@@ -35,6 +35,7 @@ key-files:
     - apps/api/src/modules/booking/providers/__tests__/redis.provider.spec.ts
     - apps/api/src/health/redis.health.indicator.ts
     - apps/api/src/health/__tests__/redis.health.indicator.spec.ts
+    - apps/api/src/main.ts
     - .planning/phases/20-valkey-production-connectivity-contract/20-REVIEW-FIX.md
 
 key-decisions:
@@ -71,6 +72,7 @@ completed: 2026-04-30
 - Created `20-HUMAN-UAT.md` with the operator evidence fields for Cloud Run revision, Valkey mode, VPC egress, safe fixture approval, health, Lua, Socket.IO, idle reconnect, log/Sentry cleanliness, scale restore, rollback, and redaction.
 - Created `20-VERIFICATION.md` with `status: pending-production-smoke` and `human_needed: true` so local/code verification stays separate from production runtime evidence.
 - Hardened the smoke and runtime redaction surface after code review: auth/cookie/JWT values are redacted, unlock is verified through post-delete seat state, malformed idle seconds are rejected, and failed smoke checks append FAIL evidence after setup validation.
+- Hardened the final review findings: production bootstrap now requires Redis `PING`, log smoke requires Sentry observation for PASS, bearer redaction covers opaque token characters, Socket.IO smoke fails preflight before mutation when `min-instances < 2`, and health handles non-Error Redis rejections.
 
 ## Task Commits
 
@@ -79,6 +81,8 @@ completed: 2026-04-30
 3. **Task 3: Run production smoke with operator-approved fixture** - skipped by user request; no production PASS evidence recorded
 4. **Review hardening: close production smoke review findings** - `dc445c5` (fix)
 5. **Review fix report: smoke hardening** - `c74c784` (docs)
+6. **Final code review report** - `b2cc20e` (docs)
+7. **Final review hardening: startup and smoke gates** - `3170858` (fix)
 
 ## Files Created/Modified
 
@@ -89,7 +93,8 @@ completed: 2026-04-30
 - `apps/api/src/modules/booking/providers/__tests__/redis.provider.spec.ts` - Covers auth/cookie/JWT redaction in Redis provider logs.
 - `apps/api/src/health/redis.health.indicator.ts` - Redacts auth/cookie/JWT values in public health down messages.
 - `apps/api/src/health/__tests__/redis.health.indicator.spec.ts` - Covers auth/cookie/JWT redaction in health output.
-- `.planning/phases/20-valkey-production-connectivity-contract/20-REVIEW-FIX.md` - Records the fourth review-fix pass.
+- `apps/api/src/main.ts` - Requires production Redis `PING` before serving.
+- `.planning/phases/20-valkey-production-connectivity-contract/20-REVIEW-FIX.md` - Records the final review-fix passes.
 
 ## Decisions Made
 
@@ -142,9 +147,49 @@ completed: 2026-04-30
 - **Verification:** `node --check` and static grep gates passed.
 - **Committed in:** `dc445c5`
 
+**5. [Rule 3 - Startup safety] Fail production bootstrap when Redis is unreachable**
+- **Found during:** Final code review
+- **Issue:** Cloud Run could start serving after provider connect failures were swallowed.
+- **Fix:** Added production-only `redisClient.ping()` before Socket.IO adapter setup and `app.listen()`.
+- **Files modified:** `apps/api/src/main.ts`
+- **Verification:** API typecheck passed.
+- **Committed in:** `3170858`
+
+**6. [Rule 2 - Evidence correctness] Require Sentry observation for log smoke PASS**
+- **Found during:** Final code review
+- **Issue:** `checkLogs()` could return PASS with only Cloud Logging evidence and no Sentry observation.
+- **Fix:** Missing `GRABIT_SMOKE_SENTRY_OBSERVATION` now records `missing` and returns `ok: false`.
+- **Files modified:** `scripts/smoke-valkey-production.mjs`
+- **Verification:** `node --check` and static grep gates passed.
+- **Committed in:** `3170858`
+
+**7. [Rule 2 - Secret redaction] Cover opaque bearer token characters**
+- **Found during:** Final code review
+- **Issue:** Smoke redaction could leave bearer suffixes containing characters outside `[A-Za-z0-9._-]`.
+- **Fix:** Expanded the bearer pattern to redact any non-whitespace token value.
+- **Files modified:** `scripts/smoke-valkey-production.mjs`
+- **Verification:** static grep gate passed.
+- **Committed in:** `3170858`
+
+**8. [Rule 3 - Smoke precondition] Fail Socket.IO smoke before mutation when min-instances < 2**
+- **Found during:** Final code review
+- **Issue:** Default `--min-instances=0` conflicted with the two-instance proof requirement.
+- **Fix:** Added a preflight FAIL before socket connection or seat mutation, instructing the operator to temporarily set `min-instances=2` and restore pre-state.
+- **Files modified:** `scripts/smoke-valkey-production.mjs`
+- **Verification:** `node --check` and static grep gates passed.
+- **Committed in:** `3170858`
+
+**9. [Rule 3 - Health robustness] Handle non-Error Redis ping rejections**
+- **Found during:** Final code review
+- **Issue:** A string rejection could throw inside `sanitizeHealthMessage()` instead of returning a down health result.
+- **Fix:** Convert non-Error rejections with `String(err)` and added a string `ECONNRESET` regression test.
+- **Files modified:** `apps/api/src/health/redis.health.indicator.ts`, `apps/api/src/health/__tests__/redis.health.indicator.spec.ts`
+- **Verification:** targeted Vitest suite passed.
+- **Committed in:** `3170858`
+
 ---
 
-**Total deviations:** 4 auto-fixed, 1 user-directed checkpoint bypass.
+**Total deviations:** 9 auto-fixed, 1 user-directed checkpoint bypass.
 **Impact on plan:** Automated code and artifact contracts are stronger than the original implementation, but production runtime approval remains open.
 
 ## Issues Encountered
