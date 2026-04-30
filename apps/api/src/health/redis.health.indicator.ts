@@ -69,9 +69,10 @@ export class RedisHealthIndicator {
       }
       return indicator.up({ ...metadata });
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       return indicator.down({
         ...metadata,
-        message: sanitizeHealthMessage((err as Error).message),
+        message: sanitizeHealthMessage(message),
       });
     }
   }

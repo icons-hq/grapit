@@ -82,8 +82,8 @@ function parseArgs(argv) {
 function redact(value) {
   return String(value)
     .replace(REDIS_URL_PATTERN, '[redacted redis url]')
-    .replace(/Authorization:\s*Bearer\s+[A-Za-z0-9._-]+/gi, 'Authorization: Bearer <redacted>')
-    .replace(/Cookie:\s*[^`\n\r]+/gi, 'Cookie: <redacted>')
+    .replace(/\bAuthorization:\s*Bearer\s+[^\s`'")]+/gi, 'Authorization: Bearer <redacted>')
+    .replace(/\bCookie:\s*[^`\n\r]+/gi, 'Cookie: <redacted>')
     .replace(/[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/g, '<jwt:redacted>')
     .replace(/\+82[0-9]{8,}/g, '+82<redacted>')
     .replace(/\b(paymentKey|orderId)\s*[:=]\s*"?[A-Za-z0-9_-]{12,}"?/gi, '$1=<redacted>')
@@ -543,6 +543,13 @@ async function lookupSocketInstances(config, cloudRun, clientIds, sinceIso) {
 async function checkSocketIo(config, cloudRun) {
   const minInstances = Number.parseInt(String(cloudRun.minInstances ?? '0'), 10);
   const multiInstanceReady = Number.isFinite(minInstances) && minInstances >= 2;
+  if (!multiInstanceReady) {
+    return {
+      name: 'Socket.IO Two-Instance Propagation',
+      ok: false,
+      summary: `preflight failed: min-instances=${cloudRun.minInstances}; set grabit-api temporary min-instances=2 and restore the recorded pre-state before approval`,
+    };
+  }
   const sinceIso = new Date().toISOString();
   const socketA = await connectSocket(config, 'a');
   const socketB = await connectSocket(config, 'b');
@@ -604,14 +611,15 @@ async function checkLogs(config, cloudRun, sinceIso) {
     '--limit=20',
   ]);
   const count = Array.isArray(entries) ? entries.length : 0;
-  const sentryObservation = process.env.GRABIT_SMOKE_SENTRY_OBSERVATION
-    ? redact(process.env.GRABIT_SMOKE_SENTRY_OBSERVATION)
-    : 'operator-required: record Sentry zero-count or redacted event id in 20-HUMAN-UAT.md';
+  const sentryObservation = process.env.GRABIT_SMOKE_SENTRY_OBSERVATION?.trim();
+  const sanitizedSentryObservation = sentryObservation
+    ? redact(sentryObservation)
+    : 'missing';
 
   return {
     name: 'Log And Sentry Cleanliness',
-    ok: count === 0,
-    summary: `revision=${cloudRun.latestReadyRevisionName}; since=${sinceIso}; Cloud Logging failure keyword count=${count}; Sentry observation=${sentryObservation}`,
+    ok: count === 0 && Boolean(sentryObservation),
+    summary: `revision=${cloudRun.latestReadyRevisionName}; since=${sinceIso}; Cloud Logging failure keyword count=${count}; Sentry observation=${sanitizedSentryObservation}`,
   };
 }
 

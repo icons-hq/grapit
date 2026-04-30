@@ -49,6 +49,12 @@ async function bootstrap() {
   // broadcast across Cloud Run instances via Valkey pub/sub (VALK-04).
   // Falls back to the default in-process adapter when REDIS_URL is not set.
   const redisClient = app.get<IORedis>(REDIS_CLIENT);
+  if (process.env['NODE_ENV'] === 'production') {
+    const pong = await redisClient.ping();
+    if (pong !== 'PONG') {
+      throw new Error(`[bootstrap] Redis ping returned ${String(pong)}`);
+    }
+  }
   const redisIoAdapter = new RedisIoAdapter(app, redisClient);
   const redisPubSubReady = redisIoAdapter.connectToRedis();
   if (process.env['NODE_ENV'] === 'production' && !redisPubSubReady) {

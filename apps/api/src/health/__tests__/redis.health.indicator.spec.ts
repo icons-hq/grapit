@@ -123,6 +123,16 @@ describe('RedisHealthIndicator', () => {
     expect(result['redis']?.message).toContain('ECONNREFUSED');
   });
 
+  it('reports down when redis.ping() rejects with a non-Error value', async () => {
+    mockRedis.ping.mockRejectedValueOnce('ECONNRESET');
+
+    const result = (await indicator.isHealthy('redis')) as IndicatorResult;
+
+    expect(result['redis']?.status).toBe('down');
+    expect(result['redis']?.mode).toBe('cluster');
+    expect(result['redis']?.message).toContain('ECONNRESET');
+  });
+
   it('redacts redis:// and rediss:// URLs from down messages', async () => {
     mockRedis.ping.mockRejectedValueOnce(new Error(
       'failed redis://:secret@10.0.0.1:6379 and rediss://default:secret@10.0.0.2:6380 '
