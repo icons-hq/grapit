@@ -75,6 +75,7 @@ completed: 2026-04-30
 - Hardened the final review findings: production bootstrap now requires Redis `PING`, log smoke requires Sentry observation for PASS, bearer redaction covers opaque token characters, Socket.IO smoke fails preflight before mutation when `min-instances < 2`, and health handles non-Error Redis rejections.
 - Broadened smoke artifact redaction for international E.164 phone values and short payment/order identifiers.
 - Broadened smoke artifact redaction for JSON-style `paymentKey` and `orderId` values in serialized error bodies.
+- Aligned smoke PII redaction and Sentry preflight contract with the artifact promise.
 
 ## Task Commits
 
@@ -87,6 +88,7 @@ completed: 2026-04-30
 7. **Final review hardening: startup and smoke gates** - `3170858` (fix)
 8. **Smoke artifact redaction follow-up** - `22ebedc` (fix)
 9. **JSON smoke identifier redaction** - `d294008` (fix)
+10. **PII and Sentry preflight alignment** - `6119823` (fix)
 
 ## Files Created/Modified
 
@@ -207,9 +209,17 @@ completed: 2026-04-30
 - **Verification:** source-extracted `redact()` harness confirms JSON-style payment/order fragments are removed.
 - **Committed in:** `d294008`
 
+**12. [Rule 2 - PII redaction] Cover Korean local phone values and Sentry preflight**
+- **Found during:** Smoke contract review
+- **Issue:** Local phone values such as `01012345678` and `010-1234-5678` could remain, and `GRABIT_SMOKE_SENTRY_OBSERVATION` was required for PASS without being documented/preflighted.
+- **Fix:** Added a shared phone pattern for E.164 and Korean local mobile values; documented and preflighted `GRABIT_SMOKE_SENTRY_OBSERVATION` for `--check logs` and `--check all`.
+- **Files modified:** `scripts/smoke-valkey-production.mjs`
+- **Verification:** source-extracted `redact()` harness confirms local phone values are removed; missing Sentry observation with `--check all` fails with an explicit env error.
+- **Committed in:** `6119823`
+
 ---
 
-**Total deviations:** 11 auto-fixed, 1 user-directed checkpoint bypass.
+**Total deviations:** 12 auto-fixed, 1 user-directed checkpoint bypass.
 **Impact on plan:** Automated code and artifact contracts are stronger than the original implementation, but production runtime approval remains open.
 
 ## Issues Encountered

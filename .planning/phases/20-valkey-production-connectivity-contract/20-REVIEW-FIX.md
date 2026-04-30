@@ -1,29 +1,30 @@
 ---
 phase: 20-valkey-production-connectivity-contract
-fixed_at: 2026-04-30T08:28:46Z
+fixed_at: 2026-04-30T08:38:43Z
 review_path: .planning/phases/20-valkey-production-connectivity-contract/20-REVIEW.md
-iteration: 7
-findings_in_scope: 19
-fixed: 19
+iteration: 8
+findings_in_scope: 21
+fixed: 21
 skipped: 0
 status: all_fixed
 ---
 
 # Phase 20: Code Review Fix Report
 
-**Fixed at:** 2026-04-30T08:28:46Z
+**Fixed at:** 2026-04-30T08:38:43Z
 **Source review:** .planning/phases/20-valkey-production-connectivity-contract/20-REVIEW.md
-**Iteration:** 7
+**Iteration:** 8
 
 **Summary:**
-- Findings in scope: 19
-- Fixed: 19
+- Findings in scope: 21
+- Fixed: 21
 - Skipped: 0
 - Production smoke remains deferred; this report does not mark Phase 20 passed or complete.
 - Iteration 4 closes the 2026-04-30T07:46:48Z follow-up review: Redis/health auth-value redaction, post-unlock seat-state proof, strict idle seconds parsing, and failed-check artifact capture.
 - Iteration 5 closes the 2026-04-30T08:08:14Z follow-up review: production bootstrap Redis ping, required Sentry evidence, broader bearer redaction, Socket.IO preflight min-instances guard, and non-Error health rejection handling.
 - Iteration 6 closes the 2026-04-30T08:18:53Z follow-up review: international E.164 phone and short payment/order identifiers in smoke artifact redaction.
 - Iteration 7 closes the 2026-04-30T08:27:08Z follow-up review: JSON-style payment/order identifiers in smoke artifact redaction.
+- Iteration 8 closes the 2026-04-30T08:36:44Z follow-up review: Korean local phone values and explicit Sentry observation preflight/help contract.
 
 ## Fixed Issues
 
@@ -160,6 +161,20 @@ status: all_fixed
 **Commit:** d294008
 **Applied fix:** Made payment/order redaction quote-aware for keys and values, covering JSON-style `"paymentKey":"pk_test_123"` and `"orderId":"ORD-1"` summaries produced from `JSON.stringify()` error bodies.
 
+### CR-01 Iteration 8: BLOCKER - Smoke artifact redaction can leak local phone values
+
+**Status:** fixed
+**Files modified:** `scripts/smoke-valkey-production.mjs`
+**Commit:** 6119823
+**Applied fix:** Added `PHONE_PATTERN` covering E.164 and Korean local mobile values such as `01012345678` and `010-1234-5678`, then routed phone redaction through `<phone:redacted>`.
+
+### WR-01 Iteration 8: WARNING - Sentry observation requirement missing from help/preflight contract
+
+**Status:** fixed
+**Files modified:** `scripts/smoke-valkey-production.mjs`
+**Commit:** 6119823
+**Applied fix:** Added `GRABIT_SMOKE_SENTRY_OBSERVATION` to `--help` env documentation and made `--check logs` / `--check all` fail fast when the observation is missing.
+
 ## Skipped Issues
 
 None - all in-scope findings were fixed.
@@ -192,9 +207,13 @@ None - all in-scope findings were fixed.
 - Iteration 7: `node --check scripts/smoke-valkey-production.mjs`
 - Iteration 7: `pnpm --filter @grabit/web exec node ../../scripts/smoke-valkey-production.mjs --help`
 - Iteration 7: source-extracted `redact()` harness confirms JSON-style `"paymentKey":"pk_test_123"` and `"orderId":"ORD-1"` fragments do not remain.
+- Iteration 8: `node --check scripts/smoke-valkey-production.mjs`
+- Iteration 8: `pnpm --filter @grabit/web exec node ../../scripts/smoke-valkey-production.mjs --help`
+- Iteration 8: source-extracted `redact()` harness confirms `01012345678`, `010-1234-5678`, E.164 phone numbers, payment/order identifiers, bearer token, cookie, JWT, and Redis URL fragments do not remain.
+- Iteration 8: missing `GRABIT_SMOKE_SENTRY_OBSERVATION` with `--check all` fails with the explicit required-env error.
 
 ---
 
-_Fixed: 2026-04-30T08:28:46Z_
+_Fixed: 2026-04-30T08:38:43Z_
 _Fixer: the agent (gsd-code-fixer)_
-_Iteration: 7_
+_Iteration: 8_
