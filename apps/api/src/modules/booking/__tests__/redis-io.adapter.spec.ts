@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { INestApplicationContext } from '@nestjs/common';
+import { Logger } from '@nestjs/common';
+import { readFileSync } from 'node:fs';
 import type IORedis from 'ioredis';
 import { RedisIoAdapter } from '../providers/redis-io.adapter.js';
 
@@ -39,11 +41,16 @@ describe('RedisIoAdapter', () => {
   it('falls back gracefully when the client has no duplicate() method', () => {
     // Simulates InMemoryRedis: no .duplicate() -> adapter cannot wire pub/sub
     const inMemoryMock = { set: vi.fn(), get: vi.fn() } as unknown as IORedis;
+    const warnSpy = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
 
     const adapter = new RedisIoAdapter(mockApp, inMemoryMock);
     const wired = adapter.connectToRedis();
 
     expect(wired).toBe(false);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Multi-instance Socket.IO pub/sub DISABLED'),
+    );
+    warnSpy.mockRestore();
   });
 
   it('does not throw when duplicate is present but returns a minimal sub client', () => {
@@ -52,5 +59,16 @@ describe('RedisIoAdapter', () => {
     const adapter = new RedisIoAdapter(mockApp, pubClient);
 
     expect(() => adapter.connectToRedis()).not.toThrow();
+  });
+
+  it('keeps production bootstrap fail-closed when Redis pub/sub is not wired', () => {
+    const mainSource = readFileSync(
+      new URL('../../../main.ts', import.meta.url),
+      'utf8',
+    );
+
+    expect(mainSource).toContain('const redisPubSubReady = redisIoAdapter.connectToRedis()');
+    expect(mainSource).toContain('Socket.IO Redis adapter failed to wire in production');
+    expect(mainSource).toContain('app.useWebSocketAdapter(redisIoAdapter)');
   });
 });
