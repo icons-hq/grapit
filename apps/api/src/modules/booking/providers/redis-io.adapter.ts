@@ -2,7 +2,7 @@ import type { INestApplicationContext } from '@nestjs/common';
 import { Logger } from '@nestjs/common';
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
-import type IORedis from 'ioredis';
+import IORedis, { Cluster } from 'ioredis';
 import type { ServerOptions } from 'socket.io';
 
 /**
@@ -16,15 +16,29 @@ import type { ServerOptions } from 'socket.io';
  * See 07-REVIEWS.md MEDIUM concern (Claude-only #8) and T-07-13 mitigation.
  */
 export function createSocketIoRedisAdapter(
-  ioredisClient: IORedis,
+  ioredisClient: IORedis | Cluster,
 ): ReturnType<typeof createAdapter> {
   const pubClient = ioredisClient;
-  const subClient = pubClient.duplicate({
+  const subClient = duplicateSocketSubscriber(pubClient);
+
+  return createAdapter(pubClient, subClient);
+}
+
+function duplicateSocketSubscriber(pubClient: IORedis | Cluster): IORedis | Cluster {
+  if (pubClient instanceof Cluster) {
+    return pubClient.duplicate(undefined, {
+      enableReadyCheck: false,
+      redisOptions: {
+        ...(pubClient.options.redisOptions ?? {}),
+        maxRetriesPerRequest: null,
+      },
+    });
+  }
+
+  return pubClient.duplicate({
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
   });
-
-  return createAdapter(pubClient, subClient);
 }
 
 /**
@@ -56,7 +70,7 @@ export class RedisIoAdapter extends IoAdapter {
 
   constructor(
     app: INestApplicationContext,
-    private readonly redisClient: IORedis | { duplicate?: unknown },
+    private readonly redisClient: IORedis | Cluster | { duplicate?: unknown },
   ) {
     super(app);
   }
@@ -71,24 +85,21 @@ export class RedisIoAdapter extends IoAdapter {
    * the default in-process transport.
    */
   connectToRedis(): boolean {
-    const maybeClient = this.redisClient as { duplicate?: (opts?: unknown) => IORedis };
+    const maybeClient = this.redisClient as { duplicate?: (...args: unknown[]) => IORedis | Cluster };
     if (typeof maybeClient.duplicate !== 'function') {
       this.logger.warn(
         'REDIS_CLIENT has no duplicate() — assuming InMemoryRedis mock. Multi-instance Socket.IO pub/sub DISABLED. Set REDIS_URL to enable.',
       );
       return false;
     }
-    const pubClient = this.redisClient as IORedis;
+    const pubClient = this.redisClient as IORedis | Cluster;
     // @socket.io/redis-adapter requires maxRetriesPerRequest: null on the sub
     // client so that subscription commands are not aborted mid-stream by retry
     // limits, and enableReadyCheck: false so that SUBSCRIBE can happen before
     // the INFO ready check (which is not meaningful for a subscriber connection).
     // Pub client inherits ioredis options from redis.provider.ts (maxRetriesPerRequest: 3).
     // Addresses 07-REVIEWS.md MEDIUM concern (Claude-only #8) and T-07-13 mitigation.
-    const subClient = pubClient.duplicate({
-      maxRetriesPerRequest: null,
-      enableReadyCheck: false,
-    });
+    const subClient = duplicateSocketSubscriber(pubClient);
     this.adapterConstructor = createAdapter(pubClient, subClient);
     this.logger.log('Socket.IO Redis adapter wired (pub/sub via duplicated ioredis client with null retries on sub)');
     return true;

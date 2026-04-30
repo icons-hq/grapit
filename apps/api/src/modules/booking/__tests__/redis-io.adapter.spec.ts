@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { INestApplicationContext } from '@nestjs/common';
 import { Logger } from '@nestjs/common';
 import { readFileSync } from 'node:fs';
-import type IORedis from 'ioredis';
+import IORedis, { Cluster } from 'ioredis';
 import { RedisIoAdapter } from '../providers/redis-io.adapter.js';
 
 /**
@@ -36,6 +36,38 @@ describe('RedisIoAdapter', () => {
       maxRetriesPerRequest: null,
       enableReadyCheck: false,
     });
+  });
+
+  it('duplicates ioredis Cluster subscribers with cluster override options', () => {
+    const cluster = new Cluster([{ host: 'localhost', port: 6379 }], {
+      lazyConnect: true,
+      redisOptions: {
+        password: 'secret',
+        maxRetriesPerRequest: 3,
+      },
+    });
+    const subClient = new Cluster([{ host: 'localhost', port: 6379 }], {
+      lazyConnect: true,
+    });
+    const duplicate = vi.spyOn(cluster, 'duplicate').mockReturnValue(subClient);
+
+    try {
+      const adapter = new RedisIoAdapter(mockApp, cluster);
+      const wired = adapter.connectToRedis();
+
+      expect(wired).toBe(true);
+      expect(duplicate).toHaveBeenCalledWith(undefined, {
+        enableReadyCheck: false,
+        redisOptions: {
+          password: 'secret',
+          maxRetriesPerRequest: null,
+        },
+      });
+    } finally {
+      duplicate.mockRestore();
+      cluster.disconnect();
+      subClient.disconnect();
+    }
   });
 
   it('falls back gracefully when the client has no duplicate() method', () => {
