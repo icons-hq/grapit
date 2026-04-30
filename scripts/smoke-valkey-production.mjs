@@ -272,6 +272,37 @@ function getMemorystoreEvidence(config) {
   };
 }
 
+function servingTrafficEntries(cloudRun) {
+  return Array.isArray(cloudRun.traffic)
+    ? cloudRun.traffic.filter((entry) => Number(entry.percent ?? 0) > 0)
+    : [];
+}
+
+function isLatestReadyServingAllTraffic(cloudRun) {
+  const latest = cloudRun.latestReadyRevisionName;
+  const servingTraffic = servingTrafficEntries(cloudRun);
+  if (!latest || latest === 'unknown' || servingTraffic.length !== 1) {
+    return false;
+  }
+
+  const [entry] = servingTraffic;
+  return Number(entry.percent ?? 0) === 100
+    && (entry.revisionName === latest || entry.latestRevision === true);
+}
+
+function formatTraffic(traffic) {
+  if (!Array.isArray(traffic) || traffic.length === 0) {
+    return 'none';
+  }
+
+  return traffic
+    .map((entry) => {
+      const revision = entry.revisionName ?? (entry.latestRevision ? 'latestRevision' : 'unknown');
+      return `${revision}:${entry.percent ?? 0}%`;
+    })
+    .join(', ');
+}
+
 function runtimeContractFailures(cloudRun, memorystore) {
   const failures = [];
   if (cloudRun.declaredValkeyMode !== EXPECTED_VALKEY_MODE) {
@@ -289,7 +320,19 @@ function runtimeContractFailures(cloudRun, memorystore) {
   if (memorystore.mode !== EXPECTED_LIVE_MODE) {
     failures.push(`Memorystore mode=${memorystore.mode}`);
   }
+  if (!isLatestReadyServingAllTraffic(cloudRun)) {
+    failures.push(`traffic is not 100% on latestReadyRevisionName=${cloudRun.latestReadyRevisionName}`);
+  }
   return failures;
+}
+
+function cloudRunRevisionFilter(config, cloudRun) {
+  return [
+    'resource.type="cloud_run_revision"',
+    `resource.labels.service_name="${SERVICE_NAME}"`,
+    `resource.labels.location="${config.region}"`,
+    `resource.labels.revision_name="${cloudRun.latestReadyRevisionName}"`,
+  ];
 }
 
 async function requestJson(config, path, options = {}) {
@@ -451,12 +494,10 @@ async function joinShowtime(socket, showtimeId) {
   await sleep(750);
 }
 
-async function lookupSocketInstances(config, clientIds, sinceIso) {
+async function lookupSocketInstances(config, cloudRun, clientIds, sinceIso) {
   await sleep(5000);
   const filter = [
-    'resource.type="cloud_run_revision"',
-    `resource.labels.service_name="${SERVICE_NAME}"`,
-    `resource.labels.location="${config.region}"`,
+    ...cloudRunRevisionFilter(config, cloudRun),
     `timestamp>="${sinceIso}"`,
     '"Client connected"',
   ].join(' AND ');
@@ -513,7 +554,7 @@ async function checkSocketIo(config, cloudRun) {
 
     await Promise.all([updateA, updateB]);
 
-    const instanceMap = await lookupSocketInstances(config, [socketA.id, socketB.id], sinceIso);
+    const instanceMap = await lookupSocketInstances(config, cloudRun, [socketA.id, socketB.id], sinceIso);
     const instances = [...new Set([...instanceMap.values()].filter((value) => value !== 'unknown'))];
     const instanceProof = instances.length >= 2;
 
@@ -534,12 +575,10 @@ async function checkSocketIo(config, cloudRun) {
   }
 }
 
-async function checkLogs(config, sinceIso) {
+async function checkLogs(config, cloudRun, sinceIso) {
   const keywordFilter = FAILURE_KEYWORDS.map((keyword) => `"${keyword}"`).join(' OR ');
   const filter = [
-    'resource.type="cloud_run_revision"',
-    `resource.labels.service_name="${SERVICE_NAME}"`,
-    `resource.labels.location="${config.region}"`,
+    ...cloudRunRevisionFilter(config, cloudRun),
     `timestamp>="${sinceIso}"`,
     `(${keywordFilter})`,
   ].join(' AND ');
@@ -558,7 +597,7 @@ async function checkLogs(config, sinceIso) {
   return {
     name: 'Log And Sentry Cleanliness',
     ok: count === 0,
-    summary: `since=${sinceIso}; Cloud Logging failure keyword count=${count}; Sentry observation=${sentryObservation}`,
+    summary: `revision=${cloudRun.latestReadyRevisionName}; since=${sinceIso}; Cloud Logging failure keyword count=${count}; Sentry observation=${sentryObservation}`,
   };
 }
 
@@ -603,7 +642,7 @@ async function runChecks(config) {
     checks.push(await checkIdle(config, cloudRun));
   }
   if (config.check === 'logs' || config.check === 'all') {
-    checks.push(await checkLogs(config, logSinceOverride || startedUtc));
+    checks.push(await checkLogs(config, cloudRun, logSinceOverride || startedUtc));
   }
 
   const allChecksOk = checks.every((check) => check.ok);
@@ -638,6 +677,8 @@ async function writeArtifact(evidence) {
     `- Completed UTC: ${evidence.completedUtc}`,
     `- Cloud Run service: ${evidence.cloudRun.service}`,
     `- latestReadyRevisionName: ${evidence.cloudRun.latestReadyRevisionName}`,
+    `- Traffic split: ${formatTraffic(evidence.cloudRun.traffic)}`,
+    `- latestReadyRevisionName serving 100% traffic: ${isLatestReadyServingAllTraffic(evidence.cloudRun) ? 'PASS' : 'FAIL'}`,
     `- Target URL host: ${evidence.targetHost}`,
     `- Valkey instance: ${evidence.memorystore.instance}`,
     `- Live Memorystore mode: ${evidence.memorystore.mode}`,

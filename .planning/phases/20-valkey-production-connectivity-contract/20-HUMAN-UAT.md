@@ -77,10 +77,13 @@ Evidence fields:
 - [ ] Smoke timestamp UTC:
 - [ ] Smoke timestamp KST:
 - [ ] `latestReadyRevisionName`:
-- [ ] Image digest or Git SHA tag:
 - [ ] Traffic split:
+- [ ] `latestReadyRevisionName` serving 100% traffic:
+- [ ] Image digest or Git SHA tag:
 - [ ] Target URL host only:
 - [ ] Smoke command shape:
+
+PASS requires public traffic to be 100% on the recorded `latestReadyRevisionName`. Split traffic, old pinned revisions, or unknown serving revision means the automated smoke result is FAIL until the operator targets or records the exact serving revision explicitly.
 
 ## Health Ping Smoke
 
@@ -193,6 +196,7 @@ Failure keywords:
 Evidence fields:
 
 - [ ] Cloud Logging query window:
+- [ ] Cloud Logging revision filter:
 - [ ] Cloud Logging failure keyword count:
 - [ ] Sentry observation result, either zero-count or redacted event id:
 - [ ] Log and Sentry cleanliness result: PASS / FAIL
