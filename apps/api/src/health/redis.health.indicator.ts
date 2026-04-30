@@ -2,7 +2,19 @@ import { Inject, Injectable } from '@nestjs/common';
 import { HealthIndicatorService, type HealthIndicatorResult } from '@nestjs/terminus';
 import type IORedis from 'ioredis';
 
-import { REDIS_CLIENT } from '../modules/booking/providers/redis.provider.js';
+import {
+  getRedisRuntimeMetadata,
+  REDIS_CLIENT,
+} from '../modules/booking/providers/redis.provider.js';
+
+function sanitizeHealthMessage(message: string): string {
+  return message
+    .replace(/redis:\/\/\S+/gi, '[redacted redis url]')
+    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[redacted host]')
+    .replace(/\+\d{6,15}\b/g, '[redacted phone]')
+    .replace(/\b(Authorization|Cookie|JWT)\b/gi, '[redacted secret]')
+    .replace(/\b(paymentKey|orderId|token|secret)=\S+/gi, '$1=[redacted]');
+}
 
 /**
  * Custom Terminus health indicator for Valkey/Redis.
@@ -29,9 +41,11 @@ export class RedisHealthIndicator {
   async isHealthy(key: string): Promise<HealthIndicatorResult> {
     const indicator = this.healthIndicatorService.check(key);
     const maybeRedis = this.redis as { ping?: () => Promise<string> | string };
+    const metadata = getRedisRuntimeMetadata(this.redis);
 
     if (typeof maybeRedis.ping !== 'function') {
       return indicator.up({
+        ...metadata,
         message: 'ping unavailable; assuming local in-memory Redis mock',
       });
     }
@@ -39,11 +53,17 @@ export class RedisHealthIndicator {
     try {
       const pong = await maybeRedis.ping();
       if (pong !== 'PONG') {
-        return indicator.down({ message: `unexpected ping response: ${String(pong)}` });
+        return indicator.down({
+          ...metadata,
+          message: sanitizeHealthMessage(`unexpected ping response: ${String(pong)}`),
+        });
       }
-      return indicator.up();
+      return indicator.up(metadata);
     } catch (err) {
-      return indicator.down({ message: (err as Error).message });
+      return indicator.down({
+        ...metadata,
+        message: sanitizeHealthMessage((err as Error).message),
+      });
     }
   }
 }
