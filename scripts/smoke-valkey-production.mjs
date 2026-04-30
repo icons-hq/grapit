@@ -14,6 +14,7 @@ const artifactPath = process.env.GRABIT_SMOKE_ARTIFACT ?? fileURLToPath(defaultA
 
 const SERVICE_NAME = 'grabit-api';
 const VALKEY_INSTANCE = 'grabit-valkey';
+const EXPECTED_API_ORIGIN = 'https://api.heygrabit.com';
 const EXPECTED_LIVE_MODE = 'CLUSTER';
 const EXPECTED_VALKEY_MODE = 'cluster';
 const REDIS_URL_PATTERN = /\brediss?:\/\/[^\s`'")]+/gi;
@@ -109,6 +110,19 @@ function getEnv(name, fallback = undefined) {
   throw new Error(`Missing required environment variable: ${name}`);
 }
 
+function parseProductionApiUrl(rawValue) {
+  const apiUrl = new URL(rawValue);
+  if (
+    apiUrl.origin !== EXPECTED_API_ORIGIN
+    || apiUrl.pathname !== '/'
+    || apiUrl.search
+    || apiUrl.hash
+  ) {
+    throw new Error(`GRABIT_API_URL must be exactly ${EXPECTED_API_ORIGIN}`);
+  }
+  return apiUrl;
+}
+
 function parsePositiveInteger(name, value) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -122,7 +136,7 @@ function commandShape(check) {
 }
 
 async function loadConfig(check) {
-  const apiUrl = new URL(getEnv('GRABIT_API_URL'));
+  const apiUrl = parseProductionApiUrl(getEnv('GRABIT_API_URL'));
   const authHeaderPath = getEnv('GRABIT_SMOKE_AUTH_HEADER_FILE');
   const authHeaderContent = await readFile(authHeaderPath, 'utf8');
   const headerLines = authHeaderContent
@@ -346,6 +360,7 @@ async function checkLua(config) {
 
     const status = await requestJson(config, `/api/v1/booking/schedules/${encodeURIComponent(config.showtimeId)}/seats`);
     const seatState = status.body?.seats?.[config.seatId] ?? status.body?.[config.seatId] ?? 'unknown';
+    const seatLocked = seatState === 'locked';
     statusSummary = `seat=${config.seatId}, state=${seatState}`;
 
     const unlock = await fetch(new URL(`/api/v1/booking/seats/lock/${encodeURIComponent(config.showtimeId)}/${encodeURIComponent(config.seatId)}`, config.apiUrl), {
@@ -360,7 +375,7 @@ async function checkLua(config) {
 
     return {
       name: 'Lua Lock Status Unlock Smoke',
-      ok: locked && statusSummary.includes('locked') && unlockOk,
+      ok: locked && seatLocked && unlockOk,
       summary: `lock=${locked ? 'PASS' : 'FAIL'}, status=${statusSummary}, unlock=${unlockOk ? 'PASS' : 'FAIL'}`,
     };
   } finally {
