@@ -1,6 +1,6 @@
 ---
 phase: 20-valkey-production-connectivity-contract
-reviewed: 2026-04-30T08:18:53Z
+reviewed: 2026-04-30T08:27:08Z
 depth: standard
 files_reviewed: 10
 files_reviewed_list:
@@ -24,24 +24,24 @@ status: issues_found
 
 # Phase 20: Code Review Report
 
-**Reviewed:** 2026-04-30T08:18:53Z
+**Reviewed:** 2026-04-30T08:27:08Z
 **Depth:** standard
 **Files Reviewed:** 10
 **Status:** issues_found
 
 ## Summary
 
-지정된 10개 source file을 표준 깊이로 재검토했다. 요청대로 production smoke 미수행 자체는 결함으로 보고하지 않았다. 이전 review의 startup ping, Sentry observation, bearer redaction, min-instances preflight, non-Error health rejection 항목은 현재 코드에서 반영되어 있었다.
+지정된 10개 source file을 표준 깊이로 재검토했다. 요청대로 production smoke 미수행 자체는 source defect로 보고하지 않았다. 이전 review의 phone/order redaction 보강은 일부 반영되었지만, artifact에 가장 흔하게 들어오는 JSON-style key/value 형태가 아직 누락되어 security defect가 남아 있다.
 
-검증 중 `pnpm --filter @grabit/api typecheck`, `node --check scripts/smoke-valkey-production.mjs`, 그리고 API unit test suite는 통과했다. 다만 smoke artifact가 약속한 redaction 범위보다 좁게 동작해 민감 데이터가 `20-HUMAN-UAT.md`에 남을 수 있는 security defect가 남아 있다.
+검증 보조로 `pnpm --filter @grabit/api typecheck`, `pnpm --filter @grabit/api test -- redis.provider redis.health.indicator redis-io.adapter`, `pnpm --filter @grabit/api test:integration -- booking-cluster-lua`, `node --check scripts/smoke-valkey-production.mjs`를 실행했다. Typecheck, unit suite, integration suite, syntax check는 통과했다.
 
 ## Critical Issues
 
-### CR-01: BLOCKER - Smoke artifact redaction이 international phone/order 값을 누출할 수 있음
+### CR-01: BLOCKER - Smoke artifact redaction이 JSON-style payment/order 값을 누출함
 
-**File:** `scripts/smoke-valkey-production.mjs:88`
+**File:** `scripts/smoke-valkey-production.mjs:89`
 
-**Issue:** `writeArtifact()`는 line 768에서 `phone numbers`, `paymentKey`, `orderId`를 redaction한다고 기록하지만, 실제 `redact()`는 line 88에서 `+82...` 전화번호만 지우고 line 89에서 `paymentKey|orderId` 값이 12자 이상인 경우만 지운다. 이 codebase의 phone parser는 E.164 international number를 허용하므로 `+8613800138000` 같은 값이 Sentry observation, Cloud Logging error, non-OK response body에 포함되면 artifact에 그대로 append된다. `orderId=ORD-1`처럼 짧은 safe/test order id도 redaction contract와 달리 남는다. Production smoke script는 operator auth와 production evidence를 다루므로 partial redaction은 정보 노출 위험이다.
+**Issue:** `redact()`는 `paymentKey=...`, `orderId: ...` 형태만 지우고, 실제 API error body나 Sentry observation에서 흔한 JSON 형태인 `"paymentKey":"pk_test_123"` / `"orderId":"ORD-1"`은 그대로 남긴다. `requestJson()`은 non-OK response body를 `JSON.stringify(body)`로 error summary에 넣고, `writeArtifact()`는 그 summary를 `20-HUMAN-UAT.md`에 append하므로 production smoke artifact에 payment/order identifiers가 누출될 수 있다. line 768의 artifact contract도 `paymentKey`, `orderId` redaction을 명시하고 있어 현재 구현은 보안 및 artifact contract 양쪽을 위반한다.
 
 **Fix:**
 ```js
@@ -52,15 +52,15 @@ function redact(value) {
     .replace(/\bCookie:\s*[^`\n\r]+/gi, 'Cookie: <redacted>')
     .replace(/[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/g, '<jwt:redacted>')
     .replace(/\+[1-9]\d{5,14}\b/g, '+<redacted>')
-    .replace(/\b(paymentKey|orderId)\s*[:=]\s*"?[^\s"',|)]+/gi, '$1=<redacted>')
+    .replace(/(["']?\b(?:paymentKey|orderId)["']?\s*[:=]\s*)["']?[^"',\s|)]+["']?/gi, '$1"<redacted>"')
     .replace(/\b(private customer data|customer data)\b/gi, '<customer-data:redacted>');
 }
 ```
 
-`+821012345678`, `+8613800138000`, `+12025550123`, `orderId=ORD-1`, and quoted JSON-style payment/order values가 모두 artifact/console output에 남지 않는 regression check를 추가해야 한다.
+`"paymentKey":"pk_test_123"`, `{"orderId":"ORD-1"}`, `paymentKey=pk_test_123`, `orderId: ORD-1`이 console output과 artifact output 양쪽에 남지 않는 regression test를 추가해야 한다.
 
 ---
 
-_Reviewed: 2026-04-30T08:18:53Z_
+_Reviewed: 2026-04-30T08:27:08Z_
 _Reviewer: the agent (gsd-code-reviewer)_
 _Depth: standard_
