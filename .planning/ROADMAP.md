@@ -324,10 +324,10 @@ Cross-cutting constraints:
   1. production Valkey mode detection/connection config가 deployment contract로 고정된다.
   2. Cloud Run revision에서 Valkey ping, Lua lock path, Socket.IO pub/sub propagation smoke가 evidence로 남는다.
   3. idle reconnect and multi-instance propagation failure mode가 rollback/checklist에 포함된다.
-**Plans:** 4 plans
+**Plans:** 1/4 plans executed
 
 Plans:
-- [ ] 20-01-PLAN.md — VALKEY_MODE=cluster deployment/runtime contract and REDIS_CLIENT cluster selection
+- [x] 20-01-PLAN.md — VALKEY_MODE=cluster deployment/runtime contract and REDIS_CLIENT cluster selection
 - [ ] 20-02-PLAN.md — Sanitized health metadata and production-visible Socket.IO Redis adapter failure
 - [ ] 20-03-PLAN.md — Booking Lua lock/status/unlock cluster-mode integration guard
 - [ ] 20-04-PLAN.md — Production smoke script, HUMAN-UAT evidence, and rollback checklist
@@ -420,7 +420,7 @@ Phases execute in numeric order: 6 -> 7 -> 8 -> 9 -> 10 -> 11 -> 12 -> 13 -> 14 
 | 17. Local dev health indicator fix | v1.1 | 2/2 | Complete | 2026-04-29 |
 | 18. Password reset production API origin fix | v1.1 | 2/2 | Complete    | 2026-04-29 |
 | 19. Seat lock ownership enforcement | v1.1 | 4/4 | Complete    | 2026-04-29 |
-| 20. Valkey production connectivity contract | v1.1 | 0/4 | Planned | - |
+| 20. Valkey production connectivity contract | v1.1 | 1/4 | In Progress|  |
 | 21. Verification artifact backfill | v1.1 | 0/0 | Planned | - |
 | 22. Operator UAT gates | v1.1 | 0/0 | Planned | - |
 | 23. Nyquist validation backfill | v1.1 | 0/0 | Planned | - |
