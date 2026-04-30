@@ -7,9 +7,11 @@ import {
   REDIS_CLIENT,
 } from '../modules/booking/providers/redis.provider.js';
 
+const REDIS_URL_PATTERN = /\brediss?:\/\/[^\s`'")]+/gi;
+
 function sanitizeHealthMessage(message: string): string {
   return message
-    .replace(/redis:\/\/\S+/gi, '[redacted redis url]')
+    .replace(REDIS_URL_PATTERN, '[redacted redis url]')
     .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[redacted host]')
     .replace(/\+\d{6,15}\b/g, '[redacted phone]')
     .replace(/\b(Authorization|Cookie|JWT)\b/gi, '[redacted secret]')

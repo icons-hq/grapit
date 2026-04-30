@@ -14,6 +14,7 @@ export interface RedisRuntimeMetadata {
 }
 
 const REDIS_RUNTIME_METADATA = Symbol('REDIS_RUNTIME_METADATA');
+const REDIS_URL_PATTERN = /\brediss?:\/\/[^\s`'")]+/gi;
 
 /**
  * In-memory Redis mock for local dev when REDIS_URL is not configured.
@@ -579,7 +580,7 @@ function assertClusterRedisUrlPath(parsedUrl: URL): void {
 
 function sanitizeRedisErrorMessage(message: string): string {
   return message
-    .replace(/redis:\/\/\S+/gi, '[redacted redis url]')
+    .replace(REDIS_URL_PATTERN, '[redacted redis url]')
     .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[redacted host]')
     .replace(/\+\d{6,15}\b/g, '[redacted phone]')
     .replace(/\b(Authorization|Cookie|JWT)\b/gi, '[redacted secret]')

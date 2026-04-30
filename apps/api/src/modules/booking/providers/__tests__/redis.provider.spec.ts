@@ -48,6 +48,7 @@ function stringifyConsoleCalls(spy: ReturnType<typeof vi.spyOn>): string {
 
 function expectNoSensitiveRedisDetails(output: string): void {
   expect(output).not.toContain('redis://');
+  expect(output).not.toContain('rediss://');
   expect(output).not.toContain('10.0.0.1');
   expect(output).not.toContain('Authorization');
   expect(output).not.toContain('Cookie');
@@ -195,6 +196,27 @@ describe('redisProvider factory', () => {
     });
 
     expect(() => useFactory(config)).toThrowError(/must not select a logical database/);
+  });
+
+  it('redacts redis:// and rediss:// URLs from provider error logs', () => {
+    process.env['NODE_ENV'] = 'production';
+    const config = createMockConfig({ url: 'redis://localhost:6379', mode: 'standalone' });
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const client = useFactory(config) as IORedis;
+    client.emit('error', new Error(
+      'failed redis://:secret@10.0.0.1:6379 and rediss://default:secret@10.0.0.2:6380 token=secret',
+    ));
+
+    const output = `${stringifyConsoleCalls(errorSpy)}\n${stringifyConsoleCalls(warnSpy)}`;
+    expect(output).toContain('[redacted redis url]');
+    expectNoSensitiveRedisDetails(output);
+    expect(output).not.toContain('secret');
+
+    client.disconnect();
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
   });
 
   /**

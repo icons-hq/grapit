@@ -16,6 +16,7 @@ const SERVICE_NAME = 'grabit-api';
 const VALKEY_INSTANCE = 'grabit-valkey';
 const EXPECTED_LIVE_MODE = 'CLUSTER';
 const EXPECTED_VALKEY_MODE = 'cluster';
+const REDIS_URL_PATTERN = /\brediss?:\/\/[^\s`'")]+/gi;
 const FAILURE_KEYWORDS = [
   'CROSSSLOT',
   'MOVED',
@@ -51,9 +52,9 @@ Optional environment:
   GRABIT_GCP_PROJECT                     Default grapit-491806
   GRABIT_GCP_REGION                      Default asia-northeast3
 
-Security:
+  Security:
   The script records command shape, revision, mode, PASS/FAIL, and sanitized summaries only.
-  It redacts redis:// values, Authorization, Cookie, JWT, phone, paymentKey, orderId, and private customer data markers.
+  It redacts redis:// and rediss:// values, Authorization, Cookie, JWT, phone, paymentKey, orderId, and private customer data markers.
 `;
 }
 
@@ -78,7 +79,7 @@ function parseArgs(argv) {
 
 function redact(value) {
   return String(value)
-    .replace(/redis:\/\/[^`\s)]+/gi, 'redis://<redacted>')
+    .replace(REDIS_URL_PATTERN, '[redacted redis url]')
     .replace(/Authorization:\s*Bearer\s+[A-Za-z0-9._-]+/gi, 'Authorization: Bearer <redacted>')
     .replace(/Cookie:\s*[^`\n\r]+/gi, 'Cookie: <redacted>')
     .replace(/[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/g, '<jwt:redacted>')
@@ -602,7 +603,7 @@ async function writeArtifact(evidence) {
     `- Network interfaces: ${evidence.cloudRun.networkInterfaces}`,
     `- min-instances evidence: ${evidence.cloudRun.minInstances}`,
     `- Auth input: ${evidence.authHeaderName} header from GRABIT_SMOKE_AUTH_HEADER_FILE, value redacted`,
-    `- Redactions applied: redis://, Authorization, Cookie, JWT, phone numbers, paymentKey, orderId, private customer data`,
+    `- Redactions applied: redis://, rediss://, Authorization, Cookie, JWT, phone numbers, paymentKey, orderId, private customer data`,
     '',
     '| Check | Result | Summary |',
     '|-------|--------|---------|',
