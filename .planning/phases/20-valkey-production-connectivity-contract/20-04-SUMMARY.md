@@ -74,6 +74,7 @@ completed: 2026-04-30
 - Hardened the smoke and runtime redaction surface after code review: auth/cookie/JWT values are redacted, unlock is verified through post-delete seat state, malformed idle seconds are rejected, and failed smoke checks append FAIL evidence after setup validation.
 - Hardened the final review findings: production bootstrap now requires Redis `PING`, log smoke requires Sentry observation for PASS, bearer redaction covers opaque token characters, Socket.IO smoke fails preflight before mutation when `min-instances < 2`, and health handles non-Error Redis rejections.
 - Broadened smoke artifact redaction for international E.164 phone values and short payment/order identifiers.
+- Broadened smoke artifact redaction for JSON-style `paymentKey` and `orderId` values in serialized error bodies.
 
 ## Task Commits
 
@@ -85,6 +86,7 @@ completed: 2026-04-30
 6. **Final code review report** - `b2cc20e` (docs)
 7. **Final review hardening: startup and smoke gates** - `3170858` (fix)
 8. **Smoke artifact redaction follow-up** - `22ebedc` (fix)
+9. **JSON smoke identifier redaction** - `d294008` (fix)
 
 ## Files Created/Modified
 
@@ -197,9 +199,17 @@ completed: 2026-04-30
 - **Verification:** source-extracted `redact()` harness confirms representative phone/payment/order fragments are removed.
 - **Committed in:** `22ebedc`
 
+**11. [Rule 2 - Secret redaction] Cover JSON-style payment/order values**
+- **Found during:** JSON redaction review
+- **Issue:** Serialized error bodies could contain `"paymentKey":"..."` or `"orderId":"..."`, which the prior redaction pattern missed.
+- **Fix:** Made the payment/order redaction quote-aware for keys and values.
+- **Files modified:** `scripts/smoke-valkey-production.mjs`
+- **Verification:** source-extracted `redact()` harness confirms JSON-style payment/order fragments are removed.
+- **Committed in:** `d294008`
+
 ---
 
-**Total deviations:** 10 auto-fixed, 1 user-directed checkpoint bypass.
+**Total deviations:** 11 auto-fixed, 1 user-directed checkpoint bypass.
 **Impact on plan:** Automated code and artifact contracts are stronger than the original implementation, but production runtime approval remains open.
 
 ## Issues Encountered
