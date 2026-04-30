@@ -86,7 +86,7 @@ function redact(value) {
     .replace(/\bCookie:\s*[^`\n\r]+/gi, 'Cookie: <redacted>')
     .replace(/[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/g, '<jwt:redacted>')
     .replace(/\+[1-9]\d{5,14}\b/g, '+<redacted>')
-    .replace(/\b(paymentKey|orderId)\s*[:=]\s*"?[^\s"',|)]+/gi, '$1=<redacted>')
+    .replace(/(["']?\b(paymentKey|orderId)["']?\s*[:=]\s*)["']?[^\s"',|)}]+["']?/gi, '$1"<redacted>"')
     .replace(/\b(private customer data|customer data)\b/gi, '<customer-data:redacted>');
 }
 
