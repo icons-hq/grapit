@@ -257,6 +257,26 @@ function getMemorystoreEvidence(config) {
   };
 }
 
+function runtimeContractFailures(cloudRun, memorystore) {
+  const failures = [];
+  if (cloudRun.declaredValkeyMode !== EXPECTED_VALKEY_MODE) {
+    failures.push(`VALKEY_MODE=${cloudRun.declaredValkeyMode}`);
+  }
+  if (cloudRun.redisUrlBinding !== 'secret-bound') {
+    failures.push(`REDIS_URL binding=${cloudRun.redisUrlBinding}`);
+  }
+  if (cloudRun.vpcEgress !== 'private-ranges-only') {
+    failures.push(`VPC egress=${cloudRun.vpcEgress}`);
+  }
+  if (cloudRun.networkInterfaces === 'unknown') {
+    failures.push('network interfaces=unknown');
+  }
+  if (memorystore.mode !== EXPECTED_LIVE_MODE) {
+    failures.push(`Memorystore mode=${memorystore.mode}`);
+  }
+  return failures;
+}
+
 async function requestJson(config, path, options = {}) {
   const url = new URL(path, config.apiUrl);
   const response = await fetch(url, {
@@ -292,15 +312,18 @@ function redisHealthDetail(healthBody) {
 async function checkHealth(config) {
   const response = await requestJson(config, '/api/v1/health');
   const redis = redisHealthDetail(response.body);
-  const redisUp = redis?.status === 'up';
-  const mode = redis?.mode ?? redis?.metadata?.mode ?? 'unknown';
-  const client = redis?.client ?? redis?.metadata?.client ?? 'unknown';
-  const configured = redis?.configured ?? redis?.metadata?.configured ?? 'unknown';
+  const mode = redis?.mode ?? redis?.metadata?.mode;
+  const client = redis?.client ?? redis?.metadata?.client;
+  const configured = redis?.configured ?? redis?.metadata?.configured;
 
   return {
     name: 'Health Ping Smoke',
-    ok: response.body?.status === 'ok' && redisUp,
-    summary: `health=${response.body?.status ?? 'unknown'}, redis=${redis?.status ?? 'unknown'}, mode=${mode}, client=${client}, configured=${configured}`,
+    ok: response.body?.status === 'ok'
+      && redis?.status === 'up'
+      && mode === EXPECTED_VALKEY_MODE
+      && client === 'ioredis-cluster'
+      && configured === true,
+    summary: `health=${response.body?.status ?? 'unknown'}, redis=${redis?.status ?? 'unknown'}, mode=${mode ?? 'unknown'}, client=${client ?? 'unknown'}, configured=${configured ?? 'unknown'}`,
   };
 }
 
@@ -543,7 +566,8 @@ async function runChecks(config) {
   const startedUtc = new Date().toISOString();
   const cloudRun = getCloudRunEvidence(config);
   const memorystore = getMemorystoreEvidence(config);
-  const modeContractOk = cloudRun.declaredValkeyMode === EXPECTED_VALKEY_MODE && memorystore.mode === EXPECTED_LIVE_MODE;
+  const runtimeFailures = runtimeContractFailures(cloudRun, memorystore);
+  const modeContractOk = runtimeFailures.length === 0;
   const checks = [];
 
   if (config.check === 'health' || config.check === 'all') {
@@ -573,6 +597,7 @@ async function runChecks(config) {
     cloudRun,
     memorystore,
     modeContractOk,
+    runtimeContractFailures: runtimeFailures,
     checks,
     overallOk: modeContractOk && allChecksOk,
   };
@@ -602,12 +627,13 @@ async function writeArtifact(evidence) {
     `- VPC egress: ${evidence.cloudRun.vpcEgress}`,
     `- Network interfaces: ${evidence.cloudRun.networkInterfaces}`,
     `- min-instances evidence: ${evidence.cloudRun.minInstances}`,
+    `- Runtime contract failures: ${evidence.runtimeContractFailures.length > 0 ? evidence.runtimeContractFailures.join('; ') : 'none'}`,
     `- Auth input: ${evidence.authHeaderName} header from GRABIT_SMOKE_AUTH_HEADER_FILE, value redacted`,
     `- Redactions applied: redis://, rediss://, Authorization, Cookie, JWT, phone numbers, paymentKey, orderId, private customer data`,
     '',
     '| Check | Result | Summary |',
     '|-------|--------|---------|',
-    `| Production Runtime Contract | ${evidence.modeContractOk ? 'PASS' : 'FAIL'} | live=${evidence.memorystore.mode}, declared=${evidence.cloudRun.declaredValkeyMode}, expected ${EXPECTED_LIVE_MODE}/${EXPECTED_VALKEY_MODE} |`,
+    `| Production Runtime Contract | ${evidence.modeContractOk ? 'PASS' : 'FAIL'} | ${evidence.runtimeContractFailures.length > 0 ? `failures=${evidence.runtimeContractFailures.join('; ')}` : `live=${evidence.memorystore.mode}, declared=${evidence.cloudRun.declaredValkeyMode}, REDIS_URL=${evidence.cloudRun.redisUrlBinding}, VPC=${evidence.cloudRun.vpcEgress}`} |`,
     ...evidence.checks.map((check) => `| ${check.name} | ${check.ok ? 'PASS' : 'FAIL'} | ${redact(check.summary)} |`),
     `| Final automated smoke result | ${evidence.overallOk ? 'PASS' : 'FAIL'} | Sentry dashboard/API observation must still be recorded by the operator before final phase approval. |`,
     '',
