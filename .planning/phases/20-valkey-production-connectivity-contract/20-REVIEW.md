@@ -1,153 +1,131 @@
 ---
 phase: 20-valkey-production-connectivity-contract
-reviewed: 2026-04-30T07:46:48Z
+reviewed: 2026-04-30T08:08:14Z
 depth: standard
-files_reviewed: 11
+files_reviewed: 10
 files_reviewed_list:
   - .github/workflows/deploy.yml
   - apps/api/src/config/redis.config.ts
-  - apps/api/src/modules/booking/providers/redis.provider.ts
-  - apps/api/src/modules/booking/providers/__tests__/redis.provider.spec.ts
-  - apps/api/src/modules/booking/providers/redis-io.adapter.ts
-  - apps/api/src/health/redis.health.indicator.ts
   - apps/api/src/health/__tests__/redis.health.indicator.spec.ts
-  - apps/api/src/modules/booking/__tests__/redis-io.adapter.spec.ts
+  - apps/api/src/health/redis.health.indicator.ts
   - apps/api/src/main.ts
+  - apps/api/src/modules/booking/__tests__/redis-io.adapter.spec.ts
+  - apps/api/src/modules/booking/providers/__tests__/redis.provider.spec.ts
+  - apps/api/src/modules/booking/providers/redis.provider.ts
   - apps/api/test/booking-cluster-lua.integration.spec.ts
   - scripts/smoke-valkey-production.mjs
 findings:
-  critical: 2
+  critical: 3
   warning: 2
   info: 0
-  total: 4
+  total: 5
 status: issues_found
 ---
 
 # Phase 20: Code Review Report
 
-**Reviewed:** 2026-04-30T07:46:48Z
+**Reviewed:** 2026-04-30T08:08:14Z
 **Depth:** standard
-**Files Reviewed:** 11
+**Files Reviewed:** 10
 **Status:** issues_found
 
 ## Summary
 
-`20-REVIEW-FIX.md` iteration 3 및 commit `485f56b` 이후 지정된 11개 source file을 표준 깊이로 재검토했다. 이전 blocking issue였던 traffic-serving `latestReadyRevisionName` gate는 `runtimeContractFailures()`에 반영되어 있고, Socket.IO instance lookup 및 log keyword query도 `cloudRunRevisionFilter()`를 통해 `resource.labels.revision_name="${latestReadyRevisionName}"`로 제한된다. 따라서 prior issue의 핵심인 "latest ready revision 기록만 하고 실제 traffic/log scope는 묶지 않는 문제"는 코드상 해결된 것으로 확인했다. Production smoke 자체가 deferred인 점은 요청대로 code issue로 보고하지 않았다.
+지정된 10개 source file을 표준 깊이로 검토했다. Production smoke가 실제로 실행되지 않은 점은 요청대로 결함으로 보지 않았다. 대신 향후 production smoke나 Cloud Run 배포가 Valkey 연결 상태를 잘못 증명하거나, 민감한 smoke 입력을 남길 수 있는 source/artifact-contract 결함만 보고한다.
 
-다만 final smoke와 redaction 표면에 shipping 전에 막아야 할 결함이 남아 있다. 특히 public health output과 Redis provider log sanitizer는 `Authorization`/`Cookie`/`JWT` label만 치환하고 값은 남길 수 있으며, Lua smoke는 `DELETE` status code만 보고 unlock 성공으로 처리해 lock이 실제로 사라졌는지 증명하지 않는다.
-
-검증 중 실행한 명령:
-
-- `node --check scripts/smoke-valkey-production.mjs`
-- `pnpm --filter @grabit/web exec node ../../scripts/smoke-valkey-production.mjs --help`
-- `pnpm --filter @grabit/api exec vitest run src/modules/booking/providers/__tests__/redis.provider.spec.ts src/health/__tests__/redis.health.indicator.spec.ts src/modules/booking/__tests__/redis-io.adapter.spec.ts`
+검증 중 `pnpm --filter @grabit/api typecheck`와 `node --check scripts/smoke-valkey-production.mjs`는 통과했다. 통과 여부와 별개로 아래 결함은 런타임/증거 계약상 수정이 필요하다.
 
 ## Critical Issues
 
-### CR-01: BLOCKER - Redis/health sanitizers redact labels but leave secret values
+### CR-01: BLOCKER - Production startup이 unreachable Valkey에서 fail-closed 하지 않음
 
-**File:** `apps/api/src/modules/booking/providers/redis.provider.ts:581`, `apps/api/src/health/redis.health.indicator.ts:12`
+**File:** `apps/api/src/modules/booking/providers/redis.provider.ts:675`
 
-**Issue:** `sanitizeRedisErrorMessage()` and `sanitizeHealthMessage()` replace only the words `Authorization`, `Cookie`, and `JWT`. A message such as `Authorization: Bearer abc.def.ghi Cookie: session=topsecret JWT: header.payload.signature` becomes `[redacted secret]: Bearer abc.def.ghi [redacted secret]: session=topsecret [redacted secret]: header.payload.signature`, so the credential values remain. The health endpoint is public and returns sanitized error messages on Redis ping failure, so this is a real secret exposure path if an upstream error includes auth material.
+**Issue:** Production provider가 ioredis Cluster 연결을 `client.connect().catch(() => {})`로 시작하고, standalone 경로도 line 694에서 같은 방식으로 연결 실패를 삼킨다. `apps/api/src/main.ts:53`은 Socket.IO adapter를 만들 수 있었는지만 확인하고, Redis/Valkey가 실제 연결을 받았는지 또는 `PING`에 응답했는지는 확인하지 않는다. 따라서 잘못된 `REDIS_URL`, 깨진 VPC route, 중단된 Memorystore instance가 있어도 Cloud Run revision은 listen 상태가 될 수 있고, 배포 단계는 해당 revision으로 traffic을 보낼 수 있다. 좌석 locking 실패는 이후 사용자 요청 시점까지 지연된다.
 
 **Fix:**
 ```ts
-const AUTH_HEADER_PATTERN = /\bAuthorization:\s*Bearer\s+[^\s`'")]+/gi;
-const COOKIE_HEADER_PATTERN = /\bCookie:\s*[^`\n\r]+/gi;
-const JWT_PATTERN = /[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/g;
+const redisClient = app.get<IORedis>(REDIS_CLIENT);
 
-function sanitizeMessage(message: string): string {
-  return message
-    .replace(REDIS_URL_PATTERN, '[redacted redis url]')
-    .replace(AUTH_HEADER_PATTERN, 'Authorization: Bearer [redacted]')
-    .replace(COOKIE_HEADER_PATTERN, 'Cookie: [redacted]')
-    .replace(JWT_PATTERN, '[jwt:redacted]')
-    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[redacted host]')
-    .replace(/\+\d{6,15}\b/g, '[redacted phone]')
-    .replace(/\b(paymentKey|orderId|token|secret)=\S+/gi, '$1=[redacted]');
+if (process.env['NODE_ENV'] === 'production') {
+  const pong = await redisClient.ping();
+  if (pong !== 'PONG') {
+    throw new Error(`[bootstrap] Redis ping returned ${pong}`);
+  }
 }
 ```
 
-Add regression tests that reject the original `Bearer`, cookie value, and JWT-like token in both provider logs and health down responses. Prefer a shared sanitizer helper so provider, health, and smoke redaction cannot drift again.
+Production에서는 삼키는 `catch`를 제거하거나 provider factory를 async로 바꿔 연결 완료를 기다린 뒤 반환해야 한다. `/health`는 지속 모니터링으로 유지하되, shared Redis client가 사용 가능한 상태가 되기 전에는 booking API가 serving을 시작하지 않게 막아야 한다.
 
-### CR-02: BLOCKER - Lua smoke can pass unlock while the seat remains locked
+### CR-02: BLOCKER - 필수 Sentry evidence 없이 smoke log check가 PASS 가능
 
-**File:** `scripts/smoke-valkey-production.mjs:409`
+**File:** `scripts/smoke-valkey-production.mjs:607`
 
-**Issue:** `checkLua()` sets `unlockOk` from the HTTP status only (`204` or `200`) and then returns PASS when `locked && seatLocked && unlockOk`. The current booking `DELETE /booking/seats/lock/:showtimeId/:seatId` controller returns `204` after calling `unlockSeat()` and does not expose the boolean result, so the smoke can pass even if Redis failed to delete the lock. The same cleanup pattern is used in Socket.IO smoke. That leaves the production contract able to certify lock/status/unlock without proving the unlock cleanup, and it can leave the safe fixture locked until TTL.
+**Issue:** `GRABIT_SMOKE_SENTRY_OBSERVATION`이 없으면 script는 "operator-required" 문자열을 대신 넣지만, `checkLogs()`는 여전히 `ok: count === 0`을 반환한다. 그 결과 `--check logs` 또는 `--check all`이 필수 Sentry dashboard/API observation 없이도 overall PASS를 만들 수 있다. 이는 향후 production smoke evidence를 오해하게 만드는 artifact-contract 결함이다.
 
 **Fix:**
 ```js
-async function unlockAndVerifySeat(config) {
-  const unlock = await fetch(new URL(
-    `/api/v1/booking/seats/lock/${encodeURIComponent(config.showtimeId)}/${encodeURIComponent(config.seatId)}`,
-    config.apiUrl,
-  ), {
-    method: 'DELETE',
-    headers: config.authHeaders,
-  });
-  if (unlock.status !== 204 && unlock.status !== 200) {
-    const text = await unlock.text();
-    throw new Error(`unlock failed with ${unlock.status}: ${redact(text)}`);
-  }
-
-  const after = await requestJson(
-    config,
-    `/api/v1/booking/schedules/${encodeURIComponent(config.showtimeId)}/seats`,
-  );
-  const afterState = after.body?.seats?.[config.seatId] ?? after.body?.[config.seatId] ?? 'unknown';
-  return afterState !== 'locked';
+const sentryObservation = process.env.GRABIT_SMOKE_SENTRY_OBSERVATION?.trim();
+if (!sentryObservation) {
+  return {
+    name: 'Log And Sentry Cleanliness',
+    ok: false,
+    summary: `revision=${cloudRun.latestReadyRevisionName}; since=${sinceIso}; Cloud Logging failure keyword count=${count}; Sentry observation=missing`,
+  };
 }
 ```
 
-Use this in `checkLua()` and in the Socket.IO cleanup path; record the post-unlock state in the artifact summary. If Socket.IO cleanup is part of the check, also wait for or explicitly query the `available` state instead of treating `DELETE` transport success as Redis cleanup proof.
+대안으로 `--check logs`와 `--check all`에서 Sentry observation이 없으면 fail-fast 해야 한다. Cloud Logging과 Sentry evidence가 모두 있을 때만 log cleanliness를 PASS로 표시해야 한다.
+
+### CR-03: BLOCKER - Smoke redaction이 bearer token suffix를 누출할 수 있음
+
+**File:** `scripts/smoke-valkey-production.mjs:85`
+
+**Issue:** `parseAuthHeader()`는 `(.+)`로 임의의 bearer token 문자열을 허용하지만, `redact()`는 `[A-Za-z0-9._-]+`에 맞는 `Authorization: Bearer` 값만 치환한다. Opaque bearer token에는 `+`, `/`, `=`가 흔히 포함될 수 있으므로 `Authorization: Bearer abc+/==` 같은 값은 현재 로직에서 `abc`만 지워지고 `+/==`가 console output 또는 `20-HUMAN-UAT.md`에 남는다. 이 script는 실제 operator auth material을 다루므로 partial leakage도 security defect다.
+
+**Fix:**
+```js
+function redact(value) {
+  return String(value)
+    .replace(/\bAuthorization:\s*Bearer\s+[^\s`'")]+/gi, 'Authorization: Bearer <redacted>')
+    .replace(/\bCookie:\s*[^`\n\r]+/gi, 'Cookie: <redacted>')
+    .replace(REDIS_URL_PATTERN, '[redacted redis url]');
+}
+```
+
+`Authorization: Bearer abc+/==` 같은 regression case를 추가하고, redaction 이후 token fragment가 남지 않는지 assert 해야 한다.
 
 ## Warnings
 
-### WR-01: WARNING - Idle seconds parser accepts malformed values
+### WR-01: WARNING - Deploy contract와 two-instance Socket.IO smoke가 충돌함
 
-**File:** `scripts/smoke-valkey-production.mjs:126`
+**File:** `.github/workflows/deploy.yml:118`
 
-**Issue:** `parsePositiveInteger()` uses `Number.parseInt()`, so values like `30m`, `1.5`, or `1800abc` are accepted as `30`, `1`, and `1800`. A typo in `GRABIT_SMOKE_IDLE_SECONDS` can silently shorten the idle reconnect window and produce misleading evidence.
+**Issue:** API service는 `--min-instances=0`으로 배포되지만, `scripts/smoke-valkey-production.mjs:544`는 `Socket.IO Two-Instance Propagation`이 PASS하려면 `minInstances >= 2`를 요구한다. 현재 커밋된 deploy contract 기준으로는 일반 production service가 smoke precondition을 만족하지 못하므로, `--check socketio` / `--check all`은 환경적 이유로 실패하거나 operator가 문서화되지 않은 수동 변경을 해야 한다.
+
+**Fix:** 비용상 production 기본값을 유지해야 한다면 smoke precondition을 script에 명시해야 한다. 예를 들어 smoke script가 API service를 임시로 `min-instances=2`로 올리고, ready instance 2개를 기다린 뒤 propagation proof를 실행하고, `finally`에서 이전 값을 복구하게 만든다. 또는 좌석을 변경하기 전에 "set min instances to 2"라는 명확한 preflight error로 실패해야 한다.
+
+### WR-02: WARNING - non-Error rejection에서 Redis health가 down 대신 throw 가능
+
+**File:** `apps/api/src/health/redis.health.indicator.ts:74`
+
+**Issue:** catch block이 `err`를 `Error`로 cast한 뒤 `(err as Error).message`를 `sanitizeHealthMessage()`에 넘긴다. `redis.ping()`이 string 또는 다른 non-Error value로 reject하면 `message`가 `undefined`가 되고 sanitizer가 `undefined`에 `.replace()`를 호출한다. Redis-down 결과를 반환해야 할 상황이 unhandled health-check exception으로 바뀐다.
 
 **Fix:**
-```js
-function parsePositiveInteger(name, value) {
-  const trimmed = String(value).trim();
-  if (!/^[1-9]\d*$/.test(trimmed)) {
-    throw new Error(`${name} must be a positive integer`);
-  }
-  return Number(trimmed);
+```ts
+} catch (err) {
+  const message = err instanceof Error ? err.message : String(err);
+  return indicator.down({
+    ...metadata,
+    message: sanitizeHealthMessage(message),
+  });
 }
 ```
 
-### WR-02: WARNING - Failed smoke checks abort before writing FAIL evidence
-
-**File:** `scripts/smoke-valkey-production.mjs:359`
-
-**Issue:** `requestJson()` throws on any non-2xx response, and `runChecks()` does not wrap individual checks before `writeArtifact()`. A Redis-down `/health` response, failed Lua request, Socket.IO connection error, or `gcloud` failure exits the script without appending a FAIL block to `20-HUMAN-UAT.md`. The exit code is correct, but the evidence artifact contract becomes unreliable exactly when a production failure needs a recorded, redacted summary.
-
-**Fix:**
-```js
-async function captureCheck(name, run) {
-  try {
-    return await run();
-  } catch (error) {
-    return {
-      name,
-      ok: false,
-      summary: redact(error?.message ?? error),
-    };
-  }
-}
-
-checks.push(await captureCheck('Health Ping Smoke', () => checkHealth(config)));
-```
-
-Keep truly unsafe setup failures fail-fast before mutation, but once an artifact path and target are known, convert per-check failures into `ok: false` summaries so `writeArtifact()` always records the failed production observation.
+`mockRedis.ping.mockRejectedValueOnce('ECONNRESET')` unit test를 추가하고 health result가 `down`인지 assert 해야 한다.
 
 ---
 
-_Reviewed: 2026-04-30T07:46:48Z_
+_Reviewed: 2026-04-30T08:08:14Z_
 _Reviewer: the agent (gsd-code-reviewer)_
 _Depth: standard_
