@@ -1,27 +1,28 @@
 ---
 phase: 20-valkey-production-connectivity-contract
-fixed_at: 2026-04-30T08:12:08Z
+fixed_at: 2026-04-30T08:21:07Z
 review_path: .planning/phases/20-valkey-production-connectivity-contract/20-REVIEW.md
-iteration: 5
-findings_in_scope: 17
-fixed: 17
+iteration: 6
+findings_in_scope: 18
+fixed: 18
 skipped: 0
 status: all_fixed
 ---
 
 # Phase 20: Code Review Fix Report
 
-**Fixed at:** 2026-04-30T08:12:08Z
+**Fixed at:** 2026-04-30T08:21:07Z
 **Source review:** .planning/phases/20-valkey-production-connectivity-contract/20-REVIEW.md
-**Iteration:** 5
+**Iteration:** 6
 
 **Summary:**
-- Findings in scope: 17
-- Fixed: 17
+- Findings in scope: 18
+- Fixed: 18
 - Skipped: 0
 - Production smoke remains deferred; this report does not mark Phase 20 passed or complete.
 - Iteration 4 closes the 2026-04-30T07:46:48Z follow-up review: Redis/health auth-value redaction, post-unlock seat-state proof, strict idle seconds parsing, and failed-check artifact capture.
 - Iteration 5 closes the 2026-04-30T08:08:14Z follow-up review: production bootstrap Redis ping, required Sentry evidence, broader bearer redaction, Socket.IO preflight min-instances guard, and non-Error health rejection handling.
+- Iteration 6 closes the 2026-04-30T08:18:53Z follow-up review: international E.164 phone and short payment/order identifiers in smoke artifact redaction.
 
 ## Fixed Issues
 
@@ -144,6 +145,13 @@ status: all_fixed
 **Commit:** 3170858
 **Applied fix:** Converted non-Error rejection values with `String(err)` before sanitization and added an `ECONNRESET` string rejection regression test.
 
+### CR-01 Iteration 6: BLOCKER - Smoke artifact redaction can leak international phone/order values
+
+**Status:** fixed
+**Files modified:** `scripts/smoke-valkey-production.mjs`
+**Commit:** 22ebedc
+**Applied fix:** Expanded phone redaction to E.164 `+[1-9]\\d{5,14}` and payment/order redaction to consume short non-whitespace values, covering `+8613800138000`, `+12025550123`, `orderId=ORD-1`, and quoted payment identifiers.
+
 ## Skipped Issues
 
 None - all in-scope findings were fixed.
@@ -170,9 +178,12 @@ None - all in-scope findings were fixed.
 - Iteration 5: `pnpm --filter @grabit/api exec tsc --noEmit --pretty false`
 - Iteration 5: `rg -n 'redisClient\\.ping\\(\\)|Redis ping returned|preflight failed: min-instances|set grabit-api temporary min-instances=2|ECONNRESET' apps/api/src/main.ts apps/api/src/health apps/api/src/modules/booking/providers scripts/smoke-valkey-production.mjs`
 - Iteration 5: `rg -n 'Authorization:\\\\s\\*Bearer\\\\s\\+\\[\\^\\\\s' scripts/smoke-valkey-production.mjs`
+- Iteration 6: `node --check scripts/smoke-valkey-production.mjs`
+- Iteration 6: `pnpm --filter @grabit/web exec node ../../scripts/smoke-valkey-production.mjs --help`
+- Iteration 6: source-extracted `redact()` harness confirms `+821012345678`, `+8613800138000`, `+12025550123`, `orderId=ORD-1`, `paymentKey=\"pk_1\"`, bearer token, cookie, JWT, and Redis URL fragments do not remain.
 
 ---
 
-_Fixed: 2026-04-30T08:12:08Z_
+_Fixed: 2026-04-30T08:21:07Z_
 _Fixer: the agent (gsd-code-fixer)_
-_Iteration: 5_
+_Iteration: 6_
