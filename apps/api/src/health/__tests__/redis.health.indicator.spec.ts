@@ -125,7 +125,9 @@ describe('RedisHealthIndicator', () => {
 
   it('redacts redis:// and rediss:// URLs from down messages', async () => {
     mockRedis.ping.mockRejectedValueOnce(new Error(
-      'failed redis://:secret@10.0.0.1:6379 and rediss://default:secret@10.0.0.2:6380 token=secret',
+      'failed redis://:secret@10.0.0.1:6379 and rediss://default:secret@10.0.0.2:6380 '
+      + 'Authorization: Bearer super-secret-bearer Cookie: session=topsecret '
+      + 'JWT: header.payload.signature token=secret',
     ));
 
     const result = (await indicator.isHealthy('redis')) as IndicatorResult;
@@ -136,6 +138,9 @@ describe('RedisHealthIndicator', () => {
     expect(serialized).not.toContain('redis://');
     expect(serialized).not.toContain('rediss://');
     expect(serialized).not.toContain('secret');
+    expect(serialized).not.toContain('super-secret-bearer');
+    expect(serialized).not.toContain('session=topsecret');
+    expect(serialized).not.toContain('header.payload.signature');
   });
 
   it('reports down when redis.ping() returns unexpected value', async () => {

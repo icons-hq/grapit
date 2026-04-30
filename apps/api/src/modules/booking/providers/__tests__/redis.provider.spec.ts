@@ -206,13 +206,18 @@ describe('redisProvider factory', () => {
 
     const client = useFactory(config) as IORedis;
     client.emit('error', new Error(
-      'failed redis://:secret@10.0.0.1:6379 and rediss://default:secret@10.0.0.2:6380 token=secret',
+      'failed redis://:secret@10.0.0.1:6379 and rediss://default:secret@10.0.0.2:6380 '
+      + 'Authorization: Bearer super-secret-bearer Cookie: session=topsecret '
+      + 'JWT: header.payload.signature token=secret',
     ));
 
     const output = `${stringifyConsoleCalls(errorSpy)}\n${stringifyConsoleCalls(warnSpy)}`;
     expect(output).toContain('[redacted redis url]');
     expectNoSensitiveRedisDetails(output);
     expect(output).not.toContain('secret');
+    expect(output).not.toContain('super-secret-bearer');
+    expect(output).not.toContain('session=topsecret');
+    expect(output).not.toContain('header.payload.signature');
 
     client.disconnect();
     errorSpy.mockRestore();

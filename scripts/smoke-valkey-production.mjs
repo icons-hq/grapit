@@ -124,11 +124,11 @@ function parseProductionApiUrl(rawValue) {
 }
 
 function parsePositiveInteger(name, value) {
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
+  const trimmed = String(value).trim();
+  if (!/^[1-9]\d*$/.test(trimmed)) {
     throw new Error(`${name} must be a positive integer`);
   }
-  return parsed;
+  return Number(trimmed);
 }
 
 function commandShape(check) {
@@ -363,6 +363,30 @@ async function requestJson(config, path, options = {}) {
   return { status: response.status, body };
 }
 
+async function readSeatState(config) {
+  const status = await requestJson(config, `/api/v1/booking/schedules/${encodeURIComponent(config.showtimeId)}/seats`);
+  return status.body?.seats?.[config.seatId] ?? status.body?.[config.seatId] ?? 'unknown';
+}
+
+async function unlockAndVerifySeat(config) {
+  const unlock = await fetch(new URL(`/api/v1/booking/seats/lock/${encodeURIComponent(config.showtimeId)}/${encodeURIComponent(config.seatId)}`, config.apiUrl), {
+    method: 'DELETE',
+    headers: config.authHeaders,
+  });
+
+  if (unlock.status !== 204 && unlock.status !== 200) {
+    const text = await unlock.text();
+    throw new Error(`unlock failed with ${unlock.status}: ${redact(text)}`);
+  }
+
+  const afterState = await readSeatState(config);
+  return {
+    ok: afterState !== 'locked',
+    status: unlock.status,
+    afterState,
+  };
+}
+
 function redisHealthDetail(healthBody) {
   return healthBody?.details?.redis ?? healthBody?.info?.redis ?? healthBody?.redis ?? {};
 }
@@ -389,6 +413,7 @@ async function checkLua(config) {
   let locked = false;
   let unlockOk = false;
   let statusSummary = 'not-run';
+  let cleanupSummary = 'not-run';
 
   try {
     const lock = await requestJson(config, '/api/v1/booking/seats/lock', {
@@ -401,32 +426,22 @@ async function checkLua(config) {
     });
     locked = Boolean(lock.body?.success);
 
-    const status = await requestJson(config, `/api/v1/booking/schedules/${encodeURIComponent(config.showtimeId)}/seats`);
-    const seatState = status.body?.seats?.[config.seatId] ?? status.body?.[config.seatId] ?? 'unknown';
+    const seatState = await readSeatState(config);
     const seatLocked = seatState === 'locked';
     statusSummary = `seat=${config.seatId}, state=${seatState}`;
 
-    const unlock = await fetch(new URL(`/api/v1/booking/seats/lock/${encodeURIComponent(config.showtimeId)}/${encodeURIComponent(config.seatId)}`, config.apiUrl), {
-      method: 'DELETE',
-      headers: config.authHeaders,
-    });
-    unlockOk = unlock.status === 204 || unlock.status === 200;
-    if (!unlockOk) {
-      const text = await unlock.text();
-      throw new Error(`unlock failed with ${unlock.status}: ${redact(text)}`);
-    }
+    const cleanup = await unlockAndVerifySeat(config);
+    unlockOk = cleanup.ok;
+    cleanupSummary = `status=${cleanup.status}, afterState=${cleanup.afterState}`;
 
     return {
       name: 'Lua Lock Status Unlock Smoke',
       ok: locked && seatLocked && unlockOk,
-      summary: `lock=${locked ? 'PASS' : 'FAIL'}, status=${statusSummary}, unlock=${unlockOk ? 'PASS' : 'FAIL'}`,
+      summary: `lock=${locked ? 'PASS' : 'FAIL'}, status=${statusSummary}, unlock=${unlockOk ? 'PASS' : 'FAIL'} (${cleanupSummary})`,
     };
   } finally {
     if (locked && !unlockOk) {
-      await fetch(new URL(`/api/v1/booking/seats/lock/${encodeURIComponent(config.showtimeId)}/${encodeURIComponent(config.seatId)}`, config.apiUrl), {
-        method: 'DELETE',
-        headers: config.authHeaders,
-      }).catch(() => undefined);
+      await unlockAndVerifySeat(config).catch(() => undefined);
     }
   }
 }
@@ -557,18 +572,17 @@ async function checkSocketIo(config, cloudRun) {
     const instanceMap = await lookupSocketInstances(config, cloudRun, [socketA.id, socketB.id], sinceIso);
     const instances = [...new Set([...instanceMap.values()].filter((value) => value !== 'unknown'))];
     const instanceProof = instances.length >= 2;
+    const cleanup = await unlockAndVerifySeat(config);
+    lockDone = !cleanup.ok;
 
     return {
       name: 'Socket.IO Two-Instance Propagation',
-      ok: multiInstanceReady && instanceProof,
-      summary: `clients=${socketA.id},${socketB.id}; received seat-update=PASS; min-instances=${cloudRun.minInstances}; distinct Cloud Run instance IDs=${instances.length}; D-10=${instanceProof ? 'PASS' : 'FAIL'}; D-13=${instanceProof ? 'PASS' : 'FAIL'}`,
+      ok: multiInstanceReady && instanceProof && cleanup.ok,
+      summary: `clients=${socketA.id},${socketB.id}; received seat-update=PASS; min-instances=${cloudRun.minInstances}; distinct Cloud Run instance IDs=${instances.length}; cleanup=${cleanup.ok ? 'PASS' : 'FAIL'} afterState=${cleanup.afterState}; D-10=${instanceProof ? 'PASS' : 'FAIL'}; D-13=${instanceProof ? 'PASS' : 'FAIL'}`,
     };
   } finally {
     if (lockDone) {
-      await fetch(new URL(`/api/v1/booking/seats/lock/${encodeURIComponent(config.showtimeId)}/${encodeURIComponent(config.seatId)}`, config.apiUrl), {
-        method: 'DELETE',
-        headers: config.authHeaders,
-      }).catch(() => undefined);
+      await unlockAndVerifySeat(config).catch(() => undefined);
     }
     socketA.close();
     socketB.close();
@@ -603,9 +617,9 @@ async function checkLogs(config, cloudRun, sinceIso) {
 
 async function checkIdle(config, cloudRun) {
   await sleep(config.idleSeconds * 1000);
-  const afterHealth = await checkHealth(config);
-  const afterLua = await checkLua(config);
-  const afterSocket = await checkSocketIo(config, cloudRun);
+  const afterHealth = await captureCheck('Health Ping Smoke', () => checkHealth(config));
+  const afterLua = await captureCheck('Lua Lock Status Unlock Smoke', () => checkLua(config));
+  const afterSocket = await captureCheck('Socket.IO Two-Instance Propagation', () => checkSocketIo(config, cloudRun));
   return {
     name: 'Idle Reconnect Window',
     ok: afterHealth.ok && afterLua.ok && afterSocket.ok,
@@ -617,32 +631,85 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function fallbackCloudRun(error) {
+  return {
+    ok: false,
+    service: SERVICE_NAME,
+    latestReadyRevisionName: 'unknown',
+    traffic: [],
+    declaredValkeyMode: 'unknown',
+    redisUrlBinding: 'unknown',
+    minInstances: 'unknown',
+    vpcEgress: 'unknown',
+    networkInterfaces: 'unknown',
+    evidenceError: redact(error?.message ?? error),
+  };
+}
+
+function fallbackMemorystore(error) {
+  return {
+    ok: false,
+    instance: VALKEY_INSTANCE,
+    state: 'unknown',
+    mode: 'unknown',
+    shardCount: 'unknown',
+    engineVersion: 'unknown',
+    evidenceError: redact(error?.message ?? error),
+  };
+}
+
+function captureEvidence(read, fallback) {
+  try {
+    return read();
+  } catch (error) {
+    return fallback(error);
+  }
+}
+
+async function captureCheck(name, run) {
+  try {
+    return await run();
+  } catch (error) {
+    return {
+      name,
+      ok: false,
+      summary: redact(error?.message ?? error),
+    };
+  }
+}
+
 async function runChecks(config) {
   const startedUtc = new Date().toISOString();
   const logSinceOverride = process.env.GRABIT_SMOKE_LOG_SINCE_UTC?.trim();
   if (config.check === 'logs' && !logSinceOverride) {
     throw new Error('GRABIT_SMOKE_LOG_SINCE_UTC is required for standalone --check logs');
   }
-  const cloudRun = getCloudRunEvidence(config);
-  const memorystore = getMemorystoreEvidence(config);
+  const cloudRun = captureEvidence(() => getCloudRunEvidence(config), fallbackCloudRun);
+  const memorystore = captureEvidence(() => getMemorystoreEvidence(config), fallbackMemorystore);
   const runtimeFailures = runtimeContractFailures(cloudRun, memorystore);
+  if (cloudRun.evidenceError) {
+    runtimeFailures.push(`Cloud Run evidence=${cloudRun.evidenceError}`);
+  }
+  if (memorystore.evidenceError) {
+    runtimeFailures.push(`Memorystore evidence=${memorystore.evidenceError}`);
+  }
   const modeContractOk = runtimeFailures.length === 0;
   const checks = [];
 
   if (config.check === 'health' || config.check === 'all') {
-    checks.push(await checkHealth(config));
+    checks.push(await captureCheck('Health Ping Smoke', () => checkHealth(config)));
   }
   if (config.check === 'lua' || config.check === 'all') {
-    checks.push(await checkLua(config));
+    checks.push(await captureCheck('Lua Lock Status Unlock Smoke', () => checkLua(config)));
   }
   if (config.check === 'socketio' || config.check === 'all') {
-    checks.push(await checkSocketIo(config, cloudRun));
+    checks.push(await captureCheck('Socket.IO Two-Instance Propagation', () => checkSocketIo(config, cloudRun)));
   }
   if (config.check === 'idle' || config.check === 'all') {
-    checks.push(await checkIdle(config, cloudRun));
+    checks.push(await captureCheck('Idle Reconnect Window', () => checkIdle(config, cloudRun)));
   }
   if (config.check === 'logs' || config.check === 'all') {
-    checks.push(await checkLogs(config, cloudRun, logSinceOverride || startedUtc));
+    checks.push(await captureCheck('Log And Sentry Cleanliness', () => checkLogs(config, cloudRun, logSinceOverride || startedUtc)));
   }
 
   const allChecksOk = checks.every((check) => check.ok);

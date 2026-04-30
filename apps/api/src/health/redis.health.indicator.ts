@@ -8,13 +8,20 @@ import {
 } from '../modules/booking/providers/redis.provider.js';
 
 const REDIS_URL_PATTERN = /\brediss?:\/\/[^\s`'")]+/gi;
+const AUTH_HEADER_PATTERN = /\bAuthorization:\s*Bearer\s+[^\s`'")]+/gi;
+const COOKIE_HEADER_PATTERN = /\bCookie:\s*[^`\n\r]+/gi;
+const JWT_LABEL_PATTERN = /\bJWT:\s*[^\s`'")]+/gi;
+const JWT_VALUE_PATTERN = /[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g;
 
 function sanitizeHealthMessage(message: string): string {
   return message
     .replace(REDIS_URL_PATTERN, '[redacted redis url]')
+    .replace(AUTH_HEADER_PATTERN, '[redacted authorization header]')
+    .replace(COOKIE_HEADER_PATTERN, '[redacted cookie header]')
+    .replace(JWT_LABEL_PATTERN, '[redacted jwt]')
+    .replace(JWT_VALUE_PATTERN, '[jwt:redacted]')
     .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[redacted host]')
     .replace(/\+\d{6,15}\b/g, '[redacted phone]')
-    .replace(/\b(Authorization|Cookie|JWT)\b/gi, '[redacted secret]')
     .replace(/\b(paymentKey|orderId|token|secret)=\S+/gi, '$1=[redacted]');
 }
 
