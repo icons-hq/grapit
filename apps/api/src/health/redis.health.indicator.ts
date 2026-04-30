@@ -58,7 +58,7 @@ export class RedisHealthIndicator {
           message: sanitizeHealthMessage(`unexpected ping response: ${String(pong)}`),
         });
       }
-      return indicator.up(metadata);
+      return indicator.up({ ...metadata });
     } catch (err) {
       return indicator.down({
         ...metadata,
