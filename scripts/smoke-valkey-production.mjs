@@ -84,7 +84,9 @@ function parseArgs(argv) {
 function redact(value) {
   return String(value)
     .replace(REDIS_URL_PATTERN, '[redacted redis url]')
+    .replace(/(["']\bAuthorization["']\s*:\s*["']?)Bearer\s+[^"',}\]\s]+["']?/gi, '$1Bearer <redacted>"')
     .replace(/\bAuthorization:\s*Bearer\s+[^\s`'")]+/gi, 'Authorization: Bearer <redacted>')
+    .replace(/(["']\bCookie["']\s*:\s*["']?)[^"',}\]\r\n]+["']?/gi, '$1<redacted>"')
     .replace(/\bCookie:\s*[^`\n\r]+/gi, 'Cookie: <redacted>')
     .replace(/[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/g, '<jwt:redacted>')
     .replace(PHONE_PATTERN, '<phone:redacted>')
