@@ -1,25 +1,26 @@
 ---
 phase: 20-valkey-production-connectivity-contract
-fixed_at: 2026-04-30T07:39:56Z
+fixed_at: 2026-04-30T07:57:58Z
 review_path: .planning/phases/20-valkey-production-connectivity-contract/20-REVIEW.md
-iteration: 3
-findings_in_scope: 8
-fixed: 8
+iteration: 4
+findings_in_scope: 12
+fixed: 12
 skipped: 0
 status: all_fixed
 ---
 
 # Phase 20: Code Review Fix Report
 
-**Fixed at:** 2026-04-30T07:39:56Z
+**Fixed at:** 2026-04-30T07:57:58Z
 **Source review:** .planning/phases/20-valkey-production-connectivity-contract/20-REVIEW.md
-**Iteration:** 3
+**Iteration:** 4
 
 **Summary:**
-- Findings in scope: 8
-- Fixed: 8
+- Findings in scope: 12
+- Fixed: 12
 - Skipped: 0
 - Production smoke remains deferred; this report does not mark Phase 20 passed or complete.
+- Iteration 4 closes the 2026-04-30T07:46:48Z follow-up review: Redis/health auth-value redaction, post-unlock seat-state proof, strict idle seconds parsing, and failed-check artifact capture.
 
 ## Fixed Issues
 
@@ -79,6 +80,34 @@ status: all_fixed
 **Commit:** 485f56b
 **Applied fix:** Added a runtime contract gate requiring the recorded `latestReadyRevisionName` to serve 100% of public traffic before automated smoke can PASS. Socket.IO instance lookup and log keyword queries now include `resource.labels.revision_name="${latestReadyRevisionName}"`, and the UAT artifact records traffic split plus the revision-scoped log filter requirement.
 
+### CR-01 Iteration 4: BLOCKER - Redis/health sanitizers redact labels but leave secret values
+
+**Status:** fixed
+**Files modified:** `apps/api/src/modules/booking/providers/redis.provider.ts`, `apps/api/src/modules/booking/providers/__tests__/redis.provider.spec.ts`, `apps/api/src/health/redis.health.indicator.ts`, `apps/api/src/health/__tests__/redis.health.indicator.spec.ts`
+**Commit:** dc445c5
+**Applied fix:** Added explicit `Authorization: Bearer`, `Cookie`, `JWT:` label, and JWT-like value patterns to both Redis provider and health sanitizers. Regression tests now include bearer, cookie, and JWT-like values and assert that raw credential material is absent from provider logs and health down responses.
+
+### CR-02 Iteration 4: BLOCKER - Lua smoke can pass unlock while the seat remains locked
+
+**Status:** fixed
+**Files modified:** `scripts/smoke-valkey-production.mjs`
+**Commit:** dc445c5
+**Applied fix:** Added `readSeatState()` and `unlockAndVerifySeat()` so Lua and Socket.IO smoke paths query seat status after `DELETE` and require the post-unlock state to be anything other than `locked`. Cleanup failures now make the smoke check fail instead of treating transport success as Redis cleanup proof.
+
+### WR-01 Iteration 4: WARNING - Idle seconds parser accepts malformed values
+
+**Status:** fixed
+**Files modified:** `scripts/smoke-valkey-production.mjs`
+**Commit:** dc445c5
+**Applied fix:** Replaced `Number.parseInt()` with a strict positive-integer regex so values such as `30m`, `1.5`, or `1800abc` fail before production contact.
+
+### WR-02 Iteration 4: WARNING - Failed smoke checks abort before writing FAIL evidence
+
+**Status:** fixed
+**Files modified:** `scripts/smoke-valkey-production.mjs`
+**Commit:** dc445c5
+**Applied fix:** Added `captureCheck()` plus fallback Cloud Run and Memorystore evidence objects. Per-check failures are now recorded as `ok: false` summaries in the artifact, while unsafe setup validation such as missing required inputs still fails fast.
+
 ## Skipped Issues
 
 None - all in-scope findings were fixed.
@@ -93,9 +122,15 @@ None - all in-scope findings were fixed.
 - CR-04 follow-up: `GRABIT_API_URL=http://localhost:8080 node scripts/smoke-valkey-production.mjs --check health` fails with `GRABIT_API_URL must be exactly https://api.heygrabit.com`; `GRABIT_API_URL=https://staging.example.com node scripts/smoke-valkey-production.mjs --check health` fails with the same message
 - WR-02: `rg -n "statusSummary\\.includes" scripts/smoke-valkey-production.mjs` returns no matches; `rg -n "const seatLocked = seatState === 'locked'" scripts/smoke-valkey-production.mjs` finds the exact-state predicate
 - CR-01 final follow-up: `node --check scripts/smoke-valkey-production.mjs`; `rg -n "isLatestReadyServingAllTraffic|cloudRunRevisionFilter|resource\\.labels\\.revision_name|Traffic split|latestReadyRevisionName serving 100% traffic" scripts/smoke-valkey-production.mjs .planning/phases/20-valkey-production-connectivity-contract/20-HUMAN-UAT.md`
+- Iteration 4: `node --check scripts/smoke-valkey-production.mjs`
+- Iteration 4: `pnpm --filter @grabit/web exec node ../../scripts/smoke-valkey-production.mjs --help`
+- Iteration 4: `pnpm --filter @grabit/api exec vitest run src/modules/booking/providers/__tests__/redis.provider.spec.ts src/health/__tests__/redis.health.indicator.spec.ts src/modules/booking/__tests__/redis-io.adapter.spec.ts`
+- Iteration 4: `pnpm --filter @grabit/api exec tsc --noEmit --pretty false`
+- Iteration 4: malformed `GRABIT_SMOKE_IDLE_SECONDS=30m` fails with `GRABIT_SMOKE_IDLE_SECONDS must be a positive integer`
+- Iteration 4: `rg -n "parsePositiveInteger|unlockAndVerifySeat|captureCheck|fallbackCloudRun|fallbackMemorystore|afterState|GRABIT_SMOKE_IDLE_SECONDS" scripts/smoke-valkey-production.mjs`
 
 ---
 
-_Fixed: 2026-04-30T07:39:56Z_
+_Fixed: 2026-04-30T07:57:58Z_
 _Fixer: the agent (gsd-code-fixer)_
-_Iteration: 3_
+_Iteration: 4_
