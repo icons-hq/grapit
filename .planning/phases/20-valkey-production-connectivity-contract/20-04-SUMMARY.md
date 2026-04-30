@@ -77,6 +77,7 @@ completed: 2026-04-30
 - Broadened smoke artifact redaction for JSON-style `paymentKey` and `orderId` values in serialized error bodies.
 - Aligned smoke PII redaction and Sentry preflight contract with the artifact promise.
 - Broadened smoke artifact redaction for JSON-style `Authorization` and `Cookie` fields in serialized log/Sentry payloads.
+- Broadened smoke artifact redaction for `JWT:` and JSON-style `JWT` fields.
 
 ## Task Commits
 
@@ -91,6 +92,7 @@ completed: 2026-04-30
 9. **JSON smoke identifier redaction** - `d294008` (fix)
 10. **PII and Sentry preflight alignment** - `6119823` (fix)
 11. **JSON auth/cookie smoke redaction** - `6558702` (fix)
+12. **JWT smoke redaction** - `2adafff` (fix)
 
 ## Files Created/Modified
 
@@ -227,9 +229,17 @@ completed: 2026-04-30
 - **Verification:** source-extracted `redact()` harness confirms raw and JSON-style Authorization/Cookie fragments are removed.
 - **Committed in:** `6558702`
 
+**14. [Rule 2 - Secret redaction] Cover JWT label fields**
+- **Found during:** JWT redaction review
+- **Issue:** Sentry/log payloads could contain `JWT: ...`, `JWT=...`, or `"JWT":"..."`, which generic long JWT-like token matching did not cover for short placeholder values.
+- **Fix:** Added quote-aware JWT key/value redaction before generic JWT-like value redaction.
+- **Files modified:** `scripts/smoke-valkey-production.mjs`
+- **Verification:** source-extracted `redact()` harness confirms raw and JSON-style JWT fragments are removed.
+- **Committed in:** `2adafff`
+
 ---
 
-**Total deviations:** 13 auto-fixed, 1 user-directed checkpoint bypass.
+**Total deviations:** 14 auto-fixed, 1 user-directed checkpoint bypass.
 **Impact on plan:** Automated code and artifact contracts are stronger than the original implementation, but production runtime approval remains open.
 
 ## Issues Encountered

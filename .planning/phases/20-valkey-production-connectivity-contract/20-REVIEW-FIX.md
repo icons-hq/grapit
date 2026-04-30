@@ -1,23 +1,23 @@
 ---
 phase: 20-valkey-production-connectivity-contract
-fixed_at: 2026-04-30T08:46:01Z
+fixed_at: 2026-04-30T08:53:01Z
 review_path: .planning/phases/20-valkey-production-connectivity-contract/20-REVIEW.md
-iteration: 9
-findings_in_scope: 22
-fixed: 22
+iteration: 10
+findings_in_scope: 23
+fixed: 23
 skipped: 0
 status: all_fixed
 ---
 
 # Phase 20: Code Review Fix Report
 
-**Fixed at:** 2026-04-30T08:46:01Z
+**Fixed at:** 2026-04-30T08:53:01Z
 **Source review:** .planning/phases/20-valkey-production-connectivity-contract/20-REVIEW.md
-**Iteration:** 9
+**Iteration:** 10
 
 **Summary:**
-- Findings in scope: 22
-- Fixed: 22
+- Findings in scope: 23
+- Fixed: 23
 - Skipped: 0
 - Production smoke remains deferred; this report does not mark Phase 20 passed or complete.
 - Iteration 4 closes the 2026-04-30T07:46:48Z follow-up review: Redis/health auth-value redaction, post-unlock seat-state proof, strict idle seconds parsing, and failed-check artifact capture.
@@ -26,6 +26,7 @@ status: all_fixed
 - Iteration 7 closes the 2026-04-30T08:27:08Z follow-up review: JSON-style payment/order identifiers in smoke artifact redaction.
 - Iteration 8 closes the 2026-04-30T08:36:44Z follow-up review: Korean local phone values and explicit Sentry observation preflight/help contract.
 - Iteration 9 closes the 2026-04-30T08:44:xx follow-up review: JSON-style Authorization/Cookie fields in smoke artifact redaction.
+- Iteration 10 closes the 2026-04-30T08:5x follow-up review: JWT label fields in smoke artifact redaction.
 
 ## Fixed Issues
 
@@ -183,6 +184,13 @@ status: all_fixed
 **Commit:** 6558702
 **Applied fix:** Added quoted-key redaction patterns for serialized JSON fields such as `"Authorization":"Bearer ..."` and `"Cookie":"..."` while preserving the existing raw header line redaction.
 
+### CR-01 Iteration 10: BLOCKER - Smoke artifact redaction can leak JWT label values
+
+**Status:** fixed
+**Files modified:** `scripts/smoke-valkey-production.mjs`
+**Commit:** 2adafff
+**Applied fix:** Added quote-aware JWT key/value redaction for `JWT: ...`, `JWT=...`, and serialized `"JWT":"..."` payload fields before generic JWT-like value redaction.
+
 ## Skipped Issues
 
 None - all in-scope findings were fixed.
@@ -221,9 +229,12 @@ None - all in-scope findings were fixed.
 - Iteration 8: missing `GRABIT_SMOKE_SENTRY_OBSERVATION` with `--check all` fails with the explicit required-env error.
 - Iteration 9: `node --check scripts/smoke-valkey-production.mjs`
 - Iteration 9: source-extracted `redact()` harness confirms raw and JSON-style Authorization/Cookie fragments do not remain.
+- Iteration 10: `node --check scripts/smoke-valkey-production.mjs`
+- Iteration 10: `pnpm --filter @grabit/web exec node ../../scripts/smoke-valkey-production.mjs --help`
+- Iteration 10: source-extracted `redact()` harness confirms `JWT: header.payload.signature` and `"JWT":"json.header.payload"` fragments do not remain.
 
 ---
 
-_Fixed: 2026-04-30T08:46:01Z_
+_Fixed: 2026-04-30T08:53:01Z_
 _Fixer: the agent (gsd-code-fixer)_
-_Iteration: 9_
+_Iteration: 10_
