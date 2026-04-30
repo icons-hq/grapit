@@ -1,8 +1,19 @@
 import type { Provider } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import IORedis from 'ioredis';
+import IORedis, { Cluster } from 'ioredis';
 
 export const REDIS_CLIENT = Symbol('REDIS_CLIENT');
+
+export type ValkeyMode = 'standalone' | 'cluster';
+export type RedisRuntimeClient = 'in-memory' | 'ioredis-standalone' | 'ioredis-cluster';
+
+export interface RedisRuntimeMetadata {
+  mode: ValkeyMode | 'in-memory';
+  client: RedisRuntimeClient;
+  configured: boolean;
+}
+
+const REDIS_RUNTIME_METADATA = Symbol('REDIS_RUNTIME_METADATA');
 
 /**
  * In-memory Redis mock for local dev when REDIS_URL is not configured.
@@ -478,6 +489,98 @@ class InMemoryRedis {
   }
 }
 
+type RedisClient = IORedis | Cluster | InMemoryRedis;
+
+function attachRedisRuntimeMetadata<T extends object>(
+  redis: T,
+  metadata: RedisRuntimeMetadata,
+): T {
+  Object.defineProperty(redis, REDIS_RUNTIME_METADATA, {
+    value: Object.freeze({ ...metadata }),
+    enumerable: false,
+    configurable: false,
+  });
+  return redis;
+}
+
+export function getRedisRuntimeMetadata(redis: unknown): RedisRuntimeMetadata {
+  if (typeof redis === 'object' && redis !== null) {
+    const metadata = (redis as { [REDIS_RUNTIME_METADATA]?: RedisRuntimeMetadata })[
+      REDIS_RUNTIME_METADATA
+    ];
+    if (metadata) return metadata;
+  }
+
+  return {
+    mode: 'in-memory',
+    client: 'in-memory',
+    configured: false,
+  };
+}
+
+function isValkeyMode(mode: string): mode is ValkeyMode {
+  return mode === 'standalone' || mode === 'cluster';
+}
+
+function resolveValkeyMode(rawMode: string, isProduction: boolean): ValkeyMode {
+  const mode = rawMode.trim();
+
+  if (!mode) {
+    if (isProduction) {
+      throw new Error(
+        '[redis] VALKEY_MODE is required in production environment. ' +
+          'Set VALKEY_MODE to standalone or cluster.',
+      );
+    }
+    return 'standalone';
+  }
+
+  if (!isValkeyMode(mode)) {
+    throw new Error('[redis] VALKEY_MODE must be one of: standalone, cluster.');
+  }
+
+  return mode;
+}
+
+function parseRedisUrl(url: string): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error('[redis] REDIS_URL must be a valid Redis URL.');
+  }
+
+  const port = parsed.port ? Number(parsed.port) : 6379;
+  if (!parsed.hostname || !Number.isInteger(port) || port <= 0 || port > 65_535) {
+    throw new Error('[redis] REDIS_URL must include a valid host and port.');
+  }
+
+  return parsed;
+}
+
+function sanitizeRedisErrorMessage(message: string): string {
+  return message
+    .replace(/redis:\/\/\S+/gi, '[redacted redis url]')
+    .replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[redacted host]')
+    .replace(/\+\d{6,15}\b/g, '[redacted phone]')
+    .replace(/\b(Authorization|Cookie|JWT)\b/gi, '[redacted secret]')
+    .replace(/\b(paymentKey|orderId|token|secret)=\S+/gi, '$1=[redacted]');
+}
+
+function registerRedisErrorLogging(client: IORedis | Cluster): void {
+  client.on('error', (err: Error) => {
+    const safeMessage = sanitizeRedisErrorMessage(err.message);
+    if (safeMessage.includes('ECONNREFUSED')) {
+      if (!redisWarned) {
+        redisWarned = true;
+        console.warn('[redis] Redis unavailable — seat locking will fail. This is fine for local dev without REDIS_URL.');
+      }
+    } else {
+      console.error('[redis] Error:', safeMessage);
+    }
+  });
+}
+
 let redisWarned = false;
 
 /**
@@ -488,15 +591,17 @@ let redisWarned = false;
 export const redisProvider: Provider = {
   provide: REDIS_CLIENT,
   inject: [ConfigService],
-  useFactory: (config: ConfigService): IORedis | InMemoryRedis => {
+  useFactory: (config: ConfigService): RedisClient => {
     const url = config.get<string>('redis.url', '');
+    const modeValue = config.get<string>('redis.mode', '');
+    const isProduction = process.env['NODE_ENV'] === 'production';
 
     if (!url) {
       // Production misconfig must hard-fail: silent InMemoryRedis fallback would
       // isolate seat locking to a single Cloud Run instance (no cross-instance
       // pub/sub, no persistence) and silently allow duplicate bookings.
       // Addresses cross-AI review HIGH concern (07-REVIEWS.md Codex + Claude consensus #1).
-      if (process.env['NODE_ENV'] === 'production') {
+      if (isProduction) {
         throw new Error(
           '[redis] REDIS_URL is required in production environment. ' +
             'Silent InMemoryRedis fallback is disabled to prevent duplicate bookings from instance-isolated seat locking. ' +
@@ -507,7 +612,39 @@ export const redisProvider: Provider = {
         '[redis] No REDIS_URL — using in-memory mock. Seat locking works but is not persistent. ' +
           '(Development/test only — production now hard-fails.)',
       );
-      return new InMemoryRedis() as unknown as IORedis;
+      return attachRedisRuntimeMetadata(new InMemoryRedis(), {
+        mode: 'in-memory',
+        client: 'in-memory',
+        configured: false,
+      });
+    }
+
+    const mode = resolveValkeyMode(modeValue, isProduction);
+    const parsedUrl = parseRedisUrl(url);
+
+    if (mode === 'cluster') {
+      const client = new Cluster([{
+        host: parsedUrl.hostname,
+        port: parsedUrl.port ? Number(parsedUrl.port) : 6379,
+      }], {
+        lazyConnect: true,
+        scaleReads: 'master',
+        enableReadyCheck: true,
+        redisOptions: { maxRetriesPerRequest: 3 },
+        clusterRetryStrategy: (times: number) => {
+          if (times > 5) return null;
+          return Math.min(times * 500, 5000);
+        },
+      });
+
+      attachRedisRuntimeMetadata(client, {
+        mode: 'cluster',
+        client: 'ioredis-cluster',
+        configured: true,
+      });
+      registerRedisErrorLogging(client);
+      client.connect().catch(() => {});
+      return client;
     }
 
     const client = new IORedis(url, {
@@ -519,17 +656,12 @@ export const redisProvider: Provider = {
       },
     });
 
-    client.on('error', (err: Error) => {
-      if (err.message.includes('ECONNREFUSED')) {
-        if (!redisWarned) {
-          redisWarned = true;
-          console.warn('[redis] Redis unavailable — seat locking will fail. This is fine for local dev without REDIS_URL.');
-        }
-      } else {
-        console.error('[redis] Error:', err.message);
-      }
+    attachRedisRuntimeMetadata(client, {
+      mode: 'standalone',
+      client: 'ioredis-standalone',
+      configured: true,
     });
-
+    registerRedisErrorLogging(client);
     client.connect().catch(() => {});
     return client;
   },
