@@ -1,23 +1,23 @@
 ---
 phase: 20-valkey-production-connectivity-contract
-fixed_at: 2026-04-30T07:21:09Z
+fixed_at: 2026-04-30T07:30:41Z
 review_path: .planning/phases/20-valkey-production-connectivity-contract/20-REVIEW.md
-iteration: 1
-findings_in_scope: 5
-fixed: 5
+iteration: 2
+findings_in_scope: 7
+fixed: 7
 skipped: 0
 status: all_fixed
 ---
 
 # Phase 20: Code Review Fix Report
 
-**Fixed at:** 2026-04-30T07:21:09Z
+**Fixed at:** 2026-04-30T07:30:41Z
 **Source review:** .planning/phases/20-valkey-production-connectivity-contract/20-REVIEW.md
-**Iteration:** 1
+**Iteration:** 2
 
 **Summary:**
-- Findings in scope: 5
-- Fixed: 5
+- Findings in scope: 7
+- Fixed: 7
 - Skipped: 0
 - Production smoke remains deferred; this report does not mark Phase 20 passed or complete.
 
@@ -58,6 +58,20 @@ status: all_fixed
 **Commit:** 4b6616f
 **Applied fix:** Standalone `--check logs` now requires `GRABIT_SMOKE_LOG_SINCE_UTC`; `--check all` still uses the current run start time. Log summaries include the queried `since` timestamp.
 
+### CR-04 Follow-up: BLOCKER - Smoke checks can still target a non-production API origin
+
+**Status:** fixed
+**Files modified:** `scripts/smoke-valkey-production.mjs`
+**Commit:** e878458
+**Applied fix:** Added `parseProductionApiUrl()` and `EXPECTED_API_ORIGIN=https://api.heygrabit.com`, then routed `GRABIT_API_URL` through that parser before reading auth, running `gcloud`, or contacting any HTTP/Socket.IO endpoint. `localhost` and staging origins now fail before smoke execution.
+
+### WR-02: WARNING - Lua smoke accepts any status string containing "locked"
+
+**Status:** fixed
+**Files modified:** `scripts/smoke-valkey-production.mjs`
+**Commit:** e878458
+**Applied fix:** Replaced `statusSummary.includes('locked')` with an exact `seatState === 'locked'` predicate so `not_locked`, `unlocked`, or error text containing the substring cannot satisfy the Lua smoke status gate.
+
 ## Skipped Issues
 
 None - all in-scope findings were fixed.
@@ -69,9 +83,11 @@ None - all in-scope findings were fixed.
 - CR-03: `pnpm --filter @grabit/api exec tsc --noEmit --pretty false`; `pnpm --filter @grabit/api exec vitest run src/modules/booking/providers/__tests__/redis.provider.spec.ts src/health/__tests__/redis.health.indicator.spec.ts`; `node --check scripts/smoke-valkey-production.mjs`
 - CR-04: `node --check scripts/smoke-valkey-production.mjs`
 - WR-01: `node --check scripts/smoke-valkey-production.mjs`
+- CR-04 follow-up: `GRABIT_API_URL=http://localhost:8080 node scripts/smoke-valkey-production.mjs --check health` fails with `GRABIT_API_URL must be exactly https://api.heygrabit.com`; `GRABIT_API_URL=https://staging.example.com node scripts/smoke-valkey-production.mjs --check health` fails with the same message
+- WR-02: `rg -n "statusSummary\\.includes" scripts/smoke-valkey-production.mjs` returns no matches; `rg -n "const seatLocked = seatState === 'locked'" scripts/smoke-valkey-production.mjs` finds the exact-state predicate
 
 ---
 
-_Fixed: 2026-04-30T07:21:09Z_
+_Fixed: 2026-04-30T07:30:41Z_
 _Fixer: the agent (gsd-code-fixer)_
-_Iteration: 1_
+_Iteration: 2_
