@@ -18,6 +18,7 @@ const EXPECTED_API_ORIGIN = 'https://api.heygrabit.com';
 const EXPECTED_LIVE_MODE = 'CLUSTER';
 const EXPECTED_VALKEY_MODE = 'cluster';
 const REDIS_URL_PATTERN = /\brediss?:\/\/[^\s`'")]+/gi;
+const PHONE_PATTERN = /(?:\+[1-9]\d{5,14}\b|\b01[016789]-?\d{3,4}-?\d{4}\b)/g;
 const FAILURE_KEYWORDS = [
   'CROSSSLOT',
   'MOVED',
@@ -51,6 +52,7 @@ Optional environment:
   GRABIT_SMOKE_ARTIFACT                  Evidence markdown path. Default: script-root 20-HUMAN-UAT.md
   GRABIT_SMOKE_IDLE_SECONDS              Idle reconnect wait, default 1800
   GRABIT_SMOKE_LOG_SINCE_UTC             Required for standalone --check logs
+  GRABIT_SMOKE_SENTRY_OBSERVATION        Required for --check logs and --check all; record zero-count or redacted event id
   GRABIT_GCP_PROJECT                     Default grapit-491806
   GRABIT_GCP_REGION                      Default asia-northeast3
 
@@ -85,7 +87,7 @@ function redact(value) {
     .replace(/\bAuthorization:\s*Bearer\s+[^\s`'")]+/gi, 'Authorization: Bearer <redacted>')
     .replace(/\bCookie:\s*[^`\n\r]+/gi, 'Cookie: <redacted>')
     .replace(/[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/g, '<jwt:redacted>')
-    .replace(/\+[1-9]\d{5,14}\b/g, '+<redacted>')
+    .replace(PHONE_PATTERN, '<phone:redacted>')
     .replace(/(["']?\b(paymentKey|orderId)["']?\s*[:=]\s*)["']?[^\s"',|)}]+["']?/gi, '$1"<redacted>"')
     .replace(/\b(private customer data|customer data)\b/gi, '<customer-data:redacted>');
 }
@@ -691,6 +693,9 @@ async function runChecks(config) {
   const logSinceOverride = process.env.GRABIT_SMOKE_LOG_SINCE_UTC?.trim();
   if (config.check === 'logs' && !logSinceOverride) {
     throw new Error('GRABIT_SMOKE_LOG_SINCE_UTC is required for standalone --check logs');
+  }
+  if ((config.check === 'logs' || config.check === 'all') && !process.env.GRABIT_SMOKE_SENTRY_OBSERVATION?.trim()) {
+    throw new Error('GRABIT_SMOKE_SENTRY_OBSERVATION is required for --check logs and --check all');
   }
   const cloudRun = captureEvidence(() => getCloudRunEvidence(config), fallbackCloudRun);
   const memorystore = captureEvidence(() => getMemorystoreEvidence(config), fallbackMemorystore);
