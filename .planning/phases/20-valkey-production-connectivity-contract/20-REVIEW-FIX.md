@@ -1,23 +1,23 @@
 ---
 phase: 20-valkey-production-connectivity-contract
-fixed_at: 2026-04-30T07:30:41Z
+fixed_at: 2026-04-30T07:39:56Z
 review_path: .planning/phases/20-valkey-production-connectivity-contract/20-REVIEW.md
-iteration: 2
-findings_in_scope: 7
-fixed: 7
+iteration: 3
+findings_in_scope: 8
+fixed: 8
 skipped: 0
 status: all_fixed
 ---
 
 # Phase 20: Code Review Fix Report
 
-**Fixed at:** 2026-04-30T07:30:41Z
+**Fixed at:** 2026-04-30T07:39:56Z
 **Source review:** .planning/phases/20-valkey-production-connectivity-contract/20-REVIEW.md
-**Iteration:** 2
+**Iteration:** 3
 
 **Summary:**
-- Findings in scope: 7
-- Fixed: 7
+- Findings in scope: 8
+- Fixed: 8
 - Skipped: 0
 - Production smoke remains deferred; this report does not mark Phase 20 passed or complete.
 
@@ -72,6 +72,13 @@ status: all_fixed
 **Commit:** e878458
 **Applied fix:** Replaced `statusSummary.includes('locked')` with an exact `seatState === 'locked'` predicate so `not_locked`, `unlocked`, or error text containing the substring cannot satisfy the Lua smoke status gate.
 
+### CR-01 Final Follow-up: BLOCKER - Smoke PASS is not tied to the traffic-serving Cloud Run revision
+
+**Status:** fixed
+**Files modified:** `scripts/smoke-valkey-production.mjs`, `.planning/phases/20-valkey-production-connectivity-contract/20-HUMAN-UAT.md`
+**Commit:** 485f56b
+**Applied fix:** Added a runtime contract gate requiring the recorded `latestReadyRevisionName` to serve 100% of public traffic before automated smoke can PASS. Socket.IO instance lookup and log keyword queries now include `resource.labels.revision_name="${latestReadyRevisionName}"`, and the UAT artifact records traffic split plus the revision-scoped log filter requirement.
+
 ## Skipped Issues
 
 None - all in-scope findings were fixed.
@@ -85,9 +92,10 @@ None - all in-scope findings were fixed.
 - WR-01: `node --check scripts/smoke-valkey-production.mjs`
 - CR-04 follow-up: `GRABIT_API_URL=http://localhost:8080 node scripts/smoke-valkey-production.mjs --check health` fails with `GRABIT_API_URL must be exactly https://api.heygrabit.com`; `GRABIT_API_URL=https://staging.example.com node scripts/smoke-valkey-production.mjs --check health` fails with the same message
 - WR-02: `rg -n "statusSummary\\.includes" scripts/smoke-valkey-production.mjs` returns no matches; `rg -n "const seatLocked = seatState === 'locked'" scripts/smoke-valkey-production.mjs` finds the exact-state predicate
+- CR-01 final follow-up: `node --check scripts/smoke-valkey-production.mjs`; `rg -n "isLatestReadyServingAllTraffic|cloudRunRevisionFilter|resource\\.labels\\.revision_name|Traffic split|latestReadyRevisionName serving 100% traffic" scripts/smoke-valkey-production.mjs .planning/phases/20-valkey-production-connectivity-contract/20-HUMAN-UAT.md`
 
 ---
 
-_Fixed: 2026-04-30T07:30:41Z_
+_Fixed: 2026-04-30T07:39:56Z_
 _Fixer: the agent (gsd-code-fixer)_
-_Iteration: 2_
+_Iteration: 3_
