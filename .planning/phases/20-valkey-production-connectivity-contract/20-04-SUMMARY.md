@@ -76,6 +76,7 @@ completed: 2026-04-30
 - Broadened smoke artifact redaction for international E.164 phone values and short payment/order identifiers.
 - Broadened smoke artifact redaction for JSON-style `paymentKey` and `orderId` values in serialized error bodies.
 - Aligned smoke PII redaction and Sentry preflight contract with the artifact promise.
+- Broadened smoke artifact redaction for JSON-style `Authorization` and `Cookie` fields in serialized log/Sentry payloads.
 
 ## Task Commits
 
@@ -89,6 +90,7 @@ completed: 2026-04-30
 8. **Smoke artifact redaction follow-up** - `22ebedc` (fix)
 9. **JSON smoke identifier redaction** - `d294008` (fix)
 10. **PII and Sentry preflight alignment** - `6119823` (fix)
+11. **JSON auth/cookie smoke redaction** - `6558702` (fix)
 
 ## Files Created/Modified
 
@@ -217,9 +219,17 @@ completed: 2026-04-30
 - **Verification:** source-extracted `redact()` harness confirms local phone values are removed; missing Sentry observation with `--check all` fails with an explicit env error.
 - **Committed in:** `6119823`
 
+**13. [Rule 2 - Secret redaction] Cover JSON-style auth/cookie fields**
+- **Found during:** JSON auth redaction review
+- **Issue:** Serialized log/Sentry payloads could contain `"Authorization":"Bearer ..."` or `"Cookie":"..."`, which raw header redaction did not cover.
+- **Fix:** Added quoted-key redaction patterns for JSON-style auth and cookie fields.
+- **Files modified:** `scripts/smoke-valkey-production.mjs`
+- **Verification:** source-extracted `redact()` harness confirms raw and JSON-style Authorization/Cookie fragments are removed.
+- **Committed in:** `6558702`
+
 ---
 
-**Total deviations:** 12 auto-fixed, 1 user-directed checkpoint bypass.
+**Total deviations:** 13 auto-fixed, 1 user-directed checkpoint bypass.
 **Impact on plan:** Automated code and artifact contracts are stronger than the original implementation, but production runtime approval remains open.
 
 ## Issues Encountered

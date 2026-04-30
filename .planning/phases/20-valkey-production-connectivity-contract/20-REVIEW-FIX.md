@@ -1,23 +1,23 @@
 ---
 phase: 20-valkey-production-connectivity-contract
-fixed_at: 2026-04-30T08:38:43Z
+fixed_at: 2026-04-30T08:46:01Z
 review_path: .planning/phases/20-valkey-production-connectivity-contract/20-REVIEW.md
-iteration: 8
-findings_in_scope: 21
-fixed: 21
+iteration: 9
+findings_in_scope: 22
+fixed: 22
 skipped: 0
 status: all_fixed
 ---
 
 # Phase 20: Code Review Fix Report
 
-**Fixed at:** 2026-04-30T08:38:43Z
+**Fixed at:** 2026-04-30T08:46:01Z
 **Source review:** .planning/phases/20-valkey-production-connectivity-contract/20-REVIEW.md
-**Iteration:** 8
+**Iteration:** 9
 
 **Summary:**
-- Findings in scope: 21
-- Fixed: 21
+- Findings in scope: 22
+- Fixed: 22
 - Skipped: 0
 - Production smoke remains deferred; this report does not mark Phase 20 passed or complete.
 - Iteration 4 closes the 2026-04-30T07:46:48Z follow-up review: Redis/health auth-value redaction, post-unlock seat-state proof, strict idle seconds parsing, and failed-check artifact capture.
@@ -25,6 +25,7 @@ status: all_fixed
 - Iteration 6 closes the 2026-04-30T08:18:53Z follow-up review: international E.164 phone and short payment/order identifiers in smoke artifact redaction.
 - Iteration 7 closes the 2026-04-30T08:27:08Z follow-up review: JSON-style payment/order identifiers in smoke artifact redaction.
 - Iteration 8 closes the 2026-04-30T08:36:44Z follow-up review: Korean local phone values and explicit Sentry observation preflight/help contract.
+- Iteration 9 closes the 2026-04-30T08:44:xx follow-up review: JSON-style Authorization/Cookie fields in smoke artifact redaction.
 
 ## Fixed Issues
 
@@ -175,6 +176,13 @@ status: all_fixed
 **Commit:** 6119823
 **Applied fix:** Added `GRABIT_SMOKE_SENTRY_OBSERVATION` to `--help` env documentation and made `--check logs` / `--check all` fail fast when the observation is missing.
 
+### CR-01 Iteration 9: BLOCKER - Smoke artifact redaction can leak JSON-style Authorization/Cookie values
+
+**Status:** fixed
+**Files modified:** `scripts/smoke-valkey-production.mjs`
+**Commit:** 6558702
+**Applied fix:** Added quoted-key redaction patterns for serialized JSON fields such as `"Authorization":"Bearer ..."` and `"Cookie":"..."` while preserving the existing raw header line redaction.
+
 ## Skipped Issues
 
 None - all in-scope findings were fixed.
@@ -211,9 +219,11 @@ None - all in-scope findings were fixed.
 - Iteration 8: `pnpm --filter @grabit/web exec node ../../scripts/smoke-valkey-production.mjs --help`
 - Iteration 8: source-extracted `redact()` harness confirms `01012345678`, `010-1234-5678`, E.164 phone numbers, payment/order identifiers, bearer token, cookie, JWT, and Redis URL fragments do not remain.
 - Iteration 8: missing `GRABIT_SMOKE_SENTRY_OBSERVATION` with `--check all` fails with the explicit required-env error.
+- Iteration 9: `node --check scripts/smoke-valkey-production.mjs`
+- Iteration 9: source-extracted `redact()` harness confirms raw and JSON-style Authorization/Cookie fragments do not remain.
 
 ---
 
-_Fixed: 2026-04-30T08:38:43Z_
+_Fixed: 2026-04-30T08:46:01Z_
 _Fixer: the agent (gsd-code-fixer)_
-_Iteration: 8_
+_Iteration: 9_
