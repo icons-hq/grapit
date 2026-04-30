@@ -425,22 +425,22 @@ await boot.call('CLUSTER', 'ADDSLOTSRANGE', '0', '16383');
 | A3 | `20-HUMAN-UAT.md` is the best artifact name for operator smoke evidence. [ASSUMED] | Code Examples, Validation Architecture | The planner may instead extend `20-VERIFICATION.md`; requirement is evidence shape, not filename. |
 | A4 | If a smoke harness imports `socket.io-client` from `apps/api`, adding a devDependency is acceptable. [ASSUMED] | Standard Stack | If dependency churn is rejected, place the harness under an existing package that already has `socket.io-client` or use a documented manual socket tool. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Which safe production fixture should lock smoke use?**
    - What we know: Booking lock endpoints require auth and a valid showtime/seat; smoke must not use customer data. [VERIFIED: booking.controller.ts] [VERIFIED: 20-CONTEXT.md]
    - What's unclear: The repo does not identify a dedicated production smoke showtime/seat. [VERIFIED: local search]
-   - Recommendation: Planner should add a required operator input or a safe seed/admin fixture step before production smoke. [ASSUMED]
+   - RESOLVED: Plan `20-04` routes this through `user_setup` and an `autonomous: false` operator checkpoint. Execution must block until the operator supplies `GRABIT_SMOKE_SHOWTIME_ID`, `GRABIT_SMOKE_SEAT_ID`, and `GRABIT_SMOKE_AUTH_HEADER_FILE`; no executor may infer or fabricate the fixture.
 
 2. **Should the app expose instance identity for two-instance proof?**
    - What we know: Cloud Run revision and logs are available; session affinity is enabled. [VERIFIED: gcloud run services describe]
    - What's unclear: Whether existing logs are enough to prove two distinct serving instances received/joined/published during the smoke. [ASSUMED]
-   - Recommendation: Prefer log correlation first; add a sanitized smoke-only log field if evidence is otherwise ambiguous. [ASSUMED]
+   - RESOLVED: Plan `20-04` requires production smoke evidence from Cloud Run pre-state, temporary scaling or equivalent correlation evidence, Socket.IO `seat-update` observation, and scale restoration. If log/correlation evidence is insufficient to prove two-instance propagation, the smoke/checkpoint must fail rather than infer success.
 
 3. **Should mode mismatch fail at startup or only in smoke?**
    - What we know: Phase 20 requires mismatch to fail smoke/block release; production missing `REDIS_URL` already startup-fails. [VERIFIED: 20-CONTEXT.md] [VERIFIED: redis.provider.ts]
    - What's unclear: Whether live mode can be reliably detected from inside the app without GCP APIs or extra `INFO` cost. [ASSUMED]
-   - Recommendation: Startup-fail missing/invalid `VALKEY_MODE`; smoke-fail mismatch between `gcloud memorystore` mode and health/client metadata. [ASSUMED]
+   - RESOLVED: Plan `20-01` handles startup enum validation and the fail-closed provider contract for missing/invalid `VALKEY_MODE`, while Plan `20-04` compares live Memorystore mode with health/runtime metadata during production smoke. A mode mismatch fails the smoke gate.
 
 ## Environment Availability
 
