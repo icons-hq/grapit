@@ -1,6 +1,6 @@
 import type { Provider } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import IORedis, { Cluster } from 'ioredis';
+import IORedis, { Cluster, type RedisOptions } from 'ioredis';
 
 export const REDIS_CLIENT = Symbol('REDIS_CLIENT');
 
@@ -550,12 +550,31 @@ function parseRedisUrl(url: string): URL {
     throw new Error('[redis] REDIS_URL must be a valid Redis URL.');
   }
 
+  if (parsed.protocol !== 'redis:' && parsed.protocol !== 'rediss:') {
+    throw new Error('[redis] REDIS_URL must use redis:// or rediss://.');
+  }
+
   const port = parsed.port ? Number(parsed.port) : 6379;
   if (!parsed.hostname || !Number.isInteger(port) || port <= 0 || port > 65_535) {
     throw new Error('[redis] REDIS_URL must include a valid host and port.');
   }
 
   return parsed;
+}
+
+function buildRedisOptions(parsedUrl: URL): RedisOptions {
+  return {
+    maxRetriesPerRequest: 3,
+    ...(parsedUrl.username ? { username: decodeURIComponent(parsedUrl.username) } : {}),
+    ...(parsedUrl.password ? { password: decodeURIComponent(parsedUrl.password) } : {}),
+    ...(parsedUrl.protocol === 'rediss:' ? { tls: {} } : {}),
+  };
+}
+
+function assertClusterRedisUrlPath(parsedUrl: URL): void {
+  if (parsedUrl.pathname && parsedUrl.pathname !== '/' && parsedUrl.pathname !== '/0') {
+    throw new Error('[redis] REDIS_URL must not select a logical database when VALKEY_MODE=cluster.');
+  }
 }
 
 function sanitizeRedisErrorMessage(message: string): string {
@@ -623,6 +642,8 @@ export const redisProvider: Provider = {
     const parsedUrl = parseRedisUrl(url);
 
     if (mode === 'cluster') {
+      assertClusterRedisUrlPath(parsedUrl);
+      const redisOptions = buildRedisOptions(parsedUrl);
       const client = new Cluster([{
         host: parsedUrl.hostname,
         port: parsedUrl.port ? Number(parsedUrl.port) : 6379,
@@ -630,7 +651,7 @@ export const redisProvider: Provider = {
         lazyConnect: true,
         scaleReads: 'master',
         enableReadyCheck: true,
-        redisOptions: { maxRetriesPerRequest: 3 },
+        redisOptions,
         clusterRetryStrategy: (times: number) => {
           if (times > 5) return null;
           return Math.min(times * 500, 5000);

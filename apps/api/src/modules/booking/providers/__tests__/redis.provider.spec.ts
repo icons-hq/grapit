@@ -168,6 +168,35 @@ describe('redisProvider factory', () => {
     (client as Cluster).disconnect();
   });
 
+  it('preserves auth and TLS from REDIS_URL when VALKEY_MODE=cluster', () => {
+    process.env['NODE_ENV'] = 'production';
+    const config = createMockConfig({
+      url: 'rediss://default:p%40ssword@valkey.internal:6380',
+      mode: 'cluster',
+    });
+
+    const client = useFactory(config) as Cluster;
+
+    expect(client.options.redisOptions).toMatchObject({
+      username: 'default',
+      password: 'p@ssword',
+      maxRetriesPerRequest: 3,
+      tls: {},
+    });
+
+    client.disconnect();
+  });
+
+  it('rejects cluster REDIS_URL values that select a logical database', () => {
+    process.env['NODE_ENV'] = 'production';
+    const config = createMockConfig({
+      url: 'redis://localhost:6379/2',
+      mode: 'cluster',
+    });
+
+    expect(() => useFactory(config)).toThrowError(/must not select a logical database/);
+  });
+
   /**
    * Phase 10.1 review (WR-01): SmsService depends on ioredis variadic set(),
    * decr(), pttl(), and pipeline(). The InMemoryRedis mock must cover these
