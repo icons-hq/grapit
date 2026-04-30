@@ -88,6 +88,7 @@ function redact(value) {
     .replace(/\bAuthorization:\s*Bearer\s+[^\s`'")]+/gi, 'Authorization: Bearer <redacted>')
     .replace(/(["']\bCookie["']\s*:\s*["']?)[^"',}\]\r\n]+["']?/gi, '$1<redacted>"')
     .replace(/\bCookie:\s*[^`\n\r]+/gi, 'Cookie: <redacted>')
+    .replace(/(["']?\bJWT["']?\s*[:=]\s*)["']?[^\s"',|)}]+["']?/gi, '$1"<redacted>"')
     .replace(/[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/g, '<jwt:redacted>')
     .replace(PHONE_PATTERN, '<phone:redacted>')
     .replace(/(["']?\b(paymentKey|orderId)["']?\s*[:=]\s*)["']?[^\s"',|)}]+["']?/gi, '$1"<redacted>"')
