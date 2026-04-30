@@ -49,6 +49,7 @@ Required environment for every --check mode:
 Optional environment:
   GRABIT_SMOKE_ARTIFACT                  Evidence markdown path. Default: script-root 20-HUMAN-UAT.md
   GRABIT_SMOKE_IDLE_SECONDS              Idle reconnect wait, default 1800
+  GRABIT_SMOKE_LOG_SINCE_UTC             Required for standalone --check logs
   GRABIT_GCP_PROJECT                     Default grapit-491806
   GRABIT_GCP_REGION                      Default asia-northeast3
 
@@ -542,7 +543,7 @@ async function checkLogs(config, sinceIso) {
   return {
     name: 'Log And Sentry Cleanliness',
     ok: count === 0,
-    summary: `Cloud Logging failure keyword count=${count}; Sentry observation=${sentryObservation}`,
+    summary: `since=${sinceIso}; Cloud Logging failure keyword count=${count}; Sentry observation=${sentryObservation}`,
   };
 }
 
@@ -564,6 +565,10 @@ function sleep(ms) {
 
 async function runChecks(config) {
   const startedUtc = new Date().toISOString();
+  const logSinceOverride = process.env.GRABIT_SMOKE_LOG_SINCE_UTC?.trim();
+  if (config.check === 'logs' && !logSinceOverride) {
+    throw new Error('GRABIT_SMOKE_LOG_SINCE_UTC is required for standalone --check logs');
+  }
   const cloudRun = getCloudRunEvidence(config);
   const memorystore = getMemorystoreEvidence(config);
   const runtimeFailures = runtimeContractFailures(cloudRun, memorystore);
@@ -583,7 +588,7 @@ async function runChecks(config) {
     checks.push(await checkIdle(config, cloudRun));
   }
   if (config.check === 'logs' || config.check === 'all') {
-    checks.push(await checkLogs(config, startedUtc));
+    checks.push(await checkLogs(config, logSinceOverride || startedUtc));
   }
 
   const allChecksOk = checks.every((check) => check.ok);
