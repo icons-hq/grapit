@@ -50,7 +50,14 @@ async function bootstrap() {
   // Falls back to the default in-process adapter when REDIS_URL is not set.
   const redisClient = app.get<IORedis>(REDIS_CLIENT);
   const redisIoAdapter = new RedisIoAdapter(app, redisClient);
-  redisIoAdapter.connectToRedis();
+  const redisPubSubReady = redisIoAdapter.connectToRedis();
+  if (process.env['NODE_ENV'] === 'production' && !redisPubSubReady) {
+    console.error(
+      '[bootstrap] Socket.IO Redis adapter failed to wire in production. ' +
+        'Redis-backed Socket.IO pub/sub is required. Aborting startup.',
+    );
+    process.exit(1);
+  }
   app.useWebSocketAdapter(redisIoAdapter);
 
   // WR-06: origin 은 항상 배열로 통일(dev default 포함) — express-cors 는 배열마다
