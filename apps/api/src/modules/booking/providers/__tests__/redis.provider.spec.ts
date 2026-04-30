@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { ConfigService } from '@nestjs/config';
-import IORedis from 'ioredis';
+import IORedis, { type Cluster } from 'ioredis';
 import {
   ASSERT_OWNED_SEAT_LOCKS_LUA,
   CONSUME_OWNED_SEAT_LOCKS_LUA,
@@ -9,6 +9,7 @@ import {
   RELEASE_PAYMENT_CONFIRM_LOCK_LUA,
 } from '../../booking.service.js';
 import { redisProvider, REDIS_CLIENT } from '../redis.provider.js';
+import { getRedisRuntimeMetadata } from '../redis.provider.js';
 import {
   smsAttemptsKey,
   smsOtpKey,
@@ -26,15 +27,31 @@ const TEST_PHONE = '+821012345678';
  * (Codex + Claude CLI consensus #1) and T-07-10 threat mitigation.
  */
 
-type UseFactory = (config: ConfigService) => IORedis;
+type RedisProviderClient = IORedis | Cluster;
+type UseFactory = (config: ConfigService) => RedisProviderClient;
 
-function createMockConfig(url: string): ConfigService {
+function createMockConfig(values: { url?: string; mode?: string } = {}): ConfigService {
   return {
-    get: vi.fn().mockImplementation((_key: string, defaultValue?: string) => {
-      if (url === '') return defaultValue ?? '';
-      return url;
+    get: vi.fn().mockImplementation((key: string, defaultValue?: string) => {
+      const configValues: Record<string, string | undefined> = {
+        'redis.url': values.url,
+        'redis.mode': values.mode,
+      };
+      return configValues[key] ?? defaultValue ?? '';
     }),
   } as unknown as ConfigService;
+}
+
+function stringifyConsoleCalls(spy: ReturnType<typeof vi.spyOn>): string {
+  return spy.mock.calls.flat().map(String).join('\n');
+}
+
+function expectNoSensitiveRedisDetails(output: string): void {
+  expect(output).not.toContain('redis://');
+  expect(output).not.toContain('10.0.0.1');
+  expect(output).not.toContain('Authorization');
+  expect(output).not.toContain('Cookie');
+  expect(output).not.toContain('JWT');
 }
 
 describe('redisProvider factory', () => {
@@ -56,14 +73,42 @@ describe('redisProvider factory', () => {
 
   it('throws when NODE_ENV=production and REDIS_URL is empty (hard-fail guard)', () => {
     process.env['NODE_ENV'] = 'production';
-    const config = createMockConfig('');
+    const config = createMockConfig({ url: '', mode: 'cluster' });
 
     expect(() => useFactory(config)).toThrowError(/REDIS_URL is required in production/);
   });
 
+  it('throws when NODE_ENV=production and REDIS_URL is set but VALKEY_MODE is missing', () => {
+    process.env['NODE_ENV'] = 'production';
+    const config = createMockConfig({ url: 'redis://10.0.0.1:6379', mode: '' });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    expect(() => useFactory(config)).toThrowError(/VALKEY_MODE is required in production/);
+
+    const output = `${stringifyConsoleCalls(warnSpy)}\n${stringifyConsoleCalls(errorSpy)}`;
+    expectNoSensitiveRedisDetails(output);
+    warnSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
+  it('throws when VALKEY_MODE=sentinel because mode must be explicit standalone or cluster', () => {
+    process.env['NODE_ENV'] = 'production';
+    const config = createMockConfig({ url: 'redis://10.0.0.1:6379', mode: 'sentinel' });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    expect(() => useFactory(config)).toThrowError(/VALKEY_MODE must be one of: standalone, cluster/);
+
+    const output = `${stringifyConsoleCalls(warnSpy)}\n${stringifyConsoleCalls(errorSpy)}`;
+    expectNoSensitiveRedisDetails(output);
+    warnSpy.mockRestore();
+    errorSpy.mockRestore();
+  });
+
   it('returns InMemoryRedis mock when NODE_ENV=development and REDIS_URL is empty', () => {
     process.env['NODE_ENV'] = 'development';
-    const config = createMockConfig('');
+    const config = createMockConfig({ url: '' });
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const client = useFactory(config) as unknown as { set: unknown; get: unknown; eval: unknown };
@@ -71,13 +116,18 @@ describe('redisProvider factory', () => {
     expect(typeof client.set).toBe('function');
     expect(typeof client.get).toBe('function');
     expect(typeof client.eval).toBe('function');
+    expect(getRedisRuntimeMetadata(client)).toEqual({
+      mode: 'in-memory',
+      client: 'in-memory',
+      configured: false,
+    });
     expect(warnSpy).toHaveBeenCalled();
     warnSpy.mockRestore();
   });
 
   it('returns InMemoryRedis mock when NODE_ENV=test and REDIS_URL is empty', () => {
     process.env['NODE_ENV'] = 'test';
-    const config = createMockConfig('');
+    const config = createMockConfig({ url: '' });
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const client = useFactory(config) as unknown as { set: unknown };
@@ -87,15 +137,35 @@ describe('redisProvider factory', () => {
 
   it('returns a real ioredis instance when REDIS_URL is set (production)', () => {
     process.env['NODE_ENV'] = 'production';
-    const config = createMockConfig('redis://localhost:6379');
+    const config = createMockConfig({ url: 'redis://localhost:6379', mode: 'standalone' });
 
     const client = useFactory(config);
 
     // Real ioredis has duplicate() — InMemoryRedis mock does not
     expect(typeof (client as IORedis).duplicate).toBe('function');
+    expect(getRedisRuntimeMetadata(client)).toEqual({
+      mode: 'standalone',
+      client: 'ioredis-standalone',
+      configured: true,
+    });
 
     // Clean up to avoid vitest hanging on open socket
     (client as IORedis).disconnect();
+  });
+
+  it('creates an ioredis-cluster client with runtime metadata when VALKEY_MODE=cluster', () => {
+    process.env['NODE_ENV'] = 'production';
+    const config = createMockConfig({ url: 'redis://localhost:6379', mode: 'cluster' });
+
+    const client = useFactory(config);
+
+    expect(getRedisRuntimeMetadata(client)).toEqual({
+      mode: 'cluster',
+      client: 'ioredis-cluster',
+      configured: true,
+    });
+
+    (client as Cluster).disconnect();
   });
 
   /**
@@ -126,7 +196,7 @@ describe('redisProvider factory', () => {
     function createMock(): MemRedis {
       process.env['NODE_ENV'] = 'test';
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      const client = useFactory(createMockConfig('')) as unknown as MemRedis;
+      const client = useFactory(createMockConfig({ url: '' })) as unknown as MemRedis;
       warnSpy.mockRestore();
       return client;
     }
