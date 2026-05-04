@@ -35,7 +35,7 @@ Phase 21 is a documentation and traceability backfill phase, not an implementati
 
 The audit blocker is specifically about artifact absence and requirement traceability, not about re-implementing social login or R2. [VERIFIED: .planning/v1.1-MILESTONE-AUDIT.md] AUTH-01 has strong Phase 06 evidence from implementation summaries, validation, UAT, and security review, but the audit cannot trace it because `06-VERIFICATION.md` is absent and `06-02-SUMMARY.md` has `requirements_completed: []`. [VERIFIED: .planning/phases/06-social-login-bugfix/06-02-SUMMARY.md; VERIFIED: .planning/v1.1-MILESTONE-AUDIT.md] R2-02 has Phase 08 CORS evidence and later production hardening evidence, but no `08-VERIFICATION.md` and no SUMMARY frontmatter row that makes R2-02 traceable. [VERIFIED: .planning/phases/08-r2/08-03-SUMMARY.md; VERIFIED: .planning/quick/260427-pcf-r2-cors/260427-pcf-SUMMARY.md; VERIFIED: .planning/v1.1-MILESTONE-AUDIT.md]
 
-**Primary recommendation:** Generate verification reports from existing local evidence, update only the minimum SUMMARY frontmatter required for AUTH-01 and R2-02 traceability, and use `human_needed` or `partial` statuses wherever Phase 13, Phase 15, or Phase 20 evidence is deferred. [VERIFIED: .planning/phases/13-grapit-grabit-rename/13-UAT.md; VERIFIED: .planning/phases/15-resend-heygrabit-com-cutover-transactional-email-secret-mana/15-HUMAN-UAT.md; VERIFIED: .planning/phases/20-valkey-production-connectivity-contract/20-VERIFICATION.md]
+**Primary recommendation:** Generate verification reports from existing local evidence, update `06-02-SUMMARY.md` for AUTH-01 traceability, update `08-03-SUMMARY.md` with R2-01..R2-04 when `08-VERIFICATION.md` supports all four rows, and keep R2-02 explicitly present because it is the named orphan. Use `human_needed` or `partial` statuses wherever Phase 13, Phase 15, or Phase 20 evidence is deferred. [VERIFIED: .planning/phases/13-grapit-grabit-rename/13-UAT.md; VERIFIED: .planning/phases/15-resend-heygrabit-com-cutover-transactional-email-secret-mana/15-HUMAN-UAT.md; VERIFIED: .planning/phases/20-valkey-production-connectivity-contract/20-VERIFICATION.md]
 
 ## Architectural Responsibility Map
 
@@ -62,7 +62,7 @@ The audit blocker is specifically about artifact absence and requirement traceab
 |-----|---------------|-----------------|
 | AUTH-01 orphaned | Audit says AUTH-01 is absent from phase verification files because `06-VERIFICATION.md` is missing. [VERIFIED: .planning/v1.1-MILESTONE-AUDIT.md] | Create `06-VERIFICATION.md` with an AUTH-01 row and update the best evidence SUMMARY frontmatter, preferably `06-02-SUMMARY.md`, from `requirements_completed: []` to `requirements_completed: [AUTH-01]`. [VERIFIED: .planning/phases/06-social-login-bugfix/06-02-SUMMARY.md] |
 | R2-01 partial | `08-01-SUMMARY.md` frontmatter includes `requirements-completed: [R2-01, R2-03]`, but audit marks R2-01 partial because `08-VERIFICATION.md` is missing. [VERIFIED: .planning/phases/08-r2/08-01-SUMMARY.md; VERIFIED: .planning/v1.1-MILESTONE-AUDIT.md] | Create `08-VERIFICATION.md` with R2-01 evidence from `08-03-SUMMARY.md` and keep existing SUMMARY frontmatter unless normalizing field names. [VERIFIED: .planning/phases/08-r2/08-03-SUMMARY.md] |
-| R2-02 orphaned | `08-03-SUMMARY.md` documents the CORS resolution, but it has no `requirements_completed` frontmatter; audit says R2-02 is not listed in any SUMMARY frontmatter. [VERIFIED: .planning/phases/08-r2/08-03-SUMMARY.md; VERIFIED: .planning/v1.1-MILESTONE-AUDIT.md] | Add `requirements_completed: [R2-01, R2-02, R2-03, R2-04]` to `08-03-SUMMARY.md`, or minimally add `R2-02`; the broader list is defensible because `08-03-SUMMARY.md` contains bucket, CORS, secrets, public URL, deploy, and R2 mode checks. [VERIFIED: .planning/phases/08-r2/08-03-SUMMARY.md] |
+| R2-02 orphaned | `08-03-SUMMARY.md` documents the CORS resolution, but it has no `requirements_completed` frontmatter; audit says R2-02 is not listed in any SUMMARY frontmatter. [VERIFIED: .planning/phases/08-r2/08-03-SUMMARY.md; VERIFIED: .planning/v1.1-MILESTONE-AUDIT.md] | Add `requirements-completed: [R2-01, R2-02, R2-03, R2-04]` to `08-03-SUMMARY.md` when `08-VERIFICATION.md` has evidence-backed rows for all four; R2-02 is explicitly required because it is the named orphan. [VERIFIED: .planning/phases/08-r2/08-03-SUMMARY.md] |
 | R2-03 partial | `08-01-SUMMARY.md` and `08-02-SUMMARY.md` frontmatter include R2-03, but audit marks it partial because `08-VERIFICATION.md` is missing. [VERIFIED: .planning/phases/08-r2/08-01-SUMMARY.md; VERIFIED: .planning/phases/08-r2/08-02-SUMMARY.md; VERIFIED: .planning/v1.1-MILESTONE-AUDIT.md] | Create `08-VERIFICATION.md` with upload/public URL/Next image evidence and cite later production admin upload hardening separately. [VERIFIED: .planning/phases/08-r2/08-01-SUMMARY.md; VERIFIED: .planning/phases/08-r2/08-02-SUMMARY.md; VERIFIED: .planning/quick/260427-pcf-r2-cors/260427-pcf-SUMMARY.md] |
 | R2-04 partial | `08-02-SUMMARY.md` frontmatter includes R2-04, but audit marks it partial because `08-VERIFICATION.md` is missing. [VERIFIED: .planning/phases/08-r2/08-02-SUMMARY.md; VERIFIED: .planning/v1.1-MILESTONE-AUDIT.md] | Create `08-VERIFICATION.md` with custom hostname/CDN serving evidence and avoid claiming unobserved custom-domain behavior beyond recorded artifacts. [VERIFIED: .planning/phases/08-r2/08-02-SUMMARY.md; VERIFIED: .planning/phases/08-r2/08-03-SUMMARY.md] |
 
@@ -134,7 +134,7 @@ Static validation checks with rg/test
 │   └── 06-02-SUMMARY.md          # update AUTH-01 frontmatter gap
 ├── 08-r2/
 │   ├── 08-VERIFICATION.md        # create R2-01..R2-04 evidence map
-│   └── 08-03-SUMMARY.md          # update R2-02 frontmatter gap
+│   └── 08-03-SUMMARY.md          # update R2-01..R2-04 frontmatter traceability, with R2-02 required
 ├── 13-grapit-grabit-rename/
 │   └── 13-VERIFICATION.md        # create rename verification with unresolved UAT caveats
 ├── 15-resend-heygrabit-com-cutover-transactional-email-secret-mana/
@@ -190,7 +190,7 @@ The example matches Phase 15 evidence boundaries and avoids marking deferred mai
 
 **What:** Add or correct requirement frontmatter only where audit traceability is missing. [VERIFIED: .planning/v1.1-MILESTONE-AUDIT.md]
 
-**When to use:** Apply to `06-02-SUMMARY.md` for AUTH-01 and `08-03-SUMMARY.md` for R2-02; do not rewrite unrelated Phase 13/15 frontmatter into global requirement IDs. [VERIFIED: .planning/phases/06-social-login-bugfix/06-02-SUMMARY.md; VERIFIED: .planning/phases/08-r2/08-03-SUMMARY.md; VERIFIED: .planning/REQUIREMENTS.md]
+**When to use:** Apply to `06-02-SUMMARY.md` for AUTH-01 and `08-03-SUMMARY.md` for R2-01..R2-04 when `08-VERIFICATION.md` supports all four rows; R2-02 remains explicitly required. Do not rewrite unrelated Phase 13/15 frontmatter into global requirement IDs. [VERIFIED: .planning/phases/06-social-login-bugfix/06-02-SUMMARY.md; VERIFIED: .planning/phases/08-r2/08-03-SUMMARY.md; VERIFIED: .planning/REQUIREMENTS.md]
 
 **Example:**
 
@@ -290,9 +290,12 @@ The four expected files are the exact missing artifacts named by the phase goal 
 
 ```bash
 rg -n "\\| AUTH-01 \\|" .planning/phases/06-social-login-bugfix/06-VERIFICATION.md
-rg -n "\\| R2-0[1-4] \\|" .planning/phases/08-r2/08-VERIFICATION.md
+rg -n "\\| R2-01 \\|" .planning/phases/08-r2/08-VERIFICATION.md
+rg -n "\\| R2-02 \\|" .planning/phases/08-r2/08-VERIFICATION.md
+rg -n "\\| R2-03 \\|" .planning/phases/08-r2/08-VERIFICATION.md
+rg -n "\\| R2-04 \\|" .planning/phases/08-r2/08-VERIFICATION.md
 rg -n "AUTH-01" .planning/phases/06-social-login-bugfix/06-02-SUMMARY.md
-rg -n "R2-02" .planning/phases/08-r2/08-03-SUMMARY.md
+rg -n "^requirements-completed: \\[R2-01, R2-02, R2-03, R2-04\\]$" .planning/phases/08-r2/08-03-SUMMARY.md
 ```
 
 These checks target the orphaned AUTH-01 and R2-02 rows plus the R2 partial rows named by the audit. [VERIFIED: .planning/v1.1-MILESTONE-AUDIT.md]
@@ -319,38 +322,37 @@ Verification artifacts should cite secret names and sanitized evidence, not secr
 
 **Deprecated/outdated:** Using absence of `*-VERIFICATION.md` as proof of unmet runtime behavior is outdated for these gaps because the audit identifies artifact blockers separately from integration behavior. [VERIFIED: .planning/v1.1-MILESTONE-AUDIT.md]
 
-## Assumptions Log
+## Resolution Log
 
-| # | Claim | Section | Risk if Wrong |
-|---|-------|---------|---------------|
-| A1 | Phase 21 can proceed as a documentation backfill even though Phase 20 remains `human_needed`, as long as Phase 21 does not mark Phase 20 production smoke complete. [ASSUMED] | Common Pitfalls / Open Questions | If the workflow treats any dependency `human_needed` as a hard gate, planner must pause Phase 21 until Phase 20 human UAT is completed. |
+| # | Decision | Section | Rationale |
+|---|----------|---------|-----------|
+| R1 | Phase 20 `human_needed` does not block Phase 21 execution because Phase 21 is a doc-only artifact backfill and must not alter Phase 20 status. [RESOLVED] | Common Pitfalls / Open Questions | Phase 21 repairs missing verification and frontmatter evidence for Phase 06/08/13/15 only; Phase 20 production smoke remains governed by `20-HUMAN-UAT.md` and `20-VERIFICATION.md`. [VERIFIED: .planning/ROADMAP.md Phase 21; VERIFIED: .planning/phases/20-valkey-production-connectivity-contract/20-VERIFICATION.md] |
+| R2 | `08-03-SUMMARY.md` should include R2-01..R2-04 if `08-VERIFICATION.md` supports all four with evidence rows; R2-02 is explicitly required because the audit names it as orphaned frontmatter evidence. [RESOLVED] | Requirement / Frontmatter Gap Inventory | `08-03-SUMMARY.md` is the ops completion summary and contains bucket, CORS, secrets, public URL, deploy, and R2 mode checks. [VERIFIED: .planning/phases/08-r2/08-03-SUMMARY.md; VERIFIED: .planning/v1.1-MILESTONE-AUDIT.md] |
+| R3 | `13-VERIFICATION.md` uses `status: human_needed`, with `VERIFIED`/`PARTIAL`/`HUMAN NEEDED` rows instead of Phase 21 requirement `SATISFIED` rows. [RESOLVED] | Verification Status Vocabulary | Phase 13 has static rename/deploy evidence, but user-facing UAT and cleanup sign-offs remain unchecked. [VERIFIED: .planning/phases/13-grapit-grabit-rename/13-UAT.md; VERIFIED: .planning/phases/13-grapit-grabit-rename/13-HUMAN-UAT.md] |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Should Phase 20 `human_needed` block Phase 21 execution?** [ASSUMED]
-   - What we know: Phase 21 depends on Phase 20, and Phase 20 has `20-VERIFICATION.md` with `status: human_needed` because production smoke was skipped. [VERIFIED: .planning/ROADMAP.md Phase 21; VERIFIED: .planning/phases/20-valkey-production-connectivity-contract/20-VERIFICATION.md]
-   - What's unclear: The local docs do not state whether a documentation-only dependent phase may proceed while the dependency has pending human production smoke. [VERIFIED: .planning/ROADMAP.md; VERIFIED: .planning/phases/20-valkey-production-connectivity-contract/20-HUMAN-UAT.md]
-   - Recommendation: Proceed with Phase 21 only as artifact backfill and explicitly avoid changing Phase 20 status. [ASSUMED]
+1. **Does Phase 20 `human_needed` block Phase 21 execution?** [RESOLVED]
+   - Decision: No. Phase 21 may proceed because it is a documentation-only artifact backfill and it must not mark Phase 20 production smoke complete or edit Phase 20 status. [VERIFIED: .planning/ROADMAP.md Phase 21; VERIFIED: .planning/phases/20-valkey-production-connectivity-contract/20-VERIFICATION.md]
+   - Execution constraint: Phase 21 plans may cite Phase 20 only as dependency context for human-needed vocabulary; they must leave `20-VERIFICATION.md`, `20-HUMAN-UAT.md`, `STATE.md`, and Phase 20 roadmap status unchanged. [VERIFIED: .planning/phases/20-valkey-production-connectivity-contract/20-VERIFICATION.md]
 
-2. **Should `08-03-SUMMARY.md` list only R2-02 or all R2-01..R2-04?**
-   - What we know: `08-03-SUMMARY.md` contains bucket, CORS, secrets, public URL, deploy, and R2 mode checks, while R2-02 is the specific missing frontmatter row. [VERIFIED: .planning/phases/08-r2/08-03-SUMMARY.md; VERIFIED: .planning/v1.1-MILESTONE-AUDIT.md]
-   - What's unclear: The audit wording does not specify whether frontmatter should be minimal per artifact or comprehensive per phase. [VERIFIED: .planning/v1.1-MILESTONE-AUDIT.md]
-   - Recommendation: Add all R2-01..R2-04 to `08-03-SUMMARY.md` because that file is the ops completion summary and gives the planner one authoritative traceability point. [VERIFIED: .planning/phases/08-r2/08-03-SUMMARY.md]
+2. **Should `08-03-SUMMARY.md` list only R2-02 or all R2-01..R2-04?** [RESOLVED]
+   - Decision: Add R2-01..R2-04 to `08-03-SUMMARY.md` when `08-VERIFICATION.md` includes evidence-backed rows for all four; R2-02 is mandatory because the audit explicitly names it as orphaned due to missing SUMMARY frontmatter. [VERIFIED: .planning/phases/08-r2/08-03-SUMMARY.md; VERIFIED: .planning/v1.1-MILESTONE-AUDIT.md]
+   - Execution constraint: `08-VERIFICATION.md` must still keep R2-04 `PARTIAL` for custom-domain cutover evidence if the evidence does not support a full satisfied claim. [VERIFIED: .planning/phases/08-r2/08-02-SUMMARY.md; VERIFIED: .planning/v1.1-MILESTONE-AUDIT.md]
 
-3. **What exact status should `13-VERIFICATION.md` use?**
-   - What we know: Phase 13 has strong rename/deploy evidence but `13-UAT.md` records four issues and `13-HUMAN-UAT.md` still has unchecked runtime checks. [VERIFIED: .planning/phases/13-grapit-grabit-rename/13-UAT.md; VERIFIED: .planning/phases/13-grapit-grabit-rename/13-HUMAN-UAT.md]
-   - What's unclear: Later phases routed several Phase 13 UAT issues, but Phase 21 is not asked to prove all Phase 13 deferred cleanup. [VERIFIED: .planning/ROADMAP.md Phase 14-17; VERIFIED: user prompt Phase requirement IDs]
-   - Recommendation: Use `status: human_needed` with satisfied rows only for evidence-backed SC items and explicit gap rows for deferred checks. [VERIFIED: .planning/phases/13-grapit-grabit-rename/13-UAT.md]
+3. **What exact status should `13-VERIFICATION.md` use?** [RESOLVED]
+   - Decision: Use `status: human_needed` with evidence-backed `VERIFIED` rows for static/code items, `PARTIAL` for mixed domain/cutover evidence, and `HUMAN NEEDED` for unchecked external/operator evidence. [VERIFIED: .planning/phases/13-grapit-grabit-rename/13-UAT.md; VERIFIED: .planning/phases/13-grapit-grabit-rename/13-HUMAN-UAT.md]
+   - Execution constraint: Do not add `requirements_completed` to Phase 13 summaries and do not create AUTH-01 or R2-* `SATISFIED` rows in `13-VERIFICATION.md`. [VERIFIED: .planning/REQUIREMENTS.md; VERIFIED: .planning/v1.1-MILESTONE-AUDIT.md]
 
 ## Environment Availability
 
 | Dependency | Required By | Available | Version | Fallback |
 |------------|-------------|-----------|---------|----------|
-| `rg` | Static evidence and validation checks | Yes [VERIFIED: local `command -v rg`] | 15.1.0 [VERIFIED: local `rg --version`] | `grep`, with slower/manual checks. [ASSUMED] |
-| `git` | History and optional artifact commit | Yes [VERIFIED: local `command -v git`] | 2.53.0 [VERIFIED: local `git --version`] | Manual file inspection; no good fallback for commit metadata. [ASSUMED] |
-| `gsd-sdk` | Phase metadata and optional docs commit | Yes [VERIFIED: local `command -v gsd-sdk`] | 1.39.1 [VERIFIED: local `gsd-sdk --version`] | Manual `.planning` writes if SDK commit fails. [ASSUMED] |
+| `rg` | Static evidence and validation checks | Yes [VERIFIED: local `command -v rg`] | 15.1.0 [VERIFIED: local `rg --version`] | `grep`, with slower/manual checks; fallback not needed while `rg` is available. [RESOLVED] |
+| `git` | History and optional artifact commit | Yes [VERIFIED: local `command -v git`] | 2.53.0 [VERIFIED: local `git --version`] | Manual file inspection; no fallback needed while `git` is available. [RESOLVED] |
+| `gsd-sdk` | Phase metadata and optional docs commit | Yes [VERIFIED: local `command -v gsd-sdk`] | 1.39.1 [VERIFIED: local `gsd-sdk --version`] | Manual `.planning` writes if SDK commit fails; normal path uses SDK. [RESOLVED] |
 | `pnpm` | Optional targeted test reruns | Yes [VERIFIED: local `command -v pnpm`] | 10.28.1 [VERIFIED: local `pnpm --version`] | Skip app test reruns because Phase 21 is doc-only; cite existing test artifacts. [VERIFIED: .planning/ROADMAP.md Phase 21] |
-| `node` | Optional helper scripts | Yes [VERIFIED: local `command -v node`] | v25.9.0 [VERIFIED: local `node --version`] | Use shell/rg checks instead. [ASSUMED] |
+| `node` | Optional helper scripts | Yes [VERIFIED: local `command -v node`] | v25.9.0 [VERIFIED: local `node --version`] | Use shell/rg checks instead if no helper script is needed. [RESOLVED] |
 
 **Missing dependencies with no fallback:** None identified for the documentation backfill. [VERIFIED: local availability audit]
 
@@ -365,7 +367,7 @@ Verification artifacts should cite secret names and sanitized evidence, not secr
 | Framework | Static artifact checks with `test` and `rg`; existing app-level evidence is cited, not regenerated by default. [VERIFIED: .planning/ROADMAP.md Phase 21; VERIFIED: local `rg --version`] |
 | Config file | None for artifact checks. [VERIFIED: no dedicated Phase 21 validation config exists in `.planning/phases/21-verification-artifact-backfill`] |
 | Quick run command | `test -f .planning/phases/06-social-login-bugfix/06-VERIFICATION.md && test -f .planning/phases/08-r2/08-VERIFICATION.md && test -f .planning/phases/13-grapit-grabit-rename/13-VERIFICATION.md && test -f .planning/phases/15-resend-heygrabit-com-cutover-transactional-email-secret-mana/15-VERIFICATION.md` [VERIFIED: missing artifact names from audit] |
-| Full suite command | `rg -n "\\| AUTH-01 \\|" .planning/phases/06-social-login-bugfix/06-VERIFICATION.md && rg -n "\\| R2-0[1-4] \\|" .planning/phases/08-r2/08-VERIFICATION.md && rg -n "AUTH-01" .planning/phases/06-social-login-bugfix/06-02-SUMMARY.md && rg -n "R2-02" .planning/phases/08-r2/08-03-SUMMARY.md` [VERIFIED: .planning/v1.1-MILESTONE-AUDIT.md] |
+| Full suite command | `rg -n "\\| AUTH-01 \\|" .planning/phases/06-social-login-bugfix/06-VERIFICATION.md && rg -n "\\| R2-01 \\|" .planning/phases/08-r2/08-VERIFICATION.md && rg -n "\\| R2-02 \\|" .planning/phases/08-r2/08-VERIFICATION.md && rg -n "\\| R2-03 \\|" .planning/phases/08-r2/08-VERIFICATION.md && rg -n "\\| R2-04 \\|" .planning/phases/08-r2/08-VERIFICATION.md && rg -n "AUTH-01" .planning/phases/06-social-login-bugfix/06-02-SUMMARY.md && rg -n "^requirements-completed: \\[R2-01, R2-02, R2-03, R2-04\\]$" .planning/phases/08-r2/08-03-SUMMARY.md` [VERIFIED: .planning/v1.1-MILESTONE-AUDIT.md] |
 
 ### Phase Requirements -> Test Map
 
@@ -373,7 +375,7 @@ Verification artifacts should cite secret names and sanitized evidence, not secr
 |--------|----------|-----------|-------------------|--------------|
 | AUTH-01 | AUTH-01 is traceable from `06-VERIFICATION.md` and SUMMARY frontmatter. [VERIFIED: .planning/v1.1-MILESTONE-AUDIT.md] | static artifact | `rg -n "\\| AUTH-01 \\|" .planning/phases/06-social-login-bugfix/06-VERIFICATION.md && rg -n "AUTH-01" .planning/phases/06-social-login-bugfix/06-02-SUMMARY.md` | No, Wave 0 creates `06-VERIFICATION.md`. [VERIFIED: local `find`] |
 | R2-01 | R2-01 is traceable from `08-VERIFICATION.md`. [VERIFIED: .planning/v1.1-MILESTONE-AUDIT.md] | static artifact | `rg -n "\\| R2-01 \\|" .planning/phases/08-r2/08-VERIFICATION.md` | No, Wave 0 creates `08-VERIFICATION.md`. [VERIFIED: local `find`] |
-| R2-02 | R2-02 is traceable from `08-VERIFICATION.md` and `08-03-SUMMARY.md`. [VERIFIED: .planning/v1.1-MILESTONE-AUDIT.md] | static artifact | `rg -n "\\| R2-02 \\|" .planning/phases/08-r2/08-VERIFICATION.md && rg -n "R2-02" .planning/phases/08-r2/08-03-SUMMARY.md` | No, Wave 0 creates `08-VERIFICATION.md`. [VERIFIED: local `find`] |
+| R2-02 | R2-02 is traceable from `08-VERIFICATION.md` and `08-03-SUMMARY.md`. [VERIFIED: .planning/v1.1-MILESTONE-AUDIT.md] | static artifact | `rg -n "\\| R2-02 \\|" .planning/phases/08-r2/08-VERIFICATION.md && rg -n "^requirements-completed: \\[R2-01, R2-02, R2-03, R2-04\\]$" .planning/phases/08-r2/08-03-SUMMARY.md` | No, Wave 0 creates `08-VERIFICATION.md`. [VERIFIED: local `find`] |
 | R2-03 | R2-03 is traceable from `08-VERIFICATION.md`. [VERIFIED: .planning/v1.1-MILESTONE-AUDIT.md] | static artifact | `rg -n "\\| R2-03 \\|" .planning/phases/08-r2/08-VERIFICATION.md` | No, Wave 0 creates `08-VERIFICATION.md`. [VERIFIED: local `find`] |
 | R2-04 | R2-04 is traceable from `08-VERIFICATION.md`. [VERIFIED: .planning/v1.1-MILESTONE-AUDIT.md] | static artifact | `rg -n "\\| R2-04 \\|" .planning/phases/08-r2/08-VERIFICATION.md` | No, Wave 0 creates `08-VERIFICATION.md`. [VERIFIED: local `find`] |
 
@@ -390,7 +392,7 @@ Verification artifacts should cite secret names and sanitized evidence, not secr
 - [ ] `.planning/phases/13-grapit-grabit-rename/13-VERIFICATION.md` - closes missing artifact blocker for Phase 13 without adding global requirement IDs. [VERIFIED: local `find`; VERIFIED: .planning/v1.1-MILESTONE-AUDIT.md]
 - [ ] `.planning/phases/15-resend-heygrabit-com-cutover-transactional-email-secret-mana/15-VERIFICATION.md` - closes missing artifact blocker for Phase 15 without adding global requirement IDs. [VERIFIED: local `find`; VERIFIED: .planning/v1.1-MILESTONE-AUDIT.md]
 - [ ] `.planning/phases/06-social-login-bugfix/06-02-SUMMARY.md` - add AUTH-01 frontmatter traceability. [VERIFIED: .planning/phases/06-social-login-bugfix/06-02-SUMMARY.md]
-- [ ] `.planning/phases/08-r2/08-03-SUMMARY.md` - add R2-02 frontmatter traceability, preferably with R2-01..R2-04. [VERIFIED: .planning/phases/08-r2/08-03-SUMMARY.md]
+- [ ] `.planning/phases/08-r2/08-03-SUMMARY.md` - add R2-01..R2-04 frontmatter traceability when backed by `08-VERIFICATION.md`, with R2-02 explicitly required. [VERIFIED: .planning/phases/08-r2/08-03-SUMMARY.md]
 
 ## Security Domain
 
@@ -445,4 +447,4 @@ Verification artifacts should cite secret names and sanitized evidence, not secr
 - Pitfalls: HIGH - pitfalls are grounded in recorded deferred UAT, missing artifacts, and follow-up evidence. [VERIFIED: .planning/phases/13-grapit-grabit-rename/13-UAT.md; VERIFIED: .planning/phases/15-resend-heygrabit-com-cutover-transactional-email-secret-mana/15-HUMAN-UAT.md; VERIFIED: .planning/quick/260427-pcf-r2-cors/260427-pcf-SUMMARY.md]
 
 **Research date:** 2026-05-04 [VERIFIED: environment_context current_date]
-**Valid until:** 2026-06-03 for local artifact planning, unless `.planning` audit rules or target phase artifacts change sooner. [ASSUMED]
+**Valid until:** 2026-06-03 for local artifact planning, unless `.planning` audit rules or target phase artifacts change sooner. [RESOLVED]
