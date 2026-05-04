@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: 안정화 + 고도화
-status: ready_to_plan
+status: "Phase 21 shipped — PR #31"
 stopped_at: Phase 20 production smoke human verification pending
-last_updated: "2026-05-04T03:21:26.000Z"
-last_activity: 2026-05-04 -- Phase 21 complete; ready to plan Phase 22
+last_updated: "2026-05-04T04:26:15.702Z"
+last_activity: "2026-05-04 -- Phase 21 shipped — PR #31"
 progress:
   total_phases: 22
   completed_phases: 17
   total_plans: 78
   completed_plans: 77
-  percent: 77
+  percent: 99
 ---
 
 # Project State
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-04-09)
 
 Phase: 22
 Plan: Not started
-Status: Ready to plan
-Last activity: 2026-05-04 -- Phase 21 complete; ready to plan Phase 22
+Status: Phase 21 shipped — PR #31
+Last activity: 2026-05-04 -- Phase 21 shipped — PR #31
 
 Progress: [██████████] 99%
 
