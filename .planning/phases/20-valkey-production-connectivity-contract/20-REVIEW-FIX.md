@@ -1,240 +1,72 @@
 ---
 phase: 20-valkey-production-connectivity-contract
-fixed_at: 2026-04-30T08:53:01Z
+fixed_at: 2026-05-04T00:52:03Z
 review_path: .planning/phases/20-valkey-production-connectivity-contract/20-REVIEW.md
-iteration: 10
-findings_in_scope: 23
-fixed: 23
+iteration: 1
+findings_in_scope: 5
+fixed: 5
 skipped: 0
 status: all_fixed
 ---
 
 # Phase 20: Code Review Fix Report
 
-**Fixed at:** 2026-04-30T08:53:01Z
+**Fixed at:** 2026-05-04T00:52:03Z
 **Source review:** .planning/phases/20-valkey-production-connectivity-contract/20-REVIEW.md
-**Iteration:** 10
+**Iteration:** 1
 
 **Summary:**
-- Findings in scope: 23
-- Fixed: 23
+- Findings in scope: 5
+- Fixed: 5
 - Skipped: 0
-- Production smoke remains deferred; this report does not mark Phase 20 passed or complete.
-- Iteration 4 closes the 2026-04-30T07:46:48Z follow-up review: Redis/health auth-value redaction, post-unlock seat-state proof, strict idle seconds parsing, and failed-check artifact capture.
-- Iteration 5 closes the 2026-04-30T08:08:14Z follow-up review: production bootstrap Redis ping, required Sentry evidence, broader bearer redaction, Socket.IO preflight min-instances guard, and non-Error health rejection handling.
-- Iteration 6 closes the 2026-04-30T08:18:53Z follow-up review: international E.164 phone and short payment/order identifiers in smoke artifact redaction.
-- Iteration 7 closes the 2026-04-30T08:27:08Z follow-up review: JSON-style payment/order identifiers in smoke artifact redaction.
-- Iteration 8 closes the 2026-04-30T08:36:44Z follow-up review: Korean local phone values and explicit Sentry observation preflight/help contract.
-- Iteration 9 closes the 2026-04-30T08:44:xx follow-up review: JSON-style Authorization/Cookie fields in smoke artifact redaction.
-- Iteration 10 closes the 2026-04-30T08:5x follow-up review: JWT label fields in smoke artifact redaction.
 
 ## Fixed Issues
 
-### CR-01: BLOCKER - Cluster Socket.IO subscriber duplicate ignores required options
+### CR-01: BLOCKER - `workflow_run` can deploy an untrusted CI run
 
-**Status:** fixed
-**Files modified:** `apps/api/src/modules/booking/providers/redis-io.adapter.ts`, `apps/api/src/modules/booking/__tests__/redis-io.adapter.spec.ts`
-**Commit:** 93e2a99
-**Applied fix:** Added a cluster-aware subscriber duplicate helper that passes cluster overrides as the second `Cluster#duplicate()` argument, preserving `enableReadyCheck: false` and `redisOptions.maxRetriesPerRequest: null`. Added a real `Cluster` unit test for the overload shape.
+**Status:** `fixed: requires human verification`
+**Files modified:** `.github/workflows/deploy.yml`
+**Commit:** c2fd938
+**Applied fix:** Added the same fail-closed job guard to `deploy-api` and `deploy-web`, requiring the completed CI run to be a successful canonical `push` to `main` from `github.repository` before production secrets and OIDC credentials are used.
 
-### CR-02: BLOCKER - Cluster REDIS_URL parsing drops auth and TLS
+### CR-02: BLOCKER - Production startup treats Redis pub/sub as ready before it is connected
 
-**Status:** fixed
-**Files modified:** `apps/api/src/modules/booking/providers/redis.provider.ts`, `apps/api/src/modules/booking/providers/__tests__/redis.provider.spec.ts`
-**Commit:** 98e762c
-**Applied fix:** Validated Redis URL schemes, propagated username/password/TLS into cluster `redisOptions`, and rejected cluster URLs that select unsupported logical databases. Added regression tests for TLS/auth preservation and DB path rejection.
+**Status:** `fixed: requires human verification`
+**Files modified:** `apps/api/src/main.ts`, `apps/api/src/modules/booking/providers/redis-io.adapter.ts`, `apps/api/src/modules/booking/__tests__/redis-io.adapter.spec.ts`
+**Commit:** fe83f0d
+**Applied fix:** Made `RedisIoAdapter.connectToRedis()` async, required the duplicated subscriber to expose ioredis readiness methods, connect successfully, and return `PONG` before wiring the Socket.IO Redis adapter. Production bootstrap now awaits that readiness result before `app.useWebSocketAdapter()`, and the minimal subscriber regression is now a negative test.
 
-### CR-03: BLOCKER - Redis URL redaction misses rediss:// secrets
+### WR-01: WARNING - Health check reports `up` for malformed Redis clients
 
-**Status:** fixed
-**Files modified:** `apps/api/src/modules/booking/providers/redis.provider.ts`, `apps/api/src/modules/booking/providers/__tests__/redis.provider.spec.ts`, `apps/api/src/health/redis.health.indicator.ts`, `apps/api/src/health/__tests__/redis.health.indicator.spec.ts`, `scripts/smoke-valkey-production.mjs`
-**Commit:** 3bf5587
-**Applied fix:** Updated provider, health, and smoke redaction to match both `redis://` and `rediss://` URLs. Added provider log and health down-message regression tests that include both URL schemes.
-
-### CR-04: BLOCKER - Smoke script can pass without enforcing the stated production contract
-
-**Status:** fixed: requires human verification
-**Files modified:** `scripts/smoke-valkey-production.mjs`
-**Commit:** e67e464
-**Applied fix:** Required health smoke to prove `mode=cluster`, `client=ioredis-cluster`, and `configured=true`. Strengthened runtime contract checks to require Cloud Run `VALKEY_MODE=cluster`, Secret Manager REDIS_URL binding, private-ranges VPC egress, configured network interfaces, and live Memorystore `CLUSTER` mode. Artifact output now lists each failed runtime contract field.
-
-### WR-01: WARNING - Standalone log smoke checks only the moment after it starts
-
-**Status:** fixed: requires human verification
-**Files modified:** `scripts/smoke-valkey-production.mjs`
-**Commit:** 4b6616f
-**Applied fix:** Standalone `--check logs` now requires `GRABIT_SMOKE_LOG_SINCE_UTC`; `--check all` still uses the current run start time. Log summaries include the queried `since` timestamp.
-
-### CR-04 Follow-up: BLOCKER - Smoke checks can still target a non-production API origin
-
-**Status:** fixed
-**Files modified:** `scripts/smoke-valkey-production.mjs`
-**Commit:** e878458
-**Applied fix:** Added `parseProductionApiUrl()` and `EXPECTED_API_ORIGIN=https://api.heygrabit.com`, then routed `GRABIT_API_URL` through that parser before reading auth, running `gcloud`, or contacting any HTTP/Socket.IO endpoint. `localhost` and staging origins now fail before smoke execution.
-
-### WR-02: WARNING - Lua smoke accepts any status string containing "locked"
-
-**Status:** fixed
-**Files modified:** `scripts/smoke-valkey-production.mjs`
-**Commit:** e878458
-**Applied fix:** Replaced `statusSummary.includes('locked')` with an exact `seatState === 'locked'` predicate so `not_locked`, `unlocked`, or error text containing the substring cannot satisfy the Lua smoke status gate.
-
-### CR-01 Final Follow-up: BLOCKER - Smoke PASS is not tied to the traffic-serving Cloud Run revision
-
-**Status:** fixed
-**Files modified:** `scripts/smoke-valkey-production.mjs`, `.planning/phases/20-valkey-production-connectivity-contract/20-HUMAN-UAT.md`
-**Commit:** 485f56b
-**Applied fix:** Added a runtime contract gate requiring the recorded `latestReadyRevisionName` to serve 100% of public traffic before automated smoke can PASS. Socket.IO instance lookup and log keyword queries now include `resource.labels.revision_name="${latestReadyRevisionName}"`, and the UAT artifact records traffic split plus the revision-scoped log filter requirement.
-
-### CR-01 Iteration 4: BLOCKER - Redis/health sanitizers redact labels but leave secret values
-
-**Status:** fixed
-**Files modified:** `apps/api/src/modules/booking/providers/redis.provider.ts`, `apps/api/src/modules/booking/providers/__tests__/redis.provider.spec.ts`, `apps/api/src/health/redis.health.indicator.ts`, `apps/api/src/health/__tests__/redis.health.indicator.spec.ts`
-**Commit:** dc445c5
-**Applied fix:** Added explicit `Authorization: Bearer`, `Cookie`, `JWT:` label, and JWT-like value patterns to both Redis provider and health sanitizers. Regression tests now include bearer, cookie, and JWT-like values and assert that raw credential material is absent from provider logs and health down responses.
-
-### CR-02 Iteration 4: BLOCKER - Lua smoke can pass unlock while the seat remains locked
-
-**Status:** fixed
-**Files modified:** `scripts/smoke-valkey-production.mjs`
-**Commit:** dc445c5
-**Applied fix:** Added `readSeatState()` and `unlockAndVerifySeat()` so Lua and Socket.IO smoke paths query seat status after `DELETE` and require the post-unlock state to be anything other than `locked`. Cleanup failures now make the smoke check fail instead of treating transport success as Redis cleanup proof.
-
-### WR-01 Iteration 4: WARNING - Idle seconds parser accepts malformed values
-
-**Status:** fixed
-**Files modified:** `scripts/smoke-valkey-production.mjs`
-**Commit:** dc445c5
-**Applied fix:** Replaced `Number.parseInt()` with a strict positive-integer regex so values such as `30m`, `1.5`, or `1800abc` fail before production contact.
-
-### WR-02 Iteration 4: WARNING - Failed smoke checks abort before writing FAIL evidence
-
-**Status:** fixed
-**Files modified:** `scripts/smoke-valkey-production.mjs`
-**Commit:** dc445c5
-**Applied fix:** Added `captureCheck()` plus fallback Cloud Run and Memorystore evidence objects. Per-check failures are now recorded as `ok: false` summaries in the artifact, while unsafe setup validation such as missing required inputs still fails fast.
-
-### CR-01 Iteration 5: BLOCKER - Production startup can serve before Redis ping succeeds
-
-**Status:** fixed
-**Files modified:** `apps/api/src/main.ts`
-**Commit:** 3170858
-**Applied fix:** Added a production-only bootstrap `redisClient.ping()` before Socket.IO adapter wiring and `app.listen()`. Non-`PONG` responses throw through the existing fatal bootstrap handler.
-
-### CR-02 Iteration 5: BLOCKER - Log smoke can PASS without Sentry evidence
-
-**Status:** fixed
-**Files modified:** `scripts/smoke-valkey-production.mjs`
-**Commit:** 3170858
-**Applied fix:** `checkLogs()` now requires a non-empty `GRABIT_SMOKE_SENTRY_OBSERVATION` for PASS. Missing Sentry observation records `Sentry observation=missing` and returns `ok: false`.
-
-### CR-03 Iteration 5: BLOCKER - Smoke bearer redaction can leave token suffixes
-
-**Status:** fixed
-**Files modified:** `scripts/smoke-valkey-production.mjs`
-**Commit:** 3170858
-**Applied fix:** Expanded the smoke `Authorization: Bearer` redaction pattern to consume any non-whitespace token value, covering opaque tokens with `+`, `/`, or `=` characters.
-
-### WR-01 Iteration 5: WARNING - Two-instance Socket.IO smoke conflicts with default min-instances=0
-
-**Status:** fixed
-**Files modified:** `scripts/smoke-valkey-production.mjs`
-**Commit:** 3170858
-**Applied fix:** Added a preflight return before opening Socket.IO clients or mutating seats when Cloud Run `min-instances` evidence is below 2. The FAIL summary instructs the operator to temporarily set `min-instances=2` and restore pre-state.
-
-### WR-02 Iteration 5: WARNING - Redis health can throw on non-Error rejection
-
-**Status:** fixed
+**Status:** `fixed: requires human verification`
 **Files modified:** `apps/api/src/health/redis.health.indicator.ts`, `apps/api/src/health/__tests__/redis.health.indicator.spec.ts`
-**Commit:** 3170858
-**Applied fix:** Converted non-Error rejection values with `String(err)` before sanitization and added an `ECONNRESET` string rejection regression test.
+**Commit:** ed8a2a7
+**Applied fix:** Restricted the no-`ping()` health fallback to metadata-proven local in-memory Redis only. Configured Redis clients without `ping()` now report `down` with `redis ping unavailable`, with a regression test for malformed configured clients.
 
-### CR-01 Iteration 6: BLOCKER - Smoke artifact redaction can leak international phone/order values
+### WR-02: WARNING - Socket.IO smoke can race room join before lock emission
 
-**Status:** fixed
+**Status:** `fixed: requires human verification`
 **Files modified:** `scripts/smoke-valkey-production.mjs`
-**Commit:** 22ebedc
-**Applied fix:** Expanded phone redaction to E.164 `+[1-9]\\d{5,14}` and payment/order redaction to consume short non-whitespace values, covering `+8613800138000`, `+12025550123`, `orderId=ORD-1`, and quoted payment identifiers.
+**Commit:** fa5592d
+**Applied fix:** Replaced the fixed 750ms sleep after `join-showtime` with a timeout-backed wait for the gateway `joined` event or Socket.IO ack, and fail the smoke if join returns an error payload or never acknowledges.
 
-### CR-01 Iteration 7: BLOCKER - Smoke artifact redaction can leak JSON-style payment/order values
+### WR-03: WARNING - Cleanup smoke treats malformed seat status as success
 
-**Status:** fixed
+**Status:** `fixed: requires human verification`
 **Files modified:** `scripts/smoke-valkey-production.mjs`
-**Commit:** d294008
-**Applied fix:** Made payment/order redaction quote-aware for keys and values, covering JSON-style `"paymentKey":"pk_test_123"` and `"orderId":"ORD-1"` summaries produced from `JSON.stringify()` error bodies.
-
-### CR-01 Iteration 8: BLOCKER - Smoke artifact redaction can leak local phone values
-
-**Status:** fixed
-**Files modified:** `scripts/smoke-valkey-production.mjs`
-**Commit:** 6119823
-**Applied fix:** Added `PHONE_PATTERN` covering E.164 and Korean local mobile values such as `01012345678` and `010-1234-5678`, then routed phone redaction through `<phone:redacted>`.
-
-### WR-01 Iteration 8: WARNING - Sentry observation requirement missing from help/preflight contract
-
-**Status:** fixed
-**Files modified:** `scripts/smoke-valkey-production.mjs`
-**Commit:** 6119823
-**Applied fix:** Added `GRABIT_SMOKE_SENTRY_OBSERVATION` to `--help` env documentation and made `--check logs` / `--check all` fail fast when the observation is missing.
-
-### CR-01 Iteration 9: BLOCKER - Smoke artifact redaction can leak JSON-style Authorization/Cookie values
-
-**Status:** fixed
-**Files modified:** `scripts/smoke-valkey-production.mjs`
-**Commit:** 6558702
-**Applied fix:** Added quoted-key redaction patterns for serialized JSON fields such as `"Authorization":"Bearer ..."` and `"Cookie":"..."` while preserving the existing raw header line redaction.
-
-### CR-01 Iteration 10: BLOCKER - Smoke artifact redaction can leak JWT label values
-
-**Status:** fixed
-**Files modified:** `scripts/smoke-valkey-production.mjs`
-**Commit:** 2adafff
-**Applied fix:** Added quote-aware JWT key/value redaction for `JWT: ...`, `JWT=...`, and serialized `"JWT":"..."` payload fields before generic JWT-like value redaction.
-
-## Skipped Issues
-
-None - all in-scope findings were fixed.
+**Commit:** 992e41c
+**Applied fix:** Made `readSeatState()` require a valid response body with a `seats` object. Missing seat keys are now explicitly treated as `available`, while malformed bodies, missing `seats`, or non-string seat states throw and fail the smoke evidence.
 
 ## Verification
 
-- CR-01: `pnpm --filter @grabit/api exec tsc --noEmit --pretty false`; `pnpm --filter @grabit/api exec vitest run src/modules/booking/__tests__/redis-io.adapter.spec.ts`
-- CR-02: `pnpm --filter @grabit/api exec tsc --noEmit --pretty false`; `pnpm --filter @grabit/api exec vitest run src/modules/booking/providers/__tests__/redis.provider.spec.ts`
-- CR-03: `pnpm --filter @grabit/api exec tsc --noEmit --pretty false`; `pnpm --filter @grabit/api exec vitest run src/modules/booking/providers/__tests__/redis.provider.spec.ts src/health/__tests__/redis.health.indicator.spec.ts`; `node --check scripts/smoke-valkey-production.mjs`
-- CR-04: `node --check scripts/smoke-valkey-production.mjs`
-- WR-01: `node --check scripts/smoke-valkey-production.mjs`
-- CR-04 follow-up: `GRABIT_API_URL=http://localhost:8080 node scripts/smoke-valkey-production.mjs --check health` fails with `GRABIT_API_URL must be exactly https://api.heygrabit.com`; `GRABIT_API_URL=https://staging.example.com node scripts/smoke-valkey-production.mjs --check health` fails with the same message
-- WR-02: `rg -n "statusSummary\\.includes" scripts/smoke-valkey-production.mjs` returns no matches; `rg -n "const seatLocked = seatState === 'locked'" scripts/smoke-valkey-production.mjs` finds the exact-state predicate
-- CR-01 final follow-up: `node --check scripts/smoke-valkey-production.mjs`; `rg -n "isLatestReadyServingAllTraffic|cloudRunRevisionFilter|resource\\.labels\\.revision_name|Traffic split|latestReadyRevisionName serving 100% traffic" scripts/smoke-valkey-production.mjs .planning/phases/20-valkey-production-connectivity-contract/20-HUMAN-UAT.md`
-- Iteration 4: `node --check scripts/smoke-valkey-production.mjs`
-- Iteration 4: `pnpm --filter @grabit/web exec node ../../scripts/smoke-valkey-production.mjs --help`
-- Iteration 4: `pnpm --filter @grabit/api exec vitest run src/modules/booking/providers/__tests__/redis.provider.spec.ts src/health/__tests__/redis.health.indicator.spec.ts src/modules/booking/__tests__/redis-io.adapter.spec.ts`
-- Iteration 4: `pnpm --filter @grabit/api exec tsc --noEmit --pretty false`
-- Iteration 4: malformed `GRABIT_SMOKE_IDLE_SECONDS=30m` fails with `GRABIT_SMOKE_IDLE_SECONDS must be a positive integer`
-- Iteration 4: `rg -n "parsePositiveInteger|unlockAndVerifySeat|captureCheck|fallbackCloudRun|fallbackMemorystore|afterState|GRABIT_SMOKE_IDLE_SECONDS" scripts/smoke-valkey-production.mjs`
-- Iteration 5: `node --check scripts/smoke-valkey-production.mjs`
-- Iteration 5: `pnpm --filter @grabit/web exec node ../../scripts/smoke-valkey-production.mjs --help`
-- Iteration 5: `pnpm --filter @grabit/api exec vitest run src/health/__tests__/redis.health.indicator.spec.ts src/modules/booking/providers/__tests__/redis.provider.spec.ts src/modules/booking/__tests__/redis-io.adapter.spec.ts`
-- Iteration 5: `pnpm --filter @grabit/api exec tsc --noEmit --pretty false`
-- Iteration 5: `rg -n 'redisClient\\.ping\\(\\)|Redis ping returned|preflight failed: min-instances|set grabit-api temporary min-instances=2|ECONNRESET' apps/api/src/main.ts apps/api/src/health apps/api/src/modules/booking/providers scripts/smoke-valkey-production.mjs`
-- Iteration 5: `rg -n 'Authorization:\\\\s\\*Bearer\\\\s\\+\\[\\^\\\\s' scripts/smoke-valkey-production.mjs`
-- Iteration 6: `node --check scripts/smoke-valkey-production.mjs`
-- Iteration 6: `pnpm --filter @grabit/web exec node ../../scripts/smoke-valkey-production.mjs --help`
-- Iteration 6: source-extracted `redact()` harness confirms `+821012345678`, `+8613800138000`, `+12025550123`, `orderId=ORD-1`, `paymentKey=\"pk_1\"`, bearer token, cookie, JWT, and Redis URL fragments do not remain.
-- Iteration 7: `node --check scripts/smoke-valkey-production.mjs`
-- Iteration 7: `pnpm --filter @grabit/web exec node ../../scripts/smoke-valkey-production.mjs --help`
-- Iteration 7: source-extracted `redact()` harness confirms JSON-style `"paymentKey":"pk_test_123"` and `"orderId":"ORD-1"` fragments do not remain.
-- Iteration 8: `node --check scripts/smoke-valkey-production.mjs`
-- Iteration 8: `pnpm --filter @grabit/web exec node ../../scripts/smoke-valkey-production.mjs --help`
-- Iteration 8: source-extracted `redact()` harness confirms `01012345678`, `010-1234-5678`, E.164 phone numbers, payment/order identifiers, bearer token, cookie, JWT, and Redis URL fragments do not remain.
-- Iteration 8: missing `GRABIT_SMOKE_SENTRY_OBSERVATION` with `--check all` fails with the explicit required-env error.
-- Iteration 9: `node --check scripts/smoke-valkey-production.mjs`
-- Iteration 9: source-extracted `redact()` harness confirms raw and JSON-style Authorization/Cookie fragments do not remain.
-- Iteration 10: `node --check scripts/smoke-valkey-production.mjs`
-- Iteration 10: `pnpm --filter @grabit/web exec node ../../scripts/smoke-valkey-production.mjs --help`
-- Iteration 10: source-extracted `redact()` harness confirms `JWT: header.payload.signature` and `"JWT":"json.header.payload"` fragments do not remain.
+- CR-01: Re-read `.github/workflows/deploy.yml` guard sections after edit. No YAML-specific checker is configured for GitHub Actions expressions in this repo.
+- CR-02: Re-read modified sections; `pnpm --filter @grabit/api exec vitest run src/modules/booking/__tests__/redis-io.adapter.spec.ts --reporter=dot` passed. `pnpm --filter @grabit/api exec tsc --noEmit --pretty false` was attempted and failed only with pre-existing `@grabit/shared` resolution/admin implicit-any errors outside the modified files.
+- WR-01: Re-read modified sections; `pnpm --filter @grabit/api exec vitest run src/health/__tests__/redis.health.indicator.spec.ts --reporter=dot` passed. API typecheck was attempted again and failed with the same pre-existing unrelated errors.
+- WR-02: Re-read `joinShowtime()` and helper changes; `node -c scripts/smoke-valkey-production.mjs` passed.
+- WR-03: Re-read `readSeatState()` changes; `node -c scripts/smoke-valkey-production.mjs` passed.
 
 ---
 
-_Fixed: 2026-04-30T08:53:01Z_
+_Fixed: 2026-05-04T00:52:03Z_
 _Fixer: the agent (gsd-code-fixer)_
-_Iteration: 10_
+_Iteration: 1_
