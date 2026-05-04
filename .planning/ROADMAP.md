@@ -138,7 +138,7 @@ Plans:
 |-----------|-------------|--------------|----------------|--------|
 | v1.0 MVP | 1-5 | archived | 23/23 | Shipped |
 | v1.1 안정화 + 고도화 | 6-21 | archived | 77/77 | Shipped |
-| v2.0 Fanmeet Launch | 22-27 | 39/39 mapped | 0/0 | Ready for Phase 22 planning |
+| v2.0 Fanmeet Launch | 22-27 | 39/39 mapped | 5/5 | Ready for Phase 23 planning |
 
 ## Backlog
 
