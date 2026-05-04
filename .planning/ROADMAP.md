@@ -33,6 +33,15 @@
 
 **Merged from:** 22 Operator UAT gates, 23 Nyquist validation backfill, 24 Operational hardening sweep
 
+**Plans:** 5 plans
+
+Plans:
+- [ ] 22-01-PLAN.md — Wave 1 evidence ledger and human UAT scaffold for PREF-01/PREF-02/PREF-03
+- [ ] 22-02-PLAN.md — Wave 1 v1.1 validation baseline/backfill for PREF-02
+- [ ] 22-03-PLAN.md — Wave 1 operational hardening register and Valkey smoke artifact-path fix for PREF-03
+- [ ] 22-04-PLAN.md — Wave 2 SMS/email/legal human UAT closure for PREF-01
+- [ ] 22-05-PLAN.md — Wave 3 final evidence aggregation and Phase 23 readiness verification for PREF-01/PREF-02/PREF-03
+
 **Success criteria:**
 1. SMS real-device, email reset-to-login, legal public/sign-off evidence가 `PASS`, `ACCEPTED_RISK`, `BLOCKER`로 분류된다.
 2. v1.1 artifact gaps가 complete, accepted caveat, v2.0 blocker 중 하나로 정리되고 evidence 위치가 traceable하다.
