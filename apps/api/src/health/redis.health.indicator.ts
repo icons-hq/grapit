@@ -53,6 +53,13 @@ export class RedisHealthIndicator {
     const metadata = getRedisRuntimeMetadata(this.redis);
 
     if (typeof maybeRedis.ping !== 'function') {
+      if (metadata.client !== 'in-memory' || metadata.configured !== false) {
+        return indicator.down({
+          ...metadata,
+          message: 'redis ping unavailable',
+        });
+      }
+
       return indicator.up({
         ...metadata,
         message: 'ping unavailable; assuming local in-memory Redis mock',

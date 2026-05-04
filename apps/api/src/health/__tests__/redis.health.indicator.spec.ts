@@ -111,6 +111,23 @@ describe('RedisHealthIndicator', () => {
     expect(result['redis']?.message).toContain('ping unavailable');
   });
 
+  it('reports down when a configured redis client has no ping method', async () => {
+    const malformedRedis = withRedisMetadata({ get: vi.fn() }, {
+      mode: 'cluster',
+      client: 'ioredis-cluster',
+      configured: true,
+    });
+    indicator = new RedisHealthIndicator(mockHealth as never, malformedRedis as never);
+
+    const result = (await indicator.isHealthy('redis')) as IndicatorResult;
+
+    expect(result['redis']?.status).toBe('down');
+    expect(result['redis']?.mode).toBe('cluster');
+    expect(result['redis']?.client).toBe('ioredis-cluster');
+    expect(result['redis']?.configured).toBe(true);
+    expect(result['redis']?.message).toBe('redis ping unavailable');
+  });
+
   it('reports down when redis.ping() rejects with error', async () => {
     mockRedis.ping.mockRejectedValueOnce(new Error('ECONNREFUSED'));
 
