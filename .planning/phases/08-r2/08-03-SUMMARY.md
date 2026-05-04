@@ -8,6 +8,7 @@ duration: "21min"
 tasks_completed: 2
 tasks_total: 2
 files_modified: []
+requirements-completed: [R2-01, R2-02, R2-03, R2-04]
 ---
 
 # Plan 03 Summary: R2 인프라 설정 + 검증
