@@ -3,10 +3,12 @@
 > **Audit trail only.** Do not use as input to planning, research, or execution agents.
 > Decisions are captured in CONTEXT.md — this log preserves the alternatives considered.
 > Originally gathered for the Operator UAT gate. After the 2026-05-04 phase merge, these decisions apply to the PREF-01 sub-gate inside Phase 22 Preflight Closure.
+> Review update 2026-05-04T16:34:37+09:00: `request_user_input` was unavailable in Codex Default mode, so the workflow fallback selected the already-captured recommended choices for the merged validation backfill and hardening sub-gates.
 
 **Date:** 2026-05-04T16:12:52+09:00
+**Last reviewed:** 2026-05-04T16:34:37+09:00
 **Phase:** 22-Preflight Closure
-**Areas discussed:** Evidence acceptance policy, SMS real-device gate, Email inbox gate, Legal public/sign-off gate
+**Areas discussed:** Evidence acceptance policy, SMS real-device gate, Email inbox gate, Legal public/sign-off gate, Validation backfill gate, Operational hardening gate
 
 ---
 
@@ -98,9 +100,47 @@
 
 ---
 
+## Validation Backfill Gate
+
+| Question | Option | Description | Selected |
+|----------|--------|-------------|----------|
+| Gap classification | `COMPLETE / ACCEPTED_CAVEAT / BLOCKER` | Keeps validation gaps distinct from launch gate `PASS` while still forcing explicit evidence or reason | ✓ |
+| Gap classification | Reuse `PASS / ACCEPTED_RISK / BLOCKER` | Aligns with launch gates but blurs automated validation vs human caveat semantics | |
+| Gap classification | `done / pending` only | Fast to record but loses blocker severity | |
+| Human-needed evidence | Keep visible as gate or caveat | Do not mark operator-needed evidence as automated proof | ✓ |
+| Human-needed evidence | Treat old UAT notes as enough | Faster, but can fabricate closure from incomplete evidence | |
+| Human-needed evidence | Defer all human-needed evidence | Avoids false PASS but leaves Phase 23 with unclear blockers | |
+| Traceability edits | Point to existing evidence or Phase 22 baseline only | Supplements traceability without implying prior work was re-run | ✓ |
+| Traceability edits | Rewrite prior artifacts | Creates cleaner old files but misrepresents historical evidence timing | |
+| Traceability edits | No traceability edits | Lowest churn but leaves v1.1 gaps hard to audit | |
+
+**Workflow fallback choice:** `COMPLETE / ACCEPTED_CAVEAT / BLOCKER`, keep human-needed evidence visible, trace only existing evidence or the new Phase 22 baseline.
+**Notes:** This mirrors CONTEXT decisions D-18 through D-20 and keeps the validation backfill scoped to PREF-02.
+
+---
+
+## Operational Hardening Gate
+
+| Question | Option | Description | Selected |
+|----------|--------|-------------|----------|
+| Fragility closure | Concrete fix, accepted risk, or launch blocker | Forces every Valkey/R2/SMS/email/legal fragility into an actionable terminal state | ✓ |
+| Fragility closure | Document risks only | Useful as an inventory but does not protect Phase 23 planning | |
+| Fragility closure | Fix everything immediately | Over-expands the phase into feature and infra work | |
+| Debug sessions | Close, convert to v2.0 risk, or link to Phase 22 fix | Prevents diagnosed sessions from staying as invisible launch blockers | ✓ |
+| Debug sessions | Leave existing debug state untouched | Avoids churn but preserves ambiguous operational risk | |
+| Debug sessions | Reopen every debug session | Too broad for preflight closure | |
+| Direct code fixes | Existing operational surfaces only | Allows blocker fixes without starting new fanmeet functionality | ✓ |
+| Direct code fixes | No direct code fixes | Safer scope but can leave launch blockers unresolved | |
+| Direct code fixes | Include Phase 23+ features when related | Collapses phase boundaries and risks preflight scope creep | |
+
+**Workflow fallback choice:** concrete fix / accepted risk / launch blocker, normalize debug sessions, and limit direct fixes to already-shipped operational surfaces.
+**Notes:** This mirrors CONTEXT decisions D-21 through D-23 and keeps hardening scoped to PREF-03.
+
+---
+
 ## the agent's Discretion
 
-None.
+None. The fallback selections above did not introduce new discretionary implementation choices; they formalized decisions already captured in CONTEXT.md.
 
 ## Deferred Ideas
 
