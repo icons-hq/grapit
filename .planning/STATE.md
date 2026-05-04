@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Fanmeet Launch
 status: executing
-stopped_at: Phase 22 UI-SPEC approved
-last_updated: "2026-05-04T08:59:14.013Z"
-last_activity: 2026-05-04 -- Phase 22 execution started
+stopped_at: Completed 22-04-PLAN.md
+last_updated: "2026-05-04T09:23:03.207Z"
+last_activity: 2026-05-04
 progress:
   total_phases: 7
   completed_phases: 0
   total_plans: 5
-  completed_plans: 3
-  percent: 60
+  completed_plans: 4
+  percent: 80
 ---
 
 # Project State
@@ -26,9 +26,9 @@ See: .planning/PROJECT.md (updated 2026-05-04)
 ## Current Position
 
 Phase: 22 (Preflight Closure) — EXECUTING
-Plan: 1 of 5
-Status: Executing Phase 22
-Last activity: 2026-05-04 -- Phase 22 execution started
+Plan: 5 of 5
+Status: Ready to execute
+Last activity: 2026-05-04
 
 ## Deferred Items
 
@@ -160,6 +160,7 @@ Summary: 70 total items (debug sessions 5, quick tasks 41, seeds 2, UAT gaps 12,
 | Phase 19 P02 | 8min | 2 tasks | 5 files |
 | Phase 19 P04 | 7min | 2 tasks | 4 files |
 | Phase 19 P03 | 6min | 2 tasks | 2 files |
+| Phase 22 P04 | 10min | 3 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -213,6 +214,8 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 - [Phase 19-03]: Existing pending orderId returns now require active Valkey ownership for stored reservation seats.
 - [Phase 19-03]: Existing payment idempotency remains first and does not require active locks after sold transition.
 - [Phase 19-03]: Post-Toss consume failure cancels the Toss payment and skips the DB sold transition.
+- [Phase 22-04]: Classified unresolved SMS, Email, Legal, and Provider Observation gates as ACCEPTED_RISK per operator instruction on 2026-05-04 KST. — Direct production/operator evidence was not collected, so Phase 22 records accepted launch risk instead of PASS evidence.
+- [Phase 22-04]: Kept missing SMS/email/legal/provider proof out of PASS status and did not invent screenshots, provider IDs, Cloud Run/Sentry hits, mailbox receipts, or registration evidence. — Accepted-risk closure must preserve the distinction between direct evidence and approved launch risk.
 
 ### Pending Todos
 
@@ -250,8 +253,8 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 
 ## Session Continuity
 
-Last session: 2026-05-04T07:47:05.246Z
-Stopped at: Phase 22 UI-SPEC approved
-Resume file: .planning/phases/22-preflight-closure/22-UI-SPEC.md
+Last session: 2026-05-04T09:22:59.173Z
+Stopped at: Completed 22-04-PLAN.md
+Resume file: None
 
 **Planned Phase:** v2.0 Phase 22 (preflight-closure) — former 22-24 launch preflight/quality/hardening scope — plan not started

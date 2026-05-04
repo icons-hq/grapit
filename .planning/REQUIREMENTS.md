@@ -7,7 +7,7 @@
 
 ### Preflight
 
-- [ ] **PREF-01**: Operator can complete launch-facing SMS, legal, and email real-device/sign-off gates with evidence before fanmeet implementation starts.
+- [x] **PREF-01**: Operator can complete launch-facing SMS, legal, and email real-device/sign-off gates with evidence before fanmeet implementation starts.
 - [ ] **PREF-02**: Maintainer can backfill v1.1 validation artifacts into a clear v2.0 launch-readiness baseline.
 - [ ] **PREF-03**: Maintainer can close or mitigate Valkey, R2, SMS, email, and legal operational fragility as explicit launch blockers.
 
@@ -99,7 +99,7 @@ Phase mapping was consolidated on 2026-05-04 from the initial 22-phase launch-ri
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PREF-01 | Phase 22 | Pending |
+| PREF-01 | Phase 22 | Complete |
 | PREF-02 | Phase 22 | Pending |
 | PREF-03 | Phase 22 | Pending |
 | FLAG-01 | Phase 23 | Pending |

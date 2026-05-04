@@ -33,7 +33,7 @@
 
 **Merged from:** 22 Operator UAT gates, 23 Nyquist validation backfill, 24 Operational hardening sweep
 
-**Plans:** 3/5 plans executed
+**Plans:** 4/5 plans executed
 
 Plans:
 **Wave 1**
@@ -42,7 +42,7 @@ Plans:
 - [x] 22-03-PLAN.md — Wave 1 operational hardening register and Valkey smoke artifact-path fix for PREF-03
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 22-04-PLAN.md — Wave 2 SMS/email/legal human UAT closure for PREF-01
+- [x] 22-04-PLAN.md — Wave 2 SMS/email/legal human UAT closure for PREF-01
 
 **Wave 3** *(blocked on Wave 2 completion)*
 - [ ] 22-05-PLAN.md — Wave 3 final evidence aggregation and Phase 23 readiness verification for PREF-01/PREF-02/PREF-03
