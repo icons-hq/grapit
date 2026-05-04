@@ -342,10 +342,13 @@ Plans:
   1. `06-VERIFICATION.md`, `08-VERIFICATION.md`, `13-VERIFICATION.md`, `15-VERIFICATION.md`가 phase evidence와 일치하게 작성된다.
   2. orphaned/partial requirement rows가 verification files and SUMMARY frontmatter에서 추적 가능해진다.
   3. generated artifact는 실제 code/ops evidence를 참조하고 없는 evidence를 satisfied로 표시하지 않는다.
-**Plans:** 0 plans
+**Plans:** 4 plans
 
 Plans:
-- [ ] TBD (run `/gsd-plan-phase 21`)
+- [ ] 21-01-PLAN.md — Phase 06 AUTH-01 verification artifact and SUMMARY traceability backfill
+- [ ] 21-02-PLAN.md — Phase 08 R2 verification artifact and R2-02 SUMMARY traceability backfill
+- [ ] 21-03-PLAN.md — Phase 13 verification artifact with human-needed false-claim guards
+- [ ] 21-04-PLAN.md — Phase 15 verification artifact with human-needed and secret-leak guards
 
 ### Phase 22: Operator UAT gates
 
