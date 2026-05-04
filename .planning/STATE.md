@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: 안정화 + 고도화
-status: "v1.1 closed after Phase 21; Phase 22-24 deferred to v2.0 Fanmeet Launch"
-stopped_at: v2.0 Fanmeet Launch milestone setup
-last_updated: "2026-05-04T05:27:53.621Z"
-last_activity: "2026-05-04 -- v1.1 closed after Phase 21; Phase 22-24 deferred to v2.0"
+status: v1.1 closed after Phase 21; Phase 22-24 deferred to v2.0 Fanmeet Launch
+stopped_at: v1.1 scope closed after Phase 21; v2.0 Fanmeet Launch setup next
+last_updated: "2026-05-04T05:45:00.000Z"
+last_activity: "2026-05-04 -- v1.1 archived and tagged; v2.0 Fanmeet Launch setup next"
 progress:
   total_phases: 18
   completed_phases: 18
@@ -18,7 +18,7 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-04-09)
+See: .planning/PROJECT.md (updated 2026-05-04)
 
 **Core value:** 사용자가 원하는 공연을 발견하고, 좌석을 직접 선택하여, 안정적으로 예매를 완료할 수 있는 것
 **Current focus:** v2.0 Fanmeet Launch — initialize milestone with deferred Phase 22-24 preflight scope
@@ -28,9 +28,88 @@ See: .planning/PROJECT.md (updated 2026-04-09)
 Phase: v2.0 preflight (deferred Phase 22-24)
 Plan: Not started
 Status: v1.1 closed after Phase 21; Phase 22-24 deferred to v2.0 Fanmeet Launch
-Last activity: 2026-05-04 -- v1.1 closed after Phase 21; Phase 22-24 deferred to v2.0
+Last activity: 2026-05-04 -- v1.1 archived and tagged; v2.0 Fanmeet Launch setup next
 
 Progress: [██████████] 100%
+
+## Deferred Items
+
+Items acknowledged and deferred at milestone close on 2026-05-04.
+
+Summary: 70 total items (debug sessions 5, quick tasks 41, seeds 2, UAT gaps 12, verification gaps 10).
+
+| Category | Item | Status |
+|----------|------|--------|
+| debug | legal-pages-404-heygrabit | diagnosed |
+| debug | mobile-ui-broken | investigating |
+| debug | password-reset-email-not-delivered-prod | diagnosed |
+| debug | password-reset-link-redirects-to-request | diagnosed |
+| debug | signup-sms-otp-verify-wrong | diagnosed |
+| quick_task | 260331-jjc-phase-2-ui-review-priority-fixes-font-me | missing |
+| quick_task | 260331-l6q-fix-select-box-z-index-bug-and-performan | missing |
+| quick_task | 260331-ldw-ui-ux | missing |
+| quick_task | 260331-lt4-info-panel-width-fix | missing |
+| quick_task | 260331-m0k-ui | missing |
+| quick_task | 260331-mq2-rename-middleware-ts-to-proxy-ts-for-nex | missing |
+| quick_task | 260331-n9m-admin-poster-upload-fix | missing |
+| quick_task | 260331-o5k-casting-preview-save-fix | missing |
+| quick_task | 260402-kl6-ui-font-medium | missing |
+| quick_task | 260402-l4j-ui | missing |
+| quick_task | 260402-n7x-fix-redis-3-stale-user-seats-orphaned-lo | missing |
+| quick_task | 260403-f4z-fix-redis-eval-not-a-function-in-booking | missing |
+| quick_task | 260406-n1z-toss-payments-test-key | missing |
+| quick_task | 260406-nee-toss-payments-fix | missing |
+| quick_task | 260407-fbi-paid-seat-rebookable-fix | missing |
+| quick_task | 260407-gee-websocket | missing |
+| quick_task | 260407-gru-confirm-disconnect-intentional-disconnec | missing |
+| quick_task | 260407-jyt-pr-3-6-tosspaymenterror-http-refundbooki | missing |
+| quick_task | 260407-lid-svg | missing |
+| quick_task | 260408-ldc-sentry | missing |
+| quick_task | 260408-mas-pr-phase-05-pr | missing |
+| quick_task | 260408-mo9-github-actions-node-js-20-deprecation-ac | missing |
+| quick_task | 260408-nij-phase-2-4-path-traversal-seat-maps-uniqu | missing |
+| quick_task | 260408-oow-phase-04-6 | missing |
+| quick_task | 260409-cloudrun-deploy | missing |
+| quick_task | 260409-gwc-v1-0-tech-debt-cleanup-test-fix-ts-fix-c | missing |
+| quick_task | 260409-obb-ci | missing |
+| quick_task | 260409-os1-gcloud | missing |
+| quick_task | 260413-jw1-admin-grapit-test | missing |
+| quick_task | 260413-k99-admin-grapit-test-cli | missing |
+| quick_task | 260417-ghv-ux | missing |
+| quick_task | 260420-cd7-deploy-secrets-missing-infobip-sentry-toss | missing |
+| quick_task | 260420-ci-toss-secrets-restore | missing |
+| quick_task | 260420-et3-pr-16-3-sms-attempts-phone-axis-send-5xx | missing |
+| quick_task | 260420-fi4-phase-10-ui-review-3-phone-verification- | missing |
+| quick_task | 260420-oxe-code-review-fix | missing |
+| quick_task | 260422-eya-seat-map-viewer-maxselect-locked | missing |
+| quick_task | 260427-kch-410-expired-auth-service-ts-verifycode | missing |
+| quick_task | 260427-lyr-social-login-refresh-double-fire-fix | missing |
+| quick_task | 260427-pcf-r2-cors | missing |
+| quick_task | 260504-k38-close-v1-1-scope-after-phase-21-and-defe | missing |
+| seed | SEED-001-phone-input-i18n | dormant |
+| seed | SEED-002-brand-rename-grapit-to-grabit | dormant |
+| uat_gap | Phase 09 09-HUMAN-UAT.md | partial; 2 pending scenarios |
+| uat_gap | Phase 09 09-UAT.md | diagnosed; 0 pending scenarios |
+| uat_gap | Phase 10 10-HUMAN-UAT.md | partial; 1 pending scenario |
+| uat_gap | Phase 10 10-UAT.md | partial; 0 pending scenarios |
+| uat_gap | Phase 12 12-HUMAN-UAT.md | partial; 3 pending scenarios |
+| uat_gap | Phase 13 13-HUMAN-UAT.md | unknown; 0 pending scenarios |
+| uat_gap | Phase 13 13-UAT.md | diagnosed; 0 pending scenarios |
+| uat_gap | Phase 14 14-HUMAN-UAT.md | unknown; 0 pending scenarios |
+| uat_gap | Phase 15 15-HUMAN-UAT.md | unknown; 0 pending scenarios |
+| uat_gap | Phase 16 16-HUMAN-UAT.md | unknown; 0 pending scenarios |
+| uat_gap | Phase 18 18-HUMAN-UAT.md | unknown; 0 pending scenarios |
+| uat_gap | Phase 20 20-HUMAN-UAT.md | unknown; 0 pending scenarios |
+| verification_gap | Phase 10 10-VERIFICATION.md | human_needed |
+| verification_gap | Phase 10.1 10.1-VERIFICATION.md | human_needed |
+| verification_gap | Phase 11 11-VERIFICATION.md | human_needed |
+| verification_gap | Phase 12 12-VERIFICATION.md | human_needed |
+| verification_gap | Phase 13 13-VERIFICATION.md | human_needed |
+| verification_gap | Phase 14 14-VERIFICATION.md | human_needed |
+| verification_gap | Phase 15 15-VERIFICATION.md | human_needed |
+| verification_gap | Phase 16 16-VERIFICATION.md | human_needed |
+| verification_gap | Phase 18 18-VERIFICATION.md | human_needed |
+| verification_gap | Phase 20 20-VERIFICATION.md | human_needed |
 
 ## Performance Metrics
 

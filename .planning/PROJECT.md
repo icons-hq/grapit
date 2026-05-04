@@ -28,20 +28,24 @@
 - ✓ 프로덕션 password reset email → confirm → login flow가 public API origin을 사용하고 localhost rewrite에 의존하지 않음 — Phase 18 (v1.1) *(Sentry email-service 독립 관측은 caveat로 추적)*
 - ✓ 소셜 로그인 재로그인 실패 수정 증거 추적성 복구 — Phase 6 evidence backfilled in Phase 21 (v1.1)
 - ✓ Cloudflare R2 API 토큰/버킷, CORS, 프로덕션 업로드/서빙 증거 추적성 복구 — Phase 8 evidence backfilled in Phase 21 (v1.1) *(custom-domain cutover R2-04는 Active로 유지)*
+- ✓ SMS OTP v3 자체 구현 + Valkey hash-tag CROSSSLOT 방어 — Phase 10/10.1/14 (v1.1) *(real-device operator gate는 v2.0 preflight로 이월)*
+- ✓ Admin dashboard + 통계 캐시 + 차트 UI — Phase 11 (v1.1)
+- ✓ UX 현대화 + SVG 좌석맵 미니맵/터치 타겟/선택 피드백 — Phase 12 (v1.1)
+- ✓ Grabit brand/domain cutover + heygrabit.com transactional email 기반 — Phase 13/15 (v1.1) *(legacy cleanup과 Naver/Daum inbox observation은 v2.0 gate로 이월)*
+- ✓ Legal public pages 구현 + Footer URL 교체 — Phase 16 (v1.1) *(법무/operator sign-off는 v2.0 gate로 이월)*
+- ✓ Reservation/payment lock ownership enforcement — Phase 19 (v1.1)
 
 ### Active
 
-#### Current Milestone: v1.1 안정화 + 고도화
+#### Next Milestone: v2.0 Fanmeet Launch
 
-**Goal:** 인프라 안정화(기술부채 청산, Redis→Valkey 전환, R2 연동, SMS 인증 실연동)를 완료하고, 어드민 고도화 및 UX 현대화로 서비스 품질을 끌어올린다.
+**Goal:** 2026-07-04 Girl Rules fanmeet launch를 기준으로 operator verification, validation backfill, operational hardening, 다국어/글로벌 결제/현장 운영 기능을 실제 launch surface에서 완성한다.
 
 **Target features:**
-- [ ] 기술부채 12건 청산 (password reset, 테스트 회귀, Toss E2E 등)
-- [x] Upstash Redis → Google Valkey 전환 (좌석 잠금, pub/sub, 캐시 전부) — Phase 7 (코드 완료, 런타임 검증 4건은 배포 후)
-- [ ] Cloudflare R2 완전 연동 (키 발급 → 프로덕션 업로드/서빙)
-- [ ] SMS 인증 실연동 (dev mock → 실제 SMS 발송/검증)
-- [ ] 어드민 고도화 + 통계 대시보드
-- [ ] UX 현대화 — 디자인 트렌드 반영 + SVG 좌석맵 UX 개선
+- [ ] Phase 22 Operator UAT gates — SMS/legal/email real-device and external sign-off evidence
+- [ ] Phase 23 Nyquist validation backfill — v1.1 artifact-only gaps를 launch-readiness baseline으로 정리
+- [ ] Phase 24 Operational hardening sweep — Valkey/R2/SMS/email/legal fragility를 launch blocker 관점에서 해소
+- [ ] Phase 25+ fanmeet implementation — 5개국 다국어, 글로벌 결제, 운영 콘솔, 대기열/부하/DR/on-call, QR 입장 운영
 
 ### Out of Scope
 
@@ -59,9 +63,11 @@
 
 ## Context
 
-### Current State (v1.1 stabilization active — 2026-05-04)
+### Current State (v1.1 shipped — 2026-05-04)
 
-- **v1.1 milestone 완료:** Phase 6~12 전 구간 shipped. Phase 12 "UX 현대화"까지 포함하여 안정화·고도화 단계 종료
+- **Shipped version:** v1.1 안정화 + 고도화 archived/tagged after Phase 21. Full archive: `.planning/milestones/v1.1-ROADMAP.md`, `.planning/milestones/v1.1-REQUIREMENTS.md`, `.planning/milestones/v1.1-MILESTONE-AUDIT.md`
+- **Next focus:** v2.0 Fanmeet Launch. Phase 22-24 are deferred launch preflight/quality/hardening gates, not active v1.1 blockers.
+- **v1.1 milestone 완료:** Phase 6~21 closed. Phase 22-24는 v2.0 Fanmeet Launch로 이월
 - **Phase 12 산출:** shadcn UI 시스템 modernize(globals.css 토큰), 좌석 선택 visual feedback(Option C useEffect fill transition + 체크마크 fade-in/out), react-zoom-pan-pinch 내장 MiniMap viewport rect 동기화, 모바일 WCAG 2.5.5 터치 타겟(44.8px first paint), admin SVG unified parsing contract (`[data-stage]` root+descendant + enum), UX-01~UX-06 6개 requirement 모두 validated
 - **Tech stack:** Next.js 16 + React 19 + Tailwind CSS v4 + NestJS 11 + Drizzle ORM + PostgreSQL 16 + Google Memorystore for Valkey (ioredis) + Socket.IO + Toss Payments + Infobip SMS v3
 - **배포:** Cloud Run (서울 asia-northeast3), GitHub Actions CI/CD, Sentry 에러 추적
@@ -72,6 +78,7 @@
 - **Phase 14 완료 (2026-04-24):** SMS OTP CROSSSLOT fix — `{sms:${e164}}:<role>` hash-tag 스킴으로 전환, 4-심볼 module export(smsOtpKey/smsAttemptsKey/smsVerifiedKey/VERIFY_AND_INCREMENT_LUA)를 Plan 02/03 통합 테스트의 single source of truth 로 확정, cluster-mode CROSSSLOT 회귀 가드(`sms-cluster-crossslot.integration.spec.ts`) + ci.yml `test:integration` step 추가, phone-verification server-message-priority(D-07/D-08) UX 분기. 자동 검증 8/9 (api 283/283 + web 143/143 green, typecheck 0 errors, code review 0 critical). 잔여 HUMAN-UAT 3건: SC-1 실기기 프로덕션 SMS 인증 · ci.yml integration step PR green · pre-existing `sms-throttle.integration.spec.ts` TTL 2건 (@grabit rename 여파 — deferred-items.md)
 - **Phase 18 완료 (2026-04-29):** Password reset production API origin fix — production `next.config.ts` rewrites가 `[]`로 고정되어 `/api`/`socket.io`가 `localhost:8080`으로 새지 않으며, web API callers는 `apiUrl()`을 통해 `https://api.heygrabit.com` public origin을 사용한다. 최종 Cloud Run web revision `grabit-web-00023-62r`, API revision `grabit-api-00021-nnn` 기준 reset email → confirm POST 200 → login success evidence 기록. 자동 검증 web 186/186, API auth/email 323/323 green. 잔여 caveat: Sentry `component:email-service` zero-count/event-id는 독립 확인하지 않고 operator-approved caveat로 추적.
 - **Phase 21 완료 (2026-05-04):** Verification artifact backfill — Phase 06 `AUTH-01`, Phase 08 `R2-01..R2-04`, Phase 13/15 missing verification artifact를 기존 evidence에 맞춰 복구. Phase 08 `R2-04` custom-domain cutover는 `PARTIAL`/Pending으로 유지했고, Phase 13/15 operator evidence는 `human_needed` caveat를 보존. `pnpm build`, `pnpm test` green.
+- **v1.1 close caveat:** `audit-open` 70개 항목은 deferred로 승인 처리되어 `.planning/STATE.md` `Deferred Items`에 기록. 이 중 launch-facing operator/human-needed evidence는 v2.0 Phase 22-24에서 처리.
 
 ### 참조 사이트
 NOL 티켓(nol.interpark.com/ticket)을 상세 분석한 5개 문서가 docs/에 있음:
@@ -144,4 +151,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-04 — Phase 21 verification artifact backfill 완료. AUTH-01 및 R2-01~R2-03 traceability는 복구했고, R2-04 custom-domain cutover와 Phase 13/15 operator evidence caveat는 남겨 둠.*
+*Last updated: 2026-05-04 after v1.1 milestone archive*

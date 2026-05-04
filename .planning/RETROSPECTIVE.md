@@ -48,6 +48,44 @@
 
 ---
 
+## Milestone: v1.1 — 안정화 + 고도화
+
+**Shipped:** 2026-05-04
+**Phases:** 18 tracked phase dirs | **Plans:** 77 completed (+1 superseded placeholder)
+
+### What Was Built
+- Valkey migration, R2 production evidence, SMS v3 OTP, admin dashboard, UX modernization, Grabit brand/domain cutover, legal public pages, and email cutover were brought into the product baseline.
+- Password reset production API origin, seat lock ownership, Valkey runtime contract, and missing verification artifacts were addressed as explicit audit gap closures.
+- Phase 22-24 work was moved out of v1.1 into v2.0 Fanmeet Launch so remaining human/operator evidence is tested against the real launch surface.
+
+### What Worked
+- **Audit-to-gap-closure loop:** The v1.1 audit surfaced real integration breaks, and Phase 18-21 closed the highest-risk ones without expanding the milestone indefinitely.
+- **Quick task hotfix lane:** Production issues such as social login race, R2 CORS, SMS OTP expiry, and deploy secret drift were handled quickly without derailing planned phases.
+- **Verification backfill discipline:** Missing `VERIFICATION.md` files were repaired without fabricating satisfied evidence; `human_needed` stayed visible where evidence was not actually collected.
+
+### What Was Inefficient
+- **Artifact drift stayed expensive:** Many requirements were implemented but not reflected in SUMMARY frontmatter, REQUIREMENTS status, or phase verification artifacts until audit time.
+- **Scope boundary was too late:** Phase 22-24 were still modeled as v1.1 until the end, making roadmap analysis report incomplete phases even after the intended closure point.
+- **Human/operator checks accumulated:** SMS real-device, legal sign-off, mailbox observation, and Valkey production smoke evidence should have been promoted earlier as explicit launch gates.
+
+### Patterns Established
+- Treat production-facing human checks as launch preflight phases instead of burying them in implementation phases.
+- Keep `human_needed` as a first-class status when evidence is absent; do not convert it to complete for archive neatness.
+- Use gap-closure phases for real integration breaks, and move lower-confidence operational hardening into the next milestone when it depends on launch context.
+
+### Key Lessons
+1. Requirements and verification metadata need to be updated at phase completion, not during milestone close.
+2. A milestone close can accept known gaps only when they are named, counted, and routed to the next milestone.
+3. Runtime contracts for Valkey/R2/SMS/email need both automated tests and operator evidence; one does not replace the other.
+4. Phase archives keep the active ROADMAP small, but the archive must preserve caveats instead of rewriting history.
+
+### Cost Observations
+- Model mix: quality profile with GSD subagents and inline fallback where Codex Default mode blocked interactive choice tools
+- Sessions: multi-week milestone execution with phase, quick, debug, and audit workflows
+- Notable: The late artifact cleanup created avoidable context churn; v2.0 should keep validation state current per phase.
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -55,14 +93,17 @@
 | Milestone | Phases | Plans | Timeline | Key Change |
 |-----------|--------|-------|----------|------------|
 | v1.0 MVP | 5 | 23 | 13일 | GSD 워크플로우 최초 적용, phase 격리 전략 검증 |
+| v1.1 안정화 + 고도화 | 18 | 77 | 26일 | 운영 안정화 + audit gap closure + launch-facing gates를 v2.0으로 명시 이월 |
 
 ### Cumulative Quality
 
 | Milestone | Backend Tests | Frontend Tests | Tech Debt Items |
 |-----------|--------------|----------------|-----------------|
 | v1.0 | 63 | 45 | 12 |
+| v1.1 | 323+ | 186+ | 70 deferred artifacts tracked at close |
 
 ### Top Lessons (Verified Across Milestones)
 
 1. 고위험 영역은 독립 phase로 격리하면 집중도와 완성도가 높아진다
 2. Requirements 추적은 실시간으로 — 나중에 일괄 정리하면 stale 데이터가 쌓인다
+3. Human/operator evidence는 구현 phase의 부속물이 아니라 launch-readiness phase로 승격해야 한다
