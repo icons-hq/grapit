@@ -39,7 +39,7 @@ Full details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 - [x] **Phase 18: Password reset production API origin fix** - password reset confirm의 production API origin break 해소 (gap closure) (completed 2026-04-29)
 - [x] **Phase 19: Seat lock ownership enforcement** - reservation/payment 경계에서 Valkey lock ownership 강제 (gap closure) (completed 2026-04-29)
 - [ ] **Phase 20: Valkey production connectivity contract** - Cloud Run → Valkey runtime/cluster contract 검증 (gap closure)
-- [ ] **Phase 21: Verification artifact backfill** - missing `VERIFICATION.md`와 requirement evidence 계약 복구 (gap closure)
+- [x] **Phase 21: Verification artifact backfill** - missing `VERIFICATION.md`와 requirement evidence 계약 복구 (gap closure) (completed 2026-05-04)
 - [ ] **Phase 22: Operator UAT gates** - SMS, legal, email operator/human gates 완료 (gap closure)
 - [ ] **Phase 23: Nyquist validation backfill** - partial/missing validation artifacts 보강 (gap closure)
 - [ ] **Phase 24: Operational hardening sweep** - audit tech-debt follow-up를 launch blocker로 승격해 정리 (gap closure)
@@ -342,13 +342,13 @@ Plans:
   1. `06-VERIFICATION.md`, `08-VERIFICATION.md`, `13-VERIFICATION.md`, `15-VERIFICATION.md`가 phase evidence와 일치하게 작성된다.
   2. orphaned/partial requirement rows가 verification files and SUMMARY frontmatter에서 추적 가능해진다.
   3. generated artifact는 실제 code/ops evidence를 참조하고 없는 evidence를 satisfied로 표시하지 않는다.
-**Plans:** 4 plans
+**Plans:** 4/4 plans complete
 
 Plans:
-- [ ] 21-01-PLAN.md — Phase 06 AUTH-01 verification artifact and SUMMARY traceability backfill
-- [ ] 21-02-PLAN.md — Phase 08 R2 verification artifact and R2-02 SUMMARY traceability backfill
-- [ ] 21-03-PLAN.md — Phase 13 verification artifact with human-needed false-claim guards
-- [ ] 21-04-PLAN.md — Phase 15 verification artifact with human-needed and secret-leak guards
+- [x] 21-01-PLAN.md — Phase 06 AUTH-01 verification artifact and SUMMARY traceability backfill
+- [x] 21-02-PLAN.md — Phase 08 R2 verification artifact and R2-02 SUMMARY traceability backfill
+- [x] 21-03-PLAN.md — Phase 13 verification artifact with human-needed false-claim guards
+- [x] 21-04-PLAN.md — Phase 15 verification artifact with human-needed and secret-leak guards
 
 ### Phase 22: Operator UAT gates
 
@@ -424,7 +424,7 @@ Phases execute in numeric order: 6 -> 7 -> 8 -> 9 -> 10 -> 11 -> 12 -> 13 -> 14 
 | 18. Password reset production API origin fix | v1.1 | 2/2 | Complete    | 2026-04-29 |
 | 19. Seat lock ownership enforcement | v1.1 | 4/4 | Complete    | 2026-04-29 |
 | 20. Valkey production connectivity contract | v1.1 | 4/4 | Human Needed |  |
-| 21. Verification artifact backfill | v1.1 | 0/0 | Planned | - |
+| 21. Verification artifact backfill | v1.1 | 4/4 | Complete   | 2026-05-04 |
 | 22. Operator UAT gates | v1.1 | 0/0 | Planned | - |
 | 23. Nyquist validation backfill | v1.1 | 0/0 | Planned | - |
 | 24. Operational hardening sweep | v1.1 | 0/0 | Planned | - |
