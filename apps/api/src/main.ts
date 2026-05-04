@@ -56,7 +56,7 @@ async function bootstrap() {
     }
   }
   const redisIoAdapter = new RedisIoAdapter(app, redisClient);
-  const redisPubSubReady = redisIoAdapter.connectToRedis();
+  const redisPubSubReady = await redisIoAdapter.connectToRedis();
   if (process.env['NODE_ENV'] === 'production' && !redisPubSubReady) {
     console.error(
       '[bootstrap] Socket.IO Redis adapter failed to wire in production. ' +
