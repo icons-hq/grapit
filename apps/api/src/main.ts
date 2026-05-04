@@ -49,8 +49,21 @@ async function bootstrap() {
   // broadcast across Cloud Run instances via Valkey pub/sub (VALK-04).
   // Falls back to the default in-process adapter when REDIS_URL is not set.
   const redisClient = app.get<IORedis>(REDIS_CLIENT);
+  if (process.env['NODE_ENV'] === 'production') {
+    const pong = await redisClient.ping();
+    if (pong !== 'PONG') {
+      throw new Error(`[bootstrap] Redis ping returned ${String(pong)}`);
+    }
+  }
   const redisIoAdapter = new RedisIoAdapter(app, redisClient);
-  redisIoAdapter.connectToRedis();
+  const redisPubSubReady = await redisIoAdapter.connectToRedis();
+  if (process.env['NODE_ENV'] === 'production' && !redisPubSubReady) {
+    console.error(
+      '[bootstrap] Socket.IO Redis adapter failed to wire in production. ' +
+        'Redis-backed Socket.IO pub/sub is required. Aborting startup.',
+    );
+    process.exit(1);
+  }
   app.useWebSocketAdapter(redisIoAdapter);
 
   // WR-06: origin 은 항상 배열로 통일(dev default 포함) — express-cors 는 배열마다
