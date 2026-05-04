@@ -442,22 +442,19 @@ Cloudflare R2 documents CORS policy fields for browser uploads, and existing upl
 | A5 | External dashboard authentication was not performed during this research session. [ASSUMED] | Sources, Metadata | If a dashboard is unavailable during execution, the plan needs fallback evidence or blocker classification. |
 | A6 | The research validity window is 30 days for repo/code structure and 7 days for npm/provider details. [ASSUMED] | Metadata | Fast-moving package/provider behavior could change before implementation. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Which human/operator accounts have access to Resend, Sentry, Gmail, GCP Cloud Run/Logging, Cloudflare R2, and support/privacy mailboxes?** [ASSUMED]
    - What we know: These systems are required or implied by Phase 22 evidence. [VERIFIED: .planning/phases/22-preflight-closure/22-CONTEXT.md; VERIFIED: apps/api/src/modules/auth/email/email.service.ts; VERIFIED: apps/api/src/modules/admin/upload.service.ts]
-   - What's unclear: This research did not verify live dashboard authentication or account ownership. [VERIFIED: environment audit]
-   - Recommendation: Planner should create evidence collection tasks that either gather dashboard proof or classify missing access as accepted risk/blocker. [VERIFIED: .planning/phases/22-preflight-closure/22-CONTEXT.md]
+   - Resolution: Live dashboard/account access remains operator-gated in Plan 04. The resulting evidence can become `PASS`, `ACCEPTED_RISK`, or `BLOCKER` in `22-HUMAN-UAT.md` and the final ledger, so no pre-execution decision checkpoint is required. [VERIFIED: .planning/phases/22-preflight-closure/22-04-PLAN.md; VERIFIED: .planning/phases/22-preflight-closure/22-CONTEXT.md]
 
 2. **Will Naver/Daum be formally accepted as risk in Phase 22?** [ASSUMED]
    - What we know: D-11 allows Naver/Daum untested status to default to `ACCEPTED_RISK` with D-02 approval. [VERIFIED: .planning/phases/22-preflight-closure/22-CONTEXT.md]
-   - What's unclear: The operator approval itself is not yet recorded in Phase 22 evidence. [VERIFIED: .planning/phases/22-preflight-closure; VERIFIED: .planning/STATE.md]
-   - Recommendation: Planner should include an explicit approval row, not bury this in a summary. [VERIFIED: .planning/phases/22-preflight-closure/22-UI-SPEC.md]
+   - Resolution: Naver/Daum defaults to `ACCEPTED_RISK` only when D-02 maintainer and operator approvals are recorded. Plan 04 records the gate outcome in `22-HUMAN-UAT.md`; Plan 05 carries it into final verification and Phase 23 readiness. [VERIFIED: .planning/phases/22-preflight-closure/22-04-PLAN.md; VERIFIED: .planning/phases/22-preflight-closure/22-05-PLAN.md; VERIFIED: .planning/phases/22-preflight-closure/22-UI-SPEC.md]
 
 3. **Should `scripts/smoke-valkey-production.mjs` default artifact path be patched, or should Phase 22 always pass `GRABIT_SMOKE_ARTIFACT`?** [ASSUMED]
    - What we know: The script default points at a Phase 20 path that is not present in current `.planning/phases`. [VERIFIED: scripts/smoke-valkey-production.mjs; VERIFIED: ls .planning/phases]
-   - What's unclear: The planner may prefer a code fix or an execution-only environment override. [ASSUMED]
-   - Recommendation: If production smoke is part of Phase 22 execution, plan either the env override in the command or a small script-default fix. [VERIFIED: scripts/smoke-valkey-production.mjs; VERIFIED: .planning/phases/22-preflight-closure/22-CONTEXT.md]
+   - Resolution: Plan 03 makes this a concrete fix by changing the default artifact path to `.planning/phases/22-preflight-closure/artifacts/valkey-smoke.md` while preserving `GRABIT_SMOKE_ARTIFACT` override behavior. [VERIFIED: .planning/phases/22-preflight-closure/22-03-PLAN.md; VERIFIED: scripts/smoke-valkey-production.mjs; VERIFIED: .planning/phases/22-preflight-closure/22-CONTEXT.md]
 
 ## Environment Availability
 
