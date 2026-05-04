@@ -8,6 +8,19 @@
 
 사용자가 원하는 공연을 발견하고, 좌석을 직접 선택하여, 안정적으로 예매를 완료할 수 있는 것. 이 흐름이 끊기면 서비스의 의미가 없다.
 
+## Current Milestone: v2.0 Fanmeet Launch
+
+**Goal:** 2026-07-04 Girl Rules fanmeet을 무사 진행하기 위해, heygrabit.com 위에 1~2만 동접 흡수 가능한 5개국 다국어 + 4종 결제 + 운영팀 풀 콘솔을 구축하여, 2026-05-15 광고 오픈 → 2026-05-말 부하 PASS 후 결제 cutover/티켓팅 오픈 → 2026-07-04 행사 종료까지 단일 critical incident 0건으로 운영한다.
+
+**Target features:**
+- Deferred v1.1 launch-readiness gates: operator UAT, validation backfill, operational hardening
+- Production-compatible feature flags, expand-only migrations, canary deploy, Cloud Run min/max/prewarm policy
+- 5-locale i18n (`ko`, `en`, `th`, `zh-CN`, `zh-TW`) with Korean root URLs preserved
+- LINE login, 5-country SMS verification, multinational consent/audit log, legal/footer readiness
+- Queue, WAF, Cloud Run prewarm, k6 load tests, DR drills, on-call playbooks before payment cutover
+- Multi-floor SVG booking, 4 payment methods, refund state machine, random cancelled-seat holding, QR issuance
+- Admin event/content/CS/audit console, QR scan console, event-day operations, settlement/export/retrospective
+
 ## Requirements
 
 ### Validated
@@ -37,15 +50,12 @@
 
 ### Active
 
-#### Next Milestone: v2.0 Fanmeet Launch
-
-**Goal:** 2026-07-04 Girl Rules fanmeet launch를 기준으로 operator verification, validation backfill, operational hardening, 다국어/글로벌 결제/현장 운영 기능을 실제 launch surface에서 완성한다.
-
-**Target features:**
-- [ ] Phase 22 Operator UAT gates — SMS/legal/email real-device and external sign-off evidence
-- [ ] Phase 23 Nyquist validation backfill — v1.1 artifact-only gaps를 launch-readiness baseline으로 정리
-- [ ] Phase 24 Operational hardening sweep — Valkey/R2/SMS/email/legal fragility를 launch blocker 관점에서 해소
-- [ ] Phase 25+ fanmeet implementation — 5개국 다국어, 글로벌 결제, 운영 콘솔, 대기열/부하/DR/on-call, QR 입장 운영
+- [ ] v2.0 Phase 22-24 launch preflight/quality/hardening gates completed before fanmeet implementation
+- [ ] M1 advertising open on 2026-05-15 with 5-language event surface, signup, admin content, queue/WAF/prewarm basics, and booking disabled
+- [ ] M2 pre-cutover gates on 2026-05-22~26: k6 10k/20k PASS, DR PASS, on-call/Sentry/WAF readiness PASS
+- [ ] M2 payment cutover at 2026-05-말 only after gates pass: Toss live keys + `BOOKING_ENABLED=true` + 4 payment paths + QR issuance
+- [ ] M3 event operations by 2026-07-04: QR verification, duplicate/tamper detection, offline fallback, field monitoring, incident playbooks
+- [ ] M4 post-event close by 2026-07-10: entry export, no-show list, settlement data, retrospective
 
 ### Out of Scope
 
@@ -63,10 +73,10 @@
 
 ## Context
 
-### Current State (v1.1 shipped — 2026-05-04)
+### Current State (v2.0 started — 2026-05-04)
 
 - **Shipped version:** v1.1 안정화 + 고도화 archived/tagged after Phase 21. Full archive: `.planning/milestones/v1.1-ROADMAP.md`, `.planning/milestones/v1.1-REQUIREMENTS.md`, `.planning/milestones/v1.1-MILESTONE-AUDIT.md`
-- **Next focus:** v2.0 Fanmeet Launch. Phase 22-24 are deferred launch preflight/quality/hardening gates, not active v1.1 blockers.
+- **Current focus:** v2.0 Fanmeet Launch initialized from `docs/v2.0-fanmeet-milestone-spec.md`. Phase 22-24 are deferred launch preflight/quality/hardening gates, then Phase 25+ implements the Girl Rules fanmeet launch surface.
 - **v1.1 milestone 완료:** Phase 6~21 closed. Phase 22-24는 v2.0 Fanmeet Launch로 이월
 - **Phase 12 산출:** shadcn UI 시스템 modernize(globals.css 토큰), 좌석 선택 visual feedback(Option C useEffect fill transition + 체크마크 fade-in/out), react-zoom-pan-pinch 내장 MiniMap viewport rect 동기화, 모바일 WCAG 2.5.5 터치 타겟(44.8px first paint), admin SVG unified parsing contract (`[data-stage]` root+descendant + enum), UX-01~UX-06 6개 requirement 모두 validated
 - **Tech stack:** Next.js 16 + React 19 + Tailwind CSS v4 + NestJS 11 + Drizzle ORM + PostgreSQL 16 + Google Memorystore for Valkey (ioredis) + Socket.IO + Toss Payments + Infobip SMS v3
@@ -100,6 +110,11 @@ NOL 티켓(nol.interpark.com/ticket)을 상세 분석한 5개 문서가 docs/에
 - **결제**: Toss Payments SDK 연동 (PG사 계약 및 사업자등록 필요)
 - **인프라**: GCP 서울 리전 (asia-northeast3) 기반, 초기 min-instances=0으로 비용 최소화
 - **SVG 좌석맵**: MVP부터 SVG 기반 좌석 선택 구현 (외부 제작 SVG 업로드 방식)
+- **v2.0 일정**: 2026-05-15 광고 오픈, 2026-05-말 payment cutover, 2026-07-04 행사, 2026-07-10 정산/회고
+- **v2.0 cutover gate**: 부하 PASS, DR PASS, on-call PASS 전에는 `BOOKING_ENABLED=true`로 전환하지 않는다
+- **v2.0 기존 prod 무중단**: 회원, 예매, 세션, 한국어 root URL을 보존하고 DB 변경은 expand-then-contract로만 진행
+- **v2.0 compliance trade-off**: 외부 법무 검토 없이 한국 PIPA 표준 템플릿 + 영문 일반 안내문 수준으로 진행하며, 국외이전 동의는 필수로 받는다
+- **v2.0 scope exclusion**: 알림 신청, 별도 landing page, WeChat login, PASS 본인인증, LaunchDarkly, 모바일 앱은 milestone 범위에서 제외
 
 ## Key Decisions
 
@@ -120,6 +135,9 @@ NOL 티켓(nol.interpark.com/ticket)을 상세 분석한 5개 문서가 docs/에
 | testcontainers 기반 Valkey 통합 테스트 (격리 vitest config) | Lua 스크립트가 실제 Valkey Lua 5.1 interpreter에서 돌아가는지 단위 테스트로는 검증 불가. `pnpm test:integration`으로만 실행되어 기본 피드백 루프 보호 | Phase 7 Plan 05 — cross-AI 리뷰 HIGH #2 대응 |
 | HealthController Valkey ping (Terminus 11) | Cloud Run liveness probe가 Valkey 장애를 즉시 감지 → silent outage 차단 | Phase 7 Plan 05 — cross-AI 리뷰 MEDIUM #7 대응 |
 | Family-based refresh token rotation | 토큰 탈취 감지 | ✓ Good — SHA-256 해시 저장, 가족 단위 무효화 |
+| v2.0 i18n URL policy | 기존 SEO를 보존하면서 해외 사용자를 지원해야 함 | Pending — `localePrefix: "as-needed"`, Korean `/`, foreign `/en` `/th` `/zh-CN` `/zh-TW` |
+| v2.0 payment cutover gate | 부하/DR/on-call 증거 없이 실 티켓팅을 열면 플랫폼 신뢰가 손상됨 | Pending — k6 + DR + on-call PASS 전 `BOOKING_ENABLED=true` 금지 |
+| v2.0 legal translation lock | 자동 번역 legal copy는 분쟁 리스크가 큼 | Pending — 법적 고지는 한/영 수동 입력만 허용, 태/중 사용자는 영어 고지 확인 |
 
 ## Security Debt
 
@@ -151,4 +169,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-04 after v1.1 milestone archive*
+*Last updated: 2026-05-04 after v2.0 Fanmeet Launch milestone initialization*

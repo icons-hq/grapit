@@ -41,7 +41,7 @@ Phase 09-tech-debt DEBT-05 를 CI 에 통합하는 과정에서, `apps/web/e2e/t
 
 ## 영향 범위
 
-- 실패 3건: 
+- 실패 3건:
   - `happy path: widget mounts AND confirm API intercepts on complete page`
   - `UI regression: cancel error URL → toast renders`
   - `UI regression: decline error URL → error message renders`

@@ -1,17 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.1
-milestone_name: 안정화 + 고도화
-status: v1.1 closed after Phase 21; Phase 22-24 deferred to v2.0 Fanmeet Launch
-stopped_at: v1.1 scope closed after Phase 21; v2.0 Fanmeet Launch setup next
-last_updated: "2026-05-04T05:45:00.000Z"
-last_activity: "2026-05-04 -- v1.1 archived and tagged; v2.0 Fanmeet Launch setup next"
+milestone: v2.0
+milestone_name: Fanmeet Launch
+status: planning
+last_updated: "2026-05-04T06:10:00.000Z"
+last_activity: 2026-05-04
 progress:
-  total_phases: 18
-  completed_phases: 18
-  total_plans: 77
-  completed_plans: 77
-  percent: 100
+  total_phases: 22
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -21,16 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-04)
 
 **Core value:** 사용자가 원하는 공연을 발견하고, 좌석을 직접 선택하여, 안정적으로 예매를 완료할 수 있는 것
-**Current focus:** v2.0 Fanmeet Launch — initialize milestone with deferred Phase 22-24 preflight scope
+**Current focus:** Phase 22 Operator UAT gates — start v2.0 Fanmeet Launch preflight
 
 ## Current Position
 
-Phase: v2.0 preflight (deferred Phase 22-24)
-Plan: Not started
-Status: v1.1 closed after Phase 21; Phase 22-24 deferred to v2.0 Fanmeet Launch
-Last activity: 2026-05-04 -- v1.1 archived and tagged; v2.0 Fanmeet Launch setup next
-
-Progress: [██████████] 100%
+Phase: 22 — Operator UAT gates
+Plan: —
+Status: Ready for phase planning
+Last activity: 2026-05-04 — v2.0 Fanmeet Launch requirements and roadmap initialized
 
 ## Deferred Items
 
@@ -175,6 +172,7 @@ Summary: 70 total items (debug sessions 5, quick tasks 41, seeds 2, UAT gaps 12,
 - Phase 16 added (2026-04-24): Legal pages launch — Phase 13 UAT Gap test 11 (pre-existing feature gap). apps/web/app/legal/{terms,privacy,marketing} 신규 구현 + Footer href="#" 플레이스홀더 교체. 한국 개보법·정통망법 상시 공개 URL 런칭 요건. Reference: .planning/debug/legal-pages-404-heygrabit.md
 - Phase 17 added (2026-04-24): Local dev health indicator fix — Phase 13 UAT Gap test 1 (pre-existing Phase 7-05 버그). InMemoryRedis mock 에 ping() 미구현 → Terminus 503. InMemoryRedis.ping() 추가 + capability probe. Reference: .planning/debug/local-api-health-503-no-redis.md
 - v1.1 closed after Phase 21 (2026-05-04): Phase 22 Operator UAT gates, Phase 23 Nyquist validation backfill, and Phase 24 Operational hardening sweep moved to v2.0 Fanmeet Launch as preflight/quality/hardening scope.
+- v2.0 Fanmeet Launch initialized (2026-05-04): Requirements mapped to Phases 22-43 from `docs/v2.0-fanmeet-milestone-spec.md`; next action is Phase 22 planning.
 
 ### Decisions
 
@@ -216,7 +214,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 
 ### Pending Todos
 
-- Initialize v2.0 Fanmeet Launch from `docs/v2.0-fanmeet-milestone-spec.md`, with deferred Phase 22-24 as the first preflight scope.
+- Plan Phase 22 Operator UAT gates.
 
 ### Blockers/Concerns
 
@@ -224,7 +222,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 - VALK-03: Valkey eval() 시그니처 차이 -- PARTIAL. 코드 레벨 14/14 verified (testcontainers + Lua 3개 라운드트립), 런타임 3/4 PASS (2026-04-13: /health redis up, 좌석 SET NX+TTL, 카탈로그 캐시 hit 52ms). 남은 미검증: (1) CLUSTER 모드 Valkey 호환성, (2) idle 재연결 장기 안정성. Phase 11 진행 중 관찰 후 closed 처리.
 - ~~R2-02: R2 CORS AllowedHeaders 와일드카드 불가~~ -- Phase 08에서 content-type 명시적 지정으로 해결
 - ADM-06: 통계 쿼리 캐싱 -- 전제조건(Phase 7 Valkey 전환) 완료. Phase 11 어드민 대시보드에서 캐시 레이어 활용 대상으로 이관.
-- Phase 22-24 are deferred to v2.0 Fanmeet Launch, not considered active blockers for v1.1 closure.
+- Phase 22-24 are now active v2.0 preflight phases. They must complete before Phase 25 fanmeet implementation work expands the launch surface.
 
 ### Quick Tasks Completed
 
@@ -249,8 +247,8 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 
 ## Session Continuity
 
-Last session: 2026-05-04T05:27:53Z
-Stopped at: v1.1 scope closed after Phase 21; v2.0 Fanmeet Launch setup next
+Last session: 2026-05-04T06:10:00Z
+Stopped at: v2.0 Fanmeet Launch initialized; Phase 22 planning next
 Resume file: docs/v2.0-fanmeet-milestone-spec.md
 
 **Planned Phase:** v2.0 Phase 22 (operator-uat-gates) — deferred from v1.1 — plan not started
