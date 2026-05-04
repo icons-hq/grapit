@@ -17,6 +17,7 @@ const VALKEY_INSTANCE = 'grabit-valkey';
 const EXPECTED_API_ORIGIN = 'https://api.heygrabit.com';
 const EXPECTED_LIVE_MODE = 'CLUSTER';
 const EXPECTED_VALKEY_MODE = 'cluster';
+const SOCKET_JOIN_TIMEOUT_MS = 20000;
 const REDIS_URL_PATTERN = /\brediss?:\/\/[^\s`'")]+/gi;
 const PHONE_PATTERN = /(?:\+[1-9]\d{5,14}\b|\b01[016789]-?\d{3,4}-?\d{4}\b)/g;
 const FAILURE_KEYWORDS = [
@@ -509,9 +510,70 @@ function waitForSeatUpdate(socket, seatId, status) {
   });
 }
 
+function isJoinedPayload(payload, showtimeId) {
+  return payload === showtimeId
+    || payload?.data === showtimeId
+    || payload?.showtimeId === showtimeId;
+}
+
+function isJoinErrorPayload(payload) {
+  return payload?.event === 'error' || payload?.error || payload?.message;
+}
+
+function summarizeSocketPayload(payload) {
+  try {
+    return redact(JSON.stringify(payload));
+  } catch {
+    return redact(String(payload));
+  }
+}
+
 async function joinShowtime(socket, showtimeId) {
-  socket.emit('join-showtime', showtimeId);
-  await sleep(750);
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    const timeout = setTimeout(() => {
+      settle(reject, new Error(`Timed out waiting for join-showtime acknowledgement: ${showtimeId}`));
+    }, SOCKET_JOIN_TIMEOUT_MS);
+
+    function cleanup() {
+      clearTimeout(timeout);
+      socket.off('joined', onJoined);
+      socket.off('error', onError);
+    }
+
+    function settle(done, value) {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      done(value);
+    }
+
+    function onJoined(payload) {
+      if (isJoinedPayload(payload, showtimeId)) {
+        settle(resolve, payload);
+      }
+    }
+
+    function onError(payload) {
+      settle(
+        reject,
+        new Error(`join-showtime failed: ${summarizeSocketPayload(payload)}`),
+      );
+    }
+
+    socket.on('joined', onJoined);
+    socket.on('error', onError);
+    socket.emit('join-showtime', showtimeId, (ack) => {
+      if (isJoinedPayload(ack, showtimeId)) {
+        settle(resolve, ack);
+      } else if (isJoinErrorPayload(ack)) {
+        settle(
+          reject,
+          new Error(`join-showtime ack failed: ${summarizeSocketPayload(ack)}`),
+        );
+      }
+    });
+  });
 }
 
 async function lookupSocketInstances(config, cloudRun, clientIds, sinceIso) {
