@@ -12,6 +12,16 @@ Never commit or paste raw OTPs, full phone numbers, full recipient email address
 
 Use masked values such as `+82 10-****-1234`, `u***@gmail.com`, redacted screenshot paths, sanitized Cloud Run/Sentry references, and provider ids only when the id itself is not secret.
 
+## Automated Guard Results
+
+These results prove only the focused automated regression guards before manual UAT. They do not satisfy the SMS real-device, email inbox/provider, legal public/sign-off, or provider-observation gates below.
+
+| Command | Result | Exit Status | Checked At (KST) | Owner | Output Path | Notes |
+|---------|--------|-------------|------------------|-------|-------------|-------|
+| `pnpm --filter @grabit/api test -- src/modules/sms/sms.service.spec.ts src/modules/auth/email/email.service.spec.ts` | GREEN | 0 | 2026-05-04T18:02:45+09:00 | Maintainer | Not saved; terminal output reviewed | Vitest completed with 29 files and 386 tests green for the API test invocation. |
+| `pnpm --filter @grabit/web test -- app/auth/reset-password/__tests__/reset-password.test.tsx content/legal/__tests__/legal-content.test.ts app/legal/__tests__/metadata.test.ts components/layout/__tests__/footer.test.tsx` | GREEN | 0 | 2026-05-04T18:02:45+09:00 | Maintainer | Not saved; terminal output reviewed | Vitest completed with 27 files and 191 tests green for the web test invocation. |
+| `pnpm --filter @grabit/api test:integration -- sms-cluster-crossslot` | GREEN | 0 | 2026-05-04T18:02:45+09:00 | Maintainer | Not saved; terminal output reviewed | Docker 29.1.3 was available; testcontainers Valkey cluster guard completed with 5 files and 41 tests green. |
+
 ## SMS Real-Device Gate
 
 `D-05`: SMS `PASS` requires the real-device happy path `send-code -> SMS received -> verify-code success -> signup step3 verified`.
