@@ -50,6 +50,14 @@ git show bd8220e:.planning/phases/21-verification-artifact-backfill/21-VERIFICAT
 
 ## Baseline Summary
 
-Initial classification is recorded above with three launch blockers, two
-completed rows, and three accepted caveats. Task 2 normalizes the allowed labels
-and records the final numeric totals.
+- Total Rows: 8
+- COMPLETE: 2
+- ACCEPTED_CAVEAT: 3
+- BLOCKER: 3
+- Phase 23 Readiness Impact: Blocked by listed rows.
+
+Phase 23 cannot treat this inherited v1.1 validation surface as launch-ready
+until the `BLOCKER` rows are resolved or explicitly reclassified by a later
+Phase 22 gate artifact with owner, evidence path, and redaction-safe rationale.
+`ACCEPTED_CAVEAT` rows remain visible inputs for the evidence ledger and must
+not be collapsed into `COMPLETE` without direct supporting evidence.
