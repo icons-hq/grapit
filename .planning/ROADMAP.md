@@ -33,7 +33,7 @@
 
 **Merged from:** 22 Operator UAT gates, 23 Nyquist validation backfill, 24 Operational hardening sweep
 
-**Plans:** 4/5 plans executed
+**Plans:** 5/5 plans complete
 
 Plans:
 **Wave 1**
@@ -45,7 +45,7 @@ Plans:
 - [x] 22-04-PLAN.md — Wave 2 SMS/email/legal human UAT closure for PREF-01
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 22-05-PLAN.md — Wave 3 final evidence aggregation and Phase 23 readiness verification for PREF-01/PREF-02/PREF-03
+- [x] 22-05-PLAN.md — Wave 3 final evidence aggregation and Phase 23 readiness verification for PREF-01/PREF-02/PREF-03
 
 **Success criteria:**
 1. SMS real-device, email reset-to-login, legal public/sign-off evidence가 `PASS`, `ACCEPTED_RISK`, `BLOCKER`로 분류된다.
