@@ -78,6 +78,8 @@ The four issue rows are carried over as unresolved or routed evidence:
 
 This Phase 13 report is a verification artifact backfill only. It does not mark AUTH-01 or R2-* requirements as complete, and it does not edit any Phase 13 SUMMARY requirement metadata.
 
+False-claim guard: no Phase 21 requirement row is marked SATISFIED in this Phase 13 backfill.
+
 ### Gaps Summary
 
 Phase 13 remains human_needed because 13-HUMAN-UAT.md contains unchecked user-facing verification and cleanup sign-off rows.
