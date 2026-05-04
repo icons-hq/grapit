@@ -1,8 +1,8 @@
 ---
 phase: 20-valkey-production-connectivity-contract
-reviewed: 2026-04-30T09:02:12Z
+reviewed: 2026-05-04T00:33:11Z
 depth: standard
-files_reviewed: 11
+files_reviewed: 10
 files_reviewed_list:
   - .github/workflows/deploy.yml
   - apps/api/src/config/redis.config.ts
@@ -11,70 +11,100 @@ files_reviewed_list:
   - apps/api/src/main.ts
   - apps/api/src/modules/booking/__tests__/redis-io.adapter.spec.ts
   - apps/api/src/modules/booking/providers/__tests__/redis.provider.spec.ts
-  - apps/api/src/modules/booking/providers/redis-io.adapter.ts
   - apps/api/src/modules/booking/providers/redis.provider.ts
   - apps/api/test/booking-cluster-lua.integration.spec.ts
   - scripts/smoke-valkey-production.mjs
 findings:
-  critical: 0
-  warning: 4
+  critical: 2
+  warning: 3
   info: 0
-  total: 4
+  total: 5
 status: issues_found
 ---
 
 # Phase 20: Code Review Report
 
-**Reviewed:** 2026-04-30T09:02:12Z
+**Reviewed:** 2026-05-04T00:33:11Z
 **Depth:** standard
-**Files Reviewed:** 11
+**Files Reviewed:** 10
 **Status:** issues_found
 
 ## Summary
 
-Commit `2adafff` 이후 Valkey/Redis production connectivity 변경을 표준 깊이로 재검토했다. 사용자가 의도적으로 production smoke를 skip한 사실은 결함으로 기록하지 않았다. 대신 source와 artifact contract 자체에서 false pass/false fail을 만들 수 있는 지점만 기록했다.
+명시된 Valkey production connectivity 관련 10개 파일을 표준 깊이로 검토했다. 핵심 위험은 deploy workflow가 `workflow_run` 트리거를 신뢰하는 방식과, production bootstrap이 Socket.IO Redis pub/sub 준비 상태를 실제로 검증하지 않는 점이다. 둘 다 production 배포 또는 multi-instance 좌석 업데이트 계약을 깨뜨릴 수 있으므로 ship 전 수정이 필요하다.
 
-보조 확인:
-- `pnpm --filter @grabit/api exec tsc --noEmit --pretty false` 통과
-- `pnpm --filter @grabit/api test:integration -- booking-cluster-lua` 통과
-- 관련 unit test command도 통과했으나, 기존 npm script 인자 전달 방식 때문에 전체 API unit suite가 실행됐다.
+보조 확인으로 `pnpm --filter @grabit/api exec vitest run src/modules/booking/providers/__tests__/redis.provider.spec.ts --reporter=dot`를 실행했고 통과했다. 이 통과는 아래 findings를 반박하지 않는다.
+
+## Critical Issues
+
+### CR-01: BLOCKER - `workflow_run` can deploy an untrusted CI run
+
+**Classification:** BLOCKER
+**File:** `.github/workflows/deploy.yml:3`
+
+**Issue:** Deploy는 `workflow_run` 완료 이벤트에서 `conclusion == 'success'`만 확인한 뒤 `github.event.workflow_run.head_sha`를 checkout하고, 같은 job에서 GCP OIDC 및 production secrets를 사용한다. `workflow_run`은 PR CI 완료로도 발생할 수 있으므로, triggering run이 `push` to canonical `main`인지와 `head_repository`가 현재 repo인지 검증하지 않으면 fork/PR head SHA가 production deploy 권한을 얻는 경로가 생긴다.
+
+**Fix:**
+```yaml
+jobs:
+  deploy-api:
+    if: >-
+      ${{
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.head_repository.full_name == github.repository
+      }}
+```
+동일한 guard를 `deploy-web`에도 적용하고, 가능하면 deploy workflow를 `push`/`workflow_dispatch` 기반으로 단순화한다.
+
+### CR-02: BLOCKER - Production startup treats Redis pub/sub as ready before it is connected
+
+**Classification:** BLOCKER
+**File:** `apps/api/src/main.ts:59`
+
+**Issue:** `main.ts`는 `redisIoAdapter.connectToRedis()`의 boolean을 production fail-closed 근거로 사용한다. 그런데 adapter 쪽 동작은 `duplicate()`가 존재하면 subscriber 연결, subscribe 가능 여부, adapter runtime error를 기다리지 않고 즉시 `true`를 반환한다. 따라서 Redis `PING`은 성공하지만 Socket.IO subscriber connection 또는 pub/sub wiring이 실패하는 경우에도 Cloud Run instance가 정상 기동되어 multi-instance `seat-update` broadcast가 깨질 수 있다. `apps/api/src/modules/booking/__tests__/redis-io.adapter.spec.ts:88`은 `duplicate()`가 `{}`를 반환해도 throw하지 않는 것을 허용해 이 false-ready contract를 테스트로 고정하고 있다.
+
+**Fix:**
+```ts
+const redisPubSubReady = await redisIoAdapter.connectToRedis();
+if (process.env['NODE_ENV'] === 'production' && !redisPubSubReady) {
+  process.exit(1);
+}
+```
+`connectToRedis()`를 async로 바꾸고 duplicated subscriber의 실제 connection/subscription 준비를 검증한 뒤에만 `true`를 반환하게 한다. `{}` 같은 minimal subscriber는 실패로 처리하는 negative test를 추가한다.
 
 ## Warnings
 
-### WR-01: WARNING - Socket.IO smoke assumes two sockets imply two Cloud Run instances despite session affinity
+### WR-01: WARNING - Health check reports `up` for malformed Redis clients
 
-**File:** `.github/workflows/deploy.yml:124`, `scripts/smoke-valkey-production.mjs:548`
+**Classification:** WARNING
+**File:** `apps/api/src/health/redis.health.indicator.ts:55`
 
-**Issue:** API deployment enables `--session-affinity`, but `checkSocketIo()` only preflights `min-instances >= 2` and then opens two sockets from the same operator process. With Cloud Run session affinity, those connections can legitimately land on the same instance, so the script can mark D-10/D-13 as FAIL even when Redis pub/sub works. This makes the production smoke artifact inconclusive/flaky rather than a reliable connectivity contract.
+**Issue:** `redis.ping`이 없으면 health indicator가 `up`을 반환한다. 현재 `InMemoryRedis`는 `ping()`을 구현하므로 이 branch는 실제 local fallback을 위한 branch가 아니라, 잘못 주입된 Redis-like object를 healthy로 숨기는 branch가 됐다. DI/provider 회귀가 발생하면 `/health`가 Redis 경로를 검증하지 못한다.
 
-**Fix:** Include session-affinity state in `getCloudRunEvidence()` and make `checkSocketIo()` require an explicit safe condition: temporarily disable session affinity for the smoke and restore it, or require two independent client affinity contexts and record that precondition. At minimum, fail preflight with a targeted message when session affinity is enabled instead of implying `min-instances=2` is sufficient.
+**Fix:** `getRedisRuntimeMetadata(redis).client === 'in-memory' && configured === false`인 경우에만 no-ping fallback을 허용하고, 그 외에는 `indicator.down({ message: 'redis ping unavailable', ...metadata })`를 반환한다.
 
-### WR-02: WARNING - Adapter tests lock in success for an invalid Redis subscriber
+### WR-02: WARNING - Socket.IO smoke can race room join before lock emission
 
-**File:** `apps/api/src/modules/booking/__tests__/redis-io.adapter.spec.ts:88`, `apps/api/src/modules/booking/providers/redis-io.adapter.ts:88`
-
-**Issue:** The test named `does not throw when duplicate is present but returns a minimal sub client` explicitly treats `duplicate()` returning `{}` as acceptable. The production bootstrap then trusts `connectToRedis()`'s boolean as "pub/sub ready". This weakens the fail-closed contract: future provider changes or incompatible clients could return a truthy but unusable subscriber and still pass this test.
-
-**Fix:** Remove the permissive test and make `connectToRedis()` validate the duplicated client surface needed by `@socket.io/redis-adapter` before returning `true`, or catch adapter construction failures and return `false`. Add a negative test that `duplicate()` returning `{}` is not considered wired.
-
-### WR-03: WARNING - Socket.IO smoke does not wait for the room join acknowledgement
-
+**Classification:** WARNING
 **File:** `scripts/smoke-valkey-production.mjs:512`
 
-**Issue:** `joinShowtime()` emits `join-showtime` and sleeps for 750 ms before the lock request. Under cold starts, network jitter, or a slow gateway, the lock can be emitted before one socket has actually joined the room, causing a false timeout in `waitForSeatUpdate()` even though Redis pub/sub is healthy.
+**Issue:** `joinShowtime()`은 `join-showtime`을 emit한 뒤 750ms sleep만 한다. Cloud Run cold start, gateway scheduling, network jitter가 있으면 socket이 room에 들어가기 전에 lock request가 발생하고, Redis pub/sub가 정상이어도 `waitForSeatUpdate()`가 timeout될 수 있다.
 
-**Fix:** Wait for a deterministic server signal. For example, have the client listen for the gateway's `joined` event with a timeout before proceeding, or change the gateway event to use an acknowledgement callback and await that ack in the smoke script.
+**Fix:** gateway의 `joined` event 또는 Socket.IO ack를 timeout과 함께 기다린 뒤 lock request를 보내도록 smoke를 바꾼다.
 
-### WR-04: WARNING - Cleanup verification treats malformed seat status as success
+### WR-03: WARNING - Cleanup smoke treats malformed seat status as success
 
+**Classification:** WARNING
 **File:** `scripts/smoke-valkey-production.mjs:371`
 
-**Issue:** `readSeatState()` returns the sentinel string `unknown` both when a seat is legitimately absent from the `seats` map and when the response body is malformed or missing `seats`. `unlockAndVerifySeat()` then treats every state other than `locked` as cleanup success. A broken status endpoint can therefore produce PASS evidence for cleanup.
+**Issue:** `readSeatState()`는 `body.seats`가 없거나 응답 shape이 깨져도 `unknown`을 반환한다. `unlockAndVerifySeat()`는 `afterState !== 'locked'`이면 cleanup success로 처리하므로, seat-status endpoint가 malformed response를 반환해도 cleanup PASS evidence가 기록될 수 있다.
 
-**Fix:** Parse the seat-status response into an explicit shape, e.g. require `body.seats` to be an object. Return `available` only when that object exists and does not contain the seat; throw on malformed responses instead of mapping them to `unknown`.
+**Fix:** `body.seats`가 object인지 먼저 검증하고, seat가 map에 없을 때만 explicit `available` 상태로 취급한다. malformed response는 throw해서 smoke 실패로 남긴다.
 
 ---
 
-_Reviewed: 2026-04-30T09:02:12Z_
+_Reviewed: 2026-05-04T00:33:11Z_
 _Reviewer: the agent (gsd-code-reviewer)_
 _Depth: standard_
