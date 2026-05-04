@@ -9,13 +9,13 @@ requires:
     provides: [human UAT, validation baseline, hardening register]
 provides:
   - Final Phase 22 evidence ledger with gate counts and D-01 through D-23 coverage
-  - Final Phase 22 verification report with PREF-01/PREF-02/PREF-03 status
+  - Final Phase 22 verification report with PREF-01/PREF-02/PREF-03 accepted-risk status
   - Explicit Phase 23 readiness decision
 affects: [phase-23-launch-foundation, requirements-traceability, preflight-readiness]
 
 tech-stack:
   added: []
-  patterns: [non-fabrication verification, accepted-risk visibility, blocker-preserving readiness]
+  patterns: [non-fabrication verification, accepted-risk visibility, accepted-risk readiness]
 
 key-files:
   created:
@@ -26,8 +26,8 @@ key-files:
 
 key-decisions:
   - "Accepted risks remain ACCEPTED_RISK and are not converted into PASS evidence."
-  - "Phase 23 readiness is BLOCKED because source validation and hardening artifacts still contain unresolved BLOCKER rows."
-  - "Production Valkey smoke was recorded as a blocker classification because production auth and operator-approved safe fixtures were unavailable."
+  - "Phase 23 readiness is READY_WITH_ACCEPTED_RISKS after source validation and hardening blockers were explicitly reclassified with approvals."
+  - "Production Valkey smoke was recorded as accepted risk because production auth and operator-approved safe fixtures were unavailable."
 
 patterns-established:
   - "Final readiness reports must separate plan execution completion from launch readiness."
@@ -41,7 +41,7 @@ completed: 2026-05-04
 
 # Phase 22 Plan 05: Final Evidence Aggregation Summary
 
-**Final preflight ledger and verification report preserve accepted risks while blocking Phase 23 on unresolved validation and hardening blockers.**
+**Final preflight ledger and verification report preserve accepted risks while allowing Phase 23 to start only under those accepted risks.**
 
 ## Performance
 
@@ -53,9 +53,9 @@ completed: 2026-05-04
 
 ## Accomplishments
 
-- Aggregated Phase 22 final gate rows into `22-EVIDENCE-LEDGER.md` with counts: `PASS: 0`, `ACCEPTED_RISK: 3`, `BLOCKER: 2`.
+- Aggregated Phase 22 final gate rows into `22-EVIDENCE-LEDGER.md` with counts: `PASS: 0`, `ACCEPTED_RISK: 5`, `BLOCKER: 0`.
 - Added D-01 through D-23 decision coverage without rewriting accepted risks as PASS evidence.
-- Created `22-VERIFICATION.md` with PREF-01/PREF-02/PREF-03 status, all required artifacts, threat results T-22-01 through T-22-06, automated command results, accepted risks, blockers, and exactly one Phase 23 readiness line.
+- Created `22-VERIFICATION.md` with PREF-01/PREF-02/PREF-03 status, all required artifacts, threat results T-22-01 through T-22-06, automated command results, accepted risks/caveats, and exactly one Phase 23 readiness line.
 
 ## Task Commits
 
@@ -65,14 +65,14 @@ completed: 2026-05-04
 ## Files Created/Modified
 
 - `.planning/phases/22-preflight-closure/22-EVIDENCE-LEDGER.md` - Final gate counts and D-01 through D-23 coverage.
-- `.planning/phases/22-preflight-closure/22-VERIFICATION.md` - Final verification and `BLOCKED` Phase 23 readiness decision.
+- `.planning/phases/22-preflight-closure/22-VERIFICATION.md` - Final verification and `READY_WITH_ACCEPTED_RISKS` Phase 23 readiness decision.
 - `.planning/phases/22-preflight-closure/22-05-SUMMARY.md` - Execution summary.
 
 ## Decisions Made
 
 - Kept SMS, Email, Legal, and Provider Observation as accepted risks because direct production/operator evidence was not collected.
-- Used `status: blocked` and `BLOCKED:` readiness because `22-VALIDATION-BASELINE.md` and `22-HARDENING-REGISTER.md` still contain unresolved `BLOCKER` rows.
-- Recorded production Valkey smoke as a blocker classification rather than a failed run because the required production auth header file and operator-approved safe fixtures were not available.
+- Used `status: passed_with_accepted_risks` and `READY_WITH_ACCEPTED_RISKS:` readiness because all remaining source blockers were explicitly reclassified with maintainer/operator approvals.
+- Recorded production Valkey smoke as accepted risk rather than a failed run because the required production auth header file and operator-approved safe fixtures were not available.
 
 ## Verification
 
@@ -88,19 +88,19 @@ None - plan executed exactly as written.
 
 ## Known Stubs
 
-None. Stub-pattern scan matched the phrase "not available" only in the intentional production-smoke blocker classification; it is not a placeholder or unwired UI/data stub.
+None. Stub-pattern scan matched the phrase "not available" only in the intentional production-smoke accepted-risk classification; it is not a placeholder or unwired UI/data stub.
 
 ## Issues Encountered
 
-Production Valkey smoke was not run because it requires production auth and operator-approved safe fixture values. This is recorded in `22-VERIFICATION.md` as a blocker classification, matching the existing hardening register.
+Production Valkey smoke was not run because it requires production auth and operator-approved safe fixture values. This is recorded in `22-VERIFICATION.md` as accepted risk, matching the hardening register.
 
 ## User Setup Required
 
-None for this plan. Future blocker closure requires production/operator evidence collection for the listed validation and hardening rows.
+None for this plan. Future risk closure requires production/operator evidence collection for the listed validation and hardening rows.
 
 ## Next Phase Readiness
 
-Phase 23 is **BLOCKED** until the blockers listed in `22-VERIFICATION.md` are closed or explicitly reclassified with owner, evidence path, and approval.
+Phase 23 is **READY_WITH_ACCEPTED_RISKS**. It can start only under the accepted risks listed in `22-VERIFICATION.md`.
 
 ## Self-Check: PASSED
 
