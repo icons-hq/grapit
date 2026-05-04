@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 const webRequire = createRequire(new URL('../apps/web/package.json', import.meta.url));
 const { io } = webRequire('socket.io-client');
 
-const defaultArtifactUrl = new URL('../.planning/phases/20-valkey-production-connectivity-contract/20-HUMAN-UAT.md', import.meta.url);
+const defaultArtifactUrl = new URL('../.planning/phases/22-preflight-closure/artifacts/valkey-smoke.md', import.meta.url);
 const artifactPath = process.env.GRABIT_SMOKE_ARTIFACT ?? fileURLToPath(defaultArtifactUrl);
 
 const SERVICE_NAME = 'grabit-api';
@@ -50,7 +50,7 @@ Required environment for every --check mode:
   GRABIT_SMOKE_SEAT_ID                   Operator-approved safe fixture seat ID
 
 Optional environment:
-  GRABIT_SMOKE_ARTIFACT                  Evidence markdown path. Default: script-root 20-HUMAN-UAT.md
+  GRABIT_SMOKE_ARTIFACT                  Evidence markdown path. Default: .planning/phases/22-preflight-closure/artifacts/valkey-smoke.md
   GRABIT_SMOKE_IDLE_SECONDS              Idle reconnect wait, default 1800
   GRABIT_SMOKE_LOG_SINCE_UTC             Required for standalone --check logs
   GRABIT_SMOKE_SENTRY_OBSERVATION        Required for --check logs and --check all; record zero-count or redacted event id
