@@ -9,7 +9,7 @@ Requirements for v1.1 안정화 + 고도화. Each maps to roadmap phases.
 
 ### 소셜 로그인 버그
 
-- [ ] **AUTH-01**: 소셜 로그인 재로그인 실패 버그 수정 (회원가입 후 로그아웃 → 재로그인 불가, 카카오/네이버/구글 전부)
+- [x] **AUTH-01**: 소셜 로그인 재로그인 실패 버그 수정 (회원가입 후 로그아웃 → 재로그인 불가, 카카오/네이버/구글 전부)
 
 ### Valkey 마이그레이션
 
@@ -22,9 +22,9 @@ Requirements for v1.1 안정화 + 고도화. Each maps to roadmap phases.
 
 ### R2 프로덕션 연동
 
-- [ ] **R2-01**: Cloudflare R2 API 토큰 발급 + 버킷 생성
-- [ ] **R2-02**: R2 CORS 설정 (AllowedHeaders 명시적 지정)
-- [ ] **R2-03**: 포스터/SVG 프로덕션 업로드 및 CDN 서빙 동작
+- [x] **R2-01**: Cloudflare R2 API 토큰 발급 + 버킷 생성
+- [x] **R2-02**: R2 CORS 설정 (AllowedHeaders 명시적 지정)
+- [x] **R2-03**: 포스터/SVG 프로덕션 업로드 및 CDN 서빙 동작
 - [ ] **R2-04**: 커스텀 도메인 설정 (CDN 서빙)
 
 ### 기술부채 청산
@@ -96,16 +96,16 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| AUTH-01 | Phase 6, Phase 21 | Pending |
+| AUTH-01 | Phase 6, Phase 21 | Complete |
 | VALK-01 | Phase 7 | Pending |
 | VALK-02 | Phase 7, Phase 20 | Pending |
 | VALK-03 | Phase 7, Phase 19, Phase 20, Phase 24 | Complete |
 | VALK-04 | Phase 7, Phase 20 | Pending |
 | VALK-05 | Phase 7, Phase 20, Phase 24 | Pending |
 | VALK-06 | Phase 7 | Pending |
-| R2-01 | Phase 8, Phase 21, Phase 23 | Pending |
-| R2-02 | Phase 8, Phase 21, Phase 23, Phase 24 | Pending |
-| R2-03 | Phase 8, Phase 21, Phase 23 | Pending |
+| R2-01 | Phase 8, Phase 21, Phase 23 | Complete |
+| R2-02 | Phase 8, Phase 21, Phase 23, Phase 24 | Complete |
+| R2-03 | Phase 8, Phase 21, Phase 23 | Complete |
 | R2-04 | Phase 8, Phase 21, Phase 23 | Pending |
 | DEBT-01 | Phase 9, Phase 18, Phase 23 | Complete |
 | DEBT-02 | Phase 9, Phase 23 | Pending |
