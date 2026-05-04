@@ -70,6 +70,10 @@ The report references `RESEND_API_KEY` and `RESEND_FROM_EMAIL` as configuration 
    - **Expected:** Phase 15 observation window is closed with explicit mailbox/log/Sentry evidence.
    - **Why human:** Existing artifacts leave this as an operational follow-up instead of an automated static check.
 
+### Non-Fabrication Guard
+
+False-claim guard: unchecked mailbox and Sentry evidence remains HUMAN NEEDED or PARTIAL.
+
 ### Gaps Summary
 
 Phase 15 remains human_needed because 15-HUMAN-UAT.md keeps Naver/Daum inbox and Sentry dashboard fields unchecked.
