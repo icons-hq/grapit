@@ -1,94 +1,43 @@
-# Research Summary: Grapit Ticket Booking Platform
+# Research Summary: v2.0 Fanmeet Launch
 
-**Domain:** Live entertainment ticket booking (Korean market)
-**Researched:** 2026-03-27
-**Overall confidence:** HIGH
-
----
+**Domain:** Global live-event ticketing launch on existing Grabit MVP  
+**Researched:** 2026-05-04  
+**Overall confidence:** HIGH for roadmap shape, MEDIUM for PG/payment-method availability until Toss review returns.
 
 ## Executive Summary
 
-The existing technology choices defined in PROJECT.md and docs/03-ARCHITECTURE.md are sound and well-reasoned. The core stack -- Next.js 16 + NestJS 11 + PostgreSQL 16 + Upstash Redis + Cloudflare R2 + Google Cloud Run -- is a strong fit for a solo-developer ticket booking platform. The "Just Use Postgres" philosophy (replacing Elasticsearch with tsvector/pg_trgm, replacing Kafka with pg-boss) is the right call at this scale.
+v2.0 should stay on the existing modular monolith and focus on launch-grade execution rather than platform reinvention. The main additions are `next-intl`, env-based feature flags, a translation review workflow, LINE OAuth, queue/load/DR/on-call gates, pgBouncer/Cloud SQL hardening, refund/QR jobs, and a much broader admin/field-operations console.
 
-Research validates every major infrastructure choice. The primary recommendations are at the library level: use Drizzle ORM over the TypeORM/Prisma mentioned in the architecture doc (better performance, smaller bundle, faster cold starts on Cloud Run), use argon2 over bcrypt for password hashing (OWASP 2025 primary recommendation), and adopt zod + drizzle-zod instead of class-validator for shared frontend/backend validation.
+The most important planning constraint is temporal: M1 opens the event detail and signup surface on 2026-05-15 with booking disabled, while payment cutover at the end of May is blocked by load, DR, and on-call evidence. QR issuance belongs before payment cutover; QR verification and field operations can complete before the 2026-07-04 event.
 
-The highest-risk area is the SVG seat map -- rendering 1000+ interactive SVG elements with real-time WebSocket updates on mobile is the project's core technical challenge. The recommended approach (inline SVG + react-zoom-pan-pinch + Socket.IO with Redis adapter) is proven but requires careful performance profiling from the start. Start testing with small venues (<500 seats) and profile on low-end Android devices before scaling to large venues.
+## Stack Additions
 
-Payment integration with Toss Payments is straightforward but the state machine between payment confirmation and booking creation is a critical correctness concern. The "PENDING -> CONFIRMED" payment record pattern with pg-boss reconciliation jobs is essential to prevent charged-but-no-ticket scenarios.
+- `next-intl` for 5-locale App Router support with Korean root URLs preserved.
+- Shared feature flag helper for booking and language/provider flags.
+- DeepL + LLM post-processing behind an admin review queue.
+- LINE OAuth strategy added beside existing auth providers.
+- pg-boss delayed jobs for refund holding and QR email workflows.
+- k6, pgBouncer, Cloud Scheduler prewarm, Cloudflare WAF rules, and Sentry alert gates as explicit milestone artifacts.
 
-## Key Findings
+## Feature Table Stakes
 
-**Stack:** Next.js 16.2 + NestJS 11.1 + Drizzle ORM + PostgreSQL 16 + Upstash Redis + Socket.IO + Toss Payments. All versions verified current as of March 2026.
+- Preflight closure of v1.1 operator, validation, and hardening caveats.
+- 5-language public surface and localized transactional copy.
+- Multinational consent and audit logging.
+- Queue, WAF, prewarm, and load gates before payment.
+- Four payment paths, refund state machine, cancelled-seat random holding, QR issuance.
+- Admin event registration, content review, CS/Q&A/FAQ, audit, CSV, seat operations.
+- QR scan console, offline fallback, duplicate/tamper detection, event-day playbooks, post-event exports.
 
-**Architecture:** Modular monolith is correct for solo development. Dual Redis client pattern (HTTP for general ops, TCP for WebSocket pub/sub) is a necessary architectural detail.
+## Watch Out For
 
-**Critical pitfall:** Double-booking race condition. Must implement Redis SET NX (first defense) + PostgreSQL WHERE status='AVAILABLE' (final guard) + full transaction wrapping. This is non-negotiable.
+- Do not implement booking-disabled as a visual-only state.
+- Do not allow queue bypass at booking APIs.
+- Do not contract DB schema before the event.
+- Do not auto-translate legal notices.
+- Do not cut over payment without k6, DR, and on-call PASS evidence.
+- Do not assume every Toss payment method is live until merchant review confirms it.
 
----
+## Roadmap Implication
 
-## Implications for Roadmap
-
-Based on research, suggested phase structure:
-
-1. **Foundation + Auth** - Project scaffolding, monorepo setup, database schema, authentication
-   - Addresses: Project structure, Drizzle schema, JWT + Passport auth
-   - Avoids: Starting with features before infrastructure is solid
-   - Rationale: Every subsequent feature depends on auth and database
-
-2. **Performance Catalog + Admin** - CRUD for performances, genre filtering, search, admin panel
-   - Addresses: Performance catalog, PostgreSQL FTS, admin CRUD
-   - Avoids: Building booking flow without content to book
-   - Rationale: Need performances in the system before booking can work
-
-3. **Seat Map + Real-Time** - SVG rendering, zoom/pan, WebSocket seat updates, Redis locking
-   - Addresses: SVG seat map, real-time occupancy, seat locking
-   - Avoids: SVG performance pitfall (start small, profile early)
-   - Rationale: Highest-risk feature -- give it dedicated focus, not mixed with payment
-
-4. **Booking + Payment** - Complete booking flow, Toss Payments integration, payment state machine
-   - Addresses: End-to-end booking, payment, confirmation, cancellation
-   - Avoids: Payment desync pitfall (dedicated phase for correctness)
-   - Rationale: Payment integration requires Toss sandbox testing, business registration
-
-5. **Polish + Launch Prep** - Error handling, loading states, mobile optimization, E2E testing, Sentry, deployment pipeline
-   - Addresses: Production readiness, monitoring, CI/CD
-   - Avoids: Shipping without observability
-   - Rationale: Quality gate before real users
-
-**Phase ordering rationale:**
-- Auth before everything because all features are gated on user identity
-- Catalog before booking because you need content to book
-- Seat map before payment because the booking flow depends on seat selection working
-- Payment separated from seat map to isolate the two highest-risk areas
-- Polish last to consolidate quality across all features
-
-**Research flags for phases:**
-- Phase 3 (Seat Map): Likely needs deeper research on SVG performance with 1000+ seats on mobile. Profile early.
-- Phase 4 (Payment): Needs Toss Payments sandbox account setup. Business registration required.
-- Phase 3 (WebSocket): Test multi-instance Socket.IO with Redis adapter using min-instances=2 on Cloud Run.
-
----
-
-## Confidence Assessment
-
-| Area | Confidence | Notes |
-|------|------------|-------|
-| Stack (core frameworks) | HIGH | All versions verified via npm/official docs. Next.js 16, NestJS 11, React 19 all stable and current. |
-| Stack (ORM choice) | HIGH | Drizzle ORM recommendation based on multiple 2025/2026 comparisons, Trilon (NestJS consultancy) endorsement, performance benchmarks. |
-| Stack (supporting libraries) | HIGH | TanStack Query, Zustand, react-hook-form, Swiper, zod -- all actively maintained, React 19 compatible, versions verified. |
-| Stack (react-zoom-pan-pinch) | MEDIUM | Stable at v3.7 but last npm publish was ~1 year ago. API is stable, 350+ dependents, but watch for React 19 edge cases. |
-| Features | HIGH | Based on direct NOL ticket competitor analysis in project docs + standard ticket platform expectations. |
-| Architecture | HIGH | Modular monolith, dual Redis pattern, Socket.IO + Redis adapter all well-documented patterns. |
-| Pitfalls | HIGH | Double-booking, payment desync, SVG performance -- all based on real production incident patterns in ticket booking systems. |
-| Payment (Toss) | MEDIUM | SDK verified (v2.5.0), but actual integration requires sandbox testing + business registration that cannot be validated via research alone. |
-
----
-
-## Gaps to Address
-
-- **SVG seat map performance benchmarks**: Need actual profiling with 500/1000/2000 seat venues on target devices. Research can only recommend patterns, not guarantee performance.
-- **Toss Payments sandbox access**: Requires business registration + PG contract. Cannot fully validate integration flow without real sandbox credentials.
-- **Upstash Redis Seoul edge latency**: Theoretical 5-15ms from Cloud Run Seoul, but needs validation under load. If latency is higher, consider Upstash TCP connection or self-hosted Redis on GCP.
-- **Cloud SQL + pg-boss under Cloud Run**: pg-boss polls PostgreSQL. Need to verify that Cloud Run's request-based billing model doesn't conflict with pg-boss's always-polling worker pattern. May need to set min-instances=1 for the API service or run pg-boss worker as a separate Cloud Run service.
-- **drizzle-zod stability**: At v0.7.x, this is a younger package. If schema generation has edge cases, fall back to manually writing Zod schemas (still use zod, just not auto-generated).
-- **Korean search quality**: pg_trgm + tsvector is theoretically sufficient, but actual Korean search quality needs validation with real user queries. Monitor zero-result rate post-launch.
+Continue numbering from Phase 22. Use 22-24 for deferred launch-readiness gates, 25-36 for M1 advertising open, 37-40 for M2 cutover gates and live payment, 41-42 for event-day operations, and 43 for settlement/retrospective.
