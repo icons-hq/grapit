@@ -36,8 +36,8 @@ Keep the modular monolith. v2.0 adds high-risk launch capabilities, but splittin
 
 ## Build Order Constraints
 
-- Preflight phases 22-24 come first because they convert v1.1 caveats into v2.0 launch-readiness evidence.
-- SP-0 must precede feature work because feature flags, migrations, URL policy, canary, and min-instance policy unblock all other phases.
+- Phase 22 Preflight Closure comes first because it converts v1.1 caveats into v2.0 launch-readiness evidence.
+- Phase 23 Launch Foundation must precede most feature work because feature flags, migrations, URL policy, i18n/auth/consent foundations, canary policy, and min-instance policy unblock later phases.
 - i18n routing should land before translated content, auth copy, legal copy, or admin content tabs.
 - Queue/prewarm and WAF should be available by M1 because signup/ad traffic can arrive before payments.
 - QR issuance must be ready before payment cutover; QR verification can follow before the event date.

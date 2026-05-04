@@ -1,10 +1,11 @@
-# Phase 22: Operator UAT gates - Discussion Log
+# Phase 22: Preflight Closure - Discussion Log
 
 > **Audit trail only.** Do not use as input to planning, research, or execution agents.
 > Decisions are captured in CONTEXT.md — this log preserves the alternatives considered.
+> Originally gathered for the Operator UAT gate. After the 2026-05-04 phase merge, these decisions apply to the PREF-01 sub-gate inside Phase 22 Preflight Closure.
 
 **Date:** 2026-05-04T16:12:52+09:00
-**Phase:** 22-Operator UAT gates
+**Phase:** 22-Preflight Closure
 **Areas discussed:** Evidence acceptance policy, SMS real-device gate, Email inbox gate, Legal public/sign-off gate
 
 ---
@@ -27,7 +28,7 @@
 | 상태 용어 | `green / yellow / red` | 빠르게 읽히지만 정의가 필요 | |
 
 **User's choice:** Gate matrix, maintainer + operator approval, v2.0-only evidence ledger, `PASS / ACCEPTED_RISK / BLOCKER`.
-**Notes:** Existing Phase 14/15/16 docs are canonical refs only. Phase 23 owns backfill.
+**Notes:** Existing Phase 14/15/16 docs are canonical refs. Phase 22 now also owns the validation backfill sub-scope after the phase merge.
 
 ---
 
@@ -49,7 +50,7 @@
 | 실패 처리 | Fix all SMS-related issues | 5-country SMS/provider/cost까지 처리 | |
 
 **User's choice:** Happy path + failure copy, short targeted observation, screenshot + sanitized logs, fix only if same surface.
-**Notes:** Global SMS/provider/cost scope is deferred to Phase 24/28.
+**Notes:** Global SMS/provider/cost scope is deferred to Phase 23 Launch Foundation unless existing SMS fragility blocks preflight closure.
 
 ---
 
@@ -62,7 +63,7 @@
 | PASS 기준 | Provider dashboard only | Resend/Cloud Run/Sentry만 확인 | |
 | Naver/Daum 미확인 | ACCEPTED_RISK by default | Gmail PASS + Resend accepted면 approval 조건으로 risk accepted | ✓ |
 | Naver/Daum 미확인 | BLOCKER if untested | Gmail PASS여도 Naver/Daum 미확인은 blocker | |
-| Naver/Daum 미확인 | Deferred observation | Phase 36 M1 smoke로 넘김 | |
+| Naver/Daum 미확인 | Deferred observation | Phase 26 M1 smoke로 넘김 | |
 | 사용자 경로 | Password reset request only | reset email 수신만 확인 | |
 | 사용자 경로 | Reset email -> confirm -> login | 이메일 수신, 비밀번호 변경, 새 비밀번호 login | ✓ |
 | 사용자 경로 | Reset + signup verification email | 향후 email verification까지 포함 | |
@@ -93,7 +94,7 @@
 | 실패 처리 | Fix all legal/compliance issues | PIPA/PDPA/PIPL까지 처리 | |
 
 **User's choice:** Public URLs + footer/dialog + robots/canonical, factual sign-off only, include support/privacy mailbox receipt, fix evidence/docs/test gaps only.
-**Notes:** Multinational consent/legal schema lock remains Phase 29 scope.
+**Notes:** Multinational consent/legal schema lock remains Phase 23 Launch Foundation scope.
 
 ---
 
@@ -103,6 +104,6 @@ None.
 
 ## Deferred Ideas
 
-- Five-country SMS policy, provider cost monitoring, and global SMS launch behavior belong to Phase 28 or Phase 24.
-- Multinational consent, legal schema lock, PIPA/PDPA/PIPL expansion, and audit log behavior belong to Phase 29.
-- Naver/Daum mailbox behavior can be rechecked in Phase 36 M1 integration if left as `ACCEPTED_RISK` in Phase 22.
+- Five-country SMS policy, provider cost monitoring, and global SMS launch behavior belong to Phase 23 Launch Foundation unless existing SMS fragility blocks preflight closure.
+- Multinational consent, legal schema lock, PIPA/PDPA/PIPL expansion, and audit log behavior belong to Phase 23 Launch Foundation.
+- Naver/Daum mailbox behavior can be rechecked in Phase 26 M1 Canary + Cutover Gates if left as `ACCEPTED_RISK` in Phase 22.

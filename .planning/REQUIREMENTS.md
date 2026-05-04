@@ -95,47 +95,49 @@
 
 ## Traceability
 
+Phase mapping was consolidated on 2026-05-04 from the initial 22-phase launch-risk checklist into six GSD execution phases. Requirement IDs are unchanged.
+
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | PREF-01 | Phase 22 | Pending |
-| PREF-02 | Phase 23 | Pending |
-| PREF-03 | Phase 24 | Pending |
-| FLAG-01 | Phase 25 | Pending |
-| FLAG-02 | Phase 25 | Pending |
-| I18N-01 | Phase 26 | Pending |
-| I18N-02 | Phase 26 | Pending |
-| TRANS-01 | Phase 27 | Pending |
-| TRANS-02 | Phase 27 | Pending |
-| AUTH-01 | Phase 28 | Pending |
-| AUTH-02 | Phase 28 | Pending |
-| COMP-01 | Phase 29 | Pending |
-| COMP-02 | Phase 29 | Pending |
-| TRAF-01 | Phase 30 | Pending |
-| TRAF-02 | Phase 30 | Pending |
-| TRAF-03 | Phase 30 | Pending |
-| BOOK-01 | Phase 31 | Pending |
-| BOOK-02 | Phase 31 | Pending |
-| BOOK-03 | Phase 31 | Pending |
-| PAY-02 | Phase 32 | Pending |
-| REFUND-01 | Phase 32 | Pending |
-| REFUND-02 | Phase 32 | Pending |
-| QR-01 | Phase 32 | Pending |
-| ADMIN-01 | Phase 33 | Pending |
-| ADMIN-02 | Phase 34 | Pending |
-| ADMIN-03 | Phase 35 | Pending |
-| ADMIN-04 | Phase 35 | Pending |
-| M1-01 | Phase 36 | Pending |
-| LOAD-01 | Phase 37 | Pending |
-| DR-01 | Phase 38 | Pending |
-| INFRA-01 | Phase 38 | Pending |
-| OPS-01 | Phase 39 | Pending |
-| PAY-01 | Phase 40 | Pending |
-| OPS-02 | Phase 40 | Pending |
-| QR-02 | Phase 41 | Pending |
-| FIELD-01 | Phase 41 | Pending |
-| OPS-03 | Phase 42 | Pending |
-| POST-01 | Phase 43 | Pending |
-| POST-02 | Phase 43 | Pending |
+| PREF-02 | Phase 22 | Pending |
+| PREF-03 | Phase 22 | Pending |
+| FLAG-01 | Phase 23 | Pending |
+| FLAG-02 | Phase 23 | Pending |
+| I18N-01 | Phase 23 | Pending |
+| I18N-02 | Phase 23 | Pending |
+| TRANS-01 | Phase 23 | Pending |
+| TRANS-02 | Phase 23 | Pending |
+| AUTH-01 | Phase 23 | Pending |
+| AUTH-02 | Phase 23 | Pending |
+| COMP-01 | Phase 23 | Pending |
+| COMP-02 | Phase 23 | Pending |
+| TRAF-01 | Phase 24 | Pending |
+| TRAF-02 | Phase 24 | Pending |
+| TRAF-03 | Phase 24 | Pending |
+| BOOK-01 | Phase 24 | Pending |
+| BOOK-02 | Phase 24 | Pending |
+| BOOK-03 | Phase 24 | Pending |
+| PAY-02 | Phase 24 | Pending |
+| REFUND-01 | Phase 24 | Pending |
+| REFUND-02 | Phase 24 | Pending |
+| QR-01 | Phase 24 | Pending |
+| ADMIN-01 | Phase 25 | Pending |
+| ADMIN-02 | Phase 25 | Pending |
+| ADMIN-03 | Phase 25 | Pending |
+| ADMIN-04 | Phase 25 | Pending |
+| M1-01 | Phase 26 | Pending |
+| LOAD-01 | Phase 26 | Pending |
+| DR-01 | Phase 26 | Pending |
+| INFRA-01 | Phase 26 | Pending |
+| OPS-01 | Phase 26 | Pending |
+| PAY-01 | Phase 26 | Pending |
+| OPS-02 | Phase 26 | Pending |
+| QR-02 | Phase 27 | Pending |
+| FIELD-01 | Phase 27 | Pending |
+| OPS-03 | Phase 27 | Pending |
+| POST-01 | Phase 27 | Pending |
+| POST-02 | Phase 27 | Pending |
 
 **Coverage:**
 - v2.0 requirements: 39 total
@@ -144,4 +146,4 @@
 
 ---
 *Requirements defined: 2026-05-04*
-*Last updated: 2026-05-04 after v2.0 Fanmeet Launch milestone initialization*
+*Last updated: 2026-05-04 after v2.0 phase merge for GSD execution*

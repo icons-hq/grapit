@@ -3,11 +3,11 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Fanmeet Launch
 status: planning
-stopped_at: Phase 22 context gathered
-last_updated: "2026-05-04T07:14:49.190Z"
-last_activity: 2026-05-04 — v2.0 Fanmeet Launch requirements and roadmap initialized
+stopped_at: Phase 22 merged context prepared
+last_updated: "2026-05-04T07:18:15.937Z"
+last_activity: 2026-05-04 — v2.0 phases consolidated into 6 GSD execution phases
 progress:
-  total_phases: 23
+  total_phases: 7
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -20,14 +20,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-04)
 
 **Core value:** 사용자가 원하는 공연을 발견하고, 좌석을 직접 선택하여, 안정적으로 예매를 완료할 수 있는 것
-**Current focus:** Phase 22 Operator UAT gates — start v2.0 Fanmeet Launch preflight
+**Current focus:** Phase 22 Preflight Closure — close v1.1 launch evidence, validation backfill, and launch blocker hardening before fanmeet implementation
 
 ## Current Position
 
-Phase: 22 — Operator UAT gates
+Phase: 22 — Preflight Closure
 Plan: —
 Status: Ready for phase planning
-Last activity: 2026-05-04 — v2.0 Fanmeet Launch requirements and roadmap initialized
+Last activity: 2026-05-04 — v2.0 phases consolidated into 6 GSD execution phases
 
 ## Deferred Items
 
@@ -171,8 +171,9 @@ Summary: 70 total items (debug sessions 5, quick tasks 41, seeds 2, UAT gaps 12,
 - Phase 15 added (2026-04-24): Resend heygrabit.com cutover — Phase 13 UAT Gap test 9. Plan 03/04 가 명시적으로 deferred 처리한 RESEND_FROM_EMAIL secret 값 교체 + Resend 콘솔 heygrabit.com 도메인 verification + DNS SPF/DKIM/DMARC 후이즈 등록. Reference: .planning/debug/password-reset-email-not-delivered-prod.md
 - Phase 16 added (2026-04-24): Legal pages launch — Phase 13 UAT Gap test 11 (pre-existing feature gap). apps/web/app/legal/{terms,privacy,marketing} 신규 구현 + Footer href="#" 플레이스홀더 교체. 한국 개보법·정통망법 상시 공개 URL 런칭 요건. Reference: .planning/debug/legal-pages-404-heygrabit.md
 - Phase 17 added (2026-04-24): Local dev health indicator fix — Phase 13 UAT Gap test 1 (pre-existing Phase 7-05 버그). InMemoryRedis mock 에 ping() 미구현 → Terminus 503. InMemoryRedis.ping() 추가 + capability probe. Reference: .planning/debug/local-api-health-503-no-redis.md
-- v1.1 closed after Phase 21 (2026-05-04): Phase 22 Operator UAT gates, Phase 23 Nyquist validation backfill, and Phase 24 Operational hardening sweep moved to v2.0 Fanmeet Launch as preflight/quality/hardening scope.
-- v2.0 Fanmeet Launch initialized (2026-05-04): Requirements mapped to Phases 22-43 from `docs/v2.0-fanmeet-milestone-spec.md`; next action is Phase 22 planning.
+- v1.1 closed after Phase 21 (2026-05-04): former Phase 22 Operator UAT gates, Phase 23 Nyquist validation backfill, and Phase 24 Operational hardening sweep moved to v2.0 Fanmeet Launch as preflight/quality/hardening scope.
+- v2.0 Fanmeet Launch initialized (2026-05-04): requirements first mapped to Phases 22-43 from `docs/v2.0-fanmeet-milestone-spec.md`.
+- v2.0 phase merge completed (2026-05-04): 39 requirements are now mapped to six GSD execution phases, Phase 22-27, with former 22-43 gates preserved as success criteria.
 
 ### Decisions
 
@@ -214,7 +215,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 
 ### Pending Todos
 
-- Plan Phase 22 Operator UAT gates.
+- Plan Phase 22 Preflight Closure.
 
 ### Blockers/Concerns
 
@@ -222,7 +223,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 - VALK-03: Valkey eval() 시그니처 차이 -- PARTIAL. 코드 레벨 14/14 verified (testcontainers + Lua 3개 라운드트립), 런타임 3/4 PASS (2026-04-13: /health redis up, 좌석 SET NX+TTL, 카탈로그 캐시 hit 52ms). 남은 미검증: (1) CLUSTER 모드 Valkey 호환성, (2) idle 재연결 장기 안정성. Phase 11 진행 중 관찰 후 closed 처리.
 - ~~R2-02: R2 CORS AllowedHeaders 와일드카드 불가~~ -- Phase 08에서 content-type 명시적 지정으로 해결
 - ADM-06: 통계 쿼리 캐싱 -- 전제조건(Phase 7 Valkey 전환) 완료. Phase 11 어드민 대시보드에서 캐시 레이어 활용 대상으로 이관.
-- Phase 22-24 are now active v2.0 preflight phases. They must complete before Phase 25 fanmeet implementation work expands the launch surface.
+- Phase 22 Preflight Closure now owns former Phase 22-24 launch preflight/quality/hardening gates. It must complete before Phase 23 Launch Foundation expands the fanmeet launch surface.
 
 ### Quick Tasks Completed
 
@@ -244,11 +245,12 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 | 260427-lyr | 프로덕션 소셜 로그인(Google/Kakao/Naver) 100% 실패 핫픽스 (2 라운드, ✅ verified 2026-04-27): R1 `useRef` 가드는 콜백 페이지 내부 중복만 막고 부족 — root layout `<AuthInitializer />`(`apps/web/components/auth/auth-initializer.tsx` ← `apps/web/app/layout.tsx:24`)가 매 페이지 마운트마다 `initializeAuth()`로 `/auth/refresh`를 호출, 콜백 페이지 IIFE와 cross-component race → `auth.service.ts:167-174` 토큰 도난 탐지로 family revoke → 401. R2 콜백 페이지의 `/auth/refresh`+`/users/me` IIFE 제거하고 `useAuthStore`(`user`, `isInitialized`) 관측 모델로 전환 — AuthInitializer 단일 호출자화로 race 자체 소거. `hasRedirectedRef`로 push 1회 보장. 백엔드 정책 불변. PR #23 (R1) + PR #24 (R2) 머지 후 사용자 프로덕션 검증 완료. | 2026-04-27 | 70a3f65 (R1) → 56826c6 (R2) | [260427-lyr-social-login-refresh-double-fire-fix](./quick/260427-lyr-social-login-refresh-double-fire-fix/) |
 | 260427-pcf | 프로덕션 admin 포스터 업로드 100% 차단 핫픽스 (이중 결함, ✅ verified 2026-04-28): (1) `@aws-sdk/client-s3@3.1020` 이 PutObject 에 자동 부착하는 `x-amz-checksum-crc32` / `x-amz-sdk-checksum-algorithm` 두 헤더가 R2 presigned PUT 을 simple request → preflight 필요 요청으로 격상시킴, (2) `grapit-assets` 버킷 CORS 의 `allowed_headers` 가 `content-type` 하나만 등록되어 모든 `x-amz-*` 헤더 차단. 코드: `S3Client` 에 `requestChecksumCalculation: 'WHEN_REQUIRED'` + `responseChecksumValidation: 'WHEN_REQUIRED'` 추가로 헤더 제거 → 단순 PUT 복구 (회귀 테스트 1건, 321/321 green). 인프라: `wrangler r2 bucket cors set grapit-assets` 로 origins 4종(heygrabit.com 외) + headers 11종(checksum 4종 포함) 화이트리스트 확장 적용 (`grapit-assets-cors.json` 아티팩트 보존, commit 7d7ec4d). PR #26. | 2026-04-28 | 2642b24 (code) → 7d7ec4d (cors docs) | [260427-pcf-r2-cors](./quick/260427-pcf-r2-cors/) |
 | 260504-k38 | v1.1 scope closure: Phase 21 이후 v1.1을 닫고 Phase 22-24를 v2.0 Fanmeet Launch preflight/quality/hardening scope로 이월 | 2026-05-04 | docs-only | [260504-k38-close-v1-1-scope-after-phase-21-and-defe](./quick/260504-k38-close-v1-1-scope-after-phase-21-and-defe/) |
+| 260504-mn7 | v2.0 phase merge: initial 22-phase launch-risk checklist를 6개 GSD execution phases로 통합하고 requirement traceability 유지 | 2026-05-04 | docs-only | [260504-mn7-merge-v2-0-phases-into-gsd-sized-executi](./quick/260504-mn7-merge-v2-0-phases-into-gsd-sized-executi/) |
 
 ## Session Continuity
 
 Last session: 2026-05-04T07:14:49.187Z
-Stopped at: Phase 22 context gathered
-Resume file: .planning/phases/22-operator-uat-gates/22-CONTEXT.md
+Stopped at: Phase 22 merged context prepared
+Resume file: .planning/phases/22-preflight-closure/22-CONTEXT.md
 
-**Planned Phase:** v2.0 Phase 22 (operator-uat-gates) — deferred from v1.1 — plan not started
+**Planned Phase:** v2.0 Phase 22 (preflight-closure) — former 22-24 launch preflight/quality/hardening scope — plan not started

@@ -1,14 +1,17 @@
-# Phase 22: Operator UAT gates - Context
+# Phase 22: Preflight Closure - Context
 
 **Gathered:** 2026-05-04T16:12:52+09:00
+**Updated:** 2026-05-04T16:18:15+09:00
 **Status:** Ready for planning
 
 <domain>
 ## Phase Boundary
 
-Phase 22 closes the v2.0 launch-facing operator/human gates inherited from Phase 14 SMS OTP, Phase 15 email cutover, and Phase 16 legal launch. It produces a v2.0 evidence ledger that classifies each SMS, email, and legal gate as `PASS`, `ACCEPTED_RISK`, or `BLOCKER`.
+Phase 22 is now the merged v2.0 preflight phase. It closes the launch-facing operator/human gates inherited from Phase 14 SMS OTP, Phase 15 email cutover, and Phase 16 legal launch; backfills v1.1 validation artifacts into a launch-readiness baseline; and resolves or classifies Valkey/R2/SMS/email/legal fragility as launch blockers.
 
-This phase does not add new fanmeet functionality, global SMS support, multinational consent, or broad operational hardening. It may plan direct fixes only when a failed gate is on the same already-shipped surface needed to close SMS/email/legal launch readiness.
+This phase does not add new fanmeet product functionality, global SMS expansion, multinational consent, admin console scope, or booking/payment features. It may plan direct fixes when a failed gate or hardening finding is on an already-shipped surface that must be stable before Phase 23 Launch Foundation expands the launch surface.
+
+**Merged former phases:** 22 Operator UAT gates, 23 Nyquist validation backfill, 24 Operational hardening sweep.
 
 </domain>
 
@@ -18,7 +21,7 @@ This phase does not add new fanmeet functionality, global SMS support, multinati
 ### Evidence Acceptance Policy
 - **D-01:** Use a gate matrix. `PASS` requires direct evidence, `ACCEPTED_RISK` requires explicit risk acceptance, and `BLOCKER` means a launch path can break and evidence is missing or failing.
 - **D-02:** `ACCEPTED_RISK` requires both maintainer and operator approval. The maintainer records the technical risk; the operator accepts the business launch risk.
-- **D-03:** Phase 22 writes a v2.0-only evidence ledger. Do not backpatch prior Phase 14/15/16 artifacts in this phase; reference them as canonical context. Phase 23 owns artifact backfill.
+- **D-03:** Phase 22 writes a v2.0-only evidence ledger and launch-readiness baseline. Do not rewrite historical Phase 14/15/16 artifacts as if they had new evidence; reference them as canonical context and supplement traceability only where the backfill task explicitly owns it.
 - **D-04:** Use the status terms `PASS`, `ACCEPTED_RISK`, and `BLOCKER` consistently across the Phase 22 gate ledger, UAT, and verification docs.
 
 ### SMS Real-Device Gate
@@ -26,7 +29,7 @@ This phase does not add new fanmeet functionality, global SMS support, multinati
 - **D-06:** Failure-copy verification must show that wrong code, expired/resend, and system-error messages are not collapsed into the same "wrong OTP" copy. This closes the Phase 14 server-message-priority intent.
 - **D-07:** Run a short targeted observation window immediately after real-device UAT. Check the last 1 hour for `sms.verify_failed`, `CROSSSLOT`, and Sentry `provider=valkey` errors.
 - **D-08:** SMS evidence should be screenshots plus sanitized logs. Mask test phone numbers and do not include raw OTPs.
-- **D-09:** If SMS fails on the same Phase 14 SMS path, Phase 22 may include the fix plan. Global SMS expansion, provider-cost monitoring, and 5-country SMS policy belong to later v2.0 phases, especially Phase 24 and Phase 28.
+- **D-09:** If SMS fails on the same Phase 14 SMS path, Phase 22 may include the fix plan. Global SMS expansion, provider-cost monitoring, and 5-country SMS policy belong to Phase 23 Launch Foundation unless an existing SMS fragility blocks preflight closure.
 
 ### Email Inbox Gate
 - **D-10:** Email `PASS` requires Resend accepted evidence plus one inbox observation. The chosen inbox is Gmail.
@@ -38,7 +41,17 @@ This phase does not add new fanmeet functionality, global SMS support, multinati
 - **D-14:** Legal technical `PASS` requires public URL checks, Footer link checks, signup/booking dialog content checks, and production robots/canonical checks.
 - **D-15:** Legal sign-off is factual sign-off only. The operator confirms business identity, representative, business registration number, mail-order registration number, address, customer support contact, privacy/support mailbox, and effective date. External legal counsel review is not required in this phase.
 - **D-16:** Include `support@heygrabit.com` and `privacy@heygrabit.com` mailbox receipt checks in the legal gate.
-- **D-17:** If legal gate fails on direct Phase 16 launch surface gaps such as route, link, robots/canonical, placeholder gate, mailbox receipt, or sign-off document gaps, Phase 22 may include fix plans. Multinational consent, legal schema lock, and PIPA/PDPA/PIPL expansion belong to Phase 29.
+- **D-17:** If legal gate fails on direct Phase 16 launch surface gaps such as route, link, robots/canonical, placeholder gate, mailbox receipt, or sign-off document gaps, Phase 22 may include fix plans. Multinational consent, legal schema lock, and PIPA/PDPA/PIPL expansion belong to Phase 23 Launch Foundation.
+
+### Validation Backfill Gate
+- **D-18:** Validation backfill should classify each v1.1 gap as `COMPLETE`, `ACCEPTED_CAVEAT`, or `BLOCKER`, with an evidence path or explicit reason.
+- **D-19:** Do not mark human-needed or operator-needed evidence as automated proof. If evidence still needs a person, keep it visible as a gate or accepted caveat.
+- **D-20:** Traceability updates are allowed when they point to existing evidence or the new Phase 22 baseline; they must not imply prior work was newly executed.
+
+### Operational Hardening Gate
+- **D-21:** Valkey/R2/SMS/email/legal fragile points should close as one of: concrete fix, accepted risk with owner/date, or launch blocker.
+- **D-22:** Pre-existing debug sessions should be closed, converted into explicit v2.0 risks, or linked to a Phase 22 fix task.
+- **D-23:** Any direct code fix in this phase must stay on already-shipped operational surfaces. New fanmeet functionality starts in Phase 23+.
 
 ### the agent's Discretion
 No discretionary implementation choices were delegated to the agent. Downstream agents should follow the locked decisions above.
@@ -52,10 +65,10 @@ No discretionary implementation choices were delegated to the agent. Downstream 
 
 ### v2.0 Scope
 - `.planning/ROADMAP.md` — Active roadmap; Phase 22 goal and success criteria.
-- `.planning/REQUIREMENTS.md` — `PREF-01` requirement and v2.0 traceability.
+- `.planning/REQUIREMENTS.md` — `PREF-01`, `PREF-02`, `PREF-03` requirements and v2.0 traceability.
 - `.planning/PROJECT.md` — Project constraints, current milestone, and key decisions.
 - `.planning/STATE.md` — Current deferred UAT/verification gaps and v2.0 starting state.
-- `docs/v2.0-fanmeet-milestone-spec.md` — Source milestone spec; Phase 22-24 import model and launch risk register.
+- `docs/v2.0-fanmeet-milestone-spec.md` — Source milestone spec; merged Phase 22-27 model and launch risk register.
 - `.planning/milestones/v1.1-ROADMAP.md` — Archived v1.1 details for Phase 14/15/16/22 context.
 
 ### SMS Gate Context
@@ -92,12 +105,14 @@ No discretionary implementation choices were delegated to the agent. Downstream 
 - Redact PII, OTPs, reset links, tokens, and secrets in planning artifacts.
 - Keep historical v1.1 artifacts intact in this phase; write a new v2.0 evidence ledger.
 - Treat direct launch-surface regressions as Phase 22 candidates, but defer broader feature expansion to mapped v2.0 phases.
+- Preserve the requirement IDs exactly; only the phase execution grouping changed.
 
 ### Integration Points
-- New Phase 22 artifacts should likely include a `22-HUMAN-UAT.md` or equivalent evidence ledger plus `22-VERIFICATION.md` summary.
+- New Phase 22 artifacts should likely include a `22-HUMAN-UAT.md` or equivalent evidence ledger, a validation baseline/backfill artifact, a hardening register, and `22-VERIFICATION.md` summary.
 - SMS evidence connects to `SmsService` logs, Sentry `provider=valkey`, real-device signup UI, and sanitized screenshots.
 - Email evidence connects to Resend send result, Cloud Run/Sentry email-service logs, Gmail receipt, reset confirm, and login.
 - Legal evidence connects to public legal routes, Footer, signup/booking legal dialogs, robots/canonical output, and support/privacy mailbox receipts.
+- Validation and hardening evidence connects to `.planning/STATE.md` deferred items, archived v1.1 verification/UAT files, debug session notes, and quick task summaries.
 
 </code_context>
 
@@ -114,13 +129,13 @@ No discretionary implementation choices were delegated to the agent. Downstream 
 <deferred>
 ## Deferred Ideas
 
-- Five-country SMS policy, provider cost monitoring, and global SMS launch behavior belong to Phase 28 or Phase 24 hardening.
-- Multinational consent, legal schema lock, PIPA/PDPA/PIPL expansion, and audit log behavior belong to Phase 29.
-- Naver/Daum mailbox behavior can be rechecked in Phase 36 M1 integration if left as `ACCEPTED_RISK` in Phase 22.
+- Five-country SMS policy, provider cost monitoring, and global SMS launch behavior belong to Phase 23 Launch Foundation unless an existing blocker must be closed in Phase 22.
+- Multinational consent, legal schema lock, PIPA/PDPA/PIPL expansion, and audit log behavior belong to Phase 23 Launch Foundation.
+- Naver/Daum mailbox behavior can be rechecked in Phase 26 M1 Canary + Cutover Gates if left as `ACCEPTED_RISK` in Phase 22.
 
 </deferred>
 
 ---
 
-*Phase: 22-Operator UAT gates*
+*Phase: 22-Preflight Closure*
 *Context gathered: 2026-05-04T16:12:52+09:00*

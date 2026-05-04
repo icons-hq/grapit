@@ -69,11 +69,15 @@
 
 **Goal:** 2026-07-04 Girl Rules fanmeet을 위해 5개국 다국어, 글로벌 결제, 운영 콘솔, 대기열/부하/DR/on-call, QR 입장 운영을 구축한다.
 
-**Starting scope:**
+**GSD execution phases:**
 
-1. Phase 22 Operator UAT gates — SMS/legal/email operator checks as launch preflight
-2. Phase 23 Nyquist validation backfill — v1.1 artifact gaps as v2.0 quality baseline
-3. Phase 24 Operational hardening sweep — Valkey/R2/SMS/email/legal fragility cleanup as launch blockers
-4. Phase 25+ fanmeet implementation — see [docs/v2.0-fanmeet-milestone-spec.md](../docs/v2.0-fanmeet-milestone-spec.md)
+1. Phase 22 Preflight Closure — former 22-24 operator evidence, validation baseline, and launch blocker hardening
+2. Phase 23 Launch Foundation — former 25-29 prod compatibility, flags, i18n, translation, auth, consent/audit
+3. Phase 24 Traffic + Booking + Payment Core — former 30-32 queue/WAF/prewarm, booking, payment, refund, QR issuance
+4. Phase 25 Admin Operations Console — former 33-35 event registration, CS/content, admin security, audit, seat operations
+5. Phase 26 M1 Canary + Cutover Gates — former 36-40 canary, k6, DR, on-call, live payment cutover
+6. Phase 27 Event Operations + Settlement — former 41-43 QR field operations, event-day playbooks, settlement, retrospective
+
+**Merge decision:** Initial v2.0 launch-risk checklist had 22 small phases. For 1인 개발 + GSD workflow overhead control, the active roadmap now keeps the same 39 requirements but executes them through 6 larger phases with former phase gates preserved as success criteria.
 
 ---

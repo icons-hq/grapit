@@ -20,10 +20,10 @@
 
 ## Phase Placement
 
-- Phase 25 must address flag enforcement, migration compatibility, and canary before other phases.
-- Phase 30 should enforce queue tokens at API boundaries, not just build a waiting screen.
-- Phase 37-40 must stay in order: load/DR/on-call gates before live payment cutover.
-- Phase 41 must test duplicate, tampered, offline, and already-refunded QR states.
+- Phase 23 must address flag enforcement, migration compatibility, and canary foundations before later feature work depends on them.
+- Phase 24 should enforce queue tokens at API boundaries, not just build a waiting screen.
+- Phase 26 must keep load/DR/on-call gates before live payment cutover inside the phase execution plan.
+- Phase 27 must test duplicate, tampered, offline, and already-refunded QR states.
 
 ## Operational Watchpoints
 

@@ -40,4 +40,4 @@ The most important planning constraint is temporal: M1 opens the event detail an
 
 ## Roadmap Implication
 
-Continue numbering from Phase 22. Use 22-24 for deferred launch-readiness gates, 25-36 for M1 advertising open, 37-40 for M2 cutover gates and live payment, 41-42 for event-day operations, and 43 for settlement/retrospective.
+Continue numbering from Phase 22. The initial 22-phase launch-risk checklist is now consolidated into six GSD execution phases: 22 for deferred launch-readiness gates, 23 for launch foundation, 24 for traffic/booking/payment core, 25 for admin operations, 26 for M1/M2 canary and cutover gates, and 27 for event operations and settlement.
