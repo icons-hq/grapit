@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: 안정화 + 고도화
-status: "Phase 21 shipped — PR #31"
-stopped_at: Phase 20 production smoke human verification pending
-last_updated: "2026-05-04T04:26:15.702Z"
-last_activity: "2026-05-04 -- Phase 21 shipped — PR #31"
+status: "v1.1 closed after Phase 21; Phase 22-24 deferred to v2.0 Fanmeet Launch"
+stopped_at: v2.0 Fanmeet Launch milestone setup
+last_updated: "2026-05-04T05:27:53.621Z"
+last_activity: "2026-05-04 -- v1.1 closed after Phase 21; Phase 22-24 deferred to v2.0"
 progress:
-  total_phases: 22
-  completed_phases: 17
-  total_plans: 78
+  total_phases: 18
+  completed_phases: 18
+  total_plans: 77
   completed_plans: 77
-  percent: 99
+  percent: 100
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-04-09)
 
 **Core value:** 사용자가 원하는 공연을 발견하고, 좌석을 직접 선택하여, 안정적으로 예매를 완료할 수 있는 것
-**Current focus:** Phase 22 — operator-uat-gates
+**Current focus:** v2.0 Fanmeet Launch — initialize milestone with deferred Phase 22-24 preflight scope
 
 ## Current Position
 
-Phase: 22
+Phase: v2.0 preflight (deferred Phase 22-24)
 Plan: Not started
-Status: Phase 21 shipped — PR #31
-Last activity: 2026-05-04 -- Phase 21 shipped — PR #31
+Status: v1.1 closed after Phase 21; Phase 22-24 deferred to v2.0 Fanmeet Launch
+Last activity: 2026-05-04 -- v1.1 closed after Phase 21; Phase 22-24 deferred to v2.0
 
-Progress: [██████████] 99%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
@@ -95,6 +95,7 @@ Progress: [██████████] 99%
 - Phase 15 added (2026-04-24): Resend heygrabit.com cutover — Phase 13 UAT Gap test 9. Plan 03/04 가 명시적으로 deferred 처리한 RESEND_FROM_EMAIL secret 값 교체 + Resend 콘솔 heygrabit.com 도메인 verification + DNS SPF/DKIM/DMARC 후이즈 등록. Reference: .planning/debug/password-reset-email-not-delivered-prod.md
 - Phase 16 added (2026-04-24): Legal pages launch — Phase 13 UAT Gap test 11 (pre-existing feature gap). apps/web/app/legal/{terms,privacy,marketing} 신규 구현 + Footer href="#" 플레이스홀더 교체. 한국 개보법·정통망법 상시 공개 URL 런칭 요건. Reference: .planning/debug/legal-pages-404-heygrabit.md
 - Phase 17 added (2026-04-24): Local dev health indicator fix — Phase 13 UAT Gap test 1 (pre-existing Phase 7-05 버그). InMemoryRedis mock 에 ping() 미구현 → Terminus 503. InMemoryRedis.ping() 추가 + capability probe. Reference: .planning/debug/local-api-health-503-no-redis.md
+- v1.1 closed after Phase 21 (2026-05-04): Phase 22 Operator UAT gates, Phase 23 Nyquist validation backfill, and Phase 24 Operational hardening sweep moved to v2.0 Fanmeet Launch as preflight/quality/hardening scope.
 
 ### Decisions
 
@@ -136,7 +137,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 
 ### Pending Todos
 
-None.
+- Initialize v2.0 Fanmeet Launch from `docs/v2.0-fanmeet-milestone-spec.md`, with deferred Phase 22-24 as the first preflight scope.
 
 ### Blockers/Concerns
 
@@ -144,6 +145,7 @@ None.
 - VALK-03: Valkey eval() 시그니처 차이 -- PARTIAL. 코드 레벨 14/14 verified (testcontainers + Lua 3개 라운드트립), 런타임 3/4 PASS (2026-04-13: /health redis up, 좌석 SET NX+TTL, 카탈로그 캐시 hit 52ms). 남은 미검증: (1) CLUSTER 모드 Valkey 호환성, (2) idle 재연결 장기 안정성. Phase 11 진행 중 관찰 후 closed 처리.
 - ~~R2-02: R2 CORS AllowedHeaders 와일드카드 불가~~ -- Phase 08에서 content-type 명시적 지정으로 해결
 - ADM-06: 통계 쿼리 캐싱 -- 전제조건(Phase 7 Valkey 전환) 완료. Phase 11 어드민 대시보드에서 캐시 레이어 활용 대상으로 이관.
+- Phase 22-24 are deferred to v2.0 Fanmeet Launch, not considered active blockers for v1.1 closure.
 
 ### Quick Tasks Completed
 
@@ -164,11 +166,12 @@ None.
 | 260427-kch | 회원가입 가입완료 시 410 EXPIRED 차단 핫픽스: `auth.service.ts` register/completeSocialRegistration 가 OTP 코드를 `verifyCode` 로 재호출 → Lua 가 OTP 키 DEL 후 EXPIRED 반환 → GoneException. `SmsService.isPhoneVerified` 추가 + GoneException catch fallback 으로 `{sms:{e164}}:verified` 플래그(TTL 600s) idempotency 확인 (sms.service.ts:385-403 자체 권고 반영). 8 회귀 테스트 추가, 315/315 green. main 직접 머지(PR #21) → Cloud Run 자동 배포 | 2026-04-27 | 9b38358 (hotfix/main) | [260427-kch-410-expired-auth-service-ts-verifycode](./quick/260427-kch-410-expired-auth-service-ts-verifycode/) |
 | 260427-lyr | 프로덕션 소셜 로그인(Google/Kakao/Naver) 100% 실패 핫픽스 (2 라운드, ✅ verified 2026-04-27): R1 `useRef` 가드는 콜백 페이지 내부 중복만 막고 부족 — root layout `<AuthInitializer />`(`apps/web/components/auth/auth-initializer.tsx` ← `apps/web/app/layout.tsx:24`)가 매 페이지 마운트마다 `initializeAuth()`로 `/auth/refresh`를 호출, 콜백 페이지 IIFE와 cross-component race → `auth.service.ts:167-174` 토큰 도난 탐지로 family revoke → 401. R2 콜백 페이지의 `/auth/refresh`+`/users/me` IIFE 제거하고 `useAuthStore`(`user`, `isInitialized`) 관측 모델로 전환 — AuthInitializer 단일 호출자화로 race 자체 소거. `hasRedirectedRef`로 push 1회 보장. 백엔드 정책 불변. PR #23 (R1) + PR #24 (R2) 머지 후 사용자 프로덕션 검증 완료. | 2026-04-27 | 70a3f65 (R1) → 56826c6 (R2) | [260427-lyr-social-login-refresh-double-fire-fix](./quick/260427-lyr-social-login-refresh-double-fire-fix/) |
 | 260427-pcf | 프로덕션 admin 포스터 업로드 100% 차단 핫픽스 (이중 결함, ✅ verified 2026-04-28): (1) `@aws-sdk/client-s3@3.1020` 이 PutObject 에 자동 부착하는 `x-amz-checksum-crc32` / `x-amz-sdk-checksum-algorithm` 두 헤더가 R2 presigned PUT 을 simple request → preflight 필요 요청으로 격상시킴, (2) `grapit-assets` 버킷 CORS 의 `allowed_headers` 가 `content-type` 하나만 등록되어 모든 `x-amz-*` 헤더 차단. 코드: `S3Client` 에 `requestChecksumCalculation: 'WHEN_REQUIRED'` + `responseChecksumValidation: 'WHEN_REQUIRED'` 추가로 헤더 제거 → 단순 PUT 복구 (회귀 테스트 1건, 321/321 green). 인프라: `wrangler r2 bucket cors set grapit-assets` 로 origins 4종(heygrabit.com 외) + headers 11종(checksum 4종 포함) 화이트리스트 확장 적용 (`grapit-assets-cors.json` 아티팩트 보존, commit 7d7ec4d). PR #26. | 2026-04-28 | 2642b24 (code) → 7d7ec4d (cors docs) | [260427-pcf-r2-cors](./quick/260427-pcf-r2-cors/) |
+| 260504-k38 | v1.1 scope closure: Phase 21 이후 v1.1을 닫고 Phase 22-24를 v2.0 Fanmeet Launch preflight/quality/hardening scope로 이월 | 2026-05-04 | docs-only | [260504-k38-close-v1-1-scope-after-phase-21-and-defe](./quick/260504-k38-close-v1-1-scope-after-phase-21-and-defe/) |
 
 ## Session Continuity
 
-Last session: 2026-04-30T09:12:40Z
-Stopped at: Phase 20 production smoke human verification pending
-Resume file: .planning/phases/20-valkey-production-connectivity-contract/20-HUMAN-UAT.md
+Last session: 2026-05-04T05:27:53Z
+Stopped at: v1.1 scope closed after Phase 21; v2.0 Fanmeet Launch setup next
+Resume file: docs/v2.0-fanmeet-milestone-spec.md
 
-**Planned Phase:** 15 (resend-heygrabit-com-cutover-transactional-email-secret-mana) — 3 plans — 2026-04-24T08:54:14.266Z
+**Planned Phase:** v2.0 Phase 22 (operator-uat-gates) — deferred from v1.1 — plan not started

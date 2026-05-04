@@ -30,3 +30,32 @@
 - `useShowtimes` hook의 `/api/v1/performances/:id/showtimes` 라우트 미존재 (enabled:false, 런타임 영향 없음)
 
 ---
+
+## v1.1 안정화 + 고도화 (Closed: 2026-05-04)
+
+**Delivered:** v1.0 이후 운영 안정화와 gap closure를 Phase 21까지 진행하고, 남은 operator/validation/hardening work는 v2.0 Fanmeet Launch의 실제 launch surface로 이월.
+
+**Phases:** 18 tracked phases through Phase 21 (including inserted 09.1 and 10.1)
+**Timeline:** 26일 (2026-04-09 ~ 2026-05-04)
+**Closure point:** Phase 21 Verification artifact backfill shipped (PR #31)
+
+**Scope closure decision:**
+
+1. **v1.1 closes after Phase 21** — Phase 22-24 are no longer active v1.1 scope.
+2. **Phase 22-24 deferred to v2.0** — operator UAT gates, Nyquist validation backfill, and operational hardening become v2.0 fanmeet preflight/quality gates.
+3. **Known human-needed evidence remains explicit** — Phase 20 production smoke and launch-facing legal/SMS/email gates are not marked complete; they move forward as v2.0 launch readiness work.
+
+---
+
+## v2.0 Fanmeet Launch (Planned)
+
+**Goal:** 2026-07-04 Girl Rules fanmeet을 위해 5개국 다국어, 글로벌 결제, 운영 콘솔, 대기열/부하/DR/on-call, QR 입장 운영을 구축한다.
+
+**Starting scope:**
+
+1. Phase 22 Operator UAT gates — SMS/legal/email operator checks as launch preflight
+2. Phase 23 Nyquist validation backfill — v1.1 artifact gaps as v2.0 quality baseline
+3. Phase 24 Operational hardening sweep — Valkey/R2/SMS/email/legal fragility cleanup as launch blockers
+4. Phase 25+ fanmeet implementation — see [docs/v2.0-fanmeet-milestone-spec.md](../docs/v2.0-fanmeet-milestone-spec.md)
+
+---

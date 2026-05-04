@@ -7,6 +7,8 @@
 
 Requirements for v1.1 안정화 + 고도화. Each maps to roadmap phases.
 
+**Scope note (2026-05-04):** v1.1 is closed after Phase 21. Former Phase 22-24 work is deferred into v2.0 Fanmeet Launch and remains listed in traceability as `v2.0 Phase 22-24` where relevant.
+
 ### 소셜 로그인 버그
 
 - [x] **AUTH-01**: 소셜 로그인 재로그인 실패 버그 수정 (회원가입 후 로그아웃 → 재로그인 불가, 카카오/네이버/구글 전부)
@@ -99,22 +101,22 @@ Which phases cover which requirements. Updated during roadmap creation.
 | AUTH-01 | Phase 6, Phase 21 | Complete |
 | VALK-01 | Phase 7 | Pending |
 | VALK-02 | Phase 7, Phase 20 | Pending |
-| VALK-03 | Phase 7, Phase 19, Phase 20, Phase 24 | Complete |
+| VALK-03 | Phase 7, Phase 19, Phase 20, v2.0 Phase 24 | Complete |
 | VALK-04 | Phase 7, Phase 20 | Pending |
-| VALK-05 | Phase 7, Phase 20, Phase 24 | Pending |
+| VALK-05 | Phase 7, Phase 20, v2.0 Phase 24 | Pending |
 | VALK-06 | Phase 7 | Pending |
-| R2-01 | Phase 8, Phase 21, Phase 23 | Complete |
-| R2-02 | Phase 8, Phase 21, Phase 23, Phase 24 | Complete |
-| R2-03 | Phase 8, Phase 21, Phase 23 | Complete |
-| R2-04 | Phase 8, Phase 21, Phase 23 | Pending |
-| DEBT-01 | Phase 9, Phase 18, Phase 23 | Complete |
-| DEBT-02 | Phase 9, Phase 23 | Pending |
-| DEBT-03 | Phase 9, Phase 23 | Pending |
-| DEBT-04 | Phase 9, Phase 23 | Pending |
-| DEBT-05 | Phase 9, Phase 23 | Pending |
-| DEBT-06 | Phase 9, Phase 23 | Pending |
+| R2-01 | Phase 8, Phase 21, v2.0 Phase 23 | Complete |
+| R2-02 | Phase 8, Phase 21, v2.0 Phase 23, v2.0 Phase 24 | Complete |
+| R2-03 | Phase 8, Phase 21, v2.0 Phase 23 | Complete |
+| R2-04 | Phase 8, Phase 21, v2.0 Phase 23 | Pending |
+| DEBT-01 | Phase 9, Phase 18, v2.0 Phase 23 | Complete |
+| DEBT-02 | Phase 9, v2.0 Phase 23 | Pending |
+| DEBT-03 | Phase 9, v2.0 Phase 23 | Pending |
+| DEBT-04 | Phase 9, v2.0 Phase 23 | Pending |
+| DEBT-05 | Phase 9, v2.0 Phase 23 | Pending |
+| DEBT-06 | Phase 9, v2.0 Phase 23 | Pending |
 | SMS-01 | Phase 10 | Pending |
-| SMS-02 | Phase 10, Phase 22, Phase 24 | Pending |
+| SMS-02 | Phase 10, v2.0 Phase 22, v2.0 Phase 24 | Pending |
 | SMS-03 | Phase 10 | Pending |
 | SMS-04 | Phase 10 | Pending |
 | ADM-01 | Phase 11 | Complete |
@@ -139,4 +141,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-04-09*
-*Last updated: 2026-04-29 after v1.1 milestone gap planning*
+*Last updated: 2026-05-04 after v1.1 scope closure and Phase 22-24 v2.0 deferral*

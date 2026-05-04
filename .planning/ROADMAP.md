@@ -3,7 +3,8 @@
 ## Milestones
 
 - ✅ **v1.0 MVP** -- Phases 1-5 (shipped 2026-04-09)
-- 🚧 **v1.1 안정화 + 고도화** -- Phases 6-24 (in progress)
+- ✅ **v1.1 안정화 + 고도화** -- Phases 6-21 (closed 2026-05-04; former Phase 22-24 deferred to v2.0)
+- 🧭 **v2.0 Fanmeet Launch** -- Phase 22+ (planned; starts with deferred operator/validation/hardening gates)
 
 ## Phases
 
@@ -20,9 +21,11 @@ Full details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 
 </details>
 
-### 🚧 v1.1 안정화 + 고도화 (In Progress)
+### ✅ v1.1 안정화 + 고도화 (Closed 2026-05-04)
 
 **Milestone Goal:** 인프라 안정화(Redis->Valkey 전환, R2 연동, 기술부채 청산, SMS 실연동)를 완료하고, 어드민 고도화 및 UX 현대화로 서비스 품질을 끌어올린다.
+
+**Closure decision:** v1.1 scope is closed after Phase 21. Former Phase 22-24 work is no longer active v1.1 scope and is deferred into the v2.0 Fanmeet Launch milestone as launch preflight/hardening work.
 
 - [x] **Phase 6: 소셜 로그인 버그 수정** - 소셜 로그인 재로그인 실패 버그 해결 (completed 2026-04-09, PR #11/#12)
 - [x] **Phase 7: Valkey 마이그레이션** - Upstash Redis 제거, ioredis 단일 클라이언트로 Google Valkey 전환 (completed 2026-04-13, CLUSTER 모드/idle 재연결 장기 모니터링은 VALK-03 로 추적)
@@ -34,15 +37,18 @@ Full details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 - [x] **Phase 13: 브랜드 grapit→grabit rename** - 코드/설정/사용자 노출 카피/도메인 식별자 전환 (completed 2026-04-22)
 - [x] **Phase 14: SMS OTP CROSSSLOT fix** - Valkey Cluster hash tag 적용과 프로덕션 SMS OTP 회귀 방어 (completed 2026-04-24)
 - [x] **Phase 15: Resend heygrabit.com cutover** - transactional email 발송 도메인과 Secret Manager 값 전환 (completed 2026-04-27)
-- [ ] **Phase 16: Legal pages launch** - legal 공개 URL cutover와 외부 sign-off 완료 (in progress)
+- [x] **Phase 16: Legal pages launch** - legal 공개 URL 구현 완료; operator cutover/sign-off gate는 v2.0 Phase 22로 이월 (closed with deferred gate)
 - [x] **Phase 17: Local dev health indicator fix** - InMemoryRedis ping parity와 health capability probe 보강 (completed)
 - [x] **Phase 18: Password reset production API origin fix** - password reset confirm의 production API origin break 해소 (gap closure) (completed 2026-04-29)
 - [x] **Phase 19: Seat lock ownership enforcement** - reservation/payment 경계에서 Valkey lock ownership 강제 (gap closure) (completed 2026-04-29)
-- [ ] **Phase 20: Valkey production connectivity contract** - Cloud Run → Valkey runtime/cluster contract 검증 (gap closure)
+- [x] **Phase 20: Valkey production connectivity contract** - Cloud Run → Valkey runtime/cluster contract 검증 계약 작성 완료; production smoke evidence는 v2.0 Phase 24로 이월 (`human_needed`, accepted for v1.1 closure)
 - [x] **Phase 21: Verification artifact backfill** - missing `VERIFICATION.md`와 requirement evidence 계약 복구 (gap closure) (completed 2026-05-04)
-- [ ] **Phase 22: Operator UAT gates** - SMS, legal, email operator/human gates 완료 (gap closure)
-- [ ] **Phase 23: Nyquist validation backfill** - partial/missing validation artifacts 보강 (gap closure)
-- [ ] **Phase 24: Operational hardening sweep** - audit tech-debt follow-up를 launch blocker로 승격해 정리 (gap closure)
+
+#### Deferred to v2.0 Fanmeet Launch
+
+- [ ] **Phase 22: Operator UAT gates** - SMS, legal, email operator/human gates 완료 (v2.0 launch preflight)
+- [ ] **Phase 23: Nyquist validation backfill** - partial/missing validation artifacts 보강 (v2.0 quality gate)
+- [ ] **Phase 24: Operational hardening sweep** - audit tech-debt follow-up를 fanmeet launch blocker로 승격해 정리
 
 ## Phase Details
 
@@ -350,12 +356,16 @@ Plans:
 - [x] 21-03-PLAN.md — Phase 13 verification artifact with human-needed false-claim guards
 - [x] 21-04-PLAN.md — Phase 15 verification artifact with human-needed and secret-leak guards
 
+## v2.0 Fanmeet Launch Preflight (Deferred from v1.1)
+
+The following phases were originally planned as v1.1 gap-closure work. They are now deferred into the v2.0 Fanmeet Launch milestone so operator verification, validation backfill, and operational hardening are handled against the real fanmeet launch surface instead of extending v1.1.
+
 ### Phase 22: Operator UAT gates
 
-**Goal:** Phase 14 SMS OTP, Phase 15 email cutover, Phase 16 legal launch에 남은 실기기/외부 sign-off/operator smoke gate를 완료하여 launch-facing partial flows를 닫는다.
+**Goal:** Phase 14 SMS OTP, Phase 15 email cutover, Phase 16 legal launch에 남은 실기기/외부 sign-off/operator smoke gate를 v2.0 fanmeet launch preflight로 완료한다.
 **Requirements:** SMS-02, CUTOVER-05, D-01, D-02, D-03, D-04, D-05, D-06, D-07, D-08, D-09, D-10, D-11, D-12, D-13, D-14, D-15
 **Gap Closure:** Closes `.planning/v1.1-MILESTONE-AUDIT.md` SMS signup OTP, legal pages launch, and email inbox observation gaps.
-**Depends on:** Phase 21
+**Depends on:** Phase 21; v2.0 Fanmeet Launch milestone initialization
 **Success Criteria** (what must be TRUE):
   1. SMS signup OTP real-device production UAT and zero-CROSSSLOT/Sentry observation window are recorded.
   2. legal factual sign-off, mailbox receipt, production URL smoke, robots/canonical checks are complete.
@@ -367,14 +377,14 @@ Plans:
 
 ### Phase 23: Nyquist validation backfill
 
-**Goal:** Audit가 partial/missing으로 분류한 phase validation artifacts를 보강하여 v1.1 Nyquist coverage를 milestone completion gate 수준으로 끌어올린다.
+**Goal:** Audit가 partial/missing으로 분류한 phase validation artifacts를 보강하여 v2.0 launch-readiness baseline에서 v1.1 coverage gaps를 명확히 닫는다.
 **Requirements:** R2-01, R2-02, R2-03, R2-04, DEBT-01, DEBT-02, DEBT-03, DEBT-04, DEBT-05, DEBT-06
 **Gap Closure:** Closes `.planning/v1.1-MILESTONE-AUDIT.md` Nyquist validation gaps for phases 08, 09, 09.1, 10.1, 13, 16, 17.
 **Depends on:** Phase 22
 **Success Criteria** (what must be TRUE):
   1. `$gsd-validate-phase 08`, `09`, `09.1`, `10.1`, `13`, `16`, `17` 결과가 artifact로 남는다.
   2. validation gaps are resolved or explicitly routed to a new blocker with owner and evidence.
-  3. milestone audit can distinguish implementation gaps from artifact-only gaps after validation backfill.
+  3. v2.0 launch-readiness audit can distinguish implementation gaps from artifact-only gaps after validation backfill.
 **Plans:** 0 plans
 
 Plans:
@@ -382,7 +392,7 @@ Plans:
 
 ### Phase 24: Operational hardening sweep
 
-**Goal:** Audit tech-debt에 남은 fragile 운영 항목을 launch blocker 관점에서 정리하여 re-audit 때 반복 gap으로 남지 않게 한다.
+**Goal:** Audit tech-debt에 남은 fragile 운영 항목을 fanmeet launch blocker 관점에서 정리하여 v2.0 re-audit 때 반복 gap으로 남지 않게 한다.
 **Requirements:** VALK-03, VALK-05, R2-02, SMS-02, CUTOVER-05, SC-4
 **Gap Closure:** Closes `.planning/v1.1-MILESTONE-AUDIT.md` tech-debt follow-ups across Valkey, R2, SMS, brand cleanup, email observation, and legal operations.
 **Depends on:** Phase 23
@@ -398,7 +408,7 @@ Plans:
 ## Progress
 
 **Execution Order:**
-Phases execute in numeric order: 6 -> 7 -> 8 -> 9 -> 10 -> 11 -> 12 -> 13 -> 14 -> 15 -> 16 -> 17 -> 18 -> 19 -> 20 -> 21 -> 22 -> 23 -> 24
+v1.1 executed through Phase 21 and is closed. v2.0 resumes with deferred Phase 22 -> 23 -> 24 before fanmeet implementation phases.
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
@@ -419,15 +429,15 @@ Phases execute in numeric order: 6 -> 7 -> 8 -> 9 -> 10 -> 11 -> 12 -> 13 -> 14 
 | 13. 브랜드 grapit→grabit rename | v1.1 | 4/4 | Complete | 2026-04-22 |
 | 14. SMS OTP CROSSSLOT fix | v1.1 | 4/4 | Complete | 2026-04-24 |
 | 15. Resend heygrabit.com cutover | v1.1 | 3/3 | Complete (48h 관측 follow-up pending) | 2026-04-27 |
-| 16. Legal pages launch | v1.1 | 5/6 | Partial | - |
+| 16. Legal pages launch | v1.1 | 5/6 | Closed (operator gate deferred) | 2026-05-04 |
 | 17. Local dev health indicator fix | v1.1 | 2/2 | Complete | 2026-04-29 |
 | 18. Password reset production API origin fix | v1.1 | 2/2 | Complete    | 2026-04-29 |
 | 19. Seat lock ownership enforcement | v1.1 | 4/4 | Complete    | 2026-04-29 |
-| 20. Valkey production connectivity contract | v1.1 | 4/4 | Human Needed |  |
+| 20. Valkey production connectivity contract | v1.1 | 4/4 | Closed (human-needed deferred) | 2026-05-04 |
 | 21. Verification artifact backfill | v1.1 | 4/4 | Complete    | 2026-05-04 |
-| 22. Operator UAT gates | v1.1 | 0/0 | Planned | - |
-| 23. Nyquist validation backfill | v1.1 | 0/0 | Planned | - |
-| 24. Operational hardening sweep | v1.1 | 0/0 | Planned | - |
+| 22. Operator UAT gates | v2.0 | 0/0 | Deferred from v1.1 | - |
+| 23. Nyquist validation backfill | v2.0 | 0/0 | Deferred from v1.1 | - |
+| 24. Operational hardening sweep | v2.0 | 0/0 | Deferred from v1.1 | - |
 
 ## Backlog
 
