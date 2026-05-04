@@ -218,8 +218,8 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 - [Phase 22-04]: Classified unresolved SMS, Email, Legal, and Provider Observation gates as ACCEPTED_RISK per operator instruction on 2026-05-04 KST. — Direct production/operator evidence was not collected, so Phase 22 records accepted launch risk instead of PASS evidence.
 - [Phase 22-04]: Kept missing SMS/email/legal/provider proof out of PASS status and did not invent screenshots, provider IDs, Cloud Run/Sentry hits, mailbox receipts, or registration evidence. — Accepted-risk closure must preserve the distinction between direct evidence and approved launch risk.
 - [Phase 22-05]: Accepted risks remain ACCEPTED_RISK and are not converted into PASS evidence.
-- [Phase 22-05]: Phase 23 readiness is BLOCKED because source validation and hardening artifacts still contain unresolved BLOCKER rows.
-- [Phase 22-05]: Production Valkey smoke was recorded as a blocker classification because production auth and operator-approved safe fixtures were unavailable.
+- [Phase 22-05]: Phase 23 readiness is READY_WITH_ACCEPTED_RISKS after source validation and hardening blockers were explicitly reclassified with maintainer/operator approvals.
+- [Phase 22-05]: Production Valkey smoke was recorded as an accepted-risk classification because production auth and operator-approved safe fixtures were unavailable.
 
 ### Pending Todos
 
@@ -232,7 +232,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 - ~~R2-02: R2 CORS AllowedHeaders 와일드카드 불가~~ -- Phase 08에서 content-type 명시적 지정으로 해결
 - ADM-06: 통계 쿼리 캐싱 -- 전제조건(Phase 7 Valkey 전환) 완료. Phase 11 어드민 대시보드에서 캐시 레이어 활용 대상으로 이관.
 - Phase 22 Preflight Closure now owns former Phase 22-24 launch preflight/quality/hardening gates. It must complete before Phase 23 Launch Foundation expands the fanmeet launch surface.
-- Phase 23 readiness is BLOCKED after 22-05 until source validation and hardening BLOCKER rows are closed or explicitly reclassified.
+- Phase 23 readiness is READY_WITH_ACCEPTED_RISKS after 22-05; missing direct validation/hardening evidence remains accepted risk/caveat, not PASS evidence.
 
 ### Quick Tasks Completed
 
@@ -262,4 +262,4 @@ Last session: 2026-05-04T09:36:50.588Z
 Stopped at: Completed 22-05-PLAN.md
 Resume file: None
 
-**Planned Phase:** v2.0 Phase 22 (preflight-closure) — Plan 22-05 complete; final verification says Phase 23 readiness is BLOCKED until listed validation and hardening blockers are closed or reclassified.
+**Planned Phase:** v2.0 Phase 23 (launch-foundation) — Phase 22 complete with READY_WITH_ACCEPTED_RISKS; proceed only under accepted risks listed in 22-VERIFICATION.md.

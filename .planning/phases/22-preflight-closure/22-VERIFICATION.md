@@ -1,88 +1,135 @@
 ---
 phase: 22-preflight-closure
-verified: 2026-05-04T09:31:18Z
+verified: 2026-05-04T09:59:11Z
 status: passed_with_accepted_risks
+score: "12/12 must-haves verified"
 requirements: [PREF-01, PREF-02, PREF-03]
+overrides_applied: 0
+verification_marker: PHASE_22_VERIFIED_READY_WITH_ACCEPTED_RISKS
+accepted_risk_readiness: READY_WITH_ACCEPTED_RISKS
+re_verification:
+  previous_status: "prior run found stale STATE readiness gap"
+  previous_score: "10/12"
+  gaps_closed:
+    - "No unresolved blocked Phase 23 readiness wording remains after accepted-risk closure."
+    - "Planning state no longer contradicts the final accepted-risk readiness."
+  gaps_remaining: []
+  regressions: []
+accepted_risks:
+  - "Missing direct SMS, email, legal, provider-observation, Valkey, and R2 evidence remains accepted risk/caveat, not PASS evidence."
+  - "Phase 23 may proceed only as READY_WITH_ACCEPTED_RISKS, not green READY."
+advisory_followups:
+  - "scripts/smoke-valkey-production.mjs WR-01: add gcloud spawn timeout/error handling."
+  - "scripts/smoke-valkey-production.mjs WR-02: add fetch timeout/abort handling."
+  - "scripts/smoke-valkey-production.mjs WR-03: retry Cloud Logging instance proof instead of single sleep."
 ---
 
-# Phase 22 Verification
+# Phase 22: Preflight Closure Verification Report
 
-## Phase Goal
+**Phase Goal:** Close launch-facing evidence from Phase 14 SMS OTP, Phase 15 email cutover, and Phase 16 legal launch; backfill v1.1 validation gaps; and classify Valkey/R2/SMS/email/legal fragility before fanmeet implementation.
+**Verified:** 2026-05-04T09:59:11Z
+**Status:** passed_with_accepted_risks
+**Re-verification:** Yes - after closing the stale `.planning/STATE.md` readiness gap from the previous verifier run.
 
-Phase 22 decides whether Phase 23 can start without unresolved v1.1 launch-readiness blockers. The final decision is based on current Phase 22 artifacts only; historical v1.1 artifacts remain context and are not rewritten as newly executed proof.
+## Goal Achievement
 
-Direct production/operator evidence for SMS, Email, Legal, and Provider Observation was not collected. Those gates remain `ACCEPTED_RISK` per 2026-05-04 KST maintainer/operator approval and are not treated as green `PASS` evidence.
+Phase 22 achieves the preflight-closure goal under accepted risk. The source artifacts no longer contain unresolved source `BLOCKER` rows in their evidence tables, and `.planning/STATE.md` no longer contradicts the phase-level accepted-risk readiness.
 
-## Requirements Matrix
+This is not a green launch-readiness pass. Missing direct SMS, email, legal, provider-observation, Valkey, and R2 evidence remains explicitly documented as `ACCEPTED_RISK` or `ACCEPTED_CAVEAT`, and Phase 23 readiness remains `READY_WITH_ACCEPTED_RISKS`.
 
-| Requirement | Final Status | Evidence Artifact | Verification Result |
-|-------------|--------------|-------------------|---------------------|
-| PREF-01 | ACCEPTED_RISK | `.planning/phases/22-preflight-closure/22-HUMAN-UAT.md`; `.planning/phases/22-preflight-closure/22-EVIDENCE-LEDGER.md` | SMS, Email, Legal, and Provider Observation are accepted launch risks with approval date and next action. No direct production/operator evidence is claimed. |
-| PREF-02 | ACCEPTED_RISK | `.planning/phases/22-preflight-closure/22-VALIDATION-BASELINE.md`; `.planning/phases/22-preflight-closure/22-EVIDENCE-LEDGER.md` | Baseline summary has no remaining `BLOCKER` rows, but six `ACCEPTED_CAVEAT` rows remain visible and are not treated as `PASS`. |
-| PREF-03 | ACCEPTED_RISK | `.planning/phases/22-preflight-closure/22-HARDENING-REGISTER.md`; `.planning/phases/22-preflight-closure/22-EVIDENCE-LEDGER.md` | Hardening register has no remaining `BLOCKER` findings, but Valkey, R2, SMS, Email, and Legal hardening gaps remain accepted risks. |
+### Observable Truths
 
-## Artifact Matrix
+| # | Truth | Status | Evidence |
+|---|-------|--------|----------|
+| 1 | SMS real-device, email reset-to-login, and legal public/sign-off gates are classified as `PASS`, `ACCEPTED_RISK`, or `BLOCKER`. | VERIFIED WITH ACCEPTED RISKS | `22-HUMAN-UAT.md:33-96` classifies all missing direct operator/provider evidence as `ACCEPTED_RISK`; final gate rows in `22-EVIDENCE-LEDGER.md:26-30` are all `ACCEPTED_RISK`. |
+| 2 | v1.1 artifact gaps are classified as `COMPLETE`, `ACCEPTED_CAVEAT`, or `BLOCKER` with traceable evidence. | VERIFIED WITH ACCEPTED CAVEATS | `22-VALIDATION-BASELINE.md:28-35` classifies 8 rows; `22-VALIDATION-BASELINE.md:53-56` reports `COMPLETE: 2`, `ACCEPTED_CAVEAT: 6`, `BLOCKER: 0`. |
+| 3 | Valkey/R2/SMS/email/legal fragile points close as concrete fix, `ACCEPTED_RISK`, or `BLOCKER`. | VERIFIED WITH ACCEPTED RISKS | `22-HARDENING-REGISTER.md:25-33` records one concrete fix and accepted-risk rows; a row parser found zero source blocker rows. |
+| 4 | Phase 23 starts without unresolved v1.1 launch-readiness blocker. | VERIFIED WITH ACCEPTED RISKS | `.planning/STATE.md:221`, `:235`, and `:265` now say `READY_WITH_ACCEPTED_RISKS`; `.planning/STATE.md:222` records production Valkey smoke as accepted-risk classification. |
+| 5 | Missing direct evidence remains accepted risk/caveat, not `PASS`. | VERIFIED | `22-EVIDENCE-LEDGER.md:40-44` has `PASS: 0`, `ACCEPTED_RISK: 5`, `BLOCKER: 0`; `22-VALIDATION-BASELINE.md:55-60` keeps six caveats visible. |
+| 6 | D-01 through D-23 are traceable into final artifacts. | VERIFIED | `22-EVIDENCE-LEDGER.md:46-72` maps every decision ID to its source artifact; spot-check confirmed `D-01..D-23` present. |
+| 7 | Required Phase 22 artifacts exist and are substantive. | VERIFIED | `gsd-sdk verify.artifacts` passed for all five plans: HUMAN-UAT, EVIDENCE-LEDGER, VALIDATION-BASELINE, HARDENING-REGISTER, VERIFICATION, and the Valkey smoke script. |
+| 8 | Production Valkey smoke default artifact path points to Phase 22. | VERIFIED WITH ADVISORY RISK | `scripts/smoke-valkey-production.mjs:12-13` and `--help` point to `.planning/phases/22-preflight-closure/artifacts/valkey-smoke.md`; `22-REVIEW.md` warnings remain advisory follow-up only. |
+| 9 | PREF-01, PREF-02, and PREF-03 are all accounted for. | VERIFIED | Plan frontmatter references all three IDs; `REQUIREMENTS.md:10-12` defines them; this report maps each to evidence below. |
+| 10 | Phase 23 readiness is `READY_WITH_ACCEPTED_RISKS`, not green `READY`, in the final Phase 22 report. | VERIFIED | This report uses `accepted_risk_readiness: READY_WITH_ACCEPTED_RISKS` and does not claim green `READY`. |
+| 11 | Accepted-risk approvals include maintainer/operator approval and KST date. | VERIFIED | `22-HUMAN-UAT.md:98-105`, `22-EVIDENCE-LEDGER.md:34-36`, and `22-HARDENING-REGISTER.md:17-20` record the approval contract and dates. |
+| 12 | Planning state no longer contradicts the final accepted-risk readiness. | VERIFIED | Spot-check of `.planning/STATE.md` found no stale blocked-readiness or old blocker-classification wording. |
 
-| Artifact | Expected | Exists | Substantive | Wired | Status | Details |
-|----------|----------|--------|-------------|-------|--------|---------|
-| `.planning/phases/22-preflight-closure/22-HUMAN-UAT.md` | PREF-01 SMS/email/legal/operator evidence and accepted-risk approvals | yes | yes | yes | VERIFIED WITH ACCEPTED RISKS | Contains accepted-risk rows for SMS, Email, Legal, Provider Observation and explicit 2026-05-04 KST maintainer/operator approvals. |
-| `.planning/phases/22-preflight-closure/22-EVIDENCE-LEDGER.md` | Final gate ledger for PREF-01/PREF-02/PREF-03 | yes | yes | yes | VERIFIED WITH ACCEPTED RISKS | Final Gate Counts are `PASS: 0`, `ACCEPTED_RISK: 5`, `BLOCKER: 0`; D-01 through D-23 are mapped. |
-| `.planning/phases/22-preflight-closure/22-VALIDATION-BASELINE.md` | v1.1 validation baseline for PREF-02 | yes | yes | yes | VERIFIED WITH ACCEPTED CAVEATS | Classifies 8 inherited rows; none remain `BLOCKER`, while six remain `ACCEPTED_CAVEAT`. |
-| `.planning/phases/22-preflight-closure/22-HARDENING-REGISTER.md` | Operational hardening register for PREF-03 | yes | yes | yes | VERIFIED WITH ACCEPTED RISKS | Contains concrete fix and accepted-risk dispositions; no unresolved blocker findings remain. |
-| `.planning/phases/22-preflight-closure/22-VERIFICATION.md` | Final Phase 22 verification and Phase 23 readiness decision | yes | yes | yes | VERIFIED WITH ACCEPTED RISKS | This report records the accepted-risk readiness decision and preserves accepted risks/caveats. |
+**Score:** 12/12 truths verified
+
+## Required Artifacts
+
+| Artifact | Expected | Status | Details |
+|----------|----------|--------|---------|
+| `.planning/phases/22-preflight-closure/22-HUMAN-UAT.md` | PREF-01 operator evidence or accepted-risk worksheet | VERIFIED WITH ACCEPTED RISKS | Exists and records SMS, Email, Legal, and Provider Observation as accepted risks with approvals and review triggers. |
+| `.planning/phases/22-preflight-closure/22-EVIDENCE-LEDGER.md` | Canonical final gate ledger | VERIFIED WITH ACCEPTED RISKS | Final gate rows are `ACCEPTED_RISK`; counts are `PASS: 0`, `ACCEPTED_RISK: 5`, `BLOCKER: 0`. |
+| `.planning/phases/22-preflight-closure/22-VALIDATION-BASELINE.md` | v1.1 validation baseline | VERIFIED WITH ACCEPTED CAVEATS | 8 rows classified; no `BLOCKER` rows remain, and 6 caveats remain visible. |
+| `.planning/phases/22-preflight-closure/22-HARDENING-REGISTER.md` | Operational hardening register | VERIFIED WITH ACCEPTED RISKS | One concrete fix plus accepted-risk rows; no blocker findings remain. |
+| `scripts/smoke-valkey-production.mjs` | Phase 22 Valkey smoke artifact default | VERIFIED WITH ADVISORY WARNINGS | Default path and help text are correct; review warnings remain follow-up context. |
+| `.planning/STATE.md` | Current planning state should reflect final readiness | VERIFIED | Phase 23 readiness is `READY_WITH_ACCEPTED_RISKS`; missing evidence remains accepted risk/caveat, not PASS evidence. |
 
 ## Key Link Verification
 
 | From | To | Via | Status | Details |
 |------|----|-----|--------|---------|
-| `22-VERIFICATION.md` | `22-EVIDENCE-LEDGER.md` | Requirements matrix and artifact matrix cite final gate status | WIRED | Final decision uses ledger counts and source accepted-risk/caveat rows. |
-| `22-EVIDENCE-LEDGER.md` | `22-HUMAN-UAT.md` | SMS, Email, Legal accepted-risk rows | WIRED | Human UAT accepted risks are visible and not converted to `PASS`. |
-| `22-EVIDENCE-LEDGER.md` | `22-VALIDATION-BASELINE.md` | Validation Backfill gate row | WIRED | Baseline `ACCEPTED_CAVEAT` rows remain visible; no blocker rows remain. |
-| `22-EVIDENCE-LEDGER.md` | `22-HARDENING-REGISTER.md` | Hardening gate row | WIRED | Operational accepted-risk findings remain visible. |
+| `22-EVIDENCE-LEDGER.md` | `22-HUMAN-UAT.md` | Evidence rows cite SMS/Email/Legal accepted-risk sections | WIRED | `gsd-sdk verify.key-links` passed for Plan 22-01. |
+| `22-VALIDATION-BASELINE.md` | `.planning/milestones/v1.1-MILESTONE-AUDIT.md` | Gap rows cite historical audit findings | WIRED | `gsd-sdk verify.key-links` passed for Plan 22-02. |
+| `scripts/smoke-valkey-production.mjs` | `.planning/phases/22-preflight-closure/artifacts/valkey-smoke.md` | `defaultArtifactUrl` fallback | WIRED | `gsd-sdk verify.key-links` passed for Plan 22-03; `--help` also prints the Phase 22 path. |
+| `22-HUMAN-UAT.md` | `apps/api/src/modules/sms/sms.service.ts` | `sms.verify_failed`, `CROSSSLOT`, `provider=valkey` trace terms | WIRED BY TERMS, PATH NOT LITERAL | `gsd-sdk` literal path check fails, but the plan's `via` terms appear in HUMAN-UAT and the code contains `sms.verify_failed`/`CROSSSLOT`. |
+| `22-HUMAN-UAT.md` | `apps/api/src/modules/auth/email/email.service.ts` | `Resend`, `email-service` trace terms | WIRED BY TERMS, PATH NOT LITERAL | `gsd-sdk` literal path check fails, but HUMAN-UAT includes Resend/email-service observations and the code contains the Resend/email-service implementation. |
+| `22-VERIFICATION.md` | `22-EVIDENCE-LEDGER.md` | Verification rows cite final ledger status | WIRED | `gsd-sdk verify.key-links` passed for Plan 22-05. |
+| `22-EVIDENCE-LEDGER.md` | `22-VALIDATION-BASELINE.md` | Validation Backfill evidence row | WIRED | Final ledger links PREF-02 to the baseline summary. |
+| `22-EVIDENCE-LEDGER.md` | `22-HARDENING-REGISTER.md` | Hardening evidence row | WIRED | Final ledger links PREF-03 to the hardening register. |
 
-## Threat Mitigation Results
+## Data-Flow Trace (Level 4)
 
-| Threat Ref | Result | Evidence | Notes |
-|------------|--------|----------|-------|
-| T-22-01 | MITIGATED | `22-VERIFICATION.md`; `22-EVIDENCE-LEDGER.md` | Final report cites redacted artifact paths and does not include OTPs, reset links, cookies, auth headers, or secrets. |
-| T-22-02 | MITIGATED | `22-VERIFICATION.md`; `22-VALIDATION-BASELINE.md` | Historical artifacts are cited as context only; Phase 22 status cites Phase 22 artifacts. |
-| T-22-03 | MITIGATED WITH ACCEPTED RISK | `22-HUMAN-UAT.md#sms-real-device-gate`; `22-EVIDENCE-LEDGER.md` | SMS readiness is not marked `PASS` and does not rely on `isPhoneVerified` alone. Missing real-device evidence remains accepted risk in source artifacts. |
-| T-22-04 | MITIGATED WITH ACCEPTED RISK | `22-HARDENING-REGISTER.md`; `scripts/smoke-valkey-production.mjs --help` | Script default artifact path is Phase 22, but Cloud Run -> Valkey production smoke evidence is not collected and is accepted by maintainer/operator on 2026-05-04 KST. |
-| T-22-05 | MITIGATED WITH ACCEPTED RISK | `22-HARDENING-REGISTER.md` | R2 production provider/config evidence remains missing; local fallback is not treated as `PASS`, and the residual risk is accepted by maintainer/operator on 2026-05-04 KST. |
-| T-22-06 | MITIGATED WITH ACCEPTED RISK | `22-EVIDENCE-LEDGER.md`; `22-HUMAN-UAT.md`; `22-HARDENING-REGISTER.md` | Missing provider/public-surface evidence is accepted risk with approvals/dates visible; readiness is not green `READY`. |
+| Artifact | Data Variable | Source | Produces Real Data | Status |
+|----------|---------------|--------|--------------------|--------|
+| `22-EVIDENCE-LEDGER.md` | Final gate statuses | HUMAN-UAT, VALIDATION-BASELINE, HARDENING-REGISTER | Yes, as planning evidence classifications | FLOWING WITH ACCEPTED RISKS |
+| `22-VALIDATION-BASELINE.md` | Baseline classifications | v1.1 audit/history plus Phase 22 accepted-risk artifacts | Yes, as traceable classification rows | FLOWING WITH ACCEPTED CAVEATS |
+| `22-HARDENING-REGISTER.md` | Dispositions | Smoke script, code references, accepted-risk approvals | Yes, as concrete fix/accepted-risk rows | FLOWING WITH ADVISORY WARNINGS |
+| `.planning/STATE.md` | Phase 23 readiness state | Final Phase 22 accepted-risk decision | Yes, matches Phase 22 source artifacts | FLOWING WITH ACCEPTED RISKS |
 
-## Automated Verification Commands
+## Behavioral Spot-Checks
 
-| Command | Result | Exit | Checked At | Notes |
-|---------|--------|------|------------|-------|
-| `test -f .planning/phases/22-preflight-closure/22-HUMAN-UAT.md` | PASS | 0 | 2026-05-04T18:29 KST | Required artifact exists. |
-| `test -f .planning/phases/22-preflight-closure/22-EVIDENCE-LEDGER.md` | PASS | 0 | 2026-05-04T18:29 KST | Required artifact exists. |
-| `test -f .planning/phases/22-preflight-closure/22-VALIDATION-BASELINE.md` | PASS | 0 | 2026-05-04T18:29 KST | Required artifact exists. |
-| `test -f .planning/phases/22-preflight-closure/22-HARDENING-REGISTER.md` | PASS | 0 | 2026-05-04T18:29 KST | Required artifact exists. |
-| `test -f .planning/phases/22-preflight-closure/22-VERIFICATION.md` | PASS | 0 | 2026-05-04T18:31 KST | This file exists after Task 2 creation and is rechecked by plan verification. |
-| `pnpm --filter @grabit/api test -- src/modules/sms/sms.service.spec.ts src/modules/auth/email/email.service.spec.ts` | PASS | 0 | 2026-05-04T18:30 KST | Vitest: 29 files, 386 tests passed. |
-| `pnpm --filter @grabit/web test -- app/auth/reset-password/__tests__/reset-password.test.tsx content/legal/__tests__/legal-content.test.ts app/legal/__tests__/metadata.test.ts components/layout/__tests__/footer.test.tsx` | PASS | 0 | 2026-05-04T18:30 KST | Vitest: 27 files, 191 tests passed. Existing jsdom/act stderr warnings did not fail tests. |
-| `pnpm test && pnpm build` | PASS | 0 | 2026-05-04T18:30 KST | Turbo test and build completed successfully; outputs were cache hits with all tasks successful. |
-| `pnpm --filter @grabit/api test:integration -- booking-cluster-lua` | PASS | 0 | 2026-05-04T18:31 KST | Docker 29.1.3 available; 5 integration files, 41 tests passed. |
-| `node scripts/smoke-valkey-production.mjs --checks=health,lua,socketio,logs` | ACCEPTED_RISK CLASSIFICATION | not run | 2026-05-04T18:31 KST | Production auth header file and operator-approved safe fixture values are not available. `--help` confirms required env and Phase 22 default artifact path; source register keeps Valkey production smoke as accepted risk. |
+| Behavior | Command | Result | Status |
+|----------|---------|--------|--------|
+| Source artifacts have no unresolved `BLOCKER` table rows | `node -e "...scan 22 source tables..."` | `blocker_rows=0` for HUMAN-UAT, EVIDENCE-LEDGER, VALIDATION-BASELINE, HARDENING-REGISTER, and STATE | PASS |
+| Planning state has no stale blocked readiness contradiction | `node -e "...scan .planning/STATE.md..."` | `state readiness ok` | PASS |
+| Valkey smoke help prints Phase 22 artifact path | `node scripts/smoke-valkey-production.mjs --help` | Default path is `.planning/phases/22-preflight-closure/artifacts/valkey-smoke.md` | PASS |
+| Required artifacts declared by plans exist and are substantive | `gsd-sdk query verify.artifacts` for 22-01 through 22-05 | All artifact checks passed | PASS |
+| Required key links are connected or term-traceable | `gsd-sdk query verify.key-links` plus manual term grep for 22-04 | Literal links pass except 22-04 path references; 22-04 via terms are present in source/code | PASS WITH NOTE |
 
-## Accepted Risks And Caveats
+## Requirements Coverage
 
-| Source | Status | Caveat | Approval / Owner | Review Trigger |
-|--------|--------|--------|------------------|----------------|
-| SMS real-device and provider observation | ACCEPTED_RISK | Direct happy-path, failure-copy, Cloud Run, and Sentry provider observation evidence was not collected. | Maintainer + Operator, 2026-05-04 KST | Collect direct SMS evidence before production launch/significant traffic or if a related SMS incident occurs. |
-| Email reset-to-login and provider observation | ACCEPTED_RISK | Direct Gmail receipt, Resend id, reset-confirm, login, and email-service observation evidence was not collected. | Maintainer + Operator, 2026-05-04 KST | Collect direct email evidence before production launch/significant traffic or if a related email incident occurs. |
-| Legal public/sign-off and provider observation | ACCEPTED_RISK | Direct public URL, Footer/mailto, robots/canonical, mailbox, factual sign-off, and public-surface evidence was not collected. | Maintainer + Operator, 2026-05-04 KST | Collect direct legal evidence before production launch/significant traffic or if a related legal incident occurs. |
-| Email provider observation caveat | ACCEPTED_CAVEAT | Historical reset-to-login evidence exists, but provider/dashboard closeout caveats remain. | Operator + Maintainer | Reclassify in a later gate if fanmeet launch depends on it. |
-| R2 production evidence caveat | ACCEPTED_CAVEAT | Historical CORS/upload evidence exists, but live Phase 22 provider proof and custom-domain cutover evidence are not newly collected. | Maintainer | Collect live provider proof if the fanmeet launch surface depends on it. |
-| Missing/stale verification artifacts | ACCEPTED_CAVEAT | Historical artifact gaps are preserved as caveats unless they block Phase 23 launch readiness. | Maintainer | Use Phase 22 baseline and Phase 21 backfill for future traceability. |
+| Requirement | Source Plan | Description | Status | Evidence |
+|-------------|-------------|-------------|--------|----------|
+| PREF-01 | 22-01, 22-04, 22-05 | Operator can complete launch-facing SMS, legal, and email real-device/sign-off gates with evidence before fanmeet implementation starts. | SATISFIED AS ACCEPTED RISK | `22-HUMAN-UAT.md` and `22-EVIDENCE-LEDGER.md` classify missing direct evidence as accepted risk with approval and next action. |
+| PREF-02 | 22-01, 22-02, 22-05 | Maintainer can backfill v1.1 validation artifacts into a clear v2.0 launch-readiness baseline. | SATISFIED WITH ACCEPTED CAVEATS | `22-VALIDATION-BASELINE.md` classifies inherited gaps and keeps six caveats visible. |
+| PREF-03 | 22-01, 22-03, 22-05 | Maintainer can close or mitigate Valkey, R2, SMS, email, and legal operational fragility as explicit launch blockers. | SATISFIED AS ACCEPTED RISK | `22-HARDENING-REGISTER.md` records the Valkey artifact-path fix and accepted-risk dispositions. |
 
-## Blockers
+No additional Phase 22 requirement IDs were found in `REQUIREMENTS.md`; PREF-01, PREF-02, and PREF-03 are all accounted for.
 
-None. All previously unresolved source blockers were explicitly reclassified as
-accepted caveats or accepted risks with maintainer/operator approval dated
-2026-05-04 KST. These are not green `PASS` evidence and remain listed above.
+## Anti-Patterns Found
 
-## Phase 23 Readiness
+| File | Line | Pattern | Severity | Impact |
+|------|------|---------|----------|--------|
+| `scripts/smoke-valkey-production.mjs` | 199 | `spawnSync()` has no timeout/error handling | WARNING | From `22-REVIEW.md` WR-01; production smoke can hang or obscure missing `gcloud`. Advisory follow-up only. |
+| `scripts/smoke-valkey-production.mjs` | 344 | `fetch()` calls have no timeout | WARNING | From `22-REVIEW.md` WR-02; smoke can stall without artifact output. Advisory follow-up only. |
+| `scripts/smoke-valkey-production.mjs` | 597 | Cloud Logging proof uses one fixed sleep | WARNING | From `22-REVIEW.md` WR-03; smoke can false-fail due log ingestion delay. Advisory follow-up only. |
 
-READY_WITH_ACCEPTED_RISKS: Phase 23 can start only with the accepted risks listed above.
+No blocker anti-patterns remain for the Phase 22 goal. The previous `.planning/STATE.md` stale blocked-readiness wording is closed.
+
+## Human Verification Required
+
+None for this verification decision. Missing direct production/operator evidence is already explicitly accepted as risk by the user/operator and remains visible as accepted risk or accepted caveat, not `PASS`.
+
+## Gaps Summary
+
+No blocking gaps remain. Phase 22 can proceed to Phase 23 only under `READY_WITH_ACCEPTED_RISKS`; the missing direct evidence is deliberately preserved as accepted risk/caveat, not green evidence.
+
+**Verification marker:** PHASE_22_VERIFIED_READY_WITH_ACCEPTED_RISKS
+
+---
+
+_Verified: 2026-05-04T09:59:11Z_
+_Verifier: the agent (gsd-verifier)_
