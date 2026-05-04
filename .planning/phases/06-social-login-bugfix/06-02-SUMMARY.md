@@ -25,7 +25,8 @@ key_decisions:
   - "OAuth provider 페이지 봇 감지로 인해 callback URL 직접 접근 방식으로 E2E 테스트 구성"
 patterns_established:
   - "Playwright E2E: apps/web/e2e/ 디렉토리에 spec 파일 배치, webServer로 pnpm dev 자동 실행"
-requirements_completed: []
+requirements_completed:
+  - AUTH-01
 metrics:
   duration: 3m
   completed: "2026-04-09T07:08:15Z"
