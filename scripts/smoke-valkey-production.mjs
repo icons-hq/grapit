@@ -369,9 +369,27 @@ async function requestJson(config, path, options = {}) {
   return { status: response.status, body };
 }
 
+function isObjectRecord(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 async function readSeatState(config) {
   const status = await requestJson(config, `/api/v1/booking/schedules/${encodeURIComponent(config.showtimeId)}/seats`);
-  return status.body?.seats?.[config.seatId] ?? status.body?.[config.seatId] ?? 'unknown';
+  if (!isObjectRecord(status.body)) {
+    throw new Error('seat-status response body must be an object');
+  }
+  if (!isObjectRecord(status.body.seats)) {
+    throw new Error('seat-status response must include a seats object');
+  }
+
+  const state = status.body.seats[config.seatId];
+  if (state === undefined) {
+    return 'available';
+  }
+  if (typeof state !== 'string') {
+    throw new Error(`seat-status response has non-string state for ${config.seatId}`);
+  }
+  return state;
 }
 
 async function unlockAndVerifySeat(config) {
