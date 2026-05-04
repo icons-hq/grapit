@@ -47,10 +47,10 @@
 - ✓ Grabit brand/domain cutover + heygrabit.com transactional email 기반 — Phase 13/15 (v1.1) *(legacy cleanup과 Naver/Daum inbox observation은 v2.0 gate로 이월)*
 - ✓ Legal public pages 구현 + Footer URL 교체 — Phase 16 (v1.1) *(법무/operator sign-off는 v2.0 gate로 이월)*
 - ✓ Reservation/payment lock ownership enforcement — Phase 19 (v1.1)
+- ✓ v2.0 Phase 22 Preflight Closure before fanmeet implementation — Phase 22 (v2.0) *(READY_WITH_ACCEPTED_RISKS; missing direct operator/provider/Valkey/R2 evidence remains accepted risk/caveat, not PASS evidence)*
 
 ### Active
 
-- [ ] v2.0 Phase 22 Preflight Closure completed before fanmeet implementation
 - [ ] M1 advertising open on 2026-05-15 with 5-language event surface, signup, admin content, queue/WAF/prewarm basics, and booking disabled
 - [ ] M2 pre-cutover gates on 2026-05-22~26: k6 10k/20k PASS, DR PASS, on-call/Sentry/WAF readiness PASS
 - [ ] M2 payment cutover at 2026-05-말 only after gates pass: Toss live keys + `BOOKING_ENABLED=true` + 4 payment paths + QR issuance
@@ -76,7 +76,7 @@
 ### Current State (v2.0 started — 2026-05-04)
 
 - **Shipped version:** v1.1 안정화 + 고도화 archived/tagged after Phase 21. Full archive: `.planning/milestones/v1.1-ROADMAP.md`, `.planning/milestones/v1.1-REQUIREMENTS.md`, `.planning/milestones/v1.1-MILESTONE-AUDIT.md`
-- **Current focus:** v2.0 Fanmeet Launch initialized from `docs/v2.0-fanmeet-milestone-spec.md` and consolidated into 6 GSD execution phases. Phase 22 Preflight Closure now contains the deferred launch preflight/quality/hardening gates, then Phase 23+ implements the Girl Rules fanmeet launch surface.
+- **Current focus:** v2.0 Fanmeet Launch initialized from `docs/v2.0-fanmeet-milestone-spec.md` and consolidated into GSD execution phases. Phase 22 Preflight Closure is complete with `READY_WITH_ACCEPTED_RISKS`; Phase 23+ fanmeet work must preserve the accepted-risk caveats until direct operator/provider/Valkey/R2 evidence is collected.
 - **v1.1 milestone 완료:** Phase 6~21 closed. Former Phase 22-24는 v2.0 Phase 22 Preflight Closure로 이월
 - **Phase 12 산출:** shadcn UI 시스템 modernize(globals.css 토큰), 좌석 선택 visual feedback(Option C useEffect fill transition + 체크마크 fade-in/out), react-zoom-pan-pinch 내장 MiniMap viewport rect 동기화, 모바일 WCAG 2.5.5 터치 타겟(44.8px first paint), admin SVG unified parsing contract (`[data-stage]` root+descendant + enum), UX-01~UX-06 6개 requirement 모두 validated
 - **Tech stack:** Next.js 16 + React 19 + Tailwind CSS v4 + NestJS 11 + Drizzle ORM + PostgreSQL 16 + Google Memorystore for Valkey (ioredis) + Socket.IO + Toss Payments + Infobip SMS v3
@@ -88,7 +88,7 @@
 - **Phase 14 완료 (2026-04-24):** SMS OTP CROSSSLOT fix — `{sms:${e164}}:<role>` hash-tag 스킴으로 전환, 4-심볼 module export(smsOtpKey/smsAttemptsKey/smsVerifiedKey/VERIFY_AND_INCREMENT_LUA)를 Plan 02/03 통합 테스트의 single source of truth 로 확정, cluster-mode CROSSSLOT 회귀 가드(`sms-cluster-crossslot.integration.spec.ts`) + ci.yml `test:integration` step 추가, phone-verification server-message-priority(D-07/D-08) UX 분기. 자동 검증 8/9 (api 283/283 + web 143/143 green, typecheck 0 errors, code review 0 critical). 잔여 HUMAN-UAT 3건: SC-1 실기기 프로덕션 SMS 인증 · ci.yml integration step PR green · pre-existing `sms-throttle.integration.spec.ts` TTL 2건 (@grabit rename 여파 — deferred-items.md)
 - **Phase 18 완료 (2026-04-29):** Password reset production API origin fix — production `next.config.ts` rewrites가 `[]`로 고정되어 `/api`/`socket.io`가 `localhost:8080`으로 새지 않으며, web API callers는 `apiUrl()`을 통해 `https://api.heygrabit.com` public origin을 사용한다. 최종 Cloud Run web revision `grabit-web-00023-62r`, API revision `grabit-api-00021-nnn` 기준 reset email → confirm POST 200 → login success evidence 기록. 자동 검증 web 186/186, API auth/email 323/323 green. 잔여 caveat: Sentry `component:email-service` zero-count/event-id는 독립 확인하지 않고 operator-approved caveat로 추적.
 - **Phase 21 완료 (2026-05-04):** Verification artifact backfill — Phase 06 `AUTH-01`, Phase 08 `R2-01..R2-04`, Phase 13/15 missing verification artifact를 기존 evidence에 맞춰 복구. Phase 08 `R2-04` custom-domain cutover는 `PARTIAL`/Pending으로 유지했고, Phase 13/15 operator evidence는 `human_needed` caveat를 보존. `pnpm build`, `pnpm test` green.
-- **v1.1 close caveat:** `audit-open` 70개 항목은 deferred로 승인 처리되어 `.planning/STATE.md` `Deferred Items`에 기록. 이 중 launch-facing operator/human-needed evidence는 v2.0 Phase 22 Preflight Closure에서 처리.
+- **v1.1 close caveat:** `audit-open` 70개 항목은 deferred로 승인 처리되어 `.planning/STATE.md` `Deferred Items`에 기록. Launch-facing operator/human-needed evidence는 v2.0 Phase 22에서 `ACCEPTED_RISK`로 닫혔고, direct evidence 수집 전까지 PASS evidence로 취급하지 않는다.
 
 ### 참조 사이트
 NOL 티켓(nol.interpark.com/ticket)을 상세 분석한 5개 문서가 docs/에 있음:
@@ -169,4 +169,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-04 after v2.0 Fanmeet Launch milestone initialization*
+*Last updated: 2026-05-04 after Phase 22 accepted-risk preflight closure*
