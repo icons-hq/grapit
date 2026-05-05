@@ -1,5 +1,5 @@
 ---
-status: diagnosed
+status: resolved
 phase: 22-preflight-closure
 source:
   - .planning/phases/22-preflight-closure/22-01-SUMMARY.md
@@ -7,8 +7,9 @@ source:
   - .planning/phases/22-preflight-closure/22-03-SUMMARY.md
   - .planning/phases/22-preflight-closure/22-04-SUMMARY.md
   - .planning/phases/22-preflight-closure/22-05-SUMMARY.md
+  - .planning/phases/22-preflight-closure/22-06-SUMMARY.md
 started: 2026-05-05T18:33:12+09:00
-updated: 2026-05-05T18:40:03+09:00
+updated: 2026-05-05T18:51:15+09:00
 mode: automated-production-cli-and-browser
 targets:
   web: https://heygrabit.com
@@ -75,6 +76,9 @@ expected: invalid phone numbers that pass broad E.164 regex are handled as user-
 result: issue
 reported: "Production `POST /api/v1/sms/verify-code` and `POST /api/v1/sms/send-code` returned HTTP 500 for an invalid-but-regex-valid international number. Cloud Run stderr showed `Error: 올바른 휴대폰 번호를 입력해주세요` from `parseE164`, then an uncaught exception stack at `SmsService.verifyCode` / `SmsController.verifyCode`."
 severity: major
+closure: local_fix_verified
+closure_observed: "`22-06` converts `parseE164()` phone validation failures to `BadRequestException` before Redis/Infobip work. `pnpm --filter @grabit/api exec vitest run src/modules/sms/sms.service.spec.ts` passed 69/69 and `pnpm --filter @grabit/api typecheck` passed."
+production_rerun: "Pending after deployment; rerun this production test against `send-code` and `verify-code` before treating the live UAT observation as pass."
 
 ### 10. Full Production Valkey Smoke Script
 expected: full `scripts/smoke-valkey-production.mjs` can run against production with operator-approved auth header and safe booking fixtures.
@@ -97,15 +101,17 @@ caveat: Sentry dashboard observation was not performed because no Sentry MCP/app
 
 total: 11
 passed: 9
-issues: 1
+issues: 0
 pending: 0
 skipped: 0
 blocked: 1
+resolved_locally: 1
+production_rerun_required: 1
 
 ## Gaps
 
 - truth: "Invalid phone numbers that pass broad E.164 regex are handled as user-facing validation errors, not production 500s."
-  status: failed
+  status: resolved
   reason: "Production returned HTTP 500 for invalid-but-regex-valid international SMS phone input; Cloud Run stderr showed `parseE164` throwing a plain Error that escaped as an internal server error."
   severity: major
   test: 9
@@ -120,20 +126,24 @@ blocked: 1
     - path: "Cloud Logging"
       issue: "Production `grabit-api-00027-nxq` recorded 500 requests for `/api/v1/sms/verify-code` and `/api/v1/sms/send-code` during this UAT."
   missing:
-    - "Normalize `parseE164()` validation failures to `BadRequestException('올바른 휴대폰 번호를 입력해주세요')` before provider/Valkey work."
-    - "Add API/service tests for invalid-but-regex-valid international numbers on both `send-code` and `verify-code`."
-    - "Keep the valid no-OTP verify path returning HTTP 410."
+    - "Production deployment and rerun of test 9."
+  resolution:
+    fixed_by:
+      - "325bc89 test(22-06): cover invalid SMS phone normalization"
+      - "70f5c58 fix(22-06): normalize invalid SMS phone errors"
+    local_verification:
+      - "`pnpm --filter @grabit/api exec vitest run src/modules/sms/sms.service.spec.ts` - 69/69 passed"
+      - "`pnpm --filter @grabit/api typecheck` - passed"
+    notes:
+      - "`sendVerificationCode()` and `verifyCode()` now reject invalid-but-regex-valid international phone input as `BadRequestException` before Valkey counters, OTP state, cooldown, or Infobip work."
+      - "Existing valid no-OTP verify behavior remains covered by the existing `GoneException` tests."
   debug_session: ""
 
-## Gap Closure Plan
+## Gap Closure Result
 
-Ready for `$gsd-execute-phase 22 --gaps` or a small `$gsd:quick` fix:
+Closed locally by `22-06`:
 
-1. Add a small phone-normalization wrapper in the SMS service layer, or make the controller schemas refine with `parseE164()`, so invalid libphonenumber inputs become HTTP 400.
-2. Use the same normalized phone handling in both `sendVerificationCode()` and `verifyCode()` before any Valkey counter, OTP, cooldown, or Infobip work.
-3. Add targeted regression tests:
-   - `send-code` with a regex-valid but invalid E.164 number returns HTTP 400 with `올바른 휴대폰 번호를 입력해주세요`.
-   - `verify-code` with the same invalid number returns HTTP 400 with the same copy.
-   - `verify-code` with a valid reserved number and no OTP still returns HTTP 410 expired/resend copy.
-   - invalid `send-code` does not call Infobip or write OTP state.
-4. Verify locally with targeted API tests, deploy, and rerun the production UAT checks for tests 8 and 9.
+1. Added service regression tests for invalid-but-regex-valid international phone input on both SMS send and verify paths.
+2. Added `parseE164OrBadRequest()` in `SmsService` and used it before any SMS provider or Valkey side effect.
+3. Verified locally with targeted unit tests and API typecheck.
+4. Production rerun remains pending until the branch is deployed.

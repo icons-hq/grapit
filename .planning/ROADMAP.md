@@ -33,7 +33,7 @@
 
 **Merged from:** 22 Operator UAT gates, 23 Nyquist validation backfill, 24 Operational hardening sweep
 
-**Plans:** 5/5 plans complete
+**Plans:** 6/6 plans complete
 
 Plans:
 **Wave 1**
@@ -47,11 +47,15 @@ Plans:
 **Wave 3** *(blocked on Wave 2 completion)*
 - [x] 22-05-PLAN.md — Wave 3 final evidence aggregation and Phase 23 readiness verification for PREF-01/PREF-02/PREF-03
 
+**Wave 4** *(gap closure after production UAT)*
+- [x] 22-06-PLAN.md — Wave 4 SMS invalid international phone 500 gap closure for PREF-01
+
 **Success criteria:**
 1. SMS real-device, email reset-to-login, legal public/sign-off evidence가 `PASS`, `ACCEPTED_RISK`, `BLOCKER`로 분류된다.
 2. v1.1 artifact gaps가 complete, accepted caveat, v2.0 blocker 중 하나로 정리되고 evidence 위치가 traceable하다.
 3. Valkey/R2/SMS/email/legal fragile points가 concrete fix, accepted risk, launch blocker 중 하나로 닫힌다.
 4. Phase 23 Launch Foundation이 unresolved v1.1 launch-readiness blocker 없이 시작 가능하다.
+5. Production UAT에서 발견된 invalid-but-regex-valid SMS phone 500 gap은 로컬 코드/테스트 기준으로 닫히고, 배포 후 production rerun 필요성이 명시된다.
 
 ### Phase 23: Launch Foundation
 

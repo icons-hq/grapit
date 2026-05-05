@@ -22,6 +22,11 @@ advisory_followups:
   - "scripts/smoke-valkey-production.mjs WR-01: add gcloud spawn timeout/error handling."
   - "scripts/smoke-valkey-production.mjs WR-02: add fetch timeout/abort handling."
   - "scripts/smoke-valkey-production.mjs WR-03: retry Cloud Logging instance proof instead of single sleep."
+post_verification_gap_closures:
+  - plan: "22-06"
+    status: "local_fix_verified"
+    summary: ".planning/phases/22-preflight-closure/22-06-SUMMARY.md"
+    production_rerun_required: true
 ---
 
 # Phase 22: Preflight Closure Verification Report
@@ -36,6 +41,17 @@ advisory_followups:
 Phase 22 achieves the preflight-closure goal under accepted risk. The source artifacts no longer contain unresolved source `BLOCKER` rows in their evidence tables, and `.planning/STATE.md` no longer contradicts the phase-level accepted-risk readiness.
 
 This is not a green launch-readiness pass. Missing direct SMS, email, legal, provider-observation, Valkey, and R2 evidence remains explicitly documented as `ACCEPTED_RISK` or `ACCEPTED_CAVEAT`, and Phase 23 readiness remains `READY_WITH_ACCEPTED_RISKS`.
+
+## Post-Verification Gap Closure
+
+After the original verification, production UAT test 9 found that invalid-but-regex-valid international SMS phone input returned HTTP 500. Plan `22-06` closes that gap locally by converting `parseE164()` validation failures to `BadRequestException` before any Valkey counter, OTP, cooldown, or Infobip work.
+
+Verification for the local closure:
+
+- `pnpm --filter @grabit/api exec vitest run src/modules/sms/sms.service.spec.ts` — 69/69 passed
+- `pnpm --filter @grabit/api typecheck` — passed
+
+Production rerun remains required after deployment before the live UAT observation is changed to pass.
 
 ### Observable Truths
 

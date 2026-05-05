@@ -163,6 +163,7 @@ Summary: 70 total items (debug sessions 5, quick tasks 41, seeds 2, UAT gaps 12,
 | Phase 19 P03 | 6min | 2 tasks | 2 files |
 | Phase 22 P04 | 10min | 3 tasks | 2 files |
 | Phase 22 P05 | 8min | 2 tasks | 3 files |
+| Phase 22 P06 | 18min | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -221,6 +222,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 - [Phase 22-05]: Accepted risks remain ACCEPTED_RISK and are not converted into PASS evidence.
 - [Phase 22-05]: Phase 23 readiness is READY_WITH_ACCEPTED_RISKS after source validation and hardening blockers were explicitly reclassified with maintainer/operator approvals.
 - [Phase 22-05]: Production Valkey smoke was recorded as an accepted-risk classification because production auth and operator-approved safe fixtures were unavailable.
+- [Phase 22-06]: Invalid-but-regex-valid SMS phone input is normalized to BadRequestException at the service boundary before Valkey/Infobip side effects. — Production UAT test 9 is locally fixed and still needs deploy plus production rerun before changing the live observation to pass.
 
 ### Pending Todos
 
