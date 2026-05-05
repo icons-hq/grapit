@@ -128,6 +128,19 @@ export const smsVerifyCounterKey = (e164: string): string => { assertE164(e164);
 export interface SendResult { success: boolean; message: string }
 export interface VerifyResult { verified: boolean; message?: string }
 
+const PHONE_VALIDATION_MESSAGE = '올바른 휴대폰 번호를 입력해주세요';
+
+function parseE164OrBadRequest(phone: string): string {
+  try {
+    return parseE164(phone);
+  } catch (err) {
+    if (err instanceof Error && err.message === PHONE_VALIDATION_MESSAGE) {
+      throw new BadRequestException(PHONE_VALIDATION_MESSAGE);
+    }
+    throw err;
+  }
+}
+
 @Injectable()
 export class SmsService {
   private readonly logger = new Logger(SmsService.name);
@@ -204,7 +217,7 @@ export class SmsService {
   }
 
   async sendVerificationCode(phone: string): Promise<SendResult> {
-    const e164 = parseE164(phone);
+    const e164 = parseE164OrBadRequest(phone);
 
     // D-03: China mainland reject
     if (isChinaMainland(e164)) {
@@ -353,7 +366,7 @@ export class SmsService {
    * regardless of the code supplied.
    */
   async verifyCode(phone: string, code: string): Promise<VerifyResult> {
-    const e164 = parseE164(phone);
+    const e164 = parseE164OrBadRequest(phone);
 
     // Dev mock: 000000 universal
     if (this.isDevMock) {
@@ -483,7 +496,7 @@ export class SmsService {
    */
   async isPhoneVerified(phone: string): Promise<boolean> {
     if (this.isDevMock) return false;
-    const e164 = parseE164(phone);
+    const e164 = parseE164OrBadRequest(phone);
     try {
       const flag = await this.redis.get(smsVerifiedKey(e164));
       return flag === '1';
