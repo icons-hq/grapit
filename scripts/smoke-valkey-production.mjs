@@ -22,6 +22,8 @@ const HTTP_TIMEOUT_MS = 30_000;
 const SOCKET_JOIN_TIMEOUT_MS = 20000;
 const INSTANCE_PROOF_TIMEOUT_MS = 90_000;
 const MAX_SOCKET_CLIENTS = 8;
+const LOG_LOOKUP_TIMEOUT_MS = 60_000;
+const LOG_LOOKUP_INTERVAL_MS = 5_000;
 const REDIS_URL_PATTERN = /\brediss?:\/\/[^\s`'")]+/gi;
 const PHONE_PATTERN = /(?:\+[1-9]\d{5,14}\b|\b01[016789]-?\d{3,4}-?\d{4}\b)/g;
 const FAILURE_KEYWORDS = [
@@ -631,8 +633,7 @@ async function joinShowtime(socket, showtimeId) {
   });
 }
 
-async function lookupSocketInstances(config, cloudRun, clientIds, sinceIso) {
-  await sleep(5000);
+function readSocketInstanceLogs(config, cloudRun, clientIds, sinceIso) {
   const filter = [
     ...cloudRunRevisionFilter(config, cloudRun),
     `timestamp>="${sinceIso}"`,
@@ -660,6 +661,22 @@ async function lookupSocketInstances(config, cloudRun, clientIds, sinceIso) {
   }
 
   return byClient;
+}
+
+async function lookupSocketInstances(config, cloudRun, clientIds, sinceIso) {
+  const deadline = Date.now() + LOG_LOOKUP_TIMEOUT_MS;
+  let latest = new Map();
+
+  while (Date.now() < deadline) {
+    await sleep(LOG_LOOKUP_INTERVAL_MS);
+    latest = readSocketInstanceLogs(config, cloudRun, clientIds, sinceIso);
+
+    if (clientIds.every((clientId) => latest.has(clientId))) {
+      return latest;
+    }
+  }
+
+  return latest;
 }
 
 function socketClientIds(sockets) {
