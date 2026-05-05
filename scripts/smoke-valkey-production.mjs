@@ -46,6 +46,7 @@ Usage:
 Required environment for every --check mode:
   GRABIT_API_URL                         Expected https://api.heygrabit.com
   GRABIT_SMOKE_AUTH_HEADER_FILE          Local uncommitted file with exactly one Authorization or Cookie header line
+  GRABIT_SMOKE_PERFORMANCE_ID            Operator-approved safe fixture performance UUID
   GRABIT_SMOKE_SHOWTIME_ID               Operator-approved safe fixture showtime UUID
   GRABIT_SMOKE_SEAT_ID                   Operator-approved safe fixture seat ID
 
@@ -155,6 +156,7 @@ async function loadConfig(check) {
   }
 
   const header = parseAuthHeader(headerLines[0]);
+  const performanceId = getEnv('GRABIT_SMOKE_PERFORMANCE_ID');
   const showtimeId = getEnv('GRABIT_SMOKE_SHOWTIME_ID');
   const seatId = getEnv('GRABIT_SMOKE_SEAT_ID');
   const project = getEnv('GRABIT_GCP_PROJECT', 'grapit-491806');
@@ -167,6 +169,7 @@ async function loadConfig(check) {
     authHeaderPath,
     authHeaderName: header.name,
     authHeaders: header.headers,
+    performanceId,
     showtimeId,
     seatId,
     project,
@@ -367,6 +370,23 @@ async function requestJson(config, path, options = {}) {
   }
 
   return { status: response.status, body };
+}
+
+function seatExistsInConfig(seatConfig, seatId) {
+  return Array.isArray(seatConfig?.tiers)
+    && seatConfig.tiers.some((tier) => Array.isArray(tier.seatIds) && tier.seatIds.includes(seatId));
+}
+
+async function validateFixture(config) {
+  const response = await requestJson(config, `/api/v1/performances/${encodeURIComponent(config.performanceId)}`);
+  const performance = response.body;
+  const showtimeOk = Array.isArray(performance?.showtimes)
+    && performance.showtimes.some((showtime) => showtime.id === config.showtimeId);
+  const seatOk = seatExistsInConfig(performance?.seatMap?.seatConfig, config.seatId);
+
+  if (!showtimeOk || !seatOk) {
+    throw new Error(`Smoke fixture is invalid: showtime=${showtimeOk ? 'ok' : 'missing'}, seat=${seatOk ? 'ok' : 'missing'}`);
+  }
 }
 
 function isObjectRecord(value) {
@@ -780,6 +800,7 @@ async function runChecks(config) {
   if ((config.check === 'logs' || config.check === 'all') && !process.env.GRABIT_SMOKE_SENTRY_OBSERVATION?.trim()) {
     throw new Error('GRABIT_SMOKE_SENTRY_OBSERVATION is required for --check logs and --check all');
   }
+  await validateFixture(config);
   const cloudRun = captureEvidence(() => getCloudRunEvidence(config), fallbackCloudRun);
   const memorystore = captureEvidence(() => getMemorystoreEvidence(config), fallbackMemorystore);
   const runtimeFailures = runtimeContractFailures(cloudRun, memorystore);
