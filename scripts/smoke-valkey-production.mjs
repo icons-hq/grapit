@@ -18,6 +18,7 @@ const EXPECTED_API_ORIGIN = 'https://api.heygrabit.com';
 const EXPECTED_LIVE_MODE = 'CLUSTER';
 const EXPECTED_VALKEY_MODE = 'cluster';
 const GCLOUD_TIMEOUT_MS = 60_000;
+const HTTP_TIMEOUT_MS = 30_000;
 const SOCKET_JOIN_TIMEOUT_MS = 20000;
 const REDIS_URL_PATTERN = /\brediss?:\/\/[^\s`'")]+/gi;
 const PHONE_PATTERN = /(?:\+[1-9]\d{5,14}\b|\b01[016789]-?\d{3,4}-?\d{4}\b)/g;
@@ -351,9 +352,16 @@ function cloudRunRevisionFilter(config, cloudRun) {
   ];
 }
 
+async function fetchWithTimeout(url, options = {}) {
+  return await fetch(url, {
+    ...options,
+    signal: options.signal ?? AbortSignal.timeout(HTTP_TIMEOUT_MS),
+  });
+}
+
 async function requestJson(config, path, options = {}) {
   const url = new URL(path, config.apiUrl);
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     ...options,
     headers: {
       Accept: 'application/json',
@@ -420,7 +428,7 @@ async function readSeatState(config) {
 }
 
 async function unlockAndVerifySeat(config) {
-  const unlock = await fetch(new URL(`/api/v1/booking/seats/lock/${encodeURIComponent(config.showtimeId)}/${encodeURIComponent(config.seatId)}`, config.apiUrl), {
+  const unlock = await fetchWithTimeout(new URL(`/api/v1/booking/seats/lock/${encodeURIComponent(config.showtimeId)}/${encodeURIComponent(config.seatId)}`, config.apiUrl), {
     method: 'DELETE',
     headers: config.authHeaders,
   });
