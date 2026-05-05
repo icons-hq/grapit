@@ -17,6 +17,7 @@ const VALKEY_INSTANCE = 'grabit-valkey';
 const EXPECTED_API_ORIGIN = 'https://api.heygrabit.com';
 const EXPECTED_LIVE_MODE = 'CLUSTER';
 const EXPECTED_VALKEY_MODE = 'cluster';
+const GCLOUD_TIMEOUT_MS = 60_000;
 const SOCKET_JOIN_TIMEOUT_MS = 20000;
 const REDIS_URL_PATTERN = /\brediss?:\/\/[^\s`'")]+/gi;
 const PHONE_PATTERN = /(?:\+[1-9]\d{5,14}\b|\b01[016789]-?\d{3,4}-?\d{4}\b)/g;
@@ -203,13 +204,19 @@ function runCli(command, args) {
   const result = spawnSync(command, args, {
     encoding: 'utf8',
     maxBuffer: 1024 * 1024 * 10,
+    timeout: GCLOUD_TIMEOUT_MS,
+    env: {
+      ...process.env,
+      CLOUDSDK_CORE_DISABLE_PROMPTS: '1',
+    },
   });
+  const spawnError = result.error ? String(result.error.message ?? result.error) : '';
 
   return {
-    ok: result.status === 0,
+    ok: result.status === 0 && !spawnError,
     status: result.status ?? 1,
     stdout: result.stdout ?? '',
-    stderr: result.stderr ?? '',
+    stderr: spawnError || result.stderr || '',
     shape: `${command} ${args.join(' ')}`,
   };
 }
