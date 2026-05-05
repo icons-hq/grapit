@@ -13,7 +13,7 @@ const defaultArtifactUrl = new URL('../.planning/phases/22-preflight-closure/art
 const artifactPath = process.env.GRABIT_SMOKE_ARTIFACT ?? fileURLToPath(defaultArtifactUrl);
 
 const SERVICE_NAME = 'grabit-api';
-const VALKEY_INSTANCE = 'grabit-valkey';
+const VALKEY_INSTANCE = 'grapit-valkey';
 const EXPECTED_API_ORIGIN = 'https://api.heygrabit.com';
 const EXPECTED_LIVE_MODE = 'CLUSTER';
 const EXPECTED_VALKEY_MODE = 'cluster';
