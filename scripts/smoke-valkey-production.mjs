@@ -20,6 +20,8 @@ const EXPECTED_VALKEY_MODE = 'cluster';
 const GCLOUD_TIMEOUT_MS = 60_000;
 const HTTP_TIMEOUT_MS = 30_000;
 const SOCKET_JOIN_TIMEOUT_MS = 20000;
+const INSTANCE_PROOF_TIMEOUT_MS = 90_000;
+const MAX_SOCKET_CLIENTS = 8;
 const REDIS_URL_PATTERN = /\brediss?:\/\/[^\s`'")]+/gi;
 const PHONE_PATTERN = /(?:\+[1-9]\d{5,14}\b|\b01[016789]-?\d{3,4}-?\d{4}\b)/g;
 const FAILURE_KEYWORDS = [
@@ -660,6 +662,56 @@ async function lookupSocketInstances(config, cloudRun, clientIds, sinceIso) {
   return byClient;
 }
 
+function socketClientIds(sockets) {
+  return sockets.map((socket) => socket.id).filter(Boolean);
+}
+
+function distinctKnownInstances(instanceMap) {
+  return [...new Set([...instanceMap.values()].filter((value) => value !== 'unknown'))];
+}
+
+function selectDistinctInstancePair(sockets, instanceMap) {
+  const byInstance = new Map();
+  for (const socket of sockets) {
+    const instanceId = instanceMap.get(socket.id);
+    if (!instanceId || instanceId === 'unknown' || byInstance.has(instanceId)) {
+      continue;
+    }
+    byInstance.set(instanceId, socket);
+  }
+
+  const entries = [...byInstance.entries()];
+  if (entries.length < 2) {
+    return null;
+  }
+
+  return [
+    { instanceId: entries[0][0], socket: entries[0][1] },
+    { instanceId: entries[1][0], socket: entries[1][1] },
+  ];
+}
+
+async function connectUntilDistinctInstancePair(config, cloudRun, sinceIso, sockets) {
+  const deadline = Date.now() + INSTANCE_PROOF_TIMEOUT_MS;
+  let instanceMap = new Map();
+  let pair = null;
+
+  while (!pair && Date.now() < deadline && sockets.length < MAX_SOCKET_CLIENTS) {
+    const socket = await connectSocket(config, `client-${sockets.length + 1}`);
+    sockets.push(socket);
+    await joinShowtime(socket, config.showtimeId);
+    instanceMap = await lookupSocketInstances(config, cloudRun, socketClientIds(sockets), sinceIso);
+    pair = selectDistinctInstancePair(sockets, instanceMap);
+  }
+
+  while (!pair && Date.now() < deadline) {
+    instanceMap = await lookupSocketInstances(config, cloudRun, socketClientIds(sockets), sinceIso);
+    pair = selectDistinctInstancePair(sockets, instanceMap);
+  }
+
+  return { instanceMap, pair };
+}
+
 async function checkSocketIo(config, cloudRun) {
   const minInstances = Number.parseInt(String(cloudRun.minInstances ?? '0'), 10);
   const multiInstanceReady = Number.isFinite(minInstances) && minInstances >= 2;
@@ -671,21 +723,24 @@ async function checkSocketIo(config, cloudRun) {
     };
   }
   const sinceIso = new Date().toISOString();
-  let socketA;
-  let socketB;
+  const sockets = [];
   let lockDone = false;
 
   try {
-    socketA = await connectSocket(config, 'a');
-    socketB = await connectSocket(config, 'b');
+    const { instanceMap, pair } = await connectUntilDistinctInstancePair(config, cloudRun, sinceIso, sockets);
+    const instances = distinctKnownInstances(instanceMap);
+    const instanceProof = Boolean(pair);
 
-    await Promise.all([
-      joinShowtime(socketA, config.showtimeId),
-      joinShowtime(socketB, config.showtimeId),
-    ]);
+    if (!pair) {
+      return {
+        name: 'Socket.IO Two-Instance Propagation',
+        ok: false,
+        summary: `opened clients=${sockets.length}; min-instances=${cloudRun.minInstances}; distinct Cloud Run instance IDs=${instances.length}; no cross-instance client pair proven before ${INSTANCE_PROOF_TIMEOUT_MS}ms deadline; D-10=FAIL; D-13=FAIL`,
+      };
+    }
 
-    const updateA = waitForSeatUpdate(socketA, config.seatId, 'locked');
-    const updateB = waitForSeatUpdate(socketB, config.seatId, 'locked');
+    const updateA = waitForSeatUpdate(pair[0].socket, config.seatId, 'locked');
+    const updateB = waitForSeatUpdate(pair[1].socket, config.seatId, 'locked');
 
     await requestJson(config, '/api/v1/booking/seats/lock', {
       method: 'POST',
@@ -699,23 +754,24 @@ async function checkSocketIo(config, cloudRun) {
 
     await Promise.all([updateA, updateB]);
 
-    const instanceMap = await lookupSocketInstances(config, cloudRun, [socketA.id, socketB.id], sinceIso);
-    const instances = [...new Set([...instanceMap.values()].filter((value) => value !== 'unknown'))];
-    const instanceProof = instances.length >= 2;
     const cleanup = await unlockAndVerifySeat(config);
     lockDone = !cleanup.ok;
+    const selectedClients = pair
+      .map((entry) => `${entry.socket.id}@${entry.instanceId}`)
+      .join(',');
 
     return {
       name: 'Socket.IO Two-Instance Propagation',
       ok: multiInstanceReady && instanceProof && cleanup.ok,
-      summary: `clients=${socketA.id},${socketB.id}; received seat-update=PASS; min-instances=${cloudRun.minInstances}; distinct Cloud Run instance IDs=${instances.length}; cleanup=${cleanup.ok ? 'PASS' : 'FAIL'} afterState=${cleanup.afterState}; D-10=${instanceProof ? 'PASS' : 'FAIL'}; D-13=${instanceProof ? 'PASS' : 'FAIL'}`,
+      summary: `selected clients=${selectedClients}; opened clients=${sockets.length}; received seat-update=PASS; min-instances=${cloudRun.minInstances}; distinct Cloud Run instance IDs=${instances.length}; cleanup=${cleanup.ok ? 'PASS' : 'FAIL'} afterState=${cleanup.afterState}; D-10=${instanceProof ? 'PASS' : 'FAIL'}; D-13=${instanceProof ? 'PASS' : 'FAIL'}`,
     };
   } finally {
     if (lockDone) {
       await unlockAndVerifySeat(config).catch(() => undefined);
     }
-    socketA?.close();
-    socketB?.close();
+    for (const socket of sockets) {
+      socket.close();
+    }
   }
 }
 
