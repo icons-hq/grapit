@@ -671,11 +671,14 @@ async function checkSocketIo(config, cloudRun) {
     };
   }
   const sinceIso = new Date().toISOString();
-  const socketA = await connectSocket(config, 'a');
-  const socketB = await connectSocket(config, 'b');
+  let socketA;
+  let socketB;
   let lockDone = false;
 
   try {
+    socketA = await connectSocket(config, 'a');
+    socketB = await connectSocket(config, 'b');
+
     await Promise.all([
       joinShowtime(socketA, config.showtimeId),
       joinShowtime(socketB, config.showtimeId),
@@ -711,8 +714,8 @@ async function checkSocketIo(config, cloudRun) {
     if (lockDone) {
       await unlockAndVerifySeat(config).catch(() => undefined);
     }
-    socketA.close();
-    socketB.close();
+    socketA?.close();
+    socketB?.close();
   }
 }
 
