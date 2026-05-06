@@ -22,9 +22,11 @@ export const REQUIRED_CONSENT_ITEM_KEYS = [
 ] as const;
 
 export const OPTIONAL_CONSENT_ITEM_KEYS = ['marketing'] as const;
+export const CONSENT_SOURCE_FLOWS = ['signup', 'booking'] as const;
 
 const supportedLocaleSchema = z.enum(SUPPORTED_LOCALES);
 const consentItemKeySchema = z.enum(CONSENT_ITEM_KEYS);
+const consentSourceFlowSchema = z.enum(CONSENT_SOURCE_FLOWS);
 const requiredConsentItemKeys = new Set<string>(REQUIRED_CONSENT_ITEM_KEYS);
 
 export const consentItemSchema = z
@@ -62,15 +64,28 @@ export const consentCaptureItemSchema = z.object({
   accepted: z.boolean(),
 });
 
-export const consentCaptureSchema = z
-  .object({
-    userId: z.string().min(1),
-    birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    capturedAt: z.string().datetime(),
-    ipAddress: z.string().min(1),
-    userAgent: z.string().optional(),
-    items: z.array(consentCaptureItemSchema).min(1),
+export const consentCaptureBaseSchema = z.object({
+  userId: z.string().min(1),
+  birthDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  capturedAt: z.string().datetime(),
+  ipAddress: z.string().min(1),
+  userAgent: z.string().optional(),
+  sourceFlow: consentSourceFlowSchema,
+  items: z.array(consentCaptureItemSchema).min(1),
+});
+
+export const consentCaptureRequestSchema = consentCaptureBaseSchema
+  .pick({
+    birthDate: true,
+    capturedAt: true,
+    sourceFlow: true,
+    items: true,
   })
+  .extend({
+    capturedAt: z.string().datetime().optional(),
+  });
+
+export const consentCaptureSchema = consentCaptureBaseSchema
   .superRefine((capture, ctx) => {
     if (isUnderFourteen(capture.birthDate, capture.capturedAt)) {
       ctx.addIssue({
@@ -107,8 +122,10 @@ export const consentAuditQuerySchema = z.object({
 });
 
 export type ConsentItemKey = (typeof CONSENT_ITEM_KEYS)[number];
+export type ConsentSourceFlow = (typeof CONSENT_SOURCE_FLOWS)[number];
 export type ConsentItem = z.infer<typeof consentItemSchema>;
 export type ConsentCaptureItem = z.infer<typeof consentCaptureItemSchema>;
+export type ConsentCaptureRequest = z.infer<typeof consentCaptureRequestSchema>;
 export type ConsentCapture = z.infer<typeof consentCaptureSchema>;
 export type ConsentAuditQuery = z.infer<typeof consentAuditQuerySchema>;
 

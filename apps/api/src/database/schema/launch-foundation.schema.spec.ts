@@ -40,6 +40,7 @@ describe('Phase 23 launch foundation schema contracts', () => {
     expectColumnName(consentAuditLogs.agreedAt, 'agreed_at');
     expectColumnName(consentAuditLogs.ipAddress, 'ip_address');
     expectColumnName(consentAuditLogs.userId, 'user_id');
+    expectColumnName(consentAuditLogs.sourceFlow, 'source_flow');
   });
 
   it('keeps legal content manual-only and separate from translation drafts', () => {

@@ -17,6 +17,7 @@ export const consentAuditLogs = pgTable('consent_audit_logs', {
   agreedAt: timestamp('agreed_at', { withTimezone: true }).notNull().defaultNow(),
   ipAddress: varchar('ip_address', { length: 45 }).notNull(),
   userAgent: varchar('user_agent', { length: 500 }),
+  sourceFlow: varchar('source_flow', { length: 20 }).notNull().default('signup'),
 }, (table) => [
   index('idx_consent_audit_logs_user').on(table.userId),
   index('idx_consent_audit_logs_item').on(table.consentItemId),
