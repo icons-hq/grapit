@@ -5,6 +5,9 @@
   "locale": {
     "suggestion": "ดูหน้านี้เป็นภาษาไทยไหม?"
   },
+  "legal": {
+    "fallbackLabel": "ตรวจสอบประกาศทางกฎหมายภาษาอังกฤษ"
+  },
   "auth": {
     "emailVerification": {
       "sent": "ส่งอีเมลยืนยันแล้ว",

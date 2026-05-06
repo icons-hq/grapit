@@ -5,6 +5,9 @@
   "locale": {
     "suggestion": "View this page in English?"
   },
+  "legal": {
+    "fallbackLabel": "Reviewing the English legal notice"
+  },
   "auth": {
     "emailVerification": {
       "sent": "Verification email sent",

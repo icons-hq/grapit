@@ -5,6 +5,9 @@
   "locale": {
     "suggestion": "要以简体中文查看此页面吗？"
   },
+  "legal": {
+    "fallbackLabel": "查看英文法律告知"
+  },
   "auth": {
     "emailVerification": {
       "sent": "验证邮件已发送",

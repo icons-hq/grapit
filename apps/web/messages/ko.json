@@ -5,6 +5,9 @@
   "locale": {
     "suggestion": "다른 언어로 볼까요?"
   },
+  "legal": {
+    "fallbackLabel": "영문 법적 고지로 확인합니다"
+  },
   "auth": {
     "emailVerification": {
       "sent": "인증 메일을 발송했습니다",

@@ -1,5 +1,9 @@
 import type { Metadata } from 'next';
+import { getLocale } from 'next-intl/server';
+import type { SupportedLocale } from '@grabit/shared';
 import privacyMd from '@/content/legal/privacy-policy.md?raw';
+import privacyEnMd from '@/content/legal/privacy-policy.en.md?raw';
+import { LegalFallbackLabel } from '@/components/legal/legal-fallback-label';
 import { TermsMarkdown } from '@/components/legal/terms-markdown';
 import { getLegalRobots } from '../robots';
 
@@ -17,6 +21,15 @@ export const metadata: Metadata = {
   robots: getLegalRobots(),
 };
 
-export default function PrivacyPage() {
-  return <TermsMarkdown showH1>{privacyMd}</TermsMarkdown>;
+export default async function PrivacyPage() {
+  const locale = (await getLocale()) as SupportedLocale;
+  const usesEnglishFallback = locale === 'th' || locale === 'zh-CN' || locale === 'zh-TW';
+  const markdown = locale === 'en' || usesEnglishFallback ? privacyEnMd : privacyMd;
+
+  return (
+    <>
+      {usesEnglishFallback ? <LegalFallbackLabel locale={locale} /> : null}
+      <TermsMarkdown showH1>{markdown}</TermsMarkdown>
+    </>
+  );
 }
