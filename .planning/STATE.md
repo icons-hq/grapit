@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Fanmeet Launch
 status: executing
-stopped_at: Completed 23-16-PLAN.md
-last_updated: "2026-05-06T06:09:50.885Z"
+stopped_at: Completed 23-17-PLAN.md
+last_updated: "2026-05-06T06:16:22.569Z"
 last_activity: 2026-05-06
 progress:
   total_phases: 7
   completed_phases: 1
   total_plans: 23
-  completed_plans: 15
-  percent: 65
+  completed_plans: 16
+  percent: 70
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-05-04)
 ## Current Position
 
 Phase: 23 (launch-foundation) — EXECUTING
-Plan: 10 of 17
+Plan: 11 of 17
 Status: Ready to execute
 Last activity: 2026-05-06
 
@@ -173,6 +173,7 @@ Summary: 70 total items (debug sessions 5, quick tasks 41, seeds 2, UAT gaps 12,
 | Phase 23-launch-foundation P14 | 5m25s | 1 tasks | 7 files |
 | Phase 23-launch-foundation P15 | 7m59s | 1 tasks | 9 files |
 | Phase 23-launch-foundation P16 | 8m16s | 1 tasks | 14 files |
+| Phase 23-launch-foundation P17 | 12 min | 1 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -257,6 +258,9 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 - [Phase 23-launch-foundation]: Locale suggestion is a LayoutShell banner prompt rather than a toast. — Keeps display deterministic and testable without global side effects.
 - [Phase 23-launch-foundation]: Locale preference validation reuses shared locale constants. — Avoids a duplicate supported-locale source of truth across API and web.
 - [Phase 23-launch-foundation]: Locale precedence remains owned by existing i18n routing. — This plan wires explicit switch and profile persistence while documenting url > explicit-switch > user-profile > cookie > ko.
+- [Phase 23-17]: Legal canonical markdown locales are locked to exactly ko and en for launch.
+- [Phase 23-17]: Thai and Chinese legal-sensitive surfaces consume English canonical fallback rather than native-language legal markdown.
+- [Phase 23-17]: English legal markdown is static manual canonical copy and remains outside the translation API/DeepL workflow.
 
 ### Pending Todos
 
@@ -295,8 +299,8 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 
 ## Session Continuity
 
-Last session: 2026-05-06T06:09:50.882Z
-Stopped at: Completed 23-16-PLAN.md
+Last session: 2026-05-06T06:16:22.565Z
+Stopped at: Completed 23-17-PLAN.md
 Resume file: None
 
 **Planned Phase:** v2.0 Phase 23 (launch-foundation) — Phase 22 complete with READY_WITH_ACCEPTED_RISKS; proceed only under accepted risks listed in 22-VERIFICATION.md.
