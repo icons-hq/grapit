@@ -94,7 +94,6 @@ describe('admin translation review workflow', () => {
     await reviewDraft.result.current.mutateAsync({
       draftId: 'draft-en',
       translatedText: 'Reviewed English draft',
-      reviewerId: '22222222-2222-4222-8222-222222222222',
     });
     await publishDraft.result.current.mutateAsync('draft-en');
 
@@ -118,7 +117,6 @@ describe('admin translation review workflow', () => {
       '/api/v1/admin/translations/drafts/draft-en/review',
       {
         translatedText: 'Reviewed English draft',
-        reviewerId: '22222222-2222-4222-8222-222222222222',
       },
     );
     expect(apiClient.post).toHaveBeenNthCalledWith(

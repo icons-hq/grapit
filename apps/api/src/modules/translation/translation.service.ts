@@ -6,7 +6,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, gte, lte, ne, type SQL } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import { translationDrafts } from '../../database/schema/translation-drafts.js';
 import { translationSources } from '../../database/schema/translation-sources.js';
@@ -48,6 +48,14 @@ export interface TranslationDraftResult {
   updatedAt: Date;
   reviewerId: string | null;
   automaticTranslationLabel: true;
+}
+
+export interface TranslationQueueFilters {
+  contentType?: string;
+  locale?: TranslationTargetLocale;
+  status?: TranslationStatus;
+  updatedFrom?: string;
+  updatedTo?: string;
 }
 
 type SourceRow = typeof translationSources.$inferSelect;
@@ -134,12 +142,33 @@ export class TranslationService {
     return drafts.map((draft) => this.mapDraft(draft, source.entityType));
   }
 
-  async listQueue(): Promise<TranslationDraftResult[]> {
+  async listQueue(filters: TranslationQueueFilters = {}): Promise<TranslationDraftResult[]> {
     if (isMemoryStore(this.db)) {
-      return this.db.drafts.map((draft) => {
-        const source = this.requireMemorySource(draft.sourceId);
-        return this.mapDraft(draft, source.entityType);
-      });
+      return this.db.drafts
+        .map((draft) => {
+          const source = this.requireMemorySource(draft.sourceId);
+          return { draft, source };
+        })
+        .filter(({ draft, source }) => this.matchesQueueFilters(draft, source, filters))
+        .sort((a, b) => b.draft.updatedAt.getTime() - a.draft.updatedAt.getTime())
+        .map(({ draft, source }) => this.mapDraft(draft, source.entityType));
+    }
+
+    const predicates: SQL[] = [];
+    if (filters.contentType) {
+      predicates.push(eq(translationSources.entityType, filters.contentType));
+    }
+    if (filters.locale) {
+      predicates.push(eq(translationDrafts.targetLocale, filters.locale));
+    }
+    if (filters.status) {
+      predicates.push(eq(translationDrafts.status, filters.status));
+    }
+    if (filters.updatedFrom) {
+      predicates.push(gte(translationDrafts.updatedAt, new Date(filters.updatedFrom)));
+    }
+    if (filters.updatedTo) {
+      predicates.push(lte(translationDrafts.updatedAt, new Date(filters.updatedTo)));
     }
 
     const rows = await this.db
@@ -149,6 +178,7 @@ export class TranslationService {
       })
       .from(translationDrafts)
       .innerJoin(translationSources, eq(translationDrafts.sourceId, translationSources.id))
+      .where(predicates.length > 0 ? and(...predicates) : undefined)
       .orderBy(desc(translationDrafts.updatedAt));
 
     return rows.map((row) => this.mapDraft(row.draft, row.contentType));
@@ -199,11 +229,34 @@ export class TranslationService {
     }
 
     if (isMemoryStore(this.db)) {
+      this.db.drafts.forEach((candidate) => {
+        if (
+          candidate.id !== draft.id &&
+          candidate.sourceId === draft.sourceId &&
+          candidate.targetLocale === draft.targetLocale &&
+          candidate.status === 'published'
+        ) {
+          candidate.status = 'stale';
+          candidate.updatedAt = new Date();
+        }
+      });
       draft.status = 'published';
       draft.publishedAt = new Date();
       draft.updatedAt = new Date();
       return this.mapDraft(draft, source.entityType);
     }
+
+    await this.db
+      .update(translationDrafts)
+      .set({ status: 'stale', updatedAt: new Date() })
+      .where(
+        and(
+          eq(translationDrafts.sourceId, draft.sourceId),
+          eq(translationDrafts.targetLocale, draft.targetLocale),
+          eq(translationDrafts.status, 'published'),
+          ne(translationDrafts.id, draftId),
+        ),
+      );
 
     const [published] = await this.db
       .update(translationDrafts)
@@ -375,6 +428,19 @@ export class TranslationService {
       reviewerId: draft.reviewedBy,
       automaticTranslationLabel: true,
     };
+  }
+
+  private matchesQueueFilters(
+    draft: DraftRow,
+    source: SourceRow,
+    filters: TranslationQueueFilters,
+  ): boolean {
+    if (filters.contentType && source.entityType !== filters.contentType) return false;
+    if (filters.locale && draft.targetLocale !== filters.locale) return false;
+    if (filters.status && draft.status !== filters.status) return false;
+    if (filters.updatedFrom && draft.updatedAt < new Date(filters.updatedFrom)) return false;
+    if (filters.updatedTo && draft.updatedAt > new Date(filters.updatedTo)) return false;
+    return true;
   }
 
   private hashSourceText(sourceText: string): string {

@@ -56,6 +56,23 @@ function createWrapper() {
   };
 }
 
+function bookingConsentItems(): PrepareReservationRequest['consentItems'] {
+  return [
+    'terms',
+    'privacy',
+    'pipa_required',
+    'cross_border_transfer',
+    'pdpa_notice',
+    'pipl_notice',
+  ].map((key) => ({
+    key: key as PrepareReservationRequest['consentItems'][number]['key'],
+    version: '2026-04-28',
+    language: 'ko',
+    accepted: true,
+    sourceFlow: 'booking' as const,
+  }));
+}
+
 describe('use-booking payment mutations', () => {
   beforeEach(() => {
     postMock.mockReset();
@@ -73,6 +90,7 @@ describe('use-booking payment mutations', () => {
       showtimeId: 'showtime-lock-test',
       seats: [{ seatId: 'A-1', tierName: 'VIP', price: 50000, row: 'A', number: '1' }],
       amount: 50000,
+      consentItems: bookingConsentItems(),
     };
     postMock.mockResolvedValueOnce({ reservationId: 'reservation-lock-test', orderId: payload.orderId });
 
@@ -130,6 +148,7 @@ describe('use-booking payment mutations', () => {
       showtimeId: 'showtime-lock-test',
       seats: [{ seatId: 'A-1', tierName: 'VIP', price: 50000, row: 'A', number: '1' }],
       amount: 50000,
+      consentItems: bookingConsentItems(),
     };
     const error = new ApiClientError(
       '좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.',
@@ -202,6 +221,7 @@ describe('use-booking payment mutations', () => {
       showtimeId: 'showtime-disabled',
       seats: [{ seatId: 'A-1', tierName: 'VIP', price: 50000, row: 'A', number: '1' }],
       amount: 50000,
+      consentItems: bookingConsentItems(),
     };
 
     const { result } = renderHook(() => usePrepareReservation(), {

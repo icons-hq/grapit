@@ -1,10 +1,13 @@
-import { Body, Controller, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import type { Request } from 'express';
 import { Roles } from '../../common/decorators/roles.decorator.js';
 import { RolesGuard } from '../../common/guards/roles.guard.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
-import { TranslationService } from './translation.service.js';
+import {
+  TRANSLATION_TARGET_LOCALES,
+  TranslationService,
+} from './translation.service.js';
 
 const createSourceSchema = z.object({
   entityType: z.string().min(1),
@@ -15,16 +18,24 @@ const createSourceSchema = z.object({
 
 const reviewDraftSchema = z.object({
   translatedText: z.string().min(1).optional(),
-  reviewerId: z.string().uuid().optional(),
 });
 
 const editSourceSchema = z.object({
   sourceText: z.string().min(1),
 });
 
+const queueFiltersSchema = z.object({
+  contentType: z.string().min(1).optional(),
+  locale: z.enum(TRANSLATION_TARGET_LOCALES).optional(),
+  status: z.enum(['draft', 'review', 'published', 'stale']).optional(),
+  updatedFrom: z.string().datetime().optional(),
+  updatedTo: z.string().datetime().optional(),
+});
+
 type CreateSourceInput = z.infer<typeof createSourceSchema>;
 type ReviewDraftInput = z.infer<typeof reviewDraftSchema>;
 type EditSourceInput = z.infer<typeof editSourceSchema>;
+type QueueFiltersInput = z.infer<typeof queueFiltersSchema>;
 
 @Controller('admin/translations')
 @UseGuards(RolesGuard)
@@ -58,8 +69,10 @@ export class TranslationController {
   }
 
   @Get('queue')
-  async listQueue() {
-    return this.translationService.listQueue();
+  async listQueue(
+    @Query(new ZodValidationPipe(queueFiltersSchema)) query: QueueFiltersInput,
+  ) {
+    return this.translationService.listQueue(query);
   }
 
   @Post('drafts/:draftId/review')
@@ -71,7 +84,7 @@ export class TranslationController {
     const user = req.user as { id: string };
     return this.translationService.markReviewed(
       draftId,
-      body.reviewerId ?? user.id,
+      user.id,
       body.translatedText,
     );
   }

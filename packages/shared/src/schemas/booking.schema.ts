@@ -14,7 +14,12 @@ export const prepareReservationSchema = z.object({
   showtimeId: z.string().uuid('유효한 회차 ID가 필요합니다'),
   seats: z.array(seatSelectionSchema).min(1, '최소 1개의 좌석을 선택해야 합니다'),
   amount: z.number().int().positive('결제 금액은 0보다 커야 합니다'),
-  consentItems: z.array(consentCaptureItemSchema).optional(),
+  consentItems: z.preprocess(
+    (value) => value ?? [],
+    z
+      .array(consentCaptureItemSchema.extend({ sourceFlow: z.literal('booking') }))
+      .min(1, '예매 동의 항목이 필요합니다'),
+  ),
 });
 
 export type PrepareReservationInput = z.infer<typeof prepareReservationSchema>;

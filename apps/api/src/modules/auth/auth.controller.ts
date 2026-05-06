@@ -61,9 +61,10 @@ export class AuthController {
   @Post('register')
   async register(
     @Body(new ZodValidationPipe(registerBodySchema)) dto: RegisterBody,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const result = await this.authService.register(dto);
+    const result = await this.authService.register(dto, this.resolveConsentMeta(req));
     this.setRefreshTokenCookie(res, result.refreshToken);
 
     return {
@@ -252,12 +253,14 @@ export class AuthController {
   async completeSocialRegistration(
     @Body(new ZodValidationPipe(completeSocialRegistrationSchema))
     dto: CompleteSocialRegistrationBody,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
     const { registrationToken, ...registerData } = dto;
     const result = await this.authService.completeSocialRegistration(
       registrationToken,
       registerData,
+      this.resolveConsentMeta(req),
     );
     this.setRefreshTokenCookie(res, result.refreshToken);
 
@@ -312,5 +315,17 @@ export class AuthController {
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
       path: '/',
     });
+  }
+
+  private resolveConsentMeta(req: Request): { ipAddress: string; userAgent?: string } {
+    return {
+      ipAddress: this.resolveIp(req),
+      userAgent: req.get('user-agent'),
+    };
+  }
+
+  private resolveIp(req: Request): string {
+    const forwardedFor = req.get('x-forwarded-for')?.split(',')[0]?.trim();
+    return forwardedFor || req.ip || '0.0.0.0';
   }
 }

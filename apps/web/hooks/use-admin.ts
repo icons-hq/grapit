@@ -71,7 +71,6 @@ export interface TranslationDraft {
 export interface ReviewTranslationDraftInput {
   draftId: string;
   translatedText: string;
-  reviewerId?: string;
 }
 
 function toApiDateTime(value?: string): string | undefined {
@@ -191,11 +190,10 @@ export function useReviewTranslationDraft() {
     mutationFn: ({
       draftId,
       translatedText,
-      reviewerId,
     }: ReviewTranslationDraftInput) =>
       apiClient.post<TranslationDraft>(
         `/api/v1/admin/translations/drafts/${draftId}/review`,
-        { translatedText, reviewerId },
+        { translatedText },
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'translations'] });

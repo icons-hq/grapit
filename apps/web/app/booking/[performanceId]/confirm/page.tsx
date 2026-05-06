@@ -26,6 +26,17 @@ const LOCK_FAILURE_MESSAGES = [
   '이미 다른 사용자가 선택한 좌석입니다.',
 ] as const;
 
+const BOOKING_CONSENT_VERSION = '2026-04-28';
+const BOOKING_CONSENT_LANGUAGE = 'ko' as const;
+const BOOKING_CONSENT_KEYS = [
+  'terms',
+  'privacy',
+  'pipa_required',
+  'cross_border_transfer',
+  'pdpa_notice',
+  'pipl_notice',
+] as const;
+
 function isLockFailureMessage(message: string): boolean {
   return LOCK_FAILURE_MESSAGES.some((candidate) => candidate === message);
 }
@@ -146,6 +157,13 @@ function ConfirmPageContent() {
         showtimeId: selectedShowtimeId ?? '',
         seats: selectedSeats,
         amount: totalPrice,
+        consentItems: BOOKING_CONSENT_KEYS.map((key) => ({
+          key,
+          version: BOOKING_CONSENT_VERSION,
+          language: BOOKING_CONSENT_LANGUAGE,
+          accepted: true,
+          sourceFlow: 'booking' as const,
+        })),
       });
       reservationIdRef.current = result.reservationId;
 

@@ -18,6 +18,7 @@ import { UserRepository } from '../user/user.repository.js';
 import { SmsService } from '../sms/sms.service.js';
 import { EmailService } from './email/email.service.js';
 import { ConsentService } from '../consent/consent.service.js';
+import type { ConsentRequestMeta } from '../consent/consent.service.js';
 import type { RegisterBody } from './dto/register.dto.js';
 import type { SocialRegisterBody } from './dto/social-register.dto.js';
 import type { SocialProfile } from './interfaces/social-profile.interface.js';
@@ -74,7 +75,10 @@ export class AuthService {
     private readonly consentService: ConsentService,
   ) {}
 
-  async register(dto: RegisterBody): Promise<AuthResult> {
+  async register(
+    dto: RegisterBody,
+    requestMeta: ConsentRequestMeta = { ipAddress: '0.0.0.0' },
+  ): Promise<AuthResult> {
     this.consentService.assertAgeAllowed(dto.birthDate);
     await this.consentService.assertRequiredConsents({ items: dto.consentItems });
 
@@ -126,7 +130,7 @@ export class AuthService {
         items: dto.consentItems,
         sourceFlow: 'signup',
       },
-      { ipAddress: '0.0.0.0' },
+      requestMeta,
     );
 
     // 5-6. Generate tokens
@@ -526,6 +530,7 @@ export class AuthService {
   async completeSocialRegistration(
     registrationToken: string,
     dto: SocialRegisterBody,
+    requestMeta: ConsentRequestMeta = { ipAddress: '0.0.0.0' },
   ): Promise<AuthResult> {
     this.logger.log('completeSocialRegistration: started');
 
@@ -586,7 +591,7 @@ export class AuthService {
           items: dto.consentItems,
           sourceFlow: 'social_completion',
         },
-        { ipAddress: '0.0.0.0' },
+        requestMeta,
       );
 
       const tokens = await this.generateTokenPair(existingUser.id, existingUser.email, existingUser.role);
@@ -633,7 +638,7 @@ export class AuthService {
         items: dto.consentItems,
         sourceFlow: 'social_completion',
       },
-      { ipAddress: '0.0.0.0' },
+      requestMeta,
     );
 
     // 6. Generate JWT tokens

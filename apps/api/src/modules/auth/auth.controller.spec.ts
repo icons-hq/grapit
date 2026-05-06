@@ -25,6 +25,8 @@ const excludedLaunchProviderTokens = {
 describe('AuthController', () => {
   let controller: AuthController;
   let mockAuthService: {
+    register: ReturnType<typeof vi.fn>;
+    completeSocialRegistration: ReturnType<typeof vi.fn>;
     findOrCreateSocialUser: ReturnType<typeof vi.fn>;
     requestEmailVerification: ReturnType<typeof vi.fn>;
     resendEmailVerification: ReturnType<typeof vi.fn>;
@@ -42,6 +44,8 @@ describe('AuthController', () => {
 
   beforeEach(() => {
     mockAuthService = {
+      register: vi.fn(),
+      completeSocialRegistration: vi.fn(),
       findOrCreateSocialUser: vi.fn(),
       requestEmailVerification: vi.fn(),
       resendEmailVerification: vi.fn(),
@@ -74,6 +78,62 @@ describe('AuthController', () => {
       mockAuthService as never,
       mockConfigService as never,
     );
+  });
+
+  describe('consent request metadata', () => {
+    it('register passes forwarded IP and user-agent into consent capture metadata', async () => {
+      mockAuthService.register.mockResolvedValue({
+        accessToken: 'access-token',
+        refreshToken: 'refresh-token',
+        user: { id: 'user-1', email: 'user@example.com' },
+      });
+      const req = {
+        ip: '10.0.0.1',
+        get: vi.fn((header: string) => {
+          const headers: Record<string, string> = {
+            'x-forwarded-for': '203.0.113.50, 10.0.0.1',
+            'user-agent': 'Vitest Browser',
+          };
+          return headers[header.toLowerCase()];
+        }),
+      };
+
+      await controller.register({ email: 'user@example.com' } as never, req as Request, mockResponse as unknown as Response);
+
+      expect(mockAuthService.register).toHaveBeenCalledWith(
+        { email: 'user@example.com' },
+        { ipAddress: '203.0.113.50', userAgent: 'Vitest Browser' },
+      );
+    });
+
+    it('social registration completion passes request metadata into consent capture metadata', async () => {
+      mockAuthService.completeSocialRegistration.mockResolvedValue({
+        accessToken: 'access-token',
+        refreshToken: 'refresh-token',
+        user: { id: 'user-1', email: 'user@example.com' },
+      });
+      const req = {
+        ip: '198.51.100.2',
+        get: vi.fn((header: string) => {
+          const headers: Record<string, string> = {
+            'user-agent': 'Vitest Social',
+          };
+          return headers[header.toLowerCase()];
+        }),
+      };
+
+      await controller.completeSocialRegistration(
+        { registrationToken: 'registration-token', name: 'User' } as never,
+        req as Request,
+        mockResponse as unknown as Response,
+      );
+
+      expect(mockAuthService.completeSocialRegistration).toHaveBeenCalledWith(
+        'registration-token',
+        { name: 'User' },
+        { ipAddress: '198.51.100.2', userAgent: 'Vitest Social' },
+      );
+    });
   });
 
   describe('setRefreshTokenCookie via socialKakaoCallback — Gap 1', () => {

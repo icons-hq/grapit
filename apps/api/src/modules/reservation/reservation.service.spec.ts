@@ -439,6 +439,7 @@ describe('ReservationService', () => {
         orderId: 'GRP-DISABLED-PREPARE',
         seats: [seatSelection('A-1')],
         amount: 50000,
+        consentItems: makeConsentItems(),
       };
       mockFeatureFlags.getFlags.mockReturnValue({ bookingEnabled: false });
 
@@ -481,6 +482,25 @@ describe('ReservationService', () => {
       expect(mockDb.transaction).not.toHaveBeenCalled();
     });
 
+    it('prepareReservation rejects omitted booking consent before DB transaction', async () => {
+      const userId = randomUUID();
+      const dto = {
+        showtimeId: randomUUID(),
+        orderId: 'GRP-CONSENT-MISSING',
+        seats: [seatSelection('A-1')],
+        amount: 50000,
+      };
+
+      await expect(service.prepareReservation(dto, userId)).rejects.toThrow(
+        '예매 동의 항목이 필요합니다',
+      );
+
+      expect(mockFeatureFlags.assertBookingEnabled).toHaveBeenCalled();
+      expect(mockConsentService.assertRequiredConsents).not.toHaveBeenCalled();
+      expect(mockDb.select).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
     it('prepareReservation rejects duplicate seat IDs before reading database state', async () => {
       const userId = randomUUID();
       const dto = {
@@ -488,6 +508,7 @@ describe('ReservationService', () => {
         orderId: 'GRP-DUPLICATE-SEATS',
         seats: [seatSelection('A-1'), seatSelection('A-1')],
         amount: 100000,
+        consentItems: makeConsentItems(),
       };
 
       await expect(service.prepareReservation(dto, userId))
@@ -506,6 +527,7 @@ describe('ReservationService', () => {
         orderId: 'GRP-LOCK-PREPARE-SUCCESS',
         seats: [seatSelection('A-1'), seatSelection('A-2')],
         amount: 100000,
+        consentItems: makeConsentItems(),
       };
       setupPrepareBase(dto);
 
@@ -526,6 +548,7 @@ describe('ReservationService', () => {
         orderId: 'GRP-CANONICAL-SEATS',
         seats: [{ seatId: 'A-1', tierName: 'R', price: 1, row: 'client', number: '999' }],
         amount: 100000,
+        consentItems: makeConsentItems(),
       };
       const insertedValues: unknown[] = [];
 
@@ -581,6 +604,7 @@ describe('ReservationService', () => {
         orderId: 'GRP-LOCK-PREPARE-MISSING',
         seats: [seatSelection('A-1')],
         amount: 50000,
+        consentItems: makeConsentItems(),
       };
       setupPrepareBase(dto);
       mockBookingService.assertOwnedSeatLocks.mockRejectedValueOnce(
@@ -602,6 +626,7 @@ describe('ReservationService', () => {
         orderId: 'GRP-LOCK-PREPARE-OTHER',
         seats: [seatSelection('A-2')],
         amount: 50000,
+        consentItems: makeConsentItems(),
       };
       setupPrepareBase(dto);
       mockBookingService.assertOwnedSeatLocks.mockRejectedValueOnce(
@@ -623,6 +648,7 @@ describe('ReservationService', () => {
         orderId: 'GRP-LOCK-IDEMPOTENT-PENDING',
         seats: [seatSelection('A-1'), seatSelection('A-2')],
         amount: 100000,
+        consentItems: makeConsentItems(),
       };
       setupExistingPendingOrder({ ...dto, userId });
       mockBookingService.assertOwnedSeatLocks.mockRejectedValueOnce(
@@ -644,6 +670,7 @@ describe('ReservationService', () => {
         orderId: 'GRP-IDEMPOTENT-CANCELLED',
         seats: [seatSelection('A-1')],
         amount: 50000,
+        consentItems: makeConsentItems(),
       };
       setupExistingPendingOrder({ ...dto, userId, status: 'CANCELLED', seats: ['A-1'] });
 
@@ -662,6 +689,7 @@ describe('ReservationService', () => {
         orderId: 'GRP-IDEMPOTENT-SEAT-MISMATCH',
         seats: [seatSelection('A-1')],
         amount: 50000,
+        consentItems: makeConsentItems(),
       };
       setupExistingPendingOrder({
         ...dto,
@@ -685,6 +713,7 @@ describe('ReservationService', () => {
         orderId: 'GRP-IDEMPOTENT-AMOUNT-MISMATCH',
         seats: [seatSelection('A-1')],
         amount: 40000,
+        consentItems: makeConsentItems(),
       };
       setupExistingPendingOrder({
         ...dto,
@@ -709,6 +738,7 @@ describe('ReservationService', () => {
         orderId: 'GRP-LOCK-IDEMPOTENT-OTHER-USER',
         seats: [seatSelection('A-1')],
         amount: 50000,
+        consentItems: makeConsentItems(),
       };
       setupExistingPendingOrder({ ...dto, userId: otherUserId });
 

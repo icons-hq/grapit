@@ -331,12 +331,12 @@ export class ReservationService {
   private async assertBookingConsent(
     dto: PrepareReservationRequest & { consentItems?: ConsentCaptureItem[] },
   ): Promise<void> {
-    if (!Object.prototype.hasOwnProperty.call(dto, 'consentItems')) {
-      return;
+    if (!dto.consentItems?.length) {
+      throw new BadRequestException('예매 동의 항목이 필요합니다');
     }
 
     await this.consentService.assertRequiredConsents({
-      items: dto.consentItems ?? [],
+      items: dto.consentItems,
     });
   }
 

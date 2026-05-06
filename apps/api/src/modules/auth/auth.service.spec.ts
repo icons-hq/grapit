@@ -294,7 +294,10 @@ describe('AuthService', () => {
         name: mockRegisterDto.name,
       });
 
-      await authService.register(mockRegisterDto);
+      await authService.register(mockRegisterDto, {
+        ipAddress: '203.0.113.10',
+        userAgent: 'Vitest Browser',
+      });
 
       expect(mockConsentService.assertAgeAllowed).toHaveBeenCalledWith(mockRegisterDto.birthDate);
       expect(mockConsentService.captureConsent).toHaveBeenCalledWith(
@@ -304,7 +307,7 @@ describe('AuthService', () => {
           items: mockRegisterDto.consentItems,
           sourceFlow: 'signup',
         },
-        { ipAddress: '0.0.0.0' },
+        { ipAddress: '203.0.113.10', userAgent: 'Vitest Browser' },
       );
     }, 15000);
 
@@ -886,6 +889,7 @@ describe('AuthService', () => {
           marketingConsent: false,
           consentItems: makeSocialConsentItems(),
         },
+        { ipAddress: '203.0.113.20', userAgent: 'Vitest Social' },
       );
 
       expect(result).toHaveProperty('accessToken');
@@ -900,7 +904,7 @@ describe('AuthService', () => {
           ]),
           sourceFlow: 'social_completion',
         }),
-        { ipAddress: '0.0.0.0' },
+        { ipAddress: '203.0.113.20', userAgent: 'Vitest Social' },
       );
     });
 
@@ -950,6 +954,7 @@ describe('AuthService', () => {
           marketingConsent: false,
           consentItems: makeSocialConsentItems(),
         },
+        { ipAddress: '203.0.113.30', userAgent: 'Vitest Link' },
       );
 
       expect(result).toHaveProperty('accessToken');
@@ -966,7 +971,7 @@ describe('AuthService', () => {
           ]),
           sourceFlow: 'social_completion',
         }),
-        { ipAddress: '0.0.0.0' },
+        { ipAddress: '203.0.113.30', userAgent: 'Vitest Link' },
       );
     });
 

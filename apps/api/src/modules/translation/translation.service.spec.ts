@@ -197,6 +197,61 @@ describe('TranslationService', () => {
     expect(queue[0].updatedAt).toBeInstanceOf(Date);
   });
 
+  it('applies queue filters for content type, locale, status, and updated date range', async () => {
+    const source = await service.createSource({
+      entityType: 'performance',
+      entityId: '11111111-1111-1111-1111-111111111111',
+      field: 'description',
+      sourceText: '팬미팅 안내',
+      createdBy: '22222222-2222-2222-2222-222222222222',
+    });
+    const drafts = await service.generateDrafts(source.id);
+    await service.markReviewed(drafts[0].id, '33333333-3333-3333-3333-333333333333');
+
+    const queue = await service.listQueue({
+      contentType: 'performance',
+      locale: 'en',
+      status: 'review',
+      updatedFrom: '2026-05-05T00:00:00.000Z',
+      updatedTo: '2026-05-07T00:00:00.000Z',
+    });
+
+    expect(queue).toHaveLength(1);
+    expect(queue[0]).toMatchObject({
+      contentType: 'performance',
+      locale: 'en',
+      status: 'review',
+    });
+  });
+
+  it('supersedes older published drafts for the same source and locale before publishing', async () => {
+    const source = await service.createSource({
+      entityType: 'fanmeet',
+      entityId: '11111111-1111-1111-1111-111111111111',
+      field: 'description',
+      sourceText: '팬미팅 안내',
+      createdBy: '22222222-2222-2222-2222-222222222222',
+    });
+    const [firstDraft] = await service.generateDrafts(source.id);
+    await service.markReviewed(firstDraft.id, '33333333-3333-3333-3333-333333333333');
+    await service.publishDraft(firstDraft.id);
+
+    const secondDraft = store.createDraft({
+      sourceId: source.id,
+      targetLocale: 'en',
+      status: 'review',
+      translatedText: 'Second reviewed copy',
+      sourceContentHash: source.contentHash,
+      reviewedBy: '44444444-4444-4444-8444-444444444444',
+      publishedAt: null,
+    });
+    const published = await service.publishDraft(secondDraft.id);
+
+    expect(published.status).toBe('published');
+    expect(store.getDraft(firstDraft.id)?.status).toBe('stale');
+    expect(store.getDraft(secondDraft.id)?.status).toBe('published');
+  });
+
   it('blocks legal-sensitive content before any translation provider call', async () => {
     const source = await service.createSource({
       entityType: 'legal',
