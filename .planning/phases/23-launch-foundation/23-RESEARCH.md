@@ -497,25 +497,25 @@ DOTENV_CONFIG_PATH=../../.env pnpm --filter @grabit/api exec drizzle-kit migrate
 
 ## Open Questions
 
-1. **How should locale precedence resolve conflicts between URL, cookie, and `users.preferred_locale`?** [VERIFIED: .planning/phases/23-launch-foundation/23-CONTEXT.md]
+1. **RESOLVED: How should locale precedence resolve conflicts between URL, cookie, and `users.preferred_locale`?** [VERIFIED: .planning/phases/23-launch-foundation/23-CONTEXT.md]
    - What we know: Anonymous users use cookie; logged-in users store profile preference. [VERIFIED: .planning/phases/23-launch-foundation/23-CONTEXT.md]
-   - What's unclear: Whether explicit URL always overrides profile for the current request. [ASSUMED]
-   - Recommendation: Use URL > explicit switch action > logged-in profile > cookie > default `ko`; never auto redirect. [VERIFIED: .planning/phases/23-launch-foundation/23-CONTEXT.md; ASSUMED]
+   - Resolution: Plan 23-01 defines the shared `LocaleResolution` contract; Plan 23-04 implements route-level suggest-never-redirect behavior; Plan 23-10 implements user profile persistence with precedence `url > explicit-switch > user-profile > cookie > ko`. [RESOLVED: .planning/phases/23-launch-foundation/23-01-PLAN.md; .planning/phases/23-launch-foundation/23-04-PLAN.md; .planning/phases/23-launch-foundation/23-10-PLAN.md]
+   - Recommendation carried into plan: Use URL > explicit switch action > logged-in profile > cookie > default `ko`; never auto redirect. [VERIFIED: .planning/phases/23-launch-foundation/23-CONTEXT.md; RESOLVED]
 
-2. **Will the operator provide DeepL credentials for draft generation in Phase 23?** [ASSUMED]
+2. **RESOLVED: Will the operator provide DeepL credentials for draft generation in Phase 23?** [ASSUMED]
    - What we know: Milestone spec mentions DeepL API + LLM post-processing; no env var exists in `.env.example`. [VERIFIED: docs/v2.0-fanmeet-milestone-spec.md; VERIFIED: .env.example]
-   - What's unclear: Account/key availability and cost acceptance. [ASSUMED]
-   - Recommendation: Plan adapter + mock/manual fallback as Wave 0/1, and make live provider evidence optional until credentials are confirmed. [ASSUMED]
+   - Resolution: Plan 23-05 declares `DEEPL_AUTH_KEY` in `user_setup`, adds `DeepLClient`, and requires missing-key fallback to deterministic unavailable/manual-review state without publishing. Live provider evidence remains dependent on user-provided credentials and is not hidden. [RESOLVED: .planning/phases/23-launch-foundation/23-05-PLAN.md]
+   - Recommendation carried into plan: Plan adapter + mock/manual fallback, and make live provider evidence optional until credentials are confirmed. [RESOLVED]
 
-3. **What exact legal copy versions are launch canonical for `ko` and `en`?** [ASSUMED]
+3. **RESOLVED: What exact legal copy versions are launch canonical for `ko` and `en`?** [ASSUMED]
    - What we know: Current legal markdown is Korean, and Thai/Chinese legal fallback must be English. [VERIFIED: apps/web/content/legal/terms-of-service.md; VERIFIED: apps/web/content/legal/privacy-policy.md; VERIFIED: apps/web/content/legal/marketing-consent.md; VERIFIED: .planning/phases/23-launch-foundation/23-CONTEXT.md]
-   - What's unclear: English canonical text is not present in current files. [VERIFIED: rg apps/web/content/legal]
-   - Recommendation: Make legal copy creation/lock a first-class task before translation/public fallback tasks. [VERIFIED: .planning/phases/23-launch-foundation/23-CONTEXT.md]
+   - Resolution: Plan 23-05 Task 3 creates manual English legal canonical fallback markdown files and tests that legal canonical languages are exactly `ko,en`; Plan 23-09 Task 3 wires Thai/Chinese fallback labels to the English canonical content. [RESOLVED: .planning/phases/23-launch-foundation/23-05-PLAN.md; .planning/phases/23-launch-foundation/23-09-PLAN.md]
+   - Recommendation carried into plan: Legal copy creation/lock is a first-class task before public fallback UI. [RESOLVED]
 
-4. **How should Phase 22 accepted risks be carried into Phase 23 evidence?** [VERIFIED: .planning/STATE.md]
+4. **RESOLVED: How should Phase 22 accepted risks be carried into Phase 23 evidence?** [VERIFIED: .planning/STATE.md]
    - What we know: Accepted risk is not PASS evidence. [VERIFIED: .planning/STATE.md]
-   - What's unclear: Which Phase 23 tasks must collect production provider evidence before M1. [ASSUMED]
-   - Recommendation: Keep an evidence ledger row for SMS/email/legal/provider observations and classify as PASS/BLOCKER/ACCEPTED_RISK explicitly. [VERIFIED: .planning/STATE.md; VERIFIED: .planning/phases/22-preflight-closure/22-HUMAN-UAT.md]
+   - Resolution: Plan 23-03 Task 3 creates the strict canary rollback runbook and explicitly preserves Phase 22 `ACCEPTED_RISK` caveats as not-PASS evidence. Plan 23-06 covers email/SMS local implementation tests; production provider evidence remains a later canary/UAT evidence gate rather than fabricated PASS. [RESOLVED: .planning/phases/23-launch-foundation/23-03-PLAN.md; .planning/phases/23-launch-foundation/23-06-PLAN.md]
+   - Recommendation carried into plan: Keep evidence classified as PASS/BLOCKER/ACCEPTED_RISK explicitly. [RESOLVED]
 
 ## Environment Availability
 

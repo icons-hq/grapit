@@ -1,9 +1,10 @@
 ---
 phase: 23
 slug: launch-foundation
-status: draft
-nyquist_compliant: false
+status: planned_pending_execution
+nyquist_compliant: planned_pending_execution
 wave_0_complete: false
+nyquist_note: "Revised plans include Wave 0/automated verification strategy, but tests have not executed yet."
 created: 2026-05-06
 ---
 
@@ -39,7 +40,8 @@ created: 2026-05-06
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
 | 23-W0-FLAG | TBD | 0 | FLAG-01, FLAG-02 | T-23-01 | `BOOKING_ENABLED=false` blocks API mutation paths and Korean root URLs remain stable | unit/smoke | `pnpm --filter @grabit/api test -- booking.service.spec.ts reservation.service.spec.ts && pnpm --filter @grabit/web test -- i18n-routing.test.ts` | partial / W0 | pending |
-| 23-W0-I18N | TBD | 0 | I18N-01, I18N-02 | T-23-02 | Locale routing is suggest-never-redirect and PhoneInput/auth/OTP/email copy is localized | unit/e2e | `pnpm --filter @grabit/web test -- i18n-routing.test.ts phone-input-i18n.test.tsx sitemap.test.ts` | W0 | pending |
+| 23-W0-I18N | 23-04, 23-10 | 0 | I18N-01, I18N-02 | T-23-02 | Locale routing is suggest-never-redirect and PhoneInput/auth/OTP/email copy is localized | unit/e2e | `pnpm --filter @grabit/web test -- i18n-routing.test.ts phone-input-i18n.test.tsx sitemap.test.ts format.test.ts format-components.test.tsx` | W0 | pending |
+| 23-W0-FORMAT | 23-10 | 0 | I18N-02 | T-23-02 | KST/KRW anchors and estimated local currency formatting are explicit and tested | unit/component | `pnpm --filter @grabit/web test -- format.test.ts format-components.test.tsx` | W0 | pending |
 | 23-W0-TRANS | TBD | 0 | TRANS-01, TRANS-02 | T-23-03 | Legal content cannot enter auto-translation jobs; reviewed machine translations keep labels | unit | `pnpm --filter @grabit/api test -- translation.service.spec.ts && pnpm --filter @grabit/web test -- translation-review.test.tsx legal-content.test.ts` | partial / W0 | pending |
 | 23-W0-AUTH | TBD | 0 | AUTH-01, AUTH-02 | T-23-04 | LINE remains absent, email verification tokens expire/latest-token-win, refresh family cap stays three active devices | unit | `pnpm --filter @grabit/api test -- auth.service.spec.ts auth.controller.spec.ts && pnpm --filter @grabit/web test -- auth-email-verification.test.tsx` | partial / W0 | pending |
 | 23-W0-COMP | TBD | 0 | COMP-01, COMP-02 | T-23-05 | Consent audit rows are immutable and queryable while PII is masked by default | unit | `pnpm --filter @grabit/api test -- consent.service.spec.ts consent-audit.controller.spec.ts && pnpm --filter @grabit/web test -- signup-consent.test.tsx consent-audit-table.test.tsx` | W0 | pending |
@@ -54,6 +56,9 @@ created: 2026-05-06
 - [ ] `packages/shared/src/flags.test.ts` — boolean parsing for `BOOKING_ENABLED` with false-by-default behavior.
 - [ ] `apps/web/i18n/routing.test.ts` — `ko` remains prefixless and `en`, `th`, `zh-CN`, `zh-TW` are prefixed.
 - [ ] `apps/web/components/ui/__tests__/phone-input-i18n.test.tsx` — launch locale labels fit the existing PhoneInput contract.
+- [ ] `apps/web/components/i18n/locale-switcher.tsx` / `locale-suggestion.tsx` grep gates — explicit language choice, `aria-current`, session dismissal copy, and no automatic redirect.
+- [ ] `apps/web/lib/i18n/format.test.ts` — KST anchor, KRW source amount, estimated conversion, and exchange-rate disclaimer for five launch locales.
+- [ ] `apps/web/components/i18n/__tests__/format-components.test.tsx` — visible time/currency components render KST/KRW anchors and disclaimer text without relying on color alone.
 - [ ] `apps/web/app/__tests__/sitemap.test.ts` — localized sitemap and hreflang alternates include five launch locales.
 - [ ] `apps/api/src/modules/feature-flags/feature-flags.service.spec.ts` — API runtime flag parsing and default values.
 - [ ] `apps/api/src/modules/translation/translation.service.spec.ts` — draft/review/publish, stale detection, and legal exclusion.
@@ -90,11 +95,13 @@ created: 2026-05-06
 
 ## Validation Sign-Off
 
+Planning note: `nyquist_compliant` is `planned_pending_execution`, not `true`, because Wave 0/test scaffolds are now explicitly assigned to plans but have not been executed yet. `wave_0_complete` remains `false` until execution creates and runs the listed tests.
+
 - [ ] All tasks have `<automated>` verify or Wave 0 dependencies
 - [ ] Sampling continuity: no 3 consecutive tasks without automated verify
 - [ ] Wave 0 covers all MISSING references
 - [ ] No watch-mode flags
 - [ ] Feedback latency < 180s for quick checks
-- [ ] `nyquist_compliant: true` set in frontmatter after Wave 0 scaffold exists
+- [ ] `nyquist_compliant: true` set in frontmatter after Wave 0 scaffold exists and executes green
 
 **Approval:** pending
