@@ -65,7 +65,7 @@ Plans:
 
 **Merged from:** 25 Prod compatibility + flags, 26 i18n routing + locale foundation, 27 Translation workflow + legal lock, 28 email verification + 5-country SMS (LINE excluded by Phase 23 D-13), 29 Multinational consent + audit
 
-**Plans:** 12/17 plans executed
+**Plans:** 13/17 plans executed
 
 Plans:
 **Wave 1**
@@ -87,7 +87,7 @@ Plans:
 **Wave 4** *(blocked on schema, i18n, translation, legal content, and auth foundations)*
 - [x] 23-07-PLAN.md — Implement itemized consent capture and masked audit query API
 - [x] 23-08-PLAN.md — Wire runtime booking-disabled UI without build-time flag freezing
-- [ ] 23-09-PLAN.md — Add localized auth, email verification, SMS OTP, and auth status UI copy
+- [x] 23-09-PLAN.md — Add localized auth, email verification, SMS OTP, and auth status UI copy
 - [ ] 23-13-PLAN.md — Wire legal English fallback labels and footer compliance surfaces
 
 **Wave 5** *(blocked on API/i18n foundations)*
