@@ -9,7 +9,7 @@ import {
   useReviewTranslationDraft,
   useTranslationQueue,
   type TranslationQueueFilters,
-  type TranslationQueueStatus,
+  type TranslationQueueFilterStatus,
   type TranslationTargetLocale,
 } from '@/hooks/use-admin';
 import { Button } from '@/components/ui/button';
@@ -22,13 +22,12 @@ import {
 } from '@/components/admin/translation-review-table';
 import { TranslationSourceForm } from '@/components/admin/translation-source-form';
 
-const STATUS_OPTIONS: Array<{ value: TranslationQueueStatus | ''; label: string }> = [
+const STATUS_OPTIONS: Array<{ value: TranslationQueueFilterStatus | ''; label: string }> = [
   { value: '', label: '전체 상태' },
   { value: 'draft', label: '초안' },
   { value: 'review', label: '검수 필요' },
   { value: 'published', label: '게시됨' },
   { value: 'stale', label: '원문 변경됨' },
-  { value: 'legal_blocked', label: '자동 번역 불가' },
 ];
 
 const LOCALE_OPTIONS: Array<{ value: TranslationTargetLocale | ''; label: string }> = [
@@ -131,7 +130,7 @@ export default function AdminTranslationsPage() {
               onChange={(event) =>
                 setFilters((current) => ({
                   ...current,
-                  status: event.target.value as TranslationQueueStatus | '',
+                  status: event.target.value as TranslationQueueFilterStatus | '',
                 }))
               }
               className="flex h-11 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"

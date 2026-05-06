@@ -102,6 +102,7 @@ CREATE INDEX "idx_legal_content_type_slug_version" ON "legal_content" USING btre
 CREATE INDEX "idx_legal_content_published_at" ON "legal_content" USING btree ("published_at");--> statement-breakpoint
 CREATE INDEX "idx_translation_drafts_source_locale_status" ON "translation_drafts" USING btree ("source_id","target_locale","status");--> statement-breakpoint
 CREATE INDEX "idx_translation_drafts_status" ON "translation_drafts" USING btree ("status");--> statement-breakpoint
+CREATE UNIQUE INDEX "idx_translation_drafts_one_published_per_source_locale" ON "translation_drafts" USING btree ("source_id","target_locale") WHERE "status" = 'published';--> statement-breakpoint
 CREATE INDEX "idx_translation_sources_entity_field" ON "translation_sources" USING btree ("entity_type","entity_id","field");--> statement-breakpoint
 CREATE INDEX "idx_translation_sources_content_hash" ON "translation_sources" USING btree ("content_hash");--> statement-breakpoint
 CREATE INDEX "idx_refresh_tokens_active_family_query" ON "refresh_tokens" USING btree ("user_id","family","revoked_at","expires_at");

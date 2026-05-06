@@ -116,6 +116,7 @@ describe('AuthService', () => {
     insert: ReturnType<typeof vi.fn>;
     select: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
+    transaction: ReturnType<typeof vi.fn>;
   };
   let mockConfigService: {
     get: ReturnType<typeof vi.fn>;
@@ -187,6 +188,9 @@ describe('AuthService', () => {
           where: vi.fn().mockResolvedValue([]),
         }),
       }),
+      transaction: vi.fn(async (callback: (tx: typeof mockDb) => Promise<unknown>) =>
+        callback(mockDb),
+      ),
     };
 
     mockSmsService = {
@@ -308,6 +312,7 @@ describe('AuthService', () => {
           sourceFlow: 'signup',
         },
         { ipAddress: '203.0.113.10', userAgent: 'Vitest Browser' },
+        expect.anything(),
       );
     }, 15000);
 
@@ -905,6 +910,7 @@ describe('AuthService', () => {
           sourceFlow: 'social_completion',
         }),
         { ipAddress: '203.0.113.20', userAgent: 'Vitest Social' },
+        expect.anything(),
       );
     });
 
@@ -972,6 +978,7 @@ describe('AuthService', () => {
           sourceFlow: 'social_completion',
         }),
         { ipAddress: '203.0.113.30', userAgent: 'Vitest Link' },
+        expect.anything(),
       );
     });
 

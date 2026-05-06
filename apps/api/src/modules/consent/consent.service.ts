@@ -32,6 +32,7 @@ export interface ConsentCaptureRequest {
 }
 
 type ConsentItemRow = typeof consentItems.$inferSelect;
+type ConsentDb = Pick<DrizzleDB, 'select' | 'insert'>;
 
 export interface ConsentAuditFilters {
   itemKey?: ConsentItemKey;
@@ -79,12 +80,13 @@ export class ConsentService {
     userId: string,
     dto: ConsentCaptureRequest,
     requestMeta: ConsentRequestMeta,
+    db: ConsentDb = this.db,
   ): Promise<void> {
     const capturedAt = dto.capturedAt ? new Date(dto.capturedAt) : new Date();
     this.assertAgeAllowed(dto.birthDate, capturedAt);
     await this.assertRequiredConsents(dto);
 
-    const activeItems = await this.db
+    const activeItems = await db
       .select()
       .from(consentItems)
       .where(eq(consentItems.isActive, true));
@@ -120,7 +122,7 @@ export class ConsentService {
     });
 
     if (auditRows.length > 0) {
-      await this.db.insert(consentAuditLogs).values(auditRows);
+      await db.insert(consentAuditLogs).values(auditRows);
     }
   }
 

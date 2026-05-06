@@ -102,36 +102,41 @@ export class AuthService {
       parallelism: 1,
     });
 
-    // 3. Insert user
-    const user = await this.userRepository.create({
-      email: dto.email,
-      passwordHash,
-      name: dto.name,
-      phone: dto.phone,
-      gender: dto.gender,
-      country: dto.country,
-      birthDate: dto.birthDate,
-      marketingConsent: dto.marketingConsent,
-      isPhoneVerified: true,
-    });
-
-    // 4. Insert terms agreement
-    await this.db.insert(schema.termsAgreements).values({
-      userId: user.id,
-      termsOfService: dto.termsOfService,
-      privacyPolicy: dto.privacyPolicy,
-      marketingConsent: dto.marketingConsent,
-    });
-
-    await this.consentService.captureConsent(
-      user.id,
-      {
+    const user = await this.db.transaction(async (tx) => {
+      // 3. Insert user
+      const createdUser = await this.userRepository.create({
+        email: dto.email,
+        passwordHash,
+        name: dto.name,
+        phone: dto.phone,
+        gender: dto.gender,
+        country: dto.country,
         birthDate: dto.birthDate,
-        items: dto.consentItems,
-        sourceFlow: 'signup',
-      },
-      requestMeta,
-    );
+        marketingConsent: dto.marketingConsent,
+        isPhoneVerified: true,
+      }, tx);
+
+      // 4. Insert terms agreement and consent audit in the same transaction.
+      await tx.insert(schema.termsAgreements).values({
+        userId: createdUser.id,
+        termsOfService: dto.termsOfService,
+        privacyPolicy: dto.privacyPolicy,
+        marketingConsent: dto.marketingConsent,
+      });
+
+      await this.consentService.captureConsent(
+        createdUser.id,
+        {
+          birthDate: dto.birthDate,
+          items: dto.consentItems,
+          sourceFlow: 'signup',
+        },
+        requestMeta,
+        tx,
+      );
+
+      return createdUser;
+    });
 
     // 5-6. Generate tokens
     const tokens = await this.generateTokenPair(user.id, user.email, user.role);
@@ -569,30 +574,33 @@ export class AuthService {
       // Account linking: create social_account link to existing user
       userId = existingUser.id;
 
-      await this.db.insert(schema.socialAccounts).values({
-        userId,
-        provider: payload.provider,
-        providerId: payload.providerId,
-        providerEmail: payload.email,
-      });
+      await this.db.transaction(async (tx) => {
+        await tx.insert(schema.socialAccounts).values({
+          userId,
+          provider: payload.provider,
+          providerId: payload.providerId,
+          providerEmail: payload.email,
+        });
 
-      // Create terms agreement for social login
-      await this.db.insert(schema.termsAgreements).values({
-        userId,
-        termsOfService: dto.termsOfService,
-        privacyPolicy: dto.privacyPolicy,
-        marketingConsent: dto.marketingConsent,
-      });
+        // Create terms agreement for social login
+        await tx.insert(schema.termsAgreements).values({
+          userId,
+          termsOfService: dto.termsOfService,
+          privacyPolicy: dto.privacyPolicy,
+          marketingConsent: dto.marketingConsent,
+        });
 
-      await this.consentService.captureConsent(
-        existingUser.id,
-        {
-          birthDate: dto.birthDate,
-          items: dto.consentItems,
-          sourceFlow: 'social_completion',
-        },
-        requestMeta,
-      );
+        await this.consentService.captureConsent(
+          existingUser.id,
+          {
+            birthDate: dto.birthDate,
+            items: dto.consentItems,
+            sourceFlow: 'social_completion',
+          },
+          requestMeta,
+          tx,
+        );
+      });
 
       const tokens = await this.generateTokenPair(existingUser.id, existingUser.email, existingUser.role);
 
@@ -602,44 +610,49 @@ export class AuthService {
       };
     }
 
-    // 3. Create new user (passwordHash = null for social-only accounts)
-    const user = await this.userRepository.create({
-      email,
-      passwordHash: null, // social-only accounts have no password
-      name: dto.name,
-      phone: dto.phone,
-      gender: dto.gender,
-      country: dto.country,
-      birthDate: dto.birthDate,
-      marketingConsent: dto.marketingConsent,
-      isPhoneVerified: true,
-    });
-
-    // 4. Create social account link
-    await this.db.insert(schema.socialAccounts).values({
-      userId: user.id,
-      provider: payload.provider,
-      providerId: payload.providerId,
-      providerEmail: payload.email,
-    });
-
-    // 5. Create terms agreement
-    await this.db.insert(schema.termsAgreements).values({
-      userId: user.id,
-      termsOfService: dto.termsOfService,
-      privacyPolicy: dto.privacyPolicy,
-      marketingConsent: dto.marketingConsent,
-    });
-
-    await this.consentService.captureConsent(
-      user.id,
-      {
+    const user = await this.db.transaction(async (tx) => {
+      // 3. Create new user (passwordHash = null for social-only accounts)
+      const createdUser = await this.userRepository.create({
+        email,
+        passwordHash: null, // social-only accounts have no password
+        name: dto.name,
+        phone: dto.phone,
+        gender: dto.gender,
+        country: dto.country,
         birthDate: dto.birthDate,
-        items: dto.consentItems,
-        sourceFlow: 'social_completion',
-      },
-      requestMeta,
-    );
+        marketingConsent: dto.marketingConsent,
+        isPhoneVerified: true,
+      }, tx);
+
+      // 4. Create social account link
+      await tx.insert(schema.socialAccounts).values({
+        userId: createdUser.id,
+        provider: payload.provider,
+        providerId: payload.providerId,
+        providerEmail: payload.email,
+      });
+
+      // 5. Create terms agreement and consent audit in the same transaction.
+      await tx.insert(schema.termsAgreements).values({
+        userId: createdUser.id,
+        termsOfService: dto.termsOfService,
+        privacyPolicy: dto.privacyPolicy,
+        marketingConsent: dto.marketingConsent,
+      });
+
+      await this.consentService.captureConsent(
+        createdUser.id,
+        {
+          birthDate: dto.birthDate,
+          items: dto.consentItems,
+          sourceFlow: 'social_completion',
+        },
+        requestMeta,
+        tx,
+      );
+
+      return createdUser;
+    });
 
     // 6. Generate JWT tokens
     const tokens = await this.generateTokenPair(user.id, user.email, user.role);

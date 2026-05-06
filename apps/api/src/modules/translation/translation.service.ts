@@ -246,23 +246,25 @@ export class TranslationService {
       return this.mapDraft(draft, source.entityType);
     }
 
-    await this.db
-      .update(translationDrafts)
-      .set({ status: 'stale', updatedAt: new Date() })
-      .where(
-        and(
-          eq(translationDrafts.sourceId, draft.sourceId),
-          eq(translationDrafts.targetLocale, draft.targetLocale),
-          eq(translationDrafts.status, 'published'),
-          ne(translationDrafts.id, draftId),
-        ),
-      );
+    const [published] = await this.db.transaction(async (tx) => {
+      await tx
+        .update(translationDrafts)
+        .set({ status: 'stale', updatedAt: new Date() })
+        .where(
+          and(
+            eq(translationDrafts.sourceId, draft.sourceId),
+            eq(translationDrafts.targetLocale, draft.targetLocale),
+            eq(translationDrafts.status, 'published'),
+            ne(translationDrafts.id, draftId),
+          ),
+        );
 
-    const [published] = await this.db
-      .update(translationDrafts)
-      .set({ status: 'published', publishedAt: new Date(), updatedAt: new Date() })
-      .where(eq(translationDrafts.id, draftId))
-      .returning();
+      return tx
+        .update(translationDrafts)
+        .set({ status: 'published', publishedAt: new Date(), updatedAt: new Date() })
+        .where(eq(translationDrafts.id, draftId))
+        .returning();
+    });
 
     return this.mapDraft(published!, source.entityType);
   }

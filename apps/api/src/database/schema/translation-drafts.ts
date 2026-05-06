@@ -1,4 +1,5 @@
-import { pgTable, uuid, text, varchar, timestamp, index } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import { pgTable, uuid, text, varchar, timestamp, index, uniqueIndex } from 'drizzle-orm/pg-core';
 import { users } from './users.js';
 import { localeEnum } from './users.js';
 import { translationSources, translationStatusEnum } from './translation-sources.js';
@@ -23,4 +24,7 @@ export const translationDrafts = pgTable('translation_drafts', {
     table.status,
   ),
   index('idx_translation_drafts_status').on(table.status),
+  uniqueIndex('idx_translation_drafts_one_published_per_source_locale')
+    .on(table.sourceId, table.targetLocale)
+    .where(sql`${table.status} = 'published'`),
 ]);

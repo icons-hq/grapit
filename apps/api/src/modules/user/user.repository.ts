@@ -36,8 +36,8 @@ export class UserRepository {
     return results[0] ?? null;
   }
 
-  async create(data: NewUser) {
-    const results = await this.db
+  async create(data: NewUser, db: Pick<DrizzleDB, 'insert'> = this.db) {
+    const results = await db
       .insert(schema.users)
       .values({
         email: data.email,

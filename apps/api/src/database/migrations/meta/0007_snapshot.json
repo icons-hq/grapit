@@ -2070,6 +2070,28 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "idx_translation_drafts_one_published_per_source_locale": {
+          "name": "idx_translation_drafts_one_published_per_source_locale",
+          "columns": [
+            {
+              "expression": "source_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "target_locale",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "where": "\"translation_drafts\".\"status\" = 'published'",
+          "with": {}
         }
       },
       "foreignKeys": {

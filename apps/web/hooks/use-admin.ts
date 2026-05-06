@@ -23,11 +23,15 @@ export type TranslationQueueStatus =
   | 'published'
   | 'stale'
   | 'legal_blocked';
+export type TranslationQueueFilterStatus = Exclude<
+  TranslationQueueStatus,
+  'legal_blocked'
+>;
 
 export interface TranslationQueueFilters {
   contentType?: string;
   locale?: TranslationTargetLocale | '';
-  status?: TranslationQueueStatus | '';
+  status?: TranslationQueueFilterStatus | '';
   updatedFrom?: string;
   updatedTo?: string;
 }
