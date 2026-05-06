@@ -78,6 +78,7 @@ describe('AuthService', () => {
   };
   let mockEmailService: {
     sendPasswordResetEmail: ReturnType<typeof vi.fn>;
+    sendEmailVerificationEmail: ReturnType<typeof vi.fn>;
   };
   // [hotfix 260427-kch] hoisted so register/completeSocialRegistration tests
   // can override verifyCode / isPhoneVerified per-case.
@@ -150,6 +151,7 @@ describe('AuthService', () => {
     // REVIEWS.md HIGH-03: capture reset link via EmailService spy
     mockEmailService = {
       sendPasswordResetEmail: vi.fn().mockResolvedValue({ success: true }),
+      sendEmailVerificationEmail: vi.fn().mockResolvedValue({ success: true }),
     };
 
     // Instantiate AuthService directly (no NestJS DI overhead)
@@ -416,6 +418,89 @@ describe('AuthService', () => {
       ).resolves.not.toThrow();
 
       expect(mockJwtService.signAsync).toHaveBeenCalled();
+    });
+  });
+
+  describe('email verification', () => {
+    function authEmailVerificationApi() {
+      return authService as unknown as {
+        requestEmailVerification(email: string, locale?: string): Promise<{ expiresAt: Date }>;
+        resendEmailVerification(email: string, locale?: string): Promise<{ expiresAt: Date }>;
+        verifyEmailVerificationToken(token: string): Promise<{ verified: true }>;
+      };
+    }
+
+    it('issues an opaque hashed token that expires in 30 minutes and does not expose the raw token in the return value', async () => {
+      vi.useFakeTimers();
+      const now = new Date('2026-05-06T05:20:00.000Z');
+      vi.setSystemTime(now);
+      mockUserRepo.findByEmail.mockResolvedValue({ ...mockUser, email: 'verify@test.com' });
+
+      try {
+        const result = await authEmailVerificationApi().requestEmailVerification('verify@test.com', 'ko');
+
+        expect(result.expiresAt.toISOString()).toBe('2026-05-06T05:50:00.000Z');
+        expect(mockDb.insert).toHaveBeenCalledWith(expect.anything());
+        const insertedValues = mockDb.insert.mock.results[0]?.value.values.mock.calls[0]?.[0] as {
+          tokenHash?: string;
+          expiresAt?: Date;
+        };
+        expect(insertedValues.tokenHash).toMatch(/^[a-f0-9]{64}$/);
+        expect(JSON.stringify(result)).not.toContain(insertedValues.tokenHash);
+        expect(mockEmailService.sendEmailVerificationEmail).toHaveBeenCalledWith(
+          'verify@test.com',
+          expect.stringContaining('/auth/verify-email?token='),
+          'ko',
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('resend is callable immediately and creates a newer token for latest-token-wins', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue({ ...mockUser, email: 'resend@test.com' });
+
+      await authEmailVerificationApi().requestEmailVerification('resend@test.com', 'en');
+      await authEmailVerificationApi().resendEmailVerification('resend@test.com', 'en');
+
+      expect(mockDb.insert).toHaveBeenCalledTimes(2);
+      expect(mockEmailService.sendEmailVerificationEmail).toHaveBeenCalledTimes(2);
+    });
+
+    it('rejects consumed, expired, and superseded verification tokens with distinct messages', async () => {
+      const token = 'opaque-email-verification-token';
+      const tokenHash = createHash('sha256').update(token).digest('hex');
+      const latestHash = createHash('sha256').update('latest-token').digest('hex');
+      const baseRecord = {
+        id: randomUUID(),
+        userId: mockUser.id,
+        email: mockUser.email,
+        purpose: 'signup',
+        tokenHash,
+        expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+        consumedAt: null,
+        createdAt: new Date('2026-05-06T05:00:00.000Z'),
+      };
+
+      const selectWhere = vi
+        .fn()
+        .mockResolvedValueOnce([{ ...baseRecord, consumedAt: new Date() }])
+        .mockResolvedValueOnce([{ ...baseRecord, expiresAt: new Date(Date.now() - 1000) }])
+        .mockResolvedValueOnce([baseRecord])
+        .mockResolvedValueOnce([{ ...baseRecord, tokenHash: latestHash, createdAt: new Date('2026-05-06T05:01:00.000Z') }]);
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({ where: selectWhere }),
+      });
+
+      await expect(authEmailVerificationApi().verifyEmailVerificationToken(token)).rejects.toThrow(
+        /이미 사용된 인증 링크/,
+      );
+      await expect(authEmailVerificationApi().verifyEmailVerificationToken(token)).rejects.toThrow(
+        /인증 링크가 만료되었습니다/,
+      );
+      await expect(authEmailVerificationApi().verifyEmailVerificationToken(token)).rejects.toThrow(
+        /새 인증 메일을 요청/,
+      );
     });
   });
 

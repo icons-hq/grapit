@@ -7,6 +7,9 @@ describe('AuthController', () => {
   let controller: AuthController;
   let mockAuthService: {
     findOrCreateSocialUser: ReturnType<typeof vi.fn>;
+    requestEmailVerification: ReturnType<typeof vi.fn>;
+    resendEmailVerification: ReturnType<typeof vi.fn>;
+    verifyEmailVerificationToken: ReturnType<typeof vi.fn>;
   };
   let mockConfigService: {
     get: ReturnType<typeof vi.fn>;
@@ -21,6 +24,9 @@ describe('AuthController', () => {
   beforeEach(() => {
     mockAuthService = {
       findOrCreateSocialUser: vi.fn(),
+      requestEmailVerification: vi.fn(),
+      resendEmailVerification: vi.fn(),
+      verifyEmailVerificationToken: vi.fn(),
     };
 
     mockConfigService = {
@@ -269,6 +275,44 @@ describe('AuthController', () => {
           path: '/',
         }),
       );
+    });
+  });
+
+  describe('email verification endpoints', () => {
+    it('POST request delegates to AuthService without returning a raw token', async () => {
+      mockAuthService.requestEmailVerification.mockResolvedValue({
+        expiresAt: new Date('2026-05-06T05:50:00.000Z'),
+      });
+
+      const result = await (controller as unknown as {
+        requestEmailVerification(dto: { email: string; locale: string }): Promise<unknown>;
+      }).requestEmailVerification({ email: 'verify@test.com', locale: 'ko' });
+
+      expect(mockAuthService.requestEmailVerification).toHaveBeenCalledWith('verify@test.com', 'ko');
+      expect(JSON.stringify(result)).not.toContain('token');
+    });
+
+    it('POST resend keeps the resend action immediately visible through a dedicated endpoint', async () => {
+      mockAuthService.resendEmailVerification.mockResolvedValue({
+        expiresAt: new Date('2026-05-06T05:50:00.000Z'),
+      });
+
+      await (controller as unknown as {
+        resendEmailVerification(dto: { email: string; locale: string }): Promise<unknown>;
+      }).resendEmailVerification({ email: 'verify@test.com', locale: 'en' });
+
+      expect(mockAuthService.resendEmailVerification).toHaveBeenCalledWith('verify@test.com', 'en');
+    });
+
+    it('POST verify consumes an opaque token through AuthService', async () => {
+      mockAuthService.verifyEmailVerificationToken.mockResolvedValue({ verified: true });
+
+      const result = await (controller as unknown as {
+        verifyEmailVerification(dto: { token: string }): Promise<unknown>;
+      }).verifyEmailVerification({ token: 'opaque-token' });
+
+      expect(result).toEqual({ verified: true });
+      expect(mockAuthService.verifyEmailVerificationToken).toHaveBeenCalledWith('opaque-token');
     });
   });
 
