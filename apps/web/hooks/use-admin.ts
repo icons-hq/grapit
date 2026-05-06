@@ -16,6 +16,64 @@ import type {
   SeatMapConfigInput,
 } from '@grabit/shared';
 
+export type TranslationTargetLocale = 'en' | 'th' | 'zh-CN' | 'zh-TW';
+export type TranslationQueueStatus =
+  | 'draft'
+  | 'review'
+  | 'published'
+  | 'stale'
+  | 'legal_blocked';
+
+export interface TranslationQueueFilters {
+  contentType?: string;
+  locale?: TranslationTargetLocale | '';
+  status?: TranslationQueueStatus | '';
+  updatedFrom?: string;
+  updatedTo?: string;
+}
+
+export interface CreateTranslationSourceInput {
+  entityType: string;
+  entityId: string;
+  field: string;
+  sourceText: string;
+}
+
+export interface TranslationSource {
+  id: string;
+  entityType: string;
+  entityId: string;
+  field: string;
+  sourceLocale: 'ko';
+  sourceText: string;
+  contentHash: string;
+  createdBy: string | null;
+  updatedAt: string;
+}
+
+export interface TranslationDraft {
+  id: string;
+  sourceId: string;
+  contentType: string;
+  field?: string;
+  sourceTitle?: string;
+  sourceText?: string;
+  locale: TranslationTargetLocale;
+  status: TranslationQueueStatus;
+  translatedText: string;
+  updatedAt: string;
+  reviewerId: string | null;
+  automaticTranslationLabel?: boolean;
+  isMachineTranslated?: boolean;
+  translatedBy?: string;
+}
+
+export interface ReviewTranslationDraftInput {
+  draftId: string;
+  translatedText: string;
+  reviewerId?: string;
+}
+
 function toApiDateTime(value?: string): string | undefined {
   if (!value) return undefined;
   const date = new Date(value);
@@ -44,6 +102,28 @@ function buildConsentAuditSearchParams(filters: ConsentAuditFilters) {
   return params;
 }
 
+function buildTranslationQueueSearchParams(filters: TranslationQueueFilters) {
+  const params = new URLSearchParams();
+
+  if (filters.contentType) params.set('contentType', filters.contentType);
+  if (filters.locale) params.set('locale', filters.locale);
+  if (filters.status) params.set('status', filters.status);
+  if (filters.updatedFrom) {
+    params.set(
+      'updatedFrom',
+      toApiDateTime(filters.updatedFrom) ?? filters.updatedFrom,
+    );
+  }
+  if (filters.updatedTo) {
+    params.set(
+      'updatedTo',
+      toApiDateTime(filters.updatedTo) ?? filters.updatedTo,
+    );
+  }
+
+  return params;
+}
+
 // Performance list for admin table
 export function useAdminPerformances(params: {
   status?: string;
@@ -60,6 +140,79 @@ export function useAdminPerformances(params: {
       return apiClient.get<PerformanceListResponse>(
         `/api/v1/admin/performances?${searchParams.toString()}`,
       );
+    },
+  });
+}
+
+export function useTranslationQueue(filters: TranslationQueueFilters = {}) {
+  return useQuery({
+    queryKey: ['admin', 'translations', filters],
+    queryFn: () => {
+      const searchParams = buildTranslationQueueSearchParams(filters);
+      const query = searchParams.toString();
+      return apiClient.get<TranslationDraft[]>(
+        `/api/v1/admin/translations/queue${query ? `?${query}` : ''}`,
+      );
+    },
+  });
+}
+
+export function useCreateTranslationSource() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: CreateTranslationSourceInput) =>
+      apiClient.post<TranslationSource>(
+        '/api/v1/admin/translations/sources',
+        data,
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'translations'] });
+    },
+  });
+}
+
+export function useGenerateTranslationDrafts() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (sourceId: string) =>
+      apiClient.post<TranslationDraft[]>(
+        `/api/v1/admin/translations/sources/${sourceId}/drafts`,
+        {},
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'translations'] });
+    },
+  });
+}
+
+export function useReviewTranslationDraft() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      draftId,
+      translatedText,
+      reviewerId,
+    }: ReviewTranslationDraftInput) =>
+      apiClient.post<TranslationDraft>(
+        `/api/v1/admin/translations/drafts/${draftId}/review`,
+        { translatedText, reviewerId },
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'translations'] });
+    },
+  });
+}
+
+export function usePublishTranslationDraft() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (draftId: string) =>
+      apiClient.post<TranslationDraft>(
+        `/api/v1/admin/translations/drafts/${draftId}/publish`,
+        {},
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'translations'] });
     },
   });
 }

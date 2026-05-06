@@ -14,6 +14,7 @@ const createSourceSchema = z.object({
 });
 
 const reviewDraftSchema = z.object({
+  translatedText: z.string().min(1).optional(),
   reviewerId: z.string().uuid().optional(),
 });
 
@@ -68,7 +69,11 @@ export class TranslationController {
     @Req() req: Request,
   ) {
     const user = req.user as { id: string };
-    return this.translationService.markReviewed(draftId, body.reviewerId ?? user.id);
+    return this.translationService.markReviewed(
+      draftId,
+      body.reviewerId ?? user.id,
+      body.translatedText,
+    );
   }
 
   @Post('drafts/:draftId/publish')

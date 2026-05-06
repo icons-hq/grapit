@@ -11,6 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
 import { StatusBadge } from '@/components/performance/status-badge';
+import { AutomaticTranslationLabel } from '@/components/i18n/automatic-translation-label';
 import { CurrencyDisplay } from '@/components/i18n/currency-display';
 import { KstTime } from '@/components/i18n/kst-time';
 import { usePerformanceDetail } from '@/hooks/use-performances';
@@ -51,6 +52,8 @@ export default function PerformanceDetailPage({
   const activeLocale = useActiveLocale();
   const { data: performance, isLoading, isError } = usePerformanceDetail(id);
   const { bookingEnabled, bookingDisabledMessage } = useRuntimeFlags();
+  const showAutomaticTranslationLabel =
+    hasAutomaticTranslationMetadata(performance);
 
   if (isLoading) return <DetailSkeleton />;
 
@@ -195,6 +198,11 @@ export default function PerformanceDetailPage({
             <h1 className="text-xl font-semibold text-gray-900">
               {performance.title}
             </h1>
+            {showAutomaticTranslationLabel && (
+              <div className="mt-3">
+                <AutomaticTranslationLabel locale={activeLocale} />
+              </div>
+            )}
 
             <div className="mt-4 space-y-2">
               {performance.venue && (
@@ -300,4 +308,21 @@ export default function PerformanceDetailPage({
 function useActiveLocale(): SupportedLocale {
   const locale = useLocale();
   return isSupportedLocale(locale) ? locale : DEFAULT_LOCALE;
+}
+
+function hasAutomaticTranslationMetadata(performance: unknown): boolean {
+  if (!performance || typeof performance !== 'object') return false;
+
+  const record = performance as Record<string, unknown>;
+  if (
+    record.automaticTranslationLabel === true ||
+    record.isMachineTranslated === true ||
+    typeof record.translatedBy === 'string'
+  ) {
+    return true;
+  }
+
+  return ['titleTranslation', 'descriptionTranslation', 'salesInfoTranslation'].some(
+    (key) => hasAutomaticTranslationMetadata(record[key]),
+  );
 }

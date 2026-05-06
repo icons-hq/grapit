@@ -154,7 +154,11 @@ export class TranslationService {
     return rows.map((row) => this.mapDraft(row.draft, row.contentType));
   }
 
-  async markReviewed(draftId: string, reviewerId: string): Promise<TranslationDraftResult> {
+  async markReviewed(
+    draftId: string,
+    reviewerId: string,
+    translatedText?: string,
+  ): Promise<TranslationDraftResult> {
     const draft = await this.findDraft(draftId);
     const source = await this.findSource(draft.sourceId);
 
@@ -164,6 +168,9 @@ export class TranslationService {
 
     if (isMemoryStore(this.db)) {
       draft.status = 'review';
+      if (translatedText) {
+        draft.translatedText = translatedText;
+      }
       draft.reviewedBy = reviewerId;
       draft.updatedAt = new Date();
       return this.mapDraft(draft, source.entityType);
@@ -171,7 +178,12 @@ export class TranslationService {
 
     const [updated] = await this.db
       .update(translationDrafts)
-      .set({ status: 'review', reviewedBy: reviewerId, updatedAt: new Date() })
+      .set({
+        status: 'review',
+        ...(translatedText ? { translatedText } : {}),
+        reviewedBy: reviewerId,
+        updatedAt: new Date(),
+      })
       .where(eq(translationDrafts.id, draftId))
       .returning();
 

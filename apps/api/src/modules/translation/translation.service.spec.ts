@@ -135,6 +135,27 @@ describe('TranslationService', () => {
     expect(published.automaticTranslationLabel).toBe(true);
   });
 
+  it('persists operator-edited translated text during review before publish', async () => {
+    const source = await service.createSource({
+      entityType: 'fanmeet',
+      entityId: '11111111-1111-1111-1111-111111111111',
+      field: 'description',
+      sourceText: '팬미팅 안내',
+      createdBy: '22222222-2222-2222-2222-222222222222',
+    });
+    const [draft] = await service.generateDrafts(source.id);
+
+    const reviewed = await service.markReviewed(
+      draft.id,
+      '33333333-3333-3333-3333-333333333333',
+      'Reviewed operator copy',
+    );
+    const published = await service.publishDraft(draft.id);
+
+    expect(reviewed.translatedText).toBe('Reviewed operator copy');
+    expect(published.translatedText).toBe('Reviewed operator copy');
+  });
+
   it('marks existing drafts stale when the Korean source is edited', async () => {
     const source = await service.createSource({
       entityType: 'fanmeet',

@@ -2,7 +2,14 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Theater, Image, Ticket, LayoutDashboard, ClipboardList } from 'lucide-react';
+import {
+  Theater,
+  Image,
+  Ticket,
+  LayoutDashboard,
+  ClipboardList,
+  Languages,
+} from 'lucide-react';
 import { cn } from '@/lib/cn';
 
 const NAV_ITEMS = [
@@ -30,6 +37,11 @@ const NAV_ITEMS = [
     label: '동의 감사',
     href: '/admin/consent-audit',
     icon: ClipboardList,
+  },
+  {
+    label: '번역 검수',
+    href: '/admin/translations',
+    icon: Languages,
   },
 ] as const;
 
