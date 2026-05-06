@@ -54,6 +54,9 @@ interface AuthResult extends TokenPair {
   user: UserProfile;
 }
 
+const EMAIL_VERIFICATION_EXPIRY_MS = 30 * 60 * 1000;
+const EMAIL_VERIFICATION_PURPOSE = 'signup';
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -249,6 +252,73 @@ export class AuthService {
     const resetLink = `${frontendUrl}/auth/reset-password?token=${resetToken}`;
 
     await this.emailService.sendPasswordResetEmail(email, resetLink);
+  }
+
+  async requestEmailVerification(
+    email: string,
+    locale: string = 'ko',
+  ): Promise<{ expiresAt: Date }> {
+    return this.issueEmailVerification(email, locale);
+  }
+
+  async resendEmailVerification(
+    email: string,
+    locale: string = 'ko',
+  ): Promise<{ expiresAt: Date }> {
+    return this.issueEmailVerification(email, locale);
+  }
+
+  async verifyEmailVerificationToken(token: string): Promise<{ verified: true }> {
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const matchingRows = await this.db
+      .select()
+      .from(schema.emailVerificationTokens)
+      .where(eq(schema.emailVerificationTokens.tokenHash, tokenHash));
+    const tokenRecord = matchingRows[0];
+
+    if (!tokenRecord) {
+      throw new UnauthorizedException('유효하지 않은 인증 링크입니다');
+    }
+
+    if (tokenRecord.consumedAt) {
+      throw new GoneException('이미 사용된 인증 링크입니다');
+    }
+
+    if (tokenRecord.expiresAt < new Date()) {
+      throw new GoneException('인증 링크가 만료되었습니다. 새 인증 메일을 요청해주세요.');
+    }
+
+    const tokenUserId = tokenRecord.userId;
+    const latestRows = await this.db
+      .select()
+      .from(schema.emailVerificationTokens)
+      .where(
+        and(
+          eq(schema.emailVerificationTokens.email, tokenRecord.email),
+          eq(schema.emailVerificationTokens.purpose, tokenRecord.purpose),
+        ),
+      );
+    const latestRecord = [...latestRows].sort(
+      (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+    )[0];
+
+    if (latestRecord && latestRecord.tokenHash !== tokenHash) {
+      throw new GoneException('새 인증 메일을 요청해주세요.');
+    }
+
+    await this.db
+      .update(schema.emailVerificationTokens)
+      .set({ consumedAt: new Date() })
+      .where(eq(schema.emailVerificationTokens.id, tokenRecord.id));
+
+    if (tokenUserId) {
+      await this.db
+        .update(schema.users)
+        .set({ isEmailVerified: true, updatedAt: new Date() })
+        .where(eq(schema.users.id, tokenUserId));
+    }
+
+    return { verified: true };
   }
 
   async resetPassword(token: string, newPassword: string): Promise<void> {
@@ -511,6 +581,35 @@ export class AuthService {
       }
       throw err;
     }
+  }
+
+  private async issueEmailVerification(
+    email: string,
+    locale: string,
+  ): Promise<{ expiresAt: Date }> {
+    const user = await this.userRepository.findByEmail(email);
+    const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_EXPIRY_MS);
+
+    if (!user) {
+      return { expiresAt };
+    }
+
+    const rawToken = randomBytes(32).toString('hex');
+    const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+
+    await this.db.insert(schema.emailVerificationTokens).values({
+      userId: user.id,
+      email,
+      purpose: EMAIL_VERIFICATION_PURPOSE,
+      tokenHash,
+      expiresAt,
+    });
+
+    const frontendUrl = this.configService.get<string>('FRONTEND_URL') ?? 'http://localhost:3000';
+    const verificationLink = `${frontendUrl}/auth/verify-email?token=${rawToken}`;
+    await this.emailService.sendEmailVerificationEmail(email, verificationLink, locale);
+
+    return { expiresAt };
   }
 
   private async generateTokenPair(

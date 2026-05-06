@@ -16,6 +16,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
+import { z } from 'zod';
 import { Public } from '../../common/decorators/public.decorator.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import { AuthService, type ValidatedUser } from './auth.service.js';
@@ -37,6 +38,15 @@ import {
 } from './guards/social-auth.guard.js';
 import type { SocialProfile } from './interfaces/social-profile.interface.js';
 import { AUTH_COOKIE_NAME } from '@grabit/shared/constants/index.js';
+
+const launchLocaleSchema = z.enum(['ko', 'en', 'th', 'zh-CN', 'zh-TW']).default('ko');
+const emailVerificationRequestSchema = z.object({
+  email: z.string().email(),
+  locale: launchLocaleSchema.optional(),
+});
+const emailVerificationTokenSchema = z.object({
+  token: z.string().min(32),
+});
 
 @Controller('auth')
 export class AuthController {
@@ -139,6 +149,46 @@ export class AuthController {
   ) {
     await this.authService.resetPassword(dto.token, dto.newPassword);
     return { message: '비밀번호가 변경되었습니다' };
+  }
+
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 3, ttl: 900000 } })
+  @Post('email-verification/request')
+  async requestEmailVerification(
+    @Body(new ZodValidationPipe(emailVerificationRequestSchema))
+    dto: z.infer<typeof emailVerificationRequestSchema>,
+  ) {
+    const result = await this.authService.requestEmailVerification(dto.email, dto.locale);
+    return {
+      message: '인증 메일을 발송했습니다',
+      expiresAt: result.expiresAt,
+    };
+  }
+
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 3, ttl: 900000 } })
+  @Post('email-verification/resend')
+  async resendEmailVerification(
+    @Body(new ZodValidationPipe(emailVerificationRequestSchema))
+    dto: z.infer<typeof emailVerificationRequestSchema>,
+  ) {
+    const result = await this.authService.resendEmailVerification(dto.email, dto.locale);
+    return {
+      message: '인증 메일을 다시 보냈습니다',
+      expiresAt: result.expiresAt,
+    };
+  }
+
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @Post('email-verification/verify')
+  async verifyEmailVerification(
+    @Body(new ZodValidationPipe(emailVerificationTokenSchema))
+    dto: z.infer<typeof emailVerificationTokenSchema>,
+  ) {
+    return this.authService.verifyEmailVerificationToken(dto.token);
   }
 
   // -- Social OAuth endpoints --
