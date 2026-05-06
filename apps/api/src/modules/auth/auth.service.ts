@@ -11,7 +11,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as argon2 from 'argon2';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, gt, isNull } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import * as schema from '../../database/schema/index.js';
 import { UserRepository } from '../user/user.repository.js';
@@ -48,6 +48,7 @@ export interface ValidatedUser {
 interface TokenPair {
   accessToken: string;
   refreshToken: string;
+  deviceLimitNotice?: string;
 }
 
 interface AuthResult extends TokenPair {
@@ -56,6 +57,7 @@ interface AuthResult extends TokenPair {
 
 const EMAIL_VERIFICATION_EXPIRY_MS = 30 * 60 * 1000;
 const EMAIL_VERIFICATION_PURPOSE = 'signup';
+const REFRESH_FAMILY_LIMIT_NOTICE = '다른 기기에서 로그인되어 가장 오래된 세션이 종료되었습니다.';
 
 @Injectable()
 export class AuthService {
@@ -174,7 +176,7 @@ export class AuthService {
         .set({ revokedAt: new Date() })
         .where(eq(schema.refreshTokens.family, tokenRecord.family));
 
-      throw new UnauthorizedException('토큰이 재사용되었습니다. 보안을 위해 모든 세션이 종료됩니다.');
+      throw new UnauthorizedException('토큰이 재사용되었습니다. 보안을 위해 해당 세션이 종료됩니다.');
     }
 
     // 5. Check expiration
@@ -319,6 +321,58 @@ export class AuthService {
     }
 
     return { verified: true };
+  }
+
+  async enforceRefreshFamilyLimit(
+    userId: string,
+    maxFamilies = 3,
+  ): Promise<{ revokedFamily: string | null; notice?: string }> {
+    const now = new Date();
+    const activeRows = await this.db
+      .select()
+      .from(schema.refreshTokens)
+      .where(
+        and(
+          eq(schema.refreshTokens.userId, userId),
+          isNull(schema.refreshTokens.revokedAt),
+          gt(schema.refreshTokens.expiresAt, now),
+        ),
+      );
+
+    const oldestByFamily = new Map<string, Date>();
+    for (const row of activeRows) {
+      const currentOldest = oldestByFamily.get(row.family);
+      if (!currentOldest || row.createdAt < currentOldest) {
+        oldestByFamily.set(row.family, row.createdAt);
+      }
+    }
+
+    const activeFamilies = [...oldestByFamily.entries()]
+      .map(([family, createdAt]) => ({ family, createdAt }))
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+
+    if (activeFamilies.length <= maxFamilies) {
+      return { revokedFamily: null };
+    }
+
+    const familiesToRevoke = activeFamilies.slice(0, activeFamilies.length - maxFamilies);
+    for (const family of familiesToRevoke) {
+      await this.db
+        .update(schema.refreshTokens)
+        .set({ revokedAt: new Date() })
+        .where(
+          and(
+            eq(schema.refreshTokens.userId, userId),
+            eq(schema.refreshTokens.family, family.family),
+            isNull(schema.refreshTokens.revokedAt),
+          ),
+        );
+    }
+
+    return {
+      revokedFamily: familiesToRevoke[0]?.family ?? null,
+      notice: REFRESH_FAMILY_LIMIT_NOTICE,
+    };
   }
 
   async resetPassword(token: string, newPassword: string): Promise<void> {
@@ -637,8 +691,13 @@ export class AuthService {
         Date.now() + REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000,
       ),
     });
+    const limitResult = await this.enforceRefreshFamilyLimit(userId);
 
-    return { accessToken, refreshToken: rawToken };
+    return {
+      accessToken,
+      refreshToken: rawToken,
+      ...(limitResult.notice ? { deviceLimitNotice: limitResult.notice } : {}),
+    };
   }
 
   private mapToProfile(user: {

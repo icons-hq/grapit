@@ -69,6 +69,7 @@ export class AuthController {
     return {
       accessToken: result.accessToken,
       user: result.user,
+      ...(result.deviceLimitNotice ? { deviceLimitNotice: result.deviceLimitNotice } : {}),
     };
   }
 
@@ -86,6 +87,7 @@ export class AuthController {
     return {
       accessToken: result.accessToken,
       user: result.user,
+      ...(result.deviceLimitNotice ? { deviceLimitNotice: result.deviceLimitNotice } : {}),
     };
   }
 
@@ -262,6 +264,7 @@ export class AuthController {
     return {
       accessToken: result.accessToken,
       user: result.user,
+      ...(result.deviceLimitNotice ? { deviceLimitNotice: result.deviceLimitNotice } : {}),
     };
   }
 

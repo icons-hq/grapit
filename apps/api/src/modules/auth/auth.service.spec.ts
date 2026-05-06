@@ -494,7 +494,7 @@ describe('AuthService', () => {
         notice: '다른 기기에서 로그인되어 가장 오래된 세션이 종료되었습니다.',
       });
       expect(updateSetMock).toHaveBeenCalledWith({ revokedAt: expect.any(Date) });
-      expect(JSON.stringify(updateWhereMock.mock.calls)).toContain('oldest-family');
+      expect(containsPrimitiveValue(updateWhereMock.mock.calls, 'oldest-family')).toBe(true);
     });
 
     it('refresh within the same family does not consume a new device slot', async () => {
