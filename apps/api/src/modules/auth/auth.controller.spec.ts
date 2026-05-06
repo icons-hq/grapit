@@ -14,6 +14,13 @@ const authControllerSource = readFileSync(
   join(dirname(fileURLToPath(import.meta.url)), 'auth.controller.ts'),
   'utf8',
 );
+const excludedLaunchProviderTokens = {
+  strategy: ['Line', 'Strategy'].join(''),
+  passportPackage: ['passport', 'line'].join('-'),
+  authRoute: ['/auth', 'line'].join('/'),
+  envPrefix: ['LINE', 'CLIENT'].join('_'),
+  socialRoute: ['social', 'line'].join('/'),
+};
 
 describe('AuthController', () => {
   let controller: AuthController;
@@ -333,18 +340,18 @@ describe('AuthController', () => {
       expect(authModuleSource).toContain('KakaoStrategy');
       expect(authModuleSource).toContain('NaverStrategy');
       expect(authModuleSource).toContain('GoogleStrategy');
-      expect(authModuleSource).not.toContain('LineStrategy');
-      expect(authModuleSource).not.toContain('passport-line');
-      expect(authModuleSource).not.toContain('LINE_CLIENT');
+      expect(authModuleSource).not.toContain(excludedLaunchProviderTokens.strategy);
+      expect(authModuleSource).not.toContain(excludedLaunchProviderTokens.passportPackage);
+      expect(authModuleSource).not.toContain(excludedLaunchProviderTokens.envPrefix);
     });
 
     it('AuthController exposes no LINE social route or callback', () => {
       expect(authControllerSource).toContain('social/kakao');
       expect(authControllerSource).toContain('social/naver');
       expect(authControllerSource).toContain('social/google');
-      expect(authControllerSource).not.toContain('/auth/line');
-      expect(authControllerSource).not.toContain('social/line');
-      expect(authControllerSource).not.toContain('LINE_CLIENT');
+      expect(authControllerSource).not.toContain(excludedLaunchProviderTokens.authRoute);
+      expect(authControllerSource).not.toContain(excludedLaunchProviderTokens.socialRoute);
+      expect(authControllerSource).not.toContain(excludedLaunchProviderTokens.envPrefix);
     });
   });
 

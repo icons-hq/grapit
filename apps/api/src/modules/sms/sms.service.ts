@@ -9,6 +9,7 @@ import type IORedis from 'ioredis';
 import { REDIS_CLIENT } from '../booking/providers/redis.provider.js';
 import { InfobipClient, InfobipApiError } from './infobip-client.js';
 import { parseE164, isChinaMainland } from './phone.util.js';
+import { formatSmsOtpMessage } from './sms-copy.js';
 
 // Phase 10 constants (retained)
 const RESEND_COOLDOWN_MS = 30_000;           // D-11: 30s resend cooldown
@@ -260,7 +261,7 @@ export class SmsService {
 
     // [Phase 10.1] Self-managed OTP generation + Valkey storage
     const otp = this.generateOtp();
-    const text = `[Grabit] 인증번호 ${otp} (3분 이내 입력)`;
+    const text = formatSmsOtpMessage(otp, 'ko');
 
     try {
       // Store OTP first -- SMS delivery only matters after user receives it.
