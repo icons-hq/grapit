@@ -9,15 +9,21 @@ import { fileURLToPath } from 'node:url';
 const webRequire = createRequire(new URL('../apps/web/package.json', import.meta.url));
 const { io } = webRequire('socket.io-client');
 
-const defaultArtifactUrl = new URL('../.planning/phases/20-valkey-production-connectivity-contract/20-HUMAN-UAT.md', import.meta.url);
+const defaultArtifactUrl = new URL('../.planning/phases/22-preflight-closure/artifacts/valkey-smoke.md', import.meta.url);
 const artifactPath = process.env.GRABIT_SMOKE_ARTIFACT ?? fileURLToPath(defaultArtifactUrl);
 
 const SERVICE_NAME = 'grabit-api';
-const VALKEY_INSTANCE = 'grabit-valkey';
+const VALKEY_INSTANCE = 'grapit-valkey';
 const EXPECTED_API_ORIGIN = 'https://api.heygrabit.com';
 const EXPECTED_LIVE_MODE = 'CLUSTER';
 const EXPECTED_VALKEY_MODE = 'cluster';
+const GCLOUD_TIMEOUT_MS = 60_000;
+const HTTP_TIMEOUT_MS = 30_000;
 const SOCKET_JOIN_TIMEOUT_MS = 20000;
+const INSTANCE_PROOF_TIMEOUT_MS = 90_000;
+const MAX_SOCKET_CLIENTS = 8;
+const LOG_LOOKUP_TIMEOUT_MS = 60_000;
+const LOG_LOOKUP_INTERVAL_MS = 5_000;
 const REDIS_URL_PATTERN = /\brediss?:\/\/[^\s`'")]+/gi;
 const PHONE_PATTERN = /(?:\+[1-9]\d{5,14}\b|\b01[016789]-?\d{3,4}-?\d{4}\b)/g;
 const FAILURE_KEYWORDS = [
@@ -46,11 +52,12 @@ Usage:
 Required environment for every --check mode:
   GRABIT_API_URL                         Expected https://api.heygrabit.com
   GRABIT_SMOKE_AUTH_HEADER_FILE          Local uncommitted file with exactly one Authorization or Cookie header line
+  GRABIT_SMOKE_PERFORMANCE_ID            Operator-approved safe fixture performance UUID
   GRABIT_SMOKE_SHOWTIME_ID               Operator-approved safe fixture showtime UUID
   GRABIT_SMOKE_SEAT_ID                   Operator-approved safe fixture seat ID
 
 Optional environment:
-  GRABIT_SMOKE_ARTIFACT                  Evidence markdown path. Default: script-root 20-HUMAN-UAT.md
+  GRABIT_SMOKE_ARTIFACT                  Evidence markdown path. Default: .planning/phases/22-preflight-closure/artifacts/valkey-smoke.md
   GRABIT_SMOKE_IDLE_SECONDS              Idle reconnect wait, default 1800
   GRABIT_SMOKE_LOG_SINCE_UTC             Required for standalone --check logs
   GRABIT_SMOKE_SENTRY_OBSERVATION        Required for --check logs and --check all; record zero-count or redacted event id
@@ -155,6 +162,7 @@ async function loadConfig(check) {
   }
 
   const header = parseAuthHeader(headerLines[0]);
+  const performanceId = getEnv('GRABIT_SMOKE_PERFORMANCE_ID');
   const showtimeId = getEnv('GRABIT_SMOKE_SHOWTIME_ID');
   const seatId = getEnv('GRABIT_SMOKE_SEAT_ID');
   const project = getEnv('GRABIT_GCP_PROJECT', 'grapit-491806');
@@ -167,6 +175,7 @@ async function loadConfig(check) {
     authHeaderPath,
     authHeaderName: header.name,
     authHeaders: header.headers,
+    performanceId,
     showtimeId,
     seatId,
     project,
@@ -200,13 +209,19 @@ function runCli(command, args) {
   const result = spawnSync(command, args, {
     encoding: 'utf8',
     maxBuffer: 1024 * 1024 * 10,
+    timeout: GCLOUD_TIMEOUT_MS,
+    env: {
+      ...process.env,
+      CLOUDSDK_CORE_DISABLE_PROMPTS: '1',
+    },
   });
+  const spawnError = result.error ? String(result.error.message ?? result.error) : '';
 
   return {
-    ok: result.status === 0,
+    ok: result.status === 0 && !spawnError,
     status: result.status ?? 1,
     stdout: result.stdout ?? '',
-    stderr: result.stderr ?? '',
+    stderr: spawnError || result.stderr || '',
     shape: `${command} ${args.join(' ')}`,
   };
 }
@@ -341,9 +356,16 @@ function cloudRunRevisionFilter(config, cloudRun) {
   ];
 }
 
+async function fetchWithTimeout(url, options = {}) {
+  return await fetch(url, {
+    ...options,
+    signal: options.signal ?? AbortSignal.timeout(HTTP_TIMEOUT_MS),
+  });
+}
+
 async function requestJson(config, path, options = {}) {
   const url = new URL(path, config.apiUrl);
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(url, {
     ...options,
     headers: {
       Accept: 'application/json',
@@ -367,6 +389,23 @@ async function requestJson(config, path, options = {}) {
   }
 
   return { status: response.status, body };
+}
+
+function seatExistsInConfig(seatConfig, seatId) {
+  return Array.isArray(seatConfig?.tiers)
+    && seatConfig.tiers.some((tier) => Array.isArray(tier.seatIds) && tier.seatIds.includes(seatId));
+}
+
+async function validateFixture(config) {
+  const response = await requestJson(config, `/api/v1/performances/${encodeURIComponent(config.performanceId)}`);
+  const performance = response.body;
+  const showtimeOk = Array.isArray(performance?.showtimes)
+    && performance.showtimes.some((showtime) => showtime.id === config.showtimeId);
+  const seatOk = seatExistsInConfig(performance?.seatMap?.seatConfig, config.seatId);
+
+  if (!showtimeOk || !seatOk) {
+    throw new Error(`Smoke fixture is invalid: showtime=${showtimeOk ? 'ok' : 'missing'}, seat=${seatOk ? 'ok' : 'missing'}`);
+  }
 }
 
 function isObjectRecord(value) {
@@ -393,7 +432,7 @@ async function readSeatState(config) {
 }
 
 async function unlockAndVerifySeat(config) {
-  const unlock = await fetch(new URL(`/api/v1/booking/seats/lock/${encodeURIComponent(config.showtimeId)}/${encodeURIComponent(config.seatId)}`, config.apiUrl), {
+  const unlock = await fetchWithTimeout(new URL(`/api/v1/booking/seats/lock/${encodeURIComponent(config.showtimeId)}/${encodeURIComponent(config.seatId)}`, config.apiUrl), {
     method: 'DELETE',
     headers: config.authHeaders,
   });
@@ -594,8 +633,7 @@ async function joinShowtime(socket, showtimeId) {
   });
 }
 
-async function lookupSocketInstances(config, cloudRun, clientIds, sinceIso) {
-  await sleep(5000);
+function readSocketInstanceLogs(config, cloudRun, clientIds, sinceIso) {
   const filter = [
     ...cloudRunRevisionFilter(config, cloudRun),
     `timestamp>="${sinceIso}"`,
@@ -625,6 +663,72 @@ async function lookupSocketInstances(config, cloudRun, clientIds, sinceIso) {
   return byClient;
 }
 
+async function lookupSocketInstances(config, cloudRun, clientIds, sinceIso) {
+  const deadline = Date.now() + LOG_LOOKUP_TIMEOUT_MS;
+  let latest = new Map();
+
+  while (Date.now() < deadline) {
+    await sleep(LOG_LOOKUP_INTERVAL_MS);
+    latest = readSocketInstanceLogs(config, cloudRun, clientIds, sinceIso);
+
+    if (clientIds.every((clientId) => latest.has(clientId))) {
+      return latest;
+    }
+  }
+
+  return latest;
+}
+
+function socketClientIds(sockets) {
+  return sockets.map((socket) => socket.id).filter(Boolean);
+}
+
+function distinctKnownInstances(instanceMap) {
+  return [...new Set([...instanceMap.values()].filter((value) => value !== 'unknown'))];
+}
+
+function selectDistinctInstancePair(sockets, instanceMap) {
+  const byInstance = new Map();
+  for (const socket of sockets) {
+    const instanceId = instanceMap.get(socket.id);
+    if (!instanceId || instanceId === 'unknown' || byInstance.has(instanceId)) {
+      continue;
+    }
+    byInstance.set(instanceId, socket);
+  }
+
+  const entries = [...byInstance.entries()];
+  if (entries.length < 2) {
+    return null;
+  }
+
+  return [
+    { instanceId: entries[0][0], socket: entries[0][1] },
+    { instanceId: entries[1][0], socket: entries[1][1] },
+  ];
+}
+
+async function connectUntilDistinctInstancePair(config, cloudRun, sinceIso, sockets) {
+  const deadline = Date.now() + INSTANCE_PROOF_TIMEOUT_MS;
+  let instanceMap = new Map();
+  let pair = null;
+
+  while (!pair && Date.now() < deadline && sockets.length < MAX_SOCKET_CLIENTS) {
+    const socket = await connectSocket(config, `client-${sockets.length + 1}`);
+    sockets.push(socket);
+    await joinShowtime(socket, config.showtimeId);
+    instanceMap = await lookupSocketInstances(config, cloudRun, socketClientIds(sockets), sinceIso);
+    pair = selectDistinctInstancePair(sockets, instanceMap);
+  }
+
+  while (!pair && Date.now() < deadline) {
+    instanceMap = await lookupSocketInstances(config, cloudRun, socketClientIds(sockets), sinceIso);
+    pair = selectDistinctInstancePair(sockets, instanceMap);
+  }
+
+  return { instanceMap, pair };
+}
+
 async function checkSocketIo(config, cloudRun) {
   const minInstances = Number.parseInt(String(cloudRun.minInstances ?? '0'), 10);
   const multiInstanceReady = Number.isFinite(minInstances) && minInstances >= 2;
@@ -636,18 +740,24 @@ async function checkSocketIo(config, cloudRun) {
     };
   }
   const sinceIso = new Date().toISOString();
-  const socketA = await connectSocket(config, 'a');
-  const socketB = await connectSocket(config, 'b');
+  const sockets = [];
   let lockDone = false;
 
   try {
-    await Promise.all([
-      joinShowtime(socketA, config.showtimeId),
-      joinShowtime(socketB, config.showtimeId),
-    ]);
+    const { instanceMap, pair } = await connectUntilDistinctInstancePair(config, cloudRun, sinceIso, sockets);
+    const instances = distinctKnownInstances(instanceMap);
+    const instanceProof = Boolean(pair);
 
-    const updateA = waitForSeatUpdate(socketA, config.seatId, 'locked');
-    const updateB = waitForSeatUpdate(socketB, config.seatId, 'locked');
+    if (!pair) {
+      return {
+        name: 'Socket.IO Two-Instance Propagation',
+        ok: false,
+        summary: `opened clients=${sockets.length}; min-instances=${cloudRun.minInstances}; distinct Cloud Run instance IDs=${instances.length}; no cross-instance client pair proven before ${INSTANCE_PROOF_TIMEOUT_MS}ms deadline; D-10=FAIL; D-13=FAIL`,
+      };
+    }
+
+    const updateA = waitForSeatUpdate(pair[0].socket, config.seatId, 'locked');
+    const updateB = waitForSeatUpdate(pair[1].socket, config.seatId, 'locked');
 
     await requestJson(config, '/api/v1/booking/seats/lock', {
       method: 'POST',
@@ -661,23 +771,24 @@ async function checkSocketIo(config, cloudRun) {
 
     await Promise.all([updateA, updateB]);
 
-    const instanceMap = await lookupSocketInstances(config, cloudRun, [socketA.id, socketB.id], sinceIso);
-    const instances = [...new Set([...instanceMap.values()].filter((value) => value !== 'unknown'))];
-    const instanceProof = instances.length >= 2;
     const cleanup = await unlockAndVerifySeat(config);
     lockDone = !cleanup.ok;
+    const selectedClients = pair
+      .map((entry) => `${entry.socket.id}@${entry.instanceId}`)
+      .join(',');
 
     return {
       name: 'Socket.IO Two-Instance Propagation',
       ok: multiInstanceReady && instanceProof && cleanup.ok,
-      summary: `clients=${socketA.id},${socketB.id}; received seat-update=PASS; min-instances=${cloudRun.minInstances}; distinct Cloud Run instance IDs=${instances.length}; cleanup=${cleanup.ok ? 'PASS' : 'FAIL'} afterState=${cleanup.afterState}; D-10=${instanceProof ? 'PASS' : 'FAIL'}; D-13=${instanceProof ? 'PASS' : 'FAIL'}`,
+      summary: `selected clients=${selectedClients}; opened clients=${sockets.length}; received seat-update=PASS; min-instances=${cloudRun.minInstances}; distinct Cloud Run instance IDs=${instances.length}; cleanup=${cleanup.ok ? 'PASS' : 'FAIL'} afterState=${cleanup.afterState}; D-10=${instanceProof ? 'PASS' : 'FAIL'}; D-13=${instanceProof ? 'PASS' : 'FAIL'}`,
     };
   } finally {
     if (lockDone) {
       await unlockAndVerifySeat(config).catch(() => undefined);
     }
-    socketA.close();
-    socketB.close();
+    for (const socket of sockets) {
+      socket.close();
+    }
   }
 }
 
@@ -780,6 +891,7 @@ async function runChecks(config) {
   if ((config.check === 'logs' || config.check === 'all') && !process.env.GRABIT_SMOKE_SENTRY_OBSERVATION?.trim()) {
     throw new Error('GRABIT_SMOKE_SENTRY_OBSERVATION is required for --check logs and --check all');
   }
+  await validateFixture(config);
   const cloudRun = captureEvidence(() => getCloudRunEvidence(config), fallbackCloudRun);
   const memorystore = captureEvidence(() => getMemorystoreEvidence(config), fallbackMemorystore);
   const runtimeFailures = runtimeContractFailures(cloudRun, memorystore);

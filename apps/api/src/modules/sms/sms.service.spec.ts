@@ -245,6 +245,21 @@ describe('SmsService', () => {
 
   // ---------- sendVerificationCode ----------
   describe('sendVerificationCode', () => {
+    it('[Phase 22-06] invalid-but-regex-valid international phone throws BadRequestException before side effects', async () => {
+      const configService = createConfigService();
+      const service = new SmsService(configService, mockRedis as never);
+      const sendSmsSpy = vi.spyOn(InfobipClient.prototype, 'sendSms');
+
+      await expect(service.sendVerificationCode('+9991234567')).rejects.toThrow(
+        BadRequestException,
+      );
+
+      expect(mockRedis.set).not.toHaveBeenCalled();
+      expect(mockRedis.eval).not.toHaveBeenCalled();
+      expect(mockRedis.pipeline).not.toHaveBeenCalled();
+      expect(sendSmsSpy).not.toHaveBeenCalled();
+    });
+
     it('중국 본토(+86) 번호 reject -- BadRequestException', async () => {
       const configService = createConfigService();
       const service = new SmsService(configService, mockRedis as never);
@@ -544,6 +559,19 @@ describe('SmsService', () => {
 
   // ---------- verifyCode ----------
   describe('verifyCode', () => {
+    it('[Phase 22-06] invalid-but-regex-valid international phone throws BadRequestException before Valkey work', async () => {
+      const configService = createConfigService();
+      const service = new SmsService(configService, mockRedis as never);
+
+      await expect(service.verifyCode('+9991234567', '123456')).rejects.toThrow(
+        BadRequestException,
+      );
+
+      expect(mockRedis.eval).not.toHaveBeenCalled();
+      expect(mockRedis.decr).not.toHaveBeenCalled();
+      expect(mockRedis.get).not.toHaveBeenCalled();
+    });
+
     it('dev mock에서 000000 성공', async () => {
       const configService = createConfigService({
         INFOBIP_API_KEY: undefined,

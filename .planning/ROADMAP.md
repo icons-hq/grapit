@@ -2,84 +2,151 @@
 
 ## Milestones
 
-- ✅ **v1.0 MVP** -- Phases 1-5 (shipped 2026-04-09)
-- ✅ **v1.1 안정화 + 고도화** -- Phases 6-21 (shipped 2026-05-04; Phase 22-24 deferred to v2.0)
-- 🧭 **v2.0 Fanmeet Launch** -- Phase 22+ (planned; starts with deferred operator/validation/hardening gates)
+- **v1.0 MVP** -- Phases 1-5, shipped 2026-04-09. Archive: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
+- **v1.1 안정화 + 고도화** -- Phases 6-21, shipped 2026-05-04. Archive: [milestones/v1.1-ROADMAP.md](milestones/v1.1-ROADMAP.md)
+- **v2.0 Fanmeet Launch** -- Phases 22-27, initialized 2026-05-04 from [docs/v2.0-fanmeet-milestone-spec.md](../docs/v2.0-fanmeet-milestone-spec.md), merged 2026-05-04 for GSD execution overhead control
 
-## Phases
+## v2.0 Fanmeet Launch
 
-<details>
-<summary>✅ v1.0 MVP (Phases 1-5) -- SHIPPED 2026-04-09</summary>
+**Goal:** 2026-07-04 Girl Rules fanmeet을 무사 진행하기 위해, 5개국 다국어 + 4종 결제 + 운영팀 풀 콘솔 + 1-2만 동접 흡수 체계를 구축하고 단일 critical incident 0건으로 운영한다.
 
-- [x] Phase 1: Foundation + Auth (5/5 plans) -- completed 2026-03-30
-- [x] Phase 2: Catalog + Admin (6/6 plans) -- completed 2026-03-31
-- [x] Phase 3: Seat Map + Real-Time (4/4 plans) -- completed 2026-04-02
-- [x] Phase 4: Booking + Payment (3/3 plans) -- completed 2026-04-07
-- [x] Phase 5: Polish + Launch (5/5 plans) -- completed 2026-04-08
+**Phase numbering:** Continued from v1.1. v1.1 closed after Phase 21; v2.0 starts at Phase 22. Former Phases 22-43 are retained as merged sub-scope references inside six GSD execution phases.
 
-Full details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
+**Coverage:** 6 phases, 39 requirements mapped, 0 unmapped.
 
-</details>
+| # | Phase | Goal | Requirements | Gate | Merged from |
+|---|-------|------|--------------|------|-------------|
+| 22 | Preflight Closure | v1.1에서 이월된 operator evidence, validation backfill, launch blocker hardening을 fanmeet 구현 전에 닫는다. | PREF-01, PREF-02, PREF-03 | Preflight | 22-24 |
+| 23 | Launch Foundation | 기존 prod 보존, feature flags, 5개 로케일, translation/legal lock, LINE/SMS, consent/audit 기반을 만든다. | FLAG-01, FLAG-02, I18N-01, I18N-02, TRANS-01, TRANS-02, AUTH-01, AUTH-02, COMP-01, COMP-02 | M1 foundation | 25-29 |
+| 24 | Traffic + Booking + Payment Core | 대기열/WAF/prewarm, 다층 좌석 선택, 결제 4종, 환불, QR 발급을 통합 booking core로 완성한다. | TRAF-01, TRAF-02, TRAF-03, BOOK-01, BOOK-02, BOOK-03, PAY-02, REFUND-01, REFUND-02, QR-01 | M1/M2 core | 30-32 |
+| 25 | Admin Operations Console | 이벤트 등록, Q&A/FAQ/notice/CS, admin security, audit, seat operations를 운영 콘솔 단위로 묶어 완성한다. | ADMIN-01, ADMIN-02, ADMIN-03, ADMIN-04 | M1 operations | 33-35 |
+| 26 | M1 Canary + Cutover Gates | 2026-05-15 광고 오픈, k6, DR, on-call, WAF fine-tune, Toss live cutover를 순차 gate로 통과한다. | M1-01, LOAD-01, DR-01, INFRA-01, OPS-01, PAY-01, OPS-02 | M1/M2 cutover | 36-40 |
+| 27 | Event Operations + Settlement | QR 현장 검표, field monitor, event-day playbook, settlement/export, retrospective를 행사 운영 단위로 닫는다. | QR-02, FIELD-01, OPS-03, POST-01, POST-02 | M3/M4 | 41-43 |
 
-- ✅ **v1.1 안정화 + 고도화** -- Phases 6-21, 77 completed plans (+1 superseded placeholder), shipped 2026-05-04. Full details: [milestones/v1.1-ROADMAP.md](milestones/v1.1-ROADMAP.md); requirements archive: [milestones/v1.1-REQUIREMENTS.md](milestones/v1.1-REQUIREMENTS.md).
+## Phase Details
 
-## v2.0 Fanmeet Launch Preflight
+### Phase 22: Preflight Closure
 
-The following phases were originally planned as v1.1 gap-closure work. They are now deferred into the v2.0 Fanmeet Launch milestone so operator verification, validation backfill, and operational hardening are handled against the real fanmeet launch surface instead of extending v1.1.
+**Goal:** Phase 14 SMS OTP, Phase 15 email cutover, Phase 16 legal launch에서 남은 launch-facing evidence를 닫고, v1.1 validation gaps와 Valkey/R2/SMS/email/legal fragility를 fanmeet 구현 전 blocker 기준으로 정리한다.
 
-### Phase 22: Operator UAT gates
+**Requirements:** PREF-01, PREF-02, PREF-03
 
-**Goal:** Phase 14 SMS OTP, Phase 15 email cutover, Phase 16 legal launch에 남은 실기기/외부 sign-off/operator smoke gate를 v2.0 fanmeet launch preflight로 완료한다.
-**Requirements:** SMS-02, CUTOVER-05, D-01, D-02, D-03, D-04, D-05, D-06, D-07, D-08, D-09, D-10, D-11, D-12, D-13, D-14, D-15
-**Depends on:** v2.0 Fanmeet Launch milestone initialization
-**Plans:** 0 plans
+**Merged from:** 22 Operator UAT gates, 23 Nyquist validation backfill, 24 Operational hardening sweep
 
-Plans:
-- [ ] TBD (run `/gsd-plan-phase 22`)
-
-### Phase 23: Nyquist validation backfill
-
-**Goal:** Audit가 partial/missing으로 분류한 phase validation artifacts를 보강하여 v2.0 launch-readiness baseline에서 v1.1 coverage gaps를 명확히 닫는다.
-**Requirements:** R2-01, R2-02, R2-03, R2-04, DEBT-01, DEBT-02, DEBT-03, DEBT-04, DEBT-05, DEBT-06
-**Depends on:** Phase 22
-**Plans:** 0 plans
+**Plans:** 6/6 plans complete
 
 Plans:
-- [ ] TBD (run `/gsd-plan-phase 23`)
+**Wave 1**
+- [x] 22-01-PLAN.md — Wave 1 evidence ledger and human UAT scaffold for PREF-01/PREF-02/PREF-03
+- [x] 22-02-PLAN.md — Wave 1 v1.1 validation baseline/backfill for PREF-02
+- [x] 22-03-PLAN.md — Wave 1 operational hardening register and Valkey smoke artifact-path fix for PREF-03
 
-### Phase 24: Operational hardening sweep
+**Wave 2** *(blocked on Wave 1 completion)*
+- [x] 22-04-PLAN.md — Wave 2 SMS/email/legal human UAT closure for PREF-01
 
-**Goal:** Audit tech-debt에 남은 fragile 운영 항목을 fanmeet launch blocker 관점에서 정리하여 v2.0 re-audit 때 반복 gap으로 남지 않게 한다.
-**Requirements:** VALK-03, VALK-05, R2-02, SMS-02, CUTOVER-05, SC-4
-**Depends on:** Phase 23
-**Plans:** 0 plans
+**Wave 3** *(blocked on Wave 2 completion)*
+- [x] 22-05-PLAN.md — Wave 3 final evidence aggregation and Phase 23 readiness verification for PREF-01/PREF-02/PREF-03
 
-Plans:
-- [ ] TBD (run `/gsd-plan-phase 24`)
+**Wave 4** *(gap closure after production UAT)*
+- [x] 22-06-PLAN.md — Wave 4 SMS invalid international phone 500 gap closure for PREF-01
+
+**Success criteria:**
+1. SMS real-device, email reset-to-login, legal public/sign-off evidence가 `PASS`, `ACCEPTED_RISK`, `BLOCKER`로 분류된다.
+2. v1.1 artifact gaps가 complete, accepted caveat, v2.0 blocker 중 하나로 정리되고 evidence 위치가 traceable하다.
+3. Valkey/R2/SMS/email/legal fragile points가 concrete fix, accepted risk, launch blocker 중 하나로 닫힌다.
+4. Phase 23 Launch Foundation이 unresolved v1.1 launch-readiness blocker 없이 시작 가능하다.
+5. Production UAT에서 발견된 invalid-but-regex-valid SMS phone 500 gap은 로컬 코드/테스트 기준으로 닫히고, 배포 후 production rerun 필요성이 명시된다.
+
+### Phase 23: Launch Foundation
+
+**Goal:** 이후 fanmeet 기능이 의존하는 prod compatibility, flags, localization, auth, translation, legal lock, consent/audit 기반을 한 실행 단위로 구축한다.
+
+**Requirements:** FLAG-01, FLAG-02, I18N-01, I18N-02, TRANS-01, TRANS-02, AUTH-01, AUTH-02, COMP-01, COMP-02
+
+**Merged from:** 25 Prod compatibility + flags, 26 i18n routing + locale foundation, 27 Translation workflow + legal lock, 28 LINE login + 5-country SMS, 29 Multinational consent + audit
+
+**Success criteria:**
+1. Expand-only migrations, canary policy, and shared feature flag helper preserve existing production users, reservations, sessions, and Korean root URLs.
+2. Korean routes remain prefixless and foreign routes use `/en`, `/th`, `/zh-CN`, `/zh-TW` with hreflang, sitemap, locale preference, time/currency formatting, and PhoneInput localization.
+3. Korean source content can generate reviewed translations, while legal notices stay Korean/English manual and auto-translation is blocked for legal copy.
+4. Kakao, Naver, Google, LINE, email verification, 5-country SMS OTP, and three-device refresh token policy are covered by tests and launch evidence.
+5. PIPA, cross-border transfer, PDPA/PIPL English notice, under-14, marketing consent, audit log, and footer legal surfaces are captured.
+6. `BOOKING_ENABLED=false` blocks API seat locks and payment attempts, not only UI buttons.
+
+### Phase 24: Traffic + Booking + Payment Core
+
+**Goal:** 광고/티켓팅 트래픽 흡수부터 좌석 선택, 결제, 환불, QR 발급까지 사용자의 core booking path를 test-key 기준으로 완성한다.
+
+**Requirements:** TRAF-01, TRAF-02, TRAF-03, BOOK-01, BOOK-02, BOOK-03, PAY-02, REFUND-01, REFUND-02, QR-01
+
+**Merged from:** 30 Queue + WAF + prewarm, 31 Seat selection refinements, 32 Payment + refund + QR issuance
+
+**Success criteria:**
+1. Queue admission uses Valkey Sorted Set and batch admission with position, ETA, and remaining-seat updates; booking APIs require valid admission.
+2. WAF/rate-limit/bot/macro rules and Cloud Scheduler prewarm runbook are documented and verified.
+3. Multi-floor SVG upload/render/switching works on desktop and mobile, with lock/countdown/expiry/payment-failure return behavior verified against Valkey.
+4. Event-specific max tickets, cancellation/change policy, and manual seat operation controls are configurable.
+5. Domestic Toss, overseas card, Alipay+, and truemoney paths work with proper disclaimers.
+6. Refund preview, Toss refund request, refund state machine, random cancelled-seat holding, QR JWT/HMAC issuance, and D-1 QR email scheduling work.
+
+### Phase 25: Admin Operations Console
+
+**Goal:** 운영자가 M1 광고 오픈과 이후 티켓팅/CS 운영을 처리할 수 있는 admin console, RBAC, audit, seat operations를 완성한다.
+
+**Requirements:** ADMIN-01, ADMIN-02, ADMIN-03, ADMIN-04
+
+**Merged from:** 33 Event registration console, 34 Q&A/FAQ/notice/CS, 35 Admin security + operations
+
+**Success criteria:**
+1. Event form supports multilingual tabs, cast cards, venue/transport, multi-SVG, price tiers, sale settings, review, approval, and publish states.
+2. Operator/reviewer/approver/finance RBAC is enforced and tested.
+3. Q&A 12 categories, FAQ, notices, CS 10 categories, escalation rules, SLA, signup failure lookup, and refund dispute retention are available.
+4. Admin MFA, IP allowlist, and sensitive action audit logs are enforced.
+5. Banners, reservation CSV filters, seat disable/reactivate, immediate cancelled-seat opening, and seat history work.
+
+### Phase 26: M1 Canary + Cutover Gates
+
+**Goal:** M1 광고 오픈과 M2 결제 cutover를 gate-driven으로 진행한다. 부하, DR, on-call, WAF, live payment 조건 중 하나라도 실패하면 cutover를 막는다.
+
+**Requirements:** M1-01, LOAD-01, DR-01, INFRA-01, OPS-01, PAY-01, OPS-02
+
+**Merged from:** 36 M1 integration + canary, 37 k6 load gate, 38 DR + DB capacity gate, 39 On-call + alert gate, 40 Live payment cutover
+
+**Success criteria:**
+1. Full event detail page is visible in five locales with payment disabled, and signup/consent/admin content/queue/WAF/prewarm/booking-disabled E2E pass.
+2. Cloud Run canary advances through agreed traffic steps with rollback ready.
+3. k6 10k baseline and 20k stress scenarios pass agreed p95/error-rate targets or cutover is explicitly blocked.
+4. Cloud SQL PITR, Valkey failover, Cloud Run rollback, pgBouncer, HA/read replica, and per-instance DB pool sizing are rehearsed.
+5. PG, Valkey, DB, CDN, latency, error-rate, payment-failure playbooks and Sentry alert dry-runs are complete.
+6. Toss live keys and `BOOKING_ENABLED=true` are applied only after gates pass; post-cutover smoke and first-24-hour monitoring cover booking, payment, QR, refund, concurrency, sellout, and payment failures.
+
+### Phase 27: Event Operations + Settlement
+
+**Goal:** 2026-07-04 행사 당일 현장 입장 운영과 행사 후 settlement/retrospective까지 v2.0 launch evidence로 닫는다.
+
+**Requirements:** QR-02, FIELD-01, OPS-03, POST-01, POST-02
+
+**Merged from:** 41 QR verification + field monitor, 42 Event-day playbooks, 43 Settlement + retrospective
+
+**Success criteria:**
+1. QR scanner validates normal, duplicate, tampered, refunded, and offline cases.
+2. Entry monitor shows entered, not-entered, entry rate, duplicate scan, and abnormal access alerts.
+3. Offline fallback sync is rehearsed with stale and recovered connectivity cases.
+4. Forced refund, weather, facility, cast issue, on-site refund, and exchange scenarios are documented with console actions and external contacts.
+5. Entry status, no-show reservation list, settlement, and accounting exports are generated.
+6. Retrospective records incidents, non-incidents, improvements, next-event carry-forward items, and v2.0 completion evidence.
 
 ## Progress
 
-**Execution Order:**
-v1.1 executed through Phase 21 and is closed. v2.0 resumes with deferred Phase 22 -> 23 -> 24 before fanmeet implementation phases.
-
-| Milestone | Phase Range | Plans Complete | Status | Completed |
-|-----------|-------------|----------------|--------|-----------|
-| v1.0 MVP | 1-5 | 23/23 | Shipped | 2026-04-09 |
-| v1.1 안정화 + 고도화 | 6-21 | 77/77 (+1 superseded placeholder) | Shipped | 2026-05-04 |
-| v2.0 Fanmeet Launch Preflight | 22-24 | 0/0 | Planned | - |
+| Milestone | Phase Range | Requirements | Plans Complete | Status |
+|-----------|-------------|--------------|----------------|--------|
+| v1.0 MVP | 1-5 | archived | 23/23 | Shipped |
+| v1.1 안정화 + 고도화 | 6-21 | archived | 77/77 | Shipped |
+| v2.0 Fanmeet Launch | 22-27 | 39/39 mapped | 5/5 | Ready for Phase 23 planning |
 
 ## Backlog
 
-### Phase 999.1: 홈 HOT/신규 오픈 "더보기" 전 장르 라우트 신설 (BACKLOG)
+### Phase 999.1: 홈 HOT/신규 오픈 "더보기" 전 장르 라우트 신설
 
-**Goal:** [Captured for future planning]
+**Goal:** Promote later if product decides HOT/new-open sections should link to an all-genre listing instead of musical-only routes.
 **Requirements:** TBD
-**Plans:** 0 plans
-
-**Context (from Phase 12 code review IN-06):**
-- `apps/web/components/home/hot-section.tsx:22-27` 및 `new-section.tsx:18-23`의 "더보기" 링크가 `/genre/musical?sort=popular|latest`로 musical 장르에 하드코딩되어 있음.
-- HOT / 신규 오픈 섹션은 전 장르 큐레이션이므로 제품 의도와 불일치. 코드만으로는 의도 여부를 확정할 수 없어 Info 레벨 finding으로 남음.
-- 제품 결정 필요: (A) 전 장르 대상 `/performances?sort=popular|latest` 같은 통합 목록 라우트 신설 -> 링크 교체, (B) MVP 주력이 musical인 의도적 제약 -> 주석으로만 명시.
-
-Plans:
-- [ ] TBD (promote with /gsd-review-backlog when ready)
