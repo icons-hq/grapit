@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { ConflictException } from '@nestjs/common';
+import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import {
   ASSERT_OWNED_SEAT_LOCKS_LUA,
@@ -13,6 +13,7 @@ import {
   RELEASE_PAYMENT_CONFIRM_LOCK_LUA,
 } from '../booking.service.js';
 import type { BookingGateway } from '../booking.gateway.js';
+import type { FeatureFlagsService } from '../../feature-flags/feature-flags.service.js';
 
 // Mock Redis client
 function createMockRedis() {
@@ -45,11 +46,18 @@ function createMockDb() {
   };
 }
 
+function createMockFeatureFlags(bookingEnabled = true) {
+  return {
+    getFlags: vi.fn(() => ({ bookingEnabled })),
+  };
+}
+
 describe('BookingService', () => {
   let service: BookingService;
   let mockRedis: ReturnType<typeof createMockRedis>;
   let mockGateway: ReturnType<typeof createMockGateway>;
   let mockDb: ReturnType<typeof createMockDb>;
+  let mockFeatureFlags: ReturnType<typeof createMockFeatureFlags>;
 
   const userId = 'user-123';
   const showtimeId = '550e8400-e29b-41d4-a716-446655440000';
@@ -59,11 +67,13 @@ describe('BookingService', () => {
     mockRedis = createMockRedis();
     mockGateway = createMockGateway();
     mockDb = createMockDb();
+    mockFeatureFlags = createMockFeatureFlags(true);
 
     service = new BookingService(
       mockRedis as any,
       mockDb as any,
       mockGateway as unknown as BookingGateway,
+      mockFeatureFlags as unknown as FeatureFlagsService,
     );
   });
 
@@ -77,6 +87,22 @@ describe('BookingService', () => {
   }
 
   describe('lockSeat', () => {
+    it('rejects disabled booking before Redis lock mutation', async () => {
+      mockFeatureFlags.getFlags.mockReturnValue({ bookingEnabled: false });
+
+      await expect(service.lockSeat(userId, showtimeId, seatId))
+        .rejects
+        .toThrow(ForbiddenException);
+      await expect(service.lockSeat(userId, showtimeId, seatId))
+        .rejects
+        .toThrow('예매는 5월말 오픈 예정입니다');
+
+      expect(mockRedis.eval).not.toHaveBeenCalled();
+      expect(mockRedis.set).not.toHaveBeenCalled();
+      expect(mockDb.select).not.toHaveBeenCalled();
+      expect(mockGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+    });
+
     it('cleans stale user-seats entries before count check via Lua eval', async () => {
       mockNoSoldRecord();
       // Lua returns [1, lockKey, seatId] = success

@@ -12,6 +12,7 @@ import { ReservationService } from './reservation.service.js';
 import { TossPaymentsClient } from '../payment/toss-payments.client.js';
 import type { BookingService } from '../booking/booking.service.js';
 import type { BookingGateway } from '../booking/booking.gateway.js';
+import type { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
 import type { SeatSelection } from '@grabit/shared';
 
 function createMockDb() {
@@ -63,24 +64,33 @@ function createMockBookingGateway() {
   };
 }
 
+function createMockFeatureFlags(bookingEnabled = true) {
+  return {
+    getFlags: vi.fn(() => ({ bookingEnabled })),
+  };
+}
+
 describe('ReservationService', () => {
   let service: ReservationService;
   let mockDb: ReturnType<typeof createMockDb>;
   let mockTossClient: ReturnType<typeof createMockTossClient>;
   let mockBookingService: ReturnType<typeof createMockBookingService>;
   let mockBookingGateway: ReturnType<typeof createMockBookingGateway>;
+  let mockFeatureFlags: ReturnType<typeof createMockFeatureFlags>;
 
   beforeEach(() => {
     mockDb = createMockDb();
     mockTossClient = createMockTossClient();
     mockBookingService = createMockBookingService();
     mockBookingGateway = createMockBookingGateway();
+    mockFeatureFlags = createMockFeatureFlags(true);
 
     service = new ReservationService(
       mockDb as any,
       mockTossClient as unknown as TossPaymentsClient,
       mockBookingService as unknown as BookingService,
       mockBookingGateway as unknown as BookingGateway,
+      mockFeatureFlags as unknown as FeatureFlagsService,
     );
   });
 
@@ -235,6 +245,23 @@ describe('ReservationService', () => {
   }
 
   describe('reservation number', () => {
+    it('does not expose API-side payment request creation while booking disabled', () => {
+      const clientMethods = Object.getOwnPropertyNames(TossPaymentsClient.prototype);
+      const serviceMethods = Object.getOwnPropertyNames(ReservationService.prototype);
+
+      expect(clientMethods).toContain('confirmPayment');
+      expect(clientMethods).not.toEqual(expect.arrayContaining([
+        'requestPayment',
+        'createPayment',
+        'paymentRequest',
+      ]));
+      expect(serviceMethods).not.toEqual(expect.arrayContaining([
+        'requestPayment',
+        'createPayment',
+        'paymentRequest',
+      ]));
+    });
+
     it('should generate reservation number matching GRP-YYYYMMDD-XXXXX format', () => {
       const result = service.generateReservationNumber();
       expect(result).toMatch(/^GRP-\d{8}-[A-Z0-9]{5}$/);
@@ -370,6 +397,28 @@ describe('ReservationService', () => {
   });
 
   describe('prepareReservation - lock ownership', () => {
+    it('prepareReservation rejects disabled booking before DB transaction', async () => {
+      const userId = randomUUID();
+      const dto = {
+        showtimeId: randomUUID(),
+        orderId: 'GRP-DISABLED-PREPARE',
+        seats: [seatSelection('A-1')],
+        amount: 50000,
+      };
+      mockFeatureFlags.getFlags.mockReturnValue({ bookingEnabled: false });
+
+      await expect(service.prepareReservation(dto, userId))
+        .rejects
+        .toThrow(ForbiddenException);
+      await expect(service.prepareReservation(dto, userId))
+        .rejects
+        .toThrow('예매는 5월말 오픈 예정입니다');
+
+      expect(mockDb.select).not.toHaveBeenCalled();
+      expect(mockBookingService.assertOwnedSeatLocks).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
     it('prepareReservation rejects duplicate seat IDs before reading database state', async () => {
       const userId = randomUUID();
       const dto = {
@@ -917,6 +966,24 @@ describe('ReservationService', () => {
     const reservationId = randomUUID();
     const showtimeId = randomUUID();
     const orderId = 'GRP-LOCK-CONFIRM-ABCDE';
+
+    it('confirmAndCreateReservation rejects disabled booking before confirm lock and Toss confirm', async () => {
+      mockFeatureFlags.getFlags.mockReturnValue({ bookingEnabled: false });
+
+      await expect(service.confirmAndCreateReservation(
+        { paymentKey: 'pk_test_123', orderId, amount: 150000 },
+        userId,
+      )).rejects.toThrow(ForbiddenException);
+      await expect(service.confirmAndCreateReservation(
+        { paymentKey: 'pk_test_123', orderId, amount: 150000 },
+        userId,
+      )).rejects.toThrow('예매는 5월말 오픈 예정입니다');
+
+      expect(mockBookingService.acquirePaymentConfirmLock).not.toHaveBeenCalled();
+      expect(mockBookingService.refreshPaymentConfirmLock).not.toHaveBeenCalled();
+      expect(mockTossClient.confirmPayment).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
 
     it('rejects concurrent confirm for the same orderId before reading payment state', async () => {
       mockBookingService.acquirePaymentConfirmLock.mockResolvedValueOnce(false);
