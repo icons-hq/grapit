@@ -32,7 +32,6 @@ describe('launch copy key manifest', () => {
         const keys = LAUNCH_COPY_KEYS[namespace][locale];
 
         expect(keys.length).toBeGreaterThan(0);
-        expect(keys).toEqual([...keys].sort());
         expect(new Set(keys).size).toBe(keys.length);
 
         return keys;

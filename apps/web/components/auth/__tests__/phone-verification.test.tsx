@@ -4,6 +4,10 @@ import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
 import { PhoneVerification } from '../phone-verification';
 
+vi.mock('next-intl', () => ({
+  useLocale: () => 'ko',
+}));
+
 // API client mock
 vi.mock('@/lib/api-client', () => ({
   apiClient: {

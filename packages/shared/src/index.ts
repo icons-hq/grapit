@@ -17,5 +17,8 @@ export * from './types/i18n.types';
 // Constants
 export * from './constants/index';
 
+// I18n
+export * from './i18n/launch-copy-keys';
+
 // Feature flags
 export * from './flags';

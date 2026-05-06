@@ -2,10 +2,14 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Loader2, CheckCircle2 } from 'lucide-react';
+import { useLocale } from 'next-intl';
 import { isValidPhoneNumber } from 'react-phone-number-input';
 import {
+  DEFAULT_LOCALE,
   SMS_CODE_EXPIRY_SECONDS,
   SMS_RESEND_COOLDOWN_SECONDS,
+  isSupportedLocale,
+  type SUPPORTED_LOCALES,
 } from '@grabit/shared';
 import { apiClient, ApiClientError } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
@@ -18,7 +22,10 @@ interface PhoneVerificationProps {
   onVerified: (code: string) => void;
   isVerified: boolean;
   error?: string;
+  locale?: SupportedLocale;
 }
+
+type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
 
 function mapErrorToCopy(err: unknown): string {
   if (err instanceof ApiClientError) {
@@ -35,13 +42,22 @@ function mapErrorToCopy(err: unknown): string {
   return '일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
 }
 
+function usePhoneVerificationLocale(localeOverride: SupportedLocale | undefined): SupportedLocale {
+  const contextLocale = useLocale();
+
+  if (localeOverride) return localeOverride;
+  return contextLocale && isSupportedLocale(contextLocale) ? contextLocale : DEFAULT_LOCALE;
+}
+
 export function PhoneVerification({
   phone,
   onPhoneChange,
   onVerified,
   isVerified,
   error,
+  locale,
 }: PhoneVerificationProps) {
+  const activeLocale = usePhoneVerificationLocale(locale);
   const [codeSent, setCodeSent] = useState(false);
   const [code, setCode] = useState('');
   const [isSending, setIsSending] = useState(false);
@@ -186,6 +202,7 @@ export function PhoneVerification({
       {/* Phone input + send button */}
       <div className="flex gap-2">
         <PhoneInput
+          locale={activeLocale}
           value={phone}
           onChange={onPhoneChange}
           placeholder="010-0000-0000"
