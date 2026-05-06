@@ -4,6 +4,7 @@ export * from './schemas/user.schema';
 export * from './schemas/performance.schema';
 export * from './schemas/booking.schema';
 export * from './schemas/admin-dashboard.schema';
+export * from './schemas/consent.schema';
 
 // Types
 export * from './types/auth.types';
