@@ -107,53 +107,11 @@ export default function PerformanceDetailPage({
 
             {/* Tab section -- below poster on desktop */}
             <div className="mt-8">
-              <Tabs defaultValue="casting">
+              <Tabs defaultValue="detail">
                 <TabsList className="w-full">
-                  <TabsTrigger value="casting">캐스팅</TabsTrigger>
                   <TabsTrigger value="detail">상세정보</TabsTrigger>
                   <TabsTrigger value="sales">판매정보</TabsTrigger>
                 </TabsList>
-
-                <TabsContent value="casting">
-                  {performance.castings.length > 0 ? (
-                    <div className="grid grid-cols-2 gap-6 md:grid-cols-3 lg:grid-cols-2">
-                      {performance.castings.map((cast) => (
-                        <div
-                          key={cast.id}
-                          className="flex flex-col items-center text-center"
-                        >
-                          <div className="relative h-16 w-16 overflow-hidden rounded-full bg-gray-200">
-                            {cast.photoUrl ? (
-                              <Image
-                                src={cast.photoUrl}
-                                alt={cast.actorName}
-                                fill
-                                className="object-cover"
-                                sizes="64px"
-                              />
-                            ) : (
-                              <div className="flex h-full items-center justify-center">
-                                <User className="h-6 w-6 text-gray-400" />
-                              </div>
-                            )}
-                          </div>
-                          <p className="mt-2 text-sm font-semibold text-gray-900">
-                            {cast.actorName}
-                          </p>
-                          {cast.roleName && (
-                            <p className="text-sm text-gray-600">
-                              {cast.roleName}
-                            </p>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-center text-sm text-gray-500">
-                      캐스팅 정보가 없습니다
-                    </p>
-                  )}
-                </TabsContent>
 
                 <TabsContent value="detail">
                   {performance.description ? (

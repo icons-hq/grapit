@@ -92,4 +92,25 @@ describe('PerformanceDetailPage i18n formatting', () => {
     expect(screen.getByText(/THB/)).toBeDefined();
     expect(screen.getByText(/exchange rate may change|환율/)).toBeDefined();
   });
+
+  it('shows only detail and sales tabs for fanmeeting-focused detail pages', async () => {
+    const params = Promise.resolve({ id: 'perf-23-14' }) as Promise<{
+      id: string;
+    }> & {
+      status: 'fulfilled';
+      value: { id: string };
+    };
+    params.status = 'fulfilled';
+    params.value = { id: 'perf-23-14' };
+
+    render(
+      <Suspense fallback={<div>loading</div>}>
+        <PerformanceDetailPage params={params} />
+      </Suspense>,
+    );
+
+    expect(await screen.findByRole('tab', { name: '상세정보' })).toBeDefined();
+    expect(screen.getByRole('tab', { name: '판매정보' })).toBeDefined();
+    expect(screen.queryByRole('tab', { name: '캐스팅' })).toBeNull();
+  });
 });

@@ -10,6 +10,7 @@ import { Plus, Trash2 } from 'lucide-react';
 import type { CreatePerformanceFormInput } from '@grabit/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { formatAdminKstDateTime } from '@/lib/admin-datetime';
 import {
   Table,
   TableBody,
@@ -39,12 +40,12 @@ interface ShowtimeManagerProps {
 
 function parseDatePart(dateTime: string): string {
   if (!dateTime) return '';
-  return dateTime.split('T')[0] ?? '';
+  return formatAdminKstDateTime(dateTime).split('T')[0] ?? '';
 }
 
 function parseTimePart(dateTime: string): string {
   if (!dateTime || !dateTime.includes('T')) return '19:00';
-  return dateTime.split('T')[1]?.substring(0, 5) ?? '19:00';
+  return formatAdminKstDateTime(dateTime).split('T')[1]?.substring(0, 5) ?? '19:00';
 }
 
 export function ShowtimeManager({

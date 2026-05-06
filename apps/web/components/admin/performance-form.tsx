@@ -25,6 +25,7 @@ import { SvgPreview } from '@/components/admin/svg-preview';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { formatAdminKstDate, formatAdminKstDateTime } from '@/lib/admin-datetime';
 import {
   Select,
   SelectContent,
@@ -52,8 +53,8 @@ function mapToFormValues(
     venueAddress: data.venue?.address,
     posterUrl: data.posterUrl,
     description: data.description,
-    startDate: data.startDate.split('T')[0],
-    endDate: data.endDate.split('T')[0],
+    startDate: formatAdminKstDate(data.startDate),
+    endDate: formatAdminKstDate(data.endDate),
     runtime: data.runtime,
     ageRating: data.ageRating,
     salesInfo: data.salesInfo,
@@ -63,7 +64,7 @@ function mapToFormValues(
       sortOrder: t.sortOrder,
     })),
     showtimes: data.showtimes.map((s) => ({
-      dateTime: s.dateTime,
+      dateTime: formatAdminKstDateTime(s.dateTime),
     })),
     castings: data.castings.map((c) => ({
       actorName: c.actorName,
