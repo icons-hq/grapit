@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-05-04)
 Phase: 999.1
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-05-06
+Last activity: 2026-05-06 - Completed quick task 260506-oef: 7월 18일 걸룰스 팬미팅 동해문화예술관 대극장 엑셀 기반 SVG 좌석맵 생성 및 사이트 추가
 
 ## Deferred Items
 
@@ -323,6 +323,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 | 260427-pcf | 프로덕션 admin 포스터 업로드 100% 차단 핫픽스 (이중 결함, ✅ verified 2026-04-28): (1) `@aws-sdk/client-s3@3.1020` 이 PutObject 에 자동 부착하는 `x-amz-checksum-crc32` / `x-amz-sdk-checksum-algorithm` 두 헤더가 R2 presigned PUT 을 simple request → preflight 필요 요청으로 격상시킴, (2) `grapit-assets` 버킷 CORS 의 `allowed_headers` 가 `content-type` 하나만 등록되어 모든 `x-amz-*` 헤더 차단. 코드: `S3Client` 에 `requestChecksumCalculation: 'WHEN_REQUIRED'` + `responseChecksumValidation: 'WHEN_REQUIRED'` 추가로 헤더 제거 → 단순 PUT 복구 (회귀 테스트 1건, 321/321 green). 인프라: `wrangler r2 bucket cors set grapit-assets` 로 origins 4종(heygrabit.com 외) + headers 11종(checksum 4종 포함) 화이트리스트 확장 적용 (`grapit-assets-cors.json` 아티팩트 보존, commit 7d7ec4d). PR #26. | 2026-04-28 | 2642b24 (code) → 7d7ec4d (cors docs) | [260427-pcf-r2-cors](./quick/260427-pcf-r2-cors/) |
 | 260504-k38 | v1.1 scope closure: Phase 21 이후 v1.1을 닫고 Phase 22-24를 v2.0 Fanmeet Launch preflight/quality/hardening scope로 이월 | 2026-05-04 | docs-only | [260504-k38-close-v1-1-scope-after-phase-21-and-defe](./quick/260504-k38-close-v1-1-scope-after-phase-21-and-defe/) |
 | 260504-mn7 | v2.0 phase merge: initial 22-phase launch-risk checklist를 6개 GSD execution phases로 통합하고 requirement traceability 유지 | 2026-05-04 | docs-only | [260504-mn7-merge-v2-0-phases-into-gsd-sized-executi](./quick/260504-mn7-merge-v2-0-phases-into-gsd-sized-executi/) |
+| 260506-oef | 7월 18일 걸룰스 팬미팅 동해문화예술관 대극장 엑셀 기반 SVG 좌석맵 생성 및 사이트 추가 | 2026-05-06 | 6b8137e | [260506-oef-7-18-svg](./quick/260506-oef-7-18-svg/) |
 
 ## Session Continuity
 
