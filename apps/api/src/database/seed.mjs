@@ -9,6 +9,58 @@ if (!DATABASE_URL) {
 
 const pool = new pg.Pool({ connectionString: DATABASE_URL });
 
+const GIRL_RULES_FANMEET_TITLE = '2026 걸룰스 팬미팅';
+const DONGHAE_SEAT_MAP_URL = '/seed/donghae-girl-rules-20260718-seat-map.svg';
+
+function expandSeatRanges(ranges) {
+  return ranges.flatMap(([row, start, end]) =>
+    Array.from({ length: end - start + 1 }, (_, index) => `${row}-${start + index}`)
+  );
+}
+
+const donghaeFanmeetSeatConfig = {
+  tiers: [
+    {
+      tierName: 'SVIP석',
+      color: '#C026D3',
+      seatIds: expandSeatRanges([
+        ['가', 1, 168],
+        ['나', 1, 176],
+        ['나', 182, 187],
+        ['다', 1, 182],
+        ['라', 1, 168],
+      ]),
+    },
+    {
+      tierName: 'VIP석',
+      color: '#EA580C',
+      seatIds: expandSeatRanges([
+        ['가', 169, 300],
+        ['나', 177, 181],
+        ['나', 188, 297],
+        ['나', 306, 308],
+        ['다', 183, 300],
+        ['라', 169, 300],
+      ]),
+    },
+    {
+      tierName: 'R석',
+      color: '#2563EB',
+      seatIds: expandSeatRanges([
+        ['가', 301, 324],
+        ['가', 327, 336],
+        ['나', 298, 305],
+        ['다', 301, 319],
+        ['라', 301, 333],
+        ['마', 1, 181],
+        ['바', 1, 172],
+        ['사', 1, 172],
+        ['아', 1, 181],
+      ]),
+    },
+  ],
+};
+
 async function seed() {
   const client = await pool.connect();
 
@@ -57,7 +109,8 @@ async function seed() {
         (gen_random_uuid(), '올림픽공원 체조경기장', '서울 송파구 올림픽로 424'),
         (gen_random_uuid(), '세종문화회관 대극장', '서울 종로구 세종대로 175'),
         (gen_random_uuid(), 'KINTEX 제1전시장', '경기 고양시 일산서구 킨텍스로 217-60'),
-        (gen_random_uuid(), '예술의전당 오페라극장', '서울 서초구 남부순환로 2406')
+        (gen_random_uuid(), '예술의전당 오페라극장', '서울 서초구 남부순환로 2406'),
+        (gen_random_uuid(), '동해문화예술관 대극장', NULL)
       RETURNING id, name
     `);
     const venues = Object.fromEntries(venueRows.rows.map(r => [r.name, r.id]));
@@ -136,7 +189,22 @@ async function seed() {
         status: 'ended',
         viewCount: 21300,
       },
+      {
+        title: GIRL_RULES_FANMEET_TITLE,
+        genre: 'concert',
+        subcategory: '팬미팅',
+        venue: '동해문화예술관 대극장',
+        poster: null,
+        description: '2026년 7월 18일 동해문화예술관 대극장에서 열리는 걸룰스 팬미팅.',
+        startDate: new Date('2026-07-17T15:00:00.000Z').toISOString(),
+        endDate: new Date('2026-07-18T14:59:59.000Z').toISOString(),
+        runtime: '120분',
+        ageRating: '전체 관람가',
+        status: 'selling',
+        viewCount: 0,
+      },
     ];
+    const girlRulesFanmeetIdx = perfData.findIndex((p) => p.title === GIRL_RULES_FANMEET_TITLE);
 
     const perfIds = [];
     for (const p of perfData) {
@@ -164,6 +232,10 @@ async function seed() {
         ));
       }
     }
+    showtimeInserts.push(client.query(
+      'INSERT INTO showtimes (id, performance_id, date_time) VALUES (gen_random_uuid(), $1, $2)',
+      [perfIds[girlRulesFanmeetIdx].id, new Date('2026-07-18T05:00:00.000Z').toISOString()]
+    ));
     await Promise.all(showtimeInserts);
     console.log(`Inserted ${showtimeInserts.length} showtimes`);
 
@@ -174,6 +246,7 @@ async function seed() {
       { idx: 2, tiers: [{ name: 'R석', price: 60000 }, { name: 'S석', price: 40000 }, { name: 'A석', price: 25000 }] },
       { idx: 3, tiers: [{ name: '일반', price: 20000 }, { name: '청소년', price: 15000 }] },
       { idx: 4, tiers: [{ name: 'VIP석', price: 150000 }, { name: 'R석', price: 120000 }, { name: 'S석', price: 90000 }] },
+      { idx: girlRulesFanmeetIdx, tiers: [{ name: 'SVIP석', price: 380000 }, { name: 'VIP석', price: 260000 }, { name: 'R석', price: 120000 }] },
     ];
     const tierInserts = [];
     for (const { idx, tiers } of tierData) {
@@ -205,6 +278,9 @@ async function seed() {
       { idx: 4, casts: [
         { actor: '옥주현', role: '엘파바' },
         { actor: '이지혜', role: '글린다' },
+      ]},
+      { idx: girlRulesFanmeetIdx, casts: [
+        { actor: '걸룰스', role: '아티스트' },
       ]},
     ];
     const castInserts = [];
@@ -246,13 +322,18 @@ async function seed() {
       { idx: 0, tiers: ['VIP석', 'R석', 'S석', 'A석'] },
       { idx: 1, tiers: ['VIP석', 'R석', 'S석'] },
       { idx: 2, tiers: ['R석', 'S석', 'A석'] },
+      {
+        idx: girlRulesFanmeetIdx,
+        config: donghaeFanmeetSeatConfig,
+        svgUrl: DONGHAE_SEAT_MAP_URL,
+      },
     ];
     for (const sm of seatMapPerfs) {
-      const config = seatMapConfig(sm.tiers);
+      const config = sm.config ?? seatMapConfig(sm.tiers);
       const totalSeats = config.tiers.reduce((sum, t) => sum + t.seatIds.length, 0);
       await client.query(
         'INSERT INTO seat_maps (id, performance_id, svg_url, seat_config, total_seats) VALUES (gen_random_uuid(), $1, $2, $3, $4)',
-        [perfIds[sm.idx].id, '/seed/sample-seat-map.svg', JSON.stringify(config), totalSeats]
+        [perfIds[sm.idx].id, sm.svgUrl ?? '/seed/sample-seat-map.svg', JSON.stringify(config), totalSeats]
       );
     }
     console.log(`Inserted ${seatMapPerfs.length} seat maps`);
