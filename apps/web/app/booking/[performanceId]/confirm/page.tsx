@@ -12,6 +12,7 @@ import { TermsAgreement } from '@/components/booking/terms-agreement';
 import { TossPaymentWidget, type TossPaymentWidgetRef } from '@/components/booking/toss-payment-widget';
 import { Button } from '@/components/ui/button';
 import { usePrepareReservation, useUnlockAllSeats, useCancelPendingReservation } from '@/hooks/use-booking';
+import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
 import { useBookingStore } from '@/stores/use-booking-store';
 import { useAuthStore } from '@/stores/use-auth-store';
 
@@ -50,6 +51,7 @@ function ConfirmPageContent() {
 
   const paymentWidgetRef = useRef<TossPaymentWidgetRef>(null);
   const reservationIdRef = useRef<string | null>(null);
+  const { bookingEnabled, bookingDisabledMessage } = useRuntimeFlags();
   const prepareMutation = usePrepareReservation();
   const unlockAll = useUnlockAllSeats();
   const cancelPending = useCancelPendingReservation();
@@ -132,6 +134,7 @@ function ConfirmPageContent() {
   }, [performanceId, router]);
 
   async function handlePayment() {
+    if (!bookingEnabled) return;
     if (lockFailureMessage) return;
     if (!paymentWidgetRef.current || !agreed || isProcessing) return;
 
@@ -168,8 +171,10 @@ function ConfirmPageContent() {
     );
   }
 
-  const ctaDisabled = !!lockFailureMessage || !agreed || isProcessing || !widgetReady;
-  const ctaText = lockFailureMessage
+  const ctaDisabled = !bookingEnabled || !!lockFailureMessage || !agreed || isProcessing || !widgetReady;
+  const ctaText = !bookingEnabled
+    ? bookingDisabledMessage
+    : lockFailureMessage
     ? '좌석을 다시 선택해주세요'
     : isProcessing
     ? '결제 처리 중...'
@@ -213,6 +218,14 @@ function ConfirmPageContent() {
             >
               좌석 다시 선택하기
             </Button>
+          </section>
+        )}
+
+        {!bookingEnabled && (
+          <section role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+            <p className="text-sm font-semibold text-amber-800">
+              {bookingDisabledMessage}
+            </p>
           </section>
         )}
 

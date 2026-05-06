@@ -16,6 +16,14 @@ vi.mock('@/hooks/use-performances', () => ({
   }),
 }));
 
+vi.mock('@/hooks/use-runtime-flags', () => ({
+  useRuntimeFlags: () => ({
+    bookingEnabled: true,
+    isLoading: false,
+    bookingDisabledMessage: 'Ticket booking opens in late May',
+  }),
+}));
+
 vi.mock('next/image', () => ({
   default: ({
     alt,

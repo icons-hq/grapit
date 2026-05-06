@@ -14,6 +14,7 @@ interface SeatSelectionSheetProps {
   onRemove: (seatId: string) => void;
   onProceed: () => void;
   isLoading: boolean;
+  disabledReason?: string | null;
 }
 
 const COLLAPSED_HEIGHT = 72;
@@ -26,6 +27,7 @@ export function SeatSelectionSheet({
   onRemove,
   onProceed,
   isLoading,
+  disabledReason = null,
 }: SeatSelectionSheetProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [translateY, setTranslateY] = useState(0);
@@ -146,12 +148,12 @@ export function SeatSelectionSheet({
             </div>
             <Button
               className="mt-3 h-12 w-full text-base"
-              disabled={isLoading}
+              disabled={!!disabledReason || isLoading}
               onClick={onProceed}
             >
               {isLoading ? (
                 <><Loader2 className="mr-2 size-4 animate-spin" />처리 중...</>
-              ) : '다음'}
+              ) : disabledReason ?? '다음'}
             </Button>
           </div>
         </div>
@@ -163,12 +165,12 @@ export function SeatSelectionSheet({
           </span>
           <Button
             size="sm"
-            disabled={isLoading}
+            disabled={!!disabledReason || isLoading}
             onClick={onProceed}
           >
             {isLoading ? (
               <><Loader2 className="mr-2 size-4 animate-spin" />처리 중...</>
-            ) : '다음'}
+            ) : disabledReason ?? '다음'}
           </Button>
         </div>
       )}

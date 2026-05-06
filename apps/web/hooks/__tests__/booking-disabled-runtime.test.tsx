@@ -3,6 +3,7 @@ import { Suspense, forwardRef, useEffect, useImperativeHandle } from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
+import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
 import type { SupportedLocale } from '@grabit/shared';
 import { BOOKING_DISABLED_COPY } from '@/lib/runtime-flags';
@@ -179,6 +180,16 @@ function renderWithQuery(ui: ReactNode) {
   );
 }
 
+function fulfilledParams(id: string) {
+  const params = Promise.resolve({ id }) as Promise<{ id: string }> & {
+    status: 'fulfilled';
+    value: { id: string };
+  };
+  params.status = 'fulfilled';
+  params.value = { id };
+  return params;
+}
+
 function seedBookingFlow() {
   useBookingStore.getState().resetBooking();
   useBookingStore.getState().setDate(new Date('2026-07-04T00:00:00.000Z'));
@@ -208,7 +219,13 @@ function seedBookingFlow() {
     email: 'fan@example.com',
     name: 'Fan',
     phone: '+821012345678',
-    role: 'USER',
+    gender: 'unspecified',
+    country: 'KR',
+    birthDate: '1990-01-01',
+    preferredLocale: 'ko',
+    isPhoneVerified: true,
+    role: 'user',
+    createdAt: '2026-05-06T00:00:00.000Z',
   });
 }
 
@@ -256,7 +273,7 @@ describe('runtime booking disabled UI', () => {
 
       renderWithQuery(
         <Suspense fallback={null}>
-          <PerformanceDetailPage params={Promise.resolve({ id: 'performance-disabled' })} />
+          <PerformanceDetailPage params={fulfilledParams('performance-disabled')} />
         </Suspense>,
       );
 
@@ -269,7 +286,7 @@ describe('runtime booking disabled UI', () => {
     const user = userEvent.setup();
     renderWithQuery(<BookingPage performanceId="performance-disabled" />);
 
-    expect(await screen.findByText('예매는 5월말 오픈 예정입니다')).toBeInTheDocument();
+    expect(await screen.findAllByText('예매는 5월말 오픈 예정입니다')).not.toHaveLength(0);
     await user.click(screen.getByRole('button', { name: '좌석 A-1' }));
 
     expect(lockSeatMutateMock).not.toHaveBeenCalled();
@@ -281,9 +298,11 @@ describe('runtime booking disabled UI', () => {
 
     await user.click(await screen.findByLabelText('전체 동의'));
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: '예매는 5월말 오픈 예정입니다' })).toBeDisabled();
+      expect(
+        screen.getAllByRole('button', { name: '예매는 5월말 오픈 예정입니다' })[0],
+      ).toBeDisabled();
     });
-    await user.click(screen.getByRole('button', { name: '예매는 5월말 오픈 예정입니다' }));
+    await user.click(screen.getAllByRole('button', { name: '예매는 5월말 오픈 예정입니다' })[0]);
 
     expect(prepareReservationMock).not.toHaveBeenCalled();
     expect(requestPaymentMock).not.toHaveBeenCalled();

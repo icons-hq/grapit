@@ -15,6 +15,7 @@ import {
 } from '@/hooks/use-booking';
 import { useBookingStore } from '@/stores/use-booking-store';
 import { useBookingSocket } from '@/hooks/use-socket';
+import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
 import { ApiClientError } from '@/lib/api-client';
 import { BookingHeader } from './booking-header';
 import { DatePicker } from './date-picker';
@@ -62,6 +63,8 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
   const lockSeat = useLockSeat();
   const unlockSeat = useUnlockSeat();
   const unlockAll = useUnlockAllSeats();
+  const { bookingEnabled, bookingDisabledMessage } = useRuntimeFlags();
+  const bookingDisabledReason = bookingEnabled ? null : bookingDisabledMessage;
 
   // All showtimes sourced from performance detail
   const allShowtimes = useMemo(
@@ -184,6 +187,10 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
   const handleSeatClick = useCallback(
     (seatId: string) => {
       if (!selectedShowtimeId) return;
+      if (!bookingEnabled) {
+        toast.info(bookingDisabledMessage);
+        return;
+      }
 
       // Locked seat: show toast and return
       const seatState = seatStatesMap.get(seatId);
@@ -265,6 +272,8 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
       lockSeat,
       unlockSeat,
       setTimerExpiry,
+      bookingEnabled,
+      bookingDisabledMessage,
     ],
   );
 
@@ -281,6 +290,10 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
   // "Next" button handler — navigate to confirm page
   const handleProceed = useCallback(() => {
     if (!selectedShowtimeId || !performance) return;
+    if (!bookingEnabled) {
+      toast.info(bookingDisabledMessage);
+      return;
+    }
 
     const selectedSt = allShowtimes.find((st) => st.id === selectedShowtimeId);
 
@@ -296,7 +309,17 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
     });
 
     router.push(`/booking/${performanceId}/confirm`);
-  }, [selectedShowtimeId, selectedSeats, performance, allShowtimes, performanceId, timerExpiresAt, router]);
+  }, [
+    selectedShowtimeId,
+    selectedSeats,
+    performance,
+    allShowtimes,
+    performanceId,
+    timerExpiresAt,
+    router,
+    bookingEnabled,
+    bookingDisabledMessage,
+  ]);
 
   const handleBack = useCallback(() => {
     router.push(`/performance/${performanceId}`);
@@ -437,6 +460,14 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
             {/* Seat legend + map */}
             {selectedShowtimeId && seatConfig && performance.seatMap && (
               <>
+                {bookingDisabledReason && (
+                  <div
+                    role="status"
+                    className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800"
+                  >
+                    {bookingDisabledReason}
+                  </div>
+                )}
                 <SeatLegend tiers={legendTiers} />
                 <SeatMapViewer
                   svgUrl={performance.seatMap.svgUrl}
@@ -459,6 +490,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
             onRemove={handleRemoveSeat}
             onProceed={handleProceed}
             isLoading={lockSeat.isPending}
+            disabledReason={bookingDisabledReason}
           />
         </div>
       </main>
@@ -472,6 +504,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
         onRemove={handleRemoveSeat}
         onProceed={handleProceed}
         isLoading={lockSeat.isPending}
+        disabledReason={bookingDisabledReason}
       />
 
       {/* Timer expiry modal */}

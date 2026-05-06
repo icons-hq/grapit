@@ -14,6 +14,7 @@ import { StatusBadge } from '@/components/performance/status-badge';
 import { CurrencyDisplay } from '@/components/i18n/currency-display';
 import { KstTime } from '@/components/i18n/kst-time';
 import { usePerformanceDetail } from '@/hooks/use-performances';
+import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
 
 function DetailSkeleton() {
   return (
@@ -49,6 +50,7 @@ export default function PerformanceDetailPage({
   const { id } = use(params);
   const activeLocale = useActiveLocale();
   const { data: performance, isLoading, isError } = usePerformanceDetail(id);
+  const { bookingEnabled, bookingDisabledMessage } = useRuntimeFlags();
 
   if (isLoading) return <DetailSkeleton />;
 
@@ -253,24 +255,43 @@ export default function PerformanceDetailPage({
             )}
 
             {/* CTA button */}
-            <Link
-              href={`/booking/${performance.id}`}
-              className="mt-6 hidden w-full rounded-lg bg-primary py-3 text-center text-base font-semibold text-white hover:bg-primary/90 transition-colors lg:block"
-            >
-              예매하기
-            </Link>
+            {bookingEnabled ? (
+              <Link
+                href={`/booking/${performance.id}`}
+                className="mt-6 hidden w-full rounded-lg bg-primary py-3 text-center text-base font-semibold text-white hover:bg-primary/90 transition-colors lg:block"
+              >
+                예매하기
+              </Link>
+            ) : (
+              <div
+                role="status"
+                className="mt-6 hidden w-full rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-center text-sm font-semibold text-amber-800 lg:block"
+              >
+                {bookingDisabledMessage}
+              </div>
+            )}
           </div>
         </div>
       </main>
 
       {/* Mobile CTA fixed bottom bar — offset by MobileTabBar height (h-14=56px) */}
       <div className="fixed bottom-[56px] left-0 right-0 z-40 flex h-16 items-center border-t bg-white px-6 shadow-[0_-4px_6px_rgba(0,0,0,0.05)] lg:hidden">
-        <Link
-          href={`/booking/${performance.id}`}
-          className="w-full rounded-lg bg-primary py-3 text-center text-base font-semibold text-white hover:bg-primary/90 transition-colors"
-        >
-          예매하기
-        </Link>
+        {bookingEnabled ? (
+          <Link
+            href={`/booking/${performance.id}`}
+            className="w-full rounded-lg bg-primary py-3 text-center text-base font-semibold text-white hover:bg-primary/90 transition-colors"
+          >
+            예매하기
+          </Link>
+        ) : (
+          <button
+            type="button"
+            disabled
+            className="min-h-12 w-full rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-center text-sm font-semibold leading-snug text-amber-800"
+          >
+            {bookingDisabledMessage}
+          </button>
+        )}
       </div>
     </>
   );

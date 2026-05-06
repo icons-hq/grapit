@@ -1,5 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api-client';
+import { BookingDisabledError } from '@/lib/runtime-flags';
+import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
 import type {
   ConfirmPaymentRequest,
   PrepareReservationRequest,
@@ -48,9 +50,16 @@ export function useMyLocks(showtimeId: string | null) {
 
 export function useLockSeat() {
   const queryClient = useQueryClient();
+  const { bookingEnabled, bookingDisabledMessage } = useRuntimeFlags();
+
   return useMutation({
-    mutationFn: (data: LockSeatRequest) =>
-      apiClient.post<LockSeatResponse>('/api/v1/booking/seats/lock', data),
+    mutationFn: (data: LockSeatRequest) => {
+      if (!bookingEnabled) {
+        throw new BookingDisabledError(bookingDisabledMessage);
+      }
+
+      return apiClient.post<LockSeatResponse>('/api/v1/booking/seats/lock', data);
+    },
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({
         queryKey: ['seat-status', variables.showtimeId],
@@ -101,11 +110,18 @@ export function useUnlockAllSeats() {
 // Payment-related hooks
 
 export function usePrepareReservation() {
+  const { bookingEnabled, bookingDisabledMessage } = useRuntimeFlags();
+
   return useMutation({
-    mutationFn: (data: PrepareReservationRequest) =>
-      apiClient.post<PrepareReservationResponse>('/api/v1/reservations/prepare', data, {
+    mutationFn: (data: PrepareReservationRequest) => {
+      if (!bookingEnabled) {
+        throw new BookingDisabledError(bookingDisabledMessage);
+      }
+
+      return apiClient.post<PrepareReservationResponse>('/api/v1/reservations/prepare', data, {
         showErrorToast: false,
-      }),
+      });
+    },
   });
 }
 
