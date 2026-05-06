@@ -1,4 +1,6 @@
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
+import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
 import {
   ConsentAuditTable,
@@ -47,6 +49,22 @@ function renderTable(overrides?: {
 }
 
 describe('ConsentAuditTable', () => {
+  beforeAll(() => {
+    Object.defineProperty(HTMLElement.prototype, 'hasPointerCapture', {
+      value: () => false,
+      configurable: true,
+    });
+    Object.defineProperty(HTMLElement.prototype, 'setPointerCapture', {
+      value: () => {},
+      configurable: true,
+    });
+    Object.defineProperty(HTMLElement.prototype, 'releasePointerCapture', {
+      value: () => {},
+      configurable: true,
+    });
+    Element.prototype.scrollIntoView = function scrollIntoView() {};
+  });
+
   it('submits every COMP-02 filter for user, item, version, language, timestamp range, and IP', async () => {
     const user = userEvent.setup();
     const { onSearch } = renderTable();

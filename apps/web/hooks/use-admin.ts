@@ -3,6 +3,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api-client';
 import type {
+  ConsentAuditFilters,
+  ConsentAuditRow,
+} from '@/components/admin/consent-audit-table';
+import type {
   PerformanceListResponse,
   PerformanceWithDetails,
   Banner,
@@ -11,6 +15,34 @@ import type {
   CreateBannerInput,
   SeatMapConfigInput,
 } from '@grabit/shared';
+
+function toApiDateTime(value?: string): string | undefined {
+  if (!value) return undefined;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toISOString();
+}
+
+function buildConsentAuditSearchParams(filters: ConsentAuditFilters) {
+  const params = new URLSearchParams();
+  const user = filters.user?.trim();
+
+  if (user) {
+    if (user.includes('@')) {
+      params.set('email', user);
+    } else {
+      params.set('userId', user);
+    }
+  }
+  if (filters.item) params.set('itemKey', filters.item);
+  if (filters.version) params.set('version', filters.version);
+  if (filters.language) params.set('language', filters.language);
+  if (filters.from) params.set('from', toApiDateTime(filters.from) ?? filters.from);
+  if (filters.to) params.set('to', toApiDateTime(filters.to) ?? filters.to);
+  if (filters.ip) params.set('ip', filters.ip);
+
+  return params;
+}
 
 // Performance list for admin table
 export function useAdminPerformances(params: {
@@ -27,6 +59,19 @@ export function useAdminPerformances(params: {
       searchParams.set('page', String(params.page ?? 1));
       return apiClient.get<PerformanceListResponse>(
         `/api/v1/admin/performances?${searchParams.toString()}`,
+      );
+    },
+  });
+}
+
+export function useAdminConsentAudit(filters: ConsentAuditFilters) {
+  return useQuery({
+    queryKey: ['admin', 'consent-audit', filters],
+    queryFn: () => {
+      const searchParams = buildConsentAuditSearchParams(filters);
+      const query = searchParams.toString();
+      return apiClient.get<ConsentAuditRow[]>(
+        `/api/v1/admin/consent-audit${query ? `?${query}` : ''}`,
       );
     },
   });
