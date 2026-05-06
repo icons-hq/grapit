@@ -65,7 +65,7 @@ Plans:
 
 **Merged from:** 25 Prod compatibility + flags, 26 i18n routing + locale foundation, 27 Translation workflow + legal lock, 28 email verification + 5-country SMS (LINE excluded by Phase 23 D-13), 29 Multinational consent + audit
 
-**Plans:** 15/17 plans executed
+**Plans:** 16/17 plans executed
 
 Plans:
 **Wave 1**
@@ -92,7 +92,7 @@ Plans:
 
 **Wave 5** *(blocked on API/i18n foundations)*
 - [x] 23-10-PLAN.md — Replace boolean signup consent with itemized UI, submit payload/API contract wiring, and no-LINE auth surface (D-13 excluded)
-- [ ] 23-12-PLAN.md — Build masked admin consent audit query UI
+- [x] 23-12-PLAN.md — Build masked admin consent audit query UI
 
 **Wave 6** *(blocked on public performance detail and admin hook/sidebar file ownership)*
 - [ ] 23-11-PLAN.md — Build admin translation workflow and wire automatic translation label into public performance detail
