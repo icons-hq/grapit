@@ -3,6 +3,7 @@ import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
+import type { AuthConsentCaptureItem } from '@grabit/shared';
 
 import { SignupForm } from '../signup-form';
 
@@ -55,7 +56,7 @@ vi.mock('@/components/auth/signup-step1', () => ({
   ),
 }));
 
-const signupConsentItems = [
+const signupConsentItems: AuthConsentCaptureItem[] = ([
   'terms',
   'privacy',
   'pipa_required',
@@ -63,7 +64,7 @@ const signupConsentItems = [
   'pdpa_notice',
   'pipl_notice',
   'marketing',
-].map((key) => ({
+] as const).map((key) => ({
   key,
   version: '2026-04-28',
   language: 'ko',

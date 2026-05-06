@@ -584,7 +584,7 @@ export class AuthService {
         {
           birthDate: dto.birthDate,
           items: dto.consentItems,
-          sourceFlow: 'signup',
+          sourceFlow: 'social_completion',
         },
         { ipAddress: '0.0.0.0' },
       );
@@ -631,7 +631,7 @@ export class AuthService {
       {
         birthDate: dto.birthDate,
         items: dto.consentItems,
-        sourceFlow: 'signup',
+        sourceFlow: 'social_completion',
       },
       { ipAddress: '0.0.0.0' },
     );

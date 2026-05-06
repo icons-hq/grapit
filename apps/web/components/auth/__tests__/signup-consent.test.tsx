@@ -175,6 +175,6 @@ describe('auth provider launch surface', () => {
     expect(screen.getByText('카카오로 시작하기')).toBeInTheDocument();
     expect(screen.getByText('네이버로 시작하기')).toBeInTheDocument();
     expect(screen.getByText('Google로 시작하기')).toBeInTheDocument();
-    expect(screen.queryByText(/\bLINE\b|\bLine\b|라인/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/\bLINE\b|\bLine\b|라인/)).not.toBeInTheDocument(); // D-13 absent
   });
 });

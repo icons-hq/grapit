@@ -16,6 +16,8 @@ import { SignupStep2 } from '@/components/auth/signup-step2';
 import { SignupStep3 } from '@/components/auth/signup-step3';
 import { EmailVerificationStatus } from '@/components/auth/email-verification-status';
 
+const UNDER_14_BLOCK_MESSAGE = '만 14세 미만은 가입할 수 없습니다';
+
 export function SignupForm() {
   const setAuth = useAuthStore((s) => s.setAuth);
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
@@ -39,18 +41,26 @@ export function SignupForm() {
   async function handleStep3Complete(data: RegisterStep3Input) {
     if (!step1Data || !step2Data) return;
 
+    const birthDate = `${data.birthYear}-${data.birthMonth}-${data.birthDay}`;
+    if (isUnderFourteen(birthDate)) {
+      toast.error(UNDER_14_BLOCK_MESSAGE);
+      return;
+    }
+
     setIsSubmitting(true);
     try {
+      const consentRows = step2Data.consentItems;
       const payload = {
         email: step1Data.email,
         password: step1Data.password,
         termsOfService: step2Data.termsOfService,
         privacyPolicy: step2Data.privacyPolicy,
         marketingConsent: step2Data.marketingConsent,
+        consentItems: consentRows,
         name: data.name,
         gender: data.gender,
         country: data.country,
-        birthDate: `${data.birthYear}-${data.birthMonth}-${data.birthDay}`,
+        birthDate,
         phone: data.phone,
         phoneVerificationCode: data.phoneVerificationCode,
       };
@@ -110,4 +120,16 @@ export function SignupForm() {
       )}
     </div>
   );
+}
+
+function isUnderFourteen(birthDate: string, at: Date = new Date()): boolean {
+  const birth = new Date(`${birthDate}T00:00:00.000Z`);
+  if (Number.isNaN(birth.getTime()) || Number.isNaN(at.getTime())) {
+    return false;
+  }
+
+  const fourteenthBirthday = new Date(birth);
+  fourteenthBirthday.setUTCFullYear(fourteenthBirthday.getUTCFullYear() + 14);
+
+  return at < fourteenthBirthday;
 }

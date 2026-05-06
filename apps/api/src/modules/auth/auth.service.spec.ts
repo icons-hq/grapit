@@ -7,7 +7,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { AuthService } from './auth.service.js';
 import type { RegisterBody } from './dto/register.dto.js';
 import type { ConsentService } from '../consent/consent.service.js';
-import type { ConsentCaptureItem } from '@grabit/shared';
+import type { AuthConsentCaptureItem } from '@grabit/shared';
 
 // Hash password once (argon2 is expensive)
 let preHashedPassword: string;
@@ -28,8 +28,9 @@ const mockRegisterDto: RegisterBody = {
 };
 
 function makeConsentItems(
-  overrides: Partial<Record<ConsentCaptureItem['key'], boolean>> = {},
-): ConsentCaptureItem[] {
+  overrides: Partial<Record<AuthConsentCaptureItem['key'], boolean>> = {},
+  sourceFlow: 'signup' | 'social_completion' = 'signup',
+): AuthConsentCaptureItem[] {
   return [
     'terms',
     'privacy',
@@ -39,11 +40,19 @@ function makeConsentItems(
     'pipl_notice',
     'marketing',
   ].map((key) => ({
-    key: key as ConsentCaptureItem['key'],
+    key: key as AuthConsentCaptureItem['key'],
     version: '2026-05-01',
     language: 'ko',
-    accepted: overrides[key as ConsentCaptureItem['key']] ?? true,
+    accepted: overrides[key as AuthConsentCaptureItem['key']] ?? true,
+    required: key !== 'marketing',
+    sourceFlow,
   }));
+}
+
+function makeSocialConsentItems(
+  overrides: Partial<Record<AuthConsentCaptureItem['key'], boolean>> = {},
+): AuthConsentCaptureItem[] {
+  return makeConsentItems(overrides, 'social_completion');
 }
 
 function createMockUser() {
@@ -875,7 +884,7 @@ describe('AuthService', () => {
           termsOfService: true,
           privacyPolicy: true,
           marketingConsent: false,
-          consentItems: makeConsentItems(),
+          consentItems: makeSocialConsentItems(),
         },
       );
 
@@ -883,6 +892,16 @@ describe('AuthService', () => {
       expect(result).toHaveProperty('refreshToken');
       expect(result).toHaveProperty('user');
       expect(mockUserRepo.create).toHaveBeenCalled();
+      expect(mockConsentService.captureConsent).toHaveBeenCalledWith(
+        newUserId,
+        expect.objectContaining({
+          items: expect.arrayContaining([
+            expect.objectContaining({ sourceFlow: 'social_completion' }),
+          ]),
+          sourceFlow: 'social_completion',
+        }),
+        { ipAddress: '0.0.0.0' },
+      );
     });
 
     it('should throw UnauthorizedException for expired registrationToken', async () => {
@@ -898,7 +917,7 @@ describe('AuthService', () => {
           termsOfService: true,
           privacyPolicy: true,
           marketingConsent: false,
-          consentItems: makeConsentItems(),
+          consentItems: makeSocialConsentItems(),
         }),
       ).rejects.toThrow(UnauthorizedException);
     });
@@ -929,7 +948,7 @@ describe('AuthService', () => {
           termsOfService: true,
           privacyPolicy: true,
           marketingConsent: false,
-          consentItems: makeConsentItems(),
+          consentItems: makeSocialConsentItems(),
         },
       );
 
@@ -939,6 +958,16 @@ describe('AuthService', () => {
       expect(mockUserRepo.create).not.toHaveBeenCalled();
       // Should insert social account link
       expect(mockDb.insert).toHaveBeenCalled();
+      expect(mockConsentService.captureConsent).toHaveBeenCalledWith(
+        existingUser.id,
+        expect.objectContaining({
+          items: expect.arrayContaining([
+            expect.objectContaining({ sourceFlow: 'social_completion' }),
+          ]),
+          sourceFlow: 'social_completion',
+        }),
+        { ipAddress: '0.0.0.0' },
+      );
     });
 
     it('[hotfix 260427-kch] verifyCode가 GoneException, isPhoneVerified true이면 정상 가입 (소셜 회귀 방지)', async () => {
@@ -974,7 +1003,7 @@ describe('AuthService', () => {
           termsOfService: true,
           privacyPolicy: true,
           marketingConsent: false,
-          consentItems: makeConsentItems(),
+          consentItems: makeSocialConsentItems(),
         },
       );
 
@@ -999,7 +1028,7 @@ describe('AuthService', () => {
           termsOfService: true,
           privacyPolicy: true,
           marketingConsent: false,
-          consentItems: makeConsentItems(),
+          consentItems: makeSocialConsentItems(),
         }),
       ).rejects.toThrow(GoneException);
 

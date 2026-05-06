@@ -22,7 +22,7 @@ export const REQUIRED_CONSENT_ITEM_KEYS = [
 ] as const;
 
 export const OPTIONAL_CONSENT_ITEM_KEYS = ['marketing'] as const;
-export const CONSENT_SOURCE_FLOWS = ['signup', 'booking'] as const;
+export const CONSENT_SOURCE_FLOWS = ['signup', 'social_completion', 'booking'] as const;
 
 const supportedLocaleSchema = z.enum(SUPPORTED_LOCALES);
 const consentItemKeySchema = z.enum(CONSENT_ITEM_KEYS);

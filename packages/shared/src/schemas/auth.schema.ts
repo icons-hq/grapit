@@ -1,5 +1,8 @@
 import { z } from 'zod';
-import { consentCaptureItemSchema } from './consent.schema';
+import {
+  REQUIRED_CONSENT_ITEM_KEYS,
+  consentCaptureItemSchema,
+} from './consent.schema';
 
 // Password validation: min 8 chars, must contain letter + number + special char
 export const passwordSchema = z
@@ -31,6 +34,75 @@ export const registerStep1Schema = z
 
 export type RegisterStep1Input = z.infer<typeof registerStep1Schema>;
 
+const authConsentSourceFlowSchema = z.enum(['signup', 'social_completion']);
+
+export const authConsentCaptureItemSchema = consentCaptureItemSchema.extend({
+  required: z.boolean(),
+  sourceFlow: authConsentSourceFlowSchema,
+});
+
+function createAuthConsentItemsSchema(sourceFlow: 'signup' | 'social_completion') {
+  return z
+    .array(
+      authConsentCaptureItemSchema.superRefine((item, ctx) => {
+        if (item.sourceFlow !== sourceFlow) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['sourceFlow'],
+            message: `${sourceFlow} consent source flow is required`,
+          });
+        }
+
+        if (item.key === 'marketing' && item.required) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['required'],
+            message: 'marketing consent must remain optional',
+          });
+        }
+
+        if (item.key !== 'marketing' && !item.required) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['required'],
+            message: `${item.key} consent must be marked required`,
+          });
+        }
+      }),
+    )
+    .min(1, '동의 항목이 필요합니다')
+    .superRefine((items, ctx) => {
+      for (const key of REQUIRED_CONSENT_ITEM_KEYS) {
+        const item = items.find((candidate) => candidate.key === key);
+
+        if (!item) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['consentItems'],
+            message: `${key} consent is required`,
+          });
+          continue;
+        }
+
+        if (!item.accepted) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['consentItems'],
+            message: `${key} consent is required`,
+          });
+        }
+      }
+    });
+}
+
+export const signupConsentItemsSchema = createAuthConsentItemsSchema('signup');
+export const socialCompletionConsentItemsSchema =
+  createAuthConsentItemsSchema('social_completion');
+export const signupConsentRowsSchema = signupConsentItemsSchema;
+export const socialCompletionConsentRowsSchema = socialCompletionConsentItemsSchema;
+
+export type AuthConsentCaptureItem = z.infer<typeof authConsentCaptureItemSchema>;
+
 // Register Step 2: Terms Agreement (D-02)
 export const registerStep2Schema = z.object({
   termsOfService: z.literal(true, {
@@ -40,7 +112,7 @@ export const registerStep2Schema = z.object({
     errorMap: () => ({ message: '개인정보처리방침에 동의해주세요' }),
   }),
   marketingConsent: z.boolean(),
-  consentItems: z.array(consentCaptureItemSchema).min(1, '동의 항목이 필요합니다'),
+  consentItems: signupConsentItemsSchema,
 });
 
 export type RegisterStep2Input = z.infer<typeof registerStep2Schema>;

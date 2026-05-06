@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import type { RegisterStep2Input } from '@grabit/shared';
+import type { ConsentItemKey, RegisterStep2Input } from '@grabit/shared';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -29,31 +29,140 @@ interface SignupStep2Props {
 const LEGAL_CONTENT = {
   termsOfService: { title: '이용약관', content: termsOfServiceMd },
   privacyPolicy: { title: '개인정보처리방침', content: privacyPolicyMd },
+  pipaRequired: {
+    title: '개인정보 필수 수집 및 이용',
+    content: privacyPolicyMd,
+  },
+  crossBorderTransfer: {
+    title: '개인정보 국외이전',
+    content: privacyPolicyMd,
+  },
+  pdpaNotice: {
+    title: '태국 PDPA 고지',
+    content: privacyPolicyMd,
+  },
+  piplNotice: {
+    title: '중국 PIPL 고지',
+    content: privacyPolicyMd,
+  },
   marketingConsent: { title: '마케팅 수신 동의', content: marketingConsentMd },
 } as const satisfies Record<string, { title: string; content: string }>;
 
 type LegalKey = keyof typeof LEGAL_CONTENT;
+type ConsentRowConfig = {
+  key: ConsentItemKey;
+  label: string;
+  required: boolean;
+  legalKey: LegalKey;
+};
+
+const CONSENT_VERSION = '2026-04-28';
+const CONSENT_LANGUAGE = 'ko' as const;
+const CROSS_BORDER_REQUIRED_MESSAGE =
+  '국외이전 동의가 필요합니다. 동의하지 않으면 가입 또는 팬미팅 예매를 진행할 수 없습니다.';
+
+const CONSENT_ROWS: ConsentRowConfig[] = [
+  {
+    key: 'terms',
+    label: '이용약관 동의',
+    required: true,
+    legalKey: 'termsOfService',
+  },
+  {
+    key: 'privacy',
+    label: '개인정보처리방침 동의',
+    required: true,
+    legalKey: 'privacyPolicy',
+  },
+  {
+    key: 'pipa_required',
+    label: '개인정보 필수 수집 및 이용 동의',
+    required: true,
+    legalKey: 'pipaRequired',
+  },
+  {
+    key: 'cross_border_transfer',
+    label: '개인정보 국외이전 동의',
+    required: true,
+    legalKey: 'crossBorderTransfer',
+  },
+  {
+    key: 'pdpa_notice',
+    label: '태국 PDPA 고지 확인',
+    required: true,
+    legalKey: 'pdpaNotice',
+  },
+  {
+    key: 'pipl_notice',
+    label: '중국 PIPL 고지 확인',
+    required: true,
+    legalKey: 'piplNotice',
+  },
+  {
+    key: 'marketing',
+    label: '마케팅 수신 동의',
+    required: false,
+    legalKey: 'marketingConsent',
+  },
+];
+
+function initialChecked(defaultValues: RegisterStep2Input | null) {
+  return Object.fromEntries(
+    CONSENT_ROWS.map((row) => {
+      const defaultItem = defaultValues?.consentItems.find(
+        (item) => item.key === row.key,
+      );
+
+      if (defaultItem) {
+        return [row.key, defaultItem.accepted];
+      }
+
+      if (row.key === 'terms') {
+        return [row.key, defaultValues?.termsOfService ?? false];
+      }
+
+      if (row.key === 'privacy') {
+        return [row.key, defaultValues?.privacyPolicy ?? false];
+      }
+
+      if (row.key === 'marketing') {
+        return [row.key, defaultValues?.marketingConsent ?? false];
+      }
+
+      return [row.key, false];
+    }),
+  ) as Record<ConsentItemKey, boolean>;
+}
 
 export function SignupStep2({ onComplete, onBack, defaultValues }: SignupStep2Props) {
-  const [termsOfService, setTermsOfService] = useState(
-    defaultValues?.termsOfService ?? false,
-  );
-  const [privacyPolicy, setPrivacyPolicy] = useState(
-    defaultValues?.privacyPolicy ?? false,
-  );
-  const [marketingConsent, setMarketingConsent] = useState(
-    defaultValues?.marketingConsent ?? false,
-  );
+  const [checkedItems, setCheckedItems] = useState(() => initialChecked(defaultValues));
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogKey, setDialogKey] = useState<LegalKey>('termsOfService');
 
-  const allChecked = termsOfService && privacyPolicy && marketingConsent;
-  const canProceed = termsOfService && privacyPolicy;
+  const allChecked = CONSENT_ROWS.every((row) => checkedItems[row.key]);
+  const canProceed = CONSENT_ROWS.filter((row) => row.required).every(
+    (row) => checkedItems[row.key],
+  );
+  const showCrossBorderWarning =
+    !checkedItems.cross_border_transfer &&
+    CONSENT_ROWS.filter(
+      (row) => row.required && row.key !== 'cross_border_transfer',
+    ).every((row) => checkedItems[row.key]);
 
   function handleSelectAll(checked: boolean) {
-    setTermsOfService(checked);
-    setPrivacyPolicy(checked);
-    setMarketingConsent(checked);
+    setCheckedItems(
+      Object.fromEntries(CONSENT_ROWS.map((row) => [row.key, checked])) as Record<
+        ConsentItemKey,
+        boolean
+      >,
+    );
+  }
+
+  function handleRowChange(key: ConsentItemKey, checked: boolean) {
+    setCheckedItems((current) => ({
+      ...current,
+      [key]: checked,
+    }));
   }
 
   function handleViewTerms(key: LegalKey) {
@@ -63,10 +172,20 @@ export function SignupStep2({ onComplete, onBack, defaultValues }: SignupStep2Pr
 
   function handleSubmit() {
     if (!canProceed) return;
+    const consentItems = CONSENT_ROWS.map((row) => ({
+      key: row.key,
+      version: CONSENT_VERSION,
+      language: CONSENT_LANGUAGE,
+      accepted: checkedItems[row.key],
+      required: row.required,
+      sourceFlow: 'signup' as const,
+    }));
+
     onComplete({
       termsOfService: true,
       privacyPolicy: true,
-      marketingConsent,
+      marketingConsent: checkedItems.marketing,
+      consentItems,
     });
   }
 
@@ -89,71 +208,67 @@ export function SignupStep2({ onComplete, onBack, defaultValues }: SignupStep2Pr
 
       <Separator />
 
+      <p className="rounded-lg bg-red-50 px-4 py-3 text-caption text-error">
+        만 14세 미만은 가입할 수 없습니다
+      </p>
+
       {/* Individual terms */}
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="terms"
-              checked={termsOfService}
-              onCheckedChange={(checked) => setTermsOfService(checked === true)}
-            />
-            <label htmlFor="terms" className="cursor-pointer text-base text-gray-900">
-              이용약관 동의 <span className="text-error">(필수)</span>
-            </label>
-          </div>
-          <button
-            type="button"
-            onClick={() => handleViewTerms('termsOfService')}
-            className="text-caption text-gray-500 underline hover:text-primary"
-          >
-            보기
-          </button>
-        </div>
+        {CONSENT_ROWS.map((row) => {
+          const rowId = `consent-${row.key}`;
 
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="privacy"
-              checked={privacyPolicy}
-              onCheckedChange={(checked) => setPrivacyPolicy(checked === true)}
-            />
-            <label htmlFor="privacy" className="cursor-pointer text-base text-gray-900">
-              개인정보처리방침 동의 <span className="text-error">(필수)</span>
-            </label>
-          </div>
-          <button
-            type="button"
-            onClick={() => handleViewTerms('privacyPolicy')}
-            className="text-caption text-gray-500 underline hover:text-primary"
-          >
-            보기
-          </button>
-        </div>
-
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Checkbox
-              id="marketing"
-              checked={marketingConsent}
-              onCheckedChange={(checked) => setMarketingConsent(checked === true)}
-            />
-            <label
-              htmlFor="marketing"
-              className="cursor-pointer text-base text-gray-900"
+          return (
+            <div
+              key={row.key}
+              className="flex items-start justify-between gap-3 rounded-lg border border-gray-200 px-4 py-3"
             >
-              마케팅 수신 동의 <span className="text-gray-400">(선택)</span>
-            </label>
-          </div>
-          <button
-            type="button"
-            onClick={() => handleViewTerms('marketingConsent')}
-            className="text-caption text-gray-500 underline hover:text-primary"
-          >
-            보기
-          </button>
-        </div>
+              <div className="flex min-w-0 items-start gap-2">
+                <Checkbox
+                  id={rowId}
+                  checked={checkedItems[row.key]}
+                  onCheckedChange={(checked) =>
+                    handleRowChange(row.key, checked === true)
+                  }
+                />
+                <div className="min-w-0 space-y-1">
+                  <label
+                    htmlFor={rowId}
+                    className="cursor-pointer text-base text-gray-900"
+                  >
+                    {row.label}
+                  </label>
+                  <div className="flex flex-wrap items-center gap-2 text-caption text-gray-500">
+                    <span
+                      className={
+                        row.required
+                          ? 'rounded-full bg-red-50 px-2 py-0.5 font-semibold text-error'
+                          : 'rounded-full bg-gray-100 px-2 py-0.5 font-semibold text-gray-500'
+                      }
+                    >
+                      {row.required ? '필수' : '선택'}
+                    </span>
+                    <span>v{CONSENT_VERSION}</span>
+                    <span>{CONSENT_LANGUAGE}</span>
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleViewTerms(row.legalKey)}
+                className="shrink-0 text-caption text-gray-500 underline hover:text-primary"
+              >
+                보기
+              </button>
+            </div>
+          );
+        })}
       </div>
+
+      {showCrossBorderWarning && (
+        <p role="alert" className="text-caption text-error">
+          {CROSS_BORDER_REQUIRED_MESSAGE}
+        </p>
+      )}
 
       <div className="flex gap-3 pt-2">
         <Button
