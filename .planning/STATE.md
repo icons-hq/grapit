@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-05-04)
 Phase: 999.1
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-05-06 - Completed quick task 260506-oef: 7월 18일 걸룰스 팬미팅 동해문화예술관 대극장 엑셀 기반 SVG 좌석맵 생성 및 사이트 추가
+Last activity: 2026-05-06 - Completed quick task 260506-p3f: 프로덕션 테스트 공연 데이터 삭제 및 2026-07-18 Girl Rules 공연 보존
 
 ## Deferred Items
 
@@ -324,6 +324,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 | 260504-k38 | v1.1 scope closure: Phase 21 이후 v1.1을 닫고 Phase 22-24를 v2.0 Fanmeet Launch preflight/quality/hardening scope로 이월 | 2026-05-04 | docs-only | [260504-k38-close-v1-1-scope-after-phase-21-and-defe](./quick/260504-k38-close-v1-1-scope-after-phase-21-and-defe/) |
 | 260504-mn7 | v2.0 phase merge: initial 22-phase launch-risk checklist를 6개 GSD execution phases로 통합하고 requirement traceability 유지 | 2026-05-04 | docs-only | [260504-mn7-merge-v2-0-phases-into-gsd-sized-executi](./quick/260504-mn7-merge-v2-0-phases-into-gsd-sized-executi/) |
 | 260506-oef | 7월 18일 걸룰스 팬미팅 동해문화예술관 대극장 엑셀 기반 SVG 좌석맵 생성 및 사이트 추가 | 2026-05-06 | 6b8137e | [260506-oef-7-18-svg](./quick/260506-oef-7-18-svg/) |
+| 260506-p3f | 프로덕션 테스트 공연 데이터 삭제 및 2026-07-18 Girl Rules 공연 보존 | 2026-05-06 | db-only | [260506-p3f-2026-07-18](./quick/260506-p3f-2026-07-18/) |
 
 ## Session Continuity
 
