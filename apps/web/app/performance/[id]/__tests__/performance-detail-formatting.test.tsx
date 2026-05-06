@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import type { PerformanceWithDetails } from '@grabit/shared';
@@ -63,7 +64,20 @@ const fixturePerformance: PerformanceWithDetails = {
 
 describe('PerformanceDetailPage i18n formatting', () => {
   it('renders the visible detail surface with KST/KRW anchors and estimated pricing disclaimer', async () => {
-    render(<PerformanceDetailPage params={Promise.resolve({ id: 'perf-23-14' })} />);
+    const params = Promise.resolve({ id: 'perf-23-14' }) as Promise<{
+      id: string;
+    }> & {
+      status: 'fulfilled';
+      value: { id: string };
+    };
+    params.status = 'fulfilled';
+    params.value = { id: 'perf-23-14' };
+
+    render(
+      <Suspense fallback={<div>loading</div>}>
+        <PerformanceDetailPage params={params} />
+      </Suspense>,
+    );
 
     expect(await screen.findAllByText(/KST/)).toHaveLength(2);
     expect(screen.getByText('KRW 110,000')).toBeDefined();

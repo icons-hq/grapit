@@ -3,24 +3,17 @@
 import { use } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
+import { useLocale } from 'next-intl';
 import { MapPin, Calendar, Clock, User, Ticket } from 'lucide-react';
+import { DEFAULT_LOCALE, isSupportedLocale } from '@grabit/shared';
+import type { SupportedLocale } from '@grabit/shared';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
 import { StatusBadge } from '@/components/performance/status-badge';
+import { CurrencyDisplay } from '@/components/i18n/currency-display';
+import { KstTime } from '@/components/i18n/kst-time';
 import { usePerformanceDetail } from '@/hooks/use-performances';
-
-function formatDate(iso: string): string {
-  const d = new Date(iso);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}.${m}.${day}`;
-}
-
-function formatPrice(price: number): string {
-  return `${price.toLocaleString()}원`;
-}
 
 function DetailSkeleton() {
   return (
@@ -54,6 +47,7 @@ export default function PerformanceDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
+  const activeLocale = useActiveLocale();
   const { data: performance, isLoading, isError } = usePerformanceDetail(id);
 
   if (isLoading) return <DetailSkeleton />;
@@ -209,9 +203,18 @@ export default function PerformanceDetailPage({
               )}
               <div className="flex items-center gap-2 text-sm text-gray-600">
                 <Calendar className="h-4 w-4 shrink-0" />
-                <span>
-                  {formatDate(performance.startDate)} ~{' '}
-                  {formatDate(performance.endDate)}
+                <span className="flex min-w-0 flex-wrap items-start gap-x-2 gap-y-1">
+                  <KstTime
+                    value={performance.startDate}
+                    locale={activeLocale}
+                  />
+                  <span aria-hidden="true" className="text-gray-400">
+                    ~
+                  </span>
+                  <KstTime
+                    value={performance.endDate}
+                    locale={activeLocale}
+                  />
                 </span>
               </div>
               {performance.runtime && (
@@ -234,14 +237,15 @@ export default function PerformanceDetailPage({
                   {performance.priceTiers.map((tier) => (
                     <div
                       key={tier.id}
-                      className="flex items-center justify-between text-sm"
+                      className="flex items-start justify-between gap-4 text-sm"
                     >
                       <span className="font-semibold text-gray-900">
                         {tier.tierName}
                       </span>
-                      <span className="text-gray-600">
-                        {formatPrice(tier.price)}
-                      </span>
+                      <CurrencyDisplay
+                        krwAmount={tier.price}
+                        locale={activeLocale}
+                      />
                     </div>
                   ))}
                 </div>
@@ -270,4 +274,9 @@ export default function PerformanceDetailPage({
       </div>
     </>
   );
+}
+
+function useActiveLocale(): SupportedLocale {
+  const locale = useLocale();
+  return isSupportedLocale(locale) ? locale : DEFAULT_LOCALE;
 }
