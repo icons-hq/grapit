@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Fanmeet Launch
 status: executing
-stopped_at: Completed 23-09-PLAN.md
-last_updated: "2026-05-06T07:10:16.874Z"
+stopped_at: Completed 23-13-PLAN.md
+last_updated: "2026-05-06T07:20:17.909Z"
 last_activity: 2026-05-06
 progress:
   total_phases: 7
   completed_phases: 1
   total_plans: 23
-  completed_plans: 19
-  percent: 83
+  completed_plans: 20
+  percent: 87
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-05-04)
 ## Current Position
 
 Phase: 23 (launch-foundation) — EXECUTING
-Plan: 14 of 17
+Plan: 15 of 17
 Status: Ready to execute
 Last activity: 2026-05-06
 
@@ -177,6 +177,7 @@ Summary: 70 total items (debug sessions 5, quick tasks 41, seeds 2, UAT gaps 12,
 | Phase 23-launch-foundation P07 | 15m09s | 3 tasks | 23 files |
 | Phase 23-launch-foundation P08 | 9m09s | 1 tasks | 13 files |
 | Phase 23-launch-foundation P09 | 13m15s | 1 tasks | 15 files |
+| Phase 23-launch-foundation P13 | 5m30s | 1 tasks | 12 files |
 
 ## Accumulated Context
 
@@ -273,6 +274,8 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 - [Phase 23-09]: Auth/email/OTP UI copy is sourced from five-locale message JSON and checked against the shared launch copy manifest.
 - [Phase 23-09]: Email verification UI suppresses raw server/provider messages and maps throttled, expired, verified, and system states to safe localized copy.
 - [Phase 23-09]: The backend-sent /auth/verify-email token link now has a web route that verifies the opaque token without rendering it.
+- [Phase 23-13]: Thai and Chinese legal pages render English canonical markdown and show an explicit fallback label rather than native legal translation claims.
+- [Phase 23-13]: Footer keeps /legal/marketing hidden from global navigation while exposing business/support/DPO contact details.
 
 ### Pending Todos
 
@@ -311,8 +314,8 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 
 ## Session Continuity
 
-Last session: 2026-05-06T07:10:09.608Z
-Stopped at: Completed 23-09-PLAN.md
+Last session: 2026-05-06T07:20:17.905Z
+Stopped at: Completed 23-13-PLAN.md
 Resume file: None
 
 **Planned Phase:** v2.0 Phase 23 (launch-foundation) — Phase 22 complete with READY_WITH_ACCEPTED_RISKS; proceed only under accepted risks listed in 22-VERIFICATION.md.
