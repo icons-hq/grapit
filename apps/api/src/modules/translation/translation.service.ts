@@ -1,14 +1,22 @@
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { and, desc, eq } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import { translationDrafts } from '../../database/schema/translation-drafts.js';
 import { translationSources } from '../../database/schema/translation-sources.js';
+import { DeepLClient, type DeepLTranslationResult } from './deepl.client.js';
 
 export const TRANSLATION_TARGET_LOCALES = ['en', 'th', 'zh-CN', 'zh-TW'] as const;
 
 export type TranslationTargetLocale = (typeof TRANSLATION_TARGET_LOCALES)[number];
 export type TranslationStatus = 'draft' | 'review' | 'published' | 'stale';
+export type LegalBlockedContentType = 'legal' | 'notice' | 'refund' | 'booking_guide';
 
 export interface CreateTranslationSourceInput {
   entityType: string;
@@ -55,6 +63,20 @@ interface MemoryTranslationStore {
   getDraft(draftId: string): DraftRow | undefined;
 }
 
+interface TranslationProvider {
+  translateText(
+    text: string,
+    locale: TranslationTargetLocale,
+  ): Promise<DeepLTranslationResult>;
+}
+
+const LEGAL_BLOCKED_CONTENT_TYPES = new Set<string>([
+  'legal',
+  'notice',
+  'refund',
+  'booking_guide',
+]);
+
 function isMemoryStore(db: DrizzleDB | MemoryTranslationStore): db is MemoryTranslationStore {
   return typeof (db as MemoryTranslationStore).createSource === 'function';
 }
@@ -64,6 +86,8 @@ export class TranslationService {
   constructor(
     @Inject(DRIZZLE)
     private readonly db: DrizzleDB | MemoryTranslationStore,
+    @Optional()
+    private readonly deepLClient?: TranslationProvider,
   ) {}
 
   async createSource(input: CreateTranslationSourceInput): Promise<TranslationSourceResult> {
@@ -99,6 +123,7 @@ export class TranslationService {
 
   async generateDrafts(sourceId: string): Promise<TranslationDraftResult[]> {
     const source = await this.findSource(sourceId);
+    this.assertTranslatableContentType(source.entityType);
     const drafts = await Promise.all(
       TRANSLATION_TARGET_LOCALES.map(async (locale) => {
         const translatedText = await this.generateDraftText(source.sourceText, locale);
@@ -215,9 +240,19 @@ export class TranslationService {
 
   protected async generateDraftText(
     sourceText: string,
-    _locale: TranslationTargetLocale,
+    locale: TranslationTargetLocale,
   ): Promise<string> {
+    if (this.deepLClient) {
+      const result = await this.deepLClient.translateText(sourceText, locale);
+      return result.text;
+    }
     return sourceText;
+  }
+
+  assertTranslatableContentType(contentType: string): void {
+    if (LEGAL_BLOCKED_CONTENT_TYPES.has(contentType)) {
+      throw new BadRequestException('법적 고지는 자동 번역할 수 없습니다');
+    }
   }
 
   private async createDraft(

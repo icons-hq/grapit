@@ -14,6 +14,7 @@ describe('mapDeepLTargetLocale', () => {
 describe('DeepLClient', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it('returns deterministic unavailable state without calling fetch when DEEPL_AUTH_KEY is missing', async () => {
