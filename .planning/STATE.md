@@ -4,14 +4,14 @@ milestone: v2.0
 milestone_name: Fanmeet Launch
 status: executing
 stopped_at: Completed 23-04-PLAN.md
-last_updated: "2026-05-06T05:03:35.680Z"
+last_updated: "2026-05-06T05:16:39.589Z"
 last_activity: 2026-05-06
 progress:
   total_phases: 7
   completed_phases: 1
   total_plans: 23
-  completed_plans: 10
-  percent: 43
+  completed_plans: 11
+  percent: 48
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-05-04)
 ## Current Position
 
 Phase: 23 (launch-foundation) — EXECUTING
-Plan: 5 of 17
+Plan: 6 of 17
 Status: Ready to execute
 Last activity: 2026-05-06
 
@@ -168,6 +168,7 @@ Summary: 70 total items (debug sessions 5, quick tasks 41, seeds 2, UAT gaps 12,
 | Phase 23 P02 | 7 min | 2 tasks | 13 files |
 | Phase 23 P03 | 8 min | 3 tasks | 13 files |
 | Phase 23 P04 | 8 min | 2 tasks | 15 files |
+| Phase 23 P05 | 10 min | 2 tasks | 8 files |
 
 ## Accumulated Context
 
@@ -237,6 +238,9 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 - [Phase 23-03]: Booking-disabled guard blocks lockSeat, prepareReservation, and confirmAndCreateReservation before Redis lock, DB transaction, confirm lock, and Toss side effects. — Advertising-open mode must be enforced on backend mutation paths, not only in UI.
 - [Phase 23-04]: Locale routing uses next-intl with localeDetection:false so URL prefixes remain authoritative and Accept-Language only creates suggestion state.
 - [Phase 23-04]: Korean sitemap URLs remain prefixless while foreign hreflang alternates use /en, /th, /zh-CN, and /zh-TW.
+- [Phase 23-05]: DeepL missing-key behavior creates deterministic manual-review drafts and never publishes content.
+- [Phase 23-05]: Legal-sensitive content types are blocked in TranslationService before any provider call.
+- [Phase 23-05]: DeepL integration uses a small direct-fetch adapter instead of adding a new dependency.
 
 ### Pending Todos
 
@@ -275,7 +279,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 
 ## Session Continuity
 
-Last session: 2026-05-06T05:03:35.677Z
+Last session: 2026-05-06T05:16:00.722Z
 Stopped at: Completed 23-04-PLAN.md
 Resume file: None
 
