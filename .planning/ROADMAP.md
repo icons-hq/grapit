@@ -65,7 +65,7 @@ Plans:
 
 **Merged from:** 25 Prod compatibility + flags, 26 i18n routing + locale foundation, 27 Translation workflow + legal lock, 28 email verification + 5-country SMS (LINE excluded by Phase 23 D-13), 29 Multinational consent + audit
 
-**Plans:** 6/17 plans executed
+**Plans:** 7/17 plans executed
 
 Plans:
 **Wave 1**
@@ -79,7 +79,7 @@ Plans:
 - [x] 23-04-PLAN.md — Implement five-locale routing, sitemap, and locale suggestion UI
 - [x] 23-05-PLAN.md — Implement backend translation workflow, DeepL adapter, and legal machine-translation guard
 - [x] 23-06-PLAN.md — Implement email verification, three-device refresh-family policy, SMS validation, and LINE absence gates (D-13 excluded)
-- [ ] 23-14-PLAN.md — Implement KST/KRW formatting helpers and wire them into public performance detail
+- [x] 23-14-PLAN.md — Implement KST/KRW formatting helpers and wire them into public performance detail
 - [ ] 23-15-PLAN.md — Localize PhoneInput labels, wire auth/OTP caller locale, and define the launch copy manifest
 - [ ] 23-16-PLAN.md — Add locale switch/suggestion UI, wire visible shell/header/menu surfaces, and persist logged-in locale preference
 - [ ] 23-17-PLAN.md — Add English legal canonical fallback files and lock legal content locales
