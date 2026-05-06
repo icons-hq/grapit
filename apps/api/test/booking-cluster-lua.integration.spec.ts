@@ -70,10 +70,15 @@ function createBookingService(redis: Cluster): BookingService {
   const mockGateway = {
     broadcastSeatUpdate: () => {},
   };
+  const mockFeatureFlags = {
+    assertBookingEnabled: () => {},
+    getFlags: () => ({ bookingEnabled: true }),
+  };
   return new BookingService(
     redis as unknown as IORedis,
     mockDb as any,
     mockGateway as any,
+    mockFeatureFlags as any,
   );
 }
 

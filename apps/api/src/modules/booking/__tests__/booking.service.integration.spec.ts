@@ -37,7 +37,11 @@ function createBookingService(redis: IORedis): BookingService {
   const mockGateway = {
     broadcastSeatUpdate: () => {},
   };
-  return new BookingService(redis, mockDb as any, mockGateway as any);
+  const mockFeatureFlags = {
+    assertBookingEnabled: () => {},
+    getFlags: () => ({ bookingEnabled: true }),
+  };
+  return new BookingService(redis, mockDb as any, mockGateway as any, mockFeatureFlags as any);
 }
 
 describe('BookingService Lua scripts — real Valkey 8 integration', () => {

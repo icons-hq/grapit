@@ -25,6 +25,7 @@ import {
 import { TossPaymentsClient } from '../payment/toss-payments.client.js';
 import { BookingService, PAYMENT_CONFIRM_LOCK_TTL } from '../booking/booking.service.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
+import { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
 import type {
   SeatSelection,
   ReservationStatus,
@@ -45,6 +46,7 @@ export class ReservationService {
     private readonly tossClient: TossPaymentsClient,
     private readonly bookingService: BookingService,
     private readonly bookingGateway: BookingGateway,
+    private readonly featureFlags: FeatureFlagsService,
   ) {}
 
   generateReservationNumber(): string {
@@ -200,6 +202,8 @@ export class ReservationService {
     dto: PrepareReservationRequest,
     userId: string,
   ): Promise<PrepareReservationResponse> {
+    this.featureFlags.assertBookingEnabled();
+
     this.assertUniqueSeatIds(dto.seats);
 
     // 1. Idempotency: if a reservation already exists for this orderId, return it
@@ -322,6 +326,8 @@ export class ReservationService {
     dto: ConfirmPaymentRequest,
     userId: string,
   ): Promise<ReservationDetail> {
+    this.featureFlags.assertBookingEnabled();
+
     const confirmLockToken = randomUUID();
     const confirmLockAcquired = await this.bookingService.acquirePaymentConfirmLock(
       dto.orderId,

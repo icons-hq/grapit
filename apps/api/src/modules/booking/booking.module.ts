@@ -4,9 +4,10 @@ import { BookingController } from './booking.controller.js';
 import { BookingService } from './booking.service.js';
 import { BookingGateway } from './booking.gateway.js';
 import { redisProvider } from './providers/redis.provider.js';
+import { FeatureFlagsModule } from '../feature-flags/feature-flags.module.js';
 
 @Module({
-  imports: [ConfigModule],
+  imports: [ConfigModule, FeatureFlagsModule],
   controllers: [BookingController],
   providers: [
     BookingService,

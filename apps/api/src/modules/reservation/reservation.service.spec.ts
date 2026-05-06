@@ -65,9 +65,15 @@ function createMockBookingGateway() {
 }
 
 function createMockFeatureFlags(bookingEnabled = true) {
-  return {
+  const mock = {
     getFlags: vi.fn(() => ({ bookingEnabled })),
+    assertBookingEnabled: vi.fn(() => {
+      if (!mock.getFlags().bookingEnabled) {
+        throw new ForbiddenException('예매는 5월말 오픈 예정입니다');
+      }
+    }),
   };
+  return mock;
 }
 
 describe('ReservationService', () => {
