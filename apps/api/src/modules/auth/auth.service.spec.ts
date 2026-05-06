@@ -1,11 +1,13 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { ConflictException, GoneException, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, GoneException, UnauthorizedException } from '@nestjs/common';
 import * as argon2 from 'argon2';
 import { createHash, randomUUID } from 'node:crypto';
 import { AuthService } from './auth.service.js';
 import type { RegisterBody } from './dto/register.dto.js';
+import type { ConsentService } from '../consent/consent.service.js';
+import type { ConsentCaptureItem } from '@grabit/shared';
 
 // Hash password once (argon2 is expensive)
 let preHashedPassword: string;
@@ -22,7 +24,27 @@ const mockRegisterDto: RegisterBody = {
   termsOfService: true,
   privacyPolicy: true,
   marketingConsent: false,
+  consentItems: makeConsentItems(),
 };
+
+function makeConsentItems(
+  overrides: Partial<Record<ConsentCaptureItem['key'], boolean>> = {},
+): ConsentCaptureItem[] {
+  return [
+    'terms',
+    'privacy',
+    'pipa_required',
+    'cross_border_transfer',
+    'pdpa_notice',
+    'pipl_notice',
+    'marketing',
+  ].map((key) => ({
+    key: key as ConsentCaptureItem['key'],
+    version: '2026-05-01',
+    language: 'ko',
+    accepted: overrides[key as ConsentCaptureItem['key']] ?? true,
+  }));
+}
 
 function createMockUser() {
   return {
@@ -92,6 +114,11 @@ describe('AuthService', () => {
   let mockEmailService: {
     sendPasswordResetEmail: ReturnType<typeof vi.fn>;
     sendEmailVerificationEmail: ReturnType<typeof vi.fn>;
+  };
+  let mockConsentService: {
+    assertAgeAllowed: ReturnType<typeof vi.fn>;
+    assertRequiredConsents: ReturnType<typeof vi.fn>;
+    captureConsent: ReturnType<typeof vi.fn>;
   };
   // [hotfix 260427-kch] hoisted so register/completeSocialRegistration tests
   // can override verifyCode / isPhoneVerified per-case.
@@ -167,6 +194,12 @@ describe('AuthService', () => {
       sendEmailVerificationEmail: vi.fn().mockResolvedValue({ success: true }),
     };
 
+    mockConsentService = {
+      assertAgeAllowed: vi.fn(),
+      assertRequiredConsents: vi.fn().mockResolvedValue(undefined),
+      captureConsent: vi.fn().mockResolvedValue(undefined),
+    };
+
     // Instantiate AuthService directly (no NestJS DI overhead)
     authService = new AuthService(
       mockJwtService as unknown as JwtService,
@@ -175,6 +208,7 @@ describe('AuthService', () => {
       mockSmsService as any,
       mockEmailService as any,
       mockDb as any,
+      mockConsentService as unknown as ConsentService,
     );
   });
 
@@ -214,6 +248,56 @@ describe('AuthService', () => {
         ConflictException,
       );
     });
+
+    it('blocks signup when required cross-border consent is missing', async () => {
+      const dto = {
+        ...mockRegisterDto,
+        consentItems: makeConsentItems({ cross_border_transfer: false }),
+      };
+      mockUserRepo.findByEmail.mockResolvedValue(null);
+      mockUserRepo.create.mockResolvedValue({
+        ...mockUser,
+        id: randomUUID(),
+        email: dto.email,
+        name: dto.name,
+      });
+      mockConsentService.assertRequiredConsents.mockRejectedValue(
+        new BadRequestException('국외이전 동의가 필요합니다. 동의하지 않으면 가입 또는 팬미팅 예매를 진행할 수 없습니다.'),
+      );
+
+      await expect(authService.register(dto)).rejects.toThrow(
+        '국외이전 동의가 필요합니다. 동의하지 않으면 가입 또는 팬미팅 예매를 진행할 수 없습니다.',
+      );
+
+      expect(mockConsentService.assertRequiredConsents).toHaveBeenCalledWith({
+        items: dto.consentItems,
+      });
+      expect(mockUserRepo.create).not.toHaveBeenCalled();
+    });
+
+    it('captures itemized signup consent rows after creating the user', async () => {
+      const userId = randomUUID();
+      mockUserRepo.findByEmail.mockResolvedValue(null);
+      mockUserRepo.create.mockResolvedValue({
+        ...mockUser,
+        id: userId,
+        email: mockRegisterDto.email,
+        name: mockRegisterDto.name,
+      });
+
+      await authService.register(mockRegisterDto);
+
+      expect(mockConsentService.assertAgeAllowed).toHaveBeenCalledWith(mockRegisterDto.birthDate);
+      expect(mockConsentService.captureConsent).toHaveBeenCalledWith(
+        userId,
+        {
+          birthDate: mockRegisterDto.birthDate,
+          items: mockRegisterDto.consentItems,
+          sourceFlow: 'signup',
+        },
+        { ipAddress: '0.0.0.0' },
+      );
+    }, 15000);
 
     it('[hotfix 260427-kch] verifyCode가 GoneException throw, isPhoneVerified true이면 정상 가입 (프론트 이중 호출 회귀 방지)', async () => {
       mockSmsService.verifyCode.mockRejectedValue(

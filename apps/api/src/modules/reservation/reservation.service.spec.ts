@@ -13,7 +13,8 @@ import { TossPaymentsClient } from '../payment/toss-payments.client.js';
 import type { BookingService } from '../booking/booking.service.js';
 import type { BookingGateway } from '../booking/booking.gateway.js';
 import type { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
-import type { SeatSelection } from '@grabit/shared';
+import type { ConsentCaptureItem, SeatSelection } from '@grabit/shared';
+import type { ConsentService } from '../consent/consent.service.js';
 
 function createMockDb() {
   return {
@@ -76,6 +77,31 @@ function createMockFeatureFlags(bookingEnabled = true) {
   return mock;
 }
 
+function makeConsentItems(
+  overrides: Partial<Record<ConsentCaptureItem['key'], boolean>> = {},
+): ConsentCaptureItem[] {
+  return [
+    'terms',
+    'privacy',
+    'pipa_required',
+    'cross_border_transfer',
+    'pdpa_notice',
+    'pipl_notice',
+    'marketing',
+  ].map((key) => ({
+    key: key as ConsentCaptureItem['key'],
+    version: '2026-05-01',
+    language: 'ko',
+    accepted: overrides[key as ConsentCaptureItem['key']] ?? true,
+  }));
+}
+
+function createMockConsentService() {
+  return {
+    assertRequiredConsents: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
 describe('ReservationService', () => {
   let service: ReservationService;
   let mockDb: ReturnType<typeof createMockDb>;
@@ -83,6 +109,7 @@ describe('ReservationService', () => {
   let mockBookingService: ReturnType<typeof createMockBookingService>;
   let mockBookingGateway: ReturnType<typeof createMockBookingGateway>;
   let mockFeatureFlags: ReturnType<typeof createMockFeatureFlags>;
+  let mockConsentService: ReturnType<typeof createMockConsentService>;
 
   beforeEach(() => {
     mockDb = createMockDb();
@@ -90,6 +117,7 @@ describe('ReservationService', () => {
     mockBookingService = createMockBookingService();
     mockBookingGateway = createMockBookingGateway();
     mockFeatureFlags = createMockFeatureFlags(true);
+    mockConsentService = createMockConsentService();
 
     service = new ReservationService(
       mockDb as any,
@@ -97,6 +125,7 @@ describe('ReservationService', () => {
       mockBookingService as unknown as BookingService,
       mockBookingGateway as unknown as BookingGateway,
       mockFeatureFlags as unknown as FeatureFlagsService,
+      mockConsentService as unknown as ConsentService,
     );
   });
 
@@ -422,6 +451,33 @@ describe('ReservationService', () => {
 
       expect(mockDb.select).not.toHaveBeenCalled();
       expect(mockBookingService.assertOwnedSeatLocks).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+      expect(mockConsentService.assertRequiredConsents).not.toHaveBeenCalled();
+    });
+
+    it('prepareReservation rejects refused cross-border booking consent before DB transaction', async () => {
+      const userId = randomUUID();
+      const dto = {
+        showtimeId: randomUUID(),
+        orderId: 'GRP-CONSENT-REFUSED',
+        seats: [seatSelection('A-1')],
+        amount: 50000,
+        consentItems: makeConsentItems({ cross_border_transfer: false }),
+      };
+      mockConsentService.assertRequiredConsents.mockRejectedValue(
+        new BadRequestException('국외이전 동의가 필요합니다. 동의하지 않으면 가입 또는 팬미팅 예매를 진행할 수 없습니다.'),
+      );
+      setupPrepareBase(dto);
+
+      await expect(service.prepareReservation(dto, userId)).rejects.toThrow(
+        '국외이전 동의가 필요합니다. 동의하지 않으면 가입 또는 팬미팅 예매를 진행할 수 없습니다.',
+      );
+
+      expect(mockFeatureFlags.assertBookingEnabled).toHaveBeenCalled();
+      expect(mockConsentService.assertRequiredConsents).toHaveBeenCalledWith({
+        items: dto.consentItems,
+      });
+      expect(mockDb.select).not.toHaveBeenCalled();
       expect(mockDb.transaction).not.toHaveBeenCalled();
     });
 
