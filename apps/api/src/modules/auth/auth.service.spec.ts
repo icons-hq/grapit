@@ -54,6 +54,19 @@ function makeMockInsertChain() {
   };
 }
 
+function containsPrimitiveValue(value: unknown, needle: string, seen = new Set<object>()): boolean {
+  if (value === needle) return true;
+  if (value === null || typeof value !== 'object') return false;
+  if (seen.has(value)) return false;
+  seen.add(value);
+  if (Array.isArray(value)) {
+    return value.some((item) => containsPrimitiveValue(item, needle, seen));
+  }
+  return Object.values(value as Record<string, unknown>).some((item) =>
+    containsPrimitiveValue(item, needle, seen),
+  );
+}
+
 describe('AuthService', () => {
   let authService: AuthService;
   let mockUser: ReturnType<typeof createMockUser>;
@@ -358,6 +371,39 @@ describe('AuthService', () => {
       expect(mockDb.update).toHaveBeenCalled();
     });
 
+    it('reused revoked token revokes only the reused family, not every user session', async () => {
+      const rawToken = 'reused-token-family-only';
+      const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+      const family = randomUUID();
+      const whereMock = vi.fn().mockResolvedValue([]);
+      const setMock = vi.fn().mockReturnValue({ where: whereMock });
+
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([
+            {
+              id: randomUUID(),
+              userId: mockUser.id,
+              tokenHash,
+              family,
+              expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+              createdAt: new Date(),
+              revokedAt: new Date(),
+            },
+          ]),
+        }),
+      });
+      mockDb.update.mockReturnValue({ set: setMock });
+
+      await expect(authService.refreshTokens(rawToken)).rejects.toThrow(
+        UnauthorizedException,
+      );
+
+      expect(whereMock).toHaveBeenCalledTimes(1);
+      expect(containsPrimitiveValue(whereMock.mock.calls, family)).toBe(true);
+      expect(containsPrimitiveValue(whereMock.mock.calls, mockUser.id)).toBe(false);
+    });
+
     it('should throw UnauthorizedException for expired token', async () => {
       const rawToken = 'expired-token';
       const tokenHash = createHash('sha256').update(rawToken).digest('hex');
@@ -381,6 +427,102 @@ describe('AuthService', () => {
       await expect(authService.refreshTokens(rawToken)).rejects.toThrow(
         UnauthorizedException,
       );
+    });
+  });
+
+  describe('refresh token family limit', () => {
+    function authFamilyLimitApi() {
+      return authService as unknown as {
+        enforceRefreshFamilyLimit(
+          userId: string,
+          maxFamilies?: number,
+        ): Promise<{ revokedFamily: string | null; notice?: string }>;
+      };
+    }
+
+    const familyRows = (families: Array<{ family: string; createdAt: Date }>) =>
+      families.map((row) => ({
+        id: randomUUID(),
+        userId: mockUser.id,
+        tokenHash: createHash('sha256').update(row.family).digest('hex'),
+        family: row.family,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        revokedAt: null,
+        createdAt: row.createdAt,
+      }));
+
+    it('keeps one to three active refresh-token families without revocation', async () => {
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue(
+            familyRows([
+              { family: 'family-1', createdAt: new Date('2026-05-01T00:00:00Z') },
+              { family: 'family-2', createdAt: new Date('2026-05-02T00:00:00Z') },
+              { family: 'family-3', createdAt: new Date('2026-05-03T00:00:00Z') },
+            ]),
+          ),
+        }),
+      });
+
+      const result = await authFamilyLimitApi().enforceRefreshFamilyLimit(mockUser.id);
+
+      expect(result).toEqual({ revokedFamily: null });
+      expect(mockDb.update).not.toHaveBeenCalled();
+    });
+
+    it('revokes the oldest active family on the fourth login and returns the user-visible notice', async () => {
+      const updateWhereMock = vi.fn().mockResolvedValue([]);
+      const updateSetMock = vi.fn().mockReturnValue({ where: updateWhereMock });
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue(
+            familyRows([
+              { family: 'oldest-family', createdAt: new Date('2026-05-01T00:00:00Z') },
+              { family: 'family-2', createdAt: new Date('2026-05-02T00:00:00Z') },
+              { family: 'family-3', createdAt: new Date('2026-05-03T00:00:00Z') },
+              { family: 'newest-family', createdAt: new Date('2026-05-04T00:00:00Z') },
+            ]),
+          ),
+        }),
+      });
+      mockDb.update.mockReturnValue({ set: updateSetMock });
+
+      const result = await authFamilyLimitApi().enforceRefreshFamilyLimit(mockUser.id);
+
+      expect(result).toEqual({
+        revokedFamily: 'oldest-family',
+        notice: '다른 기기에서 로그인되어 가장 오래된 세션이 종료되었습니다.',
+      });
+      expect(updateSetMock).toHaveBeenCalledWith({ revokedAt: expect.any(Date) });
+      expect(JSON.stringify(updateWhereMock.mock.calls)).toContain('oldest-family');
+    });
+
+    it('refresh within the same family does not consume a new device slot', async () => {
+      const rawToken = 'valid-refresh-same-family';
+      const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+      const family = randomUUID();
+
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([
+            {
+              id: randomUUID(),
+              userId: mockUser.id,
+              tokenHash,
+              family,
+              expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+              createdAt: new Date(),
+              revokedAt: null,
+            },
+          ]),
+        }),
+      });
+      mockUserRepo.findById.mockResolvedValue(mockUser);
+
+      await authService.refreshTokens(rawToken);
+
+      expect(mockDb.insert).toHaveBeenCalledTimes(1);
+      expect(mockDb.select).toHaveBeenCalledTimes(1);
     });
   });
 
