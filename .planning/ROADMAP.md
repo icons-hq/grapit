@@ -63,13 +63,35 @@ Plans:
 
 **Requirements:** FLAG-01, FLAG-02, I18N-01, I18N-02, TRANS-01, TRANS-02, AUTH-01, AUTH-02, COMP-01, COMP-02
 
-**Merged from:** 25 Prod compatibility + flags, 26 i18n routing + locale foundation, 27 Translation workflow + legal lock, 28 LINE login + 5-country SMS, 29 Multinational consent + audit
+**Merged from:** 25 Prod compatibility + flags, 26 i18n routing + locale foundation, 27 Translation workflow + legal lock, 28 email verification + 5-country SMS (LINE excluded by Phase 23 D-13), 29 Multinational consent + audit
+
+**Plans:** 9 plans
+
+Plans:
+**Wave 1**
+- [ ] 23-01-PLAN.md — Reconcile stale LINE scope and create shared flag/locale/consent contracts
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 23-02-PLAN.md — Expand Drizzle schema and run the blocking Phase 23 migration apply gate
+- [ ] 23-03-PLAN.md — Enforce runtime booking feature flags on API booking/payment creation paths
+
+**Wave 3** *(blocked on foundation contracts/schema)*
+- [ ] 23-04-PLAN.md — Implement five-locale routing, sitemap, PhoneInput localization, and locale preference
+- [ ] 23-05-PLAN.md — Implement translation workflow and legal copy machine-translation lock
+- [ ] 23-06-PLAN.md — Implement email verification, three-device refresh-family policy, SMS validation, and LINE absence gates
+
+**Wave 4** *(blocked on schema, i18n, translation, and auth foundations)*
+- [ ] 23-07-PLAN.md — Implement itemized consent capture and masked audit query API
+
+**Wave 5** *(blocked on API/i18n foundations)*
+- [ ] 23-08-PLAN.md — Wire booking-disabled, email verification, and itemized consent user-facing UI
+- [ ] 23-09-PLAN.md — Wire admin translation review, consent audit UI, legal fallback, and footer surfaces
 
 **Success criteria:**
 1. Expand-only migrations, canary policy, and shared feature flag helper preserve existing production users, reservations, sessions, and Korean root URLs.
 2. Korean routes remain prefixless and foreign routes use `/en`, `/th`, `/zh-CN`, `/zh-TW` with hreflang, sitemap, locale preference, time/currency formatting, and PhoneInput localization.
 3. Korean source content can generate reviewed translations, while legal notices stay Korean/English manual and auto-translation is blocked for legal copy.
-4. Kakao, Naver, Google, LINE, email verification, 5-country SMS OTP, and three-device refresh token policy are covered by tests and launch evidence.
+4. Kakao, Naver, Google, email verification, 5-country SMS OTP, and three-device refresh token policy are covered by tests and launch evidence; LINE remains excluded from Phase 23 per D-13.
 5. PIPA, cross-border transfer, PDPA/PIPL English notice, under-14, marketing consent, audit log, and footer legal surfaces are captured.
 6. `BOOKING_ENABLED=false` blocks API seat locks and payment attempts, not only UI buttons.
 
