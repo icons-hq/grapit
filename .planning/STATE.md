@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Fanmeet Launch
 status: executing
-stopped_at: Completed 23-01-PLAN.md
-last_updated: "2026-05-06T04:26:28.434Z"
+stopped_at: Completed 23-02-PLAN.md
+last_updated: "2026-05-06T04:38:08.321Z"
 last_activity: 2026-05-06
 progress:
   total_phases: 7
   completed_phases: 1
   total_plans: 23
-  completed_plans: 7
-  percent: 30
+  completed_plans: 8
+  percent: 35
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-05-04)
 ## Current Position
 
 Phase: 23 (launch-foundation) — EXECUTING
-Plan: 2 of 17
+Plan: 3 of 17
 Status: Ready to execute
 Last activity: 2026-05-06
 
@@ -165,6 +165,7 @@ Summary: 70 total items (debug sessions 5, quick tasks 41, seeds 2, UAT gaps 12,
 | Phase 22 P05 | 8min | 2 tasks | 3 files |
 | Phase 22 P06 | 18min | 3 tasks | 6 files |
 | Phase 23 P01 | 5 min | 3 tasks | 13 files |
+| Phase 23 P02 | 7 min | 2 tasks | 13 files |
 
 ## Accumulated Context
 
@@ -227,6 +228,9 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 - [Phase 23]: LINE remains excluded from Phase 23 per D-13; stale spec references are marked superseded instead of becoming implementation scope.
 - [Phase 23]: Korean remains prefixless while en/th/zh-CN/zh-TW use explicit route prefixes.
 - [Phase 23]: BOOKING_ENABLED is the shared source-of-truth flag name and defaults false when absent.
+- [Phase 23-02]: Locale enum is exported from users.ts so users.preferred_locale and launch content tables share one enum without a circular schema import.
+- [Phase 23-02]: Email verification latest-token-wins is supported by user/email/purpose/created_at query indexes while retaining historical token rows.
+- [Phase 23-02]: Legal content uses manual ko/en columns and is structurally separate from translation_drafts.
 
 ### Pending Todos
 
@@ -265,8 +269,8 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 
 ## Session Continuity
 
-Last session: 2026-05-06T04:25:49.677Z
-Stopped at: Completed 23-01-PLAN.md
+Last session: 2026-05-06T04:38:08.317Z
+Stopped at: Completed 23-02-PLAN.md
 Resume file: None
 
 **Planned Phase:** v2.0 Phase 23 (launch-foundation) — Phase 22 complete with READY_WITH_ACCEPTED_RISKS; proceed only under accepted risks listed in 22-VERIFICATION.md.

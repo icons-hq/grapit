@@ -13,23 +13,23 @@
 
 ### Production Compatibility and Flags
 
-- [ ] **FLAG-01**: Existing production users, reservations, sessions, and Korean SEO URLs remain valid through expand-only migrations and canary deploys.
+- [x] **FLAG-01**: Existing production users, reservations, sessions, and Korean SEO URLs remain valid through expand-only migrations and canary deploys.
 - [ ] **FLAG-02**: User sees booking disabled with localized "5월말 오픈 예정" copy, and booking APIs do not create seat locks or payment attempts while `BOOKING_ENABLED=false`.
 - [ ] **M1-01**: Operator can complete M1 integrated smoke tests and canary deploy, then open the advertising/signup surface on 2026-05-15.
 
 ### Globalization
 
-- [ ] **I18N-01**: User can view all fanmeet public pages in `ko`, `en`, `th`, `zh-CN`, and `zh-TW`, with Korean remaining on `/` and foreign locales on prefixed routes.
-- [ ] **I18N-02**: User can complete locale-sensitive flows with localized PhoneInput labels, auth/OTP copy, email/SMS templates, time display, currency display, hreflang, and sitemap support.
-- [ ] **TRANS-01**: Operator can create Korean source content, generate four translated drafts, review/publish them, and show an automatic-translation label where required.
-- [ ] **TRANS-02**: Operator can maintain legal notices as schema-locked Korean/English manual fields, with automatic translation blocked for legal copy.
+- [x] **I18N-01**: User can view all fanmeet public pages in `ko`, `en`, `th`, `zh-CN`, and `zh-TW`, with Korean remaining on `/` and foreign locales on prefixed routes.
+- [x] **I18N-02**: User can complete locale-sensitive flows with localized PhoneInput labels, auth/OTP copy, email/SMS templates, time display, currency display, hreflang, and sitemap support.
+- [x] **TRANS-01**: Operator can create Korean source content, generate four translated drafts, review/publish them, and show an automatic-translation label where required.
+- [x] **TRANS-02**: Operator can maintain legal notices as schema-locked Korean/English manual fields, with automatic translation blocked for legal copy.
 
 ### Auth and Compliance
 
-- [ ] **AUTH-01**: User can sign up or log in through Kakao, Naver, Google, or email, with email verification expiring after 30 minutes and immediate resend available. LINE is excluded from Phase 23 by D-13.
-- [ ] **AUTH-02**: User account sessions enforce the three-device policy through refresh token family tracking.
-- [ ] **COMP-01**: User can complete required PIPA, cross-border transfer, PDPA/PIPL English notice, under-14 restriction, and marketing consent flows.
-- [ ] **COMP-02**: Operator can query consent audit logs by item, version, language, timestamp, IP, and user.
+- [x] **AUTH-01**: User can sign up or log in through Kakao, Naver, Google, or email, with email verification expiring after 30 minutes and immediate resend available. LINE is excluded from Phase 23 by D-13.
+- [x] **AUTH-02**: User account sessions enforce the three-device policy through refresh token family tracking.
+- [x] **COMP-01**: User can complete required PIPA, cross-border transfer, PDPA/PIPL English notice, under-14 restriction, and marketing consent flows.
+- [x] **COMP-02**: Operator can query consent audit logs by item, version, language, timestamp, IP, and user.
 
 ### Traffic and Reliability
 
@@ -102,16 +102,16 @@ Phase mapping was consolidated on 2026-05-04 from the initial 22-phase launch-ri
 | PREF-01 | Phase 22 | Complete |
 | PREF-02 | Phase 22 | Complete |
 | PREF-03 | Phase 22 | Complete |
-| FLAG-01 | Phase 23 | Pending |
+| FLAG-01 | Phase 23 | Complete |
 | FLAG-02 | Phase 23 | Pending |
-| I18N-01 | Phase 23 | Pending |
-| I18N-02 | Phase 23 | Pending |
-| TRANS-01 | Phase 23 | Pending |
-| TRANS-02 | Phase 23 | Pending |
-| AUTH-01 | Phase 23 | Pending |
-| AUTH-02 | Phase 23 | Pending |
-| COMP-01 | Phase 23 | Pending |
-| COMP-02 | Phase 23 | Pending |
+| I18N-01 | Phase 23 | Complete |
+| I18N-02 | Phase 23 | Complete |
+| TRANS-01 | Phase 23 | Complete |
+| TRANS-02 | Phase 23 | Complete |
+| AUTH-01 | Phase 23 | Complete |
+| AUTH-02 | Phase 23 | Complete |
+| COMP-01 | Phase 23 | Complete |
+| COMP-02 | Phase 23 | Complete |
 | TRAF-01 | Phase 24 | Pending |
 | TRAF-02 | Phase 24 | Pending |
 | TRAF-03 | Phase 24 | Pending |
