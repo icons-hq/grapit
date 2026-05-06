@@ -13,3 +13,5 @@ export const MAX_POSTER_SIZE_MB = 5;
 export const MAX_SVG_SIZE_MB = 10;
 export const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
 export const CLOSING_SOON_DAYS = 7;
+
+export * from './locales';

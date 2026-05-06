@@ -11,6 +11,10 @@ export * from './types/user.types';
 export * from './types/performance.types';
 export * from './types/booking.types';
 export * from './types/admin-dashboard.types';
+export * from './types/i18n.types';
 
 // Constants
 export * from './constants/index';
+
+// Feature flags
+export * from './flags';
