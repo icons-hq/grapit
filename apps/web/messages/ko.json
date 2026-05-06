@@ -4,5 +4,34 @@
   },
   "locale": {
     "suggestion": "다른 언어로 볼까요?"
+  },
+  "auth": {
+    "emailVerification": {
+      "sent": "인증 메일을 발송했습니다",
+      "resendCta": "인증 메일 다시 보내기",
+      "resendLoading": "다시 보내는 중...",
+      "resendSuccess": "인증 메일을 다시 보냈습니다",
+      "expired": "인증 링크가 만료되었습니다. 새 인증 메일을 요청해주세요.",
+      "verified": "이메일 인증이 완료되었습니다.",
+      "throttled": "잠시 후 다시 시도해주세요.",
+      "systemError": "일시적인 오류가 발생했습니다. 다시 시도해주세요."
+    },
+    "otp": {
+      "sent": "인증번호가 발송되었습니다",
+      "resendCta": "인증번호 재발송",
+      "resendLoading": "인증번호를 다시 보내는 중입니다",
+      "resendSuccess": "인증번호를 다시 보냈습니다",
+      "expired": "인증번호가 만료되었습니다. 재발송해주세요",
+      "invalidCode": "인증번호가 일치하지 않습니다",
+      "throttled": "요청이 너무 많습니다. 잠시 후 다시 시도해주세요",
+      "systemError": "인증번호 처리에 실패했습니다. 잠시 후 다시 시도해주세요"
+    },
+    "errors": {
+      "invalidCredentials": "이메일 또는 비밀번호가 올바르지 않습니다",
+      "emailUnverified": "이메일 인증이 필요합니다",
+      "verificationRequired": "인증을 완료해주세요",
+      "providerUnavailable": "소셜 로그인 제공자를 사용할 수 없습니다",
+      "deviceLimitNotice": "다른 기기에서 로그인되어 가장 오래된 세션이 종료되었습니다."
+    }
   }
 }

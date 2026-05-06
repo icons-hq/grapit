@@ -45,25 +45,31 @@ describe('launch copy key manifest', () => {
 
   it('includes the critical auth/email/OTP/SMS launch copy keys', () => {
     expect(LAUNCH_COPY_KEYS['auth.emailVerification'].ko).toEqual([
-      'expired',
+      'sent',
       'resendCta',
       'resendLoading',
       'resendSuccess',
-      'sent',
+      'expired',
       'verified',
+      'throttled',
+      'systemError',
     ]);
     expect(LAUNCH_COPY_KEYS['auth.otp'].ko).toEqual([
-      'sendCta',
-      'sending',
-      'verifyCta',
-      'verified',
+      'sent',
+      'resendCta',
+      'resendLoading',
+      'resendSuccess',
+      'expired',
+      'invalidCode',
+      'throttled',
+      'systemError',
     ]);
     expect(LAUNCH_COPY_KEYS['auth.errors'].ko).toEqual([
-      'expiredOtp',
-      'generic',
-      'invalidOtp',
-      'rateLimited',
-      'unsupportedCountry',
+      'invalidCredentials',
+      'emailUnverified',
+      'verificationRequired',
+      'providerUnavailable',
+      'deviceLimitNotice',
     ]);
     expect(LAUNCH_COPY_KEYS['sms.otp'].ko).toEqual([
       'message',

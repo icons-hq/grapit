@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import type {
   RegisterStep1Input,
@@ -15,14 +14,17 @@ import { StepIndicator } from '@/components/auth/step-indicator';
 import { SignupStep1 } from '@/components/auth/signup-step1';
 import { SignupStep2 } from '@/components/auth/signup-step2';
 import { SignupStep3 } from '@/components/auth/signup-step3';
+import { EmailVerificationStatus } from '@/components/auth/email-verification-status';
 
 export function SignupForm() {
-  const router = useRouter();
   const setAuth = useAuthStore((s) => s.setAuth);
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
   const [step1Data, setStep1Data] = useState<RegisterStep1Input | null>(null);
   const [step2Data, setStep2Data] = useState<RegisterStep2Input | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [emailVerificationEmail, setEmailVerificationEmail] = useState<
+    string | null
+  >(null);
 
   function handleStep1Complete(data: RegisterStep1Input) {
     setStep1Data(data);
@@ -53,10 +55,13 @@ export function SignupForm() {
         phoneVerificationCode: data.phoneVerificationCode,
       };
 
-      const res = await apiClient.post<AuthResponse>('/api/v1/auth/register', payload);
+      const res = await apiClient.post<AuthResponse>(
+        '/api/v1/auth/register',
+        payload,
+      );
       setAuth(res.accessToken, res.user);
-      toast.success('회원가입이 완료되었습니다');
-      router.push('/');
+      setEmailVerificationEmail(step1Data.email);
+      toast.success('회원가입이 완료되었습니다. 이메일 인증을 진행해주세요.');
     } catch (error) {
       const message =
         error instanceof Error
@@ -70,30 +75,39 @@ export function SignupForm() {
 
   return (
     <div className="space-y-6">
-      <StepIndicator currentStep={currentStep} />
+      {emailVerificationEmail ? (
+        <EmailVerificationStatus email={emailVerificationEmail} requestOnMount />
+      ) : (
+        <>
+          <StepIndicator currentStep={currentStep} />
 
-      <div
-        className="transition-transform duration-200 ease-out"
-        key={currentStep}
-      >
-        {currentStep === 1 && (
-          <SignupStep1 onComplete={handleStep1Complete} defaultValues={step1Data} />
-        )}
-        {currentStep === 2 && (
-          <SignupStep2
-            onComplete={handleStep2Complete}
-            onBack={() => setCurrentStep(1)}
-            defaultValues={step2Data}
-          />
-        )}
-        {currentStep === 3 && (
-          <SignupStep3
-            onComplete={handleStep3Complete}
-            onBack={() => setCurrentStep(2)}
-            isSubmitting={isSubmitting}
-          />
-        )}
-      </div>
+          <div
+            className="transition-transform duration-200 ease-out"
+            key={currentStep}
+          >
+            {currentStep === 1 && (
+              <SignupStep1
+                onComplete={handleStep1Complete}
+                defaultValues={step1Data}
+              />
+            )}
+            {currentStep === 2 && (
+              <SignupStep2
+                onComplete={handleStep2Complete}
+                onBack={() => setCurrentStep(1)}
+                defaultValues={step2Data}
+              />
+            )}
+            {currentStep === 3 && (
+              <SignupStep3
+                onComplete={handleStep3Complete}
+                onBack={() => setCurrentStep(2)}
+                isSubmitting={isSubmitting}
+              />
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }

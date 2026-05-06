@@ -155,7 +155,7 @@ describe('EmailVerificationStatus', () => {
     const user = userEvent.setup();
 
     await user.click(screen.getByRole('button', { name: '인증 메일 다시 보내기' }));
-    expect(screen.getByText('다시 보내는 중...')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('다시 보내는 중...');
 
     resolveResend();
 
@@ -167,7 +167,7 @@ describe('EmailVerificationStatus', () => {
   });
 
   it('shows expired and verified states distinctly', () => {
-    const { rerender } = render(
+    const { unmount } = render(
       <EmailVerificationStatus {...defaultProps} initialState="expired" />,
     );
 
@@ -175,7 +175,8 @@ describe('EmailVerificationStatus', () => {
       '인증 링크가 만료되었습니다. 새 인증 메일을 요청해주세요.',
     );
 
-    rerender(<EmailVerificationStatus {...defaultProps} initialState="verified" />);
+    unmount();
+    render(<EmailVerificationStatus {...defaultProps} initialState="verified" />);
     expect(screen.getByRole('status')).toHaveTextContent(
       '이메일 인증이 완료되었습니다.',
     );

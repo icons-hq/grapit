@@ -4,5 +4,34 @@
   },
   "locale": {
     "suggestion": "要以繁體中文查看此頁面嗎？"
+  },
+  "auth": {
+    "emailVerification": {
+      "sent": "驗證郵件已傳送",
+      "resendCta": "重新傳送驗證郵件",
+      "resendLoading": "正在重新傳送...",
+      "resendSuccess": "已重新傳送驗證郵件",
+      "expired": "驗證連結已過期。請重新要求驗證郵件。",
+      "verified": "電子郵件驗證已完成。",
+      "throttled": "請稍後再試。",
+      "systemError": "暫時發生錯誤。請再試一次。"
+    },
+    "otp": {
+      "sent": "驗證碼已傳送",
+      "resendCta": "重新傳送驗證碼",
+      "resendLoading": "正在重新傳送驗證碼",
+      "resendSuccess": "新的驗證碼已傳送",
+      "expired": "驗證碼已過期，請重新傳送。",
+      "invalidCode": "驗證碼不正確",
+      "throttled": "請求過於頻繁，請稍後再試。",
+      "systemError": "驗證碼處理失敗，請稍後再試。"
+    },
+    "errors": {
+      "invalidCredentials": "電子郵件或密碼不正確",
+      "emailUnverified": "需要完成電子郵件驗證",
+      "verificationRequired": "請完成驗證",
+      "providerUnavailable": "此社群登入服務目前無法使用",
+      "deviceLimitNotice": "因另一台裝置登入，最早的工作階段已登出。"
+    }
   }
 }

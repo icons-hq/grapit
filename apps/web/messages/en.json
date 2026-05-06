@@ -4,5 +4,34 @@
   },
   "locale": {
     "suggestion": "View this page in English?"
+  },
+  "auth": {
+    "emailVerification": {
+      "sent": "Verification email sent",
+      "resendCta": "Resend verification email",
+      "resendLoading": "Resending...",
+      "resendSuccess": "Verification email sent again",
+      "expired": "This verification link has expired. Please request a new email.",
+      "verified": "Your email has been verified.",
+      "throttled": "Please try again shortly.",
+      "systemError": "Something went wrong. Please try again."
+    },
+    "otp": {
+      "sent": "Verification code sent",
+      "resendCta": "Resend code",
+      "resendLoading": "Sending a new code",
+      "resendSuccess": "A new verification code has been sent",
+      "expired": "The verification code expired. Please request a new one.",
+      "invalidCode": "The verification code does not match",
+      "throttled": "Too many requests. Please try again later.",
+      "systemError": "Verification failed. Please try again later."
+    },
+    "errors": {
+      "invalidCredentials": "Email or password is incorrect",
+      "emailUnverified": "Email verification is required",
+      "verificationRequired": "Please complete verification",
+      "providerUnavailable": "This social login provider is unavailable",
+      "deviceLimitNotice": "Your oldest session was signed out because another device signed in."
+    }
   }
 }

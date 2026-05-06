@@ -15,6 +15,7 @@ import { apiClient, ApiClientError } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PhoneInput } from '@/components/ui/phone-input';
+import { getAuthLaunchCopy } from './auth-launch-copy';
 
 interface PhoneVerificationProps {
   phone: string;
@@ -27,19 +28,20 @@ interface PhoneVerificationProps {
 
 type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
 
-function mapErrorToCopy(err: unknown): string {
+function mapErrorToCopy(
+  err: unknown,
+  copy: ReturnType<typeof getAuthLaunchCopy>['otp'],
+): string {
   if (err instanceof ApiClientError) {
-    if (err.statusCode === 429) return '잠시 후 다시 시도해주세요';
-    if (err.statusCode === 410 || err.statusCode === 422)
-      return '인증번호가 만료되었습니다. 재발송해주세요';
+    if (err.statusCode === 429) return copy.throttled;
+    if (err.statusCode === 410 || err.statusCode === 422) return copy.expired;
     if (err.statusCode === 400) {
       if (err.message.includes('중국 본토')) return err.message;
-      return '인증번호가 일치하지 않습니다';
+      return copy.invalidCode;
     }
-    if (err.statusCode >= 500)
-      return '일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
+    if (err.statusCode >= 500) return copy.systemError;
   }
-  return '일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
+  return copy.systemError;
 }
 
 function usePhoneVerificationLocale(localeOverride: SupportedLocale | undefined): SupportedLocale {
@@ -58,6 +60,7 @@ export function PhoneVerification({
   locale,
 }: PhoneVerificationProps) {
   const activeLocale = usePhoneVerificationLocale(locale);
+  const otpCopy = getAuthLaunchCopy(activeLocale).otp;
   const [codeSent, setCodeSent] = useState(false);
   const [code, setCode] = useState('');
   const [isSending, setIsSending] = useState(false);
@@ -65,6 +68,7 @@ export function PhoneVerification({
   const [timeLeft, setTimeLeft] = useState(0);
   const [resendCooldown, setResendCooldown] = useState(0);
   const [verifyError, setVerifyError] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const cooldownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -129,14 +133,17 @@ export function PhoneVerification({
 
     setIsSending(true);
     setVerifyError(null);
+    setStatusMessage(null);
+    const wasResend = codeSent;
     try {
       await apiClient.post('/api/v1/sms/send-code', { phone });
       setCodeSent(true);
       setCode('');
       setTimeLeft(SMS_CODE_EXPIRY_SECONDS);
       setResendCooldown(SMS_RESEND_COOLDOWN_SECONDS);
+      setStatusMessage(wasResend ? otpCopy.resendSuccess : otpCopy.sent);
     } catch (err) {
-      setVerifyError(mapErrorToCopy(err));
+      setVerifyError(mapErrorToCopy(err, otpCopy));
     } finally {
       setIsSending(false);
     }
@@ -147,6 +154,7 @@ export function PhoneVerification({
 
     setIsVerifying(true);
     setVerifyError(null);
+    setStatusMessage(null);
     try {
       const res = await apiClient.post<{ verified: boolean; message?: string }>(
         '/api/v1/sms/verify-code',
@@ -162,15 +170,14 @@ export function PhoneVerification({
         // [D-08] 빈 문자열 방어: res.message 가 undefined 이거나 길이 0 이면 fallback.
         // [REVIEWS.md LOW#6] generic 이 message?: string 이므로 typeof-string 가드가
         // 타입 narrowing 도 겸한다 (undefined 제거 + length 확인).
-        const fallback = '인증번호가 일치하지 않습니다';
         const serverMessage =
           typeof res.message === 'string' && res.message.length > 0
             ? res.message
             : null;
-        setVerifyError(serverMessage ?? fallback);
+        setVerifyError(serverMessage ?? otpCopy.invalidCode);
       }
     } catch (err) {
-      const copy = mapErrorToCopy(err);
+      const copy = mapErrorToCopy(err, otpCopy);
       setVerifyError(copy);
       // 410/422 expired -> force expired state
       if (
@@ -222,12 +229,12 @@ export function PhoneVerification({
           {isSending ? (
             <>
               <Loader2 className="h-4 w-4 animate-spin" />
-              발송 중...
+              {codeSent ? otpCopy.resendLoading : '발송 중...'}
             </>
           ) : codeSent && resendCooldown > 0 ? (
             `재발송 (${resendCooldown}s)`
           ) : codeSent ? (
-            '재발송'
+            otpCopy.resendCta
           ) : (
             '인증번호 발송'
           )}
@@ -275,17 +282,28 @@ export function PhoneVerification({
           <div
             className="flex items-center gap-2"
             aria-live={timeLeft === 0 ? 'polite' : 'off'}
-            role={timeLeft === 0 ? 'status' : undefined}
           >
             {timeLeft > 0 ? (
               <span className="text-caption text-error">
                 {formatTime(timeLeft)}
               </span>
-            ) : (
-              <span className="text-caption text-error">시간 만료</span>
-            )}
+            ) : !verifyError ? (
+              <span role="alert" className="text-caption text-error">
+                {otpCopy.expired}
+              </span>
+            ) : null}
           </div>
         </div>
+      )}
+
+      {statusMessage && !verifyError && !isExpired && (
+        <p
+          role="status"
+          aria-live="polite"
+          className="text-caption text-success animate-in fade-in duration-150"
+        >
+          {statusMessage}
+        </p>
       )}
 
       {/* Verify error */}

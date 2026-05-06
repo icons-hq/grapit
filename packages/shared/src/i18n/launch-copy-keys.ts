@@ -11,22 +11,33 @@ export type LaunchCopyLocale = (typeof LAUNCH_COPY_LOCALES)[number];
 export type LaunchCopyNamespace = (typeof LAUNCH_COPY_NAMESPACES)[number];
 
 const authEmailVerificationKeys = [
-  'expired',
+  'sent',
   'resendCta',
   'resendLoading',
   'resendSuccess',
-  'sent',
+  'expired',
   'verified',
+  'throttled',
+  'systemError',
 ] as const;
 
-const authOtpKeys = ['sendCta', 'sending', 'verifyCta', 'verified'] as const;
+const authOtpKeys = [
+  'sent',
+  'resendCta',
+  'resendLoading',
+  'resendSuccess',
+  'expired',
+  'invalidCode',
+  'throttled',
+  'systemError',
+] as const;
 
 const authErrorKeys = [
-  'expiredOtp',
-  'generic',
-  'invalidOtp',
-  'rateLimited',
-  'unsupportedCountry',
+  'invalidCredentials',
+  'emailUnverified',
+  'verificationRequired',
+  'providerUnavailable',
+  'deviceLimitNotice',
 ] as const;
 
 const smsOtpKeys = ['message', 'rateLimited', 'verified'] as const;

@@ -4,5 +4,34 @@
   },
   "locale": {
     "suggestion": "要以简体中文查看此页面吗？"
+  },
+  "auth": {
+    "emailVerification": {
+      "sent": "验证邮件已发送",
+      "resendCta": "重新发送验证邮件",
+      "resendLoading": "正在重新发送...",
+      "resendSuccess": "验证邮件已重新发送",
+      "expired": "验证链接已过期。请重新请求验证邮件。",
+      "verified": "邮箱验证已完成。",
+      "throttled": "请稍后再试。",
+      "systemError": "暂时发生错误。请重试。"
+    },
+    "otp": {
+      "sent": "验证码已发送",
+      "resendCta": "重新发送验证码",
+      "resendLoading": "正在重新发送验证码",
+      "resendSuccess": "新的验证码已发送",
+      "expired": "验证码已过期，请重新发送。",
+      "invalidCode": "验证码不正确",
+      "throttled": "请求过于频繁，请稍后再试。",
+      "systemError": "验证码处理失败，请稍后再试。"
+    },
+    "errors": {
+      "invalidCredentials": "邮箱或密码不正确",
+      "emailUnverified": "需要完成邮箱验证",
+      "verificationRequired": "请完成验证",
+      "providerUnavailable": "该社交登录服务暂不可用",
+      "deviceLimitNotice": "由于另一台设备登录，最早的会话已被退出。"
+    }
   }
 }
