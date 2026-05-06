@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { consentCaptureItemSchema } from '@grabit/shared';
 
 export const registerBodySchema = z.object({
   email: z.string().email('올바른 이메일 주소를 입력해주세요'),
@@ -28,6 +29,7 @@ export const registerBodySchema = z.object({
     errorMap: () => ({ message: '개인정보처리방침에 동의해주세요' }),
   }),
   marketingConsent: z.boolean(),
+  consentItems: z.array(consentCaptureItemSchema).min(1, '동의 항목이 필요합니다'),
 });
 
 export type RegisterBody = z.infer<typeof registerBodySchema>;

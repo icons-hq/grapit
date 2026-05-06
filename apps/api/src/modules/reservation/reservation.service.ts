@@ -26,7 +26,9 @@ import { TossPaymentsClient } from '../payment/toss-payments.client.js';
 import { BookingService, PAYMENT_CONFIRM_LOCK_TTL } from '../booking/booking.service.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
+import { ConsentService } from '../consent/consent.service.js';
 import type {
+  ConsentCaptureItem,
   SeatSelection,
   ReservationStatus,
   ReservationListItem,
@@ -47,6 +49,7 @@ export class ReservationService {
     private readonly bookingService: BookingService,
     private readonly bookingGateway: BookingGateway,
     private readonly featureFlags: FeatureFlagsService,
+    private readonly consentService: ConsentService,
   ) {}
 
   generateReservationNumber(): string {
@@ -203,6 +206,9 @@ export class ReservationService {
     userId: string,
   ): Promise<PrepareReservationResponse> {
     this.featureFlags.assertBookingEnabled();
+    await this.assertBookingConsent(dto as PrepareReservationRequest & {
+      consentItems?: ConsentCaptureItem[];
+    });
 
     this.assertUniqueSeatIds(dto.seats);
 
@@ -320,6 +326,18 @@ export class ReservationService {
     });
 
     return { reservationId: result.id, orderId: dto.orderId };
+  }
+
+  private async assertBookingConsent(
+    dto: PrepareReservationRequest & { consentItems?: ConsentCaptureItem[] },
+  ): Promise<void> {
+    if (!Object.prototype.hasOwnProperty.call(dto, 'consentItems')) {
+      return;
+    }
+
+    await this.consentService.assertRequiredConsents({
+      items: dto.consentItems ?? [],
+    });
   }
 
   async confirmAndCreateReservation(

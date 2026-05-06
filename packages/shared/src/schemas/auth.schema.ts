@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { consentCaptureItemSchema } from './consent.schema';
 
 // Password validation: min 8 chars, must contain letter + number + special char
 export const passwordSchema = z
@@ -39,6 +40,7 @@ export const registerStep2Schema = z.object({
     errorMap: () => ({ message: '개인정보처리방침에 동의해주세요' }),
   }),
   marketingConsent: z.boolean(),
+  consentItems: z.array(consentCaptureItemSchema).min(1, '동의 항목이 필요합니다'),
 });
 
 export type RegisterStep2Input = z.infer<typeof registerStep2Schema>;

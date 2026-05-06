@@ -875,6 +875,7 @@ describe('AuthService', () => {
           termsOfService: true,
           privacyPolicy: true,
           marketingConsent: false,
+          consentItems: makeConsentItems(),
         },
       );
 
@@ -897,6 +898,7 @@ describe('AuthService', () => {
           termsOfService: true,
           privacyPolicy: true,
           marketingConsent: false,
+          consentItems: makeConsentItems(),
         }),
       ).rejects.toThrow(UnauthorizedException);
     });
@@ -927,6 +929,7 @@ describe('AuthService', () => {
           termsOfService: true,
           privacyPolicy: true,
           marketingConsent: false,
+          consentItems: makeConsentItems(),
         },
       );
 
@@ -971,6 +974,7 @@ describe('AuthService', () => {
           termsOfService: true,
           privacyPolicy: true,
           marketingConsent: false,
+          consentItems: makeConsentItems(),
         },
       );
 
@@ -995,6 +999,7 @@ describe('AuthService', () => {
           termsOfService: true,
           privacyPolicy: true,
           marketingConsent: false,
+          consentItems: makeConsentItems(),
         }),
       ).rejects.toThrow(GoneException);
 
@@ -1271,7 +1276,7 @@ describe('resetPassword (integration — real JwtService — CR-02 regression gu
     integSms = { sendVerification: vi.fn(), verifyCode: vi.fn(), isPhoneVerified: vi.fn() };
     integEmail = { sendPasswordResetEmail: vi.fn() };
 
-    // Real constructor order: (jwtService, configService, userRepository, smsService, emailService, db)
+    // Real constructor order: (jwtService, configService, userRepository, smsService, emailService, db, consentService)
     authServiceLocal = new AuthService(
       realJwtService,
       integConfig as unknown as ConfigService,
@@ -1279,6 +1284,11 @@ describe('resetPassword (integration — real JwtService — CR-02 regression gu
       integSms as any,
       integEmail as any,
       integDb as any,
+      {
+        assertAgeAllowed: vi.fn(),
+        assertRequiredConsents: vi.fn(),
+        captureConsent: vi.fn(),
+      } as any,
     );
   });
 

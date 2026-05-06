@@ -11,6 +11,7 @@ import { NaverStrategy } from './strategies/naver.strategy.js';
 import { GoogleStrategy } from './strategies/google.strategy.js';
 import { UserModule } from '../user/user.module.js';
 import { SmsModule } from '../sms/sms.module.js';
+import { ConsentModule } from '../consent/consent.module.js';
 import { EmailModule } from './email/email.module.js';
 import { authConfig } from '../../config/auth.config.js';
 
@@ -23,6 +24,7 @@ import { authConfig } from '../../config/auth.config.js';
     PassportModule,
     UserModule,
     SmsModule,
+    ConsentModule,
     EmailModule,
     JwtModule.registerAsync({
       imports: [ConfigModule.forFeature(authConfig)],

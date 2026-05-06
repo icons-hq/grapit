@@ -17,6 +17,7 @@ import * as schema from '../../database/schema/index.js';
 import { UserRepository } from '../user/user.repository.js';
 import { SmsService } from '../sms/sms.service.js';
 import { EmailService } from './email/email.service.js';
+import { ConsentService } from '../consent/consent.service.js';
 import type { RegisterBody } from './dto/register.dto.js';
 import type { SocialRegisterBody } from './dto/social-register.dto.js';
 import type { SocialProfile } from './interfaces/social-profile.interface.js';
@@ -70,9 +71,13 @@ export class AuthService {
     private readonly smsService: SmsService,
     private readonly emailService: EmailService,
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
+    private readonly consentService: ConsentService,
   ) {}
 
   async register(dto: RegisterBody): Promise<AuthResult> {
+    this.consentService.assertAgeAllowed(dto.birthDate);
+    await this.consentService.assertRequiredConsents({ items: dto.consentItems });
+
     // 0. Verify phone number — handle idempotent re-verify after the
     // frontend already called /sms/verify-code (OTP key was DEL'd, so
     // verifyCode now returns EXPIRED). Per sms.service.ts:385-403, fall
@@ -113,6 +118,16 @@ export class AuthService {
       privacyPolicy: dto.privacyPolicy,
       marketingConsent: dto.marketingConsent,
     });
+
+    await this.consentService.captureConsent(
+      user.id,
+      {
+        birthDate: dto.birthDate,
+        items: dto.consentItems,
+        sourceFlow: 'signup',
+      },
+      { ipAddress: '0.0.0.0' },
+    );
 
     // 5-6. Generate tokens
     const tokens = await this.generateTokenPair(user.id, user.email, user.role);
@@ -536,6 +551,9 @@ export class AuthService {
       throw new UnauthorizedException('유효하지 않은 등록 토큰입니다');
     }
 
+    this.consentService.assertAgeAllowed(dto.birthDate);
+    await this.consentService.assertRequiredConsents({ items: dto.consentItems });
+
     // 2. Check if user with that email already exists (account linking)
     const email = payload.email ?? `${payload.provider}_${payload.providerId}@social.grabit.com`;
     const existingUser = await this.userRepository.findByEmail(email);
@@ -560,6 +578,16 @@ export class AuthService {
         privacyPolicy: dto.privacyPolicy,
         marketingConsent: dto.marketingConsent,
       });
+
+      await this.consentService.captureConsent(
+        existingUser.id,
+        {
+          birthDate: dto.birthDate,
+          items: dto.consentItems,
+          sourceFlow: 'signup',
+        },
+        { ipAddress: '0.0.0.0' },
+      );
 
       const tokens = await this.generateTokenPair(existingUser.id, existingUser.email, existingUser.role);
 
@@ -597,6 +625,16 @@ export class AuthService {
       privacyPolicy: dto.privacyPolicy,
       marketingConsent: dto.marketingConsent,
     });
+
+    await this.consentService.captureConsent(
+      user.id,
+      {
+        birthDate: dto.birthDate,
+        items: dto.consentItems,
+        sourceFlow: 'signup',
+      },
+      { ipAddress: '0.0.0.0' },
+    );
 
     // 6. Generate JWT tokens
     const tokens = await this.generateTokenPair(user.id, user.email, user.role);

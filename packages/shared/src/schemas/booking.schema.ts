@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { consentCaptureItemSchema } from './consent.schema';
 
 const seatSelectionSchema = z.object({
   seatId: z.string().min(1, '좌석 ID가 필요합니다'),
@@ -13,6 +14,7 @@ export const prepareReservationSchema = z.object({
   showtimeId: z.string().uuid('유효한 회차 ID가 필요합니다'),
   seats: z.array(seatSelectionSchema).min(1, '최소 1개의 좌석을 선택해야 합니다'),
   amount: z.number().int().positive('결제 금액은 0보다 커야 합니다'),
+  consentItems: z.array(consentCaptureItemSchema).optional(),
 });
 
 export type PrepareReservationInput = z.infer<typeof prepareReservationSchema>;
