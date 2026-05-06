@@ -65,7 +65,7 @@ Plans:
 
 **Merged from:** 25 Prod compatibility + flags, 26 i18n routing + locale foundation, 27 Translation workflow + legal lock, 28 email verification + 5-country SMS (LINE excluded by Phase 23 D-13), 29 Multinational consent + audit
 
-**Plans:** 2/17 plans executed
+**Plans:** 3/17 plans executed
 
 Plans:
 **Wave 1**
@@ -73,7 +73,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [x] 23-02-PLAN.md — Expand Drizzle schema and run the blocking Phase 23 migration apply gate
-- [ ] 23-03-PLAN.md — Enforce runtime booking feature flags on API booking/payment creation paths
+- [x] 23-03-PLAN.md — Enforce runtime booking feature flags on API booking/payment creation paths
 
 **Wave 3** *(blocked on foundation contracts/schema)*
 - [ ] 23-04-PLAN.md — Implement five-locale routing, sitemap, and locale suggestion UI

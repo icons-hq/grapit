@@ -14,7 +14,7 @@
 ### Production Compatibility and Flags
 
 - [x] **FLAG-01**: Existing production users, reservations, sessions, and Korean SEO URLs remain valid through expand-only migrations and canary deploys.
-- [ ] **FLAG-02**: User sees booking disabled with localized "5월말 오픈 예정" copy, and booking APIs do not create seat locks or payment attempts while `BOOKING_ENABLED=false`.
+- [x] **FLAG-02**: User sees booking disabled with localized "5월말 오픈 예정" copy, and booking APIs do not create seat locks or payment attempts while `BOOKING_ENABLED=false`.
 - [ ] **M1-01**: Operator can complete M1 integrated smoke tests and canary deploy, then open the advertising/signup surface on 2026-05-15.
 
 ### Globalization
@@ -103,7 +103,7 @@ Phase mapping was consolidated on 2026-05-04 from the initial 22-phase launch-ri
 | PREF-02 | Phase 22 | Complete |
 | PREF-03 | Phase 22 | Complete |
 | FLAG-01 | Phase 23 | Complete |
-| FLAG-02 | Phase 23 | Pending |
+| FLAG-02 | Phase 23 | Complete |
 | I18N-01 | Phase 23 | Complete |
 | I18N-02 | Phase 23 | Complete |
 | TRANS-01 | Phase 23 | Complete |
