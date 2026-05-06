@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Fanmeet Launch
 status: executing
-stopped_at: Completed 23-15-PLAN.md
-last_updated: "2026-05-06T05:55:58.128Z"
+stopped_at: Completed 23-16-PLAN.md
+last_updated: "2026-05-06T06:09:50.885Z"
 last_activity: 2026-05-06
 progress:
   total_phases: 7
   completed_phases: 1
   total_plans: 23
-  completed_plans: 14
-  percent: 61
+  completed_plans: 15
+  percent: 65
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-05-04)
 ## Current Position
 
 Phase: 23 (launch-foundation) — EXECUTING
-Plan: 9 of 17
+Plan: 10 of 17
 Status: Ready to execute
 Last activity: 2026-05-06
 
@@ -172,6 +172,7 @@ Summary: 70 total items (debug sessions 5, quick tasks 41, seeds 2, UAT gaps 12,
 | Phase 23 P06 | 13m52s | 3 tasks | 13 files |
 | Phase 23-launch-foundation P14 | 5m25s | 1 tasks | 7 files |
 | Phase 23-launch-foundation P15 | 7m59s | 1 tasks | 9 files |
+| Phase 23-launch-foundation P16 | 8m16s | 1 tasks | 14 files |
 
 ## Accumulated Context
 
@@ -253,6 +254,9 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 - [Phase 23-15]: PhoneInput keeps unsupported countries searchable/selectable while localizing labels for ko, en, th, zh-CN, and zh-TW.
 - [Phase 23-15]: PhoneVerification resolves next-intl active locale with ko fallback and passes it into PhoneInput.
 - [Phase 23-15]: Auth/email/OTP/SMS launch copy keys are centralized in @grabit/shared for exact five-locale coverage.
+- [Phase 23-launch-foundation]: Locale suggestion is a LayoutShell banner prompt rather than a toast. — Keeps display deterministic and testable without global side effects.
+- [Phase 23-launch-foundation]: Locale preference validation reuses shared locale constants. — Avoids a duplicate supported-locale source of truth across API and web.
+- [Phase 23-launch-foundation]: Locale precedence remains owned by existing i18n routing. — This plan wires explicit switch and profile persistence while documenting url > explicit-switch > user-profile > cookie > ko.
 
 ### Pending Todos
 
@@ -291,8 +295,8 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 
 ## Session Continuity
 
-Last session: 2026-05-06T05:55:58.124Z
-Stopped at: Completed 23-15-PLAN.md
+Last session: 2026-05-06T06:09:50.882Z
+Stopped at: Completed 23-16-PLAN.md
 Resume file: None
 
 **Planned Phase:** v2.0 Phase 23 (launch-foundation) — Phase 22 complete with READY_WITH_ACCEPTED_RISKS; proceed only under accepted risks listed in 22-VERIFICATION.md.
