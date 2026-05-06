@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Fanmeet Launch
 status: executing
-stopped_at: Completed 23-07-PLAN.md
-last_updated: "2026-05-06T06:37:23.525Z"
+stopped_at: Completed 23-08-PLAN.md
+last_updated: "2026-05-06T06:51:29.104Z"
 last_activity: 2026-05-06
 progress:
   total_phases: 7
   completed_phases: 1
   total_plans: 23
-  completed_plans: 17
-  percent: 74
+  completed_plans: 18
+  percent: 78
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-05-04)
 ## Current Position
 
 Phase: 23 (launch-foundation) — EXECUTING
-Plan: 12 of 17
+Plan: 13 of 17
 Status: Ready to execute
 Last activity: 2026-05-06
 
@@ -175,6 +175,7 @@ Summary: 70 total items (debug sessions 5, quick tasks 41, seeds 2, UAT gaps 12,
 | Phase 23-launch-foundation P16 | 8m16s | 1 tasks | 14 files |
 | Phase 23-launch-foundation P17 | 12 min | 1 tasks | 4 files |
 | Phase 23-launch-foundation P07 | 15m09s | 3 tasks | 23 files |
+| Phase 23-launch-foundation P08 | 9m09s | 1 tasks | 13 files |
 
 ## Accumulated Context
 
@@ -265,6 +266,9 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 - [Phase 23-07]: Consent audit rows persist sourceFlow on append-only evidence rows to distinguish signup from booking capture.
 - [Phase 23-07]: Admin consent audit output is masked by default for email, phone, and IP with no raw PII path added.
 - [Phase 23-07]: Booking consent validation runs after BOOKING_ENABLED and before reservation/payment side effects.
+- [Phase 23-08]: Web reads BOOKING_ENABLED through /api/runtime-flags at runtime, not NEXT_PUBLIC_BOOKING_ENABLED.
+- [Phase 23-08]: Disabled UI guards exist both in visible booking/confirm surfaces and in useLockSeat/usePrepareReservation mutation hooks.
+- [Phase 23-08]: Public performance detail CTA is replaced with localized opening copy while booking is disabled.
 
 ### Pending Todos
 
@@ -303,8 +307,8 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 
 ## Session Continuity
 
-Last session: 2026-05-06T06:37:23.520Z
-Stopped at: Completed 23-07-PLAN.md
+Last session: 2026-05-06T06:51:29.100Z
+Stopped at: Completed 23-08-PLAN.md
 Resume file: None
 
 **Planned Phase:** v2.0 Phase 23 (launch-foundation) — Phase 22 complete with READY_WITH_ACCEPTED_RISKS; proceed only under accepted risks listed in 22-VERIFICATION.md.
