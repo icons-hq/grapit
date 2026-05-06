@@ -65,7 +65,7 @@ Plans:
 
 **Merged from:** 25 Prod compatibility + flags, 26 i18n routing + locale foundation, 27 Translation workflow + legal lock, 28 email verification + 5-country SMS (LINE excluded by Phase 23 D-13), 29 Multinational consent + audit
 
-**Plans:** 10 plans
+**Plans:** 16 plans
 
 Plans:
 **Wave 1**
@@ -79,14 +79,20 @@ Plans:
 - [ ] 23-04-PLAN.md — Implement five-locale routing, sitemap, and locale suggestion UI
 - [ ] 23-05-PLAN.md — Implement translation workflow and legal copy machine-translation lock
 - [ ] 23-06-PLAN.md — Implement email verification, three-device refresh-family policy, SMS validation, and LINE absence gates
-- [ ] 23-10-PLAN.md — Implement KST/KRW formatting, locale switch/suggestion UI, PhoneInput localization, and locale preference persistence
+- [ ] 23-14-PLAN.md — Implement KST/KRW formatting helpers and visible time/currency components
+- [ ] 23-15-PLAN.md — Localize PhoneInput labels and define the launch auth/OTP/SMS copy manifest
+- [ ] 23-16-PLAN.md — Add explicit locale switch/suggestion UI and logged-in locale preference persistence
 
 **Wave 4** *(blocked on schema, i18n, translation, and auth foundations)*
 - [ ] 23-07-PLAN.md — Implement itemized consent capture and masked audit query API
+- [ ] 23-08-PLAN.md — Wire runtime booking-disabled UI without build-time flag freezing
+- [ ] 23-09-PLAN.md — Add localized auth, email verification, SMS OTP, and auth status UI copy
+- [ ] 23-11-PLAN.md — Build admin translation source-to-publish workflow and reusable automatic translation label
+- [ ] 23-13-PLAN.md — Wire legal English fallback labels and footer compliance surfaces
 
 **Wave 5** *(blocked on API/i18n foundations)*
-- [ ] 23-08-PLAN.md — Wire booking-disabled, email verification, and itemized consent user-facing UI
-- [ ] 23-09-PLAN.md — Wire admin translation review, consent audit UI, legal fallback, and footer surfaces
+- [ ] 23-10-PLAN.md — Replace boolean signup consent with itemized consent UI and no-LINE auth surface
+- [ ] 23-12-PLAN.md — Build masked admin consent audit query UI
 
 **Success criteria:**
 1. Expand-only migrations, canary policy, and shared feature flag helper preserve existing production users, reservations, sessions, and Korean root URLs.
