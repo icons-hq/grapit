@@ -65,7 +65,7 @@ Plans:
 
 **Merged from:** 25 Prod compatibility + flags, 26 i18n routing + locale foundation, 27 Translation workflow + legal lock, 28 email verification + 5-country SMS (LINE excluded by Phase 23 D-13), 29 Multinational consent + audit
 
-**Plans:** 16/17 plans executed
+**Plans:** 17/17 plans complete
 
 Plans:
 **Wave 1**
@@ -95,7 +95,7 @@ Plans:
 - [x] 23-12-PLAN.md — Build masked admin consent audit query UI
 
 **Wave 6** *(blocked on public performance detail and admin hook/sidebar file ownership)*
-- [ ] 23-11-PLAN.md — Build admin translation workflow and wire automatic translation label into public performance detail
+- [x] 23-11-PLAN.md — Build admin translation workflow and wire automatic translation label into public performance detail
 
 **Success criteria:**
 1. Expand-only migrations, canary policy, and shared feature flag helper preserve existing production users, reservations, sessions, and Korean root URLs.
