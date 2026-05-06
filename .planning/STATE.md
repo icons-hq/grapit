@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Fanmeet Launch
 status: executing
-stopped_at: Phase 23 UI-SPEC approved
-last_updated: "2026-05-06T03:48:25.750Z"
-last_activity: 2026-05-06 -- Phase 23 planning complete
+stopped_at: Completed 23-01-PLAN.md
+last_updated: "2026-05-06T04:26:28.434Z"
+last_activity: 2026-05-06
 progress:
   total_phases: 7
   completed_phases: 1
   total_plans: 23
-  completed_plans: 6
-  percent: 26
+  completed_plans: 7
+  percent: 30
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-04)
 
 **Core value:** 사용자가 원하는 공연을 발견하고, 좌석을 직접 선택하여, 안정적으로 예매를 완료할 수 있는 것
-**Current focus:** Phase 23 — Launch Foundation
+**Current focus:** Phase 23 — launch-foundation
 
 ## Current Position
 
-Phase: 23
-Plan: Not started
+Phase: 23 (launch-foundation) — EXECUTING
+Plan: 2 of 17
 Status: Ready to execute
-Last activity: 2026-05-06 -- Phase 23 planning complete
+Last activity: 2026-05-06
 
 ## Deferred Items
 
@@ -164,6 +164,7 @@ Summary: 70 total items (debug sessions 5, quick tasks 41, seeds 2, UAT gaps 12,
 | Phase 22 P04 | 10min | 3 tasks | 2 files |
 | Phase 22 P05 | 8min | 2 tasks | 3 files |
 | Phase 22 P06 | 18min | 3 tasks | 6 files |
+| Phase 23 P01 | 5 min | 3 tasks | 13 files |
 
 ## Accumulated Context
 
@@ -223,6 +224,9 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 - [Phase 22-05]: Phase 23 readiness is READY_WITH_ACCEPTED_RISKS after source validation and hardening blockers were explicitly reclassified with maintainer/operator approvals.
 - [Phase 22-05]: Production Valkey smoke was recorded as an accepted-risk classification because production auth and operator-approved safe fixtures were unavailable.
 - [Phase 22-06]: Invalid-but-regex-valid SMS phone input is normalized to BadRequestException at the service boundary before Valkey/Infobip side effects. — Production UAT test 9 is locally fixed and still needs deploy plus production rerun before changing the live observation to pass.
+- [Phase 23]: LINE remains excluded from Phase 23 per D-13; stale spec references are marked superseded instead of becoming implementation scope.
+- [Phase 23]: Korean remains prefixless while en/th/zh-CN/zh-TW use explicit route prefixes.
+- [Phase 23]: BOOKING_ENABLED is the shared source-of-truth flag name and defaults false when absent.
 
 ### Pending Todos
 
@@ -261,8 +265,8 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 
 ## Session Continuity
 
-Last session: 2026-05-06T01:54:36.374Z
-Stopped at: Phase 23 UI-SPEC approved
-Resume file: .planning/phases/23-launch-foundation/23-UI-SPEC.md
+Last session: 2026-05-06T04:25:49.677Z
+Stopped at: Completed 23-01-PLAN.md
+Resume file: None
 
 **Planned Phase:** v2.0 Phase 23 (launch-foundation) — Phase 22 complete with READY_WITH_ACCEPTED_RISKS; proceed only under accepted risks listed in 22-VERIFICATION.md.

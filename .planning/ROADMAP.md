@@ -65,11 +65,11 @@ Plans:
 
 **Merged from:** 25 Prod compatibility + flags, 26 i18n routing + locale foundation, 27 Translation workflow + legal lock, 28 email verification + 5-country SMS (LINE excluded by Phase 23 D-13), 29 Multinational consent + audit
 
-**Plans:** 17 plans
+**Plans:** 1/17 plans executed
 
 Plans:
 **Wave 1**
-- [ ] 23-01-PLAN.md — Reconcile stale LINE scope per D-13 and create shared flag/locale/consent contracts
+- [x] 23-01-PLAN.md — Reconcile stale LINE scope per D-13 and create shared flag/locale/consent contracts
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 23-02-PLAN.md — Expand Drizzle schema and run the blocking Phase 23 migration apply gate
