@@ -60,6 +60,20 @@ describe('PhoneVerification', () => {
 
   // ---------- 발송 후 상태 ----------
   describe('발송 후', () => {
+    it('SMS OTP sent state is announced with localized copy', async () => {
+      const { apiClient } = await import('@/lib/api-client');
+      (apiClient.post as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ success: true });
+
+      render(<PhoneVerification {...defaultProps} />);
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+
+      await user.click(screen.getByRole('button', { name: /인증번호 발송/ }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('status')).toHaveTextContent('인증번호가 발송되었습니다');
+      });
+    });
+
     it('"인증번호 6자리" 입력 필드가 노출', async () => {
       const { apiClient } = await import('@/lib/api-client');
       (apiClient.post as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ success: true });
@@ -115,6 +129,39 @@ describe('PhoneVerification', () => {
       await waitFor(() => {
         const btn = screen.getByRole('button', { name: /재발송/ });
         expect(btn).not.toBeDisabled();
+      });
+    });
+
+    it('SMS OTP resend loading and success states use localized copy', async () => {
+      const { apiClient } = await import('@/lib/api-client');
+      (apiClient.post as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ success: true });
+
+      render(<PhoneVerification {...defaultProps} />);
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+
+      await user.click(screen.getByRole('button', { name: /인증번호 발송/ }));
+      await waitFor(() => {
+        expect(screen.getByText(/재발송 \(30s\)/)).toBeInTheDocument();
+      });
+
+      await act(async () => {
+        vi.advanceTimersByTime(30_000);
+      });
+
+      let resolveResend!: () => void;
+      (apiClient.post as ReturnType<typeof vi.fn>).mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveResend = () => resolve({ success: true });
+        }),
+      );
+
+      await user.click(screen.getByRole('button', { name: /인증번호 재발송/ }));
+      expect(screen.getByText('인증번호를 다시 보내는 중입니다')).toBeInTheDocument();
+
+      resolveResend();
+
+      await waitFor(() => {
+        expect(screen.getByRole('status')).toHaveTextContent('인증번호를 다시 보냈습니다');
       });
     });
   });
@@ -187,6 +234,23 @@ describe('PhoneVerification', () => {
 
       await waitFor(() => {
         expect(screen.getByText(/인증번호가 일치하지 않습니다/)).toBeInTheDocument();
+      });
+    });
+
+    it('500 에러 시 system error copy를 표시하고 raw provider message는 숨김', async () => {
+      const { apiClient, ApiClientError } = await import('@/lib/api-client');
+      const err = new ApiClientError('raw infobip outage', 500);
+      (apiClient.post as ReturnType<typeof vi.fn>).mockRejectedValueOnce(err);
+
+      render(<PhoneVerification {...defaultProps} />);
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      await user.click(screen.getByRole('button', { name: /인증번호 발송/ }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          '인증번호 처리에 실패했습니다. 잠시 후 다시 시도해주세요',
+        );
+        expect(screen.queryByText('raw infobip outage')).not.toBeInTheDocument();
       });
     });
   });
