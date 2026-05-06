@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TranslationService } from './translation.service.js';
 
 type SourceRow = {
@@ -82,10 +82,20 @@ class InMemoryTranslationStore {
 describe('TranslationService', () => {
   let store: InMemoryTranslationStore;
   let service: TranslationService;
+  let deeplClient: {
+    translateText: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
     store = new InMemoryTranslationStore();
-    service = new TranslationService(store as never);
+    deeplClient = {
+      translateText: vi.fn(async (text: string, locale: string) => ({
+        status: 'translated',
+        text: `${locale}:${text}`,
+        targetLang: locale,
+      })),
+    };
+    service = new TranslationService(store as never, deeplClient as never);
   });
 
   it('creates Korean source content and target drafts for all launch locales', async () => {
@@ -164,5 +174,44 @@ describe('TranslationService', () => {
       automaticTranslationLabel: true,
     });
     expect(queue[0].updatedAt).toBeInstanceOf(Date);
+  });
+
+  it('blocks legal-sensitive content before any translation provider call', async () => {
+    const source = await service.createSource({
+      entityType: 'legal',
+      entityId: '11111111-1111-1111-1111-111111111111',
+      field: 'terms',
+      sourceText: '법적 고지',
+      createdBy: '22222222-2222-2222-2222-222222222222',
+    });
+
+    await expect(service.generateDrafts(source.id)).rejects.toThrow(
+      '법적 고지는 자동 번역할 수 없습니다',
+    );
+    expect(deeplClient.translateText).not.toHaveBeenCalled();
+  });
+
+  it('keeps missing-key provider output as reviewable drafts instead of published content', async () => {
+    deeplClient.translateText.mockResolvedValue({
+      status: 'unavailable',
+      text: '[manual-review:deepl-unavailable] 팬미팅 안내',
+      targetLang: 'EN-US',
+    });
+    const source = await service.createSource({
+      entityType: 'fanmeet',
+      entityId: '11111111-1111-1111-1111-111111111111',
+      field: 'description',
+      sourceText: '팬미팅 안내',
+      createdBy: '22222222-2222-2222-2222-222222222222',
+    });
+
+    const drafts = await service.generateDrafts(source.id);
+
+    expect(drafts[0]).toMatchObject({
+      status: 'draft',
+      translatedText: '[manual-review:deepl-unavailable] 팬미팅 안내',
+      automaticTranslationLabel: true,
+    });
+    expect(drafts.some((draft) => draft.status === 'published')).toBe(false);
   });
 });
