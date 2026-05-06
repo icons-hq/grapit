@@ -1,8 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_LOCALE, LOCALE_PREFIXES, SUPPORTED_LOCALES } from '@grabit/shared';
 import {
   getSuggestedLocaleFromAcceptLanguage,
+  LOCALE_SUGGESTION_COOKIE,
   resolveLocaleFromPathname,
   routing,
 } from './routing';
@@ -49,7 +51,7 @@ describe('launch locale routing', () => {
 
   it('ships minimal messages for all launch locales', () => {
     for (const locale of SUPPORTED_LOCALES) {
-      const messageFile = new URL(`../messages/${locale}.json`, import.meta.url);
+      const messageFile = resolve(process.cwd(), 'messages', `${locale}.json`);
 
       expect(existsSync(messageFile)).toBe(true);
 
@@ -66,10 +68,11 @@ describe('launch locale routing', () => {
   });
 
   it('keeps proxy suggest-never-redirect behavior explicit', () => {
-    const proxySource = readFileSync(new URL('../proxy.ts', import.meta.url), 'utf8');
+    const proxySource = readFileSync(resolve(process.cwd(), 'proxy.ts'), 'utf8');
 
     expect(proxySource).toContain('createMiddleware');
-    expect(proxySource).toContain('locale-suggestion');
+    expect(LOCALE_SUGGESTION_COOKIE).toBe('locale-suggestion');
+    expect(proxySource).toContain('LOCALE_SUGGESTION_COOKIE');
     expect(proxySource).not.toContain('NextResponse.redirect');
   });
 });
