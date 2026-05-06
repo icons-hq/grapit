@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Fanmeet Launch
 status: executing
-stopped_at: Completed 23-03-PLAN.md
-last_updated: "2026-05-06T04:50:37.646Z"
+stopped_at: Completed 23-04-PLAN.md
+last_updated: "2026-05-06T05:03:35.680Z"
 last_activity: 2026-05-06
 progress:
   total_phases: 7
   completed_phases: 1
   total_plans: 23
-  completed_plans: 9
-  percent: 39
+  completed_plans: 10
+  percent: 43
 ---
 
 # Project State
@@ -26,7 +26,7 @@ See: .planning/PROJECT.md (updated 2026-05-04)
 ## Current Position
 
 Phase: 23 (launch-foundation) — EXECUTING
-Plan: 4 of 17
+Plan: 5 of 17
 Status: Ready to execute
 Last activity: 2026-05-06
 
@@ -167,6 +167,7 @@ Summary: 70 total items (debug sessions 5, quick tasks 41, seeds 2, UAT gaps 12,
 | Phase 23 P01 | 5 min | 3 tasks | 13 files |
 | Phase 23 P02 | 7 min | 2 tasks | 13 files |
 | Phase 23 P03 | 8 min | 3 tasks | 13 files |
+| Phase 23 P04 | 8 min | 2 tasks | 15 files |
 
 ## Accumulated Context
 
@@ -234,6 +235,8 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 - [Phase 23-02]: Legal content uses manual ko/en columns and is structurally separate from translation_drafts.
 - [Phase 23-03]: API booking flag decisions use runtime BOOKING_ENABLED through FeatureFlagsService, not NEXT_PUBLIC_BOOKING_ENABLED. — Prevents client-public flag drift from enabling backend booking mutations.
 - [Phase 23-03]: Booking-disabled guard blocks lockSeat, prepareReservation, and confirmAndCreateReservation before Redis lock, DB transaction, confirm lock, and Toss side effects. — Advertising-open mode must be enforced on backend mutation paths, not only in UI.
+- [Phase 23-04]: Locale routing uses next-intl with localeDetection:false so URL prefixes remain authoritative and Accept-Language only creates suggestion state.
+- [Phase 23-04]: Korean sitemap URLs remain prefixless while foreign hreflang alternates use /en, /th, /zh-CN, and /zh-TW.
 
 ### Pending Todos
 
@@ -272,8 +275,8 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 
 ## Session Continuity
 
-Last session: 2026-05-06T04:50:37.643Z
-Stopped at: Completed 23-03-PLAN.md
+Last session: 2026-05-06T05:03:35.677Z
+Stopped at: Completed 23-04-PLAN.md
 Resume file: None
 
 **Planned Phase:** v2.0 Phase 23 (launch-foundation) — Phase 22 complete with READY_WITH_ACCEPTED_RISKS; proceed only under accepted risks listed in 22-VERIFICATION.md.

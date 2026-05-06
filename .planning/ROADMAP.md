@@ -65,7 +65,7 @@ Plans:
 
 **Merged from:** 25 Prod compatibility + flags, 26 i18n routing + locale foundation, 27 Translation workflow + legal lock, 28 email verification + 5-country SMS (LINE excluded by Phase 23 D-13), 29 Multinational consent + audit
 
-**Plans:** 3/17 plans executed
+**Plans:** 4/17 plans executed
 
 Plans:
 **Wave 1**
@@ -76,7 +76,7 @@ Plans:
 - [x] 23-03-PLAN.md — Enforce runtime booking feature flags on API booking/payment creation paths
 
 **Wave 3** *(blocked on foundation contracts/schema)*
-- [ ] 23-04-PLAN.md — Implement five-locale routing, sitemap, and locale suggestion UI
+- [x] 23-04-PLAN.md — Implement five-locale routing, sitemap, and locale suggestion UI
 - [ ] 23-05-PLAN.md — Implement backend translation workflow, DeepL adapter, and legal machine-translation guard
 - [ ] 23-06-PLAN.md — Implement email verification, three-device refresh-family policy, SMS validation, and LINE absence gates (D-13 excluded)
 - [ ] 23-14-PLAN.md — Implement KST/KRW formatting helpers and wire them into public performance detail
