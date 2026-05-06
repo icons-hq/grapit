@@ -26,7 +26,7 @@
 
 ### Auth and Compliance
 
-- [ ] **AUTH-01**: User can sign up or log in through Kakao, Naver, Google, LINE, or email, with email verification expiring after 30 minutes and immediate resend available.
+- [ ] **AUTH-01**: User can sign up or log in through Kakao, Naver, Google, or email, with email verification expiring after 30 minutes and immediate resend available. LINE is excluded from Phase 23 by D-13.
 - [ ] **AUTH-02**: User account sessions enforce the three-device policy through refresh token family tracking.
 - [ ] **COMP-01**: User can complete required PIPA, cross-border transfer, PDPA/PIPL English notice, under-14 restriction, and marketing consent flows.
 - [ ] **COMP-02**: Operator can query consent audit logs by item, version, language, timestamp, IP, and user.
