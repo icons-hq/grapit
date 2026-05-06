@@ -61,7 +61,10 @@ export class UserRepository {
       .where(eq(schema.users.id, userId));
   }
 
-  async updateProfile(userId: string, data: Partial<Pick<UserProfile, 'name' | 'phone'>>) {
+  async updateProfile(
+    userId: string,
+    data: Partial<Pick<UserProfile, 'name' | 'phone' | 'preferredLocale'>>,
+  ) {
     await this.db
       .update(schema.users)
       .set({ ...data, updatedAt: new Date() })

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { X, User, LogOut, Search } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { LocaleSwitcher } from '@/components/i18n/locale-switcher';
 import { GENRES, GENRE_LABELS } from '@grabit/shared';
 
 interface MobileMenuProps {
@@ -143,6 +144,14 @@ export function MobileMenu({
               로그인 / 회원가입
             </Link>
           )}
+        </div>
+
+        <div className="border-b border-gray-200 px-6 py-4">
+          <p className="mb-3 text-sm font-normal text-gray-500">언어</p>
+          <LocaleSwitcher
+            className="w-full justify-between"
+            onLocaleChange={onClose}
+          />
         </div>
 
         {/* Genre tabs -- all 8 genres (no "더보기" on mobile) */}

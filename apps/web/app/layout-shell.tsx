@@ -4,6 +4,7 @@ import { usePathname } from 'next/navigation';
 import { GNB } from '@/components/layout/gnb';
 import { Footer } from '@/components/layout/footer';
 import { MobileTabBar } from '@/components/layout/mobile-tab-bar';
+import { LocaleSuggestion } from '@/components/i18n/locale-suggestion';
 
 export function LayoutShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -15,6 +16,7 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
 
   return (
     <>
+      {!hideShell && <LocaleSuggestion />}
       {!hideShell && (
         <div className="hidden md:block">
           <GNB />

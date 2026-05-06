@@ -708,6 +708,7 @@ export class AuthService {
     gender: 'male' | 'female' | 'unspecified';
     country: string;
     birthDate: string;
+    preferredLocale?: UserProfile['preferredLocale'] | null;
     isPhoneVerified: boolean;
     role: string;
     createdAt: Date;
@@ -720,6 +721,7 @@ export class AuthService {
       gender: user.gender,
       country: user.country,
       birthDate: user.birthDate,
+      preferredLocale: user.preferredLocale ?? 'ko',
       isPhoneVerified: user.isPhoneVerified,
       role: user.role as 'user' | 'admin',
       createdAt: user.createdAt.toISOString(),

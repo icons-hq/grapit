@@ -9,6 +9,7 @@ import { cn } from '@/lib/cn';
 import { apiClient } from '@/lib/api-client';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { Button } from '@/components/ui/button';
+import { LocaleSwitcher } from '@/components/i18n/locale-switcher';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -200,6 +201,10 @@ export function GNB() {
           </div>
 
           {/* Auth area */}
+          <div className="mr-2 hidden md:block">
+            <LocaleSwitcher />
+          </div>
+
           {isAuthenticated ? (
             <div ref={profileRef} className="relative hidden md:block">
               <button
