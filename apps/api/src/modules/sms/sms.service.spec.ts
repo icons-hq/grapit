@@ -20,6 +20,7 @@ import {
   smsVerifyCounterKey,
 } from './sms.service.js';
 import { InfobipClient, InfobipApiError } from './infobip-client.js';
+import { formatSmsOtpMessage } from './sms-copy.js';
 
 vi.mock('node:crypto', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:crypto')>();
@@ -245,6 +246,54 @@ describe('SmsService', () => {
 
   // ---------- sendVerificationCode ----------
   describe('sendVerificationCode', () => {
+    it.each([
+      ['Korea local mobile', '01012345678', '+821012345678'],
+      ['United States English fallback', '+14155552671', '+14155552671'],
+      ['Thailand mobile', '+66812345678', '+66812345678'],
+      ['Taiwan mobile', '+886912345678', '+886912345678'],
+      ['Hong Kong mobile', '+85251234567', '+85251234567'],
+    ])('launch market phone validation accepts %s', async (_label, phone, expectedE164) => {
+      const configService = createConfigService();
+      const service = new SmsService(configService, mockRedis as never);
+      mockRedis.set.mockResolvedValueOnce('OK');
+      mockRedis.eval.mockResolvedValueOnce(1);
+
+      vi.spyOn(nodeCrypto, 'randomInt').mockReturnValueOnce(123456);
+      const sendSmsSpy = vi.spyOn(InfobipClient.prototype, 'sendSms').mockResolvedValueOnce({
+        messageId: 'mid-launch',
+        status: 'MESSAGE_ACCEPTED',
+        groupId: 1,
+      });
+
+      const result = await service.sendVerificationCode(phone);
+
+      expect(result.success).toBe(true);
+      expect(sendSmsSpy).toHaveBeenCalledWith(
+        expectedE164,
+        formatSmsOtpMessage('123456', 'ko'),
+      );
+      expect(mockRedis.eval).toHaveBeenCalledWith(
+        expect.stringContaining('INCR'),
+        expect.any(Number),
+        smsSendCounterKey(expectedE164),
+        expect.any(Number),
+      );
+    });
+
+    it('mainland China phone parses strictly but is blocked before provider call', async () => {
+      const configService = createConfigService();
+      const service = new SmsService(configService, mockRedis as never);
+      const sendSmsSpy = vi.spyOn(InfobipClient.prototype, 'sendSms');
+
+      await expect(service.sendVerificationCode('+8613912345678')).rejects.toThrow(
+        BadRequestException,
+      );
+
+      expect(sendSmsSpy).not.toHaveBeenCalled();
+      expect(mockRedis.set).not.toHaveBeenCalled();
+      expect(mockRedis.eval).not.toHaveBeenCalled();
+    });
+
     it('[Phase 22-06] invalid-but-regex-valid international phone throws BadRequestException before side effects', async () => {
       const configService = createConfigService();
       const service = new SmsService(configService, mockRedis as never);

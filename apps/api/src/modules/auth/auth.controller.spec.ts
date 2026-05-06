@@ -1,7 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Request, Response } from 'express';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { AuthController } from './auth.controller.js';
 import { AUTH_COOKIE_NAME } from '@grabit/shared/constants/index.js';
+
+const authModuleSource = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), 'auth.module.ts'),
+  'utf8',
+);
+const authControllerSource = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), 'auth.controller.ts'),
+  'utf8',
+);
 
 describe('AuthController', () => {
   let controller: AuthController;
@@ -313,6 +325,26 @@ describe('AuthController', () => {
 
       expect(result).toEqual({ verified: true });
       expect(mockAuthService.verifyEmailVerificationToken).toHaveBeenCalledWith('opaque-token');
+    });
+  });
+
+  describe('launch social provider surface', () => {
+    it('AuthModule registers Kakao, Naver, and Google strategies only', () => {
+      expect(authModuleSource).toContain('KakaoStrategy');
+      expect(authModuleSource).toContain('NaverStrategy');
+      expect(authModuleSource).toContain('GoogleStrategy');
+      expect(authModuleSource).not.toContain('LineStrategy');
+      expect(authModuleSource).not.toContain('passport-line');
+      expect(authModuleSource).not.toContain('LINE_CLIENT');
+    });
+
+    it('AuthController exposes no LINE social route or callback', () => {
+      expect(authControllerSource).toContain('social/kakao');
+      expect(authControllerSource).toContain('social/naver');
+      expect(authControllerSource).toContain('social/google');
+      expect(authControllerSource).not.toContain('/auth/line');
+      expect(authControllerSource).not.toContain('social/line');
+      expect(authControllerSource).not.toContain('LINE_CLIENT');
     });
   });
 
