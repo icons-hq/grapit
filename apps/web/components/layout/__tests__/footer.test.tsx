@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import '@testing-library/jest-dom/vitest';
 import { Footer } from '../footer';
 
 describe('Footer (D-03, D-04)', () => {
@@ -40,6 +41,33 @@ describe('Footer (D-03, D-04)', () => {
     it('Footer 에 "마케팅" 텍스트가 등장하지 않는다', () => {
       render(<Footer />);
       expect(screen.queryByText(/마케팅/)).toBeNull();
+    });
+  });
+
+  describe('런칭 compliance surface', () => {
+    it('사업자 식별정보와 운영 연락처를 노출한다', () => {
+      render(<Footer />);
+
+      expect(screen.getByText(/사업자명: \(주\)아이콘스/)).toBeInTheDocument();
+      expect(screen.getByText(/대표자: 정승준/)).toBeInTheDocument();
+      expect(screen.getByText(/사업자등록번호: 109-86-27576/)).toBeInTheDocument();
+      expect(screen.getByText(/통신판매업 신고번호: 2025-서울마포-1494/)).toBeInTheDocument();
+      expect(screen.getByText(/고객센터: 02-325-179/)).toBeInTheDocument();
+      expect(screen.getByText(/개인정보 보호책임자: 정승준/)).toBeInTheDocument();
+    });
+
+    it('개인정보 문의 링크가 DPO mailbox 로 연결된다', () => {
+      render(<Footer />);
+
+      const link = screen.getByText('privacy@heygrabit.com').closest('a');
+      expect(link?.getAttribute('href')).toBe('mailto:privacy@heygrabit.com');
+    });
+
+    it('LINE 또는 social login 링크를 전역 footer 에 추가하지 않는다', () => {
+      render(<Footer />);
+
+      expect(screen.queryByRole('link', { name: /line/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: /social/i })).not.toBeInTheDocument();
     });
   });
 
