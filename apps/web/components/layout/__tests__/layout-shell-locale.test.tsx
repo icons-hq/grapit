@@ -34,15 +34,28 @@ describe('locale suggestion shell wiring', () => {
     document.cookie = 'locale-suggestion=en; path=/';
   });
 
-  it('renders suggest-never-redirect copy from the public layout shell', () => {
+  it('renders suggest-never-redirect copy for the suggested locale from the public layout shell', () => {
     render(
       <LayoutShell>
         <main>public page</main>
       </LayoutShell>,
     );
 
-    expect(screen.getByText('다른 언어로 볼까요?')).toBeDefined();
+    expect(screen.getByText('View this page in English?')).toBeDefined();
     expect(screen.getByText('public page')).toBeDefined();
+  });
+
+  it('uses the suggested locale copy even when the active route falls back to Korean', () => {
+    document.cookie = 'locale-suggestion=; Max-Age=0; path=/';
+    document.cookie = 'locale-suggestion=th; path=/';
+
+    render(
+      <LayoutShell>
+        <main>public page</main>
+      </LayoutShell>,
+    );
+
+    expect(screen.getByText('ดูหน้านี้เป็นภาษาไทยไหม?')).toBeDefined();
   });
 
   it('hides locale suggestion on admin shell paths', () => {
@@ -54,7 +67,7 @@ describe('locale suggestion shell wiring', () => {
       </LayoutShell>,
     );
 
-    expect(screen.queryByText('다른 언어로 볼까요?')).toBeNull();
+    expect(screen.queryByText('View this page in English?')).toBeNull();
   });
 
   it('hides locale suggestion on booking checkout shell paths', () => {
@@ -66,7 +79,7 @@ describe('locale suggestion shell wiring', () => {
       </LayoutShell>,
     );
 
-    expect(screen.queryByText('다른 언어로 볼까요?')).toBeNull();
+    expect(screen.queryByText('View this page in English?')).toBeNull();
   });
 
   it('does not use automatic redirect APIs in locale suggestion display', () => {

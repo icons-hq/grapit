@@ -60,7 +60,9 @@ export function LocaleSuggestion({ className }: { className?: string }) {
       )}
     >
       <div className="mx-auto flex max-w-[1200px] flex-wrap items-center justify-between gap-3">
-        <p className="text-sm font-semibold">{SUGGESTION_COPY[activeLocale]}</p>
+        <p className="text-sm font-semibold">
+          {SUGGESTION_COPY[locale] ?? SUGGESTION_COPY.en}
+        </p>
         <div className="flex items-center gap-2">
           <button
             type="button"
