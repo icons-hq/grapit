@@ -18,6 +18,10 @@ function expectColumnName(column: { name: string }, name: string) {
   expect(column.name).toBe(name);
 }
 
+function readMigrationFile(migrationDir: string, name: string) {
+  return readFileSync(join(migrationDir, name), 'utf8');
+}
+
 describe('Phase 23 launch foundation schema contracts', () => {
   const migrationDir = join(dirname(fileURLToPath(import.meta.url)), '../migrations');
 
@@ -49,9 +53,9 @@ describe('Phase 23 launch foundation schema contracts', () => {
   });
 
   it('seeds active launch consent items for every supported locale', () => {
-    const source = readFileSync(
-      join(migrationDir, '0009_seed_launch_consent_items.sql'),
-      'utf8',
+    const source = readMigrationFile(
+      migrationDir,
+      '0011_seed_launch_consent_items.sql',
     );
     const keys = [
       'terms',
@@ -71,6 +75,26 @@ describe('Phase 23 launch foundation schema contracts', () => {
     }
     expect(source).toContain('ON CONFLICT ("key", "version", "locale")');
     expect(source).toContain('"is_active" = true');
+  });
+
+  it('keeps category collapse and consent seed migrations in a forward-only journal order', () => {
+    const journal = JSON.parse(
+      readMigrationFile(migrationDir, 'meta/_journal.json'),
+    ) as {
+      entries: Array<{ tag: string }>;
+    };
+    const tags = journal.entries.map((entry) => entry.tag);
+
+    expect(tags).not.toContain('0009_seed_launch_consent_items');
+    expect(tags).toContain('0009_two_event_categories');
+    expect(tags).toContain('0010_collapse_legacy_genres');
+    expect(tags).toContain('0011_seed_launch_consent_items');
+    expect(tags.indexOf('0009_two_event_categories')).toBeLessThan(
+      tags.indexOf('0010_collapse_legacy_genres'),
+    );
+    expect(tags.indexOf('0010_collapse_legacy_genres')).toBeLessThan(
+      tags.indexOf('0011_seed_launch_consent_items'),
+    );
   });
 
   it('keeps legal content manual-only and separate from translation drafts', () => {
