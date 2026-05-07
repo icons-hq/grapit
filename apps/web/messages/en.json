@@ -8,6 +8,8 @@
     "mypage": "My page",
     "logout": "Log out",
     "language": "Language",
+    "home": "Home",
+    "search": "Search",
     "category": "Category"
   },
   "home": {
@@ -23,10 +25,39 @@
     "resultTitle": "Results for '{query}'",
     "totalCount": "{count} results",
     "includeEnded": "Include ended shows",
+    "allGenres": "All",
     "loadError": "Could not load show information. Please try again shortly.",
     "retry": "Retry",
     "emptyHeading": "No results found",
     "emptyBody": "Try another keyword or browse shows by genre"
+  },
+  "genres": {
+    "musical": "Musical",
+    "concert": "Concert",
+    "play": "Theater",
+    "exhibition": "Exhibition",
+    "classic": "Classical",
+    "sports": "Sports",
+    "kids_family": "Kids/Family",
+    "leisure_camping": "Leisure/Camping"
+  },
+  "genrePage": {
+    "title": "{genre} shows",
+    "emptyHeading": "No shows are listed yet",
+    "emptyBody": "New shows will be added soon.",
+    "subcategories": {
+      "all": "All",
+      "hot": "Trending",
+      "original": "Original/Touring",
+      "license": "Licensed",
+      "creative": "Original work",
+      "domestic": "Touring"
+    },
+    "sort": {
+      "ariaLabel": "Sort",
+      "latest": "Latest",
+      "popular": "Popular"
+    }
   },
   "performance": {
     "posterAltSuffix": "poster",

@@ -1,9 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom/vitest';
 
 const mockPathname = vi.fn<() => string>().mockReturnValue('/');
 const mockPush = vi.fn();
+const mockNavigateToLocalizedPath = vi.hoisted(() => vi.fn());
 const mockAuthState = vi.hoisted(() => ({
   user: null as { name: string } | null,
   accessToken: null as string | null,
@@ -31,6 +33,10 @@ vi.mock('@/stores/use-auth-store', () => ({
   }),
 }));
 
+vi.mock('@/lib/i18n/locale-navigation', () => ({
+  navigateToLocalizedPath: mockNavigateToLocalizedPath,
+}));
+
 import { GNB } from '../gnb';
 import { MobileMenu } from '../mobile-menu';
 import {
@@ -42,6 +48,7 @@ describe('locale switcher shell wiring', () => {
   beforeEach(() => {
     mockPathname.mockReturnValue('/');
     mockPush.mockClear();
+    mockNavigateToLocalizedPath.mockClear();
     mockAuthState.user = null;
     mockAuthState.accessToken = null;
     mockAuthState.activeLocale = 'ko';
@@ -56,6 +63,38 @@ describe('locale switcher shell wiring', () => {
     expect(screen.getByText('한국어').getAttribute('aria-current')).toBe(
       'true',
     );
+  });
+
+  it('renders desktop navigation labels from the active locale', () => {
+    mockPathname.mockReturnValue('/en');
+    mockAuthState.activeLocale = 'en';
+
+    render(<GNB />);
+
+    expect(screen.getByRole('link', { name: 'Musical' })).toBeDefined();
+    expect(screen.getByRole('link', { name: 'Concert' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'More' })).toBeDefined();
+    expect(screen.getByRole('searchbox', { name: 'Search shows' })).toHaveAttribute(
+      'placeholder',
+      'Search shows or artists',
+    );
+    expect(screen.getByRole('link', { name: 'Login / Sign up' })).toHaveAttribute(
+      'href',
+      '/en/auth',
+    );
+  });
+
+  it('uses document navigation when a new locale is selected', async () => {
+    render(<GNB />);
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /언어 선택/ }));
+    await user.click(await screen.findByRole('menuitem', { name: 'English' }));
+
+    expect(mockNavigateToLocalizedPath).toHaveBeenCalledWith(
+      '/en?q=girl&page=2',
+    );
+    expect(document.cookie).toContain('preferred-locale=en');
   });
 
   it('renders explicit locale switcher through the mobile menu surface', () => {

@@ -13,7 +13,6 @@ import {
   Tent,
 } from 'lucide-react';
 import type { Genre } from '@grabit/shared';
-import { GENRE_LABELS } from '@grabit/shared';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import {
   getVisibleCopy,
@@ -67,7 +66,7 @@ export function GenreGrid() {
                 <Icon className="h-7 w-7 text-gray-700" />
               </div>
               <span className="text-sm text-gray-900">
-                {GENRE_LABELS[genre]}
+                {copy.genres[genre]}
               </span>
             </Link>
           );

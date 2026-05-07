@@ -51,5 +51,7 @@ describe('home i18n visible copy', () => {
     expect(screen.getByRole('heading', { name: 'HOT' })).toBeDefined();
     expect(screen.getByRole('heading', { name: 'Newly opened' })).toBeDefined();
     expect(screen.getByRole('heading', { name: 'Browse by genre' })).toBeDefined();
+    expect(screen.getByRole('link', { name: 'Musical' })).toBeDefined();
+    expect(screen.getByRole('link', { name: 'Kids/Family' })).toBeDefined();
   });
 });

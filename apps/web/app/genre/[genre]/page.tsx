@@ -4,7 +4,7 @@ import { use } from 'react';
 import { notFound } from 'next/navigation';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { useLocale } from 'next-intl';
-import { GENRES, GENRE_LABELS, type Genre } from '@grabit/shared';
+import { GENRES, type Genre } from '@grabit/shared';
 import { Switch } from '@/components/ui/switch';
 import { GenreChip } from '@/components/performance/genre-chip';
 import { SortToggle } from '@/components/performance/sort-toggle';
@@ -14,13 +14,13 @@ import { usePerformances } from '@/hooks/use-performances';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 
 const SUBCATEGORIES = [
-  { label: '전체', value: '' },
-  { label: '요즘HOT', value: 'hot' },
-  { label: '오리지널/내한', value: 'original' },
-  { label: '라이선스', value: 'license' },
-  { label: '창작', value: 'creative' },
-  { label: '내한', value: 'domestic' },
-];
+  { labelKey: 'all', value: '' },
+  { labelKey: 'hot', value: 'hot' },
+  { labelKey: 'original', value: 'original' },
+  { labelKey: 'license', value: 'license' },
+  { labelKey: 'creative', value: 'creative' },
+  { labelKey: 'domestic', value: 'domestic' },
+] as const;
 
 function isValidGenre(genre: string): genre is Genre {
   return (GENRES as readonly string[]).includes(genre);
@@ -65,7 +65,7 @@ export default function GenrePage({
     <main className="mx-auto w-full max-w-[1200px] px-4 py-6 md:px-6 md:py-8">
       {/* Page title */}
       <h1 className="text-display font-semibold leading-[1.2]">
-        {GENRE_LABELS[genre]} 공연
+        {copy.genrePage.title.replace('{genre}', copy.genres[genre])}
       </h1>
 
       {/* Subcategory chips */}
@@ -73,7 +73,7 @@ export default function GenrePage({
         {SUBCATEGORIES.map((cat) => (
           <GenreChip
             key={cat.value}
-            label={cat.label}
+            label={copy.genrePage.subcategories[cat.labelKey]}
             value={cat.value}
             isActive={sub === cat.value}
             onClick={() => updateParam('sub', cat.value)}
@@ -86,6 +86,7 @@ export default function GenrePage({
         <SortToggle
           value={sort}
           onChange={(v) => updateParam('sort', v)}
+          labels={copy.genrePage.sort}
         />
         <label className="flex items-center gap-2 text-sm text-gray-600">
           <span>{copy.search.includeEnded}</span>
@@ -117,8 +118,8 @@ export default function GenrePage({
           <PerformanceGrid
             performances={data?.data ?? []}
             isLoading={isLoading}
-            emptyHeading="등록된 공연이 없습니다"
-            emptyBody="곧 새로운 공연이 등록될 예정입니다"
+            emptyHeading={copy.genrePage.emptyHeading}
+            emptyBody={copy.genrePage.emptyBody}
           />
         )}
       </div>

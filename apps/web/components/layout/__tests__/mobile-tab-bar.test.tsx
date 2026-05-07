@@ -2,9 +2,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
 const mockPathname = vi.fn<() => string>().mockReturnValue('/');
+const mockIntlState = vi.hoisted(() => ({
+  locale: 'ko',
+}));
 
 vi.mock('next/navigation', () => ({
   usePathname: () => mockPathname(),
+}));
+
+vi.mock('next-intl', () => ({
+  useLocale: () => mockIntlState.locale,
 }));
 
 // Import after mock setup
@@ -13,6 +20,7 @@ import { MobileTabBar } from '../mobile-tab-bar';
 describe('MobileTabBar', () => {
   beforeEach(() => {
     mockPathname.mockReturnValue('/');
+    mockIntlState.locale = 'ko';
   });
 
   it('renders 4 tabs with correct labels', () => {
@@ -75,5 +83,18 @@ describe('MobileTabBar', () => {
     render(<MobileTabBar />);
     const mypageLink = screen.getByText('마이페이지').closest('a');
     expect(mypageLink?.getAttribute('aria-current')).toBe('page');
+  });
+
+  it('localizes labels and hrefs for prefixed locale routes', () => {
+    mockPathname.mockReturnValue('/en/search');
+    mockIntlState.locale = 'en';
+
+    render(<MobileTabBar />);
+
+    const searchLink = screen.getByText('Search').closest('a');
+    expect(screen.getByText('Home')).toBeDefined();
+    expect(screen.getByText('Category')).toBeDefined();
+    expect(searchLink?.getAttribute('href')).toBe('/en/search');
+    expect(searchLink?.getAttribute('aria-current')).toBe('page');
   });
 });

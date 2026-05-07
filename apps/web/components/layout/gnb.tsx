@@ -26,21 +26,17 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 
-import { GENRE_LABELS, type Genre } from '@grabit/shared';
+import type { Genre } from '@grabit/shared';
 
-const MAIN_GENRE_TABS: { label: string; slug: Genre }[] = [
-  { label: '뮤지컬', slug: 'musical' },
-  { label: '콘서트', slug: 'concert' },
-  { label: '연극', slug: 'play' },
-  { label: '전시', slug: 'exhibition' },
-  { label: '클래식', slug: 'classic' },
+const MAIN_GENRE_TABS: Genre[] = [
+  'musical',
+  'concert',
+  'play',
+  'exhibition',
+  'classic',
 ];
 
-const MORE_GENRES: { label: string; slug: Genre }[] = [
-  { label: '스포츠', slug: 'sports' },
-  { label: '아동/가족', slug: 'kids_family' },
-  { label: '레저/캠핑', slug: 'leisure_camping' },
-];
+const MORE_GENRES: Genre[] = ['sports', 'kids_family', 'leisure_camping'];
 
 export function GNB() {
   const router = useRouter();
@@ -128,18 +124,18 @@ export function GNB() {
 
           {/* Genre tabs - hidden on mobile */}
           <div className="hidden items-center gap-1 md:flex">
-            {MAIN_GENRE_TABS.map((tab) => (
+            {MAIN_GENRE_TABS.map((genre) => (
               <Link
-                key={tab.slug}
-                href={getLocalizedPathname(`/genre/${tab.slug}`, activeLocale)}
+                key={genre}
+                href={getLocalizedPathname(`/genre/${genre}`, activeLocale)}
                 className={cn(
                   'px-3 py-2 text-base transition-colors',
-                  isActiveGenre(tab.slug)
+                  isActiveGenre(genre)
                     ? 'border-b-2 border-primary font-semibold text-primary'
                     : 'text-gray-900 hover:text-primary',
                 )}
               >
-                {tab.label}
+                {copy.genres[genre]}
               </Link>
             ))}
 
@@ -149,7 +145,7 @@ export function GNB() {
                 <button
                   className={cn(
                     'flex items-center gap-1 px-3 py-2 text-base transition-colors',
-                    MORE_GENRES.some((g) => isActiveGenre(g.slug))
+                    MORE_GENRES.some((genre) => isActiveGenre(genre))
                       ? 'border-b-2 border-primary font-semibold text-primary'
                       : 'text-gray-900 hover:text-primary',
                   )}
@@ -160,18 +156,18 @@ export function GNB() {
               </DropdownMenuTrigger>
               <DropdownMenuContent className="w-[180px]" align="start">
                 {MORE_GENRES.map((genre) => (
-                  <DropdownMenuItem key={genre.slug} asChild>
+                  <DropdownMenuItem key={genre} asChild>
                     <Link
                       href={getLocalizedPathname(
-                        `/genre/${genre.slug}`,
+                        `/genre/${genre}`,
                         activeLocale,
                       )}
                       className={cn(
                         'w-full',
-                        isActiveGenre(genre.slug) && 'font-semibold text-primary',
+                        isActiveGenre(genre) && 'font-semibold text-primary',
                       )}
                     >
-                      {genre.label}
+                      {copy.genres[genre]}
                     </Link>
                   </DropdownMenuItem>
                 ))}

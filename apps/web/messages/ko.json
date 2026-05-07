@@ -8,6 +8,8 @@
     "mypage": "마이페이지",
     "logout": "로그아웃",
     "language": "언어",
+    "home": "홈",
+    "search": "검색",
     "category": "카테고리"
   },
   "home": {
@@ -23,10 +25,39 @@
     "resultTitle": "'{query}' 검색 결과",
     "totalCount": "총 {count}건",
     "includeEnded": "판매종료 공연 포함",
+    "allGenres": "전체",
     "loadError": "공연 정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.",
     "retry": "다시 시도",
     "emptyHeading": "검색 결과가 없습니다",
     "emptyBody": "다른 키워드로 검색하거나 장르별 공연을 둘러보세요"
+  },
+  "genres": {
+    "musical": "뮤지컬",
+    "concert": "콘서트",
+    "play": "연극",
+    "exhibition": "전시",
+    "classic": "클래식",
+    "sports": "스포츠",
+    "kids_family": "아동/가족",
+    "leisure_camping": "레저/캠핑"
+  },
+  "genrePage": {
+    "title": "{genre} 공연",
+    "emptyHeading": "등록된 공연이 없습니다",
+    "emptyBody": "곧 새로운 공연이 등록될 예정입니다",
+    "subcategories": {
+      "all": "전체",
+      "hot": "요즘HOT",
+      "original": "오리지널/내한",
+      "license": "라이선스",
+      "creative": "창작",
+      "domestic": "내한"
+    },
+    "sort": {
+      "ariaLabel": "정렬 기준",
+      "latest": "최신순",
+      "popular": "인기순"
+    }
   },
   "performance": {
     "posterAltSuffix": "포스터",

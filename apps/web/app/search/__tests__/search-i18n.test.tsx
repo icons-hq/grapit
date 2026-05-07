@@ -48,6 +48,8 @@ describe('search i18n visible copy', () => {
     expect(screen.getByRole('heading', { name: "Results for 'girl'" })).toBeDefined();
     expect(screen.getByText('0 results')).toBeDefined();
     expect(screen.getByText('Include ended shows')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'All' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Musical' })).toBeDefined();
     expect(screen.getByRole('heading', { name: 'No results found' })).toBeDefined();
   });
 });

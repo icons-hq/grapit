@@ -8,6 +8,8 @@
     "mypage": "我的頁面",
     "logout": "登出",
     "language": "語言",
+    "home": "首頁",
+    "search": "搜尋",
     "category": "分類"
   },
   "home": {
@@ -23,10 +25,39 @@
     "resultTitle": "'{query}' 的搜尋結果",
     "totalCount": "共 {count} 筆結果",
     "includeEnded": "包含已結束演出",
+    "allGenres": "全部",
     "loadError": "無法載入演出資訊。請稍後再試。",
     "retry": "重試",
     "emptyHeading": "沒有搜尋結果",
     "emptyBody": "請嘗試其他關鍵字或按類型瀏覽演出"
+  },
+  "genres": {
+    "musical": "音樂劇",
+    "concert": "演唱會",
+    "play": "話劇",
+    "exhibition": "展覽",
+    "classic": "古典",
+    "sports": "體育",
+    "kids_family": "兒童/家庭",
+    "leisure_camping": "休閒/露營"
+  },
+  "genrePage": {
+    "title": "{genre}",
+    "emptyHeading": "暫無演出",
+    "emptyBody": "新的演出將很快上線。",
+    "subcategories": {
+      "all": "全部",
+      "hot": "熱門",
+      "original": "原創/巡演",
+      "license": "授權",
+      "creative": "原創",
+      "domestic": "巡演"
+    },
+    "sort": {
+      "ariaLabel": "排序",
+      "latest": "最新",
+      "popular": "熱門"
+    }
   },
   "performance": {
     "posterAltSuffix": "海報",

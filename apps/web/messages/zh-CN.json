@@ -8,6 +8,8 @@
     "mypage": "我的页面",
     "logout": "退出登录",
     "language": "语言",
+    "home": "首页",
+    "search": "搜索",
     "category": "分类"
   },
   "home": {
@@ -23,10 +25,39 @@
     "resultTitle": "'{query}' 的搜索结果",
     "totalCount": "共 {count} 个结果",
     "includeEnded": "包含已结束演出",
+    "allGenres": "全部",
     "loadError": "无法加载演出信息。请稍后再试。",
     "retry": "重试",
     "emptyHeading": "没有搜索结果",
     "emptyBody": "请尝试其他关键词或按类型浏览演出"
+  },
+  "genres": {
+    "musical": "音乐剧",
+    "concert": "演唱会",
+    "play": "话剧",
+    "exhibition": "展览",
+    "classic": "古典",
+    "sports": "体育",
+    "kids_family": "儿童/家庭",
+    "leisure_camping": "休闲/露营"
+  },
+  "genrePage": {
+    "title": "{genre}",
+    "emptyHeading": "暂无演出",
+    "emptyBody": "新的演出将很快上线。",
+    "subcategories": {
+      "all": "全部",
+      "hot": "热门",
+      "original": "原创/巡演",
+      "license": "授权",
+      "creative": "原创",
+      "domestic": "巡演"
+    },
+    "sort": {
+      "ariaLabel": "排序",
+      "latest": "最新",
+      "popular": "热门"
+    }
   },
   "performance": {
     "posterAltSuffix": "海报",

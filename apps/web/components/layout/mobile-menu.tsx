@@ -14,7 +14,7 @@ import {
   getVisibleCopy,
   resolveVisibleCopyLocale,
 } from '@/lib/i18n/visible-copy';
-import { GENRES, GENRE_LABELS } from '@grabit/shared';
+import { GENRES } from '@grabit/shared';
 
 interface MobileMenuProps {
   isOpen: boolean;
@@ -182,7 +182,7 @@ export function MobileMenu({
                 onClick={onClose}
                 className="rounded-lg px-3 py-2 text-left text-base text-gray-900 hover:bg-gray-100"
               >
-                {GENRE_LABELS[genre]}
+                {copy.genres[genre]}
               </Link>
             ))}
           </div>

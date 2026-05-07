@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { Check, ChevronDown, Languages } from 'lucide-react';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import {
   DEFAULT_LOCALE,
   LOCALE_LABELS,
@@ -13,6 +13,7 @@ import { resolveLocaleFromPathname } from '@/i18n/routing';
 import { apiClient } from '@/lib/api-client';
 import { cn } from '@/lib/cn';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
+import { navigateToLocalizedPath } from '@/lib/i18n/locale-navigation';
 import { useAuthStore } from '@/stores/use-auth-store';
 import {
   DropdownMenu,
@@ -33,7 +34,6 @@ export function LocaleSwitcher({
   onLocaleChange,
 }: LocaleSwitcherProps) {
   const pathname = usePathname();
-  const router = useRouter();
   const searchParams = useSearchParams();
   const { accessToken, user, setAuth } = useAuthStore();
   const activeLocale = resolveLocaleFromPathname(pathname).locale;
@@ -56,7 +56,7 @@ export function LocaleSwitcher({
     }
 
     onLocaleChange?.();
-    router.push(
+    navigateToLocalizedPath(
       appendSearchParams(
         getLocalizedPathname(pathname, locale),
         searchParams.toString(),

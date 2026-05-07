@@ -8,6 +8,8 @@
     "mypage": "หน้าของฉัน",
     "logout": "ออกจากระบบ",
     "language": "ภาษา",
+    "home": "หน้าแรก",
+    "search": "ค้นหา",
     "category": "หมวดหมู่"
   },
   "home": {
@@ -23,10 +25,39 @@
     "resultTitle": "ผลการค้นหา '{query}'",
     "totalCount": "ทั้งหมด {count} รายการ",
     "includeEnded": "รวมการแสดงที่สิ้นสุดแล้ว",
+    "allGenres": "ทั้งหมด",
     "loadError": "ไม่สามารถโหลดข้อมูลการแสดงได้ โปรดลองอีกครั้งในภายหลัง",
     "retry": "ลองอีกครั้ง",
     "emptyHeading": "ไม่พบผลการค้นหา",
     "emptyBody": "ลองใช้คำค้นหาอื่นหรือเลือกดูการแสดงตามประเภท"
+  },
+  "genres": {
+    "musical": "มิวสิคัล",
+    "concert": "คอนเสิร์ต",
+    "play": "ละครเวที",
+    "exhibition": "นิทรรศการ",
+    "classic": "คลาสสิก",
+    "sports": "กีฬา",
+    "kids_family": "เด็ก/ครอบครัว",
+    "leisure_camping": "สันทนาการ/แคมป์ปิง"
+  },
+  "genrePage": {
+    "title": "{genre}",
+    "emptyHeading": "ยังไม่มีการแสดง",
+    "emptyBody": "จะมีการเพิ่มการแสดงใหม่เร็วๆ นี้",
+    "subcategories": {
+      "all": "ทั้งหมด",
+      "hot": "ยอดนิยม",
+      "original": "ต้นฉบับ/ทัวร์",
+      "license": "ลิขสิทธิ์",
+      "creative": "สร้างสรรค์",
+      "domestic": "ทัวร์"
+    },
+    "sort": {
+      "ariaLabel": "เรียงลำดับ",
+      "latest": "ล่าสุด",
+      "popular": "ยอดนิยม"
+    }
   },
   "performance": {
     "posterAltSuffix": "โปสเตอร์",

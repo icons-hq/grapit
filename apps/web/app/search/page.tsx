@@ -9,18 +9,20 @@ import { PerformanceGrid } from '@/components/performance/performance-grid';
 import { PaginationNav } from '@/components/performance/pagination-nav';
 import { useSearch } from '@/hooks/use-search';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
-import { GENRES, GENRE_LABELS } from '@grabit/shared';
-
-const GENRE_FILTER_CHIPS = [
-  { label: '전체', value: '' },
-  ...GENRES.map((g) => ({ label: GENRE_LABELS[g], value: g })),
-];
+import { GENRES } from '@grabit/shared';
 
 export default function SearchPage() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const copy = getVisibleCopy(useLocale());
+  const genreFilterChips = [
+    { label: copy.search.allGenres, value: '' },
+    ...GENRES.map((genre) => ({
+      label: copy.genres[genre],
+      value: genre,
+    })),
+  ];
 
   const q = searchParams.get('q') ?? '';
   const genre = searchParams.get('genre') ?? '';
@@ -70,7 +72,7 @@ export default function SearchPage() {
 
       {/* Genre filter chips */}
       <div className="mt-4 flex gap-2 overflow-x-auto scrollbar-hide">
-        {GENRE_FILTER_CHIPS.map((chip) => (
+        {genreFilterChips.map((chip) => (
           <GenreChip
             key={chip.value}
             label={chip.label}
