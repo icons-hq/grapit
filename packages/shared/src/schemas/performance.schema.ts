@@ -2,6 +2,14 @@ import { z } from 'zod';
 import { SUPPORTED_LOCALES } from '../constants/locales';
 import { GENRES } from '../types/performance.types';
 
+const booleanQueryParam = z.preprocess((value) => {
+  if (value === undefined || value === '') return false;
+  if (typeof value === 'boolean') return value;
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  return value;
+}, z.boolean());
+
 export const createPerformanceSchema = z.object({
   title: z.string().min(1, '공연명을 입력해주세요').max(255),
   genre: z.enum(GENRES, { required_error: '장르를 선택해주세요' }),
@@ -44,7 +52,7 @@ export const performanceQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
   sort: z.enum(['latest', 'popular']).default('latest'),
-  ended: z.coerce.boolean().optional().default(false),
+  ended: booleanQueryParam,
 });
 export type PerformanceQuery = z.infer<typeof performanceQuerySchema>;
 
@@ -52,7 +60,7 @@ export const searchQuerySchema = z.object({
   q: z.string().min(1),
   genre: z.enum(GENRES).optional(),
   locale: z.enum(SUPPORTED_LOCALES).optional(),
-  ended: z.coerce.boolean().optional().default(false),
+  ended: booleanQueryParam,
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
 });
