@@ -608,46 +608,11 @@ export class AuthService {
     const email = payload.email ?? `${payload.provider}_${payload.providerId}@social.grabit.com`;
     const existingUser = await this.userRepository.findByEmail(email);
 
-    let userId: string;
-
     if (existingUser) {
-      // Account linking: create social_account link to existing user
-      userId = existingUser.id;
-
-      await this.db.transaction(async (tx) => {
-        await tx.insert(schema.socialAccounts).values({
-          userId,
-          provider: payload.provider,
-          providerId: payload.providerId,
-          providerEmail: payload.email,
-        });
-
-        // Create terms agreement for social login
-        await tx.insert(schema.termsAgreements).values({
-          userId,
-          termsOfService: dto.termsOfService,
-          privacyPolicy: dto.privacyPolicy,
-          marketingConsent: dto.marketingConsent,
-        });
-
-        await this.consentService.captureConsent(
-          existingUser.id,
-          {
-            birthDate: dto.birthDate,
-            items: dto.consentItems,
-            sourceFlow: 'social_completion',
-          },
-          requestMeta,
-          tx,
-        );
+      throw new ConflictException({
+        code: 'ACCOUNT_LINK_CONFIRMATION_REQUIRED',
+        message: 'Sign in to the existing account before linking this social provider.',
       });
-
-      const tokens = await this.generateTokenPair(existingUser.id, existingUser.email, existingUser.role);
-
-      return {
-        ...tokens,
-        user: this.mapToProfile(existingUser),
-      };
     }
 
     const user = await this.db.transaction(async (tx) => {

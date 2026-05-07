@@ -1001,7 +1001,7 @@ describe('AuthService', () => {
       ).rejects.toThrow(UnauthorizedException);
     });
 
-    it('should link accounts when social email matches existing user without social link', async () => {
+    it('rejects social completion when email already belongs to an existing account', async () => {
       const existingUser = createMockUser();
 
       // Verify registration token
@@ -1016,40 +1016,28 @@ describe('AuthService', () => {
       // Existing user found with same email
       mockUserRepo.findByEmail.mockResolvedValue(existingUser);
 
-      const result = await authService.completeSocialRegistration(
-        'valid-registration-token',
-        {
-          name: existingUser.name,
-          gender: existingUser.gender,
-          country: existingUser.country,
-          birthDate: existingUser.birthDate,
-          phone: existingUser.phone,
-          phoneVerificationToken: 'signed-social-phone-token',
-          termsOfService: true,
-          privacyPolicy: true,
-          marketingConsent: false,
-          consentItems: makeSocialConsentItems(),
-        },
-        { ipAddress: '203.0.113.30', userAgent: 'Vitest Link' },
-      );
+      await expect(
+        authService.completeSocialRegistration(
+          'valid-registration-token',
+          {
+            name: existingUser.name,
+            gender: existingUser.gender,
+            country: existingUser.country,
+            birthDate: existingUser.birthDate,
+            phone: existingUser.phone,
+            phoneVerificationToken: 'signed-social-phone-token',
+            termsOfService: true,
+            privacyPolicy: true,
+            marketingConsent: false,
+            consentItems: makeSocialConsentItems(),
+          },
+          { ipAddress: '203.0.113.30', userAgent: 'Vitest Link' },
+        ),
+      ).rejects.toThrow(ConflictException);
 
-      expect(result).toHaveProperty('accessToken');
-      expect(result).toHaveProperty('user');
-      // Should NOT create a new user -- should link to existing
       expect(mockUserRepo.create).not.toHaveBeenCalled();
-      // Should insert social account link
-      expect(mockDb.insert).toHaveBeenCalled();
-      expect(mockConsentService.captureConsent).toHaveBeenCalledWith(
-        existingUser.id,
-        expect.objectContaining({
-          items: expect.arrayContaining([
-            expect.objectContaining({ sourceFlow: 'social_completion' }),
-          ]),
-          sourceFlow: 'social_completion',
-        }),
-        { ipAddress: '203.0.113.30', userAgent: 'Vitest Link' },
-        expect.anything(),
-      );
+      expect(mockDb.insert).not.toHaveBeenCalled();
+      expect(mockConsentService.captureConsent).not.toHaveBeenCalled();
     });
 
     it('purpose-bound phone verification token이 있으면 social registration을 완료한다', async () => {
