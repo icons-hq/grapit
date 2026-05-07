@@ -31,6 +31,7 @@ const mockRegisterDto: RegisterBody = {
   privacyPolicy: true,
   marketingConsent: false,
   consentItems: makeConsentItems(),
+  locale: 'ko',
 };
 
 function makeConsentItems(

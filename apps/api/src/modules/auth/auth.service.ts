@@ -150,7 +150,7 @@ export class AuthService {
     const verification = await this.issueEmailVerificationForUser(
       user.id,
       user.email,
-      'ko',
+      dto.locale,
     );
 
     return {

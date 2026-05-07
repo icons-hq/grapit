@@ -283,11 +283,11 @@ describe('runtime booking disabled UI', () => {
   );
 
   it('does not call the seat lock handler when disabled booking users click a seat', async () => {
-    const user = userEvent.setup();
     renderWithQuery(<BookingPage performanceId="performance-disabled" />);
 
     expect(await screen.findAllByText('예매는 5월말 오픈 예정입니다')).not.toHaveLength(0);
-    await user.click(screen.getByRole('button', { name: '좌석 A-1' }));
+    expect(screen.queryByRole('button', { name: '좌석 A-1' })).not.toBeInTheDocument();
+    expect(screen.queryByText('seat legend')).not.toBeInTheDocument();
 
     expect(lockSeatMutateMock).not.toHaveBeenCalled();
   });

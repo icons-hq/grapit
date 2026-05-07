@@ -78,6 +78,7 @@ completed: 2026-05-07T03:55:06Z
 - Exposed reviewed published performance translations from API detail/list/search/home responses with `automaticTranslationLabel=true` and `translatedBy='machine_reviewed'`.
 - Replaced the invalid `test-performance` UAT fixture with stable UUID `00000000-0000-4000-8000-000000000023`, seeded with showtime, price tiers, seat map, and reviewed translations.
 - Added `apps/web/e2e/i18n-smoke.spec.ts` covering all five locales across home, auth, search, performance detail, and booking-disabled routes without admin login or live SMS dependencies.
+- Resolved post-review i18n blockers for social signup consent payloads, consent step localization, query-preserving locale switches, translated-title search, authenticated mobile navigation, disabled booking controls, localized signup verification email, and unsafe inline SVG handling.
 
 ## Task Commits
 
@@ -111,6 +112,7 @@ Passed:
 - `pnpm --filter @grabit/web test -- visible-copy.test.ts home-i18n.test.tsx search-i18n.test.tsx auth-page-i18n.test.tsx booking-disabled-runtime.test.tsx performance-detail-translation-label.test.tsx`
 - `pnpm typecheck`
 - Post-fix checks: `pnpm --filter @grabit/shared test -- launch-copy-keys.test.ts`, `pnpm --filter @grabit/web test -- signup-step1-i18n.test.tsx visible-copy.test.ts`, `pnpm --filter @grabit/web typecheck`
+- Post-review checks: `pnpm build`, `pnpm test`, `pnpm typecheck`, `pnpm --filter @grabit/web exec playwright test e2e/i18n-smoke.spec.ts --reporter=line`
 
 Notes:
 
@@ -176,9 +178,17 @@ Notes:
 - **Verification:** `pnpm --filter @grabit/shared test -- launch-copy-keys.test.ts`, `pnpm --filter @grabit/web test -- signup-step1-i18n.test.tsx visible-copy.test.ts`, `pnpm --filter @grabit/web typecheck`
 - **Committed in:** `290afb3`
 
+**5. [Code Review] Closed Phase 23 i18n review blockers**
+- **Found during:** Phase 23 post-execution code review
+- **Issue:** The review identified gaps in social signup consent submission, consent step localization, locale switch query preservation, translated search matching, authenticated mobile navigation, booking-disabled rendering, signup verification email locale propagation, and inline SVG safety.
+- **Fix:** Added localized consent copy, propagated consent payloads and signup locale, preserved query strings in locale navigation, matched reviewed translated titles in search, localized the mobile My Page link, short-circuited disabled booking UI, and sanitized/rejected unsafe SVG payloads.
+- **Files modified:** `apps/web/app/auth/callback/page.tsx`, `apps/web/components/auth/signup-step2.tsx`, `apps/web/components/auth/signup-form.tsx`, `apps/web/components/i18n/locale-switcher.tsx`, `apps/web/components/i18n/locale-suggestion.tsx`, `apps/web/components/layout/mobile-menu.tsx`, `apps/web/components/booking/booking-page.tsx`, `apps/web/components/booking/seat-map-viewer.tsx`, `apps/web/components/admin/svg-preview.tsx`, `apps/api/src/modules/auth/auth.service.ts`, `apps/api/src/modules/auth/dto/register.dto.ts`, `apps/api/src/modules/search/search.service.ts`, `apps/web/messages/{ko,en,th,zh-CN,zh-TW}.json`, `packages/shared/src/i18n/launch-copy-keys.ts`
+- **Verification:** `pnpm build`, `pnpm test`, `pnpm typecheck`, `pnpm --filter @grabit/web exec playwright test e2e/i18n-smoke.spec.ts --reporter=line`
+- **Committed in:** pending post-review remediation commit
+
 ---
 
-**Total deviations:** 4 auto-fixed (1 missing critical, 1 bug, 2 blocking)
+**Total deviations:** 5 auto-fixed (1 post-review remediation bundle, 1 missing critical, 1 bug, 2 blocking)
 **Impact on plan:** All fixes were directly required for the planned i18n surface, type correctness, or local smoke verification. No architecture changes or new external dependencies were introduced.
 
 ## Issues Encountered

@@ -7,6 +7,7 @@ export const LAUNCH_COPY_NAMESPACES = [
   'performance',
   'booking',
   'auth.form',
+  'auth.consent',
   'auth.emailVerification',
   'auth.otp',
   'auth.errors',
@@ -74,6 +75,17 @@ const authFormKeys = [
   'temporaryError',
 ] as const;
 
+const authConsentKeys = [
+  'selectAll',
+  'required',
+  'optional',
+  'view',
+  'previous',
+  'next',
+  'dialogDescriptionSuffix',
+  'crossBorderRequired',
+] as const;
+
 const authEmailVerificationKeys = [
   'sent',
   'resendCta',
@@ -123,6 +135,7 @@ export const LAUNCH_COPY_KEYS = {
   performance: forLaunchLocales(performanceKeys),
   booking: forLaunchLocales(bookingKeys),
   'auth.form': forLaunchLocales(authFormKeys),
+  'auth.consent': forLaunchLocales(authConsentKeys),
   'auth.emailVerification': forLaunchLocales(authEmailVerificationKeys),
   'auth.otp': forLaunchLocales(authOtpKeys),
   'auth.errors': forLaunchLocales(authErrorKeys),

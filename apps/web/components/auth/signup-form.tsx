@@ -5,7 +5,6 @@ import { useLocale } from 'next-intl';
 import { toast } from 'sonner';
 import type {
   RegisterStep1Input,
-  RegisterStep2Input,
   RegisterStep3Input,
   RegisterResponse,
 } from '@grabit/shared';
@@ -14,6 +13,7 @@ import { useAuthStore } from '@/stores/use-auth-store';
 import { StepIndicator } from '@/components/auth/step-indicator';
 import { SignupStep1 } from '@/components/auth/signup-step1';
 import { SignupStep2 } from '@/components/auth/signup-step2';
+import type { SignupStep2SubmitData } from '@/components/auth/signup-step2';
 import { SignupStep3 } from '@/components/auth/signup-step3';
 import { EmailVerificationStatus } from '@/components/auth/email-verification-status';
 import { getAuthLaunchCopy } from '@/components/auth/auth-launch-copy';
@@ -23,7 +23,7 @@ export function SignupForm() {
   const setAuth = useAuthStore((s) => s.setAuth);
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
   const [step1Data, setStep1Data] = useState<RegisterStep1Input | null>(null);
-  const [step2Data, setStep2Data] = useState<RegisterStep2Input | null>(null);
+  const [step2Data, setStep2Data] = useState<SignupStep2SubmitData | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [emailVerificationEmail, setEmailVerificationEmail] = useState<
     string | null
@@ -34,7 +34,7 @@ export function SignupForm() {
     setCurrentStep(2);
   }
 
-  function handleStep2Complete(data: RegisterStep2Input) {
+  function handleStep2Complete(data: SignupStep2SubmitData) {
     setStep2Data(data);
     setCurrentStep(3);
   }
@@ -64,6 +64,7 @@ export function SignupForm() {
         birthDate,
         phone: data.phone,
         phoneVerificationToken: data.phoneVerificationToken,
+        locale: authCopy.locale,
       };
 
       const res = await apiClient.post<RegisterResponse>(

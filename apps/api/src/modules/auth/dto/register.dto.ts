@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { signupConsentRowsSchema } from '@grabit/shared';
+import { SUPPORTED_LOCALES, signupConsentRowsSchema } from '@grabit/shared';
 
 export const registerBodySchema = z.object({
   email: z.string().email('올바른 이메일 주소를 입력해주세요'),
@@ -30,6 +30,7 @@ export const registerBodySchema = z.object({
   }),
   marketingConsent: z.boolean(),
   consentItems: signupConsentRowsSchema,
+  locale: z.enum(SUPPORTED_LOCALES).default('ko'),
 });
 
 export type RegisterBody = z.infer<typeof registerBodySchema>;

@@ -6,11 +6,12 @@ import { useLocale } from 'next-intl';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import type { AuthResponse, RegisterStep2Input, RegisterStep3Input } from '@grabit/shared';
+import type { AuthResponse, RegisterStep3Input } from '@grabit/shared';
 import { apiClient } from '@/lib/api-client';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { StepIndicator } from '@/components/auth/step-indicator';
 import { SignupStep2 } from '@/components/auth/signup-step2';
+import type { SignupStep2SubmitData } from '@/components/auth/signup-step2';
 import { SignupStep3 } from '@/components/auth/signup-step3';
 import { getAuthLaunchCopy } from '@/components/auth/auth-launch-copy';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
@@ -54,7 +55,7 @@ function CallbackContent() {
   const [needsRegistration, setNeedsRegistration] = useState(false);
   const [registrationToken, setRegistrationToken] = useState('');
   const [currentStep, setCurrentStep] = useState<2 | 3>(2);
-  const [step2Data, setStep2Data] = useState<RegisterStep2Input | null>(null);
+  const [step2Data, setStep2Data] = useState<SignupStep2SubmitData | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorInfo, setErrorInfo] = useState<{ code: string; provider?: string } | null>(null);
 
@@ -114,7 +115,7 @@ function CallbackContent() {
     }
   }, [user, isInitialized, searchParams, router, authCopy.locale]);
 
-  function handleStep2Complete(data: RegisterStep2Input) {
+  function handleStep2Complete(data: SignupStep2SubmitData) {
     setStep2Data(data);
     setCurrentStep(3);
   }
@@ -129,6 +130,7 @@ function CallbackContent() {
         termsOfService: step2Data.termsOfService,
         privacyPolicy: step2Data.privacyPolicy,
         marketingConsent: step2Data.marketingConsent,
+        consentItems: step2Data.consentItems,
         name: data.name,
         gender: data.gender,
         country: data.country,
@@ -202,6 +204,7 @@ function CallbackContent() {
           >
             {currentStep === 2 && (
               <SignupStep2
+                sourceFlow="social_completion"
                 onComplete={handleStep2Complete}
                 onBack={() =>
                   router.push(getLocalizedPathname('/auth', authCopy.locale))

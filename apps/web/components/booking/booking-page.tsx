@@ -403,6 +403,37 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
     );
   }
 
+  if (bookingDisabledReason) {
+    return (
+      <div className="flex flex-1 flex-col">
+        <BookingHeader
+          performanceTitle={performance.title}
+          expiresAt={null}
+          onBack={handleBack}
+          onExpire={handleTimerExpire}
+        />
+
+        <main className="mx-auto flex w-full max-w-[760px] flex-1 items-center px-4 py-12">
+          <section
+            role="status"
+            className="w-full rounded-lg border border-amber-200 bg-amber-50 px-5 py-6 text-center"
+          >
+            <p className="text-base font-semibold text-amber-900">
+              {bookingDisabledReason}
+            </p>
+            <button
+              type="button"
+              onClick={handleBack}
+              className="mt-4 inline-flex min-h-10 items-center rounded-md bg-white px-4 text-sm font-semibold text-amber-900 shadow-sm ring-1 ring-amber-200 hover:bg-amber-100"
+            >
+              {performance.title}
+            </button>
+          </section>
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-1 flex-col">
       <BookingHeader

@@ -12,6 +12,7 @@ const localeCases = [
     searchQuery: '걸룰스',
     homeCopy: 'HOT 공연',
     searchCopy: "'걸룰스' 검색 결과",
+    resultTitle: '2026 걸룰스 팬미팅',
     authCopy: '로그인',
     detailCopy: '상세정보',
     bookingDisabledCopy: '예매는 5월말 오픈 예정입니다',
@@ -24,6 +25,7 @@ const localeCases = [
     searchQuery: 'girl',
     homeCopy: 'HOT',
     searchCopy: "Results for 'girl'",
+    resultTitle: '2026 Girl Rules Fanmeeting',
     authCopy: 'Login',
     detailCopy: 'Details',
     bookingDisabledCopy: 'Ticket booking opens in late May',
@@ -36,6 +38,7 @@ const localeCases = [
     searchQuery: 'girl',
     homeCopy: 'การแสดงยอดนิยม',
     searchCopy: "ผลการค้นหา 'girl'",
+    resultTitle: 'แฟนมีตติ้ง Girl Rules 2026',
     authCopy: 'เข้าสู่ระบบ',
     detailCopy: 'รายละเอียด',
     bookingDisabledCopy: 'การจองบัตรจะเปิดปลายเดือนพฤษภาคม',
@@ -48,6 +51,7 @@ const localeCases = [
     searchQuery: 'girl',
     homeCopy: '热门演出',
     searchCopy: "'girl' 的搜索结果",
+    resultTitle: '2026 Girl Rules 粉丝见面会',
     authCopy: '登录',
     detailCopy: '详细信息',
     bookingDisabledCopy: '门票预订预计于5月下旬开放',
@@ -60,6 +64,7 @@ const localeCases = [
     searchQuery: 'girl',
     homeCopy: '熱門演出',
     searchCopy: "'girl' 的搜尋結果",
+    resultTitle: '2026 Girl Rules 粉絲見面會',
     authCopy: '登入',
     detailCopy: '詳細資訊',
     bookingDisabledCopy: '門票預訂預計於5月下旬開放',
@@ -111,6 +116,7 @@ test.describe('Phase 23 i18n canary smoke', () => {
       );
       assertKoreanRewriteHeader(localeCase.prefix, searchResponse);
       await expect(page.getByText(localeCase.searchCopy)).toBeVisible();
+      await expect(page.getByText(localeCase.resultTitle).first()).toBeVisible();
 
       const performanceResponse = await gotoSmokeRoute(
         page,

@@ -1,12 +1,13 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { eq, desc, sql, and, ne } from 'drizzle-orm';
+import {
+  DEFAULT_LOCALE,
+  type PerformanceCardData,
+  type SearchResponse,
+  type SearchQuery,
+} from '@grabit/shared';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import { performances, venues } from '../../database/schema/index.js';
-import type {
-  PerformanceCardData,
-  SearchResponse,
-  SearchQuery,
-} from '@grabit/shared';
 import {
   overlayReviewedCardTranslations,
   resolvePerformanceTranslationLocale,
@@ -33,10 +34,32 @@ export class SearchService {
       conditions.push(ne(performances.status, 'ended'));
     }
 
-    // tsvector + ILIKE combined search
+    // tsvector + ILIKE combined search. Foreign-locale searches also match
+    // reviewed published translated titles before the result overlay step.
+    const translatedTitleCondition =
+      locale === DEFAULT_LOCALE
+        ? sql`false`
+        : sql`exists (
+            select 1
+            from translation_sources ts
+            inner join translation_drafts td on td.source_id = ts.id
+            where ts.entity_type = 'performance'
+              and ts.entity_id = ${performances.id}
+              and ts.field = 'title'
+              and ts.source_locale = ${DEFAULT_LOCALE}
+              and td.target_locale = ${locale}
+              and td.status = 'published'
+              and td.source_content_hash = ts.content_hash
+              and (
+                td.translated_text ilike ${'%' + q + '%'}
+                or to_tsvector('simple', td.translated_text) @@ plainto_tsquery('simple', ${q})
+              )
+          )`;
+
     const searchCondition = sql`(
       search_vector @@ plainto_tsquery('simple', ${q})
       OR ${performances.title} ILIKE ${'%' + q + '%'}
+      OR ${translatedTitleCondition}
     )`;
 
     const whereClause = conditions.length > 0

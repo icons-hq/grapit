@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
@@ -9,6 +9,7 @@ import { SignupStep2 } from '../signup-step2';
 const navigationMocks = vi.hoisted(() => ({
   push: vi.fn(),
   searchParams: new URLSearchParams(),
+  activeLocale: 'ko',
 }));
 
 vi.mock('next/navigation', () => ({
@@ -17,7 +18,7 @@ vi.mock('next/navigation', () => ({
 }));
 
 vi.mock('next-intl', () => ({
-  useLocale: () => 'ko',
+  useLocale: () => navigationMocks.activeLocale,
 }));
 
 vi.mock('@/lib/api-client', () => ({
@@ -47,6 +48,10 @@ vi.mock('@/content/legal/marketing-consent.md', () => ({
 }));
 
 describe('SignupStep2 itemized launch consent', () => {
+  beforeEach(() => {
+    navigationMocks.activeLocale = 'ko';
+  });
+
   it('renders required and optional itemized consent rows with version, language, and legal dialog actions', async () => {
     render(
       <SignupStep2
@@ -165,10 +170,45 @@ describe('SignupStep2 itemized launch consent', () => {
     expect(screen.getByText('만 14세 미만은 가입할 수 없습니다')).toBeInTheDocument();
     expect(screen.queryByText(/보호자|법정대리인|guardian/i)).not.toBeInTheDocument();
   });
+
+  it('renders consent labels and captures consent language from the active locale', async () => {
+    navigationMocks.activeLocale = 'en';
+    const onComplete = vi.fn();
+
+    render(
+      <SignupStep2
+        onComplete={onComplete}
+        onBack={vi.fn()}
+        defaultValues={null}
+      />,
+    );
+
+    const user = userEvent.setup();
+    expect(screen.getByLabelText(/Agree to Terms of Service/)).toBeInTheDocument();
+    expect(screen.getAllByText('Required')).toHaveLength(6);
+    expect(screen.getByText('Optional')).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText(/Agree to all/));
+    await user.click(screen.getByLabelText(/Agree to receive marketing messages/));
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+
+    expect(onComplete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        consentItems: expect.arrayContaining([
+          expect.objectContaining({
+            key: 'terms',
+            language: 'en',
+            sourceFlow: 'signup',
+          }),
+        ]),
+      }),
+    );
+  });
 });
 
 describe('auth provider launch surface', () => {
   it('keeps Kakao, Naver, Google, and email login visible while LINE is absent', () => {
+    navigationMocks.activeLocale = 'ko';
     render(<LoginForm />);
 
     expect(screen.getByLabelText(/이메일/)).toBeInTheDocument();

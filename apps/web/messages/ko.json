@@ -74,6 +74,46 @@
       "under14Blocked": "만 14세 미만은 가입할 수 없습니다",
       "temporaryError": "일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
     },
+    "consent": {
+      "selectAll": "전체 동의",
+      "required": "필수",
+      "optional": "선택",
+      "view": "보기",
+      "previous": "이전",
+      "next": "다음",
+      "dialogDescriptionSuffix": "상세 내용",
+      "crossBorderRequired": "국외이전 동의가 필요합니다. 동의하지 않으면 가입 또는 팬미팅 예매를 진행할 수 없습니다.",
+      "items": {
+        "termsOfService": {
+          "label": "이용약관 동의",
+          "title": "이용약관"
+        },
+        "privacyPolicy": {
+          "label": "개인정보처리방침 동의",
+          "title": "개인정보처리방침"
+        },
+        "pipaRequired": {
+          "label": "개인정보 필수 수집 및 이용 동의",
+          "title": "개인정보 필수 수집 및 이용"
+        },
+        "crossBorderTransfer": {
+          "label": "개인정보 국외이전 동의",
+          "title": "개인정보 국외이전"
+        },
+        "pdpaNotice": {
+          "label": "태국 PDPA 고지 확인",
+          "title": "태국 PDPA 고지"
+        },
+        "piplNotice": {
+          "label": "중국 PIPL 고지 확인",
+          "title": "중국 PIPL 고지"
+        },
+        "marketingConsent": {
+          "label": "마케팅 수신 동의",
+          "title": "마케팅 수신 동의"
+        }
+      }
+    },
     "emailVerification": {
       "sent": "인증 메일을 발송했습니다",
       "resendCta": "인증 메일 다시 보내기",

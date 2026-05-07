@@ -21,6 +21,41 @@ interface SeatMapViewerProps {
 
 const LOCKED_COLOR = '#D1D5DB';
 const SELECTED_STROKE = '#1A1A2E';
+const BLOCKED_SVG_TAGS = [
+  'script',
+  'foreignObject',
+  'iframe',
+  'object',
+  'embed',
+  'audio',
+  'video',
+  'canvas',
+] as const;
+const BLOCKED_SVG_ATTRS = new Set(['href', 'xlink:href', 'src']);
+
+function sanitizeParsedSvg(doc: Document) {
+  for (const tag of BLOCKED_SVG_TAGS) {
+    doc.querySelectorAll(tag).forEach((el) => el.remove());
+  }
+
+  doc.querySelectorAll('*').forEach((el) => {
+    for (const attr of Array.from(el.attributes)) {
+      const name = attr.name.toLowerCase();
+      const value = attr.value.trim().toLowerCase();
+      const unsafeStyle =
+        name === 'style' && /(?:url\s*\(|expression\s*\()/i.test(attr.value);
+
+      if (
+        name.startsWith('on') ||
+        BLOCKED_SVG_ATTRS.has(name) ||
+        value.includes('javascript:') ||
+        unsafeStyle
+      ) {
+        el.removeAttribute(attr.name);
+      }
+    }
+  });
+}
 
 export function SeatMapViewer({
   svgUrl,
@@ -153,6 +188,7 @@ export function SeatMapViewer({
     ) {
       return null;
     }
+    sanitizeParsedSvg(doc);
     const seats = doc.querySelectorAll('[data-seat-id]');
 
     seats.forEach((el) => {

@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { X } from 'lucide-react';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   LOCALE_LABELS,
   isSupportedLocale,
@@ -14,6 +14,7 @@ import {
 } from '@/i18n/routing';
 import { cn } from '@/lib/cn';
 import {
+  appendSearchParams,
   getLocalizedPathname,
   setLocalePreferenceCookie,
 } from './locale-switcher';
@@ -30,6 +31,7 @@ const SUGGESTION_COPY = {
 export function LocaleSuggestion({ className }: { className?: string }) {
   const pathname = usePathname();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const activeLocale = resolveLocaleFromPathname(pathname).locale;
   const [suggestedLocale, setSuggestedLocale] =
     React.useState<SupportedLocale | null>(null);
@@ -52,7 +54,12 @@ export function LocaleSuggestion({ className }: { className?: string }) {
   function chooseLocale() {
     setLocalePreferenceCookie(locale);
     dismiss();
-    router.push(getLocalizedPathname(pathname, locale));
+    router.push(
+      appendSearchParams(
+        getLocalizedPathname(pathname, locale),
+        searchParams.toString(),
+      ),
+    );
   }
 
   return (

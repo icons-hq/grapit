@@ -14,6 +14,44 @@ interface SvgPreviewProps {
   currentConfig?: SeatMapConfig;
 }
 
+const BLOCKED_SVG_TAGS = [
+  'script',
+  'foreignObject',
+  'iframe',
+  'object',
+  'embed',
+  'audio',
+  'video',
+  'canvas',
+] as const;
+const BLOCKED_SVG_ATTRS = new Set(['href', 'xlink:href', 'src']);
+
+function hasUnsafeSvgPayload(doc: Document) {
+  for (const tag of BLOCKED_SVG_TAGS) {
+    if (doc.querySelector(tag)) return true;
+  }
+
+  for (const el of Array.from(doc.querySelectorAll('*'))) {
+    for (const attr of Array.from(el.attributes)) {
+      const name = attr.name.toLowerCase();
+      const value = attr.value.trim().toLowerCase();
+      const unsafeStyle =
+        name === 'style' && /(?:url\s*\(|expression\s*\()/i.test(attr.value);
+
+      if (
+        name.startsWith('on') ||
+        BLOCKED_SVG_ATTRS.has(name) ||
+        value.includes('javascript:') ||
+        unsafeStyle
+      ) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 export function SvgPreview({
   performanceId,
   currentSvgUrl,
@@ -59,6 +97,10 @@ export function SvgPreview({
           doc.querySelector('parsererror')
         ) {
           toast.error('SVG 형식이 올바르지 않습니다. 다시 확인 후 업로드하세요.');
+          return;
+        }
+        if (hasUnsafeSvgPayload(doc)) {
+          toast.error('보안상 허용되지 않는 SVG 요소 또는 속성이 포함되어 있습니다.');
           return;
         }
       } catch {

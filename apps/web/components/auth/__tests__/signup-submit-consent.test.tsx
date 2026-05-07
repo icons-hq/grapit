@@ -142,6 +142,7 @@ describe('SignupForm consent submit payload', () => {
         '/api/v1/auth/register',
         expect.objectContaining({
           birthDate: '1995-01-02',
+          locale: 'ko',
           consentItems: expect.arrayContaining([
             expect.objectContaining({
               key: 'cross_border_transfer',

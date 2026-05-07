@@ -132,7 +132,7 @@ export function MobileMenu({
               </div>
               <div className="flex flex-col gap-1">
                 <Link
-                  href="/mypage"
+                  href={getLocalizedPathname('/mypage', activeLocale)}
                   onClick={onClose}
                   className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-gray-900 hover:bg-gray-100"
                 >

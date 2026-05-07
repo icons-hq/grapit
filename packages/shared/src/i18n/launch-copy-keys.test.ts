@@ -14,6 +14,7 @@ const expectedNamespaces = [
   'performance',
   'booking',
   'auth.form',
+  'auth.consent',
   'auth.emailVerification',
   'auth.otp',
   'auth.errors',
@@ -107,6 +108,16 @@ describe('launch copy key manifest', () => {
       'signupComplete',
       'under14Blocked',
       'temporaryError',
+    ]);
+    expect(LAUNCH_COPY_KEYS['auth.consent'].ko).toEqual([
+      'selectAll',
+      'required',
+      'optional',
+      'view',
+      'previous',
+      'next',
+      'dialogDescriptionSuffix',
+      'crossBorderRequired',
     ]);
   });
 
