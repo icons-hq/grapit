@@ -85,14 +85,17 @@ function createPerformanceRow(id = PHASE23_I18N_SMOKE_PERFORMANCE_ID) {
 
 const translatedFieldRows = [
   {
+    entityId: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
     field: 'title',
     translatedText: '2026 Girl Rules Fanmeeting',
   },
   {
+    entityId: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
     field: 'description',
     translatedText: 'English reviewed fanmeeting description',
   },
   {
+    entityId: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
     field: 'salesInfo',
     translatedText: 'English reviewed sales information',
   },

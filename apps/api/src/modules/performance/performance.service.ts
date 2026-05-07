@@ -18,6 +18,15 @@ import type {
   PerformanceQuery,
 } from '@grabit/shared';
 import { CacheService } from './cache.service.js';
+import {
+  overlayReviewedCardTranslations,
+  overlayReviewedDetailTranslations,
+  resolvePerformanceTranslationLocale,
+} from '../translation/performance-translation-overlay.js';
+
+type SeatMapConfigForDetails = NonNullable<
+  PerformanceWithDetails['seatMap']
+>['seatConfig'];
 
 @Injectable()
 export class PerformanceService {
@@ -31,14 +40,20 @@ export class PerformanceService {
     query: PerformanceQuery,
   ): Promise<PerformanceListResponse> {
     const { page = 1, limit = 20, sort = 'latest', ended = false, sub } = query;
+    const locale = resolvePerformanceTranslationLocale(query.locale);
 
-    const cacheKey = `cache:performances:list:${genre}:${page}:${limit}:${sort}:${ended}:${sub ?? 'none'}`;
+    const cacheKey = `cache:performances:list:${genre}:${locale}:${page}:${limit}:${sort}:${ended}:${sub ?? 'none'}`;
     const cached = await this.cacheService.get<PerformanceListResponse>(cacheKey);
     if (cached) return cached;
 
     const offset = (page - 1) * limit;
 
-    const conditions = [eq(performances.genre, genre as typeof performances.genre.enumValues[number])];
+    const conditions = [
+      eq(
+        performances.genre,
+        genre as (typeof performances.genre.enumValues)[number],
+      ),
+    ];
 
     if (sub) {
       conditions.push(eq(performances.subcategory, sub));
@@ -80,17 +95,19 @@ export class PerformanceService {
 
     const total = countResult[0]?.count ?? 0;
 
+    const cards: PerformanceCardData[] = data.map((row) => ({
+      id: row.id,
+      title: row.title,
+      genre: row.genre,
+      posterUrl: row.posterUrl,
+      status: row.status,
+      startDate: row.startDate?.toISOString() ?? '',
+      endDate: row.endDate?.toISOString() ?? '',
+      venueName: row.venueName ?? null,
+    }));
+
     const result: PerformanceListResponse = {
-      data: data.map((row) => ({
-        id: row.id,
-        title: row.title,
-        genre: row.genre,
-        posterUrl: row.posterUrl,
-        status: row.status,
-        startDate: row.startDate?.toISOString() ?? '',
-        endDate: row.endDate?.toISOString() ?? '',
-        venueName: row.venueName ?? null,
-      })),
+      data: await overlayReviewedCardTranslations(this.db, cards, locale),
       total,
       page,
       limit,
@@ -101,7 +118,12 @@ export class PerformanceService {
     return result;
   }
 
-  async findById(id: string): Promise<PerformanceWithDetails | null> {
+  async findById(
+    id: string,
+    locale?: string | null,
+  ): Promise<PerformanceWithDetails | null> {
+    const targetLocale = resolvePerformanceTranslationLocale(locale);
+
     // Increment view count BEFORE the cache check so view counters keep
     // accruing on every request, not just on DB hits (per plan acceptance).
     // no-op if ID doesn't exist.
@@ -110,7 +132,7 @@ export class PerformanceService {
       .set({ viewCount: sql`${performances.viewCount} + 1` })
       .where(eq(performances.id, id));
 
-    const cacheKey = `cache:performances:detail:${id}`;
+    const cacheKey = `cache:performances:detail:${id}:${targetLocale}`;
     const cached = await this.cacheService.get<PerformanceWithDetails>(cacheKey);
     if (cached) return cached;
 
@@ -126,81 +148,87 @@ export class PerformanceService {
     }
 
     // Fetch related data in parallel
-    const [priceTierRows, showtimeRows, castingRows, seatMapRows] = await Promise.all([
-      this.db
-        .select()
-        .from(priceTiers)
-        .where(eq(priceTiers.performanceId, id))
-        .orderBy(priceTiers.sortOrder),
-      this.db
-        .select()
-        .from(showtimes)
-        .where(eq(showtimes.performanceId, id))
-        .orderBy(showtimes.dateTime),
-      this.db
-        .select()
-        .from(castings)
-        .where(eq(castings.performanceId, id))
-        .orderBy(castings.sortOrder),
-      this.db
-        .select()
-        .from(seatMaps)
-        .where(eq(seatMaps.performanceId, id)),
-    ]);
+    const [priceTierRows, showtimeRows, castingRows, seatMapRows] =
+      await Promise.all([
+        this.db
+          .select()
+          .from(priceTiers)
+          .where(eq(priceTiers.performanceId, id))
+          .orderBy(priceTiers.sortOrder),
+        this.db
+          .select()
+          .from(showtimes)
+          .where(eq(showtimes.performanceId, id))
+          .orderBy(showtimes.dateTime),
+        this.db
+          .select()
+          .from(castings)
+          .where(eq(castings.performanceId, id))
+          .orderBy(castings.sortOrder),
+        this.db
+          .select()
+          .from(seatMaps)
+          .where(eq(seatMaps.performanceId, id)),
+      ]);
 
     const perf = performanceRow.performances;
     const venue = performanceRow.venues;
 
-    const result: PerformanceWithDetails = {
-      id: perf.id,
-      title: perf.title,
-      genre: perf.genre,
-      subcategory: perf.subcategory,
-      venueId: perf.venueId,
-      posterUrl: perf.posterUrl,
-      description: perf.description,
-      startDate: perf.startDate?.toISOString() ?? '',
-      endDate: perf.endDate?.toISOString() ?? '',
-      runtime: perf.runtime,
-      ageRating: perf.ageRating,
-      status: perf.status,
-      salesInfo: perf.salesInfo,
-      viewCount: perf.viewCount,
-      createdAt: perf.createdAt?.toISOString() ?? '',
-      updatedAt: perf.updatedAt?.toISOString() ?? '',
-      venue: venue
-        ? { id: venue.id, name: venue.name, address: venue.address }
-        : null,
-      priceTiers: priceTierRows.map((pt) => ({
-        id: pt.id,
-        performanceId: pt.performanceId,
-        tierName: pt.tierName,
-        price: pt.price,
-        sortOrder: pt.sortOrder,
-      })),
-      showtimes: showtimeRows.map((st) => ({
-        id: st.id,
-        performanceId: st.performanceId,
-        dateTime: st.dateTime?.toISOString() ?? '',
-      })),
-      castings: castingRows.map((c) => ({
-        id: c.id,
-        performanceId: c.performanceId,
-        actorName: c.actorName,
-        roleName: c.roleName,
-        photoUrl: c.photoUrl,
-        sortOrder: c.sortOrder,
-      })),
-      seatMap: seatMapRows[0]
-        ? {
-            id: seatMapRows[0].id,
-            performanceId: seatMapRows[0].performanceId,
-            svgUrl: seatMapRows[0].svgUrl,
-            seatConfig: seatMapRows[0].seatConfig as PerformanceWithDetails['seatMap'] extends null ? never : NonNullable<PerformanceWithDetails['seatMap']>['seatConfig'],
-            totalSeats: seatMapRows[0].totalSeats,
-          }
-        : null,
-    };
+    const result: PerformanceWithDetails =
+      await overlayReviewedDetailTranslations(
+        this.db,
+        {
+          id: perf.id,
+          title: perf.title,
+          genre: perf.genre,
+          subcategory: perf.subcategory,
+          venueId: perf.venueId,
+          posterUrl: perf.posterUrl,
+          description: perf.description,
+          startDate: perf.startDate?.toISOString() ?? '',
+          endDate: perf.endDate?.toISOString() ?? '',
+          runtime: perf.runtime,
+          ageRating: perf.ageRating,
+          status: perf.status,
+          salesInfo: perf.salesInfo,
+          viewCount: perf.viewCount,
+          createdAt: perf.createdAt?.toISOString() ?? '',
+          updatedAt: perf.updatedAt?.toISOString() ?? '',
+          venue: venue
+            ? { id: venue.id, name: venue.name, address: venue.address }
+            : null,
+          priceTiers: priceTierRows.map((pt) => ({
+            id: pt.id,
+            performanceId: pt.performanceId,
+            tierName: pt.tierName,
+            price: pt.price,
+            sortOrder: pt.sortOrder,
+          })),
+          showtimes: showtimeRows.map((st) => ({
+            id: st.id,
+            performanceId: st.performanceId,
+            dateTime: st.dateTime?.toISOString() ?? '',
+          })),
+          castings: castingRows.map((c) => ({
+            id: c.id,
+            performanceId: c.performanceId,
+            actorName: c.actorName,
+            roleName: c.roleName,
+            photoUrl: c.photoUrl,
+            sortOrder: c.sortOrder,
+          })),
+          seatMap: seatMapRows[0]
+            ? {
+                id: seatMapRows[0].id,
+                performanceId: seatMapRows[0].performanceId,
+                svgUrl: seatMapRows[0].svgUrl,
+                seatConfig: seatMapRows[0].seatConfig as SeatMapConfigForDetails,
+                totalSeats: seatMapRows[0].totalSeats,
+              }
+            : null,
+        },
+        targetLocale,
+      );
 
     await this.cacheService.set(cacheKey, result);
     return result;
@@ -229,8 +257,11 @@ export class PerformanceService {
     return result;
   }
 
-  async getHotPerformances(): Promise<PerformanceCardData[]> {
-    const cacheKey = 'cache:home:hot';
+  async getHotPerformances(
+    locale?: string | null,
+  ): Promise<PerformanceCardData[]> {
+    const targetLocale = resolvePerformanceTranslationLocale(locale);
+    const cacheKey = `cache:home:hot:${targetLocale}`;
     const cached = await this.cacheService.get<PerformanceCardData[]>(cacheKey);
     if (cached) return cached;
 
@@ -251,7 +282,7 @@ export class PerformanceService {
       .orderBy(desc(performances.viewCount))
       .limit(4);
 
-    const result: PerformanceCardData[] = rows.map((row) => ({
+    const cards: PerformanceCardData[] = rows.map((row) => ({
       id: row.id,
       title: row.title,
       genre: row.genre,
@@ -261,13 +292,21 @@ export class PerformanceService {
       endDate: row.endDate?.toISOString() ?? '',
       venueName: row.venueName ?? null,
     }));
+    const result = await overlayReviewedCardTranslations(
+      this.db,
+      cards,
+      targetLocale,
+    );
 
     await this.cacheService.set(cacheKey, result);
     return result;
   }
 
-  async getNewPerformances(): Promise<PerformanceCardData[]> {
-    const cacheKey = 'cache:home:new';
+  async getNewPerformances(
+    locale?: string | null,
+  ): Promise<PerformanceCardData[]> {
+    const targetLocale = resolvePerformanceTranslationLocale(locale);
+    const cacheKey = `cache:home:new:${targetLocale}`;
     const cached = await this.cacheService.get<PerformanceCardData[]>(cacheKey);
     if (cached) return cached;
 
@@ -284,11 +323,13 @@ export class PerformanceService {
       })
       .from(performances)
       .leftJoin(venues, eq(performances.venueId, venues.id))
-      .where(inArray(performances.status, ['selling', 'upcoming', 'closing_soon']))
+      .where(
+        inArray(performances.status, ['selling', 'upcoming', 'closing_soon']),
+      )
       .orderBy(desc(performances.createdAt))
       .limit(4);
 
-    const result: PerformanceCardData[] = rows.map((row) => ({
+    const cards: PerformanceCardData[] = rows.map((row) => ({
       id: row.id,
       title: row.title,
       genre: row.genre,
@@ -298,6 +339,11 @@ export class PerformanceService {
       endDate: row.endDate?.toISOString() ?? '',
       venueName: row.venueName ?? null,
     }));
+    const result = await overlayReviewedCardTranslations(
+      this.db,
+      cards,
+      targetLocale,
+    );
 
     await this.cacheService.set(cacheKey, result);
     return result;

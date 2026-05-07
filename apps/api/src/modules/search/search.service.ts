@@ -2,7 +2,15 @@ import { Inject, Injectable } from '@nestjs/common';
 import { eq, desc, sql, and, ne } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import { performances, venues } from '../../database/schema/index.js';
-import type { SearchResponse, SearchQuery } from '@grabit/shared';
+import type {
+  PerformanceCardData,
+  SearchResponse,
+  SearchQuery,
+} from '@grabit/shared';
+import {
+  overlayReviewedCardTranslations,
+  resolvePerformanceTranslationLocale,
+} from '../translation/performance-translation-overlay.js';
 
 @Injectable()
 export class SearchService {
@@ -12,6 +20,7 @@ export class SearchService {
 
   async search(query: SearchQuery): Promise<SearchResponse> {
     const { q, genre, ended = false, page = 1, limit = 20 } = query;
+    const locale = resolvePerformanceTranslationLocale(query.locale);
     const offset = (page - 1) * limit;
 
     const conditions: ReturnType<typeof eq>[] = [];
@@ -49,7 +58,9 @@ export class SearchService {
         .from(performances)
         .leftJoin(venues, eq(performances.venueId, venues.id))
         .where(whereClause)
-        .orderBy(desc(sql`ts_rank(search_vector, plainto_tsquery('simple', ${q}))`))
+        .orderBy(
+          desc(sql`ts_rank(search_vector, plainto_tsquery('simple', ${q}))`),
+        )
         .limit(limit)
         .offset(offset),
       this.db
@@ -60,17 +71,19 @@ export class SearchService {
 
     const total = countResult[0]?.count ?? 0;
 
+    const cards: PerformanceCardData[] = data.map((row) => ({
+      id: row.id,
+      title: row.title,
+      genre: row.genre,
+      posterUrl: row.posterUrl,
+      status: row.status,
+      startDate: row.startDate?.toISOString() ?? '',
+      endDate: row.endDate?.toISOString() ?? '',
+      venueName: row.venueName ?? null,
+    }));
+
     return {
-      data: data.map((row) => ({
-        id: row.id,
-        title: row.title,
-        genre: row.genre,
-        posterUrl: row.posterUrl,
-        status: row.status,
-        startDate: row.startDate?.toISOString() ?? '',
-        endDate: row.endDate?.toISOString() ?? '',
-        venueName: row.venueName ?? null,
-      })),
+      data: await overlayReviewedCardTranslations(this.db, cards, locale),
       total,
       page,
       limit,

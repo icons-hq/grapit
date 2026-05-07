@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Get,
   Param,
@@ -7,7 +8,10 @@ import {
 } from '@nestjs/common';
 import { Public } from '../../common/decorators/public.decorator.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
-import { performanceQuerySchema, type PerformanceQuery } from './dto/performance.dto.js';
+import {
+  performanceQuerySchema,
+  type PerformanceQuery,
+} from './dto/performance.dto.js';
 import { PerformanceService } from './performance.service.js';
 
 @Public()
@@ -24,8 +28,15 @@ export class PerformanceController {
   }
 
   @Get('performances/:id')
-  async getPerformance(@Param('id') id: string) {
-    const result = await this.performanceService.findById(id);
+  async getPerformance(
+    @Param('id') id: string,
+    @Query(new ZodValidationPipe(performanceQuerySchema)) query?: PerformanceQuery,
+  ) {
+    if (!isUuid(id)) {
+      throw new BadRequestException('올바른 공연 ID가 아닙니다');
+    }
+
+    const result = await this.performanceService.findById(id, query?.locale);
     if (!result) {
       throw new NotFoundException('공연을 찾을 수 없습니다');
     }
@@ -38,12 +49,22 @@ export class PerformanceController {
   }
 
   @Get('home/hot')
-  async getHotPerformances() {
-    return this.performanceService.getHotPerformances();
+  async getHotPerformances(
+    @Query(new ZodValidationPipe(performanceQuerySchema)) query?: PerformanceQuery,
+  ) {
+    return this.performanceService.getHotPerformances(query?.locale);
   }
 
   @Get('home/new')
-  async getNewPerformances() {
-    return this.performanceService.getNewPerformances();
+  async getNewPerformances(
+    @Query(new ZodValidationPipe(performanceQuerySchema)) query?: PerformanceQuery,
+  ) {
+    return this.performanceService.getNewPerformances(query?.locale);
   }
+}
+
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    value,
+  );
 }

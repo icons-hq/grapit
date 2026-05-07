@@ -27,6 +27,12 @@ export const GENRE_SLUGS: Record<string, Genre> = {
 };
 
 export type PerformanceStatus = 'upcoming' | 'selling' | 'closing_soon' | 'ended';
+export type TranslationReviewSource = 'machine_reviewed';
+
+export interface ReviewedTranslationMetadata {
+  automaticTranslationLabel?: boolean;
+  translatedBy?: TranslationReviewSource;
+}
 
 export const STATUS_LABELS: Record<PerformanceStatus, string> = {
   upcoming: '판매예정',
@@ -88,7 +94,7 @@ export interface Banner {
   isActive: boolean;
 }
 
-export interface Performance {
+export interface Performance extends ReviewedTranslationMetadata {
   id: string;
   title: string;
   genre: Genre;
@@ -115,7 +121,7 @@ export interface PerformanceWithDetails extends Performance {
   seatMap: SeatMap | null;
 }
 
-export interface PerformanceCardData {
+export interface PerformanceCardData extends ReviewedTranslationMetadata {
   id: string;
   title: string;
   genre: Genre;

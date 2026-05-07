@@ -1,5 +1,6 @@
 import pg from 'pg';
 import argon2 from 'argon2';
+import crypto from 'node:crypto';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 if (!DATABASE_URL) {
@@ -10,12 +11,89 @@ if (!DATABASE_URL) {
 const pool = new pg.Pool({ connectionString: DATABASE_URL });
 
 const GIRL_RULES_FANMEET_TITLE = '2026 걸룰스 팬미팅';
+const PHASE23_I18N_SMOKE_PERFORMANCE_ID =
+  '00000000-0000-4000-8000-000000000023';
 const DONGHAE_SEAT_MAP_URL = '/seed/donghae-girl-rules-20260718-seat-map.svg';
+const TRANSLATION_TARGET_LOCALES = ['en', 'th', 'zh-CN', 'zh-TW'];
+
+const girlRulesFanmeetTranslations = {
+  en: {
+    title: '2026 Girl Rules Fanmeeting',
+    description:
+      'A reviewed English introduction for the Girl Rules fanmeeting at Donghae Culture and Arts Center on July 18, 2026.',
+    salesInfo:
+      'Tickets are sold by assigned seat. Check the selected seat grade and showtime before payment.',
+  },
+  th: {
+    title: 'แฟนมีตติ้ง Girl Rules 2026',
+    description:
+      'คำแนะนำภาษาไทยที่ตรวจสอบแล้วสำหรับแฟนมีตติ้ง Girl Rules ณ Donghae Culture and Arts Center วันที่ 18 กรกฎาคม 2026',
+    salesInfo:
+      'จำหน่ายบัตรแบบระบุที่นั่ง โปรดตรวจสอบระดับที่นั่งและรอบการแสดงก่อนชำระเงิน',
+  },
+  'zh-CN': {
+    title: '2026 Girl Rules 粉丝见面会',
+    description:
+      'Girl Rules 粉丝见面会将于 2026 年 7 月 18 日在东海文化艺术馆举行，本简介已完成机器翻译审核。',
+    salesInfo:
+      '门票按指定座位销售。付款前请确认所选座位等级和演出场次。',
+  },
+  'zh-TW': {
+    title: '2026 Girl Rules 粉絲見面會',
+    description:
+      'Girl Rules 粉絲見面會將於 2026 年 7 月 18 日在東海文化藝術館舉行，本介紹已完成機器翻譯審核。',
+    salesInfo:
+      '門票採指定座位銷售。付款前請確認所選座位等級與演出場次。',
+  },
+};
 
 function expandSeatRanges(ranges) {
   return ranges.flatMap(([row, start, end]) =>
     Array.from({ length: end - start + 1 }, (_, index) => `${row}-${start + index}`)
   );
+}
+
+function contentHash(value) {
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+async function insertReviewedPerformanceTranslations(client, performance) {
+  const sourceFields = ['title', 'description', 'salesInfo'];
+
+  for (const field of sourceFields) {
+    const sourceText = performance[field];
+    if (!sourceText) {
+      continue;
+    }
+
+    const hash = contentHash(sourceText);
+    const sourceResult = await client.query(
+      `
+        INSERT INTO translation_sources
+          (id, entity_type, entity_id, field, source_locale, source_text, content_hash)
+        VALUES (gen_random_uuid(), 'performance', $1, $2, 'ko', $3, $4)
+        RETURNING id
+      `,
+      [performance.id, field, sourceText, hash],
+    );
+    const sourceId = sourceResult.rows[0].id;
+
+    for (const targetLocale of TRANSLATION_TARGET_LOCALES) {
+      await client.query(
+        `
+          INSERT INTO translation_drafts
+            (id, source_id, target_locale, status, translated_text, source_content_hash, published_at)
+          VALUES (gen_random_uuid(), $1, $2, 'published', $3, $4, NOW())
+        `,
+        [
+          sourceId,
+          targetLocale,
+          girlRulesFanmeetTranslations[targetLocale][field],
+          hash,
+        ],
+      );
+    }
+  }
 }
 
 const donghaeFanmeetSeatConfig = {
@@ -83,6 +161,8 @@ async function seed() {
     await client.query('DELETE FROM price_tiers');
     await client.query('DELETE FROM showtimes');
     await client.query('DELETE FROM seat_maps');
+    await client.query('DELETE FROM translation_drafts');
+    await client.query('DELETE FROM translation_sources');
     await client.query('DELETE FROM performances');
     await client.query('DELETE FROM venues');
 
@@ -190,12 +270,14 @@ async function seed() {
         viewCount: 21300,
       },
       {
+        id: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
         title: GIRL_RULES_FANMEET_TITLE,
         genre: 'concert',
         subcategory: '팬미팅',
         venue: '동해문화예술관 대극장',
         poster: null,
         description: '2026년 7월 18일 동해문화예술관 대극장에서 열리는 걸룰스 팬미팅.',
+        salesInfo: '전석 지정좌석제로 운영되며 예매 전 좌석 등급과 회차를 확인해주세요.',
         startDate: new Date('2026-07-17T15:00:00.000Z').toISOString(),
         endDate: new Date('2026-07-18T14:59:59.000Z').toISOString(),
         runtime: '120분',
@@ -209,13 +291,19 @@ async function seed() {
     const perfIds = [];
     for (const p of perfData) {
       const res = await client.query(`
-        INSERT INTO performances (id, title, genre, subcategory, venue_id, poster_url, description, start_date, end_date, runtime, age_rating, status, view_count)
-        VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        INSERT INTO performances (id, title, genre, subcategory, venue_id, poster_url, description, start_date, end_date, runtime, age_rating, status, sales_info, view_count)
+        VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         RETURNING id
-      `, [p.title, p.genre, p.subcategory, venues[p.venue], p.poster, p.description, p.startDate, p.endDate, p.runtime, p.ageRating, p.status, p.viewCount]);
+      `, [p.id ?? null, p.title, p.genre, p.subcategory, venues[p.venue], p.poster, p.description, p.startDate, p.endDate, p.runtime, p.ageRating, p.status, p.salesInfo ?? null, p.viewCount]);
       perfIds.push({ id: res.rows[0].id, title: p.title });
     }
     console.log(`Inserted ${perfIds.length} performances`);
+
+    await insertReviewedPerformanceTranslations(client, {
+      ...perfData[girlRulesFanmeetIdx],
+      id: perfIds[girlRulesFanmeetIdx].id,
+    });
+    console.log(`Inserted reviewed translations for ${GIRL_RULES_FANMEET_TITLE}`);
 
     // Showtimes (2~4 per performance, excluding ended)
     const showtimeInserts = [];

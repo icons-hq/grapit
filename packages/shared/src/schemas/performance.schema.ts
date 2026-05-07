@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { SUPPORTED_LOCALES } from '../constants/locales';
 import { GENRES } from '../types/performance.types';
 
 export const createPerformanceSchema = z.object({
@@ -38,6 +39,7 @@ export type UpdatePerformanceInput = z.infer<typeof updatePerformanceSchema>;
 
 export const performanceQuerySchema = z.object({
   genre: z.enum(GENRES).optional(),
+  locale: z.enum(SUPPORTED_LOCALES).optional(),
   sub: z.string().optional(),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
@@ -49,6 +51,7 @@ export type PerformanceQuery = z.infer<typeof performanceQuerySchema>;
 export const searchQuerySchema = z.object({
   q: z.string().min(1),
   genre: z.enum(GENRES).optional(),
+  locale: z.enum(SUPPORTED_LOCALES).optional(),
   ended: z.coerce.boolean().optional().default(false),
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),

@@ -18,7 +18,17 @@ const PHASE23_I18N_SMOKE_PERFORMANCE_ID =
 
 function createChainableMock() {
   const chain: Record<string, ReturnType<typeof vi.fn>> = {};
-  const methods = ['select', 'from', 'where', 'leftJoin', 'limit', 'offset', 'orderBy', 'groupBy'];
+  const methods = [
+    'select',
+    'from',
+    'where',
+    'leftJoin',
+    'innerJoin',
+    'limit',
+    'offset',
+    'orderBy',
+    'groupBy',
+  ];
   for (const method of methods) {
     chain[method] = vi.fn().mockReturnValue(chain);
   }
