@@ -65,7 +65,7 @@ Plans:
 
 **Merged from:** 25 Prod compatibility + flags, 26 i18n routing + locale foundation, 27 Translation workflow + legal lock, 28 email verification + 5-country SMS (LINE excluded by Phase 23 D-13), 29 Multinational consent + audit
 
-**Plans:** 17/17 plans complete
+**Plans:** 18/18 plans complete
 
 Plans:
 **Wave 1**
