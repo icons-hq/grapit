@@ -79,7 +79,7 @@ export function SignupStep1({ onComplete, defaultValues }: SignupStep1Props) {
                   {...field}
                 />
               </FormControl>
-              <FormDescription>8자 이상, 영문+숫자+특수문자 포함</FormDescription>
+              <FormDescription>{authCopy.form.passwordDescription}</FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -90,10 +90,12 @@ export function SignupStep1({ onComplete, defaultValues }: SignupStep1Props) {
           name="passwordConfirm"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>비밀번호 확인 <span className="text-error">*</span></FormLabel>
+              <FormLabel>
+                {authCopy.form.passwordConfirm} <span className="text-error">*</span>
+              </FormLabel>
               <FormControl>
                 <PasswordInput
-                  placeholder="비밀번호를 다시 입력해주세요"
+                  placeholder={authCopy.form.passwordConfirmPlaceholder}
                   autoComplete="new-password"
                   {...field}
                 />
@@ -105,7 +107,7 @@ export function SignupStep1({ onComplete, defaultValues }: SignupStep1Props) {
 
         <div className="pt-2">
           <Button type="submit" size="lg" className="w-full">
-            다음
+            {authCopy.form.nextButton}
           </Button>
         </div>
       </form>
