@@ -78,6 +78,13 @@
       "when": 1778136300000,
       "tag": "0010_collapse_legacy_genres",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1778139000000,
+      "tag": "0011_seed_launch_consent_items",
+      "breakpoints": true
     }
   ]
 }
