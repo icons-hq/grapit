@@ -2493,7 +2493,9 @@
         "classic",
         "sports",
         "kids_family",
-        "leisure_camping"
+        "leisure_camping",
+        "artist_celebrity",
+        "ip_popup"
       ]
     },
     "public.performance_status": {

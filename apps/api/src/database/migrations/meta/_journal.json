@@ -68,8 +68,15 @@
     {
       "idx": 9,
       "version": "7",
-      "when": 1778137200000,
-      "tag": "0009_seed_launch_consent_items",
+      "when": 1778133600000,
+      "tag": "0009_two_event_categories",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1778136300000,
+      "tag": "0010_collapse_legacy_genres",
       "breakpoints": true
     }
   ]

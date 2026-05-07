@@ -10,28 +10,30 @@
     "language": "언어",
     "home": "홈",
     "search": "검색",
-    "category": "카테고리"
+    "category": "분류"
   },
   "home": {
-    "hot": "HOT 공연",
+    "hot": "HOT 이벤트",
     "newOpen": "신규 오픈",
-    "genreShortcuts": "장르별 바로가기",
+    "genreShortcuts": "이벤트 분류",
     "more": "더보기",
-    "empty": "공연을 검색하거나 장르별로 탐색해보세요."
+    "empty": "팬미팅과 팝업 이벤트를 검색하거나 분류별로 탐색해보세요."
   },
   "search": {
     "promptTitle": "공연을 검색하세요",
     "promptBody": "공연명, 아티스트를 검색하세요",
     "resultTitle": "'{query}' 검색 결과",
     "totalCount": "총 {count}건",
-    "includeEnded": "판매종료 공연 포함",
-    "allGenres": "전체",
-    "loadError": "공연 정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.",
+    "includeEnded": "판매종료 이벤트 포함",
+    "allGenres": "전체 분류",
+    "loadError": "이벤트 정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.",
     "retry": "다시 시도",
     "emptyHeading": "검색 결과가 없습니다",
-    "emptyBody": "다른 키워드로 검색하거나 장르별 공연을 둘러보세요"
+    "emptyBody": "다른 키워드로 검색하거나 이벤트 분류를 둘러보세요"
   },
   "genres": {
+    "artist_celebrity": "아티스트·셀럽",
+    "ip_popup": "IP 팝업",
     "musical": "뮤지컬",
     "concert": "콘서트",
     "play": "연극",
@@ -42,17 +44,9 @@
     "leisure_camping": "레저/캠핑"
   },
   "genrePage": {
-    "title": "{genre} 공연",
-    "emptyHeading": "등록된 공연이 없습니다",
-    "emptyBody": "곧 새로운 공연이 등록될 예정입니다",
-    "subcategories": {
-      "all": "전체",
-      "hot": "요즘HOT",
-      "original": "오리지널/내한",
-      "license": "라이선스",
-      "creative": "창작",
-      "domestic": "내한"
-    },
+    "title": "{genre} 이벤트",
+    "emptyHeading": "등록된 이벤트가 없습니다",
+    "emptyBody": "곧 새로운 이벤트가 등록될 예정입니다",
     "sort": {
       "ariaLabel": "정렬 기준",
       "latest": "최신순",

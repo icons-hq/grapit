@@ -1,3 +1,25 @@
+## Basic Guidelines
+
+### Language Settings
+
+- Write all responses in Korean.
+- Keep technical terms and code identifiers in English, and write explanations in Korean.
+
+### Codex GSD Subagent Handling
+
+- This section applies only to the Codex global runtime. Do not modify Claude/`~/.claude` settings, files, or workflows.
+- Standing authorization: The user has explicitly authorized Codex, for this repository, to use Codex native subagents whenever a GSD workflow, GSD skill, GSD command, or agentic coding task has independent work that can safely run in parallel.
+- Treat this standing authorization as the explicit user request needed for GSD-related `spawn_agent`, `@gsd-*` custom agents, or the GSD `Task()` adapter, unless the current turn says to avoid subagents, avoid parallel work, pause, or only explain.
+- Prefer Codex native subagents for parallelizable GSD work when tasks are independent, write scopes are disjoint, or the workflow recommends wave-based fan-out.
+- Do not spawn subagents for tightly coupled work, single blocking next steps, small sequential edits, or tasks where parallel writes would create avoidable merge conflicts.
+- When using a GSD workflow's `Task()` adapter, `spawn_agent`, or `@gsd-*` custom agents, a `wait_agent` timeout or empty status is not a failure.
+- After spawning a GSD subagent, wait until terminal status or the artifact contract (`PLAN.md`, `RESEARCH.md`, `PATTERNS.md`, `SUMMARY.md`, verification marker, commit, etc.) is confirmed.
+- When calling `wait_agent`, use the `workflow.subagent_timeout` value as `timeout_ms` if it exists; otherwise use the default value of `1800000` ms.
+- If `wait_agent` times out, call `wait_agent` again for the same agent, check status with `send_input`, or spot-check filesystem/git artifacts.
+- Do not call `close_agent` immediately after a timeout, and do not directly reimplement still-running subagent work in the main agent.
+- Call `close_agent` only after collecting the final result, confirming terminal failure, completing artifact contract verification, or receiving an explicit stop request from the user.
+- Use inline sequential fallback only when Codex native subagents cannot be started, the workflow marks the work as non-parallelizable, or safety checks detect overlapping write scopes; clearly explain the fallback reason to the user.
+
 <!-- GSD:project-start source:PROJECT.md -->
 ## Project
 
@@ -222,6 +244,10 @@
 
 <!-- GSD:conventions-start source:CONVENTIONS.md -->
 ## Conventions
+
+### 어드민 계정
+개발환경, 프로덕션 동일
+- admin@grapit.test  TestAdmin2026!
 
 ### 개발환경 서버포트
 - web: 3000

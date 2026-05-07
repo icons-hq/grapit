@@ -23,7 +23,7 @@ export class PerformanceController {
   async listPerformances(
     @Query(new ZodValidationPipe(performanceQuerySchema)) query: PerformanceQuery,
   ) {
-    const genre = query.genre ?? 'musical';
+    const genre = query.genre ?? 'artist_celebrity';
     return this.performanceService.findByGenre(genre, query);
   }
 

@@ -15,9 +15,9 @@
   "home": {
     "hot": "熱門演出",
     "newOpen": "新開售",
-    "genreShortcuts": "按類型瀏覽",
+    "genreShortcuts": "按活動分類瀏覽",
     "more": "更多",
-    "empty": "搜尋演出或按類型瀏覽。"
+    "empty": "搜尋粉絲見面會和快閃活動，或按分類瀏覽。"
   },
   "search": {
     "promptTitle": "搜尋演出",
@@ -25,13 +25,15 @@
     "resultTitle": "'{query}' 的搜尋結果",
     "totalCount": "共 {count} 筆結果",
     "includeEnded": "包含已結束演出",
-    "allGenres": "全部",
+    "allGenres": "全部分類",
     "loadError": "無法載入演出資訊。請稍後再試。",
     "retry": "重試",
     "emptyHeading": "沒有搜尋結果",
-    "emptyBody": "請嘗試其他關鍵字或按類型瀏覽演出"
+    "emptyBody": "請嘗試其他關鍵字或按活動分類瀏覽"
   },
   "genres": {
+    "artist_celebrity": "藝人/名人",
+    "ip_popup": "IP 快閃",
     "musical": "音樂劇",
     "concert": "演唱會",
     "play": "話劇",
@@ -45,14 +47,6 @@
     "title": "{genre}",
     "emptyHeading": "暫無演出",
     "emptyBody": "新的演出將很快上線。",
-    "subcategories": {
-      "all": "全部",
-      "hot": "熱門",
-      "original": "原創/巡演",
-      "license": "授權",
-      "creative": "原創",
-      "domestic": "巡演"
-    },
     "sort": {
       "ariaLabel": "排序",
       "latest": "最新",

@@ -110,9 +110,8 @@ describe('AdminDashboardService', () => {
       mockCache.get.mockResolvedValue(null);
       const orderBySpy = vi.fn(() =>
         createChainMock([
-          { genre: 'musical', count: 5 },
-          { genre: 'concert', count: 3 },
-          { genre: 'play', count: 1 },
+          { genre: 'artist_celebrity', count: 5 },
+          { genre: 'ip_popup', count: 3 },
         ]),
       );
       const groupBySpy = vi.fn(() => ({ orderBy: orderBySpy }));
@@ -127,7 +126,7 @@ describe('AdminDashboardService', () => {
       mockDb.select.mockReturnValue({ from: fromSpy });
       const result = await service.getGenreDistribution('30d' as DashboardPeriod);
       expect(Array.isArray(result)).toBe(true);
-      expect(result.length).toBe(3);
+      expect(result.length).toBe(2);
     });
   });
 

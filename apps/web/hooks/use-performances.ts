@@ -15,11 +15,10 @@ export function usePerformances(genre: string) {
   const locale = resolveVisibleCopyLocale(useLocale());
   const page = Number(searchParams.get('page') ?? '1');
   const sort = (searchParams.get('sort') ?? 'latest') as 'latest' | 'popular';
-  const sub = searchParams.get('sub') ?? '';
   const ended = searchParams.get('ended') === 'true';
 
   return useQuery({
-    queryKey: ['performances', genre, page, sort, sub, ended, locale],
+    queryKey: ['performances', genre, page, sort, ended, locale],
     queryFn: () => {
       const params = new URLSearchParams({
         genre,
@@ -27,7 +26,6 @@ export function usePerformances(genre: string) {
         sort,
         locale,
       });
-      if (sub) params.set('sub', sub);
       if (ended) params.set('ended', 'true');
       return apiClient.get<PerformanceListResponse>(
         `/api/v1/performances?${params.toString()}`,

@@ -32,7 +32,7 @@ test.describe('Admin Dashboard E2E', () => {
 
     // 차트 섹션 3개
     await expect(page.getByRole('heading', { name: '매출 추이' })).toBeVisible();
-    await expect(page.getByRole('heading', { name: '장르별 예매 분포' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '분류별 예매 분포' })).toBeVisible();
     await expect(page.getByRole('heading', { name: '결제수단 분포' })).toBeVisible();
 
     // Top 10
@@ -86,7 +86,7 @@ test.describe('Admin Dashboard E2E', () => {
 
     const sections = [
       { heading: '매출 추이' },
-      { heading: '장르별 예매 분포' },
+      { heading: '분류별 예매 분포' },
       { heading: '결제수단 분포' },
     ];
     for (const s of sections) {

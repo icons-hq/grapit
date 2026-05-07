@@ -28,6 +28,8 @@ type SeatMapConfigForDetails = NonNullable<
   PerformanceWithDetails['seatMap']
 >['seatConfig'];
 
+const PERFORMANCE_TAXONOMY_CACHE_VERSION = 'event-category-v1';
+
 @Injectable()
 export class PerformanceService {
   constructor(
@@ -42,7 +44,7 @@ export class PerformanceService {
     const { page = 1, limit = 20, sort = 'latest', ended = false, sub } = query;
     const locale = resolvePerformanceTranslationLocale(query.locale);
 
-    const cacheKey = `cache:performances:list:${genre}:${locale}:${page}:${limit}:${sort}:${ended}:${sub ?? 'none'}`;
+    const cacheKey = `cache:performances:list:${PERFORMANCE_TAXONOMY_CACHE_VERSION}:${genre}:${locale}:${page}:${limit}:${sort}:${ended}:${sub ?? 'none'}`;
     const cached = await this.cacheService.get<PerformanceListResponse>(cacheKey);
     if (cached) return cached;
 
@@ -261,7 +263,7 @@ export class PerformanceService {
     locale?: string | null,
   ): Promise<PerformanceCardData[]> {
     const targetLocale = resolvePerformanceTranslationLocale(locale);
-    const cacheKey = `cache:home:hot:${targetLocale}`;
+    const cacheKey = `cache:home:hot:${PERFORMANCE_TAXONOMY_CACHE_VERSION}:${targetLocale}`;
     const cached = await this.cacheService.get<PerformanceCardData[]>(cacheKey);
     if (cached) return cached;
 
@@ -306,7 +308,7 @@ export class PerformanceService {
     locale?: string | null,
   ): Promise<PerformanceCardData[]> {
     const targetLocale = resolvePerformanceTranslationLocale(locale);
-    const cacheKey = `cache:home:new:${targetLocale}`;
+    const cacheKey = `cache:home:new:${PERFORMANCE_TAXONOMY_CACHE_VERSION}:${targetLocale}`;
     const cached = await this.cacheService.get<PerformanceCardData[]>(cacheKey);
     if (cached) return cached;
 

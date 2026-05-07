@@ -15,9 +15,9 @@
   "home": {
     "hot": "热门演出",
     "newOpen": "新开售",
-    "genreShortcuts": "按类型浏览",
+    "genreShortcuts": "按活动分类浏览",
     "more": "更多",
-    "empty": "搜索演出或按类型浏览。"
+    "empty": "搜索粉丝见面会和快闪活动，或按分类浏览。"
   },
   "search": {
     "promptTitle": "搜索演出",
@@ -25,13 +25,15 @@
     "resultTitle": "'{query}' 的搜索结果",
     "totalCount": "共 {count} 个结果",
     "includeEnded": "包含已结束演出",
-    "allGenres": "全部",
+    "allGenres": "全部分类",
     "loadError": "无法加载演出信息。请稍后再试。",
     "retry": "重试",
     "emptyHeading": "没有搜索结果",
-    "emptyBody": "请尝试其他关键词或按类型浏览演出"
+    "emptyBody": "请尝试其他关键词或按活动分类浏览"
   },
   "genres": {
+    "artist_celebrity": "艺人/名人",
+    "ip_popup": "IP 快闪",
     "musical": "音乐剧",
     "concert": "演唱会",
     "play": "话剧",
@@ -45,14 +47,6 @@
     "title": "{genre}",
     "emptyHeading": "暂无演出",
     "emptyBody": "新的演出将很快上线。",
-    "subcategories": {
-      "all": "全部",
-      "hot": "热门",
-      "original": "原创/巡演",
-      "license": "授权",
-      "creative": "原创",
-      "domestic": "巡演"
-    },
     "sort": {
       "ariaLabel": "排序",
       "latest": "最新",

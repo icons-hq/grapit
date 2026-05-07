@@ -169,7 +169,7 @@ export function MobileMenu({
           />
         </div>
 
-        {/* Genre tabs -- all 8 genres (no "더보기" on mobile) */}
+        {/* Category tabs */}
         <div className="px-6 py-4">
           <p className="mb-3 text-sm font-normal text-gray-500">
             {copy.nav.category}

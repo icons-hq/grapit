@@ -98,7 +98,7 @@ function createMockDb() {
 
 const sampleCreateInput: CreatePerformanceInput = {
   title: 'Hamlet',
-  genre: 'play',
+  genre: 'artist_celebrity',
   venueName: 'National Theater',
   venueAddress: 'Seoul, Korea',
   posterUrl: 'https://r2.example.com/posters/hamlet.jpg',

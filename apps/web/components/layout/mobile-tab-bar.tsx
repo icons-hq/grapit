@@ -21,7 +21,7 @@ interface Tab {
 
 const TABS: Tab[] = [
   { href: '/', label: 'home', icon: Home },
-  { href: '/genre/musical', label: 'category', icon: LayoutGrid },
+  { href: '/genre/artist_celebrity', label: 'category', icon: LayoutGrid },
   { href: '/search', label: 'search', icon: Search },
   { href: '/mypage', label: 'mypage', icon: User },
 ];
@@ -31,7 +31,7 @@ function isTabActive(href: string, pathname: string): boolean {
     return pathname === '/';
   }
   // For category tab, match any /genre/* path
-  if (href === '/genre/musical') {
+  if (href === '/genre/artist_celebrity') {
     return pathname.startsWith('/genre');
   }
   return pathname.startsWith(href);

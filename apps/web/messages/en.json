@@ -15,9 +15,9 @@
   "home": {
     "hot": "HOT",
     "newOpen": "Newly opened",
-    "genreShortcuts": "Browse by genre",
+    "genreShortcuts": "Browse by category",
     "more": "More",
-    "empty": "Search for a show or browse by genre."
+    "empty": "Search fanmeet and popup events or browse by category."
   },
   "search": {
     "promptTitle": "Search for shows",
@@ -25,13 +25,15 @@
     "resultTitle": "Results for '{query}'",
     "totalCount": "{count} results",
     "includeEnded": "Include ended shows",
-    "allGenres": "All",
+    "allGenres": "All categories",
     "loadError": "Could not load show information. Please try again shortly.",
     "retry": "Retry",
     "emptyHeading": "No results found",
-    "emptyBody": "Try another keyword or browse shows by genre"
+    "emptyBody": "Try another keyword or browse event categories"
   },
   "genres": {
+    "artist_celebrity": "Artist/Celebrity",
+    "ip_popup": "IP Popup",
     "musical": "Musical",
     "concert": "Concert",
     "play": "Theater",
@@ -45,14 +47,6 @@
     "title": "{genre} shows",
     "emptyHeading": "No shows are listed yet",
     "emptyBody": "New shows will be added soon.",
-    "subcategories": {
-      "all": "All",
-      "hot": "Trending",
-      "original": "Original/Touring",
-      "license": "Licensed",
-      "creative": "Original work",
-      "domestic": "Touring"
-    },
     "sort": {
       "ariaLabel": "Sort",
       "latest": "Latest",

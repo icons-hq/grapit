@@ -47,11 +47,11 @@ describe('home i18n visible copy', () => {
   it('renders canary-visible home copy from the active locale', () => {
     render(<HomePage />);
 
-    expect(screen.getByText('Search for a show or browse by genre.')).toBeDefined();
+    expect(screen.getByText('Search fanmeet and popup events or browse by category.')).toBeDefined();
     expect(screen.getByRole('heading', { name: 'HOT' })).toBeDefined();
     expect(screen.getByRole('heading', { name: 'Newly opened' })).toBeDefined();
-    expect(screen.getByRole('heading', { name: 'Browse by genre' })).toBeDefined();
-    expect(screen.getByRole('link', { name: 'Musical' })).toBeDefined();
-    expect(screen.getByRole('link', { name: 'Kids/Family' })).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Browse by category' })).toBeDefined();
+    expect(screen.getByRole('link', { name: 'Artist/Celebrity' })).toBeDefined();
+    expect(screen.getByRole('link', { name: 'IP Popup' })).toBeDefined();
   });
 });

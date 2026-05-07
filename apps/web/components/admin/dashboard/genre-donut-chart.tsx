@@ -34,7 +34,7 @@ export function GenreDonutChart({ data }: Props) {
   return (
     <>
       <span className="sr-only">
-        {`장르별 예매 분포: ${data.length}개 장르, 총 ${total.toLocaleString()}건`}
+        {`분류별 예매 분포: ${data.length}개 분류, 총 ${total.toLocaleString()}건`}
       </span>
       <ChartContainer
         config={chartConfig}

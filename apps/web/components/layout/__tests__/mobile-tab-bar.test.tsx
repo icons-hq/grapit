@@ -26,7 +26,7 @@ describe('MobileTabBar', () => {
   it('renders 4 tabs with correct labels', () => {
     render(<MobileTabBar />);
     expect(screen.getByText('홈')).toBeDefined();
-    expect(screen.getByText('카테고리')).toBeDefined();
+    expect(screen.getByText('분류')).toBeDefined();
     expect(screen.getByText('검색')).toBeDefined();
     expect(screen.getByText('마이페이지')).toBeDefined();
   });
@@ -45,10 +45,10 @@ describe('MobileTabBar', () => {
     expect(searchLink?.className).toContain('text-gray-400');
   });
 
-  it('category tab has href="/genre/musical"', () => {
+  it('category tab has href="/genre/artist_celebrity"', () => {
     render(<MobileTabBar />);
-    const categoryLink = screen.getByText('카테고리').closest('a');
-    expect(categoryLink?.getAttribute('href')).toBe('/genre/musical');
+    const categoryLink = screen.getByText('분류').closest('a');
+    expect(categoryLink?.getAttribute('href')).toBe('/genre/artist_celebrity');
   });
 
   it('has role="navigation" and active tab has aria-current="page"', () => {
@@ -71,9 +71,9 @@ describe('MobileTabBar', () => {
   });
 
   it('marks genre sub-paths as active for category tab', () => {
-    mockPathname.mockReturnValue('/genre/concert');
+    mockPathname.mockReturnValue('/genre/ip_popup');
     render(<MobileTabBar />);
-    const categoryLink = screen.getByText('카테고리').closest('a');
+    const categoryLink = screen.getByText('분류').closest('a');
     expect(categoryLink?.getAttribute('aria-current')).toBe('page');
     expect(categoryLink?.className).toContain('text-primary');
   });

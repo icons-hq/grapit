@@ -27,6 +27,7 @@
     "discuss_mode": "discuss",
     "skip_discuss": false,
     "use_worktrees": true,
+    "subagent_timeout": 1800000,
     "_auto_chain_active": false
   },
   "hooks": {

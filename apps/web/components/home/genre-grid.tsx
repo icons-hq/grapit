@@ -3,16 +3,10 @@
 import Link from 'next/link';
 import { useLocale } from 'next-intl';
 import {
-  Music,
-  Mic,
-  Drama,
-  Frame,
-  Piano,
-  Trophy,
-  Baby,
-  Tent,
+  Store,
+  Users,
 } from 'lucide-react';
-import type { Genre } from '@grabit/shared';
+import { GENRES, type EventCategory } from '@grabit/shared';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import {
   getVisibleCopy,
@@ -20,27 +14,12 @@ import {
 } from '@/lib/i18n/visible-copy';
 import type { LucideIcon } from 'lucide-react';
 
-const GENRE_ICONS: Record<Genre, LucideIcon> = {
-  musical: Music,
-  concert: Mic,
-  play: Drama,
-  exhibition: Frame,
-  classic: Piano,
-  sports: Trophy,
-  kids_family: Baby,
-  leisure_camping: Tent,
+const GENRE_ICONS: Record<EventCategory, LucideIcon> = {
+  artist_celebrity: Users,
+  ip_popup: Store,
 };
 
-const GENRE_LIST: Genre[] = [
-  'musical',
-  'concert',
-  'play',
-  'exhibition',
-  'classic',
-  'sports',
-  'kids_family',
-  'leisure_camping',
-];
+const GENRE_LIST = GENRES;
 
 // 빈 상태 발생 시: SearchIcon 대신 Telescope 또는 LayoutGrid 아이콘 사용
 // 장르 바로가기는 정적 컴포넌트로 현재 빈 상태 없음

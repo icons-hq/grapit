@@ -159,7 +159,7 @@ export class AdminDashboardService {
     });
   }
 
-  // ADM-03 — 장르별 분포 (D-11: revenue 기간 필터 공유).
+  // ADM-03 — 분류별 분포 (D-11: revenue 기간 필터 공유).
   async getGenreDistribution(period: DashboardPeriod): Promise<DashboardGenreDto> {
     return this.readThrough(`cache:admin:dashboard:genre:${period}`, async () => {
       const days = daysForPeriod(period);

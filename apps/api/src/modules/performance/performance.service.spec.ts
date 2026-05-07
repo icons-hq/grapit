@@ -60,7 +60,7 @@ function createPerformanceRow(id = PHASE23_I18N_SMOKE_PERFORMANCE_ID) {
     performances: {
       id,
       title: '2026 걸룰스 팬미팅',
-      genre: 'concert' as const,
+      genre: 'artist_celebrity' as const,
       subcategory: '팬미팅',
       venueId: 'venue-1',
       posterUrl: null,
@@ -151,7 +151,7 @@ describe('PerformanceService', () => {
 
   describe('findByGenre', () => {
     it('should return paginated performances filtered by genre', async () => {
-      const result: PerformanceListResponse = await service.findByGenre('musical', {
+      const result: PerformanceListResponse = await service.findByGenre('artist_celebrity', {
         page: 1,
         limit: 20,
         sort: 'latest',
@@ -169,7 +169,7 @@ describe('PerformanceService', () => {
     });
 
     it('should filter by subcategory when sub param provided', async () => {
-      await service.findByGenre('musical', {
+      await service.findByGenre('artist_celebrity', {
         page: 1,
         limit: 20,
         sort: 'latest',
@@ -183,7 +183,7 @@ describe('PerformanceService', () => {
     });
 
     it('should exclude ended performances when ended=false', async () => {
-      await service.findByGenre('concert', {
+      await service.findByGenre('artist_celebrity', {
         page: 1,
         limit: 20,
         sort: 'latest',
@@ -195,7 +195,7 @@ describe('PerformanceService', () => {
     });
 
     it('should sort by viewCount DESC when sort=popular', async () => {
-      await service.findByGenre('play', {
+      await service.findByGenre('ip_popup', {
         page: 1,
         limit: 20,
         sort: 'popular',
@@ -315,7 +315,7 @@ describe('PerformanceService', () => {
             {
               id: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
               title: '2026 걸룰스 팬미팅',
-              genre: 'concert',
+              genre: 'artist_celebrity',
               posterUrl: null,
               status: 'selling',
               startDate: new Date('2026-07-18T05:00:00.000Z'),
@@ -335,7 +335,7 @@ describe('PerformanceService', () => {
           ]),
         );
 
-      const result = await service.findByGenre('concert', {
+      const result = await service.findByGenre('artist_celebrity', {
         page: 1,
         limit: 20,
         sort: 'latest',

@@ -30,7 +30,7 @@ export function HotSection() {
           {copy.home.hot}
         </h2>
         <Link
-          href={`${getLocalizedPathname('/genre/musical', activeLocale)}?sort=popular`}
+          href={`${getLocalizedPathname('/genre/artist_celebrity', activeLocale)}?sort=popular`}
           className="text-sm text-gray-600 hover:text-gray-900"
         >
           {copy.home.more}

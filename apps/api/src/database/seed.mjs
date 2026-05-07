@@ -201,7 +201,7 @@ async function seed() {
     const perfData = [
       {
         title: '뮤지컬 〈오페라의 유령〉',
-        genre: 'musical',
+        genre: 'artist_celebrity',
         subcategory: '라이선스',
         venue: '블루스퀘어 인터파크홀',
         poster: '/seed/poster/25012652_p.gif',
@@ -215,7 +215,7 @@ async function seed() {
       },
       {
         title: '2026 IU 콘서트 \'The Golden Hour\'',
-        genre: 'concert',
+        genre: 'artist_celebrity',
         subcategory: 'K-POP',
         venue: '올림픽공원 체조경기장',
         poster: '/seed/poster/25018106_p.gif',
@@ -229,7 +229,7 @@ async function seed() {
       },
       {
         title: '연극 〈햄릿〉',
-        genre: 'play',
+        genre: 'artist_celebrity',
         subcategory: '셰익스피어',
         venue: '세종문화회관 대극장',
         poster: '/seed/poster/26000685_p.gif',
@@ -243,7 +243,7 @@ async function seed() {
       },
       {
         title: '전시 〈모네: 빛을 그리다〉',
-        genre: 'exhibition',
+        genre: 'ip_popup',
         subcategory: '미술',
         venue: 'KINTEX 제1전시장',
         poster: '/seed/poster/26001001_p.gif',
@@ -257,7 +257,7 @@ async function seed() {
       },
       {
         title: '뮤지컬 〈위키드〉',
-        genre: 'musical',
+        genre: 'artist_celebrity',
         subcategory: '라이선스',
         venue: '예술의전당 오페라극장',
         poster: '/seed/poster/26001248_p.gif',
@@ -272,7 +272,7 @@ async function seed() {
       {
         id: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
         title: GIRL_RULES_FANMEET_TITLE,
-        genre: 'concert',
+        genre: 'artist_celebrity',
         subcategory: '팬미팅',
         venue: '동해문화예술관 대극장',
         poster: null,

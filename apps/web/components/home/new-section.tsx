@@ -26,7 +26,7 @@ export function NewSection() {
           {copy.home.newOpen}
         </h2>
         <Link
-          href={`${getLocalizedPathname('/genre/musical', activeLocale)}?sort=latest`}
+          href={`${getLocalizedPathname('/genre/artist_celebrity', activeLocale)}?sort=latest`}
           className="text-sm text-gray-600 hover:text-gray-900"
         >
           {copy.home.more}

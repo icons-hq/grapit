@@ -4,7 +4,7 @@ milestone: v2.0
 milestone_name: Fanmeet Launch
 status: ready_to_plan
 stopped_at: Completed 23-19-PLAN.md
-last_updated: "2026-05-07T05:13:16.000Z"
+last_updated: "2026-05-07T06:02:30.000Z"
 last_activity: 2026-05-07
 progress:
   total_phases: 7
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-05-04)
 Phase: 999.1
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-05-07 - Completed quick task 260507-ji6: 심층 분석 후 언어 선택 변경 시 UI/UX 번역이 적용되지 않는 문제 해결
+Last activity: 2026-05-07 - Completed quick task 260507-r4s: 분류 페이지 legacy subcategory chip 제거
 
 ## Deferred Items
 
@@ -295,6 +295,8 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 - [Phase 23-19]: Overlay only published performance translation drafts for non-Korean locales and mark public content as machine_reviewed.
 - [Phase 23-19]: Keep the dedicated i18n smoke independent from admin login and live SMS E2E state.
 - [Phase 23-19]: Use stable UUID 00000000-0000-4000-8000-000000000023 as the Phase 23 i18n smoke fixture instead of invalid test-performance.
+- [Quick 260507-q2c]: Public/admin event taxonomy is limited to `artist_celebrity` and `ip_popup`, while legacy DB enum values remain for expand-only production compatibility.
+- [Quick 260507-r4s]: Public category pages do not expose legacy subcategory chips until a new launch-specific subcategory contract exists; stale `sub` URL params are ignored by the web list hook.
 
 ### Pending Todos
 
@@ -334,6 +336,8 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 | 260506-p3f | 프로덕션 테스트 공연 데이터 삭제 및 2026-07-18 Girl Rules 공연 보존 | 2026-05-06 | db-only | [260506-p3f-2026-07-18](./quick/260506-p3f-2026-07-18/) |
 | 260507-edj | pnpm dev FeatureFlagsService DI 오류 수정: runtime env provider를 explicit Nest token으로 전환해 SWC dev/build/prod start 경로 부팅 복구 | 2026-05-07 | 0275799 | [260507-edj-pnpm-dev-cloud-run-featureflagsservice-d](./quick/260507-edj-pnpm-dev-cloud-run-featureflagsservice-d/) |
 | 260507-ji6 | 심층 분석 후 언어 선택 변경 시 UI/UX 번역이 적용되지 않는 문제 해결 | 2026-05-07 | 652ea4c | [260507-ji6-ui-ux](./quick/260507-ji6-ui-ux/) |
+| 260507-q2c | 판매 이벤트 분류를 아티스트·셀럽 / IP 팝업 두 개로 제한 | 2026-05-07 | uncommitted | [260507-q2c-two-event-categories](./quick/260507-q2c-two-event-categories/) |
+| 260507-r4s | 분류 페이지 legacy subcategory chip 제거 | 2026-05-07 | uncommitted | [260507-r4s-category-filter-chips](./quick/260507-r4s-category-filter-chips/) |
 
 ## Session Continuity
 

@@ -1,5 +1,5 @@
 CREATE EXTENSION IF NOT EXISTS pg_trgm;--> statement-breakpoint
-CREATE TYPE "public"."genre" AS ENUM('musical', 'concert', 'play', 'exhibition', 'classic', 'sports', 'kids_family', 'leisure_camping');--> statement-breakpoint
+CREATE TYPE "public"."genre" AS ENUM('musical', 'concert', 'play', 'exhibition', 'classic', 'sports', 'kids_family', 'leisure_camping', 'artist_celebrity', 'ip_popup');--> statement-breakpoint
 CREATE TYPE "public"."performance_status" AS ENUM('upcoming', 'selling', 'closing_soon', 'ended');--> statement-breakpoint
 CREATE TABLE "banners" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,

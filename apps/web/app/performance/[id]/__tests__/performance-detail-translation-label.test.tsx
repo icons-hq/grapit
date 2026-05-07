@@ -45,7 +45,7 @@ function createPerformanceDetail(
   return {
     id: 'perf-translation-label',
     title: 'Girl Rules Fanmeet',
-    genre: 'concert',
+    genre: 'artist_celebrity',
     subcategory: null,
     venueId: 'venue-1',
     posterUrl: null,

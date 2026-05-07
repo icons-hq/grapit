@@ -13,6 +13,7 @@ import {
   type PerformanceWithDetails,
   GENRES,
   GENRE_LABELS,
+  type EventCategory,
 } from '@grabit/shared';
 import {
   useCreatePerformance,
@@ -42,12 +43,16 @@ const AGE_RATINGS = [
   '만 19세 이상',
 ] as const;
 
+function isEventCategory(genre: string): genre is EventCategory {
+  return (GENRES as readonly string[]).includes(genre);
+}
+
 function mapToFormValues(
   data: PerformanceWithDetails,
 ): CreatePerformanceFormInput {
   return {
     title: data.title,
-    genre: data.genre,
+    genre: isEventCategory(data.genre) ? data.genre : 'artist_celebrity',
     subcategory: data.subcategory,
     venueName: data.venue?.name ?? '',
     venueAddress: data.venue?.address,

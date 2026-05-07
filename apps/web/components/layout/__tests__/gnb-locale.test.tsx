@@ -71,9 +71,9 @@ describe('locale switcher shell wiring', () => {
 
     render(<GNB />);
 
-    expect(screen.getByRole('link', { name: 'Musical' })).toBeDefined();
-    expect(screen.getByRole('link', { name: 'Concert' })).toBeDefined();
-    expect(screen.getByRole('button', { name: 'More' })).toBeDefined();
+    expect(screen.getByRole('link', { name: 'Artist/Celebrity' })).toBeDefined();
+    expect(screen.getByRole('link', { name: 'IP Popup' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'More' })).toBeNull();
     expect(screen.getByRole('searchbox', { name: 'Search shows' })).toHaveAttribute(
       'placeholder',
       'Search shows or artists',

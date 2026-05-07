@@ -91,13 +91,13 @@ describe('SearchService', () => {
 
     it('should filter by genre when genre param provided', async () => {
       const result: SearchResponse = await service.search({
-        q: 'concert',
-        genre: 'concert',
+        q: 'fanmeet',
+        genre: 'artist_celebrity',
         page: 1,
         limit: 20,
       });
 
-      // When GREEN, should verify WHERE genre = 'concert'
+      // When GREEN, should verify WHERE genre = 'artist_celebrity'
       expect(result).toHaveProperty('data');
     });
 
@@ -139,7 +139,7 @@ describe('SearchService', () => {
             {
               id: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
               title: '2026 걸룰스 팬미팅',
-              genre: 'concert',
+              genre: 'artist_celebrity',
               posterUrl: null,
               status: 'selling',
               startDate: new Date('2026-07-18T05:00:00.000Z'),
@@ -161,7 +161,7 @@ describe('SearchService', () => {
 
       const result = await service.search({
         q: 'girl',
-        genre: 'concert',
+        genre: 'artist_celebrity',
         page: 1,
         limit: 20,
         locale: 'en',

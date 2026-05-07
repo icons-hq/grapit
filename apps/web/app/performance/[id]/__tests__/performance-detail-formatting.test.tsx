@@ -37,7 +37,7 @@ vi.mock('next/image', () => ({
 const fixturePerformance: PerformanceWithDetails = {
   id: 'perf-23-14',
   title: 'Girl Rules Fanmeet',
-  genre: 'concert',
+  genre: 'artist_celebrity',
   subcategory: null,
   venueId: 'venue-1',
   posterUrl: null,

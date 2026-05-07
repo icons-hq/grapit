@@ -6,21 +6,11 @@ import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { useLocale } from 'next-intl';
 import { GENRES, type Genre } from '@grabit/shared';
 import { Switch } from '@/components/ui/switch';
-import { GenreChip } from '@/components/performance/genre-chip';
 import { SortToggle } from '@/components/performance/sort-toggle';
 import { PerformanceGrid } from '@/components/performance/performance-grid';
 import { PaginationNav } from '@/components/performance/pagination-nav';
 import { usePerformances } from '@/hooks/use-performances';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
-
-const SUBCATEGORIES = [
-  { labelKey: 'all', value: '' },
-  { labelKey: 'hot', value: 'hot' },
-  { labelKey: 'original', value: 'original' },
-  { labelKey: 'license', value: 'license' },
-  { labelKey: 'creative', value: 'creative' },
-  { labelKey: 'domestic', value: 'domestic' },
-] as const;
 
 function isValidGenre(genre: string): genre is Genre {
   return (GENRES as readonly string[]).includes(genre);
@@ -42,7 +32,6 @@ export default function GenrePage({
   }
 
   const sort = (searchParams.get('sort') ?? 'latest') as 'latest' | 'popular';
-  const sub = searchParams.get('sub') ?? '';
   const ended = searchParams.get('ended') === 'true';
 
   const { data, isLoading, isError } = usePerformances(genre);
@@ -68,20 +57,6 @@ export default function GenrePage({
         {copy.genrePage.title.replace('{genre}', copy.genres[genre])}
       </h1>
 
-      {/* Subcategory chips */}
-      <div className="mt-4 flex gap-2 overflow-x-auto scrollbar-hide">
-        {SUBCATEGORIES.map((cat) => (
-          <GenreChip
-            key={cat.value}
-            label={copy.genrePage.subcategories[cat.labelKey]}
-            value={cat.value}
-            isActive={sub === cat.value}
-            onClick={() => updateParam('sub', cat.value)}
-          />
-        ))}
-      </div>
-
-      {/* Filter row: sort + ended toggle */}
       <div className="mt-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <SortToggle
           value={sort}

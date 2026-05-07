@@ -42,8 +42,8 @@ export function PerformanceGrid({
 
   return (
     <div className="grid grid-cols-2 gap-x-6 gap-y-8 md:grid-cols-3 lg:grid-cols-4">
-      {performances.map((p) => (
-        <PerformanceCard key={p.id} performance={p} />
+      {performances.map((p, index) => (
+        <PerformanceCard key={p.id} performance={p} priority={index === 0} />
       ))}
     </div>
   );
