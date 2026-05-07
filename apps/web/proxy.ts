@@ -1,30 +1,52 @@
-import createMiddleware from 'next-intl/middleware';
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { DEFAULT_LOCALE, isSupportedLocale } from '@grabit/shared';
+import type { SupportedLocale } from '@grabit/shared';
 import {
   LOCALE_SUGGESTION_COOKIE,
   getSuggestedLocaleFromAcceptLanguage,
   resolveLocaleFromPathname,
-  routing,
 } from './i18n/routing';
 
-const localeMiddleware = createMiddleware(routing);
+const NEXT_INTL_LOCALE_HEADER = 'x-next-intl-locale';
+const NEXT_LOCALE_COOKIE = 'NEXT_LOCALE';
+const ONE_YEAR_SECONDS = 60 * 60 * 24 * 365;
 
 export default function proxy(request: NextRequest) {
   // Admin auth is handled client-side in admin/layout.tsx.
   // Server-side cookie check removed because the refreshToken cookie
   // is set on the API domain (separate Cloud Run service) and is not
   // visible to the web domain.
-  if (request.nextUrl.pathname.startsWith('/admin')) {
+  if (isBypassedPathname(request.nextUrl.pathname)) {
     return NextResponse.next();
   }
 
-  const response = localeMiddleware(request);
-  const activeLocale = resolveLocaleFromPathname(request.nextUrl.pathname).locale;
+  const { locale: pathLocale, pathnameWithoutLocale } =
+    resolveLocaleFromPathname(request.nextUrl.pathname);
+  const activeLocale =
+    pathLocale === DEFAULT_LOCALE
+      ? readLocaleCookie(request) ?? DEFAULT_LOCALE
+      : pathLocale;
+  const requestHeaders = new Headers(request.headers);
+
+  requestHeaders.set(NEXT_INTL_LOCALE_HEADER, activeLocale);
+
+  const response =
+    pathLocale === DEFAULT_LOCALE
+      ? NextResponse.next({ request: { headers: requestHeaders } })
+      : rewriteToFlatPath(request, pathnameWithoutLocale, requestHeaders);
   const suggestedLocale = getSuggestedLocaleFromAcceptLanguage(
     request.headers.get('accept-language'),
     activeLocale,
   );
+
+  response.cookies.set(NEXT_LOCALE_COOKIE, activeLocale, {
+    httpOnly: false,
+    maxAge: ONE_YEAR_SECONDS,
+    path: '/',
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+  });
 
   if (suggestedLocale) {
     response.cookies.set(LOCALE_SUGGESTION_COOKIE, suggestedLocale, {
@@ -36,6 +58,33 @@ export default function proxy(request: NextRequest) {
   }
 
   return response;
+}
+
+function rewriteToFlatPath(
+  request: NextRequest,
+  pathnameWithoutLocale: string,
+  requestHeaders: Headers,
+) {
+  const url = request.nextUrl.clone();
+  url.pathname = pathnameWithoutLocale;
+
+  return NextResponse.rewrite(url, {
+    request: { headers: requestHeaders },
+  });
+}
+
+function readLocaleCookie(request: NextRequest): SupportedLocale | null {
+  const value = request.cookies.get(NEXT_LOCALE_COOKIE)?.value;
+  return value && isSupportedLocale(value) ? value : null;
+}
+
+function isBypassedPathname(pathname: string) {
+  return (
+    pathname.startsWith('/admin') ||
+    pathname.startsWith('/api') ||
+    pathname.startsWith('/_next') ||
+    /\.[^/]+$/.test(pathname)
+  );
 }
 
 export const config = {
