@@ -20,12 +20,12 @@ source:
   - .planning/phases/23-launch-foundation/23-16-SUMMARY.md
   - .planning/phases/23-launch-foundation/23-17-SUMMARY.md
 started: 2026-05-07T00:58:02Z
-updated: 2026-05-07T01:49:11Z
+updated: 2026-05-07T02:48:15Z
 ---
 
 ## Current Test
 
-[gap closure complete for locale-routing blocker; dynamic `test-performance` fixture checks blocked by seed/API prerequisite]
+[automated re-test complete; dynamic `test-performance`, admin E2E seed, and SMS E2E runtime prerequisites remain blocked]
 
 ## Tests
 
@@ -123,6 +123,13 @@ result: pass
 - `pnpm --filter @grabit/shared typecheck` - PASS.
 - `pnpm --filter @grabit/web typecheck` - PASS.
 - `pnpm --filter @grabit/api typecheck` - PASS.
+- 2026-05-07 automated re-test: Browser Use route crawl - PASS for `/`, `/auth`, `/en/auth`, `/th/auth`, `/legal/terms`, `/en/legal/terms`, `/th/legal/terms`, `/zh-CN/legal/privacy`, `/zh-TW/legal/marketing`, and `/api/runtime-flags`; all returned HTTP 200, avoided not-found, preserved foreign visible prefixes, and recorded 0 browser console errors/warnings.
+- 2026-05-07 automated re-test: Browser Use dynamic route check - BLOCKED for seeded fixture UAT. `/booking/test-performance`, `/booking/test-performance/confirm`, and `/performance/test-performance` route shells did not render not-found, but the direct API probe `/api/v1/performances/test-performance` still returned `{"statusCode":500,"message":"Internal server error"}`.
+- 2026-05-07 automated re-test: `pnpm test` - PASS; shared 30 tests, API 493 tests, web 316 tests.
+- 2026-05-07 automated re-test: `pnpm typecheck` - PASS.
+- 2026-05-07 automated re-test: `pnpm lint` - PASS with warnings; API 42 warnings, web 25 warnings, 0 errors.
+- 2026-05-07 automated re-test: `pnpm build` - PASS.
+- 2026-05-07 automated re-test: `pnpm --filter @grabit/web exec playwright test --reporter=line` - BLOCKED/PARTIAL; 10 passed, 7 skipped, 6 failed. Four admin dashboard E2E failures are caused by `admin@grabit.test` login returning 401 against the current local DB. Two signup SMS E2E failures are caused by live SMS/runtime rate-limit state (`요청이 너무 많습니다`) rather than the expected dev mock `000000` flow. These require a reset/seeded E2E environment or adjusted E2E fixtures before they can be counted as Phase 23 UAT pass/fail evidence.
 
 ## Summary
 
