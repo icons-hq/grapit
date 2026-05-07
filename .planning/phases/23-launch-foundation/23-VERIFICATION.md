@@ -1,6 +1,6 @@
 ---
 phase: 23-launch-foundation
-verified: 2026-05-06T08:24:40Z
+verified: 2026-05-07T02:24:35Z
 status: passed
 score: "10/10 must-haves verified"
 requirements:
@@ -15,134 +15,161 @@ requirements:
   - COMP-01
   - COMP-02
 overrides_applied: 0
+re_verification:
+  previous_status: passed
+  previous_score: "10/10 must-haves verified"
+  gaps_closed:
+    - "Locale-routing UAT blocker: default Korean routes no longer rewrite to nonexistent /ko paths, and foreign-prefixed auth/legal routes serve real flat App Router pages."
+  gaps_remaining: []
+  regressions: []
 deferred:
+  - truth: "Seeded dynamic performance/booking fixture UAT for /performance/test-performance and /booking/test-performance"
+    addressed_in: "Phase 26"
+    evidence: "ROADMAP Phase 26 success criterion 1 requires full event detail in five locales with payment disabled and booking-disabled E2E. Phase 23 UAT now records the route shells as reachable and the remaining failure as test-performance API fixture 500, not locale routing."
   - truth: "Actual M1 integrated smoke/canary deploy execution"
     addressed_in: "Phase 26"
-    evidence: "ROADMAP Phase 26 includes M1 Canary + Cutover Gates; M1-01 is mapped to Phase 26."
+    evidence: "REQUIREMENTS maps M1-01 to Phase 26; ROADMAP Phase 26 covers M1 Canary + Cutover Gates."
 residual_risks:
-  - "Phase 22 direct SMS/email/legal/provider evidence remains accepted risk, not Phase 23 PASS evidence; Phase 23 preserves those caveats while adding code foundations."
-  - "Codebase drift gate was skipped with reason no-structure-md and is non-blocking per provided execution context."
+  - "apps/web/next-env.d.ts is dirty from Next build-generated type reference churn and was not treated as a Phase 23 deliverable."
+  - "Web tests still emit existing act/jsdom warnings in unrelated test files, but all tested files passed and no Phase 23 blocker behavior failed."
 ---
 
 # Phase 23: Launch Foundation Verification Report
 
-**Phase Goal:** 이후 fanmeet 기능이 의존하는 prod compatibility, flags, localization, auth, translation, legal lock, consent/audit 기반을 한 실행 단위로 구축한다.
-**Verified:** 2026-05-06T08:24:40Z
-**Status:** passed
-**Re-verification:** No - initial verification
+**Phase Goal:** 이후 fanmeet 기능이 의존하는 prod compatibility, flags, localization, auth, translation, legal lock, consent/audit 기반을 한 실행 단위로 구축한다.  
+**Verified:** 2026-05-07T02:24:35Z  
+**Status:** passed  
+**Re-verification:** Yes - after Plan 23-18 locale-routing UAT gap closure and post-review hardening.
 
 ## Goal Achievement
 
-Phase 23 is achieved at the codebase/foundation level. I did not rely on SUMMARY claims as evidence: I verified ROADMAP/REQUIREMENTS contracts, all PLAN frontmatter artifacts/key links, actual source files, schema/migration contents, wiring, data flow, tests, and review/drift gates.
+Phase 23 goal is achieved at the codebase/foundation level. I verified the actual source, tests, plan frontmatter artifacts/key links, UAT record, ROADMAP, and REQUIREMENTS rather than relying on SUMMARY claims.
 
-One `gsd-sdk verify.key-links` result was a false negative: Plan 23-01 expected `export \* from './flags'`, and `packages/shared/src/index.ts` does export `export * from './flags';` at line 24. Manual key-link verification therefore passes.
+The previous locale-routing UAT blocker is closed: `apps/web/proxy.ts` no longer uses `createMiddleware`, prefixless Korean routes are served without `/ko` rewrites, foreign prefixes rewrite internally to flat routes, reserved prefixed namespaces are not stripped into protected paths, and `LocaleSuggestion` hydrates from a stable null initial render.
 
-### Observable Truths
+The remaining `test-performance` UAT items are seed-only dynamic fixture prerequisites: the route shells are reachable, but the API fixture returns 500 and lacks showtime/price/seat-map/reviewed-translation data. This is deferred to Phase 26 integrated smoke/canary criteria, not a Phase 23 implementation gap.
+
+## Observable Truths
 
 | # | Truth | Status | Evidence |
-|---|-------|--------|----------|
-| 1 | FLAG-01: Existing prod users/reservations/sessions/Korean SEO URLs remain valid through expand-only migrations and canary policy. | VERIFIED | Migration `0007_phase23_launch_foundation.sql` contains CREATE/ADD COLUMN/INDEX only, no destructive SQL; `users.preferred_locale` defaults `ko`; canary rollback policy exists in `docs/runbooks/phase23-canary-rollback.md`. Actual canary execution is deferred to Phase 26. |
-| 2 | FLAG-02: `BOOKING_ENABLED=false` shows localized disabled copy and blocks API seat locks/payment attempts. | VERIFIED | `FeatureFlagsService.assertBookingEnabled()` throws before booking lock and reservation prepare/confirm; web runtime flags default disabled and render `예매는 5월말 오픈 예정입니다`; API tests cover no Redis/DB/Toss side effects. |
-| 3 | I18N-01: Public pages support `ko`, `en`, `th`, `zh-CN`, `zh-TW`; Korean remains `/`, foreign locales are prefixed. | VERIFIED | `SUPPORTED_LOCALES`, `DEFAULT_LOCALE`, `LOCALE_PREFIXES`, `routing.localePrefix='as-needed'`, and sitemap alternates are implemented and tested. |
-| 4 | I18N-02: Locale-sensitive flows have localized PhoneInput, auth/OTP/email/SMS copy, time/currency, hreflang, sitemap. | VERIFIED | PhoneInput receives active locale, email/SMS copy has exact five-locale tests, KST/KRW components are wired into performance detail, sitemap generates five-locale alternates. |
-| 5 | TRANS-01: Operator can create Korean source content, generate four drafts, review/publish, and show automatic-translation labels. | VERIFIED | `TranslationService.generateDrafts()` targets `en/th/zh-CN/zh-TW`; review/publish/stale transitions use DB transactions; admin hooks/page and public performance detail render `AutomaticTranslationLabel`. |
-| 6 | TRANS-02: Legal notices stay Korean/English manual and auto-translation is blocked. | VERIFIED | `LEGAL_BLOCKED_CONTENT_TYPES` blocks legal/notice/refund/booking_guide before provider calls; legal schema/content files are separate; tests lock legal markdown to `ko/en` and reject Thai/Chinese legal markdown. |
-| 7 | AUTH-01: Kakao/Naver/Google/email auth, 30-minute email verification, immediate resend, LINE excluded. | VERIFIED | Auth routes expose Kakao/Naver/Google only; no LINE implementation route/provider found; email verification token table/service/controller handle 30-minute expiry, resend endpoint, latest-token-wins behavior with tests. |
-| 8 | AUTH-02: Three-device refresh family policy is enforced. | VERIFIED | Refresh token schema indexes active family query; auth service tests cover three active family cap and reused-family revoke behavior. |
-| 9 | COMP-01: PIPA, cross-border, PDPA/PIPL, under-14, marketing consent, and legal/footer surfaces are captured. | VERIFIED | Shared consent schema defines required/optional keys; signup UI emits item/version/language/sourceFlow rows; auth service captures consent transactionally; legal/footer surfaces are wired. |
-| 10 | COMP-02: Operator can query masked consent audit logs by item/version/language/timestamp/IP/user. | VERIFIED | `ConsentService.queryConsentAudit()` filters all required fields and returns masked user/IP; admin hook hits `/api/v1/admin/consent-audit`; table exposes dense filters and row detail. |
+|---|---|---|---|
+| 1 | FLAG-01: Existing production users, reservations, sessions, and Korean SEO URLs remain valid through expand-only migrations, canary policy, and Korean root URL preservation. | VERIFIED | Phase 23 schema artifacts pass; previous expand-only migration evidence still stands; `apps/web/proxy.ts` serves `/` and `/auth` as Korean without `/ko` rewrite; canary execution remains Phase 26. |
+| 2 | FLAG-02: `BOOKING_ENABLED=false` shows localized disabled copy and blocks API seat locks/payment attempts. | VERIFIED | `FeatureFlagsService.assertBookingEnabled()` is called in `booking.service.ts` and `reservation.service.ts`; web runtime flag hooks feed booking/detail disabled UI; shared/API/web tests passed. |
+| 3 | I18N-01: Public pages support `ko`, `en`, `th`, `zh-CN`, `zh-TW`; Korean remains prefixless and foreign locales are prefixed. | VERIFIED | `SUPPORTED_LOCALES`, `routing.localePrefix='as-needed'`, custom proxy, sitemap alternates, and focused routing/layout tests all pass. |
+| 4 | I18N-02: Locale-sensitive flows include PhoneInput, auth/OTP/email/SMS copy, time/currency, hreflang, sitemap, and visible locale surfaces. | VERIFIED | PhoneInput locale tests, SMS/email copy tests, sitemap tests, KST/KRW component tests, and layout locale tests passed; `PerformanceDetailPage` renders `KstTime` and `CurrencyDisplay`. |
+| 5 | TRANS-01: Operator can create Korean source content, generate four drafts, review/publish, and show automatic-translation labels. | VERIFIED | `TranslationService.generateDrafts()` creates drafts for target locales; admin translation hooks/page call `/api/v1/admin/translations`; public performance detail renders `AutomaticTranslationLabel` from translation metadata. |
+| 6 | TRANS-02: Legal notices stay Korean/English manual and auto-translation is blocked. | VERIFIED | `LEGAL_BLOCKED_CONTENT_TYPES` blocks legal/notice/refund/booking_guide before provider calls; legal fallback/metadata tests passed. |
+| 7 | AUTH-01: Kakao/Naver/Google/email auth, 30-minute email verification, immediate resend, LINE excluded. | VERIFIED | `AuthController` exposes Kakao/Naver/Google routes and no LINE route; email verification expiry/resend paths are covered by passing API/web tests. |
+| 8 | AUTH-02: Three-device refresh family policy is enforced. | VERIFIED | `AuthService` refresh-family cap/reuse tests passed in the API suite. |
+| 9 | COMP-01: PIPA, cross-border, PDPA/PIPL, under-14, marketing consent, and legal/footer surfaces are captured. | VERIFIED | Shared consent schema defines required/optional rows; signup UI emits item/version/language/sourceFlow; auth service captures consent transactionally; signup/legal/footer tests passed. |
+| 10 | COMP-02: Operator can query masked consent audit logs by item/version/language/timestamp/IP/user. | VERIFIED | `ConsentService.queryConsentAudit()` filters required fields and masks user/IP; admin consent audit table submits all COMP-02 filters; API/web tests passed. |
 
 **Score:** 10/10 truths verified
 
-### Deferred Items
+## Roadmap Success Criteria
+
+| # | Success Criterion | Status | Evidence |
+|---|---|---|---|
+| 1 | Expand-only migrations, canary policy, shared feature flag helper preserve production users/reservations/sessions/Korean root URLs. | VERIFIED | Artifact checks pass; shared flag helper is exported; prefixless Korean route preservation is covered by proxy tests. Actual canary execution is deferred to Phase 26. |
+| 2 | Korean routes prefixless; foreign routes use `/en`, `/th`, `/zh-CN`, `/zh-TW` with hreflang, sitemap, locale preference, time/currency formatting, PhoneInput localization. | VERIFIED | `proxy.ts`, `routing.ts`, sitemap, KST/KRW, PhoneInput, layout locale tests all pass. |
+| 3 | Korean source content can generate reviewed translations; legal notices remain Korean/English manual and auto-translation blocked. | VERIFIED | Translation service/admin/public label and legal block tests pass. |
+| 4 | Kakao, Naver, Google, email verification, 5-country SMS OTP, three-device policy tested; LINE excluded. | VERIFIED | API auth/SMS suites pass; LINE absence is asserted in auth tests and UI tests. |
+| 5 | PIPA, cross-border, PDPA/PIPL, under-14, marketing consent, audit log, footer legal surfaces are captured. | VERIFIED | Consent schema, signup UI, API capture, audit query UI, and footer/legal tests pass. |
+| 6 | `BOOKING_ENABLED=false` blocks API seat locks and payment attempts, not only UI buttons. | VERIFIED | API booking/reservation tests pass; `assertBookingEnabled()` is called before lock/prepare/confirm paths. |
+
+## Deferred Items
 
 | # | Item | Addressed In | Evidence |
-|---|------|--------------|----------|
-| 1 | Actual M1 integrated smoke/canary deploy execution | Phase 26 | ROADMAP maps `M1-01` to Phase 26 and Phase 26 goal is M1 Canary + Cutover Gates. Phase 23 delivered the canary policy/runbook and code gates. |
+|---|---|---|---|
+| 1 | Seeded dynamic `test-performance` booking/detail UAT | Phase 26 | `23-UAT.md` records `/booking/test-performance` and `/performance/test-performance` as route-shell reachable but blocked by API fixture 500. Phase 26 criterion 1 covers full detail, payment-disabled, booking-disabled E2E. |
+| 2 | Actual M1 integrated smoke/canary deploy execution | Phase 26 | REQUIREMENTS maps `M1-01` to Phase 26; ROADMAP Phase 26 is M1 Canary + Cutover Gates. |
 
-### Required Artifacts
+## Required Artifacts
 
 | Artifact Group | Expected | Status | Details |
 |---|---|---|---|
-| Shared contracts | Feature flags, five locale constants, consent schemas, launch copy manifest | VERIFIED | `gsd-sdk verify.artifacts` passed for all shared artifacts; shared test spot-check passed 30/30. |
-| Database/schema | Expand-only migration, preferred locale, email verification, consent audit, translation, legal lock | VERIFIED | 23-02 artifacts passed; migration grep found CREATE/ADD/INDEX only and no DROP/RENAME/DELETE/TRUNCATE. |
-| Booking flags | Runtime API flag source, booking/reservation/payment-side hard gates, web runtime disabled UI | VERIFIED | Feature flag service is injected into booking/reservation services; web booking page/hooks consume runtime flags rather than build-time flag freeze. |
-| I18N UI/SEO | Routing, proxy, sitemap, locale switch/suggestion, PhoneInput, time/currency components | VERIFIED | Routing disables localeDetection; tests assert no redirect API; GNB/mobile/layout shell render locale UI; performance detail uses KST/KRW components. |
-| Translation/legal | Translation API/service/DeepL adapter, admin review UI, auto-translation label, English legal canonical files | VERIFIED | Draft/review/publish/stale workflow wired API-to-admin-to-public; legal pages use English fallback with label for Thai/Chinese. |
-| Auth/SMS | Auth controller/service, email verification template/copy, SMS validation/copy | VERIFIED | Kakao/Naver/Google/email remain; no LINE route/provider; email/SMS localized copy exists for exact five locales. |
-| Consent/audit | API consent capture/query, signup consent UI/payload, admin consent audit UI | VERIFIED | Consent capture writes immutable rows; query masks PII; signup payload includes item/version/language/sourceFlow rows. |
+| Plan frontmatter artifacts | All Phase 23 plan artifacts exist and are substantive | VERIFIED | `gsd-sdk query verify.artifacts` passed for all 18 plans: 62/62 artifacts. |
+| Locale routing gap closure | Flat-route proxy, routing tests, hydration-safe LocaleSuggestion, UAT update | VERIFIED | Plan 23-18 artifacts passed 4/4; source inspection confirms implementation. |
+| Shared contracts | Feature flags, locale constants, launch copy, auth/booking/consent schemas | VERIFIED | Shared tests passed 5 files / 30 tests. |
+| API foundations | Feature flags, booking/reservation gates, translation, auth/email/SMS, consent audit | VERIFIED | API suite passed 41 files / 493 tests. |
+| Web foundations | Routing/sitemap/layout locale, booking-disabled UI, performance formatting/label, consent/admin/legal surfaces | VERIFIED | Web suite passed 46 files / 316 tests. |
 
-### Key Link Verification
+## Key Link Verification
 
 | From | To | Via | Status | Details |
 |---|---|---|---|---|
-| PLAN frontmatter artifacts | Actual source files | `gsd-sdk verify.artifacts` | VERIFIED | 58/58 required artifacts passed existence/substance checks. |
-| PLAN frontmatter key links | Actual source wiring | `gsd-sdk verify.key-links` plus manual false-negative check | VERIFIED | 38/38 links verified: 37 by SDK, 1 manual barrel export false-negative. |
-| Booking API | FeatureFlagsService | DI + pre-side-effect `assertBookingEnabled()` | VERIFIED | `lockSeat`, `prepareReservation`, and `confirmAndCreateReservation` call the gate before Redis/DB/Toss paths. |
-| Translation API/admin/public | Translation service/hooks/label | React Query hooks and label component | VERIFIED | Admin translation page uses hooks; detail panel and public performance page render `AutomaticTranslationLabel`. |
-| Consent signup/admin | Consent schema/service/audit API/UI | payload rows + query filters | VERIFIED | Signup form sends rows; `ConsentService` inserts audit rows; admin UI queries masked rows. |
+| Phase 23 plan key links | Actual source wiring | `gsd-sdk query verify.key-links` plus manual false-negative check | VERIFIED | SDK verified 37/38 links. The only SDK false negative is `packages/shared/src/index.ts` -> `packages/shared/src/flags.ts`; manual check confirms `export * from './flags';` at line 24. |
+| Plan 23-18 proxy | `apps/web/i18n/routing.ts` | `resolveLocaleFromPathname`, locale header, flat rewrite | VERIFIED | `proxy.ts` imports routing helpers, sets `x-next-intl-locale`, serves Korean via `NextResponse.next`, rewrites foreign prefixes to flat paths. |
+| Plan 23-18 LocaleSuggestion | `LayoutShell` | rendered shell component and mount-only cookie read | VERIFIED | `layout-shell-locale.test.tsx` verifies suggestion copy, admin/booking hiding, malformed cookie handling, and no redirect APIs. |
+| Booking API | Feature flag service | DI + `assertBookingEnabled()` before side effects | VERIFIED | `booking.service.ts` and `reservation.service.ts` call `assertBookingEnabled()`; tests cover disabled errors and no side effects. |
+| Translation API/admin/public | Translation service, hooks, public label | API controller/service + admin hooks + performance detail label | VERIFIED | Admin translation tests cover source/draft/review/publish; public detail tests cover automatic label metadata. |
+| Consent signup/admin | Consent service, auth service, admin audit table | itemized payload + DB audit rows + masked query UI | VERIFIED | `AuthService` captures signup/social consent transactionally; `ConsentService` returns masked audit rows; admin UI filter test passes. |
 
-### Data-Flow Trace (Level 4)
+## Data-Flow Trace (Level 4)
 
 | Artifact | Data Variable | Source | Produces Real Data | Status |
 |---|---|---|---|---|
-| `apps/api/src/modules/feature-flags/feature-flags.service.ts` | `bookingEnabled` | `readFeatureFlags(process.env)` | Yes, runtime env parsed with false default | FLOWING |
-| `apps/web/hooks/use-runtime-flags.ts` | `bookingEnabled`, disabled message | runtime flag endpoint/parser | Yes, web hook defaults safely and feeds booking UI/hooks | FLOWING |
-| `apps/web/i18n/routing.ts` / `app/sitemap.ts` | supported locale/prefix/alternates | shared locale constants | Yes, five-locale constants drive routing and sitemap output | FLOWING |
-| `TranslationService` | drafts/status/labels | Drizzle translation source/draft tables + DeepL adapter | Yes, DB queries/inserts/update transactions return draft/review/published/stale rows | FLOWING |
-| `AuthService` | email verification and refresh families | Drizzle token tables | Yes, hashed token rows, expiry, latest-token query, refresh family state | FLOWING |
-| `ConsentService` / admin audit UI | audit rows/filter state | `consent_audit_logs` joined with users | Yes, query filters DB rows and returns masked user/IP | FLOWING |
+| `apps/web/proxy.ts` | active locale | URL prefix resolved by `resolveLocaleFromPathname`; prefixless routes default to `ko` | Yes | FLOWING |
+| `apps/web/components/i18n/locale-suggestion.tsx` | `suggestedLocale` | client-readable `locale-suggestion` cookie after mount, validated by `isSupportedLocale` | Yes | FLOWING |
+| `apps/web/lib/runtime-flags.ts` / `apps/web/hooks/use-runtime-flags.ts` | `bookingEnabled` | runtime API/env parser using shared `readFeatureFlags()` | Yes | FLOWING |
+| `apps/api/src/modules/feature-flags/feature-flags.service.ts` | `bookingEnabled` | process runtime env provider -> shared parser -> API gate | Yes | FLOWING |
+| `apps/web/app/performance/[id]/page.tsx` | performance detail, translation label, KST/KRW | `usePerformanceDetail(id)` result -> `KstTime`, `CurrencyDisplay`, `AutomaticTranslationLabel` | Yes for code path; UAT fixture data remains deferred | FLOWING |
+| `apps/api/src/modules/translation/translation.service.ts` | translation source/drafts | Drizzle translation source/draft tables + DeepL adapter/fallback | Yes | FLOWING |
+| `apps/api/src/modules/auth/auth.service.ts` | email tokens and refresh families | Drizzle token tables, 30-minute expiry, active family queries | Yes | FLOWING |
+| `apps/api/src/modules/consent/consent.service.ts` | audit rows/filter state | `consent_audit_logs` joined with `users`, masked before return | Yes | FLOWING |
 
-### Behavioral Spot-Checks
+## Behavioral Spot-Checks
 
 | Behavior | Command | Result | Status |
 |---|---|---|---|
-| Shared feature flag, locale, auth consent, booking schema, and launch copy contract tests | `pnpm --filter @grabit/shared test -- flags.test.ts constants/locales.test.ts launch-copy-keys.test.ts` | 5 files, 30 tests passed | PASS |
-| Required artifacts exist/substantive | `gsd-sdk query verify.artifacts` for all 17 plans | 58/58 passed | PASS |
-| Required key links wired | `gsd-sdk query verify.key-links` for all 17 plans + manual `packages/shared/src/index.ts` check | 38/38 verified | PASS |
-| Anti-pattern scan on core Phase 23 files | `rg TODO/FIXME/PLACEHOLDER/return null/console.log...` | No blocker stubs. Matches were normal UI placeholders, nullable helpers, or comments. | PASS |
-| Full build/test | Provided executed verification | Root `pnpm build` passed; root `pnpm test` passed with shared 30, API 482, web 303 tests | PASS |
-| Drift/review gates | Provided executed verification + `23-REVIEW.md` | Schema drift `drift_detected=false, blocking=false`; codebase drift skipped non-blocking; code review status clean | PASS |
+| Plan 23-18 artifacts exist/substantive | `gsd-sdk query verify.artifacts .planning/phases/23-launch-foundation/23-18-PLAN.md --raw` | 4/4 passed | PASS |
+| All Phase 23 artifacts exist/substantive | `gsd-sdk query verify.artifacts` across all 18 plans | 62/62 passed | PASS |
+| Plan key links wired | `gsd-sdk query verify.key-links` across all plans + manual barrel export check | 38/38 verified after manual false-negative check | PASS |
+| Routing/layout hardening tests | `pnpm --filter @grabit/web exec vitest run i18n/routing.test.ts components/layout/__tests__/layout-shell-locale.test.tsx` | 2 files, 15 tests passed | PASS |
+| Shared contracts | `pnpm --filter @grabit/shared test -- flags.test.ts constants/locales.test.ts launch-copy-keys.test.ts auth.schema.test.ts` | 5 files, 30 tests passed | PASS |
+| API foundations | `pnpm --filter @grabit/api test -- feature-flags.service.spec.ts booking.service.spec.ts reservation.service.spec.ts translation.service.spec.ts auth.service.spec.ts auth.controller.spec.ts consent.service.spec.ts consent-audit.controller.spec.ts auth-consent.dto.spec.ts` | 41 files, 493 tests passed | PASS |
+| Web foundations | `pnpm --filter @grabit/web test -- i18n-routing.test.ts sitemap.test.ts layout-shell-locale.test.tsx performance-detail-formatting.test.tsx performance-detail-translation-label.test.tsx booking-disabled-runtime.test.tsx signup-consent.test.tsx signup-submit-consent.test.tsx consent-audit-table.test.tsx translation-review.test.tsx phone-input-i18n.test.tsx phone-verification-i18n.test.tsx legal-fallback.test.tsx footer.test.tsx` | 46 files, 316 tests passed | PASS |
+| Production build | `pnpm build` | Turbo build passed for shared/api/web | PASS |
+| Full test command | `pnpm test` | Turbo test passed: shared 30, API 493, web 316 tests | PASS |
 
-### Requirements Coverage
+## Requirements Coverage
 
 | Requirement | Source Plan(s) | Description | Status | Evidence |
 |---|---|---|---|---|
-| FLAG-01 | 23-01, 23-02, 23-03, 23-04 | Existing prod compatibility through expand-only schema, flags, Korean root URL, canary policy | SATISFIED | Expand-only SQL, runtime flag helper, routing root policy, canary rollback runbook. |
-| FLAG-02 | 23-01, 23-03, 23-08 | Booking disabled copy and API mutation block | SATISFIED | API hard gates and web runtime disabled UI/copy are wired and tested. |
-| I18N-01 | 23-01, 23-04, 23-13, 23-16, 23-17 | Five-locale public routing and legal fallback | SATISFIED | Locale constants/routing/sitemap/shell switcher/legal fallback files exist and are wired. |
-| I18N-02 | 23-04, 23-06, 23-09, 23-14, 23-15, 23-16 | Locale-sensitive auth/OTP/email/SMS/time/currency/SEO support | SATISFIED | PhoneInput, email/SMS copy, KST/KRW, locale preference, sitemap/hreflang verified. |
-| TRANS-01 | 23-02, 23-05, 23-11 | Korean source -> four drafts -> review/publish + label | SATISFIED | Translation service/controller/admin UI/public label data flow verified. |
-| TRANS-02 | 23-02, 23-05, 23-13, 23-17 | Legal manual ko/en lock and auto-translation block | SATISFIED | Legal content schema, service guard, English canonical markdown, fallback label/tests. |
-| AUTH-01 | 23-01, 23-06, 23-09, 23-10 | Kakao/Naver/Google/email, email verification, no LINE | SATISFIED | Auth routes/providers/tests verify supported providers and LINE absence; email verification endpoints/services exist. |
-| AUTH-02 | 23-02, 23-06 | Three-device refresh token family policy | SATISFIED | Refresh token schema index and auth service tests cover cap/reuse behavior. |
-| COMP-01 | 23-07, 23-10, 23-13, 23-17 | Required consent and legal surfaces | SATISFIED | Shared/auth schemas, signup UI payload, auth service transactional capture, legal/footer surfaces. |
-| COMP-02 | 23-07, 23-12 | Operator consent audit query | SATISFIED | Consent audit API/service and admin UI cover item/version/language/time/IP/user with masking. |
+| FLAG-01 | 23-01, 23-02, 23-03, 23-04 | Existing production users, reservations, sessions, and Korean SEO URLs remain valid through expand-only migrations and canary deploys. | SATISFIED | Expand-only/schema artifacts pass; shared feature flag export exists; Korean flat routes are preserved; actual canary deploy is deferred to Phase 26. |
+| FLAG-02 | 23-01, 23-03, 23-07, 23-08, 23-18 | User sees booking disabled localized copy, and booking APIs do not create seat locks/payment attempts while disabled. | SATISFIED | Runtime disabled copy and API hard gates are wired/tested; Plan 23-18 fixed route reachability for UAT surfaces. |
+| I18N-01 | 23-01, 23-02, 23-04, 23-13, 23-16, 23-17, 23-18 | Public pages in five locales; Korean `/`, foreign prefixes. | SATISFIED | Locale constants, proxy, sitemap/legal fallback/layout tests passed; UAT routing blocker resolved. |
+| I18N-02 | 23-01, 23-02, 23-04, 23-05, 23-08, 23-09, 23-11, 23-14, 23-15, 23-16, 23-18 | Locale-sensitive PhoneInput/auth/OTP/email/SMS/time/currency/hreflang/sitemap. | SATISFIED | PhoneInput, SMS/email copy, KST/KRW, sitemap, routing, and layout tests passed. |
+| TRANS-01 | 23-01, 23-02, 23-05, 23-11, 23-18 | Korean source -> four translated drafts -> review/publish -> automatic-translation label. | SATISFIED | Translation service/admin/public label tests pass; dynamic label route UAT fixture is deferred, not code-missing. |
+| TRANS-02 | 23-01, 23-02, 23-05, 23-11, 23-13, 23-17, 23-18 | Legal notices schema-locked Korean/English manual; automatic translation blocked for legal copy. | SATISFIED | Legal content guard and legal fallback tests pass; Thai/Chinese legal fallback routes are reachable. |
+| AUTH-01 | 23-01, 23-02, 23-06, 23-07, 23-09, 23-10, 23-18 | Kakao/Naver/Google/email auth, 30-minute email verification, immediate resend, LINE excluded. | SATISFIED | Auth controller/service/UI tests pass; no LINE route/provider is exposed. |
+| AUTH-02 | 23-01, 23-02, 23-06, 23-18 | Three-device refresh token family tracking. | SATISFIED | Auth service refresh-family policy tests pass. |
+| COMP-01 | 23-01, 23-02, 23-07, 23-10, 23-13, 23-17, 23-18 | PIPA, cross-border, PDPA/PIPL, under-14, marketing consent, legal/footer surfaces. | SATISFIED | Consent schema/signup/auth/legal/footer tests pass. |
+| COMP-02 | 23-02, 23-07, 23-12 | Consent audit query by item/version/language/timestamp/IP/user. | SATISFIED | Consent service/controller/admin audit table tests pass; no orphaned Phase 23 requirement found. |
 
-No Phase 23 requirements in `.planning/REQUIREMENTS.md` are orphaned: all ten IDs are claimed by at least one Phase 23 plan and have code evidence.
+All ten Phase 23 requirement IDs listed in PLAN frontmatter are present in `.planning/REQUIREMENTS.md` and have supporting code/test evidence. No additional Phase 23 requirement IDs are orphaned.
 
-### Anti-Patterns Found
+## Anti-Patterns Found
 
 | File | Line | Pattern | Severity | Impact |
 |---|---:|---|---|---|
-| `apps/web/components/admin/consent-audit-table.tsx` | 127/136/145/196 | input `placeholder` text | INFO | UI placeholders only; not implementation stubs and do not feed user-visible fake data. |
-| `apps/web/components/i18n/locale-suggestion.tsx` | 37/88/92/101 | `return null` | INFO | Conditional render/parse fallback; component is wired into `LayoutShell` and tested. |
-| `apps/api/src/modules/reservation/reservation.service.ts` | 74/77/791/801 | `return null` | INFO | Nullable helper/lookup behavior in existing reservation logic, not Phase 23 stub output. |
-| `apps/api/src/modules/auth/auth.service.ts` | 276 | comment mentions dev `console.log` mock | INFO | Existing email dev-mode note; production email path uses service/provider. |
+| `apps/web/components/i18n/locale-suggestion.tsx` | 42, 95, 99, 108, 113 | `return null` | INFO | Valid conditional render and parse fallback; not a stub. Component is wired into layout tests and route shell. |
+| `apps/web/i18n/routing.ts` | 46, 54, 100 | `return null` | INFO | Valid no-suggestion/unsupported-language return; not user-visible fake data. |
+| `apps/web/i18n/routing.test.ts` | 183 | `return null` | INFO | Test helper for absent rewrite header. |
 
-No blocker anti-patterns or hollow hardcoded-empty data paths were found in Phase 23 core files.
+No blocker stub, missing implementation, hollow hardcoded data path, or console-only handler was found in the Plan 23-18 modified source files. Existing `placeholder` UI text in unrelated admin inputs is not a Phase 23 stub.
 
-### Human Verification Required
+## Human Verification Required
 
 None for the Phase 23 completion decision.
 
-Manual/external checks are either already accepted as Phase 22 risk (`22-VERIFICATION.md` keeps missing direct SMS/email/legal/provider evidence visible) or explicitly deferred to Phase 26 (`M1-01` canary/smoke execution). Phase 23's required foundation code, tests, wiring, schema, and review gates are complete.
+The remaining route-level checks for `/performance/test-performance` and `/booking/test-performance` require seeded event data before they can be rerun, but they are explicitly classified as Phase 26 integrated smoke/canary prerequisites. They do not indicate a missing Phase 23 foundation artifact.
 
-### Gaps Summary
+## Gaps Summary
 
-No implementation gaps remain for Phase 23. The only deferred item is actual M1 canary execution, which belongs to Phase 26 and does not block this foundation phase.
+No Phase 23 implementation gaps remain. Plan 23-18 closed the locale-routing UAT blocker and post-review hardening closed stale-cookie, spoofed-header, malformed-cookie, and prefixed reserved namespace regressions. The phase can proceed with the seed-only dynamic fixture prerequisite tracked as deferred Phase 26 evidence.
 
 ---
 
-_Verified: 2026-05-06T08:24:40Z_
+_Verified: 2026-05-07T02:24:35Z_  
 _Verifier: the agent (gsd-verifier)_
