@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { DEFAULT_LOCALE, isSupportedLocale } from '@grabit/shared';
-import type { SupportedLocale } from '@grabit/shared';
+import { DEFAULT_LOCALE } from '@grabit/shared';
 import {
   LOCALE_SUGGESTION_COOKIE,
   getSuggestedLocaleFromAcceptLanguage,
@@ -23,10 +22,7 @@ export default function proxy(request: NextRequest) {
 
   const { locale: pathLocale, pathnameWithoutLocale } =
     resolveLocaleFromPathname(request.nextUrl.pathname);
-  const activeLocale =
-    pathLocale === DEFAULT_LOCALE
-      ? readLocaleCookie(request) ?? DEFAULT_LOCALE
-      : pathLocale;
+  const activeLocale = pathLocale;
   const requestHeaders = new Headers(request.headers);
 
   requestHeaders.set(NEXT_INTL_LOCALE_HEADER, activeLocale);
@@ -71,11 +67,6 @@ function rewriteToFlatPath(
   return NextResponse.rewrite(url, {
     request: { headers: requestHeaders },
   });
-}
-
-function readLocaleCookie(request: NextRequest): SupportedLocale | null {
-  const value = request.cookies.get(NEXT_LOCALE_COOKIE)?.value;
-  return value && isSupportedLocale(value) ? value : null;
 }
 
 function isBypassedPathname(pathname: string) {

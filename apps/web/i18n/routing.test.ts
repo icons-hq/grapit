@@ -42,6 +42,18 @@ describe('launch locale routing', () => {
     }
   });
 
+  it('ignores stale foreign NEXT_LOCALE cookies on prefixless Korean routes', () => {
+    for (const pathname of ['/', '/auth']) {
+      const response = runProxy(pathname, {
+        cookie: 'NEXT_LOCALE=en',
+      });
+
+      expect(getRewritePathname(response)).toBeNull();
+      expect(getForwardedRequestHeader(response, 'x-next-intl-locale')).toBe('ko');
+      expect(response.cookies.get('NEXT_LOCALE')?.value).toBe('ko');
+    }
+  });
+
   it('rewrites foreign locale prefixes to existing flat internal paths while carrying the active locale', () => {
     const cases = [
       ['/en/auth', '/auth', 'en'],
