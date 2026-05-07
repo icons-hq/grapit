@@ -82,6 +82,20 @@ describe('locale suggestion shell wiring', () => {
     expect(screen.queryByText('View this page in English?')).toBeNull();
   });
 
+  it('ignores malformed locale suggestion cookies without crashing hydration', () => {
+    document.cookie = 'locale-suggestion=; Max-Age=0; path=/';
+    document.cookie = 'locale-suggestion=%; path=/';
+
+    render(
+      <LayoutShell>
+        <main>public page</main>
+      </LayoutShell>,
+    );
+
+    expect(screen.queryByText('View this page in English?')).toBeNull();
+    expect(screen.getByText('public page')).toBeDefined();
+  });
+
   it('does not use automatic redirect APIs in locale suggestion display', () => {
     const sourcePath = join(
       process.cwd(),

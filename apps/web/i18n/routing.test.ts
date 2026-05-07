@@ -78,7 +78,9 @@ describe('launch locale routing', () => {
     expect(matcherSource).toContain('_next');
     expect(matcherSource).toContain('.*\\..*');
 
-    const response = runProxy('/admin/consent-audit');
+    const response = runProxy('/admin/consent-audit', {
+      'x-next-intl-locale': 'en',
+    });
 
     expect(getRewritePathname(response)).toBeNull();
     expect(getForwardedRequestHeader(response, 'x-next-intl-locale')).toBeNull();

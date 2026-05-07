@@ -106,6 +106,10 @@ function readSuggestedLocale(): SupportedLocale | null {
     ?.split('=')[1];
 
   if (!value) return null;
-  const decoded = decodeURIComponent(value);
-  return isSupportedLocale(decoded) ? decoded : null;
+  try {
+    const decoded = decodeURIComponent(value);
+    return isSupportedLocale(decoded) ? decoded : null;
+  } catch {
+    return null;
+  }
 }

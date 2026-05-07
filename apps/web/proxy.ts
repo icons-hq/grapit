@@ -17,7 +17,11 @@ export default function proxy(request: NextRequest) {
   // is set on the API domain (separate Cloud Run service) and is not
   // visible to the web domain.
   if (isBypassedPathname(request.nextUrl.pathname)) {
-    return NextResponse.next();
+    const requestHeaders = new Headers(request.headers);
+
+    requestHeaders.delete(NEXT_INTL_LOCALE_HEADER);
+
+    return NextResponse.next({ request: { headers: requestHeaders } });
   }
 
   const { locale: pathLocale, pathnameWithoutLocale } =
