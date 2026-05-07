@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-05-04)
 Phase: 999.1
 Plan: Not started
 Status: Phase 23 shipped — PR #33
-Last activity: 2026-05-07 - Phase 23 shipped — PR #33
+Last activity: 2026-05-07 - Completed quick task 260507-n8l: 현재 최신 pr에서 ci가 실패했어. 코드와 로그를 보고 해결
 
 ## Deferred Items
 
@@ -338,6 +338,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 | 260507-ji6 | 심층 분석 후 언어 선택 변경 시 UI/UX 번역이 적용되지 않는 문제 해결 | 2026-05-07 | 652ea4c | [260507-ji6-ui-ux](./quick/260507-ji6-ui-ux/) |
 | 260507-q2c | 판매 이벤트 분류를 아티스트·셀럽 / IP 팝업 두 개로 제한 | 2026-05-07 | uncommitted | [260507-q2c-two-event-categories](./quick/260507-q2c-two-event-categories/) |
 | 260507-r4s | 분류 페이지 legacy subcategory chip 제거 | 2026-05-07 | uncommitted | [260507-r4s-category-filter-chips](./quick/260507-r4s-category-filter-chips/) |
+| 260507-n8l | 현재 최신 pr에서 ci가 실패했어. 코드와 로그를 보고 해결 | 2026-05-07 | 85b81c3 | [260507-n8l-pr-ci](./quick/260507-n8l-pr-ci/) |
 
 ## Session Continuity
 
