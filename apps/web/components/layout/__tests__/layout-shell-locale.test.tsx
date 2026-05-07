@@ -90,6 +90,8 @@ describe('locale suggestion shell wiring', () => {
 
     expect(existsSync(sourcePath)).toBe(true);
     const source = readFileSync(sourcePath, 'utf8');
+    expect(source).toContain('React.useState<SupportedLocale | null>(null)');
+    expect(source).not.toContain('() => readSuggestedLocale()');
     expect(source).not.toMatch(
       /router\.replace|redirect\(|window\.location\.assign/,
     );

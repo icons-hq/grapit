@@ -32,7 +32,12 @@ export function LocaleSuggestion({ className }: { className?: string }) {
   const router = useRouter();
   const activeLocale = resolveLocaleFromPathname(pathname).locale;
   const [suggestedLocale, setSuggestedLocale] =
-    React.useState<SupportedLocale | null>(() => readSuggestedLocale());
+    React.useState<SupportedLocale | null>(null);
+
+  React.useEffect(() => {
+    const locale = readSuggestedLocale();
+    setSuggestedLocale(locale === activeLocale ? null : locale);
+  }, [activeLocale]);
 
   if (!suggestedLocale) return null;
   const locale = suggestedLocale;
