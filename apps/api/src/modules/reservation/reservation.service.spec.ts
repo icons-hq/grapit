@@ -99,6 +99,7 @@ function makeConsentItems(
 function createMockConsentService() {
   return {
     assertRequiredConsents: vi.fn().mockResolvedValue(undefined),
+    captureConsent: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -167,7 +168,8 @@ describe('ReservationService', () => {
       .mockReturnValueOnce(chainResult([]))
       .mockReturnValueOnce(chainResult([{ id: dto.showtimeId, performanceId: 'performance-1', dateTime: new Date() }]))
       .mockReturnValueOnce(chainResult([{ tierName: 'VIP', price: 50000 }]))
-      .mockReturnValueOnce(chainResult(seatConfigRowsFor(dto.seats)));
+      .mockReturnValueOnce(chainResult(seatConfigRowsFor(dto.seats)))
+      .mockReturnValueOnce(chainResult([{ birthDate: '1995-05-15' }]));
 
     mockDb.transaction.mockResolvedValue({
       id: 'reservation-created',
@@ -566,7 +568,8 @@ describe('ReservationService', () => {
               { tierName: 'R', color: '#222222', seatIds: ['B-1'] },
             ],
           },
-        }]));
+        }]))
+        .mockReturnValueOnce(chainResult([{ birthDate: '1995-05-15' }]));
 
       const mockTx = {
         insert: vi.fn().mockReturnValue({
@@ -595,6 +598,46 @@ describe('ReservationService', () => {
           number: '1',
         }),
       ]);
+    });
+
+    it('prepareReservation writes booking consent audit in the pending reservation transaction', async () => {
+      const userId = randomUUID();
+      const dto = {
+        showtimeId: randomUUID(),
+        orderId: 'GRP-BOOKING-CONSENT-AUDIT',
+        seats: [seatSelection('A-1')],
+        amount: 50000,
+        consentItems: makeConsentItems(),
+      };
+      setupPrepareBase(dto);
+      const mockTx = {
+        insert: vi.fn().mockReturnValue({
+          values: vi.fn(() => ({
+            returning: vi.fn().mockResolvedValue([{ id: 'reservation-created', tossOrderId: dto.orderId }]),
+          })),
+        }),
+      };
+      mockDb.transaction.mockImplementation(async (cb: (tx: typeof mockTx) => Promise<unknown>) => cb(mockTx));
+      const requestMeta = {
+        ipAddress: '198.51.100.10',
+        userAgent: 'Vitest Booking',
+      };
+
+      await expect(service.prepareReservation(dto, userId, requestMeta))
+        .resolves
+        .toEqual({ reservationId: 'reservation-created', orderId: dto.orderId });
+
+      expect(mockConsentService.captureConsent).toHaveBeenCalledTimes(1);
+      expect(mockConsentService.captureConsent).toHaveBeenCalledWith(
+        userId,
+        {
+          birthDate: '1995-05-15',
+          items: dto.consentItems,
+          sourceFlow: 'booking',
+        },
+        requestMeta,
+        mockTx,
+      );
     });
 
     it('prepareReservation rejects missing active lock before creating pending reservation', async () => {

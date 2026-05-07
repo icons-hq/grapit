@@ -21,12 +21,13 @@ import {
   venues,
   seatInventories,
   seatMaps,
+  users,
 } from '../../database/schema/index.js';
 import { TossPaymentsClient } from '../payment/toss-payments.client.js';
 import { BookingService, PAYMENT_CONFIRM_LOCK_TTL } from '../booking/booking.service.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
-import { ConsentService } from '../consent/consent.service.js';
+import { ConsentService, type ConsentRequestMeta } from '../consent/consent.service.js';
 import type {
   ConsentCaptureItem,
   SeatSelection,
@@ -201,9 +202,23 @@ export class ReservationService {
     return leftSignatures.every((value, index) => value === rightSignatures[index]);
   }
 
+  private async getUserBirthDate(userId: string): Promise<string> {
+    const [user] = await this.db
+      .select({ birthDate: users.birthDate })
+      .from(users)
+      .where(eq(users.id, userId));
+
+    if (!user) {
+      throw new NotFoundException('사용자를 찾을 수 없습니다');
+    }
+
+    return user.birthDate;
+  }
+
   async prepareReservation(
     dto: PrepareReservationRequest,
     userId: string,
+    requestMeta: ConsentRequestMeta = { ipAddress: '0.0.0.0' },
   ): Promise<PrepareReservationResponse> {
     this.featureFlags.assertBookingEnabled();
     await this.assertBookingConsent(dto as PrepareReservationRequest & {
@@ -290,6 +305,7 @@ export class ReservationService {
       dto.showtimeId,
       canonicalSeats.map((seat) => seat.seatId),
     );
+    const userBirthDate = await this.getUserBirthDate(userId);
 
     // 4. Create pending reservation + seats atomically
     const reservationNumber = this.generateReservationNumber();
@@ -320,6 +336,17 @@ export class ReservationService {
           row: seat.row,
           number: seat.number,
         })),
+      );
+
+      await this.consentService.captureConsent(
+        userId,
+        {
+          birthDate: userBirthDate,
+          items: dto.consentItems,
+          sourceFlow: 'booking',
+        },
+        requestMeta,
+        tx,
       );
 
       return reservation!;
