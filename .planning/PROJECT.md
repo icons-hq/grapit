@@ -48,7 +48,7 @@
 - ✓ Legal public pages 구현 + Footer URL 교체 — Phase 16 (v1.1) *(법무/operator sign-off는 v2.0 gate로 이월)*
 - ✓ Reservation/payment lock ownership enforcement — Phase 19 (v1.1)
 - ✓ v2.0 Phase 22 Preflight Closure before fanmeet implementation — Phase 22 (v2.0) *(READY_WITH_ACCEPTED_RISKS; missing direct operator/provider/Valkey/R2 evidence remains accepted risk/caveat, not PASS evidence)*
-- ✓ v2.0 Launch Foundation — Phase 23 (v2.0) *(prod compatibility, runtime booking flag gates, five-locale routing/copy foundation, translation/legal lock, Kakao/Naver/Google/email auth + SMS foundations, consent/audit query; M1 canary execution deferred to Phase 26)*
+- ✓ v2.0 Launch Foundation — Phase 23 (v2.0) *(prod compatibility, runtime booking flag gates, five-locale routing/copy foundation, translation/legal lock, Kakao/Naver/Google/email auth + SMS foundations, consent/audit query; locale-routing UAT blocker closed; M1 canary execution deferred to Phase 26)*
 
 ### Active
 
@@ -76,7 +76,7 @@
 ### Current State (v2.0 started — 2026-05-04)
 
 - **Shipped version:** v1.1 안정화 + 고도화 archived/tagged after Phase 21. Full archive: `.planning/milestones/v1.1-ROADMAP.md`, `.planning/milestones/v1.1-REQUIREMENTS.md`, `.planning/milestones/v1.1-MILESTONE-AUDIT.md`
-- **Current focus:** v2.0 Fanmeet Launch initialized from `docs/v2.0-fanmeet-milestone-spec.md` and consolidated into GSD execution phases. Phase 22 Preflight Closure is complete with `READY_WITH_ACCEPTED_RISKS`; Phase 23 Launch Foundation is complete/passed. Subsequent fanmeet work must preserve the accepted-risk caveats until direct operator/provider/Valkey/R2 evidence is collected.
+- **Current focus:** v2.0 Fanmeet Launch initialized from `docs/v2.0-fanmeet-milestone-spec.md` and consolidated into GSD execution phases. Phase 22 Preflight Closure is complete with `READY_WITH_ACCEPTED_RISKS`; Phase 23 Launch Foundation is complete/passed after closing the locale-routing UAT blocker. Subsequent fanmeet work must preserve the accepted-risk caveats until direct operator/provider/Valkey/R2 evidence is collected.
 - **v1.1 milestone 완료:** Phase 6~21 closed. Former Phase 22-24는 v2.0 Phase 22 Preflight Closure로 이월
 - **Phase 12 산출:** shadcn UI 시스템 modernize(globals.css 토큰), 좌석 선택 visual feedback(Option C useEffect fill transition + 체크마크 fade-in/out), react-zoom-pan-pinch 내장 MiniMap viewport rect 동기화, 모바일 WCAG 2.5.5 터치 타겟(44.8px first paint), admin SVG unified parsing contract (`[data-stage]` root+descendant + enum), UX-01~UX-06 6개 requirement 모두 validated
 - **Tech stack:** Next.js 16 + React 19 + Tailwind CSS v4 + NestJS 11 + Drizzle ORM + PostgreSQL 16 + Google Memorystore for Valkey (ioredis) + Socket.IO + Toss Payments + Infobip SMS v3
@@ -169,4 +169,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-06 after Phase 23 launch foundation verification*
+*Last updated: 2026-05-07 after Phase 23 gap closure verification*
