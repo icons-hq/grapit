@@ -1,4 +1,48 @@
 {
+  "nav": {
+    "searchPlaceholder": "공연명, 아티스트를 검색하세요",
+    "searchAriaLabel": "공연 검색",
+    "clearSearch": "검색어 지우기",
+    "moreGenres": "더보기",
+    "loginSignup": "로그인 / 회원가입",
+    "mypage": "마이페이지",
+    "logout": "로그아웃",
+    "language": "언어",
+    "category": "카테고리"
+  },
+  "home": {
+    "hot": "HOT 공연",
+    "newOpen": "신규 오픈",
+    "genreShortcuts": "장르별 바로가기",
+    "more": "더보기",
+    "empty": "공연을 검색하거나 장르별로 탐색해보세요."
+  },
+  "search": {
+    "promptTitle": "공연을 검색하세요",
+    "promptBody": "공연명, 아티스트를 검색하세요",
+    "resultTitle": "'{query}' 검색 결과",
+    "totalCount": "총 {count}건",
+    "includeEnded": "판매종료 공연 포함",
+    "loadError": "공연 정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.",
+    "retry": "다시 시도",
+    "emptyHeading": "검색 결과가 없습니다",
+    "emptyBody": "다른 키워드로 검색하거나 장르별 공연을 둘러보세요"
+  },
+  "performance": {
+    "posterAltSuffix": "포스터",
+    "detailTab": "상세정보",
+    "salesTab": "판매정보",
+    "noDetail": "상세 정보가 없습니다",
+    "refundTitle": "취소/환불 안내",
+    "refundItems": [
+      "예매 후 취소 시 취소수수료가 발생할 수 있습니다.",
+      "공연일 기준 취소 시점에 따라 수수료율이 달라집니다.",
+      "자세한 내용은 예매 시 확인해주세요."
+    ],
+    "loadError": "공연 정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.",
+    "retry": "다시 시도",
+    "bookCta": "예매하기"
+  },
   "booking": {
     "disabled": "예매는 5월말 오픈 예정입니다"
   },
@@ -9,6 +53,23 @@
     "fallbackLabel": "영문 법적 고지로 확인합니다"
   },
   "auth": {
+    "tabs": {
+      "login": "로그인",
+      "signup": "회원가입"
+    },
+    "form": {
+      "email": "이메일",
+      "password": "비밀번호",
+      "emailPlaceholder": "이메일을 입력해주세요",
+      "passwordPlaceholder": "비밀번호를 입력해주세요",
+      "loginButton": "로그인",
+      "loginLoading": "로그인 중...",
+      "forgotPassword": "비밀번호 찾기",
+      "separator": "또는",
+      "signupComplete": "회원가입이 완료되었습니다. 이메일 인증을 진행해주세요.",
+      "under14Blocked": "만 14세 미만은 가입할 수 없습니다",
+      "temporaryError": "일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
+    },
     "emailVerification": {
       "sent": "인증 메일을 발송했습니다",
       "resendCta": "인증 메일 다시 보내기",

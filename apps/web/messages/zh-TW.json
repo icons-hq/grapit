@@ -1,4 +1,48 @@
 {
+  "nav": {
+    "searchPlaceholder": "搜尋演出名稱或藝人",
+    "searchAriaLabel": "搜尋演出",
+    "clearSearch": "清除搜尋詞",
+    "moreGenres": "更多",
+    "loginSignup": "登入 / 註冊",
+    "mypage": "我的頁面",
+    "logout": "登出",
+    "language": "語言",
+    "category": "分類"
+  },
+  "home": {
+    "hot": "熱門演出",
+    "newOpen": "新開售",
+    "genreShortcuts": "按類型瀏覽",
+    "more": "更多",
+    "empty": "搜尋演出或按類型瀏覽。"
+  },
+  "search": {
+    "promptTitle": "搜尋演出",
+    "promptBody": "搜尋演出名稱或藝人",
+    "resultTitle": "'{query}' 的搜尋結果",
+    "totalCount": "共 {count} 筆結果",
+    "includeEnded": "包含已結束演出",
+    "loadError": "無法載入演出資訊。請稍後再試。",
+    "retry": "重試",
+    "emptyHeading": "沒有搜尋結果",
+    "emptyBody": "請嘗試其他關鍵字或按類型瀏覽演出"
+  },
+  "performance": {
+    "posterAltSuffix": "海報",
+    "detailTab": "詳細資訊",
+    "salesTab": "銷售資訊",
+    "noDetail": "暫無詳細資訊",
+    "refundTitle": "取消/退款說明",
+    "refundItems": [
+      "預訂後取消可能產生手續費。",
+      "手續費比例會依演出日前的取消時間而不同。",
+      "請在預訂時查看詳細內容。"
+    ],
+    "loadError": "無法載入演出資訊。請稍後再試。",
+    "retry": "重試",
+    "bookCta": "預訂門票"
+  },
   "booking": {
     "disabled": "門票預訂預計於5月下旬開放"
   },
@@ -9,6 +53,23 @@
     "fallbackLabel": "查看英文法律告知"
   },
   "auth": {
+    "tabs": {
+      "login": "登入",
+      "signup": "註冊"
+    },
+    "form": {
+      "email": "電子郵件",
+      "password": "密碼",
+      "emailPlaceholder": "請輸入電子郵件",
+      "passwordPlaceholder": "請輸入密碼",
+      "loginButton": "登入",
+      "loginLoading": "正在登入...",
+      "forgotPassword": "找回密碼",
+      "separator": "或",
+      "signupComplete": "註冊已完成。請進行電子郵件驗證。",
+      "under14Blocked": "未滿14歲無法註冊",
+      "temporaryError": "暫時發生錯誤。請稍後再試。"
+    },
     "emailVerification": {
       "sent": "驗證郵件已傳送",
       "resendCta": "重新傳送驗證郵件",

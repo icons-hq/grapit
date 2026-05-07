@@ -1,6 +1,12 @@
 export const LAUNCH_COPY_LOCALES = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
 
 export const LAUNCH_COPY_NAMESPACES = [
+  'nav',
+  'home',
+  'search',
+  'performance',
+  'booking',
+  'auth.form',
   'auth.emailVerification',
   'auth.otp',
   'auth.errors',
@@ -9,6 +15,60 @@ export const LAUNCH_COPY_NAMESPACES = [
 
 export type LaunchCopyLocale = (typeof LAUNCH_COPY_LOCALES)[number];
 export type LaunchCopyNamespace = (typeof LAUNCH_COPY_NAMESPACES)[number];
+
+const navKeys = [
+  'searchPlaceholder',
+  'searchAriaLabel',
+  'clearSearch',
+  'moreGenres',
+  'loginSignup',
+  'mypage',
+  'logout',
+  'language',
+  'category',
+] as const;
+
+const homeKeys = ['hot', 'newOpen', 'genreShortcuts', 'more', 'empty'] as const;
+
+const searchKeys = [
+  'promptTitle',
+  'promptBody',
+  'resultTitle',
+  'totalCount',
+  'includeEnded',
+  'loadError',
+  'retry',
+  'emptyHeading',
+  'emptyBody',
+] as const;
+
+const performanceKeys = [
+  'posterAltSuffix',
+  'detailTab',
+  'salesTab',
+  'noDetail',
+  'refundTitle',
+  'refundItems',
+  'loadError',
+  'retry',
+  'bookCta',
+] as const;
+
+const bookingKeys = ['disabled'] as const;
+
+const authFormKeys = [
+  'email',
+  'password',
+  'emailPlaceholder',
+  'passwordPlaceholder',
+  'loginButton',
+  'loginLoading',
+  'forgotPassword',
+  'separator',
+  'signupComplete',
+  'under14Blocked',
+  'temporaryError',
+] as const;
 
 const authEmailVerificationKeys = [
   'sent',
@@ -53,6 +113,12 @@ function forLaunchLocales<const T extends readonly string[]>(keys: T) {
 }
 
 export const LAUNCH_COPY_KEYS = {
+  nav: forLaunchLocales(navKeys),
+  home: forLaunchLocales(homeKeys),
+  search: forLaunchLocales(searchKeys),
+  performance: forLaunchLocales(performanceKeys),
+  booking: forLaunchLocales(bookingKeys),
+  'auth.form': forLaunchLocales(authFormKeys),
   'auth.emailVerification': forLaunchLocales(authEmailVerificationKeys),
   'auth.otp': forLaunchLocales(authOtpKeys),
   'auth.errors': forLaunchLocales(authErrorKeys),

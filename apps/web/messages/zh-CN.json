@@ -1,4 +1,48 @@
 {
+  "nav": {
+    "searchPlaceholder": "搜索演出名称或艺人",
+    "searchAriaLabel": "搜索演出",
+    "clearSearch": "清除搜索词",
+    "moreGenres": "更多",
+    "loginSignup": "登录 / 注册",
+    "mypage": "我的页面",
+    "logout": "退出登录",
+    "language": "语言",
+    "category": "分类"
+  },
+  "home": {
+    "hot": "热门演出",
+    "newOpen": "新开售",
+    "genreShortcuts": "按类型浏览",
+    "more": "更多",
+    "empty": "搜索演出或按类型浏览。"
+  },
+  "search": {
+    "promptTitle": "搜索演出",
+    "promptBody": "搜索演出名称或艺人",
+    "resultTitle": "'{query}' 的搜索结果",
+    "totalCount": "共 {count} 个结果",
+    "includeEnded": "包含已结束演出",
+    "loadError": "无法加载演出信息。请稍后再试。",
+    "retry": "重试",
+    "emptyHeading": "没有搜索结果",
+    "emptyBody": "请尝试其他关键词或按类型浏览演出"
+  },
+  "performance": {
+    "posterAltSuffix": "海报",
+    "detailTab": "详细信息",
+    "salesTab": "销售信息",
+    "noDetail": "暂无详细信息",
+    "refundTitle": "取消/退款说明",
+    "refundItems": [
+      "预订后取消可能产生手续费。",
+      "手续费比例会根据演出日前的取消时间而变化。",
+      "请在预订时查看详细内容。"
+    ],
+    "loadError": "无法加载演出信息。请稍后再试。",
+    "retry": "重试",
+    "bookCta": "预订门票"
+  },
   "booking": {
     "disabled": "门票预订预计于5月下旬开放"
   },
@@ -9,6 +53,23 @@
     "fallbackLabel": "查看英文法律告知"
   },
   "auth": {
+    "tabs": {
+      "login": "登录",
+      "signup": "注册"
+    },
+    "form": {
+      "email": "邮箱",
+      "password": "密码",
+      "emailPlaceholder": "请输入邮箱",
+      "passwordPlaceholder": "请输入密码",
+      "loginButton": "登录",
+      "loginLoading": "正在登录...",
+      "forgotPassword": "找回密码",
+      "separator": "或",
+      "signupComplete": "注册已完成。请进行邮箱验证。",
+      "under14Blocked": "未满14周岁无法注册",
+      "temporaryError": "暂时发生错误。请稍后再试。"
+    },
     "emailVerification": {
       "sent": "验证邮件已发送",
       "resendCta": "重新发送验证邮件",
