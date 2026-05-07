@@ -1,92 +1,82 @@
 ---
 phase: 23-launch-foundation
-fixed_at: 2026-05-07T00:52:34Z
+fixed_at: 2026-05-07T06:45:46Z
 review_path: .planning/phases/23-launch-foundation/23-REVIEW.md
 iteration: 1
-findings_in_scope: 9
-fixed: 9
+findings_in_scope: 6
+fixed: 6
 skipped: 0
 status: all_fixed
 ---
 
 # Phase 23: Code Review Fix Report
 
-**Fixed at:** 2026-05-07T00:52:34Z
+**Fixed at:** 2026-05-07T06:45:46Z
 **Source review:** .planning/phases/23-launch-foundation/23-REVIEW.md
 **Iteration:** 1
 
 **Summary:**
-- Findings in scope: 9
-- Fixed: 9
+- Findings in scope: 6
+- Fixed: 6
 - Skipped: 0
+- Setup note: initial focused tests could not run until `pnpm install --frozen-lockfile` prepared worktree dependencies.
 
 ## Fixed Issues
 
-### CR-01: SMS verified flag alone can authorize phone ownership
-
-**Status:** fixed: requires human verification
-**Files modified:** `apps/api/src/modules/auth/auth.service.ts`, `apps/api/src/modules/auth/auth.service.spec.ts`, `apps/api/src/modules/auth/dto/auth-consent.dto.spec.ts`, `apps/api/src/modules/auth/dto/register.dto.ts`, `apps/api/src/modules/auth/dto/social-register.dto.ts`, `apps/api/src/modules/sms/sms.controller.ts`, `apps/api/src/modules/sms/sms.service.ts`, `apps/api/src/modules/sms/sms.service.spec.ts`, `apps/web/app/auth/callback/page.tsx`, `apps/web/components/auth/phone-verification.tsx`, `apps/web/components/auth/signup-form.tsx`, `apps/web/components/auth/signup-step3.tsx`, `apps/web/components/auth/__tests__/phone-verification.test.tsx`, `apps/web/components/auth/__tests__/signup-submit-consent.test.tsx`, `packages/shared/src/schemas/auth.schema.ts`
-**Commit:** 1ebdc29
-**Applied fix:** `/sms/verify-code`가 phone/purpose-bound signed token을 반환하게 하고 signup/social completion이 `phoneVerificationToken`을 검증하도록 변경했다. `isPhoneVerified(phone)` fallback은 가입 권한 증명 경로에서 제거했다.
-
-### CR-02: Refresh token rotation can be bypassed by concurrent requests
-
-**Status:** fixed: requires human verification
-**Files modified:** `apps/api/src/modules/auth/auth.service.ts`, `apps/api/src/modules/auth/auth.service.spec.ts`
-**Commit:** 0774036
-**Applied fix:** refresh token rotation을 transaction으로 감싸고, `revokedAt IS NULL` 조건부 update 결과가 없으면 token family reuse로 처리하도록 변경했다.
-
-### CR-03: Email verification is not enforced before session issuance
-
-**Status:** fixed: requires human verification
-**Files modified:** `apps/api/src/modules/auth/auth.controller.ts`, `apps/api/src/modules/auth/auth.controller.spec.ts`, `apps/api/src/modules/auth/auth.service.ts`, `apps/api/src/modules/auth/auth.service.spec.ts`, `apps/web/components/auth/signup-form.tsx`, `apps/web/components/auth/__tests__/signup-submit-consent.test.tsx`, `packages/shared/src/types/auth.types.ts`
-**Commit:** 9ee34e8
-**Applied fix:** password signup 직후 access/refresh token을 발급하지 않고 email verification pending response를 반환하게 했다. password login은 `isEmailVerified`를 검사해 미검증 사용자를 `EMAIL_NOT_VERIFIED`로 차단한다.
-
-### CR-04: Profile phone updates bypass SMS verification and preserve verified state
-
-**Status:** fixed: requires human verification
-**Files modified:** `apps/api/src/modules/user/user.module.ts`, `apps/api/src/modules/user/user.repository.ts`, `apps/api/src/modules/user/user.service.ts`, `apps/api/src/modules/user/user.service.spec.ts`, `apps/web/components/auth/profile-form.tsx`, `packages/shared/src/schemas/user.schema.ts`
-**Commit:** 8c034e4
-**Applied fix:** profile phone change에 `profile_phone_change` purpose의 signed phone verification token을 요구하고, 검증된 변경에만 `isPhoneVerified`를 true로 저장하도록 했다.
-
-### CR-05: Social registration links existing accounts by email without proving account ownership
-
-**Status:** fixed: requires human verification
-**Files modified:** `apps/api/src/modules/auth/auth.service.ts`, `apps/api/src/modules/auth/auth.service.spec.ts`
-**Commit:** 38da740
-**Applied fix:** social completion 중 동일 email의 기존 계정이 발견되면 자동 linking/session issuance를 중단하고 `ACCOUNT_LINK_CONFIRMATION_REQUIRED` conflict를 반환하도록 변경했다.
-
-### CR-06: Translation review queue drops the Korean source text
+### CR-01: Fresh launch databases cannot capture signup consent
 
 **Status:** fixed
-**Files modified:** `apps/api/src/modules/translation/translation.service.ts`, `apps/api/src/modules/translation/translation.service.spec.ts`, `apps/web/hooks/use-admin.ts`, `apps/web/app/admin/translations/page.tsx`, `apps/web/components/admin/translation-review-detail-panel.tsx`, `apps/web/components/admin/__tests__/translation-review.test.tsx`
-**Commit:** 9c3ff62
-**Applied fix:** translation queue API result에 `field`와 `sourceText`를 포함하고, frontend가 translated draft를 Korean source로 fallback하지 않게 했다. source text가 없으면 review/publish를 막는 error state를 표시한다.
+**Files modified:** `apps/api/src/database/migrations/0009_seed_launch_consent_items.sql`, `apps/api/src/database/migrations/meta/_journal.json`, `apps/api/src/database/schema/launch-foundation.schema.spec.ts`
+**Commit:** 63aea35
+**Applied fix:** Added a data migration that upserts active `2026-04-28` consent items for all launch locales and all required/optional consent keys. Avoided editing `apps/api/src/database/seed.mjs` because that file had unrelated pre-existing main-worktree changes.
+**Verification:** `node -e "JSON.parse(..._journal.json...)"` passed; `pnpm --filter @grabit/api test -- src/database/schema/launch-foundation.schema.spec.ts` passed (41 files, 499 tests).
 
-### WR-01: Translation source creation can create unhandled promise rejections
+### CR-02: Booking consent is validated but never persisted to the audit log
 
-**Status:** fixed
-**Files modified:** `apps/web/components/admin/translation-source-form.tsx`, `apps/web/components/admin/__tests__/translation-review.test.tsx`
-**Commit:** dd815e7
-**Applied fix:** source creation과 draft generation mutation rejection을 form component에서 catch해 unhandled promise rejection이 발생하지 않게 했다.
+**Status:** fixed: requires human verification
+**Files modified:** `apps/api/src/modules/reservation/reservation.controller.ts`, `apps/api/src/modules/reservation/reservation.service.ts`, `apps/api/src/modules/reservation/reservation.service.spec.ts`
+**Commit:** 7c96796
+**Applied fix:** Threaded request metadata into reservation prepare, loaded the trusted user birth date server-side, and called `ConsentService.captureConsent()` with `sourceFlow: 'booking'` inside the pending reservation transaction.
+**Verification:** `pnpm --filter @grabit/api exec vitest run src/modules/reservation/reservation.service.spec.ts` passed (44 tests); `pnpm --filter @grabit/shared build` then `pnpm --filter @grabit/api typecheck` passed.
 
-### WR-02: DeepL error responses can mask provider failure details
-
-**Status:** fixed
-**Files modified:** `apps/api/src/modules/translation/deepl.client.ts`, `apps/api/src/modules/translation/deepl.client.spec.ts`
-**Commit:** eda8b44
-**Applied fix:** DeepL response body를 `text()`로 먼저 읽고, non-OK status 또는 non-JSON success response에서 status/body preview를 포함한 오류를 던지도록 변경했다.
-
-### WR-03: Locale suggestion copy uses the current locale instead of the suggested locale
+### CR-03: Consent audit timestamps are client-controlled
 
 **Status:** fixed
-**Files modified:** `apps/web/components/i18n/locale-suggestion.tsx`, `apps/web/components/layout/__tests__/layout-shell-locale.test.tsx`
-**Commit:** 21ec1a6
-**Applied fix:** locale suggestion banner copy를 active route locale이 아니라 suggested target locale 기준으로 선택하도록 변경했다.
+**Files modified:** `packages/shared/src/schemas/consent.schema.ts`, `packages/shared/src/schemas/consent.schema.test.ts`, `apps/api/src/modules/consent/consent.service.ts`, `apps/api/src/modules/consent/consent.service.spec.ts`
+**Commit:** 5dc02b3
+**Applied fix:** Removed `capturedAt` from public consent capture requests and made `ConsentService.captureConsent()` always use server time for age gate and persisted `agreedAt`.
+**Verification:** `pnpm --filter @grabit/shared exec vitest run src/schemas/consent.schema.test.ts` passed (1 test); `pnpm --filter @grabit/api exec vitest run src/modules/consent/consent.service.spec.ts` passed (5 tests); shared typecheck/build and API typecheck passed.
+
+### CR-04: Consent audit IP addresses can be spoofed through x-forwarded-for
+
+**Status:** fixed
+**Files modified:** `apps/api/src/common/request-ip.ts`, `apps/api/src/common/request-ip.spec.ts`, `apps/api/src/main.ts`, `apps/api/src/modules/auth/auth.controller.ts`, `apps/api/src/modules/auth/auth.controller.spec.ts`, `apps/api/src/modules/consent/consent.controller.ts`, `apps/api/src/modules/reservation/reservation.controller.ts`
+**Commit:** 6a2d69e
+**Applied fix:** Configured Express `trust proxy`, stopped reading raw `x-forwarded-for`, and centralized consent IP resolution on validated `req.ip` with socket fallback.
+**Verification:** `pnpm --filter @grabit/api exec vitest run src/common/request-ip.spec.ts src/modules/auth/auth.controller.spec.ts` passed (24 tests); `pnpm --filter @grabit/api typecheck` passed.
+
+### WR-01: ended=false query parameters are parsed as true
+
+**Status:** fixed: requires human verification
+**Files modified:** `packages/shared/src/schemas/performance.schema.ts`, `packages/shared/src/schemas/performance.schema.test.ts`
+**Commit:** 660ccec
+**Applied fix:** Replaced `z.coerce.boolean()` with an explicit query-string boolean parser for `ended`, covering `false`, `true`, omitted, empty, and invalid values.
+**Verification:** `pnpm --filter @grabit/shared exec vitest run src/schemas/performance.schema.test.ts` passed (2 tests); `pnpm --filter @grabit/shared typecheck` and build passed.
+
+### WR-02: Published translations can be moved back to review state
+
+**Status:** fixed: requires human verification
+**Files modified:** `apps/api/src/modules/translation/translation.service.ts`, `apps/api/src/modules/translation/translation.service.spec.ts`, `apps/web/components/admin/translation-review-detail-panel.tsx`, `apps/web/components/admin/__tests__/translation-review.test.tsx`
+**Commit:** 5192ec7
+**Applied fix:** `markReviewed()` now rejects published drafts, and the admin review button is enabled only for `draft` rows with source text and translated text.
+**Verification:** `pnpm --filter @grabit/api exec vitest run src/modules/translation/translation.service.spec.ts` passed (10 tests); `pnpm --filter @grabit/web exec vitest run components/admin/__tests__/translation-review.test.tsx` passed (7 tests); API and web typechecks passed.
+
+## Skipped Issues
+
+None.
 
 ---
 
-_Fixed: 2026-05-07T00:52:34Z_
+_Fixed: 2026-05-07T06:45:46Z_
 _Fixer: the agent (gsd-code-fixer)_
 _Iteration: 1_
