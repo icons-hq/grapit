@@ -70,6 +70,17 @@ completed: 2026-05-07
 3. **Task 3: Stabilize LocaleSuggestion hydration** - `87da1fb` (fix)
 4. **Task 4: Re-run Phase 23 browser UAT and close gap record** - `4118347` (docs)
 
+## Post-Review Hardening
+
+- `bb6d919` - `fix(23-18): keep prefixless routes Korean`
+  - Prefixless Korean URLs now ignore stale foreign `NEXT_LOCALE` cookies and normalize the response cookie back to `ko`.
+- `536862b` - `fix(23-18): harden locale proxy inputs`
+  - Bypassed admin requests strip spoofed internal locale headers, and malformed `locale-suggestion` cookies are ignored.
+- `f42f82d` - `fix(23-18): block prefixed reserved rewrites`
+  - Locale-prefixed reserved namespaces such as `/en/admin`, `/en/api`, and `/en/_next` no longer rewrite into protected internal paths.
+- `5bd4016` - `docs(23): add code review report`
+  - Final code review status is clean with zero findings.
+
 ## Verification
 
 - RED: `pnpm --filter @grabit/web test -- i18n/routing.test.ts components/layout/__tests__/layout-shell-locale.test.tsx` failed as expected before implementation: `/` rewrote to `/ko`, `/en/auth` rewrote to `/ko/en/auth`, and `proxy.ts` still used `createMiddleware`.
@@ -78,6 +89,8 @@ completed: 2026-05-07
 - `pnpm --filter @grabit/api test -- feature-flags.service.spec.ts booking.service.spec.ts reservation.service.spec.ts translation.service.spec.ts deepl.client.spec.ts auth.service.spec.ts auth.controller.spec.ts email.service.spec.ts sms.service.spec.ts consent.service.spec.ts consent-audit.controller.spec.ts auth-consent.dto.spec.ts user.service.spec.ts user.controller.spec.ts` - PASS, 493 tests.
 - `pnpm --filter @grabit/web typecheck` - PASS.
 - `pnpm --filter @grabit/api typecheck` - PASS.
+- Post-review focused suite: `pnpm --filter @grabit/web exec vitest run i18n/routing.test.ts components/layout/__tests__/layout-shell-locale.test.tsx` - PASS, 15 tests.
+- Post-review integration gates: `pnpm build` - PASS; `pnpm test` - PASS, 5 shared files / 41 api files / 46 web files.
 
 ## Browser Route Crawl
 
