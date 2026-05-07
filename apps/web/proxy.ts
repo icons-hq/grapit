@@ -12,11 +12,17 @@ const NEXT_LOCALE_COOKIE = 'NEXT_LOCALE';
 const ONE_YEAR_SECONDS = 60 * 60 * 24 * 365;
 
 export default function proxy(request: NextRequest) {
+  const { locale: pathLocale, pathnameWithoutLocale } =
+    resolveLocaleFromPathname(request.nextUrl.pathname);
+
   // Admin auth is handled client-side in admin/layout.tsx.
   // Server-side cookie check removed because the refreshToken cookie
   // is set on the API domain (separate Cloud Run service) and is not
   // visible to the web domain.
-  if (isBypassedPathname(request.nextUrl.pathname)) {
+  if (
+    isBypassedPathname(request.nextUrl.pathname) ||
+    isBypassedPathname(pathnameWithoutLocale)
+  ) {
     const requestHeaders = new Headers(request.headers);
 
     requestHeaders.delete(NEXT_INTL_LOCALE_HEADER);
@@ -24,8 +30,6 @@ export default function proxy(request: NextRequest) {
     return NextResponse.next({ request: { headers: requestHeaders } });
   }
 
-  const { locale: pathLocale, pathnameWithoutLocale } =
-    resolveLocaleFromPathname(request.nextUrl.pathname);
   const activeLocale = pathLocale;
   const requestHeaders = new Headers(request.headers);
 

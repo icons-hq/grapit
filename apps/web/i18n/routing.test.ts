@@ -86,6 +86,23 @@ describe('launch locale routing', () => {
     expect(getForwardedRequestHeader(response, 'x-next-intl-locale')).toBeNull();
   });
 
+  it('does not strip locale prefixes into reserved admin, api, or next internal paths', () => {
+    const pathnames = [
+      '/en/admin/consent-audit',
+      '/en/api/runtime-flags',
+      '/en/_next/image',
+    ];
+
+    for (const pathname of pathnames) {
+      const response = runProxy(pathname, {
+        'x-next-intl-locale': 'th',
+      });
+
+      expect(getRewritePathname(response)).toBeNull();
+      expect(getForwardedRequestHeader(response, 'x-next-intl-locale')).toBeNull();
+    }
+  });
+
   it('keeps Korean as the prefixless default and prefixes every foreign locale', () => {
     expect(routing.defaultLocale).toBe(DEFAULT_LOCALE);
     expect(routing.locales).toEqual([...SUPPORTED_LOCALES]);
