@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useLocale } from 'next-intl';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -11,6 +12,8 @@ import { useAuthStore } from '@/stores/use-auth-store';
 import { StepIndicator } from '@/components/auth/step-indicator';
 import { SignupStep2 } from '@/components/auth/signup-step2';
 import { SignupStep3 } from '@/components/auth/signup-step3';
+import { getAuthLaunchCopy } from '@/components/auth/auth-launch-copy';
+import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 
 const SOCIAL_ERROR_MESSAGES: Record<string, { title: string; detail: string }> = {
   oauth_denied: {
@@ -37,6 +40,7 @@ const SOCIAL_ERROR_MESSAGES: Record<string, { title: string; detail: string }> =
 
 function CallbackContent() {
   const router = useRouter();
+  const authCopy = getAuthLaunchCopy(useLocale());
   const searchParams = useSearchParams();
   const setAuth = useAuthStore((s) => s.setAuth);
   // status=authenticated 흐름에서는 root layout 의 AuthInitializer 가
@@ -85,10 +89,10 @@ function CallbackContent() {
       // Invalid callback
       hasRedirectedRef.current = true;
       toast.error('잘못된 접근입니다.');
-      router.push('/auth');
+      router.push(getLocalizedPathname('/auth', authCopy.locale));
     }
     // status === 'authenticated' 분기는 아래 watch effect 에서 처리.
-  }, [searchParams, router]);
+  }, [searchParams, router, authCopy.locale]);
 
   // status=authenticated 흐름: AuthInitializer 가 store 를 채울 때까지 대기 후 라우팅.
   useEffect(() => {
@@ -99,16 +103,16 @@ function CallbackContent() {
 
     if (user) {
       hasRedirectedRef.current = true;
-      router.push('/');
+      router.push(getLocalizedPathname('/', authCopy.locale));
       return;
     }
     if (isInitialized) {
       // AuthInitializer 가 끝났는데도 user 가 없다면 refresh 실패.
       hasRedirectedRef.current = true;
       toast.error('로그인에 실패했습니다.');
-      router.push('/auth');
+      router.push(getLocalizedPathname('/auth', authCopy.locale));
     }
-  }, [user, isInitialized, searchParams, router]);
+  }, [user, isInitialized, searchParams, router, authCopy.locale]);
 
   function handleStep2Complete(data: RegisterStep2Input) {
     setStep2Data(data);
@@ -138,13 +142,13 @@ function CallbackContent() {
         payload,
       );
       setAuth(res.accessToken, res.user);
-      toast.success('회원가입이 완료되었습니다');
-      router.push('/');
+      toast.success(authCopy.form.signupComplete);
+      router.push(getLocalizedPathname('/', authCopy.locale));
     } catch (error) {
       const message =
         error instanceof Error
           ? error.message
-          : '일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
+          : authCopy.form.temporaryError;
       toast.error(message);
     } finally {
       setIsSubmitting(false);
@@ -168,7 +172,9 @@ function CallbackContent() {
           <Button
             size="lg"
             className="mt-2 w-full max-w-[280px]"
-            onClick={() => router.push('/auth')}
+            onClick={() =>
+              router.push(getLocalizedPathname('/auth', authCopy.locale))
+            }
           >
             다시 로그인하기
           </Button>
@@ -197,7 +203,9 @@ function CallbackContent() {
             {currentStep === 2 && (
               <SignupStep2
                 onComplete={handleStep2Complete}
-                onBack={() => router.push('/auth')}
+                onBack={() =>
+                  router.push(getLocalizedPathname('/auth', authCopy.locale))
+                }
                 defaultValues={step2Data}
               />
             )}

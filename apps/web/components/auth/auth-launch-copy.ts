@@ -20,12 +20,18 @@ const messagesByLocale = {
   'zh-TW': zhTWMessages,
 } as const;
 
-export type AuthLaunchCopy = (typeof koMessages)['auth'];
+export type AuthLaunchCopy = (typeof koMessages)['auth'] & {
+  locale: SupportedLocale;
+};
 
 export function resolveAuthLocale(locale: string | undefined): SupportedLocale {
   return locale && isSupportedLocale(locale) ? locale : DEFAULT_LOCALE;
 }
 
 export function getAuthLaunchCopy(locale: string | undefined): AuthLaunchCopy {
-  return messagesByLocale[resolveAuthLocale(locale)].auth;
+  const resolvedLocale = resolveAuthLocale(locale);
+  return {
+    ...messagesByLocale[resolvedLocale].auth,
+    locale: resolvedLocale,
+  };
 }

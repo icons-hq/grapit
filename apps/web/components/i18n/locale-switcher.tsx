@@ -12,6 +12,7 @@ import type { SupportedLocale } from '@grabit/shared/types/i18n.types.js';
 import { resolveLocaleFromPathname } from '@/i18n/routing';
 import { apiClient } from '@/lib/api-client';
 import { cn } from '@/lib/cn';
+import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import { useAuthStore } from '@/stores/use-auth-store';
 import {
   DropdownMenu,
@@ -35,6 +36,7 @@ export function LocaleSwitcher({
   const router = useRouter();
   const { accessToken, user, setAuth } = useAuthStore();
   const activeLocale = resolveLocaleFromPathname(pathname).locale;
+  const copy = getVisibleCopy(activeLocale);
 
   async function handleLocaleSelect(locale: SupportedLocale) {
     setLocalePreferenceCookie(locale);
@@ -61,7 +63,7 @@ export function LocaleSwitcher({
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          aria-label={`언어 선택: ${LOCALE_LABELS[activeLocale].native}`}
+          aria-label={`${activeLocale === DEFAULT_LOCALE ? '언어 선택' : copy.nav.language}: ${LOCALE_LABELS[activeLocale].native}`}
           className={cn(
             'inline-flex h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold text-gray-900 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-primary',
             className,

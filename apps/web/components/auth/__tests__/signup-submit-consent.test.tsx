@@ -22,6 +22,10 @@ vi.mock('sonner', () => ({
   },
 }));
 
+vi.mock('next-intl', () => ({
+  useLocale: () => 'ko',
+}));
+
 vi.mock('@/lib/api-client', () => ({
   apiClient: {
     post: mocks.apiPost,

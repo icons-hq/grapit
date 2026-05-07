@@ -109,8 +109,8 @@ describe('PerformanceDetailPage i18n formatting', () => {
       </Suspense>,
     );
 
-    expect(await screen.findByRole('tab', { name: '상세정보' })).toBeDefined();
-    expect(screen.getByRole('tab', { name: '판매정보' })).toBeDefined();
+    expect(await screen.findByRole('tab', { name: 'รายละเอียด' })).toBeDefined();
+    expect(screen.getByRole('tab', { name: 'ข้อมูลการขาย' })).toBeDefined();
     expect(screen.queryByRole('tab', { name: '캐스팅' })).toBeNull();
   });
 });

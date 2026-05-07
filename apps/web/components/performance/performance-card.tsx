@@ -2,8 +2,14 @@
 
 import Link from 'next/link';
 import Image from 'next/image';
+import { useLocale } from 'next-intl';
 import { Ticket } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
+import {
+  getVisibleCopy,
+  resolveVisibleCopyLocale,
+} from '@/lib/i18n/visible-copy';
 import { StatusBadge } from './status-badge';
 import type { PerformanceCardData } from '@grabit/shared';
 
@@ -26,9 +32,12 @@ export function PerformanceCard({
   className,
   priority = false,
 }: PerformanceCardProps) {
+  const activeLocale = resolveVisibleCopyLocale(useLocale());
+  const copy = getVisibleCopy(activeLocale);
+
   return (
     <Link
-      href={`/performance/${performance.id}`}
+      href={getLocalizedPathname(`/performance/${performance.id}`, activeLocale)}
       className={cn(
         'group block overflow-hidden rounded-lg bg-white shadow-sm transition-shadow duration-150 hover:shadow-md',
         className,
@@ -39,7 +48,7 @@ export function PerformanceCard({
         {performance.posterUrl ? (
           <Image
             src={performance.posterUrl}
-            alt={`${performance.title} 포스터`}
+            alt={`${performance.title} ${copy.performance.posterAltSuffix}`}
             fill
             className="object-cover transition-transform duration-150 group-hover:scale-[1.02]"
             sizes="(max-width: 768px) 50vw, 25vw"
@@ -53,6 +62,7 @@ export function PerformanceCard({
         )}
         <StatusBadge
           status={performance.status}
+          locale={activeLocale}
           className="absolute left-2 top-2"
         />
       </div>

@@ -3,6 +3,7 @@
 import { use } from 'react';
 import { notFound } from 'next/navigation';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
+import { useLocale } from 'next-intl';
 import { GENRES, GENRE_LABELS, type Genre } from '@grabit/shared';
 import { Switch } from '@/components/ui/switch';
 import { GenreChip } from '@/components/performance/genre-chip';
@@ -10,6 +11,7 @@ import { SortToggle } from '@/components/performance/sort-toggle';
 import { PerformanceGrid } from '@/components/performance/performance-grid';
 import { PaginationNav } from '@/components/performance/pagination-nav';
 import { usePerformances } from '@/hooks/use-performances';
+import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 
 const SUBCATEGORIES = [
   { label: '전체', value: '' },
@@ -33,6 +35,7 @@ export default function GenrePage({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const copy = getVisibleCopy(useLocale());
 
   if (!isValidGenre(genre)) {
     notFound();
@@ -85,7 +88,7 @@ export default function GenrePage({
           onChange={(v) => updateParam('sort', v)}
         />
         <label className="flex items-center gap-2 text-sm text-gray-600">
-          <span>판매종료 공연 포함</span>
+          <span>{copy.search.includeEnded}</span>
           <Switch
             checked={ended}
             onCheckedChange={(checked: boolean) =>
@@ -100,14 +103,14 @@ export default function GenrePage({
         {isError ? (
           <div className="flex flex-col items-center py-16">
             <p className="text-base text-gray-900">
-              공연 정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.
+              {copy.search.loadError}
             </p>
             <button
               type="button"
               onClick={() => window.location.reload()}
               className="mt-4 min-h-[44px] rounded-lg bg-primary px-6 py-2 text-sm font-semibold text-white"
             >
-              다시 시도
+              {copy.search.retry}
             </button>
           </div>
         ) : (

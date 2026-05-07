@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useLocale } from 'next-intl';
 import type { ConsentItemKey, RegisterStep2Input } from '@grabit/shared';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
@@ -16,6 +17,7 @@ import termsOfServiceMd from '@/content/legal/terms-of-service.md';
 import privacyPolicyMd from '@/content/legal/privacy-policy.md';
 import marketingConsentMd from '@/content/legal/marketing-consent.md';
 import { TermsMarkdown } from '@/components/legal/terms-markdown';
+import { getAuthLaunchCopy } from '@/components/auth/auth-launch-copy';
 
 interface SignupStep2Props {
   onComplete: (data: RegisterStep2Input) => void;
@@ -135,6 +137,7 @@ function initialChecked(defaultValues: RegisterStep2Input | null) {
 }
 
 export function SignupStep2({ onComplete, onBack, defaultValues }: SignupStep2Props) {
+  const authCopy = getAuthLaunchCopy(useLocale());
   const [checkedItems, setCheckedItems] = useState(() => initialChecked(defaultValues));
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogKey, setDialogKey] = useState<LegalKey>('termsOfService');
@@ -209,7 +212,7 @@ export function SignupStep2({ onComplete, onBack, defaultValues }: SignupStep2Pr
       <Separator />
 
       <p className="rounded-lg bg-red-50 px-4 py-3 text-caption text-error">
-        만 14세 미만은 가입할 수 없습니다
+        {authCopy.form.under14Blocked}
       </p>
 
       {/* Individual terms */}

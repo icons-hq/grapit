@@ -11,6 +11,10 @@ vi.mock('next/navigation', () => ({
   }),
 }));
 
+vi.mock('next-intl', () => ({
+  useLocale: () => 'ko',
+}));
+
 vi.mock('@/stores/use-auth-store', () => ({
   useAuthStore: () => ({
     user: null,

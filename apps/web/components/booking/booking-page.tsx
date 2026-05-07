@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useLocale } from 'next-intl';
 import { ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
 import type { SeatSelection, SeatState, SeatMapConfig } from '@grabit/shared';
@@ -17,6 +18,11 @@ import { useBookingStore } from '@/stores/use-booking-store';
 import { useBookingSocket } from '@/hooks/use-socket';
 import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
 import { ApiClientError } from '@/lib/api-client';
+import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
+import {
+  getVisibleCopy,
+  resolveVisibleCopyLocale,
+} from '@/lib/i18n/visible-copy';
 import { BookingHeader } from './booking-header';
 import { DatePicker } from './date-picker';
 import { ShowtimeChips } from './showtime-chips';
@@ -39,6 +45,8 @@ function isSameDay(a: Date, b: Date): boolean {
 
 export function BookingPage({ performanceId }: { performanceId: string }) {
   const router = useRouter();
+  const activeLocale = resolveVisibleCopyLocale(useLocale());
+  const copy = getVisibleCopy(activeLocale);
   const { data: performance, isLoading: performanceLoading } =
     usePerformanceDetail(performanceId);
 
@@ -308,7 +316,9 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
       expiresAt: timerExpiresAt,
     });
 
-    router.push(`/booking/${performanceId}/confirm`);
+    router.push(
+      getLocalizedPathname(`/booking/${performanceId}/confirm`, activeLocale),
+    );
   }, [
     selectedShowtimeId,
     selectedSeats,
@@ -322,7 +332,9 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
   ]);
 
   const handleBack = useCallback(() => {
-    router.push(`/performance/${performanceId}`);
+    router.push(
+      getLocalizedPathname(`/performance/${performanceId}`, activeLocale),
+    );
   }, [router, performanceId]);
 
   // Timer expiry handler
@@ -385,7 +397,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
     return (
       <div className="flex flex-1 items-center justify-center">
         <p className="text-base text-gray-600">
-          공연 정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.
+          {copy.performance.loadError}
         </p>
       </div>
     );

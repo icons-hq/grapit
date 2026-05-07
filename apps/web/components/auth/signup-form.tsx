@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useLocale } from 'next-intl';
 import { toast } from 'sonner';
 import type {
   RegisterStep1Input,
@@ -15,10 +16,10 @@ import { SignupStep1 } from '@/components/auth/signup-step1';
 import { SignupStep2 } from '@/components/auth/signup-step2';
 import { SignupStep3 } from '@/components/auth/signup-step3';
 import { EmailVerificationStatus } from '@/components/auth/email-verification-status';
-
-const UNDER_14_BLOCK_MESSAGE = '만 14세 미만은 가입할 수 없습니다';
+import { getAuthLaunchCopy } from '@/components/auth/auth-launch-copy';
 
 export function SignupForm() {
+  const authCopy = getAuthLaunchCopy(useLocale());
   const setAuth = useAuthStore((s) => s.setAuth);
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
   const [step1Data, setStep1Data] = useState<RegisterStep1Input | null>(null);
@@ -43,7 +44,7 @@ export function SignupForm() {
 
     const birthDate = `${data.birthYear}-${data.birthMonth}-${data.birthDay}`;
     if (isUnderFourteen(birthDate)) {
-      toast.error(UNDER_14_BLOCK_MESSAGE);
+      toast.error(authCopy.form.under14Blocked);
       return;
     }
 
@@ -73,12 +74,12 @@ export function SignupForm() {
         setAuth(res.accessToken, res.user);
       }
       setEmailVerificationEmail(step1Data.email);
-      toast.success('회원가입이 완료되었습니다. 이메일 인증을 진행해주세요.');
+      toast.success(authCopy.form.signupComplete);
     } catch (error) {
       const message =
         error instanceof Error
           ? error.message
-          : '일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
+          : authCopy.form.temporaryError;
       toast.error(message);
     } finally {
       setIsSubmitting(false);

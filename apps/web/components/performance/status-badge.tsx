@@ -2,7 +2,7 @@
 
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/cn';
-import type { PerformanceStatus } from '@grabit/shared';
+import type { PerformanceStatus, SupportedLocale } from '@grabit/shared';
 import { STATUS_LABELS } from '@grabit/shared';
 
 const STATUS_STYLES: Record<PerformanceStatus, string> = {
@@ -15,9 +15,47 @@ const STATUS_STYLES: Record<PerformanceStatus, string> = {
 interface StatusBadgeProps {
   status: PerformanceStatus;
   className?: string;
+  locale?: SupportedLocale;
 }
 
-export function StatusBadge({ status, className }: StatusBadgeProps) {
+const LOCALIZED_STATUS_LABELS: Record<
+  SupportedLocale,
+  Record<PerformanceStatus, string>
+> = {
+  ko: STATUS_LABELS,
+  en: {
+    selling: 'On sale',
+    closing_soon: 'Closing soon',
+    ended: 'Ended',
+    upcoming: 'Coming soon',
+  },
+  th: {
+    selling: 'เปิดขาย',
+    closing_soon: 'ใกล้ปิดขาย',
+    ended: 'สิ้นสุดแล้ว',
+    upcoming: 'เร็วๆ นี้',
+  },
+  'zh-CN': {
+    selling: '销售中',
+    closing_soon: '即将截止',
+    ended: '已结束',
+    upcoming: '即将开售',
+  },
+  'zh-TW': {
+    selling: '銷售中',
+    closing_soon: '即將截止',
+    ended: '已結束',
+    upcoming: '即將開售',
+  },
+};
+
+export function StatusBadge({
+  status,
+  className,
+  locale = 'ko',
+}: StatusBadgeProps) {
+  const label = LOCALIZED_STATUS_LABELS[locale][status];
+
   return (
     <Badge
       className={cn(
@@ -25,9 +63,9 @@ export function StatusBadge({ status, className }: StatusBadgeProps) {
         STATUS_STYLES[status],
         className,
       )}
-      aria-label={`상태: ${STATUS_LABELS[status]}`}
+      aria-label={`${locale === 'ko' ? '상태' : 'Status'}: ${label}`}
     >
-      {STATUS_LABELS[status]}
+      {label}
     </Badge>
   );
 }

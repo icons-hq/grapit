@@ -25,6 +25,7 @@ import {
 import { PasswordInput } from '@/components/auth/password-input';
 import { SocialLoginButton } from '@/components/auth/social-login-button';
 import { getAuthLaunchCopy } from '@/components/auth/auth-launch-copy';
+import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import Link from 'next/link';
 
 const SOCIAL_LOGIN_ERRORS: Record<string, string> = {
@@ -82,7 +83,7 @@ export function LoginForm() {
         setStatusMessage(authCopy.errors.deviceLimitNotice);
         toast.info(authCopy.errors.deviceLimitNotice);
       }
-      router.push('/');
+      router.push(getLocalizedPathname('/', authCopy.locale));
     } catch (error) {
       if (error instanceof ApiClientError && error.statusCode === 401) {
         setLoginError(authCopy.errors.invalidCredentials);
@@ -93,7 +94,7 @@ export function LoginForm() {
       } else if (error instanceof ApiClientError && error.statusCode === 503) {
         setLoginError(authCopy.errors.providerUnavailable);
       } else {
-        setLoginError('일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요.');
+        setLoginError(authCopy.form.temporaryError);
       }
     } finally {
       setIsLoading(false);
@@ -114,11 +115,13 @@ export function LoginForm() {
             name="email"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>이메일 <span className="text-error">*</span></FormLabel>
+                <FormLabel>
+                  {authCopy.form.email} <span className="text-error">*</span>
+                </FormLabel>
                 <FormControl>
                   <Input
                     type="email"
-                    placeholder="이메일을 입력해주세요"
+                    placeholder={authCopy.form.emailPlaceholder}
                     autoComplete="email"
                     {...field}
                   />
@@ -133,10 +136,12 @@ export function LoginForm() {
             name="password"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>비밀번호 <span className="text-error">*</span></FormLabel>
+                <FormLabel>
+                  {authCopy.form.password} <span className="text-error">*</span>
+                </FormLabel>
                 <FormControl>
                   <PasswordInput
-                    placeholder="비밀번호를 입력해주세요"
+                    placeholder={authCopy.form.passwordPlaceholder}
                     autoComplete="current-password"
                     {...field}
                   />
@@ -175,10 +180,10 @@ export function LoginForm() {
               {isLoading ? (
                 <>
                   <Loader2 className="h-5 w-5 animate-spin" />
-                  로그인 중...
+                  {authCopy.form.loginLoading}
                 </>
               ) : (
-                '로그인'
+                authCopy.form.loginButton
               )}
             </Button>
           </div>
@@ -187,17 +192,17 @@ export function LoginForm() {
 
       <div className="flex justify-end">
         <Link
-          href="/auth/reset-password"
+          href={getLocalizedPathname('/auth/reset-password', authCopy.locale)}
           className="text-caption text-gray-500 hover:text-primary"
         >
-          비밀번호 찾기
+          {authCopy.form.forgotPassword}
         </Link>
       </div>
 
       <div className="relative">
         <Separator />
         <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 bg-white px-3 text-caption text-gray-400">
-          또는
+          {authCopy.form.separator}
         </span>
       </div>
 

@@ -16,6 +16,8 @@ import { CurrencyDisplay } from '@/components/i18n/currency-display';
 import { KstTime } from '@/components/i18n/kst-time';
 import { usePerformanceDetail } from '@/hooks/use-performances';
 import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
+import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
+import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 
 function DetailSkeleton() {
   return (
@@ -50,6 +52,7 @@ export default function PerformanceDetailPage({
 }) {
   const { id } = use(params);
   const activeLocale = useActiveLocale();
+  const copy = getVisibleCopy(activeLocale);
   const { data: performance, isLoading, isError } = usePerformanceDetail(id);
   const { bookingEnabled, bookingDisabledMessage } = useRuntimeFlags();
   const showAutomaticTranslationLabel =
@@ -62,14 +65,14 @@ export default function PerformanceDetailPage({
       <main className="mx-auto max-w-[1200px] px-6 py-8">
         <div className="flex flex-col items-center py-16">
           <p className="text-base text-gray-900">
-            공연 정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.
+            {copy.performance.loadError}
           </p>
           <button
             type="button"
             onClick={() => window.location.reload()}
             className="mt-4 rounded-lg bg-primary px-6 py-2 text-sm font-semibold text-white"
           >
-            다시 시도
+            {copy.performance.retry}
           </button>
         </div>
       </main>
@@ -88,7 +91,7 @@ export default function PerformanceDetailPage({
               {performance.posterUrl ? (
                 <Image
                   src={performance.posterUrl}
-                  alt={`${performance.title} 포스터`}
+                  alt={`${performance.title} ${copy.performance.posterAltSuffix}`}
                   fill
                   className="object-cover"
                   sizes="(max-width: 1024px) 100vw, 380px"
@@ -101,6 +104,7 @@ export default function PerformanceDetailPage({
               )}
               <StatusBadge
                 status={performance.status}
+                locale={activeLocale}
                 className="absolute left-3 top-3"
               />
             </div>
@@ -109,8 +113,8 @@ export default function PerformanceDetailPage({
             <div className="mt-8">
               <Tabs defaultValue="detail">
                 <TabsList className="w-full">
-                  <TabsTrigger value="detail">상세정보</TabsTrigger>
-                  <TabsTrigger value="sales">판매정보</TabsTrigger>
+                  <TabsTrigger value="detail">{copy.performance.detailTab}</TabsTrigger>
+                  <TabsTrigger value="sales">{copy.performance.salesTab}</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="detail">
@@ -122,7 +126,7 @@ export default function PerformanceDetailPage({
                     </div>
                   ) : (
                     <p className="text-center text-sm text-gray-500">
-                      상세 정보가 없습니다
+                      {copy.performance.noDetail}
                     </p>
                   )}
                 </TabsContent>
@@ -137,12 +141,12 @@ export default function PerformanceDetailPage({
                   ) : (
                     <div className="text-sm text-gray-600">
                       <h3 className="mb-2 font-semibold text-gray-900">
-                        취소/환불 안내
+                        {copy.performance.refundTitle}
                       </h3>
                       <ul className="list-inside list-disc space-y-1">
-                        <li>예매 후 취소 시 취소수수료가 발생할 수 있습니다.</li>
-                        <li>공연일 기준 취소 시점에 따라 수수료율이 달라집니다.</li>
-                        <li>자세한 내용은 예매 시 확인해주세요.</li>
+                        {copy.performance.refundItems.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
                       </ul>
                     </div>
                   )}
@@ -223,10 +227,13 @@ export default function PerformanceDetailPage({
             {/* CTA button */}
             {bookingEnabled ? (
               <Link
-                href={`/booking/${performance.id}`}
+                href={getLocalizedPathname(
+                  `/booking/${performance.id}`,
+                  activeLocale,
+                )}
                 className="mt-6 hidden w-full rounded-lg bg-primary py-3 text-center text-base font-semibold text-white hover:bg-primary/90 transition-colors lg:block"
               >
-                예매하기
+                {copy.performance.bookCta}
               </Link>
             ) : (
               <div
@@ -244,10 +251,13 @@ export default function PerformanceDetailPage({
       <div className="fixed bottom-[56px] left-0 right-0 z-40 flex h-16 items-center border-t bg-white px-6 shadow-[0_-4px_6px_rgba(0,0,0,0.05)] lg:hidden">
         {bookingEnabled ? (
           <Link
-            href={`/booking/${performance.id}`}
+            href={getLocalizedPathname(
+              `/booking/${performance.id}`,
+              activeLocale,
+            )}
             className="w-full rounded-lg bg-primary py-3 text-center text-base font-semibold text-white hover:bg-primary/90 transition-colors"
           >
-            예매하기
+            {copy.performance.bookCta}
           </Link>
         ) : (
           <button

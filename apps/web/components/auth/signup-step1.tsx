@@ -1,6 +1,7 @@
 'use client';
 
 import { useForm } from 'react-hook-form';
+import { useLocale } from 'next-intl';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { registerStep1Schema, type RegisterStep1Input } from '@grabit/shared';
 import { Button } from '@/components/ui/button';
@@ -15,6 +16,7 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { PasswordInput } from '@/components/auth/password-input';
+import { getAuthLaunchCopy } from '@/components/auth/auth-launch-copy';
 
 interface SignupStep1Props {
   onComplete: (data: RegisterStep1Input) => void;
@@ -22,6 +24,7 @@ interface SignupStep1Props {
 }
 
 export function SignupStep1({ onComplete, defaultValues }: SignupStep1Props) {
+  const authCopy = getAuthLaunchCopy(useLocale());
   const form = useForm<RegisterStep1Input>({
     resolver: zodResolver(registerStep1Schema),
     defaultValues: defaultValues ?? {
@@ -45,11 +48,13 @@ export function SignupStep1({ onComplete, defaultValues }: SignupStep1Props) {
           name="email"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>이메일 <span className="text-error">*</span></FormLabel>
+              <FormLabel>
+                {authCopy.form.email} <span className="text-error">*</span>
+              </FormLabel>
               <FormControl>
                 <Input
                   type="email"
-                  placeholder="이메일을 입력해주세요"
+                  placeholder={authCopy.form.emailPlaceholder}
                   autoComplete="email"
                   {...field}
                 />
@@ -64,10 +69,12 @@ export function SignupStep1({ onComplete, defaultValues }: SignupStep1Props) {
           name="password"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>비밀번호 <span className="text-error">*</span></FormLabel>
+              <FormLabel>
+                {authCopy.form.password} <span className="text-error">*</span>
+              </FormLabel>
               <FormControl>
                 <PasswordInput
-                  placeholder="비밀번호를 입력해주세요"
+                  placeholder={authCopy.form.passwordPlaceholder}
                   autoComplete="new-password"
                   {...field}
                 />
