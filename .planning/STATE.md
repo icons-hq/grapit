@@ -4,8 +4,8 @@ milestone: v2.0
 milestone_name: Fanmeet Launch
 status: ready_to_plan
 stopped_at: Completed 23-12-PLAN.md
-last_updated: "2026-05-06T18:15:33+09:00"
-last_activity: 2026-05-06
+last_updated: "2026-05-07T10:26:18+09:00"
+last_activity: 2026-05-07
 progress:
   total_phases: 7
   completed_phases: 3
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-05-04)
 Phase: 999.1
 Plan: Not started
 Status: Ready to plan
-Last activity: 2026-05-06 - Completed quick task 260506-pb1: stale Git worktree cleanup and verification
+Last activity: 2026-05-07 - Completed quick task 260507-edj: pnpm dev FeatureFlagsService DI fix
 
 ## Deferred Items
 
@@ -325,6 +325,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 | 260504-mn7 | v2.0 phase merge: initial 22-phase launch-risk checklist를 6개 GSD execution phases로 통합하고 requirement traceability 유지 | 2026-05-04 | docs-only | [260504-mn7-merge-v2-0-phases-into-gsd-sized-executi](./quick/260504-mn7-merge-v2-0-phases-into-gsd-sized-executi/) |
 | 260506-oef | 7월 18일 걸룰스 팬미팅 동해문화예술관 대극장 엑셀 기반 SVG 좌석맵 생성 및 사이트 추가 | 2026-05-06 | 6b8137e | [260506-oef-7-18-svg](./quick/260506-oef-7-18-svg/) |
 | 260506-p3f | 프로덕션 테스트 공연 데이터 삭제 및 2026-07-18 Girl Rules 공연 보존 | 2026-05-06 | db-only | [260506-p3f-2026-07-18](./quick/260506-p3f-2026-07-18/) |
+| 260507-edj | pnpm dev FeatureFlagsService DI 오류 수정: runtime env provider를 explicit Nest token으로 전환해 SWC dev/build/prod start 경로 부팅 복구 | 2026-05-07 | 0275799 | [260507-edj-pnpm-dev-cloud-run-featureflagsservice-d](./quick/260507-edj-pnpm-dev-cloud-run-featureflagsservice-d/) |
 
 ## Session Continuity
 
