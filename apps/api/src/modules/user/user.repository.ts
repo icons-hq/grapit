@@ -63,7 +63,9 @@ export class UserRepository {
 
   async updateProfile(
     userId: string,
-    data: Partial<Pick<UserProfile, 'name' | 'phone' | 'preferredLocale'>>,
+    data: Partial<
+      Pick<UserProfile, 'name' | 'phone' | 'preferredLocale' | 'isPhoneVerified'>
+    >,
   ) {
     await this.db
       .update(schema.users)

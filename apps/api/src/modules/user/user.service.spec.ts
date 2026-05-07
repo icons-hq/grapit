@@ -2,6 +2,7 @@ import { BadRequestException } from '@nestjs/common';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { UserService } from './user.service.js';
 import type { UserRepository } from './user.repository.js';
+import type { SmsService } from '../sms/sms.service.js';
 
 const baseUser = {
   id: 'user-1',
@@ -19,6 +20,7 @@ const baseUser = {
 
 describe('UserService preferred locale persistence', () => {
   let repository: Pick<UserRepository, 'findById' | 'updateProfile'>;
+  let smsService: Pick<SmsService, 'verifyPhoneVerificationToken'>;
   let service: UserService;
 
   beforeEach(() => {
@@ -26,7 +28,13 @@ describe('UserService preferred locale persistence', () => {
       findById: vi.fn().mockResolvedValue(baseUser),
       updateProfile: vi.fn().mockResolvedValue(baseUser),
     } as unknown as Pick<UserRepository, 'findById' | 'updateProfile'>;
-    service = new UserService(repository as UserRepository);
+    smsService = {
+      verifyPhoneVerificationToken: vi.fn(),
+    };
+    service = new UserService(
+      repository as UserRepository,
+      smsService as SmsService,
+    );
   });
 
   it('returns preferredLocale when reading the logged-in user profile', async () => {
@@ -47,6 +55,41 @@ describe('UserService preferred locale persistence', () => {
     expect(repository.updateProfile).toHaveBeenCalledWith('user-1', {
       preferredLocale: 'th',
     });
+  });
+
+  it('requires a purpose-bound verification token when phone changes', async () => {
+    vi.mocked(repository.updateProfile).mockResolvedValue({
+      ...baseUser,
+      phone: '+821099998888',
+      isPhoneVerified: true,
+    } as never);
+
+    await expect(
+      service.updateProfile('user-1', {
+        phone: '+821099998888',
+        phoneVerificationToken: 'signed-profile-phone-token',
+      }),
+    ).resolves.toMatchObject({
+      phone: '+821099998888',
+      isPhoneVerified: true,
+    });
+
+    expect(smsService.verifyPhoneVerificationToken).toHaveBeenCalledWith(
+      'signed-profile-phone-token',
+      { phone: '+821099998888', purpose: 'profile_phone_change' },
+    );
+    expect(repository.updateProfile).toHaveBeenCalledWith('user-1', {
+      phone: '+821099998888',
+      isPhoneVerified: true,
+    });
+  });
+
+  it('rejects phone changes without verification token before repository writes', async () => {
+    await expect(
+      service.updateProfile('user-1', { phone: '+821099998888' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(repository.updateProfile).not.toHaveBeenCalled();
   });
 
   it('rejects unsupported preferredLocale updates before repository writes', async () => {
