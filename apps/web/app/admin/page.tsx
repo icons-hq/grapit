@@ -155,7 +155,7 @@ export default function AdminDashboardPage() {
         )}
       </section>
 
-      {/* Genre + Payment row (ADM-03 + ADM-05) */}
+      {/* Category + Payment row (ADM-03 + ADM-05) */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <section
           aria-labelledby="genre-heading"
@@ -167,7 +167,7 @@ export default function AdminDashboardPage() {
               id="genre-heading"
               className="text-sm font-semibold text-gray-900"
             >
-              장르별 예매 분포
+              분류별 예매 분포
             </h2>
           </div>
           {genreMode === 'data' && genre.data ? (

@@ -102,6 +102,45 @@ describe('SeatMapViewer', () => {
     expect(seatB1?.getAttribute('fill')).toBe('#3B82F6');
   });
 
+  it('sanitizes executable SVG payloads before inline rendering', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      text: () =>
+        Promise.resolve(`
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+            <script>alert('xss')</script>
+            <style>#outside-seat-map{display:none!important}</style>
+            <foreignObject><body onload="alert('xss')"></body></foreignObject>
+            <a href="javascript:alert('xss')">
+              <circle data-seat-id="A-1" onclick="alert('xss')" cx="20" cy="20" r="10" />
+            </a>
+          </svg>
+        `),
+    });
+
+    const { container } = render(
+      <SeatMapViewer
+        svgUrl="https://example.com/malicious.svg"
+        seatConfig={mockSeatConfig}
+        seatStates={new Map([['A-1', 'available']])}
+        selectedSeatIds={new Set()}
+        onSeatClick={() => {}}
+        maxSelect={4}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-seat-id="A-1"]')).toBeTruthy();
+    });
+
+    expect(container.querySelector('script')).toBeNull();
+    expect(container.querySelector('style')).toBeNull();
+    expect(container.innerHTML).not.toContain('outside-seat-map');
+    expect(container.querySelector('foreignObject')).toBeNull();
+    expect(container.querySelector('[onclick]')).toBeNull();
+    expect(container.innerHTML).not.toContain('javascript:');
+  });
+
   it('renders locked/sold seats with gray fill and reduced opacity', async () => {
     const seatStates = new Map<string, SeatState>([
       ['A-1', 'locked'],

@@ -7,21 +7,36 @@ type SortValue = 'latest' | 'popular';
 interface SortToggleProps {
   value: SortValue;
   onChange: (v: SortValue) => void;
+  labels?: {
+    ariaLabel: string;
+    latest: string;
+    popular: string;
+  };
 }
 
-const OPTIONS: { value: SortValue; label: string }[] = [
-  { value: 'latest', label: '최신순' },
-  { value: 'popular', label: '인기순' },
-];
+const DEFAULT_LABELS: Required<SortToggleProps>['labels'] = {
+  ariaLabel: '정렬 기준',
+  latest: '최신순',
+  popular: '인기순',
+};
 
-export function SortToggle({ value, onChange }: SortToggleProps) {
+export function SortToggle({
+  value,
+  onChange,
+  labels = DEFAULT_LABELS,
+}: SortToggleProps) {
+  const options: { value: SortValue; label: string }[] = [
+    { value: 'latest', label: labels.latest },
+    { value: 'popular', label: labels.popular },
+  ];
+
   return (
     <div
       role="radiogroup"
-      aria-label="정렬 기준"
+      aria-label={labels.ariaLabel}
       className="flex items-center gap-1"
     >
-      {OPTIONS.map((opt) => (
+      {options.map((opt) => (
         <button
           key={opt.value}
           type="button"

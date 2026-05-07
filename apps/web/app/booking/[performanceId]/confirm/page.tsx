@@ -12,6 +12,7 @@ import { TermsAgreement } from '@/components/booking/terms-agreement';
 import { TossPaymentWidget, type TossPaymentWidgetRef } from '@/components/booking/toss-payment-widget';
 import { Button } from '@/components/ui/button';
 import { usePrepareReservation, useUnlockAllSeats, useCancelPendingReservation } from '@/hooks/use-booking';
+import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
 import { useBookingStore } from '@/stores/use-booking-store';
 import { useAuthStore } from '@/stores/use-auth-store';
 
@@ -23,6 +24,17 @@ function generateOrderId(): string {
 const LOCK_FAILURE_MESSAGES = [
   '좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.',
   '이미 다른 사용자가 선택한 좌석입니다.',
+] as const;
+
+const BOOKING_CONSENT_VERSION = '2026-04-28';
+const BOOKING_CONSENT_LANGUAGE = 'ko' as const;
+const BOOKING_CONSENT_KEYS = [
+  'terms',
+  'privacy',
+  'pipa_required',
+  'cross_border_transfer',
+  'pdpa_notice',
+  'pipl_notice',
 ] as const;
 
 function isLockFailureMessage(message: string): boolean {
@@ -50,6 +62,7 @@ function ConfirmPageContent() {
 
   const paymentWidgetRef = useRef<TossPaymentWidgetRef>(null);
   const reservationIdRef = useRef<string | null>(null);
+  const { bookingEnabled, bookingDisabledMessage } = useRuntimeFlags();
   const prepareMutation = usePrepareReservation();
   const unlockAll = useUnlockAllSeats();
   const cancelPending = useCancelPendingReservation();
@@ -132,6 +145,7 @@ function ConfirmPageContent() {
   }, [performanceId, router]);
 
   async function handlePayment() {
+    if (!bookingEnabled) return;
     if (lockFailureMessage) return;
     if (!paymentWidgetRef.current || !agreed || isProcessing) return;
 
@@ -143,6 +157,13 @@ function ConfirmPageContent() {
         showtimeId: selectedShowtimeId ?? '',
         seats: selectedSeats,
         amount: totalPrice,
+        consentItems: BOOKING_CONSENT_KEYS.map((key) => ({
+          key,
+          version: BOOKING_CONSENT_VERSION,
+          language: BOOKING_CONSENT_LANGUAGE,
+          accepted: true,
+          sourceFlow: 'booking' as const,
+        })),
       });
       reservationIdRef.current = result.reservationId;
 
@@ -168,8 +189,10 @@ function ConfirmPageContent() {
     );
   }
 
-  const ctaDisabled = !!lockFailureMessage || !agreed || isProcessing || !widgetReady;
-  const ctaText = lockFailureMessage
+  const ctaDisabled = !bookingEnabled || !!lockFailureMessage || !agreed || isProcessing || !widgetReady;
+  const ctaText = !bookingEnabled
+    ? bookingDisabledMessage
+    : lockFailureMessage
     ? '좌석을 다시 선택해주세요'
     : isProcessing
     ? '결제 처리 중...'
@@ -213,6 +236,14 @@ function ConfirmPageContent() {
             >
               좌석 다시 선택하기
             </Button>
+          </section>
+        )}
+
+        {!bookingEnabled && (
+          <section role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+            <p className="text-sm font-semibold text-amber-800">
+              {bookingDisabledMessage}
+            </p>
           </section>
         )}
 

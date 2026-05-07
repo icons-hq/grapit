@@ -9,7 +9,12 @@ import { Throttle } from '@nestjs/throttler';
 import { z } from 'zod';
 import { Public } from '../../common/decorators/public.decorator.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
-import { SmsService, type SendResult, type VerifyResult } from './sms.service.js';
+import {
+  SMS_VERIFICATION_PURPOSES,
+  SmsService,
+  type SendResult,
+  type VerifyResult,
+} from './sms.service.js';
 
 export const sendCodeSchema = z.object({
   phone: z.string().regex(
@@ -21,6 +26,7 @@ export const sendCodeSchema = z.object({
 const verifyCodeSchema = z.object({
   phone: z.string().min(1, '전화번호를 입력해주세요'),
   code: z.string().length(6, '인증번호는 6자리입니다'),
+  purpose: z.enum(SMS_VERIFICATION_PURPOSES).default('signup'),
 });
 
 type SendCodeBody = z.infer<typeof sendCodeSchema>;
@@ -63,6 +69,6 @@ export class SmsController {
   async verifyCode(
     @Body(new ZodValidationPipe(verifyCodeSchema)) dto: VerifyCodeBody,
   ): Promise<VerifyResult> {
-    return this.smsService.verifyCode(dto.phone, dto.code);
+    return this.smsService.verifyCode(dto.phone, dto.code, dto.purpose);
   }
 }

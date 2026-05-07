@@ -3,6 +3,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api-client';
 import type {
+  ConsentAuditFilters,
+  ConsentAuditRow,
+} from '@/components/admin/consent-audit-table';
+import type {
   PerformanceListResponse,
   PerformanceWithDetails,
   Banner,
@@ -11,6 +15,117 @@ import type {
   CreateBannerInput,
   SeatMapConfigInput,
 } from '@grabit/shared';
+
+export type TranslationTargetLocale = 'en' | 'th' | 'zh-CN' | 'zh-TW';
+export type TranslationQueueStatus =
+  | 'draft'
+  | 'review'
+  | 'published'
+  | 'stale'
+  | 'legal_blocked';
+export type TranslationQueueFilterStatus = Exclude<
+  TranslationQueueStatus,
+  'legal_blocked'
+>;
+
+export interface TranslationQueueFilters {
+  contentType?: string;
+  locale?: TranslationTargetLocale | '';
+  status?: TranslationQueueFilterStatus | '';
+  updatedFrom?: string;
+  updatedTo?: string;
+}
+
+export interface CreateTranslationSourceInput {
+  entityType: string;
+  entityId: string;
+  field: string;
+  sourceText: string;
+}
+
+export interface TranslationSource {
+  id: string;
+  entityType: string;
+  entityId: string;
+  field: string;
+  sourceLocale: 'ko';
+  sourceText: string;
+  contentHash: string;
+  createdBy: string | null;
+  updatedAt: string;
+}
+
+export interface TranslationDraft {
+  id: string;
+  sourceId: string;
+  contentType: string;
+  field: string;
+  sourceTitle?: string;
+  sourceText: string;
+  locale: TranslationTargetLocale;
+  status: TranslationQueueStatus;
+  translatedText: string;
+  updatedAt: string;
+  reviewerId: string | null;
+  automaticTranslationLabel?: boolean;
+  isMachineTranslated?: boolean;
+  translatedBy?: string;
+}
+
+export interface ReviewTranslationDraftInput {
+  draftId: string;
+  translatedText: string;
+}
+
+function toApiDateTime(value?: string): string | undefined {
+  if (!value) return undefined;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toISOString();
+}
+
+function buildConsentAuditSearchParams(filters: ConsentAuditFilters) {
+  const params = new URLSearchParams();
+  const user = filters.user?.trim();
+
+  if (user) {
+    if (user.includes('@')) {
+      params.set('email', user);
+    } else {
+      params.set('userId', user);
+    }
+  }
+  if (filters.item) params.set('itemKey', filters.item);
+  if (filters.version) params.set('version', filters.version);
+  if (filters.language) params.set('language', filters.language);
+  if (filters.from) params.set('from', toApiDateTime(filters.from) ?? filters.from);
+  if (filters.to) params.set('to', toApiDateTime(filters.to) ?? filters.to);
+  if (filters.ip) params.set('ip', filters.ip);
+
+  return params;
+}
+
+function buildTranslationQueueSearchParams(filters: TranslationQueueFilters) {
+  const params = new URLSearchParams();
+
+  if (filters.contentType) params.set('contentType', filters.contentType);
+  if (filters.locale) params.set('locale', filters.locale);
+  if (filters.status) params.set('status', filters.status);
+  if (filters.updatedFrom) {
+    params.set(
+      'updatedFrom',
+      toApiDateTime(filters.updatedFrom) ?? filters.updatedFrom,
+    );
+  }
+  if (filters.updatedTo) {
+    params.set(
+      'updatedTo',
+      toApiDateTime(filters.updatedTo) ?? filters.updatedTo,
+    );
+  }
+
+  return params;
+}
 
 // Performance list for admin table
 export function useAdminPerformances(params: {
@@ -27,6 +142,91 @@ export function useAdminPerformances(params: {
       searchParams.set('page', String(params.page ?? 1));
       return apiClient.get<PerformanceListResponse>(
         `/api/v1/admin/performances?${searchParams.toString()}`,
+      );
+    },
+  });
+}
+
+export function useTranslationQueue(filters: TranslationQueueFilters = {}) {
+  return useQuery({
+    queryKey: ['admin', 'translations', filters],
+    queryFn: () => {
+      const searchParams = buildTranslationQueueSearchParams(filters);
+      const query = searchParams.toString();
+      return apiClient.get<TranslationDraft[]>(
+        `/api/v1/admin/translations/queue${query ? `?${query}` : ''}`,
+      );
+    },
+  });
+}
+
+export function useCreateTranslationSource() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: CreateTranslationSourceInput) =>
+      apiClient.post<TranslationSource>(
+        '/api/v1/admin/translations/sources',
+        data,
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'translations'] });
+    },
+  });
+}
+
+export function useGenerateTranslationDrafts() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (sourceId: string) =>
+      apiClient.post<TranslationDraft[]>(
+        `/api/v1/admin/translations/sources/${sourceId}/drafts`,
+        {},
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'translations'] });
+    },
+  });
+}
+
+export function useReviewTranslationDraft() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      draftId,
+      translatedText,
+    }: ReviewTranslationDraftInput) =>
+      apiClient.post<TranslationDraft>(
+        `/api/v1/admin/translations/drafts/${draftId}/review`,
+        { translatedText },
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'translations'] });
+    },
+  });
+}
+
+export function usePublishTranslationDraft() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (draftId: string) =>
+      apiClient.post<TranslationDraft>(
+        `/api/v1/admin/translations/drafts/${draftId}/publish`,
+        {},
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'translations'] });
+    },
+  });
+}
+
+export function useAdminConsentAudit(filters: ConsentAuditFilters) {
+  return useQuery({
+    queryKey: ['admin', 'consent-audit', filters],
+    queryFn: () => {
+      const searchParams = buildConsentAuditSearchParams(filters);
+      const query = searchParams.toString();
+      return apiClient.get<ConsentAuditRow[]>(
+        `/api/v1/admin/consent-audit${query ? `?${query}` : ''}`,
       );
     },
   });

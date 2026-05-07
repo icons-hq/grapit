@@ -3,24 +3,21 @@
 import { use } from 'react';
 import Image from 'next/image';
 import Link from 'next/link';
+import { useLocale } from 'next-intl';
 import { MapPin, Calendar, Clock, User, Ticket } from 'lucide-react';
+import { DEFAULT_LOCALE, isSupportedLocale } from '@grabit/shared';
+import type { SupportedLocale } from '@grabit/shared';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
 import { StatusBadge } from '@/components/performance/status-badge';
+import { AutomaticTranslationLabel } from '@/components/i18n/automatic-translation-label';
+import { CurrencyDisplay } from '@/components/i18n/currency-display';
+import { KstTime } from '@/components/i18n/kst-time';
 import { usePerformanceDetail } from '@/hooks/use-performances';
-
-function formatDate(iso: string): string {
-  const d = new Date(iso);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}.${m}.${day}`;
-}
-
-function formatPrice(price: number): string {
-  return `${price.toLocaleString()}원`;
-}
+import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
+import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
+import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 
 function DetailSkeleton() {
   return (
@@ -54,7 +51,12 @@ export default function PerformanceDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
+  const activeLocale = useActiveLocale();
+  const copy = getVisibleCopy(activeLocale);
   const { data: performance, isLoading, isError } = usePerformanceDetail(id);
+  const { bookingEnabled, bookingDisabledMessage } = useRuntimeFlags();
+  const showAutomaticTranslationLabel =
+    hasAutomaticTranslationMetadata(performance);
 
   if (isLoading) return <DetailSkeleton />;
 
@@ -63,14 +65,14 @@ export default function PerformanceDetailPage({
       <main className="mx-auto max-w-[1200px] px-6 py-8">
         <div className="flex flex-col items-center py-16">
           <p className="text-base text-gray-900">
-            공연 정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.
+            {copy.performance.loadError}
           </p>
           <button
             type="button"
             onClick={() => window.location.reload()}
             className="mt-4 rounded-lg bg-primary px-6 py-2 text-sm font-semibold text-white"
           >
-            다시 시도
+            {copy.performance.retry}
           </button>
         </div>
       </main>
@@ -89,7 +91,7 @@ export default function PerformanceDetailPage({
               {performance.posterUrl ? (
                 <Image
                   src={performance.posterUrl}
-                  alt={`${performance.title} 포스터`}
+                  alt={`${performance.title} ${copy.performance.posterAltSuffix}`}
                   fill
                   className="object-cover"
                   sizes="(max-width: 1024px) 100vw, 380px"
@@ -102,59 +104,18 @@ export default function PerformanceDetailPage({
               )}
               <StatusBadge
                 status={performance.status}
+                locale={activeLocale}
                 className="absolute left-3 top-3"
               />
             </div>
 
             {/* Tab section -- below poster on desktop */}
             <div className="mt-8">
-              <Tabs defaultValue="casting">
+              <Tabs defaultValue="detail">
                 <TabsList className="w-full">
-                  <TabsTrigger value="casting">캐스팅</TabsTrigger>
-                  <TabsTrigger value="detail">상세정보</TabsTrigger>
-                  <TabsTrigger value="sales">판매정보</TabsTrigger>
+                  <TabsTrigger value="detail">{copy.performance.detailTab}</TabsTrigger>
+                  <TabsTrigger value="sales">{copy.performance.salesTab}</TabsTrigger>
                 </TabsList>
-
-                <TabsContent value="casting">
-                  {performance.castings.length > 0 ? (
-                    <div className="grid grid-cols-2 gap-6 md:grid-cols-3 lg:grid-cols-2">
-                      {performance.castings.map((cast) => (
-                        <div
-                          key={cast.id}
-                          className="flex flex-col items-center text-center"
-                        >
-                          <div className="relative h-16 w-16 overflow-hidden rounded-full bg-gray-200">
-                            {cast.photoUrl ? (
-                              <Image
-                                src={cast.photoUrl}
-                                alt={cast.actorName}
-                                fill
-                                className="object-cover"
-                                sizes="64px"
-                              />
-                            ) : (
-                              <div className="flex h-full items-center justify-center">
-                                <User className="h-6 w-6 text-gray-400" />
-                              </div>
-                            )}
-                          </div>
-                          <p className="mt-2 text-sm font-semibold text-gray-900">
-                            {cast.actorName}
-                          </p>
-                          {cast.roleName && (
-                            <p className="text-sm text-gray-600">
-                              {cast.roleName}
-                            </p>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-center text-sm text-gray-500">
-                      캐스팅 정보가 없습니다
-                    </p>
-                  )}
-                </TabsContent>
 
                 <TabsContent value="detail">
                   {performance.description ? (
@@ -165,7 +126,7 @@ export default function PerformanceDetailPage({
                     </div>
                   ) : (
                     <p className="text-center text-sm text-gray-500">
-                      상세 정보가 없습니다
+                      {copy.performance.noDetail}
                     </p>
                   )}
                 </TabsContent>
@@ -180,12 +141,12 @@ export default function PerformanceDetailPage({
                   ) : (
                     <div className="text-sm text-gray-600">
                       <h3 className="mb-2 font-semibold text-gray-900">
-                        취소/환불 안내
+                        {copy.performance.refundTitle}
                       </h3>
                       <ul className="list-inside list-disc space-y-1">
-                        <li>예매 후 취소 시 취소수수료가 발생할 수 있습니다.</li>
-                        <li>공연일 기준 취소 시점에 따라 수수료율이 달라집니다.</li>
-                        <li>자세한 내용은 예매 시 확인해주세요.</li>
+                        {copy.performance.refundItems.map((item) => (
+                          <li key={item}>{item}</li>
+                        ))}
                       </ul>
                     </div>
                   )}
@@ -199,6 +160,11 @@ export default function PerformanceDetailPage({
             <h1 className="text-xl font-semibold text-gray-900">
               {performance.title}
             </h1>
+            {showAutomaticTranslationLabel && (
+              <div className="mt-3">
+                <AutomaticTranslationLabel locale={activeLocale} />
+              </div>
+            )}
 
             <div className="mt-4 space-y-2">
               {performance.venue && (
@@ -209,9 +175,18 @@ export default function PerformanceDetailPage({
               )}
               <div className="flex items-center gap-2 text-sm text-gray-600">
                 <Calendar className="h-4 w-4 shrink-0" />
-                <span>
-                  {formatDate(performance.startDate)} ~{' '}
-                  {formatDate(performance.endDate)}
+                <span className="flex min-w-0 flex-wrap items-start gap-x-2 gap-y-1">
+                  <KstTime
+                    value={performance.startDate}
+                    locale={activeLocale}
+                  />
+                  <span aria-hidden="true" className="text-gray-400">
+                    ~
+                  </span>
+                  <KstTime
+                    value={performance.endDate}
+                    locale={activeLocale}
+                  />
                 </span>
               </div>
               {performance.runtime && (
@@ -234,14 +209,15 @@ export default function PerformanceDetailPage({
                   {performance.priceTiers.map((tier) => (
                     <div
                       key={tier.id}
-                      className="flex items-center justify-between text-sm"
+                      className="flex items-start justify-between gap-4 text-sm"
                     >
                       <span className="font-semibold text-gray-900">
                         {tier.tierName}
                       </span>
-                      <span className="text-gray-600">
-                        {formatPrice(tier.price)}
-                      </span>
+                      <CurrencyDisplay
+                        krwAmount={tier.price}
+                        locale={activeLocale}
+                      />
                     </div>
                   ))}
                 </div>
@@ -249,25 +225,72 @@ export default function PerformanceDetailPage({
             )}
 
             {/* CTA button */}
-            <Link
-              href={`/booking/${performance.id}`}
-              className="mt-6 hidden w-full rounded-lg bg-primary py-3 text-center text-base font-semibold text-white hover:bg-primary/90 transition-colors lg:block"
-            >
-              예매하기
-            </Link>
+            {bookingEnabled ? (
+              <Link
+                href={getLocalizedPathname(
+                  `/booking/${performance.id}`,
+                  activeLocale,
+                )}
+                className="mt-6 hidden w-full rounded-lg bg-primary py-3 text-center text-base font-semibold text-white hover:bg-primary/90 transition-colors lg:block"
+              >
+                {copy.performance.bookCta}
+              </Link>
+            ) : (
+              <div
+                role="status"
+                className="mt-6 hidden w-full rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-center text-sm font-semibold text-amber-800 lg:block"
+              >
+                {bookingDisabledMessage}
+              </div>
+            )}
           </div>
         </div>
       </main>
 
       {/* Mobile CTA fixed bottom bar — offset by MobileTabBar height (h-14=56px) */}
       <div className="fixed bottom-[56px] left-0 right-0 z-40 flex h-16 items-center border-t bg-white px-6 shadow-[0_-4px_6px_rgba(0,0,0,0.05)] lg:hidden">
-        <Link
-          href={`/booking/${performance.id}`}
-          className="w-full rounded-lg bg-primary py-3 text-center text-base font-semibold text-white hover:bg-primary/90 transition-colors"
-        >
-          예매하기
-        </Link>
+        {bookingEnabled ? (
+          <Link
+            href={getLocalizedPathname(
+              `/booking/${performance.id}`,
+              activeLocale,
+            )}
+            className="w-full rounded-lg bg-primary py-3 text-center text-base font-semibold text-white hover:bg-primary/90 transition-colors"
+          >
+            {copy.performance.bookCta}
+          </Link>
+        ) : (
+          <button
+            type="button"
+            disabled
+            className="min-h-12 w-full rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-center text-sm font-semibold leading-snug text-amber-800"
+          >
+            {bookingDisabledMessage}
+          </button>
+        )}
       </div>
     </>
+  );
+}
+
+function useActiveLocale(): SupportedLocale {
+  const locale = useLocale();
+  return isSupportedLocale(locale) ? locale : DEFAULT_LOCALE;
+}
+
+function hasAutomaticTranslationMetadata(performance: unknown): boolean {
+  if (!performance || typeof performance !== 'object') return false;
+
+  const record = performance as Record<string, unknown>;
+  if (
+    record.automaticTranslationLabel === true ||
+    record.isMachineTranslated === true ||
+    typeof record.translatedBy === 'string'
+  ) {
+    return true;
+  }
+
+  return ['titleTranslation', 'descriptionTranslation', 'salesInfoTranslation'].some(
+    (key) => hasAutomaticTranslationMetadata(record[key]),
   );
 }

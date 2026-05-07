@@ -1,0 +1,170 @@
+{
+  "nav": {
+    "searchPlaceholder": "공연명, 아티스트를 검색하세요",
+    "searchAriaLabel": "공연 검색",
+    "clearSearch": "검색어 지우기",
+    "moreGenres": "더보기",
+    "loginSignup": "로그인 / 회원가입",
+    "mypage": "마이페이지",
+    "logout": "로그아웃",
+    "language": "언어",
+    "home": "홈",
+    "search": "검색",
+    "category": "분류"
+  },
+  "home": {
+    "hot": "HOT 이벤트",
+    "newOpen": "신규 오픈",
+    "genreShortcuts": "이벤트 분류",
+    "more": "더보기",
+    "empty": "팬미팅과 팝업 이벤트를 검색하거나 분류별로 탐색해보세요."
+  },
+  "search": {
+    "promptTitle": "공연을 검색하세요",
+    "promptBody": "공연명, 아티스트를 검색하세요",
+    "resultTitle": "'{query}' 검색 결과",
+    "totalCount": "총 {count}건",
+    "includeEnded": "판매종료 이벤트 포함",
+    "allGenres": "전체 분류",
+    "loadError": "이벤트 정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.",
+    "retry": "다시 시도",
+    "emptyHeading": "검색 결과가 없습니다",
+    "emptyBody": "다른 키워드로 검색하거나 이벤트 분류를 둘러보세요"
+  },
+  "genres": {
+    "artist_celebrity": "아티스트·셀럽",
+    "ip_popup": "IP 팝업",
+    "musical": "뮤지컬",
+    "concert": "콘서트",
+    "play": "연극",
+    "exhibition": "전시",
+    "classic": "클래식",
+    "sports": "스포츠",
+    "kids_family": "아동/가족",
+    "leisure_camping": "레저/캠핑"
+  },
+  "genrePage": {
+    "title": "{genre} 이벤트",
+    "emptyHeading": "등록된 이벤트가 없습니다",
+    "emptyBody": "곧 새로운 이벤트가 등록될 예정입니다",
+    "sort": {
+      "ariaLabel": "정렬 기준",
+      "latest": "최신순",
+      "popular": "인기순"
+    }
+  },
+  "performance": {
+    "posterAltSuffix": "포스터",
+    "detailTab": "상세정보",
+    "salesTab": "판매정보",
+    "noDetail": "상세 정보가 없습니다",
+    "refundTitle": "취소/환불 안내",
+    "refundItems": [
+      "예매 후 취소 시 취소수수료가 발생할 수 있습니다.",
+      "공연일 기준 취소 시점에 따라 수수료율이 달라집니다.",
+      "자세한 내용은 예매 시 확인해주세요."
+    ],
+    "loadError": "공연 정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.",
+    "retry": "다시 시도",
+    "bookCta": "예매하기"
+  },
+  "booking": {
+    "disabled": "예매는 5월말 오픈 예정입니다"
+  },
+  "locale": {
+    "suggestion": "다른 언어로 볼까요?"
+  },
+  "legal": {
+    "fallbackLabel": "영문 법적 고지로 확인합니다"
+  },
+  "auth": {
+    "tabs": {
+      "login": "로그인",
+      "signup": "회원가입"
+    },
+    "form": {
+      "email": "이메일",
+      "password": "비밀번호",
+      "emailPlaceholder": "이메일을 입력해주세요",
+      "passwordPlaceholder": "비밀번호를 입력해주세요",
+      "passwordDescription": "8자 이상, 영문+숫자+특수문자 포함",
+      "passwordConfirm": "비밀번호 확인",
+      "passwordConfirmPlaceholder": "비밀번호를 다시 입력해주세요",
+      "loginButton": "로그인",
+      "loginLoading": "로그인 중...",
+      "nextButton": "다음",
+      "forgotPassword": "비밀번호 찾기",
+      "separator": "또는",
+      "signupComplete": "회원가입이 완료되었습니다. 이메일 인증을 진행해주세요.",
+      "under14Blocked": "만 14세 미만은 가입할 수 없습니다",
+      "temporaryError": "일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
+    },
+    "consent": {
+      "selectAll": "전체 동의",
+      "required": "필수",
+      "optional": "선택",
+      "view": "보기",
+      "previous": "이전",
+      "next": "다음",
+      "dialogDescriptionSuffix": "상세 내용",
+      "crossBorderRequired": "국외이전 동의가 필요합니다. 동의하지 않으면 가입 또는 팬미팅 예매를 진행할 수 없습니다.",
+      "items": {
+        "termsOfService": {
+          "label": "이용약관 동의",
+          "title": "이용약관"
+        },
+        "privacyPolicy": {
+          "label": "개인정보처리방침 동의",
+          "title": "개인정보처리방침"
+        },
+        "pipaRequired": {
+          "label": "개인정보 필수 수집 및 이용 동의",
+          "title": "개인정보 필수 수집 및 이용"
+        },
+        "crossBorderTransfer": {
+          "label": "개인정보 국외이전 동의",
+          "title": "개인정보 국외이전"
+        },
+        "pdpaNotice": {
+          "label": "태국 PDPA 고지 확인",
+          "title": "태국 PDPA 고지"
+        },
+        "piplNotice": {
+          "label": "중국 PIPL 고지 확인",
+          "title": "중국 PIPL 고지"
+        },
+        "marketingConsent": {
+          "label": "마케팅 수신 동의",
+          "title": "마케팅 수신 동의"
+        }
+      }
+    },
+    "emailVerification": {
+      "sent": "인증 메일을 발송했습니다",
+      "resendCta": "인증 메일 다시 보내기",
+      "resendLoading": "다시 보내는 중...",
+      "resendSuccess": "인증 메일을 다시 보냈습니다",
+      "expired": "인증 링크가 만료되었습니다. 새 인증 메일을 요청해주세요.",
+      "verified": "이메일 인증이 완료되었습니다.",
+      "throttled": "잠시 후 다시 시도해주세요.",
+      "systemError": "일시적인 오류가 발생했습니다. 다시 시도해주세요."
+    },
+    "otp": {
+      "sent": "인증번호가 발송되었습니다",
+      "resendCta": "인증번호 재발송",
+      "resendLoading": "인증번호를 다시 보내는 중입니다",
+      "resendSuccess": "인증번호를 다시 보냈습니다",
+      "expired": "인증번호가 만료되었습니다. 재발송해주세요",
+      "invalidCode": "인증번호가 일치하지 않습니다",
+      "throttled": "요청이 너무 많습니다. 잠시 후 다시 시도해주세요",
+      "systemError": "인증번호 처리에 실패했습니다. 잠시 후 다시 시도해주세요"
+    },
+    "errors": {
+      "invalidCredentials": "이메일 또는 비밀번호가 올바르지 않습니다",
+      "emailUnverified": "이메일 인증이 필요합니다",
+      "verificationRequired": "인증을 완료해주세요",
+      "providerUnavailable": "소셜 로그인 제공자를 사용할 수 없습니다",
+      "deviceLimitNotice": "다른 기기에서 로그인되어 가장 오래된 세션이 종료되었습니다."
+    }
+  }
+}

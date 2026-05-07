@@ -1,10 +1,18 @@
-export const GENRES = [
+export const GENRES = ['artist_celebrity', 'ip_popup'] as const;
+export type EventCategory = typeof GENRES[number];
+
+export const LEGACY_GENRES = [
   'musical', 'concert', 'play', 'exhibition',
   'classic', 'sports', 'kids_family', 'leisure_camping',
 ] as const;
-export type Genre = typeof GENRES[number];
+export type LegacyGenre = typeof LEGACY_GENRES[number];
+
+export const PERFORMANCE_GENRES = [...LEGACY_GENRES, ...GENRES] as const;
+export type Genre = typeof PERFORMANCE_GENRES[number];
 
 export const GENRE_LABELS: Record<Genre, string> = {
+  artist_celebrity: '아티스트·셀럽',
+  ip_popup: 'IP 팝업',
   musical: '뮤지컬',
   concert: '콘서트',
   play: '연극',
@@ -16,6 +24,9 @@ export const GENRE_LABELS: Record<Genre, string> = {
 };
 
 export const GENRE_SLUGS: Record<string, Genre> = {
+  '아티스트·셀럽': 'artist_celebrity',
+  '아티스트/셀럽': 'artist_celebrity',
+  'IP 팝업': 'ip_popup',
   '뮤지컬': 'musical',
   '콘서트': 'concert',
   '연극': 'play',
@@ -27,6 +38,12 @@ export const GENRE_SLUGS: Record<string, Genre> = {
 };
 
 export type PerformanceStatus = 'upcoming' | 'selling' | 'closing_soon' | 'ended';
+export type TranslationReviewSource = 'machine_reviewed';
+
+export interface ReviewedTranslationMetadata {
+  automaticTranslationLabel?: boolean;
+  translatedBy?: TranslationReviewSource;
+}
 
 export const STATUS_LABELS: Record<PerformanceStatus, string> = {
   upcoming: '판매예정',
@@ -88,7 +105,7 @@ export interface Banner {
   isActive: boolean;
 }
 
-export interface Performance {
+export interface Performance extends ReviewedTranslationMetadata {
   id: string;
   title: string;
   genre: Genre;
@@ -115,7 +132,7 @@ export interface PerformanceWithDetails extends Performance {
   seatMap: SeatMap | null;
 }
 
-export interface PerformanceCardData {
+export interface PerformanceCardData extends ReviewedTranslationMetadata {
   id: string;
   title: string;
   genre: Genre;

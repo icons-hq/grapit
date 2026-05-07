@@ -5,8 +5,13 @@ import type {
   PerformanceWithDetails,
 } from '@grabit/shared';
 
+import { BadRequestException } from '@nestjs/common';
+import { PerformanceController } from './performance.controller.js';
 import { PerformanceService } from './performance.service.js';
 import { CacheService } from './cache.service.js';
+
+const PHASE23_I18N_SMOKE_PERFORMANCE_ID =
+  '00000000-0000-4000-8000-000000000023';
 
 function createMockCacheService(): CacheService {
   // Miss-by-default cache so the service falls through to the DB path
@@ -41,6 +46,60 @@ function createChainableMock() {
   (chain as { then?: unknown }).then = vi.fn((resolve: (v: unknown[]) => void) => resolve([]));
   return chain;
 }
+
+function createChainableResult<T>(result: T) {
+  const chain = createChainableMock();
+  (chain as { then?: unknown }).then = vi.fn(
+    (resolve: (value: T) => void) => resolve(result),
+  );
+  return chain;
+}
+
+function createPerformanceRow(id = PHASE23_I18N_SMOKE_PERFORMANCE_ID) {
+  return {
+    performances: {
+      id,
+      title: '2026 걸룰스 팬미팅',
+      genre: 'artist_celebrity' as const,
+      subcategory: '팬미팅',
+      venueId: 'venue-1',
+      posterUrl: null,
+      description: '한국어 상세 소개',
+      startDate: new Date('2026-07-18T05:00:00.000Z'),
+      endDate: new Date('2026-07-18T07:00:00.000Z'),
+      runtime: '120분',
+      ageRating: '전체 관람가',
+      status: 'selling' as const,
+      salesInfo: '한국어 판매 정보',
+      viewCount: 0,
+      createdAt: new Date('2026-05-07T00:00:00.000Z'),
+      updatedAt: new Date('2026-05-07T00:00:00.000Z'),
+    },
+    venues: {
+      id: 'venue-1',
+      name: '동해문화예술관 대극장',
+      address: null,
+    },
+  };
+}
+
+const translatedFieldRows = [
+  {
+    entityId: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
+    field: 'title',
+    translatedText: '2026 Girl Rules Fanmeeting',
+  },
+  {
+    entityId: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
+    field: 'description',
+    translatedText: 'English reviewed fanmeeting description',
+  },
+  {
+    entityId: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
+    field: 'salesInfo',
+    translatedText: 'English reviewed sales information',
+  },
+];
 
 function createMockDb() {
   const chainable = createChainableMock();
@@ -92,7 +151,7 @@ describe('PerformanceService', () => {
 
   describe('findByGenre', () => {
     it('should return paginated performances filtered by genre', async () => {
-      const result: PerformanceListResponse = await service.findByGenre('musical', {
+      const result: PerformanceListResponse = await service.findByGenre('artist_celebrity', {
         page: 1,
         limit: 20,
         sort: 'latest',
@@ -110,7 +169,7 @@ describe('PerformanceService', () => {
     });
 
     it('should filter by subcategory when sub param provided', async () => {
-      await service.findByGenre('musical', {
+      await service.findByGenre('artist_celebrity', {
         page: 1,
         limit: 20,
         sort: 'latest',
@@ -124,7 +183,7 @@ describe('PerformanceService', () => {
     });
 
     it('should exclude ended performances when ended=false', async () => {
-      await service.findByGenre('concert', {
+      await service.findByGenre('artist_celebrity', {
         page: 1,
         limit: 20,
         sort: 'latest',
@@ -136,7 +195,7 @@ describe('PerformanceService', () => {
     });
 
     it('should sort by viewCount DESC when sort=popular', async () => {
-      await service.findByGenre('play', {
+      await service.findByGenre('ip_popup', {
         page: 1,
         limit: 20,
         sort: 'popular',
@@ -176,6 +235,129 @@ describe('PerformanceService', () => {
       const result = await service.findById(nonExistentId);
 
       expect(result).toBeNull();
+    });
+
+    it('overlays reviewed translated detail fields and marks machine reviewed metadata for foreign locales', async () => {
+      mockDb.select
+        .mockReturnValueOnce(createChainableResult([createPerformanceRow()]))
+        .mockReturnValueOnce(
+          createChainableResult([
+            {
+              id: 'tier-svip',
+              performanceId: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
+              tierName: 'SVIP석',
+              price: 380000,
+              sortOrder: 0,
+            },
+          ]),
+        )
+        .mockReturnValueOnce(
+          createChainableResult([
+            {
+              id: 'showtime-1',
+              performanceId: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
+              dateTime: new Date('2026-07-18T05:00:00.000Z'),
+            },
+          ]),
+        )
+        .mockReturnValueOnce(createChainableResult([]))
+        .mockReturnValueOnce(
+          createChainableResult([
+            {
+              id: 'seat-map-1',
+              performanceId: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
+              svgUrl: '/seed/donghae-girl-rules-20260718-seat-map.svg',
+              seatConfig: { tiers: [] },
+              totalSeats: 1,
+            },
+          ]),
+        )
+        .mockReturnValueOnce(createChainableResult(translatedFieldRows));
+
+      const result = await (
+        service as unknown as {
+          findById(id: string, locale: string): Promise<PerformanceWithDetails>;
+        }
+      ).findById(PHASE23_I18N_SMOKE_PERFORMANCE_ID, 'en');
+
+      expect(result.title).toBe('2026 Girl Rules Fanmeeting');
+      expect(result.description).toBe('English reviewed fanmeeting description');
+      expect(result.salesInfo).toBe('English reviewed sales information');
+      expect(result.automaticTranslationLabel).toBe(true);
+      expect(result.translatedBy).toBe('machine_reviewed');
+    });
+
+    it('keeps Korean detail canonical without automatic translation metadata', async () => {
+      mockDb.select
+        .mockReturnValueOnce(createChainableResult([createPerformanceRow()]))
+        .mockReturnValueOnce(createChainableResult([]))
+        .mockReturnValueOnce(createChainableResult([]))
+        .mockReturnValueOnce(createChainableResult([]))
+        .mockReturnValueOnce(createChainableResult([]));
+
+      const result = await (
+        service as unknown as {
+          findById(id: string, locale: string): Promise<PerformanceWithDetails>;
+        }
+      ).findById(PHASE23_I18N_SMOKE_PERFORMANCE_ID, 'ko');
+
+      expect(result.title).toBe('2026 걸룰스 팬미팅');
+      expect(result.automaticTranslationLabel).toBeUndefined();
+      expect(result.translatedBy).toBeUndefined();
+    });
+  });
+
+  describe('translation overlays for card lists', () => {
+    it('overlays reviewed translated titles on genre list cards', async () => {
+      mockDb.select
+        .mockReturnValueOnce(
+          createChainableResult([
+            {
+              id: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
+              title: '2026 걸룰스 팬미팅',
+              genre: 'artist_celebrity',
+              posterUrl: null,
+              status: 'selling',
+              startDate: new Date('2026-07-18T05:00:00.000Z'),
+              endDate: new Date('2026-07-18T07:00:00.000Z'),
+              venueName: '동해문화예술관 대극장',
+            },
+          ]),
+        )
+        .mockReturnValueOnce(createChainableResult([{ count: 1 }]))
+        .mockReturnValueOnce(
+          createChainableResult([
+            {
+              entityId: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
+              field: 'title',
+              translatedText: '2026 Girl Rules Fanmeeting',
+            },
+          ]),
+        );
+
+      const result = await service.findByGenre('artist_celebrity', {
+        page: 1,
+        limit: 20,
+        sort: 'latest',
+        ended: false,
+        locale: 'en',
+      } as never);
+
+      expect(result.data[0]?.title).toBe('2026 Girl Rules Fanmeeting');
+      expect(result.data[0]?.automaticTranslationLabel).toBe(true);
+      expect(result.data[0]?.translatedBy).toBe('machine_reviewed');
+    });
+  });
+
+  describe('controller id validation', () => {
+    it('rejects invalid string performance ids as controlled 400 errors', async () => {
+      const controller = new PerformanceController({
+        findById: vi.fn(),
+      } as unknown as PerformanceService);
+
+      await expect(controller.getPerformance('test-performance')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
     });
   });
 

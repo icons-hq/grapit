@@ -3,22 +3,14 @@
 import { use } from 'react';
 import { notFound } from 'next/navigation';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
-import { GENRES, GENRE_LABELS, type Genre } from '@grabit/shared';
+import { useLocale } from 'next-intl';
+import { GENRES, type Genre } from '@grabit/shared';
 import { Switch } from '@/components/ui/switch';
-import { GenreChip } from '@/components/performance/genre-chip';
 import { SortToggle } from '@/components/performance/sort-toggle';
 import { PerformanceGrid } from '@/components/performance/performance-grid';
 import { PaginationNav } from '@/components/performance/pagination-nav';
 import { usePerformances } from '@/hooks/use-performances';
-
-const SUBCATEGORIES = [
-  { label: '전체', value: '' },
-  { label: '요즘HOT', value: 'hot' },
-  { label: '오리지널/내한', value: 'original' },
-  { label: '라이선스', value: 'license' },
-  { label: '창작', value: 'creative' },
-  { label: '내한', value: 'domestic' },
-];
+import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 
 function isValidGenre(genre: string): genre is Genre {
   return (GENRES as readonly string[]).includes(genre);
@@ -33,13 +25,13 @@ export default function GenrePage({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const copy = getVisibleCopy(useLocale());
 
   if (!isValidGenre(genre)) {
     notFound();
   }
 
   const sort = (searchParams.get('sort') ?? 'latest') as 'latest' | 'popular';
-  const sub = searchParams.get('sub') ?? '';
   const ended = searchParams.get('ended') === 'true';
 
   const { data, isLoading, isError } = usePerformances(genre);
@@ -62,30 +54,17 @@ export default function GenrePage({
     <main className="mx-auto w-full max-w-[1200px] px-4 py-6 md:px-6 md:py-8">
       {/* Page title */}
       <h1 className="text-display font-semibold leading-[1.2]">
-        {GENRE_LABELS[genre]} 공연
+        {copy.genrePage.title.replace('{genre}', copy.genres[genre])}
       </h1>
 
-      {/* Subcategory chips */}
-      <div className="mt-4 flex gap-2 overflow-x-auto scrollbar-hide">
-        {SUBCATEGORIES.map((cat) => (
-          <GenreChip
-            key={cat.value}
-            label={cat.label}
-            value={cat.value}
-            isActive={sub === cat.value}
-            onClick={() => updateParam('sub', cat.value)}
-          />
-        ))}
-      </div>
-
-      {/* Filter row: sort + ended toggle */}
       <div className="mt-6 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <SortToggle
           value={sort}
           onChange={(v) => updateParam('sort', v)}
+          labels={copy.genrePage.sort}
         />
         <label className="flex items-center gap-2 text-sm text-gray-600">
-          <span>판매종료 공연 포함</span>
+          <span>{copy.search.includeEnded}</span>
           <Switch
             checked={ended}
             onCheckedChange={(checked: boolean) =>
@@ -100,22 +79,22 @@ export default function GenrePage({
         {isError ? (
           <div className="flex flex-col items-center py-16">
             <p className="text-base text-gray-900">
-              공연 정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.
+              {copy.search.loadError}
             </p>
             <button
               type="button"
               onClick={() => window.location.reload()}
               className="mt-4 min-h-[44px] rounded-lg bg-primary px-6 py-2 text-sm font-semibold text-white"
             >
-              다시 시도
+              {copy.search.retry}
             </button>
           </div>
         ) : (
           <PerformanceGrid
             performances={data?.data ?? []}
             isLoading={isLoading}
-            emptyHeading="등록된 공연이 없습니다"
-            emptyBody="곧 새로운 공연이 등록될 예정입니다"
+            emptyHeading={copy.genrePage.emptyHeading}
+            emptyBody={copy.genrePage.emptyBody}
           />
         )}
       </div>

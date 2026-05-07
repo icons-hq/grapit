@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Fanmeet Launch
-status: "Phase 22 shipped — PR #32"
-stopped_at: Ready to discuss Phase 23
-last_updated: "2026-05-06T00:53:56.571Z"
-last_activity: 2026-05-06
+status: "Phase 23 shipped — PR #33"
+stopped_at: Completed 23-19-PLAN.md
+last_updated: "2026-05-07T07:33:48.897Z"
+last_activity: 2026-05-07
 progress:
   total_phases: 7
-  completed_phases: 1
-  total_plans: 6
-  completed_plans: 6
-  percent: 100
+  completed_phases: 3
+  total_plans: 25
+  completed_plans: 25
+  percent: 43
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-04)
 
 **Core value:** 사용자가 원하는 공연을 발견하고, 좌석을 직접 선택하여, 안정적으로 예매를 완료할 수 있는 것
-**Current focus:** Phase 23 — Launch Foundation
+**Current focus:** Phase 23 — launch-foundation
 
 ## Current Position
 
-Phase: 23
+Phase: 999.1
 Plan: Not started
-Status: Phase 22 shipped — PR #32
-Last activity: 2026-05-06
+Status: Phase 23 shipped — PR #33
+Last activity: 2026-05-07 - Completed quick task 260507-n8l: 현재 최신 pr에서 ci가 실패했어. 코드와 로그를 보고 해결
 
 ## Deferred Items
 
@@ -113,7 +113,7 @@ Summary: 70 total items (debug sessions 5, quick tasks 41, seeds 2, UAT gaps 12,
 
 **Velocity:**
 
-- Total plans completed: 88 (v1.0)
+- Total plans completed: 142 (v1.0)
 - Average duration: ~10min
 - Total execution time: ~3 hours
 
@@ -137,6 +137,7 @@ Summary: 70 total items (debug sessions 5, quick tasks 41, seeds 2, UAT gaps 12,
 | 19 | 4 | - | - |
 | 21 | 4 | - | - |
 | 22 | 5 | - | - |
+| 23 | 19 | - | - |
 
 **Recent Trend:**
 
@@ -164,6 +165,25 @@ Summary: 70 total items (debug sessions 5, quick tasks 41, seeds 2, UAT gaps 12,
 | Phase 22 P04 | 10min | 3 tasks | 2 files |
 | Phase 22 P05 | 8min | 2 tasks | 3 files |
 | Phase 22 P06 | 18min | 3 tasks | 6 files |
+| Phase 23 P01 | 5 min | 3 tasks | 13 files |
+| Phase 23 P02 | 7 min | 2 tasks | 13 files |
+| Phase 23 P03 | 8 min | 3 tasks | 13 files |
+| Phase 23 P04 | 8 min | 2 tasks | 15 files |
+| Phase 23 P05 | 10 min | 2 tasks | 8 files |
+| Phase 23 P06 | 13m52s | 3 tasks | 13 files |
+| Phase 23-launch-foundation P14 | 5m25s | 1 tasks | 7 files |
+| Phase 23-launch-foundation P15 | 7m59s | 1 tasks | 9 files |
+| Phase 23-launch-foundation P16 | 8m16s | 1 tasks | 14 files |
+| Phase 23-launch-foundation P17 | 12 min | 1 tasks | 4 files |
+| Phase 23-launch-foundation P07 | 15m09s | 3 tasks | 23 files |
+| Phase 23-launch-foundation P08 | 9m09s | 1 tasks | 13 files |
+| Phase 23-launch-foundation P09 | 13m15s | 1 tasks | 15 files |
+| Phase 23-launch-foundation P13 | 5m30s | 1 tasks | 12 files |
+| Phase 23-launch-foundation P10 | 10 min | 1 tasks | 12 files |
+| Phase 23-launch-foundation P12 | 5m03s | 1 tasks | 5 files |
+| Phase 23-launch-foundation P11 | 7m32s | 1 tasks | 14 files |
+| Phase 23-launch-foundation P18 | 13 min | 4 tasks | 5 files |
+| Phase 23-launch-foundation P19 | 40min | 4 tasks | 50 files |
 
 ## Accumulated Context
 
@@ -223,6 +243,60 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 - [Phase 22-05]: Phase 23 readiness is READY_WITH_ACCEPTED_RISKS after source validation and hardening blockers were explicitly reclassified with maintainer/operator approvals.
 - [Phase 22-05]: Production Valkey smoke was recorded as an accepted-risk classification because production auth and operator-approved safe fixtures were unavailable.
 - [Phase 22-06]: Invalid-but-regex-valid SMS phone input is normalized to BadRequestException at the service boundary before Valkey/Infobip side effects. — Production UAT test 9 is locally fixed and still needs deploy plus production rerun before changing the live observation to pass.
+- [Phase 23]: LINE remains excluded from Phase 23 per D-13; stale spec references are marked superseded instead of becoming implementation scope.
+- [Phase 23]: Korean remains prefixless while en/th/zh-CN/zh-TW use explicit route prefixes.
+- [Phase 23]: BOOKING_ENABLED is the shared source-of-truth flag name and defaults false when absent.
+- [Phase 23-02]: Locale enum is exported from users.ts so users.preferred_locale and launch content tables share one enum without a circular schema import.
+- [Phase 23-02]: Email verification latest-token-wins is supported by user/email/purpose/created_at query indexes while retaining historical token rows.
+- [Phase 23-02]: Legal content uses manual ko/en columns and is structurally separate from translation_drafts.
+- [Phase 23-03]: API booking flag decisions use runtime BOOKING_ENABLED through FeatureFlagsService, not NEXT_PUBLIC_BOOKING_ENABLED. — Prevents client-public flag drift from enabling backend booking mutations.
+- [Phase 23-03]: Booking-disabled guard blocks lockSeat, prepareReservation, and confirmAndCreateReservation before Redis lock, DB transaction, confirm lock, and Toss side effects. — Advertising-open mode must be enforced on backend mutation paths, not only in UI.
+- [Phase 23-04]: Locale routing uses next-intl with localeDetection:false so URL prefixes remain authoritative and Accept-Language only creates suggestion state.
+- [Phase 23-04]: Korean sitemap URLs remain prefixless while foreign hreflang alternates use /en, /th, /zh-CN, and /zh-TW.
+- [Phase 23-05]: DeepL missing-key behavior creates deterministic manual-review drafts and never publishes content.
+- [Phase 23-05]: Legal-sensitive content types are blocked in TranslationService before any provider call.
+- [Phase 23-05]: DeepL integration uses a small direct-fetch adapter instead of adding a new dependency.
+- [Phase 23]: 23-06: Email verification stores SHA-256 token hashes and uses latest-token-wins supersession without a new schema column.
+- [Phase 23]: 23-06: Refresh token device cap enforces three active families per user and revokes only the oldest extra family.
+- [Phase 23]: 23-06: Launch auth/SMS copy is keyed exactly to ko, en, th, zh-CN, zh-TW while LINE remains excluded.
+- [Phase 23-14]: KST and KRW remain canonical anchors; localized time and currency are secondary advisory output.
+- [Phase 23-14]: Currency conversion uses deterministic display estimates with an explicit exchange-rate disclaimer because live FX is later payment/ops scope.
+- [Phase 23-14]: The public performance detail page resolves locale through next-intl useLocale and falls back to ko when unavailable.
+- [Phase 23-15]: PhoneInput keeps unsupported countries searchable/selectable while localizing labels for ko, en, th, zh-CN, and zh-TW.
+- [Phase 23-15]: PhoneVerification resolves next-intl active locale with ko fallback and passes it into PhoneInput.
+- [Phase 23-15]: Auth/email/OTP/SMS launch copy keys are centralized in @grabit/shared for exact five-locale coverage.
+- [Phase 23-launch-foundation]: Locale suggestion is a LayoutShell banner prompt rather than a toast. — Keeps display deterministic and testable without global side effects.
+- [Phase 23-launch-foundation]: Locale preference validation reuses shared locale constants. — Avoids a duplicate supported-locale source of truth across API and web.
+- [Phase 23-launch-foundation]: Locale precedence remains owned by existing i18n routing. — This plan wires explicit switch and profile persistence while documenting url > explicit-switch > user-profile > cookie > ko.
+- [Phase 23-17]: Legal canonical markdown locales are locked to exactly ko and en for launch.
+- [Phase 23-17]: Thai and Chinese legal-sensitive surfaces consume English canonical fallback rather than native-language legal markdown.
+- [Phase 23-17]: English legal markdown is static manual canonical copy and remains outside the translation API/DeepL workflow.
+- [Phase 23-07]: Consent audit rows persist sourceFlow on append-only evidence rows to distinguish signup from booking capture.
+- [Phase 23-07]: Admin consent audit output is masked by default for email, phone, and IP with no raw PII path added.
+- [Phase 23-07]: Booking consent validation runs after BOOKING_ENABLED and before reservation/payment side effects.
+- [Phase 23-08]: Web reads BOOKING_ENABLED through /api/runtime-flags at runtime, not NEXT_PUBLIC_BOOKING_ENABLED.
+- [Phase 23-08]: Disabled UI guards exist both in visible booking/confirm surfaces and in useLockSeat/usePrepareReservation mutation hooks.
+- [Phase 23-08]: Public performance detail CTA is replaced with localized opening copy while booking is disabled.
+- [Phase 23-09]: Auth/email/OTP UI copy is sourced from five-locale message JSON and checked against the shared launch copy manifest.
+- [Phase 23-09]: Email verification UI suppresses raw server/provider messages and maps throttled, expired, verified, and system states to safe localized copy.
+- [Phase 23-09]: The backend-sent /auth/verify-email token link now has a web route that verifies the opaque token without rendering it.
+- [Phase 23-13]: Thai and Chinese legal pages render English canonical markdown and show an explicit fallback label rather than native legal translation claims.
+- [Phase 23-13]: Footer keeps /legal/marketing hidden from global navigation while exposing business/support/DPO contact details.
+- [Phase 23-launch-foundation]: Social completion consent uses sourceFlow=social_completion while normal email signup remains sourceFlow=signup. — Consent audit evidence must distinguish social registration completion from normal email signup.
+- [Phase 23-launch-foundation]: LINE remains absent from auth UI and tests assert Kakao, Naver, Google, and email only. — D-13 removes LINE from Phase 23 launch auth scope.
+- [Phase 23-launch-foundation]: Signup Step 2 returns legacy consent booleans plus itemized consent rows so the current API transition stays backward-compatible while ConsentService receives immutable row evidence. — Plan 23-10 bridges existing terms_agreements persistence and Plan 23-07 ConsentService audit capture.
+- [Phase 23-12]: Consent audit UI consumes only masked API rows and does not add export or raw PII reveal capability in Phase 23.
+- [Phase 23-12]: Consent audit user filter accepts either email or user ID and maps to the existing API query contract.
+- [Phase 23-12]: datetime-local UI filter values are converted to ISO datetime strings before the zod-validated API endpoint.
+- [Phase 23-11]: Review endpoint persists optional translatedText so admin edited review copy is the text later published.
+- [Phase 23-11]: Public performance detail renders one AutomaticTranslationLabel near the title whenever translation metadata indicates AI assistance.
+- [Phase 23-launch-foundation]: Kept flat App Router pages and replaced next-intl createMiddleware with a narrow custom proxy. — Avoids app/[locale] migration blast radius while closing Phase 23 locale-routing UAT blocker.
+- [Phase 23-launch-foundation]: Remaining test-performance UAT checks are seed/API fixture prerequisites, not locale-routing blockers. — Browser route shells no longer render not-found, but /api/v1/performances/test-performance returns 500.
+- [Phase 23-19]: Overlay only published performance translation drafts for non-Korean locales and mark public content as machine_reviewed.
+- [Phase 23-19]: Keep the dedicated i18n smoke independent from admin login and live SMS E2E state.
+- [Phase 23-19]: Use stable UUID 00000000-0000-4000-8000-000000000023 as the Phase 23 i18n smoke fixture instead of invalid test-performance.
+- [Quick 260507-q2c]: Public/admin event taxonomy is limited to `artist_celebrity` and `ip_popup`, while legacy DB enum values remain for expand-only production compatibility.
+- [Quick 260507-r4s]: Public category pages do not expose legacy subcategory chips until a new launch-specific subcategory contract exists; stale `sub` URL params are ignored by the web list hook.
 
 ### Pending Todos
 
@@ -258,11 +332,18 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 | 260427-pcf | 프로덕션 admin 포스터 업로드 100% 차단 핫픽스 (이중 결함, ✅ verified 2026-04-28): (1) `@aws-sdk/client-s3@3.1020` 이 PutObject 에 자동 부착하는 `x-amz-checksum-crc32` / `x-amz-sdk-checksum-algorithm` 두 헤더가 R2 presigned PUT 을 simple request → preflight 필요 요청으로 격상시킴, (2) `grapit-assets` 버킷 CORS 의 `allowed_headers` 가 `content-type` 하나만 등록되어 모든 `x-amz-*` 헤더 차단. 코드: `S3Client` 에 `requestChecksumCalculation: 'WHEN_REQUIRED'` + `responseChecksumValidation: 'WHEN_REQUIRED'` 추가로 헤더 제거 → 단순 PUT 복구 (회귀 테스트 1건, 321/321 green). 인프라: `wrangler r2 bucket cors set grapit-assets` 로 origins 4종(heygrabit.com 외) + headers 11종(checksum 4종 포함) 화이트리스트 확장 적용 (`grapit-assets-cors.json` 아티팩트 보존, commit 7d7ec4d). PR #26. | 2026-04-28 | 2642b24 (code) → 7d7ec4d (cors docs) | [260427-pcf-r2-cors](./quick/260427-pcf-r2-cors/) |
 | 260504-k38 | v1.1 scope closure: Phase 21 이후 v1.1을 닫고 Phase 22-24를 v2.0 Fanmeet Launch preflight/quality/hardening scope로 이월 | 2026-05-04 | docs-only | [260504-k38-close-v1-1-scope-after-phase-21-and-defe](./quick/260504-k38-close-v1-1-scope-after-phase-21-and-defe/) |
 | 260504-mn7 | v2.0 phase merge: initial 22-phase launch-risk checklist를 6개 GSD execution phases로 통합하고 requirement traceability 유지 | 2026-05-04 | docs-only | [260504-mn7-merge-v2-0-phases-into-gsd-sized-executi](./quick/260504-mn7-merge-v2-0-phases-into-gsd-sized-executi/) |
+| 260506-oef | 7월 18일 걸룰스 팬미팅 동해문화예술관 대극장 엑셀 기반 SVG 좌석맵 생성 및 사이트 추가 | 2026-05-06 | 6b8137e | [260506-oef-7-18-svg](./quick/260506-oef-7-18-svg/) |
+| 260506-p3f | 프로덕션 테스트 공연 데이터 삭제 및 2026-07-18 Girl Rules 공연 보존 | 2026-05-06 | db-only | [260506-p3f-2026-07-18](./quick/260506-p3f-2026-07-18/) |
+| 260507-edj | pnpm dev FeatureFlagsService DI 오류 수정: runtime env provider를 explicit Nest token으로 전환해 SWC dev/build/prod start 경로 부팅 복구 | 2026-05-07 | 0275799 | [260507-edj-pnpm-dev-cloud-run-featureflagsservice-d](./quick/260507-edj-pnpm-dev-cloud-run-featureflagsservice-d/) |
+| 260507-ji6 | 심층 분석 후 언어 선택 변경 시 UI/UX 번역이 적용되지 않는 문제 해결 | 2026-05-07 | 652ea4c | [260507-ji6-ui-ux](./quick/260507-ji6-ui-ux/) |
+| 260507-q2c | 판매 이벤트 분류를 아티스트·셀럽 / IP 팝업 두 개로 제한 | 2026-05-07 | uncommitted | [260507-q2c-two-event-categories](./quick/260507-q2c-two-event-categories/) |
+| 260507-r4s | 분류 페이지 legacy subcategory chip 제거 | 2026-05-07 | uncommitted | [260507-r4s-category-filter-chips](./quick/260507-r4s-category-filter-chips/) |
+| 260507-n8l | 현재 최신 pr에서 ci가 실패했어. 코드와 로그를 보고 해결 | 2026-05-07 | 85b81c3 | [260507-n8l-pr-ci](./quick/260507-n8l-pr-ci/) |
 
 ## Session Continuity
 
-Last session: 2026-05-04T10:05:15Z
-Stopped at: Ready to discuss Phase 23
+Last session: 2026-05-07T03:58:27.279Z
+Stopped at: Completed 23-19-PLAN.md
 Resume file: None
 
 **Planned Phase:** v2.0 Phase 23 (launch-foundation) — Phase 22 complete with READY_WITH_ACCEPTED_RISKS; proceed only under accepted risks listed in 22-VERIFICATION.md.

@@ -16,7 +16,7 @@
 - Deferred v1.1 launch-readiness gates: operator UAT, validation backfill, operational hardening
 - Production-compatible feature flags, expand-only migrations, canary deploy, Cloud Run min/max/prewarm policy
 - 5-locale i18n (`ko`, `en`, `th`, `zh-CN`, `zh-TW`) with Korean root URLs preserved
-- LINE login, 5-country SMS verification, multinational consent/audit log, legal/footer readiness
+- Kakao/Naver/Google/email auth, 5-country SMS verification, multinational consent/audit log, legal/footer readiness
 - Queue, WAF, Cloud Run prewarm, k6 load tests, DR drills, on-call playbooks before payment cutover
 - Multi-floor SVG booking, 4 payment methods, refund state machine, random cancelled-seat holding, QR issuance
 - Admin event/content/CS/audit console, QR scan console, event-day operations, settlement/export/retrospective
@@ -48,6 +48,7 @@
 - ✓ Legal public pages 구현 + Footer URL 교체 — Phase 16 (v1.1) *(법무/operator sign-off는 v2.0 gate로 이월)*
 - ✓ Reservation/payment lock ownership enforcement — Phase 19 (v1.1)
 - ✓ v2.0 Phase 22 Preflight Closure before fanmeet implementation — Phase 22 (v2.0) *(READY_WITH_ACCEPTED_RISKS; missing direct operator/provider/Valkey/R2 evidence remains accepted risk/caveat, not PASS evidence)*
+- ✓ v2.0 Launch Foundation — Phase 23 (v2.0) *(prod compatibility, runtime booking flag gates, five-locale routing/copy foundation, translation/legal lock, Kakao/Naver/Google/email auth + SMS foundations, consent/audit query; locale-routing UAT blocker closed; M1 canary execution deferred to Phase 26)*
 
 ### Active
 
@@ -65,7 +66,6 @@
 - 프로모션/타임딜/쿠폰 — 마케팅 단계에서 추가
 - 로터리 티켓(추첨제) — 높은 구현 복잡도
 - 관람후기/기대평 — 소셜 기능은 코어 플로우 안정 후
-- 다국어 지원 — 한국 시장 집중
 - 모바일 앱 (Expo) — 웹 우선 검증, PMF 확인 후
 - 실시간 채팅/커뮤니티 — 서비스 성격에 맞지 않음
 - 본인인증(PASS) — 초기에는 불필요
@@ -76,7 +76,7 @@
 ### Current State (v2.0 started — 2026-05-04)
 
 - **Shipped version:** v1.1 안정화 + 고도화 archived/tagged after Phase 21. Full archive: `.planning/milestones/v1.1-ROADMAP.md`, `.planning/milestones/v1.1-REQUIREMENTS.md`, `.planning/milestones/v1.1-MILESTONE-AUDIT.md`
-- **Current focus:** v2.0 Fanmeet Launch initialized from `docs/v2.0-fanmeet-milestone-spec.md` and consolidated into GSD execution phases. Phase 22 Preflight Closure is complete with `READY_WITH_ACCEPTED_RISKS`; Phase 23+ fanmeet work must preserve the accepted-risk caveats until direct operator/provider/Valkey/R2 evidence is collected.
+- **Current focus:** v2.0 Fanmeet Launch initialized from `docs/v2.0-fanmeet-milestone-spec.md` and consolidated into GSD execution phases. Phase 22 Preflight Closure is complete with `READY_WITH_ACCEPTED_RISKS`; Phase 23 Launch Foundation is complete/passed after closing the locale-routing UAT blocker. Subsequent fanmeet work must preserve the accepted-risk caveats until direct operator/provider/Valkey/R2 evidence is collected.
 - **v1.1 milestone 완료:** Phase 6~21 closed. Former Phase 22-24는 v2.0 Phase 22 Preflight Closure로 이월
 - **Phase 12 산출:** shadcn UI 시스템 modernize(globals.css 토큰), 좌석 선택 visual feedback(Option C useEffect fill transition + 체크마크 fade-in/out), react-zoom-pan-pinch 내장 MiniMap viewport rect 동기화, 모바일 WCAG 2.5.5 터치 타겟(44.8px first paint), admin SVG unified parsing contract (`[data-stage]` root+descendant + enum), UX-01~UX-06 6개 requirement 모두 validated
 - **Tech stack:** Next.js 16 + React 19 + Tailwind CSS v4 + NestJS 11 + Drizzle ORM + PostgreSQL 16 + Google Memorystore for Valkey (ioredis) + Socket.IO + Toss Payments + Infobip SMS v3
@@ -135,9 +135,9 @@ NOL 티켓(nol.interpark.com/ticket)을 상세 분석한 5개 문서가 docs/에
 | testcontainers 기반 Valkey 통합 테스트 (격리 vitest config) | Lua 스크립트가 실제 Valkey Lua 5.1 interpreter에서 돌아가는지 단위 테스트로는 검증 불가. `pnpm test:integration`으로만 실행되어 기본 피드백 루프 보호 | Phase 7 Plan 05 — cross-AI 리뷰 HIGH #2 대응 |
 | HealthController Valkey ping (Terminus 11) | Cloud Run liveness probe가 Valkey 장애를 즉시 감지 → silent outage 차단 | Phase 7 Plan 05 — cross-AI 리뷰 MEDIUM #7 대응 |
 | Family-based refresh token rotation | 토큰 탈취 감지 | ✓ Good — SHA-256 해시 저장, 가족 단위 무효화 |
-| v2.0 i18n URL policy | 기존 SEO를 보존하면서 해외 사용자를 지원해야 함 | Pending — `localePrefix: "as-needed"`, Korean `/`, foreign `/en` `/th` `/zh-CN` `/zh-TW` |
+| v2.0 i18n URL policy | 기존 SEO를 보존하면서 해외 사용자를 지원해야 함 | Phase 23 — `localePrefix: "as-needed"`, Korean `/`, foreign `/en` `/th` `/zh-CN` `/zh-TW` |
 | v2.0 payment cutover gate | 부하/DR/on-call 증거 없이 실 티켓팅을 열면 플랫폼 신뢰가 손상됨 | Pending — k6 + DR + on-call PASS 전 `BOOKING_ENABLED=true` 금지 |
-| v2.0 legal translation lock | 자동 번역 legal copy는 분쟁 리스크가 큼 | Pending — 법적 고지는 한/영 수동 입력만 허용, 태/중 사용자는 영어 고지 확인 |
+| v2.0 legal translation lock | 자동 번역 legal copy는 분쟁 리스크가 큼 | Phase 23 — 법적 고지는 한/영 수동 입력만 허용, 태/중 사용자는 영어 고지 확인 |
 
 ## Security Debt
 
@@ -169,4 +169,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-04 after Phase 22 accepted-risk preflight closure*
+*Last updated: 2026-05-07 after Phase 23 gap closure verification*

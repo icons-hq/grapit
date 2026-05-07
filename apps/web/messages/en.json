@@ -1,0 +1,170 @@
+{
+  "nav": {
+    "searchPlaceholder": "Search shows or artists",
+    "searchAriaLabel": "Search shows",
+    "clearSearch": "Clear search",
+    "moreGenres": "More",
+    "loginSignup": "Login / Sign up",
+    "mypage": "My page",
+    "logout": "Log out",
+    "language": "Language",
+    "home": "Home",
+    "search": "Search",
+    "category": "Category"
+  },
+  "home": {
+    "hot": "HOT",
+    "newOpen": "Newly opened",
+    "genreShortcuts": "Browse by category",
+    "more": "More",
+    "empty": "Search fanmeet and popup events or browse by category."
+  },
+  "search": {
+    "promptTitle": "Search for shows",
+    "promptBody": "Search shows or artists",
+    "resultTitle": "Results for '{query}'",
+    "totalCount": "{count} results",
+    "includeEnded": "Include ended shows",
+    "allGenres": "All categories",
+    "loadError": "Could not load show information. Please try again shortly.",
+    "retry": "Retry",
+    "emptyHeading": "No results found",
+    "emptyBody": "Try another keyword or browse event categories"
+  },
+  "genres": {
+    "artist_celebrity": "Artist/Celebrity",
+    "ip_popup": "IP Popup",
+    "musical": "Musical",
+    "concert": "Concert",
+    "play": "Theater",
+    "exhibition": "Exhibition",
+    "classic": "Classical",
+    "sports": "Sports",
+    "kids_family": "Kids/Family",
+    "leisure_camping": "Leisure/Camping"
+  },
+  "genrePage": {
+    "title": "{genre} shows",
+    "emptyHeading": "No shows are listed yet",
+    "emptyBody": "New shows will be added soon.",
+    "sort": {
+      "ariaLabel": "Sort",
+      "latest": "Latest",
+      "popular": "Popular"
+    }
+  },
+  "performance": {
+    "posterAltSuffix": "poster",
+    "detailTab": "Details",
+    "salesTab": "Sales info",
+    "noDetail": "No details are available",
+    "refundTitle": "Cancellation and refund notice",
+    "refundItems": [
+      "Cancellation fees may apply after booking.",
+      "Fees vary by cancellation timing before the show date.",
+      "Please review the details during booking."
+    ],
+    "loadError": "Could not load show information. Please try again shortly.",
+    "retry": "Retry",
+    "bookCta": "Book tickets"
+  },
+  "booking": {
+    "disabled": "Ticket booking opens in late May"
+  },
+  "locale": {
+    "suggestion": "View this page in English?"
+  },
+  "legal": {
+    "fallbackLabel": "Reviewing the English legal notice"
+  },
+  "auth": {
+    "tabs": {
+      "login": "Login",
+      "signup": "Sign up"
+    },
+    "form": {
+      "email": "Email",
+      "password": "Password",
+      "emailPlaceholder": "Enter your email",
+      "passwordPlaceholder": "Enter your password",
+      "passwordDescription": "At least 8 characters with letters, numbers, and symbols",
+      "passwordConfirm": "Confirm password",
+      "passwordConfirmPlaceholder": "Enter your password again",
+      "loginButton": "Login",
+      "loginLoading": "Logging in...",
+      "nextButton": "Next",
+      "forgotPassword": "Forgot password?",
+      "separator": "or",
+      "signupComplete": "Sign-up is complete. Please verify your email.",
+      "under14Blocked": "Users under 14 cannot sign up",
+      "temporaryError": "A temporary error occurred. Please try again shortly."
+    },
+    "consent": {
+      "selectAll": "Agree to all",
+      "required": "Required",
+      "optional": "Optional",
+      "view": "View",
+      "previous": "Previous",
+      "next": "Next",
+      "dialogDescriptionSuffix": "details",
+      "crossBorderRequired": "Cross-border transfer consent is required. Without it, sign-up or fan meeting booking cannot continue.",
+      "items": {
+        "termsOfService": {
+          "label": "Agree to Terms of Service",
+          "title": "Terms of Service"
+        },
+        "privacyPolicy": {
+          "label": "Agree to Privacy Policy",
+          "title": "Privacy Policy"
+        },
+        "pipaRequired": {
+          "label": "Agree to required personal data collection and use",
+          "title": "Required Personal Data Collection and Use"
+        },
+        "crossBorderTransfer": {
+          "label": "Agree to cross-border personal data transfer",
+          "title": "Cross-border Personal Data Transfer"
+        },
+        "pdpaNotice": {
+          "label": "Acknowledge Thailand PDPA notice",
+          "title": "Thailand PDPA Notice"
+        },
+        "piplNotice": {
+          "label": "Acknowledge China PIPL notice",
+          "title": "China PIPL Notice"
+        },
+        "marketingConsent": {
+          "label": "Agree to receive marketing messages",
+          "title": "Marketing Consent"
+        }
+      }
+    },
+    "emailVerification": {
+      "sent": "Verification email sent",
+      "resendCta": "Resend verification email",
+      "resendLoading": "Resending...",
+      "resendSuccess": "Verification email sent again",
+      "expired": "This verification link has expired. Please request a new email.",
+      "verified": "Your email has been verified.",
+      "throttled": "Please try again shortly.",
+      "systemError": "Something went wrong. Please try again."
+    },
+    "otp": {
+      "sent": "Verification code sent",
+      "resendCta": "Resend code",
+      "resendLoading": "Sending a new code",
+      "resendSuccess": "A new verification code has been sent",
+      "expired": "The verification code expired. Please request a new one.",
+      "invalidCode": "The verification code does not match",
+      "throttled": "Too many requests. Please try again later.",
+      "systemError": "Verification failed. Please try again later."
+    },
+    "errors": {
+      "invalidCredentials": "Email or password is incorrect",
+      "emailUnverified": "Email verification is required",
+      "verificationRequired": "Please complete verification",
+      "providerUnavailable": "This social login provider is unavailable",
+      "deviceLimitNotice": "Your oldest session was signed out because another device signed in."
+    }
+  }
+}

@@ -2,11 +2,11 @@ import type { ReactNode } from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook } from '@testing-library/react';
-import { useConfirmPayment, usePrepareReservation } from '../use-booking';
+import { useConfirmPayment, useLockSeat, usePrepareReservation } from '../use-booking';
 import { ApiClientError, apiClient } from '@/lib/api-client';
 import type { ConfirmPaymentRequest, PrepareReservationRequest } from '@grabit/shared';
 
-const { postMock, ApiClientErrorMock } = vi.hoisted(() => {
+const { postMock, runtimeFlagsMock, ApiClientErrorMock } = vi.hoisted(() => {
   class ApiClientError extends Error {
     statusCode: number;
 
@@ -19,6 +19,11 @@ const { postMock, ApiClientErrorMock } = vi.hoisted(() => {
 
   return {
     postMock: vi.fn(),
+    runtimeFlagsMock: vi.fn(() => ({
+      bookingEnabled: true,
+      isLoading: false,
+      bookingDisabledMessage: '예매는 5월말 오픈 예정입니다',
+    })),
     ApiClientErrorMock: ApiClientError,
   };
 });
@@ -28,6 +33,10 @@ vi.mock('@/lib/api-client', () => ({
     post: postMock,
   },
   ApiClientError: ApiClientErrorMock,
+}));
+
+vi.mock('@/hooks/use-runtime-flags', () => ({
+  useRuntimeFlags: runtimeFlagsMock,
 }));
 
 function createWrapper() {
@@ -47,9 +56,32 @@ function createWrapper() {
   };
 }
 
+function bookingConsentItems(): PrepareReservationRequest['consentItems'] {
+  return [
+    'terms',
+    'privacy',
+    'pipa_required',
+    'cross_border_transfer',
+    'pdpa_notice',
+    'pipl_notice',
+  ].map((key) => ({
+    key: key as PrepareReservationRequest['consentItems'][number]['key'],
+    version: '2026-04-28',
+    language: 'ko',
+    accepted: true,
+    sourceFlow: 'booking' as const,
+  }));
+}
+
 describe('use-booking payment mutations', () => {
   beforeEach(() => {
     postMock.mockReset();
+    runtimeFlagsMock.mockReset();
+    runtimeFlagsMock.mockReturnValue({
+      bookingEnabled: true,
+      isLoading: false,
+      bookingDisabledMessage: '예매는 5월말 오픈 예정입니다',
+    });
   });
 
   it('usePrepareReservation() calls /api/v1/reservations/prepare with payload', async () => {
@@ -58,6 +90,7 @@ describe('use-booking payment mutations', () => {
       showtimeId: 'showtime-lock-test',
       seats: [{ seatId: 'A-1', tierName: 'VIP', price: 50000, row: 'A', number: '1' }],
       amount: 50000,
+      consentItems: bookingConsentItems(),
     };
     postMock.mockResolvedValueOnce({ reservationId: 'reservation-lock-test', orderId: payload.orderId });
 
@@ -115,6 +148,7 @@ describe('use-booking payment mutations', () => {
       showtimeId: 'showtime-lock-test',
       seats: [{ seatId: 'A-1', tierName: 'VIP', price: 50000, row: 'A', number: '1' }],
       amount: 50000,
+      consentItems: bookingConsentItems(),
     };
     const error = new ApiClientError(
       '좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.',
@@ -152,5 +186,51 @@ describe('use-booking payment mutations', () => {
       message: '이미 다른 사용자가 선택한 좌석입니다.',
       statusCode: 409,
     });
+  });
+
+  it('does not call lockSeat API when runtime booking is disabled', async () => {
+    runtimeFlagsMock.mockReturnValue({
+      bookingEnabled: false,
+      isLoading: false,
+      bookingDisabledMessage: '예매는 5월말 오픈 예정입니다',
+    });
+
+    const { result } = renderHook(() => useLockSeat(), {
+      wrapper: createWrapper(),
+    });
+
+    await expect(
+      result.current.mutateAsync({
+        showtimeId: 'showtime-disabled',
+        seatId: 'A-1',
+      }),
+    ).rejects.toMatchObject({
+      message: '예매는 5월말 오픈 예정입니다',
+    });
+    expect(apiClient.post).not.toHaveBeenCalled();
+  });
+
+  it('does not call prepare reservation API when runtime booking is disabled', async () => {
+    runtimeFlagsMock.mockReturnValue({
+      bookingEnabled: false,
+      isLoading: false,
+      bookingDisabledMessage: '예매는 5월말 오픈 예정입니다',
+    });
+    const payload: PrepareReservationRequest = {
+      orderId: 'GRP-DISABLED-PREPARE',
+      showtimeId: 'showtime-disabled',
+      seats: [{ seatId: 'A-1', tierName: 'VIP', price: 50000, row: 'A', number: '1' }],
+      amount: 50000,
+      consentItems: bookingConsentItems(),
+    };
+
+    const { result } = renderHook(() => usePrepareReservation(), {
+      wrapper: createWrapper(),
+    });
+
+    await expect(result.current.mutateAsync(payload)).rejects.toMatchObject({
+      message: '예매는 5월말 오픈 예정입니다',
+    });
+    expect(apiClient.post).not.toHaveBeenCalled();
   });
 });

@@ -28,7 +28,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
   const [name, setName] = useState(user.name);
   const [phone, setPhone] = useState(user.phone);
   const [isPhoneVerified, setIsPhoneVerified] = useState(true);
-  const [phoneCode, setPhoneCode] = useState('');
+  const [phoneVerificationToken, setPhoneVerificationToken] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
@@ -40,15 +40,15 @@ export function ProfileForm({ user }: ProfileFormProps) {
   useEffect(() => {
     if (phoneChanged) {
       setIsPhoneVerified(false);
-      setPhoneCode('');
+      setPhoneVerificationToken('');
     } else {
       setIsPhoneVerified(true);
     }
   }, [phone, phoneChanged]);
 
-  function handlePhoneVerified(code: string) {
+  function handlePhoneVerified(verificationToken: string) {
     setIsPhoneVerified(true);
-    setPhoneCode(code);
+    setPhoneVerificationToken(verificationToken);
   }
 
   async function handleSave() {
@@ -61,7 +61,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
       if (name !== user.name) payload.name = name;
       if (phoneChanged) {
         payload.phone = phone;
-        payload.phoneVerificationCode = phoneCode;
+        payload.phoneVerificationToken = phoneVerificationToken;
       }
 
       const updatedUser = await apiClient.patch<UserProfile>(
@@ -132,6 +132,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
           onPhoneChange={setPhone}
           onVerified={handlePhoneVerified}
           isVerified={isPhoneVerified}
+          purpose="profile_phone_change"
         />
       </div>
 

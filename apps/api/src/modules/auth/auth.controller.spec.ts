@@ -1,12 +1,36 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Request, Response } from 'express';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { AuthController } from './auth.controller.js';
 import { AUTH_COOKIE_NAME } from '@grabit/shared/constants/index.js';
+
+const authModuleSource = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), 'auth.module.ts'),
+  'utf8',
+);
+const authControllerSource = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), 'auth.controller.ts'),
+  'utf8',
+);
+const excludedLaunchProviderTokens = {
+  strategy: ['Line', 'Strategy'].join(''),
+  passportPackage: ['passport', 'line'].join('-'),
+  authRoute: ['/auth', 'line'].join('/'),
+  envPrefix: ['LINE', 'CLIENT'].join('_'),
+  socialRoute: ['social', 'line'].join('/'),
+};
 
 describe('AuthController', () => {
   let controller: AuthController;
   let mockAuthService: {
+    register: ReturnType<typeof vi.fn>;
+    completeSocialRegistration: ReturnType<typeof vi.fn>;
     findOrCreateSocialUser: ReturnType<typeof vi.fn>;
+    requestEmailVerification: ReturnType<typeof vi.fn>;
+    resendEmailVerification: ReturnType<typeof vi.fn>;
+    verifyEmailVerificationToken: ReturnType<typeof vi.fn>;
   };
   let mockConfigService: {
     get: ReturnType<typeof vi.fn>;
@@ -20,7 +44,12 @@ describe('AuthController', () => {
 
   beforeEach(() => {
     mockAuthService = {
+      register: vi.fn(),
+      completeSocialRegistration: vi.fn(),
       findOrCreateSocialUser: vi.fn(),
+      requestEmailVerification: vi.fn(),
+      resendEmailVerification: vi.fn(),
+      verifyEmailVerificationToken: vi.fn(),
     };
 
     mockConfigService = {
@@ -49,6 +78,63 @@ describe('AuthController', () => {
       mockAuthService as never,
       mockConfigService as never,
     );
+  });
+
+  describe('consent request metadata', () => {
+    it('register passes normalized request IP and user-agent into consent capture metadata', async () => {
+      mockAuthService.register.mockResolvedValue({
+        emailVerificationRequired: true,
+        email: 'user@example.com',
+        verificationExpiresAt: new Date('2026-05-06T05:50:00Z'),
+        user: { id: 'user-1', email: 'user@example.com' },
+      });
+      const req = {
+        ip: '198.51.100.20',
+        get: vi.fn((header: string) => {
+          const headers: Record<string, string> = {
+            'x-forwarded-for': '203.0.113.50, 10.0.0.1',
+            'user-agent': 'Vitest Browser',
+          };
+          return headers[header.toLowerCase()];
+        }),
+      };
+
+      await controller.register({ email: 'user@example.com' } as never, req as Request);
+
+      expect(mockAuthService.register).toHaveBeenCalledWith(
+        { email: 'user@example.com' },
+        { ipAddress: '198.51.100.20', userAgent: 'Vitest Browser' },
+      );
+    });
+
+    it('social registration completion passes request metadata into consent capture metadata', async () => {
+      mockAuthService.completeSocialRegistration.mockResolvedValue({
+        accessToken: 'access-token',
+        refreshToken: 'refresh-token',
+        user: { id: 'user-1', email: 'user@example.com' },
+      });
+      const req = {
+        ip: '198.51.100.2',
+        get: vi.fn((header: string) => {
+          const headers: Record<string, string> = {
+            'user-agent': 'Vitest Social',
+          };
+          return headers[header.toLowerCase()];
+        }),
+      };
+
+      await controller.completeSocialRegistration(
+        { registrationToken: 'registration-token', name: 'User' } as never,
+        req as Request,
+        mockResponse as unknown as Response,
+      );
+
+      expect(mockAuthService.completeSocialRegistration).toHaveBeenCalledWith(
+        'registration-token',
+        { name: 'User' },
+        { ipAddress: '198.51.100.2', userAgent: 'Vitest Social' },
+      );
+    });
   });
 
   describe('setRefreshTokenCookie via socialKakaoCallback — Gap 1', () => {
@@ -269,6 +355,64 @@ describe('AuthController', () => {
           path: '/',
         }),
       );
+    });
+  });
+
+  describe('email verification endpoints', () => {
+    it('POST request delegates to AuthService without returning a raw token', async () => {
+      mockAuthService.requestEmailVerification.mockResolvedValue({
+        expiresAt: new Date('2026-05-06T05:50:00.000Z'),
+      });
+
+      const result = await (controller as unknown as {
+        requestEmailVerification(dto: { email: string; locale: string }): Promise<unknown>;
+      }).requestEmailVerification({ email: 'verify@test.com', locale: 'ko' });
+
+      expect(mockAuthService.requestEmailVerification).toHaveBeenCalledWith('verify@test.com', 'ko');
+      expect(JSON.stringify(result)).not.toContain('token');
+    });
+
+    it('POST resend keeps the resend action immediately visible through a dedicated endpoint', async () => {
+      mockAuthService.resendEmailVerification.mockResolvedValue({
+        expiresAt: new Date('2026-05-06T05:50:00.000Z'),
+      });
+
+      await (controller as unknown as {
+        resendEmailVerification(dto: { email: string; locale: string }): Promise<unknown>;
+      }).resendEmailVerification({ email: 'verify@test.com', locale: 'en' });
+
+      expect(mockAuthService.resendEmailVerification).toHaveBeenCalledWith('verify@test.com', 'en');
+    });
+
+    it('POST verify consumes an opaque token through AuthService', async () => {
+      mockAuthService.verifyEmailVerificationToken.mockResolvedValue({ verified: true });
+
+      const result = await (controller as unknown as {
+        verifyEmailVerification(dto: { token: string }): Promise<unknown>;
+      }).verifyEmailVerification({ token: 'opaque-token' });
+
+      expect(result).toEqual({ verified: true });
+      expect(mockAuthService.verifyEmailVerificationToken).toHaveBeenCalledWith('opaque-token');
+    });
+  });
+
+  describe('launch social provider surface', () => {
+    it('AuthModule registers Kakao, Naver, and Google strategies only', () => {
+      expect(authModuleSource).toContain('KakaoStrategy');
+      expect(authModuleSource).toContain('NaverStrategy');
+      expect(authModuleSource).toContain('GoogleStrategy');
+      expect(authModuleSource).not.toContain(excludedLaunchProviderTokens.strategy);
+      expect(authModuleSource).not.toContain(excludedLaunchProviderTokens.passportPackage);
+      expect(authModuleSource).not.toContain(excludedLaunchProviderTokens.envPrefix);
+    });
+
+    it('AuthController exposes no LINE social route or callback', () => {
+      expect(authControllerSource).toContain('social/kakao');
+      expect(authControllerSource).toContain('social/naver');
+      expect(authControllerSource).toContain('social/google');
+      expect(authControllerSource).not.toContain(excludedLaunchProviderTokens.authRoute);
+      expect(authControllerSource).not.toContain(excludedLaunchProviderTokens.socialRoute);
+      expect(authControllerSource).not.toContain(excludedLaunchProviderTokens.envPrefix);
     });
   });
 

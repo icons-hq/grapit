@@ -6,6 +6,7 @@ import { DRIZZLE } from '../../database/drizzle.provider.js';
 import type { DrizzleDB } from '../../database/drizzle.provider.js';
 import { seatInventories } from '../../database/schema/seat-inventories.js';
 import { BookingGateway } from './booking.gateway.js';
+import { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
 import type { LockSeatResponse, SeatState, SeatStatusResponse, UnlockAllResponse } from '@grabit/shared';
 
 /** Maximum number of seats a user can lock per showtime (D-03) */
@@ -225,6 +226,7 @@ export class BookingService {
     @Inject(REDIS_CLIENT) private readonly redis: IORedis,
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly gateway: BookingGateway,
+    private readonly featureFlags: FeatureFlagsService,
   ) {}
 
   /**
@@ -232,6 +234,8 @@ export class BookingService {
    * Atomically: cleans stale user-seats, checks count, SET NX, SADD + EXPIRE.
    */
   async lockSeat(userId: string, showtimeId: string, seatId: string): Promise<LockSeatResponse> {
+    this.featureFlags.assertBookingEnabled();
+
     // DB-level sold check: defense against Redis TTL expiry race
     const [soldRecord] = await this.db
       .select({ id: seatInventories.id })

@@ -22,6 +22,7 @@ interface SignupStep3Props {
   onComplete: (data: RegisterStep3Input) => void;
   onBack: () => void;
   isSubmitting: boolean;
+  phoneVerificationPurpose?: 'signup' | 'social_registration';
 }
 
 const GENDER_OPTIONS = [
@@ -41,7 +42,12 @@ const COUNTRIES = [
   '기타',
 ];
 
-export function SignupStep3({ onComplete, onBack, isSubmitting }: SignupStep3Props) {
+export function SignupStep3({
+  onComplete,
+  onBack,
+  isSubmitting,
+  phoneVerificationPurpose = 'signup',
+}: SignupStep3Props) {
   const [isPhoneVerified, setIsPhoneVerified] = useState(false);
 
   const form = useForm<RegisterStep3Input>({
@@ -54,7 +60,7 @@ export function SignupStep3({ onComplete, onBack, isSubmitting }: SignupStep3Pro
       birthMonth: '',
       birthDay: '',
       phone: '',
-      phoneVerificationCode: '',
+      phoneVerificationToken: '',
     },
     mode: 'onBlur',
     reValidateMode: 'onChange',
@@ -63,9 +69,11 @@ export function SignupStep3({ onComplete, onBack, isSubmitting }: SignupStep3Pro
   const selectedGender = form.watch('gender');
   const phoneValue = form.watch('phone');
 
-  function handlePhoneVerified(code: string) {
+  function handlePhoneVerified(verificationToken: string) {
     setIsPhoneVerified(true);
-    form.setValue('phoneVerificationCode', code, { shouldValidate: true });
+    form.setValue('phoneVerificationToken', verificationToken, {
+      shouldValidate: true,
+    });
   }
 
   function onSubmit(data: RegisterStep3Input) {
@@ -239,6 +247,7 @@ export function SignupStep3({ onComplete, onBack, isSubmitting }: SignupStep3Pro
               onVerified={handlePhoneVerified}
               isVerified={isPhoneVerified}
               error={form.formState.errors.phone?.message}
+              purpose={phoneVerificationPurpose}
             />
           </div>
         </div>

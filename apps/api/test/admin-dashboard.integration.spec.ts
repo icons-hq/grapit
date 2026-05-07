@@ -96,7 +96,7 @@ describe('AdminDashboardService (integration)', () => {
 
   async function seedVenuePerformanceShowtime(overrides: {
     title?: string;
-    genre?: 'musical' | 'concert' | 'play' | 'exhibition';
+    genre?: 'artist_celebrity' | 'ip_popup';
     showtimeOffsetMs?: number;
   } = {}) {
     const venueId = randomUUID();
@@ -108,7 +108,7 @@ describe('AdminDashboardService (integration)', () => {
     await db.insert(performances).values({
       id: performanceId,
       title: overrides.title ?? 'Test Performance',
-      genre: overrides.genre ?? 'musical',
+      genre: overrides.genre ?? 'artist_celebrity',
       venueId,
       ageRating: '전체관람가',
       status: 'selling',
@@ -200,8 +200,8 @@ describe('AdminDashboardService (integration)', () => {
   it('top10: returns up to 10 performances ordered by booking count desc (last 30d CONFIRMED)', async () => {
     // Performance A: 3 CONFIRMED reservations
     // Performance B: 1 CONFIRMED reservation
-    const a = await seedVenuePerformanceShowtime({ title: 'Performance A', genre: 'musical' });
-    const b = await seedVenuePerformanceShowtime({ title: 'Performance B', genre: 'concert' });
+    const a = await seedVenuePerformanceShowtime({ title: 'Performance A', genre: 'artist_celebrity' });
+    const b = await seedVenuePerformanceShowtime({ title: 'Performance B', genre: 'ip_popup' });
     const userId = await seedUser();
     const now = Date.now();
 

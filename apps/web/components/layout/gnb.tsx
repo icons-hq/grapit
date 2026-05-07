@@ -3,38 +3,30 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter, usePathname } from 'next/navigation';
+import { useLocale } from 'next-intl';
 import { Search, ChevronDown, LogOut, User, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/cn';
+import {
+  getVisibleCopy,
+  resolveVisibleCopyLocale,
+} from '@/lib/i18n/visible-copy';
 import { apiClient } from '@/lib/api-client';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { Button } from '@/components/ui/button';
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-
-import { GENRE_LABELS, type Genre } from '@grabit/shared';
-
-const MAIN_GENRE_TABS: { label: string; slug: Genre }[] = [
-  { label: '뮤지컬', slug: 'musical' },
-  { label: '콘서트', slug: 'concert' },
-  { label: '연극', slug: 'play' },
-  { label: '전시', slug: 'exhibition' },
-  { label: '클래식', slug: 'classic' },
-];
-
-const MORE_GENRES: { label: string; slug: Genre }[] = [
-  { label: '스포츠', slug: 'sports' },
-  { label: '아동/가족', slug: 'kids_family' },
-  { label: '레저/캠핑', slug: 'leisure_camping' },
-];
+  getLocalizedPathname,
+  LocaleSwitcher,
+} from '@/components/i18n/locale-switcher';
+import { resolveLocaleFromPathname } from '@/i18n/routing';
+import { GENRES } from '@grabit/shared';
 
 export function GNB() {
   const router = useRouter();
   const pathname = usePathname();
+  const locale = useLocale();
+  const activeLocale = resolveVisibleCopyLocale(locale);
+  const copy = getVisibleCopy(activeLocale);
   const { user, isInitialized, accessToken, clearAuth } = useAuthStore();
   const [isProfileOpen, setIsProfileOpen] = React.useState(false);
   const [searchValue, setSearchValue] = React.useState('');
@@ -75,7 +67,7 @@ export function GNB() {
     }
     clearAuth();
     toast.success('로그아웃되었습니다');
-    router.push('/');
+    router.push(getLocalizedPathname('/', activeLocale));
   }
 
   function handleSearch() {
@@ -85,7 +77,9 @@ export function GNB() {
       setTimeout(() => setIsShaking(false), 200);
       return;
     }
-    router.push(`/search?q=${encodeURIComponent(trimmed)}`);
+    router.push(
+      `${getLocalizedPathname('/search', activeLocale)}?q=${encodeURIComponent(trimmed)}`,
+    );
   }
 
   function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
@@ -95,7 +89,8 @@ export function GNB() {
   }
 
   function isActiveGenre(slug: string): boolean {
-    return pathname.startsWith(`/genre/${slug}`);
+    const { pathnameWithoutLocale } = resolveLocaleFromPathname(pathname);
+    return pathnameWithoutLocale.startsWith(`/genre/${slug}`);
   }
 
   return (
@@ -104,7 +99,7 @@ export function GNB() {
         <nav className="mx-auto flex h-full max-w-[1200px] items-center px-6">
           {/* Logo */}
           <Link
-            href="/"
+            href={getLocalizedPathname('/', activeLocale)}
             className="mr-8 text-xl font-semibold text-primary"
           >
             Grabit
@@ -112,52 +107,20 @@ export function GNB() {
 
           {/* Genre tabs - hidden on mobile */}
           <div className="hidden items-center gap-1 md:flex">
-            {MAIN_GENRE_TABS.map((tab) => (
+            {GENRES.map((genre) => (
               <Link
-                key={tab.slug}
-                href={`/genre/${tab.slug}`}
+                key={genre}
+                href={getLocalizedPathname(`/genre/${genre}`, activeLocale)}
                 className={cn(
                   'px-3 py-2 text-base transition-colors',
-                  isActiveGenre(tab.slug)
+                  isActiveGenre(genre)
                     ? 'border-b-2 border-primary font-semibold text-primary'
                     : 'text-gray-900 hover:text-primary',
                 )}
               >
-                {tab.label}
+                {copy.genres[genre]}
               </Link>
             ))}
-
-            {/* More genres dropdown */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  className={cn(
-                    'flex items-center gap-1 px-3 py-2 text-base transition-colors',
-                    MORE_GENRES.some((g) => isActiveGenre(g.slug))
-                      ? 'border-b-2 border-primary font-semibold text-primary'
-                      : 'text-gray-900 hover:text-primary',
-                  )}
-                >
-                  더보기
-                  <ChevronDown className="h-4 w-4" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent className="w-[180px]" align="start">
-                {MORE_GENRES.map((genre) => (
-                  <DropdownMenuItem key={genre.slug} asChild>
-                    <Link
-                      href={`/genre/${genre.slug}`}
-                      className={cn(
-                        'w-full',
-                        isActiveGenre(genre.slug) && 'font-semibold text-primary',
-                      )}
-                    >
-                      {genre.label}
-                    </Link>
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
           </div>
 
           {/* Spacer */}
@@ -176,8 +139,8 @@ export function GNB() {
                 ref={searchInputRef}
                 type="text"
                 role="searchbox"
-                aria-label="공연 검색"
-                placeholder="공연명, 아티스트를 검색하세요"
+                aria-label={copy.nav.searchAriaLabel}
+                placeholder={copy.nav.searchPlaceholder}
                 value={searchValue}
                 onChange={(e) => setSearchValue(e.target.value)}
                 onKeyDown={handleSearchKeyDown}
@@ -191,7 +154,7 @@ export function GNB() {
                     searchInputRef.current?.focus();
                   }}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                  aria-label="검색어 지우기"
+                  aria-label={copy.nav.clearSearch}
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -200,6 +163,10 @@ export function GNB() {
           </div>
 
           {/* Auth area */}
+          <div className="mr-2 hidden md:block">
+            <LocaleSwitcher />
+          </div>
+
           {isAuthenticated ? (
             <div ref={profileRef} className="relative hidden md:block">
               <button
@@ -219,19 +186,19 @@ export function GNB() {
               {isProfileOpen && (
                 <div className="absolute right-0 top-full mt-2 w-40 rounded-lg border border-gray-200 bg-white py-1 shadow-lg">
                   <Link
-                    href="/mypage"
+                    href={getLocalizedPathname('/mypage', activeLocale)}
                     className="flex items-center gap-2 px-4 py-2 text-sm text-gray-900 hover:bg-gray-100"
                     onClick={() => setIsProfileOpen(false)}
                   >
                     <User className="h-4 w-4" />
-                    마이페이지
+                    {copy.nav.mypage}
                   </Link>
                   <button
                     className="flex w-full items-center gap-2 px-4 py-2 text-sm text-gray-500 hover:bg-gray-100"
                     onClick={handleLogout}
                   >
                     <LogOut className="h-4 w-4" />
-                    로그아웃
+                    {copy.nav.logout}
                   </button>
                 </div>
               )}
@@ -242,7 +209,9 @@ export function GNB() {
               asChild
               className="hidden text-base text-gray-900 hover:text-primary md:inline-flex"
             >
-              <Link href="/auth">로그인</Link>
+              <Link href={getLocalizedPathname('/auth', activeLocale)}>
+                {copy.nav.loginSignup}
+              </Link>
             </Button>
           )}
 

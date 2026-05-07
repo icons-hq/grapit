@@ -13,6 +13,7 @@ import {
   type PerformanceWithDetails,
   GENRES,
   GENRE_LABELS,
+  type EventCategory,
 } from '@grabit/shared';
 import {
   useCreatePerformance,
@@ -25,6 +26,7 @@ import { SvgPreview } from '@/components/admin/svg-preview';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { formatAdminKstDate, formatAdminKstDateTime } from '@/lib/admin-datetime';
 import {
   Select,
   SelectContent,
@@ -41,19 +43,23 @@ const AGE_RATINGS = [
   '만 19세 이상',
 ] as const;
 
+function isEventCategory(genre: string): genre is EventCategory {
+  return (GENRES as readonly string[]).includes(genre);
+}
+
 function mapToFormValues(
   data: PerformanceWithDetails,
 ): CreatePerformanceFormInput {
   return {
     title: data.title,
-    genre: data.genre,
+    genre: isEventCategory(data.genre) ? data.genre : 'artist_celebrity',
     subcategory: data.subcategory,
     venueName: data.venue?.name ?? '',
     venueAddress: data.venue?.address,
     posterUrl: data.posterUrl,
     description: data.description,
-    startDate: data.startDate.split('T')[0],
-    endDate: data.endDate.split('T')[0],
+    startDate: formatAdminKstDate(data.startDate),
+    endDate: formatAdminKstDate(data.endDate),
     runtime: data.runtime,
     ageRating: data.ageRating,
     salesInfo: data.salesInfo,
@@ -63,7 +69,7 @@ function mapToFormValues(
       sortOrder: t.sortOrder,
     })),
     showtimes: data.showtimes.map((s) => ({
-      dateTime: s.dateTime,
+      dateTime: formatAdminKstDateTime(s.dateTime),
     })),
     castings: data.castings.map((c) => ({
       actorName: c.actorName,

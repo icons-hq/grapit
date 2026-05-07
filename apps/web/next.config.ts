@@ -1,6 +1,7 @@
 import type { NextConfig } from 'next';
 import { loadEnvConfig } from '@next/env';
 import { withSentryConfig } from '@sentry/nextjs';
+import createNextIntlPlugin from 'next-intl/plugin';
 import { resolve } from 'path';
 
 // Load .env from monorepo root (convention: single .env at monorepo root)
@@ -58,7 +59,9 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default withSentryConfig(nextConfig, {
+const withNextIntl = createNextIntlPlugin('./i18n/request.ts');
+
+export default withSentryConfig(withNextIntl(nextConfig), {
   org: process.env.SENTRY_ORG,
   project: process.env.SENTRY_PROJECT,
   silent: !process.env.CI,

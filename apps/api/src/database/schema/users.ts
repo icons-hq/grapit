@@ -1,6 +1,7 @@
 import { pgTable, uuid, varchar, boolean, timestamp, pgEnum } from 'drizzle-orm/pg-core';
 
 export const genderEnum = pgEnum('gender', ['male', 'female', 'unspecified']);
+export const localeEnum = pgEnum('locale', ['ko', 'en', 'th', 'zh-CN', 'zh-TW']);
 
 export const users = pgTable('users', {
   id: uuid('id').defaultRandom().primaryKey(),
@@ -10,6 +11,7 @@ export const users = pgTable('users', {
   phone: varchar('phone', { length: 20 }).notNull(),
   gender: genderEnum('gender').notNull(),
   country: varchar('country', { length: 100 }).notNull().default('KR'),
+  preferredLocale: localeEnum('preferred_locale').default('ko'),
   birthDate: varchar('birth_date', { length: 10 }).notNull(), // YYYY-MM-DD format
   isPhoneVerified: boolean('is_phone_verified').notNull().default(false),
   isEmailVerified: boolean('is_email_verified').notNull().default(false),

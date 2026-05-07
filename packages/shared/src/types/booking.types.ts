@@ -1,4 +1,6 @@
 // Real-time seat types (Phase 3 - booking gateway/service)
+import type { ConsentCaptureItem } from '../schemas/consent.schema';
+
 export type SeatState = 'available' | 'locked' | 'sold';
 
 export interface LockSeatResponse {
@@ -90,6 +92,7 @@ export interface PrepareReservationRequest {
   showtimeId: string;
   seats: SeatSelection[];
   amount: number;
+  consentItems: Array<ConsentCaptureItem & { sourceFlow: 'booking' }>;
 }
 
 export interface PrepareReservationResponse {

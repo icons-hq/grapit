@@ -1,11 +1,19 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { ConflictException, GoneException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  GoneException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import * as argon2 from 'argon2';
 import { createHash, randomUUID } from 'node:crypto';
 import { AuthService } from './auth.service.js';
 import type { RegisterBody } from './dto/register.dto.js';
+import type { ConsentService } from '../consent/consent.service.js';
+import type { AuthConsentCaptureItem } from '@grabit/shared';
 
 // Hash password once (argon2 is expensive)
 let preHashedPassword: string;
@@ -18,11 +26,41 @@ const mockRegisterDto: RegisterBody = {
   country: 'KR',
   birthDate: '1995-05-15',
   phone: '010-9876-5432',
-  phoneVerificationCode: '000000',
+  phoneVerificationToken: 'signed-phone-token',
   termsOfService: true,
   privacyPolicy: true,
   marketingConsent: false,
+  consentItems: makeConsentItems(),
+  locale: 'ko',
 };
+
+function makeConsentItems(
+  overrides: Partial<Record<AuthConsentCaptureItem['key'], boolean>> = {},
+  sourceFlow: 'signup' | 'social_completion' = 'signup',
+): AuthConsentCaptureItem[] {
+  return [
+    'terms',
+    'privacy',
+    'pipa_required',
+    'cross_border_transfer',
+    'pdpa_notice',
+    'pipl_notice',
+    'marketing',
+  ].map((key) => ({
+    key: key as AuthConsentCaptureItem['key'],
+    version: '2026-05-01',
+    language: 'ko',
+    accepted: overrides[key as AuthConsentCaptureItem['key']] ?? true,
+    required: key !== 'marketing',
+    sourceFlow,
+  }));
+}
+
+function makeSocialConsentItems(
+  overrides: Partial<Record<AuthConsentCaptureItem['key'], boolean>> = {},
+): AuthConsentCaptureItem[] {
+  return makeConsentItems(overrides, 'social_completion');
+}
 
 function createMockUser() {
   return {
@@ -54,6 +92,26 @@ function makeMockInsertChain() {
   };
 }
 
+function makeMockUpdateChain(returningRows: Array<{ id: string }> = [{ id: randomUUID() }]) {
+  const returning = vi.fn().mockResolvedValue(returningRows);
+  const where = vi.fn().mockReturnValue({ returning });
+  const set = vi.fn().mockReturnValue({ where });
+  return { set, where, returning };
+}
+
+function containsPrimitiveValue(value: unknown, needle: string, seen = new Set<object>()): boolean {
+  if (value === needle) return true;
+  if (value === null || typeof value !== 'object') return false;
+  if (seen.has(value)) return false;
+  seen.add(value);
+  if (Array.isArray(value)) {
+    return value.some((item) => containsPrimitiveValue(item, needle, seen));
+  }
+  return Object.values(value as Record<string, unknown>).some((item) =>
+    containsPrimitiveValue(item, needle, seen),
+  );
+}
+
 describe('AuthService', () => {
   let authService: AuthService;
   let mockUser: ReturnType<typeof createMockUser>;
@@ -72,19 +130,25 @@ describe('AuthService', () => {
     insert: ReturnType<typeof vi.fn>;
     select: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
+    transaction: ReturnType<typeof vi.fn>;
   };
   let mockConfigService: {
     get: ReturnType<typeof vi.fn>;
   };
   let mockEmailService: {
     sendPasswordResetEmail: ReturnType<typeof vi.fn>;
+    sendEmailVerificationEmail: ReturnType<typeof vi.fn>;
   };
-  // [hotfix 260427-kch] hoisted so register/completeSocialRegistration tests
-  // can override verifyCode / isPhoneVerified per-case.
+  let mockConsentService: {
+    assertAgeAllowed: ReturnType<typeof vi.fn>;
+    assertRequiredConsents: ReturnType<typeof vi.fn>;
+    captureConsent: ReturnType<typeof vi.fn>;
+  };
   let mockSmsService: {
     verifyCode: ReturnType<typeof vi.fn>;
     sendVerificationCode: ReturnType<typeof vi.fn>;
     isPhoneVerified: ReturnType<typeof vi.fn>;
+    verifyPhoneVerificationToken: ReturnType<typeof vi.fn>;
   };
 
   beforeAll(async () => {
@@ -132,24 +196,29 @@ describe('AuthService', () => {
           where: vi.fn().mockResolvedValue([]),
         }),
       }),
-      update: vi.fn().mockReturnValue({
-        set: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([]),
-        }),
-      }),
+      update: vi.fn().mockImplementation(() => makeMockUpdateChain()),
+      transaction: vi.fn(async (callback: (tx: typeof mockDb) => Promise<unknown>) =>
+        callback(mockDb),
+      ),
     };
 
     mockSmsService = {
       verifyCode: vi.fn().mockResolvedValue({ verified: true }),
       sendVerificationCode: vi.fn().mockResolvedValue({ success: true, message: '' }),
-      // [hotfix 260427-kch] idempotency probe — defaults to false; specific
-      // tests override per case.
       isPhoneVerified: vi.fn().mockResolvedValue(false),
+      verifyPhoneVerificationToken: vi.fn(),
     };
 
     // REVIEWS.md HIGH-03: capture reset link via EmailService spy
     mockEmailService = {
       sendPasswordResetEmail: vi.fn().mockResolvedValue({ success: true }),
+      sendEmailVerificationEmail: vi.fn().mockResolvedValue({ success: true }),
+    };
+
+    mockConsentService = {
+      assertAgeAllowed: vi.fn(),
+      assertRequiredConsents: vi.fn().mockResolvedValue(undefined),
+      captureConsent: vi.fn().mockResolvedValue(undefined),
     };
 
     // Instantiate AuthService directly (no NestJS DI overhead)
@@ -160,11 +229,13 @@ describe('AuthService', () => {
       mockSmsService as any,
       mockEmailService as any,
       mockDb as any,
+      mockConsentService as unknown as ConsentService,
     );
   });
 
   describe('register', () => {
-    it('should create a user with argon2-hashed password and return AuthResponse', async () => {
+    it('should create a user with argon2-hashed password and return email verification pending response', async () => {
+      const beforeRegister = Date.now();
       mockUserRepo.findByEmail.mockResolvedValue(null);
       mockUserRepo.create.mockResolvedValue({
         ...mockUser,
@@ -175,10 +246,21 @@ describe('AuthService', () => {
 
       const result = await authService.register(mockRegisterDto);
 
-      expect(result).toHaveProperty('accessToken');
-      expect(result).toHaveProperty('refreshToken');
-      expect(result).toHaveProperty('user');
-      expect(result.user.email).toBe(mockRegisterDto.email);
+      expect(result).toMatchObject({
+        emailVerificationRequired: true,
+        email: mockRegisterDto.email,
+        user: expect.objectContaining({ email: mockRegisterDto.email }),
+      });
+      expect(result).not.toHaveProperty('accessToken');
+      expect(result).not.toHaveProperty('refreshToken');
+      expect(result.verificationExpiresAt.getTime()).toBeGreaterThanOrEqual(
+        beforeRegister + 30 * 60 * 1000,
+      );
+      expect(mockEmailService.sendEmailVerificationEmail).toHaveBeenCalledWith(
+        mockRegisterDto.email,
+        expect.stringContaining('/auth/verify-email?token='),
+        'ko',
+      );
 
       // Verify password was hashed with argon2
       const createCall = mockUserRepo.create.mock.calls[0]?.[0];
@@ -200,11 +282,61 @@ describe('AuthService', () => {
       );
     });
 
-    it('[hotfix 260427-kch] verifyCode가 GoneException throw, isPhoneVerified true이면 정상 가입 (프론트 이중 호출 회귀 방지)', async () => {
-      mockSmsService.verifyCode.mockRejectedValue(
-        new GoneException('인증번호가 만료되었습니다. 재발송해주세요'),
+    it('blocks signup when required cross-border consent is missing', async () => {
+      const dto = {
+        ...mockRegisterDto,
+        consentItems: makeConsentItems({ cross_border_transfer: false }),
+      };
+      mockUserRepo.findByEmail.mockResolvedValue(null);
+      mockUserRepo.create.mockResolvedValue({
+        ...mockUser,
+        id: randomUUID(),
+        email: dto.email,
+        name: dto.name,
+      });
+      mockConsentService.assertRequiredConsents.mockRejectedValue(
+        new BadRequestException('국외이전 동의가 필요합니다. 동의하지 않으면 가입 또는 팬미팅 예매를 진행할 수 없습니다.'),
       );
-      mockSmsService.isPhoneVerified.mockResolvedValue(true);
+
+      await expect(authService.register(dto)).rejects.toThrow(
+        '국외이전 동의가 필요합니다. 동의하지 않으면 가입 또는 팬미팅 예매를 진행할 수 없습니다.',
+      );
+
+      expect(mockConsentService.assertRequiredConsents).toHaveBeenCalledWith({
+        items: dto.consentItems,
+      });
+      expect(mockUserRepo.create).not.toHaveBeenCalled();
+    });
+
+    it('captures itemized signup consent rows after creating the user', async () => {
+      const userId = randomUUID();
+      mockUserRepo.findByEmail.mockResolvedValue(null);
+      mockUserRepo.create.mockResolvedValue({
+        ...mockUser,
+        id: userId,
+        email: mockRegisterDto.email,
+        name: mockRegisterDto.name,
+      });
+
+      await authService.register(mockRegisterDto, {
+        ipAddress: '203.0.113.10',
+        userAgent: 'Vitest Browser',
+      });
+
+      expect(mockConsentService.assertAgeAllowed).toHaveBeenCalledWith(mockRegisterDto.birthDate);
+      expect(mockConsentService.captureConsent).toHaveBeenCalledWith(
+        userId,
+        {
+          birthDate: mockRegisterDto.birthDate,
+          items: mockRegisterDto.consentItems,
+          sourceFlow: 'signup',
+        },
+        { ipAddress: '203.0.113.10', userAgent: 'Vitest Browser' },
+        expect.anything(),
+      );
+    }, 15000);
+
+    it('purpose-bound phone verification token이 있으면 OTP를 재검증하지 않고 가입한다', async () => {
       mockUserRepo.findByEmail.mockResolvedValue(null);
       mockUserRepo.create.mockResolvedValue({
         ...mockUser,
@@ -216,20 +348,22 @@ describe('AuthService', () => {
       const result = await authService.register(mockRegisterDto);
 
       expect(result.user.email).toBe(mockRegisterDto.email);
-      expect(mockSmsService.isPhoneVerified).toHaveBeenCalledWith(
-        mockRegisterDto.phone,
+      expect(mockSmsService.verifyPhoneVerificationToken).toHaveBeenCalledWith(
+        mockRegisterDto.phoneVerificationToken,
+        { phone: mockRegisterDto.phone, purpose: 'signup' },
       );
+      expect(mockSmsService.verifyCode).not.toHaveBeenCalled();
+      expect(mockSmsService.isPhoneVerified).not.toHaveBeenCalled();
       expect(mockUserRepo.create).toHaveBeenCalled();
     }, 15000);
 
-    it('[hotfix 260427-kch] verifyCode가 GoneException, isPhoneVerified false이면 410 propagate (실제 만료)', async () => {
-      mockSmsService.verifyCode.mockRejectedValue(
-        new GoneException('인증번호가 만료되었습니다. 재발송해주세요'),
-      );
-      mockSmsService.isPhoneVerified.mockResolvedValue(false);
+    it('invalid phone verification token이면 가입을 거부한다', async () => {
+      mockSmsService.verifyPhoneVerificationToken.mockImplementation(() => {
+        throw new BadRequestException('전화번호 인증이 완료되지 않았습니다');
+      });
 
       await expect(authService.register(mockRegisterDto)).rejects.toThrow(
-        GoneException,
+        BadRequestException,
       );
       expect(mockUserRepo.create).not.toHaveBeenCalled();
     });
@@ -237,13 +371,27 @@ describe('AuthService', () => {
 
   describe('validateUser', () => {
     it('should return user without passwordHash for valid credentials', async () => {
-      mockUserRepo.findByEmail.mockResolvedValue(mockUser);
+      mockUserRepo.findByEmail.mockResolvedValue({
+        ...mockUser,
+        isEmailVerified: true,
+      });
 
       const result = await authService.validateUser('test@test.com', 'Test1234!');
 
       expect(result).toBeDefined();
       expect(result.email).toBe('test@test.com');
       expect(result).not.toHaveProperty('passwordHash');
+    }, 10000);
+
+    it('should throw ForbiddenException when email is not verified', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue({
+        ...mockUser,
+        isEmailVerified: false,
+      });
+
+      await expect(
+        authService.validateUser('test@test.com', 'Test1234!'),
+      ).rejects.toThrow(ForbiddenException);
     }, 10000);
 
     it('should throw UnauthorizedException for wrong password', async () => {
@@ -290,6 +438,40 @@ describe('AuthService', () => {
       const rawToken = 'valid-raw-refresh-token';
       const tokenHash = createHash('sha256').update(rawToken).digest('hex');
       const family = randomUUID();
+      const tokenId = randomUUID();
+
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([
+            {
+              id: tokenId,
+              userId: mockUser.id,
+              tokenHash,
+              family,
+              expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+              createdAt: new Date(),
+              revokedAt: null,
+            },
+          ]),
+        }),
+      });
+
+      mockDb.update.mockImplementation(() => makeMockUpdateChain());
+
+      mockUserRepo.findById.mockResolvedValue(mockUser);
+
+      const result = await authService.refreshTokens(rawToken);
+
+      expect(result).toHaveProperty('accessToken');
+      expect(result).toHaveProperty('refreshToken');
+      expect(result.refreshToken).not.toBe(rawToken);
+      expect(mockDb.transaction).toHaveBeenCalled();
+    });
+
+    it('conditional revoke 0 rows이면 concurrent reuse로 보고 family를 폐기한다', async () => {
+      const rawToken = 'raced-refresh-token';
+      const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+      const family = randomUUID();
 
       mockDb.select.mockReturnValue({
         from: vi.fn().mockReturnValue({
@@ -306,20 +488,22 @@ describe('AuthService', () => {
           ]),
         }),
       });
-
-      mockDb.update.mockReturnValue({
-        set: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([]),
-        }),
-      });
-
       mockUserRepo.findById.mockResolvedValue(mockUser);
+      const conditionalRevoke = makeMockUpdateChain([]);
+      const familyWhere = vi.fn().mockResolvedValue([]);
+      const familySet = vi.fn().mockReturnValue({ where: familyWhere });
+      mockDb.update
+        .mockReturnValueOnce({ set: conditionalRevoke.set })
+        .mockReturnValueOnce({ set: familySet });
 
-      const result = await authService.refreshTokens(rawToken);
+      await expect(authService.refreshTokens(rawToken)).rejects.toThrow(
+        UnauthorizedException,
+      );
 
-      expect(result).toHaveProperty('accessToken');
-      expect(result).toHaveProperty('refreshToken');
-      expect(result.refreshToken).not.toBe(rawToken);
+      expect(conditionalRevoke.returning).toHaveBeenCalledWith({
+        id: expect.anything(),
+      });
+      expect(containsPrimitiveValue(familyWhere.mock.calls, family)).toBe(true);
     });
 
     it('should revoke entire token family on reuse (theft detection)', async () => {
@@ -356,6 +540,39 @@ describe('AuthService', () => {
       expect(mockDb.update).toHaveBeenCalled();
     });
 
+    it('reused revoked token revokes only the reused family, not every user session', async () => {
+      const rawToken = 'reused-token-family-only';
+      const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+      const family = randomUUID();
+      const whereMock = vi.fn().mockResolvedValue([]);
+      const setMock = vi.fn().mockReturnValue({ where: whereMock });
+
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([
+            {
+              id: randomUUID(),
+              userId: mockUser.id,
+              tokenHash,
+              family,
+              expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+              createdAt: new Date(),
+              revokedAt: new Date(),
+            },
+          ]),
+        }),
+      });
+      mockDb.update.mockReturnValue({ set: setMock });
+
+      await expect(authService.refreshTokens(rawToken)).rejects.toThrow(
+        UnauthorizedException,
+      );
+
+      expect(whereMock).toHaveBeenCalledTimes(1);
+      expect(containsPrimitiveValue(whereMock.mock.calls, family)).toBe(true);
+      expect(containsPrimitiveValue(whereMock.mock.calls, mockUser.id)).toBe(false);
+    });
+
     it('should throw UnauthorizedException for expired token', async () => {
       const rawToken = 'expired-token';
       const tokenHash = createHash('sha256').update(rawToken).digest('hex');
@@ -379,6 +596,102 @@ describe('AuthService', () => {
       await expect(authService.refreshTokens(rawToken)).rejects.toThrow(
         UnauthorizedException,
       );
+    });
+  });
+
+  describe('refresh token family limit', () => {
+    function authFamilyLimitApi() {
+      return authService as unknown as {
+        enforceRefreshFamilyLimit(
+          userId: string,
+          maxFamilies?: number,
+        ): Promise<{ revokedFamily: string | null; notice?: string }>;
+      };
+    }
+
+    const familyRows = (families: Array<{ family: string; createdAt: Date }>) =>
+      families.map((row) => ({
+        id: randomUUID(),
+        userId: mockUser.id,
+        tokenHash: createHash('sha256').update(row.family).digest('hex'),
+        family: row.family,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        revokedAt: null,
+        createdAt: row.createdAt,
+      }));
+
+    it('keeps one to three active refresh-token families without revocation', async () => {
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue(
+            familyRows([
+              { family: 'family-1', createdAt: new Date('2026-05-01T00:00:00Z') },
+              { family: 'family-2', createdAt: new Date('2026-05-02T00:00:00Z') },
+              { family: 'family-3', createdAt: new Date('2026-05-03T00:00:00Z') },
+            ]),
+          ),
+        }),
+      });
+
+      const result = await authFamilyLimitApi().enforceRefreshFamilyLimit(mockUser.id);
+
+      expect(result).toEqual({ revokedFamily: null });
+      expect(mockDb.update).not.toHaveBeenCalled();
+    });
+
+    it('revokes the oldest active family on the fourth login and returns the user-visible notice', async () => {
+      const updateWhereMock = vi.fn().mockResolvedValue([]);
+      const updateSetMock = vi.fn().mockReturnValue({ where: updateWhereMock });
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue(
+            familyRows([
+              { family: 'oldest-family', createdAt: new Date('2026-05-01T00:00:00Z') },
+              { family: 'family-2', createdAt: new Date('2026-05-02T00:00:00Z') },
+              { family: 'family-3', createdAt: new Date('2026-05-03T00:00:00Z') },
+              { family: 'newest-family', createdAt: new Date('2026-05-04T00:00:00Z') },
+            ]),
+          ),
+        }),
+      });
+      mockDb.update.mockReturnValue({ set: updateSetMock });
+
+      const result = await authFamilyLimitApi().enforceRefreshFamilyLimit(mockUser.id);
+
+      expect(result).toEqual({
+        revokedFamily: 'oldest-family',
+        notice: '다른 기기에서 로그인되어 가장 오래된 세션이 종료되었습니다.',
+      });
+      expect(updateSetMock).toHaveBeenCalledWith({ revokedAt: expect.any(Date) });
+      expect(containsPrimitiveValue(updateWhereMock.mock.calls, 'oldest-family')).toBe(true);
+    });
+
+    it('refresh within the same family does not consume a new device slot', async () => {
+      const rawToken = 'valid-refresh-same-family';
+      const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+      const family = randomUUID();
+
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([
+            {
+              id: randomUUID(),
+              userId: mockUser.id,
+              tokenHash,
+              family,
+              expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+              createdAt: new Date(),
+              revokedAt: null,
+            },
+          ]),
+        }),
+      });
+      mockUserRepo.findById.mockResolvedValue(mockUser);
+
+      await authService.refreshTokens(rawToken);
+
+      expect(mockDb.insert).toHaveBeenCalledTimes(1);
+      expect(mockDb.select).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -416,6 +729,89 @@ describe('AuthService', () => {
       ).resolves.not.toThrow();
 
       expect(mockJwtService.signAsync).toHaveBeenCalled();
+    });
+  });
+
+  describe('email verification', () => {
+    function authEmailVerificationApi() {
+      return authService as unknown as {
+        requestEmailVerification(email: string, locale?: string): Promise<{ expiresAt: Date }>;
+        resendEmailVerification(email: string, locale?: string): Promise<{ expiresAt: Date }>;
+        verifyEmailVerificationToken(token: string): Promise<{ verified: true }>;
+      };
+    }
+
+    it('issues an opaque hashed token that expires in 30 minutes and does not expose the raw token in the return value', async () => {
+      vi.useFakeTimers();
+      const now = new Date('2026-05-06T05:20:00.000Z');
+      vi.setSystemTime(now);
+      mockUserRepo.findByEmail.mockResolvedValue({ ...mockUser, email: 'verify@test.com' });
+
+      try {
+        const result = await authEmailVerificationApi().requestEmailVerification('verify@test.com', 'ko');
+
+        expect(result.expiresAt.toISOString()).toBe('2026-05-06T05:50:00.000Z');
+        expect(mockDb.insert).toHaveBeenCalledWith(expect.anything());
+        const insertedValues = mockDb.insert.mock.results[0]?.value.values.mock.calls[0]?.[0] as {
+          tokenHash?: string;
+          expiresAt?: Date;
+        };
+        expect(insertedValues.tokenHash).toMatch(/^[a-f0-9]{64}$/);
+        expect(JSON.stringify(result)).not.toContain(insertedValues.tokenHash);
+        expect(mockEmailService.sendEmailVerificationEmail).toHaveBeenCalledWith(
+          'verify@test.com',
+          expect.stringContaining('/auth/verify-email?token='),
+          'ko',
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('resend is callable immediately and creates a newer token for latest-token-wins', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue({ ...mockUser, email: 'resend@test.com' });
+
+      await authEmailVerificationApi().requestEmailVerification('resend@test.com', 'en');
+      await authEmailVerificationApi().resendEmailVerification('resend@test.com', 'en');
+
+      expect(mockDb.insert).toHaveBeenCalledTimes(2);
+      expect(mockEmailService.sendEmailVerificationEmail).toHaveBeenCalledTimes(2);
+    });
+
+    it('rejects consumed, expired, and superseded verification tokens with distinct messages', async () => {
+      const token = 'opaque-email-verification-token';
+      const tokenHash = createHash('sha256').update(token).digest('hex');
+      const latestHash = createHash('sha256').update('latest-token').digest('hex');
+      const baseRecord = {
+        id: randomUUID(),
+        userId: mockUser.id,
+        email: mockUser.email,
+        purpose: 'signup',
+        tokenHash,
+        expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+        consumedAt: null,
+        createdAt: new Date('2026-05-06T05:00:00.000Z'),
+      };
+
+      const selectWhere = vi
+        .fn()
+        .mockResolvedValueOnce([{ ...baseRecord, consumedAt: new Date() }])
+        .mockResolvedValueOnce([{ ...baseRecord, expiresAt: new Date(Date.now() - 1000) }])
+        .mockResolvedValueOnce([baseRecord])
+        .mockResolvedValueOnce([{ ...baseRecord, tokenHash: latestHash, createdAt: new Date('2026-05-06T05:01:00.000Z') }]);
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({ where: selectWhere }),
+      });
+
+      await expect(authEmailVerificationApi().verifyEmailVerificationToken(token)).rejects.toThrow(
+        /이미 사용된 인증 링크/,
+      );
+      await expect(authEmailVerificationApi().verifyEmailVerificationToken(token)).rejects.toThrow(
+        /인증 링크가 만료되었습니다/,
+      );
+      await expect(authEmailVerificationApi().verifyEmailVerificationToken(token)).rejects.toThrow(
+        /새 인증 메일을 요청/,
+      );
     });
   });
 
@@ -561,16 +957,30 @@ describe('AuthService', () => {
           country: 'KR',
           birthDate: '1995-05-15',
           phone: '010-1234-5678',
+          phoneVerificationToken: 'signed-social-phone-token',
           termsOfService: true,
           privacyPolicy: true,
           marketingConsent: false,
+          consentItems: makeSocialConsentItems(),
         },
+        { ipAddress: '203.0.113.20', userAgent: 'Vitest Social' },
       );
 
       expect(result).toHaveProperty('accessToken');
       expect(result).toHaveProperty('refreshToken');
       expect(result).toHaveProperty('user');
       expect(mockUserRepo.create).toHaveBeenCalled();
+      expect(mockConsentService.captureConsent).toHaveBeenCalledWith(
+        newUserId,
+        expect.objectContaining({
+          items: expect.arrayContaining([
+            expect.objectContaining({ sourceFlow: 'social_completion' }),
+          ]),
+          sourceFlow: 'social_completion',
+        }),
+        { ipAddress: '203.0.113.20', userAgent: 'Vitest Social' },
+        expect.anything(),
+      );
     });
 
     it('should throw UnauthorizedException for expired registrationToken', async () => {
@@ -583,14 +993,16 @@ describe('AuthService', () => {
           country: 'KR',
           birthDate: '1995-05-15',
           phone: '010-1234-5678',
+          phoneVerificationToken: 'signed-social-phone-token',
           termsOfService: true,
           privacyPolicy: true,
           marketingConsent: false,
+          consentItems: makeSocialConsentItems(),
         }),
       ).rejects.toThrow(UnauthorizedException);
     });
 
-    it('should link accounts when social email matches existing user without social link', async () => {
+    it('rejects social completion when email already belongs to an existing account', async () => {
       const existingUser = createMockUser();
 
       // Verify registration token
@@ -605,34 +1017,32 @@ describe('AuthService', () => {
       // Existing user found with same email
       mockUserRepo.findByEmail.mockResolvedValue(existingUser);
 
-      const result = await authService.completeSocialRegistration(
-        'valid-registration-token',
-        {
-          name: existingUser.name,
-          gender: existingUser.gender,
-          country: existingUser.country,
-          birthDate: existingUser.birthDate,
-          phone: existingUser.phone,
-          termsOfService: true,
-          privacyPolicy: true,
-          marketingConsent: false,
-        },
-      );
+      await expect(
+        authService.completeSocialRegistration(
+          'valid-registration-token',
+          {
+            name: existingUser.name,
+            gender: existingUser.gender,
+            country: existingUser.country,
+            birthDate: existingUser.birthDate,
+            phone: existingUser.phone,
+            phoneVerificationToken: 'signed-social-phone-token',
+            termsOfService: true,
+            privacyPolicy: true,
+            marketingConsent: false,
+            consentItems: makeSocialConsentItems(),
+          },
+          { ipAddress: '203.0.113.30', userAgent: 'Vitest Link' },
+        ),
+      ).rejects.toThrow(ConflictException);
 
-      expect(result).toHaveProperty('accessToken');
-      expect(result).toHaveProperty('user');
-      // Should NOT create a new user -- should link to existing
       expect(mockUserRepo.create).not.toHaveBeenCalled();
-      // Should insert social account link
-      expect(mockDb.insert).toHaveBeenCalled();
+      expect(mockDb.insert).not.toHaveBeenCalled();
+      expect(mockConsentService.captureConsent).not.toHaveBeenCalled();
     });
 
-    it('[hotfix 260427-kch] verifyCode가 GoneException, isPhoneVerified true이면 정상 가입 (소셜 회귀 방지)', async () => {
+    it('purpose-bound phone verification token이 있으면 social registration을 완료한다', async () => {
       const newUserId = randomUUID();
-      mockSmsService.verifyCode.mockRejectedValue(
-        new GoneException('인증번호가 만료되었습니다. 재발송해주세요'),
-      );
-      mockSmsService.isPhoneVerified.mockResolvedValue(true);
       mockJwtService.verifyAsync.mockResolvedValue({
         provider: 'kakao',
         providerId: '12345',
@@ -657,22 +1067,28 @@ describe('AuthService', () => {
           country: 'KR',
           birthDate: '1995-05-15',
           phone: '010-1234-5678',
+          phoneVerificationToken: 'signed-social-phone-token',
           termsOfService: true,
           privacyPolicy: true,
           marketingConsent: false,
+          consentItems: makeSocialConsentItems(),
         },
       );
 
       expect(result).toHaveProperty('accessToken');
-      expect(mockSmsService.isPhoneVerified).toHaveBeenCalledWith('010-1234-5678');
+      expect(mockSmsService.verifyPhoneVerificationToken).toHaveBeenCalledWith(
+        'signed-social-phone-token',
+        { phone: '010-1234-5678', purpose: 'social_registration' },
+      );
+      expect(mockSmsService.verifyCode).not.toHaveBeenCalled();
+      expect(mockSmsService.isPhoneVerified).not.toHaveBeenCalled();
       expect(mockUserRepo.create).toHaveBeenCalled();
     });
 
-    it('[hotfix 260427-kch] verifyCode가 GoneException, isPhoneVerified false이면 410 propagate (소셜, 실제 만료)', async () => {
-      mockSmsService.verifyCode.mockRejectedValue(
-        new GoneException('인증번호가 만료되었습니다. 재발송해주세요'),
-      );
-      mockSmsService.isPhoneVerified.mockResolvedValue(false);
+    it('invalid phone verification token이면 social registration을 거부한다', async () => {
+      mockSmsService.verifyPhoneVerificationToken.mockImplementation(() => {
+        throw new BadRequestException('전화번호 인증이 완료되지 않았습니다');
+      });
 
       await expect(
         authService.completeSocialRegistration('valid-registration-token', {
@@ -681,14 +1097,16 @@ describe('AuthService', () => {
           country: 'KR',
           birthDate: '1995-05-15',
           phone: '010-1234-5678',
+          phoneVerificationToken: 'invalid-social-phone-token',
           termsOfService: true,
           privacyPolicy: true,
           marketingConsent: false,
+          consentItems: makeSocialConsentItems(),
         }),
-      ).rejects.toThrow(GoneException);
+      ).rejects.toThrow(BadRequestException);
 
       expect(mockUserRepo.create).not.toHaveBeenCalled();
-      // 410 must propagate before any JWT verification of the registration token.
+      // Phone token failures must stop before any JWT verification of the registration token.
       expect(mockJwtService.verifyAsync).not.toHaveBeenCalled();
     });
   });
@@ -917,6 +1335,7 @@ describe('resetPassword (integration — real JwtService — CR-02 regression gu
     sendVerification: ReturnType<typeof vi.fn>;
     verifyCode: ReturnType<typeof vi.fn>;
     isPhoneVerified: ReturnType<typeof vi.fn>;
+    verifyPhoneVerificationToken: ReturnType<typeof vi.fn>;
   };
   let integEmail: { sendPasswordResetEmail: ReturnType<typeof vi.fn> };
 
@@ -957,10 +1376,15 @@ describe('resetPassword (integration — real JwtService — CR-02 regression gu
         set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([]) }),
       }),
     };
-    integSms = { sendVerification: vi.fn(), verifyCode: vi.fn(), isPhoneVerified: vi.fn() };
+    integSms = {
+      sendVerification: vi.fn(),
+      verifyCode: vi.fn(),
+      isPhoneVerified: vi.fn(),
+      verifyPhoneVerificationToken: vi.fn(),
+    };
     integEmail = { sendPasswordResetEmail: vi.fn() };
 
-    // Real constructor order: (jwtService, configService, userRepository, smsService, emailService, db)
+    // Real constructor order: (jwtService, configService, userRepository, smsService, emailService, db, consentService)
     authServiceLocal = new AuthService(
       realJwtService,
       integConfig as unknown as ConfigService,
@@ -968,6 +1392,11 @@ describe('resetPassword (integration — real JwtService — CR-02 regression gu
       integSms as any,
       integEmail as any,
       integDb as any,
+      {
+        assertAgeAllowed: vi.fn(),
+        assertRequiredConsents: vi.fn(),
+        captureConsent: vi.fn(),
+      } as any,
     );
   });
 

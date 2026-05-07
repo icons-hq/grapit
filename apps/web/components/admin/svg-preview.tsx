@@ -7,6 +7,7 @@ import type { SeatMapConfig } from '@grabit/shared';
 import { usePresignedUpload, useSaveSeatMap } from '@/hooks/use-admin';
 import { TierEditor } from '@/components/admin/tier-editor';
 import { Button } from '@/components/ui/button';
+import { hasUnsafeSvgPayload } from '@/lib/svg/safety';
 
 interface SvgPreviewProps {
   performanceId: string;
@@ -59,6 +60,10 @@ export function SvgPreview({
           doc.querySelector('parsererror')
         ) {
           toast.error('SVG 형식이 올바르지 않습니다. 다시 확인 후 업로드하세요.');
+          return;
+        }
+        if (hasUnsafeSvgPayload(doc)) {
+          toast.error('보안상 허용되지 않는 SVG 요소 또는 속성이 포함되어 있습니다.');
           return;
         }
       } catch {

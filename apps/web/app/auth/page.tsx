@@ -2,21 +2,26 @@
 
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { useLocale } from 'next-intl';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { LoginForm } from '@/components/auth/login-form';
 import { SignupForm } from '@/components/auth/signup-form';
+import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
+import { getAuthLaunchCopy } from '@/components/auth/auth-launch-copy';
 
 export default function AuthPage() {
   const router = useRouter();
+  const locale = useLocale();
+  const authCopy = getAuthLaunchCopy(locale);
   const { isInitialized, accessToken } = useAuthStore();
 
   // Redirect if already authenticated
   useEffect(() => {
     if (isInitialized && accessToken) {
-      router.push('/');
+      router.push(getLocalizedPathname('/', authCopy.locale));
     }
-  }, [isInitialized, accessToken, router]);
+  }, [isInitialized, accessToken, router, authCopy.locale]);
 
   if (isInitialized && accessToken) {
     return null;
@@ -27,8 +32,8 @@ export default function AuthPage() {
       <div className="w-full max-w-[400px]">
         <Tabs defaultValue="login" className="w-full">
           <TabsList className="w-full">
-            <TabsTrigger value="login">로그인</TabsTrigger>
-            <TabsTrigger value="signup">회원가입</TabsTrigger>
+            <TabsTrigger value="login">{authCopy.tabs.login}</TabsTrigger>
+            <TabsTrigger value="signup">{authCopy.tabs.signup}</TabsTrigger>
           </TabsList>
           <TabsContent
             value="login"

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { SUPPORTED_LOCALES } from '../constants/locales';
 
 export const updateProfileSchema = z.object({
   name: z
@@ -11,6 +12,8 @@ export const updateProfileSchema = z.object({
     .min(10, '올바른 전화번호를 입력해주세요')
     .max(20)
     .optional(),
+  phoneVerificationToken: z.string().min(1, '전화번호 인증이 필요합니다').optional(),
+  preferredLocale: z.enum(SUPPORTED_LOCALES).optional(),
 });
 
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;

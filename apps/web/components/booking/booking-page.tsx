@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useLocale } from 'next-intl';
 import { ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
 import type { SeatSelection, SeatState, SeatMapConfig } from '@grabit/shared';
@@ -15,7 +16,13 @@ import {
 } from '@/hooks/use-booking';
 import { useBookingStore } from '@/stores/use-booking-store';
 import { useBookingSocket } from '@/hooks/use-socket';
+import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
 import { ApiClientError } from '@/lib/api-client';
+import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
+import {
+  getVisibleCopy,
+  resolveVisibleCopyLocale,
+} from '@/lib/i18n/visible-copy';
 import { BookingHeader } from './booking-header';
 import { DatePicker } from './date-picker';
 import { ShowtimeChips } from './showtime-chips';
@@ -38,6 +45,8 @@ function isSameDay(a: Date, b: Date): boolean {
 
 export function BookingPage({ performanceId }: { performanceId: string }) {
   const router = useRouter();
+  const activeLocale = resolveVisibleCopyLocale(useLocale());
+  const copy = getVisibleCopy(activeLocale);
   const { data: performance, isLoading: performanceLoading } =
     usePerformanceDetail(performanceId);
 
@@ -62,6 +71,8 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
   const lockSeat = useLockSeat();
   const unlockSeat = useUnlockSeat();
   const unlockAll = useUnlockAllSeats();
+  const { bookingEnabled, bookingDisabledMessage } = useRuntimeFlags();
+  const bookingDisabledReason = bookingEnabled ? null : bookingDisabledMessage;
 
   // All showtimes sourced from performance detail
   const allShowtimes = useMemo(
@@ -184,6 +195,10 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
   const handleSeatClick = useCallback(
     (seatId: string) => {
       if (!selectedShowtimeId) return;
+      if (!bookingEnabled) {
+        toast.info(bookingDisabledMessage);
+        return;
+      }
 
       // Locked seat: show toast and return
       const seatState = seatStatesMap.get(seatId);
@@ -265,6 +280,8 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
       lockSeat,
       unlockSeat,
       setTimerExpiry,
+      bookingEnabled,
+      bookingDisabledMessage,
     ],
   );
 
@@ -281,6 +298,10 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
   // "Next" button handler — navigate to confirm page
   const handleProceed = useCallback(() => {
     if (!selectedShowtimeId || !performance) return;
+    if (!bookingEnabled) {
+      toast.info(bookingDisabledMessage);
+      return;
+    }
 
     const selectedSt = allShowtimes.find((st) => st.id === selectedShowtimeId);
 
@@ -295,11 +316,25 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
       expiresAt: timerExpiresAt,
     });
 
-    router.push(`/booking/${performanceId}/confirm`);
-  }, [selectedShowtimeId, selectedSeats, performance, allShowtimes, performanceId, timerExpiresAt, router]);
+    router.push(
+      getLocalizedPathname(`/booking/${performanceId}/confirm`, activeLocale),
+    );
+  }, [
+    selectedShowtimeId,
+    selectedSeats,
+    performance,
+    allShowtimes,
+    performanceId,
+    timerExpiresAt,
+    router,
+    bookingEnabled,
+    bookingDisabledMessage,
+  ]);
 
   const handleBack = useCallback(() => {
-    router.push(`/performance/${performanceId}`);
+    router.push(
+      getLocalizedPathname(`/performance/${performanceId}`, activeLocale),
+    );
   }, [router, performanceId]);
 
   // Timer expiry handler
@@ -362,8 +397,39 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
     return (
       <div className="flex flex-1 items-center justify-center">
         <p className="text-base text-gray-600">
-          공연 정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.
+          {copy.performance.loadError}
         </p>
+      </div>
+    );
+  }
+
+  if (bookingDisabledReason) {
+    return (
+      <div className="flex flex-1 flex-col">
+        <BookingHeader
+          performanceTitle={performance.title}
+          expiresAt={null}
+          onBack={handleBack}
+          onExpire={handleTimerExpire}
+        />
+
+        <main className="mx-auto flex w-full max-w-[760px] flex-1 items-center px-4 py-12">
+          <section
+            role="status"
+            className="w-full rounded-lg border border-amber-200 bg-amber-50 px-5 py-6 text-center"
+          >
+            <p className="text-base font-semibold text-amber-900">
+              {bookingDisabledReason}
+            </p>
+            <button
+              type="button"
+              onClick={handleBack}
+              className="mt-4 inline-flex min-h-10 items-center rounded-md bg-white px-4 text-sm font-semibold text-amber-900 shadow-sm ring-1 ring-amber-200 hover:bg-amber-100"
+            >
+              {performance.title}
+            </button>
+          </section>
+        </main>
       </div>
     );
   }
@@ -437,6 +503,14 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
             {/* Seat legend + map */}
             {selectedShowtimeId && seatConfig && performance.seatMap && (
               <>
+                {bookingDisabledReason && (
+                  <div
+                    role="status"
+                    className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800"
+                  >
+                    {bookingDisabledReason}
+                  </div>
+                )}
                 <SeatLegend tiers={legendTiers} />
                 <SeatMapViewer
                   svgUrl={performance.seatMap.svgUrl}
@@ -459,6 +533,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
             onRemove={handleRemoveSeat}
             onProceed={handleProceed}
             isLoading={lockSeat.isPending}
+            disabledReason={bookingDisabledReason}
           />
         </div>
       </main>
@@ -472,6 +547,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
         onRemove={handleRemoveSeat}
         onProceed={handleProceed}
         isLoading={lockSeat.isPending}
+        disabledReason={bookingDisabledReason}
       />
 
       {/* Timer expiry modal */}

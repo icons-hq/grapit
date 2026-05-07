@@ -2,8 +2,8 @@ import {
   Injectable,
   Inject,
   ConflictException,
+  ForbiddenException,
   UnauthorizedException,
-  BadRequestException,
   GoneException,
   Logger,
 } from '@nestjs/common';
@@ -11,12 +11,15 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as argon2 from 'argon2';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, gt, isNull } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import * as schema from '../../database/schema/index.js';
 import { UserRepository } from '../user/user.repository.js';
 import { SmsService } from '../sms/sms.service.js';
+import type { SmsVerificationPurpose } from '../sms/sms.service.js';
 import { EmailService } from './email/email.service.js';
+import { ConsentService } from '../consent/consent.service.js';
+import type { ConsentRequestMeta } from '../consent/consent.service.js';
 import type { RegisterBody } from './dto/register.dto.js';
 import type { SocialRegisterBody } from './dto/social-register.dto.js';
 import type { SocialProfile } from './interfaces/social-profile.interface.js';
@@ -48,11 +51,23 @@ export interface ValidatedUser {
 interface TokenPair {
   accessToken: string;
   refreshToken: string;
+  deviceLimitNotice?: string;
 }
 
 interface AuthResult extends TokenPair {
   user: UserProfile;
 }
+
+interface RegistrationPendingResult {
+  emailVerificationRequired: true;
+  email: string;
+  verificationExpiresAt: Date;
+  user: UserProfile;
+}
+
+const EMAIL_VERIFICATION_EXPIRY_MS = 30 * 60 * 1000;
+const EMAIL_VERIFICATION_PURPOSE = 'signup';
+const REFRESH_FAMILY_LIMIT_NOTICE = '다른 기기에서 로그인되어 가장 오래된 세션이 종료되었습니다.';
 
 @Injectable()
 export class AuthService {
@@ -65,14 +80,22 @@ export class AuthService {
     private readonly smsService: SmsService,
     private readonly emailService: EmailService,
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
+    private readonly consentService: ConsentService,
   ) {}
 
-  async register(dto: RegisterBody): Promise<AuthResult> {
-    // 0. Verify phone number — handle idempotent re-verify after the
-    // frontend already called /sms/verify-code (OTP key was DEL'd, so
-    // verifyCode now returns EXPIRED). Per sms.service.ts:385-403, fall
-    // back to the {sms:{e164}}:verified flag (TTL 600s).
-    await this.assertPhoneVerified(dto.phone, dto.phoneVerificationCode);
+  async register(
+    dto: RegisterBody,
+    requestMeta: ConsentRequestMeta = { ipAddress: '0.0.0.0' },
+  ): Promise<RegistrationPendingResult> {
+    this.consentService.assertAgeAllowed(dto.birthDate);
+    await this.consentService.assertRequiredConsents({ items: dto.consentItems });
+
+    // 0. Verify phone number with a server-signed token issued by /sms/verify-code.
+    await this.assertPhoneVerified(
+      dto.phone,
+      dto.phoneVerificationToken,
+      'signup',
+    );
 
     // 1. Check email uniqueness
     const existing = await this.userRepository.findByEmail(dto.email);
@@ -88,33 +111,52 @@ export class AuthService {
       parallelism: 1,
     });
 
-    // 3. Insert user
-    const user = await this.userRepository.create({
-      email: dto.email,
-      passwordHash,
-      name: dto.name,
-      phone: dto.phone,
-      gender: dto.gender,
-      country: dto.country,
-      birthDate: dto.birthDate,
-      marketingConsent: dto.marketingConsent,
-      isPhoneVerified: true,
+    const user = await this.db.transaction(async (tx) => {
+      // 3. Insert user
+      const createdUser = await this.userRepository.create({
+        email: dto.email,
+        passwordHash,
+        name: dto.name,
+        phone: dto.phone,
+        gender: dto.gender,
+        country: dto.country,
+        birthDate: dto.birthDate,
+        marketingConsent: dto.marketingConsent,
+        isPhoneVerified: true,
+      }, tx);
+
+      // 4. Insert terms agreement and consent audit in the same transaction.
+      await tx.insert(schema.termsAgreements).values({
+        userId: createdUser.id,
+        termsOfService: dto.termsOfService,
+        privacyPolicy: dto.privacyPolicy,
+        marketingConsent: dto.marketingConsent,
+      });
+
+      await this.consentService.captureConsent(
+        createdUser.id,
+        {
+          birthDate: dto.birthDate,
+          items: dto.consentItems,
+          sourceFlow: 'signup',
+        },
+        requestMeta,
+        tx,
+      );
+
+      return createdUser;
     });
 
-    // 4. Insert terms agreement
-    await this.db.insert(schema.termsAgreements).values({
-      userId: user.id,
-      termsOfService: dto.termsOfService,
-      privacyPolicy: dto.privacyPolicy,
-      marketingConsent: dto.marketingConsent,
-    });
+    const verification = await this.issueEmailVerificationForUser(
+      user.id,
+      user.email,
+      dto.locale,
+    );
 
-    // 5-6. Generate tokens
-    const tokens = await this.generateTokenPair(user.id, user.email, user.role);
-
-    // 7. Return AuthResult
     return {
-      ...tokens,
+      emailVerificationRequired: true,
+      email: user.email,
+      verificationExpiresAt: verification.expiresAt,
       user: this.mapToProfile(user),
     };
   }
@@ -139,6 +181,8 @@ export class AuthService {
     if (!isValid) {
       throw new UnauthorizedException('이메일 또는 비밀번호가 일치하지 않습니다');
     }
+
+    this.assertEmailVerified(user);
 
     // Return user without passwordHash
     const { passwordHash: _, ...userWithoutPassword } = user;
@@ -166,12 +210,9 @@ export class AuthService {
 
     // 4. Token already revoked -- possible theft! Revoke entire family
     if (tokenRecord.revokedAt) {
-      await this.db
-        .update(schema.refreshTokens)
-        .set({ revokedAt: new Date() })
-        .where(eq(schema.refreshTokens.family, tokenRecord.family));
+      await this.revokeRefreshTokenFamily(tokenRecord.family);
 
-      throw new UnauthorizedException('토큰이 재사용되었습니다. 보안을 위해 모든 세션이 종료됩니다.');
+      throw new UnauthorizedException('토큰이 재사용되었습니다. 보안을 위해 해당 세션이 종료됩니다.');
     }
 
     // 5. Check expiration
@@ -179,32 +220,46 @@ export class AuthService {
       throw new UnauthorizedException('리프레시 토큰이 만료되었습니다');
     }
 
-    // 6. Revoke old token
-    await this.db
-      .update(schema.refreshTokens)
-      .set({ revokedAt: new Date() })
-      .where(eq(schema.refreshTokens.id, tokenRecord.id));
-
-    // 7. Generate new refresh token with same family
+    // 6. Generate new refresh token with same family
     const newRawToken = randomBytes(32).toString('hex');
     const newTokenHash = createHash('sha256').update(newRawToken).digest('hex');
+    const now = new Date();
+    const newTokenExpiresAt = new Date(
+      Date.now() + REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000,
+    );
 
-    await this.db.insert(schema.refreshTokens).values({
-      userId: tokenRecord.userId,
-      tokenHash: newTokenHash,
-      family: tokenRecord.family,
-      expiresAt: new Date(
-        Date.now() + REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000,
-      ),
-    });
-
-    // 8. Fetch current user for up-to-date role/email
+    // 7. Fetch current user for up-to-date role/email
     const user = await this.userRepository.findById(tokenRecord.userId);
     if (!user) {
       throw new UnauthorizedException('사용자를 찾을 수 없습니다');
     }
 
-    // 9. Generate new access token with full claims
+    await this.db.transaction(async (tx) => {
+      const revokedRows = await tx
+        .update(schema.refreshTokens)
+        .set({ revokedAt: now })
+        .where(
+          and(
+            eq(schema.refreshTokens.id, tokenRecord.id),
+            isNull(schema.refreshTokens.revokedAt),
+          ),
+        )
+        .returning({ id: schema.refreshTokens.id });
+
+      if (revokedRows.length === 0) {
+        await this.revokeRefreshTokenFamily(tokenRecord.family, tx);
+        throw new UnauthorizedException('토큰이 재사용되었습니다. 보안을 위해 해당 세션이 종료됩니다.');
+      }
+
+      await tx.insert(schema.refreshTokens).values({
+        userId: tokenRecord.userId,
+        tokenHash: newTokenHash,
+        family: tokenRecord.family,
+        expiresAt: newTokenExpiresAt,
+      });
+    });
+
+    // 8. Generate new access token with full claims
     const accessToken = await this.jwtService.signAsync({
       sub: tokenRecord.userId,
       email: user.email,
@@ -212,6 +267,16 @@ export class AuthService {
     });
 
     return { accessToken, refreshToken: newRawToken };
+  }
+
+  private async revokeRefreshTokenFamily(
+    family: string,
+    db: Pick<DrizzleDB, 'update'> = this.db,
+  ): Promise<void> {
+    await db
+      .update(schema.refreshTokens)
+      .set({ revokedAt: new Date() })
+      .where(eq(schema.refreshTokens.family, family));
   }
 
   async revokeRefreshToken(rawToken: string): Promise<void> {
@@ -249,6 +314,125 @@ export class AuthService {
     const resetLink = `${frontendUrl}/auth/reset-password?token=${resetToken}`;
 
     await this.emailService.sendPasswordResetEmail(email, resetLink);
+  }
+
+  async requestEmailVerification(
+    email: string,
+    locale: string = 'ko',
+  ): Promise<{ expiresAt: Date }> {
+    return this.issueEmailVerification(email, locale);
+  }
+
+  async resendEmailVerification(
+    email: string,
+    locale: string = 'ko',
+  ): Promise<{ expiresAt: Date }> {
+    return this.issueEmailVerification(email, locale);
+  }
+
+  async verifyEmailVerificationToken(token: string): Promise<{ verified: true }> {
+    const tokenHash = createHash('sha256').update(token).digest('hex');
+    const matchingRows = await this.db
+      .select()
+      .from(schema.emailVerificationTokens)
+      .where(eq(schema.emailVerificationTokens.tokenHash, tokenHash));
+    const tokenRecord = matchingRows[0];
+
+    if (!tokenRecord) {
+      throw new UnauthorizedException('유효하지 않은 인증 링크입니다');
+    }
+
+    if (tokenRecord.consumedAt) {
+      throw new GoneException('이미 사용된 인증 링크입니다');
+    }
+
+    if (tokenRecord.expiresAt < new Date()) {
+      throw new GoneException('인증 링크가 만료되었습니다. 새 인증 메일을 요청해주세요.');
+    }
+
+    const tokenUserId = tokenRecord.userId;
+    const latestRows = await this.db
+      .select()
+      .from(schema.emailVerificationTokens)
+      .where(
+        and(
+          eq(schema.emailVerificationTokens.email, tokenRecord.email),
+          eq(schema.emailVerificationTokens.purpose, tokenRecord.purpose),
+        ),
+      );
+    const latestRecord = [...latestRows].sort(
+      (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+    )[0];
+
+    if (latestRecord && latestRecord.tokenHash !== tokenHash) {
+      throw new GoneException('새 인증 메일을 요청해주세요.');
+    }
+
+    await this.db
+      .update(schema.emailVerificationTokens)
+      .set({ consumedAt: new Date() })
+      .where(eq(schema.emailVerificationTokens.id, tokenRecord.id));
+
+    if (tokenUserId) {
+      await this.db
+        .update(schema.users)
+        .set({ isEmailVerified: true, updatedAt: new Date() })
+        .where(eq(schema.users.id, tokenUserId));
+    }
+
+    return { verified: true };
+  }
+
+  async enforceRefreshFamilyLimit(
+    userId: string,
+    maxFamilies = 3,
+  ): Promise<{ revokedFamily: string | null; notice?: string }> {
+    const now = new Date();
+    const activeRows = await this.db
+      .select()
+      .from(schema.refreshTokens)
+      .where(
+        and(
+          eq(schema.refreshTokens.userId, userId),
+          isNull(schema.refreshTokens.revokedAt),
+          gt(schema.refreshTokens.expiresAt, now),
+        ),
+      );
+
+    const oldestByFamily = new Map<string, Date>();
+    for (const row of activeRows) {
+      const currentOldest = oldestByFamily.get(row.family);
+      if (!currentOldest || row.createdAt < currentOldest) {
+        oldestByFamily.set(row.family, row.createdAt);
+      }
+    }
+
+    const activeFamilies = [...oldestByFamily.entries()]
+      .map(([family, createdAt]) => ({ family, createdAt }))
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+
+    if (activeFamilies.length <= maxFamilies) {
+      return { revokedFamily: null };
+    }
+
+    const familiesToRevoke = activeFamilies.slice(0, activeFamilies.length - maxFamilies);
+    for (const family of familiesToRevoke) {
+      await this.db
+        .update(schema.refreshTokens)
+        .set({ revokedAt: new Date() })
+        .where(
+          and(
+            eq(schema.refreshTokens.userId, userId),
+            eq(schema.refreshTokens.family, family.family),
+            isNull(schema.refreshTokens.revokedAt),
+          ),
+        );
+    }
+
+    return {
+      revokedFamily: familiesToRevoke[0]?.family ?? null,
+      notice: REFRESH_FAMILY_LIMIT_NOTICE,
+    };
   }
 
   async resetPassword(token: string, newPassword: string): Promise<void> {
@@ -387,11 +571,16 @@ export class AuthService {
   async completeSocialRegistration(
     registrationToken: string,
     dto: SocialRegisterBody,
+    requestMeta: ConsentRequestMeta = { ipAddress: '0.0.0.0' },
   ): Promise<AuthResult> {
     this.logger.log('completeSocialRegistration: started');
 
-    // 0. Verify phone number — see register() for rationale
-    await this.assertPhoneVerified(dto.phone, dto.phoneVerificationCode);
+    // 0. Verify phone number with a purpose-bound token from /sms/verify-code.
+    await this.assertPhoneVerified(
+      dto.phone,
+      dto.phoneVerificationToken,
+      'social_registration',
+    );
 
     // 1. Verify registrationToken JWT
     let payload: {
@@ -412,66 +601,62 @@ export class AuthService {
       throw new UnauthorizedException('유효하지 않은 등록 토큰입니다');
     }
 
+    this.consentService.assertAgeAllowed(dto.birthDate);
+    await this.consentService.assertRequiredConsents({ items: dto.consentItems });
+
     // 2. Check if user with that email already exists (account linking)
     const email = payload.email ?? `${payload.provider}_${payload.providerId}@social.grabit.com`;
     const existingUser = await this.userRepository.findByEmail(email);
 
-    let userId: string;
-
     if (existingUser) {
-      // Account linking: create social_account link to existing user
-      userId = existingUser.id;
+      throw new ConflictException({
+        code: 'ACCOUNT_LINK_CONFIRMATION_REQUIRED',
+        message: 'Sign in to the existing account before linking this social provider.',
+      });
+    }
 
-      await this.db.insert(schema.socialAccounts).values({
-        userId,
+    const user = await this.db.transaction(async (tx) => {
+      // 3. Create new user (passwordHash = null for social-only accounts)
+      const createdUser = await this.userRepository.create({
+        email,
+        passwordHash: null, // social-only accounts have no password
+        name: dto.name,
+        phone: dto.phone,
+        gender: dto.gender,
+        country: dto.country,
+        birthDate: dto.birthDate,
+        marketingConsent: dto.marketingConsent,
+        isPhoneVerified: true,
+      }, tx);
+
+      // 4. Create social account link
+      await tx.insert(schema.socialAccounts).values({
+        userId: createdUser.id,
         provider: payload.provider,
         providerId: payload.providerId,
         providerEmail: payload.email,
       });
 
-      // Create terms agreement for social login
-      await this.db.insert(schema.termsAgreements).values({
-        userId,
+      // 5. Create terms agreement and consent audit in the same transaction.
+      await tx.insert(schema.termsAgreements).values({
+        userId: createdUser.id,
         termsOfService: dto.termsOfService,
         privacyPolicy: dto.privacyPolicy,
         marketingConsent: dto.marketingConsent,
       });
 
-      const tokens = await this.generateTokenPair(existingUser.id, existingUser.email, existingUser.role);
+      await this.consentService.captureConsent(
+        createdUser.id,
+        {
+          birthDate: dto.birthDate,
+          items: dto.consentItems,
+          sourceFlow: 'social_completion',
+        },
+        requestMeta,
+        tx,
+      );
 
-      return {
-        ...tokens,
-        user: this.mapToProfile(existingUser),
-      };
-    }
-
-    // 3. Create new user (passwordHash = null for social-only accounts)
-    const user = await this.userRepository.create({
-      email,
-      passwordHash: null, // social-only accounts have no password
-      name: dto.name,
-      phone: dto.phone,
-      gender: dto.gender,
-      country: dto.country,
-      birthDate: dto.birthDate,
-      marketingConsent: dto.marketingConsent,
-      isPhoneVerified: true,
-    });
-
-    // 4. Create social account link
-    await this.db.insert(schema.socialAccounts).values({
-      userId: user.id,
-      provider: payload.provider,
-      providerId: payload.providerId,
-      providerEmail: payload.email,
-    });
-
-    // 5. Create terms agreement
-    await this.db.insert(schema.termsAgreements).values({
-      userId: user.id,
-      termsOfService: dto.termsOfService,
-      privacyPolicy: dto.privacyPolicy,
-      marketingConsent: dto.marketingConsent,
+      return createdUser;
     });
 
     // 6. Generate JWT tokens
@@ -487,30 +672,62 @@ export class AuthService {
 
   // -- Private helpers --
 
-  /**
-   * [hotfix 260427-kch] Verify phone with idempotency fallback.
-   * The frontend already calls POST /sms/verify-code before /auth/register
-   * (or completeSocialRegistration) and the SmsService Lua script DEL's the
-   * OTP key on success. Re-running verifyCode therefore throws GoneException
-   * for the legitimate user. We catch that one specific exception and fall
-   * back to the verified-flag set by the original verify call (TTL 600s,
-   * see sms.service.ts:385-403). True expiry (no flag) still bubbles 410
-   * to the client.
-   */
-  private async assertPhoneVerified(phone: string, code: string): Promise<void> {
-    try {
-      const verifyResult = await this.smsService.verifyCode(phone, code);
-      if (!verifyResult.verified) {
-        throw new BadRequestException('전화번호 인증이 완료되지 않았습니다');
-      }
-    } catch (err) {
-      if (err instanceof GoneException) {
-        const alreadyVerified = await this.smsService.isPhoneVerified(phone);
-        if (!alreadyVerified) throw err; // truly expired — propagate 410
-        return;
-      }
-      throw err;
+  private async assertPhoneVerified(
+    phone: string,
+    verificationToken: string,
+    purpose: SmsVerificationPurpose,
+  ): Promise<void> {
+    this.smsService.verifyPhoneVerificationToken(verificationToken, {
+      phone,
+      purpose,
+    });
+  }
+
+  private assertEmailVerified(user: { isEmailVerified: boolean }): void {
+    if (!user.isEmailVerified) {
+      throw new ForbiddenException({
+        code: 'EMAIL_NOT_VERIFIED',
+        message: 'Email verification is required.',
+      });
     }
+  }
+
+  private async issueEmailVerification(
+    email: string,
+    locale: string,
+  ): Promise<{ expiresAt: Date }> {
+    const user = await this.userRepository.findByEmail(email);
+    const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_EXPIRY_MS);
+
+    if (!user) {
+      return { expiresAt };
+    }
+
+    return this.issueEmailVerificationForUser(user.id, email, locale);
+  }
+
+  private async issueEmailVerificationForUser(
+    userId: string,
+    email: string,
+    locale: string,
+  ): Promise<{ expiresAt: Date }> {
+    const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_EXPIRY_MS);
+    const rawToken = randomBytes(32).toString('hex');
+    const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+
+    await this.db.insert(schema.emailVerificationTokens).values({
+      userId,
+      email,
+      purpose: EMAIL_VERIFICATION_PURPOSE,
+      tokenHash,
+      expiresAt,
+    });
+
+    const frontendUrl = this.configService.get<string>('FRONTEND_URL') ?? 'http://localhost:3000';
+    const verificationLink = `${frontendUrl}/auth/verify-email?token=${rawToken}`;
+    await this.emailService.sendEmailVerificationEmail(email, verificationLink, locale);
+
+    return { expiresAt };
   }
 
   private async generateTokenPair(
@@ -538,8 +755,13 @@ export class AuthService {
         Date.now() + REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000,
       ),
     });
+    const limitResult = await this.enforceRefreshFamilyLimit(userId);
 
-    return { accessToken, refreshToken: rawToken };
+    return {
+      accessToken,
+      refreshToken: rawToken,
+      ...(limitResult.notice ? { deviceLimitNotice: limitResult.notice } : {}),
+    };
   }
 
   private mapToProfile(user: {
@@ -550,6 +772,7 @@ export class AuthService {
     gender: 'male' | 'female' | 'unspecified';
     country: string;
     birthDate: string;
+    preferredLocale?: UserProfile['preferredLocale'] | null;
     isPhoneVerified: boolean;
     role: string;
     createdAt: Date;
@@ -562,6 +785,7 @@ export class AuthService {
       gender: user.gender,
       country: user.country,
       birthDate: user.birthDate,
+      preferredLocale: user.preferredLocale ?? 'ko',
       isPhoneVerified: user.isPhoneVerified,
       role: user.role as 'user' | 'admin',
       createdAt: user.createdAt.toISOString(),

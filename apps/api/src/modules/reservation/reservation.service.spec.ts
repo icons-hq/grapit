@@ -12,7 +12,9 @@ import { ReservationService } from './reservation.service.js';
 import { TossPaymentsClient } from '../payment/toss-payments.client.js';
 import type { BookingService } from '../booking/booking.service.js';
 import type { BookingGateway } from '../booking/booking.gateway.js';
-import type { SeatSelection } from '@grabit/shared';
+import type { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
+import type { ConsentCaptureItem, SeatSelection } from '@grabit/shared';
+import type { ConsentService } from '../consent/consent.service.js';
 
 function createMockDb() {
   return {
@@ -63,24 +65,68 @@ function createMockBookingGateway() {
   };
 }
 
+function createMockFeatureFlags(bookingEnabled = true) {
+  const mock = {
+    getFlags: vi.fn(() => ({ bookingEnabled })),
+    assertBookingEnabled: vi.fn(() => {
+      if (!mock.getFlags().bookingEnabled) {
+        throw new ForbiddenException('예매는 5월말 오픈 예정입니다');
+      }
+    }),
+  };
+  return mock;
+}
+
+function makeConsentItems(
+  overrides: Partial<Record<ConsentCaptureItem['key'], boolean>> = {},
+): ConsentCaptureItem[] {
+  return [
+    'terms',
+    'privacy',
+    'pipa_required',
+    'cross_border_transfer',
+    'pdpa_notice',
+    'pipl_notice',
+    'marketing',
+  ].map((key) => ({
+    key: key as ConsentCaptureItem['key'],
+    version: '2026-05-01',
+    language: 'ko',
+    accepted: overrides[key as ConsentCaptureItem['key']] ?? true,
+  }));
+}
+
+function createMockConsentService() {
+  return {
+    assertRequiredConsents: vi.fn().mockResolvedValue(undefined),
+    captureConsent: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
 describe('ReservationService', () => {
   let service: ReservationService;
   let mockDb: ReturnType<typeof createMockDb>;
   let mockTossClient: ReturnType<typeof createMockTossClient>;
   let mockBookingService: ReturnType<typeof createMockBookingService>;
   let mockBookingGateway: ReturnType<typeof createMockBookingGateway>;
+  let mockFeatureFlags: ReturnType<typeof createMockFeatureFlags>;
+  let mockConsentService: ReturnType<typeof createMockConsentService>;
 
   beforeEach(() => {
     mockDb = createMockDb();
     mockTossClient = createMockTossClient();
     mockBookingService = createMockBookingService();
     mockBookingGateway = createMockBookingGateway();
+    mockFeatureFlags = createMockFeatureFlags(true);
+    mockConsentService = createMockConsentService();
 
     service = new ReservationService(
       mockDb as any,
       mockTossClient as unknown as TossPaymentsClient,
       mockBookingService as unknown as BookingService,
       mockBookingGateway as unknown as BookingGateway,
+      mockFeatureFlags as unknown as FeatureFlagsService,
+      mockConsentService as unknown as ConsentService,
     );
   });
 
@@ -122,7 +168,8 @@ describe('ReservationService', () => {
       .mockReturnValueOnce(chainResult([]))
       .mockReturnValueOnce(chainResult([{ id: dto.showtimeId, performanceId: 'performance-1', dateTime: new Date() }]))
       .mockReturnValueOnce(chainResult([{ tierName: 'VIP', price: 50000 }]))
-      .mockReturnValueOnce(chainResult(seatConfigRowsFor(dto.seats)));
+      .mockReturnValueOnce(chainResult(seatConfigRowsFor(dto.seats)))
+      .mockReturnValueOnce(chainResult([{ birthDate: '1995-05-15' }]));
 
     mockDb.transaction.mockResolvedValue({
       id: 'reservation-created',
@@ -235,6 +282,23 @@ describe('ReservationService', () => {
   }
 
   describe('reservation number', () => {
+    it('does not expose API-side payment request creation while booking disabled', () => {
+      const clientMethods = Object.getOwnPropertyNames(TossPaymentsClient.prototype);
+      const serviceMethods = Object.getOwnPropertyNames(ReservationService.prototype);
+
+      expect(clientMethods).toContain('confirmPayment');
+      expect(clientMethods).not.toEqual(expect.arrayContaining([
+        'requestPayment',
+        'createPayment',
+        'paymentRequest',
+      ]));
+      expect(serviceMethods).not.toEqual(expect.arrayContaining([
+        'requestPayment',
+        'createPayment',
+        'paymentRequest',
+      ]));
+    });
+
     it('should generate reservation number matching GRP-YYYYMMDD-XXXXX format', () => {
       const result = service.generateReservationNumber();
       expect(result).toMatch(/^GRP-\d{8}-[A-Z0-9]{5}$/);
@@ -370,6 +434,75 @@ describe('ReservationService', () => {
   });
 
   describe('prepareReservation - lock ownership', () => {
+    it('prepareReservation rejects disabled booking before DB transaction', async () => {
+      const userId = randomUUID();
+      const dto = {
+        showtimeId: randomUUID(),
+        orderId: 'GRP-DISABLED-PREPARE',
+        seats: [seatSelection('A-1')],
+        amount: 50000,
+        consentItems: makeConsentItems(),
+      };
+      mockFeatureFlags.getFlags.mockReturnValue({ bookingEnabled: false });
+
+      await expect(service.prepareReservation(dto, userId))
+        .rejects
+        .toThrow(ForbiddenException);
+      await expect(service.prepareReservation(dto, userId))
+        .rejects
+        .toThrow('예매는 5월말 오픈 예정입니다');
+
+      expect(mockDb.select).not.toHaveBeenCalled();
+      expect(mockBookingService.assertOwnedSeatLocks).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+      expect(mockConsentService.assertRequiredConsents).not.toHaveBeenCalled();
+    });
+
+    it('prepareReservation rejects refused cross-border booking consent before DB transaction', async () => {
+      const userId = randomUUID();
+      const dto = {
+        showtimeId: randomUUID(),
+        orderId: 'GRP-CONSENT-REFUSED',
+        seats: [seatSelection('A-1')],
+        amount: 50000,
+        consentItems: makeConsentItems({ cross_border_transfer: false }),
+      };
+      mockConsentService.assertRequiredConsents.mockRejectedValue(
+        new BadRequestException('국외이전 동의가 필요합니다. 동의하지 않으면 가입 또는 팬미팅 예매를 진행할 수 없습니다.'),
+      );
+      setupPrepareBase(dto);
+
+      await expect(service.prepareReservation(dto, userId)).rejects.toThrow(
+        '국외이전 동의가 필요합니다. 동의하지 않으면 가입 또는 팬미팅 예매를 진행할 수 없습니다.',
+      );
+
+      expect(mockFeatureFlags.assertBookingEnabled).toHaveBeenCalled();
+      expect(mockConsentService.assertRequiredConsents).toHaveBeenCalledWith({
+        items: dto.consentItems,
+      });
+      expect(mockDb.select).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
+    it('prepareReservation rejects omitted booking consent before DB transaction', async () => {
+      const userId = randomUUID();
+      const dto = {
+        showtimeId: randomUUID(),
+        orderId: 'GRP-CONSENT-MISSING',
+        seats: [seatSelection('A-1')],
+        amount: 50000,
+      };
+
+      await expect(service.prepareReservation(dto, userId)).rejects.toThrow(
+        '예매 동의 항목이 필요합니다',
+      );
+
+      expect(mockFeatureFlags.assertBookingEnabled).toHaveBeenCalled();
+      expect(mockConsentService.assertRequiredConsents).not.toHaveBeenCalled();
+      expect(mockDb.select).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
     it('prepareReservation rejects duplicate seat IDs before reading database state', async () => {
       const userId = randomUUID();
       const dto = {
@@ -377,6 +510,7 @@ describe('ReservationService', () => {
         orderId: 'GRP-DUPLICATE-SEATS',
         seats: [seatSelection('A-1'), seatSelection('A-1')],
         amount: 100000,
+        consentItems: makeConsentItems(),
       };
 
       await expect(service.prepareReservation(dto, userId))
@@ -395,6 +529,7 @@ describe('ReservationService', () => {
         orderId: 'GRP-LOCK-PREPARE-SUCCESS',
         seats: [seatSelection('A-1'), seatSelection('A-2')],
         amount: 100000,
+        consentItems: makeConsentItems(),
       };
       setupPrepareBase(dto);
 
@@ -415,6 +550,7 @@ describe('ReservationService', () => {
         orderId: 'GRP-CANONICAL-SEATS',
         seats: [{ seatId: 'A-1', tierName: 'R', price: 1, row: 'client', number: '999' }],
         amount: 100000,
+        consentItems: makeConsentItems(),
       };
       const insertedValues: unknown[] = [];
 
@@ -432,7 +568,8 @@ describe('ReservationService', () => {
               { tierName: 'R', color: '#222222', seatIds: ['B-1'] },
             ],
           },
-        }]));
+        }]))
+        .mockReturnValueOnce(chainResult([{ birthDate: '1995-05-15' }]));
 
       const mockTx = {
         insert: vi.fn().mockReturnValue({
@@ -463,6 +600,46 @@ describe('ReservationService', () => {
       ]);
     });
 
+    it('prepareReservation writes booking consent audit in the pending reservation transaction', async () => {
+      const userId = randomUUID();
+      const dto = {
+        showtimeId: randomUUID(),
+        orderId: 'GRP-BOOKING-CONSENT-AUDIT',
+        seats: [seatSelection('A-1')],
+        amount: 50000,
+        consentItems: makeConsentItems(),
+      };
+      setupPrepareBase(dto);
+      const mockTx = {
+        insert: vi.fn().mockReturnValue({
+          values: vi.fn(() => ({
+            returning: vi.fn().mockResolvedValue([{ id: 'reservation-created', tossOrderId: dto.orderId }]),
+          })),
+        }),
+      };
+      mockDb.transaction.mockImplementation(async (cb: (tx: typeof mockTx) => Promise<unknown>) => cb(mockTx));
+      const requestMeta = {
+        ipAddress: '198.51.100.10',
+        userAgent: 'Vitest Booking',
+      };
+
+      await expect(service.prepareReservation(dto, userId, requestMeta))
+        .resolves
+        .toEqual({ reservationId: 'reservation-created', orderId: dto.orderId });
+
+      expect(mockConsentService.captureConsent).toHaveBeenCalledTimes(1);
+      expect(mockConsentService.captureConsent).toHaveBeenCalledWith(
+        userId,
+        {
+          birthDate: '1995-05-15',
+          items: dto.consentItems,
+          sourceFlow: 'booking',
+        },
+        requestMeta,
+        mockTx,
+      );
+    });
+
     it('prepareReservation rejects missing active lock before creating pending reservation', async () => {
       const userId = randomUUID();
       const dto = {
@@ -470,6 +647,7 @@ describe('ReservationService', () => {
         orderId: 'GRP-LOCK-PREPARE-MISSING',
         seats: [seatSelection('A-1')],
         amount: 50000,
+        consentItems: makeConsentItems(),
       };
       setupPrepareBase(dto);
       mockBookingService.assertOwnedSeatLocks.mockRejectedValueOnce(
@@ -491,6 +669,7 @@ describe('ReservationService', () => {
         orderId: 'GRP-LOCK-PREPARE-OTHER',
         seats: [seatSelection('A-2')],
         amount: 50000,
+        consentItems: makeConsentItems(),
       };
       setupPrepareBase(dto);
       mockBookingService.assertOwnedSeatLocks.mockRejectedValueOnce(
@@ -512,6 +691,7 @@ describe('ReservationService', () => {
         orderId: 'GRP-LOCK-IDEMPOTENT-PENDING',
         seats: [seatSelection('A-1'), seatSelection('A-2')],
         amount: 100000,
+        consentItems: makeConsentItems(),
       };
       setupExistingPendingOrder({ ...dto, userId });
       mockBookingService.assertOwnedSeatLocks.mockRejectedValueOnce(
@@ -533,6 +713,7 @@ describe('ReservationService', () => {
         orderId: 'GRP-IDEMPOTENT-CANCELLED',
         seats: [seatSelection('A-1')],
         amount: 50000,
+        consentItems: makeConsentItems(),
       };
       setupExistingPendingOrder({ ...dto, userId, status: 'CANCELLED', seats: ['A-1'] });
 
@@ -551,6 +732,7 @@ describe('ReservationService', () => {
         orderId: 'GRP-IDEMPOTENT-SEAT-MISMATCH',
         seats: [seatSelection('A-1')],
         amount: 50000,
+        consentItems: makeConsentItems(),
       };
       setupExistingPendingOrder({
         ...dto,
@@ -574,6 +756,7 @@ describe('ReservationService', () => {
         orderId: 'GRP-IDEMPOTENT-AMOUNT-MISMATCH',
         seats: [seatSelection('A-1')],
         amount: 40000,
+        consentItems: makeConsentItems(),
       };
       setupExistingPendingOrder({
         ...dto,
@@ -598,6 +781,7 @@ describe('ReservationService', () => {
         orderId: 'GRP-LOCK-IDEMPOTENT-OTHER-USER',
         seats: [seatSelection('A-1')],
         amount: 50000,
+        consentItems: makeConsentItems(),
       };
       setupExistingPendingOrder({ ...dto, userId: otherUserId });
 
@@ -917,6 +1101,24 @@ describe('ReservationService', () => {
     const reservationId = randomUUID();
     const showtimeId = randomUUID();
     const orderId = 'GRP-LOCK-CONFIRM-ABCDE';
+
+    it('confirmAndCreateReservation rejects disabled booking before confirm lock and Toss confirm', async () => {
+      mockFeatureFlags.getFlags.mockReturnValue({ bookingEnabled: false });
+
+      await expect(service.confirmAndCreateReservation(
+        { paymentKey: 'pk_test_123', orderId, amount: 150000 },
+        userId,
+      )).rejects.toThrow(ForbiddenException);
+      await expect(service.confirmAndCreateReservation(
+        { paymentKey: 'pk_test_123', orderId, amount: 150000 },
+        userId,
+      )).rejects.toThrow('예매는 5월말 오픈 예정입니다');
+
+      expect(mockBookingService.acquirePaymentConfirmLock).not.toHaveBeenCalled();
+      expect(mockBookingService.refreshPaymentConfirmLock).not.toHaveBeenCalled();
+      expect(mockTossClient.confirmPayment).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
 
     it('rejects concurrent confirm for the same orderId before reading payment state', async () => {
       mockBookingService.acquirePaymentConfirmLock.mockResolvedValueOnce(false);

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { socialCompletionConsentRowsSchema } from '@grabit/shared';
 
 export const socialRegisterBodySchema = z.object({
   name: z
@@ -13,7 +14,7 @@ export const socialRegisterBodySchema = z.object({
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, '올바른 생년월일 형식이 아닙니다 (YYYY-MM-DD)'),
   phone: z.string().min(10, '올바른 전화번호를 입력해주세요').max(20),
-  phoneVerificationCode: z.string().length(6, '인증번호 6자리를 입력해주세요'),
+  phoneVerificationToken: z.string().min(1, '전화번호 인증이 필요합니다'),
   termsOfService: z.literal(true, {
     errorMap: () => ({ message: '이용약관에 동의해주세요' }),
   }),
@@ -21,6 +22,7 @@ export const socialRegisterBodySchema = z.object({
     errorMap: () => ({ message: '개인정보처리방침에 동의해주세요' }),
   }),
   marketingConsent: z.boolean(),
+  consentItems: socialCompletionConsentRowsSchema,
 });
 
 export type SocialRegisterBody = z.infer<typeof socialRegisterBodySchema>;

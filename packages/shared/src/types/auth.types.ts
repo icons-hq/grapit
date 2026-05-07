@@ -3,7 +3,17 @@ import type { UserProfile } from './user.types';
 export interface AuthResponse {
   accessToken: string;
   user: UserProfile;
+  deviceLimitNotice?: string;
 }
+
+export interface RegistrationPendingResponse {
+  emailVerificationRequired: true;
+  email: string;
+  verificationExpiresAt: string;
+  user: UserProfile;
+}
+
+export type RegisterResponse = AuthResponse | RegistrationPendingResponse;
 
 export interface TokenRefreshResponse {
   accessToken: string;

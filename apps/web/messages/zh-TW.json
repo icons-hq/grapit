@@ -1,0 +1,170 @@
+{
+  "nav": {
+    "searchPlaceholder": "搜尋演出名稱或藝人",
+    "searchAriaLabel": "搜尋演出",
+    "clearSearch": "清除搜尋詞",
+    "moreGenres": "更多",
+    "loginSignup": "登入 / 註冊",
+    "mypage": "我的頁面",
+    "logout": "登出",
+    "language": "語言",
+    "home": "首頁",
+    "search": "搜尋",
+    "category": "分類"
+  },
+  "home": {
+    "hot": "熱門演出",
+    "newOpen": "新開售",
+    "genreShortcuts": "按活動分類瀏覽",
+    "more": "更多",
+    "empty": "搜尋粉絲見面會和快閃活動，或按分類瀏覽。"
+  },
+  "search": {
+    "promptTitle": "搜尋演出",
+    "promptBody": "搜尋演出名稱或藝人",
+    "resultTitle": "'{query}' 的搜尋結果",
+    "totalCount": "共 {count} 筆結果",
+    "includeEnded": "包含已結束演出",
+    "allGenres": "全部分類",
+    "loadError": "無法載入演出資訊。請稍後再試。",
+    "retry": "重試",
+    "emptyHeading": "沒有搜尋結果",
+    "emptyBody": "請嘗試其他關鍵字或按活動分類瀏覽"
+  },
+  "genres": {
+    "artist_celebrity": "藝人/名人",
+    "ip_popup": "IP 快閃",
+    "musical": "音樂劇",
+    "concert": "演唱會",
+    "play": "話劇",
+    "exhibition": "展覽",
+    "classic": "古典",
+    "sports": "體育",
+    "kids_family": "兒童/家庭",
+    "leisure_camping": "休閒/露營"
+  },
+  "genrePage": {
+    "title": "{genre}",
+    "emptyHeading": "暫無演出",
+    "emptyBody": "新的演出將很快上線。",
+    "sort": {
+      "ariaLabel": "排序",
+      "latest": "最新",
+      "popular": "熱門"
+    }
+  },
+  "performance": {
+    "posterAltSuffix": "海報",
+    "detailTab": "詳細資訊",
+    "salesTab": "銷售資訊",
+    "noDetail": "暫無詳細資訊",
+    "refundTitle": "取消/退款說明",
+    "refundItems": [
+      "預訂後取消可能產生手續費。",
+      "手續費比例會依演出日前的取消時間而不同。",
+      "請在預訂時查看詳細內容。"
+    ],
+    "loadError": "無法載入演出資訊。請稍後再試。",
+    "retry": "重試",
+    "bookCta": "預訂門票"
+  },
+  "booking": {
+    "disabled": "門票預訂預計於5月下旬開放"
+  },
+  "locale": {
+    "suggestion": "要以繁體中文查看此頁面嗎？"
+  },
+  "legal": {
+    "fallbackLabel": "查看英文法律告知"
+  },
+  "auth": {
+    "tabs": {
+      "login": "登入",
+      "signup": "註冊"
+    },
+    "form": {
+      "email": "電子郵件",
+      "password": "密碼",
+      "emailPlaceholder": "請輸入電子郵件",
+      "passwordPlaceholder": "請輸入密碼",
+      "passwordDescription": "至少8個字元，包含字母、數字和符號",
+      "passwordConfirm": "確認密碼",
+      "passwordConfirmPlaceholder": "請再次輸入密碼",
+      "loginButton": "登入",
+      "loginLoading": "正在登入...",
+      "nextButton": "下一步",
+      "forgotPassword": "找回密碼",
+      "separator": "或",
+      "signupComplete": "註冊已完成。請進行電子郵件驗證。",
+      "under14Blocked": "未滿14歲無法註冊",
+      "temporaryError": "暫時發生錯誤。請稍後再試。"
+    },
+    "consent": {
+      "selectAll": "全部同意",
+      "required": "必填",
+      "optional": "可選",
+      "view": "查看",
+      "previous": "上一步",
+      "next": "下一步",
+      "dialogDescriptionSuffix": "詳細內容",
+      "crossBorderRequired": "必須同意個人資料跨境傳輸。不同意時無法繼續註冊或預訂粉絲見面會。",
+      "items": {
+        "termsOfService": {
+          "label": "同意服務條款",
+          "title": "服務條款"
+        },
+        "privacyPolicy": {
+          "label": "同意隱私權政策",
+          "title": "隱私權政策"
+        },
+        "pipaRequired": {
+          "label": "同意必要個人資料蒐集與使用",
+          "title": "必要個人資料蒐集與使用"
+        },
+        "crossBorderTransfer": {
+          "label": "同意個人資料跨境傳輸",
+          "title": "個人資料跨境傳輸"
+        },
+        "pdpaNotice": {
+          "label": "確認泰國 PDPA 通知",
+          "title": "泰國 PDPA 通知"
+        },
+        "piplNotice": {
+          "label": "確認中國 PIPL 通知",
+          "title": "中國 PIPL 通知"
+        },
+        "marketingConsent": {
+          "label": "同意接收行銷訊息",
+          "title": "行銷接收同意"
+        }
+      }
+    },
+    "emailVerification": {
+      "sent": "驗證郵件已傳送",
+      "resendCta": "重新傳送驗證郵件",
+      "resendLoading": "正在重新傳送...",
+      "resendSuccess": "已重新傳送驗證郵件",
+      "expired": "驗證連結已過期。請重新要求驗證郵件。",
+      "verified": "電子郵件驗證已完成。",
+      "throttled": "請稍後再試。",
+      "systemError": "暫時發生錯誤。請再試一次。"
+    },
+    "otp": {
+      "sent": "驗證碼已傳送",
+      "resendCta": "重新傳送驗證碼",
+      "resendLoading": "正在重新傳送驗證碼",
+      "resendSuccess": "新的驗證碼已傳送",
+      "expired": "驗證碼已過期，請重新傳送。",
+      "invalidCode": "驗證碼不正確",
+      "throttled": "請求過於頻繁，請稍後再試。",
+      "systemError": "驗證碼處理失敗，請稍後再試。"
+    },
+    "errors": {
+      "invalidCredentials": "電子郵件或密碼不正確",
+      "emailUnverified": "需要完成電子郵件驗證",
+      "verificationRequired": "請完成驗證",
+      "providerUnavailable": "此社群登入服務目前無法使用",
+      "deviceLimitNotice": "因另一台裝置登入，最早的工作階段已登出。"
+    }
+  }
+}

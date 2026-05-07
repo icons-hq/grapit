@@ -1,5 +1,9 @@
 import type { Metadata } from 'next';
+import { getLocale } from 'next-intl/server';
+import type { SupportedLocale } from '@grabit/shared';
 import termsMd from '@/content/legal/terms-of-service.md?raw';
+import termsEnMd from '@/content/legal/terms-of-service.en.md?raw';
+import { LegalFallbackLabel } from '@/components/legal/legal-fallback-label';
 import { TermsMarkdown } from '@/components/legal/terms-markdown';
 import { getLegalRobots } from '../robots';
 
@@ -21,6 +25,15 @@ export const metadata: Metadata = {
   robots: getLegalRobots(),
 };
 
-export default function TermsPage() {
-  return <TermsMarkdown showH1>{termsMd}</TermsMarkdown>;
+export default async function TermsPage() {
+  const locale = (await getLocale()) as SupportedLocale;
+  const usesEnglishFallback = locale === 'th' || locale === 'zh-CN' || locale === 'zh-TW';
+  const markdown = locale === 'en' || usesEnglishFallback ? termsEnMd : termsMd;
+
+  return (
+    <>
+      {usesEnglishFallback ? <LegalFallbackLabel locale={locale} /> : null}
+      <TermsMarkdown showH1>{markdown}</TermsMarkdown>
+    </>
+  );
 }

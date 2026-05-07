@@ -1,7 +1,16 @@
-export { users, genderEnum } from './users.js';
+export { users, genderEnum, localeEnum } from './users.js';
 export { socialAccounts } from './social-accounts.js';
 export { refreshTokens } from './refresh-tokens.js';
+export { emailVerificationTokens } from './email-verification-tokens.js';
 export { termsAgreements } from './terms-agreements.js';
+export { consentItems } from './consent-items.js';
+export { consentAuditLogs } from './consent-audit-logs.js';
+export {
+  translationSources,
+  translationStatusEnum,
+} from './translation-sources.js';
+export { translationDrafts } from './translation-drafts.js';
+export { legalContent, legalContentTypeEnum } from './legal-content.js';
 export { venues } from './venues.js';
 export { performances, genreEnum as performanceGenreEnum, performanceStatusEnum } from './performances.js';
 export { showtimes } from './showtimes.js';

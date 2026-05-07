@@ -17,7 +17,7 @@
 | # | Phase | Goal | Requirements | Gate | Merged from |
 |---|-------|------|--------------|------|-------------|
 | 22 | Preflight Closure | v1.1에서 이월된 operator evidence, validation backfill, launch blocker hardening을 fanmeet 구현 전에 닫는다. | PREF-01, PREF-02, PREF-03 | Preflight | 22-24 |
-| 23 | Launch Foundation | 기존 prod 보존, feature flags, 5개 로케일, translation/legal lock, LINE/SMS, consent/audit 기반을 만든다. | FLAG-01, FLAG-02, I18N-01, I18N-02, TRANS-01, TRANS-02, AUTH-01, AUTH-02, COMP-01, COMP-02 | M1 foundation | 25-29 |
+| 23 | Launch Foundation | 기존 prod 보존, feature flags, 5개 로케일, translation/legal lock, auth/SMS (LINE excluded by D-13), consent/audit 기반을 만든다. | FLAG-01, FLAG-02, I18N-01, I18N-02, TRANS-01, TRANS-02, AUTH-01, AUTH-02, COMP-01, COMP-02 | M1 foundation | 25-29 |
 | 24 | Traffic + Booking + Payment Core | 대기열/WAF/prewarm, 다층 좌석 선택, 결제 4종, 환불, QR 발급을 통합 booking core로 완성한다. | TRAF-01, TRAF-02, TRAF-03, BOOK-01, BOOK-02, BOOK-03, PAY-02, REFUND-01, REFUND-02, QR-01 | M1/M2 core | 30-32 |
 | 25 | Admin Operations Console | 이벤트 등록, Q&A/FAQ/notice/CS, admin security, audit, seat operations를 운영 콘솔 단위로 묶어 완성한다. | ADMIN-01, ADMIN-02, ADMIN-03, ADMIN-04 | M1 operations | 33-35 |
 | 26 | M1 Canary + Cutover Gates | 2026-05-15 광고 오픈, k6, DR, on-call, WAF fine-tune, Toss live cutover를 순차 gate로 통과한다. | M1-01, LOAD-01, DR-01, INFRA-01, OPS-01, PAY-01, OPS-02 | M1/M2 cutover | 36-40 |
@@ -63,15 +63,51 @@ Plans:
 
 **Requirements:** FLAG-01, FLAG-02, I18N-01, I18N-02, TRANS-01, TRANS-02, AUTH-01, AUTH-02, COMP-01, COMP-02
 
-**Merged from:** 25 Prod compatibility + flags, 26 i18n routing + locale foundation, 27 Translation workflow + legal lock, 28 LINE login + 5-country SMS, 29 Multinational consent + audit
+**Merged from:** 25 Prod compatibility + flags, 26 i18n routing + locale foundation, 27 Translation workflow + legal lock, 28 email verification + 5-country SMS (LINE excluded by Phase 23 D-13), 29 Multinational consent + audit
+
+**Plans:** 19/19 plans complete
+
+Plans:
+**Wave 1**
+- [x] 23-01-PLAN.md — Reconcile stale LINE scope per D-13 and create shared flag/locale/consent contracts
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [x] 23-02-PLAN.md — Expand Drizzle schema and run the blocking Phase 23 migration apply gate
+- [x] 23-03-PLAN.md — Enforce runtime booking feature flags on API booking/payment creation paths
+
+**Wave 3** *(blocked on foundation contracts/schema)*
+- [x] 23-04-PLAN.md — Implement five-locale routing, sitemap, and locale suggestion UI
+- [x] 23-05-PLAN.md — Implement backend translation workflow, DeepL adapter, and legal machine-translation guard
+- [x] 23-06-PLAN.md — Implement email verification, three-device refresh-family policy, SMS validation, and LINE absence gates (D-13 excluded)
+- [x] 23-14-PLAN.md — Implement KST/KRW formatting helpers and wire them into public performance detail
+- [x] 23-15-PLAN.md — Localize PhoneInput labels, wire auth/OTP caller locale, and define the launch copy manifest
+- [x] 23-16-PLAN.md — Add locale switch/suggestion UI, wire visible shell/header/menu surfaces, and persist logged-in locale preference
+- [x] 23-17-PLAN.md — Add English legal canonical fallback files and lock legal content locales
+
+**Wave 4** *(blocked on schema, i18n, translation, legal content, and auth foundations)*
+- [x] 23-07-PLAN.md — Implement itemized consent capture and masked audit query API
+- [x] 23-08-PLAN.md — Wire runtime booking-disabled UI without build-time flag freezing
+- [x] 23-09-PLAN.md — Add localized auth, email verification, SMS OTP, and auth status UI copy
+- [x] 23-13-PLAN.md — Wire legal English fallback labels and footer compliance surfaces
+
+**Wave 5** *(blocked on API/i18n foundations)*
+- [x] 23-10-PLAN.md — Replace boolean signup consent with itemized UI, submit payload/API contract wiring, and no-LINE auth surface (D-13 excluded)
+- [x] 23-12-PLAN.md — Build masked admin consent audit query UI
+
+**Wave 6** *(blocked on public performance detail and admin hook/sidebar file ownership)*
+- [x] 23-11-PLAN.md — Build admin translation workflow and wire automatic translation label into public performance detail
+
+**Wave 7** *(gap closure before Phase 26 canary)*
+- [x] 23-19-PLAN.md — Close Phase 23 i18n visible-copy, translated performance content, locale-prefixed route, and canary smoke gaps (completed 2026-05-07)
 
 **Success criteria:**
 1. Expand-only migrations, canary policy, and shared feature flag helper preserve existing production users, reservations, sessions, and Korean root URLs.
 2. Korean routes remain prefixless and foreign routes use `/en`, `/th`, `/zh-CN`, `/zh-TW` with hreflang, sitemap, locale preference, time/currency formatting, and PhoneInput localization.
 3. Korean source content can generate reviewed translations, while legal notices stay Korean/English manual and auto-translation is blocked for legal copy.
-4. Kakao, Naver, Google, LINE, email verification, 5-country SMS OTP, and three-device refresh token policy are covered by tests and launch evidence.
+4. Kakao, Naver, Google, email verification, 5-country SMS OTP, and three-device refresh token policy are covered by tests and launch evidence; LINE remains excluded from Phase 23 per D-13.
 5. PIPA, cross-border transfer, PDPA/PIPL English notice, under-14, marketing consent, audit log, and footer legal surfaces are captured.
 6. `BOOKING_ENABLED=false` blocks API seat locks and payment attempts, not only UI buttons.
+7. Phase 26 canary entry has a stable five-locale i18n smoke covering GNB locale switcher, public/auth/home/search/performance/booking-disabled visible copy, translated performance content, and locale-prefixed route behavior.
 
 ### Phase 24: Traffic + Booking + Payment Core
 

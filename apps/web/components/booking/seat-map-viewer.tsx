@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { SeatMapControls } from './seat-map-controls';
 import { useIsMobile } from '@/hooks/use-is-mobile';
 import { prefixSvgDefsIds } from './__utils__/prefix-svg-defs-ids';
+import { sanitizeParsedSvg } from '@/lib/svg/safety';
 
 interface SeatMapViewerProps {
   svgUrl: string;
@@ -153,6 +154,7 @@ export function SeatMapViewer({
     ) {
       return null;
     }
+    sanitizeParsedSvg(doc);
     const seats = doc.querySelectorAll('[data-seat-id]');
 
     seats.forEach((el) => {

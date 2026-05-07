@@ -1,4 +1,6 @@
 import type { Metadata } from 'next';
+import { NextIntlClientProvider } from 'next-intl';
+import { getLocale, getMessages } from 'next-intl/server';
 import { pretendard } from './fonts';
 import { Toaster } from '@/components/ui/sonner';
 import { AuthInitializer } from '@/components/auth/auth-initializer';
@@ -12,20 +14,25 @@ export const metadata: Metadata = {
   description: '공연, 전시, 스포츠 등 라이브 엔터테인먼트 티켓 예매 플랫폼',
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const locale = await getLocale();
+  const messages = await getMessages();
+
   return (
-    <html lang="ko" className={pretendard.variable}>
+    <html lang={locale} className={pretendard.variable}>
       <body className="flex min-h-screen flex-col">
-        <Providers>
-          <AuthInitializer />
-          <NetworkBanner />
-          <LayoutShell>{children}</LayoutShell>
-          <Toaster />
-        </Providers>
+        <NextIntlClientProvider locale={locale} messages={messages} timeZone="Asia/Seoul">
+          <Providers>
+            <AuthInitializer />
+            <NetworkBanner />
+            <LayoutShell>{children}</LayoutShell>
+            <Toaster />
+          </Providers>
+        </NextIntlClientProvider>
       </body>
     </html>
   );

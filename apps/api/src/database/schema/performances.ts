@@ -5,6 +5,7 @@ import { venues } from './venues.js';
 export const genreEnum = pgEnum('genre', [
   'musical', 'concert', 'play', 'exhibition',
   'classic', 'sports', 'kids_family', 'leisure_camping',
+  'artist_celebrity', 'ip_popup',
 ]);
 
 export const performanceStatusEnum = pgEnum('performance_status', [

@@ -13,6 +13,7 @@ interface SeatSelectionPanelProps {
   onRemove: (seatId: string) => void;
   onProceed: () => void;
   isLoading: boolean;
+  disabledReason?: string | null;
 }
 
 function formatDateLabel(date: Date): string {
@@ -40,6 +41,7 @@ export function SeatSelectionPanel({
   onRemove,
   onProceed,
   isLoading,
+  disabledReason = null,
 }: SeatSelectionPanelProps) {
   const totalPrice = selectedSeats.reduce((sum, s) => sum + s.price, 0);
 
@@ -91,14 +93,19 @@ export function SeatSelectionPanel({
         </div>
 
         {/* CTA */}
+        {disabledReason && (
+          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
+            {disabledReason}
+          </p>
+        )}
         <Button
           className="h-12 w-full text-base"
-          disabled={selectedSeats.length === 0 || isLoading}
+          disabled={!!disabledReason || selectedSeats.length === 0 || isLoading}
           onClick={onProceed}
         >
           {isLoading ? (
             <><Loader2 className="mr-2 size-4 animate-spin" />처리 중...</>
-          ) : selectedSeats.length === 0 ? '좌석을 선택해주세요' : '다음'}
+          ) : disabledReason ?? (selectedSeats.length === 0 ? '좌석을 선택해주세요' : '다음')}
         </Button>
       </div>
     </div>

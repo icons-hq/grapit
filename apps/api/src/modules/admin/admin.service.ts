@@ -24,6 +24,7 @@ import type {
   SeatMapConfigInput,
 } from '@grabit/shared';
 import { CacheService } from '../performance/cache.service.js';
+import { parseAdminKstDateTime } from './admin-date.util.js';
 
 @Injectable()
 export class AdminService {
@@ -72,8 +73,8 @@ export class AdminService {
           venueId: venue?.id,
           posterUrl: input.posterUrl ?? null,
           description: input.description ?? null,
-          startDate: new Date(input.startDate),
-          endDate: new Date(input.endDate),
+          startDate: parseAdminKstDateTime(input.startDate),
+          endDate: parseAdminKstDateTime(input.endDate),
           runtime: input.runtime ?? null,
           ageRating: input.ageRating,
           salesInfo: input.salesInfo ?? null,
@@ -103,7 +104,7 @@ export class AdminService {
           .values(
             input.showtimes.map((st) => ({
               performanceId,
-              dateTime: new Date(st.dateTime),
+              dateTime: parseAdminKstDateTime(st.dateTime),
             })),
           );
       }
@@ -179,8 +180,12 @@ export class AdminService {
       if (venueId !== undefined) updateData['venueId'] = venueId;
       if (input.posterUrl !== undefined) updateData['posterUrl'] = input.posterUrl;
       if (input.description !== undefined) updateData['description'] = input.description;
-      if (input.startDate !== undefined) updateData['startDate'] = new Date(input.startDate);
-      if (input.endDate !== undefined) updateData['endDate'] = new Date(input.endDate);
+      if (input.startDate !== undefined) {
+        updateData['startDate'] = parseAdminKstDateTime(input.startDate);
+      }
+      if (input.endDate !== undefined) {
+        updateData['endDate'] = parseAdminKstDateTime(input.endDate);
+      }
       if (input.runtime !== undefined) updateData['runtime'] = input.runtime;
       if (input.ageRating !== undefined) updateData['ageRating'] = input.ageRating;
       if (input.salesInfo !== undefined) updateData['salesInfo'] = input.salesInfo;
@@ -222,7 +227,7 @@ export class AdminService {
             .values(
               input.showtimes.map((st) => ({
                 performanceId: id,
-                dateTime: new Date(st.dateTime),
+                dateTime: parseAdminKstDateTime(st.dateTime),
               })),
             );
         }

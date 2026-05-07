@@ -15,4 +15,10 @@ export const refreshTokens = pgTable('refresh_tokens', {
   index('idx_refresh_tokens_token_hash').on(table.tokenHash),
   index('idx_refresh_tokens_family').on(table.family),
   index('idx_refresh_tokens_user_id').on(table.userId),
+  index('idx_refresh_tokens_active_family_query').on(
+    table.userId,
+    table.family,
+    table.revokedAt,
+    table.expiresAt,
+  ),
 ]);

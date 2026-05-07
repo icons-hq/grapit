@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { Resend } from 'resend';
 import * as Sentry from '@sentry/nestjs';
 import { PasswordResetEmail } from './templates/password-reset.js';
+import { EmailVerificationEmail } from './templates/email-verification.js';
+import { emailVerificationCopy, type EmailVerificationLocale } from './templates/email-verification.copy.js';
 
 export interface SendEmailResult {
   success: boolean;
@@ -129,4 +131,71 @@ export class EmailService {
     // Unreachable: loop body returns on every attempt outcome (success, non-retryable, or final-attempt exhaustion).
     throw new Error('email retry loop exited unexpectedly');
   }
+
+  async sendEmailVerificationEmail(
+    to: string,
+    verificationLink: string,
+    locale: string = 'ko',
+  ): Promise<SendEmailResult> {
+    const resolvedLocale = resolveEmailVerificationLocale(locale);
+    const copy = emailVerificationCopy[resolvedLocale];
+
+    if (this.resend === null) {
+      const toDomain = to.split('@')[1] ?? 'unknown';
+      this.logger.log(`DEV EMAIL: email verification requested for ${toDomain} (${resolvedLocale})`);
+      return { success: true };
+    }
+
+    const toDomain = to.split('@')[1] ?? 'unknown';
+
+    for (let attempt = 1; attempt <= MAX_SEND_ATTEMPTS; attempt++) {
+      const { data, error } = await this.resend.emails.send({
+        from: this.from,
+        to,
+        subject: copy.subject,
+        react: EmailVerificationEmail({ verificationLink, locale: resolvedLocale }),
+      });
+
+      if (!error) {
+        if (attempt > 1) {
+          this.logger.log(`Resend recovered on attempt ${attempt} (toDomain=${toDomain})`);
+        }
+        return { success: true, id: data?.id };
+      }
+
+      const isFinalAttempt = attempt === MAX_SEND_ATTEMPTS;
+      const isTransient = RETRYABLE_ERROR(error.message);
+
+      if (isFinalAttempt || !isTransient) {
+        this.logger.error(
+          `Resend verification send failed for ${toDomain} after ${attempt} attempt(s): ${error.message}`,
+        );
+        Sentry.withScope((scope) => {
+          scope.setTag('component', 'email-service');
+          scope.setTag('provider', 'resend');
+          scope.setTag('emailType', 'verification');
+          scope.setLevel('error');
+          scope.setContext('email', {
+            from: this.from,
+            toDomain,
+            attempts: attempt,
+          });
+          Sentry.captureException(new Error(`Resend verification send failed: ${error.message}`));
+        });
+        return { success: false, error: error.message };
+      }
+
+      const delayMs = RETRY_BASE_MS * 2 ** (attempt - 1);
+      this.logger.warn(
+        `Resend transient verification error on attempt ${attempt}/${MAX_SEND_ATTEMPTS} (toDomain=${toDomain}): ${error.message} — retrying in ${delayMs}ms`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+
+    throw new Error('email verification retry loop exited unexpectedly');
+  }
+}
+
+function resolveEmailVerificationLocale(locale: string): EmailVerificationLocale {
+  return locale in emailVerificationCopy ? (locale as EmailVerificationLocale) : 'ko';
 }

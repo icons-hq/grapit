@@ -1,0 +1,38 @@
+import { describe, expect, it, vi } from 'vitest';
+import { render, screen } from '@testing-library/react';
+
+vi.mock('next-intl', () => ({
+  useLocale: () => 'en',
+}));
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn() }),
+  useSearchParams: () => new URLSearchParams(),
+}));
+
+vi.mock('@/stores/use-auth-store', () => ({
+  useAuthStore: () => ({
+    isInitialized: true,
+    accessToken: null,
+    setAuth: vi.fn(),
+  }),
+}));
+
+vi.mock('@/components/auth/signup-form', () => ({
+  SignupForm: () => <div>signup form</div>,
+}));
+
+import AuthPage from '../page';
+
+describe('auth page i18n visible copy', () => {
+  it('renders auth tabs and login form copy from the active locale', () => {
+    render(<AuthPage />);
+
+    expect(screen.getByRole('tab', { name: 'Login' })).toBeDefined();
+    expect(screen.getByRole('tab', { name: 'Sign up' })).toBeDefined();
+    expect(screen.getByPlaceholderText('Enter your email')).toBeDefined();
+    expect(screen.getByPlaceholderText('Enter your password')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Login' })).toBeDefined();
+    expect(screen.getByText('Forgot password?')).toBeDefined();
+  });
+});

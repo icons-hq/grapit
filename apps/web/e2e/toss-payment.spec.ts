@@ -40,6 +40,8 @@ test.describe('Toss Payments E2E', () => {
   }) => {
     let confirmIntercepted = false;
 
+    await enableBooking(page);
+
     // 0. Blocker B2: seed auth so /confirm + /complete do not redirect to /auth.
     //    loginAsTestUser calls the real /api/v1/auth/login endpoint and lands
     //    the httpOnly refreshToken cookie; AuthInitializer then exchanges it
@@ -126,6 +128,7 @@ test.describe('Toss Payments E2E', () => {
     // it catches UI regressions in the error handling branch
     // (confirm/page.tsx:75-76). This is UI regression coverage only.
     //
+    await enableBooking(page);
     // Auth is still required because /confirm is behind AuthGuard.
     await loginAsTestUser(page);
     await injectBookingFixture(page, {
@@ -150,6 +153,7 @@ test.describe('Toss Payments E2E', () => {
     // NOTE: Same disclaimer as Scenario 2 — URL simulation only. This is not
     // a replacement for real Toss sandbox flow; it only asserts the UI renders
     // the decline message when the error URL params are present.
+    await enableBooking(page);
     await loginAsTestUser(page);
     await injectBookingFixture(page, {
       performanceId: 'e2e-test-performance',
@@ -172,6 +176,7 @@ test.describe('Toss Payments E2E', () => {
     let confirmIntercepted = false;
     const perfId = 'e2e-test-performance';
 
+    await enableBooking(page);
     await loginAsTestUser(page);
     await injectBookingFixture(page, {
       performanceId: perfId,
@@ -310,4 +315,14 @@ test.describe('Toss Payments E2E', () => {
     await expect(page.getByText('잘못된 접근입니다.')).toBeVisible({ timeout: 5000 });
     await expect.poll(() => confirmIntercepted).toBe(false);
   });
+
+  async function enableBooking(page: import('@playwright/test').Page) {
+    await page.route('**/api/runtime-flags', async (route: Route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ bookingEnabled: true }),
+      });
+    });
+  }
 });

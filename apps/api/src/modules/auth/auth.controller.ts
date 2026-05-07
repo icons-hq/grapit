@@ -16,8 +16,10 @@ import { AuthGuard } from '@nestjs/passport';
 import { ConfigService } from '@nestjs/config';
 import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
+import { z } from 'zod';
 import { Public } from '../../common/decorators/public.decorator.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
+import { resolveTrustedRequestIp } from '../../common/request-ip.js';
 import { AuthService, type ValidatedUser } from './auth.service.js';
 import { registerBodySchema, type RegisterBody } from './dto/register.dto.js';
 import {
@@ -38,6 +40,15 @@ import {
 import type { SocialProfile } from './interfaces/social-profile.interface.js';
 import { AUTH_COOKIE_NAME } from '@grabit/shared/constants/index.js';
 
+const launchLocaleSchema = z.enum(['ko', 'en', 'th', 'zh-CN', 'zh-TW']).default('ko');
+const emailVerificationRequestSchema = z.object({
+  email: z.string().email(),
+  locale: launchLocaleSchema.optional(),
+});
+const emailVerificationTokenSchema = z.object({
+  token: z.string().min(32),
+});
+
 @Controller('auth')
 export class AuthController {
   private readonly logger = new Logger(AuthController.name);
@@ -51,13 +62,14 @@ export class AuthController {
   @Post('register')
   async register(
     @Body(new ZodValidationPipe(registerBodySchema)) dto: RegisterBody,
-    @Res({ passthrough: true }) res: Response,
+    @Req() req: Request,
   ) {
-    const result = await this.authService.register(dto);
-    this.setRefreshTokenCookie(res, result.refreshToken);
+    const result = await this.authService.register(dto, this.resolveConsentMeta(req));
 
     return {
-      accessToken: result.accessToken,
+      emailVerificationRequired: result.emailVerificationRequired,
+      email: result.email,
+      verificationExpiresAt: result.verificationExpiresAt,
       user: result.user,
     };
   }
@@ -76,6 +88,7 @@ export class AuthController {
     return {
       accessToken: result.accessToken,
       user: result.user,
+      ...(result.deviceLimitNotice ? { deviceLimitNotice: result.deviceLimitNotice } : {}),
     };
   }
 
@@ -141,6 +154,46 @@ export class AuthController {
     return { message: '비밀번호가 변경되었습니다' };
   }
 
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 3, ttl: 900000 } })
+  @Post('email-verification/request')
+  async requestEmailVerification(
+    @Body(new ZodValidationPipe(emailVerificationRequestSchema))
+    dto: z.infer<typeof emailVerificationRequestSchema>,
+  ) {
+    const result = await this.authService.requestEmailVerification(dto.email, dto.locale);
+    return {
+      message: '인증 메일을 발송했습니다',
+      expiresAt: result.expiresAt,
+    };
+  }
+
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 3, ttl: 900000 } })
+  @Post('email-verification/resend')
+  async resendEmailVerification(
+    @Body(new ZodValidationPipe(emailVerificationRequestSchema))
+    dto: z.infer<typeof emailVerificationRequestSchema>,
+  ) {
+    const result = await this.authService.resendEmailVerification(dto.email, dto.locale);
+    return {
+      message: '인증 메일을 다시 보냈습니다',
+      expiresAt: result.expiresAt,
+    };
+  }
+
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @Post('email-verification/verify')
+  async verifyEmailVerification(
+    @Body(new ZodValidationPipe(emailVerificationTokenSchema))
+    dto: z.infer<typeof emailVerificationTokenSchema>,
+  ) {
+    return this.authService.verifyEmailVerificationToken(dto.token);
+  }
+
   // -- Social OAuth endpoints --
 
   @Public()
@@ -200,18 +253,21 @@ export class AuthController {
   async completeSocialRegistration(
     @Body(new ZodValidationPipe(completeSocialRegistrationSchema))
     dto: CompleteSocialRegistrationBody,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
     const { registrationToken, ...registerData } = dto;
     const result = await this.authService.completeSocialRegistration(
       registrationToken,
       registerData,
+      this.resolveConsentMeta(req),
     );
     this.setRefreshTokenCookie(res, result.refreshToken);
 
     return {
       accessToken: result.accessToken,
       user: result.user,
+      ...(result.deviceLimitNotice ? { deviceLimitNotice: result.deviceLimitNotice } : {}),
     };
   }
 
@@ -259,5 +315,12 @@ export class AuthController {
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
       path: '/',
     });
+  }
+
+  private resolveConsentMeta(req: Request): { ipAddress: string; userAgent?: string } {
+    return {
+      ipAddress: resolveTrustedRequestIp(req),
+      userAgent: req.get('user-agent'),
+    };
   }
 }

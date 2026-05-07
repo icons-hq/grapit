@@ -1,15 +1,23 @@
 'use client';
 
 import Link from 'next/link';
+import { useLocale } from 'next-intl';
 import { Swiper, SwiperSlide } from 'swiper/react';
 import { FreeMode } from 'swiper/modules';
 import { SectionSkeleton } from '@/components/skeletons';
 import { PerformanceCard } from '@/components/performance/performance-card';
+import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { useHotPerformances } from '@/hooks/use-performances';
+import {
+  getVisibleCopy,
+  resolveVisibleCopyLocale,
+} from '@/lib/i18n/visible-copy';
 import 'swiper/css';
 import 'swiper/css/free-mode';
 
 export function HotSection() {
+  const activeLocale = resolveVisibleCopyLocale(useLocale());
+  const copy = getVisibleCopy(activeLocale);
   const { data: performances, isLoading } = useHotPerformances();
 
   if (isLoading) return <SectionSkeleton />;
@@ -18,12 +26,14 @@ export function HotSection() {
   return (
     <section className="mt-10">
       <div className="mb-6 flex items-center justify-between">
-        <h2 className="text-display font-semibold leading-[1.2]">HOT 공연</h2>
+        <h2 className="text-display font-semibold leading-[1.2]">
+          {copy.home.hot}
+        </h2>
         <Link
-          href="/genre/musical?sort=popular"
+          href={`${getLocalizedPathname('/genre/artist_celebrity', activeLocale)}?sort=popular`}
           className="text-sm text-gray-600 hover:text-gray-900"
         >
-          더보기
+          {copy.home.more}
         </Link>
       </div>
       <Swiper

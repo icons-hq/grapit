@@ -3,9 +3,18 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useLocale } from 'next-intl';
 import { X, User, LogOut, Search } from 'lucide-react';
 import { cn } from '@/lib/cn';
-import { GENRES, GENRE_LABELS } from '@grabit/shared';
+import {
+  getLocalizedPathname,
+  LocaleSwitcher,
+} from '@/components/i18n/locale-switcher';
+import {
+  getVisibleCopy,
+  resolveVisibleCopyLocale,
+} from '@/lib/i18n/visible-copy';
+import { GENRES } from '@grabit/shared';
 
 interface MobileMenuProps {
   isOpen: boolean;
@@ -23,6 +32,9 @@ export function MobileMenu({
   userName,
 }: MobileMenuProps) {
   const router = useRouter();
+  const locale = useLocale();
+  const activeLocale = resolveVisibleCopyLocale(locale);
+  const copy = getVisibleCopy(activeLocale);
   const [searchValue, setSearchValue] = React.useState('');
 
   // Prevent body scroll when menu is open
@@ -40,7 +52,9 @@ export function MobileMenu({
   function handleSearch() {
     const trimmed = searchValue.trim();
     if (trimmed.length === 0) return;
-    router.push(`/search?q=${encodeURIComponent(trimmed)}`);
+    router.push(
+      `${getLocalizedPathname('/search', activeLocale)}?q=${encodeURIComponent(trimmed)}`,
+    );
     setSearchValue('');
     onClose();
   }
@@ -89,8 +103,8 @@ export function MobileMenu({
             <input
               type="text"
               role="searchbox"
-              aria-label="공연 검색"
-              placeholder="공연명, 아티스트를 검색하세요"
+              aria-label={copy.nav.searchAriaLabel}
+              placeholder={copy.nav.searchPlaceholder}
               value={searchValue}
               onChange={(e) => setSearchValue(e.target.value)}
               onKeyDown={handleSearchKeyDown}
@@ -118,45 +132,57 @@ export function MobileMenu({
               </div>
               <div className="flex flex-col gap-1">
                 <Link
-                  href="/mypage"
+                  href={getLocalizedPathname('/mypage', activeLocale)}
                   onClick={onClose}
                   className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-gray-900 hover:bg-gray-100"
                 >
                   <User className="h-4 w-4" />
-                  마이페이지
+                  {copy.nav.mypage}
                 </Link>
                 <button
                   onClick={() => { onLogout(); onClose(); }}
                   className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-gray-500 hover:bg-gray-100"
                 >
                   <LogOut className="h-4 w-4" />
-                  로그아웃
+                  {copy.nav.logout}
                 </button>
               </div>
             </div>
           ) : (
             <Link
-              href="/auth"
+              href={getLocalizedPathname('/auth', activeLocale)}
               onClick={onClose}
               className="block w-full rounded-lg bg-primary px-4 py-3 text-center text-base font-semibold text-white"
             >
-              로그인 / 회원가입
+              {copy.nav.loginSignup}
             </Link>
           )}
         </div>
 
-        {/* Genre tabs -- all 8 genres (no "더보기" on mobile) */}
+        <div className="border-b border-gray-200 px-6 py-4">
+          <p className="mb-3 text-sm font-normal text-gray-500">
+            {copy.nav.language}
+          </p>
+          <LocaleSwitcher
+            className="w-full justify-between"
+            onLocaleChange={onClose}
+          />
+        </div>
+
+        {/* Category tabs */}
         <div className="px-6 py-4">
-          <p className="mb-3 text-sm font-normal text-gray-500">카테고리</p>
+          <p className="mb-3 text-sm font-normal text-gray-500">
+            {copy.nav.category}
+          </p>
           <div className="flex flex-col gap-1">
             {GENRES.map((genre) => (
               <Link
                 key={genre}
-                href={`/genre/${genre}`}
+                href={getLocalizedPathname(`/genre/${genre}`, activeLocale)}
                 onClick={onClose}
                 className="rounded-lg px-3 py-2 text-left text-base text-gray-900 hover:bg-gray-100"
               >
-                {GENRE_LABELS[genre]}
+                {copy.genres[genre]}
               </Link>
             ))}
           </div>

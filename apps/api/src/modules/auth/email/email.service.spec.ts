@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EmailService } from './email.service.js';
 
@@ -88,6 +89,56 @@ describe('EmailService', () => {
     expect(callArg.react).toBeDefined();
     expect(result).toEqual({ success: true, id: 'mock-id' });
     expect(sentryMod.__captureExceptionMock).not.toHaveBeenCalled();
+  });
+
+  it('PROD mode: sendEmailVerificationEmail uses localized verification copy and react template', async () => {
+    const config = makeConfig({
+      RESEND_API_KEY: 're_test_key',
+      RESEND_FROM_EMAIL: 'no-reply@heygrabit.com',
+      NODE_ENV: 'production',
+    });
+    const svc = new EmailService(config);
+    const sendEmailVerificationEmail = (svc as unknown as {
+      sendEmailVerificationEmail?: (to: string, verificationLink: string, locale: string) => Promise<unknown>;
+    }).sendEmailVerificationEmail;
+    expect(sendEmailVerificationEmail).toEqual(expect.any(Function));
+
+    const mod = resendModule as unknown as { __sendMock: ReturnType<typeof vi.fn> };
+    mod.__sendMock.mockResolvedValueOnce({ data: { id: 'verification-id' }, error: null });
+    const result = await sendEmailVerificationEmail!.call(
+      svc,
+      'user@example.com',
+      'https://app.test/auth/verify-email?token=opaque',
+      'zh-TW',
+    );
+
+    const callArg = mod.__sendMock.mock.calls[0]?.[0] as { subject: string; react: unknown };
+    expect(callArg.subject).toContain('Grabit');
+    expect(callArg.react).toBeDefined();
+    expect(result).toEqual({ success: true, id: 'verification-id' });
+  });
+
+  it('DEV mode: sendEmailVerificationEmail does not log the raw verification link or token', async () => {
+    const config = makeConfig({ NODE_ENV: 'development' });
+    const logSpy = vi.spyOn(Logger.prototype, 'log');
+    const svc = new EmailService(config);
+    const sendEmailVerificationEmail = (svc as unknown as {
+      sendEmailVerificationEmail?: (to: string, verificationLink: string, locale: string) => Promise<unknown>;
+    }).sendEmailVerificationEmail;
+    expect(sendEmailVerificationEmail).toEqual(expect.any(Function));
+
+    await sendEmailVerificationEmail!.call(
+      svc,
+      'user@example.com',
+      'https://app.test/auth/verify-email?token=raw-secret-token',
+      'ko',
+    );
+
+    const serializedLogs = JSON.stringify(logSpy.mock.calls);
+    expect(serializedLogs).not.toContain('raw-secret-token');
+    expect(serializedLogs).not.toContain('https://app.test/auth/verify-email');
+
+    logSpy.mockRestore();
   });
 
   it('PROD misconfig (API_KEY): no RESEND_API_KEY + NODE_ENV=production → throws on construction', () => {

@@ -7,7 +7,9 @@ import {
   Body,
   Query,
   Request,
+  Req,
 } from '@nestjs/common';
+import type { Request as ExpressRequest } from 'express';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import {
   prepareReservationSchema,
@@ -18,6 +20,8 @@ import {
   type CancelReservationInput,
   type ReservationStatus,
 } from '@grabit/shared';
+import { resolveTrustedRequestIp } from '../../common/request-ip.js';
+import type { ConsentRequestMeta } from '../consent/consent.service.js';
 import { ReservationService } from './reservation.service.js';
 
 @Controller()
@@ -29,9 +33,13 @@ export class ReservationController {
   @Post('reservations/prepare')
   async prepareReservation(
     @Body(new ZodValidationPipe(prepareReservationSchema)) body: PrepareReservationInput,
-    @Request() req: { user: { id: string } },
+    @Req() req: ExpressRequest & { user: { id: string } },
   ) {
-    return this.reservationService.prepareReservation(body, req.user.id);
+    return this.reservationService.prepareReservation(
+      body,
+      req.user.id,
+      this.resolveConsentMeta(req),
+    );
   }
 
   @Post('payments/confirm')
@@ -86,5 +94,12 @@ export class ReservationController {
   ) {
     await this.reservationService.cancelPendingReservation(id, req.user.id);
     return { message: '만료된 예매가 취소되었습니다' };
+  }
+
+  private resolveConsentMeta(req: ExpressRequest): ConsentRequestMeta {
+    return {
+      ipAddress: resolveTrustedRequestIp(req),
+      userAgent: req.get('user-agent'),
+    };
   }
 }

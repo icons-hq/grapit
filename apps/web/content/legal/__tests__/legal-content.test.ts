@@ -1,13 +1,33 @@
 import { describe, expect, it } from 'vitest';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 
 import marketingConsentMd from '../marketing-consent.md?raw';
 import privacyPolicyMd from '../privacy-policy.md?raw';
 import termsOfServiceMd from '../terms-of-service.md?raw';
 
+const legalContentDir = path.resolve(process.cwd(), 'content/legal');
+
+function readLegalDocument(filename: string) {
+  const filePath = path.join(legalContentDir, filename);
+  return existsSync(filePath) ? readFileSync(filePath, 'utf8') : null;
+}
+
 const legalDocuments = {
   'terms-of-service.md': termsOfServiceMd,
   'privacy-policy.md': privacyPolicyMd,
   'marketing-consent.md': marketingConsentMd,
+};
+
+const englishLegalDocuments = {
+  'terms-of-service.en.md': readLegalDocument('terms-of-service.en.md'),
+  'privacy-policy.en.md': readLegalDocument('privacy-policy.en.md'),
+  'marketing-consent.en.md': readLegalDocument('marketing-consent.en.md'),
+};
+
+const allCanonicalLegalDocuments = {
+  ...legalDocuments,
+  ...englishLegalDocuments,
 };
 
 const placeholderPatterns = [
@@ -27,10 +47,30 @@ const placeholderPatterns = [
   /YYYY-MM-DD/,
 ];
 
+const requiredEnglishHeadingPatterns = {
+  'terms-of-service.en.md': [
+    /^# Terms of Service/m,
+    /^## Article 1 \(Purpose\)/m,
+    /^## Article 15 \(Business Identity and Contact\)/m,
+  ],
+  'privacy-policy.en.md': [
+    /^# Privacy Policy/m,
+    /^## Article 1 \(Purpose of Processing Personal Information\)/m,
+    /^## Article 6 \(Cross-Border Transfer of Personal Information\)/m,
+  ],
+  'marketing-consent.en.md': [
+    /^# Marketing Consent/m,
+    /^## Purpose of Collection and Use/m,
+    /^## Right to Refuse Consent/m,
+  ],
+};
+
 describe('legal content', () => {
-  it.each(Object.entries(legalDocuments))(
+  it.each(Object.entries(allCanonicalLegalDocuments))(
     '%s does not expose launch placeholder values',
     (_filename, content) => {
+      expect(content).toEqual(expect.any(String));
+
       for (const pattern of placeholderPatterns) {
         expect(content).not.toMatch(pattern);
       }
@@ -47,7 +87,8 @@ describe('legal content', () => {
   });
 
   it('uses the launch effective date across legal documents', () => {
-    for (const content of Object.values(legalDocuments)) {
+    for (const content of Object.values(allCanonicalLegalDocuments)) {
+      expect(content).toEqual(expect.any(String));
       expect(content).toContain('2026-04-28');
     }
   });
@@ -58,5 +99,60 @@ describe('legal content', () => {
     expect(privacyPolicyMd).toContain('| Infobip Limited 및 그 계열사 | 독일 (Germany) |');
     expect(privacyPolicyMd).toContain('휴대전화번호, SMS 인증 메시지 내용');
     expect(privacyPolicyMd).toContain('발송일로부터 3개월');
+  });
+
+  it('locks legal canonical markdown locales to Korean and English', () => {
+    const legalMarkdownFiles = readdirSync(legalContentDir)
+      .filter((filename) => filename.endsWith('.md'))
+      .sort();
+
+    const canonicalLocales = new Set(
+      legalMarkdownFiles.map((filename) => {
+        const match = filename.match(/\.(en|th|zh-CN|zh-TW)\.md$/);
+        return match?.[1] ?? 'ko';
+      }),
+    );
+
+    expect([...canonicalLocales].sort()).toEqual(['en', 'ko']);
+  });
+
+  it.each(Object.entries(englishLegalDocuments))(
+    '%s exists as manual English canonical legal copy',
+    (_filename, content) => {
+      expect(content).toEqual(expect.any(String));
+      expect(content).not.toMatch(/machine translated|automatic translation|자동 번역/i);
+      expect(content).toContain('Grabit');
+      expect(content).toContain('2026-04-28');
+    },
+  );
+
+  it.each(Object.entries(requiredEnglishHeadingPatterns))(
+    '%s follows the Korean legal document structure',
+    (filename, headingPatterns) => {
+      const content = englishLegalDocuments[filename as keyof typeof englishLegalDocuments];
+
+      expect(content).toEqual(expect.any(String));
+      for (const pattern of headingPatterns) {
+        expect(content).toMatch(pattern);
+      }
+    },
+  );
+
+  it('rejects Thai and Chinese legal markdown files', () => {
+    const forbiddenLegalMarkdownFiles = [
+      'terms-of-service.th.md',
+      'terms-of-service.zh-CN.md',
+      'terms-of-service.zh-TW.md',
+      'privacy-policy.th.md',
+      'privacy-policy.zh-CN.md',
+      'privacy-policy.zh-TW.md',
+      'marketing-consent.th.md',
+      'marketing-consent.zh-CN.md',
+      'marketing-consent.zh-TW.md',
+    ];
+
+    for (const filename of forbiddenLegalMarkdownFiles) {
+      expect(existsSync(path.join(legalContentDir, filename))).toBe(false);
+    }
   });
 });

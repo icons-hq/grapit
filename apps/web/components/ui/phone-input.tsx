@@ -8,7 +8,11 @@ import PhoneInputPrimitive, {
 } from 'react-phone-number-input';
 import flags from 'react-phone-number-input/flags';
 import ko from 'react-phone-number-input/locale/ko.json';
+import en from 'react-phone-number-input/locale/en.json';
+import th from 'react-phone-number-input/locale/th.json';
+import zh from 'react-phone-number-input/locale/zh.json';
 import 'react-phone-number-input/style.css';
+import { DEFAULT_LOCALE, isSupportedLocale, type SUPPORTED_LOCALES } from '@grabit/shared';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -34,24 +38,99 @@ type PhoneInputProps = Omit<
 > & {
   value: string;
   onChange: (value: string) => void;
+  locale?: PhoneInputLocale;
 };
 
+type PhoneInputLocale = (typeof SUPPORTED_LOCALES)[number];
+
+type PhoneInputLabelSet = Labels & Record<string, string>;
+
+type CountrySelectCopy = {
+  ariaPrefix: string;
+  searchPlaceholder: string;
+  empty: string;
+};
+
+const zhTwLabels = {
+  ...(zh as PhoneInputLabelSet),
+  country: '國家/地區',
+  KR: '韓國',
+  TH: '泰國',
+  CN: '中國',
+  TW: '台灣',
+  US: '美國',
+  IS: '冰島',
+  ZZ: '國際',
+} satisfies PhoneInputLabelSet;
+
+const PHONE_INPUT_LABELS = {
+  ko: ko as PhoneInputLabelSet,
+  en: en as PhoneInputLabelSet,
+  th: th as PhoneInputLabelSet,
+  'zh-CN': zh as PhoneInputLabelSet,
+  'zh-TW': zhTwLabels,
+} as const satisfies Record<PhoneInputLocale, PhoneInputLabelSet>;
+
+const COUNTRY_SELECT_COPY = {
+  ko: {
+    ariaPrefix: '국가 선택',
+    searchPlaceholder: '국가 검색...',
+    empty: '일치하는 국가가 없습니다.',
+  },
+  en: {
+    ariaPrefix: 'Phone number country',
+    searchPlaceholder: 'Search country...',
+    empty: 'No country found.',
+  },
+  th: {
+    ariaPrefix: (th as PhoneInputLabelSet).country ?? 'ประเทศ',
+    searchPlaceholder: 'ค้นหาประเทศ...',
+    empty: 'ไม่พบประเทศที่ตรงกัน',
+  },
+  'zh-CN': {
+    ariaPrefix: (zh as PhoneInputLabelSet).country ?? '国家',
+    searchPlaceholder: '搜索国家/地区...',
+    empty: '未找到匹配的国家/地区。',
+  },
+  'zh-TW': {
+    ariaPrefix: zhTwLabels.country,
+    searchPlaceholder: '搜尋國家/地區...',
+    empty: '找不到相符的國家/地區。',
+  },
+} as const satisfies Record<PhoneInputLocale, CountrySelectCopy>;
+
+function resolvePhoneInputLocale(locale: PhoneInputLocale | undefined): PhoneInputLocale {
+  return locale && isSupportedLocale(locale) ? locale : DEFAULT_LOCALE;
+}
+
 const PhoneInput = React.forwardRef<HTMLInputElement, PhoneInputProps>(
-  ({ className, onChange, value, ...props }, ref) => (
-    <PhoneInputPrimitive
-      ref={ref as never}
-      className={cn('flex', className)}
-      labels={ko as Labels}
-      defaultCountry="KR"
-      flagComponent={FlagComponent}
-      countrySelectComponent={CountrySelect}
-      inputComponent={InputComponent}
-      smartCaret={false}
-      value={value || undefined}
-      onChange={(v) => onChange(v ?? '')}
-      {...props}
-    />
-  ),
+  ({ className, locale, onChange, value, ...props }, ref) => {
+    const activeLocale = resolvePhoneInputLocale(locale);
+    const labels = PHONE_INPUT_LABELS[activeLocale];
+    const countrySelectCopy = COUNTRY_SELECT_COPY[activeLocale];
+
+    return (
+      <PhoneInputPrimitive
+        ref={ref as never}
+        className={cn('flex', className)}
+        labels={labels}
+        defaultCountry="KR"
+        flagComponent={FlagComponent}
+        countrySelectComponent={(countrySelectProps) => (
+          <CountrySelect
+            {...countrySelectProps}
+            labels={labels}
+            copy={countrySelectCopy}
+          />
+        )}
+        inputComponent={InputComponent}
+        smartCaret={false}
+        value={value || undefined}
+        onChange={(v) => onChange(v ?? '')}
+        {...props}
+      />
+    );
+  },
 );
 PhoneInput.displayName = 'PhoneInput';
 
@@ -77,6 +156,8 @@ type CountrySelectProps = {
   value: Country;
   onChange: (value: Country) => void;
   options: CountrySelectOption[];
+  labels: PhoneInputLabelSet;
+  copy: CountrySelectCopy;
 };
 
 function CountrySelect({
@@ -84,7 +165,11 @@ function CountrySelect({
   value,
   onChange,
   options,
+  labels,
+  copy,
 }: CountrySelectProps) {
+  const selectedLabel = value ? labels[value] ?? value : null;
+
   return (
     <Popover>
       <PopoverTrigger asChild>
@@ -93,15 +178,11 @@ function CountrySelect({
           variant="outline"
           className="flex h-11 gap-1 rounded-s-lg rounded-e-none px-3"
           disabled={disabled}
-          aria-label={
-            value
-              ? `국가 선택: ${(ko as Record<string, string>)[value] ?? value}`
-              : '국가 선택'
-          }
+          aria-label={selectedLabel ? `${copy.ariaPrefix}: ${selectedLabel}` : copy.ariaPrefix}
         >
           <FlagComponent
             country={value}
-            countryName={(ko as Record<string, string>)[value] ?? value}
+            countryName={selectedLabel ?? value}
           />
           <ChevronsUpDown
             className={cn(
@@ -113,10 +194,10 @@ function CountrySelect({
       </PopoverTrigger>
       <PopoverContent className="w-[300px] p-0">
         <Command>
-          <CommandInput placeholder="국가 검색..." />
+          <CommandInput placeholder={copy.searchPlaceholder} />
           <CommandList>
             <ScrollArea className="h-72">
-              <CommandEmpty>일치하는 국가가 없습니다.</CommandEmpty>
+              <CommandEmpty>{copy.empty}</CommandEmpty>
               <CommandGroup>
                 {options
                   .filter((option): option is CountrySelectOption =>

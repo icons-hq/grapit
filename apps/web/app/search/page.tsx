@@ -1,23 +1,28 @@
 'use client';
 
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
+import { useLocale } from 'next-intl';
 import { SearchIcon } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { GenreChip } from '@/components/performance/genre-chip';
 import { PerformanceGrid } from '@/components/performance/performance-grid';
 import { PaginationNav } from '@/components/performance/pagination-nav';
 import { useSearch } from '@/hooks/use-search';
-import { GENRES, GENRE_LABELS } from '@grabit/shared';
-
-const GENRE_FILTER_CHIPS = [
-  { label: '전체', value: '' },
-  ...GENRES.map((g) => ({ label: GENRE_LABELS[g], value: g })),
-];
+import { getVisibleCopy } from '@/lib/i18n/visible-copy';
+import { GENRES } from '@grabit/shared';
 
 export default function SearchPage() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const copy = getVisibleCopy(useLocale());
+  const genreFilterChips = [
+    { label: copy.search.allGenres, value: '' },
+    ...GENRES.map((genre) => ({
+      label: copy.genres[genre],
+      value: genre,
+    })),
+  ];
 
   const q = searchParams.get('q') ?? '';
   const genre = searchParams.get('genre') ?? '';
@@ -45,11 +50,9 @@ export default function SearchPage() {
         <div className="flex flex-col items-center">
           <SearchIcon className="h-12 w-12 text-gray-400" />
           <h1 className="mt-4 text-xl font-semibold text-gray-900">
-            공연을 검색하세요
+            {copy.search.promptTitle}
           </h1>
-          <p className="mt-2 text-sm text-gray-600">
-            공연명, 아티스트를 검색하세요
-          </p>
+          <p className="mt-2 text-sm text-gray-600">{copy.search.promptBody}</p>
         </div>
       </main>
     );
@@ -59,15 +62,17 @@ export default function SearchPage() {
     <main className="mx-auto w-full max-w-[1200px] px-4 py-6 md:px-6 md:py-8">
       {/* Heading */}
       <h1 className="text-xl font-semibold text-gray-900">
-        &apos;{q}&apos; 검색 결과
+        {copy.search.resultTitle.replace('{query}', q)}
       </h1>
       <p className="mt-1 h-5 text-sm text-gray-600">
-        {data ? `총 ${data.total}건` : '\u00A0'}
+        {data
+          ? copy.search.totalCount.replace('{count}', String(data.total))
+          : '\u00A0'}
       </p>
 
       {/* Genre filter chips */}
       <div className="mt-4 flex gap-2 overflow-x-auto scrollbar-hide">
-        {GENRE_FILTER_CHIPS.map((chip) => (
+        {genreFilterChips.map((chip) => (
           <GenreChip
             key={chip.value}
             label={chip.label}
@@ -81,7 +86,7 @@ export default function SearchPage() {
       {/* Ended toggle */}
       <div className="mt-4 flex items-center justify-end">
         <label className="flex items-center gap-2 text-sm text-gray-600">
-          <span>판매종료 공연 포함</span>
+          <span>{copy.search.includeEnded}</span>
           <Switch
             checked={ended}
             onCheckedChange={(checked: boolean) =>
@@ -96,22 +101,22 @@ export default function SearchPage() {
         {isError ? (
           <div className="flex flex-col items-center py-16">
             <p className="text-base text-gray-900">
-              공연 정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.
+              {copy.search.loadError}
             </p>
             <button
               type="button"
               onClick={() => window.location.reload()}
               className="mt-4 min-h-[44px] rounded-lg bg-primary px-6 py-2 text-sm font-semibold text-white"
             >
-              다시 시도
+              {copy.search.retry}
             </button>
           </div>
         ) : (
           <PerformanceGrid
             performances={data?.data ?? []}
             isLoading={isLoading}
-            emptyHeading="검색 결과가 없습니다"
-            emptyBody="다른 키워드로 검색하거나 장르별 공연을 둘러보세요"
+            emptyHeading={copy.search.emptyHeading}
+            emptyBody={copy.search.emptyBody}
           />
         )}
       </div>

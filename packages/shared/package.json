@@ -25,12 +25,14 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsc",
-    "dev": "tsc --watch"
+    "dev": "tsc --watch",
+    "test": "vitest run"
   },
   "dependencies": {
     "zod": "^3.24.0"
   },
   "devDependencies": {
-    "typescript": "~5.9.0"
+    "typescript": "~5.9.0",
+    "vitest": "^3.2.4"
   }
 }
