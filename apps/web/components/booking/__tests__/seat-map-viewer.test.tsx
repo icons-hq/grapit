@@ -109,6 +109,7 @@ describe('SeatMapViewer', () => {
         Promise.resolve(`
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
             <script>alert('xss')</script>
+            <style>#outside-seat-map{display:none!important}</style>
             <foreignObject><body onload="alert('xss')"></body></foreignObject>
             <a href="javascript:alert('xss')">
               <circle data-seat-id="A-1" onclick="alert('xss')" cx="20" cy="20" r="10" />
@@ -133,6 +134,8 @@ describe('SeatMapViewer', () => {
     });
 
     expect(container.querySelector('script')).toBeNull();
+    expect(container.querySelector('style')).toBeNull();
+    expect(container.innerHTML).not.toContain('outside-seat-map');
     expect(container.querySelector('foreignObject')).toBeNull();
     expect(container.querySelector('[onclick]')).toBeNull();
     expect(container.innerHTML).not.toContain('javascript:');

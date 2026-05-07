@@ -43,6 +43,8 @@ const SVG_WITHOUT_STAGE =
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 200"><rect data-seat-id="A-1" x="10" y="10" width="32" height="32"/></svg>';
 
 const MALFORMED_SVG = '<svg><g data-stage="top"><rect data-seat-id="A-1"';
+const SVG_WITH_STYLE_TAG =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 200"><text>STAGE</text><style>#outside-seat-map{display:none!important}</style><rect data-seat-id="A-1" x="10" y="10" width="32" height="32"/></svg>';
 
 function makeFile(content: string, name = 'test.svg'): File {
   return new File([content], name, { type: 'image/svg+xml' });
@@ -158,6 +160,20 @@ describe('SvgPreview — UX-02 admin 업로드 검증 (D-06/D-07 unified contrac
     await waitFor(() => {
       expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
         expect.stringContaining('SVG 형식이 올바르지 않습니다'),
+      );
+    });
+    expect(mockMutateAsync).not.toHaveBeenCalled();
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it('보안상 document-wide CSS를 주입하는 <style> SVG 업로드를 거부한다', async () => {
+    const { container } = render(<SvgPreview performanceId="perf-1" />);
+    const input = container.querySelector('#svg-input') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [makeFile(SVG_WITH_STYLE_TAG)] } });
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith(
+        expect.stringContaining('보안상 허용되지 않는 SVG'),
       );
     });
     expect(mockMutateAsync).not.toHaveBeenCalled();

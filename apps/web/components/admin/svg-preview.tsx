@@ -7,49 +7,12 @@ import type { SeatMapConfig } from '@grabit/shared';
 import { usePresignedUpload, useSaveSeatMap } from '@/hooks/use-admin';
 import { TierEditor } from '@/components/admin/tier-editor';
 import { Button } from '@/components/ui/button';
+import { hasUnsafeSvgPayload } from '@/lib/svg/safety';
 
 interface SvgPreviewProps {
   performanceId: string;
   currentSvgUrl?: string;
   currentConfig?: SeatMapConfig;
-}
-
-const BLOCKED_SVG_TAGS = [
-  'script',
-  'foreignObject',
-  'iframe',
-  'object',
-  'embed',
-  'audio',
-  'video',
-  'canvas',
-] as const;
-const BLOCKED_SVG_ATTRS = new Set(['href', 'xlink:href', 'src']);
-
-function hasUnsafeSvgPayload(doc: Document) {
-  for (const tag of BLOCKED_SVG_TAGS) {
-    if (doc.querySelector(tag)) return true;
-  }
-
-  for (const el of Array.from(doc.querySelectorAll('*'))) {
-    for (const attr of Array.from(el.attributes)) {
-      const name = attr.name.toLowerCase();
-      const value = attr.value.trim().toLowerCase();
-      const unsafeStyle =
-        name === 'style' && /(?:url\s*\(|expression\s*\()/i.test(attr.value);
-
-      if (
-        name.startsWith('on') ||
-        BLOCKED_SVG_ATTRS.has(name) ||
-        value.includes('javascript:') ||
-        unsafeStyle
-      ) {
-        return true;
-      }
-    }
-  }
-
-  return false;
 }
 
 export function SvgPreview({
