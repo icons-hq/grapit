@@ -96,6 +96,39 @@ jobs:
           echo "Cloud SQL Proxy failed to accept connections within 30s" >&2
           exit 1
 
+      # Production DBs may still need 0009 to add enum values before 0010 updates rows.
+      # Run it once in its own committed step so PostgreSQL allows the new enum values.
+      - name: Pre-apply event category enum migration
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          pnpm --filter @grabit/api exec node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises';
+          import { join } from 'node:path';
+          import pg from 'pg';
+
+          const migrationPath = join(
+            process.cwd(),
+            'src/database/migrations/0009_two_event_categories.sql',
+          );
+          const source = await readFile(migrationPath, 'utf8');
+          const statements = source
+            .split('--> statement-breakpoint')
+            .map((statement) => statement.trim())
+            .filter(Boolean);
+
+          const client = new pg.Client({ connectionString: process.env.DATABASE_URL });
+
+          await client.connect();
+          try {
+            for (const statement of statements) {
+              await client.query(statement);
+            }
+          } finally {
+            await client.end();
+          }
+          NODE
+
       # DB migration (per D-17)
       - name: Run migrations
         env:
