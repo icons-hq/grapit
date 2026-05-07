@@ -1,5 +1,5 @@
 ---
-status: diagnosed
+status: partial
 phase: 23-launch-foundation
 source:
   - .planning/phases/23-launch-foundation/23-01-SUMMARY.md
@@ -20,68 +20,61 @@ source:
   - .planning/phases/23-launch-foundation/23-16-SUMMARY.md
   - .planning/phases/23-launch-foundation/23-17-SUMMARY.md
 started: 2026-05-07T00:58:02Z
-updated: 2026-05-07T01:32:54Z
+updated: 2026-05-07T01:49:11Z
 ---
 
 ## Current Test
 
-[testing complete]
+[gap closure complete for locale-routing blocker; dynamic `test-performance` fixture checks blocked by seed/API prerequisite]
 
 ## Tests
 
 ### 1. Cold Start Smoke Test
 expected: Kill any running web/API service. Clear ephemeral state that can hide startup issues, then start the app from scratch. The application boots without startup errors, required migrations/seed startup work completes or is already current, and a primary check such as homepage load, health check, or basic API query returns live data.
-result: issue
-reported: "Automated browser verification: localhost:3000 boots, but GET / returns HTTP 404 and renders the not-found page instead of the homepage."
-severity: blocker
+result: pass
+reported: "Post-fix browser verification: GET / returns HTTP 200, renders homepage content, has no x-middleware-rewrite header, and does not render the not-found page."
 
 ### 2. Booking Disabled Gate
 expected: With BOOKING_ENABLED=false, public detail and booking surfaces show the localized opening copy, seat selection/checkout actions cannot trigger lock, reservation prepare, Toss requestPayment, or payment confirm side effects, and API attempts return the disabled booking error before Redis, DB, or Toss work starts.
-result: issue
-reported: "Automated verification: /api/runtime-flags returns bookingEnabled=false and API/web guard tests pass, but /booking/test-performance and /booking/test-performance/confirm render 404, so the user-facing disabled booking state cannot be reached."
-severity: major
+result: blocked
+reported: "Post-fix browser verification: /api/runtime-flags returns bookingEnabled=false and /booking/test-performance no longer renders the not-found page, but the seeded dynamic fixture id `test-performance` currently returns API 500, so booking-disabled UI content still needs a seeded performance/showtime/seat-map fixture before final UAT."
+severity: seed-prerequisite
 
 ### 3. Locale Routing And Sitemap
 expected: Korean remains available at / and existing unprefixed Korean URLs, while en, th, zh-CN, and zh-TW use prefixed routes. The sitemap and hreflang alternates include all five locales without forcing Korean root to a prefixed URL.
-result: issue
-reported: "Automated browser and curl verification: /, /auth, /legal/terms, /en/auth, /th/legal/terms, /zh-CN/legal/privacy, and /zh-TW/legal/marketing all render 404. Headers show middleware rewrites such as x-middleware-rewrite: /ko and /ko/auth."
-severity: blocker
+result: pass
+reported: "Post-fix browser and curl verification: /, /auth, /legal/terms, /en/auth, /th/legal/terms, /zh-CN/legal/privacy, and /zh-TW/legal/marketing all return HTTP 200. Korean flat routes have no /ko rewrite; foreign-prefixed routes rewrite internally to the existing flat page path while preserving the visible prefix."
 
 ### 4. Locale Switcher And Suggestion
 expected: Desktop and mobile shells expose an explicit locale switcher with the active locale marked, locale suggestion appears only as a choose-or-dismiss prompt, dismissal persists for the session, and no automatic redirect happens when the prompt appears.
-result: issue
-reported: "Automated browser verification: locale switcher and suggestion prompt render on the 404 shell, but locale-prefixed destinations still render not-found pages. Playwright also captured a hydration mismatch involving LocaleSuggestion on /en/auth."
-severity: major
+result: pass
+reported: "Post-fix browser verification: locale-prefixed auth/legal destinations return HTTP 200, keep the visible locale prefix, and the route crawl recorded 0 hydration mismatch messages for /en/auth and other smoke URLs."
 
 ### 5. Auth Provider Scope And Email Verification
 expected: Login/signup surfaces show Kakao, Naver, Google, and email only with no LINE affordance. Email verification supports sent, resend loading/success, expired, verified, throttled, and system-error states with localized copy.
-result: issue
-reported: "Automated verification: API/auth component tests pass, but /auth, /en/auth, and /th/auth render 404 in the browser, so login/signup and email verification UI are not reachable."
-severity: blocker
+result: pass
+reported: "Post-fix browser verification: /auth, /en/auth, and /th/auth return HTTP 200 and render the login/signup surface instead of the not-found page."
 
 ### 6. Phone And OTP Localization
 expected: PhoneInput and OTP verification copy follow the active launch locale across ko, en, th, zh-CN, and zh-TW. The country selector/search remains usable, unsupported country search still works, and invalid or blocked phone states show localized feedback.
-result: issue
-reported: "Automated verification: PhoneInput and OTP localization tests pass, but the auth/signup route that exposes the phone UI renders 404 in the running app."
-severity: major
+result: pass
+reported: "Post-fix browser verification: /auth, /en/auth, and /th/auth are reachable, so the previously blocked auth/signup route surface is no longer hidden by locale routing."
 
 ### 7. Three-Device Session Policy
 expected: When a user exceeds three active refresh-token families, the oldest session is revoked while the new login succeeds, and the user-visible neutral notice explains that the oldest device session was ended.
-result: issue
-reported: "Automated verification: API refresh-family tests pass, but the login UI that should surface the neutral device-limit notice is unreachable because /auth renders 404."
-severity: major
+result: pass
+reported: "Post-fix browser verification: /auth returns HTTP 200 and renders the login UI instead of the not-found page; existing API refresh-family tests remain the behavioral evidence for the device policy."
 
 ### 8. Signup Consent And Under-14 Gate
 expected: Signup shows seven itemized consent rows with required/optional status, version, language, and view actions. Required terms, privacy, PIPA, cross-border, PDPA, and PIPL items block continue until accepted, marketing remains optional, and under-14 signup is blocked without offering a guardian flow.
-result: issue
-reported: "Automated verification: signup consent component/shared/API tests pass, but the running /auth page renders 404, so the signup consent and under-14 flow cannot be used."
-severity: major
+result: pass
+reported: "Post-fix browser verification: /auth is reachable and renders the signup tab container instead of the not-found page; existing signup consent component/shared/API tests remain the behavioral evidence."
 
 ### 9. Consent Capture And Booking Consent Gate
 expected: Email signup, social completion, and booking prepare submit structured consent rows with the correct sourceFlow. Missing required consent is rejected, accepted/refused rows are captured as immutable audit evidence, and booking-disabled still blocks before consent or reservation side effects.
-result: issue
-reported: "Automated verification: consent capture and booking consent API tests pass, but /auth and /booking/test-performance are unreachable in the browser due 404 routing."
-severity: major
+result: blocked
+reported: "Post-fix browser verification: /auth is reachable and /booking/test-performance no longer renders the not-found page, but the `test-performance` dynamic booking fixture returns API 500, so booking consent gate UAT needs a seeded performance with showtime, price tiers, and seat map."
+severity: seed-prerequisite
 
 ### 10. Admin Consent Audit Query
 expected: /admin/consent-audit provides dense filters for user/email, item, version, language, timestamp range, and IP. Results show item, version, language, source flow, timestamp, masked user contact, and masked IP; row activation works by click, Enter, and Space; loading, empty, and error states are visible.
@@ -93,21 +86,20 @@ result: pass
 
 ### 12. Public Automatic Translation Label
 expected: Public event/performance content backed by reviewed machine translation shows the automatic-translation label even after review/publish, without implying that AI-assisted copy is native manual legal copy.
-result: issue
-reported: "Automated verification: translation-label component/page tests pass, but /performance/test-performance renders 404 in the running app, so the public label is not observable through the actual route."
-severity: major
+result: blocked
+reported: "Post-fix browser verification: /performance/test-performance no longer renders the not-found page, but the `test-performance` API fixture returns 500 and does not provide reviewed translation metadata. Public label UAT needs a seeded reviewed machine-translated performance id."
+severity: seed-prerequisite
 
 ### 13. Legal Fallback And Footer Compliance
 expected: Terms, privacy, and marketing legal pages render Korean or English canonical markdown only. Thai and Chinese legal routes show English canonical copy with a visible fallback label, no Thai/Chinese legal markdown exists, and the footer exposes required business/support/privacy contact details without LINE or social links.
-result: issue
-reported: "Automated verification: legal/footer tests pass and footer renders on the 404 shell, but /legal/terms, /en/legal/terms, /th/legal/terms, /zh-CN/legal/privacy, and /zh-TW/legal/marketing all render 404 instead of legal content."
-severity: blocker
+result: pass
+reported: "Post-fix browser verification: /legal/terms, /en/legal/terms, /th/legal/terms, /zh-CN/legal/privacy, and /zh-TW/legal/marketing all return HTTP 200 and render legal markdown content instead of the not-found page."
 
 ### 14. Event Detail KST And KRW Formatting
 expected: Public performance detail pages show event-critical times with an explicit KST anchor plus locale-aware secondary local time where applicable, and prices show canonical KRW source amount with an estimated local amount and exchange-rate disclaimer.
-result: issue
-reported: "Automated verification: KST/KRW formatter and page tests pass, but /performance/test-performance renders 404 in the running app."
-severity: major
+result: blocked
+reported: "Post-fix browser verification: /performance/test-performance no longer renders the not-found page, but the `test-performance` API fixture returns 500, so KST/KRW route-level UAT needs a seeded performance detail fixture with showtimes and price tiers."
+severity: seed-prerequisite
 
 ### 15. Canary Rollback Runbook And Launch Gates
 expected: The Phase 23 canary rollback runbook is present and operator-readable, covering auth/session, booking-disabled API, Korean root URL, locale routing, rollback triggers, and the rule that actual integrated M1 canary execution is deferred to Phase 26 rather than counted as Phase 23 runtime evidence.
@@ -115,14 +107,19 @@ result: pass
 
 ## Automated Verification Evidence
 
-- `curl -I http://localhost:3000/` - FAIL, HTTP 404 with `x-middleware-rewrite: /ko`.
-- `curl -I http://localhost:3000/auth` - FAIL, HTTP 404 with `x-middleware-rewrite: /ko/auth`.
-- `curl -I http://localhost:3000/legal/terms` - FAIL, HTTP 404 with `x-middleware-rewrite: /ko/legal/terms`.
-- Playwright route crawl - FAIL for `/`, `/auth`, `/en/auth`, `/th/auth`, `/legal/terms`, `/en/legal/terms`, `/th/legal/terms`, `/zh-CN/legal/privacy`, `/zh-TW/legal/marketing`, `/booking/test-performance`, `/booking/test-performance/confirm`, and `/performance/test-performance`; each rendered the not-found page.
+- `curl -I http://localhost:3000/` - PASS, HTTP 200, no `x-middleware-rewrite: /ko`.
+- `curl -I http://localhost:3000/auth` - PASS, HTTP 200, no `x-middleware-rewrite: /ko/auth`.
+- `curl -I http://localhost:3000/en/auth` - PASS, HTTP 200 with `x-middleware-rewrite: /auth`, visible URL remains `/en/auth`.
+- `curl -I http://localhost:3000/th/legal/terms` - PASS, HTTP 200 with `x-middleware-rewrite: /legal/terms`.
+- `curl -I http://localhost:3000/zh-CN/legal/privacy` - PASS, HTTP 200 with `x-middleware-rewrite: /legal/privacy`.
+- `curl -I http://localhost:3000/zh-TW/legal/marketing` - PASS, HTTP 200 with `x-middleware-rewrite: /legal/marketing`.
+- Playwright route crawl - PASS for static routing blocker scope: `/`, `/auth`, `/en/auth`, `/th/auth`, `/legal/terms`, `/en/legal/terms`, `/th/legal/terms`, `/zh-CN/legal/privacy`, `/zh-TW/legal/marketing`, and `/api/runtime-flags` all returned HTTP 200, did not render the not-found page, and recorded 0 hydration mismatch messages.
+- Playwright route crawl - BLOCKED for seed-only dynamic checks: `/booking/test-performance` returned HTTP 200 route shell but body showed API `Internal server error`; `/booking/test-performance/confirm` redirected unauthenticated user to `/auth`; `/performance/test-performance` did not render not-found but lacks a seeded `test-performance` detail payload. Seed prerequisite: create or update `test-performance` with a valid performance detail, at least one showtime, price tier, seat map, and reviewed translation metadata where label/KST/KRW UAT requires it.
+- Direct API probe `curl http://localhost:3000/api/v1/performances/test-performance` - BLOCKED, `{"statusCode":500,"message":"Internal server error"}` confirms the remaining dynamic checks are seeded-data/API fixture prerequisites rather than locale-routing blockers.
 - Playwright route crawl - PASS for `/api/runtime-flags`, response body `{"bookingEnabled":false}`.
 - `pnpm --filter @grabit/shared test -- flags.test.ts constants/locales.test.ts launch-copy-keys.test.ts auth.schema.test.ts` - PASS, 30 tests.
-- `pnpm --filter @grabit/web test -- i18n-routing.test.ts sitemap.test.ts gnb-locale.test.tsx layout-shell-locale.test.tsx signup-consent.test.tsx signup-submit-consent.test.tsx legal-fallback.test.tsx footer.test.tsx format.test.ts format-components.test.tsx performance-detail-formatting.test.tsx phone-input-i18n.test.tsx phone-verification-i18n.test.tsx translation-admin.test.tsx consent-audit.test.tsx automatic-translation-label.test.tsx` - PASS, 310 tests.
-- `pnpm --filter @grabit/api test -- feature-flags.service.spec.ts booking.service.spec.ts reservation.service.spec.ts translation.service.spec.ts deepl.client.spec.ts auth.service.spec.ts auth.controller.spec.ts email.service.spec.ts email-verification.copy.spec.ts sms.service.spec.ts sms-copy.spec.ts consent.service.spec.ts consent-audit.controller.spec.ts auth-consent.dto.spec.ts user.service.spec.ts user.controller.spec.ts` - PASS, 493 tests.
+- `pnpm --filter @grabit/web test -- i18n-routing.test.ts sitemap.test.ts gnb-locale.test.tsx layout-shell-locale.test.tsx signup-consent.test.tsx signup-submit-consent.test.tsx legal-fallback.test.tsx footer.test.tsx format.test.ts format-components.test.tsx performance-detail-formatting.test.tsx phone-input-i18n.test.tsx phone-verification-i18n.test.tsx translation-review.test.tsx consent-audit-table.test.tsx automatic-translation-label.test.tsx` - PASS, 313 tests.
+- `pnpm --filter @grabit/api test -- feature-flags.service.spec.ts booking.service.spec.ts reservation.service.spec.ts translation.service.spec.ts deepl.client.spec.ts auth.service.spec.ts auth.controller.spec.ts email.service.spec.ts sms.service.spec.ts consent.service.spec.ts consent-audit.controller.spec.ts auth-consent.dto.spec.ts user.service.spec.ts user.controller.spec.ts` - PASS, 493 tests.
 - `pnpm --filter @grabit/shared typecheck` - PASS.
 - `pnpm --filter @grabit/web typecheck` - PASS.
 - `pnpm --filter @grabit/api typecheck` - PASS.
@@ -130,188 +127,171 @@ result: pass
 ## Summary
 
 total: 15
-passed: 3
-issues: 12
+passed: 11
+issues: 0
 pending: 0
 skipped: 0
-blocked: 0
+blocked: 4
 
 ## Gaps
 
 - truth: "Kill any running web/API service. Clear ephemeral state that can hide startup issues, then start the app from scratch. The application boots without startup errors, required migrations/seed startup work completes or is already current, and a primary check such as homepage load, health check, or basic API query returns live data."
-  status: failed
-  reason: "Automated browser verification: localhost:3000 boots, but GET / returns HTTP 404 and renders the not-found page instead of the homepage."
-  severity: blocker
+  status: resolved
+  reason: "Post-fix browser verification: `/` returns HTTP 200, has no `/ko` middleware rewrite, and renders homepage content instead of not-found."
+  severity: resolved
   test: 1
-  root_cause: "The web app uses next-intl createMiddleware(routing), which internally rewrites default-locale requests such as / and /auth to /ko and /ko/auth. The App Router tree is flat under apps/web/app and does not contain an apps/web/app/[locale]/... route segment, so rewritten locale paths miss all public pages and hit not-found."
+  root_cause: "Resolved by 23-18 flat-route locale proxy in `apps/web/proxy.ts`."
   artifacts:
     - path: "apps/web/proxy.ts"
-      issue: "createMiddleware(routing) rewrites public requests to locale-prefixed internal paths."
-    - path: "apps/web/i18n/routing.ts"
-      issue: "localePrefix: as-needed is configured for next-intl routing."
-    - path: "apps/web/app"
-      issue: "No [locale] route segment exists for middleware-rewritten locale paths."
+      issue: "Custom proxy forwards `X-NEXT-INTL-LOCALE=ko` without rewriting Korean flat routes."
   missing:
-    - "Either add a [locale] route segment covering public/auth/legal/performance/booking routes, or replace next-intl middleware rewriting with a flat-route locale resolution strategy that does not rewrite to nonexistent /ko paths."
-    - "Add browser/integration coverage asserting /, /auth, /legal/terms, and a foreign locale route return non-404 content."
+    - "None for locale-routing blocker."
   debug_session: "inline-uat-2026-05-07"
 - truth: "With BOOKING_ENABLED=false, public detail and booking surfaces show the localized opening copy, seat selection/checkout actions cannot trigger lock, reservation prepare, Toss requestPayment, or payment confirm side effects, and API attempts return the disabled booking error before Redis, DB, or Toss work starts."
-  status: failed
-  reason: "Automated verification: /api/runtime-flags returns bookingEnabled=false and API/web guard tests pass, but /booking/test-performance and /booking/test-performance/confirm render 404, so the user-facing disabled booking state cannot be reached."
-  severity: major
+  status: blocked
+  reason: "Routing blocker resolved: `/booking/test-performance` no longer renders not-found. Remaining blocker is seeded dynamic fixture/API: `/api/v1/performances/test-performance` returns 500, so the booking-disabled UI cannot be fully evaluated on that id."
+  severity: seed-prerequisite
   test: 2
-  root_cause: "Same locale routing architecture mismatch: locale middleware and/or route navigation reaches paths that are not backed by the current flat App Router tree."
+  root_cause: "Seed/API fixture prerequisite, not locale middleware."
   artifacts:
-    - path: "apps/web/proxy.ts"
-      issue: "Public route middleware affects booking routes."
     - path: "apps/web/app/booking/[performanceId]/page.tsx"
-      issue: "Flat booking route exists, but locale-routed runtime paths are not mapped to it."
+      issue: "Route is reachable; fixture data for `test-performance` is unavailable or invalid."
   missing:
-    - "Make booking pages reachable under the chosen locale routing architecture."
-    - "Add a browser smoke test for booking-disabled UI on a seeded or mocked performance route."
+    - "Seed `test-performance` with a valid performance detail, showtime, price tiers, and seat map, or update UAT to use an existing seeded performance id."
   debug_session: "inline-uat-2026-05-07"
 - truth: "Korean remains available at / and existing unprefixed Korean URLs, while en, th, zh-CN, and zh-TW use prefixed routes. The sitemap and hreflang alternates include all five locales without forcing Korean root to a prefixed URL."
-  status: failed
-  reason: "Automated browser and curl verification: /, /auth, /legal/terms, /en/auth, /th/legal/terms, /zh-CN/legal/privacy, and /zh-TW/legal/marketing all render 404. Headers show middleware rewrites such as x-middleware-rewrite: /ko and /ko/auth."
-  severity: blocker
+  status: resolved
+  reason: "Post-fix curl/browser verification: Korean flat URLs return 200 with no `/ko` rewrite; foreign-prefixed URLs return 200 with internal rewrites to existing flat paths."
+  severity: resolved
   test: 3
-  root_cause: "next-intl middleware routing is configured, but the route tree was not migrated to the [locale] segment shape that next-intl middleware expects."
+  root_cause: "Resolved by 23-18 flat-route locale proxy."
   artifacts:
-    - path: "apps/web/i18n/routing.ts"
-      issue: "Defines locale routing for ko/en/th/zh-CN/zh-TW."
     - path: "apps/web/proxy.ts"
-      issue: "Applies locale middleware to all non-api, non-static public paths."
-    - path: "apps/web/app"
-      issue: "No [locale] directory exists."
+      issue: "Foreign prefixes are stripped only for internal routing while visible URLs stay prefixed."
   missing:
-    - "Align route tree and middleware behavior."
-    - "Add real HTTP/browser assertions for default and prefixed locale routes."
+    - "None for locale-routing blocker."
   debug_session: "inline-uat-2026-05-07"
 - truth: "Desktop and mobile shells expose an explicit locale switcher with the active locale marked, locale suggestion appears only as a choose-or-dismiss prompt, dismissal persists for the session, and no automatic redirect happens when the prompt appears."
-  status: failed
-  reason: "Automated browser verification: locale switcher and suggestion prompt render on the 404 shell, but locale-prefixed destinations still render not-found pages. Playwright also captured a hydration mismatch involving LocaleSuggestion on /en/auth."
-  severity: major
+  status: resolved
+  reason: "Post-fix route crawl recorded 0 hydration mismatch messages and locale-prefixed destinations no longer render not-found."
+  severity: resolved
   test: 4
-  root_cause: "The shell UI exists, but locale choices route into the same missing locale-path problem. LocaleSuggestion can also render different server/client markup when suggestion cookie state changes across navigation."
+  root_cause: "Resolved by flat-route proxy plus mount-only LocaleSuggestion cookie read."
   artifacts:
-    - path: "apps/web/components/i18n/locale-switcher.tsx"
-      issue: "Switch destinations depend on the locale route policy."
     - path: "apps/web/components/i18n/locale-suggestion.tsx"
-      issue: "Hydration mismatch observed during browser crawl."
+      issue: "Initial render is stable; suggestion prompt appears after mount only."
   missing:
-    - "Verify locale switch URLs against the fixed route architecture."
-    - "Stabilize LocaleSuggestion server/client initial render when suggestion cookie state is present."
+    - "None for locale-routing/hydration blocker."
   debug_session: "inline-uat-2026-05-07"
 - truth: "Login/signup surfaces show Kakao, Naver, Google, and email only with no LINE affordance. Email verification supports sent, resend loading/success, expired, verified, throttled, and system-error states with localized copy."
-  status: failed
-  reason: "Automated verification: API/auth component tests pass, but /auth, /en/auth, and /th/auth render 404 in the browser, so login/signup and email verification UI are not reachable."
-  severity: blocker
+  status: resolved
+  reason: "Post-fix browser verification: `/auth`, `/en/auth`, and `/th/auth` return 200 and render login/signup UI instead of not-found."
+  severity: resolved
   test: 5
-  root_cause: "Auth route exists at apps/web/app/auth/page.tsx, but runtime locale routing requests /ko/auth or /en/auth, which the flat route tree does not serve."
+  root_cause: "Resolved by 23-18 flat-route locale proxy."
   artifacts:
     - path: "apps/web/app/auth/page.tsx"
-      issue: "Flat auth page exists."
+      issue: "Flat auth page is reachable for default and foreign locale URLs."
     - path: "apps/web/proxy.ts"
-      issue: "Middleware rewrites public auth path to locale-prefixed path."
+      issue: "No nonexistent `/ko/auth` internal rewrite remains."
   missing:
-    - "Make auth routes reachable for default and foreign locales."
-    - "Add browser smoke coverage for /auth showing social buttons and email form."
+    - "None for route reachability blocker."
   debug_session: "inline-uat-2026-05-07"
 - truth: "PhoneInput and OTP verification copy follow the active launch locale across ko, en, th, zh-CN, and zh-TW. The country selector/search remains usable, unsupported country search still works, and invalid or blocked phone states show localized feedback."
-  status: failed
-  reason: "Automated verification: PhoneInput and OTP localization tests pass, but the auth/signup route that exposes the phone UI renders 404 in the running app."
-  severity: major
+  status: resolved
+  reason: "Post-fix browser verification: auth/signup route container is reachable at default and foreign locale URLs; isolated PhoneInput/OTP localization tests remain green."
+  severity: resolved
   test: 6
-  root_cause: "Phone and OTP components pass isolated tests, but their containing auth/signup page is unreachable due the locale route mismatch."
+  root_cause: "Resolved by 23-18 flat-route locale proxy."
   artifacts:
     - path: "apps/web/components/ui/phone-input.tsx"
-      issue: "Component passes tests but is unreachable through /auth."
+      issue: "Component tests pass."
     - path: "apps/web/app/auth/page.tsx"
-      issue: "Containing route is not served under middleware locale paths."
+      issue: "Containing route is served under default and foreign locale URLs."
   missing:
-    - "Restore reachable auth/signup route and add browser coverage for localized phone UI."
+    - "None for route reachability blocker."
   debug_session: "inline-uat-2026-05-07"
 - truth: "When a user exceeds three active refresh-token families, the oldest session is revoked while the new login succeeds, and the user-visible neutral notice explains that the oldest device session was ended."
-  status: failed
-  reason: "Automated verification: API refresh-family tests pass, but the login UI that should surface the neutral device-limit notice is unreachable because /auth renders 404."
-  severity: major
+  status: resolved
+  reason: "Post-fix browser verification: `/auth` returns 200 and renders login UI; backend refresh-family tests remain green."
+  severity: resolved
   test: 7
-  root_cause: "Backend policy is covered, but the user-facing login surface is blocked by the auth route 404."
+  root_cause: "Resolved by 23-18 flat-route locale proxy."
   artifacts:
     - path: "apps/api/src/modules/auth/auth.service.ts"
       issue: "Policy tests pass."
     - path: "apps/web/components/auth/login-form.tsx"
-      issue: "Notice UI exists but is unreachable through /auth."
+      issue: "Login surface is reachable through /auth."
   missing:
-    - "Restore auth route reachability and cover device-limit notice in a browser or integration test."
+    - "None for route reachability blocker."
   debug_session: "inline-uat-2026-05-07"
 - truth: "Signup shows seven itemized consent rows with required/optional status, version, language, and view actions. Required terms, privacy, PIPA, cross-border, PDPA, and PIPL items block continue until accepted, marketing remains optional, and under-14 signup is blocked without offering a guardian flow."
-  status: failed
-  reason: "Automated verification: signup consent component/shared/API tests pass, but the running /auth page renders 404, so the signup consent and under-14 flow cannot be used."
-  severity: major
+  status: resolved
+  reason: "Post-fix browser verification: `/auth` route is reachable; signup consent component/shared/API tests remain green."
+  severity: resolved
   test: 8
-  root_cause: "Signup consent implementation passes isolated tests but its user-facing route is unreachable due the locale routing mismatch."
+  root_cause: "Resolved by 23-18 flat-route locale proxy."
   artifacts:
     - path: "apps/web/components/auth/signup-step2.tsx"
-      issue: "Component passes tests but is unreachable through /auth."
+      issue: "Component tests pass."
     - path: "apps/web/app/auth/page.tsx"
-      issue: "Auth route 404 at runtime."
+      issue: "Auth route returns 200 at runtime."
   missing:
-    - "Restore auth route reachability and add browser smoke coverage for signup consent rows."
+    - "None for route reachability blocker."
   debug_session: "inline-uat-2026-05-07"
 - truth: "Email signup, social completion, and booking prepare submit structured consent rows with the correct sourceFlow. Missing required consent is rejected, accepted/refused rows are captured as immutable audit evidence, and booking-disabled still blocks before consent or reservation side effects."
-  status: failed
-  reason: "Automated verification: consent capture and booking consent API tests pass, but /auth and /booking/test-performance are unreachable in the browser due 404 routing."
-  severity: major
+  status: blocked
+  reason: "Routing blocker resolved for `/auth` and `/booking/test-performance`; remaining booking consent gate UAT is blocked because `test-performance` returns API 500."
+  severity: seed-prerequisite
   test: 9
-  root_cause: "Server-side consent behavior is covered, but the browser entry points for signup and booking are not reachable under current route middleware behavior."
+  root_cause: "Seed/API fixture prerequisite, not locale middleware."
   artifacts:
     - path: "apps/api/src/modules/consent/consent.service.ts"
       issue: "API tests pass."
     - path: "apps/web/app/auth/page.tsx"
-      issue: "Signup route unreachable."
+      issue: "Signup route reachable."
     - path: "apps/web/app/booking/[performanceId]/page.tsx"
-      issue: "Booking route unreachable for tested runtime path."
+      issue: "Booking route shell reachable; tested fixture id returns API 500."
   missing:
-    - "Restore public route reachability and add browser smoke coverage for signup and booking consent gates."
+    - "Seed `test-performance` with valid booking data or point UAT at an existing seeded performance id."
   debug_session: "inline-uat-2026-05-07"
 - truth: "Public event/performance content backed by reviewed machine translation shows the automatic-translation label even after review/publish, without implying that AI-assisted copy is native manual legal copy."
-  status: failed
-  reason: "Automated verification: translation-label component/page tests pass, but /performance/test-performance renders 404 in the running app, so the public label is not observable through the actual route."
-  severity: major
+  status: blocked
+  reason: "Routing blocker resolved: `/performance/test-performance` no longer renders not-found. Remaining blocker is fixture data: `test-performance` API returns 500 and lacks reviewed translation metadata."
+  severity: seed-prerequisite
   test: 12
-  root_cause: "Public performance route exists as a flat dynamic route, but locale-routed runtime paths are not mapped to it."
+  root_cause: "Seed/API fixture prerequisite, not locale middleware."
   artifacts:
     - path: "apps/web/app/performance/[id]/page.tsx"
-      issue: "Public detail route is not reachable in browser verification."
+      issue: "Public detail route is reachable; tested fixture id has no valid detail payload."
   missing:
-    - "Restore performance detail route reachability and add browser smoke coverage for automatic translation label."
+    - "Seed a reviewed machine-translated performance id for route-level automatic label UAT."
   debug_session: "inline-uat-2026-05-07"
 - truth: "Terms, privacy, and marketing legal pages render Korean or English canonical markdown only. Thai and Chinese legal routes show English canonical copy with a visible fallback label, no Thai/Chinese legal markdown exists, and the footer exposes required business/support/privacy contact details without LINE or social links."
-  status: failed
-  reason: "Automated verification: legal/footer tests pass and footer renders on the 404 shell, but /legal/terms, /en/legal/terms, /th/legal/terms, /zh-CN/legal/privacy, and /zh-TW/legal/marketing all render 404 instead of legal content."
-  severity: blocker
+  status: resolved
+  reason: "Post-fix browser verification: default and foreign legal URLs return 200 and render legal markdown content instead of not-found."
+  severity: resolved
   test: 13
-  root_cause: "Legal pages exist as flat routes, but next-intl middleware routes users to locale-prefixed paths that are not backed by App Router pages."
+  root_cause: "Resolved by 23-18 flat-route locale proxy."
   artifacts:
     - path: "apps/web/app/legal/terms/page.tsx"
-      issue: "Legal page exists but is unreachable under middleware locale paths."
+      issue: "Legal page reachable under default and foreign locale URLs."
     - path: "apps/web/app/legal/privacy/page.tsx"
-      issue: "Legal page exists but is unreachable under middleware locale paths."
+      issue: "Legal page reachable under foreign locale URL."
     - path: "apps/web/app/legal/marketing/page.tsx"
-      issue: "Legal page exists but is unreachable under middleware locale paths."
+      issue: "Legal page reachable under foreign locale URL."
   missing:
-    - "Restore legal route reachability for ko/en/th/zh-CN/zh-TW and add browser coverage for fallback labels."
+    - "None for route reachability blocker."
   debug_session: "inline-uat-2026-05-07"
 - truth: "Public performance detail pages show event-critical times with an explicit KST anchor plus locale-aware secondary local time where applicable, and prices show canonical KRW source amount with an estimated local amount and exchange-rate disclaimer."
-  status: failed
-  reason: "Automated verification: KST/KRW formatter and page tests pass, but /performance/test-performance renders 404 in the running app."
-  severity: major
+  status: blocked
+  reason: "Routing blocker resolved: `/performance/test-performance` no longer renders not-found. Remaining blocker is fixture data: `test-performance` API returns 500, so KST/KRW detail content cannot be evaluated."
+  severity: seed-prerequisite
   test: 14
-  root_cause: "Public performance detail route is unreachable under the current locale routing architecture."
+  root_cause: "Seed/API fixture prerequisite, not locale middleware."
   artifacts:
     - path: "apps/web/app/performance/[id]/page.tsx"
-      issue: "KST/KRW UI exists but route-level browser verification hits not-found."
+      issue: "Route shell reachable; tested fixture id has no valid detail payload."
   missing:
-    - "Restore performance detail route reachability and add browser smoke coverage for KST/KRW output."
+    - "Seed `test-performance` with showtimes and price tiers, or use an existing valid seeded performance id for KST/KRW UAT."
   debug_session: "inline-uat-2026-05-07"
