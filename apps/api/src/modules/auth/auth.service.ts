@@ -2,6 +2,7 @@ import {
   Injectable,
   Inject,
   ConflictException,
+  ForbiddenException,
   UnauthorizedException,
   GoneException,
   Logger,
@@ -57,6 +58,13 @@ interface AuthResult extends TokenPair {
   user: UserProfile;
 }
 
+interface RegistrationPendingResult {
+  emailVerificationRequired: true;
+  email: string;
+  verificationExpiresAt: Date;
+  user: UserProfile;
+}
+
 const EMAIL_VERIFICATION_EXPIRY_MS = 30 * 60 * 1000;
 const EMAIL_VERIFICATION_PURPOSE = 'signup';
 const REFRESH_FAMILY_LIMIT_NOTICE = '다른 기기에서 로그인되어 가장 오래된 세션이 종료되었습니다.';
@@ -78,7 +86,7 @@ export class AuthService {
   async register(
     dto: RegisterBody,
     requestMeta: ConsentRequestMeta = { ipAddress: '0.0.0.0' },
-  ): Promise<AuthResult> {
+  ): Promise<RegistrationPendingResult> {
     this.consentService.assertAgeAllowed(dto.birthDate);
     await this.consentService.assertRequiredConsents({ items: dto.consentItems });
 
@@ -139,12 +147,16 @@ export class AuthService {
       return createdUser;
     });
 
-    // 5-6. Generate tokens
-    const tokens = await this.generateTokenPair(user.id, user.email, user.role);
+    const verification = await this.issueEmailVerificationForUser(
+      user.id,
+      user.email,
+      'ko',
+    );
 
-    // 7. Return AuthResult
     return {
-      ...tokens,
+      emailVerificationRequired: true,
+      email: user.email,
+      verificationExpiresAt: verification.expiresAt,
       user: this.mapToProfile(user),
     };
   }
@@ -169,6 +181,8 @@ export class AuthService {
     if (!isValid) {
       throw new UnauthorizedException('이메일 또는 비밀번호가 일치하지 않습니다');
     }
+
+    this.assertEmailVerified(user);
 
     // Return user without passwordHash
     const { passwordHash: _, ...userWithoutPassword } = user;
@@ -704,6 +718,15 @@ export class AuthService {
     });
   }
 
+  private assertEmailVerified(user: { isEmailVerified: boolean }): void {
+    if (!user.isEmailVerified) {
+      throw new ForbiddenException({
+        code: 'EMAIL_NOT_VERIFIED',
+        message: 'Email verification is required.',
+      });
+    }
+  }
+
   private async issueEmailVerification(
     email: string,
     locale: string,
@@ -715,11 +738,20 @@ export class AuthService {
       return { expiresAt };
     }
 
+    return this.issueEmailVerificationForUser(user.id, email, locale);
+  }
+
+  private async issueEmailVerificationForUser(
+    userId: string,
+    email: string,
+    locale: string,
+  ): Promise<{ expiresAt: Date }> {
+    const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_EXPIRY_MS);
     const rawToken = randomBytes(32).toString('hex');
     const tokenHash = createHash('sha256').update(rawToken).digest('hex');
 
     await this.db.insert(schema.emailVerificationTokens).values({
-      userId: user.id,
+      userId,
       email,
       purpose: EMAIL_VERIFICATION_PURPOSE,
       tokenHash,

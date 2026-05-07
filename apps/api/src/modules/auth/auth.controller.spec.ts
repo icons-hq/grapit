@@ -83,8 +83,9 @@ describe('AuthController', () => {
   describe('consent request metadata', () => {
     it('register passes forwarded IP and user-agent into consent capture metadata', async () => {
       mockAuthService.register.mockResolvedValue({
-        accessToken: 'access-token',
-        refreshToken: 'refresh-token',
+        emailVerificationRequired: true,
+        email: 'user@example.com',
+        verificationExpiresAt: new Date('2026-05-06T05:50:00Z'),
         user: { id: 'user-1', email: 'user@example.com' },
       });
       const req = {
@@ -98,7 +99,7 @@ describe('AuthController', () => {
         }),
       };
 
-      await controller.register({ email: 'user@example.com' } as never, req as Request, mockResponse as unknown as Response);
+      await controller.register({ email: 'user@example.com' } as never, req as Request);
 
       expect(mockAuthService.register).toHaveBeenCalledWith(
         { email: 'user@example.com' },

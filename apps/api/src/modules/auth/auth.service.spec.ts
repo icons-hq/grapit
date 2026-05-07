@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import { BadRequestException, ConflictException, GoneException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  GoneException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import * as argon2 from 'argon2';
 import { createHash, randomUUID } from 'node:crypto';
 import { AuthService } from './auth.service.js';
@@ -227,7 +233,8 @@ describe('AuthService', () => {
   });
 
   describe('register', () => {
-    it('should create a user with argon2-hashed password and return AuthResponse', async () => {
+    it('should create a user with argon2-hashed password and return email verification pending response', async () => {
+      const beforeRegister = Date.now();
       mockUserRepo.findByEmail.mockResolvedValue(null);
       mockUserRepo.create.mockResolvedValue({
         ...mockUser,
@@ -238,10 +245,21 @@ describe('AuthService', () => {
 
       const result = await authService.register(mockRegisterDto);
 
-      expect(result).toHaveProperty('accessToken');
-      expect(result).toHaveProperty('refreshToken');
-      expect(result).toHaveProperty('user');
-      expect(result.user.email).toBe(mockRegisterDto.email);
+      expect(result).toMatchObject({
+        emailVerificationRequired: true,
+        email: mockRegisterDto.email,
+        user: expect.objectContaining({ email: mockRegisterDto.email }),
+      });
+      expect(result).not.toHaveProperty('accessToken');
+      expect(result).not.toHaveProperty('refreshToken');
+      expect(result.verificationExpiresAt.getTime()).toBeGreaterThanOrEqual(
+        beforeRegister + 30 * 60 * 1000,
+      );
+      expect(mockEmailService.sendEmailVerificationEmail).toHaveBeenCalledWith(
+        mockRegisterDto.email,
+        expect.stringContaining('/auth/verify-email?token='),
+        'ko',
+      );
 
       // Verify password was hashed with argon2
       const createCall = mockUserRepo.create.mock.calls[0]?.[0];
@@ -352,13 +370,27 @@ describe('AuthService', () => {
 
   describe('validateUser', () => {
     it('should return user without passwordHash for valid credentials', async () => {
-      mockUserRepo.findByEmail.mockResolvedValue(mockUser);
+      mockUserRepo.findByEmail.mockResolvedValue({
+        ...mockUser,
+        isEmailVerified: true,
+      });
 
       const result = await authService.validateUser('test@test.com', 'Test1234!');
 
       expect(result).toBeDefined();
       expect(result.email).toBe('test@test.com');
       expect(result).not.toHaveProperty('passwordHash');
+    }, 10000);
+
+    it('should throw ForbiddenException when email is not verified', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue({
+        ...mockUser,
+        isEmailVerified: false,
+      });
+
+      await expect(
+        authService.validateUser('test@test.com', 'Test1234!'),
+      ).rejects.toThrow(ForbiddenException);
     }, 10000);
 
     it('should throw UnauthorizedException for wrong password', async () => {

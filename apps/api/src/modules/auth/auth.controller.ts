@@ -62,15 +62,14 @@ export class AuthController {
   async register(
     @Body(new ZodValidationPipe(registerBodySchema)) dto: RegisterBody,
     @Req() req: Request,
-    @Res({ passthrough: true }) res: Response,
   ) {
     const result = await this.authService.register(dto, this.resolveConsentMeta(req));
-    this.setRefreshTokenCookie(res, result.refreshToken);
 
     return {
-      accessToken: result.accessToken,
+      emailVerificationRequired: result.emailVerificationRequired,
+      email: result.email,
+      verificationExpiresAt: result.verificationExpiresAt,
       user: result.user,
-      ...(result.deviceLimitNotice ? { deviceLimitNotice: result.deviceLimitNotice } : {}),
     };
   }
 

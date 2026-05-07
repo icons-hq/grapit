@@ -118,7 +118,9 @@ describe('SignupForm consent submit payload', () => {
     vi.clearAllMocks();
     mocks.step3BirthYear = '1995';
     mocks.apiPost.mockResolvedValue({
-      accessToken: 'access-token',
+      emailVerificationRequired: true,
+      email: 'fan@example.com',
+      verificationExpiresAt: '2026-05-06T05:50:00.000Z',
       user: { id: 'user-1', email: 'fan@example.com' },
     });
   });

@@ -6,7 +6,7 @@ import type {
   RegisterStep1Input,
   RegisterStep2Input,
   RegisterStep3Input,
-  AuthResponse,
+  RegisterResponse,
 } from '@grabit/shared';
 import { apiClient } from '@/lib/api-client';
 import { useAuthStore } from '@/stores/use-auth-store';
@@ -65,11 +65,13 @@ export function SignupForm() {
         phoneVerificationToken: data.phoneVerificationToken,
       };
 
-      const res = await apiClient.post<AuthResponse>(
+      const res = await apiClient.post<RegisterResponse>(
         '/api/v1/auth/register',
         payload,
       );
-      setAuth(res.accessToken, res.user);
+      if ('accessToken' in res) {
+        setAuth(res.accessToken, res.user);
+      }
       setEmailVerificationEmail(step1Data.email);
       toast.success('회원가입이 완료되었습니다. 이메일 인증을 진행해주세요.');
     } catch (error) {
@@ -86,7 +88,7 @@ export function SignupForm() {
   return (
     <div className="space-y-6">
       {emailVerificationEmail ? (
-        <EmailVerificationStatus email={emailVerificationEmail} requestOnMount />
+        <EmailVerificationStatus email={emailVerificationEmail} />
       ) : (
         <>
           <StepIndicator currentStep={currentStep} />
