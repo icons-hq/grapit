@@ -77,12 +77,8 @@ export const consentCaptureBaseSchema = z.object({
 export const consentCaptureRequestSchema = consentCaptureBaseSchema
   .pick({
     birthDate: true,
-    capturedAt: true,
     sourceFlow: true,
     items: true,
-  })
-  .extend({
-    capturedAt: z.string().datetime().optional(),
   });
 
 export const consentCaptureSchema = consentCaptureBaseSchema

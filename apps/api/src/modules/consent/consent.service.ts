@@ -28,7 +28,6 @@ export interface ConsentCaptureRequest {
   birthDate: string;
   items: ConsentCaptureItem[];
   sourceFlow: ConsentSourceFlow;
-  capturedAt?: string;
 }
 
 type ConsentItemRow = typeof consentItems.$inferSelect;
@@ -82,7 +81,7 @@ export class ConsentService {
     requestMeta: ConsentRequestMeta,
     db: ConsentDb = this.db,
   ): Promise<void> {
-    const capturedAt = dto.capturedAt ? new Date(dto.capturedAt) : new Date();
+    const capturedAt = new Date();
     this.assertAgeAllowed(dto.birthDate, capturedAt);
     await this.assertRequiredConsents(dto);
 

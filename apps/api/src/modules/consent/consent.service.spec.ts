@@ -66,17 +66,22 @@ describe('ConsentService', () => {
   it('writes one immutable audit row per submitted item/version/language', async () => {
     const userId = randomUUID();
     const capturedAt = new Date('2026-05-06T00:00:00.000Z');
+    vi.useFakeTimers();
+    vi.setSystemTime(capturedAt);
 
-    await service.captureConsent(
-      userId,
-      {
-        birthDate: '1995-05-15',
-        items: makeCaptureItems({ marketing: false }),
-        sourceFlow: 'signup',
-        capturedAt: capturedAt.toISOString(),
-      },
-      { ipAddress: '203.0.113.10', userAgent: 'vitest-agent' },
-    );
+    try {
+      await service.captureConsent(
+        userId,
+        {
+          birthDate: '1995-05-15',
+          items: makeCaptureItems({ marketing: false }),
+          sourceFlow: 'signup',
+        },
+        { ipAddress: '203.0.113.10', userAgent: 'vitest-agent' },
+      );
+    } finally {
+      vi.useRealTimers();
+    }
 
     expect(insertedRows).toHaveLength(7);
     expect(insertedRows).toEqual(
