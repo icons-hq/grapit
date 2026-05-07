@@ -1,4 +1,13 @@
+import { readFileSync } from 'node:fs';
 import { expect, test, type Page, type Response } from '@playwright/test';
+
+const koMessages = JSON.parse(
+  readFileSync(new URL('../messages/ko.json', import.meta.url), 'utf8'),
+) as {
+  home: {
+    hot: string;
+  };
+};
 
 const PHASE23_I18N_SMOKE_PERFORMANCE_ID =
   process.env['PHASE23_I18N_SMOKE_PERFORMANCE_ID'] ??
@@ -10,7 +19,7 @@ const localeCases = [
     prefix: '',
     nativeName: '한국어',
     searchQuery: '걸룰스',
-    homeCopy: 'HOT 공연',
+    homeCopy: koMessages.home.hot,
     searchCopy: "'걸룰스' 검색 결과",
     resultTitle: '2026 걸룰스 팬미팅',
     authCopy: '로그인',

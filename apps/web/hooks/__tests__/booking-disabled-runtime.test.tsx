@@ -307,4 +307,47 @@ describe('runtime booking disabled UI', () => {
     expect(prepareReservationMock).not.toHaveBeenCalled();
     expect(requestPaymentMock).not.toHaveBeenCalled();
   });
+
+  it('switches the confirm CTA to 결제하기 after required agreements when booking is enabled', async () => {
+    const user = userEvent.setup();
+    useRuntimeFlagsMock.mockReturnValue({
+      bookingEnabled: true,
+      isLoading: false,
+      bookingDisabledMessage: '예매는 5월말 오픈 예정입니다',
+    });
+
+    renderWithQuery(<ConfirmPage />);
+
+    expect(screen.getAllByRole('button', { name: '약관에 동의해주세요' })).toHaveLength(2);
+
+    await user.click(await screen.findByLabelText('전체 동의'));
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: '결제하기' })).toHaveLength(2);
+    });
+  });
+
+  it('surfaces prepare 409 recovery UI and does not call Toss requestPayment when booking is enabled', async () => {
+    const user = userEvent.setup();
+    const lockFailureMessage = '좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.';
+    useRuntimeFlagsMock.mockReturnValue({
+      bookingEnabled: true,
+      isLoading: false,
+      bookingDisabledMessage: '예매는 5월말 오픈 예정입니다',
+    });
+    prepareReservationMock.mockRejectedValueOnce(new Error(lockFailureMessage));
+
+    renderWithQuery(<ConfirmPage />);
+
+    await user.click(await screen.findByLabelText('전체 동의'));
+    await user.click((await screen.findAllByRole('button', { name: '결제하기' }))[0]);
+
+    expect(await screen.findByText(lockFailureMessage)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '좌석 다시 선택하기' })).toBeInTheDocument();
+    expect(
+      screen.getAllByRole('button', { name: '좌석을 다시 선택해주세요' })[0],
+    ).toBeDisabled();
+    expect(prepareReservationMock).toHaveBeenCalledTimes(1);
+    expect(requestPaymentMock).not.toHaveBeenCalled();
+  });
 });

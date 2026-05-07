@@ -16,6 +16,7 @@ export function useRuntimeFlags() {
     queryKey: ['runtime-flags'],
     queryFn: () => fetchRuntimeFlags(),
     initialData: DISABLED_DEFAULT,
+    initialDataUpdatedAt: 0,
     staleTime: 30_000,
   });
 
