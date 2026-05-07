@@ -1,5 +1,6 @@
 import './instrument.js';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import type IORedis from 'ioredis';
@@ -43,7 +44,8 @@ async function bootstrap() {
     }
   }
 
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  app.set('trust proxy', 1);
 
   // Wire Socket.IO to the shared ioredis REDIS_CLIENT so seat-update events
   // broadcast across Cloud Run instances via Valkey pub/sub (VALK-04).

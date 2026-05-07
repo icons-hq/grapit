@@ -81,7 +81,7 @@ describe('AuthController', () => {
   });
 
   describe('consent request metadata', () => {
-    it('register passes forwarded IP and user-agent into consent capture metadata', async () => {
+    it('register passes normalized request IP and user-agent into consent capture metadata', async () => {
       mockAuthService.register.mockResolvedValue({
         emailVerificationRequired: true,
         email: 'user@example.com',
@@ -89,7 +89,7 @@ describe('AuthController', () => {
         user: { id: 'user-1', email: 'user@example.com' },
       });
       const req = {
-        ip: '10.0.0.1',
+        ip: '198.51.100.20',
         get: vi.fn((header: string) => {
           const headers: Record<string, string> = {
             'x-forwarded-for': '203.0.113.50, 10.0.0.1',
@@ -103,7 +103,7 @@ describe('AuthController', () => {
 
       expect(mockAuthService.register).toHaveBeenCalledWith(
         { email: 'user@example.com' },
-        { ipAddress: '203.0.113.50', userAgent: 'Vitest Browser' },
+        { ipAddress: '198.51.100.20', userAgent: 'Vitest Browser' },
       );
     });
 

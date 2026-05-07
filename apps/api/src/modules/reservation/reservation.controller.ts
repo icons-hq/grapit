@@ -20,6 +20,7 @@ import {
   type CancelReservationInput,
   type ReservationStatus,
 } from '@grabit/shared';
+import { resolveTrustedRequestIp } from '../../common/request-ip.js';
 import type { ConsentRequestMeta } from '../consent/consent.service.js';
 import { ReservationService } from './reservation.service.js';
 
@@ -97,12 +98,8 @@ export class ReservationController {
 
   private resolveConsentMeta(req: ExpressRequest): ConsentRequestMeta {
     return {
-      ipAddress: this.resolveIp(req),
+      ipAddress: resolveTrustedRequestIp(req),
       userAgent: req.get('user-agent'),
     };
-  }
-
-  private resolveIp(req: ExpressRequest): string {
-    return req.ip || req.socket.remoteAddress || '0.0.0.0';
   }
 }

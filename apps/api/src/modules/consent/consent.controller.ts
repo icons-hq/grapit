@@ -9,6 +9,7 @@ import {
 import { CurrentUser, type RequestUser } from '../../common/decorators/current-user.decorator.js';
 import { Public } from '../../common/decorators/public.decorator.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
+import { resolveTrustedRequestIp } from '../../common/request-ip.js';
 import { ConsentService } from './consent.service.js';
 
 const consentItemsQuerySchema = z.object({
@@ -36,15 +37,10 @@ export class ConsentController {
     @Req() req: Request,
   ) {
     await this.consentService.captureConsent(user.id, body, {
-      ipAddress: this.resolveIp(req),
+      ipAddress: resolveTrustedRequestIp(req),
       userAgent: req.get('user-agent'),
     });
 
     return { captured: true };
-  }
-
-  private resolveIp(req: Request): string {
-    const forwardedFor = req.get('x-forwarded-for')?.split(',')[0]?.trim();
-    return forwardedFor || req.ip || '0.0.0.0';
   }
 }

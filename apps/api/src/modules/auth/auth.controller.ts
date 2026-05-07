@@ -19,6 +19,7 @@ import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { Public } from '../../common/decorators/public.decorator.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
+import { resolveTrustedRequestIp } from '../../common/request-ip.js';
 import { AuthService, type ValidatedUser } from './auth.service.js';
 import { registerBodySchema, type RegisterBody } from './dto/register.dto.js';
 import {
@@ -318,13 +319,8 @@ export class AuthController {
 
   private resolveConsentMeta(req: Request): { ipAddress: string; userAgent?: string } {
     return {
-      ipAddress: this.resolveIp(req),
+      ipAddress: resolveTrustedRequestIp(req),
       userAgent: req.get('user-agent'),
     };
-  }
-
-  private resolveIp(req: Request): string {
-    const forwardedFor = req.get('x-forwarded-for')?.split(',')[0]?.trim();
-    return forwardedFor || req.ip || '0.0.0.0';
   }
 }
