@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Fanmeet Launch
-status: ready_to_execute
-stopped_at: Planned 23-19-PLAN.md
-last_updated: "2026-05-07T03:09:52.787Z"
-last_activity: 2026-05-07 -- Phase 23 planning complete
+status: verifying
+stopped_at: Completed 23-19-PLAN.md
+last_updated: "2026-05-07T03:58:55.754Z"
+last_activity: 2026-05-07
 progress:
   total_phases: 7
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 25
-  completed_plans: 24
-  percent: 96
+  completed_plans: 25
+  percent: 100
 ---
 
 # Project State
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-05-04)
 
 ## Current Position
 
-Phase: 23
-Plan: 23-19
-Status: Ready to execute
-Last activity: 2026-05-07 -- Phase 23 planning complete
+Phase: 23 (launch-foundation) — READY_FOR_VERIFICATION
+Plan: 19 of 19
+Status: Phase complete — ready for verification
+Last activity: 2026-05-07
 
 ## Deferred Items
 
@@ -183,6 +183,7 @@ Summary: 70 total items (debug sessions 5, quick tasks 41, seeds 2, UAT gaps 12,
 | Phase 23-launch-foundation P12 | 5m03s | 1 tasks | 5 files |
 | Phase 23-launch-foundation P11 | 7m32s | 1 tasks | 14 files |
 | Phase 23-launch-foundation P18 | 13 min | 4 tasks | 5 files |
+| Phase 23-launch-foundation P19 | 40min | 4 tasks | 50 files |
 
 ## Accumulated Context
 
@@ -291,6 +292,9 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 - [Phase 23-11]: Public performance detail renders one AutomaticTranslationLabel near the title whenever translation metadata indicates AI assistance.
 - [Phase 23-launch-foundation]: Kept flat App Router pages and replaced next-intl createMiddleware with a narrow custom proxy. — Avoids app/[locale] migration blast radius while closing Phase 23 locale-routing UAT blocker.
 - [Phase 23-launch-foundation]: Remaining test-performance UAT checks are seed/API fixture prerequisites, not locale-routing blockers. — Browser route shells no longer render not-found, but /api/v1/performances/test-performance returns 500.
+- [Phase 23-19]: Overlay only published performance translation drafts for non-Korean locales and mark public content as machine_reviewed.
+- [Phase 23-19]: Keep the dedicated i18n smoke independent from admin login and live SMS E2E state.
+- [Phase 23-19]: Use stable UUID 00000000-0000-4000-8000-000000000023 as the Phase 23 i18n smoke fixture instead of invalid test-performance.
 
 ### Pending Todos
 
@@ -332,8 +336,8 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 
 ## Session Continuity
 
-Last session: 2026-05-07T01:55:40.570Z
-Stopped at: Completed 23-18-PLAN.md
+Last session: 2026-05-07T03:58:27.279Z
+Stopped at: Completed 23-19-PLAN.md
 Resume file: None
 
 **Planned Phase:** v2.0 Phase 23 (launch-foundation) — Phase 22 complete with READY_WITH_ACCEPTED_RISKS; proceed only under accepted risks listed in 22-VERIFICATION.md.

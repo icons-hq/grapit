@@ -65,7 +65,7 @@ Plans:
 
 **Merged from:** 25 Prod compatibility + flags, 26 i18n routing + locale foundation, 27 Translation workflow + legal lock, 28 email verification + 5-country SMS (LINE excluded by Phase 23 D-13), 29 Multinational consent + audit
 
-**Plans:** 18/19 plans complete
+**Plans:** 19/19 plans complete
 
 Plans:
 **Wave 1**
@@ -98,7 +98,7 @@ Plans:
 - [x] 23-11-PLAN.md — Build admin translation workflow and wire automatic translation label into public performance detail
 
 **Wave 7** *(gap closure before Phase 26 canary)*
-- [ ] 23-19-PLAN.md — Close Phase 23 i18n visible-copy, translated performance content, locale-prefixed route, and canary smoke gaps
+- [x] 23-19-PLAN.md — Close Phase 23 i18n visible-copy, translated performance content, locale-prefixed route, and canary smoke gaps (completed 2026-05-07)
 
 **Success criteria:**
 1. Expand-only migrations, canary policy, and shared feature flag helper preserve existing production users, reservations, sessions, and Korean root URLs.
