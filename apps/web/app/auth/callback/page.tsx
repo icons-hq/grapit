@@ -130,7 +130,7 @@ function CallbackContent() {
         country: data.country,
         birthDate: `${data.birthYear}-${data.birthMonth}-${data.birthDay}`,
         phone: data.phone,
-        phoneVerificationCode: data.phoneVerificationCode,
+        phoneVerificationToken: data.phoneVerificationToken,
       };
 
       const res = await apiClient.post<AuthResponse>(
@@ -206,6 +206,7 @@ function CallbackContent() {
                 onComplete={handleStep3Complete}
                 onBack={() => setCurrentStep(2)}
                 isSubmitting={isSubmitting}
+                phoneVerificationPurpose="social_registration"
               />
             )}
           </div>

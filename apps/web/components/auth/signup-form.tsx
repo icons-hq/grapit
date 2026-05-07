@@ -62,7 +62,7 @@ export function SignupForm() {
         country: data.country,
         birthDate,
         phone: data.phone,
-        phoneVerificationCode: data.phoneVerificationCode,
+        phoneVerificationToken: data.phoneVerificationToken,
       };
 
       const res = await apiClient.post<AuthResponse>(

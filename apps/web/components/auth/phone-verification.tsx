@@ -20,13 +20,18 @@ import { getAuthLaunchCopy } from './auth-launch-copy';
 interface PhoneVerificationProps {
   phone: string;
   onPhoneChange: (phone: string) => void;
-  onVerified: (code: string) => void;
+  onVerified: (verificationToken: string) => void;
   isVerified: boolean;
   error?: string;
   locale?: SupportedLocale;
+  purpose?: SmsVerificationPurpose;
 }
 
 type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
+type SmsVerificationPurpose =
+  | 'signup'
+  | 'social_registration'
+  | 'profile_phone_change';
 
 function mapErrorToCopy(
   err: unknown,
@@ -58,6 +63,7 @@ export function PhoneVerification({
   isVerified,
   error,
   locale,
+  purpose = 'signup',
 }: PhoneVerificationProps) {
   const activeLocale = usePhoneVerificationLocale(locale);
   const otpCopy = getAuthLaunchCopy(activeLocale).otp;
@@ -156,13 +162,17 @@ export function PhoneVerification({
     setVerifyError(null);
     setStatusMessage(null);
     try {
-      const res = await apiClient.post<{ verified: boolean; message?: string }>(
+      const res = await apiClient.post<{
+        verified: boolean;
+        message?: string;
+        verificationToken?: string;
+      }>(
         '/api/v1/sms/verify-code',
-        { phone, code },
+        { phone, code, purpose },
       );
-      if (res.verified) {
+      if (res.verified && res.verificationToken) {
         clearTimer();
-        onVerified(code);
+        onVerified(res.verificationToken);
       } else {
         // [D-07] 서버가 system error context 를 message 로 내려준 경우 (예: Valkey EVAL
         // 장애 → '인증번호 확인에 실패했습니다. 잠시 후 다시 시도해주세요.') 하드코드 대신

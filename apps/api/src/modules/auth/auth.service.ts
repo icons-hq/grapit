@@ -3,7 +3,6 @@ import {
   Inject,
   ConflictException,
   UnauthorizedException,
-  BadRequestException,
   GoneException,
   Logger,
 } from '@nestjs/common';
@@ -16,6 +15,7 @@ import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import * as schema from '../../database/schema/index.js';
 import { UserRepository } from '../user/user.repository.js';
 import { SmsService } from '../sms/sms.service.js';
+import type { SmsVerificationPurpose } from '../sms/sms.service.js';
 import { EmailService } from './email/email.service.js';
 import { ConsentService } from '../consent/consent.service.js';
 import type { ConsentRequestMeta } from '../consent/consent.service.js';
@@ -82,11 +82,12 @@ export class AuthService {
     this.consentService.assertAgeAllowed(dto.birthDate);
     await this.consentService.assertRequiredConsents({ items: dto.consentItems });
 
-    // 0. Verify phone number — handle idempotent re-verify after the
-    // frontend already called /sms/verify-code (OTP key was DEL'd, so
-    // verifyCode now returns EXPIRED). Per sms.service.ts:385-403, fall
-    // back to the {sms:{e164}}:verified flag (TTL 600s).
-    await this.assertPhoneVerified(dto.phone, dto.phoneVerificationCode);
+    // 0. Verify phone number with a server-signed token issued by /sms/verify-code.
+    await this.assertPhoneVerified(
+      dto.phone,
+      dto.phoneVerificationToken,
+      'signup',
+    );
 
     // 1. Check email uniqueness
     const existing = await this.userRepository.findByEmail(dto.email);
@@ -539,8 +540,12 @@ export class AuthService {
   ): Promise<AuthResult> {
     this.logger.log('completeSocialRegistration: started');
 
-    // 0. Verify phone number — see register() for rationale
-    await this.assertPhoneVerified(dto.phone, dto.phoneVerificationCode);
+    // 0. Verify phone number with a purpose-bound token from /sms/verify-code.
+    await this.assertPhoneVerified(
+      dto.phone,
+      dto.phoneVerificationToken,
+      'social_registration',
+    );
 
     // 1. Verify registrationToken JWT
     let payload: {
@@ -667,30 +672,15 @@ export class AuthService {
 
   // -- Private helpers --
 
-  /**
-   * [hotfix 260427-kch] Verify phone with idempotency fallback.
-   * The frontend already calls POST /sms/verify-code before /auth/register
-   * (or completeSocialRegistration) and the SmsService Lua script DEL's the
-   * OTP key on success. Re-running verifyCode therefore throws GoneException
-   * for the legitimate user. We catch that one specific exception and fall
-   * back to the verified-flag set by the original verify call (TTL 600s,
-   * see sms.service.ts:385-403). True expiry (no flag) still bubbles 410
-   * to the client.
-   */
-  private async assertPhoneVerified(phone: string, code: string): Promise<void> {
-    try {
-      const verifyResult = await this.smsService.verifyCode(phone, code);
-      if (!verifyResult.verified) {
-        throw new BadRequestException('전화번호 인증이 완료되지 않았습니다');
-      }
-    } catch (err) {
-      if (err instanceof GoneException) {
-        const alreadyVerified = await this.smsService.isPhoneVerified(phone);
-        if (!alreadyVerified) throw err; // truly expired — propagate 410
-        return;
-      }
-      throw err;
-    }
+  private async assertPhoneVerified(
+    phone: string,
+    verificationToken: string,
+    purpose: SmsVerificationPurpose,
+  ): Promise<void> {
+    this.smsService.verifyPhoneVerificationToken(verificationToken, {
+      phone,
+      purpose,
+    });
   }
 
   private async issueEmailVerification(

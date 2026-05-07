@@ -40,7 +40,7 @@ const baseSocialBody = {
   country: '대한민국',
   birthDate: '1995-01-02',
   phone: '+821012345678',
-  phoneVerificationCode: '123456',
+  phoneVerificationToken: 'signed-phone-token',
   termsOfService: true,
   privacyPolicy: true,
   marketingConsent: false,

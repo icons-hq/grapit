@@ -411,7 +411,10 @@ describe('PhoneVerification', () => {
       const onVerified = vi.fn();
       (apiClient.post as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce({ success: true })
-        .mockResolvedValueOnce({ verified: true });
+        .mockResolvedValueOnce({
+          verified: true,
+          verificationToken: 'signed-phone-token',
+        });
 
       render(<PhoneVerification {...defaultProps} onVerified={onVerified} />);
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
@@ -425,7 +428,12 @@ describe('PhoneVerification', () => {
       await user.click(screen.getByRole('button', { name: /확인/ }));
 
       await waitFor(() => {
-        expect(onVerified).toHaveBeenCalledWith('123456');
+        expect(onVerified).toHaveBeenCalledWith('signed-phone-token');
+      });
+      expect(apiClient.post).toHaveBeenLastCalledWith('/api/v1/sms/verify-code', {
+        phone: '+821012345678',
+        code: '123456',
+        purpose: 'signup',
       });
       // 성공 분기에서는 에러 alert 가 없어야 함 (D-07 regression guard)
       expect(screen.queryByRole('alert')).toBeNull();

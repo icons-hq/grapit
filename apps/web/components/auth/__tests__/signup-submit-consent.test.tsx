@@ -104,7 +104,7 @@ vi.mock('@/components/auth/signup-step3', () => ({
           birthMonth: '01',
           birthDay: '02',
           phone: '+821012345678',
-          phoneVerificationCode: '123456',
+          phoneVerificationToken: 'signed-phone-token',
         })
       }
     >

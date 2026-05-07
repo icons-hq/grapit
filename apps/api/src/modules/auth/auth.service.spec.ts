@@ -20,7 +20,7 @@ const mockRegisterDto: RegisterBody = {
   country: 'KR',
   birthDate: '1995-05-15',
   phone: '010-9876-5432',
-  phoneVerificationCode: '000000',
+  phoneVerificationToken: 'signed-phone-token',
   termsOfService: true,
   privacyPolicy: true,
   marketingConsent: false,
@@ -130,12 +130,11 @@ describe('AuthService', () => {
     assertRequiredConsents: ReturnType<typeof vi.fn>;
     captureConsent: ReturnType<typeof vi.fn>;
   };
-  // [hotfix 260427-kch] hoisted so register/completeSocialRegistration tests
-  // can override verifyCode / isPhoneVerified per-case.
   let mockSmsService: {
     verifyCode: ReturnType<typeof vi.fn>;
     sendVerificationCode: ReturnType<typeof vi.fn>;
     isPhoneVerified: ReturnType<typeof vi.fn>;
+    verifyPhoneVerificationToken: ReturnType<typeof vi.fn>;
   };
 
   beforeAll(async () => {
@@ -196,9 +195,8 @@ describe('AuthService', () => {
     mockSmsService = {
       verifyCode: vi.fn().mockResolvedValue({ verified: true }),
       sendVerificationCode: vi.fn().mockResolvedValue({ success: true, message: '' }),
-      // [hotfix 260427-kch] idempotency probe — defaults to false; specific
-      // tests override per case.
       isPhoneVerified: vi.fn().mockResolvedValue(false),
+      verifyPhoneVerificationToken: vi.fn(),
     };
 
     // REVIEWS.md HIGH-03: capture reset link via EmailService spy
@@ -316,11 +314,7 @@ describe('AuthService', () => {
       );
     }, 15000);
 
-    it('[hotfix 260427-kch] verifyCode가 GoneException throw, isPhoneVerified true이면 정상 가입 (프론트 이중 호출 회귀 방지)', async () => {
-      mockSmsService.verifyCode.mockRejectedValue(
-        new GoneException('인증번호가 만료되었습니다. 재발송해주세요'),
-      );
-      mockSmsService.isPhoneVerified.mockResolvedValue(true);
+    it('purpose-bound phone verification token이 있으면 OTP를 재검증하지 않고 가입한다', async () => {
       mockUserRepo.findByEmail.mockResolvedValue(null);
       mockUserRepo.create.mockResolvedValue({
         ...mockUser,
@@ -332,20 +326,22 @@ describe('AuthService', () => {
       const result = await authService.register(mockRegisterDto);
 
       expect(result.user.email).toBe(mockRegisterDto.email);
-      expect(mockSmsService.isPhoneVerified).toHaveBeenCalledWith(
-        mockRegisterDto.phone,
+      expect(mockSmsService.verifyPhoneVerificationToken).toHaveBeenCalledWith(
+        mockRegisterDto.phoneVerificationToken,
+        { phone: mockRegisterDto.phone, purpose: 'signup' },
       );
+      expect(mockSmsService.verifyCode).not.toHaveBeenCalled();
+      expect(mockSmsService.isPhoneVerified).not.toHaveBeenCalled();
       expect(mockUserRepo.create).toHaveBeenCalled();
     }, 15000);
 
-    it('[hotfix 260427-kch] verifyCode가 GoneException, isPhoneVerified false이면 410 propagate (실제 만료)', async () => {
-      mockSmsService.verifyCode.mockRejectedValue(
-        new GoneException('인증번호가 만료되었습니다. 재발송해주세요'),
-      );
-      mockSmsService.isPhoneVerified.mockResolvedValue(false);
+    it('invalid phone verification token이면 가입을 거부한다', async () => {
+      mockSmsService.verifyPhoneVerificationToken.mockImplementation(() => {
+        throw new BadRequestException('전화번호 인증이 완료되지 않았습니다');
+      });
 
       await expect(authService.register(mockRegisterDto)).rejects.toThrow(
-        GoneException,
+        BadRequestException,
       );
       expect(mockUserRepo.create).not.toHaveBeenCalled();
     });
@@ -889,6 +885,7 @@ describe('AuthService', () => {
           country: 'KR',
           birthDate: '1995-05-15',
           phone: '010-1234-5678',
+          phoneVerificationToken: 'signed-social-phone-token',
           termsOfService: true,
           privacyPolicy: true,
           marketingConsent: false,
@@ -924,6 +921,7 @@ describe('AuthService', () => {
           country: 'KR',
           birthDate: '1995-05-15',
           phone: '010-1234-5678',
+          phoneVerificationToken: 'signed-social-phone-token',
           termsOfService: true,
           privacyPolicy: true,
           marketingConsent: false,
@@ -955,6 +953,7 @@ describe('AuthService', () => {
           country: existingUser.country,
           birthDate: existingUser.birthDate,
           phone: existingUser.phone,
+          phoneVerificationToken: 'signed-social-phone-token',
           termsOfService: true,
           privacyPolicy: true,
           marketingConsent: false,
@@ -982,12 +981,8 @@ describe('AuthService', () => {
       );
     });
 
-    it('[hotfix 260427-kch] verifyCode가 GoneException, isPhoneVerified true이면 정상 가입 (소셜 회귀 방지)', async () => {
+    it('purpose-bound phone verification token이 있으면 social registration을 완료한다', async () => {
       const newUserId = randomUUID();
-      mockSmsService.verifyCode.mockRejectedValue(
-        new GoneException('인증번호가 만료되었습니다. 재발송해주세요'),
-      );
-      mockSmsService.isPhoneVerified.mockResolvedValue(true);
       mockJwtService.verifyAsync.mockResolvedValue({
         provider: 'kakao',
         providerId: '12345',
@@ -1012,6 +1007,7 @@ describe('AuthService', () => {
           country: 'KR',
           birthDate: '1995-05-15',
           phone: '010-1234-5678',
+          phoneVerificationToken: 'signed-social-phone-token',
           termsOfService: true,
           privacyPolicy: true,
           marketingConsent: false,
@@ -1020,15 +1016,19 @@ describe('AuthService', () => {
       );
 
       expect(result).toHaveProperty('accessToken');
-      expect(mockSmsService.isPhoneVerified).toHaveBeenCalledWith('010-1234-5678');
+      expect(mockSmsService.verifyPhoneVerificationToken).toHaveBeenCalledWith(
+        'signed-social-phone-token',
+        { phone: '010-1234-5678', purpose: 'social_registration' },
+      );
+      expect(mockSmsService.verifyCode).not.toHaveBeenCalled();
+      expect(mockSmsService.isPhoneVerified).not.toHaveBeenCalled();
       expect(mockUserRepo.create).toHaveBeenCalled();
     });
 
-    it('[hotfix 260427-kch] verifyCode가 GoneException, isPhoneVerified false이면 410 propagate (소셜, 실제 만료)', async () => {
-      mockSmsService.verifyCode.mockRejectedValue(
-        new GoneException('인증번호가 만료되었습니다. 재발송해주세요'),
-      );
-      mockSmsService.isPhoneVerified.mockResolvedValue(false);
+    it('invalid phone verification token이면 social registration을 거부한다', async () => {
+      mockSmsService.verifyPhoneVerificationToken.mockImplementation(() => {
+        throw new BadRequestException('전화번호 인증이 완료되지 않았습니다');
+      });
 
       await expect(
         authService.completeSocialRegistration('valid-registration-token', {
@@ -1037,15 +1037,16 @@ describe('AuthService', () => {
           country: 'KR',
           birthDate: '1995-05-15',
           phone: '010-1234-5678',
+          phoneVerificationToken: 'invalid-social-phone-token',
           termsOfService: true,
           privacyPolicy: true,
           marketingConsent: false,
           consentItems: makeSocialConsentItems(),
         }),
-      ).rejects.toThrow(GoneException);
+      ).rejects.toThrow(BadRequestException);
 
       expect(mockUserRepo.create).not.toHaveBeenCalled();
-      // 410 must propagate before any JWT verification of the registration token.
+      // Phone token failures must stop before any JWT verification of the registration token.
       expect(mockJwtService.verifyAsync).not.toHaveBeenCalled();
     });
   });
@@ -1274,6 +1275,7 @@ describe('resetPassword (integration — real JwtService — CR-02 regression gu
     sendVerification: ReturnType<typeof vi.fn>;
     verifyCode: ReturnType<typeof vi.fn>;
     isPhoneVerified: ReturnType<typeof vi.fn>;
+    verifyPhoneVerificationToken: ReturnType<typeof vi.fn>;
   };
   let integEmail: { sendPasswordResetEmail: ReturnType<typeof vi.fn> };
 
@@ -1314,7 +1316,12 @@ describe('resetPassword (integration — real JwtService — CR-02 regression gu
         set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([]) }),
       }),
     };
-    integSms = { sendVerification: vi.fn(), verifyCode: vi.fn(), isPhoneVerified: vi.fn() };
+    integSms = {
+      sendVerification: vi.fn(),
+      verifyCode: vi.fn(),
+      isPhoneVerified: vi.fn(),
+      verifyPhoneVerificationToken: vi.fn(),
+    };
     integEmail = { sendPasswordResetEmail: vi.fn() };
 
     // Real constructor order: (jwtService, configService, userRepository, smsService, emailService, db, consentService)

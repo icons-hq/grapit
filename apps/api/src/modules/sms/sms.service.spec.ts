@@ -53,6 +53,7 @@ function createConfigService(overrides: Record<string, string | undefined> = {})
     INFOBIP_API_KEY: 'test-key',
     INFOBIP_BASE_URL: 'https://test.api.infobip.com',
     INFOBIP_SENDER: '0212345678',
+    JWT_SECRET: 'test-jwt-secret',
     NODE_ENV: 'test',
     ...overrides,
   };

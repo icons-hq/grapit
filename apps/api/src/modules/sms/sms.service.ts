@@ -4,7 +4,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as Sentry from '@sentry/nestjs';
-import { randomInt } from 'node:crypto';
+import { createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import type IORedis from 'ioredis';
 import { REDIS_CLIENT } from '../booking/providers/redis.provider.js';
 import { InfobipClient, InfobipApiError } from './infobip-client.js';
@@ -22,6 +22,13 @@ const VERIFY_PHONE_WINDOW_SEC = 900;         // D-07: 15min window
 const OTP_TTL_MS = 180_000;                  // 3min -- matches message copy
 const OTP_MAX_ATTEMPTS = 5;                  // replaces Infobip pinAttempts
 const VERIFIED_FLAG_TTL_SEC = 600;           // verified flag 10min for signup re-check
+const PHONE_VERIFICATION_TOKEN_TTL_MS = VERIFIED_FLAG_TTL_SEC * 1000;
+export const SMS_VERIFICATION_PURPOSES = [
+  'signup',
+  'social_registration',
+  'profile_phone_change',
+] as const;
+export type SmsVerificationPurpose = (typeof SMS_VERIFICATION_PURPOSES)[number];
 
 /**
  * [Phase 10] Lua atomic INCR + conditional EXPIRE for phone axis rate-limit counters.
@@ -127,7 +134,19 @@ export const smsSendCounterKey   = (e164: string): string => { assertE164(e164);
 export const smsVerifyCounterKey = (e164: string): string => { assertE164(e164); return `{sms:${e164}}:verify-count`; };
 
 export interface SendResult { success: boolean; message: string }
-export interface VerifyResult { verified: boolean; message?: string }
+export interface VerifyResult {
+  verified: boolean;
+  message?: string;
+  verificationToken?: string;
+}
+
+interface PhoneVerificationTokenPayload {
+  v: 1;
+  phone: string;
+  purpose: SmsVerificationPurpose;
+  exp: number;
+  nonce: string;
+}
 
 const PHONE_VALIDATION_MESSAGE = '올바른 휴대폰 번호를 입력해주세요';
 
@@ -147,6 +166,7 @@ export class SmsService {
   private readonly logger = new Logger(SmsService.name);
   private readonly client: InfobipClient | null;
   private readonly isDevMock: boolean;
+  private readonly verificationTokenSecret: string;
 
   constructor(
     configService: ConfigService,
@@ -157,6 +177,11 @@ export class SmsService {
     const baseUrl = configService.get<string>('INFOBIP_BASE_URL')?.trim() ?? '';
     const sender  = configService.get<string>('INFOBIP_SENDER')?.trim()   ?? '';
     const isProduction = process.env['NODE_ENV'] === 'production';
+    const verificationTokenSecret =
+      configService.get<string>('SMS_VERIFICATION_TOKEN_SECRET')?.trim() ??
+      configService.get<string>('JWT_SECRET')?.trim() ??
+      configService.get<string>('auth.jwtSecret')?.trim() ??
+      '';
 
     const missing = [
       !apiKey  && 'INFOBIP_API_KEY',
@@ -167,6 +192,12 @@ export class SmsService {
     if (isProduction && missing.length > 0) {
       throw new Error(
         `[sms] ${missing.join(', ')} required in production. Silent dev mock disabled.`,
+      );
+    }
+
+    if (isProduction && !verificationTokenSecret) {
+      throw new Error(
+        '[sms] SMS_VERIFICATION_TOKEN_SECRET or JWT_SECRET required in production.',
       );
     }
 
@@ -194,6 +225,8 @@ export class SmsService {
 
     this.isDevMock = !isProduction && missing.length > 0;
     this.client = this.isDevMock ? null : new InfobipClient(baseUrl, apiKey, sender);
+    this.verificationTokenSecret =
+      verificationTokenSecret || 'dev-sms-verification-token-secret';
 
     if (this.isDevMock) {
       this.logger.warn({ event: 'sms.credential_missing', mode: 'dev_mock' });
@@ -366,14 +399,21 @@ export class SmsService {
    * distinguish verified-within-10min vs not based on response shape,
    * regardless of the code supplied.
    */
-  async verifyCode(phone: string, code: string): Promise<VerifyResult> {
+  async verifyCode(
+    phone: string,
+    code: string,
+    purpose: SmsVerificationPurpose = 'signup',
+  ): Promise<VerifyResult> {
     const e164 = parseE164OrBadRequest(phone);
 
     // Dev mock: 000000 universal
     if (this.isDevMock) {
       if (code === '000000') {
         this.logger.log({ event: 'sms.verified', mode: 'dev_mock', phone: e164 });
-        return { verified: true };
+        return {
+          verified: true,
+          verificationToken: this.createPhoneVerificationToken(e164, purpose),
+        };
       }
       return { verified: false, message: '인증번호가 일치하지 않습니다' };
     }
@@ -403,18 +443,14 @@ export class SmsService {
     // impersonation primitive against every downstream consumer of verifyCode
     // (signup, password-reset, etc.).
     //
-    // Short-term mitigation: remove the short-circuit entirely. Every verify
-    // call must evaluate the Lua script against the actual OTP. Idempotent
-    // re-verify after a successful first pass returns EXPIRED (GoneException)
-    // because the OTP was DEL'd — downstream consumers should treat that as
-    // "already verified" via explicit check OR re-send.
+    // Mitigation: remove the short-circuit entirely. Every verify call must
+    // evaluate the Lua script against the actual OTP. A successful verification
+    // returns a signed, phone/purpose-bound token for downstream consumers.
     //
     // The `{sms:{e164}}:verified` flag is still SETEX'd inside the Lua script on
     // VERIFIED; it remains available for downstream consumers to query
-    // explicitly if they need an idempotency signal, but it no longer gates
-    // the verify-response. Long-term plan (WR-02 follow-up): issue a
-    // server-bound opaque token at verify-time and require it on downstream
-    // endpoints.
+    // explicitly if they need telemetry, but it no longer gates signup or
+    // profile mutation authorization.
 
     // [Phase 10.1] Valkey Lua atomic OTP verify
     try {
@@ -433,7 +469,10 @@ export class SmsService {
       switch (status) {
         case 'VERIFIED':
           this.logger.log({ event: 'sms.verified', phone: e164, attempts: result[1] });
-          return { verified: true };
+          return {
+            verified: true,
+            verificationToken: this.createPhoneVerificationToken(e164, purpose),
+          };
         case 'WRONG':
           this.logger.warn({ event: 'sms.verify_wrong', phone: e164, remaining: result[1] });
           return { verified: false, message: '인증번호가 일치하지 않습니다' };
@@ -511,5 +550,85 @@ export class SmsService {
       });
       return false;
     }
+  }
+
+  verifyPhoneVerificationToken(
+    token: string,
+    options: { phone: string; purpose: SmsVerificationPurpose },
+  ): void {
+    const e164 = parseE164OrBadRequest(options.phone);
+    const payload = this.parsePhoneVerificationToken(token);
+
+    if (
+      payload.phone !== e164 ||
+      payload.purpose !== options.purpose ||
+      payload.exp < Date.now()
+    ) {
+      throw new BadRequestException('전화번호 인증이 완료되지 않았습니다');
+    }
+  }
+
+  private createPhoneVerificationToken(
+    e164: string,
+    purpose: SmsVerificationPurpose,
+  ): string {
+    const payload: PhoneVerificationTokenPayload = {
+      v: 1,
+      phone: e164,
+      purpose,
+      exp: Date.now() + PHONE_VERIFICATION_TOKEN_TTL_MS,
+      nonce: randomBytes(16).toString('base64url'),
+    };
+    const encodedPayload = Buffer.from(JSON.stringify(payload), 'utf8').toString(
+      'base64url',
+    );
+    return `${encodedPayload}.${this.signPhoneVerificationPayload(encodedPayload)}`;
+  }
+
+  private parsePhoneVerificationToken(token: string): PhoneVerificationTokenPayload {
+    const [encodedPayload, signature] = token.split('.');
+    if (!encodedPayload || !signature) {
+      throw new BadRequestException('전화번호 인증이 완료되지 않았습니다');
+    }
+
+    const expectedSignature = this.signPhoneVerificationPayload(encodedPayload);
+    const expected = Buffer.from(expectedSignature, 'utf8');
+    const actual = Buffer.from(signature, 'utf8');
+    if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
+      throw new BadRequestException('전화번호 인증이 완료되지 않았습니다');
+    }
+
+    let payload: unknown;
+    try {
+      payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8'));
+    } catch {
+      throw new BadRequestException('전화번호 인증이 완료되지 않았습니다');
+    }
+
+    if (!this.isPhoneVerificationPayload(payload)) {
+      throw new BadRequestException('전화번호 인증이 완료되지 않았습니다');
+    }
+
+    return payload;
+  }
+
+  private signPhoneVerificationPayload(encodedPayload: string): string {
+    return createHmac('sha256', this.verificationTokenSecret)
+      .update(encodedPayload)
+      .digest('base64url');
+  }
+
+  private isPhoneVerificationPayload(
+    payload: unknown,
+  ): payload is PhoneVerificationTokenPayload {
+    if (!payload || typeof payload !== 'object') return false;
+    const candidate = payload as Partial<PhoneVerificationTokenPayload>;
+    return (
+      candidate.v === 1 &&
+      typeof candidate.phone === 'string' &&
+      SMS_VERIFICATION_PURPOSES.includes(candidate.purpose as SmsVerificationPurpose) &&
+      typeof candidate.exp === 'number' &&
+      typeof candidate.nonce === 'string'
+    );
   }
 }
