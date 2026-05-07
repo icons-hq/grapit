@@ -181,10 +181,10 @@ Notes:
 **5. [Code Review] Closed Phase 23 i18n review blockers**
 - **Found during:** Phase 23 post-execution code review
 - **Issue:** The review identified gaps in social signup consent submission, consent step localization, locale switch query preservation, translated search matching, authenticated mobile navigation, booking-disabled rendering, signup verification email locale propagation, and inline SVG safety.
-- **Fix:** Added localized consent copy, propagated consent payloads and signup locale, preserved query strings in locale navigation, matched reviewed translated titles in search, localized the mobile My Page link, short-circuited disabled booking UI, and sanitized/rejected unsafe SVG payloads.
-- **Files modified:** `apps/web/app/auth/callback/page.tsx`, `apps/web/components/auth/signup-step2.tsx`, `apps/web/components/auth/signup-form.tsx`, `apps/web/components/i18n/locale-switcher.tsx`, `apps/web/components/i18n/locale-suggestion.tsx`, `apps/web/components/layout/mobile-menu.tsx`, `apps/web/components/booking/booking-page.tsx`, `apps/web/components/booking/seat-map-viewer.tsx`, `apps/web/components/admin/svg-preview.tsx`, `apps/api/src/modules/auth/auth.service.ts`, `apps/api/src/modules/auth/dto/register.dto.ts`, `apps/api/src/modules/search/search.service.ts`, `apps/web/messages/{ko,en,th,zh-CN,zh-TW}.json`, `packages/shared/src/i18n/launch-copy-keys.ts`
-- **Verification:** `pnpm build`, `pnpm test`, `pnpm typecheck`, `pnpm --filter @grabit/web exec playwright test e2e/i18n-smoke.spec.ts --reporter=line`
-- **Committed in:** pending post-review remediation commit
+- **Fix:** Added localized consent copy, propagated consent payloads and signup locale, preserved query strings in locale navigation, matched reviewed translated titles in search, localized the mobile My Page link, short-circuited disabled booking UI, and sanitized/rejected unsafe SVG payloads including document-wide `<style>` CSS injection.
+- **Files modified:** `apps/web/app/auth/callback/page.tsx`, `apps/web/components/auth/signup-step2.tsx`, `apps/web/components/auth/signup-form.tsx`, `apps/web/components/i18n/locale-switcher.tsx`, `apps/web/components/i18n/locale-suggestion.tsx`, `apps/web/components/layout/mobile-menu.tsx`, `apps/web/components/booking/booking-page.tsx`, `apps/web/components/booking/seat-map-viewer.tsx`, `apps/web/components/admin/svg-preview.tsx`, `apps/web/lib/svg/safety.ts`, `apps/api/src/modules/auth/auth.service.ts`, `apps/api/src/modules/auth/dto/register.dto.ts`, `apps/api/src/modules/search/search.service.ts`, `apps/web/messages/{ko,en,th,zh-CN,zh-TW}.json`, `packages/shared/src/i18n/launch-copy-keys.ts`
+- **Verification:** `pnpm build`, `pnpm test`, `pnpm typecheck`, `pnpm --filter @grabit/web test -- seat-map-viewer.test.tsx svg-preview.test.tsx`, `pnpm --filter @grabit/web exec playwright test e2e/i18n-smoke.spec.ts --reporter=line`
+- **Committed in:** `e089f3c`, `896dee1`
 
 ---
 
