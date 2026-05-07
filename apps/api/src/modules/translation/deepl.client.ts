@@ -64,10 +64,22 @@ export class DeepLClient {
       }),
     });
 
-    const data = await response.json() as DeepLTranslateResponse;
+    const responseText = await response.text();
 
     if (!response.ok) {
-      throw new Error('DeepL 번역 요청에 실패했습니다');
+      const statusText = response.statusText || 'Unknown status';
+      throw new Error(
+        `DeepL 번역 요청에 실패했습니다 (${response.status} ${statusText}): ${responseText.slice(0, 500)}`,
+      );
+    }
+
+    let data: DeepLTranslateResponse;
+    try {
+      data = JSON.parse(responseText) as DeepLTranslateResponse;
+    } catch {
+      throw new Error(
+        `DeepL 번역 응답이 JSON 형식이 아닙니다: ${responseText.slice(0, 500)}`,
+      );
     }
 
     const translatedText = data.translations?.[0]?.text;

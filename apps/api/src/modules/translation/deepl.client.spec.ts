@@ -42,9 +42,9 @@ describe('DeepLClient', () => {
   it('calls DeepL translate endpoint with auth key and mapped target language', async () => {
     const fetchSpy = vi.fn().mockResolvedValue({
       ok: true,
-      json: vi.fn().mockResolvedValue({
+      text: vi.fn().mockResolvedValue(JSON.stringify({
         translations: [{ text: 'Fan meeting guide', detected_source_language: 'KO' }],
-      }),
+      })),
     });
     vi.stubGlobal('fetch', fetchSpy);
     const client = new DeepLClient({
@@ -77,6 +77,48 @@ describe('DeepLClient', () => {
           target_lang: 'ZH-HANS',
         }),
       }),
+    );
+  });
+
+  it('preserves DeepL error response body when the request fails', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      statusText: 'Too Many Requests',
+      text: vi.fn().mockResolvedValue('quota exceeded'),
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    const client = new DeepLClient({
+      get: vi.fn((key: string, defaultValue?: string) => {
+        if (key === 'DEEPL_AUTH_KEY') {
+          return 'test-deepl-key';
+        }
+        return defaultValue;
+      }),
+    } as unknown as ConfigService);
+
+    await expect(client.translateText('팬미팅 안내', 'en')).rejects.toThrow(
+      'DeepL 번역 요청에 실패했습니다 (429 Too Many Requests): quota exceeded',
+    );
+  });
+
+  it('reports non-JSON successful responses with their body preview', async () => {
+    const fetchSpy = vi.fn().mockResolvedValue({
+      ok: true,
+      text: vi.fn().mockResolvedValue('<html>maintenance</html>'),
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    const client = new DeepLClient({
+      get: vi.fn((key: string, defaultValue?: string) => {
+        if (key === 'DEEPL_AUTH_KEY') {
+          return 'test-deepl-key';
+        }
+        return defaultValue;
+      }),
+    } as unknown as ConfigService);
+
+    await expect(client.translateText('팬미팅 안내', 'en')).rejects.toThrow(
+      'DeepL 번역 응답이 JSON 형식이 아닙니다: <html>maintenance</html>',
     );
   });
 });
