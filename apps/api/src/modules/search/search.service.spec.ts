@@ -3,6 +3,9 @@ import type { SearchResponse } from '@grabit/shared';
 
 import { SearchService } from './search.service.js';
 
+const PHASE23_I18N_SMOKE_PERFORMANCE_ID =
+  '00000000-0000-4000-8000-000000000023';
+
 /**
  * Phase 2 Plan 00: RED-state test stubs for SearchService
  *
@@ -20,6 +23,14 @@ function createChainableMock() {
     chain[method] = vi.fn().mockReturnValue(chain);
   }
   (chain as { then?: unknown }).then = vi.fn((resolve: (v: unknown[]) => void) => resolve([]));
+  return chain;
+}
+
+function createChainableResult<T>(result: T) {
+  const chain = createChainableMock();
+  (chain as { then?: unknown }).then = vi.fn(
+    (resolve: (value: T) => void) => resolve(result),
+  );
   return chain;
 }
 
@@ -109,6 +120,46 @@ describe('SearchService', () => {
       expect(result.page).toBe(2);
       expect(result.limit).toBe(10);
       expect(result.query).toBe('musical theater');
+    });
+
+    it('overlays reviewed translated titles on foreign-locale search results', async () => {
+      mockDb.select
+        .mockReturnValueOnce(
+          createChainableResult([
+            {
+              id: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
+              title: '2026 걸룰스 팬미팅',
+              genre: 'concert',
+              posterUrl: null,
+              status: 'selling',
+              startDate: new Date('2026-07-18T05:00:00.000Z'),
+              endDate: new Date('2026-07-18T07:00:00.000Z'),
+              venueName: '동해문화예술관 대극장',
+            },
+          ]),
+        )
+        .mockReturnValueOnce(createChainableResult([{ count: 1 }]))
+        .mockReturnValueOnce(
+          createChainableResult([
+            {
+              entityId: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
+              field: 'title',
+              translatedText: '2026 Girl Rules Fanmeeting',
+            },
+          ]),
+        );
+
+      const result = await service.search({
+        q: 'girl',
+        genre: 'concert',
+        page: 1,
+        limit: 20,
+        locale: 'en',
+      } as never);
+
+      expect(result.data[0]?.title).toBe('2026 Girl Rules Fanmeeting');
+      expect(result.data[0]?.automaticTranslationLabel).toBe(true);
+      expect(result.data[0]?.translatedBy).toBe('machine_reviewed');
     });
   });
 });
