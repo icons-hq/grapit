@@ -202,6 +202,9 @@ export class TranslationService {
     if (draft.status === 'stale') {
       throw new BadRequestException('원문이 변경된 번역 초안은 다시 생성해야 합니다');
     }
+    if (draft.status === 'published') {
+      throw new BadRequestException('이미 게시된 번역은 검수 상태로 되돌릴 수 없습니다');
+    }
 
     if (isMemoryStore(this.db)) {
       draft.status = 'review';

@@ -291,6 +291,21 @@ describe('admin translation review workflow', () => {
     expect(onPublishDraft).toHaveBeenCalledWith('draft-en');
   });
 
+  it('disables review for already published drafts', () => {
+    render(
+      <TranslationReviewDetailPanel
+        draft={{ ...draftRow, status: 'published' }}
+        onReviewDraft={vi.fn()}
+        onPublishDraft={vi.fn()}
+        isReviewing={false}
+        isPublishing={false}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: '검수 완료' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '게시' })).toBeEnabled();
+  });
+
   it('shows an error state instead of falling back to translated text when source text is missing', () => {
     render(
       <TranslationReviewDetailPanel

@@ -52,6 +52,7 @@ export function TranslationReviewDetailPanel({
     typeof draft.sourceText === 'string' ? draft.sourceText.trim() : '';
   const isMissingSourceText = sourceText.length === 0;
   const canReview =
+    draft.status === 'draft' &&
     !isBlocked &&
     !isStale &&
     !isMissingSourceText &&

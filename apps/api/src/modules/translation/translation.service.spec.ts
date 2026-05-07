@@ -156,6 +156,24 @@ describe('TranslationService', () => {
     expect(published.translatedText).toBe('Reviewed operator copy');
   });
 
+  it('does not move published drafts back to review', async () => {
+    const source = await service.createSource({
+      entityType: 'fanmeet',
+      entityId: '11111111-1111-1111-1111-111111111111',
+      field: 'description',
+      sourceText: '팬미팅 안내',
+      createdBy: '22222222-2222-2222-2222-222222222222',
+    });
+    const [draft] = await service.generateDrafts(source.id);
+    await service.markReviewed(draft.id, '33333333-3333-3333-3333-333333333333');
+    await service.publishDraft(draft.id);
+
+    await expect(
+      service.markReviewed(draft.id, '44444444-4444-4444-8444-444444444444'),
+    ).rejects.toThrow('이미 게시된 번역은 검수 상태로 되돌릴 수 없습니다');
+    expect(store.getDraft(draft.id)?.status).toBe('published');
+  });
+
   it('marks existing drafts stale when the Korean source is edited', async () => {
     const source = await service.createSource({
       entityType: 'fanmeet',
