@@ -40,7 +40,7 @@ vi.mock('next/image', () => ({
 }));
 
 function createPerformanceDetail(
-  overrides: Partial<PerformanceWithDetails> & Record<string, unknown> = {},
+  overrides: Record<string, unknown> = {},
 ): PerformanceWithDetails & Record<string, unknown> {
   return {
     id: 'perf-translation-label',
