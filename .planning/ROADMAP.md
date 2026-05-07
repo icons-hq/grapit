@@ -65,7 +65,7 @@ Plans:
 
 **Merged from:** 25 Prod compatibility + flags, 26 i18n routing + locale foundation, 27 Translation workflow + legal lock, 28 email verification + 5-country SMS (LINE excluded by Phase 23 D-13), 29 Multinational consent + audit
 
-**Plans:** 18/18 plans complete
+**Plans:** 18/19 plans complete
 
 Plans:
 **Wave 1**
@@ -97,6 +97,9 @@ Plans:
 **Wave 6** *(blocked on public performance detail and admin hook/sidebar file ownership)*
 - [x] 23-11-PLAN.md — Build admin translation workflow and wire automatic translation label into public performance detail
 
+**Wave 7** *(gap closure before Phase 26 canary)*
+- [ ] 23-19-PLAN.md — Close Phase 23 i18n visible-copy, translated performance content, locale-prefixed route, and canary smoke gaps
+
 **Success criteria:**
 1. Expand-only migrations, canary policy, and shared feature flag helper preserve existing production users, reservations, sessions, and Korean root URLs.
 2. Korean routes remain prefixless and foreign routes use `/en`, `/th`, `/zh-CN`, `/zh-TW` with hreflang, sitemap, locale preference, time/currency formatting, and PhoneInput localization.
@@ -104,6 +107,7 @@ Plans:
 4. Kakao, Naver, Google, email verification, 5-country SMS OTP, and three-device refresh token policy are covered by tests and launch evidence; LINE remains excluded from Phase 23 per D-13.
 5. PIPA, cross-border transfer, PDPA/PIPL English notice, under-14, marketing consent, audit log, and footer legal surfaces are captured.
 6. `BOOKING_ENABLED=false` blocks API seat locks and payment attempts, not only UI buttons.
+7. Phase 26 canary entry has a stable five-locale i18n smoke covering GNB locale switcher, public/auth/home/search/performance/booking-disabled visible copy, translated performance content, and locale-prefixed route behavior.
 
 ### Phase 24: Traffic + Booking + Payment Core
 
