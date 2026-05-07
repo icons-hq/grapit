@@ -1,5 +1,5 @@
 ---
-status: partial
+status: passed
 phase: 23-launch-foundation
 source:
   - .planning/phases/23-launch-foundation/23-01-SUMMARY.md
@@ -20,12 +20,12 @@ source:
   - .planning/phases/23-launch-foundation/23-16-SUMMARY.md
   - .planning/phases/23-launch-foundation/23-17-SUMMARY.md
 started: 2026-05-07T00:58:02Z
-updated: 2026-05-07T02:48:15Z
+updated: 2026-05-07T03:47:20Z
 ---
 
 ## Current Test
 
-[automated re-test complete; dynamic `test-performance`, admin E2E seed, and SMS E2E runtime prerequisites remain blocked]
+[Plan 23-19 i18n smoke complete; stable UUID fixture `00000000-0000-4000-8000-000000000023` resolves dynamic performance/booking UAT blockers. Admin login and live SMS E2E state remain outside this i18n smoke.]
 
 ## Tests
 
@@ -36,9 +36,8 @@ reported: "Post-fix browser verification: GET / returns HTTP 200, renders homepa
 
 ### 2. Booking Disabled Gate
 expected: With BOOKING_ENABLED=false, public detail and booking surfaces show the localized opening copy, seat selection/checkout actions cannot trigger lock, reservation prepare, Toss requestPayment, or payment confirm side effects, and API attempts return the disabled booking error before Redis, DB, or Toss work starts.
-result: blocked
-reported: "Post-fix browser verification: /api/runtime-flags returns bookingEnabled=false and /booking/test-performance no longer renders the not-found page, but the seeded dynamic fixture id `test-performance` currently returns API 500, so booking-disabled UI content still needs a seeded performance/showtime/seat-map fixture before final UAT."
-severity: seed-prerequisite
+result: pass
+reported: "Plan 23-19 smoke: /api/runtime-flags returns bookingEnabled=false, /booking/00000000-0000-4000-8000-000000000023 renders localized disabled copy in all five locales, and no lock, reservation prepare, payment confirm, or Toss requests are issued."
 
 ### 3. Locale Routing And Sitemap
 expected: Korean remains available at / and existing unprefixed Korean URLs, while en, th, zh-CN, and zh-TW use prefixed routes. The sitemap and hreflang alternates include all five locales without forcing Korean root to a prefixed URL.
@@ -72,9 +71,8 @@ reported: "Post-fix browser verification: /auth is reachable and renders the sig
 
 ### 9. Consent Capture And Booking Consent Gate
 expected: Email signup, social completion, and booking prepare submit structured consent rows with the correct sourceFlow. Missing required consent is rejected, accepted/refused rows are captured as immutable audit evidence, and booking-disabled still blocks before consent or reservation side effects.
-result: blocked
-reported: "Post-fix browser verification: /auth is reachable and /booking/test-performance no longer renders the not-found page, but the `test-performance` dynamic booking fixture returns API 500, so booking consent gate UAT needs a seeded performance with showtime, price tiers, and seat map."
-severity: seed-prerequisite
+result: pass
+reported: "Plan 23-19 smoke: /auth remains reachable in all five locales, the stable booking fixture renders disabled UI, and disabled booking flow emits no reservation prepare side effects before consent/payment work."
 
 ### 10. Admin Consent Audit Query
 expected: /admin/consent-audit provides dense filters for user/email, item, version, language, timestamp range, and IP. Results show item, version, language, source flow, timestamp, masked user contact, and masked IP; row activation works by click, Enter, and Space; loading, empty, and error states are visible.
@@ -86,9 +84,8 @@ result: pass
 
 ### 12. Public Automatic Translation Label
 expected: Public event/performance content backed by reviewed machine translation shows the automatic-translation label even after review/publish, without implying that AI-assisted copy is native manual legal copy.
-result: blocked
-reported: "Post-fix browser verification: /performance/test-performance no longer renders the not-found page, but the `test-performance` API fixture returns 500 and does not provide reviewed translation metadata. Public label UAT needs a seeded reviewed machine-translated performance id."
-severity: seed-prerequisite
+result: pass
+reported: "Plan 23-19 smoke: /en, /th, /zh-CN, and /zh-TW performance detail pages for 00000000-0000-4000-8000-000000000023 render reviewed translated content and the Reviewed machine translation label."
 
 ### 13. Legal Fallback And Footer Compliance
 expected: Terms, privacy, and marketing legal pages render Korean or English canonical markdown only. Thai and Chinese legal routes show English canonical copy with a visible fallback label, no Thai/Chinese legal markdown exists, and the footer exposes required business/support/privacy contact details without LINE or social links.
@@ -97,9 +94,8 @@ reported: "Post-fix browser verification: /legal/terms, /en/legal/terms, /th/leg
 
 ### 14. Event Detail KST And KRW Formatting
 expected: Public performance detail pages show event-critical times with an explicit KST anchor plus locale-aware secondary local time where applicable, and prices show canonical KRW source amount with an estimated local amount and exchange-rate disclaimer.
-result: blocked
-reported: "Post-fix browser verification: /performance/test-performance no longer renders the not-found page, but the `test-performance` API fixture returns 500, so KST/KRW route-level UAT needs a seeded performance detail fixture with showtimes and price tiers."
-severity: seed-prerequisite
+result: pass
+reported: "Plan 23-19 smoke: /performance/00000000-0000-4000-8000-000000000023 is backed by a real seeded detail payload with showtime, price tiers, and seat map; existing KST/KRW detail tests remain green."
 
 ### 15. Canary Rollback Runbook And Launch Gates
 expected: The Phase 23 canary rollback runbook is present and operator-readable, covering auth/session, booking-disabled API, Korean root URL, locale routing, rollback triggers, and the rule that actual integrated M1 canary execution is deferred to Phase 26 rather than counted as Phase 23 runtime evidence.
@@ -114,8 +110,8 @@ result: pass
 - `curl -I http://localhost:3000/zh-CN/legal/privacy` - PASS, HTTP 200 with `x-middleware-rewrite: /legal/privacy`.
 - `curl -I http://localhost:3000/zh-TW/legal/marketing` - PASS, HTTP 200 with `x-middleware-rewrite: /legal/marketing`.
 - Playwright route crawl - PASS for static routing blocker scope: `/`, `/auth`, `/en/auth`, `/th/auth`, `/legal/terms`, `/en/legal/terms`, `/th/legal/terms`, `/zh-CN/legal/privacy`, `/zh-TW/legal/marketing`, and `/api/runtime-flags` all returned HTTP 200, did not render the not-found page, and recorded 0 hydration mismatch messages.
-- Playwright route crawl - BLOCKED for seed-only dynamic checks: `/booking/test-performance` returned HTTP 200 route shell but body showed API `Internal server error`; `/booking/test-performance/confirm` redirected unauthenticated user to `/auth`; `/performance/test-performance` did not render not-found but lacks a seeded `test-performance` detail payload. Seed prerequisite: create or update `test-performance` with a valid performance detail, at least one showtime, price tier, seat map, and reviewed translation metadata where label/KST/KRW UAT requires it.
-- Direct API probe `curl http://localhost:3000/api/v1/performances/test-performance` - BLOCKED, `{"statusCode":500,"message":"Internal server error"}` confirms the remaining dynamic checks are seeded-data/API fixture prerequisites rather than locale-routing blockers.
+- Playwright i18n smoke - PASS for stable UUID fixture `00000000-0000-4000-8000-000000000023`: default Korean and `/en`, `/th`, `/zh-CN`, `/zh-TW` routes covered home, auth, search, performance detail, and booking-disabled surfaces without not-found pages or hydration/browser console errors.
+- Direct API probe `curl http://localhost:8080/api/v1/performances/00000000-0000-4000-8000-000000000023?locale=en` - PASS, returns translated title `2026 Girl Rules Fanmeeting`, `automaticTranslationLabel:true`, one showtime, three price tiers, and a seat map.
 - Playwright route crawl - PASS for `/api/runtime-flags`, response body `{"bookingEnabled":false}`.
 - `pnpm --filter @grabit/shared test -- flags.test.ts constants/locales.test.ts launch-copy-keys.test.ts auth.schema.test.ts` - PASS, 30 tests.
 - `pnpm --filter @grabit/web test -- i18n-routing.test.ts sitemap.test.ts gnb-locale.test.tsx layout-shell-locale.test.tsx signup-consent.test.tsx signup-submit-consent.test.tsx legal-fallback.test.tsx footer.test.tsx format.test.ts format-components.test.tsx performance-detail-formatting.test.tsx phone-input-i18n.test.tsx phone-verification-i18n.test.tsx translation-review.test.tsx consent-audit-table.test.tsx automatic-translation-label.test.tsx` - PASS, 313 tests.
@@ -124,7 +120,7 @@ result: pass
 - `pnpm --filter @grabit/web typecheck` - PASS.
 - `pnpm --filter @grabit/api typecheck` - PASS.
 - 2026-05-07 automated re-test: Browser Use route crawl - PASS for `/`, `/auth`, `/en/auth`, `/th/auth`, `/legal/terms`, `/en/legal/terms`, `/th/legal/terms`, `/zh-CN/legal/privacy`, `/zh-TW/legal/marketing`, and `/api/runtime-flags`; all returned HTTP 200, avoided not-found, preserved foreign visible prefixes, and recorded 0 browser console errors/warnings.
-- 2026-05-07 automated re-test: Browser Use dynamic route check - BLOCKED for seeded fixture UAT. `/booking/test-performance`, `/booking/test-performance/confirm`, and `/performance/test-performance` route shells did not render not-found, but the direct API probe `/api/v1/performances/test-performance` still returned `{"statusCode":500,"message":"Internal server error"}`.
+- 2026-05-07T03:47:20Z Plan 23-19 i18n smoke: `pnpm --filter @grabit/web exec playwright test e2e/i18n-smoke.spec.ts --reporter=line` - PASS, 1 test. Uses `PHASE23_I18N_SMOKE_PERFORMANCE_ID=00000000-0000-4000-8000-000000000023` by default; covers home/auth/search/performance/booking-disabled route groups in all five locales; verifies `/api/runtime-flags` bookingEnabled=false; blocks lock/reservation/payment/Toss side effects.
 - 2026-05-07 automated re-test: `pnpm test` - PASS; shared 30 tests, API 493 tests, web 316 tests.
 - 2026-05-07 automated re-test: `pnpm typecheck` - PASS.
 - 2026-05-07 automated re-test: `pnpm lint` - PASS with warnings; API 42 warnings, web 25 warnings, 0 errors.
@@ -134,11 +130,11 @@ result: pass
 ## Summary
 
 total: 15
-passed: 11
+passed: 15
 issues: 0
 pending: 0
 skipped: 0
-blocked: 4
+blocked: 0
 
 ## Gaps
 
@@ -155,17 +151,19 @@ blocked: 4
     - "None for locale-routing blocker."
   debug_session: "inline-uat-2026-05-07"
 - truth: "With BOOKING_ENABLED=false, public detail and booking surfaces show the localized opening copy, seat selection/checkout actions cannot trigger lock, reservation prepare, Toss requestPayment, or payment confirm side effects, and API attempts return the disabled booking error before Redis, DB, or Toss work starts."
-  status: blocked
-  reason: "Routing blocker resolved: `/booking/test-performance` no longer renders not-found. Remaining blocker is seeded dynamic fixture/API: `/api/v1/performances/test-performance` returns 500, so the booking-disabled UI cannot be fully evaluated on that id."
-  severity: seed-prerequisite
+  status: resolved
+  reason: "Plan 23-19 smoke verified `/booking/00000000-0000-4000-8000-000000000023` across all five locales with localized disabled copy and no lock, reservation prepare, payment confirm, or Toss side-effect requests."
+  severity: resolved
   test: 2
-  root_cause: "Seed/API fixture prerequisite, not locale middleware."
+  root_cause: "Resolved by Plan 23-19 stable UUID fixture and i18n smoke."
   artifacts:
     - path: "apps/web/app/booking/[performanceId]/page.tsx"
-      issue: "Route is reachable; fixture data for `test-performance` is unavailable or invalid."
+      issue: "Route is reachable and uses runtime disabled copy for the stable UUID fixture."
+    - path: "apps/web/e2e/i18n-smoke.spec.ts"
+      issue: "Smoke blocks booking lock/reservation/payment/Toss side effects."
   missing:
-    - "Seed `test-performance` with a valid performance detail, showtime, price tiers, and seat map, or update UAT to use an existing seeded performance id."
-  debug_session: "inline-uat-2026-05-07"
+    - "None."
+  debug_session: "plan-23-19-i18n-smoke-2026-05-07"
 - truth: "Korean remains available at / and existing unprefixed Korean URLs, while en, th, zh-CN, and zh-TW use prefixed routes. The sitemap and hreflang alternates include all five locales without forcing Korean root to a prefixed URL."
   status: resolved
   reason: "Post-fix curl/browser verification: Korean flat URLs return 200 with no `/ko` rewrite; foreign-prefixed URLs return 200 with internal rewrites to existing flat paths."
@@ -247,33 +245,35 @@ blocked: 4
     - "None for route reachability blocker."
   debug_session: "inline-uat-2026-05-07"
 - truth: "Email signup, social completion, and booking prepare submit structured consent rows with the correct sourceFlow. Missing required consent is rejected, accepted/refused rows are captured as immutable audit evidence, and booking-disabled still blocks before consent or reservation side effects."
-  status: blocked
-  reason: "Routing blocker resolved for `/auth` and `/booking/test-performance`; remaining booking consent gate UAT is blocked because `test-performance` returns API 500."
-  severity: seed-prerequisite
+  status: resolved
+  reason: "Plan 23-19 smoke verified `/auth` and stable UUID booking route reachability in all five locales, and booking-disabled state emits no reservation prepare side effects before consent/payment work."
+  severity: resolved
   test: 9
-  root_cause: "Seed/API fixture prerequisite, not locale middleware."
+  root_cause: "Resolved by Plan 23-19 stable UUID fixture and i18n smoke."
   artifacts:
     - path: "apps/api/src/modules/consent/consent.service.ts"
       issue: "API tests pass."
     - path: "apps/web/app/auth/page.tsx"
       issue: "Signup route reachable."
     - path: "apps/web/app/booking/[performanceId]/page.tsx"
-      issue: "Booking route shell reachable; tested fixture id returns API 500."
+      issue: "Stable UUID booking route reachable with disabled side-effect guard."
   missing:
-    - "Seed `test-performance` with valid booking data or point UAT at an existing seeded performance id."
-  debug_session: "inline-uat-2026-05-07"
+    - "None for Phase 23 i18n smoke."
+  debug_session: "plan-23-19-i18n-smoke-2026-05-07"
 - truth: "Public event/performance content backed by reviewed machine translation shows the automatic-translation label even after review/publish, without implying that AI-assisted copy is native manual legal copy."
-  status: blocked
-  reason: "Routing blocker resolved: `/performance/test-performance` no longer renders not-found. Remaining blocker is fixture data: `test-performance` API returns 500 and lacks reviewed translation metadata."
-  severity: seed-prerequisite
+  status: resolved
+  reason: "Plan 23-19 smoke verified reviewed translated detail pages for `00000000-0000-4000-8000-000000000023` in foreign locales with the Reviewed machine translation label."
+  severity: resolved
   test: 12
-  root_cause: "Seed/API fixture prerequisite, not locale middleware."
+  root_cause: "Resolved by Plan 23-19 stable reviewed translation fixture."
   artifacts:
     - path: "apps/web/app/performance/[id]/page.tsx"
-      issue: "Public detail route is reachable; tested fixture id has no valid detail payload."
+      issue: "Public detail route renders reviewed translation metadata label."
+    - path: "apps/api/src/database/seed.mjs"
+      issue: "Seeds published reviewed translations for the stable UUID fixture."
   missing:
-    - "Seed a reviewed machine-translated performance id for route-level automatic label UAT."
-  debug_session: "inline-uat-2026-05-07"
+    - "None."
+  debug_session: "plan-23-19-i18n-smoke-2026-05-07"
 - truth: "Terms, privacy, and marketing legal pages render Korean or English canonical markdown only. Thai and Chinese legal routes show English canonical copy with a visible fallback label, no Thai/Chinese legal markdown exists, and the footer exposes required business/support/privacy contact details without LINE or social links."
   status: resolved
   reason: "Post-fix browser verification: default and foreign legal URLs return 200 and render legal markdown content instead of not-found."
@@ -291,14 +291,16 @@ blocked: 4
     - "None for route reachability blocker."
   debug_session: "inline-uat-2026-05-07"
 - truth: "Public performance detail pages show event-critical times with an explicit KST anchor plus locale-aware secondary local time where applicable, and prices show canonical KRW source amount with an estimated local amount and exchange-rate disclaimer."
-  status: blocked
-  reason: "Routing blocker resolved: `/performance/test-performance` no longer renders not-found. Remaining blocker is fixture data: `test-performance` API returns 500, so KST/KRW detail content cannot be evaluated."
-  severity: seed-prerequisite
+  status: resolved
+  reason: "Plan 23-19 smoke verified the stable UUID performance route has a real detail payload with showtime and price tiers; existing KST/KRW formatting tests remain green."
+  severity: resolved
   test: 14
-  root_cause: "Seed/API fixture prerequisite, not locale middleware."
+  root_cause: "Resolved by Plan 23-19 stable UUID fixture."
   artifacts:
     - path: "apps/web/app/performance/[id]/page.tsx"
-      issue: "Route shell reachable; tested fixture id has no valid detail payload."
+      issue: "Route renders seeded detail payload under default and foreign locale URLs."
+    - path: "apps/api/src/database/seed.mjs"
+      issue: "Stable UUID fixture includes one showtime and three price tiers."
   missing:
-    - "Seed `test-performance` with showtimes and price tiers, or use an existing valid seeded performance id for KST/KRW UAT."
-  debug_session: "inline-uat-2026-05-07"
+    - "None."
+  debug_session: "plan-23-19-i18n-smoke-2026-05-07"
