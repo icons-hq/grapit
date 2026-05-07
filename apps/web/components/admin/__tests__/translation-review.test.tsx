@@ -157,6 +157,42 @@ describe('admin translation review workflow', () => {
     expect(onGenerateDrafts).toHaveBeenCalledWith('source-1');
   });
 
+  it('catches source creation and draft generation failures without leaking rejected promises', async () => {
+    const user = userEvent.setup();
+    const onCreateSource = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('create failed'))
+      .mockResolvedValueOnce({ id: 'source-1' });
+    const onGenerateDrafts = vi.fn().mockRejectedValue(new Error('generate failed'));
+
+    render(
+      <TranslationSourceForm
+        onCreateSource={onCreateSource}
+        onGenerateDrafts={onGenerateDrafts}
+        isCreating={false}
+        isGenerating={false}
+      />,
+    );
+
+    await user.type(screen.getByLabelText('콘텐츠 ID'), 'perf-1');
+    await user.type(screen.getByLabelText('원문 제목'), '걸스 룰즈 팬미팅');
+    await user.type(screen.getByLabelText('한국어 원문'), '한국어 원문입니다.');
+
+    await user.click(screen.getByRole('button', { name: '원문 저장' }));
+    expect(
+      screen.getByRole('button', { name: 'en/th/zh-CN/zh-TW 초안 생성' }),
+    ).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: '원문 저장' }));
+    await user.click(
+      screen.getByRole('button', { name: 'en/th/zh-CN/zh-TW 초안 생성' }),
+    );
+
+    await waitFor(() => {
+      expect(onGenerateDrafts).toHaveBeenCalledWith('source-1');
+    });
+  });
+
   it('covers loading, empty, status, legal-blocked, and keyboard row activation states', async () => {
     const onSelectRow = vi.fn();
     const user = userEvent.setup();

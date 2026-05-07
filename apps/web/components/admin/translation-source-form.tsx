@@ -33,13 +33,26 @@ export function TranslationSourceForm({
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const sourceText = `${sourceTitle.trim()}\n\n${sourceBody.trim()}`.trim();
-    const source = await onCreateSource({
-      entityType,
-      entityId: entityId.trim(),
-      field,
-      sourceText,
-    });
-    setSourceId(source.id);
+    try {
+      const source = await onCreateSource({
+        entityType,
+        entityId: entityId.trim(),
+        field,
+        sourceText,
+      });
+      setSourceId(source.id);
+    } catch {
+      setSourceId(null);
+    }
+  }
+
+  async function handleGenerateDrafts() {
+    if (!sourceId) return;
+    try {
+      await onGenerateDrafts(sourceId);
+    } catch {
+      // Parent mutation handlers own user-facing error feedback.
+    }
   }
 
   return (
@@ -122,9 +135,7 @@ export function TranslationSourceForm({
           type="button"
           variant="outline"
           disabled={!sourceId || isGenerating}
-          onClick={() => {
-            if (sourceId) void onGenerateDrafts(sourceId);
-          }}
+          onClick={() => void handleGenerateDrafts()}
         >
           en/th/zh-CN/zh-TW 초안 생성
         </Button>
