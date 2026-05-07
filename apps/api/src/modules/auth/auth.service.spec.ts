@@ -85,6 +85,13 @@ function makeMockInsertChain() {
   };
 }
 
+function makeMockUpdateChain(returningRows: Array<{ id: string }> = [{ id: randomUUID() }]) {
+  const returning = vi.fn().mockResolvedValue(returningRows);
+  const where = vi.fn().mockReturnValue({ returning });
+  const set = vi.fn().mockReturnValue({ where });
+  return { set, where, returning };
+}
+
 function containsPrimitiveValue(value: unknown, needle: string, seen = new Set<object>()): boolean {
   if (value === needle) return true;
   if (value === null || typeof value !== 'object') return false;
@@ -182,11 +189,7 @@ describe('AuthService', () => {
           where: vi.fn().mockResolvedValue([]),
         }),
       }),
-      update: vi.fn().mockReturnValue({
-        set: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([]),
-        }),
-      }),
+      update: vi.fn().mockImplementation(() => makeMockUpdateChain()),
       transaction: vi.fn(async (callback: (tx: typeof mockDb) => Promise<unknown>) =>
         callback(mockDb),
       ),
@@ -402,6 +405,40 @@ describe('AuthService', () => {
       const rawToken = 'valid-raw-refresh-token';
       const tokenHash = createHash('sha256').update(rawToken).digest('hex');
       const family = randomUUID();
+      const tokenId = randomUUID();
+
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([
+            {
+              id: tokenId,
+              userId: mockUser.id,
+              tokenHash,
+              family,
+              expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+              createdAt: new Date(),
+              revokedAt: null,
+            },
+          ]),
+        }),
+      });
+
+      mockDb.update.mockImplementation(() => makeMockUpdateChain());
+
+      mockUserRepo.findById.mockResolvedValue(mockUser);
+
+      const result = await authService.refreshTokens(rawToken);
+
+      expect(result).toHaveProperty('accessToken');
+      expect(result).toHaveProperty('refreshToken');
+      expect(result.refreshToken).not.toBe(rawToken);
+      expect(mockDb.transaction).toHaveBeenCalled();
+    });
+
+    it('conditional revoke 0 rows이면 concurrent reuse로 보고 family를 폐기한다', async () => {
+      const rawToken = 'raced-refresh-token';
+      const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+      const family = randomUUID();
 
       mockDb.select.mockReturnValue({
         from: vi.fn().mockReturnValue({
@@ -418,20 +455,22 @@ describe('AuthService', () => {
           ]),
         }),
       });
-
-      mockDb.update.mockReturnValue({
-        set: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([]),
-        }),
-      });
-
       mockUserRepo.findById.mockResolvedValue(mockUser);
+      const conditionalRevoke = makeMockUpdateChain([]);
+      const familyWhere = vi.fn().mockResolvedValue([]);
+      const familySet = vi.fn().mockReturnValue({ where: familyWhere });
+      mockDb.update
+        .mockReturnValueOnce({ set: conditionalRevoke.set })
+        .mockReturnValueOnce({ set: familySet });
 
-      const result = await authService.refreshTokens(rawToken);
+      await expect(authService.refreshTokens(rawToken)).rejects.toThrow(
+        UnauthorizedException,
+      );
 
-      expect(result).toHaveProperty('accessToken');
-      expect(result).toHaveProperty('refreshToken');
-      expect(result.refreshToken).not.toBe(rawToken);
+      expect(conditionalRevoke.returning).toHaveBeenCalledWith({
+        id: expect.anything(),
+      });
+      expect(containsPrimitiveValue(familyWhere.mock.calls, family)).toBe(true);
     });
 
     it('should revoke entire token family on reuse (theft detection)', async () => {

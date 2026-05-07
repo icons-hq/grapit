@@ -196,10 +196,7 @@ export class AuthService {
 
     // 4. Token already revoked -- possible theft! Revoke entire family
     if (tokenRecord.revokedAt) {
-      await this.db
-        .update(schema.refreshTokens)
-        .set({ revokedAt: new Date() })
-        .where(eq(schema.refreshTokens.family, tokenRecord.family));
+      await this.revokeRefreshTokenFamily(tokenRecord.family);
 
       throw new UnauthorizedException('토큰이 재사용되었습니다. 보안을 위해 해당 세션이 종료됩니다.');
     }
@@ -209,32 +206,46 @@ export class AuthService {
       throw new UnauthorizedException('리프레시 토큰이 만료되었습니다');
     }
 
-    // 6. Revoke old token
-    await this.db
-      .update(schema.refreshTokens)
-      .set({ revokedAt: new Date() })
-      .where(eq(schema.refreshTokens.id, tokenRecord.id));
-
-    // 7. Generate new refresh token with same family
+    // 6. Generate new refresh token with same family
     const newRawToken = randomBytes(32).toString('hex');
     const newTokenHash = createHash('sha256').update(newRawToken).digest('hex');
+    const now = new Date();
+    const newTokenExpiresAt = new Date(
+      Date.now() + REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000,
+    );
 
-    await this.db.insert(schema.refreshTokens).values({
-      userId: tokenRecord.userId,
-      tokenHash: newTokenHash,
-      family: tokenRecord.family,
-      expiresAt: new Date(
-        Date.now() + REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000,
-      ),
-    });
-
-    // 8. Fetch current user for up-to-date role/email
+    // 7. Fetch current user for up-to-date role/email
     const user = await this.userRepository.findById(tokenRecord.userId);
     if (!user) {
       throw new UnauthorizedException('사용자를 찾을 수 없습니다');
     }
 
-    // 9. Generate new access token with full claims
+    await this.db.transaction(async (tx) => {
+      const revokedRows = await tx
+        .update(schema.refreshTokens)
+        .set({ revokedAt: now })
+        .where(
+          and(
+            eq(schema.refreshTokens.id, tokenRecord.id),
+            isNull(schema.refreshTokens.revokedAt),
+          ),
+        )
+        .returning({ id: schema.refreshTokens.id });
+
+      if (revokedRows.length === 0) {
+        await this.revokeRefreshTokenFamily(tokenRecord.family, tx);
+        throw new UnauthorizedException('토큰이 재사용되었습니다. 보안을 위해 해당 세션이 종료됩니다.');
+      }
+
+      await tx.insert(schema.refreshTokens).values({
+        userId: tokenRecord.userId,
+        tokenHash: newTokenHash,
+        family: tokenRecord.family,
+        expiresAt: newTokenExpiresAt,
+      });
+    });
+
+    // 8. Generate new access token with full claims
     const accessToken = await this.jwtService.signAsync({
       sub: tokenRecord.userId,
       email: user.email,
@@ -242,6 +253,16 @@ export class AuthService {
     });
 
     return { accessToken, refreshToken: newRawToken };
+  }
+
+  private async revokeRefreshTokenFamily(
+    family: string,
+    db: Pick<DrizzleDB, 'update'> = this.db,
+  ): Promise<void> {
+    await db
+      .update(schema.refreshTokens)
+      .set({ revokedAt: new Date() })
+      .where(eq(schema.refreshTokens.family, family));
   }
 
   async revokeRefreshToken(rawToken: string): Promise<void> {
