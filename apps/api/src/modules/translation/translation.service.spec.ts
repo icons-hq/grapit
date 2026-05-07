@@ -189,6 +189,8 @@ describe('TranslationService', () => {
 
     expect(queue[0]).toMatchObject({
       contentType: 'fanmeet',
+      field: 'description',
+      sourceText: '팬미팅 안내',
       locale: 'en',
       status: 'review',
       reviewerId: '33333333-3333-3333-3333-333333333333',
@@ -213,7 +215,7 @@ describe('TranslationService', () => {
       locale: 'en',
       status: 'review',
       updatedFrom: '2026-05-05T00:00:00.000Z',
-      updatedTo: '2026-05-07T00:00:00.000Z',
+      updatedTo: '2026-05-08T00:00:00.000Z',
     });
 
     expect(queue).toHaveLength(1);

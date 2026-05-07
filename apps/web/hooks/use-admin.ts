@@ -59,9 +59,9 @@ export interface TranslationDraft {
   id: string;
   sourceId: string;
   contentType: string;
-  field?: string;
+  field: string;
   sourceTitle?: string;
-  sourceText?: string;
+  sourceText: string;
   locale: TranslationTargetLocale;
   status: TranslationQueueStatus;
   translatedText: string;

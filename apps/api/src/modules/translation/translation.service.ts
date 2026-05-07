@@ -42,6 +42,8 @@ export interface TranslationDraftResult {
   id: string;
   sourceId: string;
   contentType: string;
+  field: string;
+  sourceText: string;
   locale: TranslationTargetLocale;
   status: TranslationStatus;
   translatedText: string;
@@ -60,6 +62,7 @@ export interface TranslationQueueFilters {
 
 type SourceRow = typeof translationSources.$inferSelect;
 type DraftRow = typeof translationDrafts.$inferSelect;
+type DraftSourceContext = Pick<SourceRow, 'entityType' | 'field' | 'sourceText'>;
 
 interface MemoryTranslationStore {
   sources: SourceRow[];
@@ -139,7 +142,7 @@ export class TranslationService {
       }),
     );
 
-    return drafts.map((draft) => this.mapDraft(draft, source.entityType));
+    return drafts.map((draft) => this.mapDraft(draft, source));
   }
 
   async listQueue(filters: TranslationQueueFilters = {}): Promise<TranslationDraftResult[]> {
@@ -151,7 +154,7 @@ export class TranslationService {
         })
         .filter(({ draft, source }) => this.matchesQueueFilters(draft, source, filters))
         .sort((a, b) => b.draft.updatedAt.getTime() - a.draft.updatedAt.getTime())
-        .map(({ draft, source }) => this.mapDraft(draft, source.entityType));
+        .map(({ draft, source }) => this.mapDraft(draft, source));
     }
 
     const predicates: SQL[] = [];
@@ -174,14 +177,18 @@ export class TranslationService {
     const rows = await this.db
       .select({
         draft: translationDrafts,
-        contentType: translationSources.entityType,
+        source: {
+          entityType: translationSources.entityType,
+          field: translationSources.field,
+          sourceText: translationSources.sourceText,
+        },
       })
       .from(translationDrafts)
       .innerJoin(translationSources, eq(translationDrafts.sourceId, translationSources.id))
       .where(predicates.length > 0 ? and(...predicates) : undefined)
       .orderBy(desc(translationDrafts.updatedAt));
 
-    return rows.map((row) => this.mapDraft(row.draft, row.contentType));
+    return rows.map((row) => this.mapDraft(row.draft, row.source));
   }
 
   async markReviewed(
@@ -203,7 +210,7 @@ export class TranslationService {
       }
       draft.reviewedBy = reviewerId;
       draft.updatedAt = new Date();
-      return this.mapDraft(draft, source.entityType);
+      return this.mapDraft(draft, source);
     }
 
     const [updated] = await this.db
@@ -217,7 +224,7 @@ export class TranslationService {
       .where(eq(translationDrafts.id, draftId))
       .returning();
 
-    return this.mapDraft(updated!, source.entityType);
+    return this.mapDraft(updated!, source);
   }
 
   async publishDraft(draftId: string): Promise<TranslationDraftResult> {
@@ -243,7 +250,7 @@ export class TranslationService {
       draft.status = 'published';
       draft.publishedAt = new Date();
       draft.updatedAt = new Date();
-      return this.mapDraft(draft, source.entityType);
+      return this.mapDraft(draft, source);
     }
 
     const [published] = await this.db.transaction(async (tx) => {
@@ -266,7 +273,7 @@ export class TranslationService {
         .returning();
     });
 
-    return this.mapDraft(published!, source.entityType);
+    return this.mapDraft(published!, source);
   }
 
   async markStaleOnSourceEdit(
@@ -283,7 +290,7 @@ export class TranslationService {
         draft.sourceContentHash = nextHash;
         draft.updatedAt = new Date();
       });
-      return staleDrafts.map((draft) => this.mapDraft(draft, source.entityType));
+      return staleDrafts.map((draft) => this.mapDraft(draft, source));
     }
 
     const [source] = await this.db
@@ -302,7 +309,7 @@ export class TranslationService {
       .where(and(eq(translationDrafts.sourceId, sourceId)))
       .returning();
 
-    return staleDrafts.map((draft) => this.mapDraft(draft, source.entityType));
+    return staleDrafts.map((draft) => this.mapDraft(draft, source));
   }
 
   protected async generateDraftText(
@@ -418,11 +425,13 @@ export class TranslationService {
     };
   }
 
-  private mapDraft(draft: DraftRow, contentType: string): TranslationDraftResult {
+  private mapDraft(draft: DraftRow, source: DraftSourceContext): TranslationDraftResult {
     return {
       id: draft.id,
       sourceId: draft.sourceId,
-      contentType,
+      contentType: source.entityType,
+      field: source.field,
+      sourceText: source.sourceText,
       locale: draft.targetLocale as TranslationTargetLocale,
       status: draft.status,
       translatedText: draft.translatedText,

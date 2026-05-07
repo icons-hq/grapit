@@ -254,4 +254,25 @@ describe('admin translation review workflow', () => {
     await user.click(screen.getByRole('button', { name: '게시' }));
     expect(onPublishDraft).toHaveBeenCalledWith('draft-en');
   });
+
+  it('shows an error state instead of falling back to translated text when source text is missing', () => {
+    render(
+      <TranslationReviewDetailPanel
+        draft={{ ...draftRow, sourceText: '' }}
+        onReviewDraft={vi.fn()}
+        onPublishDraft={vi.fn()}
+        isReviewing={false}
+        isPublishing={false}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        '한국어 원문 정보를 불러오지 못했습니다. 원문을 확인한 뒤 다시 시도하세요.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText('원문 정보를 불러오지 못했습니다.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '검수 완료' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '게시' })).toBeDisabled();
+  });
 });

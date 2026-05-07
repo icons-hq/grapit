@@ -48,10 +48,18 @@ export function TranslationReviewDetailPanel({
 
   const isBlocked = draft.status === 'legal_blocked';
   const isStale = draft.status === 'stale';
-  const canReview = !isBlocked && !isStale && translatedText.trim().length > 0;
+  const sourceText =
+    typeof draft.sourceText === 'string' ? draft.sourceText.trim() : '';
+  const isMissingSourceText = sourceText.length === 0;
+  const canReview =
+    !isBlocked &&
+    !isStale &&
+    !isMissingSourceText &&
+    translatedText.trim().length > 0;
   const canPublish =
     !isBlocked &&
     !isStale &&
+    !isMissingSourceText &&
     (draft.status === 'review' ||
       draft.status === 'published' ||
       reviewedDraftId === draft.id);
@@ -99,6 +107,15 @@ export function TranslationReviewDetailPanel({
         </div>
       )}
 
+      {isMissingSourceText && (
+        <div
+          role="alert"
+          className="mt-4 rounded-lg bg-[#FEF2F2] p-3 text-sm font-semibold text-[#C62828]"
+        >
+          한국어 원문 정보를 불러오지 못했습니다. 원문을 확인한 뒤 다시 시도하세요.
+        </div>
+      )}
+
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <section className="space-y-2">
           <div className="flex items-center gap-2">
@@ -111,7 +128,7 @@ export function TranslationReviewDetailPanel({
             </Badge>
           </div>
           <div className="min-h-[180px] whitespace-pre-wrap rounded-lg border bg-[#F5F5F7] p-3 text-sm text-gray-900">
-            {draft.sourceText ?? draft.sourceTitle ?? draft.sourceId}
+            {sourceText || '원문 정보를 불러오지 못했습니다.'}
           </div>
         </section>
 

@@ -55,7 +55,6 @@ export default function AdminTranslationsPage() {
       (queue.data ?? []).map((row) => ({
         ...row,
         sourceTitle: row.sourceTitle ?? row.sourceText ?? row.sourceId,
-        sourceText: row.sourceText ?? row.translatedText,
       })),
     [queue.data],
   );
