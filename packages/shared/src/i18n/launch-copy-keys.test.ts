@@ -8,6 +8,12 @@ import {
 
 const expectedLocales = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
 const expectedNamespaces = [
+  'nav',
+  'home',
+  'search',
+  'performance',
+  'booking',
+  'auth.form',
   'auth.emailVerification',
   'auth.otp',
   'auth.errors',
@@ -19,7 +25,7 @@ describe('launch copy key manifest', () => {
     expect(LAUNCH_COPY_LOCALES).toEqual(expectedLocales);
   });
 
-  it('requires auth/email/OTP/SMS namespaces only', () => {
+  it('requires every canary-visible launch namespace', () => {
     expect(LAUNCH_COPY_NAMESPACES).toEqual(expectedNamespaces);
     expect(Object.keys(LAUNCH_COPY_KEYS)).toEqual(expectedNamespaces);
   });
@@ -43,7 +49,64 @@ describe('launch copy key manifest', () => {
     }
   });
 
-  it('includes the critical auth/email/OTP/SMS launch copy keys', () => {
+  it('includes the critical visible surface launch copy keys', () => {
+    expect(LAUNCH_COPY_KEYS.nav.ko).toEqual([
+      'searchPlaceholder',
+      'searchAriaLabel',
+      'clearSearch',
+      'moreGenres',
+      'loginSignup',
+      'mypage',
+      'logout',
+      'language',
+      'category',
+    ]);
+    expect(LAUNCH_COPY_KEYS.home.ko).toEqual([
+      'hot',
+      'newOpen',
+      'genreShortcuts',
+      'more',
+      'empty',
+    ]);
+    expect(LAUNCH_COPY_KEYS.search.ko).toEqual([
+      'promptTitle',
+      'promptBody',
+      'resultTitle',
+      'totalCount',
+      'includeEnded',
+      'loadError',
+      'retry',
+      'emptyHeading',
+      'emptyBody',
+    ]);
+    expect(LAUNCH_COPY_KEYS.performance.ko).toEqual([
+      'posterAltSuffix',
+      'detailTab',
+      'salesTab',
+      'noDetail',
+      'refundTitle',
+      'refundItems',
+      'loadError',
+      'retry',
+      'bookCta',
+    ]);
+    expect(LAUNCH_COPY_KEYS.booking.ko).toEqual(['disabled']);
+    expect(LAUNCH_COPY_KEYS['auth.form'].ko).toEqual([
+      'email',
+      'password',
+      'emailPlaceholder',
+      'passwordPlaceholder',
+      'loginButton',
+      'loginLoading',
+      'forgotPassword',
+      'separator',
+      'signupComplete',
+      'under14Blocked',
+      'temporaryError',
+    ]);
+  });
+
+  it('preserves the critical auth/email/OTP/SMS launch copy keys', () => {
     expect(LAUNCH_COPY_KEYS['auth.emailVerification'].ko).toEqual([
       'sent',
       'resendCta',
