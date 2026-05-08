@@ -250,6 +250,7 @@ export function useCreatePerformance() {
       apiClient.post<PerformanceWithDetails>(
         '/api/v1/admin/performances',
         data,
+        { showErrorToast: false },
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'performances'] });
@@ -265,6 +266,7 @@ export function useUpdatePerformance(id: string) {
       apiClient.put<PerformanceWithDetails>(
         `/api/v1/admin/performances/${id}`,
         data,
+        { showErrorToast: false },
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'performances'] });

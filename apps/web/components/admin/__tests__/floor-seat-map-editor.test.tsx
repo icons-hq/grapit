@@ -58,4 +58,19 @@ describe('FloorSeatMapEditor', () => {
     expect(alert).toHaveTextContent('1F');
     expect(alert).toHaveTextContent('고유하게 수정');
   });
+
+  it('renders the server duplicate correction message without dropping rows', () => {
+    render(
+      <FloorSeatMapEditor
+        value={[createSeatMap({ floorKey: '1F' })]}
+        onChange={vi.fn()}
+        duplicateFloorError="서버에서 중복된 floorKey를 확인했습니다. 각 층 키를 고유하게 수정한 뒤 다시 저장해주세요."
+      />,
+    );
+
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      '서버에서 중복된 floorKey를 확인했습니다.',
+    );
+    expect(screen.getByDisplayValue('1F')).toBeInTheDocument();
+  });
 });
