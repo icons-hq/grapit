@@ -9,16 +9,59 @@ function createMockDb() {
     select: vi.fn(),
     insert: vi.fn(),
     update: vi.fn(),
+    transaction: vi.fn(),
   };
+}
+
+function createSelectChain<T>(rows: T[]) {
+  const chain = {
+    from: vi.fn(),
+    where: vi.fn(),
+  };
+  chain.from.mockReturnValue(chain);
+  chain.where.mockResolvedValue(rows);
+  return chain;
+}
+
+function createMutationChain<T>(returningRows: T[] = []) {
+  const chain = {
+    set: vi.fn(),
+    values: vi.fn(),
+    where: vi.fn(),
+    onConflictDoNothing: vi.fn(),
+    returning: vi.fn(),
+  };
+  chain.set.mockReturnValue(chain);
+  chain.values.mockReturnValue(chain);
+  chain.where.mockReturnValue(chain);
+  chain.onConflictDoNothing.mockReturnValue(chain);
+  chain.returning.mockResolvedValue(returningRows);
+  return chain;
 }
 
 describe('PaymentService', () => {
   let service: PaymentService;
   let mockDb: ReturnType<typeof createMockDb>;
+  let mockBookingGateway: {
+    broadcastSeatUpdate: ReturnType<typeof vi.fn>;
+  };
+  let mockQrTicketService: {
+    ensureIssuedTicketForReservation: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
     mockDb = createMockDb();
-    service = new PaymentService(mockDb as any);
+    mockBookingGateway = {
+      broadcastSeatUpdate: vi.fn(),
+    };
+    mockQrTicketService = {
+      ensureIssuedTicketForReservation: vi.fn().mockResolvedValue({}),
+    };
+    service = new PaymentService(
+      mockDb as any,
+      mockBookingGateway as any,
+      mockQrTicketService as any,
+    );
   });
 
   describe('amount validation', () => {
@@ -165,6 +208,97 @@ describe('PaymentService', () => {
           failUrl: 'https://grabit.test/booking/perf-1/confirm?error=true',
         }),
       ).toThrow(new BadRequestException('FOREIGN_EASY_PAY 결제는 pendingUrl이 필요합니다'));
+    });
+  });
+
+  describe('upsertAsyncPaymentProgress', () => {
+    it('finalizes async DONE webhook by confirming reservation, selling seats, and issuing QR ticket', async () => {
+      const reservationId = randomUUID();
+      const showtimeId = randomUUID();
+      const userId = randomUUID();
+      const paymentId = randomUUID();
+      const tx = {
+        update: vi.fn(),
+        insert: vi.fn(),
+      };
+      const updateReservation = createMutationChain();
+      const insertPayment = createMutationChain([{ id: paymentId }]);
+      const updateFirstSeat = createMutationChain([]);
+      const insertFirstSeat = createMutationChain([{ id: randomUUID() }]);
+      const updateSecondSeat = createMutationChain([{ id: randomUUID() }]);
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          userId,
+          showtimeId,
+          status: 'PENDING_PAYMENT',
+          totalAmount: 150000,
+        }]))
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([
+          { seatId: '1F:A-1' },
+          { seatId: '2F:B-2' },
+        ]));
+      mockDb.transaction.mockImplementation(async (callback: (txArg: typeof tx) => Promise<void>) => {
+        await callback(tx);
+      });
+      tx.update
+        .mockReturnValueOnce(updateReservation)
+        .mockReturnValueOnce(updateFirstSeat)
+        .mockReturnValueOnce(updateSecondSeat);
+      tx.insert
+        .mockReturnValueOnce(insertPayment)
+        .mockReturnValueOnce(insertFirstSeat);
+
+      await service.upsertAsyncPaymentProgress(
+        {
+          eventId: 'evt-payment-done',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_async_done',
+            orderId: 'GRP-ASYNC-DONE',
+            status: 'DONE',
+            method: 'FOREIGN_EASY_PAY',
+            provider: 'ALIPAY_PLUS',
+            currency: 'USD',
+            totalAmount: 150000,
+            approvedAt: '2026-05-08T08:00:00.000Z',
+          },
+        },
+        'DONE',
+        'payment_status_changed:done',
+      );
+
+      expect(updateReservation.set).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'CONFIRMED' }),
+      );
+      expect(insertPayment.values).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reservationId,
+          paymentKey: 'pay_async_done',
+          tossOrderId: 'GRP-ASYNC-DONE',
+          amount: 150000,
+          status: 'DONE',
+          asyncStatus: 'payment_status_changed:done',
+        }),
+      );
+      expect(mockBookingGateway.broadcastSeatUpdate).toHaveBeenCalledWith(
+        showtimeId,
+        '1F:A-1',
+        'sold',
+        userId,
+      );
+      expect(mockBookingGateway.broadcastSeatUpdate).toHaveBeenCalledWith(
+        showtimeId,
+        '2F:B-2',
+        'sold',
+        userId,
+      );
+      expect(mockQrTicketService.ensureIssuedTicketForReservation).toHaveBeenCalledWith({
+        reservationId,
+        paymentId,
+      });
     });
   });
 });

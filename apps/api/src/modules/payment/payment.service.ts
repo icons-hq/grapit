@@ -1,16 +1,22 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Inject,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
-import { eq, or } from 'drizzle-orm';
+import { and, eq, or, sql } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
   paymentWebhookEvents,
   payments,
+  reservationSeats,
   reservations,
+  seatInventories,
 } from '../../database/schema/index.js';
+import { BookingGateway } from '../booking/booking.gateway.js';
+import { QrTicketService } from '../ticket/qr-ticket.service.js';
 import type {
   PaymentInfo,
   PaymentMethod,
@@ -80,10 +86,31 @@ export interface AsyncPaymentProgressSnapshot {
   paymentStatus: PaymentStatus | null;
 }
 
+type WebhookReservationSnapshot = {
+  id: string;
+  userId: string;
+  showtimeId: string;
+  status: ReservationStatus;
+  totalAmount: number;
+};
+
+type WebhookPaymentSnapshot = {
+  id: string;
+  reservationId: string;
+};
+
+type WebhookSeatSelection = {
+  seatId: string;
+  floorKey: string;
+  seatKey: string;
+};
+
 @Injectable()
 export class PaymentService {
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
+    @Optional() private readonly bookingGateway?: BookingGateway,
+    @Optional() private readonly qrTicketService?: QrTicketService,
   ) {}
 
   prepareTossPaymentBranch(input: TossPaymentBranchRequest): TossPaymentBranch {
@@ -238,6 +265,8 @@ export class PaymentService {
     const [reservation] = await this.db
       .select({
         id: reservations.id,
+        userId: reservations.userId,
+        showtimeId: reservations.showtimeId,
         status: reservations.status,
         totalAmount: reservations.totalAmount,
       })
@@ -251,6 +280,7 @@ export class PaymentService {
     const [existingPayment] = await this.db
       .select({
         id: payments.id,
+        reservationId: payments.reservationId,
       })
       .from(payments)
       .where(
@@ -263,6 +293,32 @@ export class PaymentService {
     const provider = this.resolveWebhookProvider(payload);
     const method = this.resolveWebhookMethod(payload, provider);
     const amount = payload.data.totalAmount ?? reservation.totalAmount;
+
+    if (paymentStatus === 'DONE') {
+      if (payload.data.totalAmount !== reservation.totalAmount) {
+        await this.storeRejectedWebhookPayment({
+          payload,
+          reservation,
+          existingPayment,
+          provider,
+          method,
+          amount: payload.data.totalAmount ?? 0,
+          asyncStatus: 'payment_amount_mismatch',
+        });
+        throw new BadRequestException('결제 금액이 일치하지 않습니다');
+      }
+
+      await this.finalizeAsyncDonePayment({
+        payload,
+        reservation,
+        existingPayment,
+        provider,
+        method,
+        asyncStatus,
+      });
+      return;
+    }
+
     const paidAt = paymentStatus === 'DONE' && payload.data.approvedAt
       ? new Date(payload.data.approvedAt)
       : null;
@@ -308,6 +364,216 @@ export class PaymentService {
         })
         .where(eq(reservations.id, reservation.id));
     }
+  }
+
+  private async finalizeAsyncDonePayment(input: {
+    payload: TossWebhookRequestBody;
+    reservation: WebhookReservationSnapshot;
+    existingPayment?: WebhookPaymentSnapshot;
+    provider: PaymentProvider;
+    method: PaymentMethod['method'];
+    asyncStatus: string;
+  }): Promise<void> {
+    const {
+      payload,
+      reservation,
+      existingPayment,
+      provider,
+      method,
+      asyncStatus,
+    } = input;
+
+    if (reservation.status !== 'PENDING_PAYMENT' && reservation.status !== 'CONFIRMED') {
+      throw new ConflictException('결제 완료 처리 대상 예매 상태가 아닙니다');
+    }
+
+    if (existingPayment && existingPayment.reservationId !== reservation.id) {
+      throw new ConflictException('결제 정보가 예매와 일치하지 않습니다');
+    }
+
+    const pendingSeats = await this.getReservationSeatSelections(reservation.id);
+    const paidAt = payload.data.approvedAt
+      ? new Date(payload.data.approvedAt)
+      : new Date();
+    let committedPaymentId = existingPayment?.id ?? null;
+
+    await this.db.transaction(async (tx) => {
+      await tx
+        .update(reservations)
+        .set({
+          status: 'CONFIRMED',
+          updatedAt: new Date(),
+        })
+        .where(eq(reservations.id, reservation.id));
+
+      const paymentValues = {
+        reservationId: reservation.id,
+        paymentKey: payload.data.paymentKey,
+        tossOrderId: payload.data.orderId,
+        method,
+        provider,
+        currency: payload.data.currency ?? 'KRW',
+        asyncStatus,
+        amount: reservation.totalAmount,
+        status: 'DONE' as const,
+        paidAt,
+        cancelledAt: null,
+        cancelReason: null,
+      };
+
+      if (existingPayment) {
+        await tx
+          .update(payments)
+          .set(paymentValues)
+          .where(eq(payments.id, existingPayment.id));
+      } else {
+        const insertedPayments = await tx
+          .insert(payments)
+          .values(paymentValues)
+          .returning({ id: payments.id });
+
+        committedPaymentId = insertedPayments[0]?.id ?? null;
+      }
+
+      for (const seat of pendingSeats) {
+        const updated = await tx
+          .update(seatInventories)
+          .set({
+            status: 'sold',
+            soldAt: new Date(),
+            lockedBy: null,
+            lockedUntil: null,
+          })
+          .where(
+            and(
+              eq(seatInventories.showtimeId, reservation.showtimeId),
+              eq(seatInventories.floorKey, seat.floorKey),
+              or(
+                eq(seatInventories.seatKey, seat.seatKey),
+                and(
+                  sql`${seatInventories.seatKey} IS NULL`,
+                  eq(seatInventories.seatId, seat.seatId),
+                ),
+              ),
+              sql`${seatInventories.status} <> 'sold'`,
+            ),
+          )
+          .returning({ id: seatInventories.id });
+
+        if (updated.length > 0) continue;
+
+        const inserted = await tx
+          .insert(seatInventories)
+          .values({
+            showtimeId: reservation.showtimeId,
+            seatId: seat.seatId,
+            floorKey: seat.floorKey,
+            seatKey: seat.seatKey,
+            status: 'sold',
+            soldAt: new Date(),
+          })
+          .onConflictDoNothing()
+          .returning({ id: seatInventories.id });
+
+        if (inserted.length === 0) {
+          throw new ConflictException('이미 판매된 좌석입니다');
+        }
+      }
+    });
+
+    for (const seat of pendingSeats) {
+      this.bookingGateway?.broadcastSeatUpdate(
+        reservation.showtimeId,
+        seat.seatKey,
+        'sold',
+        reservation.userId,
+      );
+    }
+
+    if (this.qrTicketService && committedPaymentId) {
+      await this.qrTicketService.ensureIssuedTicketForReservation({
+        reservationId: reservation.id,
+        paymentId: committedPaymentId,
+      });
+    }
+  }
+
+  private async getReservationSeatSelections(
+    reservationId: string,
+  ): Promise<WebhookSeatSelection[]> {
+    const rows = await this.db
+      .select({
+        seatId: reservationSeats.seatId,
+      })
+      .from(reservationSeats)
+      .where(eq(reservationSeats.reservationId, reservationId));
+
+    return rows.map((row) => this.normalizeReservationSeatIdentity(row.seatId));
+  }
+
+  private normalizeReservationSeatIdentity(seatId: string): WebhookSeatSelection {
+    if (seatId.includes(':')) {
+      const separatorIndex = seatId.indexOf(':');
+      const floorKey = seatId.slice(0, separatorIndex) || '1F';
+      const rawSeatId = seatId.slice(separatorIndex + 1);
+
+      return {
+        floorKey,
+        seatId: rawSeatId,
+        seatKey: `${floorKey}:${rawSeatId}`,
+      };
+    }
+
+    return {
+      floorKey: '1F',
+      seatId,
+      seatKey: `1F:${seatId}`,
+    };
+  }
+
+  private async storeRejectedWebhookPayment(input: {
+    payload: TossWebhookRequestBody;
+    reservation: WebhookReservationSnapshot;
+    existingPayment?: WebhookPaymentSnapshot;
+    provider: PaymentProvider;
+    method: PaymentMethod['method'];
+    amount: number;
+    asyncStatus: string;
+  }): Promise<void> {
+    const {
+      payload,
+      reservation,
+      existingPayment,
+      provider,
+      method,
+      amount,
+      asyncStatus,
+    } = input;
+
+    const paymentValues = {
+      reservationId: reservation.id,
+      paymentKey: payload.data.paymentKey,
+      tossOrderId: payload.data.orderId,
+      method,
+      provider,
+      currency: payload.data.currency ?? 'KRW',
+      asyncStatus,
+      amount,
+      status: 'ABORTED' as const,
+      paidAt: null,
+      cancelledAt: null,
+      cancelReason: '결제 금액 불일치',
+    };
+
+    if (existingPayment) {
+      await this.db
+        .update(payments)
+        .set(paymentValues)
+        .where(eq(payments.id, existingPayment.id));
+      return;
+    }
+
+    await this.db.insert(payments).values(paymentValues);
   }
 
   async markWebhookEventProcessed(

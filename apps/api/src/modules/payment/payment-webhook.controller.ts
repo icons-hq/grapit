@@ -172,9 +172,27 @@ export class PaymentWebhookController {
       return false;
     }
 
+    if (!this.isPrioritizedPaymentStatus(progress.paymentStatus)) {
+      return false;
+    }
+
+    if (
+      incomingStatus === 'DONE'
+      && progress.paymentStatus === 'DONE'
+      && progress.reservationStatus === 'PENDING_PAYMENT'
+    ) {
+      return false;
+    }
+
     return (
       paymentStatusPriority[incomingStatus]
       <= paymentStatusPriority[progress.paymentStatus]
     );
+  }
+
+  private isPrioritizedPaymentStatus(
+    status: string,
+  ): status is keyof typeof paymentStatusPriority {
+    return status in paymentStatusPriority;
   }
 }
