@@ -319,9 +319,7 @@ export class PaymentService {
       return;
     }
 
-    const paidAt = paymentStatus === 'DONE' && payload.data.approvedAt
-      ? new Date(payload.data.approvedAt)
-      : null;
+    const paidAt = null;
     const cancelledAt = paymentStatus === 'CANCELED' && payload.data.canceledAt
       ? new Date(payload.data.canceledAt)
       : null;
