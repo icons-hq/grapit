@@ -105,6 +105,8 @@ ALTER TABLE "reservations" ADD COLUMN "reentry_grace_until_at" timestamp with ti
 ALTER TABLE "reservations" ADD COLUMN "payment_deadline_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "seat_inventories" ADD COLUMN "floor_key" varchar(20) DEFAULT '1F' NOT NULL;--> statement-breakpoint
 ALTER TABLE "seat_inventories" ADD COLUMN "seat_key" varchar(80);--> statement-breakpoint
+UPDATE "seat_inventories" SET "seat_key" = COALESCE(NULLIF("seat_key", ''), "floor_key" || ':' || "seat_id");--> statement-breakpoint
+ALTER TABLE "seat_inventories" ALTER COLUMN "seat_key" SET NOT NULL;--> statement-breakpoint
 ALTER TABLE "seat_inventories" ADD COLUMN "reopen_hold_until" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "seat_inventories" ADD COLUMN "reopen_job_id" varchar(200);--> statement-breakpoint
 ALTER TABLE "seat_inventories" ADD COLUMN "held_cancelled_at" timestamp with time zone;--> statement-breakpoint

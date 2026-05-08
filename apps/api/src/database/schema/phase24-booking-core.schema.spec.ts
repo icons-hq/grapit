@@ -208,6 +208,10 @@ describe('Phase 24 booking core database schema contracts', () => {
       (seatInventories as Record<string, { name: string }>).seatKey,
       'seat_key',
     );
+    expect(
+      (seatInventories as Record<string, { notNull?: boolean }>).seatKey
+        ?.notNull,
+    ).toBe(true);
     expectColumnName(
       (seatInventories as Record<string, { name: string }>).reopenHoldUntil,
       'reopen_hold_until',

@@ -13,7 +13,7 @@ export const seatInventories = pgTable('seat_inventories', {
   showtimeId: uuid('showtime_id').notNull().references(() => showtimes.id, { onDelete: 'cascade' }),
   seatId: varchar('seat_id', { length: 20 }).notNull(),
   floorKey: varchar('floor_key', { length: 20 }).notNull().default('1F'),
-  seatKey: varchar('seat_key', { length: 80 }),
+  seatKey: varchar('seat_key', { length: 80 }).notNull(),
   status: seatStatusEnum('status').notNull().default('available'),
   lockedBy: uuid('locked_by'),
   lockedUntil: timestamp('locked_until', { withTimezone: true }),
