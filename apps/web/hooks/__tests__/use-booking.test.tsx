@@ -2,8 +2,17 @@ import type { ReactNode } from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook } from '@testing-library/react';
-import { useConfirmPayment, useLockSeat, usePrepareReservation } from '../use-booking';
+import {
+  useBookingPaymentSnapshot,
+  useConfirmPayment,
+  useLockSeat,
+  usePrepareReservation,
+} from '../use-booking';
 import { ApiClientError, apiClient } from '@/lib/api-client';
+import {
+  buildWidgetPaymentRequest,
+  resolvePaymentMethodSelection,
+} from '@/components/booking/toss-payment-widget';
 import { useBookingStore } from '@/stores/use-booking-store';
 import type {
   ConfirmPaymentRequest,
@@ -460,5 +469,113 @@ describe('use-booking payment mutations', () => {
         showErrorToast: false,
       },
     );
+  });
+
+  it('useBookingPaymentSnapshot() exposes a separate paymentDeadlineAt from lock expiry', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-08T10:00:00.000Z'));
+
+    useBookingStore.getState().setBookingData({
+      selectedSeats: [createFloorAwareSeat()],
+      showtimeId: 'showtime-payment-window',
+      performanceId: 'performance-1',
+      performanceTitle: '락 테스트 공연',
+      showDateTime: '2026-07-18T12:00:00.000Z',
+      venue: '테스트 공연장',
+      posterUrl: null,
+      expiresAt: new Date('2026-05-08T10:10:00.000Z').getTime(),
+    });
+
+    const { Wrapper, queryClient } = createWrapper();
+    queryClient.setQueryData(
+      ['performance', 'performance-1', 'ko'],
+      createPerformanceDetail({
+        bookingPolicy: {
+          maxTicketsPerUser: 1,
+          allowedPaymentMethods: ['CARD', 'FOREIGN_EASY_PAY'],
+          changePolicyEnabled: false,
+          paymentWindowMinutes: 7,
+          seatHoldMinutes: 10,
+          cancelledSeatHoldMinMinutes: 1,
+          cancelledSeatHoldMaxMinutes: 10,
+          manualOpenEnabled: true,
+        },
+      }),
+    );
+
+    const { result } = renderHook(() => useBookingPaymentSnapshot(), {
+      wrapper: Wrapper,
+    });
+
+    expect(result.current.lockExpiresAt).toBe('2026-05-08T10:10:00.000Z');
+    expect(result.current.paymentDeadlineAt).toBe('2026-05-08T10:07:00.000Z');
+    expect(result.current.allowedPaymentMethods).toEqual(['CARD', 'FOREIGN_EASY_PAY']);
+
+    vi.useRealTimers();
+  });
+
+  it('resolvePaymentMethodSelection() flags foreign easy pay for disclaimer and pendingUrl flow', () => {
+    expect(resolvePaymentMethodSelection('TRUEMONEY')).toMatchObject({
+      requiresOverseasDisclaimer: true,
+      paymentMethod: {
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'TRUEMONEY',
+        pendingUrlRequired: true,
+      },
+    });
+  });
+
+  it('buildWidgetPaymentRequest() keeps pendingUrl for foreign wallets and international-card options for overseas card', () => {
+    const foreignWalletRequest = buildWidgetPaymentRequest({
+      branch: {
+        orderId: 'GRP-FOREIGN-EASY-PAY',
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'TRUEMONEY',
+        currency: 'USD',
+        successUrl: 'https://grabit.test/success',
+        failUrl: 'https://grabit.test/fail',
+        pendingUrl: 'https://grabit.test/pending',
+        asyncStatus: 'pending_webhook',
+        useInternationalCardOnly: false,
+      },
+      amount: 50000,
+      customerEmail: 'fan@example.com',
+      customerName: '해외 팬',
+      customerMobilePhone: '821012345678',
+      orderName: '팬미팅 티켓 1매',
+      locale: 'th',
+    });
+
+    expect(foreignWalletRequest).toMatchObject({
+      pendingUrl: 'https://grabit.test/pending',
+      foreignEasyPay: {
+        country: 'TH',
+      },
+    });
+
+    const overseasCardRequest = buildWidgetPaymentRequest({
+      branch: {
+        orderId: 'GRP-OVERSEAS-CARD',
+        method: 'CARD',
+        provider: 'CARD',
+        currency: 'KRW',
+        successUrl: 'https://grabit.test/success',
+        failUrl: 'https://grabit.test/fail',
+        asyncStatus: 'sync',
+        useInternationalCardOnly: true,
+      },
+      amount: 50000,
+      customerEmail: 'fan@example.com',
+      customerName: '해외 팬',
+      customerMobilePhone: '821012345678',
+      orderName: '팬미팅 티켓 1매',
+      locale: 'en',
+    });
+
+    expect(overseasCardRequest).toMatchObject({
+      card: {
+        useInternationalCardOnly: true,
+      },
+    });
   });
 });
