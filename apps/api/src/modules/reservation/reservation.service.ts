@@ -1,6 +1,7 @@
 import {
   Injectable,
   Inject,
+  Optional,
   BadRequestException,
   ConflictException,
   ForbiddenException,
@@ -29,6 +30,7 @@ import { BookingService, PAYMENT_CONFIRM_LOCK_TTL } from '../booking/booking.ser
 import { BookingGateway } from '../booking/booking.gateway.js';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
 import { ConsentService, type ConsentRequestMeta } from '../consent/consent.service.js';
+import { QrTicketService } from '../ticket/qr-ticket.service.js';
 import { DEFAULT_PERFORMANCE_BOOKING_POLICY } from '@grabit/shared';
 import type {
   BookingPolicy,
@@ -136,6 +138,7 @@ export class ReservationService {
     private readonly bookingGateway: BookingGateway,
     private readonly featureFlags: FeatureFlagsService,
     private readonly consentService: ConsentService,
+    @Optional() private readonly qrTicketService?: QrTicketService,
   ) {}
 
   generateReservationNumber(): string {
@@ -825,6 +828,7 @@ export class ReservationService {
     }
 
     // 5. Update reservation status + create payment record + mark seats sold
+    let committedPaymentId: string | null = null;
     try {
       await this.db.transaction(async (tx) => {
         await tx
@@ -836,6 +840,7 @@ export class ReservationService {
           .where(eq(reservations.id, reservation.id));
 
         if (approvedPayment.existingPaymentId) {
+          committedPaymentId = approvedPayment.existingPaymentId;
           await tx
             .update(payments)
             .set({
@@ -846,18 +851,23 @@ export class ReservationService {
             })
             .where(eq(payments.id, approvedPayment.existingPaymentId));
         } else {
-          await tx.insert(payments).values({
-            reservationId: reservation.id,
-            paymentKey: approvedPayment.paymentKey,
-            tossOrderId: approvedPayment.orderId,
-            method: approvedPayment.method,
-            provider: 'CARD',
-            currency: 'KRW',
-            asyncStatus: approvedPayment.asyncStatus ?? 'sync',
-            amount: approvedPayment.totalAmount,
-            status: 'DONE',
-            paidAt: new Date(approvedPayment.approvedAt),
-          });
+          const insertedPayments = await tx
+            .insert(payments)
+            .values({
+              reservationId: reservation.id,
+              paymentKey: approvedPayment.paymentKey,
+              tossOrderId: approvedPayment.orderId,
+              method: approvedPayment.method,
+              provider: 'CARD',
+              currency: 'KRW',
+              asyncStatus: approvedPayment.asyncStatus ?? 'sync',
+              amount: approvedPayment.totalAmount,
+              status: 'DONE',
+              paidAt: new Date(approvedPayment.approvedAt),
+            })
+            .returning({ id: payments.id });
+
+          committedPaymentId = insertedPayments[0]?.id ?? null;
         }
 
         // Mark seats sold only when no committed sold row already exists.
@@ -955,6 +965,13 @@ export class ReservationService {
       );
     }
 
+    if (this.qrTicketService && committedPaymentId) {
+      await this.qrTicketService.ensureIssuedTicketForReservation({
+        reservationId: reservation.id,
+        paymentId: committedPaymentId,
+      });
+    }
+
     return this.getReservationDetail(reservation.id, userId);
     } finally {
       clearInterval(seatLockRefreshTimer);
@@ -1042,6 +1059,7 @@ export class ReservationService {
         reservation: {
           id: reservations.id,
           userId: reservations.userId,
+          showtimeId: reservations.showtimeId,
           reservationNumber: reservations.reservationNumber,
           status: reservations.status,
           totalAmount: reservations.totalAmount,
@@ -1089,6 +1107,21 @@ export class ReservationService {
       .from(payments)
       .where(eq(payments.reservationId, reservationId));
 
+    const qrTicket: ReservationDetail['qrTicket'] =
+      row.reservation.status === 'CONFIRMED' && payment?.id && this.qrTicketService
+        ? await this.qrTicketService.ensureIssuedTicketForReservation({
+            reservationId,
+            paymentId: payment.id,
+          })
+        : {
+            token: '',
+            jti: '',
+            status: row.reservation.status === 'CONFIRMED' ? 'ACTIVE' : 'REVOKED',
+            issuedAt: row.reservation.createdAt?.toISOString() ?? new Date(0).toISOString(),
+            emailScheduledAt: null,
+            emailedAt: null,
+          };
+
     return {
       id: row.reservation.id,
       reservationNumber: row.reservation.reservationNumber,
@@ -1130,12 +1163,7 @@ export class ReservationService {
         customerServiceCtaVisible: false,
       },
       cancelledSeatHold: null,
-      qrTicket: {
-        token: '',
-        jti: '',
-        status: row.reservation.status === 'CONFIRMED' ? 'ACTIVE' : 'REVOKED',
-        issuedAt: row.reservation.createdAt?.toISOString() ?? new Date(0).toISOString(),
-      },
+      qrTicket,
     };
   }
 

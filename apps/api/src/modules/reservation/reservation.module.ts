@@ -5,9 +5,10 @@ import { ReservationController } from './reservation.controller.js';
 import { ReservationService } from './reservation.service.js';
 import { FeatureFlagsModule } from '../feature-flags/feature-flags.module.js';
 import { ConsentModule } from '../consent/consent.module.js';
+import { TicketModule } from '../ticket/ticket.module.js';
 
 @Module({
-  imports: [PaymentModule, BookingModule, FeatureFlagsModule, ConsentModule],
+  imports: [PaymentModule, BookingModule, FeatureFlagsModule, ConsentModule, TicketModule],
   controllers: [ReservationController],
   providers: [ReservationService],
   exports: [ReservationService],
