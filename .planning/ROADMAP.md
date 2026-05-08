@@ -117,7 +117,7 @@ Plans:
 
 **Merged from:** 30 Queue + WAF + prewarm, 31 Seat selection refinements, 32 Payment + refund + QR issuance
 
-**Plans:** 16/17 plans executed
+**Plans:** 17/17 plans complete
 
 Plans:
 **Wave 1**
@@ -155,7 +155,7 @@ Plans:
 - [x] 24-13-PLAN.md — Issue QR tickets, schedule D-1 QR email, and expose QR on booking complete/My Page
 
 **Wave 10**
-- [ ] 24-14-PLAN.md — Render refund preview, refund timeline, and delayed-reopen guidance in reservation detail
+- [x] 24-14-PLAN.md — Render refund preview, refund timeline, and delayed-reopen guidance in reservation detail
 
 **Success criteria:**
 1. Queue admission uses Valkey Sorted Set and batch admission with position, ETA, and remaining-seat updates; booking APIs require valid admission.
