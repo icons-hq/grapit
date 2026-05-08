@@ -178,7 +178,7 @@ function createPerformanceDetail() {
       },
     ],
     bookingPolicy: {
-      maxTicketsPerUser: 1,
+      maxTicketsPerUser: 2,
       allowedPaymentMethods: ['CARD'],
       changePolicyEnabled: false,
       paymentWindowMinutes: 7,
@@ -245,12 +245,12 @@ describe('BookingPage floor selector', () => {
     expect(screen.getByText('current map: /1F-map.svg')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '현재 층 좌석 선택' }));
-    await user.click(screen.getByRole('button', { name: /2층/ }));
+    await user.click(screen.getByRole('radio', { name: /2층/ }));
 
     expect(screen.getByText('current map: /2F-map.svg')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '현재 층 좌석 선택' }));
-    await user.click(screen.getByRole('button', { name: /1층/ }));
+    await user.click(screen.getByRole('radio', { name: /1층/ }));
 
     expect(screen.getByRole('heading', { name: '1층' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '2층' })).toBeInTheDocument();
@@ -263,7 +263,7 @@ describe('BookingPage floor selector', () => {
     renderWithQuery(<BookingPage performanceId="performance-floor-aware" />);
 
     expect(
-      screen.getByText('이 공연은 1인 1매까지 예매할 수 있습니다'),
+      screen.getByText('이 공연은 1인 2매까지 예매할 수 있습니다'),
     ).toBeInTheDocument();
     expect(screen.queryByText(/최대 4석/)).not.toBeInTheDocument();
     expect(

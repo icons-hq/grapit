@@ -67,6 +67,17 @@ const fixturePerformance: PerformanceWithDetails = {
   ],
   showtimes: [],
   castings: [],
+  seatMaps: [],
+  bookingPolicy: {
+    maxTicketsPerUser: 1,
+    allowedPaymentMethods: ['CARD'],
+    changePolicyEnabled: false,
+    paymentWindowMinutes: 7,
+    seatHoldMinutes: 10,
+    cancelledSeatHoldMinMinutes: 1,
+    cancelledSeatHoldMaxMinutes: 10,
+    manualOpenEnabled: true,
+  },
   seatMap: null,
 };
 
