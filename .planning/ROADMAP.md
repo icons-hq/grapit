@@ -117,11 +117,11 @@ Plans:
 
 **Merged from:** 30 Queue + WAF + prewarm, 31 Seat selection refinements, 32 Payment + refund + QR issuance
 
-**Plans:** 17 plans
+**Plans:** 1/17 plans executed
 
 Plans:
 **Wave 1**
-- [ ] 24-01-PLAN.md — Define shared booking-core DTO/zod contracts for queue, floor-aware booking, payment, refund, and QR
+- [x] 24-01-PLAN.md — Define shared booking-core DTO/zod contracts for queue, floor-aware booking, payment, refund, and QR
 
 **Wave 2**
 - [ ] 24-02-PLAN.md — Implement Phase 24 Drizzle schema changes for floors, policy, payment deadline, refund, and QR state
