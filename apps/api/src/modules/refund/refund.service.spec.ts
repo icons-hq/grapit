@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { TossPaymentError } from '../payment/toss-payments.client.js';
 import { RefundService } from './refund.service.js';
+import {
+  bookingOperationAuditLogs,
+  seatInventories,
+} from '../../database/schema/index.js';
 
 function createRefund(overrides: Record<string, unknown> = {}) {
   return {
@@ -53,6 +57,36 @@ function createContext() {
     },
     seats: [{ seatId: '1F:A-10' }],
   };
+}
+
+function createRefundTransactionMock(completedRefund: ReturnType<typeof createRefund>) {
+  const updateCalls: Array<{ table: unknown; values: Record<string, unknown> }> = [];
+  const insertCalls: Array<{ table: unknown; values: unknown }> = [];
+
+  const tx = {
+    update(table: unknown) {
+      return {
+        set(values: Record<string, unknown>) {
+          updateCalls.push({ table, values });
+          return {
+            where: vi.fn(() => ({
+              returning: vi.fn().mockResolvedValue([completedRefund]),
+            })),
+          };
+        },
+      };
+    },
+    insert(table: unknown) {
+      return {
+        values(values: unknown) {
+          insertCalls.push({ table, values });
+          return Promise.resolve(values);
+        },
+      };
+    },
+  };
+
+  return { tx, updateCalls, insertCalls };
 }
 
 describe('RefundService', () => {
@@ -124,5 +158,75 @@ describe('RefundService', () => {
     expect(result.idempotent).toBe(false);
     expect(result.retryEnqueued).toBe(true);
     expect(result.refundTimeline?.currentState).toBe('SENT_TO_PG');
+  });
+
+  it('holds refunded seats and writes admin refund audit rows on admin refund completion', async () => {
+    const completedRefund = createRefund({
+      status: 'completed',
+      resultCode: 'CANCELED',
+      resultMessage: 'PG cancel completed',
+      completedAt: new Date('2026-05-08T03:10:00.000Z'),
+    });
+    const transaction = createRefundTransactionMock(completedRefund);
+    const db = {
+      transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
+        callback(transaction.tx),
+      ),
+      update: vi.fn(() => ({
+        set: vi.fn(() => ({
+          where: vi.fn().mockResolvedValue(undefined),
+        })),
+      })),
+    };
+    const pgBoss = {
+      isAvailable: false,
+      send: vi.fn(),
+    };
+    const service = new RefundService(
+      db as never,
+      { cancelPayment: vi.fn() } as never,
+      pgBoss as never,
+    );
+    const context = createContext();
+
+    const result = await (service as any).finalizeRefundSuccess(
+      context,
+      'refund-1',
+      '관리자 환불',
+      {
+        paymentKey: 'pay-key-1',
+        orderId: 'GRP-20260508-ABCDE',
+        method: '카드',
+        totalAmount: 132000,
+        status: 'CANCELED',
+        approvedAt: '2026-05-08T12:00:00+09:00',
+        cancels: [],
+      },
+      { kind: 'admin', operatorUserId: 'admin-1' },
+    );
+
+    expect(result).toBe(completedRefund);
+    const seatUpdates = transaction.updateCalls.filter(
+      (call) => call.table === seatInventories,
+    );
+    expect(seatUpdates).toHaveLength(1);
+    expect(seatUpdates[0]?.values).toMatchObject({
+      status: 'held_cancelled',
+      lockedBy: null,
+      lockedUntil: null,
+      reopenJobId: 'PENDING_ENQUEUE',
+    });
+
+    expect(transaction.insertCalls).toHaveLength(1);
+    expect(transaction.insertCalls[0]?.table).toBe(bookingOperationAuditLogs);
+    expect(transaction.insertCalls[0]?.values).toEqual([
+      expect.objectContaining({
+        operatorUserId: 'admin-1',
+        action: 'admin_refund',
+        seatKey: '1F:A-10',
+        reservationId: 'reservation-1',
+      }),
+    ]);
+    expect(pgBoss.send).not.toHaveBeenCalled();
   });
 });

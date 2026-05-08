@@ -11,6 +11,7 @@ import { reservations } from './reservations.js';
 
 export const bookingOperationActionEnum = pgEnum('booking_operation_action', [
   'manual_open',
+  'admin_refund',
 ]);
 
 export const bookingOperationAuditLogs = pgTable(

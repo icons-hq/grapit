@@ -8,7 +8,6 @@ import {
   type Mock,
 } from 'vitest';
 import { AdminBookingService } from './admin-booking.service.js';
-import { TossPaymentsClient } from '../payment/toss-payments.client.js';
 import {
   bookingOperationAuditLogs,
   seatInventories,
@@ -23,18 +22,9 @@ function createMockDb() {
   };
 }
 
-function createMockTossClient() {
+function createMockRefundService() {
   return {
-    confirmPayment: vi.fn(),
-    cancelPayment: vi.fn().mockResolvedValue({
-      paymentKey: 'pk_test_123',
-      orderId: 'GRP-20260403-ABCDE',
-      method: '카드',
-      totalAmount: 150000,
-      status: 'CANCELED',
-      approvedAt: '2026-04-03T10:00:00+09:00',
-      cancels: [{ cancelAmount: 150000, cancelReason: '관리자 환불', canceledAt: '2026-04-03T11:00:00+09:00' }],
-    }),
+    requestAdminRefund: vi.fn().mockResolvedValue({}),
   };
 }
 
@@ -88,18 +78,18 @@ function createTransactionMock() {
 describe('AdminBookingService', () => {
   let service: AdminBookingService;
   let mockDb: ReturnType<typeof createMockDb>;
-  let mockTossClient: ReturnType<typeof createMockTossClient>;
   let mockBookingGateway: ReturnType<typeof createMockBookingGateway>;
+  let mockRefundService: ReturnType<typeof createMockRefundService>;
 
   beforeEach(() => {
     mockDb = createMockDb();
-    mockTossClient = createMockTossClient();
     mockBookingGateway = createMockBookingGateway();
+    mockRefundService = createMockRefundService();
 
     service = new AdminBookingService(
       mockDb as any,
-      mockTossClient as unknown as TossPaymentsClient,
       mockBookingGateway as any,
+      mockRefundService as any,
     );
   });
 
@@ -219,7 +209,7 @@ describe('AdminBookingService', () => {
         '2F:A-2',
         'available',
       );
-      expect(mockTossClient.cancelPayment).not.toHaveBeenCalled();
+      expect(mockRefundService.requestAdminRefund).not.toHaveBeenCalled();
     });
 
     it('should reject manual open when the booking policy disables it', async () => {
@@ -240,6 +230,20 @@ describe('AdminBookingService', () => {
 
       await expect(service.manualOpen('reservation-1', 'admin-1')).rejects.toThrow(
         '수동 오픈이 비활성화된 공연입니다',
+      );
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+      expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('refundBooking', () => {
+    it('delegates admin refunds to RefundService with operator context', async () => {
+      await service.refundBooking('reservation-1', 'admin-1', '관리자 환불');
+
+      expect(mockRefundService.requestAdminRefund).toHaveBeenCalledWith(
+        'reservation-1',
+        'admin-1',
+        '관리자 환불',
       );
       expect(mockDb.transaction).not.toHaveBeenCalled();
       expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();

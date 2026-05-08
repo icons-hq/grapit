@@ -43,9 +43,10 @@ export class AdminBookingController {
   @Post('bookings/:id/refund')
   async refundBooking(
     @Param('id') id: string,
+    @CurrentUser('id') operatorUserId: string,
     @Body(new ZodValidationPipe(adminRefundSchema)) body: AdminRefundInput,
   ) {
-    await this.adminBookingService.refundBooking(id, body.reason);
+    await this.adminBookingService.refundBooking(id, operatorUserId, body.reason);
     return { message: '환불이 처리되었습니다' };
   }
 

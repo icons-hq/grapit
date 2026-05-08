@@ -2,7 +2,6 @@ import {
   Injectable,
   Inject,
   BadRequestException,
-  InternalServerErrorException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
@@ -19,8 +18,8 @@ import {
   bookingPolicies,
   bookingOperationAuditLogs,
 } from '../../database/schema/index.js';
-import { TossPaymentsClient } from '../payment/toss-payments.client.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
+import { RefundService } from '../refund/refund.service.js';
 import type {
   AdminBookingListItem,
   BookingStats,
@@ -73,8 +72,8 @@ export class AdminBookingService {
 
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
-    private readonly tossClient: TossPaymentsClient,
     private readonly bookingGateway: BookingGateway,
+    private readonly refundService: RefundService,
   ) {}
 
   async getBookings(params: {
@@ -279,90 +278,12 @@ export class AdminBookingService {
     };
   }
 
-  async refundBooking(reservationId: string, reason: string): Promise<void> {
-    const [reservation] = await this.db
-      .select()
-      .from(reservations)
-      .where(eq(reservations.id, reservationId));
-
-    if (!reservation) {
-      throw new NotFoundException('예매를 찾을 수 없습니다');
-    }
-
-    if (reservation.status !== 'CONFIRMED') {
-      throw new BadRequestException('환불할 수 없는 상태입니다');
-    }
-
-    const [payment] = await this.db
-      .select()
-      .from(payments)
-      .where(eq(payments.reservationId, reservationId));
-
-    if (payment) {
-      await this.tossClient.cancelPayment(payment.paymentKey, reason);
-    }
-
-    try {
-      const now = new Date();
-      await this.db.transaction(async (tx) => {
-        await tx
-          .update(reservations)
-          .set({
-            status: 'CANCELLED',
-            cancelledAt: now,
-            cancelReason: reason,
-            updatedAt: now,
-          })
-          .where(eq(reservations.id, reservationId));
-
-        if (payment) {
-          await tx
-            .update(payments)
-            .set({
-              status: 'CANCELED',
-              cancelledAt: now,
-              cancelReason: reason,
-            })
-            .where(eq(payments.reservationId, reservationId));
-        }
-
-        // Restore seat_inventories to available
-        const cancelledSeats = await tx
-          .select({ seatId: reservationSeats.seatId })
-          .from(reservationSeats)
-          .where(eq(reservationSeats.reservationId, reservationId));
-
-        for (const seat of cancelledSeats) {
-          await tx
-            .update(seatInventories)
-            .set({ status: 'available', soldAt: null, lockedBy: null, lockedUntil: null })
-            .where(
-              and(
-                eq(seatInventories.showtimeId, reservation.showtimeId),
-                eq(seatInventories.seatId, seat.seatId),
-              ),
-            );
-        }
-      });
-    } catch (dbError) {
-      this.logger.error(
-        `CRITICAL: DB transaction failed after Toss refund. reservationId=${reservationId}, paymentKey=${payment?.paymentKey}. Manual reconciliation required.`,
-        dbError instanceof Error ? dbError.stack : String(dbError),
-      );
-      throw new InternalServerErrorException(
-        '환불은 처리되었으나 시스템 오류가 발생했습니다. 관리자에게 문의해주세요.',
-      );
-    }
-
-    // Broadcast available status via WebSocket
-    const freedSeats = await this.db
-      .select({ seatId: reservationSeats.seatId })
-      .from(reservationSeats)
-      .where(eq(reservationSeats.reservationId, reservationId));
-
-    for (const seat of freedSeats) {
-      this.bookingGateway.broadcastSeatUpdate(reservation.showtimeId, seat.seatId, 'available');
-    }
+  async refundBooking(
+    reservationId: string,
+    operatorUserId: string,
+    reason: string,
+  ): Promise<void> {
+    await this.refundService.requestAdminRefund(reservationId, operatorUserId, reason);
   }
 
   async manualOpen(reservationId: string, operatorUserId: string): Promise<void> {

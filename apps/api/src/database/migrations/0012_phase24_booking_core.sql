@@ -1,4 +1,4 @@
-CREATE TYPE "public"."booking_operation_action" AS ENUM('manual_open');--> statement-breakpoint
+CREATE TYPE "public"."booking_operation_action" AS ENUM('manual_open', 'admin_refund');--> statement-breakpoint
 CREATE TYPE "public"."refund_status" AS ENUM('requested', 'sent_to_pg', 'processing_at_pg', 'completed', 'failed');--> statement-breakpoint
 CREATE TYPE "public"."ticket_status" AS ENUM('active', 'revoked', 'used', 'expired');--> statement-breakpoint
 ALTER TYPE "public"."payment_status" ADD VALUE 'IN_PROGRESS' BEFORE 'DONE';--> statement-breakpoint

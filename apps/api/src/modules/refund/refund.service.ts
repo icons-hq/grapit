@@ -10,6 +10,7 @@ import { and, eq } from 'drizzle-orm';
 import type { RefundTimeline } from '@grabit/shared';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
+  bookingOperationAuditLogs,
   bookingPolicies,
   payments,
   refunds,
@@ -48,6 +49,10 @@ type ReservationRefundContext = {
   bookingPolicy: BookingPolicyRecord | null;
   seats: ReservationSeatRecord[];
 };
+
+type RefundRequestActor =
+  | { kind: 'user' }
+  | { kind: 'admin'; operatorUserId: string };
 
 export interface RefundPreviewResponse {
   reservationId: string;
@@ -229,6 +234,30 @@ export class RefundService {
   ): Promise<RefundRequestResponse> {
     const context = await this.loadReservationContext(reservationId, userId);
     const existingRefund = await this.findExistingRefund(reservationId);
+
+    return this.requestRefundWithContext(context, existingRefund, reason, { kind: 'user' });
+  }
+
+  async requestAdminRefund(
+    reservationId: string,
+    operatorUserId: string,
+    reason: string,
+  ): Promise<RefundRequestResponse> {
+    const context = await this.loadReservationContextByReservationId(reservationId);
+    const existingRefund = await this.findExistingRefund(reservationId);
+
+    return this.requestRefundWithContext(context, existingRefund, reason, {
+      kind: 'admin',
+      operatorUserId,
+    });
+  }
+
+  protected async requestRefundWithContext(
+    context: ReservationRefundContext,
+    existingRefund: RefundRecord | null,
+    reason: string,
+    actor: RefundRequestActor,
+  ): Promise<RefundRequestResponse> {
     if (existingRefund) {
       return this.buildRequestResponse(context, existingRefund, {
         idempotent: true,
@@ -240,7 +269,7 @@ export class RefundService {
       throw new BadRequestException('환불 가능한 예매 상태가 아닙니다');
     }
 
-    const requestedRefund = await this.insertRequestedRefund(context, reason);
+    const requestedRefund = await this.insertRequestedRefund(context, reason, actor);
 
     try {
       const cancelResult = await this.tossPaymentsClient.cancelPayment(
@@ -254,6 +283,7 @@ export class RefundService {
           requestedRefund.id,
           reason,
           cancelResult,
+          actor,
         );
 
         return this.buildRequestResponse(context, completedRefund, {
@@ -388,6 +418,55 @@ export class RefundService {
     };
   }
 
+  protected async loadReservationContextByReservationId(
+    reservationId: string,
+  ): Promise<ReservationRefundContext> {
+    const [reservation] = await this.db
+      .select()
+      .from(reservations)
+      .where(eq(reservations.id, reservationId));
+
+    if (!reservation) {
+      throw new NotFoundException('예매 정보를 찾을 수 없습니다');
+    }
+
+    const [payment] = await this.db
+      .select()
+      .from(payments)
+      .where(eq(payments.reservationId, reservation.id));
+
+    if (!payment) {
+      throw new BadRequestException('환불할 결제 정보가 없습니다');
+    }
+
+    const [showtime] = await this.db
+      .select()
+      .from(showtimes)
+      .where(eq(showtimes.id, reservation.showtimeId));
+
+    if (!showtime) {
+      throw new NotFoundException('회차 정보를 찾을 수 없습니다');
+    }
+
+    const [bookingPolicy] = await this.db
+      .select()
+      .from(bookingPolicies)
+      .where(eq(bookingPolicies.performanceId, showtime.performanceId));
+
+    const seats = await this.db
+      .select()
+      .from(reservationSeats)
+      .where(eq(reservationSeats.reservationId, reservation.id));
+
+    return {
+      reservation,
+      payment,
+      showtime,
+      bookingPolicy: bookingPolicy ?? null,
+      seats,
+    };
+  }
+
   protected async findExistingRefund(
     reservationId: string,
   ): Promise<RefundRecord | null> {
@@ -402,6 +481,7 @@ export class RefundService {
   protected async insertRequestedRefund(
     context: ReservationRefundContext,
     reason: string,
+    actor: RefundRequestActor = { kind: 'user' },
   ): Promise<RefundRecord> {
     const now = new Date();
     const [created] = await this.db
@@ -412,11 +492,14 @@ export class RefundService {
         status: 'requested',
         provider: 'toss_payments',
         resultCode: 'REQUESTED',
-        resultMessage: 'Refund requested by user',
+        resultMessage:
+          actor.kind === 'admin' ? 'Refund requested by admin' : 'Refund requested by user',
         providerMetadata: {
           cancelReason: reason,
           reservationNumber: context.reservation.reservationNumber,
           paymentKey: context.payment.paymentKey,
+          requestedBy: actor.kind,
+          ...(actor.kind === 'admin' ? { operatorUserId: actor.operatorUserId } : {}),
         },
         requestedAt: now,
         expectedDepositAt: calculateExpectedRefundDepositAt(now),
@@ -522,6 +605,7 @@ export class RefundService {
     refundId: string,
     reason: string,
     response: TossPaymentResponse,
+    actor: RefundRequestActor = { kind: 'user' },
   ): Promise<RefundRecord> {
     const now = new Date();
     const holdWindow = this.resolveHoldWindowMinutes(context.bookingPolicy);
@@ -597,6 +681,18 @@ export class RefundService {
               eq(seatInventories.seatKey, seatIdentity.seatKey),
             ),
           );
+      }
+
+      if (actor.kind === 'admin' && seatIdentities.length > 0) {
+        await tx.insert(bookingOperationAuditLogs).values(
+          seatIdentities.map((seatIdentity) => ({
+            operatorUserId: actor.operatorUserId,
+            action: 'admin_refund' as const,
+            seatKey: seatIdentity.seatKey,
+            reservationId: context.reservation.id,
+            createdAt: now,
+          })),
+        );
       }
 
       return [updatedRefund];

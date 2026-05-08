@@ -3539,7 +3539,8 @@
       "name": "booking_operation_action",
       "schema": "public",
       "values": [
-        "manual_open"
+        "manual_open",
+        "admin_refund"
       ]
     },
     "public.gender": {

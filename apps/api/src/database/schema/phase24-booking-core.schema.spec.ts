@@ -382,6 +382,9 @@ describe('Phase 24 booking core database schema contracts', () => {
       () => null,
     );
     expect(auditLogsModule?.bookingOperationAuditLogs).toBeDefined();
+    expect(auditLogsModule?.bookingOperationActionEnum?.enumValues).toEqual(
+      expect.arrayContaining(['manual_open', 'admin_refund']),
+    );
     expectColumnName(
       (
         auditLogsModule?.bookingOperationAuditLogs as Record<
