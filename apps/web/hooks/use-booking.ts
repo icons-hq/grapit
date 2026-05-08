@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api-client';
 import { BookingDisabledError } from '@/lib/runtime-flags';
@@ -46,6 +46,19 @@ export interface BookingPaymentSnapshot {
   bookingPolicy: BookingPolicy;
   allowedPaymentMethods: PerformanceBookingPolicy['allowedPaymentMethods'];
   isPaymentDeadlineExpired: boolean;
+}
+
+export type BookingPaymentStatus =
+  | 'idle'
+  | 'confirmed'
+  | 'pending'
+  | 'failed'
+  | 'expired';
+
+export interface BookingPaymentRecoverySnapshot {
+  paymentStatus: BookingPaymentStatus;
+  paymentDeadlineAt: string | null;
+  reservation: ReservationDetail | null;
 }
 
 function toFloorAwareSeatSelection(
@@ -137,6 +150,14 @@ function buildBookingPaymentSnapshot(
       ? new Date(paymentDeadlineAt).getTime() <= Date.now()
       : false,
   };
+}
+
+function isPastIsoDate(value: string | null | undefined, now = Date.now()): boolean {
+  if (!value) {
+    return false;
+  }
+
+  return new Date(value).getTime() <= now;
 }
 
 export function useSeatStatus(showtimeId: string | null) {
@@ -291,6 +312,77 @@ export function useReservationByOrderId(orderId: string | null) {
       apiClient.get<ReservationDetail>(`/api/v1/reservations?orderId=${orderId}`),
     enabled: !!orderId,
   });
+}
+
+interface UseBookingPaymentRecoveryOptions {
+  enabled?: boolean;
+  pendingReturn?: boolean;
+  pollIntervalMs?: number;
+}
+
+export function useBookingPaymentRecovery(
+  orderId: string | null,
+  options: UseBookingPaymentRecoveryOptions = {},
+) {
+  const { enabled = !!orderId, pendingReturn = false, pollIntervalMs = 2500 } = options;
+  const fallbackSnapshot = useBookingPaymentSnapshot();
+  const reservationQuery = useQuery({
+    queryKey: ['reservations', 'orderId', orderId],
+    queryFn: () =>
+      apiClient.get<ReservationDetail>(`/api/v1/reservations?orderId=${orderId}`),
+    enabled: enabled && !!orderId,
+  });
+
+  const paymentDeadlineAt = reservationQuery.data?.paymentDeadlineAt ?? fallbackSnapshot.paymentDeadlineAt;
+  const paymentStatus = useMemo<BookingPaymentStatus>(() => {
+    if (reservationQuery.data?.status === 'CONFIRMED') {
+      return 'confirmed';
+    }
+
+    if (
+      reservationQuery.data?.status === 'FAILED'
+      || reservationQuery.data?.status === 'CANCELLED'
+    ) {
+      return 'failed';
+    }
+
+    if (reservationQuery.data?.status === 'PENDING_PAYMENT') {
+      return isPastIsoDate(reservationQuery.data.paymentDeadlineAt) ? 'expired' : 'pending';
+    }
+
+    if (pendingReturn) {
+      return isPastIsoDate(paymentDeadlineAt) ? 'expired' : 'pending';
+    }
+
+    return 'idle';
+  }, [paymentDeadlineAt, pendingReturn, reservationQuery.data]);
+
+  useEffect(() => {
+    if (!enabled || !orderId || paymentStatus !== 'pending') {
+      return undefined;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void reservationQuery.refetch();
+    }, pollIntervalMs);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [
+    enabled,
+    orderId,
+    paymentStatus,
+    pollIntervalMs,
+    reservationQuery.refetch,
+  ]);
+
+  return {
+    ...reservationQuery,
+    paymentStatus,
+    paymentDeadlineAt,
+    reservation: reservationQuery.data ?? null,
+  };
 }
 
 export function useCancelPendingReservation() {
