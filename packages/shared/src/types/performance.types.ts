@@ -89,13 +89,49 @@ export interface SeatMapConfig {
   }>;
 }
 
+export const PERFORMANCE_ALLOWED_PAYMENT_METHODS = [
+  'CARD',
+  'VIRTUAL_ACCOUNT',
+  'TRANSFER',
+  'MOBILE_PHONE',
+  'FOREIGN_EASY_PAY',
+  'SIMPLE_PAY',
+] as const;
+export type PerformanceAllowedPaymentMethod =
+  typeof PERFORMANCE_ALLOWED_PAYMENT_METHODS[number];
+
 export interface SeatMap {
   id: string;
   performanceId: string;
+  floorKey: string;
+  floorLabel: string;
+  sortOrder: number;
   svgUrl: string;
   seatConfig: SeatMapConfig | null;
   totalSeats: number;
 }
+
+export interface PerformanceBookingPolicy {
+  maxTicketsPerUser: number;
+  allowedPaymentMethods: PerformanceAllowedPaymentMethod[];
+  changePolicyEnabled: boolean;
+  paymentWindowMinutes: number;
+  seatHoldMinutes: number;
+  cancelledSeatHoldMinMinutes: number;
+  cancelledSeatHoldMaxMinutes: number;
+  manualOpenEnabled: boolean;
+}
+
+export const DEFAULT_PERFORMANCE_BOOKING_POLICY: PerformanceBookingPolicy = {
+  maxTicketsPerUser: 1,
+  allowedPaymentMethods: ['CARD'],
+  changePolicyEnabled: false,
+  paymentWindowMinutes: 7,
+  seatHoldMinutes: 10,
+  cancelledSeatHoldMinMinutes: 1,
+  cancelledSeatHoldMaxMinutes: 10,
+  manualOpenEnabled: true,
+};
 
 export interface Banner {
   id: string;
@@ -129,6 +165,10 @@ export interface PerformanceWithDetails extends Performance {
   priceTiers: PriceTier[];
   showtimes: Showtime[];
   castings: CastMember[];
+  seatMaps: SeatMap[];
+  bookingPolicy: PerformanceBookingPolicy;
+  // Transitional compatibility alias for existing consumers until the
+  // booking/admin UI fully migrates to seatMaps[].
   seatMap: SeatMap | null;
 }
 

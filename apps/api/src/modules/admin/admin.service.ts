@@ -11,12 +11,14 @@ import {
   banners,
 } from '../../database/schema/index.js';
 import type {
+  PerformanceBookingPolicy,
   Banner,
   SeatMap,
   PerformanceWithDetails,
   PerformanceListResponse,
   SeatMapConfig,
 } from '@grabit/shared';
+import { DEFAULT_PERFORMANCE_BOOKING_POLICY as DEFAULT_BOOKING_POLICY } from '@grabit/shared';
 import type {
   CreatePerformanceInput,
   UpdatePerformanceInput,
@@ -25,6 +27,13 @@ import type {
 } from '@grabit/shared';
 import { CacheService } from '../performance/cache.service.js';
 import { parseAdminKstDateTime } from './admin-date.util.js';
+
+function cloneDefaultBookingPolicy(): PerformanceBookingPolicy {
+  return {
+    ...DEFAULT_BOOKING_POLICY,
+    allowedPaymentMethods: [...DEFAULT_BOOKING_POLICY.allowedPaymentMethods],
+  };
+}
 
 @Injectable()
 export class AdminService {
@@ -145,6 +154,8 @@ export class AdminService {
         priceTiers: [],
         showtimes: [],
         castings: [],
+        seatMaps: [],
+        bookingPolicy: cloneDefaultBookingPolicy(),
         seatMap: null,
       };
     });
@@ -272,6 +283,8 @@ export class AdminService {
         priceTiers: [],
         showtimes: [],
         castings: [],
+        seatMaps: [],
+        bookingPolicy: cloneDefaultBookingPolicy(),
         seatMap: null,
       };
     });
@@ -315,6 +328,9 @@ export class AdminService {
     return {
       id: result!.id,
       performanceId: result!.performanceId,
+      floorKey: result!.floorKey ?? '1F',
+      floorLabel: result!.floorLabel ?? '1층',
+      sortOrder: result!.sortOrder ?? 0,
       svgUrl: result!.svgUrl,
       seatConfig: result!.seatConfig as SeatMapConfig | null,
       totalSeats: result!.totalSeats,

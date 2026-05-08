@@ -1,6 +1,10 @@
 import { z } from 'zod';
 import { SUPPORTED_LOCALES } from '../constants/locales';
-import { GENRES } from '../types/performance.types';
+import {
+  DEFAULT_PERFORMANCE_BOOKING_POLICY,
+  GENRES,
+  PERFORMANCE_ALLOWED_PAYMENT_METHODS,
+} from '../types/performance.types';
 
 const booleanQueryParam = z.preprocess((value) => {
   if (value === undefined || value === '') return false;
@@ -9,41 +13,6 @@ const booleanQueryParam = z.preprocess((value) => {
   if (value === 'false') return false;
   return value;
 }, z.boolean());
-
-export const createPerformanceSchema = z.object({
-  title: z.string().min(1, '공연명을 입력해주세요').max(255),
-  genre: z.enum(GENRES, { required_error: '장르를 선택해주세요' }),
-  subcategory: z.string().max(100).nullable().optional(),
-  venueName: z.string().min(1, '장소를 입력해주세요').max(255),
-  venueAddress: z.string().max(500).nullable().optional(),
-  posterUrl: z.string().url().nullable().optional(),
-  description: z.string().nullable().optional(),
-  startDate: z.string().min(1, '시작일을 입력해주세요'),
-  endDate: z.string().min(1, '종료일을 입력해주세요'),
-  runtime: z.string().max(50).nullable().optional(),
-  ageRating: z.string().min(1, '관람연령을 입력해주세요').max(50),
-  salesInfo: z.string().nullable().optional(),
-  priceTiers: z.array(z.object({
-    tierName: z.string().min(1, '등급명을 입력해주세요').max(50),
-    price: z.number().int().min(0, '가격은 0 이상이어야 합니다'),
-    sortOrder: z.number().int().min(0).default(0),
-  })).min(1, '최소 1개의 가격 등급이 필요합니다'),
-  showtimes: z.array(z.object({
-    dateTime: z.string().min(1, '회차 일시를 입력해주세요'),
-  })).optional().default([]),
-  castings: z.array(z.object({
-    actorName: z.string().min(1, '배우 이름을 입력해주세요').max(100),
-    roleName: z.string().max(100).nullable().optional(),
-    photoUrl: z.string().url().nullable().optional(),
-    sortOrder: z.number().int().min(0).default(0),
-  })).optional().default([]),
-});
-
-export type CreatePerformanceInput = z.infer<typeof createPerformanceSchema>;
-export type CreatePerformanceFormInput = z.input<typeof createPerformanceSchema>;
-
-export const updatePerformanceSchema = createPerformanceSchema.partial();
-export type UpdatePerformanceInput = z.infer<typeof updatePerformanceSchema>;
 
 export const performanceQuerySchema = z.object({
   genre: z.enum(GENRES).optional(),
@@ -82,3 +51,91 @@ export const seatMapConfigSchema = z.object({
   })),
 });
 export type SeatMapConfigInput = z.infer<typeof seatMapConfigSchema>;
+
+export const performanceSeatMapSchema = z.object({
+  floorKey: z.string().min(1, '층 키를 입력해주세요').max(20),
+  floorLabel: z.string().min(1, '층 라벨을 입력해주세요').max(100),
+  sortOrder: z.number().int().min(0).default(0),
+  svgUrl: z.string().url('올바른 좌석맵 URL을 입력해주세요'),
+  seatConfig: seatMapConfigSchema.nullable().optional().default(null),
+  totalSeats: z.number().int().min(0).default(0),
+});
+export type PerformanceSeatMapInput = z.infer<typeof performanceSeatMapSchema>;
+
+export const performanceBookingPolicySchema = z.object({
+  maxTicketsPerUser: z
+    .number()
+    .int()
+    .positive('최대 예매 가능 매수는 1 이상이어야 합니다'),
+  allowedPaymentMethods: z
+    .array(z.enum(PERFORMANCE_ALLOWED_PAYMENT_METHODS))
+    .min(1, '최소 1개의 결제 수단이 필요합니다'),
+  changePolicyEnabled: z.boolean(),
+  paymentWindowMinutes: z
+    .number()
+    .int()
+    .positive('결제 가능 시간은 1분 이상이어야 합니다'),
+  seatHoldMinutes: z
+    .number()
+    .int()
+    .positive('좌석 hold 시간은 1분 이상이어야 합니다'),
+  cancelledSeatHoldMinMinutes: z
+    .number()
+    .int()
+    .positive('취소 좌석 hold 최소 시간은 1분 이상이어야 합니다'),
+  cancelledSeatHoldMaxMinutes: z
+    .number()
+    .int()
+    .positive('취소 좌석 hold 최대 시간은 1분 이상이어야 합니다'),
+  manualOpenEnabled: z.boolean(),
+}).superRefine((value, ctx) => {
+  if (value.cancelledSeatHoldMaxMinutes < value.cancelledSeatHoldMinMinutes) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: '취소 좌석 hold 최대 시간은 최소 시간보다 작을 수 없습니다',
+      path: ['cancelledSeatHoldMaxMinutes'],
+    });
+  }
+});
+export type PerformanceBookingPolicyInput = z.infer<
+  typeof performanceBookingPolicySchema
+>;
+
+export const createPerformanceSchema = z.object({
+  title: z.string().min(1, '공연명을 입력해주세요').max(255),
+  genre: z.enum(GENRES, { required_error: '장르를 선택해주세요' }),
+  subcategory: z.string().max(100).nullable().optional(),
+  venueName: z.string().min(1, '장소를 입력해주세요').max(255),
+  venueAddress: z.string().max(500).nullable().optional(),
+  posterUrl: z.string().url().nullable().optional(),
+  description: z.string().nullable().optional(),
+  startDate: z.string().min(1, '시작일을 입력해주세요'),
+  endDate: z.string().min(1, '종료일을 입력해주세요'),
+  runtime: z.string().max(50).nullable().optional(),
+  ageRating: z.string().min(1, '관람연령을 입력해주세요').max(50),
+  salesInfo: z.string().nullable().optional(),
+  priceTiers: z.array(z.object({
+    tierName: z.string().min(1, '등급명을 입력해주세요').max(50),
+    price: z.number().int().min(0, '가격은 0 이상이어야 합니다'),
+    sortOrder: z.number().int().min(0).default(0),
+  })).min(1, '최소 1개의 가격 등급이 필요합니다'),
+  showtimes: z.array(z.object({
+    dateTime: z.string().min(1, '회차 일시를 입력해주세요'),
+  })).optional().default([]),
+  castings: z.array(z.object({
+    actorName: z.string().min(1, '배우 이름을 입력해주세요').max(100),
+    roleName: z.string().max(100).nullable().optional(),
+    photoUrl: z.string().url().nullable().optional(),
+    sortOrder: z.number().int().min(0).default(0),
+  })).optional().default([]),
+  seatMaps: z.array(performanceSeatMapSchema).optional().default([]),
+  bookingPolicy: performanceBookingPolicySchema
+    .optional()
+    .default(DEFAULT_PERFORMANCE_BOOKING_POLICY),
+});
+
+export type CreatePerformanceInput = z.infer<typeof createPerformanceSchema>;
+export type CreatePerformanceFormInput = z.input<typeof createPerformanceSchema>;
+
+export const updatePerformanceSchema = createPerformanceSchema.partial();
+export type UpdatePerformanceInput = z.infer<typeof updatePerformanceSchema>;

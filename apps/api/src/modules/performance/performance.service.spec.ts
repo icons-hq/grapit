@@ -294,13 +294,12 @@ describe('PerformanceService', () => {
         .mockReturnValueOnce(
           createChainableResult([
             {
-              id: 'seat-map-1',
-              performanceId: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
-              svgUrl: '/seed/donghae-girl-rules-20260718-seat-map.svg',
-              seatConfig: { tiers: [] },
-              totalSeats: 1,
+              ...createSeatMapRow(),
             },
           ]),
+        )
+        .mockReturnValueOnce(
+          createChainableResult([createBookingPolicyRow()]),
         )
         .mockReturnValueOnce(createChainableResult(translatedFieldRows));
 
@@ -323,7 +322,8 @@ describe('PerformanceService', () => {
         .mockReturnValueOnce(createChainableResult([]))
         .mockReturnValueOnce(createChainableResult([]))
         .mockReturnValueOnce(createChainableResult([]))
-        .mockReturnValueOnce(createChainableResult([]));
+        .mockReturnValueOnce(createChainableResult([]))
+        .mockReturnValueOnce(createChainableResult([createBookingPolicyRow()]));
 
       const result = await (
         service as unknown as {
