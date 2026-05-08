@@ -1,0 +1,173 @@
+import type { ReactNode } from 'react';
+import { act, renderHook, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Mock } from 'vitest';
+
+const {
+  postMock,
+  getMock,
+  ioMock,
+  socketMock,
+  ApiClientErrorMock,
+} = vi.hoisted(() => {
+  class ApiClientError extends Error {
+    statusCode: number;
+
+    constructor(message: string, statusCode: number) {
+      super(message);
+      this.name = 'ApiClientError';
+      this.statusCode = statusCode;
+    }
+  }
+
+  const socket = {
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+    emit: vi.fn(),
+    on: vi.fn(),
+    off: vi.fn(),
+    io: { on: vi.fn(), off: vi.fn() },
+  };
+
+  return {
+    postMock: vi.fn(),
+    getMock: vi.fn(),
+    ioMock: vi.fn(() => socket),
+    socketMock: socket,
+    ApiClientErrorMock: ApiClientError,
+  };
+});
+
+vi.mock('socket.io-client', () => ({
+  io: ioMock,
+}));
+
+vi.mock('@/lib/api-client', () => ({
+  apiClient: {
+    post: postMock,
+    get: getMock,
+  },
+  ApiClientError: ApiClientErrorMock,
+}));
+
+import { useQueue } from '../use-queue';
+
+function createWrapper() {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+
+  return function Wrapper({ children }: { children: ReactNode }) {
+    return (
+      <QueryClientProvider client={queryClient}>
+        {children}
+      </QueryClientProvider>
+    );
+  };
+}
+
+describe('useQueue', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+  });
+
+  it('auto-enters the booking route when the queue session is admitted', async () => {
+    postMock.mockResolvedValueOnce({
+      queueSessionId: 'queue-session-1',
+    });
+    getMock.mockResolvedValueOnce({
+      queueSessionId: 'queue-session-1',
+      state: 'ADMITTED',
+      position: 0,
+      waitingCount: 0,
+      etaSeconds: 0,
+      remainingSeats: 17,
+      autoEnter: true,
+      admittedAt: '2026-05-08T09:00:00.000Z',
+      activeUntilAt: '2026-05-08T09:10:00.000Z',
+      reentryGraceUntilAt: '2026-05-08T09:13:00.000Z',
+    });
+
+    const { result } = renderHook(
+      () =>
+        useQueue({
+          performanceId: 'performance-1',
+        }),
+      {
+        wrapper: createWrapper(),
+      },
+    );
+
+    await waitFor(() => {
+      expect(result.current.status).toBe('admitted');
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(1200);
+    });
+
+    expect(result.current.isReady).toBe(true);
+    expect(result.current.remainingSeats).toBe(17);
+    expect(result.current.etaSeconds).toBe(0);
+    expect(socketMock.connect).toHaveBeenCalled();
+  });
+
+  it('moves to expired state when queue:expired arrives over the socket contract', async () => {
+    postMock.mockResolvedValueOnce({
+      queueSessionId: 'queue-session-2',
+    });
+    getMock.mockResolvedValueOnce({
+      queueSessionId: 'queue-session-2',
+      state: 'WAITING',
+      position: 3,
+      waitingCount: 12,
+      etaSeconds: 30,
+      remainingSeats: 9,
+      autoEnter: false,
+      admittedAt: null,
+      activeUntilAt: null,
+      reentryGraceUntilAt: null,
+    });
+
+    const { result } = renderHook(
+      () =>
+        useQueue({
+          performanceId: 'performance-2',
+        }),
+      {
+        wrapper: createWrapper(),
+      },
+    );
+
+    await waitFor(() => {
+      expect(result.current.status).toBe('waiting');
+    });
+
+    const expiredCall = (socketMock.on as Mock).mock.calls.find(
+      (call: unknown[]) => call[0] === 'queue:expired',
+    );
+    expect(expiredCall).toBeDefined();
+
+    const expiredHandler = expiredCall?.[1] as (payload: {
+      queueSessionId: string;
+      state: string;
+      autoEnter: boolean;
+    }) => void;
+
+    act(() => {
+      expiredHandler({
+        queueSessionId: 'queue-session-2',
+        state: 'EXPIRED',
+        autoEnter: false,
+      });
+    });
+
+    expect(result.current.status).toBe('expired');
+    expect(result.current.autoEnter).toBe(false);
+  });
+});
