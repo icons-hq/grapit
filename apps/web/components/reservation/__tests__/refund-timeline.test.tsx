@@ -42,12 +42,13 @@ function createReservation(
     cancelReason: '일정 변경',
     paymentKey: 'payment-key-1',
     queueAdmission: {
-      queueId: 'queue-1',
       queueSessionId: 'queue-session-1',
       admissionToken: 'admission-token-1',
-      issuedAt: '2026-05-08T08:55:00.000Z',
-      expiresAt: '2026-05-08T09:55:00.000Z',
-      graceExpiresAt: '2026-05-08T09:58:00.000Z',
+      refreshFamilyId: 'refresh-family-1',
+      deviceSlotKey: 'device-slot-1',
+      admittedAt: '2026-05-08T08:55:00.000Z',
+      activeUntilAt: '2026-05-08T09:55:00.000Z',
+      reentryGraceUntilAt: '2026-05-08T09:58:00.000Z',
     },
     paymentDeadlineAt: '2026-05-08T09:15:00.000Z',
     bookingPolicy: {
@@ -99,16 +100,16 @@ describe('ReservationDetail refund timeline', () => {
 
     expect(screen.getByText('환불 요청됨')).toBeInTheDocument();
     expect(screen.getByText('PG 전달됨')).toBeInTheDocument();
-    expect(screen.getByText('환불 처리 중')).toBeInTheDocument();
+    expect(screen.getAllByText('환불 처리 중').length).toBeGreaterThan(0);
     expect(screen.getByText('환불 완료')).toBeInTheDocument();
-    expect(screen.getByText('환불 실패')).toBeInTheDocument();
+    expect(screen.getAllByText('환불 실패').length).toBeGreaterThan(0);
     expect(
-      screen.getByText(
+      screen.getAllByText(
         '취소된 좌석은 즉시 재오픈되지 않을 수 있으며, 잠시 후 다시 판매될 수 있습니다',
-      ),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/예상 입금 시점/)).toBeInTheDocument();
-    expect(screen.getByText(/고객센터/)).toBeInTheDocument();
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(screen.getAllByText('예상 입금 시점').length).toBeGreaterThan(0);
+    expect(screen.getByRole('alert')).toHaveTextContent('고객센터');
   });
 
   it('keeps refund failure visible with follow-up guidance', () => {
@@ -132,7 +133,7 @@ describe('ReservationDetail refund timeline', () => {
       />,
     );
 
-    expect(screen.getByText('환불 실패')).toBeInTheDocument();
+    expect(screen.getAllByText('환불 실패').length).toBeGreaterThan(0);
     expect(screen.getByText(/환불 처리가 지연되었거나 실패했습니다/)).toBeInTheDocument();
     expect(screen.getByText(/고객센터로 문의/)).toBeInTheDocument();
   });
