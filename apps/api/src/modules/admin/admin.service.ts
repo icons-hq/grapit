@@ -1,4 +1,9 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import { eq, sql, ilike } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
@@ -8,6 +13,7 @@ import {
   showtimes,
   castings,
   seatMaps,
+  bookingPolicies,
   banners,
 } from '../../database/schema/index.js';
 import type {
@@ -17,6 +23,8 @@ import type {
   PerformanceWithDetails,
   PerformanceListResponse,
   SeatMapConfig,
+  PerformanceSeatMapInput,
+  PerformanceBookingPolicyInput,
 } from '@grabit/shared';
 import { DEFAULT_PERFORMANCE_BOOKING_POLICY as DEFAULT_BOOKING_POLICY } from '@grabit/shared';
 import type {
@@ -34,6 +42,24 @@ function cloneDefaultBookingPolicy(): PerformanceBookingPolicy {
     allowedPaymentMethods: [...DEFAULT_BOOKING_POLICY.allowedPaymentMethods],
   };
 }
+
+type LegacySeatMapSaveInput = {
+  svgUrl: string;
+  seatConfig: SeatMapConfigInput;
+  totalSeats?: number;
+};
+
+type FloorAwareSeatMapSaveInput = {
+  seatMaps: PerformanceSeatMapInput[];
+  bookingPolicy?: PerformanceBookingPolicyInput;
+};
+
+type SaveSeatMapInput = LegacySeatMapSaveInput | FloorAwareSeatMapSaveInput;
+
+type SeatMapSaveResult = Pick<
+  PerformanceWithDetails,
+  'seatMaps' | 'bookingPolicy' | 'seatMap'
+>;
 
 @Injectable()
 export class AdminService {
@@ -55,6 +81,102 @@ export class AdminService {
       ops.push(this.cacheService.invalidate(`cache:performances:detail:${id}`));
     }
     await Promise.all(ops);
+  }
+
+  private normalizeSeatMaps(
+    performanceId: string,
+    floors: PerformanceSeatMapInput[],
+  ): SeatMap[] {
+    return floors.map((floor, index) => ({
+      id: `${performanceId}:${floor.floorKey}:${index}`,
+      performanceId,
+      floorKey: floor.floorKey,
+      floorLabel: floor.floorLabel,
+      sortOrder: floor.sortOrder,
+      svgUrl: floor.svgUrl,
+      seatConfig: floor.seatConfig as SeatMapConfig | null,
+      totalSeats: floor.totalSeats,
+    }));
+  }
+
+  private assertUniqueFloorKeys(floors: PerformanceSeatMapInput[]): void {
+    const seen = new Set<string>();
+
+    for (const floor of floors) {
+      if (seen.has(floor.floorKey)) {
+        throw new UnprocessableEntityException({
+          message: 'Validation failed',
+          errors: {
+            seatMaps: [`duplicate floorKey: ${floor.floorKey}`],
+          },
+        });
+      }
+
+      seen.add(floor.floorKey);
+    }
+  }
+
+  private async persistBookingPolicy(
+    tx: DrizzleDB,
+    performanceId: string,
+    bookingPolicy: PerformanceBookingPolicyInput | PerformanceBookingPolicy,
+  ): Promise<void> {
+    await tx
+      .insert(bookingPolicies)
+      .values({
+        performanceId,
+        maxTicketsPerUser: bookingPolicy.maxTicketsPerUser,
+        allowedPaymentMethods: bookingPolicy.allowedPaymentMethods,
+        changePolicyEnabled: bookingPolicy.changePolicyEnabled,
+        paymentWindowMinutes: bookingPolicy.paymentWindowMinutes,
+        seatHoldMinutes: bookingPolicy.seatHoldMinutes,
+        cancelledSeatHoldMinMinutes: bookingPolicy.cancelledSeatHoldMinMinutes,
+        cancelledSeatHoldMaxMinutes: bookingPolicy.cancelledSeatHoldMaxMinutes,
+        manualOpenEnabled: bookingPolicy.manualOpenEnabled,
+      })
+      .onConflictDoUpdate({
+        target: bookingPolicies.performanceId,
+        set: {
+          maxTicketsPerUser: bookingPolicy.maxTicketsPerUser,
+          allowedPaymentMethods: bookingPolicy.allowedPaymentMethods,
+          changePolicyEnabled: bookingPolicy.changePolicyEnabled,
+          paymentWindowMinutes: bookingPolicy.paymentWindowMinutes,
+          seatHoldMinutes: bookingPolicy.seatHoldMinutes,
+          cancelledSeatHoldMinMinutes: bookingPolicy.cancelledSeatHoldMinMinutes,
+          cancelledSeatHoldMaxMinutes: bookingPolicy.cancelledSeatHoldMaxMinutes,
+          manualOpenEnabled: bookingPolicy.manualOpenEnabled,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+  }
+
+  private async replaceSeatMaps(
+    tx: DrizzleDB,
+    performanceId: string,
+    floors: PerformanceSeatMapInput[],
+  ): Promise<void> {
+    this.assertUniqueFloorKeys(floors);
+    await tx.delete(seatMaps).where(eq(seatMaps.performanceId, performanceId));
+
+    if (floors.length === 0) {
+      return;
+    }
+
+    await tx
+      .insert(seatMaps)
+      .values(
+        floors.map((floor) => ({
+          performanceId,
+          floorKey: floor.floorKey,
+          floorLabel: floor.floorLabel,
+          sortOrder: floor.sortOrder,
+          svgUrl: floor.svgUrl,
+          seatConfig: floor.seatConfig as unknown as Record<string, unknown> | null,
+          totalSeats: floor.totalSeats,
+        })),
+      )
+      .returning();
   }
 
   async createPerformance(input: CreatePerformanceInput): Promise<PerformanceWithDetails> {
@@ -133,6 +255,19 @@ export class AdminService {
           );
       }
 
+      const normalizedSeatMaps = this.normalizeSeatMaps(
+        performanceId,
+        input.seatMaps,
+      );
+      await this.replaceSeatMaps(tx as unknown as DrizzleDB, performanceId, input.seatMaps);
+
+      const bookingPolicy = input.bookingPolicy ?? cloneDefaultBookingPolicy();
+      await this.persistBookingPolicy(
+        tx as unknown as DrizzleDB,
+        performanceId,
+        bookingPolicy,
+      );
+
       return {
         id: perf!.id,
         title: perf!.title,
@@ -154,9 +289,9 @@ export class AdminService {
         priceTiers: [],
         showtimes: [],
         castings: [],
-        seatMaps: [],
-        bookingPolicy: cloneDefaultBookingPolicy(),
-        seatMap: null,
+        seatMaps: normalizedSeatMaps,
+        bookingPolicy,
+        seatMap: normalizedSeatMaps[0] ?? null,
       };
     });
 
@@ -262,6 +397,21 @@ export class AdminService {
         }
       }
 
+      if (input.seatMaps) {
+        await this.replaceSeatMaps(tx as unknown as DrizzleDB, id, input.seatMaps);
+      }
+
+      const bookingPolicy = input.bookingPolicy ?? cloneDefaultBookingPolicy();
+      if (input.bookingPolicy) {
+        await this.persistBookingPolicy(
+          tx as unknown as DrizzleDB,
+          id,
+          bookingPolicy,
+        );
+      }
+
+      const normalizedSeatMaps = this.normalizeSeatMaps(id, input.seatMaps ?? []);
+
       return {
         id: perf!.id,
         title: perf!.title,
@@ -283,9 +433,9 @@ export class AdminService {
         priceTiers: [],
         showtimes: [],
         castings: [],
-        seatMaps: [],
-        bookingPolicy: cloneDefaultBookingPolicy(),
-        seatMap: null,
+        seatMaps: normalizedSeatMaps,
+        bookingPolicy,
+        seatMap: normalizedSeatMaps[0] ?? null,
       };
     });
 
@@ -300,40 +450,56 @@ export class AdminService {
 
   async saveSeatMap(
     performanceId: string,
-    svgUrl: string,
-    seatConfig: SeatMapConfigInput,
-    totalSeats?: number,
-  ): Promise<SeatMap> {
-    const calculatedTotalSeats = totalSeats
-      ?? seatConfig.tiers.reduce((sum, tier) => sum + tier.seatIds.length, 0);
+    input: SaveSeatMapInput,
+  ): Promise<SeatMapSaveResult> {
+    const floorAwareInput: FloorAwareSeatMapSaveInput = 'seatMaps' in input
+      ? input
+      : {
+          seatMaps: [
+            {
+              floorKey: '1F',
+              floorLabel: '1층',
+              sortOrder: 0,
+              svgUrl: input.svgUrl,
+              seatConfig: input.seatConfig,
+              totalSeats:
+                input.totalSeats
+                ?? input.seatConfig.tiers.reduce(
+                  (sum, tier) => sum + tier.seatIds.length,
+                  0,
+                ),
+            },
+          ],
+        };
 
-    const [result] = await this.db
-      .insert(seatMaps)
-      .values({
+    const bookingPolicy = floorAwareInput.bookingPolicy ?? cloneDefaultBookingPolicy();
+    this.assertUniqueFloorKeys(floorAwareInput.seatMaps);
+
+    await this.db.transaction(async (tx) => {
+      await this.replaceSeatMaps(
+        tx as unknown as DrizzleDB,
         performanceId,
-        svgUrl,
-        seatConfig: seatConfig as unknown as Record<string, unknown>,
-        totalSeats: calculatedTotalSeats,
-      })
-      .onConflictDoUpdate({
-        target: seatMaps.performanceId,
-        set: {
-          svgUrl,
-          seatConfig: seatConfig as unknown as Record<string, unknown>,
-          totalSeats: calculatedTotalSeats,
-        },
-      })
-      .returning();
+        floorAwareInput.seatMaps,
+      );
+
+      if (floorAwareInput.bookingPolicy) {
+        await this.persistBookingPolicy(
+          tx as unknown as DrizzleDB,
+          performanceId,
+          floorAwareInput.bookingPolicy,
+        );
+      }
+    });
+
+    const normalizedSeatMaps = this.normalizeSeatMaps(
+      performanceId,
+      floorAwareInput.seatMaps,
+    );
 
     return {
-      id: result!.id,
-      performanceId: result!.performanceId,
-      floorKey: result!.floorKey ?? '1F',
-      floorLabel: result!.floorLabel ?? '1층',
-      sortOrder: result!.sortOrder ?? 0,
-      svgUrl: result!.svgUrl,
-      seatConfig: result!.seatConfig as SeatMapConfig | null,
-      totalSeats: result!.totalSeats,
+      seatMaps: normalizedSeatMaps,
+      bookingPolicy,
+      seatMap: normalizedSeatMaps[0] ?? null,
     };
   }
 

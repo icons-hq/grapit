@@ -101,6 +101,29 @@ export type PerformanceBookingPolicyInput = z.infer<
   typeof performanceBookingPolicySchema
 >;
 
+export const legacySeatMapSaveSchema = z.object({
+  svgUrl: z.string().url('올바른 좌석맵 URL을 입력해주세요'),
+  seatConfig: seatMapConfigSchema,
+  totalSeats: z.number().int().min(0).optional(),
+});
+export type LegacySeatMapSaveInput = z.infer<typeof legacySeatMapSaveSchema>;
+
+export const floorAwareSeatMapSaveSchema = z.object({
+  seatMaps: z
+    .array(performanceSeatMapSchema)
+    .min(1, '최소 1개의 층 좌석맵이 필요합니다'),
+  bookingPolicy: performanceBookingPolicySchema.optional(),
+});
+export type FloorAwareSeatMapSaveInput = z.infer<
+  typeof floorAwareSeatMapSaveSchema
+>;
+
+export const saveSeatMapPayloadSchema = z.union([
+  legacySeatMapSaveSchema,
+  floorAwareSeatMapSaveSchema,
+]);
+export type SaveSeatMapPayloadInput = z.infer<typeof saveSeatMapPayloadSchema>;
+
 export const createPerformanceSchema = z.object({
   title: z.string().min(1, '공연명을 입력해주세요').max(255),
   genre: z.enum(GENRES, { required_error: '장르를 선택해주세요' }),
