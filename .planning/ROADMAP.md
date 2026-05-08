@@ -117,7 +117,7 @@ Plans:
 
 **Merged from:** 30 Queue + WAF + prewarm, 31 Seat selection refinements, 32 Payment + refund + QR issuance
 
-**Plans:** 6/17 plans executed
+**Plans:** 9/17 plans executed
 
 Plans:
 **Wave 1**
@@ -135,9 +135,9 @@ Plans:
 - [x] 24-06-PLAN.md — Expose multi-floor performance/admin contracts and persistence without UI editor coupling
 
 **Wave 5**
-- [ ] 24-07-PLAN.md — Enforce floor-aware booking runtime and policy semantics on the backend
-- [ ] 24-08-PLAN.md — Wire the queue waiting route UX and localized retry/challenge/block states
-- [ ] 24-15-PLAN.md — Add the admin floor editor, multi-floor SVG preview wiring, and booking-policy controls
+- [x] 24-07-PLAN.md — Enforce floor-aware booking runtime and policy semantics on the backend
+- [x] 24-08-PLAN.md — Wire the queue waiting route UX and localized retry/challenge/block states
+- [x] 24-15-PLAN.md — Add the admin floor editor, multi-floor SVG preview wiring, and booking-policy controls
 
 **Wave 6**
 - [ ] 24-09-PLAN.md — Implement backend synchronous/asynchronous Toss payment branching and webhook idempotency
