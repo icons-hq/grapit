@@ -117,24 +117,40 @@ Plans:
 
 **Merged from:** 30 Queue + WAF + prewarm, 31 Seat selection refinements, 32 Payment + refund + QR issuance
 
-**Plans:** 6 plans
+**Plans:** 14 plans
 
 Plans:
 **Wave 1**
-- [ ] 24-01-PLAN.md — Establish floor-aware booking/refund/QR schema contracts and run the blocking Phase 24 migration gate
+- [ ] 24-01-PLAN.md — Define shared booking-core DTO/zod contracts for queue, floor-aware booking, payment, refund, and QR
 
 **Wave 2**
-- [ ] 24-02-PLAN.md — Implement queue admission, traffic defense, and prewarm control-path/runbooks
-- [ ] 24-03-PLAN.md — Implement multi-floor seat-map and event booking-policy contracts across API/admin
+- [ ] 24-02-PLAN.md — Implement Phase 24 Drizzle schema changes for floors, policy, payment deadline, refund, and QR state
 
 **Wave 3**
-- [ ] 24-04-PLAN.md — Wire queue waiting UX and multi-floor seat-selection UI into the booking route
+- [ ] 24-03-PLAN.md — Run the blocking Phase 24 Drizzle generate/migrate gate
 
 **Wave 4**
-- [ ] 24-05-PLAN.md — Implement 7-minute payment deadline UX and Toss domestic/overseas payment branching
+- [ ] 24-04-PLAN.md — Implement the admission queue module and API-side mutation guard
+- [ ] 24-05-PLAN.md — Implement traffic-defense decisions, protected prewarm control path, and operator runbook
+- [ ] 24-06-PLAN.md — Expose multi-floor performance/admin contracts and the minimal admin floor editor
 
 **Wave 5**
-- [ ] 24-06-PLAN.md — Implement refund automation, delayed reopen, QR issuance, and reservation follow-up surfaces
+- [ ] 24-07-PLAN.md — Enforce floor-aware booking runtime/state and add the floor selector flow
+- [ ] 24-08-PLAN.md — Wire the queue waiting route UX and localized retry/challenge/block states
+
+**Wave 6**
+- [ ] 24-09-PLAN.md — Implement backend synchronous/asynchronous Toss payment branching and webhook idempotency
+
+**Wave 7**
+- [ ] 24-10-PLAN.md — Render the payment deadline, overseas disclaimer, and payment recovery UX
+- [ ] 24-11-PLAN.md — Implement refund state orchestration and delayed cancelled-seat release jobs
+
+**Wave 8**
+- [ ] 24-12-PLAN.md — Implement the admin manual-open exception path
+- [ ] 24-13-PLAN.md — Issue QR tickets, schedule D-1 QR email, and expose QR on booking complete/My Page
+
+**Wave 9**
+- [ ] 24-14-PLAN.md — Render refund preview, refund timeline, and delayed-reopen guidance in reservation detail
 
 **Success criteria:**
 1. Queue admission uses Valkey Sorted Set and batch admission with position, ETA, and remaining-seat updates; booking APIs require valid admission.

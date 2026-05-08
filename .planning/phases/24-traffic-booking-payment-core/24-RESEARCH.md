@@ -395,27 +395,27 @@ const body = {
 | A3 | The simplest viable prewarm automation in this repo is a protected internal POST control path that performs the Cloud Run scale update on behalf of Cloud Scheduler. | Common Pitfalls / Architecture | If wrong, the planner should introduce Cloud Workflows or another control-plane helper, increasing infra scope. |
 | A4 | Webhook handlers should persist an explicit processed-event record or equivalent idempotency key even if Toss docs do not mandate a specific storage model. | Common Pitfalls / Security Domain | If wrong, duplicate event prevention may be overbuilt; if omitted when needed, async payment/refund state can corrupt. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Does the production Cloudflare plan actually include Bot Management / bot-score fields?**
    - What we know: project constraints mention Cloudflare Free plan, while Cloudflare docs mark `cf.bot_management.score`, `cf.bot_management.detection_ids`, and `cf.bot_management.js_detection.passed` as Enterprise add-ons. [VERIFIED: AGENTS.md] [CITED: https://developers.cloudflare.com/ruleset-engine/rules-language/fields/reference/]
    - What's unclear: whether TRAF-02’s “bot-score challenge/blocking” is a hard requirement with a plan upgrade, or whether Phase 24 should satisfy it with managed challenge + app-layer macro scoring only.
-   - Recommendation: resolve this before plan lock. If no Enterprise add-on is available, record a requirement caveat and plan Cloudflare challenge rules without bot-score predicates.
+   - RESOLVED: Plan Phase 24 as if Enterprise-only bot-score fields are unavailable unless the operator later proves otherwise. TRAF-02 is satisfied by Cloudflare Managed Challenge + rate limiting + app-layer macro scoring, and the runbook/manual verification gate records any future plan upgrade separately.
 
 2. **How much of Alipay+/TrueMoney can actually be executed with current test keys?**
    - What we know: Toss docs state some digital wallet providers do not work in test environments, and non-PayPal foreign wallets are async via webhook. [CITED: https://docs.tosspayments.com/en/api-guide]
    - What's unclear: which foreign providers the merchant account can simulate today versus only validate via webhook fixtures/test logs.
-   - Recommendation: plan both provider-facing E2E and fixture-based webhook verification; do not make the phase depend solely on a browser-run happy path.
+   - RESOLVED: Phase 24 must implement the async backend branches and webhook/idempotency logic regardless of sandbox availability. Browser happy-path evidence is required for methods the current test merchant exposes; unsupported wallets are verified through webhook fixtures/manual sandbox evidence and do not block planning.
 
 3. **What is the canonical internal seat identity for future vendor SVGs?**
    - What we know: the repo currently assumes single `seatId` keys, and Phase 24 requires floor-specific rows. [VERIFIED: apps/api/src/database/schema/seat-maps.ts] [VERIFIED: apps/web/components/booking/seat-map-viewer.tsx]
    - What's unclear: whether future vendor SVGs guarantee globally unique `data-seat-id` across floors.
-   - Recommendation: normalize to composite identity even if current files appear unique; this is cheaper than discovering collisions after lock/reservation code ships.
+   - RESOLVED: The canonical internal identity is a composite seat key built from floor context plus seat id (`seatKey = ${floorKey}:${seatId}` or equivalent normalized composite). All Phase 24 contracts, locks, reservations, and UI state use this composite identity even when current SVG files look globally unique.
 
 4. **Which service account will own prewarm scaling permissions?**
    - What we know: Cloud Scheduler can authenticate to HTTP targets, and Cloud Run scaling can be changed through the service API. [CITED: https://docs.cloud.google.com/scheduler/docs/http-target-auth] [CITED: https://cloud.google.com/run/docs/configuring/min-instances?authuser=1]
    - What's unclear: whether the current API service account is allowed to update Cloud Run services, or whether a dedicated control-plane service account/workflow is preferred.
-   - Recommendation: decide this in planning because it affects both security review and implementation shape.
+   - RESOLVED: Phase 24 implements a protected internal POST prewarm control path guarded by `PREWARM_CONTROL_TOKEN`; the concrete IAM principal that invokes it remains environment-specific `user_setup`/manual verification. Planning does not assume a new control-plane service beyond that protected endpoint.
 
 ## Environment Availability
 
