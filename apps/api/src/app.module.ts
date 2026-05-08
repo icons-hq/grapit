@@ -19,6 +19,7 @@ import { ReservationModule } from './modules/reservation/reservation.module.js';
 import { FeatureFlagsModule } from './modules/feature-flags/feature-flags.module.js';
 import { TranslationModule } from './modules/translation/translation.module.js';
 import { ConsentModule } from './modules/consent/consent.module.js';
+import { PrewarmModule } from './modules/ops/prewarm.module.js';
 import {
   TRAFFIC_RATE_LIMITED,
   TrafficDefenseService,
@@ -71,6 +72,7 @@ import { redisConfig } from './config/redis.config.js';
     FeatureFlagsModule,
     TranslationModule,
     ConsentModule,
+    PrewarmModule,
     TrafficModule,
   ],
   providers: [

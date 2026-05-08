@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { ForbiddenException } from '@nestjs/common';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { IS_PUBLIC_KEY } from '../../common/decorators/public.decorator.js';
 import { PrewarmController } from './prewarm.controller.js';
 import { PrewarmService } from './prewarm.service.js';
 
@@ -248,6 +249,6 @@ describe('PrewarmService', () => {
 
     expect(source).toContain("@Post('services/:serviceName')");
     expect(source).toContain("@Post('services/:serviceName/step-down')");
-    expect(Reflect.getMetadata('__isPublic__', PrewarmController)).toBe(true);
+    expect(Reflect.getMetadata(IS_PUBLIC_KEY, PrewarmController)).toBe(true);
   });
 });
