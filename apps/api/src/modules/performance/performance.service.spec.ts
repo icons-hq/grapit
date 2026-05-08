@@ -83,6 +83,36 @@ function createPerformanceRow(id = PHASE23_I18N_SMOKE_PERFORMANCE_ID) {
   };
 }
 
+function createSeatMapRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'seat-map-1',
+    performanceId: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
+    floorKey: '1F',
+    floorLabel: '1층',
+    sortOrder: 0,
+    svgUrl: '/seed/donghae-girl-rules-20260718-seat-map.svg',
+    seatConfig: { tiers: [] },
+    totalSeats: 1,
+    ...overrides,
+  };
+}
+
+function createBookingPolicyRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'booking-policy-1',
+    performanceId: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
+    maxTicketsPerUser: 1,
+    allowedPaymentMethods: ['CARD'],
+    changePolicyEnabled: false,
+    paymentWindowMinutes: 7,
+    seatHoldMinutes: 10,
+    cancelledSeatHoldMinMinutes: 1,
+    cancelledSeatHoldMaxMinutes: 10,
+    manualOpenEnabled: true,
+    ...overrides,
+  };
+}
+
 const translatedFieldRows = [
   {
     entityId: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
@@ -304,6 +334,83 @@ describe('PerformanceService', () => {
       expect(result.title).toBe('2026 걸룰스 팬미팅');
       expect(result.automaticTranslationLabel).toBeUndefined();
       expect(result.translatedBy).toBeUndefined();
+    });
+
+    it('returns floor-aware seatMaps and bookingPolicy for downstream booking flows', async () => {
+      mockDb.select
+        .mockReturnValueOnce(createChainableResult([createPerformanceRow()]))
+        .mockReturnValueOnce(createChainableResult([]))
+        .mockReturnValueOnce(createChainableResult([]))
+        .mockReturnValueOnce(createChainableResult([]))
+        .mockReturnValueOnce(
+          createChainableResult([
+            createSeatMapRow(),
+            createSeatMapRow({
+              id: 'seat-map-2',
+              floorKey: '2F',
+              floorLabel: '2층',
+              sortOrder: 1,
+              svgUrl: '/seed/donghae-girl-rules-20260718-seat-map-2f.svg',
+            }),
+          ]),
+        )
+        .mockReturnValueOnce(
+          createChainableResult([
+            createBookingPolicyRow({
+              allowedPaymentMethods: ['CARD', 'FOREIGN_EASY_PAY'],
+              maxTicketsPerUser: 2,
+            }),
+          ]),
+        );
+
+      const result = await (
+        service as unknown as {
+          findById(id: string, locale: string): Promise<PerformanceWithDetails>;
+        }
+      ).findById(PHASE23_I18N_SMOKE_PERFORMANCE_ID, 'ko');
+
+      expect(result.seatMaps).toHaveLength(2);
+      expect(result.seatMaps.map((seatMap) => seatMap.floorKey)).toEqual([
+        '1F',
+        '2F',
+      ]);
+      expect(result.bookingPolicy).toMatchObject({
+        maxTicketsPerUser: 2,
+        allowedPaymentMethods: ['CARD', 'FOREIGN_EASY_PAY'],
+        changePolicyEnabled: false,
+      });
+    });
+
+    it('synthesizes default 1F values for legacy single-floor seat-map rows', async () => {
+      mockDb.select
+        .mockReturnValueOnce(createChainableResult([createPerformanceRow()]))
+        .mockReturnValueOnce(createChainableResult([]))
+        .mockReturnValueOnce(createChainableResult([]))
+        .mockReturnValueOnce(createChainableResult([]))
+        .mockReturnValueOnce(
+          createChainableResult([
+            createSeatMapRow({
+              floorKey: undefined,
+              floorLabel: undefined,
+              sortOrder: undefined,
+            }),
+          ]),
+        )
+        .mockReturnValueOnce(createChainableResult([createBookingPolicyRow()]));
+
+      const result = await (
+        service as unknown as {
+          findById(id: string, locale: string): Promise<PerformanceWithDetails>;
+        }
+      ).findById(PHASE23_I18N_SMOKE_PERFORMANCE_ID, 'ko');
+
+      expect(result.seatMaps).toEqual([
+        expect.objectContaining({
+          floorKey: '1F',
+          floorLabel: '1층',
+          sortOrder: 0,
+        }),
+      ]);
     });
   });
 
