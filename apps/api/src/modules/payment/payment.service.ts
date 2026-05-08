@@ -97,6 +97,10 @@ type WebhookReservationSnapshot = {
 type WebhookPaymentSnapshot = {
   id: string;
   reservationId: string;
+  paymentKey: string;
+  tossOrderId: string;
+  amount: number;
+  status: PaymentStatus;
 };
 
 type WebhookSeatSelection = {
@@ -281,6 +285,10 @@ export class PaymentService {
       .select({
         id: payments.id,
         reservationId: payments.reservationId,
+        paymentKey: payments.paymentKey,
+        tossOrderId: payments.tossOrderId,
+        amount: payments.amount,
+        status: payments.status,
       })
       .from(payments)
       .where(
@@ -385,11 +393,26 @@ export class PaymentService {
       throw new ConflictException('결제 완료 처리 대상 예매 상태가 아닙니다');
     }
 
-    if (existingPayment && existingPayment.reservationId !== reservation.id) {
-      throw new ConflictException('결제 정보가 예매와 일치하지 않습니다');
+    this.assertExistingPaymentMatchesWebhook({
+      existingPayment,
+      reservation,
+      payload,
+    });
+
+    if (
+      existingPayment
+      && reservation.status === 'CONFIRMED'
+      && existingPayment.status === 'DONE'
+    ) {
+      if (this.qrTicketService) {
+        await this.qrTicketService.ensureIssuedTicketForReservation({
+          reservationId: reservation.id,
+          paymentId: existingPayment.id,
+        });
+      }
+      return;
     }
 
-    const isConfirmedDoneReplay = reservation.status === 'CONFIRMED' && !!existingPayment;
     const pendingSeats = await this.getReservationSeatSelections(reservation.id);
     const paidAt = payload.data.approvedAt
       ? new Date(payload.data.approvedAt)
@@ -475,10 +498,6 @@ export class PaymentService {
           .returning({ id: seatInventories.id });
 
         if (inserted.length === 0) {
-          if (isConfirmedDoneReplay) {
-            continue;
-          }
-
           throw new ConflictException('이미 판매된 좌석입니다');
         }
       }
@@ -498,6 +517,30 @@ export class PaymentService {
         reservationId: reservation.id,
         paymentId: committedPaymentId,
       });
+    }
+  }
+
+  private assertExistingPaymentMatchesWebhook(input: {
+    existingPayment?: WebhookPaymentSnapshot;
+    reservation: WebhookReservationSnapshot;
+    payload: TossWebhookRequestBody;
+  }): void {
+    const { existingPayment, reservation, payload } = input;
+
+    if (!existingPayment) {
+      return;
+    }
+
+    if (existingPayment.reservationId !== reservation.id) {
+      throw new ConflictException('결제 정보가 예매와 일치하지 않습니다');
+    }
+
+    if (
+      existingPayment.paymentKey !== payload.data.paymentKey
+      || existingPayment.tossOrderId !== payload.data.orderId
+      || existingPayment.amount !== reservation.totalAmount
+    ) {
+      throw new BadRequestException('결제 정보가 예매와 일치하지 않습니다');
     }
   }
 
