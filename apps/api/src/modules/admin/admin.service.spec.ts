@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { NotFoundException } from '@nestjs/common';
+import { NotFoundException, UnprocessableEntityException } from '@nestjs/common';
 import type {
   Banner,
-  SeatMap,
   PerformanceWithDetails,
+  PerformanceSeatMapInput,
+  PerformanceBookingPolicyInput,
 } from '@grabit/shared';
 import type {
   CreatePerformanceInput,
@@ -14,6 +15,7 @@ import type {
 
 import { AdminService } from './admin.service.js';
 import { CacheService } from '../performance/cache.service.js';
+import { bookingPolicies, seatMaps } from '../../database/schema/index.js';
 
 function createMockCacheService(): CacheService {
   // Admin mutations trigger invalidate* — mocks swallow them so we can
@@ -96,6 +98,51 @@ function createMockDb() {
   };
 }
 
+function findInsertCallIndex(
+  tx: ReturnType<typeof createMockTx>,
+  table: unknown,
+) {
+  return tx.insert.mock.calls.findIndex(([arg]) => arg === table);
+}
+
+const sampleSeatMaps: PerformanceSeatMapInput[] = [
+  {
+    floorKey: '1F',
+    floorLabel: '1층',
+    sortOrder: 0,
+    svgUrl: 'https://r2.example.com/seatmaps/1f.svg',
+    seatConfig: {
+      tiers: [
+        { tierName: 'VIP', color: '#FFD700', seatIds: ['A1', 'A2'] },
+      ],
+    },
+    totalSeats: 2,
+  },
+  {
+    floorKey: '2F',
+    floorLabel: '2층',
+    sortOrder: 1,
+    svgUrl: 'https://r2.example.com/seatmaps/2f.svg',
+    seatConfig: {
+      tiers: [
+        { tierName: 'R', color: '#4169E1', seatIds: ['B1'] },
+      ],
+    },
+    totalSeats: 1,
+  },
+];
+
+const sampleBookingPolicy: PerformanceBookingPolicyInput = {
+  maxTicketsPerUser: 1,
+  allowedPaymentMethods: ['CARD', 'FOREIGN_EASY_PAY'],
+  changePolicyEnabled: false,
+  paymentWindowMinutes: 7,
+  seatHoldMinutes: 10,
+  cancelledSeatHoldMinMinutes: 1,
+  cancelledSeatHoldMaxMinutes: 10,
+  manualOpenEnabled: true,
+};
+
 const sampleCreateInput: CreatePerformanceInput = {
   title: 'Hamlet',
   genre: 'artist_celebrity',
@@ -120,6 +167,17 @@ const sampleCreateInput: CreatePerformanceInput = {
     { actorName: 'Actor A', roleName: 'Hamlet', sortOrder: 0 },
     { actorName: 'Actor B', roleName: 'Ophelia', sortOrder: 1 },
   ],
+  seatMaps: [],
+  bookingPolicy: {
+    maxTicketsPerUser: 1,
+    allowedPaymentMethods: ['CARD'],
+    changePolicyEnabled: false,
+    paymentWindowMinutes: 7,
+    seatHoldMinutes: 10,
+    cancelledSeatHoldMinMinutes: 1,
+    cancelledSeatHoldMaxMinutes: 10,
+    manualOpenEnabled: true,
+  },
 };
 
 describe('AdminService', () => {
@@ -160,6 +218,18 @@ describe('AdminService', () => {
       // When GREEN, should verify venues INSERT ON CONFLICT or SELECT by name
       expect(tx.insert).toHaveBeenCalled();
     });
+
+    it('persists floor-aware seatMaps and bookingPolicy in the same transaction', async () => {
+      await service.createPerformance({
+        ...sampleCreateInput,
+        seatMaps: sampleSeatMaps,
+        bookingPolicy: sampleBookingPolicy,
+      });
+
+      const tx = mockDb._tx;
+      expect(findInsertCallIndex(tx, seatMaps)).toBeGreaterThanOrEqual(0);
+      expect(findInsertCallIndex(tx, bookingPolicies)).toBeGreaterThanOrEqual(0);
+    });
   });
 
   describe('updatePerformance', () => {
@@ -189,6 +259,20 @@ describe('AdminService', () => {
       // When GREEN, should verify DELETE price_tiers WHERE performanceId + INSERT new tiers
       expect(tx.delete).toHaveBeenCalled();
       expect(tx.insert).toHaveBeenCalled();
+    });
+
+    it('replaces seatMaps and upserts bookingPolicy without assuming a single floor', async () => {
+      const updateInput: UpdatePerformanceInput = {
+        seatMaps: sampleSeatMaps,
+        bookingPolicy: sampleBookingPolicy,
+      };
+
+      await service.updatePerformance('perf-id-123', updateInput);
+
+      const tx = mockDb._tx;
+      expect(findInsertCallIndex(tx, seatMaps)).toBeGreaterThanOrEqual(0);
+      expect(findInsertCallIndex(tx, bookingPolicies)).toBeGreaterThanOrEqual(0);
+      expect(tx.delete).toHaveBeenCalled();
     });
   });
 
@@ -268,7 +352,41 @@ describe('AdminService', () => {
   });
 
   describe('saveSeatMap', () => {
-    it('should upsert seat map for performance', async () => {
+    it('persists multi-floor payloads and returns floor-aware seat maps', async () => {
+      const result = await service.saveSeatMap('perf-id-123', {
+        seatMaps: sampleSeatMaps,
+        bookingPolicy: sampleBookingPolicy,
+      });
+
+      expect(mockDb.transaction).toHaveBeenCalled();
+      expect(result.seatMaps.map((seatMap) => seatMap.floorKey)).toEqual([
+        '1F',
+        '2F',
+      ]);
+      expect(result.bookingPolicy.allowedPaymentMethods).toEqual([
+        'CARD',
+        'FOREIGN_EASY_PAY',
+      ]);
+    });
+
+    it('rejects duplicate floorKey values before persistence', async () => {
+      await expect(
+        service.saveSeatMap('perf-id-123', {
+          seatMaps: [
+            sampleSeatMaps[0]!,
+            {
+              ...sampleSeatMaps[0]!,
+              floorLabel: '1층 복제',
+            },
+          ],
+          bookingPolicy: sampleBookingPolicy,
+        }),
+      ).rejects.toThrow(UnprocessableEntityException);
+
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
+    it('keeps legacy single-seat-map saves compatible with default 1F floor data', async () => {
       const seatMapConfig: SeatMapConfigInput = {
         tiers: [
           { tierName: 'VIP', color: '#FFD700', seatIds: ['A1', 'A2', 'A3'] },
@@ -276,10 +394,14 @@ describe('AdminService', () => {
         ],
       };
 
-      await service.saveSeatMap('perf-id-123', 'https://r2.example.com/seatmaps/venue1.svg', seatMapConfig);
+      const result = await service.saveSeatMap('perf-id-123', {
+        svgUrl: 'https://r2.example.com/seatmaps/venue1.svg',
+        seatConfig: seatMapConfig,
+        totalSeats: 7,
+      });
 
-      // When GREEN, should verify INSERT ON CONFLICT DO UPDATE on seat_maps table
-      expect(mockDb.insert).toHaveBeenCalled();
+      expect(result.seatMap?.floorKey).toBe('1F');
+      expect(result.seatMaps[0]?.floorLabel).toBe('1층');
     });
   });
 });
