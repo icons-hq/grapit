@@ -8,10 +8,12 @@ import {
   Req,
   HttpCode,
   HttpStatus,
+  UseGuards,
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { Public } from '../../common/decorators/public.decorator.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
+import { AdmissionGuard } from '../queue/guards/admission.guard.js';
 import { BookingService } from './booking.service.js';
 import { lockSeatSchema, type LockSeatBody } from './dto/lock-seat.dto.js';
 
@@ -23,6 +25,7 @@ export class BookingController {
    * POST /api/v1/booking/seats/lock
    * Auth required. Locks a seat for the authenticated user.
    */
+  @UseGuards(AdmissionGuard)
   @Post('seats/lock')
   @HttpCode(HttpStatus.CREATED)
   async lockSeat(
