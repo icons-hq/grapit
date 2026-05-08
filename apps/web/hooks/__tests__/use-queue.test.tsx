@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { act, renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Mock } from 'vitest';
@@ -70,6 +70,13 @@ function createWrapper() {
   };
 }
 
+async function flushQueueEffects() {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
 describe('useQueue', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -103,9 +110,8 @@ describe('useQueue', () => {
       },
     );
 
-    await waitFor(() => {
-      expect(result.current.status).toBe('admitted');
-    });
+    await flushQueueEffects();
+    expect(result.current.status).toBe('admitted');
 
     act(() => {
       vi.advanceTimersByTime(1200);
@@ -144,9 +150,8 @@ describe('useQueue', () => {
       },
     );
 
-    await waitFor(() => {
-      expect(result.current.status).toBe('waiting');
-    });
+    await flushQueueEffects();
+    expect(result.current.status).toBe('waiting');
 
     const expiredCall = (socketMock.on as Mock).mock.calls.find(
       (call: unknown[]) => call[0] === 'queue:expired',
