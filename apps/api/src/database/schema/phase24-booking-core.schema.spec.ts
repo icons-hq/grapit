@@ -262,4 +262,59 @@ describe('Phase 24 booking core database schema contracts', () => {
       'allowed_payment_methods',
     );
   });
+
+  it('requires explicit refund-state and qr-ticket persistence for post-payment flows', async () => {
+    const refundsModule = await import('./refunds.js').catch(() => null);
+    expect(refundsModule?.refunds).toBeDefined();
+    expect(refundsModule?.refundStatusEnum?.enumValues).toEqual(
+      expect.arrayContaining([
+        'requested',
+        'sent_to_pg',
+        'processing_at_pg',
+        'completed',
+        'failed',
+      ]),
+    );
+    expectColumnName(
+      (refundsModule?.refunds as Record<string, { name: string }>)?.provider,
+      'provider',
+    );
+    expectColumnName(
+      (refundsModule?.refunds as Record<string, { name: string }>)?.resultCode,
+      'result_code',
+    );
+    expectColumnName(
+      (
+        refundsModule?.refunds as Record<string, { name: string }>
+      )?.failureReason,
+      'failure_reason',
+    );
+
+    const ticketsModule = await import('./tickets.js').catch(() => null);
+    expect(ticketsModule?.tickets).toBeDefined();
+    expectColumnName(
+      (ticketsModule?.tickets as Record<string, { name: string }>)?.qrTokenJti,
+      'qr_token_jti',
+    );
+    expectColumnName(
+      (
+        ticketsModule?.tickets as Record<string, { name: string }>
+      )?.secretVersion,
+      'secret_version',
+    );
+    expectColumnName(
+      (ticketsModule?.tickets as Record<string, { name: string }>)?.issuedAt,
+      'issued_at',
+    );
+    expectColumnName(
+      (
+        ticketsModule?.tickets as Record<string, { name: string }>
+      )?.emailScheduledAt,
+      'email_scheduled_at',
+    );
+    expectColumnName(
+      (ticketsModule?.tickets as Record<string, { name: string }>)?.emailSentAt,
+      'email_sent_at',
+    );
+  });
 });
