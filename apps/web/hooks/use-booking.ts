@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api-client';
 import { BookingDisabledError } from '@/lib/runtime-flags';
@@ -35,6 +36,17 @@ export type { SeatSelection, SeatStatusResponse, LockSeatRequest, LockSeatRespon
 
 const DEFAULT_FLOOR_KEY = '1F';
 const DEFAULT_FLOOR_LABEL = '1층';
+const DEFAULT_PAYMENT_WINDOW_MINUTES = 7;
+const DEFAULT_SEAT_HOLD_MINUTES = 10;
+const DEFAULT_ALLOWED_PAYMENT_METHODS = ['CARD'] as const;
+
+export interface BookingPaymentSnapshot {
+  paymentDeadlineAt: string | null;
+  lockExpiresAt: string | null;
+  bookingPolicy: BookingPolicy;
+  allowedPaymentMethods: PerformanceBookingPolicy['allowedPaymentMethods'];
+  isPaymentDeadlineExpired: boolean;
+}
 
 function toFloorAwareSeatSelection(
   seat: FloorAwareSeatSelection | SeatSelection,
@@ -95,6 +107,38 @@ function getCachedPerformanceDetail(
   return null;
 }
 
+function buildBookingPaymentSnapshot(
+  lockExpiresAtMs: number | null,
+  performancePolicy?: PerformanceBookingPolicy,
+): BookingPaymentSnapshot {
+  const paymentWindowMinutes = performancePolicy?.paymentWindowMinutes ?? DEFAULT_PAYMENT_WINDOW_MINUTES;
+  const seatHoldMinutes = performancePolicy?.seatHoldMinutes ?? DEFAULT_SEAT_HOLD_MINUTES;
+  const lockExpiresAt = lockExpiresAtMs ? new Date(lockExpiresAtMs).toISOString() : null;
+  const paymentDeadlineAt = lockExpiresAtMs
+    ? new Date(
+      Math.min(lockExpiresAtMs, Date.now() + paymentWindowMinutes * 60 * 1000),
+    ).toISOString()
+    : null;
+
+  return {
+    paymentDeadlineAt,
+    lockExpiresAt,
+    bookingPolicy: {
+      maxTicketsPerOrder: performancePolicy?.maxTicketsPerUser ?? 1,
+      cancellationChangePolicy: performancePolicy?.changePolicyEnabled
+        ? 'SAME_GRADE_CHANGE'
+        : 'CANCEL_ONLY',
+      sameGradeChangeEnabled: performancePolicy?.changePolicyEnabled ?? false,
+      paymentWindowMinutes,
+      seatHoldMinutes,
+    },
+    allowedPaymentMethods: performancePolicy?.allowedPaymentMethods ?? [...DEFAULT_ALLOWED_PAYMENT_METHODS],
+    isPaymentDeadlineExpired: paymentDeadlineAt
+      ? new Date(paymentDeadlineAt).getTime() <= Date.now()
+      : false,
+  };
+}
+
 export function useSeatStatus(showtimeId: string | null) {
   return useQuery({
     queryKey: ['seat-status', showtimeId],
@@ -116,6 +160,17 @@ export function useMyLocks(showtimeId: string | null) {
     enabled: !!showtimeId,
     staleTime: 0,
   });
+}
+
+export function useBookingPaymentSnapshot(): BookingPaymentSnapshot {
+  const queryClient = useQueryClient();
+  const performanceId = useBookingStore((state) => state.performanceId);
+  const lockExpiresAtMs = useBookingStore((state) => state.expiresAt);
+
+  return useMemo(() => {
+    const cachedPerformance = getCachedPerformanceDetail(queryClient, performanceId);
+    return buildBookingPaymentSnapshot(lockExpiresAtMs, cachedPerformance?.bookingPolicy);
+  }, [lockExpiresAtMs, performanceId, queryClient]);
 }
 
 export function useLockSeat() {
