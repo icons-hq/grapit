@@ -117,7 +117,7 @@ Plans:
 
 **Merged from:** 30 Queue + WAF + prewarm, 31 Seat selection refinements, 32 Payment + refund + QR issuance
 
-**Plans:** 13/17 plans executed
+**Plans:** 16/17 plans executed
 
 Plans:
 **Wave 1**
@@ -148,11 +148,11 @@ Plans:
 - [x] 24-11-PLAN.md — Implement refund state orchestration and delayed cancelled-seat release jobs
 
 **Wave 8**
-- [ ] 24-12-PLAN.md — Implement the admin manual-open exception path
-- [ ] 24-17-PLAN.md — Render pending/failure/expired payment recovery UI and Toss payment recovery E2E
+- [x] 24-12-PLAN.md — Implement the admin manual-open exception path
+- [x] 24-17-PLAN.md — Render pending/failure/expired payment recovery UI and Toss payment recovery E2E
 
 **Wave 9**
-- [ ] 24-13-PLAN.md — Issue QR tickets, schedule D-1 QR email, and expose QR on booking complete/My Page
+- [x] 24-13-PLAN.md — Issue QR tickets, schedule D-1 QR email, and expose QR on booking complete/My Page
 
 **Wave 10**
 - [ ] 24-14-PLAN.md — Render refund preview, refund timeline, and delayed-reopen guidance in reservation detail
