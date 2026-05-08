@@ -317,4 +317,121 @@ describe('Phase 24 booking core database schema contracts', () => {
       'email_sent_at',
     );
   });
+
+  it('requires webhook ledger, manual-open audit storage, and schema exports for async booking state', async () => {
+    const webhookEventsModule = await import('./payment-webhook-events.js').catch(
+      () => null,
+    );
+    expect(webhookEventsModule?.paymentWebhookEvents).toBeDefined();
+    expectColumnName(
+      (
+        webhookEventsModule?.paymentWebhookEvents as Record<
+          string,
+          { name: string }
+        >
+      )?.eventId,
+      'event_id',
+    );
+    expectColumnName(
+      (
+        webhookEventsModule?.paymentWebhookEvents as Record<
+          string,
+          { name: string }
+        >
+      )?.eventType,
+      'event_type',
+    );
+    expectColumnName(
+      (
+        webhookEventsModule?.paymentWebhookEvents as Record<
+          string,
+          { name: string }
+        >
+      )?.payload,
+      'payload',
+    );
+    expectColumnName(
+      (
+        webhookEventsModule?.paymentWebhookEvents as Record<
+          string,
+          { name: string }
+        >
+      )?.receivedAt,
+      'received_at',
+    );
+    expectColumnName(
+      (
+        webhookEventsModule?.paymentWebhookEvents as Record<
+          string,
+          { name: string }
+        >
+      )?.processedAt,
+      'processed_at',
+    );
+    expectColumnName(
+      (
+        webhookEventsModule?.paymentWebhookEvents as Record<
+          string,
+          { name: string }
+        >
+      )?.processingResultCode,
+      'processing_result_code',
+    );
+
+    const auditLogsModule = await import('./booking-operation-audit-logs.js').catch(
+      () => null,
+    );
+    expect(auditLogsModule?.bookingOperationAuditLogs).toBeDefined();
+    expectColumnName(
+      (
+        auditLogsModule?.bookingOperationAuditLogs as Record<
+          string,
+          { name: string }
+        >
+      )?.operatorUserId,
+      'operator_user_id',
+    );
+    expectColumnName(
+      (
+        auditLogsModule?.bookingOperationAuditLogs as Record<
+          string,
+          { name: string }
+        >
+      )?.action,
+      'action',
+    );
+    expectColumnName(
+      (
+        auditLogsModule?.bookingOperationAuditLogs as Record<
+          string,
+          { name: string }
+        >
+      )?.seatKey,
+      'seat_key',
+    );
+    expectColumnName(
+      (
+        auditLogsModule?.bookingOperationAuditLogs as Record<
+          string,
+          { name: string }
+        >
+      )?.reservationId,
+      'reservation_id',
+    );
+    expectColumnName(
+      (
+        auditLogsModule?.bookingOperationAuditLogs as Record<
+          string,
+          { name: string }
+        >
+      )?.createdAt,
+      'created_at',
+    );
+
+    const schemaIndexModule = await import('./index.js');
+    expect(schemaIndexModule.paymentWebhookEvents).toBeDefined();
+    expect(schemaIndexModule.bookingOperationAuditLogs).toBeDefined();
+    expect(schemaIndexModule.refunds).toBeDefined();
+    expect(schemaIndexModule.tickets).toBeDefined();
+  });
 });
