@@ -96,7 +96,7 @@ describe('BookingService', () => {
     );
   });
 
-  // Helper: mock DB select to return no sold record (used by lockSeat DB defense)
+  // Helper: mock DB select to return no unavailable record (used by lockSeat DB defense)
   function mockNoSoldRecord(maxTicketsPerUser = 4) {
     mockDb.select
       .mockReturnValueOnce(chainResult([]))
@@ -215,11 +215,11 @@ describe('BookingService', () => {
       expect(mockGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
     });
 
-    describe('sold defense', () => {
+    describe('unavailable seat defense', () => {
       it('should throw ConflictException when seat_inventories has status=sold', async () => {
         mockDb.select.mockReturnValue({
           from: vi.fn().mockReturnValue({
-            where: vi.fn().mockResolvedValue([{ id: randomUUID() }]),
+            where: vi.fn().mockResolvedValue([{ id: randomUUID(), status: 'sold' }]),
           }),
         });
 
@@ -228,6 +228,22 @@ describe('BookingService', () => {
 
         await expect(service.lockSeat(userId, showtimeId, seatId))
           .rejects.toThrow('이미 판매된 좌석입니다');
+
+        expect(mockRedis.eval).not.toHaveBeenCalled();
+      });
+
+      it('should throw ConflictException when seat_inventories has status=held_cancelled', async () => {
+        mockDb.select.mockReturnValue({
+          from: vi.fn().mockReturnValue({
+            where: vi.fn().mockResolvedValue([{ id: randomUUID(), status: 'held_cancelled' }]),
+          }),
+        });
+
+        await expect(service.lockSeat(userId, showtimeId, seatId))
+          .rejects.toThrow(ConflictException);
+
+        await expect(service.lockSeat(userId, showtimeId, seatId))
+          .rejects.toThrow('환불 처리 중인 좌석입니다');
 
         expect(mockRedis.eval).not.toHaveBeenCalled();
       });
@@ -574,7 +590,7 @@ describe('BookingService', () => {
   });
 
   describe('getSeatStatus', () => {
-    it('returns Record of seatId to SeatState combining Redis locks + DB sold records', async () => {
+    it('returns Record of seatId to SeatState combining Redis locks + DB unavailable records', async () => {
       // Mock Lua eval returning valid locked seats (stale entries cleaned by script)
       mockRedis.eval.mockResolvedValue(['A-1', 'A-2']);
 
@@ -582,6 +598,7 @@ describe('BookingService', () => {
       const mockFrom = vi.fn().mockReturnValue({
         where: vi.fn().mockResolvedValue([
           { seatId: 'B-1', status: 'sold' },
+          { seatId: 'C-1', status: 'held_cancelled' },
         ]),
       });
       mockDb.select.mockReturnValue({ from: mockFrom });
@@ -592,6 +609,7 @@ describe('BookingService', () => {
       expect(result.seats['A-1']).toBe('locked');
       expect(result.seats['A-2']).toBe('locked');
       expect(result.seats['B-1']).toBe('sold');
+      expect(result.seats['C-1']).toBe('held');
 
       // Verify eval called with GET_VALID_LOCKED_SEATS_LUA pattern
       // ioredis flat signature: eval(script, numKeys, ...keysAndArgs)

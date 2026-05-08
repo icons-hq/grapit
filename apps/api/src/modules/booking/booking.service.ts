@@ -285,9 +285,12 @@ export class BookingService {
     this.featureFlags.assertBookingEnabled();
     const seatIdentity = parseRuntimeSeatIdentity(seatId);
 
-    // DB-level sold check: defense against Redis TTL expiry race
-    const [soldRecord] = await this.db
-      .select({ id: seatInventories.id })
+    // DB-level unavailable check: defense against Redis TTL expiry and delayed refund release races.
+    const [unavailableRecord] = await this.db
+      .select({
+        id: seatInventories.id,
+        status: seatInventories.status,
+      })
       .from(seatInventories)
       .where(
         and(
@@ -300,12 +303,19 @@ export class BookingService {
               eq(seatInventories.seatId, seatIdentity.seatId),
             ),
           ),
-          eq(seatInventories.status, 'sold'),
+          or(
+            eq(seatInventories.status, 'sold'),
+            eq(seatInventories.status, 'held_cancelled'),
+          ),
         ),
       );
 
-    if (soldRecord) {
-      throw new ConflictException('이미 판매된 좌석입니다');
+    if (unavailableRecord) {
+      throw new ConflictException(
+        unavailableRecord.status === 'held_cancelled'
+          ? '환불 처리 중인 좌석입니다'
+          : '이미 판매된 좌석입니다',
+      );
     }
 
     const maxTicketsPerUser = await this.getMaxTicketsPerUser(showtimeId);
@@ -546,7 +556,7 @@ export class BookingService {
 
   /**
    * Returns the status of all seats for a showtime.
-   * Combines Redis locks + DB sold records.
+   * Combines Redis locks + DB unavailable records.
    */
   async getSeatStatus(showtimeId: string): Promise<SeatStatusResponse> {
     // 1. Get locked seats from Redis (with stale entry cleanup)
@@ -559,8 +569,8 @@ export class BookingService {
       keyPrefix,
     )) as string[];
 
-    // 2. Get sold seats from DB
-    const soldSeats = await this.db
+    // 2. Get sold and delayed-release seats from DB
+    const unavailableSeats = await this.db
       .select({
         seatId: seatInventories.seatId,
         floorKey: seatInventories.floorKey,
@@ -571,7 +581,10 @@ export class BookingService {
       .where(
         and(
           eq(seatInventories.showtimeId, showtimeId),
-          eq(seatInventories.status, 'sold'),
+          or(
+            eq(seatInventories.status, 'sold'),
+            eq(seatInventories.status, 'held_cancelled'),
+          ),
         ),
       );
 
@@ -582,9 +595,9 @@ export class BookingService {
       seats[decodeRuntimeSeatId(runtimeSeatId)] = 'locked';
     }
 
-    for (const row of soldSeats) {
+    for (const row of unavailableSeats) {
       const soldSeatKey = row.seatKey ?? (row.floorKey ? `${row.floorKey}:${row.seatId}` : row.seatId);
-      seats[soldSeatKey] = 'sold';
+      seats[soldSeatKey] = row.status === 'held_cancelled' ? 'held' : 'sold';
     }
 
     return { showtimeId, seats };
