@@ -138,6 +138,25 @@ describe('ReservationService', () => {
     return { seatId, tierName: 'VIP', price: 50000, row: 'A', number };
   }
 
+  function floorAwareSeatSelection(seatKey: string): SeatSelection & {
+    floorKey: string;
+    floorLabel: string;
+    seatKey: string;
+  } {
+    const [floorKey, seatId] = seatKey.split(':');
+    const [, number = '1'] = seatId?.split('-') ?? [];
+    return {
+      seatId: seatId ?? seatKey,
+      tierName: 'VIP',
+      price: 50000,
+      row: 'A',
+      number,
+      floorKey: floorKey ?? '1F',
+      floorLabel: floorKey === '2F' ? '2층' : '1층',
+      seatKey,
+    };
+  }
+
   function seatConfigRowsFor(seats: Array<string | SeatSelection>) {
     return [{
       seatConfig: {
@@ -166,7 +185,15 @@ describe('ReservationService', () => {
   }) {
     mockDb.select
       .mockReturnValueOnce(chainResult([]))
-      .mockReturnValueOnce(chainResult([{ id: dto.showtimeId, performanceId: 'performance-1', dateTime: new Date() }]))
+      .mockReturnValueOnce(chainResult([{
+        id: dto.showtimeId,
+        performanceId: 'performance-1',
+        dateTime: new Date(),
+        maxTicketsPerUser: 4,
+        changePolicyEnabled: false,
+        paymentWindowMinutes: 7,
+        seatHoldMinutes: 10,
+      }]))
       .mockReturnValueOnce(chainResult([{ tierName: 'VIP', price: 50000 }]))
       .mockReturnValueOnce(chainResult(seatConfigRowsFor(dto.seats)))
       .mockReturnValueOnce(chainResult([{ birthDate: '1995-05-15' }]));
@@ -199,7 +226,15 @@ describe('ReservationService', () => {
         status: dto.status ?? 'PENDING_PAYMENT',
         totalAmount: amount,
       }]))
-      .mockReturnValueOnce(chainResult([{ id: dto.showtimeId, performanceId: 'performance-1', dateTime: new Date() }]))
+      .mockReturnValueOnce(chainResult([{
+        id: dto.showtimeId,
+        performanceId: 'performance-1',
+        dateTime: new Date(),
+        maxTicketsPerUser: 4,
+        changePolicyEnabled: false,
+        paymentWindowMinutes: 7,
+        seatHoldMinutes: 10,
+      }]))
       .mockReturnValueOnce(chainResult([{ tierName: 'VIP', price: 50000 }]))
       .mockReturnValueOnce(chainResult(seatConfigRowsFor(seatMapSeatIds)))
       .mockReturnValueOnce(chainResult(seats.map((seatId) => ({
@@ -535,7 +570,10 @@ describe('ReservationService', () => {
 
       await expect(service.prepareReservation(dto, userId))
         .resolves
-        .toEqual({ reservationId: 'reservation-created', orderId: dto.orderId });
+        .toEqual(expect.objectContaining({
+          reservationId: 'reservation-created',
+          orderId: dto.orderId,
+        }));
 
       expect(mockBookingService.assertOwnedSeatLocks).toHaveBeenCalledWith(userId, dto.showtimeId, ['A-1', 'A-2']);
       expect(mockDb.transaction).toHaveBeenCalledOnce();
@@ -585,7 +623,10 @@ describe('ReservationService', () => {
 
       await expect(service.prepareReservation(dto, userId))
         .resolves
-        .toEqual({ reservationId: 'reservation-created', orderId: dto.orderId });
+        .toEqual(expect.objectContaining({
+          reservationId: 'reservation-created',
+          orderId: dto.orderId,
+        }));
 
       expect(mockBookingService.assertOwnedSeatLocks).toHaveBeenCalledWith(userId, dto.showtimeId, ['A-1']);
       expect(insertedValues[1]).toEqual([
@@ -598,6 +639,124 @@ describe('ReservationService', () => {
           number: '1',
         }),
       ]);
+    });
+
+    it('prepareReservation treats same seat labels on different floors as distinct seatKeys', async () => {
+      const userId = randomUUID();
+      const dto = {
+        showtimeId: randomUUID(),
+        orderId: 'GRP-FLOOR-AWARE-SEAT-KEYS',
+        seats: [floorAwareSeatSelection('1F:A-1'), floorAwareSeatSelection('2F:A-1')],
+        amount: 100000,
+        consentItems: makeConsentItems(),
+      };
+      const insertedValues: unknown[] = [];
+
+      mockDb.select
+        .mockReturnValueOnce(chainResult([]))
+        .mockReturnValueOnce(chainResult([{
+          id: dto.showtimeId,
+          performanceId: 'performance-1',
+          dateTime: new Date(),
+          maxTicketsPerUser: 2,
+          changePolicyEnabled: false,
+          paymentWindowMinutes: 7,
+          seatHoldMinutes: 10,
+        }]))
+        .mockReturnValueOnce(chainResult([{ tierName: 'VIP', price: 50000 }]))
+        .mockReturnValueOnce(chainResult([
+          {
+            floorKey: '1F',
+            floorLabel: '1층',
+            seatConfig: {
+              tiers: [{ tierName: 'VIP', color: '#111111', seatIds: ['A-1'] }],
+            },
+          },
+          {
+            floorKey: '2F',
+            floorLabel: '2층',
+            seatConfig: {
+              tiers: [{ tierName: 'VIP', color: '#222222', seatIds: ['A-1'] }],
+            },
+          },
+        ]))
+        .mockReturnValueOnce(chainResult([{ birthDate: '1995-05-15' }]));
+
+      const mockTx = {
+        insert: vi.fn().mockReturnValue({
+          values: vi.fn((values: unknown) => {
+            insertedValues.push(values);
+            return {
+              returning: vi.fn().mockResolvedValue([{ id: 'reservation-created', tossOrderId: dto.orderId }]),
+            };
+          }),
+        }),
+      };
+      mockDb.transaction.mockImplementation(async (cb: (tx: typeof mockTx) => Promise<unknown>) => cb(mockTx));
+
+      await expect(service.prepareReservation(dto, userId))
+        .resolves
+        .toEqual(expect.objectContaining({
+          reservationId: 'reservation-created',
+          orderId: dto.orderId,
+        }));
+
+      expect(mockBookingService.assertOwnedSeatLocks).toHaveBeenCalledWith(
+        userId,
+        dto.showtimeId,
+        ['1F:A-1', '2F:A-1'],
+      );
+      expect(insertedValues[1]).toEqual([
+        expect.objectContaining({ seatId: '1F:A-1', row: 'A', number: '1' }),
+        expect.objectContaining({ seatId: '2F:A-1', row: 'A', number: '1' }),
+      ]);
+    });
+
+    it('prepareReservation rejects seat selections above event maxTicketsPerUser across floors combined', async () => {
+      const userId = randomUUID();
+      const dto = {
+        showtimeId: randomUUID(),
+        orderId: 'GRP-POLICY-LIMIT-CROSS-FLOOR',
+        seats: [floorAwareSeatSelection('1F:A-1'), floorAwareSeatSelection('2F:B-1')],
+        amount: 100000,
+        consentItems: makeConsentItems(),
+      };
+
+      mockDb.select
+        .mockReturnValueOnce(chainResult([]))
+        .mockReturnValueOnce(chainResult([{
+          id: dto.showtimeId,
+          performanceId: 'performance-1',
+          dateTime: new Date(),
+          maxTicketsPerUser: 1,
+          changePolicyEnabled: false,
+          paymentWindowMinutes: 7,
+          seatHoldMinutes: 10,
+        }]))
+        .mockReturnValueOnce(chainResult([{ tierName: 'VIP', price: 50000 }]))
+        .mockReturnValueOnce(chainResult([
+          {
+            floorKey: '1F',
+            floorLabel: '1층',
+            seatConfig: {
+              tiers: [{ tierName: 'VIP', color: '#111111', seatIds: ['A-1'] }],
+            },
+          },
+          {
+            floorKey: '2F',
+            floorLabel: '2층',
+            seatConfig: {
+              tiers: [{ tierName: 'VIP', color: '#222222', seatIds: ['B-1'] }],
+            },
+          },
+        ]));
+
+      await expect(service.prepareReservation(dto, userId))
+        .rejects
+        .toThrow('최대 1석까지 선택할 수 있습니다');
+
+      expect(mockBookingService.assertOwnedSeatLocks).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
     });
 
     it('prepareReservation writes booking consent audit in the pending reservation transaction', async () => {
@@ -625,7 +784,10 @@ describe('ReservationService', () => {
 
       await expect(service.prepareReservation(dto, userId, requestMeta))
         .resolves
-        .toEqual({ reservationId: 'reservation-created', orderId: dto.orderId });
+        .toEqual(expect.objectContaining({
+          reservationId: 'reservation-created',
+          orderId: dto.orderId,
+        }));
 
       expect(mockConsentService.captureConsent).toHaveBeenCalledTimes(1);
       expect(mockConsentService.captureConsent).toHaveBeenCalledWith(

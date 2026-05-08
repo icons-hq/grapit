@@ -46,6 +46,19 @@ function createMockDb() {
   };
 }
 
+function chainResult<T>(rows: T[]) {
+  const handler: ProxyHandler<object> = {
+    get(_target, prop) {
+      if (prop === 'then') {
+        return (resolve: (value: T[]) => void) => resolve(rows);
+      }
+      return (..._args: unknown[]) => new Proxy({}, handler);
+    },
+  };
+
+  return new Proxy({}, handler);
+}
+
 function createMockFeatureFlags(bookingEnabled = true) {
   const mock = {
     getFlags: vi.fn(() => ({ bookingEnabled })),
@@ -84,12 +97,10 @@ describe('BookingService', () => {
   });
 
   // Helper: mock DB select to return no sold record (used by lockSeat DB defense)
-  function mockNoSoldRecord() {
-    mockDb.select.mockReturnValueOnce({
-      from: vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue([]),
-      }),
-    });
+  function mockNoSoldRecord(maxTicketsPerUser = 4) {
+    mockDb.select
+      .mockReturnValueOnce(chainResult([]))
+      .mockReturnValueOnce(chainResult([{ maxTicketsPerUser }]));
   }
 
   describe('lockSeat', () => {
@@ -149,6 +160,22 @@ describe('BookingService', () => {
       await expect(service.lockSeat(userId, showtimeId, seatId))
         .rejects
         .toThrow(ConflictException);
+    });
+
+    it('uses event-configured maxTicketsPerUser instead of hardcoded MAX_SEATS', async () => {
+      mockNoSoldRecord(1);
+      mockRedis.eval.mockResolvedValue([0, 'MAX_SEATS']);
+
+      await expect(service.lockSeat(userId, showtimeId, '1F:A-1'))
+        .rejects
+        .toThrow('최대 1석까지 선택할 수 있습니다');
+
+      const callArgs = mockRedis.eval.mock.calls[0] as unknown[];
+      const numKeys = callArgs[1] as number;
+      const flatKeys = callArgs.slice(2, 2 + numKeys) as string[];
+      const flatArgs = callArgs.slice(2 + numKeys) as string[];
+      expect(flatKeys).toContain(`{${showtimeId}}:seat:1F%3AA-1`);
+      expect(flatArgs[2]).toBe('1');
     });
 
     it('rejects when SET NX fails (seat taken)', async () => {
@@ -579,6 +606,21 @@ describe('BookingService', () => {
       expect(numKeys).toBe(1);
       expect(flatKeys).toEqual([`{${showtimeId}}:locked-seats`]);
       expect(flatArgs).toEqual([`{${showtimeId}}:seat:`]);
+    });
+
+    it('uses canonical seatKey identity so same seat labels on different floors do not collide', async () => {
+      mockRedis.eval.mockResolvedValue(['1F%3AA-1']);
+      mockDb.select.mockReturnValue(
+        chainResult([
+          { seatId: 'A-1', floorKey: '2F', seatKey: '2F:A-1', status: 'sold' },
+        ]),
+      );
+
+      const result = await service.getSeatStatus(showtimeId);
+
+      expect(result.seats['1F:A-1']).toBe('locked');
+      expect(result.seats['2F:A-1']).toBe('sold');
+      expect(result.seats['A-1']).toBeUndefined();
     });
   });
 });
