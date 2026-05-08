@@ -116,7 +116,7 @@ describe('Phase 24 booking core shared contracts', () => {
     expect(parsedPrepare.paymentDeadlineAt).toBe('2026-05-08T11:52:00.000Z');
 
     const parsedDetail = bookingContracts.reservationDetailSchema.parse({
-      id: 'reservation-1',
+      id: '22222222-2222-4222-8222-222222222222',
       reservationNumber: 'GRP-24001',
       status: 'CONFIRMED',
       performanceTitle: 'Girl Rules Fanmeet',
