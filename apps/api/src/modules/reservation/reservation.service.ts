@@ -35,6 +35,7 @@ import type {
   ConsentCaptureItem,
   FloorAwareSeatSelection,
   PerformanceBookingPolicy,
+  PaymentStatus,
   SeatSelection,
   ReservationStatus,
   ReservationListItem,
@@ -47,6 +48,17 @@ import type {
 
 const DEFAULT_FLOOR_KEY = '1F';
 const DEFAULT_FLOOR_LABEL = '1층';
+export const PAYMENT_DEADLINE_MINUTES = 7;
+
+type ApprovedPaymentSnapshot = {
+  existingPaymentId?: string;
+  paymentKey: string;
+  orderId: string;
+  method: string;
+  totalAmount: number;
+  approvedAt: string;
+  asyncStatus?: string | null;
+};
 
 type SeatSelectionLike = SeatSelection & Partial<FloorAwareSeatSelection>;
 type ShowtimeBookingContext = {
@@ -135,6 +147,33 @@ export class ReservationService {
     ].join('');
     const random = Math.random().toString(36).substring(2, 7).toUpperCase();
     return `GRP-${dateStr}-${random}`;
+  }
+
+  private calculatePaymentDeadlineAt(preparedAt: Date): Date {
+    return new Date(preparedAt.getTime() + PAYMENT_DEADLINE_MINUTES * 60 * 1000);
+  }
+
+  private toOptionalDate(value?: string | null): Date | undefined {
+    if (!value) return undefined;
+    return new Date(value);
+  }
+
+  private isPastWindow(value: Date | null | undefined, now: Date = new Date()): boolean {
+    return value instanceof Date && !Number.isNaN(value.getTime()) && value.getTime() < now.getTime();
+  }
+
+  private hasAsyncPaymentHandoff(status?: PaymentStatus | null): boolean {
+    return status === 'IN_PROGRESS' || status === 'DONE';
+  }
+
+  private async expirePendingReservation(reservationId: string): Promise<void> {
+    await this.db
+      .update(reservations)
+      .set({
+        status: 'FAILED',
+        updatedAt: new Date(),
+      })
+      .where(eq(reservations.id, reservationId));
   }
 
   private assertUniqueSeatIds(seats: SeatSelectionLike[]): void {
@@ -384,6 +423,7 @@ export class ReservationService {
         status: reservations.status,
         tossOrderId: reservations.tossOrderId,
         totalAmount: reservations.totalAmount,
+        paymentDeadlineAt: reservations.paymentDeadlineAt,
       })
       .from(reservations)
       .where(eq(reservations.tossOrderId, dto.orderId));
@@ -399,6 +439,20 @@ export class ReservationService {
 
       if (existing.showtimeId !== dto.showtimeId) {
         throw new ConflictException('기존 예매 요청과 일치하지 않습니다. 새 주문 ID로 다시 시도해주세요.');
+      }
+
+      if (this.isPastWindow(existing.paymentDeadlineAt)) {
+        const [existingPayment] = await this.db
+          .select({
+            status: payments.status,
+          })
+          .from(payments)
+          .where(eq(payments.tossOrderId, dto.orderId));
+
+        if (!this.hasAsyncPaymentHandoff(existingPayment?.status as PaymentStatus | undefined)) {
+          await this.expirePendingReservation(existing.id);
+          throw new ConflictException('결제 가능 시간이 만료되었습니다. 좌석을 다시 선택해주세요.');
+        }
       }
 
       const existingShowtime = await this.getShowtimeBookingContext(existing.showtimeId);
@@ -425,7 +479,9 @@ export class ReservationService {
         reservationId: existing.id,
         orderId: dto.orderId,
         queueAdmission: dto.queueAdmission,
-        paymentDeadlineAt: dto.paymentDeadlineAt,
+        paymentDeadlineAt:
+          existing.paymentDeadlineAt?.toISOString()
+          ?? dto.paymentDeadlineAt,
         bookingPolicy: existingShowtime.bookingPolicy,
         paymentMethod: dto.paymentMethod,
       };
@@ -451,6 +507,8 @@ export class ReservationService {
     const userBirthDate = await this.getUserBirthDate(userId);
 
     // 4. Create pending reservation + seats atomically
+    const preparedAt = new Date();
+    const paymentDeadlineAt = this.calculatePaymentDeadlineAt(preparedAt);
     const reservationNumber = this.generateReservationNumber();
     const cancelDeadline = this.calculateCancelDeadline(showtime.dateTime);
 
@@ -464,6 +522,14 @@ export class ReservationService {
           reservationNumber,
           status: 'PENDING_PAYMENT',
           totalAmount: expectedAmount,
+          queueSessionId: dto.queueAdmission?.queueSessionId,
+          admissionToken: dto.queueAdmission?.admissionToken,
+          refreshFamilyId: dto.queueAdmission?.refreshFamilyId,
+          deviceSlotKey: dto.queueAdmission?.deviceSlotKey,
+          admittedAt: this.toOptionalDate(dto.queueAdmission?.admittedAt),
+          admissionActiveUntilAt: this.toOptionalDate(dto.queueAdmission?.activeUntilAt),
+          reentryGraceUntilAt: this.toOptionalDate(dto.queueAdmission?.reentryGraceUntilAt),
+          paymentDeadlineAt,
           cancelDeadline,
         })
         .returning();
@@ -499,7 +565,7 @@ export class ReservationService {
       reservationId: result.id,
       orderId: dto.orderId,
       queueAdmission: dto.queueAdmission,
-      paymentDeadlineAt: dto.paymentDeadlineAt,
+      paymentDeadlineAt: paymentDeadlineAt.toISOString(),
       bookingPolicy: showtime.bookingPolicy,
       paymentMethod: dto.paymentMethod,
     };
@@ -620,8 +686,9 @@ export class ReservationService {
       .from(payments)
       .where(eq(payments.tossOrderId, dto.orderId));
 
-    if (existingPayment) {
-      return this.getReservationDetail(existingPayment.reservationId, userId);
+    const legacyExistingPayment = existingPayment as { reservationId: string; status?: unknown } | undefined;
+    if (legacyExistingPayment && !legacyExistingPayment.status) {
+      return this.getReservationDetail(legacyExistingPayment.reservationId, userId);
     }
 
     // 2. Look up pending reservation by tossOrderId
@@ -647,6 +714,34 @@ export class ReservationService {
       throw new ConflictException('좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.');
     }
 
+    if (this.isPastWindow(reservation.admissionActiveUntilAt)) {
+      if (existingPayment?.status === 'DONE') {
+        await this.cancelConfirmedPaymentOrThrow(
+          existingPayment.paymentKey,
+          '결제 유효 시간 초과로 인한 자동 취소',
+        );
+        await this.db
+          .update(payments)
+          .set({
+            status: 'CANCELED',
+            cancelledAt: new Date(),
+            cancelReason: '결제 유효 시간 초과로 인한 자동 취소',
+          })
+          .where(eq(payments.id, existingPayment.id));
+        await this.expirePendingReservation(reservation.id);
+      }
+
+      throw new ConflictException('좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.');
+    }
+
+    if (
+      existingPayment
+      && existingPayment.status
+      && existingPayment.status !== 'DONE'
+    ) {
+      throw new ConflictException('좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.');
+    }
+
     // 3. Amount validation against the prepared reservation
     if (reservation.totalAmount !== dto.amount) {
       throw new BadRequestException('금액이 일치하지 않습니다');
@@ -663,12 +758,36 @@ export class ReservationService {
 
     const seatLockRefreshTimer = this.startOwnedSeatLockRefresh(userId, reservation.showtimeId, pendingSeatIds);
     try {
-    // 4. Call Toss Payments confirm API
-    const tossResponse = await this.tossClient.confirmPayment({
-      paymentKey: dto.paymentKey,
-      orderId: dto.orderId,
-      amount: dto.amount,
-    });
+    let approvedPayment: ApprovedPaymentSnapshot;
+    if (existingPayment?.status === 'DONE') {
+      approvedPayment = {
+        existingPaymentId: existingPayment.id,
+        paymentKey: existingPayment.paymentKey,
+        orderId: existingPayment.tossOrderId,
+        method: existingPayment.method,
+        totalAmount: existingPayment.amount,
+        approvedAt:
+          existingPayment.paidAt?.toISOString()
+          ?? new Date().toISOString(),
+        asyncStatus: existingPayment.asyncStatus,
+      };
+    } else {
+      // 4. Call Toss Payments confirm API
+      const tossResponse = await this.tossClient.confirmPayment({
+        paymentKey: dto.paymentKey,
+        orderId: dto.orderId,
+        amount: dto.amount,
+      });
+
+      approvedPayment = {
+        paymentKey: tossResponse.paymentKey,
+        orderId: tossResponse.orderId,
+        method: tossResponse.method,
+        totalAmount: tossResponse.totalAmount,
+        approvedAt: tossResponse.approvedAt,
+        asyncStatus: 'sync',
+      };
+    }
 
     let confirmLockStillOwned: boolean;
     try {
@@ -678,19 +797,19 @@ export class ReservationService {
       );
     } catch (lockError) {
       this.logger.error(
-        `Payment confirm lock refresh failed after Toss confirm. paymentKey=${tossResponse.paymentKey}, orderId=${dto.orderId}`,
+        `Payment confirm lock refresh failed after payment approval. paymentKey=${approvedPayment.paymentKey}, orderId=${dto.orderId}`,
         lockError instanceof Error ? lockError.stack : String(lockError),
       );
-      await this.cancelConfirmedPaymentOrThrow(tossResponse.paymentKey, '결제 확인 상태 검증 실패로 인한 자동 취소');
+      await this.cancelConfirmedPaymentOrThrow(approvedPayment.paymentKey, '결제 확인 상태 검증 실패로 인한 자동 취소');
       throw new InternalServerErrorException(
         '결제는 승인되었으나 처리 중 오류가 발생했습니다. 자동 취소를 시도했습니다. 고객센터에 문의해주세요.',
       );
     }
     if (!confirmLockStillOwned) {
       this.logger.error(
-        `Payment confirm lock ownership lost after Toss confirm. paymentKey=${tossResponse.paymentKey}, orderId=${dto.orderId}`,
+        `Payment confirm lock ownership lost after payment approval. paymentKey=${approvedPayment.paymentKey}, orderId=${dto.orderId}`,
       );
-      await this.cancelConfirmedPaymentOrThrow(tossResponse.paymentKey, '결제 확인 중복 처리로 인한 자동 취소');
+      await this.cancelConfirmedPaymentOrThrow(approvedPayment.paymentKey, '결제 확인 중복 처리로 인한 자동 취소');
       throw new ConflictException('결제 확인이 이미 진행 중입니다.');
     }
 
@@ -698,10 +817,10 @@ export class ReservationService {
       await this.bookingService.assertOwnedSeatLocks(userId, reservation.showtimeId, pendingSeatIds);
     } catch (lockError) {
       this.logger.error(
-        `Seat lock ownership lost after Toss confirm. paymentKey=${tossResponse.paymentKey}, orderId=${dto.orderId}`,
+        `Seat lock ownership lost after payment approval. paymentKey=${approvedPayment.paymentKey}, orderId=${dto.orderId}`,
         lockError instanceof Error ? lockError.stack : String(lockError),
       );
-      await this.cancelConfirmedPaymentOrThrow(tossResponse.paymentKey, '좌석 점유 만료로 인한 자동 취소');
+      await this.cancelConfirmedPaymentOrThrow(approvedPayment.paymentKey, '좌석 점유 만료로 인한 자동 취소');
       throw lockError;
     }
 
@@ -716,15 +835,30 @@ export class ReservationService {
           })
           .where(eq(reservations.id, reservation.id));
 
-        await tx.insert(payments).values({
-          reservationId: reservation.id,
-          paymentKey: tossResponse.paymentKey,
-          tossOrderId: tossResponse.orderId,
-          method: tossResponse.method,
-          amount: tossResponse.totalAmount,
-          status: 'DONE',
-          paidAt: new Date(tossResponse.approvedAt),
-        });
+        if (approvedPayment.existingPaymentId) {
+          await tx
+            .update(payments)
+            .set({
+              status: 'DONE',
+              amount: approvedPayment.totalAmount,
+              paidAt: new Date(approvedPayment.approvedAt),
+              asyncStatus: approvedPayment.asyncStatus ?? 'pending_webhook',
+            })
+            .where(eq(payments.id, approvedPayment.existingPaymentId));
+        } else {
+          await tx.insert(payments).values({
+            reservationId: reservation.id,
+            paymentKey: approvedPayment.paymentKey,
+            tossOrderId: approvedPayment.orderId,
+            method: approvedPayment.method,
+            provider: 'CARD',
+            currency: 'KRW',
+            asyncStatus: approvedPayment.asyncStatus ?? 'sync',
+            amount: approvedPayment.totalAmount,
+            status: 'DONE',
+            paidAt: new Date(approvedPayment.approvedAt),
+          });
+        }
 
         // Mark seats sold only when no committed sold row already exists.
         for (const seat of pendingSeats) {
@@ -789,10 +923,10 @@ export class ReservationService {
 
       // Compensation: attempt to cancel the Toss payment
       this.logger.error(
-        `DB transaction failed after Toss confirm. paymentKey=${tossResponse.paymentKey}, orderId=${dto.orderId}`,
+        `DB transaction failed after payment approval. paymentKey=${approvedPayment.paymentKey}, orderId=${dto.orderId}`,
         dbError instanceof Error ? dbError.stack : String(dbError),
       );
-      await this.cancelConfirmedPaymentOrThrow(tossResponse.paymentKey, '서버 오류로 인한 자동 취소');
+      await this.cancelConfirmedPaymentOrThrow(approvedPayment.paymentKey, '서버 오류로 인한 자동 취소');
       if (dbError instanceof ConflictException) {
         throw dbError;
       }
@@ -911,6 +1045,14 @@ export class ReservationService {
           reservationNumber: reservations.reservationNumber,
           status: reservations.status,
           totalAmount: reservations.totalAmount,
+          queueSessionId: reservations.queueSessionId,
+          admissionToken: reservations.admissionToken,
+          refreshFamilyId: reservations.refreshFamilyId,
+          deviceSlotKey: reservations.deviceSlotKey,
+          admittedAt: reservations.admittedAt,
+          admissionActiveUntilAt: reservations.admissionActiveUntilAt,
+          reentryGraceUntilAt: reservations.reentryGraceUntilAt,
+          paymentDeadlineAt: reservations.paymentDeadlineAt,
           cancelDeadline: reservations.cancelDeadline,
           cancelledAt: reservations.cancelledAt,
           cancelReason: reservations.cancelReason,
@@ -971,15 +1113,15 @@ export class ReservationService {
       cancelReason: row.reservation.cancelReason ?? null,
       paymentKey: payment?.paymentKey ?? '',
       queueAdmission: {
-        queueSessionId: '',
-        admissionToken: '',
-        refreshFamilyId: '',
-        deviceSlotKey: '',
-        admittedAt: row.reservation.createdAt?.toISOString() ?? new Date(0).toISOString(),
-        activeUntilAt: row.reservation.cancelDeadline?.toISOString() ?? new Date(0).toISOString(),
-        reentryGraceUntilAt: row.reservation.cancelDeadline?.toISOString() ?? new Date(0).toISOString(),
+        queueSessionId: row.reservation.queueSessionId ?? '',
+        admissionToken: row.reservation.admissionToken ?? '',
+        refreshFamilyId: row.reservation.refreshFamilyId ?? '',
+        deviceSlotKey: row.reservation.deviceSlotKey ?? '',
+        admittedAt: row.reservation.admittedAt?.toISOString() ?? new Date(0).toISOString(),
+        activeUntilAt: row.reservation.admissionActiveUntilAt?.toISOString() ?? new Date(0).toISOString(),
+        reentryGraceUntilAt: row.reservation.reentryGraceUntilAt?.toISOString() ?? new Date(0).toISOString(),
       },
-      paymentDeadlineAt: row.reservation.cancelDeadline?.toISOString() ?? new Date(0).toISOString(),
+      paymentDeadlineAt: row.reservation.paymentDeadlineAt?.toISOString() ?? new Date(0).toISOString(),
       bookingPolicy: mapPerformanceBookingPolicy(undefined, { forceCancelOnly: true }),
       refundTimeline: {
         currentState: row.reservation.status === 'CANCELLED' ? 'REQUESTED' : 'COMPLETED',

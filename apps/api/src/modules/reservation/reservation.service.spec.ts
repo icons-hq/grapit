@@ -1463,9 +1463,9 @@ describe('ReservationService', () => {
           tossOrderId: orderId,
           status: 'PENDING_PAYMENT',
           totalAmount: 150000,
-          paymentDeadlineAt: new Date('2026-05-08T07:07:00.000Z'),
-          admissionActiveUntilAt: new Date('2026-05-08T07:10:00.000Z'),
-          reentryGraceUntilAt: new Date('2026-05-08T07:13:00.000Z'),
+          paymentDeadlineAt: new Date('2099-05-08T07:07:00.000Z'),
+          admissionActiveUntilAt: new Date('2099-05-08T07:10:00.000Z'),
+          reentryGraceUntilAt: new Date('2099-05-08T07:13:00.000Z'),
         }]));
 
       await expect(service.confirmAndCreateReservation(
