@@ -303,6 +303,12 @@ export class PaymentService {
     const amount = payload.data.totalAmount ?? reservation.totalAmount;
 
     if (paymentStatus === 'DONE') {
+      this.assertExistingPaymentIdentityMatchesWebhook({
+        existingPayment,
+        reservation,
+        payload,
+      });
+
       if (payload.data.totalAmount !== reservation.totalAmount) {
         await this.storeRejectedWebhookPayment({
           payload,
@@ -525,6 +531,24 @@ export class PaymentService {
     reservation: WebhookReservationSnapshot;
     payload: TossWebhookRequestBody;
   }): void {
+    this.assertExistingPaymentIdentityMatchesWebhook(input);
+
+    const { existingPayment, reservation } = input;
+
+    if (!existingPayment) {
+      return;
+    }
+
+    if (existingPayment.amount !== reservation.totalAmount) {
+      throw new BadRequestException('결제 정보가 예매와 일치하지 않습니다');
+    }
+  }
+
+  private assertExistingPaymentIdentityMatchesWebhook(input: {
+    existingPayment?: WebhookPaymentSnapshot;
+    reservation: WebhookReservationSnapshot;
+    payload: TossWebhookRequestBody;
+  }): void {
     const { existingPayment, reservation, payload } = input;
 
     if (!existingPayment) {
@@ -538,7 +562,6 @@ export class PaymentService {
     if (
       existingPayment.paymentKey !== payload.data.paymentKey
       || existingPayment.tossOrderId !== payload.data.orderId
-      || existingPayment.amount !== reservation.totalAmount
     ) {
       throw new BadRequestException('결제 정보가 예매와 일치하지 않습니다');
     }

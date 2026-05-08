@@ -442,5 +442,52 @@ describe('PaymentService', () => {
       expect(mockQrTicketService.ensureIssuedTicketForReservation).not.toHaveBeenCalled();
       expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
     });
+
+    it('rejects amount-mismatched DONE replays before mutating an existing payment identity', async () => {
+      const reservationId = randomUUID();
+      const paymentId = randomUUID();
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          userId: randomUUID(),
+          showtimeId: randomUUID(),
+          status: 'CONFIRMED',
+          totalAmount: 150000,
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: paymentId,
+          reservationId,
+          paymentKey: 'pay_original_done',
+          tossOrderId: 'GRP-ASYNC-DONE',
+          amount: 150000,
+          status: 'DONE',
+        }]));
+
+      await expect(service.upsertAsyncPaymentProgress(
+        {
+          eventId: 'evt-payment-done-amount-identity-mismatch',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_different_done',
+            orderId: 'GRP-ASYNC-DONE',
+            status: 'DONE',
+            method: 'FOREIGN_EASY_PAY',
+            provider: 'ALIPAY_PLUS',
+            currency: 'USD',
+            totalAmount: 149000,
+            approvedAt: '2026-05-08T08:00:00.000Z',
+          },
+        },
+        'DONE',
+        'payment_status_changed:done',
+      )).rejects.toThrow('결제 정보가 예매와 일치하지 않습니다');
+
+      expect(mockDb.update).not.toHaveBeenCalled();
+      expect(mockDb.insert).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+      expect(mockQrTicketService.ensureIssuedTicketForReservation).not.toHaveBeenCalled();
+      expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+    });
   });
 });
