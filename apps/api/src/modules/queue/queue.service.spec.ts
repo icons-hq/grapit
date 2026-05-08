@@ -102,7 +102,7 @@ describe('QueueService', () => {
       activeUntilAt: null,
       reentryGraceUntilAt: null,
       paymentRecoveryUntilAt: null,
-      expiresAt: new Date('2026-05-08T00:30:00.000Z').toISOString(),
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     });
 
     const lease = await service.ensureQueueSession({

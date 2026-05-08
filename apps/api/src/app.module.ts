@@ -25,6 +25,7 @@ import {
   TrafficDefenseService,
 } from './modules/traffic/traffic-defense.service.js';
 import { TrafficModule } from './modules/traffic/traffic.module.js';
+import { QueueModule } from './modules/queue/queue.module.js';
 import { JwtAuthGuard } from './modules/auth/guards/jwt-auth.guard.js';
 import { REDIS_CLIENT } from './modules/booking/providers/redis.provider.js';
 import { authConfig } from './config/auth.config.js';
@@ -74,6 +75,7 @@ import { redisConfig } from './config/redis.config.js';
     ConsentModule,
     PrewarmModule,
     TrafficModule,
+    QueueModule,
   ],
   providers: [
     {

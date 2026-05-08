@@ -76,7 +76,7 @@ const TRAFFIC_POLICIES: Record<TrafficPolicyName, TrafficPolicyDefinition> = {
       },
       {
         method: 'POST',
-        patterns: [/\/queue\/entry$/],
+        patterns: [/\/queue\/entry$/, /\/queue\/performances\/[^/]+\/enter$/],
       },
     ],
   },
