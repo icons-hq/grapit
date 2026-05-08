@@ -117,7 +117,7 @@ Plans:
 
 **Merged from:** 30 Queue + WAF + prewarm, 31 Seat selection refinements, 32 Payment + refund + QR issuance
 
-**Plans:** 2/17 plans executed
+**Plans:** 3/17 plans executed
 
 Plans:
 **Wave 1**
@@ -127,7 +127,7 @@ Plans:
 - [x] 24-02-PLAN.md — Implement Phase 24 Drizzle schema changes for floors, policy, payment deadline, refund, and QR state
 
 **Wave 3**
-- [ ] 24-03-PLAN.md — Run the blocking Phase 24 Drizzle generate/migrate gate
+- [x] 24-03-PLAN.md — Run the blocking Phase 24 Drizzle generate/migrate gate
 
 **Wave 4**
 - [ ] 24-04-PLAN.md — Implement the admission queue module and API-side mutation guard
