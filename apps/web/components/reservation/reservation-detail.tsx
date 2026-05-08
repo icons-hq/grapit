@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ChevronLeft } from 'lucide-react';
+import { ChevronLeft, Mail, QrCode } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -173,6 +173,54 @@ export function ReservationDetailView({
           />
         </CardContent>
       </Card>
+
+      {reservation.qrTicket.status === 'ACTIVE' && (
+        <Card className="mt-4 border-[#E9DFFF] bg-[#F8F5FF] py-4">
+          <CardContent className="space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <QrCode className="h-5 w-5 text-[#6C3CE0]" />
+                  <h2 className="text-base font-semibold text-gray-900">QR 티켓</h2>
+                </div>
+                <p className="text-sm text-gray-700">
+                  결제 직후 발급된 입장용 QR 티켓입니다. 공연장 입장 전에 다시 확인해주세요.
+                </p>
+              </div>
+              <Badge className="bg-[#F0FDF4] text-[#15803D] border-transparent">발급 완료</Badge>
+            </div>
+
+            <div className="rounded-xl border border-white/80 bg-white/90 p-4">
+              <InfoRow label="티켓 ID" value={reservation.qrTicket.jti} />
+              <Separator />
+              <InfoRow label="발급 시각" value={formatDateTime(reservation.qrTicket.issuedAt)} />
+              {reservation.qrTicket.emailScheduledAt && (
+                <>
+                  <Separator />
+                  <InfoRow
+                    label="안내 메일 예약"
+                    value={formatDateTime(reservation.qrTicket.emailScheduledAt)}
+                  />
+                </>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-dashed border-[#D9CCFF] bg-white/70 p-4">
+              <span className="mb-2 block text-sm font-semibold text-gray-900">QR 토큰</span>
+              <pre className="overflow-x-auto whitespace-pre-wrap break-all text-xs text-gray-700">
+                {reservation.qrTicket.token}
+              </pre>
+            </div>
+
+            <div className="flex items-start gap-3 rounded-xl border border-white/70 bg-white/80 p-4">
+              <Mail className="mt-0.5 h-4 w-4 text-[#6C3CE0]" />
+              <p className="text-sm text-gray-700">
+                QR 티켓 안내 메일은 공연 24시간 전에 다시 발송됩니다.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Cancel info */}
       <Card className="mt-4 py-4">

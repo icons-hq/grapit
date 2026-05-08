@@ -135,7 +135,7 @@ test.describe('booking complete QR visibility', () => {
 
     await page.goto('/mypage/reservations/phase24-qr-reservation');
 
-    await expect(page.getByText('QR 티켓')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('heading', { name: 'QR 티켓' })).toBeVisible({ timeout: 10000 });
     await expect(page.getByText('qr-jti-phase24')).toBeVisible({ timeout: 10000 });
   });
 });
