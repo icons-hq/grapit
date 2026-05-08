@@ -13,7 +13,7 @@ import type {
   CreatePerformanceInput,
   UpdatePerformanceInput,
   CreateBannerInput,
-  SeatMapConfigInput,
+  SaveSeatMapPayloadInput,
 } from '@grabit/shared';
 
 export type TranslationTargetLocale = 'en' | 'th' | 'zh-CN' | 'zh-TW';
@@ -307,11 +307,7 @@ export function usePresignedUpload() {
 // Save seat map config
 export function useSaveSeatMap(performanceId: string) {
   return useMutation({
-    mutationFn: (data: {
-      svgUrl: string;
-      seatConfig: SeatMapConfigInput;
-      totalSeats: number;
-    }) =>
+    mutationFn: (data: SaveSeatMapPayloadInput) =>
       apiClient.post(
         `/api/v1/admin/performances/${performanceId}/seat-map`,
         data,
