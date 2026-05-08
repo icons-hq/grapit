@@ -117,6 +117,25 @@ Plans:
 
 **Merged from:** 30 Queue + WAF + prewarm, 31 Seat selection refinements, 32 Payment + refund + QR issuance
 
+**Plans:** 6 plans
+
+Plans:
+**Wave 1**
+- [ ] 24-01-PLAN.md — Establish floor-aware booking/refund/QR schema contracts and run the blocking Phase 24 migration gate
+
+**Wave 2**
+- [ ] 24-02-PLAN.md — Implement queue admission, traffic defense, and prewarm control-path/runbooks
+- [ ] 24-03-PLAN.md — Implement multi-floor seat-map and event booking-policy contracts across API/admin
+
+**Wave 3**
+- [ ] 24-04-PLAN.md — Wire queue waiting UX and multi-floor seat-selection UI into the booking route
+
+**Wave 4**
+- [ ] 24-05-PLAN.md — Implement 7-minute payment deadline UX and Toss domestic/overseas payment branching
+
+**Wave 5**
+- [ ] 24-06-PLAN.md — Implement refund automation, delayed reopen, QR issuance, and reservation follow-up surfaces
+
 **Success criteria:**
 1. Queue admission uses Valkey Sorted Set and batch admission with position, ETA, and remaining-seat updates; booking APIs require valid admission.
 2. WAF/rate-limit/bot/macro rules and Cloud Scheduler prewarm runbook are documented and verified.
