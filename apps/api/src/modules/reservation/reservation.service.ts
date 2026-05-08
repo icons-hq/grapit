@@ -9,7 +9,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { eq, and, sql, desc, inArray } from 'drizzle-orm';
+import { eq, and, or, sql, desc, inArray } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
   reservations,
@@ -21,6 +21,7 @@ import {
   venues,
   seatInventories,
   seatMaps,
+  bookingPolicies,
   users,
 } from '../../database/schema/index.js';
 import { TossPaymentsClient } from '../payment/toss-payments.client.js';
@@ -28,10 +29,12 @@ import { BookingService, PAYMENT_CONFIRM_LOCK_TTL } from '../booking/booking.ser
 import { BookingGateway } from '../booking/booking.gateway.js';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
 import { ConsentService, type ConsentRequestMeta } from '../consent/consent.service.js';
+import { DEFAULT_PERFORMANCE_BOOKING_POLICY } from '@grabit/shared';
 import type {
   BookingPolicy,
   ConsentCaptureItem,
   FloorAwareSeatSelection,
+  PerformanceBookingPolicy,
   SeatSelection,
   ReservationStatus,
   ReservationListItem,
@@ -42,23 +45,71 @@ import type {
   SeatMapConfig,
 } from '@grabit/shared';
 
-const LEGACY_FLOOR_KEY = 'default';
-const LEGACY_FLOOR_LABEL = '기본';
+const DEFAULT_FLOOR_KEY = '1F';
+const DEFAULT_FLOOR_LABEL = '1층';
 
-function toFloorAwareSeatSelection(seat: SeatSelection): FloorAwareSeatSelection {
+type SeatSelectionLike = SeatSelection & Partial<FloorAwareSeatSelection>;
+type ShowtimeBookingContext = {
+  id: string;
+  performanceId: string;
+  dateTime: Date;
+  maxTicketsPerUser: number;
+  bookingPolicy: BookingPolicy;
+};
+
+function normalizeSeatIdentity(seat: Pick<SeatSelectionLike, 'seatId'> & Partial<FloorAwareSeatSelection>) {
+  const separatorIndex = seat.seatId.includes(':') ? seat.seatId.indexOf(':') : -1;
+  const seatIdFromStoredValue = separatorIndex > 0 ? seat.seatId.slice(separatorIndex + 1) : undefined;
+  const floorKeyFromStoredValue = separatorIndex > 0 ? seat.seatId.slice(0, separatorIndex) : undefined;
+  const seatKeyFromField =
+    typeof seat.seatKey === 'string' && seat.seatKey.length > 0 ? seat.seatKey : undefined;
+  const floorKeyFromSeatKey = seatKeyFromField?.includes(':')
+    ? seatKeyFromField.slice(0, seatKeyFromField.indexOf(':'))
+    : undefined;
+  const seatIdFromSeatKey = seatKeyFromField?.includes(':')
+    ? seatKeyFromField.slice(seatKeyFromField.indexOf(':') + 1)
+    : undefined;
+  const floorKey = seat.floorKey ?? floorKeyFromSeatKey ?? floorKeyFromStoredValue ?? DEFAULT_FLOOR_KEY;
+  const seatId = seatIdFromSeatKey ?? seatIdFromStoredValue ?? seat.seatId;
+
   return {
-    ...seat,
-    floorKey: LEGACY_FLOOR_KEY,
-    floorLabel: LEGACY_FLOOR_LABEL,
-    seatKey: `${LEGACY_FLOOR_KEY}:${seat.seatId}`,
+    floorKey,
+    floorLabel: seat.floorLabel ?? (floorKey === DEFAULT_FLOOR_KEY ? DEFAULT_FLOOR_LABEL : floorKey),
+    seatId,
+    seatKey: `${floorKey}:${seatId}`,
   };
 }
 
-function makeLegacyBookingPolicy(): BookingPolicy {
+function toFloorAwareSeatSelection(seat: SeatSelectionLike): FloorAwareSeatSelection {
+  const identity = normalizeSeatIdentity(seat);
+
   return {
-    maxTicketsPerOrder: 4,
-    cancellationChangePolicy: 'CANCEL_ONLY',
-    sameGradeChangeEnabled: false,
+    ...seat,
+    seatId: identity.seatId,
+    floorKey: identity.floorKey,
+    floorLabel: identity.floorLabel,
+    seatKey: identity.seatKey,
+  };
+}
+
+function mapPerformanceBookingPolicy(
+  policy: Partial<PerformanceBookingPolicy> | null | undefined,
+  options: { forceCancelOnly?: boolean } = {},
+): BookingPolicy {
+  const maxTicketsPerOrder =
+    policy?.maxTicketsPerUser ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.maxTicketsPerUser;
+  const sameGradeChangeEnabled = options.forceCancelOnly
+    ? false
+    : (policy?.changePolicyEnabled ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.changePolicyEnabled);
+
+  return {
+    maxTicketsPerOrder,
+    cancellationChangePolicy: sameGradeChangeEnabled ? 'SAME_GRADE_CHANGE' : 'CANCEL_ONLY',
+    sameGradeChangeEnabled,
+    paymentWindowMinutes:
+      policy?.paymentWindowMinutes ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.paymentWindowMinutes,
+    seatHoldMinutes:
+      policy?.seatHoldMinutes ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.seatHoldMinutes,
   };
 }
 
@@ -86,10 +137,19 @@ export class ReservationService {
     return `GRP-${dateStr}-${random}`;
   }
 
-  private assertUniqueSeatIds(seats: SeatSelection[]): void {
-    const uniqueSeatIds = new Set(seats.map((seat) => seat.seatId));
-    if (uniqueSeatIds.size !== seats.length) {
+  private assertUniqueSeatIds(seats: SeatSelectionLike[]): void {
+    const uniqueSeatKeys = new Set(seats.map((seat) => toFloorAwareSeatSelection(seat).seatKey));
+    if (uniqueSeatKeys.size !== seats.length) {
       throw new BadRequestException('중복된 좌석이 포함되어 있습니다');
+    }
+  }
+
+  private assertSeatCountWithinPolicy(
+    seats: FloorAwareSeatSelection[],
+    maxTicketsPerUser: number,
+  ): void {
+    if (seats.length > maxTicketsPerUser) {
+      throw new ConflictException(`최대 ${maxTicketsPerUser}석까지 선택할 수 있습니다`);
     }
   }
 
@@ -136,10 +196,11 @@ export class ReservationService {
   }
 
   private async getCanonicalSeatSelections(
-    seats: SeatSelection[],
+    seats: SeatSelectionLike[],
     performanceId: string,
-  ): Promise<SeatSelection[]> {
-    this.assertUniqueSeatIds(seats);
+  ): Promise<FloorAwareSeatSelection[]> {
+    const requestedSeats = seats.map((seat) => toFloorAwareSeatSelection(seat));
+    this.assertUniqueSeatIds(requestedSeats);
 
     const [tiers, seatMapRows] = await Promise.all([
       this.db
@@ -147,18 +208,43 @@ export class ReservationService {
         .from(priceTiers)
         .where(eq(priceTiers.performanceId, performanceId)),
       this.db
-        .select({ seatConfig: seatMaps.seatConfig })
+        .select({
+          floorKey: seatMaps.floorKey,
+          floorLabel: seatMaps.floorLabel,
+          seatConfig: seatMaps.seatConfig,
+        })
         .from(seatMaps)
         .where(eq(seatMaps.performanceId, performanceId)),
     ]);
 
     const tierPriceByName = new Map(tiers.map((tier) => [tier.tierName, tier.price]));
-    const seatTierBySeatId = this.getSeatTierBySeatId(seatMapRows[0]?.seatConfig);
-    if (!seatTierBySeatId) {
+    const seatTierByFloorKey = new Map(
+      seatMapRows.map((row) => [
+        row.floorKey ?? DEFAULT_FLOOR_KEY,
+        {
+          floorLabel: row.floorLabel ?? DEFAULT_FLOOR_LABEL,
+          seatTierBySeatId: this.getSeatTierBySeatId(row.seatConfig),
+        },
+      ]),
+    );
+
+    if (seatTierByFloorKey.size === 0) {
       throw new BadRequestException('좌석 배치 정보가 유효하지 않습니다');
     }
 
-    return seats.map((seat) => {
+    const hasAnyUsableSeatConfig = Array.from(seatTierByFloorKey.values())
+      .some((floor) => floor.seatTierBySeatId && floor.seatTierBySeatId.size > 0);
+    if (!hasAnyUsableSeatConfig) {
+      throw new BadRequestException('좌석 배치 정보가 유효하지 않습니다');
+    }
+
+    return requestedSeats.map((seat) => {
+      const floorData = seatTierByFloorKey.get(seat.floorKey);
+      const seatTierBySeatId = floorData?.seatTierBySeatId;
+      if (!seatTierBySeatId) {
+        throw new BadRequestException('좌석 배치 정보가 유효하지 않습니다');
+      }
+
       const tierName = seatTierBySeatId.get(seat.seatId);
       if (!tierName) {
         throw new BadRequestException('유효하지 않은 좌석입니다');
@@ -173,6 +259,7 @@ export class ReservationService {
 
       return {
         ...seat,
+        floorLabel: floorData.floorLabel,
         tierName,
         price: tierPrice,
         row: position.row,
@@ -192,11 +279,11 @@ export class ReservationService {
 
   private async getReservationSeatIds(reservationId: string): Promise<string[]> {
     const rows = await this.getReservationSeatSelections(reservationId);
-    return rows.map((row) => row.seatId);
+    return rows.map((row) => row.seatKey);
   }
 
-  private async getReservationSeatSelections(reservationId: string): Promise<SeatSelection[]> {
-    return this.db
+  private async getReservationSeatSelections(reservationId: string): Promise<FloorAwareSeatSelection[]> {
+    const rows = await this.db
       .select({
         seatId: reservationSeats.seatId,
         tierName: reservationSeats.tierName,
@@ -206,13 +293,18 @@ export class ReservationService {
       })
       .from(reservationSeats)
       .where(eq(reservationSeats.reservationId, reservationId));
+
+    return rows.map((seat) => toFloorAwareSeatSelection(seat));
   }
 
-  private hasSameSeatSelections(left: SeatSelection[], right: SeatSelection[]): boolean {
+  private hasSameSeatSelections(
+    left: FloorAwareSeatSelection[],
+    right: FloorAwareSeatSelection[],
+  ): boolean {
     if (left.length !== right.length) return false;
 
     const signature = (seat: SeatSelection) => [
-      seat.seatId,
+      toFloorAwareSeatSelection(seat).seatKey,
       seat.tierName,
       seat.price,
       seat.row,
@@ -235,6 +327,40 @@ export class ReservationService {
     }
 
     return user.birthDate;
+  }
+
+  private async getShowtimeBookingContext(showtimeId: string): Promise<ShowtimeBookingContext> {
+    const [showtime] = await this.db
+      .select({
+        id: showtimes.id,
+        performanceId: showtimes.performanceId,
+        dateTime: showtimes.dateTime,
+        maxTicketsPerUser: bookingPolicies.maxTicketsPerUser,
+        changePolicyEnabled: bookingPolicies.changePolicyEnabled,
+        paymentWindowMinutes: bookingPolicies.paymentWindowMinutes,
+        seatHoldMinutes: bookingPolicies.seatHoldMinutes,
+      })
+      .from(showtimes)
+      .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, showtimes.performanceId))
+      .where(eq(showtimes.id, showtimeId));
+
+    if (!showtime) {
+      throw new NotFoundException('회차를 찾을 수 없습니다');
+    }
+
+    return {
+      id: showtime.id,
+      performanceId: showtime.performanceId,
+      dateTime: showtime.dateTime,
+      maxTicketsPerUser:
+        showtime.maxTicketsPerUser ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.maxTicketsPerUser,
+      bookingPolicy: mapPerformanceBookingPolicy({
+        maxTicketsPerUser: showtime.maxTicketsPerUser ?? undefined,
+        changePolicyEnabled: showtime.changePolicyEnabled ?? undefined,
+        paymentWindowMinutes: showtime.paymentWindowMinutes ?? undefined,
+        seatHoldMinutes: showtime.seatHoldMinutes ?? undefined,
+      }),
+    };
   }
 
   async prepareReservation(
@@ -275,19 +401,13 @@ export class ReservationService {
         throw new ConflictException('기존 예매 요청과 일치하지 않습니다. 새 주문 ID로 다시 시도해주세요.');
       }
 
-      const [existingShowtime] = await this.db
-        .select()
-        .from(showtimes)
-        .where(eq(showtimes.id, existing.showtimeId));
-
-      if (!existingShowtime) {
-        throw new NotFoundException('회차를 찾을 수 없습니다');
-      }
+      const existingShowtime = await this.getShowtimeBookingContext(existing.showtimeId);
 
       const canonicalSeats = await this.getCanonicalSeatSelections(
         dto.seats,
         existingShowtime.performanceId,
       );
+      this.assertSeatCountWithinPolicy(canonicalSeats, existingShowtime.maxTicketsPerUser);
       const expectedAmount = this.calculateSeatTotal(canonicalSeats);
       if (existing.totalAmount !== expectedAmount || dto.amount !== expectedAmount) {
         throw new ConflictException('기존 예매 요청과 일치하지 않습니다. 새 주문 ID로 다시 시도해주세요.');
@@ -298,7 +418,7 @@ export class ReservationService {
         throw new ConflictException('기존 예매 요청과 일치하지 않습니다. 새 주문 ID로 다시 시도해주세요.');
       }
 
-      const existingSeatIds = existingSeats.map((seat) => seat.seatId);
+      const existingSeatIds = existingSeats.map((seat) => seat.seatKey);
       await this.bookingService.assertOwnedSeatLocks(userId, existing.showtimeId, existingSeatIds);
 
       return {
@@ -306,23 +426,17 @@ export class ReservationService {
         orderId: dto.orderId,
         queueAdmission: dto.queueAdmission,
         paymentDeadlineAt: dto.paymentDeadlineAt,
-        bookingPolicy: dto.bookingPolicy,
+        bookingPolicy: existingShowtime.bookingPolicy,
         paymentMethod: dto.paymentMethod,
       };
     }
 
     // 2. Get showtime to determine performanceId and dateTime
-    const [showtime] = await this.db
-      .select()
-      .from(showtimes)
-      .where(eq(showtimes.id, dto.showtimeId));
-
-    if (!showtime) {
-      throw new NotFoundException('회차를 찾을 수 없습니다');
-    }
+    const showtime = await this.getShowtimeBookingContext(dto.showtimeId);
 
     // 3. Calculate expected amount from DB and canonical seat map metadata
     const canonicalSeats = await this.getCanonicalSeatSelections(dto.seats, showtime.performanceId);
+    this.assertSeatCountWithinPolicy(canonicalSeats, showtime.maxTicketsPerUser);
     const expectedAmount = this.calculateSeatTotal(canonicalSeats);
 
     if (expectedAmount !== dto.amount) {
@@ -332,7 +446,7 @@ export class ReservationService {
     await this.bookingService.assertOwnedSeatLocks(
       userId,
       dto.showtimeId,
-      canonicalSeats.map((seat) => seat.seatId),
+      canonicalSeats.map((seat) => seat.seatKey),
     );
     const userBirthDate = await this.getUserBirthDate(userId);
 
@@ -359,7 +473,7 @@ export class ReservationService {
       await tx.insert(reservationSeats).values(
         canonicalSeats.map((seat) => ({
           reservationId,
-          seatId: seat.seatId,
+          seatId: seat.seatKey,
           tierName: seat.tierName,
           price: seat.price,
           row: seat.row,
@@ -386,7 +500,7 @@ export class ReservationService {
       orderId: dto.orderId,
       queueAdmission: dto.queueAdmission,
       paymentDeadlineAt: dto.paymentDeadlineAt,
-      bookingPolicy: dto.bookingPolicy,
+      bookingPolicy: showtime.bookingPolicy,
       paymentMethod: dto.paymentMethod,
     };
   }
@@ -538,7 +652,8 @@ export class ReservationService {
       throw new BadRequestException('금액이 일치하지 않습니다');
     }
 
-    const pendingSeatIds = await this.getReservationSeatIds(reservation.id);
+    const pendingSeats = await this.getReservationSeatSelections(reservation.id);
+    const pendingSeatIds = pendingSeats.map((seat) => seat.seatKey);
     await this.bookingService.extendOwnedSeatLocks(
       userId,
       reservation.showtimeId,
@@ -612,14 +727,21 @@ export class ReservationService {
         });
 
         // Mark seats sold only when no committed sold row already exists.
-        for (const seatId of pendingSeatIds) {
+        for (const seat of pendingSeats) {
           const updated = await tx
             .update(seatInventories)
             .set({ status: 'sold', soldAt: new Date(), lockedBy: null, lockedUntil: null })
             .where(
               and(
                 eq(seatInventories.showtimeId, reservation.showtimeId),
-                eq(seatInventories.seatId, seatId),
+                eq(seatInventories.floorKey, seat.floorKey),
+                or(
+                  eq(seatInventories.seatKey, seat.seatKey),
+                  and(
+                    sql`${seatInventories.seatKey} IS NULL`,
+                    eq(seatInventories.seatId, seat.seatId),
+                  ),
+                ),
                 sql`${seatInventories.status} <> 'sold'`,
               ),
             )
@@ -631,7 +753,9 @@ export class ReservationService {
             .insert(seatInventories)
             .values({
               showtimeId: reservation.showtimeId,
-              seatId,
+              seatId: seat.seatId,
+              floorKey: seat.floorKey,
+              seatKey: seat.seatKey,
               status: 'sold',
               soldAt: new Date(),
             })
@@ -688,8 +812,13 @@ export class ReservationService {
     }
 
     // Broadcast sold status via WebSocket after the DB transaction commits.
-    for (const seatId of pendingSeatIds) {
-      this.bookingGateway.broadcastSeatUpdate(reservation.showtimeId, seatId, 'sold', userId);
+    for (const seat of pendingSeats) {
+      this.bookingGateway.broadcastSeatUpdate(
+        reservation.showtimeId,
+        seat.seatKey,
+        'sold',
+        userId,
+      );
     }
 
     return this.getReservationDetail(reservation.id, userId);
@@ -851,7 +980,7 @@ export class ReservationService {
         reentryGraceUntilAt: row.reservation.cancelDeadline?.toISOString() ?? new Date(0).toISOString(),
       },
       paymentDeadlineAt: row.reservation.cancelDeadline?.toISOString() ?? new Date(0).toISOString(),
-      bookingPolicy: makeLegacyBookingPolicy(),
+      bookingPolicy: mapPerformanceBookingPolicy(undefined, { forceCancelOnly: true }),
       refundTimeline: {
         currentState: row.reservation.status === 'CANCELLED' ? 'REQUESTED' : 'COMPLETED',
         requestedAt: row.reservation.cancelledAt?.toISOString() ?? row.reservation.createdAt?.toISOString() ?? new Date(0).toISOString(),
@@ -959,13 +1088,21 @@ export class ReservationService {
           .where(eq(reservationSeats.reservationId, reservationId));
 
         for (const seat of cancelledSeats) {
+          const seatIdentity = normalizeSeatIdentity({ seatId: seat.seatId });
           await tx
             .update(seatInventories)
             .set({ status: 'available', soldAt: null, lockedBy: null, lockedUntil: null })
             .where(
               and(
                 eq(seatInventories.showtimeId, row.showtime_id),
-                eq(seatInventories.seatId, seat.seatId),
+                eq(seatInventories.floorKey, seatIdentity.floorKey),
+                or(
+                  eq(seatInventories.seatKey, seatIdentity.seatKey),
+                  and(
+                    sql`${seatInventories.seatKey} IS NULL`,
+                    eq(seatInventories.seatId, seatIdentity.seatId),
+                  ),
+                ),
               ),
             );
         }

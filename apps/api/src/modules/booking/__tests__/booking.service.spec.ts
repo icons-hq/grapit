@@ -142,7 +142,7 @@ describe('BookingService', () => {
       expect(script).toContain('owner == ARGV[1]');
       expect(numKeys).toBe(3);
       expect(flatKeys).toContain(`{${showtimeId}}:user-seats:${userId}`);
-      expect(flatKeys).toContain(`{${showtimeId}}:seat:${seatId}`);
+      expect(flatKeys).toContain(`{${showtimeId}}:seat:1F%3AA-1`);
       expect(flatKeys).toContain(`{${showtimeId}}:locked-seats`);
 
       // Verify response shape
@@ -275,11 +275,11 @@ describe('BookingService', () => {
       expect(script).toContain('SREM');
       expect(numKeys).toBe(3);
       expect(flatKeys).toEqual([
-        `{${showtimeId}}:seat:${seatId}`,
+        `{${showtimeId}}:seat:1F%3AA-1`,
         `{${showtimeId}}:user-seats:${userId}`,
         `{${showtimeId}}:locked-seats`,
       ]);
-      expect(flatArgs).toEqual([userId, seatId]);
+      expect(flatArgs).toEqual([userId, '1F%3AA-1']);
     });
 
     it('returns false when Lua script detects different owner', async () => {
@@ -425,10 +425,10 @@ describe('BookingService', () => {
       expect(flatKeys).toEqual([
         `{${showtimeId}}:user-seats:${userId}`,
         `{${showtimeId}}:locked-seats`,
-        `{${showtimeId}}:seat:A-1`,
-        `{${showtimeId}}:seat:A-2`,
+        `{${showtimeId}}:seat:1F%3AA-1`,
+        `{${showtimeId}}:seat:1F%3AA-2`,
       ]);
-      expect(flatArgs).toEqual([userId, 'A-1', 'A-2']);
+      expect(flatArgs).toEqual([userId, '1F%3AA-1', '1F%3AA-2']);
     });
 
     it('consumeOwnedSeatLocks preserves unrelated same-showtime locks', async () => {
@@ -464,10 +464,10 @@ describe('BookingService', () => {
       expect(numKeys).toBe(3);
       expect(flatKeys).toEqual([
         `{${showtimeId}}:user-seats:${userId}`,
-        `{${showtimeId}}:seat:A-1`,
-        `{${showtimeId}}:seat:A-2`,
+        `{${showtimeId}}:seat:1F%3AA-1`,
+        `{${showtimeId}}:seat:1F%3AA-2`,
       ]);
-      expect(flatArgs).toEqual([userId, String(PAYMENT_CONFIRM_LOCK_TTL), 'A-1', 'A-2']);
+      expect(flatArgs).toEqual([userId, String(PAYMENT_CONFIRM_LOCK_TTL), '1F%3AA-1', '1F%3AA-2']);
     });
 
     it('extendOwnedSeatLocks rejects missing locks with lock-expired message', async () => {
