@@ -226,14 +226,19 @@ describe('TranslationService', () => {
       createdBy: '22222222-2222-2222-2222-222222222222',
     });
     const drafts = await service.generateDrafts(source.id);
-    await service.markReviewed(drafts[0].id, '33333333-3333-3333-3333-333333333333');
+    const reviewed = await service.markReviewed(
+      drafts[0].id,
+      '33333333-3333-3333-3333-333333333333',
+    );
+    const updatedFrom = new Date(reviewed.updatedAt.getTime() - 1_000).toISOString();
+    const updatedTo = new Date(reviewed.updatedAt.getTime() + 1_000).toISOString();
 
     const queue = await service.listQueue({
       contentType: 'performance',
       locale: 'en',
       status: 'review',
-      updatedFrom: '2026-05-05T00:00:00.000Z',
-      updatedTo: '2026-05-08T00:00:00.000Z',
+      updatedFrom,
+      updatedTo,
     });
 
     expect(queue).toHaveLength(1);

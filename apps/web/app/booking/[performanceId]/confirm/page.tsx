@@ -15,6 +15,7 @@ import { usePrepareReservation, useUnlockAllSeats, useCancelPendingReservation }
 import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
 import { useBookingStore } from '@/stores/use-booking-store';
 import { useAuthStore } from '@/stores/use-auth-store';
+import type { FloorAwareSeatSelection, SeatSelection } from '@grabit/shared';
 
 function generateOrderId(): string {
   const random = Math.random().toString(36).slice(2, 7).toUpperCase();
@@ -37,6 +38,18 @@ const BOOKING_CONSENT_KEYS = [
   'pipl_notice',
 ] as const;
 
+const LEGACY_FLOOR_KEY = 'default';
+const LEGACY_FLOOR_LABEL = '기본';
+
+function toFloorAwareSeatSelection(seat: SeatSelection): FloorAwareSeatSelection {
+  return {
+    ...seat,
+    floorKey: LEGACY_FLOOR_KEY,
+    floorLabel: LEGACY_FLOOR_LABEL,
+    seatKey: `${LEGACY_FLOOR_KEY}:${seat.seatId}`,
+  };
+}
+
 function isLockFailureMessage(message: string): boolean {
   return LOCK_FAILURE_MESSAGES.some((candidate) => candidate === message);
 }
@@ -47,7 +60,7 @@ function ConfirmPageContent() {
   const searchParams = useSearchParams();
   const performanceId = params.performanceId as string;
 
-  const { selectedSeats, performanceTitle, showDateTime, venue, posterUrl, selectedShowtimeId } =
+  const { selectedSeats, performanceTitle, showDateTime, venue, posterUrl, selectedShowtimeId, expiresAt } =
     useBookingStore();
   const user = useAuthStore((s) => s.user);
 
@@ -152,10 +165,12 @@ function ConfirmPageContent() {
     setIsProcessing(true);
     try {
       // 1. Create pending reservation on server before payment
+      const now = new Date();
+      const paymentDeadlineAt = new Date(expiresAt ?? now.getTime() + 10 * 60 * 1000).toISOString();
       const result = await prepareMutation.mutateAsync({
         orderId,
         showtimeId: selectedShowtimeId ?? '',
-        seats: selectedSeats,
+        seats: selectedSeats.map(toFloorAwareSeatSelection),
         amount: totalPrice,
         consentItems: BOOKING_CONSENT_KEYS.map((key) => ({
           key,
@@ -164,6 +179,27 @@ function ConfirmPageContent() {
           accepted: true,
           sourceFlow: 'booking' as const,
         })),
+        queueAdmission: {
+          queueSessionId: `legacy-${orderId}`,
+          admissionToken: `legacy-${orderId}`,
+          refreshFamilyId: user?.id ?? 'anonymous',
+          deviceSlotKey: user?.id ?? 'anonymous',
+          admittedAt: now.toISOString(),
+          activeUntilAt: paymentDeadlineAt,
+          reentryGraceUntilAt: paymentDeadlineAt,
+        },
+        paymentDeadlineAt,
+        bookingPolicy: {
+          maxTicketsPerOrder: 4,
+          cancellationChangePolicy: 'CANCEL_ONLY',
+          sameGradeChangeEnabled: false,
+          paymentWindowMinutes: 10,
+        },
+        paymentMethod: {
+          method: 'CARD',
+          provider: 'CARD',
+          currency: 'KRW',
+        },
       });
       reservationIdRef.current = result.reservationId;
 

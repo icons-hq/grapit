@@ -29,7 +29,9 @@ import { BookingGateway } from '../booking/booking.gateway.js';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
 import { ConsentService, type ConsentRequestMeta } from '../consent/consent.service.js';
 import type {
+  BookingPolicy,
   ConsentCaptureItem,
+  FloorAwareSeatSelection,
   SeatSelection,
   ReservationStatus,
   ReservationListItem,
@@ -39,6 +41,26 @@ import type {
   PrepareReservationResponse,
   SeatMapConfig,
 } from '@grabit/shared';
+
+const LEGACY_FLOOR_KEY = 'default';
+const LEGACY_FLOOR_LABEL = '기본';
+
+function toFloorAwareSeatSelection(seat: SeatSelection): FloorAwareSeatSelection {
+  return {
+    ...seat,
+    floorKey: LEGACY_FLOOR_KEY,
+    floorLabel: LEGACY_FLOOR_LABEL,
+    seatKey: `${LEGACY_FLOOR_KEY}:${seat.seatId}`,
+  };
+}
+
+function makeLegacyBookingPolicy(): BookingPolicy {
+  return {
+    maxTicketsPerOrder: 4,
+    cancellationChangePolicy: 'CANCEL_ONLY',
+    sameGradeChangeEnabled: false,
+  };
+}
 
 @Injectable()
 export class ReservationService {
@@ -279,7 +301,14 @@ export class ReservationService {
       const existingSeatIds = existingSeats.map((seat) => seat.seatId);
       await this.bookingService.assertOwnedSeatLocks(userId, existing.showtimeId, existingSeatIds);
 
-      return { reservationId: existing.id, orderId: dto.orderId };
+      return {
+        reservationId: existing.id,
+        orderId: dto.orderId,
+        queueAdmission: dto.queueAdmission,
+        paymentDeadlineAt: dto.paymentDeadlineAt,
+        bookingPolicy: dto.bookingPolicy,
+        paymentMethod: dto.paymentMethod,
+      };
     }
 
     // 2. Get showtime to determine performanceId and dateTime
@@ -352,7 +381,14 @@ export class ReservationService {
       return reservation!;
     });
 
-    return { reservationId: result.id, orderId: dto.orderId };
+    return {
+      reservationId: result.id,
+      orderId: dto.orderId,
+      queueAdmission: dto.queueAdmission,
+      paymentDeadlineAt: dto.paymentDeadlineAt,
+      bookingPolicy: dto.bookingPolicy,
+      paymentMethod: dto.paymentMethod,
+    };
   }
 
   private async assertBookingConsent(
@@ -722,7 +758,7 @@ export class ReservationService {
         posterUrl: row.performance.posterUrl,
         showDateTime: row.showtime.dateTime?.toISOString() ?? '',
         venue: row.venue?.name ?? '',
-        seats: seats.map((s) => ({
+        seats: seats.map((s) => toFloorAwareSeatSelection({
           seatId: s.seatId,
           tierName: s.tierName,
           price: s.price,
@@ -790,7 +826,7 @@ export class ReservationService {
       posterUrl: row.performance.posterUrl,
       showDateTime: row.showtime.dateTime?.toISOString() ?? '',
       venue: row.venue?.name ?? '',
-      seats: seats.map((s) => ({
+      seats: seats.map((s) => toFloorAwareSeatSelection({
         seatId: s.seatId,
         tierName: s.tierName,
         price: s.price,
@@ -805,6 +841,30 @@ export class ReservationService {
       cancelledAt: row.reservation.cancelledAt?.toISOString() ?? null,
       cancelReason: row.reservation.cancelReason ?? null,
       paymentKey: payment?.paymentKey ?? '',
+      queueAdmission: {
+        queueSessionId: '',
+        admissionToken: '',
+        refreshFamilyId: '',
+        deviceSlotKey: '',
+        admittedAt: row.reservation.createdAt?.toISOString() ?? new Date(0).toISOString(),
+        activeUntilAt: row.reservation.cancelDeadline?.toISOString() ?? new Date(0).toISOString(),
+        reentryGraceUntilAt: row.reservation.cancelDeadline?.toISOString() ?? new Date(0).toISOString(),
+      },
+      paymentDeadlineAt: row.reservation.cancelDeadline?.toISOString() ?? new Date(0).toISOString(),
+      bookingPolicy: makeLegacyBookingPolicy(),
+      refundTimeline: {
+        currentState: row.reservation.status === 'CANCELLED' ? 'REQUESTED' : 'COMPLETED',
+        requestedAt: row.reservation.cancelledAt?.toISOString() ?? row.reservation.createdAt?.toISOString() ?? new Date(0).toISOString(),
+        completedAt: row.reservation.cancelledAt?.toISOString() ?? null,
+        customerServiceCtaVisible: false,
+      },
+      cancelledSeatHold: null,
+      qrTicket: {
+        token: '',
+        jti: '',
+        status: row.reservation.status === 'CONFIRMED' ? 'ACTIVE' : 'REVOKED',
+        issuedAt: row.reservation.createdAt?.toISOString() ?? new Date(0).toISOString(),
+      },
     };
   }
 

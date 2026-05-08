@@ -22,6 +22,10 @@ key-files:
       packages/shared/src/schemas/booking.schema.ts,
       packages/shared/src/index.ts,
       packages/shared/src/schemas/booking.schema.test.ts,
+      apps/api/src/modules/admin/admin-booking.service.ts,
+      apps/api/src/modules/reservation/reservation.service.ts,
+      apps/web/app/booking/[performanceId]/confirm/page.tsx,
+      apps/api/src/modules/translation/translation.service.spec.ts,
     ]
 key-decisions:
   - "Legacy SeatSelection base는 유지하고 canonical booking DTO에는 FloorAwareSeatSelection을 연결해 Phase 24 contract를 선행 고정한다."
@@ -85,8 +89,18 @@ Each task was committed atomically:
 
 ---
 
-**Total deviations:** 1 auto-fixed (1 blocking)
-**Impact on plan:** The deviation was required to keep the repo’s existing shared verification target aligned with the new contract. No broader scope creep.
+**2. [Post-wave Gate] Added compatibility shims for existing booking surfaces**
+- **Found during:** Post-wave `pnpm build` / `pnpm test`
+- **Issue:** Expanding shared DTOs made existing admin/reservation/confirm call sites fail TypeScript before later Phase 24 runtime plans could adopt the new storage model. A separate translation queue test also used a fixed date range ending at `2026-05-08T00:00:00.000Z`, which became time-dependent on the current execution date.
+- **Fix:** Added legacy floor-aware seat mapping and prepare-response echo fields at existing booking boundaries, seeded temporary reservation detail Phase 24 fields, and made the translation filter test derive its date range from the reviewed draft timestamp.
+- **Files modified:** `apps/api/src/modules/admin/admin-booking.service.ts`, `apps/api/src/modules/reservation/reservation.service.ts`, `apps/web/app/booking/[performanceId]/confirm/page.tsx`, `apps/api/src/modules/translation/translation.service.spec.ts`
+- **Verification:** `pnpm build`, `pnpm test`
+- **Committed in:** `fix(24-01): keep booking contracts buildable`
+
+---
+
+**Total deviations:** 2 auto-fixed (2 blocking)
+**Impact on plan:** The post-wave compatibility shim keeps the repository buildable while later Phase 24 schema/runtime plans replace legacy defaults with persisted floor, queue, payment, refund, and QR data.
 
 ## Issues Encountered
 

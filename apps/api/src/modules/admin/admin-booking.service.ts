@@ -22,11 +22,24 @@ import { BookingGateway } from '../booking/booking.gateway.js';
 import type {
   AdminBookingListItem,
   BookingStats,
+  FloorAwareSeatSelection,
   PaymentInfo,
   PaymentStatus,
   ReservationStatus,
   SeatSelection,
 } from '@grabit/shared';
+
+const LEGACY_FLOOR_KEY = 'default';
+const LEGACY_FLOOR_LABEL = '기본';
+
+function toFloorAwareSeatSelection(seat: SeatSelection): FloorAwareSeatSelection {
+  return {
+    ...seat,
+    floorKey: LEGACY_FLOOR_KEY,
+    floorLabel: LEGACY_FLOOR_LABEL,
+    seatKey: `${LEGACY_FLOOR_KEY}:${seat.seatId}`,
+  };
+}
 
 @Injectable()
 export class AdminBookingService {
@@ -144,7 +157,7 @@ export class AdminBookingService {
         userPhone: row.user.phone,
         performanceTitle: row.performance.title,
         showDateTime: row.showtime.dateTime?.toISOString() ?? '',
-        seats: seats.map((s) => ({
+        seats: seats.map((s) => toFloorAwareSeatSelection({
           seatId: s.seatId,
           tierName: s.tierName,
           price: s.price,
@@ -212,7 +225,7 @@ export class AdminBookingService {
       userPhone: row.user.phone,
       performanceTitle: row.performance.title,
       showDateTime: row.showtime.dateTime?.toISOString() ?? '',
-      seats: seats.map((s) => ({
+      seats: seats.map((s) => toFloorAwareSeatSelection({
         seatId: s.seatId,
         tierName: s.tierName,
         price: s.price,
