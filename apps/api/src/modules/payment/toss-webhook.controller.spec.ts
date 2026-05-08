@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { GUARDS_METADATA } from '@nestjs/common/constants';
+import { IS_PUBLIC_KEY } from '../../common/decorators/public.decorator.js';
 import { PaymentWebhookController } from './payment-webhook.controller.js';
+import { TossWebhookGuard } from './toss-webhook.guard.js';
 import type {
   AsyncPaymentProgressSnapshot,
   PaymentService,
@@ -79,6 +82,21 @@ describe('PaymentWebhookController', () => {
       ...overrides,
     };
   }
+
+  it('marks the Toss webhook endpoint public while requiring provider guard authentication', () => {
+    expect(
+      Reflect.getMetadata(
+        IS_PUBLIC_KEY,
+        PaymentWebhookController.prototype.handleTossWebhook,
+      ),
+    ).toBe(true);
+    expect(
+      Reflect.getMetadata(
+        GUARDS_METADATA,
+        PaymentWebhookController.prototype.handleTossWebhook,
+      ),
+    ).toContain(TossWebhookGuard);
+  });
 
   it('acknowledges duplicate replay without re-applying an already processed event', async () => {
     paymentService.recordWebhookEvent.mockResolvedValueOnce(

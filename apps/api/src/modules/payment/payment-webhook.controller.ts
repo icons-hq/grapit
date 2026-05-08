@@ -1,11 +1,13 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Post, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
+import { Public } from '../../common/decorators/public.decorator.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import {
   type AsyncPaymentProgressSnapshot,
   PaymentService,
   type TossWebhookRequestBody,
 } from './payment.service.js';
+import { TossWebhookGuard } from './toss-webhook.guard.js';
 
 const paymentStatusPriority = {
   READY: 0,
@@ -47,6 +49,8 @@ type TossWebhookDto = z.infer<typeof tossWebhookSchema>;
 export class PaymentWebhookController {
   constructor(private readonly paymentService: PaymentService) {}
 
+  @Public()
+  @UseGuards(TossWebhookGuard)
   @Post('webhook')
   async handleTossWebhook(
     @Body(new ZodValidationPipe(tossWebhookSchema))

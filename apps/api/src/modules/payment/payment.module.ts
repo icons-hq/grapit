@@ -3,10 +3,11 @@ import { PaymentController } from './payment.controller.js';
 import { PaymentWebhookController } from './payment-webhook.controller.js';
 import { TossPaymentsClient } from './toss-payments.client.js';
 import { PaymentService } from './payment.service.js';
+import { TossWebhookGuard } from './toss-webhook.guard.js';
 
 @Module({
   controllers: [PaymentController, PaymentWebhookController],
-  providers: [TossPaymentsClient, PaymentService],
+  providers: [TossPaymentsClient, PaymentService, TossWebhookGuard],
   exports: [TossPaymentsClient, PaymentService],
 })
 export class PaymentModule {}
