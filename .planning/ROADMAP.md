@@ -117,7 +117,7 @@ Plans:
 
 **Merged from:** 30 Queue + WAF + prewarm, 31 Seat selection refinements, 32 Payment + refund + QR issuance
 
-**Plans:** 9/17 plans executed
+**Plans:** 11/17 plans executed
 
 Plans:
 **Wave 1**
@@ -140,8 +140,8 @@ Plans:
 - [x] 24-15-PLAN.md — Add the admin floor editor, multi-floor SVG preview wiring, and booking-policy controls
 
 **Wave 6**
-- [ ] 24-09-PLAN.md — Implement backend synchronous/asynchronous Toss payment branching and webhook idempotency
-- [ ] 24-16-PLAN.md — Add the floor selector, grouped booking state, and policy-aligned booking UI
+- [x] 24-09-PLAN.md — Implement backend synchronous/asynchronous Toss payment branching and webhook idempotency
+- [x] 24-16-PLAN.md — Add the floor selector, grouped booking state, and policy-aligned booking UI
 
 **Wave 7**
 - [ ] 24-10-PLAN.md — Render the payment deadline, overseas disclaimer, and localized confirm-page payment copy
