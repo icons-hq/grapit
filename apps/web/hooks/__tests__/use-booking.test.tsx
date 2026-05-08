@@ -4,7 +4,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook } from '@testing-library/react';
 import { useConfirmPayment, useLockSeat, usePrepareReservation } from '../use-booking';
 import { ApiClientError, apiClient } from '@/lib/api-client';
-import type { ConfirmPaymentRequest, PrepareReservationRequest } from '@grabit/shared';
+import { useBookingStore } from '@/stores/use-booking-store';
+import type {
+  ConfirmPaymentRequest,
+  FloorAwareSeatSelection,
+  PerformanceWithDetails,
+  PrepareReservationRequest,
+} from '@grabit/shared';
 
 const { postMock, runtimeFlagsMock, ApiClientErrorMock } = vi.hoisted(() => {
   class ApiClientError extends Error {
@@ -47,13 +53,15 @@ function createWrapper() {
     },
   });
 
-  return function Wrapper({ children }: { children: ReactNode }) {
+  function Wrapper({ children }: { children: ReactNode }) {
     return (
       <QueryClientProvider client={queryClient}>
         {children}
       </QueryClientProvider>
     );
-  };
+  }
+
+  return { Wrapper, queryClient };
 }
 
 function bookingConsentItems(): PrepareReservationRequest['consentItems'] {
@@ -73,6 +81,109 @@ function bookingConsentItems(): PrepareReservationRequest['consentItems'] {
   }));
 }
 
+function createQueueAdmission(orderId: string) {
+  const now = '2026-05-08T10:00:00.000Z';
+
+  return {
+    queueSessionId: `queue-${orderId}`,
+    admissionToken: `token-${orderId}`,
+    refreshFamilyId: 'user-1',
+    deviceSlotKey: 'device-1',
+    admittedAt: now,
+    activeUntilAt: now,
+    reentryGraceUntilAt: now,
+  };
+}
+
+function createPaymentMethod(): PrepareReservationRequest['paymentMethod'] {
+  return {
+    method: 'CARD',
+    provider: 'CARD',
+    currency: 'KRW',
+  };
+}
+
+function createFloorAwareSeat(
+  overrides: Partial<FloorAwareSeatSelection> = {},
+): FloorAwareSeatSelection {
+  const floorKey = overrides.floorKey ?? '1F';
+  const seatId = overrides.seatId ?? 'A-1';
+
+  return {
+    seatId,
+    tierName: overrides.tierName ?? 'VIP',
+    tierColor: overrides.tierColor ?? '#6C3CE0',
+    price: overrides.price ?? 50000,
+    row: overrides.row ?? 'A',
+    number: overrides.number ?? '1',
+    floorKey,
+    floorLabel: overrides.floorLabel ?? (floorKey === '2F' ? '2층' : '1층'),
+    seatKey: overrides.seatKey ?? `${floorKey}:${seatId}`,
+  };
+}
+
+function createPrepareReservationPayload(
+  overrides: Partial<PrepareReservationRequest> = {},
+): PrepareReservationRequest {
+  const orderId = overrides.orderId ?? 'GRP-LOCK-TEST';
+
+  return {
+    orderId,
+    showtimeId: overrides.showtimeId ?? 'showtime-lock-test',
+    seats: overrides.seats ?? [createFloorAwareSeat()],
+    amount: overrides.amount ?? 50000,
+    consentItems: overrides.consentItems ?? bookingConsentItems(),
+    queueAdmission: overrides.queueAdmission ?? createQueueAdmission(orderId),
+    paymentDeadlineAt: overrides.paymentDeadlineAt ?? '2026-05-08T10:10:00.000Z',
+    bookingPolicy: overrides.bookingPolicy ?? {
+      maxTicketsPerOrder: 4,
+      cancellationChangePolicy: 'CANCEL_ONLY',
+      sameGradeChangeEnabled: false,
+      paymentWindowMinutes: 10,
+    },
+    paymentMethod: overrides.paymentMethod ?? createPaymentMethod(),
+  };
+}
+
+function createPerformanceDetail(
+  overrides: Partial<PerformanceWithDetails> = {},
+): PerformanceWithDetails {
+  return {
+    id: overrides.id ?? 'performance-1',
+    title: overrides.title ?? '락 테스트 공연',
+    genre: overrides.genre ?? 'artist_celebrity',
+    subcategory: overrides.subcategory ?? null,
+    venueId: overrides.venueId ?? null,
+    posterUrl: overrides.posterUrl ?? null,
+    description: overrides.description ?? null,
+    startDate: overrides.startDate ?? '2026-07-18T00:00:00.000Z',
+    endDate: overrides.endDate ?? '2026-07-18T00:00:00.000Z',
+    runtime: overrides.runtime ?? null,
+    ageRating: overrides.ageRating ?? '전체관람가',
+    status: overrides.status ?? 'selling',
+    salesInfo: overrides.salesInfo ?? null,
+    viewCount: overrides.viewCount ?? 0,
+    createdAt: overrides.createdAt ?? '2026-05-08T00:00:00.000Z',
+    updatedAt: overrides.updatedAt ?? '2026-05-08T00:00:00.000Z',
+    venue: overrides.venue ?? null,
+    priceTiers: overrides.priceTiers ?? [],
+    showtimes: overrides.showtimes ?? [],
+    castings: overrides.castings ?? [],
+    seatMaps: overrides.seatMaps ?? [],
+    bookingPolicy: overrides.bookingPolicy ?? {
+      maxTicketsPerUser: 1,
+      allowedPaymentMethods: ['CARD'],
+      changePolicyEnabled: false,
+      paymentWindowMinutes: 7,
+      seatHoldMinutes: 10,
+      cancelledSeatHoldMinMinutes: 1,
+      cancelledSeatHoldMaxMinutes: 10,
+      manualOpenEnabled: true,
+    },
+    seatMap: overrides.seatMap ?? null,
+  };
+}
+
 describe('use-booking payment mutations', () => {
   beforeEach(() => {
     postMock.mockReset();
@@ -82,20 +193,19 @@ describe('use-booking payment mutations', () => {
       isLoading: false,
       bookingDisabledMessage: '예매는 5월말 오픈 예정입니다',
     });
+    useBookingStore.getState().resetBooking();
   });
 
   it('usePrepareReservation() calls /api/v1/reservations/prepare with payload', async () => {
-    const payload: PrepareReservationRequest = {
-      orderId: 'GRP-LOCK-TEST',
-      showtimeId: 'showtime-lock-test',
-      seats: [{ seatId: 'A-1', tierName: 'VIP', price: 50000, row: 'A', number: '1' }],
-      amount: 50000,
-      consentItems: bookingConsentItems(),
-    };
-    postMock.mockResolvedValueOnce({ reservationId: 'reservation-lock-test', orderId: payload.orderId });
+    const payload = createPrepareReservationPayload();
+    postMock.mockResolvedValueOnce({
+      reservationId: 'reservation-lock-test',
+      orderId: payload.orderId,
+    });
 
+    const { Wrapper } = createWrapper();
     const { result } = renderHook(() => usePrepareReservation(), {
-      wrapper: createWrapper(),
+      wrapper: Wrapper,
     });
 
     await expect(result.current.mutateAsync(payload)).resolves.toEqual({
@@ -121,7 +231,7 @@ describe('use-booking payment mutations', () => {
       posterUrl: null,
       showDateTime: new Date().toISOString(),
       venue: '락 테스트 극장',
-      seats: [{ seatId: 'A-1', tierName: 'VIP', price: 50000, row: 'A', number: '1' }],
+      seats: [createFloorAwareSeat()],
       totalAmount: 50000,
       createdAt: new Date().toISOString(),
       paymentMethod: 'card',
@@ -130,10 +240,29 @@ describe('use-booking payment mutations', () => {
       cancelledAt: null,
       cancelReason: null,
       paymentKey: payload.paymentKey,
+      queueAdmission: createQueueAdmission(payload.orderId),
+      paymentDeadlineAt: new Date().toISOString(),
+      bookingPolicy: {
+        maxTicketsPerOrder: 1,
+        cancellationChangePolicy: 'CANCEL_ONLY',
+        sameGradeChangeEnabled: false,
+      },
+      refundTimeline: {
+        currentState: 'REQUESTED',
+        requestedAt: new Date().toISOString(),
+        customerServiceCtaVisible: false,
+      },
+      cancelledSeatHold: null,
+      qrTicket: {
+        token: 'qr-token',
+        jti: 'qr-jti',
+        status: 'ACTIVE',
+        issuedAt: new Date().toISOString(),
+      },
     });
 
     const { result } = renderHook(() => useConfirmPayment(), {
-      wrapper: createWrapper(),
+      wrapper: createWrapper().Wrapper,
     });
 
     await result.current.mutateAsync(payload);
@@ -143,21 +272,18 @@ describe('use-booking payment mutations', () => {
   });
 
   it('keeps ApiClientError 409 lock-expired message as the mutation error', async () => {
-    const payload: PrepareReservationRequest = {
+    const payload = createPrepareReservationPayload({
       orderId: 'GRP-LOCK-EXPIRED',
-      showtimeId: 'showtime-lock-test',
-      seats: [{ seatId: 'A-1', tierName: 'VIP', price: 50000, row: 'A', number: '1' }],
-      amount: 50000,
-      consentItems: bookingConsentItems(),
-    };
+    });
     const error = new ApiClientError(
       '좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.',
       409,
     );
     postMock.mockRejectedValueOnce(error);
 
+    const { Wrapper } = createWrapper();
     const { result } = renderHook(() => usePrepareReservation(), {
-      wrapper: createWrapper(),
+      wrapper: Wrapper,
     });
 
     await expect(result.current.mutateAsync(payload)).rejects.toMatchObject({
@@ -179,7 +305,7 @@ describe('use-booking payment mutations', () => {
     postMock.mockRejectedValueOnce(error);
 
     const { result } = renderHook(() => useConfirmPayment(), {
-      wrapper: createWrapper(),
+      wrapper: createWrapper().Wrapper,
     });
 
     await expect(result.current.mutateAsync(payload)).rejects.toMatchObject({
@@ -196,7 +322,7 @@ describe('use-booking payment mutations', () => {
     });
 
     const { result } = renderHook(() => useLockSeat(), {
-      wrapper: createWrapper(),
+      wrapper: createWrapper().Wrapper,
     });
 
     await expect(
@@ -216,21 +342,123 @@ describe('use-booking payment mutations', () => {
       isLoading: false,
       bookingDisabledMessage: '예매는 5월말 오픈 예정입니다',
     });
-    const payload: PrepareReservationRequest = {
+    const payload = createPrepareReservationPayload({
       orderId: 'GRP-DISABLED-PREPARE',
       showtimeId: 'showtime-disabled',
-      seats: [{ seatId: 'A-1', tierName: 'VIP', price: 50000, row: 'A', number: '1' }],
-      amount: 50000,
-      consentItems: bookingConsentItems(),
-    };
+    });
 
     const { result } = renderHook(() => usePrepareReservation(), {
-      wrapper: createWrapper(),
+      wrapper: createWrapper().Wrapper,
     });
 
     await expect(result.current.mutateAsync(payload)).rejects.toMatchObject({
       message: '예매는 5월말 오픈 예정입니다',
     });
     expect(apiClient.post).not.toHaveBeenCalled();
+  });
+
+  it('useLockSeat() posts the floor-aware seatKey as the runtime seat id', async () => {
+    postMock.mockResolvedValueOnce({
+      success: true,
+      lockId: 'lock-2F-A-1',
+      seatId: 'A-1',
+      seatKey: '2F:A-1',
+      floorKey: '2F',
+      floorLabel: '2층',
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    });
+
+    const { result } = renderHook(() => useLockSeat(), {
+      wrapper: createWrapper().Wrapper,
+    });
+
+    await result.current.mutateAsync({
+      showtimeId: 'showtime-floor-aware',
+      seatId: 'A-1',
+      floorKey: '2F',
+      floorLabel: '2층',
+      seatKey: '2F:A-1',
+    });
+
+    expect(apiClient.post).toHaveBeenCalledWith('/api/v1/booking/seats/lock', {
+      showtimeId: 'showtime-floor-aware',
+      seatId: '2F:A-1',
+    });
+  });
+
+  it('usePrepareReservation() uses floor-aware store seats and cached event policy instead of legacy payload defaults', async () => {
+    useBookingStore.getState().setBookingData({
+      selectedSeats: [
+        createFloorAwareSeat(),
+        createFloorAwareSeat({
+          floorKey: '2F',
+          floorLabel: '2층',
+          seatKey: '2F:A-1',
+        }),
+      ],
+      showtimeId: 'showtime-floor-aware',
+      performanceId: 'performance-1',
+      performanceTitle: '락 테스트 공연',
+      showDateTime: '2026-07-18T12:00:00.000Z',
+      venue: '테스트 공연장',
+      posterUrl: null,
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    });
+
+    const { Wrapper, queryClient } = createWrapper();
+    queryClient.setQueryData(
+      ['performance', 'performance-1', 'ko'],
+      createPerformanceDetail(),
+    );
+    postMock.mockResolvedValueOnce({
+      reservationId: 'reservation-floor-aware',
+      orderId: 'GRP-FLOOR-AWARE',
+    });
+
+    const { result } = renderHook(() => usePrepareReservation(), {
+      wrapper: Wrapper,
+    });
+
+    await result.current.mutateAsync(
+      createPrepareReservationPayload({
+        orderId: 'GRP-FLOOR-AWARE',
+        showtimeId: 'showtime-floor-aware',
+        seats: [
+          createFloorAwareSeat({
+            floorKey: 'default',
+            floorLabel: '기본',
+            seatKey: 'default:A-1',
+          }),
+        ],
+        bookingPolicy: {
+          maxTicketsPerOrder: 4,
+          cancellationChangePolicy: 'CANCEL_ONLY',
+          sameGradeChangeEnabled: false,
+          paymentWindowMinutes: 10,
+        },
+      }),
+    );
+
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/api/v1/reservations/prepare',
+      expect.objectContaining({
+        seats: [
+          createFloorAwareSeat(),
+          createFloorAwareSeat({
+            floorKey: '2F',
+            floorLabel: '2층',
+            seatKey: '2F:A-1',
+          }),
+        ],
+        bookingPolicy: expect.objectContaining({
+          maxTicketsPerOrder: 1,
+          paymentWindowMinutes: 7,
+          seatHoldMinutes: 10,
+        }),
+      }),
+      {
+        showErrorToast: false,
+      },
+    );
   });
 });
