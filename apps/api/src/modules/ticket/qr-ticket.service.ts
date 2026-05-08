@@ -36,6 +36,9 @@ type TicketRecord = {
   secretVersion: string;
   status: 'active' | 'revoked' | 'used' | 'expired';
   issuedAt: Date;
+  expiresAt: Date | null;
+  usedAt: Date | null;
+  revokedAt: Date | null;
   emailScheduledAt: Date | null;
   emailSentAt: Date | null;
   emailJobId: string | null;
@@ -214,7 +217,42 @@ export class QrTicketService implements OnModuleInit {
       throw new UnauthorizedException('유효하지 않은 QR 티켓입니다');
     }
 
+    await this.requireValidTicketState(verified);
+
     return verified;
+  }
+
+  private async requireValidTicketState(
+    payload: QrTicketTokenPayload,
+  ): Promise<void> {
+    const [ticketRecord] = await this.db
+      .select(this.ticketRecordFields())
+      .from(tickets)
+      .where(
+        and(
+          eq(tickets.qrTokenJti, payload.jti),
+          eq(tickets.reservationId, payload.reservationId),
+          eq(tickets.paymentId, payload.paymentId),
+          eq(tickets.showtimeId, payload.showtimeId),
+        ),
+      );
+
+    if (!ticketRecord) {
+      throw new UnauthorizedException('유효하지 않은 QR 티켓입니다');
+    }
+
+    const isExpired =
+      ticketRecord.expiresAt instanceof Date &&
+      ticketRecord.expiresAt.getTime() <= Date.now();
+
+    if (
+      ticketRecord.status !== 'active'
+      || ticketRecord.usedAt
+      || ticketRecord.revokedAt
+      || isExpired
+    ) {
+      throw new UnauthorizedException('사용할 수 없는 QR 티켓입니다');
+    }
   }
 
   private async findTicketByReservationId(reservationId: string): Promise<TicketRecord | null> {
@@ -501,6 +539,9 @@ export class QrTicketService implements OnModuleInit {
       secretVersion: tickets.secretVersion,
       status: tickets.status,
       issuedAt: tickets.issuedAt,
+      expiresAt: tickets.expiresAt,
+      usedAt: tickets.usedAt,
+      revokedAt: tickets.revokedAt,
       emailScheduledAt: tickets.emailScheduledAt,
       emailSentAt: tickets.emailSentAt,
       emailJobId: tickets.emailJobId,

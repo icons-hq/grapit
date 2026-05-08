@@ -34,6 +34,26 @@ function createUpdateResult<T>(rows: T[]) {
   };
 }
 
+function createTicketRecord(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'ticket-1',
+    reservationId: 'reservation-1',
+    paymentId: 'payment-1',
+    showtimeId: 'showtime-1',
+    qrTokenJti: 'qr-jti-1',
+    secretVersion: '2026-07',
+    status: 'active',
+    issuedAt: new Date('2026-07-10T09:00:00.000Z'),
+    expiresAt: null,
+    usedAt: null,
+    revokedAt: null,
+    emailScheduledAt: new Date('2026-07-17T11:00:00.000Z'),
+    emailSentAt: null,
+    emailJobId: null,
+    ...overrides,
+  };
+}
+
 describe('QrTicketService', () => {
   const now = new Date('2026-07-10T09:00:00.000Z');
 
@@ -60,7 +80,8 @@ describe('QrTicketService', () => {
               showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
             },
           ]),
-        ),
+        )
+        .mockReturnValueOnce(chainResult([createTicketRecord()])),
       insert: vi.fn().mockReturnValue(
         createInsertResult([
           {
@@ -184,7 +205,21 @@ describe('QrTicketService', () => {
     );
 
     const service = new QrTicketService(
-      { select: vi.fn(), insert: vi.fn(), update: vi.fn() } as never,
+      {
+        select: vi.fn().mockReturnValue(chainResult([
+          createTicketRecord({
+            id: 'ticket-legacy',
+            reservationId: 'reservation-legacy',
+            paymentId: 'payment-legacy',
+            showtimeId: 'showtime-legacy',
+            qrTokenJti: 'qr-jti-prior',
+            secretVersion: '2026-05',
+            issuedAt: new Date('2026-05-01T00:00:00.000Z'),
+          }),
+        ])),
+        insert: vi.fn(),
+        update: vi.fn(),
+      } as never,
       configService as never,
       jwtService,
       { sendQrTicketReminderEmail: vi.fn() } as never,
@@ -201,5 +236,61 @@ describe('QrTicketService', () => {
     expect(verified.secretVersion).toBe('2026-05');
     expect(verified.jti).toBe('qr-jti-prior');
     expect(verified.paymentId).toBe('payment-legacy');
+  });
+
+  it('rejects signed QR tokens when the persisted ticket is used, revoked, or expired', async () => {
+    const configService = {
+      get: vi.fn((key: string) => {
+        if (key === 'QR_TICKET_SECRET') return 'current-secret';
+        if (key === 'QR_TICKET_SECRET_VERSION') return '2026-07';
+        if (key === 'QR_TICKET_SECRET_KEYRING_JSON') {
+          return JSON.stringify({ '2026-07': 'current-secret' });
+        }
+
+        return undefined;
+      }),
+    };
+    const jwtService = new JwtService();
+    const token = await jwtService.signAsync(
+      {
+        type: 'qr-ticket',
+        jti: 'qr-jti-1',
+        reservationId: 'reservation-1',
+        paymentId: 'payment-1',
+        showtimeId: 'showtime-1',
+        secretVersion: '2026-07',
+        issuedAt: now.toISOString(),
+      },
+      {
+        secret: 'current-secret',
+        algorithm: 'HS256',
+        noTimestamp: true,
+      },
+    );
+
+    const invalidRows = [
+      createTicketRecord({ status: 'revoked' }),
+      createTicketRecord({ usedAt: new Date('2026-07-10T09:00:00.000Z') }),
+      createTicketRecord({ expiresAt: new Date('2026-07-10T08:59:59.000Z') }),
+    ];
+
+    for (const ticketRecord of invalidRows) {
+      const service = new QrTicketService(
+        { select: vi.fn().mockReturnValue(chainResult([ticketRecord])) } as never,
+        configService as never,
+        jwtService,
+        { sendQrTicketReminderEmail: vi.fn() } as never,
+        {
+          isAvailable: false,
+          send: vi.fn(),
+          work: vi.fn(),
+          stop: vi.fn(),
+        } as never,
+      );
+
+      await expect(service.verifyTicketToken(token)).rejects.toThrow(
+        '사용할 수 없는 QR 티켓입니다',
+      );
+    }
   });
 });
