@@ -117,7 +117,7 @@ Plans:
 
 **Merged from:** 30 Queue + WAF + prewarm, 31 Seat selection refinements, 32 Payment + refund + QR issuance
 
-**Plans:** 3/17 plans executed
+**Plans:** 6/17 plans executed
 
 Plans:
 **Wave 1**
@@ -130,9 +130,9 @@ Plans:
 - [x] 24-03-PLAN.md — Run the blocking Phase 24 Drizzle generate/migrate gate
 
 **Wave 4**
-- [ ] 24-04-PLAN.md — Implement the admission queue module and API-side mutation guard
-- [ ] 24-05-PLAN.md — Implement traffic-defense decisions, protected prewarm control path, and operator runbook
-- [ ] 24-06-PLAN.md — Expose multi-floor performance/admin contracts and persistence without UI editor coupling
+- [x] 24-04-PLAN.md — Implement the admission queue module and API-side mutation guard
+- [x] 24-05-PLAN.md — Implement traffic-defense decisions, protected prewarm control path, and operator runbook
+- [x] 24-06-PLAN.md — Expose multi-floor performance/admin contracts and persistence without UI editor coupling
 
 **Wave 5**
 - [ ] 24-07-PLAN.md — Enforce floor-aware booking runtime and policy semantics on the backend
