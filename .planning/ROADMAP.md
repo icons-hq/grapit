@@ -117,7 +117,7 @@ Plans:
 
 **Merged from:** 30 Queue + WAF + prewarm, 31 Seat selection refinements, 32 Payment + refund + QR issuance
 
-**Plans:** 11/17 plans executed
+**Plans:** 13/17 plans executed
 
 Plans:
 **Wave 1**
@@ -144,8 +144,8 @@ Plans:
 - [x] 24-16-PLAN.md — Add the floor selector, grouped booking state, and policy-aligned booking UI
 
 **Wave 7**
-- [ ] 24-10-PLAN.md — Render the payment deadline, overseas disclaimer, and localized confirm-page payment copy
-- [ ] 24-11-PLAN.md — Implement refund state orchestration and delayed cancelled-seat release jobs
+- [x] 24-10-PLAN.md — Render the payment deadline, overseas disclaimer, and localized confirm-page payment copy
+- [x] 24-11-PLAN.md — Implement refund state orchestration and delayed cancelled-seat release jobs
 
 **Wave 8**
 - [ ] 24-12-PLAN.md — Implement the admin manual-open exception path
