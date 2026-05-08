@@ -389,6 +389,7 @@ export class PaymentService {
       throw new ConflictException('결제 정보가 예매와 일치하지 않습니다');
     }
 
+    const isConfirmedDoneReplay = reservation.status === 'CONFIRMED' && !!existingPayment;
     const pendingSeats = await this.getReservationSeatSelections(reservation.id);
     const paidAt = payload.data.approvedAt
       ? new Date(payload.data.approvedAt)
@@ -474,6 +475,10 @@ export class PaymentService {
           .returning({ id: seatInventories.id });
 
         if (inserted.length === 0) {
+          if (isConfirmedDoneReplay) {
+            continue;
+          }
+
           throw new ConflictException('이미 판매된 좌석입니다');
         }
       }

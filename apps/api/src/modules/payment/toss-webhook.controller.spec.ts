@@ -165,6 +165,39 @@ describe('PaymentWebhookController', () => {
     );
   });
 
+  it('re-applies DONE webhook replay when post-commit side effects previously failed', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(
+      makeLedgerResult({
+        state: 'duplicate-pending',
+        processingResultCode: 'PROCESSING_FAILED',
+      }),
+    );
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(
+      makeProgress({
+        reservationStatus: 'CONFIRMED',
+        paymentStatus: 'DONE',
+      }),
+    );
+
+    const result = await controller.handleTossWebhook(paymentStatusChangedEvent);
+
+    expect(result).toEqual({
+      acknowledged: true,
+      duplicate: false,
+      processingResultCode: 'PAYMENT_STATUS_CHANGED_DONE_APPLIED',
+    });
+    expect(paymentService.upsertAsyncPaymentProgress).toHaveBeenCalledWith(
+      paymentStatusChangedEvent,
+      'DONE',
+      'payment_status_changed:done',
+    );
+    expect(paymentService.markWebhookEventProcessed).toHaveBeenCalledWith(
+      'evt-payment-done-1',
+      'PAYMENT_STATUS_CHANGED_DONE_APPLIED',
+      undefined,
+    );
+  });
+
   it('applies cancel webhook once and marks the ledger row processed', async () => {
     paymentService.recordWebhookEvent.mockResolvedValueOnce(
       makeLedgerResult({

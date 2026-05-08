@@ -348,5 +348,75 @@ describe('PaymentService', () => {
       expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
       expect(mockQrTicketService.ensureIssuedTicketForReservation).not.toHaveBeenCalled();
     });
+
+    it('retries QR issuance for already confirmed async DONE webhook replays', async () => {
+      const reservationId = randomUUID();
+      const showtimeId = randomUUID();
+      const userId = randomUUID();
+      const paymentId = randomUUID();
+      const tx = {
+        update: vi.fn(),
+        insert: vi.fn(),
+      };
+      const updateReservation = createMutationChain();
+      const updatePayment = createMutationChain();
+      const updateSoldSeat = createMutationChain([]);
+      const insertSoldSeat = createMutationChain([]);
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          userId,
+          showtimeId,
+          status: 'CONFIRMED',
+          totalAmount: 150000,
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: paymentId,
+          reservationId,
+        }]))
+        .mockReturnValueOnce(createSelectChain([
+          { seatId: '1F:A-1' },
+        ]));
+      mockDb.transaction.mockImplementation(async (callback: (txArg: typeof tx) => Promise<void>) => {
+        await callback(tx);
+      });
+      tx.update
+        .mockReturnValueOnce(updateReservation)
+        .mockReturnValueOnce(updatePayment)
+        .mockReturnValueOnce(updateSoldSeat);
+      tx.insert.mockReturnValueOnce(insertSoldSeat);
+
+      await service.upsertAsyncPaymentProgress(
+        {
+          eventId: 'evt-payment-done-retry',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_async_done',
+            orderId: 'GRP-ASYNC-DONE',
+            status: 'DONE',
+            method: 'FOREIGN_EASY_PAY',
+            provider: 'ALIPAY_PLUS',
+            currency: 'USD',
+            totalAmount: 150000,
+            approvedAt: '2026-05-08T08:00:00.000Z',
+          },
+        },
+        'DONE',
+        'payment_status_changed:done',
+      );
+
+      expect(insertSoldSeat.onConflictDoNothing).toHaveBeenCalled();
+      expect(mockQrTicketService.ensureIssuedTicketForReservation).toHaveBeenCalledWith({
+        reservationId,
+        paymentId,
+      });
+      expect(mockBookingGateway.broadcastSeatUpdate).toHaveBeenCalledWith(
+        showtimeId,
+        '1F:A-1',
+        'sold',
+        userId,
+      );
+    });
   });
 });

@@ -179,7 +179,10 @@ export class PaymentWebhookController {
     if (
       incomingStatus === 'DONE'
       && progress.paymentStatus === 'DONE'
-      && progress.reservationStatus === 'PENDING_PAYMENT'
+      && (
+        progress.reservationStatus === 'PENDING_PAYMENT'
+        || progress.reservationStatus === 'CONFIRMED'
+      )
     ) {
       return false;
     }
