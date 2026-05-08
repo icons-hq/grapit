@@ -1,4 +1,25 @@
 import { expect, test, type Route } from '@playwright/test';
+import { readFileSync } from 'node:fs';
+
+const koMessages = JSON.parse(
+  readFileSync(new URL('../messages/ko.json', import.meta.url), 'utf8'),
+) as {
+  booking: {
+    queue: {
+      metrics: {
+        position: string;
+        eta: string;
+        remainingSeats: string;
+      };
+      status: {
+        waiting: { title: string };
+        retry: { title: string };
+        challenge: { title: string };
+        blocked: { title: string };
+      };
+    };
+  };
+};
 
 const waitingSnapshot = {
   queueSessionId: 'queue-session-waiting',
@@ -13,24 +34,26 @@ const waitingSnapshot = {
   reentryGraceUntilAt: null,
 };
 
+const queuePerformanceId = '00000000-0000-4000-8000-000000000023';
+
 const failureCases = [
   {
     name: 'retry',
     status: 429,
     message: 'TRAFFIC_RATE_LIMITED',
-    expectedHeading: 'Too many requests. Please try again shortly',
+    expectedHeading: koMessages.booking.queue.status.retry.title,
   },
   {
     name: 'challenge',
     status: 403,
     message: 'SECURITY_CHALLENGE_REQUIRED',
-    expectedHeading: 'Complete the security check and try again',
+    expectedHeading: koMessages.booking.queue.status.challenge.title,
   },
   {
     name: 'blocked',
     status: 403,
     message: 'SECURITY_BLOCKED',
-    expectedHeading: 'Your request was blocked because of unusual activity',
+    expectedHeading: koMessages.booking.queue.status.blocked.title,
   },
 ] as const;
 
@@ -58,16 +81,21 @@ test.describe('booking queue route', () => {
       },
     );
 
-    await page.goto('/en/booking/e2e-queue-performance');
+    await page.goto(`/booking/${queuePerformanceId}`);
+    await page.waitForFunction(() => document.body.innerText.includes('12'));
 
     await expect(
-      page.getByRole('heading', {
-        name: 'You are waiting in the booking queue',
-      }),
+      page.getByText(koMessages.booking.queue.status.waiting.title).first(),
     ).toBeVisible();
-    await expect(page.getByText('Current position')).toBeVisible();
-    await expect(page.getByText('Estimated wait')).toBeVisible();
-    await expect(page.getByText('Remaining seats')).toBeVisible();
+    await expect(
+      page.getByText(koMessages.booking.queue.metrics.position),
+    ).toBeVisible();
+    await expect(
+      page.getByText(koMessages.booking.queue.metrics.eta),
+    ).toBeVisible();
+    await expect(
+      page.getByText(koMessages.booking.queue.metrics.remainingSeats),
+    ).toBeVisible();
     await expect(page.getByText('12')).toBeVisible();
   });
 
@@ -85,12 +113,14 @@ test.describe('booking queue route', () => {
         },
       );
 
-      await page.goto('/en/booking/e2e-queue-performance');
+      await page.goto(`/booking/${queuePerformanceId}`);
+      await page.waitForFunction(
+        (expectedTitle) => document.body.innerText.includes(expectedTitle),
+        failureCase.expectedHeading,
+      );
 
       await expect(
-        page.getByRole('heading', {
-          name: failureCase.expectedHeading,
-        }),
+        page.getByText(failureCase.expectedHeading).first(),
       ).toBeVisible();
     });
   }
@@ -98,14 +128,7 @@ test.describe('booking queue route', () => {
 
 async function stubAnonymousAuth(page: import('@playwright/test').Page) {
   await page.route('**/api/v1/auth/refresh', async (route: Route) => {
-    await route.fulfill({
-      status: 401,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        statusCode: 401,
-        message: 'Unauthorized',
-      }),
-    });
+    await route.fulfill({ status: 204, body: '' });
   });
 }
 

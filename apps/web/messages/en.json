@@ -69,7 +69,65 @@
     "bookCta": "Book tickets"
   },
   "booking": {
-    "disabled": "Ticket booking opens in late May"
+    "disabled": "Ticket booking opens in late May",
+    "queue": {
+      "status": {
+        "loading": {
+          "badge": "Checking queue",
+          "title": "You are waiting in the booking queue",
+          "description": "We are loading your position, ETA, and remaining seats.",
+          "helper": "Queue details refresh automatically in a moment."
+        },
+        "waiting": {
+          "badge": "Waiting",
+          "title": "You are waiting in the booking queue",
+          "description": "When your turn arrives, the booking screen opens automatically.",
+          "helper": "Your position, ETA, and remaining seats refresh automatically."
+        },
+        "admitted": {
+          "badge": "Ready to enter",
+          "title": "Your turn is ready. Entering the booking screen",
+          "description": "If automatic entry does not start, use the button below to continue.",
+          "helper": "As soon as entry is granted, live seat updates and the timer appear."
+        },
+        "expired": {
+          "badge": "Entry expired",
+          "title": "Your entry window expired. Returning you to the queue",
+          "description": "Rejoin the queue to receive a fresh admission window.",
+          "helper": "After rejoining, you can still see position, ETA, and remaining seats."
+        },
+        "retry": {
+          "badge": "Try again shortly",
+          "title": "Too many requests. Please try again shortly",
+          "description": "Wait a moment and retry to refresh your queue status.",
+          "helper": "Repeated rapid requests will not speed up entry."
+        },
+        "challenge": {
+          "badge": "Security check",
+          "title": "Complete the security check and try again",
+          "description": "We detected unusual traffic and need an extra verification step.",
+          "helper": "Refresh the page or try again after completing the security check."
+        },
+        "blocked": {
+          "badge": "Request blocked",
+          "title": "Your request was blocked because of unusual activity",
+          "description": "Repeated abnormal requests prevented booking entry on this browser.",
+          "helper": "If the block continues, wait a while and contact support."
+        }
+      },
+      "metrics": {
+        "position": "Current position",
+        "eta": "Estimated wait",
+        "remainingSeats": "Remaining seats",
+        "ready": "Ready to enter",
+        "soon": "Soon"
+      },
+      "infoLabel": "Queue details",
+      "autoEnterInfo": "Once admission is granted, the route opens the seat selection screen automatically.",
+      "safetyInfo": "Only position, ETA, and remaining seats are shown here. Internal admission tokens stay hidden.",
+      "retryAction": "Try again",
+      "enterNowAction": "Enter now"
+    }
   },
   "locale": {
     "suggestion": "View this page in English?"

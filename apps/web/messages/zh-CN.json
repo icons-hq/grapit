@@ -69,7 +69,65 @@
     "bookCta": "预订门票"
   },
   "booking": {
-    "disabled": "门票预订预计于5月下旬开放"
+    "disabled": "门票预订预计于5月下旬开放",
+    "queue": {
+      "status": {
+        "loading": {
+          "badge": "正在检查队列",
+          "title": "您正在票务排队中等待进入",
+          "description": "正在加载您的排位、预计等待时间和剩余座位数。",
+          "helper": "队列信息会在稍后自动刷新。"
+        },
+        "waiting": {
+          "badge": "等待中",
+          "title": "您正在票务排队中等待进入",
+          "description": "轮到您时，预订页面会自动打开。",
+          "helper": "您的排位、预计等待时间和剩余座位数会自动更新。"
+        },
+        "admitted": {
+          "badge": "准备进入",
+          "title": "轮到您了，正在进入预订页面",
+          "description": "如果没有自动进入，请使用下方按钮继续。",
+          "helper": "获得进入权限后，系统会立即显示实时座位状态和计时器。"
+        },
+        "expired": {
+          "badge": "入场已过期",
+          "title": "您的入场时间已过期，正在返回队列",
+          "description": "请重新进入队列以获得新的入场时间窗口。",
+          "helper": "重新排队后，您仍可查看排位、预计等待时间和剩余座位数。"
+        },
+        "retry": {
+          "badge": "请稍后重试",
+          "title": "请求过多，请稍后再试",
+          "description": "稍等片刻后重试，即可刷新当前队列状态。",
+          "helper": "短时间内反复请求不会让您更快进入。"
+        },
+        "challenge": {
+          "badge": "安全验证",
+          "title": "请完成安全验证后再试",
+          "description": "我们检测到异常流量，需要额外的验证步骤。",
+          "helper": "完成安全验证后，请刷新页面或再次尝试。"
+        },
+        "blocked": {
+          "badge": "请求被阻止",
+          "title": "由于异常活动，您的请求已被阻止",
+          "description": "此浏览器出现重复异常请求，因此已限制进入预订流程。",
+          "helper": "如果仍被阻止，请稍后重试并联系客户支持。"
+        }
+      },
+      "metrics": {
+        "position": "当前排位",
+        "eta": "预计等待时间",
+        "remainingSeats": "剩余座位",
+        "ready": "可进入",
+        "soon": "即将进入"
+      },
+      "infoLabel": "队列详情",
+      "autoEnterInfo": "一旦获得入场资格，系统会自动打开座位选择页面。",
+      "safetyInfo": "这里只显示排位、预计等待时间和剩余座位数，内部 admission token 不会暴露。",
+      "retryAction": "重试",
+      "enterNowAction": "立即进入"
+    }
   },
   "locale": {
     "suggestion": "要以简体中文查看此页面吗？"

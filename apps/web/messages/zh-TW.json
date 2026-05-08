@@ -69,7 +69,65 @@
     "bookCta": "預訂門票"
   },
   "booking": {
-    "disabled": "門票預訂預計於5月下旬開放"
+    "disabled": "門票預訂預計於5月下旬開放",
+    "queue": {
+      "status": {
+        "loading": {
+          "badge": "正在檢查隊列",
+          "title": "您正在票券排隊中等待進入",
+          "description": "正在載入您的排位、預估等待時間與剩餘座位數。",
+          "helper": "隊列資訊會稍後自動更新。"
+        },
+        "waiting": {
+          "badge": "等待中",
+          "title": "您正在票券排隊中等待進入",
+          "description": "輪到您時，預訂頁面會自動開啟。",
+          "helper": "您的排位、預估等待時間與剩餘座位數會自動更新。"
+        },
+        "admitted": {
+          "badge": "準備進入",
+          "title": "輪到您了，正在進入預訂頁面",
+          "description": "如果沒有自動進入，請使用下方按鈕繼續。",
+          "helper": "取得入場資格後，系統會立刻顯示即時座位狀態與計時器。"
+        },
+        "expired": {
+          "badge": "入場已過期",
+          "title": "您的入場時間已過期，正在返回隊列",
+          "description": "請重新加入隊列以取得新的入場時段。",
+          "helper": "重新排隊後，您仍可查看排位、預估等待時間與剩餘座位數。"
+        },
+        "retry": {
+          "badge": "請稍後重試",
+          "title": "請求過多，請稍後再試",
+          "description": "稍候再重試即可更新目前的隊列狀態。",
+          "helper": "短時間內反覆送出請求不會讓您更快進入。"
+        },
+        "challenge": {
+          "badge": "安全驗證",
+          "title": "請完成安全驗證後再試",
+          "description": "我們偵測到異常流量，需要額外的驗證步驟。",
+          "helper": "完成安全驗證後，請重新整理頁面或再次嘗試。"
+        },
+        "blocked": {
+          "badge": "請求已封鎖",
+          "title": "由於異常活動，您的請求已被封鎖",
+          "description": "此瀏覽器出現重複異常請求，因此已限制進入預訂流程。",
+          "helper": "如果仍然被封鎖，請稍後再試並聯絡客服。"
+        }
+      },
+      "metrics": {
+        "position": "目前排位",
+        "eta": "預估等待時間",
+        "remainingSeats": "剩餘座位",
+        "ready": "可進入",
+        "soon": "即將進入"
+      },
+      "infoLabel": "隊列詳情",
+      "autoEnterInfo": "一旦取得入場資格，系統會自動開啟座位選擇頁面。",
+      "safetyInfo": "這裡只顯示排位、預估等待時間與剩餘座位數，內部 admission token 不會曝光。",
+      "retryAction": "重試",
+      "enterNowAction": "立即進入"
+    }
   },
   "locale": {
     "suggestion": "要以繁體中文查看此頁面嗎？"
