@@ -127,6 +127,32 @@
       "safetyInfo": "这里只显示排位、预计等待时间和剩余座位数，内部 admission token 不会暴露。",
       "retryAction": "重试",
       "enterNowAction": "立即进入"
+    },
+    "paymentDeadline": {
+      "badge": "支付时限",
+      "title": "请在 7 分钟内完成支付",
+      "helper": "剩余时间少于或等于 {threshold} 时，将进入紧急状态。",
+      "criticalHelper": "剩余时间少于或等于 {threshold}。请立即完成银行卡或海外钱包认证。",
+      "seatHoldHelper": "座位锁定将在 {time} 后到期"
+    },
+    "paymentDisclaimer": {
+      "title": "海外支付提示",
+      "description": "使用海外银行卡、Alipay+ 或 TrueMoney 前，请先确认以下说明。",
+      "krwPrimary": "实际扣款将以 KRW 为主币种处理。",
+      "fxHelper": "页面展示的汇率预估和卡组织或钱包手续费仅供参考，实际扣款时可能不同。",
+      "refundDelay": "海外支付的取消或退款，可能需要更长时间才会显示在银行卡或钱包账单中。",
+      "checkboxLabel": "我已同意海外支付及退款注意事项",
+      "ctaPending": "需要同意海外支付说明",
+      "payNow": "立即支付"
+    },
+    "paymentRecovery": {
+      "expiredTitle": "支付时间已到期",
+      "expiredBody": "请重新选择座位后再发起新的支付。",
+      "expiredCta": "支付时间已到期",
+      "reselectCta": "重新选择座位",
+      "reselectPrompt": "请重新选择座位",
+      "pendingTitle": "正在等待海外支付认证完成",
+      "pendingBody": "钱包服务商完成认证后，您可以继续查询同一笔订单的状态。"
     }
   },
   "locale": {

@@ -127,6 +127,32 @@
       "safetyInfo": "Only position, ETA, and remaining seats are shown here. Internal admission tokens stay hidden.",
       "retryAction": "Try again",
       "enterNowAction": "Enter now"
+    },
+    "paymentDeadline": {
+      "badge": "Payment deadline",
+      "title": "Complete payment within 7 minutes",
+      "helper": "{threshold} or less switches the payment state to critical.",
+      "criticalHelper": "{threshold} or less remaining. Finish card or overseas wallet verification now.",
+      "seatHoldHelper": "Seat hold expires in {time}"
+    },
+    "paymentDisclaimer": {
+      "title": "Overseas payment notice",
+      "description": "Review this notice before using an overseas card, Alipay+, or TrueMoney.",
+      "krwPrimary": "The primary charge is processed in KRW.",
+      "fxHelper": "The displayed FX estimate and card or wallet fees are informational and may differ at the actual charge time.",
+      "refundDelay": "Refunds for overseas payments may take extra time to appear on the card or wallet statement.",
+      "checkboxLabel": "I agree to the overseas payment and refund notice",
+      "ctaPending": "Overseas payment consent is required",
+      "payNow": "Pay now"
+    },
+    "paymentRecovery": {
+      "expiredTitle": "The payment time has expired",
+      "expiredBody": "Choose your seats again and start a new payment attempt.",
+      "expiredCta": "Payment time expired",
+      "reselectCta": "Choose seats again",
+      "reselectPrompt": "Please choose your seats again",
+      "pendingTitle": "Waiting for overseas payment authorization",
+      "pendingBody": "Once the wallet provider finishes authorization, you can resume the same order status check."
     }
   },
   "locale": {

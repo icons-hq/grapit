@@ -127,6 +127,32 @@
       "safetyInfo": "대기열 순번, 예상 시간, 남은 좌석 수만 노출되며 내부 인증 정보는 표시되지 않습니다.",
       "retryAction": "다시 시도",
       "enterNowAction": "지금 입장하기"
+    },
+    "paymentDeadline": {
+      "badge": "결제 가능 시간",
+      "title": "지금부터 7분 안에 결제를 완료해주세요",
+      "helper": "{threshold} 이하가 되면 결제 마감 상태로 전환됩니다.",
+      "criticalHelper": "{threshold} 이하로 남았습니다. 카드 인증과 해외 결제 인증을 바로 완료해주세요.",
+      "seatHoldHelper": "좌석 점유 만료 {time}"
+    },
+    "paymentDisclaimer": {
+      "title": "해외 결제 안내",
+      "description": "해외 카드, Alipay+, TrueMoney 결제 전 아래 내용을 확인해주세요.",
+      "krwPrimary": "결제 금액은 KRW 기준으로 청구됩니다.",
+      "fxHelper": "예상 환율과 카드사/지갑사 수수료는 참고용이며 실제 청구 시점에 달라질 수 있습니다.",
+      "refundDelay": "해외 결제 취소/환불은 카드사 또는 지갑사 반영까지 추가 시간이 걸릴 수 있습니다.",
+      "checkboxLabel": "해외 결제 및 환불 유의사항에 동의합니다",
+      "ctaPending": "해외 결제 동의가 필요합니다",
+      "payNow": "결제하기"
+    },
+    "paymentRecovery": {
+      "expiredTitle": "결제 가능 시간이 만료되었습니다",
+      "expiredBody": "좌석을 다시 선택한 뒤 새 결제를 시작해주세요.",
+      "expiredCta": "결제 시간이 만료되었습니다",
+      "reselectCta": "좌석 다시 선택하기",
+      "reselectPrompt": "좌석을 다시 선택해주세요",
+      "pendingTitle": "해외 결제 인증을 기다리고 있습니다",
+      "pendingBody": "지갑사 인증이 끝나면 같은 주문으로 예매 상태를 다시 확인할 수 있습니다."
     }
   },
   "locale": {

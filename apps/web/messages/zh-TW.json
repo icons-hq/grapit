@@ -127,6 +127,32 @@
       "safetyInfo": "這裡只顯示排位、預估等待時間與剩餘座位數，內部 admission token 不會曝光。",
       "retryAction": "重試",
       "enterNowAction": "立即進入"
+    },
+    "paymentDeadline": {
+      "badge": "付款時限",
+      "title": "請在 7 分鐘內完成付款",
+      "helper": "剩餘時間少於或等於 {threshold} 時，將進入緊急狀態。",
+      "criticalHelper": "剩餘時間少於或等於 {threshold}。請立即完成信用卡或海外錢包驗證。",
+      "seatHoldHelper": "座位保留將於 {time} 後到期"
+    },
+    "paymentDisclaimer": {
+      "title": "海外付款提醒",
+      "description": "使用海外信用卡、Alipay+ 或 TrueMoney 前，請先確認以下說明。",
+      "krwPrimary": "實際扣款將以 KRW 為主要計價幣別。",
+      "fxHelper": "頁面顯示的匯率預估與卡組織或錢包手續費僅供參考，實際扣款時可能不同。",
+      "refundDelay": "海外付款的取消或退款，可能需要較長時間才會顯示在信用卡或錢包帳單上。",
+      "checkboxLabel": "我已同意海外付款及退款注意事項",
+      "ctaPending": "需要同意海外付款說明",
+      "payNow": "立即付款"
+    },
+    "paymentRecovery": {
+      "expiredTitle": "付款時間已到期",
+      "expiredBody": "請重新選擇座位後再開始新的付款流程。",
+      "expiredCta": "付款時間已到期",
+      "reselectCta": "重新選擇座位",
+      "reselectPrompt": "請重新選擇座位",
+      "pendingTitle": "正在等待海外付款授權完成",
+      "pendingBody": "當錢包服務商完成授權後，您可以繼續確認同一筆訂單的狀態。"
     }
   },
   "locale": {
