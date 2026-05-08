@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { BadRequestException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import type { PaymentMethod } from '@grabit/shared';
 import { PaymentService } from './payment.service.js';
 
 function createMockDb() {
@@ -59,6 +60,111 @@ describe('PaymentService', () => {
 
       const result = await service.getPaymentByReservationId(reservationId);
       expect(result).toBeNull();
+    });
+  });
+
+  describe('prepareTossPaymentBranch', () => {
+    function createPaymentMethod(
+      overrides: Partial<PaymentMethod> = {},
+    ): PaymentMethod {
+      return {
+        method: 'CARD',
+        provider: 'CARD',
+        currency: 'KRW',
+        ...overrides,
+      };
+    }
+
+    it('keeps domestic card on the synchronous confirm branch', () => {
+      const branch = service.prepareTossPaymentBranch({
+        orderId: 'GRP-DOMESTIC-CARD',
+        paymentMethod: createPaymentMethod(),
+        successUrl: 'https://grabit.test/booking/perf-1/complete',
+        failUrl: 'https://grabit.test/booking/perf-1/confirm?error=true',
+      });
+
+      expect(branch).toMatchObject({
+        orderId: 'GRP-DOMESTIC-CARD',
+        method: 'CARD',
+        provider: 'CARD',
+        currency: 'KRW',
+        asyncStatus: 'sync',
+      });
+      expect(branch.useInternationalCardOnly).toBe(false);
+      expect(branch.pendingUrl).toBeUndefined();
+    });
+
+    it('routes overseas card through CARD with useInternationalCardOnly=true', () => {
+      const branch = service.prepareTossPaymentBranch({
+        orderId: 'GRP-FOREIGN-CARD',
+        paymentMethod: createPaymentMethod({
+          currency: 'USD',
+          overseasPaymentConsent: {
+            required: true,
+            agreed: true,
+            agreementVersion: '2026-05-08',
+          },
+        }),
+        successUrl: 'https://grabit.test/booking/perf-1/complete',
+        failUrl: 'https://grabit.test/booking/perf-1/confirm?error=true',
+      });
+
+      expect(branch).toMatchObject({
+        orderId: 'GRP-FOREIGN-CARD',
+        method: 'CARD',
+        provider: 'CARD',
+        currency: 'KRW',
+        asyncStatus: 'sync',
+        useInternationalCardOnly: true,
+      });
+      expect(branch.pendingUrl).toBeUndefined();
+    });
+
+    it('routes foreign easy-pay through pendingUrl + async webhook tracking', () => {
+      const branch = service.prepareTossPaymentBranch({
+        orderId: 'GRP-ALIPAY',
+        paymentMethod: createPaymentMethod({
+          method: 'FOREIGN_EASY_PAY',
+          provider: 'ALIPAY_PLUS',
+          currency: 'USD',
+          pendingUrlRequired: true,
+          overseasPaymentConsent: {
+            required: true,
+            agreed: true,
+            agreementVersion: '2026-05-08',
+          },
+        }),
+        successUrl: 'https://grabit.test/booking/perf-1/complete',
+        failUrl: 'https://grabit.test/booking/perf-1/confirm?error=true',
+        pendingUrl: 'https://grabit.test/booking/perf-1/pending?orderId=GRP-ALIPAY',
+      });
+
+      expect(branch).toMatchObject({
+        orderId: 'GRP-ALIPAY',
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'ALIPAY_PLUS',
+        currency: 'USD',
+        asyncStatus: 'pending_webhook',
+        pendingUrl:
+          'https://grabit.test/booking/perf-1/pending?orderId=GRP-ALIPAY',
+      });
+      expect(branch.useInternationalCardOnly).toBe(false);
+    });
+
+    it('rejects foreign easy-pay when pendingUrl is missing', () => {
+      expect(() =>
+        service.prepareTossPaymentBranch({
+          orderId: 'GRP-NO-PENDING',
+          paymentMethod: createPaymentMethod({
+            method: 'FOREIGN_EASY_PAY',
+            provider: 'TRUEMONEY',
+            currency: 'THB',
+            pendingUrlRequired: true,
+          }),
+          successUrl: 'https://grabit.test/booking/perf-1/complete',
+          failUrl: 'https://grabit.test/booking/perf-1/confirm?error=true',
+        }),
+      ).toThrow(new BadRequestException('FOREIGN_EASY_PAY 결제는 pendingUrl이 필요합니다'));
     });
   });
 });
