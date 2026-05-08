@@ -1477,6 +1477,78 @@ describe('ReservationService', () => {
       expect(mockTossClient.confirmPayment).not.toHaveBeenCalled();
     });
 
+    it('rejects pre-existing DONE payment when stored amount does not match the reservation', async () => {
+      mockDb.select
+        .mockReturnValueOnce(chainResult([{
+          id: 'payment-existing',
+          reservationId,
+          tossOrderId: orderId,
+          paymentKey: 'pay_async_1',
+          method: 'FOREIGN_EASY_PAY',
+          provider: 'ALIPAY_PLUS',
+          currency: 'USD',
+          amount: 149000,
+          status: 'DONE',
+          paidAt: new Date('2026-05-08T07:06:30.000Z'),
+        }]))
+        .mockReturnValueOnce(chainResult([{
+          id: reservationId,
+          userId,
+          showtimeId,
+          tossOrderId: orderId,
+          status: 'PENDING_PAYMENT',
+          totalAmount: 150000,
+          paymentDeadlineAt: new Date('2099-05-08T07:07:00.000Z'),
+          admissionActiveUntilAt: new Date('2099-05-08T07:10:00.000Z'),
+          reentryGraceUntilAt: new Date('2099-05-08T07:13:00.000Z'),
+        }]));
+
+      await expect(service.confirmAndCreateReservation(
+        { paymentKey: 'pay_async_1', orderId, amount: 150000 },
+        userId,
+      )).rejects.toThrow('금액이 일치하지 않습니다');
+
+      expect(mockBookingService.extendOwnedSeatLocks).not.toHaveBeenCalled();
+      expect(mockTossClient.confirmPayment).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects pre-existing DONE payment when paymentKey does not match the request', async () => {
+      mockDb.select
+        .mockReturnValueOnce(chainResult([{
+          id: 'payment-existing',
+          reservationId,
+          tossOrderId: orderId,
+          paymentKey: 'other_payment_key',
+          method: 'FOREIGN_EASY_PAY',
+          provider: 'ALIPAY_PLUS',
+          currency: 'USD',
+          amount: 150000,
+          status: 'DONE',
+          paidAt: new Date('2026-05-08T07:06:30.000Z'),
+        }]))
+        .mockReturnValueOnce(chainResult([{
+          id: reservationId,
+          userId,
+          showtimeId,
+          tossOrderId: orderId,
+          status: 'PENDING_PAYMENT',
+          totalAmount: 150000,
+          paymentDeadlineAt: new Date('2099-05-08T07:07:00.000Z'),
+          admissionActiveUntilAt: new Date('2099-05-08T07:10:00.000Z'),
+          reentryGraceUntilAt: new Date('2099-05-08T07:13:00.000Z'),
+        }]));
+
+      await expect(service.confirmAndCreateReservation(
+        { paymentKey: 'pay_async_1', orderId, amount: 150000 },
+        userId,
+      )).rejects.toThrow('결제 정보가 예매와 일치하지 않습니다');
+
+      expect(mockBookingService.extendOwnedSeatLocks).not.toHaveBeenCalled();
+      expect(mockTossClient.confirmPayment).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
     it('confirmAndCreateReservation extends locks before Toss confirm and rejects invalid locks', async () => {
       setupConfirmReservationBase({
         reservationId,

@@ -750,6 +750,10 @@ export class ReservationService {
       throw new BadRequestException('금액이 일치하지 않습니다');
     }
 
+    if (existingPayment?.status === 'DONE') {
+      this.assertExistingDonePaymentMatchesRequest(existingPayment, reservation, dto);
+    }
+
     const pendingSeats = await this.getReservationSeatSelections(reservation.id);
     const pendingSeatIds = pendingSeats.map((seat) => seat.seatKey);
     await this.bookingService.extendOwnedSeatLocks(
@@ -975,6 +979,35 @@ export class ReservationService {
     return this.getReservationDetail(reservation.id, userId);
     } finally {
       clearInterval(seatLockRefreshTimer);
+    }
+  }
+
+  private assertExistingDonePaymentMatchesRequest(
+    existingPayment: {
+      reservationId: string;
+      paymentKey: string;
+      tossOrderId: string;
+      amount: number;
+    },
+    reservation: {
+      id: string;
+      totalAmount: number;
+    },
+    dto: ConfirmPaymentRequest,
+  ): void {
+    if (
+      existingPayment.reservationId !== reservation.id
+      || existingPayment.paymentKey !== dto.paymentKey
+      || existingPayment.tossOrderId !== dto.orderId
+    ) {
+      throw new BadRequestException('결제 정보가 예매와 일치하지 않습니다');
+    }
+
+    if (
+      existingPayment.amount !== reservation.totalAmount
+      || existingPayment.amount !== dto.amount
+    ) {
+      throw new BadRequestException('금액이 일치하지 않습니다');
     }
   }
 

@@ -300,5 +300,53 @@ describe('PaymentService', () => {
         paymentId,
       });
     });
+
+    it('rejects amount-mismatched DONE webhook without finalizing reservation state', async () => {
+      const reservationId = randomUUID();
+      const insertRejectedPayment = createMutationChain();
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          userId: randomUUID(),
+          showtimeId: randomUUID(),
+          status: 'PENDING_PAYMENT',
+          totalAmount: 150000,
+        }]))
+        .mockReturnValueOnce(createSelectChain([]));
+      mockDb.insert.mockReturnValueOnce(insertRejectedPayment);
+
+      await expect(service.upsertAsyncPaymentProgress(
+        {
+          eventId: 'evt-payment-underpaid',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_underpaid',
+            orderId: 'GRP-UNDERPAID',
+            status: 'DONE',
+            method: 'FOREIGN_EASY_PAY',
+            provider: 'ALIPAY_PLUS',
+            currency: 'USD',
+            totalAmount: 149000,
+            approvedAt: '2026-05-08T08:00:00.000Z',
+          },
+        },
+        'DONE',
+        'payment_status_changed:done',
+      )).rejects.toThrow('금액이 일치하지 않습니다');
+
+      expect(insertRejectedPayment.values).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reservationId,
+          paymentKey: 'pay_underpaid',
+          amount: 149000,
+          status: 'ABORTED',
+          asyncStatus: 'payment_amount_mismatch',
+        }),
+      );
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+      expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+      expect(mockQrTicketService.ensureIssuedTicketForReservation).not.toHaveBeenCalled();
+    });
   });
 });
