@@ -117,7 +117,7 @@ Plans:
 
 **Merged from:** 30 Queue + WAF + prewarm, 31 Seat selection refinements, 32 Payment + refund + QR issuance
 
-**Plans:** 14 plans
+**Plans:** 17 plans
 
 Plans:
 **Wave 1**
@@ -132,24 +132,29 @@ Plans:
 **Wave 4**
 - [ ] 24-04-PLAN.md — Implement the admission queue module and API-side mutation guard
 - [ ] 24-05-PLAN.md — Implement traffic-defense decisions, protected prewarm control path, and operator runbook
-- [ ] 24-06-PLAN.md — Expose multi-floor performance/admin contracts and the minimal admin floor editor
+- [ ] 24-06-PLAN.md — Expose multi-floor performance/admin contracts and persistence without UI editor coupling
 
 **Wave 5**
-- [ ] 24-07-PLAN.md — Enforce floor-aware booking runtime/state and add the floor selector flow
+- [ ] 24-07-PLAN.md — Enforce floor-aware booking runtime and policy semantics on the backend
 - [ ] 24-08-PLAN.md — Wire the queue waiting route UX and localized retry/challenge/block states
+- [ ] 24-15-PLAN.md — Add the admin floor editor, multi-floor SVG preview wiring, and booking-policy controls
 
 **Wave 6**
 - [ ] 24-09-PLAN.md — Implement backend synchronous/asynchronous Toss payment branching and webhook idempotency
+- [ ] 24-16-PLAN.md — Add the floor selector, grouped booking state, and policy-aligned booking UI
 
 **Wave 7**
-- [ ] 24-10-PLAN.md — Render the payment deadline, overseas disclaimer, and payment recovery UX
+- [ ] 24-10-PLAN.md — Render the payment deadline, overseas disclaimer, and localized confirm-page payment copy
 - [ ] 24-11-PLAN.md — Implement refund state orchestration and delayed cancelled-seat release jobs
 
 **Wave 8**
 - [ ] 24-12-PLAN.md — Implement the admin manual-open exception path
-- [ ] 24-13-PLAN.md — Issue QR tickets, schedule D-1 QR email, and expose QR on booking complete/My Page
+- [ ] 24-17-PLAN.md — Render pending/failure/expired payment recovery UI and Toss payment recovery E2E
 
 **Wave 9**
+- [ ] 24-13-PLAN.md — Issue QR tickets, schedule D-1 QR email, and expose QR on booking complete/My Page
+
+**Wave 10**
 - [ ] 24-14-PLAN.md — Render refund preview, refund timeline, and delayed-reopen guidance in reservation detail
 
 **Success criteria:**
