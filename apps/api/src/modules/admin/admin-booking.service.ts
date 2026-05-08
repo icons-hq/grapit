@@ -16,6 +16,8 @@ import {
   performances,
   users,
   seatInventories,
+  bookingPolicies,
+  bookingOperationAuditLogs,
 } from '../../database/schema/index.js';
 import { TossPaymentsClient } from '../payment/toss-payments.client.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
@@ -38,6 +40,30 @@ function toFloorAwareSeatSelection(seat: SeatSelection): FloorAwareSeatSelection
     floorKey: LEGACY_FLOOR_KEY,
     floorLabel: LEGACY_FLOOR_LABEL,
     seatKey: `${LEGACY_FLOOR_KEY}:${seat.seatId}`,
+  };
+}
+
+function normalizeReservationSeatIdentity(seatId: string): {
+  floorKey: string;
+  seatId: string;
+  seatKey: string;
+} {
+  if (seatId.includes(':')) {
+    const separatorIndex = seatId.indexOf(':');
+    const floorKey = seatId.slice(0, separatorIndex) || '1F';
+    const rawSeatId = seatId.slice(separatorIndex + 1);
+
+    return {
+      floorKey,
+      seatId: rawSeatId,
+      seatKey: `${floorKey}:${rawSeatId}`,
+    };
+  }
+
+  return {
+    floorKey: '1F',
+    seatId,
+    seatKey: `1F:${seatId}`,
   };
 }
 
@@ -337,5 +363,95 @@ export class AdminBookingService {
     for (const seat of freedSeats) {
       this.bookingGateway.broadcastSeatUpdate(reservation.showtimeId, seat.seatId, 'available');
     }
+  }
+
+  async manualOpen(reservationId: string, operatorUserId: string): Promise<void> {
+    const [context] = await this.db
+      .select({
+        reservation: {
+          id: reservations.id,
+          showtimeId: reservations.showtimeId,
+          status: reservations.status,
+        },
+        bookingPolicy: {
+          manualOpenEnabled: bookingPolicies.manualOpenEnabled,
+        },
+      })
+      .from(reservations)
+      .innerJoin(showtimes, eq(showtimes.id, reservations.showtimeId))
+      .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, showtimes.performanceId))
+      .where(eq(reservations.id, reservationId));
+
+    if (!context) {
+      throw new NotFoundException('예매를 찾을 수 없습니다');
+    }
+
+    if (context.reservation.status !== 'CANCELLED') {
+      throw new BadRequestException('수동 오픈은 취소된 예매에만 사용할 수 있습니다');
+    }
+
+    if (context.bookingPolicy?.manualOpenEnabled === false) {
+      throw new BadRequestException('수동 오픈이 비활성화된 공연입니다');
+    }
+
+    const seats = await this.db
+      .select({ seatId: reservationSeats.seatId })
+      .from(reservationSeats)
+      .where(eq(reservationSeats.reservationId, reservationId));
+
+    if (seats.length === 0) {
+      throw new NotFoundException('오픈할 좌석을 찾을 수 없습니다');
+    }
+
+    const now = new Date();
+    const seatIdentities = seats.map((seat) =>
+      normalizeReservationSeatIdentity(seat.seatId),
+    );
+
+    await this.db.transaction(async (tx) => {
+      await tx.insert(bookingOperationAuditLogs).values(
+        seatIdentities.map((seatIdentity) => ({
+          operatorUserId,
+          action: 'manual_open' as const,
+          seatKey: seatIdentity.seatKey,
+          reservationId,
+          createdAt: now,
+        })),
+      );
+
+      for (const seatIdentity of seatIdentities) {
+        await tx
+          .update(seatInventories)
+          .set({
+            status: 'available',
+            lockedBy: null,
+            lockedUntil: null,
+            soldAt: null,
+            heldCancelledAt: null,
+            reopenHoldUntil: null,
+            reopenJobId: null,
+          })
+          .where(
+            and(
+              eq(seatInventories.showtimeId, context.reservation.showtimeId),
+              eq(seatInventories.floorKey, seatIdentity.floorKey),
+              eq(seatInventories.seatKey, seatIdentity.seatKey),
+              eq(seatInventories.status, 'held_cancelled'),
+            ),
+          );
+      }
+    });
+
+    for (const seat of seats) {
+      this.bookingGateway.broadcastSeatUpdate(
+        context.reservation.showtimeId,
+        seat.seatId,
+        'available',
+      );
+    }
+
+    this.logger.log(
+      `Manual open completed for reservationId=${reservationId}, operatorUserId=${operatorUserId}, seats=${seatIdentities.length}`,
+    );
   }
 }
