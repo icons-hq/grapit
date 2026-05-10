@@ -244,6 +244,7 @@ describe('SeatMapViewer', () => {
     );
 
     expect(seatLabel).toBeTruthy();
+    expect(seatLabel?.getAttribute('pointer-events')).toBe('none');
     fireEvent.click(seatLabel!);
     expect(onSeatClick).toHaveBeenCalledWith('A-1');
   });
