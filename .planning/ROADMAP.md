@@ -117,7 +117,7 @@ Plans:
 
 **Merged from:** 30 Queue + WAF + prewarm, 31 Seat selection refinements, 32 Payment + refund + QR issuance
 
-**Plans:** 17/17 plans complete
+**Plans:** 17/20 plans complete
 
 Plans:
 **Wave 1**
@@ -156,6 +156,11 @@ Plans:
 
 **Wave 10**
 - [x] 24-14-PLAN.md — Render refund preview, refund timeline, and delayed-reopen guidance in reservation detail
+
+**Wave 11** *(gap closure after automated UAT)*
+- [ ] 24-18-PLAN.md — Break the Payment/Ticket/Jobs bootstrap cycle so the built API cold-start reaches `/api/v1/health`
+- [ ] 24-19-PLAN.md — Refresh booking integration fixtures for floor-aware seatKey/policy semantics and remove the duplicate fresh-migration index from `0012`
+- [ ] 24-20-PLAN.md — Scope queue waiting Playwright metric locators so the browser slice passes without strict-text ambiguity
 
 **Success criteria:**
 1. Queue admission uses Valkey Sorted Set and batch admission with position, ETA, and remaining-seat updates; booking APIs require valid admission.
