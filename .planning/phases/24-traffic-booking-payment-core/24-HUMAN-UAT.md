@@ -3,14 +3,14 @@ status: partial
 phase: 24-traffic-booking-payment-core
 source: [24-VERIFICATION.md]
 started: 2026-05-08T10:32:42Z
-updated: 2026-05-10T19:24:30+09:00
+updated: 2026-05-10T21:31:11+09:00
 ---
 
 # Phase 24: Human UAT
 
 ## Current Test
 
-[testing complete - 2 issues, 2 blocked external/operational gates]
+[testing complete - 1 passed, 1 issue, 2 blocked external/operational gates]
 
 ## Tests
 
@@ -29,22 +29,43 @@ evidence:
 
 ### 2. Cloud Scheduler → prewarm API(OIDC+control-token) 실제 호출 검증
 expected: scale-up/step-down job이 의도한 서비스에 성공하고 감사 가능한 실행 로그가 남는다
-result: issue
-reported: "GCP project grapit-491806 is authenticated, but Cloud Scheduler API is disabled, no scheduler jobs can be listed, deployed API prewarm endpoints return 404, and deployed Cloud Run env does not expose PREWARM_* configuration names."
-severity: blocker
+result: passed
+resolved_at: 2026-05-10T21:28:43+09:00
+audience_url: "https://grabit-api-d3c6wrfdbq-du.a.run.app/api/v1/internal/prewarm/services/grabit-api"
+runtime_service_account: "grapit-cloudrun@grapit-491806.iam.gserviceaccount.com"
+scheduler_service_account: "scheduler-prewarm@grapit-491806.iam.gserviceaccount.com"
+job_names:
+  - grabit-prewarm-scale-up
+  - grabit-prewarm-step-down
+notes:
+  - "익명 유효 JSON POST는 scale-up/step-down 모두 401을 반환해, deployed route contract가 더 이상 404나 body-validation-only 400 단계에 머물지 않음을 확인했다."
+  - "첫 live rerun은 runtime service account의 self `roles/iam.serviceAccountUser` binding 누락으로 503(`iam.serviceaccounts.actAs` denied)였고, binding 추가 후 scale-up이 성공했다."
+  - "직후 step-down은 in-flight scale-up과 service version이 충돌해 한 번 503이 났지만, 서비스가 settle 된 뒤 단독 재실행에서 202와 Cloud Run audit success를 확인했다."
 evidence:
-  - command: gcloud auth list && gcloud config list
+  - command: gcloud auth list --filter=status:ACTIVE --format='value(account)' && gcloud config get-value project
     result: PASS, active account sangwopark19icons@gmail.com, project grapit-491806
-  - command: gcloud scheduler jobs list --location=asia-northeast3
-    result: FAIL, cloudscheduler.googleapis.com SERVICE_DISABLED
-  - command: gcloud services list --enabled --filter='name:(cloudscheduler.googleapis.com OR run.googleapis.com)'
-    result: PASS, run.googleapis.com enabled; cloudscheduler.googleapis.com absent
-  - command: curl -X POST https://grabit-api-d3c6wrfdbq-du.a.run.app/api/v1/internal/prewarm/services/grabit-api
-    result: FAIL, 404 Cannot POST /api/v1/internal/prewarm/services/grabit-api
-  - command: curl -X POST https://grabit-api-d3c6wrfdbq-du.a.run.app/api/v1/internal/prewarm/services/grabit-api/step-down
-    result: FAIL, 404 Cannot POST /api/v1/internal/prewarm/services/grabit-api/step-down
-  - command: gcloud run services describe grabit-api --region=asia-northeast3
-    result: PASS, deployed revision grabit-api-00029-tsx; env names include TOSS/GOOGLE keys but no PREWARM_* names
+  - command: pnpm --filter @grabit/api exec vitest run src/modules/ops/prewarm.service.spec.ts
+    result: PASS, 4 tests passed after switching the Cloud Run Admin API contract to `template.scaling.minInstanceCount`
+  - command: pnpm --filter @grabit/api typecheck
+    result: PASS, no TypeScript errors
+  - command: gcloud run deploy grabit-api --project=grapit-491806 --region=asia-northeast3 --image asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-api:24-21-prewarm-amd64-20260510212420-30703eb --max-instances=100 --quiet
+    result: PASS, deployed revision `grabit-api-00034-x9x`
+  - command: gcloud run services describe grabit-api --region=asia-northeast3 --format='value(status.url)' && gcloud secrets versions access latest --secret=prewarm-allowed-audience
+    result: PASS, live target URL and `PREWARM_ALLOWED_AUDIENCE` both equal `https://grabit-api-d3c6wrfdbq-du.a.run.app/api/v1/internal/prewarm/services/grabit-api`
+  - command: gcloud secrets versions access latest --secret=prewarm-allowed-scheduler-email
+    result: PASS, live scheduler caller remains `scheduler-prewarm@grapit-491806.iam.gserviceaccount.com`
+  - command: node anonymous valid-JSON POST smoke for scale-up/step-down
+    result: PASS, scale-up 401 and step-down 401 for unauthenticated requests
+  - command: gcloud iam service-accounts add-iam-policy-binding grapit-cloudrun@grapit-491806.iam.gserviceaccount.com --member='serviceAccount:grapit-cloudrun@grapit-491806.iam.gserviceaccount.com' --role='roles/iam.serviceAccountUser'
+    result: PASS, added the self `iam.serviceAccounts.actAs` binding required for Cloud Run UpdateService calls that preserve the runtime service account
+  - command: gcloud scheduler jobs describe grabit-prewarm-scale-up --location=asia-northeast3 && gcloud scheduler jobs describe grabit-prewarm-step-down --location=asia-northeast3
+    result: PASS, both jobs exist in `asia-northeast3`, use `POST`, the same shared OIDC audience, and `x-prewarm-control-token`
+  - command: gcloud scheduler jobs run grabit-prewarm-scale-up --location=asia-northeast3
+    result: PASS, Cloud Run request log `2026-05-10T12:27:42.740801Z` returned 202 and Cloud Audit `UpdateService` recorded `template.scaling.minInstanceCount=100` at `2026-05-10T12:27:42.805289Z`
+  - command: gcloud scheduler jobs run grabit-prewarm-step-down --location=asia-northeast3
+    result: PASS after sequential rerun, Cloud Run request log `2026-05-10T12:28:42.779Z` returned 202 and Cloud Audit `UpdateService` recorded `template.scaling.minInstanceCount=0` at `2026-05-10T12:28:43.279486Z`
+  - command: gcloud run services describe grabit-api --region=asia-northeast3 --format='export' | rg 'autoscaling.knative.dev/minScale'
+    result: PASS, observed `minScale: 100` after scale-up and `minScale: 0` after final step-down
 
 ### 3. Toss sandbox 실결제 경로(국내카드/해외카드/Alipay+/truemoney) E2E
 expected: sync/pending/recovery 분기와 안내문구가 실제 redirect/webhook 왕복에서 일치한다
@@ -80,8 +101,8 @@ evidence:
 ## Summary
 
 total: 4
-passed: 0
-issues: 2
+passed: 1
+issues: 1
 pending: 0
 skipped: 0
 blocked: 2
@@ -89,23 +110,25 @@ blocked: 2
 ## Gaps
 
 - truth: "Cloud Scheduler scale-up and step-down jobs successfully call the deployed prewarm API with OIDC and control-token protection."
-  status: failed
-  reason: "GCP project grapit-491806 has Cloud Scheduler API disabled, deployed prewarm routes return 404, and deployed API env names do not include PREWARM_* settings."
+  status: resolved
+  reason: "2026-05-10 live redeploy, shared audience reconciliation, and runtime service-account IAM completion closed the missing-route/missing-env/live-call gap."
   severity: blocker
   test: 2
-  root_cause: "Prewarm code exists locally and unit tests pass, but the deployed Cloud Run revision and GCP project are not operationally configured for Phase 24 prewarm: Scheduler API is disabled, jobs are absent/unlistable, deployed routes are unavailable, and PREWARM_* environment configuration is absent."
+  root_cause: "The original local contract had to be made durable in deploy CI, then the live service still needed the Cloud Run v2 `template.scaling.minInstanceCount` PATCH shape plus a self `roles/iam.serviceAccountUser` binding on the runtime service account before Scheduler-triggered UpdateService calls could succeed."
   artifacts:
     - path: "docs/runbooks/phase24-queue-waf-prewarm.md"
-      issue: "Documents required Scheduler jobs and prewarm endpoint contract, but external project state does not satisfy it."
+      issue: "Now documents the shared audience, maxScale 100, runtime IAM fallback, and manual rerun conflict note used for the live fix."
     - path: "apps/api/src/modules/ops/prewarm.controller.ts"
-      issue: "Local route contract exists for /internal/prewarm/services/:serviceName and /step-down."
+      issue: "Route contract stayed unchanged while the live rollout was repaired around it."
     - path: "apps/api/src/app.module.ts"
-      issue: "Local AppModule imports PrewarmModule, while deployed API returned 404 for the expected routes."
-  missing:
-    - "Enable cloudscheduler.googleapis.com for grapit-491806."
-    - "Deploy an API revision that exposes the prewarm routes."
-    - "Set PREWARM_CONTROL_TOKEN, PREWARM_PROJECT_ID, PREWARM_REGION, PREWARM_ALLOWED_SCHEDULER_EMAIL, and PREWARM_ALLOWED_AUDIENCE on the deployed API service."
-    - "Create and run the scale-up and step-down Cloud Scheduler jobs with OIDC and x-prewarm-control-token."
+      issue: "Module wiring stayed intact; the successful live fix came from deploy/runtime/IAM alignment rather than route redesign."
+    - path: "apps/api/src/modules/ops/prewarm.service.ts"
+      issue: "Cloud Run Admin API PATCH now uses `template.scaling.minInstanceCount`, matching the successful live audit requests."
+  resolved_with:
+    - "Deployed API revision `grabit-api-00034-x9x` from image `24-21-prewarm-amd64-20260510212420-30703eb`."
+    - "Exact live audience URL: `https://grabit-api-d3c6wrfdbq-du.a.run.app/api/v1/internal/prewarm/services/grabit-api`."
+    - "Runtime service account: `grapit-cloudrun@grapit-491806.iam.gserviceaccount.com` with `roles/run.admin` and self `roles/iam.serviceAccountUser`."
+    - "Scheduler caller: `scheduler-prewarm@grapit-491806.iam.gserviceaccount.com` using jobs `grabit-prewarm-scale-up` and `grabit-prewarm-step-down`."
   debug_session: "inline automated UAT 2026-05-10"
 
 - truth: "Mobile and desktop users can reliably select seats across floors by clicking/tapping visible seats, with timer, selection summary, and CTA updating."
