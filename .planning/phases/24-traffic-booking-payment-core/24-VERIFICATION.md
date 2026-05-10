@@ -1,27 +1,36 @@
 ---
 phase: 24-traffic-booking-payment-core
-verified: 2026-05-08T10:30:38Z
+verified: 2026-05-10T10:03:16Z
 status: human_needed
 score: 4/6 must-haves verified
 overrides_applied: 0
+re_verification:
+  previous_status: human_needed
+  previous_score: 4/6
+  gaps_closed: []
+  gaps_remaining: []
+  regressions: []
 human_verification:
   - test: "Cloudflare WAF/rate-limit/challenge/block rules 실제 Zone 반영 확인"
     expected: "runbook의 queue-entry/lock-seat/prepare-reservation/confirm-payment 규칙이 활성화되고 동작한다"
-    why_human: "코드베이스 밖의 Cloudflare Dashboard 상태는 정적 분석으로 검증 불가"
+    why_human: "Cloudflare Dashboard/Zone 설정은 코드베이스 정적 분석으로 검증 불가"
+  - test: "Cloud Scheduler → prewarm API(OIDC+control-token) 실제 호출 검증"
+    expected: "scale-up/step-down job이 의도한 서비스에 성공하고 감사 가능한 실행 로그가 남는다"
+    why_human: "GCP Scheduler/Cloud Run IAM 연동은 로컬 코드만으로 완전 검증 불가"
   - test: "Toss sandbox 실결제 경로(국내카드/해외카드/Alipay+/truemoney) E2E"
-    expected: "각 브랜치가 안내문구/redirect/pending/recovery 포함해 정상 완료 또는 의도된 실패 복구를 제공한다"
-    why_human: "외부 PG 리다이렉트/웹훅 왕복은 로컬 정적 검증으로 완전 판정 불가"
-  - test: "모바일/데스크톱 멀티층 좌석 선택 UX 최종 확인"
-    expected: "층 전환 시 선택/타이머 유지, 그룹 요약 표시, 결제 진입 흐름이 실제 브라우저에서 안정 동작한다"
-    why_human: "반응형/터치 UX는 코드와 단위테스트만으로 체감 품질 판정 불가"
+    expected: "sync/pending/recovery 분기와 안내문구가 실제 redirect/webhook 왕복에서 일치한다"
+    why_human: "외부 PG 네트워크 왕복은 정적 분석/단위테스트만으로 최종 판정 불가"
+  - test: "모바일/데스크톱 멀티층 좌석 선택 UX 수동 점검"
+    expected: "층 전환 시 선택/타이머/복구 흐름이 실제 브라우저에서 안정 동작한다"
+    why_human: "반응형/터치 UX는 코드 판독만으로 체감 품질 판정 불가"
 ---
 
 # Phase 24: Traffic + Booking + Payment Core Verification Report
 
 **Phase Goal:** 광고/티켓팅 트래픽 흡수부터 좌석 선택, 결제, 환불, QR 발급까지 사용자의 core booking path를 test-key 기준으로 완성한다.  
-**Verified:** 2026-05-08T10:30:38Z  
+**Verified:** 2026-05-10T10:03:16Z  
 **Status:** human_needed  
-**Re-verification:** No — initial verification
+**Re-verification:** Yes — gap closure(24-18/24-19/24-20) 이후 재검증
 
 ## Goal Achievement
 
@@ -29,12 +38,12 @@ human_verification:
 
 | # | Truth | Status | Evidence |
 | --- | --- | --- | --- |
-| 1 | Queue admission uses Valkey Sorted Set + batch admission, and booking APIs require valid admission | ✓ VERIFIED | `queue.service.ts`에서 `zrange/zrem/sadd` 기반 배치 admission 및 position broadcast 구현([queue.service.ts](/Users/sangwopark19/icons/grapit/apps/api/src/modules/queue/queue.service.ts:395)). `AdmissionGuard`가 booking/reservation mutation에 강제 적용([booking.controller.ts](/Users/sangwopark19/icons/grapit/apps/api/src/modules/booking/booking.controller.ts:28), [reservation.controller.ts](/Users/sangwopark19/icons/grapit/apps/api/src/modules/reservation/reservation.controller.ts:53)). |
-| 2 | WAF/rate-limit/bot/macro rules and Cloud Scheduler prewarm runbook are documented and verified | ? UNCERTAIN | runbook/코드는 존재([phase24-queue-waf-prewarm.md](/Users/sangwopark19/icons/grapit/docs/runbooks/phase24-queue-waf-prewarm.md:1), [traffic-defense.service.ts](/Users/sangwopark19/icons/grapit/apps/api/src/modules/traffic/traffic-defense.service.ts:192), [prewarm.controller.ts](/Users/sangwopark19/icons/grapit/apps/api/src/modules/ops/prewarm.controller.ts:27), [prewarm.service.ts](/Users/sangwopark19/icons/grapit/apps/api/src/modules/ops/prewarm.service.ts:94)). 하지만 Cloudflare 실 Zone 적용 여부는 코드베이스에서 확인 불가. |
-| 3 | Multi-floor SVG upload/render/switching works on desktop/mobile with lock/countdown/expiry/payment-failure return behavior | ? UNCERTAIN | 멀티층 상태/렌더 로직 구현([use-booking-store.ts](/Users/sangwopark19/icons/grapit/apps/web/stores/use-booking-store.ts:25), [floor-selector.tsx](/Users/sangwopark19/icons/grapit/apps/web/components/booking/floor-selector.tsx:18), [seat-map-viewer.tsx](/Users/sangwopark19/icons/grapit/apps/web/components/booking/seat-map-viewer.tsx:26), [booking-page.tsx](/Users/sangwopark19/icons/grapit/apps/web/components/booking/booking-page.tsx:97)). 다만 모바일/데스크톱 실브라우저 UX 완전 판정은 수동 필요. |
-| 4 | Event-specific max tickets/policy/manual seat operation controls are configurable | ✓ VERIFIED | booking policy schema + migration + admin 서비스에서 max tickets/manual open 저장/검증([0012_phase24_booking_core.sql](/Users/sangwopark19/icons/grapit/apps/api/src/database/migrations/0012_phase24_booking_core.sql:18), [admin-booking.service.ts](/Users/sangwopark19/icons/grapit/apps/api/src/modules/admin/admin-booking.service.ts:289), [admin-booking.controller.ts](/Users/sangwopark19/icons/grapit/apps/api/src/modules/admin/admin-booking.controller.ts:53)). |
-| 5 | Domestic Toss, overseas card, Alipay+, truemoney paths work with proper disclaimers | ✓ VERIFIED | 결제 분기 매트릭스 구현([payment.service.ts](/Users/sangwopark19/icons/grapit/apps/api/src/modules/payment/payment.service.ts:120)), widget 측 provider 매핑/overseas consent 처리([toss-payment-widget.tsx](/Users/sangwopark19/icons/grapit/apps/web/components/booking/toss-payment-widget.tsx:129)). webhook idempotency/순서 역전 방어([payment-webhook.controller.ts](/Users/sangwopark19/icons/grapit/apps/api/src/modules/payment/payment-webhook.controller.ts:59)). |
-| 6 | Refund preview/request/state machine + random cancelled-seat hold + QR issuance + D-1 QR email scheduling work | ✓ VERIFIED | refund 상태머신/재시도/hold 구현([refund.service.ts](/Users/sangwopark19/icons/grapit/apps/api/src/modules/refund/refund.service.ts:38), [cancelled-seat-release.worker.ts](/Users/sangwopark19/icons/grapit/apps/api/src/modules/jobs/cancelled-seat-release.worker.ts:61)). QR 발급/JWT 검증/D-1 schedule 구현([qr-ticket.service.ts](/Users/sangwopark19/icons/grapit/apps/api/src/modules/ticket/qr-ticket.service.ts:98), [qr-ticket.service.ts](/Users/sangwopark19/icons/grapit/apps/api/src/modules/ticket/qr-ticket.service.ts:305)). |
+| 1 | Queue admission uses Valkey Sorted Set + batch admission, and booking APIs require valid admission | ✓ VERIFIED | 배치 admission 로직 `zrange/zrem/sadd` 확인([queue.service.ts](/Users/sangwopark19/icons/grapit/apps/api/src/modules/queue/queue.service.ts:395)). booking/reservation mutation 가드 강제 적용([booking.controller.ts](/Users/sangwopark19/icons/grapit/apps/api/src/modules/booking/booking.controller.ts:28), [reservation.controller.ts](/Users/sangwopark19/icons/grapit/apps/api/src/modules/reservation/reservation.controller.ts:53)). |
+| 2 | WAF/rate-limit/bot/macro rules and Cloud Scheduler prewarm runbook are documented and verified | ? UNCERTAIN | runbook/코드 구현 존재([phase24-queue-waf-prewarm.md](/Users/sangwopark19/icons/grapit/docs/runbooks/phase24-queue-waf-prewarm.md:1), [traffic-defense.service.ts](/Users/sangwopark19/icons/grapit/apps/api/src/modules/traffic/traffic-defense.service.ts:50), [prewarm.controller.ts](/Users/sangwopark19/icons/grapit/apps/api/src/modules/ops/prewarm.controller.ts:28), [prewarm.service.ts](/Users/sangwopark19/icons/grapit/apps/api/src/modules/ops/prewarm.service.ts:118)). 다만 실제 Zone/Scheduler 적용은 코드 외부 검증 필요. |
+| 3 | Multi-floor SVG upload/render/switching works on desktop and mobile, with lock/countdown/expiry/payment-failure return behavior | ? UNCERTAIN | floor-aware 상태/컴포넌트와 queue metric locator 안정화 반영([queue-waiting.tsx](/Users/sangwopark19/icons/grapit/apps/web/components/booking/queue-waiting.tsx:145), [booking-queue.spec.ts](/Users/sangwopark19/icons/grapit/apps/web/e2e/booking-queue.spec.ts:31)). 실기기/실브라우저 UX 최종 판정은 수동 필요. |
+| 4 | Event-specific max tickets, cancellation/change policy, and manual seat operation controls are configurable | ✓ VERIFIED | migration 및 정책/수동오픈 경로 존재([0012_phase24_booking_core.sql](/Users/sangwopark19/icons/grapit/apps/api/src/database/migrations/0012_phase24_booking_core.sql:129), [booking.service.ts](/Users/sangwopark19/icons/grapit/apps/api/src/modules/booking/booking.service.ts:271)). |
+| 5 | Domestic Toss, overseas card, Alipay+, and truemoney paths work with proper disclaimers | ✓ VERIFIED | provider/branch 및 consent 분기 구현([payment.service.ts](/Users/sangwopark19/icons/grapit/apps/api/src/modules/payment/payment.service.ts:185), [toss-payment-widget.tsx](/Users/sangwopark19/icons/grapit/apps/web/components/booking/toss-payment-widget.tsx:19), [payment-webhook.controller.ts](/Users/sangwopark19/icons/grapit/apps/api/src/modules/payment/payment-webhook.controller.ts:59)). |
+| 6 | Refund preview/request/state machine, random cancelled-seat holding, QR JWT/HMAC issuance, and D-1 QR email scheduling work | ✓ VERIFIED | refund 상태머신/재시도/hold 및 release worker 구현([refund.service.ts](/Users/sangwopark19/icons/grapit/apps/api/src/modules/refund/refund.service.ts:214), [refund-cancel-retry.worker.ts](/Users/sangwopark19/icons/grapit/apps/api/src/modules/jobs/refund-cancel-retry.worker.ts:84), [cancelled-seat-release.worker.ts](/Users/sangwopark19/icons/grapit/apps/api/src/modules/jobs/cancelled-seat-release.worker.ts:125)). QR 발급/검증/스케줄 구현([qr-ticket.service.ts](/Users/sangwopark19/icons/grapit/apps/api/src/modules/ticket/qr-ticket.service.ts:91), [qr-ticket.service.ts](/Users/sangwopark19/icons/grapit/apps/api/src/modules/ticket/qr-ticket.service.ts:325)). |
 
 **Score:** 4/6 truths verified
 
@@ -42,88 +51,99 @@ human_verification:
 
 | Artifact | Expected | Status | Details |
 | --- | --- | --- | --- |
-| `apps/api/src/database/migrations/0012_phase24_booking_core.sql` | phase24 core schema migration | ✓ VERIFIED | floor/payment_deadline/refund/ticket/audit columns+tables+indexes 존재 |
-| `apps/api/src/modules/queue/*` | queue admission runtime + guard | ✓ VERIFIED | controller/service/gateway/guard 실구현 및 spec 존재 |
-| `apps/api/src/modules/payment/*` | Toss branch + webhook idempotency | ✓ VERIFIED | branch matrix + webhook ledger/중복 처리 구현 |
-| `apps/api/src/modules/refund/*` | refund orchestration/state machine | ✓ VERIFIED | preview/request/retry/hold 구현 |
-| `apps/api/src/modules/ticket/*` | QR issuance + token verify + schedule | ✓ VERIFIED | issue/verify/email job scheduling 구현 |
-| `apps/web/components/booking/*` | floor-aware booking/payment UI | ✓ VERIFIED | floor selector, SVG viewer, payment deadline/banner/wallet 분기 구현 |
+| `apps/api/src/modules/jobs/pgboss.module.ts` | PG_BOSS leaf module | ✓ VERIFIED | provider-only leaf module 생성, `ticket/refund`에서 직접 import |
+| `apps/api/src/modules/jobs/jobs.module.ts` | worker registration 분리 | ✓ VERIFIED | `PaymentModule` 의존은 유지하되 request path와 분리 |
+| `apps/api/src/modules/ticket/ticket.module.ts` | ticket ↔ pgboss leaf 연결 | ✓ VERIFIED | `PgbossModule` import로 bootstrap cycle 경감 |
+| `apps/api/src/modules/refund/refund.module.ts` | refund service PG_BOSS 해석 가능 | ✓ VERIFIED | `PgbossModule` + `JobsModule` 동시 import로 service/worker 경로 분리 유지 |
+| `apps/api/src/modules/booking/__tests__/booking.service.integration.spec.ts` | floor-aware fixture + leftJoin 대응 | ✓ VERIFIED | `encodeURIComponent`, `leftJoin` query shape 기반 fixture 반영 |
+| `apps/api/test/booking-cluster-lua.integration.spec.ts` | cluster fixture 동기화 | ✓ VERIFIED | runtime seat key 인코딩 경로 확인 |
+| `apps/api/src/database/migrations/0012_phase24_booking_core.sql` | fresh migration 안전성 | ✓ VERIFIED | `idx_translation_drafts_one_published_per_source_locale` 중복 생성 제거, floor key index 유지 |
+| `apps/web/components/booking/queue-waiting.tsx` | stable queue metric selector | ✓ VERIFIED | `queue-metric-position/eta/remaining-seats` contract 존재 |
+| `apps/web/e2e/booking-queue.spec.ts` | strict-safe metric scoped assertion | ✓ VERIFIED | page-wide text 대신 testid 기반 검증 |
 
 ### Key Link Verification
 
 | From | To | Via | Status | Details |
 | --- | --- | --- | --- | --- |
-| `AdmissionGuard` | `BookingController/ReservationController` | `@UseGuards` | ✓ WIRED | lockSeat/prepare/confirm mutation 보호 확인 |
-| `QueueController` | `QueueService` | enter/status API | ✓ WIRED | queueSession/position/eta/remainingSeats 전달 |
-| `PaymentWebhookController` | `PaymentService` | `recordWebhookEvent` + `upsertAsyncPaymentProgress` | ✓ WIRED | duplicate/stale webhook 방어 포함 |
-| `RefundService` | `CancelledSeatReleaseWorker` | pg-boss delayed release payload | ✓ WIRED | held_cancelled -> delayed reopen 경로 연결 |
-| `AdminBookingController` | `AdminBookingService` | `manual-open`/`refund` endpoint | ✓ WIRED | 관리자 예외 경로 및 refund delegation |
-| `TicketController` | `QrTicketService` | owned reservation ticket lookup | ✓ WIRED | 예약 상세 QR 조회 연결 |
+| `ticket.module.ts` | `pgboss.module.ts` | shared PG_BOSS provider import | ✓ WIRED | `PgbossModule` import 확인 |
+| `jobs.module.ts` | `payment.module.ts` | worker-only runtime dependency | ✓ WIRED | worker bootstrap 경로에서만 결합 |
+| `booking.service.integration.spec.ts` | `booking.service.ts` | `getMaxTicketsPerUser()` query shape | ✓ WIRED | `leftJoin` 계약 반영 |
+| `booking-cluster-lua.integration.spec.ts` | `booking.service.ts` | encoded runtime seat keys | ✓ WIRED | `encodeURIComponent` 계약 반영 |
+| `booking-queue.spec.ts` | `queue-waiting.tsx` | stable metric locator contract | ✓ WIRED | 동일 `queue-metric-*` 식별자 사용 |
 
 ### Data-Flow Trace (Level 4)
 
 | Artifact | Data Variable | Source | Produces Real Data | Status |
 | --- | --- | --- | --- | --- |
-| `queue.controller.ts` | `position/etaSeconds/remainingSeats` | `queue.service.ts` + Redis sorted set/set | Yes | ✓ FLOWING |
-| `payment-webhook.controller.ts` | webhook process result | `payment_webhook_events` + `payments/reservations` DB upsert | Yes | ✓ FLOWING |
-| `refund.service.ts` | `refundTimeline` + `retryEnqueued` | `refunds/payments/reservations` + Toss cancel response + pg-boss | Yes | ✓ FLOWING |
-| `booking-page.tsx` | floor grouped selections | Zustand store + performance detail + seat status hooks | Yes | ✓ FLOWING |
-| `qr-ticket.service.ts` | ticket token/job schedule | `tickets/reservations/payments/showtimes` + `pg-boss` | Yes | ✓ FLOWING |
+| `queue.service.ts` | `position/etaSeconds/remainingSeats` | Valkey sorted set + availability 계산 | Yes | ✓ FLOWING |
+| `payment-webhook.controller.ts` | webhook 반영 상태 | `recordWebhookEvent` + `upsertAsyncPaymentProgress` + DB | Yes | ✓ FLOWING |
+| `refund.service.ts` | `refundTimeline/retryEnqueued` | refunds/payments/reservations + pg-boss enqueue 결과 | Yes | ✓ FLOWING |
+| `qr-ticket.service.ts` | QR token/email schedule | tickets/showtimes/users + pg-boss/email | Yes | ✓ FLOWING |
+| `queue-waiting.tsx` | metric tile 값 | queue session API snapshot | Yes | ✓ FLOWING |
 
 ### Behavioral Spot-Checks
 
 | Behavior | Command | Result | Status |
 | --- | --- | --- | --- |
-| Queue admission runtime contract tests | `pnpm --filter @grabit/api exec vitest run src/modules/queue/queue.service.spec.ts` | 3 tests passed | ✓ PASS |
-| Toss webhook idempotency/stale-event handling | `pnpm --filter @grabit/api exec vitest run src/modules/payment/toss-webhook.controller.spec.ts` | 6 tests passed | ✓ PASS |
-| QR issuance/scheduling core flow | `pnpm --filter @grabit/api exec vitest run src/modules/ticket/qr-ticket.service.spec.ts` | 3 tests passed | ✓ PASS |
+| Monorepo build | `pnpm build` | passed | ✓ PASS |
+| Full test suite | `pnpm test` | api 599 + web 348 + shared 37 passed | ✓ PASS |
+| API type/lint gate | `pnpm --filter @grabit/api typecheck` / `pnpm --filter @grabit/api lint` | typecheck pass, lint warning-only(0 error) | ✓ PASS |
+| Schema drift | `verify.schema-drift 24` | `drift_detected=false` | ✓ PASS |
 
 ### Requirements Coverage
 
 | Requirement | Source Plan | Description | Status | Evidence |
 | --- | --- | --- | --- | --- |
-| `TRAF-01` | 24-01/04/08 | queue admission + booking guard | ✓ SATISFIED | queue module + AdmissionGuard wiring + queue tests |
-| `TRAF-02` | 24-05/08 | rate-limit/challenge/block + queue UX | ? NEEDS HUMAN | code/runbook 존재, Cloudflare 실적용은 수동 확인 필요 |
-| `TRAF-03` | 24-05 | prewarm control path/runbook | ? NEEDS HUMAN | prewarm OIDC/token 검증 코드 존재, 실제 Scheduler/GCP 연동은 수동 확인 필요 |
-| `BOOK-01` | 24-02/06/07/15/16 | floor-aware booking + policy | ✓ SATISFIED | floor-aware schema/service/store/UI 및 tests |
-| `BOOK-02` | 24-01/03/09/10/17 | payment core + recoveries | ✓ SATISFIED | branch/webhook/deadline/recovery 구현 및 tests |
-| `BOOK-03` | 24-01/02/06/07/12/15/16 | policy/manual-open/admin operations | ✓ SATISFIED | admin manual-open/policy checks/audit row 구현 |
-| `PAY-02` | 24-01/03/09/10/17 | Toss sync/async + foreign flows | ✓ SATISFIED | payment branch + webhook idempotency + widget mapping |
-| `REFUND-01` | 24-01/02/03/11/14 | refund preview/timeline/state | ✓ SATISFIED | refund service/timeline UI/tests |
-| `REFUND-02` | 24-01/02/03/11/12 | delayed reopen + manual-open exception | ✓ SATISFIED | cancelled-seat worker + admin manual-open |
-| `QR-01` | 24-01/02/03/13 | QR issue/verify/D-1 schedule | ✓ SATISFIED | qr-ticket service/controller/schema/tests |
+| `TRAF-01` | 24-01/04/08/20 | queue admission + booking guard + queue UX | ✓ SATISFIED | queue service + AdmissionGuard + queue e2e locator 안정화 |
+| `TRAF-02` | 24-05/08/20 | WAF/rate-limit/challenge/block | ? NEEDS HUMAN | runbook + traffic-defense 코드 확인, Zone 적용은 외부 검증 필요 |
+| `TRAF-03` | 24-05 | prewarm scheduler path | ? NEEDS HUMAN | prewarm controller/service 및 토큰 검증 코드 존재, 실제 GCP wiring 확인 필요 |
+| `BOOK-01` | 24-02/06/07/15/16/19 | floor-aware seat selection/lock | ✓ SATISFIED | runtime seatKey/encoded lock + integration fixture 갱신 |
+| `BOOK-02` | 24-01/03/09/10/17 | deadline/expiry/recovery | ✓ SATISFIED | payment async/recovery 구현 + 테스트 통과 |
+| `BOOK-03` | 24-01/02/06/07/12/15/16/19 | policy/manual controls | ✓ SATISFIED | maxTickets 정책 lookup + 수동 운영 경로 유지 |
+| `PAY-02` | 24-01/03/09/10/17/18 | Toss domestic/overseas 분기 | ✓ SATISFIED | provider 분기 + webhook idempotency + bootstrap cycle 해소 |
+| `REFUND-01` | 24-01/02/03/11/14/18 | refund request/timeline/state | ✓ SATISFIED | refund service 상태머신 + retry worker + tests |
+| `REFUND-02` | 24-01/02/03/11/12/18 | delayed reopen + manual-open exception | ✓ SATISFIED | held_cancelled + release job + admin path |
+| `QR-01` | 24-01/02/03/13/18 | QR issue/verify/D-1 scheduling | ✓ SATISFIED | qr-ticket JWT/HMAC + email resend schedule + PG_BOSS wiring 유지 |
 
 ### Anti-Patterns Found
 
 | File | Line | Pattern | Severity | Impact |
 | --- | --- | --- | --- | --- |
-| N/A | - | blocker-level TODO/placeholder/stub not found in sampled phase-critical files | ℹ️ Info | 핵심 경로에서 placeholder 구현 징후 미발견 |
+| `apps/api/src/modules/refund/refund.service.ts` | 201 | `return null` | ℹ️ Info | metadata/queue enqueue 실패 처리용 정상 분기, stub 아님 |
+| `apps/api/src/modules/jobs/refund-cancel-retry.worker.ts` | 196 | `return null` | ℹ️ Info | context 부재/스킵 시 안전 종료 분기, stub 아님 |
+| `apps/api/src/modules/booking/__tests__/booking.service.integration.spec.ts` | 42 | `() => {}` | ℹ️ Info | test fixture mock no-op으로 실행 경로 영향 없음 |
 
 ### Human Verification Required
 
 ### 1. Cloudflare Rule Activation
 
-**Test:** Cloudflare Dashboard에서 queue-entry/booking mutation rule 그룹이 runbook대로 활성화되어 있는지 확인  
-**Expected:** retry/challenge/block 분기가 실제 zone에서 적용  
-**Why human:** 외부 SaaS 설정 상태는 repo 정적 분석 불가
+**Test:** Cloudflare Dashboard에서 queue-entry/booking mutation 룰 그룹 활성화 상태 확인  
+**Expected:** retry/challenge/block 분기가 실제 zone에서 동작  
+**Why human:** 외부 SaaS 설정은 repo 정적 분석 불가
 
-### 2. Real Toss Sandbox Round-Trip
+### 2. Scheduler Prewarm Runtime
 
-**Test:** 국내카드/해외카드/Alipay+/truemoney 시나리오를 sandbox에서 실제 결제-리턴-웹훅까지 실행  
-**Expected:** sync/pending/recovery 분기와 안내문구가 의도대로 동작  
-**Why human:** PG redirect/webhook 외부 왕복은 로컬 코드만으로 최종 판정 불가
+**Test:** Cloud Scheduler에서 prewarm scale-up/step-down job 실제 트리거  
+**Expected:** OIDC + `x-prewarm-control-token` 검증을 통과하고 대상 서비스 min-instance 조정  
+**Why human:** GCP IAM/실행 로그는 코드 외부 상태
 
-### 3. Responsive Booking UX
+### 3. Toss Sandbox Round-Trip
 
-**Test:** mobile viewport + desktop viewport에서 floor switching/seat grouping/timer/expiry 경로 수동 점검  
-**Expected:** 선택 보존, 요약 정확성, 결제 진입 안정성 확보  
-**Why human:** 반응형·터치 UX 완성도는 자동 테스트만으로 충분히 보장 불가
+**Test:** 국내카드/해외카드/Alipay+/truemoney 결제-리턴-웹훅 왕복 수동 실행  
+**Expected:** sync/pending/failure/expired recovery가 UI/DB 상태와 일치  
+**Why human:** 외부 PG 왕복은 단위테스트만으로 완전 판정 불가
+
+### 4. Responsive Multi-floor UX
+
+**Test:** 모바일/데스크톱에서 floor switching + lock/countdown/recovery 흐름 수동 점검  
+**Expected:** 층 전환 시 선택 보존 및 타이머/복구 흐름 안정 동작  
+**Why human:** 터치/레이아웃 체감 품질은 자동화로 충분히 대체 불가
 
 ### Gaps Summary
 
-코드베이스 기준으로 Phase 24 핵심 구현(큐, 결제 분기/웹훅, 환불 상태머신, 관리자 예외경로, QR 발급, 스키마/마이그레이션, 핵심 테스트)은 확인됨. 다만 Cloudflare/GCP/Toss 외부 시스템과 실제 브라우저 UX는 자동 검증 한계를 가지므로 human UAT가 필요하다.
+코드 기준 BLOCKER gap은 확인되지 않았다. 다만 성공기준 #2, #3의 일부는 외부 인프라/실브라우저 행태 검증이 필요하므로 상태는 `human_needed`다.
 
 ---
 
-_Verified: 2026-05-08T10:30:38Z_  
+_Verified: 2026-05-10T10:03:16Z_  
 _Verifier: the agent (gsd-verifier)_
