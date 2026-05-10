@@ -76,12 +76,35 @@ function createUnavailableBoss(reason: string): PgBossContract {
   };
 }
 
-function loadPgBossConstructor() {
+type PgBossConstructor = new (options: {
+  connectionString: string;
+}) => PgBossContract & { start(): Promise<void> };
+
+export function resolvePgBossConstructor(moduleExport: unknown): PgBossConstructor {
+  const candidate =
+    typeof moduleExport === 'object' && moduleExport !== null
+      ? ((moduleExport as { PgBoss?: unknown; default?: unknown }).PgBoss ??
+          (moduleExport as { default?: unknown }).default ??
+          moduleExport)
+      : moduleExport;
+
+  if (typeof candidate !== 'function') {
+    throw new TypeError('pg-boss constructor export was not found');
+  }
+
+  return candidate as PgBossConstructor;
+}
+
+export function loadPgBossConstructor(): PgBossConstructor {
   const require = createRequire(import.meta.url);
   const module = require('pg-boss');
-  return (module?.default ?? module) as new (options: {
-    connectionString: string;
-  }) => PgBossContract & { start(): Promise<void> };
+  return resolvePgBossConstructor(module);
+}
+
+export function markBossAvailable(
+  boss: PgBossContract & { start(): Promise<void> },
+): PgBossContract {
+  return Object.assign(boss, { isAvailable: true });
 }
 
 export const pgbossProvider = {
@@ -98,10 +121,7 @@ export const pgbossProvider = {
       const boss = new PgBoss({ connectionString });
       await boss.start();
 
-      return {
-        ...boss,
-        isAvailable: true,
-      };
+      return markBossAvailable(boss);
     } catch (error) {
       logger.error(
         'Failed to initialize pg-boss. Background refund/cancel jobs are unavailable until dependency/runtime is fixed.',
