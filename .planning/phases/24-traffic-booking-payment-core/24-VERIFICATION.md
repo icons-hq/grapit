@@ -1,6 +1,6 @@
 ---
 phase: 24-traffic-booking-payment-core
-verified: 2026-05-10T13:35:20Z
+verified: 2026-05-10T13:56:48Z
 status: human_needed
 score: 4/6 must-haves verified
 overrides_applied: 0
@@ -10,12 +10,14 @@ re_verification:
   gaps_closed:
     - "Cloud Scheduler → prewarm API(OIDC+control-token) 실제 호출 검증"
     - "모바일/데스크톱 멀티층 좌석 선택 UX 수동 점검"
-  gaps_remaining: []
+  gaps_remaining:
+    - "Cloudflare zone activation pending registrar nameserver cutover"
+    - "Toss sandbox merchant redirect/webhook round-trip"
   regressions: []
 human_verification:
   - test: "Cloudflare WAF/rate-limit/challenge/block rules 실제 Zone 반영 확인"
     expected: "queue-entry/lock-seat/prepare-reservation/confirm-payment 규칙이 활성화되고 동작한다"
-    why_human: "CLI API와 Chrome Dashboard 모두 현재 Cloudflare 계정의 zone/domain 목록이 비어 있음을 확인했다. Grapit zone을 추가하고 ruleset/rate-limit/challenge/block rules를 반영해야 통과 판정 가능"
+    why_human: "Cloudflare Free zone `heygrabit.com`과 dashboard security rules는 구성 완료됐지만, zone status가 `pending`이고 공개 DNS가 아직 WHOISDomain NS를 반환한다. Registrar에서 NS를 `rick.ns.cloudflare.com`/`wanda.ns.cloudflare.com`으로 전환한 뒤 edge rule 실행을 재확인해야 통과 판정 가능"
   - test: "Toss sandbox 실결제 경로(국내카드/해외카드/Alipay+/truemoney) 실제 redirect/webhook 왕복 확인"
     expected: "sync/pending/recovery 분기와 안내 문구가 실제 PG round-trip 결과와 일치한다"
     why_human: "실제 Toss sandbox merchant 세션/외부 webhook 연동은 정적 분석·mock 테스트로 대체 불가"
@@ -24,7 +26,7 @@ human_verification:
 # Phase 24: Traffic + Booking + Payment Core Verification Report
 
 **Phase Goal:** 광고/티켓팅 트래픽 흡수부터 좌석 선택, 결제, 환불, QR 발급까지 사용자의 core booking path를 test-key 기준으로 완성한다.  
-**Verified:** 2026-05-10T13:27:50Z  
+**Verified:** 2026-05-10T13:56:48Z
 **Status:** human_needed  
 **Re-verification:** Yes — gap closure(24-21/24-22 포함) 이후 재검증
 
@@ -35,7 +37,7 @@ human_verification:
 | # | Truth | Status | Evidence |
 | --- | --- | --- | --- |
 | 1 | Queue admission uses Valkey Sorted Set and batch admission; booking APIs require valid admission | ✓ VERIFIED | `zrange/zrem/sadd` 기반 batch admission과 snapshot 계산이 구현됨 (`apps/api/src/modules/queue/queue.service.ts`), booking/reservation mutation에 `AdmissionGuard`가 강제됨 (`apps/api/src/modules/booking/booking.controller.ts`, `apps/api/src/modules/reservation/reservation.controller.ts`). |
-| 2 | WAF/rate-limit/bot/macro rules and Cloud Scheduler prewarm runbook are documented and verified | ? UNCERTAIN (WARNING) | app-layer traffic policy/decision + prewarm OIDC/control-token 검증 + runbook은 확인됨 (`apps/api/src/modules/traffic/traffic-defense.service.ts`, `apps/api/src/modules/ops/prewarm.service.ts`, `docs/runbooks/phase24-queue-waf-prewarm.md`). Cloud Scheduler prewarm live 호출은 HUMAN-UAT test 2에서 PASS. Cloudflare는 CLI API와 Chrome Dashboard에서 현재 계정의 zone/domain 목록이 비어 있어 HUMAN-UAT test 1이 still blocked. |
+| 2 | WAF/rate-limit/bot/macro rules and Cloud Scheduler prewarm runbook are documented and verified | ? UNCERTAIN (WARNING) | app-layer traffic policy/decision + prewarm OIDC/control-token 검증 + runbook은 확인됨 (`apps/api/src/modules/traffic/traffic-defense.service.ts`, `apps/api/src/modules/ops/prewarm.service.ts`, `docs/runbooks/phase24-queue-waf-prewarm.md`). Cloud Scheduler prewarm live 호출은 HUMAN-UAT test 2에서 PASS. Cloudflare Free zone `heygrabit.com` exists with three active custom rules and one active rate-limit rule, but zone activation is pending registrar NS cutover from WHOISDomain to `rick.ns.cloudflare.com`/`wanda.ns.cloudflare.com`. |
 | 3 | Multi-floor SVG upload/render/switching works on desktop/mobile with lock/countdown/expiry/recovery behavior | ✓ VERIFIED | floor-aware seat identity/selector/summary wiring (`apps/web/components/booking/booking-page.tsx`, `apps/web/components/booking/floor-selector.tsx`) + overlay hit-target 보정(`apps/web/components/booking/seat-map-viewer.tsx`) + browser 회귀 테스트 PASS(`apps/web/e2e/booking-floor-selection.spec.ts`). |
 | 4 | Event-specific max tickets, cancellation/change policy, and manual seat operation controls are configurable | ✓ VERIFIED | `booking_policies` + migration 확장(`apps/api/src/database/schema/booking-policies.ts`, `apps/api/src/database/migrations/0012_phase24_booking_core.sql`) 및 `maxTicketsPerUser` 서버 enforcement(`apps/api/src/modules/booking/booking.service.ts`), manual-open audit/처리(`apps/api/src/modules/admin/admin-booking.service.ts`). |
 | 5 | Domestic Toss, overseas card, Alipay+, and truemoney paths work with proper disclaimers | ? UNCERTAIN (WARNING) | provider 분기/consent/schema/webhook idempotency 구현 및 mocked browser tests PASS(`apps/web/components/booking/toss-payment-widget.tsx`, `apps/api/src/modules/payment/payment.service.ts`, `apps/api/src/modules/payment/payment-webhook.controller.ts`, `apps/web/e2e/toss-payment-phase24.spec.ts`). 하지만 실제 Toss sandbox redirect/webhook 왕복 증거는 HUMAN-UAT test 3에서 blocked. |
@@ -90,7 +92,7 @@ human_verification:
 | Requirement | Source Plan | Description | Status | Evidence |
 | --- | --- | --- | --- | --- |
 | `TRAF-01` | 24-01/04/08/20 | queue admission + booking guard + queue UX | ✓ SATISFIED | queue service + AdmissionGuard + booking-queue e2e |
-| `TRAF-02` | 24-05/08/20 | WAF/rate-limit/challenge/block | ? NEEDS HUMAN | app-layer 구현/테스트 및 runbook 있음. CLI API + Chrome Dashboard 확인 결과 현재 Cloudflare 계정에 zone/domain이 없어 실제 zone rule 활성 증거를 만들 수 없음 |
+| `TRAF-02` | 24-05/08/20 | WAF/rate-limit/challenge/block | ? NEEDS HUMAN | Cloudflare Free zone and dashboard rules are configured: queue-entry managed challenge, booking mutation managed challenge, booking macro block, and critical booking API rate limit. Public DNS still delegates to WHOISDomain, so edge execution remains unverified until registrar NS cutover. |
 | `TRAF-03` | 24-05/21 | Cloud Scheduler prewarm scale-up/step-down | ✓ SATISFIED | prewarm service/runbook + HUMAN-UAT test 2 live run PASS |
 | `BOOK-01` | 24-02/06/07/15/16/19/22 | multi-floor seat selection/lock | ✓ SATISFIED | floor-aware seatKey + seat-map hit-target fix + floor browser e2e |
 | `BOOK-02` | 24-01/03/09/10/17/22 | countdown/expiry/recovery | ✓ SATISFIED | confirm/complete recovery UI + e2e + lock failure 분기 |
@@ -112,7 +114,7 @@ human_verification:
 
 **Test:** Cloudflare Dashboard/API에서 Grapit zone의 queue-entry/booking mutation 규칙 활성 상태 확인  
 **Expected:** challenge/block/rate-limit 분기가 실제 zone에서 동작  
-**Why human:** 2026-05-10 CLI API와 Chrome Dashboard로 현재 인증 계정의 zone/domain 목록이 비어 있음을 확인했다. `Domains > Overview`는 "도메인 또는 하위 도메인을 찾을 수 없습니다"를 표시했고, `Application Security > WAF`는 account-level WAF Enterprise upsell만 표시했다. Grapit zone을 Cloudflare에 추가하고 runbook rules를 반영한 뒤 재확인이 필요하다.
+**Why human:** 2026-05-10 Cloudflare Dashboard에서 Free zone `heygrabit.com`을 추가하고 queue-entry/booking mutation/macro custom rules와 critical booking API rate-limit rule을 활성화했다. CLI API confirms zone `c7e9867fe90523f398e5c51ad911107e` is still `pending`, and `dig NS heygrabit.com +short` still returns WHOISDomain nameservers. Registrar에서 `rick.ns.cloudflare.com`/`wanda.ns.cloudflare.com`으로 NS를 전환한 뒤 재확인이 필요하다.
 
 ### 2. Toss Sandbox Round-Trip
 
@@ -122,9 +124,9 @@ human_verification:
 
 ### Gaps Summary
 
-코드 내부 구현/테스트 기준의 BLOCKER gap은 확인되지 않았다. 다만 success criteria #2(Cloudflare 실 zone 적용)는 현재 Cloudflare 계정에 zone/domain이 없어 운영 반영이 확인되지 않았고, #5(실 Toss sandbox round-trip)도 외부 운영 증거가 미완료라 `status: human_needed`를 유지한다.
+코드 내부 구현/테스트 기준의 BLOCKER gap은 확인되지 않았다. Success criteria #2는 Cloudflare zone/rules 구성까지 완료됐지만 registrar NS cutover 전이라 edge 실행 증거가 아직 없고, #5(실 Toss sandbox round-trip)도 외부 운영 증거가 미완료라 `status: human_needed`를 유지한다.
 
 ---
 
-_Verified: 2026-05-10T13:35:20Z_
+_Verified: 2026-05-10T13:56:48Z_
 _Verifier: the agent (gsd-verifier)_

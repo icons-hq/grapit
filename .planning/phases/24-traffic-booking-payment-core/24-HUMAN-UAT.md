@@ -3,35 +3,39 @@ status: partial
 phase: 24-traffic-booking-payment-core
 source: [24-VERIFICATION.md]
 started: 2026-05-08T10:32:42Z
-updated: 2026-05-10T22:35:20+09:00
+updated: 2026-05-10T22:56:48+09:00
 ---
 
 # Phase 24: Human UAT
 
 ## Current Test
 
-[testing complete - 2 passed, 0 issues, 2 blocked external/operational gates]
+[testing complete - 2 passed, 0 issues, 1 configured/pending DNS delegation gate, 1 blocked external PG gate]
 
 ## Tests
 
 ### 1. Cloudflare WAF/rate-limit/challenge/block rules 실제 Zone 반영 확인
 expected: runbook의 queue-entry/lock-seat/prepare-reservation/confirm-payment 규칙이 활성화되고 동작한다
 result: blocked
-blocked_by: missing_external_zone
-reason: "Wrangler OAuth and the logged-in Chrome Cloudflare Dashboard both point at account `6c94bc5d14389171fcb54b8b9fc1f0eb`, but that account currently has zero Cloudflare zones/domains. The dashboard WAF page only shows the account-level Enterprise upsell, so the queue-entry/lock-seat/prepare-reservation/confirm-payment zone rules cannot be verified as active or passing."
+blocked_by: registrar_nameserver_cutover
+reason: "Cloudflare Free zone `heygrabit.com` now exists in account `6c94bc5d14389171fcb54b8b9fc1f0eb` and dashboard security rules were configured, but the zone remains `pending` until the registrar delegates NS from WHOISDomain to Cloudflare. Public DNS still returns `ns1/ns2/ns3/ns4.whoisdomain.kr`, so edge traffic cannot yet be proven to execute the rules."
 evidence:
   - command: pnpm exec wrangler whoami
     result: PASS, authenticated account visible with zone:read scope
-  - command: Cloudflare API GET /client/v4/zones?per_page=50 using Wrangler OAuth token
-    result: PASS request, empty zone list
+  - command: Cloudflare API POST /client/v4/zones using Wrangler OAuth token
+    result: FAIL, 403 missing `com.cloudflare.api.account.zone.create`; dashboard flow used instead
+  - command: Computer Use Chrome Cloudflare Dashboard, Domains > Add domain > Connect domain
+    result: PASS, added `heygrabit.com` on Free plan, imported apex/www/api A records, SES MX/SPF, DMARC, Google verification, and Resend DKIM TXT records
+  - command: Cloudflare API GET /client/v4/zones?name=heygrabit.com using Wrangler OAuth token
+    result: PASS, zone id `c7e9867fe90523f398e5c51ad911107e`, status `pending`, plan `Free Website`, name servers `rick.ns.cloudflare.com` and `wanda.ns.cloudflare.com`
   - command: pnpm exec wrangler zones list
     result: FAIL, Wrangler v4 has no zones list command
-  - command: Browser-use Cloudflare Dashboard navigation
-    result: BLOCKED at login screen with Cloudflare human challenge; no authenticated in-app browser session available
-  - command: Computer Use Chrome Cloudflare Dashboard, Domains > Overview
-    result: PASS read-only check, logged-in account shows "도메인 또는 하위 도메인을 찾을 수 없습니다" and "도메인을 추가하세요"
-  - command: Computer Use Chrome Cloudflare Dashboard, Application Security > WAF
-    result: PASS read-only check, page shows account-level WAF Enterprise upsell rather than a zone rule/rate-limit/ruleset list
+  - command: Computer Use Chrome Cloudflare Dashboard, Security > Security Rules > Custom Rules
+    result: PASS, active custom rules `phase24-queue-entry-managed-challenge`, `phase24-booking-mutation-managed-challenge`, and `phase24-booking-macro-block` show `3/5 used`; Cloudflare UI no longer supports `cf.threat_score`, so suspicious user-agent predicates were used
+  - command: Computer Use Chrome Cloudflare Dashboard, Security > Security Rules > Rate Limiting Rules
+    result: PASS, active rule `phase24-critical-booking-api-rate-limit` shows `1/1 used`; expression covers POST booking lock/reservation prepare/payment confirm paths, per-IP threshold 30 requests / 10 seconds, action Block, mitigation 10 seconds
+  - command: dig NS heygrabit.com +short
+    result: BLOCKED, public authoritative NS still `ns1.whoisdomain.kr`, `ns2.whoisdomain.kr`, `ns3.whoisdomain.kr`, `ns4.whoisdomain.kr`; registrar must switch to `rick.ns.cloudflare.com` and `wanda.ns.cloudflare.com`
 
 ### 2. Cloud Scheduler → prewarm API(OIDC+control-token) 실제 호출 검증
 expected: scale-up/step-down job이 의도한 서비스에 성공하고 감사 가능한 실행 로그가 남는다
@@ -113,6 +117,20 @@ skipped: 0
 blocked: 2
 
 ## Gaps
+
+- truth: "Cloudflare zone security rules are configured, but public traffic is not delegated to Cloudflare yet."
+  status: human_needed
+  reason: "The Cloudflare Free zone and dashboard rules are active in the Cloudflare account, but the zone remains `pending` and public DNS still delegates `heygrabit.com` to WHOISDomain nameservers. A registrar-side NS cutover is required before edge rule execution can be verified."
+  severity: operational
+  test: 1
+  root_cause: "The available Wrangler OAuth token could read zones but could not create the zone or read Rulesets API entrypoints, so the zone/rules were configured through the authenticated Chrome Dashboard. Registrar nameserver changes require domain registrar access and were intentionally not performed by the agent."
+  artifacts:
+    - path: ".planning/phases/24-traffic-booking-payment-core/24-HUMAN-UAT.md"
+      issue: "Documents the configured Cloudflare zone, active custom/rate-limit rules, and remaining registrar NS cutover."
+    - path: ".planning/phases/24-traffic-booking-payment-core/24-VERIFICATION.md"
+      issue: "Keeps Phase 24 in `human_needed` until Cloudflare activation propagates and Toss sandbox round-trip is verified."
+  next_human_step:
+    - "At the registrar for `heygrabit.com`, replace `ns1/ns2/ns3/ns4.whoisdomain.kr` with `rick.ns.cloudflare.com` and `wanda.ns.cloudflare.com`, then wait for Cloudflare zone status to become active."
 
 - truth: "Cloud Scheduler scale-up and step-down jobs successfully call the deployed prewarm API with OIDC and control-token protection."
   status: resolved
