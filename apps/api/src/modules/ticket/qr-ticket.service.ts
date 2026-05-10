@@ -22,9 +22,12 @@ import {
   venues,
 } from '../../database/schema/index.js';
 import { EmailService } from '../auth/email/email.service.js';
-import { PG_BOSS, type PgBossContract } from '../jobs/pgboss.provider.js';
+import {
+  PG_BOSS,
+  PG_BOSS_JOB_NAMES,
+  type PgBossContract,
+} from '../jobs/pgboss.provider.js';
 
-const QR_EMAIL_JOB_NAME = 'qr-ticket-email-resend';
 const DAY_IN_MS = 24 * 60 * 60 * 1000;
 
 type TicketRecord = {
@@ -84,13 +87,16 @@ export class QrTicketService implements OnModuleInit {
     }
 
     try {
-      await this.pgBoss.work<QrTicketEmailJobPayload>(QR_EMAIL_JOB_NAME, async ([job]) => {
-        if (!job) {
-          return;
-        }
+      await this.pgBoss.work<QrTicketEmailJobPayload>(
+        PG_BOSS_JOB_NAMES.qrTicketEmailResend,
+        async ([job]) => {
+          if (!job) {
+            return;
+          }
 
-        await this.handleReminderEmailJob(job.data);
-      });
+          await this.handleReminderEmailJob(job.data);
+        },
+      );
     } catch (error) {
       this.logger.error(
         'QR reminder worker registration failed',
@@ -321,7 +327,7 @@ export class QrTicketService implements OnModuleInit {
     }
 
     const jobId = await this.pgBoss.send<QrTicketEmailJobPayload>(
-      QR_EMAIL_JOB_NAME,
+      PG_BOSS_JOB_NAMES.qrTicketEmailResend,
       {
         ticketId: ticketRecord.id,
         reservationId: ticketRecord.reservationId,

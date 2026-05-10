@@ -178,6 +178,29 @@ export function isTossCancelCompleted(response: TossPaymentResponse): boolean {
   return response.status === 'CANCELED';
 }
 
+const REFUND_CANCEL_RETRY_METADATA_KEY = 'refundCancelRetry';
+
+function getRefundProviderMetadata(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? { ...(value as Record<string, unknown>) }
+    : {};
+}
+
+function getRefundCancelRetryJobId(refund: Pick<RefundRecord, 'providerMetadata'>): string | null {
+  const metadata = getRefundProviderMetadata(refund.providerMetadata);
+  const retryMetadata = metadata[REFUND_CANCEL_RETRY_METADATA_KEY];
+  if (
+    retryMetadata
+    && typeof retryMetadata === 'object'
+    && !Array.isArray(retryMetadata)
+    && typeof (retryMetadata as { jobId?: unknown }).jobId === 'string'
+  ) {
+    return (retryMetadata as { jobId: string }).jobId;
+  }
+
+  return null;
+}
+
 function pickCancelledSeatReleaseDelaySeconds(
   minMinutes: number,
   maxMinutes: number,
@@ -260,9 +283,13 @@ export class RefundService {
     actor: RefundRequestActor,
   ): Promise<RefundRequestResponse> {
     if (existingRefund) {
-      return this.buildRequestResponse(context, existingRefund, {
+      const refund = await this.ensureRefundCancelRetryScheduled(existingRefund);
+
+      return this.buildRequestResponse(context, refund, {
         idempotent: true,
-        retryEnqueued: existingRefund.status === 'sent_to_pg' || existingRefund.status === 'processing_at_pg',
+        retryEnqueued:
+          (refund.status === 'sent_to_pg' || refund.status === 'processing_at_pg')
+          && Boolean(getRefundCancelRetryJobId(refund)),
       });
     }
 
@@ -299,9 +326,16 @@ export class RefundService {
         reason,
         requestedRefund.retryCount,
       );
-      const jobId = await this.scheduleRefundCancelRetry(processingRefund.id, processingRefund.retryCount);
+      const jobId = await this.scheduleRefundCancelRetry(
+        processingRefund.id,
+        processingRefund.retryCount,
+      );
+      const scheduledRefund = await this.recordRefundCancelRetrySchedule(
+        processingRefund,
+        jobId,
+      );
 
-      return this.buildRequestResponse(context, processingRefund, {
+      return this.buildRequestResponse(context, scheduledRefund, {
         idempotent: false,
         retryEnqueued: Boolean(jobId),
       });
@@ -313,9 +347,16 @@ export class RefundService {
           reason,
           requestedRefund.retryCount,
         );
-        const jobId = await this.scheduleRefundCancelRetry(retryableRefund.id, retryableRefund.retryCount);
+        const jobId = await this.scheduleRefundCancelRetry(
+          retryableRefund.id,
+          retryableRefund.retryCount,
+        );
+        const scheduledRefund = await this.recordRefundCancelRetrySchedule(
+          retryableRefund,
+          jobId,
+        );
 
-        return this.buildRequestResponse(context, retryableRefund, {
+        return this.buildRequestResponse(context, scheduledRefund, {
           idempotent: false,
           retryEnqueued: Boolean(jobId),
         });
@@ -601,6 +642,44 @@ export class RefundService {
     return updated;
   }
 
+  protected async ensureRefundCancelRetryScheduled(
+    refund: RefundRecord,
+  ): Promise<RefundRecord> {
+    if (
+      (refund.status !== 'sent_to_pg' && refund.status !== 'processing_at_pg')
+      || refund.retryCount >= REFUND_CANCEL_MAX_RETRIES
+      || getRefundCancelRetryJobId(refund)
+    ) {
+      return refund;
+    }
+
+    const jobId = await this.scheduleRefundCancelRetry(refund.id, refund.retryCount);
+    return this.recordRefundCancelRetrySchedule(refund, jobId);
+  }
+
+  protected async recordRefundCancelRetrySchedule(
+    refund: RefundRecord,
+    jobId: string | null,
+  ): Promise<RefundRecord> {
+    const now = new Date();
+    const providerMetadata = getRefundProviderMetadata(refund.providerMetadata);
+
+    return this.updateRefund(refund.id, {
+      providerMetadata: {
+        ...providerMetadata,
+        [REFUND_CANCEL_RETRY_METADATA_KEY]: {
+          status: jobId ? 'scheduled' : 'schedule_failed',
+          jobId,
+          attempt: refund.retryCount + 1,
+          scheduledAt: jobId ? now.toISOString() : null,
+          failedAt: jobId ? null : now.toISOString(),
+        },
+      },
+      customerServiceCtaVisible: !jobId,
+      updatedAt: now,
+    });
+  }
+
   protected async finalizeRefundSuccess(
     context: ReservationRefundContext,
     refundId: string,
@@ -779,19 +858,27 @@ export class RefundService {
     const delaySeconds = Math.min(600, 60 * Math.max(1, nextAttempt));
     const startAfter = new Date(Date.now() + delaySeconds * 1000);
 
-    return this.pgBoss.send(
-      PG_BOSS_JOB_NAMES.refundCancelRetry,
-      {
-        refundId,
-        attempt: nextAttempt,
-      },
-      {
-        startAfter,
-        singletonKey: refundId,
-        retryLimit: REFUND_CANCEL_MAX_RETRIES,
-        retryBackoff: true,
-        retryDelay: 60,
-      },
-    );
+    try {
+      return await this.pgBoss.send(
+        PG_BOSS_JOB_NAMES.refundCancelRetry,
+        {
+          refundId,
+          attempt: nextAttempt,
+        },
+        {
+          startAfter,
+          singletonKey: refundId,
+          retryLimit: REFUND_CANCEL_MAX_RETRIES,
+          retryBackoff: true,
+          retryDelay: 60,
+        },
+      );
+    } catch (error) {
+      this.logger.error(
+        `pg-boss refund-cancel-retry enqueue failed for refundId=${refundId}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+      return null;
+    }
   }
 }

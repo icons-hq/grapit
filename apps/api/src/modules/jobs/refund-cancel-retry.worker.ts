@@ -57,6 +57,14 @@ type RetryContext = {
   seats: ReservationSeatRecord[];
 };
 
+const REFUND_CANCEL_RETRY_METADATA_KEY = 'refundCancelRetry';
+
+function getRefundProviderMetadata(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? { ...(value as Record<string, unknown>) }
+    : {};
+}
+
 @Injectable()
 export class RefundCancelRetryWorker implements OnModuleInit {
   private readonly logger = new Logger(RefundCancelRetryWorker.name);
@@ -89,6 +97,7 @@ export class RefundCancelRetryWorker implements OnModuleInit {
       | 'missing_refund'
       | 'already_terminal'
       | 'rescheduled'
+      | 'retry_schedule_failed'
       | 'failed'
       | 'completed'
       | 'processing';
@@ -123,8 +132,17 @@ export class RefundCancelRetryWorker implements OnModuleInit {
       }
 
       await this.markRefundProcessing(context.refund.id, response, reason, nextRetryCount);
-      await this.scheduleRetry(context.refund.id, nextRetryCount);
-      return { status: 'processing' };
+      const jobId = await this.scheduleRetry(context.refund.id, nextRetryCount);
+      await this.recordRetryScheduleState(
+        context.refund.id,
+        {
+          cancelReason: reason,
+          paymentStatus: response.status,
+        },
+        nextRetryCount,
+        jobId,
+      );
+      return { status: jobId ? 'processing' : 'retry_schedule_failed' };
     } catch (error) {
       if (isTransientRefundCancelFailure(error)) {
         await this.recordTransientRetryFailure(
@@ -138,8 +156,17 @@ export class RefundCancelRetryWorker implements OnModuleInit {
           return { status: 'failed' };
         }
 
-        await this.scheduleRetry(context.refund.id, nextRetryCount);
-        return { status: 'rescheduled' };
+        const jobId = await this.scheduleRetry(context.refund.id, nextRetryCount);
+        await this.recordRetryScheduleState(
+          context.refund.id,
+          {
+            cancelReason: reason,
+            lastTransientError: getRefundErrorMessage(error),
+          },
+          nextRetryCount,
+          jobId,
+        );
+        return { status: jobId ? 'rescheduled' : 'retry_schedule_failed' };
       }
 
       await this.markFinalFailure(context.refund.id, error);
@@ -256,6 +283,32 @@ export class RefundCancelRetryWorker implements OnModuleInit {
         },
         expectedDepositAt: calculateExpectedRefundDepositAt(),
         updatedAt: new Date(),
+      })
+      .where(eq(refunds.id, refundId));
+  }
+
+  protected async recordRetryScheduleState(
+    refundId: string,
+    baseMetadata: Record<string, unknown>,
+    retryCount: number,
+    jobId: string | null,
+  ): Promise<void> {
+    const now = new Date();
+    await this.db
+      .update(refunds)
+      .set({
+        providerMetadata: {
+          ...getRefundProviderMetadata(baseMetadata),
+          [REFUND_CANCEL_RETRY_METADATA_KEY]: {
+            status: jobId ? 'scheduled' : 'schedule_failed',
+            jobId,
+            attempt: retryCount + 1,
+            scheduledAt: jobId ? now.toISOString() : null,
+            failedAt: jobId ? null : now.toISOString(),
+          },
+        },
+        customerServiceCtaVisible: !jobId,
+        updatedAt: now,
       })
       .where(eq(refunds.id, refundId));
   }
@@ -453,16 +506,24 @@ export class RefundCancelRetryWorker implements OnModuleInit {
     const delaySeconds = Math.min(600, 60 * Math.max(1, retryCount));
     const startAfter = new Date(Date.now() + delaySeconds * 1000);
 
-    return this.pgBoss.send(
-      PG_BOSS_JOB_NAMES.refundCancelRetry,
-      { refundId, attempt: retryCount + 1 },
-      {
-        startAfter,
-        singletonKey: refundId,
-        retryLimit: REFUND_CANCEL_MAX_RETRIES,
-        retryBackoff: true,
-        retryDelay: 60,
-      },
-    );
+    try {
+      return await this.pgBoss.send(
+        PG_BOSS_JOB_NAMES.refundCancelRetry,
+        { refundId, attempt: retryCount + 1 },
+        {
+          startAfter,
+          singletonKey: refundId,
+          retryLimit: REFUND_CANCEL_MAX_RETRIES,
+          retryBackoff: true,
+          retryDelay: 60,
+        },
+      );
+    } catch (error) {
+      this.logger.error(
+        `pg-boss refund-cancel-retry enqueue failed for refundId=${refundId}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+      return null;
+    }
   }
 }

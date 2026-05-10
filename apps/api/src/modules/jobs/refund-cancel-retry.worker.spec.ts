@@ -123,6 +123,9 @@ describe('RefundCancelRetryWorker', () => {
     const scheduleRetrySpy = vi
       .spyOn(worker as never, 'scheduleRetry')
       .mockResolvedValue('refund-retry-job-2' as never);
+    const recordScheduleSpy = vi
+      .spyOn(worker as never, 'recordRetryScheduleState')
+      .mockResolvedValue(undefined as never);
 
     const result = await worker.handleJob({
       refundId: 'refund-1',
@@ -132,7 +135,63 @@ describe('RefundCancelRetryWorker', () => {
     expect(tossPaymentsClient.cancelPayment).toHaveBeenCalledWith('pay-key-1', '단순 변심');
     expect(recordTransientSpy).toHaveBeenCalled();
     expect(scheduleRetrySpy).toHaveBeenCalledWith('refund-1', 1);
+    expect(recordScheduleSpy).toHaveBeenCalledWith(
+      'refund-1',
+      {
+        cancelReason: '단순 변심',
+        lastTransientError: 'provider 5xx',
+      },
+      1,
+      'refund-retry-job-2',
+    );
     expect(result.status).toBe('rescheduled');
+  });
+
+  it('records retry schedule failure without throwing after transient provider failure', async () => {
+    const boss = {
+      isAvailable: true,
+      work: vi.fn(),
+      send: vi.fn().mockRejectedValue(new Error('Queue refund-cancel-retry does not exist')),
+      stop: vi.fn(),
+    };
+    const tossPaymentsClient = {
+      cancelPayment: vi
+        .fn()
+        .mockRejectedValue(new TossPaymentError('INTERNAL_SERVER_ERROR', 'provider 5xx')),
+    };
+    const worker = new RefundCancelRetryWorker(
+      {} as never,
+      tossPaymentsClient as never,
+      boss as never,
+    );
+
+    vi.spyOn(worker as never, 'loadRetryContext').mockResolvedValue(
+      createRetryContext() as never,
+    );
+    const recordTransientSpy = vi
+      .spyOn(worker as never, 'recordTransientRetryFailure')
+      .mockResolvedValue(undefined as never);
+    const recordScheduleSpy = vi
+      .spyOn(worker as never, 'recordRetryScheduleState')
+      .mockResolvedValue(undefined as never);
+
+    const result = await worker.handleJob({
+      refundId: 'refund-1',
+      attempt: 1,
+    });
+
+    expect(recordTransientSpy).toHaveBeenCalled();
+    expect(boss.send).toHaveBeenCalled();
+    expect(recordScheduleSpy).toHaveBeenCalledWith(
+      'refund-1',
+      {
+        cancelReason: '단순 변심',
+        lastTransientError: 'provider 5xx',
+      },
+      1,
+      null,
+    );
+    expect(result.status).toBe('retry_schedule_failed');
   });
 
   it('attempts the configured final retry before marking retry exhausted', async () => {

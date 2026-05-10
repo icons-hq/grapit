@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  bootstrapPgBossQueues,
   loadPgBossConstructor,
   markBossAvailable,
+  PG_BOSS_QUEUE_NAMES,
   resolvePgBossConstructor,
   type PgBossContract,
 } from './pgboss.provider.js';
@@ -18,6 +20,10 @@ class FakeBoss implements PgBossContract {
   }
 
   async work() {
+    return undefined;
+  }
+
+  async createQueue() {
     return undefined;
   }
 
@@ -48,5 +54,21 @@ describe('pgbossProvider helpers', () => {
     expect(availableBoss.send).toBe(FakeBoss.prototype.send);
     expect(availableBoss.work).toBe(FakeBoss.prototype.work);
     expect(availableBoss.stop).toBe(FakeBoss.prototype.stop);
+  });
+
+  it('bootstraps every exported application queue before workers use pg-boss', async () => {
+    const createdQueues: string[] = [];
+    const boss = {
+      createQueue: async (name: string) => {
+        createdQueues.push(name);
+      },
+    };
+
+    await bootstrapPgBossQueues(boss);
+
+    expect(createdQueues.sort()).toEqual([...PG_BOSS_QUEUE_NAMES].sort());
+    expect(createdQueues).toContain('release-cancelled-seat');
+    expect(createdQueues).toContain('refund-cancel-retry');
+    expect(createdQueues).toContain('qr-ticket-email-resend');
   });
 });

@@ -7,7 +7,10 @@ export const PG_BOSS = Symbol('PG_BOSS');
 export const PG_BOSS_JOB_NAMES = {
   releaseCancelledSeat: 'release-cancelled-seat',
   refundCancelRetry: 'refund-cancel-retry',
+  qrTicketEmailResend: 'qr-ticket-email-resend',
 } as const;
+
+export const PG_BOSS_QUEUE_NAMES = Object.values(PG_BOSS_JOB_NAMES);
 
 export interface SeatIdentityPayload {
   floorKey: string;
@@ -47,6 +50,7 @@ export type PgBossWorkHandler<TData = unknown> = (
 
 export interface PgBossContract {
   isAvailable: boolean;
+  createQueue(name: string, options?: Record<string, unknown>): Promise<void>;
   send<TData = unknown>(
     name: string,
     data?: TData,
@@ -73,6 +77,10 @@ function createUnavailableBoss(reason: string): PgBossContract {
       logger.warn(`pg-boss worker registration skipped: ${reason}`);
       return undefined;
     },
+    async createQueue() {
+      logger.warn(`pg-boss queue bootstrap skipped: ${reason}`);
+      return undefined;
+    },
     async stop() {
       return undefined;
     },
@@ -81,7 +89,10 @@ function createUnavailableBoss(reason: string): PgBossContract {
 
 type PgBossConstructor = new (options: {
   connectionString: string;
-}) => PgBossContract & { start(): Promise<void> };
+}) => PgBossContract & {
+  start(): Promise<void>;
+  on?(event: 'error' | 'warning', handler: (event: unknown) => void): unknown;
+};
 
 export function resolvePgBossConstructor(moduleExport: unknown): PgBossConstructor {
   const candidate =
@@ -110,6 +121,29 @@ export function markBossAvailable(
   return Object.assign(boss, { isAvailable: true });
 }
 
+export async function bootstrapPgBossQueues(
+  boss: Pick<PgBossContract, 'createQueue'>,
+  queueNames: readonly string[] = PG_BOSS_QUEUE_NAMES,
+): Promise<void> {
+  await Promise.all(queueNames.map((queueName) => boss.createQueue(queueName)));
+}
+
+function attachPgBossListeners(
+  boss: PgBossContract & {
+    on?(event: 'error' | 'warning', handler: (event: unknown) => void): unknown;
+  },
+): void {
+  boss.on?.('error', (event) => {
+    logger.error(
+      'pg-boss runtime error',
+      event instanceof Error ? event.stack : String(event),
+    );
+  });
+  boss.on?.('warning', (event) => {
+    logger.warn(`pg-boss warning: ${event instanceof Error ? event.message : String(event)}`);
+  });
+}
+
 export const pgbossProvider = {
   provide: PG_BOSS,
   inject: [ConfigService],
@@ -122,7 +156,9 @@ export const pgbossProvider = {
     try {
       const PgBoss = loadPgBossConstructor();
       const boss = new PgBoss({ connectionString });
+      attachPgBossListeners(boss);
       await boss.start();
+      await bootstrapPgBossQueues(boss);
 
       return markBossAvailable(boss);
     } catch (error) {

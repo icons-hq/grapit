@@ -117,6 +117,13 @@ describe('RefundService', () => {
       sentToPgAt: new Date('2026-05-08T03:05:00.000Z'),
       processingAtPgAt: new Date('2026-05-08T03:05:00.000Z'),
       resultCode: 'IN_PROGRESS',
+      providerMetadata: {
+        refundCancelRetry: {
+          status: 'scheduled',
+          jobId: 'job-refund-retry-existing',
+          attempt: 1,
+        },
+      },
     });
 
     vi.spyOn(service as never, 'loadReservationContext').mockResolvedValue(context as never);
@@ -125,9 +132,59 @@ describe('RefundService', () => {
     const result = await service.requestRefund('reservation-1', 'user-1', '단순 변심');
 
     expect(tossPaymentsClient.cancelPayment).not.toHaveBeenCalled();
+    expect(pgBoss.send).not.toHaveBeenCalled();
     expect(result.idempotent).toBe(true);
     expect(result.retryEnqueued).toBe(true);
     expect(result.refundTimeline?.currentState).toBe('PROCESSING_AT_PG');
+  });
+
+  it('reattempts retry enqueue for duplicate non-terminal refunds without a stored retry job', async () => {
+    const tossPaymentsClient = {
+      cancelPayment: vi.fn(),
+    };
+    const pgBoss = {
+      isAvailable: true,
+      send: vi.fn(),
+    };
+    const service = new RefundService({} as never, tossPaymentsClient as never, pgBoss as never);
+    const context = createContext();
+    const existingRefund = createRefund({
+      status: 'sent_to_pg',
+      sentToPgAt: new Date('2026-05-08T03:05:00.000Z'),
+      resultCode: 'INTERNAL_SERVER_ERROR',
+      providerMetadata: { cancelReason: '단순 변심' },
+    });
+    const scheduledRefund = createRefund({
+      ...existingRefund,
+      providerMetadata: {
+        cancelReason: '단순 변심',
+        refundCancelRetry: {
+          status: 'scheduled',
+          jobId: 'job-refund-retry-reattempt',
+          attempt: 1,
+        },
+      },
+    });
+
+    vi.spyOn(service as never, 'loadReservationContext').mockResolvedValue(context as never);
+    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(existingRefund as never);
+    const retrySpy = vi
+      .spyOn(service as never, 'scheduleRefundCancelRetry')
+      .mockResolvedValue('job-refund-retry-reattempt' as never);
+    const recordScheduleSpy = vi
+      .spyOn(service as never, 'recordRefundCancelRetrySchedule')
+      .mockResolvedValue(scheduledRefund as never);
+
+    const result = await service.requestRefund('reservation-1', 'user-1', '단순 변심');
+
+    expect(tossPaymentsClient.cancelPayment).not.toHaveBeenCalled();
+    expect(retrySpy).toHaveBeenCalledWith(existingRefund.id, existingRefund.retryCount);
+    expect(recordScheduleSpy).toHaveBeenCalledWith(
+      existingRefund,
+      'job-refund-retry-reattempt',
+    );
+    expect(result.idempotent).toBe(true);
+    expect(result.retryEnqueued).toBe(true);
   });
 
   it('persists sent_to_pg and enqueues refund-cancel-retry on transient Toss cancel failure', async () => {
@@ -153,6 +210,17 @@ describe('RefundService', () => {
       resultMessage: 'temporary 5xx from provider',
       failureReason: 'temporary 5xx from provider',
     });
+    const scheduledRefund = createRefund({
+      ...retryableRefund,
+      providerMetadata: {
+        cancelReason: '단순 변심',
+        refundCancelRetry: {
+          status: 'scheduled',
+          jobId: 'job-refund-retry-1',
+          attempt: 1,
+        },
+      },
+    });
 
     vi.spyOn(service as never, 'loadReservationContext').mockResolvedValue(context as never);
     vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(null as never);
@@ -161,14 +229,71 @@ describe('RefundService', () => {
     const retrySpy = vi
       .spyOn(service as never, 'scheduleRefundCancelRetry')
       .mockResolvedValue('job-refund-retry-1' as never);
+    const recordScheduleSpy = vi
+      .spyOn(service as never, 'recordRefundCancelRetrySchedule')
+      .mockResolvedValue(scheduledRefund as never);
 
     const result = await service.requestRefund('reservation-1', 'user-1', '단순 변심');
 
     expect(tossPaymentsClient.cancelPayment).toHaveBeenCalledWith('pay-key-1', '단순 변심');
     expect(retrySpy).toHaveBeenCalledWith(requestedRefund.id, requestedRefund.retryCount);
+    expect(recordScheduleSpy).toHaveBeenCalledWith(
+      retryableRefund,
+      'job-refund-retry-1',
+    );
     expect(result.idempotent).toBe(false);
     expect(result.retryEnqueued).toBe(true);
     expect(result.refundTimeline?.currentState).toBe('SENT_TO_PG');
+  });
+
+  it('keeps a provider-processing refund non-terminal when retry enqueue fails', async () => {
+    const tossPaymentsClient = {
+      cancelPayment: vi.fn().mockResolvedValue({
+        status: 'IN_PROGRESS',
+      }),
+    };
+    const pgBoss = {
+      isAvailable: true,
+      send: vi.fn().mockRejectedValue(new Error('Queue refund-cancel-retry does not exist')),
+    };
+    const service = new RefundService({} as never, tossPaymentsClient as never, pgBoss as never);
+    const context = createContext();
+    const requestedRefund = createRefund();
+    const processingRefund = createRefund({
+      status: 'processing_at_pg',
+      processingAtPgAt: new Date('2026-05-08T03:06:00.000Z'),
+      resultCode: 'IN_PROGRESS',
+    });
+    const scheduleFailedRefund = createRefund({
+      ...processingRefund,
+      customerServiceCtaVisible: true,
+      providerMetadata: {
+        cancelReason: '단순 변심',
+        paymentStatus: 'IN_PROGRESS',
+        refundCancelRetry: {
+          status: 'schedule_failed',
+          jobId: null,
+          attempt: 1,
+        },
+      },
+    });
+
+    vi.spyOn(service as never, 'loadReservationContext').mockResolvedValue(context as never);
+    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(null as never);
+    vi.spyOn(service as never, 'insertRequestedRefund').mockResolvedValue(requestedRefund as never);
+    vi.spyOn(service as never, 'markRefundProcessing').mockResolvedValue(processingRefund as never);
+    const recordScheduleSpy = vi
+      .spyOn(service as never, 'recordRefundCancelRetrySchedule')
+      .mockResolvedValue(scheduleFailedRefund as never);
+    const failedSpy = vi.spyOn(service as never, 'markRefundFailed');
+
+    const result = await service.requestRefund('reservation-1', 'user-1', '단순 변심');
+
+    expect(pgBoss.send).toHaveBeenCalled();
+    expect(recordScheduleSpy).toHaveBeenCalledWith(processingRefund, null);
+    expect(failedSpy).not.toHaveBeenCalled();
+    expect(result.retryEnqueued).toBe(false);
+    expect(result.refundTimeline?.currentState).toBe('PROCESSING_AT_PG');
   });
 
   it('holds refunded seats and writes admin refund audit rows on admin refund completion', async () => {
