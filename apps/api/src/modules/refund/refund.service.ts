@@ -6,6 +6,7 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import type { RefundTimeline } from '@grabit/shared';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
@@ -84,7 +85,6 @@ export const REFUND_VISIBLE_STATES: readonly RefundStateMachineStatus[] = [
 export const DEFAULT_CANCELLED_SEAT_HOLD_MINUTES = 1;
 export const DEFAULT_CANCELLED_SEAT_HOLD_MAX_MINUTES = 10;
 export const REFUND_CANCEL_MAX_RETRIES = 3;
-export const SEAT_RELEASE_PENDING_JOB_ID = 'PENDING_ENQUEUE';
 export const SEAT_RELEASE_ENQUEUE_FAILED_JOB_ID = 'JOB_ENQUEUE_FAILED';
 
 const REFUND_TIMELINE_STATE_MAP: Record<
@@ -175,7 +175,7 @@ export function getRefundErrorMessage(error: unknown): string {
 }
 
 export function isTossCancelCompleted(response: TossPaymentResponse): boolean {
-  return response.status === 'DONE' || response.status.includes('CANCELED');
+  return response.status === 'CANCELED';
 }
 
 function pickCancelledSeatReleaseDelaySeconds(
@@ -618,6 +618,16 @@ export class RefundService {
     const seatIdentities = context.seats.map((seat) =>
       normalizeReservationSeatIdentity(seat.seatId),
     );
+    const releaseJobId = randomUUID();
+    const releaseEnqueued = await this.scheduleCancelledSeatRelease(
+      context,
+      seatIdentities,
+      releaseAt,
+      releaseJobId,
+    );
+    const persistedReleaseJobId = releaseEnqueued
+      ? releaseJobId
+      : SEAT_RELEASE_ENQUEUE_FAILED_JOB_ID;
 
     const [completedRefund] = await this.db.transaction(async (tx) => {
       const [updatedRefund] = await tx
@@ -681,7 +691,7 @@ export class RefundService {
             lockedUntil: null,
             heldCancelledAt: now,
             reopenHoldUntil: releaseAt,
-            reopenJobId: SEAT_RELEASE_PENDING_JOB_ID,
+            reopenJobId: persistedReleaseJobId,
             soldAt: null,
           })
           .where(
@@ -712,26 +722,6 @@ export class RefundService {
       throw new NotFoundException('완료된 환불 상태를 저장하지 못했습니다');
     }
 
-    const releaseJobId = await this.scheduleCancelledSeatRelease(
-      context,
-      seatIdentities,
-      releaseAt,
-    );
-
-    if (releaseJobId) {
-      await this.updateSeatReleaseJobId(
-        context.reservation.showtimeId,
-        seatIdentities,
-        releaseJobId,
-      );
-    } else {
-      await this.updateSeatReleaseJobId(
-        context.reservation.showtimeId,
-        seatIdentities,
-        SEAT_RELEASE_ENQUEUE_FAILED_JOB_ID,
-      );
-    }
-
     return completedRefund;
   }
 
@@ -739,12 +729,13 @@ export class RefundService {
     context: ReservationRefundContext,
     seatIdentities: SeatIdentityPayload[],
     releaseAt: Date,
-  ): Promise<string | null> {
+    releaseJobId: string,
+  ): Promise<boolean> {
     if (!this.pgBoss?.isAvailable) {
       this.logger.warn(
         `pg-boss unavailable. release-cancelled-seat job skipped for reservationId=${context.reservation.id}`,
       );
-      return null;
+      return false;
     }
 
     const payload: ReleaseCancelledSeatJobPayload = {
@@ -754,33 +745,22 @@ export class RefundService {
       seatIdentities,
     };
 
-    return this.pgBoss.send(PG_BOSS_JOB_NAMES.releaseCancelledSeat, payload, {
-      startAfter: releaseAt,
-      singletonKey: context.reservation.id,
-      retryLimit: 3,
-      retryBackoff: true,
-      retryDelay: 30,
-    });
-  }
-
-  protected async updateSeatReleaseJobId(
-    showtimeId: string,
-    seatIdentities: SeatIdentityPayload[],
-    jobId: string,
-  ): Promise<void> {
-    for (const seatIdentity of seatIdentities) {
-      await this.db
-        .update(seatInventories)
-        .set({ reopenJobId: jobId })
-        .where(
-          and(
-            eq(seatInventories.showtimeId, showtimeId),
-            eq(seatInventories.floorKey, seatIdentity.floorKey),
-            eq(seatInventories.seatKey, seatIdentity.seatKey),
-            eq(seatInventories.status, 'held_cancelled'),
-            eq(seatInventories.reopenJobId, SEAT_RELEASE_PENDING_JOB_ID),
-          ),
-        );
+    try {
+      const jobId = await this.pgBoss.send(PG_BOSS_JOB_NAMES.releaseCancelledSeat, payload, {
+        id: releaseJobId,
+        startAfter: releaseAt,
+        singletonKey: context.reservation.id,
+        retryLimit: 3,
+        retryBackoff: true,
+        retryDelay: 30,
+      });
+      return jobId === releaseJobId;
+    } catch (error) {
+      this.logger.error(
+        `pg-boss release-cancelled-seat enqueue failed for reservationId=${context.reservation.id}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+      return false;
     }
   }
 

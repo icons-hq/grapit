@@ -33,6 +33,7 @@ export interface PgBossJob<TData = unknown> {
 }
 
 export interface PgBossSendOptions {
+  id?: string;
   startAfter?: Date | string;
   retryLimit?: number;
   retryDelay?: number;

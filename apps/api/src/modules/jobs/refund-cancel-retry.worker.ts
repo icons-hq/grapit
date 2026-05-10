@@ -5,6 +5,7 @@ import {
   OnModuleInit,
   Optional,
 } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
@@ -28,7 +29,6 @@ import {
   normalizeReservationSeatIdentity,
   REFUND_CANCEL_MAX_RETRIES,
   SEAT_RELEASE_ENQUEUE_FAILED_JOB_ID,
-  SEAT_RELEASE_PENDING_JOB_ID,
 } from '../refund/refund.service.js';
 import { TossPaymentsClient, type TossPaymentResponse } from '../payment/toss-payments.client.js';
 import {
@@ -133,6 +133,11 @@ export class RefundCancelRetryWorker implements OnModuleInit {
           reason,
           nextRetryCount,
         );
+        if (nextRetryCount >= REFUND_CANCEL_MAX_RETRIES) {
+          await this.markRetryExhausted(context.refund.id, reason);
+          return { status: 'failed' };
+        }
+
         await this.scheduleRetry(context.refund.id, nextRetryCount);
         return { status: 'rescheduled' };
       }
@@ -312,6 +317,16 @@ export class RefundCancelRetryWorker implements OnModuleInit {
     const seatIdentities = context.seats.map((seat) =>
       normalizeReservationSeatIdentity(seat.seatId),
     );
+    const releaseJobId = randomUUID();
+    const releaseEnqueued = await this.scheduleReleaseJob(
+      context,
+      seatIdentities,
+      releaseAt,
+      releaseJobId,
+    );
+    const persistedReleaseJobId = releaseEnqueued
+      ? releaseJobId
+      : SEAT_RELEASE_ENQUEUE_FAILED_JOB_ID;
 
     await this.db.transaction(async (tx) => {
       await tx
@@ -375,7 +390,7 @@ export class RefundCancelRetryWorker implements OnModuleInit {
             lockedUntil: null,
             heldCancelledAt: now,
             reopenHoldUntil: releaseAt,
-            reopenJobId: SEAT_RELEASE_PENDING_JOB_ID,
+            reopenJobId: persistedReleaseJobId,
             soldAt: null,
           })
           .where(
@@ -388,35 +403,19 @@ export class RefundCancelRetryWorker implements OnModuleInit {
       }
     });
 
-    const releaseJobId = await this.scheduleReleaseJob(context, seatIdentities, releaseAt);
-    const persistedJobId = releaseJobId ?? SEAT_RELEASE_ENQUEUE_FAILED_JOB_ID;
-
-    for (const seatIdentity of seatIdentities) {
-      await this.db
-        .update(seatInventories)
-        .set({ reopenJobId: persistedJobId })
-        .where(
-          and(
-            eq(seatInventories.showtimeId, context.reservation.showtimeId),
-            eq(seatInventories.floorKey, seatIdentity.floorKey),
-            eq(seatInventories.seatKey, seatIdentity.seatKey),
-            eq(seatInventories.status, 'held_cancelled'),
-            eq(seatInventories.reopenJobId, SEAT_RELEASE_PENDING_JOB_ID),
-          ),
-        );
-    }
   }
 
   protected async scheduleReleaseJob(
     context: RetryContext,
     seatIdentities: SeatIdentityPayload[],
     releaseAt: Date,
-  ): Promise<string | null> {
+    releaseJobId: string,
+  ): Promise<boolean> {
     if (!this.pgBoss?.isAvailable) {
       this.logger.warn(
         `pg-boss unavailable. delayed seat release skipped for refundId=${context.refund.id}`,
       );
-      return null;
+      return false;
     }
 
     const payload: ReleaseCancelledSeatJobPayload = {
@@ -426,13 +425,23 @@ export class RefundCancelRetryWorker implements OnModuleInit {
       seatIdentities,
     };
 
-    return this.pgBoss.send(PG_BOSS_JOB_NAMES.releaseCancelledSeat, payload, {
-      startAfter: releaseAt,
-      singletonKey: context.reservation.id,
-      retryLimit: 3,
-      retryBackoff: true,
-      retryDelay: 30,
-    });
+    try {
+      const jobId = await this.pgBoss.send(PG_BOSS_JOB_NAMES.releaseCancelledSeat, payload, {
+        id: releaseJobId,
+        startAfter: releaseAt,
+        singletonKey: context.reservation.id,
+        retryLimit: 3,
+        retryBackoff: true,
+        retryDelay: 30,
+      });
+      return jobId === releaseJobId;
+    } catch (error) {
+      this.logger.error(
+        `pg-boss release-cancelled-seat enqueue failed for refundId=${context.refund.id}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+      return false;
+    }
   }
 
   protected async scheduleRetry(refundId: string, retryCount: number): Promise<string | null> {

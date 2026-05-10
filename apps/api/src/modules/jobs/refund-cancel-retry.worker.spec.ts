@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { seatInventories, tickets } from '../../database/schema/index.js';
 import { TossPaymentError } from '../payment/toss-payments.client.js';
-import { REFUND_CANCEL_MAX_RETRIES } from '../refund/refund.service.js';
+import {
+  REFUND_CANCEL_MAX_RETRIES,
+  SEAT_RELEASE_ENQUEUE_FAILED_JOB_ID,
+} from '../refund/refund.service.js';
 import { RefundCancelRetryWorker } from './refund-cancel-retry.worker.js';
 
 function createRetryContext() {
@@ -154,9 +157,7 @@ describe('RefundCancelRetryWorker', () => {
     const recordTransientSpy = vi
       .spyOn(worker as never, 'recordTransientRetryFailure')
       .mockResolvedValue(undefined as never);
-    const scheduleRetrySpy = vi
-      .spyOn(worker as never, 'scheduleRetry')
-      .mockResolvedValue('refund-retry-final' as never);
+    const scheduleRetrySpy = vi.spyOn(worker as never, 'scheduleRetry');
     const exhaustedSpy = vi
       .spyOn(worker as never, 'markRetryExhausted')
       .mockResolvedValue(undefined as never);
@@ -170,9 +171,9 @@ describe('RefundCancelRetryWorker', () => {
       '단순 변심',
       REFUND_CANCEL_MAX_RETRIES,
     );
-    expect(scheduleRetrySpy).toHaveBeenCalledWith('refund-1', REFUND_CANCEL_MAX_RETRIES);
-    expect(exhaustedSpy).not.toHaveBeenCalled();
-    expect(result.status).toBe('rescheduled');
+    expect(scheduleRetrySpy).not.toHaveBeenCalled();
+    expect(exhaustedSpy).toHaveBeenCalledWith('refund-1', '단순 변심');
+    expect(result.status).toBe('failed');
   });
 
   it('revokes issued QR tickets when a delayed refund retry completes', async () => {
@@ -192,7 +193,7 @@ describe('RefundCancelRetryWorker', () => {
       { cancelPayment: vi.fn() } as never,
       { isAvailable: false, work: vi.fn(), send: vi.fn(), stop: vi.fn() } as never,
     );
-    vi.spyOn(worker as never, 'scheduleReleaseJob').mockResolvedValue(null as never);
+    vi.spyOn(worker as never, 'scheduleReleaseJob').mockResolvedValue(false as never);
 
     await (worker as any).finalizeSuccessfulRetry(
       createRetryContext(),
@@ -206,6 +207,12 @@ describe('RefundCancelRetryWorker', () => {
       status: 'revoked',
       revokedAt: expect.any(Date),
     });
-    expect(db.update).toHaveBeenCalledWith(seatInventories);
+
+    const seatUpdates = transaction.updateCalls.filter((call) => call.table === seatInventories);
+    expect(seatUpdates).toHaveLength(1);
+    expect(seatUpdates[0]?.values).toMatchObject({
+      status: 'held_cancelled',
+      reopenJobId: SEAT_RELEASE_ENQUEUE_FAILED_JOB_ID,
+    });
   });
 });

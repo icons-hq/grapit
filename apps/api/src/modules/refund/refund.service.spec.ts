@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { TossPaymentError } from '../payment/toss-payments.client.js';
-import { RefundService } from './refund.service.js';
+import {
+  isTossCancelCompleted,
+  RefundService,
+  SEAT_RELEASE_ENQUEUE_FAILED_JOB_ID,
+} from './refund.service.js';
 import {
   bookingOperationAuditLogs,
   seatInventories,
@@ -91,6 +95,12 @@ function createRefundTransactionMock(completedRefund: ReturnType<typeof createRe
 }
 
 describe('RefundService', () => {
+  it('treats only CANCELED Toss responses as completed refund cancels', () => {
+    expect(isTossCancelCompleted({ status: 'CANCELED' } as never)).toBe(true);
+    expect(isTossCancelCompleted({ status: 'DONE' } as never)).toBe(false);
+    expect(isTossCancelCompleted({ status: 'PARTIAL_CANCELED' } as never)).toBe(false);
+  });
+
   it('returns existing refund state for duplicate requests without calling Toss again', async () => {
     const tossPaymentsClient = {
       cancelPayment: vi.fn(),
@@ -215,7 +225,7 @@ describe('RefundService', () => {
       status: 'held_cancelled',
       lockedBy: null,
       lockedUntil: null,
-      reopenJobId: 'PENDING_ENQUEUE',
+      reopenJobId: SEAT_RELEASE_ENQUEUE_FAILED_JOB_ID,
     });
     const ticketUpdates = transaction.updateCalls.filter((call) => call.table === tickets);
     expect(ticketUpdates).toHaveLength(1);
@@ -235,5 +245,60 @@ describe('RefundService', () => {
       }),
     ]);
     expect(pgBoss.send).not.toHaveBeenCalled();
+  });
+
+  it('persists the preallocated release job id with refunded seats when enqueue succeeds', async () => {
+    const completedRefund = createRefund({
+      status: 'completed',
+      resultCode: 'CANCELED',
+      resultMessage: 'PG cancel completed',
+      completedAt: new Date('2026-05-08T03:10:00.000Z'),
+    });
+    const transaction = createRefundTransactionMock(completedRefund);
+    const db = {
+      transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
+        callback(transaction.tx),
+      ),
+    };
+    const pgBoss = {
+      isAvailable: true,
+      send: vi.fn((_queue: unknown, _payload: unknown, options: { id: string }) =>
+        Promise.resolve(options.id),
+      ),
+    };
+    const service = new RefundService(
+      db as never,
+      { cancelPayment: vi.fn() } as never,
+      pgBoss as never,
+    );
+    const context = createContext();
+
+    await (service as any).finalizeRefundSuccess(
+      context,
+      'refund-1',
+      '사용자 환불',
+      {
+        paymentKey: 'pay-key-1',
+        orderId: 'GRP-20260508-ABCDE',
+        method: '카드',
+        totalAmount: 132000,
+        status: 'CANCELED',
+        approvedAt: '2026-05-08T12:00:00+09:00',
+        cancels: [],
+      },
+      { kind: 'user' },
+    );
+
+    const sendOptions = pgBoss.send.mock.calls[0]?.[2] as { id?: string } | undefined;
+    expect(sendOptions).toEqual(expect.objectContaining({ id: expect.any(String) }));
+
+    const seatUpdates = transaction.updateCalls.filter(
+      (call) => call.table === seatInventories,
+    );
+    expect(seatUpdates).toHaveLength(1);
+    expect(seatUpdates[0]?.values).toMatchObject({
+      status: 'held_cancelled',
+      reopenJobId: sendOptions?.id,
+    });
   });
 });
