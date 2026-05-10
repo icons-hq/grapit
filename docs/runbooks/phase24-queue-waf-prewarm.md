@@ -22,7 +22,7 @@ This runbook also documents the protected prewarm control path that Cloud Schedu
 - Preserve the existing dual-factor guard from Phase 24-05:
   - Google-signed Scheduler `OIDC` bearer token
   - `x-prewarm-control-token` second factor
-- Treat the five `PREWARM_*` settings as a deploy-time invariant. Future API deploys must continue to inject them through `.github/workflows/deploy.yml`.
+- Treat the seven `PREWARM_*` settings as a deploy-time invariant. Future API deploys must continue to inject them through `.github/workflows/deploy.yml`.
 
 ## Cloudflare Rule Groups
 
@@ -99,6 +99,15 @@ Runtime environment variables:
 - `PREWARM_REGION`
 - `PREWARM_ALLOWED_SCHEDULER_EMAIL`
 - `PREWARM_ALLOWED_AUDIENCE`
+- `PREWARM_ALLOWED_SERVICE_NAME`
+- `PREWARM_MAX_MIN_INSTANCES`
+
+Allowlist and capacity contract:
+
+- `PREWARM_ALLOWED_SERVICE_NAME` must be `grabit-api` for the Phase 24 launch contract.
+- `PREWARM_MAX_MIN_INSTANCES` must be `100` unless the Cloud Run deploy max scale and launch capacity plan are changed together.
+- The API rejects any route `:serviceName` that does not equal `PREWARM_ALLOWED_SERVICE_NAME`.
+- The API rejects any requested `minInstances` greater than `PREWARM_MAX_MIN_INSTANCES` before calling the Cloud Run Admin API.
 
 Request bodies:
 
@@ -149,6 +158,7 @@ TARGET_URL="$(gcloud run services describe grabit-api \
 - The step-down job keeps its `/step-down` `--uri`, but its `--oidc-token-audience` must still use the shared scale-up endpoint audience above.
 - The deploy contract must keep `grabit-api` `--max-instances` greater than or equal to the requested prewarm `minInstances`.
 - On the current Grapit Cloud Run service, `run.googleapis.com/network-interfaces` is enabled, which caps `autoscaling.knative.dev/maxScale` at `100`. For the live Phase 24 rollout, use `{"minInstances":100}` and keep `--max-instances=100`.
+- `.github/workflows/deploy.yml` must set `PREWARM_ALLOWED_SERVICE_NAME=grabit-api` and `PREWARM_MAX_MIN_INSTANCES=100` for the `grabit-api` service. These two values are non-secret deploy invariants, while token/project/region/audience/email remain Secret Manager-backed settings.
 
 ### Scale-Up Job
 

@@ -5,6 +5,10 @@ on:
     types: [completed]
     branches: [main]
 
+concurrency:
+  group: deploy-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
+
 env:
   GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   GCP_REGION: asia-northeast3
@@ -175,6 +179,8 @@ jobs:
             KAKAO_CALLBACK_URL=${{ vars.CLOUD_RUN_API_URL }}/api/v1/auth/social/kakao/callback
             NAVER_CALLBACK_URL=${{ vars.CLOUD_RUN_API_URL }}/api/v1/auth/social/naver/callback
             GOOGLE_CALLBACK_URL=${{ vars.CLOUD_RUN_API_URL }}/api/v1/auth/social/google/callback
+            PREWARM_ALLOWED_SERVICE_NAME=${{ env.API_SERVICE }}
+            PREWARM_MAX_MIN_INSTANCES=100
           secrets: |
             DATABASE_URL=database-url:latest
             JWT_SECRET=jwt-secret:latest

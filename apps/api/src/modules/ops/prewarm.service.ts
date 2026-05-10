@@ -13,6 +13,8 @@ export const PREWARM_PROJECT_ID = 'PREWARM_PROJECT_ID';
 export const PREWARM_REGION = 'PREWARM_REGION';
 export const PREWARM_ALLOWED_SCHEDULER_EMAIL = 'PREWARM_ALLOWED_SCHEDULER_EMAIL';
 export const PREWARM_ALLOWED_AUDIENCE = 'PREWARM_ALLOWED_AUDIENCE';
+export const PREWARM_ALLOWED_SERVICE_NAME = 'PREWARM_ALLOWED_SERVICE_NAME';
+export const PREWARM_MAX_MIN_INSTANCES = 'PREWARM_MAX_MIN_INSTANCES';
 
 const GOOGLE_OIDC_DISCOVERY_URL = 'https://accounts.google.com/.well-known/openid-configuration';
 const GOOGLE_METADATA_ACCESS_TOKEN_URL =
@@ -82,11 +84,12 @@ export class PrewarmService {
   }
 
   private async authorizeSchedulerRequest(req: PrewarmRequestLike): Promise<PrewarmTokenClaims> {
+    this.assertControlToken(req);
+
     const oidcToken = this.extractBearerToken(req);
     const claims = await this.verifyGoogleSignedIdToken(oidcToken);
 
     this.assertExpectedClaims(claims);
-    this.assertControlToken(req);
 
     return claims;
   }
@@ -136,7 +139,17 @@ export class PrewarmService {
       throw new BadRequestException('PREWARM_INVALID_SERVICE_NAME');
     }
 
-    if (!Number.isInteger(minInstances) || minInstances < 0) {
+    const allowedServiceName = this.getRequiredEnv(PREWARM_ALLOWED_SERVICE_NAME);
+    if (serviceName !== allowedServiceName) {
+      throw new ForbiddenException('PREWARM_SERVICE_NOT_ALLOWED');
+    }
+
+    const maxMinInstances = this.getRequiredNonNegativeIntegerEnv(PREWARM_MAX_MIN_INSTANCES);
+    if (
+      !Number.isInteger(minInstances) ||
+      minInstances < 0 ||
+      minInstances > maxMinInstances
+    ) {
       throw new BadRequestException('PREWARM_INVALID_MIN_INSTANCES');
     }
 
@@ -310,6 +323,15 @@ export class PrewarmService {
     }
 
     return value;
+  }
+
+  private getRequiredNonNegativeIntegerEnv(name: string): number {
+    const value = this.getRequiredEnv(name);
+    if (!/^\d+$/.test(value)) {
+      throw new ServiceUnavailableException(`${name} must be a non-negative integer`);
+    }
+
+    return Number.parseInt(value, 10);
   }
 
   private readHeader(

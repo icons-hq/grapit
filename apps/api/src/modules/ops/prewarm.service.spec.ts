@@ -1,7 +1,12 @@
 import { createSign, generateKeyPairSync } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
-import { ForbiddenException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  HttpStatus,
+  type INestApplication,
+} from '@nestjs/common';
+import { Test } from '@nestjs/testing';
+import request from 'supertest';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { IS_PUBLIC_KEY } from '../../common/decorators/public.decorator.js';
 import { PrewarmController } from './prewarm.controller.js';
@@ -15,6 +20,8 @@ const TEST_ENV = {
     'scheduler-prewarm@grabit-prod.iam.gserviceaccount.com',
   PREWARM_ALLOWED_AUDIENCE:
     'https://api.heygrabit.com/api/v1/internal/prewarm/services/grabit-api',
+  PREWARM_ALLOWED_SERVICE_NAME: 'grabit-api',
+  PREWARM_MAX_MIN_INSTANCES: '100',
 };
 
 function createConfigService() {
@@ -88,6 +95,34 @@ describe('PrewarmService', () => {
   afterEach(() => {
     global.fetch = originalFetch;
   });
+
+  it.each([
+    ['missing', undefined],
+    ['wrong', 'wrong-prewarm-secret'],
+  ])(
+    'rejects %s control token before Google OIDC network verification',
+    async (_caseName, presentedControlToken) => {
+      const configService = createConfigService();
+      const service = new PrewarmService(configService as never);
+      const { token } = signServiceAccountToken();
+      const headers: Record<string, string> = {
+        authorization: `Bearer ${token}`,
+      };
+
+      if (presentedControlToken) {
+        headers['x-prewarm-control-token'] = presentedControlToken;
+      }
+
+      const fetchMock = vi.fn();
+      global.fetch = fetchMock as unknown as typeof global.fetch;
+
+      await expect(
+        service.scaleUp('grabit-api', 100, createRequest(headers) as never),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
 
   it('validates Scheduler OIDC claims and shared app token before scaling up', async () => {
     const configService = createConfigService();
@@ -246,11 +281,136 @@ describe('PrewarmService', () => {
     expect(global.fetch).toHaveBeenCalledTimes(2);
   });
 
-  it('wires both prewarm and step-down routes in the controller source', async () => {
-    const source = await readFile(resolve(__dirname, 'prewarm.controller.ts'), 'utf-8');
+  it('rejects service names outside the configured allowlist before Cloud Run Admin update', async () => {
+    const configService = createConfigService();
+    const service = new PrewarmService(configService as never);
+    const { token, jwk } = signServiceAccountToken();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            jwks_uri: 'https://www.googleapis.com/oauth2/v3/certs',
+          }),
+          { headers: { 'content-type': 'application/json', 'cache-control': 'max-age=300' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ keys: [jwk] }), {
+          headers: { 'content-type': 'application/json', 'cache-control': 'max-age=300' },
+        }),
+      );
+    global.fetch = fetchMock as unknown as typeof global.fetch;
 
-    expect(source).toContain("@Post('services/:serviceName')");
-    expect(source).toContain("@Post('services/:serviceName/step-down')");
+    await expect(
+      service.scaleUp(
+        'other-api',
+        100,
+        createRequest({
+          authorization: `Bearer ${token}`,
+          'x-prewarm-control-token': TEST_ENV.PREWARM_CONTROL_TOKEN,
+        }) as never,
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(
+      fetchMock.mock.calls.some(([url]) => String(url).includes('run.googleapis.com')),
+    ).toBe(false);
+  });
+
+  it('rejects minInstances above the configured cap before Cloud Run Admin update', async () => {
+    const configService = createConfigService();
+    const service = new PrewarmService(configService as never);
+    const { token, jwk } = signServiceAccountToken();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            jwks_uri: 'https://www.googleapis.com/oauth2/v3/certs',
+          }),
+          { headers: { 'content-type': 'application/json', 'cache-control': 'max-age=300' } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ keys: [jwk] }), {
+          headers: { 'content-type': 'application/json', 'cache-control': 'max-age=300' },
+        }),
+      );
+    global.fetch = fetchMock as unknown as typeof global.fetch;
+
+    await expect(
+      service.scaleUp(
+        'grabit-api',
+        101,
+        createRequest({
+          authorization: `Bearer ${token}`,
+          'x-prewarm-control-token': TEST_ENV.PREWARM_CONTROL_TOKEN,
+        }) as never,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(
+      fetchMock.mock.calls.some(([url]) => String(url).includes('run.googleapis.com')),
+    ).toBe(false);
+  });
+
+  it('registers prewarm routes with body validation and 202 status', async () => {
+    const scaleUp = vi.fn().mockResolvedValue({ operation: 'scale-up' });
+    const stepDown = vi.fn().mockResolvedValue({ operation: 'step-down' });
+    const moduleRef = await Test.createTestingModule({
+      controllers: [PrewarmController],
+      providers: [
+        {
+          provide: PrewarmService,
+          useValue: {
+            scaleUp,
+            stepDown,
+          },
+        },
+      ],
+    }).compile();
+    const controller = moduleRef.get(PrewarmController);
+    (controller as unknown as { prewarmService: unknown }).prewarmService = {
+      scaleUp,
+      stepDown,
+    };
+    const app: INestApplication = moduleRef.createNestApplication();
+
+    try {
+      await app.init();
+      const server = app.getHttpServer();
+
+      await request(server)
+        .post('/internal/prewarm/services/grabit-api')
+        .send({ minInstances: 100 })
+        .expect(HttpStatus.ACCEPTED)
+        .expect(({ body }) => {
+          expect(body).toEqual({ operation: 'scale-up' });
+        });
+      expect(scaleUp).toHaveBeenCalledWith('grabit-api', 100, expect.any(Object));
+
+      scaleUp.mockClear();
+      await request(server)
+        .post('/internal/prewarm/services/grabit-api')
+        .send({})
+        .expect(HttpStatus.BAD_REQUEST);
+      expect(scaleUp).not.toHaveBeenCalled();
+
+      await request(server)
+        .post('/internal/prewarm/services/grabit-api/step-down')
+        .send({})
+        .expect(HttpStatus.ACCEPTED)
+        .expect(({ body }) => {
+          expect(body).toEqual({ operation: 'step-down' });
+        });
+      expect(stepDown).toHaveBeenCalledWith('grabit-api', undefined, expect.any(Object));
+    } finally {
+      await app.close();
+    }
+
     expect(Reflect.getMetadata(IS_PUBLIC_KEY, PrewarmController)).toBe(true);
   });
 });
