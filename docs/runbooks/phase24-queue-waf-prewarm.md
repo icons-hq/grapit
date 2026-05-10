@@ -102,7 +102,7 @@ Runtime environment variables:
 
 Request bodies:
 
-- Scale-up: `{"minInstances": 120}`
+- Scale-up: `{"minInstances": 100}`
 - `step-down`: `{"minInstances": 0}` or omit `minInstances` to use the controller default of `0`
 
 ## Cloud Scheduler Setup
@@ -120,6 +120,16 @@ Request bodies:
 - Grant the operator creating jobs `iam.serviceAccounts.actAs` on that service account.
 - Configure each job to use `OIDC`, not OAuth, because the target is the app endpoint and the app validates the ID token itself.
 
+### Required Cloud Run Runtime Permissions
+
+- The deployed `grabit-api` revision currently runs as `grapit-cloudrun@grapit-491806.iam.gserviceaccount.com`.
+- That runtime principal must be allowed to update the `grabit-api` service through the Cloud Run Admin API.
+- The current live fallback binding is:
+  - `roles/run.admin` for `serviceAccount:grapit-cloudrun@grapit-491806.iam.gserviceaccount.com`
+- Because the update request preserves the service template service account, the same runtime principal also needs:
+  - `roles/iam.serviceAccountUser` on `grapit-cloudrun@grapit-491806.iam.gserviceaccount.com` for `serviceAccount:grapit-cloudrun@grapit-491806.iam.gserviceaccount.com`
+- If either binding is missing, the prewarm endpoint can return `503` even when the route, OIDC audience, and control token are all correct.
+
 ### Required Target URL / Audience Contract
 
 - Resolve the live target URL from the deployed service before creating jobs:
@@ -132,11 +142,13 @@ TARGET_URL="$(gcloud run services describe grabit-api \
 ```
 
 - If production is serving the prewarm endpoint from a custom domain instead of the `run.app` hostname, replace `TARGET_URL` with that exact deployed URL after verification.
-- `PREWARM_ALLOWED_AUDIENCE` must equal the exact endpoint URL the Scheduler job calls, not a stale hardcoded domain.
-- The job `--uri`, the job `--oidc-token-audience`, and the Secret Manager value for `PREWARM_ALLOWED_AUDIENCE` must all match exactly.
-- For this app contract, the audience must include the route path, not only the origin:
-  - Scale-up audience: `${TARGET_URL}/api/v1/internal/prewarm/services/grabit-api`
-  - Step-down audience: `${TARGET_URL}/api/v1/internal/prewarm/services/grabit-api/step-down`
+- `PREWARM_ALLOWED_AUDIENCE` must equal the exact live scale-up endpoint URL, not a stale hardcoded domain.
+- The current Phase 24-05 app contract validates a single shared audience value, so both jobs must reuse the same `--oidc-token-audience` value even though the step-down job calls a different URI.
+- Use this exact shared audience value:
+  - `${TARGET_URL}/api/v1/internal/prewarm/services/grabit-api`
+- The step-down job keeps its `/step-down` `--uri`, but its `--oidc-token-audience` must still use the shared scale-up endpoint audience above.
+- The deploy contract must keep `grabit-api` `--max-instances` greater than or equal to the requested prewarm `minInstances`.
+- On the current Grapit Cloud Run service, `run.googleapis.com/network-interfaces` is enabled, which caps `autoscaling.knative.dev/maxScale` at `100`. For the live Phase 24 rollout, use `{"minInstances":100}` and keep `--max-instances=100`.
 
 ### Scale-Up Job
 
@@ -151,7 +163,7 @@ gcloud scheduler jobs create http grabit-prewarm-scale-up \
   --uri="${TARGET_URL}/api/v1/internal/prewarm/services/grabit-api" \
   --http-method=POST \
   --headers="Content-Type=application/json,x-prewarm-control-token=${PREWARM_CONTROL_TOKEN}" \
-  --message-body='{"minInstances":120}' \
+  --message-body='{"minInstances":100}' \
   --oidc-service-account-email="scheduler-prewarm@grapit-491806.iam.gserviceaccount.com" \
   --oidc-token-audience="${TARGET_URL}/api/v1/internal/prewarm/services/grabit-api"
 ```
@@ -171,14 +183,15 @@ gcloud scheduler jobs create http grabit-prewarm-step-down \
   --headers="Content-Type=application/json,x-prewarm-control-token=${PREWARM_CONTROL_TOKEN}" \
   --message-body='{"minInstances":0}' \
   --oidc-service-account-email="scheduler-prewarm@grapit-491806.iam.gserviceaccount.com" \
-  --oidc-token-audience="${TARGET_URL}/api/v1/internal/prewarm/services/grabit-api/step-down"
+  --oidc-token-audience="${TARGET_URL}/api/v1/internal/prewarm/services/grabit-api"
 ```
 
 Operational note:
 
 - Cloud Scheduler `create http` supports `POST` or `PUT` bodies but not a direct JSON `PATCH` flow for this use case.
-- The app endpoint exists specifically to translate Scheduler `POST` requests into the Cloud Run Admin API `PATCH ...?update_mask=scaling.minInstanceCount`.
+- The app endpoint exists specifically to translate Scheduler `POST` requests into the Cloud Run Admin API `PATCH ...?update_mask=template.scaling.minInstanceCount`.
 - Do not change the app-layer routes or swap the request flow to a direct Scheduler-to-Cloud-Run-Admin-API call. This runbook closes the operational gap without changing the protected Phase 24-05 contract.
+- For manual operator smoke tests, do not fire `scale-up` and `step-down` back-to-back against the same live revision without waiting for the first Cloud Run update to settle, or the second request can fail with a version conflict.
 
 ## Verification
 

@@ -130,7 +130,7 @@ describe('PrewarmService', () => {
 
     const result = await service.scaleUp(
       'grabit-api',
-      120,
+      100,
       createRequest({
         authorization: `Bearer ${token}`,
         'x-prewarm-control-token': TEST_ENV.PREWARM_CONTROL_TOKEN,
@@ -140,12 +140,12 @@ describe('PrewarmService', () => {
     expect(result).toMatchObject({
       operation: 'scale-up',
       serviceName: 'grabit-api',
-      minInstances: 120,
+      minInstances: 100,
     });
 
     expect(global.fetch).toHaveBeenLastCalledWith(
       expect.stringContaining(
-        '/v2/projects/grabit-prod/locations/asia-northeast3/services/grabit-api?update_mask=scaling.minInstanceCount',
+        '/v2/projects/grabit-prod/locations/asia-northeast3/services/grabit-api?update_mask=template.scaling.minInstanceCount',
       ),
       expect.objectContaining({
         method: 'PATCH',
@@ -154,8 +154,10 @@ describe('PrewarmService', () => {
           'Content-Type': 'application/json',
         }),
         body: JSON.stringify({
-          scaling: {
-            minInstanceCount: 120,
+          template: {
+            scaling: {
+              minInstanceCount: 100,
+            },
           },
         }),
       }),
@@ -233,7 +235,7 @@ describe('PrewarmService', () => {
     await expect(
       service.scaleUp(
         'grabit-api',
-        120,
+        100,
         createRequest({
           authorization: `Bearer ${token}`,
           'x-prewarm-control-token': TEST_ENV.PREWARM_CONTROL_TOKEN,

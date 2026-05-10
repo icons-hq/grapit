@@ -146,7 +146,7 @@ export class PrewarmService {
     const endpoint =
       `https://run.googleapis.com/v2/projects/${encodeURIComponent(projectId)}` +
       `/locations/${encodeURIComponent(region)}/services/${encodeURIComponent(serviceName)}` +
-      '?update_mask=scaling.minInstanceCount';
+      '?update_mask=template.scaling.minInstanceCount';
 
     const response = await fetch(endpoint, {
       method: 'PATCH',
@@ -155,8 +155,10 @@ export class PrewarmService {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        scaling: {
-          minInstanceCount: minInstances,
+        template: {
+          scaling: {
+            minInstanceCount: minInstances,
+          },
         },
       }),
     });
