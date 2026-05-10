@@ -35,6 +35,11 @@ const waitingSnapshot = {
 };
 
 const queuePerformanceId = '00000000-0000-4000-8000-000000000023';
+const queueMetricTestIds = {
+  position: 'queue-metric-position',
+  eta: 'queue-metric-eta',
+  remainingSeats: 'queue-metric-remaining-seats',
+} as const;
 
 const failureCases = [
   {
@@ -82,21 +87,33 @@ test.describe('booking queue route', () => {
     );
 
     await page.goto(`/booking/${queuePerformanceId}`);
-    await page.waitForFunction(() => document.body.innerText.includes('12'));
+    const positionMetric = page.getByTestId(queueMetricTestIds.position);
+    const etaMetric = page.getByTestId(queueMetricTestIds.eta);
+    const remainingSeatsMetric = page.getByTestId(
+      queueMetricTestIds.remainingSeats,
+    );
 
     await expect(
-      page.getByText(koMessages.booking.queue.status.waiting.title).first(),
+      page.getByRole('heading', {
+        name: koMessages.booking.queue.status.waiting.title,
+      }),
     ).toBeVisible();
-    await expect(
-      page.getByText(koMessages.booking.queue.metrics.position),
-    ).toBeVisible();
-    await expect(
-      page.getByText(koMessages.booking.queue.metrics.eta),
-    ).toBeVisible();
-    await expect(
-      page.getByText(koMessages.booking.queue.metrics.remainingSeats),
-    ).toBeVisible();
-    await expect(page.getByText('12')).toBeVisible();
+    await expect(positionMetric).toContainText(
+      koMessages.booking.queue.metrics.position,
+    );
+    await expect(positionMetric).toContainText(
+      waitingSnapshot.position.toString(),
+    );
+    await expect(etaMetric).toContainText(koMessages.booking.queue.metrics.eta);
+    await expect(etaMetric).toContainText(
+      formatQueueEta(waitingSnapshot.etaSeconds),
+    );
+    await expect(remainingSeatsMetric).toContainText(
+      koMessages.booking.queue.metrics.remainingSeats,
+    );
+    await expect(remainingSeatsMetric).toContainText(
+      waitingSnapshot.remainingSeats.toString(),
+    );
   });
 
   for (const failureCase of failureCases) {
@@ -114,17 +131,27 @@ test.describe('booking queue route', () => {
       );
 
       await page.goto(`/booking/${queuePerformanceId}`);
-      await page.waitForFunction(
-        (expectedTitle) => document.body.innerText.includes(expectedTitle),
-        failureCase.expectedHeading,
-      );
-
       await expect(
-        page.getByText(failureCase.expectedHeading).first(),
+        page.getByRole('heading', { name: failureCase.expectedHeading }),
       ).toBeVisible();
     });
   }
 });
+
+function formatQueueEta(etaSeconds: number): string {
+  if (etaSeconds <= 0) {
+    return '곧 입장';
+  }
+
+  const minutes = Math.floor(etaSeconds / 60);
+  const seconds = etaSeconds % 60;
+
+  if (minutes <= 0) {
+    return `${seconds}s`;
+  }
+
+  return `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
+}
 
 async function stubAnonymousAuth(page: import('@playwright/test').Page) {
   await page.route('**/api/v1/auth/refresh', async (route: Route) => {

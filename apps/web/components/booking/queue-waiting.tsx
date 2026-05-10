@@ -141,6 +141,12 @@ const SURFACE_TONES = {
   blocked: 'destructive',
 } as const;
 
+const QUEUE_METRIC_TEST_IDS = {
+  position: 'queue-metric-position',
+  eta: 'queue-metric-eta',
+  remainingSeats: 'queue-metric-remaining-seats',
+} as const;
+
 function formatEta(etaSeconds: number, queueCopy: QueueCopy): string {
   if (etaSeconds <= 0) {
     return queueCopy.metrics.soon;
@@ -242,8 +248,16 @@ export function QueueWaiting({
                 {queueCopy.infoLabel}
               </div>
               <div className="grid gap-3 sm:grid-cols-3">
-                <div className="rounded-2xl bg-[#f5f5f7] p-4">
-                  <p className="text-sm font-medium text-neutral-500">
+                <div
+                  className="rounded-2xl bg-[#f5f5f7] p-4"
+                  data-testid={QUEUE_METRIC_TEST_IDS.position}
+                  role="group"
+                  aria-labelledby="queue-metric-position-label"
+                >
+                  <p
+                    className="text-sm font-medium text-neutral-500"
+                    id="queue-metric-position-label"
+                  >
                     {queueCopy.metrics.position}
                   </p>
                   {status === 'loading' ? (
@@ -254,8 +268,16 @@ export function QueueWaiting({
                     </p>
                   )}
                 </div>
-                <div className="rounded-2xl bg-[#f5f5f7] p-4">
-                  <p className="text-sm font-medium text-neutral-500">
+                <div
+                  className="rounded-2xl bg-[#f5f5f7] p-4"
+                  data-testid={QUEUE_METRIC_TEST_IDS.eta}
+                  role="group"
+                  aria-labelledby="queue-metric-eta-label"
+                >
+                  <p
+                    className="text-sm font-medium text-neutral-500"
+                    id="queue-metric-eta-label"
+                  >
                     {queueCopy.metrics.eta}
                   </p>
                   {status === 'loading' ? (
@@ -268,8 +290,16 @@ export function QueueWaiting({
                     </p>
                   )}
                 </div>
-                <div className="rounded-2xl bg-[#f5f5f7] p-4">
-                  <p className="text-sm font-medium text-neutral-500">
+                <div
+                  className="rounded-2xl bg-[#f5f5f7] p-4"
+                  data-testid={QUEUE_METRIC_TEST_IDS.remainingSeats}
+                  role="group"
+                  aria-labelledby="queue-metric-remaining-seats-label"
+                >
+                  <p
+                    className="text-sm font-medium text-neutral-500"
+                    id="queue-metric-remaining-seats-label"
+                  >
                     {queueCopy.metrics.remainingSeats}
                   </p>
                   {status === 'loading' ? (
