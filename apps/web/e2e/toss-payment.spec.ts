@@ -26,6 +26,11 @@ import { loginAsTestUser } from './helpers/auth';
  * Blocker B2 (revision-2): loginAsTestUser seeds auth state before navigation.
  */
 test.describe('Toss Payments E2E', () => {
+  // These tests share the seeded admin account. Running them in parallel rotates
+  // the same refresh token family across isolated browser contexts and makes
+  // AuthInitializer redirect otherwise valid pages back to /auth.
+  test.describe.configure({ mode: 'serial' });
+
   test.skip(
     !process.env['TOSS_CLIENT_KEY_TEST'],
     'Skipped: TOSS_CLIENT_KEY_TEST not set. CI main-push gate should have failed before reaching this.',
@@ -115,7 +120,9 @@ test.describe('Toss Payments E2E', () => {
     }).toBe(true);
 
     // 8. Assert complete page shows success state.
-    await expect(page.getByText(/예매가 완료|완료되었습니다/)).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('heading', { name: '예매가 완료되었습니다' })).toBeVisible({
+      timeout: 10000,
+    });
   });
 
   // ============================================================================
@@ -257,7 +264,7 @@ test.describe('Toss Payments E2E', () => {
     await expect(page.getByText(/예매가 완료|완료되었습니다/)).not.toBeVisible();
   });
 
-  test('complete page: recovery failure after non-lock confirm error renders terminal failed state', async ({
+  test('complete page: recovery failure after non-lock confirm error renders recoverable failed state', async ({
     page,
   }) => {
     await loginAsTestUser(page);
@@ -289,10 +296,13 @@ test.describe('Toss Payments E2E', () => {
       '/booking/e2e-test-performance/complete?paymentKey=test_payment_key_recovery_failure&orderId=test_order_recovery_failure&amount=50000',
     );
 
-    await expect(page.getByText('예매를 완료하지 못했습니다')).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText('결제 확인에 실패했습니다. 예매 내역을 확인해주세요.')).toBeVisible({
+    await expect(page.getByRole('heading', { name: '결제 확인에 실패했습니다' })).toBeVisible({
       timeout: 10000,
     });
+    await expect(
+      page.getByText('결제 상태를 아직 확인하지 못했습니다. 잠시 후 다시 확인하거나 예매 내역을 확인해주세요.'),
+    ).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('button', { name: '상태 다시 확인' })).toBeVisible();
     await expect(page.getByRole('button', { name: '예매 내역 확인' })).toBeVisible();
     await expect(page.locator('.animate-spin')).not.toBeVisible();
   });

@@ -1,6 +1,6 @@
 ---
 phase: 24-traffic-booking-payment-core
-verified: 2026-05-10T13:56:48Z
+verified: 2026-05-10T14:20:45Z
 status: human_needed
 score: 4/6 must-haves verified
 overrides_applied: 0
@@ -17,10 +17,10 @@ re_verification:
 human_verification:
   - test: "Cloudflare WAF/rate-limit/challenge/block rules 실제 Zone 반영 확인"
     expected: "queue-entry/lock-seat/prepare-reservation/confirm-payment 규칙이 활성화되고 동작한다"
-    why_human: "Cloudflare Free zone `heygrabit.com`과 dashboard security rules는 구성 완료됐지만, zone status가 `pending`이고 공개 DNS가 아직 WHOISDomain NS를 반환한다. Registrar에서 NS를 `rick.ns.cloudflare.com`/`wanda.ns.cloudflare.com`으로 전환한 뒤 edge rule 실행을 재확인해야 통과 판정 가능"
+    why_human: "Cloudflare Free zone `heygrabit.com`과 dashboard security rules는 구성 완료됐지만, zone status가 `pending`이고 공개 DNS가 아직 WHOISDomain NS를 반환한다. Registrar confirmation page에는 `rick.ns.cloudflare.com`/`wanda.ns.cloudflare.com` 값까지 준비됐지만 등록인 이메일/휴대폰 인증번호가 필요해 최종 제출 전 단계에서 멈췄다. 인증 완료 후 edge rule 실행을 재확인해야 통과 판정 가능"
   - test: "Toss sandbox 실결제 경로(국내카드/해외카드/Alipay+/truemoney) 실제 redirect/webhook 왕복 확인"
     expected: "sync/pending/recovery 분기와 안내 문구가 실제 PG round-trip 결과와 일치한다"
-    why_human: "실제 Toss sandbox merchant 세션/외부 webhook 연동은 정적 분석·mock 테스트로 대체 불가"
+    why_human: "Cloud Run webhook secret 주입과 local real-SDK E2E까지는 완료됐지만, Toss developer center webhook 등록 화면이 올바른 상점 context 없이는 막힌다. 실제 Toss sandbox merchant 세션/외부 webhook 연동은 정적 분석·mock 테스트로 대체 불가"
 ---
 
 # Phase 24: Traffic + Booking + Payment Core Verification Report
@@ -40,7 +40,7 @@ human_verification:
 | 2 | WAF/rate-limit/bot/macro rules and Cloud Scheduler prewarm runbook are documented and verified | ? UNCERTAIN (WARNING) | app-layer traffic policy/decision + prewarm OIDC/control-token 검증 + runbook은 확인됨 (`apps/api/src/modules/traffic/traffic-defense.service.ts`, `apps/api/src/modules/ops/prewarm.service.ts`, `docs/runbooks/phase24-queue-waf-prewarm.md`). Cloud Scheduler prewarm live 호출은 HUMAN-UAT test 2에서 PASS. Cloudflare Free zone `heygrabit.com` exists with three active custom rules and one active rate-limit rule, but zone activation is pending registrar NS cutover from WHOISDomain to `rick.ns.cloudflare.com`/`wanda.ns.cloudflare.com`. |
 | 3 | Multi-floor SVG upload/render/switching works on desktop/mobile with lock/countdown/expiry/recovery behavior | ✓ VERIFIED | floor-aware seat identity/selector/summary wiring (`apps/web/components/booking/booking-page.tsx`, `apps/web/components/booking/floor-selector.tsx`) + overlay hit-target 보정(`apps/web/components/booking/seat-map-viewer.tsx`) + browser 회귀 테스트 PASS(`apps/web/e2e/booking-floor-selection.spec.ts`). |
 | 4 | Event-specific max tickets, cancellation/change policy, and manual seat operation controls are configurable | ✓ VERIFIED | `booking_policies` + migration 확장(`apps/api/src/database/schema/booking-policies.ts`, `apps/api/src/database/migrations/0012_phase24_booking_core.sql`) 및 `maxTicketsPerUser` 서버 enforcement(`apps/api/src/modules/booking/booking.service.ts`), manual-open audit/처리(`apps/api/src/modules/admin/admin-booking.service.ts`). |
-| 5 | Domestic Toss, overseas card, Alipay+, and truemoney paths work with proper disclaimers | ? UNCERTAIN (WARNING) | provider 분기/consent/schema/webhook idempotency 구현 및 mocked browser tests PASS(`apps/web/components/booking/toss-payment-widget.tsx`, `apps/api/src/modules/payment/payment.service.ts`, `apps/api/src/modules/payment/payment-webhook.controller.ts`, `apps/web/e2e/toss-payment-phase24.spec.ts`). 하지만 실제 Toss sandbox redirect/webhook 왕복 증거는 HUMAN-UAT test 3에서 blocked. |
+| 5 | Domestic Toss, overseas card, Alipay+, and truemoney paths work with proper disclaimers | ? UNCERTAIN (WARNING) | provider 분기/consent/schema/webhook idempotency 구현, deployed webhook-secret readiness, local real-SDK iframe mount + confirm intercept E2E PASS(`apps/web/components/booking/toss-payment-widget.tsx`, `apps/api/src/modules/payment/payment.service.ts`, `apps/api/src/modules/payment/payment-webhook.controller.ts`, `apps/web/e2e/toss-payment.spec.ts`, `apps/web/e2e/toss-payment-phase24.spec.ts`). 하지만 실제 Toss sandbox redirect/webhook 왕복 증거는 HUMAN-UAT test 3에서 developer center store context blocked. |
 | 6 | Refund preview/request/state machine, random cancelled-seat holding, QR JWT/HMAC issuance, and D-1 QR email scheduling work | ✓ VERIFIED | refund 상태머신/재시도/hold+release worker(`apps/api/src/modules/refund/refund.service.ts`, `apps/api/src/modules/jobs/refund-cancel-retry.worker.ts`, `apps/api/src/modules/jobs/cancelled-seat-release.worker.ts`) + QR JWT/HMAC 발급/검증 및 D-1 email scheduling(`apps/api/src/modules/ticket/qr-ticket.service.ts`). |
 
 **Score:** 4/6 truths verified
@@ -86,6 +86,9 @@ human_verification:
 | Multi-floor browser regression | `pnpm --filter @grabit/web exec playwright test e2e/booking-floor-selection.spec.ts --project=chromium --reporter=line` | 2 tests passed | ✓ PASS |
 | Queue metric locator regression | `pnpm --filter @grabit/web exec playwright test e2e/booking-queue.spec.ts --project=chromium --reporter=line` | 4 tests passed | ✓ PASS |
 | Toss recovery browser regression | `pnpm --filter @grabit/web exec playwright test e2e/toss-payment-phase24.spec.ts --project=chromium --reporter=line` | 3 tests passed | ✓ PASS |
+| Toss full SDK browser regression | `TOSS_CLIENT_KEY_TEST=$NEXT_PUBLIC_TOSS_CLIENT_KEY E2E_API_URL=http://localhost:8080 pnpm --filter @grabit/web exec playwright test e2e/toss-payment.spec.ts --project=chromium --reporter=line` | 7 tests passed after serializing the seeded-admin auth flow | ✓ PASS |
+| Toss webhook guard/service regression | `pnpm --filter @grabit/api exec vitest run src/modules/payment/toss-webhook.guard.spec.ts src/modules/payment/toss-webhook.controller.spec.ts src/modules/payment/payment.service.spec.ts` | 3 files / 21 tests passed | ✓ PASS |
+| Deployed Toss webhook receiver readiness | `curl` before/after `gcloud run services update --update-secrets=TOSS_WEBHOOK_SECRET=toss-webhook-secret:latest` | before: 401 missing configured secret; after: 400 with configured secret on malformed JSON and 401 without secret; revision `grabit-api-00037-f8t` | ✓ PASS |
 
 ### Requirements Coverage
 
@@ -97,7 +100,7 @@ human_verification:
 | `BOOK-01` | 24-02/06/07/15/16/19/22 | multi-floor seat selection/lock | ✓ SATISFIED | floor-aware seatKey + seat-map hit-target fix + floor browser e2e |
 | `BOOK-02` | 24-01/03/09/10/17/22 | countdown/expiry/recovery | ✓ SATISFIED | confirm/complete recovery UI + e2e + lock failure 분기 |
 | `BOOK-03` | 24-01/02/06/07/12/15/16/19 | policy/manual controls | ✓ SATISFIED | booking policy schema + maxTickets enforcement + manual open audit |
-| `PAY-02` | 24-01/03/09/10/17/18 | Toss domestic/overseas 분기 | ? NEEDS HUMAN | provider/disclaimer/webhook 로직 + mocked e2e PASS, 실 PG round-trip 증거 미확정 |
+| `PAY-02` | 24-01/03/09/10/17/18 | Toss domestic/overseas 분기 | ? NEEDS HUMAN | provider/disclaimer/webhook 로직 + local real-SDK and mocked e2e PASS + deployed webhook receiver secret readiness, 실 PG redirect/webhook history는 Toss merchant/store context 필요 |
 | `REFUND-01` | 24-01/02/03/11/14/18 | refund request/timeline/state | ✓ SATISFIED | refund service state machine + timeline UI |
 | `REFUND-02` | 24-01/02/03/11/12/18 | delayed reopen + manual-open exception | ✓ SATISFIED | held_cancelled + release worker + manual open override |
 | `QR-01` | 24-01/02/03/13/18 | QR issue/verify/D-1 scheduling | ✓ SATISFIED | QR JWT/HMAC + reminder schedule worker |
@@ -114,19 +117,19 @@ human_verification:
 
 **Test:** Cloudflare Dashboard/API에서 Grapit zone의 queue-entry/booking mutation 규칙 활성 상태 확인  
 **Expected:** challenge/block/rate-limit 분기가 실제 zone에서 동작  
-**Why human:** 2026-05-10 Cloudflare Dashboard에서 Free zone `heygrabit.com`을 추가하고 queue-entry/booking mutation/macro custom rules와 critical booking API rate-limit rule을 활성화했다. CLI API confirms zone `c7e9867fe90523f398e5c51ad911107e` is still `pending`, and `dig NS heygrabit.com +short` still returns WHOISDomain nameservers. Registrar에서 `rick.ns.cloudflare.com`/`wanda.ns.cloudflare.com`으로 NS를 전환한 뒤 재확인이 필요하다.
+**Why human:** 2026-05-10 Cloudflare Dashboard에서 Free zone `heygrabit.com`을 추가하고 queue-entry/booking mutation/macro custom rules와 critical booking API rate-limit rule을 활성화했다. CLI/API evidence previously confirmed zone `c7e9867fe90523f398e5c51ad911107e` is still `pending`, and latest `dig NS heygrabit.com +short` still returns WHOISDomain nameservers. WHOISDomain nameserver change form is prepared with `rick.ns.cloudflare.com`/`wanda.ns.cloudflare.com`, but final submit requires registrant contact verification code. 인증 완료 후 재확인이 필요하다.
 
 ### 2. Toss Sandbox Round-Trip
 
 **Test:** 국내카드/해외카드/Alipay+/truemoney 실결제 redirect + webhook 왕복 수행  
 **Expected:** pending/failed/expired/success 분기와 DB/UI 상태가 일치  
-**Why human:** 외부 PG 세션/웹훅 네트워크 왕복은 mock으로 대체 불가
+**Why human:** Cloud Run receiver readiness는 보강됐다: `toss-webhook-secret` Secret Manager secret을 만들고 revision `grabit-api-00037-f8t`에 `TOSS_WEBHOOK_SECRET`을 주입했으며, configured secret이 있는 malformed webhook은 400 validation까지 도달하고 secret 없는 요청은 401로 차단된다. Local API/DB 기반 `toss-payment.spec.ts`도 real Toss SDK iframe mount와 confirm intercept까지 PASS한다. 그러나 Toss developer center webhook page는 올바른 상점 context 없이 `올바른 상점이 아닙니다`로 막혔고, 외부 PG redirect/webhook network history는 mock/local smoke로 대체 불가하다.
 
 ### Gaps Summary
 
-코드 내부 구현/테스트 기준의 BLOCKER gap은 확인되지 않았다. Success criteria #2는 Cloudflare zone/rules 구성까지 완료됐지만 registrar NS cutover 전이라 edge 실행 증거가 아직 없고, #5(실 Toss sandbox round-trip)도 외부 운영 증거가 미완료라 `status: human_needed`를 유지한다.
+코드 내부 구현/테스트 기준의 BLOCKER gap은 확인되지 않았다. Success criteria #2는 Cloudflare zone/rules 구성과 registrar form 준비까지 완료됐지만 등록인 2단계 인증 전이라 edge 실행 증거가 아직 없고, #5는 Cloud Run receiver readiness와 local real-SDK E2E까지 보강됐지만 Toss developer center 상점 context 기반 실 redirect/webhook 증거가 미완료라 `status: human_needed`를 유지한다.
 
 ---
 
-_Verified: 2026-05-10T13:56:48Z_
+_Verified: 2026-05-10T14:20:45Z_
 _Verifier: the agent (gsd-verifier)_

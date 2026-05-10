@@ -3,7 +3,7 @@ status: partial
 phase: 24-traffic-booking-payment-core
 source: [24-VERIFICATION.md]
 started: 2026-05-08T10:32:42Z
-updated: 2026-05-10T22:56:48+09:00
+updated: 2026-05-10T23:20:45+09:00
 ---
 
 # Phase 24: Human UAT
@@ -34,8 +34,10 @@ evidence:
     result: PASS, active custom rules `phase24-queue-entry-managed-challenge`, `phase24-booking-mutation-managed-challenge`, and `phase24-booking-macro-block` show `3/5 used`; Cloudflare UI no longer supports `cf.threat_score`, so suspicious user-agent predicates were used
   - command: Computer Use Chrome Cloudflare Dashboard, Security > Security Rules > Rate Limiting Rules
     result: PASS, active rule `phase24-critical-booking-api-rate-limit` shows `1/1 used`; expression covers POST booking lock/reservation prepare/payment confirm paths, per-IP threshold 30 requests / 10 seconds, action Block, mitigation 10 seconds
+  - command: Computer Use Chrome WHOISDomain, My domains > `heygrabit.com` > nameserver change
+    result: BLOCKED, registrar confirmation page now contains desired Cloudflare NS values `rick.ns.cloudflare.com` and `wanda.ns.cloudflare.com`, but final submit requires registrant email/phone verification code; the agent stopped at this 2-step identity gate
   - command: dig NS heygrabit.com +short
-    result: BLOCKED, public authoritative NS still `ns1.whoisdomain.kr`, `ns2.whoisdomain.kr`, `ns3.whoisdomain.kr`, `ns4.whoisdomain.kr`; registrar must switch to `rick.ns.cloudflare.com` and `wanda.ns.cloudflare.com`
+    result: BLOCKED, public authoritative NS still `ns1.whoisdomain.kr`, `ns2.whoisdomain.kr`, `ns3.whoisdomain.kr`, `ns4.whoisdomain.kr`; registrar 2-step verification must be completed before Cloudflare activation can propagate
 
 ### 2. Cloud Scheduler → prewarm API(OIDC+control-token) 실제 호출 검증
 expected: scale-up/step-down job이 의도한 서비스에 성공하고 감사 가능한 실행 로그가 남는다
@@ -81,15 +83,25 @@ evidence:
 expected: sync/pending/recovery 분기와 안내문구가 실제 redirect/webhook 왕복에서 일치한다
 result: blocked
 blocked_by: third-party
-reason: "Local and deployed config expose Toss test-key material, and mocked Phase 24 recovery browser tests pass, but an actual Toss sandbox redirect/webhook round trip requires a live sandbox merchant session and public webhook/redirect configuration not derivable from the repo alone."
+reason: "Local and deployed config expose Toss test-key material, deployed API now has a configured webhook secret, and real SDK mount/confirm-intercept browser evidence passes locally. However, actual Toss sandbox redirect/webhook round-trip still requires a Toss developer center store context and webhook registration; the developer center webhook page returned `올바른 상점이 아닙니다` without the required merchant/store context."
 evidence:
   - command: local .env key presence check
     result: PASS, NEXT_PUBLIC_TOSS_CLIENT_KEY and TOSS_SECRET_KEY are test-key-present
   - command: gcloud run services describe grabit-api --region=asia-northeast3
-    result: PASS, deployed API env names include TOSS_SECRET_KEY
+    result: PASS, deployed API env names include TOSS_SECRET_KEY and TOSS_WEBHOOK_SECRET secret reference
+  - command: gcloud secrets create toss-webhook-secret && gcloud run services update grabit-api --update-secrets=TOSS_WEBHOOK_SECRET=toss-webhook-secret:latest
+    result: PASS, deployed revision `grabit-api-00037-f8t` serves 100% traffic with `TOSS_WEBHOOK_SECRET` sourced from Secret Manager
+  - command: curl deployed `/api/v1/payments/toss/webhook` before/after secret injection
+    result: PASS, before injection returned 401; after injection returned 400 for malformed JSON with the configured secret header and 401 without the secret, proving the deployed guard now reaches body validation only for authenticated webhook attempts
+  - command: pnpm --filter @grabit/api exec vitest run src/modules/payment/toss-webhook.guard.spec.ts src/modules/payment/toss-webhook.controller.spec.ts src/modules/payment/payment.service.spec.ts
+    result: PASS, 3 files / 21 tests passed
   - command: pnpm --filter @grabit/web exec playwright test e2e/toss-payment-phase24.spec.ts --project=chromium --reporter=line
     result: PASS, 3 mocked pending/failed/expired recovery tests passed
-  - limitation: "Domestic/overseas/Alipay+/truemoney real Toss redirects and webhooks were not executed because they require external Toss sandbox merchant flow state."
+  - command: TOSS_CLIENT_KEY_TEST=$NEXT_PUBLIC_TOSS_CLIENT_KEY E2E_API_URL=http://localhost:8080 pnpm --filter @grabit/web exec playwright test e2e/toss-payment.spec.ts --project=chromium --reporter=line
+    result: PASS after E2E stabilization, 7 tests passed with local API/DB; happy path mounted the real Toss SDK iframe and intercepted the server confirm call after simulated successUrl navigation
+  - command: Browser navigate https://developers.tosspayments.com/webhook
+    result: BLOCKED, developer center returned `올바른 상점이 아닙니다`; webhook registration requires the correct Toss merchant/store context
+  - limitation: "Domestic/overseas/Alipay+/truemoney real Toss redirects and webhooks were not executed because they require external Toss sandbox merchant flow state and developer center webhook registration."
 
 ### 4. 모바일/데스크톱 멀티층 좌석 선택 UX 최종 확인
 expected: 층 전환 시 선택/타이머/복구 흐름이 실제 브라우저에서 안정 동작한다
@@ -120,17 +132,33 @@ blocked: 2
 
 - truth: "Cloudflare zone security rules are configured, but public traffic is not delegated to Cloudflare yet."
   status: human_needed
-  reason: "The Cloudflare Free zone and dashboard rules are active in the Cloudflare account, but the zone remains `pending` and public DNS still delegates `heygrabit.com` to WHOISDomain nameservers. A registrar-side NS cutover is required before edge rule execution can be verified."
+  reason: "The Cloudflare Free zone and dashboard rules are active in the Cloudflare account, but the zone remains `pending` and public DNS still delegates `heygrabit.com` to WHOISDomain nameservers. The registrar nameserver form has been prepared with Cloudflare NS values, but final submission is blocked by registrant email/phone verification."
   severity: operational
   test: 1
-  root_cause: "The available Wrangler OAuth token could read zones but could not create the zone or read Rulesets API entrypoints, so the zone/rules were configured through the authenticated Chrome Dashboard. Registrar nameserver changes require domain registrar access and were intentionally not performed by the agent."
+  root_cause: "The available Wrangler OAuth token could read zones but could not create the zone or read Rulesets API entrypoints, so the zone/rules were configured through the authenticated Chrome Dashboard. Registrar final nameserver submission requires registrant contact verification; the agent reached the 2-step verification gate and did not request or enter the code."
   artifacts:
     - path: ".planning/phases/24-traffic-booking-payment-core/24-HUMAN-UAT.md"
       issue: "Documents the configured Cloudflare zone, active custom/rate-limit rules, and remaining registrar NS cutover."
     - path: ".planning/phases/24-traffic-booking-payment-core/24-VERIFICATION.md"
       issue: "Keeps Phase 24 in `human_needed` until Cloudflare activation propagates and Toss sandbox round-trip is verified."
   next_human_step:
-    - "At the registrar for `heygrabit.com`, replace `ns1/ns2/ns3/ns4.whoisdomain.kr` with `rick.ns.cloudflare.com` and `wanda.ns.cloudflare.com`, then wait for Cloudflare zone status to become active."
+    - "At the registrar confirmation page for `heygrabit.com`, complete the registered contact verification code flow and submit the prepared nameserver change to `rick.ns.cloudflare.com` and `wanda.ns.cloudflare.com`, then wait for Cloudflare zone status to become active."
+
+- truth: "Toss webhook endpoint now fails closed in production while allowing authenticated malformed requests to reach validation, and local real-SDK payment E2E is stable."
+  status: partially_resolved
+  reason: "Cloud Run now receives `TOSS_WEBHOOK_SECRET` from Secret Manager, the deployed webhook guard behavior was smoke-tested, and the local full Toss browser spec passes with real SDK iframe mount plus confirm intercept. The remaining unverified part is Toss-side merchant store webhook registration and actual sandbox payment redirect/webhook delivery."
+  severity: external
+  test: 3
+  root_cause: "The repo and GCP environment can prepare the receiver, but Toss developer center requires a valid store context for webhook registration and live sandbox flow history."
+  artifacts:
+    - path: "apps/web/e2e/toss-payment.spec.ts"
+      issue: "Now runs serially to avoid shared seeded-admin refresh-token rotation flake and asserts the current recoverable unknown-confirm UI."
+    - path: ".planning/phases/24-traffic-booking-payment-core/24-HUMAN-UAT.md"
+      issue: "Records deployed webhook-secret readiness, local real-SDK E2E evidence, and remaining Toss developer center blocker."
+    - path: ".planning/phases/24-traffic-booking-payment-core/24-VERIFICATION.md"
+      issue: "Keeps Phase 24 in `human_needed` until real Toss sandbox redirect/webhook history exists."
+  next_human_step:
+    - "In Toss Payments developer center, select the correct merchant/store and register the webhook endpoint for `PAYMENT_STATUS_CHANGED` and `CANCEL_STATUS_CHANGED` using the deployed API URL plus the Secret Manager-backed shared secret, then execute domestic card, overseas card, Alipay+, and truemoney sandbox payments."
 
 - truth: "Cloud Scheduler scale-up and step-down jobs successfully call the deployed prewarm API with OIDC and control-token protection."
   status: resolved
