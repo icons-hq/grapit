@@ -3,7 +3,7 @@ status: partial
 phase: 24-traffic-booking-payment-core
 source: [24-VERIFICATION.md]
 started: 2026-05-08T10:32:42Z
-updated: 2026-05-10T21:57:56+09:00
+updated: 2026-05-10T22:35:20+09:00
 ---
 
 # Phase 24: Human UAT
@@ -17,8 +17,8 @@ updated: 2026-05-10T21:57:56+09:00
 ### 1. Cloudflare WAF/rate-limit/challenge/block rules 실제 Zone 반영 확인
 expected: runbook의 queue-entry/lock-seat/prepare-reservation/confirm-payment 규칙이 활성화되고 동작한다
 result: blocked
-blocked_by: third-party
-reason: "Wrangler OAuth login is available, but Cloudflare API zone list for the authenticated account returned zero zones. No active Grapit zone/ruleset/rate-limit/challenge/block state can be verified from this local account."
+blocked_by: missing_external_zone
+reason: "Wrangler OAuth and the logged-in Chrome Cloudflare Dashboard both point at account `6c94bc5d14389171fcb54b8b9fc1f0eb`, but that account currently has zero Cloudflare zones/domains. The dashboard WAF page only shows the account-level Enterprise upsell, so the queue-entry/lock-seat/prepare-reservation/confirm-payment zone rules cannot be verified as active or passing."
 evidence:
   - command: pnpm exec wrangler whoami
     result: PASS, authenticated account visible with zone:read scope
@@ -26,6 +26,12 @@ evidence:
     result: PASS request, empty zone list
   - command: pnpm exec wrangler zones list
     result: FAIL, Wrangler v4 has no zones list command
+  - command: Browser-use Cloudflare Dashboard navigation
+    result: BLOCKED at login screen with Cloudflare human challenge; no authenticated in-app browser session available
+  - command: Computer Use Chrome Cloudflare Dashboard, Domains > Overview
+    result: PASS read-only check, logged-in account shows "도메인 또는 하위 도메인을 찾을 수 없습니다" and "도메인을 추가하세요"
+  - command: Computer Use Chrome Cloudflare Dashboard, Application Security > WAF
+    result: PASS read-only check, page shows account-level WAF Enterprise upsell rather than a zone rule/rate-limit/ruleset list
 
 ### 2. Cloud Scheduler → prewarm API(OIDC+control-token) 실제 호출 검증
 expected: scale-up/step-down job이 의도한 서비스에 성공하고 감사 가능한 실행 로그가 남는다
