@@ -68,6 +68,13 @@ const SVG_WITH_TEXT_OVERLAY = `
 </svg>
 `;
 
+const SPECIAL_SEAT_ID = 'A-"1\\vip';
+const SVG_WITH_SPECIAL_SEAT_ID = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 120">
+  <rect data-seat-id="A-&quot;1\\vip" x="20" y="20" width="36" height="24" rx="4" />
+</svg>
+`;
+
 const mockSeatConfig: SeatMapConfig = {
   tiers: [
     { tierName: 'VIP', color: '#6C3CE0', seatIds: ['A-1', 'A-2'] },
@@ -405,6 +412,67 @@ describe('SeatMapViewer', () => {
       const seatA1 = container.querySelector('[data-seat-id="A-1"]');
       expect(seatA1?.getAttribute('stroke')).toBe('#1A1A2E');
       expect(seatA1?.getAttribute('stroke-width')).toBe('3');
+    });
+  });
+
+  it('styles selected and pending seats when the seat id contains CSS selector characters', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      text: () => Promise.resolve(SVG_WITH_SPECIAL_SEAT_ID),
+    });
+
+    const specialSeatConfig: SeatMapConfig = {
+      tiers: [
+        {
+          tierName: 'VIP',
+          color: '#3B82F6',
+          seatIds: [SPECIAL_SEAT_ID],
+        },
+      ],
+    };
+    const seatStates = new Map<string, SeatState>([
+      [SPECIAL_SEAT_ID, 'available'],
+    ]);
+
+    const { container, rerender } = render(
+      <SeatMapViewer
+        svgUrl="https://example.com/special-seat-id.svg"
+        seatConfig={specialSeatConfig}
+        seatStates={seatStates}
+        selectedSeatIds={new Set([SPECIAL_SEAT_ID])}
+        onSeatClick={() => {}}
+        maxSelect={4}
+      />,
+    );
+
+    const findSpecialSeat = () =>
+      Array.from(container.querySelectorAll<SVGElement>('[data-seat-id]')).find(
+        (element) => element.getAttribute('data-seat-id') === SPECIAL_SEAT_ID,
+      );
+
+    await waitFor(() => {
+      const seat = findSpecialSeat();
+      expect(seat).toBeTruthy();
+      expect(seat?.style.transition).toContain('fill 150ms');
+      expect(seat?.getAttribute('fill')).toBe('#6C3CE0');
+    });
+
+    rerender(
+      <SeatMapViewer
+        svgUrl="https://example.com/special-seat-id.svg"
+        seatConfig={specialSeatConfig}
+        seatStates={seatStates}
+        selectedSeatIds={new Set()}
+        onSeatClick={() => {}}
+        maxSelect={4}
+      />,
+    );
+
+    await waitFor(() => {
+      const seat = findSpecialSeat();
+      expect(seat).toBeTruthy();
+      expect(seat?.style.transition).toContain('fill 150ms');
+      expect(seat?.getAttribute('fill')).toBe('#3B82F6');
     });
   });
 

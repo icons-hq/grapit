@@ -311,6 +311,9 @@ async function clickSeatLabelCenter(page: Page) {
 }
 
 async function tapSeatLabelCenter(page: Page) {
+  await page.evaluate(() => window.scrollBy(0, 180));
+
+  const seatMapGrid = page.getByRole('grid', { name: '좌석 배치도' });
   const seatLabel = page
     .getByRole('grid', { name: '좌석 배치도' })
     .locator('text.seat-number')
@@ -318,15 +321,31 @@ async function tapSeatLabelCenter(page: Page) {
     .first();
   await expect(seatLabel).toBeVisible();
   const box = await seatLabel.boundingBox();
+  const gridBox = await seatMapGrid.boundingBox();
   if (!box) {
     throw new Error('Seat label bounding box was not available');
   }
+  if (!gridBox) {
+    throw new Error('Seat map grid bounding box was not available');
+  }
 
-  await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
+  const tapPosition = {
+    x: box.x - gridBox.x + box.width / 2,
+    y: box.y - gridBox.y + box.height / 2,
+  };
+  await seatMapGrid.tap({
+    force: true,
+    position: tapPosition,
+  });
 }
 
 function getNextButton(page: Page) {
   return page.locator('button').filter({ hasText: /^다음$/ }).last();
+}
+
+async function assertTimerAndNextCta(page: Page) {
+  await expect(page.getByLabel(/남은 시간 \d+분 \d+초/)).toBeVisible();
+  await expect(getNextButton(page)).toBeEnabled();
 }
 
 async function assertPostSelectionState(page: Page) {
@@ -334,8 +353,21 @@ async function assertPostSelectionState(page: Page) {
   await expect(summary.getByRole('heading', { name: '1층' })).toBeVisible();
   await expect(summary.getByText('VIP')).toBeVisible();
   await expect(summary.getByText('A열 1번')).toBeVisible();
-  await expect(page.getByLabel(/남은 시간 \d+분 \d+초/)).toBeVisible();
-  await expect(getNextButton(page)).toBeEnabled();
+  await assertTimerAndNextCta(page);
+}
+
+async function assertMobilePostSelectionState(page: Page) {
+  const collapsedSummary = page.getByText('1석 선택 | 110,000원');
+  await expect(collapsedSummary).toBeVisible();
+  await collapsedSummary.click();
+  const mobileSummary = page.locator('div.fixed.inset-x-0.bottom-0');
+  await expect(
+    mobileSummary.getByRole('heading', { name: '선택 좌석' }),
+  ).toBeVisible();
+  await expect(mobileSummary.getByRole('heading', { name: '1층' })).toBeVisible();
+  await expect(mobileSummary.getByText('VIP')).toBeVisible();
+  await expect(mobileSummary.getByText('A열 1번')).toBeVisible();
+  await assertTimerAndNextCta(page);
 }
 
 async function createMobilePage(browser: Browser) {
@@ -378,8 +410,7 @@ test.describe('booking floor-browser seat selection', () => {
       await page.goto(`/booking/${FLOOR_BROWSER_PERFORMANCE_ID}`);
       await selectDateAndShowtime(page);
       await tapSeatLabelCenter(page);
-
-      await expect(page.getByRole('radio', { name: '1층' }).getByText('1')).toBeVisible();
+      await assertMobilePostSelectionState(page);
     } finally {
       await context.close().catch(() => {});
     }

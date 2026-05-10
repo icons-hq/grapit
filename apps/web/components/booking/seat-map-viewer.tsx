@@ -405,9 +405,7 @@ export function SeatMapViewer({
         // useEffect는 건드리지 않음 → D-13 broadcast 즉시 회색 정책 유지.
         return;
       }
-      const el = root.querySelector(
-        `[data-seat-id="${seatId}"]`,
-      ) as SVGElement | null;
+      const el = findSeatElementById(root, seatId);
       if (!el) return;
       el.style.transition = 'fill 150ms ease-out, stroke 150ms ease-out';
       el.setAttribute('fill', '#6C3CE0'); // Brand Purple — D-03
@@ -415,9 +413,7 @@ export function SeatMapViewer({
 
     // 해제 중인 좌석: fill을 원래 tier 색상으로 복원 + transition 유지
     pendingRemovals.forEach((seatId) => {
-      const el = root.querySelector(
-        `[data-seat-id="${seatId}"]`,
-      ) as SVGElement | null;
+      const el = findSeatElementById(root, seatId);
       if (!el) return;
       el.style.transition = 'fill 150ms ease-out, stroke 150ms ease-out';
       const originalFill = tierColorMap.get(seatId)?.color ?? LOCKED_COLOR;
