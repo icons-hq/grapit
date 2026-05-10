@@ -144,4 +144,3 @@ CREATE INDEX "idx_reservations_queue_session_id" ON "reservations" USING btree (
 CREATE INDEX "idx_reservations_payment_deadline_at" ON "reservations" USING btree ("payment_deadline_at");--> statement-breakpoint
 CREATE UNIQUE INDEX "idx_seat_inv_showtime_floor_seat_key" ON "seat_inventories" USING btree ("showtime_id","floor_key","seat_key");--> statement-breakpoint
 CREATE UNIQUE INDEX "idx_seat_maps_performance_floor_key" ON "seat_maps" USING btree ("performance_id","floor_key");--> statement-breakpoint
-CREATE UNIQUE INDEX "idx_translation_drafts_one_published_per_source_locale" ON "translation_drafts" USING btree ("source_id","target_locale") WHERE "translation_drafts"."status" = 'published';
