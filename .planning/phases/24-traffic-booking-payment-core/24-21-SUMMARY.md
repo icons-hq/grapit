@@ -61,7 +61,7 @@ completed: 2026-05-10
 
 1. **Task 1: Make the prewarm deploy contract durable in CI and the runbook** - `30703eb` (`chore`)
 2. **Task 2: Roll out and verify the live GCP prewarm path for `grabit-api`** - `d61b38a` (`fix`)
-3. **Task 3: Resolve Human UAT test 2 and summarize the operational rollout** - committed with this summary/UAT update
+3. **Task 3: Resolve Human UAT test 2 and summarize the operational rollout** - `70165eb` (`docs`)
 
 ## Files Created/Modified
 
@@ -129,9 +129,10 @@ None - the required Cloud Scheduler jobs, Secret Manager values, deploy contract
 - Remaining Phase 24 Human UAT work is isolated to test 4 (seat-label hit target), not to Cloud Scheduler, Cloud Run, or deploy-time prewarm configuration.
 - Future API deploys should keep using the existing `PREWARM_*` Secret Manager contract and max-instances `100` guard until the networking model changes.
 
-## Self-Check: PENDING
+## Self-Check: PASSED
 
-- Summary file existence and commit references will be verified after the Task 3 commit is created.
+- Verified `.planning/phases/24-traffic-booking-payment-core/24-21-SUMMARY.md` exists on disk.
+- Verified task commits `30703eb`, `d61b38a`, and `70165eb` exist in git history.
 
 ---
 *Phase: 24-traffic-booking-payment-core*
