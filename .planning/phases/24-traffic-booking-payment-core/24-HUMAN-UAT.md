@@ -3,14 +3,14 @@ status: partial
 phase: 24-traffic-booking-payment-core
 source: [24-VERIFICATION.md]
 started: 2026-05-08T10:32:42Z
-updated: 2026-05-10T21:31:11+09:00
+updated: 2026-05-10T21:57:56+09:00
 ---
 
 # Phase 24: Human UAT
 
 ## Current Test
 
-[testing complete - 1 passed, 1 issue, 2 blocked external/operational gates]
+[testing complete - 2 passed, 0 issues, 2 blocked external/operational gates]
 
 ## Tests
 
@@ -83,26 +83,25 @@ evidence:
 
 ### 4. 모바일/데스크톱 멀티층 좌석 선택 UX 최종 확인
 expected: 층 전환 시 선택/타이머/복구 흐름이 실제 브라우저에서 안정 동작한다
-result: issue
-reported: "Browser automation rendered the multi-floor booking page on desktop/mobile, but clicking the visible center of seat A-1 did not select the seat because the SVG seat-number <text> element intercepted pointer events. The summary stayed empty, timer stayed --:--, and the next CTA stayed disabled."
-severity: major
+result: passed
+resolved_at: 2026-05-10T21:57:56+09:00
+notes:
+  - "SeatMapViewer now normalizes vendor seat-number overlays in the processed SVG layer with `pointer-events=\"none\"` plus seat overlay metadata, so visible seat labels no longer absorb the interaction before the booking click handler resolves `A-1`."
+  - "The new `booking-floor-selection.spec.ts` route-stubs `/booking/floor-browser` and clicks the visible seat-label center rather than a rect edge or `[data-seat-id]` shortcut. Desktop verifies the grouped summary (`1층` / `VIP` / `A열 1번`), active timer (`남은시간 07:xx`), enabled next CTA, and 1F → 2F → 1F persistence. Mobile-sized Chromium verifies the same centered interaction updates floor selection state (`1층` badge `1`)."
 evidence:
-  - command: pnpm --filter @grabit/web test
-    result: PASS, 55 files / 348 tests
-  - command: pnpm --filter @grabit/api test
-    result: PASS, 54 files / 599 tests
-  - command: Playwright Browser route-stubbed desktop/mobile UAT at http://localhost:3000/booking/floor-browser
-    result: FAIL, seat map rendered but center seat click left summary empty and CTA disabled
-  - screenshot: /tmp/grapit-phase24-seat-desktop.png
-  - screenshot: /tmp/grapit-phase24-seat-mobile.png
-  - diagnostic: "Playwright click reported the seat-number <text> subtree intercepting pointer events over [data-seat-id='A-1']."
-  - control_check: "After scrolling and clicking the rect edge on desktop, the summary showed VIP A열 1번 and the timer changed to 07:56, proving the state path works when the rect receives the click."
+  - command: pnpm --filter @grabit/web test -- components/booking/__tests__/seat-map-viewer.test.tsx
+    result: PASS, 55 files / 349 tests including `components/booking/__tests__/seat-map-viewer.test.tsx` (22 tests green) with the centered text-overlay regression
+  - command: pnpm --filter @grabit/web exec playwright test e2e/booking-floor-selection.spec.ts --project=chromium --reporter=line
+    result: PASS, 2 tests green; desktop center click produced `1층` summary + `A열 1번` + active timer + enabled `다음`, and mobile-sized centered interaction updated the `1층` selected-count badge to `1`
+  - assertion: "Desktop `floor-browser` flow now leaves the booking header on `남은시간 07:xx`, the right summary shows `1층` and `A열 1번`, and `다음` is enabled immediately after the visible seat-label center click."
+  - assertion: "Switching floors after the hit-target fix kept the `1층` selection intact when moving 1F → 2F → 1F."
+  - assertion: "Mobile-sized Chromium still exercises the visible seat-label center and confirms the selection state by turning the `1층` floor badge to `1` without relying on a rect-edge workaround."
 
 ## Summary
 
 total: 4
-passed: 1
-issues: 1
+passed: 2
+issues: 0
 pending: 0
 skipped: 0
 blocked: 2
@@ -132,22 +131,19 @@ blocked: 2
   debug_session: "inline automated UAT 2026-05-10"
 
 - truth: "Mobile and desktop users can reliably select seats across floors by clicking/tapping visible seats, with timer, selection summary, and CTA updating."
-  status: failed
-  reason: "Browser automation showed that clicking the visible center of seat A-1 did not select the seat because SVG seat-number text intercepted pointer events."
+  status: resolved
+  reason: "SeatMapViewer now neutralizes seat-number overlays before the click handler runs, and the browser regression covers centered label interactions on desktop plus a mobile-sized selection-state check."
   severity: major
   test: 4
   root_cause: "SeatMapViewer delegates clicks from elements that have a [data-seat-id] ancestor, but uploaded/rendered SVG seat-number <text> elements can sit above the seat rect without pointer-events:none or data-seat-id ancestry. Center clicks target the text node, so handleClick does not resolve a seat id."
   artifacts:
     - path: "apps/web/components/booking/seat-map-viewer.tsx"
-      issue: "Click handler only searches closest('[data-seat-id]'); it does not neutralize or map seat-number text overlays."
-    - path: "apps/web/public/seed/sample-seat-map.svg"
-      issue: "Contains seat-number text overlay that can intercept pointer events over the clickable rect."
-    - path: "/tmp/grapit-phase24-seat-desktop.png"
-      issue: "Screenshot evidence after failed desktop center-click flow."
-    - path: "/tmp/grapit-phase24-seat-mobile.png"
-      issue: "Screenshot evidence after failed mobile center-tap flow."
-  missing:
-    - "Normalize processed SVG so non-seat overlays inside the seat map do not intercept pointer events, or propagate data-seat-id to the visible seat-label group."
-    - "Add a browser-level regression that clicks the visible center of a numbered seat, not only the rect edge or mocked component."
-    - "Re-run desktop and mobile browser UAT for 1F/2F selection persistence after the hit-target fix."
+      issue: "Processed SVG now marks seat-number overlays with seat metadata and `pointer-events:none`, while the handler still blocks sold seats and preserves the locked-seat invariant."
+    - path: "apps/web/components/booking/__tests__/seat-map-viewer.test.tsx"
+      issue: "Clicks the visible `A-1` label text directly and proves `onSeatClick('A-1')` fires while decorative checkmarks stay non-interactive."
+    - path: "apps/web/e2e/booking-floor-selection.spec.ts"
+      issue: "Route-stubbed `/booking/floor-browser` regression clicks the visible seat-label center on desktop/mobile-sized flows and re-checks 1F ↔ 2F persistence."
+  resolved_with:
+    - "Unit regression: `pnpm --filter @grabit/web test -- components/booking/__tests__/seat-map-viewer.test.tsx`."
+    - "Browser regression: `pnpm --filter @grabit/web exec playwright test e2e/booking-floor-selection.spec.ts --project=chromium --reporter=line`."
   debug_session: "inline Playwright Browser UAT 2026-05-10"
