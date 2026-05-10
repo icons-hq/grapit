@@ -8,6 +8,7 @@ import {
 import { and, eq } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import { seatInventories, showtimes } from '../../database/schema/index.js';
+import { BookingGateway } from '../booking/booking.gateway.js';
 import {
   PG_BOSS,
   PG_BOSS_JOB_NAMES,
@@ -43,6 +44,7 @@ export class CancelledSeatReleaseWorker implements OnModuleInit {
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     @Optional() @Inject(PG_BOSS) private readonly pgBoss?: PgBossContract,
+    @Optional() private readonly bookingGateway?: BookingGateway,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -57,14 +59,18 @@ export class CancelledSeatReleaseWorker implements OnModuleInit {
           return;
         }
 
-        await this.handleJob(job.data);
+        await this.handleJob(job.data, job.id);
       },
     );
   }
 
-  async handleJob(payload: ReleaseCancelledSeatJobPayload): Promise<{
-    status: 'released' | 'skipped_imminent' | 'missing_showtime';
+  async handleJob(payload: ReleaseCancelledSeatJobPayload, releaseJobId?: string): Promise<{
+    status: 'released' | 'skipped_imminent' | 'missing_showtime' | 'missing_job';
   }> {
+    if (!releaseJobId) {
+      return { status: 'missing_job' };
+    }
+
     const showtimeAt = await this.loadShowtimeAt(payload.showtimeId);
     if (!showtimeAt) {
       return { status: 'missing_showtime' };
@@ -72,11 +78,28 @@ export class CancelledSeatReleaseWorker implements OnModuleInit {
 
     const releaseAt = new Date(payload.releaseAt);
     if (shouldKeepHeldCancelledSeat(showtimeAt, releaseAt)) {
-      await this.markShowtimeImminentHold(payload.showtimeId, payload.seatIdentities, releaseAt);
+      await this.markShowtimeImminentHold(
+        payload.showtimeId,
+        payload.seatIdentities,
+        releaseAt,
+        releaseJobId,
+      );
       return { status: 'skipped_imminent' };
     }
 
-    await this.releaseHeldSeats(payload.showtimeId, payload.seatIdentities);
+    const releasedSeats = await this.releaseHeldSeats(
+      payload.showtimeId,
+      payload.seatIdentities,
+      releaseJobId,
+    );
+    for (const seatIdentity of releasedSeats) {
+      this.bookingGateway?.broadcastSeatUpdate(
+        payload.showtimeId,
+        seatIdentity.seatKey,
+        'available',
+      );
+    }
+
     return { status: 'released' };
   }
 
@@ -93,6 +116,7 @@ export class CancelledSeatReleaseWorker implements OnModuleInit {
     showtimeId: string,
     seatIdentities: SeatIdentityPayload[],
     releaseAt: Date,
+    releaseJobId: string,
   ): Promise<void> {
     for (const seatIdentity of seatIdentities) {
       await this.db
@@ -107,6 +131,8 @@ export class CancelledSeatReleaseWorker implements OnModuleInit {
             eq(seatInventories.showtimeId, showtimeId),
             eq(seatInventories.floorKey, seatIdentity.floorKey),
             eq(seatInventories.seatKey, seatIdentity.seatKey),
+            eq(seatInventories.status, 'held_cancelled'),
+            eq(seatInventories.reopenJobId, releaseJobId),
           ),
         );
     }
@@ -115,9 +141,12 @@ export class CancelledSeatReleaseWorker implements OnModuleInit {
   protected async releaseHeldSeats(
     showtimeId: string,
     seatIdentities: SeatIdentityPayload[],
-  ): Promise<void> {
+    releaseJobId: string,
+  ): Promise<SeatIdentityPayload[]> {
+    const releasedSeats: SeatIdentityPayload[] = [];
+
     for (const seatIdentity of seatIdentities) {
-      await this.db
+      const released = await this.db
         .update(seatInventories)
         .set({
           status: 'available',
@@ -133,12 +162,21 @@ export class CancelledSeatReleaseWorker implements OnModuleInit {
             eq(seatInventories.showtimeId, showtimeId),
             eq(seatInventories.floorKey, seatIdentity.floorKey),
             eq(seatInventories.seatKey, seatIdentity.seatKey),
+            eq(seatInventories.status, 'held_cancelled'),
+            eq(seatInventories.reopenJobId, releaseJobId),
           ),
-        );
+        )
+        .returning({ id: seatInventories.id });
+
+      if (released.length > 0) {
+        releasedSeats.push(seatIdentity);
+      }
     }
 
     this.logger.log(
-      `Released held_cancelled seats for showtimeId=${showtimeId}, count=${seatIdentities.length}`,
+      `Released held_cancelled seats for showtimeId=${showtimeId}, count=${releasedSeats.length}`,
     );
+
+    return releasedSeats;
   }
 }

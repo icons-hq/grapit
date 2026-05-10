@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { seatInventories } from '../../database/schema/index.js';
 import {
   CancelledSeatReleaseWorker,
   pickCancelledSeatReleaseDelaySeconds,
@@ -29,12 +30,14 @@ describe('CancelledSeatReleaseWorker', () => {
       new Date('2026-05-15T10:00:00.000Z') as never,
     );
 
-    const result = await worker.handleJob({
+    const payload = {
       reservationId: 'reservation-1',
       showtimeId: 'showtime-1',
       releaseAt: '2026-05-15T09:56:00.000Z',
       seatIdentities: [{ floorKey: '1F', seatId: 'A-10', seatKey: '1F:A-10' }],
-    });
+    };
+
+    const result = await worker.handleJob(payload, 'release-job-1');
 
     expect(shouldKeepHeldCancelledSeat(
       new Date('2026-05-15T10:00:00.000Z'),
@@ -84,8 +87,83 @@ describe('CancelledSeatReleaseWorker', () => {
     const handler = boss.work.mock.calls[0]?.[1] as (
       jobs: Array<{ data: typeof payload }>,
     ) => Promise<void>;
-    await handler([{ data: payload }]);
+    await handler([{ id: 'release-job-1', data: payload }]);
 
-    expect(handleJobSpy).toHaveBeenCalledWith(payload);
+    expect(handleJobSpy).toHaveBeenCalledWith(payload, 'release-job-1');
+  });
+
+  it('guards delayed release by current held_cancelled ownership and broadcasts released seats', async () => {
+    const db = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn().mockResolvedValue([
+            { dateTime: new Date('2026-05-15T10:00:00.000Z') },
+          ]),
+        })),
+      })),
+      update: vi.fn(() => ({
+        set: vi.fn(() => ({
+          where: vi.fn(() => ({
+            returning: vi.fn().mockResolvedValue([{ id: 'seat-inventory-1' }]),
+          })),
+        })),
+      })),
+    };
+    const bookingGateway = { broadcastSeatUpdate: vi.fn() };
+    const worker = new CancelledSeatReleaseWorker(
+      db as never,
+      { isAvailable: true, work: vi.fn(), send: vi.fn(), stop: vi.fn() } as never,
+      bookingGateway as never,
+    );
+    const payload = {
+      reservationId: 'reservation-1',
+      showtimeId: 'showtime-1',
+      releaseAt: '2026-05-15T09:00:00.000Z',
+      seatIdentities: [{ floorKey: '1F', seatId: 'A-10', seatKey: '1F:A-10' }],
+    };
+
+    const result = await worker.handleJob(payload, 'release-job-1');
+
+    expect(result.status).toBe('released');
+    expect(db.update).toHaveBeenCalledWith(seatInventories);
+    expect(bookingGateway.broadcastSeatUpdate).toHaveBeenCalledWith(
+      'showtime-1',
+      '1F:A-10',
+      'available',
+    );
+  });
+
+  it('does not broadcast when the guarded delayed release updates no rows', async () => {
+    const db = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn().mockResolvedValue([
+            { dateTime: new Date('2026-05-15T10:00:00.000Z') },
+          ]),
+        })),
+      })),
+      update: vi.fn(() => ({
+        set: vi.fn(() => ({
+          where: vi.fn(() => ({
+            returning: vi.fn().mockResolvedValue([]),
+          })),
+        })),
+      })),
+    };
+    const bookingGateway = { broadcastSeatUpdate: vi.fn() };
+    const worker = new CancelledSeatReleaseWorker(
+      db as never,
+      { isAvailable: true, work: vi.fn(), send: vi.fn(), stop: vi.fn() } as never,
+      bookingGateway as never,
+    );
+
+    await worker.handleJob({
+      reservationId: 'reservation-1',
+      showtimeId: 'showtime-1',
+      releaseAt: '2026-05-15T09:00:00.000Z',
+      seatIdentities: [{ floorKey: '1F', seatId: 'A-10', seatKey: '1F:A-10' }],
+    }, 'stale-release-job');
+
+    expect(bookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
   });
 });

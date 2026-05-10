@@ -229,9 +229,15 @@ export class QrTicketService implements OnModuleInit {
   private async requireValidTicketState(
     payload: QrTicketTokenPayload,
   ): Promise<void> {
-    const [ticketRecord] = await this.db
-      .select(this.ticketRecordFields())
+    const [row] = await this.db
+      .select({
+        ticket: this.ticketRecordFields(),
+        reservationStatus: reservations.status,
+        paymentStatus: payments.status,
+      })
       .from(tickets)
+      .innerJoin(reservations, eq(tickets.reservationId, reservations.id))
+      .innerJoin(payments, eq(tickets.paymentId, payments.id))
       .where(
         and(
           eq(tickets.qrTokenJti, payload.jti),
@@ -241,10 +247,11 @@ export class QrTicketService implements OnModuleInit {
         ),
       );
 
-    if (!ticketRecord) {
+    if (!row) {
       throw new UnauthorizedException('유효하지 않은 QR 티켓입니다');
     }
 
+    const ticketRecord = row.ticket;
     const isExpired =
       ticketRecord.expiresAt instanceof Date &&
       ticketRecord.expiresAt.getTime() <= Date.now();
@@ -254,6 +261,8 @@ export class QrTicketService implements OnModuleInit {
       || ticketRecord.usedAt
       || ticketRecord.revokedAt
       || isExpired
+      || row.reservationStatus !== 'CONFIRMED'
+      || row.paymentStatus !== 'DONE'
     ) {
       throw new UnauthorizedException('사용할 수 없는 QR 티켓입니다');
     }

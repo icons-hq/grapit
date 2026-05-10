@@ -15,6 +15,7 @@ import {
   reservations,
   seatInventories,
   showtimes,
+  tickets,
 } from '../../database/schema/index.js';
 import {
   calculateExpectedRefundDepositAt,
@@ -101,13 +102,14 @@ export class RefundCancelRetryWorker implements OnModuleInit {
       return { status: 'already_terminal' };
     }
 
-    const reason = this.resolveCancelReason(context.refund);
-    const nextRetryCount = context.refund.retryCount + 1;
-
-    if (nextRetryCount >= REFUND_CANCEL_MAX_RETRIES) {
+    if (context.refund.retryCount >= REFUND_CANCEL_MAX_RETRIES) {
+      const reason = this.resolveCancelReason(context.refund);
       await this.markRetryExhausted(context.refund.id, reason);
       return { status: 'failed' };
     }
+
+    const reason = this.resolveCancelReason(context.refund);
+    const nextRetryCount = context.refund.retryCount + 1;
 
     try {
       const response = await this.tossPaymentsClient.cancelPayment(
@@ -355,6 +357,15 @@ export class RefundCancelRetryWorker implements OnModuleInit {
         })
         .where(eq(payments.id, context.payment.id));
 
+      await tx
+        .update(tickets)
+        .set({
+          status: 'revoked',
+          revokedAt: now,
+          updatedAt: now,
+        })
+        .where(eq(tickets.reservationId, context.reservation.id));
+
       for (const seatIdentity of seatIdentities) {
         await tx
           .update(seatInventories)
@@ -389,6 +400,8 @@ export class RefundCancelRetryWorker implements OnModuleInit {
             eq(seatInventories.showtimeId, context.reservation.showtimeId),
             eq(seatInventories.floorKey, seatIdentity.floorKey),
             eq(seatInventories.seatKey, seatIdentity.seatKey),
+            eq(seatInventories.status, 'held_cancelled'),
+            eq(seatInventories.reopenJobId, SEAT_RELEASE_PENDING_JOB_ID),
           ),
         );
     }

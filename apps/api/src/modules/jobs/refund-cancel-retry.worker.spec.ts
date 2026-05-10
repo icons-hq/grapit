@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { seatInventories, tickets } from '../../database/schema/index.js';
 import { TossPaymentError } from '../payment/toss-payments.client.js';
+import { REFUND_CANCEL_MAX_RETRIES } from '../refund/refund.service.js';
 import { RefundCancelRetryWorker } from './refund-cancel-retry.worker.js';
 
 function createRetryContext() {
@@ -30,6 +32,24 @@ function createRetryContext() {
     },
     seats: [{ seatId: '1F:A-10' }],
   };
+}
+
+function createTransactionMock() {
+  const updateCalls: Array<{ table: unknown; values: Record<string, unknown> }> = [];
+  const tx = {
+    update(table: unknown) {
+      return {
+        set(values: Record<string, unknown>) {
+          updateCalls.push({ table, values });
+          return {
+            where: vi.fn().mockResolvedValue(undefined),
+          };
+        },
+      };
+    },
+  };
+
+  return { tx, updateCalls };
 }
 
 describe('RefundCancelRetryWorker', () => {
@@ -110,5 +130,82 @@ describe('RefundCancelRetryWorker', () => {
     expect(recordTransientSpy).toHaveBeenCalled();
     expect(scheduleRetrySpy).toHaveBeenCalledWith('refund-1', 1);
     expect(result.status).toBe('rescheduled');
+  });
+
+  it('attempts the configured final retry before marking retry exhausted', async () => {
+    const tossPaymentsClient = {
+      cancelPayment: vi
+        .fn()
+        .mockRejectedValue(new TossPaymentError('INTERNAL_SERVER_ERROR', 'provider 5xx')),
+    };
+    const worker = new RefundCancelRetryWorker(
+      {} as never,
+      tossPaymentsClient as never,
+      { isAvailable: true, work: vi.fn(), send: vi.fn(), stop: vi.fn() } as never,
+    );
+
+    vi.spyOn(worker as never, 'loadRetryContext').mockResolvedValue({
+      ...createRetryContext(),
+      refund: {
+        ...createRetryContext().refund,
+        retryCount: REFUND_CANCEL_MAX_RETRIES - 1,
+      },
+    } as never);
+    const recordTransientSpy = vi
+      .spyOn(worker as never, 'recordTransientRetryFailure')
+      .mockResolvedValue(undefined as never);
+    const scheduleRetrySpy = vi
+      .spyOn(worker as never, 'scheduleRetry')
+      .mockResolvedValue('refund-retry-final' as never);
+    const exhaustedSpy = vi
+      .spyOn(worker as never, 'markRetryExhausted')
+      .mockResolvedValue(undefined as never);
+
+    const result = await worker.handleJob({ refundId: 'refund-1', attempt: 3 });
+
+    expect(tossPaymentsClient.cancelPayment).toHaveBeenCalledWith('pay-key-1', '단순 변심');
+    expect(recordTransientSpy).toHaveBeenCalledWith(
+      'refund-1',
+      expect.any(TossPaymentError),
+      '단순 변심',
+      REFUND_CANCEL_MAX_RETRIES,
+    );
+    expect(scheduleRetrySpy).toHaveBeenCalledWith('refund-1', REFUND_CANCEL_MAX_RETRIES);
+    expect(exhaustedSpy).not.toHaveBeenCalled();
+    expect(result.status).toBe('rescheduled');
+  });
+
+  it('revokes issued QR tickets when a delayed refund retry completes', async () => {
+    const transaction = createTransactionMock();
+    const db = {
+      transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
+        callback(transaction.tx),
+      ),
+      update: vi.fn(() => ({
+        set: vi.fn(() => ({
+          where: vi.fn().mockResolvedValue(undefined),
+        })),
+      })),
+    };
+    const worker = new RefundCancelRetryWorker(
+      db as never,
+      { cancelPayment: vi.fn() } as never,
+      { isAvailable: false, work: vi.fn(), send: vi.fn(), stop: vi.fn() } as never,
+    );
+    vi.spyOn(worker as never, 'scheduleReleaseJob').mockResolvedValue(null as never);
+
+    await (worker as any).finalizeSuccessfulRetry(
+      createRetryContext(),
+      { status: 'CANCELED' },
+      '단순 변심',
+    );
+
+    const ticketUpdates = transaction.updateCalls.filter((call) => call.table === tickets);
+    expect(ticketUpdates).toHaveLength(1);
+    expect(ticketUpdates[0]?.values).toMatchObject({
+      status: 'revoked',
+      revokedAt: expect.any(Date),
+    });
+    expect(db.update).toHaveBeenCalledWith(seatInventories);
   });
 });

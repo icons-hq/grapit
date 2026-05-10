@@ -4,6 +4,7 @@ import { RefundService } from './refund.service.js';
 import {
   bookingOperationAuditLogs,
   seatInventories,
+  tickets,
 } from '../../database/schema/index.js';
 
 function createRefund(overrides: Record<string, unknown> = {}) {
@@ -215,6 +216,12 @@ describe('RefundService', () => {
       lockedBy: null,
       lockedUntil: null,
       reopenJobId: 'PENDING_ENQUEUE',
+    });
+    const ticketUpdates = transaction.updateCalls.filter((call) => call.table === tickets);
+    expect(ticketUpdates).toHaveLength(1);
+    expect(ticketUpdates[0]?.values).toMatchObject({
+      status: 'revoked',
+      revokedAt: expect.any(Date),
     });
 
     expect(transaction.insertCalls).toHaveLength(1);

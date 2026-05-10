@@ -54,6 +54,17 @@ function createTicketRecord(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function createVerifiableTicketRow(overrides: Record<string, unknown> = {}) {
+  const { ticket, ...rowOverrides } = overrides;
+
+  return {
+    ticket: createTicketRecord(ticket as Record<string, unknown> | undefined),
+    reservationStatus: 'CONFIRMED',
+    paymentStatus: 'DONE',
+    ...rowOverrides,
+  };
+}
+
 describe('QrTicketService', () => {
   const now = new Date('2026-07-10T09:00:00.000Z');
 
@@ -81,7 +92,7 @@ describe('QrTicketService', () => {
             },
           ]),
         )
-        .mockReturnValueOnce(chainResult([createTicketRecord()])),
+        .mockReturnValueOnce(chainResult([createVerifiableTicketRow()])),
       insert: vi.fn().mockReturnValue(
         createInsertResult([
           {
@@ -239,14 +250,16 @@ describe('QrTicketService', () => {
     const service = new QrTicketService(
       {
         select: vi.fn().mockReturnValue(chainResult([
-          createTicketRecord({
-            id: 'ticket-legacy',
-            reservationId: 'reservation-legacy',
-            paymentId: 'payment-legacy',
-            showtimeId: 'showtime-legacy',
-            qrTokenJti: 'qr-jti-prior',
-            secretVersion: '2026-05',
-            issuedAt: new Date('2026-05-01T00:00:00.000Z'),
+          createVerifiableTicketRow({
+            ticket: {
+              id: 'ticket-legacy',
+              reservationId: 'reservation-legacy',
+              paymentId: 'payment-legacy',
+              showtimeId: 'showtime-legacy',
+              qrTokenJti: 'qr-jti-prior',
+              secretVersion: '2026-05',
+              issuedAt: new Date('2026-05-01T00:00:00.000Z'),
+            },
           }),
         ])),
         insert: vi.fn(),
@@ -301,14 +314,69 @@ describe('QrTicketService', () => {
     );
 
     const invalidRows = [
-      createTicketRecord({ status: 'revoked' }),
-      createTicketRecord({ usedAt: new Date('2026-07-10T09:00:00.000Z') }),
-      createTicketRecord({ expiresAt: new Date('2026-07-10T08:59:59.000Z') }),
+      createVerifiableTicketRow({ ticket: { status: 'revoked' } }),
+      createVerifiableTicketRow({ ticket: { usedAt: new Date('2026-07-10T09:00:00.000Z') } }),
+      createVerifiableTicketRow({ ticket: { expiresAt: new Date('2026-07-10T08:59:59.000Z') } }),
     ];
 
     for (const ticketRecord of invalidRows) {
       const service = new QrTicketService(
         { select: vi.fn().mockReturnValue(chainResult([ticketRecord])) } as never,
+        configService as never,
+        jwtService,
+        { sendQrTicketReminderEmail: vi.fn() } as never,
+        {
+          isAvailable: false,
+          send: vi.fn(),
+          work: vi.fn(),
+          stop: vi.fn(),
+        } as never,
+      );
+
+      await expect(service.verifyTicketToken(token)).rejects.toThrow(
+        '사용할 수 없는 QR 티켓입니다',
+      );
+    }
+  });
+
+  it('rejects active QR tokens after reservation cancellation or payment cancellation', async () => {
+    const configService = {
+      get: vi.fn((key: string) => {
+        if (key === 'QR_TICKET_SECRET') return 'current-secret';
+        if (key === 'QR_TICKET_SECRET_VERSION') return '2026-07';
+        if (key === 'QR_TICKET_SECRET_KEYRING_JSON') {
+          return JSON.stringify({ '2026-07': 'current-secret' });
+        }
+
+        return undefined;
+      }),
+    };
+    const jwtService = new JwtService();
+    const token = await jwtService.signAsync(
+      {
+        type: 'qr-ticket',
+        jti: 'qr-jti-1',
+        reservationId: 'reservation-1',
+        paymentId: 'payment-1',
+        showtimeId: 'showtime-1',
+        secretVersion: '2026-07',
+        issuedAt: now.toISOString(),
+      },
+      {
+        secret: 'current-secret',
+        algorithm: 'HS256',
+        noTimestamp: true,
+      },
+    );
+
+    const invalidRows = [
+      createVerifiableTicketRow({ reservationStatus: 'CANCELLED' }),
+      createVerifiableTicketRow({ paymentStatus: 'CANCELED' }),
+    ];
+
+    for (const row of invalidRows) {
+      const service = new QrTicketService(
+        { select: vi.fn().mockReturnValue(chainResult([row])) } as never,
         configService as never,
         jwtService,
         { sendQrTicketReminderEmail: vi.fn() } as never,

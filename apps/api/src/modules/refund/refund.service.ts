@@ -18,6 +18,7 @@ import {
   reservations,
   seatInventories,
   showtimes,
+  tickets,
 } from '../../database/schema/index.js';
 import {
   PG_BOSS,
@@ -662,6 +663,15 @@ export class RefundService {
         })
         .where(eq(payments.id, context.payment.id));
 
+      await tx
+        .update(tickets)
+        .set({
+          status: 'revoked',
+          revokedAt: now,
+          updatedAt: now,
+        })
+        .where(eq(tickets.reservationId, context.reservation.id));
+
       for (const seatIdentity of seatIdentities) {
         await tx
           .update(seatInventories)
@@ -767,6 +777,8 @@ export class RefundService {
             eq(seatInventories.showtimeId, showtimeId),
             eq(seatInventories.floorKey, seatIdentity.floorKey),
             eq(seatInventories.seatKey, seatIdentity.seatKey),
+            eq(seatInventories.status, 'held_cancelled'),
+            eq(seatInventories.reopenJobId, SEAT_RELEASE_PENDING_JOB_ID),
           ),
         );
     }
