@@ -198,6 +198,11 @@ jobs:
             INFOBIP_SENDER=infobip-sender:latest
             SENTRY_DSN=sentry-dsn:latest
             TOSS_SECRET_KEY=toss-secret-key:latest
+            PREWARM_CONTROL_TOKEN=prewarm-control-token:latest
+            PREWARM_PROJECT_ID=prewarm-project-id:latest
+            PREWARM_REGION=prewarm-region:latest
+            PREWARM_ALLOWED_SCHEDULER_EMAIL=prewarm-allowed-scheduler-email:latest
+            PREWARM_ALLOWED_AUDIENCE=prewarm-allowed-audience:latest
 
   deploy-web:
     if: >-
