@@ -84,7 +84,11 @@ export class QrTicketService implements OnModuleInit {
     }
 
     try {
-      await this.pgBoss.work<QrTicketEmailJobPayload>(QR_EMAIL_JOB_NAME, async (job) => {
+      await this.pgBoss.work<QrTicketEmailJobPayload>(QR_EMAIL_JOB_NAME, async ([job]) => {
+        if (!job) {
+          return;
+        }
+
         await this.handleReminderEmailJob(job.data);
       });
     } catch (error) {

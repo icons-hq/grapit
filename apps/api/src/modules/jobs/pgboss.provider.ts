@@ -40,7 +40,9 @@ export interface PgBossSendOptions {
   singletonKey?: string;
 }
 
-export type PgBossWorkHandler<TData = unknown> = (job: PgBossJob<TData>) => Promise<unknown>;
+export type PgBossWorkHandler<TData = unknown> = (
+  jobs: PgBossJob<TData>[],
+) => Promise<unknown>;
 
 export interface PgBossContract {
   isAvailable: boolean;

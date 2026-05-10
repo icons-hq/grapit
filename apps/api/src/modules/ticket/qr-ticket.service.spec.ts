@@ -171,6 +171,38 @@ describe('QrTicketService', () => {
     expect(verified.reservationId).toBe('reservation-1');
   });
 
+  it('consumes pg-boss batch payloads when the QR email worker runs', async () => {
+    const pgBoss = {
+      isAvailable: true,
+      send: vi.fn(),
+      work: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn(),
+    };
+    const service = new QrTicketService(
+      {} as never,
+      { get: vi.fn() } as never,
+      new JwtService(),
+      { sendQrTicketReminderEmail: vi.fn() } as never,
+      pgBoss as never,
+    );
+    const handleReminderSpy = vi
+      .spyOn(service as never, 'handleReminderEmailJob')
+      .mockResolvedValue(undefined as never);
+    const payload = {
+      ticketId: 'ticket-1',
+      reservationId: 'reservation-1',
+    };
+
+    await service.onModuleInit();
+    const handler = pgBoss.work.mock.calls[0]?.[1] as (
+      jobs: Array<{ data: typeof payload }>,
+    ) => Promise<void>;
+    await handler([{ data: payload }]);
+
+    expect(pgBoss.work).toHaveBeenCalledWith('qr-ticket-email-resend', expect.any(Function));
+    expect(handleReminderSpy).toHaveBeenCalledWith(payload);
+  });
+
   it('verifies a previously issued token via QR_TICKET_SECRET_KEYRING_JSON lookup', async () => {
     const configService = {
       get: vi.fn((key: string) => {

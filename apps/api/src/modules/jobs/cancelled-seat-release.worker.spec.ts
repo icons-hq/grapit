@@ -61,4 +61,31 @@ describe('CancelledSeatReleaseWorker', () => {
       expect.any(Function),
     );
   });
+
+  it('consumes pg-boss batch payloads when the registered worker runs', async () => {
+    const boss = {
+      isAvailable: true,
+      work: vi.fn().mockResolvedValue(undefined),
+      send: vi.fn(),
+      stop: vi.fn(),
+    };
+    const worker = new CancelledSeatReleaseWorker({} as never, boss as never);
+    const handleJobSpy = vi
+      .spyOn(worker, 'handleJob')
+      .mockResolvedValue({ status: 'released' });
+    const payload = {
+      reservationId: 'reservation-1',
+      showtimeId: 'showtime-1',
+      releaseAt: '2026-05-15T10:00:00.000Z',
+      seatIdentities: [{ floorKey: '1F', seatId: 'A-10', seatKey: '1F:A-10' }],
+    };
+
+    await worker.onModuleInit();
+    const handler = boss.work.mock.calls[0]?.[1] as (
+      jobs: Array<{ data: typeof payload }>,
+    ) => Promise<void>;
+    await handler([{ data: payload }]);
+
+    expect(handleJobSpy).toHaveBeenCalledWith(payload);
+  });
 });

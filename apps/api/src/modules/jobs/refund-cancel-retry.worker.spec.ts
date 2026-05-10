@@ -49,6 +49,30 @@ describe('RefundCancelRetryWorker', () => {
     expect(boss.work).toHaveBeenCalledWith('refund-cancel-retry', expect.any(Function));
   });
 
+  it('consumes pg-boss batch payloads when the registered worker runs', async () => {
+    const boss = {
+      isAvailable: true,
+      work: vi.fn().mockResolvedValue(undefined),
+      send: vi.fn(),
+      stop: vi.fn(),
+    };
+    const worker = new RefundCancelRetryWorker({} as never, {
+      cancelPayment: vi.fn(),
+    } as never, boss as never);
+    const handleJobSpy = vi
+      .spyOn(worker, 'handleJob')
+      .mockResolvedValue({ status: 'processing' });
+    const payload = { refundId: 'refund-1', attempt: 1 };
+
+    await worker.onModuleInit();
+    const handler = boss.work.mock.calls[0]?.[1] as (
+      jobs: Array<{ data: typeof payload }>,
+    ) => Promise<void>;
+    await handler([{ data: payload }]);
+
+    expect(handleJobSpy).toHaveBeenCalledWith(payload);
+  });
+
   it('reschedules durable retry work when Toss cancel fails transiently again', async () => {
     const boss = {
       isAvailable: true,

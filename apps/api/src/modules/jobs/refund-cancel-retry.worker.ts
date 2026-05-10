@@ -73,7 +73,11 @@ export class RefundCancelRetryWorker implements OnModuleInit {
 
     await this.pgBoss.work<RefundCancelRetryJobPayload>(
       PG_BOSS_JOB_NAMES.refundCancelRetry,
-      async (job) => {
+      async ([job]) => {
+        if (!job) {
+          return;
+        }
+
         await this.handleJob(job.data);
       },
     );

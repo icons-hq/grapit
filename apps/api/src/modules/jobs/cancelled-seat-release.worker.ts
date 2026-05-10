@@ -52,7 +52,11 @@ export class CancelledSeatReleaseWorker implements OnModuleInit {
 
     await this.pgBoss.work<ReleaseCancelledSeatJobPayload>(
       PG_BOSS_JOB_NAMES.releaseCancelledSeat,
-      async (job) => {
+      async ([job]) => {
+        if (!job) {
+          return;
+        }
+
         await this.handleJob(job.data);
       },
     );
