@@ -117,7 +117,7 @@ Plans:
 
 **Merged from:** 30 Queue + WAF + prewarm, 31 Seat selection refinements, 32 Payment + refund + QR issuance
 
-**Plans:** 20/22 plans complete
+**Plans:** 22/22 plans complete
 
 Plans:
 **Wave 1**
@@ -161,8 +161,8 @@ Plans:
 - [x] 24-18-PLAN.md — Break the Payment/Ticket/Jobs bootstrap cycle so the built API cold-start reaches `/api/v1/health`
 - [x] 24-19-PLAN.md — Refresh booking integration fixtures for floor-aware seatKey/policy semantics and remove the duplicate fresh-migration index from `0012`
 - [x] 24-20-PLAN.md — Scope queue waiting Playwright metric locators so the browser slice passes without strict-text ambiguity
-- [ ] 24-21-PLAN.md — Operationalize the live Cloud Scheduler prewarm rollout, durable deploy env contract, and GCP verification evidence
-- [ ] 24-22-PLAN.md — Fix seat-number overlay hit-targets and add desktop/mobile browser regression for multi-floor selection
+- [x] 24-21-PLAN.md — Operationalize the live Cloud Scheduler prewarm rollout, durable deploy env contract, and GCP verification evidence
+- [x] 24-22-PLAN.md — Fix seat-number overlay hit-targets and add desktop/mobile browser regression for multi-floor selection
 
 **Success criteria:**
 1. Queue admission uses Valkey Sorted Set and batch admission with position, ETA, and remaining-seat updates; booking APIs require valid admission.
