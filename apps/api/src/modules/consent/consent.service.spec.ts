@@ -10,15 +10,12 @@ function makeConsentItems() {
     { id: 'item-privacy', key: 'privacy', version: '2026-05-01', locale: 'ko', isRequired: true },
     { id: 'item-pipa', key: 'pipa_required', version: '2026-05-01', locale: 'ko', isRequired: true },
     {
-      id: 'item-cross-border',
-      key: 'cross_border_transfer',
+      id: 'item-marketing',
+      key: 'marketing',
       version: '2026-05-01',
       locale: 'ko',
-      isRequired: true,
+      isRequired: false,
     },
-    { id: 'item-pdpa', key: 'pdpa_notice', version: '2026-05-01', locale: 'ko', isRequired: true },
-    { id: 'item-pipl', key: 'pipl_notice', version: '2026-05-01', locale: 'ko', isRequired: true },
-    { id: 'item-marketing', key: 'marketing', version: '2026-05-01', locale: 'ko', isRequired: false },
   ];
 }
 
@@ -74,7 +71,15 @@ describe('ConsentService', () => {
         userId,
         {
           birthDate: '1995-05-15',
-          items: makeCaptureItems({ marketing: false }),
+          items: [
+            ...makeCaptureItems({ marketing: false }),
+            {
+              key: 'cross_border_transfer',
+              version: '2026-05-01',
+              language: 'ko',
+              accepted: true,
+            },
+          ],
           sourceFlow: 'signup',
         },
         { ipAddress: '203.0.113.10', userAgent: 'vitest-agent' },
@@ -83,13 +88,13 @@ describe('ConsentService', () => {
       vi.useRealTimers();
     }
 
-    expect(insertedRows).toHaveLength(7);
+    expect(insertedRows).toHaveLength(4);
     expect(insertedRows).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           userId,
-          consentItemId: 'item-cross-border',
-          itemKey: 'cross_border_transfer',
+          consentItemId: 'item-pipa',
+          itemKey: 'pipa_required',
           itemVersion: '2026-05-01',
           language: 'ko',
           agreed: true,
@@ -117,16 +122,34 @@ describe('ConsentService', () => {
     ).rejects.toThrow(BadRequestException);
   });
 
-  it('blocks when cross-border transfer consent is refused', async () => {
+  it('does not require legacy cross-border or country notice rows', async () => {
     await expect(
       service.assertRequiredConsents({
         birthDate: '1995-05-15',
         sourceFlow: 'booking',
-        items: makeCaptureItems({ cross_border_transfer: false }),
+        items: [
+          ...makeCaptureItems(),
+          {
+            key: 'cross_border_transfer',
+            version: '2026-05-01',
+            language: 'ko',
+            accepted: false,
+          },
+          {
+            key: 'pdpa_notice',
+            version: '2026-05-01',
+            language: 'ko',
+            accepted: false,
+          },
+          {
+            key: 'pipl_notice',
+            version: '2026-05-01',
+            language: 'ko',
+            accepted: false,
+          },
+        ],
       }),
-    ).rejects.toThrow(
-      '국외이전 동의가 필요합니다. 동의하지 않으면 가입 또는 팬미팅 예매를 진행할 수 없습니다.',
-    );
+    ).resolves.toBeUndefined();
   });
 
   it('keeps marketing consent optional and separate from required blocking', async () => {

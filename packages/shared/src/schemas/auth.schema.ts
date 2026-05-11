@@ -42,6 +42,8 @@ export const authConsentCaptureItemSchema = consentCaptureItemSchema.extend({
 });
 
 function createAuthConsentItemsSchema(sourceFlow: 'signup' | 'social_completion') {
+  const requiredAuthConsentItemKeys = new Set<string>(REQUIRED_CONSENT_ITEM_KEYS);
+
   return z
     .array(
       authConsentCaptureItemSchema.superRefine((item, ctx) => {
@@ -61,7 +63,7 @@ function createAuthConsentItemsSchema(sourceFlow: 'signup' | 'social_completion'
           });
         }
 
-        if (item.key !== 'marketing' && !item.required) {
+        if (requiredAuthConsentItemKeys.has(item.key) && !item.required) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             path: ['required'],

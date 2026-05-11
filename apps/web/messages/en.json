@@ -191,7 +191,6 @@
       "previous": "Previous",
       "next": "Next",
       "dialogDescriptionSuffix": "details",
-      "crossBorderRequired": "Cross-border transfer consent is required. Without it, sign-up or fan meeting booking cannot continue.",
       "items": {
         "termsOfService": {
           "label": "Agree to Terms of Service",
@@ -204,18 +203,6 @@
         "pipaRequired": {
           "label": "Agree to required personal data collection and use",
           "title": "Required Personal Data Collection and Use"
-        },
-        "crossBorderTransfer": {
-          "label": "Agree to cross-border personal data transfer",
-          "title": "Cross-border Personal Data Transfer"
-        },
-        "pdpaNotice": {
-          "label": "Acknowledge Thailand PDPA notice",
-          "title": "Thailand PDPA Notice"
-        },
-        "piplNotice": {
-          "label": "Acknowledge China PIPL notice",
-          "title": "China PIPL Notice"
         },
         "marketingConsent": {
           "label": "Agree to receive marketing messages",

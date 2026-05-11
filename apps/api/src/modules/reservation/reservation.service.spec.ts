@@ -84,9 +84,6 @@ function makeConsentItems(
     'terms',
     'privacy',
     'pipa_required',
-    'cross_border_transfer',
-    'pdpa_notice',
-    'pipl_notice',
     'marketing',
   ].map((key) => ({
     key: key as ConsentCaptureItem['key'],
@@ -510,22 +507,22 @@ describe('ReservationService', () => {
       expect(mockConsentService.assertRequiredConsents).not.toHaveBeenCalled();
     });
 
-    it('prepareReservation rejects refused cross-border booking consent before DB transaction', async () => {
+    it('prepareReservation rejects refused required booking consent before DB transaction', async () => {
       const userId = randomUUID();
       const dto = {
         showtimeId: randomUUID(),
         orderId: 'GRP-CONSENT-REFUSED',
         seats: [seatSelection('A-1')],
         amount: 50000,
-        consentItems: makeConsentItems({ cross_border_transfer: false }),
+        consentItems: makeConsentItems({ privacy: false }),
       };
       mockConsentService.assertRequiredConsents.mockRejectedValue(
-        new BadRequestException('국외이전 동의가 필요합니다. 동의하지 않으면 가입 또는 팬미팅 예매를 진행할 수 없습니다.'),
+        new BadRequestException('privacy consent is required'),
       );
       setupPrepareBase(dto);
 
       await expect(service.prepareReservation(dto, userId)).rejects.toThrow(
-        '국외이전 동의가 필요합니다. 동의하지 않으면 가입 또는 팬미팅 예매를 진행할 수 없습니다.',
+        'privacy consent is required',
       );
 
       expect(mockFeatureFlags.assertBookingEnabled).toHaveBeenCalled();

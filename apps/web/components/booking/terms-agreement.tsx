@@ -21,10 +21,10 @@ interface TermsAgreementProps {
 
 export function TermsAgreement({ agreed, onAgreementChange }: TermsAgreementProps) {
   const [bookingTerms, setBookingTerms] = useState(false);
-  const [privacyTerms, setPrivacyTerms] = useState(false);
+  const [privacyNotice, setPrivacyNotice] = useState(false);
   const [dialogContent, setDialogContent] = useState<{ title: string; content: string } | null>(null);
 
-  const allChecked = bookingTerms && privacyTerms;
+  const allChecked = bookingTerms && privacyNotice;
 
   useEffect(() => {
     onAgreementChange(allChecked);
@@ -33,7 +33,7 @@ export function TermsAgreement({ agreed, onAgreementChange }: TermsAgreementProp
   const handleAllToggle = useCallback((checked: boolean | 'indeterminate') => {
     const value = checked === true;
     setBookingTerms(value);
-    setPrivacyTerms(value);
+    setPrivacyNotice(value);
   }, []);
 
   return (
@@ -81,10 +81,10 @@ export function TermsAgreement({ agreed, onAgreementChange }: TermsAgreementProp
             <div className="flex items-center justify-between">
               <label className="flex cursor-pointer items-center gap-3 py-1.5">
                 <Checkbox
-                  checked={privacyTerms}
-                  onCheckedChange={(checked) => setPrivacyTerms(checked === true)}
+                  checked={privacyNotice}
+                  onCheckedChange={(checked) => setPrivacyNotice(checked === true)}
                 />
-                <span className="text-sm">개인정보 제3자 제공에 동의합니다 (필수)</span>
+                <span className="text-sm">개인정보 처리 안내를 확인했습니다 (필수)</span>
               </label>
               <Button
                 variant="link"
@@ -92,9 +92,9 @@ export function TermsAgreement({ agreed, onAgreementChange }: TermsAgreementProp
                 className="h-auto p-0 text-xs text-gray-500"
                 onClick={() =>
                   setDialogContent({
-                    title: '개인정보 제3자 제공 동의',
+                    title: '개인정보 처리 안내',
                     content:
-                      '1. 제공받는 자: 공연 주최사\n\n2. 제공 목적: 예매 확인, 입장 관리\n\n3. 제공 항목: 예매자 이름, 연락처, 예매번호\n\n4. 보유 기간: 공연 종료 후 30일\n\n5. 동의를 거부할 수 있으나, 거부 시 예매가 불가합니다.',
+                      '1. Grabit은 예매 확인, 결제, QR 입장, 환불 및 고객 상담을 위해 예매자 정보를 처리합니다.\n\n2. GMMTV, iQIYI 등 해외 엔터테인먼트사 또는 공연 주최사에는 예매자 개인정보를 제공하지 않습니다.\n\n3. 결제 처리, 이메일/SMS 발송 등 서비스 제공에 필요한 수탁자에게는 개인정보처리방침에 고지된 범위 안에서만 처리위탁합니다.\n\n4. 보유 기간과 이용자 권리는 개인정보처리방침을 따릅니다.',
                   })
                 }
               >

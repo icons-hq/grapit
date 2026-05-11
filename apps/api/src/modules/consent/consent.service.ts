@@ -16,8 +16,6 @@ import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import { consentAuditLogs, consentItems, users } from '../../database/schema/index.js';
 
 export const UNDER_14_BLOCK_MESSAGE = '만 14세 미만은 가입할 수 없습니다';
-export const CROSS_BORDER_REQUIRED_MESSAGE =
-  '국외이전 동의가 필요합니다. 동의하지 않으면 가입 또는 팬미팅 예매를 진행할 수 없습니다.';
 
 export interface ConsentRequestMeta {
   ipAddress: string;
@@ -32,6 +30,7 @@ export interface ConsentCaptureRequest {
 
 type ConsentItemRow = typeof consentItems.$inferSelect;
 type ConsentDb = Pick<DrizzleDB, 'select' | 'insert'>;
+const requiredConsentItemKeys = new Set<string>(REQUIRED_CONSENT_ITEM_KEYS);
 
 export interface ConsentAuditFilters {
   itemKey?: ConsentItemKey;
@@ -97,16 +96,20 @@ export class ConsentService {
       ]),
     );
 
-    const auditRows = dto.items.map((item) => {
+    const auditRows = dto.items.flatMap((item) => {
       const activeItem = activeItemByKeyVersionLocale.get(
         this.itemSignature(item.key, item.version, item.language),
       );
 
       if (!activeItem) {
+        if (!requiredConsentItemKeys.has(item.key)) {
+          return [];
+        }
+
         throw new BadRequestException(`${item.key} consent item is not active`);
       }
 
-      return {
+      return [{
         userId,
         consentItemId: activeItem.id,
         itemKey: item.key,
@@ -117,7 +120,7 @@ export class ConsentService {
         ipAddress: requestMeta.ipAddress,
         userAgent: requestMeta.userAgent,
         sourceFlow: dto.sourceFlow,
-      };
+      }];
     });
 
     if (auditRows.length > 0) {
@@ -191,11 +194,6 @@ export class ConsentService {
 
   async assertRequiredConsents(dto: Pick<ConsentCaptureRequest, 'items'>): Promise<void> {
     const itemsByKey = new Map(dto.items.map((item) => [item.key, item]));
-    const crossBorder = itemsByKey.get('cross_border_transfer');
-    if (!crossBorder?.accepted) {
-      throw new BadRequestException(CROSS_BORDER_REQUIRED_MESSAGE);
-    }
-
     for (const key of REQUIRED_CONSENT_ITEM_KEYS) {
       const item = itemsByKey.get(key);
       if (!item?.accepted) {

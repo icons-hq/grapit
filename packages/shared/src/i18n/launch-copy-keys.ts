@@ -83,7 +83,6 @@ const authConsentKeys = [
   'previous',
   'next',
   'dialogDescriptionSuffix',
-  'crossBorderRequired',
 ] as const;
 
 const authEmailVerificationKeys = [

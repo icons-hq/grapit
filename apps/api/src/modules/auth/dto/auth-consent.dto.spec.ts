@@ -10,9 +10,6 @@ type ConsentKey =
   | 'terms'
   | 'privacy'
   | 'pipa_required'
-  | 'cross_border_transfer'
-  | 'pdpa_notice'
-  | 'pipl_notice'
   | 'marketing';
 
 function makeConsentItems(sourceFlow: 'signup' | 'social_completion') {
@@ -20,9 +17,6 @@ function makeConsentItems(sourceFlow: 'signup' | 'social_completion') {
     'terms',
     'privacy',
     'pipa_required',
-    'cross_border_transfer',
-    'pdpa_notice',
-    'pipl_notice',
     'marketing',
   ].map((key) => ({
     key,
@@ -55,7 +49,7 @@ describe('auth DTO consent contract', () => {
       consentItems: makeConsentItems('signup'),
     });
 
-    expect(parsed.consentItems.find((item) => item.key === 'cross_border_transfer')).toMatchObject({
+    expect(parsed.consentItems.find((item) => item.key === 'pipa_required')).toMatchObject({
       version: '2026-04-28',
       language: 'ko',
       accepted: true,
@@ -87,9 +81,9 @@ describe('auth DTO consent contract', () => {
         password: 'Test1234!',
         ...baseSocialBody,
         consentItems: makeConsentItems('signup').filter(
-          (item) => item.key !== ('pipl_notice' satisfies ConsentKey),
+          (item) => item.key !== ('pipa_required' satisfies ConsentKey),
         ),
       }),
-    ).toThrow(/pipl_notice/);
+    ).toThrow(/pipa_required/);
   });
 });

@@ -9,9 +9,6 @@ function makeConsentItems(): ConsentCaptureItem[] {
     'terms',
     'privacy',
     'pipa_required',
-    'cross_border_transfer',
-    'pdpa_notice',
-    'pipl_notice',
     'marketing',
   ].map((key) => ({
     key: key as ConsentCaptureItem['key'],
