@@ -1,4 +1,4 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Headers, Post, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import { Public } from '../../common/decorators/public.decorator.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
@@ -18,27 +18,33 @@ const paymentStatusPriority = {
   CANCELED: 4,
 } as const;
 
-const tossWebhookSchema = z.object({
-  eventId: z.string().min(1, 'eventId가 필요합니다'),
+const tossWebhookDatetimeSchema = z.string().min(1);
+const tossWebhookProviderSchema = z
+  .enum([
+    'CARD',
+    'TOSS_PAY',
+    'NAVER_PAY',
+    'KAKAOPAY',
+    'ALIPAY_PLUS',
+    'TRUEMONEY',
+  ])
+  .optional()
+  .catch(undefined);
+
+export const tossWebhookSchema = z.object({
+  eventId: z.string().min(1, 'eventId가 필요합니다').optional(),
   eventType: z.enum(['PAYMENT_STATUS_CHANGED', 'CANCEL_STATUS_CHANGED']),
-  createdAt: z.string().datetime().optional(),
+  createdAt: tossWebhookDatetimeSchema.optional(),
   data: z.object({
     paymentKey: z.string().min(1, 'paymentKey가 필요합니다'),
     orderId: z.string().min(1, 'orderId가 필요합니다'),
     status: z.string().min(1, 'status가 필요합니다'),
     method: z.string().min(1).optional(),
-    provider: z.enum([
-      'CARD',
-      'TOSS_PAY',
-      'NAVER_PAY',
-      'KAKAOPAY',
-      'ALIPAY_PLUS',
-      'TRUEMONEY',
-    ]).optional(),
+    provider: tossWebhookProviderSchema,
     currency: z.string().min(1).optional(),
     totalAmount: z.number().int().positive().optional(),
-    approvedAt: z.string().datetime().optional(),
-    canceledAt: z.string().datetime().optional(),
+    approvedAt: tossWebhookDatetimeSchema.optional(),
+    canceledAt: tossWebhookDatetimeSchema.optional(),
     cancelReason: z.string().min(1).optional(),
   }),
 });
@@ -55,8 +61,10 @@ export class PaymentWebhookController {
   async handleTossWebhook(
     @Body(new ZodValidationPipe(tossWebhookSchema))
     body: TossWebhookDto,
+    @Headers('tosspayments-webhook-transmission-id') transmissionId?: string,
   ) {
-    const ledger = await this.paymentService.recordWebhookEvent(body);
+    const webhook = this.withEventId(body, transmissionId);
+    const ledger = await this.paymentService.recordWebhookEvent(webhook);
 
     if (ledger.state === 'duplicate-processed') {
       return {
@@ -68,13 +76,13 @@ export class PaymentWebhookController {
 
     try {
       const progress = await this.paymentService.findAsyncPaymentProgress(
-        body.data.orderId,
-        body.data.paymentKey,
+        webhook.data.orderId,
+        webhook.data.paymentKey,
       );
-      const processingResult = await this.processEvent(body, progress);
+      const processingResult = await this.processEvent(webhook, progress);
 
       await this.paymentService.markWebhookEventProcessed(
-        body.eventId,
+        webhook.eventId,
         processingResult.code,
         processingResult.message,
       );
@@ -87,12 +95,31 @@ export class PaymentWebhookController {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'webhook processing failed';
       await this.paymentService.markWebhookEventFailed(
-        body.eventId,
+        webhook.eventId,
         'PROCESSING_FAILED',
         message,
       );
       throw error;
     }
+  }
+
+  private withEventId(
+    body: TossWebhookDto,
+    transmissionId?: string,
+  ): TossWebhookRequestBody {
+    return {
+      ...body,
+      eventId:
+        body.eventId
+        ?? transmissionId
+        ?? [
+          body.eventType,
+          body.data.orderId,
+          body.data.paymentKey,
+          body.data.status,
+          body.createdAt ?? 'unknown-created-at',
+        ].join(':'),
+    };
   }
 
   private async processEvent(

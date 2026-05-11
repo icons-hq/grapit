@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { GUARDS_METADATA } from '@nestjs/common/constants';
 import { IS_PUBLIC_KEY } from '../../common/decorators/public.decorator.js';
-import { PaymentWebhookController } from './payment-webhook.controller.js';
+import {
+  PaymentWebhookController,
+  tossWebhookSchema,
+} from './payment-webhook.controller.js';
 import { TossWebhookGuard } from './toss-webhook.guard.js';
 import type {
   AsyncPaymentProgressSnapshot,
@@ -96,6 +99,60 @@ describe('PaymentWebhookController', () => {
         PaymentWebhookController.prototype.handleTossWebhook,
       ),
     ).toContain(TossWebhookGuard);
+  });
+
+  it('accepts Toss webhook timestamps with timezone offsets', () => {
+    const parsed = tossWebhookSchema.parse({
+      ...paymentStatusChangedEvent,
+      createdAt: '2026-05-11T11:25:14+09:00',
+      data: {
+        ...paymentStatusChangedEvent.data,
+        approvedAt: '2026-05-11T11:25:14+09:00',
+      },
+    });
+
+    expect(parsed.createdAt).toBe('2026-05-11T11:25:14+09:00');
+    expect(parsed.data.approvedAt).toBe('2026-05-11T11:25:14+09:00');
+  });
+
+  it('accepts Toss webhook timestamps without timezone offsets', () => {
+    const parsed = tossWebhookSchema.parse({
+      ...paymentStatusChangedEvent,
+      createdAt: '2026-05-11T11:25:14.903866',
+      data: {
+        ...paymentStatusChangedEvent.data,
+        approvedAt: '2026-05-11T11:25:14.903866',
+        provider: 'TOSS_TRANSFER',
+      },
+    });
+
+    expect(parsed.createdAt).toBe('2026-05-11T11:25:14.903866');
+    expect(parsed.data.approvedAt).toBe('2026-05-11T11:25:14.903866');
+    expect(parsed.data.provider).toBeUndefined();
+  });
+
+  it('uses Toss transmission header when the payment webhook body has no eventId', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(
+      makeLedgerResult({
+        eventId: 'transmission-1',
+      }),
+    );
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
+
+    const { eventId: _eventId, ...bodyWithoutEventId } = paymentStatusChangedEvent;
+    await controller.handleTossWebhook(bodyWithoutEventId, 'transmission-1');
+
+    expect(paymentService.recordWebhookEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventId: 'transmission-1',
+        eventType: 'PAYMENT_STATUS_CHANGED',
+      }),
+    );
+    expect(paymentService.markWebhookEventProcessed).toHaveBeenCalledWith(
+      'transmission-1',
+      'PAYMENT_STATUS_CHANGED_DONE_APPLIED',
+      undefined,
+    );
   });
 
   it('acknowledges duplicate replay without re-applying an already processed event', async () => {

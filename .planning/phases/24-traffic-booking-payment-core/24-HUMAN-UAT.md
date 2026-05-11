@@ -3,22 +3,22 @@ status: partial
 phase: 24-traffic-booking-payment-core
 source: [24-VERIFICATION.md]
 started: 2026-05-08T10:32:42Z
-updated: 2026-05-10T23:20:45+09:00
+updated: 2026-05-11T11:51:02+09:00
 ---
 
 # Phase 24: Human UAT
 
 ## Current Test
 
-[testing complete - 2 passed, 0 issues, 1 configured/pending DNS delegation gate, 1 blocked external PG gate]
+[external activation update - 3 passed, 0 issues, 1 partial Toss payment-method matrix gap]
 
 ## Tests
 
 ### 1. Cloudflare WAF/rate-limit/challenge/block rules 실제 Zone 반영 확인
 expected: runbook의 queue-entry/lock-seat/prepare-reservation/confirm-payment 규칙이 활성화되고 동작한다
-result: blocked
-blocked_by: registrar_nameserver_cutover
-reason: "Cloudflare Free zone `heygrabit.com` now exists in account `6c94bc5d14389171fcb54b8b9fc1f0eb` and dashboard security rules were configured, but the zone remains `pending` until the registrar delegates NS from WHOISDomain to Cloudflare. Public DNS still returns `ns1/ns2/ns3/ns4.whoisdomain.kr`, so edge traffic cannot yet be proven to execute the rules."
+result: passed
+resolved_at: 2026-05-11T11:10:00+09:00
+reason: "WHOISDomain nameserver cutover completed, public resolvers returned only the Cloudflare NS pair, the Cloudflare zone became active, and edge smoke proved both normal availability and managed-challenge behavior."
 evidence:
   - command: pnpm exec wrangler whoami
     result: PASS, authenticated account visible with zone:read scope
@@ -37,7 +37,13 @@ evidence:
   - command: Computer Use Chrome WHOISDomain, My domains > `heygrabit.com` > nameserver change
     result: BLOCKED, registrar confirmation page now contains desired Cloudflare NS values `rick.ns.cloudflare.com` and `wanda.ns.cloudflare.com`, but final submit requires registrant email/phone verification code; the agent stopped at this 2-step identity gate
   - command: dig NS heygrabit.com +short
-    result: BLOCKED, public authoritative NS still `ns1.whoisdomain.kr`, `ns2.whoisdomain.kr`, `ns3.whoisdomain.kr`, `ns4.whoisdomain.kr`; registrar 2-step verification must be completed before Cloudflare activation can propagate
+    result: PASS after registrar cutover, default resolver plus `@1.1.1.1` and `@8.8.8.8` returned only `rick.ns.cloudflare.com.` and `wanda.ns.cloudflare.com.`
+  - command: dig DS heygrabit.com +short
+    result: PASS, no stale registrar DS record
+  - command: curl -I https://heygrabit.com && curl -I https://api.heygrabit.com/api/v1/health
+    result: PASS, both resolved through Cloudflare; API health returned 200
+  - command: deliberate suspicious user-agent smoke against protected paths
+    result: PASS, Cloudflare returned 403 with `cf-mitigated: challenge` while normal traffic remained available
 
 ### 2. Cloud Scheduler → prewarm API(OIDC+control-token) 실제 호출 검증
 expected: scale-up/step-down job이 의도한 서비스에 성공하고 감사 가능한 실행 로그가 남는다
@@ -81,9 +87,9 @@ evidence:
 
 ### 3. Toss sandbox 실결제 경로(국내카드/해외카드/Alipay+/truemoney) E2E
 expected: sync/pending/recovery 분기와 안내문구가 실제 redirect/webhook 왕복에서 일치한다
-result: blocked
-blocked_by: third-party
-reason: "Local and deployed config expose Toss test-key material, deployed API now has a configured webhook secret, and real SDK mount/confirm-intercept browser evidence passes locally. However, actual Toss sandbox redirect/webhook round-trip still requires a Toss developer center store context and webhook registration; the developer center webhook page returned `올바른 상점이 아닙니다` without the required merchant/store context."
+result: partial
+blocked_by: payment_method_matrix_remaining
+reason: "The correct Toss developer-center store was selected, webhook registration succeeded, current-store test secret was synced to Secret Manager, a real Toss sandbox 계좌이체 redirect/confirm/webhook round-trip completed, and Toss dashboard history plus Cloud Run/DB evidence show successful webhook processing. The full domestic-card, overseas-card, Alipay+, and truemoney matrix is still not fully exercised."
 evidence:
   - command: local .env key presence check
     result: PASS, NEXT_PUBLIC_TOSS_CLIENT_KEY and TOSS_SECRET_KEY are test-key-present
@@ -101,7 +107,19 @@ evidence:
     result: PASS after E2E stabilization, 7 tests passed with local API/DB; happy path mounted the real Toss SDK iframe and intercepted the server confirm call after simulated successUrl navigation
   - command: Browser navigate https://developers.tosspayments.com/webhook
     result: BLOCKED, developer center returned `올바른 상점이 아닙니다`; webhook registration requires the correct Toss merchant/store context
-  - limitation: "Domestic/overseas/Alipay+/truemoney real Toss redirects and webhooks were not executed because they require external Toss sandbox merchant flow state and developer center webhook registration."
+  - command: Chrome Toss Developer Center, `개발 연동 체험 상점` > Webhooks
+    result: PASS, webhook `grabit-phase24-payment-status` registered for `PAYMENT_STATUS_CHANGED` and `CANCEL_STATUS_CHANGED` using the API custom domain endpoint with query-secret fallback; full secret intentionally omitted
+  - command: Secret Manager + Cloud Run sync
+    result: PASS, `toss-secret-key` latest version updated from the current store secret, active API revision `grabit-api-p24wheact2` serves 100% traffic without `BOOKING_ENABLED`, and temporary `phase24-smoke` tag was removed after smoke
+  - command: Real Toss sandbox transfer redirect/confirm
+    result: PASS, order `GRP-P24-1778467773443`, seat `1F:가-4`, amount `380000`, payment key prefix `tviva2026051...`; Grabit confirm returned reservation `CONFIRMED`, QR `ACTIVE`, paidAt `2026-05-11T02:51:01.000Z`
+  - command: Toss dashboard webhook history
+    result: PASS, latest row showed `성공 PAYMENT_STATUS_CHANGED 2026-05-11 11:51:02`
+  - command: Cloud Run logging read for `/api/v1/payments/toss/webhook`
+    result: PASS, `2026-05-11T02:51:02.000662Z` returned HTTP 201 on revision `grabit-api-p24wheact2`
+  - command: production DB `payment_webhook_events`
+    result: PASS, event `whtrans_*` for order `GRP-P24-1778467773443` processed with `PAYMENT_STATUS_CHANGED_DONE_APPLIED` at `2026-05-11T02:51:02.093Z`; payload method was `계좌이체`
+  - limitation: "Domestic card, overseas card, Alipay+, and truemoney real Toss redirects remain method-matrix gaps. The completed evidence is for account transfer plus webhook delivery in the correct Toss store."
 
 ### 4. 모바일/데스크톱 멀티층 좌석 선택 UX 최종 확인
 expected: 층 전환 시 선택/타이머/복구 흐름이 실제 브라우저에서 안정 동작한다
@@ -122,17 +140,18 @@ evidence:
 ## Summary
 
 total: 4
-passed: 2
+passed: 3
 issues: 0
 pending: 0
 skipped: 0
-blocked: 2
+blocked: 0
+partial: 1
 
 ## Gaps
 
-- truth: "Cloudflare zone security rules are configured, but public traffic is not delegated to Cloudflare yet."
-  status: human_needed
-  reason: "The Cloudflare Free zone and dashboard rules are active in the Cloudflare account, but the zone remains `pending` and public DNS still delegates `heygrabit.com` to WHOISDomain nameservers. The registrar nameserver form has been prepared with Cloudflare NS values, but final submission is blocked by registrant email/phone verification."
+- truth: "Cloudflare zone security rules are configured and public traffic is delegated through Cloudflare."
+  status: resolved
+  reason: "WHOISDomain nameserver cutover completed, public resolvers now return only `rick.ns.cloudflare.com` and `wanda.ns.cloudflare.com`, no stale DS record exists, and Cloudflare edge smoke produced managed-challenge responses for suspicious traffic."
   severity: operational
   test: 1
   root_cause: "The available Wrangler OAuth token could read zones but could not create the zone or read Rulesets API entrypoints, so the zone/rules were configured through the authenticated Chrome Dashboard. Registrar final nameserver submission requires registrant contact verification; the agent reached the 2-step verification gate and did not request or enter the code."
@@ -141,12 +160,12 @@ blocked: 2
       issue: "Documents the configured Cloudflare zone, active custom/rate-limit rules, and remaining registrar NS cutover."
     - path: ".planning/phases/24-traffic-booking-payment-core/24-VERIFICATION.md"
       issue: "Keeps Phase 24 in `human_needed` until Cloudflare activation propagates and Toss sandbox round-trip is verified."
-  next_human_step:
-    - "At the registrar confirmation page for `heygrabit.com`, complete the registered contact verification code flow and submit the prepared nameserver change to `rick.ns.cloudflare.com` and `wanda.ns.cloudflare.com`, then wait for Cloudflare zone status to become active."
+  resolved_with:
+    - "Cloudflare active-zone DNS evidence and WAF smoke on 2026-05-11."
 
-- truth: "Toss webhook endpoint now fails closed in production while allowing authenticated malformed requests to reach validation, and local real-SDK payment E2E is stable."
+- truth: "Toss webhook endpoint is registered in the correct store and processes real sandbox payment webhooks."
   status: partially_resolved
-  reason: "Cloud Run now receives `TOSS_WEBHOOK_SECRET` from Secret Manager, the deployed webhook guard behavior was smoke-tested, and the local full Toss browser spec passes with real SDK iframe mount plus confirm intercept. The remaining unverified part is Toss-side merchant store webhook registration and actual sandbox payment redirect/webhook delivery."
+  reason: "Correct-store webhook registration, Secret Manager key sync, real Toss sandbox transfer redirect, Grabit confirm, Cloud Run webhook 201, Toss dashboard success history, and DB ledger processing are verified. Remaining gap is the full domestic-card, overseas-card, Alipay+, and truemoney matrix."
   severity: external
   test: 3
   root_cause: "The repo and GCP environment can prepare the receiver, but Toss developer center requires a valid store context for webhook registration and live sandbox flow history."
@@ -158,7 +177,7 @@ blocked: 2
     - path: ".planning/phases/24-traffic-booking-payment-core/24-VERIFICATION.md"
       issue: "Keeps Phase 24 in `human_needed` until real Toss sandbox redirect/webhook history exists."
   next_human_step:
-    - "In Toss Payments developer center, select the correct merchant/store and register the webhook endpoint for `PAYMENT_STATUS_CHANGED` and `CANCEL_STATUS_CHANGED` using the deployed API URL plus the Secret Manager-backed shared secret, then execute domestic card, overseas card, Alipay+, and truemoney sandbox payments."
+    - "Execute and record the remaining Toss method-matrix flows: domestic card, overseas card, Alipay+, and truemoney."
 
 - truth: "Cloud Scheduler scale-up and step-down jobs successfully call the deployed prewarm API with OIDC and control-token protection."
   status: resolved

@@ -1,7 +1,7 @@
 ---
 phase: 24-traffic-booking-payment-core
 status: human_needed
-last_verified: 2026-05-10 23:28:30 KST
+last_verified: 2026-05-11 11:51:02 KST
 scope: Cloudflare nameserver activation and Toss sandbox/webhook activation
 ---
 
@@ -40,7 +40,54 @@ Sources:
 - Toss API keys: https://docs.tosspayments.com/reference/using-api/api-keys
 - Toss LLM quick reference: https://docs.tosspayments.com/guides/v2/get-started/llms-quick-reference
 
-## Current Live State
+## 2026-05-11 Activation Evidence
+
+### Cloudflare
+
+Cloudflare activation is complete for `heygrabit.com`.
+
+- WHOISDomain nameserver cutover completed.
+- Cloudflare zone id: `c7e9867fe90523f398e5c51ad911107e`
+- Public resolver checks returned only:
+  - `rick.ns.cloudflare.com.`
+  - `wanda.ns.cloudflare.com.`
+- `dig DS heygrabit.com +short` returned no stale registrar DS records.
+- `curl -I https://heygrabit.com` and `curl -I https://api.heygrabit.com/api/v1/health` returned through the Cloudflare path.
+- WAF smoke showed suspicious user agents receiving Cloudflare `403` with `cf-mitigated: challenge`; normal availability remained `200`.
+
+### Toss Sandbox And Webhook
+
+Toss sandbox webhook activation is complete for the current `개발 연동 체험 상점` store.
+
+- Webhook name: `grabit-phase24-payment-status`
+- Events: `PAYMENT_STATUS_CHANGED`, `CANCEL_STATUS_CHANGED`
+- Endpoint host: `https://api.heygrabit.com`
+- Secret transport: temporary query-secret fallback inside Toss Developer Center only; the full URL and secret are intentionally not recorded here.
+- Toss dashboard webhook history showed `성공 PAYMENT_STATUS_CHANGED` at `2026-05-11 11:51:02 KST`.
+- Cloud Run request log showed `POST /api/v1/payments/toss/webhook` returning `201` on revision `grabit-api-p24wheact2` at `2026-05-11T02:51:02.000662Z`.
+- DB ledger row:
+  - event id prefix class: `whtrans_*`
+  - order id: `GRP-P24-1778467773443`
+  - payment key: `tviva2026051...`
+  - event type: `PAYMENT_STATUS_CHANGED`
+  - method: `계좌이체`
+  - result: `PAYMENT_STATUS_CHANGED_DONE_APPLIED`
+  - processed at: `2026-05-11T02:51:02.093Z`
+- Grabit server confirm for the same order returned reservation `CONFIRMED`, QR `ACTIVE`, and `paidAt=2026-05-11T02:51:01.000Z`.
+
+Important limitation: this proves the store-specific Toss redirect, confirm, webhook delivery, and Grabit processing path using Toss test account transfer. It does not complete the full payment-method matrix for domestic card, overseas card, Alipay+, and truemoney.
+
+### Production Drift Fixed During Activation
+
+- `grabit-api` `minScale` was restored to `0` after an accidental `100` min-instance drift exhausted Cloud SQL capacity.
+- Production Phase 24 migrations were applied; `floor_key`, `seat_key`, `async_status`, `queue_session_id`, and webhook ledger columns exist in production.
+- QR ticket secrets were added to Secret Manager and injected into Cloud Run.
+- `toss-secret-key` Secret Manager latest version was updated from the current Toss store API secret.
+- Active production API revision is `grabit-api-p24wheact2`, serving 100% traffic without `BOOKING_ENABLED`.
+- Temporary `phase24-smoke` Cloud Run tag was removed after evidence capture.
+- Temporary Cloud SQL authorized network was cleared after DB evidence capture.
+
+## Superseded 2026-05-10 Live State
 
 Checked at `2026-05-10 23:28:30 KST`.
 
