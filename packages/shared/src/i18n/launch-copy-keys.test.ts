@@ -117,7 +117,6 @@ describe('launch copy key manifest', () => {
       'previous',
       'next',
       'dialogDescriptionSuffix',
-      'crossBorderRequired',
     ]);
   });
 

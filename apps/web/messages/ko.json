@@ -191,7 +191,6 @@
       "previous": "이전",
       "next": "다음",
       "dialogDescriptionSuffix": "상세 내용",
-      "crossBorderRequired": "국외이전 동의가 필요합니다. 동의하지 않으면 가입 또는 팬미팅 예매를 진행할 수 없습니다.",
       "items": {
         "termsOfService": {
           "label": "이용약관 동의",
@@ -204,18 +203,6 @@
         "pipaRequired": {
           "label": "개인정보 필수 수집 및 이용 동의",
           "title": "개인정보 필수 수집 및 이용"
-        },
-        "crossBorderTransfer": {
-          "label": "개인정보 국외이전 동의",
-          "title": "개인정보 국외이전"
-        },
-        "pdpaNotice": {
-          "label": "태국 PDPA 고지 확인",
-          "title": "태국 PDPA 고지"
-        },
-        "piplNotice": {
-          "label": "중국 PIPL 고지 확인",
-          "title": "중국 PIPL 고지"
         },
         "marketingConsent": {
           "label": "마케팅 수신 동의",

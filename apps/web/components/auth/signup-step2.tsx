@@ -38,9 +38,6 @@ const LEGAL_CONTENT = {
   termsOfService: { content: termsOfServiceMd },
   privacyPolicy: { content: privacyPolicyMd },
   pipaRequired: { content: privacyPolicyMd },
-  crossBorderTransfer: { content: privacyPolicyMd },
-  pdpaNotice: { content: privacyPolicyMd },
-  piplNotice: { content: privacyPolicyMd },
   marketingConsent: { content: marketingConsentMd },
 } as const satisfies Record<string, { content: string }>;
 
@@ -75,21 +72,6 @@ const CONSENT_ROWS: ConsentRowConfig[] = [
     key: 'pipa_required',
     required: true,
     legalKey: 'pipaRequired',
-  },
-  {
-    key: 'cross_border_transfer',
-    required: true,
-    legalKey: 'crossBorderTransfer',
-  },
-  {
-    key: 'pdpa_notice',
-    required: true,
-    legalKey: 'pdpaNotice',
-  },
-  {
-    key: 'pipl_notice',
-    required: true,
-    legalKey: 'piplNotice',
   },
   {
     key: 'marketing',
@@ -142,11 +124,6 @@ export function SignupStep2({
   const canProceed = CONSENT_ROWS.filter((row) => row.required).every(
     (row) => checkedItems[row.key],
   );
-  const showCrossBorderWarning =
-    !checkedItems.cross_border_transfer &&
-    CONSENT_ROWS.filter(
-      (row) => row.required && row.key !== 'cross_border_transfer',
-    ).every((row) => checkedItems[row.key]);
 
   function handleSelectAll(checked: boolean) {
     setCheckedItems(
@@ -263,12 +240,6 @@ export function SignupStep2({
           );
         })}
       </div>
-
-      {showCrossBorderWarning && (
-        <p role="alert" className="text-caption text-error">
-          {consentCopy.crossBorderRequired}
-        </p>
-      )}
 
       <div className="flex gap-3 pt-2">
         <Button

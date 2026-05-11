@@ -64,9 +64,6 @@ const signupConsentItems: AuthConsentCaptureItem[] = ([
   'terms',
   'privacy',
   'pipa_required',
-  'cross_border_transfer',
-  'pdpa_notice',
-  'pipl_notice',
   'marketing',
 ] as const).map((key) => ({
   key,
@@ -145,7 +142,7 @@ describe('SignupForm consent submit payload', () => {
           locale: 'ko',
           consentItems: expect.arrayContaining([
             expect.objectContaining({
-              key: 'cross_border_transfer',
+              key: 'pipa_required',
               version: '2026-04-28',
               language: 'ko',
               accepted: true,

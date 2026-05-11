@@ -191,7 +191,6 @@
       "previous": "上一步",
       "next": "下一步",
       "dialogDescriptionSuffix": "詳細內容",
-      "crossBorderRequired": "必須同意個人資料跨境傳輸。不同意時無法繼續註冊或預訂粉絲見面會。",
       "items": {
         "termsOfService": {
           "label": "同意服務條款",
@@ -204,18 +203,6 @@
         "pipaRequired": {
           "label": "同意必要個人資料蒐集與使用",
           "title": "必要個人資料蒐集與使用"
-        },
-        "crossBorderTransfer": {
-          "label": "同意個人資料跨境傳輸",
-          "title": "個人資料跨境傳輸"
-        },
-        "pdpaNotice": {
-          "label": "確認泰國 PDPA 通知",
-          "title": "泰國 PDPA 通知"
-        },
-        "piplNotice": {
-          "label": "確認中國 PIPL 通知",
-          "title": "中國 PIPL 通知"
         },
         "marketingConsent": {
           "label": "同意接收行銷訊息",

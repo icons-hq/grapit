@@ -42,9 +42,6 @@ function makeConsentItems(
     'terms',
     'privacy',
     'pipa_required',
-    'cross_border_transfer',
-    'pdpa_notice',
-    'pipl_notice',
     'marketing',
   ].map((key) => ({
     key: key as AuthConsentCaptureItem['key'],
@@ -282,10 +279,10 @@ describe('AuthService', () => {
       );
     });
 
-    it('blocks signup when required cross-border consent is missing', async () => {
+    it('blocks signup when a required privacy consent is missing', async () => {
       const dto = {
         ...mockRegisterDto,
-        consentItems: makeConsentItems({ cross_border_transfer: false }),
+        consentItems: makeConsentItems({ privacy: false }),
       };
       mockUserRepo.findByEmail.mockResolvedValue(null);
       mockUserRepo.create.mockResolvedValue({
@@ -295,11 +292,11 @@ describe('AuthService', () => {
         name: dto.name,
       });
       mockConsentService.assertRequiredConsents.mockRejectedValue(
-        new BadRequestException('국외이전 동의가 필요합니다. 동의하지 않으면 가입 또는 팬미팅 예매를 진행할 수 없습니다.'),
+        new BadRequestException('privacy consent is required'),
       );
 
       await expect(authService.register(dto)).rejects.toThrow(
-        '국외이전 동의가 필요합니다. 동의하지 않으면 가입 또는 팬미팅 예매를 진행할 수 없습니다.',
+        'privacy consent is required',
       );
 
       expect(mockConsentService.assertRequiredConsents).toHaveBeenCalledWith({

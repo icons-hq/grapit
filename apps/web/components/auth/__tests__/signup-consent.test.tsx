@@ -65,9 +65,6 @@ describe('SignupStep2 itemized launch consent', () => {
       '이용약관 동의',
       '개인정보처리방침 동의',
       '개인정보 필수 수집 및 이용 동의',
-      '개인정보 국외이전 동의',
-      '태국 PDPA 고지 확인',
-      '중국 PIPL 고지 확인',
     ];
 
     for (const row of requiredRows) {
@@ -75,20 +72,23 @@ describe('SignupStep2 itemized launch consent', () => {
     }
 
     expect(screen.getByLabelText(/마케팅 수신 동의/)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/개인정보 국외이전 동의/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/태국 PDPA 고지 확인/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/중국 PIPL 고지 확인/)).not.toBeInTheDocument();
     expect(screen.getAllByText('필수')).toHaveLength(requiredRows.length);
     expect(screen.getByText('선택')).toBeInTheDocument();
-    expect(screen.getAllByText(/v2026-04-28/)).toHaveLength(7);
-    expect(screen.getAllByText(/ko/)).toHaveLength(7);
-    expect(screen.getAllByRole('button', { name: '보기' })).toHaveLength(7);
+    expect(screen.getAllByText(/v2026-04-28/)).toHaveLength(4);
+    expect(screen.getAllByText(/ko/)).toHaveLength(4);
+    expect(screen.getAllByRole('button', { name: '보기' })).toHaveLength(4);
 
-    await userEvent.click(screen.getAllByRole('button', { name: '보기' })[3]!);
+    await userEvent.click(screen.getAllByRole('button', { name: '보기' })[2]!);
 
     await waitFor(() => {
-      expect(screen.getByRole('dialog')).toHaveTextContent('개인정보 국외이전');
+      expect(screen.getByRole('dialog')).toHaveTextContent('개인정보 필수 수집 및 이용');
     });
   });
 
-  it('blocks progression when cross-border transfer is refused and shows the required refusal copy', async () => {
+  it('blocks progression when required privacy collection consent is refused', async () => {
     const onComplete = vi.fn();
     render(
       <SignupStep2
@@ -102,16 +102,10 @@ describe('SignupStep2 itemized launch consent', () => {
     for (const label of [
       /이용약관 동의/,
       /개인정보처리방침 동의/,
-      /개인정보 필수 수집 및 이용 동의/,
-      /태국 PDPA 고지 확인/,
-      /중국 PIPL 고지 확인/,
     ]) {
       await user.click(screen.getByLabelText(label));
     }
 
-    expect(screen.getByRole('alert')).toHaveTextContent(
-      '국외이전 동의가 필요합니다. 동의하지 않으면 가입 또는 팬미팅 예매를 진행할 수 없습니다.',
-    );
     expect(screen.getByRole('button', { name: '다음' })).toBeDisabled();
     expect(onComplete).not.toHaveBeenCalled();
   });
@@ -138,7 +132,7 @@ describe('SignupStep2 itemized launch consent', () => {
         marketingConsent: false,
         consentItems: expect.arrayContaining([
           expect.objectContaining({
-            key: 'cross_border_transfer',
+            key: 'pipa_required',
             version: '2026-04-28',
             language: 'ko',
             accepted: true,
@@ -156,6 +150,16 @@ describe('SignupStep2 itemized launch consent', () => {
         ]),
       }),
     );
+    expect(
+      onComplete.mock.calls[0]?.[0].consentItems.map(
+        (item: { key: string }) => item.key,
+      ),
+    ).toEqual([
+      'terms',
+      'privacy',
+      'pipa_required',
+      'marketing',
+    ]);
   });
 
   it('shows the final under-14 block copy without a guardian consent flow', () => {
@@ -185,7 +189,7 @@ describe('SignupStep2 itemized launch consent', () => {
 
     const user = userEvent.setup();
     expect(screen.getByLabelText(/Agree to Terms of Service/)).toBeInTheDocument();
-    expect(screen.getAllByText('Required')).toHaveLength(6);
+    expect(screen.getAllByText('Required')).toHaveLength(3);
     expect(screen.getByText('Optional')).toBeInTheDocument();
 
     await user.click(screen.getByLabelText(/Agree to all/));

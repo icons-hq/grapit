@@ -77,6 +77,23 @@ describe('Phase 23 launch foundation schema contracts', () => {
     expect(source).toContain('"is_active" = true');
   });
 
+  it('relaxes launch consent items that are now handled as privacy notices', () => {
+    const source = readMigrationFile(
+      migrationDir,
+      '0013_relax_launch_consent_requirements.sql',
+    );
+
+    for (const key of [
+      'cross_border_transfer',
+      'pdpa_notice',
+      'pipl_notice',
+    ]) {
+      expect(source).toContain(`'${key}'`);
+    }
+    expect(source).toContain('"is_required" = false');
+    expect(source).toContain('"is_active" = false');
+  });
+
   it('keeps category collapse and consent seed migrations in a forward-only journal order', () => {
     const journal = JSON.parse(
       readMigrationFile(migrationDir, 'meta/_journal.json'),
@@ -89,11 +106,15 @@ describe('Phase 23 launch foundation schema contracts', () => {
     expect(tags).toContain('0009_two_event_categories');
     expect(tags).toContain('0010_collapse_legacy_genres');
     expect(tags).toContain('0011_seed_launch_consent_items');
+    expect(tags).toContain('0013_relax_launch_consent_requirements');
     expect(tags.indexOf('0009_two_event_categories')).toBeLessThan(
       tags.indexOf('0010_collapse_legacy_genres'),
     );
     expect(tags.indexOf('0010_collapse_legacy_genres')).toBeLessThan(
       tags.indexOf('0011_seed_launch_consent_items'),
+    );
+    expect(tags.indexOf('0012_phase24_booking_core')).toBeLessThan(
+      tags.indexOf('0013_relax_launch_consent_requirements'),
     );
   });
 

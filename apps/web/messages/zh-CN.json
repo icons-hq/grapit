@@ -191,7 +191,6 @@
       "previous": "上一步",
       "next": "下一步",
       "dialogDescriptionSuffix": "详细内容",
-      "crossBorderRequired": "必须同意个人信息跨境传输。不同意时无法继续注册或预订粉丝见面会。",
       "items": {
         "termsOfService": {
           "label": "同意服务条款",
@@ -204,18 +203,6 @@
         "pipaRequired": {
           "label": "同意必要个人信息收集和使用",
           "title": "必要个人信息收集和使用"
-        },
-        "crossBorderTransfer": {
-          "label": "同意个人信息跨境传输",
-          "title": "个人信息跨境传输"
-        },
-        "pdpaNotice": {
-          "label": "确认泰国 PDPA 通知",
-          "title": "泰国 PDPA 通知"
-        },
-        "piplNotice": {
-          "label": "确认中国 PIPL 通知",
-          "title": "中国 PIPL 通知"
         },
         "marketingConsent": {
           "label": "同意接收营销信息",

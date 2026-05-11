@@ -45,9 +45,6 @@ const BOOKING_CONSENT_KEYS = [
   'terms',
   'privacy',
   'pipa_required',
-  'cross_border_transfer',
-  'pdpa_notice',
-  'pipl_notice',
 ] as const;
 
 const LEGACY_FLOOR_KEY = 'default';

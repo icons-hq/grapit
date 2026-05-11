@@ -92,6 +92,13 @@
       "when": 1778220731089,
       "tag": "0012_phase24_booking_core",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1778483617000,
+      "tag": "0013_relax_launch_consent_requirements",
+      "breakpoints": true
     }
   ]
 }

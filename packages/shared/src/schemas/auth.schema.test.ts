@@ -16,9 +16,6 @@ function makeConsentItems(
     'terms',
     'privacy',
     'pipa_required',
-    'cross_border_transfer',
-    'pdpa_notice',
-    'pipl_notice',
     'marketing',
   ].map((key) => ({
     key,
@@ -57,18 +54,18 @@ describe('registerStep2Schema launch consent contract', () => {
         privacyPolicy: true,
         marketingConsent: false,
         consentItems: makeConsentItems().filter(
-          (item) => item.key !== 'cross_border_transfer',
+          (item) => item.key !== 'pipa_required',
         ),
       }),
-    ).toThrow(/cross_border_transfer/);
+    ).toThrow(/pipa_required/);
 
     expect(() =>
       registerStep2Schema.parse({
         termsOfService: true,
         privacyPolicy: true,
         marketingConsent: false,
-        consentItems: makeConsentItems({ cross_border_transfer: false }),
+        consentItems: makeConsentItems({ pipa_required: false }),
       }),
-    ).toThrow(/cross_border_transfer/);
+    ).toThrow(/pipa_required/);
   });
 });
