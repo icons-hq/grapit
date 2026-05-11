@@ -33,9 +33,9 @@
 
 ### Traffic and Reliability
 
-- [ ] **TRAF-01**: User entering ticketing can be admitted through a Valkey Sorted Set queue with batch admission, queue position, estimated wait, and remaining-seat updates.
-- [ ] **TRAF-02**: Platform enforces Cloudflare WAF, per-endpoint rate limits, bot-score challenge/blocking, and macro-pattern controls for login, signup, SMS, and booking endpoints.
-- [ ] **TRAF-03**: Platform can prewarm Cloud Run through Cloud Scheduler before advertising or ticketing traffic, then step down safely afterward.
+- [x] **TRAF-01**: User entering ticketing can be admitted through a Valkey Sorted Set queue with batch admission, queue position, estimated wait, and remaining-seat updates.
+- [x] **TRAF-02**: Platform enforces Cloudflare WAF, per-endpoint rate limits, bot-score challenge/blocking, and macro-pattern controls for login, signup, SMS, and booking endpoints.
+- [x] **TRAF-03**: Platform can prewarm Cloud Run through Cloud Scheduler before advertising or ticketing traffic, then step down safely afterward.
 - [ ] **LOAD-01**: Maintainer can run k6 10k baseline and 20k stress scenarios with p95 under 2 seconds and error rate under 1% before payment cutover.
 - [ ] **DR-01**: Maintainer can execute DB PITR restore, Valkey failover, and Cloud Run rollback drills before payment cutover.
 - [ ] **OPS-01**: Operator can use on-call playbooks and Sentry alerts for PG, Valkey, DB, CDN, latency, error-rate, and payment-failure incidents.
@@ -43,14 +43,14 @@
 
 ### Booking, Payment, Refund, and QR Issuance
 
-- [ ] **BOOK-01**: User can select seats across multi-floor SVG maps with existing lock ownership enforcement and event-specific ticket limits.
-- [ ] **BOOK-02**: User sees a 7-minute payment countdown, red warning at two minutes, 10-minute seat lock expiry, and automatic seat return after payment failure or timeout.
-- [ ] **BOOK-03**: Operator can configure cancellation fee rules, same-grade/change policy if enabled, and manual seat re-open controls per event.
+- [x] **BOOK-01**: User can select seats across multi-floor SVG maps with existing lock ownership enforcement and event-specific ticket limits.
+- [x] **BOOK-02**: User sees a 7-minute payment countdown, red warning at two minutes, 10-minute seat lock expiry, and automatic seat return after payment failure or timeout.
+- [x] **BOOK-03**: Operator can configure cancellation fee rules, same-grade/change policy if enabled, and manual seat re-open controls per event.
 - [ ] **PAY-01**: Operator can enable live ticketing in five minutes through Toss live keys and `BOOKING_ENABLED=true` only after all cutover gates pass.
-- [ ] **PAY-02**: User can pay through Toss domestic methods, overseas card, Alipay+, or truemoney, with FX disclaimer and explicit agreement where required.
-- [ ] **REFUND-01**: User can request cancellation/refund, preview irreversible refund details, and track refund state from request through PG processing to completion.
-- [ ] **REFUND-02**: Cancelled seats reopen after a random 1-10 minute hold through a delayed job unless an operator manually opens them.
-- [ ] **QR-01**: User receives a QR JWT/HMAC ticket after successful booking, and the system can send the QR email 24 hours before the event.
+- [x] **PAY-02**: User can pay through Toss domestic methods, overseas card, Alipay+, or truemoney, with FX disclaimer and explicit agreement where required.
+- [x] **REFUND-01**: User can request cancellation/refund, preview irreversible refund details, and track refund state from request through PG processing to completion.
+- [x] **REFUND-02**: Cancelled seats reopen after a random 1-10 minute hold through a delayed job unless an operator manually opens them.
+- [x] **QR-01**: User receives a QR JWT/HMAC ticket after successful booking, and the system can send the QR email 24 hours before the event.
 - [ ] **OPS-02**: Operator can monitor the first 24 hours of ticketing for 1-2만 concurrent users, sellout behavior, payment failures, and refund automation health.
 
 ### Admin and Event Operations
@@ -112,16 +112,16 @@ Phase mapping was consolidated on 2026-05-04 from the initial 22-phase launch-ri
 | AUTH-02 | Phase 23 | Complete |
 | COMP-01 | Phase 23 | Complete |
 | COMP-02 | Phase 23 | Complete |
-| TRAF-01 | Phase 24 | Pending |
-| TRAF-02 | Phase 24 | Pending |
-| TRAF-03 | Phase 24 | Pending |
-| BOOK-01 | Phase 24 | Pending |
-| BOOK-02 | Phase 24 | Pending |
-| BOOK-03 | Phase 24 | Pending |
-| PAY-02 | Phase 24 | Pending |
-| REFUND-01 | Phase 24 | Pending |
-| REFUND-02 | Phase 24 | Pending |
-| QR-01 | Phase 24 | Pending |
+| TRAF-01 | Phase 24 | Complete |
+| TRAF-02 | Phase 24 | Complete |
+| TRAF-03 | Phase 24 | Complete |
+| BOOK-01 | Phase 24 | Complete |
+| BOOK-02 | Phase 24 | Complete |
+| BOOK-03 | Phase 24 | Complete |
+| PAY-02 | Phase 24 | Complete |
+| REFUND-01 | Phase 24 | Complete |
+| REFUND-02 | Phase 24 | Complete |
+| QR-01 | Phase 24 | Complete |
 | ADMIN-01 | Phase 25 | Pending |
 | ADMIN-02 | Phase 25 | Pending |
 | ADMIN-03 | Phase 25 | Pending |

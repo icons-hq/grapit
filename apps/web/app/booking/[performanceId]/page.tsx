@@ -2,6 +2,9 @@
 
 import { use } from 'react';
 import { BookingPage } from '@/components/booking/booking-page';
+import { QueueWaiting } from '@/components/booking/queue-waiting';
+import { useQueue } from '@/hooks/use-queue';
+import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
 
 export default function BookingRoute({
   params,
@@ -9,5 +12,40 @@ export default function BookingRoute({
   params: Promise<{ performanceId: string }>;
 }) {
   const { performanceId } = use(params);
-  return <BookingPage performanceId={performanceId} />;
+
+  const { bookingEnabled, isResolved: runtimeFlagsResolved } = useRuntimeFlags();
+  const queue = useQueue({
+    performanceId,
+    enabled: runtimeFlagsResolved && bookingEnabled,
+  });
+
+  if (!runtimeFlagsResolved) {
+    return (
+      <QueueWaiting
+        status="loading"
+        position={0}
+        etaSeconds={0}
+        remainingSeats={0}
+        autoEnter={false}
+      />
+    );
+  }
+
+  if (!bookingEnabled || queue.isReady) {
+    return <BookingPage performanceId={performanceId} />;
+  }
+
+  return (
+    <QueueWaiting
+      status={queue.status}
+      position={queue.position}
+      etaSeconds={queue.etaSeconds}
+      remainingSeats={queue.remainingSeats}
+      autoEnter={queue.autoEnter}
+      onRetry={() => {
+        void queue.retry();
+      }}
+      onEnterNow={queue.enterNow}
+    />
+  );
 }

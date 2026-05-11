@@ -85,6 +85,13 @@
       "when": 1778139000000,
       "tag": "0011_seed_launch_consent_items",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1778220731089,
+      "tag": "0012_phase24_booking_core",
+      "breakpoints": true
     }
   ]
 }

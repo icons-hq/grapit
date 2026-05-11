@@ -1,19 +1,25 @@
 import { Injectable, Inject, ConflictException } from '@nestjs/common';
 import type IORedis from 'ioredis';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, or, isNull } from 'drizzle-orm';
 import { REDIS_CLIENT } from './providers/redis.provider.js';
 import { DRIZZLE } from '../../database/drizzle.provider.js';
 import type { DrizzleDB } from '../../database/drizzle.provider.js';
 import { seatInventories } from '../../database/schema/seat-inventories.js';
+import { bookingPolicies } from '../../database/schema/booking-policies.js';
+import { showtimes } from '../../database/schema/showtimes.js';
 import { BookingGateway } from './booking.gateway.js';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
-import type { LockSeatResponse, SeatState, SeatStatusResponse, UnlockAllResponse } from '@grabit/shared';
-
-/** Maximum number of seats a user can lock per showtime (D-03) */
-const MAX_SEATS = 4;
+import {
+  DEFAULT_PERFORMANCE_BOOKING_POLICY,
+  type LockSeatResponse,
+  type SeatState,
+  type SeatStatusResponse,
+  type UnlockAllResponse,
+} from '@grabit/shared';
 
 /** Lock TTL in seconds (10 minutes, per BOOK-03) */
 const LOCK_TTL = 600;
+const DEFAULT_FLOOR_KEY = '1F';
 
 export const LOCK_EXPIRED_MESSAGE = '좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.';
 export const LOCK_OTHER_OWNER_MESSAGE = '이미 다른 사용자가 선택한 좌석입니다.';
@@ -21,6 +27,36 @@ export const LOCK_OTHER_OWNER_MESSAGE = '이미 다른 사용자가 선택한 �
 export type SeatLockOwnershipFailureReason = 'MISSING' | 'OTHER_OWNER';
 
 type SeatLockOwnershipResult = [number, string, string, string];
+type RuntimeSeatIdentity = {
+  seatId: string;
+  floorKey: string;
+  seatKey: string;
+  runtimeSeatId: string;
+};
+
+function parseRuntimeSeatIdentity(rawSeatIdOrKey: string): RuntimeSeatIdentity {
+  const separatorIndex = rawSeatIdOrKey.indexOf(':');
+  const floorKey = separatorIndex > 0
+    ? rawSeatIdOrKey.slice(0, separatorIndex)
+    : DEFAULT_FLOOR_KEY;
+  const seatId = separatorIndex > 0
+    ? rawSeatIdOrKey.slice(separatorIndex + 1)
+    : rawSeatIdOrKey;
+  const seatKey = separatorIndex > 0
+    ? rawSeatIdOrKey
+    : `${floorKey}:${seatId}`;
+
+  return {
+    seatId,
+    floorKey,
+    seatKey,
+    runtimeSeatId: encodeURIComponent(seatKey),
+  };
+}
+
+function decodeRuntimeSeatId(runtimeSeatId: string): string {
+  return decodeURIComponent(runtimeSeatId);
+}
 
 /**
  * Lua script for atomic seat locking.
@@ -229,31 +265,63 @@ export class BookingService {
     private readonly featureFlags: FeatureFlagsService,
   ) {}
 
+  private async getMaxTicketsPerUser(showtimeId: string): Promise<number> {
+    const [row] = await this.db
+      .select({
+        maxTicketsPerUser: bookingPolicies.maxTicketsPerUser,
+      })
+      .from(showtimes)
+      .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, showtimes.performanceId))
+      .where(eq(showtimes.id, showtimeId));
+
+    return row?.maxTicketsPerUser ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.maxTicketsPerUser;
+  }
+
   /**
    * Attempts to lock a seat for a user using a single Lua script (redis.eval).
    * Atomically: cleans stale user-seats, checks count, SET NX, SADD + EXPIRE.
    */
   async lockSeat(userId: string, showtimeId: string, seatId: string): Promise<LockSeatResponse> {
     this.featureFlags.assertBookingEnabled();
+    const seatIdentity = parseRuntimeSeatIdentity(seatId);
 
-    // DB-level sold check: defense against Redis TTL expiry race
-    const [soldRecord] = await this.db
-      .select({ id: seatInventories.id })
+    // DB-level unavailable check: defense against Redis TTL expiry and delayed refund release races.
+    const [unavailableRecord] = await this.db
+      .select({
+        id: seatInventories.id,
+        status: seatInventories.status,
+      })
       .from(seatInventories)
       .where(
         and(
           eq(seatInventories.showtimeId, showtimeId),
-          eq(seatInventories.seatId, seatId),
-          eq(seatInventories.status, 'sold'),
+          eq(seatInventories.floorKey, seatIdentity.floorKey),
+          or(
+            eq(seatInventories.seatKey, seatIdentity.seatKey),
+            and(
+              isNull(seatInventories.seatKey),
+              eq(seatInventories.seatId, seatIdentity.seatId),
+            ),
+          ),
+          or(
+            eq(seatInventories.status, 'sold'),
+            eq(seatInventories.status, 'held_cancelled'),
+          ),
         ),
       );
 
-    if (soldRecord) {
-      throw new ConflictException('이미 판매된 좌석입니다');
+    if (unavailableRecord) {
+      throw new ConflictException(
+        unavailableRecord.status === 'held_cancelled'
+          ? '환불 처리 중인 좌석입니다'
+          : '이미 판매된 좌석입니다',
+      );
     }
 
+    const maxTicketsPerUser = await this.getMaxTicketsPerUser(showtimeId);
+
     const userSeatsKey = `{${showtimeId}}:user-seats:${userId}`;
-    const lockKey = `{${showtimeId}}:seat:${seatId}`;
+    const lockKey = `{${showtimeId}}:seat:${seatIdentity.runtimeSeatId}`;
     const lockedSeatsKey = `{${showtimeId}}:locked-seats`;
     const keyPrefix = `{${showtimeId}}:seat:`;
 
@@ -265,8 +333,8 @@ export class BookingService {
       lockedSeatsKey,
       userId,
       String(LOCK_TTL),
-      String(MAX_SEATS),
-      seatId,
+      String(maxTicketsPerUser),
+      seatIdentity.runtimeSeatId,
       keyPrefix,
     )) as [number, string, string?];
 
@@ -274,7 +342,7 @@ export class BookingService {
 
     if (status === 0) {
       if (reason === 'MAX_SEATS') {
-        throw new ConflictException(`최대 ${MAX_SEATS}석까지 선택할 수 있습니다`);
+        throw new ConflictException(`최대 ${maxTicketsPerUser}석까지 선택할 수 있습니다`);
       }
       throw new ConflictException('이미 다른 사용자가 선택한 좌석입니다');
     }
@@ -286,6 +354,8 @@ export class BookingService {
       success: true,
       lockId: lockKey,
       seatId,
+      seatKey: seatIdentity.seatKey,
+      floorKey: seatIdentity.floorKey,
       expiresAt: Date.now() + LOCK_TTL * 1000,
     };
   }
@@ -295,7 +365,8 @@ export class BookingService {
    * Removes from both user-seats and locked-seats Redis sets.
    */
   async unlockSeat(userId: string, showtimeId: string, seatId: string): Promise<boolean> {
-    const lockKey = `{${showtimeId}}:seat:${seatId}`;
+    const seatIdentity = parseRuntimeSeatIdentity(seatId);
+    const lockKey = `{${showtimeId}}:seat:${seatIdentity.runtimeSeatId}`;
     const userSeatsKey = `{${showtimeId}}:user-seats:${userId}`;
     const lockedSeatsKey = `{${showtimeId}}:locked-seats`;
 
@@ -306,7 +377,7 @@ export class BookingService {
       userSeatsKey,
       lockedSeatsKey,
       userId,
-      seatId,
+      seatIdentity.runtimeSeatId,
     )) as number;
 
     if (result === 0) {
@@ -335,15 +406,16 @@ export class BookingService {
 
     const unlockedSeats: string[] = [];
 
-    for (const seatId of members) {
-      const lockKey = `{${showtimeId}}:seat:${seatId}`;
+    for (const runtimeSeatId of members) {
+      const lockKey = `{${showtimeId}}:seat:${runtimeSeatId}`;
       const owner = await this.redis.get(lockKey);
 
       if (owner === userId) {
         await this.redis.del(lockKey);
-        await this.redis.srem(lockedSeatsKey, seatId);
-        this.gateway.broadcastSeatUpdate(showtimeId, seatId, 'available', userId);
-        unlockedSeats.push(seatId);
+        await this.redis.srem(lockedSeatsKey, runtimeSeatId);
+        const rawSeatId = decodeRuntimeSeatId(runtimeSeatId);
+        this.gateway.broadcastSeatUpdate(showtimeId, rawSeatId, 'available', userId);
+        unlockedSeats.push(rawSeatId);
       }
     }
 
@@ -354,13 +426,14 @@ export class BookingService {
   }
 
   async assertOwnedSeatLocks(userId: string, showtimeId: string, seatIds: string[]): Promise<void> {
-    const seatLockKeys = seatIds.map((seatId) => `{${showtimeId}}:seat:${seatId}`);
+    const runtimeSeatIds = seatIds.map((seatId) => parseRuntimeSeatIdentity(seatId).runtimeSeatId);
+    const seatLockKeys = runtimeSeatIds.map((runtimeSeatId) => `{${showtimeId}}:seat:${runtimeSeatId}`);
 
     const result = (await this.redis.eval(ASSERT_OWNED_SEAT_LOCKS_LUA,
-      seatIds.length,
+      runtimeSeatIds.length,
       ...seatLockKeys,
       userId,
-      ...seatIds,
+      ...runtimeSeatIds,
     )) as SeatLockOwnershipResult;
 
     const conflict = this.lockConflictFromResult(result);
@@ -370,15 +443,16 @@ export class BookingService {
   async consumeOwnedSeatLocks(userId: string, showtimeId: string, seatIds: string[]): Promise<{ consumedSeatIds: string[] }> {
     const userSeatsKey = `{${showtimeId}}:user-seats:${userId}`;
     const lockedSeatsKey = `{${showtimeId}}:locked-seats`;
-    const seatLockKeys = seatIds.map((seatId) => `{${showtimeId}}:seat:${seatId}`);
+    const runtimeSeatIds = seatIds.map((seatId) => parseRuntimeSeatIdentity(seatId).runtimeSeatId);
+    const seatLockKeys = runtimeSeatIds.map((runtimeSeatId) => `{${showtimeId}}:seat:${runtimeSeatId}`);
 
     const result = (await this.redis.eval(CONSUME_OWNED_SEAT_LOCKS_LUA,
-      2 + seatIds.length,
+      2 + runtimeSeatIds.length,
       userSeatsKey,
       lockedSeatsKey,
       ...seatLockKeys,
       userId,
-      ...seatIds,
+      ...runtimeSeatIds,
     )) as SeatLockOwnershipResult;
 
     const conflict = this.lockConflictFromResult(result);
@@ -394,15 +468,16 @@ export class BookingService {
     ttlSeconds: number,
   ): Promise<void> {
     const userSeatsKey = `{${showtimeId}}:user-seats:${userId}`;
-    const seatLockKeys = seatIds.map((seatId) => `{${showtimeId}}:seat:${seatId}`);
+    const runtimeSeatIds = seatIds.map((seatId) => parseRuntimeSeatIdentity(seatId).runtimeSeatId);
+    const seatLockKeys = runtimeSeatIds.map((runtimeSeatId) => `{${showtimeId}}:seat:${runtimeSeatId}`);
 
     const result = (await this.redis.eval(EXTEND_OWNED_SEAT_LOCKS_LUA,
-      1 + seatIds.length,
+      1 + runtimeSeatIds.length,
       userSeatsKey,
       ...seatLockKeys,
       userId,
       String(ttlSeconds),
-      ...seatIds,
+      ...runtimeSeatIds,
     )) as SeatLockOwnershipResult;
 
     const conflict = this.lockConflictFromResult(result);
@@ -463,11 +538,11 @@ export class BookingService {
     const validSeats: string[] = [];
     let expiresAt: number | null = null;
 
-    for (const seatId of userSeats) {
-      const lockKey = `{${showtimeId}}:seat:${seatId}`;
+    for (const runtimeSeatId of userSeats) {
+      const lockKey = `{${showtimeId}}:seat:${runtimeSeatId}`;
       const owner = await this.redis.get(lockKey);
       if (owner === userId) {
-        validSeats.push(seatId);
+        validSeats.push(decodeRuntimeSeatId(runtimeSeatId));
         const remainingTtl = await this.redis.ttl(lockKey);
         if (remainingTtl > 0) {
           const seatExpiresAt = Date.now() + remainingTtl * 1000;
@@ -481,7 +556,7 @@ export class BookingService {
 
   /**
    * Returns the status of all seats for a showtime.
-   * Combines Redis locks + DB sold records.
+   * Combines Redis locks + DB unavailable records.
    */
   async getSeatStatus(showtimeId: string): Promise<SeatStatusResponse> {
     // 1. Get locked seats from Redis (with stale entry cleanup)
@@ -494,26 +569,35 @@ export class BookingService {
       keyPrefix,
     )) as string[];
 
-    // 2. Get sold seats from DB
-    const soldSeats = await this.db
-      .select({ seatId: seatInventories.seatId, status: seatInventories.status })
+    // 2. Get sold and delayed-release seats from DB
+    const unavailableSeats = await this.db
+      .select({
+        seatId: seatInventories.seatId,
+        floorKey: seatInventories.floorKey,
+        seatKey: seatInventories.seatKey,
+        status: seatInventories.status,
+      })
       .from(seatInventories)
       .where(
         and(
           eq(seatInventories.showtimeId, showtimeId),
-          eq(seatInventories.status, 'sold'),
+          or(
+            eq(seatInventories.status, 'sold'),
+            eq(seatInventories.status, 'held_cancelled'),
+          ),
         ),
       );
 
     // 3. Build combined seat map
     const seats: Record<string, SeatState> = {};
 
-    for (const seatId of lockedSeats) {
-      seats[seatId] = 'locked';
+    for (const runtimeSeatId of lockedSeats) {
+      seats[decodeRuntimeSeatId(runtimeSeatId)] = 'locked';
     }
 
-    for (const row of soldSeats) {
-      seats[row.seatId] = 'sold';
+    for (const row of unavailableSeats) {
+      const soldSeatKey = row.seatKey ?? (row.floorKey ? `${row.floorKey}:${row.seatId}` : row.seatId);
+      seats[soldSeatKey] = row.status === 'held_cancelled' ? 'held' : 'sold';
     }
 
     return { showtimeId, seats };

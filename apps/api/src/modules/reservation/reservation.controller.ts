@@ -1,5 +1,6 @@
 import {
   Controller,
+  ForbiddenException,
   Get,
   Post,
   Put,
@@ -8,11 +9,14 @@ import {
   Query,
   Request,
   Req,
+  UseGuards,
 } from '@nestjs/common';
+import { z } from 'zod';
 import type { Request as ExpressRequest } from 'express';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import {
   prepareReservationSchema,
+  queueAdmissionSchema,
   confirmPaymentSchema,
   cancelReservationSchema,
   type PrepareReservationInput,
@@ -22,7 +26,23 @@ import {
 } from '@grabit/shared';
 import { resolveTrustedRequestIp } from '../../common/request-ip.js';
 import type { ConsentRequestMeta } from '../consent/consent.service.js';
+import { AdmissionGuard } from '../queue/guards/admission.guard.js';
 import { ReservationService } from './reservation.service.js';
+
+const prepareReservationTransportSchema = prepareReservationSchema
+  .omit({ queueAdmission: true })
+  .extend({
+    queueAdmission: queueAdmissionSchema.partial().optional(),
+  });
+
+type PrepareReservationTransportInput = z.infer<
+  typeof prepareReservationTransportSchema
+>;
+
+type QueueAdmissionRequest = ExpressRequest & {
+  user: { id: string };
+  queueAdmission?: PrepareReservationInput['queueAdmission'];
+};
 
 @Controller()
 export class ReservationController {
@@ -30,18 +50,32 @@ export class ReservationController {
     private readonly reservationService: ReservationService,
   ) {}
 
+  @UseGuards(AdmissionGuard)
   @Post('reservations/prepare')
   async prepareReservation(
-    @Body(new ZodValidationPipe(prepareReservationSchema)) body: PrepareReservationInput,
-    @Req() req: ExpressRequest & { user: { id: string } },
+    @Body(new ZodValidationPipe(prepareReservationTransportSchema))
+    body: PrepareReservationTransportInput,
+    @Req() req: QueueAdmissionRequest,
   ) {
-    return this.reservationService.prepareReservation(
-      body,
+    const result = await this.reservationService.prepareReservation(
+      {
+        ...body,
+        queueAdmission: this.requireQueueAdmission(req),
+      },
       req.user.id,
       this.resolveConsentMeta(req),
     );
+
+    return {
+      ...result,
+      queueAdmission: {
+        ...result.queueAdmission,
+        admissionToken: 'cookie-bound',
+      },
+    };
   }
 
+  @UseGuards(AdmissionGuard)
   @Post('payments/confirm')
   async confirmPayment(
     @Body(new ZodValidationPipe(confirmPaymentSchema)) body: ConfirmPaymentInput,
@@ -101,5 +135,15 @@ export class ReservationController {
       ipAddress: resolveTrustedRequestIp(req),
       userAgent: req.get('user-agent'),
     };
+  }
+
+  private requireQueueAdmission(
+    req: QueueAdmissionRequest,
+  ): PrepareReservationInput['queueAdmission'] {
+    if (!req.queueAdmission) {
+      throw new ForbiddenException('대기열 입장 인증이 필요합니다');
+    }
+
+    return req.queueAdmission;
   }
 }

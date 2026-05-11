@@ -2,7 +2,6 @@ import {
   Injectable,
   Inject,
   BadRequestException,
-  InternalServerErrorException,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
@@ -16,17 +15,56 @@ import {
   performances,
   users,
   seatInventories,
+  bookingPolicies,
+  bookingOperationAuditLogs,
 } from '../../database/schema/index.js';
-import { TossPaymentsClient } from '../payment/toss-payments.client.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
+import { RefundService } from '../refund/refund.service.js';
 import type {
   AdminBookingListItem,
   BookingStats,
+  FloorAwareSeatSelection,
   PaymentInfo,
   PaymentStatus,
   ReservationStatus,
   SeatSelection,
 } from '@grabit/shared';
+
+const LEGACY_FLOOR_KEY = 'default';
+const LEGACY_FLOOR_LABEL = '기본';
+
+function toFloorAwareSeatSelection(seat: SeatSelection): FloorAwareSeatSelection {
+  return {
+    ...seat,
+    floorKey: LEGACY_FLOOR_KEY,
+    floorLabel: LEGACY_FLOOR_LABEL,
+    seatKey: `${LEGACY_FLOOR_KEY}:${seat.seatId}`,
+  };
+}
+
+function normalizeReservationSeatIdentity(seatId: string): {
+  floorKey: string;
+  seatId: string;
+  seatKey: string;
+} {
+  if (seatId.includes(':')) {
+    const separatorIndex = seatId.indexOf(':');
+    const floorKey = seatId.slice(0, separatorIndex) || '1F';
+    const rawSeatId = seatId.slice(separatorIndex + 1);
+
+    return {
+      floorKey,
+      seatId: rawSeatId,
+      seatKey: `${floorKey}:${rawSeatId}`,
+    };
+  }
+
+  return {
+    floorKey: '1F',
+    seatId,
+    seatKey: `1F:${seatId}`,
+  };
+}
 
 @Injectable()
 export class AdminBookingService {
@@ -34,8 +72,8 @@ export class AdminBookingService {
 
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
-    private readonly tossClient: TossPaymentsClient,
     private readonly bookingGateway: BookingGateway,
+    private readonly refundService: RefundService,
   ) {}
 
   async getBookings(params: {
@@ -144,7 +182,7 @@ export class AdminBookingService {
         userPhone: row.user.phone,
         performanceTitle: row.performance.title,
         showDateTime: row.showtime.dateTime?.toISOString() ?? '',
-        seats: seats.map((s) => ({
+        seats: seats.map((s) => toFloorAwareSeatSelection({
           seatId: s.seatId,
           tierName: s.tierName,
           price: s.price,
@@ -212,7 +250,7 @@ export class AdminBookingService {
       userPhone: row.user.phone,
       performanceTitle: row.performance.title,
       showDateTime: row.showtime.dateTime?.toISOString() ?? '',
-      seats: seats.map((s) => ({
+      seats: seats.map((s) => toFloorAwareSeatSelection({
         seatId: s.seatId,
         tierName: s.tierName,
         price: s.price,
@@ -240,89 +278,101 @@ export class AdminBookingService {
     };
   }
 
-  async refundBooking(reservationId: string, reason: string): Promise<void> {
-    const [reservation] = await this.db
-      .select()
+  async refundBooking(
+    reservationId: string,
+    operatorUserId: string,
+    reason: string,
+  ): Promise<void> {
+    await this.refundService.requestAdminRefund(reservationId, operatorUserId, reason);
+  }
+
+  async manualOpen(reservationId: string, operatorUserId: string): Promise<void> {
+    const [context] = await this.db
+      .select({
+        reservation: {
+          id: reservations.id,
+          showtimeId: reservations.showtimeId,
+          status: reservations.status,
+        },
+        bookingPolicy: {
+          manualOpenEnabled: bookingPolicies.manualOpenEnabled,
+        },
+      })
       .from(reservations)
+      .innerJoin(showtimes, eq(showtimes.id, reservations.showtimeId))
+      .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, showtimes.performanceId))
       .where(eq(reservations.id, reservationId));
 
-    if (!reservation) {
+    if (!context) {
       throw new NotFoundException('예매를 찾을 수 없습니다');
     }
 
-    if (reservation.status !== 'CONFIRMED') {
-      throw new BadRequestException('환불할 수 없는 상태입니다');
+    if (context.reservation.status !== 'CANCELLED') {
+      throw new BadRequestException('수동 오픈은 취소된 예매에만 사용할 수 있습니다');
     }
 
-    const [payment] = await this.db
-      .select()
-      .from(payments)
-      .where(eq(payments.reservationId, reservationId));
-
-    if (payment) {
-      await this.tossClient.cancelPayment(payment.paymentKey, reason);
+    if (context.bookingPolicy?.manualOpenEnabled === false) {
+      throw new BadRequestException('수동 오픈이 비활성화된 공연입니다');
     }
 
-    try {
-      const now = new Date();
-      await this.db.transaction(async (tx) => {
-        await tx
-          .update(reservations)
-          .set({
-            status: 'CANCELLED',
-            cancelledAt: now,
-            cancelReason: reason,
-            updatedAt: now,
-          })
-          .where(eq(reservations.id, reservationId));
-
-        if (payment) {
-          await tx
-            .update(payments)
-            .set({
-              status: 'CANCELED',
-              cancelledAt: now,
-              cancelReason: reason,
-            })
-            .where(eq(payments.reservationId, reservationId));
-        }
-
-        // Restore seat_inventories to available
-        const cancelledSeats = await tx
-          .select({ seatId: reservationSeats.seatId })
-          .from(reservationSeats)
-          .where(eq(reservationSeats.reservationId, reservationId));
-
-        for (const seat of cancelledSeats) {
-          await tx
-            .update(seatInventories)
-            .set({ status: 'available', soldAt: null, lockedBy: null, lockedUntil: null })
-            .where(
-              and(
-                eq(seatInventories.showtimeId, reservation.showtimeId),
-                eq(seatInventories.seatId, seat.seatId),
-              ),
-            );
-        }
-      });
-    } catch (dbError) {
-      this.logger.error(
-        `CRITICAL: DB transaction failed after Toss refund. reservationId=${reservationId}, paymentKey=${payment?.paymentKey}. Manual reconciliation required.`,
-        dbError instanceof Error ? dbError.stack : String(dbError),
-      );
-      throw new InternalServerErrorException(
-        '환불은 처리되었으나 시스템 오류가 발생했습니다. 관리자에게 문의해주세요.',
-      );
-    }
-
-    // Broadcast available status via WebSocket
-    const freedSeats = await this.db
+    const seats = await this.db
       .select({ seatId: reservationSeats.seatId })
       .from(reservationSeats)
       .where(eq(reservationSeats.reservationId, reservationId));
 
-    for (const seat of freedSeats) {
-      this.bookingGateway.broadcastSeatUpdate(reservation.showtimeId, seat.seatId, 'available');
+    if (seats.length === 0) {
+      throw new NotFoundException('오픈할 좌석을 찾을 수 없습니다');
     }
+
+    const now = new Date();
+    const seatIdentities = seats.map((seat) =>
+      normalizeReservationSeatIdentity(seat.seatId),
+    );
+
+    await this.db.transaction(async (tx) => {
+      await tx.insert(bookingOperationAuditLogs).values(
+        seatIdentities.map((seatIdentity) => ({
+          operatorUserId,
+          action: 'manual_open' as const,
+          seatKey: seatIdentity.seatKey,
+          reservationId,
+          createdAt: now,
+        })),
+      );
+
+      for (const seatIdentity of seatIdentities) {
+        await tx
+          .update(seatInventories)
+          .set({
+            status: 'available',
+            lockedBy: null,
+            lockedUntil: null,
+            soldAt: null,
+            heldCancelledAt: null,
+            reopenHoldUntil: null,
+            reopenJobId: null,
+          })
+          .where(
+            and(
+              eq(seatInventories.showtimeId, context.reservation.showtimeId),
+              eq(seatInventories.floorKey, seatIdentity.floorKey),
+              eq(seatInventories.seatKey, seatIdentity.seatKey),
+              eq(seatInventories.status, 'held_cancelled'),
+            ),
+          );
+      }
+    });
+
+    for (const seat of seats) {
+      this.bookingGateway.broadcastSeatUpdate(
+        context.reservation.showtimeId,
+        seat.seatId,
+        'available',
+      );
+    }
+
+    this.logger.log(
+      `Manual open completed for reservationId=${reservationId}, operatorUserId=${operatorUserId}, seats=${seatIdentities.length}`,
+    );
   }
 }

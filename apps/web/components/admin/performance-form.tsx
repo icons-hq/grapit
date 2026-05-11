@@ -7,9 +7,13 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { Trash2, Plus, Upload, X, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
+  DEFAULT_PERFORMANCE_BOOKING_POLICY,
   createPerformanceSchema,
   type CreatePerformanceInput,
   type CreatePerformanceFormInput,
+  type PerformanceAllowedPaymentMethod,
+  PERFORMANCE_ALLOWED_PAYMENT_METHODS,
+  type PerformanceSeatMapInput,
   type PerformanceWithDetails,
   GENRES,
   GENRE_LABELS,
@@ -22,11 +26,19 @@ import {
 } from '@/hooks/use-admin';
 import { ShowtimeManager } from '@/components/admin/showtime-manager';
 import { CastingManager } from '@/components/admin/casting-manager';
+import {
+  findDuplicateFloorKeys,
+  FloorSeatMapEditor,
+} from '@/components/admin/floor-seat-map-editor';
 import { SvgPreview } from '@/components/admin/svg-preview';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { formatAdminKstDate, formatAdminKstDateTime } from '@/lib/admin-datetime';
+import { ApiClientError } from '@/lib/api-client';
 import {
   Select,
   SelectContent,
@@ -43,13 +55,54 @@ const AGE_RATINGS = [
   '만 19세 이상',
 ] as const;
 
+const PAYMENT_METHOD_LABELS: Record<PerformanceAllowedPaymentMethod, string> = {
+  CARD: '카드 결제',
+  VIRTUAL_ACCOUNT: '가상계좌',
+  TRANSFER: '계좌이체',
+  MOBILE_PHONE: '휴대폰 결제',
+  FOREIGN_EASY_PAY: '해외 간편결제',
+  SIMPLE_PAY: '국내 간편결제',
+};
+
 function isEventCategory(genre: string): genre is EventCategory {
   return (GENRES as readonly string[]).includes(genre);
+}
+
+function mapSeatMapToFormValue(
+  seatMap: PerformanceWithDetails['seatMaps'][number],
+): PerformanceSeatMapInput {
+  return {
+    floorKey: seatMap.floorKey,
+    floorLabel: seatMap.floorLabel,
+    sortOrder: seatMap.sortOrder,
+    svgUrl: seatMap.svgUrl,
+    seatConfig: seatMap.seatConfig,
+    totalSeats: seatMap.totalSeats,
+  };
+}
+
+function normalizeSeatMapsForEditor(
+  seatMaps: CreatePerformanceFormInput['seatMaps'],
+): PerformanceSeatMapInput[] {
+  return (seatMaps ?? []).map((seatMap, index) => ({
+    floorKey: seatMap.floorKey,
+    floorLabel: seatMap.floorLabel,
+    sortOrder: seatMap.sortOrder ?? index,
+    svgUrl: seatMap.svgUrl,
+    seatConfig: seatMap.seatConfig ?? null,
+    totalSeats: seatMap.totalSeats ?? 0,
+  }));
 }
 
 function mapToFormValues(
   data: PerformanceWithDetails,
 ): CreatePerformanceFormInput {
+  const mappedSeatMaps = data.seatMaps.length
+    ? data.seatMaps.map(mapSeatMapToFormValue)
+    : data.seatMap
+      ? [mapSeatMapToFormValue(data.seatMap)]
+      : [];
+
   return {
     title: data.title,
     genre: isEventCategory(data.genre) ? data.genre : 'artist_celebrity',
@@ -77,6 +130,10 @@ function mapToFormValues(
       photoUrl: c.photoUrl,
       sortOrder: c.sortOrder,
     })),
+    seatMaps: mappedSeatMaps,
+    bookingPolicy: data.bookingPolicy ?? {
+      ...DEFAULT_PERFORMANCE_BOOKING_POLICY,
+    },
   };
 }
 
@@ -94,6 +151,9 @@ export function PerformanceForm({
   const router = useRouter();
   const [posterPreview, setPosterPreview] = useState<string | null>(
     initialData?.posterUrl ?? null,
+  );
+  const [seatMapDuplicateError, setSeatMapDuplicateError] = useState<string | null>(
+    null,
   );
 
   const form = useForm<CreatePerformanceFormInput, unknown, CreatePerformanceInput>({
@@ -116,6 +176,10 @@ export function PerformanceForm({
           priceTiers: [{ tierName: '', price: 0, sortOrder: 0 }],
           showtimes: [],
           castings: [],
+          seatMaps: [],
+          bookingPolicy: {
+            ...DEFAULT_PERFORMANCE_BOOKING_POLICY,
+          },
         },
   });
 
@@ -137,6 +201,7 @@ export function PerformanceForm({
   const createMutation = useCreatePerformance();
   const updateMutation = useUpdatePerformance(performanceId ?? '');
   const presignedUpload = usePresignedUpload();
+  const seatMaps = normalizeSeatMapsForEditor(form.watch('seatMaps'));
 
   const handlePosterUpload = useCallback(
     async (file: File) => {
@@ -196,21 +261,57 @@ export function PerformanceForm({
     setPosterPreview(null);
   }
 
+  function updateSeatMaps(nextSeatMaps: PerformanceSeatMapInput[]) {
+    setSeatMapDuplicateError(null);
+    form.setValue('seatMaps', nextSeatMaps, {
+      shouldDirty: true,
+    });
+  }
+
   async function onSubmit(data: CreatePerformanceInput) {
+    const duplicateFloorKeys = findDuplicateFloorKeys(data.seatMaps ?? []);
+
+    if (duplicateFloorKeys.length > 0) {
+      const correctionMessage = `중복된 floorKey가 있습니다: ${duplicateFloorKeys.join(', ')}. 각 층 키를 고유하게 수정한 뒤 다시 저장해주세요.`;
+
+      setSeatMapDuplicateError(correctionMessage);
+      toast.error('중복된 floorKey를 수정한 뒤 다시 저장해주세요.');
+      return;
+    }
+
     try {
       if (mode === 'create') {
         await createMutation.mutateAsync(data);
       } else if (performanceId) {
         await updateMutation.mutateAsync(data);
       }
+
       toast.success('공연이 저장되었습니다');
       router.push('/admin/performances');
-    } catch {
-      toast.error('공연 저장에 실패했습니다.');
+    } catch (error) {
+      if (
+        error instanceof ApiClientError &&
+        error.statusCode === 422 &&
+        error.message.includes('Validation failed')
+      ) {
+        const correctionMessage =
+          '서버에서 중복된 floorKey를 확인했습니다. 각 층 키를 고유하게 수정한 뒤 다시 저장해주세요.';
+
+        setSeatMapDuplicateError(correctionMessage);
+        toast.error('중복된 floorKey를 수정한 뒤 다시 저장해주세요.');
+        return;
+      }
+
+      toast.error(
+        error instanceof Error ? error.message : '공연 저장에 실패했습니다.',
+      );
     }
   }
 
-  const isSubmitting = form.formState.isSubmitting;
+  const isSubmitting =
+    form.formState.isSubmitting ||
+    createMutation.isPending ||
+    updateMutation.isPending;
 
   return (
     <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8 pb-24">
@@ -496,17 +597,230 @@ export function PerformanceForm({
         />
       </section>
 
-      {/* Section: 좌석맵 (edit mode only) */}
-      {mode === 'edit' && performanceId && (
-        <section className="rounded-lg bg-white p-6 shadow-sm">
-          <h2 className="mb-4 text-xl font-semibold">좌석맵</h2>
-          <SvgPreview
-            performanceId={performanceId}
-            currentSvgUrl={initialData?.seatMap?.svgUrl}
-            currentConfig={initialData?.seatMap?.seatConfig ?? undefined}
+      {/* Section: 좌석맵 및 예매 정책 */}
+      <section className="rounded-lg bg-white p-6 shadow-sm">
+        <div className="space-y-6">
+          <div>
+            <h2 className="mb-2 text-xl font-semibold">좌석맵 및 예매 정책</h2>
+            <p className="text-sm text-gray-600">
+              층별 SVG 좌석맵과 공연별 예매 정책을 함께 설정합니다.
+            </p>
+          </div>
+
+          <FloorSeatMapEditor
+            value={seatMaps}
+            onChange={updateSeatMaps}
+            duplicateFloorError={seatMapDuplicateError}
+            renderPreview={({ floor, index, updateFloor }) => (
+              <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                <SvgPreview
+                  inputId={`svg-input-${index}`}
+                  currentSvgUrl={floor.svgUrl || undefined}
+                  currentConfig={floor.seatConfig}
+                  currentTotalSeats={floor.totalSeats}
+                  onChange={({ svgUrl, seatConfig, totalSeats }) => {
+                    setSeatMapDuplicateError(null);
+                    updateFloor({
+                      ...floor,
+                      svgUrl,
+                      seatConfig,
+                      totalSeats,
+                    });
+                  }}
+                />
+              </div>
+            )}
           />
-        </section>
-      )}
+
+          <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="bookingPolicy.maxTicketsPerUser">
+                  1인 최대 예매 가능 매수
+                </Label>
+                <Input
+                  id="bookingPolicy.maxTicketsPerUser"
+                  type="number"
+                  min={1}
+                  {...form.register('bookingPolicy.maxTicketsPerUser', {
+                    valueAsNumber: true,
+                  })}
+                />
+                <p className="text-sm text-gray-500">
+                  이 공연은 전체 층 합산 기준으로 최대 예매 매수를 제한합니다.
+                </p>
+                {form.formState.errors.bookingPolicy?.maxTicketsPerUser && (
+                  <p className="text-sm text-red-500">
+                    {form.formState.errors.bookingPolicy.maxTicketsPerUser.message}
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label>허용 결제 수단</Label>
+                <Controller
+                  control={form.control}
+                  name="bookingPolicy.allowedPaymentMethods"
+                  render={({ field }) => (
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {PERFORMANCE_ALLOWED_PAYMENT_METHODS.map((method) => {
+                        const checked = field.value?.includes(method) ?? false;
+
+                        return (
+                          <label
+                            key={method}
+                            className="flex min-h-11 items-center gap-3 rounded-lg border bg-white px-3 py-2 text-sm font-medium text-gray-900"
+                          >
+                            <Checkbox
+                              checked={checked}
+                              onCheckedChange={(nextChecked) => {
+                                const nextValue = nextChecked
+                                  ? [...(field.value ?? []), method]
+                                  : (field.value ?? []).filter((value) => value !== method);
+
+                                field.onChange(nextValue);
+                              }}
+                            />
+                            <span>{PAYMENT_METHOD_LABELS[method]}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  )}
+                />
+                {form.formState.errors.bookingPolicy?.allowedPaymentMethods && (
+                  <p className="text-sm text-red-500">
+                    {form.formState.errors.bookingPolicy.allowedPaymentMethods.message}
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="bookingPolicy.paymentWindowMinutes">
+                  결제 가능 시간 (분)
+                </Label>
+                <Input
+                  id="bookingPolicy.paymentWindowMinutes"
+                  type="number"
+                  min={1}
+                  {...form.register('bookingPolicy.paymentWindowMinutes', {
+                    valueAsNumber: true,
+                  })}
+                />
+                {form.formState.errors.bookingPolicy?.paymentWindowMinutes && (
+                  <p className="text-sm text-red-500">
+                    {form.formState.errors.bookingPolicy.paymentWindowMinutes.message}
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="bookingPolicy.seatHoldMinutes">
+                  좌석 hold 시간 (분)
+                </Label>
+                <Input
+                  id="bookingPolicy.seatHoldMinutes"
+                  type="number"
+                  min={1}
+                  {...form.register('bookingPolicy.seatHoldMinutes', {
+                    valueAsNumber: true,
+                  })}
+                />
+                {form.formState.errors.bookingPolicy?.seatHoldMinutes && (
+                  <p className="text-sm text-red-500">
+                    {form.formState.errors.bookingPolicy.seatHoldMinutes.message}
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="bookingPolicy.cancelledSeatHoldMinMinutes">
+                  취소 좌석 hold 최소 시간 (분)
+                </Label>
+                <Input
+                  id="bookingPolicy.cancelledSeatHoldMinMinutes"
+                  type="number"
+                  min={1}
+                  {...form.register('bookingPolicy.cancelledSeatHoldMinMinutes', {
+                    valueAsNumber: true,
+                  })}
+                />
+                {form.formState.errors.bookingPolicy?.cancelledSeatHoldMinMinutes && (
+                  <p className="text-sm text-red-500">
+                    {form.formState.errors.bookingPolicy.cancelledSeatHoldMinMinutes.message}
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="bookingPolicy.cancelledSeatHoldMaxMinutes">
+                  취소 좌석 hold 최대 시간 (분)
+                </Label>
+                <Input
+                  id="bookingPolicy.cancelledSeatHoldMaxMinutes"
+                  type="number"
+                  min={1}
+                  {...form.register('bookingPolicy.cancelledSeatHoldMaxMinutes', {
+                    valueAsNumber: true,
+                  })}
+                />
+                <p className="text-sm text-gray-500">
+                  취소 후 좌석이 재오픈되기 전 랜덤 hold 구간의 상한입니다.
+                </p>
+                {form.formState.errors.bookingPolicy?.cancelledSeatHoldMaxMinutes && (
+                  <p className="text-sm text-red-500">
+                    {form.formState.errors.bookingPolicy.cancelledSeatHoldMaxMinutes.message}
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-6 grid gap-4 md:grid-cols-2">
+              <Controller
+                control={form.control}
+                name="bookingPolicy.changePolicyEnabled"
+                render={({ field }) => (
+                  <div className="flex items-start justify-between gap-4 rounded-lg border bg-white px-4 py-3">
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold text-gray-900">
+                        결제 전 좌석 변경 허용
+                      </p>
+                      <p className="text-sm text-gray-500">
+                        결제 완료 전까지 좌석 변경 정책을 운영자 설정으로 제어합니다.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </div>
+                )}
+              />
+
+              <Controller
+                control={form.control}
+                name="bookingPolicy.manualOpenEnabled"
+                render={({ field }) => (
+                  <div className="flex items-start justify-between gap-4 rounded-lg border bg-white px-4 py-3">
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold text-gray-900">
+                        운영자 수동 재오픈 허용
+                      </p>
+                      <p className="text-sm text-gray-500">
+                        취소 좌석의 즉시 재오픈 예외 정책을 저장합니다.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={field.value}
+                      onCheckedChange={field.onChange}
+                    />
+                  </div>
+                )}
+              />
+            </div>
+          </div>
+        </div>
+      </section>
 
       {/* Section: 판매/상세 정보 */}
       <section className="rounded-lg bg-white p-6 shadow-sm">

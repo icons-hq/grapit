@@ -12,6 +12,16 @@ export interface SendEmailResult {
   error?: string;
 }
 
+export interface SendQrTicketReminderEmailInput {
+  reservationNumber: string;
+  performanceTitle: string;
+  showDateTime: string;
+  venue: string;
+  ticketToken: string;
+  ticketUrl: string;
+  locale?: string;
+}
+
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // [Phase 15 WR-01] Bounded in-process retry for transient Resend failures.
@@ -194,8 +204,102 @@ export class EmailService {
 
     throw new Error('email verification retry loop exited unexpectedly');
   }
+
+  async sendQrTicketReminderEmail(
+    to: string,
+    input: SendQrTicketReminderEmailInput,
+  ): Promise<SendEmailResult> {
+    const showDateTime = new Intl.DateTimeFormat('ko-KR', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      weekday: 'short',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'Asia/Seoul',
+    }).format(new Date(input.showDateTime));
+
+    const html = [
+      '<div style="font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;line-height:1.6;color:#111827">',
+      '<h1 style="font-size:20px;margin:0 0 16px">QR 티켓 안내</h1>',
+      `<p style="margin:0 0 12px"><strong>${escapeHtml(input.performanceTitle)}</strong> 공연의 QR 티켓을 다시 보내드립니다.</p>`,
+      `<p style="margin:0 0 4px">예매번호: <strong>${escapeHtml(input.reservationNumber)}</strong></p>`,
+      `<p style="margin:0 0 4px">공연일시: ${escapeHtml(showDateTime)}</p>`,
+      `<p style="margin:0 0 16px">장소: ${escapeHtml(input.venue)}</p>`,
+      `<p style="margin:0 0 8px">마이페이지에서 바로 확인:</p>`,
+      `<p style="margin:0 0 16px"><a href="${escapeHtml(input.ticketUrl)}">${escapeHtml(input.ticketUrl)}</a></p>`,
+      '<p style="margin:0 0 8px">QR 토큰</p>',
+      `<pre style="white-space:pre-wrap;word-break:break-all;background:#F3F4F6;padding:12px;border-radius:8px">${escapeHtml(input.ticketToken)}</pre>`,
+      '</div>',
+    ].join('');
+
+    if (this.resend === null) {
+      const toDomain = to.split('@')[1] ?? 'unknown';
+      this.logger.log(
+        `DEV EMAIL: QR ticket reminder requested for ${toDomain} (${input.locale ?? 'ko'})`,
+      );
+      return { success: true };
+    }
+
+    const toDomain = to.split('@')[1] ?? 'unknown';
+
+    for (let attempt = 1; attempt <= MAX_SEND_ATTEMPTS; attempt++) {
+      const { data, error } = await this.resend.emails.send({
+        from: this.from,
+        to,
+        subject: `[Grabit] QR 티켓 안내 - ${input.performanceTitle}`,
+        html,
+      });
+
+      if (!error) {
+        if (attempt > 1) {
+          this.logger.log(`Resend recovered on attempt ${attempt} (toDomain=${toDomain})`);
+        }
+        return { success: true, id: data?.id };
+      }
+
+      const isFinalAttempt = attempt === MAX_SEND_ATTEMPTS;
+      const isTransient = RETRYABLE_ERROR(error.message);
+
+      if (isFinalAttempt || !isTransient) {
+        this.logger.error(
+          `Resend QR reminder send failed for ${toDomain} after ${attempt} attempt(s): ${error.message}`,
+        );
+        Sentry.withScope((scope) => {
+          scope.setTag('component', 'email-service');
+          scope.setTag('provider', 'resend');
+          scope.setTag('emailType', 'qr-reminder');
+          scope.setLevel('error');
+          scope.setContext('email', {
+            from: this.from,
+            toDomain,
+            attempts: attempt,
+          });
+          Sentry.captureException(new Error(`Resend QR reminder send failed: ${error.message}`));
+        });
+        return { success: false, error: error.message };
+      }
+
+      const delayMs = RETRY_BASE_MS * 2 ** (attempt - 1);
+      this.logger.warn(
+        `Resend transient QR reminder error on attempt ${attempt}/${MAX_SEND_ATTEMPTS} (toDomain=${toDomain}): ${error.message} — retrying in ${delayMs}ms`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+
+    throw new Error('qr reminder retry loop exited unexpectedly');
+  }
 }
 
 function resolveEmailVerificationLocale(locale: string): EmailVerificationLocale {
   return locale in emailVerificationCopy ? (locale as EmailVerificationLocale) : 'ko';
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
 }

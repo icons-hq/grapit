@@ -3,9 +3,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useLocale } from 'next-intl';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Loader2, X } from 'lucide-react';
 import { toast } from 'sonner';
-import type { SeatSelection, SeatState, SeatMapConfig } from '@grabit/shared';
+import type {
+  FloorAwareSeatSelection,
+  SeatMap,
+  SeatMapConfig,
+  SeatState,
+  Showtime,
+} from '@grabit/shared';
 import { usePerformanceDetail } from '@/hooks/use-performances';
 import {
   useSeatStatus,
@@ -18,28 +24,281 @@ import { useBookingStore } from '@/stores/use-booking-store';
 import { useBookingSocket } from '@/hooks/use-socket';
 import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
 import { ApiClientError } from '@/lib/api-client';
+import {
+  formatKstDateLabel,
+  formatKstTimeLabel,
+  getKstCalendarDate,
+  getKstCalendarKey,
+  isSameKstCalendarDate,
+} from '@/lib/booking-datetime';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import {
   getVisibleCopy,
   resolveVisibleCopyLocale,
 } from '@/lib/i18n/visible-copy';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import { BookingHeader } from './booking-header';
 import { DatePicker } from './date-picker';
+import { FloorSelector } from './floor-selector';
 import { ShowtimeChips } from './showtime-chips';
 import { SeatLegend } from './seat-legend';
 import { SeatMapViewer } from './seat-map-viewer';
-import { SeatSelectionPanel } from './seat-selection-panel';
-import { SeatSelectionSheet } from './seat-selection-sheet';
 import { TimerExpiredModal } from './timer-expired-modal';
-import { Skeleton } from '@/components/ui/skeleton';
 
-const MAX_SEATS = 4;
+const DEFAULT_FLOOR_KEY = '1F';
 
-function isSameDay(a: Date, b: Date): boolean {
+type RuntimeSeatIdentity = {
+  seatId: string;
+  floorKey: string;
+  seatKey: string;
+};
+
+type GroupedFloorSelection = {
+  floorKey: string;
+  floorLabel: string;
+  seats: FloorAwareSeatSelection[];
+};
+
+function parseRuntimeSeatIdentity(rawSeatIdOrKey: string): RuntimeSeatIdentity {
+  const separatorIndex = rawSeatIdOrKey.indexOf(':');
+  const floorKey = separatorIndex > 0
+    ? rawSeatIdOrKey.slice(0, separatorIndex)
+    : DEFAULT_FLOOR_KEY;
+  const seatId = separatorIndex > 0
+    ? rawSeatIdOrKey.slice(separatorIndex + 1)
+    : rawSeatIdOrKey;
+
+  return {
+    seatId,
+    floorKey,
+    seatKey: separatorIndex > 0 ? rawSeatIdOrKey : `${floorKey}:${seatId}`,
+  };
+}
+
+function SelectionGroups({
+  groups,
+  onRemove,
+}: {
+  groups: GroupedFloorSelection[];
+  onRemove: (seatKey: string) => void;
+}) {
+  if (groups.length === 0) {
+    return (
+      <p className="mt-3 text-sm text-gray-500">
+        선택한 좌석이 없습니다. 좌석을 선택하면 결제 단계로 이동할 수 있습니다.
+      </p>
+    );
+  }
+
   return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
+    <div className="mt-4 space-y-4">
+      {groups.map((group) => (
+        <section
+          key={group.floorKey}
+          className="rounded-xl border border-border bg-[#F5F5F7] p-4"
+        >
+          <h3 className="text-sm font-semibold text-gray-900">
+            {group.floorLabel}
+          </h3>
+          <div className="mt-3 space-y-2">
+            {group.seats.map((seat) => (
+              <div
+                key={seat.seatKey}
+                className="flex items-start justify-between gap-3 rounded-lg bg-white px-3 py-3"
+              >
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="inline-block size-3 rounded-full"
+                      style={{ backgroundColor: seat.tierColor }}
+                    />
+                    <span className="text-sm font-medium text-gray-700">
+                      {seat.tierName}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-sm text-gray-900">
+                    {seat.row}열 {seat.number}번
+                  </p>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="text-base font-semibold text-gray-900">
+                    {seat.price.toLocaleString()}원
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onRemove(seat.seatKey)}
+                    aria-label="좌석 선택 해제"
+                    className="flex size-7 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
+                  >
+                    <X className="size-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function DesktopSelectionSummary({
+  performanceTitle,
+  selectedDate,
+  selectedShowtime,
+  groups,
+  selectedSeatCount,
+  totalPrice,
+  onRemove,
+  onProceed,
+  isLoading,
+  disabledReason,
+}: {
+  performanceTitle: string;
+  selectedDate: Date | null;
+  selectedShowtime: Showtime | null;
+  groups: GroupedFloorSelection[];
+  selectedSeatCount: number;
+  totalPrice: number;
+  onRemove: (seatKey: string) => void;
+  onProceed: () => void;
+  isLoading: boolean;
+  disabledReason: string | null;
+}) {
+  return (
+    <aside className="hidden w-[360px] shrink-0 lg:block">
+      <div className="sticky top-16 space-y-5 rounded-2xl border border-border bg-white p-6 shadow-sm">
+        <div>
+          <p className="truncate text-base font-semibold text-gray-900">
+            {performanceTitle}
+          </p>
+          {selectedDate && selectedShowtime ? (
+            <p className="mt-1 text-sm text-gray-500">
+              {formatKstDateLabel(selectedShowtime.dateTime)} {formatKstTimeLabel(selectedShowtime.dateTime)}
+            </p>
+          ) : null}
+        </div>
+
+        <div>
+          <h2 className="text-xl font-semibold text-gray-900">선택 좌석</h2>
+          <SelectionGroups groups={groups} onRemove={onRemove} />
+        </div>
+
+        <div className="rounded-xl border border-border bg-[#F5F5F7] px-4 py-4">
+          <p className="text-sm text-gray-500">총 합계</p>
+          <div className="mt-2 flex items-baseline justify-between">
+            <span className="text-base text-gray-700">{selectedSeatCount}석</span>
+            <span className="text-xl font-semibold text-gray-900">
+              {totalPrice.toLocaleString()}원
+            </span>
+          </div>
+        </div>
+
+        {disabledReason ? (
+          <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
+            {disabledReason}
+          </p>
+        ) : null}
+
+        <Button
+          className="h-12 w-full text-base"
+          disabled={!!disabledReason || selectedSeatCount === 0 || isLoading}
+          onClick={onProceed}
+        >
+          {isLoading ? (
+            <>
+              <Loader2 className="mr-2 size-4 animate-spin" />
+              처리 중...
+            </>
+          ) : disabledReason ?? (selectedSeatCount === 0 ? '좌석을 선택해주세요' : '다음')}
+        </Button>
+      </div>
+    </aside>
+  );
+}
+
+function MobileSelectionSummary({
+  groups,
+  selectedSeatCount,
+  totalPrice,
+  onRemove,
+  onProceed,
+  isLoading,
+  disabledReason,
+}: {
+  groups: GroupedFloorSelection[];
+  selectedSeatCount: number;
+  totalPrice: number;
+  onRemove: (seatKey: string) => void;
+  onProceed: () => void;
+  isLoading: boolean;
+  disabledReason: string | null;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  useEffect(() => {
+    if (selectedSeatCount === 0) {
+      setIsOpen(false);
+    }
+  }, [selectedSeatCount]);
+
+  return (
+    <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-white/95 px-4 pb-[calc(env(safe-area-inset-bottom)+16px)] pt-3 shadow-[0_-12px_32px_rgba(0,0,0,0.08)] backdrop-blur lg:hidden">
+      {isOpen ? (
+        <div>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-base font-semibold text-gray-900">선택 좌석</h2>
+            <button
+              type="button"
+              onClick={() => setIsOpen(false)}
+              className="flex size-9 items-center justify-center rounded-full text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800"
+              aria-label="선택 좌석 접기"
+            >
+              <ChevronDown className="size-5" />
+            </button>
+          </div>
+          <div className="max-h-[45vh] overflow-y-auto pr-1">
+            <SelectionGroups groups={groups} onRemove={onRemove} />
+          </div>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => {
+            if (selectedSeatCount > 0) {
+              setIsOpen(true);
+            }
+          }}
+          className="mb-3 flex min-h-11 w-full items-center justify-between rounded-xl border border-border bg-[#F5F5F7] px-4 py-3 text-left"
+          aria-expanded={isOpen}
+        >
+          <span className="text-sm font-medium text-gray-900">
+            {selectedSeatCount === 0
+              ? '선택한 좌석이 없습니다'
+              : `${selectedSeatCount}석 선택 | ${totalPrice.toLocaleString()}원`}
+          </span>
+          {selectedSeatCount > 0 ? (
+            <span className="text-sm font-semibold text-primary">상세 보기</span>
+          ) : (
+            <span className="text-sm text-gray-500">좌석을 선택해주세요</span>
+          )}
+        </button>
+      )}
+
+      <Button
+        className="h-12 w-full text-base"
+        disabled={!!disabledReason || selectedSeatCount === 0 || isLoading}
+        onClick={onProceed}
+      >
+        {isLoading ? (
+          <>
+            <Loader2 className="mr-2 size-4 animate-spin" />
+            처리 중...
+          </>
+        ) : disabledReason ?? (selectedSeatCount === 0 ? '좌석을 선택해주세요' : '다음')}
+      </Button>
+    </div>
   );
 }
 
@@ -63,7 +322,9 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
     setTimerExpiry,
   } = useBookingStore();
 
-  // WebSocket real-time connection
+  const [selectedFloorKey, setSelectedFloorKey] = useState<string | null>(null);
+  const [isDatePickerOpen, setIsDatePickerOpen] = useState(true);
+
   useBookingSocket(selectedShowtimeId);
 
   const { data: seatStatusData } = useSeatStatus(selectedShowtimeId);
@@ -74,178 +335,315 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
   const { bookingEnabled, bookingDisabledMessage } = useRuntimeFlags();
   const bookingDisabledReason = bookingEnabled ? null : bookingDisabledMessage;
 
-  // All showtimes sourced from performance detail
+  const availableSeatMaps = useMemo(() => {
+    if (!performance) {
+      return [];
+    }
+
+    const performanceSeatMaps = performance.seatMaps ?? [];
+    const seatMaps = performanceSeatMaps.length > 0
+      ? performanceSeatMaps
+      : performance.seatMap
+        ? [performance.seatMap]
+        : [];
+
+    return [...seatMaps].sort((left, right) => left.sortOrder - right.sortOrder);
+  }, [performance]);
+
+  useEffect(() => {
+    if (selectedFloorKey && availableSeatMaps.some((seatMap) => seatMap.floorKey === selectedFloorKey)) {
+      return;
+    }
+
+    setSelectedFloorKey(availableSeatMaps[0]?.floorKey ?? null);
+  }, [availableSeatMaps, selectedFloorKey]);
+
+  const currentSeatMap = useMemo(
+    () => availableSeatMaps.find((seatMap) => seatMap.floorKey === selectedFloorKey)
+      ?? availableSeatMaps[0]
+      ?? null,
+    [availableSeatMaps, selectedFloorKey],
+  );
+
   const allShowtimes = useMemo(
     () => performance?.showtimes ?? [],
     [performance?.showtimes],
   );
 
-  // Available dates: unique dates from showtimes
   const availableDates = useMemo(() => {
     const dateMap = new Map<string, Date>();
-    for (const st of allShowtimes) {
-      const d = new Date(st.dateTime);
-      const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+    for (const showtime of allShowtimes) {
+      const key = getKstCalendarKey(showtime.dateTime);
       if (!dateMap.has(key)) {
-        dateMap.set(key, new Date(d.getFullYear(), d.getMonth(), d.getDate()));
+        dateMap.set(key, getKstCalendarDate(showtime.dateTime));
       }
     }
     return Array.from(dateMap.values());
   }, [allShowtimes]);
 
-  // Showtimes for selected date
   const filteredShowtimes = useMemo(() => {
-    if (!selectedDate) return [];
-    return allShowtimes.filter((st) =>
-      isSameDay(new Date(st.dateTime), selectedDate),
+    if (!selectedDate) {
+      return [];
+    }
+
+    return allShowtimes.filter((showtime) =>
+      isSameKstCalendarDate(showtime.dateTime, selectedDate),
     );
   }, [allShowtimes, selectedDate]);
 
-  // Selected showtime object
   const selectedShowtime = useMemo(
-    () => allShowtimes.find((st) => st.id === selectedShowtimeId) ?? null,
+    () => allShowtimes.find((showtime) => showtime.id === selectedShowtimeId) ?? null,
     [allShowtimes, selectedShowtimeId],
   );
 
-  // Seat states map
-  const seatStatesMap = useMemo(() => {
-    const map = new Map<string, SeatState>();
-    if (seatStatusData?.seats) {
-      for (const [seatId, state] of Object.entries(seatStatusData.seats)) {
-        map.set(seatId, state);
-      }
+  const tierInfoByFloorKey = useMemo(() => {
+    const map = new Map<string, Map<string, { tierName: string; color: string; price: number }>>();
+    if (!performance?.priceTiers) {
+      return map;
     }
+
+    for (const seatMap of availableSeatMaps) {
+      const seatConfig = seatMap.seatConfig;
+      if (!seatConfig) {
+        map.set(seatMap.floorKey, new Map());
+        continue;
+      }
+
+      const tierMap = new Map<string, { tierName: string; color: string; price: number }>();
+      for (const tier of seatConfig.tiers) {
+        const priceTier = performance.priceTiers.find((item) => item.tierName === tier.tierName);
+        for (const seatId of tier.seatIds) {
+          tierMap.set(seatId, {
+            tierName: tier.tierName,
+            color: tier.color,
+            price: priceTier?.price ?? 0,
+          });
+        }
+      }
+      map.set(seatMap.floorKey, tierMap);
+    }
+
+    return map;
+  }, [availableSeatMaps, performance?.priceTiers]);
+
+  const seatStatesByFloorKey = useMemo(() => {
+    const map = new Map<string, Map<string, SeatState>>();
+    if (!seatStatusData?.seats) {
+      return map;
+    }
+
+    for (const [runtimeSeatId, state] of Object.entries(seatStatusData.seats)) {
+      const seatIdentity = parseRuntimeSeatIdentity(runtimeSeatId);
+      const floorMap = map.get(seatIdentity.floorKey) ?? new Map<string, SeatState>();
+      floorMap.set(seatIdentity.seatId, state);
+      map.set(seatIdentity.floorKey, floorMap);
+    }
+
     return map;
   }, [seatStatusData]);
 
-  // Selected seat IDs as a set
-  const selectedSeatIds = useMemo(
-    () => new Set(selectedSeats.map((s) => s.seatId)),
-    [selectedSeats],
+  const seatStatesMap = useMemo(
+    () => currentSeatMap
+      ? seatStatesByFloorKey.get(currentSeatMap.floorKey) ?? new Map<string, SeatState>()
+      : new Map<string, SeatState>(),
+    [currentSeatMap, seatStatesByFloorKey],
   );
 
-  // Seat config
-  const seatConfig: SeatMapConfig | null =
-    performance?.seatMap?.seatConfig ?? null;
+  const selectedSeatIds = useMemo(
+    () => new Set(
+      selectedSeats
+        .filter((seat) => seat.floorKey === currentSeatMap?.floorKey)
+        .map((seat) => seat.seatId),
+    ),
+    [currentSeatMap?.floorKey, selectedSeats],
+  );
 
-  // Tiers for legend: merge seatConfig with priceTiers
+  const seatConfig: SeatMapConfig | null = currentSeatMap?.seatConfig ?? null;
+  const tierInfoMap = useMemo(
+    () => (currentSeatMap ? tierInfoByFloorKey.get(currentSeatMap.floorKey) ?? new Map() : new Map()),
+    [currentSeatMap, tierInfoByFloorKey],
+  );
+
   const legendTiers = useMemo(() => {
-    if (!seatConfig || !performance?.priceTiers) return [];
+    if (!seatConfig || !performance?.priceTiers) {
+      return [];
+    }
+
     return seatConfig.tiers
       .map((tier) => {
-        const priceTier = performance.priceTiers.find(
-          (pt) => pt.tierName === tier.tierName,
-        );
+        const priceTier = performance.priceTiers.find((item) => item.tierName === tier.tierName);
         return {
           name: tier.tierName,
           color: tier.color,
           price: priceTier?.price ?? 0,
         };
       })
-      .sort((a, b) => b.price - a.price);
+      .sort((left, right) => right.price - left.price);
   }, [seatConfig, performance?.priceTiers]);
 
-  // Build tier info map for seat click handling
-  const tierInfoMap = useMemo(() => {
-    const map = new Map<
-      string,
-      { tierName: string; color: string; price: number }
-    >();
-    if (!seatConfig || !performance?.priceTiers) return map;
-    for (const tier of seatConfig.tiers) {
-      const priceTier = performance.priceTiers.find(
-        (pt) => pt.tierName === tier.tierName,
-      );
-      for (const seatId of tier.seatIds) {
-        map.set(seatId, {
-          tierName: tier.tierName,
-          color: tier.color,
-          price: priceTier?.price ?? 0,
-        });
+  const maxTicketsPerUser = performance?.bookingPolicy?.maxTicketsPerUser ?? 1;
+  const ticketLimitCopy = `이 공연은 1인 ${maxTicketsPerUser}매까지 예매할 수 있습니다`;
+  const seatChangePolicyCopy = '결제 완료 후 좌석 변경은 지원되지 않으며, 취소/환불 후 다시 예매해야 합니다.';
+
+  const floorOrderMap = useMemo(
+    () => new Map(availableSeatMaps.map((seatMap) => [seatMap.floorKey, seatMap.sortOrder])),
+    [availableSeatMaps],
+  );
+
+  const groupedSelections = useMemo(() => {
+    const groups = new Map<string, GroupedFloorSelection>();
+
+    for (const seat of selectedSeats) {
+      const existingGroup = groups.get(seat.floorKey);
+      if (existingGroup) {
+        existingGroup.seats.push(seat);
+        continue;
       }
+
+      groups.set(seat.floorKey, {
+        floorKey: seat.floorKey,
+        floorLabel: seat.floorLabel,
+        seats: [seat],
+      });
     }
-    return map;
-  }, [seatConfig, performance?.priceTiers]);
 
-  // Restore session: if user has existing locks from before refresh
+    return Array.from(groups.values()).sort((left, right) => {
+      const leftOrder = floorOrderMap.get(left.floorKey) ?? Number.MAX_SAFE_INTEGER;
+      const rightOrder = floorOrderMap.get(right.floorKey) ?? Number.MAX_SAFE_INTEGER;
+      return leftOrder - rightOrder;
+    });
+  }, [floorOrderMap, selectedSeats]);
+
+  const totalPrice = useMemo(
+    () => selectedSeats.reduce((sum, seat) => sum + seat.price, 0),
+    [selectedSeats],
+  );
+
+  const floorOptions = useMemo(() => {
+    return availableSeatMaps.map((seatMap) => {
+      const selectedCount = selectedSeats.filter((seat) => seat.floorKey === seatMap.floorKey).length;
+      const floorStates = seatStatesByFloorKey.get(seatMap.floorKey);
+      const seatIds = seatMap.seatConfig?.tiers.flatMap((tier) => tier.seatIds) ?? [];
+      const hasAvailableSeats = seatIds.length === 0
+        ? true
+        : seatIds.some((seatId) => {
+          const state = floorStates?.get(seatId) ?? 'available';
+          return state !== 'locked' && state !== 'sold';
+        });
+
+      return {
+        floorKey: seatMap.floorKey,
+        floorLabel: seatMap.floorLabel,
+        selectedCount,
+        isSoldOut: !hasAvailableSeats,
+      };
+    });
+  }, [availableSeatMaps, seatStatesByFloorKey, selectedSeats]);
+
+  const currentFloorOption = floorOptions.find((option) => option.floorKey === currentSeatMap?.floorKey) ?? null;
+
   useEffect(() => {
-    if (!myLocksData || myLocksData.seatIds.length === 0) return;
-    if (selectedSeats.length > 0) return; // already have local state
+    if (!myLocksData || myLocksData.seatIds.length === 0) {
+      return;
+    }
+    if (selectedSeats.length > 0) {
+      return;
+    }
 
-    for (const seatId of myLocksData.seatIds) {
-      const info = tierInfoMap.get(seatId);
-      if (!info) continue;
-      const parts = seatId.split('-');
+    for (const runtimeSeatId of myLocksData.seatIds) {
+      const seatIdentity = parseRuntimeSeatIdentity(runtimeSeatId);
+      const floorSeatMap = availableSeatMaps.find((seatMap) => seatMap.floorKey === seatIdentity.floorKey);
+      const tierInfo = tierInfoByFloorKey.get(seatIdentity.floorKey)?.get(seatIdentity.seatId);
+      if (!floorSeatMap || !tierInfo) {
+        continue;
+      }
+
+      const parts = seatIdentity.seatId.split('-');
       addSeat({
-        seatId,
-        tierName: info.tierName,
-        tierColor: info.color,
-        row: parts[0] ?? '',
+        seatId: seatIdentity.seatId,
+        tierName: tierInfo.tierName,
+        tierColor: tierInfo.color,
+        row: parts[0] ?? seatIdentity.seatId,
         number: parts[1] ?? '',
-        price: info.price,
+        price: tierInfo.price,
+        floorKey: floorSeatMap.floorKey,
+        floorLabel: floorSeatMap.floorLabel,
+        seatKey: seatIdentity.seatKey,
       });
     }
 
     if (myLocksData.expiresAt) {
       setTimerExpiry(myLocksData.expiresAt);
     }
-  }, [myLocksData, tierInfoMap, selectedSeats.length, addSeat, setTimerExpiry]);
+  }, [
+    addSeat,
+    availableSeatMaps,
+    myLocksData,
+    selectedSeats.length,
+    setTimerExpiry,
+    tierInfoByFloorKey,
+  ]);
 
-  // Seat click handler (optimistic UI)
   const handleSeatClick = useCallback(
     (seatId: string) => {
-      if (!selectedShowtimeId) return;
+      if (!selectedShowtimeId || !currentSeatMap) {
+        return;
+      }
       if (!bookingEnabled) {
         toast.info(bookingDisabledMessage);
         return;
       }
 
-      // Locked seat: show toast and return
       const seatState = seatStatesMap.get(seatId);
       if (seatState === 'locked' && !selectedSeatIds.has(seatId)) {
         toast.info('이미 다른 사용자가 선택한 좌석입니다');
         return;
       }
 
-      // If already selected -> deselect
-      if (selectedSeatIds.has(seatId)) {
-        removeSeat(seatId);
-        unlockSeat.mutate({ showtimeId: selectedShowtimeId, seatId });
+      const existingSeat = selectedSeats.find(
+        (seat) => seat.floorKey === currentSeatMap.floorKey && seat.seatId === seatId,
+      );
+      if (existingSeat) {
+        removeSeat(existingSeat.seatKey);
+        unlockSeat.mutate({ showtimeId: selectedShowtimeId, seatId: existingSeat.seatKey });
         return;
       }
 
-      // Max seats check
-      if (selectedSeats.length >= MAX_SEATS) {
+      if (selectedSeats.length >= maxTicketsPerUser) {
         toast.error(
-          '최대 4석까지 선택할 수 있습니다. 다른 좌석을 먼저 해제해주세요.',
+          `${ticketLimitCopy}. 다른 좌석을 먼저 해제해주세요.`,
         );
         return;
       }
 
-      // Get tier info for this seat
       const info = tierInfoMap.get(seatId);
-      if (!info) return;
+      if (!info) {
+        return;
+      }
 
-      // Parse row/number from seatId (e.g. "A-1")
       const parts = seatId.split('-');
-      const row = parts[0] ?? seatId;
-      const number = parts[1] ?? '';
-
-      const seatSelection: SeatSelection = {
+      const seatSelection: FloorAwareSeatSelection = {
         seatId,
         tierName: info.tierName,
         tierColor: info.color,
-        row,
-        number,
+        row: parts[0] ?? seatId,
+        number: parts[1] ?? '',
         price: info.price,
+        floorKey: currentSeatMap.floorKey,
+        floorLabel: currentSeatMap.floorLabel,
+        seatKey: `${currentSeatMap.floorKey}:${seatId}`,
       };
 
-      // Optimistic: add immediately
       addSeat(seatSelection);
 
-      // Call lock API
       lockSeat.mutate(
-        { showtimeId: selectedShowtimeId, seatId },
+        {
+          showtimeId: selectedShowtimeId,
+          seatId,
+          floorKey: currentSeatMap.floorKey,
+          floorLabel: currentSeatMap.floorLabel,
+          seatKey: seatSelection.seatKey,
+        },
         {
           onSuccess: (response) => {
             if (response.expiresAt) {
@@ -253,64 +651,69 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
             }
           },
           onError: (error: unknown) => {
-            // Race condition: revert optimistic update
-            removeSeat(seatId);
-            if (
-              error instanceof ApiClientError &&
-              error.statusCode === 409
-            ) {
+            removeSeat(seatSelection.seatKey);
+            if (error instanceof ApiClientError && error.statusCode === 409) {
               toast.info('이미 다른 사용자가 선택한 좌석입니다');
-            } else {
-              toast.error(
-                '일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요.',
-              );
+              return;
             }
+
+            toast.error('일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요.');
           },
         },
       );
     },
     [
-      selectedShowtimeId,
+      addSeat,
+      bookingDisabledMessage,
+      bookingEnabled,
+      currentSeatMap,
+      lockSeat,
+      maxTicketsPerUser,
+      removeSeat,
       seatStatesMap,
       selectedSeatIds,
-      selectedSeats.length,
-      tierInfoMap,
-      addSeat,
-      removeSeat,
-      lockSeat,
-      unlockSeat,
+      selectedSeats,
+      selectedShowtimeId,
       setTimerExpiry,
-      bookingEnabled,
-      bookingDisabledMessage,
+      ticketLimitCopy,
+      tierInfoMap,
+      unlockSeat,
     ],
   );
 
-  // Remove seat from panel
   const handleRemoveSeat = useCallback(
-    (seatId: string) => {
-      if (!selectedShowtimeId) return;
-      removeSeat(seatId);
-      unlockSeat.mutate({ showtimeId: selectedShowtimeId, seatId });
+    (seatKey: string) => {
+      if (!selectedShowtimeId) {
+        return;
+      }
+
+      const seat = selectedSeats.find((selectedSeat) => selectedSeat.seatKey === seatKey);
+      if (!seat) {
+        return;
+      }
+
+      removeSeat(seat.seatKey);
+      unlockSeat.mutate({ showtimeId: selectedShowtimeId, seatId: seat.seatKey });
     },
-    [selectedShowtimeId, removeSeat, unlockSeat],
+    [removeSeat, selectedSeats, selectedShowtimeId, unlockSeat],
   );
 
-  // "Next" button handler — navigate to confirm page
   const handleProceed = useCallback(() => {
-    if (!selectedShowtimeId || !performance) return;
+    if (!selectedShowtimeId || !performance) {
+      return;
+    }
     if (!bookingEnabled) {
       toast.info(bookingDisabledMessage);
       return;
     }
 
-    const selectedSt = allShowtimes.find((st) => st.id === selectedShowtimeId);
-
+    const selectedPerformanceShowtime = allShowtimes.find((showtime) => showtime.id === selectedShowtimeId);
     useBookingStore.getState().setBookingData({
       selectedSeats,
       showtimeId: selectedShowtimeId,
       performanceId,
       performanceTitle: performance.title,
-      showDateTime: selectedSt?.dateTime ?? null,
+      showDateTime: selectedPerformanceShowtime?.dateTime ?? null,
       venue: performance.venue?.name ?? null,
       posterUrl: performance.posterUrl ?? null,
       expiresAt: timerExpiresAt,
@@ -320,43 +723,36 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
       getLocalizedPathname(`/booking/${performanceId}/confirm`, activeLocale),
     );
   }, [
-    selectedShowtimeId,
-    selectedSeats,
-    performance,
+    activeLocale,
     allShowtimes,
-    performanceId,
-    timerExpiresAt,
-    router,
-    bookingEnabled,
     bookingDisabledMessage,
+    bookingEnabled,
+    performance,
+    performanceId,
+    router,
+    selectedSeats,
+    selectedShowtimeId,
+    timerExpiresAt,
   ]);
 
   const handleBack = useCallback(() => {
     router.push(
       getLocalizedPathname(`/performance/${performanceId}`, activeLocale),
     );
-  }, [router, performanceId]);
+  }, [activeLocale, performanceId, router]);
 
-  // Timer expiry handler
   const handleTimerExpire = useCallback(() => {
     useBookingStore.getState().expireTimer();
   }, []);
 
-  // Timer expiry modal reset handler:
-  // Read showtimeId BEFORE resetBooking clears it, then fire-and-forget unlock-all.
-  // If API call fails, locks expire via TTL anyway -- no error toast needed.
   const handleTimerReset = useCallback(() => {
-    const { selectedShowtimeId: stId } = useBookingStore.getState();
-    if (stId) {
-      unlockAll.mutate({ showtimeId: stId });
+    const { selectedShowtimeId: showtimeId } = useBookingStore.getState();
+    if (showtimeId) {
+      unlockAll.mutate({ showtimeId });
     }
     useBookingStore.getState().resetBooking();
   }, [unlockAll]);
 
-  // Collapsible state for mobile date/showtime picker
-  const [isDatePickerOpen, setIsDatePickerOpen] = useState(true);
-
-  // Date selection handler
   const handleDateSelect = useCallback(
     (date: Date) => {
       setDate(date);
@@ -364,6 +760,40 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
     },
     [setDate, setShowtime],
   );
+
+  if (bookingDisabledReason) {
+    const disabledTitle = performance?.title ?? '예매 안내';
+    const backLabel = performance?.title ?? '공연 상세로 돌아가기';
+
+    return (
+      <div className="flex flex-1 flex-col">
+        <BookingHeader
+          performanceTitle={disabledTitle}
+          expiresAt={null}
+          onBack={handleBack}
+          onExpire={handleTimerExpire}
+        />
+
+        <main className="mx-auto flex w-full max-w-[760px] flex-1 items-center px-4 py-12">
+          <section
+            role="status"
+            className="w-full rounded-lg border border-amber-200 bg-amber-50 px-5 py-6 text-center"
+          >
+            <p className="text-base font-semibold text-amber-900">
+              {bookingDisabledReason}
+            </p>
+            <button
+              type="button"
+              onClick={handleBack}
+              className="mt-4 inline-flex min-h-10 items-center rounded-md bg-white px-4 text-sm font-semibold text-amber-900 shadow-sm ring-1 ring-amber-200 hover:bg-amber-100"
+            >
+              {backLabel}
+            </button>
+          </section>
+        </main>
+      </div>
+    );
+  }
 
   if (performanceLoading) {
     return (
@@ -403,37 +833,6 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
     );
   }
 
-  if (bookingDisabledReason) {
-    return (
-      <div className="flex flex-1 flex-col">
-        <BookingHeader
-          performanceTitle={performance.title}
-          expiresAt={null}
-          onBack={handleBack}
-          onExpire={handleTimerExpire}
-        />
-
-        <main className="mx-auto flex w-full max-w-[760px] flex-1 items-center px-4 py-12">
-          <section
-            role="status"
-            className="w-full rounded-lg border border-amber-200 bg-amber-50 px-5 py-6 text-center"
-          >
-            <p className="text-base font-semibold text-amber-900">
-              {bookingDisabledReason}
-            </p>
-            <button
-              type="button"
-              onClick={handleBack}
-              className="mt-4 inline-flex min-h-10 items-center rounded-md bg-white px-4 text-sm font-semibold text-amber-900 shadow-sm ring-1 ring-amber-200 hover:bg-amber-100"
-            >
-              {performance.title}
-            </button>
-          </section>
-        </main>
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-1 flex-col">
       <BookingHeader
@@ -443,11 +842,9 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
         onExpire={handleTimerExpire}
       />
 
-      <main className="mx-auto w-full max-w-[1280px] px-4 py-4 pb-24 lg:px-6 lg:py-8 lg:pb-8">
+      <main className="mx-auto w-full max-w-[1280px] px-4 py-4 pb-32 lg:px-6 lg:py-8 lg:pb-8">
         <div className="flex flex-col lg:flex-row lg:gap-8">
-          {/* Left column */}
           <div className="min-w-0 flex-1 space-y-6">
-            {/* Date/Showtime picker - collapsible on mobile */}
             <div className="rounded-lg border border-border p-3 lg:border-0 lg:p-0">
               <button
                 type="button"
@@ -466,7 +863,6 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
               </button>
 
               <div className={`${isDatePickerOpen ? 'block' : 'hidden'} lg:block`}>
-                {/* Date picker */}
                 <div className="mt-3 lg:mt-0">
                   <h2 className="mb-2 text-sm font-normal text-gray-700">
                     날짜 선택
@@ -478,8 +874,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
                   />
                 </div>
 
-                {/* Showtime chips */}
-                {selectedDate && (
+                {selectedDate ? (
                   <div className="mt-4 lg:mt-6">
                     <h2 className="mb-2 text-sm font-normal text-gray-700">
                       회차 선택
@@ -489,47 +884,59 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
                       selected={selectedShowtimeId}
                       onSelect={(id) => {
                         setShowtime(id);
-                        // Auto-collapse on mobile after showtime selection
                         if (id && window.innerWidth < 1024) {
                           setIsDatePickerOpen(false);
                         }
                       }}
                     />
                   </div>
-                )}
+                ) : null}
               </div>
             </div>
 
-            {/* Seat legend + map */}
-            {selectedShowtimeId && seatConfig && performance.seatMap && (
+            {selectedShowtimeId && currentSeatMap && seatConfig ? (
               <>
-                {bookingDisabledReason && (
-                  <div
-                    role="status"
-                    className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800"
-                  >
-                    {bookingDisabledReason}
-                  </div>
-                )}
+                <FloorSelector
+                  floors={floorOptions}
+                  selectedFloorKey={currentSeatMap.floorKey}
+                  onChange={setSelectedFloorKey}
+                />
+
+                <section className="rounded-2xl border border-border bg-[#F5F5F7] px-4 py-4">
+                  <p className="text-sm font-semibold text-gray-900">
+                    {ticketLimitCopy}
+                  </p>
+                  <p className="mt-1 text-sm text-gray-600">
+                    {seatChangePolicyCopy}
+                  </p>
+                  {currentFloorOption?.isSoldOut ? (
+                    <p className="mt-2 text-sm font-semibold text-amber-800">
+                      현재 층은 선택 가능한 좌석이 없습니다. 다른 층을 확인해주세요.
+                    </p>
+                  ) : null}
+                </section>
+
                 <SeatLegend tiers={legendTiers} />
+
                 <SeatMapViewer
-                  svgUrl={performance.seatMap.svgUrl}
+                  svgUrl={currentSeatMap.svgUrl}
                   seatConfig={seatConfig}
                   seatStates={seatStatesMap}
                   selectedSeatIds={selectedSeatIds}
                   onSeatClick={handleSeatClick}
-                  maxSelect={MAX_SEATS}
+                  maxSelect={maxTicketsPerUser}
                 />
               </>
-            )}
+            ) : null}
           </div>
 
-          {/* Right column: desktop panel */}
-          <SeatSelectionPanel
+          <DesktopSelectionSummary
             performanceTitle={performance.title}
             selectedDate={selectedDate}
             selectedShowtime={selectedShowtime}
-            selectedSeats={selectedSeats}
+            groups={groupedSelections}
+            selectedSeatCount={selectedSeats.length}
+            totalPrice={totalPrice}
             onRemove={handleRemoveSeat}
             onProceed={handleProceed}
             isLoading={lockSeat.isPending}
@@ -538,19 +945,18 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
         </div>
       </main>
 
-      {/* Mobile bottom sheet */}
-      <SeatSelectionSheet
-        performanceTitle={performance.title}
-        selectedDate={selectedDate}
-        selectedShowtime={selectedShowtime}
-        selectedSeats={selectedSeats}
-        onRemove={handleRemoveSeat}
-        onProceed={handleProceed}
-        isLoading={lockSeat.isPending}
-        disabledReason={bookingDisabledReason}
-      />
+      {selectedShowtimeId ? (
+        <MobileSelectionSummary
+          groups={groupedSelections}
+          selectedSeatCount={selectedSeats.length}
+          totalPrice={totalPrice}
+          onRemove={handleRemoveSeat}
+          onProceed={handleProceed}
+          isLoading={lockSeat.isPending}
+          disabledReason={bookingDisabledReason}
+        />
+      ) : null}
 
-      {/* Timer expiry modal */}
       <TimerExpiredModal open={isTimerExpired} onReset={handleTimerReset} />
     </div>
   );

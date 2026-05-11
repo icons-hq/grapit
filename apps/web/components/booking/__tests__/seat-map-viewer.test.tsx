@@ -55,6 +55,26 @@ const SVG_CONTENT = `
 </svg>
 `;
 
+const SVG_WITH_TEXT_OVERLAY = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 120">
+  <g class="seat-cell">
+    <rect data-seat-id="A-1" x="20" y="20" width="36" height="24" rx="4" />
+    <text x="38" y="36" text-anchor="middle">1</text>
+  </g>
+  <g class="seat-cell">
+    <rect data-seat-id="A-2" x="80" y="20" width="36" height="24" rx="4" />
+    <text x="98" y="36" text-anchor="middle">2</text>
+  </g>
+</svg>
+`;
+
+const SPECIAL_SEAT_ID = 'A-"1\\vip';
+const SVG_WITH_SPECIAL_SEAT_ID = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 120">
+  <rect data-seat-id="A-&quot;1\\vip" x="20" y="20" width="36" height="24" rx="4" />
+</svg>
+`;
+
 const mockSeatConfig: SeatMapConfig = {
   tiers: [
     { tierName: 'VIP', color: '#6C3CE0', seatIds: ['A-1', 'A-2'] },
@@ -198,6 +218,41 @@ describe('SeatMapViewer', () => {
 
     const seatA1 = container.querySelector('[data-seat-id="A-1"]')!;
     fireEvent.click(seatA1);
+    expect(onSeatClick).toHaveBeenCalledWith('A-1');
+  });
+
+  it('clicking centered seat-number text over A-1 still selects the seat', async () => {
+    const onSeatClick = vi.fn();
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      text: () => Promise.resolve(SVG_WITH_TEXT_OVERLAY),
+    });
+
+    const { container } = render(
+      <SeatMapViewer
+        svgUrl="https://example.com/text-overlay.svg"
+        seatConfig={mockSeatConfig}
+        seatStates={new Map<string, SeatState>([
+          ['A-1', 'available'],
+          ['A-2', 'available'],
+        ])}
+        selectedSeatIds={new Set()}
+        onSeatClick={onSeatClick}
+        maxSelect={4}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-seat-id="A-1"]')).toBeTruthy();
+    });
+
+    const seatLabel = Array.from(container.querySelectorAll('text')).find(
+      (node) => node.textContent?.trim() === '1',
+    );
+
+    expect(seatLabel).toBeTruthy();
+    expect(seatLabel?.getAttribute('pointer-events')).toBe('none');
+    fireEvent.click(seatLabel!);
     expect(onSeatClick).toHaveBeenCalledWith('A-1');
   });
 
@@ -360,6 +415,67 @@ describe('SeatMapViewer', () => {
     });
   });
 
+  it('styles selected and pending seats when the seat id contains CSS selector characters', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      text: () => Promise.resolve(SVG_WITH_SPECIAL_SEAT_ID),
+    });
+
+    const specialSeatConfig: SeatMapConfig = {
+      tiers: [
+        {
+          tierName: 'VIP',
+          color: '#3B82F6',
+          seatIds: [SPECIAL_SEAT_ID],
+        },
+      ],
+    };
+    const seatStates = new Map<string, SeatState>([
+      [SPECIAL_SEAT_ID, 'available'],
+    ]);
+
+    const { container, rerender } = render(
+      <SeatMapViewer
+        svgUrl="https://example.com/special-seat-id.svg"
+        seatConfig={specialSeatConfig}
+        seatStates={seatStates}
+        selectedSeatIds={new Set([SPECIAL_SEAT_ID])}
+        onSeatClick={() => {}}
+        maxSelect={4}
+      />,
+    );
+
+    const findSpecialSeat = () =>
+      Array.from(container.querySelectorAll<SVGElement>('[data-seat-id]')).find(
+        (element) => element.getAttribute('data-seat-id') === SPECIAL_SEAT_ID,
+      );
+
+    await waitFor(() => {
+      const seat = findSpecialSeat();
+      expect(seat).toBeTruthy();
+      expect(seat?.style.transition).toContain('fill 150ms');
+      expect(seat?.getAttribute('fill')).toBe('#6C3CE0');
+    });
+
+    rerender(
+      <SeatMapViewer
+        svgUrl="https://example.com/special-seat-id.svg"
+        seatConfig={specialSeatConfig}
+        seatStates={seatStates}
+        selectedSeatIds={new Set()}
+        onSeatClick={() => {}}
+        maxSelect={4}
+      />,
+    );
+
+    await waitFor(() => {
+      const seat = findSpecialSeat();
+      expect(seat).toBeTruthy();
+      expect(seat?.style.transition).toContain('fill 150ms');
+      expect(seat?.getAttribute('fill')).toBe('#3B82F6');
+    });
+  });
+
   it('shows error state when SVG fetch fails', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: false,
@@ -447,6 +563,7 @@ describe('SeatMapViewer', () => {
       const checkmark = container.querySelector('[data-seat-checkmark]');
       expect(checkmark).toBeTruthy();
       expect(checkmark?.tagName.toLowerCase()).toBe('text');
+      expect(checkmark?.getAttribute('pointer-events')).toBe('none');
     });
   });
 

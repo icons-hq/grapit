@@ -117,6 +117,53 @@ Plans:
 
 **Merged from:** 30 Queue + WAF + prewarm, 31 Seat selection refinements, 32 Payment + refund + QR issuance
 
+**Plans:** 22/22 plans complete
+
+Plans:
+**Wave 1**
+- [x] 24-01-PLAN.md — Define shared booking-core DTO/zod contracts for queue, floor-aware booking, payment, refund, and QR
+
+**Wave 2**
+- [x] 24-02-PLAN.md — Implement Phase 24 Drizzle schema changes for floors, policy, payment deadline, refund, and QR state
+
+**Wave 3**
+- [x] 24-03-PLAN.md — Run the blocking Phase 24 Drizzle generate/migrate gate
+
+**Wave 4**
+- [x] 24-04-PLAN.md — Implement the admission queue module and API-side mutation guard
+- [x] 24-05-PLAN.md — Implement traffic-defense decisions, protected prewarm control path, and operator runbook
+- [x] 24-06-PLAN.md — Expose multi-floor performance/admin contracts and persistence without UI editor coupling
+
+**Wave 5**
+- [x] 24-07-PLAN.md — Enforce floor-aware booking runtime and policy semantics on the backend
+- [x] 24-08-PLAN.md — Wire the queue waiting route UX and localized retry/challenge/block states
+- [x] 24-15-PLAN.md — Add the admin floor editor, multi-floor SVG preview wiring, and booking-policy controls
+
+**Wave 6**
+- [x] 24-09-PLAN.md — Implement backend synchronous/asynchronous Toss payment branching and webhook idempotency
+- [x] 24-16-PLAN.md — Add the floor selector, grouped booking state, and policy-aligned booking UI
+
+**Wave 7**
+- [x] 24-10-PLAN.md — Render the payment deadline, overseas disclaimer, and localized confirm-page payment copy
+- [x] 24-11-PLAN.md — Implement refund state orchestration and delayed cancelled-seat release jobs
+
+**Wave 8**
+- [x] 24-12-PLAN.md — Implement the admin manual-open exception path
+- [x] 24-17-PLAN.md — Render pending/failure/expired payment recovery UI and Toss payment recovery E2E
+
+**Wave 9**
+- [x] 24-13-PLAN.md — Issue QR tickets, schedule D-1 QR email, and expose QR on booking complete/My Page
+
+**Wave 10**
+- [x] 24-14-PLAN.md — Render refund preview, refund timeline, and delayed-reopen guidance in reservation detail
+
+**Wave 11** *(gap closure after automated UAT)*
+- [x] 24-18-PLAN.md — Break the Payment/Ticket/Jobs bootstrap cycle so the built API cold-start reaches `/api/v1/health`
+- [x] 24-19-PLAN.md — Refresh booking integration fixtures for floor-aware seatKey/policy semantics and remove the duplicate fresh-migration index from `0012`
+- [x] 24-20-PLAN.md — Scope queue waiting Playwright metric locators so the browser slice passes without strict-text ambiguity
+- [x] 24-21-PLAN.md — Operationalize the live Cloud Scheduler prewarm rollout, durable deploy env contract, and GCP verification evidence
+- [x] 24-22-PLAN.md — Fix seat-number overlay hit-targets and add desktop/mobile browser regression for multi-floor selection
+
 **Success criteria:**
 1. Queue admission uses Valkey Sorted Set and batch admission with position, ETA, and remaining-seat updates; booking APIs require valid admission.
 2. WAF/rate-limit/bot/macro rules and Cloud Scheduler prewarm runbook are documented and verified.
@@ -178,7 +225,7 @@ Plans:
 |-----------|-------------|--------------|----------------|--------|
 | v1.0 MVP | 1-5 | archived | 23/23 | Shipped |
 | v1.1 안정화 + 고도화 | 6-21 | archived | 77/77 | Shipped |
-| v2.0 Fanmeet Launch | 22-27 | 39/39 mapped | 5/5 | Ready for Phase 23 planning |
+| v2.0 Fanmeet Launch | 22-27 | 39/39 mapped | 47/47 planned tasks complete through Phase 24 | Ready for Phase 25 planning |
 
 ## Backlog
 

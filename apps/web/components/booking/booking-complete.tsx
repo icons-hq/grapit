@@ -1,7 +1,8 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { CheckCircle2 } from 'lucide-react';
+import { CheckCircle2, Mail, QrCode } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
@@ -121,11 +122,44 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
         </CardContent>
       </Card>
 
+      <Card className="w-full border-[#E9DFFF] bg-[#F8F5FF]">
+        <CardContent className="space-y-4 py-5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <QrCode className="h-5 w-5 text-[#6C3CE0]" />
+                <h2 className="text-base font-semibold text-gray-900">QR 티켓</h2>
+              </div>
+              <p className="text-sm text-gray-700">
+                결제가 완료되었습니다. QR 티켓은 마이페이지에서 바로 확인할 수 있습니다.
+              </p>
+            </div>
+            <Badge className="bg-[#F0FDF4] text-[#15803D]">발급 완료</Badge>
+          </div>
+
+          <div className="rounded-xl border border-white/80 bg-white/90 p-4">
+            <div className="flex items-start gap-3">
+              <Mail className="mt-0.5 h-4 w-4 text-[#6C3CE0]" />
+              <p className="text-sm text-gray-700">
+                QR 티켓 안내 메일은 공연 24시간 전에 다시 발송됩니다.
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
       <Separator />
 
       {/* CTA buttons */}
       <div className="flex w-full flex-col gap-3 pb-8">
         <Button
+          className="h-12 w-full"
+          onClick={() => router.push(`/mypage/reservations/${booking.id}`)}
+        >
+          QR 티켓 보기
+        </Button>
+        <Button
+          variant="secondary"
           className="h-12 w-full"
           onClick={() => router.push('/mypage?tab=reservations')}
         >

@@ -19,7 +19,9 @@ const {
   requestPaymentMock,
   routerPushMock,
   routerReplaceMock,
+  usePerformanceDetailMock,
   useLocaleMock,
+  useTranslationsMock,
   useRuntimeFlagsMock,
 } = vi.hoisted(() => ({
   lockSeatMutateMock: vi.fn(),
@@ -27,7 +29,40 @@ const {
   requestPaymentMock: vi.fn(),
   routerPushMock: vi.fn(),
   routerReplaceMock: vi.fn(),
+  usePerformanceDetailMock: vi.fn(),
   useLocaleMock: vi.fn(() => 'ko'),
+  useTranslationsMock: vi.fn(() => (key: string, values?: Record<string, string>) => {
+    const messages: Record<string, string> = {
+      'paymentDeadline.badge': '결제 가능 시간',
+      'paymentDeadline.title': '지금부터 7분 안에 결제를 완료해주세요',
+      'paymentDeadline.helper': '{threshold} 이하가 되면 마감 상태로 전환됩니다.',
+      'paymentDeadline.criticalHelper': '{threshold} 이하로 남았습니다. 결제를 서둘러주세요.',
+      'paymentDeadline.seatHoldHelper': '좌석 점유 만료 {time}',
+      'paymentDisclaimer.title': '해외 결제 안내',
+      'paymentDisclaimer.description': '해외 결제 전에 아래 내용을 확인해주세요.',
+      'paymentDisclaimer.krwPrimary': '결제 금액은 KRW 기준으로 청구됩니다.',
+      'paymentDisclaimer.fxHelper': '예상 환율과 수수료는 실제 청구 시점에 달라질 수 있습니다.',
+      'paymentDisclaimer.refundDelay': '환불 반영까지 추가 시간이 걸릴 수 있습니다.',
+      'paymentDisclaimer.checkboxLabel': '해외 결제 및 환불 유의사항에 동의합니다',
+      'paymentDisclaimer.ctaPending': '해외 결제 동의가 필요합니다',
+      'paymentDisclaimer.payNow': '결제하기',
+      'paymentRecovery.reselectCta': '좌석 다시 선택하기',
+      'paymentRecovery.reselectPrompt': '좌석을 다시 선택해주세요',
+      'paymentRecovery.expiredTitle': '결제 가능 시간이 만료되었습니다',
+      'paymentRecovery.expiredBody': '좌석을 다시 선택한 뒤 새 결제를 시작해주세요.',
+      'paymentRecovery.expiredCta': '결제 시간이 만료되었습니다',
+    };
+
+    let message = messages[key] ?? key;
+
+    if (values) {
+      for (const [token, value] of Object.entries(values)) {
+        message = message.replace(`{${token}}`, value);
+      }
+    }
+
+    return message;
+  }),
   useRuntimeFlagsMock: vi.fn(() => ({
     bookingEnabled: false,
     isLoading: false,
@@ -37,6 +72,7 @@ const {
 
 vi.mock('next-intl', () => ({
   useLocale: useLocaleMock,
+  useTranslations: useTranslationsMock,
 }));
 
 vi.mock('next/navigation', () => ({
@@ -53,11 +89,7 @@ vi.mock('@/hooks/use-runtime-flags', () => ({
 }));
 
 vi.mock('@/hooks/use-performances', () => ({
-  usePerformanceDetail: () => ({
-    data: createPerformanceDetail(),
-    isLoading: false,
-    isError: false,
-  }),
+  usePerformanceDetail: usePerformanceDetailMock,
 }));
 
 vi.mock('@/hooks/use-socket', () => ({
@@ -69,6 +101,19 @@ vi.mock('@/hooks/use-booking', () => ({
     data: { seats: { 'A-1': 'available' } },
   }),
   useMyLocks: () => ({ data: { seatIds: [], expiresAt: null } }),
+  useBookingPaymentSnapshot: () => ({
+    paymentDeadlineAt: new Date(Date.now() + 7 * 60 * 1000).toISOString(),
+    lockExpiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+    bookingPolicy: {
+      maxTicketsPerOrder: 1,
+      cancellationChangePolicy: 'CANCEL_ONLY',
+      sameGradeChangeEnabled: false,
+      paymentWindowMinutes: 7,
+      seatHoldMinutes: 10,
+    },
+    allowedPaymentMethods: ['CARD'],
+    isPaymentDeadlineExpired: false,
+  }),
   useLockSeat: () => ({ mutate: lockSeatMutateMock, isPending: false }),
   useUnlockSeat: () => ({ mutate: vi.fn(), isPending: false }),
   useUnlockAllSeats: () => ({ mutate: vi.fn(), isPending: false }),
@@ -236,6 +281,12 @@ describe('runtime booking disabled UI', () => {
     requestPaymentMock.mockReset();
     routerPushMock.mockReset();
     routerReplaceMock.mockReset();
+    usePerformanceDetailMock.mockReset();
+    usePerformanceDetailMock.mockReturnValue({
+      data: createPerformanceDetail(),
+      isLoading: false,
+      isError: false,
+    });
     useLocaleMock.mockReturnValue('ko');
     useRuntimeFlagsMock.mockReturnValue({
       bookingEnabled: false,
@@ -291,6 +342,32 @@ describe('runtime booking disabled UI', () => {
 
     expect(lockSeatMutateMock).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['ko', '예매는 5월말 오픈 예정입니다'],
+    ['en', 'Ticket booking opens in late May'],
+  ] satisfies Array<[SupportedLocale, string]>)(
+    'shows disabled copy before performance detail finishes loading for %s',
+    (locale, copy) => {
+      useLocaleMock.mockReturnValue(locale);
+      useRuntimeFlagsMock.mockReturnValue({
+        bookingEnabled: false,
+        isLoading: false,
+        bookingDisabledMessage: copy,
+      });
+      usePerformanceDetailMock.mockReturnValue({
+        data: undefined,
+        isLoading: true,
+        isError: false,
+      });
+
+      renderWithQuery(<BookingPage performanceId="performance-disabled" />);
+
+      expect(screen.getByText(copy)).toBeInTheDocument();
+      expect(screen.queryByText('date picker')).not.toBeInTheDocument();
+      expect(screen.queryByText('seat legend')).not.toBeInTheDocument();
+    },
+  );
 
   it('does not prepare reservation or call Toss requestPayment when disabled', async () => {
     const user = userEvent.setup();

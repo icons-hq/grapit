@@ -59,11 +59,15 @@ function buildNatMap(
   return natMap;
 }
 
-function createBookingService(redis: Cluster): BookingService {
+function createBookingService(redis: Cluster, maxTicketsPerUser = 1): BookingService {
+  const unavailableRows: Array<{ id: string; status: string }> = [];
   const mockDb = {
     select: () => ({
       from: () => ({
-        where: async () => [],
+        where: async () => unavailableRows,
+        leftJoin: () => ({
+          where: async () => [{ maxTicketsPerUser }],
+        }),
       }),
     }),
   };
@@ -90,15 +94,19 @@ describe('BookingService Lua scripts — Valkey Cluster mode', () => {
   const userId = 'booking-cluster-user-1';
   const otherUserId = 'booking-cluster-user-2';
   const showtimeId = 'booking-cluster-showtime-1';
-  const seatId = 'A-1';
-  const otherSeatId = 'A-2';
-  const unrelatedSeatId = 'A-3';
+  const seatKey = '1F:A-1';
+  const otherSeatKey = '1F:A-2';
+  const unrelatedSeatKey = '1F:A-3';
   const lockTtl = 600;
+  const toRuntimeSeatId = (rawSeatKey: string) => encodeURIComponent(rawSeatKey);
 
   const userSeatsKey = `{${showtimeId}}:user-seats:${userId}`;
-  const lockKey = `{${showtimeId}}:seat:${seatId}`;
-  const otherLockKey = `{${showtimeId}}:seat:${otherSeatId}`;
-  const unrelatedLockKey = `{${showtimeId}}:seat:${unrelatedSeatId}`;
+  const runtimeSeatId = toRuntimeSeatId(seatKey);
+  const otherRuntimeSeatId = toRuntimeSeatId(otherSeatKey);
+  const unrelatedRuntimeSeatId = toRuntimeSeatId(unrelatedSeatKey);
+  const lockKey = `{${showtimeId}}:seat:${runtimeSeatId}`;
+  const otherLockKey = `{${showtimeId}}:seat:${otherRuntimeSeatId}`;
+  const unrelatedLockKey = `{${showtimeId}}:seat:${unrelatedRuntimeSeatId}`;
   const lockedSeatsKey = `{${showtimeId}}:locked-seats`;
 
   beforeAll(async () => {
@@ -184,7 +192,7 @@ describe('BookingService Lua scripts — Valkey Cluster mode', () => {
         legacyUserSeatsKey,
         legacyLockKey,
         legacyLockedSeatsKey,
-        seatId,
+        seatKey,
         userId,
       ),
     ).rejects.toThrow(/CROSSSLOT/);
@@ -200,32 +208,34 @@ describe('BookingService Lua scripts — Valkey Cluster mode', () => {
   });
 
   it('locks, reports, and unlocks a seat through BookingService under cluster mode', async () => {
-    await expect(service.lockSeat(userId, showtimeId, seatId))
+    await expect(service.lockSeat(userId, showtimeId, seatKey))
       .resolves
       .toMatchObject({
         success: true,
         lockId: lockKey,
-        seatId,
+        seatId: seatKey,
+        seatKey,
+        floorKey: '1F',
       });
 
     expect(await cluster.get(lockKey)).toBe(userId);
-    expect(await cluster.smembers(userSeatsKey)).toContain(seatId);
-    expect(await cluster.smembers(lockedSeatsKey)).toContain(seatId);
+    expect(await cluster.smembers(userSeatsKey)).toContain(runtimeSeatId);
+    expect(await cluster.smembers(lockedSeatsKey)).toContain(runtimeSeatId);
 
     await expect(service.getSeatStatus(showtimeId))
       .resolves
       .toEqual({
         showtimeId,
-        seats: { [seatId]: 'locked' },
+        seats: { [seatKey]: 'locked' },
       });
 
-    await expect(service.unlockSeat(userId, showtimeId, seatId))
+    await expect(service.unlockSeat(userId, showtimeId, seatKey))
       .resolves
       .toBe(true);
 
     expect(await cluster.get(lockKey)).toBeNull();
-    expect(await cluster.sismember(userSeatsKey, seatId)).toBe(0);
-    expect(await cluster.sismember(lockedSeatsKey, seatId)).toBe(0);
+    expect(await cluster.sismember(userSeatsKey, runtimeSeatId)).toBe(0);
+    expect(await cluster.sismember(lockedSeatsKey, runtimeSeatId)).toBe(0);
     await expect(service.getSeatStatus(showtimeId))
       .resolves
       .toEqual({ showtimeId, seats: {} });
@@ -233,16 +243,16 @@ describe('BookingService Lua scripts — Valkey Cluster mode', () => {
 
   it('assertOwnedSeatLocks preserves Phase 19 owner/missing/other-owner behavior under cluster mode', async () => {
     await cluster.set(lockKey, userId, 'EX', lockTtl);
-    await expect(service.assertOwnedSeatLocks(userId, showtimeId, [seatId]))
+    await expect(service.assertOwnedSeatLocks(userId, showtimeId, [seatKey]))
       .resolves
       .toBeUndefined();
 
-    await expect(service.assertOwnedSeatLocks(userId, showtimeId, [seatId, otherSeatId]))
+    await expect(service.assertOwnedSeatLocks(userId, showtimeId, [seatKey, otherSeatKey]))
       .rejects
       .toThrow(LOCK_EXPIRED_MESSAGE);
 
     await cluster.set(otherLockKey, otherUserId, 'EX', lockTtl);
-    await expect(service.assertOwnedSeatLocks(userId, showtimeId, [seatId, otherSeatId]))
+    await expect(service.assertOwnedSeatLocks(userId, showtimeId, [seatKey, otherSeatKey]))
       .rejects
       .toThrow(LOCK_OTHER_OWNER_MESSAGE);
   });
@@ -251,17 +261,17 @@ describe('BookingService Lua scripts — Valkey Cluster mode', () => {
     await cluster.set(lockKey, userId, 'EX', lockTtl);
     await cluster.set(otherLockKey, userId, 'EX', lockTtl);
     await cluster.set(unrelatedLockKey, userId, 'EX', lockTtl);
-    await cluster.sadd(userSeatsKey, seatId, otherSeatId, unrelatedSeatId);
-    await cluster.sadd(lockedSeatsKey, seatId, otherSeatId, unrelatedSeatId);
+    await cluster.sadd(userSeatsKey, runtimeSeatId, otherRuntimeSeatId, unrelatedRuntimeSeatId);
+    await cluster.sadd(lockedSeatsKey, runtimeSeatId, otherRuntimeSeatId, unrelatedRuntimeSeatId);
 
-    await expect(service.consumeOwnedSeatLocks(userId, showtimeId, [seatId, otherSeatId]))
+    await expect(service.consumeOwnedSeatLocks(userId, showtimeId, [seatKey, otherSeatKey]))
       .resolves
-      .toEqual({ consumedSeatIds: [seatId, otherSeatId] });
+      .toEqual({ consumedSeatIds: [seatKey, otherSeatKey] });
 
     expect(await cluster.get(lockKey)).toBeNull();
     expect(await cluster.get(otherLockKey)).toBeNull();
     expect(await cluster.get(unrelatedLockKey)).toBe(userId);
-    expect(await cluster.sismember(userSeatsKey, unrelatedSeatId)).toBe(1);
-    expect(await cluster.sismember(lockedSeatsKey, unrelatedSeatId)).toBe(1);
+    expect(await cluster.sismember(userSeatsKey, unrelatedRuntimeSeatId)).toBe(1);
+    expect(await cluster.sismember(lockedSeatsKey, unrelatedRuntimeSeatId)).toBe(1);
   });
 });

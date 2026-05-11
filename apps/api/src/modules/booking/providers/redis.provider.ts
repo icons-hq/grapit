@@ -30,6 +30,7 @@ const JWT_VALUE_PATTERN = /[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8
 class InMemoryRedis {
   private store = new Map<string, string>();
   private sets = new Map<string, Set<string>>();
+  private sortedSets = new Map<string, Map<string, number>>();
   private ttls = new Map<string, NodeJS.Timeout>();
   private expiries = new Map<string, number>();
 
@@ -110,7 +111,7 @@ class InMemoryRedis {
    *  - >= 0: remaining milliseconds
    */
   async pttl(key: string): Promise<number> {
-    if (!this.store.has(key) && !this.sets.has(key)) return -2;
+    if (!this.store.has(key) && !this.sets.has(key) && !this.sortedSets.has(key)) return -2;
     const expiry = this.expiries.get(key);
     if (!expiry) return -1;
     const remaining = expiry - Date.now();
@@ -166,7 +167,7 @@ class InMemoryRedis {
   async del(...keys: string[]): Promise<number> {
     let count = 0;
     for (const key of keys) {
-      const existed = this.store.delete(key) || this.sets.delete(key);
+      const existed = this.store.delete(key) || this.sets.delete(key) || this.sortedSets.delete(key);
       const timer = this.ttls.get(key);
       if (timer) clearTimeout(timer);
       this.ttls.delete(key);
@@ -200,8 +201,51 @@ class InMemoryRedis {
     return this.sets.get(key)?.size ?? 0;
   }
 
+  async zadd(key: string, score: number | string, member: string): Promise<number> {
+    if (!this.sortedSets.has(key)) this.sortedSets.set(key, new Map());
+    const zset = this.sortedSets.get(key)!;
+    const existed = zset.has(member);
+    zset.set(member, Number(score));
+    return existed ? 0 : 1;
+  }
+
+  async zrem(key: string, ...members: string[]): Promise<number> {
+    const zset = this.sortedSets.get(key);
+    if (!zset) return 0;
+    let removed = 0;
+    for (const member of members) {
+      if (zset.delete(member)) removed++;
+    }
+    return removed;
+  }
+
+  async zrank(key: string, member: string): Promise<number | null> {
+    const entries = this.getSortedSetEntries(key);
+    const index = entries.findIndex(([entryMember]) => entryMember === member);
+    return index >= 0 ? index : null;
+  }
+
+  async zcard(key: string): Promise<number> {
+    return this.sortedSets.get(key)?.size ?? 0;
+  }
+
+  async zrange(key: string, start: number, stop: number): Promise<string[]> {
+    const members = this.getSortedSetEntries(key).map(([member]) => member);
+    if (members.length === 0) return [];
+
+    const normalizedStart = start < 0 ? Math.max(members.length + start, 0) : start;
+    const normalizedStop = stop < 0 ? members.length + stop : stop;
+    const inclusiveStop = Math.min(normalizedStop + 1, members.length);
+
+    if (normalizedStart >= members.length || normalizedStart > normalizedStop) {
+      return [];
+    }
+
+    return members.slice(normalizedStart, inclusiveStop);
+  }
+
   async ttl(key: string): Promise<number> {
-    if (!this.store.has(key) && !this.sets.has(key)) return -2;
+    if (!this.store.has(key) && !this.sets.has(key) && !this.sortedSets.has(key)) return -2;
     const expiry = this.expiries.get(key);
     if (!expiry) return -1;
     const remaining = Math.ceil((expiry - Date.now()) / 1000);
@@ -209,13 +253,14 @@ class InMemoryRedis {
   }
 
   async expire(key: string, seconds: number): Promise<number> {
-    if (!this.store.has(key) && !this.sets.has(key)) return 0;
+    if (!this.store.has(key) && !this.sets.has(key) && !this.sortedSets.has(key)) return 0;
     const prev = this.ttls.get(key);
     if (prev) clearTimeout(prev);
     this.expiries.set(key, Date.now() + seconds * 1000);
     this.ttls.set(key, setTimeout(() => {
       this.store.delete(key);
       this.sets.delete(key);
+      this.sortedSets.delete(key);
       this.ttls.delete(key);
       this.expiries.delete(key);
     }, seconds * 1000));
@@ -491,6 +536,15 @@ class InMemoryRedis {
     }
 
     return alive;
+  }
+
+  private getSortedSetEntries(key: string): Array<[string, number]> {
+    return Array.from(this.sortedSets.get(key)?.entries() ?? []).sort((a, b) => {
+      if (a[1] === b[1]) {
+        return a[0].localeCompare(b[0]);
+      }
+      return a[1] - b[1];
+    });
   }
 }
 

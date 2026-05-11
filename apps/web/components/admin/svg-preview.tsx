@@ -1,33 +1,75 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useCallback, useEffect, useEffectEvent, useState } from 'react';
 import { Upload, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
-import type { SeatMapConfig } from '@grabit/shared';
+import type { SeatMapConfig, SeatMapConfigInput } from '@grabit/shared';
 import { usePresignedUpload, useSaveSeatMap } from '@/hooks/use-admin';
 import { TierEditor } from '@/components/admin/tier-editor';
 import { Button } from '@/components/ui/button';
 import { hasUnsafeSvgPayload } from '@/lib/svg/safety';
 
 interface SvgPreviewProps {
-  performanceId: string;
+  performanceId?: string;
   currentSvgUrl?: string;
-  currentConfig?: SeatMapConfig;
+  currentConfig?: SeatMapConfig | null;
+  currentTotalSeats?: number;
+  onChange?: (value: {
+    svgUrl: string;
+    seatConfig: SeatMapConfigInput;
+    totalSeats: number;
+  }) => void;
+  inputId?: string;
 }
 
 export function SvgPreview({
   performanceId,
   currentSvgUrl,
   currentConfig,
+  currentTotalSeats,
+  onChange,
+  inputId = 'svg-input',
 }: SvgPreviewProps) {
+  const isControlled = typeof onChange === 'function';
   const [svgUrl, setSvgUrl] = useState<string | null>(currentSvgUrl ?? null);
   const [tiers, setTiers] = useState<SeatMapConfig['tiers']>(
     currentConfig?.tiers ?? [],
   );
-  const [totalSeats, setTotalSeats] = useState(0);
+  const [totalSeats, setTotalSeats] = useState(currentTotalSeats ?? 0);
 
   const presignedUpload = usePresignedUpload();
-  const saveSeatMap = useSaveSeatMap(performanceId);
+  const saveSeatMap = useSaveSeatMap(performanceId ?? '');
+  const emitChange = useEffectEvent((value: {
+    svgUrl: string;
+    seatConfig: SeatMapConfigInput;
+    totalSeats: number;
+  }) => {
+    onChange?.(value);
+  });
+
+  useEffect(() => {
+    setSvgUrl(currentSvgUrl ?? null);
+  }, [currentSvgUrl]);
+
+  useEffect(() => {
+    setTiers(currentConfig?.tiers ?? []);
+  }, [currentConfig]);
+
+  useEffect(() => {
+    setTotalSeats(currentTotalSeats ?? 0);
+  }, [currentTotalSeats]);
+
+  useEffect(() => {
+    if (!isControlled || !svgUrl) {
+      return;
+    }
+
+    emitChange({
+      svgUrl,
+      seatConfig: { tiers },
+      totalSeats,
+    });
+  }, [emitChange, isControlled, svgUrl, tiers, totalSeats]);
 
   // review IN-05: mutateAsync만 좁혀 deps로 사용.
   //   presignedUpload 객체 전체를 deps로 쓰면 isPending 등 내부 상태 변화로 identity가 바뀌어
@@ -132,8 +174,16 @@ export function SvgPreview({
   }
 
   async function handleSave() {
+    if (isControlled) {
+      return;
+    }
+
     if (!svgUrl) {
       toast.error('SVG 파일을 먼저 업로드해주세요.');
+      return;
+    }
+    if (!performanceId) {
+      toast.error('공연을 먼저 저장한 뒤 좌석맵을 저장해주세요.');
       return;
     }
     try {
@@ -167,7 +217,7 @@ export function SvgPreview({
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => document.getElementById('svg-input')?.click()}
+            onClick={() => document.getElementById(inputId)?.click()}
           >
             <Upload className="mr-2 h-4 w-4" />
             다른 SVG 업로드
@@ -181,7 +231,7 @@ export function SvgPreview({
       ) : (
         <div
           className="flex h-48 cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 bg-gray-50 transition-colors hover:border-primary hover:bg-primary/5"
-          onClick={() => document.getElementById('svg-input')?.click()}
+          onClick={() => document.getElementById(inputId)?.click()}
         >
           <Upload className="mb-2 h-8 w-8 text-gray-400" />
           <p className="text-sm text-gray-500">SVG 좌석맵 업로드</p>
@@ -189,7 +239,7 @@ export function SvgPreview({
         </div>
       )}
       <input
-        id="svg-input"
+        id={inputId}
         type="file"
         accept=".svg"
         className="hidden"
@@ -200,22 +250,24 @@ export function SvgPreview({
       {svgUrl && (
         <>
           <TierEditor tiers={tiers} onChange={setTiers} />
-          <div className="flex justify-end">
-            <Button
-              type="button"
-              onClick={handleSave}
-              disabled={saveSeatMap.isPending}
-            >
-              {saveSeatMap.isPending ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  저장 중...
-                </>
-              ) : (
-                '좌석맵 저장'
-              )}
-            </Button>
-          </div>
+          {!isControlled && (
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                onClick={handleSave}
+                disabled={saveSeatMap.isPending}
+              >
+                {saveSeatMap.isPending ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    저장 중...
+                  </>
+                ) : (
+                  '좌석맵 저장'
+                )}
+              </Button>
+            </div>
+          )}
         </>
       )}
     </div>

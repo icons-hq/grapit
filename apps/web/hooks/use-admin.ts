@@ -13,7 +13,7 @@ import type {
   CreatePerformanceInput,
   UpdatePerformanceInput,
   CreateBannerInput,
-  SeatMapConfigInput,
+  SaveSeatMapPayloadInput,
 } from '@grabit/shared';
 
 export type TranslationTargetLocale = 'en' | 'th' | 'zh-CN' | 'zh-TW';
@@ -250,6 +250,7 @@ export function useCreatePerformance() {
       apiClient.post<PerformanceWithDetails>(
         '/api/v1/admin/performances',
         data,
+        { showErrorToast: false },
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'performances'] });
@@ -265,6 +266,7 @@ export function useUpdatePerformance(id: string) {
       apiClient.put<PerformanceWithDetails>(
         `/api/v1/admin/performances/${id}`,
         data,
+        { showErrorToast: false },
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'performances'] });
@@ -307,11 +309,7 @@ export function usePresignedUpload() {
 // Save seat map config
 export function useSaveSeatMap(performanceId: string) {
   return useMutation({
-    mutationFn: (data: {
-      svgUrl: string;
-      seatConfig: SeatMapConfigInput;
-      totalSeats: number;
-    }) =>
+    mutationFn: (data: SaveSeatMapPayloadInput) =>
       apiClient.post(
         `/api/v1/admin/performances/${performanceId}/seat-map`,
         data,

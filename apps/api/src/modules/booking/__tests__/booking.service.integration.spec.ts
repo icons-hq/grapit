@@ -26,11 +26,15 @@ import {
  * Lua script execute at all on Valkey 8 and produce the expected Redis state".
  */
 
-function createBookingService(redis: IORedis): BookingService {
+function createBookingService(redis: IORedis, maxTicketsPerUser = 1): BookingService {
+  const unavailableRows: Array<{ id: string; status: string }> = [];
   const mockDb = {
     select: () => ({
       from: () => ({
-        where: async () => [],
+        where: async () => unavailableRows,
+        leftJoin: () => ({
+          where: async () => [{ maxTicketsPerUser }],
+        }),
       }),
     }),
   };
@@ -50,10 +54,14 @@ describe('BookingService Lua scripts — real Valkey 8 integration', () => {
 
   const userId = 'user-integ-1';
   const showtimeId = 'show-integ-1';
-  const seatId = 'A-1';
+  const seatKey = '1F:A-1';
+  const otherSeatKey = '1F:A-2';
+  const thirdSeatKey = '1F:A-3';
+  const toRuntimeSeatId = (rawSeatKey: string) => encodeURIComponent(rawSeatKey);
 
   const userSeatsKey = `{${showtimeId}}:user-seats:${userId}`;
-  const lockKey = `{${showtimeId}}:seat:${seatId}`;
+  const runtimeSeatId = toRuntimeSeatId(seatKey);
+  const lockKey = `{${showtimeId}}:seat:${runtimeSeatId}`;
   const lockedSeatsKey = `{${showtimeId}}:locked-seats`;
   const LOCK_TTL = 600;
 
@@ -91,12 +99,14 @@ describe('BookingService Lua scripts — real Valkey 8 integration', () => {
   it('locks a seat through BookingService.lockSeat on real Valkey', async () => {
     const service = createBookingService(redis);
 
-    await expect(service.lockSeat(userId, showtimeId, seatId))
+    await expect(service.lockSeat(userId, showtimeId, seatKey))
       .resolves
       .toMatchObject({
         success: true,
         lockId: lockKey,
-        seatId,
+        seatId: seatKey,
+        seatKey,
+        floorKey: '1F',
       });
 
     // Verify the lock was actually set
@@ -110,22 +120,22 @@ describe('BookingService Lua scripts — real Valkey 8 integration', () => {
 
     // Verify SADD was applied
     const userSeats = await redis.smembers(userSeatsKey);
-    expect(userSeats).toContain(seatId);
+    expect(userSeats).toContain(runtimeSeatId);
 
     const lockedSeats = await redis.smembers(lockedSeatsKey);
-    expect(lockedSeats).toContain(seatId);
+    expect(lockedSeats).toContain(runtimeSeatId);
   });
 
   it('lists locked seats through BookingService.getSeatStatus on real Valkey', async () => {
     const service = createBookingService(redis);
 
-    await service.lockSeat(userId, showtimeId, seatId);
+    await service.lockSeat(userId, showtimeId, seatKey);
 
     await expect(service.getSeatStatus(showtimeId))
       .resolves
       .toEqual({
         showtimeId,
-        seats: { [seatId]: 'locked' },
+        seats: { [seatKey]: 'locked' },
       });
   });
 
@@ -133,18 +143,18 @@ describe('BookingService Lua scripts — real Valkey 8 integration', () => {
     const service = createBookingService(redis);
     const otherUser = 'user-integ-2';
 
-    await service.lockSeat(userId, showtimeId, seatId);
+    await service.lockSeat(userId, showtimeId, seatKey);
 
-    await expect(service.lockSeat(otherUser, showtimeId, seatId))
+    await expect(service.lockSeat(otherUser, showtimeId, seatKey))
       .rejects
       .toThrow('이미 다른 사용자가 선택한 좌석입니다');
   });
 
   it('unlocks the seat through BookingService.unlockSeat for the owner', async () => {
     const service = createBookingService(redis);
-    await service.lockSeat(userId, showtimeId, seatId);
+    await service.lockSeat(userId, showtimeId, seatKey);
 
-    await expect(service.unlockSeat(userId, showtimeId, seatId))
+    await expect(service.unlockSeat(userId, showtimeId, seatKey))
       .resolves
       .toBe(true);
 
@@ -154,20 +164,20 @@ describe('BookingService Lua scripts — real Valkey 8 integration', () => {
 
     // Verify the set memberships were removed
     const userSeats = await redis.smembers(userSeatsKey);
-    expect(userSeats).not.toContain(seatId);
+    expect(userSeats).not.toContain(runtimeSeatId);
 
     const lockedSeats = await redis.smembers(lockedSeatsKey);
-    expect(lockedSeats).not.toContain(seatId);
+    expect(lockedSeats).not.toContain(runtimeSeatId);
   });
 
   it('unlock for non-owner returns 0 (no-op)', async () => {
     const service = createBookingService(redis);
-    const seatId2 = 'A-2';
-    const lockKey2 = `{${showtimeId}}:seat:${seatId2}`;
+    const runtimeSeatId2 = toRuntimeSeatId(otherSeatKey);
+    const lockKey2 = `{${showtimeId}}:seat:${runtimeSeatId2}`;
 
-    await service.lockSeat(userId, showtimeId, seatId2);
+    await service.lockSeat(userId, showtimeId, otherSeatKey);
 
-    await expect(service.unlockSeat('user-impostor', showtimeId, seatId2))
+    await expect(service.unlockSeat('user-impostor', showtimeId, otherSeatKey))
       .resolves
       .toBe(false);
 
@@ -182,6 +192,12 @@ describe('BookingService Lua scripts — real Valkey 8 integration', () => {
     const ownershipShowtimeId = 'ownership-showtime-1';
     const ownershipUserSeatsKey = `{${ownershipShowtimeId}}:user-seats:${ownershipUserId}`;
     const ownershipLockedSeatsKey = `{${ownershipShowtimeId}}:locked-seats`;
+    const ownershipSeatKeyA = '1F:A-1';
+    const ownershipSeatKeyB = '1F:A-2';
+    const ownershipSeatKeyC = '1F:A-3';
+    const ownershipRuntimeSeatIdA = toRuntimeSeatId(ownershipSeatKeyA);
+    const ownershipRuntimeSeatIdB = toRuntimeSeatId(ownershipSeatKeyB);
+    const ownershipRuntimeSeatIdC = toRuntimeSeatId(ownershipSeatKeyC);
 
     beforeEach(async () => {
       await redis.flushdb();
@@ -189,63 +205,73 @@ describe('BookingService Lua scripts — real Valkey 8 integration', () => {
 
     it('assertOwnedSeatLocks passes all-owned locks on real Valkey', async () => {
       const service = createBookingService(redis);
-      await redis.set(`{${ownershipShowtimeId}}:seat:A-1`, ownershipUserId, 'EX', LOCK_TTL);
-      await redis.set(`{${ownershipShowtimeId}}:seat:A-2`, ownershipUserId, 'EX', LOCK_TTL);
+      await redis.set(`{${ownershipShowtimeId}}:seat:${ownershipRuntimeSeatIdA}`, ownershipUserId, 'EX', LOCK_TTL);
+      await redis.set(`{${ownershipShowtimeId}}:seat:${ownershipRuntimeSeatIdB}`, ownershipUserId, 'EX', LOCK_TTL);
 
-      await expect(service.assertOwnedSeatLocks(ownershipUserId, ownershipShowtimeId, ['A-1', 'A-2']))
+      await expect(service.assertOwnedSeatLocks(ownershipUserId, ownershipShowtimeId, [ownershipSeatKeyA, ownershipSeatKeyB]))
         .resolves
         .toBeUndefined();
     });
 
     it('assertOwnedSeatLocks rejects missing locks on real Valkey', async () => {
       const service = createBookingService(redis);
-      await redis.set(`{${ownershipShowtimeId}}:seat:A-1`, ownershipUserId, 'EX', LOCK_TTL);
+      await redis.set(`{${ownershipShowtimeId}}:seat:${ownershipRuntimeSeatIdA}`, ownershipUserId, 'EX', LOCK_TTL);
 
-      await expect(service.assertOwnedSeatLocks(ownershipUserId, ownershipShowtimeId, ['A-1', 'A-2']))
+      await expect(service.assertOwnedSeatLocks(ownershipUserId, ownershipShowtimeId, [ownershipSeatKeyA, ownershipSeatKeyB]))
         .rejects
         .toThrow(LOCK_EXPIRED_MESSAGE);
     });
 
     it('assertOwnedSeatLocks rejects other-owner locks on real Valkey', async () => {
       const service = createBookingService(redis);
-      await redis.set(`{${ownershipShowtimeId}}:seat:A-1`, ownershipUserId, 'EX', LOCK_TTL);
-      await redis.set(`{${ownershipShowtimeId}}:seat:A-2`, otherUserId, 'EX', LOCK_TTL);
+      await redis.set(`{${ownershipShowtimeId}}:seat:${ownershipRuntimeSeatIdA}`, ownershipUserId, 'EX', LOCK_TTL);
+      await redis.set(`{${ownershipShowtimeId}}:seat:${ownershipRuntimeSeatIdB}`, otherUserId, 'EX', LOCK_TTL);
 
-      await expect(service.assertOwnedSeatLocks(ownershipUserId, ownershipShowtimeId, ['A-1', 'A-2']))
+      await expect(service.assertOwnedSeatLocks(ownershipUserId, ownershipShowtimeId, [ownershipSeatKeyA, ownershipSeatKeyB]))
         .rejects
         .toThrow(LOCK_OTHER_OWNER_MESSAGE);
     });
 
     it('assertOwnedSeatLocks rejects stale index members without deleting indexes on real Valkey', async () => {
       const service = createBookingService(redis);
-      await redis.sadd(ownershipUserSeatsKey, 'A-2');
-      await redis.sadd(ownershipLockedSeatsKey, 'A-2');
+      await redis.sadd(ownershipUserSeatsKey, ownershipRuntimeSeatIdB);
+      await redis.sadd(ownershipLockedSeatsKey, ownershipRuntimeSeatIdB);
 
-      await expect(service.assertOwnedSeatLocks(ownershipUserId, ownershipShowtimeId, ['A-2']))
+      await expect(service.assertOwnedSeatLocks(ownershipUserId, ownershipShowtimeId, [ownershipSeatKeyB]))
         .rejects
         .toThrow(LOCK_EXPIRED_MESSAGE);
 
-      expect(await redis.sismember(ownershipUserSeatsKey, 'A-2')).toBe(1);
-      expect(await redis.sismember(ownershipLockedSeatsKey, 'A-2')).toBe(1);
+      expect(await redis.sismember(ownershipUserSeatsKey, ownershipRuntimeSeatIdB)).toBe(1);
+      expect(await redis.sismember(ownershipLockedSeatsKey, ownershipRuntimeSeatIdB)).toBe(1);
     });
 
     it('consumeOwnedSeatLocks supports unrelated lock preservation on real Valkey', async () => {
       const service = createBookingService(redis);
-      await redis.set(`{${ownershipShowtimeId}}:seat:A-1`, ownershipUserId, 'EX', LOCK_TTL);
-      await redis.set(`{${ownershipShowtimeId}}:seat:A-2`, ownershipUserId, 'EX', LOCK_TTL);
-      await redis.set(`{${ownershipShowtimeId}}:seat:A-3`, ownershipUserId, 'EX', LOCK_TTL);
-      await redis.sadd(ownershipUserSeatsKey, 'A-1', 'A-2', 'A-3');
-      await redis.sadd(ownershipLockedSeatsKey, 'A-1', 'A-2', 'A-3');
+      await redis.set(`{${ownershipShowtimeId}}:seat:${ownershipRuntimeSeatIdA}`, ownershipUserId, 'EX', LOCK_TTL);
+      await redis.set(`{${ownershipShowtimeId}}:seat:${ownershipRuntimeSeatIdB}`, ownershipUserId, 'EX', LOCK_TTL);
+      await redis.set(`{${ownershipShowtimeId}}:seat:${ownershipRuntimeSeatIdC}`, ownershipUserId, 'EX', LOCK_TTL);
+      await redis.sadd(
+        ownershipUserSeatsKey,
+        ownershipRuntimeSeatIdA,
+        ownershipRuntimeSeatIdB,
+        ownershipRuntimeSeatIdC,
+      );
+      await redis.sadd(
+        ownershipLockedSeatsKey,
+        ownershipRuntimeSeatIdA,
+        ownershipRuntimeSeatIdB,
+        ownershipRuntimeSeatIdC,
+      );
 
-      await expect(service.consumeOwnedSeatLocks(ownershipUserId, ownershipShowtimeId, ['A-1', 'A-2']))
+      await expect(service.consumeOwnedSeatLocks(ownershipUserId, ownershipShowtimeId, [ownershipSeatKeyA, ownershipSeatKeyB]))
         .resolves
-        .toEqual({ consumedSeatIds: ['A-1', 'A-2'] });
+        .toEqual({ consumedSeatIds: [ownershipSeatKeyA, ownershipSeatKeyB] });
 
-      expect(await redis.get(`{${ownershipShowtimeId}}:seat:A-1`)).toBeNull();
-      expect(await redis.get(`{${ownershipShowtimeId}}:seat:A-2`)).toBeNull();
-      expect(await redis.get(`{${ownershipShowtimeId}}:seat:A-3`)).toBe(ownershipUserId);
-      expect(await redis.sismember(ownershipUserSeatsKey, 'A-3')).toBe(1);
-      expect(await redis.sismember(ownershipLockedSeatsKey, 'A-3')).toBe(1);
+      expect(await redis.get(`{${ownershipShowtimeId}}:seat:${ownershipRuntimeSeatIdA}`)).toBeNull();
+      expect(await redis.get(`{${ownershipShowtimeId}}:seat:${ownershipRuntimeSeatIdB}`)).toBeNull();
+      expect(await redis.get(`{${ownershipShowtimeId}}:seat:${ownershipRuntimeSeatIdC}`)).toBe(ownershipUserId);
+      expect(await redis.sismember(ownershipUserSeatsKey, ownershipRuntimeSeatIdC)).toBe(1);
+      expect(await redis.sismember(ownershipLockedSeatsKey, ownershipRuntimeSeatIdC)).toBe(1);
     });
   });
 });

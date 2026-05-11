@@ -242,6 +242,11 @@ describe('redisProvider factory', () => {
       sadd: (key: string, ...members: string[]) => Promise<number>;
       srem: (key: string, ...members: string[]) => Promise<number>;
       smembers: (key: string) => Promise<string[]>;
+      zadd: (key: string, score: number | string, member: string) => Promise<number>;
+      zrem: (key: string, ...members: string[]) => Promise<number>;
+      zrank: (key: string, member: string) => Promise<number | null>;
+      zcard: (key: string) => Promise<number>;
+      zrange: (key: string, start: number, stop: number) => Promise<string[]>;
       pipeline: () => {
         set: (key: string, value: string, ...args: unknown[]) => ReturnType<MemRedis['pipeline']>;
         del: (...keys: string[]) => ReturnType<MemRedis['pipeline']>;
@@ -346,6 +351,27 @@ describe('redisProvider factory', () => {
 
       expect(await redis.get('string:key')).toBeNull();
       expect(await redis.smembers('set:key')).toEqual([]);
+    });
+
+    it('supports sorted-set queue operations used by Phase 24 admission queue', async () => {
+      const redis = createMock();
+
+      expect(await redis.zadd('queue:waiting', 30, 'session-b')).toBe(1);
+      expect(await redis.zadd('queue:waiting', 10, 'session-a')).toBe(1);
+      expect(await redis.zadd('queue:waiting', 20, 'session-c')).toBe(1);
+      expect(await redis.zcard('queue:waiting')).toBe(3);
+      expect(await redis.zrank('queue:waiting', 'session-c')).toBe(1);
+      expect(await redis.zrange('queue:waiting', 0, -1)).toEqual([
+        'session-a',
+        'session-c',
+        'session-b',
+      ]);
+
+      expect(await redis.zrem('queue:waiting', 'session-c')).toBe(1);
+      expect(await redis.zrange('queue:waiting', 0, -1)).toEqual([
+        'session-a',
+        'session-b',
+      ]);
     });
 
     describe('lock ownership Lua parity', () => {

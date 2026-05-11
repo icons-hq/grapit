@@ -3,6 +3,7 @@
 import { Loader2 } from 'lucide-react';
 import type { SeatSelection, Showtime } from '@grabit/shared';
 import { Button } from '@/components/ui/button';
+import { formatKstDateLabel, formatKstTimeLabel } from '@/lib/booking-datetime';
 import { SeatRow } from './seat-row';
 
 interface SeatSelectionPanelProps {
@@ -14,23 +15,6 @@ interface SeatSelectionPanelProps {
   onProceed: () => void;
   isLoading: boolean;
   disabledReason?: string | null;
-}
-
-function formatDateLabel(date: Date): string {
-  return date.toLocaleDateString('ko-KR', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    weekday: 'short',
-  });
-}
-
-function formatTimeLabel(dateTime: string): string {
-  return new Date(dateTime).toLocaleTimeString('ko-KR', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
 }
 
 export function SeatSelectionPanel({
@@ -55,7 +39,7 @@ export function SeatSelectionPanel({
           </p>
           {selectedDate && selectedShowtime && (
             <p className="mt-1 text-sm text-gray-500">
-              {formatDateLabel(selectedDate)} {formatTimeLabel(selectedShowtime.dateTime)}
+              {formatKstDateLabel(selectedShowtime.dateTime)} {formatKstTimeLabel(selectedShowtime.dateTime)}
             </p>
           )}
         </div>

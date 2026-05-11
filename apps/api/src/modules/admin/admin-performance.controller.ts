@@ -15,10 +15,10 @@ import { Roles } from '../../common/decorators/roles.decorator.js';
 import {
   createPerformanceSchema,
   updatePerformanceSchema,
-  seatMapConfigSchema,
+  saveSeatMapPayloadSchema,
   type CreatePerformanceInput,
   type UpdatePerformanceInput,
-  type SeatMapConfigInput,
+  type SaveSeatMapPayloadInput,
 } from '@grabit/shared';
 import { AdminService } from './admin.service.js';
 import { UploadService } from './upload.service.js';
@@ -78,14 +78,10 @@ export class AdminPerformanceController {
   @Post('performances/:id/seat-map')
   async saveSeatMap(
     @Param('id') id: string,
-    @Body() body: { svgUrl: string; seatConfig: SeatMapConfigInput; totalSeats?: number },
+    @Body(new ZodValidationPipe(saveSeatMapPayloadSchema))
+    body: SaveSeatMapPayloadInput,
   ) {
-    return this.adminService.saveSeatMap(
-      id,
-      body.svgUrl,
-      body.seatConfig,
-      body.totalSeats,
-    );
+    return this.adminService.saveSeatMap(id, body);
   }
 
   @Post('upload/presigned')

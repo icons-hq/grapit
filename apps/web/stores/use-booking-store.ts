@@ -1,12 +1,31 @@
 'use client';
 
 import { create } from 'zustand';
-import type { SeatSelection } from '@grabit/shared';
+import type { FloorAwareSeatSelection, SeatSelection } from '@grabit/shared';
+
+const DEFAULT_FLOOR_KEY = '1F';
+const DEFAULT_FLOOR_LABEL = '1층';
+
+function normalizeSeatSelection(
+  seat: FloorAwareSeatSelection | SeatSelection,
+): FloorAwareSeatSelection {
+  const candidate = seat as Partial<FloorAwareSeatSelection>;
+  const floorKey = candidate.floorKey?.trim() || DEFAULT_FLOOR_KEY;
+  const floorLabel = candidate.floorLabel?.trim()
+    || (floorKey === DEFAULT_FLOOR_KEY ? DEFAULT_FLOOR_LABEL : floorKey);
+
+  return {
+    ...seat,
+    floorKey,
+    floorLabel,
+    seatKey: candidate.seatKey?.trim() || `${floorKey}:${seat.seatId}`,
+  };
+}
 
 interface BookingState {
   selectedDate: Date | null;
   selectedShowtimeId: string | null;
-  selectedSeats: SeatSelection[];
+  selectedSeats: FloorAwareSeatSelection[];
   timerExpiresAt: number | null;
   isTimerExpired: boolean;
   isConnected: boolean;
@@ -21,14 +40,14 @@ interface BookingState {
 
   setDate: (date: Date | null) => void;
   setShowtime: (id: string | null) => void;
-  addSeat: (seat: SeatSelection) => void;
-  removeSeat: (seatId: string) => void;
+  addSeat: (seat: FloorAwareSeatSelection | SeatSelection) => void;
+  removeSeat: (seatKey: string) => void;
   clearSeats: () => void;
   setTimerExpiry: (expiresAt: number) => void;
   expireTimer: () => void;
   setConnected: (connected: boolean) => void;
   setBookingData: (data: {
-    selectedSeats: SeatSelection[];
+    selectedSeats: Array<FloorAwareSeatSelection | SeatSelection>;
     showtimeId: string | null;
     performanceId: string | null;
     performanceTitle: string | null;
@@ -44,7 +63,7 @@ interface BookingState {
 const initialState = {
   selectedDate: null,
   selectedShowtimeId: null,
-  selectedSeats: [] as SeatSelection[],
+  selectedSeats: [] as FloorAwareSeatSelection[],
   timerExpiresAt: null,
   isTimerExpired: false,
   isConnected: false,
@@ -70,13 +89,20 @@ export const useBookingStore = create<BookingState>((set) => ({
     }),
 
   addSeat: (seat) =>
-    set((state) => ({
-      selectedSeats: [...state.selectedSeats, seat],
-    })),
+    set((state) => {
+      const normalizedSeat = normalizeSeatSelection(seat);
+      if (state.selectedSeats.some((selected) => selected.seatKey === normalizedSeat.seatKey)) {
+        return state;
+      }
 
-  removeSeat: (seatId) =>
+      return {
+        selectedSeats: [...state.selectedSeats, normalizedSeat],
+      };
+    }),
+
+  removeSeat: (seatKey) =>
     set((state) => ({
-      selectedSeats: state.selectedSeats.filter((s) => s.seatId !== seatId),
+      selectedSeats: state.selectedSeats.filter((seat) => seat.seatKey !== seatKey),
     })),
 
   clearSeats: () => set({ selectedSeats: [], timerExpiresAt: null, isTimerExpired: false }),
@@ -92,7 +118,7 @@ export const useBookingStore = create<BookingState>((set) => ({
 
   setBookingData: (data) =>
     set({
-      selectedSeats: data.selectedSeats,
+      selectedSeats: data.selectedSeats.map(normalizeSeatSelection),
       selectedShowtimeId: data.showtimeId,
       performanceId: data.performanceId,
       performanceTitle: data.performanceTitle,
@@ -112,9 +138,8 @@ export const useBookingStore = create<BookingState>((set) => ({
 // Allows Playwright specs to inject booking state via `window.__BOOKING_FIXTURE__`
 // so the confirm page doesn't redirect to /booking/:id (see confirm/page.tsx:62-66).
 //
-// Blocker B1 (revision-2): seats payload uses SeatSelection shape from
-// packages/shared/src/types/booking.types.ts:30-37 — { seatId, tierName, price,
-// row, number, tierColor? } — matching setBookingData's selectedSeats parameter.
+// `setBookingData()` normalizes both legacy SeatSelection fixtures and the newer
+// FloorAwareSeatSelection payloads into the floor-aware store contract.
 //
 // Production tree-shake: the `process.env.NODE_ENV !== 'production'` gate is
 // resolved at build time by Next.js / Turbopack, removing this entire block
@@ -128,7 +153,7 @@ if (typeof window !== 'undefined' && process.env.NODE_ENV !== 'production') {
         __BOOKING_FIXTURE__?: {
           performanceId: string;
           showtimeId: string;
-          seats: SeatSelection[];
+          seats: Array<FloorAwareSeatSelection | SeatSelection>;
           performanceTitle: string;
           showDateTime: string;
           venue: string;

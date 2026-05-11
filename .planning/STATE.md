@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Fanmeet Launch
-status: "Phase 23 shipped — PR #33"
-stopped_at: Completed 23-19-PLAN.md
-last_updated: "2026-05-07T08:59:45Z"
-last_activity: 2026-05-07
+status: ready_to_plan
+stopped_at: Phase 24 completed; Phase 25 ready to plan
+last_updated: "2026-05-11T04:48:09.300Z"
+last_activity: 2026-05-11 -- Phase 24 completed and Phase 25 Admin Operations Console is ready to plan
 progress:
-  total_phases: 7
+  total_phases: 6
   completed_phases: 3
-  total_plans: 25
-  completed_plans: 25
-  percent: 43
+  total_plans: 47
+  completed_plans: 47
+  percent: 100
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-04)
 
 **Core value:** 사용자가 원하는 공연을 발견하고, 좌석을 직접 선택하여, 안정적으로 예매를 완료할 수 있는 것
-**Current focus:** Phase 23 — launch-foundation
+**Current focus:** Phase 25 — admin-operations-console
 
 ## Current Position
 
-Phase: 999.1
+Phase: 25 (admin-operations-console) — READY TO PLAN
 Plan: Not started
-Status: Phase 23 shipped — PR #33
-Last activity: 2026-05-07 - Completed quick task 260507-ok2: production deploy migration failure를 CLI로 조사하고 복구
+Status: Ready to plan Phase 25
+Last activity: 2026-05-11 -- Phase 24 completed; Phase 25 is the next roadmap phase
 
 ## Deferred Items
 
@@ -113,11 +113,11 @@ Summary: 70 total items (debug sessions 5, quick tasks 41, seeds 2, UAT gaps 12,
 
 **Velocity:**
 
-- Total plans completed: 142 (v1.0)
+- Current v2.0 planned tasks complete: 47/47 through Phase 24
 - Average duration: ~10min
 - Total execution time: ~3 hours
 
-**By Phase (v1.0):**
+**By Phase (historical + v2.0):**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
@@ -136,8 +136,9 @@ Summary: 70 total items (debug sessions 5, quick tasks 41, seeds 2, UAT gaps 12,
 | 18 | 2 | - | - |
 | 19 | 4 | - | - |
 | 21 | 4 | - | - |
-| 22 | 5 | - | - |
+| 22 | 6 | - | - |
 | 23 | 19 | - | - |
+| 24 | 22 | - | - |
 
 **Recent Trend:**
 
@@ -340,11 +341,14 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 | 260507-r4s | 분류 페이지 legacy subcategory chip 제거 | 2026-05-07 | uncommitted | [260507-r4s-category-filter-chips](./quick/260507-r4s-category-filter-chips/) |
 | 260507-n8l | 현재 최신 pr에서 ci가 실패했어. 코드와 로그를 보고 해결 | 2026-05-07 | 85b81c3 | [260507-n8l-pr-ci](./quick/260507-n8l-pr-ci/) |
 | 260507-ok2 | production deploy migration failure를 CLI로 조사하고 복구 | 2026-05-07 | dc9dba0, d1d6633 | [260507-ok2-ci-cd-cli](./quick/260507-ok2-ci-cd-cli/) |
+| 260511-i3d | Phase 24 Toss method matrix gap closure: Redis Cluster queue purge fix, Toss `ALIPAY` webhook normalization, production API/web redeploy, and non-secret method-matrix evidence | 2026-05-11 | committed | [260511-i3d-resolve-phase-24-remaining-toss-method-m](./quick/260511-i3d-resolve-phase-24-remaining-toss-method-m/) |
+| 260511-ipx | Phase 24 production operations handling runbook for queue, booking, Toss, Cloud Run, Cloudflare, secrets, DB, Redis, refund, QR, rollback, and evidence workflows | 2026-05-11 | committed | [260511-ipx-create-phase-24-production-operations-ha](./quick/260511-ipx-create-phase-24-production-operations-ha/) |
+| 260511-l0p | PR #34 CI E2E 복구: KST showtime rendering 고정, runtime flag resolution 반응형화, booking-disabled smoke 안정화 | 2026-05-11 | committed | [260511-l0p-pr-ci](./quick/260511-l0p-pr-ci/) |
 
 ## Session Continuity
 
-Last session: 2026-05-07T03:58:27.279Z
-Stopped at: Completed 23-19-PLAN.md
-Resume file: None
+Last session: 2026-05-11T04:48:09.300Z
+Stopped at: Phase 24 completed; Phase 25 ready to plan
+Resume file: .planning/ROADMAP.md
 
-**Planned Phase:** v2.0 Phase 23 (launch-foundation) — Phase 22 complete with READY_WITH_ACCEPTED_RISKS; proceed only under accepted risks listed in 22-VERIFICATION.md.
+**Planned Phase:** v2.0 Phase 25 (admin-operations-console) — Phase 24 is complete with accepted operational caveats documented in 24-VERIFICATION.md and docs/runbooks/phase24-production-operations-handling.md.

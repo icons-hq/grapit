@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { PerformanceModule } from '../performance/performance.module.js';
 import { PaymentModule } from '../payment/payment.module.js';
 import { BookingModule } from '../booking/booking.module.js';
+import { RefundModule } from '../refund/refund.module.js';
 import { AdminPerformanceController } from './admin-performance.controller.js';
 import { AdminBannerController } from './admin-banner.controller.js';
 import { AdminBookingController } from './admin-booking.controller.js';
@@ -14,7 +15,7 @@ import { UploadService } from './upload.service.js';
 import { AdminDashboardService } from './admin-dashboard.service.js';
 
 @Module({
-  imports: [PerformanceModule, PaymentModule, BookingModule],
+  imports: [PerformanceModule, PaymentModule, BookingModule, RefundModule],
   controllers: [
     AdminPerformanceController,
     AdminBannerController,

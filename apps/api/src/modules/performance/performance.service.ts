@@ -8,14 +8,20 @@ import {
   showtimes,
   castings,
   seatMaps,
+  bookingPolicies,
   banners,
 } from '../../database/schema/index.js';
+import {
+  DEFAULT_PERFORMANCE_BOOKING_POLICY,
+} from '@grabit/shared';
 import type {
+  PerformanceBookingPolicy,
   PerformanceCardData,
   PerformanceListResponse,
   PerformanceWithDetails,
   Banner,
   PerformanceQuery,
+  SeatMap,
 } from '@grabit/shared';
 import { CacheService } from './cache.service.js';
 import {
@@ -29,6 +35,86 @@ type SeatMapConfigForDetails = NonNullable<
 >['seatConfig'];
 
 const PERFORMANCE_TAXONOMY_CACHE_VERSION = 'event-category-v1';
+const DEFAULT_FLOOR_KEY = '1F';
+const DEFAULT_FLOOR_LABEL = '1층';
+
+function mapSeatMapRowToDetailsSeatMap(
+  row: {
+    id: string;
+    performanceId: string;
+    floorKey?: string | null;
+    floorLabel?: string | null;
+    sortOrder?: number | null;
+    svgUrl: string;
+    seatConfig: unknown;
+    totalSeats: number;
+  },
+): SeatMap {
+  return {
+    id: row.id,
+    performanceId: row.performanceId,
+    floorKey: row.floorKey ?? DEFAULT_FLOOR_KEY,
+    floorLabel: row.floorLabel ?? DEFAULT_FLOOR_LABEL,
+    sortOrder: row.sortOrder ?? 0,
+    svgUrl: row.svgUrl,
+    seatConfig: row.seatConfig as SeatMapConfigForDetails,
+    totalSeats: row.totalSeats,
+  };
+}
+
+function cloneDefaultBookingPolicy(): PerformanceBookingPolicy {
+  return {
+    ...DEFAULT_PERFORMANCE_BOOKING_POLICY,
+    allowedPaymentMethods: [
+      ...DEFAULT_PERFORMANCE_BOOKING_POLICY.allowedPaymentMethods,
+    ],
+  };
+}
+
+function mapBookingPolicyRow(
+  row:
+    | {
+        maxTicketsPerUser: number | null;
+        allowedPaymentMethods: string[] | null;
+        changePolicyEnabled: boolean | null;
+        paymentWindowMinutes: number | null;
+        seatHoldMinutes: number | null;
+        cancelledSeatHoldMinMinutes: number | null;
+        cancelledSeatHoldMaxMinutes: number | null;
+        manualOpenEnabled: boolean | null;
+      }
+    | null
+    | undefined,
+): PerformanceBookingPolicy {
+  if (!row) {
+    return cloneDefaultBookingPolicy();
+  }
+
+  return {
+    maxTicketsPerUser:
+      row.maxTicketsPerUser ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.maxTicketsPerUser,
+    allowedPaymentMethods:
+      row.allowedPaymentMethods?.length
+        ? (row.allowedPaymentMethods as PerformanceBookingPolicy['allowedPaymentMethods'])
+        : [...DEFAULT_PERFORMANCE_BOOKING_POLICY.allowedPaymentMethods],
+    changePolicyEnabled:
+      row.changePolicyEnabled
+      ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.changePolicyEnabled,
+    paymentWindowMinutes:
+      row.paymentWindowMinutes
+      ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.paymentWindowMinutes,
+    seatHoldMinutes:
+      row.seatHoldMinutes ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.seatHoldMinutes,
+    cancelledSeatHoldMinMinutes:
+      row.cancelledSeatHoldMinMinutes
+      ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.cancelledSeatHoldMinMinutes,
+    cancelledSeatHoldMaxMinutes:
+      row.cancelledSeatHoldMaxMinutes
+      ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.cancelledSeatHoldMaxMinutes,
+    manualOpenEnabled:
+      row.manualOpenEnabled ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.manualOpenEnabled,
+  };
+}
 
 @Injectable()
 export class PerformanceService {
@@ -150,7 +236,7 @@ export class PerformanceService {
     }
 
     // Fetch related data in parallel
-    const [priceTierRows, showtimeRows, castingRows, seatMapRows] =
+    const [priceTierRows, showtimeRows, castingRows, seatMapRows, bookingPolicyRows] =
       await Promise.all([
         this.db
           .select()
@@ -170,11 +256,18 @@ export class PerformanceService {
         this.db
           .select()
           .from(seatMaps)
-          .where(eq(seatMaps.performanceId, id)),
+          .where(eq(seatMaps.performanceId, id))
+          .orderBy(seatMaps.sortOrder),
+        this.db
+          .select()
+          .from(bookingPolicies)
+          .where(eq(bookingPolicies.performanceId, id)),
       ]);
 
     const perf = performanceRow.performances;
     const venue = performanceRow.venues;
+    const detailSeatMaps = seatMapRows.map(mapSeatMapRowToDetailsSeatMap);
+    const bookingPolicy = mapBookingPolicyRow(bookingPolicyRows[0] ?? null);
 
     const result: PerformanceWithDetails =
       await overlayReviewedDetailTranslations(
@@ -219,15 +312,9 @@ export class PerformanceService {
             photoUrl: c.photoUrl,
             sortOrder: c.sortOrder,
           })),
-          seatMap: seatMapRows[0]
-            ? {
-                id: seatMapRows[0].id,
-                performanceId: seatMapRows[0].performanceId,
-                svgUrl: seatMapRows[0].svgUrl,
-                seatConfig: seatMapRows[0].seatConfig as SeatMapConfigForDetails,
-                totalSeats: seatMapRows[0].totalSeats,
-              }
-            : null,
+          seatMaps: detailSeatMaps,
+          bookingPolicy,
+          seatMap: detailSeatMaps[0] ?? null,
         },
         targetLocale,
       );

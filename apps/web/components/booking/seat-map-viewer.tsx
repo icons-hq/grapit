@@ -22,6 +22,63 @@ interface SeatMapViewerProps {
 
 const LOCKED_COLOR = '#D1D5DB';
 const SELECTED_STROKE = '#1A1A2E';
+const SEAT_OVERLAY_ATTR = 'data-seat-overlay-for';
+
+function normalizeSeatLabelOverlays(doc: Document) {
+  const seatParents = new Set<Element>();
+  doc.querySelectorAll('[data-seat-id]').forEach((seatEl) => {
+    if (seatEl.parentElement) {
+      seatParents.add(seatEl.parentElement);
+    }
+  });
+
+  seatParents.forEach((parent) => {
+    const seatChildren = Array.from(parent.children).filter((child) =>
+      child.hasAttribute('data-seat-id')
+    );
+    if (seatChildren.length !== 1) {
+      return;
+    }
+
+    const seatId = seatChildren[0]?.getAttribute('data-seat-id');
+    if (!seatId) {
+      return;
+    }
+
+    Array.from(parent.children).forEach((child) => {
+      if (child === seatChildren[0]) {
+        return;
+      }
+
+      if (child.hasAttribute('data-seat-checkmark')) {
+        return;
+      }
+
+      const overlayTexts = child.matches('text, tspan')
+        ? [child]
+        : Array.from(child.querySelectorAll('text, tspan'));
+
+      overlayTexts.forEach((overlayText) => {
+        if (overlayText.hasAttribute('data-seat-checkmark')) {
+          return;
+        }
+
+        overlayText.setAttribute(SEAT_OVERLAY_ATTR, seatId);
+        overlayText.setAttribute('pointer-events', 'none');
+      });
+    });
+  });
+}
+
+function findSeatElementById(container: ParentNode | null, seatId: string) {
+  if (!container) {
+    return null;
+  }
+
+  return Array.from(container.querySelectorAll<SVGElement>('[data-seat-id]')).find(
+    (element) => element.getAttribute('data-seat-id') === seatId,
+  ) ?? null;
+}
 
 export function SeatMapViewer({
   svgUrl,
@@ -313,6 +370,8 @@ export function SeatMapViewer({
       svgEl.appendChild(overlayG);
     }
 
+    normalizeSeatLabelOverlays(doc);
+
     // Remove fixed dimensions and make responsive
     svgEl.removeAttribute('width');
     svgEl.removeAttribute('height');
@@ -346,9 +405,7 @@ export function SeatMapViewer({
         // useEffect는 건드리지 않음 → D-13 broadcast 즉시 회색 정책 유지.
         return;
       }
-      const el = root.querySelector(
-        `[data-seat-id="${seatId}"]`,
-      ) as SVGElement | null;
+      const el = findSeatElementById(root, seatId);
       if (!el) return;
       el.style.transition = 'fill 150ms ease-out, stroke 150ms ease-out';
       el.setAttribute('fill', '#6C3CE0'); // Brand Purple — D-03
@@ -356,9 +413,7 @@ export function SeatMapViewer({
 
     // 해제 중인 좌석: fill을 원래 tier 색상으로 복원 + transition 유지
     pendingRemovals.forEach((seatId) => {
-      const el = root.querySelector(
-        `[data-seat-id="${seatId}"]`,
-      ) as SVGElement | null;
+      const el = findSeatElementById(root, seatId);
       if (!el) return;
       el.style.transition = 'fill 150ms ease-out, stroke 150ms ease-out';
       const originalFill = tierColorMap.get(seatId)?.color ?? LOCKED_COLOR;
@@ -374,11 +429,12 @@ export function SeatMapViewer({
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
       const target = (e.target as HTMLElement).closest<SVGElement>(
-        '[data-seat-id]',
+        `[data-seat-id],[${SEAT_OVERLAY_ATTR}]`,
       );
       if (!target) return;
 
-      const seatId = target.getAttribute('data-seat-id');
+      const seatId = target.getAttribute('data-seat-id')
+        ?? target.getAttribute(SEAT_OVERLAY_ATTR);
       if (!seatId) return;
 
       const state = seatStates.get(seatId) ?? 'available';
@@ -400,15 +456,21 @@ export function SeatMapViewer({
   const handleMouseOver = useCallback(
     (e: React.MouseEvent) => {
       const target = (e.target as HTMLElement).closest<SVGElement>(
-        '[data-seat-id]',
+        `[data-seat-id],[${SEAT_OVERLAY_ATTR}]`,
       );
       if (!target) {
         if (tooltipRef.current) tooltipRef.current.style.display = 'none';
         return;
       }
 
-      const seatId = target.getAttribute('data-seat-id');
+      const seatId = target.getAttribute('data-seat-id')
+        ?? target.getAttribute(SEAT_OVERLAY_ATTR);
       if (!seatId) return;
+
+      const seatElement = target.hasAttribute('data-seat-id')
+        ? target
+        : findSeatElementById(containerRef.current, seatId);
+      if (!seatElement) return;
 
       const state = seatStates.get(seatId) ?? 'available';
       if (state !== 'available' && !selectedSeatIds.has(seatId)) {
@@ -423,7 +485,7 @@ export function SeatMapViewer({
       const row = parts[0] ?? seatId;
       const number = parts[1] ?? '';
 
-      const rect = target.getBoundingClientRect();
+      const rect = seatElement.getBoundingClientRect();
       const containerRect = containerRef.current?.getBoundingClientRect();
 
       if (containerRect && tooltipRef.current) {
@@ -435,9 +497,9 @@ export function SeatMapViewer({
         tooltipRef.current.style.display = 'block';
 
         if (state === 'available' && !selectedSeatIds.has(seatId)) {
-          target.style.filter = 'brightness(1.15)';
-          target.setAttribute('stroke', tierInfo.color);
-          target.setAttribute('stroke-width', '2');
+          seatElement.style.filter = 'brightness(1.15)';
+          seatElement.setAttribute('stroke', tierInfo.color);
+          seatElement.setAttribute('stroke-width', '2');
         }
       }
     },
@@ -447,23 +509,29 @@ export function SeatMapViewer({
   const handleMouseOut = useCallback(
     (e: React.MouseEvent) => {
       const target = (e.target as HTMLElement).closest<SVGElement>(
-        '[data-seat-id]',
+        `[data-seat-id],[${SEAT_OVERLAY_ATTR}]`,
       );
       if (!target) return;
 
       if (tooltipRef.current) tooltipRef.current.style.display = 'none';
 
-      const seatId = target.getAttribute('data-seat-id');
+      const seatId = target.getAttribute('data-seat-id')
+        ?? target.getAttribute(SEAT_OVERLAY_ATTR);
       if (!seatId) return;
+
+      const seatElement = target.hasAttribute('data-seat-id')
+        ? target
+        : findSeatElementById(containerRef.current, seatId);
+      if (!seatElement) return;
 
       const isSelected = selectedSeatIds.has(seatId);
       if (isSelected) return;
 
-      target.style.filter = '';
+      seatElement.style.filter = '';
       const state = seatStates.get(seatId) ?? 'available';
       if (state === 'available') {
-        target.removeAttribute('stroke');
-        target.setAttribute('stroke-width', '0');
+        seatElement.removeAttribute('stroke');
+        seatElement.setAttribute('stroke-width', '0');
       }
     },
     // review IN-02: tierColorMap 미사용이므로 deps에서 제거.
