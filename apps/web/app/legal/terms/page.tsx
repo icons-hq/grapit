@@ -27,7 +27,7 @@ export const metadata: Metadata = {
 
 export default async function TermsPage() {
   const locale = (await getLocale()) as SupportedLocale;
-  const usesEnglishFallback = locale === 'th' || locale === 'zh-CN' || locale === 'zh-TW';
+  const usesEnglishFallback = locale === 'th' || locale === 'zh-CN' || locale === 'ja';
   const markdown = locale === 'en' || usesEnglishFallback ? termsEnMd : termsMd;
 
   return (

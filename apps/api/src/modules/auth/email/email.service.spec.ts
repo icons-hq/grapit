@@ -109,7 +109,7 @@ describe('EmailService', () => {
       svc,
       'user@example.com',
       'https://app.test/auth/verify-email?token=opaque',
-      'zh-TW',
+      'ja',
     );
 
     const callArg = mod.__sendMock.mock.calls[0]?.[0] as { subject: string; react: unknown };

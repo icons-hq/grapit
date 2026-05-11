@@ -35,7 +35,7 @@ const LOCALE_OPTIONS: Array<{ value: TranslationTargetLocale | ''; label: string
   { value: 'en', label: 'English' },
   { value: 'th', label: 'ไทย' },
   { value: 'zh-CN', label: '简体中文' },
-  { value: 'zh-TW', label: '繁體中文' },
+  { value: 'ja', label: '日本語' },
 ];
 
 export default function AdminTranslationsPage() {

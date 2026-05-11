@@ -5,7 +5,7 @@ export const LEGAL_FALLBACK_LABELS: Record<SupportedLocale, string> = {
   en: 'Reviewing the English legal notice',
   th: 'ตรวจสอบประกาศทางกฎหมายภาษาอังกฤษ',
   'zh-CN': '查看英文法律告知',
-  'zh-TW': '查看英文法律告知',
+  ja: '英語の法的通知を確認しています',
 };
 
 export function LegalFallbackLabel({ locale }: { locale: SupportedLocale }) {

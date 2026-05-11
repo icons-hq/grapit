@@ -6,7 +6,7 @@ import {
   smsOtpCopy,
 } from './sms-copy.js';
 
-const expectedLocales = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
+const expectedLocales = ['ko', 'en', 'th', 'zh-CN', 'ja'] as const;
 const smsOtpKeys = [
   'template',
   'sent',

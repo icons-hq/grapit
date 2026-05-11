@@ -31,7 +31,7 @@ describe('localized sitemap', () => {
     expect(alternates.en).toBe(`${SITE_URL}/en/legal/privacy`);
     expect(alternates.th).toBe(`${SITE_URL}/th/legal/privacy`);
     expect(alternates['zh-CN']).toBe(`${SITE_URL}/zh-CN/legal/privacy`);
-    expect(alternates['zh-TW']).toBe(`${SITE_URL}/zh-TW/legal/privacy`);
+    expect(alternates['ja']).toBe(`${SITE_URL}/ja/legal/privacy`);
   });
 
   it('includes root and public legal surfaces with localized alternates', () => {

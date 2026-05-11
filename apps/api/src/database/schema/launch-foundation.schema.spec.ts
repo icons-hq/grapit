@@ -52,12 +52,17 @@ describe('Phase 23 launch foundation schema contracts', () => {
     expectColumnName(consentAuditLogs.sourceFlow, 'source_flow');
   });
 
-  it('seeds active launch consent items for every supported locale', () => {
+  it('rewrites legacy zh-TW consent data to zh-CN and seeds Japanese consent rows', () => {
     const source = readMigrationFile(
       migrationDir,
-      '0011_seed_launch_consent_items.sql',
+      '0014_locale_ja_drop_zh_tw.sql',
     );
-    const keys = [
+
+    expect(source).toContain('UPDATE "consent_audit_logs" AS "logs"');
+    expect(source).toContain('DELETE FROM "consent_items" WHERE "locale" = \'zh-TW\'');
+    expect(source).toContain('DELETE FROM "translation_drafts" AS "zh_tw"');
+
+    for (const key of [
       'terms',
       'privacy',
       'pipa_required',
@@ -65,16 +70,12 @@ describe('Phase 23 launch foundation schema contracts', () => {
       'pdpa_notice',
       'pipl_notice',
       'marketing',
-    ];
-    const locales = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'];
-
-    for (const locale of locales) {
-      for (const key of keys) {
-        expect(source).toContain(`('${key}', '2026-04-28', '${locale}'`);
-      }
+    ]) {
+      expect(source).toContain(`('${key}', '2026-04-28', 'ja'`);
     }
+
     expect(source).toContain('ON CONFLICT ("key", "version", "locale")');
-    expect(source).toContain('"is_active" = true');
+    expect(source).toContain('"is_active" = EXCLUDED."is_active"');
   });
 
   it('relaxes launch consent items that are now handled as privacy notices', () => {
@@ -107,6 +108,7 @@ describe('Phase 23 launch foundation schema contracts', () => {
     expect(tags).toContain('0010_collapse_legacy_genres');
     expect(tags).toContain('0011_seed_launch_consent_items');
     expect(tags).toContain('0013_relax_launch_consent_requirements');
+    expect(tags).toContain('0014_locale_ja_drop_zh_tw');
     expect(tags.indexOf('0009_two_event_categories')).toBeLessThan(
       tags.indexOf('0010_collapse_legacy_genres'),
     );
@@ -115,6 +117,9 @@ describe('Phase 23 launch foundation schema contracts', () => {
     );
     expect(tags.indexOf('0012_phase24_booking_core')).toBeLessThan(
       tags.indexOf('0013_relax_launch_consent_requirements'),
+    );
+    expect(tags.indexOf('0013_relax_launch_consent_requirements')).toBeLessThan(
+      tags.indexOf('0014_locale_ja_drop_zh_tw'),
     );
   });
 
@@ -130,7 +135,7 @@ describe('Phase 23 launch foundation schema contracts', () => {
   });
 
   it('defines the launch enum values needed by locale, translation, and legal workflows', () => {
-    expect(localeEnum.enumValues).toEqual(['ko', 'en', 'th', 'zh-CN', 'zh-TW']);
+    expect(localeEnum.enumValues).toEqual(['ko', 'en', 'th', 'zh-CN', 'ja']);
     expect(translationStatusEnum.enumValues).toEqual(['draft', 'review', 'published', 'stale']);
     expect(legalContentTypeEnum.enumValues).toEqual(['legal', 'notice', 'refund', 'booking_guide']);
   });

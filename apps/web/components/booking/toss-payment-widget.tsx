@@ -43,7 +43,7 @@ const LOCALE_TO_COUNTRY = {
   en: 'US',
   th: 'TH',
   'zh-CN': 'CN',
-  'zh-TW': 'TW',
+  ja: 'JP',
 } as const;
 
 type PaymentMethodWidget = Awaited<ReturnType<TossPaymentsWidgets['renderPaymentMethods']>>;

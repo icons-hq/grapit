@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { emailVerificationCopy } from './email-verification.copy.js';
 
-const SUPPORTED_LOCALES = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
+const SUPPORTED_LOCALES = ['ko', 'en', 'th', 'zh-CN', 'ja'] as const;
 const REQUIRED_KEYS = [
   'subject',
   'bodyIntro',

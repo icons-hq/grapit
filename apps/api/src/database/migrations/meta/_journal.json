@@ -99,6 +99,13 @@
       "when": 1778483617000,
       "tag": "0013_relax_launch_consent_requirements",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1778487473405,
+      "tag": "0014_locale_ja_drop_zh_tw",
+      "breakpoints": true
     }
   ]
 }

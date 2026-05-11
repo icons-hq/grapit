@@ -43,7 +43,7 @@ describe('legal canonical locale fallback', () => {
   it.each([
     ['th', TermsPage, 'Terms of Service'],
     ['zh-CN', PrivacyPage, 'Privacy Policy'],
-    ['zh-TW', MarketingPage, 'Marketing Consent'],
+    ['ja', MarketingPage, 'Marketing Consent'],
   ])(
     'renders %s legal pages with English canonical copy and the fallback label',
     async (locale, Page, heading) => {

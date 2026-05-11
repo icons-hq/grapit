@@ -94,7 +94,7 @@ describe('UserService preferred locale persistence', () => {
 
   it('rejects unsupported preferredLocale updates before repository writes', async () => {
     await expect(
-      service.updateProfile('user-1', { preferredLocale: 'ja' } as never),
+      service.updateProfile('user-1', { preferredLocale: 'zh-TW' } as never),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(repository.updateProfile).not.toHaveBeenCalled();
   });

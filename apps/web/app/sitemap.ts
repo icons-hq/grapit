@@ -12,7 +12,7 @@ const PUBLIC_SITEMAP_PATHS = [
   '/legal/marketing',
 ] as const;
 
-const HREFLANG_LOCALES = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const satisfies typeof SUPPORTED_LOCALES;
+const HREFLANG_LOCALES = ['ko', 'en', 'th', 'zh-CN', 'ja'] as const satisfies typeof SUPPORTED_LOCALES;
 
 export type LocalizedAlternates = Record<SupportedLocale, string>;
 

@@ -145,7 +145,7 @@ describe('admin translation review workflow', () => {
     await user.type(screen.getByLabelText('한국어 원문'), '한국어 원문입니다.');
     await user.click(screen.getByRole('button', { name: '원문 저장' }));
     await user.click(
-      screen.getByRole('button', { name: 'en/th/zh-CN/zh-TW 초안 생성' }),
+      screen.getByRole('button', { name: 'en/th/zh-CN/ja 초안 생성' }),
     );
 
     expect(onCreateSource).toHaveBeenCalledWith({
@@ -180,12 +180,12 @@ describe('admin translation review workflow', () => {
 
     await user.click(screen.getByRole('button', { name: '원문 저장' }));
     expect(
-      screen.getByRole('button', { name: 'en/th/zh-CN/zh-TW 초안 생성' }),
+      screen.getByRole('button', { name: 'en/th/zh-CN/ja 초안 생성' }),
     ).toBeDisabled();
 
     await user.click(screen.getByRole('button', { name: '원문 저장' }));
     await user.click(
-      screen.getByRole('button', { name: 'en/th/zh-CN/zh-TW 초안 생성' }),
+      screen.getByRole('button', { name: 'en/th/zh-CN/ja 초안 생성' }),
     );
 
     await waitFor(() => {
@@ -228,7 +228,7 @@ describe('admin translation review workflow', () => {
       draftRow,
       { ...draftRow, id: 'draft-review', status: 'review', locale: 'th' },
       { ...draftRow, id: 'draft-published', status: 'published', locale: 'zh-CN' },
-      { ...draftRow, id: 'draft-stale', status: 'stale', locale: 'zh-TW' },
+      { ...draftRow, id: 'draft-stale', status: 'stale', locale: 'ja' },
       {
         ...draftRow,
         id: 'draft-blocked',

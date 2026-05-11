@@ -92,10 +92,11 @@ function normalizeLanguageTag(tag: string): SupportedLocale | null {
   if (lower === 'en' || lower.startsWith('en-')) return 'en';
   if (lower === 'th' || lower.startsWith('th-')) return 'th';
 
-  if (lower === 'zh-tw' || lower === 'zh-hk' || lower === 'zh-mo') return 'zh-TW';
-  if (lower.startsWith('zh-hant')) return 'zh-TW';
+  if (lower === 'zh-tw' || lower === 'zh-hk' || lower === 'zh-mo') return 'zh-CN';
+  if (lower.startsWith('zh-hant')) return 'zh-CN';
   if (lower === 'zh-cn' || lower === 'zh-sg') return 'zh-CN';
   if (lower.startsWith('zh-hans') || lower === 'zh') return 'zh-CN';
+  if (lower === 'ja' || lower.startsWith('ja-')) return 'ja';
 
   return null;
 }
