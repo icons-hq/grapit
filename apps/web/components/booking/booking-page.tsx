@@ -24,6 +24,13 @@ import { useBookingStore } from '@/stores/use-booking-store';
 import { useBookingSocket } from '@/hooks/use-socket';
 import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
 import { ApiClientError } from '@/lib/api-client';
+import {
+  formatKstDateLabel,
+  formatKstTimeLabel,
+  getKstCalendarDate,
+  getKstCalendarKey,
+  isSameKstCalendarDate,
+} from '@/lib/booking-datetime';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import {
   getVisibleCopy,
@@ -52,31 +59,6 @@ type GroupedFloorSelection = {
   floorLabel: string;
   seats: FloorAwareSeatSelection[];
 };
-
-function isSameDay(a: Date, b: Date): boolean {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
-}
-
-function formatDateLabel(date: Date): string {
-  return date.toLocaleDateString('ko-KR', {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    weekday: 'short',
-  });
-}
-
-function formatTimeLabel(dateTime: string): string {
-  return new Date(dateTime).toLocaleTimeString('ko-KR', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-}
 
 function parseRuntimeSeatIdentity(rawSeatIdOrKey: string): RuntimeSeatIdentity {
   const separatorIndex = rawSeatIdOrKey.indexOf(':');
@@ -193,7 +175,7 @@ function DesktopSelectionSummary({
           </p>
           {selectedDate && selectedShowtime ? (
             <p className="mt-1 text-sm text-gray-500">
-              {formatDateLabel(selectedDate)} {formatTimeLabel(selectedShowtime.dateTime)}
+              {formatKstDateLabel(selectedShowtime.dateTime)} {formatKstTimeLabel(selectedShowtime.dateTime)}
             </p>
           ) : null}
         </div>
@@ -391,10 +373,9 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
   const availableDates = useMemo(() => {
     const dateMap = new Map<string, Date>();
     for (const showtime of allShowtimes) {
-      const date = new Date(showtime.dateTime);
-      const key = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+      const key = getKstCalendarKey(showtime.dateTime);
       if (!dateMap.has(key)) {
-        dateMap.set(key, new Date(date.getFullYear(), date.getMonth(), date.getDate()));
+        dateMap.set(key, getKstCalendarDate(showtime.dateTime));
       }
     }
     return Array.from(dateMap.values());
@@ -406,7 +387,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
     }
 
     return allShowtimes.filter((showtime) =>
-      isSameDay(new Date(showtime.dateTime), selectedDate),
+      isSameKstCalendarDate(showtime.dateTime, selectedDate),
     );
   }, [allShowtimes, selectedDate]);
 
@@ -780,6 +761,40 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
     [setDate, setShowtime],
   );
 
+  if (bookingDisabledReason) {
+    const disabledTitle = performance?.title ?? '예매 안내';
+    const backLabel = performance?.title ?? '공연 상세로 돌아가기';
+
+    return (
+      <div className="flex flex-1 flex-col">
+        <BookingHeader
+          performanceTitle={disabledTitle}
+          expiresAt={null}
+          onBack={handleBack}
+          onExpire={handleTimerExpire}
+        />
+
+        <main className="mx-auto flex w-full max-w-[760px] flex-1 items-center px-4 py-12">
+          <section
+            role="status"
+            className="w-full rounded-lg border border-amber-200 bg-amber-50 px-5 py-6 text-center"
+          >
+            <p className="text-base font-semibold text-amber-900">
+              {bookingDisabledReason}
+            </p>
+            <button
+              type="button"
+              onClick={handleBack}
+              className="mt-4 inline-flex min-h-10 items-center rounded-md bg-white px-4 text-sm font-semibold text-amber-900 shadow-sm ring-1 ring-amber-200 hover:bg-amber-100"
+            >
+              {backLabel}
+            </button>
+          </section>
+        </main>
+      </div>
+    );
+  }
+
   if (performanceLoading) {
     return (
       <div className="flex flex-1 flex-col">
@@ -814,37 +829,6 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
         <p className="text-base text-gray-600">
           {copy.performance.loadError}
         </p>
-      </div>
-    );
-  }
-
-  if (bookingDisabledReason) {
-    return (
-      <div className="flex flex-1 flex-col">
-        <BookingHeader
-          performanceTitle={performance.title}
-          expiresAt={null}
-          onBack={handleBack}
-          onExpire={handleTimerExpire}
-        />
-
-        <main className="mx-auto flex w-full max-w-[760px] flex-1 items-center px-4 py-12">
-          <section
-            role="status"
-            className="w-full rounded-lg border border-amber-200 bg-amber-50 px-5 py-6 text-center"
-          >
-            <p className="text-base font-semibold text-amber-900">
-              {bookingDisabledReason}
-            </p>
-            <button
-              type="button"
-              onClick={handleBack}
-              className="mt-4 inline-flex min-h-10 items-center rounded-md bg-white px-4 text-sm font-semibold text-amber-900 shadow-sm ring-1 ring-amber-200 hover:bg-amber-100"
-            >
-              {performance.title}
-            </button>
-          </section>
-        </main>
       </div>
     );
   }

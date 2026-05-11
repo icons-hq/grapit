@@ -27,6 +27,25 @@ describe('ShowtimeChips', () => {
     });
   });
 
+  it('renders Korean event time in KST regardless of runner timezone', () => {
+    render(
+      <ShowtimeChips
+        showtimes={[
+          {
+            id: 'kst-showtime',
+            performanceId: 'p-1',
+            dateTime: '2026-07-18T19:00:00.000+09:00',
+          },
+        ]}
+        selected={null}
+        onSelect={() => {}}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: '19:00' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: '10:00' })).toBeNull();
+  });
+
   it('calls onSelect with the showtime id when clicked', async () => {
     const onSelect = vi.fn();
     const user = userEvent.setup();

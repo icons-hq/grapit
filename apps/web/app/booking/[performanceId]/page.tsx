@@ -1,7 +1,6 @@
 'use client';
 
 import { use } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
 import { BookingPage } from '@/components/booking/booking-page';
 import { QueueWaiting } from '@/components/booking/queue-waiting';
 import { useQueue } from '@/hooks/use-queue';
@@ -14,12 +13,7 @@ export default function BookingRoute({
 }) {
   const { performanceId } = use(params);
 
-  const queryClient = useQueryClient();
-  const runtimeFlagsState = queryClient.getQueryState<{
-    bookingEnabled: boolean;
-  }>(['runtime-flags']);
-  const runtimeFlagsResolved = (runtimeFlagsState?.dataUpdatedAt ?? 0) > 0;
-  const { bookingEnabled } = useRuntimeFlags();
+  const { bookingEnabled, isResolved: runtimeFlagsResolved } = useRuntimeFlags();
   const queue = useQueue({
     performanceId,
     enabled: runtimeFlagsResolved && bookingEnabled,

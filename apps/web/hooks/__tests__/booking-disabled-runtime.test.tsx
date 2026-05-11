@@ -19,6 +19,7 @@ const {
   requestPaymentMock,
   routerPushMock,
   routerReplaceMock,
+  usePerformanceDetailMock,
   useLocaleMock,
   useTranslationsMock,
   useRuntimeFlagsMock,
@@ -28,6 +29,7 @@ const {
   requestPaymentMock: vi.fn(),
   routerPushMock: vi.fn(),
   routerReplaceMock: vi.fn(),
+  usePerformanceDetailMock: vi.fn(),
   useLocaleMock: vi.fn(() => 'ko'),
   useTranslationsMock: vi.fn(() => (key: string, values?: Record<string, string>) => {
     const messages: Record<string, string> = {
@@ -87,11 +89,7 @@ vi.mock('@/hooks/use-runtime-flags', () => ({
 }));
 
 vi.mock('@/hooks/use-performances', () => ({
-  usePerformanceDetail: () => ({
-    data: createPerformanceDetail(),
-    isLoading: false,
-    isError: false,
-  }),
+  usePerformanceDetail: usePerformanceDetailMock,
 }));
 
 vi.mock('@/hooks/use-socket', () => ({
@@ -283,6 +281,12 @@ describe('runtime booking disabled UI', () => {
     requestPaymentMock.mockReset();
     routerPushMock.mockReset();
     routerReplaceMock.mockReset();
+    usePerformanceDetailMock.mockReset();
+    usePerformanceDetailMock.mockReturnValue({
+      data: createPerformanceDetail(),
+      isLoading: false,
+      isError: false,
+    });
     useLocaleMock.mockReturnValue('ko');
     useRuntimeFlagsMock.mockReturnValue({
       bookingEnabled: false,
@@ -338,6 +342,32 @@ describe('runtime booking disabled UI', () => {
 
     expect(lockSeatMutateMock).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['ko', '예매는 5월말 오픈 예정입니다'],
+    ['en', 'Ticket booking opens in late May'],
+  ] satisfies Array<[SupportedLocale, string]>)(
+    'shows disabled copy before performance detail finishes loading for %s',
+    (locale, copy) => {
+      useLocaleMock.mockReturnValue(locale);
+      useRuntimeFlagsMock.mockReturnValue({
+        bookingEnabled: false,
+        isLoading: false,
+        bookingDisabledMessage: copy,
+      });
+      usePerformanceDetailMock.mockReturnValue({
+        data: undefined,
+        isLoading: true,
+        isError: false,
+      });
+
+      renderWithQuery(<BookingPage performanceId="performance-disabled" />);
+
+      expect(screen.getByText(copy)).toBeInTheDocument();
+      expect(screen.queryByText('date picker')).not.toBeInTheDocument();
+      expect(screen.queryByText('seat legend')).not.toBeInTheDocument();
+    },
+  );
 
   it('does not prepare reservation or call Toss requestPayment when disabled', async () => {
     const user = userEvent.setup();

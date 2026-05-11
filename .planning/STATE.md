@@ -343,6 +343,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 | 260507-ok2 | production deploy migration failure를 CLI로 조사하고 복구 | 2026-05-07 | dc9dba0, d1d6633 | [260507-ok2-ci-cd-cli](./quick/260507-ok2-ci-cd-cli/) |
 | 260511-i3d | Phase 24 Toss method matrix gap closure: Redis Cluster queue purge fix, Toss `ALIPAY` webhook normalization, production API/web redeploy, and non-secret method-matrix evidence | 2026-05-11 | committed | [260511-i3d-resolve-phase-24-remaining-toss-method-m](./quick/260511-i3d-resolve-phase-24-remaining-toss-method-m/) |
 | 260511-ipx | Phase 24 production operations handling runbook for queue, booking, Toss, Cloud Run, Cloudflare, secrets, DB, Redis, refund, QR, rollback, and evidence workflows | 2026-05-11 | committed | [260511-ipx-create-phase-24-production-operations-ha](./quick/260511-ipx-create-phase-24-production-operations-ha/) |
+| 260511-l0p | PR #34 CI E2E 복구: KST showtime rendering 고정, runtime flag resolution 반응형화, booking-disabled smoke 안정화 | 2026-05-11 | committed | [260511-l0p-pr-ci](./quick/260511-l0p-pr-ci/) |
 
 ## Session Continuity
 

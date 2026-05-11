@@ -3,21 +3,13 @@
 import type { Showtime } from '@grabit/shared';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib';
+import { formatKstTimeLabel } from '@/lib/booking-datetime';
 
 interface ShowtimeChipsProps {
   showtimes: Showtime[];
   selected: string | null;
   onSelect: (id: string) => void;
   isLoading?: boolean;
-}
-
-function formatTime(dateTime: string): string {
-  const d = new Date(dateTime);
-  return d.toLocaleTimeString('ko-KR', {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
 }
 
 export function ShowtimeChips({
@@ -60,7 +52,7 @@ export function ShowtimeChips({
                 : 'bg-gray-100 text-gray-900 hover:bg-gray-200',
             )}
           >
-            {formatTime(showtime.dateTime)}
+            {formatKstTimeLabel(showtime.dateTime)}
           </button>
         );
       })}
