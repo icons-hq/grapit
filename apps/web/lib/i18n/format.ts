@@ -34,7 +34,7 @@ const LOCALE_CURRENCY: Record<SupportedLocale, string> = {
   en: 'USD',
   th: 'THB',
   'zh-CN': 'CNY',
-  'zh-TW': 'TWD',
+  ja: 'JPY',
 };
 
 export const DEFAULT_EXCHANGE_RATES: Record<SupportedLocale, ExchangeRateEstimate> = {
@@ -42,7 +42,7 @@ export const DEFAULT_EXCHANGE_RATES: Record<SupportedLocale, ExchangeRateEstimat
   en: { currency: 'USD', rate: 0.00072 },
   th: { currency: 'THB', rate: 0.025 },
   'zh-CN': { currency: 'CNY', rate: 0.0052 },
-  'zh-TW': { currency: 'TWD', rate: 0.022 },
+  ja: { currency: 'JPY', rate: 0.11 },
 };
 
 export function normalizeSupportedLocale(locale: string | undefined): SupportedLocale {

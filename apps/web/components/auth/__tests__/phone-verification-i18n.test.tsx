@@ -60,7 +60,7 @@ describe('PhoneVerification PhoneInput locale wiring', () => {
     vi.clearAllMocks();
   });
 
-  it.each(['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const)(
+  it.each(['ko', 'en', 'th', 'zh-CN', 'ja'] as const)(
     'passes active %s locale into PhoneInput during the auth/SMS OTP flow',
     (locale) => {
       mocks.activeLocale = locale;
@@ -73,7 +73,7 @@ describe('PhoneVerification PhoneInput locale wiring', () => {
   );
 
   it('falls back to ko when next-intl returns an unsupported locale', () => {
-    mocks.activeLocale = 'ja';
+    mocks.activeLocale = 'fr';
 
     render(<PhoneVerification {...defaultProps} />);
 

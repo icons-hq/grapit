@@ -53,7 +53,7 @@ const LOCALE_LABELS: Record<TranslationTargetLocale, string> = {
   en: 'English',
   th: 'ไทย',
   'zh-CN': '简体中文',
-  'zh-TW': '繁體中文',
+  ja: '日本語',
 };
 
 function formatDateTime(value: string): string {

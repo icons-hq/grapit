@@ -49,7 +49,7 @@ describe('home i18n visible copy', () => {
 
     expect(screen.getByText('Search fanmeet and popup events or browse by category.')).toBeDefined();
     expect(screen.getByRole('heading', { name: 'HOT' })).toBeDefined();
-    expect(screen.getByRole('heading', { name: 'Newly opened' })).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'New' })).toBeDefined();
     expect(screen.getByRole('heading', { name: 'Browse by category' })).toBeDefined();
     expect(screen.getByRole('link', { name: 'Artist/Celebrity' })).toBeDefined();
     expect(screen.getByRole('link', { name: 'IP Popup' })).toBeDefined();

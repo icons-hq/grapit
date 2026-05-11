@@ -5,7 +5,7 @@ import {
 } from './format';
 import type { SupportedLocale } from '@grabit/shared';
 
-const locales: SupportedLocale[] = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'];
+const locales: SupportedLocale[] = ['ko', 'en', 'th', 'zh-CN', 'ja'];
 
 describe('formatEventTimeWithKstAnchor', () => {
   it.each(locales)('keeps an explicit KST anchor for %s', (locale) => {
@@ -30,16 +30,16 @@ describe('formatEventTimeWithKstAnchor', () => {
         localTimeZone: 'Asia/Bangkok',
       },
     );
-    const zhTw = formatEventTimeWithKstAnchor(
+    const ja = formatEventTimeWithKstAnchor(
       '2026-07-04T09:00:00.000Z',
-      'zh-TW',
+      'ja',
       {
-        localTimeZone: 'Asia/Taipei',
+        localTimeZone: 'Asia/Tokyo',
       },
     );
 
     expect(th.local).toContain('16:00');
-    expect(zhTw.local).toContain('17:00');
+    expect(ja.local).toContain('18:00');
   });
 });
 

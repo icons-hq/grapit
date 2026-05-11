@@ -302,7 +302,7 @@ describe('runtime booking disabled UI', () => {
       en: 'Ticket booking opens in late May',
       th: 'การจองบัตรจะเปิดปลายเดือนพฤษภาคม',
       'zh-CN': '门票预订预计于5月下旬开放',
-      'zh-TW': '門票預訂預計於5月下旬開放',
+      'ja': 'チケット予約は5月下旬に開始予定です',
     });
   });
 
@@ -311,7 +311,7 @@ describe('runtime booking disabled UI', () => {
     ['en', 'Ticket booking opens in late May'],
     ['th', 'การจองบัตรจะเปิดปลายเดือนพฤษภาคม'],
     ['zh-CN', '门票预订预计于5月下旬开放'],
-    ['zh-TW', '門票預訂預計於5月下旬開放'],
+    ['ja', 'チケット予約は5月下旬に開始予定です'],
   ] satisfies Array<[SupportedLocale, string]>)(
     'replaces the performance detail booking CTA with disabled copy for %s',
     async (locale, copy) => {

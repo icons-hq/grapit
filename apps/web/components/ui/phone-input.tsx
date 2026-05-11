@@ -51,16 +51,16 @@ type CountrySelectCopy = {
   empty: string;
 };
 
-const zhTwLabels = {
-  ...(zh as PhoneInputLabelSet),
-  country: '國家/地區',
-  KR: '韓國',
-  TH: '泰國',
-  CN: '中國',
-  TW: '台灣',
-  US: '美國',
-  IS: '冰島',
-  ZZ: '國際',
+const jaLabels = {
+  ...(en as PhoneInputLabelSet),
+  country: '国/地域',
+  KR: '韓国',
+  TH: 'タイ',
+  CN: '中国',
+  JP: '日本',
+  US: 'アメリカ合衆国',
+  IS: 'アイスランド',
+  ZZ: '国際',
 } satisfies PhoneInputLabelSet;
 
 const PHONE_INPUT_LABELS = {
@@ -68,7 +68,7 @@ const PHONE_INPUT_LABELS = {
   en: en as PhoneInputLabelSet,
   th: th as PhoneInputLabelSet,
   'zh-CN': zh as PhoneInputLabelSet,
-  'zh-TW': zhTwLabels,
+  ja: jaLabels,
 } as const satisfies Record<PhoneInputLocale, PhoneInputLabelSet>;
 
 const COUNTRY_SELECT_COPY = {
@@ -92,10 +92,10 @@ const COUNTRY_SELECT_COPY = {
     searchPlaceholder: '搜索国家/地区...',
     empty: '未找到匹配的国家/地区。',
   },
-  'zh-TW': {
-    ariaPrefix: zhTwLabels.country,
-    searchPlaceholder: '搜尋國家/地區...',
-    empty: '找不到相符的國家/地區。',
+  ja: {
+    ariaPrefix: jaLabels.country,
+    searchPlaceholder: '国/地域を検索...',
+    empty: '一致する国/地域が見つかりません。',
   },
 } as const satisfies Record<PhoneInputLocale, CountrySelectCopy>;
 

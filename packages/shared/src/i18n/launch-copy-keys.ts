@@ -1,4 +1,4 @@
-export const LAUNCH_COPY_LOCALES = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
+export const LAUNCH_COPY_LOCALES = ['ko', 'en', 'th', 'zh-CN', 'ja'] as const;
 
 export const LAUNCH_COPY_NAMESPACES = [
   'nav',
@@ -123,7 +123,7 @@ function forLaunchLocales<const T extends readonly string[]>(keys: T) {
     en: keys,
     th: keys,
     'zh-CN': keys,
-    'zh-TW': keys,
+    'ja': keys,
   } as const satisfies Record<LaunchCopyLocale, T>;
 }
 

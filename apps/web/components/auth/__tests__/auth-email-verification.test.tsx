@@ -11,7 +11,7 @@ import koMessages from '@/messages/ko.json';
 import enMessages from '@/messages/en.json';
 import thMessages from '@/messages/th.json';
 import zhCNMessages from '@/messages/zh-CN.json';
-import zhTWMessages from '@/messages/zh-TW.json';
+import jaMessages from '@/messages/ja.json';
 import { EmailVerificationStatus } from '../email-verification-status';
 
 const mocks = vi.hoisted(() => ({
@@ -41,7 +41,7 @@ const messageFiles = {
   en: enMessages,
   th: thMessages,
   'zh-CN': zhCNMessages,
-  'zh-TW': zhTWMessages,
+  'ja': jaMessages,
 } as const;
 
 const expectedNamespaces = [

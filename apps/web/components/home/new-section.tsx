@@ -22,9 +22,7 @@ export function NewSection() {
   return (
     <section className="mt-10">
       <div className="mb-6 flex items-center justify-between">
-        <h2 className="text-display font-semibold leading-[1.2]">
-          {copy.home.newOpen}
-        </h2>
+        <h2 className="text-display font-semibold leading-[1.2]">New</h2>
         <Link
           href={`${getLocalizedPathname('/genre/artist_celebrity', activeLocale)}?sort=latest`}
           className="text-sm text-gray-600 hover:text-gray-900"
@@ -32,9 +30,14 @@ export function NewSection() {
           {copy.home.more}
         </Link>
       </div>
-      <div className="grid grid-cols-2 gap-6 md:grid-cols-4">
+      <div className="flex flex-wrap justify-center gap-6">
         {performances.map((p) => (
-          <PerformanceCard key={p.id} performance={p} />
+          <div
+            key={p.id}
+            className="w-[calc(50%-0.75rem)] min-w-0 md:w-[calc(25%-1.125rem)]"
+          >
+            <PerformanceCard performance={p} />
+          </div>
         ))}
       </div>
     </section>
