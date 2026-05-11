@@ -665,7 +665,7 @@ export class QueueService {
   }
 
   private async purgeQueueSessionRecord(record: QueueSessionRecord): Promise<void> {
-    await this.redis.del(
+    const keys = [
       this.sessionKey(record.performanceId, record.queueSessionId),
       this.sessionRefKey(record.queueSessionId),
       this.identityKey(record.performanceId, {
@@ -674,7 +674,12 @@ export class QueueService {
         deviceSlotId: record.deviceSlotId,
       }),
       this.admissionTokenKey(record.admissionTokenHash),
-    );
+    ];
+
+    for (const key of keys) {
+      await this.redis.del(key);
+    }
+
     await this.redis.zrem(this.waitingQueueKey(record.performanceId), record.queueSessionId);
     await this.redis.srem(this.activeAdmissionsKey(record.performanceId), record.queueSessionId);
   }

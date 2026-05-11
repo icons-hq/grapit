@@ -117,6 +117,42 @@ describe('QueueService', () => {
     expect(mockRedis.zadd).not.toHaveBeenCalled();
   });
 
+  it('purges stale session keys one by one for Redis Cluster slot safety', async () => {
+    mockRedis.get.mockResolvedValueOnce('queue-session-1');
+    vi.spyOn(service as never, 'readQueueSessionRecord')
+      .mockResolvedValueOnce({
+        queueSessionId: 'queue-session-1',
+        performanceId,
+        userId: identity.userId,
+        refreshTokenFamilyId: identity.refreshTokenFamilyId,
+        deviceSlotId: identity.deviceSlotId,
+        admissionTokenHash: 'existing-token-hash',
+        state: 'EXPIRED',
+        enteredAt: new Date('2026-05-08T00:00:00.000Z').toISOString(),
+        admittedAt: null,
+        activeUntilAt: null,
+        reentryGraceUntilAt: null,
+        paymentRecoveryUntilAt: null,
+        expiresAt: new Date('2026-05-08T00:05:00.000Z').toISOString(),
+      })
+      .mockResolvedValueOnce(null);
+
+    await service.ensureQueueSession({
+      performanceId,
+      identity,
+    });
+
+    const purgeCalls = mockRedis.del.mock.calls.slice(0, 4);
+    expect(purgeCalls).toHaveLength(4);
+    expect(purgeCalls.every((args) => args.length === 1)).toBe(true);
+    expect(purgeCalls.map(([key]) => String(key))).toEqual([
+      `{queue:${performanceId}}:session:queue-session-1`,
+      '{queue:session-ref}:queue-session-1',
+      `{queue:${performanceId}}:identity:user-1:family-1:family-1`,
+      '{queue:admission}:existing-token-hash',
+    ]);
+  });
+
   it('locks the queue transport contract to cookie-only admission and realtime queue events', async () => {
     const controllerSource = await readFile(
       resolve(__dirname, 'queue.controller.ts'),

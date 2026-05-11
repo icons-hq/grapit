@@ -341,6 +341,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 | 260507-r4s | 분류 페이지 legacy subcategory chip 제거 | 2026-05-07 | uncommitted | [260507-r4s-category-filter-chips](./quick/260507-r4s-category-filter-chips/) |
 | 260507-n8l | 현재 최신 pr에서 ci가 실패했어. 코드와 로그를 보고 해결 | 2026-05-07 | 85b81c3 | [260507-n8l-pr-ci](./quick/260507-n8l-pr-ci/) |
 | 260507-ok2 | production deploy migration failure를 CLI로 조사하고 복구 | 2026-05-07 | dc9dba0, d1d6633 | [260507-ok2-ci-cd-cli](./quick/260507-ok2-ci-cd-cli/) |
+| 260511-i3d | Phase 24 Toss method matrix gap closure: Redis Cluster queue purge fix, Toss `ALIPAY` webhook normalization, production API/web redeploy, and non-secret method-matrix evidence | 2026-05-11 | committed | [260511-i3d-resolve-phase-24-remaining-toss-method-m](./quick/260511-i3d-resolve-phase-24-remaining-toss-method-m/) |
 
 ## Session Continuity
 

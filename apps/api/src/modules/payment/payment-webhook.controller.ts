@@ -25,6 +25,7 @@ const tossWebhookProviderSchema = z
     'TOSS_PAY',
     'NAVER_PAY',
     'KAKAOPAY',
+    'ALIPAY',
     'ALIPAY_PLUS',
     'TRUEMONEY',
   ])

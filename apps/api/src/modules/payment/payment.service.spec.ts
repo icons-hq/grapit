@@ -260,7 +260,7 @@ describe('PaymentService', () => {
             orderId: 'GRP-ASYNC-DONE',
             status: 'DONE',
             method: 'FOREIGN_EASY_PAY',
-            provider: 'ALIPAY_PLUS',
+            provider: 'ALIPAY',
             currency: 'USD',
             totalAmount: 150000,
             approvedAt: '2026-05-08T08:00:00.000Z',
@@ -281,6 +281,8 @@ describe('PaymentService', () => {
           amount: 150000,
           status: 'DONE',
           asyncStatus: 'payment_status_changed:done',
+          method: 'FOREIGN_EASY_PAY',
+          provider: 'ALIPAY_PLUS',
         }),
       );
       expect(mockBookingGateway.broadcastSeatUpdate).toHaveBeenCalledWith(

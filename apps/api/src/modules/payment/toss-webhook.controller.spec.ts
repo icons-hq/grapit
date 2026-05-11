@@ -131,6 +131,18 @@ describe('PaymentWebhookController', () => {
     expect(parsed.data.provider).toBeUndefined();
   });
 
+  it('accepts Toss Alipay webhook provider code before service-level normalization', () => {
+    const parsed = tossWebhookSchema.parse({
+      ...paymentStatusChangedEvent,
+      data: {
+        ...paymentStatusChangedEvent.data,
+        provider: 'ALIPAY',
+      },
+    });
+
+    expect(parsed.data.provider).toBe('ALIPAY');
+  });
+
   it('uses Toss transmission header when the payment webhook body has no eventId', async () => {
     paymentService.recordWebhookEvent.mockResolvedValueOnce(
       makeLedgerResult({

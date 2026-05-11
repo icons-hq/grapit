@@ -25,6 +25,8 @@ import type {
   PaymentStatus,
 } from '@grabit/shared';
 
+type TossWebhookProvider = PaymentProvider | 'ALIPAY';
+
 const ASYNC_FOREIGN_EASY_PAY_PROVIDERS = new Set<PaymentProvider>([
   'ALIPAY_PLUS',
   'TRUEMONEY',
@@ -65,7 +67,7 @@ export interface TossWebhookRequestBody {
     orderId: string;
     status: string;
     method?: string;
-    provider?: PaymentProvider;
+    provider?: TossWebhookProvider;
     currency?: string;
     totalAmount?: number;
     approvedAt?: string;
@@ -694,6 +696,10 @@ export class PaymentService {
   }
 
   private resolveWebhookProvider(payload: TossWebhookRequestBody): PaymentProvider {
+    if (payload.data.provider === 'ALIPAY') {
+      return 'ALIPAY_PLUS';
+    }
+
     if (payload.data.provider) {
       return payload.data.provider;
     }

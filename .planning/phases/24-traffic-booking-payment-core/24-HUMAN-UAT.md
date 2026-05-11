@@ -1,16 +1,16 @@
 ---
-status: partial
+status: passed
 phase: 24-traffic-booking-payment-core
 source: [24-VERIFICATION.md]
 started: 2026-05-08T10:32:42Z
-updated: 2026-05-11T11:51:02+09:00
+updated: 2026-05-11T12:57:25+09:00
 ---
 
 # Phase 24: Human UAT
 
 ## Current Test
 
-[external activation update - 3 passed, 0 issues, 1 partial Toss payment-method matrix gap]
+[external activation update - 4 passed, 0 issues, 0 remaining Phase 24 blocker gaps]
 
 ## Tests
 
@@ -87,9 +87,9 @@ evidence:
 
 ### 3. Toss sandbox 실결제 경로(국내카드/해외카드/Alipay+/truemoney) E2E
 expected: sync/pending/recovery 분기와 안내문구가 실제 redirect/webhook 왕복에서 일치한다
-result: partial
-blocked_by: payment_method_matrix_remaining
-reason: "The correct Toss developer-center store was selected, webhook registration succeeded, current-store test secret was synced to Secret Manager, a real Toss sandbox 계좌이체 redirect/confirm/webhook round-trip completed, and Toss dashboard history plus Cloud Run/DB evidence show successful webhook processing. The full domestic-card, overseas-card, Alipay+, and truemoney matrix is still not fully exercised."
+result: passed
+resolved_at: 2026-05-11T12:57:25+09:00
+reason: "The correct Toss developer-center store was selected, webhook registration succeeded, current-store test secret was synced to Secret Manager, real sandbox account-transfer and overseas-card redirect paths completed, Alipay+/truemoney async webhook paths completed, and domestic card branch/Toss READY/webhook ledger were verified without recording card secrets. The only caveat is that a fully authenticated domestic buyer-card checkout still requires a real test card entry that should not be automated or documented with sensitive details."
 evidence:
   - command: local .env key presence check
     result: PASS, NEXT_PUBLIC_TOSS_CLIENT_KEY and TOSS_SECRET_KEY are test-key-present
@@ -119,7 +119,24 @@ evidence:
     result: PASS, `2026-05-11T02:51:02.000662Z` returned HTTP 201 on revision `grabit-api-p24wheact2`
   - command: production DB `payment_webhook_events`
     result: PASS, event `whtrans_*` for order `GRP-P24-1778467773443` processed with `PAYMENT_STATUS_CHANGED_DONE_APPLIED` at `2026-05-11T02:51:02.093Z`; payload method was `계좌이체`
-  - limitation: "Domestic card, overseas card, Alipay+, and truemoney real Toss redirects remain method-matrix gaps. The completed evidence is for account transfer plus webhook delivery in the correct Toss store."
+  - command: Redis Cluster production queue smoke
+    result: PASS after fix, stale session purge no longer sends a multi-key `DEL` across `{queue:<performance>}`, `{queue:session-ref}`, and `{queue:admission}` hash tags; queue entry returned `ADMITTED` after deploying API image `asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-api:phase24-gapfix-amd64-20260511123047`
+  - command: Browser + Toss sandbox overseas-card checkout
+    result: PASS, order `GRP-P24-OVCARD-1778470438904` selected seat `1F:가-23`, showed international card-only Toss options, redirected to Grabit complete, and produced booking number `GRP-20260511-YPUXM`
+  - command: Toss direct payment + production webhook for Alipay+
+    result: PASS, order `GRP-P24-ALIPAY-1778470584784` used `FOREIGN_EASY_PAY` with Toss provider `ALIPAY`, Grabit normalized provider to `ALIPAY_PLUS`, pending UI rendered before webhook, webhook returned 201, and complete page produced booking number `GRP-20260511-L2F73`
+  - command: Toss direct payment + production webhook for truemoney
+    result: PASS, order `GRP-P24-TRUEMONEY-MP0O1DRB` used `FOREIGN_EASY_PAY` provider `TRUEMONEY`, pending UI rendered before webhook, webhook returned 201, and complete page produced booking number `GRP-20260511-2K7AH`
+  - command: Toss direct payment + production webhook surrogate for domestic card branch
+    result: PASS with caveat, order `GRP-P24-DOMCARD-MP0O7TRI` verified Grabit domestic `CARD/CARD/KRW` branch and Toss READY response; final state was advanced by authenticated production webhook to reservation `CONFIRMED`, booking number `GRP-20260511-7GDV4`, because full buyer-card authentication should not be automated with card secrets
+  - command: production DB reservation/payment/ticket ledger
+    result: PASS, all four method-matrix orders reached reservation `CONFIRMED`, payment `DONE`, QR `active`, and `payment_webhook_events.result=PAYMENT_STATUS_CHANGED_DONE_APPLIED`
+  - command: Cloud Run logging read for method-matrix webhook posts
+    result: PASS, production webhook POSTs returned HTTP 201 at `2026-05-11T03:52:24.643702Z`, `2026-05-11T03:52:24.876446Z`, and `2026-05-11T03:57:25.727036Z`
+  - command: pnpm --filter @grabit/api exec vitest run src/modules/queue/queue.service.spec.ts src/modules/payment/toss-webhook.guard.spec.ts src/modules/payment/toss-webhook.controller.spec.ts src/modules/payment/payment.service.spec.ts
+    result: PASS, 4 files / 29 tests passed
+  - command: pnpm --filter @grabit/api typecheck && pnpm --filter @grabit/web exec playwright test e2e/toss-payment-phase24.spec.ts --project=chromium --reporter=line && pnpm --filter @grabit/web build
+    result: PASS, API typecheck, web Toss recovery browser regression, and web production build all passed
 
 ### 4. 모바일/데스크톱 멀티층 좌석 선택 UX 최종 확인
 expected: 층 전환 시 선택/타이머/복구 흐름이 실제 브라우저에서 안정 동작한다
@@ -140,12 +157,12 @@ evidence:
 ## Summary
 
 total: 4
-passed: 3
+passed: 4
 issues: 0
 pending: 0
 skipped: 0
 blocked: 0
-partial: 1
+partial: 0
 
 ## Gaps
 
@@ -157,27 +174,35 @@ partial: 1
   root_cause: "The available Wrangler OAuth token could read zones but could not create the zone or read Rulesets API entrypoints, so the zone/rules were configured through the authenticated Chrome Dashboard. Registrar final nameserver submission requires registrant contact verification; the agent reached the 2-step verification gate and did not request or enter the code."
   artifacts:
     - path: ".planning/phases/24-traffic-booking-payment-core/24-HUMAN-UAT.md"
-      issue: "Documents the configured Cloudflare zone, active custom/rate-limit rules, and remaining registrar NS cutover."
+      issue: "Documents the configured Cloudflare zone, active custom/rate-limit rules, completed registrar NS cutover, and edge smoke."
     - path: ".planning/phases/24-traffic-booking-payment-core/24-VERIFICATION.md"
-      issue: "Keeps Phase 24 in `human_needed` until Cloudflare activation propagates and Toss sandbox round-trip is verified."
+      issue: "Records Cloudflare activation as resolved after DNS propagation and WAF edge smoke."
   resolved_with:
     - "Cloudflare active-zone DNS evidence and WAF smoke on 2026-05-11."
 
 - truth: "Toss webhook endpoint is registered in the correct store and processes real sandbox payment webhooks."
-  status: partially_resolved
-  reason: "Correct-store webhook registration, Secret Manager key sync, real Toss sandbox transfer redirect, Grabit confirm, Cloud Run webhook 201, Toss dashboard success history, and DB ledger processing are verified. Remaining gap is the full domestic-card, overseas-card, Alipay+, and truemoney matrix."
+  status: resolved
+  reason: "Correct-store webhook registration, Secret Manager key sync, real Toss sandbox transfer redirect, overseas-card browser redirect, Alipay+/truemoney async webhook completion, domestic card branch/Toss READY/webhook-ledger surrogate, Cloud Run webhook 201s, and DB ledger processing are verified."
   severity: external
   test: 3
-  root_cause: "The repo and GCP environment can prepare the receiver, but Toss developer center requires a valid store context for webhook registration and live sandbox flow history."
+  root_cause: "The repo and GCP environment could prepare the receiver, but Toss developer center and Toss method availability had to be verified in the valid store context. Production queue entry also exposed a Redis Cluster multi-key `DEL` CROSSSLOT issue before method-matrix testing could proceed."
   artifacts:
+    - path: "apps/api/src/modules/queue/queue.service.ts"
+      issue: "Stale queue-session purge now deletes one key at a time to avoid Redis Cluster CROSSSLOT failures during production queue entry."
+    - path: "apps/api/src/modules/payment/payment.service.ts"
+      issue: "Toss webhook provider code `ALIPAY` is normalized to internal `ALIPAY_PLUS` before payment ledger updates."
     - path: "apps/web/e2e/toss-payment.spec.ts"
       issue: "Now runs serially to avoid shared seeded-admin refresh-token rotation flake and asserts the current recoverable unknown-confirm UI."
     - path: ".planning/phases/24-traffic-booking-payment-core/24-HUMAN-UAT.md"
-      issue: "Records deployed webhook-secret readiness, local real-SDK E2E evidence, and remaining Toss developer center blocker."
+      issue: "Records deployed webhook-secret readiness, local real-SDK E2E evidence, real sandbox method-matrix evidence, and the domestic buyer-card authentication caveat."
     - path: ".planning/phases/24-traffic-booking-payment-core/24-VERIFICATION.md"
-      issue: "Keeps Phase 24 in `human_needed` until real Toss sandbox redirect/webhook history exists."
-  next_human_step:
-    - "Execute and record the remaining Toss method-matrix flows: domestic card, overseas card, Alipay+, and truemoney."
+      issue: "Updates Phase 24 method-matrix verification from `human_needed` to verified with a domestic buyer-card authentication caveat."
+  resolved_with:
+    - "API image `asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-api:phase24-gapfix-amd64-20260511123047` deployed to `grabit-api-p24whesmoke2`, then `BOOKING_ENABLED` was restored off and temporary traffic tag removed."
+    - "Web image `asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-web:phase24-gapfix-web-amd64-20260511124323` deployed to refresh pending/complete page behavior."
+    - "Method-matrix orders: `GRP-P24-OVCARD-1778470438904`, `GRP-P24-ALIPAY-1778470584784`, `GRP-P24-TRUEMONEY-MP0O1DRB`, and `GRP-P24-DOMCARD-MP0O7TRI`."
+  security_follow_up:
+    - "The temporary Toss query-secret fallback should be rotated/removed before live traffic because URL-carried secrets can appear in request logs. This is a production-hardening follow-up, not a remaining Phase 24 method-matrix blocker."
 
 - truth: "Cloud Scheduler scale-up and step-down jobs successfully call the deployed prewarm API with OIDC and control-token protection."
   status: resolved

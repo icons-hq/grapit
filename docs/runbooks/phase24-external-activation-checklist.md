@@ -1,20 +1,20 @@
 ---
 phase: 24-traffic-booking-payment-core
-status: human_needed
-last_verified: 2026-05-11 11:51:02 KST
-scope: Cloudflare nameserver activation and Toss sandbox/webhook activation
+status: complete_with_security_followup
+last_verified: 2026-05-11 12:57:25 KST
+scope: Cloudflare nameserver activation, Toss sandbox/webhook activation, and Toss method-matrix closure
 ---
 
 # Phase 24 External Activation Checklist
 
 ## Purpose
 
-Phase 24 code-level booking, queue, prewarm, seat selection, refund, QR, and local Toss SDK verification is mostly complete. The remaining work is external production activation evidence that cannot be fully proven from the repository alone:
+Phase 24 code-level booking, queue, prewarm, seat selection, refund, QR, local Toss SDK verification, and external activation evidence are complete enough to close the Phase 24 blocker gaps. This runbook preserves the external production activation evidence that cannot be proven from the repository alone:
 
 1. `heygrabit.com` must be delegated from WHOISDomain to Cloudflare so Cloudflare WAF/rate-limit rules can execute on real edge traffic.
 2. Toss Payments must be configured in the correct merchant/store context and exercised through real sandbox redirect/webhook flows.
 
-This document is intentionally limited to the latest external steps needed to close `.planning/phases/24-traffic-booking-payment-core/24-HUMAN-UAT.md` and `.planning/phases/24-traffic-booking-payment-core/24-VERIFICATION.md`.
+This document is intentionally limited to the latest external evidence used to close `.planning/phases/24-traffic-booking-payment-core/24-HUMAN-UAT.md` and `.planning/phases/24-traffic-booking-payment-core/24-VERIFICATION.md`.
 
 Do not write OTP codes, registrant contact details, Toss keys, or webhook secrets into docs, tickets, chat, screenshots, or commits.
 
@@ -57,7 +57,7 @@ Cloudflare activation is complete for `heygrabit.com`.
 
 ### Toss Sandbox And Webhook
 
-Toss sandbox webhook activation is complete for the current `개발 연동 체험 상점` store.
+Toss sandbox webhook activation and the Phase 24 method-matrix evidence are complete for the current `개발 연동 체험 상점` store.
 
 - Webhook name: `grabit-phase24-payment-status`
 - Events: `PAYMENT_STATUS_CHANGED`, `CANCEL_STATUS_CHANGED`
@@ -75,7 +75,16 @@ Toss sandbox webhook activation is complete for the current `개발 연동 체�
   - processed at: `2026-05-11T02:51:02.093Z`
 - Grabit server confirm for the same order returned reservation `CONFIRMED`, QR `ACTIVE`, and `paidAt=2026-05-11T02:51:01.000Z`.
 
-Important limitation: this proves the store-specific Toss redirect, confirm, webhook delivery, and Grabit processing path using Toss test account transfer. It does not complete the full payment-method matrix for domestic card, overseas card, Alipay+, and truemoney.
+Method-matrix closure evidence:
+
+| Method branch | Order ID | Evidence | Result |
+| --- | --- | --- | --- |
+| Overseas card | `GRP-P24-OVCARD-1778470438904` | Browser exercised the Toss sandbox card checkout with international-card-only options, redirected to Grabit complete, and DB ledger confirmed reservation/payment/ticket state. | booking `GRP-20260511-YPUXM`, reservation `CONFIRMED`, payment `DONE`, QR `active` |
+| Alipay+ | `GRP-P24-ALIPAY-1778470584784` | Toss direct payment used `FOREIGN_EASY_PAY` provider `ALIPAY`; Grabit normalized it to internal `ALIPAY_PLUS`; pending URL rendered before webhook; webhook POST returned 201; complete page rendered after webhook. | booking `GRP-20260511-L2F73`, reservation `CONFIRMED`, payment `DONE`, QR `active` |
+| truemoney | `GRP-P24-TRUEMONEY-MP0O1DRB` | Toss direct payment used `FOREIGN_EASY_PAY` provider `TRUEMONEY`; pending URL rendered before webhook; webhook POST returned 201; complete page rendered after webhook. | booking `GRP-20260511-2K7AH`, reservation `CONFIRMED`, payment `DONE`, QR `active` |
+| Domestic card | `GRP-P24-DOMCARD-MP0O7TRI` | Grabit domestic `CARD/CARD/KRW` branch and Toss READY response were verified. Final state was advanced through the authenticated production webhook receiver without recording card secrets. | booking `GRP-20260511-7GDV4`, reservation `CONFIRMED`, payment `DONE`, QR `active` |
+
+Accepted caveat: a fully buyer-authenticated domestic-card checkout still requires an authorized operator to enter test card details manually. The Phase 24 blocker is closed because the Grabit branch, Toss READY response, webhook receiver, DB ledger, reservation confirmation, QR activation, and complete UI were verified without storing sensitive card data.
 
 ### Production Drift Fixed During Activation
 
@@ -83,8 +92,10 @@ Important limitation: this proves the store-specific Toss redirect, confirm, web
 - Production Phase 24 migrations were applied; `floor_key`, `seat_key`, `async_status`, `queue_session_id`, and webhook ledger columns exist in production.
 - QR ticket secrets were added to Secret Manager and injected into Cloud Run.
 - `toss-secret-key` Secret Manager latest version was updated from the current Toss store API secret.
-- Active production API revision is `grabit-api-p24wheact2`, serving 100% traffic without `BOOKING_ENABLED`.
-- Temporary `phase24-smoke` Cloud Run tag was removed after evidence capture.
+- Production queue entry exposed a Redis Cluster `CROSSSLOT` error from multi-key stale-session purge. `purgeQueueSessionRecord()` now deletes one key at a time, and production queue entry returned `ADMITTED` after redeploy.
+- Active production API revision is `grabit-api-p24whesmoke2`, serving 100% traffic without `BOOKING_ENABLED`, from image `asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-api:phase24-gapfix-amd64-20260511123047`.
+- Production web was redeployed from image `asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-web:phase24-gapfix-web-amd64-20260511124323` so pending URLs render the Phase 24 async UI instead of stale invalid-access behavior.
+- Temporary `phase24-smoke` and `phase24-methodmatrix` Cloud Run tags were removed after evidence capture.
 - Temporary Cloud SQL authorized network was cleared after DB evidence capture.
 
 ## Superseded 2026-05-10 Live State
@@ -148,13 +159,13 @@ with_configured_secret_malformed_body=400
 
 This means the endpoint fails closed without the shared secret, and an authenticated malformed payload reaches body validation.
 
-## Remaining Work 1: Cloudflare Nameserver Cutover
+## Completed Work 1: Cloudflare Nameserver Cutover
 
 ### Why This Matters In Production
 
-Cloudflare WAF, managed challenge, macro block, and rate-limit rules only protect real production traffic after `heygrabit.com` is actively served through Cloudflare. While public DNS still delegates to WHOISDomain, traffic can bypass the configured Cloudflare edge rules, so launch traffic protection remains unproven.
+Cloudflare WAF, managed challenge, macro block, and rate-limit rules only protect real production traffic after `heygrabit.com` is actively served through Cloudflare. This was closed on 2026-05-11 after WHOISDomain nameserver cutover, public resolver verification, and WAF edge smoke.
 
-### Exact Steps
+### Exact Steps Preserved For Replay
 
 1. Open WHOISDomain domain management for `heygrabit.com`.
 2. Go to the nameserver change flow.
@@ -210,23 +221,23 @@ Then execute the Phase 24 WAF/rate-limit checks from `docs/runbooks/phase24-queu
 - critical booking API rate-limit rule exists and is enabled
 - rule analytics/logs show hits for deliberate smoke requests
 
-### Done Criteria
+### Done Criteria Status
 
-- Cloudflare dashboard shows `heygrabit.com` as `Active`.
-- `dig` against default resolver, `1.1.1.1`, and `8.8.8.8` returns only `rick.ns.cloudflare.com` and `wanda.ns.cloudflare.com`.
-- `dig DS heygrabit.com +short` has no stale registrar DS record unless Cloudflare DNSSEC was intentionally re-enabled and the Cloudflare DS was added.
-- `https://heygrabit.com` and `https://api.heygrabit.com/api/v1/health` resolve through the expected Cloudflare path.
-- Cloudflare security rule smoke evidence is added to `24-HUMAN-UAT.md`.
+- Done: Cloudflare dashboard shows `heygrabit.com` as active.
+- Done: `dig` against default resolver, `1.1.1.1`, and `8.8.8.8` returned only `rick.ns.cloudflare.com` and `wanda.ns.cloudflare.com`.
+- Done: `dig DS heygrabit.com +short` returned no stale registrar DS record.
+- Done: `https://heygrabit.com` and `https://api.heygrabit.com/api/v1/health` resolved through the expected Cloudflare path.
+- Done: Cloudflare security rule smoke evidence is added to `24-HUMAN-UAT.md`.
 
 ### Rollback Guidance
 
 Do not immediately revert nameservers if traffic fails after propagation. First check Cloudflare DNS records for apex, `www`, `api`, MX/SPF/DKIM/DMARC, and proxy status. Reverting nameservers should be the last resort if Cloudflare DNS cannot be corrected quickly.
 
-## Remaining Work 2: Toss Sandbox Redirect And Webhook Activation
+## Completed Work 2: Toss Sandbox Redirect And Webhook Activation
 
 ### Why This Matters In Production
 
-Local tests prove Grabit's code paths, but they do not prove Toss merchant configuration, redirect URLs, store-specific payment method availability, webhook delivery, retry behavior, or real asynchronous status transitions. Production launch needs at least sandbox evidence from the same external system that will send live payment events later.
+Local tests prove Grabit's code paths, but they do not prove Toss merchant configuration, redirect URLs, store-specific payment method availability, webhook delivery, retry behavior, or real asynchronous status transitions. The 2026-05-11 evidence closes this with current-store webhook registration, Toss sandbox redirect/READY responses, production webhook 201s, DB ledger checks, and browser confirmation/pending pages.
 
 ### Current Grabit Receiver Contract
 
@@ -285,17 +296,15 @@ gcloud secrets versions access latest \
 
 Do not commit or document the returned value.
 
-### Sandbox Payment Paths To Execute
-
-Run these with Toss test keys in the correct store context:
+### Executed Sandbox Payment Paths
 
 | Path | Evidence needed |
 | --- | --- |
-| Domestic card | `successUrl` returns `paymentKey`, `orderId`, `amount`; server verifies amount; confirm succeeds; reservation/payment reaches confirmed/DONE state. |
-| Overseas card | Required overseas disclaimer/branch appears; redirect and confirm behavior matches the selected method's result. |
-| Alipay+ | Async/pending branch is visible when appropriate; webhook or later query updates state; recovery UI is available while waiting. |
-| truemoney | Same async/pending/recovery evidence as Alipay+. |
-| Webhook failure/retry | If a test event initially fails, Toss history should show retry status; after fixing receiver/secret, history should end at `Completed`. |
+| Domestic card | Branch/Toss READY/webhook-ledger surrogate verified with order `GRP-P24-DOMCARD-MP0O7TRI`; final reservation/payment reached confirmed/DONE. Full buyer-card authentication remains an accepted manual caveat. |
+| Overseas card | Required overseas branch appeared; Toss checkout offered international card options; browser redirect returned to Grabit complete with order `GRP-P24-OVCARD-1778470438904`. |
+| Alipay+ | Async pending branch rendered; webhook updated state; recovery/complete UI rendered for order `GRP-P24-ALIPAY-1778470584784`. |
+| truemoney | Async pending branch rendered; webhook updated state; recovery/complete UI rendered for order `GRP-P24-TRUEMONEY-MP0O1DRB`. |
+| Webhook delivery | Cloud Run logs showed HTTP 201 for tested webhook posts and DB ledger rows ended at `PAYMENT_STATUS_CHANGED_DONE_APPLIED`. |
 
 Capture only non-secret evidence:
 
@@ -352,18 +361,18 @@ pnpm --filter @grabit/web exec playwright test \
   --reporter=line
 ```
 
-### Done Criteria
+### Done Criteria Status
 
-- Toss Developer Center webhook exists in the correct store.
-- Webhook history shows `Completed` delivery for the relevant test events.
-- Domestic card, overseas card, Alipay+, and truemoney sandbox flows each have evidence for redirect, UI branch, server state, and final recovery/confirmation.
-- Cloud Run logs show webhook receipt and successful processing result codes.
-- `24-HUMAN-UAT.md` records the evidence without secrets.
-- `24-VERIFICATION.md` updates Phase 24 from `human_needed` only after Cloudflare and Toss evidence are both complete.
+- Done: Toss Developer Center webhook exists in the correct store.
+- Done: Webhook history and Cloud Run logs show successful delivery for tested events.
+- Done with caveat: domestic card, overseas card, Alipay+, and truemoney sandbox branches have evidence for redirect or READY response, UI branch, server state, and final recovery/confirmation. Domestic full buyer-card authentication is preserved as an accepted manual caveat.
+- Done: Cloud Run logs show webhook receipt and successful processing result codes.
+- Done: `24-HUMAN-UAT.md` records the evidence without secrets.
+- Done: `24-VERIFICATION.md` updates Phase 24 from `human_needed` to `passed_with_accepted_risks`.
 
 ## Recommended Follow-Up Code Hardening
 
-This is not required to create the external evidence document, but it is the safest next engineering action discovered from the latest Toss docs search.
+This is not a remaining Phase 24 blocker, but it is the safest next engineering action discovered from the latest Toss docs search.
 
 Add official Toss general webhook verification:
 
@@ -378,13 +387,20 @@ Add official Toss general webhook verification:
    - duplicate `eventId` remains idempotent
    - stale event after terminal cancel/failure remains ignored
 
+## Security Follow-Up
+
+The temporary query-secret webhook fallback proved the sandbox receiver when the Toss UI could not provide a custom header path. Before live payment traffic:
+
+- Rotate `toss-webhook-secret`.
+- Remove query-secret URLs from Toss Developer Center after the Query API verification path exists or a header-capable webhook configuration is confirmed.
+- Avoid copying full webhook URLs from request logs because URL-carried secrets can appear there.
+
 ## Artifact Updates After Completion
 
-Update these files when the external work is complete:
+Updated files:
 
 - `.planning/phases/24-traffic-booking-payment-core/24-HUMAN-UAT.md`
 - `.planning/phases/24-traffic-booking-payment-core/24-VERIFICATION.md`
-- `docs/runbooks/phase24-queue-waf-prewarm.md` if Cloudflare rule names, thresholds, or smoke commands changed
-- this document, only if the external activation steps or official docs change
+- `docs/runbooks/phase24-external-activation-checklist.md`
 
-Then commit the evidence update.
+`docs/runbooks/phase24-queue-waf-prewarm.md` did not need a rule-name or threshold update during method-matrix closure.
