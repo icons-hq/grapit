@@ -239,7 +239,7 @@ describe('PhoneVerification', () => {
 
     it('500 에러 시 system error copy를 표시하고 raw provider message는 숨김', async () => {
       const { apiClient, ApiClientError } = await import('@/lib/api-client');
-      const err = new ApiClientError('raw infobip outage', 500);
+      const err = new ApiClientError('raw twilio outage', 500);
       (apiClient.post as ReturnType<typeof vi.fn>).mockRejectedValueOnce(err);
 
       render(<PhoneVerification {...defaultProps} />);
@@ -250,7 +250,7 @@ describe('PhoneVerification', () => {
         expect(screen.getByRole('alert')).toHaveTextContent(
           '인증번호 처리에 실패했습니다. 잠시 후 다시 시도해주세요',
         );
-        expect(screen.queryByText('raw infobip outage')).not.toBeInTheDocument();
+        expect(screen.queryByText('raw twilio outage')).not.toBeInTheDocument();
       });
     });
   });

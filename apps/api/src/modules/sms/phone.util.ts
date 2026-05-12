@@ -57,15 +57,10 @@ export function parseE164(input: string): string {
   }
 }
 
-/**
- * E.164 번호가 중국 본토(+86)인지 판정한다.
- * +852(홍콩), +853(마카오), +886(대만)은 false를 반환한다.
- */
-export function isChinaMainland(e164: string): boolean {
+export function getE164Country(e164: string): string | undefined {
   try {
-    const parsed = parsePhoneNumberWithError(e164);
-    return parsed.country === 'CN';
+    return parsePhoneNumberWithError(e164).country;
   } catch {
-    return false;
+    return undefined;
   }
 }

@@ -2,7 +2,7 @@ export const AUTH_COOKIE_NAME = 'refreshToken';
 export const ACCESS_TOKEN_EXPIRY = '15m';
 export const REFRESH_TOKEN_EXPIRY_DAYS = 7;
 export const SMS_CODE_LENGTH = 6;
-export const SMS_CODE_EXPIRY_SECONDS = 180;
+export const SMS_CODE_EXPIRY_SECONDS = 600;
 export const SMS_RESEND_COOLDOWN_SECONDS = 30; // D-11: 서버 {sms:{e164}}:resend PX 30000과 동일
 export const PASSWORD_MIN_LENGTH = 8;
 

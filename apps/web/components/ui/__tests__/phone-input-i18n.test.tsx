@@ -22,11 +22,11 @@ describe('PhoneInput launch locale labels', () => {
   });
 
   const localeCases = [
-    ['ko', '국가 선택: 대한민국'],
-    ['en', 'Phone number country: South Korea'],
-    ['th', 'ประเทศ: เกาหลีใต้'],
-    ['zh-CN', '国家: 韩国'],
-    ['ja', '国/地域: 韓国'],
+    ['ko', '국가 선택: 대한민국 +82'],
+    ['en', 'Phone number country: South Korea +82'],
+    ['th', 'ประเทศ: เกาหลีใต้ +82'],
+    ['zh-CN', '国家: 韩国 +82'],
+    ['ja', '国/地域: 韓国 +82'],
   ] as const;
 
   it.each(localeCases)('uses %s labels for the country selector', (locale, accessibleName) => {
@@ -52,23 +52,24 @@ describe('PhoneInput launch locale labels', () => {
 
     await user.click(icelandOption as HTMLElement);
 
-    expect(screen.getByRole('button', { name: 'Phone number country: Iceland' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Phone number country: Iceland +354' })).toBeInTheDocument();
   });
 
   it('preserves the existing min-height and popover trigger behavior for long Thai labels', () => {
     render(<PhoneInput locale="th" value="" onChange={() => {}} />);
 
     const trigger = screen.getByRole('button', {
-      name: 'ประเทศ: เกาหลีใต้',
+      name: 'ประเทศ: เกาหลีใต้ +82',
     });
 
     expect(trigger).toHaveClass('h-11');
     expect(trigger).toHaveAttribute('data-slot', 'popover-trigger');
+    expect(trigger).toHaveTextContent('+82');
   });
 
   it('keeps the original Korean fallback when locale is omitted', () => {
     render(<PhoneInput value="" onChange={() => {}} />);
 
-    expect(screen.getByRole('button', { name: '국가 선택: 대한민국' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '국가 선택: 대한민국 +82' })).toBeInTheDocument();
   });
 });

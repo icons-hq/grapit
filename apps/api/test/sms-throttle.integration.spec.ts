@@ -15,7 +15,7 @@ import {
   smsVerifiedKey,
 } from '../src/modules/sms/sms.service.js';
 
-// Phase 10.1: Infobip env 3종(INFOBIP_API_KEY, INFOBIP_BASE_URL, INFOBIP_SENDER) 체계.
+// Phase 10.1: Twilio Verify env(TWILIO_ACCOUNT_SID, API key pair, TWILIO_VERIFY_SERVICE_SID) 체계.
 // 레거시 APPLICATION_ID/MESSAGE_ID env는 v3 API 전환으로 제거됨.
 
 /**

@@ -41,7 +41,6 @@ function mapErrorToCopy(
     if (err.statusCode === 429) return copy.throttled;
     if (err.statusCode === 410 || err.statusCode === 422) return copy.expired;
     if (err.statusCode === 400) {
-      if (err.message.includes('중국 본토')) return err.message;
       return copy.invalidCode;
     }
     if (err.statusCode >= 500) return copy.systemError;
@@ -89,7 +88,7 @@ export function PhoneVerification({
     return clearTimer;
   }, [clearTimer]);
 
-  // Expiry timer (3 min)
+  // Expiry timer (Twilio Verify default: 10 min)
   useEffect(() => {
     if (timeLeft <= 0) {
       clearTimer();
