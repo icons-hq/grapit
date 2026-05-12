@@ -1,3 +1,0 @@
-{
-  "_deprecated": "Phase 10.1: Infobip verify endpoint is no longer used. Verification happens locally via Valkey Lua VERIFY_AND_INCREMENT script. File retained to avoid broken imports during transition; remove after all spec imports are cleaned."
-}

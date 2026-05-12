@@ -24,7 +24,7 @@ type AuthStatusCopy = {
 
 export const smsOtpCopy: Record<SmsCopyLocale, SmsOtpCopy> = {
   ko: {
-    template: '[Grabit] 인증번호 {{otp}} (3분 이내 입력)',
+    template: '[Grabit] 인증번호 {{otp}} (10분 이내 입력)',
     sent: '인증번호가 발송되었습니다',
     resendCta: '인증번호 재발송',
     resendLoading: '인증번호를 다시 보내는 중입니다',
@@ -35,7 +35,7 @@ export const smsOtpCopy: Record<SmsCopyLocale, SmsOtpCopy> = {
     systemError: '인증번호 처리에 실패했습니다. 잠시 후 다시 시도해주세요',
   },
   en: {
-    template: '[Grabit] Verification code {{otp}}. Expires in 3 minutes.',
+    template: '[Grabit] Verification code {{otp}}. Expires in 10 minutes.',
     sent: 'Verification code sent',
     resendCta: 'Resend code',
     resendLoading: 'Sending a new code',
@@ -46,7 +46,7 @@ export const smsOtpCopy: Record<SmsCopyLocale, SmsOtpCopy> = {
     systemError: 'Verification failed. Please try again later.',
   },
   th: {
-    template: '[Grabit] รหัสยืนยัน {{otp}} ใช้ได้ภายใน 3 นาที',
+    template: '[Grabit] รหัสยืนยัน {{otp}} ใช้ได้ภายใน 10 นาที',
     sent: 'ส่งรหัสยืนยันแล้ว',
     resendCta: 'ส่งรหัสอีกครั้ง',
     resendLoading: 'กำลังส่งรหัสใหม่',
@@ -57,7 +57,7 @@ export const smsOtpCopy: Record<SmsCopyLocale, SmsOtpCopy> = {
     systemError: 'ยืนยันรหัสไม่สำเร็จ โปรดลองอีกครั้งในภายหลัง',
   },
   'zh-CN': {
-    template: '[Grabit] 验证码 {{otp}}，3分钟内有效。',
+    template: '[Grabit] 验证码 {{otp}}，10分钟内有效。',
     sent: '验证码已发送',
     resendCta: '重新发送验证码',
     resendLoading: '正在重新发送验证码',
@@ -68,7 +68,7 @@ export const smsOtpCopy: Record<SmsCopyLocale, SmsOtpCopy> = {
     systemError: '验证码处理失败，请稍后再试。',
   },
   ja: {
-    template: '[Grabit] 認証コード {{otp}}（3分以内に入力してください）',
+    template: '[Grabit] 認証コード {{otp}}（10分以内に入力してください）',
     sent: '認証コードを送信しました',
     resendCta: '認証コードを再送信',
     resendLoading: '認証コードを再送信しています',

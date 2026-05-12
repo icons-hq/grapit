@@ -199,9 +199,10 @@ jobs:
             R2_SECRET_ACCESS_KEY=r2-secret-access-key:latest
             RESEND_API_KEY=resend-api-key:latest
             RESEND_FROM_EMAIL=resend-from-email:latest
-            INFOBIP_API_KEY=infobip-api-key:latest
-            INFOBIP_BASE_URL=infobip-base-url:latest
-            INFOBIP_SENDER=infobip-sender:latest
+            TWILIO_ACCOUNT_SID=twilio-account-sid:latest
+            TWILIO_API_KEY_SID=twilio-api-key-sid:latest
+            TWILIO_API_KEY_SECRET=twilio-api-key-secret:latest
+            TWILIO_VERIFY_SERVICE_SID=twilio-verify-service-sid:latest
             SENTRY_DSN=sentry-dsn:latest
             TOSS_SECRET_KEY=toss-secret-key:latest
             PREWARM_CONTROL_TOKEN=prewarm-control-token:latest

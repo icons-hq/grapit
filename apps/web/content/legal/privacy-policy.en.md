@@ -46,7 +46,7 @@ The Company outsources the following personal information processing tasks for s
 
 - **Cloud hosting**: Google Cloud Platform - service infrastructure operation (asia-northeast3 Seoul region, domestic processing)
 - **Email delivery**: Resend - transactional email delivery such as password reset email (cross-border processor; see Article 6)
-- **SMS delivery**: Infobip Limited and its affiliates - mobile phone verification (cross-border processor; see Article 6)
+- **SMS delivery**: Twilio Inc. and its affiliates - mobile phone verification (cross-border processor; see Article 6)
 - **Object storage**: Cloudflare R2 - storage of static files such as posters and seat maps (distributed CDN; no user personal information stored)
 
 ## Article 6 (Cross-Border Transfer of Personal Information)
@@ -56,17 +56,17 @@ The Company transfers personal information overseas as follows to provide the Se
 | Recipient | Country | Items Transferred | Purpose | Retention and Use Period | Time and Method of Transfer |
 |-----------|---------|-------------------|---------|--------------------------|-----------------------------|
 | Resend, Inc. | United States | Email address | Sending password reset transactional email | Until delivery is complete; Resend service logs may be retained for up to 90 days | At the time of service use, through HTTPS API transfer using TLS 1.2 or higher |
-| Infobip Limited and its affiliates | Germany | Mobile phone number and SMS verification message content | Sending SMS verification OTP | 3 months from the sending date, unless shortened or changed by contract or settings | At signup or re-verification, through HTTPS API transfer using TLS 1.2 or higher |
+| Twilio Inc. and its affiliates | United States | Mobile phone number and SMS verification request/status data | Sending and checking SMS verification OTP | Until verification processing is complete and for the retention period required by contract or applicable law | At signup or re-verification, through HTTPS API transfer using TLS 1.2 or higher |
 
 Data subjects may refuse this cross-border transfer. If refused, some functions such as password reset email and SMS verification may be restricted. To refuse or ask detailed questions, contact `privacy@heygrabit.com`.
 
-### Notice for Thailand and Other Overseas Users
+### Notice for Global Users
 
-Personal information of users accessing the Service from Thailand or other countries is processed according to the purposes, items, retention periods, processors, and rights exercise procedures described above. Personal information required for sign-up and ticket booking is processed to provide the service requested by the user and to perform the related contract. Separate marketing use is conducted only when the user gives optional consent.
+Personal information of users accessing the Service from outside Korea is processed according to the purposes, items, retention periods, processors, and rights exercise procedures described above. Personal information required for sign-up and ticket booking is processed to provide the service requested by the user and to perform the related contract. Separate marketing use is conducted only when the user gives optional consent.
 
-### Mainland China Service Limitation
+### Notice for Mainland China Users
 
-The Company currently does not support SMS verification or account registration using mainland China phone numbers (`+86`) and does not target account registration for mainland China residents. Simplified Chinese UI is provided only for language convenience, and the Company does not operate a service that requires separate overseas provision consent under China PIPL for mainland China users.
+SMS verification and account registration using mainland China phone numbers (`+86`) are supported to the extent allowed by Twilio Verify coverage, country-specific carrier requirements, regulatory requirements, and fraud-prevention controls. Simplified Chinese UI is provided for language convenience, and personal information of mainland China users is processed according to the cross-border transfer, processor, retention, and rights exercise terms in this Privacy Policy.
 
 ## Article 7 (Rights and Obligations of Data Subjects and How to Exercise Them)
 Data subjects may exercise the following privacy rights against the Company at any time.
@@ -104,7 +104,7 @@ This Privacy Policy applies from the effective date. If additions, deletions, or
 
 | Version | Effective Date | Main Changes |
 |---------|----------------|--------------|
-| v1.2 | 2026-05-11 | Clarified no personal data sharing with overseas entertainment companies, overseas user notice, and mainland China service limitation |
+| v1.2 | 2026-05-11 | Clarified no personal data sharing with overseas entertainment companies, global user notice, and mainland China user notice |
 | v1.1 | 2026-04-28 | Added Chief Privacy Officer details and business identity information |
 | v1.0 | 2026-04-14 | Initial publication |
 

@@ -3,12 +3,12 @@ import { test, expect } from '@playwright/test';
 /**
  * SMS Mock 모드 E2E 테스트 -- Plan 09 GREEN 전환
  *
- * CI 환경에서 INFOBIP_API_KEY 미설정 -> dev mock 자동 진입
+ * CI 환경에서 TWILIO_ACCOUNT_SID 미설정 -> dev mock 자동 진입
  * 000000 유니버설 코드로 회원가입 step3 전화번호 인증 플로우 완주
  *
  * 전제 조건:
  * - web(3000) + api(8080) 모두 실행 중
- * - API는 INFOBIP_API_KEY 미설정 상태 -> dev mock 모드
+ * - API는 TWILIO_ACCOUNT_SID 미설정 상태 -> dev mock 모드
  */
 
 test.describe('회원가입 SMS 인증 (mock 모드)', () => {
@@ -62,8 +62,8 @@ test.describe('회원가입 SMS 인증 (mock 모드)', () => {
     // 쿨다운 라벨 확인: "재발송 (30s)" or similar
     await expect(page.getByText(/재발송.*\d+s/)).toBeVisible({ timeout: 10_000 });
 
-    // 만료 타이머 확인 (00:00 ~ 03:00 형식)
-    await expect(page.locator('text=/^0[0-3]:\\d{2}$/')).toBeVisible({ timeout: 10_000 });
+    // 만료 타이머 확인 (Twilio Verify 기본 10분)
+    await expect(page.locator('text=/^(0\\d|10):\\d{2}$/')).toBeVisible({ timeout: 10_000 });
 
     // 인증번호 6자리 입력 (mock 모드: 000000)
     const codeInput = page.getByPlaceholder('인증번호 6자리');

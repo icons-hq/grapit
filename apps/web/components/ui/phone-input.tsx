@@ -169,6 +169,11 @@ function CountrySelect({
   copy,
 }: CountrySelectProps) {
   const selectedLabel = value ? labels[value] ?? value : null;
+  const selectedCallingCode = value ? getCountryCallingCode(value) : null;
+  const selectedDescriptor =
+    selectedLabel && selectedCallingCode
+      ? `${selectedLabel} +${selectedCallingCode}`
+      : selectedLabel;
 
   return (
     <Popover>
@@ -176,14 +181,19 @@ function CountrySelect({
         <Button
           type="button"
           variant="outline"
-          className="flex h-11 gap-1 rounded-s-lg rounded-e-none px-3"
+          className="flex h-11 min-w-[82px] gap-1 rounded-s-lg rounded-e-none px-3"
           disabled={disabled}
-          aria-label={selectedLabel ? `${copy.ariaPrefix}: ${selectedLabel}` : copy.ariaPrefix}
+          aria-label={selectedDescriptor ? `${copy.ariaPrefix}: ${selectedDescriptor}` : copy.ariaPrefix}
         >
           <FlagComponent
             country={value}
             countryName={selectedLabel ?? value}
           />
+          {selectedCallingCode ? (
+            <span className="text-sm tabular-nums text-gray-700">
+              +{selectedCallingCode}
+            </span>
+          ) : null}
           <ChevronsUpDown
             className={cn(
               '-mr-2 h-4 w-4 opacity-50',

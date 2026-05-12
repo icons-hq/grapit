@@ -94,11 +94,11 @@ describe('legal content', () => {
   });
 
   it('discloses the runtime SMS provider in privacy policy', () => {
-    expect(privacyPolicyMd).not.toContain('Twilio');
-    expect(privacyPolicyMd).toContain('SMS 발송**: Infobip Limited 및 그 계열사');
-    expect(privacyPolicyMd).toContain('| Infobip Limited 및 그 계열사 | 독일 (Germany) |');
-    expect(privacyPolicyMd).toContain('휴대전화번호, SMS 인증 메시지 내용');
-    expect(privacyPolicyMd).toContain('발송일로부터 3개월');
+    expect(privacyPolicyMd).not.toContain('Infobip');
+    expect(privacyPolicyMd).toContain('SMS 발송**: Twilio Inc. 및 그 계열사');
+    expect(privacyPolicyMd).toContain('| Twilio Inc. 및 그 계열사 | 미국 (United States) |');
+    expect(privacyPolicyMd).toContain('휴대전화번호, SMS 인증 요청 및 상태 정보');
+    expect(privacyPolicyMd).toContain('SMS 본인인증 OTP 발송 및 확인');
   });
 
   it('locks legal canonical markdown locales to Korean and English', () => {

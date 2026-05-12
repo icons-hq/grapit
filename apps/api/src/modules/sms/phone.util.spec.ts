@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { parseE164, isChinaMainland } from './phone.util.js';
+import {
+  getE164Country,
+  parseE164,
+} from './phone.util.js';
 
 describe('parseE164', () => {
   it('한국 로컬 포맷(하이픈 포함) → E.164', () => {
@@ -57,24 +60,15 @@ describe('parseE164', () => {
   });
 });
 
-describe('isChinaMainland', () => {
-  it('중국 본토(+86) → true', () => {
-    expect(isChinaMainland('+8613912345678')).toBe(true);
-  });
-
-  it('한국(+82) → false', () => {
-    expect(isChinaMainland('+821012345678')).toBe(false);
-  });
-
-  it('홍콩(+852) → false', () => {
-    expect(isChinaMainland('+85212345678')).toBe(false);
-  });
-
-  it('마카오(+853) → false', () => {
-    expect(isChinaMainland('+85362345678')).toBe(false);
-  });
-
-  it('대만(+886) → false', () => {
-    expect(isChinaMainland('+886912345678')).toBe(false);
+describe('E.164 country detection', () => {
+  it.each([
+    ['Korea', '+821012345678', 'KR'],
+    ['United States', '+14155552671', 'US'],
+    ['Thailand', '+66812345678', 'TH'],
+    ['Taiwan', '+886912345678', 'TW'],
+    ['Hong Kong', '+85251234567', 'HK'],
+    ['Vietnam', '+84982291899', 'VN'],
+  ])('detects %s', (_label, phone, country) => {
+    expect(getE164Country(phone)).toBe(country);
   });
 });

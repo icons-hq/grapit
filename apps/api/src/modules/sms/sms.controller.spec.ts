@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Phase 10.1: Infobip env 3종(API_KEY/BASE_URL/SENDER)으로 mock 마이그레이션.
-// APPLICATION_ID/MESSAGE_ID는 더 이상 사용되지 않음.
+// Phase 10.1: Twilio Verify env(ACCOUNT_SID/API_KEY/VERIFY_SERVICE_SID)으로 mock 마이그레이션.
+// Infobip env는 더 이상 사용되지 않음.
 
 /**
  * Unit tests for sms.controller.ts Plan 10-06 changes:
@@ -94,9 +94,10 @@ describe('SmsService phone axis 429 uses HttpException', () => {
     const mockConfigService = {
       get: vi.fn().mockImplementation((key: string) => {
         const env: Record<string, string> = {
-          INFOBIP_API_KEY: 'test-key',
-          INFOBIP_BASE_URL: 'https://test.api.infobip.com',
-          INFOBIP_SENDER: '0212345678',
+          TWILIO_ACCOUNT_SID: 'AC_test',
+          TWILIO_API_KEY_SID: 'SK_test',
+          TWILIO_API_KEY_SECRET: 'test-secret',
+          TWILIO_VERIFY_SERVICE_SID: 'VA_test',
         };
         return env[key];
       }),
@@ -127,9 +128,10 @@ describe('SmsService phone axis 429 uses HttpException', () => {
     const mockConfigService = {
       get: vi.fn().mockImplementation((key: string) => {
         const env: Record<string, string> = {
-          INFOBIP_API_KEY: 'test-key',
-          INFOBIP_BASE_URL: 'https://test.api.infobip.com',
-          INFOBIP_SENDER: '0212345678',
+          TWILIO_ACCOUNT_SID: 'AC_test',
+          TWILIO_API_KEY_SID: 'SK_test',
+          TWILIO_API_KEY_SECRET: 'test-secret',
+          TWILIO_VERIFY_SERVICE_SID: 'VA_test',
         };
         return env[key];
       }),
@@ -159,9 +161,10 @@ describe('SmsService phone axis 429 uses HttpException', () => {
     const mockConfigService = {
       get: vi.fn().mockImplementation((key: string) => {
         const env: Record<string, string> = {
-          INFOBIP_API_KEY: 'test-key',
-          INFOBIP_BASE_URL: 'https://test.api.infobip.com',
-          INFOBIP_SENDER: '0212345678',
+          TWILIO_ACCOUNT_SID: 'AC_test',
+          TWILIO_API_KEY_SID: 'SK_test',
+          TWILIO_API_KEY_SECRET: 'test-secret',
+          TWILIO_VERIFY_SERVICE_SID: 'VA_test',
         };
         return env[key];
       }),

@@ -4,12 +4,17 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as Sentry from '@sentry/nestjs';
-import { createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type IORedis from 'ioredis';
 import { REDIS_CLIENT } from '../booking/providers/redis.provider.js';
-import { InfobipClient, InfobipApiError } from './infobip-client.js';
-import { parseE164, isChinaMainland } from './phone.util.js';
-import { formatSmsOtpMessage } from './sms-copy.js';
+import {
+  TwilioVerifyApiError,
+  TwilioVerifyClient,
+} from './twilio-verify-client.js';
+import {
+  getE164Country,
+  parseE164,
+} from './phone.util.js';
 
 // Phase 10 constants (retained)
 const RESEND_COOLDOWN_MS = 30_000;           // D-11: 30s resend cooldown
@@ -18,9 +23,6 @@ const SEND_PHONE_WINDOW_SEC = 3600;          // D-06: 1h window
 const VERIFY_PHONE_LIMIT = 10;               // D-07: phone 10/900s
 const VERIFY_PHONE_WINDOW_SEC = 900;         // D-07: 15min window
 
-// Phase 10.1 new constants
-const OTP_TTL_MS = 180_000;                  // 3min -- matches message copy
-const OTP_MAX_ATTEMPTS = 5;                  // replaces Infobip pinAttempts
 const VERIFIED_FLAG_TTL_SEC = 600;           // verified flag 10min for signup re-check
 const PHONE_VERIFICATION_TOKEN_TTL_MS = VERIFIED_FLAG_TTL_SEC * 1000;
 export const SMS_VERIFICATION_PURPOSES = [
@@ -164,7 +166,7 @@ function parseE164OrBadRequest(phone: string): string {
 @Injectable()
 export class SmsService {
   private readonly logger = new Logger(SmsService.name);
-  private readonly client: InfobipClient | null;
+  private readonly client: TwilioVerifyClient | null;
   private readonly isDevMock: boolean;
   private readonly verificationTokenSecret: string;
 
@@ -172,10 +174,15 @@ export class SmsService {
     configService: ConfigService,
     @Inject(REDIS_CLIENT) private readonly redis: IORedis,
   ) {
-    // Phase 10.1: env 3 vars (APPLICATION_ID/MESSAGE_ID removed, SENDER added)
-    const apiKey  = configService.get<string>('INFOBIP_API_KEY')?.trim()  ?? '';
-    const baseUrl = configService.get<string>('INFOBIP_BASE_URL')?.trim() ?? '';
-    const sender  = configService.get<string>('INFOBIP_SENDER')?.trim()   ?? '';
+    const accountSid = configService.get<string>('TWILIO_ACCOUNT_SID')?.trim() ?? '';
+    const authToken = configService.get<string>('TWILIO_AUTH_TOKEN')?.trim() ?? '';
+    const apiKeySid = configService.get<string>('TWILIO_API_KEY_SID')?.trim() ?? '';
+    const apiKeySecret =
+      configService.get<string>('TWILIO_API_KEY_SECRET')?.trim() ?? '';
+    const verifyServiceSid =
+      configService.get<string>('TWILIO_VERIFY_SERVICE_SID')?.trim() ?? '';
+    const verifyLocale =
+      configService.get<string>('TWILIO_VERIFY_LOCALE')?.trim() || undefined;
     const isProduction = process.env['NODE_ENV'] === 'production';
     const verificationTokenSecret =
       configService.get<string>('SMS_VERIFICATION_TOKEN_SECRET')?.trim() ??
@@ -183,10 +190,16 @@ export class SmsService {
       configService.get<string>('auth.jwtSecret')?.trim() ??
       '';
 
+    const hasApiKeyCredentials = Boolean(apiKeySid && apiKeySecret);
+    const hasAuthTokenCredentials = Boolean(authToken);
     const missing = [
-      !apiKey  && 'INFOBIP_API_KEY',
-      !baseUrl && 'INFOBIP_BASE_URL',
-      !sender  && 'INFOBIP_SENDER',
+      !accountSid && 'TWILIO_ACCOUNT_SID',
+      !verifyServiceSid && 'TWILIO_VERIFY_SERVICE_SID',
+      !hasAuthTokenCredentials &&
+        !hasApiKeyCredentials &&
+        'TWILIO_AUTH_TOKEN or TWILIO_API_KEY_SID/TWILIO_API_KEY_SECRET',
+      apiKeySid && !apiKeySecret && 'TWILIO_API_KEY_SECRET',
+      apiKeySecret && !apiKeySid && 'TWILIO_API_KEY_SID',
     ].filter(Boolean) as string[];
 
     if (isProduction && missing.length > 0) {
@@ -201,30 +214,16 @@ export class SmsService {
       );
     }
 
-    // [WR-03] In production, reject alphanumeric sender IDs. KR MNOs silently
-    // rewrite non-numeric senders, which causes Infobip to return 4xx for every
-    // send. Our rollback policy keeps the phone-axis counter on 4xx (abuse
-    // mitigation), so a sender-ID typo like `INFOBIP_SENDER=Grabit` would
-    // permanently drain every user's 5/hour quota with zero delivery.
-    // KISA-registered numeric senders (landline or pre-approved short codes)
-    // are typically 4-15 digits. If Grabit adds non-KR routes later, relax
-    // this to "numeric OR <= 11 alphanumeric chars" per Infobip sender-ID docs.
-    if (isProduction && sender && !/^[0-9]{4,15}$/.test(sender)) {
-      // [WR-03] Always mask to first 2 chars + ***. Previous `length <= 3 ?
-      // sender : ...` branch leaked the full value for 1-3 char inputs (the
-      // error lands in Cloud Run stdout -> Cloud Logging). For values shorter
-      // than 2 chars, emit only '***' since the prefix would be the entire
-      // value.
-      const masked = sender.length <= 2 ? '***' : `${sender.slice(0, 2)}***`;
-      throw new Error(
-        `[sms] INFOBIP_SENDER must be a KISA-registered numeric ID (got "${masked}"). ` +
-          'Alphanumeric senders are silently rewritten by KR MNOs and cause every send ' +
-          'to fail with Infobip 4xx, draining users\' hourly quotas.',
-      );
-    }
-
     this.isDevMock = !isProduction && missing.length > 0;
-    this.client = this.isDevMock ? null : new InfobipClient(baseUrl, apiKey, sender);
+    this.client = this.isDevMock
+      ? null
+      : new TwilioVerifyClient(
+          hasApiKeyCredentials
+            ? { accountSid, apiKeySid, apiKeySecret }
+            : { accountSid, authToken },
+          verifyServiceSid,
+          verifyLocale,
+        );
     this.verificationTokenSecret =
       verificationTokenSecret || 'dev-sms-verification-token-secret';
 
@@ -243,24 +242,11 @@ export class SmsService {
     )) as number;
   }
 
-  /**
-   * [Phase 10.1] 6-digit OTP. node:crypto.randomInt (OWASP A02 -- CSPRNG).
-   */
-  private generateOtp(): string {
-    return String(randomInt(100000, 1000000));
-  }
-
   async sendVerificationCode(phone: string): Promise<SendResult> {
     const e164 = parseE164OrBadRequest(phone);
+    const country = getE164Country(e164) ?? 'unknown';
 
-    // D-03: China mainland reject
-    if (isChinaMainland(e164)) {
-      throw new BadRequestException(
-        '현재 중국 본토 SMS 인증은 지원되지 않습니다. 다른 국가 번호로 가입해 주세요',
-      );
-    }
-
-    // Dev mock -- cooldown/counter/Infobip all skipped
+    // Dev mock -- cooldown/counter/Twilio all skipped
     if (this.isDevMock) {
       this.logger.log({ event: 'sms.sent', mode: 'dev_mock', phone: e164 });
       return { success: true, message: '인증번호가 발송되었습니다' };
@@ -292,57 +278,26 @@ export class SmsService {
       );
     }
 
-    // [Phase 10.1] Self-managed OTP generation + Valkey storage
-    const otp = this.generateOtp();
-    const text = formatSmsOtpMessage(otp, 'ko');
-
     try {
-      // Store OTP first -- SMS delivery only matters after user receives it.
-      // On sendSms failure, OTP naturally expires via TTL 180s. Next send overwrites.
-      //
-      // [Issue 1 / PR #16 review] Reset attempts counter atomically with new
-      // OTP storage. {sms:{e164}}:attempts TTL is 900s (set inside
-      // VERIFY_AND_INCREMENT_LUA on first INCR), longer than OTP TTL 180s.
-      // Without this DEL, a user who failed N attempts on OTP#1 and then
-      // re-sends would start OTP#2 with attempts=N already counted in Valkey
-      // — the very first verify on the fresh OTP could trigger
-      // NO_MORE_ATTEMPTS.
-      //
-      // ioredis pipeline keeps both ops in a single round trip and adjacent.
-      // The verify path reads OTP first (KEYS[1]), so a Lua script is not
-      // required — pipeline ordering is observably atomic for the consumer.
-      const pipeline = this.redis.pipeline();
-      pipeline.set(smsOtpKey(e164), otp, 'PX', OTP_TTL_MS);
-      pipeline.del(smsAttemptsKey(e164));
-      const results = await pipeline.exec();
-      // ioredis pipeline.exec returns Array<[Error|null, unknown]> | null.
-      // Treat any op error as a failed send — flow into the catch below so the
-      // SMS is NOT sent (otherwise the user would receive an unverifiable code).
-      //
-      // [WR-01] Guard against null per-entry: older @types/ioredis and
-      // defensive codepaths in the repo elsewhere type entries as
-      // `[Error|null, unknown] | null`. If Valkey returns null for a single op
-      // (e.g. mid-pipeline connection reset), destructuring would throw a
-      // TypeError inside `.some` and skip the "pipeline failed" guard. Use
-      // index access instead of destructuring so null entries are handled
-      // uniformly.
-      if (!results || results.some((r) => !r || r[0])) {
-        throw new Error('Failed to store OTP / reset attempts in Valkey');
-      }
-
-      await this.client!.sendSms(e164, text);
-      this.logger.log({ event: 'sms.sent', phone: e164 });
+      const sent = await this.client!.sendVerification(e164);
+      this.logger.log({
+        event: 'sms.sent',
+        phone: e164,
+        country,
+        providerStatus: sent.status,
+        providerChannel: sent.channel,
+        verificationSid: sent.sid,
+      });
       return { success: true, message: '인증번호가 발송되었습니다' };
     } catch (err) {
       // [Phase 10 review + Issue 2] Rollback policy
-      // 5xx/timeout/network -> user didn't receive SMS -> release BOTH the
+      // Twilio 5xx/429/timeout/network -> user didn't receive SMS -> release BOTH the
       //   30s cooldown AND the phone-axis hourly send slot. Otherwise a
-      //   transient Infobip outage would burn the user's 5/hour quota
+      //   transient provider outage would burn the user's 5/hour quota
       //   without delivering anything (Issue 2 from PR #16 review).
-      // 4xx (incl. groupId=5 REJECTED, converted by InfobipClient) -> permanent
-      //   rejection -> keep both cooldown and counter (abuse mitigation).
+      // Twilio permanent 4xx -> keep both cooldown and counter (abuse mitigation).
       const shouldRollback =
-        !(err instanceof InfobipApiError) || err.status >= 500;
+        !(err instanceof TwilioVerifyApiError) || err.shouldRollbackQuota;
       if (shouldRollback) {
         // [WR-02] Emit per-op rollback failures so ops can detect stuck-quota
         // states. Silently swallowing `.catch(() => {})` meant a Valkey blip
@@ -364,12 +319,14 @@ export class SmsService {
         });
       }
 
-      const country = e164.startsWith('+82') ? 'KR' : 'unknown';
       Sentry.withScope((scope) => {
-        scope.setTag('provider', 'infobip');
+        scope.setTag('provider', 'twilio_verify');
         scope.setTag('country', country);
-        if (err instanceof InfobipApiError) {
+        if (err instanceof TwilioVerifyApiError) {
           scope.setTag('http_status', String(err.status));
+          if (err.code !== undefined) {
+            scope.setTag('twilio_code', String(err.code));
+          }
         }
         scope.setLevel('error');
         Sentry.captureException(err);
@@ -380,7 +337,7 @@ export class SmsService {
   }
 
   /**
-   * Verify a user-supplied OTP against the Valkey-stored code.
+   * Verify a user-supplied OTP through Twilio Verify.
    *
    * SECURITY NOTE: `verifyCode` is NOT a standalone authentication primitive.
    * A `{ verified: true }` response means "this phone successfully verified an
@@ -393,11 +350,8 @@ export class SmsService {
    * "verified" signal.
    *
    * Additionally, the phone-axis verify counter (D-07 — 10/900s) is
-   * incremented BEFORE any idempotent-verify short-circuit to prevent a 10-min
-   * enumeration oracle: without this ordering, an attacker could POST
-   * `/verify-code { phone, code: "000000" }` for arbitrary phones and
-   * distinguish verified-within-10min vs not based on response shape,
-   * regardless of the code supplied.
+   * incremented before the provider call so Twilio status differences cannot
+   * be probed without consuming local verification quota.
    */
   async verifyCode(
     phone: string,
@@ -418,11 +372,7 @@ export class SmsService {
       return { verified: false, message: '인증번호가 일치하지 않습니다' };
     }
 
-    // [WR-02] D-07 rate limit MUST run before any short-circuit — it is the
-    // only signal that resists enumeration of the `{sms:{e164}}:verified` flag.
-    // If we checked the verified flag first and returned early, the counter
-    // would not increment and an attacker could probe unlimited phones to
-    // distinguish "verified within last 10 min" vs not.
+    // D-07 local phone-axis rate limit runs before the provider call.
     const verifyCount = await this.atomicIncr(
       smsVerifyCounterKey(e164), VERIFY_PHONE_WINDOW_SEC,
     );
@@ -436,77 +386,80 @@ export class SmsService {
       );
     }
 
-    // [CR-01] SECURITY: previously we short-circuited to `{ verified: true }`
-    // whenever `{sms:{e164}}:verified` was '1', regardless of the submitted code.
-    // During the 600s flag TTL, any caller who knew a recently-verified phone
-    // could pass verification with `code: "000000"` (or anything). This was an
-    // impersonation primitive against every downstream consumer of verifyCode
-    // (signup, password-reset, etc.).
-    //
-    // Mitigation: remove the short-circuit entirely. Every verify call must
-    // evaluate the Lua script against the actual OTP. A successful verification
-    // returns a signed, phone/purpose-bound token for downstream consumers.
-    //
-    // The `{sms:{e164}}:verified` flag is still SETEX'd inside the Lua script on
-    // VERIFIED; it remains available for downstream consumers to query
-    // explicitly if they need telemetry, but it no longer gates signup or
-    // profile mutation authorization.
-
-    // [Phase 10.1] Valkey Lua atomic OTP verify
     try {
-      const result = (await this.redis.eval(
-        VERIFY_AND_INCREMENT_LUA,
-        3,
-        smsOtpKey(e164),
-        smsAttemptsKey(e164),
-        smsVerifiedKey(e164),
-        code,
-        String(OTP_MAX_ATTEMPTS),
-        String(VERIFIED_FLAG_TTL_SEC),
-      )) as [string, number];
-
-      const [status] = result;
-      switch (status) {
-        case 'VERIFIED':
-          this.logger.log({ event: 'sms.verified', phone: e164, attempts: result[1] });
-          return {
-            verified: true,
-            verificationToken: this.createPhoneVerificationToken(e164, purpose),
-          };
-        case 'WRONG':
-          this.logger.warn({ event: 'sms.verify_wrong', phone: e164, remaining: result[1] });
-          return { verified: false, message: '인증번호가 일치하지 않습니다' };
-        case 'EXPIRED':
-          throw new GoneException('인증번호가 만료되었습니다. 재발송해주세요');
-        case 'NO_MORE_ATTEMPTS':
-          this.logger.warn({ event: 'sms.verify_exhausted', phone: e164 });
-          throw new GoneException('인증번호가 만료되었습니다. 재발송해주세요');
-        default: {
-          // Unreachable -- Lua script returns one of the above.
-          const exhaustive: never = status as never;
-          throw new Error(`Unknown VERIFY_AND_INCREMENT result: ${exhaustive}`);
-        }
+      const result = await this.client!.checkVerification(e164, code);
+      if (result.valid && result.status === 'approved') {
+        await this.redis.set(
+          smsVerifiedKey(e164),
+          '1',
+          'EX',
+          VERIFIED_FLAG_TTL_SEC,
+        );
+        this.logger.log({
+          event: 'sms.verified',
+          phone: e164,
+          providerStatus: result.status,
+          verificationSid: result.sid,
+        });
+        return {
+          verified: true,
+          verificationToken: this.createPhoneVerificationToken(e164, purpose),
+        };
       }
+
+      this.logger.warn({
+        event: 'sms.verify_wrong',
+        phone: e164,
+        providerStatus: result.status,
+      });
+      return { verified: false, message: '인증번호가 일치하지 않습니다' };
     } catch (err) {
       if (err instanceof GoneException) throw err;
-      // [WR-04] Transient Valkey eval failure: the user got no verification
+      if (err instanceof TwilioVerifyApiError && err.isExpiredOrExhausted) {
+        throw new GoneException('인증번호가 만료되었습니다. 재발송해주세요');
+      }
+      if (err instanceof TwilioVerifyApiError && err.isRateLimited) {
+        await this.redis
+          .decr(smsVerifyCounterKey(e164))
+          .catch((rollbackErr: unknown) => {
+            this.logger.warn({
+              event: 'sms.rollback_failed',
+              phone: e164,
+              op: 'verify_counter_decr',
+              err: (rollbackErr as Error).message,
+            });
+          });
+        throw new HttpException(
+          { statusCode: 429, message: '잠시 후 다시 시도해주세요', retryAfterMs: VERIFY_PHONE_WINDOW_SEC * 1000 },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+      // Transient Twilio/Valkey failure: the user got no verification
       // outcome, so release the verify slot that atomicIncr just consumed.
       // Mirrors the sendVerificationCode rollback policy for 5xx/network
       // failures. Without this, each Valkey blip burns one of the user's
       // 10/15min verify attempts without producing any result.
-      await this.redis
-        .decr(smsVerifyCounterKey(e164))
-        .catch((rollbackErr: unknown) => {
-          this.logger.warn({
-            event: 'sms.rollback_failed',
-            phone: e164,
-            op: 'verify_counter_decr',
-            err: (rollbackErr as Error).message,
+      if (!(err instanceof TwilioVerifyApiError) || err.shouldRollbackQuota) {
+        await this.redis
+          .decr(smsVerifyCounterKey(e164))
+          .catch((rollbackErr: unknown) => {
+            this.logger.warn({
+              event: 'sms.rollback_failed',
+              phone: e164,
+              op: 'verify_counter_decr',
+              err: (rollbackErr as Error).message,
+            });
           });
-        });
-      // Valkey eval failure etc. -- log + propagate as user-facing generic message
+      }
+      // Provider failure etc. -- log + propagate as user-facing generic message
       Sentry.withScope((scope) => {
-        scope.setTag('provider', 'valkey');
+        scope.setTag('provider', 'twilio_verify');
+        if (err instanceof TwilioVerifyApiError) {
+          scope.setTag('http_status', String(err.status));
+          if (err.code !== undefined) {
+            scope.setTag('twilio_code', String(err.code));
+          }
+        }
         scope.setLevel('error');
         Sentry.captureException(err);
       });
@@ -518,12 +471,9 @@ export class SmsService {
   /**
    * [hotfix 260427-kch] Idempotency probe for downstream consumers.
    *
-   * After a successful verifyCode() call the OTP key is DEL'd, so a second
-   * verifyCode() with the same code returns EXPIRED (GoneException). Per the
-   * design note above verifyCode (sms.service.ts:385-403), the
-   * `{sms:{e164}}:verified` flag (TTL 600s) is left behind specifically so
-   * downstream consumers can probe "this phone was verified within the last
-   * 10 min" WITHOUT re-running the Lua script.
+   * After a successful Twilio Verify check, the `{sms:{e164}}:verified` flag
+   * (TTL 600s) is left behind so downstream consumers can probe "this phone
+   * was verified within the last 10 min" without calling Twilio again.
    *
    * SECURITY: This is NOT an authentication primitive. Callers MUST only
    * consult this AFTER verifyCode() has thrown GoneException. Calling this
