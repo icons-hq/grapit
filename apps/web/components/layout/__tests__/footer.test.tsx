@@ -52,7 +52,7 @@ describe('Footer (D-03, D-04)', () => {
       expect(screen.getByText(/대표자: 정승준/)).toBeInTheDocument();
       expect(screen.getByText(/사업자등록번호: 109-86-27576/)).toBeInTheDocument();
       expect(screen.getByText(/통신판매업 신고번호: 2025-서울마포-1494/)).toBeInTheDocument();
-      expect(screen.getByText(/고객센터: 02-325-179/)).toBeInTheDocument();
+      expect(screen.getByText('고객센터: 02-325-1794')).toBeInTheDocument();
       expect(screen.getByText(/개인정보 보호책임자: 정승준/)).toBeInTheDocument();
     });
 
