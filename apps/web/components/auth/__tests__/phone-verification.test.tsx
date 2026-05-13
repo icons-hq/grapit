@@ -194,6 +194,29 @@ describe('PhoneVerification', () => {
       });
     });
 
+    it('send-code 400은 OTP 불일치가 아니라 휴대폰 번호 안내로 표시하고 코드 입력을 열지 않는다', async () => {
+      const { apiClient, ApiClientError } = await import('@/lib/api-client');
+      const landlineError = new ApiClientError('SMS를 받을 수 있는 휴대폰 번호를 입력해주세요', 400);
+      (apiClient.post as ReturnType<typeof vi.fn>).mockRejectedValueOnce(landlineError);
+
+      render(<PhoneVerification {...defaultProps} phone="+66600565418" />);
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      await user.click(screen.getByRole('button', { name: /인증번호 발송/ }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'SMS를 받을 수 있는 휴대폰 번호를 입력해주세요',
+        );
+      });
+      expect(screen.queryByText('인증번호가 일치하지 않습니다')).not.toBeInTheDocument();
+      expect(screen.queryByPlaceholderText(/인증번호 6자리/)).not.toBeInTheDocument();
+      expect(apiClient.post).toHaveBeenCalledWith(
+        '/api/v1/sms/send-code',
+        { phone: '+66600565418' },
+        { showErrorToast: false },
+      );
+    });
+
     it('410 에러 시 "인증번호가 만료되었습니다. 재발송해주세요"', async () => {
       const { apiClient, ApiClientError } = await import('@/lib/api-client');
       // 발송 먼저 성공
@@ -446,7 +469,7 @@ describe('PhoneVerification', () => {
         phone: '+821012345678',
         code: '123456',
         purpose: 'signup',
-      });
+      }, { showErrorToast: false });
       // 성공 분기에서는 에러 alert 가 없어야 함 (D-07 regression guard)
       expect(screen.queryByRole('alert')).toBeNull();
     });

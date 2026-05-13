@@ -299,6 +299,49 @@ describe('SmsService', () => {
       expect(mockRedis.decr).not.toHaveBeenCalledWith(smsSendCounterKey('+821012345678'));
     });
 
+    it('Twilio 60205 landline recipient는 휴대폰 번호 안내로 매핑하고 quota rollback은 하지 않는다', async () => {
+      const configService = createConfigService();
+      const service = new SmsService(configService, mockRedis as never);
+      mockRedis.set.mockResolvedValueOnce('OK');
+      mockRedis.eval.mockResolvedValueOnce(1);
+
+      vi.spyOn(TwilioVerifyClient.prototype, 'sendVerification')
+        .mockRejectedValueOnce(
+          new TwilioVerifyApiError(
+            403,
+            60205,
+            'SMS is not supported by landline phone number',
+          ),
+        );
+
+      await expect(service.sendVerificationCode('+66600565418')).rejects.toMatchObject({
+        message: 'SMS를 받을 수 있는 휴대폰 번호를 입력해주세요',
+      });
+
+      expect(mockRedis.del).not.toHaveBeenCalledWith(smsResendKey('+66600565418'));
+      expect(mockRedis.decr).not.toHaveBeenCalledWith(smsSendCounterKey('+66600565418'));
+    });
+
+    it('Twilio 60200 invalid To는 올바른 전화번호 안내로 매핑한다', async () => {
+      const configService = createConfigService();
+      const service = new SmsService(configService, mockRedis as never);
+      mockRedis.set.mockResolvedValueOnce('OK');
+      mockRedis.eval.mockResolvedValueOnce(1);
+
+      vi.spyOn(TwilioVerifyClient.prototype, 'sendVerification')
+        .mockRejectedValueOnce(
+          new TwilioVerifyApiError(
+            400,
+            60200,
+            'Invalid parameter `To`: +82600565418',
+          ),
+        );
+
+      await expect(service.sendVerificationCode('+82600565418')).rejects.toMatchObject({
+        message: '올바른 휴대폰 번호를 입력해주세요',
+      });
+    });
+
     it('phone axis send counter Lua INCR: 6번째 호출 429', async () => {
       const configService = createConfigService();
       const service = new SmsService(configService, mockRedis as never);

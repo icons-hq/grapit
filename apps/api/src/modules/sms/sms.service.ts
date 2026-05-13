@@ -151,6 +151,7 @@ interface PhoneVerificationTokenPayload {
 }
 
 const PHONE_VALIDATION_MESSAGE = '올바른 휴대폰 번호를 입력해주세요';
+const SMS_CAPABLE_PHONE_MESSAGE = 'SMS를 받을 수 있는 휴대폰 번호를 입력해주세요';
 
 function parseE164OrBadRequest(phone: string): string {
   try {
@@ -161,6 +162,21 @@ function parseE164OrBadRequest(phone: string): string {
     }
     throw err;
   }
+}
+
+function maskE164ForLog(e164: string): string {
+  if (e164.length <= 6) return `${e164.slice(0, 3)}***`;
+  return `${e164.slice(0, 4)}${'*'.repeat(Math.max(3, e164.length - 6))}${e164.slice(-2)}`;
+}
+
+function mapTwilioSendFailure(err: TwilioVerifyApiError): BadRequestException {
+  if (err.isUnsupportedLandline) {
+    return new BadRequestException(SMS_CAPABLE_PHONE_MESSAGE);
+  }
+  if (err.isInvalidRecipient) {
+    return new BadRequestException(PHONE_VALIDATION_MESSAGE);
+  }
+  return new BadRequestException('인증번호 발송에 실패했습니다. 잠시 후 다시 시도해주세요.');
 }
 
 @Injectable()
@@ -331,7 +347,17 @@ export class SmsService {
         scope.setLevel('error');
         Sentry.captureException(err);
       });
-      this.logger.error({ event: 'sms.send_failed', phone: e164, err: (err as Error).message });
+      this.logger.error({
+        event: 'sms.send_failed',
+        phone: maskE164ForLog(e164),
+        country,
+        providerStatus: err instanceof TwilioVerifyApiError ? err.status : undefined,
+        providerCode: err instanceof TwilioVerifyApiError ? err.code : undefined,
+        err: (err as Error).message,
+      });
+      if (err instanceof TwilioVerifyApiError) {
+        throw mapTwilioSendFailure(err);
+      }
       throw new BadRequestException('인증번호 발송에 실패했습니다. 잠시 후 다시 시도해주세요.');
     }
   }

@@ -346,6 +346,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 | 260511-l0p | PR #34 CI E2E 복구: KST showtime rendering 고정, runtime flag resolution 반응형화, booking-disabled smoke 안정화 | 2026-05-11 | committed | [260511-l0p-pr-ci](./quick/260511-l0p-pr-ci/) |
 | 260511-nfs | launch locale matrix를 `ko/en/th/zh-CN/ja`로 교체하고, persisted `zh-TW` locale migration 및 홈 `New` literal/가운데 정렬을 적용 | 2026-05-11 | 9ef3037 | [260511-nfs-h2-new-ui-pr](./quick/260511-nfs-h2-new-ui-pr/) |
 | 260512-kjs | Footer 고객센터 전화번호 끝자리 누락 수정 (`02-325-1794`) | 2026-05-12 | 836e2d6 | [260512-kjs-footer-02-325-1794](./quick/260512-kjs-footer-02-325-1794/) |
+| 260513-p1q | 회원가입 해외 SMS 인증 실패 UX와 Twilio landline/invalid recipient error mapping 수정 | 2026-05-13 | committed | [260513-p1q-sms-ux-twilio-landline-invalid-recipient](./quick/260513-p1q-sms-ux-twilio-landline-invalid-recipient/) |
 
 ## Session Continuity
 

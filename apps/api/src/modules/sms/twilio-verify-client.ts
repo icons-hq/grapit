@@ -47,6 +47,14 @@ export class TwilioVerifyApiError extends Error {
   get isExpiredOrExhausted(): boolean {
     return this.status === 404 || this.code === 20404 || this.code === 60202;
   }
+
+  get isUnsupportedLandline(): boolean {
+    return this.code === 60205;
+  }
+
+  get isInvalidRecipient(): boolean {
+    return this.code === 60200;
+  }
 }
 
 function toTwilioVerifyApiError(err: unknown): TwilioVerifyApiError {
