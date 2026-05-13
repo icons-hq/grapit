@@ -437,32 +437,27 @@ this.bookingGateway.broadcastSeatUpdate(showtimeId, seatId, 'available');
 
 All claims in this research are verified from repository files, npm registry output, or cited primary documentation. No `[ASSUMED]` claims are intentionally used.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Locale source of truth**
-   - What we know: Phase 25 UI-SPEC requires `zh-TW` and calls inherited `ja` drift, while current runtime/tests use `ja` [VERIFIED: .planning/phases/25-admin-operations-console/25-UI-SPEC.md][VERIFIED: packages/shared/src/constants/locales.ts].
-   - What's unclear: Whether Phase 25 should migrate the whole app back to `zh-TW`, support both temporarily, or amend UI-SPEC.
-   - Recommendation: Treat this as a Wave 0 decision; no new multilingual support/event work should encode `ja` until resolved.
+   - Planning decision: Phase 25 uses exactly `ko`, `en`, `th`, `zh-CN`, and `zh-TW`. Inherited active `ja` runtime/admin references are treated as implementation drift and removed by the split locale reconciliation plans `25-01`, `25-02`, and `25-16` through `25-20`.
+   - Rationale: 25-UI-SPEC and roadmap/context define `zh-TW`; broadening to a sixth locale would violate the UI contract and add support/translation scope.
 
 2. **Capability names and seeded admin users**
-   - What we know: DB/user types only support `user/admin`; planner needs operator/reviewer/approver/finance semantics without D-01 bureaucracy [VERIFIED: apps/api/src/database/schema/users.ts][VERIFIED: packages/shared/src/types/user.types.ts][VERIFIED: .planning/phases/25-admin-operations-console/25-CONTEXT.md].
-   - What's unclear: Whether one seeded superadmin is enough for verification or test fixtures need multiple operator profiles.
-   - Recommendation: Add capability bundles and keep `admin` as all-capabilities for existing seed.
+   - Planning decision: `25-03-PLAN.md` defines capability bundles for `operator`, `reviewer`, `approver`, `finance`, and `admin`, but `admin` remains the all-capabilities superuser for existing `admin@grapit.test` verification. Non-admin bundle users are fixture-only unless a later phase explicitly adds seeded operator accounts.
+   - Rationale: This satisfies RBAC/capability enforcement while preserving D-01/D-02 fast admin-led publish and avoiding mandatory approval bureaucracy.
 
 3. **Notice translation policy**
-   - What we know: UI/CONTEXT wants multilingual notices/support content, but translation service blocks `notice` from machine-generated drafts [VERIFIED: apps/api/src/modules/translation/translation.service.ts][VERIFIED: .planning/phases/25-admin-operations-console/25-CONTEXT.md].
-   - What's unclear: Whether non-legal notices may use assisted translation after review.
-   - Recommendation: Default notices to manual `ko/en` plus reviewed `th/zh-*` content unless planner records an explicit allowlist.
+   - Planning decision: `25-10-PLAN.md` defaults FAQ/notice/support content to manual Korean and English source content, with schema prerequisites in `25-21-PLAN.md`. Thai, Simplified Chinese, and Traditional Chinese content may use assisted translation only after operator review, and must carry the visible translation-use indication `자동 번역 검수본`.
+   - Rationale: Existing `TranslationService` blocks automatic `notice` draft generation; Phase 25 should not silently bypass that legal/notice guard.
 
 4. **IP allowlist source and break-glass model**
-   - What we know: D-09 delegates allowlist behavior but requires audit evidence [VERIFIED: .planning/phases/25-admin-operations-console/25-CONTEXT.md].
-   - What's unclear: Env-configured allowlist vs DB-managed allowlist, and local/dev bypass rules.
-   - Recommendation: Use env bootstrap + DB-managed changes with audit; allow local dev bypass only outside production.
+   - Planning decision: `25-07-PLAN.md` uses env/bootstrap allowlist as the production default, DB-managed allowlist exceptions/changes through `security.manage`, explicit local/dev bypass only outside production, and mandatory audit for denials, exceptions, and security/permission changes; `25-14-PLAN.md` exposes the security surface.
+   - Rationale: This balances launch practicality with ADMIN-03 and D-09 while preserving D-10 audit evidence.
 
 5. **Raw CSV retention**
-   - What we know: Raw PII CSV export is allowed, but raw PII must not be logged [VERIFIED: .planning/phases/25-admin-operations-console/25-CONTEXT.md].
-   - What's unclear: Whether generated CSV files may be retained in object storage.
-   - Recommendation: Stream/download without storing raw file unless a later decision defines retention and access rules.
+   - Planning decision: `25-11-PLAN.md` streams/downloads raw reservation CSV output and does not persist generated raw CSV files to object storage. Audit records store actor, filters, export type, reason, status, IP/user-agent, and timestamp, but never raw exported row values.
+   - Rationale: D-15 allows raw PII export but requires audit; no source artifact authorizes raw PII file retention.
 
 ## Environment Availability
 
