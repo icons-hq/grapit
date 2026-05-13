@@ -56,6 +56,14 @@ describe('PhoneVerification', () => {
       render(<PhoneVerification {...defaultProps} />);
       expect(screen.queryByPlaceholderText(/인증번호 6자리/)).not.toBeInTheDocument();
     });
+
+    it('valid E.164 번호의 실제 발송 대상을 masking해서 사전 표시', () => {
+      render(<PhoneVerification {...defaultProps} phone="+66812345678" />);
+
+      expect(screen.getByRole('status')).toHaveTextContent(
+        '인증번호 발송 대상: +66 ****78',
+      );
+    });
   });
 
   // ---------- 발송 후 상태 ----------
@@ -70,7 +78,9 @@ describe('PhoneVerification', () => {
       await user.click(screen.getByRole('button', { name: /인증번호 발송/ }));
 
       await waitFor(() => {
-        expect(screen.getByRole('status')).toHaveTextContent('인증번호가 발송되었습니다');
+        expect(screen.getByRole('status')).toHaveTextContent(
+          '인증번호가 발송되었습니다 (+82 ****78)',
+        );
       });
     });
 
@@ -161,7 +171,9 @@ describe('PhoneVerification', () => {
       resolveResend();
 
       await waitFor(() => {
-        expect(screen.getByRole('status')).toHaveTextContent('인증번호를 다시 보냈습니다');
+        expect(screen.getByRole('status')).toHaveTextContent(
+          '인증번호를 다시 보냈습니다 (+82 ****78)',
+        );
       });
     });
   });

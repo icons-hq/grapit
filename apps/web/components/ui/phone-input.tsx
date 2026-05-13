@@ -99,6 +99,14 @@ const COUNTRY_SELECT_COPY = {
   },
 } as const satisfies Record<PhoneInputLocale, CountrySelectCopy>;
 
+const DEFAULT_COUNTRY_BY_LOCALE = {
+  ko: 'KR',
+  en: 'KR',
+  th: 'TH',
+  'zh-CN': 'KR',
+  ja: 'KR',
+} as const satisfies Record<PhoneInputLocale, Country>;
+
 function resolvePhoneInputLocale(locale: PhoneInputLocale | undefined): PhoneInputLocale {
   return locale && isSupportedLocale(locale) ? locale : DEFAULT_LOCALE;
 }
@@ -114,7 +122,7 @@ const PhoneInput = React.forwardRef<HTMLInputElement, PhoneInputProps>(
         ref={ref as never}
         className={cn('flex', className)}
         labels={labels}
-        defaultCountry="KR"
+        defaultCountry={DEFAULT_COUNTRY_BY_LOCALE[activeLocale]}
         flagComponent={FlagComponent}
         countrySelectComponent={(countrySelectProps) => (
           <CountrySelect

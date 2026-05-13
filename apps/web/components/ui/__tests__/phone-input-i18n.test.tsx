@@ -24,7 +24,7 @@ describe('PhoneInput launch locale labels', () => {
   const localeCases = [
     ['ko', '국가 선택: 대한민국 +82'],
     ['en', 'Phone number country: South Korea +82'],
-    ['th', 'ประเทศ: เกาหลีใต้ +82'],
+    ['th', 'ประเทศ: ไทย +66'],
     ['zh-CN', '国家: 韩国 +82'],
     ['ja', '国/地域: 韓国 +82'],
   ] as const;
@@ -59,12 +59,12 @@ describe('PhoneInput launch locale labels', () => {
     render(<PhoneInput locale="th" value="" onChange={() => {}} />);
 
     const trigger = screen.getByRole('button', {
-      name: 'ประเทศ: เกาหลีใต้ +82',
+      name: 'ประเทศ: ไทย +66',
     });
 
     expect(trigger).toHaveClass('h-11');
     expect(trigger).toHaveAttribute('data-slot', 'popover-trigger');
-    expect(trigger).toHaveTextContent('+82');
+    expect(trigger).toHaveTextContent('+66');
   });
 
   it('keeps the original Korean fallback when locale is omitted', () => {
