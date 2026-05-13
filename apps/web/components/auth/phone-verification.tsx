@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Loader2, CheckCircle2 } from 'lucide-react';
 import { useLocale } from 'next-intl';
+import { parsePhoneNumberFromString } from 'libphonenumber-js/min';
 import { isValidPhoneNumber } from 'react-phone-number-input';
 import {
   DEFAULT_LOCALE,
@@ -55,6 +56,21 @@ function usePhoneVerificationLocale(localeOverride: SupportedLocale | undefined)
   return contextLocale && isSupportedLocale(contextLocale) ? contextLocale : DEFAULT_LOCALE;
 }
 
+function formatOtpTemplate(template: string, phone: string): string {
+  return template.replace('{phone}', phone);
+}
+
+function getMaskedSmsDestination(phone: string): string | null {
+  const parsed = parsePhoneNumberFromString(phone);
+  if (!parsed?.isValid()) return null;
+
+  const callingCode = `+${parsed.countryCallingCode}`;
+  const nationalNumber = parsed.nationalNumber;
+  if (nationalNumber.length <= 2) return callingCode;
+
+  return `${callingCode} ****${nationalNumber.slice(-2)}`;
+}
+
 export function PhoneVerification({
   phone,
   onPhoneChange,
@@ -76,6 +92,7 @@ export function PhoneVerification({
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const cooldownTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const smsDestination = useMemo(() => getMaskedSmsDestination(phone), [phone]);
 
   const clearTimer = useCallback(() => {
     if (timerRef.current) {
@@ -146,7 +163,16 @@ export function PhoneVerification({
       setCode('');
       setTimeLeft(SMS_CODE_EXPIRY_SECONDS);
       setResendCooldown(SMS_RESEND_COOLDOWN_SECONDS);
-      setStatusMessage(wasResend ? otpCopy.resendSuccess : otpCopy.sent);
+      if (smsDestination) {
+        setStatusMessage(
+          formatOtpTemplate(
+            wasResend ? otpCopy.resendSuccessTo : otpCopy.sentTo,
+            smsDestination,
+          ),
+        );
+      } else {
+        setStatusMessage(wasResend ? otpCopy.resendSuccess : otpCopy.sent);
+      }
     } catch (err) {
       setVerifyError(mapErrorToCopy(err, otpCopy));
     } finally {
@@ -249,6 +275,12 @@ export function PhoneVerification({
           )}
         </Button>
       </div>
+
+      {smsDestination && !codeSent && !isVerified && (
+        <p className="text-caption text-gray-500" role="status">
+          {formatOtpTemplate(otpCopy.destinationPreview, smsDestination)}
+        </p>
+      )}
 
       {/* Error from phone field */}
       {error && !verifyError && (
