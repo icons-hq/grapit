@@ -37,11 +37,13 @@ type SmsVerificationPurpose =
 function mapErrorToCopy(
   err: unknown,
   copy: ReturnType<typeof getAuthLaunchCopy>['otp'],
+  phase: 'send' | 'verify',
 ): string {
   if (err instanceof ApiClientError) {
     if (err.statusCode === 429) return copy.throttled;
     if (err.statusCode === 410 || err.statusCode === 422) return copy.expired;
     if (err.statusCode === 400) {
+      if (phase === 'send') return err.message || copy.systemError;
       return copy.invalidCode;
     }
     if (err.statusCode >= 500) return copy.systemError;
@@ -158,7 +160,11 @@ export function PhoneVerification({
     setStatusMessage(null);
     const wasResend = codeSent;
     try {
-      await apiClient.post('/api/v1/sms/send-code', { phone });
+      await apiClient.post(
+        '/api/v1/sms/send-code',
+        { phone },
+        { showErrorToast: false },
+      );
       setCodeSent(true);
       setCode('');
       setTimeLeft(SMS_CODE_EXPIRY_SECONDS);
@@ -174,7 +180,7 @@ export function PhoneVerification({
         setStatusMessage(wasResend ? otpCopy.resendSuccess : otpCopy.sent);
       }
     } catch (err) {
-      setVerifyError(mapErrorToCopy(err, otpCopy));
+      setVerifyError(mapErrorToCopy(err, otpCopy, 'send'));
     } finally {
       setIsSending(false);
     }
@@ -194,6 +200,7 @@ export function PhoneVerification({
       }>(
         '/api/v1/sms/verify-code',
         { phone, code, purpose },
+        { showErrorToast: false },
       );
       if (res.verified && res.verificationToken) {
         clearTimer();
@@ -212,7 +219,7 @@ export function PhoneVerification({
         setVerifyError(serverMessage ?? otpCopy.invalidCode);
       }
     } catch (err) {
-      const copy = mapErrorToCopy(err, otpCopy);
+      const copy = mapErrorToCopy(err, otpCopy, 'verify');
       setVerifyError(copy);
       // 410/422 expired -> force expired state
       if (
