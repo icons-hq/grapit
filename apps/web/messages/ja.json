@@ -69,7 +69,7 @@
     "bookCta": "チケットを予約"
   },
   "booking": {
-    "disabled": "チケット予約は5月下旬に開始予定です",
+    "disabled": "チケット予約は後日開始予定です",
     "queue": {
       "status": {
         "loading": {

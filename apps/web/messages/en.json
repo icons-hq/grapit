@@ -69,7 +69,7 @@
     "bookCta": "Book tickets"
   },
   "booking": {
-    "disabled": "Ticket booking opens in late May",
+    "disabled": "Ticket booking will open later",
     "queue": {
       "status": {
         "loading": {

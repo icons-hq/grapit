@@ -69,7 +69,7 @@
     "bookCta": "预订门票"
   },
   "booking": {
-    "disabled": "门票预订预计于5月下旬开放",
+    "disabled": "门票预订将于稍后开放",
     "queue": {
       "status": {
         "loading": {

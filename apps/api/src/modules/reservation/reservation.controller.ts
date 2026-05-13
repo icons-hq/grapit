@@ -40,7 +40,7 @@ type PrepareReservationTransportInput = z.infer<
 >;
 
 type QueueAdmissionRequest = ExpressRequest & {
-  user: { id: string };
+  user: { id: string; role?: string };
   queueAdmission?: PrepareReservationInput['queueAdmission'];
 };
 
@@ -62,7 +62,7 @@ export class ReservationController {
         ...body,
         queueAdmission: this.requireQueueAdmission(req),
       },
-      req.user.id,
+      { id: req.user.id, role: req.user.role },
       this.resolveConsentMeta(req),
     );
 
@@ -79,9 +79,12 @@ export class ReservationController {
   @Post('payments/confirm')
   async confirmPayment(
     @Body(new ZodValidationPipe(confirmPaymentSchema)) body: ConfirmPaymentInput,
-    @Request() req: { user: { id: string } },
+    @Request() req: { user: { id: string; role?: string } },
   ) {
-    return this.reservationService.confirmAndCreateReservation(body, req.user.id);
+    return this.reservationService.confirmAndCreateReservation(
+      body,
+      { id: req.user.id, role: req.user.role },
+    );
   }
 
   @Get('users/me/reservations')

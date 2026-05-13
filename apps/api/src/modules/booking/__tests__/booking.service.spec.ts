@@ -62,9 +62,9 @@ function chainResult<T>(rows: T[]) {
 function createMockFeatureFlags(bookingEnabled = true) {
   const mock = {
     getFlags: vi.fn(() => ({ bookingEnabled })),
-    assertBookingEnabled: vi.fn(() => {
-      if (!mock.getFlags().bookingEnabled) {
-        throw new ForbiddenException('예매는 5월말 오픈 예정입니다');
+    assertBookingEnabled: vi.fn((actor?: { id: string; role?: string }) => {
+      if (!mock.getFlags().bookingEnabled && actor?.role !== 'admin') {
+        throw new ForbiddenException('예매는 추후 오픈 예정입니다');
       }
     }),
   };
@@ -112,12 +112,29 @@ describe('BookingService', () => {
         .toThrow(ForbiddenException);
       await expect(service.lockSeat(userId, showtimeId, seatId))
         .rejects
-        .toThrow('예매는 5월말 오픈 예정입니다');
+        .toThrow('예매는 추후 오픈 예정입니다');
 
       expect(mockRedis.eval).not.toHaveBeenCalled();
       expect(mockRedis.set).not.toHaveBeenCalled();
       expect(mockDb.select).not.toHaveBeenCalled();
       expect(mockGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+    });
+
+    it('allows admin actor through disabled booking flag to existing lock validation', async () => {
+      mockFeatureFlags.getFlags.mockReturnValue({ bookingEnabled: false });
+      mockNoSoldRecord();
+      mockRedis.eval.mockResolvedValue([1, `{${showtimeId}}:seat:${seatId}`, seatId]);
+
+      await expect(service.lockSeat({ id: userId, role: 'admin' }, showtimeId, seatId))
+        .resolves
+        .toEqual(expect.objectContaining({ success: true, seatId }));
+
+      expect(mockFeatureFlags.assertBookingEnabled).toHaveBeenCalledWith({
+        id: userId,
+        role: 'admin',
+      });
+      expect(mockDb.select).toHaveBeenCalled();
+      expect(mockRedis.eval).toHaveBeenCalled();
     });
 
     it('cleans stale user-seats entries before count check via Lua eval', async () => {

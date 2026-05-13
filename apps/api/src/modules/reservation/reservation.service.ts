@@ -63,6 +63,7 @@ type ApprovedPaymentSnapshot = {
 };
 
 type SeatSelectionLike = SeatSelection & Partial<FloorAwareSeatSelection>;
+type BookingActor = { id: string; role?: string };
 type ShowtimeBookingContext = {
   id: string;
   performanceId: string;
@@ -407,10 +408,12 @@ export class ReservationService {
 
   async prepareReservation(
     dto: PrepareReservationRequest,
-    userId: string,
+    actorOrUserId: string | BookingActor,
     requestMeta: ConsentRequestMeta = { ipAddress: '0.0.0.0' },
   ): Promise<PrepareReservationResponse> {
-    this.featureFlags.assertBookingEnabled();
+    const actor = typeof actorOrUserId === 'string' ? { id: actorOrUserId } : actorOrUserId;
+    const userId = actor.id;
+    this.featureFlags.assertBookingEnabled(actor);
     await this.assertBookingConsent(dto as PrepareReservationRequest & {
       consentItems?: ConsentCaptureItem[];
     });
@@ -588,9 +591,11 @@ export class ReservationService {
 
   async confirmAndCreateReservation(
     dto: ConfirmPaymentRequest,
-    userId: string,
+    actorOrUserId: string | BookingActor,
   ): Promise<ReservationDetail> {
-    this.featureFlags.assertBookingEnabled();
+    const actor = typeof actorOrUserId === 'string' ? { id: actorOrUserId } : actorOrUserId;
+    const userId = actor.id;
+    this.featureFlags.assertBookingEnabled(actor);
 
     const confirmLockToken = randomUUID();
     const confirmLockAcquired = await this.bookingService.acquirePaymentConfirmLock(

@@ -14,6 +14,7 @@ import {
   resolvePaymentMethodSelection,
 } from '@/components/booking/toss-payment-widget';
 import { useBookingStore } from '@/stores/use-booking-store';
+import { useAuthStore } from '@/stores/use-auth-store';
 import type {
   ConfirmPaymentRequest,
   FloorAwareSeatSelection,
@@ -37,7 +38,7 @@ const { postMock, runtimeFlagsMock, ApiClientErrorMock } = vi.hoisted(() => {
     runtimeFlagsMock: vi.fn(() => ({
       bookingEnabled: true,
       isLoading: false,
-      bookingDisabledMessage: '예매는 5월말 오픈 예정입니다',
+      bookingDisabledMessage: '예매는 추후 오픈 예정입니다',
     })),
     ApiClientErrorMock: ApiClientError,
   };
@@ -99,6 +100,22 @@ function createQueueAdmission(orderId: string) {
     activeUntilAt: now,
     reentryGraceUntilAt: now,
   };
+}
+
+function setAdminAuth() {
+  useAuthStore.getState().setAuth('admin-token', {
+    id: 'admin-1',
+    email: 'admin@grapit.test',
+    name: 'Admin',
+    phone: '+821012345678',
+    gender: 'unspecified',
+    country: 'KR',
+    birthDate: '1990-01-01',
+    preferredLocale: 'ko',
+    isPhoneVerified: true,
+    role: 'admin',
+    createdAt: '2026-05-06T00:00:00.000Z',
+  });
 }
 
 function createPaymentMethod(): PrepareReservationRequest['paymentMethod'] {
@@ -197,9 +214,10 @@ describe('use-booking payment mutations', () => {
     runtimeFlagsMock.mockReturnValue({
       bookingEnabled: true,
       isLoading: false,
-      bookingDisabledMessage: '예매는 5월말 오픈 예정입니다',
+      bookingDisabledMessage: '예매는 추후 오픈 예정입니다',
     });
     useBookingStore.getState().resetBooking();
+    useAuthStore.getState().clearAuth();
   });
 
   it('usePrepareReservation() calls /api/v1/reservations/prepare with payload', async () => {
@@ -324,7 +342,7 @@ describe('use-booking payment mutations', () => {
     runtimeFlagsMock.mockReturnValue({
       bookingEnabled: false,
       isLoading: false,
-      bookingDisabledMessage: '예매는 5월말 오픈 예정입니다',
+      bookingDisabledMessage: '예매는 추후 오픈 예정입니다',
     });
 
     const { result } = renderHook(() => useLockSeat(), {
@@ -337,16 +355,49 @@ describe('use-booking payment mutations', () => {
         seatId: 'A-1',
       }),
     ).rejects.toMatchObject({
-      message: '예매는 5월말 오픈 예정입니다',
+      message: '예매는 추후 오픈 예정입니다',
     });
     expect(apiClient.post).not.toHaveBeenCalled();
+  });
+
+  it('calls lockSeat API for admin when runtime booking is disabled', async () => {
+    runtimeFlagsMock.mockReturnValue({
+      bookingEnabled: false,
+      isLoading: false,
+      bookingDisabledMessage: '예매는 추후 오픈 예정입니다',
+    });
+    setAdminAuth();
+    postMock.mockResolvedValueOnce({
+      success: true,
+      lockId: 'admin-lock',
+      seatId: 'A-1',
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    });
+
+    const { result } = renderHook(() => useLockSeat(), {
+      wrapper: createWrapper().Wrapper,
+    });
+
+    await expect(
+      result.current.mutateAsync({
+        showtimeId: 'showtime-disabled',
+        seatId: 'A-1',
+      }),
+    ).resolves.toMatchObject({
+      success: true,
+      lockId: 'admin-lock',
+    });
+    expect(apiClient.post).toHaveBeenCalledWith('/api/v1/booking/seats/lock', {
+      showtimeId: 'showtime-disabled',
+      seatId: 'A-1',
+    });
   });
 
   it('does not call prepare reservation API when runtime booking is disabled', async () => {
     runtimeFlagsMock.mockReturnValue({
       bookingEnabled: false,
       isLoading: false,
-      bookingDisabledMessage: '예매는 5월말 오픈 예정입니다',
+      bookingDisabledMessage: '예매는 추후 오픈 예정입니다',
     });
     const payload = createPrepareReservationPayload({
       orderId: 'GRP-DISABLED-PREPARE',
@@ -358,9 +409,43 @@ describe('use-booking payment mutations', () => {
     });
 
     await expect(result.current.mutateAsync(payload)).rejects.toMatchObject({
-      message: '예매는 5월말 오픈 예정입니다',
+      message: '예매는 추후 오픈 예정입니다',
     });
     expect(apiClient.post).not.toHaveBeenCalled();
+  });
+
+  it('calls prepare reservation API for admin when runtime booking is disabled', async () => {
+    runtimeFlagsMock.mockReturnValue({
+      bookingEnabled: false,
+      isLoading: false,
+      bookingDisabledMessage: '예매는 추후 오픈 예정입니다',
+    });
+    setAdminAuth();
+    const payload = createPrepareReservationPayload({
+      orderId: 'GRP-ADMIN-PREPARE',
+      showtimeId: 'showtime-disabled',
+    });
+    postMock.mockResolvedValueOnce({
+      reservationId: 'admin-reservation',
+      orderId: payload.orderId,
+    });
+
+    const { result } = renderHook(() => usePrepareReservation(), {
+      wrapper: createWrapper().Wrapper,
+    });
+
+    await expect(result.current.mutateAsync(payload)).resolves.toEqual({
+      reservationId: 'admin-reservation',
+      orderId: payload.orderId,
+    });
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/api/v1/reservations/prepare',
+      expect.objectContaining({
+        orderId: payload.orderId,
+        showtimeId: payload.showtimeId,
+      }),
+      { showErrorToast: false },
+    );
   });
 
   it('useLockSeat() posts the floor-aware seatKey as the runtime seat id', async () => {

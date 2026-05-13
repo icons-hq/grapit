@@ -68,9 +68,9 @@ function createMockBookingGateway() {
 function createMockFeatureFlags(bookingEnabled = true) {
   const mock = {
     getFlags: vi.fn(() => ({ bookingEnabled })),
-    assertBookingEnabled: vi.fn(() => {
-      if (!mock.getFlags().bookingEnabled) {
-        throw new ForbiddenException('예매는 5월말 오픈 예정입니다');
+    assertBookingEnabled: vi.fn((actor?: { id: string; role?: string }) => {
+      if (!mock.getFlags().bookingEnabled && actor?.role !== 'admin') {
+        throw new ForbiddenException('예매는 추후 오픈 예정입니다');
       }
     }),
   };
@@ -499,12 +499,34 @@ describe('ReservationService', () => {
         .toThrow(ForbiddenException);
       await expect(service.prepareReservation(dto, userId))
         .rejects
-        .toThrow('예매는 5월말 오픈 예정입니다');
+        .toThrow('예매는 추후 오픈 예정입니다');
 
       expect(mockDb.select).not.toHaveBeenCalled();
       expect(mockBookingService.assertOwnedSeatLocks).not.toHaveBeenCalled();
       expect(mockDb.transaction).not.toHaveBeenCalled();
       expect(mockConsentService.assertRequiredConsents).not.toHaveBeenCalled();
+    });
+
+    it('prepareReservation lets admin actor bypass disabled booking flag and reach consent validation', async () => {
+      const userId = randomUUID();
+      const dto = {
+        showtimeId: randomUUID(),
+        orderId: 'GRP-ADMIN-PREPARE-BYPASS',
+        seats: [seatSelection('A-1')],
+        amount: 50000,
+      };
+      mockFeatureFlags.getFlags.mockReturnValue({ bookingEnabled: false });
+
+      await expect(service.prepareReservation(dto, { id: userId, role: 'admin' }))
+        .rejects
+        .toThrow('예매 동의 항목이 필요합니다');
+
+      expect(mockFeatureFlags.assertBookingEnabled).toHaveBeenCalledWith({
+        id: userId,
+        role: 'admin',
+      });
+      expect(mockDb.select).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
     });
 
     it('prepareReservation rejects refused required booking consent before DB transaction', async () => {
@@ -1404,10 +1426,28 @@ describe('ReservationService', () => {
       await expect(service.confirmAndCreateReservation(
         { paymentKey: 'pk_test_123', orderId, amount: 150000 },
         userId,
-      )).rejects.toThrow('예매는 5월말 오픈 예정입니다');
+      )).rejects.toThrow('예매는 추후 오픈 예정입니다');
 
       expect(mockBookingService.acquirePaymentConfirmLock).not.toHaveBeenCalled();
       expect(mockBookingService.refreshPaymentConfirmLock).not.toHaveBeenCalled();
+      expect(mockTossClient.confirmPayment).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
+    it('confirmAndCreateReservation lets admin actor bypass disabled booking flag and reach confirm lock validation', async () => {
+      mockFeatureFlags.getFlags.mockReturnValue({ bookingEnabled: false });
+      mockBookingService.acquirePaymentConfirmLock.mockResolvedValueOnce(false);
+
+      await expect(service.confirmAndCreateReservation(
+        { paymentKey: 'pk_test_123', orderId, amount: 150000 },
+        { id: userId, role: 'admin' },
+      )).rejects.toThrow('결제 확인이 이미 진행 중입니다.');
+
+      expect(mockFeatureFlags.assertBookingEnabled).toHaveBeenCalledWith({
+        id: userId,
+        role: 'admin',
+      });
+      expect(mockBookingService.acquirePaymentConfirmLock).toHaveBeenCalled();
       expect(mockTossClient.confirmPayment).not.toHaveBeenCalled();
       expect(mockDb.transaction).not.toHaveBeenCalled();
     });

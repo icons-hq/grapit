@@ -32,8 +32,12 @@ export class BookingController {
     @Body(new ZodValidationPipe(lockSeatSchema)) body: LockSeatBody,
     @Req() req: Request,
   ) {
-    const user = req.user as { id: string };
-    return this.bookingService.lockSeat(user.id, body.showtimeId, body.seatId);
+    const user = req.user as { id: string; role?: string };
+    return this.bookingService.lockSeat(
+      { id: user.id, role: user.role },
+      body.showtimeId,
+      body.seatId,
+    );
   }
 
   /**

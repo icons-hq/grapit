@@ -10,7 +10,7 @@ describe('getVisibleCopy', () => {
     expect(copy.home.hot).toBe('HOT');
     expect(copy.search.promptTitle).toBe('Search for shows');
     expect(copy.performance.bookCta).toBe('Book tickets');
-    expect(copy.booking.disabled).toBe('Ticket booking opens in late May');
+    expect(copy.booking.disabled).toBe('Ticket booking will open later');
     expect(copy.auth.tabs.login).toBe('Login');
     expect(copy.auth.form.email).toBe('Email');
   });
@@ -19,7 +19,7 @@ describe('getVisibleCopy', () => {
     const copy = getVisibleCopy('xx');
 
     expect(copy.nav.searchPlaceholder).toBe('공연명, 아티스트를 검색하세요');
-    expect(copy.booking.disabled).toBe('예매는 5월말 오픈 예정입니다');
+    expect(copy.booking.disabled).toBe('예매는 추후 오픈 예정입니다');
     expect(copy.auth.tabs.login).toBe('로그인');
   });
 });

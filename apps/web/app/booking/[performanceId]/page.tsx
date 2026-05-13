@@ -4,7 +4,7 @@ import { use } from 'react';
 import { BookingPage } from '@/components/booking/booking-page';
 import { QueueWaiting } from '@/components/booking/queue-waiting';
 import { useQueue } from '@/hooks/use-queue';
-import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
+import { useBookingAvailability } from '@/hooks/use-booking-availability';
 
 export default function BookingRoute({
   params,
@@ -13,10 +13,10 @@ export default function BookingRoute({
 }) {
   const { performanceId } = use(params);
 
-  const { bookingEnabled, isResolved: runtimeFlagsResolved } = useRuntimeFlags();
+  const { bookingAvailable, isResolved: runtimeFlagsResolved } = useBookingAvailability();
   const queue = useQueue({
     performanceId,
-    enabled: runtimeFlagsResolved && bookingEnabled,
+    enabled: runtimeFlagsResolved && bookingAvailable,
   });
 
   if (!runtimeFlagsResolved) {
@@ -31,7 +31,7 @@ export default function BookingRoute({
     );
   }
 
-  if (!bookingEnabled || queue.isReady) {
+  if (!bookingAvailable || queue.isReady) {
     return <BookingPage performanceId={performanceId} />;
   }
 
