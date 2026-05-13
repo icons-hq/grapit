@@ -23,7 +23,7 @@ import {
   useUnlockAllSeats,
   useCancelPendingReservation,
 } from '@/hooks/use-booking';
-import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
+import { useBookingAvailability } from '@/hooks/use-booking-availability';
 import { resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
 import { useBookingStore } from '@/stores/use-booking-store';
 import { useAuthStore } from '@/stores/use-auth-store';
@@ -94,7 +94,7 @@ function ConfirmPageContent() {
 
   const paymentWidgetRef = useRef<TossPaymentWidgetRef>(null);
   const reservationIdRef = useRef<string | null>(null);
-  const { bookingEnabled, bookingDisabledMessage } = useRuntimeFlags();
+  const { bookingAvailable, bookingDisabledMessage } = useBookingAvailability();
   const prepareMutation = usePrepareReservation();
   const unlockAll = useUnlockAllSeats();
   const cancelPending = useCancelPendingReservation();
@@ -211,7 +211,7 @@ function ConfirmPageContent() {
   }, [overseasDisclaimerAgreed, requiresOverseasDisclaimer, selectedPaymentMethod, t]);
 
   async function handlePayment() {
-    if (!bookingEnabled) return;
+    if (!bookingAvailable) return;
     if (lockFailureMessage) return;
     if (isPaymentDeadlineExpired) return;
     if (!paymentWidgetRef.current || !agreed || isProcessing) return;
@@ -270,14 +270,14 @@ function ConfirmPageContent() {
     );
   }
 
-  const ctaDisabled = !bookingEnabled
+  const ctaDisabled = !bookingAvailable
     || !!lockFailureMessage
     || !agreed
     || isProcessing
     || !widgetReady
     || isPaymentDeadlineExpired
     || (requiresOverseasDisclaimer && !overseasDisclaimerAgreed);
-  const ctaText = !bookingEnabled
+  const ctaText = !bookingAvailable
     ? bookingDisabledMessage
     : lockFailureMessage
     ? t('paymentRecovery.reselectPrompt')
@@ -346,7 +346,7 @@ function ConfirmPageContent() {
           </section>
         )}
 
-        {!bookingEnabled && (
+        {!bookingAvailable && (
           <section role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-4">
             <p className="text-sm font-semibold text-amber-800">
               {bookingDisabledMessage}

@@ -281,8 +281,14 @@ export class BookingService {
    * Attempts to lock a seat for a user using a single Lua script (redis.eval).
    * Atomically: cleans stale user-seats, checks count, SET NX, SADD + EXPIRE.
    */
-  async lockSeat(userId: string, showtimeId: string, seatId: string): Promise<LockSeatResponse> {
-    this.featureFlags.assertBookingEnabled();
+  async lockSeat(
+    actorOrUserId: string | { id: string; role?: string },
+    showtimeId: string,
+    seatId: string,
+  ): Promise<LockSeatResponse> {
+    const actor = typeof actorOrUserId === 'string' ? { id: actorOrUserId } : actorOrUserId;
+    const userId = actor.id;
+    this.featureFlags.assertBookingEnabled(actor);
     const seatIdentity = parseRuntimeSeatIdentity(seatId);
 
     // DB-level unavailable check: defense against Redis TTL expiry and delayed refund release races.

@@ -15,7 +15,7 @@ import { AutomaticTranslationLabel } from '@/components/i18n/automatic-translati
 import { CurrencyDisplay } from '@/components/i18n/currency-display';
 import { KstTime } from '@/components/i18n/kst-time';
 import { usePerformanceDetail } from '@/hooks/use-performances';
-import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
+import { useBookingAvailability } from '@/hooks/use-booking-availability';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 
@@ -54,7 +54,7 @@ export default function PerformanceDetailPage({
   const activeLocale = useActiveLocale();
   const copy = getVisibleCopy(activeLocale);
   const { data: performance, isLoading, isError } = usePerformanceDetail(id);
-  const { bookingEnabled, bookingDisabledMessage } = useRuntimeFlags();
+  const { bookingAvailable, bookingDisabledMessage } = useBookingAvailability();
   const showAutomaticTranslationLabel =
     hasAutomaticTranslationMetadata(performance);
 
@@ -216,7 +216,6 @@ export default function PerformanceDetailPage({
                       </span>
                       <CurrencyDisplay
                         krwAmount={tier.price}
-                        locale={activeLocale}
                       />
                     </div>
                   ))}
@@ -225,7 +224,7 @@ export default function PerformanceDetailPage({
             )}
 
             {/* CTA button */}
-            {bookingEnabled ? (
+            {bookingAvailable ? (
               <Link
                 href={getLocalizedPathname(
                   `/booking/${performance.id}`,
@@ -249,7 +248,7 @@ export default function PerformanceDetailPage({
 
       {/* Mobile CTA fixed bottom bar — offset by MobileTabBar height (h-14=56px) */}
       <div className="fixed bottom-[56px] left-0 right-0 z-40 flex h-16 items-center border-t bg-white px-6 shadow-[0_-4px_6px_rgba(0,0,0,0.05)] lg:hidden">
-        {bookingEnabled ? (
+        {bookingAvailable ? (
           <Link
             href={getLocalizedPathname(
               `/booking/${performance.id}`,

@@ -2,7 +2,7 @@ import { useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api-client';
 import { BookingDisabledError } from '@/lib/runtime-flags';
-import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
+import { useBookingAvailability } from '@/hooks/use-booking-availability';
 import { useBookingStore } from '@/stores/use-booking-store';
 import type {
   BookingPolicy,
@@ -196,11 +196,11 @@ export function useBookingPaymentSnapshot(): BookingPaymentSnapshot {
 
 export function useLockSeat() {
   const queryClient = useQueryClient();
-  const { bookingEnabled, bookingDisabledMessage } = useRuntimeFlags();
+  const { bookingAvailable, bookingDisabledMessage } = useBookingAvailability();
 
   return useMutation({
     mutationFn: (data: LockSeatRequest) => {
-      if (!bookingEnabled) {
+      if (!bookingAvailable) {
         throw new BookingDisabledError(bookingDisabledMessage);
       }
 
@@ -260,13 +260,13 @@ export function useUnlockAllSeats() {
 
 export function usePrepareReservation() {
   const queryClient = useQueryClient();
-  const { bookingEnabled, bookingDisabledMessage } = useRuntimeFlags();
+  const { bookingAvailable, bookingDisabledMessage } = useBookingAvailability();
   const selectedSeats = useBookingStore((state) => state.selectedSeats);
   const performanceId = useBookingStore((state) => state.performanceId);
 
   return useMutation({
     mutationFn: (data: PrepareReservationRequest) => {
-      if (!bookingEnabled) {
+      if (!bookingAvailable) {
         throw new BookingDisabledError(bookingDisabledMessage);
       }
 

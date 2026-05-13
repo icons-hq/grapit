@@ -69,7 +69,7 @@
     "bookCta": "예매하기"
   },
   "booking": {
-    "disabled": "예매는 5월말 오픈 예정입니다",
+    "disabled": "예매는 추후 오픈 예정입니다",
     "queue": {
       "status": {
         "loading": {

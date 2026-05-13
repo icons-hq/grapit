@@ -66,7 +66,7 @@ const {
   useRuntimeFlagsMock: vi.fn(() => ({
     bookingEnabled: false,
     isLoading: false,
-    bookingDisabledMessage: '예매는 5월말 오픈 예정입니다',
+    bookingDisabledMessage: '예매는 추후 오픈 예정입니다',
   })),
 }));
 
@@ -235,6 +235,22 @@ function fulfilledParams(id: string) {
   return params;
 }
 
+function setCurrentUserRole(role: 'user' | 'admin') {
+  useAuthStore.getState().setAuth(`${role}-access-token`, {
+    id: `${role}-1`,
+    email: role === 'admin' ? 'admin@grapit.test' : 'fan@example.com',
+    name: role === 'admin' ? 'Admin' : 'Fan',
+    phone: '+821012345678',
+    gender: 'unspecified',
+    country: 'KR',
+    birthDate: '1990-01-01',
+    preferredLocale: 'ko',
+    isPhoneVerified: true,
+    role,
+    createdAt: '2026-05-06T00:00:00.000Z',
+  });
+}
+
 function seedBookingFlow() {
   useBookingStore.getState().resetBooking();
   useBookingStore.getState().setDate(new Date('2026-07-04T00:00:00.000Z'));
@@ -259,19 +275,7 @@ function seedBookingFlow() {
     expiresAt: Date.now() + 600000,
   });
 
-  useAuthStore.getState().setAuth('access-token', {
-    id: 'user-1',
-    email: 'fan@example.com',
-    name: 'Fan',
-    phone: '+821012345678',
-    gender: 'unspecified',
-    country: 'KR',
-    birthDate: '1990-01-01',
-    preferredLocale: 'ko',
-    isPhoneVerified: true,
-    role: 'user',
-    createdAt: '2026-05-06T00:00:00.000Z',
-  });
+  setCurrentUserRole('user');
 }
 
 describe('runtime booking disabled UI', () => {
@@ -291,27 +295,27 @@ describe('runtime booking disabled UI', () => {
     useRuntimeFlagsMock.mockReturnValue({
       bookingEnabled: false,
       isLoading: false,
-      bookingDisabledMessage: '예매는 5월말 오픈 예정입니다',
+      bookingDisabledMessage: '예매는 추후 오픈 예정입니다',
     });
     seedBookingFlow();
   });
 
   it('keeps exact booking-disabled copy for all five launch locales', () => {
     expect(BOOKING_DISABLED_COPY).toEqual({
-      ko: '예매는 5월말 오픈 예정입니다',
-      en: 'Ticket booking opens in late May',
-      th: 'การจองบัตรจะเปิดปลายเดือนพฤษภาคม',
-      'zh-CN': '门票预订预计于5月下旬开放',
-      'ja': 'チケット予約は5月下旬に開始予定です',
+      ko: '예매는 추후 오픈 예정입니다',
+      en: 'Ticket booking will open later',
+      th: 'การจองบัตรจะเปิดให้บริการในภายหลัง',
+      'zh-CN': '门票预订将于稍后开放',
+      'ja': 'チケット予約は後日開始予定です',
     });
   });
 
   it.each([
-    ['ko', '예매는 5월말 오픈 예정입니다'],
-    ['en', 'Ticket booking opens in late May'],
-    ['th', 'การจองบัตรจะเปิดปลายเดือนพฤษภาคม'],
-    ['zh-CN', '门票预订预计于5月下旬开放'],
-    ['ja', 'チケット予約は5月下旬に開始予定です'],
+    ['ko', '예매는 추후 오픈 예정입니다'],
+    ['en', 'Ticket booking will open later'],
+    ['th', 'การจองบัตรจะเปิดให้บริการในภายหลัง'],
+    ['zh-CN', '门票预订将于稍后开放'],
+    ['ja', 'チケット予約は後日開始予定です'],
   ] satisfies Array<[SupportedLocale, string]>)(
     'replaces the performance detail booking CTA with disabled copy for %s',
     async (locale, copy) => {
@@ -336,16 +340,48 @@ describe('runtime booking disabled UI', () => {
   it('does not call the seat lock handler when disabled booking users click a seat', async () => {
     renderWithQuery(<BookingPage performanceId="performance-disabled" />);
 
-    expect(await screen.findAllByText('예매는 5월말 오픈 예정입니다')).not.toHaveLength(0);
+    expect(await screen.findAllByText('예매는 추후 오픈 예정입니다')).not.toHaveLength(0);
     expect(screen.queryByRole('button', { name: '좌석 A-1' })).not.toBeInTheDocument();
     expect(screen.queryByText('seat legend')).not.toBeInTheDocument();
 
     expect(lockSeatMutateMock).not.toHaveBeenCalled();
   });
 
+  it('shows booking CTA on performance detail for admin while runtime booking is disabled', async () => {
+    setCurrentUserRole('admin');
+
+    renderWithQuery(
+      <Suspense fallback={null}>
+        <PerformanceDetailPage params={fulfilledParams('performance-disabled')} />
+      </Suspense>,
+    );
+
+    expect(await screen.findAllByRole('link', { name: '예매하기' })).toHaveLength(2);
+    expect(screen.queryByText('예매는 추후 오픈 예정입니다')).not.toBeInTheDocument();
+  });
+
+  it('allows admin to lock a seat while runtime booking is disabled', async () => {
+    const user = userEvent.setup();
+    setCurrentUserRole('admin');
+    useBookingStore.getState().clearSeats();
+
+    renderWithQuery(<BookingPage performanceId="performance-disabled" />);
+
+    await user.click(await screen.findByRole('button', { name: '좌석 A-1' }));
+
+    expect(lockSeatMutateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        showtimeId: 'showtime-disabled',
+        seatId: 'A-1',
+      }),
+      expect.any(Object),
+    );
+    expect(screen.queryByText('예매는 추후 오픈 예정입니다')).not.toBeInTheDocument();
+  });
+
   it.each([
-    ['ko', '예매는 5월말 오픈 예정입니다'],
-    ['en', 'Ticket booking opens in late May'],
+    ['ko', '예매는 추후 오픈 예정입니다'],
+    ['en', 'Ticket booking will open later'],
   ] satisfies Array<[SupportedLocale, string]>)(
     'shows disabled copy before performance detail finishes loading for %s',
     (locale, copy) => {
@@ -376,13 +412,35 @@ describe('runtime booking disabled UI', () => {
     await user.click(await screen.findByLabelText('전체 동의'));
     await waitFor(() => {
       expect(
-        screen.getAllByRole('button', { name: '예매는 5월말 오픈 예정입니다' })[0],
+        screen.getAllByRole('button', { name: '예매는 추후 오픈 예정입니다' })[0],
       ).toBeDisabled();
     });
-    await user.click(screen.getAllByRole('button', { name: '예매는 5월말 오픈 예정입니다' })[0]);
+    await user.click(screen.getAllByRole('button', { name: '예매는 추후 오픈 예정입니다' })[0]);
 
     expect(prepareReservationMock).not.toHaveBeenCalled();
     expect(requestPaymentMock).not.toHaveBeenCalled();
+  });
+
+  it('allows admin to prepare reservation and request Toss payment while runtime booking is disabled', async () => {
+    const user = userEvent.setup();
+    setCurrentUserRole('admin');
+    prepareReservationMock.mockResolvedValueOnce({
+      reservationId: 'admin-reservation-1',
+      orderId: 'admin-order-1',
+    });
+
+    renderWithQuery(<ConfirmPage />);
+
+    await user.click(await screen.findByLabelText('전체 동의'));
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: '결제하기' })).toHaveLength(2);
+    });
+    await user.click(screen.getAllByRole('button', { name: '결제하기' })[0]);
+
+    await waitFor(() => {
+      expect(prepareReservationMock).toHaveBeenCalledTimes(1);
+    });
+    expect(requestPaymentMock).toHaveBeenCalledTimes(1);
   });
 
   it('switches the confirm CTA to 결제하기 after required agreements when booking is enabled', async () => {
@@ -390,7 +448,7 @@ describe('runtime booking disabled UI', () => {
     useRuntimeFlagsMock.mockReturnValue({
       bookingEnabled: true,
       isLoading: false,
-      bookingDisabledMessage: '예매는 5월말 오픈 예정입니다',
+      bookingDisabledMessage: '예매는 추후 오픈 예정입니다',
     });
 
     renderWithQuery(<ConfirmPage />);
@@ -410,7 +468,7 @@ describe('runtime booking disabled UI', () => {
     useRuntimeFlagsMock.mockReturnValue({
       bookingEnabled: true,
       isLoading: false,
-      bookingDisabledMessage: '예매는 5월말 오픈 예정입니다',
+      bookingDisabledMessage: '예매는 추후 오픈 예정입니다',
     });
     prepareReservationMock.mockRejectedValueOnce(new Error(lockFailureMessage));
 

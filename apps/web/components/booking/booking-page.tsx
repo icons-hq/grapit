@@ -22,7 +22,7 @@ import {
 } from '@/hooks/use-booking';
 import { useBookingStore } from '@/stores/use-booking-store';
 import { useBookingSocket } from '@/hooks/use-socket';
-import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
+import { useBookingAvailability } from '@/hooks/use-booking-availability';
 import { ApiClientError } from '@/lib/api-client';
 import {
   formatKstDateLabel,
@@ -332,8 +332,8 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
   const lockSeat = useLockSeat();
   const unlockSeat = useUnlockSeat();
   const unlockAll = useUnlockAllSeats();
-  const { bookingEnabled, bookingDisabledMessage } = useRuntimeFlags();
-  const bookingDisabledReason = bookingEnabled ? null : bookingDisabledMessage;
+  const { bookingAvailable, bookingDisabledMessage } = useBookingAvailability();
+  const bookingDisabledReason = bookingAvailable ? null : bookingDisabledMessage;
 
   const availableSeatMaps = useMemo(() => {
     if (!performance) {
@@ -589,7 +589,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
       if (!selectedShowtimeId || !currentSeatMap) {
         return;
       }
-      if (!bookingEnabled) {
+      if (!bookingAvailable) {
         toast.info(bookingDisabledMessage);
         return;
       }
@@ -665,7 +665,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
     [
       addSeat,
       bookingDisabledMessage,
-      bookingEnabled,
+      bookingAvailable,
       currentSeatMap,
       lockSeat,
       maxTicketsPerUser,
@@ -702,7 +702,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
     if (!selectedShowtimeId || !performance) {
       return;
     }
-    if (!bookingEnabled) {
+    if (!bookingAvailable) {
       toast.info(bookingDisabledMessage);
       return;
     }
@@ -726,7 +726,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
     activeLocale,
     allShowtimes,
     bookingDisabledMessage,
-    bookingEnabled,
+    bookingAvailable,
     performance,
     performanceId,
     router,

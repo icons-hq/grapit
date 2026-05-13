@@ -20,7 +20,7 @@ vi.mock('@/hooks/use-runtime-flags', () => ({
   useRuntimeFlags: () => ({
     bookingEnabled: true,
     isLoading: false,
-    bookingDisabledMessage: 'Ticket booking opens in late May',
+    bookingDisabledMessage: 'Ticket booking will open later',
   }),
 }));
 
@@ -82,7 +82,7 @@ const fixturePerformance: PerformanceWithDetails = {
 };
 
 describe('PerformanceDetailPage i18n formatting', () => {
-  it('renders the visible detail surface with KST/KRW anchors and estimated pricing disclaimer', async () => {
+  it('renders the visible detail surface with KST anchors and KRW-only pricing', async () => {
     const params = Promise.resolve({ id: 'perf-23-14' }) as Promise<{
       id: string;
     }> & {
@@ -100,8 +100,8 @@ describe('PerformanceDetailPage i18n formatting', () => {
 
     expect(await screen.findAllByText(/KST/)).toHaveLength(2);
     expect(screen.getByText('KRW 110,000')).toBeDefined();
-    expect(screen.getByText(/THB/)).toBeDefined();
-    expect(screen.getByText(/exchange rate may change|환율/)).toBeDefined();
+    expect(screen.queryByText(/THB|USD|approx/i)).toBeNull();
+    expect(screen.queryByText(/exchange rate may change|환율/)).toBeNull();
   });
 
   it('shows only detail and sales tabs for fanmeeting-focused detail pages', async () => {

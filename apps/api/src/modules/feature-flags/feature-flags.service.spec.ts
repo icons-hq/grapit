@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ForbiddenException } from '@nestjs/common';
 import { SELF_DECLARED_DEPS_METADATA } from '@nestjs/common/constants.js';
 import { Test } from '@nestjs/testing';
 import { FLAG_NAMES } from '@grabit/shared';
@@ -49,6 +50,26 @@ describe('FeatureFlagsService', () => {
     }));
 
     expect(service.getFlags().bookingEnabled).toBe(false);
+  });
+
+  it('blocks non-admin actors when booking is disabled', () => {
+    const service = new FeatureFlagsService(() => ({
+      [FLAG_NAMES.BOOKING_ENABLED]: 'false',
+    }));
+
+    expect(() => service.assertBookingEnabled({ id: 'user-1', role: 'user' }))
+      .toThrow(ForbiddenException);
+    expect(() => service.assertBookingEnabled({ id: 'user-1', role: 'user' }))
+      .toThrow('예매는 추후 오픈 예정입니다');
+  });
+
+  it('allows admin actors when booking is disabled', () => {
+    const service = new FeatureFlagsService(() => ({
+      [FLAG_NAMES.BOOKING_ENABLED]: 'false',
+    }));
+
+    expect(() => service.assertBookingEnabled({ id: 'admin-1', role: 'admin' }))
+      .not.toThrow();
   });
 
   it('compiles in a Nest module with the default runtime env provider', async () => {

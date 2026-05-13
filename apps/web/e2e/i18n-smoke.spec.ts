@@ -24,7 +24,7 @@ const localeCases = [
     resultTitle: '2026 걸룰스 팬미팅',
     authCopy: '로그인',
     detailCopy: '상세정보',
-    bookingDisabledCopy: '예매는 5월말 오픈 예정입니다',
+    bookingDisabledCopy: '예매는 추후 오픈 예정입니다',
     expectsTranslationLabel: false,
   },
   {
@@ -37,7 +37,7 @@ const localeCases = [
     resultTitle: '2026 Girl Rules Fanmeeting',
     authCopy: 'Login',
     detailCopy: 'Details',
-    bookingDisabledCopy: 'Ticket booking opens in late May',
+    bookingDisabledCopy: 'Ticket booking will open later',
     expectsTranslationLabel: true,
   },
   {
@@ -50,7 +50,7 @@ const localeCases = [
     resultTitle: 'แฟนมีตติ้ง Girl Rules 2026',
     authCopy: 'เข้าสู่ระบบ',
     detailCopy: 'รายละเอียด',
-    bookingDisabledCopy: 'การจองบัตรจะเปิดปลายเดือนพฤษภาคม',
+    bookingDisabledCopy: 'การจองบัตรจะเปิดให้บริการในภายหลัง',
     expectsTranslationLabel: true,
   },
   {
@@ -63,7 +63,7 @@ const localeCases = [
     resultTitle: '2026 Girl Rules 粉丝见面会',
     authCopy: '登录',
     detailCopy: '详细信息',
-    bookingDisabledCopy: '门票预订预计于5月下旬开放',
+    bookingDisabledCopy: '门票预订将于稍后开放',
     expectsTranslationLabel: true,
   },
   {
@@ -76,7 +76,7 @@ const localeCases = [
     resultTitle: '2026 Girl Rules ファンミーティング',
     authCopy: 'ログイン',
     detailCopy: '詳細情報',
-    bookingDisabledCopy: 'チケット予約は5月下旬に開始予定です',
+    bookingDisabledCopy: 'チケット予約は後日開始予定です',
     expectsTranslationLabel: true,
   },
 ] as const;

@@ -9,11 +9,11 @@ import {
 export type RuntimeFlags = ReturnType<typeof readFeatureFlags>;
 
 export const BOOKING_DISABLED_COPY: Record<SupportedLocale, string> = {
-  ko: '예매는 5월말 오픈 예정입니다',
-  en: 'Ticket booking opens in late May',
-  th: 'การจองบัตรจะเปิดปลายเดือนพฤษภาคม',
-  'zh-CN': '门票预订预计于5月下旬开放',
-  ja: 'チケット予約は5月下旬に開始予定です',
+  ko: '예매는 추후 오픈 예정입니다',
+  en: 'Ticket booking will open later',
+  th: 'การจองบัตรจะเปิดให้บริการในภายหลัง',
+  'zh-CN': '门票预订将于稍后开放',
+  ja: 'チケット予約は後日開始予定です',
 };
 
 export class BookingDisabledError extends Error {

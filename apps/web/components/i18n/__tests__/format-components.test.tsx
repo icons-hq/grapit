@@ -19,17 +19,15 @@ describe('KstTime', () => {
 });
 
 describe('CurrencyDisplay', () => {
-  it('renders KRW source price, estimated conversion, and disclaimer', () => {
+  it('renders only the KRW source price', () => {
     render(
       <CurrencyDisplay
         krwAmount={110000}
-        locale="th"
-        exchangeRate={{ currency: 'THB', rate: 0.025 }}
       />,
     );
 
     expect(screen.getByText('KRW 110,000')).toBeDefined();
-    expect(screen.getByText(/THB 2,750/)).toBeDefined();
-    expect(screen.getByText(/exchange rate may change|환율/)).toBeDefined();
+    expect(screen.queryByText(/THB|USD|approx/i)).toBeNull();
+    expect(screen.queryByText(/exchange rate may change|환율/)).toBeNull();
   });
 });
