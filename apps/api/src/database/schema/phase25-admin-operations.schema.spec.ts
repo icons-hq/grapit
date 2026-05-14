@@ -7,6 +7,10 @@ import {
   adminAuditActionEnum,
   adminAuditLogs,
   adminAuditStatusEnum,
+  seatInventories,
+  seatOperationActionEnum,
+  seatOperationHistory,
+  seatStatusEnum,
 } from './index.js';
 import * as schemaBarrel from './index.js';
 
@@ -90,5 +94,43 @@ describe('Phase 25 admin operations security schema contracts', () => {
     expectColumnName(adminAccessAllowlist.expiresAt, 'expires_at');
     expectColumnName(adminAccessAllowlist.createdAt, 'created_at');
     expectColumnName(adminAccessAllowlist.updatedAt, 'updated_at');
+  });
+});
+
+describe('Phase 25 admin seat operation schema contracts', () => {
+  it('adds durable disabled seat inventory state before seat operation APIs', () => {
+    expect(seatStatusEnum.enumValues).toEqual([
+      'available',
+      'locked',
+      'held_cancelled',
+      'sold',
+      'disabled',
+    ]);
+    expectColumnName(seatInventories.status, 'status');
+  });
+
+  it('persists seat-centric disable/reactivate/manual-open history with audit linkage', () => {
+    expect(schemaBarrel).toHaveProperty('seatOperationHistory');
+    expect(schemaBarrel).toHaveProperty('seatOperationActionEnum');
+
+    expect(seatOperationActionEnum.enumValues).toEqual([
+      'seat.disable',
+      'seat.reactivate',
+      'seat.manual_open',
+    ]);
+
+    expectColumnName(seatOperationHistory.actorUserId, 'actor_user_id');
+    expectColumnName(seatOperationHistory.action, 'action');
+    expectColumnName(seatOperationHistory.showtimeId, 'showtime_id');
+    expectColumnName(seatOperationHistory.seatInventoryId, 'seat_inventory_id');
+    expectColumnName(seatOperationHistory.seatId, 'seat_id');
+    expectColumnName(seatOperationHistory.floorKey, 'floor_key');
+    expectColumnName(seatOperationHistory.seatKey, 'seat_key');
+    expectColumnName(seatOperationHistory.previousStatus, 'previous_status');
+    expectColumnName(seatOperationHistory.nextStatus, 'next_status');
+    expectColumnName(seatOperationHistory.reason, 'reason');
+    expectColumnName(seatOperationHistory.auditLogId, 'audit_log_id');
+    expectColumnName(seatOperationHistory.reservationId, 'reservation_id');
+    expectColumnName(seatOperationHistory.createdAt, 'created_at');
   });
 });
