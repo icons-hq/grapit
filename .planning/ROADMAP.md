@@ -180,7 +180,7 @@ Plans:
 
 **Merged from:** 33 Event registration console, 34 Q&A/FAQ/notice/CS, 35 Admin security + operations
 
-**Plans:** 17/23 plans executed
+**Plans:** 19/23 plans executed
 
 Plans:
 **Wave 0**
@@ -215,8 +215,8 @@ Plans:
 - [x] 25-11-PLAN.md — Implement seven-filter reservation CSV export and admin refund audit
 
 **Wave 7** *(blocked on shared service files)*
-- [ ] 25-12-PLAN.md — Implement backend seat operations APIs/services/tests
-- [ ] 25-13-PLAN.md — Expand banner operations with placement/device/schedule and audit
+- [x] 25-12-PLAN.md — Implement backend seat operations APIs/services/tests
+- [x] 25-13-PLAN.md — Expand banner operations with placement/device/schedule and audit
 
 **Wave 8** *(blocked on seat backend and export spec ownership)*
 - [ ] 25-22-PLAN.md — Build web seat operation hooks, panel, modal wiring, tests, and deferred E2E spec
