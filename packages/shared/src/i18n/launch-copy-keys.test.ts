@@ -6,7 +6,7 @@ import {
   LAUNCH_COPY_NAMESPACES,
 } from './launch-copy-keys';
 
-const expectedLocales = ['ko', 'en', 'th', 'zh-CN', 'ja'] as const;
+const expectedLocales = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
 const expectedNamespaces = [
   'nav',
   'home',

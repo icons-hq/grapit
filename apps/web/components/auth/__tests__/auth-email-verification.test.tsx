@@ -11,8 +11,9 @@ import koMessages from '@/messages/ko.json';
 import enMessages from '@/messages/en.json';
 import thMessages from '@/messages/th.json';
 import zhCNMessages from '@/messages/zh-CN.json';
-import jaMessages from '@/messages/ja.json';
+import zhTWMessages from '@/messages/zh-TW.json';
 import { EmailVerificationStatus } from '../email-verification-status';
+import { getAuthLaunchCopy } from '../auth-launch-copy';
 
 const mocks = vi.hoisted(() => ({
   activeLocale: 'ko',
@@ -41,7 +42,7 @@ const messageFiles = {
   en: enMessages,
   th: thMessages,
   'zh-CN': zhCNMessages,
-  'ja': jaMessages,
+  'zh-TW': zhTWMessages,
 } as const;
 
 const expectedNamespaces = [
@@ -123,6 +124,14 @@ describe('auth launch copy messages', () => {
     expect(copy.expired).toBe(
       '인증 링크가 만료되었습니다. 새 인증 메일을 요청해주세요.',
     );
+  });
+
+  it('resolves Traditional Chinese auth copy through the launch locale key', () => {
+    const copy = getAuthLaunchCopy('zh-TW');
+
+    expect(copy.locale).toBe('zh-TW');
+    expect(copy.emailVerification.resendCta).toEqual(expect.any(String));
+    expect(copy.emailVerification.resendCta.trim().length).toBeGreaterThan(0);
   });
 });
 

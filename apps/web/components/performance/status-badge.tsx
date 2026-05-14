@@ -41,11 +41,11 @@ const LOCALIZED_STATUS_LABELS: Record<
     ended: '已结束',
     upcoming: '即将开售',
   },
-  ja: {
-    selling: '販売中',
-    closing_soon: 'まもなく終了',
-    ended: '終了',
-    upcoming: '近日公開',
+  'zh-TW': {
+    selling: '銷售中',
+    closing_soon: '即將截止',
+    ended: '已結束',
+    upcoming: '即將開售',
   },
 };
 
