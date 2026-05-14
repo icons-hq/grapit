@@ -180,7 +180,7 @@ Plans:
 
 **Merged from:** 33 Event registration console, 34 Q&A/FAQ/notice/CS, 35 Admin security + operations
 
-**Plans:** 13/23 plans executed
+**Plans:** 17/23 plans executed
 
 Plans:
 **Wave 0**
@@ -209,10 +209,10 @@ Plans:
 - [x] 25-07-PLAN.md — Implement masked audit, allowlist, and CSV safety primitives
 
 **Wave 6** *(feature plans blocked on migration and primitives)*
-- [ ] 25-08-PLAN.md — Implement event registration, venue/transport, publish confirmation, and event audit
-- [ ] 25-09-PLAN.md — Build unified operations inbox, SLA, escalation, and support workflow API/UI
-- [ ] 25-10-PLAN.md — Add FAQ/notice authoring, review, publish, and translation-use indication
-- [ ] 25-11-PLAN.md — Implement seven-filter reservation CSV export and admin refund audit
+- [x] 25-08-PLAN.md — Implement event registration, venue/transport, publish confirmation, and event audit
+- [x] 25-09-PLAN.md — Build unified operations inbox, SLA, escalation, and support workflow API/UI
+- [x] 25-10-PLAN.md — Add FAQ/notice authoring, review, publish, and translation-use indication
+- [x] 25-11-PLAN.md — Implement seven-filter reservation CSV export and admin refund audit
 
 **Wave 7** *(blocked on shared service files)*
 - [ ] 25-12-PLAN.md — Implement backend seat operations APIs/services/tests
