@@ -191,6 +191,24 @@ describe('ReservationService', () => {
     return new Proxy({}, handler);
   }
 
+  function sqlPredicateHasParamValue(predicate: unknown, value: string): boolean {
+    const candidate = predicate as {
+      constructor?: { name?: string };
+      queryChunks?: unknown[];
+      value?: unknown;
+    };
+
+    if (candidate.constructor?.name === 'Param') {
+      return candidate.value === value;
+    }
+
+    if (!Array.isArray(candidate.queryChunks)) {
+      return false;
+    }
+
+    return candidate.queryChunks.some((chunk) => sqlPredicateHasParamValue(chunk, value));
+  }
+
   function setupPrepareBase(dto: {
     showtimeId: string;
     orderId: string;
@@ -1282,11 +1300,15 @@ describe('ReservationService', () => {
       const mockTx = {
         update: vi.fn().mockImplementation((...args: unknown[]) => {
           txOps.push({ operation: 'update', args });
+          const updateWhere = vi.fn().mockImplementation((...whereArgs: unknown[]) => {
+            txOps.push({ operation: 'where', args: whereArgs });
+            return {
+              returning: vi.fn().mockResolvedValue([{ id: randomUUID() }]),
+            };
+          });
           return {
             set: vi.fn().mockReturnValue({
-              where: vi.fn().mockReturnValue({
-                returning: vi.fn().mockResolvedValue([{ id: randomUUID() }]),
-              }),
+              where: updateWhere,
             }),
           };
         }),
@@ -1384,6 +1406,21 @@ describe('ReservationService', () => {
         .toBeLessThan(mockDb.transaction.mock.invocationCallOrder[0]!);
       expect(mockDb.transaction.mock.invocationCallOrder[0])
         .toBeLessThan(mockBookingService.consumeOwnedSeatLocks.mock.invocationCallOrder[0]!);
+    });
+
+    it('marks pending seats sold only from available inventory state', async () => {
+      const { txOps } = setupConfirmMocks();
+
+      await service.confirmAndCreateReservation(
+        { paymentKey: 'pk_test_123', orderId, amount: 150000 },
+        userId,
+      );
+
+      const availableSeatPredicates = txOps.filter(({ operation, args }) =>
+        operation === 'where'
+        && args.some((arg) => sqlPredicateHasParamValue(arg, 'available')),
+      );
+      expect(availableSeatPredicates).toHaveLength(2);
     });
 
     it('should not call BookingService.unlockAllSeats after confirm success', async () => {
@@ -1793,7 +1830,7 @@ describe('ReservationService', () => {
       await expect(service.confirmAndCreateReservation(
         { paymentKey: 'pk_test_123', orderId, amount: 150000 },
         userId,
-      )).rejects.toThrow('이미 판매된 좌석입니다');
+      )).rejects.toThrow('판매 불가능한 좌석입니다');
 
       expect(mockTossClient.confirmPayment).toHaveBeenCalledOnce();
       expect(mockTossClient.cancelPayment).toHaveBeenCalledWith('pk_test_123', '서버 오류로 인한 자동 취소');

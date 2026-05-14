@@ -39,6 +39,24 @@ function createMutationChain<T>(returningRows: T[] = []) {
   return chain;
 }
 
+function sqlPredicateHasParamValue(predicate: unknown, value: string): boolean {
+  const candidate = predicate as {
+    constructor?: { name?: string };
+    queryChunks?: unknown[];
+    value?: unknown;
+  };
+
+  if (candidate.constructor?.name === 'Param') {
+    return candidate.value === value;
+  }
+
+  if (!Array.isArray(candidate.queryChunks)) {
+    return false;
+  }
+
+  return candidate.queryChunks.some((chunk) => sqlPredicateHasParamValue(chunk, value));
+}
+
 describe('PaymentService', () => {
   let service: PaymentService;
   let mockDb: ReturnType<typeof createMockDb>;
@@ -285,6 +303,12 @@ describe('PaymentService', () => {
           provider: 'ALIPAY_PLUS',
         }),
       );
+      expect(updateFirstSeat.where.mock.calls.some((args) =>
+        args.some((arg) => sqlPredicateHasParamValue(arg, 'available')),
+      )).toBe(true);
+      expect(updateSecondSeat.where.mock.calls.some((args) =>
+        args.some((arg) => sqlPredicateHasParamValue(arg, 'available')),
+      )).toBe(true);
       expect(mockBookingGateway.broadcastSeatUpdate).toHaveBeenCalledWith(
         showtimeId,
         '1F:A-1',

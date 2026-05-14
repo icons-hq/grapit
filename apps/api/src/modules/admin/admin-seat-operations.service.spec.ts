@@ -193,6 +193,47 @@ describe('AdminSeatOperationsService', () => {
     );
   });
 
+  it('broadcasts the committed disabled state when active lock cleanup fails', async () => {
+    const tx = createTransactionMock([availableSeat()]);
+    const gateway = createMockBookingGateway();
+    const db = {
+      transaction: vi.fn().mockImplementation((callback: (tx: unknown) => Promise<unknown>) =>
+        callback(tx.tx),
+      ),
+      select: vi.fn(),
+    };
+    const bookingService = createMockBookingService();
+    bookingService.forceReleaseSeatLock.mockRejectedValueOnce(new Error('redis cleanup failed'));
+    const service = new AdminSeatOperationsService(
+      db as never,
+      createMockAdminAuditService(),
+      gateway as never,
+      bookingService as never,
+    );
+
+    await expect(service.performOperation('admin-1', {
+      operation: 'seat.disable',
+      showtimeId: '00000000-0000-4000-8000-000000000001',
+      seatKey: '2F:A-1',
+      reason: '시야 제한 좌석 판매 중지',
+      confirmed: true,
+    })).resolves.toMatchObject({
+      showtimeId: '00000000-0000-4000-8000-000000000001',
+      seatKey: '2F:A-1',
+      nextStatus: 'disabled',
+    });
+
+    expect(bookingService.forceReleaseSeatLock).toHaveBeenCalledWith(
+      '00000000-0000-4000-8000-000000000001',
+      '2F:A-1',
+    );
+    expect(gateway.broadcastSeatUpdate).toHaveBeenCalledWith(
+      '00000000-0000-4000-8000-000000000001',
+      '2F:A-1',
+      'disabled',
+    );
+  });
+
   it('reactivates a disabled seat and rejects invalid state transitions', async () => {
     const disabledTx = createTransactionMock([{
       ...availableSeat(),
