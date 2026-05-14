@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent, waitFor } from '@testing-library/react';
+import { render, fireEvent, screen, waitFor } from '@testing-library/react';
 import { SvgPreview } from '../svg-preview';
 
 // sonner mock — toast.error/success 호출 추적
@@ -22,7 +22,26 @@ vi.mock('@/hooks/use-admin', () => ({
 
 // TierEditor는 본 테스트 범위 밖 — 단순 stub
 vi.mock('@/components/admin/tier-editor', () => ({
-  TierEditor: () => <div data-testid="tier-editor" />,
+  TierEditor: ({
+    tiers,
+    onChange,
+  }: {
+    tiers: Array<{ tierName: string; color: string; seatIds: string[] }>;
+    onChange: (tiers: Array<{ tierName: string; color: string; seatIds: string[] }>) => void;
+  }) => (
+    <button
+      type="button"
+      data-testid="tier-editor"
+      onClick={() =>
+        onChange([
+          ...tiers,
+          { tierName: 'R', color: '#00AAFF', seatIds: ['B-1'] },
+        ])
+      }
+    >
+      tier-editor
+    </button>
+  ),
 }));
 
 import { toast } from 'sonner';
@@ -79,6 +98,64 @@ describe('SvgPreview — UX-02 admin 업로드 검증 (D-06/D-07 unified contrac
       );
     });
     expect(vi.mocked(toast.error)).not.toHaveBeenCalled();
+  });
+
+  it('controlled mode does not emit onChange while syncing existing props', async () => {
+    const onChange = vi.fn();
+
+    render(
+      <SvgPreview
+        currentSvgUrl="https://cdn.example.com/seats/existing.svg"
+        currentConfig={{
+          tiers: [{ tierName: 'VIP', color: '#FFD700', seatIds: ['A-1'] }],
+        }}
+        currentTotalSeats={1}
+        onChange={onChange}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('tier-editor')).toBeTruthy();
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('controlled mode emits onChange once when tiers change', async () => {
+    const onChange = vi.fn();
+
+    render(
+      <SvgPreview
+        currentSvgUrl="https://cdn.example.com/seats/existing.svg"
+        currentConfig={{
+          tiers: [{ tierName: 'VIP', color: '#FFD700', seatIds: ['A-1'] }],
+        }}
+        currentTotalSeats={1}
+        onChange={onChange}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('tier-editor')).toBeTruthy();
+    });
+    onChange.mockClear();
+
+    fireEvent.click(screen.getByTestId('tier-editor'));
+
+    await waitFor(() => {
+      expect(onChange).toHaveBeenCalledTimes(1);
+    });
+    expect(onChange).toHaveBeenCalledWith({
+      svgUrl: 'https://cdn.example.com/seats/existing.svg',
+      seatConfig: {
+        tiers: [
+          { tierName: 'VIP', color: '#FFD700', seatIds: ['A-1'] },
+          { tierName: 'R', color: '#00AAFF', seatIds: ['B-1'] },
+        ],
+      },
+      totalSeats: 1,
+    });
   });
 
   it('root data-stage 속성 SVG 업로드 시 검증 통과', async () => {
