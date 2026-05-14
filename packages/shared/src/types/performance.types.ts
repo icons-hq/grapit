@@ -40,6 +40,35 @@ export const GENRE_SLUGS: Record<string, Genre> = {
 export type PerformanceStatus = 'upcoming' | 'selling' | 'closing_soon' | 'ended';
 export type TranslationReviewSource = 'machine_reviewed';
 
+export const PERFORMANCE_PUBLISH_LIFECYCLE = [
+  'draft',
+  'review',
+  'publish_ready',
+  'published',
+] as const;
+export type PerformancePublishLifecycle =
+  typeof PERFORMANCE_PUBLISH_LIFECYCLE[number];
+
+export const BANNER_PLACEMENTS = [
+  'home_hero',
+  'home_secondary',
+  'performance_detail',
+  'operations_notice',
+] as const;
+export type BannerPlacement = typeof BANNER_PLACEMENTS[number];
+
+export const BANNER_DEVICE_TARGETS = ['all', 'desktop', 'mobile'] as const;
+export type BannerDeviceTarget = typeof BANNER_DEVICE_TARGETS[number];
+
+export const BANNER_STATUSES = [
+  'draft',
+  'scheduled',
+  'active',
+  'paused',
+  'expired',
+] as const;
+export type BannerStatus = typeof BANNER_STATUSES[number];
+
 export interface ReviewedTranslationMetadata {
   automaticTranslationLabel?: boolean;
   translatedBy?: TranslationReviewSource;
@@ -56,6 +85,8 @@ export interface Venue {
   id: string;
   name: string;
   address: string | null;
+  accessNotes?: string | null;
+  transportSummary?: string | null;
 }
 
 export interface PriceTier {
@@ -137,6 +168,11 @@ export interface Banner {
   id: string;
   imageUrl: string;
   linkUrl: string | null;
+  placement: BannerPlacement;
+  deviceTarget: BannerDeviceTarget;
+  status: BannerStatus;
+  startsAt: string | null;
+  endsAt: string | null;
   sortOrder: number;
   isActive: boolean;
 }
@@ -154,6 +190,11 @@ export interface Performance extends ReviewedTranslationMetadata {
   runtime: string | null;
   ageRating: string;
   status: PerformanceStatus;
+  publishState?: PerformancePublishLifecycle;
+  publishReviewRequestedAt?: string | null;
+  publishReadyAt?: string | null;
+  publishedAt?: string | null;
+  publishedByUserId?: string | null;
   salesInfo: string | null;
   viewCount: number;
   createdAt: string;

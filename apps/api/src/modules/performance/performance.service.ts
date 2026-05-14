@@ -116,6 +116,11 @@ function mapBookingPolicyRow(
   };
 }
 
+function toOptionalIsoString(value: Date | string | null | undefined): string | null {
+  if (!value) return null;
+  return value instanceof Date ? value.toISOString() : value;
+}
+
 @Injectable()
 export class PerformanceService {
   constructor(
@@ -338,6 +343,11 @@ export class PerformanceService {
       id: b.id,
       imageUrl: b.imageUrl,
       linkUrl: b.linkUrl,
+      placement: b.placement,
+      deviceTarget: b.deviceTarget,
+      status: b.status,
+      startsAt: toOptionalIsoString(b.startsAt),
+      endsAt: toOptionalIsoString(b.endsAt),
       sortOrder: b.sortOrder,
       isActive: b.isActive,
     }));
