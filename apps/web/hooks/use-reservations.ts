@@ -7,13 +7,26 @@ import {
   keepPreviousData,
 } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api-client';
+import { apiUrl } from '@/lib/api-url';
+import { useAuthStore } from '@/stores/use-auth-store';
 import type {
   ReservationListItem,
   ReservationDetail,
   AdminBookingListItem,
+  AdminReservationExportFilter,
   BookingStats,
   PaymentInfo,
 } from '@grabit/shared';
+
+export type ReservationExportPayload = AdminReservationExportFilter & {
+  exportType: 'raw_pii';
+  reason: string;
+};
+
+export interface ReservationExportDownload {
+  blob: Blob;
+  filename: string;
+}
 
 export function useMyReservations(status?: string) {
   return useQuery({
@@ -92,4 +105,80 @@ export function useAdminRefund() {
       queryClient.invalidateQueries({ queryKey: ['admin', 'bookings'] });
     },
   });
+}
+
+export function useReservationExport() {
+  return useMutation({
+    mutationFn: async (
+      filters: ReservationExportPayload,
+    ): Promise<ReservationExportDownload> => {
+      const { accessToken } = useAuthStore.getState();
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+
+      if (accessToken) {
+        headers['Authorization'] = `Bearer ${accessToken}`;
+      }
+
+      const response = await fetch(apiUrl('/api/v1/admin/bookings/export'), {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify(filters),
+      });
+
+      if (!response.ok) {
+        throw new Error(await resolveExportErrorMessage(response));
+      }
+
+      const blob = await response.blob();
+      const filename = resolveExportFilename(
+        response.headers.get('content-disposition'),
+      );
+
+      downloadBlob(blob, filename);
+
+      return { blob, filename };
+    },
+  });
+}
+
+async function resolveExportErrorMessage(response: Response): Promise<string> {
+  try {
+    const data = (await response.json()) as { message?: unknown };
+    if (typeof data.message === 'string') {
+      return data.message;
+    }
+  } catch {
+    // Fall through to the generic operator-facing message.
+  }
+
+  return '예약자 CSV 내보내기에 실패했습니다.';
+}
+
+function resolveExportFilename(contentDisposition: string | null): string {
+  const fallback = 'reservation-export-raw.csv';
+  if (!contentDisposition) {
+    return fallback;
+  }
+
+  const match = /filename="?(?<filename>[^";]+)"?/i.exec(contentDisposition);
+  return match?.groups?.['filename'] ?? fallback;
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  if (typeof document === 'undefined') {
+    return;
+  }
+
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.rel = 'noopener';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
