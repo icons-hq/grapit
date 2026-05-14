@@ -175,4 +175,56 @@ describe('useQueue', () => {
     expect(result.current.status).toBe('expired');
     expect(result.current.autoEnter).toBe(false);
   });
+
+  it('polls waiting sessions when socket admission events do not arrive', async () => {
+    postMock.mockResolvedValueOnce({
+      queueSessionId: 'queue-session-poll',
+    });
+    getMock
+      .mockResolvedValueOnce({
+        queueSessionId: 'queue-session-poll',
+        state: 'WAITING',
+        position: 1,
+        waitingCount: 1,
+        etaSeconds: 0,
+        remainingSeats: 5,
+        autoEnter: false,
+        admittedAt: null,
+        activeUntilAt: null,
+        reentryGraceUntilAt: null,
+      })
+      .mockResolvedValueOnce({
+        queueSessionId: 'queue-session-poll',
+        state: 'ADMITTED',
+        position: 0,
+        waitingCount: 0,
+        etaSeconds: 0,
+        remainingSeats: 5,
+        autoEnter: true,
+        admittedAt: '2026-05-08T09:00:00.000Z',
+        activeUntilAt: '2026-05-08T09:10:00.000Z',
+        reentryGraceUntilAt: '2026-05-08T09:13:00.000Z',
+      });
+
+    const { result } = renderHook(
+      () =>
+        useQueue({
+          performanceId: 'performance-poll',
+        }),
+      {
+        wrapper: createWrapper(),
+      },
+    );
+
+    await flushQueueEffects();
+    expect(result.current.status).toBe('waiting');
+
+    await act(async () => {
+      vi.advanceTimersByTime(2500);
+      await Promise.resolve();
+    });
+
+    expect(getMock).toHaveBeenCalledTimes(2);
+    expect(result.current.status).toBe('admitted');
+  });
 });

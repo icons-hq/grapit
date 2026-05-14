@@ -100,7 +100,10 @@ export class AdminService {
       this.cacheService.invalidatePattern('cache:home:*'),
     ];
     if (id) {
-      ops.push(this.cacheService.invalidate(`cache:performances:detail:${id}`));
+      ops.push(
+        this.cacheService.invalidate(`cache:performances:detail:${id}`),
+        this.cacheService.invalidatePattern(`cache:performances:detail:${id}:*`),
+      );
     }
     await Promise.all(ops);
   }
@@ -1019,6 +1022,8 @@ export class AdminService {
       performanceId,
       floorAwareInput.seatMaps,
     );
+
+    await this.invalidateCatalogCache(performanceId);
 
     return {
       seatMaps: normalizedSeatMaps,

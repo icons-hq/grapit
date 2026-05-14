@@ -14,6 +14,7 @@ import {
 type AuthenticatedRequest = Request & {
   user?: {
     id?: string;
+    role?: string;
   };
   body?: Record<string, unknown>;
   queueAdmission?: {
@@ -36,6 +37,11 @@ export class AdmissionGuard implements CanActivate {
     const userId = request.user?.id;
     if (!userId) {
       throw new ForbiddenException('대기열 입장 인증이 필요합니다');
+    }
+
+    if (request.user?.role === 'admin') {
+      request.queueAdmission = this.createAdminBypassAdmission(userId);
+      return true;
     }
 
     const refreshToken = readRefreshCookie(
@@ -126,5 +132,23 @@ export class AdmissionGuard implements CanActivate {
   private resolvePath(request: AuthenticatedRequest): string {
     const originalUrl = request.originalUrl ?? request.url ?? '';
     return originalUrl.split('?')[0] ?? originalUrl;
+  }
+
+  private createAdminBypassAdmission(userId: string): NonNullable<
+    AuthenticatedRequest['queueAdmission']
+  > {
+    const admittedAt = new Date();
+    const activeUntilAt = new Date(admittedAt.getTime() + 10 * 60 * 1000);
+    const reentryGraceUntilAt = new Date(activeUntilAt.getTime() + 3 * 60 * 1000);
+
+    return {
+      queueSessionId: `admin-bypass-${userId}`,
+      admissionToken: 'admin-bypass',
+      refreshFamilyId: `admin-bypass-${userId}`,
+      deviceSlotKey: `admin-bypass-${userId}`,
+      admittedAt: admittedAt.toISOString(),
+      activeUntilAt: activeUntilAt.toISOString(),
+      reentryGraceUntilAt: reentryGraceUntilAt.toISOString(),
+    };
   }
 }

@@ -421,6 +421,24 @@ describe('AdminService', () => {
       expect(findInsertCallIndex(tx, bookingPolicies)).toBeGreaterThanOrEqual(0);
       expect(tx.delete).toHaveBeenCalled();
     });
+
+    it('persists deleting all seatMaps and invalidates locale-scoped detail caches', async () => {
+      const result = await service.updatePerformance('perf-id-123', {
+        seatMaps: [],
+      });
+
+      const tx = mockDb._tx;
+      expect(tx.delete).toHaveBeenCalled();
+      expect(findInsertCallIndex(tx, seatMaps)).toBe(-1);
+      expect(result.seatMaps).toEqual([]);
+      expect(result.seatMap).toBeNull();
+      expect(mockCache.invalidate).toHaveBeenCalledWith(
+        'cache:performances:detail:perf-id-123',
+      );
+      expect(mockCache.invalidatePattern).toHaveBeenCalledWith(
+        'cache:performances:detail:perf-id-123:*',
+      );
+    });
   });
 
   describe('deletePerformance', () => {
@@ -606,6 +624,20 @@ describe('AdminService', () => {
 
       expect(result.seatMap?.floorKey).toBe('1F');
       expect(result.seatMaps[0]?.floorLabel).toBe('1층');
+    });
+
+    it('invalidates locale-scoped detail caches after direct seat-map saves', async () => {
+      await service.saveSeatMap('perf-id-123', {
+        seatMaps: sampleSeatMaps,
+        bookingPolicy: sampleBookingPolicy,
+      });
+
+      expect(mockCache.invalidate).toHaveBeenCalledWith(
+        'cache:performances:detail:perf-id-123',
+      );
+      expect(mockCache.invalidatePattern).toHaveBeenCalledWith(
+        'cache:performances:detail:perf-id-123:*',
+      );
     });
   });
 });
