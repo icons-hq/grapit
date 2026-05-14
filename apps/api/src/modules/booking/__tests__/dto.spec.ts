@@ -32,16 +32,18 @@ describe('LockSeatRequest zod schema', () => {
 });
 
 describe('SeatState type', () => {
-  it('includes available | locked | sold | held', () => {
+  it('includes available | locked | sold | held | disabled', () => {
     // Type-level check: assign each literal to SeatState
     const available: SeatState = 'available';
     const locked: SeatState = 'locked';
     const sold: SeatState = 'sold';
     const held: SeatState = 'held';
+    const disabled: SeatState = 'disabled';
 
     expect(available).toBe('available');
     expect(locked).toBe('locked');
     expect(sold).toBe('sold');
     expect(held).toBe('held');
+    expect(disabled).toBe('disabled');
   });
 });
