@@ -40,3 +40,24 @@ export {
   bookingOperationActionEnum,
   bookingOperationAuditLogs,
 } from './booking-operation-audit-logs.js';
+export {
+  supportContentReviewStateEnum,
+  supportThreadCategoryEnum,
+  supportThreadEscalationStateEnum,
+  supportThreadPriorityEnum,
+  supportThreadSourceEnum,
+  supportThreadStatusEnum,
+  supportThreads,
+  supportTranslationUseEnum,
+} from './support-threads.js';
+export {
+  supportMessageAuthorTypeEnum,
+  supportMessages,
+  supportMessageVisibilityEnum,
+} from './support-messages.js';
+export { supportFaqs } from './support-faqs.js';
+export {
+  supportNoticeCategoryEnum,
+  supportNotices,
+  supportNoticeStatusEnum,
+} from './support-notices.js';
