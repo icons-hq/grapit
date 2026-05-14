@@ -1,5 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
+const port = process.env['PLAYWRIGHT_PORT'] ?? '3000';
+const baseURL = process.env['PLAYWRIGHT_BASE_URL'] ?? `http://localhost:${port}`;
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
@@ -8,7 +11,7 @@ export default defineConfig({
   workers: process.env['CI'] ? 1 : undefined,
   reporter: 'html',
   use: {
-    baseURL: 'http://localhost:3000',
+    baseURL,
     trace: 'on-first-retry',
   },
   projects: [
@@ -22,8 +25,8 @@ export default defineConfig({
   // logs to a file for easier debugging. Playwright only manages the web dev
   // server here so we don't have to fight webServer.env capture semantics.
   webServer: {
-    command: 'pnpm --filter @grabit/web dev',
-    url: 'http://localhost:3000',
+    command: `pnpm --filter @grabit/web exec next dev --turbopack --port ${port}`,
+    url: baseURL,
     reuseExistingServer: !process.env['CI'],
     timeout: 120_000,
     env: {
