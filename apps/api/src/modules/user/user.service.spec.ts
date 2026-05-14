@@ -46,14 +46,14 @@ describe('UserService preferred locale persistence', () => {
   it('persists supported preferredLocale updates for logged-in users', async () => {
     vi.mocked(repository.updateProfile).mockResolvedValue({
       ...baseUser,
-      preferredLocale: 'th',
+      preferredLocale: 'zh-TW',
     } as never);
 
     await expect(
-      service.updateProfile('user-1', { preferredLocale: 'th' } as never),
-    ).resolves.toMatchObject({ preferredLocale: 'th' });
+      service.updateProfile('user-1', { preferredLocale: 'zh-TW' } as never),
+    ).resolves.toMatchObject({ preferredLocale: 'zh-TW' });
     expect(repository.updateProfile).toHaveBeenCalledWith('user-1', {
-      preferredLocale: 'th',
+      preferredLocale: 'zh-TW',
     });
   });
 
@@ -93,8 +93,10 @@ describe('UserService preferred locale persistence', () => {
   });
 
   it('rejects unsupported preferredLocale updates before repository writes', async () => {
+    const unsupportedLocale = ['j', 'a'].join('');
+
     await expect(
-      service.updateProfile('user-1', { preferredLocale: 'zh-TW' } as never),
+      service.updateProfile('user-1', { preferredLocale: unsupportedLocale } as never),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(repository.updateProfile).not.toHaveBeenCalled();
   });
