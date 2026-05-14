@@ -1,6 +1,5 @@
 import {
   DEFAULT_LOCALE,
-  isSupportedLocale,
   type SupportedLocale,
 } from '@grabit/shared';
 
@@ -28,34 +27,44 @@ export type FormattedCurrencyEstimate = {
 };
 
 const KST_TIME_ZONE = 'Asia/Seoul';
+type PublicFormattingLocale =
+  | Extract<SupportedLocale, 'ko' | 'en' | 'th' | 'zh-CN'>
+  | 'zh-TW';
+type FormattingLocaleInput = SupportedLocale | 'zh-TW';
+const PUBLIC_FORMATTING_LOCALES = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
 
-const LOCALE_CURRENCY: Record<SupportedLocale, string> = {
+const LOCALE_CURRENCY: Record<PublicFormattingLocale, string> = {
   ko: 'KRW',
   en: 'USD',
   th: 'THB',
   'zh-CN': 'CNY',
-  ja: 'JPY',
+  'zh-TW': 'TWD',
 };
 
-export const DEFAULT_EXCHANGE_RATES: Record<SupportedLocale, ExchangeRateEstimate> = {
+export const DEFAULT_EXCHANGE_RATES: Record<PublicFormattingLocale, ExchangeRateEstimate> = {
   ko: { currency: 'KRW', rate: 1 },
   en: { currency: 'USD', rate: 0.00072 },
   th: { currency: 'THB', rate: 0.025 },
   'zh-CN': { currency: 'CNY', rate: 0.0052 },
-  ja: { currency: 'JPY', rate: 0.11 },
+  'zh-TW': { currency: 'TWD', rate: 0.023 },
 };
 
-export function normalizeSupportedLocale(locale: string | undefined): SupportedLocale {
-  if (locale && isSupportedLocale(locale)) return locale;
+export function normalizeSupportedLocale(locale: string | undefined): PublicFormattingLocale {
+  if (locale && isPublicFormattingLocale(locale)) return locale;
   return DEFAULT_LOCALE;
+}
+
+function isPublicFormattingLocale(value: string): value is PublicFormattingLocale {
+  return (PUBLIC_FORMATTING_LOCALES as readonly string[]).includes(value);
 }
 
 export function formatEventTimeWithKstAnchor(
   input: string | Date,
-  locale: SupportedLocale,
+  locale: FormattingLocaleInput,
   options: EventTimeFormatOptions = {},
 ): FormattedEventTime {
   const date = toValidDate(input);
+  const publicLocale = normalizeSupportedLocale(locale);
 
   if (!date) {
     return {
@@ -69,7 +78,7 @@ export function formatEventTimeWithKstAnchor(
   const includeLocalTime = options.includeLocalTime ?? true;
   const localTimeZone = options.localTimeZone ?? getResolvedTimeZone();
   const local = includeLocalTime
-    ? formatLocalTime(date, locale, localTimeZone)
+    ? formatLocalTime(date, publicLocale, localTimeZone)
     : null;
 
   return {
@@ -81,14 +90,16 @@ export function formatEventTimeWithKstAnchor(
 
 export function formatKrwWithEstimate(
   krwAmount: number,
-  locale: SupportedLocale,
-  exchangeRate: ExchangeRateEstimate = DEFAULT_EXCHANGE_RATES[locale],
+  locale: FormattingLocaleInput,
+  exchangeRate?: ExchangeRateEstimate,
 ): FormattedCurrencyEstimate {
+  const publicLocale = normalizeSupportedLocale(locale);
+  const resolvedExchangeRate = exchangeRate ?? DEFAULT_EXCHANGE_RATES[publicLocale];
   const source = `KRW ${formatWholeNumber(krwAmount)}`;
-  const currency = exchangeRate.currency || LOCALE_CURRENCY[locale];
-  const estimatedAmount = Math.round(krwAmount * exchangeRate.rate);
+  const currency = resolvedExchangeRate.currency || LOCALE_CURRENCY[publicLocale];
+  const estimatedAmount = Math.round(krwAmount * resolvedExchangeRate.rate);
   const estimate = `approx. ${currency} ${formatWholeNumber(estimatedAmount)}`;
-  const disclaimer = getExchangeRateDisclaimer(locale);
+  const disclaimer = getExchangeRateDisclaimer(publicLocale);
 
   return {
     source,
@@ -126,7 +137,7 @@ function formatDateTimeInTimeZone(date: Date, timeZone: string): string {
 
 function formatLocalTime(
   date: Date,
-  locale: SupportedLocale,
+  locale: PublicFormattingLocale,
   timeZone: string,
 ): string {
   return new Intl.DateTimeFormat(locale, {
@@ -151,7 +162,7 @@ function formatWholeNumber(value: number): string {
   }).format(value);
 }
 
-function getExchangeRateDisclaimer(locale: SupportedLocale): string {
+function getExchangeRateDisclaimer(locale: PublicFormattingLocale): string {
   if (locale === 'ko') {
     return '예상 환산 금액이며 환율은 변동될 수 있습니다.';
   }

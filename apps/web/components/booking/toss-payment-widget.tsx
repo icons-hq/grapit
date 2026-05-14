@@ -43,8 +43,9 @@ const LOCALE_TO_COUNTRY = {
   en: 'US',
   th: 'TH',
   'zh-CN': 'CN',
-  ja: 'JP',
+  'zh-TW': 'TW',
 } as const;
+type PaymentWidgetLocale = keyof typeof LOCALE_TO_COUNTRY;
 
 type PaymentMethodWidget = Awaited<ReturnType<TossPaymentsWidgets['renderPaymentMethods']>>;
 type SelectedWidgetPaymentMethod = Awaited<ReturnType<PaymentMethodWidget['getSelectedPaymentMethod']>>;
@@ -126,6 +127,15 @@ function createOverseasConsent(): PaymentMethod['overseasPaymentConsent'] {
   };
 }
 
+function resolvePaymentWidgetLocale(locale: string | undefined): PaymentWidgetLocale {
+  if (locale === 'zh-TW') return 'zh-TW';
+
+  const visibleCopyLocale = resolveVisibleCopyLocale(locale);
+  return visibleCopyLocale in LOCALE_TO_COUNTRY
+    ? (visibleCopyLocale as PaymentWidgetLocale)
+    : 'ko';
+}
+
 export function resolvePaymentMethodSelection(code: string): PaymentMethodSelection {
   if (FOREIGN_WALLET_CODES.has(code)) {
     return {
@@ -194,7 +204,7 @@ export function buildWidgetPaymentRequest({
   orderName: string;
   locale: string;
 }): WidgetPaymentRequestPayload {
-  const resolvedLocale = resolveVisibleCopyLocale(locale);
+  const resolvedLocale = resolvePaymentWidgetLocale(locale);
   const baseRequest: WidgetPaymentRequestPayload = {
     orderId: branch.orderId,
     orderName,
@@ -255,7 +265,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
     },
     ref,
   ) {
-    const locale = resolveVisibleCopyLocale(useLocale());
+    const locale = resolvePaymentWidgetLocale(useLocale());
     const [widgets, setWidgets] = useState<TossPaymentsWidgets | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);

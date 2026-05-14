@@ -1,18 +1,23 @@
-import { DEFAULT_LOCALE, SUPPORTED_LOCALES, isSupportedLocale } from '@grabit/shared';
+import { DEFAULT_LOCALE, isSupportedLocale } from '@grabit/shared';
 import { defineRouting } from 'next-intl/routing';
 import type { SupportedLocale } from '@grabit/shared';
 
 export const LOCALE_SUGGESTION_COOKIE = 'locale-suggestion';
+export const PUBLIC_SUPPORTED_LOCALES = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
+
+export type PublicSupportedLocale =
+  | Extract<SupportedLocale, 'ko' | 'en' | 'th' | 'zh-CN'>
+  | 'zh-TW';
 
 export const routing = defineRouting({
-  locales: [...SUPPORTED_LOCALES],
+  locales: [...PUBLIC_SUPPORTED_LOCALES],
   defaultLocale: DEFAULT_LOCALE,
   localePrefix: 'as-needed',
   localeDetection: false,
 });
 
 export type LocalePathResolution = {
-  locale: SupportedLocale;
+  locale: PublicSupportedLocale;
   pathnameWithoutLocale: string;
 };
 
@@ -20,7 +25,11 @@ export function resolveLocaleFromPathname(pathname: string): LocalePathResolutio
   const normalizedPathname = normalizePathname(pathname);
   const [, maybeLocale, ...rest] = normalizedPathname.split('/');
 
-  if (maybeLocale && isSupportedLocale(maybeLocale) && maybeLocale !== DEFAULT_LOCALE) {
+  if (
+    maybeLocale &&
+    isPublicSupportedLocale(maybeLocale) &&
+    maybeLocale !== DEFAULT_LOCALE
+  ) {
     return {
       locale: maybeLocale,
       pathnameWithoutLocale: rest.length > 0 ? `/${rest.join('/')}` : '/',
@@ -35,8 +44,8 @@ export function resolveLocaleFromPathname(pathname: string): LocalePathResolutio
 
 export function getSuggestedLocaleFromAcceptLanguage(
   acceptLanguage: string | null | undefined,
-  activeLocale: SupportedLocale,
-): SupportedLocale | null {
+  activeLocale: PublicSupportedLocale,
+): PublicSupportedLocale | null {
   const preferredLocales = parseAcceptLanguage(acceptLanguage);
 
   for (const preferredLocale of preferredLocales) {
@@ -83,20 +92,24 @@ function parseAcceptLanguage(acceptLanguage: string | null | undefined) {
     .map((item) => item.tag);
 }
 
-function normalizeLanguageTag(tag: string): SupportedLocale | null {
+export function isPublicSupportedLocale(value: string): value is PublicSupportedLocale {
+  return (PUBLIC_SUPPORTED_LOCALES as readonly string[]).includes(value);
+}
+
+function normalizeLanguageTag(tag: string): PublicSupportedLocale | null {
   const canonical = tag.trim();
   const lower = canonical.toLowerCase();
 
-  if (isSupportedLocale(canonical)) return canonical;
+  if (isPublicSupportedLocale(canonical)) return canonical;
   if (lower === 'ko' || lower.startsWith('ko-')) return 'ko';
   if (lower === 'en' || lower.startsWith('en-')) return 'en';
   if (lower === 'th' || lower.startsWith('th-')) return 'th';
 
-  if (lower === 'zh-tw' || lower === 'zh-hk' || lower === 'zh-mo') return 'zh-CN';
-  if (lower.startsWith('zh-hant')) return 'zh-CN';
+  if (lower === 'zh-tw' || lower === 'zh-hk' || lower === 'zh-mo') return 'zh-TW';
+  if (lower.startsWith('zh-hant')) return 'zh-TW';
   if (lower === 'zh-cn' || lower === 'zh-sg') return 'zh-CN';
   if (lower.startsWith('zh-hans') || lower === 'zh') return 'zh-CN';
-  if (lower === 'ja' || lower.startsWith('ja-')) return 'ja';
+  if (isSupportedLocale(canonical)) return null;
 
   return null;
 }
