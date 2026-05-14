@@ -76,7 +76,7 @@ function createTransactionMock(seatRows: unknown[]) {
 function availableSeat() {
   return {
     id: 'seat-inventory-1',
-    showtimeId: 'showtime-1',
+    showtimeId: '00000000-0000-4000-8000-000000000001',
     seatId: 'A-1',
     floorKey: '2F',
     seatKey: '2F:A-1',
@@ -107,7 +107,7 @@ describe('AdminSeatOperationsService', () => {
       'admin-1',
       {
         operation: 'seat.disable',
-        showtimeId: 'showtime-1',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
         seatKey: '2F:A-1',
         reason: '시야 제한 좌석 판매 중지',
         confirmed: true,
@@ -123,7 +123,7 @@ describe('AdminSeatOperationsService', () => {
       historyId: 'history-1',
       auditEventId: 'audit-seat-1',
       operation: 'seat.disable',
-      showtimeId: 'showtime-1',
+      showtimeId: '00000000-0000-4000-8000-000000000001',
       seatKey: '2F:A-1',
       previousStatus: 'available',
       nextStatus: 'disabled',
@@ -133,7 +133,7 @@ describe('AdminSeatOperationsService', () => {
         actorUserId: 'admin-1',
         action: 'seat.disable',
         resourceType: 'seat_inventory',
-        resourceId: 'showtime-1:2F:A-1',
+        resourceId: '00000000-0000-4000-8000-000000000001:2F:A-1',
         status: 'success',
         reason: '시야 제한 좌석 판매 중지',
         changedFields: ['seatStatus'],
@@ -158,7 +158,7 @@ describe('AdminSeatOperationsService', () => {
     expect(tx.insertValues).toHaveBeenCalledWith(expect.objectContaining({
       actorUserId: 'admin-1',
       action: 'seat.disable',
-      showtimeId: 'showtime-1',
+      showtimeId: '00000000-0000-4000-8000-000000000001',
       seatInventoryId: 'seat-inventory-1',
       seatId: 'A-1',
       floorKey: '2F',
@@ -170,7 +170,7 @@ describe('AdminSeatOperationsService', () => {
     }));
     expect(gateway.broadcastSeatUpdate).toHaveBeenCalledTimes(1);
     expect(gateway.broadcastSeatUpdate).toHaveBeenCalledWith(
-      'showtime-1',
+      '00000000-0000-4000-8000-000000000001',
       '2F:A-1',
       'disabled',
     );
@@ -197,7 +197,7 @@ describe('AdminSeatOperationsService', () => {
 
     await service.performOperation('admin-1', {
       operation: 'seat.reactivate',
-      showtimeId: 'showtime-1',
+      showtimeId: '00000000-0000-4000-8000-000000000001',
       seatKey: '2F:A-1',
       reason: '좌석 상태 확인 완료',
       confirmed: true,
@@ -212,7 +212,7 @@ describe('AdminSeatOperationsService', () => {
       nextStatus: 'available',
     }));
     expect(gateway.broadcastSeatUpdate).toHaveBeenCalledWith(
-      'showtime-1',
+      '00000000-0000-4000-8000-000000000001',
       '2F:A-1',
       'available',
     );
@@ -225,7 +225,7 @@ describe('AdminSeatOperationsService', () => {
     await expect(
       service.performOperation('admin-1', {
         operation: 'seat.reactivate',
-        showtimeId: 'showtime-1',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
         seatKey: '2F:A-1',
         reason: '이미 판매 가능 좌석 확인',
         confirmed: true,
@@ -249,7 +249,7 @@ describe('AdminSeatOperationsService', () => {
     await expect(
       service.performOperation('admin-1', {
         operation: 'seat.disable',
-        showtimeId: 'showtime-1',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
         seatKey: '2F:A-1',
         reason: '   ',
         confirmed: true,
@@ -258,7 +258,7 @@ describe('AdminSeatOperationsService', () => {
     await expect(
       service.performOperation('admin-1', {
         operation: 'seat.disable',
-        showtimeId: 'showtime-1',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
         seatKey: '2F:A-1',
         reason: '시야 제한',
         confirmed: false as true,
@@ -286,7 +286,7 @@ describe('AdminSeatOperationsService', () => {
     await expect(
       service.performOperation('admin-1', {
         operation: 'seat.disable',
-        showtimeId: 'showtime-1',
+        showtimeId: 'malformed-showtime-id',
         seatKey: '2F:A-1',
         reason: '시야 제한',
         confirmed: true,
@@ -294,7 +294,7 @@ describe('AdminSeatOperationsService', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
     await expect(
       service.listHistory({
-        showtimeId: 'showtime-1',
+        showtimeId: 'malformed-showtime-id',
         seatKey: '2F:A-1',
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
@@ -321,7 +321,7 @@ describe('AdminSeatOperationsService', () => {
     await expect(
       service.performOperation('admin-1', {
         operation: 'seat.disable',
-        showtimeId: 'showtime-1',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
         seatKey: '2F:A-1',
         reason: '시설 문제',
         confirmed: true,
@@ -337,7 +337,7 @@ describe('AdminSeatOperationsService', () => {
     await expect(
       service.performOperation('admin-1', {
         operation: 'seat.disable',
-        showtimeId: 'showtime-1',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
         seatKey: '2F:A-404',
         reason: '없는 좌석 확인',
         confirmed: true,
@@ -351,7 +351,7 @@ describe('AdminSeatOperationsService', () => {
       {
         id: 'history-1',
         action: 'seat.disable',
-        showtimeId: 'showtime-1',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
         seatKey: '2F:A-1',
         previousStatus: 'available',
         nextStatus: 'disabled',
@@ -373,7 +373,7 @@ describe('AdminSeatOperationsService', () => {
     );
 
     const history = await service.listHistory({
-      showtimeId: 'showtime-1',
+      showtimeId: '00000000-0000-4000-8000-000000000001',
       seatKey: '2F:A-1',
     });
 
@@ -381,7 +381,7 @@ describe('AdminSeatOperationsService', () => {
       {
         id: 'history-1',
         operation: 'seat.disable',
-        showtimeId: 'showtime-1',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
         seatKey: '2F:A-1',
         previousStatus: 'available',
         nextStatus: 'disabled',

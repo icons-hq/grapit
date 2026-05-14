@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Inject,
   Post,
   Query,
   Req,
@@ -12,6 +13,7 @@ import { z } from 'zod';
 
 import {
   adminSeatOperationRequestSchema,
+  adminSeatOperationShowtimeIdSchema,
   type AdminSeatOperationRequest,
 } from '@grabit/shared';
 import { AdminCapabilities } from '../../common/decorators/admin-capabilities.decorator.js';
@@ -32,7 +34,7 @@ const seatOperationMutationSchema = adminSeatOperationRequestSchema.pick({
 });
 
 const seatOperationHistoryQuerySchema = z.object({
-  showtimeId: z.string().min(1, '회차 ID가 필요합니다'),
+  showtimeId: adminSeatOperationShowtimeIdSchema,
   seatKey: z.string().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
 });
@@ -48,6 +50,7 @@ type SeatOperationHistoryQuery = z.infer<typeof seatOperationHistoryQuerySchema>
 @Roles('admin')
 export class AdminSeatOperationsController {
   constructor(
+    @Inject(AdminSeatOperationsService)
     private readonly seatOperationsService: AdminSeatOperationsService,
   ) {}
 

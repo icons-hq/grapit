@@ -186,7 +186,7 @@ describe('Admin seat operations UI', () => {
         {
           id: 'history-1',
           operation: 'seat.disable',
-          showtimeId: 'showtime-1',
+          showtimeId: '00000000-0000-4000-8000-000000000001',
           seatKey: '1F:A-10',
           previousStatus: 'available',
           nextStatus: 'disabled',
@@ -201,7 +201,7 @@ describe('Admin seat operations UI', () => {
       .mockResolvedValueOnce({
         id: 'history-2',
         operation: 'seat.disable',
-        showtimeId: 'showtime-1',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
         seatKey: '1F:A-10',
         previousStatus: 'available',
         nextStatus: 'disabled',
@@ -213,7 +213,7 @@ describe('Admin seat operations UI', () => {
       .mockResolvedValueOnce({
         id: 'history-3',
         operation: 'seat.reactivate',
-        showtimeId: 'showtime-1',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
         seatKey: '1F:A-10',
         previousStatus: 'disabled',
         nextStatus: 'available',
@@ -226,7 +226,7 @@ describe('Admin seat operations UI', () => {
     const { SeatOperationsPanel } = await import('../seat-operations-panel');
     renderWithClient(
       <SeatOperationsPanel
-        initialShowtimeId="showtime-1"
+        initialShowtimeId="00000000-0000-4000-8000-000000000001"
         initialSeatKey="1F:A-10"
       />,
       queryClient,
@@ -234,7 +234,7 @@ describe('Admin seat operations UI', () => {
 
     await screen.findByText('시야 제한');
     expect(apiClient.get).toHaveBeenCalledWith(
-      '/api/v1/admin/seat-operations/history?showtimeId=showtime-1&seatKey=1F%3AA-10&limit=50',
+      '/api/v1/admin/seat-operations/history?showtimeId=00000000-0000-4000-8000-000000000001&seatKey=1F%3AA-10&limit=50',
     );
 
     await user.click(screen.getByRole('button', { name: '좌석 비활성화' }));
@@ -254,7 +254,7 @@ describe('Admin seat operations UI', () => {
       expect(apiClient.post).toHaveBeenCalledWith(
         '/api/v1/admin/seat-operations/disable',
         {
-          showtimeId: 'showtime-1',
+          showtimeId: '00000000-0000-4000-8000-000000000001',
           seatKey: '1F:A-10',
           reason: '시야 불량',
           confirmed: true,
@@ -283,7 +283,7 @@ describe('Admin seat operations UI', () => {
       expect(apiClient.post).toHaveBeenCalledWith(
         '/api/v1/admin/seat-operations/reactivate',
         {
-          showtimeId: 'showtime-1',
+          showtimeId: '00000000-0000-4000-8000-000000000001',
           seatKey: '1F:A-10',
           reason: '시야 제한 해소',
           confirmed: true,

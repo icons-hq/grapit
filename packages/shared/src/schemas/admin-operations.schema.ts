@@ -65,6 +65,9 @@ const dateOnly = (label: string) =>
 
 export const adminCapabilitySchema = z.enum(ADMIN_CAPABILITIES);
 export const adminCapabilityBundleSchema = z.enum(ADMIN_CAPABILITY_BUNDLES);
+export const adminSeatOperationShowtimeIdSchema = z
+  .string()
+  .uuid('유효한 회차 ID가 필요합니다');
 
 export const adminPublishLifecycleSchema = z.enum([
   'draft',
@@ -224,7 +227,7 @@ export const adminReservationExportFilterSchema = z
 
 export const adminSeatOperationRequestSchema = z.object({
   operation: z.enum(['seat.disable', 'seat.reactivate', 'seat.manual_open']),
-  showtimeId: z.string().min(1, '회차 ID가 필요합니다'),
+  showtimeId: adminSeatOperationShowtimeIdSchema,
   seatKey: z.string().min(1, '좌석 키가 필요합니다'),
   reservationId: z.string().min(1).optional(),
   reason: z
@@ -239,7 +242,7 @@ export const adminSeatOperationRequestSchema = z.object({
 export const adminSeatOperationHistorySchema = z.object({
   id: z.string().min(1),
   operation: adminSeatOperationRequestSchema.shape.operation,
-  showtimeId: z.string().min(1),
+  showtimeId: adminSeatOperationShowtimeIdSchema,
   seatKey: z.string().min(1),
   previousStatus: z.string().min(1),
   nextStatus: z.string().min(1),

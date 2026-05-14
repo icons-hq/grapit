@@ -31,7 +31,7 @@ test.describe('Admin export and seat operations', () => {
         rows: [
           {
             id: 'seat-history-1',
-            showtimeId: 'showtime-1',
+            showtimeId: '00000000-0000-4000-8000-000000000001',
             seatKey: '1F:A-10',
             operation: 'seat.manual_open',
             previousStatus: 'held_cancelled',
@@ -85,7 +85,7 @@ test.describe('Admin export and seat operations', () => {
     await expect(
       page.getByRole('heading', { name: '좌석 운영', level: 1 }),
     ).toBeVisible();
-    await page.getByLabel('회차 ID').fill('showtime-1');
+    await page.getByLabel('회차 ID').fill('00000000-0000-4000-8000-000000000001');
     await page.getByLabel('좌석 키').fill('1F:A-10');
     await page.getByRole('button', { name: '좌석 비활성화' }).click();
     await expect(

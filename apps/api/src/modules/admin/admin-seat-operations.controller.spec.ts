@@ -1,4 +1,4 @@
-import { BadRequestException, type ExecutionContext, type INestApplication } from '@nestjs/common';
+import { type ExecutionContext, type INestApplication } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';

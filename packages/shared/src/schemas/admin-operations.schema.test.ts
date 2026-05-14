@@ -123,7 +123,7 @@ describe('admin operations contract', () => {
   it('requires reasons for seat operations that change capacity', () => {
     const parsed = adminSeatOperationRequestSchema.parse({
       operation: 'seat.disable',
-      showtimeId: 'showtime-1',
+      showtimeId: '00000000-0000-4000-8000-000000000001',
       seatKey: '1F:A-1',
       reason: 'facility sightline blocked',
       confirmed: true,
@@ -133,7 +133,7 @@ describe('admin operations contract', () => {
     expect(() =>
       adminSeatOperationRequestSchema.parse({
         operation: 'seat.reactivate',
-        showtimeId: 'showtime-1',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
         seatKey: '1F:A-1',
         confirmed: true,
       }),
@@ -144,7 +144,7 @@ describe('admin operations contract', () => {
     expect(() =>
       adminSeatOperationRequestSchema.parse({
         operation: 'seat.disable',
-        showtimeId: 'showtime-1',
+        showtimeId: 'malformed-showtime-id',
         seatKey: '1F:A-1',
         reason: '시야 제한',
         confirmed: true,
@@ -155,7 +155,7 @@ describe('admin operations contract', () => {
       adminSeatOperationHistorySchema.parse({
         id: 'history-1',
         operation: 'seat.disable',
-        showtimeId: 'showtime-1',
+        showtimeId: 'malformed-showtime-id',
         seatKey: '1F:A-1',
         previousStatus: 'available',
         nextStatus: 'disabled',

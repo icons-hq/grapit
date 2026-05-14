@@ -6,10 +6,11 @@ import {
 } from '@nestjs/common';
 import { and, desc, eq, type SQL } from 'drizzle-orm';
 
-import type {
-  AdminSeatOperationHistory,
-  AdminSeatOperationRequest,
-  SeatState,
+import {
+  adminSeatOperationShowtimeIdSchema,
+  type AdminSeatOperationHistory,
+  type AdminSeatOperationRequest,
+  type SeatState,
 } from '@grabit/shared';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
@@ -61,6 +62,7 @@ export class AdminSeatOperationsService {
     input: AdminSeatOperationRequest,
     context: AdminSeatOperationExecutionContext = {},
   ): Promise<AdminSeatOperationResult> {
+    const showtimeId = parseSeatOperationShowtimeId(input.showtimeId);
     const action = assertSeatInventoryOperation(input.operation);
     const reason = input.reason.trim();
     if (!reason) {
@@ -84,7 +86,7 @@ export class AdminSeatOperationsService {
         .from(seatInventories)
         .where(
           and(
-            eq(seatInventories.showtimeId, input.showtimeId),
+            eq(seatInventories.showtimeId, showtimeId),
             eq(seatInventories.seatKey, input.seatKey),
           ),
         )
@@ -100,7 +102,7 @@ export class AdminSeatOperationsService {
           actorUserId,
           action,
           resourceType: 'seat_inventory',
-          resourceId: `${input.showtimeId}:${input.seatKey}`,
+          resourceId: `${showtimeId}:${input.seatKey}`,
           status: 'success',
           reason,
           changedFields: ['seatStatus'],
@@ -144,7 +146,7 @@ export class AdminSeatOperationsService {
         .values({
           actorUserId,
           action,
-          showtimeId: input.showtimeId,
+          showtimeId,
           seatInventoryId: seat.id,
           seatId: seat.seatId,
           floorKey: seat.floorKey,
@@ -163,7 +165,7 @@ export class AdminSeatOperationsService {
         historyId: history?.id ?? '',
         auditEventId: audit.id,
         operation: action,
-        showtimeId: input.showtimeId,
+        showtimeId,
         seatKey: seat.seatKey,
         previousStatus: seat.status,
         nextStatus,
@@ -185,12 +187,10 @@ export class AdminSeatOperationsService {
   async listHistory(
     filters: AdminSeatOperationHistoryFilters,
   ): Promise<AdminSeatOperationHistoryResponse> {
-    if (!filters.showtimeId.trim()) {
-      throw new BadRequestException('회차 ID가 필요합니다');
-    }
+    const showtimeId = parseSeatOperationShowtimeId(filters.showtimeId);
 
     const predicates: SQL[] = [
-      eq(seatOperationHistory.showtimeId, filters.showtimeId),
+      eq(seatOperationHistory.showtimeId, showtimeId),
     ];
     if (filters.seatKey) {
       predicates.push(eq(seatOperationHistory.seatKey, filters.seatKey));
@@ -229,6 +229,14 @@ export class AdminSeatOperationsService {
       })),
     };
   }
+}
+
+function parseSeatOperationShowtimeId(showtimeId: string): string {
+  const result = adminSeatOperationShowtimeIdSchema.safeParse(showtimeId);
+  if (!result.success) {
+    throw new BadRequestException('유효한 회차 ID가 필요합니다');
+  }
+  return result.data;
 }
 
 function assertSeatInventoryOperation(
