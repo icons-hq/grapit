@@ -8,6 +8,16 @@ import {
   performancePublishStateEnum,
   performanceStatusEnum,
   performances,
+  supportContentReviewStateEnum,
+  supportFaqs,
+  supportMessages,
+  supportNotices,
+  supportNoticeStatusEnum,
+  supportThreadCategoryEnum,
+  supportThreadEscalationStateEnum,
+  supportThreadPriorityEnum,
+  supportThreads,
+  supportTranslationUseEnum,
   venues,
 } from './index.js';
 import * as schemaBarrel from './index.js';
@@ -122,5 +132,100 @@ describe('Phase 25 admin content schema contracts', () => {
       deviceTarget: 'mobile',
       status: 'scheduled',
     });
+  });
+
+  it('persists support thread/message SLA, escalation, locale, assignee, and refund/signup linkage contracts', () => {
+    expect(schemaBarrel).toHaveProperty('supportThreads');
+    expect(schemaBarrel).toHaveProperty('supportMessages');
+    expect(schemaBarrel).toHaveProperty('supportThreadCategoryEnum');
+    expect(schemaBarrel).toHaveProperty('supportThreadPriorityEnum');
+    expect(schemaBarrel).toHaveProperty('supportThreadEscalationStateEnum');
+
+    expect(supportThreadCategoryEnum.enumValues).toEqual(
+      expect.arrayContaining([
+        'payment_error',
+        'refund_unprocessed',
+        'abuse_fraud',
+        'signup_failure',
+      ]),
+    );
+    expect(supportThreadPriorityEnum.enumValues).toEqual([
+      'low',
+      'normal',
+      'high',
+      'urgent',
+    ]);
+    expect(supportThreadEscalationStateEnum.enumValues).toEqual([
+      'none',
+      'auto_escalated',
+      'manual_escalated',
+      'deescalated',
+      'resolved',
+    ]);
+
+    expectColumnName(supportThreads.category, 'category');
+    expectColumnName(supportThreads.priority, 'priority');
+    expectColumnName(supportThreads.escalationState, 'escalation_state');
+    expectColumnName(supportThreads.slaDueAt, 'sla_due_at');
+    expectColumnName(supportThreads.locale, 'locale');
+    expectColumnName(supportThreads.assigneeUserId, 'assignee_user_id');
+    expectColumnName(supportThreads.refundId, 'refund_id');
+    expectColumnName(supportThreads.reservationId, 'reservation_id');
+    expectColumnName(
+      supportThreads.signupFailureEmailHash,
+      'signup_failure_email_hash',
+    );
+    expectColumnName(
+      supportThreads.signupFailurePhoneHash,
+      'signup_failure_phone_hash',
+    );
+
+    expectColumnName(supportMessages.threadId, 'thread_id');
+    expectColumnName(supportMessages.locale, 'locale');
+    expectColumnName(supportMessages.reviewState, 'review_state');
+    expectColumnName(supportMessages.translationUse, 'translation_use');
+  });
+
+  it('persists FAQ and notice review state plus assisted translation-use indication before publish', () => {
+    expect(schemaBarrel).toHaveProperty('supportFaqs');
+    expect(schemaBarrel).toHaveProperty('supportNotices');
+    expect(schemaBarrel).toHaveProperty('supportContentReviewStateEnum');
+    expect(schemaBarrel).toHaveProperty('supportTranslationUseEnum');
+    expect(schemaBarrel).toHaveProperty('supportNoticeStatusEnum');
+
+    expect(supportContentReviewStateEnum.enumValues).toEqual([
+      'draft',
+      'review',
+      'approved',
+      'published',
+      'archived',
+    ]);
+    expect(supportTranslationUseEnum.enumValues).toEqual([
+      'none',
+      'manual',
+      'assisted',
+    ]);
+    expect(supportNoticeStatusEnum.enumValues).toEqual([
+      'draft',
+      'review',
+      'scheduled',
+      'published',
+      'archived',
+    ]);
+
+    expectColumnName(supportFaqs.locale, 'locale');
+    expectColumnName(supportFaqs.reviewState, 'review_state');
+    expectColumnName(supportFaqs.translationUse, 'translation_use');
+    expectColumnName(supportFaqs.reviewedByUserId, 'reviewed_by_user_id');
+    expectColumnName(supportFaqs.reviewedAt, 'reviewed_at');
+    expectColumnName(supportFaqs.publishedAt, 'published_at');
+
+    expectColumnName(supportNotices.locale, 'locale');
+    expectColumnName(supportNotices.status, 'status');
+    expectColumnName(supportNotices.reviewState, 'review_state');
+    expectColumnName(supportNotices.translationUse, 'translation_use');
+    expectColumnName(supportNotices.reviewedByUserId, 'reviewed_by_user_id');
+    expectColumnName(supportNotices.reviewedAt, 'reviewed_at');
+    expectColumnName(supportNotices.publishedAt, 'published_at');
   });
 });
