@@ -180,7 +180,7 @@ Plans:
 
 **Merged from:** 33 Event registration console, 34 Q&A/FAQ/notice/CS, 35 Admin security + operations
 
-**Plans:** 20/23 plans executed
+**Plans:** 21/23 plans executed
 
 Plans:
 **Wave 0**
@@ -222,7 +222,7 @@ Plans:
 - [x] 25-22-PLAN.md — Build web seat operation hooks, panel, modal wiring, tests, and deferred E2E spec
 
 **Wave 9** *(blocked on feature surfaces)*
-- [ ] 25-14-PLAN.md — Expose audit/security APIs, pages, hooks, and accepted-risk MFA surface
+- [x] 25-14-PLAN.md — Expose audit/security APIs, pages, hooks, and accepted-risk MFA surface
 
 **Wave 10** *(final admin wiring and route-level smoke)*
 - [ ] 25-23-PLAN.md — Wire AdminModule/sidebar/layout access state and route-level RBAC/security E2E
