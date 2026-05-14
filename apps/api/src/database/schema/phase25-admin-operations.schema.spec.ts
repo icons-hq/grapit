@@ -32,6 +32,7 @@ describe('Phase 25 admin operations security schema contracts', () => {
       'seat.disable',
       'seat.reactivate',
       'seat.manual_open',
+      'banner.manage',
       'reservations.export_raw',
       'security.allowlist.update',
       'security.permission.update',

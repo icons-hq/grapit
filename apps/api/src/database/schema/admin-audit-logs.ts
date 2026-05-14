@@ -19,6 +19,7 @@ export const adminAuditActionEnum = pgEnum('admin_audit_action', [
   'seat.disable',
   'seat.reactivate',
   'seat.manual_open',
+  'banner.manage',
   'reservations.export_raw',
   'security.allowlist.update',
   'security.permission.update',

@@ -12,6 +12,7 @@ export const ADMIN_AUDIT_ACTIONS = [
   'seat.disable',
   'seat.reactivate',
   'seat.manual_open',
+  'banner.manage',
   'reservations.export_raw',
   'security.allowlist.update',
   'security.permission.update',

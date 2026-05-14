@@ -1,6 +1,6 @@
 CREATE TYPE "public"."admin_allowlist_source" AS ENUM('env_bootstrap', 'db_managed', 'temporary_exception');--> statement-breakpoint
 CREATE TYPE "public"."admin_allowlist_status" AS ENUM('active', 'disabled', 'expired');--> statement-breakpoint
-CREATE TYPE "public"."admin_audit_action" AS ENUM('event.publish', 'event.update', 'refund.admin_refund', 'support.escalate', 'seat.disable', 'seat.reactivate', 'seat.manual_open', 'reservations.export_raw', 'security.allowlist.update', 'security.permission.update');--> statement-breakpoint
+CREATE TYPE "public"."admin_audit_action" AS ENUM('event.publish', 'event.update', 'refund.admin_refund', 'support.escalate', 'seat.disable', 'seat.reactivate', 'seat.manual_open', 'banner.manage', 'reservations.export_raw', 'security.allowlist.update', 'security.permission.update');--> statement-breakpoint
 CREATE TYPE "public"."admin_audit_status" AS ENUM('success', 'denied', 'failed');--> statement-breakpoint
 CREATE TYPE "public"."banner_device_target" AS ENUM('all', 'desktop', 'mobile');--> statement-breakpoint
 CREATE TYPE "public"."banner_placement" AS ENUM('home_hero', 'home_secondary', 'performance_detail', 'operations_notice');--> statement-breakpoint
