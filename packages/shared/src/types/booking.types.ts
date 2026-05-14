@@ -1,6 +1,6 @@
 import type { ConsentCaptureItem } from '../schemas/consent.schema';
 
-export type SeatState = 'available' | 'locked' | 'sold' | 'held';
+export type SeatState = 'available' | 'locked' | 'sold' | 'held' | 'disabled';
 
 export interface SeatSelection {
   seatId: string;

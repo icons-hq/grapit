@@ -224,10 +224,10 @@ export function SeatMapViewer({
       const isRemoving = pendingRemovals.has(seatId);
       const showCheckmark = isSelected || isRemoving;
 
-      // reviews revision MED #4 D-13 BROADCAST PRIORITY: locked/sold가 선택보다 우선
+      // reviews revision MED #4 D-13 BROADCAST PRIORITY: locked/sold/disabled가 선택보다 우선
       // — broadcast 즉시 회색 + transition:none 유지. useMemo에서 LOCKED_COLOR 박아두고
       // Task 3 useEffect는 seatStates 체크로 primary 색 변경 skip.
-      if (state === 'locked' || state === 'sold') {
+      if (state === 'locked' || state === 'sold' || state === 'disabled') {
         el.setAttribute('fill', LOCKED_COLOR);
         el.removeAttribute('stroke');
         el.setAttribute('stroke-width', '0');
@@ -389,7 +389,7 @@ export function SeatMapViewer({
   // reviews revision MED #4 D-13 BROADCAST PRIORITY:
   //   selectedSeatIds 안의 좌석이 broadcast로 locked/sold로 전환된 경우,
   //   useEffect가 primary 색으로 덮어쓰면 D-13의 "broadcast 즉시 회색" 정책 침해.
-  //   → seatStates.get(seatId) === 'locked' | 'sold'이면 skip.
+  //   → seatStates.get(seatId) === 'locked' | 'sold' | 'disabled'이면 skip.
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !processedSvg) return;
@@ -397,10 +397,10 @@ export function SeatMapViewer({
     if (!root) return;
 
     // 선택 좌석: fill을 primary로 변경 + transition 부여
-    // 단 D-13: locked/sold 상태는 skip (broadcast 우선)
+    // 단 D-13: locked/sold/disabled 상태는 skip (broadcast 우선)
     selectedSeatIds.forEach((seatId) => {
       const state = seatStates.get(seatId);
-      if (state === 'locked' || state === 'sold') {
+      if (state === 'locked' || state === 'sold' || state === 'disabled') {
         // reviews revision MED #4: useMemo가 이미 LOCKED_COLOR + transition:none으로 박아둠.
         // useEffect는 건드리지 않음 → D-13 broadcast 즉시 회색 정책 유지.
         return;
@@ -438,7 +438,7 @@ export function SeatMapViewer({
       if (!seatId) return;
 
       const state = seatStates.get(seatId) ?? 'available';
-      if (state === 'sold') return;
+      if (state === 'sold' || state === 'disabled') return;
       // PR18-CR-MAXSELECT-LOCKED: locked는 maxSelect 우회하여 parent에 위임 (D-13 invariant), available 한도만 차단
       if (
         state !== 'locked' &&

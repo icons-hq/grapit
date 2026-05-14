@@ -25,6 +25,7 @@ type SeatOperationAction = Extract<
   'seat.disable' | 'seat.reactivate'
 >;
 type SeatInventoryStatus = typeof seatInventories.$inferSelect.status;
+type AdminSeatOperationNextStatus = Extract<SeatState, 'available' | 'disabled'>;
 
 export interface AdminSeatOperationExecutionContext {
   now?: Date;
@@ -178,7 +179,7 @@ export class AdminSeatOperationsService {
     this.bookingGateway.broadcastSeatUpdate(
       result.showtimeId,
       result.seatKey,
-      result.nextStatus as SeatState,
+      result.nextStatus,
     );
 
     return result;
@@ -252,7 +253,7 @@ function assertSeatInventoryOperation(
 function resolveNextStatus(
   action: SeatOperationAction,
   currentStatus: SeatInventoryStatus,
-): SeatInventoryStatus {
+): AdminSeatOperationNextStatus {
   if (action === 'seat.disable') {
     if (currentStatus === 'disabled') {
       throw new BadRequestException('이미 비활성화된 좌석입니다');
