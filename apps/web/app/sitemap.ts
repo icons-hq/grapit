@@ -1,6 +1,5 @@
 import type { MetadataRoute } from 'next';
-import { DEFAULT_LOCALE, LOCALE_PREFIXES, SUPPORTED_LOCALES } from '@grabit/shared';
-import type { SupportedLocale } from '@grabit/shared';
+import { DEFAULT_LOCALE } from '@grabit/shared';
 
 const SITE_URL = 'https://heygrabit.com';
 const LAST_MODIFIED = new Date('2026-05-06T00:00:00.000Z');
@@ -12,11 +11,20 @@ const PUBLIC_SITEMAP_PATHS = [
   '/legal/marketing',
 ] as const;
 
-const HREFLANG_LOCALES = ['ko', 'en', 'th', 'zh-CN', 'ja'] as const satisfies typeof SUPPORTED_LOCALES;
+const HREFLANG_LOCALES = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
+const LOCALE_PREFIXES = {
+  ko: '/',
+  en: '/en',
+  th: '/th',
+  'zh-CN': '/zh-CN',
+  'zh-TW': '/zh-TW',
+} as const satisfies Record<HreflangLocale, string>;
 
-export type LocalizedAlternates = Record<SupportedLocale, string>;
+type HreflangLocale = (typeof HREFLANG_LOCALES)[number];
 
-export function getLocalizedUrl(pathname: string, locale: SupportedLocale) {
+export type LocalizedAlternates = Record<HreflangLocale, string>;
+
+export function getLocalizedUrl(pathname: string, locale: HreflangLocale) {
   const normalizedPathname = normalizePathname(pathname);
 
   if (locale === DEFAULT_LOCALE) {
