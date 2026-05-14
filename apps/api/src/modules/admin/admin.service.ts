@@ -20,6 +20,9 @@ import {
 import type {
   PerformanceBookingPolicy,
   Banner,
+  BannerDeviceTarget,
+  BannerPlacement,
+  BannerStatus,
   SeatMap,
   PerformanceWithDetails,
   PerformanceListResponse,
@@ -33,6 +36,12 @@ import type {
   UpdatePerformanceInput,
   CreateBannerInput,
   SeatMapConfigInput,
+} from '@grabit/shared';
+import {
+  BANNER_DEVICE_TARGETS,
+  BANNER_PLACEMENTS,
+  BANNER_STATUSES,
+  createBannerSchema,
 } from '@grabit/shared';
 import { CacheService } from '../performance/cache.service.js';
 import { parseAdminKstDateTime } from './admin-date.util.js';
@@ -71,6 +80,33 @@ type SeatMapSaveResult = Pick<
   PerformanceWithDetails,
   'seatMaps' | 'bookingPolicy' | 'seatMap'
 >;
+
+type BannerMutationContext = AdminEventMutationContext;
+
+type BannerRow = {
+  id: string;
+  imageUrl: string;
+  linkUrl: string | null;
+  placement: BannerPlacement;
+  deviceTarget: BannerDeviceTarget;
+  status: BannerStatus;
+  startsAt: Date | string | null;
+  endsAt: Date | string | null;
+  sortOrder: number;
+  isActive: boolean;
+};
+
+type NormalizedCreateBannerInput = {
+  imageUrl: string;
+  linkUrl?: string | null;
+  placement: BannerPlacement;
+  deviceTarget: BannerDeviceTarget;
+  startsAt?: string | null;
+  endsAt?: string | null;
+  status: BannerStatus;
+  sortOrder: number;
+  isActive: boolean;
+};
 
 export interface AdminEventMutationContext {
   actorUserId: string;
@@ -810,53 +846,57 @@ export class AdminService {
     };
   }
 
-  async createBanner(input: CreateBannerInput): Promise<Banner> {
+  async createBanner(
+    input: CreateBannerInput,
+    context?: BannerMutationContext,
+  ): Promise<Banner> {
+    const bannerInput = validateCreateBannerInput(input);
     const [result] = await this.db
       .insert(banners)
       .values({
-        imageUrl: input.imageUrl,
-        linkUrl: input.linkUrl ?? null,
-        placement: input.placement ?? 'home_hero',
-        deviceTarget: input.deviceTarget ?? 'all',
-        startsAt: parseOptionalIsoDate(input.startsAt),
-        endsAt: parseOptionalIsoDate(input.endsAt),
-        status: input.status ?? 'active',
-        sortOrder: input.sortOrder ?? 0,
-        isActive: input.isActive ?? true,
+        imageUrl: bannerInput.imageUrl,
+        linkUrl: bannerInput.linkUrl ?? null,
+        placement: bannerInput.placement,
+        deviceTarget: bannerInput.deviceTarget,
+        startsAt: parseOptionalIsoDate(bannerInput.startsAt),
+        endsAt: parseOptionalIsoDate(bannerInput.endsAt),
+        status: bannerInput.status,
+        sortOrder: bannerInput.sortOrder,
+        isActive: bannerInput.isActive,
       })
       .returning();
 
     await this.cacheService.invalidate('cache:home:banners');
+    const banner = toBanner(result!);
 
-    return {
-      id: result!.id,
-      imageUrl: result!.imageUrl,
-      linkUrl: result!.linkUrl,
-      placement: result!.placement,
-      deviceTarget: result!.deviceTarget,
-      status: result!.status,
-      startsAt: toOptionalIsoString(result!.startsAt),
-      endsAt: toOptionalIsoString(result!.endsAt),
-      sortOrder: result!.sortOrder,
-      isActive: result!.isActive,
-    };
+    await this.writeBannerAudit('create', banner.id, context, {
+      changedFields: resolveBannerChangedFields(bannerInput),
+      after: toBannerAuditSnapshot(banner),
+    });
+
+    return banner;
   }
 
-  async updateBanner(id: string, input: Partial<CreateBannerInput>): Promise<Banner> {
+  async updateBanner(
+    id: string,
+    input: Partial<CreateBannerInput>,
+    context?: BannerMutationContext,
+  ): Promise<Banner> {
+    const bannerInput = validateUpdateBannerInput(input);
     const updateData: Record<string, unknown> = {};
-    if (input.imageUrl !== undefined) updateData['imageUrl'] = input.imageUrl;
-    if (input.linkUrl !== undefined) updateData['linkUrl'] = input.linkUrl;
-    if (input.placement !== undefined) updateData['placement'] = input.placement;
-    if (input.deviceTarget !== undefined) updateData['deviceTarget'] = input.deviceTarget;
-    if (input.startsAt !== undefined) {
-      updateData['startsAt'] = parseOptionalIsoDate(input.startsAt);
+    if (bannerInput.imageUrl !== undefined) updateData['imageUrl'] = bannerInput.imageUrl;
+    if (bannerInput.linkUrl !== undefined) updateData['linkUrl'] = bannerInput.linkUrl;
+    if (bannerInput.placement !== undefined) updateData['placement'] = bannerInput.placement;
+    if (bannerInput.deviceTarget !== undefined) updateData['deviceTarget'] = bannerInput.deviceTarget;
+    if (bannerInput.startsAt !== undefined) {
+      updateData['startsAt'] = parseOptionalIsoDate(bannerInput.startsAt);
     }
-    if (input.endsAt !== undefined) {
-      updateData['endsAt'] = parseOptionalIsoDate(input.endsAt);
+    if (bannerInput.endsAt !== undefined) {
+      updateData['endsAt'] = parseOptionalIsoDate(bannerInput.endsAt);
     }
-    if (input.status !== undefined) updateData['status'] = input.status;
-    if (input.sortOrder !== undefined) updateData['sortOrder'] = input.sortOrder;
-    if (input.isActive !== undefined) updateData['isActive'] = input.isActive;
+    if (bannerInput.status !== undefined) updateData['status'] = bannerInput.status;
+    if (bannerInput.sortOrder !== undefined) updateData['sortOrder'] = bannerInput.sortOrder;
+    if (bannerInput.isActive !== undefined) updateData['isActive'] = bannerInput.isActive;
     updateData['updatedAt'] = new Date();
 
     const [result] = await this.db
@@ -870,24 +910,24 @@ export class AdminService {
     }
 
     await this.cacheService.invalidate('cache:home:banners');
+    const banner = toBanner(result);
 
-    return {
-      id: result.id,
-      imageUrl: result.imageUrl,
-      linkUrl: result.linkUrl,
-      placement: result.placement,
-      deviceTarget: result.deviceTarget,
-      status: result.status,
-      startsAt: toOptionalIsoString(result.startsAt),
-      endsAt: toOptionalIsoString(result.endsAt),
-      sortOrder: result.sortOrder,
-      isActive: result.isActive,
-    };
+    await this.writeBannerAudit('update', id, context, {
+      changedFields: resolveBannerChangedFields(bannerInput),
+      after: toBannerAuditSnapshot(banner),
+    });
+
+    return banner;
   }
 
-  async deleteBanner(id: string): Promise<void> {
+  async deleteBanner(id: string, context?: BannerMutationContext): Promise<void> {
     await this.db.delete(banners).where(eq(banners.id, id));
     await this.cacheService.invalidate('cache:home:banners');
+
+    await this.writeBannerAudit('delete', id, context, {
+      changedFields: ['deleted'],
+      after: { deleted: true },
+    });
   }
 
   async listBanners(): Promise<Banner[]> {
@@ -896,21 +936,17 @@ export class AdminService {
       .from(banners)
       .orderBy(banners.sortOrder);
 
-    return rows.map((b) => ({
-      id: b.id,
-      imageUrl: b.imageUrl,
-      linkUrl: b.linkUrl,
-      placement: b.placement,
-      deviceTarget: b.deviceTarget,
-      status: b.status,
-      startsAt: toOptionalIsoString(b.startsAt),
-      endsAt: toOptionalIsoString(b.endsAt),
-      sortOrder: b.sortOrder,
-      isActive: b.isActive,
-    }));
+    return rows.map(toBanner);
   }
 
-  async reorderBanners(orderedIds: string[]): Promise<void> {
+  async reorderBanners(
+    orderedIds: string[],
+    context?: BannerMutationContext,
+  ): Promise<void> {
+    if (orderedIds.length === 0) {
+      throw new BadRequestException('배너 순서를 변경할 ID가 필요합니다');
+    }
+
     await this.db.transaction(async (tx) => {
       for (let i = 0; i < orderedIds.length; i++) {
         await tx
@@ -920,7 +956,150 @@ export class AdminService {
       }
     });
     await this.cacheService.invalidate('cache:home:banners');
+
+    await this.writeBannerAudit('reorder', 'bulk-reorder', context, {
+      changedFields: ['sortOrder'],
+      after: { orderedIds },
+    });
   }
+
+  private async writeBannerAudit(
+    reason: 'create' | 'update' | 'delete' | 'reorder',
+    resourceId: string,
+    context: BannerMutationContext | undefined,
+    diff: {
+      changedFields: string[];
+      before?: Record<string, unknown>;
+      after: Record<string, unknown>;
+    },
+  ): Promise<void> {
+    if (!context) {
+      return;
+    }
+
+    await this.adminAuditService.write({
+      actorUserId: context.actorUserId,
+      action: 'banner.manage',
+      resourceType: 'banner',
+      resourceId,
+      status: 'success',
+      reason,
+      changedFields: diff.changedFields,
+      before: diff.before ?? {},
+      after: diff.after,
+      ipAddress: context.ipAddress ?? null,
+      userAgent: context.userAgent ?? null,
+      requestId: context.requestId ?? null,
+    });
+  }
+}
+
+function validateCreateBannerInput(
+  input: CreateBannerInput,
+): NormalizedCreateBannerInput {
+  const parsed = createBannerSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new BadRequestException('배너 입력이 올바르지 않습니다');
+  }
+  return parsed.data;
+}
+
+function validateUpdateBannerInput(
+  input: Partial<CreateBannerInput>,
+): Partial<CreateBannerInput> {
+  validateOptionalUrl(input.imageUrl, '배너 이미지 URL');
+  validateOptionalUrl(input.linkUrl, '배너 링크 URL');
+  validateOptionalEnum(input.placement, BANNER_PLACEMENTS, '배너 위치');
+  validateOptionalEnum(input.deviceTarget, BANNER_DEVICE_TARGETS, '배너 기기');
+  validateOptionalEnum(input.status, BANNER_STATUSES, '배너 상태');
+  validateOptionalIsoDate(input.startsAt, '배너 시작 시각');
+  validateOptionalIsoDate(input.endsAt, '배너 종료 시각');
+
+  if (
+    input.startsAt
+    && input.endsAt
+    && Date.parse(input.endsAt) < Date.parse(input.startsAt)
+  ) {
+    throw new BadRequestException('배너 종료 시각은 시작 시각보다 빠를 수 없습니다');
+  }
+  if (
+    input.sortOrder !== undefined
+    && (!Number.isInteger(input.sortOrder) || input.sortOrder < 0)
+  ) {
+    throw new BadRequestException('배너 정렬 순서는 0 이상의 정수여야 합니다');
+  }
+  if (input.isActive !== undefined && typeof input.isActive !== 'boolean') {
+    throw new BadRequestException('배너 활성 상태가 올바르지 않습니다');
+  }
+
+  return input;
+}
+
+function validateOptionalUrl(
+  value: string | null | undefined,
+  label: string,
+): void {
+  if (value === undefined || value === null) return;
+  try {
+    new URL(value);
+  } catch {
+    throw new BadRequestException(`${label}이 올바르지 않습니다`);
+  }
+}
+
+function validateOptionalEnum<T extends readonly string[]>(
+  value: string | undefined,
+  allowedValues: T,
+  label: string,
+): void {
+  if (value === undefined) return;
+  if (!allowedValues.includes(value)) {
+    throw new BadRequestException(`${label} 값이 올바르지 않습니다`);
+  }
+}
+
+function validateOptionalIsoDate(
+  value: string | null | undefined,
+  label: string,
+): void {
+  if (value === undefined || value === null) return;
+  if (Number.isNaN(Date.parse(value))) {
+    throw new BadRequestException(`${label}은 ISO datetime 형식이어야 합니다`);
+  }
+}
+
+function resolveBannerChangedFields(input: Partial<CreateBannerInput>): string[] {
+  return sanitizeChangedFields(Object.keys(input));
+}
+
+function toBanner(row: BannerRow): Banner {
+  return {
+    id: row.id,
+    imageUrl: row.imageUrl,
+    linkUrl: row.linkUrl,
+    placement: row.placement,
+    deviceTarget: row.deviceTarget,
+    status: row.status,
+    startsAt: toOptionalIsoString(row.startsAt),
+    endsAt: toOptionalIsoString(row.endsAt),
+    sortOrder: row.sortOrder,
+    isActive: row.isActive,
+  };
+}
+
+function toBannerAuditSnapshot(banner: Banner): Record<string, unknown> {
+  return {
+    id: banner.id,
+    imageUrl: banner.imageUrl,
+    linkUrl: banner.linkUrl,
+    placement: banner.placement,
+    deviceTarget: banner.deviceTarget,
+    status: banner.status,
+    startsAt: banner.startsAt,
+    endsAt: banner.endsAt,
+    sortOrder: banner.sortOrder,
+    isActive: banner.isActive,
+  };
 }
 
 function resolveUpdateChangedFields(input: UpdatePerformanceInput): string[] {

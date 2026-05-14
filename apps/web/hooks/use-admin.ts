@@ -137,6 +137,13 @@ function buildTranslationQueueSearchParams(filters: TranslationQueueFilters) {
   return params;
 }
 
+function invalidateBannerQueries(
+  queryClient: ReturnType<typeof useQueryClient>,
+) {
+  queryClient.invalidateQueries({ queryKey: ['admin', 'banners'] });
+  queryClient.invalidateQueries({ queryKey: ['home', 'banners'] });
+}
+
 // Performance list for admin table
 export function useAdminPerformances(params: {
   status?: string;
@@ -359,7 +366,7 @@ export function useCreateBanner() {
     mutationFn: (data: CreateBannerInput) =>
       apiClient.post<Banner>('/api/v1/admin/banners', data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin', 'banners'] });
+      invalidateBannerQueries(queryClient);
     },
   });
 }
@@ -371,7 +378,7 @@ export function useUpdateBanner(id: string) {
     mutationFn: (data: Partial<CreateBannerInput>) =>
       apiClient.put<Banner>(`/api/v1/admin/banners/${id}`, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin', 'banners'] });
+      invalidateBannerQueries(queryClient);
     },
   });
 }
@@ -382,7 +389,7 @@ export function useDeleteBanner() {
     mutationFn: (id: string) =>
       apiClient.delete(`/api/v1/admin/banners/${id}`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin', 'banners'] });
+      invalidateBannerQueries(queryClient);
     },
   });
 }
@@ -393,7 +400,7 @@ export function useReorderBanners() {
     mutationFn: (orderedIds: string[]) =>
       apiClient.put('/api/v1/admin/banners/reorder', { orderedIds }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin', 'banners'] });
+      invalidateBannerQueries(queryClient);
     },
   });
 }
