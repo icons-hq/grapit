@@ -109,11 +109,12 @@ describe('EmailService', () => {
       svc,
       'user@example.com',
       'https://app.test/auth/verify-email?token=opaque',
-      'ja',
+      'zh-TW',
     );
 
     const callArg = mod.__sendMock.mock.calls[0]?.[0] as { subject: string; react: unknown };
     expect(callArg.subject).toContain('Grabit');
+    expect(callArg.subject).toContain('驗證');
     expect(callArg.react).toBeDefined();
     expect(result).toEqual({ success: true, id: 'verification-id' });
   });
