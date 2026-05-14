@@ -429,6 +429,10 @@ describe('BookingService', () => {
   });
 
   describe('lock ownership helpers', () => {
+    beforeEach(() => {
+      mockDb.select.mockReturnValue(chainResult([]));
+    });
+
     it('assertOwnedSeatLocks succeeds when all requested seat locks belong to the user', async () => {
       mockRedis.eval.mockResolvedValue([1, 'OK', '2', '']);
 
@@ -438,6 +442,17 @@ describe('BookingService', () => {
 
       expect(mockRedis.eval).toHaveBeenCalledOnce();
       expect(mockRedis.eval.mock.calls[0]?.[0]).toBe(ASSERT_OWNED_SEAT_LOCKS_LUA);
+    });
+
+    it('assertOwnedSeatLocks rejects a Redis-owned seat once DB status becomes disabled', async () => {
+      mockDb.select.mockReturnValue(chainResult([{ id: randomUUID(), status: 'disabled' }]));
+      mockRedis.eval.mockResolvedValue([1, 'OK', '1', '']);
+
+      await expect(service.assertOwnedSeatLocks(userId, showtimeId, ['A-1']))
+        .rejects
+        .toThrow('운영자가 비활성화한 좌석입니다');
+
+      expect(mockRedis.eval).not.toHaveBeenCalled();
     });
 
     it('assertOwnedSeatLocks rejects missing or expired locks with lock-expired message', async () => {
@@ -493,6 +508,17 @@ describe('BookingService', () => {
       expect(mockRedis.srem).not.toHaveBeenCalled();
     });
 
+    it('consumeOwnedSeatLocks rejects disabled DB status before consuming Redis locks', async () => {
+      mockDb.select.mockReturnValue(chainResult([{ id: randomUUID(), status: 'disabled' }]));
+      mockRedis.eval.mockResolvedValue([1, 'OK', '1', '']);
+
+      await expect(service.consumeOwnedSeatLocks(userId, showtimeId, ['A-1']))
+        .rejects
+        .toThrow('운영자가 비활성화한 좌석입니다');
+
+      expect(mockRedis.eval).not.toHaveBeenCalled();
+    });
+
     it('extendOwnedSeatLocks verifies ownership and extends each requested lock atomically', async () => {
       mockRedis.eval.mockResolvedValue([1, 'OK', '2', '']);
 
@@ -528,6 +554,20 @@ describe('BookingService', () => {
         ['A-1', 'A-2'],
         PAYMENT_CONFIRM_LOCK_TTL,
       )).rejects.toThrow(LOCK_EXPIRED_MESSAGE);
+    });
+
+    it('extendOwnedSeatLocks rejects disabled DB status before extending Redis locks', async () => {
+      mockDb.select.mockReturnValue(chainResult([{ id: randomUUID(), status: 'disabled' }]));
+      mockRedis.eval.mockResolvedValue([1, 'OK', '1', '']);
+
+      await expect(service.extendOwnedSeatLocks(
+        userId,
+        showtimeId,
+        ['A-1'],
+        PAYMENT_CONFIRM_LOCK_TTL,
+      )).rejects.toThrow('운영자가 비활성화한 좌석입니다');
+
+      expect(mockRedis.eval).not.toHaveBeenCalled();
     });
   });
 
