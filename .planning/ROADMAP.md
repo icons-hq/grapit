@@ -180,7 +180,7 @@ Plans:
 
 **Merged from:** 33 Event registration console, 34 Q&A/FAQ/notice/CS, 35 Admin security + operations
 
-**Plans:** 22/23 plans executed
+**Plans:** 23/23 plans complete
 
 Plans:
 **Wave 0**
@@ -228,7 +228,7 @@ Plans:
 - [x] 25-23-PLAN.md — Wire AdminModule/sidebar/layout access state and route-level RBAC/security E2E
 
 **Wave 11** *(phase verification artifacts)*
-- [ ] 25-15-PLAN.md — Run full validation and record MFA accepted-risk/manual UAT evidence
+- [x] 25-15-PLAN.md — Run full validation and record MFA accepted-risk/manual UAT evidence
 
 **Success criteria:**
 1. Event form supports multilingual tabs, cast cards, venue/transport, multi-SVG, price tiers, sale settings, review, approval, and publish states.
