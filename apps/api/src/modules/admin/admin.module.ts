@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AdminCapabilitiesGuard } from '../../common/guards/admin-capabilities.guard.js';
 import { PerformanceModule } from '../performance/performance.module.js';
 import { PaymentModule } from '../payment/payment.module.js';
 import { BookingModule } from '../booking/booking.module.js';
@@ -10,6 +11,7 @@ import { LocalUploadController } from './local-upload.controller.js';
 import { AdminDashboardController } from './admin-dashboard.controller.js';
 import { AdminDiagnosticsController } from './admin-diagnostics.controller.js';
 import { AdminService } from './admin.service.js';
+import { AdminAuditService } from './admin-audit.service.js';
 import { AdminBookingService } from './admin-booking.service.js';
 import { UploadService } from './upload.service.js';
 import { AdminDashboardService } from './admin-dashboard.service.js';
@@ -26,6 +28,8 @@ import { AdminDashboardService } from './admin-dashboard.service.js';
   ],
   providers: [
     AdminService,
+    AdminAuditService,
+    AdminCapabilitiesGuard,
     AdminBookingService,
     UploadService,
     AdminDashboardService,

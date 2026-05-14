@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Inject,
   Injectable,
   NotFoundException,
@@ -35,6 +36,7 @@ import type {
 } from '@grabit/shared';
 import { CacheService } from '../performance/cache.service.js';
 import { parseAdminKstDateTime } from './admin-date.util.js';
+import { AdminAuditService } from './admin-audit.service.js';
 
 function cloneDefaultBookingPolicy(): PerformanceBookingPolicy {
   return {
@@ -70,11 +72,38 @@ type SeatMapSaveResult = Pick<
   'seatMaps' | 'bookingPolicy' | 'seatMap'
 >;
 
+export interface AdminEventMutationContext {
+  actorUserId: string;
+  reason?: string | null;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  requestId?: string | null;
+}
+
+export interface EventPublishContentChecklist {
+  ko: {
+    title: boolean;
+    description: boolean;
+  };
+  en: {
+    title: boolean;
+    description: boolean;
+  };
+}
+
+export interface PublishPerformanceInput {
+  reason: string;
+  confirmed: true;
+  confirmedChangedFields: string[];
+  contentChecklist: EventPublishContentChecklist;
+}
+
 @Injectable()
 export class AdminService {
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly cacheService: CacheService,
+    private readonly adminAuditService: AdminAuditService,
   ) {}
 
   /**
@@ -336,7 +365,11 @@ export class AdminService {
     return result;
   }
 
-  async updatePerformance(id: string, input: UpdatePerformanceInput): Promise<PerformanceWithDetails> {
+  async updatePerformance(
+    id: string,
+    input: UpdatePerformanceInput,
+    context?: AdminEventMutationContext,
+  ): Promise<PerformanceWithDetails> {
     const result = await this.db.transaction(async (tx) => {
       // Handle venue update if venueName changed
       let venueId: string | undefined;
@@ -472,7 +505,7 @@ export class AdminService {
 
       const normalizedSeatMaps = this.normalizeSeatMaps(id, input.seatMaps ?? []);
 
-      return {
+      const response = {
         id: perf!.id,
         title: perf!.title,
         genre: perf!.genre,
@@ -504,6 +537,144 @@ export class AdminService {
         bookingPolicy,
         seatMap: normalizedSeatMaps[0] ?? null,
       };
+
+      if (context) {
+        const changedFields = resolveUpdateChangedFields(input);
+        await this.adminAuditService.write(
+          {
+            actorUserId: context.actorUserId,
+            action: 'event.update',
+            resourceType: 'performance',
+            resourceId: id,
+            status: 'success',
+            reason: context.reason ?? null,
+            changedFields,
+            before: {},
+            after: buildUpdateAuditSnapshot(input, response),
+            ipAddress: context.ipAddress ?? null,
+            userAgent: context.userAgent ?? null,
+            requestId: context.requestId ?? null,
+          },
+          tx as unknown as DrizzleDB,
+        );
+      }
+
+      return response;
+    });
+
+    await this.invalidateCatalogCache(id);
+    return result;
+  }
+
+  async publishPerformance(
+    id: string,
+    input: PublishPerformanceInput,
+    context: AdminEventMutationContext,
+  ): Promise<PerformanceWithDetails> {
+    const result = await this.db.transaction(async (tx) => {
+      const changedFields = sanitizeChangedFields(input.confirmedChangedFields);
+      const missingRequiredContent = getMissingRequiredPublishContent(
+        input.contentChecklist,
+      );
+
+      if (missingRequiredContent.length > 0) {
+        await this.adminAuditService.write(
+          {
+            actorUserId: context.actorUserId,
+            action: 'event.publish',
+            resourceType: 'performance',
+            resourceId: id,
+            status: 'failed',
+            reason: input.reason,
+            changedFields,
+            before: {},
+            after: { missingRequiredContent },
+            ipAddress: context.ipAddress ?? null,
+            userAgent: context.userAgent ?? null,
+            requestId: context.requestId ?? null,
+          },
+          tx as unknown as DrizzleDB,
+        );
+
+        throw new BadRequestException(
+          `게시에는 한국어와 영어 필수 콘텐츠가 필요합니다: ${missingRequiredContent.join(', ')}`,
+        );
+      }
+
+      const publishedAt = new Date();
+      const [perf] = await tx
+        .update(performances)
+        .set({
+          publishState: 'published',
+          publishedAt,
+          publishedByUserId: context.actorUserId,
+          updatedAt: publishedAt,
+        })
+        .where(eq(performances.id, id))
+        .returning();
+
+      if (!perf) {
+        throw new NotFoundException(`공연을 찾을 수 없습니다 (id: ${id})`);
+      }
+
+      const bookingPolicy = cloneDefaultBookingPolicy();
+      const normalizedSeatMaps: SeatMap[] = [];
+      const response: PerformanceWithDetails = {
+        id: perf.id,
+        title: perf.title,
+        genre: perf.genre,
+        subcategory: perf.subcategory,
+        venueId: perf.venueId,
+        posterUrl: perf.posterUrl,
+        description: perf.description,
+        startDate: perf.startDate?.toISOString() ?? '',
+        endDate: perf.endDate?.toISOString() ?? '',
+        runtime: perf.runtime,
+        ageRating: perf.ageRating,
+        status: perf.status,
+        publishState: perf.publishState,
+        publishReviewRequestedAt: toOptionalIsoString(
+          perf.publishReviewRequestedAt,
+        ),
+        publishReadyAt: toOptionalIsoString(perf.publishReadyAt),
+        publishedAt: toOptionalIsoString(perf.publishedAt),
+        publishedByUserId: perf.publishedByUserId,
+        salesInfo: perf.salesInfo,
+        viewCount: perf.viewCount,
+        createdAt: perf.createdAt?.toISOString() ?? '',
+        updatedAt: perf.updatedAt?.toISOString() ?? '',
+        venue: null,
+        priceTiers: [],
+        showtimes: [],
+        castings: [],
+        seatMaps: normalizedSeatMaps,
+        bookingPolicy,
+        seatMap: null,
+      };
+
+      await this.adminAuditService.write(
+        {
+          actorUserId: context.actorUserId,
+          action: 'event.publish',
+          resourceType: 'performance',
+          resourceId: id,
+          status: 'success',
+          reason: input.reason,
+          changedFields,
+          before: {},
+          after: {
+            publishState: 'published',
+            publishedAt: response.publishedAt,
+            publishedByUserId: context.actorUserId,
+          },
+          ipAddress: context.ipAddress ?? null,
+          userAgent: context.userAgent ?? null,
+          requestId: context.requestId ?? null,
+        },
+        tx as unknown as DrizzleDB,
+      );
+
+      return response;
     });
 
     await this.invalidateCatalogCache(id);
@@ -750,4 +921,65 @@ export class AdminService {
     });
     await this.cacheService.invalidate('cache:home:banners');
   }
+}
+
+function resolveUpdateChangedFields(input: UpdatePerformanceInput): string[] {
+  return sanitizeChangedFields([
+    ...Object.keys(input),
+    ...(input.venueName !== undefined ? ['venueName'] : []),
+    ...(input.venueAddress !== undefined ? ['venueAddress'] : []),
+    ...(input.venueAccessNotes !== undefined ? ['venueAccessNotes'] : []),
+    ...(input.transportSummary !== undefined ? ['transportSummary'] : []),
+  ]);
+}
+
+function sanitizeChangedFields(fields: readonly string[]): string[] {
+  return [...new Set(fields.map((field) => field.trim()).filter(Boolean))];
+}
+
+function buildUpdateAuditSnapshot(
+  input: UpdatePerformanceInput,
+  response: PerformanceWithDetails,
+): Record<string, unknown> {
+  const snapshot: Record<string, unknown> = {};
+
+  for (const field of resolveUpdateChangedFields(input)) {
+    if (field === 'venueName') {
+      snapshot[field] = input.venueName ?? response.venue?.name ?? null;
+      continue;
+    }
+    if (field === 'venueAddress') {
+      snapshot[field] = input.venueAddress ?? response.venue?.address ?? null;
+      continue;
+    }
+    if (field === 'venueAccessNotes') {
+      snapshot[field] =
+        input.venueAccessNotes ?? response.venue?.accessNotes ?? null;
+      continue;
+    }
+    if (field === 'transportSummary') {
+      snapshot[field] =
+        input.transportSummary ?? response.venue?.transportSummary ?? null;
+      continue;
+    }
+
+    if (Object.hasOwn(input, field)) {
+      snapshot[field] = input[field as keyof UpdatePerformanceInput];
+    }
+  }
+
+  return snapshot;
+}
+
+function getMissingRequiredPublishContent(
+  checklist: EventPublishContentChecklist,
+): string[] {
+  const missing: string[] = [];
+
+  if (!checklist.ko.title) missing.push('ko.title');
+  if (!checklist.ko.description) missing.push('ko.description');
+  if (!checklist.en.title) missing.push('en.title');
+  if (!checklist.en.description) missing.push('en.description');
+
+  return missing;
 }
