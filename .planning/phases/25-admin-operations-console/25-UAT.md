@@ -1,10 +1,10 @@
 ---
-status: diagnosed
+status: passed_with_accepted_risk
 phase: 25-admin-operations-console
 source:
   - 25-01-SUMMARY.md through 25-23-SUMMARY.md
 started: 2026-05-14T05:13:49Z
-updated: 2026-05-14T05:13:49Z
+updated: 2026-05-14T08:36:00Z
 mode: automated
 accepted_risk:
   - D-08-admin-mfa
@@ -78,23 +78,20 @@ evidence:
 
 ### 8. Seat operations invalid showtime ID validation
 expected: If an operator enters a malformed showtime ID, the admin API should reject it as a validation error instead of surfacing an internal server error.
-result: issue
-reported: "Browser MCP entered `showtime-1` into `/admin/seat-operations`; API returned 500 Internal Server Error for `/api/v1/admin/seat-operations/history?showtimeId=showtime-1...`."
-severity: major
-root_cause: "Phase 25 shared/controller schemas only require `showtimeId` to be a non-empty string (`z.string().min(1)`). The service then compares that value against PostgreSQL UUID columns, so malformed IDs reach Drizzle/Postgres and raise `22P02 invalid input syntax for type uuid`, which Nest surfaces as 500."
-artifacts:
-  - path: "packages/shared/src/schemas/admin-operations.schema.ts"
-    issue: "`showtimeId` in admin seat operation request/history schemas is `z.string().min(1)` instead of UUID validation."
-  - path: "apps/api/src/modules/admin/admin-seat-operations.controller.ts"
-    issue: "History query schema accepts malformed `showtimeId`."
-  - path: "apps/api/src/modules/admin/admin-seat-operations.service.ts"
-    issue: "Service trusts malformed `showtimeId` and sends it into UUID comparisons."
-  - path: "apps/api/src/modules/admin/admin-seat-operations.service.spec.ts"
-    issue: "Existing tests use `showtime-1`, so they do not catch production UUID constraints."
-missing:
-  - "Validate admin seat operation `showtimeId` as UUID in shared request/history schemas or controller schema."
-  - "Add API regression coverage that malformed `showtimeId` returns 400, not 500."
-  - "Update tests/fixtures that use `showtime-1` where they are meant to represent production API inputs."
+result: pass
+reported: "Original Browser MCP run entered `showtime-1` into `/admin/seat-operations` and observed a 500 from `/api/v1/admin/seat-operations/history?showtimeId=showtime-1...`."
+severity: resolved_major
+root_cause: "Phase 25 shared/controller schemas only required `showtimeId` to be a non-empty string, so malformed IDs reached PostgreSQL UUID comparisons and raised `22P02 invalid input syntax for type uuid`."
+resolution:
+  - "Added shared UUID validation for admin seat operation request/history showtime IDs."
+  - "Added controller regression coverage proving malformed history query input returns validation-level 400 and does not call the service."
+  - "Added service boundary regression coverage proving malformed mutation/history inputs fail before DB/audit/broadcast side effects."
+  - "Normalized production happy-path UI/E2E fixtures away from `showtime-1`."
+evidence:
+  - "`pnpm --filter @grabit/shared test -- src/schemas/admin-operations.schema.test.ts` passed: 8 files / 43 tests."
+  - "`pnpm --filter @grabit/api exec vitest run modules/admin/admin-seat-operations.controller.spec.ts modules/admin/admin-seat-operations.service.spec.ts modules/booking/__tests__/booking.service.spec.ts modules/booking/__tests__/dto.spec.ts modules/reservation/reservation.service.spec.ts modules/payment/payment.service.spec.ts` passed: 6 files / 124 tests."
+  - "`rg -n \"showtime-1\" packages/shared/src/schemas/admin-operations.schema.test.ts apps/api/src/modules/admin/admin-seat-operations.service.spec.ts apps/web/components/admin/__tests__/seat-operations-panel.test.tsx apps/web/e2e/admin-export-and-seat-ops.spec.ts` produced no output for scoped happy-path fixtures."
+  - "`25-REVIEW.md` final code review status is `clean` with findings 0."
 
 ### 9. Translation review and zh-TW launch locale
 expected: Admin translation review includes `en`, `th`, `zh-CN`, and `zh-TW` surfaces, with no active Japanese launch locale drift.
@@ -106,8 +103,8 @@ evidence:
 ## Summary
 
 total: 9
-passed: 8
-issues: 1
+passed: 9
+issues: 0
 pending: 0
 skipped: 0
 blocked: 0
@@ -115,19 +112,23 @@ blocked: 0
 ## Gaps
 
 - truth: "Malformed admin seat operation showtime IDs should be rejected as validation errors instead of surfacing internal server errors."
-  status: failed
-  reason: "Browser MCP reported `/api/v1/admin/seat-operations/history?showtimeId=showtime-1...` returned 500 Internal Server Error."
-  severity: major
+  status: resolved
+  reason: "Shared/controller/service UUID validation now rejects malformed showtime IDs before DB UUID comparisons."
+  severity: resolved_major
   test: 8
-  root_cause: "Phase 25 admin seat operation schemas accept any non-empty string for `showtimeId`; malformed IDs reach PostgreSQL UUID comparisons and raise `22P02`, producing 500."
-  artifacts:
+  root_cause: "Phase 25 admin seat operation schemas accepted any non-empty string for `showtimeId`; malformed IDs reached PostgreSQL UUID comparisons and raised `22P02`, producing 500."
+  fixed:
     - path: "packages/shared/src/schemas/admin-operations.schema.ts"
-      issue: "`showtimeId` is `z.string().min(1)` for admin seat operations."
+      evidence: "Admin seat operation request/history schemas now use UUID validation."
     - path: "apps/api/src/modules/admin/admin-seat-operations.controller.ts"
-      issue: "History query schema accepts malformed `showtimeId`."
-    - path: "apps/api/src/modules/admin/admin-seat-operations.service.spec.ts"
-      issue: "Fixtures use `showtime-1`, hiding UUID validation mismatch."
-  missing:
-    - "UUID validation for admin seat operation request/history inputs."
-    - "400-not-500 regression tests for malformed `showtimeId`."
+      evidence: "History query validation uses the shared UUID schema and rejects malformed input before service invocation."
+    - path: "apps/api/src/modules/admin/admin-seat-operations.service.ts"
+      evidence: "Service validates showtime IDs before transaction/select database work."
+    - path: "apps/api/src/modules/admin/admin-seat-operations.controller.spec.ts"
+      evidence: "Malformed `showtime-1` history query returns 400 and does not call the service."
+  missing: []
   debug_session: "automated-browser-mcp-2026-05-14"
+
+## Residual Accepted Risk
+
+- D-08 admin MFA remains `ACCEPTED_RISK_DEFERRED`. This UAT does not convert MFA to PASS; it only confirms the accepted-risk copy and audit/allowlist controls remain visible.

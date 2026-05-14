@@ -180,7 +180,7 @@ Plans:
 
 **Merged from:** 33 Event registration console, 34 Q&A/FAQ/notice/CS, 35 Admin security + operations
 
-**Plans:** 23/24 plans complete
+**Plans:** 24/24 plans complete
 
 Plans:
 **Wave 0**
@@ -231,7 +231,7 @@ Plans:
 - [x] 25-15-PLAN.md — Run full validation and record MFA accepted-risk/manual UAT evidence
 
 **Wave 12** *(gap closure after automated UAT)*
-- [ ] 25-24-PLAN.md — Close malformed admin seat-operation showtimeId validation gap
+- [x] 25-24-PLAN.md — Close malformed admin seat-operation showtimeId validation gap
 
 **Success criteria:**
 1. Event form supports multilingual tabs, cast cards, venue/transport, multi-SVG, price tiers, sale settings, review, approval, and publish states.

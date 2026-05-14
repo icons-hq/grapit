@@ -1,6 +1,6 @@
 ---
 phase: 25-admin-operations-console
-plan: "15"
+plan: "25"
 status: verified_with_accepted_risk
 completed: 2026-05-14
 requirements: [ADMIN-01, ADMIN-02, ADMIN-03, ADMIN-04]
@@ -9,6 +9,8 @@ requirements: [ADMIN-01, ADMIN-02, ADMIN-03, ADMIN-04]
 # Phase 25 Verification
 
 Phase 25 automated verification is complete for the admin operations console scope. The exact final E2E command is still blocked locally because `localhost:3000` is occupied by an unrelated Next server from `/Users/sangwopark19/workspace/fso/notes-app`; the same admin E2E set passed on an isolated `localhost:3001` Playwright config with the API on `localhost:8080`.
+
+The Phase 25 UAT gap for malformed admin seat operation `showtimeId` validation is now resolved by Plan 25-24. The original 500 path for `showtime-1` is covered by controller/service regression tests and now fails before PostgreSQL UUID comparisons.
 
 ## Requirement Status
 
@@ -45,6 +47,30 @@ Phase 25 automated verification is complete for the admin operations console sco
 | `TZ=UTC pnpm --filter @grabit/web exec playwright test admin-dashboard.spec.ts admin-event-publish.spec.ts admin-operations-inbox.spec.ts admin-rbac-and-security.spec.ts admin-export-and-seat-ops.spec.ts --config=/tmp/grapit-admin-rbac-playwright-3001.config.mjs` | PASS: 12 tests / 12 passed, 0 skipped, with this worktree web server on `3001` and API on `8080`. |
 | `pnpm --filter @grabit/web typecheck` | PASS after final E2E/test wiring changes. |
 | `rg -n "test\\.skip|describe\\.skip" apps/web/e2e/admin-event-publish.spec.ts apps/web/e2e/admin-operations-inbox.spec.ts apps/web/e2e/admin-export-and-seat-ops.spec.ts` | PASS: no output. |
+
+## Gap Closure Validation
+
+| Command | Result |
+|---------|--------|
+| `pnpm --filter @grabit/shared test -- src/schemas/admin-operations.schema.test.ts` | PASS: 8 files / 43 tests. |
+| `pnpm --filter @grabit/api exec vitest run modules/admin/admin-seat-operations.controller.spec.ts modules/admin/admin-seat-operations.service.spec.ts modules/booking/__tests__/booking.service.spec.ts modules/booking/__tests__/dto.spec.ts modules/reservation/reservation.service.spec.ts modules/payment/payment.service.spec.ts` | PASS: 6 files / 124 tests. |
+| `pnpm --filter @grabit/web exec vitest run components/admin/__tests__/seat-operations-panel.test.tsx components/booking/__tests__/seat-map-viewer.test.tsx` | PASS: 2 files / 26 tests, with existing React `act(...)` warnings. |
+| `pnpm --filter @grabit/shared typecheck` | PASS. |
+| `pnpm --filter @grabit/shared build` | PASS. |
+| `pnpm --filter @grabit/api typecheck` | PASS. |
+| `pnpm --filter @grabit/web typecheck` | PASS. |
+| `pnpm --filter @grabit/api lint` | PASS_WITH_WARNINGS: 50 existing warnings, 0 errors. |
+| `git diff --check` | PASS. |
+| `rg -n "showtime-1" packages/shared/src/schemas/admin-operations.schema.test.ts apps/api/src/modules/admin/admin-seat-operations.service.spec.ts apps/web/components/admin/__tests__/seat-operations-panel.test.tsx apps/web/e2e/admin-export-and-seat-ops.spec.ts` | PASS: no scoped happy-path fixture output. |
+| `25-REVIEW.md` final code review | PASS: `status: clean`, findings 0. |
+
+## Gap Closure Findings
+
+- Malformed admin seat operation history/mutation `showtimeId` values now fail validation before database UUID comparisons.
+- Admin-disabled seats are treated as unavailable across shared state, frontend seat selection, lock helpers, checkout recovery, reservation confirmation, and async payment finalization.
+- Admin disable can create a `disabled` inventory row for a valid SVG seat that has no existing `seat_inventories` row.
+- Existing async `DONE` recovery and async webhook `DONE` captured-payment paths now compensate Toss/local payment/reservation state when disabled seats prevent finalization.
+- D-08 admin MFA remains `ACCEPTED_RISK_DEFERRED`; no MFA implementation was introduced.
 
 ## Route Coverage
 
