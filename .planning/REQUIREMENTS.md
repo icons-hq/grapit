@@ -58,7 +58,7 @@
 - [ ] **ADMIN-01**: Operator can register and approve the fanmeet event with multilingual tabs, cast cards, multi-SVG upload, price tiers, sale settings, and review/approval RBAC.
 - [x] **ADMIN-02**: Operator can manage Q&A, FAQ, notices, CS tickets, escalation rules, refund-dispute conversations, and 24-hour SLA indicators.
 - [x] **ADMIN-03**: Admin access requires MFA and IP allowlist, and sensitive actions write audit logs.
-- [ ] **ADMIN-04**: Operator can manage banners, reservation CSV exports, seat disable/reactivate actions, cancelled-seat immediate opening, and seat-change history.
+- [x] **ADMIN-04**: Operator can manage banners, reservation CSV exports, seat disable/reactivate actions, cancelled-seat immediate opening, and seat-change history.
 - [ ] **QR-02**: Field staff can scan QR tickets with JWT/HMAC verification, duplicate-scan detection, tamper detection, and offline fallback sync.
 - [ ] **FIELD-01**: Operator can monitor event-day entry counts, no-shows, entry rate, duplicate scans, and abnormal access alerts in real time.
 - [ ] **OPS-03**: Operator can follow event-day playbooks for forced refund, weather/facility/cast cancellation, on-site refund, and exchange scenarios.
@@ -125,7 +125,7 @@ Phase mapping was consolidated on 2026-05-04 from the initial 22-phase launch-ri
 | ADMIN-01 | Phase 25 | Pending |
 | ADMIN-02 | Phase 25 | Complete |
 | ADMIN-03 | Phase 25 | Complete |
-| ADMIN-04 | Phase 25 | Pending |
+| ADMIN-04 | Phase 25 | Complete |
 | M1-01 | Phase 26 | Pending |
 | LOAD-01 | Phase 26 | Pending |
 | DR-01 | Phase 26 | Pending |
