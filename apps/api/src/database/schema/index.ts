@@ -41,6 +41,20 @@ export {
   bookingOperationAuditLogs,
 } from './booking-operation-audit-logs.js';
 export {
+  adminAuditActionEnum,
+  adminAuditLogs,
+  adminAuditStatusEnum,
+} from './admin-audit-logs.js';
+export {
+  adminAccessAllowlist,
+  adminAllowlistSourceEnum,
+  adminAllowlistStatusEnum,
+} from './admin-access-allowlist.js';
+export {
+  seatOperationActionEnum,
+  seatOperationHistory,
+} from './seat-operation-history.js';
+export {
   supportContentReviewStateEnum,
   supportThreadCategoryEnum,
   supportThreadEscalationStateEnum,
