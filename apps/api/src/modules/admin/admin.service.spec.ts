@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import {
+  BadRequestException,
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
 import type {
   Banner,
   PerformanceWithDetails,
@@ -14,8 +18,9 @@ import type {
 } from '@grabit/shared/schemas/performance.schema';
 
 import { AdminService } from './admin.service.js';
+import type { AdminAuditService } from './admin-audit.service.js';
 import { CacheService } from '../performance/cache.service.js';
-import { bookingPolicies, seatMaps } from '../../database/schema/index.js';
+import { bookingPolicies, performances, seatMaps } from '../../database/schema/index.js';
 
 function createMockCacheService(): CacheService {
   // Admin mutations trigger invalidate* — mocks swallow them so we can
@@ -48,8 +53,10 @@ function createMockTx() {
     txChain[method] = vi.fn().mockReturnValue(txChain);
   }
   (txChain as { then?: unknown }).then = vi.fn((resolve: (v: unknown[]) => void) => resolve([]));
+  const updates: Array<{ table: unknown; values: Record<string, unknown> }> = [];
 
   return {
+    _updates: updates,
     insert: vi.fn().mockReturnValue({
       values: vi.fn().mockReturnValue({
         returning: vi.fn().mockResolvedValue([{ id: 'new-id' }]),
@@ -59,13 +66,38 @@ function createMockTx() {
       }),
     }),
     select: vi.fn().mockReturnValue(txChain),
-    update: vi.fn().mockReturnValue({
-      set: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          returning: vi.fn().mockResolvedValue([{ id: 'updated-id' }]),
-        }),
+    update: vi.fn((table: unknown) => ({
+      set: vi.fn((values: Record<string, unknown>) => {
+        updates.push({ table, values });
+        return {
+          where: vi.fn().mockReturnValue({
+            returning: vi.fn().mockResolvedValue([{
+              id: 'updated-id',
+              title: 'Hamlet - Revised',
+              genre: 'artist_celebrity',
+              subcategory: null,
+              venueId: 'venue-id-1',
+              posterUrl: null,
+              description: 'Updated description',
+              startDate: new Date('2026-04-01T00:00:00.000Z'),
+              endDate: new Date('2026-06-30T00:00:00.000Z'),
+              runtime: '150min',
+              ageRating: '12+',
+              status: 'upcoming',
+              publishState: values['publishState'] ?? 'draft',
+              publishReviewRequestedAt: null,
+              publishReadyAt: null,
+              publishedAt: values['publishedAt'] ?? null,
+              publishedByUserId: values['publishedByUserId'] ?? null,
+              salesInfo: null,
+              viewCount: 0,
+              createdAt: new Date('2026-01-01T00:00:00.000Z'),
+              updatedAt: values['updatedAt'] ?? new Date('2026-01-02T00:00:00.000Z'),
+            }]),
+          }),
+        };
       }),
-    }),
+    })),
     delete: vi.fn().mockReturnValue({
       where: vi.fn().mockResolvedValue([]),
     }),
@@ -96,6 +128,12 @@ function createMockDb() {
     }),
     _tx: mockTx,
   };
+}
+
+function createMockAuditService() {
+  return {
+    write: vi.fn().mockResolvedValue({ id: 'audit-id-25-08' }),
+  } as unknown as AdminAuditService;
 }
 
 function findInsertCallIndex(
@@ -143,6 +181,18 @@ const sampleBookingPolicy: PerformanceBookingPolicyInput = {
   manualOpenEnabled: true,
 };
 
+const adminMutationContext = {
+  actorUserId: '11111111-1111-4111-8111-111111111111',
+  ipAddress: '198.51.100.10',
+  userAgent: 'Vitest Admin Console',
+  requestId: 'req-25-08',
+};
+
+const publishReadyContentChecklist = {
+  ko: { title: true, description: true },
+  en: { title: true, description: true },
+};
+
 const sampleCreateInput: CreatePerformanceInput = {
   title: 'Hamlet',
   genre: 'artist_celebrity',
@@ -184,13 +234,16 @@ describe('AdminService', () => {
   let service: AdminService;
   let mockDb: ReturnType<typeof createMockDb>;
   let mockCache: CacheService;
+  let mockAudit: AdminAuditService;
 
   beforeEach(() => {
     mockDb = createMockDb();
     mockCache = createMockCacheService();
+    mockAudit = createMockAuditService();
     service = new AdminService(
       mockDb as unknown as ConstructorParameters<typeof AdminService>[0],
       mockCache,
+      mockAudit,
     );
   });
 
@@ -273,6 +326,134 @@ describe('AdminService', () => {
       expect(findInsertCallIndex(tx, seatMaps)).toBeGreaterThanOrEqual(0);
       expect(findInsertCallIndex(tx, bookingPolicies)).toBeGreaterThanOrEqual(0);
       expect(tx.delete).toHaveBeenCalled();
+    });
+
+    it('writes event.update audit with safe venue and transport changed fields', async () => {
+      const updateInput: UpdatePerformanceInput = {
+        venueName: '동해문화예술관 대극장',
+        venueAddress: '서울 성북구 화랑로13길 60',
+        venueAccessNotes: '휠체어석은 B 게이트에서 안내',
+        transportSummary: '6호선 고려대역 하차 후 도보 10분',
+      };
+
+      await service.updatePerformance('perf-id-123', updateInput, {
+        ...adminMutationContext,
+        reason: '공연장 및 교통 안내 보강',
+      });
+
+      expect(mockAudit.write).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorUserId: adminMutationContext.actorUserId,
+          action: 'event.update',
+          resourceType: 'performance',
+          resourceId: 'perf-id-123',
+          status: 'success',
+          reason: '공연장 및 교통 안내 보강',
+          changedFields: expect.arrayContaining([
+            'venueName',
+            'venueAddress',
+            'venueAccessNotes',
+            'transportSummary',
+          ]),
+          after: expect.objectContaining({
+            venueName: '동해문화예술관 대극장',
+            venueAddress: '서울 성북구 화랑로13길 60',
+            venueAccessNotes: '휠체어석은 B 게이트에서 안내',
+            transportSummary: '6호선 고려대역 하차 후 도보 10분',
+          }),
+          ipAddress: adminMutationContext.ipAddress,
+          userAgent: adminMutationContext.userAgent,
+          requestId: adminMutationContext.requestId,
+        }),
+        mockDb._tx,
+      );
+    });
+  });
+
+  describe('publishPerformance', () => {
+    it('publishes an event through the admin-led flow and writes event.publish audit', async () => {
+      await service.publishPerformance(
+        'perf-id-123',
+        {
+          reason: '광고 오픈 전 게시 승인',
+          confirmed: true,
+          confirmedChangedFields: [
+            'title',
+            'venueName',
+            'transportSummary',
+            'salesInfo',
+          ],
+          contentChecklist: publishReadyContentChecklist,
+        },
+        adminMutationContext,
+      );
+
+      const publishUpdate = mockDb._tx._updates.find(
+        (entry) => entry.table === performances,
+      );
+
+      expect(publishUpdate?.values).toEqual(
+        expect.objectContaining({
+          publishState: 'published',
+          publishedByUserId: adminMutationContext.actorUserId,
+        }),
+      );
+      expect(publishUpdate?.values).not.toHaveProperty('status');
+      expect(mockAudit.write).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorUserId: adminMutationContext.actorUserId,
+          action: 'event.publish',
+          resourceType: 'performance',
+          resourceId: 'perf-id-123',
+          status: 'success',
+          reason: '광고 오픈 전 게시 승인',
+          changedFields: [
+            'title',
+            'venueName',
+            'transportSummary',
+            'salesInfo',
+          ],
+          after: expect.objectContaining({
+            publishState: 'published',
+            publishedByUserId: adminMutationContext.actorUserId,
+          }),
+        }),
+        mockDb._tx,
+      );
+    });
+
+    it('blocks publish without public status mutation when Korean or English content is missing', async () => {
+      await expect(
+        service.publishPerformance(
+          'perf-id-123',
+          {
+            reason: '영문 설명 누락 검수',
+            confirmed: true,
+            confirmedChangedFields: ['description'],
+            contentChecklist: {
+              ko: { title: true, description: true },
+              en: { title: true, description: false },
+            },
+          },
+          adminMutationContext,
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(mockDb._tx.update).not.toHaveBeenCalled();
+      expect(mockAudit.write).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'event.publish',
+          resourceType: 'performance',
+          resourceId: 'perf-id-123',
+          status: 'failed',
+          reason: '영문 설명 누락 검수',
+          changedFields: ['description'],
+          after: expect.objectContaining({
+            missingRequiredContent: ['en.description'],
+          }),
+        }),
+        mockDb._tx,
+      );
     });
   });
 
