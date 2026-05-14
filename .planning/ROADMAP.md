@@ -180,7 +180,7 @@ Plans:
 
 **Merged from:** 33 Event registration console, 34 Q&A/FAQ/notice/CS, 35 Admin security + operations
 
-**Plans:** 10/23 plans executed
+**Plans:** 11/23 plans executed
 
 Plans:
 **Wave 0**
@@ -200,7 +200,7 @@ Plans:
 - [x] 25-21-PLAN.md — Add support thread, FAQ, and notice schema contracts
 
 **Wave 3** *(blocked on content schema)*
-- [ ] 25-05-PLAN.md — Add audit, allowlist, disabled-seat, and seat-operation history schema contracts
+- [x] 25-05-PLAN.md — Add audit, allowlist, disabled-seat, and seat-operation history schema contracts
 
 **Wave 4** *(blocking schema push gate)*
 - [ ] 25-06-PLAN.md — Generate, review, and apply the Phase 25 Drizzle migration
