@@ -683,6 +683,42 @@ export class ReservationService {
     }
   }
 
+  private async cancelExistingDonePaymentAfterFailure(input: {
+    paymentId: string;
+    paymentKey: string;
+    reservationId: string;
+    reason: string;
+  }): Promise<void> {
+    await this.cancelConfirmedPaymentOrThrow(input.paymentKey, input.reason);
+    await this.db
+      .update(payments)
+      .set({
+        status: 'CANCELED',
+        cancelledAt: new Date(),
+        cancelReason: input.reason,
+      })
+      .where(eq(payments.id, input.paymentId));
+    await this.expirePendingReservation(input.reservationId);
+  }
+
+  private async cancelApprovedPaymentAfterFailure(
+    approvedPayment: ApprovedPaymentSnapshot,
+    reservationId: string,
+    reason: string,
+  ): Promise<void> {
+    if (approvedPayment.existingPaymentId) {
+      await this.cancelExistingDonePaymentAfterFailure({
+        paymentId: approvedPayment.existingPaymentId,
+        paymentKey: approvedPayment.paymentKey,
+        reservationId,
+        reason,
+      });
+      return;
+    }
+
+    await this.cancelConfirmedPaymentOrThrow(approvedPayment.paymentKey, reason);
+  }
+
   private async confirmAndCreateReservationLocked(
     dto: ConfirmPaymentRequest,
     userId: string,
@@ -761,12 +797,28 @@ export class ReservationService {
 
     const pendingSeats = await this.getReservationSeatSelections(reservation.id);
     const pendingSeatIds = pendingSeats.map((seat) => seat.seatKey);
-    await this.bookingService.extendOwnedSeatLocks(
-      userId,
-      reservation.showtimeId,
-      pendingSeatIds,
-      PAYMENT_CONFIRM_LOCK_TTL,
-    );
+    try {
+      await this.bookingService.extendOwnedSeatLocks(
+        userId,
+        reservation.showtimeId,
+        pendingSeatIds,
+        PAYMENT_CONFIRM_LOCK_TTL,
+      );
+    } catch (lockError) {
+      if (existingPayment?.status === 'DONE') {
+        const reason = lockError instanceof ConflictException
+          && lockError.message.includes('비활성화')
+          ? '판매 불가능 좌석으로 인한 자동 취소'
+          : '좌석 점유 만료로 인한 자동 취소';
+        await this.cancelExistingDonePaymentAfterFailure({
+          paymentId: existingPayment.id,
+          paymentKey: existingPayment.paymentKey,
+          reservationId: reservation.id,
+          reason,
+        });
+      }
+      throw lockError;
+    }
 
     const seatLockRefreshTimer = this.startOwnedSeatLockRefresh(userId, reservation.showtimeId, pendingSeatIds);
     try {
@@ -812,7 +864,11 @@ export class ReservationService {
         `Payment confirm lock refresh failed after payment approval. paymentKey=${approvedPayment.paymentKey}, orderId=${dto.orderId}`,
         lockError instanceof Error ? lockError.stack : String(lockError),
       );
-      await this.cancelConfirmedPaymentOrThrow(approvedPayment.paymentKey, '결제 확인 상태 검증 실패로 인한 자동 취소');
+      await this.cancelApprovedPaymentAfterFailure(
+        approvedPayment,
+        reservation.id,
+        '결제 확인 상태 검증 실패로 인한 자동 취소',
+      );
       throw new InternalServerErrorException(
         '결제는 승인되었으나 처리 중 오류가 발생했습니다. 자동 취소를 시도했습니다. 고객센터에 문의해주세요.',
       );
@@ -821,7 +877,11 @@ export class ReservationService {
       this.logger.error(
         `Payment confirm lock ownership lost after payment approval. paymentKey=${approvedPayment.paymentKey}, orderId=${dto.orderId}`,
       );
-      await this.cancelConfirmedPaymentOrThrow(approvedPayment.paymentKey, '결제 확인 중복 처리로 인한 자동 취소');
+      await this.cancelApprovedPaymentAfterFailure(
+        approvedPayment,
+        reservation.id,
+        '결제 확인 중복 처리로 인한 자동 취소',
+      );
       throw new ConflictException('결제 확인이 이미 진행 중입니다.');
     }
 
@@ -832,7 +892,11 @@ export class ReservationService {
         `Seat lock ownership lost after payment approval. paymentKey=${approvedPayment.paymentKey}, orderId=${dto.orderId}`,
         lockError instanceof Error ? lockError.stack : String(lockError),
       );
-      await this.cancelConfirmedPaymentOrThrow(approvedPayment.paymentKey, '좌석 점유 만료로 인한 자동 취소');
+      await this.cancelApprovedPaymentAfterFailure(
+        approvedPayment,
+        reservation.id,
+        '좌석 점유 만료로 인한 자동 취소',
+      );
       throw lockError;
     }
 
@@ -926,8 +990,9 @@ export class ReservationService {
           `Seat finalization failed after payment approval. paymentKey=${approvedPayment.paymentKey}, orderId=${dto.orderId}`,
           dbError.stack,
         );
-        await this.cancelConfirmedPaymentOrThrow(
-          approvedPayment.paymentKey,
+        await this.cancelApprovedPaymentAfterFailure(
+          approvedPayment,
+          reservation.id,
           '판매 불가능 좌석으로 인한 자동 취소',
         );
         throw dbError;
