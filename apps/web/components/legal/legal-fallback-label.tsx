@@ -1,14 +1,14 @@
-import type { SupportedLocale } from '@grabit/shared';
+export type LegalFallbackLocale = 'ko' | 'en' | 'th' | 'zh-CN' | 'zh-TW';
 
-export const LEGAL_FALLBACK_LABELS: Record<SupportedLocale, string> = {
+export const LEGAL_FALLBACK_LABELS: Record<LegalFallbackLocale, string> = {
   ko: '영문 법적 고지로 확인합니다',
   en: 'Reviewing the English legal notice',
   th: 'ตรวจสอบประกาศทางกฎหมายภาษาอังกฤษ',
   'zh-CN': '查看英文法律告知',
-  ja: '英語の法的通知を確認しています',
+  'zh-TW': '查看英文法律告知',
 };
 
-export function LegalFallbackLabel({ locale }: { locale: SupportedLocale }) {
+export function LegalFallbackLabel({ locale }: { locale: LegalFallbackLocale }) {
   const localizedLabel = LEGAL_FALLBACK_LABELS[locale];
 
   return (
