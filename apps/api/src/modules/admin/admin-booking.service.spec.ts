@@ -134,10 +134,11 @@ describe('AdminBookingService', () => {
   });
 
   describe('manualOpen', () => {
-    it('should reopen held cancelled seats immediately and write immutable manual-open audit rows', async () => {
+    it('should reopen held cancelled seats immediately and write immutable manual-open audit rows plus admin audit evidence', async () => {
       const operatorUserId = 'admin-1';
       const reservationId = 'reservation-1';
       const showtimeId = 'showtime-1';
+      const reason = '좌석 재오픈 요청 확인';
       const transaction = createTransactionMock();
 
       mockDb.select
@@ -177,7 +178,7 @@ describe('AdminBookingService', () => {
         callback(transaction.tx),
       );
 
-      await service.manualOpen(reservationId, operatorUserId);
+      await (service as any).manualOpen(reservationId, operatorUserId, reason);
 
       expect(transaction.insertCalls).toHaveLength(1);
       expect(transaction.insertCalls[0]?.table).toBe(bookingOperationAuditLogs);
@@ -225,7 +226,42 @@ describe('AdminBookingService', () => {
         '2F:A-2',
         'available',
       );
+      expect(mockAdminAuditService.write).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorUserId: operatorUserId,
+          action: 'seat.manual_open',
+          resourceType: 'reservation',
+          resourceId: reservationId,
+          status: 'success',
+          reason,
+          changedFields: ['seatStatus'],
+          before: {
+            seats: [
+              { seatKey: '2F:A-1', status: 'held_cancelled' },
+              { seatKey: '2F:A-2', status: 'held_cancelled' },
+            ],
+          },
+          after: {
+            seats: [
+              { seatKey: '2F:A-1', status: 'available' },
+              { seatKey: '2F:A-2', status: 'available' },
+            ],
+          },
+        }),
+        transaction.tx,
+      );
       expect(mockRefundService.requestAdminRefund).not.toHaveBeenCalled();
+    });
+
+    it('should reject manual open without a reason before querying or auditing', async () => {
+      await expect(
+        (service as any).manualOpen('reservation-1', 'admin-1', '   '),
+      ).rejects.toThrow('좌석 운영 사유를 입력해주세요');
+
+      expect(mockDb.select).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+      expect(mockAdminAuditService.write).not.toHaveBeenCalled();
+      expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
     });
 
     it('should reject manual open when the booking policy disables it', async () => {
@@ -244,10 +280,11 @@ describe('AdminBookingService', () => {
         ]),
       );
 
-      await expect(service.manualOpen('reservation-1', 'admin-1')).rejects.toThrow(
-        '수동 오픈이 비활성화된 공연입니다',
-      );
+      await expect(
+        (service as any).manualOpen('reservation-1', 'admin-1', '정책 확인'),
+      ).rejects.toThrow('수동 오픈이 비활성화된 공연입니다');
       expect(mockDb.transaction).not.toHaveBeenCalled();
+      expect(mockAdminAuditService.write).not.toHaveBeenCalled();
       expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
     });
   });
