@@ -5,10 +5,13 @@ import {
   ADMIN_CAPABILITY_BUNDLE_CAPABILITIES,
   adminAuditEventSchema,
   adminCapabilitySchema,
+  adminSeatOperationHistorySchema,
   adminReservationExportFilterSchema,
   adminSecurityStatusSchema,
   adminSeatOperationRequestSchema,
 } from './admin-operations.schema';
+
+const VALID_SHOWTIME_ID = '00000000-0000-4000-8000-000000000001';
 
 describe('admin operations contract', () => {
   it('defines required capabilities and keeps admin as the all-capabilities bundle', () => {
@@ -135,5 +138,42 @@ describe('admin operations contract', () => {
         confirmed: true,
       }),
     ).toThrow(/사유/);
+  });
+
+  it('rejects malformed admin seat operation showtime IDs', () => {
+    expect(() =>
+      adminSeatOperationRequestSchema.parse({
+        operation: 'seat.disable',
+        showtimeId: 'showtime-1',
+        seatKey: '1F:A-1',
+        reason: '시야 제한',
+        confirmed: true,
+      }),
+    ).toThrow(/회차 ID/);
+
+    expect(() =>
+      adminSeatOperationHistorySchema.parse({
+        id: 'history-1',
+        operation: 'seat.disable',
+        showtimeId: 'showtime-1',
+        seatKey: '1F:A-1',
+        previousStatus: 'available',
+        nextStatus: 'disabled',
+        reason: '시야 제한',
+        actorUserId: 'admin-1',
+        auditEventId: 'audit-1',
+        createdAt: '2026-05-14T00:00:00.000Z',
+      }),
+    ).toThrow(/회차 ID/);
+
+    expect(
+      adminSeatOperationRequestSchema.parse({
+        operation: 'seat.disable',
+        showtimeId: VALID_SHOWTIME_ID,
+        seatKey: '1F:A-1',
+        reason: '시야 제한',
+        confirmed: true,
+      }).showtimeId,
+    ).toBe(VALID_SHOWTIME_ID);
   });
 });

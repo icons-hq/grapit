@@ -270,6 +270,41 @@ describe('AdminSeatOperationsService', () => {
     expect(gateway.broadcastSeatUpdate).not.toHaveBeenCalled();
   });
 
+  it('rejects malformed showtime IDs before database access', async () => {
+    const db = {
+      transaction: vi.fn(),
+      select: vi.fn(),
+    };
+    const auditService = createMockAdminAuditService();
+    const gateway = createMockBookingGateway();
+    const service = new AdminSeatOperationsService(
+      db as never,
+      auditService,
+      gateway as never,
+    );
+
+    await expect(
+      service.performOperation('admin-1', {
+        operation: 'seat.disable',
+        showtimeId: 'showtime-1',
+        seatKey: '2F:A-1',
+        reason: '시야 제한',
+        confirmed: true,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    await expect(
+      service.listHistory({
+        showtimeId: 'showtime-1',
+        seatKey: '2F:A-1',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(db.transaction).not.toHaveBeenCalled();
+    expect(db.select).not.toHaveBeenCalled();
+    expect(auditService.write).not.toHaveBeenCalled();
+    expect(gateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+  });
+
   it('does not broadcast when the transaction fails or the seat is missing', async () => {
     const failingDb = {
       transaction: vi.fn().mockRejectedValue(new Error('tx failed')),
