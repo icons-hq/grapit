@@ -348,6 +348,13 @@ describe('ReservationService', () => {
       }]));
   }
 
+  function mockRootUpdateChain() {
+    const where = vi.fn().mockResolvedValue([]);
+    const set = vi.fn().mockReturnValue({ where });
+    mockDb.update.mockReturnValue({ set });
+    return { set, where };
+  }
+
   describe('reservation number', () => {
     it('does not expose API-side payment request creation while booking disabled', () => {
       const clientMethods = Object.getOwnPropertyNames(TossPaymentsClient.prototype);
@@ -1862,6 +1869,7 @@ describe('ReservationService', () => {
         }),
       };
       mockDb.transaction.mockImplementation(async (cb: (tx: typeof mockTx) => Promise<unknown>) => cb(mockTx));
+      const rootUpdate = mockRootUpdateChain();
       setupReservationDetailMocks({ reservationId, userId, amount: 150000 });
 
       await expect(service.confirmAndCreateReservation(
@@ -1874,7 +1882,72 @@ describe('ReservationService', () => {
         'pay_async_1',
         expect.stringContaining('판매 불가능'),
       );
+      expect(rootUpdate.set).toHaveBeenCalledWith(expect.objectContaining({
+        status: 'CANCELED',
+        cancelReason: expect.stringContaining('판매 불가능'),
+      }));
+      expect(rootUpdate.set).toHaveBeenCalledWith(expect.objectContaining({
+        status: 'FAILED',
+      }));
       expect(mockBookingService.consumeOwnedSeatLocks).not.toHaveBeenCalled();
+    });
+
+    it('cancels existing DONE payment and expires reservation when disabled seats fail before finalization', async () => {
+      mockDb.select
+        .mockReturnValueOnce(chainResult([{
+          id: 'payment-existing',
+          reservationId,
+          tossOrderId: orderId,
+          paymentKey: 'pay_async_1',
+          method: 'FOREIGN_EASY_PAY',
+          provider: 'ALIPAY_PLUS',
+          currency: 'USD',
+          amount: 150000,
+          status: 'DONE',
+          paidAt: new Date('2026-05-08T07:06:30.000Z'),
+        }]))
+        .mockReturnValueOnce(chainResult([{
+          id: reservationId,
+          userId,
+          showtimeId,
+          tossOrderId: orderId,
+          status: 'PENDING_PAYMENT',
+          totalAmount: 150000,
+          paymentDeadlineAt: new Date('2099-05-08T07:07:00.000Z'),
+          admissionActiveUntilAt: new Date('2099-05-08T07:10:00.000Z'),
+          reentryGraceUntilAt: new Date('2099-05-08T07:13:00.000Z'),
+        }]))
+        .mockReturnValueOnce(chainResult([
+          { seatId: 'A-1', tierName: 'VIP', price: 100000, row: 'A', number: '1' },
+          { seatId: 'A-2', tierName: 'VIP', price: 50000, row: 'A', number: '2' },
+        ]));
+      mockBookingService.extendOwnedSeatLocks.mockRejectedValueOnce(
+        new ConflictException('운영자가 비활성화한 좌석입니다'),
+      );
+      const rootUpdate = mockRootUpdateChain();
+
+      await expect(service.confirmAndCreateReservation(
+        { paymentKey: 'pay_async_1', orderId, amount: 150000 },
+        userId,
+      )).rejects.toThrow('운영자가 비활성화한 좌석입니다');
+
+      expect(mockTossClient.confirmPayment).not.toHaveBeenCalled();
+      expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
+        'pay_async_1',
+        expect.stringContaining('판매 불가능'),
+      );
+      expect(rootUpdate.set).toHaveBeenCalledWith(expect.objectContaining({
+        status: 'CANCELED',
+        cancelReason: expect.stringContaining('판매 불가능'),
+      }));
+      expect(rootUpdate.set).toHaveBeenCalledWith(expect.objectContaining({
+        status: 'FAILED',
+      }));
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+      expect(mockBookingService.assertOwnedSeatLocks).not.toHaveBeenCalled();
+      expect(mockBookingService.consumeOwnedSeatLocks).not.toHaveBeenCalled();
+      const lockToken = mockBookingService.acquirePaymentConfirmLock.mock.calls[0]?.[1];
+      expect(mockBookingService.releasePaymentConfirmLock).toHaveBeenCalledWith(orderId, lockToken);
     });
 
     it('cancels Toss and rejects when conditional sold transition detects an already sold seat', async () => {
