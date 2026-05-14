@@ -12,12 +12,22 @@ export {
 export { translationDrafts } from './translation-drafts.js';
 export { legalContent, legalContentTypeEnum } from './legal-content.js';
 export { venues } from './venues.js';
-export { performances, genreEnum as performanceGenreEnum, performanceStatusEnum } from './performances.js';
+export {
+  performances,
+  genreEnum as performanceGenreEnum,
+  performanceStatusEnum,
+  performancePublishStateEnum,
+} from './performances.js';
 export { showtimes } from './showtimes.js';
 export { priceTiers } from './price-tiers.js';
 export { castings } from './castings.js';
 export { seatMaps } from './seat-maps.js';
-export { banners } from './banners.js';
+export {
+  banners,
+  bannerPlacementEnum,
+  bannerDeviceTargetEnum,
+  bannerStatusEnum,
+} from './banners.js';
 export { seatInventories, seatStatusEnum } from './seat-inventories.js';
 export { reservations, reservationStatusEnum } from './reservations.js';
 export { reservationSeats } from './reservation-seats.js';

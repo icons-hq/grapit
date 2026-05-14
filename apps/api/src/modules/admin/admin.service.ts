@@ -43,6 +43,15 @@ function cloneDefaultBookingPolicy(): PerformanceBookingPolicy {
   };
 }
 
+function parseOptionalIsoDate(value: string | null | undefined): Date | null {
+  return value ? new Date(value) : null;
+}
+
+function toOptionalIsoString(value: Date | string | null | undefined): string | null {
+  if (!value) return null;
+  return value instanceof Date ? value.toISOString() : value;
+}
+
 type LegacySeatMapSaveInput = {
   svgUrl: string;
   seatConfig: SeatMapConfigInput;
@@ -187,10 +196,16 @@ export class AdminService {
         .values({
           name: input.venueName,
           address: input.venueAddress ?? null,
+          accessNotes: input.venueAccessNotes ?? null,
+          transportSummary: input.transportSummary ?? null,
         })
         .onConflictDoUpdate({
           target: venues.name,
-          set: { address: input.venueAddress ?? null },
+          set: {
+            address: input.venueAddress ?? null,
+            accessNotes: input.venueAccessNotes ?? null,
+            transportSummary: input.transportSummary ?? null,
+          },
         })
         .returning();
 
@@ -208,6 +223,13 @@ export class AdminService {
           endDate: parseAdminKstDateTime(input.endDate),
           runtime: input.runtime ?? null,
           ageRating: input.ageRating,
+          publishState: input.publishState,
+          publishReviewRequestedAt: parseOptionalIsoDate(
+            input.publishReviewRequestedAt,
+          ),
+          publishReadyAt: parseOptionalIsoDate(input.publishReadyAt),
+          publishedAt: parseOptionalIsoDate(input.publishedAt),
+          publishedByUserId: input.publishedByUserId ?? null,
           salesInfo: input.salesInfo ?? null,
         })
         .returning();
@@ -281,11 +303,26 @@ export class AdminService {
         runtime: perf!.runtime,
         ageRating: perf!.ageRating,
         status: perf!.status,
+        publishState: perf!.publishState,
+        publishReviewRequestedAt: toOptionalIsoString(
+          perf!.publishReviewRequestedAt,
+        ),
+        publishReadyAt: toOptionalIsoString(perf!.publishReadyAt),
+        publishedAt: toOptionalIsoString(perf!.publishedAt),
+        publishedByUserId: perf!.publishedByUserId,
         salesInfo: perf!.salesInfo,
         viewCount: perf!.viewCount,
         createdAt: perf!.createdAt?.toISOString() ?? '',
         updatedAt: perf!.updatedAt?.toISOString() ?? '',
-        venue: venue ? { id: venue.id, name: venue.name, address: venue.address } : null,
+        venue: venue
+          ? {
+              id: venue.id,
+              name: venue.name,
+              address: venue.address,
+              accessNotes: venue.accessNotes,
+              transportSummary: venue.transportSummary,
+            }
+          : null,
         priceTiers: [],
         showtimes: [],
         castings: [],
@@ -309,10 +346,16 @@ export class AdminService {
           .values({
             name: input.venueName,
             address: input.venueAddress ?? null,
+            accessNotes: input.venueAccessNotes ?? null,
+            transportSummary: input.transportSummary ?? null,
           })
           .onConflictDoUpdate({
             target: venues.name,
-            set: { address: input.venueAddress ?? null },
+            set: {
+              address: input.venueAddress ?? null,
+              accessNotes: input.venueAccessNotes ?? null,
+              transportSummary: input.transportSummary ?? null,
+            },
           })
           .returning();
         venueId = venue?.id;
@@ -334,6 +377,23 @@ export class AdminService {
       }
       if (input.runtime !== undefined) updateData['runtime'] = input.runtime;
       if (input.ageRating !== undefined) updateData['ageRating'] = input.ageRating;
+      if (input.publishState !== undefined) {
+        updateData['publishState'] = input.publishState;
+      }
+      if (input.publishReviewRequestedAt !== undefined) {
+        updateData['publishReviewRequestedAt'] = parseOptionalIsoDate(
+          input.publishReviewRequestedAt,
+        );
+      }
+      if (input.publishReadyAt !== undefined) {
+        updateData['publishReadyAt'] = parseOptionalIsoDate(input.publishReadyAt);
+      }
+      if (input.publishedAt !== undefined) {
+        updateData['publishedAt'] = parseOptionalIsoDate(input.publishedAt);
+      }
+      if (input.publishedByUserId !== undefined) {
+        updateData['publishedByUserId'] = input.publishedByUserId;
+      }
       if (input.salesInfo !== undefined) updateData['salesInfo'] = input.salesInfo;
       updateData['updatedAt'] = new Date();
 
@@ -425,6 +485,13 @@ export class AdminService {
         runtime: perf!.runtime,
         ageRating: perf!.ageRating,
         status: perf!.status,
+        publishState: perf!.publishState,
+        publishReviewRequestedAt: toOptionalIsoString(
+          perf!.publishReviewRequestedAt,
+        ),
+        publishReadyAt: toOptionalIsoString(perf!.publishReadyAt),
+        publishedAt: toOptionalIsoString(perf!.publishedAt),
+        publishedByUserId: perf!.publishedByUserId,
         salesInfo: perf!.salesInfo,
         viewCount: perf!.viewCount,
         createdAt: perf!.createdAt?.toISOString() ?? '',
@@ -578,8 +645,13 @@ export class AdminService {
       .values({
         imageUrl: input.imageUrl,
         linkUrl: input.linkUrl ?? null,
-        sortOrder: input.sortOrder,
-        isActive: input.isActive,
+        placement: input.placement ?? 'home_hero',
+        deviceTarget: input.deviceTarget ?? 'all',
+        startsAt: parseOptionalIsoDate(input.startsAt),
+        endsAt: parseOptionalIsoDate(input.endsAt),
+        status: input.status ?? 'active',
+        sortOrder: input.sortOrder ?? 0,
+        isActive: input.isActive ?? true,
       })
       .returning();
 
@@ -589,6 +661,11 @@ export class AdminService {
       id: result!.id,
       imageUrl: result!.imageUrl,
       linkUrl: result!.linkUrl,
+      placement: result!.placement,
+      deviceTarget: result!.deviceTarget,
+      status: result!.status,
+      startsAt: toOptionalIsoString(result!.startsAt),
+      endsAt: toOptionalIsoString(result!.endsAt),
       sortOrder: result!.sortOrder,
       isActive: result!.isActive,
     };
@@ -598,6 +675,15 @@ export class AdminService {
     const updateData: Record<string, unknown> = {};
     if (input.imageUrl !== undefined) updateData['imageUrl'] = input.imageUrl;
     if (input.linkUrl !== undefined) updateData['linkUrl'] = input.linkUrl;
+    if (input.placement !== undefined) updateData['placement'] = input.placement;
+    if (input.deviceTarget !== undefined) updateData['deviceTarget'] = input.deviceTarget;
+    if (input.startsAt !== undefined) {
+      updateData['startsAt'] = parseOptionalIsoDate(input.startsAt);
+    }
+    if (input.endsAt !== undefined) {
+      updateData['endsAt'] = parseOptionalIsoDate(input.endsAt);
+    }
+    if (input.status !== undefined) updateData['status'] = input.status;
     if (input.sortOrder !== undefined) updateData['sortOrder'] = input.sortOrder;
     if (input.isActive !== undefined) updateData['isActive'] = input.isActive;
     updateData['updatedAt'] = new Date();
@@ -618,6 +704,11 @@ export class AdminService {
       id: result.id,
       imageUrl: result.imageUrl,
       linkUrl: result.linkUrl,
+      placement: result.placement,
+      deviceTarget: result.deviceTarget,
+      status: result.status,
+      startsAt: toOptionalIsoString(result.startsAt),
+      endsAt: toOptionalIsoString(result.endsAt),
       sortOrder: result.sortOrder,
       isActive: result.isActive,
     };
@@ -638,6 +729,11 @@ export class AdminService {
       id: b.id,
       imageUrl: b.imageUrl,
       linkUrl: b.linkUrl,
+      placement: b.placement,
+      deviceTarget: b.deviceTarget,
+      status: b.status,
+      startsAt: toOptionalIsoString(b.startsAt),
+      endsAt: toOptionalIsoString(b.endsAt),
       sortOrder: b.sortOrder,
       isActive: b.isActive,
     }));
