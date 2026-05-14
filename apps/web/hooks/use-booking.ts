@@ -228,7 +228,7 @@ export function useUnlockSeat() {
       seatId: string;
     }) =>
       apiClient.delete<void>(
-        `/api/v1/booking/seats/lock/${showtimeId}/${seatId}`,
+        `/api/v1/booking/seats/lock/${encodeURIComponent(showtimeId)}/${encodeURIComponent(seatId)}`,
       ),
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({

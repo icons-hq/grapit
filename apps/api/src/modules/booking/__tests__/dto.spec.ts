@@ -22,26 +22,34 @@ describe('LockSeatRequest zod schema', () => {
     expect(lockSeatSchema.safeParse(empty).success).toBe(false);
   });
 
-  it('rejects seatId longer than 20 chars', () => {
+  it('accepts stable runtime seat keys up to 120 chars and rejects longer values', () => {
+    const longButValid = {
+      showtimeId: '550e8400-e29b-41d4-a716-446655440000',
+      seatId: `1F:SECTION-A:${'A'.repeat(90)}`,
+    };
     const tooLong = {
       showtimeId: '550e8400-e29b-41d4-a716-446655440000',
-      seatId: 'A'.repeat(21),
+      seatId: 'A'.repeat(121),
     };
+
+    expect(lockSeatSchema.safeParse(longButValid).success).toBe(true);
     expect(lockSeatSchema.safeParse(tooLong).success).toBe(false);
   });
 });
 
 describe('SeatState type', () => {
-  it('includes available | locked | sold | held', () => {
+  it('includes available | locked | sold | held | disabled', () => {
     // Type-level check: assign each literal to SeatState
     const available: SeatState = 'available';
     const locked: SeatState = 'locked';
     const sold: SeatState = 'sold';
     const held: SeatState = 'held';
+    const disabled: SeatState = 'disabled';
 
     expect(available).toBe('available');
     expect(locked).toBe('locked');
     expect(sold).toBe('sold');
     expect(held).toBe('held');
+    expect(disabled).toBe('disabled');
   });
 });

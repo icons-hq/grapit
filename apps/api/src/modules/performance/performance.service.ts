@@ -43,9 +43,10 @@ function mapSeatMapRowToDetailsSeatMap(
     id: string;
     performanceId: string;
     floorKey?: string | null;
-    floorLabel?: string | null;
-    sortOrder?: number | null;
-    svgUrl: string;
+	    floorLabel?: string | null;
+	    sortOrder?: number | null;
+	    venueLayoutId?: string | null;
+	    svgUrl: string;
     seatConfig: unknown;
     totalSeats: number;
   },
@@ -54,9 +55,10 @@ function mapSeatMapRowToDetailsSeatMap(
     id: row.id,
     performanceId: row.performanceId,
     floorKey: row.floorKey ?? DEFAULT_FLOOR_KEY,
-    floorLabel: row.floorLabel ?? DEFAULT_FLOOR_LABEL,
-    sortOrder: row.sortOrder ?? 0,
-    svgUrl: row.svgUrl,
+	    floorLabel: row.floorLabel ?? DEFAULT_FLOOR_LABEL,
+	    sortOrder: row.sortOrder ?? 0,
+	    venueLayoutId: row.venueLayoutId ?? null,
+	    svgUrl: row.svgUrl,
     seatConfig: row.seatConfig as SeatMapConfigForDetails,
     totalSeats: row.totalSeats,
   };

@@ -15,7 +15,14 @@ import type {
 
 import { AdminService } from './admin.service.js';
 import { CacheService } from '../performance/cache.service.js';
-import { bookingPolicies, seatMaps } from '../../database/schema/index.js';
+import {
+  bookingPolicies,
+  performanceSeatTiers,
+  seatMaps,
+  venueLayoutFloors,
+  venueLayouts,
+  venueLayoutSeats,
+} from '../../database/schema/index.js';
 
 function createMockCacheService(): CacheService {
   // Admin mutations trigger invalidate* — mocks swallow them so we can
@@ -47,7 +54,13 @@ function createMockTx() {
   for (const method of methods) {
     txChain[method] = vi.fn().mockReturnValue(txChain);
   }
-  (txChain as { then?: unknown }).then = vi.fn((resolve: (v: unknown[]) => void) => resolve([]));
+  (txChain as { then?: unknown }).then = vi.fn((resolve: (v: unknown[]) => void) =>
+    resolve([
+      { tierName: 'VIP' },
+      { tierName: 'R' },
+      { tierName: 'S' },
+    ]),
+  );
 
   return {
     insert: vi.fn().mockReturnValue({
@@ -74,6 +87,18 @@ function createMockTx() {
 
 function createMockDb() {
   const mockTx = createMockTx();
+  const dbSelectChain: Record<string, ReturnType<typeof vi.fn>> = {};
+  for (const method of ['from', 'where']) {
+    dbSelectChain[method] = vi.fn().mockReturnValue(dbSelectChain);
+  }
+  (dbSelectChain as { then?: unknown }).then = vi.fn((resolve: (v: unknown[]) => void) =>
+    resolve([
+      { tierName: 'VIP' },
+      { tierName: 'R' },
+      { tierName: 'S' },
+    ]),
+  );
+
   return {
     transaction: vi.fn((cb: (tx: typeof mockTx) => Promise<unknown>) => cb(mockTx)),
     insert: vi.fn().mockReturnValue({
@@ -94,6 +119,7 @@ function createMockDb() {
     delete: vi.fn().mockReturnValue({
       where: vi.fn().mockResolvedValue([]),
     }),
+    select: vi.fn().mockReturnValue(dbSelectChain),
     _tx: mockTx,
   };
 }
@@ -229,6 +255,19 @@ describe('AdminService', () => {
       const tx = mockDb._tx;
       expect(findInsertCallIndex(tx, seatMaps)).toBeGreaterThanOrEqual(0);
       expect(findInsertCallIndex(tx, bookingPolicies)).toBeGreaterThanOrEqual(0);
+    });
+
+    it('mirrors legacy floor-aware seatMaps into venue layout template and overlay tables', async () => {
+      await service.createPerformance({
+        ...sampleCreateInput,
+        seatMaps: sampleSeatMaps,
+      });
+
+      const tx = mockDb._tx;
+      expect(findInsertCallIndex(tx, venueLayouts)).toBeGreaterThanOrEqual(0);
+      expect(findInsertCallIndex(tx, venueLayoutFloors)).toBeGreaterThanOrEqual(0);
+      expect(findInsertCallIndex(tx, venueLayoutSeats)).toBeGreaterThanOrEqual(0);
+      expect(findInsertCallIndex(tx, performanceSeatTiers)).toBeGreaterThanOrEqual(0);
     });
   });
 
@@ -377,6 +416,63 @@ describe('AdminService', () => {
             {
               ...sampleSeatMaps[0]!,
               floorLabel: '1층 복제',
+            },
+          ],
+          bookingPolicy: sampleBookingPolicy,
+        }),
+      ).rejects.toThrow(UnprocessableEntityException);
+
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects duplicate seat assignments inside a floor before persistence', async () => {
+      await expect(
+        service.saveSeatMap('perf-id-123', {
+          seatMaps: [
+            {
+              ...sampleSeatMaps[0]!,
+              seatConfig: {
+                tiers: [
+                  { tierName: 'VIP', color: '#FFD700', seatIds: ['A1'] },
+                  { tierName: 'R', color: '#4169E1', seatIds: ['A1'] },
+                ],
+              },
+            },
+          ],
+          bookingPolicy: sampleBookingPolicy,
+        }),
+      ).rejects.toThrow(UnprocessableEntityException);
+
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects seat tiers that are not registered as price tiers', async () => {
+      await expect(
+        service.saveSeatMap('perf-id-123', {
+          seatMaps: [
+            {
+              ...sampleSeatMaps[0]!,
+              seatConfig: {
+                tiers: [
+                  { tierName: 'UNREGISTERED', color: '#111111', seatIds: ['A1'] },
+                ],
+              },
+            },
+          ],
+          bookingPolicy: sampleBookingPolicy,
+        }),
+      ).rejects.toThrow(UnprocessableEntityException);
+
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects detected SVG seats that are not assigned to any tier', async () => {
+      await expect(
+        service.saveSeatMap('perf-id-123', {
+          seatMaps: [
+            {
+              ...sampleSeatMaps[0]!,
+              totalSeats: 3,
             },
           ],
           bookingPolicy: sampleBookingPolicy,

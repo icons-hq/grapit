@@ -265,6 +265,23 @@ describe('BookingService', () => {
         expect(mockRedis.eval).not.toHaveBeenCalled();
       });
 
+      it('should throw ConflictException when seat_inventories has status=disabled', async () => {
+        mockDb.select.mockReturnValue({
+          from: vi.fn().mockReturnValue({
+            where: vi.fn().mockResolvedValue([{ id: randomUUID(), status: 'disabled' }]),
+          }),
+        });
+
+        await expect(service.lockSeat(userId, showtimeId, seatId))
+          .rejects.toThrow(ConflictException);
+
+        await expect(service.lockSeat(userId, showtimeId, seatId))
+          .rejects.toThrow('운영자가 판매를 중지한 좌석입니다');
+
+        expect(mockRedis.eval).not.toHaveBeenCalled();
+      });
+
+
       it('should proceed to Redis lock when no sold record exists in seat_inventories', async () => {
         mockNoSoldRecord();
         mockRedis.eval.mockResolvedValue([1, `{${showtimeId}}:seat:${seatId}`, seatId]);
@@ -616,6 +633,7 @@ describe('BookingService', () => {
         where: vi.fn().mockResolvedValue([
           { seatId: 'B-1', status: 'sold' },
           { seatId: 'C-1', status: 'held_cancelled' },
+          { seatId: 'D-1', status: 'disabled' },
         ]),
       });
       mockDb.select.mockReturnValue({ from: mockFrom });
@@ -627,6 +645,7 @@ describe('BookingService', () => {
       expect(result.seats['A-2']).toBe('locked');
       expect(result.seats['B-1']).toBe('sold');
       expect(result.seats['C-1']).toBe('held');
+      expect(result.seats['D-1']).toBe('disabled');
 
       // Verify eval called with GET_VALID_LOCKED_SEATS_LUA pattern
       // ioredis flat signature: eval(script, numKeys, ...keysAndArgs)

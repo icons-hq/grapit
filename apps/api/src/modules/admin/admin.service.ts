@@ -11,11 +11,16 @@ import {
   venues,
   priceTiers,
   showtimes,
-  castings,
-  seatMaps,
-  bookingPolicies,
-  banners,
-} from '../../database/schema/index.js';
+	  castings,
+	  seatMaps,
+	  bookingPolicies,
+	  banners,
+	  venueLayouts,
+	  venueLayoutFloors,
+	  venueLayoutSeats,
+	  performanceSeatTiers,
+	  performanceSeatAssignments,
+	} from '../../database/schema/index.js';
 import type {
   PerformanceBookingPolicy,
   Banner,
@@ -60,6 +65,21 @@ type SeatMapSaveResult = Pick<
   PerformanceWithDetails,
   'seatMaps' | 'bookingPolicy' | 'seatMap'
 >;
+
+type SeatMapValidationIssue = {
+  path: string;
+  message: string;
+};
+
+type PriceTierSnapshot = {
+  tierName: string;
+  price: number;
+  sortOrder: number;
+};
+
+type SyncedLayoutOverlay = {
+  layoutId: string | null;
+};
 
 @Injectable()
 export class AdminService {
@@ -116,6 +136,194 @@ export class AdminService {
     }
   }
 
+  private assertUniquePriceTierNames(
+    priceTierInputs: Array<{ tierName: string }>,
+  ): Set<string> {
+    const names = new Set<string>();
+    const duplicates = new Set<string>();
+
+    for (const tier of priceTierInputs) {
+      const tierName = tier.tierName.trim();
+      if (names.has(tierName)) {
+        duplicates.add(tierName);
+      }
+      names.add(tierName);
+    }
+
+    if (duplicates.size > 0) {
+      throw new UnprocessableEntityException({
+        message: 'Validation failed',
+        errors: {
+          priceTiers: [
+            `duplicate tierName: ${Array.from(duplicates).join(', ')}`,
+          ],
+        },
+      });
+    }
+
+    return names;
+  }
+
+  private async loadPriceTierNames(
+    tx: DrizzleDB,
+    performanceId: string,
+  ): Promise<Set<string>> {
+    const snapshots = await this.loadPriceTierSnapshots(tx, performanceId);
+    return new Set(snapshots.map((row) => row.tierName));
+  }
+
+  private async loadPriceTierSnapshots(
+    tx: DrizzleDB,
+    performanceId: string,
+  ): Promise<PriceTierSnapshot[]> {
+    const rows = await tx
+      .select({
+        tierName: priceTiers.tierName,
+        price: priceTiers.price,
+        sortOrder: priceTiers.sortOrder,
+      })
+      .from(priceTiers)
+      .where(eq(priceTiers.performanceId, performanceId));
+
+    return rows.map((row) => ({
+      tierName: row.tierName,
+      price: row.price,
+      sortOrder: row.sortOrder,
+    }));
+  }
+
+  private priceTierSnapshotsFromInput(
+    priceTierInputs: Array<{ tierName: string; price: number; sortOrder: number }>,
+  ): PriceTierSnapshot[] {
+    return priceTierInputs.map((tier) => ({
+      tierName: tier.tierName.trim(),
+      price: tier.price,
+      sortOrder: tier.sortOrder,
+    }));
+  }
+
+  private async loadPerformanceVenueId(
+    tx: DrizzleDB,
+    performanceId: string,
+  ): Promise<string | null> {
+    const rows = await tx
+      .select({ venueId: performances.venueId })
+      .from(performances)
+      .where(eq(performances.id, performanceId));
+
+    return typeof rows[0]?.venueId === 'string' ? rows[0].venueId : null;
+  }
+
+  private getAssignedSeatIds(floor: PerformanceSeatMapInput): Set<string> {
+    const assignedSeats = new Set<string>();
+
+    for (const tier of floor.seatConfig?.tiers ?? []) {
+      for (const seatId of tier.seatIds) {
+        assignedSeats.add(seatId);
+      }
+    }
+
+    return assignedSeats;
+  }
+
+  private toStableSeatKey(floorKey: string, sourceSeatId: string): string {
+    return sourceSeatId.includes(':') ? sourceSeatId : `${floorKey}:${sourceSeatId}`;
+  }
+
+  private deriveSeatPosition(sourceSeatId: string): { rowLabel: string | null; seatNumber: string | null } {
+    const localSeatId = sourceSeatId.includes(':')
+      ? sourceSeatId.slice(sourceSeatId.indexOf(':') + 1)
+      : sourceSeatId;
+    const hyphenParts = localSeatId.split('-');
+    if (hyphenParts.length >= 2 && hyphenParts[0] && hyphenParts.slice(1).join('-')) {
+      return {
+        rowLabel: hyphenParts[0],
+        seatNumber: hyphenParts.slice(1).join('-'),
+      };
+    }
+
+    const compactMatch = /^([A-Za-z]+)[-_ ]?(\d+)$/.exec(localSeatId);
+    if (compactMatch) {
+      return {
+        rowLabel: compactMatch[1]!,
+        seatNumber: compactMatch[2]!,
+      };
+    }
+
+    return { rowLabel: null, seatNumber: null };
+  }
+
+  private assertSeatMapConfigsValid(
+    floors: PerformanceSeatMapInput[],
+    validTierNames: Set<string>,
+  ): void {
+    const issues: SeatMapValidationIssue[] = [];
+
+    floors.forEach((floor, floorIndex) => {
+      const seatConfig = floor.seatConfig;
+      if (!seatConfig) {
+        if (floor.totalSeats > 0) {
+          issues.push({
+            path: `seatMaps.${floorIndex}.seatConfig`,
+            message: `seatConfig is required for ${floor.totalSeats} detected seats`,
+          });
+        }
+        return;
+      }
+
+      const assignedSeats = new Set<string>();
+      const duplicatedSeats = new Set<string>();
+
+      seatConfig.tiers.forEach((tier, tierIndex) => {
+        const tierName = tier.tierName.trim();
+        if (!validTierNames.has(tierName)) {
+          issues.push({
+            path: `seatMaps.${floorIndex}.seatConfig.tiers.${tierIndex}.tierName`,
+            message: `unknown tierName: ${tier.tierName}`,
+          });
+        }
+
+        for (const seatId of tier.seatIds) {
+          if (assignedSeats.has(seatId)) {
+            duplicatedSeats.add(seatId);
+          }
+          assignedSeats.add(seatId);
+
+          if (this.toStableSeatKey(floor.floorKey, seatId).length > 120) {
+            issues.push({
+              path: `seatMaps.${floorIndex}.seatConfig.tiers.${tierIndex}.seatIds`,
+              message: `seatKey exceeds 120 chars: ${this.toStableSeatKey(floor.floorKey, seatId)}`,
+            });
+          }
+        }
+      });
+
+      if (duplicatedSeats.size > 0) {
+        issues.push({
+          path: `seatMaps.${floorIndex}.seatConfig.tiers`,
+          message: `duplicate seatIds: ${Array.from(duplicatedSeats).join(', ')}`,
+        });
+      }
+
+      if (floor.totalSeats > 0 && assignedSeats.size !== floor.totalSeats) {
+        issues.push({
+          path: `seatMaps.${floorIndex}.seatConfig.tiers`,
+          message: `assigned seat count ${assignedSeats.size} does not match detected totalSeats ${floor.totalSeats}`,
+        });
+      }
+    });
+
+    if (issues.length > 0) {
+      throw new UnprocessableEntityException({
+        message: 'Validation failed',
+        errors: issues.reduce<Record<string, string[]>>((acc, issue) => {
+          acc[issue.path] = [...(acc[issue.path] ?? []), issue.message];
+          return acc;
+        }, {}),
+      });
+    }
+  }
+
   private async persistBookingPolicy(
     tx: DrizzleDB,
     performanceId: string,
@@ -151,12 +359,187 @@ export class AdminService {
       .returning();
   }
 
+  private async syncVenueLayoutOverlay(
+    tx: DrizzleDB,
+    performanceId: string,
+    venueId: string | null | undefined,
+    floors: PerformanceSeatMapInput[],
+    priceTierSnapshots: PriceTierSnapshot[],
+  ): Promise<SyncedLayoutOverlay> {
+    await tx
+      .delete(performanceSeatAssignments)
+      .where(eq(performanceSeatAssignments.performanceId, performanceId));
+    await tx
+      .delete(performanceSeatTiers)
+      .where(eq(performanceSeatTiers.performanceId, performanceId));
+
+    if (!venueId || floors.length === 0) {
+      return { layoutId: null };
+    }
+
+    const layoutName = `performance:${performanceId}:seat-map`;
+    const firstSvgUrl = floors[0]?.svgUrl ?? null;
+    const [layout] = await tx
+      .insert(venueLayouts)
+      .values({
+        venueId,
+        layoutName,
+        version: 1,
+        isActive: true,
+        sourceSvgUrl: firstSvgUrl,
+        normalizedSvgUrl: firstSvgUrl,
+        stagePosition: 'top',
+      })
+      .onConflictDoUpdate({
+        target: [
+          venueLayouts.venueId,
+          venueLayouts.layoutName,
+          venueLayouts.version,
+        ],
+        set: {
+          isActive: true,
+          sourceSvgUrl: firstSvgUrl,
+          normalizedSvgUrl: firstSvgUrl,
+          updatedAt: new Date(),
+        },
+      })
+      .returning({ id: venueLayouts.id });
+
+    const layoutId = layout?.id ?? null;
+    if (!layoutId) {
+      return { layoutId: null };
+    }
+
+    await tx.delete(venueLayoutSeats).where(eq(venueLayoutSeats.layoutId, layoutId));
+    await tx.delete(venueLayoutFloors).where(eq(venueLayoutFloors.layoutId, layoutId));
+
+    const tierColorByName = new Map<string, string>();
+    for (const floor of floors) {
+      for (const tier of floor.seatConfig?.tiers ?? []) {
+        if (!tierColorByName.has(tier.tierName)) {
+          tierColorByName.set(tier.tierName, tier.color);
+        }
+      }
+    }
+
+    const insertedTierRows = priceTierSnapshots.length > 0
+      ? await tx
+        .insert(performanceSeatTiers)
+        .values(
+          priceTierSnapshots.map((tier) => ({
+            performanceId,
+            tierName: tier.tierName,
+            price: tier.price,
+            sortOrder: tier.sortOrder,
+            color: tierColorByName.get(tier.tierName) ?? '#9CA3AF',
+          })),
+        )
+        .returning({
+          id: performanceSeatTiers.id,
+          tierName: performanceSeatTiers.tierName,
+        })
+      : [];
+    const tierIdByName = new Map(
+      insertedTierRows
+        .filter((row) => typeof row.tierName === 'string')
+        .map((row) => [row.tierName, row.id]),
+    );
+
+    for (const floor of floors) {
+      const [layoutFloor] = await tx
+        .insert(venueLayoutFloors)
+        .values({
+          layoutId,
+          floorKey: floor.floorKey,
+          floorLabel: floor.floorLabel,
+          sortOrder: floor.sortOrder,
+          svgUrl: floor.svgUrl,
+        })
+        .returning({ id: venueLayoutFloors.id });
+      const floorId = layoutFloor?.id;
+      if (!floorId) {
+        continue;
+      }
+
+      const seatTierBySeatKey = new Map<string, string>();
+      for (const tier of floor.seatConfig?.tiers ?? []) {
+        for (const sourceSeatId of tier.seatIds) {
+          seatTierBySeatKey.set(
+            this.toStableSeatKey(floor.floorKey, sourceSeatId),
+            tier.tierName,
+          );
+        }
+      }
+
+      const seatValues = Array.from(this.getAssignedSeatIds(floor)).map((sourceSeatId, index) => {
+        const seatKey = this.toStableSeatKey(floor.floorKey, sourceSeatId);
+        const position = this.deriveSeatPosition(sourceSeatId);
+
+        return {
+          layoutId,
+          floorId,
+          seatKey,
+          sourceSeatId,
+          rowLabel: position.rowLabel,
+          seatNumber: position.seatNumber,
+          sortOrder: index,
+        };
+      });
+
+      if (seatValues.length === 0) {
+        continue;
+      }
+
+      const insertedSeatRows = await tx
+        .insert(venueLayoutSeats)
+        .values(seatValues)
+        .returning({
+          id: venueLayoutSeats.id,
+          seatKey: venueLayoutSeats.seatKey,
+        });
+
+      const assignmentValues = insertedSeatRows
+        .map((seatRow) => {
+          const tierName = seatTierBySeatKey.get(seatRow.seatKey);
+          const tierId = tierName ? tierIdByName.get(tierName) : undefined;
+          if (!tierId) {
+            return null;
+          }
+
+          return {
+            performanceId,
+            layoutSeatId: seatRow.id,
+            tierId,
+            saleStatus: 'available' as const,
+          };
+        })
+        .filter((value): value is NonNullable<typeof value> => value !== null);
+
+      if (assignmentValues.length > 0) {
+        await tx.insert(performanceSeatAssignments).values(assignmentValues);
+      }
+    }
+
+    return { layoutId };
+  }
+
   private async replaceSeatMaps(
     tx: DrizzleDB,
     performanceId: string,
+    venueId: string | null | undefined,
     floors: PerformanceSeatMapInput[],
+    validTierNames: Set<string>,
+    priceTierSnapshots: PriceTierSnapshot[],
   ): Promise<void> {
     this.assertUniqueFloorKeys(floors);
+    this.assertSeatMapConfigsValid(floors, validTierNames);
+    const overlay = await this.syncVenueLayoutOverlay(
+      tx,
+      performanceId,
+      venueId,
+      floors,
+      priceTierSnapshots,
+    );
     await tx.delete(seatMaps).where(eq(seatMaps.performanceId, performanceId));
 
     if (floors.length === 0) {
@@ -168,6 +551,7 @@ export class AdminService {
       .values(
         floors.map((floor) => ({
           performanceId,
+          venueLayoutId: overlay.layoutId,
           floorKey: floor.floorKey,
           floorLabel: floor.floorLabel,
           sortOrder: floor.sortOrder,
@@ -213,6 +597,8 @@ export class AdminService {
         .returning();
 
       const performanceId = perf!.id;
+      const validTierNames = this.assertUniquePriceTierNames(input.priceTiers);
+      const priceTierSnapshots = this.priceTierSnapshotsFromInput(input.priceTiers);
 
       // Insert price tiers
       if (input.priceTiers.length > 0) {
@@ -259,7 +645,14 @@ export class AdminService {
         performanceId,
         input.seatMaps,
       );
-      await this.replaceSeatMaps(tx as unknown as DrizzleDB, performanceId, input.seatMaps);
+      await this.replaceSeatMaps(
+        tx as unknown as DrizzleDB,
+        performanceId,
+        venue?.id,
+        input.seatMaps,
+        validTierNames,
+        priceTierSnapshots,
+      );
 
       const bookingPolicy = input.bookingPolicy ?? cloneDefaultBookingPolicy();
       await this.persistBookingPolicy(
@@ -348,7 +741,11 @@ export class AdminService {
       }
 
       // Replace price tiers if provided
+      let validTierNames: Set<string> | null = null;
+      let priceTierSnapshots: PriceTierSnapshot[] | null = null;
       if (input.priceTiers) {
+        validTierNames = this.assertUniquePriceTierNames(input.priceTiers);
+        priceTierSnapshots = this.priceTierSnapshotsFromInput(input.priceTiers);
         await tx.delete(priceTiers).where(eq(priceTiers.performanceId, id));
         if (input.priceTiers.length > 0) {
           await tx
@@ -398,7 +795,22 @@ export class AdminService {
       }
 
       if (input.seatMaps) {
-        await this.replaceSeatMaps(tx as unknown as DrizzleDB, id, input.seatMaps);
+        validTierNames ??= await this.loadPriceTierNames(
+          tx as unknown as DrizzleDB,
+          id,
+        );
+        priceTierSnapshots ??= await this.loadPriceTierSnapshots(
+          tx as unknown as DrizzleDB,
+          id,
+        );
+        await this.replaceSeatMaps(
+          tx as unknown as DrizzleDB,
+          id,
+          perf.venueId,
+          input.seatMaps,
+          validTierNames,
+          priceTierSnapshots,
+        );
       }
 
       const bookingPolicy = input.bookingPolicy ?? cloneDefaultBookingPolicy();
@@ -474,12 +886,27 @@ export class AdminService {
 
     const bookingPolicy = floorAwareInput.bookingPolicy ?? cloneDefaultBookingPolicy();
     this.assertUniqueFloorKeys(floorAwareInput.seatMaps);
+    const [priceTierSnapshots, venueId] = await Promise.all([
+      this.loadPriceTierSnapshots(
+        this.db,
+        performanceId,
+      ),
+      this.loadPerformanceVenueId(
+        this.db,
+        performanceId,
+      ),
+    ]);
+    const validTierNames = new Set(priceTierSnapshots.map((row) => row.tierName));
+    this.assertSeatMapConfigsValid(floorAwareInput.seatMaps, validTierNames);
 
     await this.db.transaction(async (tx) => {
       await this.replaceSeatMaps(
         tx as unknown as DrizzleDB,
         performanceId,
+        venueId,
         floorAwareInput.seatMaps,
+        validTierNames,
+        priceTierSnapshots,
       );
 
       if (floorAwareInput.bookingPolicy) {

@@ -1,19 +1,29 @@
 import { pgTable, uuid, varchar, timestamp, uniqueIndex, pgEnum } from 'drizzle-orm/pg-core';
 import { showtimes } from './showtimes.js';
+import { venueLayoutSeats } from './venue-layout-seats.js';
+import { performanceSeatAssignments } from './performance-seat-assignments.js';
 
 export const seatStatusEnum = pgEnum('seat_status', [
   'available',
   'locked',
   'held_cancelled',
+  'disabled',
   'sold',
 ]);
 
 export const seatInventories = pgTable('seat_inventories', {
   id: uuid('id').defaultRandom().primaryKey(),
   showtimeId: uuid('showtime_id').notNull().references(() => showtimes.id, { onDelete: 'cascade' }),
-  seatId: varchar('seat_id', { length: 20 }).notNull(),
+  layoutSeatId: uuid('layout_seat_id').references(() => venueLayoutSeats.id, {
+    onDelete: 'set null',
+  }),
+  performanceSeatAssignmentId: uuid('performance_seat_assignment_id').references(
+    () => performanceSeatAssignments.id,
+    { onDelete: 'set null' },
+  ),
+  seatId: varchar('seat_id', { length: 120 }).notNull(),
   floorKey: varchar('floor_key', { length: 20 }).notNull().default('1F'),
-  seatKey: varchar('seat_key', { length: 80 }).notNull(),
+  seatKey: varchar('seat_key', { length: 120 }).notNull(),
   status: seatStatusEnum('status').notNull().default('available'),
   lockedBy: uuid('locked_by'),
   lockedUntil: timestamp('locked_until', { withTimezone: true }),

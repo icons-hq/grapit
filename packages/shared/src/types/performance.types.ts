@@ -58,6 +58,47 @@ export interface Venue {
   address: string | null;
 }
 
+export interface VenueLayout {
+  id: string;
+  venueId: string;
+  layoutName: string;
+  version: number;
+  isActive: boolean;
+  sourceSvgUrl: string | null;
+  normalizedSvgUrl: string | null;
+  stagePosition: 'top' | 'right' | 'bottom' | 'left';
+}
+
+export interface VenueLayoutFloor {
+  id: string;
+  layoutId: string;
+  floorKey: string;
+  floorLabel: string;
+  sortOrder: number;
+  svgUrl: string | null;
+}
+
+export interface VenueLayoutSection {
+  id: string;
+  floorId: string;
+  sectionKey: string;
+  sectionLabel: string;
+  sortOrder: number;
+}
+
+export interface VenueLayoutSeat {
+  id: string;
+  layoutId: string;
+  floorId: string;
+  sectionId: string | null;
+  seatKey: string;
+  sourceSeatId: string;
+  rowLabel: string | null;
+  seatNumber: string | null;
+  isAccessible: boolean;
+  sortOrder: number;
+}
+
 export interface PriceTier {
   id: string;
   performanceId: string;
@@ -103,12 +144,33 @@ export type PerformanceAllowedPaymentMethod =
 export interface SeatMap {
   id: string;
   performanceId: string;
+  venueLayoutId?: string | null;
   floorKey: string;
   floorLabel: string;
   sortOrder: number;
   svgUrl: string;
   seatConfig: SeatMapConfig | null;
   totalSeats: number;
+}
+
+export interface PerformanceSeatTier {
+  id: string;
+  performanceId: string;
+  tierName: string;
+  color: string;
+  price: number;
+  sortOrder: number;
+}
+
+export type PerformanceSeatSaleStatus = 'available' | 'blocked';
+
+export interface PerformanceSeatAssignment {
+  id: string;
+  performanceId: string;
+  layoutSeatId: string;
+  tierId: string;
+  saleStatus: PerformanceSeatSaleStatus;
+  blockReason: string | null;
 }
 
 export interface PerformanceBookingPolicy {

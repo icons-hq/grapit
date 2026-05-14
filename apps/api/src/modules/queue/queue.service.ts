@@ -734,7 +734,7 @@ export class QueueService {
       .where(
         and(
           eq(showtimes.performanceId, performanceId),
-          inArray(seatInventories.status, ['sold', 'held_cancelled']),
+          inArray(seatInventories.status, ['sold', 'held_cancelled', 'disabled']),
         ),
       );
 

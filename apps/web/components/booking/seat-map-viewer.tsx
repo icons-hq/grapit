@@ -11,37 +11,78 @@ import { useIsMobile } from '@/hooks/use-is-mobile';
 import { prefixSvgDefsIds } from './__utils__/prefix-svg-defs-ids';
 import { sanitizeParsedSvg } from '@/lib/svg/safety';
 
+type RuntimeSeatState = SeatState | 'disabled';
+
 interface SeatMapViewerProps {
   svgUrl: string;
   seatConfig: SeatMapConfig;
-  seatStates: Map<string, SeatState>;
+  seatStates: ReadonlyMap<string, RuntimeSeatState>;
   selectedSeatIds: Set<string>;
-  onSeatClick: (seatId: string) => void;
+  onSeatClick: (runtimeSeatId: string) => void;
   maxSelect: number;
 }
 
 const LOCKED_COLOR = '#D1D5DB';
 const SELECTED_STROKE = '#1A1A2E';
+const SEAT_ID_ATTR = 'data-seat-id';
+const SEAT_KEY_ATTR = 'data-seat-key';
 const SEAT_OVERLAY_ATTR = 'data-seat-overlay-for';
+
+function getLocalSeatId(runtimeSeatId: string) {
+  const separatorIndex = runtimeSeatId.indexOf(':');
+  return separatorIndex > 0 ? runtimeSeatId.slice(separatorIndex + 1) : runtimeSeatId;
+}
+
+function getSeatIdentity(element: Element | null) {
+  if (!element) {
+    return null;
+  }
+
+  const seatKey = element.getAttribute(SEAT_KEY_ATTR);
+  const seatId = element.getAttribute(SEAT_ID_ATTR) ?? (seatKey ? getLocalSeatId(seatKey) : null);
+  const runtimeSeatId = seatKey ?? seatId;
+
+  if (!runtimeSeatId || !seatId) {
+    return null;
+  }
+
+  return { runtimeSeatId, seatId };
+}
+
+function isUnavailableSeatState(state: RuntimeSeatState | undefined) {
+  return state === 'locked' || state === 'sold' || state === 'held' || state === 'disabled';
+}
+
+function getSeatState(
+  seatStates: ReadonlyMap<string, RuntimeSeatState>,
+  runtimeSeatId: string,
+  seatId: string,
+) {
+  return seatStates.get(runtimeSeatId) ?? seatStates.get(seatId) ?? 'available';
+}
 
 function normalizeSeatLabelOverlays(doc: Document) {
   const seatParents = new Set<Element>();
-  doc.querySelectorAll('[data-seat-id]').forEach((seatEl) => {
+  doc.querySelectorAll(`[${SEAT_KEY_ATTR}],[${SEAT_ID_ATTR}]`).forEach((seatEl) => {
     if (seatEl.parentElement) {
       seatParents.add(seatEl.parentElement);
     }
   });
 
   seatParents.forEach((parent) => {
+    if (parent.tagName.toLowerCase() === 'svg') {
+      return;
+    }
+
     const seatChildren = Array.from(parent.children).filter((child) =>
-      child.hasAttribute('data-seat-id')
+      child.hasAttribute(SEAT_KEY_ATTR) || child.hasAttribute(SEAT_ID_ATTR)
     );
     if (seatChildren.length !== 1) {
       return;
     }
 
-    const seatId = seatChildren[0]?.getAttribute('data-seat-id');
-    if (!seatId) {
+    const identity = getSeatIdentity(seatChildren[0] ?? null);
+    if (!identity) {
       return;
     }
 
@@ -63,20 +104,23 @@ function normalizeSeatLabelOverlays(doc: Document) {
           return;
         }
 
-        overlayText.setAttribute(SEAT_OVERLAY_ATTR, seatId);
+        overlayText.setAttribute(SEAT_OVERLAY_ATTR, identity.runtimeSeatId);
         overlayText.setAttribute('pointer-events', 'none');
       });
     });
   });
 }
 
-function findSeatElementById(container: ParentNode | null, seatId: string) {
+function findSeatElementByIdentity(container: ParentNode | null, runtimeSeatId: string) {
   if (!container) {
     return null;
   }
 
-  return Array.from(container.querySelectorAll<SVGElement>('[data-seat-id]')).find(
-    (element) => element.getAttribute('data-seat-id') === seatId,
+  return Array.from(container.querySelectorAll<SVGElement>(`[${SEAT_KEY_ATTR}],[${SEAT_ID_ATTR}]`)).find(
+    (element) => {
+      const identity = getSeatIdentity(element);
+      return identity?.runtimeSeatId === runtimeSeatId || identity?.seatId === runtimeSeatId;
+    },
   ) ?? null;
 }
 
@@ -212,22 +256,22 @@ export function SeatMapViewer({
       return null;
     }
     sanitizeParsedSvg(doc);
-    const seats = doc.querySelectorAll('[data-seat-id]');
+    const seats = doc.querySelectorAll(`[${SEAT_KEY_ATTR}],[${SEAT_ID_ATTR}]`);
 
     seats.forEach((el) => {
-      const seatId = el.getAttribute('data-seat-id');
-      if (!seatId) return;
+      const identity = getSeatIdentity(el);
+      if (!identity) return;
 
-      const tierInfo = tierColorMap.get(seatId);
-      const state = seatStates.get(seatId) ?? 'available';
-      const isSelected = selectedSeatIds.has(seatId);
-      const isRemoving = pendingRemovals.has(seatId);
+      const tierInfo = tierColorMap.get(identity.seatId) ?? tierColorMap.get(identity.runtimeSeatId);
+      const state = getSeatState(seatStates, identity.runtimeSeatId, identity.seatId);
+      const isSelected = selectedSeatIds.has(identity.runtimeSeatId) || selectedSeatIds.has(identity.seatId);
+      const isRemoving = pendingRemovals.has(identity.runtimeSeatId) || pendingRemovals.has(identity.seatId);
       const showCheckmark = isSelected || isRemoving;
 
-      // reviews revision MED #4 D-13 BROADCAST PRIORITY: locked/sold가 선택보다 우선
+      // reviews revision MED #4 D-13 BROADCAST PRIORITY: unavailable 상태가 선택보다 우선
       // — broadcast 즉시 회색 + transition:none 유지. useMemo에서 LOCKED_COLOR 박아두고
       // Task 3 useEffect는 seatStates 체크로 primary 색 변경 skip.
-      if (state === 'locked' || state === 'sold') {
+      if (isUnavailableSeatState(state)) {
         el.setAttribute('fill', LOCKED_COLOR);
         el.removeAttribute('stroke');
         el.setAttribute('stroke-width', '0');
@@ -387,9 +431,9 @@ export function SeatMapViewer({
   // 권장 패턴 (RESEARCH §Pitfall 3): 마운트 후 useEffect가 *동일 element의 속성*을 변경 → CSS transition 정상 발화.
   //
   // reviews revision MED #4 D-13 BROADCAST PRIORITY:
-  //   selectedSeatIds 안의 좌석이 broadcast로 locked/sold로 전환된 경우,
+  //   selectedSeatIds 안의 좌석이 broadcast로 unavailable 전환된 경우,
   //   useEffect가 primary 색으로 덮어쓰면 D-13의 "broadcast 즉시 회색" 정책 침해.
-  //   → seatStates.get(seatId) === 'locked' | 'sold'이면 skip.
+  //   → unavailable 상태이면 skip.
   useEffect(() => {
     const container = containerRef.current;
     if (!container || !processedSvg) return;
@@ -397,26 +441,29 @@ export function SeatMapViewer({
     if (!root) return;
 
     // 선택 좌석: fill을 primary로 변경 + transition 부여
-    // 단 D-13: locked/sold 상태는 skip (broadcast 우선)
+    // 단 D-13: unavailable 상태는 skip (broadcast 우선)
     selectedSeatIds.forEach((seatId) => {
-      const state = seatStates.get(seatId);
-      if (state === 'locked' || state === 'sold') {
+      const el = findSeatElementByIdentity(root, seatId);
+      if (!el) return;
+      const identity = getSeatIdentity(el);
+      if (!identity) return;
+      const state = getSeatState(seatStates, identity.runtimeSeatId, identity.seatId);
+      if (isUnavailableSeatState(state)) {
         // reviews revision MED #4: useMemo가 이미 LOCKED_COLOR + transition:none으로 박아둠.
         // useEffect는 건드리지 않음 → D-13 broadcast 즉시 회색 정책 유지.
         return;
       }
-      const el = findSeatElementById(root, seatId);
-      if (!el) return;
       el.style.transition = 'fill 150ms ease-out, stroke 150ms ease-out';
       el.setAttribute('fill', '#6C3CE0'); // Brand Purple — D-03
     });
 
     // 해제 중인 좌석: fill을 원래 tier 색상으로 복원 + transition 유지
     pendingRemovals.forEach((seatId) => {
-      const el = findSeatElementById(root, seatId);
+      const el = findSeatElementByIdentity(root, seatId);
       if (!el) return;
       el.style.transition = 'fill 150ms ease-out, stroke 150ms ease-out';
-      const originalFill = tierColorMap.get(seatId)?.color ?? LOCKED_COLOR;
+      const localSeatId = getLocalSeatId(seatId);
+      const originalFill = tierColorMap.get(localSeatId)?.color ?? tierColorMap.get(seatId)?.color ?? LOCKED_COLOR;
       el.setAttribute('fill', originalFill);
     });
   }, [selectedSeatIds, pendingRemovals, tierColorMap, seatStates, processedSvg]);
@@ -429,25 +476,26 @@ export function SeatMapViewer({
   const handleClick = useCallback(
     (e: React.MouseEvent) => {
       const target = (e.target as HTMLElement).closest<SVGElement>(
-        `[data-seat-id],[${SEAT_OVERLAY_ATTR}]`,
+        `[${SEAT_KEY_ATTR}],[${SEAT_ID_ATTR}],[${SEAT_OVERLAY_ATTR}]`,
       );
       if (!target) return;
 
-      const seatId = target.getAttribute('data-seat-id')
-        ?? target.getAttribute(SEAT_OVERLAY_ATTR);
-      if (!seatId) return;
+      const overlayIdentity = target.getAttribute(SEAT_OVERLAY_ATTR);
+      const identity = overlayIdentity
+        ? { runtimeSeatId: overlayIdentity, seatId: getLocalSeatId(overlayIdentity) }
+        : getSeatIdentity(target);
+      if (!identity) return;
 
-      const state = seatStates.get(seatId) ?? 'available';
-      if (state === 'sold') return;
-      // PR18-CR-MAXSELECT-LOCKED: locked는 maxSelect 우회하여 parent에 위임 (D-13 invariant), available 한도만 차단
+      const state = getSeatState(seatStates, identity.runtimeSeatId, identity.seatId);
+      if (isUnavailableSeatState(state)) return;
       if (
-        state !== 'locked' &&
-        !selectedSeatIds.has(seatId) &&
+        !selectedSeatIds.has(identity.runtimeSeatId) &&
+        !selectedSeatIds.has(identity.seatId) &&
         selectedSeatIds.size >= maxSelect
       ) {
         return;
       }
-      onSeatClick(seatId);
+      onSeatClick(identity.runtimeSeatId);
     },
     [seatStates, selectedSeatIds, onSeatClick, maxSelect],
   );
@@ -456,33 +504,36 @@ export function SeatMapViewer({
   const handleMouseOver = useCallback(
     (e: React.MouseEvent) => {
       const target = (e.target as HTMLElement).closest<SVGElement>(
-        `[data-seat-id],[${SEAT_OVERLAY_ATTR}]`,
+        `[${SEAT_KEY_ATTR}],[${SEAT_ID_ATTR}],[${SEAT_OVERLAY_ATTR}]`,
       );
       if (!target) {
         if (tooltipRef.current) tooltipRef.current.style.display = 'none';
         return;
       }
 
-      const seatId = target.getAttribute('data-seat-id')
-        ?? target.getAttribute(SEAT_OVERLAY_ATTR);
-      if (!seatId) return;
+      const overlayIdentity = target.getAttribute(SEAT_OVERLAY_ATTR);
+      const identity = overlayIdentity
+        ? { runtimeSeatId: overlayIdentity, seatId: getLocalSeatId(overlayIdentity) }
+        : getSeatIdentity(target);
+      if (!identity) return;
 
-      const seatElement = target.hasAttribute('data-seat-id')
+      const seatElement = target.hasAttribute(SEAT_KEY_ATTR) || target.hasAttribute(SEAT_ID_ATTR)
         ? target
-        : findSeatElementById(containerRef.current, seatId);
+        : findSeatElementByIdentity(containerRef.current, identity.runtimeSeatId);
       if (!seatElement) return;
 
-      const state = seatStates.get(seatId) ?? 'available';
-      if (state !== 'available' && !selectedSeatIds.has(seatId)) {
+      const state = getSeatState(seatStates, identity.runtimeSeatId, identity.seatId);
+      const isSelected = selectedSeatIds.has(identity.runtimeSeatId) || selectedSeatIds.has(identity.seatId);
+      if (state !== 'available' && !isSelected) {
         if (tooltipRef.current) tooltipRef.current.style.display = 'none';
         return;
       }
 
-      const tierInfo = tierColorMap.get(seatId);
+      const tierInfo = tierColorMap.get(identity.seatId) ?? tierColorMap.get(identity.runtimeSeatId);
       if (!tierInfo) return;
 
-      const parts = seatId.split('-');
-      const row = parts[0] ?? seatId;
+      const parts = identity.seatId.split('-');
+      const row = parts[0] ?? identity.seatId;
       const number = parts[1] ?? '';
 
       const rect = seatElement.getBoundingClientRect();
@@ -496,7 +547,7 @@ export function SeatMapViewer({
         tooltipRef.current.style.top = `${y}px`;
         tooltipRef.current.style.display = 'block';
 
-        if (state === 'available' && !selectedSeatIds.has(seatId)) {
+        if (state === 'available' && !isSelected) {
           seatElement.style.filter = 'brightness(1.15)';
           seatElement.setAttribute('stroke', tierInfo.color);
           seatElement.setAttribute('stroke-width', '2');
@@ -509,26 +560,28 @@ export function SeatMapViewer({
   const handleMouseOut = useCallback(
     (e: React.MouseEvent) => {
       const target = (e.target as HTMLElement).closest<SVGElement>(
-        `[data-seat-id],[${SEAT_OVERLAY_ATTR}]`,
+        `[${SEAT_KEY_ATTR}],[${SEAT_ID_ATTR}],[${SEAT_OVERLAY_ATTR}]`,
       );
       if (!target) return;
 
       if (tooltipRef.current) tooltipRef.current.style.display = 'none';
 
-      const seatId = target.getAttribute('data-seat-id')
-        ?? target.getAttribute(SEAT_OVERLAY_ATTR);
-      if (!seatId) return;
+      const overlayIdentity = target.getAttribute(SEAT_OVERLAY_ATTR);
+      const identity = overlayIdentity
+        ? { runtimeSeatId: overlayIdentity, seatId: getLocalSeatId(overlayIdentity) }
+        : getSeatIdentity(target);
+      if (!identity) return;
 
-      const seatElement = target.hasAttribute('data-seat-id')
+      const seatElement = target.hasAttribute(SEAT_KEY_ATTR) || target.hasAttribute(SEAT_ID_ATTR)
         ? target
-        : findSeatElementById(containerRef.current, seatId);
+        : findSeatElementByIdentity(containerRef.current, identity.runtimeSeatId);
       if (!seatElement) return;
 
-      const isSelected = selectedSeatIds.has(seatId);
+      const isSelected = selectedSeatIds.has(identity.runtimeSeatId) || selectedSeatIds.has(identity.seatId);
       if (isSelected) return;
 
       seatElement.style.filter = '';
-      const state = seatStates.get(seatId) ?? 'available';
+      const state = getSeatState(seatStates, identity.runtimeSeatId, identity.seatId);
       if (state === 'available') {
         seatElement.removeAttribute('stroke');
         seatElement.setAttribute('stroke-width', '0');

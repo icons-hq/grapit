@@ -36,11 +36,13 @@ export function SvgPreview({
     currentConfig?.tiers ?? [],
   );
   const [totalSeats, setTotalSeats] = useState(currentTotalSeats ?? 0);
+  const [svgMarkup, setSvgMarkup] = useState<string | null>(null);
 
   const presignedUpload = usePresignedUpload();
   const saveSeatMap = useSaveSeatMap(performanceId ?? '');
   useEffect(() => {
     setSvgUrl(currentSvgUrl ?? null);
+    setSvgMarkup(null);
   }, [currentSvgUrl]);
 
   useEffect(() => {
@@ -50,6 +52,33 @@ export function SvgPreview({
   useEffect(() => {
     setTotalSeats(currentTotalSeats ?? 0);
   }, [currentTotalSeats]);
+
+  useEffect(() => {
+    if (!svgUrl || svgMarkup) {
+      return;
+    }
+
+    let isMounted = true;
+    fetch(svgUrl)
+      .then((res) => {
+        if (!res.ok) throw new Error('Failed to fetch SVG');
+        return res.text();
+      })
+      .then((text) => {
+        if (isMounted) {
+          setSvgMarkup(text);
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setSvgMarkup(null);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [svgMarkup, svgUrl]);
 
   // review IN-05: mutateAsync만 좁혀 deps로 사용.
   //   presignedUpload 객체 전체를 deps로 쓰면 isPending 등 내부 상태 변화로 identity가 바뀌어
@@ -136,6 +165,7 @@ export function SvgPreview({
         //   주석/CDATA/다른 tag 속성 이름 등에 'data-seat-id' substring이 우연히
         //   포함된 경우의 false positive를 제거하여 의도와 실제 좌석 수가 일치하도록 보장.
         const seatCount = doc.querySelectorAll('[data-seat-id]').length;
+        setSvgMarkup(text);
         setTotalSeats(seatCount);
         if (isControlled) {
           onChange?.({
@@ -248,6 +278,7 @@ export function SvgPreview({
                 });
               }
             }}
+            svgMarkup={svgMarkup}
           />
           {!isControlled && (
             <div className="flex justify-end">

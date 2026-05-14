@@ -7,6 +7,7 @@ import {
   useConfirmPayment,
   useLockSeat,
   usePrepareReservation,
+  useUnlockSeat,
 } from '../use-booking';
 import { ApiClientError, apiClient } from '@/lib/api-client';
 import {
@@ -22,7 +23,7 @@ import type {
   PrepareReservationRequest,
 } from '@grabit/shared';
 
-const { postMock, runtimeFlagsMock, ApiClientErrorMock } = vi.hoisted(() => {
+const { postMock, deleteMock, runtimeFlagsMock, ApiClientErrorMock } = vi.hoisted(() => {
   class ApiClientError extends Error {
     statusCode: number;
 
@@ -35,6 +36,7 @@ const { postMock, runtimeFlagsMock, ApiClientErrorMock } = vi.hoisted(() => {
 
   return {
     postMock: vi.fn(),
+    deleteMock: vi.fn(),
     runtimeFlagsMock: vi.fn(() => ({
       bookingEnabled: true,
       isLoading: false,
@@ -47,6 +49,7 @@ const { postMock, runtimeFlagsMock, ApiClientErrorMock } = vi.hoisted(() => {
 vi.mock('@/lib/api-client', () => ({
   apiClient: {
     post: postMock,
+    delete: deleteMock,
   },
   ApiClientError: ApiClientErrorMock,
 }));
@@ -210,6 +213,7 @@ function createPerformanceDetail(
 describe('use-booking payment mutations', () => {
   beforeEach(() => {
     postMock.mockReset();
+    deleteMock.mockReset();
     runtimeFlagsMock.mockReset();
     runtimeFlagsMock.mockReturnValue({
       bookingEnabled: true,
@@ -475,6 +479,23 @@ describe('use-booking payment mutations', () => {
       showtimeId: 'showtime-floor-aware',
       seatId: '2F:A-1',
     });
+  });
+
+  it('useUnlockSeat() URL-encodes runtime seat keys before path transport', async () => {
+    deleteMock.mockResolvedValueOnce(undefined);
+
+    const { result } = renderHook(() => useUnlockSeat(), {
+      wrapper: createWrapper().Wrapper,
+    });
+
+    await result.current.mutateAsync({
+      showtimeId: 'showtime/floor-aware',
+      seatId: '2F:A/1?#',
+    });
+
+    expect(apiClient.delete).toHaveBeenCalledWith(
+      '/api/v1/booking/seats/lock/showtime%2Ffloor-aware/2F%3AA%2F1%3F%23',
+    );
   });
 
   it('usePrepareReservation() uses floor-aware store seats and cached event policy instead of legacy payload defaults', async () => {

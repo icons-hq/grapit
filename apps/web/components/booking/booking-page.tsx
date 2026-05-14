@@ -48,6 +48,8 @@ import { TimerExpiredModal } from './timer-expired-modal';
 
 const DEFAULT_FLOOR_KEY = '1F';
 
+type RuntimeSeatState = SeatState | 'disabled';
+
 type RuntimeSeatIdentity = {
   seatId: string;
   floorKey: string;
@@ -74,6 +76,10 @@ function parseRuntimeSeatIdentity(rawSeatIdOrKey: string): RuntimeSeatIdentity {
     floorKey,
     seatKey: separatorIndex > 0 ? rawSeatIdOrKey : `${floorKey}:${seatId}`,
   };
+}
+
+function isUnavailableSeatState(state: RuntimeSeatState | undefined) {
+  return state === 'locked' || state === 'sold' || state === 'held' || state === 'disabled';
 }
 
 function SelectionGroups({
@@ -427,15 +433,16 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
   }, [availableSeatMaps, performance?.priceTiers]);
 
   const seatStatesByFloorKey = useMemo(() => {
-    const map = new Map<string, Map<string, SeatState>>();
+    const map = new Map<string, Map<string, RuntimeSeatState>>();
     if (!seatStatusData?.seats) {
       return map;
     }
 
     for (const [runtimeSeatId, state] of Object.entries(seatStatusData.seats)) {
       const seatIdentity = parseRuntimeSeatIdentity(runtimeSeatId);
-      const floorMap = map.get(seatIdentity.floorKey) ?? new Map<string, SeatState>();
-      floorMap.set(seatIdentity.seatId, state);
+      const floorMap = map.get(seatIdentity.floorKey) ?? new Map<string, RuntimeSeatState>();
+      floorMap.set(seatIdentity.seatKey, state as RuntimeSeatState);
+      floorMap.set(seatIdentity.seatId, state as RuntimeSeatState);
       map.set(seatIdentity.floorKey, floorMap);
     }
 
@@ -444,8 +451,8 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
 
   const seatStatesMap = useMemo(
     () => currentSeatMap
-      ? seatStatesByFloorKey.get(currentSeatMap.floorKey) ?? new Map<string, SeatState>()
-      : new Map<string, SeatState>(),
+      ? seatStatesByFloorKey.get(currentSeatMap.floorKey) ?? new Map<string, RuntimeSeatState>()
+      : new Map<string, RuntimeSeatState>(),
     [currentSeatMap, seatStatesByFloorKey],
   );
 
@@ -528,7 +535,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
         ? true
         : seatIds.some((seatId) => {
           const state = floorStates?.get(seatId) ?? 'available';
-          return state !== 'locked' && state !== 'sold';
+          return !isUnavailableSeatState(state);
         });
 
       return {
@@ -585,7 +592,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
   ]);
 
   const handleSeatClick = useCallback(
-    (seatId: string) => {
+    (runtimeSeatId: string) => {
       if (!selectedShowtimeId || !currentSeatMap) {
         return;
       }
@@ -594,14 +601,23 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
         return;
       }
 
-      const seatState = seatStatesMap.get(seatId);
-      if (seatState === 'locked' && !selectedSeatIds.has(seatId)) {
+      const seatIdentity = parseRuntimeSeatIdentity(runtimeSeatId);
+      const floorSeatMap = availableSeatMaps.find((seatMap) => seatMap.floorKey === seatIdentity.floorKey)
+        ?? currentSeatMap;
+      const floorSeatStates = seatStatesByFloorKey.get(floorSeatMap.floorKey) ?? seatStatesMap;
+      const seatState = floorSeatStates.get(seatIdentity.seatKey) ?? floorSeatStates.get(seatIdentity.seatId);
+      const isSelected = selectedSeats.some(
+        (seat) => seat.seatKey === seatIdentity.seatKey
+          || (seat.floorKey === floorSeatMap.floorKey && seat.seatId === seatIdentity.seatId),
+      );
+      if (isUnavailableSeatState(seatState) && !isSelected) {
         toast.info('이미 다른 사용자가 선택한 좌석입니다');
         return;
       }
 
       const existingSeat = selectedSeats.find(
-        (seat) => seat.floorKey === currentSeatMap.floorKey && seat.seatId === seatId,
+        (seat) => seat.seatKey === seatIdentity.seatKey
+          || (seat.floorKey === floorSeatMap.floorKey && seat.seatId === seatIdentity.seatId),
       );
       if (existingSeat) {
         removeSeat(existingSeat.seatKey);
@@ -616,22 +632,24 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
         return;
       }
 
-      const info = tierInfoMap.get(seatId);
+      const info = tierInfoByFloorKey.get(floorSeatMap.floorKey)?.get(seatIdentity.seatId)
+        ?? tierInfoMap.get(seatIdentity.seatId)
+        ?? tierInfoMap.get(seatIdentity.seatKey);
       if (!info) {
         return;
       }
 
-      const parts = seatId.split('-');
+      const parts = seatIdentity.seatId.split('-');
       const seatSelection: FloorAwareSeatSelection = {
-        seatId,
+        seatId: seatIdentity.seatId,
         tierName: info.tierName,
         tierColor: info.color,
-        row: parts[0] ?? seatId,
+        row: parts[0] ?? seatIdentity.seatId,
         number: parts[1] ?? '',
         price: info.price,
-        floorKey: currentSeatMap.floorKey,
-        floorLabel: currentSeatMap.floorLabel,
-        seatKey: `${currentSeatMap.floorKey}:${seatId}`,
+        floorKey: floorSeatMap.floorKey,
+        floorLabel: floorSeatMap.floorLabel,
+        seatKey: seatIdentity.seatKey,
       };
 
       addSeat(seatSelection);
@@ -639,9 +657,9 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
       lockSeat.mutate(
         {
           showtimeId: selectedShowtimeId,
-          seatId,
-          floorKey: currentSeatMap.floorKey,
-          floorLabel: currentSeatMap.floorLabel,
+          seatId: seatIdentity.seatId,
+          floorKey: floorSeatMap.floorKey,
+          floorLabel: floorSeatMap.floorLabel,
           seatKey: seatSelection.seatKey,
         },
         {
@@ -664,6 +682,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
     },
     [
       addSeat,
+      availableSeatMaps,
       bookingDisabledMessage,
       bookingAvailable,
       currentSeatMap,
@@ -671,11 +690,12 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
       maxTicketsPerUser,
       removeSeat,
       seatStatesMap,
-      selectedSeatIds,
+      seatStatesByFloorKey,
       selectedSeats,
       selectedShowtimeId,
       setTimerExpiry,
       ticketLimitCopy,
+      tierInfoByFloorKey,
       tierInfoMap,
       unlockSeat,
     ],

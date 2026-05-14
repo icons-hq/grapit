@@ -106,6 +106,13 @@
       "when": 1778487473405,
       "tag": "0014_locale_ja_drop_zh_tw",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1778742000000,
+      "tag": "0015_venue_layout_template_seats",
+      "breakpoints": true
     }
   ]
 }

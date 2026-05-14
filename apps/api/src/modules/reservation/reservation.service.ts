@@ -22,6 +22,10 @@ import {
   venues,
   seatInventories,
   seatMaps,
+  performanceSeatAssignments,
+  performanceSeatTiers,
+  venueLayoutSeats,
+  venueLayoutFloors,
   bookingPolicies,
   users,
 } from '../../database/schema/index.js';
@@ -64,6 +68,10 @@ type ApprovedPaymentSnapshot = {
 
 type SeatSelectionLike = SeatSelection & Partial<FloorAwareSeatSelection>;
 type BookingActor = { id: string; role?: string };
+type CanonicalSeatSelection = FloorAwareSeatSelection & {
+  layoutSeatId?: string;
+  performanceSeatAssignmentId?: string;
+};
 type ShowtimeBookingContext = {
   id: string;
   performanceId: string;
@@ -238,10 +246,82 @@ export class ReservationService {
     return seats.reduce((total, seat) => total + seat.price, 0);
   }
 
+  private async getCanonicalSeatSelectionsFromOverlay(
+    requestedSeats: FloorAwareSeatSelection[],
+    performanceId: string,
+  ): Promise<CanonicalSeatSelection[] | null> {
+    const overlayRows = await this.db
+      .select({
+        assignmentId: performanceSeatAssignments.id,
+        saleStatus: performanceSeatAssignments.saleStatus,
+        layoutSeatId: venueLayoutSeats.id,
+        seatKey: venueLayoutSeats.seatKey,
+        sourceSeatId: venueLayoutSeats.sourceSeatId,
+        rowLabel: venueLayoutSeats.rowLabel,
+        seatNumber: venueLayoutSeats.seatNumber,
+        floorKey: venueLayoutFloors.floorKey,
+        floorLabel: venueLayoutFloors.floorLabel,
+        tierName: performanceSeatTiers.tierName,
+        price: performanceSeatTiers.price,
+      })
+      .from(performanceSeatAssignments)
+      .innerJoin(
+        venueLayoutSeats,
+        eq(performanceSeatAssignments.layoutSeatId, venueLayoutSeats.id),
+      )
+      .innerJoin(
+        venueLayoutFloors,
+        eq(venueLayoutSeats.floorId, venueLayoutFloors.id),
+      )
+      .innerJoin(
+        performanceSeatTiers,
+        eq(performanceSeatAssignments.tierId, performanceSeatTiers.id),
+      )
+      .where(eq(performanceSeatAssignments.performanceId, performanceId));
+
+    if (overlayRows.length === 0) {
+      return null;
+    }
+
+    const overlayBySeatKey = new Map<string, typeof overlayRows[number]>();
+    for (const row of overlayRows) {
+      overlayBySeatKey.set(row.seatKey, row);
+      overlayBySeatKey.set(`${row.floorKey}:${row.sourceSeatId}`, row);
+    }
+
+    return requestedSeats.map((seat) => {
+      const row = overlayBySeatKey.get(seat.seatKey);
+      if (!row) {
+        throw new BadRequestException('유효하지 않은 좌석입니다');
+      }
+      if (row.saleStatus !== 'available') {
+        throw new BadRequestException('선택할 수 없는 좌석입니다');
+      }
+
+      const position = row.rowLabel && row.seatNumber
+        ? { row: row.rowLabel, number: row.seatNumber }
+        : this.deriveSeatPosition(row.sourceSeatId, seat);
+
+      return {
+        ...seat,
+        seatId: row.sourceSeatId,
+        seatKey: row.seatKey,
+        floorKey: row.floorKey,
+        floorLabel: row.floorLabel,
+        tierName: row.tierName,
+        price: row.price,
+        row: position.row,
+        number: position.number,
+        layoutSeatId: row.layoutSeatId,
+        performanceSeatAssignmentId: row.assignmentId,
+      };
+    });
+  }
+
   private async getCanonicalSeatSelections(
     seats: SeatSelectionLike[],
     performanceId: string,
-  ): Promise<FloorAwareSeatSelection[]> {
+  ): Promise<CanonicalSeatSelection[]> {
     const requestedSeats = seats.map((seat) => toFloorAwareSeatSelection(seat));
     this.assertUniqueSeatIds(requestedSeats);
 
@@ -254,11 +334,22 @@ export class ReservationService {
         .select({
           floorKey: seatMaps.floorKey,
           floorLabel: seatMaps.floorLabel,
+          venueLayoutId: seatMaps.venueLayoutId,
           seatConfig: seatMaps.seatConfig,
         })
         .from(seatMaps)
         .where(eq(seatMaps.performanceId, performanceId)),
     ]);
+
+    if (seatMapRows.some((row) => typeof row.venueLayoutId === 'string')) {
+      const overlaySeats = await this.getCanonicalSeatSelectionsFromOverlay(
+        requestedSeats,
+        performanceId,
+      );
+      if (overlaySeats) {
+        return overlaySeats;
+      }
+    }
 
     const tierPriceByName = new Map(tiers.map((tier) => [tier.tierName, tier.price]));
     const seatTierByFloorKey = new Map(
@@ -881,9 +972,14 @@ export class ReservationService {
 
         // Mark seats sold only when no committed sold row already exists.
         for (const seat of pendingSeats) {
-          const updated = await tx
-            .update(seatInventories)
-            .set({ status: 'sold', soldAt: new Date(), lockedBy: null, lockedUntil: null })
+	          const updated = await tx
+	            .update(seatInventories)
+	            .set({
+	              status: 'sold',
+	              soldAt: new Date(),
+	              lockedBy: null,
+	              lockedUntil: null,
+	            })
             .where(
               and(
                 eq(seatInventories.showtimeId, reservation.showtimeId),

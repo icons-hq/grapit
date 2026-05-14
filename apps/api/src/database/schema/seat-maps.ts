@@ -1,9 +1,11 @@
-import { pgTable, uuid, varchar, integer, jsonb, timestamp, uniqueIndex } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, integer, jsonb, timestamp, uniqueIndex, index } from 'drizzle-orm/pg-core';
 import { performances } from './performances.js';
+import { venueLayouts } from './venue-layouts.js';
 
 export const seatMaps = pgTable('seat_maps', {
   id: uuid('id').defaultRandom().primaryKey(),
   performanceId: uuid('performance_id').notNull().references(() => performances.id, { onDelete: 'cascade' }),
+  venueLayoutId: uuid('venue_layout_id').references(() => venueLayouts.id, { onDelete: 'set null' }),
   floorKey: varchar('floor_key', { length: 20 }).notNull().default('1F'),
   floorLabel: varchar('floor_label', { length: 100 }).notNull().default('1층'),
   sortOrder: integer('sort_order').notNull().default(0),
@@ -16,4 +18,5 @@ export const seatMaps = pgTable('seat_maps', {
     table.performanceId,
     table.floorKey,
   ),
+  index('idx_seat_maps_venue_layout_id').on(table.venueLayoutId),
 ]);

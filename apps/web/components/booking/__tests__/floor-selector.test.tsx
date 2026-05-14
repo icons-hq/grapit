@@ -13,12 +13,17 @@ const {
   unlockAllMutateMock,
   routerPushMock,
   useLocaleMock,
+  seatStatusSeatsMock,
 } = vi.hoisted(() => ({
   lockSeatMutateMock: vi.fn(),
   unlockSeatMutateMock: vi.fn(),
   unlockAllMutateMock: vi.fn(),
   routerPushMock: vi.fn(),
   useLocaleMock: vi.fn(() => 'ko'),
+  seatStatusSeatsMock: vi.fn(() => ({
+    '1F:A-1': 'available',
+    '2F:A-1': 'available',
+  })),
 }));
 
 vi.mock('next-intl', () => ({
@@ -54,10 +59,7 @@ vi.mock('@/hooks/use-socket', () => ({
 vi.mock('@/hooks/use-booking', () => ({
   useSeatStatus: () => ({
     data: {
-      seats: {
-        '1F:A-1': 'available',
-        '2F:A-1': 'available',
-      },
+      seats: seatStatusSeatsMock(),
     },
   }),
   useMyLocks: () => ({ data: { seatIds: [], expiresAt: null } }),
@@ -88,7 +90,10 @@ vi.mock('@/components/booking/seat-map-viewer', () => ({
     <div>
       <p>{`current map: ${svgUrl}`}</p>
       <p>{`selected ids: ${Array.from(selectedSeatIds).join(',') || 'none'}`}</p>
-      <button type="button" onClick={() => onSeatClick('A-1')}>
+      <button
+        type="button"
+        onClick={() => onSeatClick(svgUrl.includes('/2F-') ? '2F:A-1' : 'A-1')}
+      >
         현재 층 좌석 선택
       </button>
     </div>
@@ -220,6 +225,11 @@ describe('BookingPage floor selector', () => {
     unlockAllMutateMock.mockReset();
     routerPushMock.mockReset();
     useLocaleMock.mockReturnValue('ko');
+    seatStatusSeatsMock.mockReset();
+    seatStatusSeatsMock.mockReturnValue({
+      '1F:A-1': 'available',
+      '2F:A-1': 'available',
+    });
     lockSeatMutateMock.mockImplementation((variables, options) => {
       options?.onSuccess?.(
         {
@@ -268,6 +278,20 @@ describe('BookingPage floor selector', () => {
     expect(screen.queryByText(/최대 4석/)).not.toBeInTheDocument();
     expect(
       screen.getByText(/결제 완료 후 좌석 변경은 지원되지 않으며, 취소\/환불 후 다시 예매해야 합니다\./),
+    ).toBeInTheDocument();
+  });
+
+  it('marks floors unavailable when all seats are held or disabled', () => {
+    seatStatusSeatsMock.mockReturnValue({
+      '1F:A-1': 'held',
+      '2F:A-1': 'disabled',
+    });
+
+    renderWithQuery(<BookingPage performanceId="performance-floor-aware" />);
+
+    expect(screen.getAllByText('혼잡')).toHaveLength(2);
+    expect(
+      screen.getByText('현재 층은 선택 가능한 좌석이 없습니다. 다른 층을 확인해주세요.'),
     ).toBeInTheDocument();
   });
 });
