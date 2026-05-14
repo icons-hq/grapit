@@ -180,7 +180,7 @@ Plans:
 
 **Merged from:** 33 Event registration console, 34 Q&A/FAQ/notice/CS, 35 Admin security + operations
 
-**Plans:** 23/23 plans complete
+**Plans:** 23/24 plans complete
 
 Plans:
 **Wave 0**
@@ -230,12 +230,16 @@ Plans:
 **Wave 11** *(phase verification artifacts)*
 - [x] 25-15-PLAN.md — Run full validation and record MFA accepted-risk/manual UAT evidence
 
+**Wave 12** *(gap closure after automated UAT)*
+- [ ] 25-24-PLAN.md — Close malformed admin seat-operation showtimeId validation gap
+
 **Success criteria:**
 1. Event form supports multilingual tabs, cast cards, venue/transport, multi-SVG, price tiers, sale settings, review, approval, and publish states.
 2. Operator/reviewer/approver/finance RBAC is enforced and tested.
 3. Q&A 12 categories, FAQ, notices, CS 10 categories, escalation rules, SLA, signup failure lookup, and refund dispute retention are available.
 4. Admin MFA remains an explicit accepted-risk/deferred item per D-08; IP allowlist and sensitive action audit logs are enforced.
 5. Banners, reservation CSV filters, seat disable/reactivate, immediate cancelled-seat opening, and seat history work.
+6. Malformed admin seat operation showtime IDs are rejected as validation-level 400 responses before PostgreSQL UUID comparisons.
 
 ### Phase 26: M1 Canary + Cutover Gates
 
