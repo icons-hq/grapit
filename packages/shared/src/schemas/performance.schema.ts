@@ -143,6 +143,7 @@ export const createPerformanceSchema = z.object({
     sortOrder: z.number().int().min(0).default(0),
   })).min(1, '최소 1개의 가격 등급이 필요합니다'),
   showtimes: z.array(z.object({
+    showtimeId: z.string().uuid().optional(),
     dateTime: z.string().min(1, '회차 일시를 입력해주세요'),
   })).optional().default([]),
   castings: z.array(z.object({

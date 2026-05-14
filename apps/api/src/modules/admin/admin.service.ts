@@ -4,23 +4,24 @@ import {
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { eq, sql, ilike } from 'drizzle-orm';
+import { and, eq, sql, ilike, inArray } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
   performances,
   venues,
   priceTiers,
   showtimes,
-	  castings,
-	  seatMaps,
-	  bookingPolicies,
-	  banners,
-	  venueLayouts,
-	  venueLayoutFloors,
-	  venueLayoutSeats,
-	  performanceSeatTiers,
-	  performanceSeatAssignments,
-	} from '../../database/schema/index.js';
+  reservations,
+  castings,
+  seatMaps,
+  bookingPolicies,
+  banners,
+  venueLayouts,
+  venueLayoutFloors,
+  venueLayoutSeats,
+  performanceSeatTiers,
+  performanceSeatAssignments,
+} from '../../database/schema/index.js';
 import type {
   PerformanceBookingPolicy,
   Banner,
@@ -60,6 +61,7 @@ type FloorAwareSeatMapSaveInput = {
 };
 
 type SaveSeatMapInput = LegacySeatMapSaveInput | FloorAwareSeatMapSaveInput;
+type ShowtimeUpdateInput = NonNullable<UpdatePerformanceInput['showtimes']>[number];
 
 type SeatMapSaveResult = Pick<
   PerformanceWithDetails,
@@ -563,6 +565,111 @@ export class AdminService {
       .returning();
   }
 
+  private async syncShowtimes(
+    tx: DrizzleDB,
+    performanceId: string,
+    nextShowtimes: ShowtimeUpdateInput[],
+  ): Promise<void> {
+    const existingShowtimes = await tx
+      .select({
+        id: showtimes.id,
+        dateTime: showtimes.dateTime,
+      })
+      .from(showtimes)
+      .where(eq(showtimes.performanceId, performanceId))
+      .orderBy(showtimes.dateTime);
+
+    const existingById = new Map(
+      existingShowtimes.map((showtime) => [showtime.id, showtime]),
+    );
+    const retainedIds = new Set<string>();
+
+    for (const [index, nextShowtime] of nextShowtimes.entries()) {
+      const dateTime = parseAdminKstDateTime(nextShowtime.dateTime);
+      const requestedId = nextShowtime.showtimeId;
+      let targetShowtime = requestedId
+        ? existingById.get(requestedId)
+        : undefined;
+
+      if (requestedId && !targetShowtime) {
+        throw new UnprocessableEntityException({
+          message: 'Validation failed',
+          errors: {
+            showtimes: [`unknown showtimeId: ${requestedId}`],
+          },
+        });
+      }
+
+      if (!targetShowtime) {
+        targetShowtime =
+          existingShowtimes.find(
+            (showtime) =>
+              !retainedIds.has(showtime.id)
+              && showtime.dateTime.getTime() === dateTime.getTime(),
+          )
+          ?? existingShowtimes.find(
+            (showtime, existingIndex) =>
+              existingIndex === index && !retainedIds.has(showtime.id),
+          );
+      }
+
+      if (targetShowtime) {
+        retainedIds.add(targetShowtime.id);
+        await tx
+          .update(showtimes)
+          .set({ dateTime })
+          .where(
+            and(
+              eq(showtimes.id, targetShowtime.id),
+              eq(showtimes.performanceId, performanceId),
+            ),
+          );
+        continue;
+      }
+
+      await tx
+        .insert(showtimes)
+        .values({
+          performanceId,
+          dateTime,
+        });
+    }
+
+    const removedShowtimeIds = existingShowtimes
+      .filter((showtime) => !retainedIds.has(showtime.id))
+      .map((showtime) => showtime.id);
+
+    if (removedShowtimeIds.length === 0) {
+      return;
+    }
+
+    const referencedShowtimes = await tx
+      .select({ showtimeId: reservations.showtimeId })
+      .from(reservations)
+      .where(inArray(reservations.showtimeId, removedShowtimeIds))
+      .limit(1);
+
+    if (referencedShowtimes.length > 0) {
+      throw new UnprocessableEntityException({
+        message: 'Validation failed',
+        errors: {
+          showtimes: [
+            '예약이 연결된 회차는 삭제할 수 없습니다. 회차를 유지한 채 일시만 수정하거나 예약을 먼저 정리해주세요.',
+          ],
+        },
+      });
+    }
+
+    await tx
+      .delete(showtimes)
+      .where(
+        and(
+          eq(showtimes.performanceId, performanceId),
+          inArray(showtimes.id, removedShowtimeIds),
+        ),
+      );
+  }
+
   async createPerformance(input: CreatePerformanceInput): Promise<PerformanceWithDetails> {
     const result = await this.db.transaction(async (tx) => {
       // Insert or find venue by name
@@ -763,17 +870,7 @@ export class AdminService {
 
       // Replace showtimes if provided
       if (input.showtimes) {
-        await tx.delete(showtimes).where(eq(showtimes.performanceId, id));
-        if (input.showtimes.length > 0) {
-          await tx
-            .insert(showtimes)
-            .values(
-              input.showtimes.map((st) => ({
-                performanceId: id,
-                dateTime: parseAdminKstDateTime(st.dateTime),
-              })),
-            );
-        }
+        await this.syncShowtimes(tx as unknown as DrizzleDB, id, input.showtimes);
       }
 
       // Replace castings if provided

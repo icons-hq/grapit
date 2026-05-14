@@ -109,6 +109,7 @@ function ShowtimeRow({
   onRemove: () => void;
 }) {
   // Hidden input holds the actual dateTime value for react-hook-form
+  const showtimeIdField = register(`showtimes.${index}.showtimeId`);
   const { onChange: rhfOnChange, ...rest } = register(
     `showtimes.${index}.dateTime`,
   );
@@ -164,6 +165,7 @@ function ShowtimeRow({
         />
       </TableCell>
       <TableCell>
+        <input type="hidden" {...showtimeIdField} />
         <input type="hidden" {...rest} onChange={rhfOnChange} />
         <AlertDialog>
           <AlertDialogTrigger asChild>
