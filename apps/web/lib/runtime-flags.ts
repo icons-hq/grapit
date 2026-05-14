@@ -1,19 +1,22 @@
 import {
   DEFAULT_LOCALE,
   FLAG_NAMES,
-  isSupportedLocale,
   readFeatureFlags,
   type SupportedLocale,
 } from '@grabit/shared';
 
 export type RuntimeFlags = ReturnType<typeof readFeatureFlags>;
+type RuntimeLocale =
+  | Extract<SupportedLocale, 'ko' | 'en' | 'th' | 'zh-CN'>
+  | 'zh-TW';
+const RUNTIME_LOCALES = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
 
-export const BOOKING_DISABLED_COPY: Record<SupportedLocale, string> = {
+export const BOOKING_DISABLED_COPY: Record<RuntimeLocale, string> = {
   ko: '예매는 추후 오픈 예정입니다',
   en: 'Ticket booking will open later',
   th: 'การจองบัตรจะเปิดให้บริการในภายหลัง',
   'zh-CN': '门票预订将于稍后开放',
-  ja: 'チケット予約は後日開始予定です',
+  'zh-TW': '門票預訂將於稍後開放',
 };
 
 export class BookingDisabledError extends Error {
@@ -25,10 +28,14 @@ export class BookingDisabledError extends Error {
 
 export function getBookingDisabledCopy(locale: string | undefined): string {
   const candidate = locale ?? '';
-  const supportedLocale = isSupportedLocale(candidate)
+  const supportedLocale = isRuntimeLocale(candidate)
     ? candidate
     : DEFAULT_LOCALE;
   return BOOKING_DISABLED_COPY[supportedLocale];
+}
+
+function isRuntimeLocale(value: string): value is RuntimeLocale {
+  return (RUNTIME_LOCALES as readonly string[]).includes(value);
 }
 
 export function readRuntimeFlagsFromEnv(

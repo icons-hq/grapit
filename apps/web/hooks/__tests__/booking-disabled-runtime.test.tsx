@@ -5,7 +5,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
-import type { SupportedLocale } from '@grabit/shared';
 import { BOOKING_DISABLED_COPY } from '@/lib/runtime-flags';
 import { BookingPage } from '@/components/booking/booking-page';
 import ConfirmPage from '@/app/booking/[performanceId]/confirm/page';
@@ -316,7 +315,7 @@ describe('runtime booking disabled UI', () => {
     ['th', 'การจองบัตรจะเปิดให้บริการในภายหลัง'],
     ['zh-CN', '门票预订将于稍后开放'],
     ['zh-TW', '門票預訂將於稍後開放'],
-  ] satisfies Array<[SupportedLocale, string]>)(
+  ] satisfies Array<[string, string]>)(
     'replaces the performance detail booking CTA with disabled copy for %s',
     async (locale, copy) => {
       useLocaleMock.mockReturnValue(locale);
@@ -382,7 +381,7 @@ describe('runtime booking disabled UI', () => {
   it.each([
     ['ko', '예매는 추후 오픈 예정입니다'],
     ['en', 'Ticket booking will open later'],
-  ] satisfies Array<[SupportedLocale, string]>)(
+  ] satisfies Array<[string, string]>)(
     'shows disabled copy before performance detail finishes loading for %s',
     (locale, copy) => {
       useLocaleMock.mockReturnValue(locale);
