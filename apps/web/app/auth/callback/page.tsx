@@ -190,12 +190,17 @@ function CallbackContent() {
       <main className="flex flex-1 items-center justify-center px-4 py-12">
         <div className="w-full max-w-[400px] space-y-6">
           <h1 className="text-center text-heading font-semibold text-gray-900">
-            추가 정보 입력
+            {authCopy.signup.socialTitle}
           </h1>
 
           <StepIndicator
             currentStep={currentStep}
-            labels={['소셜 로그인', '약관 동의', '추가 정보']}
+            ariaLabel={authCopy.signup.progressAriaLabel}
+            labels={[
+              authCopy.signup.socialStep,
+              authCopy.signup.stepConsent,
+              authCopy.signup.stepAdditional,
+            ]}
           />
 
           <div

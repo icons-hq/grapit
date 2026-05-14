@@ -5,6 +5,7 @@ import { Check, ChevronsUpDown } from 'lucide-react';
 import type { Country, FlagProps, Labels } from 'react-phone-number-input';
 import PhoneInputPrimitive, {
   getCountryCallingCode,
+  parsePhoneNumber,
 } from 'react-phone-number-input';
 import flags from 'react-phone-number-input/flags';
 import ko from 'react-phone-number-input/locale/ko.json';
@@ -49,6 +50,11 @@ type CountrySelectCopy = {
   ariaPrefix: string;
   searchPlaceholder: string;
   empty: string;
+};
+
+type RawDisplayInputProps = React.ComponentProps<'input'> & {
+  rawDisplayCallingCode?: string;
+  rawDisplayCountry?: Country;
 };
 
 const jaLabels = {
@@ -116,6 +122,8 @@ const PhoneInput = React.forwardRef<HTMLInputElement, PhoneInputProps>(
     const activeLocale = resolvePhoneInputLocale(locale);
     const labels = PHONE_INPUT_LABELS[activeLocale];
     const countrySelectCopy = COUNTRY_SELECT_COPY[activeLocale];
+    const parsedCountry = value ? parsePhoneNumber(value)?.country : undefined;
+    const rawDisplayCountry = parsedCountry ?? 'KR';
 
     return (
       <PhoneInputPrimitive
@@ -133,6 +141,8 @@ const PhoneInput = React.forwardRef<HTMLInputElement, PhoneInputProps>(
         )}
         inputComponent={InputComponent}
         smartCaret={false}
+        rawDisplayCallingCode={getCountryCallingCode(rawDisplayCountry)}
+        rawDisplayCountry={rawDisplayCountry}
         value={value || undefined}
         onChange={(v) => onChange(v ?? '')}
         {...props}
@@ -144,15 +154,48 @@ PhoneInput.displayName = 'PhoneInput';
 
 const InputComponent = React.forwardRef<
   HTMLInputElement,
-  React.ComponentProps<'input'>
->(({ className, ...props }, ref) => (
-  <Input
-    {...props}
-    ref={ref}
-    className={cn('rounded-s-none rounded-e-lg', className)}
-  />
-));
+  RawDisplayInputProps
+>(({ className, onChange, rawDisplayCallingCode, rawDisplayCountry, value, ...props }, ref) => {
+  const displayValue =
+    typeof value === 'string'
+      ? toRawNationalDigits(value, rawDisplayCallingCode, rawDisplayCountry)
+      : value;
+
+  function handleChange(event: React.ChangeEvent<HTMLInputElement>) {
+    event.currentTarget.value = event.currentTarget.value.replace(/[^0-9]/g, '');
+    onChange?.(event);
+  }
+
+  return (
+    <Input
+      {...props}
+      ref={ref}
+      inputMode="numeric"
+      value={displayValue}
+      onChange={handleChange}
+      className={cn('rounded-s-none rounded-e-lg', className)}
+    />
+  );
+});
 InputComponent.displayName = 'InputComponent';
+
+function toRawNationalDigits(
+  value: string,
+  callingCode: string | undefined,
+  country: Country | undefined,
+): string {
+  let digits = value.replace(/[^0-9]/g, '');
+
+  if (callingCode && digits.startsWith(callingCode)) {
+    digits = digits.slice(callingCode.length);
+  }
+
+  if (country === 'KR' && digits.startsWith('10')) {
+    return `0${digits}`;
+  }
+
+  return digits;
+}
 
 type CountrySelectOption = {
   label: string;
