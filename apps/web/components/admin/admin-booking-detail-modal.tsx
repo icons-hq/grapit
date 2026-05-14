@@ -1,10 +1,13 @@
 'use client';
 
 import { useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, ShieldAlert } from 'lucide-react';
+import { toast } from 'sonner';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -13,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
+import { useAdminManualOpenSeat } from '@/hooks/use-admin-seat-operations';
 import { useAdminBookingDetail } from '@/hooks/use-reservations';
 import { formatDateTime } from '@/lib/format-datetime';
 import type { ReservationStatus } from '@grabit/shared';
@@ -70,11 +74,16 @@ export function AdminBookingDetailModal({
   );
   const [showRefundForm, setShowRefundForm] = useState(false);
   const [refundReason, setRefundReason] = useState('');
+  const [showManualOpenForm, setShowManualOpenForm] = useState(false);
+  const [manualOpenReason, setManualOpenReason] = useState('');
+  const manualOpenMutation = useAdminManualOpenSeat();
 
   function handleOpenChange(value: boolean) {
     if (!value) {
       setShowRefundForm(false);
       setRefundReason('');
+      setShowManualOpenForm(false);
+      setManualOpenReason('');
     }
     onOpenChange(value);
   }
@@ -84,6 +93,31 @@ export function AdminBookingDetailModal({
     onRefund(bookingId, refundReason.trim());
   }
 
+  function handleManualOpenConfirm() {
+    if (!bookingId || !manualOpenReason.trim()) return;
+
+    manualOpenMutation.mutate(
+      {
+        reservationId: bookingId,
+        reason: manualOpenReason.trim(),
+      },
+      {
+        onSuccess: () => {
+          toast.success('취소 좌석이 즉시 판매 가능 상태로 변경되었습니다.');
+          setShowManualOpenForm(false);
+          setManualOpenReason('');
+        },
+        onError: (error) => {
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : '취소 좌석 즉시 개방에 실패했습니다.',
+          );
+        },
+      },
+    );
+  }
+
   const statusConfig = booking ? STATUS_CONFIG[booking.status] : null;
 
   return (
@@ -91,6 +125,9 @@ export function AdminBookingDetailModal({
       <DialogContent className="max-h-[80vh] w-full max-w-[480px] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>예매 상세</DialogTitle>
+          <DialogDescription>
+            예매 상태, 좌석, 결제 정보와 예약별 운영 작업을 확인합니다.
+          </DialogDescription>
         </DialogHeader>
 
         {isLoading && (
@@ -102,7 +139,7 @@ export function AdminBookingDetailModal({
           </div>
         )}
 
-        {booking && !showRefundForm && (
+        {booking && !showRefundForm && !showManualOpenForm && (
           <div className="space-y-1">
             <InfoRow label="예매번호" value={booking.reservationNumber} />
             <Separator />
@@ -160,9 +197,27 @@ export function AdminBookingDetailModal({
               <Button
                 variant="destructive"
                 className="mt-4 w-full"
-                onClick={() => setShowRefundForm(true)}
+                onClick={() => {
+                  setShowManualOpenForm(false);
+                  setManualOpenReason('');
+                  setShowRefundForm(true);
+                }}
               >
                 환불 처리
+              </Button>
+            )}
+
+            {booking.status === 'CANCELLED' && (
+              <Button
+                variant="outline"
+                className="mt-4 h-12 w-full border-[#C62828] text-[#C62828] hover:bg-[#FEF2F2] hover:text-[#C62828]"
+                onClick={() => {
+                  setShowRefundForm(false);
+                  setRefundReason('');
+                  setShowManualOpenForm(true);
+                }}
+              >
+                취소 좌석 즉시 개방
               </Button>
             )}
           </div>
@@ -234,6 +289,92 @@ export function AdminBookingDetailModal({
                 )}
               </Button>
             </div>
+          </div>
+        )}
+
+        {booking && showManualOpenForm && (
+          <div className="space-y-4">
+            <DialogHeader>
+              <DialogTitle>
+                이 취소 좌석을 지금 즉시 개방하시겠습니까?
+              </DialogTitle>
+              <DialogDescription>
+                취소로 보류 중인 좌석을 판매 가능 상태로 즉시 변경합니다. 좌석과
+                사유를 확인한 뒤 진행하세요.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div
+              role="alert"
+              className="flex gap-3 rounded-lg border border-[#F3C8C8] bg-[#FEF2F2] p-3 text-sm font-semibold text-[#C62828]"
+            >
+              <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>
+                즉시 개방은 예약 상세에서만 처리하는 고위험 운영 작업입니다.
+              </span>
+            </div>
+
+            <div className="rounded-lg bg-[#F5F5F7] p-3">
+              <p className="text-sm font-semibold text-gray-700">개방 대상</p>
+              <dl className="mt-2 grid gap-2 text-sm text-gray-700">
+                <div className="flex justify-between gap-3 rounded-md bg-white px-3 py-2">
+                  <dt className="font-semibold">예매번호</dt>
+                  <dd className="text-right">{booking.reservationNumber}</dd>
+                </div>
+                <div className="flex justify-between gap-3 rounded-md bg-white px-3 py-2">
+                  <dt className="font-semibold">좌석</dt>
+                  <dd className="text-right">
+                    {booking.seats
+                      .map(
+                        (seat) =>
+                          `${seat.floorLabel} ${seat.tierName} ${seat.row}열 ${seat.number}번`,
+                      )
+                      .join(', ')}
+                  </dd>
+                </div>
+              </dl>
+            </div>
+
+            <label className="space-y-1.5 text-sm font-semibold text-gray-700">
+              <span>즉시 개방 사유</span>
+              <Textarea
+                value={manualOpenReason}
+                onChange={(event) => setManualOpenReason(event.target.value)}
+                aria-label="즉시 개방 사유"
+                placeholder="예: 취소 입금 확인, 운영자 확인 후 재판매"
+                className="min-h-[80px]"
+              />
+            </label>
+
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setShowManualOpenForm(false);
+                  setManualOpenReason('');
+                }}
+              >
+                취소
+              </Button>
+              <Button
+                type="button"
+                className="bg-[#C62828] hover:bg-[#A81F1F]"
+                disabled={
+                  !manualOpenReason.trim() || manualOpenMutation.isPending
+                }
+                onClick={handleManualOpenConfirm}
+              >
+                {manualOpenMutation.isPending ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    즉시 개방 중...
+                  </>
+                ) : (
+                  '즉시 개방 확인'
+                )}
+              </Button>
+            </DialogFooter>
           </div>
         )}
       </DialogContent>
