@@ -180,7 +180,7 @@ Plans:
 
 **Merged from:** 33 Event registration console, 34 Q&A/FAQ/notice/CS, 35 Admin security + operations
 
-**Plans:** 8/23 plans executed
+**Plans:** 9/23 plans executed
 
 Plans:
 **Wave 0**
@@ -194,7 +194,7 @@ Plans:
 - [x] 25-20-PLAN.md — Resolve legal fallback locale drift
 
 **Wave 1** *(blocked on locale plans and contracts)*
-- [ ] 25-04-PLAN.md — Add event, venue/transport, and banner schema contracts
+- [x] 25-04-PLAN.md — Add event, venue/transport, and banner schema contracts
 
 **Wave 2** *(blocked on event/content schema ownership)*
 - [ ] 25-21-PLAN.md — Add support thread, FAQ, and notice schema contracts
