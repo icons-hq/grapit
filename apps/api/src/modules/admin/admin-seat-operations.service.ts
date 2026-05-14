@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { and, desc, eq, type SQL } from 'drizzle-orm';
@@ -53,6 +54,8 @@ export interface AdminSeatOperationHistoryResponse {
 
 @Injectable()
 export class AdminSeatOperationsService {
+  private readonly logger = new Logger(AdminSeatOperationsService.name);
+
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly adminAuditService: AdminAuditService,
@@ -179,7 +182,14 @@ export class AdminSeatOperationsService {
     });
 
     if (result.nextStatus === 'disabled') {
-      await this.bookingService?.forceReleaseSeatLock(result.showtimeId, result.seatKey);
+      try {
+        await this.bookingService?.forceReleaseSeatLock(result.showtimeId, result.seatKey);
+      } catch (error) {
+        this.logger.error(
+          `Failed to force-release disabled seat lock. showtimeId=${result.showtimeId}, seatKey=${result.seatKey}`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      }
     }
 
     this.bookingGateway.broadcastSeatUpdate(

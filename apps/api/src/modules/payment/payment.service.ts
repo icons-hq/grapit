@@ -485,7 +485,7 @@ export class PaymentService {
                   eq(seatInventories.seatId, seat.seatId),
                 ),
               ),
-              sql`${seatInventories.status} <> 'sold'`,
+              eq(seatInventories.status, 'available'),
             ),
           )
           .returning({ id: seatInventories.id });
@@ -506,7 +506,7 @@ export class PaymentService {
           .returning({ id: seatInventories.id });
 
         if (inserted.length === 0) {
-          throw new ConflictException('이미 판매된 좌석입니다');
+          throw new ConflictException('판매 불가능한 좌석입니다');
         }
       }
     });

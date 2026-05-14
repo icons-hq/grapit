@@ -879,7 +879,7 @@ export class ReservationService {
           committedPaymentId = insertedPayments[0]?.id ?? null;
         }
 
-        // Mark seats sold only when no committed sold row already exists.
+        // Mark seats sold only when the inventory row is still available.
         for (const seat of pendingSeats) {
           const updated = await tx
             .update(seatInventories)
@@ -895,7 +895,7 @@ export class ReservationService {
                     eq(seatInventories.seatId, seat.seatId),
                   ),
                 ),
-                sql`${seatInventories.status} <> 'sold'`,
+                eq(seatInventories.status, 'available'),
               ),
             )
             .returning({ id: seatInventories.id });
@@ -916,7 +916,7 @@ export class ReservationService {
             .returning({ id: seatInventories.id });
 
           if (inserted.length === 0) {
-            throw new ConflictException('이미 판매된 좌석입니다');
+            throw new ConflictException('판매 불가능한 좌석입니다');
           }
         }
       });
