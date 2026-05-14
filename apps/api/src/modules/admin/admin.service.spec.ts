@@ -18,7 +18,9 @@ import { CacheService } from '../performance/cache.service.js';
 import {
   bookingPolicies,
   performanceSeatTiers,
+  reservations,
   seatMaps,
+  showtimes,
   venueLayoutFloors,
   venueLayouts,
   venueLayoutSeats,
@@ -50,7 +52,7 @@ function createMockCacheService(): CacheService {
 
 function createMockTx() {
   const txChain: Record<string, ReturnType<typeof vi.fn>> = {};
-  const methods = ['select', 'from', 'where', 'returning'];
+  const methods = ['select', 'from', 'where', 'orderBy', 'limit', 'returning'];
   for (const method of methods) {
     txChain[method] = vi.fn().mockReturnValue(txChain);
   }
@@ -83,6 +85,24 @@ function createMockTx() {
       where: vi.fn().mockResolvedValue([]),
     }),
   };
+}
+
+type SelectResultChain<T> = {
+  from: ReturnType<typeof vi.fn>;
+  where: ReturnType<typeof vi.fn>;
+  orderBy: ReturnType<typeof vi.fn>;
+  limit: ReturnType<typeof vi.fn>;
+  then: ReturnType<typeof vi.fn>;
+};
+
+function createSelectResultChain<T>(result: T[]): SelectResultChain<T> {
+  const chain = {} as SelectResultChain<T>;
+  chain.from = vi.fn().mockReturnValue(chain);
+  chain.where = vi.fn().mockReturnValue(chain);
+  chain.orderBy = vi.fn().mockResolvedValue(result);
+  chain.limit = vi.fn().mockResolvedValue(result);
+  chain.then = vi.fn((resolve: (value: T[]) => void) => resolve(result));
+  return chain;
 }
 
 function createMockDb() {
@@ -298,6 +318,94 @@ describe('AdminService', () => {
       // When GREEN, should verify DELETE price_tiers WHERE performanceId + INSERT new tiers
       expect(tx.delete).toHaveBeenCalled();
       expect(tx.insert).toHaveBeenCalled();
+    });
+
+    it('updates existing showtimes in place when showtimeId is preserved', async () => {
+      const tx = mockDb._tx;
+      const showtimeId = '11111111-1111-4111-8111-111111111111';
+      tx.select.mockReturnValueOnce(
+        createSelectResultChain([
+          {
+            id: showtimeId,
+            dateTime: new Date('2026-04-01T10:00:00.000Z'),
+          },
+        ]),
+      );
+
+      await service.updatePerformance('perf-id-123', {
+        showtimes: [
+          {
+            showtimeId,
+            dateTime: '2026-04-01T20:00:00',
+          },
+        ],
+      });
+
+      expect(tx.update).toHaveBeenCalledWith(showtimes);
+      expect(tx.delete).not.toHaveBeenCalledWith(showtimes);
+    });
+
+    it('keeps existing showtime rows for legacy payloads without showtimeId', async () => {
+      const tx = mockDb._tx;
+      tx.select.mockReturnValueOnce(
+        createSelectResultChain([
+          {
+            id: '22222222-2222-4222-8222-222222222222',
+            dateTime: new Date('2026-04-01T10:00:00.000Z'),
+          },
+        ]),
+      );
+
+      await service.updatePerformance('perf-id-123', {
+        showtimes: [
+          {
+            dateTime: '2026-04-01T20:00:00',
+          },
+        ],
+      });
+
+      expect(tx.update).toHaveBeenCalledWith(showtimes);
+      expect(tx.delete).not.toHaveBeenCalledWith(showtimes);
+    });
+
+    it('rejects removing a showtime that already has reservations', async () => {
+      const tx = mockDb._tx;
+      tx.select
+        .mockReturnValueOnce(
+          createSelectResultChain([
+            {
+              id: '33333333-3333-4333-8333-333333333333',
+              dateTime: new Date('2026-04-01T10:00:00.000Z'),
+            },
+            {
+              id: '44444444-4444-4444-8444-444444444444',
+              dateTime: new Date('2026-04-02T10:00:00.000Z'),
+            },
+          ]),
+        )
+        .mockReturnValueOnce(
+          createSelectResultChain([
+            {
+              showtimeId: '44444444-4444-4444-8444-444444444444',
+            },
+          ]),
+        );
+
+      await expect(
+        service.updatePerformance('perf-id-123', {
+          showtimes: [
+            {
+              showtimeId: '33333333-3333-4333-8333-333333333333',
+              dateTime: '2026-04-01T19:00:00',
+            },
+          ],
+        }),
+      ).rejects.toThrow(UnprocessableEntityException);
+
+      expect(tx.select).toHaveBeenCalledWith({
+        showtimeId: reservations.showtimeId,
+      });
+      expect(tx.delete).not.toHaveBeenCalledWith(showtimes);
     });
 
     it('replaces seatMaps and upserts bookingPolicy without assuming a single floor', async () => {
