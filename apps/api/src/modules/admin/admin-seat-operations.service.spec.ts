@@ -8,6 +8,7 @@ import {
   seatInventories,
   seatOperationHistory,
 } from '../../database/schema/index.js';
+import type { BookingService } from '../booking/booking.service.js';
 import type { AdminAuditService } from './admin-audit.service.js';
 import { AdminSeatOperationsService } from './admin-seat-operations.service.js';
 
@@ -22,6 +23,14 @@ function createMockAdminAuditService() {
 function createMockBookingGateway() {
   return {
     broadcastSeatUpdate: vi.fn(),
+  };
+}
+
+function createMockBookingService() {
+  return {
+    forceReleaseSeatLock: vi.fn().mockResolvedValue(undefined),
+  } as unknown as Pick<BookingService, 'forceReleaseSeatLock'> & {
+    forceReleaseSeatLock: Mock;
   };
 }
 
@@ -97,10 +106,12 @@ describe('AdminSeatOperationsService', () => {
       select: vi.fn(),
     };
     const auditService = createMockAdminAuditService();
+    const bookingService = createMockBookingService();
     const service = new AdminSeatOperationsService(
       db as never,
       auditService,
       gateway as never,
+      bookingService as never,
     );
 
     const result = await service.performOperation(
@@ -168,6 +179,12 @@ describe('AdminSeatOperationsService', () => {
       reason: '시야 제한 좌석 판매 중지',
       auditLogId: 'audit-seat-1',
     }));
+    expect(bookingService.forceReleaseSeatLock).toHaveBeenCalledWith(
+      '00000000-0000-4000-8000-000000000001',
+      '2F:A-1',
+    );
+    expect(bookingService.forceReleaseSeatLock.mock.invocationCallOrder[0])
+      .toBeLessThan(gateway.broadcastSeatUpdate.mock.invocationCallOrder[0]!);
     expect(gateway.broadcastSeatUpdate).toHaveBeenCalledTimes(1);
     expect(gateway.broadcastSeatUpdate).toHaveBeenCalledWith(
       '00000000-0000-4000-8000-000000000001',
