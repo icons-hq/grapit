@@ -1787,7 +1787,12 @@ describe('ReservationService', () => {
       expect(mockBookingService.assertOwnedSeatLocks).toHaveBeenCalledWith(userId, showtimeId, ['1F:A-1', '1F:A-2']);
       expect(mockTossClient.confirmPayment).toHaveBeenCalledOnce();
       expect(mockDb.transaction).toHaveBeenCalledOnce();
-      expect(mockBookingService.consumeOwnedSeatLocks).toHaveBeenCalledWith(userId, showtimeId, ['1F:A-1', '1F:A-2']);
+      expect(mockBookingService.consumeOwnedSeatLocks).toHaveBeenCalledWith(
+        userId,
+        showtimeId,
+        ['1F:A-1', '1F:A-2'],
+        { skipUnavailableCheck: true },
+      );
       expect(mockDb.transaction.mock.invocationCallOrder[0])
         .toBeLessThan(mockBookingService.consumeOwnedSeatLocks.mock.invocationCallOrder[0]!);
       expect(mockTossClient.cancelPayment).not.toHaveBeenCalled();
@@ -1796,6 +1801,80 @@ describe('ReservationService', () => {
       const lockToken = mockBookingService.acquirePaymentConfirmLock.mock.calls[0]?.[1];
       expect(mockBookingService.refreshPaymentConfirmLock).toHaveBeenCalledWith(orderId, lockToken);
       expect(mockBookingService.releasePaymentConfirmLock).toHaveBeenCalledWith(orderId, lockToken);
+    });
+
+    it('cancels existing DONE payment and rejects when final sold transition detects an unavailable seat', async () => {
+      mockDb.select
+        .mockReturnValueOnce(chainResult([{
+          id: 'payment-existing',
+          reservationId,
+          tossOrderId: orderId,
+          paymentKey: 'pay_async_1',
+          method: 'FOREIGN_EASY_PAY',
+          provider: 'ALIPAY_PLUS',
+          currency: 'USD',
+          amount: 150000,
+          status: 'DONE',
+          paidAt: new Date('2026-05-08T07:06:30.000Z'),
+        }]))
+        .mockReturnValueOnce(chainResult([{
+          id: reservationId,
+          userId,
+          showtimeId,
+          tossOrderId: orderId,
+          status: 'PENDING_PAYMENT',
+          totalAmount: 150000,
+          paymentDeadlineAt: new Date('2099-05-08T07:07:00.000Z'),
+          admissionActiveUntilAt: new Date('2099-05-08T07:10:00.000Z'),
+          reentryGraceUntilAt: new Date('2099-05-08T07:13:00.000Z'),
+        }]))
+        .mockReturnValueOnce(chainResult([
+          { seatId: 'A-1', tierName: 'VIP', price: 100000, row: 'A', number: '1' },
+          { seatId: 'A-2', tierName: 'VIP', price: 50000, row: 'A', number: '2' },
+        ]))
+        .mockReturnValueOnce(chainResult([{ reservationId, tossOrderId: orderId }]));
+
+      const mockTx = {
+        update: vi.fn()
+          .mockReturnValueOnce({
+            set: vi.fn().mockReturnValue({
+              where: vi.fn().mockResolvedValue(undefined),
+            }),
+          })
+          .mockReturnValueOnce({
+            set: vi.fn().mockReturnValue({
+              where: vi.fn().mockResolvedValue(undefined),
+            }),
+          })
+          .mockReturnValueOnce({
+            set: vi.fn().mockReturnValue({
+              where: vi.fn().mockReturnValue({
+                returning: vi.fn().mockResolvedValue([]),
+              }),
+            }),
+          }),
+        insert: vi.fn().mockReturnValue({
+          values: vi.fn().mockReturnValue({
+            onConflictDoNothing: vi.fn().mockReturnValue({
+              returning: vi.fn().mockResolvedValue([]),
+            }),
+          }),
+        }),
+      };
+      mockDb.transaction.mockImplementation(async (cb: (tx: typeof mockTx) => Promise<unknown>) => cb(mockTx));
+      setupReservationDetailMocks({ reservationId, userId, amount: 150000 });
+
+      await expect(service.confirmAndCreateReservation(
+        { paymentKey: 'pay_async_1', orderId, amount: 150000 },
+        userId,
+      )).rejects.toThrow('판매 불가능한 좌석입니다');
+
+      expect(mockTossClient.confirmPayment).not.toHaveBeenCalled();
+      expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
+        'pay_async_1',
+        expect.stringContaining('판매 불가능'),
+      );
+      expect(mockBookingService.consumeOwnedSeatLocks).not.toHaveBeenCalled();
     });
 
     it('cancels Toss and rejects when conditional sold transition detects an already sold seat', async () => {

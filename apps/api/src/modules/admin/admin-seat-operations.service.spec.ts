@@ -5,8 +5,10 @@ import {
 import { describe, expect, it, vi, type Mock } from 'vitest';
 
 import {
+  seatMaps,
   seatInventories,
   seatOperationHistory,
+  showtimes,
 } from '../../database/schema/index.js';
 import type { BookingService } from '../booking/booking.service.js';
 import type { AdminAuditService } from './admin-audit.service.js';
@@ -232,6 +234,107 @@ describe('AdminSeatOperationsService', () => {
       '2F:A-1',
       'disabled',
     );
+  });
+
+  it('disables an untouched available seat by creating a disabled inventory row from the seat map', async () => {
+    const inventorySelect = createSelectChain([]);
+    const showtimeSelect = createSelectChain([{ performanceId: 'performance-1' }]);
+    const seatMapSelect = createSelectChain([{
+      seatConfig: {
+        tiers: [
+          { tierName: 'VIP', color: '#111111', seatIds: ['A-1', 'A-2'] },
+        ],
+      },
+    }]);
+    const insertInventoryReturning = vi.fn().mockResolvedValue([{
+      id: 'seat-inventory-1',
+      showtimeId: '00000000-0000-4000-8000-000000000001',
+      seatId: 'A-1',
+      floorKey: '2F',
+      seatKey: '2F:A-1',
+      status: 'disabled',
+    }]);
+    const insertInventoryOnConflict = vi.fn().mockReturnValue({
+      returning: insertInventoryReturning,
+    });
+    const insertInventoryValues = vi.fn().mockReturnValue({
+      onConflictDoNothing: insertInventoryOnConflict,
+    });
+    const insertHistoryReturning = vi.fn().mockResolvedValue([{ id: 'history-1' }]);
+    const insertHistoryValues = vi.fn().mockReturnValue({
+      returning: insertHistoryReturning,
+    });
+    const tx = {
+      select: vi.fn()
+        .mockReturnValueOnce(inventorySelect.select())
+        .mockReturnValueOnce(showtimeSelect.select())
+        .mockReturnValueOnce(seatMapSelect.select()),
+      insert: vi.fn()
+        .mockReturnValueOnce({ values: insertInventoryValues })
+        .mockReturnValueOnce({ values: insertHistoryValues }),
+      update: vi.fn(),
+    };
+    const db = {
+      transaction: vi.fn().mockImplementation((callback: (tx: unknown) => Promise<unknown>) =>
+        callback(tx),
+      ),
+      select: vi.fn(),
+    };
+    const auditService = createMockAdminAuditService();
+    const gateway = createMockBookingGateway();
+    const bookingService = createMockBookingService();
+    const service = new AdminSeatOperationsService(
+      db as never,
+      auditService,
+      gateway as never,
+      bookingService as never,
+    );
+
+    const result = await service.performOperation('admin-1', {
+      operation: 'seat.disable',
+      showtimeId: '00000000-0000-4000-8000-000000000001',
+      seatKey: '2F:A-1',
+      reason: '시야 제한 좌석 판매 중지',
+      confirmed: true,
+    });
+
+    expect(result).toMatchObject({
+      previousStatus: 'available',
+      nextStatus: 'disabled',
+      seatInventoryId: 'seat-inventory-1',
+      seatKey: '2F:A-1',
+    });
+    expect(tx.insert).toHaveBeenCalledWith(seatInventories);
+    expect(insertInventoryValues).toHaveBeenCalledWith(expect.objectContaining({
+      showtimeId: '00000000-0000-4000-8000-000000000001',
+      seatId: 'A-1',
+      floorKey: '2F',
+      seatKey: '2F:A-1',
+      status: 'disabled',
+    }));
+    expect(tx.insert).toHaveBeenCalledWith(seatOperationHistory);
+    expect(auditService.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        before: { seatStatus: 'available' },
+        after: { seatStatus: 'disabled' },
+      }),
+      tx,
+    );
+    expect(bookingService.forceReleaseSeatLock).toHaveBeenCalledWith(
+      '00000000-0000-4000-8000-000000000001',
+      '2F:A-1',
+    );
+    expect(gateway.broadcastSeatUpdate).toHaveBeenCalledWith(
+      '00000000-0000-4000-8000-000000000001',
+      '2F:A-1',
+      'disabled',
+    );
+    expect(tx.select).toHaveBeenCalledWith(expect.objectContaining({
+      performanceId: showtimes.performanceId,
+    }));
+    expect(tx.select).toHaveBeenCalledWith(expect.objectContaining({
+      seatConfig: seatMaps.seatConfig,
+    }));
   });
 
   it('reactivates a disabled seat and rejects invalid state transitions', async () => {

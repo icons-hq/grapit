@@ -519,6 +519,23 @@ describe('BookingService', () => {
       expect(mockRedis.eval).not.toHaveBeenCalled();
     });
 
+    it('consumeOwnedSeatLocks can skip unavailable DB checks for post-confirm cleanup', async () => {
+      mockDb.select.mockReturnValue(chainResult([{ id: randomUUID(), status: 'sold' }]));
+      mockRedis.eval.mockResolvedValue([1, 'OK', '1', '']);
+      const consume = service.consumeOwnedSeatLocks.bind(service) as (
+        userId: string,
+        showtimeId: string,
+        seatIds: string[],
+        options: { skipUnavailableCheck: boolean },
+      ) => Promise<{ consumedSeatIds: string[] }>;
+
+      await expect(consume(userId, showtimeId, ['A-1'], { skipUnavailableCheck: true }))
+        .resolves
+        .toEqual({ consumedSeatIds: ['A-1'] });
+
+      expect(mockRedis.eval).toHaveBeenCalledOnce();
+    });
+
     it('extendOwnedSeatLocks verifies ownership and extends each requested lock atomically', async () => {
       mockRedis.eval.mockResolvedValue([1, 'OK', '2', '']);
 
