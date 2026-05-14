@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Menu, LogOut } from 'lucide-react';
+import Link from 'next/link';
+import { Menu, LogOut, ShieldAlert } from 'lucide-react';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { AdminSidebar } from '@/components/admin/admin-sidebar';
 import { Button } from '@/components/ui/button';
@@ -23,14 +23,52 @@ export default function AdminLayout({
   const isInitialized = useAuthStore((s) => s.isInitialized);
   const clearAuth = useAuthStore((s) => s.clearAuth);
 
-  useEffect(() => {
-    if (isInitialized && (!user || user.role !== 'admin')) {
-      router.replace('/');
-    }
-  }, [isInitialized, user, router]);
+  if (!isInitialized) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#F5F5F7] px-6">
+        <div className="rounded-lg bg-white px-6 py-5 text-sm font-semibold text-gray-700 shadow-sm">
+          관리자 권한을 확인하고 있습니다.
+        </div>
+      </div>
+    );
+  }
 
-  if (!isInitialized || !user || user.role !== 'admin') {
-    return null;
+  if (!user || user.role !== 'admin') {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#F5F5F7] px-6">
+        <section
+          role="alert"
+          aria-labelledby="admin-access-denied-title"
+          className="w-full max-w-lg rounded-lg border border-[#F3C7C7] bg-white p-6 shadow-sm"
+        >
+          <div className="flex items-start gap-4">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-[#FEF2F2] text-[#C62828]">
+              <ShieldAlert className="h-5 w-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h1
+                id="admin-access-denied-title"
+                className="text-heading font-semibold leading-[1.2] text-gray-900"
+              >
+                관리자 접근 권한이 없습니다
+              </h1>
+              <p className="mt-3 text-base leading-[1.5] text-gray-700">
+                이 화면은 관리자 권한이 있는 계정만 사용할 수 있습니다. 백엔드
+                권한 검사는 계속 API guard에서 처리됩니다.
+              </p>
+              <div className="mt-6 flex flex-col gap-2 sm:flex-row">
+                <Button asChild className="h-11">
+                  <Link href="/auth">관리자 계정으로 로그인</Link>
+                </Button>
+                <Button asChild variant="outline" className="h-11">
+                  <Link href="/">홈으로 이동</Link>
+                </Button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+    );
   }
 
   function handleLogout() {
@@ -52,7 +90,7 @@ export default function AdminLayout({
               </SheetTrigger>
               <SheetContent side="left" className="w-[240px] p-0">
                 <SheetTitle className="sr-only">관리자 메뉴</SheetTitle>
-                <AdminSidebar />
+                <AdminSidebar variant="drawer" />
               </SheetContent>
             </Sheet>
           </div>
