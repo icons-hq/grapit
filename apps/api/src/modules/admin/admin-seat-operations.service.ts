@@ -17,6 +17,7 @@ import {
   seatInventories,
   seatOperationHistory,
 } from '../../database/schema/index.js';
+import { BookingService } from '../booking/booking.service.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
 import { AdminAuditService } from './admin-audit.service.js';
 
@@ -56,6 +57,7 @@ export class AdminSeatOperationsService {
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly adminAuditService: AdminAuditService,
     private readonly bookingGateway: BookingGateway,
+    private readonly bookingService?: BookingService,
   ) {}
 
   async performOperation(
@@ -175,6 +177,10 @@ export class AdminSeatOperationsService {
         createdAt: now.toISOString(),
       };
     });
+
+    if (result.nextStatus === 'disabled') {
+      await this.bookingService?.forceReleaseSeatLock(result.showtimeId, result.seatKey);
+    }
 
     this.bookingGateway.broadcastSeatUpdate(
       result.showtimeId,

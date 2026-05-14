@@ -435,6 +435,8 @@ export class BookingService {
   }
 
   async assertOwnedSeatLocks(userId: string, showtimeId: string, seatIds: string[]): Promise<void> {
+    await this.assertNoUnavailableSeatRecords(showtimeId, seatIds);
+
     const runtimeSeatIds = seatIds.map((seatId) => parseRuntimeSeatIdentity(seatId).runtimeSeatId);
     const seatLockKeys = runtimeSeatIds.map((runtimeSeatId) => `{${showtimeId}}:seat:${runtimeSeatId}`);
 
@@ -450,6 +452,8 @@ export class BookingService {
   }
 
   async consumeOwnedSeatLocks(userId: string, showtimeId: string, seatIds: string[]): Promise<{ consumedSeatIds: string[] }> {
+    await this.assertNoUnavailableSeatRecords(showtimeId, seatIds);
+
     const userSeatsKey = `{${showtimeId}}:user-seats:${userId}`;
     const lockedSeatsKey = `{${showtimeId}}:locked-seats`;
     const runtimeSeatIds = seatIds.map((seatId) => parseRuntimeSeatIdentity(seatId).runtimeSeatId);
@@ -476,6 +480,8 @@ export class BookingService {
     seatIds: string[],
     ttlSeconds: number,
   ): Promise<void> {
+    await this.assertNoUnavailableSeatRecords(showtimeId, seatIds);
+
     const userSeatsKey = `{${showtimeId}}:user-seats:${userId}`;
     const runtimeSeatIds = seatIds.map((seatId) => parseRuntimeSeatIdentity(seatId).runtimeSeatId);
     const seatLockKeys = runtimeSeatIds.map((runtimeSeatId) => `{${showtimeId}}:seat:${runtimeSeatId}`);
@@ -491,6 +497,20 @@ export class BookingService {
 
     const conflict = this.lockConflictFromResult(result);
     if (conflict) throw conflict;
+  }
+
+  async forceReleaseSeatLock(showtimeId: string, seatId: string): Promise<void> {
+    const runtimeSeatId = parseRuntimeSeatIdentity(seatId).runtimeSeatId;
+    const lockKey = `{${showtimeId}}:seat:${runtimeSeatId}`;
+    const lockedSeatsKey = `{${showtimeId}}:locked-seats`;
+    const owner = await this.redis.get(lockKey);
+
+    await this.redis.del(lockKey);
+    await this.redis.srem(lockedSeatsKey, runtimeSeatId);
+
+    if (owner) {
+      await this.redis.srem(`{${showtimeId}}:user-seats:${owner}`, runtimeSeatId);
+    }
   }
 
   async acquirePaymentConfirmLock(orderId: string, lockToken: string): Promise<boolean> {
@@ -531,6 +551,45 @@ export class BookingService {
       return new ConflictException(LOCK_OTHER_OWNER_MESSAGE);
     }
     return new ConflictException(LOCK_EXPIRED_MESSAGE);
+  }
+
+  private async assertNoUnavailableSeatRecords(showtimeId: string, seatIds: string[]): Promise<void> {
+    for (const seatId of seatIds) {
+      const seatIdentity = parseRuntimeSeatIdentity(seatId);
+      const [unavailableRecord] = await this.db
+        .select({
+          status: seatInventories.status,
+        })
+        .from(seatInventories)
+        .where(
+          and(
+            eq(seatInventories.showtimeId, showtimeId),
+            eq(seatInventories.floorKey, seatIdentity.floorKey),
+            or(
+              eq(seatInventories.seatKey, seatIdentity.seatKey),
+              and(
+                isNull(seatInventories.seatKey),
+                eq(seatInventories.seatId, seatIdentity.seatId),
+              ),
+            ),
+            or(
+              eq(seatInventories.status, 'sold'),
+              eq(seatInventories.status, 'held_cancelled'),
+              eq(seatInventories.status, 'disabled'),
+            ),
+          ),
+        );
+
+      if (!unavailableRecord) continue;
+
+      if (unavailableRecord.status === 'held_cancelled') {
+        throw new ConflictException('환불 처리 중인 좌석입니다');
+      }
+      if (unavailableRecord.status === 'disabled') {
+        throw new ConflictException('운영자가 비활성화한 좌석입니다');
+      }
+      throw new ConflictException('이미 판매된 좌석입니다');
+    }
   }
 
   /**
