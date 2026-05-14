@@ -1912,7 +1912,10 @@ describe('ReservationService', () => {
       )).rejects.toThrow('판매 불가능한 좌석입니다');
 
       expect(mockTossClient.confirmPayment).toHaveBeenCalledOnce();
-      expect(mockTossClient.cancelPayment).toHaveBeenCalledWith('pk_test_123', '서버 오류로 인한 자동 취소');
+      expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
+        'pk_test_123',
+        expect.stringContaining('판매 불가능'),
+      );
       expect(mockBookingService.assertOwnedSeatLocks).toHaveBeenCalledWith(userId, showtimeId, ['1F:A-1', '1F:A-2']);
       expect(mockBookingService.assertOwnedSeatLocks.mock.invocationCallOrder[0])
         .toBeLessThan(mockDb.transaction.mock.invocationCallOrder[0]!);

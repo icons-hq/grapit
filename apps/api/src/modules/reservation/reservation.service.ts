@@ -921,6 +921,18 @@ export class ReservationService {
         }
       });
     } catch (dbError) {
+      if (dbError instanceof ConflictException) {
+        this.logger.error(
+          `Seat finalization failed after payment approval. paymentKey=${approvedPayment.paymentKey}, orderId=${dto.orderId}`,
+          dbError.stack,
+        );
+        await this.cancelConfirmedPaymentOrThrow(
+          approvedPayment.paymentKey,
+          '판매 불가능 좌석으로 인한 자동 취소',
+        );
+        throw dbError;
+      }
+
       try {
         const [committedPayment] = await this.db
           .select()
@@ -946,9 +958,6 @@ export class ReservationService {
         dbError instanceof Error ? dbError.stack : String(dbError),
       );
       await this.cancelConfirmedPaymentOrThrow(approvedPayment.paymentKey, '서버 오류로 인한 자동 취소');
-      if (dbError instanceof ConflictException) {
-        throw dbError;
-      }
       throw new InternalServerErrorException(
         '결제는 승인되었으나 처리 중 오류가 발생했습니다. 자동 취소를 시도했습니다. 고객센터에 문의해주세요.',
       );
@@ -956,7 +965,12 @@ export class ReservationService {
 
     clearInterval(seatLockRefreshTimer);
     try {
-      await this.bookingService.consumeOwnedSeatLocks(userId, reservation.showtimeId, pendingSeatIds);
+      await this.bookingService.consumeOwnedSeatLocks(
+        userId,
+        reservation.showtimeId,
+        pendingSeatIds,
+        { skipUnavailableCheck: true },
+      );
     } catch (cleanupError) {
       this.logger.warn(
         `Post-commit seat lock cleanup failed. reservationId=${reservation.id}`,

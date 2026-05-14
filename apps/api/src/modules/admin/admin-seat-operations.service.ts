@@ -11,12 +11,15 @@ import {
   adminSeatOperationShowtimeIdSchema,
   type AdminSeatOperationHistory,
   type AdminSeatOperationRequest,
+  type SeatMapConfig,
   type SeatState,
 } from '@grabit/shared';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
+  seatMaps,
   seatInventories,
   seatOperationHistory,
+  showtimes,
 } from '../../database/schema/index.js';
 import { BookingService } from '../booking/booking.service.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
@@ -28,6 +31,17 @@ type SeatOperationAction = Extract<
 >;
 type SeatInventoryStatus = typeof seatInventories.$inferSelect.status;
 type AdminSeatOperationNextStatus = Extract<SeatState, 'available' | 'disabled'>;
+type SeatOperationIdentity = {
+  floorKey: string;
+  seatId: string;
+  seatKey: string;
+};
+type SeatOperationInventoryRow = Pick<
+  typeof seatInventories.$inferSelect,
+  'id' | 'showtimeId' | 'seatId' | 'floorKey' | 'seatKey' | 'status'
+>;
+
+const DEFAULT_FLOOR_KEY = '1F';
 
 export interface AdminSeatOperationExecutionContext {
   now?: Date;
@@ -98,11 +112,17 @@ export class AdminSeatOperationsService {
         )
         .limit(1);
 
-      if (!seat) {
+      if (!seat && action !== 'seat.disable') {
         throw new NotFoundException('좌석을 찾을 수 없습니다');
       }
 
-      const nextStatus = resolveNextStatus(action, seat.status);
+      const seatIdentity = parseSeatOperationSeatKey(input.seatKey);
+      if (!seat) {
+        await assertSeatExistsInShowtimeSeatMap(tx as DrizzleDB, showtimeId, seatIdentity);
+      }
+
+      const previousStatus = seat?.status ?? 'available';
+      const nextStatus = resolveNextStatus(action, previousStatus);
       const audit = await this.adminAuditService.write(
         {
           actorUserId,
@@ -113,7 +133,7 @@ export class AdminSeatOperationsService {
           reason,
           changedFields: ['seatStatus'],
           before: {
-            seatStatus: seat.status,
+            seatStatus: previousStatus,
           },
           after: {
             seatStatus: nextStatus,
@@ -124,28 +144,9 @@ export class AdminSeatOperationsService {
         tx,
       );
 
-      const [updated] = await tx
-        .update(seatInventories)
-        .set({
-          status: nextStatus,
-          lockedBy: null,
-          lockedUntil: null,
-          soldAt: null,
-          heldCancelledAt: null,
-          reopenHoldUntil: null,
-          reopenJobId: null,
-        })
-        .where(
-          and(
-            eq(seatInventories.id, seat.id),
-            eq(seatInventories.status, seat.status),
-          ),
-        )
-        .returning({ id: seatInventories.id });
-
-      if (!updated) {
-        throw new BadRequestException('좌석 상태가 변경되었습니다. 새로고침 후 다시 시도해주세요');
-      }
+      const inventory = seat
+        ? await updateSeatInventoryStatus(tx as DrizzleDB, seat, nextStatus)
+        : await createDisabledSeatInventory(tx as DrizzleDB, showtimeId, seatIdentity);
 
       const [history] = await tx
         .insert(seatOperationHistory)
@@ -153,11 +154,11 @@ export class AdminSeatOperationsService {
           actorUserId,
           action,
           showtimeId,
-          seatInventoryId: seat.id,
-          seatId: seat.seatId,
-          floorKey: seat.floorKey,
-          seatKey: seat.seatKey,
-          previousStatus: seat.status,
+          seatInventoryId: inventory.id,
+          seatId: inventory.seatId,
+          floorKey: inventory.floorKey,
+          seatKey: inventory.seatKey,
+          previousStatus,
           nextStatus,
           reason,
           auditLogId: audit.id,
@@ -172,8 +173,11 @@ export class AdminSeatOperationsService {
         auditEventId: audit.id,
         operation: action,
         showtimeId,
-        seatKey: seat.seatKey,
-        previousStatus: seat.status,
+        seatInventoryId: inventory.id,
+        seatId: inventory.seatId,
+        floorKey: inventory.floorKey,
+        seatKey: inventory.seatKey,
+        previousStatus,
         nextStatus,
         reason,
         actorUserId,
@@ -264,6 +268,146 @@ function assertSeatInventoryOperation(
   }
 
   throw new BadRequestException('지원하지 않는 좌석 운영입니다');
+}
+
+function parseSeatOperationSeatKey(seatKey: string): SeatOperationIdentity {
+  const separatorIndex = seatKey.indexOf(':');
+  const floorKey = separatorIndex > 0
+    ? seatKey.slice(0, separatorIndex)
+    : DEFAULT_FLOOR_KEY;
+  const seatId = separatorIndex > 0
+    ? seatKey.slice(separatorIndex + 1)
+    : seatKey;
+
+  if (!floorKey.trim() || !seatId.trim()) {
+    throw new BadRequestException('유효한 좌석 키가 필요합니다');
+  }
+
+  return {
+    floorKey,
+    seatId,
+    seatKey: separatorIndex > 0 ? seatKey : `${floorKey}:${seatId}`,
+  };
+}
+
+async function assertSeatExistsInShowtimeSeatMap(
+  db: DrizzleDB,
+  showtimeId: string,
+  seat: SeatOperationIdentity,
+): Promise<void> {
+  const [showtime] = await db
+    .select({ performanceId: showtimes.performanceId })
+    .from(showtimes)
+    .where(eq(showtimes.id, showtimeId))
+    .limit(1);
+
+  if (!showtime) {
+    throw new NotFoundException('좌석을 찾을 수 없습니다');
+  }
+
+  const [seatMap] = await db
+    .select({ seatConfig: seatMaps.seatConfig })
+    .from(seatMaps)
+    .where(
+      and(
+        eq(seatMaps.performanceId, showtime.performanceId),
+        eq(seatMaps.floorKey, seat.floorKey),
+      ),
+    )
+    .limit(1);
+
+  if (!seatMapHasSeatId(seatMap?.seatConfig, seat.seatId)) {
+    throw new NotFoundException('좌석을 찾을 수 없습니다');
+  }
+}
+
+function seatMapHasSeatId(seatConfig: unknown, seatId: string): boolean {
+  if (!seatConfig || typeof seatConfig !== 'object') {
+    return false;
+  }
+
+  const tiers = (seatConfig as SeatMapConfig).tiers;
+  return Array.isArray(tiers)
+    && tiers.some((tier) =>
+      Boolean(
+        tier
+        && Array.isArray(tier.seatIds)
+        && tier.seatIds.includes(seatId),
+      ),
+    );
+}
+
+async function updateSeatInventoryStatus(
+  db: DrizzleDB,
+  seat: SeatOperationInventoryRow,
+  nextStatus: AdminSeatOperationNextStatus,
+): Promise<SeatOperationInventoryRow> {
+  const [updated] = await db
+    .update(seatInventories)
+    .set({
+      status: nextStatus,
+      lockedBy: null,
+      lockedUntil: null,
+      soldAt: null,
+      heldCancelledAt: null,
+      reopenHoldUntil: null,
+      reopenJobId: null,
+    })
+    .where(
+      and(
+        eq(seatInventories.id, seat.id),
+        eq(seatInventories.status, seat.status),
+      ),
+    )
+    .returning({
+      id: seatInventories.id,
+      showtimeId: seatInventories.showtimeId,
+      seatId: seatInventories.seatId,
+      floorKey: seatInventories.floorKey,
+      seatKey: seatInventories.seatKey,
+      status: seatInventories.status,
+    });
+
+  if (!updated) {
+    throw new BadRequestException('좌석 상태가 변경되었습니다. 새로고침 후 다시 시도해주세요');
+  }
+
+  return {
+    ...seat,
+    ...updated,
+    status: nextStatus,
+  };
+}
+
+async function createDisabledSeatInventory(
+  db: DrizzleDB,
+  showtimeId: string,
+  seat: SeatOperationIdentity,
+): Promise<SeatOperationInventoryRow> {
+  const [created] = await db
+    .insert(seatInventories)
+    .values({
+      showtimeId,
+      seatId: seat.seatId,
+      floorKey: seat.floorKey,
+      seatKey: seat.seatKey,
+      status: 'disabled',
+    })
+    .onConflictDoNothing()
+    .returning({
+      id: seatInventories.id,
+      showtimeId: seatInventories.showtimeId,
+      seatId: seatInventories.seatId,
+      floorKey: seatInventories.floorKey,
+      seatKey: seatInventories.seatKey,
+      status: seatInventories.status,
+    });
+
+  if (!created) {
+    throw new BadRequestException('좌석 상태가 변경되었습니다. 새로고침 후 다시 시도해주세요');
+  }
+
+  return created;
 }
 
 function resolveNextStatus(

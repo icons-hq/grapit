@@ -451,8 +451,15 @@ export class BookingService {
     if (conflict) throw conflict;
   }
 
-  async consumeOwnedSeatLocks(userId: string, showtimeId: string, seatIds: string[]): Promise<{ consumedSeatIds: string[] }> {
-    await this.assertNoUnavailableSeatRecords(showtimeId, seatIds);
+  async consumeOwnedSeatLocks(
+    userId: string,
+    showtimeId: string,
+    seatIds: string[],
+    options: { skipUnavailableCheck?: boolean } = {},
+  ): Promise<{ consumedSeatIds: string[] }> {
+    if (!options.skipUnavailableCheck) {
+      await this.assertNoUnavailableSeatRecords(showtimeId, seatIds);
+    }
 
     const userSeatsKey = `{${showtimeId}}:user-seats:${userId}`;
     const lockedSeatsKey = `{${showtimeId}}:locked-seats`;
