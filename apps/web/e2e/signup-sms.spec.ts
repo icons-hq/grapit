@@ -35,7 +35,7 @@ test.describe('회원가입 SMS 인증 (mock 모드)', () => {
     await page.getByRole('button', { name: '다음' }).click();
 
     // Step 3: 개인정보 + 전화번호 인증 화면
-    await expect(page.getByPlaceholder('010-0000-0000')).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByLabel('전화번호')).toBeVisible({ timeout: 10_000 });
   }
 
   test('전화번호 인증 mock(000000)으로 회원가입 step3 인증 완료', async ({ page }) => {
@@ -53,7 +53,7 @@ test.describe('회원가입 SMS 인증 (mock 모드)', () => {
     await page.getByPlaceholder('DD').fill('15');
 
     // 전화번호 입력
-    const phoneInput = page.getByPlaceholder('010-0000-0000');
+    const phoneInput = page.getByLabel('전화번호');
     await phoneInput.fill('01012345678');
 
     // 인증번호 발송
@@ -66,7 +66,7 @@ test.describe('회원가입 SMS 인증 (mock 모드)', () => {
     await expect(page.locator('text=/^(0\\d|10):\\d{2}$/')).toBeVisible({ timeout: 10_000 });
 
     // 인증번호 6자리 입력 (mock 모드: 000000)
-    const codeInput = page.getByPlaceholder('인증번호 6자리');
+    const codeInput = page.getByLabel('인증번호 6자리');
     await expect(codeInput).toBeVisible({ timeout: 10_000 });
     await codeInput.fill('000000');
 
@@ -88,11 +88,11 @@ test.describe('회원가입 SMS 인증 (mock 모드)', () => {
     await page.getByPlaceholder('DD').fill('15');
 
     // 전화번호 입력 + 발송
-    await page.getByPlaceholder('010-0000-0000').fill('01012345678');
+    await page.getByLabel('전화번호').fill('01012345678');
     await page.getByRole('button', { name: '인증번호 발송' }).click();
 
     // 잘못된 인증번호 입력
-    const codeInput = page.getByPlaceholder('인증번호 6자리');
+    const codeInput = page.getByLabel('인증번호 6자리');
     await expect(codeInput).toBeVisible({ timeout: 10_000 });
     await codeInput.fill('111111');
     await page.getByRole('button', { name: '확인' }).click();
@@ -105,7 +105,7 @@ test.describe('회원가입 SMS 인증 (mock 모드)', () => {
     await navigateToStep3(page);
 
     // 전화번호 입력
-    await page.getByPlaceholder('010-0000-0000').fill('01012345678');
+    await page.getByLabel('전화번호').fill('01012345678');
 
     // 인증번호 발송
     await page.getByRole('button', { name: '인증번호 발송' }).click();

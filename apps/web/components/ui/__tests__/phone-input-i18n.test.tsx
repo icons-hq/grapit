@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
+import React from 'react';
 import { render, screen, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
@@ -71,5 +72,29 @@ describe('PhoneInput launch locale labels', () => {
     render(<PhoneInput value="" onChange={() => {}} />);
 
     expect(screen.getByRole('button', { name: '국가 선택: 대한민국 +82' })).toBeInTheDocument();
+  });
+
+  it('keeps the visible national number as raw digits without hyphen formatting', async () => {
+    function ControlledPhoneInput() {
+      const [value, setValue] = React.useState('');
+
+      return (
+        <PhoneInput
+          aria-label="전화번호"
+          locale="ko"
+          value={value}
+          onChange={setValue}
+        />
+      );
+    }
+
+    const user = userEvent.setup();
+    render(<ControlledPhoneInput />);
+
+    const input = screen.getByLabelText('전화번호');
+    await user.type(input, '01022876849');
+
+    expect(input).toHaveValue('01022876849');
+    expect((input as HTMLInputElement).value).not.toContain('-');
   });
 });

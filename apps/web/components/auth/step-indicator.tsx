@@ -6,6 +6,7 @@ import { cn } from '@/lib/cn';
 interface StepIndicatorProps {
   currentStep: 1 | 2 | 3;
   labels?: string[];
+  ariaLabel?: string;
 }
 
 const DEFAULT_LABELS = ['이메일/비밀번호', '약관 동의', '추가 정보'];
@@ -13,11 +14,12 @@ const DEFAULT_LABELS = ['이메일/비밀번호', '약관 동의', '추가 정�
 export function StepIndicator({
   currentStep,
   labels = DEFAULT_LABELS,
+  ariaLabel = '회원가입 진행 상태',
 }: StepIndicatorProps) {
   const steps = [1, 2, 3] as const;
 
   return (
-    <div className="flex w-full items-center justify-center" role="navigation" aria-label="회원가입 진행 상태">
+    <div className="flex w-full items-center justify-center" role="navigation" aria-label={ariaLabel}>
       {steps.map((step, index) => {
         const isCompleted = step < currentStep;
         const isActive = step === currentStep;

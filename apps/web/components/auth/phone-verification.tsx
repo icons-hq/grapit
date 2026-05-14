@@ -51,6 +51,10 @@ function mapErrorToCopy(
   return copy.systemError;
 }
 
+function formatSecondsCopy(template: string, seconds: number): string {
+  return template.replace('{seconds}', String(seconds));
+}
+
 function usePhoneVerificationLocale(localeOverride: SupportedLocale | undefined): SupportedLocale {
   const contextLocale = useLocale();
 
@@ -83,7 +87,8 @@ export function PhoneVerification({
   purpose = 'signup',
 }: PhoneVerificationProps) {
   const activeLocale = usePhoneVerificationLocale(locale);
-  const otpCopy = getAuthLaunchCopy(activeLocale).otp;
+  const authCopy = getAuthLaunchCopy(activeLocale);
+  const otpCopy = authCopy.otp;
   const [codeSent, setCodeSent] = useState(false);
   const [code, setCode] = useState('');
   const [isSending, setIsSending] = useState(false);
@@ -243,21 +248,21 @@ export function PhoneVerification({
   // Button aria-label for cooldown
   const sendButtonAriaLabel =
     codeSent && resendCooldown > 0
-      ? `재발송 대기 중, ${resendCooldown}초 남음`
+      ? formatSecondsCopy(otpCopy.cooldownAriaLabel, resendCooldown)
       : undefined;
 
   return (
     <div className="space-y-4">
       {/* Phone input + send button */}
-      <div className="flex gap-2">
+      <div className="space-y-2">
         <PhoneInput
           locale={activeLocale}
           value={phone}
           onChange={onPhoneChange}
-          placeholder="010-0000-0000"
+          aria-label={authCopy.signup.phoneLabel}
           autoComplete="tel"
           disabled={isVerified}
-          className="flex-1"
+          className="w-full"
         />
         <Button
           type="button"
@@ -266,19 +271,19 @@ export function PhoneVerification({
           onClick={handleSendCode}
           disabled={sendButtonDisabled}
           aria-label={sendButtonAriaLabel}
-          className="shrink-0"
+          className="w-full"
         >
           {isSending ? (
             <>
               <Loader2 className="h-4 w-4 animate-spin" />
-              {codeSent ? otpCopy.resendLoading : '발송 중...'}
+              {codeSent ? otpCopy.resendLoading : otpCopy.sendLoading}
             </>
           ) : codeSent && resendCooldown > 0 ? (
-            `재발송 (${resendCooldown}s)`
+            formatSecondsCopy(otpCopy.cooldownLabel, resendCooldown)
           ) : codeSent ? (
             otpCopy.resendCta
           ) : (
-            '인증번호 발송'
+            otpCopy.sendCta
           )}
         </Button>
       </div>
@@ -303,7 +308,7 @@ export function PhoneVerification({
               inputMode="numeric"
               autoComplete="one-time-code"
               maxLength={6}
-              placeholder="인증번호 6자리"
+              aria-label={otpCopy.codeAriaLabel}
               value={code}
               onChange={(e) => {
                 const v = e.target.value.replace(/[^0-9]/g, '');
@@ -322,7 +327,7 @@ export function PhoneVerification({
               {isVerifying ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                '확인'
+                otpCopy.verifyCta
               )}
             </Button>
           </div>
@@ -368,7 +373,7 @@ export function PhoneVerification({
       {isVerified && (
         <div className="flex items-center gap-2" role="status">
           <CheckCircle2 className="h-5 w-5 text-success" />
-          <span className="text-caption text-success">인증 완료</span>
+          <span className="text-caption text-success">{otpCopy.verified}</span>
         </div>
       )}
     </div>

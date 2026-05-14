@@ -54,7 +54,7 @@ describe('PhoneVerification', () => {
 
     it('인증번호 입력 필드가 숨겨져 있음', () => {
       render(<PhoneVerification {...defaultProps} />);
-      expect(screen.queryByPlaceholderText(/인증번호 6자리/)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/인증번호 6자리/)).not.toBeInTheDocument();
     });
 
     it('valid E.164 번호의 실제 발송 대상을 masking해서 사전 표시', () => {
@@ -93,7 +93,7 @@ describe('PhoneVerification', () => {
 
       await user.click(screen.getByRole('button', { name: /인증번호 발송/ }));
       await waitFor(() => {
-        expect(screen.getByPlaceholderText(/인증번호 6자리/)).toBeInTheDocument();
+        expect(screen.getByLabelText(/인증번호 6자리/)).toBeInTheDocument();
       });
     });
 
@@ -231,11 +231,11 @@ describe('PhoneVerification', () => {
       (apiClient.post as ReturnType<typeof vi.fn>).mockRejectedValueOnce(error410);
 
       await waitFor(() => {
-        const input = screen.getByPlaceholderText(/인증번호 6자리/);
+        const input = screen.getByLabelText(/인증번호 6자리/);
         expect(input).toBeInTheDocument();
       });
 
-      const codeInput = screen.getByPlaceholderText(/인증번호 6자리/);
+      const codeInput = screen.getByLabelText(/인증번호 6자리/);
       await user.type(codeInput, '123456');
       await user.click(screen.getByRole('button', { name: /확인/ }));
 
@@ -259,11 +259,11 @@ describe('PhoneVerification', () => {
       });
 
       await waitFor(() => {
-        const input = screen.getByPlaceholderText(/인증번호 6자리/);
+        const input = screen.getByLabelText(/인증번호 6자리/);
         expect(input).toBeInTheDocument();
       });
 
-      const codeInput = screen.getByPlaceholderText(/인증번호 6자리/);
+      const codeInput = screen.getByLabelText(/인증번호 6자리/);
       await user.type(codeInput, '999999');
       await user.click(screen.getByRole('button', { name: /확인/ }));
 
@@ -305,13 +305,18 @@ describe('PhoneVerification', () => {
       ).not.toBeInTheDocument();
     });
 
-    it('KR 기본 상태에서 inner input이 placeholder "010-0000-0000"을 노출 (E2E 선택자 호환성)', () => {
+    it('전화번호 input은 placeholder 없이 accessible label로 노출', () => {
       render(<PhoneVerification {...defaultProps} phone="" />);
-      // E2E: page.getByPlaceholder('010-0000-0000')와 호환되도록 placeholder
-      // prop이 react-phone-number-input inputComponent까지 spread 전달되어야 함
-      expect(
-        screen.getByPlaceholderText('010-0000-0000'),
-      ).toBeInTheDocument();
+      const input = screen.getByLabelText(/전화번호/);
+
+      expect(input).toBeInTheDocument();
+      expect(input).not.toHaveAttribute('placeholder');
+    });
+
+    it('표시 값은 하이픈 없이 raw national digits로 유지', () => {
+      render(<PhoneVerification {...defaultProps} />);
+
+      expect(screen.getByLabelText(/전화번호/)).toHaveValue('01012345678');
     });
   });
 
@@ -334,7 +339,7 @@ describe('PhoneVerification', () => {
       await user.click(screen.getByRole('button', { name: /인증번호 발송/ }));
 
       await waitFor(() => {
-        const input = screen.getByPlaceholderText(/인증번호 6자리/);
+        const input = screen.getByLabelText(/인증번호 6자리/);
         expect(input).toHaveAttribute('autocomplete', 'one-time-code');
       });
     });
@@ -384,10 +389,10 @@ describe('PhoneVerification', () => {
       await user.click(screen.getByRole('button', { name: /인증번호 발송/ }));
 
       await waitFor(() => {
-        expect(screen.getByPlaceholderText(/인증번호 6자리/)).toBeInTheDocument();
+        expect(screen.getByLabelText(/인증번호 6자리/)).toBeInTheDocument();
       });
 
-      await user.type(screen.getByPlaceholderText(/인증번호 6자리/), '123456');
+      await user.type(screen.getByLabelText(/인증번호 6자리/), '123456');
       await user.click(screen.getByRole('button', { name: /확인/ }));
 
       await waitFor(() => {
@@ -408,10 +413,10 @@ describe('PhoneVerification', () => {
       await user.click(screen.getByRole('button', { name: /인증번호 발송/ }));
 
       await waitFor(() => {
-        expect(screen.getByPlaceholderText(/인증번호 6자리/)).toBeInTheDocument();
+        expect(screen.getByLabelText(/인증번호 6자리/)).toBeInTheDocument();
       });
 
-      await user.type(screen.getByPlaceholderText(/인증번호 6자리/), '999999');
+      await user.type(screen.getByLabelText(/인증번호 6자리/), '999999');
       await user.click(screen.getByRole('button', { name: /확인/ }));
 
       await waitFor(() => {
@@ -430,10 +435,10 @@ describe('PhoneVerification', () => {
       await user.click(screen.getByRole('button', { name: /인증번호 발송/ }));
 
       await waitFor(() => {
-        expect(screen.getByPlaceholderText(/인증번호 6자리/)).toBeInTheDocument();
+        expect(screen.getByLabelText(/인증번호 6자리/)).toBeInTheDocument();
       });
 
-      await user.type(screen.getByPlaceholderText(/인증번호 6자리/), '999999');
+      await user.type(screen.getByLabelText(/인증번호 6자리/), '999999');
       await user.click(screen.getByRole('button', { name: /확인/ }));
 
       await waitFor(() => {
@@ -456,10 +461,10 @@ describe('PhoneVerification', () => {
       await user.click(screen.getByRole('button', { name: /인증번호 발송/ }));
 
       await waitFor(() => {
-        expect(screen.getByPlaceholderText(/인증번호 6자리/)).toBeInTheDocument();
+        expect(screen.getByLabelText(/인증번호 6자리/)).toBeInTheDocument();
       });
 
-      await user.type(screen.getByPlaceholderText(/인증번호 6자리/), '123456');
+      await user.type(screen.getByLabelText(/인증번호 6자리/), '123456');
       await user.click(screen.getByRole('button', { name: /확인/ }));
 
       await waitFor(() => {

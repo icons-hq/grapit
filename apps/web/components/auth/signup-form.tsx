@@ -93,7 +93,15 @@ export function SignupForm() {
         <EmailVerificationStatus email={emailVerificationEmail} />
       ) : (
         <>
-          <StepIndicator currentStep={currentStep} />
+          <StepIndicator
+            currentStep={currentStep}
+            ariaLabel={authCopy.signup.progressAriaLabel}
+            labels={[
+              authCopy.signup.stepCredentials,
+              authCopy.signup.stepConsent,
+              authCopy.signup.stepAdditional,
+            ]}
+          />
 
           <div
             className="transition-transform duration-200 ease-out"
