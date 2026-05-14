@@ -998,6 +998,21 @@ export class ReservationService {
         throw dbError;
       }
 
+      if (approvedPayment.existingPaymentId) {
+        this.logger.error(
+          `DB transaction failed after existing payment recovery. paymentKey=${approvedPayment.paymentKey}, orderId=${dto.orderId}`,
+          dbError instanceof Error ? dbError.stack : String(dbError),
+        );
+        await this.cancelApprovedPaymentAfterFailure(
+          approvedPayment,
+          reservation.id,
+          '서버 오류로 인한 자동 취소',
+        );
+        throw new InternalServerErrorException(
+          '결제는 승인되었으나 처리 중 오류가 발생했습니다. 자동 취소를 시도했습니다. 고객센터에 문의해주세요.',
+        );
+      }
+
       try {
         const [committedPayment] = await this.db
           .select()
