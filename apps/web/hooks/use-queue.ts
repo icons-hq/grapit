@@ -5,6 +5,7 @@ import { io, type Socket } from 'socket.io-client';
 import { ApiClientError, apiClient } from '@/lib/api-client';
 
 const AUTO_ENTER_DELAY_MS = 1_200;
+const WAITING_POLL_INTERVAL_MS = 2_500;
 
 type QueueTransportState =
   | 'WAITING'
@@ -288,6 +289,20 @@ export function useQueue({
       socketRef.current = null;
     };
   }, [applySnapshot, enabled, snapshot.queueSessionId]);
+
+  useEffect(() => {
+    if (!enabled || status !== 'waiting' || !snapshot.queueSessionId) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      void loadQueueSession(snapshot.queueSessionId);
+    }, WAITING_POLL_INTERVAL_MS);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [enabled, loadQueueSession, snapshot.queueSessionId, status]);
 
   useEffect(() => {
     return () => {

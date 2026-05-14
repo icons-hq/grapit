@@ -13,10 +13,14 @@ export default function BookingRoute({
 }) {
   const { performanceId } = use(params);
 
-  const { bookingAvailable, isResolved: runtimeFlagsResolved } = useBookingAvailability();
+  const {
+    bookingAvailable,
+    isAdminBookingBypassActive,
+    isResolved: runtimeFlagsResolved,
+  } = useBookingAvailability();
   const queue = useQueue({
     performanceId,
-    enabled: runtimeFlagsResolved && bookingAvailable,
+    enabled: runtimeFlagsResolved && bookingAvailable && !isAdminBookingBypassActive,
   });
 
   if (!runtimeFlagsResolved) {
@@ -31,7 +35,7 @@ export default function BookingRoute({
     );
   }
 
-  if (!bookingAvailable || queue.isReady) {
+  if (!bookingAvailable || isAdminBookingBypassActive || queue.isReady) {
     return <BookingPage performanceId={performanceId} />;
   }
 

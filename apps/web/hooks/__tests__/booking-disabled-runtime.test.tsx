@@ -337,6 +337,31 @@ describe('runtime booking disabled UI', () => {
     },
   );
 
+  it('keeps the performance detail booking CTA active for admin payment tests while public booking is disabled', async () => {
+    useAuthStore.getState().setAuth('admin-token', {
+      id: 'admin-1',
+      email: 'admin@grabit.test',
+      name: 'Admin',
+      phone: '+821012345678',
+      gender: 'unspecified',
+      country: 'KR',
+      birthDate: '1990-01-01',
+      preferredLocale: 'ko',
+      isPhoneVerified: true,
+      role: 'admin',
+      createdAt: '2026-05-06T00:00:00.000Z',
+    });
+
+    renderWithQuery(
+      <Suspense fallback={null}>
+        <PerformanceDetailPage params={fulfilledParams('performance-disabled')} />
+      </Suspense>,
+    );
+
+    expect(await screen.findAllByRole('link', { name: '예매하기' })).toHaveLength(2);
+    expect(screen.queryByText('예매는 5월말 오픈 예정입니다')).not.toBeInTheDocument();
+  });
+
   it('does not call the seat lock handler when disabled booking users click a seat', async () => {
     renderWithQuery(<BookingPage performanceId="performance-disabled" />);
 

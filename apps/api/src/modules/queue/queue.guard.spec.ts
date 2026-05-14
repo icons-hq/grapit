@@ -104,6 +104,28 @@ describe('AdmissionGuard', () => {
     });
   });
 
+  it('allows admin booking tests without queue cookies and attaches bypass admission context', async () => {
+    const context = createExecutionContext({
+      user: { id: 'admin-1', role: 'admin' },
+      cookies: {},
+    });
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+
+    expect(queueService.resolveBrowserIdentity).not.toHaveBeenCalled();
+    expect(queueService.assertAdmissionForShowtime).not.toHaveBeenCalled();
+
+    const request = context.switchToHttp().getRequest() as {
+      queueAdmission?: Record<string, string>;
+    };
+    expect(request.queueAdmission).toMatchObject({
+      queueSessionId: 'admin-bypass-admin-1',
+      admissionToken: 'admin-bypass',
+      refreshFamilyId: 'admin-bypass-admin-1',
+      deviceSlotKey: 'admin-bypass-admin-1',
+    });
+  });
+
   it('validates confirm-payment requests through orderId binding', async () => {
     const context = createExecutionContext({
       body: {

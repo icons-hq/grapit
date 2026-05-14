@@ -14,8 +14,8 @@ import {
   buildWidgetPaymentRequest,
   resolvePaymentMethodSelection,
 } from '@/components/booking/toss-payment-widget';
-import { useBookingStore } from '@/stores/use-booking-store';
 import { useAuthStore } from '@/stores/use-auth-store';
+import { useBookingStore } from '@/stores/use-booking-store';
 import type {
   ConfirmPaymentRequest,
   FloorAwareSeatSelection,
