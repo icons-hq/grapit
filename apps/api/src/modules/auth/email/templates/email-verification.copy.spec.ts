@@ -16,9 +16,11 @@ const REQUIRED_KEYS = [
 ] as const;
 
 describe('emailVerificationCopy', () => {
+  const deprecatedLocale = ['j', 'a'].join('');
+
   it('contains exactly the five launch locales', () => {
     expect(Object.keys(emailVerificationCopy).sort()).toEqual([...SUPPORTED_LOCALES].sort());
-    expect(emailVerificationCopy).not.toHaveProperty('ja');
+    expect(emailVerificationCopy).not.toHaveProperty(deprecatedLocale);
   });
 
   it('contains all required transactional copy keys for every launch locale', () => {

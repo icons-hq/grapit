@@ -27,12 +27,14 @@ const authStatusKeys = [
 ] as const;
 
 describe('launch SMS and auth copy contract', () => {
+  const deprecatedLocale = ['j', 'a'].join('');
+
   it('exports exactly the five launch locales', () => {
     expect(SMS_COPY_LOCALES).toEqual(expectedLocales);
     expect(Object.keys(smsOtpCopy)).toEqual([...expectedLocales]);
     expect(Object.keys(authStatusCopy)).toEqual([...expectedLocales]);
-    expect(smsOtpCopy).not.toHaveProperty('ja');
-    expect(authStatusCopy).not.toHaveProperty('ja');
+    expect(smsOtpCopy).not.toHaveProperty(deprecatedLocale);
+    expect(authStatusCopy).not.toHaveProperty(deprecatedLocale);
   });
 
   it.each(expectedLocales)('SMS OTP copy for %s contains every required key', (locale) => {

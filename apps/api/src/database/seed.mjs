@@ -14,7 +14,7 @@ const GIRL_RULES_FANMEET_TITLE = '2026 걸룰스 팬미팅';
 const PHASE23_I18N_SMOKE_PERFORMANCE_ID =
   '00000000-0000-4000-8000-000000000023';
 const DONGHAE_SEAT_MAP_URL = '/seed/donghae-girl-rules-20260718-seat-map.svg';
-const TRANSLATION_TARGET_LOCALES = ['en', 'th', 'zh-CN', 'ja'];
+const TRANSLATION_TARGET_LOCALES = ['en', 'th', 'zh-CN', 'zh-TW'];
 
 const girlRulesFanmeetTranslations = {
   en: {
@@ -38,12 +38,12 @@ const girlRulesFanmeetTranslations = {
     salesInfo:
       '门票按指定座位销售。付款前请确认所选座位等级和演出场次。',
   },
-  'ja': {
-    title: '2026 Girl Rules ファンミーティング',
+  'zh-TW': {
+    title: '2026 Girl Rules 粉絲見面會',
     description:
-      '2026年7月18日に東海文化芸術館で開催される Girl Rules ファンミーティングの日本語紹介です。機械翻訳の確認を完了しています。',
+      'Girl Rules 粉絲見面會將於 2026 年 7 月 18 日在東海文化藝術館舉行，本簡介已完成機器翻譯審核。',
     salesInfo:
-      'チケットは指定席で販売されます。お支払い前に選択した座席等級と公演回をご確認ください。',
+      '門票採指定座位銷售。付款前請確認所選座位等級與演出場次。',
   },
 };
 

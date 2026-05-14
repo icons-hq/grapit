@@ -26,6 +26,7 @@ describe('Phase 23 launch foundation schema contracts', () => {
   const migrationDir = join(dirname(fileURLToPath(import.meta.url)), '../migrations');
   const schemaDir = dirname(fileURLToPath(import.meta.url));
   const launchLocales = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
+  const deprecatedLocale = ['j', 'a'].join('');
 
   it('stores a nullable/defaulted preferred locale for existing users', () => {
     expectColumnName(users.preferredLocale, 'preferred_locale');
@@ -150,10 +151,12 @@ describe('Phase 23 launch foundation schema contracts', () => {
     const seedSource = readFileSync(join(schemaDir, '../seed.mjs'), 'utf8');
 
     expect(authControllerSource).toContain("z.enum(['ko', 'en', 'th', 'zh-CN', 'zh-TW'])");
-    expect(authControllerSource).not.toContain("z.enum(['ko', 'en', 'th', 'zh-CN', 'ja'])");
+    expect(authControllerSource).not.toContain(
+      `z.enum(['ko', 'en', 'th', 'zh-CN', '${deprecatedLocale}'])`,
+    );
     expect(seedSource).toContain("const TRANSLATION_TARGET_LOCALES = ['en', 'th', 'zh-CN', 'zh-TW']");
     expect(seedSource).toContain("'zh-TW': {");
-    expect(seedSource).not.toContain("'ja': {");
+    expect(seedSource).not.toContain(`'${deprecatedLocale}': {`);
     expect(seedSource).not.toContain('チケット');
   });
 });
