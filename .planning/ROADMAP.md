@@ -180,18 +180,18 @@ Plans:
 
 **Merged from:** 33 Event registration console, 34 Q&A/FAQ/notice/CS, 35 Admin security + operations
 
-**Plans:** 23 plans
+**Plans:** 8/23 plans executed
 
 Plans:
 **Wave 0**
-- [ ] 25-01-PLAN.md — Resolve shared/message-bundle launch locale drift to `zh-TW`
-- [ ] 25-02-PLAN.md — Resolve API schema/auth/email/SMS active-`ja` locale drift
-- [ ] 25-03-PLAN.md — Define admin operations contracts and backend capability guard
-- [ ] 25-16-PLAN.md — Resolve public routing, formatting, runtime, and i18n-component locale drift
-- [ ] 25-17-PLAN.md — Resolve auth/phone/sitemap/i18n-smoke locale drift
-- [ ] 25-18-PLAN.md — Resolve user/consent/translation/DeepL locale drift
-- [ ] 25-19-PLAN.md — Resolve admin translation and consent UI locale drift
-- [ ] 25-20-PLAN.md — Resolve legal fallback locale drift
+- [x] 25-01-PLAN.md — Resolve shared/message-bundle launch locale drift to `zh-TW`
+- [x] 25-02-PLAN.md — Resolve API schema/auth/email/SMS active-`ja` locale drift
+- [x] 25-03-PLAN.md — Define admin operations contracts and backend capability guard
+- [x] 25-16-PLAN.md — Resolve public routing, formatting, runtime, and i18n-component locale drift
+- [x] 25-17-PLAN.md — Resolve auth/phone/sitemap/i18n-smoke locale drift
+- [x] 25-18-PLAN.md — Resolve user/consent/translation/DeepL locale drift
+- [x] 25-19-PLAN.md — Resolve admin translation and consent UI locale drift
+- [x] 25-20-PLAN.md — Resolve legal fallback locale drift
 
 **Wave 1** *(blocked on locale plans and contracts)*
 - [ ] 25-04-PLAN.md — Add event, venue/transport, and banner schema contracts
