@@ -59,7 +59,7 @@ describe('launch locale routing', () => {
       ['/en/auth', '/auth', 'en'],
       ['/th/legal/terms', '/legal/terms', 'th'],
       ['/zh-CN/legal/privacy', '/legal/privacy', 'zh-CN'],
-      ['/ja/legal/marketing', '/legal/marketing', 'ja'],
+      ['/zh-TW/legal/marketing', '/legal/marketing', 'zh-TW'],
     ] as const;
 
     for (const [externalPathname, internalPathname, locale] of cases) {
@@ -135,10 +135,10 @@ describe('launch locale routing', () => {
   it('turns Accept-Language into suggestion state without changing the active URL locale', () => {
     expect(getSuggestedLocaleFromAcceptLanguage('th,en;q=0.8,ko;q=0.5', 'ko')).toBe('th');
     expect(getSuggestedLocaleFromAcceptLanguage('zh-Hant-TW,zh;q=0.9,en;q=0.5', 'ko')).toBe(
-      'zh-CN',
+      'zh-TW',
     );
     expect(getSuggestedLocaleFromAcceptLanguage('zh-Hans-CN,en;q=0.5', 'ko')).toBe('zh-CN');
-    expect(getSuggestedLocaleFromAcceptLanguage('ja-JP,en;q=0.5', 'ko')).toBe('ja');
+    expect(getSuggestedLocaleFromAcceptLanguage('ja-JP,en;q=0.5', 'ko')).toBeNull();
     expect(getSuggestedLocaleFromAcceptLanguage('ko,en;q=0.8', 'ko')).toBeNull();
     expect(getSuggestedLocaleFromAcceptLanguage('fr,de;q=0.8', 'ko')).toBeNull();
   });
