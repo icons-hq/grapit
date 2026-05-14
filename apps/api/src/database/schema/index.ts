@@ -51,6 +51,10 @@ export {
   adminAllowlistStatusEnum,
 } from './admin-access-allowlist.js';
 export {
+  seatOperationActionEnum,
+  seatOperationHistory,
+} from './seat-operation-history.js';
+export {
   supportContentReviewStateEnum,
   supportThreadCategoryEnum,
   supportThreadEscalationStateEnum,
