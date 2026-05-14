@@ -24,6 +24,7 @@ interface SeatMapViewerProps {
 
 const LOCKED_COLOR = '#D1D5DB';
 const SELECTED_STROKE = '#1A1A2E';
+const EXCLUDED_COLOR = '#F4D03F';
 const SEAT_ID_ATTR = 'data-seat-id';
 const SEAT_KEY_ATTR = 'data-seat-key';
 const SEAT_OVERLAY_ATTR = 'data-seat-overlay-for';
@@ -59,6 +60,19 @@ function getSeatState(
   seatId: string,
 ) {
   return seatStates.get(runtimeSeatId) ?? seatStates.get(seatId) ?? 'available';
+}
+
+function isExcludedSeatElement(el: Element, tierInfoExists: boolean) {
+  const className = el.getAttribute('class') ?? '';
+  const category = (el.getAttribute('data-category') ?? '').toLowerCase();
+
+  return (
+    className.split(/\s+/).includes('seat-excluded') ||
+    category === 'excluded' ||
+    category === '사석' ||
+    el.getAttribute('data-seat-excluded') === 'true' ||
+    !tierInfoExists
+  );
 }
 
 function normalizeSeatLabelOverlays(doc: Document) {
@@ -263,10 +277,21 @@ export function SeatMapViewer({
       if (!identity) return;
 
       const tierInfo = tierColorMap.get(identity.seatId) ?? tierColorMap.get(identity.runtimeSeatId);
+      const isExcluded = isExcludedSeatElement(el, Boolean(tierInfo));
       const state = getSeatState(seatStates, identity.runtimeSeatId, identity.seatId);
       const isSelected = selectedSeatIds.has(identity.runtimeSeatId) || selectedSeatIds.has(identity.seatId);
       const isRemoving = pendingRemovals.has(identity.runtimeSeatId) || pendingRemovals.has(identity.seatId);
       const showCheckmark = isSelected || isRemoving;
+
+      if (isExcluded) {
+        el.setAttribute('data-seat-excluded', 'true');
+        el.setAttribute('aria-disabled', 'true');
+        el.setAttribute('fill', el.getAttribute('fill') || EXCLUDED_COLOR);
+        el.removeAttribute('stroke');
+        el.setAttribute('stroke-width', '0');
+        el.setAttribute('style', 'cursor:not-allowed;opacity:0.85;transition:none');
+        return;
+      }
 
       // reviews revision MED #4 D-13 BROADCAST PRIORITY: unavailable 상태가 선택보다 우선
       // — broadcast 즉시 회색 + transition:none 유지. useMemo에서 LOCKED_COLOR 박아두고
@@ -486,6 +511,13 @@ export function SeatMapViewer({
         : getSeatIdentity(target);
       if (!identity) return;
 
+      const seatElement = target.hasAttribute(SEAT_KEY_ATTR) || target.hasAttribute(SEAT_ID_ATTR)
+        ? target
+        : findSeatElementByIdentity(containerRef.current, identity.runtimeSeatId);
+      if (!seatElement || seatElement.getAttribute('data-seat-excluded') === 'true') {
+        return;
+      }
+
       const state = getSeatState(seatStates, identity.runtimeSeatId, identity.seatId);
       if (isUnavailableSeatState(state)) return;
       if (
@@ -521,6 +553,10 @@ export function SeatMapViewer({
         ? target
         : findSeatElementByIdentity(containerRef.current, identity.runtimeSeatId);
       if (!seatElement) return;
+      if (seatElement.getAttribute('data-seat-excluded') === 'true') {
+        if (tooltipRef.current) tooltipRef.current.style.display = 'none';
+        return;
+      }
 
       const state = getSeatState(seatStates, identity.runtimeSeatId, identity.seatId);
       const isSelected = selectedSeatIds.has(identity.runtimeSeatId) || selectedSeatIds.has(identity.seatId);

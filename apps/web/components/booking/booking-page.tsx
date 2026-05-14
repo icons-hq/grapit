@@ -7,10 +7,8 @@ import { ChevronDown, Loader2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
   FloorAwareSeatSelection,
-  SeatMap,
   SeatMapConfig,
   SeatState,
-  Showtime,
 } from '@grabit/shared';
 import { usePerformanceDetail } from '@/hooks/use-performances';
 import {
@@ -25,8 +23,6 @@ import { useBookingSocket } from '@/hooks/use-socket';
 import { useBookingAvailability } from '@/hooks/use-booking-availability';
 import { ApiClientError } from '@/lib/api-client';
 import {
-  formatKstDateLabel,
-  formatKstTimeLabel,
   getKstCalendarDate,
   getKstCalendarKey,
   isSameKstCalendarDate,
@@ -56,10 +52,10 @@ type RuntimeSeatIdentity = {
   seatKey: string;
 };
 
-type GroupedFloorSelection = {
-  floorKey: string;
-  floorLabel: string;
-  seats: FloorAwareSeatSelection[];
+type TierSummary = {
+  tierName: string;
+  color: string;
+  count: number;
 };
 
 function parseRuntimeSeatIdentity(rawSeatIdOrKey: string): RuntimeSeatIdentity {
@@ -82,229 +78,136 @@ function isUnavailableSeatState(state: RuntimeSeatState | undefined) {
   return state === 'locked' || state === 'sold' || state === 'held' || state === 'disabled';
 }
 
-function SelectionGroups({
-  groups,
+function formatSeatLabel(seat: FloorAwareSeatSelection) {
+  return `${seat.floorLabel} ${seat.row}열 ${seat.number}번`;
+}
+
+function SelectionTags({
+  seats,
   onRemove,
 }: {
-  groups: GroupedFloorSelection[];
+  seats: FloorAwareSeatSelection[];
   onRemove: (seatKey: string) => void;
 }) {
-  if (groups.length === 0) {
+  if (seats.length === 0) {
     return (
-      <p className="mt-3 text-sm text-gray-500">
-        선택한 좌석이 없습니다. 좌석을 선택하면 결제 단계로 이동할 수 있습니다.
+      <p className="text-sm text-gray-500">
+        선택한 좌석이 없습니다. 좌석을 클릭하면 이곳에 표시됩니다.
       </p>
     );
   }
 
   return (
-    <div className="mt-4 space-y-4">
-      {groups.map((group) => (
-        <section
-          key={group.floorKey}
-          className="rounded-xl border border-border bg-[#F5F5F7] p-4"
+    <div className="flex flex-wrap gap-2">
+      {seats.map((seat) => (
+        <button
+          key={seat.seatKey}
+          type="button"
+          onClick={() => onRemove(seat.seatKey)}
+          aria-label={`${formatSeatLabel(seat)} 선택 해제`}
+          className="inline-flex min-h-8 items-center gap-2 rounded-md px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-transform hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+          style={{ backgroundColor: seat.tierColor ?? '#6C3CE0' }}
         >
-          <h3 className="text-sm font-semibold text-gray-900">
-            {group.floorLabel}
-          </h3>
-          <div className="mt-3 space-y-2">
-            {group.seats.map((seat) => (
-              <div
-                key={seat.seatKey}
-                className="flex items-start justify-between gap-3 rounded-lg bg-white px-3 py-3"
-              >
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="inline-block size-3 rounded-full"
-                      style={{ backgroundColor: seat.tierColor }}
-                    />
-                    <span className="text-sm font-medium text-gray-700">
-                      {seat.tierName}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-sm text-gray-900">
-                    {seat.row}열 {seat.number}번
-                  </p>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <span className="text-base font-semibold text-gray-900">
-                    {seat.price.toLocaleString()}원
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => onRemove(seat.seatKey)}
-                    aria-label="좌석 선택 해제"
-                    className="flex size-7 items-center justify-center rounded-full text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
-                  >
-                    <X className="size-4" />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
+          <span>{seat.tierName}</span>
+          <span>{formatSeatLabel(seat)}</span>
+          <X className="size-3.5" aria-hidden="true" />
+        </button>
       ))}
     </div>
   );
 }
 
-function DesktopSelectionSummary({
-  performanceTitle,
-  selectedDate,
-  selectedShowtime,
-  groups,
+function BookingSelectionBar({
+  tierSummaries,
   selectedSeatCount,
   totalPrice,
-  onRemove,
+  canClear,
+  onClear,
   onProceed,
   isLoading,
   disabledReason,
 }: {
-  performanceTitle: string;
-  selectedDate: Date | null;
-  selectedShowtime: Showtime | null;
-  groups: GroupedFloorSelection[];
+  tierSummaries: TierSummary[];
   selectedSeatCount: number;
   totalPrice: number;
-  onRemove: (seatKey: string) => void;
+  canClear: boolean;
+  onClear: () => void;
   onProceed: () => void;
   isLoading: boolean;
   disabledReason: string | null;
 }) {
   return (
-    <aside className="hidden w-[360px] shrink-0 lg:block">
-      <div className="sticky top-16 space-y-5 rounded-2xl border border-border bg-white p-6 shadow-sm">
-        <div>
-          <p className="truncate text-base font-semibold text-gray-900">
-            {performanceTitle}
-          </p>
-          {selectedDate && selectedShowtime ? (
-            <p className="mt-1 text-sm text-gray-500">
-              {formatKstDateLabel(selectedShowtime.dateTime)} {formatKstTimeLabel(selectedShowtime.dateTime)}
+    <aside
+      role="complementary"
+      aria-label="선택 좌석 요약"
+      className="fixed inset-x-0 bottom-0 z-40 border-t-2 border-border bg-white/95 px-4 pb-[calc(env(safe-area-inset-bottom)+14px)] pt-3 shadow-[0_-12px_32px_rgba(0,0,0,0.08)] backdrop-blur"
+    >
+      <div className="mx-auto grid w-full max-w-[1280px] gap-3 lg:grid-cols-[1fr_auto] lg:items-center">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            {tierSummaries.length > 0 ? (
+              tierSummaries.map((summary) => (
+                <span
+                  key={summary.tierName}
+                  className="inline-flex min-h-8 items-center gap-2 rounded-lg bg-[#F5F5F7] px-3 text-gray-800"
+                >
+                  <span
+                    className="inline-block size-2.5 rounded-full"
+                    style={{ backgroundColor: summary.color }}
+                  />
+                  <strong>{summary.tierName}</strong>
+                  <span>{summary.count}석</span>
+                </span>
+              ))
+            ) : (
+              <span className="inline-flex min-h-8 items-center rounded-lg bg-[#F5F5F7] px-3 text-gray-500">
+                선택 좌석 0석
+              </span>
+            )}
+            <span className="inline-flex min-h-8 items-center rounded-lg bg-[#F5F5F7] px-3 font-semibold text-gray-800">
+              총 {selectedSeatCount}석
+            </span>
+          </div>
+          {disabledReason ? (
+            <p className="mt-2 text-sm font-semibold text-amber-800">
+              {disabledReason}
             </p>
           ) : null}
         </div>
 
-        <div>
-          <h2 className="text-xl font-semibold text-gray-900">선택 좌석</h2>
-          <SelectionGroups groups={groups} onRemove={onRemove} />
-        </div>
-
-        <div className="rounded-xl border border-border bg-[#F5F5F7] px-4 py-4">
-          <p className="text-sm text-gray-500">총 합계</p>
-          <div className="mt-2 flex items-baseline justify-between">
-            <span className="text-base text-gray-700">{selectedSeatCount}석</span>
-            <span className="text-xl font-semibold text-gray-900">
-              {totalPrice.toLocaleString()}원
-            </span>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+          <p className="text-right text-2xl font-extrabold text-gray-950">
+            <small className="mr-2 text-sm font-medium text-gray-500">
+              총 결제 금액
+            </small>
+            {totalPrice.toLocaleString()}원
+          </p>
+          <div className="grid grid-cols-[auto_1fr] gap-2 sm:flex">
+            <Button
+              type="button"
+              variant="secondary"
+              className="h-11 px-4"
+              disabled={!canClear || isLoading}
+              onClick={onClear}
+            >
+              전체 해제
+            </Button>
+            <Button
+              className="h-11 min-w-28 px-5 text-base"
+              disabled={!!disabledReason || selectedSeatCount === 0 || isLoading}
+              onClick={onProceed}
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                  처리 중...
+                </>
+              ) : selectedSeatCount === 0 ? '좌석을 선택해주세요' : '다음'}
+            </Button>
           </div>
         </div>
-
-        {disabledReason ? (
-          <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800">
-            {disabledReason}
-          </p>
-        ) : null}
-
-        <Button
-          className="h-12 w-full text-base"
-          disabled={!!disabledReason || selectedSeatCount === 0 || isLoading}
-          onClick={onProceed}
-        >
-          {isLoading ? (
-            <>
-              <Loader2 className="mr-2 size-4 animate-spin" />
-              처리 중...
-            </>
-          ) : disabledReason ?? (selectedSeatCount === 0 ? '좌석을 선택해주세요' : '다음')}
-        </Button>
       </div>
     </aside>
-  );
-}
-
-function MobileSelectionSummary({
-  groups,
-  selectedSeatCount,
-  totalPrice,
-  onRemove,
-  onProceed,
-  isLoading,
-  disabledReason,
-}: {
-  groups: GroupedFloorSelection[];
-  selectedSeatCount: number;
-  totalPrice: number;
-  onRemove: (seatKey: string) => void;
-  onProceed: () => void;
-  isLoading: boolean;
-  disabledReason: string | null;
-}) {
-  const [isOpen, setIsOpen] = useState(false);
-
-  useEffect(() => {
-    if (selectedSeatCount === 0) {
-      setIsOpen(false);
-    }
-  }, [selectedSeatCount]);
-
-  return (
-    <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-white/95 px-4 pb-[calc(env(safe-area-inset-bottom)+16px)] pt-3 shadow-[0_-12px_32px_rgba(0,0,0,0.08)] backdrop-blur lg:hidden">
-      {isOpen ? (
-        <div>
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-base font-semibold text-gray-900">선택 좌석</h2>
-            <button
-              type="button"
-              onClick={() => setIsOpen(false)}
-              className="flex size-9 items-center justify-center rounded-full text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800"
-              aria-label="선택 좌석 접기"
-            >
-              <ChevronDown className="size-5" />
-            </button>
-          </div>
-          <div className="max-h-[45vh] overflow-y-auto pr-1">
-            <SelectionGroups groups={groups} onRemove={onRemove} />
-          </div>
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={() => {
-            if (selectedSeatCount > 0) {
-              setIsOpen(true);
-            }
-          }}
-          className="mb-3 flex min-h-11 w-full items-center justify-between rounded-xl border border-border bg-[#F5F5F7] px-4 py-3 text-left"
-          aria-expanded={isOpen}
-        >
-          <span className="text-sm font-medium text-gray-900">
-            {selectedSeatCount === 0
-              ? '선택한 좌석이 없습니다'
-              : `${selectedSeatCount}석 선택 | ${totalPrice.toLocaleString()}원`}
-          </span>
-          {selectedSeatCount > 0 ? (
-            <span className="text-sm font-semibold text-primary">상세 보기</span>
-          ) : (
-            <span className="text-sm text-gray-500">좌석을 선택해주세요</span>
-          )}
-        </button>
-      )}
-
-      <Button
-        className="h-12 w-full text-base"
-        disabled={!!disabledReason || selectedSeatCount === 0 || isLoading}
-        onClick={onProceed}
-      >
-        {isLoading ? (
-          <>
-            <Loader2 className="mr-2 size-4 animate-spin" />
-            처리 중...
-          </>
-        ) : disabledReason ?? (selectedSeatCount === 0 ? '좌석을 선택해주세요' : '다음')}
-      </Button>
-    </div>
   );
 }
 
@@ -396,11 +299,6 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
       isSameKstCalendarDate(showtime.dateTime, selectedDate),
     );
   }, [allShowtimes, selectedDate]);
-
-  const selectedShowtime = useMemo(
-    () => allShowtimes.find((showtime) => showtime.id === selectedShowtimeId) ?? null,
-    [allShowtimes, selectedShowtimeId],
-  );
 
   const tierInfoByFloorKey = useMemo(() => {
     const map = new Map<string, Map<string, { tierName: string; color: string; price: number }>>();
@@ -497,29 +395,48 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
     [availableSeatMaps],
   );
 
-  const groupedSelections = useMemo(() => {
-    const groups = new Map<string, GroupedFloorSelection>();
+  const sortedSelections = useMemo(() => {
+    return [...selectedSeats].sort((left, right) => {
+      const leftOrder = floorOrderMap.get(left.floorKey) ?? Number.MAX_SAFE_INTEGER;
+      const rightOrder = floorOrderMap.get(right.floorKey) ?? Number.MAX_SAFE_INTEGER;
+      if (leftOrder !== rightOrder) {
+        return leftOrder - rightOrder;
+      }
 
-    for (const seat of selectedSeats) {
-      const existingGroup = groups.get(seat.floorKey);
-      if (existingGroup) {
-        existingGroup.seats.push(seat);
+      const rowCompare = left.row.localeCompare(right.row, 'ko');
+      if (rowCompare !== 0) {
+        return rowCompare;
+      }
+
+      const leftNumber = Number.parseInt(left.number, 10);
+      const rightNumber = Number.parseInt(right.number, 10);
+      if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) {
+        return leftNumber - rightNumber;
+      }
+
+      return left.number.localeCompare(right.number, 'ko');
+    });
+  }, [floorOrderMap, selectedSeats]);
+
+  const tierSummaries = useMemo(() => {
+    const summaries = new Map<string, TierSummary>();
+
+    for (const seat of sortedSelections) {
+      const existing = summaries.get(seat.tierName);
+      if (existing) {
+        existing.count += 1;
         continue;
       }
 
-      groups.set(seat.floorKey, {
-        floorKey: seat.floorKey,
-        floorLabel: seat.floorLabel,
-        seats: [seat],
+      summaries.set(seat.tierName, {
+        tierName: seat.tierName,
+        color: seat.tierColor ?? '#6C3CE0',
+        count: 1,
       });
     }
 
-    return Array.from(groups.values()).sort((left, right) => {
-      const leftOrder = floorOrderMap.get(left.floorKey) ?? Number.MAX_SAFE_INTEGER;
-      const rightOrder = floorOrderMap.get(right.floorKey) ?? Number.MAX_SAFE_INTEGER;
-      return leftOrder - rightOrder;
-    });
-  }, [floorOrderMap, selectedSeats]);
+    return Array.from(summaries.values());
+  }, [sortedSelections]);
 
   const totalPrice = useMemo(
     () => selectedSeats.reduce((sum, seat) => sum + seat.price, 0),
@@ -543,6 +460,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
         floorLabel: seatMap.floorLabel,
         selectedCount,
         isSoldOut: !hasAvailableSeats,
+        totalSeats: seatMap.totalSeats,
       };
     });
   }, [availableSeatMaps, seatStatesByFloorKey, selectedSeats]);
@@ -718,6 +636,15 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
     [removeSeat, selectedSeats, selectedShowtimeId, unlockSeat],
   );
 
+  const handleClearSeats = useCallback(() => {
+    if (!selectedShowtimeId || selectedSeats.length === 0) {
+      return;
+    }
+
+    unlockAll.mutate({ showtimeId: selectedShowtimeId });
+    useBookingStore.getState().clearSeats();
+  }, [selectedSeats.length, selectedShowtimeId, unlockAll]);
+
   const handleProceed = useCallback(() => {
     if (!selectedShowtimeId || !performance) {
       return;
@@ -862,9 +789,8 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
         onExpire={handleTimerExpire}
       />
 
-      <main className="mx-auto w-full max-w-[1280px] px-4 py-4 pb-32 lg:px-6 lg:py-8 lg:pb-8">
-        <div className="flex flex-col lg:flex-row lg:gap-8">
-          <div className="min-w-0 flex-1 space-y-6">
+      <main className="mx-auto w-full max-w-[1280px] px-4 py-4 pb-48 lg:px-6 lg:py-8 lg:pb-40">
+        <div className="min-w-0 space-y-6">
             <div className="rounded-lg border border-border p-3 lg:border-0 lg:p-0">
               <button
                 type="button"
@@ -936,7 +862,22 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
                   ) : null}
                 </section>
 
-                <SeatLegend tiers={legendTiers} />
+                <SeatLegend tiers={legendTiers} showExcluded />
+
+                <section className="rounded-xl border border-border bg-white px-4 py-4 shadow-sm">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <h2 className="text-sm font-semibold text-gray-900">
+                      선택 좌석
+                    </h2>
+                    <span className="text-sm font-semibold text-primary">
+                      {selectedSeats.length}석
+                    </span>
+                  </div>
+                  <SelectionTags
+                    seats={sortedSelections}
+                    onRemove={handleRemoveSeat}
+                  />
+                </section>
 
                 <SeatMapViewer
                   svgUrl={currentSeatMap.svgUrl}
@@ -948,31 +889,18 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
                 />
               </>
             ) : null}
-          </div>
-
-          <DesktopSelectionSummary
-            performanceTitle={performance.title}
-            selectedDate={selectedDate}
-            selectedShowtime={selectedShowtime}
-            groups={groupedSelections}
-            selectedSeatCount={selectedSeats.length}
-            totalPrice={totalPrice}
-            onRemove={handleRemoveSeat}
-            onProceed={handleProceed}
-            isLoading={lockSeat.isPending}
-            disabledReason={bookingDisabledReason}
-          />
         </div>
       </main>
 
       {selectedShowtimeId ? (
-        <MobileSelectionSummary
-          groups={groupedSelections}
+        <BookingSelectionBar
+          tierSummaries={tierSummaries}
           selectedSeatCount={selectedSeats.length}
           totalPrice={totalPrice}
-          onRemove={handleRemoveSeat}
+          canClear={selectedSeats.length > 0}
+          onClear={handleClearSeats}
           onProceed={handleProceed}
-          isLoading={lockSeat.isPending}
+          isLoading={lockSeat.isPending || unlockAll.isPending}
           disabledReason={bookingDisabledReason}
         />
       ) : null}

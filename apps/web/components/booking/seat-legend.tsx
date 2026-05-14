@@ -2,9 +2,10 @@
 
 interface SeatLegendProps {
   tiers: Array<{ name: string; color: string; price: number }>;
+  showExcluded?: boolean;
 }
 
-export function SeatLegend({ tiers }: SeatLegendProps) {
+export function SeatLegend({ tiers, showExcluded = false }: SeatLegendProps) {
   if (tiers.length === 0) return null;
 
   return (
@@ -23,6 +24,16 @@ export function SeatLegend({ tiers }: SeatLegendProps) {
             </span>
           </div>
         ))}
+        {showExcluded ? (
+          <div className="flex shrink-0 items-center gap-2">
+            <span
+              className="inline-block size-3 rounded-sm border border-black/10"
+              style={{ backgroundColor: '#F4D03F' }}
+            />
+            <span className="text-sm text-gray-700">사석 / 초대석</span>
+            <span className="text-sm text-gray-500">선택 제외</span>
+          </div>
+        ) : null}
       </div>
     </div>
   );

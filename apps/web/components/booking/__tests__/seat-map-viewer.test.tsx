@@ -75,6 +75,14 @@ const SVG_WITH_SEAT_KEY = `
     <text x="38" y="36" text-anchor="middle">1</text>
   </g>
   <rect data-seat-id="A-2" x="80" y="20" width="36" height="24" rx="4" />
+ </svg>
+`;
+
+const SVG_WITH_EXCLUDED_SEATS = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 120">
+  <rect class="seat seat-excluded" data-seat-id="A-9" x="20" y="20" width="36" height="24" rx="4" fill="#F4D03F" />
+  <rect data-seat-id="A-10" data-category="EXCLUDED" x="70" y="20" width="36" height="24" rx="4" />
+  <rect data-seat-id="A-11" x="120" y="20" width="36" height="24" rx="4" />
 </svg>
 `;
 
@@ -472,6 +480,51 @@ describe('SeatMapViewer', () => {
 
     fireEvent.click(seatLabel!);
     expect(onSeatClick).toHaveBeenCalledWith('2F:A-1');
+  });
+
+  it('marks excluded seats as disabled and does not call onSeatClick', async () => {
+    const onSeatClick = vi.fn();
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      text: () => Promise.resolve(SVG_WITH_EXCLUDED_SEATS),
+    });
+
+    const { container } = render(
+      <SeatMapViewer
+        svgUrl="https://example.com/excluded-seats.svg"
+        seatConfig={{
+          tiers: [
+            { tierName: 'VIP', color: '#6C3CE0', seatIds: ['A-11'] },
+          ],
+        }}
+        seatStates={new Map<string, SeatState>([
+          ['A-9', 'available'],
+          ['A-10', 'available'],
+          ['A-11', 'available'],
+        ])}
+        selectedSeatIds={new Set()}
+        onSeatClick={onSeatClick}
+        maxSelect={4}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-seat-id="A-9"]')).toBeTruthy();
+    });
+
+    const classExcluded = container.querySelector('[data-seat-id="A-9"]')!;
+    const categoryExcluded = container.querySelector('[data-seat-id="A-10"]')!;
+    const availableSeat = container.querySelector('[data-seat-id="A-11"]')!;
+
+    expect(classExcluded.getAttribute('data-seat-excluded')).toBe('true');
+    expect(categoryExcluded.getAttribute('aria-disabled')).toBe('true');
+
+    fireEvent.click(classExcluded);
+    fireEvent.click(categoryExcluded);
+    expect(onSeatClick).not.toHaveBeenCalled();
+
+    fireEvent.click(availableSeat);
+    expect(onSeatClick).toHaveBeenCalledWith('A-11');
   });
 
   it('renders selected seats with dark stroke', async () => {

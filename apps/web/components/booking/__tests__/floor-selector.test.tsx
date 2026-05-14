@@ -247,7 +247,7 @@ describe('BookingPage floor selector', () => {
     });
   });
 
-  it('preserves selections across floor switching and groups the summary by floor label', async () => {
+  it('preserves selections across floor switching and renders removable tags plus bottom summary', async () => {
     const user = userEvent.setup();
 
     renderWithQuery(<BookingPage performanceId="performance-floor-aware" />);
@@ -262,11 +262,38 @@ describe('BookingPage floor selector', () => {
     await user.click(screen.getByRole('button', { name: '현재 층 좌석 선택' }));
     await user.click(screen.getByRole('radio', { name: /1층/ }));
 
-    expect(screen.getByRole('heading', { name: '1층' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '2층' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: '1층 A열 1번 선택 해제' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: '2층 A열 1번 선택 해제' }),
+    ).toBeInTheDocument();
     expect(screen.getByText('current map: /1F-map.svg')).toBeInTheDocument();
     expect(screen.getByText('selected ids: A-1')).toBeInTheDocument();
-    expect(screen.getAllByText('2석').length).toBeGreaterThan(0);
+    expect(screen.getByText('총 2석')).toBeInTheDocument();
+    expect(screen.getByText('총 결제 금액')).toBeInTheDocument();
+    expect(screen.getByText('220,000원')).toBeInTheDocument();
+  });
+
+  it('clears all selected seats through the fixed bottom bar', async () => {
+    const user = userEvent.setup();
+
+    renderWithQuery(<BookingPage performanceId="performance-floor-aware" />);
+
+    await user.click(screen.getByRole('button', { name: '현재 층 좌석 선택' }));
+    expect(
+      screen.getByRole('button', { name: '1층 A열 1번 선택 해제' }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '전체 해제' }));
+
+    expect(unlockAllMutateMock).toHaveBeenCalledWith({
+      showtimeId: 'showtime-floor-aware',
+    });
+    expect(
+      screen.queryByRole('button', { name: '1층 A열 1번 선택 해제' }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('총 0석')).toBeInTheDocument();
   });
 
   it('shows policy-driven limit copy and removes the hardcoded 최대 4석 helper', () => {
