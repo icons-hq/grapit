@@ -1,18 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import { LOCALE_PREFIXES, SUPPORTED_LOCALES } from '@grabit/shared';
 import sitemap, { buildLocalizedAlternates, getLocalizedUrl } from '../sitemap';
 
 const SITE_URL = 'https://heygrabit.com';
+const launchLocales = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
+const localePrefixes = {
+  ko: '/',
+  en: '/en',
+  th: '/th',
+  'zh-CN': '/zh-CN',
+  'zh-TW': '/zh-TW',
+} as const satisfies Record<(typeof launchLocales)[number], string>;
 
 describe('localized sitemap', () => {
   it('builds prefixless Korean URLs and prefixed foreign URLs', () => {
     expect(getLocalizedUrl('/', 'ko')).toBe(`${SITE_URL}/`);
     expect(getLocalizedUrl('/legal/terms', 'ko')).toBe(`${SITE_URL}/legal/terms`);
 
-    for (const locale of SUPPORTED_LOCALES) {
+    for (const locale of launchLocales) {
       if (locale === 'ko') continue;
 
-      expect(LOCALE_PREFIXES[locale]).toBe(`/${locale}`);
+      expect(localePrefixes[locale]).toBe(`/${locale}`);
       expect(getLocalizedUrl('/', locale)).toBe(`${SITE_URL}/${locale}`);
       expect(getLocalizedUrl('/legal/terms', locale)).toBe(
         `${SITE_URL}/${locale}/legal/terms`,
@@ -23,7 +30,7 @@ describe('localized sitemap', () => {
   it('returns hreflang alternates for all launch locales', () => {
     const alternates = buildLocalizedAlternates('/legal/privacy');
 
-    for (const locale of SUPPORTED_LOCALES) {
+    for (const locale of launchLocales) {
       expect(alternates).toHaveProperty(locale);
     }
 
@@ -31,7 +38,7 @@ describe('localized sitemap', () => {
     expect(alternates.en).toBe(`${SITE_URL}/en/legal/privacy`);
     expect(alternates.th).toBe(`${SITE_URL}/th/legal/privacy`);
     expect(alternates['zh-CN']).toBe(`${SITE_URL}/zh-CN/legal/privacy`);
-    expect(alternates['ja']).toBe(`${SITE_URL}/ja/legal/privacy`);
+    expect(alternates['zh-TW']).toBe(`${SITE_URL}/zh-TW/legal/privacy`);
   });
 
   it('includes root and public legal surfaces with localized alternates', () => {
