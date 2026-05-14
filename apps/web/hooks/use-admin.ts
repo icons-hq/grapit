@@ -77,6 +77,16 @@ export interface ReviewTranslationDraftInput {
   translatedText: string;
 }
 
+export interface PublishPerformanceInput {
+  reason: string;
+  confirmed: true;
+  confirmedChangedFields: string[];
+  contentChecklist: {
+    ko: { title: boolean; description: boolean };
+    en: { title: boolean; description: boolean };
+  };
+}
+
 function toApiDateTime(value?: string): string | undefined {
   if (!value) return undefined;
   const date = new Date(value);
@@ -265,6 +275,24 @@ export function useUpdatePerformance(id: string) {
     mutationFn: (data: UpdatePerformanceInput) =>
       apiClient.put<PerformanceWithDetails>(
         `/api/v1/admin/performances/${id}`,
+        data,
+        { showErrorToast: false },
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'performances'] });
+      queryClient.invalidateQueries({
+        queryKey: ['admin', 'performance', id],
+      });
+    },
+  });
+}
+
+export function usePublishPerformance(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: PublishPerformanceInput) =>
+      apiClient.post<PerformanceWithDetails>(
+        `/api/v1/admin/performances/${id}/publish`,
         data,
         { showErrorToast: false },
       ),

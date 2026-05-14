@@ -21,9 +21,15 @@ import {
 } from '@grabit/shared';
 import {
   useCreatePerformance,
+  usePublishPerformance,
   useUpdatePerformance,
   usePresignedUpload,
 } from '@/hooks/use-admin';
+import {
+  EventPublishConfirmationDialog,
+  type EventPublishConfirmInput,
+  type EventPublishReviewSummary,
+} from '@/components/admin/event-publish-confirmation-dialog';
 import { ShowtimeManager } from '@/components/admin/showtime-manager';
 import { CastingManager } from '@/components/admin/casting-manager';
 import {
@@ -46,6 +52,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 const AGE_RATINGS = [
   '전체 관람가',
@@ -63,6 +70,8 @@ const PAYMENT_METHOD_LABELS: Record<PerformanceAllowedPaymentMethod, string> = {
   FOREIGN_EASY_PAY: '해외 간편결제',
   SIMPLE_PAY: '국내 간편결제',
 };
+
+const ADMIN_EVENT_LOCALE_ORDER = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
 
 function isEventCategory(genre: string): genre is EventCategory {
   return (GENRES as readonly string[]).includes(genre);
@@ -94,6 +103,81 @@ function normalizeSeatMapsForEditor(
   }));
 }
 
+function getChangedFieldNames(dirtyFields: unknown, prefix = ''): string[] {
+  if (dirtyFields === true) {
+    return prefix ? [prefix] : [];
+  }
+
+  if (
+    typeof dirtyFields !== 'object' ||
+    dirtyFields === null ||
+    Array.isArray(dirtyFields)
+  ) {
+    return [];
+  }
+
+  return Object.entries(dirtyFields).flatMap(([key, value]) =>
+    getChangedFieldNames(value, prefix ? `${prefix}.${key}` : key),
+  );
+}
+
+function hasText(value: unknown): boolean {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function buildPublishReviewSummary(
+  values: CreatePerformanceFormInput,
+  dirtyFields: unknown,
+): EventPublishReviewSummary {
+  const contentChecklist = {
+    ko: {
+      title: hasText(values.title),
+      description: hasText(values.description),
+    },
+    en: {
+      title: hasText(values.title),
+      description: hasText(values.description),
+    },
+  };
+  const seatMaps = normalizeSeatMapsForEditor(values.seatMaps);
+  const changedFields = getChangedFieldNames(dirtyFields);
+
+  return {
+    title: values.title || '제목 미입력',
+    changedFields: changedFields.length > 0 ? changedFields : ['publishState'],
+    localeStates: ADMIN_EVENT_LOCALE_ORDER.map((locale) => {
+      const required = locale === 'ko' || locale === 'en';
+      const ready =
+        locale === 'ko'
+          ? contentChecklist.ko.title && contentChecklist.ko.description
+          : locale === 'en'
+            ? contentChecklist.en.title && contentChecklist.en.description
+            : false;
+
+      return {
+        locale,
+        label: locale,
+        required,
+        ready,
+      };
+    }),
+    venue: {
+      name: values.venueName || '',
+      address: values.venueAddress ?? null,
+      accessNotes: values.venueAccessNotes ?? null,
+    },
+    transportSummary: values.transportSummary ?? null,
+    saleSummary: {
+      salesInfo: values.salesInfo ?? null,
+      paymentMethods: values.bookingPolicy?.allowedPaymentMethods ?? [],
+      maxTicketsPerUser: values.bookingPolicy?.maxTicketsPerUser ?? 1,
+      seatMapCount: seatMaps.length,
+      totalSeats: seatMaps.reduce((sum, seatMap) => sum + seatMap.totalSeats, 0),
+    },
+    contentChecklist,
+  };
+}
+
 function mapToFormValues(
   data: PerformanceWithDetails,
 ): CreatePerformanceFormInput {
@@ -109,6 +193,8 @@ function mapToFormValues(
     subcategory: data.subcategory,
     venueName: data.venue?.name ?? '',
     venueAddress: data.venue?.address,
+    venueAccessNotes: data.venue?.accessNotes,
+    transportSummary: data.venue?.transportSummary,
     posterUrl: data.posterUrl,
     description: data.description,
     startDate: formatAdminKstDate(data.startDate),
@@ -155,6 +241,7 @@ export function PerformanceForm({
   const [seatMapDuplicateError, setSeatMapDuplicateError] = useState<string | null>(
     null,
   );
+  const [publishDialogOpen, setPublishDialogOpen] = useState(false);
 
   const form = useForm<CreatePerformanceFormInput, unknown, CreatePerformanceInput>({
     resolver: zodResolver(createPerformanceSchema),
@@ -166,6 +253,8 @@ export function PerformanceForm({
           genre: undefined,
           venueName: '',
           venueAddress: null,
+          venueAccessNotes: null,
+          transportSummary: null,
           posterUrl: null,
           description: null,
           startDate: '',
@@ -200,8 +289,14 @@ export function PerformanceForm({
 
   const createMutation = useCreatePerformance();
   const updateMutation = useUpdatePerformance(performanceId ?? '');
+  const publishMutation = usePublishPerformance(performanceId ?? '');
   const presignedUpload = usePresignedUpload();
   const seatMaps = normalizeSeatMapsForEditor(form.watch('seatMaps'));
+  const watchedValues = form.watch();
+  const publishReviewSummary = buildPublishReviewSummary(
+    watchedValues,
+    form.formState.dirtyFields,
+  );
 
   const handlePosterUpload = useCallback(
     async (file: File) => {
@@ -308,13 +403,30 @@ export function PerformanceForm({
     }
   }
 
+  async function handlePublishConfirm(input: EventPublishConfirmInput) {
+    if (!performanceId) return;
+
+    try {
+      await publishMutation.mutateAsync(input);
+      toast.success('이벤트가 게시되었습니다');
+      setPublishDialogOpen(false);
+      router.push('/admin/performances');
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : '이벤트 게시에 실패했습니다.',
+      );
+    }
+  }
+
   const isSubmitting =
     form.formState.isSubmitting ||
     createMutation.isPending ||
     updateMutation.isPending;
+  const canPublish = mode === 'edit' && Boolean(performanceId);
 
   return (
-    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8 pb-24">
+    <>
+      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8 pb-24">
       {/* Section: 기본 정보 */}
       <section className="rounded-lg bg-white p-6 shadow-sm">
         <h2 className="mb-4 text-xl font-semibold">기본 정보</h2>
@@ -425,6 +537,37 @@ export function PerformanceForm({
                 id="venueAddress"
                 {...form.register('venueAddress')}
                 placeholder="공연장 주소"
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label
+                htmlFor="venueAccessNotes"
+                className="mb-1 block text-sm font-semibold"
+              >
+                입장 안내
+              </label>
+              <Textarea
+                id="venueAccessNotes"
+                {...form.register('venueAccessNotes')}
+                rows={3}
+                placeholder="게이트, 접근성, 현장 안내를 입력하세요"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="transportSummary"
+                className="mb-1 block text-sm font-semibold"
+              >
+                교통 안내
+              </label>
+              <Textarea
+                id="transportSummary"
+                {...form.register('transportSummary')}
+                rows={3}
+                placeholder="대중교통, 셔틀, 주차 안내를 입력하세요"
               />
             </div>
           </div>
@@ -851,6 +994,67 @@ export function PerformanceForm({
         </div>
       </section>
 
+      <section className="rounded-lg bg-white p-6 shadow-sm">
+        <div className="space-y-5">
+          <div>
+            <h2 className="mb-2 text-xl font-semibold">게시 검토</h2>
+            <p className="text-sm text-gray-600">
+              공개 전 언어 상태, 장소/교통, 판매 설정을 한 번에 확인합니다.
+            </p>
+          </div>
+
+          <Tabs defaultValue="ko" className="w-full">
+            <TabsList>
+              {publishReviewSummary.localeStates.map((state) => (
+                <TabsTrigger key={state.locale} value={state.locale}>
+                  {state.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+            {publishReviewSummary.localeStates.map((state) => (
+              <TabsContent key={state.locale} value={state.locale}>
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900">
+                      {state.required ? '필수 게시 언어' : '검수 필요 언어'}
+                    </p>
+                    <p className="mt-1 text-sm text-gray-600">
+                      {state.ready
+                        ? '게시 가능한 콘텐츠가 준비되었습니다.'
+                        : '게시 전 검수 상태로 남습니다.'}
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-[#F3EFFF] px-3 py-1 text-sm font-semibold text-[#6C3CE0]">
+                    {state.ready ? '준비됨' : '검수 필요'}
+                  </span>
+                </div>
+              </TabsContent>
+            ))}
+          </Tabs>
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="rounded-lg border border-gray-200 bg-[#F5F5F7] p-4">
+              <p className="text-sm font-semibold text-gray-700">장소/교통</p>
+              <p className="mt-2 text-sm font-semibold text-gray-900">
+                {publishReviewSummary.venue.name || '장소 미입력'}
+              </p>
+              <p className="mt-1 text-sm text-gray-600">
+                {publishReviewSummary.transportSummary || '교통 안내 미입력'}
+              </p>
+            </div>
+            <div className="rounded-lg border border-gray-200 bg-[#F5F5F7] p-4">
+              <p className="text-sm font-semibold text-gray-700">판매 설정</p>
+              <p className="mt-2 text-sm text-gray-900">
+                결제 수단 {publishReviewSummary.saleSummary.paymentMethods.join(', ') || '미입력'}
+              </p>
+              <p className="mt-1 text-sm text-gray-600">
+                1인 {publishReviewSummary.saleSummary.maxTicketsPerUser}매 / {publishReviewSummary.saleSummary.seatMapCount}개 층 / {publishReviewSummary.saleSummary.totalSeats.toLocaleString('ko-KR')}석
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
       {/* Sticky bottom bar */}
       <div className="sticky bottom-0 flex justify-end gap-3 border-t bg-white px-8 py-4">
         <Button
@@ -870,7 +1074,24 @@ export function PerformanceForm({
             '저장'
           )}
         </Button>
+        {canPublish && (
+          <Button
+            type="button"
+            disabled={isSubmitting || publishMutation.isPending}
+            onClick={() => setPublishDialogOpen(true)}
+          >
+            이벤트 게시하기
+          </Button>
+        )}
       </div>
-    </form>
+      </form>
+      <EventPublishConfirmationDialog
+        open={publishDialogOpen}
+        onOpenChange={setPublishDialogOpen}
+        summary={publishReviewSummary}
+        onConfirm={handlePublishConfirm}
+        isPublishing={publishMutation.isPending}
+      />
+    </>
   );
 }
