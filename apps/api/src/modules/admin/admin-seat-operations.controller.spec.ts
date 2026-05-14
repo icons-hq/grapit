@@ -75,4 +75,29 @@ describe('AdminSeatOperationsController', () => {
     });
     expect(service.listHistory).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['disable', '/admin/seat-operations/disable'],
+    ['reactivate', '/admin/seat-operations/reactivate'],
+  ])(
+    'returns 400 for malformed %s showtimeId before calling the service',
+    async (_label, path) => {
+      service.performOperation.mockResolvedValue({});
+
+      const res = await request(app.getHttpServer())
+        .post(path)
+        .send({
+          showtimeId: 'showtime-1',
+          seatKey: '1F:A-10',
+          reason: '시야 제한',
+          confirmed: true,
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body).toMatchObject({
+        message: 'Validation failed',
+      });
+      expect(service.performOperation).not.toHaveBeenCalled();
+    },
+  );
 });
