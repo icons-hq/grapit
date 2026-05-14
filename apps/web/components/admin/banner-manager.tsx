@@ -4,12 +4,29 @@ import { useState, useCallback } from 'react';
 import { Upload, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { usePresignedUpload } from '@/hooks/use-admin';
+import type {
+  BannerDeviceTarget,
+  BannerPlacement,
+  BannerStatus,
+} from '@grabit/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 
 interface BannerFormData {
   imageUrl: string;
-  linkUrl: string;
+  linkUrl: string | null;
+  placement: BannerPlacement;
+  deviceTarget: BannerDeviceTarget;
+  startsAt: string | null;
+  endsAt: string | null;
+  status: BannerStatus;
   sortOrder: number;
   isActive: boolean;
 }
@@ -21,6 +38,42 @@ interface BannerFormProps {
   isSubmitting: boolean;
 }
 
+const PLACEMENT_OPTIONS: Array<{ value: BannerPlacement; label: string }> = [
+  { value: 'home_hero', label: '홈 히어로' },
+  { value: 'home_secondary', label: '홈 보조' },
+  { value: 'performance_detail', label: '공연 상세' },
+  { value: 'operations_notice', label: '운영 공지' },
+];
+
+const DEVICE_TARGET_OPTIONS: Array<{ value: BannerDeviceTarget; label: string }> = [
+  { value: 'all', label: '전체' },
+  { value: 'desktop', label: '데스크톱' },
+  { value: 'mobile', label: '모바일' },
+];
+
+const STATUS_OPTIONS: Array<{ value: BannerStatus; label: string }> = [
+  { value: 'draft', label: '임시저장' },
+  { value: 'scheduled', label: '예약됨' },
+  { value: 'active', label: '활성' },
+  { value: 'paused', label: '일시중지' },
+  { value: 'expired', label: '만료' },
+];
+
+function toDatetimeLocal(value: string | null | undefined): string {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const offsetMs = date.getTimezoneOffset() * 60 * 1000;
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+}
+
+function toIsoDatetime(value: string): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toISOString();
+}
+
 export function BannerForm({
   initialData,
   onSubmit,
@@ -29,6 +82,19 @@ export function BannerForm({
 }: BannerFormProps) {
   const [imageUrl, setImageUrl] = useState(initialData?.imageUrl ?? '');
   const [linkUrl, setLinkUrl] = useState(initialData?.linkUrl ?? '');
+  const [placement, setPlacement] = useState<BannerPlacement>(
+    initialData?.placement ?? 'home_hero',
+  );
+  const [deviceTarget, setDeviceTarget] = useState<BannerDeviceTarget>(
+    initialData?.deviceTarget ?? 'all',
+  );
+  const [startsAt, setStartsAt] = useState(
+    toDatetimeLocal(initialData?.startsAt),
+  );
+  const [endsAt, setEndsAt] = useState(toDatetimeLocal(initialData?.endsAt));
+  const [status, setStatus] = useState<BannerStatus>(
+    initialData?.status ?? 'active',
+  );
   const [sortOrder, setSortOrder] = useState(initialData?.sortOrder ?? 0);
   const presignedUpload = usePresignedUpload();
 
@@ -68,14 +134,19 @@ export function BannerForm({
     }
     await onSubmit({
       imageUrl,
-      linkUrl: linkUrl || '',
+      linkUrl: linkUrl.trim() || null,
+      placement,
+      deviceTarget,
+      startsAt: toIsoDatetime(startsAt),
+      endsAt: toIsoDatetime(endsAt),
+      status,
       sortOrder,
-      isActive: true,
+      isActive: initialData?.isActive ?? true,
     });
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4 rounded-lg border p-4">
+    <form onSubmit={handleSubmit} className="space-y-4 rounded-lg border bg-white p-4">
       {/* Image */}
       {imageUrl ? (
         <div className="relative">
@@ -113,6 +184,7 @@ export function BannerForm({
         type="file"
         accept="image/jpeg,image/png,image/webp"
         className="hidden"
+        aria-label="배너 이미지 파일"
         onChange={(e) => {
           const file = e.target.files?.[0];
           if (file) handleImageUpload(file);
@@ -131,6 +203,108 @@ export function BannerForm({
           onChange={(e) => setLinkUrl(e.target.value)}
           placeholder="https://..."
         />
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3">
+        <div>
+          <label htmlFor="banner-placement" className="mb-1 block text-sm font-semibold">
+            배너 위치
+          </label>
+          <Select
+            value={placement}
+            onValueChange={(value) => setPlacement(value as BannerPlacement)}
+          >
+            <SelectTrigger
+              id="banner-placement"
+              className="h-11 w-full rounded-lg border-gray-200 bg-white text-base"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PLACEMENT_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div>
+          <label htmlFor="banner-device-target" className="mb-1 block text-sm font-semibold">
+            기기 대상
+          </label>
+          <Select
+            value={deviceTarget}
+            onValueChange={(value) =>
+              setDeviceTarget(value as BannerDeviceTarget)
+            }
+          >
+            <SelectTrigger
+              id="banner-device-target"
+              className="h-11 w-full rounded-lg border-gray-200 bg-white text-base"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {DEVICE_TARGET_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div>
+          <label htmlFor="banner-status" className="mb-1 block text-sm font-semibold">
+            배너 상태
+          </label>
+          <Select
+            value={status}
+            onValueChange={(value) => setStatus(value as BannerStatus)}
+          >
+            <SelectTrigger
+              id="banner-status"
+              className="h-11 w-full rounded-lg border-gray-200 bg-white text-base"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {STATUS_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <div>
+          <label htmlFor="banner-starts-at" className="mb-1 block text-sm font-semibold">
+            배너 시작 시각
+          </label>
+          <Input
+            id="banner-starts-at"
+            type="datetime-local"
+            value={startsAt}
+            onChange={(e) => setStartsAt(e.target.value)}
+          />
+        </div>
+
+        <div>
+          <label htmlFor="banner-ends-at" className="mb-1 block text-sm font-semibold">
+            배너 종료 시각
+          </label>
+          <Input
+            id="banner-ends-at"
+            type="datetime-local"
+            value={endsAt}
+            onChange={(e) => setEndsAt(e.target.value)}
+          />
+        </div>
       </div>
 
       {/* Sort Order */}
