@@ -135,7 +135,7 @@ describe('Phase 23 launch foundation schema contracts', () => {
   });
 
   it('defines the launch enum values needed by locale, translation, and legal workflows', () => {
-    expect(localeEnum.enumValues).toEqual(['ko', 'en', 'th', 'zh-CN', 'ja']);
+    expect(localeEnum.enumValues).toEqual(['ko', 'en', 'th', 'zh-CN', 'zh-TW']);
     expect(translationStatusEnum.enumValues).toEqual(['draft', 'review', 'published', 'stale']);
     expect(legalContentTypeEnum.enumValues).toEqual(['legal', 'notice', 'refund', 'booking_guide']);
   });

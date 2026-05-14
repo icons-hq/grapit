@@ -1,7 +1,7 @@
 import { pgTable, uuid, varchar, boolean, timestamp, pgEnum } from 'drizzle-orm/pg-core';
 
 export const genderEnum = pgEnum('gender', ['male', 'female', 'unspecified']);
-export const localeEnum = pgEnum('locale', ['ko', 'en', 'th', 'zh-CN', 'ja']);
+export const localeEnum = pgEnum('locale', ['ko', 'en', 'th', 'zh-CN', 'zh-TW']);
 
 export const users = pgTable('users', {
   id: uuid('id').defaultRandom().primaryKey(),
