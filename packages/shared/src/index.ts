@@ -6,6 +6,7 @@ export * from './schemas/performance.schema';
 export * from './schemas/booking.schema';
 export * from './schemas/admin-dashboard.schema';
 export * from './schemas/consent.schema';
+export * from './schemas/admin-operations.schema';
 
 // Types
 export * from './types/auth.types';
@@ -15,6 +16,7 @@ export * from './types/performance.types';
 export * from './types/booking.types';
 export * from './types/admin-dashboard.types';
 export * from './types/i18n.types';
+export * from './types/admin-operations.types';
 
 // Constants
 export * from './constants/index';

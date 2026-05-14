@@ -1,4 +1,7 @@
 import type { SupportedLocale } from './i18n.types';
+import type { AdminCapability, AdminCapabilityBundle } from './admin-operations.types';
+
+export type UserRole = 'user' | 'admin';
 
 export interface UserProfile {
   id: string;
@@ -10,6 +13,8 @@ export interface UserProfile {
   birthDate: string;
   preferredLocale: SupportedLocale;
   isPhoneVerified: boolean;
-  role: 'user' | 'admin';
+  role: UserRole;
+  adminCapabilityBundle?: AdminCapabilityBundle | null;
+  adminCapabilities?: AdminCapability[];
   createdAt: string;
 }
