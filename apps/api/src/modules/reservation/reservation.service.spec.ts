@@ -2026,6 +2026,61 @@ describe('ReservationService', () => {
       expect(mockBookingService.releasePaymentConfirmLock).toHaveBeenCalledWith(orderId, lockToken);
     });
 
+    it('cancels existing DONE payment when async recovery transaction fails generically', async () => {
+      mockDb.select
+        .mockReturnValueOnce(chainResult([{
+          id: 'payment-existing',
+          reservationId,
+          tossOrderId: orderId,
+          paymentKey: 'pay_async_1',
+          method: 'FOREIGN_EASY_PAY',
+          provider: 'ALIPAY_PLUS',
+          currency: 'USD',
+          amount: 150000,
+          status: 'DONE',
+          paidAt: new Date('2026-05-08T07:06:30.000Z'),
+        }]))
+        .mockReturnValueOnce(chainResult([{
+          id: reservationId,
+          userId,
+          showtimeId,
+          tossOrderId: orderId,
+          status: 'PENDING_PAYMENT',
+          totalAmount: 150000,
+          paymentDeadlineAt: new Date('2099-05-08T07:07:00.000Z'),
+          admissionActiveUntilAt: new Date('2099-05-08T07:10:00.000Z'),
+          reentryGraceUntilAt: new Date('2099-05-08T07:13:00.000Z'),
+        }]))
+        .mockReturnValueOnce(chainResult([
+          { seatId: 'A-1', tierName: 'VIP', price: 100000, row: 'A', number: '1' },
+          { seatId: 'A-2', tierName: 'VIP', price: 50000, row: 'A', number: '2' },
+        ]))
+        .mockReturnValueOnce(chainResult([{ reservationId, tossOrderId: orderId }]));
+      mockDb.transaction.mockRejectedValueOnce(new Error('db write failed after captured payment'));
+      const rootUpdate = mockRootUpdateChain();
+      setupReservationDetailMocks({ reservationId, userId, amount: 150000 });
+
+      await expect(service.confirmAndCreateReservation(
+        { paymentKey: 'pay_async_1', orderId, amount: 150000 },
+        userId,
+      )).rejects.toThrow('결제는 승인되었으나 처리 중 오류가 발생했습니다');
+
+      expect(mockTossClient.confirmPayment).not.toHaveBeenCalled();
+      expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
+        'pay_async_1',
+        '서버 오류로 인한 자동 취소',
+      );
+      expect(rootUpdate.set).toHaveBeenCalledWith(expect.objectContaining({
+        status: 'CANCELED',
+        cancelReason: '서버 오류로 인한 자동 취소',
+      }));
+      expect(rootUpdate.set).toHaveBeenCalledWith(expect.objectContaining({
+        status: 'FAILED',
+      }));
+      expect(mockBookingService.consumeOwnedSeatLocks).not.toHaveBeenCalled();
+      expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+    });
+
     it('existing payment idempotency returns detail without active lock ownership check', async () => {
       mockDb.select
         .mockReturnValueOnce(chainResult([{ reservationId, tossOrderId: orderId }]));
