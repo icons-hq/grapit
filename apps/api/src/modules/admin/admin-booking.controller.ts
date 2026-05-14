@@ -21,11 +21,20 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
 import {
   adminRefundSchema,
   adminReservationExportFilterSchema,
+  adminSeatOperationRequestSchema,
   type AdminRefundInput,
   type AdminReservationExportFilter,
+  type AdminSeatOperationRequest,
 } from '@grabit/shared';
 import { resolveTrustedRequestIp } from '../../common/request-ip.js';
 import { AdminBookingService } from './admin-booking.service.js';
+
+const manualOpenSchema = adminSeatOperationRequestSchema.pick({
+  reason: true,
+  confirmed: true,
+});
+
+type ManualOpenInput = Pick<AdminSeatOperationRequest, 'reason' | 'confirmed'>;
 
 @Controller('admin')
 @UseGuards(RolesGuard)
@@ -93,11 +102,14 @@ export class AdminBookingController {
   }
 
   @Post('bookings/:id/manual-open')
+  @UseGuards(AdminCapabilitiesGuard)
+  @AdminCapabilities('seat.manual_open')
   async manualOpenBooking(
     @Param('id') id: string,
     @CurrentUser('id') operatorUserId: string,
+    @Body(new ZodValidationPipe(manualOpenSchema)) body: ManualOpenInput,
   ) {
-    await this.adminBookingService.manualOpen(id, operatorUserId);
+    await this.adminBookingService.manualOpen(id, operatorUserId, body.reason);
     return { message: '좌석이 즉시 오픈되었습니다' };
   }
 }

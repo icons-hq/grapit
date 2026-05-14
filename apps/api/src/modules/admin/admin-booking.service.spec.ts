@@ -235,18 +235,18 @@ describe('AdminBookingService', () => {
           status: 'success',
           reason,
           changedFields: ['seatStatus'],
-          before: {
-            seats: [
+          before: expect.objectContaining({
+            seatStatus: [
               { seatKey: '2F:A-1', status: 'held_cancelled' },
               { seatKey: '2F:A-2', status: 'held_cancelled' },
             ],
-          },
-          after: {
-            seats: [
+          }),
+          after: expect.objectContaining({
+            seatStatus: [
               { seatKey: '2F:A-1', status: 'available' },
               { seatKey: '2F:A-2', status: 'available' },
             ],
-          },
+          }),
         }),
         transaction.tx,
       );

@@ -7,12 +7,14 @@ import { RefundModule } from '../refund/refund.module.js';
 import { AdminPerformanceController } from './admin-performance.controller.js';
 import { AdminBannerController } from './admin-banner.controller.js';
 import { AdminBookingController } from './admin-booking.controller.js';
+import { AdminSeatOperationsController } from './admin-seat-operations.controller.js';
 import { LocalUploadController } from './local-upload.controller.js';
 import { AdminDashboardController } from './admin-dashboard.controller.js';
 import { AdminDiagnosticsController } from './admin-diagnostics.controller.js';
 import { AdminService } from './admin.service.js';
 import { AdminAuditService } from './admin-audit.service.js';
 import { AdminBookingService } from './admin-booking.service.js';
+import { AdminSeatOperationsService } from './admin-seat-operations.service.js';
 import { UploadService } from './upload.service.js';
 import { AdminDashboardService } from './admin-dashboard.service.js';
 
@@ -22,6 +24,7 @@ import { AdminDashboardService } from './admin-dashboard.service.js';
     AdminPerformanceController,
     AdminBannerController,
     AdminBookingController,
+    AdminSeatOperationsController,
     LocalUploadController,
     AdminDashboardController,
     AdminDiagnosticsController,
@@ -31,6 +34,7 @@ import { AdminDashboardService } from './admin-dashboard.service.js';
     AdminAuditService,
     AdminCapabilitiesGuard,
     AdminBookingService,
+    AdminSeatOperationsService,
     UploadService,
     AdminDashboardService,
   ],

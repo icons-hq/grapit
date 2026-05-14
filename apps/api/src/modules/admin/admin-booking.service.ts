@@ -540,7 +540,16 @@ export class AdminBookingService {
       .orderBy(desc(reservations.createdAt));
   }
 
-  async manualOpen(reservationId: string, operatorUserId: string): Promise<void> {
+  async manualOpen(
+    reservationId: string,
+    operatorUserId: string,
+    reason: string,
+  ): Promise<void> {
+    const auditReason = reason.trim();
+    if (!auditReason) {
+      throw new BadRequestException('좌석 운영 사유를 입력해주세요');
+    }
+
     const [context] = await this.db
       .select({
         reservation: {
@@ -582,6 +591,14 @@ export class AdminBookingService {
     const seatIdentities = seats.map((seat) =>
       normalizeReservationSeatIdentity(seat.seatId),
     );
+    const beforeSeatStatus = seatIdentities.map((seatIdentity) => ({
+      seatKey: seatIdentity.seatKey,
+      status: 'held_cancelled',
+    }));
+    const afterSeatStatus = seatIdentities.map((seatIdentity) => ({
+      seatKey: seatIdentity.seatKey,
+      status: 'available',
+    }));
 
     await this.db.transaction(async (tx) => {
       await tx.insert(bookingOperationAuditLogs).values(
@@ -592,6 +609,25 @@ export class AdminBookingService {
           reservationId,
           createdAt: now,
         })),
+      );
+
+      await this.auditService.write(
+        {
+          actorUserId: operatorUserId,
+          action: 'seat.manual_open',
+          resourceType: 'reservation',
+          resourceId: reservationId,
+          status: 'success',
+          reason: auditReason,
+          changedFields: ['seatStatus'],
+          before: {
+            seatStatus: beforeSeatStatus,
+          },
+          after: {
+            seatStatus: afterSeatStatus,
+          },
+        },
+        tx,
       );
 
       for (const seatIdentity of seatIdentities) {
