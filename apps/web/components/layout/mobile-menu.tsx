@@ -14,7 +14,7 @@ import {
   getVisibleCopy,
   resolveVisibleCopyLocale,
 } from '@/lib/i18n/visible-copy';
-import { GENRES } from '@grabit/shared';
+import { PUBLIC_GENRES } from '@/lib/performance/public-genres';
 
 interface MobileMenuProps {
   isOpen: boolean;
@@ -175,7 +175,7 @@ export function MobileMenu({
             {copy.nav.category}
           </p>
           <div className="flex flex-col gap-1">
-            {GENRES.map((genre) => (
+            {PUBLIC_GENRES.map((genre) => (
               <Link
                 key={genre}
                 href={getLocalizedPathname(`/genre/${genre}`, activeLocale)}

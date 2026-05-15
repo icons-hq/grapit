@@ -49,7 +49,7 @@ describe('search i18n visible copy', () => {
     expect(screen.getByText('0 results')).toBeDefined();
     expect(screen.getByText('Include ended shows')).toBeDefined();
     expect(screen.getByRole('button', { name: 'All categories' })).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Artist/Celebrity' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Artist' })).toBeDefined();
     expect(screen.getByRole('button', { name: 'IP Popup' })).toBeDefined();
     expect(screen.getByRole('heading', { name: 'No results found' })).toBeDefined();
   });
