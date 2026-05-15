@@ -4,8 +4,9 @@ import {
   BadRequestException,
   Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
-import { eq, and, sql, ilike, or, desc, inArray } from 'drizzle-orm';
+import { eq, and, sql, ilike, or, desc, inArray, gte, lte, ne, type SQL } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
   reservations,
@@ -20,8 +21,11 @@ import {
 } from '../../database/schema/index.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
 import { RefundService } from '../refund/refund.service.js';
+import { safeCsvRows } from './csv-export.util.js';
+import { AdminAuditService } from './admin-audit.service.js';
 import type {
   AdminBookingListItem,
+  AdminReservationExportFilter,
   BookingStats,
   FloorAwareSeatSelection,
   PaymentInfo,
@@ -32,6 +36,72 @@ import type {
 
 const LEGACY_FLOOR_KEY = 'default';
 const LEGACY_FLOOR_LABEL = '기본';
+const RAW_EXPORT_TYPE = 'raw_pii';
+const RESERVATION_EXPORT_HEADERS = [
+  'Reservation Number',
+  'User Name',
+  'User Email',
+  'User Phone',
+  'Audience Region',
+  'Performance Title',
+  'Show DateTime',
+  'Tier',
+  'Seat',
+  'Payment Method',
+  'Payment Status',
+  'Total Amount',
+  'Reservation Status',
+  'Reserved At',
+] as const;
+
+export interface ReservationExportRequest {
+  actorUserId: string;
+  filters: AdminReservationExportFilter;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+}
+
+export interface ReservationExportResult {
+  filename: string;
+  contentType: 'text/csv; charset=utf-8';
+  csv: string;
+  rowCount: number;
+}
+
+type ReservationExportRow = {
+  reservation: {
+    id: string;
+    reservationNumber: string;
+    status: string;
+    totalAmount: number;
+    createdAt: Date | null;
+  };
+  user: {
+    name: string;
+    email: string;
+    phone: string;
+    country: string;
+  };
+  showtime: {
+    dateTime: Date | null;
+  };
+  performance: {
+    id: string;
+    title: string;
+  };
+  seat: {
+    seatId: string;
+    tierName: string;
+    row: string;
+    number: string;
+    price: number;
+  };
+  payment: {
+    method: string | null;
+    status: string | null;
+    paidAt: Date | null;
+  } | null;
+};
 
 function toFloorAwareSeatSelection(seat: SeatSelection): FloorAwareSeatSelection {
   return {
@@ -74,7 +144,12 @@ export class AdminBookingService {
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly bookingGateway: BookingGateway,
     private readonly refundService: RefundService,
+    @Optional() private readonly injectedAuditService?: AdminAuditService,
   ) {}
+
+  private get auditService(): AdminAuditService {
+    return this.injectedAuditService ?? new AdminAuditService(this.db);
+  }
 
   async getBookings(params: {
     status?: string;
@@ -283,10 +358,198 @@ export class AdminBookingService {
     operatorUserId: string,
     reason: string,
   ): Promise<void> {
-    await this.refundService.requestAdminRefund(reservationId, operatorUserId, reason);
+    try {
+      const refundResult = await this.refundService.requestAdminRefund(
+        reservationId,
+        operatorUserId,
+        reason,
+      );
+
+      await this.auditService.write({
+        actorUserId: operatorUserId,
+        action: 'refund.admin_refund',
+        resourceType: 'reservation',
+        resourceId: reservationId,
+        status: 'success',
+        reason,
+        changedFields: ['refund'],
+        before: {},
+        after: {
+          refund: {
+            idempotent: refundResult.idempotent,
+            retryEnqueued: refundResult.retryEnqueued,
+            currentState: refundResult.refundTimeline?.currentState ?? null,
+          },
+        },
+      });
+    } catch (error) {
+      await this.auditService.write({
+        actorUserId: operatorUserId,
+        action: 'refund.admin_refund',
+        resourceType: 'reservation',
+        resourceId: reservationId,
+        status: 'failed',
+        reason,
+        changedFields: ['refund'],
+        before: {},
+        after: {
+          refund: {
+            error: error instanceof Error ? error.message : 'unknown',
+          },
+        },
+      }).catch((auditError: unknown) => {
+        this.logger.warn(
+          `Failed to write admin refund failure audit for reservationId=${reservationId}: ${
+            auditError instanceof Error ? auditError.message : 'unknown'
+          }`,
+        );
+      });
+      throw error;
+    }
   }
 
-  async manualOpen(reservationId: string, operatorUserId: string): Promise<void> {
+  async exportReservations(
+    request: ReservationExportRequest,
+  ): Promise<ReservationExportResult> {
+    const reason = request.filters.reason?.trim();
+    if (!reason) {
+      throw new BadRequestException('원본 CSV 내보내기 사유를 입력해주세요');
+    }
+
+    if (
+      request.filters.dateFrom
+      && request.filters.dateTo
+      && request.filters.dateFrom > request.filters.dateTo
+    ) {
+      throw new BadRequestException('조회 종료일은 시작일 이후여야 합니다');
+    }
+
+    const filters = {
+      ...request.filters,
+      exportType: RAW_EXPORT_TYPE,
+      reason,
+    } satisfies AdminReservationExportFilter;
+
+    const rows = await this.selectReservationExportRows(filters);
+    const csv = safeCsvRows([
+      RESERVATION_EXPORT_HEADERS,
+      ...rows.map((row) => reservationExportRowToCsvValues(row)),
+    ]);
+
+    await this.auditService.write({
+      actorUserId: request.actorUserId,
+      action: 'reservations.export_raw',
+      resourceType: 'reservation_export',
+      resourceId: RAW_EXPORT_TYPE,
+      status: 'success',
+      reason,
+      changedFields: ['exportType', 'filters', 'rowCount'],
+      before: {},
+      after: {
+        exportType: RAW_EXPORT_TYPE,
+        filters: reservationExportFiltersForAudit(filters),
+        rowCount: rows.length,
+      },
+      ipAddress: request.ipAddress ?? null,
+      userAgent: request.userAgent ?? null,
+    });
+
+    return {
+      filename: `reservation-export-raw-${new Date().toISOString().slice(0, 10)}.csv`,
+      contentType: 'text/csv; charset=utf-8',
+      csv,
+      rowCount: rows.length,
+    };
+  }
+
+  private async selectReservationExportRows(
+    filters: AdminReservationExportFilter,
+  ): Promise<ReservationExportRow[]> {
+    const conditions: SQL[] = [];
+
+    if (filters.eventId) {
+      conditions.push(eq(performances.id, filters.eventId));
+    }
+    if (filters.tierName) {
+      conditions.push(eq(reservationSeats.tierName, filters.tierName));
+    }
+    if (filters.zoneFloor) {
+      conditions.push(ilike(reservationSeats.seatId, `${filters.zoneFloor}:%`));
+    }
+    if (filters.reservationStatus) {
+      conditions.push(eq(reservations.status, filters.reservationStatus));
+    }
+    if (filters.audienceRegion === 'domestic') {
+      conditions.push(eq(users.country, 'KR'));
+    }
+    if (filters.audienceRegion === 'overseas') {
+      conditions.push(ne(users.country, 'KR'));
+    }
+    if (filters.paymentMethod) {
+      conditions.push(eq(payments.method, filters.paymentMethod));
+    }
+    if (filters.dateFrom) {
+      conditions.push(gte(reservations.createdAt, dateOnlyStart(filters.dateFrom)));
+    }
+    if (filters.dateTo) {
+      conditions.push(lte(reservations.createdAt, dateOnlyEnd(filters.dateTo)));
+    }
+
+    return this.db
+      .select({
+        reservation: {
+          id: reservations.id,
+          reservationNumber: reservations.reservationNumber,
+          status: reservations.status,
+          totalAmount: reservations.totalAmount,
+          createdAt: reservations.createdAt,
+        },
+        user: {
+          name: users.name,
+          email: users.email,
+          phone: users.phone,
+          country: users.country,
+        },
+        showtime: {
+          dateTime: showtimes.dateTime,
+        },
+        performance: {
+          id: performances.id,
+          title: performances.title,
+        },
+        seat: {
+          seatId: reservationSeats.seatId,
+          tierName: reservationSeats.tierName,
+          row: reservationSeats.row,
+          number: reservationSeats.number,
+          price: reservationSeats.price,
+        },
+        payment: {
+          method: payments.method,
+          status: payments.status,
+          paidAt: payments.paidAt,
+        },
+      })
+      .from(reservations)
+      .innerJoin(users, eq(reservations.userId, users.id))
+      .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
+      .innerJoin(performances, eq(showtimes.performanceId, performances.id))
+      .innerJoin(reservationSeats, eq(reservationSeats.reservationId, reservations.id))
+      .leftJoin(payments, eq(payments.reservationId, reservations.id))
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(reservations.createdAt));
+  }
+
+  async manualOpen(
+    reservationId: string,
+    operatorUserId: string,
+    reason: string,
+  ): Promise<void> {
+    const auditReason = reason.trim();
+    if (!auditReason) {
+      throw new BadRequestException('좌석 운영 사유를 입력해주세요');
+    }
+
     const [context] = await this.db
       .select({
         reservation: {
@@ -328,6 +591,14 @@ export class AdminBookingService {
     const seatIdentities = seats.map((seat) =>
       normalizeReservationSeatIdentity(seat.seatId),
     );
+    const beforeSeatStatus = seatIdentities.map((seatIdentity) => ({
+      seatKey: seatIdentity.seatKey,
+      status: 'held_cancelled',
+    }));
+    const afterSeatStatus = seatIdentities.map((seatIdentity) => ({
+      seatKey: seatIdentity.seatKey,
+      status: 'available',
+    }));
 
     await this.db.transaction(async (tx) => {
       await tx.insert(bookingOperationAuditLogs).values(
@@ -338,6 +609,25 @@ export class AdminBookingService {
           reservationId,
           createdAt: now,
         })),
+      );
+
+      await this.auditService.write(
+        {
+          actorUserId: operatorUserId,
+          action: 'seat.manual_open',
+          resourceType: 'reservation',
+          resourceId: reservationId,
+          status: 'success',
+          reason: auditReason,
+          changedFields: ['seatStatus'],
+          before: {
+            seatStatus: beforeSeatStatus,
+          },
+          after: {
+            seatStatus: afterSeatStatus,
+          },
+        },
+        tx,
       );
 
       for (const seatIdentity of seatIdentities) {
@@ -375,4 +665,57 @@ export class AdminBookingService {
       `Manual open completed for reservationId=${reservationId}, operatorUserId=${operatorUserId}, seats=${seatIdentities.length}`,
     );
   }
+}
+
+function reservationExportRowToCsvValues(row: ReservationExportRow): readonly unknown[] {
+  const audienceRegion = row.user.country === 'KR' ? 'domestic' : 'overseas';
+
+  return [
+    row.reservation.reservationNumber,
+    row.user.name,
+    row.user.email,
+    row.user.phone,
+    audienceRegion,
+    row.performance.title,
+    row.showtime.dateTime?.toISOString() ?? '',
+    row.seat.tierName,
+    row.seat.seatId,
+    row.payment?.method ?? '',
+    row.payment?.status ?? '',
+    row.reservation.totalAmount,
+    row.reservation.status,
+    row.reservation.createdAt?.toISOString() ?? '',
+  ];
+}
+
+function reservationExportFiltersForAudit(
+  filters: AdminReservationExportFilter,
+): Record<string, string> {
+  const auditFilters: Record<string, string> = {};
+
+  for (const key of [
+    'eventId',
+    'tierName',
+    'zoneFloor',
+    'reservationStatus',
+    'audienceRegion',
+    'paymentMethod',
+    'dateFrom',
+    'dateTo',
+  ] as const) {
+    const value = filters[key];
+    if (typeof value === 'string' && value.trim().length > 0) {
+      auditFilters[key] = value;
+    }
+  }
+
+  return auditFilters;
+}
+
+function dateOnlyStart(date: string): Date {
+  return new Date(`${date}T00:00:00.000Z`);
+}
+
+function dateOnlyEnd(date: string): Date {
+  return new Date(`${date}T23:59:59.999Z`);
 }

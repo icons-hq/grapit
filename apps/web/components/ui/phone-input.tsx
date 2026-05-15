@@ -13,7 +13,7 @@ import en from 'react-phone-number-input/locale/en.json';
 import th from 'react-phone-number-input/locale/th.json';
 import zh from 'react-phone-number-input/locale/zh.json';
 import 'react-phone-number-input/style.css';
-import { DEFAULT_LOCALE, isSupportedLocale, type SUPPORTED_LOCALES } from '@grabit/shared';
+import { DEFAULT_LOCALE } from '@grabit/shared';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -42,8 +42,6 @@ type PhoneInputProps = Omit<
   locale?: PhoneInputLocale;
 };
 
-type PhoneInputLocale = (typeof SUPPORTED_LOCALES)[number];
-
 type PhoneInputLabelSet = Labels & Record<string, string>;
 
 type CountrySelectCopy = {
@@ -57,16 +55,21 @@ type RawDisplayInputProps = React.ComponentProps<'input'> & {
   rawDisplayCountry?: Country;
 };
 
-const jaLabels = {
-  ...(en as PhoneInputLabelSet),
-  country: '国/地域',
-  KR: '韓国',
-  TH: 'タイ',
-  CN: '中国',
+const PHONE_INPUT_LOCALES = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
+
+type PhoneInputLocale = (typeof PHONE_INPUT_LOCALES)[number];
+
+const zhTWLabels = {
+  ...(zh as PhoneInputLabelSet),
+  country: '國家/地區',
+  KR: '韓國',
+  TH: '泰國',
+  CN: '中國',
+  TW: '台灣',
   JP: '日本',
-  US: 'アメリカ合衆国',
-  IS: 'アイスランド',
-  ZZ: '国際',
+  US: '美國',
+  IS: '冰島',
+  ZZ: '國際',
 } satisfies PhoneInputLabelSet;
 
 const PHONE_INPUT_LABELS = {
@@ -74,7 +77,7 @@ const PHONE_INPUT_LABELS = {
   en: en as PhoneInputLabelSet,
   th: th as PhoneInputLabelSet,
   'zh-CN': zh as PhoneInputLabelSet,
-  ja: jaLabels,
+  'zh-TW': zhTWLabels,
 } as const satisfies Record<PhoneInputLocale, PhoneInputLabelSet>;
 
 const COUNTRY_SELECT_COPY = {
@@ -98,10 +101,10 @@ const COUNTRY_SELECT_COPY = {
     searchPlaceholder: '搜索国家/地区...',
     empty: '未找到匹配的国家/地区。',
   },
-  ja: {
-    ariaPrefix: jaLabels.country,
-    searchPlaceholder: '国/地域を検索...',
-    empty: '一致する国/地域が見つかりません。',
+  'zh-TW': {
+    ariaPrefix: zhTWLabels.country,
+    searchPlaceholder: '搜尋國家/地區...',
+    empty: '找不到符合的國家/地區。',
   },
 } as const satisfies Record<PhoneInputLocale, CountrySelectCopy>;
 
@@ -110,11 +113,11 @@ const DEFAULT_COUNTRY_BY_LOCALE = {
   en: 'KR',
   th: 'TH',
   'zh-CN': 'KR',
-  ja: 'KR',
+  'zh-TW': 'KR',
 } as const satisfies Record<PhoneInputLocale, Country>;
 
 function resolvePhoneInputLocale(locale: PhoneInputLocale | undefined): PhoneInputLocale {
-  return locale && isSupportedLocale(locale) ? locale : DEFAULT_LOCALE;
+  return locale && PHONE_INPUT_LOCALES.includes(locale) ? locale : DEFAULT_LOCALE;
 }
 
 const PhoneInput = React.forwardRef<HTMLInputElement, PhoneInputProps>(

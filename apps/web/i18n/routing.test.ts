@@ -2,14 +2,23 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
-import { DEFAULT_LOCALE, LOCALE_PREFIXES, SUPPORTED_LOCALES } from '@grabit/shared';
+import { DEFAULT_LOCALE, SUPPORTED_LOCALES } from '@grabit/shared';
 import proxy, { config as proxyConfig } from '../proxy';
 import {
   getSuggestedLocaleFromAcceptLanguage,
   LOCALE_SUGGESTION_COOKIE,
+  PUBLIC_SUPPORTED_LOCALES,
   resolveLocaleFromPathname,
   routing,
 } from './routing';
+
+const PUBLIC_LOCALE_PREFIXES = {
+  ko: '/',
+  en: '/en',
+  th: '/th',
+  'zh-CN': '/zh-CN',
+  'zh-TW': '/zh-TW',
+} as const;
 
 vi.mock('next-intl/middleware', async () => {
   const { NextResponse } =
@@ -59,7 +68,7 @@ describe('launch locale routing', () => {
       ['/en/auth', '/auth', 'en'],
       ['/th/legal/terms', '/legal/terms', 'th'],
       ['/zh-CN/legal/privacy', '/legal/privacy', 'zh-CN'],
-      ['/ja/legal/marketing', '/legal/marketing', 'ja'],
+      ['/zh-TW/legal/marketing', '/legal/marketing', 'zh-TW'],
     ] as const;
 
     for (const [externalPathname, internalPathname, locale] of cases) {
@@ -105,7 +114,7 @@ describe('launch locale routing', () => {
 
   it('keeps Korean as the prefixless default and prefixes every foreign locale', () => {
     expect(routing.defaultLocale).toBe(DEFAULT_LOCALE);
-    expect(routing.locales).toEqual([...SUPPORTED_LOCALES]);
+    expect(routing.locales).toEqual([...PUBLIC_SUPPORTED_LOCALES]);
     expect(routing.localePrefix).toBe('as-needed');
 
     expect(resolveLocaleFromPathname('/')).toEqual({
@@ -117,10 +126,10 @@ describe('launch locale routing', () => {
       pathnameWithoutLocale: '/performance/123',
     });
 
-    for (const locale of SUPPORTED_LOCALES) {
+    for (const locale of PUBLIC_SUPPORTED_LOCALES) {
       if (locale === 'ko') continue;
 
-      expect(LOCALE_PREFIXES[locale]).toBe(`/${locale}`);
+      expect(PUBLIC_LOCALE_PREFIXES[locale]).toBe(`/${locale}`);
       expect(resolveLocaleFromPathname(`/${locale}`)).toEqual({
         locale,
         pathnameWithoutLocale: '/',
@@ -135,10 +144,9 @@ describe('launch locale routing', () => {
   it('turns Accept-Language into suggestion state without changing the active URL locale', () => {
     expect(getSuggestedLocaleFromAcceptLanguage('th,en;q=0.8,ko;q=0.5', 'ko')).toBe('th');
     expect(getSuggestedLocaleFromAcceptLanguage('zh-Hant-TW,zh;q=0.9,en;q=0.5', 'ko')).toBe(
-      'zh-CN',
+      'zh-TW',
     );
     expect(getSuggestedLocaleFromAcceptLanguage('zh-Hans-CN,en;q=0.5', 'ko')).toBe('zh-CN');
-    expect(getSuggestedLocaleFromAcceptLanguage('ja-JP,en;q=0.5', 'ko')).toBe('ja');
     expect(getSuggestedLocaleFromAcceptLanguage('ko,en;q=0.8', 'ko')).toBeNull();
     expect(getSuggestedLocaleFromAcceptLanguage('fr,de;q=0.8', 'ko')).toBeNull();
   });

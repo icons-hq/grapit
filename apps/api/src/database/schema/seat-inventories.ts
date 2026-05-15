@@ -7,8 +7,8 @@ export const seatStatusEnum = pgEnum('seat_status', [
   'available',
   'locked',
   'held_cancelled',
-  'disabled',
   'sold',
+  'disabled',
 ]);
 
 export const seatInventories = pgTable('seat_inventories', {

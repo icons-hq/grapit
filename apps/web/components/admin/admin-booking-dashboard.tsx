@@ -14,6 +14,7 @@ import {
 import { AdminStatCard } from '@/components/admin/admin-stat-card';
 import { AdminBookingTable } from '@/components/admin/admin-booking-table';
 import { AdminBookingDetailModal } from '@/components/admin/admin-booking-detail-modal';
+import { ReservationExportPanel } from '@/components/admin/reservation-export-panel';
 import { useAdminBookings, useAdminRefund } from '@/hooks/use-reservations';
 
 const STATUS_OPTIONS = [
@@ -93,6 +94,10 @@ export function AdminBookingDashboard() {
           value={stats?.cancelRate ?? 0}
           format="percent"
         />
+      </div>
+
+      <div className="mt-6">
+        <ReservationExportPanel />
       </div>
 
       {/* Search + filter */}

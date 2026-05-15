@@ -1,8 +1,12 @@
 import { z } from 'zod';
 import { SUPPORTED_LOCALES } from '../constants/locales';
 import {
+  BANNER_DEVICE_TARGETS,
+  BANNER_PLACEMENTS,
+  BANNER_STATUSES,
   DEFAULT_PERFORMANCE_BOOKING_POLICY,
   GENRES,
+  PERFORMANCE_PUBLISH_LIFECYCLE,
   PERFORMANCE_ALLOWED_PAYMENT_METHODS,
 } from '../types/performance.types';
 
@@ -13,6 +17,16 @@ const booleanQueryParam = z.preprocess((value) => {
   if (value === 'false') return false;
   return value;
 }, z.boolean());
+
+const isoDatetime = (label: string) =>
+  z.string().datetime({ message: `${label}은 ISO datetime 형식이어야 합니다` });
+
+export const performancePublishLifecycleSchema = z.enum(
+  PERFORMANCE_PUBLISH_LIFECYCLE,
+);
+export const bannerPlacementSchema = z.enum(BANNER_PLACEMENTS);
+export const bannerDeviceTargetSchema = z.enum(BANNER_DEVICE_TARGETS);
+export const bannerStatusSchema = z.enum(BANNER_STATUSES);
 
 export const performanceQuerySchema = z.object({
   genre: z.enum(GENRES).optional(),
@@ -38,10 +52,24 @@ export type SearchQuery = z.infer<typeof searchQuerySchema>;
 export const createBannerSchema = z.object({
   imageUrl: z.string().url('올바른 이미지 URL을 입력해주세요'),
   linkUrl: z.string().url().nullable().optional(),
+  placement: bannerPlacementSchema.default('home_hero'),
+  deviceTarget: bannerDeviceTargetSchema.default('all'),
+  startsAt: isoDatetime('배너 시작 시각').nullable().optional(),
+  endsAt: isoDatetime('배너 종료 시각').nullable().optional(),
+  status: bannerStatusSchema.default('active'),
   sortOrder: z.number().int().min(0).default(0),
   isActive: z.boolean().default(true),
+}).superRefine((value, ctx) => {
+  if (!value.startsAt || !value.endsAt) return;
+  if (Date.parse(value.endsAt) < Date.parse(value.startsAt)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: '배너 종료 시각은 시작 시각보다 빠를 수 없습니다',
+      path: ['endsAt'],
+    });
+  }
 });
-export type CreateBannerInput = z.infer<typeof createBannerSchema>;
+export type CreateBannerInput = z.input<typeof createBannerSchema>;
 
 export const seatMapConfigSchema = z.object({
   tiers: z.array(z.object({
@@ -130,6 +158,8 @@ export const createPerformanceSchema = z.object({
   subcategory: z.string().max(100).nullable().optional(),
   venueName: z.string().min(1, '장소를 입력해주세요').max(255),
   venueAddress: z.string().max(500).nullable().optional(),
+  venueAccessNotes: z.string().max(2000).nullable().optional(),
+  transportSummary: z.string().max(2000).nullable().optional(),
   posterUrl: z.string().url().nullable().optional(),
   description: z.string().nullable().optional(),
   startDate: z.string().min(1, '시작일을 입력해주세요'),
@@ -137,6 +167,11 @@ export const createPerformanceSchema = z.object({
   runtime: z.string().max(50).nullable().optional(),
   ageRating: z.string().min(1, '관람연령을 입력해주세요').max(50),
   salesInfo: z.string().nullable().optional(),
+  publishState: performancePublishLifecycleSchema.default('draft'),
+  publishReviewRequestedAt: isoDatetime('게시 검토 요청 시각').nullable().optional(),
+  publishReadyAt: isoDatetime('게시 준비 완료 시각').nullable().optional(),
+  publishedAt: isoDatetime('게시 시각').nullable().optional(),
+  publishedByUserId: z.string().uuid().nullable().optional(),
   priceTiers: z.array(z.object({
     tierName: z.string().min(1, '등급명을 입력해주세요').max(50),
     price: z.number().int().min(0, '가격은 0 이상이어야 합니다'),

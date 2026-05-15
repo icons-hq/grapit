@@ -15,7 +15,7 @@ describe('AutomaticTranslationLabel', () => {
     ['en', 'Reviewed machine translation'],
     ['th', 'Reviewed machine translation'],
     ['zh-CN', 'Reviewed machine translation'],
-    ['ja', 'Reviewed machine translation'],
+    ['zh-TW', 'Reviewed machine translation'],
     ['unknown', 'Reviewed machine translation'],
   ])('renders English fallback copy for %s', (locale, expectedCopy) => {
     render(<AutomaticTranslationLabel locale={locale} />);

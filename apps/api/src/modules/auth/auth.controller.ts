@@ -40,7 +40,7 @@ import {
 import type { SocialProfile } from './interfaces/social-profile.interface.js';
 import { AUTH_COOKIE_NAME } from '@grabit/shared/constants/index.js';
 
-const launchLocaleSchema = z.enum(['ko', 'en', 'th', 'zh-CN', 'ja']).default('ko');
+const launchLocaleSchema = z.enum(['ko', 'en', 'th', 'zh-CN', 'zh-TW']).default('ko');
 const emailVerificationRequestSchema = z.object({
   email: z.string().email(),
   locale: launchLocaleSchema.optional(),

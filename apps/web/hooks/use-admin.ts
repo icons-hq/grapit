@@ -16,7 +16,7 @@ import type {
   SaveSeatMapPayloadInput,
 } from '@grabit/shared';
 
-export type TranslationTargetLocale = 'en' | 'th' | 'zh-CN' | 'ja';
+export type TranslationTargetLocale = 'en' | 'th' | 'zh-CN' | 'zh-TW';
 export type TranslationQueueStatus =
   | 'draft'
   | 'review'
@@ -77,6 +77,16 @@ export interface ReviewTranslationDraftInput {
   translatedText: string;
 }
 
+export interface PublishPerformanceInput {
+  reason: string;
+  confirmed: true;
+  confirmedChangedFields: string[];
+  contentChecklist: {
+    ko: { title: boolean; description: boolean };
+    en: { title: boolean; description: boolean };
+  };
+}
+
 function toApiDateTime(value?: string): string | undefined {
   if (!value) return undefined;
   const date = new Date(value);
@@ -125,6 +135,13 @@ function buildTranslationQueueSearchParams(filters: TranslationQueueFilters) {
   }
 
   return params;
+}
+
+function invalidateBannerQueries(
+  queryClient: ReturnType<typeof useQueryClient>,
+) {
+  queryClient.invalidateQueries({ queryKey: ['admin', 'banners'] });
+  queryClient.invalidateQueries({ queryKey: ['home', 'banners'] });
 }
 
 // Performance list for admin table
@@ -277,6 +294,24 @@ export function useUpdatePerformance(id: string) {
   });
 }
 
+export function usePublishPerformance(id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: PublishPerformanceInput) =>
+      apiClient.post<PerformanceWithDetails>(
+        `/api/v1/admin/performances/${id}/publish`,
+        data,
+        { showErrorToast: false },
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'performances'] });
+      queryClient.invalidateQueries({
+        queryKey: ['admin', 'performance', id],
+      });
+    },
+  });
+}
+
 // Delete performance
 export function useDeletePerformance() {
   const queryClient = useQueryClient();
@@ -331,7 +366,7 @@ export function useCreateBanner() {
     mutationFn: (data: CreateBannerInput) =>
       apiClient.post<Banner>('/api/v1/admin/banners', data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin', 'banners'] });
+      invalidateBannerQueries(queryClient);
     },
   });
 }
@@ -343,7 +378,7 @@ export function useUpdateBanner(id: string) {
     mutationFn: (data: Partial<CreateBannerInput>) =>
       apiClient.put<Banner>(`/api/v1/admin/banners/${id}`, data),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin', 'banners'] });
+      invalidateBannerQueries(queryClient);
     },
   });
 }
@@ -354,7 +389,7 @@ export function useDeleteBanner() {
     mutationFn: (id: string) =>
       apiClient.delete(`/api/v1/admin/banners/${id}`),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin', 'banners'] });
+      invalidateBannerQueries(queryClient);
     },
   });
 }
@@ -365,7 +400,7 @@ export function useReorderBanners() {
     mutationFn: (orderedIds: string[]) =>
       apiClient.put('/api/v1/admin/banners/reorder', { orderedIds }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['admin', 'banners'] });
+      invalidateBannerQueries(queryClient);
     },
   });
 }

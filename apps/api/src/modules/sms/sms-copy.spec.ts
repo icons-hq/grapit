@@ -6,7 +6,7 @@ import {
   smsOtpCopy,
 } from './sms-copy.js';
 
-const expectedLocales = ['ko', 'en', 'th', 'zh-CN', 'ja'] as const;
+const expectedLocales = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
 const smsOtpKeys = [
   'template',
   'sent',
@@ -27,10 +27,14 @@ const authStatusKeys = [
 ] as const;
 
 describe('launch SMS and auth copy contract', () => {
+  const deprecatedLocale = ['j', 'a'].join('');
+
   it('exports exactly the five launch locales', () => {
     expect(SMS_COPY_LOCALES).toEqual(expectedLocales);
     expect(Object.keys(smsOtpCopy)).toEqual([...expectedLocales]);
     expect(Object.keys(authStatusCopy)).toEqual([...expectedLocales]);
+    expect(smsOtpCopy).not.toHaveProperty(deprecatedLocale);
+    expect(authStatusCopy).not.toHaveProperty(deprecatedLocale);
   });
 
   it.each(expectedLocales)('SMS OTP copy for %s contains every required key', (locale) => {
@@ -59,5 +63,9 @@ describe('launch SMS and auth copy contract', () => {
     expect(message).toContain('123456');
     expect(message).not.toContain('{{otp}}');
     expect(message.length).toBeGreaterThan(10);
+  });
+
+  it('formats Traditional Chinese OTP provider payload for zh-TW', () => {
+    expect(formatSmsOtpMessage('123456', 'zh-TW')).toContain('驗證碼 123456');
   });
 });

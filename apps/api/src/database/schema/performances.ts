@@ -1,5 +1,6 @@
 import { pgTable, uuid, varchar, text, integer, timestamp, pgEnum, index } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
+import { users } from './users.js';
 import { venues } from './venues.js';
 
 export const genreEnum = pgEnum('genre', [
@@ -10,6 +11,10 @@ export const genreEnum = pgEnum('genre', [
 
 export const performanceStatusEnum = pgEnum('performance_status', [
   'upcoming', 'selling', 'closing_soon', 'ended',
+]);
+
+export const performancePublishStateEnum = pgEnum('performance_publish_state', [
+  'draft', 'review', 'publish_ready', 'published',
 ]);
 
 export const performances = pgTable('performances', {
@@ -25,6 +30,11 @@ export const performances = pgTable('performances', {
   runtime: varchar('runtime', { length: 50 }),
   ageRating: varchar('age_rating', { length: 50 }).notNull(),
   status: performanceStatusEnum('status').notNull().default('upcoming'),
+  publishState: performancePublishStateEnum('publish_state').notNull().default('draft'),
+  publishReviewRequestedAt: timestamp('publish_review_requested_at', { withTimezone: true }),
+  publishReadyAt: timestamp('publish_ready_at', { withTimezone: true }),
+  publishedAt: timestamp('published_at', { withTimezone: true }),
+  publishedByUserId: uuid('published_by_user_id').references(() => users.id, { onDelete: 'set null' }),
   salesInfo: text('sales_info'),
   viewCount: integer('view_count').notNull().default(0),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -32,6 +42,7 @@ export const performances = pgTable('performances', {
 }, (table) => [
   index('idx_performances_genre').on(table.genre),
   index('idx_performances_status').on(table.status),
+  index('idx_performances_publish_state').on(table.publishState),
   index('idx_performances_title_trgm').using('gin', sql`${table.title} gin_trgm_ops`),
 ]);
 

@@ -24,6 +24,9 @@ function readMigrationFile(migrationDir: string, name: string) {
 
 describe('Phase 23 launch foundation schema contracts', () => {
   const migrationDir = join(dirname(fileURLToPath(import.meta.url)), '../migrations');
+  const schemaDir = dirname(fileURLToPath(import.meta.url));
+  const launchLocales = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
+  const deprecatedLocale = ['j', 'a'].join('');
 
   it('stores a nullable/defaulted preferred locale for existing users', () => {
     expectColumnName(users.preferredLocale, 'preferred_locale');
@@ -52,7 +55,7 @@ describe('Phase 23 launch foundation schema contracts', () => {
     expectColumnName(consentAuditLogs.sourceFlow, 'source_flow');
   });
 
-  it('rewrites legacy zh-TW consent data to zh-CN and seeds Japanese consent rows', () => {
+  it('keeps historical ja migration evidence isolated from active launch locales', () => {
     const source = readMigrationFile(
       migrationDir,
       '0014_locale_ja_drop_zh_tw.sql',
@@ -71,7 +74,7 @@ describe('Phase 23 launch foundation schema contracts', () => {
       'pipl_notice',
       'marketing',
     ]) {
-      expect(source).toContain(`('${key}', '2026-04-28', 'ja'`);
+      expect(source).toContain(`('${key}', '2026-04-28', 'ja'`); // historical ja migration evidence
     }
 
     expect(source).toContain('ON CONFLICT ("key", "version", "locale")');
@@ -135,8 +138,25 @@ describe('Phase 23 launch foundation schema contracts', () => {
   });
 
   it('defines the launch enum values needed by locale, translation, and legal workflows', () => {
-    expect(localeEnum.enumValues).toEqual(['ko', 'en', 'th', 'zh-CN', 'ja']);
+    expect(localeEnum.enumValues).toEqual([...launchLocales]);
     expect(translationStatusEnum.enumValues).toEqual(['draft', 'review', 'published', 'stale']);
     expect(legalContentTypeEnum.enumValues).toEqual(['legal', 'notice', 'refund', 'booking_guide']);
+  });
+
+  it('keeps API auth validation and seed fixture aligned to zh-TW instead of active ja', () => {
+    const authControllerSource = readFileSync(
+      join(schemaDir, '../../modules/auth/auth.controller.ts'),
+      'utf8',
+    );
+    const seedSource = readFileSync(join(schemaDir, '../seed.mjs'), 'utf8');
+
+    expect(authControllerSource).toContain("z.enum(['ko', 'en', 'th', 'zh-CN', 'zh-TW'])");
+    expect(authControllerSource).not.toContain(
+      `z.enum(['ko', 'en', 'th', 'zh-CN', '${deprecatedLocale}'])`,
+    );
+    expect(seedSource).toContain("const TRANSLATION_TARGET_LOCALES = ['en', 'th', 'zh-CN', 'zh-TW']");
+    expect(seedSource).toContain("'zh-TW': {");
+    expect(seedSource).not.toContain(`'${deprecatedLocale}': {`);
+    expect(seedSource).not.toContain('チケット');
   });
 });

@@ -180,12 +180,66 @@ Plans:
 
 **Merged from:** 33 Event registration console, 34 Q&A/FAQ/notice/CS, 35 Admin security + operations
 
+**Plans:** 24/24 plans complete
+
+Plans:
+**Wave 0**
+- [x] 25-01-PLAN.md — Resolve shared/message-bundle launch locale drift to `zh-TW`
+- [x] 25-02-PLAN.md — Resolve API schema/auth/email/SMS active-`ja` locale drift
+- [x] 25-03-PLAN.md — Define admin operations contracts and backend capability guard
+- [x] 25-16-PLAN.md — Resolve public routing, formatting, runtime, and i18n-component locale drift
+- [x] 25-17-PLAN.md — Resolve auth/phone/sitemap/i18n-smoke locale drift
+- [x] 25-18-PLAN.md — Resolve user/consent/translation/DeepL locale drift
+- [x] 25-19-PLAN.md — Resolve admin translation and consent UI locale drift
+- [x] 25-20-PLAN.md — Resolve legal fallback locale drift
+
+**Wave 1** *(blocked on locale plans and contracts)*
+- [x] 25-04-PLAN.md — Add event, venue/transport, and banner schema contracts
+
+**Wave 2** *(blocked on event/content schema ownership)*
+- [x] 25-21-PLAN.md — Add support thread, FAQ, and notice schema contracts
+
+**Wave 3** *(blocked on content schema)*
+- [x] 25-05-PLAN.md — Add audit, allowlist, disabled-seat, and seat-operation history schema contracts
+
+**Wave 4** *(blocking schema push gate)*
+- [x] 25-06-PLAN.md — Generate, review, and apply the Phase 25 Drizzle migration
+
+**Wave 5** *(blocked on migration gate)*
+- [x] 25-07-PLAN.md — Implement masked audit, allowlist, and CSV safety primitives
+
+**Wave 6** *(feature plans blocked on migration and primitives)*
+- [x] 25-08-PLAN.md — Implement event registration, venue/transport, publish confirmation, and event audit
+- [x] 25-09-PLAN.md — Build unified operations inbox, SLA, escalation, and support workflow API/UI
+- [x] 25-10-PLAN.md — Add FAQ/notice authoring, review, publish, and translation-use indication
+- [x] 25-11-PLAN.md — Implement seven-filter reservation CSV export and admin refund audit
+
+**Wave 7** *(blocked on shared service files)*
+- [x] 25-12-PLAN.md — Implement backend seat operations APIs/services/tests
+- [x] 25-13-PLAN.md — Expand banner operations with placement/device/schedule and audit
+
+**Wave 8** *(blocked on seat backend and export spec ownership)*
+- [x] 25-22-PLAN.md — Build web seat operation hooks, panel, modal wiring, tests, and deferred E2E spec
+
+**Wave 9** *(blocked on feature surfaces)*
+- [x] 25-14-PLAN.md — Expose audit/security APIs, pages, hooks, and accepted-risk MFA surface
+
+**Wave 10** *(final admin wiring and route-level smoke)*
+- [x] 25-23-PLAN.md — Wire AdminModule/sidebar/layout access state and route-level RBAC/security E2E
+
+**Wave 11** *(phase verification artifacts)*
+- [x] 25-15-PLAN.md — Run full validation and record MFA accepted-risk/manual UAT evidence
+
+**Wave 12** *(gap closure after automated UAT)*
+- [x] 25-24-PLAN.md — Close malformed admin seat-operation showtimeId validation gap
+
 **Success criteria:**
 1. Event form supports multilingual tabs, cast cards, venue/transport, multi-SVG, price tiers, sale settings, review, approval, and publish states.
 2. Operator/reviewer/approver/finance RBAC is enforced and tested.
 3. Q&A 12 categories, FAQ, notices, CS 10 categories, escalation rules, SLA, signup failure lookup, and refund dispute retention are available.
-4. Admin MFA, IP allowlist, and sensitive action audit logs are enforced.
+4. Admin MFA remains an explicit accepted-risk/deferred item per D-08; IP allowlist and sensitive action audit logs are enforced.
 5. Banners, reservation CSV filters, seat disable/reactivate, immediate cancelled-seat opening, and seat history work.
+6. Malformed admin seat operation showtime IDs are rejected as validation-level 400 responses before PostgreSQL UUID comparisons.
 
 ### Phase 26: M1 Canary + Cutover Gates
 

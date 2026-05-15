@@ -1,4 +1,4 @@
-export const EMAIL_VERIFICATION_LOCALES = ['ko', 'en', 'th', 'zh-CN', 'ja'] as const;
+export const EMAIL_VERIFICATION_LOCALES = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
 
 export type EmailVerificationLocale = (typeof EMAIL_VERIFICATION_LOCALES)[number];
 
@@ -64,16 +64,16 @@ export const emailVerificationCopy: Record<EmailVerificationLocale, EmailVerific
     throttled: '请稍后再试。',
     systemError: '暂时发生错误。请重试。',
   },
-  ja: {
-    subject: '[Grabit] メール認証のご案内',
-    bodyIntro: '下のボタンを押してメール認証を完了してください。このリンクは30分間有効です。',
-    verifyCta: 'メールを認証する',
-    resendCta: '認証メールを再送信',
-    resendLoading: '再送信中...',
-    resendSuccess: '認証メールを再送信しました',
-    expired: '認証リンクの有効期限が切れました。新しいメールをリクエストしてください。',
-    verified: 'メール認証が完了しました。',
-    throttled: 'しばらくしてからもう一度お試しください。',
-    systemError: '一時的なエラーが発生しました。もう一度お試しください。',
+  'zh-TW': {
+    subject: '[Grabit] 驗證電子郵件',
+    bodyIntro: '請點選下方按鈕完成電子郵件驗證。此連結 30 分鐘內有效。',
+    verifyCta: '驗證電子郵件',
+    resendCta: '重新寄送驗證信',
+    resendLoading: '正在重新寄送...',
+    resendSuccess: '驗證信已重新寄送',
+    expired: '驗證連結已過期。請重新申請驗證信。',
+    verified: '電子郵件驗證已完成。',
+    throttled: '請稍後再試。',
+    systemError: '暫時發生錯誤。請再試一次。',
   },
 };

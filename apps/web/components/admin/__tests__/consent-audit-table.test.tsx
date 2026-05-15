@@ -25,6 +25,8 @@ const rows: ConsentAuditRow[] = [
   },
 ];
 
+const legacyLocaleLabel = String.fromCharCode(0x65e5, 0x672c, 0x8a9e);
+
 function renderTable(overrides?: {
   auditRows?: ConsentAuditRow[];
   isLoading?: boolean;
@@ -95,6 +97,16 @@ describe('ConsentAuditTable', () => {
       to: '2026-05-06T23:59',
       ip: '203.0.113.10',
     });
+  });
+
+  it('exposes Traditional Chinese consent filtering without a Japanese launch option', async () => {
+    const user = userEvent.setup();
+    renderTable();
+
+    await user.click(screen.getByRole('combobox', { name: '언어' }));
+
+    expect(await screen.findByRole('option', { name: '繁體中文' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: legacyLocaleLabel })).not.toBeInTheDocument();
   });
 
   it('renders masked audit evidence and does not reveal raw PII', () => {

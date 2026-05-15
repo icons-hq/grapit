@@ -1,0 +1,292 @@
+{
+  "nav": {
+    "searchPlaceholder": "搜索演出名稱或藝人",
+    "searchAriaLabel": "搜索演出",
+    "clearSearch": "清除搜索詞",
+    "moreGenres": "更多",
+    "loginSignup": "登錄 / 註冊",
+    "mypage": "我的頁面",
+    "logout": "退出登錄",
+    "language": "語言",
+    "home": "首頁",
+    "search": "搜索",
+    "category": "分類"
+  },
+  "home": {
+    "hot": "熱門演出",
+    "newOpen": "新開售",
+    "genreShortcuts": "按活動分類瀏覽",
+    "more": "更多",
+    "empty": "搜索粉絲見面會和快閃活動，或按分類瀏覽。"
+  },
+  "search": {
+    "promptTitle": "搜索演出",
+    "promptBody": "搜索演出名稱或藝人",
+    "resultTitle": "'{query}' 的搜索結果",
+    "totalCount": "共 {count} 個結果",
+    "includeEnded": "包含已結束演出",
+    "allGenres": "全部分類",
+    "loadError": "無法加載演出信息。請稍後再試。",
+    "retry": "重試",
+    "emptyHeading": "沒有搜索結果",
+    "emptyBody": "請嘗試其他關鍵詞或按活動分類瀏覽"
+  },
+  "genres": {
+    "artist_celebrity": "藝人/名人",
+    "ip_popup": "IP 快閃",
+    "musical": "音樂劇",
+    "concert": "演唱會",
+    "play": "話劇",
+    "exhibition": "展覽",
+    "classic": "古典",
+    "sports": "體育",
+    "kids_family": "兒童/家庭",
+    "leisure_camping": "休閒/露營"
+  },
+  "genrePage": {
+    "title": "{genre}",
+    "emptyHeading": "暫無演出",
+    "emptyBody": "新的演出將很快上線。",
+    "sort": {
+      "ariaLabel": "排序",
+      "latest": "最新",
+      "popular": "熱門"
+    }
+  },
+  "performance": {
+    "posterAltSuffix": "海報",
+    "detailTab": "詳細信息",
+    "salesTab": "銷售信息",
+    "noDetail": "暫無詳細信息",
+    "refundTitle": "取消/退款說明",
+    "refundItems": [
+      "預訂後取消可能產生手續費。",
+      "手續費比例會根據演出日前的取消時間而變化。",
+      "請在預訂時查看詳細內容。"
+    ],
+    "loadError": "無法加載演出信息。請稍後再試。",
+    "retry": "重試",
+    "bookCta": "預訂門票"
+  },
+  "booking": {
+    "disabled": "門票預訂將於稍後開放",
+    "queue": {
+      "status": {
+        "loading": {
+          "badge": "正在檢查隊列",
+          "title": "您正在票務排隊中等待進入",
+          "description": "正在加載您的排位、預計等待時間和剩餘座位數。",
+          "helper": "隊列信息會在稍後自動刷新。"
+        },
+        "waiting": {
+          "badge": "等待中",
+          "title": "您正在票務排隊中等待進入",
+          "description": "輪到您時，預訂頁面會自動打開。",
+          "helper": "您的排位、預計等待時間和剩餘座位數會自動更新。"
+        },
+        "admitted": {
+          "badge": "準備進入",
+          "title": "輪到您了，正在進入預訂頁面",
+          "description": "如果沒有自動進入，請使用下方按鈕繼續。",
+          "helper": "獲得進入權限後，系統會立即顯示實時座位狀態和計時器。"
+        },
+        "expired": {
+          "badge": "入場已過期",
+          "title": "您的入場時間已過期，正在返回隊列",
+          "description": "請重新進入隊列以獲得新的入場時間窗口。",
+          "helper": "重新排隊後，您仍可查看排位、預計等待時間和剩餘座位數。"
+        },
+        "retry": {
+          "badge": "請稍後重試",
+          "title": "請求過多，請稍後再試",
+          "description": "稍等片刻後重試，即可刷新當前隊列狀態。",
+          "helper": "短時間內反覆請求不會讓您更快進入。"
+        },
+        "challenge": {
+          "badge": "安全驗證",
+          "title": "請完成安全驗證後再試",
+          "description": "我們檢測到異常流量，需要額外的驗證步驟。",
+          "helper": "完成安全驗證後，請刷新頁面或再次嘗試。"
+        },
+        "blocked": {
+          "badge": "請求被阻止",
+          "title": "由於異常活動，您的請求已被阻止",
+          "description": "此瀏覽器出現重複異常請求，因此已限制進入預訂流程。",
+          "helper": "如果仍被阻止，請稍後重試並聯系客戶支持。"
+        }
+      },
+      "metrics": {
+        "position": "當前排位",
+        "eta": "預計等待時間",
+        "remainingSeats": "剩餘座位",
+        "ready": "可進入",
+        "soon": "即將進入"
+      },
+      "infoLabel": "隊列詳情",
+      "autoEnterInfo": "一旦獲得入場資格，系統會自動打開座位選擇頁面。",
+      "safetyInfo": "這裡只顯示排位、預計等待時間和剩餘座位數，內部 admission token 不會暴露。",
+      "retryAction": "重試",
+      "enterNowAction": "立即進入"
+    },
+    "paymentDeadline": {
+      "badge": "支付時限",
+      "title": "請在 7 分鐘內完成支付",
+      "helper": "剩餘時間少於或等於 {threshold} 時，將進入緊急狀態。",
+      "criticalHelper": "剩餘時間少於或等於 {threshold}。請立即完成銀行卡或海外錢包認證。",
+      "seatHoldHelper": "座位鎖定將在 {time} 後到期"
+    },
+    "paymentDisclaimer": {
+      "title": "海外支付提示",
+      "description": "使用海外銀行卡、Alipay+ 或 TrueMoney 前，請先確認以下說明。",
+      "krwPrimary": "實際扣款將以 KRW 為主幣種處理。",
+      "fxHelper": "頁面展示的匯率預估和卡組織或錢包手續費僅供參考，實際扣款時可能不同。",
+      "refundDelay": "海外支付的取消或退款，可能需要更長時間才會顯示在銀行卡或錢包賬單中。",
+      "checkboxLabel": "我已同意海外支付及退款注意事項",
+      "ctaPending": "需要同意海外支付說明",
+      "payNow": "立即支付"
+    },
+    "paymentRecovery": {
+      "expiredTitle": "支付時間已到期",
+      "expiredBody": "請重新選擇座位後再發起新的支付。",
+      "expiredCta": "支付時間已到期",
+      "reselectCta": "重新選擇座位",
+      "reselectPrompt": "請重新選擇座位",
+      "pendingTitle": "正在等待海外支付認證完成",
+      "pendingBody": "錢包服務商完成認證後，您可以繼續查詢同一筆訂單的狀態。"
+    }
+  },
+  "locale": {
+    "suggestion": "要以繁體中文查看此頁面嗎？"
+  },
+  "legal": {
+    "fallbackLabel": "查看英文法律告知"
+  },
+  "auth": {
+    "tabs": {
+      "login": "登錄",
+      "signup": "註冊"
+    },
+    "form": {
+      "email": "郵箱",
+      "password": "密碼",
+      "emailPlaceholder": "請輸入郵箱",
+      "passwordPlaceholder": "請輸入密碼",
+      "passwordDescription": "至少8個字符，包含字母、數字和符號",
+      "passwordConfirm": "確認密碼",
+      "passwordConfirmPlaceholder": "請再次輸入密碼",
+      "loginButton": "登錄",
+      "loginLoading": "正在登錄...",
+      "nextButton": "下一步",
+      "forgotPassword": "找回密碼",
+      "separator": "或",
+      "signupComplete": "註冊已完成。請進行郵箱驗證。",
+      "under14Blocked": "未滿14週歲無法註冊",
+      "temporaryError": "暫時發生錯誤。請稍後再試。"
+    },
+    "signup": {
+      "progressAriaLabel": "註冊進度",
+      "stepCredentials": "電子郵件/密碼",
+      "stepConsent": "條款同意",
+      "stepAdditional": "附加資訊",
+      "socialStep": "社群登入",
+      "socialTitle": "輸入附加資訊",
+      "nameLabel": "姓名",
+      "namePlaceholder": "請輸入姓名",
+      "genderLabel": "性別",
+      "genderMale": "男性",
+      "genderFemale": "女性",
+      "genderUnspecified": "不指定",
+      "countryLabel": "國家/地區",
+      "countryKR": "韓國",
+      "countryUS": "美國",
+      "countryJP": "日本",
+      "countryCN": "中國",
+      "countryGB": "英國",
+      "countryCA": "加拿大",
+      "countryAU": "澳洲",
+      "countryOTHER": "其他",
+      "birthDateLabel": "出生日期",
+      "birthYearAriaLabel": "出生年份",
+      "birthMonthAriaLabel": "出生月份",
+      "birthDayAriaLabel": "出生日期",
+      "phoneLabel": "電話號碼",
+      "previousButton": "上一步",
+      "submitButton": "完成註冊",
+      "submittingButton": "處理中...",
+      "nameRequired": "請輸入姓名",
+      "nameMax": "姓名不得超過100個字元",
+      "genderRequired": "請選擇性別",
+      "countryRequired": "請選擇國家/地區",
+      "birthYearInvalid": "請輸入有效的出生年份",
+      "birthMonthInvalid": "請輸入有效的出生月份",
+      "birthDayInvalid": "請輸入有效的出生日期",
+      "phoneInvalid": "請輸入有效的電話號碼",
+      "phoneVerificationRequired": "需要完成電話號碼驗證"
+    },
+    "consent": {
+      "selectAll": "全部同意",
+      "required": "必填",
+      "optional": "可選",
+      "view": "查看",
+      "previous": "上一步",
+      "next": "下一步",
+      "dialogDescriptionSuffix": "詳細內容",
+      "items": {
+        "termsOfService": {
+          "label": "同意服務條款",
+          "title": "服務條款"
+        },
+        "privacyPolicy": {
+          "label": "同意隱私政策",
+          "title": "隱私政策"
+        },
+        "pipaRequired": {
+          "label": "同意必要個人信息收集和使用",
+          "title": "必要個人信息收集和使用"
+        },
+        "marketingConsent": {
+          "label": "同意接收營銷信息",
+          "title": "營銷接收同意"
+        }
+      }
+    },
+    "emailVerification": {
+      "sent": "驗證郵件已發送",
+      "resendCta": "重新發送驗證郵件",
+      "resendLoading": "正在重新發送...",
+      "resendSuccess": "驗證郵件已重新發送",
+      "expired": "驗證鏈接已過期。請重新請求驗證郵件。",
+      "verified": "郵箱驗證已完成。",
+      "throttled": "請稍後再試。",
+      "systemError": "暫時發生錯誤。請重試。"
+    },
+    "otp": {
+      "sent": "驗證碼已發送",
+      "sendCta": "發送驗證碼",
+      "sendLoading": "發送中...",
+      "resendCta": "重新發送驗證碼",
+      "resendLoading": "正在重新發送驗證碼",
+      "resendSuccess": "新的驗證碼已發送",
+      "destinationPreview": "驗證碼發送至：{phone}",
+      "sentTo": "驗證碼已發送 ({phone})",
+      "resendSuccessTo": "新的驗證碼已發送 ({phone})",
+      "cooldownLabel": "重新發送（{seconds}s）",
+      "cooldownAriaLabel": "等待重新發送，還剩 {seconds} 秒",
+      "codeAriaLabel": "6位數驗證碼",
+      "codePlaceholder": "6位數驗證碼",
+      "verifyCta": "確認",
+      "expired": "驗證碼已過期，請重新發送。",
+      "invalidCode": "驗證碼不正確",
+      "throttled": "請求過於頻繁，請稍後再試。",
+      "systemError": "驗證碼處理失敗，請稍後再試。",
+      "verified": "驗證完成"
+    },
+    "errors": {
+      "invalidCredentials": "郵箱或密碼不正確",
+      "emailUnverified": "需要完成郵箱驗證",
+      "verificationRequired": "請完成驗證",
+      "providerUnavailable": "該社交登錄服務暫不可用",
+      "deviceLimitNotice": "由於另一臺設備登錄，最早的會話已被退出。"
+    }
+  }
+}

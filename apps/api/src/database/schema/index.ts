@@ -16,7 +16,12 @@ export { venueLayouts } from './venue-layouts.js';
 export { venueLayoutFloors } from './venue-layout-floors.js';
 export { venueLayoutSections } from './venue-layout-sections.js';
 export { venueLayoutSeats } from './venue-layout-seats.js';
-export { performances, genreEnum as performanceGenreEnum, performanceStatusEnum } from './performances.js';
+export {
+  performances,
+  genreEnum as performanceGenreEnum,
+  performanceStatusEnum,
+  performancePublishStateEnum,
+} from './performances.js';
 export { showtimes } from './showtimes.js';
 export { priceTiers } from './price-tiers.js';
 export { castings } from './castings.js';
@@ -26,7 +31,12 @@ export {
   performanceSeatAssignments,
   performanceSeatSaleStatusEnum,
 } from './performance-seat-assignments.js';
-export { banners } from './banners.js';
+export {
+  banners,
+  bannerPlacementEnum,
+  bannerDeviceTargetEnum,
+  bannerStatusEnum,
+} from './banners.js';
 export { seatInventories, seatStatusEnum } from './seat-inventories.js';
 export { reservations, reservationStatusEnum } from './reservations.js';
 export { reservationSeats } from './reservation-seats.js';
@@ -39,3 +49,38 @@ export {
   bookingOperationActionEnum,
   bookingOperationAuditLogs,
 } from './booking-operation-audit-logs.js';
+export {
+  adminAuditActionEnum,
+  adminAuditLogs,
+  adminAuditStatusEnum,
+} from './admin-audit-logs.js';
+export {
+  adminAccessAllowlist,
+  adminAllowlistSourceEnum,
+  adminAllowlistStatusEnum,
+} from './admin-access-allowlist.js';
+export {
+  seatOperationActionEnum,
+  seatOperationHistory,
+} from './seat-operation-history.js';
+export {
+  supportContentReviewStateEnum,
+  supportThreadCategoryEnum,
+  supportThreadEscalationStateEnum,
+  supportThreadPriorityEnum,
+  supportThreadSourceEnum,
+  supportThreadStatusEnum,
+  supportThreads,
+  supportTranslationUseEnum,
+} from './support-threads.js';
+export {
+  supportMessageAuthorTypeEnum,
+  supportMessages,
+  supportMessageVisibilityEnum,
+} from './support-messages.js';
+export { supportFaqs } from './support-faqs.js';
+export {
+  supportNoticeCategoryEnum,
+  supportNotices,
+  supportNoticeStatusEnum,
+} from './support-notices.js';

@@ -18,7 +18,7 @@ type SourceRow = {
 type DraftRow = {
   id: string;
   sourceId: string;
-  targetLocale: 'en' | 'th' | 'zh-CN' | 'ja';
+  targetLocale: 'en' | 'th' | 'zh-CN' | 'zh-TW';
   status: 'draft' | 'review' | 'published' | 'stale';
   translatedText: string;
   sourceContentHash: string;
@@ -110,7 +110,7 @@ describe('TranslationService', () => {
     const drafts = await service.generateDrafts(source.id);
 
     expect(source.sourceLocale).toBe('ko');
-    expect(drafts.map((draft) => draft.locale)).toEqual(['en', 'th', 'zh-CN', 'ja']);
+    expect(drafts.map((draft) => draft.locale)).toEqual(['en', 'th', 'zh-CN', 'zh-TW']);
     expect(drafts.every((draft) => draft.status === 'draft')).toBe(true);
     expect(drafts.every((draft) => draft.automaticTranslationLabel === true)).toBe(true);
   });

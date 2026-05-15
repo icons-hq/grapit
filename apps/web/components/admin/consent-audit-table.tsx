@@ -21,7 +21,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 
-export type ConsentAuditLanguage = 'ko' | 'en' | 'th' | 'zh-CN' | 'ja';
+export type ConsentAuditLanguage = 'ko' | 'en' | 'th' | 'zh-CN' | 'zh-TW';
 
 export interface ConsentAuditFilters {
   user?: string;
@@ -62,7 +62,7 @@ const LANGUAGE_OPTIONS = [
   { value: 'en', label: 'English' },
   { value: 'th', label: 'ไทย' },
   { value: 'zh-CN', label: '简体中文' },
-  { value: 'ja', label: '日本語' },
+  { value: 'zh-TW', label: '繁體中文' },
 ] as const;
 
 function compactFilters(filters: ConsentAuditFilters): ConsentAuditFilters {

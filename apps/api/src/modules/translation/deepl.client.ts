@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { TranslationTargetLocale } from './translation.service.js';
 
-export type DeepLTargetLang = 'EN-US' | 'TH' | 'ZH-HANS' | 'JA';
+export type DeepLTargetLang = 'EN-US' | 'TH' | 'ZH-HANS' | 'ZH-HANT';
 
 export interface DeepLTranslationResult {
   status: 'translated' | 'unavailable';
@@ -21,7 +21,7 @@ const DEEPL_TARGET_LOCALE: Record<TranslationTargetLocale, DeepLTargetLang> = {
   en: 'EN-US',
   th: 'TH',
   'zh-CN': 'ZH-HANS',
-  ja: 'JA',
+  'zh-TW': 'ZH-HANT',
 };
 
 export function mapDeepLTargetLocale(locale: TranslationTargetLocale): DeepLTargetLang {

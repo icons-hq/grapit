@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Inject,
   Injectable,
   NotFoundException,
@@ -25,6 +26,9 @@ import {
 import type {
   PerformanceBookingPolicy,
   Banner,
+  BannerDeviceTarget,
+  BannerPlacement,
+  BannerStatus,
   SeatMap,
   PerformanceWithDetails,
   PerformanceListResponse,
@@ -39,14 +43,30 @@ import type {
   CreateBannerInput,
   SeatMapConfigInput,
 } from '@grabit/shared';
+import {
+  BANNER_DEVICE_TARGETS,
+  BANNER_PLACEMENTS,
+  BANNER_STATUSES,
+  createBannerSchema,
+} from '@grabit/shared';
 import { CacheService } from '../performance/cache.service.js';
 import { parseAdminKstDateTime } from './admin-date.util.js';
+import { AdminAuditService } from './admin-audit.service.js';
 
 function cloneDefaultBookingPolicy(): PerformanceBookingPolicy {
   return {
     ...DEFAULT_BOOKING_POLICY,
     allowedPaymentMethods: [...DEFAULT_BOOKING_POLICY.allowedPaymentMethods],
   };
+}
+
+function parseOptionalIsoDate(value: string | null | undefined): Date | null {
+  return value ? new Date(value) : null;
+}
+
+function toOptionalIsoString(value: Date | string | null | undefined): string | null {
+  if (!value) return null;
+  return value instanceof Date ? value.toISOString() : value;
 }
 
 type LegacySeatMapSaveInput = {
@@ -68,6 +88,59 @@ type SeatMapSaveResult = Pick<
   'seatMaps' | 'bookingPolicy' | 'seatMap'
 >;
 
+type BannerMutationContext = AdminEventMutationContext;
+
+type BannerRow = {
+  id: string;
+  imageUrl: string;
+  linkUrl: string | null;
+  placement: BannerPlacement;
+  deviceTarget: BannerDeviceTarget;
+  status: BannerStatus;
+  startsAt: Date | string | null;
+  endsAt: Date | string | null;
+  sortOrder: number;
+  isActive: boolean;
+};
+
+type NormalizedCreateBannerInput = {
+  imageUrl: string;
+  linkUrl?: string | null;
+  placement: BannerPlacement;
+  deviceTarget: BannerDeviceTarget;
+  startsAt?: string | null;
+  endsAt?: string | null;
+  status: BannerStatus;
+  sortOrder: number;
+  isActive: boolean;
+};
+
+export interface AdminEventMutationContext {
+  actorUserId: string;
+  reason?: string | null;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  requestId?: string | null;
+}
+
+export interface EventPublishContentChecklist {
+  ko: {
+    title: boolean;
+    description: boolean;
+  };
+  en: {
+    title: boolean;
+    description: boolean;
+  };
+}
+
+export interface PublishPerformanceInput {
+  reason: string;
+  confirmed: true;
+  confirmedChangedFields: string[];
+  contentChecklist: EventPublishContentChecklist;
+}
+
 type SeatMapValidationIssue = {
   path: string;
   message: string;
@@ -88,6 +161,7 @@ export class AdminService {
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly cacheService: CacheService,
+    private readonly adminAuditService: AdminAuditService,
   ) {}
 
   /**
@@ -681,10 +755,16 @@ export class AdminService {
         .values({
           name: input.venueName,
           address: input.venueAddress ?? null,
+          accessNotes: input.venueAccessNotes ?? null,
+          transportSummary: input.transportSummary ?? null,
         })
         .onConflictDoUpdate({
           target: venues.name,
-          set: { address: input.venueAddress ?? null },
+          set: {
+            address: input.venueAddress ?? null,
+            accessNotes: input.venueAccessNotes ?? null,
+            transportSummary: input.transportSummary ?? null,
+          },
         })
         .returning();
 
@@ -702,6 +782,13 @@ export class AdminService {
           endDate: parseAdminKstDateTime(input.endDate),
           runtime: input.runtime ?? null,
           ageRating: input.ageRating,
+          publishState: input.publishState,
+          publishReviewRequestedAt: parseOptionalIsoDate(
+            input.publishReviewRequestedAt,
+          ),
+          publishReadyAt: parseOptionalIsoDate(input.publishReadyAt),
+          publishedAt: parseOptionalIsoDate(input.publishedAt),
+          publishedByUserId: input.publishedByUserId ?? null,
           salesInfo: input.salesInfo ?? null,
         })
         .returning();
@@ -784,11 +871,26 @@ export class AdminService {
         runtime: perf!.runtime,
         ageRating: perf!.ageRating,
         status: perf!.status,
+        publishState: perf!.publishState,
+        publishReviewRequestedAt: toOptionalIsoString(
+          perf!.publishReviewRequestedAt,
+        ),
+        publishReadyAt: toOptionalIsoString(perf!.publishReadyAt),
+        publishedAt: toOptionalIsoString(perf!.publishedAt),
+        publishedByUserId: perf!.publishedByUserId,
         salesInfo: perf!.salesInfo,
         viewCount: perf!.viewCount,
         createdAt: perf!.createdAt?.toISOString() ?? '',
         updatedAt: perf!.updatedAt?.toISOString() ?? '',
-        venue: venue ? { id: venue.id, name: venue.name, address: venue.address } : null,
+        venue: venue
+          ? {
+              id: venue.id,
+              name: venue.name,
+              address: venue.address,
+              accessNotes: venue.accessNotes,
+              transportSummary: venue.transportSummary,
+            }
+          : null,
         priceTiers: [],
         showtimes: [],
         castings: [],
@@ -802,7 +904,11 @@ export class AdminService {
     return result;
   }
 
-  async updatePerformance(id: string, input: UpdatePerformanceInput): Promise<PerformanceWithDetails> {
+  async updatePerformance(
+    id: string,
+    input: UpdatePerformanceInput,
+    context?: AdminEventMutationContext,
+  ): Promise<PerformanceWithDetails> {
     const result = await this.db.transaction(async (tx) => {
       // Handle venue update if venueName changed
       let venueId: string | undefined;
@@ -812,10 +918,16 @@ export class AdminService {
           .values({
             name: input.venueName,
             address: input.venueAddress ?? null,
+            accessNotes: input.venueAccessNotes ?? null,
+            transportSummary: input.transportSummary ?? null,
           })
           .onConflictDoUpdate({
             target: venues.name,
-            set: { address: input.venueAddress ?? null },
+            set: {
+              address: input.venueAddress ?? null,
+              accessNotes: input.venueAccessNotes ?? null,
+              transportSummary: input.transportSummary ?? null,
+            },
           })
           .returning();
         venueId = venue?.id;
@@ -837,6 +949,23 @@ export class AdminService {
       }
       if (input.runtime !== undefined) updateData['runtime'] = input.runtime;
       if (input.ageRating !== undefined) updateData['ageRating'] = input.ageRating;
+      if (input.publishState !== undefined) {
+        updateData['publishState'] = input.publishState;
+      }
+      if (input.publishReviewRequestedAt !== undefined) {
+        updateData['publishReviewRequestedAt'] = parseOptionalIsoDate(
+          input.publishReviewRequestedAt,
+        );
+      }
+      if (input.publishReadyAt !== undefined) {
+        updateData['publishReadyAt'] = parseOptionalIsoDate(input.publishReadyAt);
+      }
+      if (input.publishedAt !== undefined) {
+        updateData['publishedAt'] = parseOptionalIsoDate(input.publishedAt);
+      }
+      if (input.publishedByUserId !== undefined) {
+        updateData['publishedByUserId'] = input.publishedByUserId;
+      }
       if (input.salesInfo !== undefined) updateData['salesInfo'] = input.salesInfo;
       updateData['updatedAt'] = new Date();
 
@@ -924,7 +1053,7 @@ export class AdminService {
 
       const normalizedSeatMaps = this.normalizeSeatMaps(id, input.seatMaps ?? []);
 
-      return {
+      const response = {
         id: perf!.id,
         title: perf!.title,
         genre: perf!.genre,
@@ -937,6 +1066,13 @@ export class AdminService {
         runtime: perf!.runtime,
         ageRating: perf!.ageRating,
         status: perf!.status,
+        publishState: perf!.publishState,
+        publishReviewRequestedAt: toOptionalIsoString(
+          perf!.publishReviewRequestedAt,
+        ),
+        publishReadyAt: toOptionalIsoString(perf!.publishReadyAt),
+        publishedAt: toOptionalIsoString(perf!.publishedAt),
+        publishedByUserId: perf!.publishedByUserId,
         salesInfo: perf!.salesInfo,
         viewCount: perf!.viewCount,
         createdAt: perf!.createdAt?.toISOString() ?? '',
@@ -949,6 +1085,144 @@ export class AdminService {
         bookingPolicy,
         seatMap: normalizedSeatMaps[0] ?? null,
       };
+
+      if (context) {
+        const changedFields = resolveUpdateChangedFields(input);
+        await this.adminAuditService.write(
+          {
+            actorUserId: context.actorUserId,
+            action: 'event.update',
+            resourceType: 'performance',
+            resourceId: id,
+            status: 'success',
+            reason: context.reason ?? null,
+            changedFields,
+            before: {},
+            after: buildUpdateAuditSnapshot(input, response),
+            ipAddress: context.ipAddress ?? null,
+            userAgent: context.userAgent ?? null,
+            requestId: context.requestId ?? null,
+          },
+          tx as unknown as DrizzleDB,
+        );
+      }
+
+      return response;
+    });
+
+    await this.invalidateCatalogCache(id);
+    return result;
+  }
+
+  async publishPerformance(
+    id: string,
+    input: PublishPerformanceInput,
+    context: AdminEventMutationContext,
+  ): Promise<PerformanceWithDetails> {
+    const result = await this.db.transaction(async (tx) => {
+      const changedFields = sanitizeChangedFields(input.confirmedChangedFields);
+      const missingRequiredContent = getMissingRequiredPublishContent(
+        input.contentChecklist,
+      );
+
+      if (missingRequiredContent.length > 0) {
+        await this.adminAuditService.write(
+          {
+            actorUserId: context.actorUserId,
+            action: 'event.publish',
+            resourceType: 'performance',
+            resourceId: id,
+            status: 'failed',
+            reason: input.reason,
+            changedFields,
+            before: {},
+            after: { missingRequiredContent },
+            ipAddress: context.ipAddress ?? null,
+            userAgent: context.userAgent ?? null,
+            requestId: context.requestId ?? null,
+          },
+          tx as unknown as DrizzleDB,
+        );
+
+        throw new BadRequestException(
+          `게시에는 한국어와 영어 필수 콘텐츠가 필요합니다: ${missingRequiredContent.join(', ')}`,
+        );
+      }
+
+      const publishedAt = new Date();
+      const [perf] = await tx
+        .update(performances)
+        .set({
+          publishState: 'published',
+          publishedAt,
+          publishedByUserId: context.actorUserId,
+          updatedAt: publishedAt,
+        })
+        .where(eq(performances.id, id))
+        .returning();
+
+      if (!perf) {
+        throw new NotFoundException(`공연을 찾을 수 없습니다 (id: ${id})`);
+      }
+
+      const bookingPolicy = cloneDefaultBookingPolicy();
+      const normalizedSeatMaps: SeatMap[] = [];
+      const response: PerformanceWithDetails = {
+        id: perf.id,
+        title: perf.title,
+        genre: perf.genre,
+        subcategory: perf.subcategory,
+        venueId: perf.venueId,
+        posterUrl: perf.posterUrl,
+        description: perf.description,
+        startDate: perf.startDate?.toISOString() ?? '',
+        endDate: perf.endDate?.toISOString() ?? '',
+        runtime: perf.runtime,
+        ageRating: perf.ageRating,
+        status: perf.status,
+        publishState: perf.publishState,
+        publishReviewRequestedAt: toOptionalIsoString(
+          perf.publishReviewRequestedAt,
+        ),
+        publishReadyAt: toOptionalIsoString(perf.publishReadyAt),
+        publishedAt: toOptionalIsoString(perf.publishedAt),
+        publishedByUserId: perf.publishedByUserId,
+        salesInfo: perf.salesInfo,
+        viewCount: perf.viewCount,
+        createdAt: perf.createdAt?.toISOString() ?? '',
+        updatedAt: perf.updatedAt?.toISOString() ?? '',
+        venue: null,
+        priceTiers: [],
+        showtimes: [],
+        castings: [],
+        seatMaps: normalizedSeatMaps,
+        bookingPolicy,
+        seatMap: null,
+      };
+
+      await this.adminAuditService.write(
+        {
+          actorUserId: context.actorUserId,
+          action: 'event.publish',
+          resourceType: 'performance',
+          resourceId: id,
+          status: 'success',
+          reason: input.reason,
+          changedFields,
+          before: {},
+          after: {
+            publishState: 'published',
+            publishedAt: response.publishedAt,
+            publishedByUserId: context.actorUserId,
+          },
+          ipAddress: context.ipAddress ?? null,
+          userAgent: context.userAgent ?? null,
+          requestId: context.requestId ?? null,
+        },
+        tx as unknown as DrizzleDB,
+      );
+
+      return response;
     });
 
     await this.invalidateCatalogCache(id);
@@ -1101,34 +1375,57 @@ export class AdminService {
     };
   }
 
-  async createBanner(input: CreateBannerInput): Promise<Banner> {
+  async createBanner(
+    input: CreateBannerInput,
+    context?: BannerMutationContext,
+  ): Promise<Banner> {
+    const bannerInput = validateCreateBannerInput(input);
     const [result] = await this.db
       .insert(banners)
       .values({
-        imageUrl: input.imageUrl,
-        linkUrl: input.linkUrl ?? null,
-        sortOrder: input.sortOrder,
-        isActive: input.isActive,
+        imageUrl: bannerInput.imageUrl,
+        linkUrl: bannerInput.linkUrl ?? null,
+        placement: bannerInput.placement,
+        deviceTarget: bannerInput.deviceTarget,
+        startsAt: parseOptionalIsoDate(bannerInput.startsAt),
+        endsAt: parseOptionalIsoDate(bannerInput.endsAt),
+        status: bannerInput.status,
+        sortOrder: bannerInput.sortOrder,
+        isActive: bannerInput.isActive,
       })
       .returning();
 
     await this.cacheService.invalidate('cache:home:banners');
+    const banner = toBanner(result!);
 
-    return {
-      id: result!.id,
-      imageUrl: result!.imageUrl,
-      linkUrl: result!.linkUrl,
-      sortOrder: result!.sortOrder,
-      isActive: result!.isActive,
-    };
+    await this.writeBannerAudit('create', banner.id, context, {
+      changedFields: resolveBannerChangedFields(bannerInput),
+      after: toBannerAuditSnapshot(banner),
+    });
+
+    return banner;
   }
 
-  async updateBanner(id: string, input: Partial<CreateBannerInput>): Promise<Banner> {
+  async updateBanner(
+    id: string,
+    input: Partial<CreateBannerInput>,
+    context?: BannerMutationContext,
+  ): Promise<Banner> {
+    const bannerInput = validateUpdateBannerInput(input);
     const updateData: Record<string, unknown> = {};
-    if (input.imageUrl !== undefined) updateData['imageUrl'] = input.imageUrl;
-    if (input.linkUrl !== undefined) updateData['linkUrl'] = input.linkUrl;
-    if (input.sortOrder !== undefined) updateData['sortOrder'] = input.sortOrder;
-    if (input.isActive !== undefined) updateData['isActive'] = input.isActive;
+    if (bannerInput.imageUrl !== undefined) updateData['imageUrl'] = bannerInput.imageUrl;
+    if (bannerInput.linkUrl !== undefined) updateData['linkUrl'] = bannerInput.linkUrl;
+    if (bannerInput.placement !== undefined) updateData['placement'] = bannerInput.placement;
+    if (bannerInput.deviceTarget !== undefined) updateData['deviceTarget'] = bannerInput.deviceTarget;
+    if (bannerInput.startsAt !== undefined) {
+      updateData['startsAt'] = parseOptionalIsoDate(bannerInput.startsAt);
+    }
+    if (bannerInput.endsAt !== undefined) {
+      updateData['endsAt'] = parseOptionalIsoDate(bannerInput.endsAt);
+    }
+    if (bannerInput.status !== undefined) updateData['status'] = bannerInput.status;
+    if (bannerInput.sortOrder !== undefined) updateData['sortOrder'] = bannerInput.sortOrder;
+    if (bannerInput.isActive !== undefined) updateData['isActive'] = bannerInput.isActive;
     updateData['updatedAt'] = new Date();
 
     const [result] = await this.db
@@ -1142,19 +1439,24 @@ export class AdminService {
     }
 
     await this.cacheService.invalidate('cache:home:banners');
+    const banner = toBanner(result);
 
-    return {
-      id: result.id,
-      imageUrl: result.imageUrl,
-      linkUrl: result.linkUrl,
-      sortOrder: result.sortOrder,
-      isActive: result.isActive,
-    };
+    await this.writeBannerAudit('update', id, context, {
+      changedFields: resolveBannerChangedFields(bannerInput),
+      after: toBannerAuditSnapshot(banner),
+    });
+
+    return banner;
   }
 
-  async deleteBanner(id: string): Promise<void> {
+  async deleteBanner(id: string, context?: BannerMutationContext): Promise<void> {
     await this.db.delete(banners).where(eq(banners.id, id));
     await this.cacheService.invalidate('cache:home:banners');
+
+    await this.writeBannerAudit('delete', id, context, {
+      changedFields: ['deleted'],
+      after: { deleted: true },
+    });
   }
 
   async listBanners(): Promise<Banner[]> {
@@ -1163,16 +1465,17 @@ export class AdminService {
       .from(banners)
       .orderBy(banners.sortOrder);
 
-    return rows.map((b) => ({
-      id: b.id,
-      imageUrl: b.imageUrl,
-      linkUrl: b.linkUrl,
-      sortOrder: b.sortOrder,
-      isActive: b.isActive,
-    }));
+    return rows.map(toBanner);
   }
 
-  async reorderBanners(orderedIds: string[]): Promise<void> {
+  async reorderBanners(
+    orderedIds: string[],
+    context?: BannerMutationContext,
+  ): Promise<void> {
+    if (orderedIds.length === 0) {
+      throw new BadRequestException('배너 순서를 변경할 ID가 필요합니다');
+    }
+
     await this.db.transaction(async (tx) => {
       for (let i = 0; i < orderedIds.length; i++) {
         await tx
@@ -1182,5 +1485,209 @@ export class AdminService {
       }
     });
     await this.cacheService.invalidate('cache:home:banners');
+
+    await this.writeBannerAudit('reorder', 'bulk-reorder', context, {
+      changedFields: ['sortOrder'],
+      after: { orderedIds },
+    });
   }
+
+  private async writeBannerAudit(
+    reason: 'create' | 'update' | 'delete' | 'reorder',
+    resourceId: string,
+    context: BannerMutationContext | undefined,
+    diff: {
+      changedFields: string[];
+      before?: Record<string, unknown>;
+      after: Record<string, unknown>;
+    },
+  ): Promise<void> {
+    if (!context) {
+      return;
+    }
+
+    await this.adminAuditService.write({
+      actorUserId: context.actorUserId,
+      action: 'banner.manage',
+      resourceType: 'banner',
+      resourceId,
+      status: 'success',
+      reason,
+      changedFields: diff.changedFields,
+      before: diff.before ?? {},
+      after: diff.after,
+      ipAddress: context.ipAddress ?? null,
+      userAgent: context.userAgent ?? null,
+      requestId: context.requestId ?? null,
+    });
+  }
+}
+
+function validateCreateBannerInput(
+  input: CreateBannerInput,
+): NormalizedCreateBannerInput {
+  const parsed = createBannerSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new BadRequestException('배너 입력이 올바르지 않습니다');
+  }
+  return parsed.data;
+}
+
+function validateUpdateBannerInput(
+  input: Partial<CreateBannerInput>,
+): Partial<CreateBannerInput> {
+  validateOptionalUrl(input.imageUrl, '배너 이미지 URL');
+  validateOptionalUrl(input.linkUrl, '배너 링크 URL');
+  validateOptionalEnum(input.placement, BANNER_PLACEMENTS, '배너 위치');
+  validateOptionalEnum(input.deviceTarget, BANNER_DEVICE_TARGETS, '배너 기기');
+  validateOptionalEnum(input.status, BANNER_STATUSES, '배너 상태');
+  validateOptionalIsoDate(input.startsAt, '배너 시작 시각');
+  validateOptionalIsoDate(input.endsAt, '배너 종료 시각');
+
+  if (
+    input.startsAt
+    && input.endsAt
+    && Date.parse(input.endsAt) < Date.parse(input.startsAt)
+  ) {
+    throw new BadRequestException('배너 종료 시각은 시작 시각보다 빠를 수 없습니다');
+  }
+  if (
+    input.sortOrder !== undefined
+    && (!Number.isInteger(input.sortOrder) || input.sortOrder < 0)
+  ) {
+    throw new BadRequestException('배너 정렬 순서는 0 이상의 정수여야 합니다');
+  }
+  if (input.isActive !== undefined && typeof input.isActive !== 'boolean') {
+    throw new BadRequestException('배너 활성 상태가 올바르지 않습니다');
+  }
+
+  return input;
+}
+
+function validateOptionalUrl(
+  value: string | null | undefined,
+  label: string,
+): void {
+  if (value === undefined || value === null) return;
+  try {
+    new URL(value);
+  } catch {
+    throw new BadRequestException(`${label}이 올바르지 않습니다`);
+  }
+}
+
+function validateOptionalEnum<T extends readonly string[]>(
+  value: string | undefined,
+  allowedValues: T,
+  label: string,
+): void {
+  if (value === undefined) return;
+  if (!allowedValues.includes(value)) {
+    throw new BadRequestException(`${label} 값이 올바르지 않습니다`);
+  }
+}
+
+function validateOptionalIsoDate(
+  value: string | null | undefined,
+  label: string,
+): void {
+  if (value === undefined || value === null) return;
+  if (Number.isNaN(Date.parse(value))) {
+    throw new BadRequestException(`${label}은 ISO datetime 형식이어야 합니다`);
+  }
+}
+
+function resolveBannerChangedFields(input: Partial<CreateBannerInput>): string[] {
+  return sanitizeChangedFields(Object.keys(input));
+}
+
+function toBanner(row: BannerRow): Banner {
+  return {
+    id: row.id,
+    imageUrl: row.imageUrl,
+    linkUrl: row.linkUrl,
+    placement: row.placement,
+    deviceTarget: row.deviceTarget,
+    status: row.status,
+    startsAt: toOptionalIsoString(row.startsAt),
+    endsAt: toOptionalIsoString(row.endsAt),
+    sortOrder: row.sortOrder,
+    isActive: row.isActive,
+  };
+}
+
+function toBannerAuditSnapshot(banner: Banner): Record<string, unknown> {
+  return {
+    id: banner.id,
+    imageUrl: banner.imageUrl,
+    linkUrl: banner.linkUrl,
+    placement: banner.placement,
+    deviceTarget: banner.deviceTarget,
+    status: banner.status,
+    startsAt: banner.startsAt,
+    endsAt: banner.endsAt,
+    sortOrder: banner.sortOrder,
+    isActive: banner.isActive,
+  };
+}
+
+function resolveUpdateChangedFields(input: UpdatePerformanceInput): string[] {
+  return sanitizeChangedFields([
+    ...Object.keys(input),
+    ...(input.venueName !== undefined ? ['venueName'] : []),
+    ...(input.venueAddress !== undefined ? ['venueAddress'] : []),
+    ...(input.venueAccessNotes !== undefined ? ['venueAccessNotes'] : []),
+    ...(input.transportSummary !== undefined ? ['transportSummary'] : []),
+  ]);
+}
+
+function sanitizeChangedFields(fields: readonly string[]): string[] {
+  return [...new Set(fields.map((field) => field.trim()).filter(Boolean))];
+}
+
+function buildUpdateAuditSnapshot(
+  input: UpdatePerformanceInput,
+  response: PerformanceWithDetails,
+): Record<string, unknown> {
+  const snapshot: Record<string, unknown> = {};
+
+  for (const field of resolveUpdateChangedFields(input)) {
+    if (field === 'venueName') {
+      snapshot[field] = input.venueName ?? response.venue?.name ?? null;
+      continue;
+    }
+    if (field === 'venueAddress') {
+      snapshot[field] = input.venueAddress ?? response.venue?.address ?? null;
+      continue;
+    }
+    if (field === 'venueAccessNotes') {
+      snapshot[field] =
+        input.venueAccessNotes ?? response.venue?.accessNotes ?? null;
+      continue;
+    }
+    if (field === 'transportSummary') {
+      snapshot[field] =
+        input.transportSummary ?? response.venue?.transportSummary ?? null;
+      continue;
+    }
+
+    if (Object.hasOwn(input, field)) {
+      snapshot[field] = input[field as keyof UpdatePerformanceInput];
+    }
+  }
+
+  return snapshot;
+}
+
+function getMissingRequiredPublishContent(
+  checklist: EventPublishContentChecklist,
+): string[] {
+  const missing: string[] = [];
+
+  if (!checklist.ko.title) missing.push('ko.title');
+  if (!checklist.ko.description) missing.push('ko.description');
+  if (!checklist.en.title) missing.push('en.title');
+  if (!checklist.en.description) missing.push('en.description');
+
+  return missing;
 }

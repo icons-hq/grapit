@@ -180,7 +180,7 @@ describe('SeatMapViewer', () => {
   });
 
   it('renders unavailable seats with gray fill and reduced opacity', async () => {
-    const seatStates = new Map<string, SeatState | 'disabled'>([
+    const seatStates = new Map<string, SeatState>([
       ['A-1', 'locked'],
       ['A-2', 'held'],
       ['B-1', 'disabled'],
@@ -394,6 +394,32 @@ describe('SeatMapViewer', () => {
     const onSeatClick = vi.fn();
     const seatStates = new Map<string, SeatState>([
       ['A-1', 'sold'],
+    ]);
+
+    const { container } = render(
+      <SeatMapViewer
+        svgUrl="https://example.com/seats.svg"
+        seatConfig={mockSeatConfig}
+        seatStates={seatStates}
+        selectedSeatIds={new Set()}
+        onSeatClick={onSeatClick}
+        maxSelect={4}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-seat-id="A-1"]')).toBeTruthy();
+    });
+
+    const seatA1 = container.querySelector('[data-seat-id="A-1"]')!;
+    fireEvent.click(seatA1);
+    expect(onSeatClick).not.toHaveBeenCalled();
+  });
+
+  it('does NOT call onSeatClick when clicking a disabled seat', async () => {
+    const onSeatClick = vi.fn();
+    const seatStates = new Map<string, SeatState>([
+      ['A-1', 'disabled'],
     ]);
 
     const { container } = render(

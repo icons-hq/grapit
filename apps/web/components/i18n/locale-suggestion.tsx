@@ -4,12 +4,9 @@ import * as React from 'react';
 import { X } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
-  LOCALE_LABELS,
-  isSupportedLocale,
-} from '@grabit/shared/constants/locales.js';
-import type { SupportedLocale } from '@grabit/shared/types/i18n.types.js';
-import {
   LOCALE_SUGGESTION_COOKIE,
+  type PublicSupportedLocale,
+  isPublicSupportedLocale,
   resolveLocaleFromPathname,
 } from '@/i18n/routing';
 import { cn } from '@/lib/cn';
@@ -19,13 +16,23 @@ import {
   setLocalePreferenceCookie,
 } from './locale-switcher';
 
+type SupportedLocale = PublicSupportedLocale;
+
 const DISMISSED_STORAGE_KEY = 'locale-suggestion-dismissed';
 const SUGGESTION_COPY = {
   ko: '다른 언어로 볼까요?',
   en: 'View this page in English?',
   th: 'ดูหน้านี้เป็นภาษาไทยไหม?',
   'zh-CN': '要以简体中文查看此页面吗？',
-  ja: 'このページを日本語で表示しますか？',
+  'zh-TW': '要以繁體中文查看此頁面嗎？',
+} as const satisfies Record<SupportedLocale, string>;
+
+const PUBLIC_LOCALE_LABELS = {
+  ko: '한국어',
+  en: 'English',
+  th: 'ไทย',
+  'zh-CN': '简体中文',
+  'zh-TW': '繁體中文',
 } as const satisfies Record<SupportedLocale, string>;
 
 export function LocaleSuggestion({ className }: { className?: string }) {
@@ -81,7 +88,7 @@ export function LocaleSuggestion({ className }: { className?: string }) {
             onClick={chooseLocale}
             className="min-h-10 rounded-md bg-primary px-3 text-sm font-semibold text-white"
           >
-            {LOCALE_LABELS[locale].native}
+            {PUBLIC_LOCALE_LABELS[locale]}
           </button>
           <button
             type="button"
@@ -115,7 +122,7 @@ function readSuggestedLocale(): SupportedLocale | null {
   if (!value) return null;
   try {
     const decoded = decodeURIComponent(value);
-    return isSupportedLocale(decoded) ? decoded : null;
+    return isPublicSupportedLocale(decoded) ? decoded : null;
   } catch {
     return null;
   }

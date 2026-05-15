@@ -9,8 +9,6 @@ import {
   DEFAULT_LOCALE,
   SMS_CODE_EXPIRY_SECONDS,
   SMS_RESEND_COOLDOWN_SECONDS,
-  isSupportedLocale,
-  type SUPPORTED_LOCALES,
 } from '@grabit/shared';
 import { apiClient, ApiClientError } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
@@ -28,7 +26,9 @@ interface PhoneVerificationProps {
   purpose?: SmsVerificationPurpose;
 }
 
-type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
+const PHONE_VERIFICATION_LOCALES = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
+
+type SupportedLocale = (typeof PHONE_VERIFICATION_LOCALES)[number];
 type SmsVerificationPurpose =
   | 'signup'
   | 'social_registration'
@@ -59,7 +59,13 @@ function usePhoneVerificationLocale(localeOverride: SupportedLocale | undefined)
   const contextLocale = useLocale();
 
   if (localeOverride) return localeOverride;
-  return contextLocale && isSupportedLocale(contextLocale) ? contextLocale : DEFAULT_LOCALE;
+  return contextLocale && isPhoneVerificationLocale(contextLocale)
+    ? contextLocale
+    : DEFAULT_LOCALE;
+}
+
+function isPhoneVerificationLocale(value: string): value is SupportedLocale {
+  return PHONE_VERIFICATION_LOCALES.includes(value as SupportedLocale);
 }
 
 function formatOtpTemplate(template: string, phone: string): string {

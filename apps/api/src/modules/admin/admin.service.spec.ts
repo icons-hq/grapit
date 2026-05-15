@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import {
+  BadRequestException,
+  NotFoundException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
+import { PATH_METADATA } from '@nestjs/common/constants';
 import type {
   Banner,
   PerformanceWithDetails,
@@ -14,9 +19,14 @@ import type {
 } from '@grabit/shared/schemas/performance.schema';
 
 import { AdminService } from './admin.service.js';
+import { AdminBannerController } from './admin-banner.controller.js';
+import type { AdminAuditService } from './admin-audit.service.js';
+import { ADMIN_CAPABILITIES_KEY } from '../../common/decorators/admin-capabilities.decorator.js';
 import { CacheService } from '../performance/cache.service.js';
 import {
+  banners,
   bookingPolicies,
+  performances,
   performanceSeatTiers,
   reservations,
   seatMaps,
@@ -56,6 +66,7 @@ function createMockTx() {
   for (const method of methods) {
     txChain[method] = vi.fn().mockReturnValue(txChain);
   }
+  const updates: Array<{ table: unknown; values: Record<string, unknown> }> = [];
   (txChain as { then?: unknown }).then = vi.fn((resolve: (v: unknown[]) => void) =>
     resolve([
       { tierName: 'VIP' },
@@ -65,6 +76,7 @@ function createMockTx() {
   );
 
   return {
+    _updates: updates,
     insert: vi.fn().mockReturnValue({
       values: vi.fn().mockReturnValue({
         returning: vi.fn().mockResolvedValue([{ id: 'new-id' }]),
@@ -74,13 +86,38 @@ function createMockTx() {
       }),
     }),
     select: vi.fn().mockReturnValue(txChain),
-    update: vi.fn().mockReturnValue({
-      set: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          returning: vi.fn().mockResolvedValue([{ id: 'updated-id' }]),
-        }),
+    update: vi.fn((table: unknown) => ({
+      set: vi.fn((values: Record<string, unknown>) => {
+        updates.push({ table, values });
+        return {
+          where: vi.fn().mockReturnValue({
+            returning: vi.fn().mockResolvedValue([{
+              id: 'updated-id',
+              title: 'Hamlet - Revised',
+              genre: 'artist_celebrity',
+              subcategory: null,
+              venueId: 'venue-id-1',
+              posterUrl: null,
+              description: 'Updated description',
+              startDate: new Date('2026-04-01T00:00:00.000Z'),
+              endDate: new Date('2026-06-30T00:00:00.000Z'),
+              runtime: '150min',
+              ageRating: '12+',
+              status: 'upcoming',
+              publishState: values['publishState'] ?? 'draft',
+              publishReviewRequestedAt: null,
+              publishReadyAt: null,
+              publishedAt: values['publishedAt'] ?? null,
+              publishedByUserId: values['publishedByUserId'] ?? null,
+              salesInfo: null,
+              viewCount: 0,
+              createdAt: new Date('2026-01-01T00:00:00.000Z'),
+              updatedAt: values['updatedAt'] ?? new Date('2026-01-02T00:00:00.000Z'),
+            }]),
+          }),
+        };
       }),
-    }),
+    })),
     delete: vi.fn().mockReturnValue({
       where: vi.fn().mockResolvedValue([]),
     }),
@@ -144,6 +181,12 @@ function createMockDb() {
   };
 }
 
+function createMockAuditService() {
+  return {
+    write: vi.fn().mockResolvedValue({ id: 'audit-id-25-08' }),
+  } as unknown as AdminAuditService;
+}
+
 function findInsertCallIndex(
   tx: ReturnType<typeof createMockTx>,
   table: unknown,
@@ -189,6 +232,25 @@ const sampleBookingPolicy: PerformanceBookingPolicyInput = {
   manualOpenEnabled: true,
 };
 
+const adminMutationContext = {
+  actorUserId: '11111111-1111-4111-8111-111111111111',
+  ipAddress: '198.51.100.10',
+  userAgent: 'Vitest Admin Console',
+  requestId: 'req-25-08',
+};
+
+const bannerMutationContext = {
+  actorUserId: '22222222-2222-4222-8222-222222222222',
+  ipAddress: '203.0.113.25',
+  userAgent: 'Vitest Banner Console',
+  requestId: 'req-25-13',
+};
+
+const publishReadyContentChecklist = {
+  ko: { title: true, description: true },
+  en: { title: true, description: true },
+};
+
 const sampleCreateInput: CreatePerformanceInput = {
   title: 'Hamlet',
   genre: 'artist_celebrity',
@@ -226,17 +288,51 @@ const sampleCreateInput: CreatePerformanceInput = {
   },
 };
 
+function createBannerRow(
+  overrides: Partial<{
+    id: string;
+    imageUrl: string;
+    linkUrl: string | null;
+    placement: Banner['placement'];
+    deviceTarget: Banner['deviceTarget'];
+    status: Banner['status'];
+    startsAt: Date | null;
+    endsAt: Date | null;
+    sortOrder: number;
+    isActive: boolean;
+  }> = {},
+) {
+  return {
+    id: 'banner-id-123',
+    imageUrl: 'https://r2.example.com/banners/spring.jpg',
+    linkUrl: 'https://www.heygrabit.com/performances/123',
+    placement: 'home_hero' as const,
+    deviceTarget: 'all' as const,
+    status: 'active' as const,
+    startsAt: null,
+    endsAt: null,
+    sortOrder: 0,
+    isActive: true,
+    createdAt: new Date('2026-05-01T00:00:00.000Z'),
+    updatedAt: new Date('2026-05-01T00:00:00.000Z'),
+    ...overrides,
+  };
+}
+
 describe('AdminService', () => {
   let service: AdminService;
   let mockDb: ReturnType<typeof createMockDb>;
   let mockCache: CacheService;
+  let mockAudit: AdminAuditService;
 
   beforeEach(() => {
     mockDb = createMockDb();
     mockCache = createMockCacheService();
+    mockAudit = createMockAuditService();
     service = new AdminService(
       mockDb as unknown as ConstructorParameters<typeof AdminService>[0],
       mockCache,
+      mockAudit,
     );
   });
 
@@ -439,6 +535,134 @@ describe('AdminService', () => {
         'cache:performances:detail:perf-id-123:*',
       );
     });
+
+    it('writes event.update audit with safe venue and transport changed fields', async () => {
+      const updateInput: UpdatePerformanceInput = {
+        venueName: '동해문화예술관 대극장',
+        venueAddress: '서울 성북구 화랑로13길 60',
+        venueAccessNotes: '휠체어석은 B 게이트에서 안내',
+        transportSummary: '6호선 고려대역 하차 후 도보 10분',
+      };
+
+      await service.updatePerformance('perf-id-123', updateInput, {
+        ...adminMutationContext,
+        reason: '공연장 및 교통 안내 보강',
+      });
+
+      expect(mockAudit.write).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorUserId: adminMutationContext.actorUserId,
+          action: 'event.update',
+          resourceType: 'performance',
+          resourceId: 'perf-id-123',
+          status: 'success',
+          reason: '공연장 및 교통 안내 보강',
+          changedFields: expect.arrayContaining([
+            'venueName',
+            'venueAddress',
+            'venueAccessNotes',
+            'transportSummary',
+          ]),
+          after: expect.objectContaining({
+            venueName: '동해문화예술관 대극장',
+            venueAddress: '서울 성북구 화랑로13길 60',
+            venueAccessNotes: '휠체어석은 B 게이트에서 안내',
+            transportSummary: '6호선 고려대역 하차 후 도보 10분',
+          }),
+          ipAddress: adminMutationContext.ipAddress,
+          userAgent: adminMutationContext.userAgent,
+          requestId: adminMutationContext.requestId,
+        }),
+        mockDb._tx,
+      );
+    });
+  });
+
+  describe('publishPerformance', () => {
+    it('publishes an event through the admin-led flow and writes event.publish audit', async () => {
+      await service.publishPerformance(
+        'perf-id-123',
+        {
+          reason: '광고 오픈 전 게시 승인',
+          confirmed: true,
+          confirmedChangedFields: [
+            'title',
+            'venueName',
+            'transportSummary',
+            'salesInfo',
+          ],
+          contentChecklist: publishReadyContentChecklist,
+        },
+        adminMutationContext,
+      );
+
+      const publishUpdate = mockDb._tx._updates.find(
+        (entry) => entry.table === performances,
+      );
+
+      expect(publishUpdate?.values).toEqual(
+        expect.objectContaining({
+          publishState: 'published',
+          publishedByUserId: adminMutationContext.actorUserId,
+        }),
+      );
+      expect(publishUpdate?.values).not.toHaveProperty('status');
+      expect(mockAudit.write).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorUserId: adminMutationContext.actorUserId,
+          action: 'event.publish',
+          resourceType: 'performance',
+          resourceId: 'perf-id-123',
+          status: 'success',
+          reason: '광고 오픈 전 게시 승인',
+          changedFields: [
+            'title',
+            'venueName',
+            'transportSummary',
+            'salesInfo',
+          ],
+          after: expect.objectContaining({
+            publishState: 'published',
+            publishedByUserId: adminMutationContext.actorUserId,
+          }),
+        }),
+        mockDb._tx,
+      );
+    });
+
+    it('blocks publish without public status mutation when Korean or English content is missing', async () => {
+      await expect(
+        service.publishPerformance(
+          'perf-id-123',
+          {
+            reason: '영문 설명 누락 검수',
+            confirmed: true,
+            confirmedChangedFields: ['description'],
+            contentChecklist: {
+              ko: { title: true, description: true },
+              en: { title: true, description: false },
+            },
+          },
+          adminMutationContext,
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(mockDb._tx.update).not.toHaveBeenCalled();
+      expect(mockAudit.write).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'event.publish',
+          resourceType: 'performance',
+          resourceId: 'perf-id-123',
+          status: 'failed',
+          reason: '영문 설명 누락 검수',
+          changedFields: ['description'],
+          after: expect.objectContaining({
+            missingRequiredContent: ['en.description'],
+          }),
+        }),
+        mockDb._tx,
+      );
+    });
   });
 
   describe('deletePerformance', () => {
@@ -455,7 +679,7 @@ describe('AdminService', () => {
     it('should insert banner and return created record', async () => {
       const bannerInput: CreateBannerInput = {
         imageUrl: 'https://r2.example.com/banners/spring.jpg',
-        linkUrl: '/performances/123',
+        linkUrl: 'https://www.heygrabit.com/performances/123',
         sortOrder: 0,
         isActive: true,
       };
@@ -464,6 +688,95 @@ describe('AdminService', () => {
 
       // When GREEN, should verify INSERT into banners and return the created record
       expect(mockDb.insert).toHaveBeenCalled();
+    });
+
+    it('persists expanded banner fields and writes banner.manage audit', async () => {
+      const startsAt = '2026-05-15T00:00:00.000Z';
+      const endsAt = '2026-05-31T23:59:59.000Z';
+      const bannerInput: CreateBannerInput = {
+        imageUrl: 'https://r2.example.com/banners/may.jpg',
+        linkUrl: 'https://www.heygrabit.com/performances/may-fanmeet',
+        placement: 'home_secondary',
+        deviceTarget: 'mobile',
+        startsAt,
+        endsAt,
+        status: 'scheduled',
+        sortOrder: 3,
+        isActive: true,
+      };
+      const values = vi.fn().mockReturnValue({
+        returning: vi.fn().mockResolvedValue([
+          createBannerRow({
+            id: 'banner-id-25-13',
+            ...bannerInput,
+            startsAt: new Date(startsAt),
+            endsAt: new Date(endsAt),
+          }),
+        ]),
+      });
+      mockDb.insert = vi.fn().mockReturnValue({ values });
+
+      const result = await service.createBanner(
+        bannerInput,
+        bannerMutationContext,
+      );
+
+      expect(values).toHaveBeenCalledWith(
+        expect.objectContaining({
+          imageUrl: bannerInput.imageUrl,
+          linkUrl: bannerInput.linkUrl,
+          placement: 'home_secondary',
+          deviceTarget: 'mobile',
+          startsAt: new Date(startsAt),
+          endsAt: new Date(endsAt),
+          status: 'scheduled',
+          sortOrder: 3,
+          isActive: true,
+        }),
+      );
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: 'banner-id-25-13',
+          placement: 'home_secondary',
+          deviceTarget: 'mobile',
+          status: 'scheduled',
+          startsAt,
+          endsAt,
+          sortOrder: 3,
+        }),
+      );
+      expect(mockCache.invalidate).toHaveBeenCalledWith('cache:home:banners');
+      expect(mockAudit.write).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorUserId: bannerMutationContext.actorUserId,
+          action: 'banner.manage',
+          resourceType: 'banner',
+          resourceId: 'banner-id-25-13',
+          status: 'success',
+          reason: 'create',
+          changedFields: expect.arrayContaining([
+            'imageUrl',
+            'linkUrl',
+            'placement',
+            'deviceTarget',
+            'startsAt',
+            'endsAt',
+            'status',
+            'sortOrder',
+            'isActive',
+          ]),
+          after: expect.objectContaining({
+            placement: 'home_secondary',
+            deviceTarget: 'mobile',
+            startsAt,
+            endsAt,
+            status: 'scheduled',
+          }),
+          ipAddress: bannerMutationContext.ipAddress,
+          userAgent: bannerMutationContext.userAgent,
+          requestId: bannerMutationContext.requestId,
+        }),
+      );
     });
   });
 
@@ -476,6 +789,97 @@ describe('AdminService', () => {
 
       // When GREEN, should verify UPDATE banners SET ... WHERE id = 'banner-id-123'
       expect(mockDb.update).toHaveBeenCalled();
+    });
+
+    it('writes banner.manage audit for expanded banner field updates', async () => {
+      const startsAt = '2026-06-01T00:00:00.000Z';
+      const endsAt = '2026-06-30T23:59:59.000Z';
+      const updateValues = vi.fn().mockReturnValue({
+        where: vi.fn().mockReturnValue({
+          returning: vi.fn().mockResolvedValue([
+            createBannerRow({
+              id: 'banner-id-123',
+              imageUrl: 'https://r2.example.com/banners/june.jpg',
+              linkUrl: 'https://www.heygrabit.com/performances/june',
+              placement: 'performance_detail',
+              deviceTarget: 'desktop',
+              startsAt: new Date(startsAt),
+              endsAt: new Date(endsAt),
+              status: 'active',
+              sortOrder: 6,
+              isActive: true,
+            }),
+          ]),
+        }),
+      });
+      mockDb.update = vi.fn().mockReturnValue({
+        set: updateValues,
+      });
+
+      await service.updateBanner(
+        'banner-id-123',
+        {
+          imageUrl: 'https://r2.example.com/banners/june.jpg',
+          linkUrl: 'https://www.heygrabit.com/performances/june',
+          placement: 'performance_detail',
+          deviceTarget: 'desktop',
+          startsAt,
+          endsAt,
+          status: 'active',
+          sortOrder: 6,
+          isActive: true,
+        },
+        bannerMutationContext,
+      );
+
+      expect(updateValues).toHaveBeenCalledWith(
+        expect.objectContaining({
+          placement: 'performance_detail',
+          deviceTarget: 'desktop',
+          startsAt: new Date(startsAt),
+          endsAt: new Date(endsAt),
+          status: 'active',
+          sortOrder: 6,
+        }),
+      );
+      expect(mockAudit.write).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'banner.manage',
+          resourceType: 'banner',
+          resourceId: 'banner-id-123',
+          status: 'success',
+          reason: 'update',
+          changedFields: expect.arrayContaining([
+            'imageUrl',
+            'linkUrl',
+            'placement',
+            'deviceTarget',
+            'startsAt',
+            'endsAt',
+            'status',
+            'sortOrder',
+            'isActive',
+          ]),
+          after: expect.objectContaining({
+            placement: 'performance_detail',
+            deviceTarget: 'desktop',
+            startsAt,
+            endsAt,
+            status: 'active',
+          }),
+        }),
+      );
+    });
+
+    it('rejects banner schedule windows where endsAt is before startsAt', async () => {
+      await expect(
+        service.updateBanner('banner-id-123', {
+          startsAt: '2026-07-02T00:00:00.000Z',
+          endsAt: '2026-07-01T00:00:00.000Z',
+        }),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(mockDb.update).not.toHaveBeenCalled();
     });
 
     it('should throw NotFoundException when banner does not exist', async () => {
@@ -503,6 +907,25 @@ describe('AdminService', () => {
       // When GREEN, should verify DELETE FROM banners WHERE id = 'banner-id-123'
       expect(mockDb.delete).toHaveBeenCalled();
     });
+
+    it('writes banner.manage audit after delete', async () => {
+      await service.deleteBanner('banner-id-123', bannerMutationContext);
+
+      expect(mockDb.delete).toHaveBeenCalled();
+      expect(mockCache.invalidate).toHaveBeenCalledWith('cache:home:banners');
+      expect(mockAudit.write).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actorUserId: bannerMutationContext.actorUserId,
+          action: 'banner.manage',
+          resourceType: 'banner',
+          resourceId: 'banner-id-123',
+          status: 'success',
+          reason: 'delete',
+          changedFields: ['deleted'],
+          after: { deleted: true },
+        }),
+      );
+    });
   });
 
   describe('reorderBanners', () => {
@@ -513,6 +936,64 @@ describe('AdminService', () => {
 
       // Verify transaction was used
       expect(mockDb.transaction).toHaveBeenCalled();
+    });
+
+    it('rejects empty reorder payloads before persistence', async () => {
+      await expect(service.reorderBanners([])).rejects.toThrow(BadRequestException);
+
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
+    it('writes banner.manage audit after reorder and invalidates public banners', async () => {
+      const orderedIds = ['banner-3', 'banner-1', 'banner-2'];
+
+      await service.reorderBanners(orderedIds, bannerMutationContext);
+
+      expect(mockDb.transaction).toHaveBeenCalled();
+      expect(mockCache.invalidate).toHaveBeenCalledWith('cache:home:banners');
+      expect(mockAudit.write).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'banner.manage',
+          resourceType: 'banner',
+          resourceId: 'bulk-reorder',
+          status: 'success',
+          reason: 'reorder',
+          changedFields: ['sortOrder'],
+          after: { orderedIds },
+        }),
+      );
+    });
+  });
+
+  describe('AdminBannerController route contract', () => {
+    it('keeps banners/reorder before banners/:id and requires banner.manage for mutations', () => {
+      const prototype = AdminBannerController.prototype;
+      const routes = Object.getOwnPropertyNames(prototype)
+        .filter((propertyName) => propertyName !== 'constructor')
+        .map((propertyName) => ({
+          propertyName,
+          path: Reflect.getMetadata(
+            PATH_METADATA,
+            prototype[propertyName as keyof typeof prototype],
+          ) as string | undefined,
+        }))
+        .filter((route) => route.path);
+
+      expect(routes.findIndex((route) => route.path === 'banners/reorder'))
+        .toBeLessThan(routes.findIndex((route) => route.path === 'banners/:id'));
+      for (const methodName of [
+        'createBanner',
+        'updateBanner',
+        'deleteBanner',
+        'reorderBanners',
+      ] as const) {
+        expect(
+          Reflect.getMetadata(
+            ADMIN_CAPABILITIES_KEY,
+            prototype[methodName],
+          ),
+        ).toEqual(['banner.manage']);
+      }
     });
   });
 

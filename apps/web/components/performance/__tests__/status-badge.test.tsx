@@ -27,4 +27,11 @@ describe('StatusBadge', () => {
     render(<StatusBadge status="selling" />);
     expect(screen.getByLabelText('상태: 판매중')).toBeDefined();
   });
+
+  it('renders Traditional Chinese labels for the launch locale', () => {
+    render(<StatusBadge status="selling" locale="zh-TW" />);
+
+    expect(screen.getByText('銷售中')).toBeDefined();
+    expect(screen.getByLabelText('Status: 銷售中')).toBeDefined();
+  });
 });
