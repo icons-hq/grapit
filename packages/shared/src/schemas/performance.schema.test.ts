@@ -64,6 +64,17 @@ describe('performance floor and booking policy schema', () => {
       runtime: '120분',
       ageRating: '전체 관람가',
       salesInfo: '오픈 예정',
+      detailImages: [
+        {
+          imageUrl: 'https://cdn.example.com/detail/seat-guide.jpg',
+          altText: '좌석 안내',
+          sortOrder: 0,
+        },
+        {
+          imageUrl: 'https://cdn.example.com/detail/benefits.jpg',
+          sortOrder: 1,
+        },
+      ],
       priceTiers: [
         { tierName: 'VIP', price: 88000, sortOrder: 0 },
       ],
@@ -108,6 +119,17 @@ describe('performance floor and booking policy schema', () => {
     });
 
     expect(parsed.seatMaps).toHaveLength(2);
+    expect(parsed.detailImages).toEqual([
+      {
+        imageUrl: 'https://cdn.example.com/detail/seat-guide.jpg',
+        altText: '좌석 안내',
+        sortOrder: 0,
+      },
+      {
+        imageUrl: 'https://cdn.example.com/detail/benefits.jpg',
+        sortOrder: 1,
+      },
+    ]);
     expect(parsed.seatMaps[0]?.floorKey).toBe('1F');
     expect(parsed.bookingPolicy.allowedPaymentMethods).toEqual([
       'CARD',
@@ -147,6 +169,13 @@ describe('performance floor and booking policy schema', () => {
         cancelledSeatHoldMaxMinutes: 8,
         manualOpenEnabled: false,
       },
+      detailImages: [
+        {
+          imageUrl: 'https://cdn.example.com/detail/location.jpg',
+          altText: null,
+          sortOrder: 0,
+        },
+      ],
     });
 
     expect(parsed.showtimes?.[0]?.showtimeId).toBe(
@@ -155,5 +184,8 @@ describe('performance floor and booking policy schema', () => {
     expect(parsed.seatMaps?.[0]?.floorLabel).toBe('1층');
     expect(parsed.bookingPolicy?.maxTicketsPerUser).toBe(2);
     expect(parsed.bookingPolicy?.manualOpenEnabled).toBe(false);
+    expect(parsed.detailImages?.[0]?.imageUrl).toBe(
+      'https://cdn.example.com/detail/location.jpg',
+    );
   });
 });

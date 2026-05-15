@@ -134,6 +134,13 @@
       "when": 1778801000000,
       "tag": "0017_phase25_locale_enum_backfill",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1778840000000,
+      "tag": "0018_performance_detail_images",
+      "breakpoints": true
     }
   ]
 }

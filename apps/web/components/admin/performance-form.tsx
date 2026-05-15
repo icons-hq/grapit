@@ -4,7 +4,16 @@ import { useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useForm, useFieldArray, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Trash2, Plus, Upload, X, Loader2 } from 'lucide-react';
+import {
+  ArrowDown,
+  ArrowUp,
+  Image as ImageIcon,
+  Trash2,
+  Plus,
+  Upload,
+  X,
+  Loader2,
+} from 'lucide-react';
 import { toast } from 'sonner';
 import {
   DEFAULT_PERFORMANCE_BOOKING_POLICY,
@@ -12,6 +21,7 @@ import {
   type CreatePerformanceInput,
   type CreatePerformanceFormInput,
   type PerformanceAllowedPaymentMethod,
+  type PerformanceDetailImageInput,
   PERFORMANCE_ALLOWED_PAYMENT_METHODS,
   type PerformanceSeatMapInput,
   type PerformanceWithDetails,
@@ -109,6 +119,18 @@ function normalizeSeatMapsForEditor(
     seatConfig: seatMap.seatConfig ?? null,
     totalSeats: seatMap.totalSeats ?? 0,
   }));
+}
+
+function normalizeDetailImagesForSave(
+  detailImages: CreatePerformanceFormInput['detailImages'],
+): PerformanceDetailImageInput[] {
+  return (detailImages ?? [])
+    .filter((image) => typeof image.imageUrl === 'string' && image.imageUrl.length > 0)
+    .map((image, index) => ({
+      imageUrl: image.imageUrl,
+      altText: image.altText?.trim() ? image.altText.trim() : null,
+      sortOrder: index,
+    }));
 }
 
 function getChangedFieldNames(dirtyFields: unknown, prefix = ''): string[] {
@@ -211,6 +233,7 @@ function mapToFormValues(
     ageRating: data.ageRating,
     status: data.status,
     salesInfo: data.salesInfo,
+    detailImages: normalizeDetailImagesForSave(data.detailImages),
     priceTiers: data.priceTiers.map((t) => ({
       tierName: t.tierName,
       price: t.price,
@@ -273,6 +296,7 @@ export function PerformanceForm({
           ageRating: '',
           status: 'upcoming',
           salesInfo: null,
+          detailImages: [],
           priceTiers: [{ tierName: '', price: 0, sortOrder: 0 }],
           showtimes: [],
           castings: [],
@@ -303,6 +327,7 @@ export function PerformanceForm({
   const publishMutation = usePublishPerformance(performanceId ?? '');
   const presignedUpload = usePresignedUpload();
   const seatMaps = normalizeSeatMapsForEditor(form.watch('seatMaps'));
+  const detailImages = normalizeDetailImagesForSave(form.watch('detailImages'));
   const watchedValues = form.watch();
   const publishReviewSummary = buildPublishReviewSummary(
     watchedValues,
@@ -367,6 +392,89 @@ export function PerformanceForm({
     setPosterPreview(null);
   }
 
+  async function handleDetailImagesUpload(files: FileList | File[]) {
+    const imageFiles = Array.from(files).filter((file) =>
+      file.type.startsWith('image/'),
+    );
+
+    if (imageFiles.length === 0) {
+      toast.error('이미지 파일을 선택해주세요.');
+      return;
+    }
+
+    const oversizedFile = imageFiles.find(
+      (file) => file.size > 5 * 1024 * 1024,
+    );
+    if (oversizedFile) {
+      toast.error('상세 이미지는 파일당 5MB 이하여야 합니다.');
+      return;
+    }
+
+    const currentImages = normalizeDetailImagesForSave(
+      form.getValues('detailImages'),
+    );
+    const uploadedImages: PerformanceDetailImageInput[] = [];
+
+    try {
+      for (const file of imageFiles) {
+        const ext = file.name.split('.').pop() ?? 'jpg';
+        const { uploadUrl, publicUrl, mode } =
+          await presignedUpload.mutateAsync({
+            folder: 'performance-detail',
+            contentType: file.type,
+            extension: ext,
+          });
+
+        await fetch(uploadUrl, {
+          method: 'PUT',
+          body: file,
+          headers: { 'Content-Type': file.type },
+          ...(mode === 'local' ? { credentials: 'include' as const } : {}),
+        });
+
+        uploadedImages.push({
+          imageUrl: publicUrl,
+          altText: '',
+          sortOrder: currentImages.length + uploadedImages.length,
+        });
+      }
+
+      form.setValue(
+        'detailImages',
+        normalizeDetailImagesForSave([...currentImages, ...uploadedImages]),
+        { shouldDirty: true },
+      );
+      toast.success(`${uploadedImages.length}개의 상세 이미지가 업로드되었습니다.`);
+    } catch {
+      toast.error('상세 이미지 업로드에 실패했습니다.');
+    }
+  }
+
+  function reorderDetailImage(index: number, direction: -1 | 1) {
+    const currentImages = normalizeDetailImagesForSave(
+      form.getValues('detailImages'),
+    );
+    const nextIndex = index + direction;
+
+    if (nextIndex < 0 || nextIndex >= currentImages.length) return;
+
+    const nextImages = [...currentImages];
+    const [movedImage] = nextImages.splice(index, 1);
+    if (!movedImage) return;
+    nextImages.splice(nextIndex, 0, movedImage);
+
+    form.setValue('detailImages', normalizeDetailImagesForSave(nextImages), {
+      shouldDirty: true,
+    });
+  }
+
+  function removeDetailImage(index: number) {
+    const nextImages = normalizeDetailImagesForSave(form.getValues('detailImages'))
+      .filter((_, imageIndex) => imageIndex !== index);
+
+    form.setValue('detailImages', nextImages, { shouldDirty: true });
+  }
+
   function updateSeatMaps(nextSeatMaps: PerformanceSeatMapInput[]) {
     setSeatMapDuplicateError(null);
     form.setValue('seatMaps', nextSeatMaps, {
@@ -375,6 +483,10 @@ export function PerformanceForm({
   }
 
   async function onSubmit(data: CreatePerformanceInput) {
+    const payload: CreatePerformanceInput = {
+      ...data,
+      detailImages: normalizeDetailImagesForSave(data.detailImages),
+    };
     const duplicateFloorKeys = findDuplicateFloorKeys(data.seatMaps ?? []);
 
     if (duplicateFloorKeys.length > 0) {
@@ -387,9 +499,9 @@ export function PerformanceForm({
 
     try {
       if (mode === 'create') {
-        await createMutation.mutateAsync(data);
+        await createMutation.mutateAsync(payload);
       } else if (performanceId) {
-        await updateMutation.mutateAsync(data);
+        await updateMutation.mutateAsync(payload);
       }
 
       toast.success('공연이 저장되었습니다');
@@ -702,6 +814,142 @@ export function PerformanceForm({
           className="hidden"
           onChange={handleFileInput}
         />
+      </section>
+
+      <section className="rounded-lg bg-white p-6 shadow-sm">
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-xl font-semibold">상세페이지 이미지</h2>
+            <p className="mt-1 text-sm text-gray-600">
+              공연 상세페이지 본문에 노출될 이미지를 순서대로 관리합니다.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() =>
+              document.getElementById('detail-images-input')?.click()
+            }
+            disabled={presignedUpload.isPending}
+          >
+            {presignedUpload.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Upload className="h-4 w-4" />
+            )}
+            이미지 추가
+          </Button>
+        </div>
+
+        <input
+          id="detail-images-input"
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          multiple
+          className="hidden"
+          onChange={(event) => {
+            const files = event.target.files;
+            if (files) {
+              void handleDetailImagesUpload(files);
+              event.target.value = '';
+            }
+          }}
+        />
+
+        {detailImages.length === 0 ? (
+          <div
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) => {
+              event.preventDefault();
+              void handleDetailImagesUpload(event.dataTransfer.files);
+            }}
+            onClick={() =>
+              document.getElementById('detail-images-input')?.click()
+            }
+            className="flex min-h-[180px] cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 bg-gray-50 px-6 py-8 text-center transition-colors hover:border-primary hover:bg-primary/5"
+          >
+            <ImageIcon className="mb-3 h-9 w-9 text-gray-400" />
+            <p className="text-sm font-semibold text-gray-900">
+              상세 이미지를 업로드하세요
+            </p>
+            <p className="mt-1 text-sm text-gray-500">
+              jpg, png, webp / 파일당 5MB / 여러 장 선택 가능
+            </p>
+          </div>
+        ) : (
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {detailImages.map((image, index) => (
+              <div
+                key={`${image.imageUrl}-${index}`}
+                className="overflow-hidden rounded-lg border border-gray-200 bg-gray-50"
+              >
+                <input
+                  type="hidden"
+                  {...form.register(`detailImages.${index}.imageUrl`)}
+                />
+                <input
+                  type="hidden"
+                  {...form.register(`detailImages.${index}.sortOrder`, {
+                    valueAsNumber: true,
+                  })}
+                />
+
+                <div className="relative aspect-[2/3] bg-gray-100">
+                  <img
+                    src={image.imageUrl}
+                    alt={image.altText || `상세 이미지 ${index + 1}`}
+                    className="h-full w-full object-cover"
+                  />
+                  <div className="absolute left-3 top-3 rounded-full bg-black/75 px-2.5 py-1 text-xs font-semibold text-white">
+                    {index + 1}
+                  </div>
+                  <div className="absolute right-2 top-2 flex gap-1">
+                    <Button
+                      type="button"
+                      size="icon-xs"
+                      variant="secondary"
+                      onClick={() => reorderDetailImage(index, -1)}
+                      disabled={index === 0}
+                      aria-label="상세 이미지 위로 이동"
+                    >
+                      <ArrowUp className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      type="button"
+                      size="icon-xs"
+                      variant="secondary"
+                      onClick={() => reorderDetailImage(index, 1)}
+                      disabled={index === detailImages.length - 1}
+                      aria-label="상세 이미지 아래로 이동"
+                    >
+                      <ArrowDown className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      type="button"
+                      size="icon-xs"
+                      variant="destructive"
+                      onClick={() => removeDetailImage(index)}
+                      aria-label="상세 이미지 삭제"
+                    >
+                      <Trash2 className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-2 p-3">
+                  <Label htmlFor={`detailImages.${index}.altText`}>
+                    대체 텍스트
+                  </Label>
+                  <Input
+                    id={`detailImages.${index}.altText`}
+                    {...form.register(`detailImages.${index}.altText`)}
+                    placeholder="예: 좌석 안내 이미지"
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
 
       {/* Section: 가격 등급 */}

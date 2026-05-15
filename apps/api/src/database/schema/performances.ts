@@ -1,4 +1,14 @@
-import { pgTable, uuid, varchar, text, integer, timestamp, pgEnum, index } from 'drizzle-orm/pg-core';
+import {
+  pgTable,
+  uuid,
+  varchar,
+  text,
+  integer,
+  timestamp,
+  pgEnum,
+  index,
+  jsonb,
+} from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { users } from './users.js';
 import { venues } from './venues.js';
@@ -30,11 +40,18 @@ export const performances = pgTable('performances', {
   runtime: varchar('runtime', { length: 50 }),
   ageRating: varchar('age_rating', { length: 50 }).notNull(),
   status: performanceStatusEnum('status').notNull().default('upcoming'),
-  publishState: performancePublishStateEnum('publish_state').notNull().default('draft'),
-  publishReviewRequestedAt: timestamp('publish_review_requested_at', { withTimezone: true }),
+  detailImages: jsonb('detail_images').notNull().default(sql`'[]'::jsonb`),
+  publishState: performancePublishStateEnum('publish_state')
+    .notNull()
+    .default('draft'),
+  publishReviewRequestedAt: timestamp('publish_review_requested_at', {
+    withTimezone: true,
+  }),
   publishReadyAt: timestamp('publish_ready_at', { withTimezone: true }),
   publishedAt: timestamp('published_at', { withTimezone: true }),
-  publishedByUserId: uuid('published_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+  publishedByUserId: uuid('published_by_user_id').references(() => users.id, {
+    onDelete: 'set null',
+  }),
   salesInfo: text('sales_info'),
   viewCount: integer('view_count').notNull().default(0),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -43,7 +60,10 @@ export const performances = pgTable('performances', {
   index('idx_performances_genre').on(table.genre),
   index('idx_performances_status').on(table.status),
   index('idx_performances_publish_state').on(table.publishState),
-  index('idx_performances_title_trgm').using('gin', sql`${table.title} gin_trgm_ops`),
+  index('idx_performances_title_trgm').using(
+    'gin',
+    sql`${table.title} gin_trgm_ops`,
+  ),
 ]);
 
 // Note: search_vector tsvector GENERATED ALWAYS AS (to_tsvector('simple', coalesce(title, ''))) STORED
