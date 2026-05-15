@@ -18,7 +18,7 @@ CREATE TYPE "public"."support_thread_priority" AS ENUM('low', 'normal', 'high', 
 CREATE TYPE "public"."support_thread_source" AS ENUM('qna', 'cs', 'refund_dispute', 'signup_failure', 'notice_followup');--> statement-breakpoint
 CREATE TYPE "public"."support_thread_status" AS ENUM('open', 'waiting_customer', 'waiting_operator', 'resolved', 'closed');--> statement-breakpoint
 CREATE TYPE "public"."support_translation_use" AS ENUM('none', 'manual', 'assisted');--> statement-breakpoint
-ALTER TYPE "public"."seat_status" ADD VALUE 'disabled';--> statement-breakpoint
+ALTER TYPE "public"."seat_status" ADD VALUE IF NOT EXISTS 'disabled';--> statement-breakpoint
 CREATE TABLE "admin_access_allowlist" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"cidr" varchar(64) NOT NULL,
