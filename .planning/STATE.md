@@ -4,8 +4,8 @@ milestone: v2.0
 milestone_name: Fanmeet Launch
 status: "Phase 25 shipped — PR #47"
 stopped_at: Phase 25 complete; ready for Phase 26
-last_updated: "2026-05-15T00:41:34.406Z"
-last_activity: "2026-05-15 -- Phase 25 shipped via PR #47"
+last_updated: "2026-05-15T02:58:40.000Z"
+last_activity: "2026-05-15 -- Completed quick task 260515-gke: public genre navigation cleanup"
 progress:
   total_phases: 7
   completed_phases: 4
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-05-04)
 Phase: 26 (m1-canary-cutover-gates) — READY
 Plan: 0 of 0
 Status: Phase 25 shipped — PR #47
-Last activity: 2026-05-15 -- Phase 25 shipped via PR #47
+Last activity: 2026-05-15 -- Completed quick task 260515-gke: public genre navigation cleanup
 
 ## Deferred Items
 
@@ -350,6 +350,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 | 260512-kjs | Footer 고객센터 전화번호 끝자리 누락 수정 (`02-325-1794`) | 2026-05-12 | 836e2d6 | [260512-kjs-footer-02-325-1794](./quick/260512-kjs-footer-02-325-1794/) |
 | 260513-p1q | 회원가입 해외 SMS 인증 실패 UX와 Twilio landline/invalid recipient error mapping 수정 | 2026-05-13 | committed | [260513-p1q-sms-ux-twilio-landline-invalid-recipient](./quick/260513-p1q-sms-ux-twilio-landline-invalid-recipient/) |
 | 260514-m5k | Admin SVG 좌석맵 삭제 stale detail cache 수정 + admin-only booking/payment test bypass + queue text wrapping/polling 보강 | 2026-05-14 | uncommitted | [260514-m5k-fix-admin-seat-map-deletion-persistence-](./quick/260514-m5k-fix-admin-seat-map-deletion-persistence-/) |
+| 260515-gke | GNB와 메인 하단 종목에서 IP 팝업을 숨기고 아티스트·셀럽 표시를 아티스트로 변경 | 2026-05-15 | c2ab217 | [260515-gke-gnb-ip-ip](./quick/260515-gke-gnb-ip-ip/) |
 
 ## Session Continuity
 
