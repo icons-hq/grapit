@@ -689,13 +689,14 @@ export function SeatMapViewer({
           </MiniMap>
         )}
         <TransformComponent
-          wrapperClass="w-full min-h-[300px] lg:min-h-[500px]"
-          contentClass="w-full"
+          wrapperClass="flex w-full min-h-[300px] items-center justify-center lg:min-h-[500px]"
+          contentClass="flex min-h-[300px] w-full items-center justify-center lg:min-h-[500px]"
           wrapperStyle={{ width: '100%', maxWidth: '100%' }}
           contentStyle={{ width: '100%' }}
         >
           <div
             ref={containerRef}
+            className="mx-auto w-full max-w-full"
             role="grid"
             aria-label="좌석 배치도"
             onClick={handleClick}

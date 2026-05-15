@@ -4,11 +4,10 @@ import { SeatMapViewer } from '../seat-map-viewer';
 import type { SeatMapConfig, SeatState } from '@grabit/shared';
 
 // B-3: vi.hoisted로 mock factory가 참조할 const들을 hoist-safe하게 선언
-const { transformWrapperSpy, mockUseIsMobile, miniMapSpy } = vi.hoisted(() => ({
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+const { transformWrapperSpy, transformComponentSpy, mockUseIsMobile, miniMapSpy } = vi.hoisted(() => ({
   transformWrapperSpy: vi.fn<(props: any) => void>(),
+  transformComponentSpy: vi.fn<(props: any) => void>(),
   mockUseIsMobile: vi.fn<() => boolean>(() => false),
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   miniMapSpy: vi.fn<(props: any) => null>(() => null),
 }));
 
@@ -17,7 +16,6 @@ vi.mock('@/hooks/use-is-mobile', () => ({
 }));
 
 vi.mock('react-zoom-pan-pinch', () => ({
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   TransformWrapper: (props: any) => {
     transformWrapperSpy(props);
     return (
@@ -32,11 +30,10 @@ vi.mock('react-zoom-pan-pinch', () => ({
       </div>
     );
   },
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  TransformComponent: ({ children }: any) => (
-    <div data-testid="transform-component">{children}</div>
-  ),
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  TransformComponent: (props: any) => {
+    transformComponentSpy(props);
+    return <div data-testid="transform-component">{props.children}</div>;
+  },
   MiniMap: (props: any) => {
     miniMapSpy(props);
     return <div data-testid="minimap" />;
@@ -103,6 +100,7 @@ const mockSeatConfig: SeatMapConfig = {
 describe('SeatMapViewer', () => {
   beforeEach(() => {
     transformWrapperSpy.mockClear();
+    transformComponentSpy.mockClear();
     mockUseIsMobile.mockReset();
     mockUseIsMobile.mockReturnValue(false);
     miniMapSpy.mockClear();
@@ -138,6 +136,48 @@ describe('SeatMapViewer', () => {
 
     const seatB1 = container.querySelector('[data-seat-id="B-1"]');
     expect(seatB1?.getAttribute('fill')).toBe('#3B82F6');
+  });
+
+  it('centers the transform viewport and content within the seat-map viewer', async () => {
+    render(
+      <SeatMapViewer
+        svgUrl="https://example.com/seats.svg"
+        seatConfig={mockSeatConfig}
+        seatStates={new Map<string, SeatState>([
+          ['A-1', 'available'],
+        ])}
+        selectedSeatIds={new Set()}
+        onSeatClick={() => {}}
+        maxSelect={4}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(transformComponentSpy).toHaveBeenCalled();
+    });
+
+    expect(transformComponentSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        wrapperClass: expect.stringMatching(/\bflex\b/),
+        contentClass: expect.stringMatching(/\bflex\b/),
+        wrapperStyle: expect.objectContaining({
+          width: '100%',
+          maxWidth: '100%',
+        }),
+        contentStyle: expect.objectContaining({
+          width: '100%',
+        }),
+      }),
+    );
+    const props = transformComponentSpy.mock.lastCall?.[0];
+    expect(props.wrapperClass).toEqual(expect.stringContaining('min-h-[300px]'));
+    expect(props.wrapperClass).toEqual(expect.stringContaining('lg:min-h-[500px]'));
+    expect(props.wrapperClass).toEqual(expect.stringContaining('items-center'));
+    expect(props.wrapperClass).toEqual(expect.stringContaining('justify-center'));
+    expect(props.contentClass).toEqual(expect.stringContaining('min-h-[300px]'));
+    expect(props.contentClass).toEqual(expect.stringContaining('lg:min-h-[500px]'));
+    expect(props.contentClass).toEqual(expect.stringContaining('items-center'));
+    expect(props.contentClass).toEqual(expect.stringContaining('justify-center'));
   });
 
   it('sanitizes executable SVG payloads before inline rendering', async () => {
