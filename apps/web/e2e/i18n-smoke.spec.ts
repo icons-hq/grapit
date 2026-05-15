@@ -74,7 +74,7 @@ const localeCases = [
     homeCopy: '熱門演出',
     searchCopy: "「girl」的搜尋結果",
     resultTitle: '2026 Girl Rules 粉絲見面會',
-    authCopy: '登入',
+    authCopy: '登錄',
     detailCopy: '詳細資訊',
     bookingDisabledCopy: '門票預訂將於稍後開放',
     expectsTranslationLabel: true,
