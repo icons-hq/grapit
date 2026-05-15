@@ -2,12 +2,14 @@
 
 import type { ReactNode } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
-import type { PerformanceSeatMapInput } from '@grabit/shared';
+import type { PerformanceSeatMapInput, SeatMapConfig } from '@grabit/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
 const DEFAULT_MAX_FLOORS = 7;
+
+type SeatTier = SeatMapConfig['tiers'][number];
 
 export interface FloorSeatMapEditorProps {
   value: PerformanceSeatMapInput[];
@@ -21,7 +23,18 @@ export interface FloorSeatMapEditorProps {
   }) => ReactNode;
 }
 
-export function createEmptySeatMapFloor(sortOrder: number): PerformanceSeatMapInput {
+function cloneSharedTierTemplate(tier: SeatTier): SeatTier {
+  return {
+    tierName: tier.tierName,
+    color: tier.color,
+    seatIds: [],
+  };
+}
+
+export function createEmptySeatMapFloor(
+  sortOrder: number,
+  sharedTiers: SeatTier[] = [],
+): PerformanceSeatMapInput {
   const floorNumber = sortOrder + 1;
 
   return {
@@ -29,7 +42,9 @@ export function createEmptySeatMapFloor(sortOrder: number): PerformanceSeatMapIn
     floorLabel: `${floorNumber}층`,
     sortOrder,
     svgUrl: '',
-    seatConfig: null,
+    seatConfig: sharedTiers.length
+      ? { tiers: sharedTiers.map(cloneSharedTierTemplate) }
+      : null,
     totalSeats: 0,
   };
 }
@@ -60,6 +75,40 @@ export function findDuplicateFloorKeys(
     });
 }
 
+function deriveSharedTierTemplates(
+  value: PerformanceSeatMapInput[],
+): SeatTier[] {
+  const firstFloorWithTiers = value.find(
+    (floor) => (floor.seatConfig?.tiers.length ?? 0) > 0,
+  );
+
+  return (firstFloorWithTiers?.seatConfig?.tiers ?? []).map(
+    cloneSharedTierTemplate,
+  );
+}
+
+function syncFloorTierStructure(
+  floor: PerformanceSeatMapInput,
+  sharedTiers: SeatTier[],
+): PerformanceSeatMapInput {
+  if (sharedTiers.length === 0) {
+    return { ...floor, seatConfig: null };
+  }
+
+  const currentTiers = floor.seatConfig?.tiers ?? [];
+
+  return {
+    ...floor,
+    seatConfig: {
+      tiers: sharedTiers.map((sharedTier, index) => ({
+        tierName: sharedTier.tierName,
+        color: sharedTier.color,
+        seatIds: currentTiers[index]?.seatIds ?? [],
+      })),
+    },
+  };
+}
+
 export function FloorSeatMapEditor({
   value,
   onChange,
@@ -72,6 +121,7 @@ export function FloorSeatMapEditor({
   const duplicateMessage = duplicateKeys.length
     ? `중복된 floorKey가 있습니다: ${duplicateKeys.join(', ')}. 각 층 키를 고유하게 수정한 뒤 다시 저장해주세요.`
     : duplicateFloorError;
+  const sharedTierTemplates = deriveSharedTierTemplates(value);
 
   function updateFloor(
     index: number,
@@ -83,7 +133,10 @@ export function FloorSeatMapEditor({
   }
 
   function appendFloor() {
-    onChange([...value, createEmptySeatMapFloor(value.length)]);
+    onChange([
+      ...value,
+      createEmptySeatMapFloor(value.length, sharedTierTemplates),
+    ]);
   }
 
   function removeFloor(index: number) {
@@ -94,6 +147,60 @@ export function FloorSeatMapEditor({
           ...floor,
           sortOrder: floorIndex,
         })),
+    );
+  }
+
+  function updateSharedTiers(nextSharedTiers: SeatTier[]) {
+    onChange(
+      value.map((floor) => syncFloorTierStructure(floor, nextSharedTiers)),
+    );
+  }
+
+  function addSharedTier() {
+    updateSharedTiers([
+      ...sharedTierTemplates,
+      { tierName: '', color: '#6C3CE0', seatIds: [] },
+    ]);
+  }
+
+  function updateSharedTier(
+    index: number,
+    field: 'tierName' | 'color',
+    nextValue: string,
+  ) {
+    updateSharedTiers(
+      sharedTierTemplates.map((tier, tierIndex) => (
+        tierIndex === index ? { ...tier, [field]: nextValue } : tier
+      )),
+    );
+  }
+
+  function removeSharedTier(index: number) {
+    const nextSharedTiers = sharedTierTemplates.filter(
+      (_, tierIndex) => tierIndex !== index,
+    );
+
+    onChange(
+      value.map((floor) => {
+        const nextExistingTiers = (floor.seatConfig?.tiers ?? []).filter(
+          (_, tierIndex) => tierIndex !== index,
+        );
+
+        if (nextSharedTiers.length === 0) {
+          return { ...floor, seatConfig: null };
+        }
+
+        return {
+          ...floor,
+          seatConfig: {
+            tiers: nextSharedTiers.map((sharedTier, tierIndex) => ({
+              tierName: sharedTier.tierName,
+              color: sharedTier.color,
+              seatIds: nextExistingTiers[tierIndex]?.seatIds ?? [],
+            })),
+          },
+        };
+      }),
     );
   }
 
@@ -125,6 +232,65 @@ export function FloorSeatMapEditor({
           {duplicateMessage}
         </div>
       )}
+
+      <div className="rounded-lg border border-gray-200 bg-white p-4">
+        <div className="mb-3 space-y-1">
+          <p className="text-sm font-semibold text-gray-900">통합 좌석등급</p>
+          <p className="text-sm text-gray-600">
+            등급명과 색상은 모든 층에 함께 적용하고, 좌석 배정만 층별로 관리합니다.
+          </p>
+        </div>
+
+        {value.length === 0 ? (
+          <p className="text-sm text-gray-500">
+            층을 먼저 추가하면 통합 좌석등급을 설정할 수 있습니다.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {sharedTierTemplates.length === 0 ? (
+              <p className="text-sm text-gray-500">
+                등급을 추가하면 모든 층에 같은 등급 구조가 생성됩니다.
+              </p>
+            ) : (
+              sharedTierTemplates.map((tier, index) => (
+                <div key={index} className="flex items-center gap-2">
+                  <Input
+                    value={tier.tierName}
+                    onChange={(event) =>
+                      updateSharedTier(index, 'tierName', event.target.value)
+                    }
+                    placeholder="등급명 (예: VIP)"
+                    className="flex-1"
+                  />
+                  <input
+                    type="color"
+                    value={tier.color}
+                    onChange={(event) =>
+                      updateSharedTier(index, 'color', event.target.value)
+                    }
+                    className="h-10 w-10 cursor-pointer rounded border"
+                    aria-label={`${tier.tierName || `등급 ${index + 1}`} 색상`}
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => removeSharedTier(index)}
+                    aria-label="통합 좌석등급 삭제"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              ))
+            )}
+
+            <Button type="button" variant="outline" onClick={addSharedTier}>
+              <Plus className="h-4 w-4" />
+              좌석등급 추가
+            </Button>
+          </div>
+        )}
+      </div>
 
       {value.length === 0 ? (
         <div className="rounded-lg border border-dashed border-gray-300 bg-white px-4 py-6 text-sm text-gray-600">

@@ -6,6 +6,13 @@ import { sanitizeParsedSvg } from '@/lib/svg/safety';
 
 type SeatTier = SeatMapConfig['tiers'][number];
 
+interface SelectionRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
 interface VisualSeatTierEditorProps {
   svgMarkup: string;
   tiers: SeatMapConfig['tiers'];
@@ -160,10 +167,46 @@ function findSeatIdFromTarget(target: EventTarget | null) {
   return findSeatElementFromTarget(target)?.getAttribute('data-seat-id') ?? null;
 }
 
-function previewSeatPaint(seatEl: Element, color: string) {
-  seatEl.setAttribute('fill', color);
-  seatEl.setAttribute('stroke', '#111827');
-  seatEl.setAttribute('stroke-width', '2');
+function createSelectionRect(
+  startPoint: { x: number; y: number },
+  endPoint: { x: number; y: number },
+  containerRect: DOMRect,
+): SelectionRect {
+  const left = Math.min(startPoint.x, endPoint.x);
+  const top = Math.min(startPoint.y, endPoint.y);
+  const right = Math.max(startPoint.x, endPoint.x);
+  const bottom = Math.max(startPoint.y, endPoint.y);
+
+  return {
+    left: left - containerRect.left,
+    top: top - containerRect.top,
+    width: right - left,
+    height: bottom - top,
+  };
+}
+
+function selectionToClientRect(
+  selectionRect: SelectionRect,
+  containerRect: DOMRect,
+) {
+  return {
+    left: containerRect.left + selectionRect.left,
+    top: containerRect.top + selectionRect.top,
+    right: containerRect.left + selectionRect.left + selectionRect.width,
+    bottom: containerRect.top + selectionRect.top + selectionRect.height,
+  };
+}
+
+function rectsIntersect(
+  left: Pick<DOMRect, 'left' | 'right' | 'top' | 'bottom'>,
+  right: Pick<DOMRect, 'left' | 'right' | 'top' | 'bottom'>,
+) {
+  return (
+    left.left <= right.right &&
+    left.right >= right.left &&
+    left.top <= right.bottom &&
+    left.bottom >= right.top
+  );
 }
 
 export function VisualSeatTierEditor({
@@ -172,11 +215,12 @@ export function VisualSeatTierEditor({
   onChange,
 }: VisualSeatTierEditorProps) {
   const [activeTierIndex, setActiveTierIndex] = useState(0);
-  const [isDragPaintEnabled, setIsDragPaintEnabled] = useState(false);
-  const [isPainting, setIsPainting] = useState(false);
+  const [isRangeSelectEnabled, setIsRangeSelectEnabled] = useState(false);
+  const [selectionRect, setSelectionRect] = useState<SelectionRect | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
-  const isPaintingRef = useRef(false);
-  const paintedSeatIdsRef = useRef<Set<string>>(new Set());
+  const isSelectingRef = useRef(false);
+  const selectionStartRef = useRef<{ x: number; y: number } | null>(null);
+  const latestSelectionRef = useRef<SelectionRect | null>(null);
   const parsed = useMemo(() => parseSvg(svgMarkup, tiers), [svgMarkup, tiers]);
   const activeTier = tiers[activeTierIndex] ?? tiers[0];
 
@@ -187,48 +231,95 @@ export function VisualSeatTierEditor({
     onChange(assignSeatToTier(tiers, activeTierIndex, seatId));
   }
 
-  function addSeatToCurrentPaint(seatEl: Element | null) {
-    if (!seatEl || !activeTier || !gridRef.current?.contains(seatEl)) {
-      return;
+  function beginRangeSelection(clientX: number, clientY: number) {
+    if (!isRangeSelectEnabled || !activeTier || !gridRef.current) {
+      return false;
     }
 
-    const seatId = seatEl.getAttribute('data-seat-id')?.trim();
-    if (!seatId) {
-      return;
-    }
-
-    paintedSeatIdsRef.current.add(seatId);
-    previewSeatPaint(seatEl, activeTier.color);
+    const startPoint = { x: clientX, y: clientY };
+    const initialRect = createSelectionRect(
+      startPoint,
+      startPoint,
+      gridRef.current.getBoundingClientRect(),
+    );
+    isSelectingRef.current = true;
+    selectionStartRef.current = startPoint;
+    latestSelectionRef.current = initialRect;
+    setSelectionRect(initialRect);
+    return true;
   }
 
-  function commitPaintedSeats() {
-    if (!isPaintingRef.current) {
+  function updateRangeSelection(clientX: number, clientY: number) {
+    if (
+      !isRangeSelectEnabled ||
+      !isSelectingRef.current ||
+      !selectionStartRef.current ||
+      !gridRef.current
+    ) {
       return;
     }
 
-    const paintedSeatIds = Array.from(paintedSeatIdsRef.current);
-    paintedSeatIdsRef.current.clear();
-    isPaintingRef.current = false;
-    setIsPainting(false);
+    const nextSelectionRect = createSelectionRect(
+      selectionStartRef.current,
+      { x: clientX, y: clientY },
+      gridRef.current.getBoundingClientRect(),
+    );
+    latestSelectionRef.current = nextSelectionRect;
+    setSelectionRect(nextSelectionRect);
+  }
 
-    if (!activeTier || paintedSeatIds.length === 0) {
+  function commitRangeSelection() {
+    if (!isSelectingRef.current) {
       return;
     }
 
-    onChange(paintSeatsToTier(tiers, activeTierIndex, paintedSeatIds));
+    const gridEl = gridRef.current;
+    const currentSelectionRect = latestSelectionRef.current;
+    isSelectingRef.current = false;
+    selectionStartRef.current = null;
+    latestSelectionRef.current = null;
+    setSelectionRect(null);
+
+    if (!gridEl || !activeTier || !currentSelectionRect) {
+      return;
+    }
+
+    const selectionClientRect = selectionToClientRect(
+      currentSelectionRect,
+      gridEl.getBoundingClientRect(),
+    );
+    const selectedSeatIds = Array.from(
+      gridEl.querySelectorAll<SVGElement>('[data-seat-id]'),
+    )
+      .filter((seatEl) =>
+        rectsIntersect(seatEl.getBoundingClientRect(), selectionClientRect),
+      )
+      .map((seatEl) => seatEl.getAttribute('data-seat-id')?.trim())
+      .filter((seatId): seatId is string => Boolean(seatId));
+
+    if (selectedSeatIds.length === 0) {
+      return;
+    }
+
+    onChange(paintSeatsToTier(tiers, activeTierIndex, selectedSeatIds));
+  }
+
+  function cancelRangeSelection() {
+    isSelectingRef.current = false;
+    selectionStartRef.current = null;
+    latestSelectionRef.current = null;
+    setSelectionRect(null);
   }
 
   useEffect(() => {
-    if (!isPainting) {
-      return;
-    }
-
-    window.addEventListener('pointerup', commitPaintedSeats);
-    window.addEventListener('pointercancel', commitPaintedSeats);
+    window.addEventListener('pointerup', commitRangeSelection);
+    window.addEventListener('pointercancel', cancelRangeSelection);
+    window.addEventListener('mouseup', commitRangeSelection);
 
     return () => {
-      window.removeEventListener('pointerup', commitPaintedSeats);
-      window.removeEventListener('pointercancel', commitPaintedSeats);
+      window.removeEventListener('pointerup', commitRangeSelection);
+      window.removeEventListener('pointercancel', cancelRangeSelection);
+      window.removeEventListener('mouseup', commitRangeSelection);
     };
   });
 
@@ -249,11 +340,11 @@ export function VisualSeatTierEditor({
             ref={gridRef}
             role="grid"
             aria-label="등급 배정 좌석맵"
-            className={`max-h-[460px] overflow-auto rounded-md border bg-gray-50 p-3 ${
-              isDragPaintEnabled ? 'select-none' : ''
+            className={`relative max-h-[460px] overflow-auto rounded-md border bg-gray-50 p-3 ${
+              isRangeSelectEnabled ? 'cursor-crosshair select-none' : ''
             }`}
             onClick={(event) => {
-              if (isDragPaintEnabled) {
+              if (isRangeSelectEnabled) {
                 return;
               }
               handleSeatPick(findSeatIdFromTarget(event.target));
@@ -264,37 +355,44 @@ export function VisualSeatTierEditor({
               handleSeatPick(findSeatIdFromTarget(event.target));
             }}
             onPointerDown={(event) => {
-              if (!isDragPaintEnabled || !activeTier) {
-                return;
-              }
-
-              const seatEl = findSeatElementFromTarget(event.target);
-              if (!seatEl) {
+              if (!beginRangeSelection(event.clientX, event.clientY)) {
                 return;
               }
 
               event.preventDefault();
               event.currentTarget.setPointerCapture?.(event.pointerId);
-              paintedSeatIdsRef.current = new Set();
-              isPaintingRef.current = true;
-              setIsPainting(true);
-              addSeatToCurrentPaint(seatEl);
             }}
             onPointerMove={(event) => {
-              if (!isDragPaintEnabled || !isPaintingRef.current) {
-                return;
-              }
-
-              const seatEl = document.elementFromPoint(
-                event.clientX,
-                event.clientY,
-              );
-              addSeatToCurrentPaint(findSeatElementFromTarget(seatEl));
+              updateRangeSelection(event.clientX, event.clientY);
             }}
-            onPointerUp={commitPaintedSeats}
-            onPointerCancel={commitPaintedSeats}
-            dangerouslySetInnerHTML={{ __html: parsed.processedSvg }}
-          />
+            onPointerUp={commitRangeSelection}
+            onPointerCancel={cancelRangeSelection}
+            onMouseDown={(event) => {
+              if (beginRangeSelection(event.clientX, event.clientY)) {
+                event.preventDefault();
+              }
+            }}
+            onMouseMove={(event) => {
+              updateRangeSelection(event.clientX, event.clientY);
+            }}
+            onMouseUp={() => {
+              commitRangeSelection();
+            }}
+          >
+            <div dangerouslySetInnerHTML={{ __html: parsed.processedSvg }} />
+            {selectionRect && (
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute border border-primary bg-primary/15"
+                style={{
+                  left: selectionRect.left,
+                  top: selectionRect.top,
+                  width: selectionRect.width,
+                  height: selectionRect.height,
+                }}
+              />
+            )}
+          </div>
         </div>
 
         <div className="w-full space-y-3 lg:w-64">
@@ -320,15 +418,13 @@ export function VisualSeatTierEditor({
           </div>
 
           <label className="flex items-center justify-between gap-3 rounded-md border bg-gray-50 px-3 py-2 text-sm">
-            <span className="font-medium text-gray-700">드래그 배정</span>
+            <span className="font-medium text-gray-700">범위 배정</span>
             <input
               type="checkbox"
-              checked={isDragPaintEnabled}
+              checked={isRangeSelectEnabled}
               onChange={(event) => {
-                setIsDragPaintEnabled(event.target.checked);
-                paintedSeatIdsRef.current.clear();
-                isPaintingRef.current = false;
-                setIsPainting(false);
+                setIsRangeSelectEnabled(event.target.checked);
+                cancelRangeSelection();
               }}
               className="h-4 w-4 rounded border-gray-300"
             />

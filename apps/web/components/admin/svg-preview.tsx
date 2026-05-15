@@ -20,6 +20,7 @@ interface SvgPreviewProps {
     totalSeats: number;
   }) => void;
   inputId?: string;
+  allowTierStructureEditing?: boolean;
 }
 
 export function SvgPreview({
@@ -29,6 +30,7 @@ export function SvgPreview({
   currentTotalSeats,
   onChange,
   inputId = 'svg-input',
+  allowTierStructureEditing = true,
 }: SvgPreviewProps) {
   const isControlled = typeof onChange === 'function';
   const [svgUrl, setSvgUrl] = useState<string | null>(currentSvgUrl ?? null);
@@ -268,6 +270,7 @@ export function SvgPreview({
         <>
           <TierEditor
             tiers={tiers}
+            allowTierStructureEditing={allowTierStructureEditing}
             onChange={(nextTiers) => {
               setTiers(nextTiers);
               if (isControlled) {
