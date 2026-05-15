@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { PerformanceSeatMapInput } from '@grabit/shared';
 import {
@@ -72,5 +72,135 @@ describe('FloorSeatMapEditor', () => {
       '서버에서 중복된 floorKey를 확인했습니다.',
     );
     expect(screen.getByDisplayValue('1F')).toBeInTheDocument();
+  });
+
+  it('adds a shared seat tier to every floor at once', () => {
+    const onChange = vi.fn();
+
+    render(
+      <FloorSeatMapEditor
+        value={[
+          createSeatMap({ floorKey: '1F', seatConfig: null }),
+          createSeatMap({
+            floorKey: '2F',
+            floorLabel: '2층',
+            sortOrder: 1,
+            seatConfig: null,
+          }),
+        ]}
+        onChange={onChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByText('좌석등급 추가'));
+
+    expect(onChange).toHaveBeenCalledWith([
+      expect.objectContaining({
+        floorKey: '1F',
+        seatConfig: {
+          tiers: [{ tierName: '', color: '#6C3CE0', seatIds: [] }],
+        },
+      }),
+      expect.objectContaining({
+        floorKey: '2F',
+        seatConfig: {
+          tiers: [{ tierName: '', color: '#6C3CE0', seatIds: [] }],
+        },
+      }),
+    ]);
+  });
+
+  it('updates shared tier name and color across floors while preserving per-floor seat assignments', () => {
+    const onChange = vi.fn();
+
+    render(
+      <FloorSeatMapEditor
+        value={[
+          createSeatMap({
+            floorKey: '1F',
+            seatConfig: {
+              tiers: [{ tierName: 'VIP', color: '#FFD700', seatIds: ['A-1'] }],
+            },
+          }),
+          createSeatMap({
+            floorKey: '2F',
+            floorLabel: '2층',
+            sortOrder: 1,
+            seatConfig: {
+              tiers: [{ tierName: 'VIP', color: '#FFD700', seatIds: ['B-1'] }],
+            },
+          }),
+        ]}
+        onChange={onChange}
+      />,
+    );
+
+    fireEvent.change(screen.getByDisplayValue('VIP'), {
+      target: { value: 'R석' },
+    });
+
+    expect(onChange).toHaveBeenLastCalledWith([
+      expect.objectContaining({
+        floorKey: '1F',
+        seatConfig: {
+          tiers: [{ tierName: 'R석', color: '#FFD700', seatIds: ['A-1'] }],
+        },
+      }),
+      expect.objectContaining({
+        floorKey: '2F',
+        seatConfig: {
+          tiers: [{ tierName: 'R석', color: '#FFD700', seatIds: ['B-1'] }],
+        },
+      }),
+    ]);
+  });
+
+  it('removes a shared seat tier from every floor at once', () => {
+    const onChange = vi.fn();
+
+    render(
+      <FloorSeatMapEditor
+        value={[
+          createSeatMap({
+            floorKey: '1F',
+            seatConfig: {
+              tiers: [
+                { tierName: 'VIP', color: '#FFD700', seatIds: ['A-1'] },
+                { tierName: 'R', color: '#2563EB', seatIds: ['A-2'] },
+              ],
+            },
+          }),
+          createSeatMap({
+            floorKey: '2F',
+            floorLabel: '2층',
+            sortOrder: 1,
+            seatConfig: {
+              tiers: [
+                { tierName: 'VIP', color: '#FFD700', seatIds: ['B-1'] },
+                { tierName: 'R', color: '#2563EB', seatIds: ['B-2'] },
+              ],
+            },
+          }),
+        ]}
+        onChange={onChange}
+      />,
+    );
+
+    fireEvent.click(screen.getAllByLabelText('통합 좌석등급 삭제')[0]!);
+
+    expect(onChange).toHaveBeenCalledWith([
+      expect.objectContaining({
+        floorKey: '1F',
+        seatConfig: {
+          tiers: [{ tierName: 'R', color: '#2563EB', seatIds: ['A-2'] }],
+        },
+      }),
+      expect.objectContaining({
+        floorKey: '2F',
+        seatConfig: {
+          tiers: [{ tierName: 'R', color: '#2563EB', seatIds: ['B-2'] }],
+        },
+      }),
+    ]);
   });
 });

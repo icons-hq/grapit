@@ -11,9 +11,15 @@ interface TierEditorProps {
   tiers: SeatMapConfig['tiers'];
   onChange: (tiers: SeatMapConfig['tiers']) => void;
   svgMarkup?: string | null;
+  allowTierStructureEditing?: boolean;
 }
 
-export function TierEditor({ tiers, onChange, svgMarkup }: TierEditorProps) {
+export function TierEditor({
+  tiers,
+  onChange,
+  svgMarkup,
+  allowTierStructureEditing = true,
+}: TierEditorProps) {
   function updateTier(
     index: number,
     field: keyof SeatMapConfig['tiers'][number],
@@ -44,7 +50,9 @@ export function TierEditor({ tiers, onChange, svgMarkup }: TierEditorProps) {
       <h3 className="text-sm font-semibold">등급별 좌석 설정</h3>
       {tiers.length === 0 ? (
         <p className="text-sm text-gray-500">
-          등급을 추가하여 좌석을 배정해주세요.
+          {allowTierStructureEditing
+            ? '등급을 추가하여 좌석을 배정해주세요.'
+            : '통합 좌석등급을 먼저 추가해주세요.'}
         </p>
       ) : (
         <div className="space-y-4">
@@ -63,32 +71,45 @@ export function TierEditor({ tiers, onChange, svgMarkup }: TierEditorProps) {
                 className="flex flex-col gap-2 rounded-lg border p-3"
               >
                 <div className="flex items-center gap-2">
-                  <Input
-                    value={tier.tierName}
-                    onChange={(e) =>
-                      updateTier(index, 'tierName', e.target.value)
-                    }
-                    placeholder="등급명 (예: VIP)"
-                    className="flex-1"
-                  />
-                  <input
-                    type="color"
-                    value={tier.color}
-                    onChange={(e) =>
-                      updateTier(index, 'color', e.target.value)
-                    }
-                    className="h-10 w-10 cursor-pointer rounded border"
-                    aria-label={`${tier.tierName || '등급'} 색상`}
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => removeTier(index)}
-                    aria-label="등급 삭제"
-                  >
-                    <Trash2 className="h-4 w-4 text-gray-400 hover:text-red-600" />
-                  </Button>
+                  {allowTierStructureEditing ? (
+                    <>
+                      <Input
+                        value={tier.tierName}
+                        onChange={(e) =>
+                          updateTier(index, 'tierName', e.target.value)
+                        }
+                        placeholder="등급명 (예: VIP)"
+                        className="flex-1"
+                      />
+                      <input
+                        type="color"
+                        value={tier.color}
+                        onChange={(e) =>
+                          updateTier(index, 'color', e.target.value)
+                        }
+                        className="h-10 w-10 cursor-pointer rounded border"
+                        aria-label={`${tier.tierName || '등급'} 색상`}
+                      />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => removeTier(index)}
+                        aria-label="등급 삭제"
+                      >
+                        <Trash2 className="h-4 w-4 text-gray-400 hover:text-red-600" />
+                      </Button>
+                    </>
+                  ) : (
+                    <div className="flex flex-1 items-center gap-2 text-sm font-medium text-gray-700">
+                      <span
+                        className="h-4 w-4 rounded border"
+                        style={{ backgroundColor: tier.color }}
+                        aria-hidden="true"
+                      />
+                      <span>{tier.tierName || `등급 ${index + 1}`}</span>
+                    </div>
+                  )}
                 </div>
                 <details className="rounded-md bg-gray-50 p-2">
                   <summary className="cursor-pointer text-xs font-medium text-gray-600">
@@ -116,10 +137,12 @@ export function TierEditor({ tiers, onChange, svgMarkup }: TierEditorProps) {
           </div>
         </div>
       )}
-      <Button type="button" variant="outline" onClick={addTier}>
-        <Plus className="mr-2 h-4 w-4" />
-        등급 추가
-      </Button>
+      {allowTierStructureEditing && (
+        <Button type="button" variant="outline" onClick={addTier}>
+          <Plus className="mr-2 h-4 w-4" />
+          등급 추가
+        </Button>
+      )}
     </div>
   );
 }

@@ -4,8 +4,8 @@ milestone: v2.0
 milestone_name: Fanmeet Launch
 status: "Phase 25 shipped — PR #47"
 stopped_at: Phase 25 complete; ready for Phase 26
-last_updated: "2026-05-15T03:36:38.000Z"
-last_activity: "2026-05-15 -- Completed quick task 260515-hee: admin SVG seat tier drag paint assignment"
+last_updated: "2026-05-15T05:21:45.000Z"
+last_activity: "2026-05-15 -- Completed quick task 260515-jao: admin SVG range selection and shared seat tiers"
 progress:
   total_phases: 7
   completed_phases: 4
@@ -28,13 +28,13 @@ See: .planning/PROJECT.md (updated 2026-05-04)
 Phase: 26 (m1-canary-cutover-gates) — READY
 Plan: 0 of 0
 Status: Phase 25 shipped — PR #47
-Last activity: 2026-05-15 -- Completed quick task 260515-hee: admin SVG seat tier drag paint assignment
+Last activity: 2026-05-15 -- Completed quick task 260515-jao: admin SVG range selection and shared seat tiers
 
 ## Deferred Items
 
 Items acknowledged and deferred at milestone close on 2026-05-04.
 
-Summary: 71 total items (debug sessions 5, quick tasks 42, seeds 2, UAT gaps 12, verification gaps 10).
+Summary: 72 total items (debug sessions 5, quick tasks 43, seeds 2, UAT gaps 12, verification gaps 10).
 
 | Category | Item | Status |
 |----------|------|--------|
@@ -352,6 +352,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 | 260514-m5k | Admin SVG 좌석맵 삭제 stale detail cache 수정 + admin-only booking/payment test bypass + queue text wrapping/polling 보강 | 2026-05-14 | uncommitted | [260514-m5k-fix-admin-seat-map-deletion-persistence-](./quick/260514-m5k-fix-admin-seat-map-deletion-persistence-/) |
 | 260515-gke | GNB와 메인 하단 종목에서 IP 팝업을 숨기고 아티스트·셀럽 표시를 아티스트로 변경 | 2026-05-15 | c2ab217 | [260515-gke-gnb-ip-ip](./quick/260515-gke-gnb-ip-ip/) |
 | 260515-hee | Admin SVG 좌석 등급 편집기에 brush-style 드래그 배정 추가 | 2026-05-15 | uncommitted | [260515-hee-admin-svg-seat-tier-editor-drag-paint-as](./quick/260515-hee-admin-svg-seat-tier-editor-drag-paint-as/) |
+| 260515-jao | Admin SVG 좌석 등급을 범위 선택으로 배정하고 층별 좌석등급 구조를 통합 | 2026-05-15 | uncommitted | [260515-jao-admin-svg-range-selection-and-shared-sea](./quick/260515-jao-admin-svg-range-selection-and-shared-sea/) |
 
 ## Session Continuity
 
