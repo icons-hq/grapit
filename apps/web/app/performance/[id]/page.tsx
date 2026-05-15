@@ -239,7 +239,7 @@ export default function PerformanceDetailPage({
                   className="flex items-center gap-2 rounded-md px-3 py-2 hover:bg-gray-100 hover:text-gray-900"
                 >
                   <ImageIcon className="h-4 w-4" />
-                  상세 이미지
+                  {getDetailImagesNavLabel(activeLocale)}
                 </a>
               )}
               <a
@@ -247,14 +247,14 @@ export default function PerformanceDetailPage({
                 className="flex items-center gap-2 rounded-md px-3 py-2 hover:bg-gray-100 hover:text-gray-900"
               >
                 <Info className="h-4 w-4" />
-                {copy.performance.detailTab}
+                {getDetailCopyNavLabel(activeLocale)}
               </a>
               <a
                 href="#sales-copy"
                 className="flex items-center gap-2 rounded-md px-3 py-2 hover:bg-gray-100 hover:text-gray-900"
               >
                 <Ticket className="h-4 w-4" />
-                {copy.performance.salesTab}
+                {getSalesCopyNavLabel(activeLocale)}
               </a>
             </nav>
           </aside>
@@ -362,6 +362,42 @@ export default function PerformanceDetailPage({
 function useActiveLocale(): SupportedLocale {
   const locale = useLocale();
   return isSupportedLocale(locale) ? locale : DEFAULT_LOCALE;
+}
+
+function getDetailImagesNavLabel(locale: SupportedLocale): string {
+  const labels: Record<SupportedLocale, string> = {
+    ko: '이미지 안내',
+    en: 'Image guide',
+    th: 'คู่มือรูปภาพ',
+    'zh-CN': '图片导览',
+    'zh-TW': '圖片導覽',
+  };
+
+  return labels[locale];
+}
+
+function getDetailCopyNavLabel(locale: SupportedLocale): string {
+  const labels: Record<SupportedLocale, string> = {
+    ko: '공연 안내',
+    en: 'Overview',
+    th: 'ภาพรวม',
+    'zh-CN': '演出导览',
+    'zh-TW': '演出導覽',
+  };
+
+  return labels[locale];
+}
+
+function getSalesCopyNavLabel(locale: SupportedLocale): string {
+  const labels: Record<SupportedLocale, string> = {
+    ko: '예매 안내',
+    en: 'Ticket guide',
+    th: 'คู่มือตั๋ว',
+    'zh-CN': '票务指南',
+    'zh-TW': '票務指南',
+  };
+
+  return labels[locale];
 }
 
 function DetailFact({
