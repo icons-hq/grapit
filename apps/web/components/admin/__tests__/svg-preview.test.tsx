@@ -29,18 +29,32 @@ vi.mock('@/components/admin/tier-editor', () => ({
     tiers: Array<{ tierName: string; color: string; seatIds: string[] }>;
     onChange: (tiers: Array<{ tierName: string; color: string; seatIds: string[] }>) => void;
   }) => (
-    <button
-      type="button"
-      data-testid="tier-editor"
-      onClick={() =>
-        onChange([
-          ...tiers,
-          { tierName: 'R', color: '#00AAFF', seatIds: ['B-1'] },
-        ])
-      }
-    >
-      tier-editor
-    </button>
+    <>
+      <button
+        type="button"
+        data-testid="tier-editor"
+        onClick={() =>
+          onChange([
+            ...tiers,
+            { tierName: 'R', color: '#00AAFF', seatIds: ['B-1'] },
+          ])
+        }
+      >
+        tier-editor
+      </button>
+      <button
+        type="button"
+        data-testid="drag-tier-editor"
+        onClick={() =>
+          onChange([
+            { ...tiers[0], seatIds: ['A-1', 'A-2', 'A-3'] },
+            ...tiers.slice(1),
+          ])
+        }
+      >
+        drag-tier-editor
+      </button>
+    </>
   ),
 }));
 
@@ -155,6 +169,41 @@ describe('SvgPreview — UX-02 admin 업로드 검증 (D-06/D-07 unified contrac
         ],
       },
       totalSeats: 1,
+    });
+  });
+
+  it('controlled mode forwards a batched visual tier update as one onChange', async () => {
+    const onChange = vi.fn();
+
+    render(
+      <SvgPreview
+        currentSvgUrl="https://cdn.example.com/seats/existing.svg"
+        currentConfig={{
+          tiers: [{ tierName: 'VIP', color: '#FFD700', seatIds: ['A-1'] }],
+        }}
+        currentTotalSeats={3}
+        onChange={onChange}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('drag-tier-editor')).toBeTruthy();
+    });
+    onChange.mockClear();
+
+    fireEvent.click(screen.getByTestId('drag-tier-editor'));
+
+    await waitFor(() => {
+      expect(onChange).toHaveBeenCalledTimes(1);
+    });
+    expect(onChange).toHaveBeenCalledWith({
+      svgUrl: 'https://cdn.example.com/seats/existing.svg',
+      seatConfig: {
+        tiers: [
+          { tierName: 'VIP', color: '#FFD700', seatIds: ['A-1', 'A-2', 'A-3'] },
+        ],
+      },
+      totalSeats: 3,
     });
   });
 

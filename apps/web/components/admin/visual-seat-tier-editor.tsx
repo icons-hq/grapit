@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SeatMapConfig } from '@grabit/shared';
 import { sanitizeParsedSvg } from '@/lib/svg/safety';
 
@@ -127,12 +127,43 @@ function assignSeatToTier(
   });
 }
 
-function findSeatIdFromTarget(target: EventTarget | null) {
+function paintSeatsToTier(
+  tiers: SeatMapConfig['tiers'],
+  activeTierIndex: number,
+  seatIds: string[],
+) {
+  const paintedSeatIds = new Set(seatIds);
+
+  return tiers.map((tier, index) => {
+    const nextSeatIds = tier.seatIds.filter((id) => !paintedSeatIds.has(id));
+
+    if (index !== activeTierIndex) {
+      return { ...tier, seatIds: nextSeatIds };
+    }
+
+    return {
+      ...tier,
+      seatIds: Array.from(new Set([...nextSeatIds, ...seatIds])),
+    };
+  });
+}
+
+function findSeatElementFromTarget(target: EventTarget | null) {
   if (!(target instanceof Element)) {
     return null;
   }
 
-  return target.closest('[data-seat-id]')?.getAttribute('data-seat-id') ?? null;
+  return target.closest('[data-seat-id]');
+}
+
+function findSeatIdFromTarget(target: EventTarget | null) {
+  return findSeatElementFromTarget(target)?.getAttribute('data-seat-id') ?? null;
+}
+
+function previewSeatPaint(seatEl: Element, color: string) {
+  seatEl.setAttribute('fill', color);
+  seatEl.setAttribute('stroke', '#111827');
+  seatEl.setAttribute('stroke-width', '2');
 }
 
 export function VisualSeatTierEditor({
@@ -141,6 +172,11 @@ export function VisualSeatTierEditor({
   onChange,
 }: VisualSeatTierEditorProps) {
   const [activeTierIndex, setActiveTierIndex] = useState(0);
+  const [isDragPaintEnabled, setIsDragPaintEnabled] = useState(false);
+  const [isPainting, setIsPainting] = useState(false);
+  const gridRef = useRef<HTMLDivElement | null>(null);
+  const isPaintingRef = useRef(false);
+  const paintedSeatIdsRef = useRef<Set<string>>(new Set());
   const parsed = useMemo(() => parseSvg(svgMarkup, tiers), [svgMarkup, tiers]);
   const activeTier = tiers[activeTierIndex] ?? tiers[0];
 
@@ -150,6 +186,51 @@ export function VisualSeatTierEditor({
     }
     onChange(assignSeatToTier(tiers, activeTierIndex, seatId));
   }
+
+  function addSeatToCurrentPaint(seatEl: Element | null) {
+    if (!seatEl || !activeTier || !gridRef.current?.contains(seatEl)) {
+      return;
+    }
+
+    const seatId = seatEl.getAttribute('data-seat-id')?.trim();
+    if (!seatId) {
+      return;
+    }
+
+    paintedSeatIdsRef.current.add(seatId);
+    previewSeatPaint(seatEl, activeTier.color);
+  }
+
+  function commitPaintedSeats() {
+    if (!isPaintingRef.current) {
+      return;
+    }
+
+    const paintedSeatIds = Array.from(paintedSeatIdsRef.current);
+    paintedSeatIdsRef.current.clear();
+    isPaintingRef.current = false;
+    setIsPainting(false);
+
+    if (!activeTier || paintedSeatIds.length === 0) {
+      return;
+    }
+
+    onChange(paintSeatsToTier(tiers, activeTierIndex, paintedSeatIds));
+  }
+
+  useEffect(() => {
+    if (!isPainting) {
+      return;
+    }
+
+    window.addEventListener('pointerup', commitPaintedSeats);
+    window.addEventListener('pointercancel', commitPaintedSeats);
+
+    return () => {
+      window.removeEventListener('pointerup', commitPaintedSeats);
+      window.removeEventListener('pointercancel', commitPaintedSeats);
+    };
+  });
 
   if (!parsed) {
     return (
@@ -165,17 +246,53 @@ export function VisualSeatTierEditor({
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
         <div className="min-w-0 flex-1">
           <div
+            ref={gridRef}
             role="grid"
             aria-label="등급 배정 좌석맵"
-            className="max-h-[460px] overflow-auto rounded-md border bg-gray-50 p-3"
-            onClick={(event) =>
-              handleSeatPick(findSeatIdFromTarget(event.target))
-            }
+            className={`max-h-[460px] overflow-auto rounded-md border bg-gray-50 p-3 ${
+              isDragPaintEnabled ? 'select-none' : ''
+            }`}
+            onClick={(event) => {
+              if (isDragPaintEnabled) {
+                return;
+              }
+              handleSeatPick(findSeatIdFromTarget(event.target));
+            }}
             onKeyDown={(event) => {
               if (event.key !== 'Enter' && event.key !== ' ') return;
               event.preventDefault();
               handleSeatPick(findSeatIdFromTarget(event.target));
             }}
+            onPointerDown={(event) => {
+              if (!isDragPaintEnabled || !activeTier) {
+                return;
+              }
+
+              const seatEl = findSeatElementFromTarget(event.target);
+              if (!seatEl) {
+                return;
+              }
+
+              event.preventDefault();
+              event.currentTarget.setPointerCapture?.(event.pointerId);
+              paintedSeatIdsRef.current = new Set();
+              isPaintingRef.current = true;
+              setIsPainting(true);
+              addSeatToCurrentPaint(seatEl);
+            }}
+            onPointerMove={(event) => {
+              if (!isDragPaintEnabled || !isPaintingRef.current) {
+                return;
+              }
+
+              const seatEl = document.elementFromPoint(
+                event.clientX,
+                event.clientY,
+              );
+              addSeatToCurrentPaint(findSeatElementFromTarget(seatEl));
+            }}
+            onPointerUp={commitPaintedSeats}
+            onPointerCancel={commitPaintedSeats}
             dangerouslySetInnerHTML={{ __html: parsed.processedSvg }}
           />
         </div>
@@ -201,6 +318,21 @@ export function VisualSeatTierEditor({
               ))}
             </select>
           </div>
+
+          <label className="flex items-center justify-between gap-3 rounded-md border bg-gray-50 px-3 py-2 text-sm">
+            <span className="font-medium text-gray-700">드래그 배정</span>
+            <input
+              type="checkbox"
+              checked={isDragPaintEnabled}
+              onChange={(event) => {
+                setIsDragPaintEnabled(event.target.checked);
+                paintedSeatIdsRef.current.clear();
+                isPaintingRef.current = false;
+                setIsPainting(false);
+              }}
+              className="h-4 w-4 rounded border-gray-300"
+            />
+          </label>
 
           <div className="grid grid-cols-2 gap-2 text-sm">
             <div className="rounded-md bg-gray-50 p-2">
