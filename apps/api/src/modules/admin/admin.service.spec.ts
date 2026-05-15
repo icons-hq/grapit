@@ -23,7 +23,18 @@ import { AdminBannerController } from './admin-banner.controller.js';
 import type { AdminAuditService } from './admin-audit.service.js';
 import { ADMIN_CAPABILITIES_KEY } from '../../common/decorators/admin-capabilities.decorator.js';
 import { CacheService } from '../performance/cache.service.js';
-import { banners, bookingPolicies, performances, seatMaps } from '../../database/schema/index.js';
+import {
+  banners,
+  bookingPolicies,
+  performances,
+  performanceSeatTiers,
+  reservations,
+  seatMaps,
+  showtimes,
+  venueLayoutFloors,
+  venueLayouts,
+  venueLayoutSeats,
+} from '../../database/schema/index.js';
 
 function createMockCacheService(): CacheService {
   // Admin mutations trigger invalidate* — mocks swallow them so we can
@@ -51,12 +62,18 @@ function createMockCacheService(): CacheService {
 
 function createMockTx() {
   const txChain: Record<string, ReturnType<typeof vi.fn>> = {};
-  const methods = ['select', 'from', 'where', 'returning'];
+  const methods = ['select', 'from', 'where', 'orderBy', 'limit', 'returning'];
   for (const method of methods) {
     txChain[method] = vi.fn().mockReturnValue(txChain);
   }
-  (txChain as { then?: unknown }).then = vi.fn((resolve: (v: unknown[]) => void) => resolve([]));
   const updates: Array<{ table: unknown; values: Record<string, unknown> }> = [];
+  (txChain as { then?: unknown }).then = vi.fn((resolve: (v: unknown[]) => void) =>
+    resolve([
+      { tierName: 'VIP' },
+      { tierName: 'R' },
+      { tierName: 'S' },
+    ]),
+  );
 
   return {
     _updates: updates,
@@ -107,8 +124,38 @@ function createMockTx() {
   };
 }
 
+type SelectResultChain<T> = {
+  from: ReturnType<typeof vi.fn>;
+  where: ReturnType<typeof vi.fn>;
+  orderBy: ReturnType<typeof vi.fn>;
+  limit: ReturnType<typeof vi.fn>;
+  then: ReturnType<typeof vi.fn>;
+};
+
+function createSelectResultChain<T>(result: T[]): SelectResultChain<T> {
+  const chain = {} as SelectResultChain<T>;
+  chain.from = vi.fn().mockReturnValue(chain);
+  chain.where = vi.fn().mockReturnValue(chain);
+  chain.orderBy = vi.fn().mockResolvedValue(result);
+  chain.limit = vi.fn().mockResolvedValue(result);
+  chain.then = vi.fn((resolve: (value: T[]) => void) => resolve(result));
+  return chain;
+}
+
 function createMockDb() {
   const mockTx = createMockTx();
+  const dbSelectChain: Record<string, ReturnType<typeof vi.fn>> = {};
+  for (const method of ['from', 'where']) {
+    dbSelectChain[method] = vi.fn().mockReturnValue(dbSelectChain);
+  }
+  (dbSelectChain as { then?: unknown }).then = vi.fn((resolve: (v: unknown[]) => void) =>
+    resolve([
+      { tierName: 'VIP' },
+      { tierName: 'R' },
+      { tierName: 'S' },
+    ]),
+  );
+
   return {
     transaction: vi.fn((cb: (tx: typeof mockTx) => Promise<unknown>) => cb(mockTx)),
     insert: vi.fn().mockReturnValue({
@@ -129,6 +176,7 @@ function createMockDb() {
     delete: vi.fn().mockReturnValue({
       where: vi.fn().mockResolvedValue([]),
     }),
+    select: vi.fn().mockReturnValue(dbSelectChain),
     _tx: mockTx,
   };
 }
@@ -324,6 +372,19 @@ describe('AdminService', () => {
       expect(findInsertCallIndex(tx, seatMaps)).toBeGreaterThanOrEqual(0);
       expect(findInsertCallIndex(tx, bookingPolicies)).toBeGreaterThanOrEqual(0);
     });
+
+    it('mirrors legacy floor-aware seatMaps into venue layout template and overlay tables', async () => {
+      await service.createPerformance({
+        ...sampleCreateInput,
+        seatMaps: sampleSeatMaps,
+      });
+
+      const tx = mockDb._tx;
+      expect(findInsertCallIndex(tx, venueLayouts)).toBeGreaterThanOrEqual(0);
+      expect(findInsertCallIndex(tx, venueLayoutFloors)).toBeGreaterThanOrEqual(0);
+      expect(findInsertCallIndex(tx, venueLayoutSeats)).toBeGreaterThanOrEqual(0);
+      expect(findInsertCallIndex(tx, performanceSeatTiers)).toBeGreaterThanOrEqual(0);
+    });
   });
 
   describe('updatePerformance', () => {
@@ -355,6 +416,94 @@ describe('AdminService', () => {
       expect(tx.insert).toHaveBeenCalled();
     });
 
+    it('updates existing showtimes in place when showtimeId is preserved', async () => {
+      const tx = mockDb._tx;
+      const showtimeId = '11111111-1111-4111-8111-111111111111';
+      tx.select.mockReturnValueOnce(
+        createSelectResultChain([
+          {
+            id: showtimeId,
+            dateTime: new Date('2026-04-01T10:00:00.000Z'),
+          },
+        ]),
+      );
+
+      await service.updatePerformance('perf-id-123', {
+        showtimes: [
+          {
+            showtimeId,
+            dateTime: '2026-04-01T20:00:00',
+          },
+        ],
+      });
+
+      expect(tx.update).toHaveBeenCalledWith(showtimes);
+      expect(tx.delete).not.toHaveBeenCalledWith(showtimes);
+    });
+
+    it('keeps existing showtime rows for legacy payloads without showtimeId', async () => {
+      const tx = mockDb._tx;
+      tx.select.mockReturnValueOnce(
+        createSelectResultChain([
+          {
+            id: '22222222-2222-4222-8222-222222222222',
+            dateTime: new Date('2026-04-01T10:00:00.000Z'),
+          },
+        ]),
+      );
+
+      await service.updatePerformance('perf-id-123', {
+        showtimes: [
+          {
+            dateTime: '2026-04-01T20:00:00',
+          },
+        ],
+      });
+
+      expect(tx.update).toHaveBeenCalledWith(showtimes);
+      expect(tx.delete).not.toHaveBeenCalledWith(showtimes);
+    });
+
+    it('rejects removing a showtime that already has reservations', async () => {
+      const tx = mockDb._tx;
+      tx.select
+        .mockReturnValueOnce(
+          createSelectResultChain([
+            {
+              id: '33333333-3333-4333-8333-333333333333',
+              dateTime: new Date('2026-04-01T10:00:00.000Z'),
+            },
+            {
+              id: '44444444-4444-4444-8444-444444444444',
+              dateTime: new Date('2026-04-02T10:00:00.000Z'),
+            },
+          ]),
+        )
+        .mockReturnValueOnce(
+          createSelectResultChain([
+            {
+              showtimeId: '44444444-4444-4444-8444-444444444444',
+            },
+          ]),
+        );
+
+      await expect(
+        service.updatePerformance('perf-id-123', {
+          showtimes: [
+            {
+              showtimeId: '33333333-3333-4333-8333-333333333333',
+              dateTime: '2026-04-01T19:00:00',
+            },
+          ],
+        }),
+      ).rejects.toThrow(UnprocessableEntityException);
+
+      expect(tx.select).toHaveBeenCalledWith({
+        showtimeId: reservations.showtimeId,
+      });
+      expect(tx.delete).not.toHaveBeenCalledWith(showtimes);
+    });
+
     it('replaces seatMaps and upserts bookingPolicy without assuming a single floor', async () => {
       const updateInput: UpdatePerformanceInput = {
         seatMaps: sampleSeatMaps,
@@ -367,6 +516,24 @@ describe('AdminService', () => {
       expect(findInsertCallIndex(tx, seatMaps)).toBeGreaterThanOrEqual(0);
       expect(findInsertCallIndex(tx, bookingPolicies)).toBeGreaterThanOrEqual(0);
       expect(tx.delete).toHaveBeenCalled();
+    });
+
+    it('persists deleting all seatMaps and invalidates locale-scoped detail caches', async () => {
+      const result = await service.updatePerformance('perf-id-123', {
+        seatMaps: [],
+      });
+
+      const tx = mockDb._tx;
+      expect(tx.delete).toHaveBeenCalled();
+      expect(findInsertCallIndex(tx, seatMaps)).toBe(-1);
+      expect(result.seatMaps).toEqual([]);
+      expect(result.seatMap).toBeNull();
+      expect(mockCache.invalidate).toHaveBeenCalledWith(
+        'cache:performances:detail:perf-id-123',
+      );
+      expect(mockCache.invalidatePattern).toHaveBeenCalledWith(
+        'cache:performances:detail:perf-id-123:*',
+      );
     });
 
     it('writes event.update audit with safe venue and transport changed fields', async () => {
@@ -865,6 +1032,63 @@ describe('AdminService', () => {
       expect(mockDb.transaction).not.toHaveBeenCalled();
     });
 
+    it('rejects duplicate seat assignments inside a floor before persistence', async () => {
+      await expect(
+        service.saveSeatMap('perf-id-123', {
+          seatMaps: [
+            {
+              ...sampleSeatMaps[0]!,
+              seatConfig: {
+                tiers: [
+                  { tierName: 'VIP', color: '#FFD700', seatIds: ['A1'] },
+                  { tierName: 'R', color: '#4169E1', seatIds: ['A1'] },
+                ],
+              },
+            },
+          ],
+          bookingPolicy: sampleBookingPolicy,
+        }),
+      ).rejects.toThrow(UnprocessableEntityException);
+
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects seat tiers that are not registered as price tiers', async () => {
+      await expect(
+        service.saveSeatMap('perf-id-123', {
+          seatMaps: [
+            {
+              ...sampleSeatMaps[0]!,
+              seatConfig: {
+                tiers: [
+                  { tierName: 'UNREGISTERED', color: '#111111', seatIds: ['A1'] },
+                ],
+              },
+            },
+          ],
+          bookingPolicy: sampleBookingPolicy,
+        }),
+      ).rejects.toThrow(UnprocessableEntityException);
+
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
+    it('rejects detected SVG seats that are not assigned to any tier', async () => {
+      await expect(
+        service.saveSeatMap('perf-id-123', {
+          seatMaps: [
+            {
+              ...sampleSeatMaps[0]!,
+              totalSeats: 3,
+            },
+          ],
+          bookingPolicy: sampleBookingPolicy,
+        }),
+      ).rejects.toThrow(UnprocessableEntityException);
+
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
     it('keeps legacy single-seat-map saves compatible with default 1F floor data', async () => {
       const seatMapConfig: SeatMapConfigInput = {
         tiers: [
@@ -881,6 +1105,20 @@ describe('AdminService', () => {
 
       expect(result.seatMap?.floorKey).toBe('1F');
       expect(result.seatMaps[0]?.floorLabel).toBe('1층');
+    });
+
+    it('invalidates locale-scoped detail caches after direct seat-map saves', async () => {
+      await service.saveSeatMap('perf-id-123', {
+        seatMaps: sampleSeatMaps,
+        bookingPolicy: sampleBookingPolicy,
+      });
+
+      expect(mockCache.invalidate).toHaveBeenCalledWith(
+        'cache:performances:detail:perf-id-123',
+      );
+      expect(mockCache.invalidatePattern).toHaveBeenCalledWith(
+        'cache:performances:detail:perf-id-123:*',
+      );
     });
   });
 });

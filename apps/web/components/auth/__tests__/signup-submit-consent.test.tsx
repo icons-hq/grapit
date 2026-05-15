@@ -100,7 +100,7 @@ vi.mock('@/components/auth/signup-step3', () => ({
         onComplete({
           name: 'Fan User',
           gender: 'female',
-          country: '대한민국',
+          country: 'KR',
           birthYear: mocks.step3BirthYear,
           birthMonth: '01',
           birthDay: '02',

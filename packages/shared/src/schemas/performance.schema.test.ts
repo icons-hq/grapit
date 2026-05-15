@@ -95,6 +95,12 @@ describe('performance floor and booking policy schema', () => {
 
   it('accepts partial floor/policy updates for admin edit flows', () => {
     const parsed = updatePerformanceSchema.parse({
+      showtimes: [
+        {
+          showtimeId: '11111111-1111-4111-8111-111111111111',
+          dateTime: '2026-07-18T14:00:00',
+        },
+      ],
       seatMaps: [
         {
           floorKey: '1F',
@@ -121,6 +127,9 @@ describe('performance floor and booking policy schema', () => {
       },
     });
 
+    expect(parsed.showtimes?.[0]?.showtimeId).toBe(
+      '11111111-1111-4111-8111-111111111111',
+    );
     expect(parsed.seatMaps?.[0]?.floorLabel).toBe('1층');
     expect(parsed.bookingPolicy?.maxTicketsPerUser).toBe(2);
     expect(parsed.bookingPolicy?.manualOpenEnabled).toBe(false);

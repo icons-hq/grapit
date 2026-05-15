@@ -276,7 +276,7 @@ describe('BookingService', () => {
           .rejects.toThrow(ConflictException);
 
         await expect(service.lockSeat(userId, showtimeId, seatId))
-          .rejects.toThrow('운영자가 비활성화한 좌석입니다');
+          .rejects.toThrow('운영자가 판매를 중지한 좌석입니다');
 
         expect(mockRedis.eval).not.toHaveBeenCalled();
       });

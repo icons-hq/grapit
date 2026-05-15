@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Fanmeet Launch
-status: ready
+status: "Phase 25 shipped — PR #47"
 stopped_at: Phase 25 complete; ready for Phase 26
-last_updated: "2026-05-14T08:36:00.000Z"
-last_activity: 2026-05-14 -- Phase 25 gap closure complete
+last_updated: "2026-05-15T00:41:34.406Z"
+last_activity: "2026-05-15 -- Phase 25 shipped via PR #47"
 progress:
   total_phases: 7
   completed_phases: 4
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-05-04)
 
 Phase: 26 (m1-canary-cutover-gates) — READY
 Plan: 0 of 0
-Status: Phase 25 complete; ready to discuss/plan Phase 26
-Last activity: 2026-05-14 -- Phase 25 gap closure complete
+Status: Phase 25 shipped — PR #47
+Last activity: 2026-05-15 -- Phase 25 shipped via PR #47
 
 ## Deferred Items
 
@@ -344,10 +344,12 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 | 260507-ok2 | production deploy migration failure를 CLI로 조사하고 복구 | 2026-05-07 | dc9dba0, d1d6633 | [260507-ok2-ci-cd-cli](./quick/260507-ok2-ci-cd-cli/) |
 | 260511-i3d | Phase 24 Toss method matrix gap closure: Redis Cluster queue purge fix, Toss `ALIPAY` webhook normalization, production API/web redeploy, and non-secret method-matrix evidence | 2026-05-11 | committed | [260511-i3d-resolve-phase-24-remaining-toss-method-m](./quick/260511-i3d-resolve-phase-24-remaining-toss-method-m/) |
 | 260511-ipx | Phase 24 production operations handling runbook for queue, booking, Toss, Cloud Run, Cloudflare, secrets, DB, Redis, refund, QR, rollback, and evidence workflows | 2026-05-11 | committed | [260511-ipx-create-phase-24-production-operations-ha](./quick/260511-ipx-create-phase-24-production-operations-ha/) |
+| 260514-vlt | Venue layout template + performance overlay persistence, visual seat tier editor, and booking seatKey/held/disabled hardening | 2026-05-14 | uncommitted | [260514-vlt-venue-layout-template-seats](./quick/260514-vlt-venue-layout-template-seats/) |
 | 260511-l0p | PR #34 CI E2E 복구: KST showtime rendering 고정, runtime flag resolution 반응형화, booking-disabled smoke 안정화 | 2026-05-11 | committed | [260511-l0p-pr-ci](./quick/260511-l0p-pr-ci/) |
 | 260511-nfs | launch locale matrix를 `ko/en/th/zh-CN/ja`로 교체하고, persisted `zh-TW` locale migration 및 홈 `New` literal/가운데 정렬을 적용 | 2026-05-11 | 9ef3037 | [260511-nfs-h2-new-ui-pr](./quick/260511-nfs-h2-new-ui-pr/) |
 | 260512-kjs | Footer 고객센터 전화번호 끝자리 누락 수정 (`02-325-1794`) | 2026-05-12 | 836e2d6 | [260512-kjs-footer-02-325-1794](./quick/260512-kjs-footer-02-325-1794/) |
 | 260513-p1q | 회원가입 해외 SMS 인증 실패 UX와 Twilio landline/invalid recipient error mapping 수정 | 2026-05-13 | committed | [260513-p1q-sms-ux-twilio-landline-invalid-recipient](./quick/260513-p1q-sms-ux-twilio-landline-invalid-recipient/) |
+| 260514-m5k | Admin SVG 좌석맵 삭제 stale detail cache 수정 + admin-only booking/payment test bypass + queue text wrapping/polling 보강 | 2026-05-14 | uncommitted | [260514-m5k-fix-admin-seat-map-deletion-persistence-](./quick/260514-m5k-fix-admin-seat-map-deletion-persistence-/) |
 
 ## Session Continuity
 

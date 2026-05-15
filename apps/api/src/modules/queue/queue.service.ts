@@ -214,9 +214,14 @@ export class QueueService {
   async enterPerformanceQueue(params: {
     performanceId: string;
     identity: QueueIdentity;
+    bypassQueue?: boolean;
   }): Promise<QueueEnterResult> {
     const lease = await this.ensureQueueSession(params);
-    await this.reconcilePerformanceQueue(params.performanceId);
+    if (params.bypassQueue) {
+      await this.admitQueueSession(params.performanceId, lease.queueSessionId);
+    } else {
+      await this.reconcilePerformanceQueue(params.performanceId);
+    }
 
     const snapshot = await this.getQueueSessionStatus({
       queueSessionId: lease.queueSessionId,
@@ -228,6 +233,22 @@ export class QueueService {
       ...snapshot,
       admissionToken: lease.admissionToken,
     };
+  }
+
+  private async admitQueueSession(
+    performanceId: string,
+    queueSessionId: string,
+  ): Promise<void> {
+    const record = await this.readQueueSessionRecord(performanceId, queueSessionId);
+    if (!record || record.state === EXPIRED || record.state === ADMITTED) {
+      return;
+    }
+
+    const admittedRecord = this.toAdmittedRecord(record);
+    await this.persistQueueSessionRecord(admittedRecord);
+    await this.redis.zrem(this.waitingQueueKey(performanceId), queueSessionId);
+    await this.redis.sadd(this.activeAdmissionsKey(performanceId), queueSessionId);
+    this.gateway.emitAdmitted(queueSessionId, await this.buildSnapshot(admittedRecord));
   }
 
   async getQueueSessionStatus(params: QueueStatusParams): Promise<QueueSessionSnapshot> {
@@ -734,7 +755,7 @@ export class QueueService {
       .where(
         and(
           eq(showtimes.performanceId, performanceId),
-          inArray(seatInventories.status, ['sold', 'held_cancelled']),
+          inArray(seatInventories.status, ['sold', 'held_cancelled', 'disabled']),
         ),
       );
 

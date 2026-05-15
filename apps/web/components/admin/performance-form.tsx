@@ -208,6 +208,7 @@ function mapToFormValues(
       sortOrder: t.sortOrder,
     })),
     showtimes: data.showtimes.map((s) => ({
+      showtimeId: s.id,
       dateTime: formatAdminKstDateTime(s.dateTime),
     })),
     castings: data.castings.map((c) => ({

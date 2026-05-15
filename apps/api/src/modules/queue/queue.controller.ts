@@ -18,6 +18,7 @@ import {
 type AuthenticatedRequest = Request & {
   user: {
     id: string;
+    role?: string;
   };
 };
 
@@ -39,6 +40,7 @@ export class QueueController {
     const result = await this.queueService.enterPerformanceQueue({
       performanceId,
       identity,
+      bypassQueue: req.user.role === 'admin',
     });
 
     this.setAdmissionCookie(res, result.admissionToken);

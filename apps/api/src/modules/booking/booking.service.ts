@@ -322,7 +322,7 @@ export class BookingService {
         unavailableRecord.status === 'held_cancelled'
           ? '환불 처리 중인 좌석입니다'
           : unavailableRecord.status === 'disabled'
-            ? '운영자가 비활성화한 좌석입니다'
+            ? '운영자가 판매를 중지한 좌석입니다'
           : '이미 판매된 좌석입니다',
       );
     }
@@ -673,12 +673,11 @@ export class BookingService {
 
     for (const row of unavailableSeats) {
       const soldSeatKey = row.seatKey ?? (row.floorKey ? `${row.floorKey}:${row.seatId}` : row.seatId);
-      seats[soldSeatKey] =
-        row.status === 'held_cancelled'
-          ? 'held'
-          : row.status === 'disabled'
-            ? 'disabled'
-            : 'sold';
+      seats[soldSeatKey] = row.status === 'held_cancelled'
+        ? 'held'
+        : row.status === 'disabled'
+          ? 'disabled'
+          : 'sold';
     }
 
     return { showtimeId, seats };

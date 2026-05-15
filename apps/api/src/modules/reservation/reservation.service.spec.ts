@@ -441,6 +441,41 @@ describe('ReservationService', () => {
         .toBe(180000);
     });
 
+    it('uses performance seat assignment overlay before legacy seat map config when present', async () => {
+      const performanceId = randomUUID();
+      const seats: SeatSelection[] = [
+        { seatId: 'A-1', tierName: 'R', price: 1, row: 'client', number: '999' },
+      ];
+
+      mockDb.select
+        .mockReturnValueOnce(chainResult([{ tierName: 'VIP', price: 50000 }]))
+        .mockReturnValueOnce(chainResult([{
+          floorKey: '1F',
+          floorLabel: '1층',
+          venueLayoutId: 'layout-1',
+          seatConfig: {
+            tiers: [{ tierName: 'VIP', color: '#111111', seatIds: ['A-1'] }],
+          },
+        }]))
+        .mockReturnValueOnce(chainResult([{
+          assignmentId: 'assignment-1',
+          saleStatus: 'available',
+          layoutSeatId: 'layout-seat-1',
+          seatKey: '1F:A-1',
+          sourceSeatId: 'A-1',
+          rowLabel: 'A',
+          seatNumber: '1',
+          floorKey: '1F',
+          floorLabel: '1층',
+          tierName: 'VIP',
+          price: 123000,
+        }]));
+
+      await expect(service.calculateTotalAmount(seats, performanceId))
+        .resolves
+        .toBe(123000);
+    });
+
     it('should throw BadRequestException for invalid tier ID', async () => {
       const performanceId = randomUUID();
       const seats: SeatSelection[] = [

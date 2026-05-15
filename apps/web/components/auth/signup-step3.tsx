@@ -1,10 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useForm } from 'react-hook-form';
+import { useLocale } from 'next-intl';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { Loader2 } from 'lucide-react';
-import { registerStep3Schema, type RegisterStep3Input } from '@grabit/shared';
+import type { RegisterStep3Input } from '@grabit/shared';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -17,6 +19,7 @@ import {
   FormMessage,
 } from '@/components/ui/form';
 import { PhoneVerification } from '@/components/auth/phone-verification';
+import { getAuthLaunchCopy, type AuthLaunchCopy } from './auth-launch-copy';
 
 interface SignupStep3Props {
   onComplete: (data: RegisterStep3Input) => void;
@@ -25,22 +28,49 @@ interface SignupStep3Props {
   phoneVerificationPurpose?: 'signup' | 'social_registration';
 }
 
-const GENDER_OPTIONS = [
-  { value: 'male' as const, label: '남성' },
-  { value: 'female' as const, label: '여성' },
-  { value: 'unspecified' as const, label: '선택안함' },
-];
+const GENDER_OPTIONS = ['male', 'female', 'unspecified'] as const;
+const COUNTRY_OPTIONS = ['KR', 'US', 'JP', 'CN', 'GB', 'CA', 'AU', 'OTHER'] as const;
+type SignupCopy = AuthLaunchCopy['signup'];
 
-const COUNTRIES = [
-  '대한민국',
-  '미국',
-  '일본',
-  '중국',
-  '영국',
-  '캐나다',
-  '호주',
-  '기타',
-];
+function createRegisterStep3Schema(copy: SignupCopy) {
+  return z.object({
+    name: z.string().min(1, copy.nameRequired).max(100, copy.nameMax),
+    gender: z.enum(['male', 'female', 'unspecified'], {
+      errorMap: () => ({ message: copy.genderRequired }),
+    }),
+    country: z.string().min(1, copy.countryRequired).max(100),
+    birthYear: z.string().regex(/^\d{4}$/, copy.birthYearInvalid),
+    birthMonth: z.string().regex(/^(0[1-9]|1[0-2])$/, copy.birthMonthInvalid),
+    birthDay: z.string().regex(/^(0[1-9]|[12]\d|3[01])$/, copy.birthDayInvalid),
+    phone: z.string().min(10, copy.phoneInvalid).max(20),
+    phoneVerificationToken: z.string().min(1, copy.phoneVerificationRequired),
+  });
+}
+
+function getGenderLabel(copy: SignupCopy, value: (typeof GENDER_OPTIONS)[number]) {
+  const labels = {
+    male: copy.genderMale,
+    female: copy.genderFemale,
+    unspecified: copy.genderUnspecified,
+  } satisfies Record<(typeof GENDER_OPTIONS)[number], string>;
+
+  return labels[value];
+}
+
+function getCountryLabel(copy: SignupCopy, value: (typeof COUNTRY_OPTIONS)[number]) {
+  const labels = {
+    KR: copy.countryKR,
+    US: copy.countryUS,
+    JP: copy.countryJP,
+    CN: copy.countryCN,
+    GB: copy.countryGB,
+    CA: copy.countryCA,
+    AU: copy.countryAU,
+    OTHER: copy.countryOTHER,
+  } satisfies Record<(typeof COUNTRY_OPTIONS)[number], string>;
+
+  return labels[value];
+}
 
 export function SignupStep3({
   onComplete,
@@ -48,14 +78,20 @@ export function SignupStep3({
   isSubmitting,
   phoneVerificationPurpose = 'signup',
 }: SignupStep3Props) {
+  const authCopy = getAuthLaunchCopy(useLocale());
+  const signupCopy = authCopy.signup;
+  const schema = useMemo(
+    () => createRegisterStep3Schema(signupCopy),
+    [signupCopy],
+  );
   const [isPhoneVerified, setIsPhoneVerified] = useState(false);
 
   const form = useForm<RegisterStep3Input>({
-    resolver: zodResolver(registerStep3Schema),
+    resolver: zodResolver(schema),
     defaultValues: {
       name: '',
       gender: undefined,
-      country: '대한민국',
+      country: 'KR',
       birthYear: '',
       birthMonth: '',
       birthDay: '',
@@ -92,10 +128,10 @@ export function SignupStep3({
           name="name"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>이름 <span className="text-error">*</span></FormLabel>
+              <FormLabel>{signupCopy.nameLabel} <span className="text-error">*</span></FormLabel>
               <FormControl>
                 <Input
-                  placeholder="이름을 입력해주세요"
+                  placeholder={signupCopy.namePlaceholder}
                   autoComplete="name"
                   {...field}
                 />
@@ -111,21 +147,21 @@ export function SignupStep3({
           name="gender"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>성별 <span className="text-error">*</span></FormLabel>
+              <FormLabel>{signupCopy.genderLabel} <span className="text-error">*</span></FormLabel>
               <div className="flex gap-2">
                 {GENDER_OPTIONS.map((option) => (
                   <button
-                    key={option.value}
+                    key={option}
                     type="button"
-                    onClick={() => field.onChange(option.value)}
+                    onClick={() => field.onChange(option)}
                     className={cn(
                       'flex h-10 flex-1 items-center justify-center rounded-lg border text-base transition-colors',
-                      selectedGender === option.value
+                      selectedGender === option
                         ? 'border-primary bg-primary/5 font-semibold text-primary'
                         : 'border-gray-200 text-gray-700 hover:border-gray-300',
                     )}
                   >
-                    {option.label}
+                    {getGenderLabel(signupCopy, option)}
                   </button>
                 ))}
               </div>
@@ -140,15 +176,15 @@ export function SignupStep3({
           name="country"
           render={({ field }) => (
             <FormItem>
-              <FormLabel>국가 <span className="text-error">*</span></FormLabel>
+              <FormLabel>{signupCopy.countryLabel} <span className="text-error">*</span></FormLabel>
               <FormControl>
                 <select
                   {...field}
                   className="flex h-11 w-full rounded-lg border border-gray-200 bg-white px-4 py-2 text-base text-gray-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-0"
                 >
-                  {COUNTRIES.map((c) => (
+                  {COUNTRY_OPTIONS.map((c) => (
                     <option key={c} value={c}>
-                      {c}
+                      {getCountryLabel(signupCopy, c)}
                     </option>
                   ))}
                 </select>
@@ -161,7 +197,7 @@ export function SignupStep3({
         {/* Birth date */}
         <div>
           <label className="text-base font-semibold leading-none text-gray-900">
-            생년월일 <span className="text-error">*</span>
+            {signupCopy.birthDateLabel} <span className="text-error">*</span>
           </label>
           <div className="mt-2 flex gap-2">
             <FormField
@@ -175,6 +211,7 @@ export function SignupStep3({
                       inputMode="numeric"
                       maxLength={4}
                       placeholder="YYYY"
+                      aria-label={signupCopy.birthYearAriaLabel}
                       {...field}
                       onChange={(e) => {
                         const v = e.target.value.replace(/[^0-9]/g, '');
@@ -197,6 +234,7 @@ export function SignupStep3({
                       inputMode="numeric"
                       maxLength={2}
                       placeholder="MM"
+                      aria-label={signupCopy.birthMonthAriaLabel}
                       {...field}
                       onChange={(e) => {
                         const v = e.target.value.replace(/[^0-9]/g, '');
@@ -219,6 +257,7 @@ export function SignupStep3({
                       inputMode="numeric"
                       maxLength={2}
                       placeholder="DD"
+                      aria-label={signupCopy.birthDayAriaLabel}
                       {...field}
                       onChange={(e) => {
                         const v = e.target.value.replace(/[^0-9]/g, '');
@@ -236,7 +275,7 @@ export function SignupStep3({
         {/* Phone verification */}
         <div>
           <label className="text-base font-semibold leading-none text-gray-900">
-            전화번호 <span className="text-error">*</span>
+            {signupCopy.phoneLabel} <span className="text-error">*</span>
           </label>
           <div className="mt-2">
             <PhoneVerification
@@ -260,7 +299,7 @@ export function SignupStep3({
             className="flex-1"
             onClick={onBack}
           >
-            이전
+            {signupCopy.previousButton}
           </Button>
           <Button
             type="submit"
@@ -271,10 +310,10 @@ export function SignupStep3({
             {isSubmitting ? (
               <>
                 <Loader2 className="h-5 w-5 animate-spin" />
-                처리 중...
+                {signupCopy.submittingButton}
               </>
             ) : (
-              '가입 완료'
+              signupCopy.submitButton
             )}
           </Button>
         </div>

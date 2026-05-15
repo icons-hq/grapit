@@ -22,7 +22,7 @@ export const bookingOperationAuditLogs = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'restrict' }),
     action: bookingOperationActionEnum('action').notNull(),
-    seatKey: varchar('seat_key', { length: 80 }).notNull(),
+    seatKey: varchar('seat_key', { length: 120 }).notNull(),
     reservationId: uuid('reservation_id')
       .notNull()
       .references(() => reservations.id, { onDelete: 'restrict' }),

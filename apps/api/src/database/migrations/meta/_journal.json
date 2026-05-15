@@ -110,6 +110,13 @@
     {
       "idx": 15,
       "version": "7",
+      "when": 1778742000000,
+      "tag": "0015_venue_layout_template_seats",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
       "when": 1778722438752,
       "tag": "0015_phase25_admin_operations_console",
       "breakpoints": true

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useEffectEvent, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Upload, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import type { SeatMapConfig, SeatMapConfigInput } from '@grabit/shared';
@@ -36,19 +36,13 @@ export function SvgPreview({
     currentConfig?.tiers ?? [],
   );
   const [totalSeats, setTotalSeats] = useState(currentTotalSeats ?? 0);
+  const [svgMarkup, setSvgMarkup] = useState<string | null>(null);
 
   const presignedUpload = usePresignedUpload();
   const saveSeatMap = useSaveSeatMap(performanceId ?? '');
-  const emitChange = useEffectEvent((value: {
-    svgUrl: string;
-    seatConfig: SeatMapConfigInput;
-    totalSeats: number;
-  }) => {
-    onChange?.(value);
-  });
-
   useEffect(() => {
     setSvgUrl(currentSvgUrl ?? null);
+    setSvgMarkup(null);
   }, [currentSvgUrl]);
 
   useEffect(() => {
@@ -60,16 +54,31 @@ export function SvgPreview({
   }, [currentTotalSeats]);
 
   useEffect(() => {
-    if (!isControlled || !svgUrl) {
+    if (!svgUrl || svgMarkup) {
       return;
     }
 
-    emitChange({
-      svgUrl,
-      seatConfig: { tiers },
-      totalSeats,
-    });
-  }, [emitChange, isControlled, svgUrl, tiers, totalSeats]);
+    let isMounted = true;
+    fetch(svgUrl)
+      .then((res) => {
+        if (!res.ok) throw new Error('Failed to fetch SVG');
+        return res.text();
+      })
+      .then((text) => {
+        if (isMounted) {
+          setSvgMarkup(text);
+        }
+      })
+      .catch(() => {
+        if (isMounted) {
+          setSvgMarkup(null);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [svgMarkup, svgUrl]);
 
   // review IN-05: mutateAsync만 좁혀 deps로 사용.
   //   presignedUpload 객체 전체를 deps로 쓰면 isPending 등 내부 상태 변화로 identity가 바뀌어
@@ -156,14 +165,22 @@ export function SvgPreview({
         //   주석/CDATA/다른 tag 속성 이름 등에 'data-seat-id' substring이 우연히
         //   포함된 경우의 false positive를 제거하여 의도와 실제 좌석 수가 일치하도록 보장.
         const seatCount = doc.querySelectorAll('[data-seat-id]').length;
+        setSvgMarkup(text);
         setTotalSeats(seatCount);
+        if (isControlled) {
+          onChange?.({
+            svgUrl: publicUrl,
+            seatConfig: { tiers },
+            totalSeats: seatCount,
+          });
+        }
 
         toast.success('좌석맵 SVG가 업로드되었습니다.');
       } catch {
         toast.error('SVG 업로드에 실패했습니다.');
       }
     },
-    [presignedUploadMutate],
+    [isControlled, onChange, presignedUploadMutate, tiers],
   );
 
   function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
@@ -249,7 +266,20 @@ export function SvgPreview({
       {/* Tier Editor */}
       {svgUrl && (
         <>
-          <TierEditor tiers={tiers} onChange={setTiers} />
+          <TierEditor
+            tiers={tiers}
+            onChange={(nextTiers) => {
+              setTiers(nextTiers);
+              if (isControlled) {
+                onChange?.({
+                  svgUrl,
+                  seatConfig: { tiers: nextTiers },
+                  totalSeats,
+                });
+              }
+            }}
+            svgMarkup={svgMarkup}
+          />
           {!isControlled && (
             <div className="flex justify-end">
               <Button

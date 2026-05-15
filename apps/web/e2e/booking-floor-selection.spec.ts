@@ -25,6 +25,7 @@ const FIRST_FLOOR_SVG = `
     <rect data-seat-id="A-1" x="174" y="124" width="52" height="36" rx="4" fill="#E5E7EB" stroke="#CBD5E1" />
     <text class="seat-number" x="200" y="146" text-anchor="middle">1</text>
   </g>
+  <rect class="seat seat-excluded" data-seat-id="A-99" x="290" y="124" width="52" height="36" rx="4" fill="#F4D03F" />
 </svg>
 `;
 
@@ -35,6 +36,7 @@ const SECOND_FLOOR_SVG = `
     <rect data-seat-id="A-1" x="214" y="124" width="52" height="36" rx="4" fill="#E5E7EB" stroke="#CBD5E1" />
     <text class="seat-number" x="240" y="146" text-anchor="middle">1</text>
   </g>
+  <rect data-seat-id="B-2" data-category="EXCLUDED" x="110" y="124" width="52" height="36" rx="4" fill="#F4D03F" />
 </svg>
 `;
 
@@ -53,9 +55,14 @@ function createFloorBrowserPerformanceDetail() {
           color: '#6C3CE0',
           seatIds: ['A-1'],
         },
+        {
+          tierName: 'R',
+          color: '#3B82F6',
+          seatIds: ['B-1'],
+        },
       ],
     },
-    totalSeats: 1,
+    totalSeats: 2,
   };
 
   return {
@@ -219,9 +226,13 @@ async function stubFloorBrowserRoutes(page: Page) {
   await page.route('**/api/v1/booking/seats/lock', async (route: Route) => {
     const payload = JSON.parse(route.request().postData() ?? '{}') as {
       seatId?: string;
+      floorKey?: string;
+      floorLabel?: string;
+      seatKey?: string;
     };
-    const runtimeSeatId = payload.seatId ?? '1F:A-1';
-    const [floorKey, seatId] = runtimeSeatId.split(':');
+    const floorKey = payload.floorKey ?? '1F';
+    const seatId = payload.seatId ?? 'A-1';
+    const runtimeSeatId = payload.seatKey ?? `${floorKey}:${seatId}`;
 
     await route.fulfill({
       status: 200,
@@ -232,7 +243,7 @@ async function stubFloorBrowserRoutes(page: Page) {
         seatId,
         seatKey: runtimeSeatId,
         floorKey,
-        floorLabel: floorKey === '2F' ? '2층' : '1층',
+        floorLabel: payload.floorLabel ?? (floorKey === '2F' ? '2층' : '1층'),
         expiresAt: LOCK_EXPIRES_AT,
       }),
     });
@@ -311,8 +322,6 @@ async function clickSeatLabelCenter(page: Page) {
 }
 
 async function tapSeatLabelCenter(page: Page) {
-  await page.evaluate(() => window.scrollBy(0, 180));
-
   const seatMapGrid = page.getByRole('grid', { name: '좌석 배치도' });
   const seatLabel = page
     .getByRole('grid', { name: '좌석 배치도' })
@@ -333,14 +342,17 @@ async function tapSeatLabelCenter(page: Page) {
     x: box.x - gridBox.x + box.width / 2,
     y: box.y - gridBox.y + box.height / 2,
   };
-  await seatMapGrid.tap({
+  await seatMapGrid.click({
     force: true,
     position: tapPosition,
   });
 }
 
 function getNextButton(page: Page) {
-  return page.locator('button').filter({ hasText: /^다음$/ }).last();
+  return page
+    .locator('button')
+    .filter({ hasText: /^(다음|좌석을 선택해주세요)$/ })
+    .last();
 }
 
 async function assertTimerAndNextCta(page: Page) {
@@ -350,24 +362,44 @@ async function assertTimerAndNextCta(page: Page) {
 
 async function assertPostSelectionState(page: Page) {
   const summary = page.getByRole('complementary');
-  await expect(summary.getByRole('heading', { name: '1층' })).toBeVisible();
   await expect(summary.getByText('VIP')).toBeVisible();
-  await expect(summary.getByText('A열 1번')).toBeVisible();
+  await expect(summary.getByText('총 1석')).toBeVisible();
+  await expect(summary.getByText('총 결제 금액')).toBeVisible();
+  await expect(summary.getByText('110,000원')).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: '1층 A열 1번 선택 해제' }),
+  ).toBeVisible();
   await assertTimerAndNextCta(page);
 }
 
 async function assertMobilePostSelectionState(page: Page) {
-  const collapsedSummary = page.getByText('1석 선택 | 110,000원');
-  await expect(collapsedSummary).toBeVisible();
-  await collapsedSummary.click();
-  const mobileSummary = page.locator('div.fixed.inset-x-0.bottom-0');
-  await expect(
-    mobileSummary.getByRole('heading', { name: '선택 좌석' }),
-  ).toBeVisible();
-  await expect(mobileSummary.getByRole('heading', { name: '1층' })).toBeVisible();
+  const mobileSummary = page.getByRole('complementary', { name: '선택 좌석 요약' });
   await expect(mobileSummary.getByText('VIP')).toBeVisible();
-  await expect(mobileSummary.getByText('A열 1번')).toBeVisible();
+  await expect(mobileSummary.getByText('총 1석')).toBeVisible();
+  await expect(mobileSummary.getByText('총 결제 금액')).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: '1층 A열 1번 선택 해제' }),
+  ).toBeVisible();
   await assertTimerAndNextCta(page);
+}
+
+async function clickExcludedSeat(page: Page, seatId: string) {
+  const seatMapGrid = page.getByRole('grid', { name: '좌석 배치도' });
+  const excludedSeat = seatMapGrid.locator(`[data-seat-id="${seatId}"]`);
+  await expect(excludedSeat).toBeVisible();
+  const box = await excludedSeat.boundingBox();
+  const gridBox = await seatMapGrid.boundingBox();
+  if (!box || !gridBox) {
+    throw new Error('Excluded seat bounding box was not available');
+  }
+
+  await seatMapGrid.click({
+    force: true,
+    position: {
+      x: box.x - gridBox.x + box.width / 2,
+      y: box.y - gridBox.y + box.height / 2,
+    },
+  });
 }
 
 async function createMobilePage(browser: Browser) {
@@ -384,6 +416,9 @@ test.describe('booking floor-browser seat selection', () => {
 
     await page.goto(`/booking/${FLOOR_BROWSER_PERFORMANCE_ID}`);
     await selectDateAndShowtime(page);
+    await expect(getNextButton(page)).toBeDisabled();
+    await clickExcludedSeat(page, 'A-99');
+    await expect(getNextButton(page)).toBeDisabled();
     await clickSeatLabelCenter(page);
     await assertPostSelectionState(page);
 
@@ -391,14 +426,25 @@ test.describe('booking floor-browser seat selection', () => {
     await expect(
       page.getByRole('grid', { name: '좌석 배치도' }).getByText('2층 맵'),
     ).toBeVisible();
-    await expect(page.getByText('A열 1번')).toBeVisible();
+    await expect(page.getByRole('button', { name: '1층 A열 1번 선택 해제' })).toBeVisible();
 
     await page.getByRole('radio', { name: '1층' }).click();
     await expect(
       page.getByRole('grid', { name: '좌석 배치도' }).getByText('1층 맵'),
     ).toBeVisible();
-    await expect(page.getByText('A열 1번')).toBeVisible();
+    await expect(page.getByRole('button', { name: '1층 A열 1번 선택 해제' })).toBeVisible();
     await expect(getNextButton(page)).toBeEnabled();
+    await page.getByRole('button', { name: '전체 해제' }).click();
+    await expect(page.getByRole('button', { name: '1층 A열 1번 선택 해제' })).toHaveCount(0);
+    await expect(getNextButton(page)).toBeDisabled();
+
+    await page.reload();
+    await selectDateAndShowtime(page);
+    await clickSeatLabelCenter(page);
+    await assertPostSelectionState(page);
+    await page.getByRole('button', { name: '1층 A열 1번 선택 해제' }).click();
+    await expect(page.getByRole('button', { name: '1층 A열 1번 선택 해제' })).toHaveCount(0);
+    await expect(getNextButton(page)).toBeDisabled();
   });
 
   test('mobile-sized tap on the visible seat label center follows the same booking flow', async ({ browser }) => {

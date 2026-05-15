@@ -204,8 +204,8 @@ describe('BookingPage timezone handling', () => {
     await user.click(screen.getByRole('button', { name: '19:00' }));
 
     expect(screen.getByText('seat map ready')).toBeInTheDocument();
-    expect(screen.getByText('KST Fanmeet').nextElementSibling).toHaveTextContent(
-      '2026년 7월 18일 토 19:00',
-    );
+    expect(
+      screen.getByRole('button', { name: '7/18 - 회차 선택완료' }),
+    ).toBeInTheDocument();
   });
 });

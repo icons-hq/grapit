@@ -203,12 +203,12 @@ export function QueueWaiting({
         >
           <CardHeader className="gap-4 border-b bg-gradient-to-r from-white to-neutral-50/90 pb-6">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-              <div className="space-y-4">
+              <div className="min-w-0 flex-1 space-y-4">
                 <Badge variant={tone}>{copy.badge}</Badge>
                 <div className="space-y-2">
                   <h1
                     className={cn(
-                      'text-2xl font-semibold tracking-tight text-neutral-950 sm:text-[28px]',
+                      'break-keep text-2xl font-semibold tracking-tight text-neutral-950 sm:text-[28px]',
                       isFailure && 'text-red-900',
                     )}
                   >
@@ -216,7 +216,7 @@ export function QueueWaiting({
                   </h1>
                   <p
                     className={cn(
-                      'max-w-2xl text-base leading-7 text-neutral-600',
+                      'max-w-2xl whitespace-normal break-keep text-base leading-7 text-neutral-600',
                       isFailure && 'text-red-700',
                     )}
                   >
@@ -226,7 +226,7 @@ export function QueueWaiting({
               </div>
               <div
                 className={cn(
-                  'flex size-14 items-center justify-center rounded-2xl border border-neutral-200 bg-[#f5f5f7] text-[#6c3ce0]',
+                  'flex size-14 shrink-0 items-center justify-center rounded-2xl border border-neutral-200 bg-[#f5f5f7] text-[#6c3ce0]',
                   isFailure && 'border-red-200 bg-red-50 text-red-600',
                 )}
               >
@@ -317,7 +317,7 @@ export function QueueWaiting({
               <p className="text-sm font-semibold text-[#6c3ce0]">
                 {queueCopy.infoLabel}
               </p>
-              <div className="mt-3 space-y-3 text-sm leading-6 text-neutral-700">
+              <div className="mt-3 space-y-3 whitespace-normal break-keep text-sm leading-6 text-neutral-700">
                 <p>{copy.helper}</p>
                 <p>
                   {status === 'admitted'
