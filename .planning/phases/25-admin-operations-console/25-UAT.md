@@ -4,7 +4,7 @@ phase: 25-admin-operations-console
 source:
   - 25-01-SUMMARY.md through 25-23-SUMMARY.md
 started: 2026-05-14T05:13:49Z
-updated: 2026-05-14T08:36:00Z
+updated: 2026-05-15T00:30:47Z
 mode: automated
 accepted_risk:
   - D-08-admin-mfa
@@ -108,6 +108,41 @@ issues: 0
 pending: 0
 skipped: 0
 blocked: 0
+
+## Reverification 2026-05-15
+
+Status: passed_with_accepted_risk
+
+CLI evidence:
+  - `gsd-sdk query audit-open --json` found Phase 25 `25-UAT.md` at `passed_with_accepted_risk`; `25-HUMAN-UAT.md` remains `human_uat_required_for_security_evidence`.
+  - `pnpm lint` passed with existing warnings only: API 50 warnings / 0 errors, web 35 warnings / 0 errors.
+  - `pnpm typecheck` passed.
+  - `pnpm test` passed: shared 8 files / 43 tests, API 65 files / 657 tests, web 62 files / 385 tests.
+  - `pnpm --filter @grabit/api test:integration` passed: 5 files / 41 tests.
+  - `pnpm --filter @grabit/shared test -- src/schemas/admin-operations.schema.test.ts` passed: 8 files / 43 tests.
+  - `pnpm --filter @grabit/api exec vitest run modules/admin/admin-seat-operations.controller.spec.ts modules/admin/admin-seat-operations.service.spec.ts modules/booking/__tests__/booking.service.spec.ts modules/booking/__tests__/dto.spec.ts modules/reservation/reservation.service.spec.ts modules/payment/payment.service.spec.ts` passed: 6 files / 124 tests.
+  - `pnpm --filter @grabit/web exec vitest run components/admin/__tests__/seat-operations-panel.test.tsx components/booking/__tests__/seat-map-viewer.test.tsx` passed: 2 files / 26 tests, with existing React `act(...)` warnings.
+  - `DOTENV_CONFIG_PATH=../../.env pnpm --filter @grabit/api exec drizzle-kit migrate` passed with `[✓] migrations applied successfully!`.
+  - API cold start via `pnpm --filter @grabit/api dev` mapped Phase 25 admin routes and reported 0 TypeScript issues.
+  - Web dev server via `pnpm --filter @grabit/web dev` served `http://localhost:3000`; `curl -I http://localhost:3000/admin` returned 200.
+  - `curl http://localhost:8080/api/v1/health` returned `status: ok` with in-memory Redis dev mode.
+
+Browser and E2E evidence:
+  - `CI=1 TZ=UTC E2E_API_URL=http://localhost:8080 pnpm --filter @grabit/web test:e2e -- admin-dashboard.spec.ts admin-event-publish.spec.ts admin-operations-inbox.spec.ts admin-rbac-and-security.spec.ts admin-export-and-seat-ops.spec.ts` was blocked by Playwright's CI port ownership check because the verified local web server was already running on `3000`.
+  - Local parallel E2E run on the same route set passed 11/12 and exposed one dashboard auth/session race in the `period-filter` test. The failed page snapshot was the access-denied screen, not the dashboard.
+  - The same `period-filter` test passed alone with `--workers=1` in 797ms.
+  - The full admin E2E route set passed with `--workers=1`: 12/12 passed in 5.7s.
+  - Browser MCP logged in through the real API, opened `/admin`, and observed `대시보드`, KPI copy, chart sections, and Top 10.
+  - Browser MCP route smoke opened `/admin`, `/admin/operations`, `/admin/support-content`, `/admin/security`, `/admin/audit`, `/admin/bookings`, `/admin/seat-operations`, and `/admin/translations`; all observed Phase 25 admin API responses were 200.
+  - Browser MCP confirmed `/admin/bookings` raw CSV dialog shows a PII/raw export warning and keeps `CSV 내보내기` disabled until a reason is entered.
+  - Browser MCP confirmed `/admin/seat-operations` accepts showtime UUID `00000000-0000-4000-8000-000000000001` plus seat key `1F:A-10`, returns history 200, opens the disable dialog, and keeps `비활성화 확인` disabled until a reason is entered.
+  - Browser MCP confirmed `/admin/security` still shows the exact accepted-risk copy: `MFA는 아직 적용되지 않았습니다. 현재는 IP allowlist와 audit monitoring으로 운영합니다.`
+  - Browser MCP console noise was limited to `favicon.ico` 404.
+  - Computer Use inspected the running Chrome app and selected an existing `Grabit - 공연 티켓 예매` tab at `localhost:3000`, confirming the live local page renders through the desktop browser accessibility tree.
+
+Notes:
+  - The parallel E2E auth/session race is treated as a test orchestration flake because the failed snapshot was access-denied, the focused test passed alone, and the entire route set passed serially.
+  - D-08 admin MFA remains `ACCEPTED_RISK_DEFERRED`, not a security PASS.
 
 ## Gaps
 
