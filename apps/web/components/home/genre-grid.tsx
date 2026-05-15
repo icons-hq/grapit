@@ -2,24 +2,20 @@
 
 import Link from 'next/link';
 import { useLocale } from 'next-intl';
-import {
-  Store,
-  Users,
-} from 'lucide-react';
-import { GENRES, type EventCategory } from '@grabit/shared';
+import { Users } from 'lucide-react';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import {
   getVisibleCopy,
   resolveVisibleCopyLocale,
 } from '@/lib/i18n/visible-copy';
+import { PUBLIC_GENRES, type PublicGenre } from '@/lib/performance/public-genres';
 import type { LucideIcon } from 'lucide-react';
 
-const GENRE_ICONS: Record<EventCategory, LucideIcon> = {
+const GENRE_ICONS: Record<PublicGenre, LucideIcon> = {
   artist_celebrity: Users,
-  ip_popup: Store,
 };
 
-const GENRE_LIST = GENRES;
+const GENRE_LIST = PUBLIC_GENRES;
 
 // 빈 상태 발생 시: SearchIcon 대신 Telescope 또는 LayoutGrid 아이콘 사용
 // 장르 바로가기는 정적 컴포넌트로 현재 빈 상태 없음

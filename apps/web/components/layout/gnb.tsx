@@ -19,7 +19,7 @@ import {
   LocaleSwitcher,
 } from '@/components/i18n/locale-switcher';
 import { resolveLocaleFromPathname } from '@/i18n/routing';
-import { GENRES } from '@grabit/shared';
+import { PUBLIC_GENRES } from '@/lib/performance/public-genres';
 
 export function GNB() {
   const router = useRouter();
@@ -107,7 +107,7 @@ export function GNB() {
 
           {/* Genre tabs - hidden on mobile */}
           <div className="hidden items-center gap-1 md:flex">
-            {GENRES.map((genre) => (
+            {PUBLIC_GENRES.map((genre) => (
               <Link
                 key={genre}
                 href={getLocalizedPathname(`/genre/${genre}`, activeLocale)}

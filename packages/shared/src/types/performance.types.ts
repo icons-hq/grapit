@@ -11,7 +11,7 @@ export const PERFORMANCE_GENRES = [...LEGACY_GENRES, ...GENRES] as const;
 export type Genre = typeof PERFORMANCE_GENRES[number];
 
 export const GENRE_LABELS: Record<Genre, string> = {
-  artist_celebrity: '아티스트·셀럽',
+  artist_celebrity: '아티스트',
   ip_popup: 'IP 팝업',
   musical: '뮤지컬',
   concert: '콘서트',
@@ -24,6 +24,7 @@ export const GENRE_LABELS: Record<Genre, string> = {
 };
 
 export const GENRE_SLUGS: Record<string, Genre> = {
+  '아티스트': 'artist_celebrity',
   '아티스트·셀럽': 'artist_celebrity',
   '아티스트/셀럽': 'artist_celebrity',
   'IP 팝업': 'ip_popup',
