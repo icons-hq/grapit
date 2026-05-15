@@ -13,8 +13,10 @@ import {
 } from '../../database/schema/index.js';
 import {
   DEFAULT_PERFORMANCE_BOOKING_POLICY,
+  performanceDetailImagesSchema,
 } from '@grabit/shared';
 import type {
+  PerformanceDetailImage,
   PerformanceBookingPolicy,
   PerformanceCardData,
   PerformanceListResponse,
@@ -37,6 +39,22 @@ type SeatMapConfigForDetails = NonNullable<
 const PERFORMANCE_TAXONOMY_CACHE_VERSION = 'event-category-v1';
 const DEFAULT_FLOOR_KEY = '1F';
 const DEFAULT_FLOOR_LABEL = '1층';
+
+function normalizePerformanceDetailImages(
+  value: unknown,
+): PerformanceDetailImage[] {
+  const parsed = performanceDetailImagesSchema.safeParse(value);
+
+  if (!parsed.success) return [];
+
+  return parsed.data
+    .map((image, index) => ({
+      imageUrl: image.imageUrl,
+      altText: image.altText ?? null,
+      sortOrder: image.sortOrder ?? index,
+    }))
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+}
 
 function mapSeatMapRowToDetailsSeatMap(
   row: {
@@ -287,6 +305,7 @@ export class PerformanceService {
           venueId: perf.venueId,
           posterUrl: perf.posterUrl,
           description: perf.description,
+          detailImages: normalizePerformanceDetailImages(perf.detailImages),
           startDate: perf.startDate?.toISOString() ?? '',
           endDate: perf.endDate?.toISOString() ?? '',
           runtime: perf.runtime,

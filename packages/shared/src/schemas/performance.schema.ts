@@ -154,6 +154,19 @@ export const saveSeatMapPayloadSchema = z.union([
 ]);
 export type SaveSeatMapPayloadInput = z.infer<typeof saveSeatMapPayloadSchema>;
 
+export const performanceDetailImageSchema = z.object({
+  imageUrl: z.string().url('올바른 상세 이미지 URL을 입력해주세요'),
+  altText: z.string().max(200, '대체 텍스트는 200자 이하여야 합니다').nullable().optional(),
+  sortOrder: z.number().int().min(0).default(0),
+});
+export const performanceDetailImagesSchema = z
+  .array(performanceDetailImageSchema)
+  .optional()
+  .default([]);
+export type PerformanceDetailImageInput = z.infer<
+  typeof performanceDetailImageSchema
+>;
+
 export const createPerformanceSchema = z.object({
   title: z.string().min(1, '공연명을 입력해주세요').max(255),
   genre: z.enum(GENRES, { required_error: '장르를 선택해주세요' }),
@@ -170,6 +183,7 @@ export const createPerformanceSchema = z.object({
   ageRating: z.string().min(1, '관람연령을 입력해주세요').max(50),
   status: performanceStatusSchema.default('upcoming'),
   salesInfo: z.string().nullable().optional(),
+  detailImages: performanceDetailImagesSchema,
   publishState: performancePublishLifecycleSchema.default('draft'),
   publishReviewRequestedAt: isoDatetime('게시 검토 요청 시각').nullable().optional(),
   publishReadyAt: isoDatetime('게시 준비 완료 시각').nullable().optional(),
