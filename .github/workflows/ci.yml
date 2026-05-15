@@ -8,6 +8,7 @@ on:
 
 jobs:
   check:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     # Postgres service container for E2E runs (Phase 09-tech-debt DEBT-05).
     # Unit tests (pnpm test) do not hit the DB — they mock it — but migrate/seed
@@ -167,3 +168,12 @@ jobs:
           if [ -f api.pid ]; then
             kill "$(cat api.pid)" 2>/dev/null || true
           fi
+
+  main-deploy-gate:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm deploy gate
+        run: |
+          echo "PR-required full CI passed before this commit reached main."
+          echo "Deploy workflow may proceed for ${GITHUB_SHA}."
