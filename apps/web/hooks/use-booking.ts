@@ -120,6 +120,33 @@ function getCachedPerformanceDetail(
   return null;
 }
 
+function getCachedPerformanceDetailForShowtime(
+  queryClient: ReturnType<typeof useQueryClient>,
+  showtimeId: string,
+): PerformanceWithDetails | null {
+  const matches = queryClient.getQueriesData<PerformanceWithDetails>({
+    queryKey: ['performance'],
+  });
+
+  for (const [, data] of matches) {
+    if (data?.showtimes.some((showtime) => showtime.id === showtimeId)) {
+      return data;
+    }
+  }
+
+  return null;
+}
+
+function assertCachedPerformanceBookable(
+  performance: PerformanceWithDetails | null,
+  isAdmin: boolean,
+  message: string,
+): void {
+  if (performance?.status === 'upcoming' && !isAdmin) {
+    throw new BookingDisabledError(message);
+  }
+}
+
 function buildBookingPaymentSnapshot(
   lockExpiresAtMs: number | null,
   performancePolicy?: PerformanceBookingPolicy,
@@ -196,13 +223,23 @@ export function useBookingPaymentSnapshot(): BookingPaymentSnapshot {
 
 export function useLockSeat() {
   const queryClient = useQueryClient();
-  const { bookingAvailable, bookingDisabledMessage } = useBookingAvailability();
+  const performanceId = useBookingStore((state) => state.performanceId);
+  const { bookingAvailable, bookingDisabledMessage, isAdmin } =
+    useBookingAvailability();
 
   return useMutation({
     mutationFn: (data: LockSeatRequest) => {
       if (!bookingAvailable) {
         throw new BookingDisabledError(bookingDisabledMessage);
       }
+      const cachedPerformance =
+        getCachedPerformanceDetail(queryClient, performanceId)
+        ?? getCachedPerformanceDetailForShowtime(queryClient, data.showtimeId);
+      assertCachedPerformanceBookable(
+        cachedPerformance,
+        isAdmin,
+        bookingDisabledMessage,
+      );
 
       return apiClient.post<LockSeatResponse>('/api/v1/booking/seats/lock', {
         showtimeId: data.showtimeId,
@@ -260,7 +297,8 @@ export function useUnlockAllSeats() {
 
 export function usePrepareReservation() {
   const queryClient = useQueryClient();
-  const { bookingAvailable, bookingDisabledMessage } = useBookingAvailability();
+  const { bookingAvailable, bookingDisabledMessage, isAdmin } =
+    useBookingAvailability();
   const selectedSeats = useBookingStore((state) => state.selectedSeats);
   const performanceId = useBookingStore((state) => state.performanceId);
 
@@ -270,7 +308,14 @@ export function usePrepareReservation() {
         throw new BookingDisabledError(bookingDisabledMessage);
       }
 
-      const cachedPerformance = getCachedPerformanceDetail(queryClient, performanceId);
+      const cachedPerformance =
+        getCachedPerformanceDetail(queryClient, performanceId)
+        ?? getCachedPerformanceDetailForShowtime(queryClient, data.showtimeId);
+      assertCachedPerformanceBookable(
+        cachedPerformance,
+        isAdmin,
+        bookingDisabledMessage,
+      );
       const seats = (selectedSeats.length > 0 ? selectedSeats : data.seats).map(toFloorAwareSeatSelection);
       const bookingPolicy = cachedPerformance?.bookingPolicy
         ? toBookingPolicy(cachedPerformance.bookingPolicy, data.bookingPolicy)

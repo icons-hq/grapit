@@ -1,4 +1,9 @@
-import { Injectable, Inject, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common';
 import type IORedis from 'ioredis';
 import { eq, and, or, isNull } from 'drizzle-orm';
 import { REDIS_CLIENT } from './providers/redis.provider.js';
@@ -6,6 +11,7 @@ import { DRIZZLE } from '../../database/drizzle.provider.js';
 import type { DrizzleDB } from '../../database/drizzle.provider.js';
 import { seatInventories } from '../../database/schema/seat-inventories.js';
 import { bookingPolicies } from '../../database/schema/booking-policies.js';
+import { performances } from '../../database/schema/performances.js';
 import { showtimes } from '../../database/schema/showtimes.js';
 import { BookingGateway } from './booking.gateway.js';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
@@ -33,6 +39,7 @@ type RuntimeSeatIdentity = {
   seatKey: string;
   runtimeSeatId: string;
 };
+type BookingActor = { id: string; role?: string };
 
 function parseRuntimeSeatIdentity(rawSeatIdOrKey: string): RuntimeSeatIdentity {
   const separatorIndex = rawSeatIdOrKey.indexOf(':');
@@ -282,13 +289,14 @@ export class BookingService {
    * Atomically: cleans stale user-seats, checks count, SET NX, SADD + EXPIRE.
    */
   async lockSeat(
-    actorOrUserId: string | { id: string; role?: string },
+    actorOrUserId: string | BookingActor,
     showtimeId: string,
     seatId: string,
   ): Promise<LockSeatResponse> {
     const actor = typeof actorOrUserId === 'string' ? { id: actorOrUserId } : actorOrUserId;
     const userId = actor.id;
     this.featureFlags.assertBookingEnabled(actor);
+    await this.assertShowtimeBookingOpen(showtimeId, actor);
     const seatIdentity = parseRuntimeSeatIdentity(seatId);
 
     // DB-level unavailable check: defense against Redis TTL expiry and delayed refund release races.
@@ -367,6 +375,25 @@ export class BookingService {
       floorKey: seatIdentity.floorKey,
       expiresAt: Date.now() + LOCK_TTL * 1000,
     };
+  }
+
+  private async assertShowtimeBookingOpen(
+    showtimeId: string,
+    actor: BookingActor,
+  ): Promise<void> {
+    if (actor.role === 'admin') {
+      return;
+    }
+
+    const [row] = await this.db
+      .select({ performanceStatus: performances.status })
+      .from(showtimes)
+      .innerJoin(performances, eq(showtimes.performanceId, performances.id))
+      .where(eq(showtimes.id, showtimeId));
+
+    if (row?.performanceStatus === 'upcoming') {
+      throw new ForbiddenException('예매는 추후 오픈 예정입니다');
+    }
   }
 
   /**

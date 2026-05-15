@@ -8,6 +8,7 @@ import {
   GENRES,
   PERFORMANCE_PUBLISH_LIFECYCLE,
   PERFORMANCE_ALLOWED_PAYMENT_METHODS,
+  PERFORMANCE_STATUSES,
 } from '../types/performance.types';
 
 const booleanQueryParam = z.preprocess((value) => {
@@ -24,6 +25,7 @@ const isoDatetime = (label: string) =>
 export const performancePublishLifecycleSchema = z.enum(
   PERFORMANCE_PUBLISH_LIFECYCLE,
 );
+export const performanceStatusSchema = z.enum(PERFORMANCE_STATUSES);
 export const bannerPlacementSchema = z.enum(BANNER_PLACEMENTS);
 export const bannerDeviceTargetSchema = z.enum(BANNER_DEVICE_TARGETS);
 export const bannerStatusSchema = z.enum(BANNER_STATUSES);
@@ -166,6 +168,7 @@ export const createPerformanceSchema = z.object({
   endDate: z.string().min(1, '종료일을 입력해주세요'),
   runtime: z.string().max(50).nullable().optional(),
   ageRating: z.string().min(1, '관람연령을 입력해주세요').max(50),
+  status: performanceStatusSchema.default('upcoming'),
   salesInfo: z.string().nullable().optional(),
   publishState: performancePublishLifecycleSchema.default('draft'),
   publishReviewRequestedAt: isoDatetime('게시 검토 요청 시각').nullable().optional(),

@@ -4,8 +4,8 @@ milestone: v2.0
 milestone_name: Fanmeet Launch
 status: "Phase 25 shipped — PR #47"
 stopped_at: Phase 25 complete; ready for Phase 26
-last_updated: "2026-05-15T06:30:14.867Z"
-last_activity: "2026-05-15 -- Completed quick task 260515-ldb: seat map center alignment"
+last_updated: "2026-05-15T07:15:00.000Z"
+last_activity: "2026-05-15 -- Completed quick task 260515-m81: upcoming/open performance booking controls"
 progress:
   total_phases: 7
   completed_phases: 4
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-05-04)
 Phase: 26 (m1-canary-cutover-gates) — READY
 Plan: 0 of 0
 Status: Phase 25 shipped — PR #47
-Last activity: 2026-05-15 -- Completed quick task 260515-jao: admin SVG range selection and shared seat tiers
+Last activity: 2026-05-15 -- Completed quick task 260515-m81: upcoming/open performance booking controls
 
 ## Deferred Items
 
@@ -354,6 +354,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 | 260515-hee | Admin SVG 좌석 등급 편집기에 brush-style 드래그 배정 추가 | 2026-05-15 | uncommitted | [260515-hee-admin-svg-seat-tier-editor-drag-paint-as](./quick/260515-hee-admin-svg-seat-tier-editor-drag-paint-as/) |
 | 260515-jao | Admin SVG 좌석 등급을 범위 선택으로 배정하고 층별 좌석등급 구조를 통합 | 2026-05-15 | uncommitted | [260515-jao-admin-svg-range-selection-and-shared-sea](./quick/260515-jao-admin-svg-range-selection-and-shared-sea/) |
 | 260515-ldb | 티켓 좌석 선택 화면의 SVG 좌석맵을 viewer 영역 중앙에 정렬 | 2026-05-15 | committed | [260515-ldb-seat-map-center](./quick/260515-ldb-seat-map-center/) |
+| 260515-m81 | 공연 등록 상태를 오픈예정/오픈으로 분리하고 오픈예정 일반 예매 차단 + admin 테스트 예매 허용 | 2026-05-15 | uncommitted | [260515-m81-discuss-upcoming-selling-admin](./quick/260515-m81-discuss-upcoming-selling-admin/) |
 
 ## Session Continuity
 

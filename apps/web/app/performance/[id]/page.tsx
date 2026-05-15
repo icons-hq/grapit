@@ -54,7 +54,9 @@ export default function PerformanceDetailPage({
   const activeLocale = useActiveLocale();
   const copy = getVisibleCopy(activeLocale);
   const { data: performance, isLoading, isError } = usePerformanceDetail(id);
-  const { bookingAvailable, bookingDisabledMessage } = useBookingAvailability();
+  const { bookingAvailable, bookingDisabledMessage } = useBookingAvailability({
+    performanceStatus: performance?.status,
+  });
   const showAutomaticTranslationLabel =
     hasAutomaticTranslationMetadata(performance);
 
@@ -175,19 +177,23 @@ export default function PerformanceDetailPage({
               )}
               <div className="flex items-center gap-2 text-sm text-gray-600">
                 <Calendar className="h-4 w-4 shrink-0" />
-                <span className="flex min-w-0 flex-wrap items-start gap-x-2 gap-y-1">
-                  <KstTime
-                    value={performance.startDate}
-                    locale={activeLocale}
-                  />
-                  <span aria-hidden="true" className="text-gray-400">
-                    ~
+                {performance.status === 'upcoming' ? (
+                  <span>오픈예정</span>
+                ) : (
+                  <span className="flex min-w-0 flex-wrap items-start gap-x-2 gap-y-1">
+                    <KstTime
+                      value={performance.startDate}
+                      locale={activeLocale}
+                    />
+                    <span aria-hidden="true" className="text-gray-400">
+                      ~
+                    </span>
+                    <KstTime
+                      value={performance.endDate}
+                      locale={activeLocale}
+                    />
                   </span>
-                  <KstTime
-                    value={performance.endDate}
-                    locale={activeLocale}
-                  />
-                </span>
+                )}
               </div>
               {performance.runtime && (
                 <div className="flex items-center gap-2 text-sm text-gray-600">

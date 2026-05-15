@@ -782,6 +782,7 @@ export class AdminService {
           endDate: parseAdminKstDateTime(input.endDate),
           runtime: input.runtime ?? null,
           ageRating: input.ageRating,
+          status: input.status,
           publishState: input.publishState,
           publishReviewRequestedAt: parseOptionalIsoDate(
             input.publishReviewRequestedAt,
@@ -949,6 +950,7 @@ export class AdminService {
       }
       if (input.runtime !== undefined) updateData['runtime'] = input.runtime;
       if (input.ageRating !== undefined) updateData['ageRating'] = input.ageRating;
+      if (input.status !== undefined) updateData['status'] = input.status;
       if (input.publishState !== undefined) {
         updateData['publishState'] = input.publishState;
       }

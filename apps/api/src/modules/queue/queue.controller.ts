@@ -41,6 +41,7 @@ export class QueueController {
       performanceId,
       identity,
       bypassQueue: req.user.role === 'admin',
+      actorRole: req.user.role,
     });
 
     this.setAdmissionCookie(res, result.admissionToken);

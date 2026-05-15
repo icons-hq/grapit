@@ -1,5 +1,5 @@
 import { Suspense } from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import type { PerformanceWithDetails } from '@grabit/shared';
 import PerformanceDetailPage from '../page';
@@ -82,6 +82,10 @@ const fixturePerformance: PerformanceWithDetails = {
 };
 
 describe('PerformanceDetailPage i18n formatting', () => {
+  beforeEach(() => {
+    fixturePerformance.status = 'selling';
+  });
+
   it('renders the visible detail surface with KST anchors and KRW-only pricing', async () => {
     const params = Promise.resolve({ id: 'perf-23-14' }) as Promise<{
       id: string;
@@ -123,5 +127,26 @@ describe('PerformanceDetailPage i18n formatting', () => {
     expect(await screen.findByRole('tab', { name: 'รายละเอียด' })).toBeDefined();
     expect(screen.getByRole('tab', { name: 'ข้อมูลการขาย' })).toBeDefined();
     expect(screen.queryByRole('tab', { name: '캐스팅' })).toBeNull();
+  });
+
+  it('shows 오픈예정 instead of date anchors for upcoming performances', async () => {
+    fixturePerformance.status = 'upcoming';
+    const params = Promise.resolve({ id: 'perf-23-14' }) as Promise<{
+      id: string;
+    }> & {
+      status: 'fulfilled';
+      value: { id: string };
+    };
+    params.status = 'fulfilled';
+    params.value = { id: 'perf-23-14' };
+
+    render(
+      <Suspense fallback={<div>loading</div>}>
+        <PerformanceDetailPage params={params} />
+      </Suspense>,
+    );
+
+    expect(await screen.findAllByText('오픈예정')).not.toHaveLength(0);
+    expect(screen.queryByText(/KST/)).toBeNull();
   });
 });

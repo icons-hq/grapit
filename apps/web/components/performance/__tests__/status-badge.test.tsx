@@ -5,7 +5,7 @@ import { StatusBadge } from '../status-badge';
 describe('StatusBadge', () => {
   it('renders correct label for selling status', () => {
     render(<StatusBadge status="selling" />);
-    expect(screen.getByText('판매중')).toBeDefined();
+    expect(screen.getByText('오픈')).toBeDefined();
   });
 
   it('renders correct label for closing_soon status', () => {
@@ -20,12 +20,12 @@ describe('StatusBadge', () => {
 
   it('renders correct label for upcoming status', () => {
     render(<StatusBadge status="upcoming" />);
-    expect(screen.getByText('판매예정')).toBeDefined();
+    expect(screen.getByText('오픈예정')).toBeDefined();
   });
 
   it('has accessible aria-label', () => {
     render(<StatusBadge status="selling" />);
-    expect(screen.getByLabelText('상태: 판매중')).toBeDefined();
+    expect(screen.getByLabelText('상태: 오픈')).toBeDefined();
   });
 
   it('renders Traditional Chinese labels for the launch locale', () => {

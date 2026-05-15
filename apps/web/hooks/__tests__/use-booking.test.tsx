@@ -342,6 +342,34 @@ describe('use-booking payment mutations', () => {
     });
   });
 
+  it('allows payment confirm to reach server when runtime booking is disabled', async () => {
+    runtimeFlagsMock.mockReturnValue({
+      bookingEnabled: false,
+      isLoading: false,
+      bookingDisabledMessage: '예매는 추후 오픈 예정입니다',
+    });
+    const payload: ConfirmPaymentRequest = {
+      paymentKey: 'test_payment_key_confirm_disabled',
+      orderId: 'GRP-CONFIRM-DISABLED',
+      amount: 50000,
+    };
+    postMock.mockResolvedValueOnce({
+      id: 'reservation-confirm-disabled',
+      status: 'CONFIRMED',
+    });
+
+    const { result } = renderHook(() => useConfirmPayment(), {
+      wrapper: createWrapper().Wrapper,
+    });
+
+    await expect(result.current.mutateAsync(payload)).resolves.toMatchObject({
+      id: 'reservation-confirm-disabled',
+    });
+    expect(apiClient.post).toHaveBeenCalledWith('/api/v1/payments/confirm', payload, {
+      showErrorToast: false,
+    });
+  });
+
   it('does not call lockSeat API when runtime booking is disabled', async () => {
     runtimeFlagsMock.mockReturnValue({
       bookingEnabled: false,

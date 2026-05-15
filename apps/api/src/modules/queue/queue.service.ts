@@ -17,6 +17,7 @@ import { reservations } from '../../database/schema/reservations.js';
 import { seatInventories } from '../../database/schema/seat-inventories.js';
 import { seatMaps } from '../../database/schema/seat-maps.js';
 import { showtimes } from '../../database/schema/showtimes.js';
+import { performances } from '../../database/schema/performances.js';
 import { QueueGateway } from './queue.gateway.js';
 
 export const QUEUE_ADMISSION_COOKIE_NAME = 'grabit_queue_admission';
@@ -215,7 +216,9 @@ export class QueueService {
     performanceId: string;
     identity: QueueIdentity;
     bypassQueue?: boolean;
+    actorRole?: string;
   }): Promise<QueueEnterResult> {
+    await this.assertPerformanceBookingOpen(params.performanceId, params.actorRole);
     const lease = await this.ensureQueueSession(params);
     if (params.bypassQueue) {
       await this.admitQueueSession(params.performanceId, lease.queueSessionId);
@@ -233,6 +236,24 @@ export class QueueService {
       ...snapshot,
       admissionToken: lease.admissionToken,
     };
+  }
+
+  private async assertPerformanceBookingOpen(
+    performanceId: string,
+    actorRole: string | undefined,
+  ): Promise<void> {
+    if (actorRole === 'admin') {
+      return;
+    }
+
+    const [row] = await this.db
+      .select({ status: performances.status })
+      .from(performances)
+      .where(eq(performances.id, performanceId));
+
+    if (row?.status === 'upcoming') {
+      throw new ForbiddenException('예매는 추후 오픈 예정입니다');
+    }
   }
 
   private async admitQueueSession(

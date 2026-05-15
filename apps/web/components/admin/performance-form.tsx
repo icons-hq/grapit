@@ -18,6 +18,7 @@ import {
   GENRES,
   GENRE_LABELS,
   type EventCategory,
+  type PerformanceStatus,
 } from '@grabit/shared';
 import {
   useCreatePerformance,
@@ -72,6 +73,13 @@ const PAYMENT_METHOD_LABELS: Record<PerformanceAllowedPaymentMethod, string> = {
 };
 
 const ADMIN_EVENT_LOCALE_ORDER = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
+const PERFORMANCE_OPEN_STATUS_OPTIONS: Array<{
+  value: Extract<PerformanceStatus, 'upcoming' | 'selling'>;
+  label: string;
+}> = [
+  { value: 'upcoming', label: '오픈예정' },
+  { value: 'selling', label: '오픈' },
+];
 
 function isEventCategory(genre: string): genre is EventCategory {
   return (GENRES as readonly string[]).includes(genre);
@@ -201,6 +209,7 @@ function mapToFormValues(
     endDate: formatAdminKstDate(data.endDate),
     runtime: data.runtime,
     ageRating: data.ageRating,
+    status: data.status,
     salesInfo: data.salesInfo,
     priceTiers: data.priceTiers.map((t) => ({
       tierName: t.tierName,
@@ -262,6 +271,7 @@ export function PerformanceForm({
           endDate: '',
           runtime: null,
           ageRating: '',
+          status: 'upcoming',
           salesInfo: null,
           priceTiers: [{ tierName: '', price: 0, sortOrder: 0 }],
           showtimes: [],
@@ -448,7 +458,7 @@ export function PerformanceForm({
             )}
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-3">
             <div>
               <label className="mb-1 block text-sm font-semibold">
                 장르 <span className="text-red-500">*</span>
@@ -477,6 +487,38 @@ export function PerformanceForm({
               {form.formState.errors.genre && (
                 <p className="mt-1 text-sm text-red-500">
                   {form.formState.errors.genre.message}
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-semibold">
+                오픈 상태 <span className="text-red-500">*</span>
+              </label>
+              <Controller
+                control={form.control}
+                name="status"
+                render={({ field }) => (
+                  <Select
+                    value={field.value ?? 'upcoming'}
+                    onValueChange={field.onChange}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="오픈 상태를 선택해주세요" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PERFORMANCE_OPEN_STATUS_OPTIONS.map((status) => (
+                        <SelectItem key={status.value} value={status.value}>
+                          {status.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+              {form.formState.errors.status && (
+                <p className="mt-1 text-sm text-red-500">
+                  {form.formState.errors.status.message}
                 </p>
               )}
             </div>

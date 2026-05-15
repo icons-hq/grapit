@@ -241,7 +241,9 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
   const lockSeat = useLockSeat();
   const unlockSeat = useUnlockSeat();
   const unlockAll = useUnlockAllSeats();
-  const { bookingAvailable, bookingDisabledMessage } = useBookingAvailability();
+  const { bookingAvailable, bookingDisabledMessage } = useBookingAvailability({
+    performanceStatus: performance?.status,
+  });
   const bookingDisabledReason = bookingAvailable ? null : bookingDisabledMessage;
 
   const availableSeatMaps = useMemo(() => {
