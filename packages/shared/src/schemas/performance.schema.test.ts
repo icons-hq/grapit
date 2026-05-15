@@ -29,6 +29,28 @@ describe('search query schema', () => {
 });
 
 describe('performance floor and booking policy schema', () => {
+  it('defaults new performances to upcoming and accepts explicit open status', () => {
+    const basePayload = {
+      title: '2026 걸룰스 팬미팅',
+      genre: 'artist_celebrity',
+      venueName: '동해문화예술관 대극장',
+      startDate: '2026-07-18T14:00:00.000Z',
+      endDate: '2026-07-18T16:00:00.000Z',
+      ageRating: '전체 관람가',
+      priceTiers: [
+        { tierName: 'VIP', price: 88000, sortOrder: 0 },
+      ],
+    };
+
+    expect(createPerformanceSchema.parse(basePayload).status).toBe('upcoming');
+    expect(
+      createPerformanceSchema.parse({
+        ...basePayload,
+        status: 'selling',
+      }).status,
+    ).toBe('selling');
+  });
+
   it('keeps floor-aware seatMaps and bookingPolicy in create payloads', () => {
     const parsed = createPerformanceSchema.parse({
       title: '2026 걸룰스 팬미팅',

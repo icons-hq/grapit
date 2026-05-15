@@ -32,6 +32,9 @@ function createBookingService(redis: IORedis, maxTicketsPerUser = 1): BookingSer
     select: () => ({
       from: () => ({
         where: async () => unavailableRows,
+        innerJoin: () => ({
+          where: async () => [{ performanceStatus: 'selling' }],
+        }),
         leftJoin: () => ({
           where: async () => [{ maxTicketsPerUser }],
         }),

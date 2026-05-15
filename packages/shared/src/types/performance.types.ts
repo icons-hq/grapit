@@ -38,7 +38,13 @@ export const GENRE_SLUGS: Record<string, Genre> = {
   '레저/캠핑': 'leisure_camping',
 };
 
-export type PerformanceStatus = 'upcoming' | 'selling' | 'closing_soon' | 'ended';
+export const PERFORMANCE_STATUSES = [
+  'upcoming',
+  'selling',
+  'closing_soon',
+  'ended',
+] as const;
+export type PerformanceStatus = typeof PERFORMANCE_STATUSES[number];
 export type TranslationReviewSource = 'machine_reviewed';
 
 export const PERFORMANCE_PUBLISH_LIFECYCLE = [
@@ -76,8 +82,8 @@ export interface ReviewedTranslationMetadata {
 }
 
 export const STATUS_LABELS: Record<PerformanceStatus, string> = {
-  upcoming: '판매예정',
-  selling: '판매중',
+  upcoming: '오픈예정',
+  selling: '오픈',
   closing_soon: '마감임박',
   ended: '판매종료',
 };

@@ -97,7 +97,17 @@ describe('BookingService', () => {
   });
 
   // Helper: mock DB select to return no unavailable record (used by lockSeat DB defense)
-  function mockNoSoldRecord(maxTicketsPerUser = 4) {
+  function mockNoSoldRecord(
+    maxTicketsPerUser = 4,
+    options: { includePerformanceStatus?: boolean } = {},
+  ) {
+    const includePerformanceStatus = options.includePerformanceStatus ?? true;
+    if (includePerformanceStatus) {
+      mockDb.select.mockReturnValueOnce(
+        chainResult([{ performanceStatus: 'selling' }]),
+      );
+    }
+
     mockDb.select
       .mockReturnValueOnce(chainResult([]))
       .mockReturnValueOnce(chainResult([{ maxTicketsPerUser }]));
@@ -122,7 +132,7 @@ describe('BookingService', () => {
 
     it('allows admin actor through disabled booking flag to existing lock validation', async () => {
       mockFeatureFlags.getFlags.mockReturnValue({ bookingEnabled: false });
-      mockNoSoldRecord();
+      mockNoSoldRecord(4, { includePerformanceStatus: false });
       mockRedis.eval.mockResolvedValue([1, `{${showtimeId}}:seat:${seatId}`, seatId]);
 
       await expect(service.lockSeat({ id: userId, role: 'admin' }, showtimeId, seatId))
@@ -135,6 +145,20 @@ describe('BookingService', () => {
       });
       expect(mockDb.select).toHaveBeenCalled();
       expect(mockRedis.eval).toHaveBeenCalled();
+    });
+
+    it('rejects public users for upcoming performances before Redis lock mutation', async () => {
+      mockDb.select.mockReturnValueOnce(
+        chainResult([{ performanceStatus: 'upcoming' }]),
+      );
+
+      const promise = service.lockSeat(userId, showtimeId, seatId);
+
+      await expect(promise).rejects.toThrow(ForbiddenException);
+      await expect(promise).rejects.toThrow('예매는 추후 오픈 예정입니다');
+
+      expect(mockRedis.eval).not.toHaveBeenCalled();
+      expect(mockGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
     });
 
     it('cleans stale user-seats entries before count check via Lua eval', async () => {
@@ -234,49 +258,55 @@ describe('BookingService', () => {
 
     describe('unavailable seat defense', () => {
       it('should throw ConflictException when seat_inventories has status=sold', async () => {
+        mockDb.select.mockReturnValueOnce(
+          chainResult([{ performanceStatus: 'selling' }]),
+        );
         mockDb.select.mockReturnValue({
           from: vi.fn().mockReturnValue({
             where: vi.fn().mockResolvedValue([{ id: randomUUID(), status: 'sold' }]),
           }),
         });
 
-        await expect(service.lockSeat(userId, showtimeId, seatId))
-          .rejects.toThrow(ConflictException);
+        const promise = service.lockSeat(userId, showtimeId, seatId);
 
-        await expect(service.lockSeat(userId, showtimeId, seatId))
-          .rejects.toThrow('이미 판매된 좌석입니다');
+        await expect(promise).rejects.toThrow(ConflictException);
+        await expect(promise).rejects.toThrow('이미 판매된 좌석입니다');
 
         expect(mockRedis.eval).not.toHaveBeenCalled();
       });
 
       it('should throw ConflictException when seat_inventories has status=held_cancelled', async () => {
+        mockDb.select.mockReturnValueOnce(
+          chainResult([{ performanceStatus: 'selling' }]),
+        );
         mockDb.select.mockReturnValue({
           from: vi.fn().mockReturnValue({
             where: vi.fn().mockResolvedValue([{ id: randomUUID(), status: 'held_cancelled' }]),
           }),
         });
 
-        await expect(service.lockSeat(userId, showtimeId, seatId))
-          .rejects.toThrow(ConflictException);
+        const promise = service.lockSeat(userId, showtimeId, seatId);
 
-        await expect(service.lockSeat(userId, showtimeId, seatId))
-          .rejects.toThrow('환불 처리 중인 좌석입니다');
+        await expect(promise).rejects.toThrow(ConflictException);
+        await expect(promise).rejects.toThrow('환불 처리 중인 좌석입니다');
 
         expect(mockRedis.eval).not.toHaveBeenCalled();
       });
 
       it('should throw ConflictException when seat_inventories has status=disabled', async () => {
+        mockDb.select.mockReturnValueOnce(
+          chainResult([{ performanceStatus: 'selling' }]),
+        );
         mockDb.select.mockReturnValue({
           from: vi.fn().mockReturnValue({
             where: vi.fn().mockResolvedValue([{ id: randomUUID(), status: 'disabled' }]),
           }),
         });
 
-        await expect(service.lockSeat(userId, showtimeId, seatId))
-          .rejects.toThrow(ConflictException);
+        const promise = service.lockSeat(userId, showtimeId, seatId);
 
-        await expect(service.lockSeat(userId, showtimeId, seatId))
-          .rejects.toThrow('운영자가 판매를 중지한 좌석입니다');
+        await expect(promise).rejects.toThrow(ConflictException);
+        await expect(promise).rejects.toThrow('운영자가 판매를 중지한 좌석입니다');
 
         expect(mockRedis.eval).not.toHaveBeenCalled();
       });

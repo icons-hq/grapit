@@ -37,7 +37,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { GENRE_LABELS } from '@grabit/shared';
-import type { Genre } from '@grabit/shared';
+import type { Genre, PerformanceStatus } from '@grabit/shared';
 import { toast } from 'sonner';
 
 export default function AdminPerformancesPage() {
@@ -75,7 +75,15 @@ export default function AdminPerformancesPage() {
     });
   }
 
-  function formatDateRange(start: string, end: string): string {
+  function formatDateRange(
+    start: string,
+    end: string,
+    performanceStatus: PerformanceStatus,
+  ): string {
+    if (performanceStatus === 'upcoming') {
+      return '오픈예정';
+    }
+
     const startDate = new Date(start).toLocaleDateString('ko-KR');
     const endDate = new Date(end).toLocaleDateString('ko-KR');
     return `${startDate} ~ ${endDate}`;
@@ -180,7 +188,7 @@ export default function AdminPerformancesPage() {
                   {GENRE_LABELS[perf.genre as Genre]}
                 </TableCell>
                 <TableCell className="hidden lg:table-cell text-sm text-gray-600">
-                  {formatDateRange(perf.startDate, perf.endDate)}
+                  {formatDateRange(perf.startDate, perf.endDate, perf.status)}
                 </TableCell>
                 <TableCell>
                   <StatusBadge status={perf.status} />

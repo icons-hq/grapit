@@ -75,6 +75,7 @@ type CanonicalSeatSelection = FloorAwareSeatSelection & {
 type ShowtimeBookingContext = {
   id: string;
   performanceId: string;
+  performanceStatus: string;
   dateTime: Date;
   maxTicketsPerUser: number;
   bookingPolicy: BookingPolicy;
@@ -468,6 +469,7 @@ export class ReservationService {
       .select({
         id: showtimes.id,
         performanceId: showtimes.performanceId,
+        performanceStatus: performances.status,
         dateTime: showtimes.dateTime,
         maxTicketsPerUser: bookingPolicies.maxTicketsPerUser,
         changePolicyEnabled: bookingPolicies.changePolicyEnabled,
@@ -475,6 +477,7 @@ export class ReservationService {
         seatHoldMinutes: bookingPolicies.seatHoldMinutes,
       })
       .from(showtimes)
+      .innerJoin(performances, eq(showtimes.performanceId, performances.id))
       .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, showtimes.performanceId))
       .where(eq(showtimes.id, showtimeId));
 
@@ -485,6 +488,7 @@ export class ReservationService {
     return {
       id: showtime.id,
       performanceId: showtime.performanceId,
+      performanceStatus: showtime.performanceStatus,
       dateTime: showtime.dateTime,
       maxTicketsPerUser:
         showtime.maxTicketsPerUser ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.maxTicketsPerUser,
@@ -495,6 +499,15 @@ export class ReservationService {
         seatHoldMinutes: showtime.seatHoldMinutes ?? undefined,
       }),
     };
+  }
+
+  private assertPerformanceBookingOpen(
+    performanceStatus: string,
+    actor: BookingActor,
+  ): void {
+    if (performanceStatus === 'upcoming' && actor.role !== 'admin') {
+      throw new ForbiddenException('예매는 추후 오픈 예정입니다');
+    }
   }
 
   async prepareReservation(
@@ -553,6 +566,7 @@ export class ReservationService {
       }
 
       const existingShowtime = await this.getShowtimeBookingContext(existing.showtimeId);
+      this.assertPerformanceBookingOpen(existingShowtime.performanceStatus, actor);
 
       const canonicalSeats = await this.getCanonicalSeatSelections(
         dto.seats,
@@ -586,6 +600,7 @@ export class ReservationService {
 
     // 2. Get showtime to determine performanceId and dateTime
     const showtime = await this.getShowtimeBookingContext(dto.showtimeId);
+    this.assertPerformanceBookingOpen(showtime.performanceStatus, actor);
 
     // 3. Calculate expected amount from DB and canonical seat map metadata
     const canonicalSeats = await this.getCanonicalSeatSelections(dto.seats, showtime.performanceId);

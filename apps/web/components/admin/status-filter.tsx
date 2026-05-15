@@ -4,8 +4,8 @@ import { cn } from '@/lib/cn';
 
 const STATUS_OPTIONS = [
   { label: '전체', value: '' },
-  { label: '판매중', value: 'selling' },
-  { label: '판매예정', value: 'upcoming' },
+  { label: '오픈', value: 'selling' },
+  { label: '오픈예정', value: 'upcoming' },
   { label: '판매종료', value: 'ended' },
 ] as const;
 

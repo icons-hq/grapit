@@ -214,12 +214,14 @@ describe('ReservationService', () => {
     orderId: string;
     seats: SeatSelection[];
     amount: number;
+    performanceStatus?: string;
   }) {
     mockDb.select
       .mockReturnValueOnce(chainResult([]))
       .mockReturnValueOnce(chainResult([{
         id: dto.showtimeId,
         performanceId: 'performance-1',
+        performanceStatus: dto.performanceStatus ?? 'selling',
         dateTime: new Date(),
         maxTicketsPerUser: 4,
         changePolicyEnabled: false,
@@ -261,6 +263,7 @@ describe('ReservationService', () => {
       .mockReturnValueOnce(chainResult([{
         id: dto.showtimeId,
         performanceId: 'performance-1',
+        performanceStatus: 'selling',
         dateTime: new Date(),
         maxTicketsPerUser: 4,
         changePolicyEnabled: false,
@@ -649,6 +652,27 @@ describe('ReservationService', () => {
         .toThrow('중복된 좌석이 포함되어 있습니다');
 
       expect(mockDb.select).not.toHaveBeenCalled();
+      expect(mockBookingService.assertOwnedSeatLocks).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
+    it('prepareReservation rejects public upcoming performances before lock validation', async () => {
+      const userId = randomUUID();
+      const dto = {
+        showtimeId: randomUUID(),
+        orderId: 'GRP-UPCOMING-PREPARE',
+        seats: [seatSelection('A-1')],
+        amount: 50000,
+        consentItems: makeConsentItems(),
+        performanceStatus: 'upcoming',
+      };
+      setupPrepareBase(dto);
+
+      await expect(service.prepareReservation(dto, userId))
+        .rejects
+        .toThrow('예매는 추후 오픈 예정입니다');
+
+      expect(mockConsentService.assertRequiredConsents).toHaveBeenCalled();
       expect(mockBookingService.assertOwnedSeatLocks).not.toHaveBeenCalled();
       expect(mockDb.transaction).not.toHaveBeenCalled();
     });
