@@ -99,7 +99,7 @@ describe('EmailService', () => {
     });
     const svc = new EmailService(config);
     const sendEmailVerificationEmail = (svc as unknown as {
-      sendEmailVerificationEmail?: (to: string, verificationLink: string, locale: string) => Promise<unknown>;
+      sendEmailVerificationEmail?: (to: string, verificationCode: string, locale: string) => Promise<unknown>;
     }).sendEmailVerificationEmail;
     expect(sendEmailVerificationEmail).toEqual(expect.any(Function));
 
@@ -108,7 +108,7 @@ describe('EmailService', () => {
     const result = await sendEmailVerificationEmail!.call(
       svc,
       'user@example.com',
-      'https://app.test/auth/verify-email?token=opaque',
+      '123456',
       'zh-TW',
     );
 
@@ -119,25 +119,24 @@ describe('EmailService', () => {
     expect(result).toEqual({ success: true, id: 'verification-id' });
   });
 
-  it('DEV mode: sendEmailVerificationEmail does not log the raw verification link or token', async () => {
+  it('DEV mode: sendEmailVerificationEmail does not log the raw verification code', async () => {
     const config = makeConfig({ NODE_ENV: 'development' });
     const logSpy = vi.spyOn(Logger.prototype, 'log');
     const svc = new EmailService(config);
     const sendEmailVerificationEmail = (svc as unknown as {
-      sendEmailVerificationEmail?: (to: string, verificationLink: string, locale: string) => Promise<unknown>;
+      sendEmailVerificationEmail?: (to: string, verificationCode: string, locale: string) => Promise<unknown>;
     }).sendEmailVerificationEmail;
     expect(sendEmailVerificationEmail).toEqual(expect.any(Function));
 
     await sendEmailVerificationEmail!.call(
       svc,
       'user@example.com',
-      'https://app.test/auth/verify-email?token=raw-secret-token',
+      '987654',
       'ko',
     );
 
     const serializedLogs = JSON.stringify(logSpy.mock.calls);
-    expect(serializedLogs).not.toContain('raw-secret-token');
-    expect(serializedLogs).not.toContain('https://app.test/auth/verify-email');
+    expect(serializedLogs).not.toContain('987654');
 
     logSpy.mockRestore();
   });

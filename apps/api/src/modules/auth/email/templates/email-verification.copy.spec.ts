@@ -5,7 +5,7 @@ const SUPPORTED_LOCALES = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
 const REQUIRED_KEYS = [
   'subject',
   'bodyIntro',
-  'verifyCta',
+  'codeHelp',
   'resendCta',
   'resendLoading',
   'resendSuccess',
@@ -33,15 +33,15 @@ describe('emailVerificationCopy', () => {
     }
   });
 
-  it('includes the Korean resend and expired-link copy required for launch auth UX', () => {
-    expect(emailVerificationCopy.ko.resendCta).toBe('인증 메일 다시 보내기');
+  it('includes the Korean resend and expired-code copy required for launch auth UX', () => {
+    expect(emailVerificationCopy.ko.resendCta).toBe('인증번호 다시 보내기');
     expect(emailVerificationCopy.ko.resendLoading).toBe('다시 보내는 중...');
-    expect(emailVerificationCopy.ko.resendSuccess).toBe('인증 메일을 다시 보냈습니다');
-    expect(emailVerificationCopy.ko.expired).toBe('인증 링크가 만료되었습니다. 새 인증 메일을 요청해주세요.');
+    expect(emailVerificationCopy.ko.resendSuccess).toBe('인증번호를 다시 보냈습니다');
+    expect(emailVerificationCopy.ko.expired).toBe('인증번호가 만료되었습니다. 새 인증 메일을 요청해주세요.');
   });
 
   it('resolves Traditional Chinese verification copy for zh-TW', () => {
     expect(emailVerificationCopy['zh-TW'].subject).toContain('驗證');
-    expect(emailVerificationCopy['zh-TW'].verifyCta).toContain('驗證');
+    expect(emailVerificationCopy['zh-TW'].bodyIntro).toContain('驗證碼');
   });
 });

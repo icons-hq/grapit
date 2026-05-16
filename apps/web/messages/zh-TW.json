@@ -251,11 +251,15 @@
       }
     },
     "emailVerification": {
-      "sent": "驗證郵件已發送",
-      "resendCta": "重新發送驗證郵件",
+      "sent": "請輸入發送到你信箱的6位數驗證碼",
+      "codeAriaLabel": "6位數電子郵件驗證碼",
+      "codePlaceholder": "6位數驗證碼",
+      "verifyCta": "確認",
+      "resendCta": "重新發送驗證碼",
       "resendLoading": "正在重新發送...",
-      "resendSuccess": "驗證郵件已重新發送",
-      "expired": "驗證鏈接已過期。請重新請求驗證郵件。",
+      "resendSuccess": "驗證碼已重新發送",
+      "expired": "驗證碼已過期。請重新請求驗證郵件。",
+      "invalidCode": "驗證碼不正確",
       "verified": "郵箱驗證已完成。",
       "throttled": "請稍後再試。",
       "systemError": "暫時發生錯誤。請重試。"

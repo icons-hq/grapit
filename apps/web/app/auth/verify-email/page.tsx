@@ -8,6 +8,7 @@ import { EmailVerificationStatus } from '@/components/auth/email-verification-st
 function VerifyEmailContent() {
   const searchParams = useSearchParams();
   const token = searchParams.get('token');
+  const email = searchParams.get('email')?.trim() ?? '';
 
   return (
     <main className="flex flex-1 items-center justify-center px-4 py-12">
@@ -17,6 +18,8 @@ function VerifyEmailContent() {
         </h1>
         {token ? (
           <EmailVerificationStatus email="" token={token} />
+        ) : email ? (
+          <EmailVerificationStatus email={email} />
         ) : (
           <EmailVerificationStatus email="" initialState="systemError" />
         )}

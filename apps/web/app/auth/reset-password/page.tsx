@@ -14,6 +14,7 @@ import {
   type ResetPasswordInput,
 } from '@grabit/shared';
 import { apiUrl } from '@/lib/api-url';
+import { getFrontendOrigin } from '@/lib/frontend-origin';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/auth/password-input';
@@ -64,7 +65,7 @@ function RequestView() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify(data),
+        body: JSON.stringify({ ...data, frontendOrigin: getFrontendOrigin() }),
       });
     } catch {
       // Always show success to prevent email enumeration

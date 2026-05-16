@@ -32,6 +32,10 @@ vi.mock('@/lib/api-client', () => ({
   },
 }));
 
+vi.mock('@/lib/frontend-origin', () => ({
+  getFrontendOrigin: () => 'http://localhost:3001',
+}));
+
 vi.mock('@/stores/use-auth-store', () => ({
   useAuthStore: (selector: (state: { setAuth: typeof mocks.setAuth }) => unknown) =>
     selector({ setAuth: mocks.setAuth }),
@@ -140,6 +144,7 @@ describe('SignupForm consent submit payload', () => {
         expect.objectContaining({
           birthDate: '1995-01-02',
           locale: 'ko',
+          frontendOrigin: 'http://localhost:3001',
           consentItems: expect.arrayContaining([
             expect.objectContaining({
               key: 'pipa_required',

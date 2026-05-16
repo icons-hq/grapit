@@ -12,6 +12,7 @@ export interface UserProfile {
   country: string;
   birthDate: string;
   preferredLocale: SupportedLocale;
+  isEmailVerified: boolean;
   isPhoneVerified: boolean;
   role: UserRole;
   adminCapabilityBundle?: AdminCapabilityBundle | null;

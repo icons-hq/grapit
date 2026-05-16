@@ -129,10 +129,14 @@ const authConsentKeys = [
 
 const authEmailVerificationKeys = [
   'sent',
+  'codeAriaLabel',
+  'codePlaceholder',
+  'verifyCta',
   'resendCta',
   'resendLoading',
   'resendSuccess',
   'expired',
+  'invalidCode',
   'verified',
   'throttled',
   'systemError',

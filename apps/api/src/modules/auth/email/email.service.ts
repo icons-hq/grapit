@@ -144,7 +144,7 @@ export class EmailService {
 
   async sendEmailVerificationEmail(
     to: string,
-    verificationLink: string,
+    verificationCode: string,
     locale: string = 'ko',
   ): Promise<SendEmailResult> {
     const resolvedLocale = resolveEmailVerificationLocale(locale);
@@ -163,7 +163,7 @@ export class EmailService {
         from: this.from,
         to,
         subject: copy.subject,
-        react: EmailVerificationEmail({ verificationLink, locale: resolvedLocale }),
+        react: EmailVerificationEmail({ verificationCode, locale: resolvedLocale }),
       });
 
       if (!error) {

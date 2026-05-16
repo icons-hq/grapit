@@ -3,6 +3,7 @@ import {
   Post,
   Get,
   Body,
+  Query,
   Req,
   Res,
   UseGuards,
@@ -37,15 +38,26 @@ import {
 } from './guards/social-auth.guard.js';
 import type { SocialProfile } from './interfaces/social-profile.interface.js';
 import { AUTH_COOKIE_NAME } from '@grabit/shared/constants/index.js';
+import type { EmailAvailabilityResponse } from '@grabit/shared/types/auth.types.js';
 
 const launchLocaleSchema = z.enum(['ko', 'en', 'th', 'zh-CN', 'zh-TW']).default('ko');
+const emailAvailabilityQuerySchema = z.object({
+  email: z.string().email(),
+});
 const emailVerificationRequestSchema = z.object({
   email: z.string().email(),
   locale: launchLocaleSchema.optional(),
+  frontendOrigin: z.string().url().max(200).optional(),
 });
-const emailVerificationTokenSchema = z.object({
-  token: z.string().min(32),
-});
+const emailVerificationVerifySchema = z.union([
+  z.object({
+    email: z.string().email(),
+    code: z.string().regex(/^\d{6}$/, '인증번호는 6자리입니다'),
+  }),
+  z.object({
+    token: z.string().min(32),
+  }),
+]);
 
 @Controller('auth')
 export class AuthController {
@@ -55,6 +67,16 @@ export class AuthController {
     private readonly authService: AuthService,
     private readonly configService: ConfigService,
   ) {}
+
+  @Public()
+  @Get('email-availability')
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  async checkEmailAvailability(
+    @Query(new ZodValidationPipe(emailAvailabilityQuerySchema))
+    query: z.infer<typeof emailAvailabilityQuerySchema>,
+  ): Promise<EmailAvailabilityResponse> {
+    return this.authService.checkEmailAvailability(query.email);
+  }
 
   @Public()
   @Post('register')
@@ -136,7 +158,7 @@ export class AuthController {
     @Body(new ZodValidationPipe(resetPasswordRequestBodySchema))
     dto: ResetPasswordRequestBody,
   ) {
-    await this.authService.requestPasswordReset(dto.email);
+    await this.authService.requestPasswordReset(dto.email, dto.frontendOrigin);
     return { message: '비밀번호 재설정 링크를 발송했습니다' };
   }
 
@@ -161,9 +183,13 @@ export class AuthController {
     @Body(new ZodValidationPipe(emailVerificationRequestSchema))
     dto: z.infer<typeof emailVerificationRequestSchema>,
   ) {
-    const result = await this.authService.requestEmailVerification(dto.email, dto.locale);
+    const result = await this.authService.requestEmailVerification(
+      dto.email,
+      dto.locale,
+      dto.frontendOrigin,
+    );
     return {
-      message: '인증 메일을 발송했습니다',
+      message: '인증번호를 이메일로 발송했습니다',
       expiresAt: result.expiresAt,
     };
   }
@@ -176,21 +202,30 @@ export class AuthController {
     @Body(new ZodValidationPipe(emailVerificationRequestSchema))
     dto: z.infer<typeof emailVerificationRequestSchema>,
   ) {
-    const result = await this.authService.resendEmailVerification(dto.email, dto.locale);
+    const result = await this.authService.resendEmailVerification(
+      dto.email,
+      dto.locale,
+      dto.frontendOrigin,
+    );
     return {
-      message: '인증 메일을 다시 보냈습니다',
+      message: '인증번호를 다시 보냈습니다',
       expiresAt: result.expiresAt,
     };
   }
 
   @Public()
   @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 10, ttl: 900000 } })
   @Post('email-verification/verify')
   async verifyEmailVerification(
-    @Body(new ZodValidationPipe(emailVerificationTokenSchema))
-    dto: z.infer<typeof emailVerificationTokenSchema>,
+    @Body(new ZodValidationPipe(emailVerificationVerifySchema))
+    dto: z.infer<typeof emailVerificationVerifySchema>,
   ) {
-    return this.authService.verifyEmailVerificationToken(dto.token);
+    if ('token' in dto) {
+      return this.authService.verifyEmailVerificationToken(dto.token);
+    }
+
+    return this.authService.verifyEmailVerificationCode(dto.email, dto.code);
   }
 
   // -- Social OAuth endpoints --
@@ -261,6 +296,16 @@ export class AuthController {
       registerData,
       this.resolveConsentMeta(req),
     );
+
+    if ('emailVerificationRequired' in result) {
+      return {
+        emailVerificationRequired: result.emailVerificationRequired,
+        email: result.email,
+        verificationExpiresAt: result.verificationExpiresAt,
+        user: result.user,
+      };
+    }
+
     this.setRefreshTokenCookie(res, result.refreshToken);
 
     return {
@@ -294,10 +339,15 @@ export class AuthController {
           this.setRefreshTokenCookie(res, result.refreshToken);
         }
         res.redirect(`${frontendUrl}/auth/callback?status=authenticated`);
-      } else {
+      } else if (result.status === 'needs_registration') {
         this.logger.log(`Social login needs registration: provider=${profile.provider}`);
         res.redirect(
           `${frontendUrl}/auth/callback?registrationToken=${result.registrationToken}&status=needs_registration`,
+        );
+      } else {
+        this.logger.log(`Social login requires email verification: provider=${profile.provider}`);
+        res.redirect(
+          `${frontendUrl}/auth/callback?status=email_verification_required&email=${encodeURIComponent(result.email)}`,
         );
       }
     } catch (error) {

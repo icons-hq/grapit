@@ -72,6 +72,7 @@ export class UserService {
     country: string;
     birthDate: string;
     preferredLocale: UserProfile['preferredLocale'] | null;
+    isEmailVerified: boolean;
     isPhoneVerified: boolean;
     role: string;
     createdAt: Date;
@@ -85,6 +86,7 @@ export class UserService {
       country: user.country,
       birthDate: user.birthDate,
       preferredLocale: user.preferredLocale ?? DEFAULT_LOCALE,
+      isEmailVerified: user.isEmailVerified,
       isPhoneVerified: user.isPhoneVerified,
       role: user.role as 'user' | 'admin',
       createdAt: user.createdAt.toISOString(),

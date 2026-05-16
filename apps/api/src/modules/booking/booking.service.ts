@@ -29,6 +29,8 @@ const DEFAULT_FLOOR_KEY = '1F';
 
 export const LOCK_EXPIRED_MESSAGE = '좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.';
 export const LOCK_OTHER_OWNER_MESSAGE = '이미 다른 사용자가 선택한 좌석입니다.';
+export const BOOKING_VERIFICATION_REQUIRED_MESSAGE =
+  '이메일 인증과 휴대폰 인증을 완료해야 예매할 수 있습니다.';
 
 export type SeatLockOwnershipFailureReason = 'MISSING' | 'OTHER_OWNER';
 
@@ -39,7 +41,12 @@ type RuntimeSeatIdentity = {
   seatKey: string;
   runtimeSeatId: string;
 };
-type BookingActor = { id: string; role?: string };
+type BookingActor = {
+  id: string;
+  role?: string;
+  isEmailVerified?: boolean;
+  isPhoneVerified?: boolean;
+};
 
 function parseRuntimeSeatIdentity(rawSeatIdOrKey: string): RuntimeSeatIdentity {
   const separatorIndex = rawSeatIdOrKey.indexOf(':');
@@ -63,6 +70,12 @@ function parseRuntimeSeatIdentity(rawSeatIdOrKey: string): RuntimeSeatIdentity {
 
 function decodeRuntimeSeatId(runtimeSeatId: string): string {
   return decodeURIComponent(runtimeSeatId);
+}
+
+function assertBookingVerificationComplete(actor: BookingActor): void {
+  if (actor.isEmailVerified !== true || actor.isPhoneVerified !== true) {
+    throw new ForbiddenException(BOOKING_VERIFICATION_REQUIRED_MESSAGE);
+  }
 }
 
 /**
@@ -293,9 +306,12 @@ export class BookingService {
     showtimeId: string,
     seatId: string,
   ): Promise<LockSeatResponse> {
-    const actor = typeof actorOrUserId === 'string' ? { id: actorOrUserId } : actorOrUserId;
+    const actor = typeof actorOrUserId === 'string'
+      ? { id: actorOrUserId, isEmailVerified: true, isPhoneVerified: true }
+      : actorOrUserId;
     const userId = actor.id;
     this.featureFlags.assertBookingEnabled(actor);
+    assertBookingVerificationComplete(actor);
     await this.assertShowtimeBookingOpen(showtimeId, actor);
     const seatIdentity = parseRuntimeSeatIdentity(seatId);
 

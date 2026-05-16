@@ -31,7 +31,9 @@ describe('AuthController', () => {
     refreshTokens: ReturnType<typeof vi.fn>;
     requestEmailVerification: ReturnType<typeof vi.fn>;
     resendEmailVerification: ReturnType<typeof vi.fn>;
+    verifyEmailVerificationCode: ReturnType<typeof vi.fn>;
     verifyEmailVerificationToken: ReturnType<typeof vi.fn>;
+    checkEmailAvailability: ReturnType<typeof vi.fn>;
   };
   let mockConfigService: {
     get: ReturnType<typeof vi.fn>;
@@ -52,7 +54,9 @@ describe('AuthController', () => {
       refreshTokens: vi.fn(),
       requestEmailVerification: vi.fn(),
       resendEmailVerification: vi.fn(),
+      verifyEmailVerificationCode: vi.fn(),
       verifyEmailVerificationToken: vi.fn(),
+      checkEmailAvailability: vi.fn(),
     };
 
     mockConfigService = {
@@ -175,6 +179,34 @@ describe('AuthController', () => {
         { name: 'User' },
         { ipAddress: '198.51.100.2', userAgent: 'Vitest Social' },
       );
+    });
+
+    it('social registration completion pending response does not set refresh token cookie', async () => {
+      mockAuthService.completeSocialRegistration.mockResolvedValue({
+        emailVerificationRequired: true,
+        email: 'social@test.com',
+        verificationExpiresAt: new Date('2026-05-06T05:50:00Z'),
+        user: { id: 'user-1', email: 'social@test.com' },
+      });
+
+      const result = await controller.completeSocialRegistration(
+        { registrationToken: 'registration-token', name: 'User' } as never,
+        {
+          ip: '198.51.100.2',
+          get: vi.fn(),
+        } as unknown as Request,
+        mockResponse as unknown as Response,
+      );
+
+      expect(mockResponse.cookie).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        emailVerificationRequired: true,
+        email: 'social@test.com',
+        verificationExpiresAt: new Date('2026-05-06T05:50:00Z'),
+        user: { id: 'user-1', email: 'social@test.com' },
+      });
+      expect(JSON.stringify(result)).not.toContain('accessToken');
+      expect(JSON.stringify(result)).not.toContain('refreshToken');
     });
   });
 
@@ -400,16 +432,46 @@ describe('AuthController', () => {
   });
 
   describe('email verification endpoints', () => {
+    it('GET email availability delegates to AuthService and returns only availability', async () => {
+      mockAuthService.checkEmailAvailability.mockResolvedValue({
+        available: false,
+      });
+
+      const result = await (controller as unknown as {
+        checkEmailAvailability(dto: { email: string }): Promise<unknown>;
+      }).checkEmailAvailability({ email: 'used@test.com' });
+
+      expect(mockAuthService.checkEmailAvailability).toHaveBeenCalledWith(
+        'used@test.com',
+      );
+      expect(result).toEqual({ available: false });
+      expect(JSON.stringify(result)).not.toMatch(
+        /user|id|provider|verification|token/i,
+      );
+    });
+
     it('POST request delegates to AuthService without returning a raw token', async () => {
       mockAuthService.requestEmailVerification.mockResolvedValue({
         expiresAt: new Date('2026-05-06T05:50:00.000Z'),
       });
 
       const result = await (controller as unknown as {
-        requestEmailVerification(dto: { email: string; locale: string }): Promise<unknown>;
-      }).requestEmailVerification({ email: 'verify@test.com', locale: 'ko' });
+        requestEmailVerification(dto: {
+          email: string;
+          locale: string;
+          frontendOrigin?: string;
+        }): Promise<unknown>;
+      }).requestEmailVerification({
+        email: 'verify@test.com',
+        locale: 'ko',
+        frontendOrigin: 'http://localhost:3001',
+      });
 
-      expect(mockAuthService.requestEmailVerification).toHaveBeenCalledWith('verify@test.com', 'ko');
+      expect(mockAuthService.requestEmailVerification).toHaveBeenCalledWith(
+        'verify@test.com',
+        'ko',
+        'http://localhost:3001',
+      );
       expect(JSON.stringify(result)).not.toContain('token');
     });
 
@@ -419,13 +481,35 @@ describe('AuthController', () => {
       });
 
       await (controller as unknown as {
-        resendEmailVerification(dto: { email: string; locale: string }): Promise<unknown>;
+        resendEmailVerification(dto: {
+          email: string;
+          locale: string;
+          frontendOrigin?: string;
+        }): Promise<unknown>;
       }).resendEmailVerification({ email: 'verify@test.com', locale: 'en' });
 
-      expect(mockAuthService.resendEmailVerification).toHaveBeenCalledWith('verify@test.com', 'en');
+      expect(mockAuthService.resendEmailVerification).toHaveBeenCalledWith(
+        'verify@test.com',
+        'en',
+        undefined,
+      );
     });
 
-    it('POST verify consumes an opaque token through AuthService', async () => {
+    it('POST verify checks a 6-digit email code through AuthService', async () => {
+      mockAuthService.verifyEmailVerificationCode.mockResolvedValue({ verified: true });
+
+      const result = await (controller as unknown as {
+        verifyEmailVerification(dto: { email: string; code: string }): Promise<unknown>;
+      }).verifyEmailVerification({ email: 'verify@test.com', code: '123456' });
+
+      expect(result).toEqual({ verified: true });
+      expect(mockAuthService.verifyEmailVerificationCode).toHaveBeenCalledWith(
+        'verify@test.com',
+        '123456',
+      );
+    });
+
+    it('POST verify keeps old token links compatible while new emails use codes', async () => {
       mockAuthService.verifyEmailVerificationToken.mockResolvedValue({ verified: true });
 
       const result = await (controller as unknown as {
@@ -489,6 +573,28 @@ describe('AuthController', () => {
       const redirectUrl = mockResponse.redirect.mock.calls[0]![0] as string;
       expect(redirectUrl).toContain('registrationToken=reg-token-xyz');
       expect(redirectUrl).toContain('status=needs_registration');
+    });
+
+    it('status=email_verification_required 시 refresh cookie 없이 pending callback으로 redirect된다', async () => {
+      mockAuthService.findOrCreateSocialUser.mockResolvedValue({
+        status: 'email_verification_required',
+        email: 'social+unverified@test.com',
+        verificationExpiresAt: new Date('2026-05-06T05:50:00Z'),
+        user: { id: 'user-1', email: 'social+unverified@test.com' },
+      });
+
+      await controller.socialKakaoCallback(
+        mockRequest as Request,
+        mockResponse as unknown as Response,
+      );
+
+      expect(mockResponse.cookie).not.toHaveBeenCalled();
+      const redirectUrl = mockResponse.redirect.mock.calls[0]![0] as string;
+      expect(redirectUrl).toContain('status=email_verification_required');
+      expect(redirectUrl).toContain(
+        `email=${encodeURIComponent('social+unverified@test.com')}`,
+      );
+      expect(redirectUrl).not.toContain('registrationToken=');
     });
   });
 });

@@ -23,6 +23,7 @@ export const socialRegisterBodySchema = z.object({
   }),
   marketingConsent: z.boolean(),
   consentItems: socialCompletionConsentRowsSchema,
+  frontendOrigin: z.string().url().max(200).optional(),
 });
 
 export type SocialRegisterBody = z.infer<typeof socialRegisterBodySchema>;

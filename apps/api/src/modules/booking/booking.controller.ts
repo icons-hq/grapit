@@ -17,6 +17,13 @@ import { AdmissionGuard } from '../queue/guards/admission.guard.js';
 import { BookingService } from './booking.service.js';
 import { lockSeatSchema, type LockSeatBody } from './dto/lock-seat.dto.js';
 
+type AuthenticatedBookingUser = {
+  id: string;
+  role?: string;
+  isEmailVerified?: boolean;
+  isPhoneVerified?: boolean;
+};
+
 @Controller('booking')
 export class BookingController {
   constructor(private readonly bookingService: BookingService) {}
@@ -32,9 +39,14 @@ export class BookingController {
     @Body(new ZodValidationPipe(lockSeatSchema)) body: LockSeatBody,
     @Req() req: Request,
   ) {
-    const user = req.user as { id: string; role?: string };
+    const user = req.user as AuthenticatedBookingUser;
     return this.bookingService.lockSeat(
-      { id: user.id, role: user.role },
+      {
+        id: user.id,
+        role: user.role,
+        isEmailVerified: user.isEmailVerified,
+        isPhoneVerified: user.isPhoneVerified,
+      },
       body.showtimeId,
       body.seatId,
     );
