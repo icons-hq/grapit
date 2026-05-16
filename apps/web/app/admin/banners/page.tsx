@@ -168,6 +168,11 @@ function BannerCard({
         initialData={{
           imageUrl: banner.imageUrl,
           linkUrl: banner.linkUrl ?? '',
+          placement: banner.placement,
+          deviceTarget: banner.deviceTarget,
+          startsAt: banner.startsAt,
+          endsAt: banner.endsAt,
+          status: banner.status,
           sortOrder: banner.sortOrder,
           isActive: banner.isActive,
         }}
@@ -224,6 +229,7 @@ function BannerCard({
           <p className="truncate text-xs text-gray-500">{banner.linkUrl}</p>
         )}
         <p className="text-xs text-gray-400">
+          {banner.placement} · {banner.deviceTarget} · {banner.status} ·{' '}
           {banner.isActive ? '활성' : '비활성'}
         </p>
       </div>

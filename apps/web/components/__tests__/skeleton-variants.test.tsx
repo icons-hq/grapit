@@ -27,7 +27,7 @@ describe('BannerSkeleton', () => {
     const skeletons = container.querySelectorAll('[data-slot="skeleton"]');
 
     expect(skeletons.length).toBeGreaterThanOrEqual(1);
-    expect(skeletons[0].className).toContain('h-[188px]');
+    expect(skeletons[0].className).toContain('aspect-[1290/600]');
     expect(skeletons[0].className).toContain('md:h-[400px]');
   });
 });
