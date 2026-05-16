@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Check, ChevronDown, Languages } from 'lucide-react';
+import { Check, ChevronDown, Globe2, Languages } from 'lucide-react';
 import { usePathname, useSearchParams } from 'next/navigation';
 import {
   DEFAULT_LOCALE,
@@ -21,6 +21,14 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from '@/components/ui/sheet';
 
 export const PREFERRED_LOCALE_COOKIE = 'preferred-locale';
 
@@ -33,43 +41,17 @@ export function LocaleSwitcher({
   className,
   onLocaleChange,
 }: LocaleSwitcherProps) {
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const { accessToken, user, setAuth } = useAuthStore();
-  const activeLocale = resolveLocaleFromPathname(pathname).locale;
-  const copy = getVisibleCopy(activeLocale);
-
-  async function handleLocaleSelect(locale: SupportedLocale) {
-    setLocalePreferenceCookie(locale);
-
-    if (accessToken && user) {
-      try {
-        const updatedUser = await apiClient.patch<typeof user>(
-          '/api/v1/users/me',
-          { preferredLocale: locale },
-          { showErrorToast: false },
-        );
-        setAuth(accessToken, updatedUser);
-      } catch {
-        // Navigation remains explicit even if profile persistence is unavailable.
-      }
-    }
-
-    onLocaleChange?.();
-    navigateToLocalizedPath(
-      appendSearchParams(
-        getLocalizedPathname(pathname, locale),
-        searchParams.toString(),
-      ),
-    );
-  }
+  const { activeLocale, copy, handleLocaleSelect } = useLocaleSelection({
+    onLocaleChange,
+  });
+  const controlLabel = getLocaleControlLabel(activeLocale, copy);
 
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          aria-label={`${activeLocale === DEFAULT_LOCALE ? '언어 선택' : copy.nav.language}: ${LOCALE_LABELS[activeLocale].native}`}
+          aria-label={`${controlLabel}: ${LOCALE_LABELS[activeLocale].native}`}
           className={cn(
             'inline-flex h-10 items-center gap-2 rounded-lg px-3 text-sm font-semibold text-gray-900 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-primary',
             className,
@@ -105,6 +87,120 @@ export function LocaleSwitcher({
       </DropdownMenuContent>
     </DropdownMenu>
   );
+}
+
+export function MobileLocaleSwitcher({ className }: { className?: string }) {
+  const [open, setOpen] = React.useState(false);
+  const { activeLocale, copy, handleLocaleSelect } = useLocaleSelection({
+    onLocaleChange: () => setOpen(false),
+  });
+  const controlLabel = getLocaleControlLabel(activeLocale, copy);
+
+  return (
+    <Sheet open={open} onOpenChange={setOpen}>
+      <SheetTrigger asChild>
+        <button
+          type="button"
+          aria-label={`${controlLabel}: ${LOCALE_LABELS[activeLocale].native}`}
+          className={cn(
+            'inline-flex h-10 w-10 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-900 shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-primary',
+            className,
+          )}
+        >
+          <Globe2 className="h-5 w-5" aria-hidden="true" />
+        </button>
+      </SheetTrigger>
+      <SheetContent
+        side="bottom"
+        className="rounded-t-lg px-0 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] pt-1 md:hidden"
+      >
+        <SheetHeader className="border-b border-gray-200 px-5 pb-4 pt-5 text-left">
+          <SheetTitle className="text-base">{controlLabel}</SheetTitle>
+          <SheetDescription className="sr-only">
+            Select a language for the current page.
+          </SheetDescription>
+        </SheetHeader>
+        <div className="px-3">
+          {SUPPORTED_LOCALES.map((locale) => {
+            const isActive = locale === activeLocale;
+            const label = LOCALE_LABELS[locale];
+
+            return (
+              <button
+                key={locale}
+                type="button"
+                aria-current={isActive ? 'true' : undefined}
+                onClick={() => void handleLocaleSelect(locale)}
+                className={cn(
+                  'flex min-h-12 w-full items-center justify-between rounded-lg px-3 text-left text-sm text-gray-900 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-primary',
+                  isActive && 'font-semibold text-primary',
+                )}
+              >
+                <span className="flex min-w-0 flex-col">
+                  <span>{label.native}</span>
+                  <span className="text-xs font-normal text-gray-500">
+                    {label.english}
+                  </span>
+                </span>
+                {isActive && (
+                  <Check
+                    className="h-4 w-4 shrink-0 text-primary"
+                    aria-hidden="true"
+                  />
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+function useLocaleSelection({
+  onLocaleChange,
+}: {
+  onLocaleChange?: () => void;
+} = {}) {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const { accessToken, user, setAuth } = useAuthStore();
+  const activeLocale = resolveLocaleFromPathname(pathname).locale;
+  const copy = getVisibleCopy(activeLocale);
+
+  async function handleLocaleSelect(locale: SupportedLocale) {
+    setLocalePreferenceCookie(locale);
+
+    if (accessToken && user) {
+      try {
+        const updatedUser = await apiClient.patch<typeof user>(
+          '/api/v1/users/me',
+          { preferredLocale: locale },
+          { showErrorToast: false },
+        );
+        setAuth(accessToken, updatedUser);
+      } catch {
+        // Navigation remains explicit even if profile persistence is unavailable.
+      }
+    }
+
+    onLocaleChange?.();
+    navigateToLocalizedPath(
+      appendSearchParams(
+        getLocalizedPathname(pathname, locale),
+        searchParams.toString(),
+      ),
+    );
+  }
+
+  return { activeLocale, copy, handleLocaleSelect };
+}
+
+function getLocaleControlLabel(
+  activeLocale: SupportedLocale,
+  copy: ReturnType<typeof getVisibleCopy>,
+) {
+  return activeLocale === DEFAULT_LOCALE ? '언어 선택' : copy.nav.language;
 }
 
 export function getLocalizedPathname(

@@ -8,8 +8,6 @@ import {
   UseGuards,
   HttpCode,
   HttpStatus,
-  UnauthorizedException,
-  Param,
   Logger,
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
@@ -101,7 +99,8 @@ export class AuthController {
   ) {
     const token = (req.cookies as Record<string, string>)?.[AUTH_COOKIE_NAME];
     if (!token) {
-      throw new UnauthorizedException('리프레시 토큰이 없습니다');
+      res.status(HttpStatus.NO_CONTENT);
+      return;
     }
 
     const result = await this.authService.refreshTokens(token);

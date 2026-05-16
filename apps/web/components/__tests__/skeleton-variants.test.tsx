@@ -22,12 +22,13 @@ describe('PerformanceCardSkeleton', () => {
 });
 
 describe('BannerSkeleton', () => {
-  it('renders full-width rectangle with aspect-[2.5/1]', () => {
+  it('renders stable mobile and desktop banner heights', () => {
     const { container } = render(<BannerSkeleton />);
     const skeletons = container.querySelectorAll('[data-slot="skeleton"]');
 
     expect(skeletons.length).toBeGreaterThanOrEqual(1);
-    expect(skeletons[0].className).toContain('aspect-[2.5/1]');
+    expect(skeletons[0].className).toContain('h-[188px]');
+    expect(skeletons[0].className).toContain('md:h-[400px]');
   });
 });
 

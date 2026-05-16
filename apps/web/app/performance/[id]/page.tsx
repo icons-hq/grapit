@@ -105,6 +105,7 @@ export default function PerformanceDetailPage({
                     className="object-cover"
                     sizes="(max-width: 1024px) 320px, 360px"
                     priority
+                    loading="eager"
                   />
                 ) : (
                   <div className="flex h-full items-center justify-center">

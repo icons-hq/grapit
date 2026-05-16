@@ -47,7 +47,7 @@ export function PerformanceCard({
     <Link
       href={getLocalizedPathname(`/performance/${performance.id}`, activeLocale)}
       className={cn(
-        'group block overflow-hidden rounded-lg bg-white shadow-sm transition-shadow duration-150 hover:shadow-md',
+        'group block overflow-hidden rounded-lg border border-gray-100 bg-white shadow-sm transition-shadow duration-150 hover:shadow-md',
         className,
       )}
     >
@@ -62,6 +62,7 @@ export function PerformanceCard({
             sizes="(max-width: 768px) 50vw, 25vw"
             quality={75}
             priority={priority}
+            loading={priority ? 'eager' : undefined}
           />
         ) : (
           <div className="flex h-full items-center justify-center">
@@ -76,16 +77,16 @@ export function PerformanceCard({
       </div>
 
       {/* Info */}
-      <div className="p-3">
-        <h3 className="line-clamp-2 text-base font-semibold text-gray-900">
+      <div className="min-h-[104px] p-3 md:min-h-[116px] md:p-4">
+        <h3 className="line-clamp-2 text-sm font-semibold leading-snug text-gray-950 md:text-base">
           {performance.title}
         </h3>
         {performance.venueName && (
-          <p className="mt-1 line-clamp-1 text-sm text-gray-600">
+          <p className="mt-1.5 line-clamp-1 text-xs font-medium text-gray-600 md:text-sm">
             {performance.venueName}
           </p>
         )}
-        <p className="mt-1 text-sm text-gray-600">
+        <p className="mt-1 line-clamp-1 text-xs text-gray-500 md:text-sm">
           {formatPerformanceDateRange(performance)}
         </p>
       </div>

@@ -52,14 +52,15 @@ describe('locale switcher shell wiring', () => {
     mockAuthState.user = null;
     mockAuthState.accessToken = null;
     mockAuthState.activeLocale = 'ko';
+    document.cookie = 'preferred-locale=; Max-Age=0; path=/';
   });
 
   it('renders explicit locale switcher through the desktop GNB', () => {
     render(<GNB />);
 
     expect(
-      screen.getByRole('button', { name: /언어 선택/ }),
-    ).toBeDefined();
+      screen.getAllByRole('button', { name: '언어 선택: 한국어' }),
+    ).toHaveLength(2);
     expect(screen.getByText('한국어').getAttribute('aria-current')).toBe(
       'true',
     );
@@ -84,11 +85,35 @@ describe('locale switcher shell wiring', () => {
     );
   });
 
+  it('opens a mobile bottom sheet from the GNB globe and preserves search params on selection', async () => {
+    render(<GNB />);
+
+    const user = userEvent.setup();
+    await user.click(
+      screen.getAllByRole('button', { name: '언어 선택: 한국어' })[0],
+    );
+
+    const sheet = await screen.findByRole('dialog', { name: '언어 선택' });
+    expect(sheet).toBeDefined();
+    expect(
+      screen.getByRole('button', { name: /한국어 Korean/ }),
+    ).toHaveAttribute('aria-current', 'true');
+
+    await user.click(screen.getByRole('button', { name: /English English/ }));
+
+    expect(mockNavigateToLocalizedPath).toHaveBeenCalledWith(
+      '/en?q=girl&page=2',
+    );
+    expect(document.cookie).toContain('preferred-locale=en');
+  });
+
   it('uses document navigation when a new locale is selected', async () => {
     render(<GNB />);
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: /언어 선택/ }));
+    await user.click(
+      screen.getAllByRole('button', { name: '언어 선택: 한국어' })[1],
+    );
     await user.click(await screen.findByRole('menuitem', { name: 'English' }));
 
     expect(mockNavigateToLocalizedPath).toHaveBeenCalledWith(
@@ -97,7 +122,7 @@ describe('locale switcher shell wiring', () => {
     expect(document.cookie).toContain('preferred-locale=en');
   });
 
-  it('renders explicit locale switcher through the mobile menu surface', () => {
+  it('keeps the existing mobile menu locale surface available', () => {
     render(
       <MobileMenu
         isOpen
@@ -108,7 +133,7 @@ describe('locale switcher shell wiring', () => {
     );
 
     expect(
-      screen.getByRole('button', { name: /언어 선택/ }),
+      screen.getByRole('button', { name: '언어 선택: 한국어' }),
     ).toBeDefined();
     expect(screen.getByText('한국어').getAttribute('aria-current')).toBe(
       'true',
