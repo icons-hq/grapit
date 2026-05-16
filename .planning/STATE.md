@@ -4,8 +4,8 @@ milestone: v2.0
 milestone_name: Fanmeet Launch
 status: "Phase 25 shipped — PR #47"
 stopped_at: Phase 25 complete; ready for Phase 26
-last_updated: "2026-05-16T08:53:53.000Z"
-last_activity: "2026-05-16 -- Completed quick task 260516-o8e: mobile search input and device-targeted mobile banners"
+last_updated: "2026-05-16T09:05:00.000Z"
+last_activity: "2026-05-16 -- Shipped quick task 260516-o8e: mobile search input and device-targeted mobile banners — PR #61"
 progress:
   total_phases: 7
   completed_phases: 4
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-05-04)
 Phase: 26 (m1-canary-cutover-gates) — READY
 Plan: 0 of 0
 Status: Phase 25 shipped — PR #47
-Last activity: 2026-05-16 -- Completed quick task 260516-o8e: mobile search input and device-targeted mobile banners
+Last activity: 2026-05-16 -- Shipped quick task 260516-o8e: mobile search input and device-targeted mobile banners — PR #61
 
 ## Deferred Items
 
@@ -357,7 +357,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 | 260515-m81 | 공연 등록 상태를 오픈예정/오픈으로 분리하고 오픈예정 일반 예매 차단 + admin 테스트 예매 허용 | 2026-05-15 | uncommitted | [260515-m81-discuss-upcoming-selling-admin](./quick/260515-m81-discuss-upcoming-selling-admin/) |
 | 260515-wbw | Admin-managed performance detail images and public detail UX refresh | 2026-05-15 | de425c9 | [260515-wbw-add-admin-managed-performance-detail-ima](./quick/260515-wbw-add-admin-managed-performance-detail-ima/) |
 | 260516-mle | 모바일 홈/공개 shell UI를 refined commerce 톤으로 개선하고 모바일 header globe + bottom sheet 언어 선택을 추가 | 2026-05-16 | 43ea313 | [260516-mle-ui-ux](./quick/260516-mle-ui-ux/) |
-| 260516-o8e | 모바일 검색 입력을 복구하고 deviceTarget 기반 모바일/데스크톱 배너 표시와 admin 안내를 연결 | 2026-05-16 | uncommitted | [260516-o8e-mobile-search-ux-redesign-and-mobile-hom](./quick/260516-o8e-mobile-search-ux-redesign-and-mobile-hom/) |
+| 260516-o8e | 모바일 검색 입력을 복구하고 deviceTarget 기반 모바일/데스크톱 배너 표시와 admin 안내를 연결 | 2026-05-16 | ead7085 | [260516-o8e-mobile-search-ux-redesign-and-mobile-hom](./quick/260516-o8e-mobile-search-ux-redesign-and-mobile-hom/) |
 
 ## Session Continuity
 
