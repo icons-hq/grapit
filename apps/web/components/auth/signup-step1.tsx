@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useRef } from 'react';
 import { useForm } from 'react-hook-form';
 import { useLocale } from 'next-intl';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -37,7 +37,6 @@ export function SignupStep1({ onComplete, defaultValues }: SignupStep1Props) {
     email: string;
     available: boolean;
   } | null>(null);
-  const [isCheckingEmail, setIsCheckingEmail] = useState(false);
   const form = useForm<RegisterStep1Input>({
     resolver: zodResolver(registerStep1Schema),
     defaultValues: defaultValues ?? {
@@ -73,7 +72,6 @@ export function SignupStep1({ onComplete, defaultValues }: SignupStep1Props) {
       return cached.available;
     }
 
-    setIsCheckingEmail(true);
     try {
       const result = await apiClient.get<EmailAvailabilityResponse>(
         `/api/v1/auth/email-availability?email=${encodeURIComponent(normalizedEmail)}`,
@@ -101,8 +99,6 @@ export function SignupStep1({ onComplete, defaultValues }: SignupStep1Props) {
       return true;
     } catch {
       return true;
-    } finally {
-      setIsCheckingEmail(false);
     }
   }
 
@@ -190,12 +186,7 @@ export function SignupStep1({ onComplete, defaultValues }: SignupStep1Props) {
         />
 
         <div className="pt-2">
-          <Button
-            type="submit"
-            size="lg"
-            className="w-full"
-            disabled={isCheckingEmail}
-          >
+          <Button type="submit" size="lg" className="w-full">
             {authCopy.form.nextButton}
           </Button>
         </div>

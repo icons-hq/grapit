@@ -71,6 +71,32 @@ describe('SignupStep1 email availability', () => {
     expect(onComplete).not.toHaveBeenCalled();
   });
 
+  it('allows immediate submit after replacing a duplicate email with an available one', async () => {
+    const onComplete = vi.fn();
+    mocks.apiGet
+      .mockResolvedValueOnce({ available: false })
+      .mockResolvedValueOnce({ available: true });
+    render(<SignupStep1 onComplete={onComplete} defaultValues={null} />);
+
+    const user = await fillValidCredentials('used@test.com');
+    await user.click(screen.getByRole('button', { name: '다음' }));
+    await waitFor(() => {
+      expect(screen.getByText('이미 사용 중인 이메일입니다')).toBeInTheDocument();
+    });
+
+    await user.clear(screen.getByLabelText(/이메일/));
+    await user.type(screen.getByLabelText(/이메일/), 'new@test.com');
+    await user.click(screen.getByRole('button', { name: '다음' }));
+
+    await waitFor(() => {
+      expect(onComplete).toHaveBeenCalledWith({
+        email: 'new@test.com',
+        password: 'Test1234!',
+        passwordConfirm: 'Test1234!',
+      });
+    });
+  });
+
   it('does not render a required manual duplicate-check button', () => {
     render(<SignupStep1 onComplete={vi.fn()} defaultValues={null} />);
 
