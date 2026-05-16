@@ -230,6 +230,28 @@ describe('AuthService', () => {
     );
   });
 
+  describe('checkEmailAvailability', () => {
+    it('returns available true when no user exists for the email', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue(null);
+
+      await expect(
+        authService.checkEmailAvailability('new@test.com'),
+      ).resolves.toEqual({ available: true });
+
+      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith('new@test.com');
+    });
+
+    it('returns available false when a user row already exists for the email', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue(mockUser);
+
+      await expect(
+        authService.checkEmailAvailability('used@test.com'),
+      ).resolves.toEqual({ available: false });
+
+      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith('used@test.com');
+    });
+  });
+
   describe('register', () => {
     it('should create a user with argon2-hashed password and return email verification pending response', async () => {
       const beforeRegister = Date.now();

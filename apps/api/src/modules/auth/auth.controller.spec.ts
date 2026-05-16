@@ -32,6 +32,7 @@ describe('AuthController', () => {
     requestEmailVerification: ReturnType<typeof vi.fn>;
     resendEmailVerification: ReturnType<typeof vi.fn>;
     verifyEmailVerificationToken: ReturnType<typeof vi.fn>;
+    checkEmailAvailability: ReturnType<typeof vi.fn>;
   };
   let mockConfigService: {
     get: ReturnType<typeof vi.fn>;
@@ -53,6 +54,7 @@ describe('AuthController', () => {
       requestEmailVerification: vi.fn(),
       resendEmailVerification: vi.fn(),
       verifyEmailVerificationToken: vi.fn(),
+      checkEmailAvailability: vi.fn(),
     };
 
     mockConfigService = {
@@ -400,6 +402,24 @@ describe('AuthController', () => {
   });
 
   describe('email verification endpoints', () => {
+    it('GET email availability delegates to AuthService and returns only availability', async () => {
+      mockAuthService.checkEmailAvailability.mockResolvedValue({
+        available: false,
+      });
+
+      const result = await (controller as unknown as {
+        checkEmailAvailability(dto: { email: string }): Promise<unknown>;
+      }).checkEmailAvailability({ email: 'used@test.com' });
+
+      expect(mockAuthService.checkEmailAvailability).toHaveBeenCalledWith(
+        'used@test.com',
+      );
+      expect(result).toEqual({ available: false });
+      expect(JSON.stringify(result)).not.toMatch(
+        /user|id|provider|verification|token/i,
+      );
+    });
+
     it('POST request delegates to AuthService without returning a raw token', async () => {
       mockAuthService.requestEmailVerification.mockResolvedValue({
         expiresAt: new Date('2026-05-06T05:50:00.000Z'),
