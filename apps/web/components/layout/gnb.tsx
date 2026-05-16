@@ -149,6 +149,7 @@ export function GNB() {
                 value={searchValue}
                 onChange={(e) => setSearchValue(e.target.value)}
                 onKeyDown={handleSearchKeyDown}
+                suppressHydrationWarning
                 className="h-10 w-64 rounded-lg bg-gray-100 pl-10 pr-10 text-sm text-gray-900 placeholder:text-gray-400 focus:ring-2 focus:ring-primary focus:outline-none"
               />
               {searchValue && (

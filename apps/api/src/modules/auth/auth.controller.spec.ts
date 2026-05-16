@@ -28,6 +28,7 @@ describe('AuthController', () => {
     register: ReturnType<typeof vi.fn>;
     completeSocialRegistration: ReturnType<typeof vi.fn>;
     findOrCreateSocialUser: ReturnType<typeof vi.fn>;
+    refreshTokens: ReturnType<typeof vi.fn>;
     requestEmailVerification: ReturnType<typeof vi.fn>;
     resendEmailVerification: ReturnType<typeof vi.fn>;
     verifyEmailVerificationToken: ReturnType<typeof vi.fn>;
@@ -39,6 +40,7 @@ describe('AuthController', () => {
   let mockResponse: {
     cookie: ReturnType<typeof vi.fn>;
     redirect: ReturnType<typeof vi.fn>;
+    status: ReturnType<typeof vi.fn>;
     headersSent: boolean;
   };
 
@@ -47,6 +49,7 @@ describe('AuthController', () => {
       register: vi.fn(),
       completeSocialRegistration: vi.fn(),
       findOrCreateSocialUser: vi.fn(),
+      refreshTokens: vi.fn(),
       requestEmailVerification: vi.fn(),
       resendEmailVerification: vi.fn(),
       verifyEmailVerificationToken: vi.fn(),
@@ -62,6 +65,7 @@ describe('AuthController', () => {
     mockResponse = {
       cookie: vi.fn(),
       redirect: vi.fn(),
+      status: vi.fn().mockReturnThis(),
       headersSent: false,
     };
 
@@ -78,6 +82,43 @@ describe('AuthController', () => {
       mockAuthService as never,
       mockConfigService as never,
     );
+  });
+
+  describe('refresh session probe', () => {
+    it('returns 204 for an anonymous session probe instead of surfacing a console 401 on public pages', async () => {
+      const result = await controller.refresh(
+        { cookies: {} } as Request,
+        mockResponse as unknown as Response,
+      );
+
+      expect(result).toBeUndefined();
+      expect(mockResponse.status).toHaveBeenCalledWith(204);
+      expect(mockAuthService.refreshTokens).not.toHaveBeenCalled();
+    });
+
+    it('rotates a present refresh token and returns a new access token', async () => {
+      mockAuthService.refreshTokens.mockResolvedValue({
+        accessToken: 'new-access-token',
+        refreshToken: 'new-refresh-token',
+      });
+
+      const result = await controller.refresh(
+        {
+          cookies: { [AUTH_COOKIE_NAME]: 'old-refresh-token' },
+        } as unknown as Request,
+        mockResponse as unknown as Response,
+      );
+
+      expect(mockAuthService.refreshTokens).toHaveBeenCalledWith(
+        'old-refresh-token',
+      );
+      expect(mockResponse.cookie).toHaveBeenCalledWith(
+        AUTH_COOKIE_NAME,
+        'new-refresh-token',
+        expect.any(Object),
+      );
+      expect(result).toEqual({ accessToken: 'new-access-token' });
+    });
   });
 
   describe('consent request metadata', () => {
