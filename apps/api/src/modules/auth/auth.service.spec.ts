@@ -908,8 +908,11 @@ describe('AuthService', () => {
       });
     });
 
-    it('should return authenticated with tokens for existing social user', async () => {
-      const existingUser = createMockUser();
+    it('should return authenticated with tokens for an existing verified social user', async () => {
+      const existingUser = {
+        ...createMockUser(),
+        isEmailVerified: true,
+      };
 
       // Existing social account found
       mockDb.select.mockReturnValue({
@@ -941,10 +944,53 @@ describe('AuthService', () => {
       expect(result.accessToken).toBeDefined();
       expect(result.user).toBeDefined();
     });
+
+    it('issues email verification and returns pending state for an existing unverified social user', async () => {
+      const existingUser = {
+        ...createMockUser(),
+        email: 'unverified-social@test.com',
+        isEmailVerified: false,
+      };
+
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([
+            {
+              id: randomUUID(),
+              userId: existingUser.id,
+              provider: 'google',
+              providerId: 'google-123',
+              providerEmail: existingUser.email,
+              createdAt: new Date(),
+            },
+          ]),
+        }),
+      });
+      mockUserRepo.findById.mockResolvedValue(existingUser);
+
+      const result = await authService.findOrCreateSocialUser({
+        provider: 'google',
+        providerId: 'google-123',
+        email: existingUser.email,
+        name: existingUser.name,
+      });
+
+      expect(result.status).toBe('email_verification_required');
+      expect(result).not.toHaveProperty('accessToken');
+      expect(result).not.toHaveProperty('refreshToken');
+      expect(result.email).toBe(existingUser.email);
+      expect(result.user?.email).toBe(existingUser.email);
+      expect(result.verificationExpiresAt).toBeInstanceOf(Date);
+      expect(mockEmailService.sendEmailVerificationEmail).toHaveBeenCalledWith(
+        existingUser.email,
+        expect.stringContaining('/auth/verify-email?token='),
+        'ko',
+      );
+    });
   });
 
   describe('completeSocialRegistration', () => {
-    it('should create user + social account + terms with valid registrationToken', async () => {
+    it('should create user + social account + terms then return email verification pending response', async () => {
       const newUserId = randomUUID();
 
       // Verify registration token
@@ -985,10 +1031,25 @@ describe('AuthService', () => {
         { ipAddress: '203.0.113.20', userAgent: 'Vitest Social' },
       );
 
-      expect(result).toHaveProperty('accessToken');
-      expect(result).toHaveProperty('refreshToken');
+      expect(result).toMatchObject({
+        emailVerificationRequired: true,
+        email: 'kakao@test.com',
+        user: expect.objectContaining({ email: 'kakao@test.com' }),
+      });
+      expect(result).not.toHaveProperty('accessToken');
+      expect(result).not.toHaveProperty('refreshToken');
+      expect(result.verificationExpiresAt).toBeInstanceOf(Date);
       expect(result).toHaveProperty('user');
+      expect(mockSmsService.verifyPhoneVerificationToken).toHaveBeenCalledWith(
+        'signed-social-phone-token',
+        { phone: '010-1234-5678', purpose: 'social_registration' },
+      );
       expect(mockUserRepo.create).toHaveBeenCalled();
+      expect(mockEmailService.sendEmailVerificationEmail).toHaveBeenCalledWith(
+        'kakao@test.com',
+        expect.stringContaining('/auth/verify-email?token='),
+        'ko',
+      );
       expect(mockConsentService.captureConsent).toHaveBeenCalledWith(
         newUserId,
         expect.objectContaining({
@@ -1060,7 +1121,7 @@ describe('AuthService', () => {
       expect(mockConsentService.captureConsent).not.toHaveBeenCalled();
     });
 
-    it('purpose-bound phone verification token이 있으면 social registration을 완료한다', async () => {
+    it('purpose-bound phone verification token이 있으면 social registration 후 이메일 인증 pending을 반환한다', async () => {
       const newUserId = randomUUID();
       mockJwtService.verifyAsync.mockResolvedValue({
         provider: 'kakao',
@@ -1094,7 +1155,12 @@ describe('AuthService', () => {
         },
       );
 
-      expect(result).toHaveProperty('accessToken');
+      expect(result).toMatchObject({
+        emailVerificationRequired: true,
+        email: 'kakao@test.com',
+      });
+      expect(result).not.toHaveProperty('accessToken');
+      expect(result).not.toHaveProperty('refreshToken');
       expect(mockSmsService.verifyPhoneVerificationToken).toHaveBeenCalledWith(
         'signed-social-phone-token',
         { phone: '010-1234-5678', purpose: 'social_registration' },

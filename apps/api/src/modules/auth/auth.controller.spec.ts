@@ -178,6 +178,34 @@ describe('AuthController', () => {
         { ipAddress: '198.51.100.2', userAgent: 'Vitest Social' },
       );
     });
+
+    it('social registration completion pending response does not set refresh token cookie', async () => {
+      mockAuthService.completeSocialRegistration.mockResolvedValue({
+        emailVerificationRequired: true,
+        email: 'social@test.com',
+        verificationExpiresAt: new Date('2026-05-06T05:50:00Z'),
+        user: { id: 'user-1', email: 'social@test.com' },
+      });
+
+      const result = await controller.completeSocialRegistration(
+        { registrationToken: 'registration-token', name: 'User' } as never,
+        {
+          ip: '198.51.100.2',
+          get: vi.fn(),
+        } as unknown as Request,
+        mockResponse as unknown as Response,
+      );
+
+      expect(mockResponse.cookie).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        emailVerificationRequired: true,
+        email: 'social@test.com',
+        verificationExpiresAt: new Date('2026-05-06T05:50:00Z'),
+        user: { id: 'user-1', email: 'social@test.com' },
+      });
+      expect(JSON.stringify(result)).not.toContain('accessToken');
+      expect(JSON.stringify(result)).not.toContain('refreshToken');
+    });
   });
 
   describe('setRefreshTokenCookie via socialKakaoCallback — Gap 1', () => {
@@ -509,6 +537,28 @@ describe('AuthController', () => {
       const redirectUrl = mockResponse.redirect.mock.calls[0]![0] as string;
       expect(redirectUrl).toContain('registrationToken=reg-token-xyz');
       expect(redirectUrl).toContain('status=needs_registration');
+    });
+
+    it('status=email_verification_required 시 refresh cookie 없이 pending callback으로 redirect된다', async () => {
+      mockAuthService.findOrCreateSocialUser.mockResolvedValue({
+        status: 'email_verification_required',
+        email: 'social+unverified@test.com',
+        verificationExpiresAt: new Date('2026-05-06T05:50:00Z'),
+        user: { id: 'user-1', email: 'social+unverified@test.com' },
+      });
+
+      await controller.socialKakaoCallback(
+        mockRequest as Request,
+        mockResponse as unknown as Response,
+      );
+
+      expect(mockResponse.cookie).not.toHaveBeenCalled();
+      const redirectUrl = mockResponse.redirect.mock.calls[0]![0] as string;
+      expect(redirectUrl).toContain('status=email_verification_required');
+      expect(redirectUrl).toContain(
+        `email=${encodeURIComponent('social+unverified@test.com')}`,
+      );
+      expect(redirectUrl).not.toContain('registrationToken=');
     });
   });
 });
