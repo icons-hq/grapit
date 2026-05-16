@@ -17,10 +17,17 @@ import { getAuthLaunchCopy } from '../auth-launch-copy';
 
 const mocks = vi.hoisted(() => ({
   activeLocale: 'ko',
+  routerReplace: vi.fn(),
 }));
 
 vi.mock('next-intl', () => ({
   useLocale: () => mocks.activeLocale,
+}));
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({
+    replace: mocks.routerReplace,
+  }),
 }));
 
 vi.mock('@/lib/api-client', () => ({
@@ -100,10 +107,14 @@ const expectedKeys = {
   ],
   'auth.emailVerification': [
     'sent',
+    'codeAriaLabel',
+    'codePlaceholder',
+    'verifyCta',
     'resendCta',
     'resendLoading',
     'resendSuccess',
     'expired',
+    'invalidCode',
     'verified',
     'throttled',
     'systemError',
@@ -173,10 +184,10 @@ describe('auth launch copy messages', () => {
   it('locks critical Korean email verification copy', () => {
     const copy = readNamespace(koMessages, 'auth.emailVerification');
 
-    expect(copy.resendCta).toBe('인증 메일 다시 보내기');
+    expect(copy.resendCta).toBe('인증번호 다시 보내기');
     expect(copy.resendLoading).toBe('다시 보내는 중...');
     expect(copy.expired).toBe(
-      '인증 링크가 만료되었습니다. 새 인증 메일을 요청해주세요.',
+      '인증번호가 만료되었습니다. 새 인증 메일을 요청해주세요.',
     );
   });
 
@@ -199,15 +210,63 @@ describe('EmailVerificationStatus', () => {
     vi.clearAllMocks();
   });
 
-  it('shows sent state with resend action without auto-requesting email', async () => {
+  it('shows sent state with code input and resend action without auto-requesting email', async () => {
     const { apiClient } = await import('@/lib/api-client');
     render(<EmailVerificationStatus {...defaultProps} initialState="sent" />);
 
-    expect(screen.getByText('인증 메일을 발송했습니다')).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: '인증 메일 다시 보내기' }),
+      screen.getByText('이메일로 받은 6자리 인증번호를 입력해주세요'),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('이메일 인증번호 6자리')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '확인' })).toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: '인증번호 다시 보내기' }),
     ).toBeInTheDocument();
     expect(apiClient.post).not.toHaveBeenCalled();
+  });
+
+  it('verifies a 6-digit email code', async () => {
+    const { apiClient } = await import('@/lib/api-client');
+    (apiClient.post as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      verified: true,
+    });
+
+    render(<EmailVerificationStatus {...defaultProps} initialState="sent" />);
+    const user = userEvent.setup();
+
+    await user.type(screen.getByLabelText('이메일 인증번호 6자리'), '12a3456');
+    await user.click(screen.getByRole('button', { name: '확인' }));
+
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/api/v1/auth/email-verification/verify',
+      { email: 'fan@test.com', code: '123456' },
+      { showErrorToast: false },
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(
+        '이메일 인증이 완료되었습니다.',
+      );
+      expect(mocks.routerReplace).toHaveBeenCalledWith('/');
+    });
+  });
+
+  it('redirects token-backed successful verification to home', async () => {
+    const { apiClient } = await import('@/lib/api-client');
+    (apiClient.post as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      verified: true,
+    });
+
+    render(<EmailVerificationStatus email="" token="opaque-token-1234567890" />);
+
+    await waitFor(() => {
+      expect(apiClient.post).toHaveBeenCalledWith(
+        '/api/v1/auth/email-verification/verify',
+        { token: 'opaque-token-1234567890' },
+        { showErrorToast: false },
+      );
+      expect(mocks.routerReplace).toHaveBeenCalledWith('/');
+    });
   });
 
   it('announces resend loading and success states with aria-live', async () => {
@@ -222,7 +281,7 @@ describe('EmailVerificationStatus', () => {
     render(<EmailVerificationStatus {...defaultProps} initialState="sent" />);
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: '인증 메일 다시 보내기' }));
+    await user.click(screen.getByRole('button', { name: '인증번호 다시 보내기' }));
     expect(screen.getByRole('status')).toHaveTextContent('다시 보내는 중...');
     expect(apiClient.post).toHaveBeenCalledWith(
       '/api/v1/auth/email-verification/resend',
@@ -238,7 +297,7 @@ describe('EmailVerificationStatus', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('status')).toHaveTextContent(
-        '인증 메일을 다시 보냈습니다',
+        '인증번호를 다시 보냈습니다',
       );
     });
   });
@@ -249,7 +308,7 @@ describe('EmailVerificationStatus', () => {
     );
 
     expect(screen.getByRole('alert')).toHaveTextContent(
-      '인증 링크가 만료되었습니다. 새 인증 메일을 요청해주세요.',
+      '인증번호가 만료되었습니다. 새 인증 메일을 요청해주세요.',
     );
 
     unmount();
@@ -259,16 +318,30 @@ describe('EmailVerificationStatus', () => {
     );
   });
 
-  it('maps throttled and system resend failures without exposing raw server text', async () => {
+  it('maps invalid, throttled, and system failures without exposing raw server text', async () => {
     const { apiClient, ApiClientError } = await import('@/lib/api-client');
     (apiClient.post as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-      new ApiClientError('raw provider quota text', 429),
+      new ApiClientError('raw mismatch text', 400),
     );
 
     render(<EmailVerificationStatus {...defaultProps} initialState="sent" />);
     const user = userEvent.setup();
 
-    await user.click(screen.getByRole('button', { name: '인증 메일 다시 보내기' }));
+    await user.type(screen.getByLabelText('이메일 인증번호 6자리'), '999999');
+    await user.click(screen.getByRole('button', { name: '확인' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        '인증번호가 일치하지 않습니다',
+      );
+      expect(screen.queryByText('raw mismatch text')).not.toBeInTheDocument();
+    });
+
+    (apiClient.post as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new ApiClientError('raw provider quota text', 429),
+    );
+
+    await user.click(screen.getByRole('button', { name: '인증번호 다시 보내기' }));
 
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(
@@ -281,7 +354,7 @@ describe('EmailVerificationStatus', () => {
       new ApiClientError('raw smtp failure text', 500),
     );
 
-    await user.click(screen.getByRole('button', { name: '인증 메일 다시 보내기' }));
+    await user.click(screen.getByRole('button', { name: '인증번호 다시 보내기' }));
 
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(
@@ -329,7 +402,7 @@ describe('EmailVerificationStatus', () => {
         { showErrorToast: false },
       );
       expect(screen.getByRole('alert')).toHaveTextContent(
-        '인증 링크가 만료되었습니다. 새 인증 메일을 요청해주세요.',
+        '인증번호가 만료되었습니다. 새 인증 메일을 요청해주세요.',
       );
       expect(screen.queryByText('raw expired token')).not.toBeInTheDocument();
     });

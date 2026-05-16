@@ -31,6 +31,7 @@ describe('AuthController', () => {
     refreshTokens: ReturnType<typeof vi.fn>;
     requestEmailVerification: ReturnType<typeof vi.fn>;
     resendEmailVerification: ReturnType<typeof vi.fn>;
+    verifyEmailVerificationCode: ReturnType<typeof vi.fn>;
     verifyEmailVerificationToken: ReturnType<typeof vi.fn>;
     checkEmailAvailability: ReturnType<typeof vi.fn>;
   };
@@ -53,6 +54,7 @@ describe('AuthController', () => {
       refreshTokens: vi.fn(),
       requestEmailVerification: vi.fn(),
       resendEmailVerification: vi.fn(),
+      verifyEmailVerificationCode: vi.fn(),
       verifyEmailVerificationToken: vi.fn(),
       checkEmailAvailability: vi.fn(),
     };
@@ -493,7 +495,21 @@ describe('AuthController', () => {
       );
     });
 
-    it('POST verify consumes an opaque token through AuthService', async () => {
+    it('POST verify checks a 6-digit email code through AuthService', async () => {
+      mockAuthService.verifyEmailVerificationCode.mockResolvedValue({ verified: true });
+
+      const result = await (controller as unknown as {
+        verifyEmailVerification(dto: { email: string; code: string }): Promise<unknown>;
+      }).verifyEmailVerification({ email: 'verify@test.com', code: '123456' });
+
+      expect(result).toEqual({ verified: true });
+      expect(mockAuthService.verifyEmailVerificationCode).toHaveBeenCalledWith(
+        'verify@test.com',
+        '123456',
+      );
+    });
+
+    it('POST verify keeps old token links compatible while new emails use codes', async () => {
       mockAuthService.verifyEmailVerificationToken.mockResolvedValue({ verified: true });
 
       const result = await (controller as unknown as {

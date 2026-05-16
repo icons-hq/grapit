@@ -251,11 +251,15 @@
       }
     },
     "emailVerification": {
-      "sent": "Verification email sent",
-      "resendCta": "Resend verification email",
+      "sent": "Enter the 6-digit verification code sent to your email",
+      "codeAriaLabel": "6-digit email verification code",
+      "codePlaceholder": "6-digit code",
+      "verifyCta": "Verify",
+      "resendCta": "Resend verification code",
       "resendLoading": "Resending...",
-      "resendSuccess": "Verification email sent again",
-      "expired": "This verification link has expired. Please request a new email.",
+      "resendSuccess": "Verification code sent again",
+      "expired": "This verification code has expired. Please request a new email.",
+      "invalidCode": "The verification code does not match",
       "verified": "Your email has been verified.",
       "throttled": "Please try again shortly.",
       "systemError": "Something went wrong. Please try again."

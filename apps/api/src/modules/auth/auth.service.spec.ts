@@ -7,7 +7,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import * as argon2 from 'argon2';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { AuthService } from './auth.service.js';
 import type { RegisterBody } from './dto/register.dto.js';
 import type { ConsentService } from '../consent/consent.service.js';
@@ -275,7 +275,7 @@ describe('AuthService', () => {
       );
       expect(mockEmailService.sendEmailVerificationEmail).toHaveBeenCalledWith(
         mockRegisterDto.email,
-        expect.stringContaining('/auth/verify-email?token='),
+        expect.stringMatching(/^\d{6}$/),
         'ko',
       );
 
@@ -776,11 +776,18 @@ describe('AuthService', () => {
           locale?: string,
           frontendOrigin?: string,
         ): Promise<{ expiresAt: Date }>;
+        verifyEmailVerificationCode(email: string, code: string): Promise<{ verified: true }>;
         verifyEmailVerificationToken(token: string): Promise<{ verified: true }>;
       };
     }
 
-    it('issues an opaque hashed token that expires in 30 minutes and does not expose the raw token in the return value', async () => {
+    function hashEmailCode(email: string, code: string): string {
+      return createHmac('sha256', 'test-jwt-secret')
+        .update(`signup:${email.toLowerCase()}:${code}`)
+        .digest('hex');
+    }
+
+    it('issues a 6-digit email code that expires in 30 minutes and stores only a keyed hash', async () => {
       vi.useFakeTimers();
       const now = new Date('2026-05-06T05:20:00.000Z');
       vi.setSystemTime(now);
@@ -795,11 +802,17 @@ describe('AuthService', () => {
           tokenHash?: string;
           expiresAt?: Date;
         };
+        const issuedCode = mockEmailService.sendEmailVerificationEmail.mock.calls[0]?.[1] as string;
+
+        expect(issuedCode).toMatch(/^\d{6}$/);
         expect(insertedValues.tokenHash).toMatch(/^[a-f0-9]{64}$/);
+        expect(insertedValues.tokenHash).toBe(hashEmailCode('verify@test.com', issuedCode));
+        expect(insertedValues.tokenHash).not.toBe(issuedCode);
         expect(JSON.stringify(result)).not.toContain(insertedValues.tokenHash);
+        expect(JSON.stringify(result)).not.toContain(issuedCode);
         expect(mockEmailService.sendEmailVerificationEmail).toHaveBeenCalledWith(
           'verify@test.com',
-          expect.stringContaining('http://localhost:3000/auth/verify-email?token='),
+          issuedCode,
           'ko',
         );
       } finally {
@@ -807,7 +820,7 @@ describe('AuthService', () => {
       }
     });
 
-    it('uses the current local frontend origin for verification links in development', async () => {
+    it('does not use frontend origins when issuing email verification codes', async () => {
       mockUserRepo.findByEmail.mockResolvedValue({ ...mockUser, email: 'verify@test.com' });
 
       await authEmailVerificationApi().requestEmailVerification(
@@ -818,52 +831,12 @@ describe('AuthService', () => {
 
       expect(mockEmailService.sendEmailVerificationEmail).toHaveBeenCalledWith(
         'verify@test.com',
-        expect.stringContaining('http://localhost:3001/auth/verify-email?token='),
+        expect.stringMatching(/^\d{6}$/),
         'ko',
       );
     });
 
-    it('ignores untrusted frontend origins when issuing verification links', async () => {
-      mockUserRepo.findByEmail.mockResolvedValue({ ...mockUser, email: 'verify@test.com' });
-
-      await authEmailVerificationApi().requestEmailVerification(
-        'verify@test.com',
-        'ko',
-        'https://evil.example',
-      );
-
-      expect(mockEmailService.sendEmailVerificationEmail).toHaveBeenCalledWith(
-        'verify@test.com',
-        expect.stringContaining('http://localhost:3000/auth/verify-email?token='),
-        'ko',
-      );
-    });
-
-    it('uses configured production origins instead of local frontend origins', async () => {
-      mockConfigService.get.mockImplementation((key: string) => {
-        const config: Record<string, string> = {
-          'auth.jwtSecret': 'test-jwt-secret',
-          FRONTEND_URL: 'https://heygrabit.com',
-          NODE_ENV: 'production',
-        };
-        return config[key];
-      });
-      mockUserRepo.findByEmail.mockResolvedValue({ ...mockUser, email: 'verify@test.com' });
-
-      await authEmailVerificationApi().requestEmailVerification(
-        'verify@test.com',
-        'ko',
-        'http://localhost:3001',
-      );
-
-      expect(mockEmailService.sendEmailVerificationEmail).toHaveBeenCalledWith(
-        'verify@test.com',
-        expect.stringContaining('https://heygrabit.com/auth/verify-email?token='),
-        'ko',
-      );
-    });
-
-    it('resend is callable immediately and creates a newer token for latest-token-wins', async () => {
+    it('resend is callable immediately and creates a newer code for latest-code-wins', async () => {
       mockUserRepo.findByEmail.mockResolvedValue({ ...mockUser, email: 'resend@test.com' });
 
       await authEmailVerificationApi().requestEmailVerification('resend@test.com', 'en');
@@ -871,6 +844,63 @@ describe('AuthService', () => {
 
       expect(mockDb.insert).toHaveBeenCalledTimes(2);
       expect(mockEmailService.sendEmailVerificationEmail).toHaveBeenCalledTimes(2);
+    });
+
+    it('verifies the latest 6-digit email code and marks the user verified', async () => {
+      const email = 'verify@test.com';
+      const code = '123456';
+      const baseRecord = {
+        id: randomUUID(),
+        userId: mockUser.id,
+        email,
+        purpose: 'signup',
+        tokenHash: hashEmailCode(email, code),
+        expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+        consumedAt: null,
+        createdAt: new Date('2026-05-06T05:00:00.000Z'),
+      };
+      const selectWhere = vi.fn().mockResolvedValueOnce([baseRecord]);
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({ where: selectWhere }),
+      });
+
+      await expect(authEmailVerificationApi().verifyEmailVerificationCode(email, code))
+        .resolves.toEqual({ verified: true });
+
+      expect(mockDb.update).toHaveBeenCalledTimes(2);
+    });
+
+    it('rejects invalid, consumed, and expired verification codes with distinct messages', async () => {
+      const email = 'verify@test.com';
+      const code = '123456';
+      const baseRecord = {
+        id: randomUUID(),
+        userId: mockUser.id,
+        email,
+        purpose: 'signup',
+        tokenHash: hashEmailCode(email, code),
+        expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+        consumedAt: null,
+        createdAt: new Date('2026-05-06T05:00:00.000Z'),
+      };
+      const selectWhere = vi
+        .fn()
+        .mockResolvedValueOnce([baseRecord])
+        .mockResolvedValueOnce([{ ...baseRecord, consumedAt: new Date() }])
+        .mockResolvedValueOnce([{ ...baseRecord, expiresAt: new Date(Date.now() - 1000) }]);
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({ where: selectWhere }),
+      });
+
+      await expect(
+        authEmailVerificationApi().verifyEmailVerificationCode(email, '999999'),
+      ).rejects.toThrow(/인증번호가 일치하지 않습니다/);
+      await expect(
+        authEmailVerificationApi().verifyEmailVerificationCode(email, code),
+      ).rejects.toThrow(/이미 사용된 인증번호/);
+      await expect(
+        authEmailVerificationApi().verifyEmailVerificationCode(email, code),
+      ).rejects.toThrow(/인증번호가 만료되었습니다/);
     });
 
     it('rejects consumed, expired, and superseded verification tokens with distinct messages', async () => {
@@ -1058,7 +1088,7 @@ describe('AuthService', () => {
       expect(result.user?.isEmailVerified).toBe(false);
       expect(mockEmailService.sendEmailVerificationEmail).toHaveBeenCalledWith(
         existingUser.email,
-        expect.stringContaining('/auth/verify-email?token='),
+        expect.stringMatching(/^\d{6}$/),
         'ko',
       );
     });
@@ -1122,7 +1152,7 @@ describe('AuthService', () => {
       expect(mockUserRepo.create).toHaveBeenCalled();
       expect(mockEmailService.sendEmailVerificationEmail).toHaveBeenCalledWith(
         'kakao@test.com',
-        expect.stringContaining('/auth/verify-email?token='),
+        expect.stringMatching(/^\d{6}$/),
         'ko',
       );
       expect(mockConsentService.captureConsent).toHaveBeenCalledWith(

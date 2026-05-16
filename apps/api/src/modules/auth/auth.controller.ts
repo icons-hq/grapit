@@ -49,9 +49,15 @@ const emailVerificationRequestSchema = z.object({
   locale: launchLocaleSchema.optional(),
   frontendOrigin: z.string().url().max(200).optional(),
 });
-const emailVerificationTokenSchema = z.object({
-  token: z.string().min(32),
-});
+const emailVerificationVerifySchema = z.union([
+  z.object({
+    email: z.string().email(),
+    code: z.string().regex(/^\d{6}$/, '인증번호는 6자리입니다'),
+  }),
+  z.object({
+    token: z.string().min(32),
+  }),
+]);
 
 @Controller('auth')
 export class AuthController {
@@ -183,7 +189,7 @@ export class AuthController {
       dto.frontendOrigin,
     );
     return {
-      message: '인증 메일을 발송했습니다',
+      message: '인증번호를 이메일로 발송했습니다',
       expiresAt: result.expiresAt,
     };
   }
@@ -202,19 +208,24 @@ export class AuthController {
       dto.frontendOrigin,
     );
     return {
-      message: '인증 메일을 다시 보냈습니다',
+      message: '인증번호를 다시 보냈습니다',
       expiresAt: result.expiresAt,
     };
   }
 
   @Public()
   @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { limit: 10, ttl: 900000 } })
   @Post('email-verification/verify')
   async verifyEmailVerification(
-    @Body(new ZodValidationPipe(emailVerificationTokenSchema))
-    dto: z.infer<typeof emailVerificationTokenSchema>,
+    @Body(new ZodValidationPipe(emailVerificationVerifySchema))
+    dto: z.infer<typeof emailVerificationVerifySchema>,
   ) {
-    return this.authService.verifyEmailVerificationToken(dto.token);
+    if ('token' in dto) {
+      return this.authService.verifyEmailVerificationToken(dto.token);
+    }
+
+    return this.authService.verifyEmailVerificationCode(dto.email, dto.code);
   }
 
   // -- Social OAuth endpoints --

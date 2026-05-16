@@ -251,11 +251,15 @@
       }
     },
     "emailVerification": {
-      "sent": "인증 메일을 발송했습니다",
-      "resendCta": "인증 메일 다시 보내기",
+      "sent": "이메일로 받은 6자리 인증번호를 입력해주세요",
+      "codeAriaLabel": "이메일 인증번호 6자리",
+      "codePlaceholder": "인증번호 6자리",
+      "verifyCta": "확인",
+      "resendCta": "인증번호 다시 보내기",
       "resendLoading": "다시 보내는 중...",
-      "resendSuccess": "인증 메일을 다시 보냈습니다",
-      "expired": "인증 링크가 만료되었습니다. 새 인증 메일을 요청해주세요.",
+      "resendSuccess": "인증번호를 다시 보냈습니다",
+      "expired": "인증번호가 만료되었습니다. 새 인증 메일을 요청해주세요.",
+      "invalidCode": "인증번호가 일치하지 않습니다",
       "verified": "이메일 인증이 완료되었습니다.",
       "throttled": "잠시 후 다시 시도해주세요.",
       "systemError": "일시적인 오류가 발생했습니다. 다시 시도해주세요."

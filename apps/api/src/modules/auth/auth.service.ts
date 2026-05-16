@@ -4,12 +4,13 @@ import {
   ConflictException,
   UnauthorizedException,
   GoneException,
+  BadRequestException,
   Logger,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as argon2 from 'argon2';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomInt, randomUUID } from 'node:crypto';
 import { eq, and, gt, isNull } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import * as schema from '../../database/schema/index.js';
@@ -70,6 +71,7 @@ interface RegistrationPendingResult {
 
 const EMAIL_VERIFICATION_EXPIRY_MS = 30 * 60 * 1000;
 const EMAIL_VERIFICATION_PURPOSE = 'signup';
+const EMAIL_VERIFICATION_CODE_DIGITS = 6;
 const REFRESH_FAMILY_LIMIT_NOTICE = '다른 기기에서 로그인되어 가장 오래된 세션이 종료되었습니다.';
 const DEFAULT_FRONTEND_ORIGIN = 'http://localhost:3000';
 const LOCAL_FRONTEND_HOSTNAMES = new Set([
@@ -168,7 +170,6 @@ export class AuthService {
       user.id,
       user.email,
       dto.locale,
-      dto.frontendOrigin,
     );
 
     return {
@@ -336,17 +337,66 @@ export class AuthService {
   async requestEmailVerification(
     email: string,
     locale: string = 'ko',
-    frontendOrigin?: string,
+    _frontendOrigin?: string,
   ): Promise<{ expiresAt: Date }> {
-    return this.issueEmailVerification(email, locale, frontendOrigin);
+    return this.issueEmailVerification(email, locale);
   }
 
   async resendEmailVerification(
     email: string,
     locale: string = 'ko',
-    frontendOrigin?: string,
+    _frontendOrigin?: string,
   ): Promise<{ expiresAt: Date }> {
-    return this.issueEmailVerification(email, locale, frontendOrigin);
+    return this.issueEmailVerification(email, locale);
+  }
+
+  async verifyEmailVerificationCode(
+    email: string,
+    code: string,
+  ): Promise<{ verified: true }> {
+    const latestRows = await this.db
+      .select()
+      .from(schema.emailVerificationTokens)
+      .where(
+        and(
+          eq(schema.emailVerificationTokens.email, email),
+          eq(schema.emailVerificationTokens.purpose, EMAIL_VERIFICATION_PURPOSE),
+        ),
+      );
+    const latestRecord = [...latestRows].sort(
+      (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+    )[0];
+
+    if (!latestRecord) {
+      throw new BadRequestException('인증번호가 일치하지 않습니다');
+    }
+
+    if (latestRecord.consumedAt) {
+      throw new GoneException('이미 사용된 인증번호입니다');
+    }
+
+    if (latestRecord.expiresAt < new Date()) {
+      throw new GoneException('인증번호가 만료되었습니다. 새 인증 메일을 요청해주세요.');
+    }
+
+    const codeHash = this.hashEmailVerificationCode(email, code);
+    if (latestRecord.tokenHash !== codeHash) {
+      throw new BadRequestException('인증번호가 일치하지 않습니다');
+    }
+
+    await this.db
+      .update(schema.emailVerificationTokens)
+      .set({ consumedAt: new Date() })
+      .where(eq(schema.emailVerificationTokens.id, latestRecord.id));
+
+    if (latestRecord.userId) {
+      await this.db
+        .update(schema.users)
+        .set({ isEmailVerified: true, updatedAt: new Date() })
+        .where(eq(schema.users.id, latestRecord.userId));
+    }
+
+    return { verified: true };
   }
 
   async verifyEmailVerificationToken(token: string): Promise<{ verified: true }> {
@@ -691,7 +741,6 @@ export class AuthService {
       user.id,
       user.email,
       'ko',
-      dto.frontendOrigin,
     );
 
     this.logger.log(`completeSocialRegistration: completed for userId=${user.id}`);
@@ -720,7 +769,6 @@ export class AuthService {
   private async issueEmailVerification(
     email: string,
     locale: string,
-    frontendOrigin?: string,
   ): Promise<{ expiresAt: Date }> {
     const user = await this.userRepository.findByEmail(email);
     const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_EXPIRY_MS);
@@ -729,18 +777,17 @@ export class AuthService {
       return { expiresAt };
     }
 
-    return this.issueEmailVerificationForUser(user.id, email, locale, frontendOrigin);
+    return this.issueEmailVerificationForUser(user.id, email, locale);
   }
 
   private async issueEmailVerificationForUser(
     userId: string,
     email: string,
     locale: string,
-    frontendOrigin?: string,
   ): Promise<{ expiresAt: Date }> {
     const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_EXPIRY_MS);
-    const rawToken = randomBytes(32).toString('hex');
-    const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+    const verificationCode = this.generateEmailVerificationCode();
+    const tokenHash = this.hashEmailVerificationCode(email, verificationCode);
 
     await this.db.insert(schema.emailVerificationTokens).values({
       userId,
@@ -750,11 +797,26 @@ export class AuthService {
       expiresAt,
     });
 
-    const frontendUrl = this.resolveFrontendOrigin(frontendOrigin);
-    const verificationLink = `${frontendUrl}/auth/verify-email?token=${rawToken}`;
-    await this.emailService.sendEmailVerificationEmail(email, verificationLink, locale);
+    await this.emailService.sendEmailVerificationEmail(email, verificationCode, locale);
 
     return { expiresAt };
+  }
+
+  private generateEmailVerificationCode(): string {
+    return randomInt(0, 10 ** EMAIL_VERIFICATION_CODE_DIGITS)
+      .toString()
+      .padStart(EMAIL_VERIFICATION_CODE_DIGITS, '0');
+  }
+
+  private hashEmailVerificationCode(email: string, code: string): string {
+    const secret =
+      this.configService.get<string>('auth.jwtSecret') ??
+      this.configService.get<string>('JWT_SECRET') ??
+      'dev-email-verification-code-secret';
+
+    return createHmac('sha256', secret)
+      .update(`${EMAIL_VERIFICATION_PURPOSE}:${email.toLowerCase()}:${code}`)
+      .digest('hex');
   }
 
   private resolveFrontendOrigin(frontendOrigin?: string): string {

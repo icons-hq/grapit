@@ -164,10 +164,14 @@ describe('launch copy key manifest', () => {
   it('preserves the critical auth/email/OTP/SMS launch copy keys', () => {
     expect(LAUNCH_COPY_KEYS['auth.emailVerification'].ko).toEqual([
       'sent',
+      'codeAriaLabel',
+      'codePlaceholder',
+      'verifyCta',
       'resendCta',
       'resendLoading',
       'resendSuccess',
       'expired',
+      'invalidCode',
       'verified',
       'throttled',
       'systemError',
