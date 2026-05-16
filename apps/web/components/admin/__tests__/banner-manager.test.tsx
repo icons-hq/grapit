@@ -117,6 +117,67 @@ describe('BannerForm', () => {
     expect(screen.getByLabelText('순서')).toHaveValue(4);
   });
 
+  it('shows mobile banner size guidance for mobile targets', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <BannerForm
+        onSubmit={vi.fn()}
+        onCancel={vi.fn()}
+        isSubmitting={false}
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    await chooseSelectOption(user, '기기 대상', '모바일');
+
+    expect(screen.getByText('모바일 1290 x 600px 권장')).toBeInTheDocument();
+    expect(
+      screen.getByText('모바일 홈에서는 모바일 또는 전체 배너만 표시됩니다.'),
+    ).toBeInTheDocument();
+  });
+
+  it('preserves expanded edit fields when submitting unchanged data', async () => {
+    const user = userEvent.setup();
+    const onSubmit = vi.fn().mockResolvedValue(undefined);
+
+    render(
+      <BannerForm
+        initialData={{
+          imageUrl: 'https://r2.example.com/banners/mobile.jpg',
+          linkUrl: 'https://www.heygrabit.com/performances/mobile',
+          placement: 'home_secondary',
+          deviceTarget: 'mobile',
+          startsAt: '2026-05-15T00:00:00.000Z',
+          endsAt: '2026-05-31T23:59:59.000Z',
+          status: 'scheduled',
+          sortOrder: 7,
+          isActive: true,
+        }}
+        onSubmit={onSubmit}
+        onCancel={vi.fn()}
+        isSubmitting={false}
+      />,
+      { wrapper: createWrapper() },
+    );
+
+    await user.click(screen.getByRole('button', { name: '저장' }));
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({
+        imageUrl: 'https://r2.example.com/banners/mobile.jpg',
+        linkUrl: 'https://www.heygrabit.com/performances/mobile',
+        placement: 'home_secondary',
+        deviceTarget: 'mobile',
+        startsAt: expect.any(String),
+        endsAt: expect.any(String),
+        status: 'scheduled',
+        sortOrder: 7,
+        isActive: true,
+      }),
+    );
+  });
+
   it('keeps image upload and submits expanded banner fields', async () => {
     const user = userEvent.setup();
     const onSubmit = vi.fn().mockResolvedValue(undefined);

@@ -7,7 +7,7 @@ export function BannerSkeleton() {
       aria-busy="true"
       aria-label="콘텐츠를 불러오는 중입니다"
     >
-      <Skeleton className="h-[188px] w-full rounded-lg md:h-[400px] md:rounded-none" />
+      <Skeleton className="aspect-[1290/600] w-full rounded-lg md:aspect-auto md:h-[400px] md:rounded-none" />
     </div>
   );
 }

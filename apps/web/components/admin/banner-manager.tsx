@@ -97,6 +97,11 @@ export function BannerForm({
   );
   const [sortOrder, setSortOrder] = useState(initialData?.sortOrder ?? 0);
   const presignedUpload = usePresignedUpload();
+  const isMobileTarget = deviceTarget === 'mobile';
+  const uploadRatioClass = isMobileTarget ? 'aspect-[1290/600]' : 'aspect-video';
+  const uploadGuidance = isMobileTarget
+    ? '모바일 1290 x 600px 권장'
+    : '데스크톱 16:9 비율 권장';
 
   const handleImageUpload = useCallback(
     async (file: File) => {
@@ -153,7 +158,7 @@ export function BannerForm({
           <img
             src={imageUrl}
             alt="배너 미리보기"
-            className="aspect-video w-full rounded-lg object-cover"
+            className={`${uploadRatioClass} w-full rounded-lg object-cover`}
           />
           <Button
             type="button"
@@ -169,14 +174,14 @@ export function BannerForm({
         </div>
       ) : (
         <div
-          className="flex aspect-video cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 bg-gray-50 transition-colors hover:border-primary hover:bg-primary/5"
+          className={`flex ${uploadRatioClass} cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-gray-300 bg-gray-50 transition-colors hover:border-primary hover:bg-primary/5`}
           onClick={() =>
             document.getElementById('banner-image-input')?.click()
           }
         >
           <Upload className="mb-2 h-8 w-8 text-gray-400" />
           <p className="text-sm text-gray-500">배너 이미지 업로드</p>
-          <p className="mt-1 text-xs text-gray-400">16:9 비율 권장</p>
+          <p className="mt-1 text-xs text-gray-400">{uploadGuidance}</p>
         </div>
       )}
       <input
@@ -228,6 +233,13 @@ export function BannerForm({
               ))}
             </SelectContent>
           </Select>
+          <p className="mt-1 text-xs text-gray-500">
+            {deviceTarget === 'mobile'
+              ? '모바일 홈에서는 모바일 또는 전체 배너만 표시됩니다.'
+              : deviceTarget === 'desktop'
+                ? '데스크톱 홈에서는 데스크톱 또는 전체 배너만 표시됩니다.'
+                : '전체 배너는 모바일과 데스크톱에 함께 표시됩니다.'}
+          </p>
         </div>
 
         <div>

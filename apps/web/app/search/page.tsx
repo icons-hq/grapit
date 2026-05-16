@@ -1,8 +1,11 @@
 'use client';
 
+import { useEffect, useState, type FormEvent } from 'react';
 import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { useLocale } from 'next-intl';
 import { SearchIcon } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { GenreChip } from '@/components/performance/genre-chip';
 import { PerformanceGrid } from '@/components/performance/performance-grid';
@@ -27,8 +30,13 @@ export default function SearchPage() {
   const q = searchParams.get('q') ?? '';
   const genre = searchParams.get('genre') ?? '';
   const ended = searchParams.get('ended') === 'true';
+  const [searchValue, setSearchValue] = useState(q);
 
   const { data, isLoading, isError } = useSearch();
+
+  useEffect(() => {
+    setSearchValue(q);
+  }, [q]);
 
   function updateParam(key: string, value: string) {
     const params = new URLSearchParams(searchParams.toString());
@@ -43,12 +51,51 @@ export default function SearchPage() {
     router.replace(`${pathname}?${params.toString()}`);
   }
 
+  function handleSearchSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const nextQuery = searchValue.trim();
+    if (!nextQuery) return;
+
+    const params = new URLSearchParams(searchParams.toString());
+    params.set('q', nextQuery);
+    params.delete('page');
+    router.replace(`${pathname}?${params.toString()}`);
+  }
+
+  const searchForm = (
+    <form
+      onSubmit={handleSearchSubmit}
+      className="flex gap-2 rounded-xl border border-gray-200 bg-white p-2 shadow-sm"
+      role="search"
+    >
+      <div className="relative min-w-0 flex-1">
+        <SearchIcon
+          className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-primary"
+          aria-hidden="true"
+        />
+        <Input
+          type="search"
+          role="searchbox"
+          aria-label={copy.nav.searchAriaLabel}
+          placeholder={copy.nav.searchPlaceholder}
+          value={searchValue}
+          onChange={(event) => setSearchValue(event.target.value)}
+          className="h-11 rounded-lg border-0 bg-gray-50 pl-10 pr-3 text-sm font-semibold shadow-none focus-visible:ring-2"
+        />
+      </div>
+      <Button type="submit" className="h-11 px-4">
+        {copy.nav.search}
+      </Button>
+    </form>
+  );
+
   // No query -- prompt to search
   if (!q) {
     return (
-      <main className="mx-auto w-full max-w-[1200px] px-4 py-12 md:px-6 md:py-16">
-        <div className="flex flex-col items-center">
-          <SearchIcon className="h-12 w-12 text-gray-400" />
+      <main className="mx-auto w-full max-w-[1200px] px-4 py-6 md:px-6 md:py-8">
+        {searchForm}
+        <div className="flex flex-col items-center py-12 md:py-16">
+          <SearchIcon className="h-12 w-12 text-gray-400" aria-hidden="true" />
           <h1 className="mt-4 text-xl font-semibold text-gray-900">
             {copy.search.promptTitle}
           </h1>
@@ -60,8 +107,10 @@ export default function SearchPage() {
 
   return (
     <main className="mx-auto w-full max-w-[1200px] px-4 py-6 md:px-6 md:py-8">
+      {searchForm}
+
       {/* Heading */}
-      <h1 className="text-xl font-semibold text-gray-900">
+      <h1 className="mt-6 text-xl font-semibold text-gray-900">
         {copy.search.resultTitle.replace('{query}', q)}
       </h1>
       <p className="mt-1 h-5 text-sm text-gray-600">

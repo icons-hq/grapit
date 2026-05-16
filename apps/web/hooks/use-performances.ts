@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'next/navigation';
 import { useLocale } from 'next-intl';
@@ -9,6 +10,34 @@ import type {
   PerformanceCardData,
   Banner,
 } from '@grabit/shared';
+
+type HomeBannerDeviceTarget = 'mobile' | 'desktop';
+
+const DESKTOP_BANNER_QUERY = '(min-width: 768px)';
+
+function subscribeBannerTarget(callback: () => void): () => void {
+  if (typeof window === 'undefined') return () => {};
+  const mediaQueryList = window.matchMedia(DESKTOP_BANNER_QUERY);
+  mediaQueryList.addEventListener('change', callback);
+  return () => mediaQueryList.removeEventListener('change', callback);
+}
+
+function getBannerTargetSnapshot(): HomeBannerDeviceTarget | null {
+  if (typeof window === 'undefined') return null;
+  return window.matchMedia(DESKTOP_BANNER_QUERY).matches ? 'desktop' : 'mobile';
+}
+
+function getBannerTargetServerSnapshot(): HomeBannerDeviceTarget | null {
+  return null;
+}
+
+function useHomeBannerDeviceTarget(): HomeBannerDeviceTarget | null {
+  return useSyncExternalStore(
+    subscribeBannerTarget,
+    getBannerTargetSnapshot,
+    getBannerTargetServerSnapshot,
+  );
+}
 
 export function usePerformances(genre: string) {
   const searchParams = useSearchParams();
@@ -47,9 +76,18 @@ export function usePerformanceDetail(id: string) {
 }
 
 export function useHomeBanners() {
+  const target = useHomeBannerDeviceTarget();
+
   return useQuery({
-    queryKey: ['home', 'banners'],
-    queryFn: () => apiClient.get<Banner[]>('/api/v1/home/banners'),
+    queryKey: ['home', 'banners', target],
+    enabled: target !== null,
+    queryFn: async () => {
+      const banners = await apiClient.get<Banner[]>('/api/v1/home/banners');
+      return banners.filter(
+        (banner) =>
+          banner.deviceTarget === 'all' || banner.deviceTarget === target,
+      );
+    },
   });
 }
 
