@@ -62,6 +62,7 @@ export function PerformanceCard({
             sizes="(max-width: 768px) 50vw, 25vw"
             quality={75}
             priority={priority}
+            loading={priority ? 'eager' : undefined}
           />
         ) : (
           <div className="flex h-full items-center justify-center">

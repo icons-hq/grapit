@@ -52,6 +52,7 @@ export function BannerCarousel({
                   fill
                   className="object-cover"
                   priority
+                  loading="eager"
                 />
               </a>
             ) : (
@@ -62,6 +63,7 @@ export function BannerCarousel({
                   fill
                   className="object-cover"
                   priority
+                  loading="eager"
                 />
               </div>
             )}
