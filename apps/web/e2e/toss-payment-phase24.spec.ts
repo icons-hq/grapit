@@ -102,6 +102,8 @@ async function mockAuthenticatedSession(page: import('@playwright/test').Page) {
             name: 'Phase24 Tester',
             role: 'user',
             phone: '010-1234-5678',
+            isEmailVerified: true,
+            isPhoneVerified: true,
           }),
           {
             status: 200,

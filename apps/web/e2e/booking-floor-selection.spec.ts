@@ -154,6 +154,8 @@ async function mockAuthenticatedSession(page: Page) {
         name: 'Floor Browser Tester',
         role: 'user',
         phone: '010-1234-5678',
+        isEmailVerified: true,
+        isPhoneVerified: true,
       }),
     });
   });
