@@ -39,6 +39,10 @@ vi.mock('@/lib/api-client', () => ({
   },
 }));
 
+vi.mock('@/lib/frontend-origin', () => ({
+  getFrontendOrigin: () => 'https://heygrabit.com',
+}));
+
 describe('ResetPasswordPage', () => {
   beforeEach(() => {
     mockSearchParams.current = new URLSearchParams();
@@ -85,7 +89,10 @@ describe('ResetPasswordPage', () => {
         expect.objectContaining({
           method: 'POST',
           credentials: 'include',
-          body: JSON.stringify({ email: 'member@example.com' }),
+          body: JSON.stringify({
+            email: 'member@example.com',
+            frontendOrigin: 'https://heygrabit.com',
+          }),
         }),
       );
       expect((apiClient.post as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();

@@ -9,6 +9,7 @@ import type {
   RegisterResponse,
 } from '@grabit/shared';
 import { apiClient } from '@/lib/api-client';
+import { getFrontendOrigin } from '@/lib/frontend-origin';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { StepIndicator } from '@/components/auth/step-indicator';
 import { SignupStep1 } from '@/components/auth/signup-step1';
@@ -65,6 +66,7 @@ export function SignupForm() {
         phone: data.phone,
         phoneVerificationToken: data.phoneVerificationToken,
         locale: authCopy.locale,
+        frontendOrigin: getFrontendOrigin(),
       };
 
       const res = await apiClient.post<RegisterResponse>(

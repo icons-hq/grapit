@@ -26,6 +26,7 @@ vi.mock('next-intl', () => ({
 vi.mock('@/lib/api-client', () => ({
   apiClient: {
     post: vi.fn(),
+    get: vi.fn(),
   },
   ApiClientError: class ApiClientError extends Error {
     statusCode: number;
@@ -35,6 +36,10 @@ vi.mock('@/lib/api-client', () => ({
       this.statusCode = statusCode;
     }
   },
+}));
+
+vi.mock('@/lib/frontend-origin', () => ({
+  getFrontendOrigin: () => 'http://localhost:3001',
 }));
 
 const messageFiles = {
@@ -194,13 +199,15 @@ describe('EmailVerificationStatus', () => {
     vi.clearAllMocks();
   });
 
-  it('shows sent state with resend action', () => {
+  it('shows sent state with resend action without auto-requesting email', async () => {
+    const { apiClient } = await import('@/lib/api-client');
     render(<EmailVerificationStatus {...defaultProps} initialState="sent" />);
 
     expect(screen.getByText('인증 메일을 발송했습니다')).toBeInTheDocument();
     expect(
       screen.getByRole('button', { name: '인증 메일 다시 보내기' }),
     ).toBeInTheDocument();
+    expect(apiClient.post).not.toHaveBeenCalled();
   });
 
   it('announces resend loading and success states with aria-live', async () => {
@@ -217,6 +224,15 @@ describe('EmailVerificationStatus', () => {
 
     await user.click(screen.getByRole('button', { name: '인증 메일 다시 보내기' }));
     expect(screen.getByRole('status')).toHaveTextContent('다시 보내는 중...');
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/api/v1/auth/email-verification/resend',
+      {
+        email: 'fan@test.com',
+        locale: 'ko',
+        frontendOrigin: 'http://localhost:3001',
+      },
+      { showErrorToast: false },
+    );
 
     resolveResend();
 
@@ -272,6 +288,27 @@ describe('EmailVerificationStatus', () => {
         '일시적인 오류가 발생했습니다. 다시 시도해주세요.',
       );
       expect(screen.queryByText('raw smtp failure text')).not.toBeInTheDocument();
+    });
+  });
+
+  it('requests a fresh email on mount only when explicitly asked', async () => {
+    const { apiClient } = await import('@/lib/api-client');
+    (apiClient.post as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      expiresAt: '2026-05-06T07:30:00Z',
+    });
+
+    render(<EmailVerificationStatus {...defaultProps} requestOnMount />);
+
+    await waitFor(() => {
+      expect(apiClient.post).toHaveBeenCalledWith(
+        '/api/v1/auth/email-verification/request',
+        {
+          email: 'fan@test.com',
+          locale: 'ko',
+          frontendOrigin: 'http://localhost:3001',
+        },
+        { showErrorToast: false },
+      );
     });
   });
 

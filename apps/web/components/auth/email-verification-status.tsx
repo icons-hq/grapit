@@ -5,6 +5,7 @@ import { CheckCircle2, Loader2, MailWarning } from 'lucide-react';
 import { useLocale } from 'next-intl';
 import type { UserProfile } from '@grabit/shared';
 import { apiClient, ApiClientError } from '@/lib/api-client';
+import { getFrontendOrigin } from '@/lib/frontend-origin';
 import { Button } from '@/components/ui/button';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { getAuthLaunchCopy, resolveAuthLocale } from './auth-launch-copy';
@@ -92,7 +93,7 @@ export function EmailVerificationStatus({
         try {
           await apiClient.post(
             '/api/v1/auth/email-verification/request',
-            { email, locale: activeLocale },
+            { email, locale: activeLocale, frontendOrigin: getFrontendOrigin() },
             { showErrorToast: false },
           );
           if (!cancelled) {
@@ -118,7 +119,7 @@ export function EmailVerificationStatus({
     try {
       await apiClient.post(
         '/api/v1/auth/email-verification/resend',
-        { email, locale: activeLocale },
+        { email, locale: activeLocale, frontendOrigin: getFrontendOrigin() },
         { showErrorToast: false },
       );
       setState('resendSuccess');

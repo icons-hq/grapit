@@ -40,6 +40,10 @@ vi.mock('@/lib/api-client', () => ({
   },
 }));
 
+vi.mock('@/lib/frontend-origin', () => ({
+  getFrontendOrigin: () => 'http://localhost:3001',
+}));
+
 vi.mock('@/stores/use-auth-store', () => ({
   useAuthStore: (
     selector: (state: {
@@ -151,6 +155,7 @@ describe('AuthCallbackPage email verification pending states', () => {
       expect.objectContaining({
         registrationToken: 'registration-token',
         phoneVerificationToken: 'signed-social-phone-token',
+        frontendOrigin: 'http://localhost:3001',
       }),
     );
     expect(mocks.setAuth).not.toHaveBeenCalled();

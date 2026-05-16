@@ -71,6 +71,14 @@ interface RegistrationPendingResult {
 const EMAIL_VERIFICATION_EXPIRY_MS = 30 * 60 * 1000;
 const EMAIL_VERIFICATION_PURPOSE = 'signup';
 const REFRESH_FAMILY_LIMIT_NOTICE = '다른 기기에서 로그인되어 가장 오래된 세션이 종료되었습니다.';
+const DEFAULT_FRONTEND_ORIGIN = 'http://localhost:3000';
+const LOCAL_FRONTEND_HOSTNAMES = new Set([
+  'localhost',
+  '127.0.0.1',
+  '0.0.0.0',
+  '::1',
+  '[::1]',
+]);
 
 @Injectable()
 export class AuthService {
@@ -160,6 +168,7 @@ export class AuthService {
       user.id,
       user.email,
       dto.locale,
+      dto.frontendOrigin,
     );
 
     return {
@@ -296,7 +305,7 @@ export class AuthService {
       .where(eq(schema.refreshTokens.tokenHash, tokenHash));
   }
 
-  async requestPasswordReset(email: string): Promise<void> {
+  async requestPasswordReset(email: string, frontendOrigin?: string): Promise<void> {
     const user = await this.userRepository.findByEmail(email);
 
     // 소셜 전용 계정(passwordHash === null)은 리셋 링크를 발송하지 않는다.
@@ -318,7 +327,7 @@ export class AuthService {
     );
 
     // Dispatch reset link via EmailService (dev: console.log mock, prod: Resend).
-    const frontendUrl = this.configService.get<string>('FRONTEND_URL');
+    const frontendUrl = this.resolveFrontendOrigin(frontendOrigin);
     const resetLink = `${frontendUrl}/auth/reset-password?token=${resetToken}`;
 
     await this.emailService.sendPasswordResetEmail(email, resetLink);
@@ -327,15 +336,17 @@ export class AuthService {
   async requestEmailVerification(
     email: string,
     locale: string = 'ko',
+    frontendOrigin?: string,
   ): Promise<{ expiresAt: Date }> {
-    return this.issueEmailVerification(email, locale);
+    return this.issueEmailVerification(email, locale, frontendOrigin);
   }
 
   async resendEmailVerification(
     email: string,
     locale: string = 'ko',
+    frontendOrigin?: string,
   ): Promise<{ expiresAt: Date }> {
-    return this.issueEmailVerification(email, locale);
+    return this.issueEmailVerification(email, locale, frontendOrigin);
   }
 
   async verifyEmailVerificationToken(token: string): Promise<{ verified: true }> {
@@ -680,6 +691,7 @@ export class AuthService {
       user.id,
       user.email,
       'ko',
+      dto.frontendOrigin,
     );
 
     this.logger.log(`completeSocialRegistration: completed for userId=${user.id}`);
@@ -708,6 +720,7 @@ export class AuthService {
   private async issueEmailVerification(
     email: string,
     locale: string,
+    frontendOrigin?: string,
   ): Promise<{ expiresAt: Date }> {
     const user = await this.userRepository.findByEmail(email);
     const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_EXPIRY_MS);
@@ -716,13 +729,14 @@ export class AuthService {
       return { expiresAt };
     }
 
-    return this.issueEmailVerificationForUser(user.id, email, locale);
+    return this.issueEmailVerificationForUser(user.id, email, locale, frontendOrigin);
   }
 
   private async issueEmailVerificationForUser(
     userId: string,
     email: string,
     locale: string,
+    frontendOrigin?: string,
   ): Promise<{ expiresAt: Date }> {
     const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_EXPIRY_MS);
     const rawToken = randomBytes(32).toString('hex');
@@ -736,11 +750,65 @@ export class AuthService {
       expiresAt,
     });
 
-    const frontendUrl = this.configService.get<string>('FRONTEND_URL') ?? 'http://localhost:3000';
+    const frontendUrl = this.resolveFrontendOrigin(frontendOrigin);
     const verificationLink = `${frontendUrl}/auth/verify-email?token=${rawToken}`;
     await this.emailService.sendEmailVerificationEmail(email, verificationLink, locale);
 
     return { expiresAt };
+  }
+
+  private resolveFrontendOrigin(frontendOrigin?: string): string {
+    const configuredOrigins = this.getConfiguredFrontendOrigins();
+    const fallbackOrigin = configuredOrigins[0] ?? DEFAULT_FRONTEND_ORIGIN;
+    const candidateOrigin = this.normalizeFrontendOrigin(frontendOrigin);
+
+    if (!candidateOrigin) {
+      return fallbackOrigin;
+    }
+
+    const nodeEnv = this.configService.get<string>('NODE_ENV') ?? process.env.NODE_ENV;
+    if (nodeEnv === 'production') {
+      return configuredOrigins.includes(candidateOrigin)
+        ? candidateOrigin
+        : fallbackOrigin;
+    }
+
+    if (
+      configuredOrigins.includes(candidateOrigin) ||
+      this.isLocalFrontendOrigin(candidateOrigin)
+    ) {
+      return candidateOrigin;
+    }
+
+    return fallbackOrigin;
+  }
+
+  private getConfiguredFrontendOrigins(): string[] {
+    const rawFrontend = this.configService.get<string>('FRONTEND_URL')?.trim() ?? '';
+    const origins = rawFrontend
+      .split(',')
+      .map((origin) => this.normalizeFrontendOrigin(origin.trim()))
+      .filter((origin): origin is string => Boolean(origin));
+
+    return origins.length > 0 ? origins : [DEFAULT_FRONTEND_ORIGIN];
+  }
+
+  private normalizeFrontendOrigin(value?: string | null): string | null {
+    if (!value) return null;
+
+    try {
+      return new URL(value).origin;
+    } catch {
+      return null;
+    }
+  }
+
+  private isLocalFrontendOrigin(origin: string): boolean {
+    try {
+      return LOCAL_FRONTEND_HOSTNAMES.has(new URL(origin).hostname);
+    } catch {
+      return false;
+    }
   }
 
   private async generateTokenPair(

@@ -12,6 +12,7 @@ import type {
   RegistrationPendingResponse,
 } from '@grabit/shared';
 import { apiClient } from '@/lib/api-client';
+import { getFrontendOrigin } from '@/lib/frontend-origin';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { StepIndicator } from '@/components/auth/step-indicator';
 import { SignupStep2 } from '@/components/auth/signup-step2';
@@ -149,6 +150,7 @@ function CallbackContent() {
         birthDate: `${data.birthYear}-${data.birthMonth}-${data.birthDay}`,
         phone: data.phone,
         phoneVerificationToken: data.phoneVerificationToken,
+        frontendOrigin: getFrontendOrigin(),
       };
 
       const res = await apiClient.post<AuthResponse | RegistrationPendingResponse>(

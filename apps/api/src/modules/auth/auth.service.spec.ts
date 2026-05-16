@@ -749,13 +749,33 @@ describe('AuthService', () => {
 
       expect(mockJwtService.signAsync).toHaveBeenCalled();
     });
+
+    it('uses the provided local frontend origin for password reset links in development', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue({ ...mockUser, email: 'reset@test.com' });
+      mockJwtService.signAsync.mockResolvedValue('reset-token');
+
+      await authService.requestPasswordReset('reset@test.com', 'http://localhost:3001');
+
+      expect(mockEmailService.sendPasswordResetEmail).toHaveBeenCalledWith(
+        'reset@test.com',
+        'http://localhost:3001/auth/reset-password?token=reset-token',
+      );
+    });
   });
 
   describe('email verification', () => {
     function authEmailVerificationApi() {
       return authService as unknown as {
-        requestEmailVerification(email: string, locale?: string): Promise<{ expiresAt: Date }>;
-        resendEmailVerification(email: string, locale?: string): Promise<{ expiresAt: Date }>;
+        requestEmailVerification(
+          email: string,
+          locale?: string,
+          frontendOrigin?: string,
+        ): Promise<{ expiresAt: Date }>;
+        resendEmailVerification(
+          email: string,
+          locale?: string,
+          frontendOrigin?: string,
+        ): Promise<{ expiresAt: Date }>;
         verifyEmailVerificationToken(token: string): Promise<{ verified: true }>;
       };
     }
@@ -779,12 +799,68 @@ describe('AuthService', () => {
         expect(JSON.stringify(result)).not.toContain(insertedValues.tokenHash);
         expect(mockEmailService.sendEmailVerificationEmail).toHaveBeenCalledWith(
           'verify@test.com',
-          expect.stringContaining('/auth/verify-email?token='),
+          expect.stringContaining('http://localhost:3000/auth/verify-email?token='),
           'ko',
         );
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    it('uses the current local frontend origin for verification links in development', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue({ ...mockUser, email: 'verify@test.com' });
+
+      await authEmailVerificationApi().requestEmailVerification(
+        'verify@test.com',
+        'ko',
+        'http://localhost:3001',
+      );
+
+      expect(mockEmailService.sendEmailVerificationEmail).toHaveBeenCalledWith(
+        'verify@test.com',
+        expect.stringContaining('http://localhost:3001/auth/verify-email?token='),
+        'ko',
+      );
+    });
+
+    it('ignores untrusted frontend origins when issuing verification links', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue({ ...mockUser, email: 'verify@test.com' });
+
+      await authEmailVerificationApi().requestEmailVerification(
+        'verify@test.com',
+        'ko',
+        'https://evil.example',
+      );
+
+      expect(mockEmailService.sendEmailVerificationEmail).toHaveBeenCalledWith(
+        'verify@test.com',
+        expect.stringContaining('http://localhost:3000/auth/verify-email?token='),
+        'ko',
+      );
+    });
+
+    it('uses configured production origins instead of local frontend origins', async () => {
+      mockConfigService.get.mockImplementation((key: string) => {
+        const config: Record<string, string> = {
+          'auth.jwtSecret': 'test-jwt-secret',
+          FRONTEND_URL: 'https://heygrabit.com',
+          NODE_ENV: 'production',
+        };
+        return config[key];
+      });
+      mockUserRepo.findByEmail.mockResolvedValue({ ...mockUser, email: 'verify@test.com' });
+
+      await authEmailVerificationApi().requestEmailVerification(
+        'verify@test.com',
+        'ko',
+        'http://localhost:3001',
+      );
+
+      expect(mockEmailService.sendEmailVerificationEmail).toHaveBeenCalledWith(
+        'verify@test.com',
+        expect.stringContaining('https://heygrabit.com/auth/verify-email?token='),
+        'ko',
+      );
     });
 
     it('resend is callable immediately and creates a newer token for latest-token-wins', async () => {

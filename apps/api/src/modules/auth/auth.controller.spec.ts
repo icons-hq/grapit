@@ -454,10 +454,22 @@ describe('AuthController', () => {
       });
 
       const result = await (controller as unknown as {
-        requestEmailVerification(dto: { email: string; locale: string }): Promise<unknown>;
-      }).requestEmailVerification({ email: 'verify@test.com', locale: 'ko' });
+        requestEmailVerification(dto: {
+          email: string;
+          locale: string;
+          frontendOrigin?: string;
+        }): Promise<unknown>;
+      }).requestEmailVerification({
+        email: 'verify@test.com',
+        locale: 'ko',
+        frontendOrigin: 'http://localhost:3001',
+      });
 
-      expect(mockAuthService.requestEmailVerification).toHaveBeenCalledWith('verify@test.com', 'ko');
+      expect(mockAuthService.requestEmailVerification).toHaveBeenCalledWith(
+        'verify@test.com',
+        'ko',
+        'http://localhost:3001',
+      );
       expect(JSON.stringify(result)).not.toContain('token');
     });
 
@@ -467,10 +479,18 @@ describe('AuthController', () => {
       });
 
       await (controller as unknown as {
-        resendEmailVerification(dto: { email: string; locale: string }): Promise<unknown>;
+        resendEmailVerification(dto: {
+          email: string;
+          locale: string;
+          frontendOrigin?: string;
+        }): Promise<unknown>;
       }).resendEmailVerification({ email: 'verify@test.com', locale: 'en' });
 
-      expect(mockAuthService.resendEmailVerification).toHaveBeenCalledWith('verify@test.com', 'en');
+      expect(mockAuthService.resendEmailVerification).toHaveBeenCalledWith(
+        'verify@test.com',
+        'en',
+        undefined,
+      );
     });
 
     it('POST verify consumes an opaque token through AuthService', async () => {

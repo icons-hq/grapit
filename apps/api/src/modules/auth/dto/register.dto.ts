@@ -31,6 +31,7 @@ export const registerBodySchema = z.object({
   marketingConsent: z.boolean(),
   consentItems: signupConsentRowsSchema,
   locale: z.enum(SUPPORTED_LOCALES).default('ko'),
+  frontendOrigin: z.string().url().max(200).optional(),
 });
 
 export type RegisterBody = z.infer<typeof registerBodySchema>;

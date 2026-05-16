@@ -19,7 +19,7 @@ function VerifyEmailContent() {
         {token ? (
           <EmailVerificationStatus email="" token={token} />
         ) : email ? (
-          <EmailVerificationStatus email={email} requestOnMount />
+          <EmailVerificationStatus email={email} />
         ) : (
           <EmailVerificationStatus email="" initialState="systemError" />
         )}

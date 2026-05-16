@@ -47,6 +47,7 @@ const emailAvailabilityQuerySchema = z.object({
 const emailVerificationRequestSchema = z.object({
   email: z.string().email(),
   locale: launchLocaleSchema.optional(),
+  frontendOrigin: z.string().url().max(200).optional(),
 });
 const emailVerificationTokenSchema = z.object({
   token: z.string().min(32),
@@ -151,7 +152,7 @@ export class AuthController {
     @Body(new ZodValidationPipe(resetPasswordRequestBodySchema))
     dto: ResetPasswordRequestBody,
   ) {
-    await this.authService.requestPasswordReset(dto.email);
+    await this.authService.requestPasswordReset(dto.email, dto.frontendOrigin);
     return { message: '비밀번호 재설정 링크를 발송했습니다' };
   }
 
@@ -176,7 +177,11 @@ export class AuthController {
     @Body(new ZodValidationPipe(emailVerificationRequestSchema))
     dto: z.infer<typeof emailVerificationRequestSchema>,
   ) {
-    const result = await this.authService.requestEmailVerification(dto.email, dto.locale);
+    const result = await this.authService.requestEmailVerification(
+      dto.email,
+      dto.locale,
+      dto.frontendOrigin,
+    );
     return {
       message: '인증 메일을 발송했습니다',
       expiresAt: result.expiresAt,
@@ -191,7 +196,11 @@ export class AuthController {
     @Body(new ZodValidationPipe(emailVerificationRequestSchema))
     dto: z.infer<typeof emailVerificationRequestSchema>,
   ) {
-    const result = await this.authService.resendEmailVerification(dto.email, dto.locale);
+    const result = await this.authService.resendEmailVerification(
+      dto.email,
+      dto.locale,
+      dto.frontendOrigin,
+    );
     return {
       message: '인증 메일을 다시 보냈습니다',
       expiresAt: result.expiresAt,
