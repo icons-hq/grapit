@@ -6,13 +6,18 @@ import { useLocale } from 'next-intl';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import type { AuthResponse, RegisterStep3Input } from '@grabit/shared';
+import type {
+  AuthResponse,
+  RegisterStep3Input,
+  RegistrationPendingResponse,
+} from '@grabit/shared';
 import { apiClient } from '@/lib/api-client';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { StepIndicator } from '@/components/auth/step-indicator';
 import { SignupStep2 } from '@/components/auth/signup-step2';
 import type { SignupStep2SubmitData } from '@/components/auth/signup-step2';
 import { SignupStep3 } from '@/components/auth/signup-step3';
+import { EmailVerificationStatus } from '@/components/auth/email-verification-status';
 import { getAuthLaunchCopy } from '@/components/auth/auth-launch-copy';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 
@@ -58,6 +63,7 @@ function CallbackContent() {
   const [step2Data, setStep2Data] = useState<SignupStep2SubmitData | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorInfo, setErrorInfo] = useState<{ code: string; provider?: string } | null>(null);
+  const [emailVerificationEmail, setEmailVerificationEmail] = useState<string | null>(null);
 
   // searchParams 분기 결정은 마운트당 한 번만.
   const hasRunRef = useRef(false);
@@ -78,6 +84,12 @@ function CallbackContent() {
 
     const regToken = searchParams.get('registrationToken');
     const status = searchParams.get('status');
+    const pendingEmail = searchParams.get('email');
+
+    if (status === 'email_verification_required' && pendingEmail) {
+      setEmailVerificationEmail(pendingEmail);
+      return;
+    }
 
     if (status === 'needs_registration' && regToken) {
       // New social user -- needs registration completion
@@ -139,10 +151,17 @@ function CallbackContent() {
         phoneVerificationToken: data.phoneVerificationToken,
       };
 
-      const res = await apiClient.post<AuthResponse>(
+      const res = await apiClient.post<AuthResponse | RegistrationPendingResponse>(
         '/api/v1/auth/social/complete-registration',
         payload,
       );
+
+      if ('emailVerificationRequired' in res) {
+        setEmailVerificationEmail(res.email);
+        toast.success(authCopy.form.signupComplete);
+        return;
+      }
+
       setAuth(res.accessToken, res.user);
       toast.success(authCopy.form.signupComplete);
       router.push(getLocalizedPathname('/', authCopy.locale));
@@ -180,6 +199,16 @@ function CallbackContent() {
           >
             다시 로그인하기
           </Button>
+        </div>
+      </main>
+    );
+  }
+
+  if (emailVerificationEmail) {
+    return (
+      <main className="flex flex-1 items-center justify-center px-4 py-12">
+        <div className="w-full max-w-[400px]">
+          <EmailVerificationStatus email={emailVerificationEmail} />
         </div>
       </main>
     );
