@@ -24,14 +24,14 @@ export function HotSection() {
   if (!performances?.length) return null;
 
   return (
-    <section className="mt-10">
-      <div className="mb-6 flex items-center justify-between">
-        <h2 className="text-display font-semibold leading-[1.2]">
+    <section className="mt-8 md:mt-12">
+      <div className="mb-4 flex items-end justify-between md:mb-6">
+        <h2 className="text-xl font-semibold leading-tight text-gray-950 md:text-display md:leading-[1.2]">
           {copy.home.hot}
         </h2>
         <Link
           href={`${getLocalizedPathname('/genre/artist_celebrity', activeLocale)}?sort=popular`}
-          className="text-sm text-gray-600 hover:text-gray-900"
+          className="rounded-lg px-2 py-1 text-sm font-semibold text-gray-600 hover:bg-gray-100 hover:text-gray-900"
         >
           {copy.home.more}
         </Link>
@@ -39,8 +39,8 @@ export function HotSection() {
       <Swiper
         modules={[FreeMode]}
         freeMode
-        slidesPerView={1.5}
-        spaceBetween={16}
+        slidesPerView={2.12}
+        spaceBetween={12}
         breakpoints={{
           768: { slidesPerView: 2.5 },
           1024: { slidesPerView: 4, spaceBetween: 24 },

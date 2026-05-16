@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import {
   getLocalizedPathname,
   LocaleSwitcher,
+  MobileLocaleSwitcher,
 } from '@/components/i18n/locale-switcher';
 import { resolveLocaleFromPathname } from '@/i18n/routing';
 import { PUBLIC_GENRES } from '@/lib/performance/public-genres';
@@ -95,12 +96,12 @@ export function GNB() {
 
   return (
     <>
-      <header className="sticky top-0 z-50 h-16 border-b border-gray-200 bg-white">
-        <nav className="mx-auto flex h-full max-w-[1200px] items-center px-6">
+      <header className="sticky top-0 z-50 h-14 border-b border-gray-200 bg-white md:h-16">
+        <nav className="mx-auto flex h-full max-w-[1200px] items-center px-4 md:px-6">
           {/* Logo */}
           <Link
             href={getLocalizedPathname('/', activeLocale)}
-            className="mr-8 text-xl font-semibold text-primary"
+            className="mr-0 text-lg font-semibold text-primary md:mr-8 md:text-xl"
           >
             Grabit
           </Link>
@@ -125,6 +126,10 @@ export function GNB() {
 
           {/* Spacer */}
           <div className="flex-1" />
+
+          <div className="flex items-center gap-1 md:hidden">
+            <MobileLocaleSwitcher />
+          </div>
 
           {/* Search bar - hidden on mobile */}
           <div className="mr-4 hidden lg:block">

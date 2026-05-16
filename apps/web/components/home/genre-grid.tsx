@@ -24,23 +24,23 @@ export function GenreGrid() {
   const copy = getVisibleCopy(activeLocale);
 
   return (
-    <section className="mt-10 pb-12">
-      <h2 className="mb-6 text-display font-semibold leading-[1.2]">
+    <section className="mt-8 pb-12 md:mt-12">
+      <h2 className="mb-4 text-xl font-semibold leading-tight text-gray-950 md:mb-6 md:text-display md:leading-[1.2]">
         {copy.home.genreShortcuts}
       </h2>
-      <div className="grid grid-cols-4 gap-4 lg:grid-cols-8">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
         {GENRE_LIST.map((genre) => {
           const Icon = GENRE_ICONS[genre];
           return (
             <Link
               key={genre}
               href={getLocalizedPathname(`/genre/${genre}`, activeLocale)}
-              className="flex flex-col items-center gap-2 rounded-lg p-2 transition-colors hover:bg-gray-50"
+              className="flex min-h-16 items-center gap-3 rounded-lg border border-gray-200 bg-white p-3 shadow-sm transition-colors hover:bg-gray-50 md:flex-col md:gap-2 md:border-0 md:bg-transparent md:p-2 md:shadow-none"
             >
-              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-[#F5F5F7]">
-                <Icon className="h-7 w-7 text-gray-700" />
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#F5F5F7] md:h-16 md:w-16">
+                <Icon className="h-5 w-5 text-gray-700 md:h-7 md:w-7" />
               </div>
-              <span className="text-sm text-gray-900">
+              <span className="text-sm font-semibold text-gray-900 md:font-normal">
                 {copy.genres[genre]}
               </span>
             </Link>

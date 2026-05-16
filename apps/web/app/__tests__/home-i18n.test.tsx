@@ -47,6 +47,15 @@ describe('home i18n visible copy', () => {
   it('renders canary-visible home copy from the active locale', () => {
     render(<HomePage />);
 
+    expect(
+      screen.getByRole('link', { name: 'Search shows' }).getAttribute('href'),
+    ).toBe('/en/search');
+    expect(screen.getByText('Search shows or artists')).toBeDefined();
+    expect(
+      screen
+        .getByRole('link', { name: 'Browse by category' })
+        .getAttribute('href'),
+    ).toBe('/en/genre/artist_celebrity');
     expect(screen.getByText('Search fanmeet and popup events or browse by category.')).toBeDefined();
     expect(screen.getByRole('heading', { name: 'HOT' })).toBeDefined();
     expect(screen.getByRole('heading', { name: 'New' })).toBeDefined();

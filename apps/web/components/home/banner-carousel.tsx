@@ -18,25 +18,29 @@ export function BannerCarousel({
   isLoading = false,
 }: BannerCarouselProps) {
   if (isLoading) {
-    return <Skeleton className="h-[200px] w-full md:h-[400px]" />;
+    return (
+      <div className="mx-auto mt-3 w-full max-w-[1200px] px-4 md:mt-0 md:max-w-none md:px-0">
+        <Skeleton className="h-[188px] w-full rounded-lg md:h-[400px] md:rounded-none" />
+      </div>
+    );
   }
 
   if (banners.length === 0) {
     return (
-      <div className="flex h-[200px] items-center justify-center bg-gray-100 md:h-[400px]">
+      <div className="mx-auto mt-3 flex h-[188px] w-[calc(100%-2rem)] max-w-[1200px] items-center justify-center rounded-lg bg-gray-100 md:mt-0 md:h-[400px] md:w-full md:max-w-none md:rounded-none">
         <p className="text-sm text-gray-500">배너가 없습니다</p>
       </div>
     );
   }
 
   return (
-    <div className="relative w-full">
+    <div className="relative mx-auto mt-3 w-full max-w-[1200px] px-4 md:mt-0 md:max-w-none md:px-0">
       <Swiper
         modules={[Autoplay, Pagination]}
         autoplay={{ delay: 4000, disableOnInteraction: false }}
         pagination={{ clickable: true }}
         loop={banners.length > 1}
-        className="h-[200px] w-full md:h-[400px]"
+        className="h-[188px] w-full overflow-hidden rounded-lg md:h-[400px] md:rounded-none"
       >
         {banners.map((banner) => (
           <SwiperSlide key={banner.id}>

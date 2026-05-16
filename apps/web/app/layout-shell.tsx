@@ -17,11 +17,7 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
   return (
     <>
       {!hideShell && <LocaleSuggestion />}
-      {!hideShell && (
-        <div className="hidden md:block">
-          <GNB />
-        </div>
-      )}
+      {!hideShell && <GNB />}
       <div
         className={`flex flex-1 flex-col${!hideShell ? ' pb-[calc(56px+env(safe-area-inset-bottom,0px))] md:pb-0' : ''}`}
       >
