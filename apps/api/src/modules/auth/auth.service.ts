@@ -542,12 +542,28 @@ export class AuthService {
         throw new UnauthorizedException('연결된 사용자 계정을 찾을 수 없습니다');
       }
 
+      if (!user.isEmailVerified) {
+        const verification = await this.issueEmailVerificationForUser(
+          user.id,
+          user.email,
+          'ko',
+        );
+
+        return {
+          status: 'email_verification_required',
+          email: user.email,
+          verificationExpiresAt: verification.expiresAt,
+          user: this.mapToProfile(user),
+        };
+      }
+
       const tokens = await this.generateTokenPair(user.id, user.email, user.role);
 
       return {
         status: 'authenticated',
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
+        ...(tokens.deviceLimitNotice ? { deviceLimitNotice: tokens.deviceLimitNotice } : {}),
         user: this.mapToProfile(user),
       };
     }
@@ -581,7 +597,7 @@ export class AuthService {
     registrationToken: string,
     dto: SocialRegisterBody,
     requestMeta: ConsentRequestMeta = { ipAddress: '0.0.0.0' },
-  ): Promise<AuthResult> {
+  ): Promise<AuthResult | RegistrationPendingResult> {
     this.logger.log('completeSocialRegistration: started');
 
     // 0. Verify phone number with a purpose-bound token from /sms/verify-code.
@@ -668,13 +684,18 @@ export class AuthService {
       return createdUser;
     });
 
-    // 6. Generate JWT tokens
-    const tokens = await this.generateTokenPair(user.id, user.email, user.role);
+    const verification = await this.issueEmailVerificationForUser(
+      user.id,
+      user.email,
+      'ko',
+    );
 
     this.logger.log(`completeSocialRegistration: completed for userId=${user.id}`);
 
     return {
-      ...tokens,
+      emailVerificationRequired: true,
+      email: user.email,
+      verificationExpiresAt: verification.expiresAt,
       user: this.mapToProfile(user),
     };
   }

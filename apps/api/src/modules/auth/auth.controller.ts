@@ -276,6 +276,16 @@ export class AuthController {
       registerData,
       this.resolveConsentMeta(req),
     );
+
+    if ('emailVerificationRequired' in result) {
+      return {
+        emailVerificationRequired: result.emailVerificationRequired,
+        email: result.email,
+        verificationExpiresAt: result.verificationExpiresAt,
+        user: result.user,
+      };
+    }
+
     this.setRefreshTokenCookie(res, result.refreshToken);
 
     return {
@@ -309,10 +319,15 @@ export class AuthController {
           this.setRefreshTokenCookie(res, result.refreshToken);
         }
         res.redirect(`${frontendUrl}/auth/callback?status=authenticated`);
-      } else {
+      } else if (result.status === 'needs_registration') {
         this.logger.log(`Social login needs registration: provider=${profile.provider}`);
         res.redirect(
           `${frontendUrl}/auth/callback?registrationToken=${result.registrationToken}&status=needs_registration`,
+        );
+      } else {
+        this.logger.log(`Social login requires email verification: provider=${profile.provider}`);
+        res.redirect(
+          `${frontendUrl}/auth/callback?status=email_verification_required&email=${encodeURIComponent(result.email)}`,
         );
       }
     } catch (error) {
