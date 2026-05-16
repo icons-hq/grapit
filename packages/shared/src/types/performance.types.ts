@@ -160,6 +160,12 @@ export interface CastMember {
   sortOrder: number;
 }
 
+export interface PerformanceDetailImage {
+  imageUrl: string;
+  altText?: string | null;
+  sortOrder: number;
+}
+
 export interface SeatMapConfig {
   tiers: Array<{
     tierName: string;
@@ -265,6 +271,7 @@ export interface Performance extends ReviewedTranslationMetadata {
   publishedAt?: string | null;
   publishedByUserId?: string | null;
   salesInfo: string | null;
+  detailImages?: PerformanceDetailImage[];
   viewCount: number;
   createdAt: string;
   updatedAt: string;

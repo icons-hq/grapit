@@ -48,6 +48,13 @@ const fixturePerformance: PerformanceWithDetails = {
   ageRating: '만 7세 이상',
   status: 'selling',
   salesInfo: null,
+  detailImages: [
+    {
+      imageUrl: 'https://cdn.example.com/detail/seat-guide.jpg',
+      altText: 'Seat guide',
+      sortOrder: 0,
+    },
+  ],
   viewCount: 10,
   createdAt: '2026-05-06T00:00:00.000Z',
   updatedAt: '2026-05-06T00:00:00.000Z',
@@ -108,7 +115,7 @@ describe('PerformanceDetailPage i18n formatting', () => {
     expect(screen.queryByText(/exchange rate may change|환율/)).toBeNull();
   });
 
-  it('shows only detail and sales tabs for fanmeeting-focused detail pages', async () => {
+  it('shows detail images and visible detail/sales sections for fanmeeting-focused pages', async () => {
     const params = Promise.resolve({ id: 'perf-23-14' }) as Promise<{
       id: string;
     }> & {
@@ -124,9 +131,15 @@ describe('PerformanceDetailPage i18n formatting', () => {
       </Suspense>,
     );
 
-    expect(await screen.findByRole('tab', { name: 'รายละเอียด' })).toBeDefined();
-    expect(screen.getByRole('tab', { name: 'ข้อมูลการขาย' })).toBeDefined();
-    expect(screen.queryByRole('tab', { name: '캐스팅' })).toBeNull();
+    expect(await screen.findByAltText('Seat guide')).toBeDefined();
+    expect(
+      screen.getByRole('heading', { name: 'รายละเอียด' }),
+    ).toBeDefined();
+    expect(
+      screen.getByRole('heading', { name: 'ข้อมูลการขาย' }),
+    ).toBeDefined();
+    expect(screen.queryByRole('tab')).toBeNull();
+    expect(screen.queryByText('캐스팅')).toBeNull();
   });
 
   it('shows 오픈예정 instead of date anchors for upcoming performances', async () => {

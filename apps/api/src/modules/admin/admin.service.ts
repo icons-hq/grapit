@@ -24,6 +24,7 @@ import {
   performanceSeatAssignments,
 } from '../../database/schema/index.js';
 import type {
+  PerformanceDetailImage,
   PerformanceBookingPolicy,
   Banner,
   BannerDeviceTarget,
@@ -36,7 +37,9 @@ import type {
   PerformanceSeatMapInput,
   PerformanceBookingPolicyInput,
 } from '@grabit/shared';
-import { DEFAULT_PERFORMANCE_BOOKING_POLICY as DEFAULT_BOOKING_POLICY } from '@grabit/shared';
+import {
+  DEFAULT_PERFORMANCE_BOOKING_POLICY as DEFAULT_BOOKING_POLICY,
+} from '@grabit/shared';
 import type {
   CreatePerformanceInput,
   UpdatePerformanceInput,
@@ -48,6 +51,7 @@ import {
   BANNER_PLACEMENTS,
   BANNER_STATUSES,
   createBannerSchema,
+  performanceDetailImagesSchema,
 } from '@grabit/shared';
 import { CacheService } from '../performance/cache.service.js';
 import { parseAdminKstDateTime } from './admin-date.util.js';
@@ -64,9 +68,27 @@ function parseOptionalIsoDate(value: string | null | undefined): Date | null {
   return value ? new Date(value) : null;
 }
 
-function toOptionalIsoString(value: Date | string | null | undefined): string | null {
+function toOptionalIsoString(
+  value: Date | string | null | undefined,
+): string | null {
   if (!value) return null;
   return value instanceof Date ? value.toISOString() : value;
+}
+
+function normalizePerformanceDetailImages(
+  value: unknown,
+): PerformanceDetailImage[] {
+  const parsed = performanceDetailImagesSchema.safeParse(value);
+
+  if (!parsed.success) return [];
+
+  return parsed.data
+    .map((image, index) => ({
+      imageUrl: image.imageUrl,
+      altText: image.altText ?? null,
+      sortOrder: image.sortOrder ?? index,
+    }))
+    .sort((a, b) => a.sortOrder - b.sortOrder);
 }
 
 type LegacySeatMapSaveInput = {
@@ -778,6 +800,7 @@ export class AdminService {
           venueId: venue?.id,
           posterUrl: input.posterUrl ?? null,
           description: input.description ?? null,
+          detailImages: normalizePerformanceDetailImages(input.detailImages),
           startDate: parseAdminKstDateTime(input.startDate),
           endDate: parseAdminKstDateTime(input.endDate),
           runtime: input.runtime ?? null,
@@ -867,6 +890,7 @@ export class AdminService {
         venueId: perf!.venueId,
         posterUrl: perf!.posterUrl,
         description: perf!.description,
+        detailImages: normalizePerformanceDetailImages(perf!.detailImages),
         startDate: perf!.startDate?.toISOString() ?? '',
         endDate: perf!.endDate?.toISOString() ?? '',
         runtime: perf!.runtime,
@@ -942,6 +966,9 @@ export class AdminService {
       if (venueId !== undefined) updateData['venueId'] = venueId;
       if (input.posterUrl !== undefined) updateData['posterUrl'] = input.posterUrl;
       if (input.description !== undefined) updateData['description'] = input.description;
+      if (input.detailImages !== undefined) {
+        updateData['detailImages'] = normalizePerformanceDetailImages(input.detailImages);
+      }
       if (input.startDate !== undefined) {
         updateData['startDate'] = parseAdminKstDateTime(input.startDate);
       }
@@ -1063,6 +1090,7 @@ export class AdminService {
         venueId: perf!.venueId,
         posterUrl: perf!.posterUrl,
         description: perf!.description,
+        detailImages: normalizePerformanceDetailImages(perf!.detailImages),
         startDate: perf!.startDate?.toISOString() ?? '',
         endDate: perf!.endDate?.toISOString() ?? '',
         runtime: perf!.runtime,
@@ -1177,6 +1205,7 @@ export class AdminService {
         venueId: perf.venueId,
         posterUrl: perf.posterUrl,
         description: perf.description,
+        detailImages: normalizePerformanceDetailImages(perf.detailImages),
         startDate: perf.startDate?.toISOString() ?? '',
         endDate: perf.endDate?.toISOString() ?? '',
         runtime: perf.runtime,
