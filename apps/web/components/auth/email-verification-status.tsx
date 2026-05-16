@@ -3,8 +3,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { CheckCircle2, Loader2, MailWarning } from 'lucide-react';
 import { useLocale } from 'next-intl';
+import type { UserProfile } from '@grabit/shared';
 import { apiClient, ApiClientError } from '@/lib/api-client';
 import { Button } from '@/components/ui/button';
+import { useAuthStore } from '@/stores/use-auth-store';
 import { getAuthLaunchCopy, resolveAuthLocale } from './auth-launch-copy';
 
 type EmailVerificationState =
@@ -42,6 +44,8 @@ export function EmailVerificationStatus({
   const contextLocale = useLocale();
   const activeLocale = resolveAuthLocale(locale ?? contextLocale);
   const copy = getAuthLaunchCopy(activeLocale).emailVerification;
+  const accessToken = useAuthStore((state) => state.accessToken);
+  const setAuth = useAuthStore((state) => state.setAuth);
   const hasRequestedRef = useRef(false);
   const [state, setState] = useState<EmailVerificationState>(
     token || requestOnMount ? 'loading' : initialState,
@@ -62,6 +66,12 @@ export function EmailVerificationStatus({
           );
           if (!cancelled) {
             setState(result.verified ? 'verified' : 'systemError');
+            if (result.verified && accessToken) {
+              void apiClient
+                .get<UserProfile>('/api/v1/users/me', { showErrorToast: false })
+                .then((user) => setAuth(accessToken, user))
+                .catch(() => undefined);
+            }
           }
         } catch (error) {
           if (!cancelled) {
@@ -99,7 +109,7 @@ export function EmailVerificationStatus({
     return () => {
       cancelled = true;
     };
-  }, [activeLocale, email, requestOnMount, token]);
+  }, [accessToken, activeLocale, email, requestOnMount, setAuth, token]);
 
   async function handleResend() {
     if (!email) return;

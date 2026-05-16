@@ -14,14 +14,20 @@ export default function AuthPage() {
   const router = useRouter();
   const locale = useLocale();
   const authCopy = getAuthLaunchCopy(locale);
-  const { isInitialized, accessToken } = useAuthStore();
+  const { isInitialized, accessToken, user } = useAuthStore();
 
   // Redirect if already authenticated
   useEffect(() => {
     if (isInitialized && accessToken) {
+      if (user?.isEmailVerified === false) {
+        const pathname = getLocalizedPathname('/auth/verify-email', authCopy.locale);
+        router.push(`${pathname}?email=${encodeURIComponent(user.email)}`);
+        return;
+      }
+
       router.push(getLocalizedPathname('/', authCopy.locale));
     }
-  }, [isInitialized, accessToken, router, authCopy.locale]);
+  }, [isInitialized, accessToken, user, router, authCopy.locale]);
 
   if (isInitialized && accessToken) {
     return null;

@@ -115,6 +115,7 @@ function setAdminAuth() {
     country: 'KR',
     birthDate: '1990-01-01',
     preferredLocale: 'ko',
+    isEmailVerified: true,
     isPhoneVerified: true,
     role: 'admin',
     createdAt: '2026-05-06T00:00:00.000Z',

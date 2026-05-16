@@ -4,8 +4,8 @@ milestone: v2.0
 milestone_name: Fanmeet Launch
 status: "Phase 25 shipped — PR #47"
 stopped_at: Phase 25 complete; ready for Phase 26
-last_updated: "2026-05-16T13:57:12.000Z"
-last_activity: "2026-05-16 -- Completed quick task 260516-vf0: signup email duplicate auto-check and social email verification gates"
+last_updated: "2026-05-16T23:51:00.000+09:00"
+last_activity: "2026-05-16 -- Completed quick task 260516-wp5: allow login before email verification and require email plus phone verification before booking/payment"
 progress:
   total_phases: 7
   completed_phases: 4
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-05-04)
 Phase: 26 (m1-canary-cutover-gates) — READY
 Plan: 0 of 0
 Status: Phase 25 shipped — PR #47
-Last activity: 2026-05-16 -- Completed quick task 260516-vf0: signup email duplicate auto-check and social email verification gates
+Last activity: 2026-05-16 -- Completed quick task 260516-wp5: allow login before email verification and require email plus phone verification before booking/payment
 
 ## Deferred Items
 

@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import {
   ASSERT_OWNED_SEAT_LOCKS_LUA,
   BookingService,
+  BOOKING_VERIFICATION_REQUIRED_MESSAGE,
   CONSUME_OWNED_SEAT_LOCKS_LUA,
   EXTEND_OWNED_SEAT_LOCKS_LUA,
   LOCK_EXPIRED_MESSAGE,
@@ -135,16 +136,44 @@ describe('BookingService', () => {
       mockNoSoldRecord(4, { includePerformanceStatus: false });
       mockRedis.eval.mockResolvedValue([1, `{${showtimeId}}:seat:${seatId}`, seatId]);
 
-      await expect(service.lockSeat({ id: userId, role: 'admin' }, showtimeId, seatId))
+      await expect(service.lockSeat(
+        { id: userId, role: 'admin', isEmailVerified: true, isPhoneVerified: true },
+        showtimeId,
+        seatId,
+      ))
         .resolves
         .toEqual(expect.objectContaining({ success: true, seatId }));
 
       expect(mockFeatureFlags.assertBookingEnabled).toHaveBeenCalledWith({
         id: userId,
         role: 'admin',
+        isEmailVerified: true,
+        isPhoneVerified: true,
       });
       expect(mockDb.select).toHaveBeenCalled();
       expect(mockRedis.eval).toHaveBeenCalled();
+    });
+
+    it('rejects unverified actors before Redis or seat availability reads', async () => {
+      await expect(service.lockSeat(
+        { id: userId, isEmailVerified: false, isPhoneVerified: true },
+        showtimeId,
+        seatId,
+      ))
+        .rejects
+        .toThrow(BOOKING_VERIFICATION_REQUIRED_MESSAGE);
+
+      await expect(service.lockSeat(
+        { id: userId, isEmailVerified: true, isPhoneVerified: false },
+        showtimeId,
+        seatId,
+      ))
+        .rejects
+        .toThrow(BOOKING_VERIFICATION_REQUIRED_MESSAGE);
+
+      expect(mockDb.select).not.toHaveBeenCalled();
+      expect(mockRedis.eval).not.toHaveBeenCalled();
+      expect(mockGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
     });
 
     it('rejects public users for upcoming performances before Redis lock mutation', async () => {

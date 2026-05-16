@@ -30,7 +30,11 @@ import {
   users,
 } from '../../database/schema/index.js';
 import { TossPaymentsClient } from '../payment/toss-payments.client.js';
-import { BookingService, PAYMENT_CONFIRM_LOCK_TTL } from '../booking/booking.service.js';
+import {
+  BookingService,
+  BOOKING_VERIFICATION_REQUIRED_MESSAGE,
+  PAYMENT_CONFIRM_LOCK_TTL,
+} from '../booking/booking.service.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
 import { ConsentService, type ConsentRequestMeta } from '../consent/consent.service.js';
@@ -67,7 +71,12 @@ type ApprovedPaymentSnapshot = {
 };
 
 type SeatSelectionLike = SeatSelection & Partial<FloorAwareSeatSelection>;
-type BookingActor = { id: string; role?: string };
+type BookingActor = {
+  id: string;
+  role?: string;
+  isEmailVerified?: boolean;
+  isPhoneVerified?: boolean;
+};
 type CanonicalSeatSelection = FloorAwareSeatSelection & {
   layoutSeatId?: string;
   performanceSeatAssignmentId?: string;
@@ -135,6 +144,12 @@ function mapPerformanceBookingPolicy(
     seatHoldMinutes:
       policy?.seatHoldMinutes ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.seatHoldMinutes,
   };
+}
+
+function assertBookingVerificationComplete(actor: BookingActor): void {
+  if (actor.isEmailVerified !== true || actor.isPhoneVerified !== true) {
+    throw new ForbiddenException(BOOKING_VERIFICATION_REQUIRED_MESSAGE);
+  }
 }
 
 @Injectable()
@@ -515,9 +530,12 @@ export class ReservationService {
     actorOrUserId: string | BookingActor,
     requestMeta: ConsentRequestMeta = { ipAddress: '0.0.0.0' },
   ): Promise<PrepareReservationResponse> {
-    const actor = typeof actorOrUserId === 'string' ? { id: actorOrUserId } : actorOrUserId;
+    const actor = typeof actorOrUserId === 'string'
+      ? { id: actorOrUserId, isEmailVerified: true, isPhoneVerified: true }
+      : actorOrUserId;
     const userId = actor.id;
     this.featureFlags.assertBookingEnabled(actor);
+    assertBookingVerificationComplete(actor);
     await this.assertBookingConsent(dto as PrepareReservationRequest & {
       consentItems?: ConsentCaptureItem[];
     });
@@ -699,9 +717,12 @@ export class ReservationService {
     dto: ConfirmPaymentRequest,
     actorOrUserId: string | BookingActor,
   ): Promise<ReservationDetail> {
-    const actor = typeof actorOrUserId === 'string' ? { id: actorOrUserId } : actorOrUserId;
+    const actor = typeof actorOrUserId === 'string'
+      ? { id: actorOrUserId, isEmailVerified: true, isPhoneVerified: true }
+      : actorOrUserId;
     const userId = actor.id;
     this.featureFlags.assertBookingEnabled(actor);
+    assertBookingVerificationComplete(actor);
 
     const confirmLockToken = randomUUID();
     const confirmLockAcquired = await this.bookingService.acquirePaymentConfirmLock(

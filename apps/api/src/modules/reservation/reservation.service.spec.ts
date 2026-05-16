@@ -10,6 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import { ReservationService } from './reservation.service.js';
 import { TossPaymentsClient } from '../payment/toss-payments.client.js';
+import { BOOKING_VERIFICATION_REQUIRED_MESSAGE } from '../booking/booking.service.js';
 import type { BookingService } from '../booking/booking.service.js';
 import type { BookingGateway } from '../booking/booking.gateway.js';
 import type { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
@@ -580,14 +581,47 @@ describe('ReservationService', () => {
       };
       mockFeatureFlags.getFlags.mockReturnValue({ bookingEnabled: false });
 
-      await expect(service.prepareReservation(dto, { id: userId, role: 'admin' }))
+      await expect(service.prepareReservation(
+        dto,
+        { id: userId, role: 'admin', isEmailVerified: true, isPhoneVerified: true },
+      ))
         .rejects
         .toThrow('예매 동의 항목이 필요합니다');
 
       expect(mockFeatureFlags.assertBookingEnabled).toHaveBeenCalledWith({
         id: userId,
         role: 'admin',
+        isEmailVerified: true,
+        isPhoneVerified: true,
       });
+      expect(mockDb.select).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
+    it('prepareReservation rejects unverified actors before consent, seat, or reservation writes', async () => {
+      const userId = randomUUID();
+      const dto = {
+        showtimeId: randomUUID(),
+        orderId: 'GRP-VERIFY-PREPARE',
+        seats: [seatSelection('A-1')],
+        amount: 50000,
+      };
+
+      await expect(service.prepareReservation(
+        dto,
+        { id: userId, isEmailVerified: false, isPhoneVerified: true },
+      ))
+        .rejects
+        .toThrow(BOOKING_VERIFICATION_REQUIRED_MESSAGE);
+
+      await expect(service.prepareReservation(
+        dto,
+        { id: userId, isEmailVerified: true, isPhoneVerified: false },
+      ))
+        .rejects
+        .toThrow(BOOKING_VERIFICATION_REQUIRED_MESSAGE);
+
+      expect(mockConsentService.assertRequiredConsents).not.toHaveBeenCalled();
       expect(mockDb.select).not.toHaveBeenCalled();
       expect(mockDb.transaction).not.toHaveBeenCalled();
     });
@@ -1543,14 +1577,33 @@ describe('ReservationService', () => {
 
       await expect(service.confirmAndCreateReservation(
         { paymentKey: 'pk_test_123', orderId, amount: 150000 },
-        { id: userId, role: 'admin' },
+        { id: userId, role: 'admin', isEmailVerified: true, isPhoneVerified: true },
       )).rejects.toThrow('결제 확인이 이미 진행 중입니다.');
 
       expect(mockFeatureFlags.assertBookingEnabled).toHaveBeenCalledWith({
         id: userId,
         role: 'admin',
+        isEmailVerified: true,
+        isPhoneVerified: true,
       });
       expect(mockBookingService.acquirePaymentConfirmLock).toHaveBeenCalled();
+      expect(mockTossClient.confirmPayment).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
+    it('confirmAndCreateReservation rejects unverified actors before confirm lock and Toss confirm', async () => {
+      await expect(service.confirmAndCreateReservation(
+        { paymentKey: 'pk_test_123', orderId, amount: 150000 },
+        { id: userId, isEmailVerified: false, isPhoneVerified: true },
+      )).rejects.toThrow(BOOKING_VERIFICATION_REQUIRED_MESSAGE);
+
+      await expect(service.confirmAndCreateReservation(
+        { paymentKey: 'pk_test_123', orderId, amount: 150000 },
+        { id: userId, isEmailVerified: true, isPhoneVerified: false },
+      )).rejects.toThrow(BOOKING_VERIFICATION_REQUIRED_MESSAGE);
+
+      expect(mockBookingService.acquirePaymentConfirmLock).not.toHaveBeenCalled();
+      expect(mockBookingService.refreshPaymentConfirmLock).not.toHaveBeenCalled();
       expect(mockTossClient.confirmPayment).not.toHaveBeenCalled();
       expect(mockDb.transaction).not.toHaveBeenCalled();
     });

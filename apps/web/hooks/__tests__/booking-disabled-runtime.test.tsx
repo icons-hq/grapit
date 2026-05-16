@@ -5,7 +5,10 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
-import { BOOKING_DISABLED_COPY } from '@/lib/runtime-flags';
+import {
+  BOOKING_DISABLED_COPY,
+  BOOKING_VERIFICATION_REQUIRED_COPY,
+} from '@/lib/runtime-flags';
 import { BookingPage } from '@/components/booking/booking-page';
 import ConfirmPage from '@/app/booking/[performanceId]/confirm/page';
 import PerformanceDetailPage from '@/app/performance/[id]/page';
@@ -244,6 +247,7 @@ function setCurrentUserRole(role: 'user' | 'admin') {
     country: 'KR',
     birthDate: '1990-01-01',
     preferredLocale: 'ko',
+    isEmailVerified: true,
     isPhoneVerified: true,
     role,
     createdAt: '2026-05-06T00:00:00.000Z',
@@ -309,6 +313,16 @@ describe('runtime booking disabled UI', () => {
     });
   });
 
+  it('keeps exact booking verification-required copy for all five launch locales', () => {
+    expect(BOOKING_VERIFICATION_REQUIRED_COPY).toEqual({
+      ko: '이메일 인증과 휴대폰 인증을 완료해야 예매할 수 있습니다.',
+      en: 'Complete both email and phone verification before booking tickets.',
+      th: 'กรุณายืนยันทั้งอีเมลและหมายเลขโทรศัพท์ก่อนจองบัตร',
+      'zh-CN': '请先完成电子邮箱和手机号验证后再预订门票。',
+      'zh-TW': '請先完成電子郵件和手機號碼驗證後再預訂門票。',
+    });
+  });
+
   it.each([
     ['ko', '예매는 추후 오픈 예정입니다'],
     ['en', 'Ticket booking will open later'],
@@ -346,6 +360,7 @@ describe('runtime booking disabled UI', () => {
       country: 'KR',
       birthDate: '1990-01-01',
       preferredLocale: 'ko',
+      isEmailVerified: true,
       isPhoneVerified: true,
       role: 'admin',
       createdAt: '2026-05-06T00:00:00.000Z',

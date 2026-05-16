@@ -2,7 +2,6 @@ import {
   Injectable,
   Inject,
   ConflictException,
-  ForbiddenException,
   UnauthorizedException,
   GoneException,
   Logger,
@@ -47,6 +46,7 @@ export interface ValidatedUser {
   gender: 'male' | 'female' | 'unspecified';
   country: string;
   birthDate: string;
+  isEmailVerified: boolean;
   isPhoneVerified: boolean;
   createdAt: Date;
 }
@@ -191,10 +191,9 @@ export class AuthService {
       throw new UnauthorizedException('이메일 또는 비밀번호가 일치하지 않습니다');
     }
 
-    this.assertEmailVerified(user);
-
     // Return user without passwordHash
-    const { passwordHash: _, ...userWithoutPassword } = user;
+    const { passwordHash: _passwordHash, ...userWithoutPassword } = user;
+    void _passwordHash;
     return userWithoutPassword as ValidatedUser;
   }
 
@@ -543,18 +542,11 @@ export class AuthService {
       }
 
       if (!user.isEmailVerified) {
-        const verification = await this.issueEmailVerificationForUser(
+        await this.issueEmailVerificationForUser(
           user.id,
           user.email,
           'ko',
         );
-
-        return {
-          status: 'email_verification_required',
-          email: user.email,
-          verificationExpiresAt: verification.expiresAt,
-          user: this.mapToProfile(user),
-        };
       }
 
       const tokens = await this.generateTokenPair(user.id, user.email, user.role);
@@ -713,15 +705,6 @@ export class AuthService {
     });
   }
 
-  private assertEmailVerified(user: { isEmailVerified: boolean }): void {
-    if (!user.isEmailVerified) {
-      throw new ForbiddenException({
-        code: 'EMAIL_NOT_VERIFIED',
-        message: 'Email verification is required.',
-      });
-    }
-  }
-
   private async issueEmailVerification(
     email: string,
     locale: string,
@@ -803,6 +786,7 @@ export class AuthService {
     country: string;
     birthDate: string;
     preferredLocale?: UserProfile['preferredLocale'] | null;
+    isEmailVerified: boolean;
     isPhoneVerified: boolean;
     role: string;
     createdAt: Date;
@@ -816,6 +800,7 @@ export class AuthService {
       country: user.country,
       birthDate: user.birthDate,
       preferredLocale: user.preferredLocale ?? 'ko',
+      isEmailVerified: user.isEmailVerified,
       isPhoneVerified: user.isPhoneVerified,
       role: user.role as 'user' | 'admin',
       createdAt: user.createdAt.toISOString(),

@@ -24,7 +24,10 @@ import {
 } from '@/components/ui/form';
 import { PasswordInput } from '@/components/auth/password-input';
 import { SocialLoginButton } from '@/components/auth/social-login-button';
-import { getAuthLaunchCopy } from '@/components/auth/auth-launch-copy';
+import {
+  getAuthLaunchCopy,
+  type AuthLaunchCopy,
+} from '@/components/auth/auth-launch-copy';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import Link from 'next/link';
 
@@ -35,6 +38,15 @@ const SOCIAL_LOGIN_ERRORS: Record<string, string> = {
   server_error: '일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요.',
   account_conflict: '이미 다른 계정에 연결된 소셜 계정입니다.',
 };
+
+function getPostLoginDestination(res: AuthResponse, locale: AuthLaunchCopy['locale']) {
+  if (res.user.isEmailVerified) {
+    return getLocalizedPathname('/', locale);
+  }
+
+  const pathname = getLocalizedPathname('/auth/verify-email', locale);
+  return `${pathname}?email=${encodeURIComponent(res.user.email)}`;
+}
 
 function SocialErrorMessage() {
   const searchParams = useSearchParams();
@@ -83,7 +95,7 @@ export function LoginForm() {
         setStatusMessage(authCopy.errors.deviceLimitNotice);
         toast.info(authCopy.errors.deviceLimitNotice);
       }
-      router.push(getLocalizedPathname('/', authCopy.locale));
+      router.push(getPostLoginDestination(res, authCopy.locale));
     } catch (error) {
       if (error instanceof ApiClientError && error.statusCode === 401) {
         setLoginError(authCopy.errors.invalidCredentials);

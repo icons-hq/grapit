@@ -22,6 +22,7 @@ export function useRuntimeFlags() {
 
   return {
     ...query.data,
+    locale,
     isLoading: query.isLoading,
     isResolved: query.dataUpdatedAt > 0,
     bookingDisabledMessage: getBookingDisabledCopy(locale),

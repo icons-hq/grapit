@@ -4,8 +4,6 @@ import { ConfigService } from '@nestjs/config';
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
-  GoneException,
   UnauthorizedException,
 } from '@nestjs/common';
 import * as argon2 from 'argon2';
@@ -402,15 +400,16 @@ describe('AuthService', () => {
       expect(result).not.toHaveProperty('passwordHash');
     }, 10000);
 
-    it('should throw ForbiddenException when email is not verified', async () => {
+    it('should allow login validation when email is not verified', async () => {
       mockUserRepo.findByEmail.mockResolvedValue({
         ...mockUser,
         isEmailVerified: false,
       });
 
-      await expect(
-        authService.validateUser('test@test.com', 'Test1234!'),
-      ).rejects.toThrow(ForbiddenException);
+      const result = await authService.validateUser('test@test.com', 'Test1234!');
+
+      expect(result.email).toBe('test@test.com');
+      expect(result.isEmailVerified).toBe(false);
     }, 10000);
 
     it('should throw UnauthorizedException for wrong password', async () => {
@@ -441,6 +440,7 @@ describe('AuthService', () => {
         gender: mockUser.gender,
         country: mockUser.country,
         birthDate: mockUser.birthDate,
+        isEmailVerified: mockUser.isEmailVerified,
         isPhoneVerified: mockUser.isPhoneVerified,
         createdAt: mockUser.createdAt,
       });
@@ -945,7 +945,7 @@ describe('AuthService', () => {
       expect(result.user).toBeDefined();
     });
 
-    it('issues email verification and returns pending state for an existing unverified social user', async () => {
+    it('issues email verification and authenticates an existing unverified social user', async () => {
       const existingUser = {
         ...createMockUser(),
         email: 'unverified-social@test.com',
@@ -975,12 +975,11 @@ describe('AuthService', () => {
         name: existingUser.name,
       });
 
-      expect(result.status).toBe('email_verification_required');
-      expect(result).not.toHaveProperty('accessToken');
-      expect(result).not.toHaveProperty('refreshToken');
-      expect(result.email).toBe(existingUser.email);
+      expect(result.status).toBe('authenticated');
+      expect(result.accessToken).toBeDefined();
+      expect(result.refreshToken).toBeDefined();
       expect(result.user?.email).toBe(existingUser.email);
-      expect(result.verificationExpiresAt).toBeInstanceOf(Date);
+      expect(result.user?.isEmailVerified).toBe(false);
       expect(mockEmailService.sendEmailVerificationEmail).toHaveBeenCalledWith(
         existingUser.email,
         expect.stringContaining('/auth/verify-email?token='),

@@ -40,8 +40,20 @@ type PrepareReservationTransportInput = z.infer<
 >;
 
 type QueueAdmissionRequest = ExpressRequest & {
-  user: { id: string; role?: string };
+  user: {
+    id: string;
+    role?: string;
+    isEmailVerified?: boolean;
+    isPhoneVerified?: boolean;
+  };
   queueAdmission?: PrepareReservationInput['queueAdmission'];
+};
+
+type AuthenticatedReservationUser = {
+  id: string;
+  role?: string;
+  isEmailVerified?: boolean;
+  isPhoneVerified?: boolean;
 };
 
 @Controller()
@@ -62,7 +74,12 @@ export class ReservationController {
         ...body,
         queueAdmission: this.requireQueueAdmission(req),
       },
-      { id: req.user.id, role: req.user.role },
+      {
+        id: req.user.id,
+        role: req.user.role,
+        isEmailVerified: req.user.isEmailVerified,
+        isPhoneVerified: req.user.isPhoneVerified,
+      },
       this.resolveConsentMeta(req),
     );
 
@@ -79,11 +96,16 @@ export class ReservationController {
   @Post('payments/confirm')
   async confirmPayment(
     @Body(new ZodValidationPipe(confirmPaymentSchema)) body: ConfirmPaymentInput,
-    @Request() req: { user: { id: string; role?: string } },
+    @Request() req: { user: AuthenticatedReservationUser },
   ) {
     return this.reservationService.confirmAndCreateReservation(
       body,
-      { id: req.user.id, role: req.user.role },
+      {
+        id: req.user.id,
+        role: req.user.role,
+        isEmailVerified: req.user.isEmailVerified,
+        isPhoneVerified: req.user.isPhoneVerified,
+      },
     );
   }
 

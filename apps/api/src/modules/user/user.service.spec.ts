@@ -13,6 +13,7 @@ const baseUser = {
   country: 'KR',
   birthDate: '1990-01-01',
   preferredLocale: 'en',
+  isEmailVerified: true,
   isPhoneVerified: true,
   role: 'user',
   createdAt: new Date('2026-05-06T00:00:00Z'),
