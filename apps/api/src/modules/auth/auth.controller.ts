@@ -3,6 +3,7 @@ import {
   Post,
   Get,
   Body,
+  Query,
   Req,
   Res,
   UseGuards,
@@ -37,8 +38,12 @@ import {
 } from './guards/social-auth.guard.js';
 import type { SocialProfile } from './interfaces/social-profile.interface.js';
 import { AUTH_COOKIE_NAME } from '@grabit/shared/constants/index.js';
+import type { EmailAvailabilityResponse } from '@grabit/shared/types/auth.types.js';
 
 const launchLocaleSchema = z.enum(['ko', 'en', 'th', 'zh-CN', 'zh-TW']).default('ko');
+const emailAvailabilityQuerySchema = z.object({
+  email: z.string().email(),
+});
 const emailVerificationRequestSchema = z.object({
   email: z.string().email(),
   locale: launchLocaleSchema.optional(),
@@ -55,6 +60,16 @@ export class AuthController {
     private readonly authService: AuthService,
     private readonly configService: ConfigService,
   ) {}
+
+  @Public()
+  @Get('email-availability')
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  async checkEmailAvailability(
+    @Query(new ZodValidationPipe(emailAvailabilityQuerySchema))
+    query: z.infer<typeof emailAvailabilityQuerySchema>,
+  ): Promise<EmailAvailabilityResponse> {
+    return this.authService.checkEmailAvailability(query.email);
+  }
 
   @Public()
   @Post('register')

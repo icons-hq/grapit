@@ -15,6 +15,10 @@ export interface RegistrationPendingResponse {
 
 export type RegisterResponse = AuthResponse | RegistrationPendingResponse;
 
+export interface EmailAvailabilityResponse {
+  available: boolean;
+}
+
 export interface TokenRefreshResponse {
   accessToken: string;
 }

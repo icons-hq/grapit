@@ -24,7 +24,10 @@ import type { RegisterBody } from './dto/register.dto.js';
 import type { SocialRegisterBody } from './dto/social-register.dto.js';
 import type { SocialProfile } from './interfaces/social-profile.interface.js';
 import type { UserProfile } from '@grabit/shared/types/user.types.js';
-import type { SocialAuthResult } from '@grabit/shared/types/auth.types.js';
+import type {
+  EmailAvailabilityResponse,
+  SocialAuthResult,
+} from '@grabit/shared/types/auth.types.js';
 import {
   REFRESH_TOKEN_EXPIRY_DAYS,
 } from '@grabit/shared/constants/index.js';
@@ -82,6 +85,12 @@ export class AuthService {
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly consentService: ConsentService,
   ) {}
+
+  async checkEmailAvailability(email: string): Promise<EmailAvailabilityResponse> {
+    const existing = await this.userRepository.findByEmail(email);
+
+    return { available: !existing };
+  }
 
   async register(
     dto: RegisterBody,
