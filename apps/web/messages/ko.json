@@ -181,7 +181,8 @@
       "separator": "또는",
       "signupComplete": "회원가입이 완료되었습니다. 이메일 인증을 진행해주세요.",
       "under14Blocked": "만 14세 미만은 가입할 수 없습니다",
-      "temporaryError": "일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
+      "temporaryError": "일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+      "emailUnavailable": "이미 사용 중인 이메일입니다"
     },
     "signup": {
       "progressAriaLabel": "회원가입 진행 상태",

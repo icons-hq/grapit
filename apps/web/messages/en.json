@@ -181,7 +181,8 @@
       "separator": "or",
       "signupComplete": "Sign-up is complete. Please verify your email.",
       "under14Blocked": "Users under 14 cannot sign up",
-      "temporaryError": "A temporary error occurred. Please try again shortly."
+      "temporaryError": "A temporary error occurred. Please try again shortly.",
+      "emailUnavailable": "This email is already in use"
     },
     "signup": {
       "progressAriaLabel": "Sign-up progress",

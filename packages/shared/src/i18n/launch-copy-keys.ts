@@ -74,6 +74,7 @@ const authFormKeys = [
   'signupComplete',
   'under14Blocked',
   'temporaryError',
+  'emailUnavailable',
 ] as const;
 
 const authSignupKeys = [

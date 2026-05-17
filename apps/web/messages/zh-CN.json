@@ -181,7 +181,8 @@
       "separator": "或",
       "signupComplete": "注册已完成。请进行邮箱验证。",
       "under14Blocked": "未满14周岁无法注册",
-      "temporaryError": "暂时发生错误。请稍后再试。"
+      "temporaryError": "暂时发生错误。请稍后再试。",
+      "emailUnavailable": "该邮箱已被使用"
     },
     "signup": {
       "progressAriaLabel": "注册进度",
