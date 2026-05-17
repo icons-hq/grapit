@@ -6,6 +6,7 @@ import { SectionSkeleton } from '@/components/skeletons';
 import { PerformanceCard } from '@/components/performance/performance-card';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { useNewPerformances } from '@/hooks/use-performances';
+import { cn } from '@/lib/cn';
 import {
   getVisibleCopy,
   resolveVisibleCopyLocale,
@@ -18,6 +19,8 @@ export function NewSection() {
 
   if (isLoading) return <SectionSkeleton />;
   if (!performances?.length) return null;
+
+  const isSinglePerformance = performances.length === 1;
 
   return (
     <section className="mt-8 md:mt-12">
@@ -32,11 +35,21 @@ export function NewSection() {
           {copy.home.more}
         </Link>
       </div>
-      <div className="grid grid-cols-2 gap-x-3 gap-y-6 md:grid-cols-4 md:gap-6">
+      <div
+        className={cn(
+          isSinglePerformance
+            ? 'flex justify-center gap-x-3 gap-y-6 md:gap-6'
+            : 'grid grid-cols-2 gap-x-3 gap-y-6 md:grid-cols-4 md:gap-6',
+        )}
+      >
         {performances.map((p) => (
           <div
             key={p.id}
-            className="min-w-0"
+            className={cn(
+              'min-w-0',
+              isSinglePerformance &&
+                'w-[calc((100%_-_0.75rem)/2)] md:w-[calc((100%_-_4.5rem)/4)]',
+            )}
           >
             <PerformanceCard performance={p} />
           </div>

@@ -317,6 +317,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 260517-igb | 메인페이지 New 섹션 단일 공연 카드 가운데 정렬 복구 + regression test 추가 | 2026-05-17 | 8efcd12 | [260517-igb-new-gsd-ship-ci-cd](./quick/260517-igb-new-gsd-ship-ci-cd/) |
 | 260409-obb | CI 파이프라인 실패 수정 | 2026-04-09 | c937274 | [260409-obb-ci](./quick/260409-obb-ci/) |
 | 260409-os1 | 프로덕션 소셜로그인 쿠키 SameSite 버그 수정 | 2026-04-09 | 21eb3d6 | [260409-os1-gcloud](./quick/260409-os1-gcloud/) |
 | 260413-jw1 | seed.mjs에 어드민 유저(admin@grapit.test) 추가 | 2026-04-13 | 7bd1753 | [260413-jw1-admin-grapit-test](./quick/260413-jw1-admin-grapit-test/) |
