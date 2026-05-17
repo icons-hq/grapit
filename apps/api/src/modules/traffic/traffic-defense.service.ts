@@ -16,7 +16,6 @@ const TRAFFIC_POLICY_NAMES = [
   'prepare-reservation',
   'confirm-payment',
   'signup',
-  'sms',
 ] as const;
 
 export type TrafficPolicyName = (typeof TRAFFIC_POLICY_NAMES)[number];
@@ -117,16 +116,6 @@ const TRAFFIC_POLICIES: Record<TrafficPolicyName, TrafficPolicyDefinition> = {
       {
         method: 'POST',
         patterns: [/\/auth\/register$/],
-      },
-    ],
-  },
-  sms: {
-    ttl: 60_000,
-    limit: 10,
-    matchers: [
-      {
-        method: 'POST',
-        patterns: [/\/sms\/send-code$/, /\/sms\/verify-code$/],
       },
     ],
   },

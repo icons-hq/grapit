@@ -35,9 +35,14 @@ describe('TrafficDefenseService', () => {
         'prepare-reservation',
         'confirm-payment',
         'signup',
-        'sms',
       ]),
     );
+  });
+
+  it('does not apply traffic-defense throttling to signup SMS verification endpoints', () => {
+    const service = new TrafficDefenseService();
+
+    expect(service.getThrottlerOptions().map((policy) => policy.name)).not.toContain('sms');
   });
 
   it('uses authenticated userId first for queue-entry tracker resolution', () => {
