@@ -13,6 +13,7 @@ export interface NewUser {
   country: string;
   birthDate: string;
   isPhoneVerified?: boolean;
+  isEmailVerified?: boolean;
   marketingConsent?: boolean;
 }
 
@@ -48,6 +49,7 @@ export class UserRepository {
         country: data.country,
         birthDate: data.birthDate,
         isPhoneVerified: data.isPhoneVerified ?? false,
+        isEmailVerified: data.isEmailVerified ?? false,
         marketingConsent: data.marketingConsent ?? false,
       })
       .returning();
