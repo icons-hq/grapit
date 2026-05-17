@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Fanmeet Launch
-status: "Quick 260517-glr shipped — PR #63"
+status: "Quick 260517-jmb complete — UI i18n cleanup"
 stopped_at: Phase 25 complete; ready for Phase 26
-last_updated: "2026-05-17T12:53:00.000+09:00"
-last_activity: "2026-05-17 -- Shipped quick task 260517-glr via PR #63; CI/CD tracking requested"
+last_updated: "2026-05-17T14:37:24.000+09:00"
+last_activity: "2026-05-17 -- Completed quick task 260517-jmb: UI/UX i18n cleanup and zh-TW removal"
 progress:
   total_phases: 7
   completed_phases: 4
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-05-04)
 
 Phase: 26 (m1-canary-cutover-gates) — READY
 Plan: 0 of 0
-Status: Quick 260517-glr shipped — PR #63
-Last activity: 2026-05-17 -- Completed quick task 260517-glr: admin performance detail/sales visibility toggles
+Status: Quick 260517-jmb complete — UI i18n cleanup
+Last activity: 2026-05-17 -- Completed quick task 260517-jmb: UI/UX i18n cleanup and zh-TW removal
 
 ## Deferred Items
 
@@ -317,6 +317,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 260517-jmb | 다국어 지원에서 중국어 번체 제거, 중국어 간체 유지, 회원가입 중복 이메일 오류 i18n 전환 및 하드코딩 한국어 UI audit | 2026-05-17 | 604ba56 | [260517-jmb-ui-ux-i18n](./quick/260517-jmb-ui-ux-i18n/) |
 | 260517-igb | 메인페이지 New 섹션 단일 공연 카드 가운데 정렬 복구 + regression test 추가 | 2026-05-17 | 8efcd12 | [260517-igb-new-gsd-ship-ci-cd](./quick/260517-igb-new-gsd-ship-ci-cd/) |
 | 260409-obb | CI 파이프라인 실패 수정 | 2026-04-09 | c937274 | [260409-obb-ci](./quick/260409-obb-ci/) |
 | 260409-os1 | 프로덕션 소셜로그인 쿠키 SameSite 버그 수정 | 2026-04-09 | 21eb3d6 | [260409-os1-gcloud](./quick/260409-os1-gcloud/) |
