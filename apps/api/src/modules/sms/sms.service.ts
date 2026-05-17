@@ -17,6 +17,7 @@ import {
 } from './phone.util.js';
 
 // Phase 10 constants (retained)
+const SMS_LOCAL_RATE_LIMITS_ENABLED = false; // Hotfix 260517: unblock signup; provider limits still apply.
 const RESEND_COOLDOWN_MS = 30_000;           // D-11: 30s resend cooldown
 const SEND_PHONE_LIMIT = 5;                  // D-06: phone 5/3600s
 const SEND_PHONE_WINDOW_SEC = 3600;          // D-06: 1h window
@@ -268,30 +269,36 @@ export class SmsService {
       return { success: true, message: '인증번호가 발송되었습니다' };
     }
 
-    // D-11: 30s resend cooldown via Valkey SET NX
-    const cooldownKey = smsResendKey(e164);
-    const acquired = await this.redis.set(cooldownKey, '1', 'PX', RESEND_COOLDOWN_MS, 'NX');
-    if (acquired === null) {
-      const ttl = await this.redis.pttl(cooldownKey);
-      this.logger.warn({ event: 'sms.rate_limited', phone: e164, layer: 'resend_cooldown' });
-      throw new HttpException(
-        { statusCode: 429, message: '잠시 후 다시 시도해주세요', retryAfterMs: Math.max(ttl, 0) },
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
+    let cooldownKey: string | undefined;
+    let sendCounterKey: string | undefined;
 
-    // D-06: phone axis send 5/3600s -- Lua atomic INCR+EXPIRE
-    const sendCount = await this.atomicIncr(
-      smsSendCounterKey(e164), SEND_PHONE_WINDOW_SEC,
-    );
-    if (sendCount > SEND_PHONE_LIMIT) {
-      this.logger.warn({
-        event: 'sms.rate_limited', phone: e164, layer: 'phone_axis_send', count: sendCount,
-      });
-      throw new HttpException(
-        { statusCode: 429, message: '잠시 후 다시 시도해주세요', retryAfterMs: SEND_PHONE_WINDOW_SEC * 1000 },
-        HttpStatus.TOO_MANY_REQUESTS,
+    if (SMS_LOCAL_RATE_LIMITS_ENABLED) {
+      // D-11: 30s resend cooldown via Valkey SET NX
+      cooldownKey = smsResendKey(e164);
+      const acquired = await this.redis.set(cooldownKey, '1', 'PX', RESEND_COOLDOWN_MS, 'NX');
+      if (acquired === null) {
+        const ttl = await this.redis.pttl(cooldownKey);
+        this.logger.warn({ event: 'sms.rate_limited', phone: e164, layer: 'resend_cooldown' });
+        throw new HttpException(
+          { statusCode: 429, message: '잠시 후 다시 시도해주세요', retryAfterMs: Math.max(ttl, 0) },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+
+      // D-06: phone axis send 5/3600s -- Lua atomic INCR+EXPIRE
+      sendCounterKey = smsSendCounterKey(e164);
+      const sendCount = await this.atomicIncr(
+        sendCounterKey, SEND_PHONE_WINDOW_SEC,
       );
+      if (sendCount > SEND_PHONE_LIMIT) {
+        this.logger.warn({
+          event: 'sms.rate_limited', phone: e164, layer: 'phone_axis_send', count: sendCount,
+        });
+        throw new HttpException(
+          { statusCode: 429, message: '잠시 후 다시 시도해주세요', retryAfterMs: SEND_PHONE_WINDOW_SEC * 1000 },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
     }
 
     try {
@@ -314,14 +321,14 @@ export class SmsService {
       // Twilio permanent 4xx -> keep both cooldown and counter (abuse mitigation).
       const shouldRollback =
         !(err instanceof TwilioVerifyApiError) || err.shouldRollbackQuota;
-      if (shouldRollback) {
+      if (shouldRollback && SMS_LOCAL_RATE_LIMITS_ENABLED && cooldownKey && sendCounterKey) {
         // [WR-02] Emit per-op rollback failures so ops can detect stuck-quota
         // states. Silently swallowing `.catch(() => {})` meant a Valkey blip
         // during rollback could pin a user in the 30s cooldown or retain
         // their phone-axis slot with zero observability.
         const rollbackResults = await Promise.allSettled([
           this.redis.del(cooldownKey),
-          this.redis.decr(smsSendCounterKey(e164)),
+          this.redis.decr(sendCounterKey),
         ]);
         rollbackResults.forEach((r, i) => {
           if (r.status === 'rejected') {
@@ -398,18 +405,21 @@ export class SmsService {
       return { verified: false, message: '인증번호가 일치하지 않습니다' };
     }
 
-    // D-07 local phone-axis rate limit runs before the provider call.
-    const verifyCount = await this.atomicIncr(
-      smsVerifyCounterKey(e164), VERIFY_PHONE_WINDOW_SEC,
-    );
-    if (verifyCount > VERIFY_PHONE_LIMIT) {
-      this.logger.warn({
-        event: 'sms.rate_limited', phone: e164, layer: 'phone_axis_verify', count: verifyCount,
-      });
-      throw new HttpException(
-        { statusCode: 429, message: '잠시 후 다시 시도해주세요', retryAfterMs: VERIFY_PHONE_WINDOW_SEC * 1000 },
-        HttpStatus.TOO_MANY_REQUESTS,
+    const verifyCounterKey = smsVerifyCounterKey(e164);
+    if (SMS_LOCAL_RATE_LIMITS_ENABLED) {
+      // D-07 local phone-axis rate limit runs before the provider call.
+      const verifyCount = await this.atomicIncr(
+        verifyCounterKey, VERIFY_PHONE_WINDOW_SEC,
       );
+      if (verifyCount > VERIFY_PHONE_LIMIT) {
+        this.logger.warn({
+          event: 'sms.rate_limited', phone: e164, layer: 'phone_axis_verify', count: verifyCount,
+        });
+        throw new HttpException(
+          { statusCode: 429, message: '잠시 후 다시 시도해주세요', retryAfterMs: VERIFY_PHONE_WINDOW_SEC * 1000 },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
     }
 
     try {
@@ -445,16 +455,18 @@ export class SmsService {
         throw new GoneException('인증번호가 만료되었습니다. 재발송해주세요');
       }
       if (err instanceof TwilioVerifyApiError && err.isRateLimited) {
-        await this.redis
-          .decr(smsVerifyCounterKey(e164))
-          .catch((rollbackErr: unknown) => {
-            this.logger.warn({
-              event: 'sms.rollback_failed',
-              phone: e164,
-              op: 'verify_counter_decr',
-              err: (rollbackErr as Error).message,
+        if (SMS_LOCAL_RATE_LIMITS_ENABLED) {
+          await this.redis
+            .decr(verifyCounterKey)
+            .catch((rollbackErr: unknown) => {
+              this.logger.warn({
+                event: 'sms.rollback_failed',
+                phone: e164,
+                op: 'verify_counter_decr',
+                err: (rollbackErr as Error).message,
+              });
             });
-          });
+        }
         throw new HttpException(
           { statusCode: 429, message: '잠시 후 다시 시도해주세요', retryAfterMs: VERIFY_PHONE_WINDOW_SEC * 1000 },
           HttpStatus.TOO_MANY_REQUESTS,
@@ -465,9 +477,9 @@ export class SmsService {
       // Mirrors the sendVerificationCode rollback policy for 5xx/network
       // failures. Without this, each Valkey blip burns one of the user's
       // 10/15min verify attempts without producing any result.
-      if (!(err instanceof TwilioVerifyApiError) || err.shouldRollbackQuota) {
+      if (SMS_LOCAL_RATE_LIMITS_ENABLED && (!(err instanceof TwilioVerifyApiError) || err.shouldRollbackQuota)) {
         await this.redis
-          .decr(smsVerifyCounterKey(e164))
+          .decr(verifyCounterKey)
           .catch((rollbackErr: unknown) => {
             this.logger.warn({
               event: 'sms.rollback_failed',

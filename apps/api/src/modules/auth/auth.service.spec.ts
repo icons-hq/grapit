@@ -1052,7 +1052,7 @@ describe('AuthService', () => {
       expect(result.user).toBeDefined();
     });
 
-    it('issues email verification and authenticates an existing unverified social user', async () => {
+    it('marks an existing unverified social user verified and authenticates', async () => {
       const existingUser = {
         ...createMockUser(),
         email: 'unverified-social@test.com',
@@ -1086,17 +1086,14 @@ describe('AuthService', () => {
       expect(result.accessToken).toBeDefined();
       expect(result.refreshToken).toBeDefined();
       expect(result.user?.email).toBe(existingUser.email);
-      expect(result.user?.isEmailVerified).toBe(false);
-      expect(mockEmailService.sendEmailVerificationEmail).toHaveBeenCalledWith(
-        existingUser.email,
-        expect.stringMatching(/^\d{6}$/),
-        'ko',
-      );
+      expect(result.user?.isEmailVerified).toBe(true);
+      expect(mockDb.update).toHaveBeenCalled();
+      expect(mockEmailService.sendEmailVerificationEmail).not.toHaveBeenCalled();
     });
   });
 
   describe('completeSocialRegistration', () => {
-    it('should create user + social account + terms then return email verification pending response', async () => {
+    it('should create a verified social user + social account + terms then return auth tokens', async () => {
       const newUserId = randomUUID();
 
       // Verify registration token
@@ -1118,6 +1115,7 @@ describe('AuthService', () => {
         email: 'kakao@test.com',
         name: 'Registered Name',
         passwordHash: null,
+        isEmailVerified: true,
       });
 
       const result = await authService.completeSocialRegistration(
@@ -1138,24 +1136,27 @@ describe('AuthService', () => {
       );
 
       expect(result).toMatchObject({
-        emailVerificationRequired: true,
-        email: 'kakao@test.com',
-        user: expect.objectContaining({ email: 'kakao@test.com' }),
+        accessToken: expect.any(String),
+        refreshToken: expect.any(String),
+        user: expect.objectContaining({
+          email: 'kakao@test.com',
+          isEmailVerified: true,
+        }),
       });
-      expect(result).not.toHaveProperty('accessToken');
-      expect(result).not.toHaveProperty('refreshToken');
-      expect(result.verificationExpiresAt).toBeInstanceOf(Date);
-      expect(result).toHaveProperty('user');
+      expect(result).not.toHaveProperty('emailVerificationRequired');
       expect(mockSmsService.verifyPhoneVerificationToken).toHaveBeenCalledWith(
         'signed-social-phone-token',
         { phone: '010-1234-5678', purpose: 'social_registration' },
       );
-      expect(mockUserRepo.create).toHaveBeenCalled();
-      expect(mockEmailService.sendEmailVerificationEmail).toHaveBeenCalledWith(
-        'kakao@test.com',
-        expect.stringMatching(/^\d{6}$/),
-        'ko',
+      expect(mockUserRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          email: 'kakao@test.com',
+          isEmailVerified: true,
+          isPhoneVerified: true,
+        }),
+        expect.anything(),
       );
+      expect(mockEmailService.sendEmailVerificationEmail).not.toHaveBeenCalled();
       expect(mockConsentService.captureConsent).toHaveBeenCalledWith(
         newUserId,
         expect.objectContaining({
@@ -1227,7 +1228,7 @@ describe('AuthService', () => {
       expect(mockConsentService.captureConsent).not.toHaveBeenCalled();
     });
 
-    it('purpose-bound phone verification token이 있으면 social registration 후 이메일 인증 pending을 반환한다', async () => {
+    it('purpose-bound phone verification token이 있으면 social registration 후 바로 인증 세션을 반환한다', async () => {
       const newUserId = randomUUID();
       mockJwtService.verifyAsync.mockResolvedValue({
         provider: 'kakao',
@@ -1243,6 +1244,7 @@ describe('AuthService', () => {
         email: 'kakao@test.com',
         name: 'Registered Name',
         passwordHash: null,
+        isEmailVerified: true,
       });
 
       const result = await authService.completeSocialRegistration(
@@ -1262,18 +1264,25 @@ describe('AuthService', () => {
       );
 
       expect(result).toMatchObject({
-        emailVerificationRequired: true,
-        email: 'kakao@test.com',
+        accessToken: expect.any(String),
+        refreshToken: expect.any(String),
+        user: expect.objectContaining({
+          email: 'kakao@test.com',
+          isEmailVerified: true,
+        }),
       });
-      expect(result).not.toHaveProperty('accessToken');
-      expect(result).not.toHaveProperty('refreshToken');
+      expect(result).not.toHaveProperty('emailVerificationRequired');
       expect(mockSmsService.verifyPhoneVerificationToken).toHaveBeenCalledWith(
         'signed-social-phone-token',
         { phone: '010-1234-5678', purpose: 'social_registration' },
       );
       expect(mockSmsService.verifyCode).not.toHaveBeenCalled();
       expect(mockSmsService.isPhoneVerified).not.toHaveBeenCalled();
-      expect(mockUserRepo.create).toHaveBeenCalled();
+      expect(mockUserRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ isEmailVerified: true }),
+        expect.anything(),
+      );
+      expect(mockEmailService.sendEmailVerificationEmail).not.toHaveBeenCalled();
     });
 
     it('invalid phone verification token이면 social registration을 거부한다', async () => {

@@ -620,20 +620,16 @@ export class AuthService {
         throw new UnauthorizedException('연결된 사용자 계정을 찾을 수 없습니다');
       }
 
-      if (!user.isEmailVerified) {
-        await this.issueEmailVerificationForUser(
-          user.id,
-          user.email,
-          'ko',
-        );
-      }
+      const effectiveUser = user.isEmailVerified
+        ? user
+        : await this.markSocialEmailVerified(user);
 
       const tokens = await this.generateTokenPair(
-        user.id,
-        user.email,
-        user.role,
-        normalizeAdminCapabilityBundle(user.adminCapabilityBundle),
-        user.adminCapabilities,
+        effectiveUser.id,
+        effectiveUser.email,
+        effectiveUser.role,
+        normalizeAdminCapabilityBundle(effectiveUser.adminCapabilityBundle),
+        effectiveUser.adminCapabilities,
       );
 
       return {
@@ -641,7 +637,7 @@ export class AuthService {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
         ...(tokens.deviceLimitNotice ? { deviceLimitNotice: tokens.deviceLimitNotice } : {}),
-        user: this.mapToProfile(user),
+        user: this.mapToProfile(effectiveUser),
       };
     }
 
@@ -729,6 +725,7 @@ export class AuthService {
         birthDate: dto.birthDate,
         marketingConsent: dto.marketingConsent,
         isPhoneVerified: true,
+        isEmailVerified: true,
       }, tx);
 
       // 4. Create social account link
@@ -761,19 +758,19 @@ export class AuthService {
       return createdUser;
     });
 
-    const verification = await this.issueEmailVerificationForUser(
-      user.id,
-      user.email,
-      'ko',
+    this.logger.log(`completeSocialRegistration: completed for userId=${user.id}`);
+    const effectiveUser = { ...user, isEmailVerified: true };
+    const tokens = await this.generateTokenPair(
+      effectiveUser.id,
+      effectiveUser.email,
+      effectiveUser.role,
+      normalizeAdminCapabilityBundle(effectiveUser.adminCapabilityBundle),
+      effectiveUser.adminCapabilities,
     );
 
-    this.logger.log(`completeSocialRegistration: completed for userId=${user.id}`);
-
     return {
-      emailVerificationRequired: true,
-      email: user.email,
-      verificationExpiresAt: verification.expiresAt,
-      user: this.mapToProfile(user),
+      ...tokens,
+      user: this.mapToProfile(effectiveUser),
     };
   }
 
@@ -802,6 +799,17 @@ export class AuthService {
     }
 
     return this.issueEmailVerificationForUser(user.id, email, locale);
+  }
+
+  private async markSocialEmailVerified<T extends { id: string; isEmailVerified: boolean }>(
+    user: T,
+  ): Promise<T> {
+    await this.db
+      .update(schema.users)
+      .set({ isEmailVerified: true, updatedAt: new Date() })
+      .where(eq(schema.users.id, user.id));
+
+    return { ...user, isEmailVerified: true };
   }
 
   private async issueEmailVerificationForUser(
