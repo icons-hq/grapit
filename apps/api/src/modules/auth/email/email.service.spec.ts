@@ -109,12 +109,12 @@ describe('EmailService', () => {
       svc,
       'user@example.com',
       '123456',
-      'zh-TW',
+      'zh-CN',
     );
 
     const callArg = mod.__sendMock.mock.calls[0]?.[0] as { subject: string; react: unknown };
     expect(callArg.subject).toContain('Grabit');
-    expect(callArg.subject).toContain('驗證');
+    expect(callArg.subject).toContain('验证');
     expect(callArg.react).toBeDefined();
     expect(result).toEqual({ success: true, id: 'verification-id' });
   });

@@ -143,19 +143,18 @@ describe('Phase 23 launch foundation schema contracts', () => {
     expect(legalContentTypeEnum.enumValues).toEqual(['legal', 'notice', 'refund', 'booking_guide']);
   });
 
-  it('keeps API auth validation and seed fixture aligned to zh-TW instead of active ja', () => {
+  it('keeps API auth validation and seed fixture aligned to active launch locales', () => {
     const authControllerSource = readFileSync(
       join(schemaDir, '../../modules/auth/auth.controller.ts'),
       'utf8',
     );
     const seedSource = readFileSync(join(schemaDir, '../seed.mjs'), 'utf8');
 
-    expect(authControllerSource).toContain("z.enum(['ko', 'en', 'th', 'zh-CN', 'zh-TW'])");
+    expect(authControllerSource).toContain("z.enum(['ko', 'en', 'th', 'zh-CN'])");
     expect(authControllerSource).not.toContain(
       `z.enum(['ko', 'en', 'th', 'zh-CN', '${deprecatedLocale}'])`,
     );
-    expect(seedSource).toContain("const TRANSLATION_TARGET_LOCALES = ['en', 'th', 'zh-CN', 'zh-TW']");
-    expect(seedSource).toContain("'zh-TW': {");
+    expect(seedSource).toContain("const TRANSLATION_TARGET_LOCALES = ['en', 'th', 'zh-CN']");
     expect(seedSource).not.toContain(`'${deprecatedLocale}': {`);
     expect(seedSource).not.toContain('チケット');
   });

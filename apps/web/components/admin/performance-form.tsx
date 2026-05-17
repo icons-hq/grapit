@@ -82,7 +82,7 @@ const PAYMENT_METHOD_LABELS: Record<PerformanceAllowedPaymentMethod, string> = {
   SIMPLE_PAY: '국내 간편결제',
 };
 
-const ADMIN_EVENT_LOCALE_ORDER = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
+const ADMIN_EVENT_LOCALE_ORDER = ['ko', 'en', 'th', 'zh-CN'] as const;
 const PERFORMANCE_OPEN_STATUS_OPTIONS: Array<{
   value: Extract<PerformanceStatus, 'upcoming' | 'selling'>;
   label: string;

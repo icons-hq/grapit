@@ -18,7 +18,7 @@ type SourceRow = {
 type DraftRow = {
   id: string;
   sourceId: string;
-  targetLocale: 'en' | 'th' | 'zh-CN' | 'zh-TW';
+  targetLocale: 'en' | 'th' | 'zh-CN';
   status: 'draft' | 'review' | 'published' | 'stale';
   translatedText: string;
   sourceContentHash: string;
@@ -110,7 +110,7 @@ describe('TranslationService', () => {
     const drafts = await service.generateDrafts(source.id);
 
     expect(source.sourceLocale).toBe('ko');
-    expect(drafts.map((draft) => draft.locale)).toEqual(['en', 'th', 'zh-CN', 'zh-TW']);
+    expect(drafts.map((draft) => draft.locale)).toEqual(['en', 'th', 'zh-CN']);
     expect(drafts.every((draft) => draft.status === 'draft')).toBe(true);
     expect(drafts.every((draft) => draft.automaticTranslationLabel === true)).toBe(true);
   });
@@ -187,7 +187,7 @@ describe('TranslationService', () => {
 
     const staleDrafts = await service.markStaleOnSourceEdit(source.id, '수정된 안내');
 
-    expect(staleDrafts).toHaveLength(4);
+    expect(staleDrafts).toHaveLength(3);
     expect(staleDrafts.every((item) => item.status === 'stale')).toBe(true);
     await expect(service.publishDraft(draft.id)).rejects.toBeInstanceOf(BadRequestException);
   });

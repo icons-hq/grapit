@@ -21,9 +21,12 @@ function formatDate(iso: string): string {
   return `${y}.${m}.${day}`;
 }
 
-function formatPerformanceDateRange(performance: PerformanceCardData): string {
+function formatPerformanceDateRange(
+  performance: PerformanceCardData,
+  upcomingDateLabel: string,
+): string {
   if (performance.status === 'upcoming') {
-    return '오픈예정';
+    return upcomingDateLabel;
   }
 
   return `${formatDate(performance.startDate)} ~ ${formatDate(performance.endDate)}`;
@@ -87,7 +90,10 @@ export function PerformanceCard({
           </p>
         )}
         <p className="mt-1 line-clamp-1 text-xs text-gray-500 md:text-sm">
-          {formatPerformanceDateRange(performance)}
+          {formatPerformanceDateRange(
+            performance,
+            copy.performance.upcomingDateLabel,
+          )}
         </p>
       </div>
     </Link>

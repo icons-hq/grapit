@@ -1,4 +1,4 @@
-export const LAUNCH_COPY_LOCALES = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
+export const LAUNCH_COPY_LOCALES = ['ko', 'en', 'th', 'zh-CN'] as const;
 
 export const LAUNCH_COPY_NAMESPACES = [
   'nav',
@@ -74,6 +74,7 @@ const authFormKeys = [
   'signupComplete',
   'under14Blocked',
   'temporaryError',
+  'emailUnavailable',
 ] as const;
 
 const authSignupKeys = [
@@ -180,7 +181,6 @@ function forLaunchLocales<const T extends readonly string[]>(keys: T) {
     en: keys,
     th: keys,
     'zh-CN': keys,
-    'zh-TW': keys,
   } as const satisfies Record<LaunchCopyLocale, T>;
 }
 

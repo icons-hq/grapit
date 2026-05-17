@@ -40,7 +40,7 @@ import type { SocialProfile } from './interfaces/social-profile.interface.js';
 import { AUTH_COOKIE_NAME } from '@grabit/shared/constants/index.js';
 import type { EmailAvailabilityResponse } from '@grabit/shared/types/auth.types.js';
 
-const launchLocaleSchema = z.enum(['ko', 'en', 'th', 'zh-CN', 'zh-TW']).default('ko');
+const launchLocaleSchema = z.enum(['ko', 'en', 'th', 'zh-CN']).default('ko');
 const emailAvailabilityQuerySchema = z.object({
   email: z.string().email(),
 });

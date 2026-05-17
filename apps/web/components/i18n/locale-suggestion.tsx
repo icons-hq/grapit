@@ -10,6 +10,7 @@ import {
   resolveLocaleFromPathname,
 } from '@/i18n/routing';
 import { cn } from '@/lib/cn';
+import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import {
   appendSearchParams,
   getLocalizedPathname,
@@ -19,20 +20,11 @@ import {
 type SupportedLocale = PublicSupportedLocale;
 
 const DISMISSED_STORAGE_KEY = 'locale-suggestion-dismissed';
-const SUGGESTION_COPY = {
-  ko: '다른 언어로 볼까요?',
-  en: 'View this page in English?',
-  th: 'ดูหน้านี้เป็นภาษาไทยไหม?',
-  'zh-CN': '要以简体中文查看此页面吗？',
-  'zh-TW': '要以繁體中文查看此頁面嗎？',
-} as const satisfies Record<SupportedLocale, string>;
-
 const PUBLIC_LOCALE_LABELS = {
   ko: '한국어',
   en: 'English',
   th: 'ไทย',
   'zh-CN': '简体中文',
-  'zh-TW': '繁體中文',
 } as const satisfies Record<SupportedLocale, string>;
 
 export function LocaleSuggestion({ className }: { className?: string }) {
@@ -50,10 +42,12 @@ export function LocaleSuggestion({ className }: { className?: string }) {
 
   if (!suggestedLocale) return null;
   const locale = suggestedLocale;
+  const copy = getVisibleCopy(locale).locale;
 
   function dismiss() {
-    if (typeof window !== 'undefined') {
-      window.sessionStorage.setItem(DISMISSED_STORAGE_KEY, 'true');
+    const storage = getSessionStorage();
+    if (storage) {
+      storage.setItem(DISMISSED_STORAGE_KEY, 'true');
     }
     setSuggestedLocale(null);
   }
@@ -80,7 +74,7 @@ export function LocaleSuggestion({ className }: { className?: string }) {
     >
       <div className="mx-auto flex max-w-[1200px] flex-wrap items-center justify-between gap-3">
         <p className="text-sm font-semibold">
-          {SUGGESTION_COPY[locale] ?? SUGGESTION_COPY.en}
+          {copy.suggestion}
         </p>
         <div className="flex items-center gap-2">
           <button
@@ -96,7 +90,7 @@ export function LocaleSuggestion({ className }: { className?: string }) {
             className="inline-flex min-h-10 items-center gap-1 rounded-md px-3 text-sm font-semibold text-info hover:bg-white/60"
           >
             <X className="h-4 w-4" aria-hidden="true" />
-            나중에
+            {copy.dismiss}
           </button>
         </div>
       </div>
@@ -109,7 +103,7 @@ function readSuggestedLocale(): SupportedLocale | null {
     return null;
   }
 
-  if (window.sessionStorage.getItem(DISMISSED_STORAGE_KEY) === 'true') {
+  if (getSessionStorage()?.getItem(DISMISSED_STORAGE_KEY) === 'true') {
     return null;
   }
 
@@ -123,6 +117,18 @@ function readSuggestedLocale(): SupportedLocale | null {
   try {
     const decoded = decodeURIComponent(value);
     return isPublicSupportedLocale(decoded) ? decoded : null;
+  } catch {
+    return null;
+  }
+}
+
+function getSessionStorage(): Storage | null {
+  if (typeof window === 'undefined' || typeof window.sessionStorage === 'undefined') {
+    return null;
+  }
+
+  try {
+    return window.sessionStorage;
   } catch {
     return null;
   }

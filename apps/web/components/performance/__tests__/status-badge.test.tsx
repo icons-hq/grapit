@@ -28,10 +28,10 @@ describe('StatusBadge', () => {
     expect(screen.getByLabelText('상태: 오픈')).toBeDefined();
   });
 
-  it('renders Traditional Chinese labels for the launch locale', () => {
-    render(<StatusBadge status="selling" locale="zh-TW" />);
+  it('renders Simplified Chinese labels for the launch locale', () => {
+    render(<StatusBadge status="selling" locale="zh-CN" />);
 
-    expect(screen.getByText('銷售中')).toBeDefined();
-    expect(screen.getByLabelText('Status: 銷售中')).toBeDefined();
+    expect(screen.getByText('销售中')).toBeDefined();
+    expect(screen.getByLabelText('Status: 销售中')).toBeDefined();
   });
 });

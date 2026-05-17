@@ -29,7 +29,9 @@ import type {
   SocialAuthResult,
 } from '@grabit/shared/types/auth.types.js';
 import {
+  DEFAULT_LOCALE,
   REFRESH_TOKEN_EXPIRY_DAYS,
+  isSupportedLocale,
 } from '@grabit/shared/constants/index.js';
 
 // UUID v4 형식 검증용 regex. resetPassword 경로에서 DB lookup 전
@@ -915,7 +917,7 @@ export class AuthService {
     gender: 'male' | 'female' | 'unspecified';
     country: string;
     birthDate: string;
-    preferredLocale?: UserProfile['preferredLocale'] | null;
+    preferredLocale?: string | null;
     isEmailVerified: boolean;
     isPhoneVerified: boolean;
     role: string;
@@ -929,11 +931,18 @@ export class AuthService {
       gender: user.gender,
       country: user.country,
       birthDate: user.birthDate,
-      preferredLocale: user.preferredLocale ?? 'ko',
+      preferredLocale: normalizeStoredPreferredLocale(user.preferredLocale ?? null),
       isEmailVerified: user.isEmailVerified,
       isPhoneVerified: user.isPhoneVerified,
       role: user.role as 'user' | 'admin',
       createdAt: user.createdAt.toISOString(),
     };
   }
+}
+
+function normalizeStoredPreferredLocale(locale: string | null): UserProfile['preferredLocale'] {
+  if (!locale) return DEFAULT_LOCALE;
+  if (isSupportedLocale(locale)) return locale;
+  if (locale.toLowerCase() === 'zh-tw') return 'zh-CN';
+  return DEFAULT_LOCALE;
 }

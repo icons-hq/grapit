@@ -1,4 +1,4 @@
-export const SUPPORTED_LOCALES = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
+export const SUPPORTED_LOCALES = ['ko', 'en', 'th', 'zh-CN'] as const;
 
 export const DEFAULT_LOCALE = 'ko';
 
@@ -7,7 +7,6 @@ export const LOCALE_PREFIXES = {
   en: '/en',
   th: '/th',
   'zh-CN': '/zh-CN',
-  'zh-TW': '/zh-TW',
 } as const satisfies Record<(typeof SUPPORTED_LOCALES)[number], string>;
 
 export const LOCALE_LABELS = {
@@ -26,10 +25,6 @@ export const LOCALE_LABELS = {
   'zh-CN': {
     native: '简体中文',
     english: 'Simplified Chinese',
-  },
-  'zh-TW': {
-    native: '繁體中文',
-    english: 'Traditional Chinese',
   },
 } as const satisfies Record<
   (typeof SUPPORTED_LOCALES)[number],

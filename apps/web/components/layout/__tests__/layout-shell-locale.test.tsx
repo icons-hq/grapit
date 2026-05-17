@@ -43,6 +43,7 @@ describe('locale suggestion shell wiring', () => {
     );
 
     expect(screen.getByText('View this page in English?')).toBeDefined();
+    expect(screen.getByRole('button', { name: /Later/ })).toBeDefined();
     expect(screen.getByText('public page')).toBeDefined();
   });
 
@@ -57,6 +58,7 @@ describe('locale suggestion shell wiring', () => {
     );
 
     expect(screen.getByText('ดูหน้านี้เป็นภาษาไทยไหม?')).toBeDefined();
+    expect(screen.getByRole('button', { name: /ภายหลัง/ })).toBeDefined();
   });
 
   it('hides locale suggestion on admin shell paths', () => {
@@ -106,6 +108,9 @@ describe('locale suggestion shell wiring', () => {
     expect(existsSync(sourcePath)).toBe(true);
     const source = readFileSync(sourcePath, 'utf8');
     expect(source).toContain('React.useState<SupportedLocale | null>(null)');
+    expect(source).toContain('getVisibleCopy(locale).locale');
+    expect(source).not.toContain('SUGGESTION_COPY');
+    expect(source).not.toContain('나중에');
     expect(source).not.toContain('() => readSuggestedLocale()');
     expect(source).not.toMatch(
       /router\.replace|redirect\(|window\.location\.assign/,

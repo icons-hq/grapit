@@ -66,19 +66,6 @@ const localeCases = [
     bookingDisabledCopy: '门票预订将于稍后开放',
     expectsTranslationLabel: true,
   },
-  {
-    locale: 'zh-TW',
-    prefix: '/zh-TW',
-    nativeName: '繁體中文',
-    searchQuery: 'girl',
-    homeCopy: '熱門演出',
-    searchCopy: "'girl' 的搜索結果",
-    resultTitle: '2026 Girl Rules 粉絲見面會',
-    authCopy: '登錄',
-    detailCopy: '詳細信息',
-    bookingDisabledCopy: '門票預訂將於稍後開放',
-    expectsTranslationLabel: true,
-  },
 ] as const;
 
 test.describe('Phase 23 i18n canary smoke', () => {

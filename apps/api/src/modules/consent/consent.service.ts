@@ -35,7 +35,7 @@ const requiredConsentItemKeys = new Set<string>(REQUIRED_CONSENT_ITEM_KEYS);
 export interface ConsentAuditFilters {
   itemKey?: ConsentItemKey;
   version?: string;
-  language?: 'ko' | 'en' | 'th' | 'zh-CN' | 'zh-TW';
+  language?: 'ko' | 'en' | 'th' | 'zh-CN';
   from?: string;
   to?: string;
   ip?: string;

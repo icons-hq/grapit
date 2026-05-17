@@ -18,7 +18,7 @@ import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 
 export interface EventPublishLocaleState {
-  locale: 'ko' | 'en' | 'th' | 'zh-CN' | 'zh-TW';
+  locale: 'ko' | 'en' | 'th' | 'zh-CN';
   label: string;
   required: boolean;
   ready: boolean;

@@ -60,7 +60,7 @@ describe('PhoneVerification PhoneInput locale wiring', () => {
     vi.clearAllMocks();
   });
 
-  it.each(['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const)(
+  it.each(['ko', 'en', 'th', 'zh-CN'] as const)(
     'passes active %s locale into PhoneInput during the auth/SMS OTP flow',
     (locale) => {
       mocks.activeLocale = locale;

@@ -10,7 +10,8 @@
     "language": "언어",
     "home": "홈",
     "search": "검색",
-    "category": "분류"
+    "category": "분류",
+    "logoutSuccess": "로그아웃되었습니다"
   },
   "home": {
     "hot": "HOT 이벤트",
@@ -66,7 +67,15 @@
     ],
     "loadError": "공연 정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.",
     "retry": "다시 시도",
-    "bookCta": "예매하기"
+    "bookCta": "예매하기",
+    "venueLabel": "장소",
+    "scheduleLabel": "일정",
+    "runtimeLabel": "공연시간",
+    "ageLabel": "관람연령",
+    "priceLabel": "가격",
+    "upcomingDateLabel": "오픈예정",
+    "detailImagesTitle": "상세 이미지",
+    "detailImageAlt": "{title} 상세 이미지 {index}"
   },
   "booking": {
     "disabled": "예매는 추후 오픈 예정입니다",
@@ -156,10 +165,24 @@
     }
   },
   "locale": {
-    "suggestion": "다른 언어로 볼까요?"
+    "suggestion": "다른 언어로 볼까요?",
+    "dismiss": "나중에"
   },
   "legal": {
     "fallbackLabel": "영문 법적 고지로 확인합니다"
+  },
+  "footer": {
+    "terms": "이용약관",
+    "privacy": "개인정보처리방침",
+    "support": "고객센터",
+    "businessName": "사업자명: (주)아이콘스",
+    "representative": "대표자: 정승준",
+    "businessRegistration": "사업자등록번호: 109-86-27576",
+    "mailOrderRegistration": "통신판매업 신고번호: 2025-서울마포-1494",
+    "businessAddress": "사업장 주소: 서울특별시 마포구 월드컵로8길 69",
+    "customerSupport": "고객센터: 02-325-1794",
+    "privacyOfficer": "개인정보 보호책임자: 정승준",
+    "privacyInquiry": "개인정보 문의:"
   },
   "auth": {
     "tabs": {
@@ -181,7 +204,20 @@
       "separator": "또는",
       "signupComplete": "회원가입이 완료되었습니다. 이메일 인증을 진행해주세요.",
       "under14Blocked": "만 14세 미만은 가입할 수 없습니다",
-      "temporaryError": "일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
+      "temporaryError": "일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+      "emailUnavailable": "이미 사용 중인 이메일입니다"
+    },
+    "social": {
+      "kakaoButton": "카카오로 시작하기",
+      "naverButton": "네이버로 시작하기",
+      "googleButton": "Google로 시작하기"
+    },
+    "socialErrors": {
+      "oauthDenied": "소셜 로그인이 취소되었습니다.",
+      "oauthFailed": "소셜 로그인에 실패했습니다. 다시 시도해주세요.",
+      "tokenExpired": "로그인 세션이 만료되었습니다. 다시 시도해주세요.",
+      "serverError": "일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
+      "accountConflict": "이미 다른 계정에 연결된 소셜 계정입니다."
     },
     "signup": {
       "progressAriaLabel": "회원가입 진행 상태",

@@ -137,7 +137,7 @@ export function TranslationSourceForm({
           disabled={!sourceId || isGenerating}
           onClick={() => void handleGenerateDrafts()}
         >
-          en/th/zh-CN/zh-TW 초안 생성
+          en/th/zh-CN 초안 생성
         </Button>
       </div>
     </form>

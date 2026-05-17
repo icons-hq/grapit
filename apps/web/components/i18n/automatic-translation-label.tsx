@@ -8,7 +8,6 @@ const LOCALE_COPY: Record<string, string> = {
   en: ENGLISH_FALLBACK,
   th: ENGLISH_FALLBACK,
   'zh-CN': ENGLISH_FALLBACK,
-  'zh-TW': ENGLISH_FALLBACK,
 };
 
 interface AutomaticTranslationLabelProps {

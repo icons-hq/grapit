@@ -11,7 +11,6 @@ import koMessages from '@/messages/ko.json';
 import enMessages from '@/messages/en.json';
 import thMessages from '@/messages/th.json';
 import zhCNMessages from '@/messages/zh-CN.json';
-import zhTWMessages from '@/messages/zh-TW.json';
 import { EmailVerificationStatus } from '../email-verification-status';
 import { getAuthLaunchCopy } from '../auth-launch-copy';
 
@@ -54,7 +53,6 @@ const messageFiles = {
   en: enMessages,
   th: thMessages,
   'zh-CN': zhCNMessages,
-  'zh-TW': zhTWMessages,
 } as const;
 
 const expectedNamespaces = [
@@ -161,11 +159,11 @@ function readNamespace(
 }
 
 describe('auth launch copy messages', () => {
-  it('defines exactly the five launch locale message files', () => {
+  it('defines exactly the active launch locale message files', () => {
     expect(Object.keys(messageFiles)).toEqual(LAUNCH_COPY_LOCALES);
   });
 
-  it('mirrors every required auth namespace and key in all five launch locales', () => {
+  it('mirrors every required auth namespace and key in all active launch locales', () => {
     for (const locale of LAUNCH_COPY_LOCALES) {
       for (const namespace of expectedNamespaces) {
         const copy = readNamespace(messageFiles[locale], namespace);
@@ -191,10 +189,11 @@ describe('auth launch copy messages', () => {
     );
   });
 
-  it('resolves Traditional Chinese auth copy through the launch locale key', () => {
-    const copy = getAuthLaunchCopy('zh-TW');
+  it('falls back to Korean auth copy for stale unsupported locale keys', () => {
+    const staleLocale = ['zh', 'TW'].join('-');
+    const copy = getAuthLaunchCopy(staleLocale);
 
-    expect(copy.locale).toBe('zh-TW');
+    expect(copy.locale).toBe('ko');
     expect(copy.emailVerification.resendCta).toEqual(expect.any(String));
     expect(copy.emailVerification.resendCta.trim().length).toBeGreaterThan(0);
   });

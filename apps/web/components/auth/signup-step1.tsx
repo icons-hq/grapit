@@ -29,8 +29,6 @@ interface SignupStep1Props {
   defaultValues: RegisterStep1Input | null;
 }
 
-const EMAIL_AVAILABILITY_ERROR = '이미 사용 중인 이메일입니다';
-
 export function SignupStep1({ onComplete, defaultValues }: SignupStep1Props) {
   const authCopy = getAuthLaunchCopy(useLocale());
   const emailAvailabilityCacheRef = useRef<{
@@ -63,7 +61,7 @@ export function SignupStep1({ onComplete, defaultValues }: SignupStep1Props) {
       if (!cached.available) {
         form.setError('email', {
           type: 'availability',
-          message: EMAIL_AVAILABILITY_ERROR,
+          message: authCopy.form.emailUnavailable,
         });
       } else {
         clearAvailabilityError();
@@ -90,7 +88,7 @@ export function SignupStep1({ onComplete, defaultValues }: SignupStep1Props) {
       if (!result.available) {
         form.setError('email', {
           type: 'availability',
-          message: EMAIL_AVAILABILITY_ERROR,
+          message: authCopy.form.emailUnavailable,
         });
         return false;
       }

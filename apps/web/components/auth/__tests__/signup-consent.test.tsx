@@ -221,4 +221,14 @@ describe('auth provider launch surface', () => {
     expect(screen.getByText('Google로 시작하기')).toBeInTheDocument();
     expect(screen.queryByText(/\bLINE\b|\bLine\b|라인/)).not.toBeInTheDocument(); // D-13 absent
   });
+
+  it('localizes social login buttons for English auth routes', () => {
+    navigationMocks.activeLocale = 'en';
+    render(<LoginForm />);
+
+    expect(screen.getByText('Continue with Kakao')).toBeInTheDocument();
+    expect(screen.getByText('Continue with Naver')).toBeInTheDocument();
+    expect(screen.getByText('Continue with Google')).toBeInTheDocument();
+    expect(screen.queryByText('카카오로 시작하기')).not.toBeInTheDocument();
+  });
 });

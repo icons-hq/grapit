@@ -67,7 +67,7 @@ export function GNB() {
       // Clear state regardless
     }
     clearAuth();
-    toast.success('로그아웃되었습니다');
+    toast.success(copy.nav.logoutSuccess);
     router.push(getLocalizedPathname('/', activeLocale));
   }
 

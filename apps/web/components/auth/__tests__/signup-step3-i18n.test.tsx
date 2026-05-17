@@ -79,7 +79,7 @@ describe('SignupStep3 i18n visible copy', () => {
   });
 
   it('renders localized country names while keeping canonical country values', () => {
-    mocks.activeLocale = 'zh-TW';
+    mocks.activeLocale = 'zh-CN';
 
     render(
       <SignupStep3
@@ -89,7 +89,7 @@ describe('SignupStep3 i18n visible copy', () => {
       />,
     );
 
-    expect(screen.getByRole('option', { name: '韓國' })).toHaveValue('KR');
+    expect(screen.getByRole('option', { name: '韩国' })).toHaveValue('KR');
     expect(screen.getByRole('option', { name: '日本' })).toHaveValue('JP');
     expect(screen.getByRole('option', { name: '其他' })).toHaveValue('OTHER');
   });

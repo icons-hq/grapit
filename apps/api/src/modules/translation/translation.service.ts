@@ -12,7 +12,7 @@ import { translationDrafts } from '../../database/schema/translation-drafts.js';
 import { translationSources } from '../../database/schema/translation-sources.js';
 import { DeepLClient, type DeepLTranslationResult } from './deepl.client.js';
 
-export const TRANSLATION_TARGET_LOCALES = ['en', 'th', 'zh-CN', 'zh-TW'] as const;
+export const TRANSLATION_TARGET_LOCALES = ['en', 'th', 'zh-CN'] as const;
 
 export type TranslationTargetLocale = (typeof TRANSLATION_TARGET_LOCALES)[number];
 export type TranslationStatus = 'draft' | 'review' | 'published' | 'stale';

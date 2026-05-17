@@ -9,8 +9,8 @@ import {
 } from './locales';
 
 describe('launch locale constants', () => {
-  it('supports exactly the five launch locales', () => {
-    expect(SUPPORTED_LOCALES).toEqual(['ko', 'en', 'th', 'zh-CN', 'zh-TW']);
+  it('supports exactly the four active launch locales', () => {
+    expect(SUPPORTED_LOCALES).toEqual(['ko', 'en', 'th', 'zh-CN']);
     expect(DEFAULT_LOCALE).toBe('ko');
   });
 
@@ -20,7 +20,6 @@ describe('launch locale constants', () => {
       en: '/en',
       th: '/th',
       'zh-CN': '/zh-CN',
-      'zh-TW': '/zh-TW',
     });
   });
 
@@ -38,7 +37,7 @@ describe('launch locale constants', () => {
   it('checks whether a runtime string is a supported locale', () => {
     expect(isSupportedLocale('ko')).toBe(true);
     expect(isSupportedLocale('zh-CN')).toBe(true);
-    expect(isSupportedLocale('zh-TW')).toBe(true);
+    expect(isSupportedLocale(['zh', 'TW'].join('-'))).toBe(false);
     expect(isSupportedLocale(['j', 'a'].join(''))).toBe(false);
     expect(isSupportedLocale('')).toBe(false);
   });

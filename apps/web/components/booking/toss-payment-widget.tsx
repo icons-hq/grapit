@@ -43,7 +43,6 @@ const LOCALE_TO_COUNTRY = {
   en: 'US',
   th: 'TH',
   'zh-CN': 'CN',
-  'zh-TW': 'TW',
 } as const;
 type PaymentWidgetLocale = keyof typeof LOCALE_TO_COUNTRY;
 
@@ -128,8 +127,6 @@ function createOverseasConsent(): PaymentMethod['overseasPaymentConsent'] {
 }
 
 function resolvePaymentWidgetLocale(locale: string | undefined): PaymentWidgetLocale {
-  if (locale === 'zh-TW') return 'zh-TW';
-
   const visibleCopyLocale = resolveVisibleCopyLocale(locale);
   return visibleCopyLocale in LOCALE_TO_COUNTRY
     ? (visibleCopyLocale as PaymentWidgetLocale)

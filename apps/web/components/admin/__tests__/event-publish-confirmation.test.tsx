@@ -45,7 +45,6 @@ const reviewSummary: EventPublishReviewSummary = {
     { locale: 'en', label: 'en', required: true, ready: true },
     { locale: 'th', label: 'th', required: false, ready: false },
     { locale: 'zh-CN', label: 'zh-CN', required: false, ready: false },
-    { locale: 'zh-TW', label: 'zh-TW', required: false, ready: false },
   ],
   venue: {
     name: '동해문화예술관 대극장',
@@ -102,7 +101,6 @@ describe('EventPublishConfirmationDialog', () => {
       'en필수 준비됨',
       'th검수 필요',
       'zh-CN검수 필요',
-      'zh-TW검수 필요',
     ]);
   });
 

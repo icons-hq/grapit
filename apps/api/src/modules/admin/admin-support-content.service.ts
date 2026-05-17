@@ -21,7 +21,6 @@ export const SUPPORT_CONTENT_LOCALES = [
   'en',
   'th',
   'zh-CN',
-  'zh-TW',
 ] as const;
 
 export type SupportContentLocale = (typeof SUPPORT_CONTENT_LOCALES)[number];

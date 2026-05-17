@@ -10,7 +10,8 @@
     "language": "Language",
     "home": "Home",
     "search": "Search",
-    "category": "Category"
+    "category": "Category",
+    "logoutSuccess": "You have been signed out"
   },
   "home": {
     "hot": "HOT",
@@ -66,7 +67,15 @@
     ],
     "loadError": "Could not load show information. Please try again shortly.",
     "retry": "Retry",
-    "bookCta": "Book tickets"
+    "bookCta": "Book tickets",
+    "venueLabel": "Venue",
+    "scheduleLabel": "Schedule",
+    "runtimeLabel": "Runtime",
+    "ageLabel": "Age rating",
+    "priceLabel": "Price",
+    "upcomingDateLabel": "Coming soon",
+    "detailImagesTitle": "Detail images",
+    "detailImageAlt": "{title} detail image {index}"
   },
   "booking": {
     "disabled": "Ticket booking will open later",
@@ -156,10 +165,24 @@
     }
   },
   "locale": {
-    "suggestion": "View this page in English?"
+    "suggestion": "View this page in English?",
+    "dismiss": "Later"
   },
   "legal": {
     "fallbackLabel": "Reviewing the English legal notice"
+  },
+  "footer": {
+    "terms": "Terms of Service",
+    "privacy": "Privacy Policy",
+    "support": "Support",
+    "businessName": "Company: ICONS Co., Ltd.",
+    "representative": "Representative: Seungjun Jung",
+    "businessRegistration": "Business registration no.: 109-86-27576",
+    "mailOrderRegistration": "Mail-order business registration no.: 2025-Seoul Mapo-1494",
+    "businessAddress": "Business address: 69 World Cup-ro 8-gil, Mapo-gu, Seoul",
+    "customerSupport": "Customer support: 02-325-1794",
+    "privacyOfficer": "Privacy officer: Seungjun Jung",
+    "privacyInquiry": "Privacy inquiries:"
   },
   "auth": {
     "tabs": {
@@ -181,7 +204,20 @@
       "separator": "or",
       "signupComplete": "Sign-up is complete. Please verify your email.",
       "under14Blocked": "Users under 14 cannot sign up",
-      "temporaryError": "A temporary error occurred. Please try again shortly."
+      "temporaryError": "A temporary error occurred. Please try again shortly.",
+      "emailUnavailable": "This email is already in use"
+    },
+    "social": {
+      "kakaoButton": "Continue with Kakao",
+      "naverButton": "Continue with Naver",
+      "googleButton": "Continue with Google"
+    },
+    "socialErrors": {
+      "oauthDenied": "Social login was cancelled.",
+      "oauthFailed": "Social login failed. Please try again.",
+      "tokenExpired": "Your login session expired. Please try again.",
+      "serverError": "A temporary error occurred. Please try again shortly.",
+      "accountConflict": "This social account is already connected to another account."
     },
     "signup": {
       "progressAriaLabel": "Sign-up progress",

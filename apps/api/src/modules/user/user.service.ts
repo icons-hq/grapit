@@ -71,7 +71,7 @@ export class UserService {
     gender: 'male' | 'female' | 'unspecified';
     country: string;
     birthDate: string;
-    preferredLocale: UserProfile['preferredLocale'] | null;
+    preferredLocale: string | null;
     isEmailVerified: boolean;
     isPhoneVerified: boolean;
     role: string;
@@ -85,11 +85,18 @@ export class UserService {
       gender: user.gender,
       country: user.country,
       birthDate: user.birthDate,
-      preferredLocale: user.preferredLocale ?? DEFAULT_LOCALE,
+      preferredLocale: normalizeStoredPreferredLocale(user.preferredLocale),
       isEmailVerified: user.isEmailVerified,
       isPhoneVerified: user.isPhoneVerified,
       role: user.role as 'user' | 'admin',
       createdAt: user.createdAt.toISOString(),
     };
   }
+}
+
+function normalizeStoredPreferredLocale(locale: string | null): UserProfile['preferredLocale'] {
+  if (!locale) return DEFAULT_LOCALE;
+  if (isSupportedLocale(locale)) return locale;
+  if (locale.toLowerCase() === 'zh-tw') return 'zh-CN';
+  return DEFAULT_LOCALE;
 }
