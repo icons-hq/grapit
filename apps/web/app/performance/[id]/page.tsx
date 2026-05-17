@@ -90,6 +90,9 @@ export default function PerformanceDetailPage({
     );
   }
 
+  const showDescriptionSection = performance.descriptionVisible !== false;
+  const showSalesSection = performance.salesInfoVisible !== false;
+
   return (
     <>
       <main className="pb-24 lg:pb-12">
@@ -243,20 +246,24 @@ export default function PerformanceDetailPage({
                   {getDetailImagesNavLabel(activeLocale)}
                 </a>
               )}
-              <a
-                href="#detail-copy"
-                className="flex items-center gap-2 rounded-md px-3 py-2 hover:bg-gray-100 hover:text-gray-900"
-              >
-                <Info className="h-4 w-4" />
-                {getDetailCopyNavLabel(activeLocale)}
-              </a>
-              <a
-                href="#sales-copy"
-                className="flex items-center gap-2 rounded-md px-3 py-2 hover:bg-gray-100 hover:text-gray-900"
-              >
-                <Ticket className="h-4 w-4" />
-                {getSalesCopyNavLabel(activeLocale)}
-              </a>
+              {showDescriptionSection && (
+                <a
+                  href="#detail-copy"
+                  className="flex items-center gap-2 rounded-md px-3 py-2 hover:bg-gray-100 hover:text-gray-900"
+                >
+                  <Info className="h-4 w-4" />
+                  {getDetailCopyNavLabel(activeLocale)}
+                </a>
+              )}
+              {showSalesSection && (
+                <a
+                  href="#sales-copy"
+                  className="flex items-center gap-2 rounded-md px-3 py-2 hover:bg-gray-100 hover:text-gray-900"
+                >
+                  <Ticket className="h-4 w-4" />
+                  {getSalesCopyNavLabel(activeLocale)}
+                </a>
+              )}
             </nav>
           </aside>
 
@@ -288,48 +295,52 @@ export default function PerformanceDetailPage({
               </section>
             )}
 
-            <section id="detail-copy" className="scroll-mt-24">
-              <SectionHeader
-                eyebrow="information"
-                title={copy.performance.detailTab}
-              />
-              {performance.description ? (
-                <div className="mt-5 rounded-xl border border-gray-200 bg-white p-5 text-sm leading-7 text-gray-800 shadow-sm">
-                  <p className="whitespace-pre-wrap">
-                    {performance.description}
+            {showDescriptionSection && (
+              <section id="detail-copy" className="scroll-mt-24">
+                <SectionHeader
+                  eyebrow="information"
+                  title={copy.performance.detailTab}
+                />
+                {performance.description ? (
+                  <div className="mt-5 rounded-xl border border-gray-200 bg-white p-5 text-sm leading-7 text-gray-800 shadow-sm">
+                    <p className="whitespace-pre-wrap">
+                      {performance.description}
+                    </p>
+                  </div>
+                ) : (
+                  <p className="mt-5 rounded-xl border border-gray-200 bg-gray-50 p-5 text-center text-sm text-gray-500">
+                    {copy.performance.noDetail}
                   </p>
-                </div>
-              ) : (
-                <p className="mt-5 rounded-xl border border-gray-200 bg-gray-50 p-5 text-center text-sm text-gray-500">
-                  {copy.performance.noDetail}
-                </p>
-              )}
-            </section>
+                )}
+              </section>
+            )}
 
-            <section id="sales-copy" className="scroll-mt-24">
-              <SectionHeader
-                eyebrow="ticket policy"
-                title={copy.performance.salesTab}
-              />
-              {performance.salesInfo ? (
-                <div className="mt-5 rounded-xl border border-gray-200 bg-white p-5 text-sm leading-7 text-gray-800 shadow-sm">
-                  <p className="whitespace-pre-wrap">
-                    {performance.salesInfo}
-                  </p>
-                </div>
-              ) : (
-                <div className="mt-5 rounded-xl border border-gray-200 bg-white p-5 text-sm text-gray-600 shadow-sm">
-                  <h3 className="mb-2 font-semibold text-gray-900">
-                    {copy.performance.refundTitle}
-                  </h3>
-                  <ul className="list-inside list-disc space-y-1">
-                    {copy.performance.refundItems.map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </section>
+            {showSalesSection && (
+              <section id="sales-copy" className="scroll-mt-24">
+                <SectionHeader
+                  eyebrow="ticket policy"
+                  title={copy.performance.salesTab}
+                />
+                {performance.salesInfo ? (
+                  <div className="mt-5 rounded-xl border border-gray-200 bg-white p-5 text-sm leading-7 text-gray-800 shadow-sm">
+                    <p className="whitespace-pre-wrap">
+                      {performance.salesInfo}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="mt-5 rounded-xl border border-gray-200 bg-white p-5 text-sm text-gray-600 shadow-sm">
+                    <h3 className="mb-2 font-semibold text-gray-900">
+                      {copy.performance.refundTitle}
+                    </h3>
+                    <ul className="list-inside list-disc space-y-1">
+                      {copy.performance.refundItems.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </section>
+            )}
           </div>
         </div>
       </main>
