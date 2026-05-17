@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Fanmeet Launch
-status: "Phase 25 shipped — PR #47"
+status: "Quick 260517-glr shipped — PR #63"
 stopped_at: Phase 25 complete; ready for Phase 26
-last_updated: "2026-05-16T23:51:00.000+09:00"
-last_activity: "2026-05-16 -- Completed quick task 260516-wp5: allow login before email verification and require email plus phone verification before booking/payment"
+last_updated: "2026-05-17T12:53:00.000+09:00"
+last_activity: "2026-05-17 -- Shipped quick task 260517-glr via PR #63; CI/CD tracking requested"
 progress:
   total_phases: 7
   completed_phases: 4
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-05-04)
 
 Phase: 26 (m1-canary-cutover-gates) — READY
 Plan: 0 of 0
-Status: Phase 25 shipped — PR #47
+Status: Quick 260517-glr shipped — PR #63
 Last activity: 2026-05-17 -- Completed quick task 260517-glr: admin performance detail/sales visibility toggles
 
 ## Deferred Items
