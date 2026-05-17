@@ -109,6 +109,7 @@ describe('launch copy key manifest', () => {
       'signupComplete',
       'under14Blocked',
       'temporaryError',
+      'emailUnavailable',
     ]);
     expect(LAUNCH_COPY_KEYS['auth.signup'].ko).toEqual([
       'progressAriaLabel',

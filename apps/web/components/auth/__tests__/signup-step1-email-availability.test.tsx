@@ -7,10 +7,11 @@ import { SignupStep1 } from '../signup-step1';
 
 const mocks = vi.hoisted(() => ({
   apiGet: vi.fn(),
+  activeLocale: 'ko',
 }));
 
 vi.mock('next-intl', () => ({
-  useLocale: () => 'ko',
+  useLocale: () => mocks.activeLocale,
 }));
 
 vi.mock('@/lib/api-client', () => ({
@@ -32,6 +33,7 @@ async function fillValidCredentials(email: string) {
 describe('SignupStep1 email availability', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.activeLocale = 'ko';
     mocks.apiGet.mockResolvedValue({ available: true });
   });
 
@@ -69,6 +71,23 @@ describe('SignupStep1 email availability', () => {
       expect(screen.getByText('이미 사용 중인 이메일입니다')).toBeInTheDocument();
     });
     expect(onComplete).not.toHaveBeenCalled();
+  });
+
+  it('renders duplicate email errors from the active locale copy', async () => {
+    mocks.activeLocale = 'en';
+    mocks.apiGet.mockResolvedValue({ available: false });
+    render(<SignupStep1 onComplete={vi.fn()} defaultValues={null} />);
+
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText(/Email/), 'used@test.com');
+    await user.type(screen.getByPlaceholderText('Enter your password'), 'Test1234!');
+    await user.type(screen.getByPlaceholderText('Enter your password again'), 'Test1234!');
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('This email is already in use')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('이미 사용 중인 이메일입니다')).not.toBeInTheDocument();
   });
 
   it('allows immediate submit after replacing a duplicate email with an available one', async () => {
