@@ -24,8 +24,28 @@ export async function mockAdminAuth(page: Page) {
       name: '관리자',
       role: 'admin',
       phone: '010-0000-0000',
+      gender: 'unspecified',
+      country: 'KR',
+      birthDate: '1990-01-01',
+      preferredLocale: 'ko',
+      marketingConsent: true,
       isEmailVerified: true,
       isPhoneVerified: true,
+      adminCapabilityBundle: 'admin',
+      adminCapabilities: [
+        'event.write',
+        'event.publish',
+        'support.manage',
+        'support.escalate',
+        'reservations.export_raw',
+        'seat.disable',
+        'seat.reactivate',
+        'seat.manual_open',
+        'banner.manage',
+        'audit.read',
+        'security.manage',
+      ],
+      createdAt: '2026-05-01T00:00:00.000Z',
     });
   });
 }

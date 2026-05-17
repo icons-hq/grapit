@@ -30,6 +30,7 @@ const ADMIN_SIDEBAR_LABELS = [
   '번역 검수',
   '운영 인박스',
   'FAQ/공지',
+  '회원 관리',
   '좌석 운영',
   '감사 로그',
   '보안 설정',
@@ -38,6 +39,7 @@ const ADMIN_SIDEBAR_LABELS = [
 const PHASE_25_LINKS = [
   { label: '운영 인박스', href: '/admin/operations' },
   { label: 'FAQ/공지', href: '/admin/support-content' },
+  { label: '회원 관리', href: '/admin/users' },
   { label: '좌석 운영', href: '/admin/seat-operations' },
   { label: '감사 로그', href: '/admin/audit' },
   { label: '보안 설정', href: '/admin/security' },
@@ -133,8 +135,31 @@ async function mockUser(page: Page, user: { role: 'user' | 'admin' }) {
         name: user.role === 'admin' ? '관리자' : '일반 사용자',
         role: user.role,
         phone: '010-0000-0000',
+        gender: 'unspecified',
+        country: 'KR',
+        birthDate: '1990-01-01',
+        preferredLocale: 'ko',
+        marketingConsent: user.role === 'admin',
         isEmailVerified: true,
         isPhoneVerified: true,
+        adminCapabilityBundle: user.role === 'admin' ? 'admin' : null,
+        adminCapabilities:
+          user.role === 'admin'
+            ? [
+                'event.write',
+                'event.publish',
+                'support.manage',
+                'support.escalate',
+                'reservations.export_raw',
+                'seat.disable',
+                'seat.reactivate',
+                'seat.manual_open',
+                'banner.manage',
+                'audit.read',
+                'security.manage',
+              ]
+            : [],
+        createdAt: '2026-05-01T00:00:00.000Z',
       }),
     });
   });

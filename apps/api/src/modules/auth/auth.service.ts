@@ -25,6 +25,11 @@ import type { SocialRegisterBody } from './dto/social-register.dto.js';
 import type { SocialProfile } from './interfaces/social-profile.interface.js';
 import type { UserProfile } from '@grabit/shared/types/user.types.js';
 import type {
+  AdminCapability,
+  AdminCapabilityBundle,
+} from '@grabit/shared/types/admin-operations.types.js';
+import { ADMIN_CAPABILITIES } from '@grabit/shared/schemas/admin-operations.schema.js';
+import type {
   EmailAvailabilityResponse,
   SocialAuthResult,
 } from '@grabit/shared/types/auth.types.js';
@@ -51,7 +56,10 @@ export interface ValidatedUser {
   birthDate: string;
   isEmailVerified: boolean;
   isPhoneVerified: boolean;
+  marketingConsent: boolean;
   createdAt: Date;
+  adminCapabilityBundle?: string | null;
+  adminCapabilities?: AdminCapability[] | readonly string[] | null;
 }
 
 interface TokenPair {
@@ -183,7 +191,13 @@ export class AuthService {
   }
 
   async login(user: ValidatedUser): Promise<AuthResult> {
-    const tokens = await this.generateTokenPair(user.id, user.email, user.role);
+    const tokens = await this.generateTokenPair(
+      user.id,
+      user.email,
+      user.role,
+      normalizeAdminCapabilityBundle(user.adminCapabilityBundle),
+      user.adminCapabilities,
+    );
 
     return {
       ...tokens,
@@ -284,6 +298,8 @@ export class AuthService {
       sub: tokenRecord.userId,
       email: user.email,
       role: user.role,
+      adminCapabilityBundle: normalizeAdminCapabilityBundle(user.adminCapabilityBundle),
+      adminCapabilities: normalizeAdminCapabilities(user.adminCapabilities),
     });
 
     return { accessToken, refreshToken: newRawToken };
@@ -612,7 +628,13 @@ export class AuthService {
         );
       }
 
-      const tokens = await this.generateTokenPair(user.id, user.email, user.role);
+      const tokens = await this.generateTokenPair(
+        user.id,
+        user.email,
+        user.role,
+        normalizeAdminCapabilityBundle(user.adminCapabilityBundle),
+        user.adminCapabilities,
+      );
 
       return {
         status: 'authenticated',
@@ -879,12 +901,16 @@ export class AuthService {
     userId: string,
     email: string,
     role: string,
+    adminCapabilityBundle?: string | null,
+    adminCapabilities?: readonly string[] | null,
   ): Promise<TokenPair> {
     // Access token
     const accessToken = await this.jwtService.signAsync({
       sub: userId,
       email,
       role,
+      adminCapabilityBundle: normalizeAdminCapabilityBundle(adminCapabilityBundle),
+      adminCapabilities: normalizeAdminCapabilities(adminCapabilities),
     });
 
     // Refresh token: random bytes, hashed for storage
@@ -920,7 +946,10 @@ export class AuthService {
     preferredLocale?: string | null;
     isEmailVerified: boolean;
     isPhoneVerified: boolean;
+    marketingConsent?: boolean;
     role: string;
+    adminCapabilityBundle?: string | null;
+    adminCapabilities?: readonly string[] | null;
     createdAt: Date;
   }): UserProfile {
     return {
@@ -934,7 +963,10 @@ export class AuthService {
       preferredLocale: normalizeStoredPreferredLocale(user.preferredLocale ?? null),
       isEmailVerified: user.isEmailVerified,
       isPhoneVerified: user.isPhoneVerified,
+      marketingConsent: user.marketingConsent ?? false,
       role: user.role as 'user' | 'admin',
+      adminCapabilityBundle: normalizeAdminCapabilityBundle(user.adminCapabilityBundle),
+      adminCapabilities: normalizeAdminCapabilities(user.adminCapabilities),
       createdAt: user.createdAt.toISOString(),
     };
   }
@@ -945,4 +977,28 @@ function normalizeStoredPreferredLocale(locale: string | null): UserProfile['pre
   if (isSupportedLocale(locale)) return locale;
   if (locale.toLowerCase() === 'zh-tw') return 'zh-CN';
   return DEFAULT_LOCALE;
+}
+
+function normalizeAdminCapabilities(
+  capabilities: readonly string[] | null | undefined,
+): AdminCapability[] {
+  if (!capabilities) return [];
+  return ADMIN_CAPABILITIES.filter((capability) =>
+    capabilities.includes(capability),
+  );
+}
+
+function normalizeAdminCapabilityBundle(
+  bundle: string | null | undefined,
+): AdminCapabilityBundle | null {
+  if (
+    bundle === 'operator' ||
+    bundle === 'reviewer' ||
+    bundle === 'approver' ||
+    bundle === 'finance' ||
+    bundle === 'admin'
+  ) {
+    return bundle;
+  }
+  return null;
 }

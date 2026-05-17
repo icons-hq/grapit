@@ -4,12 +4,19 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
-import type { UserProfile } from '@grabit/shared';
+import {
+  LOCALE_LABELS,
+  SUPPORTED_LOCALES,
+  type SupportedLocale,
+  type UserProfile,
+} from '@grabit/shared';
 import { apiClient } from '@/lib/api-client';
 import { useAuthStore } from '@/stores/use-auth-store';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { PhoneVerification } from '@/components/auth/phone-verification';
 
 const GENDER_LABELS: Record<string, string> = {
@@ -22,11 +29,33 @@ interface ProfileFormProps {
   user: UserProfile;
 }
 
+type ProfileSettingsUser = UserProfile & {
+  marketingConsent?: boolean | null;
+};
+
+type ProfileUpdatePayload = {
+  name?: string;
+  phone?: string;
+  phoneVerificationToken?: string;
+  preferredLocale?: SupportedLocale;
+  marketingConsent?: boolean;
+};
+
+function getMarketingConsent(user: UserProfile): boolean {
+  return (user as ProfileSettingsUser).marketingConsent === true;
+}
+
 export function ProfileForm({ user }: ProfileFormProps) {
   const router = useRouter();
   const { setAuth, clearAuth, accessToken } = useAuthStore();
   const [name, setName] = useState(user.name);
   const [phone, setPhone] = useState(user.phone);
+  const [preferredLocale, setPreferredLocale] = useState<SupportedLocale>(
+    user.preferredLocale,
+  );
+  const [marketingConsent, setMarketingConsent] = useState(
+    getMarketingConsent(user),
+  );
   const [isPhoneVerified, setIsPhoneVerified] = useState(true);
   const [phoneVerificationToken, setPhoneVerificationToken] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -34,7 +63,11 @@ export function ProfileForm({ user }: ProfileFormProps) {
 
   // Track whether phone was changed
   const phoneChanged = phone !== user.phone;
-  const hasChanges = name !== user.name || phoneChanged;
+  const hasChanges =
+    name !== user.name ||
+    phoneChanged ||
+    preferredLocale !== user.preferredLocale ||
+    marketingConsent !== getMarketingConsent(user);
 
   // Reset phone verification when phone changes
   useEffect(() => {
@@ -57,14 +90,20 @@ export function ProfileForm({ user }: ProfileFormProps) {
 
     setIsSaving(true);
     try {
-      const payload: Record<string, string> = {};
+      const payload: ProfileUpdatePayload = {};
       if (name !== user.name) payload.name = name;
       if (phoneChanged) {
         payload.phone = phone;
         payload.phoneVerificationToken = phoneVerificationToken;
       }
+      if (preferredLocale !== user.preferredLocale) {
+        payload.preferredLocale = preferredLocale;
+      }
+      if (marketingConsent !== getMarketingConsent(user)) {
+        payload.marketingConsent = marketingConsent;
+      }
 
-      const updatedUser = await apiClient.patch<UserProfile>(
+      const updatedUser = await apiClient.patch<ProfileSettingsUser>(
         '/api/v1/users/me',
         payload,
       );
@@ -108,13 +147,44 @@ export function ProfileForm({ user }: ProfileFormProps) {
 
   return (
     <div className="space-y-6">
-      {/* Email - read only */}
+      <section className="rounded-lg border border-gray-200 bg-white p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium text-gray-500">계정 상태</p>
+            <p className="mt-1 text-base font-semibold text-gray-900">
+              {user.role === 'admin' ? '관리자 계정' : '일반 회원'}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Badge
+              variant={user.isEmailVerified ? 'default' : 'outline'}
+              className={
+                user.isEmailVerified
+                  ? 'bg-[#EAF8EF] text-[#176E38]'
+                  : 'text-gray-600'
+              }
+            >
+              이메일 {user.isEmailVerified ? '인증 완료' : '미인증'}
+            </Badge>
+            <Badge
+              variant={user.isPhoneVerified ? 'default' : 'outline'}
+              className={
+                user.isPhoneVerified
+                  ? 'bg-[#EEF6FF] text-[#1D5E9F]'
+                  : 'text-gray-600'
+              }
+            >
+              휴대폰 {user.isPhoneVerified ? '인증 완료' : '미인증'}
+            </Badge>
+          </div>
+        </div>
+      </section>
+
       <div className="space-y-2">
         <Label>이메일</Label>
         <p className="text-base text-gray-700">{user.email}</p>
       </div>
 
-      {/* Name - editable */}
       <div className="space-y-2">
         <Label htmlFor="profile-name">이름</Label>
         <Input
@@ -124,7 +194,6 @@ export function ProfileForm({ user }: ProfileFormProps) {
         />
       </div>
 
-      {/* Phone - editable with re-verify */}
       <div className="space-y-2">
         <Label>전화번호</Label>
         <PhoneVerification
@@ -136,7 +205,44 @@ export function ProfileForm({ user }: ProfileFormProps) {
         />
       </div>
 
-      {/* Gender - read only */}
+      <div className="space-y-2">
+        <Label htmlFor="profile-locale">선호 언어</Label>
+        <select
+          id="profile-locale"
+          value={preferredLocale}
+          onChange={(event) =>
+            setPreferredLocale(event.target.value as SupportedLocale)
+          }
+          className="flex h-11 w-full rounded-lg border border-gray-200 bg-white px-4 py-2 text-base text-gray-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-0"
+        >
+          {SUPPORTED_LOCALES.map((locale) => (
+            <option key={locale} value={locale}>
+              {LOCALE_LABELS[locale].native} ({LOCALE_LABELS[locale].english})
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div className="flex items-center justify-between gap-4 rounded-lg border border-gray-200 bg-white p-4">
+        <div className="min-w-0">
+          <Label
+            htmlFor="profile-marketing-consent"
+            className="text-base font-semibold text-gray-900"
+          >
+            마케팅 수신 동의
+          </Label>
+          <p className="mt-1 text-sm text-gray-600">
+            공연 소식, 할인, 예매 알림을 받을지 설정합니다.
+          </p>
+        </div>
+        <Switch
+          id="profile-marketing-consent"
+          aria-label="마케팅 수신 동의"
+          checked={marketingConsent}
+          onCheckedChange={setMarketingConsent}
+        />
+      </div>
+
       <div className="space-y-2">
         <Label>성별</Label>
         <p className="text-base text-gray-700">
@@ -144,13 +250,11 @@ export function ProfileForm({ user }: ProfileFormProps) {
         </p>
       </div>
 
-      {/* Birth date - read only */}
       <div className="space-y-2">
         <Label>생년월일</Label>
         <p className="text-base text-gray-700">{formatBirthDate(user.birthDate)}</p>
       </div>
 
-      {/* Save button */}
       <Button
         size="lg"
         className="w-full"
@@ -167,8 +271,13 @@ export function ProfileForm({ user }: ProfileFormProps) {
         )}
       </Button>
 
-      {/* Logout */}
-      <div className="pt-4">
+      <div className="rounded-lg border border-gray-200 bg-white p-4">
+        <div className="mb-3">
+          <p className="text-base font-semibold text-gray-900">세션</p>
+          <p className="mt-1 text-sm text-gray-600">
+            현재 기기에서만 로그아웃합니다.
+          </p>
+        </div>
         <Button
           variant="ghost"
           className="w-full text-gray-500"

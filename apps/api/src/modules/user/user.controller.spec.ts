@@ -3,9 +3,13 @@ import { updateProfileSchema } from '@grabit/shared/schemas/user.schema.js';
 
 describe('UserController preferred locale validation', () => {
   it('accepts a supported preferredLocale in profile update DTOs', () => {
-    const parsed = updateProfileSchema.parse({ preferredLocale: 'zh-CN' });
+    const parsed = updateProfileSchema.parse({
+      preferredLocale: 'zh-CN',
+      marketingConsent: true,
+    });
 
     expect(parsed.preferredLocale).toBe('zh-CN');
+    expect(parsed.marketingConsent).toBe(true);
   });
 
   it('rejects unsupported preferredLocale values before service persistence', () => {

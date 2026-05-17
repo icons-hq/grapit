@@ -14,6 +14,7 @@ export interface UserProfile {
   preferredLocale: SupportedLocale;
   isEmailVerified: boolean;
   isPhoneVerified: boolean;
+  marketingConsent: boolean;
   role: UserRole;
   adminCapabilityBundle?: AdminCapabilityBundle | null;
   adminCapabilities?: AdminCapability[];

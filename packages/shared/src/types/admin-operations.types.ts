@@ -8,6 +8,16 @@ import {
   type AdminReservationExportFilter,
   type AdminSeatOperationRequest,
   type AdminSecurityStatus,
+  type AdminUserDetail,
+  type AdminUserListItem,
+  type AdminUserListQuery,
+  type AdminUserListResponse,
+  type AdminUserPermissionUpdate,
+  type AdminUserRecentReservation,
+  type AdminUserReservationSummary,
+  type AdminUserRole,
+  type AdminUserSupportThreadSummary,
+  type AdminUserVerificationState,
 } from '../schemas/admin-operations.schema';
 
 export type {
@@ -26,6 +36,16 @@ export type {
   AdminSeatOperationRequest,
   AdminSeatOperationHistory,
   AdminSecurityStatus,
+  AdminUserRole,
+  AdminUserListQuery,
+  AdminUserVerificationState,
+  AdminUserReservationSummary,
+  AdminUserListItem,
+  AdminUserRecentReservation,
+  AdminUserSupportThreadSummary,
+  AdminUserDetail,
+  AdminUserListResponse,
+  AdminUserPermissionUpdate,
 } from '../schemas/admin-operations.schema';
 
 export interface AdminCapabilityUser {
@@ -50,6 +70,10 @@ export interface AdminOperationsContract {
   exportFilter?: AdminReservationExportFilter;
   seatOperation?: AdminSeatOperationRequest;
   securityStatus: AdminSecurityStatus;
+  userListQuery?: AdminUserListQuery;
+  userListItems?: AdminUserListItem[];
+  userDetail?: AdminUserDetail;
+  userPermissionUpdate?: AdminUserPermissionUpdate;
 }
 
 export function resolveAdminCapabilitySnapshot(
@@ -63,7 +87,7 @@ export function resolveAdminCapabilitySnapshot(
     };
   }
 
-  if (user.role === 'admin' || user.adminCapabilityBundle === 'admin') {
+  if (user.adminCapabilityBundle === 'admin') {
     return {
       bundle: 'admin',
       capabilities: ADMIN_CAPABILITIES,
@@ -71,19 +95,31 @@ export function resolveAdminCapabilitySnapshot(
     };
   }
 
+  if (user.adminCapabilityBundle) {
+    const explicitCapabilities = user.adminCapabilities?.length
+      ? normalizeAdminCapabilities(user.adminCapabilities)
+      : ADMIN_CAPABILITY_BUNDLE_CAPABILITIES[user.adminCapabilityBundle];
+
+    return {
+      bundle: user.adminCapabilityBundle,
+      capabilities: explicitCapabilities,
+      superuser: false,
+    };
+  }
+
   if (user.adminCapabilities?.length) {
     return {
-      bundle: user.adminCapabilityBundle ?? null,
+      bundle: null,
       capabilities: normalizeAdminCapabilities(user.adminCapabilities),
       superuser: false,
     };
   }
 
-  if (user.adminCapabilityBundle) {
+  if (user.role === 'admin') {
     return {
-      bundle: user.adminCapabilityBundle,
-      capabilities: ADMIN_CAPABILITY_BUNDLE_CAPABILITIES[user.adminCapabilityBundle],
-      superuser: false,
+      bundle: 'admin',
+      capabilities: ADMIN_CAPABILITIES,
+      superuser: true,
     };
   }
 

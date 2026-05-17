@@ -8,6 +8,8 @@ interface JwtPayload {
   sub: string;
   email: string;
   role: string;
+  adminCapabilityBundle?: string | null;
+  adminCapabilities?: string[];
 }
 
 @Injectable()
@@ -33,6 +35,8 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
       id: user.id,
       email: user.email,
       role: user.role,
+      adminCapabilityBundle: user.adminCapabilityBundle ?? null,
+      adminCapabilities: user.adminCapabilities ?? [],
       isEmailVerified: user.isEmailVerified,
       isPhoneVerified: user.isPhoneVerified,
     };

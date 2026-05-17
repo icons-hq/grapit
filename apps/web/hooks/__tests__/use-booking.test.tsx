@@ -117,6 +117,7 @@ function setAdminAuth() {
     preferredLocale: 'ko',
     isEmailVerified: true,
     isPhoneVerified: true,
+    marketingConsent: false,
     role: 'admin',
     createdAt: '2026-05-06T00:00:00.000Z',
   });
