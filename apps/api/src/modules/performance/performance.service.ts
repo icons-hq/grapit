@@ -36,6 +36,10 @@ type SeatMapConfigForDetails = NonNullable<
   PerformanceWithDetails['seatMap']
 >['seatConfig'];
 
+type FindPerformanceByIdOptions = {
+  includeHiddenCopy?: boolean;
+};
+
 const PERFORMANCE_TAXONOMY_CACHE_VERSION = 'event-category-v1';
 const DEFAULT_FLOOR_KEY = '1F';
 const DEFAULT_FLOOR_LABEL = '1층';
@@ -141,6 +145,18 @@ function toOptionalIsoString(value: Date | string | null | undefined): string | 
   return value instanceof Date ? value.toISOString() : value;
 }
 
+function maskHiddenPerformanceCopy(
+  performance: PerformanceWithDetails,
+): PerformanceWithDetails {
+  return {
+    ...performance,
+    description:
+      performance.descriptionVisible === false ? null : performance.description,
+    salesInfo:
+      performance.salesInfoVisible === false ? null : performance.salesInfo,
+  };
+}
+
 @Injectable()
 export class PerformanceService {
   constructor(
@@ -234,8 +250,10 @@ export class PerformanceService {
   async findById(
     id: string,
     locale?: string | null,
+    options: FindPerformanceByIdOptions = {},
   ): Promise<PerformanceWithDetails | null> {
     const targetLocale = resolvePerformanceTranslationLocale(locale);
+    const includeHiddenCopy = options.includeHiddenCopy === true;
 
     // Increment view count BEFORE the cache check so view counters keep
     // accruing on every request, not just on DB hits (per plan acceptance).
@@ -246,8 +264,10 @@ export class PerformanceService {
       .where(eq(performances.id, id));
 
     const cacheKey = `cache:performances:detail:${id}:${targetLocale}`;
-    const cached = await this.cacheService.get<PerformanceWithDetails>(cacheKey);
-    if (cached) return cached;
+    if (!includeHiddenCopy) {
+      const cached = await this.cacheService.get<PerformanceWithDetails>(cacheKey);
+      if (cached) return cached;
+    }
 
     // Get performance with venue
     const [performanceRow] = await this.db
@@ -305,6 +325,7 @@ export class PerformanceService {
           venueId: perf.venueId,
           posterUrl: perf.posterUrl,
           description: perf.description,
+          descriptionVisible: perf.descriptionVisible,
           detailImages: normalizePerformanceDetailImages(perf.detailImages),
           startDate: perf.startDate?.toISOString() ?? '',
           endDate: perf.endDate?.toISOString() ?? '',
@@ -312,6 +333,7 @@ export class PerformanceService {
           ageRating: perf.ageRating,
           status: perf.status,
           salesInfo: perf.salesInfo,
+          salesInfoVisible: perf.salesInfoVisible,
           viewCount: perf.viewCount,
           createdAt: perf.createdAt?.toISOString() ?? '',
           updatedAt: perf.updatedAt?.toISOString() ?? '',
@@ -345,8 +367,14 @@ export class PerformanceService {
         targetLocale,
       );
 
-    await this.cacheService.set(cacheKey, result);
-    return result;
+    const response = includeHiddenCopy
+      ? result
+      : maskHiddenPerformanceCopy(result);
+
+    if (!includeHiddenCopy) {
+      await this.cacheService.set(cacheKey, response);
+    }
+    return response;
   }
 
   async getHomeBanners(): Promise<Banner[]> {

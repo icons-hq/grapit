@@ -55,7 +55,10 @@ function createChainableResult<T>(result: T) {
   return chain;
 }
 
-function createPerformanceRow(id = PHASE23_I18N_SMOKE_PERFORMANCE_ID) {
+function createPerformanceRow(
+  id = PHASE23_I18N_SMOKE_PERFORMANCE_ID,
+  performanceOverrides: Record<string, unknown> = {},
+) {
   return {
     performances: {
       id,
@@ -65,15 +68,18 @@ function createPerformanceRow(id = PHASE23_I18N_SMOKE_PERFORMANCE_ID) {
       venueId: 'venue-1',
       posterUrl: null,
       description: '한국어 상세 소개',
+      descriptionVisible: true,
       startDate: new Date('2026-07-18T05:00:00.000Z'),
       endDate: new Date('2026-07-18T07:00:00.000Z'),
       runtime: '120분',
       ageRating: '전체 관람가',
       status: 'selling' as const,
       salesInfo: '한국어 판매 정보',
+      salesInfoVisible: true,
       viewCount: 0,
       createdAt: new Date('2026-05-07T00:00:00.000Z'),
       updatedAt: new Date('2026-05-07T00:00:00.000Z'),
+      ...performanceOverrides,
     },
     venues: {
       id: 'venue-1',
@@ -314,6 +320,65 @@ describe('PerformanceService', () => {
       expect(result.salesInfo).toBe('English reviewed sales information');
       expect(result.automaticTranslationLabel).toBe(true);
       expect(result.translatedBy).toBe('machine_reviewed');
+    });
+
+    it('masks hidden copy after translation overlay for public details', async () => {
+      mockDb.select
+        .mockReturnValueOnce(createChainableResult([
+          createPerformanceRow(PHASE23_I18N_SMOKE_PERFORMANCE_ID, {
+            descriptionVisible: false,
+            salesInfoVisible: false,
+          }),
+        ]))
+        .mockReturnValueOnce(createChainableResult([]))
+        .mockReturnValueOnce(createChainableResult([]))
+        .mockReturnValueOnce(createChainableResult([]))
+        .mockReturnValueOnce(createChainableResult([]))
+        .mockReturnValueOnce(createChainableResult([createBookingPolicyRow()]))
+        .mockReturnValueOnce(createChainableResult(translatedFieldRows));
+
+      const result = await (
+        service as unknown as {
+          findById(id: string, locale: string): Promise<PerformanceWithDetails>;
+        }
+      ).findById(PHASE23_I18N_SMOKE_PERFORMANCE_ID, 'en');
+
+      expect(result.descriptionVisible).toBe(false);
+      expect(result.salesInfoVisible).toBe(false);
+      expect(result.description).toBeNull();
+      expect(result.salesInfo).toBeNull();
+    });
+
+    it('keeps hidden copy available for guarded admin detail fetches', async () => {
+      mockDb.select
+        .mockReturnValueOnce(createChainableResult([
+          createPerformanceRow(PHASE23_I18N_SMOKE_PERFORMANCE_ID, {
+            descriptionVisible: false,
+            salesInfoVisible: false,
+          }),
+        ]))
+        .mockReturnValueOnce(createChainableResult([]))
+        .mockReturnValueOnce(createChainableResult([]))
+        .mockReturnValueOnce(createChainableResult([]))
+        .mockReturnValueOnce(createChainableResult([]))
+        .mockReturnValueOnce(createChainableResult([createBookingPolicyRow()]));
+
+      const result = await (
+        service as unknown as {
+          findById(
+            id: string,
+            locale?: string | null,
+            options?: { includeHiddenCopy?: boolean },
+          ): Promise<PerformanceWithDetails>;
+        }
+      ).findById(PHASE23_I18N_SMOKE_PERFORMANCE_ID, null, {
+        includeHiddenCopy: true,
+      });
+
+      expect(result.descriptionVisible).toBe(false);
+      expect(result.salesInfoVisible).toBe(false);
+      expect(result.description).toBe('한국어 상세 소개');
+      expect(result.salesInfo).toBe('한국어 판매 정보');
     });
 
     it('keeps Korean detail canonical without automatic translation metadata', async () => {

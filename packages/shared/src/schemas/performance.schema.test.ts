@@ -29,6 +29,37 @@ describe('search query schema', () => {
 });
 
 describe('performance floor and booking policy schema', () => {
+  it('defaults performance copy visibility to public on create payloads', () => {
+    const parsed = createPerformanceSchema.parse({
+      title: '2026 걸룰스 팬미팅',
+      genre: 'artist_celebrity',
+      venueName: '동해문화예술관 대극장',
+      description: '운영자가 입력한 상세정보',
+      salesInfo: '운영자가 입력한 판매정보',
+      startDate: '2026-07-18T14:00:00.000Z',
+      endDate: '2026-07-18T16:00:00.000Z',
+      ageRating: '전체 관람가',
+      priceTiers: [
+        { tierName: 'VIP', price: 88000, sortOrder: 0 },
+      ],
+    });
+
+    expect(parsed.descriptionVisible).toBe(true);
+    expect(parsed.salesInfoVisible).toBe(true);
+  });
+
+  it('accepts explicit hidden copy flags on partial update payloads', () => {
+    const parsed = updatePerformanceSchema.parse({
+      descriptionVisible: false,
+      salesInfoVisible: false,
+    });
+
+    expect(parsed).toEqual({
+      descriptionVisible: false,
+      salesInfoVisible: false,
+    });
+  });
+
   it('defaults new performances to upcoming and accepts explicit open status', () => {
     const basePayload = {
       title: '2026 걸룰스 팬미팅',

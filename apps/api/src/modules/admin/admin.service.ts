@@ -800,6 +800,7 @@ export class AdminService {
           venueId: venue?.id,
           posterUrl: input.posterUrl ?? null,
           description: input.description ?? null,
+          descriptionVisible: input.descriptionVisible ?? true,
           detailImages: normalizePerformanceDetailImages(input.detailImages),
           startDate: parseAdminKstDateTime(input.startDate),
           endDate: parseAdminKstDateTime(input.endDate),
@@ -814,6 +815,7 @@ export class AdminService {
           publishedAt: parseOptionalIsoDate(input.publishedAt),
           publishedByUserId: input.publishedByUserId ?? null,
           salesInfo: input.salesInfo ?? null,
+          salesInfoVisible: input.salesInfoVisible ?? true,
         })
         .returning();
 
@@ -890,6 +892,7 @@ export class AdminService {
         venueId: perf!.venueId,
         posterUrl: perf!.posterUrl,
         description: perf!.description,
+        descriptionVisible: perf!.descriptionVisible,
         detailImages: normalizePerformanceDetailImages(perf!.detailImages),
         startDate: perf!.startDate?.toISOString() ?? '',
         endDate: perf!.endDate?.toISOString() ?? '',
@@ -904,6 +907,7 @@ export class AdminService {
         publishedAt: toOptionalIsoString(perf!.publishedAt),
         publishedByUserId: perf!.publishedByUserId,
         salesInfo: perf!.salesInfo,
+        salesInfoVisible: perf!.salesInfoVisible,
         viewCount: perf!.viewCount,
         createdAt: perf!.createdAt?.toISOString() ?? '',
         updatedAt: perf!.updatedAt?.toISOString() ?? '',
@@ -966,6 +970,9 @@ export class AdminService {
       if (venueId !== undefined) updateData['venueId'] = venueId;
       if (input.posterUrl !== undefined) updateData['posterUrl'] = input.posterUrl;
       if (input.description !== undefined) updateData['description'] = input.description;
+      if (input.descriptionVisible !== undefined) {
+        updateData['descriptionVisible'] = input.descriptionVisible;
+      }
       if (input.detailImages !== undefined) {
         updateData['detailImages'] = normalizePerformanceDetailImages(input.detailImages);
       }
@@ -996,6 +1003,9 @@ export class AdminService {
         updateData['publishedByUserId'] = input.publishedByUserId;
       }
       if (input.salesInfo !== undefined) updateData['salesInfo'] = input.salesInfo;
+      if (input.salesInfoVisible !== undefined) {
+        updateData['salesInfoVisible'] = input.salesInfoVisible;
+      }
       updateData['updatedAt'] = new Date();
 
       const [perf] = await tx
@@ -1090,6 +1100,7 @@ export class AdminService {
         venueId: perf!.venueId,
         posterUrl: perf!.posterUrl,
         description: perf!.description,
+        descriptionVisible: perf!.descriptionVisible,
         detailImages: normalizePerformanceDetailImages(perf!.detailImages),
         startDate: perf!.startDate?.toISOString() ?? '',
         endDate: perf!.endDate?.toISOString() ?? '',
@@ -1104,6 +1115,7 @@ export class AdminService {
         publishedAt: toOptionalIsoString(perf!.publishedAt),
         publishedByUserId: perf!.publishedByUserId,
         salesInfo: perf!.salesInfo,
+        salesInfoVisible: perf!.salesInfoVisible,
         viewCount: perf!.viewCount,
         createdAt: perf!.createdAt?.toISOString() ?? '',
         updatedAt: perf!.updatedAt?.toISOString() ?? '',
@@ -1205,6 +1217,7 @@ export class AdminService {
         venueId: perf.venueId,
         posterUrl: perf.posterUrl,
         description: perf.description,
+        descriptionVisible: perf.descriptionVisible,
         detailImages: normalizePerformanceDetailImages(perf.detailImages),
         startDate: perf.startDate?.toISOString() ?? '',
         endDate: perf.endDate?.toISOString() ?? '',
@@ -1219,6 +1232,7 @@ export class AdminService {
         publishedAt: toOptionalIsoString(perf.publishedAt),
         publishedByUserId: perf.publishedByUserId,
         salesInfo: perf.salesInfo,
+        salesInfoVisible: perf.salesInfoVisible,
         viewCount: perf.viewCount,
         createdAt: perf.createdAt?.toISOString() ?? '',
         updatedAt: perf.updatedAt?.toISOString() ?? '',

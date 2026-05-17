@@ -234,6 +234,7 @@ describe('redisProvider factory', () => {
       set: (key: string, value: string, ...args: unknown[]) => Promise<string | null>;
       get: (key: string) => Promise<string | null>;
       del: (...keys: string[]) => Promise<number>;
+      keys: (pattern: string) => Promise<string[]>;
       decr: (key: string) => Promise<number>;
       ping: () => Promise<string>;
       pttl: (key: string) => Promise<number>;
@@ -351,6 +352,25 @@ describe('redisProvider factory', () => {
 
       expect(await redis.get('string:key')).toBeNull();
       expect(await redis.smembers('set:key')).toEqual([]);
+    });
+
+    it('keys() supports CacheService wildcard invalidation patterns', async () => {
+      const redis = createMock();
+      await redis.set('cache:performances:detail:perf-1:ko', '{"id":"perf-1"}');
+      await redis.set('cache:performances:detail:perf-1:en', '{"id":"perf-1"}');
+      await redis.set('cache:performances:detail:perf-2:ko', '{"id":"perf-2"}');
+      await redis.sadd('cache:performances:list:artist', 'perf-1');
+
+      await expect(redis.keys('cache:performances:detail:perf-1:*')).resolves.toEqual([
+        'cache:performances:detail:perf-1:ko',
+        'cache:performances:detail:perf-1:en',
+      ]);
+      await expect(redis.keys('cache:performances:*')).resolves.toEqual([
+        'cache:performances:detail:perf-1:ko',
+        'cache:performances:detail:perf-1:en',
+        'cache:performances:detail:perf-2:ko',
+        'cache:performances:list:artist',
+      ]);
     });
 
     it('supports sorted-set queue operations used by Phase 24 admission queue', async () => {

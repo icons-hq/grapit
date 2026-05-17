@@ -254,7 +254,9 @@ export function useAdminPerformanceDetail(id: string) {
   return useQuery({
     queryKey: ['admin', 'performance', id],
     queryFn: () =>
-      apiClient.get<PerformanceWithDetails>(`/api/v1/performances/${id}`),
+      apiClient.get<PerformanceWithDetails>(
+        `/api/v1/admin/performances/${id}`,
+      ),
     enabled: !!id,
   });
 }

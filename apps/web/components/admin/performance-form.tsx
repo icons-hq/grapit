@@ -208,6 +208,18 @@ function buildPublishReviewSummary(
   };
 }
 
+function copyVisibilityHelperText(visible: boolean): string {
+  return visible
+    ? '사용자 상세 페이지에 표시'
+    : '입력값은 저장되고 사용자에게는 숨김';
+}
+
+function copyVisibilityChipClasses(visible: boolean): string {
+  return visible
+    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+    : 'border-gray-300 bg-gray-100 text-gray-700';
+}
+
 function mapToFormValues(
   data: PerformanceWithDetails,
 ): CreatePerformanceFormInput {
@@ -227,12 +239,14 @@ function mapToFormValues(
     transportSummary: data.venue?.transportSummary,
     posterUrl: data.posterUrl,
     description: data.description,
+    descriptionVisible: data.descriptionVisible !== false,
     startDate: formatAdminKstDate(data.startDate),
     endDate: formatAdminKstDate(data.endDate),
     runtime: data.runtime,
     ageRating: data.ageRating,
     status: data.status,
     salesInfo: data.salesInfo,
+    salesInfoVisible: data.salesInfoVisible !== false,
     detailImages: normalizeDetailImagesForSave(data.detailImages),
     priceTiers: data.priceTiers.map((t) => ({
       tierName: t.tierName,
@@ -290,12 +304,14 @@ export function PerformanceForm({
           transportSummary: null,
           posterUrl: null,
           description: null,
+          descriptionVisible: true,
           startDate: '',
           endDate: '',
           runtime: null,
           ageRating: '',
           status: 'upcoming',
           salesInfo: null,
+          salesInfoVisible: true,
           detailImages: [],
           priceTiers: [{ tierName: '', price: 0, sortOrder: 0 }],
           showtimes: [],
@@ -1259,12 +1275,43 @@ export function PerformanceForm({
 
       {/* Section: 판매/상세 정보 */}
       <section className="rounded-lg bg-white p-6 shadow-sm">
-        <h2 className="mb-4 text-xl font-semibold">판매/상세 정보</h2>
-        <div className="space-y-4">
-          <div>
-            <label htmlFor="description" className="mb-1 block text-sm font-semibold">
-              상세정보
-            </label>
+        <div className="space-y-6">
+          <div className="space-y-3">
+            <Controller
+              control={form.control}
+              name="descriptionVisible"
+              render={({ field }) => {
+                const visible = field.value !== false;
+
+                return (
+                  <div className="flex flex-col gap-3 border-b border-gray-100 pb-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <Label
+                        htmlFor="description"
+                        className="text-lg font-semibold text-gray-900"
+                      >
+                        상세정보
+                      </Label>
+                      <p className="mt-1 text-sm text-gray-500">
+                        {copyVisibilityHelperText(visible)}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span
+                        className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${copyVisibilityChipClasses(visible)}`}
+                      >
+                        {visible ? '공개' : '비공개'}
+                      </span>
+                      <Switch
+                        checked={visible}
+                        onCheckedChange={field.onChange}
+                        aria-label="상세정보 공개 상태"
+                      />
+                    </div>
+                  </div>
+                );
+              }}
+            />
             <Textarea
               id="description"
               {...form.register('description')}
@@ -1272,10 +1319,42 @@ export function PerformanceForm({
               placeholder="공연 상세 정보를 입력해주세요"
             />
           </div>
-          <div>
-            <label htmlFor="salesInfo" className="mb-1 block text-sm font-semibold">
-              판매정보
-            </label>
+          <div className="space-y-3">
+            <Controller
+              control={form.control}
+              name="salesInfoVisible"
+              render={({ field }) => {
+                const visible = field.value !== false;
+
+                return (
+                  <div className="flex flex-col gap-3 border-b border-gray-100 pb-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <Label
+                        htmlFor="salesInfo"
+                        className="text-lg font-semibold text-gray-900"
+                      >
+                        판매정보
+                      </Label>
+                      <p className="mt-1 text-sm text-gray-500">
+                        {copyVisibilityHelperText(visible)}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span
+                        className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${copyVisibilityChipClasses(visible)}`}
+                      >
+                        {visible ? '공개' : '비공개'}
+                      </span>
+                      <Switch
+                        checked={visible}
+                        onCheckedChange={field.onChange}
+                        aria-label="판매정보 공개 상태"
+                      />
+                    </div>
+                  </div>
+                );
+              }}
+            />
             <Textarea
               id="salesInfo"
               {...form.register('salesInfo')}

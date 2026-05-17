@@ -42,12 +42,14 @@ const fixturePerformance: PerformanceWithDetails = {
   venueId: 'venue-1',
   posterUrl: null,
   description: 'Fanmeet fixture',
+  descriptionVisible: true,
   startDate: '2026-07-04T09:00:00.000Z',
   endDate: '2026-07-04T12:00:00.000Z',
   runtime: '120분',
   ageRating: '만 7세 이상',
   status: 'selling',
   salesInfo: null,
+  salesInfoVisible: true,
   detailImages: [
     {
       imageUrl: 'https://cdn.example.com/detail/seat-guide.jpg',
@@ -91,6 +93,10 @@ const fixturePerformance: PerformanceWithDetails = {
 describe('PerformanceDetailPage i18n formatting', () => {
   beforeEach(() => {
     fixturePerformance.status = 'selling';
+    fixturePerformance.description = 'Fanmeet fixture';
+    fixturePerformance.descriptionVisible = true;
+    fixturePerformance.salesInfo = null;
+    fixturePerformance.salesInfoVisible = true;
   });
 
   it('renders the visible detail surface with KST anchors and KRW-only pricing', async () => {
@@ -140,6 +146,37 @@ describe('PerformanceDetailPage i18n formatting', () => {
     ).toBeDefined();
     expect(screen.queryByRole('tab')).toBeNull();
     expect(screen.queryByText('캐스팅')).toBeNull();
+  });
+
+  it('omits hidden detail and sales copy sections while keeping detail images', async () => {
+    fixturePerformance.description = 'Hidden public detail body';
+    fixturePerformance.descriptionVisible = false;
+    fixturePerformance.salesInfo = 'Hidden public sales body';
+    fixturePerformance.salesInfoVisible = false;
+    const params = Promise.resolve({ id: 'perf-23-14' }) as Promise<{
+      id: string;
+    }> & {
+      status: 'fulfilled';
+      value: { id: string };
+    };
+    params.status = 'fulfilled';
+    params.value = { id: 'perf-23-14' };
+
+    render(
+      <Suspense fallback={<div>loading</div>}>
+        <PerformanceDetailPage params={params} />
+      </Suspense>,
+    );
+
+    expect(await screen.findByAltText('Seat guide')).toBeDefined();
+    expect(screen.queryByRole('heading', { name: 'รายละเอียด' })).toBeNull();
+    expect(
+      screen.queryByRole('heading', { name: 'ข้อมูลการขาย' }),
+    ).toBeNull();
+    expect(screen.queryByRole('link', { name: /รายละเอียด/ })).toBeNull();
+    expect(screen.queryByRole('link', { name: /ข้อมูลการขาย/ })).toBeNull();
+    expect(screen.queryByText('Hidden public detail body')).toBeNull();
+    expect(screen.queryByText('Hidden public sales body')).toBeNull();
   });
 
   it('shows 오픈예정 instead of date anchors for upcoming performances', async () => {

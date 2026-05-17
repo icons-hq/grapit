@@ -88,7 +88,9 @@ export class AdminPerformanceController {
 
   @Get('performances/:id')
   async getPerformance(@Param('id') id: string) {
-    return this.performanceService.findById(id);
+    return this.performanceService.findById(id, undefined, {
+      includeHiddenCopy: true,
+    });
   }
 
   @Post('performances')

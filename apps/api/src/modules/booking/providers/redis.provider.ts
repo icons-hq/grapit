@@ -177,6 +177,20 @@ class InMemoryRedis {
     return count;
   }
 
+  async keys(pattern: string): Promise<string[]> {
+    const matcher = new RegExp(
+      `^${pattern
+        .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+        .replace(/\*/g, '.*')}$`,
+    );
+
+    return Array.from(new Set([
+      ...this.store.keys(),
+      ...this.sets.keys(),
+      ...this.sortedSets.keys(),
+    ])).filter((key) => matcher.test(key));
+  }
+
   async sadd(key: string, ...members: string[]): Promise<number> {
     if (!this.sets.has(key)) this.sets.set(key, new Set());
     const s = this.sets.get(key)!;
