@@ -13,7 +13,7 @@ import {
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ConfigService } from '@nestjs/config';
-import { Throttle } from '@nestjs/throttler';
+import { SkipThrottle, Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { Public } from '../../common/decorators/public.decorator.js';
@@ -177,6 +177,8 @@ export class AuthController {
 
   @Public()
   @HttpCode(HttpStatus.OK)
+  @SkipThrottle()
+  // Hotfix 260517: signup email verification must not be blocked by shared IP traffic.
   @Throttle({ default: { limit: 3, ttl: 900000 } })
   @Post('email-verification/request')
   async requestEmailVerification(
@@ -196,6 +198,8 @@ export class AuthController {
 
   @Public()
   @HttpCode(HttpStatus.OK)
+  @SkipThrottle()
+  // Hotfix 260517: signup email verification must not be blocked by shared IP traffic.
   @Throttle({ default: { limit: 3, ttl: 900000 } })
   @Post('email-verification/resend')
   async resendEmailVerification(
@@ -215,6 +219,8 @@ export class AuthController {
 
   @Public()
   @HttpCode(HttpStatus.OK)
+  @SkipThrottle()
+  // Hotfix 260517: signup email verification must not be blocked by shared IP traffic.
   @Throttle({ default: { limit: 10, ttl: 900000 } })
   @Post('email-verification/verify')
   async verifyEmailVerification(

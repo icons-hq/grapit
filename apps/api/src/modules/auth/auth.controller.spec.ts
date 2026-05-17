@@ -21,6 +21,7 @@ const excludedLaunchProviderTokens = {
   envPrefix: ['LINE', 'CLIENT'].join('_'),
   socialRoute: ['social', 'line'].join('/'),
 };
+const DEFAULT_SKIP_METADATA = 'THROTTLER:SKIPdefault';
 
 describe('AuthController', () => {
   let controller: AuthController;
@@ -475,6 +476,15 @@ describe('AuthController', () => {
       expect(JSON.stringify(result)).not.toContain('token');
     });
 
+    it('POST request skips the default IP throttler during signup verification', () => {
+      expect(
+        Reflect.getMetadata(
+          DEFAULT_SKIP_METADATA,
+          AuthController.prototype.requestEmailVerification,
+        ),
+      ).toBe(true);
+    });
+
     it('POST resend keeps the resend action immediately visible through a dedicated endpoint', async () => {
       mockAuthService.resendEmailVerification.mockResolvedValue({
         expiresAt: new Date('2026-05-06T05:50:00.000Z'),
@@ -495,6 +505,15 @@ describe('AuthController', () => {
       );
     });
 
+    it('POST resend skips the default IP throttler during signup verification', () => {
+      expect(
+        Reflect.getMetadata(
+          DEFAULT_SKIP_METADATA,
+          AuthController.prototype.resendEmailVerification,
+        ),
+      ).toBe(true);
+    });
+
     it('POST verify checks a 6-digit email code through AuthService', async () => {
       mockAuthService.verifyEmailVerificationCode.mockResolvedValue({ verified: true });
 
@@ -507,6 +526,15 @@ describe('AuthController', () => {
         'verify@test.com',
         '123456',
       );
+    });
+
+    it('POST verify skips the default IP throttler during signup verification', () => {
+      expect(
+        Reflect.getMetadata(
+          DEFAULT_SKIP_METADATA,
+          AuthController.prototype.verifyEmailVerification,
+        ),
+      ).toBe(true);
     });
 
     it('POST verify keeps old token links compatible while new emails use codes', async () => {
