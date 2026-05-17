@@ -14,7 +14,7 @@ import {
   Ticket,
   User,
 } from 'lucide-react';
-import { DEFAULT_LOCALE, GENRE_LABELS, isSupportedLocale } from '@grabit/shared';
+import { DEFAULT_LOCALE, isSupportedLocale } from '@grabit/shared';
 import type { SupportedLocale } from '@grabit/shared';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Separator } from '@/components/ui/separator';
@@ -125,7 +125,7 @@ export default function PerformanceDetailPage({
 
             <div className="flex min-w-0 flex-col justify-center">
               <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-primary">
-                <span>{GENRE_LABELS[performance.genre]}</span>
+                <span>{copy.genres[performance.genre]}</span>
                 {performance.subcategory && (
                   <>
                     <span aria-hidden="true" className="text-gray-300">
@@ -149,16 +149,16 @@ export default function PerformanceDetailPage({
                 {performance.venue && (
                   <DetailFact
                     icon={<MapPin className="h-4 w-4" />}
-                    label="장소"
+                    label={copy.performance.venueLabel}
                     value={performance.venue.name}
                   />
                 )}
                 <DetailFact
                   icon={<Calendar className="h-4 w-4" />}
-                  label="일정"
+                  label={copy.performance.scheduleLabel}
                   value={
                     performance.status === 'upcoming' ? (
-                      '오픈예정'
+                      copy.performance.upcomingDateLabel
                     ) : (
                       <span className="flex min-w-0 flex-wrap items-start gap-x-2 gap-y-1">
                         <KstTime
@@ -179,13 +179,13 @@ export default function PerformanceDetailPage({
                 {performance.runtime && (
                   <DetailFact
                     icon={<Clock className="h-4 w-4" />}
-                    label="공연시간"
+                    label={copy.performance.runtimeLabel}
                     value={performance.runtime}
                   />
                 )}
                 <DetailFact
                   icon={<User className="h-4 w-4" />}
-                  label="관람연령"
+                  label={copy.performance.ageLabel}
                   value={performance.ageRating}
                 />
               </div>
@@ -194,7 +194,7 @@ export default function PerformanceDetailPage({
                 <div className="mt-7 rounded-xl border border-gray-200 bg-gray-50 p-4">
                   <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-gray-900">
                     <CreditCard className="h-4 w-4 text-primary" />
-                    가격
+                    {copy.performance.priceLabel}
                   </div>
                   <div className="grid gap-2 sm:grid-cols-2">
                     {performance.priceTiers.map((tier) => (
@@ -272,7 +272,7 @@ export default function PerformanceDetailPage({
               <section id="detail-images" className="scroll-mt-24">
                 <SectionHeader
                   eyebrow={`${detailImages.length} images`}
-                  title="상세 이미지"
+                  title={copy.performance.detailImagesTitle}
                 />
                 <div className="mt-5 space-y-5">
                   {detailImages.map((image, index) => (
@@ -284,7 +284,11 @@ export default function PerformanceDetailPage({
                         src={image.imageUrl}
                         alt={
                           image.altText
-                          || `${performance.title} 상세 이미지 ${index + 1}`
+                          || formatDetailImageAlt(
+                            copy.performance.detailImageAlt,
+                            performance.title,
+                            index + 1,
+                          )
                         }
                         className="h-auto w-full object-contain"
                         loading={index === 0 ? 'eager' : 'lazy'}
@@ -407,6 +411,10 @@ function getSalesCopyNavLabel(locale: SupportedLocale): string {
   };
 
   return labels[locale];
+}
+
+function formatDetailImageAlt(template: string, title: string, index: number) {
+  return template.replace('{title}', title).replace('{index}', String(index));
 }
 
 function DetailFact({

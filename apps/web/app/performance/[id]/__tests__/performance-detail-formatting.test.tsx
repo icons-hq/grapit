@@ -179,7 +179,7 @@ describe('PerformanceDetailPage i18n formatting', () => {
     expect(screen.queryByText('Hidden public sales body')).toBeNull();
   });
 
-  it('shows 오픈예정 instead of date anchors for upcoming performances', async () => {
+  it('localizes the upcoming label instead of date anchors for upcoming performances', async () => {
     fixturePerformance.status = 'upcoming';
     const params = Promise.resolve({ id: 'perf-23-14' }) as Promise<{
       id: string;
@@ -196,7 +196,8 @@ describe('PerformanceDetailPage i18n formatting', () => {
       </Suspense>,
     );
 
-    expect(await screen.findAllByText('오픈예정')).not.toHaveLength(0);
+    expect(await screen.findAllByText('เร็วๆ นี้')).not.toHaveLength(0);
+    expect(screen.queryByText('오픈예정')).toBeNull();
     expect(screen.queryByText(/KST/)).toBeNull();
   });
 });

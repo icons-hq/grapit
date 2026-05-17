@@ -10,7 +10,8 @@
     "language": "ภาษา",
     "home": "หน้าแรก",
     "search": "ค้นหา",
-    "category": "หมวดหมู่"
+    "category": "หมวดหมู่",
+    "logoutSuccess": "ออกจากระบบแล้ว"
   },
   "home": {
     "hot": "การแสดงยอดนิยม",
@@ -66,7 +67,15 @@
     ],
     "loadError": "ไม่สามารถโหลดข้อมูลการแสดงได้ โปรดลองอีกครั้งในภายหลัง",
     "retry": "ลองอีกครั้ง",
-    "bookCta": "จองบัตร"
+    "bookCta": "จองบัตร",
+    "venueLabel": "สถานที่",
+    "scheduleLabel": "กำหนดการ",
+    "runtimeLabel": "ระยะเวลาแสดง",
+    "ageLabel": "เรตอายุ",
+    "priceLabel": "ราคา",
+    "upcomingDateLabel": "เร็วๆ นี้",
+    "detailImagesTitle": "รูปภาพรายละเอียด",
+    "detailImageAlt": "{title} รูปรายละเอียด {index}"
   },
   "booking": {
     "disabled": "การจองบัตรจะเปิดให้บริการในภายหลัง",
@@ -156,10 +165,24 @@
     }
   },
   "locale": {
-    "suggestion": "ดูหน้านี้เป็นภาษาไทยไหม?"
+    "suggestion": "ดูหน้านี้เป็นภาษาไทยไหม?",
+    "dismiss": "ภายหลัง"
   },
   "legal": {
     "fallbackLabel": "ตรวจสอบประกาศทางกฎหมายภาษาอังกฤษ"
+  },
+  "footer": {
+    "terms": "ข้อกำหนดการใช้บริการ",
+    "privacy": "นโยบายความเป็นส่วนตัว",
+    "support": "ศูนย์ช่วยเหลือ",
+    "businessName": "บริษัท: ICONS Co., Ltd.",
+    "representative": "ผู้แทน: Seungjun Jung",
+    "businessRegistration": "เลขทะเบียนธุรกิจ: 109-86-27576",
+    "mailOrderRegistration": "เลขทะเบียนธุรกิจขายทางไกล: 2025-Seoul Mapo-1494",
+    "businessAddress": "ที่อยู่บริษัท: 69 World Cup-ro 8-gil, Mapo-gu, Seoul",
+    "customerSupport": "ศูนย์ช่วยเหลือ: 02-325-1794",
+    "privacyOfficer": "เจ้าหน้าที่คุ้มครองข้อมูลส่วนบุคคล: Seungjun Jung",
+    "privacyInquiry": "สอบถามเรื่องข้อมูลส่วนบุคคล:"
   },
   "auth": {
     "tabs": {
@@ -183,6 +206,18 @@
       "under14Blocked": "ผู้ใช้ที่อายุต่ำกว่า 14 ปีไม่สามารถสมัครได้",
       "temporaryError": "เกิดข้อผิดพลาดชั่วคราว โปรดลองอีกครั้งในภายหลัง",
       "emailUnavailable": "อีเมลนี้ถูกใช้งานแล้ว"
+    },
+    "social": {
+      "kakaoButton": "ดำเนินการต่อด้วย Kakao",
+      "naverButton": "ดำเนินการต่อด้วย Naver",
+      "googleButton": "ดำเนินการต่อด้วย Google"
+    },
+    "socialErrors": {
+      "oauthDenied": "การเข้าสู่ระบบด้วยโซเชียลถูกยกเลิก",
+      "oauthFailed": "เข้าสู่ระบบด้วยโซเชียลไม่สำเร็จ โปรดลองอีกครั้ง",
+      "tokenExpired": "เซสชันเข้าสู่ระบบหมดอายุ โปรดลองอีกครั้ง",
+      "serverError": "เกิดข้อผิดพลาดชั่วคราว โปรดลองอีกครั้งในภายหลัง",
+      "accountConflict": "บัญชีโซเชียลนี้เชื่อมต่อกับบัญชีอื่นแล้ว"
     },
     "signup": {
       "progressAriaLabel": "ความคืบหน้าการสมัครสมาชิก",

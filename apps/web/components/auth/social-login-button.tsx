@@ -9,6 +9,7 @@ type Provider = 'kakao' | 'naver' | 'google';
 
 interface SocialLoginButtonProps {
   provider: Provider;
+  label: string;
   onClick: () => void;
   isLoading?: boolean;
   className?: string;
@@ -17,7 +18,6 @@ interface SocialLoginButtonProps {
 const PROVIDER_CONFIG: Record<
   Provider,
   {
-    label: string;
     bgColor: string;
     textColor: string;
     borderClass: string;
@@ -25,21 +25,18 @@ const PROVIDER_CONFIG: Record<
   }
 > = {
   kakao: {
-    label: '카카오로 시작하기',
     bgColor: '#FEE500',
     textColor: '#191919',
     borderClass: '',
     icon: '/icons/kakao.svg',
   },
   naver: {
-    label: '네이버로 시작하기',
     bgColor: '#03C75A',
     textColor: '#FFFFFF',
     borderClass: '',
     icon: '/icons/naver.svg',
   },
   google: {
-    label: 'Google로 시작하기',
     bgColor: '#FFFFFF',
     textColor: '#1F1F1F',
     borderClass: 'border border-[#DADCE0]',
@@ -49,6 +46,7 @@ const PROVIDER_CONFIG: Record<
 
 export function SocialLoginButton({
   provider,
+  label,
   onClick,
   isLoading = false,
   className,
@@ -81,7 +79,7 @@ export function SocialLoginButton({
             height={20}
             className="h-5 w-5"
           />
-          <span>{config.label}</span>
+          <span>{label}</span>
         </>
       )}
     </button>

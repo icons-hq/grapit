@@ -1,21 +1,36 @@
 import Link from 'next/link';
+import { useLocale } from 'next-intl';
+import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
+import {
+  getVisibleCopy,
+  resolveVisibleCopyLocale,
+} from '@/lib/i18n/visible-copy';
 
 export function Footer() {
+  const activeLocale = resolveVisibleCopyLocale(useLocale());
+  const copy = getVisibleCopy(activeLocale).footer;
+
   return (
     <footer className="mt-auto min-h-[120px] bg-gray-100">
       <div className="mx-auto max-w-[1200px] px-6 py-8">
         {/* Legal links */}
         <div className="flex flex-wrap items-center gap-2 text-sm text-gray-900">
-          <Link href="/legal/terms" className="hover:underline">
-            이용약관
+          <Link
+            href={getLocalizedPathname('/legal/terms', activeLocale)}
+            className="hover:underline"
+          >
+            {copy.terms}
           </Link>
           <span className="text-gray-400">|</span>
-          <Link href="/legal/privacy" className="font-semibold hover:underline">
-            개인정보처리방침
+          <Link
+            href={getLocalizedPathname('/legal/privacy', activeLocale)}
+            className="font-semibold hover:underline"
+          >
+            {copy.privacy}
           </Link>
           <span className="text-gray-400">|</span>
           <a href="mailto:support@heygrabit.com" className="hover:underline">
-            고객센터
+            {copy.support}
           </a>
         </div>
 
@@ -25,15 +40,15 @@ export function Footer() {
         </p>
 
         <div className="mt-4 grid gap-2 text-caption leading-relaxed text-gray-600 sm:grid-cols-2">
-          <p>사업자명: (주)아이콘스</p>
-          <p>대표자: 정승준</p>
-          <p>사업자등록번호: 109-86-27576</p>
-          <p>통신판매업 신고번호: 2025-서울마포-1494</p>
-          <p>사업장 주소: 서울특별시 마포구 월드컵로8길 69</p>
-          <p>고객센터: 02-325-1794</p>
-          <p>개인정보 보호책임자: 정승준</p>
+          <p>{copy.businessName}</p>
+          <p>{copy.representative}</p>
+          <p>{copy.businessRegistration}</p>
+          <p>{copy.mailOrderRegistration}</p>
+          <p>{copy.businessAddress}</p>
+          <p>{copy.customerSupport}</p>
+          <p>{copy.privacyOfficer}</p>
           <p>
-            개인정보 문의:{' '}
+            {copy.privacyInquiry}{' '}
             <a href="mailto:privacy@heygrabit.com" className="hover:underline">
               privacy@heygrabit.com
             </a>

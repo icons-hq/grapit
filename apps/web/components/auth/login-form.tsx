@@ -31,13 +31,13 @@ import {
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import Link from 'next/link';
 
-const SOCIAL_LOGIN_ERRORS: Record<string, string> = {
-  oauth_denied: '소셜 로그인이 취소되었습니다.',
-  oauth_failed: '소셜 로그인에 실패했습니다. 다시 시도해주세요.',
-  token_expired: '로그인 세션이 만료되었습니다. 다시 시도해주세요.',
-  server_error: '일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요.',
-  account_conflict: '이미 다른 계정에 연결된 소셜 계정입니다.',
-};
+const SOCIAL_LOGIN_ERROR_KEYS = {
+  oauth_denied: 'oauthDenied',
+  oauth_failed: 'oauthFailed',
+  token_expired: 'tokenExpired',
+  server_error: 'serverError',
+  account_conflict: 'accountConflict',
+} as const satisfies Record<string, keyof AuthLaunchCopy['socialErrors']>;
 
 function getPostLoginDestination(res: AuthResponse, locale: AuthLaunchCopy['locale']) {
   if (res.user.isEmailVerified) {
@@ -49,16 +49,24 @@ function getPostLoginDestination(res: AuthResponse, locale: AuthLaunchCopy['loca
 }
 
 function SocialErrorMessage() {
+  const locale = useLocale();
+  const authCopy = getAuthLaunchCopy(locale);
   const searchParams = useSearchParams();
   const socialError = searchParams.get('error');
+  const errorKey =
+    socialError && socialError in SOCIAL_LOGIN_ERROR_KEYS
+      ? SOCIAL_LOGIN_ERROR_KEYS[
+          socialError as keyof typeof SOCIAL_LOGIN_ERROR_KEYS
+        ]
+      : null;
 
-  if (!socialError || !SOCIAL_LOGIN_ERRORS[socialError]) {
+  if (!errorKey) {
     return null;
   }
 
   return (
     <p className="text-caption text-error animate-in fade-in duration-150">
-      {SOCIAL_LOGIN_ERRORS[socialError]}
+      {authCopy.socialErrors[errorKey]}
     </p>
   );
 }
@@ -225,16 +233,19 @@ export function LoginForm() {
       <div className="space-y-3">
         <SocialLoginButton
           provider="kakao"
+          label={authCopy.social.kakaoButton}
           onClick={() => handleSocialLogin('kakao')}
           isLoading={socialLoading === 'kakao'}
         />
         <SocialLoginButton
           provider="naver"
+          label={authCopy.social.naverButton}
           onClick={() => handleSocialLogin('naver')}
           isLoading={socialLoading === 'naver'}
         />
         <SocialLoginButton
           provider="google"
+          label={authCopy.social.googleButton}
           onClick={() => handleSocialLogin('google')}
           isLoading={socialLoading === 'google'}
         />

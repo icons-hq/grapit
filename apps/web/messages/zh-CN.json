@@ -10,7 +10,8 @@
     "language": "语言",
     "home": "首页",
     "search": "搜索",
-    "category": "分类"
+    "category": "分类",
+    "logoutSuccess": "已退出登录"
   },
   "home": {
     "hot": "热门演出",
@@ -66,7 +67,15 @@
     ],
     "loadError": "无法加载演出信息。请稍后再试。",
     "retry": "重试",
-    "bookCta": "预订门票"
+    "bookCta": "预订门票",
+    "venueLabel": "场馆",
+    "scheduleLabel": "日程",
+    "runtimeLabel": "演出时长",
+    "ageLabel": "年龄限制",
+    "priceLabel": "价格",
+    "upcomingDateLabel": "即将开售",
+    "detailImagesTitle": "详情图片",
+    "detailImageAlt": "{title} 详情图片 {index}"
   },
   "booking": {
     "disabled": "门票预订将于稍后开放",
@@ -156,10 +165,24 @@
     }
   },
   "locale": {
-    "suggestion": "要以简体中文查看此页面吗？"
+    "suggestion": "要以简体中文查看此页面吗？",
+    "dismiss": "稍后"
   },
   "legal": {
     "fallbackLabel": "查看英文法律告知"
+  },
+  "footer": {
+    "terms": "服务条款",
+    "privacy": "隐私政策",
+    "support": "客户支持",
+    "businessName": "公司：ICONS Co., Ltd.",
+    "representative": "代表：Seungjun Jung",
+    "businessRegistration": "营业执照号：109-86-27576",
+    "mailOrderRegistration": "通信销售备案号：2025-Seoul Mapo-1494",
+    "businessAddress": "营业地址：69 World Cup-ro 8-gil, Mapo-gu, Seoul",
+    "customerSupport": "客户支持：02-325-1794",
+    "privacyOfficer": "个人信息保护负责人：Seungjun Jung",
+    "privacyInquiry": "隐私咨询："
   },
   "auth": {
     "tabs": {
@@ -183,6 +206,18 @@
       "under14Blocked": "未满14周岁无法注册",
       "temporaryError": "暂时发生错误。请稍后再试。",
       "emailUnavailable": "该邮箱已被使用"
+    },
+    "social": {
+      "kakaoButton": "使用 Kakao 继续",
+      "naverButton": "使用 Naver 继续",
+      "googleButton": "使用 Google 继续"
+    },
+    "socialErrors": {
+      "oauthDenied": "社交登录已取消。",
+      "oauthFailed": "社交登录失败。请重试。",
+      "tokenExpired": "登录会话已过期。请重试。",
+      "serverError": "暂时发生错误。请稍后再试。",
+      "accountConflict": "该社交账号已连接到其他账户。"
     },
     "signup": {
       "progressAriaLabel": "注册进度",

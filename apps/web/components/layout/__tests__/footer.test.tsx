@@ -1,9 +1,21 @@
-import { describe, it, expect } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { Footer } from '../footer';
 
+const localeMock = vi.hoisted(() => ({
+  activeLocale: 'ko',
+}));
+
+vi.mock('next-intl', () => ({
+  useLocale: () => localeMock.activeLocale,
+}));
+
 describe('Footer (D-03, D-04)', () => {
+  beforeEach(() => {
+    localeMock.activeLocale = 'ko';
+  });
+
   describe('링크 href 계약 (D-03)', () => {
     it('이용약관 링크가 /legal/terms 로 연결된다', () => {
       render(<Footer />);
@@ -75,6 +87,24 @@ describe('Footer (D-03, D-04)', () => {
     it('Copyright 라인이 변경되지 않는다', () => {
       render(<Footer />);
       expect(screen.getByText(/© 2026 Grabit\. All rights reserved\./)).not.toBeNull();
+    });
+  });
+
+  describe('public i18n surface', () => {
+    it('영어 locale 에서는 footer 링크와 사업자 label 을 영어로 렌더링한다', () => {
+      localeMock.activeLocale = 'en';
+      render(<Footer />);
+
+      expect(screen.getByText('Terms of Service').closest('a')).toHaveAttribute(
+        'href',
+        '/en/legal/terms',
+      );
+      expect(screen.getByText('Privacy Policy').closest('a')).toHaveAttribute(
+        'href',
+        '/en/legal/privacy',
+      );
+      expect(screen.getByText(/Company: ICONS Co\., Ltd\./)).toBeInTheDocument();
+      expect(screen.queryByText(/사업자명:/)).not.toBeInTheDocument();
     });
   });
 });
