@@ -13,6 +13,7 @@ branch: quick/260517-social-email-bypass-hotfix
 - Changed social registration completion to create social-only users with `isEmailVerified=true` and return auth tokens immediately.
 - Changed existing social login to mark previously unverified social-linked users as email verified before issuing tokens.
 - Changed signup SMS send/verify endpoints to skip the default IP throttler.
+- Removed signup SMS send/verify endpoints from the custom traffic-defense throttler after production smoke exposed `TRAFFIC_RATE_LIMITED`.
 - Bypassed app-side SMS resend cooldown and phone-axis counters so launch traffic is not blocked locally.
 - Preserved normal email/password signup email verification.
 - Preserved Twilio provider validation/errors, including invalid/landline recipient handling and provider-level 429.

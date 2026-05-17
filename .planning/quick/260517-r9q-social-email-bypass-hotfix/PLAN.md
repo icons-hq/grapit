@@ -16,5 +16,6 @@ Production signup users can be blocked by email verification when social provide
 2. Mark newly completed social users as `isEmailVerified=true` at creation time.
 3. Repair existing social-linked users with `isEmailVerified=false` on their next OAuth login, then issue the normal authenticated session.
 4. Skip controller-level IP throttling for `/sms/send-code` and `/sms/verify-code`.
-5. Bypass app-side SMS resend cooldown and phone-axis counters while preserving Twilio provider validation/errors.
-6. Verify auth/SMS behavior and API build before production deploy.
+5. Remove SMS verification endpoints from the custom traffic-defense throttler.
+6. Bypass app-side SMS resend cooldown and phone-axis counters while preserving Twilio provider validation/errors.
+7. Verify auth/SMS behavior and API build before production deploy.
