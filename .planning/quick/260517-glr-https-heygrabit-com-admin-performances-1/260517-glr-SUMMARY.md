@@ -13,6 +13,7 @@ commits:
   - ef1c910
   - 9549ce1
   - 7716640
+  - 9b642bb
 key_files:
   created:
     - apps/api/src/database/migrations/0019_performance_copy_visibility.sql
@@ -34,6 +35,7 @@ key_files:
     - apps/web/app/performance/[id]/__tests__/performance-detail-formatting.test.tsx
     - apps/web/app/performance/[id]/__tests__/performance-detail-translation-label.test.tsx
     - apps/web/hooks/__tests__/use-booking.test.tsx
+    - apps/web/e2e/admin-event-publish.spec.ts
     - apps/api/src/modules/booking/providers/redis.provider.ts
     - apps/api/src/modules/booking/providers/__tests__/redis.provider.spec.ts
 decisions:
@@ -53,6 +55,7 @@ Admin-controlled `descriptionVisible` and `salesInfoVisible` flags now persist s
 | Task 1: Persist visibility flags and enforce API masking | Complete | 323ebde, 00a2efe | Added RED API/schema tests, DB columns/migration, shared contract fields, admin persistence, guarded include-hidden detail path, and public response masking. |
 | Task 2: Add admin header controls and public section omission | Complete | ef1c910, 9549ce1 | Added RED UI tests, admin endpoint hook, section header switches/chips, preserved text submission, and public detail section/nav omission while keeping detail images visible. |
 | Browser gap: local cache invalidation parity | Complete | 7716640 | Browser save/reload found stale public detail responses in local dev because `InMemoryRedis` lacked `keys()`. Added wildcard key support so `CacheService.invalidatePattern()` works in local/dev parity. |
+| CI ship fix: admin publish E2E detail mock | Complete | 9b642bb | CI caught that `admin-event-publish.spec.ts` still mocked only the public performance detail endpoint after the edit page moved to `/api/v1/admin/performances/:id`. Added the matching admin detail mock and reran the targeted E2E locally. |
 
 ## Verification
 
@@ -65,6 +68,7 @@ Admin-controlled `descriptionVisible` and `salesInfoVisible` flags now persist s
 | Browser use on local dev (`localhost:3000` + `localhost:8080`) | Passed: admin login, create dedicated test performance, hide both copy blocks, admin reload preserves hidden text, public page omits hidden detail/sales anchors and copy while keeping detail image, restore visibility and public copy returns |
 | `pnpm --filter @grabit/api test -- src/modules/booking/providers/__tests__/redis.provider.spec.ts src/modules/performance/__tests__/cache.service.spec.ts` | Passed: 65 files, 692 tests |
 | `pnpm --filter @grabit/api typecheck` | Passed |
+| `pnpm --filter @grabit/web test:e2e -- e2e/admin-event-publish.spec.ts` | Passed: 1 test |
 
 ## TDD Gate Compliance
 
@@ -73,6 +77,7 @@ Admin-controlled `descriptionVisible` and `salesInfoVisible` flags now persist s
 - RED UI commit: `ef1c910`
 - GREEN UI commit: `9549ce1`
 - Browser gap fix commit: `7716640`
+- CI E2E mock alignment commit: `9b642bb`
 
 ## Deviations from Plan
 
@@ -99,6 +104,13 @@ Admin-controlled `descriptionVisible` and `salesInfoVisible` flags now persist s
 - **Files modified:** `apps/api/src/modules/booking/providers/redis.provider.ts`, `apps/api/src/modules/booking/providers/__tests__/redis.provider.spec.ts`
 - **Commit:** `7716640`
 
+**4. [CI ship fix] Admin publish E2E mocked the old detail endpoint only**
+- **Found during:** GitHub Actions PR CI for PR #63
+- **Issue:** The admin performance edit page now reads `/api/v1/admin/performances/:id`, but `admin-event-publish.spec.ts` only mocked `/api/v1/performances/:id`, so the publish review fixture no longer loaded venue/transport copy in CI.
+- **Fix:** Added the matching admin detail route mock and verified the targeted Playwright spec locally.
+- **Files modified:** `apps/web/e2e/admin-event-publish.spec.ts`
+- **Commit:** `9b642bb`
+
 ## Known Stubs
 
 None. Targeted stub scan found only intentional admin form input placeholder attributes, not mock data or unfinished UI paths.
@@ -115,5 +127,5 @@ None beyond the planned trust boundaries in the quick plan. The new admin/public
 ## Self-Check: PASSED
 
 - Found summary file: `.planning/quick/260517-glr-https-heygrabit-com-admin-performances-1/260517-glr-SUMMARY.md`
-- Found commits: `323ebde`, `00a2efe`, `ef1c910`, `9549ce1`, `7716640`
+- Found commits: `323ebde`, `00a2efe`, `ef1c910`, `9549ce1`, `7716640`, `9b642bb`
 - Browser verification completed against a temporary local test performance; the temporary row was deleted after verification.
