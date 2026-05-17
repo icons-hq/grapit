@@ -224,6 +224,10 @@ jobs:
             GOOGLE_CALLBACK_URL=${{ vars.CLOUD_RUN_API_URL }}/api/v1/auth/social/google/callback
             PREWARM_ALLOWED_SERVICE_NAME=${{ env.API_SERVICE }}
             PREWARM_MAX_MIN_INSTANCES=100
+            DB_POOL_MAX=3
+            DB_POOL_IDLE_TIMEOUT_MS=30000
+            DB_POOL_CONNECTION_TIMEOUT_MS=5000
+            R2_UPLOAD_CACHE_CONTROL_ENABLED=false
           secrets: |
             DATABASE_URL=database-url:latest
             JWT_SECRET=jwt-secret:latest

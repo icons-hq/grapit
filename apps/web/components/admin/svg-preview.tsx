@@ -7,6 +7,7 @@ import type { SeatMapConfig, SeatMapConfigInput } from '@grabit/shared';
 import { usePresignedUpload, useSaveSeatMap } from '@/hooks/use-admin';
 import { TierEditor } from '@/components/admin/tier-editor';
 import { Button } from '@/components/ui/button';
+import { uploadPresignedAsset } from '@/lib/admin-upload';
 import { hasUnsafeSvgPayload } from '@/lib/svg/safety';
 
 interface SvgPreviewProps {
@@ -150,16 +151,18 @@ export function SvgPreview({
       }
 
       try {
-        const { uploadUrl, publicUrl } =
+        const { uploadUrl, publicUrl, mode, cacheControl } =
           await presignedUploadMutate({
             folder: 'seat-maps',
             contentType: 'image/svg+xml',
             extension: 'svg',
           });
-        await fetch(uploadUrl, {
-          method: 'PUT',
-          body: file,
-          headers: { 'Content-Type': 'image/svg+xml' },
+        await uploadPresignedAsset({
+          uploadUrl,
+          file,
+          contentType: 'image/svg+xml',
+          mode,
+          cacheControl,
         });
         setSvgUrl(publicUrl);
 

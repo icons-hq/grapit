@@ -28,6 +28,7 @@ function createMockConfigService(overrides: Record<string, string> = {}) {
     R2_PUBLIC_URL: 'https://cdn.heygrabit.com',
     R2_ACCESS_KEY_ID: 'test-access-key',
     R2_SECRET_ACCESS_KEY: 'test-secret-key',
+    R2_UPLOAD_CACHE_CONTROL_ENABLED: 'true',
     API_URL: 'http://localhost:8080',
     ...overrides,
   };
@@ -68,6 +69,7 @@ describe('UploadService', () => {
       expect(result).toHaveProperty('uploadUrl');
       expect(result).toHaveProperty('publicUrl');
       expect(result).toHaveProperty('key');
+      expect(result.cacheControl).toBe('public, max-age=31536000, immutable');
       expect(result.mode).toBe('r2');
 
       expect(result.key).toMatch(/^posters\//);
@@ -87,11 +89,36 @@ describe('UploadService', () => {
     it('should set correct ContentType on PutObjectCommand', async () => {
       const { PutObjectCommand } = await import('@aws-sdk/client-s3');
 
-      await service.generatePresignedUrl('seatmaps', 'image/svg+xml', 'svg');
+      await service.generatePresignedUrl('seat-maps', 'image/svg+xml', 'svg');
 
       expect(PutObjectCommand).toHaveBeenCalledWith(
         expect.objectContaining({
           ContentType: 'image/svg+xml',
+          CacheControl: 'public, max-age=31536000, immutable',
+        }),
+      );
+    });
+
+    it('should omit CacheControl when R2 upload cache control is disabled', async () => {
+      const { PutObjectCommand } = await import('@aws-sdk/client-s3');
+      vi.mocked(PutObjectCommand).mockClear();
+
+      const disabledService = new UploadService(
+        createMockConfigService({
+          R2_UPLOAD_CACHE_CONTROL_ENABLED: 'false',
+        }) as unknown as ConstructorParameters<typeof UploadService>[0],
+      );
+
+      const result = await disabledService.generatePresignedUrl(
+        'posters',
+        'image/jpeg',
+        'jpg',
+      );
+
+      expect(result.cacheControl).toBeNull();
+      expect(PutObjectCommand).toHaveBeenCalledWith(
+        expect.not.objectContaining({
+          CacheControl: expect.any(String),
         }),
       );
     });
@@ -100,6 +127,24 @@ describe('UploadService', () => {
       const result = await service.generatePresignedUrl('banners', 'image/png', 'png');
 
       expect(result.publicUrl).toBe(`https://cdn.heygrabit.com/${result.key}`);
+    });
+
+    it('should reject unsupported upload folders', async () => {
+      await expect(
+        service.generatePresignedUrl('avatars', 'image/png', 'png'),
+      ).rejects.toThrow('Unsupported upload folder');
+    });
+
+    it('should reject MIME types outside the folder allowlist', async () => {
+      await expect(
+        service.generatePresignedUrl('seat-maps', 'image/png', 'png'),
+      ).rejects.toThrow('Unsupported upload content type');
+    });
+
+    it('should reject extensions outside the folder allowlist', async () => {
+      await expect(
+        service.generatePresignedUrl('posters', 'image/jpeg', 'svg'),
+      ).rejects.toThrow('Unsupported upload extension');
     });
 
     it('should create S3Client with forcePathStyle: true for R2 compatibility', async () => {
@@ -147,6 +192,7 @@ describe('UploadService', () => {
       const result = await service.generatePresignedUrl('posters', 'image/jpeg', 'jpg');
 
       expect(result.mode).toBe('local');
+      expect(result.cacheControl).toBe('public, max-age=31536000, immutable');
       expect(result.uploadUrl).toMatch(
         /^http:\/\/localhost:8080\/api\/v1\/admin\/upload\/local\/posters\//,
       );

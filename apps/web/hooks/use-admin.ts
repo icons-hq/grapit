@@ -339,6 +339,7 @@ export function usePresignedUpload() {
         publicUrl: string;
         key: string;
         mode: 'local' | 'r2';
+        cacheControl: string | null;
       }>('/api/v1/admin/upload/presigned', params),
   });
 }

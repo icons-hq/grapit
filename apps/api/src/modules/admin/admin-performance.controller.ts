@@ -53,7 +53,16 @@ const publishPerformanceSchema = z.object({
   contentChecklist: publishContentChecklistSchema,
 });
 
+const presignedUploadRequestSchema = z.object({
+  folder: z
+    .enum(['posters', 'performance-detail', 'banners', 'castings', 'seat-maps'])
+    .describe('R2 upload folder'),
+  contentType: z.string().trim().min(1).max(100),
+  extension: z.string().trim().min(1).max(10),
+});
+
 type PublishPerformanceBody = z.infer<typeof publishPerformanceSchema>;
+type PresignedUploadRequest = z.infer<typeof presignedUploadRequestSchema>;
 type AdminRequest = Request & {
   user?: {
     id?: string;
@@ -145,7 +154,8 @@ export class AdminPerformanceController {
 
   @Post('upload/presigned')
   async getPresignedUrl(
-    @Body() body: { folder: string; contentType: string; extension: string },
+    @Body(new ZodValidationPipe(presignedUploadRequestSchema))
+    body: PresignedUploadRequest,
   ) {
     return this.uploadService.generatePresignedUrl(
       body.folder,
