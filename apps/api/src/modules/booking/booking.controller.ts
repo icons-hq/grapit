@@ -10,6 +10,7 @@ import {
   HttpStatus,
   UseGuards,
 } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { Public } from '../../common/decorators/public.decorator.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
@@ -100,6 +101,7 @@ export class BookingController {
    * Public endpoint. Returns all seat states for a showtime.
    */
   @Public()
+  @SkipThrottle()
   @Get('schedules/:showtimeId/seats')
   async getSeatStatus(@Param('showtimeId') showtimeId: string) {
     return this.bookingService.getSeatStatus(showtimeId);
