@@ -10,6 +10,12 @@ test.describe('admin event publish review', () => {
       await fulfillJson(route, performance);
     });
     await page.route(
+      '**/api/v1/admin/performances/perf-25-08',
+      async (route) => {
+        await fulfillJson(route, performance);
+      },
+    );
+    await page.route(
       '**/api/v1/admin/performances/perf-25-08/publish',
       async (route) => {
         await fulfillJson(route, {
