@@ -11,6 +11,7 @@ import {
   seatOperationActionEnum,
   seatOperationHistory,
   seatStatusEnum,
+  users,
 } from './index.js';
 import * as schemaBarrel from './index.js';
 
@@ -67,6 +68,11 @@ describe('Phase 25 admin operations security schema contracts', () => {
     );
     expect(adminAuditLogs).not.toHaveProperty('rawExportRows');
     expect(adminAuditLogs).not.toHaveProperty('rawPiiSnapshot');
+  });
+
+  it('persists per-admin capability truth on user rows for capability guards', () => {
+    expectColumnName(users.adminCapabilityBundle, 'admin_capability_bundle');
+    expectColumnName(users.adminCapabilities, 'admin_capabilities');
   });
 
   it('stores env bootstrap allowlist records and DB-managed exceptions with audit linkage', () => {

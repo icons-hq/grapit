@@ -442,6 +442,7 @@ describe('AuthService', () => {
         birthDate: mockUser.birthDate,
         isEmailVerified: mockUser.isEmailVerified,
         isPhoneVerified: mockUser.isPhoneVerified,
+        marketingConsent: mockUser.marketingConsent,
         createdAt: mockUser.createdAt,
       });
 

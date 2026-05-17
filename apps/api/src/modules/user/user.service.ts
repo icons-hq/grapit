@@ -2,6 +2,11 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { UserRepository } from './user.repository.js';
 import type { UserProfile } from '@grabit/shared/types/user.types.js';
 import { DEFAULT_LOCALE, isSupportedLocale } from '@grabit/shared/constants/locales.js';
+import {
+  ADMIN_CAPABILITIES,
+  type AdminCapability,
+  type AdminCapabilityBundle,
+} from '@grabit/shared/schemas/admin-operations.schema.js';
 import type { UpdateProfileInput } from '@grabit/shared/schemas/user.schema.js';
 import { SmsService } from '../sms/sms.service.js';
 
@@ -38,11 +43,17 @@ export class UserService {
     }
 
     const updateData: Partial<
-      Pick<UserProfile, 'name' | 'phone' | 'preferredLocale' | 'isPhoneVerified'>
+      Pick<
+        UserProfile,
+        'name' | 'phone' | 'preferredLocale' | 'isPhoneVerified' | 'marketingConsent'
+      >
     > = {};
     if (data.name !== undefined) updateData.name = data.name;
     if (data.preferredLocale !== undefined) {
       updateData.preferredLocale = data.preferredLocale;
+    }
+    if (data.marketingConsent !== undefined) {
+      updateData.marketingConsent = data.marketingConsent;
     }
     if (data.phone !== undefined && data.phone !== currentUser.phone) {
       if (!data.phoneVerificationToken) {
@@ -74,7 +85,10 @@ export class UserService {
     preferredLocale: string | null;
     isEmailVerified: boolean;
     isPhoneVerified: boolean;
+    marketingConsent: boolean;
     role: string;
+    adminCapabilityBundle?: string | null;
+    adminCapabilities?: readonly string[] | null;
     createdAt: Date;
   }): UserProfile {
     return {
@@ -88,7 +102,10 @@ export class UserService {
       preferredLocale: normalizeStoredPreferredLocale(user.preferredLocale),
       isEmailVerified: user.isEmailVerified,
       isPhoneVerified: user.isPhoneVerified,
+      marketingConsent: user.marketingConsent,
       role: user.role as 'user' | 'admin',
+      adminCapabilityBundle: normalizeAdminCapabilityBundle(user.adminCapabilityBundle),
+      adminCapabilities: normalizeAdminCapabilities(user.adminCapabilities),
       createdAt: user.createdAt.toISOString(),
     };
   }
@@ -99,4 +116,28 @@ function normalizeStoredPreferredLocale(locale: string | null): UserProfile['pre
   if (isSupportedLocale(locale)) return locale;
   if (locale.toLowerCase() === 'zh-tw') return 'zh-CN';
   return DEFAULT_LOCALE;
+}
+
+function normalizeAdminCapabilities(
+  capabilities: readonly string[] | null | undefined,
+): AdminCapability[] {
+  if (!capabilities) return [];
+  return ADMIN_CAPABILITIES.filter((capability) =>
+    capabilities.includes(capability),
+  );
+}
+
+function normalizeAdminCapabilityBundle(
+  bundle: string | null | undefined,
+): AdminCapabilityBundle | null {
+  if (
+    bundle === 'operator' ||
+    bundle === 'reviewer' ||
+    bundle === 'approver' ||
+    bundle === 'finance' ||
+    bundle === 'admin'
+  ) {
+    return bundle;
+  }
+  return null;
 }

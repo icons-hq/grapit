@@ -1,4 +1,13 @@
-import { pgTable, uuid, varchar, boolean, timestamp, pgEnum } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import {
+  pgTable,
+  uuid,
+  varchar,
+  boolean,
+  timestamp,
+  pgEnum,
+  jsonb,
+} from 'drizzle-orm/pg-core';
 
 export const genderEnum = pgEnum('gender', ['male', 'female', 'unspecified']);
 export const localeEnum = pgEnum('locale', ['ko', 'en', 'th', 'zh-CN', 'zh-TW']);
@@ -17,6 +26,11 @@ export const users = pgTable('users', {
   isEmailVerified: boolean('is_email_verified').notNull().default(false),
   marketingConsent: boolean('marketing_consent').notNull().default(false),
   role: varchar('role', { length: 20 }).notNull().default('user'), // user | admin
+  adminCapabilityBundle: varchar('admin_capability_bundle', { length: 20 }),
+  adminCapabilities: jsonb('admin_capabilities')
+    .$type<string[]>()
+    .notNull()
+    .default(sql`'[]'::jsonb`),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

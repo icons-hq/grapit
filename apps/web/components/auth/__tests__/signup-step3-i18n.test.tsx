@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
+import { COUNTRY_OPTIONS } from '@grabit/shared';
 
 import { SignupStep3 } from '../signup-step3';
 
@@ -53,6 +54,8 @@ describe('SignupStep3 i18n visible copy', () => {
     expect(screen.getByText('Gender')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Prefer not to say' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: 'Japan' })).toHaveValue('JP');
+    expect(screen.getByRole('option', { name: 'South Korea' })).toHaveValue('KR');
+    expect(screen.getAllByRole('option').length).toBeGreaterThan(200);
     expect(screen.getByText('Phone number')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Previous' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Complete sign-up' })).toBeInTheDocument();
@@ -78,7 +81,7 @@ describe('SignupStep3 i18n visible copy', () => {
     });
   });
 
-  it('renders localized country names while keeping canonical country values', () => {
+  it('renders English country names in every locale while keeping canonical country values', () => {
     mocks.activeLocale = 'zh-CN';
 
     render(
@@ -89,8 +92,19 @@ describe('SignupStep3 i18n visible copy', () => {
       />,
     );
 
-    expect(screen.getByRole('option', { name: '韩国' })).toHaveValue('KR');
-    expect(screen.getByRole('option', { name: '日本' })).toHaveValue('JP');
-    expect(screen.getByRole('option', { name: '其他' })).toHaveValue('OTHER');
+    for (const [label, value] of [
+      ['Afghanistan', 'AF'],
+      ['Brazil', 'BR'],
+      ['Japan', 'JP'],
+      ['South Korea', 'KR'],
+      ['United States', 'US'],
+      ['Zimbabwe', 'ZW'],
+    ] as const) {
+      expect(screen.getByRole('option', { name: label })).toHaveValue(value);
+    }
+
+    expect(screen.getAllByRole('option')).toHaveLength(COUNTRY_OPTIONS.length);
+    expect(screen.queryByRole('option', { name: '韩国' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: '其他' })).not.toBeInTheDocument();
   });
 });

@@ -14,6 +14,7 @@ import {
   Armchair,
   ScrollText,
   ShieldCheck,
+  UsersRound,
 } from 'lucide-react';
 import { cn } from '@/lib/cn';
 
@@ -65,6 +66,11 @@ const NAV_GROUPS = [
         label: '예매 관리',
         href: '/admin/bookings',
         icon: Ticket,
+      },
+      {
+        label: '회원 관리',
+        href: '/admin/users',
+        icon: UsersRound,
       },
       {
         label: '좌석 운영',

@@ -13,6 +13,7 @@ import { AdminSupportContentController } from './admin-support-content.controlle
 import { AdminSeatOperationsController } from './admin-seat-operations.controller.js';
 import { AdminAuditController } from './admin-audit.controller.js';
 import { AdminSecurityController } from './admin-security.controller.js';
+import { AdminUserController } from './admin-user.controller.js';
 import { LocalUploadController } from './local-upload.controller.js';
 import { AdminDashboardController } from './admin-dashboard.controller.js';
 import { AdminDiagnosticsController } from './admin-diagnostics.controller.js';
@@ -23,6 +24,7 @@ import { AdminOperationsService } from './admin-operations.service.js';
 import { AdminSupportContentService } from './admin-support-content.service.js';
 import { AdminSeatOperationsService } from './admin-seat-operations.service.js';
 import { AdminSecurityService } from './admin-security.service.js';
+import { AdminUserService } from './admin-user.service.js';
 import { UploadService } from './upload.service.js';
 import { AdminDashboardService } from './admin-dashboard.service.js';
 
@@ -37,6 +39,7 @@ import { AdminDashboardService } from './admin-dashboard.service.js';
     AdminSeatOperationsController,
     AdminAuditController,
     AdminSecurityController,
+    AdminUserController,
     LocalUploadController,
     AdminDashboardController,
     AdminDiagnosticsController,
@@ -49,6 +52,7 @@ import { AdminDashboardService } from './admin-dashboard.service.js';
     AdminOperationsService,
     AdminSupportContentService,
     AdminSeatOperationsService,
+    AdminUserService,
     {
       provide: AdminSecurityService,
       useFactory: (db: DrizzleDB, audit: AdminAuditService) =>

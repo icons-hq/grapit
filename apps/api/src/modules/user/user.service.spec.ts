@@ -15,6 +15,7 @@ const baseUser = {
   preferredLocale: 'en',
   isEmailVerified: true,
   isPhoneVerified: true,
+  marketingConsent: false,
   role: 'user',
   createdAt: new Date('2026-05-06T00:00:00Z'),
 };
@@ -41,6 +42,7 @@ describe('UserService preferred locale persistence', () => {
   it('returns preferredLocale when reading the logged-in user profile', async () => {
     await expect(service.getUserProfile('user-1')).resolves.toMatchObject({
       preferredLocale: 'en',
+      marketingConsent: false,
     });
   });
 
@@ -55,6 +57,20 @@ describe('UserService preferred locale persistence', () => {
     ).resolves.toMatchObject({ preferredLocale: 'zh-CN' });
     expect(repository.updateProfile).toHaveBeenCalledWith('user-1', {
       preferredLocale: 'zh-CN',
+    });
+  });
+
+  it('persists marketing consent updates through the existing profile path', async () => {
+    vi.mocked(repository.updateProfile).mockResolvedValue({
+      ...baseUser,
+      marketingConsent: true,
+    } as never);
+
+    await expect(
+      service.updateProfile('user-1', { marketingConsent: true }),
+    ).resolves.toMatchObject({ marketingConsent: true });
+    expect(repository.updateProfile).toHaveBeenCalledWith('user-1', {
+      marketingConsent: true,
     });
   });
 

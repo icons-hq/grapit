@@ -5,11 +5,14 @@ import {
   ADMIN_CAPABILITY_BUNDLE_CAPABILITIES,
   adminAuditEventSchema,
   adminCapabilitySchema,
+  adminUserListItemSchema,
+  adminUserPermissionUpdateSchema,
   adminSeatOperationHistorySchema,
   adminReservationExportFilterSchema,
   adminSecurityStatusSchema,
   adminSeatOperationRequestSchema,
 } from './admin-operations.schema';
+import { resolveAdminCapabilitySnapshot } from '../types/admin-operations.types';
 
 const VALID_SHOWTIME_ID = '00000000-0000-4000-8000-000000000001';
 
@@ -59,6 +62,90 @@ describe('admin operations contract', () => {
 
     expect(parsed.action).toBe('event.publish');
     expect(parsed.diff.after).toEqual({ status: 'published' });
+  });
+
+  it('validates admin user list rows with masked contact fields and capability truth', () => {
+    const parsed = adminUserListItemSchema.parse({
+      id: 'user-1',
+      maskedEmail: 'fa***@example.com',
+      name: 'Fan',
+      maskedPhone: '+82********78',
+      role: 'admin',
+      country: 'KR',
+      preferredLocale: 'ko',
+      marketingConsent: true,
+      adminCapabilityBundle: 'operator',
+      adminCapabilities: ['support.manage', 'seat.disable'],
+      verificationState: {
+        emailVerified: true,
+        phoneVerified: true,
+      },
+      reservationSummary: {
+        total: 2,
+        statuses: {
+          pendingPayment: 1,
+          confirmed: 1,
+          cancelled: 0,
+          failed: 0,
+        },
+        lastReservationAt: '2026-05-14T00:00:00.000Z',
+      },
+      lastActivityAt: '2026-05-14T00:00:00.000Z',
+      createdAt: '2026-05-01T00:00:00.000Z',
+    });
+
+    expect(parsed.maskedEmail).toBe('fa***@example.com');
+    expect(parsed.adminCapabilities).toContain('support.manage');
+  });
+
+  it('requires reason and explicit confirmation for admin permission updates', () => {
+    expect(() =>
+      adminUserPermissionUpdateSchema.parse({
+        role: 'admin',
+        adminCapabilityBundle: 'admin',
+        adminCapabilities: ['security.manage'],
+        confirmed: true,
+      }),
+    ).toThrow(/사유/);
+
+    expect(() =>
+      adminUserPermissionUpdateSchema.parse({
+        role: 'admin',
+        adminCapabilityBundle: 'admin',
+        reason: 'security owner rotation',
+      }),
+    ).toThrow(/확인/);
+
+    const parsed = adminUserPermissionUpdateSchema.parse({
+      role: 'admin',
+      adminCapabilityBundle: 'admin',
+      adminCapabilities: ['security.manage'],
+      reason: 'security owner rotation',
+      confirmed: true,
+    });
+
+    expect(parsed.confirmed).toBe(true);
+    expect(parsed.reason).toBe('security owner rotation');
+  });
+
+  it('limits explicit non-admin bundles even when the coarse role remains admin', () => {
+    expect(
+      resolveAdminCapabilitySnapshot({
+        id: 'admin-1',
+        role: 'admin',
+      }).superuser,
+    ).toBe(true);
+
+    const limited = resolveAdminCapabilitySnapshot({
+      id: 'admin-2',
+      role: 'admin',
+      adminCapabilityBundle: 'operator',
+      adminCapabilities: ['support.manage'],
+    });
+
+    expect(limited.superuser).toBe(false);
+    expect(limited.capabilities).toEqual(['support.manage']);
+    expect(limited.capabilities).not.toContain('security.manage');
   });
 
   it('requires a reason when raw reservation export can expose PII', () => {

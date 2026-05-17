@@ -6,7 +6,7 @@ import { useLocale } from 'next-intl';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Loader2 } from 'lucide-react';
-import type { RegisterStep3Input } from '@grabit/shared';
+import { COUNTRY_OPTIONS, type RegisterStep3Input } from '@grabit/shared';
 import { cn } from '@/lib/cn';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -29,7 +29,6 @@ interface SignupStep3Props {
 }
 
 const GENDER_OPTIONS = ['male', 'female', 'unspecified'] as const;
-const COUNTRY_OPTIONS = ['KR', 'US', 'JP', 'CN', 'GB', 'CA', 'AU', 'OTHER'] as const;
 type SignupCopy = AuthLaunchCopy['signup'];
 
 function createRegisterStep3Schema(copy: SignupCopy) {
@@ -53,21 +52,6 @@ function getGenderLabel(copy: SignupCopy, value: (typeof GENDER_OPTIONS)[number]
     female: copy.genderFemale,
     unspecified: copy.genderUnspecified,
   } satisfies Record<(typeof GENDER_OPTIONS)[number], string>;
-
-  return labels[value];
-}
-
-function getCountryLabel(copy: SignupCopy, value: (typeof COUNTRY_OPTIONS)[number]) {
-  const labels = {
-    KR: copy.countryKR,
-    US: copy.countryUS,
-    JP: copy.countryJP,
-    CN: copy.countryCN,
-    GB: copy.countryGB,
-    CA: copy.countryCA,
-    AU: copy.countryAU,
-    OTHER: copy.countryOTHER,
-  } satisfies Record<(typeof COUNTRY_OPTIONS)[number], string>;
 
   return labels[value];
 }
@@ -182,9 +166,9 @@ export function SignupStep3({
                   {...field}
                   className="flex h-11 w-full rounded-lg border border-gray-200 bg-white px-4 py-2 text-base text-gray-900 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-0"
                 >
-                  {COUNTRY_OPTIONS.map((c) => (
-                    <option key={c} value={c}>
-                      {getCountryLabel(signupCopy, c)}
+                  {COUNTRY_OPTIONS.map((country) => (
+                    <option key={country.value} value={country.value}>
+                      {country.label}
                     </option>
                   ))}
                 </select>

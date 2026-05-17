@@ -249,6 +249,7 @@ function setCurrentUserRole(role: 'user' | 'admin') {
     preferredLocale: 'ko',
     isEmailVerified: true,
     isPhoneVerified: true,
+    marketingConsent: false,
     role,
     createdAt: '2026-05-06T00:00:00.000Z',
   });
@@ -359,6 +360,7 @@ describe('runtime booking disabled UI', () => {
       preferredLocale: 'ko',
       isEmailVerified: true,
       isPhoneVerified: true,
+      marketingConsent: false,
       role: 'admin',
       createdAt: '2026-05-06T00:00:00.000Z',
     });

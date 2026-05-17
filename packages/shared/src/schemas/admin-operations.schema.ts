@@ -65,6 +65,7 @@ const dateOnly = (label: string) =>
 
 export const adminCapabilitySchema = z.enum(ADMIN_CAPABILITIES);
 export const adminCapabilityBundleSchema = z.enum(ADMIN_CAPABILITY_BUNDLES);
+export const adminUserRoleSchema = z.enum(['user', 'admin']);
 export const adminSeatOperationShowtimeIdSchema = z
   .string()
   .uuid('유효한 회차 ID가 필요합니다');
@@ -169,6 +170,8 @@ export const adminAuditActionSchema = z.enum([
   'support.assign',
   'support.resolve',
   'allowlist.update',
+  'security.allowlist.update',
+  'security.permission.update',
 ]);
 
 export const adminAuditEventSchema = z.object({
@@ -265,8 +268,140 @@ export const adminSecurityStatusSchema = z.object({
   lastAuditEventAt: isoDatetime('최근 감사 이벤트 시각').nullable().optional(),
 });
 
+export const adminUserListQuerySchema = z.object({
+  search: z.string().trim().min(1).max(100).optional(),
+  role: adminUserRoleSchema.optional(),
+  verification: z
+    .enum([
+      'all',
+      'verified',
+      'email_verified',
+      'phone_verified',
+      'email_unverified',
+      'phone_unverified',
+      'unverified',
+    ])
+    .default('all'),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+});
+
+export const adminUserVerificationStateSchema = z.object({
+  emailVerified: z.boolean(),
+  phoneVerified: z.boolean(),
+});
+
+export const adminUserReservationStatusSummarySchema = z.object({
+  pendingPayment: z.number().int().min(0).default(0),
+  confirmed: z.number().int().min(0).default(0),
+  cancelled: z.number().int().min(0).default(0),
+  failed: z.number().int().min(0).default(0),
+});
+
+export const adminUserReservationSummarySchema = z.object({
+  total: z.number().int().min(0),
+  statuses: adminUserReservationStatusSummarySchema,
+  lastReservationAt: isoDatetime('최근 예매 시각').nullable(),
+});
+
+export const adminUserListItemSchema = z.object({
+  id: z.string().min(1),
+  maskedEmail: z.string().min(1),
+  name: z.string().min(1),
+  maskedPhone: z.string().min(1),
+  role: adminUserRoleSchema,
+  country: z.string().min(1),
+  preferredLocale: z.string().min(1),
+  marketingConsent: z.boolean(),
+  adminCapabilityBundle: adminCapabilityBundleSchema.nullable(),
+  adminCapabilities: z.array(adminCapabilitySchema),
+  verificationState: adminUserVerificationStateSchema,
+  reservationSummary: adminUserReservationSummarySchema,
+  lastActivityAt: isoDatetime('최근 활동 시각').nullable(),
+  createdAt: isoDatetime('가입 시각'),
+});
+
+export const adminUserRecentReservationSchema = z.object({
+  id: z.string().min(1),
+  reservationNumber: z.string().min(1),
+  status: z.enum(['PENDING_PAYMENT', 'CONFIRMED', 'CANCELLED', 'FAILED']),
+  totalAmount: z.number().int().min(0),
+  createdAt: isoDatetime('예매 생성 시각'),
+  cancelledAt: isoDatetime('예매 취소 시각').nullable(),
+});
+
+export const adminUserSupportThreadSummarySchema = z.object({
+  total: z.number().int().min(0),
+  open: z.number().int().min(0),
+  escalated: z.number().int().min(0),
+  recentThreads: z.array(z.object({
+    id: z.string().min(1),
+    title: z.string().min(1),
+    status: z.string().min(1),
+    priority: z.string().min(1),
+    category: z.string().min(1),
+    createdAt: isoDatetime('CS 생성 시각'),
+    updatedAt: isoDatetime('CS 수정 시각').nullable(),
+  })),
+});
+
+export const adminUserDetailSchema = adminUserListItemSchema.extend({
+  account: z.object({
+    birthDate: z.string().min(1),
+    gender: z.enum(['male', 'female', 'unspecified']),
+    updatedAt: isoDatetime('수정 시각').nullable(),
+  }),
+  recentReservations: z.array(adminUserRecentReservationSchema),
+  supportThreads: adminUserSupportThreadSummarySchema,
+  recentAuditEvents: z.array(adminAuditEventSchema),
+});
+
+export const adminUserListResponseSchema = z.object({
+  items: z.array(adminUserListItemSchema),
+  page: z.number().int().min(1),
+  limit: z.number().int().min(1).max(100),
+  total: z.number().int().min(0),
+  totalPages: z.number().int().min(0),
+});
+
+export const adminUserPermissionUpdateSchema = z
+  .object({
+    role: adminUserRoleSchema,
+    adminCapabilityBundle: adminCapabilityBundleSchema.nullable().optional(),
+    adminCapabilities: z.array(adminCapabilitySchema).default([]),
+    reason: z
+      .string({ required_error: '권한 변경 사유를 입력해주세요' })
+      .trim()
+      .min(1, '권한 변경 사유를 입력해주세요')
+      .max(500),
+    confirmed: z.literal(true, {
+      errorMap: () => ({ message: '권한 변경 확인이 필요합니다' }),
+    }),
+  })
+  .superRefine((value, ctx) => {
+    if (value.role === 'admin' && !value.adminCapabilityBundle) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['adminCapabilityBundle'],
+        message: '관리자 권한 묶음이 필요합니다',
+      });
+    }
+
+    if (
+      value.role === 'user' &&
+      (value.adminCapabilityBundle || value.adminCapabilities.length > 0)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['adminCapabilities'],
+        message: '일반 사용자는 관리자 권한을 가질 수 없습니다',
+      });
+    }
+  });
+
 export type AdminCapability = z.infer<typeof adminCapabilitySchema>;
 export type AdminCapabilityBundle = z.infer<typeof adminCapabilityBundleSchema>;
+export type AdminUserRole = z.infer<typeof adminUserRoleSchema>;
 export type AdminPublishLifecycle = z.infer<typeof adminPublishLifecycleSchema>;
 export type AdminSupportCategory = z.infer<typeof adminSupportCategorySchema>;
 export type AdminCsCategory = z.infer<typeof adminCsCategorySchema>;
@@ -286,3 +421,22 @@ export type AdminSeatOperationHistory = z.infer<
   typeof adminSeatOperationHistorySchema
 >;
 export type AdminSecurityStatus = z.infer<typeof adminSecurityStatusSchema>;
+export type AdminUserListQuery = z.infer<typeof adminUserListQuerySchema>;
+export type AdminUserVerificationState = z.infer<
+  typeof adminUserVerificationStateSchema
+>;
+export type AdminUserReservationSummary = z.infer<
+  typeof adminUserReservationSummarySchema
+>;
+export type AdminUserListItem = z.infer<typeof adminUserListItemSchema>;
+export type AdminUserRecentReservation = z.infer<
+  typeof adminUserRecentReservationSchema
+>;
+export type AdminUserSupportThreadSummary = z.infer<
+  typeof adminUserSupportThreadSummarySchema
+>;
+export type AdminUserDetail = z.infer<typeof adminUserDetailSchema>;
+export type AdminUserListResponse = z.infer<typeof adminUserListResponseSchema>;
+export type AdminUserPermissionUpdate = z.infer<
+  typeof adminUserPermissionUpdateSchema
+>;
