@@ -6,6 +6,7 @@ import {
   Query,
   NotFoundException,
 } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import { Public } from '../../common/decorators/public.decorator.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import {
@@ -15,6 +16,7 @@ import {
 import { PerformanceService } from './performance.service.js';
 
 @Public()
+@SkipThrottle()
 @Controller()
 export class PerformanceController {
   constructor(private readonly performanceService: PerformanceService) {}
