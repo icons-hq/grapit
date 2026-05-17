@@ -18,6 +18,12 @@ async function loadRewrites() {
   return nextConfig.rewrites();
 }
 
+async function loadImagesConfig() {
+  vi.resetModules();
+  const mod = await import('../../next.config');
+  return (mod.default as { images?: unknown }).images;
+}
+
 describe('nextConfig rewrites', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
@@ -38,5 +44,20 @@ describe('nextConfig rewrites', () => {
 
     expect(serialized).toContain('localhost:8080/api/:path*');
     expect(serialized).toContain('localhost:8080/socket.io/:path*');
+  });
+});
+
+describe('nextConfig images', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it('allows the configured R2 CDN hostname for optimized images', async () => {
+    vi.stubEnv('NEXT_PUBLIC_R2_HOSTNAME', 'cdn.heygrabit.com');
+
+    const images = await loadImagesConfig();
+
+    expect(JSON.stringify(images)).toContain('cdn.heygrabit.com');
   });
 });

@@ -186,6 +186,7 @@ describe('BannerForm', () => {
       publicUrl: 'https://r2.example.com/banners/uploaded.jpg',
       key: 'banners/uploaded.jpg',
       mode: 'r2',
+      cacheControl: 'public, max-age=31536000, immutable',
     });
 
     render(
@@ -207,7 +208,10 @@ describe('BannerForm', () => {
         'https://upload.example.com/banner',
         expect.objectContaining({
           method: 'PUT',
-          headers: { 'Content-Type': 'image/jpeg' },
+          headers: {
+            'Content-Type': 'image/jpeg',
+            'Cache-Control': 'public, max-age=31536000, immutable',
+          },
         }),
       );
     });

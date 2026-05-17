@@ -36,6 +36,7 @@ import {
   useUpdatePerformance,
   usePresignedUpload,
 } from '@/hooks/use-admin';
+import { uploadPresignedAsset } from '@/lib/admin-upload';
 import {
   EventPublishConfirmationDialog,
   type EventPublishConfirmInput,
@@ -363,17 +364,18 @@ export function PerformanceForm({
 
       const ext = file.name.split('.').pop() ?? 'jpg';
       try {
-        const { uploadUrl, publicUrl, mode } =
+        const { uploadUrl, publicUrl, mode, cacheControl } =
           await presignedUpload.mutateAsync({
             folder: 'posters',
             contentType: file.type,
             extension: ext,
           });
-        await fetch(uploadUrl, {
-          method: 'PUT',
-          body: file,
-          headers: { 'Content-Type': file.type },
-          ...(mode === 'local' ? { credentials: 'include' as const } : {}),
+        await uploadPresignedAsset({
+          uploadUrl,
+          file,
+          contentType: file.type,
+          mode,
+          cacheControl,
         });
         form.setValue('posterUrl', publicUrl, { shouldDirty: true });
         // Keep blobUrl for preview (avoids auth issues with local mode URLs)
@@ -434,18 +436,19 @@ export function PerformanceForm({
     try {
       for (const file of imageFiles) {
         const ext = file.name.split('.').pop() ?? 'jpg';
-        const { uploadUrl, publicUrl, mode } =
+        const { uploadUrl, publicUrl, mode, cacheControl } =
           await presignedUpload.mutateAsync({
             folder: 'performance-detail',
             contentType: file.type,
             extension: ext,
           });
 
-        await fetch(uploadUrl, {
-          method: 'PUT',
-          body: file,
-          headers: { 'Content-Type': file.type },
-          ...(mode === 'local' ? { credentials: 'include' as const } : {}),
+        await uploadPresignedAsset({
+          uploadUrl,
+          file,
+          contentType: file.type,
+          mode,
+          cacheControl,
         });
 
         uploadedImages.push({

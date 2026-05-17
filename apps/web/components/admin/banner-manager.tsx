@@ -4,6 +4,7 @@ import { useState, useCallback } from 'react';
 import { Upload, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { usePresignedUpload } from '@/hooks/use-admin';
+import { uploadPresignedAsset } from '@/lib/admin-upload';
 import type {
   BannerDeviceTarget,
   BannerPlacement,
@@ -111,16 +112,18 @@ export function BannerForm({
       }
       const ext = file.name.split('.').pop() ?? 'jpg';
       try {
-        const { uploadUrl, publicUrl } =
+        const { uploadUrl, publicUrl, mode, cacheControl } =
           await presignedUpload.mutateAsync({
             folder: 'banners',
             contentType: file.type,
             extension: ext,
           });
-        await fetch(uploadUrl, {
-          method: 'PUT',
-          body: file,
-          headers: { 'Content-Type': file.type },
+        await uploadPresignedAsset({
+          uploadUrl,
+          file,
+          contentType: file.type,
+          mode,
+          cacheControl,
         });
         setImageUrl(publicUrl);
         toast.success('배너 이미지가 업로드되었습니다.');

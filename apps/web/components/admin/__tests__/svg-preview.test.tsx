@@ -89,6 +89,8 @@ describe('SvgPreview — UX-02 admin 업로드 검증 (D-06/D-07 unified contrac
     mockMutateAsync.mockResolvedValue({
       uploadUrl: 'https://r2.example.com/upload',
       publicUrl: 'https://cdn.example.com/seats/test.svg',
+      mode: 'r2',
+      cacheControl: 'public, max-age=31536000, immutable',
     });
     vi.mocked(toast.error).mockReset();
     vi.mocked(toast.success).mockReset();
@@ -108,7 +110,13 @@ describe('SvgPreview — UX-02 admin 업로드 검증 (D-06/D-07 unified contrac
       expect(mockMutateAsync).toHaveBeenCalledTimes(1);
       expect(global.fetch).toHaveBeenCalledWith(
         'https://r2.example.com/upload',
-        expect.objectContaining({ method: 'PUT' }),
+        expect.objectContaining({
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'image/svg+xml',
+            'Cache-Control': 'public, max-age=31536000, immutable',
+          },
+        }),
       );
     });
     expect(vi.mocked(toast.error)).not.toHaveBeenCalled();

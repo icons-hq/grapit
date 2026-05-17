@@ -14,6 +14,7 @@ import { Plus, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 import type { CreatePerformanceFormInput } from '@grabit/shared';
 import { usePresignedUpload } from '@/hooks/use-admin';
+import { uploadPresignedAsset } from '@/lib/admin-upload';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -187,16 +188,18 @@ export function CastingManager({
       }
       const ext = file.name.split('.').pop() ?? 'jpg';
       try {
-        const { uploadUrl, publicUrl } =
+        const { uploadUrl, publicUrl, mode, cacheControl } =
           await presignedUpload.mutateAsync({
             folder: 'castings',
             contentType: file.type,
             extension: ext,
           });
-        await fetch(uploadUrl, {
-          method: 'PUT',
-          body: file,
-          headers: { 'Content-Type': file.type },
+        await uploadPresignedAsset({
+          uploadUrl,
+          file,
+          contentType: file.type,
+          mode,
+          cacheControl,
         });
         setValue(`castings.${index}.photoUrl`, publicUrl, {
           shouldDirty: true,
