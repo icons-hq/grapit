@@ -1,4 +1,4 @@
-export const SMS_COPY_LOCALES = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
+export const SMS_COPY_LOCALES = ['ko', 'en', 'th', 'zh-CN'] as const;
 
 export type SmsCopyLocale = (typeof SMS_COPY_LOCALES)[number];
 
@@ -67,17 +67,6 @@ export const smsOtpCopy: Record<SmsCopyLocale, SmsOtpCopy> = {
     throttled: '请求过于频繁，请稍后再试。',
     systemError: '验证码处理失败，请稍后再试。',
   },
-  'zh-TW': {
-    template: '[Grabit] 驗證碼 {{otp}}，10 分鐘內有效。',
-    sent: '驗證碼已發送',
-    resendCta: '重新發送驗證碼',
-    resendLoading: '正在重新發送驗證碼',
-    resendSuccess: '新的驗證碼已發送',
-    expired: '驗證碼已過期，請重新發送。',
-    invalidCode: '驗證碼不正確',
-    throttled: '請求過於頻繁，請稍後再試。',
-    systemError: '驗證碼處理失敗，請稍後再試。',
-  },
 };
 
 export const authStatusCopy: Record<SmsCopyLocale, AuthStatusCopy> = {
@@ -108,13 +97,6 @@ export const authStatusCopy: Record<SmsCopyLocale, AuthStatusCopy> = {
     verificationRequired: '请完成验证',
     deviceLimitNotice: '由于另一台设备登录，最早的会话已被退出。',
     providerUnavailable: '该社交登录服务暂不可用',
-  },
-  'zh-TW': {
-    invalidCredentials: '電子郵件或密碼不正確',
-    emailUnverified: '需要完成電子郵件驗證',
-    verificationRequired: '請完成驗證',
-    deviceLimitNotice: '由於另一台裝置登入，最早的工作階段已被登出。',
-    providerUnavailable: '此社群登入服務暫時無法使用',
   },
 };
 

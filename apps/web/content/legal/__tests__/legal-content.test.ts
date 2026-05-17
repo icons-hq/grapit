@@ -108,7 +108,7 @@ describe('legal content', () => {
 
     const canonicalLocales = new Set(
       legalMarkdownFiles.map((filename) => {
-        const match = filename.match(/\.(en|th|zh-CN|zh-TW)\.md$/);
+        const match = filename.match(/\.(en|th|zh-CN)\.md$/);
         return match?.[1] ?? 'ko';
       }),
     );
@@ -142,13 +142,10 @@ describe('legal content', () => {
     const forbiddenLegalMarkdownFiles = [
       'terms-of-service.th.md',
       'terms-of-service.zh-CN.md',
-      'terms-of-service.zh-TW.md',
       'privacy-policy.th.md',
       'privacy-policy.zh-CN.md',
-      'privacy-policy.zh-TW.md',
       'marketing-consent.th.md',
       'marketing-consent.zh-CN.md',
-      'marketing-consent.zh-TW.md',
     ];
 
     for (const filename of forbiddenLegalMarkdownFiles) {

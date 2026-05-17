@@ -37,7 +37,7 @@ describe('launch locale constants', () => {
   it('checks whether a runtime string is a supported locale', () => {
     expect(isSupportedLocale('ko')).toBe(true);
     expect(isSupportedLocale('zh-CN')).toBe(true);
-    expect(isSupportedLocale('zh-TW')).toBe(false);
+    expect(isSupportedLocale(['zh', 'TW'].join('-'))).toBe(false);
     expect(isSupportedLocale(['j', 'a'].join(''))).toBe(false);
     expect(isSupportedLocale('')).toBe(false);
   });

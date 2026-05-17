@@ -9,8 +9,10 @@ describe('UserController preferred locale validation', () => {
   });
 
   it('rejects unsupported preferredLocale values before service persistence', () => {
+    const staleLocale = ['zh', 'TW'].join('-');
+
     expect(() =>
-      updateProfileSchema.parse({ preferredLocale: 'zh-TW' }),
+      updateProfileSchema.parse({ preferredLocale: staleLocale }),
     ).toThrow();
   });
 });

@@ -11,13 +11,12 @@ const PUBLIC_SITEMAP_PATHS = [
   '/legal/marketing',
 ] as const;
 
-const HREFLANG_LOCALES = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
+const HREFLANG_LOCALES = ['ko', 'en', 'th', 'zh-CN'] as const;
 const LOCALE_PREFIXES = {
   ko: '/',
   en: '/en',
   th: '/th',
   'zh-CN': '/zh-CN',
-  'zh-TW': '/zh-TW',
 } as const satisfies Record<HreflangLocale, string>;
 
 type HreflangLocale = (typeof HREFLANG_LOCALES)[number];

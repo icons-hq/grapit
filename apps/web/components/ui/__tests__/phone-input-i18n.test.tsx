@@ -27,7 +27,6 @@ describe('PhoneInput launch locale labels', () => {
     ['en', 'Phone number country: South Korea +82'],
     ['th', 'ประเทศ: ไทย +66'],
     ['zh-CN', '国家: 韩国 +82'],
-    ['zh-TW', '國家/地區: 韓國 +82'],
   ] as const;
 
   it.each(localeCases)('uses %s labels for the country selector', (locale, accessibleName) => {

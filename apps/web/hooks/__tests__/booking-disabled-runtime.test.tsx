@@ -303,23 +303,21 @@ describe('runtime booking disabled UI', () => {
     seedBookingFlow();
   });
 
-  it('keeps exact booking-disabled copy for all five launch locales', () => {
+  it('keeps exact booking-disabled copy for all active launch locales', () => {
     expect(BOOKING_DISABLED_COPY).toEqual({
       ko: '예매는 추후 오픈 예정입니다',
       en: 'Ticket booking will open later',
       th: 'การจองบัตรจะเปิดให้บริการในภายหลัง',
       'zh-CN': '门票预订将于稍后开放',
-      'zh-TW': '門票預訂將於稍後開放',
     });
   });
 
-  it('keeps exact booking verification-required copy for all five launch locales', () => {
+  it('keeps exact booking verification-required copy for all active launch locales', () => {
     expect(BOOKING_VERIFICATION_REQUIRED_COPY).toEqual({
       ko: '이메일 인증과 휴대폰 인증을 완료해야 예매할 수 있습니다.',
       en: 'Complete both email and phone verification before booking tickets.',
       th: 'กรุณายืนยันทั้งอีเมลและหมายเลขโทรศัพท์ก่อนจองบัตร',
       'zh-CN': '请先完成电子邮箱和手机号验证后再预订门票。',
-      'zh-TW': '請先完成電子郵件和手機號碼驗證後再預訂門票。',
     });
   });
 
@@ -328,7 +326,6 @@ describe('runtime booking disabled UI', () => {
     ['en', 'Ticket booking will open later'],
     ['th', 'การจองบัตรจะเปิดให้บริการในภายหลัง'],
     ['zh-CN', '门票预订将于稍后开放'],
-    ['zh-TW', '門票預訂將於稍後開放'],
   ] satisfies Array<[string, string]>)(
     'replaces the performance detail booking CTA with disabled copy for %s',
     async (locale, copy) => {

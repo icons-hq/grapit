@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { apiClient } from '@/lib/api-client';
 
-export type SupportContentLocale = 'ko' | 'en' | 'th' | 'zh-CN' | 'zh-TW';
+export type SupportContentLocale = 'ko' | 'en' | 'th' | 'zh-CN';
 export type SupportContentReviewState =
   | 'draft'
   | 'review'

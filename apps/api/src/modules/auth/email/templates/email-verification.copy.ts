@@ -1,4 +1,4 @@
-export const EMAIL_VERIFICATION_LOCALES = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
+export const EMAIL_VERIFICATION_LOCALES = ['ko', 'en', 'th', 'zh-CN'] as const;
 
 export type EmailVerificationLocale = (typeof EMAIL_VERIFICATION_LOCALES)[number];
 
@@ -63,17 +63,5 @@ export const emailVerificationCopy: Record<EmailVerificationLocale, EmailVerific
     verified: '邮箱验证已完成。',
     throttled: '请稍后再试。',
     systemError: '暂时发生错误。请重试。',
-  },
-  'zh-TW': {
-    subject: '[Grabit] 驗證電子郵件',
-    bodyIntro: '請在 Grabit 電子郵件驗證頁面輸入下方 6 位數驗證碼。此驗證碼 30 分鐘內有效。',
-    codeHelp: '如果不是你本人要求的驗證碼，可以忽略此郵件。',
-    resendCta: '重新寄送驗證碼',
-    resendLoading: '正在重新寄送...',
-    resendSuccess: '驗證碼已重新寄送',
-    expired: '驗證碼已過期。請重新申請驗證信。',
-    verified: '電子郵件驗證已完成。',
-    throttled: '請稍後再試。',
-    systemError: '暫時發生錯誤。請再試一次。',
   },
 };

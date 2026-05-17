@@ -7,7 +7,6 @@ describe('mapDeepLTargetLocale', () => {
     expect(mapDeepLTargetLocale('en')).toBe('EN-US');
     expect(mapDeepLTargetLocale('th')).toBe('TH');
     expect(mapDeepLTargetLocale('zh-CN')).toBe('ZH-HANS');
-    expect(mapDeepLTargetLocale('zh-TW')).toBe('ZH-HANT');
   });
 });
 

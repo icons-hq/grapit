@@ -16,7 +16,7 @@ import type {
   SaveSeatMapPayloadInput,
 } from '@grabit/shared';
 
-export type TranslationTargetLocale = 'en' | 'th' | 'zh-CN' | 'zh-TW';
+export type TranslationTargetLocale = 'en' | 'th' | 'zh-CN';
 export type TranslationQueueStatus =
   | 'draft'
   | 'review'

@@ -55,29 +55,15 @@ type RawDisplayInputProps = React.ComponentProps<'input'> & {
   rawDisplayCountry?: Country;
 };
 
-const PHONE_INPUT_LOCALES = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
+const PHONE_INPUT_LOCALES = ['ko', 'en', 'th', 'zh-CN'] as const;
 
 type PhoneInputLocale = (typeof PHONE_INPUT_LOCALES)[number];
-
-const zhTWLabels = {
-  ...(zh as PhoneInputLabelSet),
-  country: '國家/地區',
-  KR: '韓國',
-  TH: '泰國',
-  CN: '中國',
-  TW: '台灣',
-  JP: '日本',
-  US: '美國',
-  IS: '冰島',
-  ZZ: '國際',
-} satisfies PhoneInputLabelSet;
 
 const PHONE_INPUT_LABELS = {
   ko: ko as PhoneInputLabelSet,
   en: en as PhoneInputLabelSet,
   th: th as PhoneInputLabelSet,
   'zh-CN': zh as PhoneInputLabelSet,
-  'zh-TW': zhTWLabels,
 } as const satisfies Record<PhoneInputLocale, PhoneInputLabelSet>;
 
 const COUNTRY_SELECT_COPY = {
@@ -101,11 +87,6 @@ const COUNTRY_SELECT_COPY = {
     searchPlaceholder: '搜索国家/地区...',
     empty: '未找到匹配的国家/地区。',
   },
-  'zh-TW': {
-    ariaPrefix: zhTWLabels.country,
-    searchPlaceholder: '搜尋國家/地區...',
-    empty: '找不到符合的國家/地區。',
-  },
 } as const satisfies Record<PhoneInputLocale, CountrySelectCopy>;
 
 const DEFAULT_COUNTRY_BY_LOCALE = {
@@ -113,7 +94,6 @@ const DEFAULT_COUNTRY_BY_LOCALE = {
   en: 'KR',
   th: 'TH',
   'zh-CN': 'KR',
-  'zh-TW': 'KR',
 } as const satisfies Record<PhoneInputLocale, Country>;
 
 function resolvePhoneInputLocale(locale: PhoneInputLocale | undefined): PhoneInputLocale {

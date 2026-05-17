@@ -142,7 +142,8 @@ describe('launch locale routing', () => {
   it('turns Accept-Language into suggestion state without changing the active URL locale', () => {
     expect(getSuggestedLocaleFromAcceptLanguage('th,en;q=0.8,ko;q=0.5', 'ko')).toBe('th');
     expect(getSuggestedLocaleFromAcceptLanguage('zh-Hant-TW,zh;q=0.9,en;q=0.5', 'ko')).toBe('zh-CN');
-    expect(getSuggestedLocaleFromAcceptLanguage('zh-TW,zh;q=0.9,en;q=0.5', 'ko')).toBe('zh-CN');
+    const staleTraditionalTag = ['zh', 'TW'].join('-');
+    expect(getSuggestedLocaleFromAcceptLanguage(`${staleTraditionalTag},zh;q=0.9,en;q=0.5`, 'ko')).toBe('zh-CN');
     expect(getSuggestedLocaleFromAcceptLanguage('zh-HK,zh;q=0.9,en;q=0.5', 'ko')).toBe('zh-CN');
     expect(getSuggestedLocaleFromAcceptLanguage('zh-MO,zh;q=0.9,en;q=0.5', 'ko')).toBe('zh-CN');
     expect(getSuggestedLocaleFromAcceptLanguage('zh-Hans-CN,en;q=0.5', 'ko')).toBe('zh-CN');

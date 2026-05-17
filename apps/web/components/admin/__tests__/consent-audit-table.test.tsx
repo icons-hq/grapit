@@ -99,13 +99,13 @@ describe('ConsentAuditTable', () => {
     });
   });
 
-  it('exposes Traditional Chinese consent filtering without a Japanese launch option', async () => {
+  it('exposes the active Chinese consent filter without a Japanese launch option', async () => {
     const user = userEvent.setup();
     renderTable();
 
     await user.click(screen.getByRole('combobox', { name: '언어' }));
 
-    expect(await screen.findByRole('option', { name: '繁體中文' })).toBeInTheDocument();
+    expect(await screen.findByRole('option', { name: '简体中文' })).toBeInTheDocument();
     expect(screen.queryByRole('option', { name: legacyLocaleLabel })).not.toBeInTheDocument();
   });
 

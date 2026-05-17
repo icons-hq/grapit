@@ -1,11 +1,10 @@
-export type LegalFallbackLocale = 'ko' | 'en' | 'th' | 'zh-CN' | 'zh-TW';
+export type LegalFallbackLocale = 'ko' | 'en' | 'th' | 'zh-CN';
 
 export const LEGAL_FALLBACK_LABELS: Record<LegalFallbackLocale, string> = {
   ko: '영문 법적 고지로 확인합니다',
   en: 'Reviewing the English legal notice',
   th: 'ตรวจสอบประกาศทางกฎหมายภาษาอังกฤษ',
   'zh-CN': '查看英文法律告知',
-  'zh-TW': '查看英文法律告知',
 };
 
 export function LegalFallbackLabel({ locale }: { locale: LegalFallbackLocale }) {

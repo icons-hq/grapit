@@ -27,18 +27,15 @@ export type FormattedCurrencyEstimate = {
 };
 
 const KST_TIME_ZONE = 'Asia/Seoul';
-type PublicFormattingLocale =
-  | Extract<SupportedLocale, 'ko' | 'en' | 'th' | 'zh-CN'>
-  | 'zh-TW';
-type FormattingLocaleInput = SupportedLocale | 'zh-TW';
-const PUBLIC_FORMATTING_LOCALES = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
+type PublicFormattingLocale = Extract<SupportedLocale, 'ko' | 'en' | 'th' | 'zh-CN'>;
+type FormattingLocaleInput = SupportedLocale;
+const PUBLIC_FORMATTING_LOCALES = ['ko', 'en', 'th', 'zh-CN'] as const;
 
 const LOCALE_CURRENCY: Record<PublicFormattingLocale, string> = {
   ko: 'KRW',
   en: 'USD',
   th: 'THB',
   'zh-CN': 'CNY',
-  'zh-TW': 'TWD',
 };
 
 export const DEFAULT_EXCHANGE_RATES: Record<PublicFormattingLocale, ExchangeRateEstimate> = {
@@ -46,7 +43,6 @@ export const DEFAULT_EXCHANGE_RATES: Record<PublicFormattingLocale, ExchangeRate
   en: { currency: 'USD', rate: 0.00072 },
   th: { currency: 'THB', rate: 0.025 },
   'zh-CN': { currency: 'CNY', rate: 0.0052 },
-  'zh-TW': { currency: 'TWD', rate: 0.023 },
 };
 
 export function normalizeSupportedLocale(locale: string | undefined): PublicFormattingLocale {

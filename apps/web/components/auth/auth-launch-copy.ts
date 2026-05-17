@@ -8,7 +8,6 @@ import koMessages from '@/messages/ko.json';
 import enMessages from '@/messages/en.json';
 import thMessages from '@/messages/th.json';
 import zhCNMessages from '@/messages/zh-CN.json';
-import zhTWMessages from '@/messages/zh-TW.json';
 
 type SupportedLocale = (typeof SUPPORTED_LOCALES)[number];
 
@@ -17,7 +16,6 @@ const messagesByLocale = {
   en: enMessages,
   th: thMessages,
   'zh-CN': zhCNMessages,
-  'zh-TW': zhTWMessages,
 } as const;
 
 export type AuthLaunchCopy = (typeof koMessages)['auth'] & {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { emailVerificationCopy } from './email-verification.copy.js';
 
-const SUPPORTED_LOCALES = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
+const SUPPORTED_LOCALES = ['ko', 'en', 'th', 'zh-CN'] as const;
 const REQUIRED_KEYS = [
   'subject',
   'bodyIntro',
@@ -18,7 +18,7 @@ const REQUIRED_KEYS = [
 describe('emailVerificationCopy', () => {
   const deprecatedLocale = ['j', 'a'].join('');
 
-  it('contains exactly the five launch locales', () => {
+  it('contains exactly the active launch locales', () => {
     expect(Object.keys(emailVerificationCopy).sort()).toEqual([...SUPPORTED_LOCALES].sort());
     expect(emailVerificationCopy).not.toHaveProperty(deprecatedLocale);
   });
@@ -40,8 +40,8 @@ describe('emailVerificationCopy', () => {
     expect(emailVerificationCopy.ko.expired).toBe('인증번호가 만료되었습니다. 새 인증 메일을 요청해주세요.');
   });
 
-  it('resolves Traditional Chinese verification copy for zh-TW', () => {
-    expect(emailVerificationCopy['zh-TW'].subject).toContain('驗證');
-    expect(emailVerificationCopy['zh-TW'].bodyIntro).toContain('驗證碼');
+  it('resolves Simplified Chinese verification copy for the active Chinese locale', () => {
+    expect(emailVerificationCopy['zh-CN'].subject).toContain('验证');
+    expect(emailVerificationCopy['zh-CN'].bodyIntro).toContain('验证码');
   });
 });

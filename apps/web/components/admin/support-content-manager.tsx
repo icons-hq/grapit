@@ -63,7 +63,6 @@ const LOCALE_OPTIONS: Array<{ value: SupportContentLocale; label: string }> = [
   { value: 'en', label: 'English' },
   { value: 'th', label: 'ไทย' },
   { value: 'zh-CN', label: '简体中文' },
-  { value: 'zh-TW', label: '繁體中文' },
 ];
 
 const REVIEW_STATE_LABELS = {

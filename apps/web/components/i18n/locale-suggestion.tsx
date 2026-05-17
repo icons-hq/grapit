@@ -24,7 +24,6 @@ const SUGGESTION_COPY = {
   en: 'View this page in English?',
   th: 'ดูหน้านี้เป็นภาษาไทยไหม?',
   'zh-CN': '要以简体中文查看此页面吗？',
-  'zh-TW': '要以繁體中文查看此頁面嗎？',
 } as const satisfies Record<SupportedLocale, string>;
 
 const PUBLIC_LOCALE_LABELS = {
@@ -32,7 +31,6 @@ const PUBLIC_LOCALE_LABELS = {
   en: 'English',
   th: 'ไทย',
   'zh-CN': '简体中文',
-  'zh-TW': '繁體中文',
 } as const satisfies Record<SupportedLocale, string>;
 
 export function LocaleSuggestion({ className }: { className?: string }) {

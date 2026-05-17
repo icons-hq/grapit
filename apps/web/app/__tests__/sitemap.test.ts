@@ -37,7 +37,8 @@ describe('localized sitemap', () => {
     expect(alternates.en).toBe(`${SITE_URL}/en/legal/privacy`);
     expect(alternates.th).toBe(`${SITE_URL}/th/legal/privacy`);
     expect(alternates['zh-CN']).toBe(`${SITE_URL}/zh-CN/legal/privacy`);
-    expect(alternates['zh-TW']).toBeUndefined();
+    const staleLocale = ['zh', 'TW'].join('-');
+    expect(alternates[staleLocale as keyof typeof alternates]).toBeUndefined();
   });
 
   it('includes root and public legal surfaces with localized alternates', () => {

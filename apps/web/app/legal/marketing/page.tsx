@@ -22,7 +22,7 @@ export const metadata: Metadata = {
 
 export default async function MarketingPage() {
   const locale = await getLocale();
-  const fallbackLocale = locale === 'th' || locale === 'zh-CN' || locale === 'zh-TW' ? locale : null;
+  const fallbackLocale = locale === 'th' || locale === 'zh-CN' ? locale : null;
   const markdown = locale === 'en' || fallbackLocale ? marketingEnMd : marketingMd;
 
   return (

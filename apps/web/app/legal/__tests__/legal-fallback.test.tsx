@@ -43,7 +43,6 @@ describe('legal canonical locale fallback', () => {
   it.each([
     ['th', TermsPage, 'Terms of Service'],
     ['zh-CN', PrivacyPage, 'Privacy Policy'],
-    ['zh-TW', MarketingPage, 'Marketing Consent'],
   ])(
     'renders %s legal pages with English canonical copy and the fallback label',
     async (locale, Page, heading) => {
@@ -57,8 +56,8 @@ describe('legal canonical locale fallback', () => {
     },
   );
 
-  it('renders the Traditional Chinese fallback label without Japanese launch copy', async () => {
-    getLocaleMock.mockResolvedValue('zh-TW');
+  it('renders the Simplified Chinese fallback label without Japanese launch copy', async () => {
+    getLocaleMock.mockResolvedValue('zh-CN');
 
     await renderPage(TermsPage);
 
@@ -67,7 +66,7 @@ describe('legal canonical locale fallback', () => {
     expect(fallbackLabel).toBeInTheDocument();
     expect(fallbackLabel.closest('[data-legal-fallback-locale]')).toHaveAttribute(
       'data-legal-fallback-locale',
-      'zh-TW',
+      'zh-CN',
     );
     expect(screen.queryByText('英語の法的通知を確認しています')).not.toBeInTheDocument();
   });

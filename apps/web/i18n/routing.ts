@@ -3,11 +3,9 @@ import { defineRouting } from 'next-intl/routing';
 import type { SupportedLocale } from '@grabit/shared';
 
 export const LOCALE_SUGGESTION_COOKIE = 'locale-suggestion';
-export const PUBLIC_SUPPORTED_LOCALES = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
+export const PUBLIC_SUPPORTED_LOCALES = ['ko', 'en', 'th', 'zh-CN'] as const;
 
-export type PublicSupportedLocale =
-  | Extract<SupportedLocale, 'ko' | 'en' | 'th' | 'zh-CN'>
-  | 'zh-TW';
+export type PublicSupportedLocale = Extract<SupportedLocale, 'ko' | 'en' | 'th' | 'zh-CN'>;
 
 export const routing = defineRouting({
   locales: [...PUBLIC_SUPPORTED_LOCALES],
@@ -105,10 +103,18 @@ function normalizeLanguageTag(tag: string): PublicSupportedLocale | null {
   if (lower === 'en' || lower.startsWith('en-')) return 'en';
   if (lower === 'th' || lower.startsWith('th-')) return 'th';
 
-  if (lower === 'zh-tw' || lower === 'zh-hk' || lower === 'zh-mo') return 'zh-TW';
-  if (lower.startsWith('zh-hant')) return 'zh-TW';
-  if (lower === 'zh-cn' || lower === 'zh-sg') return 'zh-CN';
-  if (lower.startsWith('zh-hans') || lower === 'zh') return 'zh-CN';
+  if (
+    lower === 'zh' ||
+    lower === 'zh-cn' ||
+    lower === 'zh-sg' ||
+    lower === 'zh-tw' ||
+    lower === 'zh-hk' ||
+    lower === 'zh-mo' ||
+    lower.startsWith('zh-hans') ||
+    lower.startsWith('zh-hant')
+  ) {
+    return 'zh-CN';
+  }
   if (isSupportedLocale(canonical)) return null;
 
   return null;

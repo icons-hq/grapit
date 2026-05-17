@@ -26,7 +26,7 @@ interface PhoneVerificationProps {
   purpose?: SmsVerificationPurpose;
 }
 
-const PHONE_VERIFICATION_LOCALES = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
+const PHONE_VERIFICATION_LOCALES = ['ko', 'en', 'th', 'zh-CN'] as const;
 
 type SupportedLocale = (typeof PHONE_VERIFICATION_LOCALES)[number];
 type SmsVerificationPurpose =

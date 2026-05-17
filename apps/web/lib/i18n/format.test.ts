@@ -5,7 +5,7 @@ import {
 } from './format';
 
 type FormatLocale = Parameters<typeof formatEventTimeWithKstAnchor>[1];
-const locales: FormatLocale[] = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'];
+const locales: FormatLocale[] = ['ko', 'en', 'th', 'zh-CN'];
 
 describe('formatEventTimeWithKstAnchor', () => {
   it.each(locales)('keeps an explicit KST anchor for %s', (locale) => {
@@ -30,16 +30,16 @@ describe('formatEventTimeWithKstAnchor', () => {
         localTimeZone: 'Asia/Bangkok',
       },
     );
-    const zhTw = formatEventTimeWithKstAnchor(
+    const zhCn = formatEventTimeWithKstAnchor(
       '2026-07-04T09:00:00.000Z',
-      'zh-TW',
+      'zh-CN',
       {
-        localTimeZone: 'Asia/Taipei',
+        localTimeZone: 'Asia/Shanghai',
       },
     );
 
     expect(th.local).toContain('16:00');
-    expect(zhTw.local).toContain('17:00');
+    expect(zhCn.local).toContain('17:00');
   });
 });
 

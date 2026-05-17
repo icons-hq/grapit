@@ -6,17 +6,14 @@ import {
 } from '@grabit/shared';
 
 export type RuntimeFlags = ReturnType<typeof readFeatureFlags>;
-type RuntimeLocale =
-  | Extract<SupportedLocale, 'ko' | 'en' | 'th' | 'zh-CN'>
-  | 'zh-TW';
-const RUNTIME_LOCALES = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
+type RuntimeLocale = Extract<SupportedLocale, 'ko' | 'en' | 'th' | 'zh-CN'>;
+const RUNTIME_LOCALES = ['ko', 'en', 'th', 'zh-CN'] as const;
 
 export const BOOKING_DISABLED_COPY: Record<RuntimeLocale, string> = {
   ko: '예매는 추후 오픈 예정입니다',
   en: 'Ticket booking will open later',
   th: 'การจองบัตรจะเปิดให้บริการในภายหลัง',
   'zh-CN': '门票预订将于稍后开放',
-  'zh-TW': '門票預訂將於稍後開放',
 };
 
 export const BOOKING_VERIFICATION_REQUIRED_COPY: Record<RuntimeLocale, string> = {
@@ -24,7 +21,6 @@ export const BOOKING_VERIFICATION_REQUIRED_COPY: Record<RuntimeLocale, string> =
   en: 'Complete both email and phone verification before booking tickets.',
   th: 'กรุณายืนยันทั้งอีเมลและหมายเลขโทรศัพท์ก่อนจองบัตร',
   'zh-CN': '请先完成电子邮箱和手机号验证后再预订门票。',
-  'zh-TW': '請先完成電子郵件和手機號碼驗證後再預訂門票。',
 };
 
 export class BookingDisabledError extends Error {

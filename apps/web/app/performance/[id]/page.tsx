@@ -382,7 +382,6 @@ function getDetailImagesNavLabel(locale: SupportedLocale): string {
     en: 'Image guide',
     th: 'คู่มือรูปภาพ',
     'zh-CN': '图片导览',
-    'zh-TW': '圖片導覽',
   };
 
   return labels[locale];
@@ -394,7 +393,6 @@ function getDetailCopyNavLabel(locale: SupportedLocale): string {
     en: 'Overview',
     th: 'ภาพรวม',
     'zh-CN': '演出导览',
-    'zh-TW': '演出導覽',
   };
 
   return labels[locale];
@@ -406,7 +404,6 @@ function getSalesCopyNavLabel(locale: SupportedLocale): string {
     en: 'Ticket guide',
     th: 'คู่มือตั๋ว',
     'zh-CN': '票务指南',
-    'zh-TW': '票務指南',
   };
 
   return labels[locale];
