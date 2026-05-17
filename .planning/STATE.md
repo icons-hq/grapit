@@ -364,7 +364,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 | 260516-vf0 | 회원가입 이메일 중복 자동검사, 기존 링크 기반 이메일 인증 강제, 소셜 가입/로그인의 이메일 인증 gate 적용 | 2026-05-16 | 584bf1c | [260516-vf0-signup-email-duplicate-auto-check-email-](./quick/260516-vf0-signup-email-duplicate-auto-check-email-/) |
 | 260517-glr | 어드민 공연 수정에서 상세정보/판매정보 공개 토글을 추가하고, 입력값 보존 상태로 public 노출을 차단 | 2026-05-17 | 7716640 | [260517-glr-https-heygrabit-com-admin-performances-1](./quick/260517-glr-https-heygrabit-com-admin-performances-1/) |
 | 260517-pzy | public catalog/health/seat-status read endpoint를 coarse default throttler에서 제외해 campaign traffic 429 차단 해소 | 2026-05-17 | committed | [260517-pzy-public-read-throttle-hotfix](./quick/260517-pzy-public-read-throttle-hotfix/) |
-| 260517-r9q | 소셜 회원가입/로그인에서 이메일 인증 gate를 우회하고 social-only 사용자를 즉시 email verified로 처리하는 production hotfix | 2026-05-17 | committed | [260517-r9q-social-email-bypass-hotfix](./quick/260517-r9q-social-email-bypass-hotfix/) |
+| 260517-r9q | 소셜 회원가입/로그인 이메일 인증 gate를 우회하고 SMS 앱 내부 throttle/cooldown을 해제하는 production signup hotfix | 2026-05-17 | committed | [260517-r9q-social-email-bypass-hotfix](./quick/260517-r9q-social-email-bypass-hotfix/) |
 
 ## Session Continuity
 
