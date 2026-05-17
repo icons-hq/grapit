@@ -20,6 +20,7 @@ import type {
 
 import { AdminService } from './admin.service.js';
 import { AdminBannerController } from './admin-banner.controller.js';
+import { AdminPerformanceController } from './admin-performance.controller.js';
 import type { AdminAuditService } from './admin-audit.service.js';
 import { ADMIN_CAPABILITIES_KEY } from '../../common/decorators/admin-capabilities.decorator.js';
 import { CacheService } from '../performance/cache.service.js';
@@ -31,6 +32,7 @@ import {
   reservations,
   seatMaps,
   showtimes,
+  venues,
   venueLayoutFloors,
   venueLayouts,
   venueLayoutSeats,
@@ -74,17 +76,72 @@ function createMockTx() {
       { tierName: 'S' },
     ]),
   );
+  const buildInsertReturningRow = (
+    table: unknown,
+    values: Record<string, unknown> | Record<string, unknown>[],
+  ) => {
+    const row = Array.isArray(values) ? (values[0] ?? {}) : values;
+
+    if (table === venues) {
+      return {
+        id: 'venue-id-1',
+        name: row['name'],
+        address: row['address'] ?? null,
+        accessNotes: row['accessNotes'] ?? null,
+        transportSummary: row['transportSummary'] ?? null,
+      };
+    }
+
+    if (table === performances) {
+      return {
+        id: 'new-id',
+        title: row['title'] ?? 'Hamlet',
+        genre: row['genre'] ?? 'artist_celebrity',
+        subcategory: row['subcategory'] ?? null,
+        venueId: row['venueId'] ?? 'venue-id-1',
+        posterUrl: row['posterUrl'] ?? null,
+        description: row['description'] ?? null,
+        descriptionVisible: row['descriptionVisible'] ?? true,
+        detailImages: row['detailImages'] ?? [],
+        startDate: row['startDate'] instanceof Date
+          ? row['startDate']
+          : new Date('2026-04-01T00:00:00.000Z'),
+        endDate: row['endDate'] instanceof Date
+          ? row['endDate']
+          : new Date('2026-06-30T00:00:00.000Z'),
+        runtime: row['runtime'] ?? null,
+        ageRating: row['ageRating'] ?? '12+',
+        status: row['status'] ?? 'upcoming',
+        publishState: row['publishState'] ?? 'draft',
+        publishReviewRequestedAt: row['publishReviewRequestedAt'] ?? null,
+        publishReadyAt: row['publishReadyAt'] ?? null,
+        publishedAt: row['publishedAt'] ?? null,
+        publishedByUserId: row['publishedByUserId'] ?? null,
+        salesInfo: row['salesInfo'] ?? null,
+        salesInfoVisible: row['salesInfoVisible'] ?? true,
+        viewCount: 0,
+        createdAt: new Date('2026-01-01T00:00:00.000Z'),
+        updatedAt: new Date('2026-01-02T00:00:00.000Z'),
+      };
+    }
+
+    return { id: 'new-id', ...row };
+  };
 
   return {
     _updates: updates,
-    insert: vi.fn().mockReturnValue({
-      values: vi.fn().mockReturnValue({
-        returning: vi.fn().mockResolvedValue([{ id: 'new-id' }]),
-        onConflictDoUpdate: vi.fn().mockReturnValue({
-          returning: vi.fn().mockResolvedValue([{ id: 'existing-id' }]),
-        }),
+    insert: vi.fn((table: unknown) => ({
+      values: vi.fn((values: Record<string, unknown> | Record<string, unknown>[]) => {
+        const row = buildInsertReturningRow(table, values);
+
+        return {
+          returning: vi.fn().mockResolvedValue([row]),
+          onConflictDoUpdate: vi.fn().mockReturnValue({
+            returning: vi.fn().mockResolvedValue([row]),
+          }),
+        };
       }),
-    }),
+    })),
     select: vi.fn().mockReturnValue(txChain),
     update: vi.fn((table: unknown) => ({
       set: vi.fn((values: Record<string, unknown>) => {
@@ -110,6 +167,8 @@ function createMockTx() {
               publishedAt: values['publishedAt'] ?? null,
               publishedByUserId: values['publishedByUserId'] ?? null,
               salesInfo: null,
+              descriptionVisible: values['descriptionVisible'] ?? true,
+              salesInfoVisible: values['salesInfoVisible'] ?? true,
               viewCount: 0,
               createdAt: new Date('2026-01-01T00:00:00.000Z'),
               updatedAt: values['updatedAt'] ?? new Date('2026-01-02T00:00:00.000Z'),
@@ -385,6 +444,35 @@ describe('AdminService', () => {
       expect(findInsertCallIndex(tx, venueLayoutSeats)).toBeGreaterThanOrEqual(0);
       expect(findInsertCallIndex(tx, performanceSeatTiers)).toBeGreaterThanOrEqual(0);
     });
+
+    it('persists and returns copy visibility flags independently from copy text', async () => {
+      const result = await service.createPerformance({
+        ...sampleCreateInput,
+        description: '공개하지 않을 상세정보 원문',
+        descriptionVisible: false,
+        salesInfo: '공개 판매정보',
+        salesInfoVisible: true,
+      });
+
+      const tx = mockDb._tx;
+      const performanceInsertIndex = findInsertCallIndex(tx, performances);
+      const insertResult = tx.insert.mock.results[performanceInsertIndex]?.value as {
+        values: ReturnType<typeof vi.fn>;
+      };
+
+      expect(insertResult.values).toHaveBeenCalledWith(
+        expect.objectContaining({
+          description: '공개하지 않을 상세정보 원문',
+          descriptionVisible: false,
+          salesInfo: '공개 판매정보',
+          salesInfoVisible: true,
+        }),
+      );
+      expect(result.description).toBe('공개하지 않을 상세정보 원문');
+      expect(result.descriptionVisible).toBe(false);
+      expect(result.salesInfo).toBe('공개 판매정보');
+      expect(result.salesInfoVisible).toBe(true);
+    });
   });
 
   describe('updatePerformance', () => {
@@ -575,6 +663,32 @@ describe('AdminService', () => {
         }),
         mockDb._tx,
       );
+    });
+
+    it('persists copy visibility updates without touching showtime preservation behavior', async () => {
+      const result = await service.updatePerformance('perf-id-123', {
+        description: '저장된 상세정보',
+        descriptionVisible: false,
+        salesInfo: '저장된 판매정보',
+        salesInfoVisible: false,
+      });
+
+      const performanceUpdate = mockDb._tx._updates.find(
+        (entry) => entry.table === performances,
+      );
+
+      expect(performanceUpdate?.values).toEqual(
+        expect.objectContaining({
+          description: '저장된 상세정보',
+          descriptionVisible: false,
+          salesInfo: '저장된 판매정보',
+          salesInfoVisible: false,
+        }),
+      );
+      expect(mockDb._tx.delete).not.toHaveBeenCalledWith(showtimes);
+      expect(result.description).toBe('Updated description');
+      expect(result.descriptionVisible).toBe(false);
+      expect(result.salesInfoVisible).toBe(false);
     });
   });
 
@@ -1120,5 +1234,28 @@ describe('AdminService', () => {
         'cache:performances:detail:perf-id-123:*',
       );
     });
+  });
+});
+
+describe('AdminPerformanceController', () => {
+  it('loads guarded admin detail through the include-hidden copy path', async () => {
+    const performanceService = {
+      findById: vi.fn().mockResolvedValue(null),
+    };
+    const controller = new AdminPerformanceController(
+      {} as ConstructorParameters<typeof AdminPerformanceController>[0],
+      {} as ConstructorParameters<typeof AdminPerformanceController>[1],
+      performanceService as unknown as ConstructorParameters<
+        typeof AdminPerformanceController
+      >[2],
+    );
+
+    await controller.getPerformance('perf-id-123');
+
+    expect(performanceService.findById).toHaveBeenCalledWith(
+      'perf-id-123',
+      undefined,
+      { includeHiddenCopy: true },
+    );
   });
 });
