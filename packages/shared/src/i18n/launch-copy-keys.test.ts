@@ -6,7 +6,7 @@ import {
   LAUNCH_COPY_NAMESPACES,
 } from './launch-copy-keys';
 
-const expectedLocales = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
+const expectedLocales = ['ko', 'en', 'th', 'zh-CN'] as const;
 const expectedNamespaces = [
   'nav',
   'home',
@@ -23,7 +23,7 @@ const expectedNamespaces = [
 ] as const;
 
 describe('launch copy key manifest', () => {
-  it('requires exactly the five launch locales', () => {
+  it('requires exactly the four active launch locales', () => {
     expect(LAUNCH_COPY_LOCALES).toEqual(expectedLocales);
   });
 

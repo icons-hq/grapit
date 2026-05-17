@@ -2,13 +2,12 @@ import { describe, expect, it } from 'vitest';
 import sitemap, { buildLocalizedAlternates, getLocalizedUrl } from '../sitemap';
 
 const SITE_URL = 'https://heygrabit.com';
-const launchLocales = ['ko', 'en', 'th', 'zh-CN', 'zh-TW'] as const;
+const launchLocales = ['ko', 'en', 'th', 'zh-CN'] as const;
 const localePrefixes = {
   ko: '/',
   en: '/en',
   th: '/th',
   'zh-CN': '/zh-CN',
-  'zh-TW': '/zh-TW',
 } as const satisfies Record<(typeof launchLocales)[number], string>;
 
 describe('localized sitemap', () => {
@@ -38,7 +37,7 @@ describe('localized sitemap', () => {
     expect(alternates.en).toBe(`${SITE_URL}/en/legal/privacy`);
     expect(alternates.th).toBe(`${SITE_URL}/th/legal/privacy`);
     expect(alternates['zh-CN']).toBe(`${SITE_URL}/zh-CN/legal/privacy`);
-    expect(alternates['zh-TW']).toBe(`${SITE_URL}/zh-TW/legal/privacy`);
+    expect(alternates['zh-TW']).toBeUndefined();
   });
 
   it('includes root and public legal surfaces with localized alternates', () => {

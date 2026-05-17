@@ -17,7 +17,6 @@ const PUBLIC_LOCALE_PREFIXES = {
   en: '/en',
   th: '/th',
   'zh-CN': '/zh-CN',
-  'zh-TW': '/zh-TW',
 } as const;
 
 vi.mock('next-intl/middleware', async () => {
@@ -68,7 +67,6 @@ describe('launch locale routing', () => {
       ['/en/auth', '/auth', 'en'],
       ['/th/legal/terms', '/legal/terms', 'th'],
       ['/zh-CN/legal/privacy', '/legal/privacy', 'zh-CN'],
-      ['/zh-TW/legal/marketing', '/legal/marketing', 'zh-TW'],
     ] as const;
 
     for (const [externalPathname, internalPathname, locale] of cases) {
@@ -143,9 +141,10 @@ describe('launch locale routing', () => {
 
   it('turns Accept-Language into suggestion state without changing the active URL locale', () => {
     expect(getSuggestedLocaleFromAcceptLanguage('th,en;q=0.8,ko;q=0.5', 'ko')).toBe('th');
-    expect(getSuggestedLocaleFromAcceptLanguage('zh-Hant-TW,zh;q=0.9,en;q=0.5', 'ko')).toBe(
-      'zh-TW',
-    );
+    expect(getSuggestedLocaleFromAcceptLanguage('zh-Hant-TW,zh;q=0.9,en;q=0.5', 'ko')).toBe('zh-CN');
+    expect(getSuggestedLocaleFromAcceptLanguage('zh-TW,zh;q=0.9,en;q=0.5', 'ko')).toBe('zh-CN');
+    expect(getSuggestedLocaleFromAcceptLanguage('zh-HK,zh;q=0.9,en;q=0.5', 'ko')).toBe('zh-CN');
+    expect(getSuggestedLocaleFromAcceptLanguage('zh-MO,zh;q=0.9,en;q=0.5', 'ko')).toBe('zh-CN');
     expect(getSuggestedLocaleFromAcceptLanguage('zh-Hans-CN,en;q=0.5', 'ko')).toBe('zh-CN');
     expect(getSuggestedLocaleFromAcceptLanguage('ko,en;q=0.8', 'ko')).toBeNull();
     expect(getSuggestedLocaleFromAcceptLanguage('fr,de;q=0.8', 'ko')).toBeNull();
