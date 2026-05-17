@@ -8,6 +8,7 @@ import {
   pgEnum,
   index,
   jsonb,
+  boolean,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { users } from './users.js';
@@ -35,6 +36,7 @@ export const performances = pgTable('performances', {
   venueId: uuid('venue_id').references(() => venues.id),
   posterUrl: varchar('poster_url', { length: 1000 }),
   description: text('description'),
+  descriptionVisible: boolean('description_visible').notNull().default(true),
   startDate: timestamp('start_date', { withTimezone: true }).notNull(),
   endDate: timestamp('end_date', { withTimezone: true }).notNull(),
   runtime: varchar('runtime', { length: 50 }),
@@ -53,6 +55,7 @@ export const performances = pgTable('performances', {
     onDelete: 'set null',
   }),
   salesInfo: text('sales_info'),
+  salesInfoVisible: boolean('sales_info_visible').notNull().default(true),
   viewCount: integer('view_count').notNull().default(0),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

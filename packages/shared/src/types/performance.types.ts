@@ -260,6 +260,7 @@ export interface Performance extends ReviewedTranslationMetadata {
   venueId: string | null;
   posterUrl: string | null;
   description: string | null;
+  descriptionVisible: boolean;
   startDate: string; // ISO string
   endDate: string;   // ISO string
   runtime: string | null;
@@ -271,6 +272,7 @@ export interface Performance extends ReviewedTranslationMetadata {
   publishedAt?: string | null;
   publishedByUserId?: string | null;
   salesInfo: string | null;
+  salesInfoVisible: boolean;
   detailImages?: PerformanceDetailImage[];
   viewCount: number;
   createdAt: string;
