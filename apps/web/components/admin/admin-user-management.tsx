@@ -379,7 +379,7 @@ function UserDetailPanel({
       {user ? (
         <>
           <AccountOverview user={user} />
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_360px]">
             <div className="space-y-4">
               <ReservationContext user={user} />
               <SupportContext user={user} />
@@ -431,7 +431,7 @@ function AccountOverview({ user }: { user: AdminUserDetail }) {
         </div>
       </div>
 
-      <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="mt-5 grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
         <InfoTile icon={Mail} label="이메일" value={user.email ?? user.maskedEmail} />
         <InfoTile icon={Phone} label="휴대폰" value={user.phone ?? user.maskedPhone} />
         <InfoTile icon={BadgeCheck} label="국가/언어" value={`${user.country} · ${user.preferredLocale}`} />
@@ -458,7 +458,7 @@ function ReservationContext({ user }: { user: AdminUserDetail }) {
         <Ticket className="h-5 w-5 text-gray-600" aria-hidden="true" />
         <h3 className="text-base font-semibold text-gray-900">예매 컨텍스트</h3>
       </div>
-      <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-5">
+      <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
         <MetricCard label="전체" value={user.reservations.total} />
         <MetricCard label="확정" value={user.reservations.confirmed} />
         <MetricCard label="결제 대기" value={user.reservations.pendingPayment} />
@@ -470,7 +470,7 @@ function ReservationContext({ user }: { user: AdminUserDetail }) {
       </div>
 
       <div className="mt-4 overflow-hidden rounded-lg border">
-        <Table>
+        <Table className="min-w-[680px]">
           <TableHeader>
             <TableRow className="bg-[#F5F5F7]">
               <TableHead>예매번호</TableHead>
