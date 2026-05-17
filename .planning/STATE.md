@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-05-04)
 Phase: 26 (m1-canary-cutover-gates) — READY
 Plan: 0 of 0
 Status: Phase 25 shipped — PR #47
-Last activity: 2026-05-16 -- Completed quick task 260516-wp5: allow login before email verification and require email plus phone verification before booking/payment
+Last activity: 2026-05-17 -- Completed quick task 260517-glr: admin performance detail/sales visibility toggles
 
 ## Deferred Items
 
@@ -359,6 +359,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 | 260516-mle | 모바일 홈/공개 shell UI를 refined commerce 톤으로 개선하고 모바일 header globe + bottom sheet 언어 선택을 추가 | 2026-05-16 | 43ea313 | [260516-mle-ui-ux](./quick/260516-mle-ui-ux/) |
 | 260516-o8e | 모바일 검색 입력을 복구하고 deviceTarget 기반 모바일/데스크톱 배너 표시와 admin 안내를 연결 | 2026-05-16 | ead7085 | [260516-o8e-mobile-search-ux-redesign-and-mobile-hom](./quick/260516-o8e-mobile-search-ux-redesign-and-mobile-hom/) |
 | 260516-vf0 | 회원가입 이메일 중복 자동검사, 기존 링크 기반 이메일 인증 강제, 소셜 가입/로그인의 이메일 인증 gate 적용 | 2026-05-16 | 584bf1c | [260516-vf0-signup-email-duplicate-auto-check-email-](./quick/260516-vf0-signup-email-duplicate-auto-check-email-/) |
+| 260517-glr | 어드민 공연 수정에서 상세정보/판매정보 공개 토글을 추가하고, 입력값 보존 상태로 public 노출을 차단 | 2026-05-17 | 9549ce1 | [260517-glr-https-heygrabit-com-admin-performances-1](./quick/260517-glr-https-heygrabit-com-admin-performances-1/) |
 
 ## Session Continuity
 
