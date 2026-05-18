@@ -64,6 +64,8 @@ describe('AdminAuditService', () => {
       'reservations.export_raw',
       'security.allowlist.update',
       'security.permission.update',
+      'user.withdraw',
+      'user.hard_delete',
     ]);
     expect(db._values).toHaveBeenCalledTimes(ADMIN_AUDIT_ACTIONS.length);
     expect(db._values.mock.calls.map(([row]) => row.action)).toEqual(

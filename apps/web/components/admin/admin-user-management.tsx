@@ -56,7 +56,9 @@ import {
   ADMIN_CAPABILITY_BUNDLES,
   useAdminUserDetail,
   useAdminUsers,
+  useHardDeleteAdminUser,
   useUpdateAdminUserPermissions,
+  useWithdrawAdminUser,
   type AdminCapability,
   type AdminCapabilityBundle,
   type AdminUserDetail,
@@ -239,6 +241,7 @@ export function AdminUserManagement() {
         selectedUserId={activeUserId}
         isLoading={detailQuery.isLoading}
         isError={detailQuery.isError}
+        onDeleted={() => setSelectedUserId(null)}
       />
     </section>
   );
@@ -389,11 +392,13 @@ function UserDetailPanel({
   selectedUserId,
   isLoading,
   isError,
+  onDeleted,
 }: {
   user: AdminUserDetail | undefined;
   selectedUserId: string | null;
   isLoading: boolean;
   isError: boolean;
+  onDeleted: () => void;
 }) {
   if (!selectedUserId) {
     return (
@@ -437,7 +442,10 @@ function UserDetailPanel({
               <SupportContext user={user} />
               <AuditContext user={user} />
             </div>
-            <PermissionEditor user={user} />
+            <div className="space-y-4">
+              <PermissionEditor user={user} />
+              <AccountLifecyclePanel user={user} onDeleted={onDeleted} />
+            </div>
           </div>
         </>
       ) : (
@@ -460,6 +468,9 @@ function AccountOverview({ user }: { user: AdminUserDetail }) {
             </h2>
             <Badge className={roleBadgeClass(user.role)}>
               {ROLE_LABELS[user.role]}
+            </Badge>
+            <Badge className={accountStatusBadgeClass(user.accountStatus)}>
+              {user.accountStatus === 'withdrawn' ? '탈퇴 처리' : '활성'}
             </Badge>
             {user.adminCapabilityBundle && (
               <Badge className="border-transparent bg-[#EFF6FF] text-[#1D4ED8]">
@@ -496,9 +507,14 @@ function AccountOverview({ user }: { user: AdminUserDetail }) {
 
       <div className="mt-4 grid gap-3 sm:grid-cols-3">
         <MetricCard label="마케팅 동의" value={user.marketingConsent ? '동의' : '미동의'} />
-        <MetricCard label="계정 상태" value={user.accountStatus ?? 'active'} />
+        <MetricCard label="계정 상태" value={user.accountStatus === 'withdrawn' ? '탈퇴 처리' : '활성'} />
         <MetricCard label="최근 로그인" value={formatDate(user.lastLoginAt)} />
       </div>
+      {user.accountStatus === 'withdrawn' && (
+        <div className="mt-4 rounded-lg border border-[#FEE2E2] bg-[#FEF2F2] p-3 text-sm text-[#991B1B]">
+          탈퇴 시각: {formatDate(user.withdrawnAt)} · 사유: {user.withdrawalReason || '기록 없음'}
+        </div>
+      )}
     </div>
   );
 }
@@ -861,6 +877,189 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
   );
 }
 
+function AccountLifecyclePanel({
+  user,
+  onDeleted,
+}: {
+  user: AdminUserDetail;
+  onDeleted: () => void;
+}) {
+  const withdrawMutation = useWithdrawAdminUser();
+  const hardDeleteMutation = useHardDeleteAdminUser();
+  const [withdrawReason, setWithdrawReason] = useState('');
+  const [deleteReason, setDeleteReason] = useState('');
+  const [withdrawConfirmed, setWithdrawConfirmed] = useState(false);
+  const [deleteConfirmed, setDeleteConfirmed] = useState(false);
+  const [withdrawOpen, setWithdrawOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteBlockers, setDeleteBlockers] = useState<string[]>([]);
+
+  useEffect(() => {
+    setWithdrawReason('');
+    setDeleteReason('');
+    setWithdrawConfirmed(false);
+    setDeleteConfirmed(false);
+    setWithdrawOpen(false);
+    setDeleteOpen(false);
+    setDeleteBlockers([]);
+  }, [user.id]);
+
+  async function handleWithdraw() {
+    try {
+      await withdrawMutation.mutateAsync({
+        userId: user.id,
+        reason: withdrawReason,
+        confirmed: true,
+      });
+      toast.success('회원이 탈퇴 처리되었습니다.');
+      setWithdrawOpen(false);
+    } catch {
+      toast.error('회원 탈퇴 처리에 실패했습니다.');
+    }
+  }
+
+  async function handleHardDelete() {
+    setDeleteBlockers([]);
+    try {
+      await hardDeleteMutation.mutateAsync({
+        userId: user.id,
+        reason: deleteReason,
+        confirmed: true,
+      });
+      toast.success('회원이 DB에서 삭제되었습니다.');
+      setDeleteOpen(false);
+      onDeleted();
+    } catch (error) {
+      const blockers = extractBlockerLabels(error);
+      setDeleteBlockers(blockers);
+      toast.error('회원 DB 삭제에 실패했습니다.');
+    }
+  }
+
+  return (
+    <aside className="rounded-lg bg-white p-5 shadow-sm" aria-label="계정 생명주기 관리">
+      <div className="flex items-center gap-2">
+        <XCircle className="h-5 w-5 text-gray-600" aria-hidden="true" />
+        <h3 className="text-base font-semibold text-gray-900">계정 생명주기</h3>
+      </div>
+      <p className="mt-2 text-sm text-gray-600">
+        탈퇴 처리는 로그인과 세션을 차단합니다. DB 완전 삭제는 탈퇴 처리 후 연결 이력이 없을 때만 가능합니다.
+      </p>
+
+      <div className="mt-4 space-y-4">
+        <div className="space-y-2">
+          <Label htmlFor="admin-user-withdraw-reason">탈퇴 처리 사유</Label>
+          <Textarea
+            id="admin-user-withdraw-reason"
+            value={withdrawReason}
+            onChange={(event) => setWithdrawReason(event.target.value)}
+            placeholder="탈퇴 처리 사유를 입력하세요"
+            className="min-h-24"
+          />
+          <label className="flex min-h-11 items-start gap-3 rounded-lg bg-[#FFFBEB] p-3 text-sm text-[#8B6306]">
+            <Checkbox
+              checked={withdrawConfirmed}
+              onCheckedChange={(checked) => setWithdrawConfirmed(checked === true)}
+              aria-label="회원 탈퇴 처리 확인"
+            />
+            <span className="font-semibold">해당 회원의 로그인과 활성 세션이 종료됨을 확인했습니다.</span>
+          </label>
+          <AlertDialog open={withdrawOpen} onOpenChange={setWithdrawOpen}>
+            <Button
+              type="button"
+              variant="destructive"
+              className="h-11 w-full"
+              disabled={
+                user.accountStatus === 'withdrawn' ||
+                withdrawReason.trim().length === 0 ||
+                !withdrawConfirmed ||
+                withdrawMutation.isPending
+              }
+              onClick={() => setWithdrawOpen(true)}
+            >
+              탈퇴 처리
+            </Button>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>{user.name} 회원을 탈퇴 처리하시겠습니까?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  이 작업은 감사 로그에 기록되며, 회원의 재로그인과 refresh를 차단합니다.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>취소</AlertDialogCancel>
+                <AlertDialogAction
+                  variant="destructive"
+                  onClick={() => void handleWithdraw()}
+                >
+                  탈퇴 처리 확정
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
+
+        <div className="space-y-2 rounded-lg border border-[#FEE2E2] p-3">
+          <Label htmlFor="admin-user-hard-delete-reason">DB 완전 삭제 사유</Label>
+          <Textarea
+            id="admin-user-hard-delete-reason"
+            value={deleteReason}
+            onChange={(event) => setDeleteReason(event.target.value)}
+            placeholder="DB 삭제 사유를 입력하세요"
+            className="min-h-24"
+          />
+          <label className="flex min-h-11 items-start gap-3 rounded-lg bg-[#FEF2F2] p-3 text-sm text-[#991B1B]">
+            <Checkbox
+              checked={deleteConfirmed}
+              onCheckedChange={(checked) => setDeleteConfirmed(checked === true)}
+              aria-label="회원 DB 완전 삭제 확인"
+            />
+            <span className="font-semibold">DB에서 회원 row를 물리적으로 삭제하는 작업임을 확인했습니다.</span>
+          </label>
+          {deleteBlockers.length > 0 && (
+            <div role="alert" className="rounded-lg bg-[#FEF2F2] p-3 text-sm font-semibold text-[#C62828]">
+              삭제 차단: {deleteBlockers.join(', ')}
+            </div>
+          )}
+          <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+            <Button
+              type="button"
+              variant="destructive"
+              className="h-11 w-full"
+              disabled={
+                user.accountStatus !== 'withdrawn' ||
+                deleteReason.trim().length === 0 ||
+                !deleteConfirmed ||
+                hardDeleteMutation.isPending
+              }
+              onClick={() => setDeleteOpen(true)}
+            >
+              DB에서 완전 삭제
+            </Button>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>{user.name} 회원을 DB에서 완전 삭제하시겠습니까?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  연결된 예매, 감사, 좌석 운영 이력이 있으면 API가 삭제를 차단합니다.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>취소</AlertDialogCancel>
+                <AlertDialogAction
+                  variant="destructive"
+                  onClick={() => void handleHardDelete()}
+                >
+                  DB 삭제 확정
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
 function VerificationBadge({
   icon,
   verified,
@@ -944,6 +1143,15 @@ function roleBadgeClass(role: AdminUserRole) {
   );
 }
 
+function accountStatusBadgeClass(status: AdminUserDetail['accountStatus']) {
+  return cn(
+    'border-transparent',
+    status === 'withdrawn'
+      ? 'bg-[#FEF2F2] text-[#C62828]'
+      : 'bg-[#F0FDF4] text-[#15803D]',
+  );
+}
+
 function auditStatusClass(status: 'success' | 'denied' | 'failed') {
   if (status === 'success') return 'border-transparent bg-[#F0FDF4] text-[#15803D]';
   if (status === 'denied') return 'border-transparent bg-[#FFFBEB] text-[#8B6306]';
@@ -969,4 +1177,23 @@ function formatCurrency(value: number | null | undefined) {
     currency: 'KRW',
     maximumFractionDigits: 0,
   }).format(value);
+}
+
+function extractBlockerLabels(error: unknown): string[] {
+  const maybeResponse = error as {
+    response?: { data?: { blockers?: Array<{ label?: string; key?: string; count?: number }> } };
+    data?: { blockers?: Array<{ label?: string; key?: string; count?: number }> };
+    blockers?: Array<{ label?: string; key?: string; count?: number }>;
+  };
+  const blockers =
+    maybeResponse.response?.data?.blockers ??
+    maybeResponse.data?.blockers ??
+    maybeResponse.blockers ??
+    [];
+  return blockers
+    .map((blocker) => {
+      const label = blocker.label ?? blocker.key ?? 'unknown';
+      return `${label} ${blocker.count ?? 0}건`;
+    })
+    .filter((label) => label.length > 0);
 }

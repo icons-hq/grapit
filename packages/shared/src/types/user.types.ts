@@ -2,6 +2,7 @@ import type { SupportedLocale } from './i18n.types';
 import type { AdminCapability, AdminCapabilityBundle } from './admin-operations.types';
 
 export type UserRole = 'user' | 'admin';
+export type AccountStatus = 'active' | 'withdrawn';
 
 export interface UserProfile {
   id: string;
@@ -18,5 +19,7 @@ export interface UserProfile {
   role: UserRole;
   adminCapabilityBundle?: AdminCapabilityBundle | null;
   adminCapabilities?: AdminCapability[];
+  accountStatus?: AccountStatus;
+  withdrawnAt?: string | null;
   createdAt: string;
 }

@@ -17,4 +17,12 @@ export const updateProfileSchema = z.object({
   marketingConsent: z.boolean().optional(),
 });
 
+export const accountWithdrawalSchema = z.object({
+  reason: z.string().trim().max(500).optional(),
+  confirmed: z.literal(true, {
+    errorMap: () => ({ message: '회원 탈퇴 확인이 필요합니다' }),
+  }),
+});
+
 export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;
+export type AccountWithdrawalInput = z.infer<typeof accountWithdrawalSchema>;

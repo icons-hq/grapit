@@ -17,12 +17,20 @@ const baseUser = {
   isPhoneVerified: true,
   marketingConsent: false,
   role: 'user',
+  accountStatus: 'active',
+  withdrawnAt: null,
   createdAt: new Date('2026-05-06T00:00:00Z'),
 };
 
 describe('UserService preferred locale persistence', () => {
   let repository: Pick<UserRepository, 'findById' | 'updateProfile'>;
   let smsService: Pick<SmsService, 'verifyPhoneVerificationToken'>;
+  let db: {
+    select: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
+    transaction: ReturnType<typeof vi.fn>;
+  };
+  let auditService: { write: ReturnType<typeof vi.fn> };
   let service: UserService;
 
   beforeEach(() => {
@@ -33,9 +41,34 @@ describe('UserService preferred locale persistence', () => {
     smsService = {
       verifyPhoneVerificationToken: vi.fn(),
     };
+    const reservationWhere = vi.fn().mockReturnValue({ limit: vi.fn().mockResolvedValue([]) });
+    const reservationJoin = vi.fn().mockReturnValue({ where: reservationWhere });
+    const reservationFrom = vi.fn().mockReturnValue({ leftJoin: reservationJoin });
+    const select = vi.fn().mockReturnValue({ from: reservationFrom });
+    const updateWhere = vi.fn().mockResolvedValue([]);
+    const updateReturning = vi.fn().mockResolvedValue([{
+      ...baseUser,
+      passwordHash: null,
+      marketingConsent: false,
+      accountStatus: 'withdrawn',
+      withdrawnAt: new Date('2026-05-18T00:00:00Z'),
+    }]);
+    const updateSet = vi.fn().mockReturnValue({ where: vi.fn().mockReturnValue({ returning: updateReturning }) });
+    const update = vi.fn().mockReturnValue({ set: updateSet, where: updateWhere });
+    const tx = { update };
+    db = {
+      select,
+      update,
+      transaction: vi.fn(async (callback: (tx: typeof tx) => Promise<unknown>) =>
+        callback(tx),
+      ),
+    };
+    auditService = { write: vi.fn().mockResolvedValue({ id: 'audit-1' }) };
     service = new UserService(
       repository as UserRepository,
       smsService as SmsService,
+      db as never,
+      auditService as never,
     );
   });
 
@@ -116,5 +149,31 @@ describe('UserService preferred locale persistence', () => {
       service.updateProfile('user-1', { preferredLocale: staleLocale } as never),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(repository.updateProfile).not.toHaveBeenCalled();
+  });
+
+  it('withdraws the current user and writes a user.withdraw audit event', async () => {
+    await expect(
+      service.withdrawSelf(
+        'user-1',
+        { reason: '서비스 이용 종료', confirmed: true },
+        { ipAddress: '203.0.113.10', userAgent: 'Vitest', requestId: 'req-1' },
+      ),
+    ).resolves.toMatchObject({
+      accountStatus: 'withdrawn',
+      marketingConsent: false,
+    });
+
+    expect(db.transaction).toHaveBeenCalledTimes(1);
+    expect(auditService.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: 'user-1',
+        action: 'user.withdraw',
+        resourceType: 'user',
+        resourceId: 'user-1',
+        reason: '서비스 이용 종료',
+        ipAddress: '203.0.113.10',
+      }),
+      expect.anything(),
+    );
   });
 });

@@ -31,6 +31,11 @@ export const users = pgTable('users', {
     .$type<string[]>()
     .notNull()
     .default(sql`'[]'::jsonb`),
+  accountStatus: varchar('account_status', { length: 20 }).notNull().default('active'),
+  withdrawnAt: timestamp('withdrawn_at', { withTimezone: true }),
+  withdrawalReason: varchar('withdrawal_reason', { length: 500 }),
+  withdrawnByUserId: uuid('withdrawn_by_user_id'),
+  withdrawalSource: varchar('withdrawal_source', { length: 20 }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });

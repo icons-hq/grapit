@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { updateProfileSchema } from '@grabit/shared/schemas/user.schema.js';
+import {
+  accountWithdrawalSchema,
+  updateProfileSchema,
+} from '@grabit/shared/schemas/user.schema.js';
 
 describe('UserController preferred locale validation', () => {
   it('accepts a supported preferredLocale in profile update DTOs', () => {
@@ -18,5 +21,19 @@ describe('UserController preferred locale validation', () => {
     expect(() =>
       updateProfileSchema.parse({ preferredLocale: staleLocale }),
     ).toThrow();
+  });
+
+  it('requires explicit confirmation for account withdrawal DTOs', () => {
+    expect(
+      accountWithdrawalSchema.parse({
+        reason: '서비스 이용 종료',
+        confirmed: true,
+      }),
+    ).toEqual({
+      reason: '서비스 이용 종료',
+      confirmed: true,
+    });
+
+    expect(() => accountWithdrawalSchema.parse({ reason: 'x' })).toThrow();
   });
 });

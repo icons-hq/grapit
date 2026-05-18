@@ -15,6 +15,7 @@ import type {
 const mocks = vi.hoisted(() => ({
   apiGet: vi.fn(),
   apiPatch: vi.fn(),
+  apiPost: vi.fn(),
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
 }));
@@ -23,6 +24,7 @@ vi.mock('@/lib/api-client', () => ({
   apiClient: {
     get: mocks.apiGet,
     patch: mocks.apiPatch,
+    post: mocks.apiPost,
   },
 }));
 
@@ -56,6 +58,10 @@ const listUser: AdminUserListItem = {
     'audit.read',
     'security.manage',
   ],
+  accountStatus: 'active',
+  withdrawnAt: null,
+  withdrawalReason: null,
+  withdrawalSource: null,
   verification: {
     email: true,
     phone: false,
@@ -225,6 +231,7 @@ describe('AdminUserManagement', () => {
   beforeEach(() => {
     mocks.apiGet.mockReset();
     mocks.apiPatch.mockReset();
+    mocks.apiPost.mockReset();
     mocks.toastSuccess.mockReset();
     mocks.toastError.mockReset();
     mockSuccessfulApi();
@@ -380,5 +387,99 @@ describe('AdminUserManagement', () => {
       within(alert).getByText('권한 변경에 실패했습니다. 현재 상세 화면은 유지됩니다.'),
     ).toBeInTheDocument();
     expect(screen.getByText('걸룰스 팬미팅')).toBeInTheDocument();
+  });
+
+  it('withdraws a user with reason and explicit confirmation', async () => {
+    const user = userEvent.setup();
+    mocks.apiPost.mockResolvedValueOnce({
+      ...detailUser,
+      accountStatus: 'withdrawn',
+      withdrawnAt: '2026-05-18T00:00:00.000Z',
+      withdrawalReason: '사용자 요청',
+      withdrawalSource: 'admin',
+    });
+    const queryClient = createQueryClient();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+
+    renderWithClient(<AdminUserManagement />, queryClient);
+
+    expect(await screen.findByText('계정 생명주기')).toBeInTheDocument();
+    const submitButton = screen.getByRole('button', { name: '탈퇴 처리' });
+    expect(submitButton).toBeDisabled();
+
+    await user.type(screen.getByLabelText('탈퇴 처리 사유'), '사용자 요청');
+    await user.click(screen.getByRole('checkbox', { name: '회원 탈퇴 처리 확인' }));
+    expect(submitButton).toBeEnabled();
+
+    await user.click(submitButton);
+    await user.click(await screen.findByRole('button', { name: '탈퇴 처리 확정' }));
+
+    await waitFor(() => {
+      expect(apiClient.post).toHaveBeenCalledWith(
+        '/api/v1/admin/users/user-fan-1/withdrawal',
+        { reason: '사용자 요청', confirmed: true },
+      );
+    });
+    await waitFor(() => {
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: ['admin', 'users'],
+      });
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: ['admin', 'audit'],
+      });
+    });
+  });
+
+  it('shows hard-delete blocker categories returned by the API', async () => {
+    const user = userEvent.setup();
+    mocks.apiGet.mockImplementation((path: string) => {
+      if (path.startsWith('/api/v1/admin/users?')) {
+        return Promise.resolve({
+          items: [{ ...listUser, accountStatus: 'withdrawn' }],
+          total: 1,
+          page: 1,
+          limit: 25,
+          totalPages: 1,
+        });
+      }
+      if (path === '/api/v1/admin/users/user-fan-1') {
+        return Promise.resolve({
+          ...detailUser,
+          accountStatus: 'withdrawn',
+          withdrawnAt: '2026-05-18T00:00:00.000Z',
+          withdrawalReason: '사용자 요청',
+          withdrawalSource: 'admin',
+        });
+      }
+      return Promise.reject(new Error(`Unhandled GET ${path}`));
+    });
+    mocks.apiPost.mockRejectedValueOnce({
+      response: {
+        data: {
+          blockers: [
+            { key: 'reservations', label: '예매 이력', count: 2 },
+            { key: 'admin_audit_logs', label: '관리자 감사 로그', count: 1 },
+          ],
+        },
+      },
+    });
+
+    renderWithClient(<AdminUserManagement />);
+
+    expect(await screen.findByText('계정 생명주기')).toBeInTheDocument();
+    await user.type(screen.getByLabelText('DB 완전 삭제 사유'), '테스트 데이터 정리');
+    await user.click(screen.getByRole('checkbox', { name: '회원 DB 완전 삭제 확인' }));
+    await user.click(screen.getByRole('button', { name: 'DB에서 완전 삭제' }));
+    await user.click(await screen.findByRole('button', { name: 'DB 삭제 확정' }));
+
+    await waitFor(() => {
+      expect(apiClient.post).toHaveBeenCalledWith(
+        '/api/v1/admin/users/user-fan-1/hard-delete',
+        { reason: '테스트 데이터 정리', confirmed: true },
+      );
+    });
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '삭제 차단: 예매 이력 2건, 관리자 감사 로그 1건',
+    );
   });
 });

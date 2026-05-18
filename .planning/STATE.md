@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Fanmeet Launch
-status: "Quick 260518-kib complete — transparent favicon.ico"
+status: "Quick 260518-l47 shipped — PR #76"
 stopped_at: Phase 25 complete; ready for Phase 26
-last_updated: "2026-05-17T16:37:32.000+09:00"
-last_activity: "2026-05-18 -- Completed quick task 260518-kib: removed favicon.ico white background with transparent alpha"
+last_updated: "2026-05-18T07:32:45.067Z"
+last_activity: "2026-05-18 -- Quick 260518-l47 shipped as PR #76: account withdrawal lifecycle"
 progress:
   total_phases: 7
   completed_phases: 4
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-05-04)
 
 Phase: 26 (m1-canary-cutover-gates) — READY
 Plan: 0 of 0
-Status: Quick 260518-kib complete — transparent favicon.ico
-Last activity: 2026-05-18 -- Completed quick task 260518-kib: removed favicon.ico white background with transparent alpha
+Status: Quick 260518-l47 shipped — PR #76
+Last activity: 2026-05-18 -- Quick 260518-l47 shipped as PR #76: account withdrawal lifecycle
 
 ## Deferred Items
 
@@ -317,6 +317,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 260518-l47 | 회원탈퇴 기능 구현 및 어드민 회원 관리에서 회원 탈퇴/DB 삭제 기능 추가 | 2026-05-18 | a178f1c | [260518-l47-db](./quick/260518-l47-db/) |
 | 260518-kib | favicon.ico 흰색 배경 제거 후 투명 아이콘으로 교체 | 2026-05-18 | committed | [260518-kib-favicon-ico](./quick/260518-kib-favicon-ico/) |
 | 260518-k34 | 제공된 이미지로 web favicon.ico 추가 | 2026-05-18 | committed | [260518-k34-web-favicon-ico](./quick/260518-k34-web-favicon-ico/) |
 | 260518-dej | 어드민 회원관리 pagination 추가, page/search/filter 변경 시 stale detail reset, 모바일 large-list/overflow UX 개선 | 2026-05-18 | committed | [260518-dej-pagination-selected-detail-reset-mobile-](./quick/260518-dej-pagination-selected-detail-reset-mobile-/) |

@@ -77,6 +77,9 @@ const detailUser = {
   gender: 'unspecified',
   birthDate: '1995-01-01',
   accountStatus: 'active',
+  withdrawnAt: null,
+  withdrawalReason: null,
+  withdrawalSource: null,
   lastLoginAt: '2026-05-17T04:00:00.000Z',
   recentReservations: [
     {
@@ -131,6 +134,16 @@ const secondPageDetailUser = {
   ],
 };
 
+type MockAdminDetailUser = Omit<
+  typeof detailUser,
+  'accountStatus' | 'withdrawnAt' | 'withdrawalReason' | 'withdrawalSource'
+> & {
+  accountStatus: 'active' | 'withdrawn';
+  withdrawnAt: string | null;
+  withdrawalReason: string | null;
+  withdrawalSource: 'self' | 'admin' | null;
+};
+
 test.describe('Admin user management', () => {
   test('renders list/detail context and sends reasoned confirmed permission updates', async ({
     page,
@@ -183,6 +196,48 @@ test.describe('Admin user management', () => {
     );
   });
 
+  test('submits admin withdrawal and surfaces hard-delete blockers in browser', async ({
+    page,
+  }) => {
+    await mockAdminAuth(page);
+    const requests = await mockAdminUsers(page);
+
+    await page.goto('/admin/users');
+
+    await expect(page.getByText('계정 생명주기')).toBeVisible();
+    const withdrawButton = page.getByRole('button', { name: '탈퇴 처리' });
+    await expect(withdrawButton).toBeDisabled();
+
+    await page.getByLabel('탈퇴 처리 사유').fill('운영 정책 위반으로 탈퇴 처리합니다.');
+    await page.getByRole('checkbox', { name: '회원 탈퇴 처리 확인' }).click();
+    await expect(withdrawButton).toBeEnabled();
+    await withdrawButton.click();
+    await page.getByRole('button', { name: '탈퇴 처리 확정' }).click();
+
+    await expect.poll(() => requests.withdrawPayloads.length).toBe(1);
+    expect(requests.withdrawPayloads[0]).toEqual({
+      reason: '운영 정책 위반으로 탈퇴 처리합니다.',
+      confirmed: true,
+    });
+
+    const hardDeleteButton = page.getByRole('button', { name: 'DB에서 완전 삭제' });
+    await expect(hardDeleteButton).toBeDisabled();
+    await page.getByLabel('DB 완전 삭제 사유').fill('탈퇴 계정 데이터 정리');
+    await page.getByRole('checkbox', { name: '회원 DB 완전 삭제 확인' }).click();
+    await expect(hardDeleteButton).toBeEnabled();
+    await hardDeleteButton.click();
+    await page.getByRole('button', { name: 'DB 삭제 확정' }).click();
+
+    await expect.poll(() => requests.hardDeletePayloads.length).toBe(1);
+    expect(requests.hardDeletePayloads[0]).toEqual({
+      reason: '탈퇴 계정 데이터 정리',
+      confirmed: true,
+    });
+    await expect(
+      page.getByText('삭제 차단: 예매 이력 2건, 관리자 감사 로그 1건'),
+    ).toBeVisible();
+  });
+
   test('shows pagination and switches detail context on mobile', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await mockAdminAuth(page);
@@ -213,25 +268,54 @@ test.describe('Admin user management', () => {
 
 async function mockAdminUsers(page: Page) {
   const patchPayloads: Array<Record<string, unknown>> = [];
+  const withdrawPayloads: Array<Record<string, unknown>> = [];
+  const hardDeletePayloads: Array<Record<string, unknown>> = [];
+  let currentDetailUser = { ...detailUser } as MockAdminDetailUser;
 
   await page.route('**/api/v1/admin/users**', async (route) => {
-    await handleAdminUsersRoute(route, patchPayloads);
+    await handleAdminUsersRoute(route, {
+      patchPayloads,
+      withdrawPayloads,
+      hardDeletePayloads,
+      getCurrentDetailUser: () => currentDetailUser,
+      setCurrentDetailUser: (user) => {
+        currentDetailUser = user;
+      },
+    });
   });
 
-  return { patchPayloads };
+  return { patchPayloads, withdrawPayloads, hardDeletePayloads };
 }
 
 async function handleAdminUsersRoute(
   route: Route,
-  patchPayloads: Array<Record<string, unknown>>,
+  requests: {
+    patchPayloads: Array<Record<string, unknown>>;
+    withdrawPayloads: Array<Record<string, unknown>>;
+    hardDeletePayloads: Array<Record<string, unknown>>;
+    getCurrentDetailUser: () => MockAdminDetailUser;
+    setCurrentDetailUser: (user: MockAdminDetailUser) => void;
+  },
 ) {
   const request = route.request();
   const url = new URL(request.url());
+  const currentDetailUser = requests.getCurrentDetailUser();
 
   if (request.method() === 'GET' && url.pathname === '/api/v1/admin/users') {
     const page = Number(url.searchParams.get('page') ?? 1);
     await fulfillJson(route, {
-      items: page === 2 ? [secondPageUser] : [listUser],
+      items:
+        page === 2
+          ? [secondPageUser]
+          : [
+              {
+                ...listUser,
+                accountStatus: currentDetailUser.accountStatus,
+                withdrawnAt: currentDetailUser.withdrawnAt,
+                withdrawalReason: currentDetailUser.withdrawalReason,
+                withdrawalSource: currentDetailUser.withdrawalSource,
+              },
+            ],
       total: 50,
       page,
       limit: Number(url.searchParams.get('limit') ?? 25),
@@ -244,7 +328,7 @@ async function handleAdminUsersRoute(
     request.method() === 'GET' &&
     url.pathname === '/api/v1/admin/users/user-fan-1'
   ) {
-    await fulfillJson(route, detailUser);
+    await fulfillJson(route, currentDetailUser);
     return;
   }
 
@@ -260,13 +344,49 @@ async function handleAdminUsersRoute(
     request.method() === 'PATCH' &&
     url.pathname === '/api/v1/admin/users/user-fan-1/permissions'
   ) {
-    patchPayloads.push(request.postDataJSON() as Record<string, unknown>);
+    requests.patchPayloads.push(request.postDataJSON() as Record<string, unknown>);
     await fulfillJson(route, {
-      ...detailUser,
+      ...currentDetailUser,
       adminCapabilities: adminCapabilities.filter(
         (capability) => capability !== 'security.manage',
       ),
     });
+    return;
+  }
+
+  if (
+    request.method() === 'POST' &&
+    url.pathname === '/api/v1/admin/users/user-fan-1/withdrawal'
+  ) {
+    requests.withdrawPayloads.push(request.postDataJSON() as Record<string, unknown>);
+    const withdrawnUser = {
+      ...currentDetailUser,
+      accountStatus: 'withdrawn' as const,
+      withdrawnAt: '2026-05-18T00:00:00.000Z',
+      withdrawalReason: '운영 정책 위반으로 탈퇴 처리합니다.',
+      withdrawalSource: 'admin' as const,
+    };
+    requests.setCurrentDetailUser(withdrawnUser);
+    await fulfillJson(route, withdrawnUser);
+    return;
+  }
+
+  if (
+    request.method() === 'POST' &&
+    url.pathname === '/api/v1/admin/users/user-fan-1/hard-delete'
+  ) {
+    requests.hardDeletePayloads.push(request.postDataJSON() as Record<string, unknown>);
+    await fulfillJson(
+      route,
+      {
+        message: '연결된 데이터가 있어 회원을 DB에서 삭제할 수 없습니다',
+        blockers: [
+          { key: 'reservations', label: '예매 이력', count: 2 },
+          { key: 'admin_audit_logs', label: '관리자 감사 로그', count: 1 },
+        ],
+      },
+      409,
+    );
     return;
   }
 

@@ -126,4 +126,33 @@ describe('ProfileForm settings center', () => {
     });
     expect(mocks.setAuth).toHaveBeenCalledWith('access-token', updatedUser);
   });
+
+  it('withdraws the account only after explicit confirmation', async () => {
+    mocks.apiPost.mockResolvedValueOnce({
+      ...baseUser,
+      accountStatus: 'withdrawn',
+    });
+    const user = userEvent.setup();
+
+    render(<ProfileForm user={baseUser} />);
+
+    const withdrawButton = screen.getByRole('button', { name: '회원 탈퇴' });
+    expect(withdrawButton).toBeDisabled();
+
+    await user.type(screen.getByLabelText('탈퇴 사유'), '서비스 이용 종료');
+    await user.click(screen.getByRole('checkbox', { name: '회원 탈퇴 확인' }));
+    expect(withdrawButton).toBeEnabled();
+
+    await user.click(withdrawButton);
+    await user.click(await screen.findByRole('button', { name: '탈퇴 확정' }));
+
+    await waitFor(() => {
+      expect(mocks.apiPost).toHaveBeenCalledWith('/api/v1/users/me/withdrawal', {
+        reason: '서비스 이용 종료',
+        confirmed: true,
+      });
+    });
+    expect(mocks.clearAuth).toHaveBeenCalled();
+    expect(mocks.routerPush).toHaveBeenCalledWith('/auth?withdrawn=1');
+  });
 });

@@ -172,6 +172,8 @@ export const adminAuditActionSchema = z.enum([
   'allowlist.update',
   'security.allowlist.update',
   'security.permission.update',
+  'user.withdraw',
+  'user.hard_delete',
 ]);
 
 export const adminAuditEventSchema = z.object({
@@ -315,6 +317,10 @@ export const adminUserListItemSchema = z.object({
   marketingConsent: z.boolean(),
   adminCapabilityBundle: adminCapabilityBundleSchema.nullable(),
   adminCapabilities: z.array(adminCapabilitySchema),
+  accountStatus: z.enum(['active', 'withdrawn']).default('active'),
+  withdrawnAt: isoDatetime('탈퇴 처리 시각').nullable().optional(),
+  withdrawalReason: z.string().nullable().optional(),
+  withdrawalSource: z.enum(['self', 'admin']).nullable().optional(),
   verificationState: adminUserVerificationStateSchema,
   reservationSummary: adminUserReservationSummarySchema,
   lastActivityAt: isoDatetime('최근 활동 시각').nullable(),
@@ -399,6 +405,40 @@ export const adminUserPermissionUpdateSchema = z
     }
   });
 
+export const adminUserWithdrawalSchema = z.object({
+  reason: z
+    .string({ required_error: '탈퇴 처리 사유를 입력해주세요' })
+    .trim()
+    .min(1, '탈퇴 처리 사유를 입력해주세요')
+    .max(500),
+  confirmed: z.literal(true, {
+    errorMap: () => ({ message: '탈퇴 처리 확인이 필요합니다' }),
+  }),
+});
+
+export const adminUserHardDeleteSchema = z.object({
+  reason: z
+    .string({ required_error: 'DB 삭제 사유를 입력해주세요' })
+    .trim()
+    .min(1, 'DB 삭제 사유를 입력해주세요')
+    .max(500),
+  confirmed: z.literal(true, {
+    errorMap: () => ({ message: 'DB 삭제 확인이 필요합니다' }),
+  }),
+});
+
+export const adminUserDeletionBlockerSchema = z.object({
+  key: z.string().min(1),
+  label: z.string().min(1),
+  count: z.number().int().min(0),
+});
+
+export const adminUserHardDeleteResponseSchema = z.object({
+  deleted: z.boolean(),
+  userId: z.string().min(1),
+  blockers: z.array(adminUserDeletionBlockerSchema).default([]),
+});
+
 export type AdminCapability = z.infer<typeof adminCapabilitySchema>;
 export type AdminCapabilityBundle = z.infer<typeof adminCapabilityBundleSchema>;
 export type AdminUserRole = z.infer<typeof adminUserRoleSchema>;
@@ -439,4 +479,10 @@ export type AdminUserDetail = z.infer<typeof adminUserDetailSchema>;
 export type AdminUserListResponse = z.infer<typeof adminUserListResponseSchema>;
 export type AdminUserPermissionUpdate = z.infer<
   typeof adminUserPermissionUpdateSchema
+>;
+export type AdminUserWithdrawalInput = z.infer<typeof adminUserWithdrawalSchema>;
+export type AdminUserHardDeleteInput = z.infer<typeof adminUserHardDeleteSchema>;
+export type AdminUserDeletionBlocker = z.infer<typeof adminUserDeletionBlockerSchema>;
+export type AdminUserHardDeleteResponse = z.infer<
+  typeof adminUserHardDeleteResponseSchema
 >;

@@ -60,6 +60,8 @@ export interface ValidatedUser {
   createdAt: Date;
   adminCapabilityBundle?: string | null;
   adminCapabilities?: AdminCapability[] | readonly string[] | null;
+  accountStatus?: string | null;
+  withdrawnAt?: Date | null;
 }
 
 interface TokenPair {
@@ -208,7 +210,7 @@ export class AuthService {
   async validateUser(email: string, password: string): Promise<ValidatedUser> {
     const user = await this.userRepository.findByEmail(email);
 
-    if (!user || !user.passwordHash) {
+    if (!user || !user.passwordHash || user.accountStatus === 'withdrawn') {
       throw new UnauthorizedException('이메일 또는 비밀번호가 일치하지 않습니다');
     }
 
@@ -266,6 +268,10 @@ export class AuthService {
     const user = await this.userRepository.findById(tokenRecord.userId);
     if (!user) {
       throw new UnauthorizedException('사용자를 찾을 수 없습니다');
+    }
+    if (user.accountStatus === 'withdrawn') {
+      await this.revokeRefreshTokenFamily(tokenRecord.family);
+      throw new UnauthorizedException('탈퇴 처리된 계정입니다');
     }
 
     await this.db.transaction(async (tx) => {
@@ -616,7 +622,7 @@ export class AuthService {
     if (socialAccount) {
       this.logger.log(`Social user found: userId=${socialAccount.userId}`);
       const user = await this.userRepository.findById(socialAccount.userId);
-      if (!user) {
+      if (!user || user.accountStatus === 'withdrawn') {
         throw new UnauthorizedException('연결된 사용자 계정을 찾을 수 없습니다');
       }
 
@@ -958,6 +964,8 @@ export class AuthService {
     role: string;
     adminCapabilityBundle?: string | null;
     adminCapabilities?: readonly string[] | null;
+    accountStatus?: string | null;
+    withdrawnAt?: Date | null;
     createdAt: Date;
   }): UserProfile {
     return {
@@ -975,6 +983,8 @@ export class AuthService {
       role: user.role as 'user' | 'admin',
       adminCapabilityBundle: normalizeAdminCapabilityBundle(user.adminCapabilityBundle),
       adminCapabilities: normalizeAdminCapabilities(user.adminCapabilities),
+      accountStatus: user.accountStatus === 'withdrawn' ? 'withdrawn' : 'active',
+      withdrawnAt: user.withdrawnAt?.toISOString() ?? null,
       createdAt: user.createdAt.toISOString(),
     };
   }

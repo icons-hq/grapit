@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Loader2 } from 'lucide-react';
+import { Loader2, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   LOCALE_LABELS,
@@ -13,10 +13,22 @@ import {
 import { apiClient } from '@/lib/api-client';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { Badge } from '@/components/ui/badge';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
+import { Textarea } from '@/components/ui/textarea';
 import { PhoneVerification } from '@/components/auth/phone-verification';
 
 const GENDER_LABELS: Record<string, string> = {
@@ -24,6 +36,7 @@ const GENDER_LABELS: Record<string, string> = {
   female: '여성',
   unspecified: '선택안함',
 };
+const WITHDRAWAL_REDIRECT_FLAG = 'grabit:withdrawalRedirect';
 
 interface ProfileFormProps {
   user: UserProfile;
@@ -60,6 +73,10 @@ export function ProfileForm({ user }: ProfileFormProps) {
   const [phoneVerificationToken, setPhoneVerificationToken] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [withdrawReason, setWithdrawReason] = useState('');
+  const [withdrawConfirmed, setWithdrawConfirmed] = useState(false);
+  const [withdrawOpen, setWithdrawOpen] = useState(false);
+  const [isWithdrawing, setIsWithdrawing] = useState(false);
 
   // Track whether phone was changed
   const phoneChanged = phone !== user.phone;
@@ -132,6 +149,33 @@ export function ProfileForm({ user }: ProfileFormProps) {
       clearAuth();
       toast.success('로그아웃되었습니다');
       router.push('/');
+    }
+  }
+
+  async function handleWithdraw() {
+    setIsWithdrawing(true);
+    try {
+      await apiClient.post('/api/v1/users/me/withdrawal', {
+        reason: withdrawReason.trim() || undefined,
+        confirmed: true,
+      });
+      try {
+        window.sessionStorage.setItem(WITHDRAWAL_REDIRECT_FLAG, '1');
+      } catch {
+        // Session storage may be unavailable in restricted browser contexts.
+      }
+      clearAuth();
+      toast.success('회원 탈퇴가 처리되었습니다');
+      router.push('/auth?withdrawn=1');
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : '진행 중인 예매가 있으면 탈퇴할 수 없습니다.';
+      toast.error(message);
+      setWithdrawOpen(false);
+    } finally {
+      setIsWithdrawing(false);
     }
   }
 
@@ -291,6 +335,69 @@ export function ProfileForm({ user }: ProfileFormProps) {
           )}
         </Button>
       </div>
+
+      <section className="rounded-lg border border-[#FEE2E2] bg-white p-4">
+        <div className="flex items-start gap-3">
+          <XCircle className="mt-0.5 h-5 w-5 text-[#C62828]" aria-hidden="true" />
+          <div className="min-w-0 flex-1">
+            <p className="text-base font-semibold text-gray-900">회원 탈퇴</p>
+            <p className="mt-1 text-sm text-gray-600">
+              진행 중인 예매가 있으면 먼저 취소 또는 관람 완료 후 탈퇴할 수 있습니다. 탈퇴가 완료되면 활성 세션이 종료됩니다.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-4 space-y-3">
+          <div className="space-y-2">
+            <Label htmlFor="profile-withdraw-reason">탈퇴 사유</Label>
+            <Textarea
+              id="profile-withdraw-reason"
+              value={withdrawReason}
+              onChange={(event) => setWithdrawReason(event.target.value)}
+              placeholder="선택 입력"
+              className="min-h-24"
+            />
+          </div>
+          <label className="flex min-h-11 items-start gap-3 rounded-lg bg-[#FEF2F2] p-3 text-sm text-[#991B1B]">
+            <Checkbox
+              checked={withdrawConfirmed}
+              onCheckedChange={(checked) => setWithdrawConfirmed(checked === true)}
+              aria-label="회원 탈퇴 확인"
+            />
+            <span className="font-semibold">
+              회원 탈퇴 후 현재 세션이 종료되고 다시 로그인할 수 없음을 확인했습니다.
+            </span>
+          </label>
+          <AlertDialog open={withdrawOpen} onOpenChange={setWithdrawOpen}>
+            <Button
+              type="button"
+              variant="destructive"
+              className="w-full"
+              disabled={!withdrawConfirmed || isWithdrawing}
+              onClick={() => setWithdrawOpen(true)}
+            >
+              회원 탈퇴
+            </Button>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>회원 탈퇴를 진행하시겠습니까?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  탈퇴 처리 후 활성 refresh token이 폐기되고 계정 로그인이 차단됩니다.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>취소</AlertDialogCancel>
+                <AlertDialogAction
+                  variant="destructive"
+                  onClick={() => void handleWithdraw()}
+                >
+                  탈퇴 확정
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
+      </section>
     </div>
   );
 }

@@ -19,10 +19,13 @@ type ApiPath = `/${string}`;
 
 class ApiClientError extends Error {
   statusCode: number;
-  constructor(message: string, statusCode: number) {
+  data: unknown;
+
+  constructor(message: string, statusCode: number, data?: unknown) {
     super(message);
     this.name = 'ApiClientError';
     this.statusCode = statusCode;
+    this.data = data;
   }
 }
 
@@ -113,9 +116,18 @@ async function request<T>(
   if (!res.ok) {
     const status = res.status;
     let errorMessage = STATUS_MESSAGES[status] ?? DEFAULT_ERROR_MESSAGE;
+    let errorData: unknown;
     try {
-      const errorData = (await res.json()) as ApiError;
-      if (errorData.message) errorMessage = errorData.message;
+      errorData = await res.json();
+      if (
+        errorData &&
+        typeof errorData === 'object' &&
+        'message' in errorData &&
+        typeof (errorData as ApiError).message === 'string' &&
+        (errorData as ApiError).message.trim().length > 0
+      ) {
+        errorMessage = (errorData as ApiError).message;
+      }
     } catch {
       // Use default message
     }
@@ -128,7 +140,7 @@ async function request<T>(
       });
     }
 
-    throw new ApiClientError(errorMessage, status);
+    throw new ApiClientError(errorMessage, status, errorData);
   }
 
   // Handle 204 No Content

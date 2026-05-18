@@ -37,6 +37,8 @@ describe('Phase 25 admin operations security schema contracts', () => {
       'reservations.export_raw',
       'security.allowlist.update',
       'security.permission.update',
+      'user.withdraw',
+      'user.hard_delete',
     ]);
     expect(adminAuditStatusEnum.enumValues).toEqual([
       'success',
@@ -73,6 +75,11 @@ describe('Phase 25 admin operations security schema contracts', () => {
   it('persists per-admin capability truth on user rows for capability guards', () => {
     expectColumnName(users.adminCapabilityBundle, 'admin_capability_bundle');
     expectColumnName(users.adminCapabilities, 'admin_capabilities');
+    expectColumnName(users.accountStatus, 'account_status');
+    expectColumnName(users.withdrawnAt, 'withdrawn_at');
+    expectColumnName(users.withdrawalReason, 'withdrawal_reason');
+    expectColumnName(users.withdrawnByUserId, 'withdrawn_by_user_id');
+    expectColumnName(users.withdrawalSource, 'withdrawal_source');
   });
 
   it('stores env bootstrap allowlist records and DB-managed exceptions with audit linkage', () => {

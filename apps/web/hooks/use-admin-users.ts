@@ -90,6 +90,10 @@ export interface AdminUserListItem {
   marketingConsent: boolean;
   adminCapabilityBundle: AdminCapabilityBundle | null;
   adminCapabilities: AdminCapability[];
+  accountStatus: 'active' | 'withdrawn';
+  withdrawnAt?: string | null;
+  withdrawalReason?: string | null;
+  withdrawalSource?: 'self' | 'admin' | null;
   verification: AdminUserVerificationState;
   reservations: AdminUserReservationSummary;
   support: AdminUserSupportSummary;
@@ -141,7 +145,6 @@ export interface AdminUserDetail extends AdminUserListItem {
   phone?: string | null;
   gender?: 'male' | 'female' | 'unspecified' | null;
   birthDate?: string | null;
-  accountStatus?: 'active' | 'suspended' | 'deleted' | 'pending' | string;
   lastLoginAt?: string | null;
   recentReservations: AdminUserReservationRow[];
   supportThreads: AdminUserSupportThread[];
@@ -155,6 +158,24 @@ export interface UpdateAdminUserPermissionsInput {
   adminCapabilities: AdminCapability[];
   reason: string;
   confirmed: true;
+}
+
+export interface AdminUserLifecycleInput {
+  userId: string;
+  reason: string;
+  confirmed: true;
+}
+
+export interface AdminUserDeletionBlocker {
+  key: string;
+  label: string;
+  count: number;
+}
+
+export interface AdminUserHardDeleteResponse {
+  deleted: boolean;
+  userId: string;
+  blockers: AdminUserDeletionBlocker[];
 }
 
 export const adminUsersQueryKey = ['admin', 'users'] as const;
@@ -208,6 +229,44 @@ export function useUpdateAdminUserPermissions() {
           role,
           adminCapabilityBundle,
           adminCapabilities: normalizeAdminCapabilities(adminCapabilities),
+          reason: reason.trim(),
+          confirmed,
+        },
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: adminUsersQueryKey });
+      queryClient.invalidateQueries({ queryKey: ['admin', 'audit'] });
+    },
+  });
+}
+
+export function useWithdrawAdminUser() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ userId, reason, confirmed }: AdminUserLifecycleInput) =>
+      apiClient.post<AdminUserDetail>(
+        `/api/v1/admin/users/${userId}/withdrawal`,
+        {
+          reason: reason.trim(),
+          confirmed,
+        },
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: adminUsersQueryKey });
+      queryClient.invalidateQueries({ queryKey: ['admin', 'audit'] });
+    },
+  });
+}
+
+export function useHardDeleteAdminUser() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ userId, reason, confirmed }: AdminUserLifecycleInput) =>
+      apiClient.post<AdminUserHardDeleteResponse>(
+        `/api/v1/admin/users/${userId}/hard-delete`,
+        {
           reason: reason.trim(),
           confirmed,
         },
@@ -283,6 +342,10 @@ function mapDetail(response: ApiAdminUserDetail | AdminUserDetail): AdminUserDet
   if (isUiDetail(response)) {
     return {
       ...response,
+      accountStatus: response.accountStatus ?? 'active',
+      withdrawnAt: response.withdrawnAt ?? null,
+      withdrawalReason: response.withdrawalReason ?? null,
+      withdrawalSource: response.withdrawalSource ?? null,
       adminCapabilities: resolveEffectiveCapabilities(
         response.adminCapabilityBundle,
         response.adminCapabilities,
@@ -302,6 +365,9 @@ function mapDetail(response: ApiAdminUserDetail | AdminUserDetail): AdminUserDet
     gender: response.account.gender,
     birthDate: response.account.birthDate,
     accountStatus: 'active',
+    withdrawnAt: null,
+    withdrawalReason: null,
+    withdrawalSource: null,
     lastLoginAt: null,
     recentReservations: response.recentReservations.map(mapApiReservation),
     support,
@@ -324,6 +390,10 @@ function mapListItem(
   if (isUiListItem(item)) {
     return {
       ...item,
+      accountStatus: item.accountStatus ?? 'active',
+      withdrawnAt: item.withdrawnAt ?? null,
+      withdrawalReason: item.withdrawalReason ?? null,
+      withdrawalSource: item.withdrawalSource ?? null,
       adminCapabilities: resolveEffectiveCapabilities(
         item.adminCapabilityBundle,
         item.adminCapabilities,
@@ -347,6 +417,10 @@ function mapListItem(
       item.adminCapabilityBundle,
       item.adminCapabilities,
     ),
+    accountStatus: item.accountStatus ?? 'active',
+    withdrawnAt: item.withdrawnAt ?? null,
+    withdrawalReason: item.withdrawalReason ?? null,
+    withdrawalSource: item.withdrawalSource ?? null,
     verification: {
       email: item.verificationState.emailVerified,
       phone: item.verificationState.phoneVerified,

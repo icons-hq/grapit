@@ -1,19 +1,25 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, ilike, inArray, or, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, ilike, inArray, isNull, or, sql, type SQL } from 'drizzle-orm';
 import {
   ADMIN_CAPABILITIES,
   adminUserListQuerySchema,
+  adminUserHardDeleteSchema,
   adminUserPermissionUpdateSchema,
+  adminUserWithdrawalSchema,
   resolveAdminCapabilitySnapshot,
   type AdminCapability,
   type AdminCapabilityBundle,
+  type AdminUserDeletionBlocker,
   type AdminUserDetail,
+  type AdminUserHardDeleteInput,
+  type AdminUserHardDeleteResponse,
   type AdminUserListItem,
   type AdminUserListQuery,
   type AdminUserListResponse,
@@ -21,11 +27,16 @@ import {
   type AdminUserRecentReservation,
   type AdminUserReservationSummary,
   type AdminUserSupportThreadSummary,
+  type AdminUserWithdrawalInput,
 } from '@grabit/shared';
 
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
+  adminAuditLogs,
+  bookingOperationAuditLogs,
+  refreshTokens,
   reservations,
+  seatOperationHistory,
   supportThreads,
   users,
 } from '../../database/schema/index.js';
@@ -50,6 +61,11 @@ type UserRow = Pick<
   | 'role'
   | 'adminCapabilityBundle'
   | 'adminCapabilities'
+  | 'accountStatus'
+  | 'withdrawnAt'
+  | 'withdrawalReason'
+  | 'withdrawnByUserId'
+  | 'withdrawalSource'
   | 'createdAt'
   | 'updatedAt'
 >;
@@ -231,6 +247,172 @@ export class AdminUserService {
     return this.getUserDetail(targetUserId);
   }
 
+  async withdrawUser(
+    actorUserId: string,
+    targetUserId: string,
+    input: AdminUserWithdrawalInput,
+    context: AdminUserPermissionUpdateContext = {},
+  ): Promise<AdminUserDetail> {
+    const parsed = adminUserWithdrawalSchema.parse(input);
+
+    await this.db.transaction(async (tx) => {
+      const target = await this.findUserById(targetUserId, tx as DrizzleDB);
+      const actor = actorUserId === targetUserId
+        ? target
+        : await this.findUserById(actorUserId, tx as DrizzleDB);
+
+      if (!hasSecurityManage(actor)) {
+        throw new ForbiddenException('security.manage 권한이 필요합니다');
+      }
+      if (actorUserId === targetUserId) {
+        throw new BadRequestException('관리자는 자기 계정을 관리자 화면에서 탈퇴 처리할 수 없습니다');
+      }
+      if (target.accountStatus === 'withdrawn') {
+        return;
+      }
+
+      await this.assertAtLeastOneSecurityAdminRemains(
+        targetUserId,
+        {
+          role: 'user',
+          adminCapabilityBundle: null,
+          adminCapabilities: [],
+        },
+        tx as DrizzleDB,
+      );
+
+      const now = new Date();
+      await tx
+        .update(users)
+        .set({
+          passwordHash: null,
+          marketingConsent: false,
+          role: 'user',
+          adminCapabilityBundle: null,
+          adminCapabilities: [],
+          accountStatus: 'withdrawn',
+          withdrawnAt: now,
+          withdrawalReason: parsed.reason,
+          withdrawnByUserId: actorUserId,
+          withdrawalSource: 'admin',
+          updatedAt: now,
+        })
+        .where(eq(users.id, targetUserId));
+
+      await tx
+        .update(refreshTokens)
+        .set({ revokedAt: now })
+        .where(and(eq(refreshTokens.userId, targetUserId), isNull(refreshTokens.revokedAt)));
+
+      await this.auditService.write(
+        {
+          actorUserId,
+          action: 'user.withdraw',
+          resourceType: 'user',
+          resourceId: targetUserId,
+          status: 'success',
+          reason: parsed.reason,
+          changedFields: [
+            'accountStatus',
+            'withdrawnAt',
+            'withdrawalSource',
+            'role',
+            'adminCapabilityBundle',
+            'adminCapabilities',
+            'marketingConsent',
+          ],
+          before: {
+            accountStatus: target.accountStatus ?? 'active',
+            email: target.email,
+            phone: target.phone,
+            role: target.role,
+            adminCapabilityBundle: target.adminCapabilityBundle,
+            adminCapabilities: target.adminCapabilities,
+            marketingConsent: target.marketingConsent,
+          },
+          after: {
+            accountStatus: 'withdrawn',
+            withdrawnAt: now.toISOString(),
+            withdrawalSource: 'admin',
+            email: target.email,
+            phone: target.phone,
+            role: 'user',
+            adminCapabilityBundle: null,
+            adminCapabilities: [],
+            marketingConsent: false,
+          },
+          ipAddress: context.ipAddress ?? null,
+          userAgent: context.userAgent ?? null,
+          requestId: context.requestId ?? null,
+        },
+        tx,
+      );
+    });
+
+    return this.getUserDetail(targetUserId);
+  }
+
+  async hardDeleteUser(
+    actorUserId: string,
+    targetUserId: string,
+    input: AdminUserHardDeleteInput,
+    context: AdminUserPermissionUpdateContext = {},
+  ): Promise<AdminUserHardDeleteResponse> {
+    const parsed = adminUserHardDeleteSchema.parse(input);
+    if (actorUserId === targetUserId) {
+      throw new BadRequestException('자기 계정은 DB에서 완전 삭제할 수 없습니다');
+    }
+
+    const target = await this.findUserById(targetUserId);
+    const actor = await this.findUserById(actorUserId);
+    if (!hasSecurityManage(actor)) {
+      throw new ForbiddenException('security.manage 권한이 필요합니다');
+    }
+    if (target.accountStatus !== 'withdrawn') {
+      throw new BadRequestException('DB 완전 삭제는 탈퇴 처리된 회원만 가능합니다');
+    }
+
+    const blockers = await this.findHardDeleteBlockers(targetUserId);
+    if (blockers.length > 0) {
+      throw new ConflictException({
+        code: 'USER_HARD_DELETE_BLOCKED',
+        message: '연결된 이력 때문에 회원을 DB에서 삭제할 수 없습니다',
+        blockers,
+      });
+    }
+
+    await this.db.transaction(async (tx) => {
+      await this.auditService.write(
+        {
+          actorUserId,
+          action: 'user.hard_delete',
+          resourceType: 'user',
+          resourceId: targetUserId,
+          status: 'success',
+          reason: parsed.reason,
+          changedFields: ['hardDeleted'],
+          before: {
+            accountStatus: target.accountStatus,
+            email: target.email,
+            phone: target.phone,
+            withdrawnAt: target.withdrawnAt?.toISOString() ?? null,
+          },
+          after: {
+            hardDeleted: true,
+          },
+          ipAddress: context.ipAddress ?? null,
+          userAgent: context.userAgent ?? null,
+          requestId: context.requestId ?? null,
+        },
+        tx,
+      );
+
+      await tx.delete(users).where(eq(users.id, targetUserId));
+    });
+
+    return { deleted: true, userId: targetUserId, blockers: [] };
+  }
+
   private async findUserById(
     userId: string,
     db: Pick<DrizzleDB, 'select'> = this.db,
@@ -355,6 +537,52 @@ export class AdminUserService {
       throw new BadRequestException('마지막 security.manage 관리자 권한은 제거할 수 없습니다');
     }
   }
+
+  private async findHardDeleteBlockers(
+    userId: string,
+  ): Promise<AdminUserDeletionBlocker[]> {
+    const [reservationCount] = await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(reservations)
+      .where(eq(reservations.userId, userId));
+    const [adminAuditCount] = await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(adminAuditLogs)
+      .where(eq(adminAuditLogs.actorUserId, userId));
+    const [seatOperationCount] = await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(seatOperationHistory)
+      .where(eq(seatOperationHistory.actorUserId, userId));
+    const [bookingOperationCount] = await this.db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(bookingOperationAuditLogs)
+      .where(eq(bookingOperationAuditLogs.operatorUserId, userId));
+
+    const checks = [
+      {
+        key: 'reservations',
+        label: '예매 이력',
+        count: reservationCount?.count ?? 0,
+      },
+      {
+        key: 'admin_audit_logs',
+        label: '관리자 감사 로그',
+        count: adminAuditCount?.count ?? 0,
+      },
+      {
+        key: 'seat_operation_history',
+        label: '좌석 운영 이력',
+        count: seatOperationCount?.count ?? 0,
+      },
+      {
+        key: 'booking_operation_audit_logs',
+        label: '예매 운영 이력',
+        count: bookingOperationCount?.count ?? 0,
+      },
+    ];
+
+    return checks.filter((check) => check.count > 0);
+  }
 }
 
 function userSelectFields() {
@@ -373,6 +601,11 @@ function userSelectFields() {
     role: users.role,
     adminCapabilityBundle: users.adminCapabilityBundle,
     adminCapabilities: users.adminCapabilities,
+    accountStatus: users.accountStatus,
+    withdrawnAt: users.withdrawnAt,
+    withdrawalReason: users.withdrawalReason,
+    withdrawnByUserId: users.withdrawnByUserId,
+    withdrawalSource: users.withdrawalSource,
     createdAt: users.createdAt,
     updatedAt: users.updatedAt,
   };
@@ -439,6 +672,10 @@ function toListItem(
     marketingConsent: user.marketingConsent,
     adminCapabilityBundle: normalizeBundle(user.adminCapabilityBundle),
     adminCapabilities: normalizeCapabilities(user.adminCapabilities),
+    accountStatus: user.accountStatus === 'withdrawn' ? 'withdrawn' : 'active',
+    withdrawnAt: user.withdrawnAt?.toISOString() ?? null,
+    withdrawalReason: user.withdrawalReason ?? null,
+    withdrawalSource: user.withdrawalSource === 'admin' ? 'admin' : user.withdrawalSource === 'self' ? 'self' : null,
     verificationState: {
       emailVerified: user.isEmailVerified,
       phoneVerified: user.isPhoneVerified,

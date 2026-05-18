@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Patch,
+  Post,
   Query,
   Req,
   UseGuards,
@@ -12,9 +13,13 @@ import type { Request } from 'express';
 import { z } from 'zod';
 import {
   adminUserListQuerySchema,
+  adminUserHardDeleteSchema,
   adminUserPermissionUpdateSchema,
+  adminUserWithdrawalSchema,
   type AdminUserListQuery,
+  type AdminUserHardDeleteInput,
   type AdminUserPermissionUpdate,
+  type AdminUserWithdrawalInput,
 } from '@grabit/shared';
 
 import { AdminCapabilities } from '../../common/decorators/admin-capabilities.decorator.js';
@@ -64,6 +69,42 @@ export class AdminUserController {
     @Req() request: Request,
   ) {
     return this.adminUserService.updatePermissions(
+      actor.id,
+      id,
+      body,
+      requestContext(request),
+    );
+  }
+
+  @Post(':id/withdrawal')
+  @AdminCapabilities('security.manage')
+  async withdrawUser(
+    @Param('id', new ZodValidationPipe(z.string().uuid('유효한 회원 ID가 필요합니다')))
+    id: string,
+    @CurrentUser() actor: RequestUser,
+    @Body(new ZodValidationPipe(adminUserWithdrawalSchema))
+    body: AdminUserWithdrawalInput,
+    @Req() request: Request,
+  ) {
+    return this.adminUserService.withdrawUser(
+      actor.id,
+      id,
+      body,
+      requestContext(request),
+    );
+  }
+
+  @Post(':id/hard-delete')
+  @AdminCapabilities('security.manage')
+  async hardDeleteUser(
+    @Param('id', new ZodValidationPipe(z.string().uuid('유효한 회원 ID가 필요합니다')))
+    id: string,
+    @CurrentUser() actor: RequestUser,
+    @Body(new ZodValidationPipe(adminUserHardDeleteSchema))
+    body: AdminUserHardDeleteInput,
+    @Req() request: Request,
+  ) {
+    return this.adminUserService.hardDeleteUser(
       actor.id,
       id,
       body,
