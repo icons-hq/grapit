@@ -222,9 +222,11 @@ export function useUpdateAdminUserPermissions() {
 function normalizeAdminUserListParams(
   params: AdminUserListParams,
 ): AdminUserListParams {
-  const page = Number.isFinite(params.page) ? Math.max(1, params.page ?? 1) : 1;
+  const page = Number.isFinite(params.page)
+    ? Math.max(1, Math.floor(params.page ?? 1))
+    : 1;
   const limit = Number.isFinite(params.limit)
-    ? Math.min(100, Math.max(1, params.limit ?? 25))
+    ? Math.min(100, Math.max(1, Math.floor(params.limit ?? 25)))
     : 25;
 
   return Object.fromEntries(
@@ -264,14 +266,15 @@ function mapListResponse(
 ): AdminUserListResponse {
   const total = Math.max(0, response.total);
   const limit = Math.max(1, response.limit);
+  const computedTotalPages = Math.max(1, Math.ceil(total / limit));
 
   return {
     ...response,
     total,
     limit,
     totalPages: 'totalPages' in response
-      ? Math.max(0, response.totalPages)
-      : Math.ceil(total / limit),
+      ? Math.max(computedTotalPages, response.totalPages)
+      : computedTotalPages,
     items: response.items.map(mapListItem),
   };
 }
