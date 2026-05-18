@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Fanmeet Launch
-status: "Quick 260518-k34 complete — favicon.ico added"
+status: "Quick 260518-kib complete — transparent favicon.ico"
 stopped_at: Phase 25 complete; ready for Phase 26
 last_updated: "2026-05-17T16:37:32.000+09:00"
-last_activity: "2026-05-18 -- Completed quick task 260518-k34: provided image converted to web favicon.ico"
+last_activity: "2026-05-18 -- Completed quick task 260518-kib: removed favicon.ico white background with transparent alpha"
 progress:
   total_phases: 7
   completed_phases: 4
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-05-04)
 
 Phase: 26 (m1-canary-cutover-gates) — READY
 Plan: 0 of 0
-Status: Quick 260518-k34 complete — favicon.ico added
-Last activity: 2026-05-18 -- Completed quick task 260518-k34: provided image converted to web favicon.ico
+Status: Quick 260518-kib complete — transparent favicon.ico
+Last activity: 2026-05-18 -- Completed quick task 260518-kib: removed favicon.ico white background with transparent alpha
 
 ## Deferred Items
 
@@ -317,6 +317,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 260518-kib | favicon.ico 흰색 배경 제거 후 투명 아이콘으로 교체 | 2026-05-18 | committed | [260518-kib-favicon-ico](./quick/260518-kib-favicon-ico/) |
 | 260518-k34 | 제공된 이미지로 web favicon.ico 추가 | 2026-05-18 | committed | [260518-k34-web-favicon-ico](./quick/260518-k34-web-favicon-ico/) |
 | 260518-dej | 어드민 회원관리 pagination 추가, page/search/filter 변경 시 stale detail reset, 모바일 large-list/overflow UX 개선 | 2026-05-18 | committed | [260518-dej-pagination-selected-detail-reset-mobile-](./quick/260518-dej-pagination-selected-detail-reset-mobile-/) |
 | 260517-mhn | 어드민 회원 관리/권한 관리 추가, 회원 MyPage 계정 허브·티켓 지갑·설정 센터 확장, 회원가입 English all-country selector 적용 | 2026-05-17 | 4f701e5 | [260517-mhn-admin-user-management-with-role-capabili](./quick/260517-mhn-admin-user-management-with-role-capabili/) |
