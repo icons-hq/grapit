@@ -77,10 +77,10 @@ export default function AdminLayout({
   }
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex min-h-screen overflow-x-hidden">
       <AdminSidebar />
-      <div className="flex flex-1 flex-col">
-        <header className="sticky top-0 z-40 flex h-16 items-center border-b bg-white px-6">
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="sticky top-0 z-40 flex h-16 min-w-0 items-center border-b bg-white px-4 sm:px-6">
           <div className="flex items-center gap-3 lg:hidden">
             <Sheet>
               <SheetTrigger asChild>
@@ -107,7 +107,7 @@ export default function AdminLayout({
             </Button>
           </div>
         </header>
-        <main className="flex-1 bg-[#F5F5F7] p-8">{children}</main>
+        <main className="min-w-0 flex-1 overflow-x-hidden bg-[#F5F5F7] p-4 sm:p-8">{children}</main>
       </div>
     </div>
   );

@@ -103,6 +103,7 @@ export interface AdminUserListResponse {
   total: number;
   page: number;
   limit: number;
+  totalPages: number;
 }
 
 export interface AdminUserReservationRow {
@@ -221,6 +222,13 @@ export function useUpdateAdminUserPermissions() {
 function normalizeAdminUserListParams(
   params: AdminUserListParams,
 ): AdminUserListParams {
+  const page = Number.isFinite(params.page)
+    ? Math.max(1, Math.floor(params.page ?? 1))
+    : 1;
+  const limit = Number.isFinite(params.limit)
+    ? Math.min(100, Math.max(1, Math.floor(params.limit ?? 25)))
+    : 25;
+
   return Object.fromEntries(
     Object.entries({
       search: params.search?.trim(),
@@ -228,8 +236,8 @@ function normalizeAdminUserListParams(
         params.verification && params.verification !== 'all'
           ? params.verification
           : undefined,
-      page: params.page ?? 1,
-      limit: params.limit ?? 25,
+      page,
+      limit,
     }).filter(([, value]) => value !== undefined && value !== ''),
   ) as AdminUserListParams;
 }
@@ -256,8 +264,17 @@ function normalizeAdminCapabilities(
 function mapListResponse(
   response: ApiAdminUserListResponse | AdminUserListResponse,
 ): AdminUserListResponse {
+  const total = Math.max(0, response.total);
+  const limit = Math.max(1, response.limit);
+  const computedTotalPages = Math.max(1, Math.ceil(total / limit));
+
   return {
     ...response,
+    total,
+    limit,
+    totalPages: 'totalPages' in response
+      ? Math.max(computedTotalPages, response.totalPages)
+      : computedTotalPages,
     items: response.items.map(mapListItem),
   };
 }

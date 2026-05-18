@@ -1,8 +1,15 @@
-import { describe, it, expect, vi } from 'vitest';
+import { beforeAll, describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { PaginationNav } from '../pagination-nav';
 
 describe('PaginationNav', () => {
+  beforeAll(() => {
+    Object.defineProperty(window, 'scrollTo', {
+      value: vi.fn(),
+      configurable: true,
+    });
+  });
+
   it('renders navigation with correct aria-label', () => {
     render(
       <PaginationNav currentPage={1} totalPages={5} onPageChange={vi.fn()} />,
