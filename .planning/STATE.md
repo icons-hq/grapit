@@ -317,6 +317,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 260518-dej | 어드민 회원관리 pagination 추가, page/search/filter 변경 시 stale detail reset, 모바일 large-list/overflow UX 개선 | 2026-05-18 | committed | [260518-dej-pagination-selected-detail-reset-mobile-](./quick/260518-dej-pagination-selected-detail-reset-mobile-/) |
 | 260517-mhn | 어드민 회원 관리/권한 관리 추가, 회원 MyPage 계정 허브·티켓 지갑·설정 센터 확장, 회원가입 English all-country selector 적용 | 2026-05-17 | 4f701e5 | [260517-mhn-admin-user-management-with-role-capabili](./quick/260517-mhn-admin-user-management-with-role-capabili/) |
 | 260517-jmb | 다국어 지원에서 중국어 번체 제거, 중국어 간체 유지, 회원가입 중복 이메일 오류 i18n 전환 및 하드코딩 한국어 UI audit | 2026-05-17 | 604ba56 | [260517-jmb-ui-ux-i18n](./quick/260517-jmb-ui-ux-i18n/) |
 | 260517-igb | 메인페이지 New 섹션 단일 공연 카드 가운데 정렬 복구 + regression test 추가 | 2026-05-17 | 8efcd12 | [260517-igb-new-gsd-ship-ci-cd](./quick/260517-igb-new-gsd-ship-ci-cd/) |

@@ -52,6 +52,24 @@ const listUser = {
   lastActivityAt: '2026-05-17T04:00:00.000Z',
 };
 
+const secondPageUser = {
+  ...listUser,
+  id: 'user-fan-2',
+  name: '이페이지',
+  maskedEmail: 'se***@example.com',
+  maskedPhone: '+82********99',
+  role: 'user',
+  adminCapabilityBundle: null,
+  adminCapabilities: [],
+  reservations: {
+    total: 1,
+    pendingPayment: 0,
+    confirmed: 1,
+    cancelled: 0,
+    totalAmount: 120000,
+  },
+};
+
 const detailUser = {
   ...listUser,
   email: 'parkfan@example.com',
@@ -91,6 +109,24 @@ const detailUser = {
       changedFields: ['adminCapabilities'],
       ipAddress: '203.0.113.0',
       createdAt: '2026-05-17T02:00:00.000Z',
+    },
+  ],
+};
+
+const secondPageDetailUser = {
+  ...detailUser,
+  ...secondPageUser,
+  email: 'secondfan@example.com',
+  phone: '+821099999999',
+  recentReservations: [
+    {
+      id: 'reservation-2',
+      reservationNumber: 'R-20260517-002',
+      performanceTitle: '두번째 페이지 공연',
+      status: 'CONFIRMED',
+      totalAmount: 120000,
+      createdAt: '2026-05-17T01:00:00.000Z',
+      showDateTime: '2026-06-01T10:00:00.000Z',
     },
   ],
 };
@@ -146,6 +182,33 @@ test.describe('Admin user management', () => {
       'security.manage',
     );
   });
+
+  test('shows pagination and switches detail context on mobile', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockAdminAuth(page);
+    await mockAdminUsers(page);
+
+    await page.goto('/admin/users');
+
+    await expect(page.getByRole('heading', { name: '회원 관리', level: 1 })).toBeVisible();
+    await expect(page.getByRole('navigation', { name: '페이지 네비게이션' })).toBeVisible();
+    await expect(page.getByText('총 50명 · 1/2 페이지')).toBeVisible();
+    await expect(page.getByText('parkfan@example.com')).toBeVisible();
+
+    const pageTwoRequest = page.waitForRequest((request) => {
+      const url = new URL(request.url());
+      return (
+        url.pathname === '/api/v1/admin/users' &&
+        url.searchParams.get('page') === '2'
+      );
+    });
+    await page.getByRole('button', { name: '2' }).click();
+    await pageTwoRequest;
+
+    await expect(page.getByRole('button', { name: '이페이지 회원 상세 보기' })).toBeVisible();
+    await expect(page.getByText('secondfan@example.com')).toBeVisible();
+    await expect(page.getByText('parkfan@example.com')).not.toBeVisible();
+  });
 });
 
 async function mockAdminUsers(page: Page) {
@@ -166,11 +229,13 @@ async function handleAdminUsersRoute(
   const url = new URL(request.url());
 
   if (request.method() === 'GET' && url.pathname === '/api/v1/admin/users') {
+    const page = Number(url.searchParams.get('page') ?? 1);
     await fulfillJson(route, {
-      items: [listUser],
-      total: 1,
-      page: Number(url.searchParams.get('page') ?? 1),
+      items: page === 2 ? [secondPageUser] : [listUser],
+      total: 50,
+      page,
       limit: Number(url.searchParams.get('limit') ?? 25),
+      totalPages: 2,
     });
     return;
   }
@@ -180,6 +245,14 @@ async function handleAdminUsersRoute(
     url.pathname === '/api/v1/admin/users/user-fan-1'
   ) {
     await fulfillJson(route, detailUser);
+    return;
+  }
+
+  if (
+    request.method() === 'GET' &&
+    url.pathname === '/api/v1/admin/users/user-fan-2'
+  ) {
+    await fulfillJson(route, secondPageDetailUser);
     return;
   }
 

@@ -49,6 +49,7 @@ import {
 } from '@/components/ui/table';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/cn';
+import { PaginationNav } from '@/components/performance/pagination-nav';
 import {
   ADMIN_CAPABILITIES,
   ADMIN_CAPABILITY_BUNDLE_CAPABILITIES,
@@ -122,6 +123,8 @@ const RESERVATION_STATUS_CLASS: Record<AdminUserReservationStatus, string> = {
   REFUNDED: 'bg-[#EFF6FF] text-[#1D4ED8] border-transparent',
 };
 
+const EMPTY_ADMIN_USERS: AdminUserListItem[] = [];
+
 export function AdminUserManagement() {
   const [searchText, setSearchText] = useState('');
   const [filters, setFilters] = useState<AdminUserListParams>({
@@ -132,8 +135,14 @@ export function AdminUserManagement() {
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
   const usersQuery = useAdminUsers(filters);
-  const users = usersQuery.data?.items ?? [];
-  const activeUserId = selectedUserId ?? users[0]?.id ?? null;
+  const users = usersQuery.data?.items ?? EMPTY_ADMIN_USERS;
+  const activeUserId = useMemo(() => {
+    if (usersQuery.isPlaceholderData) return null;
+    if (selectedUserId && users.some((user) => user.id === selectedUserId)) {
+      return selectedUserId;
+    }
+    return users[0]?.id ?? null;
+  }, [selectedUserId, users, usersQuery.isPlaceholderData]);
   const detailQuery = useAdminUserDetail(activeUserId);
 
   function handleSearch(event: FormEvent<HTMLFormElement>) {
@@ -143,6 +152,7 @@ export function AdminUserManagement() {
       search: searchText,
       page: 1,
     }));
+    setSelectedUserId(null);
   }
 
   function handleVerificationChange(value: AdminUserVerificationFilter) {
@@ -151,11 +161,20 @@ export function AdminUserManagement() {
       verification: value,
       page: 1,
     }));
+    setSelectedUserId(null);
+  }
+
+  function handlePageChange(page: number) {
+    setSelectedUserId(null);
+    setFilters((current) => ({
+      ...current,
+      page,
+    }));
   }
 
   return (
-    <section className="grid gap-4 xl:grid-cols-[390px_minmax(0,1fr)]">
-      <div className="space-y-4">
+    <section className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 xl:grid-cols-[390px_minmax(0,1fr)]">
+      <div className="min-w-0 space-y-4">
         <form
           onSubmit={handleSearch}
           className="grid gap-3 rounded-lg bg-white p-4 shadow-sm"
@@ -168,9 +187,9 @@ export function AdminUserManagement() {
               onChange={(event) => setSearchText(event.target.value)}
               placeholder="이름, 이메일, 전화번호"
               aria-label="회원 검색어"
-              className="h-11"
+              className="h-11 min-w-0"
             />
-            <Button type="submit" className="h-11 shrink-0">
+            <Button type="submit" className="h-11 w-full shrink-0 sm:w-auto">
               <Search className="h-4 w-4" />
               검색
             </Button>
@@ -205,9 +224,13 @@ export function AdminUserManagement() {
           users={users}
           selectedUserId={activeUserId}
           total={usersQuery.data?.total ?? 0}
+          page={usersQuery.data?.page ?? filters.page ?? 1}
+          limit={usersQuery.data?.limit ?? filters.limit ?? 25}
+          totalPages={usersQuery.data?.totalPages ?? 0}
           isLoading={usersQuery.isLoading}
           isError={usersQuery.isError}
           onSelect={setSelectedUserId}
+          onPageChange={handlePageChange}
         />
       </div>
 
@@ -225,23 +248,42 @@ function UserList({
   users,
   selectedUserId,
   total,
+  page,
+  limit,
+  totalPages,
   isLoading,
   isError,
   onSelect,
+  onPageChange,
 }: {
   users: AdminUserListItem[];
   selectedUserId: string | null;
   total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
   isLoading: boolean;
   isError: boolean;
   onSelect: (id: string) => void;
+  onPageChange: (page: number) => void;
 }) {
+  const displayTotalPages = Math.max(1, totalPages);
+  const firstVisible = total > 0 ? (page - 1) * limit + 1 : 0;
+  const lastVisible = total > 0 ? Math.min(page * limit, total) : 0;
+
   return (
-    <aside className="overflow-hidden rounded-lg bg-white shadow-sm">
+    <aside className="max-w-full overflow-hidden rounded-lg bg-white shadow-sm">
       <div className="flex items-center justify-between border-b px-4 py-3">
         <div>
           <h2 className="text-base font-semibold text-gray-900">회원 목록</h2>
-          <p className="mt-1 text-xs text-gray-600">총 {total.toLocaleString('ko-KR')}명</p>
+          <p className="mt-1 text-xs text-gray-600">
+            총 {total.toLocaleString('ko-KR')}명 · {page}/{displayTotalPages} 페이지
+          </p>
+          {total > 0 && (
+            <p className="mt-0.5 text-xs text-gray-500">
+              {firstVisible.toLocaleString('ko-KR')}-{lastVisible.toLocaleString('ko-KR')}명 표시
+            </p>
+          )}
         </div>
         <UserRound className="h-5 w-5 text-gray-500" aria-hidden="true" />
       </div>
@@ -279,7 +321,7 @@ function UserList({
       )}
 
       {!isLoading && users.length > 0 && (
-        <div className="divide-y">
+        <div className="max-h-[68vh] overflow-y-auto divide-y xl:max-h-[calc(100vh-18rem)]">
           {users.map((user) => {
             const isSelected = selectedUserId === user.id;
             return (
@@ -326,6 +368,16 @@ function UserList({
               </button>
             );
           })}
+        </div>
+      )}
+
+      {totalPages > 1 && (
+        <div className="border-t bg-white px-3 py-3">
+          <PaginationNav
+            currentPage={page}
+            totalPages={totalPages}
+            onPageChange={onPageChange}
+          />
         </div>
       )}
     </aside>

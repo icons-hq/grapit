@@ -81,6 +81,24 @@ const listUser: AdminUserListItem = {
   lastActivityAt: '2026-05-17T04:00:00.000Z',
 };
 
+const secondPageUser: AdminUserListItem = {
+  ...listUser,
+  id: 'user-fan-2',
+  name: '이페이지',
+  maskedEmail: 'se***@example.com',
+  maskedPhone: '+82********99',
+  role: 'user',
+  adminCapabilityBundle: null,
+  adminCapabilities: [],
+  reservations: {
+    total: 1,
+    pendingPayment: 0,
+    confirmed: 1,
+    cancelled: 0,
+    totalAmount: 120000,
+  },
+};
+
 const detailUser: AdminUserDetail = {
   ...listUser,
   email: 'parkfan@example.com',
@@ -124,6 +142,24 @@ const detailUser: AdminUserDetail = {
   ],
 };
 
+const secondPageDetailUser: AdminUserDetail = {
+  ...detailUser,
+  ...secondPageUser,
+  email: 'secondfan@example.com',
+  phone: '+821099999999',
+  recentReservations: [
+    {
+      id: 'reservation-2',
+      reservationNumber: 'R-20260517-002',
+      performanceTitle: '두번째 페이지 공연',
+      status: 'CONFIRMED',
+      totalAmount: 120000,
+      createdAt: '2026-05-17T01:00:00.000Z',
+      showDateTime: '2026-06-01T10:00:00.000Z',
+    },
+  ],
+};
+
 function createQueryClient() {
   return new QueryClient({
     defaultOptions: {
@@ -143,15 +179,23 @@ function renderWithClient(ui: ReactNode, queryClient = createQueryClient()) {
 function mockSuccessfulApi() {
   mocks.apiGet.mockImplementation((path: string) => {
     if (path.startsWith('/api/v1/admin/users?')) {
+      const url = new URL(path, 'http://localhost');
+      const page = Number(url.searchParams.get('page') ?? 1);
+      const search = url.searchParams.get('search');
+      const items = page === 2 || search === 'reset' ? [secondPageUser] : [listUser];
       return Promise.resolve({
-        items: [listUser],
-        total: 1,
-        page: 1,
+        items,
+        total: search === 'reset' ? 1 : 50,
+        page,
         limit: 25,
+        totalPages: search === 'reset' ? 1 : 2,
       });
     }
     if (path === '/api/v1/admin/users/user-fan-1') {
       return Promise.resolve(detailUser);
+    }
+    if (path === '/api/v1/admin/users/user-fan-2') {
+      return Promise.resolve(secondPageDetailUser);
     }
     return Promise.reject(new Error(`Unhandled GET ${path}`));
   });
@@ -172,6 +216,10 @@ describe('AdminUserManagement', () => {
       configurable: true,
     });
     Element.prototype.scrollIntoView = function scrollIntoView() {};
+    Object.defineProperty(window, 'scrollTo', {
+      value: vi.fn(),
+      configurable: true,
+    });
   });
 
   beforeEach(() => {
@@ -207,6 +255,47 @@ describe('AdminUserManagement', () => {
     expect(screen.getByText('Masked audit 컨텍스트')).toBeInTheDocument();
     expect(screen.getByText(/masked IP 203\.0\.113\.0/)).toBeInTheDocument();
     expect(screen.queryByText('203.0.113.123')).not.toBeInTheDocument();
+  });
+
+  it('pages through multi-page user lists and replaces stale detail context', async () => {
+    const user = userEvent.setup();
+    renderWithClient(<AdminUserManagement />);
+
+    expect(await screen.findByText('박팬')).toBeInTheDocument();
+    expect(await screen.findByText('parkfan@example.com')).toBeInTheDocument();
+    expect(screen.getByText('총 50명 · 1/2 페이지')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '2' }));
+
+    await waitFor(() => {
+      expect(apiClient.get).toHaveBeenCalledWith(
+        '/api/v1/admin/users?page=2&limit=25',
+      );
+    });
+    expect(await screen.findByRole('button', { name: '이페이지 회원 상세 보기' })).toBeInTheDocument();
+    expect(await screen.findByText('secondfan@example.com')).toBeInTheDocument();
+    expect(screen.queryByText('parkfan@example.com')).not.toBeInTheDocument();
+  });
+
+  it('resets the selected detail when a new search changes the visible list', async () => {
+    const user = userEvent.setup();
+    renderWithClient(<AdminUserManagement />);
+
+    await user.click(await screen.findByRole('button', { name: '박팬 회원 상세 보기' }));
+    expect(await screen.findByText('parkfan@example.com')).toBeInTheDocument();
+
+    await user.clear(screen.getByLabelText('회원 검색어'));
+    await user.type(screen.getByLabelText('회원 검색어'), 'reset');
+    await user.click(screen.getByRole('button', { name: '검색' }));
+
+    await waitFor(() => {
+      expect(apiClient.get).toHaveBeenCalledWith(
+        '/api/v1/admin/users?search=reset&page=1&limit=25',
+      );
+    });
+    expect(await screen.findByRole('button', { name: '이페이지 회원 상세 보기' })).toBeInTheDocument();
+    expect(await screen.findByText('secondfan@example.com')).toBeInTheDocument();
+    expect(screen.queryByText('parkfan@example.com')).not.toBeInTheDocument();
   });
 
   it('requires reason and explicit confirmation before sending confirmed permission updates', async () => {
