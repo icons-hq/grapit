@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Fanmeet Launch
-status: "Quick 260517-mhn complete — admin users and mypage account hub"
+status: "Quick 260518-dej shipped — PR #73"
 stopped_at: Phase 25 complete; ready for Phase 26
 last_updated: "2026-05-17T16:37:32.000+09:00"
-last_activity: "2026-05-17 -- Completed quick task 260517-mhn: admin user management, MyPage account hub, and signup country selector"
+last_activity: "2026-05-18 -- Shipped quick task 260518-dej: admin users pagination, stale detail reset, and mobile list usability via PR #73"
 progress:
   total_phases: 7
   completed_phases: 4
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-05-04)
 
 Phase: 26 (m1-canary-cutover-gates) — READY
 Plan: 0 of 0
-Status: Quick 260517-mhn complete — admin users and mypage account hub
-Last activity: 2026-05-17 -- Completed quick task 260517-mhn: admin user management, MyPage account hub, and signup country selector
+Status: Quick 260518-dej shipped — PR #73
+Last activity: 2026-05-18 -- Shipped quick task 260518-dej: admin users pagination, stale detail reset, and mobile list usability via PR #73
 
 ## Deferred Items
 
