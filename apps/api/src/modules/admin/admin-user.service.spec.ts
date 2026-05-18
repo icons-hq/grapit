@@ -30,6 +30,11 @@ function userRow(overrides: Partial<{
     role: overrides.role ?? 'admin',
     adminCapabilityBundle: overrides.adminCapabilityBundle ?? 'admin',
     adminCapabilities: overrides.adminCapabilities ?? [],
+    accountStatus: 'active',
+    withdrawnAt: null,
+    withdrawalReason: null,
+    withdrawnByUserId: null,
+    withdrawalSource: null,
     createdAt: new Date('2026-05-01T00:00:00.000Z'),
     updatedAt: new Date('2026-05-17T00:00:00.000Z'),
   };
@@ -49,6 +54,10 @@ function detailStub(id = 'target-user'): AdminUserDetail {
     marketingConsent: false,
     adminCapabilityBundle: 'operator',
     adminCapabilities: ['support.manage'],
+    accountStatus: 'active',
+    withdrawnAt: null,
+    withdrawalReason: null,
+    withdrawalSource: null,
     verificationState: {
       emailVerified: true,
       phoneVerified: true,

@@ -16,6 +16,8 @@ export const ADMIN_AUDIT_ACTIONS = [
   'reservations.export_raw',
   'security.allowlist.update',
   'security.permission.update',
+  'user.withdraw',
+  'user.hard_delete',
 ] as const;
 
 export const ADMIN_AUDIT_STATUSES = ['success', 'denied', 'failed'] as const;

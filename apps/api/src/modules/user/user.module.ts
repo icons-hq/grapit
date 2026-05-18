@@ -3,11 +3,12 @@ import { UserService } from './user.service.js';
 import { UserRepository } from './user.repository.js';
 import { UserController } from './user.controller.js';
 import { SmsModule } from '../sms/sms.module.js';
+import { AdminAuditService } from '../admin/admin-audit.service.js';
 
 @Module({
   imports: [SmsModule],
   controllers: [UserController],
-  providers: [UserService, UserRepository],
+  providers: [UserService, UserRepository, AdminAuditService],
   exports: [UserService, UserRepository],
 })
 export class UserModule {}

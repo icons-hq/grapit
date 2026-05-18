@@ -23,6 +23,8 @@ export const adminAuditActionEnum = pgEnum('admin_audit_action', [
   'reservations.export_raw',
   'security.allowlist.update',
   'security.permission.update',
+  'user.withdraw',
+  'user.hard_delete',
 ]);
 
 export const adminAuditStatusEnum = pgEnum('admin_audit_status', [

@@ -86,4 +86,64 @@ describe('AdminUserController', () => {
       }),
     );
   });
+
+  it('passes actor, reason, and request metadata to admin user withdrawal', async () => {
+    const service = {
+      withdrawUser: vi.fn().mockResolvedValue({ id: 'target-user' }),
+    } as unknown as AdminUserService;
+    const controller = new AdminUserController(service);
+    const body = {
+      reason: '사용자 요청',
+      confirmed: true as const,
+    };
+
+    await controller.withdrawUser(
+      'target-user',
+      { id: 'actor-admin', email: 'admin@example.com', role: 'admin' },
+      body,
+      createRequest() as never,
+    );
+
+    expect(service.withdrawUser).toHaveBeenCalledWith(
+      'actor-admin',
+      'target-user',
+      body,
+      expect.objectContaining({
+        userAgent: 'Vitest Admin Browser',
+        requestId: 'req-admin-users',
+      }),
+    );
+  });
+
+  it('passes actor, reason, and request metadata to hard delete', async () => {
+    const service = {
+      hardDeleteUser: vi.fn().mockResolvedValue({
+        deleted: true,
+        userId: 'target-user',
+        blockers: [],
+      }),
+    } as unknown as AdminUserService;
+    const controller = new AdminUserController(service);
+    const body = {
+      reason: '테스트 데이터 정리',
+      confirmed: true as const,
+    };
+
+    await controller.hardDeleteUser(
+      'target-user',
+      { id: 'actor-admin', email: 'admin@example.com', role: 'admin' },
+      body,
+      createRequest() as never,
+    );
+
+    expect(service.hardDeleteUser).toHaveBeenCalledWith(
+      'actor-admin',
+      'target-user',
+      body,
+      expect.objectContaining({
+        userAgent: 'Vitest Admin Browser',
+        requestId: 'req-admin-users',
+      }),
+    );
+  });
 });

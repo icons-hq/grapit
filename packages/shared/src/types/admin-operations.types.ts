@@ -9,6 +9,8 @@ import {
   type AdminSeatOperationRequest,
   type AdminSecurityStatus,
   type AdminUserDetail,
+  type AdminUserHardDeleteInput,
+  type AdminUserHardDeleteResponse,
   type AdminUserListItem,
   type AdminUserListQuery,
   type AdminUserListResponse,
@@ -18,6 +20,7 @@ import {
   type AdminUserRole,
   type AdminUserSupportThreadSummary,
   type AdminUserVerificationState,
+  type AdminUserWithdrawalInput,
 } from '../schemas/admin-operations.schema';
 
 export type {
@@ -46,6 +49,10 @@ export type {
   AdminUserDetail,
   AdminUserListResponse,
   AdminUserPermissionUpdate,
+  AdminUserWithdrawalInput,
+  AdminUserHardDeleteInput,
+  AdminUserDeletionBlocker,
+  AdminUserHardDeleteResponse,
 } from '../schemas/admin-operations.schema';
 
 export interface AdminCapabilityUser {
@@ -74,6 +81,9 @@ export interface AdminOperationsContract {
   userListItems?: AdminUserListItem[];
   userDetail?: AdminUserDetail;
   userPermissionUpdate?: AdminUserPermissionUpdate;
+  userWithdrawal?: AdminUserWithdrawalInput;
+  userHardDelete?: AdminUserHardDeleteInput;
+  userHardDeleteResponse?: AdminUserHardDeleteResponse;
 }
 
 export function resolveAdminCapabilitySnapshot(
