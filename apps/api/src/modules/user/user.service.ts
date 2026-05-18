@@ -17,7 +17,13 @@ import {
 import type { UpdateProfileInput } from '@grabit/shared/schemas/user.schema.js';
 import { accountWithdrawalSchema, type AccountWithdrawalInput } from '@grabit/shared/schemas/user.schema.js';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
-import { refreshTokens, reservations, showtimes, users } from '../../database/schema/index.js';
+import {
+  refreshTokens,
+  reservations,
+  showtimes,
+  socialAccounts,
+  users,
+} from '../../database/schema/index.js';
 import { AdminAuditService } from '../admin/admin-audit.service.js';
 import { SmsService } from '../sms/sms.service.js';
 
@@ -90,6 +96,10 @@ export class UserService {
         .set({ revokedAt: now })
         .where(and(eq(refreshTokens.userId, userId), isNull(refreshTokens.revokedAt)));
 
+      await tx
+        .delete(socialAccounts)
+        .where(eq(socialAccounts.userId, userId));
+
       await this.auditService.write(
         {
           actorUserId: userId,
@@ -106,6 +116,7 @@ export class UserService {
             'role',
             'adminCapabilityBundle',
             'adminCapabilities',
+            'socialAccounts',
           ],
           before: {
             accountStatus: currentUser.accountStatus ?? 'active',

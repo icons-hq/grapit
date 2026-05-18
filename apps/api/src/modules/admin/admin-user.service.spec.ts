@@ -94,12 +94,14 @@ function createMockDb(adminRows: ReturnType<typeof userRow>[]) {
   const updateWhere = vi.fn().mockResolvedValue([]);
   const updateSet = vi.fn().mockReturnValue({ where: updateWhere });
   const update = vi.fn().mockReturnValue({ set: updateSet });
+  const deleteWhere = vi.fn().mockResolvedValue([]);
+  const deleteFn = vi.fn().mockReturnValue({ where: deleteWhere });
 
   const selectWhere = vi.fn().mockResolvedValue(adminRows);
   const selectFrom = vi.fn().mockReturnValue({ where: selectWhere });
   const select = vi.fn().mockReturnValue({ from: selectFrom });
 
-  const tx = { update, select };
+  const tx = { update, delete: deleteFn, select };
   const transaction = vi.fn(async (callback: (tx: typeof tx) => Promise<unknown>) =>
     callback(tx),
   );
@@ -109,6 +111,8 @@ function createMockDb(adminRows: ReturnType<typeof userRow>[]) {
     tx,
     updateSet,
     updateWhere,
+    deleteFn,
+    deleteWhere,
     select,
   };
 }
@@ -245,5 +249,47 @@ describe('AdminUserService permission updates', () => {
         confirmed: true,
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('AdminUserService withdrawals', () => {
+  it('removes linked social accounts when an admin withdraws a user', async () => {
+    const actor = userRow({
+      id: 'actor-admin',
+      email: 'admin@example.com',
+      adminCapabilityBundle: 'admin',
+    });
+    const target = userRow({
+      id: 'target-user',
+      email: 'target@example.com',
+      adminCapabilityBundle: 'operator',
+      adminCapabilities: ['support.manage'],
+    });
+    const mockDb = createMockDb([actor]);
+    const auditService = createAuditService();
+    const service = new AdminUserService(mockDb.db as never, auditService);
+
+    vi.spyOn(service as never, 'findUserById').mockImplementation((id: string) =>
+      Promise.resolve(id === 'actor-admin' ? actor : target),
+    );
+    vi.spyOn(service, 'getUserDetail').mockResolvedValue(detailStub('target-user'));
+
+    await service.withdrawUser(
+      'actor-admin',
+      'target-user',
+      { reason: 'user requested deletion', confirmed: true },
+      { ipAddress: '203.0.113.10', userAgent: 'Vitest Admin', requestId: 'req-withdraw' },
+    );
+
+    expect(mockDb.deleteFn).toHaveBeenCalledTimes(1);
+    expect(mockDb.deleteWhere).toHaveBeenCalledTimes(1);
+    expect(auditService.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'user.withdraw',
+        resourceId: 'target-user',
+        changedFields: expect.arrayContaining(['socialAccounts']),
+      }),
+      mockDb.tx,
+    );
   });
 });

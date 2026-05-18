@@ -28,6 +28,7 @@ describe('UserService preferred locale persistence', () => {
   let db: {
     select: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
+    delete: ReturnType<typeof vi.fn>;
     transaction: ReturnType<typeof vi.fn>;
   };
   let auditService: { write: ReturnType<typeof vi.fn> };
@@ -46,19 +47,26 @@ describe('UserService preferred locale persistence', () => {
     const reservationFrom = vi.fn().mockReturnValue({ leftJoin: reservationJoin });
     const select = vi.fn().mockReturnValue({ from: reservationFrom });
     const updateWhere = vi.fn().mockResolvedValue([]);
-    const updateReturning = vi.fn().mockResolvedValue([{
-      ...baseUser,
-      passwordHash: null,
-      marketingConsent: false,
-      accountStatus: 'withdrawn',
-      withdrawnAt: new Date('2026-05-18T00:00:00Z'),
-    }]);
-    const updateSet = vi.fn().mockReturnValue({ where: vi.fn().mockReturnValue({ returning: updateReturning }) });
+    const updateReturning = vi.fn().mockResolvedValue([
+      {
+        ...baseUser,
+        passwordHash: null,
+        marketingConsent: false,
+        accountStatus: 'withdrawn',
+        withdrawnAt: new Date('2026-05-18T00:00:00Z'),
+      },
+    ]);
+    const updateSet = vi.fn().mockReturnValue({
+      where: vi.fn().mockReturnValue({ returning: updateReturning }),
+    });
     const update = vi.fn().mockReturnValue({ set: updateSet, where: updateWhere });
-    const tx = { update };
+    const deleteWhere = vi.fn().mockResolvedValue([]);
+    const deleteFn = vi.fn().mockReturnValue({ where: deleteWhere });
+    const tx = { update, delete: deleteFn };
     db = {
       select,
       update,
+      delete: deleteFn,
       transaction: vi.fn(async (callback: (tx: typeof tx) => Promise<unknown>) =>
         callback(tx),
       ),
@@ -164,6 +172,7 @@ describe('UserService preferred locale persistence', () => {
     });
 
     expect(db.transaction).toHaveBeenCalledTimes(1);
+    expect(db.delete).toHaveBeenCalledTimes(1);
     expect(auditService.write).toHaveBeenCalledWith(
       expect.objectContaining({
         actorUserId: 'user-1',

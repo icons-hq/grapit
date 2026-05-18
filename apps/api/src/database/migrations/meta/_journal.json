@@ -162,6 +162,13 @@
       "when": 1779066000000,
       "tag": "0021_account_withdrawal",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1779073200000,
+      "tag": "0022_cleanup_withdrawn_social_accounts",
+      "breakpoints": true
     }
   ]
 }
