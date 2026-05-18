@@ -1182,9 +1182,14 @@ function formatCurrency(value: number | null | undefined) {
 function extractBlockerLabels(error: unknown): string[] {
   const maybeResponse = error as {
     response?: { data?: { blockers?: Array<{ label?: string; key?: string; count?: number }> } };
+    data?: { blockers?: Array<{ label?: string; key?: string; count?: number }> };
     blockers?: Array<{ label?: string; key?: string; count?: number }>;
   };
-  const blockers = maybeResponse.response?.data?.blockers ?? maybeResponse.blockers ?? [];
+  const blockers =
+    maybeResponse.response?.data?.blockers ??
+    maybeResponse.data?.blockers ??
+    maybeResponse.blockers ??
+    [];
   return blockers
     .map((blocker) => {
       const label = blocker.label ?? blocker.key ?? 'unknown';

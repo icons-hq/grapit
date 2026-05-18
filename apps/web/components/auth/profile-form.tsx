@@ -36,6 +36,7 @@ const GENDER_LABELS: Record<string, string> = {
   female: '여성',
   unspecified: '선택안함',
 };
+const WITHDRAWAL_REDIRECT_FLAG = 'grabit:withdrawalRedirect';
 
 interface ProfileFormProps {
   user: UserProfile;
@@ -158,6 +159,11 @@ export function ProfileForm({ user }: ProfileFormProps) {
         reason: withdrawReason.trim() || undefined,
         confirmed: true,
       });
+      try {
+        window.sessionStorage.setItem(WITHDRAWAL_REDIRECT_FLAG, '1');
+      } catch {
+        // Session storage may be unavailable in restricted browser contexts.
+      }
       clearAuth();
       toast.success('회원 탈퇴가 처리되었습니다');
       router.push('/auth?withdrawn=1');
