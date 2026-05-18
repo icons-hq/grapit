@@ -37,6 +37,7 @@ import {
   refreshTokens,
   reservations,
   seatOperationHistory,
+  socialAccounts,
   supportThreads,
   users,
 } from '../../database/schema/index.js';
@@ -304,6 +305,10 @@ export class AdminUserService {
         .set({ revokedAt: now })
         .where(and(eq(refreshTokens.userId, targetUserId), isNull(refreshTokens.revokedAt)));
 
+      await tx
+        .delete(socialAccounts)
+        .where(eq(socialAccounts.userId, targetUserId));
+
       await this.auditService.write(
         {
           actorUserId,
@@ -320,6 +325,7 @@ export class AdminUserService {
             'adminCapabilityBundle',
             'adminCapabilities',
             'marketingConsent',
+            'socialAccounts',
           ],
           before: {
             accountStatus: target.accountStatus ?? 'active',

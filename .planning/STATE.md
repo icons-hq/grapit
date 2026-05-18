@@ -317,6 +317,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 260518-o33 | 탈퇴 계정의 social account 연결을 삭제해 Naver 재가입/로그인 server_error 차단 | 2026-05-18 | committed | [260518-o33-fix-social-account-cleanup-on-withdrawal](./quick/260518-o33-fix-social-account-cleanup-on-withdrawal/) |
 | 260518-l47 | 회원탈퇴 기능 구현 및 어드민 회원 관리에서 회원 탈퇴/DB 삭제 기능 추가 | 2026-05-18 | a178f1c | [260518-l47-db](./quick/260518-l47-db/) |
 | 260518-kib | favicon.ico 흰색 배경 제거 후 투명 아이콘으로 교체 | 2026-05-18 | committed | [260518-kib-favicon-ico](./quick/260518-kib-favicon-ico/) |
 | 260518-k34 | 제공된 이미지로 web favicon.ico 추가 | 2026-05-18 | committed | [260518-k34-web-favicon-ico](./quick/260518-k34-web-favicon-ico/) |
