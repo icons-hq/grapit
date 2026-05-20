@@ -2,7 +2,7 @@
   "schemaVersion": "phase26.gate-ledger.v1",
   "phase": "26",
   "slug": "m1-canary-cutover-gates",
-  "generatedAt": "2026-05-20T00:00:00.000Z",
+  "generatedAt": "2026-05-20T06:52:13.879Z",
   "cutoverPolicy": {
     "bookingEnabledRule": "BOOKING_ENABLED=true is no-go until every required gate is PASS or explicitly owner-approved as ACCEPTED_RISK or CONFIG_READY_NOT_DRILLED.",
     "allowedStates": [
@@ -43,114 +43,185 @@
   "gates": [
     {
       "gateId": "M1_DIRECT_DEPLOY_WATCH",
-      "requirementIds": ["M1-01"],
+      "requirementIds": [
+        "M1-01"
+      ],
       "state": "BLOCKED",
       "environment": "production",
-      "evidenceRefs": [],
-      "failureReason": "Direct deploy strict-watch evidence has not been recorded.",
+      "evidenceRefs": [
+        ".planning/phases/26-m1-canary-cutover-gates/evidence/26-07-direct-deploy-watch.json"
+      ],
+      "failureReason": "Direct deploy strict-watch remains unavailable or not run.",
       "approvalState": "not_requested",
       "approver": null,
       "approvalTimestamp": null,
-      "compensatingMonitoring": "Strict watch must cover health, auth/session, public detail, booking-disabled behavior, queue entry, and payment-safe path.",
+      "compensatingMonitoring": "Run the 15-minute strict watch over health, auth/session, public detail, booking-disabled behavior, queue entry, payment-safe path, and Cloud Run logs.",
       "rollbackOrCloseTrigger": "Rollback on health 5xx, login/refresh failure, public detail 5xx, unsafe booking side effects, queue entry 5xx, or unsafe payment confirm behavior.",
-      "sourceDecisions": ["D-05", "D-06", "D-07", "D-08"],
+      "sourceDecisions": [
+        "D-05",
+        "D-06",
+        "D-07",
+        "D-08"
+      ],
       "redactionNotes": "Store revision IDs, timestamps, redacted HTTP statuses, and sanitized log summaries only."
     },
     {
       "gateId": "M1_LOCALE_SCOPE",
-      "requirementIds": ["M1-01"],
+      "requirementIds": [
+        "M1-01"
+      ],
       "state": "BLOCKED",
       "environment": "production",
-      "evidenceRefs": [],
-      "failureReason": "Current active locale smoke has not reconciled older five-locale wording with code.",
+      "evidenceRefs": [
+        ".planning/phases/26-m1-canary-cutover-gates/26-07-SUMMARY.md"
+      ],
+      "failureReason": "Active locale smoke exists, but older five-locale launch wording remains reconciled as non-PASS in Plan 26-07.",
       "approvalState": "not_requested",
       "approver": null,
       "approvalTimestamp": null,
-      "compensatingMonitoring": "Verify active public locales and locale-prefixed route behavior during M1 smoke.",
+      "compensatingMonitoring": "Keep locale scope visible during M1 smoke and do not treat the older five-locale wording as PASS evidence.",
       "rollbackOrCloseTrigger": "Do not mark M1 smoke PASS if an active locale route or switcher path regresses.",
-      "sourceDecisions": ["D-05", "D-06"],
+      "sourceDecisions": [
+        "D-05",
+        "D-06"
+      ],
       "redactionNotes": "No cookies or user identifiers in locale smoke evidence."
     },
     {
       "gateId": "ADMIN_CUTOVER_UI",
-      "requirementIds": ["M1-01", "OPS-01", "OPS-02"],
+      "requirementIds": [
+        "M1-01",
+        "OPS-01",
+        "OPS-02"
+      ],
       "state": "BLOCKED",
       "environment": "production",
-      "evidenceRefs": [],
-      "failureReason": "Admin Gate Ledger/cutover readiness surface is not available yet.",
+      "evidenceRefs": [
+        ".planning/phases/26-m1-canary-cutover-gates/evidence/26-11-admin-cutover-api.json",
+        ".planning/phases/26-m1-canary-cutover-gates/26-11-SUMMARY.md",
+        ".planning/phases/26-m1-canary-cutover-gates/26-12-SUMMARY.md"
+      ],
+      "failureReason": "Admin cutover API/UI are implemented, but deployed authenticated admin API smoke and runtime CUTOVER_GATE_LEDGER_PATH evidence are still missing.",
       "approvalState": "not_requested",
       "approver": null,
       "approvalTimestamp": null,
-      "compensatingMonitoring": "Operator must be able to inspect gate state, evidence freshness, blockers, and disabled final enablement reason.",
-      "rollbackOrCloseTrigger": "Do not proceed to live enablement if operator cannot inspect current no-go state.",
-      "sourceDecisions": ["D-01", "D-02", "D-03", "D-04", "D-16", "D-29", "D-30"],
+      "compensatingMonitoring": "Operator can inspect local/read-model semantics, but live enablement waits for deployed admin API smoke against the packaged Gate Ledger artifact.",
+      "rollbackOrCloseTrigger": "Do not proceed to live enablement if the operator cannot inspect current no-go state from the deployed admin surface.",
+      "sourceDecisions": [
+        "D-01",
+        "D-02",
+        "D-03",
+        "D-04",
+        "D-16",
+        "D-29",
+        "D-30"
+      ],
       "redactionNotes": "UI/API must expose sanitized ledger data only."
     },
     {
       "gateId": "QR_VISIBILITY",
-      "requirementIds": ["PAY-01"],
-      "state": "BLOCKED",
+      "requirementIds": [
+        "PAY-01"
+      ],
+      "state": "PASS",
       "environment": "production-like",
-      "evidenceRefs": [],
-      "failureReason": "Confirmed payment QR visibility is a known cutover blocker until fixed and verified.",
+      "evidenceRefs": [
+        ".planning/phases/26-m1-canary-cutover-gates/evidence/26-03-qr-visibility.json",
+        ".planning/phases/26-m1-canary-cutover-gates/evidence/26-02-qr-contract.json"
+      ],
+      "failureReason": "Payment complete page and My Page QR visibility regression evidence recorded.",
       "approvalState": "not_requested",
       "approver": null,
       "approvalTimestamp": null,
-      "compensatingMonitoring": "Verify payment complete page and My Page/ticket detail QR access after confirmed payment.",
+      "compensatingMonitoring": "Verify confirmed paid reservations expose active QR on payment complete and My Page/ticket detail before and after opening.",
       "rollbackOrCloseTrigger": "Close booking if confirmed payment succeeds but QR issuance or visibility fails.",
-      "sourceDecisions": ["D-25", "D-26", "D-27", "D-28"],
+      "sourceDecisions": [
+        "D-25",
+        "D-26",
+        "D-27",
+        "D-28"
+      ],
       "redactionNotes": "Do not store raw QR token, JWT, HMAC secret, or ticket bearer payload."
     },
     {
       "gateId": "TOSS_TEST_REHEARSAL",
-      "requirementIds": ["PAY-01"],
+      "requirementIds": [
+        "PAY-01"
+      ],
       "state": "BLOCKED",
       "environment": "production-like-test-keys",
-      "evidenceRefs": [],
-      "failureReason": "Toss test-key ticketing rehearsal has not completed.",
+      "evidenceRefs": [
+        ".planning/phases/26-m1-canary-cutover-gates/evidence/26-05-rehearsal.json"
+      ],
+      "failureReason": "Dedicated test-event approval and required PHASE26_TEST_* fixtures were not provided in this executor context; no production-like rehearsal, Toss confirm, or cleanup mutation was run.",
       "approvalState": "not_requested",
       "approver": null,
       "approvalTimestamp": null,
-      "compensatingMonitoring": "Rehearsal must cover queue, seat lock, reservation prepare, payment-safe branch, QR issuance, refund/cancel, and cleanup.",
+      "compensatingMonitoring": "Keep live booking closed until dedicated test-event rehearsal covers queue, lock, prepare, payment-safe branch, QR, refund/cancel, and cleanup.",
       "rollbackOrCloseTrigger": "Do not rely on live cutover readiness if test-key rehearsal fails or remains incomplete.",
-      "sourceDecisions": ["D-10", "D-20", "D-21", "D-23", "D-24"],
+      "sourceDecisions": [
+        "D-10",
+        "D-20",
+        "D-21",
+        "D-23",
+        "D-24"
+      ],
       "redactionNotes": "Do not store raw Toss keys, payment keys, order IDs, or customer details."
     },
     {
       "gateId": "TOSS_TEST_SECRET_ROTATION",
-      "requirementIds": ["PAY-01"],
+      "requirementIds": [
+        "PAY-01"
+      ],
       "state": "ACCEPTED_RISK",
       "environment": "provider-secret-manager-ci",
       "evidenceRefs": [
         ".planning/phases/26-m1-canary-cutover-gates/evidence/26-04-toss-hardening.json"
       ],
-      "failureReason": "Exposed Toss test secret was not rotated during this execution window; owner approved continuing as non-PASS accepted risk with redacted CLI binding evidence.",
+      "failureReason": "D-24 preferred rotation/reissue was not completed, but owner instructed to proceed. This remains non-PASS evidence and must not be treated as final live readiness.",
       "approvalState": "approved",
       "approver": "owner",
       "approvalTimestamp": "2026-05-20T06:08:22Z",
       "compensatingMonitoring": "Keep BOOKING_ENABLED=false until final cutover checks. During rehearsal, use only dedicated test event/order markers, redacted logs, webhook re-query verification, and immediate close-booking/rollback criteria for payment or QR mismatch.",
       "rollbackOrCloseTrigger": "Do not enable live booking if Toss test rehearsal fails, live-key smoke is unavailable, webhook re-query mismatches provider state, or secret leakage is detected in frontend/logs/artifacts.",
-      "sourceDecisions": ["D-21", "D-22", "D-23", "D-24"],
-      "redactionNotes": "Raw Toss client, secret, and security keys are not stored. Evidence records only key class, short redacted prefixes, Secret Manager version metadata, GitHub secret names, and Cloud Run binding names."
+      "sourceDecisions": [
+        "D-21",
+        "D-22",
+        "D-23",
+        "D-24"
+      ],
+      "redactionNotes": "Raw client, secret, and security keys are intentionally omitted. Only key class and short redacted prefixes are recorded."
     },
     {
       "gateId": "TOSS_LIVE_KEY_SMOKE",
-      "requirementIds": ["PAY-01"],
+      "requirementIds": [
+        "PAY-01"
+      ],
       "state": "BLOCKED",
       "environment": "production-live-keys-booking-disabled",
       "evidenceRefs": [],
-      "failureReason": "Toss live-key smoke is unavailable until review/live keys are ready.",
+      "failureReason": "Toss live-key smoke has not run because live keys/review availability were not confirmed.",
       "approvalState": "not_requested",
       "approver": null,
       "approvalTimestamp": null,
-      "compensatingMonitoring": "Live keys must be injected with BOOKING_ENABLED=false before payment-safe smoke and final enablement.",
-      "rollbackOrCloseTrigger": "Do not enable booking if live key prefix, server-only handling, widget init, confirm/query/cancel, webhook re-query, or leakage scan fails.",
-      "sourceDecisions": ["D-19", "D-20", "D-21", "D-22", "D-23"],
+      "compensatingMonitoring": "Inject live keys with BOOKING_ENABLED=false, then verify prefix/class, server-only secret handling, widget init, confirm/query/cancel, webhook re-query, and leakage scan.",
+      "rollbackOrCloseTrigger": "Do not enable booking if live key smoke is unavailable or any live payment-safe check fails.",
+      "sourceDecisions": [
+        "D-19",
+        "D-20",
+        "D-21",
+        "D-22",
+        "D-23"
+      ],
       "redactionNotes": "Record key class/prefix and command shape only; never raw keys."
     },
     {
       "gateId": "BOOKING_ENABLED_GO_NO_GO",
-      "requirementIds": ["M1-01", "PAY-01", "OPS-02"],
+      "requirementIds": [
+        "M1-01",
+        "PAY-01",
+        "OPS-02"
+      ],
       "state": "BLOCKED",
       "environment": "production",
       "evidenceRefs": [],
@@ -158,175 +229,283 @@
       "approvalState": "not_requested",
       "approver": null,
       "approvalTimestamp": null,
-      "compensatingMonitoring": "Validator must prove every required gate is PASS or explicitly owner-approved non-PASS before BOOKING_ENABLED=true.",
+      "compensatingMonitoring": "Run cutover-readiness and preserve every non-PASS gate before any BOOKING_ENABLED=true change.",
       "rollbackOrCloseTrigger": "Close booking immediately on financial or seat safety criteria.",
-      "sourceDecisions": ["D-01", "D-02", "D-03", "D-04", "D-19", "D-29", "D-30"],
+      "sourceDecisions": [
+        "D-01",
+        "D-02",
+        "D-03",
+        "D-04",
+        "D-19",
+        "D-29",
+        "D-30"
+      ],
       "redactionNotes": "Final evidence must be sanitized and must not include provider secrets or PII."
     },
     {
       "gateId": "LOAD_10K_BASELINE",
-      "requirementIds": ["LOAD-01"],
+      "requirementIds": [
+        "LOAD-01"
+      ],
       "state": "BLOCKED",
       "environment": "production-like-dedicated-test-event",
-      "evidenceRefs": [],
-      "failureReason": "10k baseline load gate has not run.",
+      "evidenceRefs": [
+        ".planning/phases/26-m1-canary-cutover-gates/evidence/26-06-load.json"
+      ],
+      "failureReason": "Operator-approved target, credentials, dedicated test-event IDs, and load window were unavailable in executor context; 10k/20k k6 load was not run.",
       "approvalState": "not_requested",
       "approver": null,
       "approvalTimestamp": null,
-      "compensatingMonitoring": "Record p95 latency under 2 seconds and error rate under 1 percent, or record approved accepted risk.",
-      "rollbackOrCloseTrigger": "Do not open live booking if baseline load fails without accepted-risk approval.",
-      "sourceDecisions": ["D-09", "D-10", "D-11"],
+      "compensatingMonitoring": "Record p95 latency under 2 seconds and error rate under 1 percent, or record explicit owner-approved accepted risk.",
+      "rollbackOrCloseTrigger": "Do not open live booking if load gate fails without owner-approved accepted risk.",
+      "sourceDecisions": [
+        "D-09",
+        "D-10",
+        "D-11"
+      ],
       "redactionNotes": "Load evidence must use dedicated test identifiers and redacted auth."
     },
     {
       "gateId": "LOAD_20K_STRESS",
-      "requirementIds": ["LOAD-01"],
+      "requirementIds": [
+        "LOAD-01"
+      ],
       "state": "BLOCKED",
       "environment": "production-like-dedicated-test-event",
-      "evidenceRefs": [],
-      "failureReason": "20k stress load gate has not run.",
+      "evidenceRefs": [
+        ".planning/phases/26-m1-canary-cutover-gates/evidence/26-06-load.json"
+      ],
+      "failureReason": "Operator-approved target, credentials, dedicated test-event IDs, and load window were unavailable in executor context; 10k/20k k6 load was not run.",
       "approvalState": "not_requested",
       "approver": null,
       "approvalTimestamp": null,
-      "compensatingMonitoring": "Record p95 latency under 2 seconds and error rate under 1 percent, or record approved accepted risk.",
-      "rollbackOrCloseTrigger": "Do not open live booking if stress load fails without accepted-risk approval.",
-      "sourceDecisions": ["D-09", "D-10", "D-11"],
+      "compensatingMonitoring": "Record p95 latency under 2 seconds and error rate under 1 percent, or record explicit owner-approved accepted risk.",
+      "rollbackOrCloseTrigger": "Do not open live booking if load gate fails without owner-approved accepted risk.",
+      "sourceDecisions": [
+        "D-09",
+        "D-10",
+        "D-11"
+      ],
       "redactionNotes": "Do not load real Girl Rules users, orders, payment paths, or seats."
     },
     {
       "gateId": "DR_CLOUD_RUN_ROLLBACK",
-      "requirementIds": ["DR-01", "M1-01"],
-      "state": "BLOCKED",
+      "requirementIds": [
+        "DR-01",
+        "M1-01"
+      ],
+      "state": "CONFIG_READY_NOT_DRILLED",
       "environment": "production",
-      "evidenceRefs": [],
-      "failureReason": "Cloud Run rollback drill/evidence is missing.",
+      "evidenceRefs": [
+        ".planning/phases/26-m1-canary-cutover-gates/evidence/26-08-dr-infra.json"
+      ],
+      "failureReason": "Cloud Run service/revision/traffic metadata collected, but rollback was not drilled.",
       "approvalState": "not_requested",
       "approver": null,
       "approvalTimestamp": null,
-      "compensatingMonitoring": "Record rollback target, current revision, safe command shape, and strict watch trigger mapping.",
-      "rollbackOrCloseTrigger": "Rollback on direct deploy strict-watch critical failure.",
-      "sourceDecisions": ["D-06", "D-07", "D-08", "D-12"],
+      "compensatingMonitoring": "Keep direct-deploy rollback command shape ready and execute strict watch before cutover.",
+      "rollbackOrCloseTrigger": "Close booking or rollback if the infra gate affects live booking safety.",
+      "sourceDecisions": [
+        "D-06",
+        "D-07",
+        "D-08",
+        "D-12"
+      ],
       "redactionNotes": "Revision IDs and command shapes are allowed; no auth headers or cookies."
     },
     {
       "gateId": "DR_CLOUD_SQL_PITR",
-      "requirementIds": ["DR-01", "INFRA-01"],
+      "requirementIds": [
+        "DR-01",
+        "INFRA-01"
+      ],
       "state": "BLOCKED",
       "environment": "production-safe-target",
-      "evidenceRefs": [],
-      "failureReason": "Cloud SQL PITR/restore path evidence is missing.",
+      "evidenceRefs": [
+        ".planning/phases/26-m1-canary-cutover-gates/evidence/26-08-dr-infra.json"
+      ],
+      "failureReason": "Cloud SQL PITR/restore lacks owner-approved safe target, permissions, or PITR metadata.",
       "approvalState": "not_requested",
       "approver": null,
       "approvalTimestamp": null,
-      "compensatingMonitoring": "Actual safe-target restore is preferred; otherwise classify as CONFIG_READY_NOT_DRILLED or ACCEPTED_RISK with rollback trigger.",
+      "compensatingMonitoring": "Use owner-approved safe restore target or preserve accepted risk with clear rollback trigger.",
       "rollbackOrCloseTrigger": "Do not execute destructive cleanup without backup/restore-point confirmation.",
-      "sourceDecisions": ["D-12", "D-13", "D-14", "D-15"],
+      "sourceDecisions": [
+        "D-12",
+        "D-13",
+        "D-14",
+        "D-15"
+      ],
       "redactionNotes": "No SQL row dumps, PII, or credentials."
     },
     {
       "gateId": "DR_VALKEY_RECONNECT",
-      "requirementIds": ["DR-01"],
+      "requirementIds": [
+        "DR-01"
+      ],
       "state": "BLOCKED",
       "environment": "production",
-      "evidenceRefs": [],
-      "failureReason": "Valkey reconnect/failure behavior evidence is missing.",
+      "evidenceRefs": [
+        ".planning/phases/26-m1-canary-cutover-gates/evidence/26-08-dr-infra.json"
+      ],
+      "failureReason": "Valkey reconnect/failure smoke did not run or lacked required credentials/fixtures.",
       "approvalState": "not_requested",
       "approver": null,
       "approvalTimestamp": null,
-      "compensatingMonitoring": "Record health, reconnect, queue/seat-lock impact, and sanitized logs.",
+      "compensatingMonitoring": "Run Valkey health/reconnect smoke and watch queue/seat-lock impact.",
       "rollbackOrCloseTrigger": "Close booking if queue, lock, or seat safety signals fail after Valkey disruption.",
-      "sourceDecisions": ["D-12", "D-16", "D-30"],
+      "sourceDecisions": [
+        "D-12",
+        "D-16",
+        "D-30"
+      ],
       "redactionNotes": "Redact redis URLs, auth headers, cookies, JWTs, phone numbers, and customer data."
     },
     {
       "gateId": "INFRA_POOL_PGBOUNCER",
-      "requirementIds": ["INFRA-01"],
-      "state": "BLOCKED",
+      "requirementIds": [
+        "INFRA-01"
+      ],
+      "state": "CONFIG_READY_NOT_DRILLED",
       "environment": "production-config",
-      "evidenceRefs": [],
-      "failureReason": "DB pool sizing/pgBouncer preparedness evidence is missing.",
+      "evidenceRefs": [
+        ".planning/phases/26-m1-canary-cutover-gates/evidence/26-08-dr-infra.json"
+      ],
+      "failureReason": "DB_POOL_MAX was collected, but pgBouncer transaction pooling evidence was not found or drilled.",
       "approvalState": "not_requested",
       "approver": null,
       "approvalTimestamp": null,
-      "compensatingMonitoring": "If not drilled, this must remain CONFIG_READY_NOT_DRILLED or ACCEPTED_RISK, never PASS.",
-      "rollbackOrCloseTrigger": "Close booking or rollback if DB pool saturation causes payment, queue, or seat safety failures.",
-      "sourceDecisions": ["D-09", "D-12", "D-16", "D-30"],
+      "compensatingMonitoring": "Monitor DB capacity, pool saturation, and booking/payment/seat safety signals.",
+      "rollbackOrCloseTrigger": "Close booking or rollback if the infra gate affects live booking safety.",
+      "sourceDecisions": [
+        "D-09",
+        "D-12",
+        "D-16",
+        "D-30"
+      ],
       "redactionNotes": "Config summaries only; no connection strings."
     },
     {
       "gateId": "INFRA_HA_REPLICA",
-      "requirementIds": ["INFRA-01"],
-      "state": "BLOCKED",
+      "requirementIds": [
+        "INFRA-01"
+      ],
+      "state": "CONFIG_READY_NOT_DRILLED",
       "environment": "production-config",
-      "evidenceRefs": [],
-      "failureReason": "HA/read replica preparedness evidence is missing.",
+      "evidenceRefs": [
+        ".planning/phases/26-m1-canary-cutover-gates/evidence/26-08-dr-infra.json"
+      ],
+      "failureReason": "Cloud SQL HA/read-replica drill evidence is absent; keep non-PASS until approved or drilled.",
       "approvalState": "not_requested",
       "approver": null,
       "approvalTimestamp": null,
-      "compensatingMonitoring": "If not drilled, this must remain CONFIG_READY_NOT_DRILLED or ACCEPTED_RISK, never PASS.",
-      "rollbackOrCloseTrigger": "Close booking or rollback if database failover/read capacity risk affects live booking safety.",
-      "sourceDecisions": ["D-12", "D-16", "D-30"],
+      "compensatingMonitoring": "Monitor DB capacity, pool saturation, and booking/payment/seat safety signals.",
+      "rollbackOrCloseTrigger": "Close booking or rollback if the infra gate affects live booking safety.",
+      "sourceDecisions": [
+        "D-12",
+        "D-16",
+        "D-30"
+      ],
       "redactionNotes": "Resource names and config class are allowed; no credentials or row data."
     },
     {
       "gateId": "WAF_ACTIVE_RULES",
-      "requirementIds": ["OPS-01", "M1-01"],
+      "requirementIds": [
+        "OPS-01",
+        "M1-01"
+      ],
       "state": "BLOCKED",
       "environment": "cloudflare-production",
-      "evidenceRefs": [],
-      "failureReason": "Cloudflare WAF/rate-limit active-rule and smoke evidence is missing.",
+      "evidenceRefs": [
+        ".planning/phases/26-m1-canary-cutover-gates/evidence/26-09-ops-monitoring.json"
+      ],
+      "failureReason": "Cloudflare WAF/rate-limit active-rule and smoke evidence remains pending provider evidence.",
       "approvalState": "not_requested",
       "approver": null,
       "approvalTimestamp": null,
       "compensatingMonitoring": "Record normal-pass smoke and low-volume suspicious challenge/block/rate-limit evidence without impacting real users.",
       "rollbackOrCloseTrigger": "Close booking or tighten controls on traffic-defense bypass, queue abuse, or booking mutation abuse.",
-      "sourceDecisions": ["D-16", "D-17", "D-18"],
+      "sourceDecisions": [
+        "D-16",
+        "D-17",
+        "D-18"
+      ],
       "redactionNotes": "Redact rule IDs if needed; do not store IP addresses tied to real users."
     },
     {
       "gateId": "ONCALL_PLAYBOOKS",
-      "requirementIds": ["OPS-01"],
+      "requirementIds": [
+        "OPS-01"
+      ],
       "state": "BLOCKED",
       "environment": "operations",
-      "evidenceRefs": [],
-      "failureReason": "One-person on-call playbook dry-run evidence is missing.",
+      "evidenceRefs": [
+        ".planning/phases/26-m1-canary-cutover-gates/evidence/26-09-ops-monitoring.json",
+        "docs/runbooks/phase26-cutover-ops.md"
+      ],
+      "failureReason": "One-person on-call playbook exists, but dry-run/provider evidence remains pending.",
       "approvalState": "not_requested",
       "approver": null,
       "approvalTimestamp": null,
-      "compensatingMonitoring": "PG/DB, Valkey, Cloud Run, Cloudflare, Toss/payment failure, queue stuck, and oversell-risk procedures need dry-run/log-query evidence.",
+      "compensatingMonitoring": "Dry-run PG/DB, Valkey, Cloud Run, Cloudflare, Toss/payment failure, queue stuck, oversell-risk, QR, and refund procedures.",
       "rollbackOrCloseTrigger": "Close booking when financial or seat safety triage cannot be completed quickly.",
-      "sourceDecisions": ["D-16", "D-17", "D-18", "D-30"],
+      "sourceDecisions": [
+        "D-16",
+        "D-17",
+        "D-18",
+        "D-30"
+      ],
       "redactionNotes": "Runbook evidence must use sanitized command shapes and summaries."
     },
     {
       "gateId": "FIRST_24H_WATCH",
-      "requirementIds": ["OPS-02"],
+      "requirementIds": [
+        "OPS-02"
+      ],
       "state": "BLOCKED",
       "environment": "production",
-      "evidenceRefs": [],
-      "failureReason": "First-2h and first-24h monitoring cadence/runbook is missing.",
+      "evidenceRefs": [
+        ".planning/phases/26-m1-canary-cutover-gates/evidence/26-09-ops-monitoring.json",
+        ".planning/phases/26-m1-canary-cutover-gates/26-FIRST-24H-WATCH.md"
+      ],
+      "failureReason": "First-24h watch runbook exists, but live post-open watch handoff has not started.",
       "approvalState": "not_requested",
       "approver": null,
       "approvalTimestamp": null,
-      "compensatingMonitoring": "First 2 hours: 5-10 minute checks. Until 24 hours: 30-60 minute checks.",
-      "rollbackOrCloseTrigger": "Close booking on duplicate sale, payment/reservation/QR mismatch, payment failure spike, seat side-effect mismatch, queue stuck, or refund/cancel job failures.",
-      "sourceDecisions": ["D-29", "D-30"],
+      "compensatingMonitoring": "After opening, run first-2h checks every 5-10 minutes and 24h checks every 30-60 minutes.",
+      "rollbackOrCloseTrigger": "Close booking on duplicate sale, reservation/QR mismatch, payment failure spike, seat mismatch, queue stuck, or refund/cancel buildup.",
+      "sourceDecisions": [
+        "D-29",
+        "D-30"
+      ],
       "redactionNotes": "Business metric evidence must aggregate or mask customer data."
     },
     {
       "gateId": "CLEANUP_ISOLATION",
-      "requirementIds": ["PAY-01", "OPS-01"],
+      "requirementIds": [
+        "PAY-01",
+        "OPS-01"
+      ],
       "state": "BLOCKED",
       "environment": "production-like-dedicated-test-event",
-      "evidenceRefs": [],
-      "failureReason": "Dedicated test-event cleanup isolation, dry-run counts, denylist, and restore-point evidence are missing.",
+      "evidenceRefs": [
+        ".planning/phases/26-m1-canary-cutover-gates/evidence/26-05-rehearsal.json"
+      ],
+      "failureReason": "Dedicated test-event approval and required PHASE26_TEST_* fixtures were not provided in this executor context; no production-like rehearsal, Toss confirm, or cleanup mutation was run.",
       "approvalState": "not_requested",
       "approver": null,
       "approvalTimestamp": null,
-      "compensatingMonitoring": "Cleanup must be constrained by dedicated test IDs, test order prefix, test marker, and backup/restore-point confirmation.",
+      "compensatingMonitoring": "Cleanup must be constrained by dedicated test IDs, order markers, dry-run counts, and restore-point confirmation.",
       "rollbackOrCloseTrigger": "Stop cleanup if dry-run returns unexpected rows or real production records.",
-      "sourceDecisions": ["D-10", "D-11", "D-13", "D-14", "D-15"],
+      "sourceDecisions": [
+        "D-10",
+        "D-11",
+        "D-13",
+        "D-14",
+        "D-15"
+      ],
       "redactionNotes": "No real Girl Rules row IDs, real user PII, payment keys, or full SQL row dumps."
     }
-  ]
+  ],
+  "lastAggregatedAt": "2026-05-20T06:52:13.879Z"
 }
