@@ -40,6 +40,18 @@ Never rely on the local active `gcloud` project. Never paste raw `DATABASE_URL`,
 
 Do not convert `CONFIG_READY_NOT_DRILLED` or `ACCEPTED_RISK` to `PASS` in the Gate Ledger or summaries.
 
+## Minimum Evidence Fields
+
+Each DR/infra evidence row must include these fields before final cutover review:
+
+| Gate | Required proof | Non-PASS fallback |
+| --- | --- | --- |
+| `DR_CLOUD_RUN_ROLLBACK` | Current revision, previous-good revision, executed `update-traffic` command shape, post-rollback health/log result, restore-to-latest result. | `CONFIG_READY_NOT_DRILLED` when only service/revision metadata exists. |
+| `DR_CLOUD_SQL_PITR` | Source instance, owner-approved safe restore target, restore point, clone operation result, target describe result, cleanup disposition. | `BLOCKED` when target approval, PITR metadata, permission, or clone result is missing. |
+| `DR_VALKEY_RECONNECT` | Safe fixture IDs, smoke command shape, health/idle/log result, sanitized reconnect/failure summary. | `BLOCKED` when credentials or safe fixture IDs are missing. |
+| `INFRA_POOL_PGBOUNCER` | `DB_POOL_MAX`, Cloud Run max instances, estimated max DB connections, pgBouncer transaction-pooling proof when present. | `CONFIG_READY_NOT_DRILLED` when pool config exists but pgBouncer or load drill is absent. |
+| `INFRA_HA_REPLICA` | Cloud SQL availability type, replica metadata, failover/read-replica validation result when drilled. | `CONFIG_READY_NOT_DRILLED` when HA/read replica config exists but behavior is not drilled. |
+
 ## Evidence Collector
 
 Run the read-only collector first. It records Cloud Run service/revision/traffic/env summaries, Cloud SQL backup/PITR/HA/read-replica metadata, `DB_POOL_MAX` and timeout settings, pgBouncer config evidence if present, and Valkey smoke state.
