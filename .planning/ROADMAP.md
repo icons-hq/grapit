@@ -249,7 +249,7 @@ Plans:
 
 **Merged from:** 36 M1 integration + canary, 37 k6 load gate, 38 DR + DB capacity gate, 39 On-call + alert gate, 40 Live payment cutover
 
-**Plans:** 11/12 plans executed
+**Plans:** 12/12 plans complete
 
 Plans:
 **Wave 1**
@@ -272,7 +272,7 @@ Plans:
 - [x] 26-06-PLAN.md — k6 10k/20k load gate scripts and evidence
 
 **Wave 5** *(blocked on all evidence-producing gates and admin cutover UI)*
-- [ ] 26-10-PLAN.md — Final live-key cutover and BOOKING_ENABLED go/no-go
+- [x] 26-10-PLAN.md — Final live-key cutover and BOOKING_ENABLED go/no-go
 
 **Success criteria:**
 1. Full event detail page locale scope is reconciled in the `M1_LOCALE_SCOPE` gate before PASS, with payment disabled and signup/consent/admin content/queue/WAF/prewarm/booking-disabled E2E passing for the approved active locale set.
