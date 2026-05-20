@@ -323,6 +323,31 @@ describe('SmsService', () => {
       });
     });
 
+    it('Twilio 60410 recipient block은 stable errorCode/providerCode를 포함한다', async () => {
+      const configService = createConfigService();
+      const service = new SmsService(configService, mockRedis as never);
+
+      vi.spyOn(TwilioVerifyClient.prototype, 'sendVerification')
+        .mockRejectedValueOnce(
+          new TwilioVerifyApiError(
+            403,
+            60410,
+            'The destination phone number has been temporarily blocked',
+          ),
+        );
+
+      try {
+        await service.sendVerificationCode('+821026642373');
+        throw new Error('Expected sendVerificationCode to reject');
+      } catch (err) {
+        expect(err).toBeInstanceOf(BadRequestException);
+        expect((err as BadRequestException).getResponse()).toMatchObject({
+          errorCode: 'SMS_RECIPIENT_BLOCKED',
+          providerCode: 60410,
+        });
+      }
+    });
+
     it('local phone-axis send counter 초과 상태도 앱에서 막지 않는다', async () => {
       const configService = createConfigService();
       const service = new SmsService(configService, mockRedis as never);

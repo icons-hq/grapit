@@ -23,7 +23,11 @@ export class HttpExceptionFilter implements ExceptionFilter {
       statusCode: status,
       message: exception.message,
       ...(typeof exceptionResponse === 'object' && exceptionResponse !== null
-        ? { errors: (exceptionResponse as Record<string, unknown>)['errors'] }
+        ? {
+            errors: (exceptionResponse as Record<string, unknown>)['errors'],
+            errorCode: (exceptionResponse as Record<string, unknown>)['errorCode'],
+            providerCode: (exceptionResponse as Record<string, unknown>)['providerCode'],
+          }
         : {}),
       timestamp: new Date().toISOString(),
     };

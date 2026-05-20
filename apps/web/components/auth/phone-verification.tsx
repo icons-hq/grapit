@@ -33,6 +33,42 @@ type SmsVerificationPurpose =
   | 'signup'
   | 'social_registration'
   | 'profile_phone_change';
+type SmsSendErrorCode =
+  | 'SMS_PHONE_INVALID'
+  | 'SMS_CAPABLE_PHONE_REQUIRED'
+  | 'SMS_RECIPIENT_BLOCKED'
+  | 'SMS_PROVIDER_RATE_LIMITED'
+  | 'SMS_SEND_FAILED';
+
+function readSmsErrorCode(data: unknown): SmsSendErrorCode | null {
+  if (!data || typeof data !== 'object' || !('errorCode' in data)) return null;
+  const value = (data as { errorCode?: unknown }).errorCode;
+  if (
+    value === 'SMS_PHONE_INVALID' ||
+    value === 'SMS_CAPABLE_PHONE_REQUIRED' ||
+    value === 'SMS_RECIPIENT_BLOCKED' ||
+    value === 'SMS_PROVIDER_RATE_LIMITED' ||
+    value === 'SMS_SEND_FAILED'
+  ) {
+    return value;
+  }
+  return null;
+}
+
+function mapSmsSendErrorCodeToCopy(
+  errorCode: SmsSendErrorCode,
+  copy: ReturnType<typeof getAuthLaunchCopy>['otp'],
+): string {
+  const byCode = {
+    SMS_PHONE_INVALID: copy.invalidPhone,
+    SMS_CAPABLE_PHONE_REQUIRED: copy.smsCapablePhoneRequired,
+    SMS_RECIPIENT_BLOCKED: copy.recipientBlocked,
+    SMS_PROVIDER_RATE_LIMITED: copy.providerRateLimited,
+    SMS_SEND_FAILED: copy.sendFailed,
+  } satisfies Record<SmsSendErrorCode, string>;
+
+  return byCode[errorCode];
+}
 
 function mapErrorToCopy(
   err: unknown,
@@ -40,10 +76,12 @@ function mapErrorToCopy(
   phase: 'send' | 'verify',
 ): string {
   if (err instanceof ApiClientError) {
+    const smsErrorCode = readSmsErrorCode(err.data);
+    if (smsErrorCode) return mapSmsSendErrorCodeToCopy(smsErrorCode, copy);
     if (err.statusCode === 429) return copy.throttled;
     if (err.statusCode === 410 || err.statusCode === 422) return copy.expired;
     if (err.statusCode === 400) {
-      if (phase === 'send') return err.message || copy.systemError;
+      if (phase === 'send') return copy.invalidPhone;
       return copy.invalidCode;
     }
     if (err.statusCode >= 500) return copy.systemError;

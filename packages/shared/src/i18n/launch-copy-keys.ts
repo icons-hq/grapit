@@ -162,6 +162,11 @@ const authOtpKeys = [
   'invalidCode',
   'throttled',
   'systemError',
+  'invalidPhone',
+  'smsCapablePhoneRequired',
+  'recipientBlocked',
+  'providerRateLimited',
+  'sendFailed',
   'verified',
 ] as const;
 

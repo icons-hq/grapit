@@ -319,6 +319,11 @@
       "invalidCode": "The verification code does not match",
       "throttled": "Too many requests. Please try again later.",
       "systemError": "Verification failed. Please try again later.",
+      "invalidPhone": "Enter a valid mobile phone number.",
+      "smsCapablePhoneRequired": "Enter a mobile number that can receive SMS messages.",
+      "recipientBlocked": "We cannot send a verification code to this number right now. Try another mobile number or contact support.",
+      "providerRateLimited": "Verification requests are temporarily limited. Please try again shortly.",
+      "sendFailed": "We could not send the verification code. Please try again shortly.",
       "verified": "Verified"
     },
     "errors": {
