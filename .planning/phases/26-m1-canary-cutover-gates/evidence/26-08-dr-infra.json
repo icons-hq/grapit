@@ -1,7 +1,7 @@
 {
   "schemaVersion": "phase26.dr-infra-evidence.v1",
-  "generatedAt": "2026-05-20T05:47:13.787Z",
-  "startedAt": "2026-05-20T05:47:11.037Z",
+  "generatedAt": "2026-05-20T05:51:15.552Z",
+  "startedAt": "2026-05-20T05:51:12.045Z",
   "project": "grapit-491806",
   "region": "asia-northeast3",
   "command": "node scripts/phase26/infra-evidence.mjs --project grapit-491806 --region asia-northeast3",
@@ -171,6 +171,7 @@
         "instance": "grapit-db",
         "state": "CONFIG_READY_NOT_DRILLED",
         "command": "gcloud sql instances describe grapit-db --project=grapit-491806 --format=json",
+        "backupListCommand": "gcloud sql backups list --instance=grapit-db --project=grapit-491806 --limit=5 --sort-by=~endTime --format=json",
         "region": "asia-northeast3",
         "databaseVersion": "POSTGRES_16",
         "availabilityType": "ZONAL",
@@ -181,6 +182,44 @@
         "pitrEnabled": true,
         "transactionLogRetentionDays": 7,
         "retainedBackups": 7,
+        "recentBackups": [
+          {
+            "id": "1779246000000",
+            "status": "SUCCESSFUL",
+            "type": "AUTOMATED",
+            "windowStartTime": "2026-05-20T03:00:00Z",
+            "endTime": "2026-05-20T03:44:26.820Z"
+          },
+          {
+            "id": "1779159600000",
+            "status": "SUCCESSFUL",
+            "type": "AUTOMATED",
+            "windowStartTime": "2026-05-19T03:00:00Z",
+            "endTime": "2026-05-19T03:44:23.495Z"
+          },
+          {
+            "id": "1779073200000",
+            "status": "SUCCESSFUL",
+            "type": "AUTOMATED",
+            "windowStartTime": "2026-05-18T03:00:00Z",
+            "endTime": "2026-05-18T04:30:35.199Z"
+          },
+          {
+            "id": "1779006741562",
+            "status": "SUCCESSFUL",
+            "type": "ON_DEMAND",
+            "windowStartTime": "2026-05-17T08:32:21.562Z",
+            "endTime": "2026-05-17T08:33:32.506Z"
+          },
+          {
+            "id": "1779001218729",
+            "status": "SUCCESSFUL",
+            "type": "ON_DEMAND",
+            "windowStartTime": "2026-05-17T07:00:18.729Z",
+            "endTime": "2026-05-17T07:01:49.917Z"
+          }
+        ],
+        "recentBackupsError": null,
         "diskSizeGb": "10"
       }
     ]

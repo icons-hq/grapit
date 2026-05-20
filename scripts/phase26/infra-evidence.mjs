@@ -235,6 +235,17 @@ function extractDeployPoolEvidence(deployYaml, drizzleProvider) {
   };
 }
 
+function summarizeBackups(rawBackups) {
+  if (!Array.isArray(rawBackups)) return [];
+  return rawBackups.map((backup) => ({
+    id: backup?.id ?? null,
+    status: backup?.status ?? null,
+    type: backup?.type ?? null,
+    windowStartTime: backup?.windowStartTime ?? null,
+    endTime: backup?.endTime ?? null,
+  }));
+}
+
 async function collectCloudRun(args) {
   const services = [];
   for (const serviceName of args.services) {
@@ -317,10 +328,21 @@ async function collectCloudSql(args) {
     const instance = describe.data ?? {};
     const backupConfig = instance?.settings?.backupConfiguration ?? {};
     const availabilityType = instance?.settings?.availabilityType ?? 'UNKNOWN';
+    const backups = gcloudJson([
+      'sql',
+      'backups',
+      'list',
+      `--instance=${instanceName}`,
+      `--project=${args.project}`,
+      '--limit=5',
+      '--sort-by=~endTime',
+    ]);
+
     instances.push({
       instance: instanceName,
       state: STATES.CONFIG_READY_NOT_DRILLED,
       command: describe.shape,
+      backupListCommand: backups.shape ?? null,
       region: instance?.region ?? null,
       databaseVersion: instance?.databaseVersion ?? null,
       availabilityType,
@@ -331,6 +353,8 @@ async function collectCloudSql(args) {
       pitrEnabled: Boolean(backupConfig.pointInTimeRecoveryEnabled),
       transactionLogRetentionDays: backupConfig.transactionLogRetentionDays ?? null,
       retainedBackups: backupConfig.backupRetentionSettings?.retainedBackups ?? null,
+      recentBackups: backups.ok ? summarizeBackups(backups.data) : [],
+      recentBackupsError: backups.ok ? null : backups.error,
       diskSizeGb: instance?.settings?.dataDiskSizeGb ?? null,
     });
   }
