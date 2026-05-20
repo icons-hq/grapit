@@ -136,6 +136,11 @@ const expectedKeys = {
     'invalidCode',
     'throttled',
     'systemError',
+    'invalidPhone',
+    'smsCapablePhoneRequired',
+    'recipientBlocked',
+    'providerRateLimited',
+    'sendFailed',
     'verified',
   ],
   'auth.errors': [
