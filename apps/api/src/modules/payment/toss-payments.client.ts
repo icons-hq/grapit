@@ -15,6 +15,10 @@ export interface TossPaymentResponse {
   }>;
 }
 
+export interface TossPaymentRequestOptions {
+  idempotencyKey?: string;
+}
+
 export class TossPaymentError extends Error {
   public readonly code: string;
 
@@ -38,17 +42,61 @@ export class TossPaymentsClient {
     return `Basic ${Buffer.from(this.secretKey + ':').toString('base64')}`;
   }
 
+  private buildHeaders(
+    options: TossPaymentRequestOptions = {},
+  ): Record<string, string> {
+    const headers: Record<string, string> = {
+      Authorization: this.getAuthHeader(),
+      'Content-Type': 'application/json',
+    };
+
+    if (options.idempotencyKey) {
+      headers['Idempotency-Key'] = options.idempotencyKey;
+    }
+
+    return headers;
+  }
+
+  private toPaymentError(data: unknown, fallbackMessage: string): TossPaymentError {
+    const errorBody = data as Record<string, unknown>;
+    return new TossPaymentError(
+      typeof errorBody.code === 'string' ? errorBody.code : 'UNKNOWN_ERROR',
+      this.redactSensitiveMessage(
+        typeof errorBody.message === 'string'
+          ? errorBody.message
+          : fallbackMessage,
+      ),
+    );
+  }
+
+  private redactSensitiveMessage(message: string): string {
+    let redacted = message;
+
+    if (this.secretKey) {
+      redacted = redacted.replace(
+        new RegExp(this.escapeRegExp(this.secretKey), 'g'),
+        '[redacted toss secret]',
+      );
+    }
+
+    return redacted
+      .replace(/\b(?:test|live)_sk_[A-Za-z0-9_-]+/g, '[redacted toss secret]')
+      .replace(/\bpay_[A-Za-z0-9_-]+/g, '[redacted paymentKey]');
+  }
+
+  private escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  }
+
   async confirmPayment(params: {
     paymentKey: string;
     orderId: string;
     amount: number;
+    idempotencyKey?: string;
   }): Promise<TossPaymentResponse> {
     const response = await fetch(`${this.baseUrl}/payments/confirm`, {
       method: 'POST',
-      headers: {
-        Authorization: this.getAuthHeader(),
-        'Content-Type': 'application/json',
-      },
+      headers: this.buildHeaders({ idempotencyKey: params.idempotencyKey }),
       body: JSON.stringify({
         paymentKey: params.paymentKey,
         orderId: params.orderId,
@@ -59,35 +107,49 @@ export class TossPaymentsClient {
     const data: unknown = await response.json();
 
     if (!response.ok) {
-      const errorBody = data as Record<string, unknown>;
-      throw new TossPaymentError(
-        typeof errorBody.code === 'string' ? errorBody.code : 'UNKNOWN_ERROR',
-        typeof errorBody.message === 'string' ? errorBody.message : '결제 승인에 실패했습니다',
-      );
+      throw this.toPaymentError(data, '결제 승인에 실패했습니다');
     }
 
     // TODO: zod 스키마로 런타임 검증 추가 (현재는 타입 단언만 수행)
     return data as TossPaymentResponse;
   }
 
-  async cancelPayment(paymentKey: string, reason: string): Promise<TossPaymentResponse> {
+  async cancelPayment(
+    paymentKey: string,
+    reason: string,
+    options: TossPaymentRequestOptions = {},
+  ): Promise<TossPaymentResponse> {
     const response = await fetch(`${this.baseUrl}/payments/${paymentKey}/cancel`, {
       method: 'POST',
-      headers: {
-        Authorization: this.getAuthHeader(),
-        'Content-Type': 'application/json',
-      },
+      headers: this.buildHeaders(options),
       body: JSON.stringify({ cancelReason: reason }),
     });
 
     const data: unknown = await response.json();
 
     if (!response.ok) {
-      const errorBody = data as Record<string, unknown>;
-      throw new TossPaymentError(
-        typeof errorBody.code === 'string' ? errorBody.code : 'UNKNOWN_ERROR',
-        typeof errorBody.message === 'string' ? errorBody.message : '결제 취소에 실패했습니다',
-      );
+      throw this.toPaymentError(data, '결제 취소에 실패했습니다');
+    }
+
+    // TODO: zod 스키마로 런타임 검증 추가 (현재는 타입 단언만 수행)
+    return data as TossPaymentResponse;
+  }
+
+  async queryPayment(paymentKey: string): Promise<TossPaymentResponse> {
+    const response = await fetch(
+      `${this.baseUrl}/payments/${encodeURIComponent(paymentKey)}`,
+      {
+        method: 'GET',
+        headers: {
+          Authorization: this.getAuthHeader(),
+        },
+      },
+    );
+
+    const data: unknown = await response.json();
+
+    if (!response.ok) {
+      throw this.toPaymentError(data, '결제 상태 조회에 실패했습니다');
     }
 
     // TODO: zod 스키마로 런타임 검증 추가 (현재는 타입 단언만 수행)
