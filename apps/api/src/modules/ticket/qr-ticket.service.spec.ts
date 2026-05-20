@@ -87,6 +87,7 @@ describe('QrTicketService', () => {
             {
               reservationId: 'reservation-1',
               paymentId: 'payment-1',
+              paymentStatus: 'DONE',
               showtimeId: 'showtime-1',
               showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
             },

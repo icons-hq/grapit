@@ -46,6 +46,7 @@ import type {
   FloorAwareSeatSelection,
   PerformanceBookingPolicy,
   PaymentStatus,
+  QrTicket,
   SeatSelection,
   ReservationStatus,
   ReservationListItem,
@@ -1372,19 +1373,15 @@ export class ReservationService {
       .where(eq(payments.reservationId, reservationId));
 
     const qrTicket: ReservationDetail['qrTicket'] =
-      row.reservation.status === 'CONFIRMED' && payment?.id && this.qrTicketService
+      row.reservation.status === 'CONFIRMED'
+      && payment?.id
+      && payment.status === 'DONE'
+      && this.qrTicketService
         ? await this.qrTicketService.ensureIssuedTicketForReservation({
             reservationId,
             paymentId: payment.id,
           })
-        : {
-            token: '',
-            jti: '',
-            status: row.reservation.status === 'CONFIRMED' ? 'ACTIVE' : 'REVOKED',
-            issuedAt: row.reservation.createdAt?.toISOString() ?? new Date(0).toISOString(),
-            emailScheduledAt: null,
-            emailedAt: null,
-          };
+        : this.createBlockingQrTicket(row.reservation.createdAt);
 
     return {
       id: row.reservation.id,
@@ -1428,6 +1425,17 @@ export class ReservationService {
       },
       cancelledSeatHold: null,
       qrTicket,
+    };
+  }
+
+  private createBlockingQrTicket(createdAt?: Date | null): QrTicket {
+    return {
+      token: '',
+      jti: '',
+      status: 'REVOKED',
+      issuedAt: createdAt?.toISOString() ?? new Date(0).toISOString(),
+      emailScheduledAt: null,
+      emailedAt: null,
     };
   }
 

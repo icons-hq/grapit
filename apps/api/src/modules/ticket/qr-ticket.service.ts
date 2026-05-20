@@ -1,5 +1,6 @@
 import {
   Inject,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -50,6 +51,7 @@ type TicketRecord = {
 type ReservationIssueContext = {
   reservationId: string;
   paymentId: string;
+  paymentStatus: string;
   showtimeId: string;
   showtimeAt: Date;
 };
@@ -67,6 +69,20 @@ export interface QrTicketTokenPayload {
   showtimeId: string;
   secretVersion: string;
   issuedAt: string;
+}
+
+export interface QrTicketScannerContract {
+  tokenVersion: string;
+  ticketStatus: QrTicketStatus;
+  reservationId: string;
+  paymentId: string;
+  showtimeId: string;
+  performanceId: string;
+  performanceTitle: string;
+  showtimeAt: string;
+  venueName: string;
+  maskedJti: string;
+  verifiedAt: string;
 }
 
 @Injectable()
@@ -111,7 +127,18 @@ export class QrTicketService implements OnModuleInit {
   }): Promise<QrTicket> {
     let ticketRecord = await this.findTicketByReservationId(input.reservationId);
 
-    if (!ticketRecord) {
+    if (ticketRecord) {
+      const issueContext = await this.getReservationIssueContext(input);
+      if (
+        ticketRecord.paymentId !== issueContext.paymentId
+        || ticketRecord.showtimeId !== issueContext.showtimeId
+      ) {
+        throw new NotFoundException('QR 티켓 발급 대상 예매를 찾을 수 없습니다');
+      }
+      if (ticketRecord.status !== 'active') {
+        throw new ConflictException('QR 티켓이 활성 상태가 아닙니다');
+      }
+    } else {
       const issueContext = await this.getReservationIssueContext(input);
       const issuedAt = new Date();
       const emailScheduledAt = this.calculateEmailScheduledAt(issueContext.showtimeAt, issuedAt);
@@ -172,6 +199,7 @@ export class QrTicketService implements OnModuleInit {
       .select({
         reservationId: reservations.id,
         paymentId: payments.id,
+        paymentStatus: payments.status,
       })
       .from(reservations)
       .innerJoin(payments, eq(payments.reservationId, reservations.id))
@@ -180,6 +208,7 @@ export class QrTicketService implements OnModuleInit {
           eq(reservations.id, reservationId),
           eq(reservations.userId, userId),
           eq(reservations.status, 'CONFIRMED'),
+          eq(payments.status, 'DONE'),
         ),
       );
 
@@ -230,6 +259,56 @@ export class QrTicketService implements OnModuleInit {
     await this.requireValidTicketState(verified);
 
     return verified;
+  }
+
+  async verifyTicketForScannerContract(token: string): Promise<QrTicketScannerContract> {
+    const payload = await this.verifyTicketToken(token);
+    const [row] = await this.db
+      .select({
+        ticketStatus: tickets.status,
+        reservationId: reservations.id,
+        paymentId: payments.id,
+        showtimeId: showtimes.id,
+        performanceId: performances.id,
+        performanceTitle: performances.title,
+        showtimeAt: showtimes.dateTime,
+        venueName: venues.name,
+      })
+      .from(tickets)
+      .innerJoin(reservations, eq(tickets.reservationId, reservations.id))
+      .innerJoin(payments, eq(tickets.paymentId, payments.id))
+      .innerJoin(showtimes, eq(tickets.showtimeId, showtimes.id))
+      .innerJoin(performances, eq(showtimes.performanceId, performances.id))
+      .leftJoin(venues, eq(performances.venueId, venues.id))
+      .where(
+        and(
+          eq(tickets.qrTokenJti, payload.jti),
+          eq(tickets.reservationId, payload.reservationId),
+          eq(tickets.paymentId, payload.paymentId),
+          eq(tickets.showtimeId, payload.showtimeId),
+          eq(reservations.status, 'CONFIRMED'),
+          eq(payments.status, 'DONE'),
+          eq(tickets.status, 'active'),
+        ),
+      );
+
+    if (!row) {
+      throw new UnauthorizedException('사용할 수 없는 QR 티켓입니다');
+    }
+
+    return {
+      tokenVersion: payload.secretVersion,
+      ticketStatus: this.mapStatus(row.ticketStatus),
+      reservationId: row.reservationId,
+      paymentId: row.paymentId,
+      showtimeId: row.showtimeId,
+      performanceId: row.performanceId,
+      performanceTitle: row.performanceTitle,
+      showtimeAt: row.showtimeAt.toISOString(),
+      venueName: row.venueName ?? '',
+      maskedJti: this.maskJti(payload.jti),
+      verifiedAt: new Date().toISOString(),
+    };
   }
 
   private async requireValidTicketState(
@@ -300,6 +379,7 @@ export class QrTicketService implements OnModuleInit {
       .select({
         reservationId: reservations.id,
         paymentId: payments.id,
+        paymentStatus: payments.status,
         showtimeId: reservations.showtimeId,
         showtimeAt: showtimes.dateTime,
       })
@@ -311,14 +391,23 @@ export class QrTicketService implements OnModuleInit {
           eq(reservations.id, input.reservationId),
           eq(payments.id, input.paymentId),
           eq(reservations.status, 'CONFIRMED'),
+          eq(payments.status, 'DONE'),
         ),
       );
 
-    if (!context) {
+    if (!context || context.paymentStatus !== 'DONE') {
       throw new NotFoundException('QR 티켓 발급 대상 예매를 찾을 수 없습니다');
     }
 
     return context;
+  }
+
+  private maskJti(jti: string): string {
+    if (jti.length <= 10) {
+      return `${jti.slice(0, 2)}...${jti.slice(-2)}`;
+    }
+
+    return `${jti.slice(0, 6)}...${jti.slice(-4)}`;
   }
 
   private async ensureReminderSchedule(ticketRecord: TicketRecord): Promise<TicketRecord> {
