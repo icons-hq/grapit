@@ -133,20 +133,24 @@ test.describe('Admin Cutover Gate Ledger E2E', () => {
       page.getByRole('heading', { name: '컷오버 게이트', level: 1 }),
     ).toBeVisible();
     await expect(page.getByText('아직 라이브 예매를 열 수 없습니다')).toBeVisible();
-    await expect(page.getByText('TOSS_LIVE_KEY_SMOKE')).toBeVisible();
     await expect(
-      page.getByText('Toss review is not complete; live-key smoke is blocked.'),
+      page.getByRole('heading', { name: 'TOSS_LIVE_KEY_SMOKE' }),
+    ).toBeVisible();
+    await expect(
+      page
+        .getByText('Toss review is not complete; live-key smoke is blocked.')
+        .first(),
     ).toBeVisible();
 
-    await expect(page.getByText('CONFIG_READY_NOT_DRILLED')).toBeVisible();
+    await expect(page.getByText('CONFIG_READY_NOT_DRILLED').first()).toBeVisible();
     await expect(
       page.getByText('설정 증거는 있지만 실제 drill PASS는 아닙니다'),
     ).toBeVisible();
-    await expect(page.getByText('ACCEPTED_RISK')).toBeVisible();
+    await expect(page.getByText('ACCEPTED_RISK').first()).toBeVisible();
     await expect(
       page.getByText(
         'PASS가 아닌 상태로 진행하려면 실패 게이트, 보완 모니터링, rollback trigger를 기록해야 합니다',
-      ),
+      ).first(),
     ).toBeVisible();
 
     const enableButton = page.getByRole('button', {
