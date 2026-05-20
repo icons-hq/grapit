@@ -5,9 +5,11 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
+import { Reflector } from '@nestjs/core';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
+import { ADMIN_CAPABILITIES_KEY } from '../../common/decorators/admin-capabilities.decorator.js';
 import { AdminCapabilitiesGuard } from '../../common/guards/admin-capabilities.guard.js';
 import { RolesGuard } from '../../common/guards/roles.guard.js';
 import { AdminCutoverController } from './admin-cutover.controller.js';
@@ -30,11 +32,11 @@ describe('AdminCutoverController', () => {
     service = {
       getGateSummary: vi.fn(),
     };
+    const reflector = new Reflector();
 
     const moduleRef: TestingModule = await Test.createTestingModule({
       controllers: [AdminCutoverController],
       providers: [
-        AdminCapabilitiesGuard,
         {
           provide: AdminCutoverService,
           useValue: service,
@@ -61,6 +63,21 @@ describe('AdminCutoverController', () => {
               mode === 'admin_with_audit' ? ['audit.read'] : ['support.manage'],
           };
           return true;
+        },
+      })
+      .overrideGuard(AdminCapabilitiesGuard)
+      .useValue({
+        canActivate: (ctx: ExecutionContext) => {
+          const req = ctx.switchToHttp().getRequest();
+          const required = reflector.getAllAndOverride<string[]>(
+            ADMIN_CAPABILITIES_KEY,
+            [ctx.getHandler(), ctx.getClass()],
+          );
+          if (!required?.length) {
+            return true;
+          }
+          const capabilities = req.user?.adminCapabilities ?? [];
+          return required.every((capability) => capabilities.includes(capability));
         },
       })
       .compile();
