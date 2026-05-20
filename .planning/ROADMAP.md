@@ -249,7 +249,7 @@ Plans:
 
 **Merged from:** 36 M1 integration + canary, 37 k6 load gate, 38 DR + DB capacity gate, 39 On-call + alert gate, 40 Live payment cutover
 
-**Plans:** 10/12 plans executed
+**Plans:** 11/12 plans executed
 
 Plans:
 **Wave 1**
@@ -269,7 +269,7 @@ Plans:
 - [x] 26-12-PLAN.md — Admin Gate Ledger and cutover readiness UI
 
 **Wave 4** *(blocked on dedicated test-event rehearsal)*
-- [ ] 26-06-PLAN.md — k6 10k/20k load gate scripts and evidence
+- [x] 26-06-PLAN.md — k6 10k/20k load gate scripts and evidence
 
 **Wave 5** *(blocked on all evidence-producing gates and admin cutover UI)*
 - [ ] 26-10-PLAN.md — Final live-key cutover and BOOKING_ENABLED go/no-go
