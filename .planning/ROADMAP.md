@@ -249,7 +249,7 @@ Plans:
 
 **Merged from:** 36 M1 integration + canary, 37 k6 load gate, 38 DR + DB capacity gate, 39 On-call + alert gate, 40 Live payment cutover
 
-**Plans:** 7/12 plans executed
+**Plans:** 10/12 plans executed
 
 Plans:
 **Wave 1**
@@ -264,9 +264,9 @@ Plans:
 - [x] 26-11-PLAN.md — Admin cutover Gate Ledger read API
 
 **Wave 3** *(blocked on backend QR contract, admin cutover API, and rehearsal QR contract)*
-- [ ] 26-03-PLAN.md — Payment complete and My Page QR visibility
-- [ ] 26-05-PLAN.md — Dedicated test-event rehearsal and cleanup safety
-- [ ] 26-12-PLAN.md — Admin Gate Ledger and cutover readiness UI
+- [x] 26-03-PLAN.md — Payment complete and My Page QR visibility
+- [x] 26-05-PLAN.md — Dedicated test-event rehearsal and cleanup safety
+- [x] 26-12-PLAN.md — Admin Gate Ledger and cutover readiness UI
 
 **Wave 4** *(blocked on dedicated test-event rehearsal)*
 - [ ] 26-06-PLAN.md — k6 10k/20k load gate scripts and evidence
