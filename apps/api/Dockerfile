@@ -17,6 +17,8 @@ RUN addgroup --system --gid 1001 nodejs && \
 COPY --from=builder /app/apps/api/dist ./dist
 COPY --from=builder /deploy/node_modules ./node_modules
 COPY --from=builder /deploy/package.json ./package.json
+RUN mkdir -p /app/phase26
+COPY --from=builder /app/.planning/phases/26-m1-canary-cutover-gates/26-GATE-LEDGER.json /app/phase26/26-GATE-LEDGER.json
 USER nestjs
 EXPOSE 8080
 ENV PORT=8080
