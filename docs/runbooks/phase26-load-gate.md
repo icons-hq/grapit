@@ -54,6 +54,12 @@ Stop the k6 process and record `FAIL` or `BLOCKED` evidence if any of these occu
 
 The Docker `-e` flag before the image sets container environment, but k6 script env should be passed to the k6 CLI with `-e`. Keep secrets out of shell history where possible.
 
+Version check:
+
+```bash
+docker run --rm -i grafana/k6 version
+```
+
 Create output directory:
 
 ```bash
