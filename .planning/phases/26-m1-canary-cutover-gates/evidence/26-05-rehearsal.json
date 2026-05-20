@@ -1,0 +1,66 @@
+{
+  "schemaVersion": "phase26.rehearsal.v1",
+  "generatedAt": "2026-05-20T06:26:32.933Z",
+  "plan": "26-05",
+  "status": "BLOCKED",
+  "commandShape": {
+    "script": "scripts/phase26/rehearsal-smoke.mjs",
+    "flags": {
+      "executeCleanup": false,
+      "recordBlocked": true
+    }
+  },
+  "redaction": {
+    "mode": "metadata-only",
+    "notes": [
+      "Auth headers, cookies, raw Toss keys, payment keys, QR tokens, order suffixes, phone numbers, and email addresses are never written.",
+      "Performance title/description values are validated in memory only and are not stored in evidence."
+    ]
+  },
+  "environment": {
+    "apiOrigin": "<missing>",
+    "authHeaderFileProvided": false,
+    "databaseUrlProvided": false,
+    "performanceId": "<missing>",
+    "showtimeId": "<missing>",
+    "seatId": "<missing>",
+    "orderPrefix": "<missing>",
+    "testMarkerProvided": false,
+    "mutationApproval": "missing-or-invalid"
+  },
+  "checks": [
+    {
+      "name": "dedicated-test-event-fixtures",
+      "status": "BLOCKED",
+      "missingEnv": [
+        "GRABIT_API_URL",
+        "GRABIT_SMOKE_AUTH_HEADER_FILE",
+        "PHASE26_TEST_PERFORMANCE_ID",
+        "PHASE26_TEST_SHOWTIME_ID",
+        "PHASE26_TEST_SEAT_ID",
+        "PHASE26_TEST_ORDER_PREFIX",
+        "PHASE26_TEST_MARKER",
+        "PHASE26_REHEARSAL_ALLOW_MUTATION"
+      ]
+    },
+    {
+      "name": "live-ticketing-rehearsal",
+      "status": "NOT_RUN",
+      "reason": "No network request was made in --record-blocked mode."
+    },
+    {
+      "name": "cleanup-execution",
+      "status": "NOT_RUN",
+      "reason": "Cleanup mutation requires dry-run review and explicit owner approval."
+    }
+  ],
+  "cleanup": {
+    "dryRun": {
+      "status": "NOT_RUN"
+    },
+    "execution": {
+      "status": "NOT_RUN"
+    }
+  },
+  "blockedReason": "Dedicated test-event approval and required PHASE26_TEST_* fixtures were not provided in this executor context; no production-like rehearsal, Toss confirm, or cleanup mutation was run."
+}
