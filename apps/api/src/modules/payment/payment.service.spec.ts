@@ -443,6 +443,9 @@ describe('PaymentService', () => {
       expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
         'pay_async_done',
         expect.stringContaining('판매 불가능'),
+        {
+          idempotencyKey: 'toss-webhook:evt-payment-done-disabled-seat:seat-failure-cancel',
+        },
       );
       expect(insertCanceledPayment.values).toHaveBeenCalledWith(expect.objectContaining({
         reservationId,

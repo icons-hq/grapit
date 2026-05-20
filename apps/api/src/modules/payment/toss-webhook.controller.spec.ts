@@ -12,6 +12,7 @@ import type {
   TossWebhookRecordResult,
   TossWebhookRequestBody,
 } from './payment.service.js';
+import type { TossPaymentsClient, TossPaymentResponse } from './toss-payments.client.js';
 
 function createMockPaymentService() {
   return {
@@ -23,9 +24,16 @@ function createMockPaymentService() {
   };
 }
 
+function createMockTossClient() {
+  return {
+    queryPayment: vi.fn<TossPaymentsClient['queryPayment']>(),
+  };
+}
+
 describe('PaymentWebhookController', () => {
   let controller: PaymentWebhookController;
   let paymentService: ReturnType<typeof createMockPaymentService>;
+  let tossClient: ReturnType<typeof createMockTossClient>;
 
   const paymentStatusChangedEvent: TossWebhookRequestBody = {
     eventId: 'evt-payment-done-1',
@@ -62,7 +70,12 @@ describe('PaymentWebhookController', () => {
 
   beforeEach(() => {
     paymentService = createMockPaymentService();
-    controller = new PaymentWebhookController(paymentService as unknown as PaymentService);
+    tossClient = createMockTossClient();
+    tossClient.queryPayment.mockResolvedValue(makeQueriedPayment());
+    controller = new PaymentWebhookController(
+      paymentService as unknown as PaymentService,
+      tossClient as unknown as TossPaymentsClient,
+    );
   });
 
   function makeLedgerResult(
@@ -82,6 +95,20 @@ describe('PaymentWebhookController', () => {
       reservationId: 'reservation-1',
       reservationStatus: 'PENDING_PAYMENT',
       paymentStatus: 'IN_PROGRESS',
+      ...overrides,
+    };
+  }
+
+  function makeQueriedPayment(
+    overrides: Partial<TossPaymentResponse> = {},
+  ): TossPaymentResponse {
+    return {
+      paymentKey: 'pay_async_1',
+      orderId: 'GRP-ASYNC-1',
+      method: 'FOREIGN_EASY_PAY',
+      totalAmount: 150000,
+      status: 'DONE',
+      approvedAt: '2026-05-08T07:00:05.000Z',
       ...overrides,
     };
   }
@@ -234,6 +261,57 @@ describe('PaymentWebhookController', () => {
     );
   });
 
+  it('queries Toss before applying a DONE webhook and uses provider state as authority', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
+    tossClient.queryPayment.mockResolvedValueOnce(
+      makeQueriedPayment({
+        approvedAt: '2026-05-08T07:00:06.000Z',
+      }),
+    );
+
+    await controller.handleTossWebhook({
+      ...paymentStatusChangedEvent,
+      data: {
+        ...paymentStatusChangedEvent.data,
+        approvedAt: '2026-05-08T07:00:05.000Z',
+      },
+    });
+
+    expect(tossClient.queryPayment).toHaveBeenCalledWith('pay_async_1');
+    expect(paymentService.upsertAsyncPaymentProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: 'DONE',
+          approvedAt: '2026-05-08T07:00:06.000Z',
+        }),
+      }),
+      'DONE',
+      'payment_status_changed:done',
+    );
+  });
+
+  it('fails closed when a DONE webhook disagrees with queried Toss state', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
+    tossClient.queryPayment.mockResolvedValueOnce(
+      makeQueriedPayment({
+        status: 'CANCELED',
+      }),
+    );
+
+    await expect(controller.handleTossWebhook(paymentStatusChangedEvent)).rejects.toThrow(
+      'Toss provider state mismatch',
+    );
+
+    expect(paymentService.upsertAsyncPaymentProgress).not.toHaveBeenCalled();
+    expect(paymentService.markWebhookEventFailed).toHaveBeenCalledWith(
+      'evt-payment-done-1',
+      'PROCESSING_FAILED',
+      expect.stringContaining('Toss provider state mismatch'),
+    );
+  });
+
   it('re-applies DONE webhook replay when post-commit side effects previously failed', async () => {
     paymentService.recordWebhookEvent.mockResolvedValueOnce(
       makeLedgerResult({
@@ -274,6 +352,18 @@ describe('PaymentWebhookController', () => {
       }),
     );
     paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
+    tossClient.queryPayment.mockResolvedValueOnce(
+      makeQueriedPayment({
+        status: 'CANCELED',
+        cancels: [
+          {
+            cancelAmount: 150000,
+            cancelReason: 'buyer changed mind',
+            canceledAt: '2026-05-08T07:02:05.000Z',
+          },
+        ],
+      }),
+    );
 
     const result = await controller.handleTossWebhook(cancelStatusChangedEvent);
 
@@ -291,6 +381,27 @@ describe('PaymentWebhookController', () => {
       'evt-cancel-1',
       'CANCEL_STATUS_CHANGED_APPLIED',
       undefined,
+    );
+  });
+
+  it('fails closed when a cancel webhook disagrees with queried Toss state', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(
+      makeLedgerResult({
+        eventId: 'evt-cancel-1',
+      }),
+    );
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
+    tossClient.queryPayment.mockResolvedValueOnce(makeQueriedPayment());
+
+    await expect(controller.handleTossWebhook(cancelStatusChangedEvent)).rejects.toThrow(
+      'Toss provider state mismatch',
+    );
+
+    expect(paymentService.upsertAsyncPaymentProgress).not.toHaveBeenCalled();
+    expect(paymentService.markWebhookEventFailed).toHaveBeenCalledWith(
+      'evt-cancel-1',
+      'PROCESSING_FAILED',
+      expect.stringContaining('Toss provider state mismatch'),
     );
   });
 });
