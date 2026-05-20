@@ -249,11 +249,11 @@ Plans:
 
 **Merged from:** 36 M1 integration + canary, 37 k6 load gate, 38 DR + DB capacity gate, 39 On-call + alert gate, 40 Live payment cutover
 
-**Plans:** 12 plans
+**Plans:** 1/12 plans executed
 
 Plans:
 **Wave 1**
-- [ ] 26-01-PLAN.md — Gate Ledger foundation, source audit, and strict validator
+- [x] 26-01-PLAN.md — Gate Ledger foundation, source audit, and strict validator
 
 **Wave 2** *(blocked on Gate Ledger foundation)*
 - [ ] 26-02-PLAN.md — Backend QR contract and field-scan input smoke
