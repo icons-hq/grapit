@@ -22,7 +22,7 @@ cookies, OTP values, raw customer rows, or unmasked PII in this ledger.
 | `ADMIN_CUTOVER_UI` | M1-01, OPS-01, OPS-02 | BLOCKED | production | Admin Gate Ledger/cutover readiness surface is not available yet. |
 | `QR_VISIBILITY` | PAY-01 | BLOCKED | production-like | Confirmed payment QR visibility is a known cutover blocker until fixed and verified. |
 | `TOSS_TEST_REHEARSAL` | PAY-01 | BLOCKED | production-like-test-keys | Toss test-key ticketing rehearsal has not completed. |
-| `TOSS_TEST_SECRET_ROTATION` | PAY-01 | BLOCKED | provider-secret-manager-ci | Exposed Toss test secret has not been rotated/reissued with redacted evidence. |
+| `TOSS_TEST_SECRET_ROTATION` | PAY-01 | ACCEPTED_RISK | provider-secret-manager-ci | Exposed Toss test secret was not rotated in this execution window; owner approved continuing with redacted CLI binding evidence and non-PASS D-24 risk tracking. |
 | `TOSS_LIVE_KEY_SMOKE` | PAY-01 | BLOCKED | production-live-keys-booking-disabled | Toss live-key smoke is unavailable until review/live keys are ready. |
 | `BOOKING_ENABLED_GO_NO_GO` | M1-01, PAY-01, OPS-02 | BLOCKED | production | Final booking-enabled readiness check has not run. |
 | `LOAD_10K_BASELINE` | LOAD-01 | BLOCKED | production-like-dedicated-test-event | 10k baseline load gate has not run. |
@@ -128,3 +128,9 @@ scope. Phase 26 verifies the QR payload and visibility contract only.
 - `CONFIG_READY_NOT_DRILLED` requires owner approval and remains non-PASS.
 - Real Girl Rules event data, real users, real payments, real tickets, real
   sessions, and real seat state are protected from rehearsal cleanup.
+
+## Accepted-Risk Entries
+
+| Gate ID | Approved At | Evidence | Rationale | Monitoring / Trigger |
+| --- | --- | --- | --- | --- |
+| `TOSS_TEST_SECRET_ROTATION` | 2026-05-20T06:08:22Z | `.planning/phases/26-m1-canary-cutover-gates/evidence/26-04-toss-hardening.json` | D-24 rotation/reissue was not completed, but the owner approved continuing as non-PASS accepted risk. Raw Toss key material is not stored in repo artifacts. | Keep `BOOKING_ENABLED=false` until final cutover checks; close booking or block live enablement on Toss rehearsal failure, live-key smoke unavailability, webhook/provider mismatch, or any secret leakage. |

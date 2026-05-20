@@ -119,17 +119,19 @@
     {
       "gateId": "TOSS_TEST_SECRET_ROTATION",
       "requirementIds": ["PAY-01"],
-      "state": "BLOCKED",
+      "state": "ACCEPTED_RISK",
       "environment": "provider-secret-manager-ci",
-      "evidenceRefs": [],
-      "failureReason": "Exposed Toss test secret has not been rotated/reissued with redacted Secret Manager/CI binding evidence.",
-      "approvalState": "not_requested",
-      "approver": null,
-      "approvalTimestamp": null,
-      "compensatingMonitoring": "Record redacted evidence that the exposed test secret was reissued and bindings were updated before trusting final rehearsal evidence.",
-      "rollbackOrCloseTrigger": "Block final readiness if rotation evidence is missing or unapproved.",
+      "evidenceRefs": [
+        ".planning/phases/26-m1-canary-cutover-gates/evidence/26-04-toss-hardening.json"
+      ],
+      "failureReason": "Exposed Toss test secret was not rotated during this execution window; owner approved continuing as non-PASS accepted risk with redacted CLI binding evidence.",
+      "approvalState": "approved",
+      "approver": "owner",
+      "approvalTimestamp": "2026-05-20T06:08:22Z",
+      "compensatingMonitoring": "Keep BOOKING_ENABLED=false until final cutover checks. During rehearsal, use only dedicated test event/order markers, redacted logs, webhook re-query verification, and immediate close-booking/rollback criteria for payment or QR mismatch.",
+      "rollbackOrCloseTrigger": "Do not enable live booking if Toss test rehearsal fails, live-key smoke is unavailable, webhook re-query mismatches provider state, or secret leakage is detected in frontend/logs/artifacts.",
       "sourceDecisions": ["D-21", "D-22", "D-23", "D-24"],
-      "redactionNotes": "Never store raw Toss test or live secret values."
+      "redactionNotes": "Raw Toss client, secret, and security keys are not stored. Evidence records only key class, short redacted prefixes, Secret Manager version metadata, GitHub secret names, and Cloud Run binding names."
     },
     {
       "gateId": "TOSS_LIVE_KEY_SMOKE",

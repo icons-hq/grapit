@@ -1,0 +1,101 @@
+{
+  "schemaVersion": "phase26.toss-hardening.v1",
+  "phase": "26",
+  "plan": "26-04",
+  "recordedAt": "2026-05-20T06:08:22Z",
+  "status": "ACCEPTED_RISK",
+  "summary": "Toss retry/webhook hardening is implemented and verified. The exposed Toss test secret was not rotated in this execution window; owner explicitly approved continuing as ACCEPTED_RISK without storing raw key material.",
+  "codeEvidence": {
+    "tossIdempotencyAndWebhookAuthority": {
+      "state": "PASS",
+      "commits": [
+        "c1b27c6",
+        "faed455"
+      ],
+      "verification": [
+        "pnpm --filter @grabit/api exec vitest run src/modules/payment/toss-payments.client.spec.ts src/modules/payment/toss-webhook.controller.spec.ts src/modules/payment/payment.service.spec.ts",
+        "pnpm --filter @grabit/api typecheck"
+      ]
+    }
+  },
+  "secretRotationGate": {
+    "gateId": "TOSS_TEST_SECRET_ROTATION",
+    "state": "ACCEPTED_RISK",
+    "ownerApproval": {
+      "approvalState": "approved",
+      "approver": "owner",
+      "approvalTimestamp": "2026-05-20T06:08:22Z",
+      "source": "chat_checkpoint_response",
+      "rawKeysProvidedInChat": true,
+      "rawKeysStoredInRepoArtifacts": false
+    },
+    "keyMetadata": {
+      "clientKeyClass": "test_ck",
+      "clientKeyPrefix": "test_ck_6bJ...redacted",
+      "secretKeyClass": "test_sk",
+      "secretKeyPrefix": "test_sk_Dny...redacted",
+      "securityKeyClass": "sha256-like",
+      "securityKeyPrefix": "b50c...redacted"
+    },
+    "cliFindings": {
+      "gcpProject": "grapit-491806",
+      "cloudRunService": "grabit-api",
+      "cloudRunRegion": "asia-northeast3",
+      "latestReadyRevisionName": "grabit-api-00111-cxx",
+      "secretManagerBindings": [
+        {
+          "env": "TOSS_SECRET_KEY",
+          "secret": "toss-secret-key",
+          "versionAlias": "latest",
+          "versionsObserved": [
+            {
+              "version": "2",
+              "state": "enabled",
+              "created": "2026-05-11T02:18:41"
+            },
+            {
+              "version": "1",
+              "state": "enabled",
+              "created": "2026-04-20T03:13:59"
+            }
+          ]
+        },
+        {
+          "env": "TOSS_WEBHOOK_SECRET",
+          "secret": "toss-webhook-secret",
+          "versionAlias": "latest",
+          "versionsObserved": [
+            {
+              "version": "1",
+              "state": "enabled",
+              "created": "2026-05-10T14:13:53"
+            }
+          ]
+        }
+      ],
+      "githubSecretBindingsObserved": [
+        {
+          "name": "NEXT_PUBLIC_TOSS_CLIENT_KEY",
+          "updated": "2026-04-20T03:14:29Z"
+        },
+        {
+          "name": "TOSS_CLIENT_KEY_TEST",
+          "updated": "2026-04-20T08:25:25Z"
+        },
+        {
+          "name": "TOSS_SECRET_KEY_TEST",
+          "updated": "2026-04-20T08:25:26Z"
+        }
+      ],
+      "deployWorkflowBindings": [
+        "NEXT_PUBLIC_TOSS_CLIENT_KEY=${{ secrets.NEXT_PUBLIC_TOSS_CLIENT_KEY }}",
+        "TOSS_SECRET_KEY=toss-secret-key:latest",
+        "TOSS_WEBHOOK_SECRET=toss-webhook-secret:latest"
+      ]
+    },
+    "riskRationale": "D-24 preferred rotation/reissue was not completed, but owner instructed to proceed. This remains non-PASS evidence and must not be treated as final live readiness.",
+    "compensatingMonitoring": "Keep BOOKING_ENABLED=false until final cutover checks. During rehearsal, use only dedicated test event/order markers, redacted logs, webhook re-query verification, and immediate close-booking/rollback criteria for payment or QR mismatch.",
+    "rollbackOrCloseTrigger": "Do not enable live booking if Toss test rehearsal fails, live-key smoke is unavailable, webhook re-query mismatches provider state, or secret leakage is detected in frontend/logs/artifacts.",
+    "redactionNotes": "Raw client, secret, and security keys are intentionally omitted. Only key class and short redacted prefixes are recorded."
+  }
+}
