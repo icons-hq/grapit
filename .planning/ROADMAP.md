@@ -249,19 +249,19 @@ Plans:
 
 **Merged from:** 36 M1 integration + canary, 37 k6 load gate, 38 DR + DB capacity gate, 39 On-call + alert gate, 40 Live payment cutover
 
-**Plans:** 1/12 plans executed
+**Plans:** 6/12 plans executed
 
 Plans:
 **Wave 1**
 - [x] 26-01-PLAN.md — Gate Ledger foundation, source audit, and strict validator
 
 **Wave 2** *(blocked on Gate Ledger foundation)*
-- [ ] 26-02-PLAN.md — Backend QR contract and field-scan input smoke
+- [x] 26-02-PLAN.md — Backend QR contract and field-scan input smoke
 - [ ] 26-04-PLAN.md — Toss idempotency, webhook re-query, and test-secret rotation gate
-- [ ] 26-07-PLAN.md — Direct deploy strict-watch gate and M1 smoke
-- [ ] 26-08-PLAN.md — DR and infrastructure evidence gates
-- [ ] 26-09-PLAN.md — WAF, on-call, monitoring, and first-24h watch
-- [ ] 26-11-PLAN.md — Admin cutover Gate Ledger read API
+- [x] 26-07-PLAN.md — Direct deploy strict-watch gate and M1 smoke
+- [x] 26-08-PLAN.md — DR and infrastructure evidence gates
+- [x] 26-09-PLAN.md — WAF, on-call, monitoring, and first-24h watch
+- [x] 26-11-PLAN.md — Admin cutover Gate Ledger read API
 
 **Wave 3** *(blocked on backend QR contract, admin cutover API, and rehearsal QR contract)*
 - [ ] 26-03-PLAN.md — Payment complete and My Page QR visibility
