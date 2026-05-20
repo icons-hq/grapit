@@ -132,7 +132,7 @@ test.describe('phase26 QR visibility', () => {
       page.getByText('결제가 완료되었습니다. QR 티켓을 바로 확인할 수 있습니다.'),
     ).toBeVisible({ timeout: 10000 });
     await expect(page.getByRole('button', { name: 'QR 티켓 보기' })).toBeVisible();
-    await expect(page.getByText('QR 활성')).toBeVisible();
+    await expect(page.getByText('QR 활성').first()).toBeVisible();
     await expect(page.getByText(maskedQrJti)).toBeVisible();
     await expectNoRawSecrets(page);
   });
@@ -152,11 +152,11 @@ test.describe('phase26 QR visibility', () => {
     await page.goto('/mypage/reservations/phase26-qr-reservation');
 
     await expect(page.getByRole('heading', { name: 'QR 티켓' })).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText('QR 활성')).toBeVisible();
+    await expect(page.getByText('QR 활성').first()).toBeVisible();
     await expect(page.getByText(maskedQrJti)).toBeVisible();
-    await expect(page.getByText('2026.05.20')).toBeVisible();
+    await expect(page.getByText(/2026\.05\.20/).first()).toBeVisible();
     await expect(page.getByText('예매번호')).toBeVisible();
-    await expect(page.getByText('GRP-26-QR-0001')).toBeVisible();
+    await expect(page.getByText('GRP-26-QR-0001').first()).toBeVisible();
     await expect(page.getByText('결제 완료')).toBeVisible();
     await expect(page.getByText('Phase 26 QR Visibility Performance')).toBeVisible();
     await expect(page.getByText('Phase 26 QR Venue')).toBeVisible();
