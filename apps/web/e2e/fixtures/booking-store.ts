@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import type { SeatSelection } from '@grabit/shared';
+import type { FloorAwareSeatSelection, SeatSelection } from '@grabit/shared';
 
 /**
  * Inject minimal booking store state into the window before page navigation so the
@@ -20,7 +20,7 @@ export async function injectBookingFixture(
   args: {
     performanceId: string;
     showtimeId: string;
-    seats: SeatSelection[];
+    seats: Array<FloorAwareSeatSelection | SeatSelection>;
     performanceTitle: string;
     showDateTime: string;
     venue: string;
