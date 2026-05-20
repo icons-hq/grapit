@@ -119,11 +119,14 @@ export class TossPaymentsClient {
     reason: string,
     options: TossPaymentRequestOptions = {},
   ): Promise<TossPaymentResponse> {
-    const response = await fetch(`${this.baseUrl}/payments/${paymentKey}/cancel`, {
-      method: 'POST',
-      headers: this.buildHeaders(options),
-      body: JSON.stringify({ cancelReason: reason }),
-    });
+    const response = await fetch(
+      `${this.baseUrl}/payments/${encodeURIComponent(paymentKey)}/cancel`,
+      {
+        method: 'POST',
+        headers: this.buildHeaders(options),
+        body: JSON.stringify({ cancelReason: reason }),
+      },
+    );
 
     const data: unknown = await response.json();
 

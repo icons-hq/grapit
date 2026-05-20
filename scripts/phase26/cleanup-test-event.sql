@@ -241,7 +241,12 @@ union all
 select 'showtime_mismatch', count(*)::int
 from showtimes s
 join phase26_cleanup_config cfg on cfg.showtime_id = s.id
-where s.performance_id <> cfg.performance_id;
+where s.performance_id <> cfg.performance_id
+union all
+select 'other_showtimes_for_performance', count(*)::int
+from showtimes s
+join phase26_cleanup_config cfg on cfg.performance_id = s.performance_id
+where s.id <> cfg.showtime_id;
 
 create temp table phase26_actual_counts as
 select
@@ -344,12 +349,7 @@ with deleted as (
 )
 select 'showtimes_deleted' as action, count(*)::int as row_count from deleted;
 
-with deleted as (
-  delete from performances
-  where id = (select performance_id from phase26_cleanup_config)
-  returning 1
-)
-select 'performances_deleted_with_cascade' as action, count(*)::int as row_count from deleted;
+select 'performances_preserved' as action, 0::int as row_count;
 
 \echo 'PHASE26 cleanup execution committed. Restore via the confirmed backup/restore point if verification detects drift.'
 

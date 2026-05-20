@@ -15,7 +15,7 @@ const marker = requireEnv('PHASE26_TEST_MARKER');
 const loadApproval = requireEnv('PHASE26_LOAD_APPROVED');
 
 assertDedicatedTarget({ marker, loadApproval });
-http.setResponseCallback(http.expectedStatuses({ min: 200, max: 399 }, 401, 403, 404, 409, 429));
+http.setResponseCallback(http.expectedStatuses({ min: 200, max: 399 }));
 
 export const options = {
   discardResponseBodies: true,
@@ -40,6 +40,41 @@ export const options = {
     },
   },
 };
+
+export function setup() {
+  const responses = http.batch([
+    ['GET', `${apiUrl}/health`, null, requestOptions('setup:health')],
+    [
+      'GET',
+      `${apiUrl}/performances/${encodeURIComponent(performanceId)}`,
+      null,
+      responseBodyOptions('setup:performance'),
+    ],
+    [
+      'GET',
+      `${apiUrl}/booking/schedules/${encodeURIComponent(showtimeId)}/seats`,
+      null,
+      requestOptions('setup:seats'),
+    ],
+  ]);
+
+  const ok = check(responses[0], {
+    'setup health returns 2xx': isSuccess,
+  }) && check(responses[1], {
+    'setup performance detail returns 2xx': isSuccess,
+  }) && check(responses[2], {
+    'setup seat read returns 2xx': isSuccess,
+  });
+
+  const body = String(responses[1].body || '');
+  if (__ENV.PHASE26_SKIP_MARKER_PREFLIGHT !== '1' && !body.includes(marker)) {
+    throw new Error('Phase 26 setup failed: performance detail does not include PHASE26_TEST_MARKER');
+  }
+
+  if (!ok) {
+    throw new Error('Phase 26 setup failed: target performance/showtime is not load-test ready');
+  }
+}
 
 export function baseline() {
   const route = chooseRoute({
@@ -74,13 +109,13 @@ function readPath() {
   ]);
 
   check(responses[0], {
-    'health does not return 5xx': (res) => res.status < 500,
+    'health returns 2xx': isSuccess,
   });
   check(responses[1], {
-    'performance detail does not return 5xx': (res) => res.status < 500,
+    'performance detail returns 2xx': isSuccess,
   });
   check(responses[2], {
-    'seat read does not return 5xx': (res) => res.status < 500,
+    'seat read returns 2xx': isSuccess,
   });
 }
 
@@ -97,7 +132,7 @@ function queuePath() {
       },
     });
     check(res, {
-      'queue status does not return 5xx': (response) => response.status < 500,
+      'queue status returns 2xx': isSuccess,
     });
     return;
   }
@@ -108,8 +143,7 @@ function queuePath() {
     requestOptions('queue:enter'),
   );
   check(res, {
-    'queue enter remains controlled': (response) =>
-      response.status < 500 || [401, 403, 409, 429].includes(response.status),
+    'queue enter returns 2xx': isSuccess,
   });
 }
 
@@ -133,7 +167,7 @@ function sampledMutation() {
   );
 
   check(lock, {
-    'lock sample avoids 5xx': (response) => response.status < 500,
+    'lock sample returns 2xx': isSuccess,
   });
 
   if (__ENV.PHASE26_PREPARE_SAMPLE === '1') {
@@ -149,7 +183,7 @@ function sampledMutation() {
       requestOptions('mutation:prepare-reservation', headers),
     );
     check(prepare, {
-      'prepare sample avoids 5xx': (response) => response.status < 500,
+      'prepare sample returns 2xx': isSuccess,
     });
   }
 }
@@ -178,6 +212,17 @@ function requestOptions(name, headers = requestHeaders()) {
     },
     timeout: __ENV.PHASE26_HTTP_TIMEOUT || '10s',
   };
+}
+
+function responseBodyOptions(name, headers = requestHeaders()) {
+  return {
+    ...requestOptions(name, headers),
+    responseType: 'text',
+  };
+}
+
+function isSuccess(response) {
+  return response.status >= 200 && response.status < 300;
 }
 
 function requestHeaders() {

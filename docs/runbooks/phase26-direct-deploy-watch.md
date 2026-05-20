@@ -163,7 +163,7 @@ Rollback immediately and keep the M1 gate NO_GO if any of these occur:
 | --- | --- | --- |
 | health 5xx | `/api/v1/health` returns 5xx or times out repeatedly | rollback API revision |
 | login/refresh failure | safe account cannot login, `/auth/refresh` fails, session user changes unexpectedly | rollback API/Web depending on fault |
-| public detail 5xx | event detail returns 5xx or app error boundary for safe published event | rollback Web first, API if data/API fault |
+| public detail non-2xx | event detail returns 3xx/4xx/5xx or app error boundary for safe published event | rollback Web first, API if data/API fault |
 | BOOKING_ENABLED=false side effects | seat lock, reservation prepare, Toss branch/confirm, payment row, or sold seat side effect occurs while disabled | rollback or close booking immediately |
 | queue entry 5xx | queue enter/session path returns 5xx or Cloud Run queue errors spike | rollback API revision |
 | payment confirm unsafe behavior | payment confirm runs when disabled, confirms without safe reservation/QR state, or creates unsafe provider side effect | rollback API and keep booking closed |
@@ -237,7 +237,7 @@ M1 direct deploy watch can be marked PASS only when all strict-watch checks pass
 - 100% direct deploy.
 - Health check green.
 - Auth/session login/refresh green.
-- Public event detail below 500.
+- Public event detail returns 2xx.
 - BOOKING_ENABLED=false with no booking side effects.
 - Queue entry below 500.
 - Payment confirm safe behavior.

@@ -105,12 +105,12 @@ Checks:
   - Previous rollback revision IDs are captured in short/redacted form.
   - API /api/v1/health is 2xx.
   - Web /api/runtime-flags returns BOOKING_ENABLED=false.
-  - Public event detail URL returns <500.
+  - Public event detail URL returns 2xx.
   - Auth/session, queue entry, and payment-safe checks run through explicit smoke command hooks.
   - Cloud Run logs are clipped, redacted, and scanned during the 15-minute strict watch.
 
 Rollback triggers:
-  health 5xx, login/refresh failure, public detail 5xx, BOOKING_ENABLED=false side effects,
+  health failure, login/refresh failure, public detail non-2xx, BOOKING_ENABLED=false side effects,
   queue entry 5xx, or unsafe payment confirm behavior.
 
 Security:
@@ -464,10 +464,10 @@ async function healthCheck(config) {
 
 async function publicDetailCheck(config) {
   return httpCheck('public-detail', config.publicDetailUrl, (response) => ({
-    status: response.status < 500 ? 'PASS' : 'FAIL',
+    status: response.status >= 200 && response.status < 300 ? 'PASS' : 'FAIL',
     summary:
-      response.status < 500
-        ? 'Public event detail returned below 500.'
+      response.status >= 200 && response.status < 300
+        ? 'Public event detail returned 2xx.'
         : `Public event detail returned ${response.status}.`,
   }));
 }
@@ -616,7 +616,7 @@ function buildEvidence(config, checks, startedAt, endedAt) {
     rollbackTriggers: [
       'health 5xx',
       'login/refresh failure',
-      'public detail 5xx',
+      'public detail non-2xx',
       'BOOKING_ENABLED=false side effects',
       'queue entry 5xx',
       'payment confirm unsafe behavior',

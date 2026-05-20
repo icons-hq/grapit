@@ -189,6 +189,37 @@ describe('AdminCutoverService', () => {
     expect(serialized).not.toContain('"evidence":');
   });
 
+  it('redacts secret-like strings from exposed Gate Ledger metadata', async () => {
+    const ledgerPath = await writeLedger({
+      requiredGateIds: ['PASS_GATE'],
+      gates: [
+        gate({
+          gateId: 'PASS_GATE',
+          state: 'PASS',
+          evidenceRefs: ['evidence/pay_standalone_secret_key_123456.json'],
+          failureReason: 'paymentKey=pay_failure_secret_key_123456',
+          approver: 'test_ck_client_key_should_not_leave',
+          compensatingMonitoring:
+            'Authorization: Bearer header_payload_signature_should_not_leave',
+          rollbackOrCloseTrigger: 'QR token qrToken=secret_qr_token_should_not_leave',
+          redactionNotes: 'Cookie: refresh_token=secret_cookie_value',
+        }),
+      ],
+    });
+    process.env.CUTOVER_GATE_LEDGER_PATH = ledgerPath;
+
+    const summary = await new AdminCutoverService().getGateSummary();
+    const serialized = JSON.stringify(summary);
+
+    expect(serialized).not.toContain('pay_standalone_secret_key_123456');
+    expect(serialized).not.toContain('pay_failure_secret_key_123456');
+    expect(serialized).not.toContain('test_ck_client_key_should_not_leave');
+    expect(serialized).not.toContain('header_payload_signature_should_not_leave');
+    expect(serialized).not.toContain('secret_qr_token_should_not_leave');
+    expect(serialized).not.toContain('secret_cookie_value');
+    expect(serialized).toContain('<toss-payment-key:redacted>');
+  });
+
   async function writeLedger(ledger: Record<string, unknown>): Promise<string> {
     const path = join(tmpRoot, `ledger-${Math.random().toString(36).slice(2)}.json`);
     await writeFile(

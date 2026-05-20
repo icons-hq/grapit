@@ -54,6 +54,7 @@ const REQUIRED_FIELDS = [
 const SECRET_PATTERNS = [
   { name: 'Toss secret key', pattern: /\btest_sk_[A-Za-z0-9_-]{10,}|\blive_sk_[A-Za-z0-9_-]{10,}/i },
   { name: 'Toss client key', pattern: /\btest_ck_[A-Za-z0-9_-]{10,}|\blive_ck_[A-Za-z0-9_-]{10,}/i },
+  { name: 'standalone Toss payment key', pattern: /\b(?:pay|tgen)_[A-Za-z0-9_-]{8,}\b/i },
   { name: 'paymentKey value', pattern: /\bpaymentKey\s*[:=]\s*["']?[A-Za-z0-9_-]{12,}/i },
   { name: 'QR token', pattern: /\bqr(?:Token|_token)?\s*[:=]\s*["']?[A-Za-z0-9_-]{16,}/i },
   { name: 'Authorization bearer', pattern: /\bAuthorization:\s*Bearer\s+[A-Za-z0-9._-]{16,}/i },
@@ -123,6 +124,7 @@ function redact(value) {
   return String(value)
     .replace(/\btest_sk_[A-Za-z0-9_-]+|\blive_sk_[A-Za-z0-9_-]+/gi, '<toss-secret:redacted>')
     .replace(/\btest_ck_[A-Za-z0-9_-]+|\blive_ck_[A-Za-z0-9_-]+/gi, '<toss-client:redacted>')
+    .replace(/\b(?:pay|tgen)_[A-Za-z0-9_-]{8,}\b/gi, '<toss-payment-key:redacted>')
     .replace(/\bAuthorization:\s*Bearer\s+[^\s`'")]+/gi, 'Authorization: Bearer <redacted>')
     .replace(/\bCookie:\s*[^\n\r]+/gi, 'Cookie: <redacted>')
     .replace(/\bpaymentKey\s*[:=]\s*["']?[^\s"',}]+/gi, 'paymentKey=<redacted>')

@@ -54,8 +54,7 @@ export class TossWebhookGuard implements CanActivate {
       return authorization.slice('Bearer '.length).trim();
     }
 
-    return this.getQuerySecret(request, 'tossWebhookSecret')
-      ?? this.getQuerySecret(request, 'secret');
+    return null;
   }
 
   private getHeader(
@@ -68,22 +67,6 @@ export class TossWebhookGuard implements CanActivate {
     }
 
     return value?.trim() || null;
-  }
-
-  private getQuerySecret(
-    request: TossWebhookRequestLike,
-    name: string,
-  ): string | null {
-    const value = request.query?.[name];
-    if (typeof value === 'string') {
-      return value.trim() || null;
-    }
-
-    if (Array.isArray(value) && typeof value[0] === 'string') {
-      return value[0].trim() || null;
-    }
-
-    return null;
   }
 
   private constantTimeEquals(provided: string, expected: string): boolean {

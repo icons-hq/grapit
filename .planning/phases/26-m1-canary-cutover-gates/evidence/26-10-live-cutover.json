@@ -2,7 +2,7 @@
   "schemaVersion": "phase26.live-cutover.v1",
   "phase": "26",
   "plan": "26-10",
-  "generatedAt": "2026-05-20T06:54:39.681Z",
+  "generatedAt": "2026-05-20T06:59:53.586Z",
   "status": "BLOCKED",
   "bookingEnabledApplied": false,
   "blockedReason": "Live-key smoke and/or required Gate Ledger rows are not ready; BOOKING_ENABLED=true was not applied.",

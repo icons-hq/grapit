@@ -152,7 +152,12 @@ union all
 select 'showtime_mismatch', count(*)::int
 from showtimes s
 join phase26_cleanup_config cfg on cfg.showtime_id = s.id
-where s.performance_id <> cfg.performance_id;
+where s.performance_id <> cfg.performance_id
+union all
+select 'other_showtimes_for_performance', count(*)::int
+from showtimes s
+join phase26_cleanup_config cfg on cfg.performance_id = s.performance_id
+where s.id <> cfg.showtime_id;
 
 \echo 'PHASE26 cleanup dry-run scope'
 select

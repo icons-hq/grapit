@@ -6,6 +6,28 @@ import { Injectable } from '@nestjs/common';
 const LEDGER_ENV = 'CUTOVER_GATE_LEDGER_PATH';
 const LOCAL_LEDGER_RELATIVE_PATH =
   '.planning/phases/26-m1-canary-cutover-gates/26-GATE-LEDGER.json';
+const SENSITIVE_TEXT_REPLACEMENTS: Array<[RegExp, string]> = [
+  [/\b(?:test|live)_sk_[A-Za-z0-9_-]+/gi, '<toss-secret:redacted>'],
+  [/\b(?:test|live)_ck_[A-Za-z0-9_-]+/gi, '<toss-client:redacted>'],
+  [/\b(?:pay|tgen)_[A-Za-z0-9_-]{8,}\b/gi, '<toss-payment-key:redacted>'],
+  [
+    /\bpaymentKey\s*[:=]\s*["']?[A-Za-z0-9_-]{8,}/gi,
+    'paymentKey=<redacted>',
+  ],
+  [
+    /\bqr(?:Token|_token)?\s*[:=]\s*["']?[A-Za-z0-9_-]{16,}/gi,
+    'qrToken=<redacted>',
+  ],
+  [
+    /\bAuthorization:\s*Bearer\s+[A-Za-z0-9._-]{16,}/gi,
+    'Authorization: Bearer <redacted>',
+  ],
+  [/\bCookie:\s*[^\n\r]+/gi, 'Cookie: <redacted>'],
+  [
+    /\b[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b/g,
+    '<jwt:redacted>',
+  ],
+];
 
 export const CUTOVER_GATE_STATES = [
   'PASS',
@@ -116,7 +138,7 @@ function normalizeLedger(ledger: GateLedgerDocument): AdminCutoverGateSummary {
   const rawRows = ledger.gates
     .map((gate) => normalizeGate(gate))
     .filter((row): row is AdminCutoverGateRow => Boolean(row));
-  const requiredGateIds = toStringArray(ledger.requiredGateIds);
+  const requiredGateIds = safeStringArray(ledger.requiredGateIds);
   const knownGateIds = new Set(rawRows.map((row) => row.gateId));
   const missingRows = requiredGateIds
     .filter((gateId) => !knownGateIds.has(gateId))
@@ -141,7 +163,7 @@ function normalizeLedger(ledger: GateLedgerDocument): AdminCutoverGateSummary {
     finalEnableAllowed: rows.length > 0 && !firstBlockingGate,
     redactionNotes: [
       'Only Gate Ledger metadata and evidenceRefs are exposed by this API.',
-      stringOrNull(ledger.cutoverPolicy?.secretPolicy) ??
+      safeStringOrNull(ledger.cutoverPolicy?.secretPolicy) ??
         'Evidence must be redacted before it is linked from the Gate Ledger.',
     ],
   };
@@ -158,23 +180,23 @@ function normalizeGate(gate: unknown): AdminCutoverGateRow | null {
     return null;
   }
 
-  const evidenceRefs = toStringArray(gate.evidenceRefs);
-  const approvalState = stringOrNull(gate.approvalState) ?? 'not_requested';
+  const evidenceRefs = safeStringArray(gate.evidenceRefs);
+  const approvalState = safeStringOrNull(gate.approvalState) ?? 'not_requested';
   const row: Omit<AdminCutoverGateRow, 'blocking' | 'blockingReason'> = {
-    gateId,
-    requirementIds: toStringArray(gate.requirementIds),
+    gateId: redactSensitiveText(gateId),
+    requirementIds: safeStringArray(gate.requirementIds),
     state,
-    environment: stringOrNull(gate.environment),
+    environment: safeStringOrNull(gate.environment),
     evidenceRefs,
     evidenceMissing: evidenceRefs.length === 0,
-    failureReason: stringOrNull(gate.failureReason),
+    failureReason: safeStringOrNull(gate.failureReason),
     approvalState,
-    approver: stringOrNull(gate.approver),
-    approvalTimestamp: stringOrNull(gate.approvalTimestamp),
-    compensatingMonitoring: stringOrNull(gate.compensatingMonitoring),
-    rollbackOrCloseTrigger: stringOrNull(gate.rollbackOrCloseTrigger),
-    sourceDecisions: toStringArray(gate.sourceDecisions),
-    redactionNotes: stringOrNull(gate.redactionNotes),
+    approver: safeStringOrNull(gate.approver),
+    approvalTimestamp: safeStringOrNull(gate.approvalTimestamp),
+    compensatingMonitoring: safeStringOrNull(gate.compensatingMonitoring),
+    rollbackOrCloseTrigger: safeStringOrNull(gate.rollbackOrCloseTrigger),
+    sourceDecisions: safeStringArray(gate.sourceDecisions),
+    redactionNotes: safeStringOrNull(gate.redactionNotes),
   };
   const blockingReason = getBlockingReason(row);
 
@@ -327,8 +349,24 @@ function toStringArray(value: unknown): string[] {
   return value.filter((item): item is string => typeof item === 'string');
 }
 
+function safeStringArray(value: unknown): string[] {
+  return toStringArray(value).map(redactSensitiveText);
+}
+
 function stringOrNull(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function safeStringOrNull(value: unknown): string | null {
+  const text = stringOrNull(value);
+  return text ? redactSensitiveText(text) : null;
+}
+
+function redactSensitiveText(value: string): string {
+  return SENSITIVE_TEXT_REPLACEMENTS.reduce(
+    (redacted, [pattern, replacement]) => redacted.replace(pattern, replacement),
+    value,
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

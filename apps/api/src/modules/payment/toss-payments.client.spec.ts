@@ -75,12 +75,12 @@ describe('TossPaymentsClient', () => {
       }),
     });
 
-    await client.cancelPayment('pay_test_phase26_1', 'phase26 retry-safe cancel', {
+    await client.cancelPayment('pay_test_phase26_1/unsafe', 'phase26 retry-safe cancel', {
       idempotencyKey: 'idem_cancel_phase26_1',
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://api.tosspayments.com/v1/payments/pay_test_phase26_1/cancel',
+      'https://api.tosspayments.com/v1/payments/pay_test_phase26_1%2Funsafe/cancel',
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({

@@ -2,7 +2,7 @@
   "schemaVersion": "phase26.gate-ledger.v1",
   "phase": "26",
   "slug": "m1-canary-cutover-gates",
-  "generatedAt": "2026-05-20T06:54:39.682Z",
+  "generatedAt": "2026-05-20T06:59:53.587Z",
   "cutoverPolicy": {
     "bookingEnabledRule": "BOOKING_ENABLED=true is no-go until every required gate is PASS or explicitly owner-approved as ACCEPTED_RISK or CONFIG_READY_NOT_DRILLED.",
     "allowedStates": [
@@ -511,5 +511,5 @@
       "redactionNotes": "No real Girl Rules row IDs, real user PII, payment keys, or full SQL row dumps."
     }
   ],
-  "lastAggregatedAt": "2026-05-20T06:54:39.682Z"
+  "lastAggregatedAt": "2026-05-20T06:59:53.587Z"
 }
