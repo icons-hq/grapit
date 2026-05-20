@@ -586,27 +586,23 @@ await qrTicketService.verifyTicketToken(detail.qrTicket.token);
 | A2 | Production credentials, dedicated test event, and provider quotas/topology must be confirmed before Load/DR gate execution. [ASSUMED] | Metadata | If wrong, the planner may overstate how much can be automated without operator access. |
 | A3 | This research remains valid until 2026-05-27 for provider/live cutover assumptions and 2026-06-19 for codebase architecture if no major refactor lands. [ASSUMED] | Metadata | If provider state or code changes sooner, plan tasks may use stale evidence. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **What is the required Phase 26 locale set: current four locales or the older five-locale success criterion?**  
    What we know: code and E2E currently use `ko`, `en`, `th`, `zh-CN`; ROADMAP/milestone success criteria say five locales. [VERIFIED: codebase rg] [VERIFIED: .planning/ROADMAP.md]  
-   What's unclear: whether Phase 26 should add/restore a fifth locale or amend success evidence to current launch locales. [VERIFIED: 26-CONTEXT.md]  
-   Recommendation: Wave 0 owner decision before M1-01 PASS. [VERIFIED: codebase rg + .planning/ROADMAP.md]
+   RESOLVED: Phase 26 plans must reconcile the mismatch before M1 smoke can be recorded as PASS. Plan 26-07 asserts the active locale set from current code (`ko`, `en`, `th`, `zh-CN`) and records any mismatch with older five-locale wording in the `M1_LOCALE_SCOPE` gate. Final cutover cannot treat the locale gate as PASS unless either the code/test surface is restored to the required five-locale criterion or the owner-approved Gate Ledger records a non-PASS state with explicit approval metadata. [VERIFIED: 26-CONTEXT.md] [VERIFIED: 26-07-PLAN.md]
 
 2. **Is pgBouncer/HA/read replica implementation required now, or will owner accept non-PASS ledger state?**  
    What we know: D-12 allows pgBouncer/HA/read replica/pool sizing as `CONFIG_READY_NOT_DRILLED` or `ACCEPTED_RISK` when not drilled. [VERIFIED: 26-CONTEXT.md]  
-   What's unclear: current live Cloud SQL topology and whether provider work is budgeted before cutover. [VERIFIED: local command]  
-   Recommendation: inspect live config early and make non-PASS state explicit. [VERIFIED: 26-CONTEXT.md]
+   RESOLVED: Plan 26-08 must inspect current live topology and classify each infra row separately. Actual Cloud Run rollback, Cloud SQL PITR/restore safe target, and Valkey reconnect/failure evidence are PASS only when drilled. pgBouncer, HA/read replica, and DB pool sizing evidence may be `CONFIG_READY_NOT_DRILLED` or `ACCEPTED_RISK`, but never PASS unless drilled; owner-approved non-PASS progression requires approvalState, approver, compensatingMonitoring, and rollbackOrCloseTrigger. [VERIFIED: 26-CONTEXT.md] [VERIFIED: 26-08-PLAN.md]
 
 3. **Can Toss live-key smoke safely perform confirm/cancel before full public booking open?**  
    What we know: live keys mean real deposits and live smoke must include key/prefix, widget, server confirm/query/cancel where safely allowed, webhook delivery/query re-verification, and no leakage. [VERIFIED: 26-CONTEXT.md] [CITED: https://docs.tosspayments.com/guides/v2/get-started/llms-quick-reference]  
-   What's unclear: Toss review/live key availability and permitted live test amount/method. [VERIFIED: 26-CONTEXT.md]  
-   Recommendation: separate live-key smoke runbook from test-key rehearsal and keep booking disabled until ledger approves. [VERIFIED: 26-CONTEXT.md]
+   RESOLVED: Plan 26-10 separates live-key smoke from test-key rehearsal. Live-key smoke happens only after Toss review/live-key availability is confirmed, with `BOOKING_ENABLED=false`, server-only secret checks, no raw keys, and provider-safe confirm/query/cancel only where explicitly allowed by the runbook/operator. Webhook state must be re-queried from Toss before local finalization, and unavailable live provider state is BLOCKED or owner-approved non-PASS, not PASS. [VERIFIED: 26-CONTEXT.md] [VERIFIED: 26-10-PLAN.md]
 
 4. **Does complete page need an actual scannable QR image or is a visible My Page QR access path acceptable?**  
    What we know: D-26 says complete page and My Page/ticket detail must let the user see/access QR, and current complete page mainly links to My Page. [VERIFIED: 26-CONTEXT.md] [VERIFIED: codebase rg]  
-   What's unclear: owner UX expectation for complete page display. [VERIFIED: 26-CONTEXT.md]  
-   Recommendation: implement/verify actual visible QR access on both surfaces unless owner explicitly narrows D-26. [VERIFIED: 26-CONTEXT.md]
+   RESOLVED: Phase 26 requires visible or direct QR access on both the payment complete page and My Page/ticket detail before cutover. Plan 26-03 implements and tests both surfaces. A My Page-only link is not enough if the complete page cannot visibly expose QR-ready/direct access; QR pending remains non-PASS until safe retry/readiness evidence exists. [VERIFIED: 26-CONTEXT.md] [VERIFIED: 26-03-PLAN.md]
 
 ## Environment Availability
 
@@ -664,15 +660,16 @@ await qrTicketService.verifyTicketToken(detail.qrTicket.token);
 - **Per wave merge:** run `pnpm test`, targeted Playwright smoke, and any new Phase 26 scripts in dry-run mode. [VERIFIED: package.json]
 - **Phase gate:** full suite green, Gate Ledger valid, k6 gates complete or accepted-risk ledgered, DR/infra/WAF/on-call/Toss/QR rows accounted for before `$gsd-verify-work`. [VERIFIED: 26-CONTEXT.md]
 
-### Wave 0 Gaps
+### Wave 0 Gaps (RESOLVED BY PLANS)
 
-- [ ] `scripts/phase26/validate-gate-ledger.mjs` - validates D-01 through D-04 gate semantics. [VERIFIED: 26-CONTEXT.md]
-- [ ] `scripts/k6/phase26-baseline.js` and `scripts/k6/phase26-stress.js` - covers LOAD-01 thresholds. [CITED: https://grafana.com/docs/k6/latest/using-k6/thresholds/]
-- [ ] `apps/web/e2e/phase26-qr-visibility.spec.ts` or equivalent production-like smoke - covers D-25 through D-27. [VERIFIED: 26-CONTEXT.md]
-- [ ] API tests for Toss `Idempotency-Key` and `queryPayment(paymentKey)` webhook re-verification. [CITED: https://docs.tosspayments.com/guides/v2/get-started/llms-quick-reference] [VERIFIED: codebase rg]
-- [ ] `scripts/phase26/cleanup-dry-run.sql` and cleanup execution guard - covers D-13 through D-15. [VERIFIED: 26-CONTEXT.md]
-- [ ] `26-FIRST-24H-WATCH.md` or equivalent runbook/checklist - covers D-29 and D-30. [VERIFIED: 26-CONTEXT.md]
-- [ ] Locale scope decision/test update for four vs five locales. [VERIFIED: codebase rg] [VERIFIED: .planning/ROADMAP.md]
+- [x] `scripts/phase26/validate-gate-ledger.mjs` - planned in 26-01 Task 2; validates D-01 through D-04 gate semantics. [VERIFIED: 26-CONTEXT.md]
+- [x] Admin Gate Ledger/cutover UI - planned in 26-11 and 26-12; covers the UI-SPEC admin cutover readiness surface. [VERIFIED: 26-UI-SPEC.md]
+- [x] `scripts/k6/phase26-baseline.js` and `scripts/k6/phase26-stress.js` - planned in 26-06 Task 1; covers LOAD-01 thresholds. [CITED: https://grafana.com/docs/k6/latest/using-k6/thresholds/]
+- [x] `apps/web/e2e/phase26-qr-visibility.spec.ts` or equivalent production-like smoke - planned in 26-03 Task 1; covers D-25 through D-27. [VERIFIED: 26-CONTEXT.md]
+- [x] API tests for Toss `Idempotency-Key` and `queryPayment(paymentKey)` webhook re-verification - planned in 26-04 Task 1. [CITED: https://docs.tosspayments.com/guides/v2/get-started/llms-quick-reference] [VERIFIED: codebase rg]
+- [x] `scripts/phase26/cleanup-dry-run.sql` and cleanup execution guard - planned in 26-05 Task 1; covers D-13 through D-15. [VERIFIED: 26-CONTEXT.md]
+- [x] `26-FIRST-24H-WATCH.md` or equivalent runbook/checklist - planned in 26-09 Task 3; covers D-29 and D-30. [VERIFIED: 26-CONTEXT.md]
+- [x] Locale scope decision/test update for four vs five locales - planned in 26-07 Task 1 and 26-01 `M1_LOCALE_SCOPE`; must be reconciled before M1 smoke PASS. [VERIFIED: codebase rg] [VERIFIED: .planning/ROADMAP.md]
 
 ## Security Domain
 

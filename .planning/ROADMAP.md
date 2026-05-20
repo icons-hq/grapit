@@ -249,7 +249,7 @@ Plans:
 
 **Merged from:** 36 M1 integration + canary, 37 k6 load gate, 38 DR + DB capacity gate, 39 On-call + alert gate, 40 Live payment cutover
 
-**Plans:** 10 plans
+**Plans:** 12 plans
 
 Plans:
 **Wave 1**
@@ -258,20 +258,24 @@ Plans:
 **Wave 2** *(blocked on Gate Ledger foundation)*
 - [ ] 26-02-PLAN.md — Backend QR contract and field-scan input smoke
 - [ ] 26-04-PLAN.md — Toss idempotency, webhook re-query, and test-secret rotation gate
-- [ ] 26-05-PLAN.md — Dedicated test-event rehearsal and cleanup safety
-- [ ] 26-06-PLAN.md — k6 10k/20k load gate scripts and evidence
 - [ ] 26-07-PLAN.md — Direct deploy strict-watch gate and M1 smoke
 - [ ] 26-08-PLAN.md — DR and infrastructure evidence gates
 - [ ] 26-09-PLAN.md — WAF, on-call, monitoring, and first-24h watch
+- [ ] 26-11-PLAN.md — Admin cutover Gate Ledger read API
 
-**Wave 3** *(blocked on backend QR contract)*
+**Wave 3** *(blocked on backend QR contract, admin cutover API, and rehearsal QR contract)*
 - [ ] 26-03-PLAN.md — Payment complete and My Page QR visibility
+- [ ] 26-05-PLAN.md — Dedicated test-event rehearsal and cleanup safety
+- [ ] 26-12-PLAN.md — Admin Gate Ledger and cutover readiness UI
 
-**Wave 4** *(blocked on all evidence-producing gates)*
+**Wave 4** *(blocked on dedicated test-event rehearsal)*
+- [ ] 26-06-PLAN.md — k6 10k/20k load gate scripts and evidence
+
+**Wave 5** *(blocked on all evidence-producing gates and admin cutover UI)*
 - [ ] 26-10-PLAN.md — Final live-key cutover and BOOKING_ENABLED go/no-go
 
 **Success criteria:**
-1. Full event detail page is visible in five locales with payment disabled, and signup/consent/admin content/queue/WAF/prewarm/booking-disabled E2E pass.
+1. Full event detail page locale scope is reconciled in the `M1_LOCALE_SCOPE` gate before PASS, with payment disabled and signup/consent/admin content/queue/WAF/prewarm/booking-disabled E2E passing for the approved active locale set.
 2. CI/CD green 이후 100% 직접 배포와 15분 strict watch를 통과하고 rollback 준비가 검증된다.
 3. k6 10k baseline and 20k stress scenarios pass agreed p95/error-rate targets or cutover is explicitly blocked.
 4. Cloud SQL PITR, Valkey failover, Cloud Run rollback, pgBouncer, HA/read replica, and per-instance DB pool sizing are rehearsed.
