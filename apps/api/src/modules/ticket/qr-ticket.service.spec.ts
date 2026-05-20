@@ -393,4 +393,132 @@ describe('QrTicketService', () => {
       );
     }
   });
+
+  it('does not issue a cutover-ready QR ticket unless the linked payment is DONE', async () => {
+    const mockDb = {
+      select: vi
+        .fn()
+        .mockReturnValueOnce(chainResult([]))
+        .mockReturnValueOnce(
+          chainResult([
+            {
+              reservationId: 'reservation-1',
+              paymentId: 'payment-1',
+              paymentStatus: 'IN_PROGRESS',
+              showtimeId: 'showtime-1',
+              showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
+            },
+          ]),
+        ),
+      insert: vi.fn().mockReturnValue(createInsertResult([createTicketRecord()])),
+      update: vi.fn(),
+    };
+    const service = new QrTicketService(
+      mockDb as never,
+      {
+        get: vi.fn((key: string) => {
+          if (key === 'QR_TICKET_SECRET') return 'current-secret';
+          if (key === 'QR_TICKET_SECRET_VERSION') return '2026-07';
+          return undefined;
+        }),
+      } as never,
+      new JwtService(),
+      { sendQrTicketReminderEmail: vi.fn() } as never,
+      {
+        isAvailable: false,
+        send: vi.fn(),
+        work: vi.fn(),
+        stop: vi.fn(),
+      } as never,
+    );
+
+    await expect(service.ensureIssuedTicketForReservation({
+      reservationId: 'reservation-1',
+      paymentId: 'payment-1',
+    })).rejects.toThrow('QR 티켓 발급 대상 예매를 찾을 수 없습니다');
+
+    expect(mockDb.insert).not.toHaveBeenCalled();
+  });
+
+  it('verifies redacted Phase 27 scanner contract inputs without exposing the raw token or full JTI', async () => {
+    const configService = {
+      get: vi.fn((key: string) => {
+        if (key === 'QR_TICKET_SECRET') return 'current-secret';
+        if (key === 'QR_TICKET_SECRET_VERSION') return '2026-07';
+        if (key === 'QR_TICKET_SECRET_KEYRING_JSON') {
+          return JSON.stringify({ '2026-07': 'current-secret' });
+        }
+
+        return undefined;
+      }),
+    };
+    const jwtService = new JwtService();
+    const rawJti = 'qr-jti-phase26-scanner-contract-1234567890';
+    const token = await jwtService.signAsync(
+      {
+        type: 'qr-ticket',
+        jti: rawJti,
+        reservationId: 'reservation-1',
+        paymentId: 'payment-1',
+        showtimeId: 'showtime-1',
+        secretVersion: '2026-07',
+        issuedAt: now.toISOString(),
+      },
+      {
+        secret: 'current-secret',
+        algorithm: 'HS256',
+        noTimestamp: true,
+      },
+    );
+    const service = new QrTicketService(
+      {
+        select: vi
+          .fn()
+          .mockReturnValueOnce(chainResult([
+            createVerifiableTicketRow({
+              ticket: { qrTokenJti: rawJti },
+            }),
+          ]))
+          .mockReturnValueOnce(chainResult([
+            {
+              ticketStatus: 'active',
+              reservationId: 'reservation-1',
+              paymentId: 'payment-1',
+              showtimeId: 'showtime-1',
+              performanceId: 'performance-1',
+              performanceTitle: 'Girl Rules FAN MEETING IN SEOUL',
+              showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
+              venueName: '동해문화예술관 대극장',
+            },
+          ])),
+      } as never,
+      configService as never,
+      jwtService,
+      { sendQrTicketReminderEmail: vi.fn() } as never,
+      {
+        isAvailable: false,
+        send: vi.fn(),
+        work: vi.fn(),
+        stop: vi.fn(),
+      } as never,
+    );
+
+    const result = await service.verifyTicketForScannerContract(token);
+    const serialized = JSON.stringify(result);
+
+    expect(result).toMatchObject({
+      tokenVersion: '2026-07',
+      ticketStatus: 'ACTIVE',
+      reservationId: 'reservation-1',
+      paymentId: 'payment-1',
+      showtimeId: 'showtime-1',
+      performanceId: 'performance-1',
+      performanceTitle: 'Girl Rules FAN MEETING IN SEOUL',
+      venueName: '동해문화예술관 대극장',
+      maskedJti: expect.stringMatching(/^qr-jti...7890$/),
+    });
+    expect(result.showtimeAt).toBe('2026-07-18T11:00:00.000Z');
+    expect(serialized).not.toContain(token);
+    expect(serialized).not.toContain(rawJti);
+  });
 });

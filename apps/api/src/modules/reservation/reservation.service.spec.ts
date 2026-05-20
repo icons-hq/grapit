@@ -128,6 +128,20 @@ describe('ReservationService', () => {
     );
   });
 
+  function createServiceWithQrTicketService(qrTicketService: {
+    ensureIssuedTicketForReservation: ReturnType<typeof vi.fn>;
+  }) {
+    return new ReservationService(
+      mockDb as any,
+      mockTossClient as unknown as TossPaymentsClient,
+      mockBookingService as unknown as BookingService,
+      mockBookingGateway as unknown as BookingGateway,
+      mockFeatureFlags as unknown as FeatureFlagsService,
+      mockConsentService as unknown as ConsentService,
+      qrTicketService as never,
+    );
+  }
+
   const LOCK_EXPIRED_MESSAGE = '좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.';
   const LOCK_OTHER_OWNER_MESSAGE = '이미 다른 사용자가 선택한 좌석입니다.';
 
@@ -308,6 +322,8 @@ describe('ReservationService', () => {
     reservationId: string;
     userId: string;
     amount: number;
+    status?: string;
+    paymentStatus?: string;
     seats?: string[];
   }) {
     const seats = args.seats ?? ['A-1', 'A-2'];
@@ -322,8 +338,9 @@ describe('ReservationService', () => {
                     id: args.reservationId,
                     userId: args.userId,
                     reservationNumber: 'GRP-20260429-LOCKS',
-                    status: 'CONFIRMED',
+                    status: args.status ?? 'CONFIRMED',
                     totalAmount: args.amount,
+                    showtimeId: 'showtime-1',
                     cancelDeadline: new Date(),
                     cancelledAt: null,
                     cancelReason: null,
@@ -348,6 +365,8 @@ describe('ReservationService', () => {
       .mockReturnValueOnce(chainResult([{
         paymentKey: 'pk_test_123',
         method: '카드',
+        id: 'payment-1',
+        status: args.paymentStatus ?? 'DONE',
         paidAt: new Date(),
       }]));
   }
@@ -2278,6 +2297,83 @@ describe('ReservationService', () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+  });
+
+  describe('getReservationDetail - QR cutover contract', () => {
+    const userId = randomUUID();
+    const reservationId = randomUUID();
+
+    it('self-heals a confirmed DONE payment by issuing an active QR ticket on the read path', async () => {
+      const qrTicketService = {
+        ensureIssuedTicketForReservation: vi.fn().mockResolvedValue({
+          token: 'signed-qr-token',
+          jti: 'qr-jti-1',
+          status: 'ACTIVE',
+          issuedAt: '2026-07-10T09:00:00.000Z',
+          emailScheduledAt: null,
+          emailedAt: null,
+        }),
+      };
+      const qrAwareService = createServiceWithQrTicketService(qrTicketService);
+      setupReservationDetailMocks({ reservationId, userId, amount: 150000 });
+
+      await expect(qrAwareService.getReservationDetail(reservationId, userId))
+        .resolves
+        .toMatchObject({
+          id: reservationId,
+          qrTicket: {
+            token: 'signed-qr-token',
+            jti: 'qr-jti-1',
+            status: 'ACTIVE',
+          },
+        });
+
+      expect(qrTicketService.ensureIssuedTicketForReservation).toHaveBeenCalledWith({
+        reservationId,
+        paymentId: 'payment-1',
+      });
+    });
+
+    it('does not expose a false ACTIVE QR state when confirmed reservation has no DONE payment', async () => {
+      const qrTicketService = {
+        ensureIssuedTicketForReservation: vi.fn().mockResolvedValue({
+          token: 'signed-qr-token',
+          jti: 'qr-jti-1',
+          status: 'ACTIVE',
+          issuedAt: '2026-07-10T09:00:00.000Z',
+          emailScheduledAt: null,
+          emailedAt: null,
+        }),
+      };
+      const qrAwareService = createServiceWithQrTicketService(qrTicketService);
+      setupReservationDetailMocks({
+        reservationId,
+        userId,
+        amount: 150000,
+        paymentStatus: 'IN_PROGRESS',
+      });
+
+      const detail = await qrAwareService.getReservationDetail(reservationId, userId);
+
+      expect(detail.qrTicket).toMatchObject({
+        token: '',
+        jti: '',
+        status: 'REVOKED',
+      });
+      expect(qrTicketService.ensureIssuedTicketForReservation).not.toHaveBeenCalled();
+    });
+
+    it('keeps confirmed reservation detail in a blocking non-active QR state when QR runtime wiring is unavailable', async () => {
+      setupReservationDetailMocks({ reservationId, userId, amount: 150000 });
+
+      const detail = await service.getReservationDetail(reservationId, userId);
+
+      expect(detail.qrTicket).toMatchObject({
+        token: '',
+        jti: '',
+        status: 'REVOKED',
+      });
     });
   });
 
