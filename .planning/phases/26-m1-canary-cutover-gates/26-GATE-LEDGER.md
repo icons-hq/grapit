@@ -23,8 +23,8 @@ cookies, OTP values, raw customer rows, or unmasked PII in this ledger.
 | `QR_VISIBILITY` | PAY-01 | PASS | not_requested | 2 | Payment complete page and My Page QR visibility regression evidence recorded. |
 | `TOSS_TEST_REHEARSAL` | PAY-01 | BLOCKED | not_requested | 1 | Dedicated test-event approval and required PHASE26_TEST_* fixtures were not provided in this executor context; no production-like rehearsal, Toss confirm, or cleanup mutation was run. |
 | `TOSS_TEST_SECRET_ROTATION` | PAY-01 | ACCEPTED_RISK | approved / owner | 1 | D-24 preferred rotation/reissue was not completed, but owner instructed to proceed. This remains non-PASS evidence and must not be treated as final live readiness. |
-| `TOSS_LIVE_KEY_SMOKE` | PAY-01 | BLOCKED | not_requested | 0 | Toss live-key smoke has not run because live keys/review availability were not confirmed. |
-| `BOOKING_ENABLED_GO_NO_GO` | M1-01, PAY-01, OPS-02 | BLOCKED | not_requested | 0 | Final booking-enabled readiness check has not run. |
+| `TOSS_LIVE_KEY_SMOKE` | PAY-01 | BLOCKED | not_requested | 1 | Owner did not confirm Toss review completion or live-key availability in this executor context. No live key prefix/class, server confirm/query/cancel, webhook, or widget smoke was run. |
+| `BOOKING_ENABLED_GO_NO_GO` | M1-01, PAY-01, OPS-02 | BLOCKED | not_requested | 1 | Live-key smoke and/or required Gate Ledger rows are not ready; BOOKING_ENABLED=true was not applied. |
 | `LOAD_10K_BASELINE` | LOAD-01 | BLOCKED | not_requested | 1 | Operator-approved target, credentials, dedicated test-event IDs, and load window were unavailable in executor context; 10k/20k k6 load was not run. |
 | `LOAD_20K_STRESS` | LOAD-01 | BLOCKED | not_requested | 1 | Operator-approved target, credentials, dedicated test-event IDs, and load window were unavailable in executor context; 10k/20k k6 load was not run. |
 | `DR_CLOUD_RUN_ROLLBACK` | DR-01, M1-01 | CONFIG_READY_NOT_DRILLED | not_requested | 1 | Cloud Run service/revision/traffic metadata collected, but rollback was not drilled. |

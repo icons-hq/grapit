@@ -2,7 +2,7 @@
   "schemaVersion": "phase26.gate-ledger.v1",
   "phase": "26",
   "slug": "m1-canary-cutover-gates",
-  "generatedAt": "2026-05-20T06:52:13.879Z",
+  "generatedAt": "2026-05-20T06:54:39.682Z",
   "cutoverPolicy": {
     "bookingEnabledRule": "BOOKING_ENABLED=true is no-go until every required gate is PASS or explicitly owner-approved as ACCEPTED_RISK or CONFIG_READY_NOT_DRILLED.",
     "allowedStates": [
@@ -199,13 +199,15 @@
       ],
       "state": "BLOCKED",
       "environment": "production-live-keys-booking-disabled",
-      "evidenceRefs": [],
-      "failureReason": "Toss live-key smoke has not run because live keys/review availability were not confirmed.",
+      "evidenceRefs": [
+        ".planning/phases/26-m1-canary-cutover-gates/evidence/26-10-live-cutover.json"
+      ],
+      "failureReason": "Owner did not confirm Toss review completion or live-key availability in this executor context. No live key prefix/class, server confirm/query/cancel, webhook, or widget smoke was run.",
       "approvalState": "not_requested",
       "approver": null,
       "approvalTimestamp": null,
-      "compensatingMonitoring": "Inject live keys with BOOKING_ENABLED=false, then verify prefix/class, server-only secret handling, widget init, confirm/query/cancel, webhook re-query, and leakage scan.",
-      "rollbackOrCloseTrigger": "Do not enable booking if live key smoke is unavailable or any live payment-safe check fails.",
+      "compensatingMonitoring": "Keep BOOKING_ENABLED=false until live-key smoke passes and Gate Ledger approval is recorded.",
+      "rollbackOrCloseTrigger": "Do not enable booking if live key prefix, server-only handling, widget init, confirm/query/cancel, webhook re-query, or leakage scan fails.",
       "sourceDecisions": [
         "D-19",
         "D-20",
@@ -224,12 +226,14 @@
       ],
       "state": "BLOCKED",
       "environment": "production",
-      "evidenceRefs": [],
-      "failureReason": "Final booking-enabled readiness check has not run.",
+      "evidenceRefs": [
+        ".planning/phases/26-m1-canary-cutover-gates/evidence/26-10-live-cutover.json"
+      ],
+      "failureReason": "Live-key smoke and/or required Gate Ledger rows are not ready; BOOKING_ENABLED=true was not applied.",
       "approvalState": "not_requested",
       "approver": null,
       "approvalTimestamp": null,
-      "compensatingMonitoring": "Run cutover-readiness and preserve every non-PASS gate before any BOOKING_ENABLED=true change.",
+      "compensatingMonitoring": "Keep booking closed until readiness passes and the owner approves the runbook go decision.",
       "rollbackOrCloseTrigger": "Close booking immediately on financial or seat safety criteria.",
       "sourceDecisions": [
         "D-01",
@@ -507,5 +511,5 @@
       "redactionNotes": "No real Girl Rules row IDs, real user PII, payment keys, or full SQL row dumps."
     }
   ],
-  "lastAggregatedAt": "2026-05-20T06:52:13.879Z"
+  "lastAggregatedAt": "2026-05-20T06:54:39.682Z"
 }
