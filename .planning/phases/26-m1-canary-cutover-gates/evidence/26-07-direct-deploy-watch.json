@@ -2,12 +2,19 @@
   "schemaVersion": "phase26.direct-deploy-watch.v1",
   "phase": "26",
   "plan": "26-07",
-  "requirementIds": ["M1-01"],
+  "requirementIds": [
+    "M1-01"
+  ],
   "policy": "CI/CD green -> 100% direct deploy -> 15-minute strict watch",
-  "sourceDecisions": ["D-05", "D-06", "D-07", "D-08"],
-  "status": "NOT_RUN",
-  "startedAt": null,
-  "endedAt": null,
+  "sourceDecisions": [
+    "D-05",
+    "D-06",
+    "D-07",
+    "D-08"
+  ],
+  "status": "PASS",
+  "startedAt": "2026-05-21T03:13:02.173Z",
+  "endedAt": "2026-05-21T03:27:10.133Z",
   "target": {
     "project": "grapit-491806",
     "region": "asia-northeast3",
@@ -15,14 +22,14 @@
     "webService": "grabit-web",
     "apiUrl": "https://api.heygrabit.com",
     "webUrl": "https://heygrabit.com",
-    "publicDetailUrl": null,
+    "publicDetailUrl": "https://heygrabit.com/performance/18a3bcc6-5e75-463d-abfd-634601328754",
     "durationMinutes": 15,
     "pollSeconds": 60
   },
   "rollbackTriggers": [
     "health 5xx",
     "login/refresh failure",
-    "public detail 5xx",
+    "public detail non-2xx",
     "BOOKING_ENABLED=false side effects",
     "queue entry 5xx",
     "payment confirm unsafe behavior"
@@ -39,14 +46,1974 @@
   },
   "checks": [
     {
-      "name": "direct-deploy-watch",
-      "status": "BLOCKED",
-      "summary": "Operator has not run the direct deploy strict watch yet. Run scripts/phase26/direct-deploy-watch.mjs during the deploy window to replace this evidence with redacted live results.",
+      "name": "github-actions",
+      "status": "PASS",
+      "summary": "Operator supplied green GitHub Actions deploy run URL.",
       "details": {
-        "requiredCommandShape": "node scripts/phase26/direct-deploy-watch.mjs --public-detail-url=https://heygrabit.com/performance/<safe-id> --auth-smoke-command=<redacted-safe-auth-smoke> --queue-smoke-command=<redacted-safe-queue-smoke> --payment-safe-command=<redacted-safe-payment-smoke>",
-        "mustStayNoGoUntilRun": true
+        "runUrl": "https://github.com/sangwopark19/grapit/actions/runs/26202441334"
       },
-      "checkedAt": null
+      "checkedAt": "2026-05-21T03:13:02.174Z"
+    },
+    {
+      "name": "cloud-run-grabit-api",
+      "status": "PASS",
+      "summary": "grabit-api latest ready revision has 100% direct deploy traffic.",
+      "details": {
+        "service": "grabit-api",
+        "latestReadyRevision": "grabit-api-00114-chg",
+        "observedTraffic": [
+          {
+            "revisionName": "grabit-api-00114-chg",
+            "percent": 100
+          }
+        ],
+        "image": "asia-northeast3-docker.pkg.devgrapit-491806grabi",
+        "bookingEnabled": "<absent>"
+      },
+      "checkedAt": "2026-05-21T03:13:02.993Z"
+    },
+    {
+      "name": "cloud-run-grabit-web",
+      "status": "PASS",
+      "summary": "grabit-web latest ready revision has 100% direct deploy traffic.",
+      "details": {
+        "service": "grabit-web",
+        "latestReadyRevision": "grabit-web-00077-4sx",
+        "observedTraffic": [
+          {
+            "revisionName": "grabit-web-00077-4sx",
+            "percent": 100
+          }
+        ],
+        "image": "asia-northeast3-docker.pkg.devgrapit-491806grabi",
+        "bookingEnabled": "<absent>"
+      },
+      "checkedAt": "2026-05-21T03:13:03.600Z"
+    },
+    {
+      "name": "rollback-revisions",
+      "status": "PASS",
+      "summary": "Rollback revision IDs captured in short/redacted form.",
+      "details": {
+        "apiRollbackRevision": "grabit-api-00113-2lw",
+        "webRollbackRevision": "grabit-web-00076-rf4",
+        "note": "Operator supplied rollback target revisions."
+      },
+      "checkedAt": "2026-05-21T03:13:03.600Z"
+    },
+    {
+      "name": "api-health",
+      "status": "PASS",
+      "summary": "API health returned 2xx.",
+      "details": {
+        "url": "https://api.heygrabit.com/api/v1/health",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:13:04.223Z"
+    },
+    {
+      "name": "runtime-flags",
+      "status": "PASS",
+      "summary": "BOOKING_ENABLED=false observed during direct deploy watch.",
+      "details": {
+        "url": "https://heygrabit.com/api/runtime-flags",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:13:04.851Z"
+    },
+    {
+      "name": "public-detail",
+      "status": "PASS",
+      "summary": "Public event detail returned 2xx.",
+      "details": {
+        "url": "https://heygrabit.com/performance/18a3bcc6-5e75-463d-abfd-634601328754",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:13:05.182Z"
+    },
+    {
+      "name": "auth-session",
+      "status": "PASS",
+      "summary": "auth-session hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; refresh_code=$(curl -sS -o /dev/null -w \"%{http_code}\" -b \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/refresh); rm -f \"$tmp\"; case \"$refresh_code\" in 200|204) echo \"auth_session=ok refresh_http=$refresh_code\" ;; *) echo \"auth_session=fail refresh_http=$refresh_code\"; exit 1 ;; esac",
+        "exitStatus": 0,
+        "stdout": "auth_session=ok refresh_http=200\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:13:06.587Z"
+    },
+    {
+      "name": "queue-entry",
+      "status": "PASS",
+      "summary": "queue-entry hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; enter=$(curl -sS -b \"$tmp\" -c \"$tmp\" -H \"Authorization: Bearer <redacted>\" -X POST https://api.heygrabit.com/api/v1/queue/performances/18a3bcc6-5e75-463d-abfd-634601328754/enter); state=$(printf \"%s\" \"$enter\" | jq -r \".state // empty\"); qid=$(printf \"%s\" \"$enter\" | jq -r \".queueSessionId // empty\"); test -n \"$qid\" || exit 1; session=$(curl -sS -b \"$tmp\" -H \"Authorization: Bearer <redacted>\" https://api.heygrabit.com/api/v1/queue/sessions/$qid); session_state=$(printf \"%s\" \"$session\" | jq -r \".state // empty\"); rm -f \"$tmp\"; test -n \"$state\" || exit 1; test -n \"$session_state\" || exit 1; echo \"queue_entry=ok state=$state session_state=$session_state\"",
+        "exitStatus": 0,
+        "stdout": "queue_entry=ok state=ADMITTED session_state=ADMITTED\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:13:08.661Z"
+    },
+    {
+      "name": "payment-safe",
+      "status": "PASS",
+      "summary": "payment-safe hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; resp=$(mktemp); order=\"phase26-disabled-probe-$(date -u +%Y%m%d%H%M%S)\"; code=$(curl -sS -o \"$resp\" -w \"%{http_code}\" -b \"$tmp\" -H \"Authorization: Bearer <redacted>\" -H \"Content-Type: application/json\" -X POST https://api.heygrabit.com/api/v1/payments/confirm --data-raw \"{\\\"paymentKey\\\":\\\"phase26-disabled-probe\\\",\\\"orderId\\\":\\\"$order\\\",\\\"amount\\\":1}\"); rm -f \"$tmp\" \"$resp\"; case \"$code\" in 403|404) echo \"payment_safe=ok http=$code class=no_provider_confirm_no_side_effect\" ;; *) echo \"payment_safe=fail http=$code\"; exit 1 ;; esac",
+        "exitStatus": 0,
+        "stdout": "payment_safe=ok http=403 class=no_provider_confirm_no_side_effect\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:13:09.992Z"
+    },
+    {
+      "name": "cloud-run-logs",
+      "status": "PASS",
+      "summary": "No critical Cloud Run log patterns found in clipped scan.",
+      "details": {
+        "filter": "resource.type=\"cloud_run_revision\"\nAND resource.labels.service_name=(\"grabit-api\" OR \"grabit-web\")\nAND timestamp>=\"2026-05-21T03:13:02.173Z\"\nAND (severity>=WARNING OR \"auth/refresh\" OR \"queue\" OR \"confirm\" OR \"health\" OR \"payment\")",
+        "sample": [
+          "2026-05-21T03:13:04.066833Z\tINFO\tgrabit-api\t200"
+        ],
+        "criticalSample": []
+      },
+      "checkedAt": "2026-05-21T03:13:11.745Z"
+    },
+    {
+      "name": "github-actions",
+      "status": "PASS",
+      "summary": "Operator supplied green GitHub Actions deploy run URL.",
+      "details": {
+        "runUrl": "https://github.com/sangwopark19/grapit/actions/runs/26202441334"
+      },
+      "checkedAt": "2026-05-21T03:14:11.747Z"
+    },
+    {
+      "name": "cloud-run-grabit-api",
+      "status": "PASS",
+      "summary": "grabit-api latest ready revision has 100% direct deploy traffic.",
+      "details": {
+        "service": "grabit-api",
+        "latestReadyRevision": "grabit-api-00114-chg",
+        "observedTraffic": [
+          {
+            "revisionName": "grabit-api-00114-chg",
+            "percent": 100
+          }
+        ],
+        "image": "asia-northeast3-docker.pkg.devgrapit-491806grabi",
+        "bookingEnabled": "<absent>"
+      },
+      "checkedAt": "2026-05-21T03:14:12.425Z"
+    },
+    {
+      "name": "cloud-run-grabit-web",
+      "status": "PASS",
+      "summary": "grabit-web latest ready revision has 100% direct deploy traffic.",
+      "details": {
+        "service": "grabit-web",
+        "latestReadyRevision": "grabit-web-00077-4sx",
+        "observedTraffic": [
+          {
+            "revisionName": "grabit-web-00077-4sx",
+            "percent": 100
+          }
+        ],
+        "image": "asia-northeast3-docker.pkg.devgrapit-491806grabi",
+        "bookingEnabled": "<absent>"
+      },
+      "checkedAt": "2026-05-21T03:14:13.193Z"
+    },
+    {
+      "name": "rollback-revisions",
+      "status": "PASS",
+      "summary": "Rollback revision IDs captured in short/redacted form.",
+      "details": {
+        "apiRollbackRevision": "grabit-api-00113-2lw",
+        "webRollbackRevision": "grabit-web-00076-rf4",
+        "note": "Operator supplied rollback target revisions."
+      },
+      "checkedAt": "2026-05-21T03:14:13.193Z"
+    },
+    {
+      "name": "api-health",
+      "status": "PASS",
+      "summary": "API health returned 2xx.",
+      "details": {
+        "url": "https://api.heygrabit.com/api/v1/health",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:14:13.777Z"
+    },
+    {
+      "name": "runtime-flags",
+      "status": "PASS",
+      "summary": "BOOKING_ENABLED=false observed during direct deploy watch.",
+      "details": {
+        "url": "https://heygrabit.com/api/runtime-flags",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:14:14.365Z"
+    },
+    {
+      "name": "public-detail",
+      "status": "PASS",
+      "summary": "Public event detail returned 2xx.",
+      "details": {
+        "url": "https://heygrabit.com/performance/18a3bcc6-5e75-463d-abfd-634601328754",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:14:14.699Z"
+    },
+    {
+      "name": "auth-session",
+      "status": "PASS",
+      "summary": "auth-session hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; refresh_code=$(curl -sS -o /dev/null -w \"%{http_code}\" -b \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/refresh); rm -f \"$tmp\"; case \"$refresh_code\" in 200|204) echo \"auth_session=ok refresh_http=$refresh_code\" ;; *) echo \"auth_session=fail refresh_http=$refresh_code\"; exit 1 ;; esac",
+        "exitStatus": 0,
+        "stdout": "auth_session=ok refresh_http=200\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:14:16.172Z"
+    },
+    {
+      "name": "queue-entry",
+      "status": "PASS",
+      "summary": "queue-entry hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; enter=$(curl -sS -b \"$tmp\" -c \"$tmp\" -H \"Authorization: Bearer <redacted>\" -X POST https://api.heygrabit.com/api/v1/queue/performances/18a3bcc6-5e75-463d-abfd-634601328754/enter); state=$(printf \"%s\" \"$enter\" | jq -r \".state // empty\"); qid=$(printf \"%s\" \"$enter\" | jq -r \".queueSessionId // empty\"); test -n \"$qid\" || exit 1; session=$(curl -sS -b \"$tmp\" -H \"Authorization: Bearer <redacted>\" https://api.heygrabit.com/api/v1/queue/sessions/$qid); session_state=$(printf \"%s\" \"$session\" | jq -r \".state // empty\"); rm -f \"$tmp\"; test -n \"$state\" || exit 1; test -n \"$session_state\" || exit 1; echo \"queue_entry=ok state=$state session_state=$session_state\"",
+        "exitStatus": 0,
+        "stdout": "queue_entry=ok state=ADMITTED session_state=ADMITTED\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:14:18.261Z"
+    },
+    {
+      "name": "payment-safe",
+      "status": "PASS",
+      "summary": "payment-safe hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; resp=$(mktemp); order=\"phase26-disabled-probe-$(date -u +%Y%m%d%H%M%S)\"; code=$(curl -sS -o \"$resp\" -w \"%{http_code}\" -b \"$tmp\" -H \"Authorization: Bearer <redacted>\" -H \"Content-Type: application/json\" -X POST https://api.heygrabit.com/api/v1/payments/confirm --data-raw \"{\\\"paymentKey\\\":\\\"phase26-disabled-probe\\\",\\\"orderId\\\":\\\"$order\\\",\\\"amount\\\":1}\"); rm -f \"$tmp\" \"$resp\"; case \"$code\" in 403|404) echo \"payment_safe=ok http=$code class=no_provider_confirm_no_side_effect\" ;; *) echo \"payment_safe=fail http=$code\"; exit 1 ;; esac",
+        "exitStatus": 0,
+        "stdout": "payment_safe=ok http=403 class=no_provider_confirm_no_side_effect\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:14:19.448Z"
+    },
+    {
+      "name": "cloud-run-logs",
+      "status": "PASS",
+      "summary": "No critical Cloud Run log patterns found in clipped scan.",
+      "details": {
+        "filter": "resource.type=\"cloud_run_revision\"\nAND resource.labels.service_name=(\"grabit-api\" OR \"grabit-web\")\nAND timestamp>=\"2026-05-21T03:13:02.173Z\"\nAND (severity>=WARNING OR \"auth/refresh\" OR \"queue\" OR \"confirm\" OR \"health\" OR \"payment\")",
+        "sample": [
+          "2026-05-21T03:14:13.626667Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:14:04.194160Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:14:03.954185Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:13:37.650846Z\tWARNING\tgrabit-api\t401\t\t",
+          "2026-05-21T03:13:14.642752Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:13:14.410563Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:13:08.466560Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:13:07.782885Z\tINFO\tgrabit-api\t201\t\t",
+          "2026-05-21T03:13:06.409537Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:13:04.066833Z\tINFO\tgrabit-api\t200"
+        ],
+        "criticalSample": []
+      },
+      "checkedAt": "2026-05-21T03:14:21.126Z"
+    },
+    {
+      "name": "github-actions",
+      "status": "PASS",
+      "summary": "Operator supplied green GitHub Actions deploy run URL.",
+      "details": {
+        "runUrl": "https://github.com/sangwopark19/grapit/actions/runs/26202441334"
+      },
+      "checkedAt": "2026-05-21T03:15:21.128Z"
+    },
+    {
+      "name": "cloud-run-grabit-api",
+      "status": "PASS",
+      "summary": "grabit-api latest ready revision has 100% direct deploy traffic.",
+      "details": {
+        "service": "grabit-api",
+        "latestReadyRevision": "grabit-api-00114-chg",
+        "observedTraffic": [
+          {
+            "revisionName": "grabit-api-00114-chg",
+            "percent": 100
+          }
+        ],
+        "image": "asia-northeast3-docker.pkg.devgrapit-491806grabi",
+        "bookingEnabled": "<absent>"
+      },
+      "checkedAt": "2026-05-21T03:15:21.967Z"
+    },
+    {
+      "name": "cloud-run-grabit-web",
+      "status": "PASS",
+      "summary": "grabit-web latest ready revision has 100% direct deploy traffic.",
+      "details": {
+        "service": "grabit-web",
+        "latestReadyRevision": "grabit-web-00077-4sx",
+        "observedTraffic": [
+          {
+            "revisionName": "grabit-web-00077-4sx",
+            "percent": 100
+          }
+        ],
+        "image": "asia-northeast3-docker.pkg.devgrapit-491806grabi",
+        "bookingEnabled": "<absent>"
+      },
+      "checkedAt": "2026-05-21T03:15:22.754Z"
+    },
+    {
+      "name": "rollback-revisions",
+      "status": "PASS",
+      "summary": "Rollback revision IDs captured in short/redacted form.",
+      "details": {
+        "apiRollbackRevision": "grabit-api-00113-2lw",
+        "webRollbackRevision": "grabit-web-00076-rf4",
+        "note": "Operator supplied rollback target revisions."
+      },
+      "checkedAt": "2026-05-21T03:15:22.754Z"
+    },
+    {
+      "name": "api-health",
+      "status": "PASS",
+      "summary": "API health returned 2xx.",
+      "details": {
+        "url": "https://api.heygrabit.com/api/v1/health",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:15:23.358Z"
+    },
+    {
+      "name": "runtime-flags",
+      "status": "PASS",
+      "summary": "BOOKING_ENABLED=false observed during direct deploy watch.",
+      "details": {
+        "url": "https://heygrabit.com/api/runtime-flags",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:15:23.950Z"
+    },
+    {
+      "name": "public-detail",
+      "status": "PASS",
+      "summary": "Public event detail returned 2xx.",
+      "details": {
+        "url": "https://heygrabit.com/performance/18a3bcc6-5e75-463d-abfd-634601328754",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:15:24.273Z"
+    },
+    {
+      "name": "auth-session",
+      "status": "PASS",
+      "summary": "auth-session hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; refresh_code=$(curl -sS -o /dev/null -w \"%{http_code}\" -b \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/refresh); rm -f \"$tmp\"; case \"$refresh_code\" in 200|204) echo \"auth_session=ok refresh_http=$refresh_code\" ;; *) echo \"auth_session=fail refresh_http=$refresh_code\"; exit 1 ;; esac",
+        "exitStatus": 0,
+        "stdout": "auth_session=ok refresh_http=200\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:15:26.019Z"
+    },
+    {
+      "name": "queue-entry",
+      "status": "PASS",
+      "summary": "queue-entry hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; enter=$(curl -sS -b \"$tmp\" -c \"$tmp\" -H \"Authorization: Bearer <redacted>\" -X POST https://api.heygrabit.com/api/v1/queue/performances/18a3bcc6-5e75-463d-abfd-634601328754/enter); state=$(printf \"%s\" \"$enter\" | jq -r \".state // empty\"); qid=$(printf \"%s\" \"$enter\" | jq -r \".queueSessionId // empty\"); test -n \"$qid\" || exit 1; session=$(curl -sS -b \"$tmp\" -H \"Authorization: Bearer <redacted>\" https://api.heygrabit.com/api/v1/queue/sessions/$qid); session_state=$(printf \"%s\" \"$session\" | jq -r \".state // empty\"); rm -f \"$tmp\"; test -n \"$state\" || exit 1; test -n \"$session_state\" || exit 1; echo \"queue_entry=ok state=$state session_state=$session_state\"",
+        "exitStatus": 0,
+        "stdout": "queue_entry=ok state=ADMITTED session_state=ADMITTED\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:15:28.089Z"
+    },
+    {
+      "name": "payment-safe",
+      "status": "PASS",
+      "summary": "payment-safe hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; resp=$(mktemp); order=\"phase26-disabled-probe-$(date -u +%Y%m%d%H%M%S)\"; code=$(curl -sS -o \"$resp\" -w \"%{http_code}\" -b \"$tmp\" -H \"Authorization: Bearer <redacted>\" -H \"Content-Type: application/json\" -X POST https://api.heygrabit.com/api/v1/payments/confirm --data-raw \"{\\\"paymentKey\\\":\\\"phase26-disabled-probe\\\",\\\"orderId\\\":\\\"$order\\\",\\\"amount\\\":1}\"); rm -f \"$tmp\" \"$resp\"; case \"$code\" in 403|404) echo \"payment_safe=ok http=$code class=no_provider_confirm_no_side_effect\" ;; *) echo \"payment_safe=fail http=$code\"; exit 1 ;; esac",
+        "exitStatus": 0,
+        "stdout": "payment_safe=ok http=403 class=no_provider_confirm_no_side_effect\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:15:29.356Z"
+    },
+    {
+      "name": "cloud-run-logs",
+      "status": "PASS",
+      "summary": "No critical Cloud Run log patterns found in clipped scan.",
+      "details": {
+        "filter": "resource.type=\"cloud_run_revision\"\nAND resource.labels.service_name=(\"grabit-api\" OR \"grabit-web\")\nAND timestamp>=\"2026-05-21T03:13:02.173Z\"\nAND (severity>=WARNING OR \"auth/refresh\" OR \"queue\" OR \"confirm\" OR \"health\" OR \"payment\")",
+        "sample": [
+          "2026-05-21T03:15:23.202124Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:14:49.153083Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:14:48.862281Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:14:19.666054Z\tWARNING\tgrabit-api\t401\t\t",
+          "2026-05-21T03:14:18.061173Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:14:17.369535Z\tINFO\tgrabit-api\t201\t\t",
+          "2026-05-21T03:14:15.985878Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:14:13.626667Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:14:04.194160Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:14:03.954185Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:13:37.650846Z\tWARNING\tgrabit-api\t401\t\t",
+          "2026-05-21T03:13:14.642752Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:13:14.410563Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:13:08.466560Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:13:07.782885Z\tINFO\tgrabit-api\t201\t\t",
+          "2026-05-21T03:13:06.409537Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:13:04.066833Z\tINFO\tgrabit-api\t200"
+        ],
+        "criticalSample": []
+      },
+      "checkedAt": "2026-05-21T03:15:31.282Z"
+    },
+    {
+      "name": "github-actions",
+      "status": "PASS",
+      "summary": "Operator supplied green GitHub Actions deploy run URL.",
+      "details": {
+        "runUrl": "https://github.com/sangwopark19/grapit/actions/runs/26202441334"
+      },
+      "checkedAt": "2026-05-21T03:16:31.283Z"
+    },
+    {
+      "name": "cloud-run-grabit-api",
+      "status": "PASS",
+      "summary": "grabit-api latest ready revision has 100% direct deploy traffic.",
+      "details": {
+        "service": "grabit-api",
+        "latestReadyRevision": "grabit-api-00114-chg",
+        "observedTraffic": [
+          {
+            "revisionName": "grabit-api-00114-chg",
+            "percent": 100
+          }
+        ],
+        "image": "asia-northeast3-docker.pkg.devgrapit-491806grabi",
+        "bookingEnabled": "<absent>"
+      },
+      "checkedAt": "2026-05-21T03:16:32.077Z"
+    },
+    {
+      "name": "cloud-run-grabit-web",
+      "status": "PASS",
+      "summary": "grabit-web latest ready revision has 100% direct deploy traffic.",
+      "details": {
+        "service": "grabit-web",
+        "latestReadyRevision": "grabit-web-00077-4sx",
+        "observedTraffic": [
+          {
+            "revisionName": "grabit-web-00077-4sx",
+            "percent": 100
+          }
+        ],
+        "image": "asia-northeast3-docker.pkg.devgrapit-491806grabi",
+        "bookingEnabled": "<absent>"
+      },
+      "checkedAt": "2026-05-21T03:16:32.876Z"
+    },
+    {
+      "name": "rollback-revisions",
+      "status": "PASS",
+      "summary": "Rollback revision IDs captured in short/redacted form.",
+      "details": {
+        "apiRollbackRevision": "grabit-api-00113-2lw",
+        "webRollbackRevision": "grabit-web-00076-rf4",
+        "note": "Operator supplied rollback target revisions."
+      },
+      "checkedAt": "2026-05-21T03:16:32.876Z"
+    },
+    {
+      "name": "api-health",
+      "status": "PASS",
+      "summary": "API health returned 2xx.",
+      "details": {
+        "url": "https://api.heygrabit.com/api/v1/health",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:16:33.453Z"
+    },
+    {
+      "name": "runtime-flags",
+      "status": "PASS",
+      "summary": "BOOKING_ENABLED=false observed during direct deploy watch.",
+      "details": {
+        "url": "https://heygrabit.com/api/runtime-flags",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:16:34.014Z"
+    },
+    {
+      "name": "public-detail",
+      "status": "PASS",
+      "summary": "Public event detail returned 2xx.",
+      "details": {
+        "url": "https://heygrabit.com/performance/18a3bcc6-5e75-463d-abfd-634601328754",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:16:34.335Z"
+    },
+    {
+      "name": "auth-session",
+      "status": "PASS",
+      "summary": "auth-session hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; refresh_code=$(curl -sS -o /dev/null -w \"%{http_code}\" -b \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/refresh); rm -f \"$tmp\"; case \"$refresh_code\" in 200|204) echo \"auth_session=ok refresh_http=$refresh_code\" ;; *) echo \"auth_session=fail refresh_http=$refresh_code\"; exit 1 ;; esac",
+        "exitStatus": 0,
+        "stdout": "auth_session=ok refresh_http=200\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:16:35.706Z"
+    },
+    {
+      "name": "queue-entry",
+      "status": "PASS",
+      "summary": "queue-entry hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; enter=$(curl -sS -b \"$tmp\" -c \"$tmp\" -H \"Authorization: Bearer <redacted>\" -X POST https://api.heygrabit.com/api/v1/queue/performances/18a3bcc6-5e75-463d-abfd-634601328754/enter); state=$(printf \"%s\" \"$enter\" | jq -r \".state // empty\"); qid=$(printf \"%s\" \"$enter\" | jq -r \".queueSessionId // empty\"); test -n \"$qid\" || exit 1; session=$(curl -sS -b \"$tmp\" -H \"Authorization: Bearer <redacted>\" https://api.heygrabit.com/api/v1/queue/sessions/$qid); session_state=$(printf \"%s\" \"$session\" | jq -r \".state // empty\"); rm -f \"$tmp\"; test -n \"$state\" || exit 1; test -n \"$session_state\" || exit 1; echo \"queue_entry=ok state=$state session_state=$session_state\"",
+        "exitStatus": 0,
+        "stdout": "queue_entry=ok state=ADMITTED session_state=ADMITTED\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:16:37.763Z"
+    },
+    {
+      "name": "payment-safe",
+      "status": "PASS",
+      "summary": "payment-safe hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; resp=$(mktemp); order=\"phase26-disabled-probe-$(date -u +%Y%m%d%H%M%S)\"; code=$(curl -sS -o \"$resp\" -w \"%{http_code}\" -b \"$tmp\" -H \"Authorization: Bearer <redacted>\" -H \"Content-Type: application/json\" -X POST https://api.heygrabit.com/api/v1/payments/confirm --data-raw \"{\\\"paymentKey\\\":\\\"phase26-disabled-probe\\\",\\\"orderId\\\":\\\"$order\\\",\\\"amount\\\":1}\"); rm -f \"$tmp\" \"$resp\"; case \"$code\" in 403|404) echo \"payment_safe=ok http=$code class=no_provider_confirm_no_side_effect\" ;; *) echo \"payment_safe=fail http=$code\"; exit 1 ;; esac",
+        "exitStatus": 0,
+        "stdout": "payment_safe=ok http=403 class=no_provider_confirm_no_side_effect\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:16:39.008Z"
+    },
+    {
+      "name": "cloud-run-logs",
+      "status": "PASS",
+      "summary": "No critical Cloud Run log patterns found in clipped scan.",
+      "details": {
+        "filter": "resource.type=\"cloud_run_revision\"\nAND resource.labels.service_name=(\"grabit-api\" OR \"grabit-web\")\nAND timestamp>=\"2026-05-21T03:13:02.173Z\"\nAND (severity>=WARNING OR \"auth/refresh\" OR \"queue\" OR \"confirm\" OR \"health\" OR \"payment\")",
+        "sample": [
+          "2026-05-21T03:16:33.314008Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:16:23.140589Z\tWARNING\tgrabit-api\t401\t\t",
+          "2026-05-21T03:16:23.128348Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:16:22.902427Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:16:22.312391Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:16:22.130340Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:16:19.075877Z\tWARNING\tgrabit-api\t401\t\t",
+          "2026-05-21T03:16:18.786325Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:15:45.516118Z\tWARNING\tgrabit-api\t401\t\t",
+          "2026-05-21T03:15:40.836953Z\tWARNING\tgrabit-api\t404\t\t",
+          "2026-05-21T03:15:27.892623Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:15:27.209235Z\tINFO\tgrabit-api\t201\t\t",
+          "2026-05-21T03:15:25.850402Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:15:23.202124Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:14:49.153083Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:14:48.862281Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:14:19.666054Z\tWARNING\tgrabit-api\t401\t\t",
+          "2026-05-21T03:14:18.061173Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:14:17.369535Z\tINFO\tgrabit-api\t201\t\t",
+          "2026-05-21T03:14:15.985878Z\tINFO\tgrabit-api\t200\t\t"
+        ],
+        "criticalSample": []
+      },
+      "checkedAt": "2026-05-21T03:16:40.960Z"
+    },
+    {
+      "name": "github-actions",
+      "status": "PASS",
+      "summary": "Operator supplied green GitHub Actions deploy run URL.",
+      "details": {
+        "runUrl": "https://github.com/sangwopark19/grapit/actions/runs/26202441334"
+      },
+      "checkedAt": "2026-05-21T03:17:40.961Z"
+    },
+    {
+      "name": "cloud-run-grabit-api",
+      "status": "PASS",
+      "summary": "grabit-api latest ready revision has 100% direct deploy traffic.",
+      "details": {
+        "service": "grabit-api",
+        "latestReadyRevision": "grabit-api-00114-chg",
+        "observedTraffic": [
+          {
+            "revisionName": "grabit-api-00114-chg",
+            "percent": 100
+          }
+        ],
+        "image": "asia-northeast3-docker.pkg.devgrapit-491806grabi",
+        "bookingEnabled": "<absent>"
+      },
+      "checkedAt": "2026-05-21T03:17:41.810Z"
+    },
+    {
+      "name": "cloud-run-grabit-web",
+      "status": "PASS",
+      "summary": "grabit-web latest ready revision has 100% direct deploy traffic.",
+      "details": {
+        "service": "grabit-web",
+        "latestReadyRevision": "grabit-web-00077-4sx",
+        "observedTraffic": [
+          {
+            "revisionName": "grabit-web-00077-4sx",
+            "percent": 100
+          }
+        ],
+        "image": "asia-northeast3-docker.pkg.devgrapit-491806grabi",
+        "bookingEnabled": "<absent>"
+      },
+      "checkedAt": "2026-05-21T03:17:42.559Z"
+    },
+    {
+      "name": "rollback-revisions",
+      "status": "PASS",
+      "summary": "Rollback revision IDs captured in short/redacted form.",
+      "details": {
+        "apiRollbackRevision": "grabit-api-00113-2lw",
+        "webRollbackRevision": "grabit-web-00076-rf4",
+        "note": "Operator supplied rollback target revisions."
+      },
+      "checkedAt": "2026-05-21T03:17:42.559Z"
+    },
+    {
+      "name": "api-health",
+      "status": "PASS",
+      "summary": "API health returned 2xx.",
+      "details": {
+        "url": "https://api.heygrabit.com/api/v1/health",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:17:43.140Z"
+    },
+    {
+      "name": "runtime-flags",
+      "status": "PASS",
+      "summary": "BOOKING_ENABLED=false observed during direct deploy watch.",
+      "details": {
+        "url": "https://heygrabit.com/api/runtime-flags",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:17:43.707Z"
+    },
+    {
+      "name": "public-detail",
+      "status": "PASS",
+      "summary": "Public event detail returned 2xx.",
+      "details": {
+        "url": "https://heygrabit.com/performance/18a3bcc6-5e75-463d-abfd-634601328754",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:17:44.025Z"
+    },
+    {
+      "name": "auth-session",
+      "status": "PASS",
+      "summary": "auth-session hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; refresh_code=$(curl -sS -o /dev/null -w \"%{http_code}\" -b \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/refresh); rm -f \"$tmp\"; case \"$refresh_code\" in 200|204) echo \"auth_session=ok refresh_http=$refresh_code\" ;; *) echo \"auth_session=fail refresh_http=$refresh_code\"; exit 1 ;; esac",
+        "exitStatus": 0,
+        "stdout": "auth_session=ok refresh_http=200\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:17:45.409Z"
+    },
+    {
+      "name": "queue-entry",
+      "status": "PASS",
+      "summary": "queue-entry hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; enter=$(curl -sS -b \"$tmp\" -c \"$tmp\" -H \"Authorization: Bearer <redacted>\" -X POST https://api.heygrabit.com/api/v1/queue/performances/18a3bcc6-5e75-463d-abfd-634601328754/enter); state=$(printf \"%s\" \"$enter\" | jq -r \".state // empty\"); qid=$(printf \"%s\" \"$enter\" | jq -r \".queueSessionId // empty\"); test -n \"$qid\" || exit 1; session=$(curl -sS -b \"$tmp\" -H \"Authorization: Bearer <redacted>\" https://api.heygrabit.com/api/v1/queue/sessions/$qid); session_state=$(printf \"%s\" \"$session\" | jq -r \".state // empty\"); rm -f \"$tmp\"; test -n \"$state\" || exit 1; test -n \"$session_state\" || exit 1; echo \"queue_entry=ok state=$state session_state=$session_state\"",
+        "exitStatus": 0,
+        "stdout": "queue_entry=ok state=ADMITTED session_state=ADMITTED\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:17:47.485Z"
+    },
+    {
+      "name": "payment-safe",
+      "status": "PASS",
+      "summary": "payment-safe hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; resp=$(mktemp); order=\"phase26-disabled-probe-$(date -u +%Y%m%d%H%M%S)\"; code=$(curl -sS -o \"$resp\" -w \"%{http_code}\" -b \"$tmp\" -H \"Authorization: Bearer <redacted>\" -H \"Content-Type: application/json\" -X POST https://api.heygrabit.com/api/v1/payments/confirm --data-raw \"{\\\"paymentKey\\\":\\\"phase26-disabled-probe\\\",\\\"orderId\\\":\\\"$order\\\",\\\"amount\\\":1}\"); rm -f \"$tmp\" \"$resp\"; case \"$code\" in 403|404) echo \"payment_safe=ok http=$code class=no_provider_confirm_no_side_effect\" ;; *) echo \"payment_safe=fail http=$code\"; exit 1 ;; esac",
+        "exitStatus": 0,
+        "stdout": "payment_safe=ok http=403 class=no_provider_confirm_no_side_effect\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:17:48.667Z"
+    },
+    {
+      "name": "cloud-run-logs",
+      "status": "PASS",
+      "summary": "No critical Cloud Run log patterns found in clipped scan.",
+      "details": {
+        "filter": "resource.type=\"cloud_run_revision\"\nAND resource.labels.service_name=(\"grabit-api\" OR \"grabit-web\")\nAND timestamp>=\"2026-05-21T03:13:02.173Z\"\nAND (severity>=WARNING OR \"auth/refresh\" OR \"queue\" OR \"confirm\" OR \"health\" OR \"payment\")",
+        "sample": [
+          "2026-05-21T03:17:42.986634Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:17:31.396115Z\tWARNING\tgrabit-api\t404\t\t",
+          "2026-05-21T03:17:05.542742Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:17:05.431019Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:16:52.472405Z\tWARNING\tgrabit-api\t401\t\t",
+          "2026-05-21T03:16:40.883191Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:16:40.741558Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:16:40.518753Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:16:40.407093Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:16:38.824604Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:16:38.355462Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:16:37.570562Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:16:36.902848Z\tINFO\tgrabit-api\t201\t\t",
+          "2026-05-21T03:16:35.539042Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:16:33.314008Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:16:23.140589Z\tWARNING\tgrabit-api\t401\t\t",
+          "2026-05-21T03:16:23.128348Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:16:22.902427Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:16:22.312391Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:16:22.130340Z\tINFO\tgrabit-api\t204\t\t"
+        ],
+        "criticalSample": []
+      },
+      "checkedAt": "2026-05-21T03:17:50.517Z"
+    },
+    {
+      "name": "github-actions",
+      "status": "PASS",
+      "summary": "Operator supplied green GitHub Actions deploy run URL.",
+      "details": {
+        "runUrl": "https://github.com/sangwopark19/grapit/actions/runs/26202441334"
+      },
+      "checkedAt": "2026-05-21T03:18:50.518Z"
+    },
+    {
+      "name": "cloud-run-grabit-api",
+      "status": "PASS",
+      "summary": "grabit-api latest ready revision has 100% direct deploy traffic.",
+      "details": {
+        "service": "grabit-api",
+        "latestReadyRevision": "grabit-api-00114-chg",
+        "observedTraffic": [
+          {
+            "revisionName": "grabit-api-00114-chg",
+            "percent": 100
+          }
+        ],
+        "image": "asia-northeast3-docker.pkg.devgrapit-491806grabi",
+        "bookingEnabled": "<absent>"
+      },
+      "checkedAt": "2026-05-21T03:18:51.290Z"
+    },
+    {
+      "name": "cloud-run-grabit-web",
+      "status": "PASS",
+      "summary": "grabit-web latest ready revision has 100% direct deploy traffic.",
+      "details": {
+        "service": "grabit-web",
+        "latestReadyRevision": "grabit-web-00077-4sx",
+        "observedTraffic": [
+          {
+            "revisionName": "grabit-web-00077-4sx",
+            "percent": 100
+          }
+        ],
+        "image": "asia-northeast3-docker.pkg.devgrapit-491806grabi",
+        "bookingEnabled": "<absent>"
+      },
+      "checkedAt": "2026-05-21T03:18:52.022Z"
+    },
+    {
+      "name": "rollback-revisions",
+      "status": "PASS",
+      "summary": "Rollback revision IDs captured in short/redacted form.",
+      "details": {
+        "apiRollbackRevision": "grabit-api-00113-2lw",
+        "webRollbackRevision": "grabit-web-00076-rf4",
+        "note": "Operator supplied rollback target revisions."
+      },
+      "checkedAt": "2026-05-21T03:18:52.023Z"
+    },
+    {
+      "name": "api-health",
+      "status": "PASS",
+      "summary": "API health returned 2xx.",
+      "details": {
+        "url": "https://api.heygrabit.com/api/v1/health",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:18:52.980Z"
+    },
+    {
+      "name": "runtime-flags",
+      "status": "PASS",
+      "summary": "BOOKING_ENABLED=false observed during direct deploy watch.",
+      "details": {
+        "url": "https://heygrabit.com/api/runtime-flags",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:18:53.556Z"
+    },
+    {
+      "name": "public-detail",
+      "status": "PASS",
+      "summary": "Public event detail returned 2xx.",
+      "details": {
+        "url": "https://heygrabit.com/performance/18a3bcc6-5e75-463d-abfd-634601328754",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:18:53.887Z"
+    },
+    {
+      "name": "auth-session",
+      "status": "PASS",
+      "summary": "auth-session hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; refresh_code=$(curl -sS -o /dev/null -w \"%{http_code}\" -b \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/refresh); rm -f \"$tmp\"; case \"$refresh_code\" in 200|204) echo \"auth_session=ok refresh_http=$refresh_code\" ;; *) echo \"auth_session=fail refresh_http=$refresh_code\"; exit 1 ;; esac",
+        "exitStatus": 0,
+        "stdout": "auth_session=ok refresh_http=200\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:18:55.301Z"
+    },
+    {
+      "name": "queue-entry",
+      "status": "PASS",
+      "summary": "queue-entry hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; enter=$(curl -sS -b \"$tmp\" -c \"$tmp\" -H \"Authorization: Bearer <redacted>\" -X POST https://api.heygrabit.com/api/v1/queue/performances/18a3bcc6-5e75-463d-abfd-634601328754/enter); state=$(printf \"%s\" \"$enter\" | jq -r \".state // empty\"); qid=$(printf \"%s\" \"$enter\" | jq -r \".queueSessionId // empty\"); test -n \"$qid\" || exit 1; session=$(curl -sS -b \"$tmp\" -H \"Authorization: Bearer <redacted>\" https://api.heygrabit.com/api/v1/queue/sessions/$qid); session_state=$(printf \"%s\" \"$session\" | jq -r \".state // empty\"); rm -f \"$tmp\"; test -n \"$state\" || exit 1; test -n \"$session_state\" || exit 1; echo \"queue_entry=ok state=$state session_state=$session_state\"",
+        "exitStatus": 0,
+        "stdout": "queue_entry=ok state=ADMITTED session_state=ADMITTED\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:18:57.431Z"
+    },
+    {
+      "name": "payment-safe",
+      "status": "PASS",
+      "summary": "payment-safe hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; resp=$(mktemp); order=\"phase26-disabled-probe-$(date -u +%Y%m%d%H%M%S)\"; code=$(curl -sS -o \"$resp\" -w \"%{http_code}\" -b \"$tmp\" -H \"Authorization: Bearer <redacted>\" -H \"Content-Type: application/json\" -X POST https://api.heygrabit.com/api/v1/payments/confirm --data-raw \"{\\\"paymentKey\\\":\\\"phase26-disabled-probe\\\",\\\"orderId\\\":\\\"$order\\\",\\\"amount\\\":1}\"); rm -f \"$tmp\" \"$resp\"; case \"$code\" in 403|404) echo \"payment_safe=ok http=$code class=no_provider_confirm_no_side_effect\" ;; *) echo \"payment_safe=fail http=$code\"; exit 1 ;; esac",
+        "exitStatus": 0,
+        "stdout": "payment_safe=ok http=403 class=no_provider_confirm_no_side_effect\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:18:58.693Z"
+    },
+    {
+      "name": "cloud-run-logs",
+      "status": "PASS",
+      "summary": "No critical Cloud Run log patterns found in clipped scan.",
+      "details": {
+        "filter": "resource.type=\"cloud_run_revision\"\nAND resource.labels.service_name=(\"grabit-api\" OR \"grabit-web\")\nAND timestamp>=\"2026-05-21T03:13:02.173Z\"\nAND (severity>=WARNING OR \"auth/refresh\" OR \"queue\" OR \"confirm\" OR \"health\" OR \"payment\")",
+        "sample": [
+          "2026-05-21T03:18:55.136523Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:17:47.301251Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:17:46.608439Z\tINFO\tgrabit-api\t201\t\t",
+          "2026-05-21T03:17:45.239885Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:17:42.986634Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:17:31.396115Z\tWARNING\tgrabit-api\t404\t\t",
+          "2026-05-21T03:17:05.542742Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:17:05.431019Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:16:52.472405Z\tWARNING\tgrabit-api\t401\t\t",
+          "2026-05-21T03:16:40.883191Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:16:40.741558Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:16:40.518753Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:16:40.407093Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:16:38.824604Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:16:38.355462Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:16:37.570562Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:16:36.902848Z\tINFO\tgrabit-api\t201\t\t",
+          "2026-05-21T03:16:35.539042Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:16:33.314008Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:16:23.140589Z\tWARNING\tgrabit-api\t401\t\t"
+        ],
+        "criticalSample": []
+      },
+      "checkedAt": "2026-05-21T03:19:00.973Z"
+    },
+    {
+      "name": "github-actions",
+      "status": "PASS",
+      "summary": "Operator supplied green GitHub Actions deploy run URL.",
+      "details": {
+        "runUrl": "https://github.com/sangwopark19/grapit/actions/runs/26202441334"
+      },
+      "checkedAt": "2026-05-21T03:20:00.974Z"
+    },
+    {
+      "name": "cloud-run-grabit-api",
+      "status": "PASS",
+      "summary": "grabit-api latest ready revision has 100% direct deploy traffic.",
+      "details": {
+        "service": "grabit-api",
+        "latestReadyRevision": "grabit-api-00114-chg",
+        "observedTraffic": [
+          {
+            "revisionName": "grabit-api-00114-chg",
+            "percent": 100
+          }
+        ],
+        "image": "asia-northeast3-docker.pkg.devgrapit-491806grabi",
+        "bookingEnabled": "<absent>"
+      },
+      "checkedAt": "2026-05-21T03:20:01.775Z"
+    },
+    {
+      "name": "cloud-run-grabit-web",
+      "status": "PASS",
+      "summary": "grabit-web latest ready revision has 100% direct deploy traffic.",
+      "details": {
+        "service": "grabit-web",
+        "latestReadyRevision": "grabit-web-00077-4sx",
+        "observedTraffic": [
+          {
+            "revisionName": "grabit-web-00077-4sx",
+            "percent": 100
+          }
+        ],
+        "image": "asia-northeast3-docker.pkg.devgrapit-491806grabi",
+        "bookingEnabled": "<absent>"
+      },
+      "checkedAt": "2026-05-21T03:20:02.530Z"
+    },
+    {
+      "name": "rollback-revisions",
+      "status": "PASS",
+      "summary": "Rollback revision IDs captured in short/redacted form.",
+      "details": {
+        "apiRollbackRevision": "grabit-api-00113-2lw",
+        "webRollbackRevision": "grabit-web-00076-rf4",
+        "note": "Operator supplied rollback target revisions."
+      },
+      "checkedAt": "2026-05-21T03:20:02.530Z"
+    },
+    {
+      "name": "api-health",
+      "status": "PASS",
+      "summary": "API health returned 2xx.",
+      "details": {
+        "url": "https://api.heygrabit.com/api/v1/health",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:20:03.484Z"
+    },
+    {
+      "name": "runtime-flags",
+      "status": "PASS",
+      "summary": "BOOKING_ENABLED=false observed during direct deploy watch.",
+      "details": {
+        "url": "https://heygrabit.com/api/runtime-flags",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:20:04.048Z"
+    },
+    {
+      "name": "public-detail",
+      "status": "PASS",
+      "summary": "Public event detail returned 2xx.",
+      "details": {
+        "url": "https://heygrabit.com/performance/18a3bcc6-5e75-463d-abfd-634601328754",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:20:04.367Z"
+    },
+    {
+      "name": "auth-session",
+      "status": "PASS",
+      "summary": "auth-session hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; refresh_code=$(curl -sS -o /dev/null -w \"%{http_code}\" -b \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/refresh); rm -f \"$tmp\"; case \"$refresh_code\" in 200|204) echo \"auth_session=ok refresh_http=$refresh_code\" ;; *) echo \"auth_session=fail refresh_http=$refresh_code\"; exit 1 ;; esac",
+        "exitStatus": 0,
+        "stdout": "auth_session=ok refresh_http=200\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:20:06.119Z"
+    },
+    {
+      "name": "queue-entry",
+      "status": "PASS",
+      "summary": "queue-entry hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; enter=$(curl -sS -b \"$tmp\" -c \"$tmp\" -H \"Authorization: Bearer <redacted>\" -X POST https://api.heygrabit.com/api/v1/queue/performances/18a3bcc6-5e75-463d-abfd-634601328754/enter); state=$(printf \"%s\" \"$enter\" | jq -r \".state // empty\"); qid=$(printf \"%s\" \"$enter\" | jq -r \".queueSessionId // empty\"); test -n \"$qid\" || exit 1; session=$(curl -sS -b \"$tmp\" -H \"Authorization: Bearer <redacted>\" https://api.heygrabit.com/api/v1/queue/sessions/$qid); session_state=$(printf \"%s\" \"$session\" | jq -r \".state // empty\"); rm -f \"$tmp\"; test -n \"$state\" || exit 1; test -n \"$session_state\" || exit 1; echo \"queue_entry=ok state=$state session_state=$session_state\"",
+        "exitStatus": 0,
+        "stdout": "queue_entry=ok state=ADMITTED session_state=ADMITTED\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:20:08.153Z"
+    },
+    {
+      "name": "payment-safe",
+      "status": "PASS",
+      "summary": "payment-safe hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; resp=$(mktemp); order=\"phase26-disabled-probe-$(date -u +%Y%m%d%H%M%S)\"; code=$(curl -sS -o \"$resp\" -w \"%{http_code}\" -b \"$tmp\" -H \"Authorization: Bearer <redacted>\" -H \"Content-Type: application/json\" -X POST https://api.heygrabit.com/api/v1/payments/confirm --data-raw \"{\\\"paymentKey\\\":\\\"phase26-disabled-probe\\\",\\\"orderId\\\":\\\"$order\\\",\\\"amount\\\":1}\"); rm -f \"$tmp\" \"$resp\"; case \"$code\" in 403|404) echo \"payment_safe=ok http=$code class=no_provider_confirm_no_side_effect\" ;; *) echo \"payment_safe=fail http=$code\"; exit 1 ;; esac",
+        "exitStatus": 0,
+        "stdout": "payment_safe=ok http=403 class=no_provider_confirm_no_side_effect\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:20:09.382Z"
+    },
+    {
+      "name": "cloud-run-logs",
+      "status": "PASS",
+      "summary": "No critical Cloud Run log patterns found in clipped scan.",
+      "details": {
+        "filter": "resource.type=\"cloud_run_revision\"\nAND resource.labels.service_name=(\"grabit-api\" OR \"grabit-web\")\nAND timestamp>=\"2026-05-21T03:13:02.173Z\"\nAND (severity>=WARNING OR \"auth/refresh\" OR \"queue\" OR \"confirm\" OR \"health\" OR \"payment\")",
+        "sample": [
+          "2026-05-21T03:20:03.345119Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:19:48.483429Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:19:48.161385Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:18:57.224927Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:18:56.555673Z\tINFO\tgrabit-api\t201\t\t",
+          "2026-05-21T03:18:55.136523Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:18:52.825741Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:17:47.301251Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:17:46.608439Z\tINFO\tgrabit-api\t201\t\t",
+          "2026-05-21T03:17:45.239885Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:17:42.986634Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:17:31.396115Z\tWARNING\tgrabit-api\t404\t\t",
+          "2026-05-21T03:17:05.542742Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:17:05.431019Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:16:52.472405Z\tWARNING\tgrabit-api\t401\t\t",
+          "2026-05-21T03:16:40.883191Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:16:40.741558Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:16:40.518753Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:16:40.407093Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:16:38.824604Z\tINFO\tgrabit-api\t200\t\t"
+        ],
+        "criticalSample": []
+      },
+      "checkedAt": "2026-05-21T03:20:11.381Z"
+    },
+    {
+      "name": "github-actions",
+      "status": "PASS",
+      "summary": "Operator supplied green GitHub Actions deploy run URL.",
+      "details": {
+        "runUrl": "https://github.com/sangwopark19/grapit/actions/runs/26202441334"
+      },
+      "checkedAt": "2026-05-21T03:21:11.383Z"
+    },
+    {
+      "name": "cloud-run-grabit-api",
+      "status": "PASS",
+      "summary": "grabit-api latest ready revision has 100% direct deploy traffic.",
+      "details": {
+        "service": "grabit-api",
+        "latestReadyRevision": "grabit-api-00114-chg",
+        "observedTraffic": [
+          {
+            "revisionName": "grabit-api-00114-chg",
+            "percent": 100
+          }
+        ],
+        "image": "asia-northeast3-docker.pkg.devgrapit-491806grabi",
+        "bookingEnabled": "<absent>"
+      },
+      "checkedAt": "2026-05-21T03:21:12.169Z"
+    },
+    {
+      "name": "cloud-run-grabit-web",
+      "status": "PASS",
+      "summary": "grabit-web latest ready revision has 100% direct deploy traffic.",
+      "details": {
+        "service": "grabit-web",
+        "latestReadyRevision": "grabit-web-00077-4sx",
+        "observedTraffic": [
+          {
+            "revisionName": "grabit-web-00077-4sx",
+            "percent": 100
+          }
+        ],
+        "image": "asia-northeast3-docker.pkg.devgrapit-491806grabi",
+        "bookingEnabled": "<absent>"
+      },
+      "checkedAt": "2026-05-21T03:21:12.955Z"
+    },
+    {
+      "name": "rollback-revisions",
+      "status": "PASS",
+      "summary": "Rollback revision IDs captured in short/redacted form.",
+      "details": {
+        "apiRollbackRevision": "grabit-api-00113-2lw",
+        "webRollbackRevision": "grabit-web-00076-rf4",
+        "note": "Operator supplied rollback target revisions."
+      },
+      "checkedAt": "2026-05-21T03:21:12.955Z"
+    },
+    {
+      "name": "api-health",
+      "status": "PASS",
+      "summary": "API health returned 2xx.",
+      "details": {
+        "url": "https://api.heygrabit.com/api/v1/health",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:21:13.525Z"
+    },
+    {
+      "name": "runtime-flags",
+      "status": "PASS",
+      "summary": "BOOKING_ENABLED=false observed during direct deploy watch.",
+      "details": {
+        "url": "https://heygrabit.com/api/runtime-flags",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:21:14.090Z"
+    },
+    {
+      "name": "public-detail",
+      "status": "PASS",
+      "summary": "Public event detail returned 2xx.",
+      "details": {
+        "url": "https://heygrabit.com/performance/18a3bcc6-5e75-463d-abfd-634601328754",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:21:14.410Z"
+    },
+    {
+      "name": "auth-session",
+      "status": "PASS",
+      "summary": "auth-session hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; refresh_code=$(curl -sS -o /dev/null -w \"%{http_code}\" -b \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/refresh); rm -f \"$tmp\"; case \"$refresh_code\" in 200|204) echo \"auth_session=ok refresh_http=$refresh_code\" ;; *) echo \"auth_session=fail refresh_http=$refresh_code\"; exit 1 ;; esac",
+        "exitStatus": 0,
+        "stdout": "auth_session=ok refresh_http=200\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:21:15.820Z"
+    },
+    {
+      "name": "queue-entry",
+      "status": "PASS",
+      "summary": "queue-entry hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; enter=$(curl -sS -b \"$tmp\" -c \"$tmp\" -H \"Authorization: Bearer <redacted>\" -X POST https://api.heygrabit.com/api/v1/queue/performances/18a3bcc6-5e75-463d-abfd-634601328754/enter); state=$(printf \"%s\" \"$enter\" | jq -r \".state // empty\"); qid=$(printf \"%s\" \"$enter\" | jq -r \".queueSessionId // empty\"); test -n \"$qid\" || exit 1; session=$(curl -sS -b \"$tmp\" -H \"Authorization: Bearer <redacted>\" https://api.heygrabit.com/api/v1/queue/sessions/$qid); session_state=$(printf \"%s\" \"$session\" | jq -r \".state // empty\"); rm -f \"$tmp\"; test -n \"$state\" || exit 1; test -n \"$session_state\" || exit 1; echo \"queue_entry=ok state=$state session_state=$session_state\"",
+        "exitStatus": 0,
+        "stdout": "queue_entry=ok state=ADMITTED session_state=ADMITTED\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:21:18.342Z"
+    },
+    {
+      "name": "payment-safe",
+      "status": "PASS",
+      "summary": "payment-safe hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; resp=$(mktemp); order=\"phase26-disabled-probe-$(date -u +%Y%m%d%H%M%S)\"; code=$(curl -sS -o \"$resp\" -w \"%{http_code}\" -b \"$tmp\" -H \"Authorization: Bearer <redacted>\" -H \"Content-Type: application/json\" -X POST https://api.heygrabit.com/api/v1/payments/confirm --data-raw \"{\\\"paymentKey\\\":\\\"phase26-disabled-probe\\\",\\\"orderId\\\":\\\"$order\\\",\\\"amount\\\":1}\"); rm -f \"$tmp\" \"$resp\"; case \"$code\" in 403|404) echo \"payment_safe=ok http=$code class=no_provider_confirm_no_side_effect\" ;; *) echo \"payment_safe=fail http=$code\"; exit 1 ;; esac",
+        "exitStatus": 0,
+        "stdout": "payment_safe=ok http=403 class=no_provider_confirm_no_side_effect\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:21:19.578Z"
+    },
+    {
+      "name": "cloud-run-logs",
+      "status": "PASS",
+      "summary": "No critical Cloud Run log patterns found in clipped scan.",
+      "details": {
+        "filter": "resource.type=\"cloud_run_revision\"\nAND resource.labels.service_name=(\"grabit-api\" OR \"grabit-web\")\nAND timestamp>=\"2026-05-21T03:13:02.173Z\"\nAND (severity>=WARNING OR \"auth/refresh\" OR \"queue\" OR \"confirm\" OR \"health\" OR \"payment\")",
+        "sample": [
+          "2026-05-21T03:21:13.382234Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:20:50.064229Z\tWARNING\tgrabit-api\t404\t\t",
+          "2026-05-21T03:20:07.950466Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:20:07.295431Z\tINFO\tgrabit-api\t201\t\t",
+          "2026-05-21T03:20:05.949544Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:20:03.345119Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:19:48.483429Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:19:48.161385Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:18:57.224927Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:18:56.555673Z\tINFO\tgrabit-api\t201\t\t",
+          "2026-05-21T03:18:55.136523Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:18:52.825741Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:17:47.301251Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:17:46.608439Z\tINFO\tgrabit-api\t201\t\t",
+          "2026-05-21T03:17:45.239885Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:17:42.986634Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:17:31.396115Z\tWARNING\tgrabit-api\t404\t\t",
+          "2026-05-21T03:17:05.542742Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:17:05.431019Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:16:52.472405Z\tWARNING\tgrabit-api\t401\t\t"
+        ],
+        "criticalSample": []
+      },
+      "checkedAt": "2026-05-21T03:21:21.551Z"
+    },
+    {
+      "name": "github-actions",
+      "status": "PASS",
+      "summary": "Operator supplied green GitHub Actions deploy run URL.",
+      "details": {
+        "runUrl": "https://github.com/sangwopark19/grapit/actions/runs/26202441334"
+      },
+      "checkedAt": "2026-05-21T03:22:21.552Z"
+    },
+    {
+      "name": "cloud-run-grabit-api",
+      "status": "PASS",
+      "summary": "grabit-api latest ready revision has 100% direct deploy traffic.",
+      "details": {
+        "service": "grabit-api",
+        "latestReadyRevision": "grabit-api-00114-chg",
+        "observedTraffic": [
+          {
+            "revisionName": "grabit-api-00114-chg",
+            "percent": 100
+          }
+        ],
+        "image": "asia-northeast3-docker.pkg.devgrapit-491806grabi",
+        "bookingEnabled": "<absent>"
+      },
+      "checkedAt": "2026-05-21T03:22:22.352Z"
+    },
+    {
+      "name": "cloud-run-grabit-web",
+      "status": "PASS",
+      "summary": "grabit-web latest ready revision has 100% direct deploy traffic.",
+      "details": {
+        "service": "grabit-web",
+        "latestReadyRevision": "grabit-web-00077-4sx",
+        "observedTraffic": [
+          {
+            "revisionName": "grabit-web-00077-4sx",
+            "percent": 100
+          }
+        ],
+        "image": "asia-northeast3-docker.pkg.devgrapit-491806grabi",
+        "bookingEnabled": "<absent>"
+      },
+      "checkedAt": "2026-05-21T03:22:23.130Z"
+    },
+    {
+      "name": "rollback-revisions",
+      "status": "PASS",
+      "summary": "Rollback revision IDs captured in short/redacted form.",
+      "details": {
+        "apiRollbackRevision": "grabit-api-00113-2lw",
+        "webRollbackRevision": "grabit-web-00076-rf4",
+        "note": "Operator supplied rollback target revisions."
+      },
+      "checkedAt": "2026-05-21T03:22:23.130Z"
+    },
+    {
+      "name": "api-health",
+      "status": "PASS",
+      "summary": "API health returned 2xx.",
+      "details": {
+        "url": "https://api.heygrabit.com/api/v1/health",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:22:23.691Z"
+    },
+    {
+      "name": "runtime-flags",
+      "status": "PASS",
+      "summary": "BOOKING_ENABLED=false observed during direct deploy watch.",
+      "details": {
+        "url": "https://heygrabit.com/api/runtime-flags",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:22:24.285Z"
+    },
+    {
+      "name": "public-detail",
+      "status": "PASS",
+      "summary": "Public event detail returned 2xx.",
+      "details": {
+        "url": "https://heygrabit.com/performance/18a3bcc6-5e75-463d-abfd-634601328754",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:22:24.741Z"
+    },
+    {
+      "name": "auth-session",
+      "status": "PASS",
+      "summary": "auth-session hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; refresh_code=$(curl -sS -o /dev/null -w \"%{http_code}\" -b \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/refresh); rm -f \"$tmp\"; case \"$refresh_code\" in 200|204) echo \"auth_session=ok refresh_http=$refresh_code\" ;; *) echo \"auth_session=fail refresh_http=$refresh_code\"; exit 1 ;; esac",
+        "exitStatus": 0,
+        "stdout": "auth_session=ok refresh_http=200\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:22:26.124Z"
+    },
+    {
+      "name": "queue-entry",
+      "status": "PASS",
+      "summary": "queue-entry hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; enter=$(curl -sS -b \"$tmp\" -c \"$tmp\" -H \"Authorization: Bearer <redacted>\" -X POST https://api.heygrabit.com/api/v1/queue/performances/18a3bcc6-5e75-463d-abfd-634601328754/enter); state=$(printf \"%s\" \"$enter\" | jq -r \".state // empty\"); qid=$(printf \"%s\" \"$enter\" | jq -r \".queueSessionId // empty\"); test -n \"$qid\" || exit 1; session=$(curl -sS -b \"$tmp\" -H \"Authorization: Bearer <redacted>\" https://api.heygrabit.com/api/v1/queue/sessions/$qid); session_state=$(printf \"%s\" \"$session\" | jq -r \".state // empty\"); rm -f \"$tmp\"; test -n \"$state\" || exit 1; test -n \"$session_state\" || exit 1; echo \"queue_entry=ok state=$state session_state=$session_state\"",
+        "exitStatus": 0,
+        "stdout": "queue_entry=ok state=ADMITTED session_state=ADMITTED\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:22:28.189Z"
+    },
+    {
+      "name": "payment-safe",
+      "status": "PASS",
+      "summary": "payment-safe hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; resp=$(mktemp); order=\"phase26-disabled-probe-$(date -u +%Y%m%d%H%M%S)\"; code=$(curl -sS -o \"$resp\" -w \"%{http_code}\" -b \"$tmp\" -H \"Authorization: Bearer <redacted>\" -H \"Content-Type: application/json\" -X POST https://api.heygrabit.com/api/v1/payments/confirm --data-raw \"{\\\"paymentKey\\\":\\\"phase26-disabled-probe\\\",\\\"orderId\\\":\\\"$order\\\",\\\"amount\\\":1}\"); rm -f \"$tmp\" \"$resp\"; case \"$code\" in 403|404) echo \"payment_safe=ok http=$code class=no_provider_confirm_no_side_effect\" ;; *) echo \"payment_safe=fail http=$code\"; exit 1 ;; esac",
+        "exitStatus": 0,
+        "stdout": "payment_safe=ok http=403 class=no_provider_confirm_no_side_effect\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:22:29.413Z"
+    },
+    {
+      "name": "cloud-run-logs",
+      "status": "PASS",
+      "summary": "No critical Cloud Run log patterns found in clipped scan.",
+      "details": {
+        "filter": "resource.type=\"cloud_run_revision\"\nAND resource.labels.service_name=(\"grabit-api\" OR \"grabit-web\")\nAND timestamp>=\"2026-05-21T03:13:02.173Z\"\nAND (severity>=WARNING OR \"auth/refresh\" OR \"queue\" OR \"confirm\" OR \"health\" OR \"payment\")",
+        "sample": [
+          "2026-05-21T03:22:23.547339Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:22:19.768527Z\tWARNING\tgrabit-api\t401\t\t",
+          "2026-05-21T03:22:16.584674Z\tWARNING\tgrabit-api\t401\t\t",
+          "2026-05-21T03:22:16.292064Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:21:44.037101Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:21:43.914995Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:21:22.502646Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:21:22.227145Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:21:22.023912Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:21:20.726138Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:21:20.560621Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:21:18.142563Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:21:17.457471Z\tINFO\tgrabit-api\t201\t\t",
+          "2026-05-21T03:21:15.650744Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:21:13.382234Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:20:50.064229Z\tWARNING\tgrabit-api\t404\t\t",
+          "2026-05-21T03:20:07.950466Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:20:07.295431Z\tINFO\tgrabit-api\t201\t\t",
+          "2026-05-21T03:20:05.949544Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:20:03.345119Z\tINFO\tgrabit-api\t200\t\t"
+        ],
+        "criticalSample": []
+      },
+      "checkedAt": "2026-05-21T03:22:31.173Z"
+    },
+    {
+      "name": "github-actions",
+      "status": "PASS",
+      "summary": "Operator supplied green GitHub Actions deploy run URL.",
+      "details": {
+        "runUrl": "https://github.com/sangwopark19/grapit/actions/runs/26202441334"
+      },
+      "checkedAt": "2026-05-21T03:23:31.175Z"
+    },
+    {
+      "name": "cloud-run-grabit-api",
+      "status": "PASS",
+      "summary": "grabit-api latest ready revision has 100% direct deploy traffic.",
+      "details": {
+        "service": "grabit-api",
+        "latestReadyRevision": "grabit-api-00114-chg",
+        "observedTraffic": [
+          {
+            "revisionName": "grabit-api-00114-chg",
+            "percent": 100
+          }
+        ],
+        "image": "asia-northeast3-docker.pkg.devgrapit-491806grabi",
+        "bookingEnabled": "<absent>"
+      },
+      "checkedAt": "2026-05-21T03:23:31.954Z"
+    },
+    {
+      "name": "cloud-run-grabit-web",
+      "status": "PASS",
+      "summary": "grabit-web latest ready revision has 100% direct deploy traffic.",
+      "details": {
+        "service": "grabit-web",
+        "latestReadyRevision": "grabit-web-00077-4sx",
+        "observedTraffic": [
+          {
+            "revisionName": "grabit-web-00077-4sx",
+            "percent": 100
+          }
+        ],
+        "image": "asia-northeast3-docker.pkg.devgrapit-491806grabi",
+        "bookingEnabled": "<absent>"
+      },
+      "checkedAt": "2026-05-21T03:23:32.677Z"
+    },
+    {
+      "name": "rollback-revisions",
+      "status": "PASS",
+      "summary": "Rollback revision IDs captured in short/redacted form.",
+      "details": {
+        "apiRollbackRevision": "grabit-api-00113-2lw",
+        "webRollbackRevision": "grabit-web-00076-rf4",
+        "note": "Operator supplied rollback target revisions."
+      },
+      "checkedAt": "2026-05-21T03:23:32.677Z"
+    },
+    {
+      "name": "api-health",
+      "status": "PASS",
+      "summary": "API health returned 2xx.",
+      "details": {
+        "url": "https://api.heygrabit.com/api/v1/health",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:23:33.240Z"
+    },
+    {
+      "name": "runtime-flags",
+      "status": "PASS",
+      "summary": "BOOKING_ENABLED=false observed during direct deploy watch.",
+      "details": {
+        "url": "https://heygrabit.com/api/runtime-flags",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:23:33.827Z"
+    },
+    {
+      "name": "public-detail",
+      "status": "PASS",
+      "summary": "Public event detail returned 2xx.",
+      "details": {
+        "url": "https://heygrabit.com/performance/18a3bcc6-5e75-463d-abfd-634601328754",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:23:34.162Z"
+    },
+    {
+      "name": "auth-session",
+      "status": "PASS",
+      "summary": "auth-session hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; refresh_code=$(curl -sS -o /dev/null -w \"%{http_code}\" -b \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/refresh); rm -f \"$tmp\"; case \"$refresh_code\" in 200|204) echo \"auth_session=ok refresh_http=$refresh_code\" ;; *) echo \"auth_session=fail refresh_http=$refresh_code\"; exit 1 ;; esac",
+        "exitStatus": 0,
+        "stdout": "auth_session=ok refresh_http=200\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:23:35.523Z"
+    },
+    {
+      "name": "queue-entry",
+      "status": "PASS",
+      "summary": "queue-entry hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; enter=$(curl -sS -b \"$tmp\" -c \"$tmp\" -H \"Authorization: Bearer <redacted>\" -X POST https://api.heygrabit.com/api/v1/queue/performances/18a3bcc6-5e75-463d-abfd-634601328754/enter); state=$(printf \"%s\" \"$enter\" | jq -r \".state // empty\"); qid=$(printf \"%s\" \"$enter\" | jq -r \".queueSessionId // empty\"); test -n \"$qid\" || exit 1; session=$(curl -sS -b \"$tmp\" -H \"Authorization: Bearer <redacted>\" https://api.heygrabit.com/api/v1/queue/sessions/$qid); session_state=$(printf \"%s\" \"$session\" | jq -r \".state // empty\"); rm -f \"$tmp\"; test -n \"$state\" || exit 1; test -n \"$session_state\" || exit 1; echo \"queue_entry=ok state=$state session_state=$session_state\"",
+        "exitStatus": 0,
+        "stdout": "queue_entry=ok state=ADMITTED session_state=ADMITTED\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:23:37.611Z"
+    },
+    {
+      "name": "payment-safe",
+      "status": "PASS",
+      "summary": "payment-safe hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; resp=$(mktemp); order=\"phase26-disabled-probe-$(date -u +%Y%m%d%H%M%S)\"; code=$(curl -sS -o \"$resp\" -w \"%{http_code}\" -b \"$tmp\" -H \"Authorization: Bearer <redacted>\" -H \"Content-Type: application/json\" -X POST https://api.heygrabit.com/api/v1/payments/confirm --data-raw \"{\\\"paymentKey\\\":\\\"phase26-disabled-probe\\\",\\\"orderId\\\":\\\"$order\\\",\\\"amount\\\":1}\"); rm -f \"$tmp\" \"$resp\"; case \"$code\" in 403|404) echo \"payment_safe=ok http=$code class=no_provider_confirm_no_side_effect\" ;; *) echo \"payment_safe=fail http=$code\"; exit 1 ;; esac",
+        "exitStatus": 0,
+        "stdout": "payment_safe=ok http=403 class=no_provider_confirm_no_side_effect\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:23:38.825Z"
+    },
+    {
+      "name": "cloud-run-logs",
+      "status": "PASS",
+      "summary": "No critical Cloud Run log patterns found in clipped scan.",
+      "details": {
+        "filter": "resource.type=\"cloud_run_revision\"\nAND resource.labels.service_name=(\"grabit-api\" OR \"grabit-web\")\nAND timestamp>=\"2026-05-21T03:13:02.173Z\"\nAND (severity>=WARNING OR \"auth/refresh\" OR \"queue\" OR \"confirm\" OR \"health\" OR \"payment\")",
+        "sample": [
+          "2026-05-21T03:23:33.096245Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:23:00.994645Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:23:00.664609Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:22:27.991945Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:22:27.328988Z\tINFO\tgrabit-api\t201\t\t",
+          "2026-05-21T03:22:25.958986Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:22:23.547339Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:22:19.768527Z\tWARNING\tgrabit-api\t401\t\t",
+          "2026-05-21T03:22:16.584674Z\tWARNING\tgrabit-api\t401\t\t",
+          "2026-05-21T03:22:16.292064Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:21:44.037101Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:21:43.914995Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:21:22.502646Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:21:22.227145Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:21:22.023912Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:21:20.726138Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:21:20.560621Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:21:18.142563Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:21:17.457471Z\tINFO\tgrabit-api\t201\t\t",
+          "2026-05-21T03:21:15.650744Z\tINFO\tgrabit-api\t200\t\t"
+        ],
+        "criticalSample": []
+      },
+      "checkedAt": "2026-05-21T03:23:40.787Z"
+    },
+    {
+      "name": "github-actions",
+      "status": "PASS",
+      "summary": "Operator supplied green GitHub Actions deploy run URL.",
+      "details": {
+        "runUrl": "https://github.com/sangwopark19/grapit/actions/runs/26202441334"
+      },
+      "checkedAt": "2026-05-21T03:24:40.788Z"
+    },
+    {
+      "name": "cloud-run-grabit-api",
+      "status": "PASS",
+      "summary": "grabit-api latest ready revision has 100% direct deploy traffic.",
+      "details": {
+        "service": "grabit-api",
+        "latestReadyRevision": "grabit-api-00114-chg",
+        "observedTraffic": [
+          {
+            "revisionName": "grabit-api-00114-chg",
+            "percent": 100
+          }
+        ],
+        "image": "asia-northeast3-docker.pkg.devgrapit-491806grabi",
+        "bookingEnabled": "<absent>"
+      },
+      "checkedAt": "2026-05-21T03:24:41.574Z"
+    },
+    {
+      "name": "cloud-run-grabit-web",
+      "status": "PASS",
+      "summary": "grabit-web latest ready revision has 100% direct deploy traffic.",
+      "details": {
+        "service": "grabit-web",
+        "latestReadyRevision": "grabit-web-00077-4sx",
+        "observedTraffic": [
+          {
+            "revisionName": "grabit-web-00077-4sx",
+            "percent": 100
+          }
+        ],
+        "image": "asia-northeast3-docker.pkg.devgrapit-491806grabi",
+        "bookingEnabled": "<absent>"
+      },
+      "checkedAt": "2026-05-21T03:24:42.323Z"
+    },
+    {
+      "name": "rollback-revisions",
+      "status": "PASS",
+      "summary": "Rollback revision IDs captured in short/redacted form.",
+      "details": {
+        "apiRollbackRevision": "grabit-api-00113-2lw",
+        "webRollbackRevision": "grabit-web-00076-rf4",
+        "note": "Operator supplied rollback target revisions."
+      },
+      "checkedAt": "2026-05-21T03:24:42.324Z"
+    },
+    {
+      "name": "api-health",
+      "status": "PASS",
+      "summary": "API health returned 2xx.",
+      "details": {
+        "url": "https://api.heygrabit.com/api/v1/health",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:24:42.934Z"
+    },
+    {
+      "name": "runtime-flags",
+      "status": "PASS",
+      "summary": "BOOKING_ENABLED=false observed during direct deploy watch.",
+      "details": {
+        "url": "https://heygrabit.com/api/runtime-flags",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:24:43.523Z"
+    },
+    {
+      "name": "public-detail",
+      "status": "PASS",
+      "summary": "Public event detail returned 2xx.",
+      "details": {
+        "url": "https://heygrabit.com/performance/18a3bcc6-5e75-463d-abfd-634601328754",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:24:43.837Z"
+    },
+    {
+      "name": "auth-session",
+      "status": "PASS",
+      "summary": "auth-session hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; refresh_code=$(curl -sS -o /dev/null -w \"%{http_code}\" -b \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/refresh); rm -f \"$tmp\"; case \"$refresh_code\" in 200|204) echo \"auth_session=ok refresh_http=$refresh_code\" ;; *) echo \"auth_session=fail refresh_http=$refresh_code\"; exit 1 ;; esac",
+        "exitStatus": 0,
+        "stdout": "auth_session=ok refresh_http=200\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:24:45.202Z"
+    },
+    {
+      "name": "queue-entry",
+      "status": "PASS",
+      "summary": "queue-entry hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; enter=$(curl -sS -b \"$tmp\" -c \"$tmp\" -H \"Authorization: Bearer <redacted>\" -X POST https://api.heygrabit.com/api/v1/queue/performances/18a3bcc6-5e75-463d-abfd-634601328754/enter); state=$(printf \"%s\" \"$enter\" | jq -r \".state // empty\"); qid=$(printf \"%s\" \"$enter\" | jq -r \".queueSessionId // empty\"); test -n \"$qid\" || exit 1; session=$(curl -sS -b \"$tmp\" -H \"Authorization: Bearer <redacted>\" https://api.heygrabit.com/api/v1/queue/sessions/$qid); session_state=$(printf \"%s\" \"$session\" | jq -r \".state // empty\"); rm -f \"$tmp\"; test -n \"$state\" || exit 1; test -n \"$session_state\" || exit 1; echo \"queue_entry=ok state=$state session_state=$session_state\"",
+        "exitStatus": 0,
+        "stdout": "queue_entry=ok state=ADMITTED session_state=ADMITTED\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:24:47.237Z"
+    },
+    {
+      "name": "payment-safe",
+      "status": "PASS",
+      "summary": "payment-safe hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; resp=$(mktemp); order=\"phase26-disabled-probe-$(date -u +%Y%m%d%H%M%S)\"; code=$(curl -sS -o \"$resp\" -w \"%{http_code}\" -b \"$tmp\" -H \"Authorization: Bearer <redacted>\" -H \"Content-Type: application/json\" -X POST https://api.heygrabit.com/api/v1/payments/confirm --data-raw \"{\\\"paymentKey\\\":\\\"phase26-disabled-probe\\\",\\\"orderId\\\":\\\"$order\\\",\\\"amount\\\":1}\"); rm -f \"$tmp\" \"$resp\"; case \"$code\" in 403|404) echo \"payment_safe=ok http=$code class=no_provider_confirm_no_side_effect\" ;; *) echo \"payment_safe=fail http=$code\"; exit 1 ;; esac",
+        "exitStatus": 0,
+        "stdout": "payment_safe=ok http=403 class=no_provider_confirm_no_side_effect\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:24:48.428Z"
+    },
+    {
+      "name": "cloud-run-logs",
+      "status": "PASS",
+      "summary": "No critical Cloud Run log patterns found in clipped scan.",
+      "details": {
+        "filter": "resource.type=\"cloud_run_revision\"\nAND resource.labels.service_name=(\"grabit-api\" OR \"grabit-web\")\nAND timestamp>=\"2026-05-21T03:13:02.173Z\"\nAND (severity>=WARNING OR \"auth/refresh\" OR \"queue\" OR \"confirm\" OR \"health\" OR \"payment\")",
+        "sample": [
+          "2026-05-21T03:24:42.780767Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:23:37.412552Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:23:36.730254Z\tINFO\tgrabit-api\t201\t\t",
+          "2026-05-21T03:23:35.358770Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:23:33.096245Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:23:00.994645Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:23:00.664609Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:22:27.991945Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:22:27.328988Z\tINFO\tgrabit-api\t201\t\t",
+          "2026-05-21T03:22:25.958986Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:22:23.547339Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:22:19.768527Z\tWARNING\tgrabit-api\t401\t\t",
+          "2026-05-21T03:22:16.584674Z\tWARNING\tgrabit-api\t401\t\t",
+          "2026-05-21T03:22:16.292064Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:21:44.037101Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:21:43.914995Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:21:22.502646Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:21:22.227145Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:21:22.023912Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:21:20.726138Z\tINFO\tgrabit-api\t204\t\t"
+        ],
+        "criticalSample": []
+      },
+      "checkedAt": "2026-05-21T03:24:50.697Z"
+    },
+    {
+      "name": "github-actions",
+      "status": "PASS",
+      "summary": "Operator supplied green GitHub Actions deploy run URL.",
+      "details": {
+        "runUrl": "https://github.com/sangwopark19/grapit/actions/runs/26202441334"
+      },
+      "checkedAt": "2026-05-21T03:25:50.698Z"
+    },
+    {
+      "name": "cloud-run-grabit-api",
+      "status": "PASS",
+      "summary": "grabit-api latest ready revision has 100% direct deploy traffic.",
+      "details": {
+        "service": "grabit-api",
+        "latestReadyRevision": "grabit-api-00114-chg",
+        "observedTraffic": [
+          {
+            "revisionName": "grabit-api-00114-chg",
+            "percent": 100
+          }
+        ],
+        "image": "asia-northeast3-docker.pkg.devgrapit-491806grabi",
+        "bookingEnabled": "<absent>"
+      },
+      "checkedAt": "2026-05-21T03:25:51.503Z"
+    },
+    {
+      "name": "cloud-run-grabit-web",
+      "status": "PASS",
+      "summary": "grabit-web latest ready revision has 100% direct deploy traffic.",
+      "details": {
+        "service": "grabit-web",
+        "latestReadyRevision": "grabit-web-00077-4sx",
+        "observedTraffic": [
+          {
+            "revisionName": "grabit-web-00077-4sx",
+            "percent": 100
+          }
+        ],
+        "image": "asia-northeast3-docker.pkg.devgrapit-491806grabi",
+        "bookingEnabled": "<absent>"
+      },
+      "checkedAt": "2026-05-21T03:25:52.275Z"
+    },
+    {
+      "name": "rollback-revisions",
+      "status": "PASS",
+      "summary": "Rollback revision IDs captured in short/redacted form.",
+      "details": {
+        "apiRollbackRevision": "grabit-api-00113-2lw",
+        "webRollbackRevision": "grabit-web-00076-rf4",
+        "note": "Operator supplied rollback target revisions."
+      },
+      "checkedAt": "2026-05-21T03:25:52.275Z"
+    },
+    {
+      "name": "api-health",
+      "status": "PASS",
+      "summary": "API health returned 2xx.",
+      "details": {
+        "url": "https://api.heygrabit.com/api/v1/health",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:25:52.852Z"
+    },
+    {
+      "name": "runtime-flags",
+      "status": "PASS",
+      "summary": "BOOKING_ENABLED=false observed during direct deploy watch.",
+      "details": {
+        "url": "https://heygrabit.com/api/runtime-flags",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:25:53.417Z"
+    },
+    {
+      "name": "public-detail",
+      "status": "PASS",
+      "summary": "Public event detail returned 2xx.",
+      "details": {
+        "url": "https://heygrabit.com/performance/18a3bcc6-5e75-463d-abfd-634601328754",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:25:53.847Z"
+    },
+    {
+      "name": "auth-session",
+      "status": "PASS",
+      "summary": "auth-session hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; refresh_code=$(curl -sS -o /dev/null -w \"%{http_code}\" -b \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/refresh); rm -f \"$tmp\"; case \"$refresh_code\" in 200|204) echo \"auth_session=ok refresh_http=$refresh_code\" ;; *) echo \"auth_session=fail refresh_http=$refresh_code\"; exit 1 ;; esac",
+        "exitStatus": 0,
+        "stdout": "auth_session=ok refresh_http=200\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:25:55.226Z"
+    },
+    {
+      "name": "queue-entry",
+      "status": "PASS",
+      "summary": "queue-entry hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; enter=$(curl -sS -b \"$tmp\" -c \"$tmp\" -H \"Authorization: Bearer <redacted>\" -X POST https://api.heygrabit.com/api/v1/queue/performances/18a3bcc6-5e75-463d-abfd-634601328754/enter); state=$(printf \"%s\" \"$enter\" | jq -r \".state // empty\"); qid=$(printf \"%s\" \"$enter\" | jq -r \".queueSessionId // empty\"); test -n \"$qid\" || exit 1; session=$(curl -sS -b \"$tmp\" -H \"Authorization: Bearer <redacted>\" https://api.heygrabit.com/api/v1/queue/sessions/$qid); session_state=$(printf \"%s\" \"$session\" | jq -r \".state // empty\"); rm -f \"$tmp\"; test -n \"$state\" || exit 1; test -n \"$session_state\" || exit 1; echo \"queue_entry=ok state=$state session_state=$session_state\"",
+        "exitStatus": 0,
+        "stdout": "queue_entry=ok state=ADMITTED session_state=ADMITTED\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:25:57.305Z"
+    },
+    {
+      "name": "payment-safe",
+      "status": "PASS",
+      "summary": "payment-safe hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; resp=$(mktemp); order=\"phase26-disabled-probe-$(date -u +%Y%m%d%H%M%S)\"; code=$(curl -sS -o \"$resp\" -w \"%{http_code}\" -b \"$tmp\" -H \"Authorization: Bearer <redacted>\" -H \"Content-Type: application/json\" -X POST https://api.heygrabit.com/api/v1/payments/confirm --data-raw \"{\\\"paymentKey\\\":\\\"phase26-disabled-probe\\\",\\\"orderId\\\":\\\"$order\\\",\\\"amount\\\":1}\"); rm -f \"$tmp\" \"$resp\"; case \"$code\" in 403|404) echo \"payment_safe=ok http=$code class=no_provider_confirm_no_side_effect\" ;; *) echo \"payment_safe=fail http=$code\"; exit 1 ;; esac",
+        "exitStatus": 0,
+        "stdout": "payment_safe=ok http=403 class=no_provider_confirm_no_side_effect\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:25:58.547Z"
+    },
+    {
+      "name": "cloud-run-logs",
+      "status": "PASS",
+      "summary": "No critical Cloud Run log patterns found in clipped scan.",
+      "details": {
+        "filter": "resource.type=\"cloud_run_revision\"\nAND resource.labels.service_name=(\"grabit-api\" OR \"grabit-web\")\nAND timestamp>=\"2026-05-21T03:13:02.173Z\"\nAND (severity>=WARNING OR \"auth/refresh\" OR \"queue\" OR \"confirm\" OR \"health\" OR \"payment\")",
+        "sample": [
+          "2026-05-21T03:25:55.055388Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:25:52.699926Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:24:47.046794Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:24:46.753902Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:24:46.436901Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:24:46.398614Z\tINFO\tgrabit-api\t201\t\t",
+          "2026-05-21T03:24:45.036333Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:24:42.780767Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:23:37.412552Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:23:36.730254Z\tINFO\tgrabit-api\t201\t\t",
+          "2026-05-21T03:23:35.358770Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:23:33.096245Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:23:00.994645Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:23:00.664609Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:22:27.991945Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:22:27.328988Z\tINFO\tgrabit-api\t201\t\t",
+          "2026-05-21T03:22:25.958986Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:22:23.547339Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:22:19.768527Z\tWARNING\tgrabit-api\t401\t\t",
+          "2026-05-21T03:22:16.584674Z\tWARNING\tgrabit-api\t401\t\t"
+        ],
+        "criticalSample": []
+      },
+      "checkedAt": "2026-05-21T03:26:00.497Z"
+    },
+    {
+      "name": "github-actions",
+      "status": "PASS",
+      "summary": "Operator supplied green GitHub Actions deploy run URL.",
+      "details": {
+        "runUrl": "https://github.com/sangwopark19/grapit/actions/runs/26202441334"
+      },
+      "checkedAt": "2026-05-21T03:27:00.498Z"
+    },
+    {
+      "name": "cloud-run-grabit-api",
+      "status": "PASS",
+      "summary": "grabit-api latest ready revision has 100% direct deploy traffic.",
+      "details": {
+        "service": "grabit-api",
+        "latestReadyRevision": "grabit-api-00114-chg",
+        "observedTraffic": [
+          {
+            "revisionName": "grabit-api-00114-chg",
+            "percent": 100
+          }
+        ],
+        "image": "asia-northeast3-docker.pkg.devgrapit-491806grabi",
+        "bookingEnabled": "<absent>"
+      },
+      "checkedAt": "2026-05-21T03:27:01.318Z"
+    },
+    {
+      "name": "cloud-run-grabit-web",
+      "status": "PASS",
+      "summary": "grabit-web latest ready revision has 100% direct deploy traffic.",
+      "details": {
+        "service": "grabit-web",
+        "latestReadyRevision": "grabit-web-00077-4sx",
+        "observedTraffic": [
+          {
+            "revisionName": "grabit-web-00077-4sx",
+            "percent": 100
+          }
+        ],
+        "image": "asia-northeast3-docker.pkg.devgrapit-491806grabi",
+        "bookingEnabled": "<absent>"
+      },
+      "checkedAt": "2026-05-21T03:27:02.094Z"
+    },
+    {
+      "name": "rollback-revisions",
+      "status": "PASS",
+      "summary": "Rollback revision IDs captured in short/redacted form.",
+      "details": {
+        "apiRollbackRevision": "grabit-api-00113-2lw",
+        "webRollbackRevision": "grabit-web-00076-rf4",
+        "note": "Operator supplied rollback target revisions."
+      },
+      "checkedAt": "2026-05-21T03:27:02.094Z"
+    },
+    {
+      "name": "api-health",
+      "status": "PASS",
+      "summary": "API health returned 2xx.",
+      "details": {
+        "url": "https://api.heygrabit.com/api/v1/health",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:27:02.675Z"
+    },
+    {
+      "name": "runtime-flags",
+      "status": "PASS",
+      "summary": "BOOKING_ENABLED=false observed during direct deploy watch.",
+      "details": {
+        "url": "https://heygrabit.com/api/runtime-flags",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:27:03.269Z"
+    },
+    {
+      "name": "public-detail",
+      "status": "PASS",
+      "summary": "Public event detail returned 2xx.",
+      "details": {
+        "url": "https://heygrabit.com/performance/18a3bcc6-5e75-463d-abfd-634601328754",
+        "statusCode": 200
+      },
+      "checkedAt": "2026-05-21T03:27:03.595Z"
+    },
+    {
+      "name": "auth-session",
+      "status": "PASS",
+      "summary": "auth-session hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; refresh_code=$(curl -sS -o /dev/null -w \"%{http_code}\" -b \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/refresh); rm -f \"$tmp\"; case \"$refresh_code\" in 200|204) echo \"auth_session=ok refresh_http=$refresh_code\" ;; *) echo \"auth_session=fail refresh_http=$refresh_code\"; exit 1 ;; esac",
+        "exitStatus": 0,
+        "stdout": "auth_session=ok refresh_http=200\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:27:04.955Z"
+    },
+    {
+      "name": "queue-entry",
+      "status": "PASS",
+      "summary": "queue-entry hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; enter=$(curl -sS -b \"$tmp\" -c \"$tmp\" -H \"Authorization: Bearer <redacted>\" -X POST https://api.heygrabit.com/api/v1/queue/performances/18a3bcc6-5e75-463d-abfd-634601328754/enter); state=$(printf \"%s\" \"$enter\" | jq -r \".state // empty\"); qid=$(printf \"%s\" \"$enter\" | jq -r \".queueSessionId // empty\"); test -n \"$qid\" || exit 1; session=$(curl -sS -b \"$tmp\" -H \"Authorization: Bearer <redacted>\" https://api.heygrabit.com/api/v1/queue/sessions/$qid); session_state=$(printf \"%s\" \"$session\" | jq -r \".state // empty\"); rm -f \"$tmp\"; test -n \"$state\" || exit 1; test -n \"$session_state\" || exit 1; echo \"queue_entry=ok state=$state session_state=$session_state\"",
+        "exitStatus": 0,
+        "stdout": "queue_entry=ok state=ADMITTED session_state=ADMITTED\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:27:06.993Z"
+    },
+    {
+      "name": "payment-safe",
+      "status": "PASS",
+      "summary": "payment-safe hook passed.",
+      "details": {
+        "commandShape": "tmp=$(mktemp); payload=$(jq -nc --arg email \"$GRAPIT_ADMIN_EMAIL\" --arg password \"$GRAPIT_ADMIN_PASSWORD\" \"{email:\\$email,password:\"<redacted>\"}\"); body=$(curl -sS -c \"$tmp\" -X POST https://api.heygrabit.com/api/v1/auth/login -H \"Content-Type: application/json\" --data-raw \"$payload\"); token=\"<redacted>\" \"%s\" \"$body\" | jq -r \".accessToken // empty\"); test -n \"$token\" || exit 1; resp=$(mktemp); order=\"phase26-disabled-probe-$(date -u +%Y%m%d%H%M%S)\"; code=$(curl -sS -o \"$resp\" -w \"%{http_code}\" -b \"$tmp\" -H \"Authorization: Bearer <redacted>\" -H \"Content-Type: application/json\" -X POST https://api.heygrabit.com/api/v1/payments/confirm --data-raw \"{\\\"paymentKey\\\":\\\"phase26-disabled-probe\\\",\\\"orderId\\\":\\\"$order\\\",\\\"amount\\\":1}\"); rm -f \"$tmp\" \"$resp\"; case \"$code\" in 403|404) echo \"payment_safe=ok http=$code class=no_provider_confirm_no_side_effect\" ;; *) echo \"payment_safe=fail http=$code\"; exit 1 ;; esac",
+        "exitStatus": 0,
+        "stdout": "payment_safe=ok http=403 class=no_provider_confirm_no_side_effect\n",
+        "stderr": ""
+      },
+      "checkedAt": "2026-05-21T03:27:08.205Z"
+    },
+    {
+      "name": "cloud-run-logs",
+      "status": "PASS",
+      "summary": "No critical Cloud Run log patterns found in clipped scan.",
+      "details": {
+        "filter": "resource.type=\"cloud_run_revision\"\nAND resource.labels.service_name=(\"grabit-api\" OR \"grabit-web\")\nAND timestamp>=\"2026-05-21T03:13:02.173Z\"\nAND (severity>=WARNING OR \"auth/refresh\" OR \"queue\" OR \"confirm\" OR \"health\" OR \"payment\")",
+        "sample": [
+          "2026-05-21T03:27:04.791684Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:27:02.529900Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:26:12.173188Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:26:11.835934Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:25:57.091683Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:25:56.416255Z\tINFO\tgrabit-api\t201\t\t",
+          "2026-05-21T03:25:55.055388Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:25:52.699926Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:24:47.046794Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:24:46.753902Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:24:46.436901Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:24:46.398614Z\tINFO\tgrabit-api\t201\t\t",
+          "2026-05-21T03:24:45.036333Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:24:42.780767Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:23:37.412552Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:23:36.730254Z\tINFO\tgrabit-api\t201\t\t",
+          "2026-05-21T03:23:35.358770Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:23:33.096245Z\tINFO\tgrabit-api\t200\t\t",
+          "2026-05-21T03:23:00.994645Z\tINFO\tgrabit-api\t204\t\t",
+          "2026-05-21T03:23:00.664609Z\tINFO\tgrabit-api\t204\t\t"
+        ],
+        "criticalSample": []
+      },
+      "checkedAt": "2026-05-21T03:27:10.133Z"
     }
   ]
 }

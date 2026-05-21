@@ -221,7 +221,7 @@ function normalizeOrigin(name, value) {
 }
 
 function redact(value) {
-  return SECRET_PATTERNS.reduce((next, pattern) => {
+  const redacted = SECRET_PATTERNS.reduce((next, pattern) => {
     if (pattern.source.includes('accessToken')) {
       return next.replace(pattern, '$1"<redacted>"');
     }
@@ -239,6 +239,16 @@ function redact(value) {
     }
     return next.replace(pattern, '<redacted>');
   }, String(value));
+
+  return redacted
+    .replace(
+      /(\\?"password\\?"\s*:\s*\\?")[^"\\\s]+(\\?")/gi,
+      '$1<redacted>$2',
+    )
+    .replace(
+      /(\\?"email\\?"\s*:\s*\\?")[^"\\]+(\\?")/gi,
+      '$1<email:redacted>$2',
+    );
 }
 
 function clip(value, length = 1600) {

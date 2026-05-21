@@ -2,7 +2,7 @@
   "schemaVersion": "phase26.gate-ledger.v1",
   "phase": "26",
   "slug": "m1-canary-cutover-gates",
-  "generatedAt": "2026-05-21T02:08:24.533Z",
+  "generatedAt": "2026-05-21T03:27:30.198Z",
   "cutoverPolicy": {
     "bookingEnabledRule": "BOOKING_ENABLED=true is no-go until every required gate is PASS or explicitly owner-approved as ACCEPTED_RISK or CONFIG_READY_NOT_DRILLED.",
     "allowedStates": [
@@ -46,12 +46,12 @@
       "requirementIds": [
         "M1-01"
       ],
-      "state": "BLOCKED",
+      "state": "PASS",
       "environment": "production",
       "evidenceRefs": [
         ".planning/phases/26-m1-canary-cutover-gates/evidence/26-07-direct-deploy-watch.json"
       ],
-      "failureReason": "Direct deploy strict-watch remains unavailable or not run.",
+      "failureReason": "Direct deploy strict-watch evidence recorded.",
       "approvalState": "not_requested",
       "approver": null,
       "approvalTimestamp": null,
@@ -511,5 +511,5 @@
       "redactionNotes": "No real Girl Rules row IDs, real user PII, payment keys, or full SQL row dumps."
     }
   ],
-  "lastAggregatedAt": "2026-05-21T02:08:24.533Z"
+  "lastAggregatedAt": "2026-05-21T03:27:30.198Z"
 }
