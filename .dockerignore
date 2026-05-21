@@ -6,6 +6,13 @@ node_modules
 !.env.example
 *.md
 .planning
+!.planning/
+.planning/*
+!.planning/phases/
+.planning/phases/*
+!.planning/phases/26-m1-canary-cutover-gates/
+.planning/phases/26-m1-canary-cutover-gates/*
+!.planning/phases/26-m1-canary-cutover-gates/26-GATE-LEDGER.json
 .claude
 .agents
 dist
