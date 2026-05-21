@@ -25,8 +25,8 @@ cookies, OTP values, raw customer rows, or unmasked PII in this ledger.
 | `TOSS_TEST_SECRET_ROTATION` | PAY-01 | ACCEPTED_RISK | approved / owner | 1 | D-24 preferred rotation/reissue was not completed, but owner instructed to proceed. This remains non-PASS evidence and must not be treated as final live readiness. |
 | `TOSS_LIVE_KEY_SMOKE` | PAY-01 | BLOCKED | not_requested | 1 | Owner did not confirm Toss review completion or live-key availability in this executor context. No live key prefix/class, server confirm/query/cancel, webhook, or widget smoke was run. |
 | `BOOKING_ENABLED_GO_NO_GO` | M1-01, PAY-01, OPS-02 | BLOCKED | not_requested | 1 | Live-key smoke and/or required Gate Ledger rows are not ready; BOOKING_ENABLED=true was not applied. |
-| `LOAD_10K_BASELINE` | LOAD-01 | BLOCKED | not_requested | 1 | Operator-approved target, credentials, dedicated test-event IDs, and load window were unavailable in executor context; 10k/20k k6 load was not run. |
-| `LOAD_20K_STRESS` | LOAD-01 | BLOCKED | not_requested | 1 | Operator-approved target, credentials, dedicated test-event IDs, and load window were unavailable in executor context; 10k/20k k6 load was not run. |
+| `LOAD_10K_BASELINE` | LOAD-01 | BLOCKED | not_requested | 1 | Dedicated test-event fixture, operator-approved load window, and k6 summary files are not available; real Girl Rules event was not targeted. |
+| `LOAD_20K_STRESS` | LOAD-01 | BLOCKED | not_requested | 1 | Dedicated test-event fixture, operator-approved load window, and k6 summary files are not available; real Girl Rules event was not targeted. |
 | `DR_CLOUD_RUN_ROLLBACK` | DR-01, M1-01 | CONFIG_READY_NOT_DRILLED | not_requested | 1 | Cloud Run service/revision/traffic metadata collected, but rollback was not drilled. |
 | `DR_CLOUD_SQL_PITR` | DR-01, INFRA-01 | BLOCKED | not_requested | 1 | Cloud SQL PITR/restore lacks owner-approved safe target, permissions, or PITR metadata. |
 | `DR_VALKEY_RECONNECT` | DR-01 | BLOCKED | not_requested | 1 | Valkey reconnect/failure smoke did not run or lacked required credentials/fixtures. |

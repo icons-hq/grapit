@@ -1,7 +1,7 @@
 {
   "schemaVersion": "phase26.dr-infra-evidence.v1",
-  "generatedAt": "2026-05-20T05:51:15.552Z",
-  "startedAt": "2026-05-20T05:51:12.045Z",
+  "generatedAt": "2026-05-21T02:08:24.505Z",
+  "startedAt": "2026-05-21T02:08:21.050Z",
   "project": "grapit-491806",
   "region": "asia-northeast3",
   "command": "node scripts/phase26/infra-evidence.mjs --project grapit-491806 --region asia-northeast3",
@@ -75,13 +75,13 @@
         "service": "grabit-api",
         "state": "CONFIG_READY_NOT_DRILLED",
         "command": "gcloud run services describe grabit-api --project=grapit-491806 --region=asia-northeast3 --format=json",
-        "latestCreatedRevisionName": "grabit-api-00111-cxx",
-        "latestReadyRevisionName": "grabit-api-00111-cxx",
+        "latestCreatedRevisionName": "grabit-api-00112-wpt",
+        "latestReadyRevisionName": "grabit-api-00112-wpt",
         "traffic": [
           {
             "latestRevision": true,
             "percent": 100,
-            "revisionName": "grabit-api-00111-cxx"
+            "revisionName": "grabit-api-00112-wpt"
           }
         ],
         "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-api:5074e2790fa05f71ddc61c6c857b29bcad016676",
@@ -134,7 +134,7 @@
           "DB_POOL_CONNECTION_TIMEOUT_MS": "5000",
           "R2_UPLOAD_CACHE_CONTROL_ENABLED": "true"
         },
-        "minInstances": "0",
+        "minInstances": "100",
         "maxScale": "100",
         "vpcEgress": "private-ranges-only",
         "networkInterfaces": "[{\"network\":\"default\",\"subnetwork\":\"default\"}]"
@@ -237,8 +237,10 @@
   },
   "valkeySmoke": {
     "state": "BLOCKED",
-    "reason": "Not run. Pass --run-valkey-smoke health|lua|socketio|idle|logs|all with required smoke env.",
-    "command": "node scripts/smoke-valkey-production.mjs --check <check>"
+    "command": "node scripts/smoke-valkey-production.mjs --check health",
+    "status": 1,
+    "stdout": "",
+    "stderr": "Error: Missing required environment variable: GRABIT_SMOKE_AUTH_HEADER_FILE\n    at getEnv (file:///Users/sangwopark19/icons/grapit/scripts/smoke-valkey-production.mjs:123:9)\n    at loadConfig (file:///Users/sangwopark19/icons/grapit/scripts/smoke-valkey-production.mjs:153:26)\n    at file:///Users/sangwopark19/icons/grapit/scripts/smoke-valkey-production.mjs:991:24\n    at ModuleJob.run (node:internal/modules/esm/module_job:413:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:660:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)\n"
   },
   "redactionPolicy": [
     "DATABASE_URL",

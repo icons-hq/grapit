@@ -2,7 +2,7 @@
   "schemaVersion": "phase26.ops-monitoring.v1",
   "phase": "26",
   "plan": "09",
-  "generatedAt": "2026-05-20T05:46:28.859Z",
+  "generatedAt": "2026-05-21T02:07:28.659Z",
   "project": "grapit-491806",
   "region": "asia-northeast3",
   "services": {
@@ -16,7 +16,7 @@
     "ONCALL_PLAYBOOKS": "BLOCKED",
     "FIRST_24H_WATCH": "BLOCKED"
   },
-  "classification": "PENDING_PROVIDER_EVIDENCE",
+  "classification": "CLOUD_RUN_PROBE_RECORDED",
   "evidenceRefs": {
     "gateLedger": ".planning/phases/26-m1-canary-cutover-gates/26-GATE-LEDGER.json",
     "runbook": "docs/runbooks/phase26-cutover-ops.md",
@@ -228,5 +228,21 @@
     "No raw Toss keys, payment keys, QR tokens, cookies, bearer tokens, OTPs, e-mail addresses, phone numbers, full IPs, or PII.",
     "Cloudflare normal-pass and suspicious challenge/block/rate-limit smokes are recorded separately.",
     "Non-PASS monitoring evidence stays non-PASS until owner approval is explicitly recorded in the Gate Ledger."
-  ]
+  ],
+  "cloudRunProbe": {
+    "serviceDescribe": {
+      "commandShape": "gcloud run services describe grabit-api --project=grapit-491806 --region=asia-northeast3 --format=json(status.latestReadyRevisionName,status.traffic)",
+      "ok": true,
+      "status": 0,
+      "stdout": "{\n  \"status\": {\n    \"latestReadyRevisionName\": \"grabit-api-00112-wpt\",\n    \"traffic\": [\n      {\n        \"latestRevision\": true,\n        \"percent\": 100,\n        \"revisionName\": \"grabit-api-00112-wpt\"\n      }\n    ]\n  }\n}\n",
+      "stderr": ""
+    },
+    "recentLogs": {
+      "commandShape": "gcloud logging read resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"grabit-api\" AND (severity>=WARNING OR \"queue\" OR \"confirm\" OR \"payment\" OR \"refund\" OR \"qr\") --project=grapit-491806 --limit=25 --format=json",
+      "ok": true,
+      "status": 0,
+      "stdout": "[\n  {\n    \"httpRequest\": {\n      \"latency\": \"0.041941944s\",\n      \"protocol\": \"HTTP/1.1\",\n      \"referer\": \"https://heygrabit.com/\",\n      \"remoteIp\": \"<ip:redacted>\",\n      \"requestMethod\": \"GET\",\n      \"requestSize\": \"1725\",\n      \"requestUrl\": \"https://api.heygrabit.com/api/v1/admin/dashboard/payment?period=30d\",\n      \"responseSize\": \"890\",\n      \"serverIp\": \"<ip:redacted>\",\n      \"status\": 304,\n      \"userAgent\": \"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/<ip:redacted> Safari/537.36\"\n    },\n    \"insertId\": \"6a0e66de0005e258e369db07\",\n    \"labels\": {\n      \"commit-sha\": \"5074e2790fa05f71ddc61c6c857b29bcad016676\",\n      \"instanceId\": \"0007b734d914c34e177c5985119ba036526e4338d83a8f10fd52fd86b533e5511e52b242256a53e81e91ac88b7b597f2c11af067a168289116ceb8b527785fa82a4aebd392226454d348801ed5a4c535ae8e6aab5a168f2115a7d1987a7a1ac7\",\n      \"managed-by\": \"github-actions\"\n    },\n    \"logName\": \"projects/grapit-491806/logs/run.googleapis.com%2Frequests\",\n    \"receiveTimestamp\": \"2026-05-21T01:58:54.408622894Z\",\n    \"resource\": {\n      \"labels\": {\n        \"configuration_name\": \"grabit-api\",\n        \"location\": \"asia-northeast3\",\n        \"project_id\": \"grapit-491806\",\n        \"revision_name\": \"grabit-api-00112-wpt\",\n        \"service_name\": \"grabit-api\"\n      },\n      \"type\": \"cloud_run_revision\"\n    },\n    \"severity\": \"INFO\",\n    \"spanId\": \"2fe6708e8e7a3c6a\",\n    \"timestamp\": \"2026-05-21T01:58:54.342631Z\",\n    \"trace\": \"projects/grapit-491806/traces/0d9b9ddc484d81c6ce56c0b4e34f97c1\"\n  },\n  {\n    \"httpRequest\": {\n      \"latency\": \"0.003617363s\",\n      \"protocol\": \"HTTP/1.1\",\n      \"referer\": \"https://heygrabit.com/\",\n      \"remoteIp\": \"<ip:redacted>\",\n      \"requestMethod\": \"OPTIONS\",\n      \"requestSize\": \"925\",\n      \"requestUrl\": \"https://api.heygrabit.com/api/v1/admin/dashboard/payment?period=30d\",\n      \"responseSize\": \"339\",\n      \"serverIp\": \"<ip:redacted>\",\n      \"status\": 204,\n      \"userAgent\": \"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/<ip:redacted> Safari/537.36\"\n    },\n    \"insertId\": \"6a0e66de00007cd2cd181443\",\n    \"labels\": {\n      \"commit-sha\": \"5074e2790fa05f71ddc61c6c857b29bcad016676\",\n      \"instanceId\": \"0007b734d92c1a2028382679140ba09c378ae83545355584b64caeb7abea96a30715f35cdbf941a00ca56b66c6be39f05a460d5ca69638939351317cc226ec5f615f55d837dff12d4a66ab9ccac7eb46c72b47df35bbd26069f986f0\",\n      \"managed-by\": \"github-actions\"\n    },\n    \"logName\": \"projects/grapit-491806/logs/run.googleapis.com%2Frequests\",\n    \"receiveTimestamp\": \"2026-05-21T01:58:54.122381420Z\",\n    \"resource\": {\n      \"labels\": {\n        \"configuration_name\": \"grabit-api\",\n        \"location\": \"asia-northeast3\",\n        \"project_id\": \"grapit-491806\",\n        \"revision_name\": \"grabit-api-00112-wpt\",\n        \"service_name\": \"grabit-api\"\n      },\n      \"type\": \"cloud_run_revision\"\n    },\n    \"severity\": \"INFO\",\n    \"spanId\": \"93f4b4fd95adcc97\",\n    \"timestamp\": \"2026-05-21T01:58:54.027246Z\",\n    \"trace\": \"projects/grapit-491806/traces/d4ffdcd3934cc19231d51a077f24bd65\"\n  },\n  {\n    \"httpRequest\": {\n      \"latency\": \"0.012763624s\",\n      \"protocol\": \"HTTP/1.1\",\n      \"referer\": \"https://heygrabit.com/\",\n      \"remoteIp\": \"<ip:redacted>\",\n      \"requestMethod\": \"GET\",\n      \"requestSize\": \"1385\",\n      \"requestUrl\": \"https://api.heygrabit.com/api/v1/users/me/reservations\",\n      \"responseSize\": \"1032\",\n      \"serverIp\": \"<ip:redacted>\",\n      \"status\": 401,\n      \"userAgent\": \"Mozilla/5.0 (Linux; Android 16; SM-S931N Build/BP2A.250605.031.A3; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/148.0.7778.120 Mobile Safari/537.36 KAKAOTALK/26.4.1 (INAPP)\"\n    },\n    \"insertId\": \"6a0e66b90004ea90bce100ff\",\n    \"labels\": {\n      \"commit-sha\": \"5074e2790fa05f71ddc61c6c857b29bcad016676\",\n      \"instanceId\": \"0007b734d928e7f0a2f14006aa06f66ddc861d007a52e5b2abb8d32e4c83932e11ca226187bebec673e95916c96927b155049b176d0acdda801c367768ccaddda896f63918f1efc9c3fb0991e",
+      "stderr": ""
+    }
+  }
 }
