@@ -249,9 +249,34 @@ Plans:
 
 **Merged from:** 36 M1 integration + canary, 37 k6 load gate, 38 DR + DB capacity gate, 39 On-call + alert gate, 40 Live payment cutover
 
+**Plans:** 12/12 plans complete
+
+Plans:
+**Wave 1**
+- [x] 26-01-PLAN.md — Gate Ledger foundation, source audit, and strict validator
+
+**Wave 2** *(blocked on Gate Ledger foundation)*
+- [x] 26-02-PLAN.md — Backend QR contract and field-scan input smoke
+- [x] 26-04-PLAN.md — Toss idempotency, webhook re-query, and test-secret rotation gate
+- [x] 26-07-PLAN.md — Direct deploy strict-watch gate and M1 smoke
+- [x] 26-08-PLAN.md — DR and infrastructure evidence gates
+- [x] 26-09-PLAN.md — WAF, on-call, monitoring, and first-24h watch
+- [x] 26-11-PLAN.md — Admin cutover Gate Ledger read API
+
+**Wave 3** *(blocked on backend QR contract, admin cutover API, and rehearsal QR contract)*
+- [x] 26-03-PLAN.md — Payment complete and My Page QR visibility
+- [x] 26-05-PLAN.md — Dedicated test-event rehearsal and cleanup safety
+- [x] 26-12-PLAN.md — Admin Gate Ledger and cutover readiness UI
+
+**Wave 4** *(blocked on dedicated test-event rehearsal)*
+- [x] 26-06-PLAN.md — k6 10k/20k load gate scripts and evidence
+
+**Wave 5** *(blocked on all evidence-producing gates and admin cutover UI)*
+- [x] 26-10-PLAN.md — Final live-key cutover and BOOKING_ENABLED go/no-go
+
 **Success criteria:**
-1. Full event detail page is visible in five locales with payment disabled, and signup/consent/admin content/queue/WAF/prewarm/booking-disabled E2E pass.
-2. Cloud Run canary advances through agreed traffic steps with rollback ready.
+1. Full event detail page locale scope is reconciled in the `M1_LOCALE_SCOPE` gate before PASS, with payment disabled and signup/consent/admin content/queue/WAF/prewarm/booking-disabled E2E passing for the approved active locale set.
+2. CI/CD green 이후 100% 직접 배포와 15분 strict watch를 통과하고 rollback 준비가 검증된다.
 3. k6 10k baseline and 20k stress scenarios pass agreed p95/error-rate targets or cutover is explicitly blocked.
 4. Cloud SQL PITR, Valkey failover, Cloud Run rollback, pgBouncer, HA/read replica, and per-instance DB pool sizing are rehearsed.
 5. PG, Valkey, DB, CDN, latency, error-rate, payment-failure playbooks and Sentry alert dry-runs are complete.

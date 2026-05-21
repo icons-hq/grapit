@@ -8,6 +8,7 @@ import {
   Ticket,
   LayoutDashboard,
   ClipboardList,
+  FileCheck2,
   Languages,
   Inbox,
   FileQuestion,
@@ -61,6 +62,11 @@ const NAV_GROUPS = [
         label: '운영 인박스',
         href: '/admin/operations',
         icon: Inbox,
+      },
+      {
+        label: '컷오버 게이트',
+        href: '/admin/cutover',
+        icon: FileCheck2,
       },
       {
         label: '예매 관리',

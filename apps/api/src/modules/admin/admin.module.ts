@@ -12,6 +12,7 @@ import { AdminOperationsController } from './admin-operations.controller.js';
 import { AdminSupportContentController } from './admin-support-content.controller.js';
 import { AdminSeatOperationsController } from './admin-seat-operations.controller.js';
 import { AdminAuditController } from './admin-audit.controller.js';
+import { AdminCutoverController } from './admin-cutover.controller.js';
 import { AdminSecurityController } from './admin-security.controller.js';
 import { AdminUserController } from './admin-user.controller.js';
 import { LocalUploadController } from './local-upload.controller.js';
@@ -23,6 +24,7 @@ import { AdminBookingService } from './admin-booking.service.js';
 import { AdminOperationsService } from './admin-operations.service.js';
 import { AdminSupportContentService } from './admin-support-content.service.js';
 import { AdminSeatOperationsService } from './admin-seat-operations.service.js';
+import { AdminCutoverService } from './admin-cutover.service.js';
 import { AdminSecurityService } from './admin-security.service.js';
 import { AdminUserService } from './admin-user.service.js';
 import { UploadService } from './upload.service.js';
@@ -38,6 +40,7 @@ import { AdminDashboardService } from './admin-dashboard.service.js';
     AdminSupportContentController,
     AdminSeatOperationsController,
     AdminAuditController,
+    AdminCutoverController,
     AdminSecurityController,
     AdminUserController,
     LocalUploadController,
@@ -52,6 +55,7 @@ import { AdminDashboardService } from './admin-dashboard.service.js';
     AdminOperationsService,
     AdminSupportContentService,
     AdminSeatOperationsService,
+    AdminCutoverService,
     AdminUserService,
     {
       provide: AdminSecurityService,

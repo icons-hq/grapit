@@ -28,8 +28,21 @@ function formatPrice(amount: number): string {
   return `${amount.toLocaleString('ko-KR')}원`;
 }
 
+function maskIdentifier(value: string | null | undefined): string {
+  if (!value) {
+    return '발급 대기';
+  }
+
+  if (value.length <= 12) {
+    return value;
+  }
+
+  return `${value.slice(0, 7)}...${value.slice(-4)}`;
+}
+
 export function BookingComplete({ booking }: BookingCompleteProps) {
   const router = useRouter();
+  const isQrActive = booking.qrTicket?.status === 'ACTIVE';
 
   return (
     <div className="flex flex-col items-center gap-6">
@@ -131,10 +144,47 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
                 <h2 className="text-base font-semibold text-gray-900">QR 티켓</h2>
               </div>
               <p className="text-sm text-gray-700">
-                결제가 완료되었습니다. QR 티켓은 마이페이지에서 바로 확인할 수 있습니다.
+                {isQrActive
+                  ? '결제가 완료되었습니다. QR 티켓을 바로 확인할 수 있습니다.'
+                  : '결제는 완료되었지만 QR 티켓을 확인하는 중입니다. 잠시 후 새로고침하거나 마이페이지에서 다시 확인하세요.'}
               </p>
             </div>
-            <Badge className="bg-[#F0FDF4] text-[#15803D]">발급 완료</Badge>
+            <Badge
+              className={
+                isQrActive
+                  ? 'bg-[#F0FDF4] text-[#15803D] border-transparent'
+                  : 'bg-[#FFFBEB] text-[#8B6306] border-transparent'
+              }
+            >
+              {isQrActive ? 'QR 활성' : '확인 중'}
+            </Badge>
+          </div>
+
+          <div className="rounded-xl border border-white/80 bg-white/90 p-4">
+            <div className="grid gap-3 text-sm sm:grid-cols-2">
+              <div>
+                <span className="block text-gray-500">상태</span>
+                <span className="font-semibold text-gray-900">
+                  {isQrActive ? 'QR 활성' : 'QR 확인 중'}
+                </span>
+              </div>
+              <div>
+                <span className="block text-gray-500">티켓 ID</span>
+                <span className="font-semibold text-gray-900">
+                  {isQrActive ? maskIdentifier(booking.qrTicket?.jti) : '발급 대기'}
+                </span>
+              </div>
+              <div>
+                <span className="block text-gray-500">예매번호</span>
+                <span className="font-semibold text-gray-900">{booking.reservationNumber}</span>
+              </div>
+              <div>
+                <span className="block text-gray-500">결제 상태</span>
+                <span className="font-semibold text-gray-900">
+                  {booking.status === 'CONFIRMED' && booking.paidAt ? '결제 완료' : '확인 중'}
+                </span>
+              </div>
+            </div>
           </div>
 
           <div className="rounded-xl border border-white/80 bg-white/90 p-4">

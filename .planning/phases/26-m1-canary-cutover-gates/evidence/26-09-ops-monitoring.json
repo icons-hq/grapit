@@ -1,0 +1,248 @@
+{
+  "schemaVersion": "phase26.ops-monitoring.v1",
+  "phase": "26",
+  "plan": "09",
+  "generatedAt": "2026-05-21T02:07:28.659Z",
+  "project": "grapit-491806",
+  "region": "asia-northeast3",
+  "services": {
+    "api": "grabit-api",
+    "web": "grabit-web",
+    "apiUrl": "https://api.heygrabit.com",
+    "webUrl": "https://heygrabit.com"
+  },
+  "gateStateAtCollection": {
+    "WAF_ACTIVE_RULES": "BLOCKED",
+    "ONCALL_PLAYBOOKS": "BLOCKED",
+    "FIRST_24H_WATCH": "BLOCKED"
+  },
+  "classification": "CLOUD_RUN_PROBE_RECORDED",
+  "evidenceRefs": {
+    "gateLedger": ".planning/phases/26-m1-canary-cutover-gates/26-GATE-LEDGER.json",
+    "runbook": "docs/runbooks/phase26-cutover-ops.md",
+    "first24hWatch": ".planning/phases/26-m1-canary-cutover-gates/26-FIRST-24H-WATCH.md"
+  },
+  "providerChecks": [
+    {
+      "key": "cloudRun.logs",
+      "label": "Cloud Run log query status",
+      "commandShape": "gcloud logging read 'resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"grabit-api\" AND (severity>=WARNING OR \"queue\" OR \"confirm\" OR \"payment\" OR \"refund\" OR \"qr\")' --project=grapit-491806 --limit=100",
+      "classification": "PENDING_PROVIDER_EVIDENCE",
+      "status": "not_collected",
+      "sourceTimestamp": null,
+      "sourceRef": null,
+      "redactedSummary": null
+    },
+    {
+      "key": "sentry.alertDryRun",
+      "label": "Sentry alert dry-run status",
+      "commandShape": "Sentry alert rule dry-run or issue/metric alert query for API/web error-rate and payment failures",
+      "classification": "PENDING_PROVIDER_EVIDENCE",
+      "status": "not_collected",
+      "sourceTimestamp": null,
+      "sourceRef": null,
+      "redactedSummary": null
+    },
+    {
+      "key": "cloudflare.activeRules",
+      "label": "Cloudflare active WAF/rate-limit rules",
+      "commandShape": "Cloudflare dashboard/API evidence for queue-entry challenge, booking mutation rate-limit, and macro/block rules",
+      "classification": "PENDING_PROVIDER_EVIDENCE",
+      "status": "not_collected",
+      "sourceTimestamp": null,
+      "sourceRef": null,
+      "redactedSummary": null
+    }
+  ],
+  "wafSmokes": [
+    {
+      "key": "cloudflare.normalPass",
+      "label": "Cloudflare normal-pass smoke",
+      "type": "normal-pass",
+      "commandShape": "curl -I https://heygrabit.com && curl -I https://api.heygrabit.com/api/v1/health",
+      "expectedSafeResult": "normal buyer-like requests pass without challenge/block",
+      "classification": "PENDING_PROVIDER_EVIDENCE",
+      "status": "not_collected",
+      "sourceTimestamp": null,
+      "sourceRef": null,
+      "redactedSummary": null
+    },
+    {
+      "key": "cloudflare.suspiciousChallenge",
+      "label": "Cloudflare suspicious challenge smoke",
+      "type": "suspicious-challenge",
+      "commandShape": "curl -I https://heygrabit.com/booking -H 'User-Agent: phase26-low-volume-smoke'",
+      "expectedSafeResult": "low-volume suspicious smoke produces managed challenge/block/rate-limit evidence",
+      "safety": "run from an operator machine only; stop immediately if real users are challenged or blocked",
+      "classification": "PENDING_PROVIDER_EVIDENCE",
+      "status": "not_collected",
+      "sourceTimestamp": null,
+      "sourceRef": null,
+      "redactedSummary": null
+    },
+    {
+      "key": "cloudflare.bookingMutationRateLimit",
+      "label": "Cloudflare booking mutation rate-limit smoke",
+      "type": "suspicious-rate-limit",
+      "commandShape": "send a low-volume dedicated-test-event booking mutation smoke with a tagged user-agent",
+      "expectedSafeResult": "booking mutation rule records challenge/block/rate-limit without affecting real buyers",
+      "safety": "dedicated test event only; never target the real Girl Rules event or real users",
+      "classification": "PENDING_PROVIDER_EVIDENCE",
+      "status": "not_collected",
+      "sourceTimestamp": null,
+      "sourceRef": null,
+      "redactedSummary": null
+    }
+  ],
+  "businessMetrics": [
+    {
+      "key": "queue.length",
+      "label": "queue length",
+      "source": "Valkey queue sorted sets + QueueService snapshots",
+      "commandShape": "read waiting queue cardinality and active admission set for dedicated test performance",
+      "expectedSafeResult": "queue length is finite, decreasing under admission, and linked to dedicated test performance only",
+      "classification": "PENDING_PROVIDER_EVIDENCE",
+      "status": "not_collected",
+      "sourceTimestamp": null,
+      "sourceRef": null,
+      "redactedSummary": null
+    },
+    {
+      "key": "queue.admissionRate",
+      "label": "queue admission rate",
+      "source": "QueueService admission records + Cloud Run queue logs",
+      "commandShape": "query admitted/session state changes and admission token success counts",
+      "expectedSafeResult": "admissions continue while remaining seats exist and no queue admission stuck state appears",
+      "classification": "PENDING_PROVIDER_EVIDENCE",
+      "status": "not_collected",
+      "sourceTimestamp": null,
+      "sourceRef": null,
+      "redactedSummary": null
+    },
+    {
+      "key": "seat.lockSuccessRate",
+      "label": "lock success rate",
+      "source": "BookingService lock-seat response and Valkey lock keys",
+      "commandShape": "compare lock-seat attempts, 2xx responses, and {showtime}:locked-seats count",
+      "expectedSafeResult": "lock success/failure matches available seats and no duplicate seat lock appears",
+      "classification": "PENDING_PROVIDER_EVIDENCE",
+      "status": "not_collected",
+      "sourceTimestamp": null,
+      "sourceRef": null,
+      "redactedSummary": null
+    },
+    {
+      "key": "reservation.prepareSuccessRate",
+      "label": "prepare success rate",
+      "source": "ReservationService prepare records and reservation status counts",
+      "commandShape": "count prepare attempts, PENDING_PAYMENT reservations, and rejected validation rows",
+      "expectedSafeResult": "prepare success matches valid admitted sessions and owned locks",
+      "classification": "PENDING_PROVIDER_EVIDENCE",
+      "status": "not_collected",
+      "sourceTimestamp": null,
+      "sourceRef": null,
+      "redactedSummary": null
+    },
+    {
+      "key": "payment.confirmSuccessRate",
+      "label": "confirm success rate",
+      "source": "ReservationService confirm path + payments table",
+      "commandShape": "count confirm attempts, DONE payments, reservation CONFIRMED rows, and compensating cancels",
+      "expectedSafeResult": "payment confirm success always has matching reservation, sold seats, and QR issuance",
+      "classification": "PENDING_PROVIDER_EVIDENCE",
+      "status": "not_collected",
+      "sourceTimestamp": null,
+      "sourceRef": null,
+      "redactedSummary": null
+    },
+    {
+      "key": "payment.successFailure",
+      "label": "payment success/failure",
+      "source": "Toss test/live dashboard, Cloud Run payment logs, payments table",
+      "commandShape": "compare Toss status, local payments.status, webhook ledger, and failed/canceled rows",
+      "expectedSafeResult": "payment failure spike is absent; failed payments remain recoverable or canceled safely",
+      "classification": "PENDING_PROVIDER_EVIDENCE",
+      "status": "not_collected",
+      "sourceTimestamp": null,
+      "sourceRef": null,
+      "redactedSummary": null
+    },
+    {
+      "key": "qr.issuance",
+      "label": "QR issuance",
+      "source": "QrTicketService, tickets table, complete page, My Page reservation detail",
+      "commandShape": "count active tickets for confirmed reservations and verify visible QR surfaces",
+      "expectedSafeResult": "each confirmed paid reservation has exactly one active QR ticket visible to the owner",
+      "classification": "PENDING_PROVIDER_EVIDENCE",
+      "status": "not_collected",
+      "sourceTimestamp": null,
+      "sourceRef": null,
+      "redactedSummary": null
+    },
+    {
+      "key": "refund.jobFailures",
+      "label": "refund job failures",
+      "source": "pg-boss refundCancelRetry jobs + refund/payment rows",
+      "commandShape": "query retryable/failed refund jobs and latest provider-safe cancel result",
+      "expectedSafeResult": "refund/cancel backlog is zero or within reviewed retry policy",
+      "classification": "PENDING_PROVIDER_EVIDENCE",
+      "status": "not_collected",
+      "sourceTimestamp": null,
+      "sourceRef": null,
+      "redactedSummary": null
+    },
+    {
+      "key": "inventory.remainingSeats",
+      "label": "remaining seats",
+      "source": "QueueService remainingSeats + seat inventory DB aggregation",
+      "commandShape": "compare total capacity, sold/disabled/held_cancelled seats, and active locks",
+      "expectedSafeResult": "remaining seats never goes negative and matches public/queue state",
+      "classification": "PENDING_PROVIDER_EVIDENCE",
+      "status": "not_collected",
+      "sourceTimestamp": null,
+      "sourceRef": null,
+      "redactedSummary": null
+    },
+    {
+      "key": "inventory.selloutBehavior",
+      "label": "sellout behavior",
+      "source": "QueueService, BookingService, performance/showtime state, public booking UI",
+      "commandShape": "verify no more admissions/locks/prepare once remaining seats reaches zero",
+      "expectedSafeResult": "sellout blocks new booking side effects and keeps existing confirmed reservations intact",
+      "classification": "PENDING_PROVIDER_EVIDENCE",
+      "status": "not_collected",
+      "sourceTimestamp": null,
+      "sourceRef": null,
+      "redactedSummary": null
+    }
+  ],
+  "closeBookingTriggers": [
+    "duplicate sale",
+    "payment confirm success without reservation/QR",
+    "payment failure spike",
+    "seat lock/prepare side-effect mismatch",
+    "queue admission stuck",
+    "refund/cancel job buildup"
+  ],
+  "redactionPolicy": [
+    "No raw Toss keys, payment keys, QR tokens, cookies, bearer tokens, OTPs, e-mail addresses, phone numbers, full IPs, or PII.",
+    "Cloudflare normal-pass and suspicious challenge/block/rate-limit smokes are recorded separately.",
+    "Non-PASS monitoring evidence stays non-PASS until owner approval is explicitly recorded in the Gate Ledger."
+  ],
+  "cloudRunProbe": {
+    "serviceDescribe": {
+      "commandShape": "gcloud run services describe grabit-api --project=grapit-491806 --region=asia-northeast3 --format=json(status.latestReadyRevisionName,status.traffic)",
+      "ok": true,
+      "status": 0,
+      "stdout": "{\n  \"status\": {\n    \"latestReadyRevisionName\": \"grabit-api-00112-wpt\",\n    \"traffic\": [\n      {\n        \"latestRevision\": true,\n        \"percent\": 100,\n        \"revisionName\": \"grabit-api-00112-wpt\"\n      }\n    ]\n  }\n}\n",
+      "stderr": ""
+    },
+    "recentLogs": {
+      "commandShape": "gcloud logging read resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"grabit-api\" AND (severity>=WARNING OR \"queue\" OR \"confirm\" OR \"payment\" OR \"refund\" OR \"qr\") --project=grapit-491806 --limit=25 --format=json",
+      "ok": true,
+      "status": 0,
+      "stdout": "[\n  {\n    \"httpRequest\": {\n      \"latency\": \"0.041941944s\",\n      \"protocol\": \"HTTP/1.1\",\n      \"referer\": \"https://heygrabit.com/\",\n      \"remoteIp\": \"<ip:redacted>\",\n      \"requestMethod\": \"GET\",\n      \"requestSize\": \"1725\",\n      \"requestUrl\": \"https://api.heygrabit.com/api/v1/admin/dashboard/payment?period=30d\",\n      \"responseSize\": \"890\",\n      \"serverIp\": \"<ip:redacted>\",\n      \"status\": 304,\n      \"userAgent\": \"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/<ip:redacted> Safari/537.36\"\n    },\n    \"insertId\": \"6a0e66de0005e258e369db07\",\n    \"labels\": {\n      \"commit-sha\": \"5074e2790fa05f71ddc61c6c857b29bcad016676\",\n      \"instanceId\": \"0007b734d914c34e177c5985119ba036526e4338d83a8f10fd52fd86b533e5511e52b242256a53e81e91ac88b7b597f2c11af067a168289116ceb8b527785fa82a4aebd392226454d348801ed5a4c535ae8e6aab5a168f2115a7d1987a7a1ac7\",\n      \"managed-by\": \"github-actions\"\n    },\n    \"logName\": \"projects/grapit-491806/logs/run.googleapis.com%2Frequests\",\n    \"receiveTimestamp\": \"2026-05-21T01:58:54.408622894Z\",\n    \"resource\": {\n      \"labels\": {\n        \"configuration_name\": \"grabit-api\",\n        \"location\": \"asia-northeast3\",\n        \"project_id\": \"grapit-491806\",\n        \"revision_name\": \"grabit-api-00112-wpt\",\n        \"service_name\": \"grabit-api\"\n      },\n      \"type\": \"cloud_run_revision\"\n    },\n    \"severity\": \"INFO\",\n    \"spanId\": \"2fe6708e8e7a3c6a\",\n    \"timestamp\": \"2026-05-21T01:58:54.342631Z\",\n    \"trace\": \"projects/grapit-491806/traces/0d9b9ddc484d81c6ce56c0b4e34f97c1\"\n  },\n  {\n    \"httpRequest\": {\n      \"latency\": \"0.003617363s\",\n      \"protocol\": \"HTTP/1.1\",\n      \"referer\": \"https://heygrabit.com/\",\n      \"remoteIp\": \"<ip:redacted>\",\n      \"requestMethod\": \"OPTIONS\",\n      \"requestSize\": \"925\",\n      \"requestUrl\": \"https://api.heygrabit.com/api/v1/admin/dashboard/payment?period=30d\",\n      \"responseSize\": \"339\",\n      \"serverIp\": \"<ip:redacted>\",\n      \"status\": 204,\n      \"userAgent\": \"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/<ip:redacted> Safari/537.36\"\n    },\n    \"insertId\": \"6a0e66de00007cd2cd181443\",\n    \"labels\": {\n      \"commit-sha\": \"5074e2790fa05f71ddc61c6c857b29bcad016676\",\n      \"instanceId\": \"0007b734d92c1a2028382679140ba09c378ae83545355584b64caeb7abea96a30715f35cdbf941a00ca56b66c6be39f05a460d5ca69638939351317cc226ec5f615f55d837dff12d4a66ab9ccac7eb46c72b47df35bbd26069f986f0\",\n      \"managed-by\": \"github-actions\"\n    },\n    \"logName\": \"projects/grapit-491806/logs/run.googleapis.com%2Frequests\",\n    \"receiveTimestamp\": \"2026-05-21T01:58:54.122381420Z\",\n    \"resource\": {\n      \"labels\": {\n        \"configuration_name\": \"grabit-api\",\n        \"location\": \"asia-northeast3\",\n        \"project_id\": \"grapit-491806\",\n        \"revision_name\": \"grabit-api-00112-wpt\",\n        \"service_name\": \"grabit-api\"\n      },\n      \"type\": \"cloud_run_revision\"\n    },\n    \"severity\": \"INFO\",\n    \"spanId\": \"93f4b4fd95adcc97\",\n    \"timestamp\": \"2026-05-21T01:58:54.027246Z\",\n    \"trace\": \"projects/grapit-491806/traces/d4ffdcd3934cc19231d51a077f24bd65\"\n  },\n  {\n    \"httpRequest\": {\n      \"latency\": \"0.012763624s\",\n      \"protocol\": \"HTTP/1.1\",\n      \"referer\": \"https://heygrabit.com/\",\n      \"remoteIp\": \"<ip:redacted>\",\n      \"requestMethod\": \"GET\",\n      \"requestSize\": \"1385\",\n      \"requestUrl\": \"https://api.heygrabit.com/api/v1/users/me/reservations\",\n      \"responseSize\": \"1032\",\n      \"serverIp\": \"<ip:redacted>\",\n      \"status\": 401,\n      \"userAgent\": \"Mozilla/5.0 (Linux; Android 16; SM-S931N Build/BP2A.250605.031.A3; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/148.0.7778.120 Mobile Safari/537.36 KAKAOTALK/26.4.1 (INAPP)\"\n    },\n    \"insertId\": \"6a0e66b90004ea90bce100ff\",\n    \"labels\": {\n      \"commit-sha\": \"5074e2790fa05f71ddc61c6c857b29bcad016676\",\n      \"instanceId\": \"0007b734d928e7f0a2f14006aa06f66ddc861d007a52e5b2abb8d32e4c83932e11ca226187bebec673e95916c96927b155049b176d0acdda801c367768ccaddda896f63918f1efc9c3fb0991e",
+      "stderr": ""
+    }
+  }
+}

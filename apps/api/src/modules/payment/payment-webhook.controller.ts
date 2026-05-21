@@ -1,4 +1,4 @@
-import { Body, Controller, Headers, Post, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Headers, Post, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import { Public } from '../../common/decorators/public.decorator.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
@@ -7,6 +7,7 @@ import {
   PaymentService,
   type TossWebhookRequestBody,
 } from './payment.service.js';
+import { TossPaymentsClient, type TossPaymentResponse } from './toss-payments.client.js';
 import { TossWebhookGuard } from './toss-webhook.guard.js';
 
 const paymentStatusPriority = {
@@ -54,7 +55,10 @@ type TossWebhookDto = z.infer<typeof tossWebhookSchema>;
 
 @Controller('payments/toss')
 export class PaymentWebhookController {
-  constructor(private readonly paymentService: PaymentService) {}
+  constructor(
+    private readonly paymentService: PaymentService,
+    private readonly tossPaymentsClient: TossPaymentsClient,
+  ) {}
 
   @Public()
   @UseGuards(TossWebhookGuard)
@@ -76,11 +80,12 @@ export class PaymentWebhookController {
     }
 
     try {
+      const providerVerifiedWebhook = await this.withProviderVerifiedState(webhook);
       const progress = await this.paymentService.findAsyncPaymentProgress(
-        webhook.data.orderId,
-        webhook.data.paymentKey,
+        providerVerifiedWebhook.data.orderId,
+        providerVerifiedWebhook.data.paymentKey,
       );
-      const processingResult = await this.processEvent(webhook, progress);
+      const processingResult = await this.processEvent(providerVerifiedWebhook, progress);
 
       await this.paymentService.markWebhookEventProcessed(
         webhook.eventId,
@@ -163,6 +168,69 @@ export class PaymentWebhookController {
     );
 
     return { code: `PAYMENT_STATUS_CHANGED_${incomingStatus}_APPLIED` };
+  }
+
+  private async withProviderVerifiedState(
+    body: TossWebhookRequestBody,
+  ): Promise<TossWebhookRequestBody> {
+    const queried = await this.tossPaymentsClient.queryPayment(body.data.paymentKey);
+    this.assertProviderStateMatchesWebhook(body, queried);
+
+    const providerData: TossWebhookRequestBody['data'] = {
+      ...body.data,
+      paymentKey: queried.paymentKey,
+      orderId: queried.orderId,
+      status: queried.status,
+      method: queried.method ?? body.data.method,
+      totalAmount: queried.totalAmount,
+    };
+
+    if (body.eventType === 'PAYMENT_STATUS_CHANGED' && queried.approvedAt) {
+      providerData.approvedAt = queried.approvedAt;
+    }
+
+    if (body.eventType === 'CANCEL_STATUS_CHANGED') {
+      const latestCancel = queried.cancels?.[queried.cancels.length - 1];
+      providerData.canceledAt = latestCancel?.canceledAt ?? body.data.canceledAt;
+      providerData.cancelReason = latestCancel?.cancelReason ?? body.data.cancelReason;
+    }
+
+    return {
+      ...body,
+      data: providerData,
+    };
+  }
+
+  private assertProviderStateMatchesWebhook(
+    body: TossWebhookRequestBody,
+    queried: TossPaymentResponse,
+  ): void {
+    const mismatches: string[] = [];
+
+    if (queried.paymentKey !== body.data.paymentKey) {
+      mismatches.push('paymentKey');
+    }
+
+    if (queried.orderId !== body.data.orderId) {
+      mismatches.push('orderId');
+    }
+
+    if (queried.status !== body.data.status) {
+      mismatches.push('status');
+    }
+
+    if (
+      typeof body.data.totalAmount === 'number'
+      && queried.totalAmount !== body.data.totalAmount
+    ) {
+      mismatches.push('totalAmount');
+    }
+
+    if (mismatches.length > 0) {
+      throw new BadRequestException(
+        `Toss provider state mismatch: ${mismatches.join(', ')}`,
+      );
+    }
   }
 
   private normalizePaymentStatus(status: string) {

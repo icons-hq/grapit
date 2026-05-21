@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "phase26.qr-contract.v1",
+  "status": "BLOCKED",
+  "generatedAt": "2026-05-20T05:47:00.000Z",
+  "commandShape": "node scripts/phase26/field-scan-contract-smoke.mjs",
+  "environment": {
+    "apiOrigin": "not-run",
+    "authHeaderType": "not-run",
+    "reservationId": "",
+    "paymentId": ""
+  },
+  "checks": [],
+  "failureReason": "Not run: requires operator-approved authenticated confirmed reservation/payment fixture.",
+  "redactionNotes": "Raw QR token/JWT/HMAC, cookies, Authorization headers, paymentKey, and full JTI are never written."
+}

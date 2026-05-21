@@ -61,6 +61,18 @@ function formatDeadline(dateString: string): string {
   return `${y}.${m}.${d} ${h}:${min}까지`;
 }
 
+function maskIdentifier(value: string | null | undefined): string {
+  if (!value) {
+    return '발급 대기';
+  }
+
+  if (value.length <= 12) {
+    return value;
+  }
+
+  return `${value.slice(0, 7)}...${value.slice(-4)}`;
+}
+
 const DELAYED_REOPEN_NOTICE =
   '취소된 좌석은 즉시 재오픈되지 않을 수 있으며, 잠시 후 다시 판매될 수 있습니다';
 
@@ -101,6 +113,8 @@ export function ReservationDetailView({
     reservation.refundTimeline.currentState !== 'COMPLETED';
   const hasExpectedDepositAt =
     Boolean(reservation.refundTimeline.expectedDepositAt) && showRefundTimeline;
+  const isQrActive = reservation.qrTicket?.status === 'ACTIVE';
+  const shouldShowQrTicket = reservation.status === 'CONFIRMED';
 
   return (
     <div>
@@ -186,7 +200,7 @@ export function ReservationDetailView({
         </CardContent>
       </Card>
 
-      {reservation.qrTicket.status === 'ACTIVE' && (
+      {shouldShowQrTicket && (
         <Card className="mt-4 border-[#E9DFFF] bg-[#F8F5FF] py-4">
           <CardContent className="space-y-4">
             <div className="flex items-start justify-between gap-3">
@@ -196,17 +210,42 @@ export function ReservationDetailView({
                   <h2 className="text-base font-semibold text-gray-900">QR 티켓</h2>
                 </div>
                 <p className="text-sm text-gray-700">
-                  결제 직후 발급된 입장용 QR 티켓입니다. 공연장 입장 전에 다시 확인해주세요.
+                  {isQrActive
+                    ? '결제가 완료되었습니다. QR 티켓을 바로 확인할 수 있습니다.'
+                    : '결제는 완료되었지만 QR 티켓을 확인하는 중입니다. 잠시 후 새로고침하거나 마이페이지에서 다시 확인하세요.'}
                 </p>
               </div>
-              <Badge className="bg-[#F0FDF4] text-[#15803D] border-transparent">발급 완료</Badge>
+              <Badge
+                className={
+                  isQrActive
+                    ? 'bg-[#F0FDF4] text-[#15803D] border-transparent'
+                    : 'bg-[#FFFBEB] text-[#8B6306] border-transparent'
+                }
+              >
+                {isQrActive ? 'QR 활성' : '확인 중'}
+              </Badge>
             </div>
 
             <div className="rounded-xl border border-white/80 bg-white/90 p-4">
-              <InfoRow label="티켓 ID" value={reservation.qrTicket.jti} />
+              <InfoRow label="상태" value={isQrActive ? 'QR 활성' : 'QR 확인 중'} />
               <Separator />
-              <InfoRow label="발급 시각" value={formatDateTime(reservation.qrTicket.issuedAt)} />
-              {reservation.qrTicket.emailScheduledAt && (
+              <InfoRow
+                label="티켓 ID"
+                value={isQrActive ? maskIdentifier(reservation.qrTicket?.jti) : '발급 대기'}
+              />
+              <Separator />
+              <InfoRow label="예매번호" value={reservation.reservationNumber} />
+              <Separator />
+              <InfoRow
+                label="결제 상태"
+                value={reservation.paidAt ? '결제 완료' : '확인 중'}
+              />
+              <Separator />
+              <InfoRow
+                label="발급 시각"
+                value={isQrActive ? formatDateTime(reservation.qrTicket.issuedAt) : '확인 중'}
+              />
+              {isQrActive && reservation.qrTicket.emailScheduledAt && (
                 <>
                   <Separator />
                   <InfoRow
@@ -215,13 +254,6 @@ export function ReservationDetailView({
                   />
                 </>
               )}
-            </div>
-
-            <div className="rounded-xl border border-dashed border-[#D9CCFF] bg-white/70 p-4">
-              <span className="mb-2 block text-sm font-semibold text-gray-900">QR 토큰</span>
-              <pre className="overflow-x-auto whitespace-pre-wrap break-all text-xs text-gray-700">
-                {reservation.qrTicket.token}
-              </pre>
             </div>
 
             <div className="flex items-start gap-3 rounded-xl border border-white/70 bg-white/80 p-4">

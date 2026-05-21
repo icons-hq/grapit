@@ -1,0 +1,259 @@
+{
+  "schemaVersion": "phase26.dr-infra-evidence.v1",
+  "generatedAt": "2026-05-21T02:08:24.505Z",
+  "startedAt": "2026-05-21T02:08:21.050Z",
+  "project": "grapit-491806",
+  "region": "asia-northeast3",
+  "command": "node scripts/phase26/infra-evidence.mjs --project grapit-491806 --region asia-northeast3",
+  "allowedStates": [
+    "PASS",
+    "FAIL",
+    "ACCEPTED_RISK",
+    "CONFIG_READY_NOT_DRILLED",
+    "BLOCKED"
+  ],
+  "approval": {
+    "approved": false,
+    "acceptedRisk": false,
+    "approver": "",
+    "restoreTarget": "",
+    "restoreWindow": "",
+    "cloudRunRollbackDrilled": false,
+    "cloudSqlRestoreDrilled": false,
+    "valkeyReconnectDrilled": false
+  },
+  "classifications": [
+    {
+      "gateId": "DR_CLOUD_RUN_ROLLBACK",
+      "state": "CONFIG_READY_NOT_DRILLED",
+      "reason": "Cloud Run service/revision/traffic metadata collected, but rollback was not drilled.",
+      "evidence": [
+        "cloudRun.services",
+        "approval.cloudRunRollbackDrilled"
+      ]
+    },
+    {
+      "gateId": "DR_CLOUD_SQL_PITR",
+      "state": "BLOCKED",
+      "reason": "Cloud SQL PITR/restore lacks owner-approved safe target, permissions, or PITR metadata.",
+      "evidence": [
+        "cloudSql.instances",
+        "approval.restoreTarget",
+        "approval.cloudSqlRestoreDrilled"
+      ]
+    },
+    {
+      "gateId": "DR_VALKEY_RECONNECT",
+      "state": "BLOCKED",
+      "reason": "Valkey reconnect/failure smoke did not run or lacked required credentials/fixtures.",
+      "evidence": [
+        "valkeySmoke"
+      ]
+    },
+    {
+      "gateId": "INFRA_POOL_PGBOUNCER",
+      "state": "CONFIG_READY_NOT_DRILLED",
+      "reason": "DB_POOL_MAX was collected, but pgBouncer transaction pooling evidence was not found or drilled.",
+      "evidence": [
+        "poolEvidence.deployValues",
+        "poolEvidence.pgbouncerConfigPresent"
+      ]
+    },
+    {
+      "gateId": "INFRA_HA_REPLICA",
+      "state": "CONFIG_READY_NOT_DRILLED",
+      "reason": "Cloud SQL HA/read-replica drill evidence is absent; keep non-PASS until approved or drilled.",
+      "evidence": [
+        "cloudSql.instances.availabilityType",
+        "cloudSql.instances.instanceType"
+      ]
+    }
+  ],
+  "cloudRun": {
+    "services": [
+      {
+        "service": "grabit-api",
+        "state": "CONFIG_READY_NOT_DRILLED",
+        "command": "gcloud run services describe grabit-api --project=grapit-491806 --region=asia-northeast3 --format=json",
+        "latestCreatedRevisionName": "grabit-api-00112-wpt",
+        "latestReadyRevisionName": "grabit-api-00112-wpt",
+        "traffic": [
+          {
+            "latestRevision": true,
+            "percent": 100,
+            "revisionName": "grabit-api-00112-wpt"
+          }
+        ],
+        "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-api:5074e2790fa05f71ddc61c6c857b29bcad016676",
+        "env": {
+          "NODE_ENV": "production",
+          "VALKEY_MODE": "cluster",
+          "FRONTEND_URL": "https://heygrabit.com",
+          "KAKAO_CALLBACK_URL": "https://api.heygrabit.com/api/v1/auth/social/kakao/callback",
+          "NAVER_CALLBACK_URL": "https://api.heygrabit.com/api/v1/auth/social/naver/callback",
+          "GOOGLE_CALLBACK_URL": "https://api.heygrabit.com/api/v1/auth/social/google/callback",
+          "DATABASE_URL": "<secret-bound>",
+          "JWT_SECRET": "<secret-bound>",
+          "JWT_REFRESH_SECRET": "<secret-bound>",
+          "KAKAO_CLIENT_ID": "<secret-bound>",
+          "KAKAO_CLIENT_SECRET": "<secret-bound>",
+          "NAVER_CLIENT_ID": "<secret-bound>",
+          "NAVER_CLIENT_SECRET": "<secret-bound>",
+          "GOOGLE_CLIENT_ID": "<secret-bound>",
+          "GOOGLE_CLIENT_SECRET": "<secret-bound>",
+          "REDIS_URL": "<secret-bound>",
+          "R2_ACCOUNT_ID": "<secret-bound>",
+          "R2_BUCKET_NAME": "<secret-bound>",
+          "R2_PUBLIC_URL": "<secret-bound>",
+          "R2_ACCESS_KEY_ID": "<secret-bound>",
+          "R2_SECRET_ACCESS_KEY": "<secret-bound>",
+          "RESEND_API_KEY": "<secret-bound>",
+          "RESEND_FROM_EMAIL": "<secret-bound>",
+          "INFOBIP_API_KEY": "<secret-bound>",
+          "INFOBIP_BASE_URL": "<secret-bound>",
+          "INFOBIP_SENDER": "<secret-bound>",
+          "SENTRY_DSN": "<secret-bound>",
+          "TOSS_SECRET_KEY": "<secret-bound>",
+          "PREWARM_CONTROL_TOKEN": "<secret-bound>",
+          "PREWARM_PROJECT_ID": "<secret-bound>",
+          "PREWARM_REGION": "<secret-bound>",
+          "PREWARM_ALLOWED_SCHEDULER_EMAIL": "<secret-bound>",
+          "PREWARM_ALLOWED_AUDIENCE": "<secret-bound>",
+          "TOSS_WEBHOOK_SECRET": "<secret-bound>",
+          "QR_TICKET_SECRET": "<secret-bound>",
+          "QR_TICKET_SECRET_VERSION": "<secret-bound>",
+          "QR_TICKET_SECRET_KEYRING_JSON": "<secret-bound>",
+          "PREWARM_ALLOWED_SERVICE_NAME": "grabit-api",
+          "PREWARM_MAX_MIN_INSTANCES": "100",
+          "TWILIO_ACCOUNT_SID": "<secret-bound>",
+          "TWILIO_API_KEY_SID": "<secret-bound>",
+          "TWILIO_API_KEY_SECRET": "<secret-bound>",
+          "TWILIO_VERIFY_SERVICE_SID": "<secret-bound>",
+          "DB_POOL_MAX": "3",
+          "DB_POOL_IDLE_TIMEOUT_MS": "30000",
+          "DB_POOL_CONNECTION_TIMEOUT_MS": "5000",
+          "R2_UPLOAD_CACHE_CONTROL_ENABLED": "true"
+        },
+        "minInstances": "100",
+        "maxScale": "100",
+        "vpcEgress": "private-ranges-only",
+        "networkInterfaces": "[{\"network\":\"default\",\"subnetwork\":\"default\"}]"
+      },
+      {
+        "service": "grabit-web",
+        "state": "CONFIG_READY_NOT_DRILLED",
+        "command": "gcloud run services describe grabit-web --project=grapit-491806 --region=asia-northeast3 --format=json",
+        "latestCreatedRevisionName": "grabit-web-00076-rf4",
+        "latestReadyRevisionName": "grabit-web-00076-rf4",
+        "traffic": [
+          {
+            "latestRevision": true,
+            "percent": 100,
+            "revisionName": "grabit-web-00076-rf4"
+          }
+        ],
+        "image": "asia-northeast3-docker.pkg.dev/grapit-491806/grabit/grabit-web:5074e2790fa05f71ddc61c6c857b29bcad016676",
+        "env": {
+          "SENTRY_DSN": "<secret-bound>",
+          "NODE_ENV": "production"
+        },
+        "minInstances": "0",
+        "maxScale": "10",
+        "vpcEgress": null,
+        "networkInterfaces": ""
+      }
+    ]
+  },
+  "cloudSql": {
+    "state": "CONFIG_READY_NOT_DRILLED",
+    "instances": [
+      {
+        "instance": "grapit-db",
+        "state": "CONFIG_READY_NOT_DRILLED",
+        "command": "gcloud sql instances describe grapit-db --project=grapit-491806 --format=json",
+        "backupListCommand": "gcloud sql backups list --instance=grapit-db --project=grapit-491806 --limit=5 --sort-by=~endTime --format=json",
+        "region": "asia-northeast3",
+        "databaseVersion": "POSTGRES_16",
+        "availabilityType": "ZONAL",
+        "replicationType": "SYNCHRONOUS",
+        "instanceType": "CLOUD_SQL_INSTANCE",
+        "primaryInstanceName": null,
+        "backupEnabled": true,
+        "pitrEnabled": true,
+        "transactionLogRetentionDays": 7,
+        "retainedBackups": 7,
+        "recentBackups": [
+          {
+            "id": "1779246000000",
+            "status": "SUCCESSFUL",
+            "type": "AUTOMATED",
+            "windowStartTime": "2026-05-20T03:00:00Z",
+            "endTime": "2026-05-20T03:44:26.820Z"
+          },
+          {
+            "id": "1779159600000",
+            "status": "SUCCESSFUL",
+            "type": "AUTOMATED",
+            "windowStartTime": "2026-05-19T03:00:00Z",
+            "endTime": "2026-05-19T03:44:23.495Z"
+          },
+          {
+            "id": "1779073200000",
+            "status": "SUCCESSFUL",
+            "type": "AUTOMATED",
+            "windowStartTime": "2026-05-18T03:00:00Z",
+            "endTime": "2026-05-18T04:30:35.199Z"
+          },
+          {
+            "id": "1779006741562",
+            "status": "SUCCESSFUL",
+            "type": "ON_DEMAND",
+            "windowStartTime": "2026-05-17T08:32:21.562Z",
+            "endTime": "2026-05-17T08:33:32.506Z"
+          },
+          {
+            "id": "1779001218729",
+            "status": "SUCCESSFUL",
+            "type": "ON_DEMAND",
+            "windowStartTime": "2026-05-17T07:00:18.729Z",
+            "endTime": "2026-05-17T07:01:49.917Z"
+          }
+        ],
+        "recentBackupsError": null,
+        "diskSizeGb": "10"
+      }
+    ]
+  },
+  "poolEvidence": {
+    "deployValues": {
+      "DB_POOL_MAX": "3",
+      "DB_POOL_IDLE_TIMEOUT_MS": "30000",
+      "DB_POOL_CONNECTION_TIMEOUT_MS": "5000"
+    },
+    "apiMaxInstances": 100,
+    "drizzleProviderUsesPoolEnv": true,
+    "pgbouncerConfigPresent": false,
+    "estimatedApiDbConnections": 300
+  },
+  "valkeySmoke": {
+    "state": "BLOCKED",
+    "command": "node scripts/smoke-valkey-production.mjs --check health",
+    "status": 1,
+    "stdout": "",
+    "stderr": "Error: Missing required environment variable: GRABIT_SMOKE_AUTH_HEADER_FILE\n    at getEnv (file:///Users/sangwopark19/icons/grapit/scripts/smoke-valkey-production.mjs:123:9)\n    at loadConfig (file:///Users/sangwopark19/icons/grapit/scripts/smoke-valkey-production.mjs:153:26)\n    at file:///Users/sangwopark19/icons/grapit/scripts/smoke-valkey-production.mjs:991:24\n    at ModuleJob.run (node:internal/modules/esm/module_job:413:25)\n    at async onImport.tracePromise.__proto__ (node:internal/modules/esm/loader:660:26)\n    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5)\n"
+  },
+  "redactionPolicy": [
+    "DATABASE_URL",
+    "Redis URLs",
+    "Authorization/Cookie headers",
+    "JWTs",
+    "provider tokens",
+    "paymentKey/orderId",
+    "secret-like key/value pairs"
+  ],
+  "notes": [
+    "PASS is never inferred from configuration alone.",
+    "PITR/restore and rollback actions are not executed by this collector.",
+    "CONFIG_READY_NOT_DRILLED and ACCEPTED_RISK remain non-PASS cutover states."
+  ]
+}

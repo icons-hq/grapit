@@ -1,0 +1,60 @@
+{
+  "schemaVersion": "phase26.admin-cutover-api.evidence.v1",
+  "plan": "26-11",
+  "createdAt": "2026-05-20T05:50:00.000Z",
+  "endpoint": "https://api.heygrabit.com/api/v1/admin/cutover/gates",
+  "authContract": {
+    "requiredRole": "admin",
+    "requiredCapability": "audit.read",
+    "tokenPolicy": "Use an authenticated admin session or bearer token outside repository artifacts. Do not store cookies, JWTs, refresh tokens, OTPs, payment keys, QR tokens, or PII."
+  },
+  "runtimeArtifact": {
+    "environmentVariable": "CUTOVER_GATE_LEDGER_PATH",
+    "expectedPath": "/app/phase26/26-GATE-LEDGER.json",
+    "packagedArtifact": ".planning/phases/26-m1-canary-cutover-gates/26-GATE-LEDGER.json",
+    "rawEvidencePackaged": false,
+    "notes": "The API image packages only the sanitized Gate Ledger JSON artifact, not the evidence directory or provider payloads."
+  },
+  "postDeploySmokeExpectation": {
+    "initializedLedger": {
+      "httpStatus": 200,
+      "mustContain": [
+        "rows",
+        "countsByState",
+        "missingEvidenceCount",
+        "firstBlockingGate",
+        "finalEnableAllowed"
+      ],
+      "expectedValues": {
+        "firstBlockingGate": "present while initialized required gates remain BLOCKED or missing evidence",
+        "finalEnableAllowed": false
+      },
+      "redaction": [
+        "Gate rows expose evidenceRefs, approval metadata, failure/caveat reason, compensatingMonitoring, and rollbackOrCloseTrigger only.",
+        "Response must not include raw filesystem paths, Toss keys, paymentKey values, cookies, JWTs, OTPs, QR tokens, full PII, or raw provider payloads."
+      ]
+    },
+    "missingOrInvalidRuntimeArtifact": {
+      "httpStatus": 200,
+      "mustContain": [
+        "source.state=blocked",
+        "firstBlockingGate.state=BLOCKED",
+        "finalEnableAllowed=false"
+      ],
+      "mustNotBecome": [
+        "500",
+        "PASS",
+        "finalEnableAllowed=true"
+      ],
+      "operatorMeaning": "A missing runtime artifact is a no-go Gate Ledger state, not an API crash and never PASS evidence."
+    }
+  },
+  "commandShape": [
+    "curl -fsS -H 'Authorization: Bearer <redacted-admin-token>' https://api.heygrabit.com/api/v1/admin/cutover/gates",
+    "Verify firstBlockingGate exists and finalEnableAllowed=false until every required Gate Ledger row is PASS or explicitly approved non-PASS."
+  ],
+  "cutoverPolicy": {
+    "trafficSplitCanary": "not used for Phase 26",
+    "bookingEnabledRule": "BOOKING_ENABLED=true remains blocked while any required gate is BLOCKED, FAIL, missing evidence, or unapproved non-PASS."
+  }
+}

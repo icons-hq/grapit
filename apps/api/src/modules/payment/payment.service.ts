@@ -692,6 +692,12 @@ export class PaymentService {
     await this.tossClient.cancelPayment(
       payload.data.paymentKey,
       ASYNC_DONE_SEAT_FAILURE_CANCEL_REASON,
+      {
+        idempotencyKey: this.buildWebhookCancelIdempotencyKey(
+          payload,
+          'seat-failure-cancel',
+        ),
+      },
     );
 
     const paymentValues = {
@@ -727,6 +733,13 @@ export class PaymentService {
         })
         .where(eq(reservations.id, reservation.id));
     }
+  }
+
+  private buildWebhookCancelIdempotencyKey(
+    payload: TossWebhookRequestBody,
+    reasonCode: string,
+  ): string {
+    return `toss-webhook:${payload.eventId}:${reasonCode}`;
   }
 
   async markWebhookEventProcessed(

@@ -357,7 +357,7 @@ function ConfirmPageContent() {
         {/* Payment Widget */}
         <section className="space-y-3">
           <h2 className="text-base font-semibold">결제 수단</h2>
-          {user && (
+          {user && bookingAvailable && (
             <TossPaymentWidget
               ref={paymentWidgetRef}
               orderId={orderId}

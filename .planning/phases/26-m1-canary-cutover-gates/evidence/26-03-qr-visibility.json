@@ -1,0 +1,63 @@
+{
+  "schemaVersion": "phase26.qr-visibility-evidence.v1",
+  "phase": "26",
+  "plan": "03",
+  "gateId": "QR_VISIBILITY",
+  "status": "PASS",
+  "recordedAt": "2026-05-20T06:18:20Z",
+  "environment": "local-playwright",
+  "target": {
+    "baseUrl": "http://localhost:3000",
+    "port": 3000,
+    "portReason": "Default Playwright port was available during CI=1 verification."
+  },
+  "commands": [
+    {
+      "command": "CI=1 TZ=UTC pnpm --filter @grabit/web test:e2e -- phase26-qr-visibility.spec.ts",
+      "status": "PASS",
+      "summary": "2 Playwright scenarios passed: complete page QR access and My Page reservation QR metadata."
+    },
+    {
+      "command": "node scripts/phase26/validate-gate-ledger.mjs --ledger .planning/phases/26-m1-canary-cutover-gates/26-GATE-LEDGER.json --strict",
+      "status": "PASS",
+      "summary": "Gate Ledger strict schema/redaction validation passed."
+    }
+  ],
+  "surfacesCovered": [
+    {
+      "surface": "payment-complete-page",
+      "routeShape": "/booking/<performanceId>/complete?<payment-identifier:redacted>&orderId=<test-order>&amount=<amount>",
+      "assertions": [
+        "QR-ready copy is visible only for active QR state.",
+        "QR ticket access CTA is visible.",
+        "Masked QR ticket identifier is visible.",
+        "Raw payment identifier, QR token, and raw QR JTI are not rendered."
+      ]
+    },
+    {
+      "surface": "mypage-reservation-detail",
+      "routeShape": "/mypage/reservations/<test-reservation-id>",
+      "assertions": [
+        "Active QR status is visible.",
+        "Masked QR ticket identifier, issue date, reservation number, payment linkage, event title, showtime, and venue context are visible.",
+        "Raw payment identifier, QR token, and raw QR JTI are not rendered."
+      ]
+    }
+  ],
+  "maskedIdentifiers": {
+    "reservationId": "phase26-qr-reservation",
+    "reservationNumber": "GRP-26-QR-0001",
+    "qrJtiMasked": "phase26...7890",
+    "paymentIdentifier": "<redacted>",
+    "qrToken": "<redacted>"
+  },
+  "redaction": {
+    "containsRawPaymentIdentifier": false,
+    "containsRawQrToken": false,
+    "containsRawQrJti": false,
+    "containsBearerToken": false,
+    "containsCookie": false,
+    "notes": "Fixture identifiers are synthetic. Sensitive payment and QR values are represented only by redacted markers or masked identifiers."
+  },
+  "ledgerNote": "This evidence artifact is ready for final QR_VISIBILITY ledger aggregation. The shared Gate Ledger row was not edited in this wave-owned plan."
+}

@@ -1,0 +1,52 @@
+{
+  "schemaVersion": "phase26.direct-deploy-watch.v1",
+  "phase": "26",
+  "plan": "26-07",
+  "requirementIds": ["M1-01"],
+  "policy": "CI/CD green -> 100% direct deploy -> 15-minute strict watch",
+  "sourceDecisions": ["D-05", "D-06", "D-07", "D-08"],
+  "status": "NOT_RUN",
+  "startedAt": null,
+  "endedAt": null,
+  "target": {
+    "project": "grapit-491806",
+    "region": "asia-northeast3",
+    "apiService": "grabit-api",
+    "webService": "grabit-web",
+    "apiUrl": "https://api.heygrabit.com",
+    "webUrl": "https://heygrabit.com",
+    "publicDetailUrl": null,
+    "durationMinutes": 15,
+    "pollSeconds": 60
+  },
+  "rollbackTriggers": [
+    "health 5xx",
+    "login/refresh failure",
+    "public detail 5xx",
+    "BOOKING_ENABLED=false side effects",
+    "queue entry 5xx",
+    "payment confirm unsafe behavior"
+  ],
+  "trafficSplitCanaryPolicy": "D-05 supersedes Cloud Run traffic-split canary: use 100% direct deploy plus strict watch.",
+  "redaction": {
+    "rawCookies": "forbidden",
+    "bearerTokens": "forbidden",
+    "tossKeys": "forbidden",
+    "paymentKeys": "redacted",
+    "orderIds": "redacted",
+    "qrTokens": "forbidden",
+    "pii": "redacted"
+  },
+  "checks": [
+    {
+      "name": "direct-deploy-watch",
+      "status": "BLOCKED",
+      "summary": "Operator has not run the direct deploy strict watch yet. Run scripts/phase26/direct-deploy-watch.mjs during the deploy window to replace this evidence with redacted live results.",
+      "details": {
+        "requiredCommandShape": "node scripts/phase26/direct-deploy-watch.mjs --public-detail-url=https://heygrabit.com/performance/<safe-id> --auth-smoke-command=<redacted-safe-auth-smoke> --queue-smoke-command=<redacted-safe-queue-smoke> --payment-safe-command=<redacted-safe-payment-smoke>",
+        "mustStayNoGoUntilRun": true
+      },
+      "checkedAt": null
+    }
+  ]
+}

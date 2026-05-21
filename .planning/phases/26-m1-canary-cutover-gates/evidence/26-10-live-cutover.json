@@ -1,0 +1,69 @@
+{
+  "schemaVersion": "phase26.live-cutover.v1",
+  "phase": "26",
+  "plan": "26-10",
+  "generatedAt": "2026-05-20T06:59:53.586Z",
+  "status": "BLOCKED",
+  "bookingEnabledApplied": false,
+  "blockedReason": "Live-key smoke and/or required Gate Ledger rows are not ready; BOOKING_ENABLED=true was not applied.",
+  "commands": [
+    {
+      "command": "node scripts/phase26/cutover-readiness.mjs --ledger .planning/phases/26-m1-canary-cutover-gates/26-GATE-LEDGER.json --booking-enabled-check",
+      "expectedUntilGo": "non-zero no-go while required gates remain BLOCKED, FAIL, missing evidence, or unapproved non-PASS"
+    }
+  ],
+  "tossTestSecretRotation": {
+    "state": "ACCEPTED_RISK",
+    "approvalState": "approved",
+    "approver": "owner",
+    "approvalTimestamp": "2026-05-20T06:08:22Z",
+    "preservedAsPass": false,
+    "note": "D-24 accepted risk remains non-PASS unless the provider key is actually rotated/reissued and rebound."
+  },
+  "liveKeySmoke": {
+    "status": "BLOCKED",
+    "reason": "Owner did not confirm Toss review completion or live-key availability in this executor context. No live key prefix/class, server confirm/query/cancel, webhook, or widget smoke was run.",
+    "bookingEnabledDuringSmoke": false,
+    "rawKeysRecorded": false
+  },
+  "bookingEnabledGoNoGo": {
+    "status": "BLOCKED",
+    "ownerApprovalRecorded": false,
+    "mutationApplied": false,
+    "reason": "Readiness blockers remain; live booking stays closed."
+  },
+  "blockers": [
+    "M1_DIRECT_DEPLOY_WATCH: BLOCKED is no-go",
+    "M1_LOCALE_SCOPE: BLOCKED is no-go",
+    "ADMIN_CUTOVER_UI: BLOCKED is no-go",
+    "TOSS_TEST_REHEARSAL: BLOCKED is no-go",
+    "TOSS_LIVE_KEY_SMOKE: BLOCKED is no-go",
+    "BOOKING_ENABLED_GO_NO_GO: BLOCKED is no-go",
+    "LOAD_10K_BASELINE: BLOCKED is no-go",
+    "LOAD_20K_STRESS: BLOCKED is no-go",
+    "DR_CLOUD_RUN_ROLLBACK: CONFIG_READY_NOT_DRILLED requires owner approval, monitoring, and rollback/close trigger",
+    "DR_CLOUD_SQL_PITR: BLOCKED is no-go",
+    "DR_VALKEY_RECONNECT: BLOCKED is no-go",
+    "INFRA_POOL_PGBOUNCER: CONFIG_READY_NOT_DRILLED requires owner approval, monitoring, and rollback/close trigger",
+    "INFRA_HA_REPLICA: CONFIG_READY_NOT_DRILLED requires owner approval, monitoring, and rollback/close trigger",
+    "WAF_ACTIVE_RULES: BLOCKED is no-go",
+    "ONCALL_PLAYBOOKS: BLOCKED is no-go",
+    "FIRST_24H_WATCH: BLOCKED is no-go",
+    "CLEANUP_ISOLATION: BLOCKED is no-go"
+  ],
+  "nextOperatorActions": [
+    "Complete Toss review and make live keys available through Secret Manager/GitHub/Cloud Run without writing raw key values into artifacts.",
+    "Run live-key smoke with BOOKING_ENABLED=false: key prefix/class, server-only secret handling, widget init, confirm/query/cancel where safely allowed, webhook re-query, and leakage scan.",
+    "Run cutover-readiness again and require zero blockers before any BOOKING_ENABLED=true mutation.",
+    "After owner go approval, enable BOOKING_ENABLED=true through the approved Cloud Run/Secret Manager path and start direct-deploy plus first-2h/24h watch handoff."
+  ],
+  "redaction": {
+    "rawTossKeys": false,
+    "paymentKeys": false,
+    "qrTokens": false,
+    "cookies": false,
+    "authHeaders": false,
+    "pii": false,
+    "notes": "This evidence records only gate states, command shapes, and operator next actions. It contains no raw payment credentials or user data."
+  }
+}

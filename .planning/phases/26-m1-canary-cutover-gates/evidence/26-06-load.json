@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "phase26.k6-load.v1",
+  "generatedAt": "2026-05-21T02:07:28.787Z",
+  "plan": "26-06",
+  "requirement": "LOAD-01",
+  "status": "BLOCKED",
+  "target": {
+    "apiUrl": "<missing>",
+    "performanceId": "<missing>",
+    "showtimeId": "<missing>",
+    "dedicatedTestScope": "PHASE26_TEST"
+  },
+  "operatorApproval": {
+    "state": "missing_or_invalid",
+    "approver": null,
+    "window": null,
+    "tokenRecorded": null
+  },
+  "commandShapes": {
+    "baseline": "docker run --rm -i grafana/k6 run -e ... --summary-export /out/phase26-baseline-summary.json - < scripts/k6/phase26-baseline.js",
+    "stress": "docker run --rm -i grafana/k6 run -e ... --summary-export /out/phase26-stress-summary.json - < scripts/k6/phase26-stress.js",
+    "recorder": "node scripts/phase26/record-k6-evidence.mjs --baseline <json> --stress <json>"
+  },
+  "checks": [
+    {
+      "gateId": "LOAD_10K_BASELINE",
+      "status": "NOT_RUN",
+      "reason": "Dedicated test-event fixture, operator-approved load window, and k6 summary files are not available; real Girl Rules event was not targeted."
+    },
+    {
+      "gateId": "LOAD_20K_STRESS",
+      "status": "NOT_RUN",
+      "reason": "Dedicated test-event fixture, operator-approved load window, and k6 summary files are not available; real Girl Rules event was not targeted."
+    }
+  ],
+  "acceptance": {
+    "p95ThresholdMs": 2000,
+    "errorRateThreshold": 0.01
+  },
+  "blockedReason": "Dedicated test-event fixture, operator-approved load window, and k6 summary files are not available; real Girl Rules event was not targeted.",
+  "redaction": {
+    "mode": "metadata-only",
+    "notes": [
+      "Auth headers, cookies, Toss keys, payment keys, QR tokens, phone numbers, and email addresses are not recorded.",
+      "Dedicated event identifiers are masked because this file feeds cutover decisions."
+    ]
+  }
+}
