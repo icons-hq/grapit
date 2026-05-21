@@ -17,7 +17,7 @@ cookies, OTP values, raw customer rows, or unmasked PII in this ledger.
 
 | Gate ID | Requirements | State | Approval | Evidence | No-Go / Caveat |
 | --- | --- | --- | --- | --- | --- |
-| `M1_DIRECT_DEPLOY_WATCH` | M1-01 | BLOCKED | not_requested | 1 | Direct deploy strict-watch remains unavailable or not run. |
+| `M1_DIRECT_DEPLOY_WATCH` | M1-01 | PASS | not_requested | 1 | Direct deploy strict-watch evidence recorded. |
 | `M1_LOCALE_SCOPE` | M1-01 | BLOCKED | not_requested | 1 | Active locale smoke exists, but older five-locale launch wording remains reconciled as non-PASS in Plan 26-07. |
 | `ADMIN_CUTOVER_UI` | M1-01, OPS-01, OPS-02 | BLOCKED | not_requested | 3 | Admin cutover API/UI are implemented, but deployed authenticated admin API smoke and runtime CUTOVER_GATE_LEDGER_PATH evidence are still missing. |
 | `QR_VISIBILITY` | PAY-01 | PASS | not_requested | 2 | Payment complete page and My Page QR visibility regression evidence recorded. |
@@ -39,7 +39,6 @@ cookies, OTP values, raw customer rows, or unmasked PII in this ledger.
 
 ## Final Readiness
 
-- M1_DIRECT_DEPLOY_WATCH: BLOCKED is no-go
 - M1_LOCALE_SCOPE: BLOCKED is no-go
 - ADMIN_CUTOVER_UI: BLOCKED is no-go
 - TOSS_TEST_REHEARSAL: BLOCKED is no-go

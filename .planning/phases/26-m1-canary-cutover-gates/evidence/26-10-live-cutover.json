@@ -2,7 +2,7 @@
   "schemaVersion": "phase26.live-cutover.v1",
   "phase": "26",
   "plan": "26-10",
-  "generatedAt": "2026-05-20T06:59:53.586Z",
+  "generatedAt": "2026-05-21T03:27:30.196Z",
   "status": "BLOCKED",
   "bookingEnabledApplied": false,
   "blockedReason": "Live-key smoke and/or required Gate Ledger rows are not ready; BOOKING_ENABLED=true was not applied.",
@@ -33,7 +33,6 @@
     "reason": "Readiness blockers remain; live booking stays closed."
   },
   "blockers": [
-    "M1_DIRECT_DEPLOY_WATCH: BLOCKED is no-go",
     "M1_LOCALE_SCOPE: BLOCKED is no-go",
     "ADMIN_CUTOVER_UI: BLOCKED is no-go",
     "TOSS_TEST_REHEARSAL: BLOCKED is no-go",
