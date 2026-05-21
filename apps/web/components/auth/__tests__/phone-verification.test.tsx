@@ -15,10 +15,12 @@ vi.mock('@/lib/api-client', () => ({
   },
   ApiClientError: class ApiClientError extends Error {
     statusCode: number;
-    constructor(message: string, statusCode: number) {
+    data: unknown;
+    constructor(message: string, statusCode: number, data?: unknown) {
       super(message);
       this.name = 'ApiClientError';
       this.statusCode = statusCode;
+      this.data = data;
     }
   },
 }));
@@ -196,7 +198,11 @@ describe('PhoneVerification', () => {
 
     it('send-code 400은 OTP 불일치가 아니라 휴대폰 번호 안내로 표시하고 코드 입력을 열지 않는다', async () => {
       const { apiClient, ApiClientError } = await import('@/lib/api-client');
-      const landlineError = new ApiClientError('SMS를 받을 수 있는 휴대폰 번호를 입력해주세요', 400);
+      const landlineError = new ApiClientError(
+        'SMS를 받을 수 있는 휴대폰 번호를 입력해주세요',
+        400,
+        { errorCode: 'SMS_CAPABLE_PHONE_REQUIRED', providerCode: 60205 },
+      );
       (apiClient.post as ReturnType<typeof vi.fn>).mockRejectedValueOnce(landlineError);
 
       render(<PhoneVerification {...defaultProps} phone="+66600565418" />);
@@ -215,6 +221,27 @@ describe('PhoneVerification', () => {
         { phone: '+66600565418' },
         { showErrorToast: false },
       );
+    });
+
+    it('Twilio 60410 recipient block은 현재 locale의 상세 안내로 표시한다', async () => {
+      const { apiClient, ApiClientError } = await import('@/lib/api-client');
+      const blockedError = new ApiClientError(
+        '현재 이 번호로는 인증번호를 보낼 수 없습니다.',
+        400,
+        { errorCode: 'SMS_RECIPIENT_BLOCKED', providerCode: 60410 },
+      );
+      (apiClient.post as ReturnType<typeof vi.fn>).mockRejectedValueOnce(blockedError);
+
+      render(<PhoneVerification {...defaultProps} locale="en" />);
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      await user.click(screen.getByRole('button', { name: /Send verification code/ }));
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'We cannot send a verification code to this number right now.',
+        );
+      });
+      expect(screen.queryByText(/현재 이 번호/)).not.toBeInTheDocument();
     });
 
     it('410 에러 시 "인증번호가 만료되었습니다. 재발송해주세요"', async () => {

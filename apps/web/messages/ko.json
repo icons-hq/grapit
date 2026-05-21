@@ -319,6 +319,11 @@
       "invalidCode": "인증번호가 일치하지 않습니다",
       "throttled": "요청이 너무 많습니다. 잠시 후 다시 시도해주세요",
       "systemError": "인증번호 처리에 실패했습니다. 잠시 후 다시 시도해주세요",
+      "invalidPhone": "올바른 휴대폰 번호를 입력해주세요",
+      "smsCapablePhoneRequired": "SMS를 받을 수 있는 휴대폰 번호를 입력해주세요",
+      "recipientBlocked": "현재 이 번호로는 인증번호를 보낼 수 없습니다. 다른 휴대폰 번호를 사용하거나 고객센터로 문의해주세요.",
+      "providerRateLimited": "인증번호 요청이 제한되었습니다. 잠시 후 다시 시도해주세요.",
+      "sendFailed": "인증번호 발송에 실패했습니다. 잠시 후 다시 시도해주세요.",
       "verified": "인증 완료"
     },
     "errors": {

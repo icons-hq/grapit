@@ -196,6 +196,11 @@ describe('launch copy key manifest', () => {
       'invalidCode',
       'throttled',
       'systemError',
+      'invalidPhone',
+      'smsCapablePhoneRequired',
+      'recipientBlocked',
+      'providerRateLimited',
+      'sendFailed',
       'verified',
     ]);
     expect(LAUNCH_COPY_KEYS['auth.errors'].ko).toEqual([

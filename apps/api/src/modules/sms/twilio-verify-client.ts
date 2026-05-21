@@ -55,6 +55,10 @@ export class TwilioVerifyApiError extends Error {
   get isInvalidRecipient(): boolean {
     return this.code === 60200;
   }
+
+  get isRecipientBlocked(): boolean {
+    return this.code === 60410;
+  }
 }
 
 function toTwilioVerifyApiError(err: unknown): TwilioVerifyApiError {

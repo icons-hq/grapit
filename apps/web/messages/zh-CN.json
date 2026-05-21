@@ -319,6 +319,11 @@
       "invalidCode": "验证码不正确",
       "throttled": "请求过于频繁，请稍后再试。",
       "systemError": "验证码处理失败，请稍后再试。",
+      "invalidPhone": "请输入有效的手机号码。",
+      "smsCapablePhoneRequired": "请输入可以接收短信的手机号码。",
+      "recipientBlocked": "目前无法向此号码发送验证码。请使用其他手机号码或联系客户支持。",
+      "providerRateLimited": "验证码请求暂时受限，请稍后再试。",
+      "sendFailed": "验证码发送失败，请稍后再试。",
       "verified": "验证完成"
     },
     "errors": {

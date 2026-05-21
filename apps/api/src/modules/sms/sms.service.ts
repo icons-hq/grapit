@@ -153,13 +153,42 @@ interface PhoneVerificationTokenPayload {
 
 const PHONE_VALIDATION_MESSAGE = '올바른 휴대폰 번호를 입력해주세요';
 const SMS_CAPABLE_PHONE_MESSAGE = 'SMS를 받을 수 있는 휴대폰 번호를 입력해주세요';
+const SMS_RECIPIENT_BLOCKED_MESSAGE =
+  '현재 이 번호로는 인증번호를 보낼 수 없습니다. 다른 휴대폰 번호를 사용하거나 고객센터로 문의해주세요.';
+const SMS_PROVIDER_RATE_LIMITED_MESSAGE =
+  '인증번호 요청이 제한되었습니다. 잠시 후 다시 시도해주세요.';
+const SMS_SEND_FAILED_MESSAGE =
+  '인증번호 발송에 실패했습니다. 잠시 후 다시 시도해주세요.';
+
+const SMS_ERROR_CODES = {
+  invalidPhone: 'SMS_PHONE_INVALID',
+  smsCapablePhoneRequired: 'SMS_CAPABLE_PHONE_REQUIRED',
+  recipientBlocked: 'SMS_RECIPIENT_BLOCKED',
+  providerRateLimited: 'SMS_PROVIDER_RATE_LIMITED',
+  sendFailed: 'SMS_SEND_FAILED',
+} as const;
+
+type SmsErrorCode = (typeof SMS_ERROR_CODES)[keyof typeof SMS_ERROR_CODES];
+
+function smsBadRequest(
+  message: string,
+  errorCode: SmsErrorCode,
+  providerCode?: number,
+): BadRequestException {
+  const exception = new BadRequestException(message);
+  Object.assign(exception.getResponse() as Record<string, unknown>, {
+    errorCode,
+    providerCode,
+  });
+  return exception;
+}
 
 function parseE164OrBadRequest(phone: string): string {
   try {
     return parseE164(phone);
   } catch (err) {
     if (err instanceof Error && err.message === PHONE_VALIDATION_MESSAGE) {
-      throw new BadRequestException(PHONE_VALIDATION_MESSAGE);
+      throw smsBadRequest(PHONE_VALIDATION_MESSAGE, SMS_ERROR_CODES.invalidPhone);
     }
     throw err;
   }
@@ -172,12 +201,30 @@ function maskE164ForLog(e164: string): string {
 
 function mapTwilioSendFailure(err: TwilioVerifyApiError): BadRequestException {
   if (err.isUnsupportedLandline) {
-    return new BadRequestException(SMS_CAPABLE_PHONE_MESSAGE);
+    return smsBadRequest(
+      SMS_CAPABLE_PHONE_MESSAGE,
+      SMS_ERROR_CODES.smsCapablePhoneRequired,
+      err.code,
+    );
   }
   if (err.isInvalidRecipient) {
-    return new BadRequestException(PHONE_VALIDATION_MESSAGE);
+    return smsBadRequest(PHONE_VALIDATION_MESSAGE, SMS_ERROR_CODES.invalidPhone, err.code);
   }
-  return new BadRequestException('인증번호 발송에 실패했습니다. 잠시 후 다시 시도해주세요.');
+  if (err.isRecipientBlocked) {
+    return smsBadRequest(
+      SMS_RECIPIENT_BLOCKED_MESSAGE,
+      SMS_ERROR_CODES.recipientBlocked,
+      err.code,
+    );
+  }
+  if (err.isRateLimited) {
+    return smsBadRequest(
+      SMS_PROVIDER_RATE_LIMITED_MESSAGE,
+      SMS_ERROR_CODES.providerRateLimited,
+      err.code,
+    );
+  }
+  return smsBadRequest(SMS_SEND_FAILED_MESSAGE, SMS_ERROR_CODES.sendFailed, err.code);
 }
 
 @Injectable()
@@ -365,7 +412,7 @@ export class SmsService {
       if (err instanceof TwilioVerifyApiError) {
         throw mapTwilioSendFailure(err);
       }
-      throw new BadRequestException('인증번호 발송에 실패했습니다. 잠시 후 다시 시도해주세요.');
+      throw smsBadRequest(SMS_SEND_FAILED_MESSAGE, SMS_ERROR_CODES.sendFailed);
     }
   }
 
