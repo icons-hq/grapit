@@ -1,10 +1,12 @@
 ---
 phase: 26
 slug: m1-canary-cutover-gates
-status: draft
+status: verified
 nyquist_compliant: true
 wave_0_complete: true
 created: 2026-05-20
+validated: 2026-05-21T09:37:00+0900
+live_cutover_status: human_needed_no_go
 ---
 
 # Phase 26 - Validation Strategy
@@ -18,7 +20,7 @@ Per-phase validation contract for Phase 26 planning and execution.
 | Property | Value |
 |----------|-------|
 | **Framework** | Vitest for API/shared/web unit tests; Playwright for web E2E; k6 for load thresholds; CLI/provider evidence for production ops gates. |
-| **Config file** | `apps/api/vitest.config.ts`, `apps/web/vitest.config.ts`, `apps/web/playwright.config.ts`; k6 scripts to be added under `scripts/k6/`. |
+| **Config file** | `apps/api/vitest.config.ts`, `apps/web/vitest.config.ts`, `apps/web/playwright.config.ts`; k6 scripts under `scripts/k6/phase26-baseline.js` and `scripts/k6/phase26-stress.js`. |
 | **Quick run command** | `pnpm --filter @grabit/api test`, `pnpm --filter @grabit/web test`, plus targeted scripts introduced by Phase 26 plans. |
 | **Full suite command** | `pnpm test`, `pnpm typecheck`, `pnpm lint`, `pnpm build`, selected Playwright smoke, and k6 baseline/stress gates when environment access is available. |
 | **Estimated runtime** | Local unit/type/lint/build: repo-dependent; provider/load gates require explicit operator window. |
@@ -34,19 +36,41 @@ Per-phase validation contract for Phase 26 planning and execution.
 
 ---
 
+## Nyquist Audit Result
+
+This audit found no missing automated validation files. Phase 26 is Nyquist-compliant for implementation coverage, while live cutover remains intentionally no-go until external provider/operator gates are completed or explicitly approved as non-PASS.
+
+| Metric | Count |
+|--------|-------|
+| Requirements audited | 7 |
+| Automated coverage gaps found | 0 |
+| New test files generated | 0 |
+| Manual-only external/operator gates retained | 5 |
+
+## Current Audit Evidence
+
+| Check | Result |
+|-------|--------|
+| Gate Ledger strict validator plus expected `BOOKING_ENABLED=true` no-go | PASS |
+| API targeted Vitest: admin cutover, QR ticket, reservation, Toss client/webhook/payment | PASS - 7 files, 112 tests |
+| Web Playwright: `admin-cutover`, `phase26-qr-visibility`, `phase26-m1-smoke` | PASS - 6 tests |
+| Phase 26 CLI `--help`, k6 threshold/source assertions, first-24h watch assertions | PASS |
+
+---
+
 ## Per-Task Verification Map
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 26-W0-M1 | 26-07 Task 1-3; 26-11 Task 1-3; 26-12 Task 1-3 | 2-3 | M1-01 | T-26-DEPLOY, T-26-11, T-26-12 | Direct deploy watch proves health/auth/session/public detail/booking-disabled/queue/payment-safe paths without traffic-split canary; admin Gate Ledger API/UI exposes the no-go state from a Cloud Run runtime artifact. | E2E + ops smoke + admin API/UI | `CI=1 TZ=UTC pnpm --filter @grabit/web test:e2e -- phase26-m1-smoke.spec.ts`<br>`node scripts/phase26/direct-deploy-watch.mjs --help`<br>`pnpm --filter @grabit/api exec vitest run src/modules/admin/admin-cutover.controller.spec.ts src/modules/admin/admin-cutover.service.spec.ts`<br>`CI=1 TZ=UTC pnpm --filter @grabit/web test:e2e -- admin-cutover.spec.ts`<br>`node -e "const fs=require('fs'); const s=fs.readFileSync('apps/api/Dockerfile','utf8')+'\\n'+fs.readFileSync('.github/workflows/deploy.yml','utf8'); for (const token of ['CUTOVER_GATE_LEDGER_PATH','/app/phase26/26-GATE-LEDGER.json','26-GATE-LEDGER.json']) if(!s.includes(token)) throw new Error('missing '+token);"` | planned | planned |
-| 26-W0-LOAD | 26-06 Task 1-3 | 4 | LOAD-01 | T-26-LOAD | k6 10k baseline and 20k stress gates enforce p95 < 2s and error rate < 1%, or ledger blocks/records accepted risk. | load | `node -e "const fs=require('fs'); const s=fs.readFileSync('scripts/k6/phase26-baseline.js','utf8')+'\\n'+fs.readFileSync('scripts/k6/phase26-stress.js','utf8'); for (const token of ['http_req_duration','p(95)<2000','http_req_failed','rate<0.01','PHASE26_TEST','constant-arrival-rate']) if(!s.includes(token)) throw new Error('missing '+token);"`<br>`node scripts/phase26/record-k6-evidence.mjs --help`<br>`docker run --rm grafana/k6 version`<br>`docker run --rm -i grafana/k6 run - < scripts/k6/phase26-baseline.js`<br>`docker run --rm -i grafana/k6 run - < scripts/k6/phase26-stress.js` | planned | planned |
-| 26-W0-DR | 26-08 Task 1-3 | 2 | DR-01 | T-26-DR | Cloud Run rollback, Cloud SQL PITR/restore, and Valkey reconnect/failure evidence are captured against safe targets. | ops drill | `node scripts/phase26/infra-evidence.mjs --help`<br>`node -e "const fs=require('fs'); const s=fs.readFileSync('docs/runbooks/phase26-dr-infra-gate.md','utf8'); for (const token of ['Cloud Run rollback','Cloud SQL','PITR','restore','Valkey','pgBouncer','HA','read replica','DB_POOL_MAX','CONFIG_READY_NOT_DRILLED','ACCEPTED_RISK']) if(!s.includes(token)) throw new Error('missing '+token);"`<br>`gcloud run services describe grabit-api --project=grapit-491806 --region=asia-northeast3 --format=json`<br>`node scripts/smoke-valkey-production.mjs --check health` | planned | planned |
-| 26-W0-INFRA | 26-08 Task 1-3; 26-10 Task 1 | 2, 5 | INFRA-01 | T-26-INFRA | pgBouncer, HA/read replica, and DB pool sizing are either drilled, config-evidenced, or ledgered as non-PASS states. | config + ops evidence | `node scripts/phase26/infra-evidence.mjs --help`<br>`node -e "const fs=require('fs'); const s=fs.readFileSync('scripts/phase26/infra-evidence.mjs','utf8'); for (const token of ['grapit-491806','asia-northeast3','DB_POOL_MAX','PITR','Valkey','CONFIG_READY_NOT_DRILLED']) if(!s.includes(token)) throw new Error('missing '+token);"`<br>`node scripts/phase26/cutover-readiness.mjs --help`<br>`node scripts/phase26/validate-gate-ledger.mjs --ledger .planning/phases/26-m1-canary-cutover-gates/26-GATE-LEDGER.json --strict` | planned | planned |
-| 26-W0-OPS1 | 26-09 Task 1-2; 26-11 Task 1-3; 26-12 Task 1-3 | 2-3 | OPS-01 | T-26-OPS, T-26-11, T-26-12 | Sentry, Cloud Run logs, Cloudflare, business metrics, 1-person playbooks, admin visibility, and runtime Gate Ledger access have dry-run/read evidence. | ops smoke + admin UI | `node scripts/phase26/monitoring-evidence.mjs --help`<br>`node -e "const fs=require('fs'); const s=fs.readFileSync('docs/runbooks/phase26-cutover-ops.md','utf8'); for (const token of ['PG','DB','Valkey','Cloud Run','Cloudflare','Toss','payment failure','queue stuck','oversell','QR','refund','sellout','remaining seats','dry-run','evidence']) if(!s.includes(token)) throw new Error('missing '+token);"`<br>`pnpm --filter @grabit/api exec vitest run src/modules/admin/admin-cutover.controller.spec.ts src/modules/admin/admin-cutover.service.spec.ts`<br>`CI=1 TZ=UTC pnpm --filter @grabit/web test:e2e -- admin-cutover.spec.ts` | planned | planned |
-| 26-W0-PAY | 26-02 Task 1-3; 26-03 Task 1-3; 26-04 Task 1-3; 26-05 Task 1-3; 26-10 Task 1-3 | 2-5 | PAY-01 | T-26-PAY | Toss test/live cutover preserves server-side amount verification, server-only secrets, webhook re-query, idempotency, QR visibility, D-24 TOSS_TEST_SECRET_ROTATION, and `BOOKING_ENABLED` no-go semantics. | integration + ops smoke | `pnpm --filter @grabit/api exec vitest run src/modules/ticket/qr-ticket.service.spec.ts src/modules/reservation/reservation.service.spec.ts`<br>`CI=1 TZ=UTC pnpm --filter @grabit/web test:e2e -- phase26-qr-visibility.spec.ts`<br>`pnpm --filter @grabit/api exec vitest run src/modules/payment/toss-payments.client.spec.ts src/modules/payment/toss-webhook.controller.spec.ts src/modules/payment/payment.service.spec.ts`<br>`node scripts/phase26/rehearsal-smoke.mjs --help`<br>`node scripts/phase26/cutover-readiness.mjs --ledger .planning/phases/26-m1-canary-cutover-gates/26-GATE-LEDGER.json --booking-enabled-check` | planned | planned |
-| 26-W0-OPS2 | 26-09 Task 3; 26-10 Task 1-3; 26-12 Task 1-3 | 3, 5 | OPS-02 | T-26-WATCH | First-2h intensive and first-24h periodic monitoring checks queue/payment/seat/QR/Cloud Run/Sentry/Cloudflare and close-booking triggers; admin UI surfaces current state. | runbook + manual ops + admin UI | `node -e "const fs=require('fs'); const s=fs.readFileSync('.planning/phases/26-m1-canary-cutover-gates/26-FIRST-24H-WATCH.md','utf8'); for (const token of ['5-10','30-60','24','duplicate sale','reservation/QR','payment failure','seat lock','queue admission stuck','refund','cancel job','close-booking','rollback']) if(!s.includes(token)) throw new Error('missing '+token);"`<br>`node scripts/phase26/cutover-readiness.mjs --ledger .planning/phases/26-m1-canary-cutover-gates/26-GATE-LEDGER.json --booking-enabled-check`<br>`CI=1 TZ=UTC pnpm --filter @grabit/web test:e2e -- admin-cutover.spec.ts` | planned | planned |
+| 26-W0-M1 | 26-07 Task 1-3; 26-11 Task 1-3; 26-12 Task 1-3 | 2-3 | M1-01 | T-26-DEPLOY, T-26-11, T-26-12 | Direct deploy watch proves health/auth/session/public detail/booking-disabled/queue/payment-safe paths without traffic-split canary; admin Gate Ledger API/UI exposes the no-go state from a Cloud Run runtime artifact. | E2E + ops smoke + admin API/UI | `CI=1 TZ=UTC pnpm --filter @grabit/web test:e2e -- phase26-m1-smoke.spec.ts`<br>`node scripts/phase26/direct-deploy-watch.mjs --help`<br>`pnpm --filter @grabit/api exec vitest run src/modules/admin/admin-cutover.controller.spec.ts src/modules/admin/admin-cutover.service.spec.ts`<br>`CI=1 TZ=UTC pnpm --filter @grabit/web test:e2e -- admin-cutover.spec.ts`<br>`node -e "const fs=require('fs'); const s=fs.readFileSync('apps/api/Dockerfile','utf8')+'\\n'+fs.readFileSync('.github/workflows/deploy.yml','utf8'); for (const token of ['CUTOVER_GATE_LEDGER_PATH','/app/phase26/26-GATE-LEDGER.json','26-GATE-LEDGER.json']) if(!s.includes(token)) throw new Error('missing '+token);"` | yes | green |
+| 26-W0-LOAD | 26-06 Task 1-3 | 4 | LOAD-01 | T-26-LOAD | k6 10k baseline and 20k stress gates enforce p95 < 2s and error rate < 1%, or ledger blocks/records accepted risk. | load | `node -e "const fs=require('fs'); const s=fs.readFileSync('scripts/k6/phase26-baseline.js','utf8')+'\\n'+fs.readFileSync('scripts/k6/phase26-stress.js','utf8'); for (const token of ['http_req_duration','p(95)<2000','http_req_failed','rate<0.01','PHASE26_TEST','constant-arrival-rate']) if(!s.includes(token)) throw new Error('missing '+token);"`<br>`node scripts/phase26/record-k6-evidence.mjs --help`<br>`docker run --rm grafana/k6 version`<br>`docker run --rm -i grafana/k6 run - < scripts/k6/phase26-baseline.js`<br>`docker run --rm -i grafana/k6 run - < scripts/k6/phase26-stress.js` | yes | green |
+| 26-W0-DR | 26-08 Task 1-3 | 2 | DR-01 | T-26-DR | Cloud Run rollback, Cloud SQL PITR/restore, and Valkey reconnect/failure evidence are captured against safe targets. | ops drill | `node scripts/phase26/infra-evidence.mjs --help`<br>`node -e "const fs=require('fs'); const s=fs.readFileSync('docs/runbooks/phase26-dr-infra-gate.md','utf8'); for (const token of ['Cloud Run rollback','Cloud SQL','PITR','restore','Valkey','pgBouncer','HA','read replica','DB_POOL_MAX','CONFIG_READY_NOT_DRILLED','ACCEPTED_RISK']) if(!s.includes(token)) throw new Error('missing '+token);"`<br>`gcloud run services describe grabit-api --project=grapit-491806 --region=asia-northeast3 --format=json`<br>`node scripts/smoke-valkey-production.mjs --check health` | yes | green |
+| 26-W0-INFRA | 26-08 Task 1-3; 26-10 Task 1 | 2, 5 | INFRA-01 | T-26-INFRA | pgBouncer, HA/read replica, and DB pool sizing are either drilled, config-evidenced, or ledgered as non-PASS states. | config + ops evidence | `node scripts/phase26/infra-evidence.mjs --help`<br>`node -e "const fs=require('fs'); const s=fs.readFileSync('scripts/phase26/infra-evidence.mjs','utf8'); for (const token of ['grapit-491806','asia-northeast3','DB_POOL_MAX','PITR','Valkey','CONFIG_READY_NOT_DRILLED']) if(!s.includes(token)) throw new Error('missing '+token);"`<br>`node scripts/phase26/cutover-readiness.mjs --help`<br>`node scripts/phase26/validate-gate-ledger.mjs --ledger .planning/phases/26-m1-canary-cutover-gates/26-GATE-LEDGER.json --strict` | yes | green |
+| 26-W0-OPS1 | 26-09 Task 1-2; 26-11 Task 1-3; 26-12 Task 1-3 | 2-3 | OPS-01 | T-26-OPS, T-26-11, T-26-12 | Sentry, Cloud Run logs, Cloudflare, business metrics, 1-person playbooks, admin visibility, and runtime Gate Ledger access have dry-run/read evidence. | ops smoke + admin UI | `node scripts/phase26/monitoring-evidence.mjs --help`<br>`node -e "const fs=require('fs'); const s=fs.readFileSync('docs/runbooks/phase26-cutover-ops.md','utf8'); for (const token of ['PG','DB','Valkey','Cloud Run','Cloudflare','Toss','payment failure','queue stuck','oversell','QR','refund','sellout','remaining seats','dry-run','evidence']) if(!s.includes(token)) throw new Error('missing '+token);"`<br>`pnpm --filter @grabit/api exec vitest run src/modules/admin/admin-cutover.controller.spec.ts src/modules/admin/admin-cutover.service.spec.ts`<br>`CI=1 TZ=UTC pnpm --filter @grabit/web test:e2e -- admin-cutover.spec.ts` | yes | green |
+| 26-W0-PAY | 26-02 Task 1-3; 26-03 Task 1-3; 26-04 Task 1-3; 26-05 Task 1-3; 26-10 Task 1-3 | 2-5 | PAY-01 | T-26-PAY | Toss test/live cutover preserves server-side amount verification, server-only secrets, webhook re-query, idempotency, QR visibility, D-24 TOSS_TEST_SECRET_ROTATION, and `BOOKING_ENABLED` no-go semantics. | integration + ops smoke | `pnpm --filter @grabit/api exec vitest run src/modules/ticket/qr-ticket.service.spec.ts src/modules/reservation/reservation.service.spec.ts`<br>`CI=1 TZ=UTC pnpm --filter @grabit/web test:e2e -- phase26-qr-visibility.spec.ts`<br>`pnpm --filter @grabit/api exec vitest run src/modules/payment/toss-payments.client.spec.ts src/modules/payment/toss-webhook.controller.spec.ts src/modules/payment/payment.service.spec.ts`<br>`node scripts/phase26/rehearsal-smoke.mjs --help`<br>`if node scripts/phase26/cutover-readiness.mjs --ledger .planning/phases/26-m1-canary-cutover-gates/26-GATE-LEDGER.json --booking-enabled-check; then echo "unexpected cutover ready"; exit 1; else echo "expected no-go"; fi` | yes | green |
+| 26-W0-OPS2 | 26-09 Task 3; 26-10 Task 1-3; 26-12 Task 1-3 | 3, 5 | OPS-02 | T-26-WATCH | First-2h intensive and first-24h periodic monitoring checks queue/payment/seat/QR/Cloud Run/Sentry/Cloudflare and close-booking triggers; admin UI surfaces current state. | runbook + manual ops + admin UI | `node -e "const fs=require('fs'); const s=fs.readFileSync('.planning/phases/26-m1-canary-cutover-gates/26-FIRST-24H-WATCH.md','utf8'); for (const token of ['5-10','30-60','24','duplicate sale','reservation/QR','payment failure','seat lock','queue admission stuck','refund','cancel job','close-booking','rollback']) if(!s.includes(token)) throw new Error('missing '+token);"`<br>`if node scripts/phase26/cutover-readiness.mjs --ledger .planning/phases/26-m1-canary-cutover-gates/26-GATE-LEDGER.json --booking-enabled-check; then echo "unexpected cutover ready"; exit 1; else echo "expected no-go"; fi`<br>`CI=1 TZ=UTC pnpm --filter @grabit/web test:e2e -- admin-cutover.spec.ts` | yes | green |
 
-*Status: pending, green, red, flaky.*
+*Status: `green` means automated implementation coverage exists and passed. It does not mean external live cutover gates are `PASS`; those remain governed by the Gate Ledger and Manual-Only table below.*
 
 ---
 
@@ -86,4 +110,15 @@ Per-phase validation contract for Phase 26 planning and execution.
 - [x] Gate Ledger validates every required cutover gate before `BOOKING_ENABLED=true`.
 - [x] `nyquist_compliant: true` set in frontmatter after the planner maps validation rows to concrete tasks.
 
-**Approval:** planner revision complete; execution still must produce the evidence before any gate can be marked PASS.
+**Approval:** Nyquist audit complete on 2026-05-21. No automated coverage gaps were found, no new test files were required, and live cutover remains `human_needed_no_go` until the Manual-Only gates produce approved evidence.
+
+## Validation Audit 2026-05-21
+
+| Metric | Count |
+|--------|-------|
+| Gaps found | 0 |
+| Resolved | 0 |
+| Escalated | 0 |
+| New test files generated | 0 |
+
+**Audit note:** Current Gate Ledger strict validation passes, while `BOOKING_ENABLED=true` readiness correctly fails on remaining `BLOCKED` and unapproved `CONFIG_READY_NOT_DRILLED` rows. This is the expected Phase 26 safety state, not a validation gap.
