@@ -487,6 +487,8 @@ function rejectionReasonFor(outcome: FieldCheckInOutcome): string {
     case 'entered':
       return '';
   }
+
+  return '처리할 수 없는 검표 상태입니다';
 }
 
 function redactedTokenRef(token: string): string {
