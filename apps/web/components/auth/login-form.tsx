@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 import { loginSchema, type LoginInput, type AuthResponse } from '@grabit/shared';
 import { apiClient, ApiClientError } from '@/lib/api-client';
 import { apiUrl } from '@/lib/api-url';
+import { resolveSafeReturnToFromSearch } from '@/lib/auth-return';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -39,9 +40,13 @@ const SOCIAL_LOGIN_ERROR_KEYS = {
   account_conflict: 'accountConflict',
 } as const satisfies Record<string, keyof AuthLaunchCopy['socialErrors']>;
 
-function getPostLoginDestination(res: AuthResponse, locale: AuthLaunchCopy['locale']) {
+function getPostLoginDestination(
+  res: AuthResponse,
+  locale: AuthLaunchCopy['locale'],
+  returnTo: string | null,
+) {
   if (res.user.isEmailVerified) {
-    return getLocalizedPathname('/', locale);
+    return returnTo ?? getLocalizedPathname('/', locale);
   }
 
   const pathname = getLocalizedPathname('/auth/verify-email', locale);
@@ -103,7 +108,11 @@ export function LoginForm() {
         setStatusMessage(authCopy.errors.deviceLimitNotice);
         toast.info(authCopy.errors.deviceLimitNotice);
       }
-      router.push(getPostLoginDestination(res, authCopy.locale));
+      const returnTo =
+        typeof window === 'undefined'
+          ? null
+          : resolveSafeReturnToFromSearch(window.location.search);
+      router.push(getPostLoginDestination(res, authCopy.locale, returnTo));
     } catch (error) {
       if (error instanceof ApiClientError && error.statusCode === 401) {
         setLoginError(authCopy.errors.invalidCredentials);

@@ -23,6 +23,7 @@ const regularUser = {
 const baseVerification = {
   result: 'processable',
   resultLabel: '입장 가능 티켓입니다',
+  processable: true,
   reservationNumber: 'GRP-27-SCAN-0001',
   performanceTitle: 'Phase 27 Field Operations',
   showtimeAt: '2026-07-04T10:00:00.000Z',
@@ -108,6 +109,7 @@ describe('ScannerCheckIn', () => {
         ...baseVerification,
         result,
         resultLabel,
+        processable: false,
       },
     });
 
@@ -121,6 +123,7 @@ describe('ScannerCheckIn', () => {
         ...baseVerification,
         result: 'offline-pending',
         resultLabel: '네트워크 문제로 보류 스캔에 저장했습니다. 연결이 복구되면 서버와 동기화하세요.',
+        processable: false,
         offlineQueue: [
           {
             deviceAttemptId: 'device-attempt-1',

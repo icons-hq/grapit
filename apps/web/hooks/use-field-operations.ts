@@ -45,11 +45,11 @@ export interface ScannerCheckInVerification {
   venueName?: string;
   showtimeAt?: string;
   showtimeId?: string;
-  seats: string[];
+  seats: readonly string[];
   ticketStatus?: string;
   rejectionReason?: string | null;
   priorScanContext?: ScannerPriorScanContext | null;
-  offlineQueue: ScannerOfflineQueueItem[];
+  offlineQueue: readonly ScannerOfflineQueueItem[];
   verifiedAt?: string;
 }
 
@@ -107,7 +107,7 @@ export function useFieldCheckInConsume() {
 export function normalizeVerifyResponse(
   response: FieldCheckInVerifyResponse | Record<string, unknown>,
 ): ScannerCheckInVerification {
-  const record = asRecord(response);
+  const record = asRecord(response) ?? {};
   const ticket = asRecord(record['ticket']);
   const rawResult = stringValue(record['outcome']) ?? stringValue(record['result']);
   const result = normalizeResult(rawResult, booleanValue(record['processable']));
@@ -142,7 +142,7 @@ export function normalizeVerifyResponse(
 export function normalizeConsumeResponse(
   response: FieldCheckInConsumeResponse | Record<string, unknown>,
 ): ScannerCheckInConsumeResult {
-  const record = asRecord(response);
+  const record = asRecord(response) ?? {};
   const rawResult = stringValue(record['outcome']) ?? stringValue(record['result']);
   const result = normalizeResult(rawResult, false);
 
@@ -241,7 +241,7 @@ function normalizeOfflineQueue(value: unknown): ScannerOfflineQueueItem[] {
   }
 
   return value
-    .map((item) => {
+    .map((item): ScannerOfflineQueueItem | null => {
       const record = asRecord(item);
       const deviceAttemptId = stringValue(record?.['deviceAttemptId']);
       const attemptedAt = stringValue(record?.['attemptedAt']);
@@ -261,7 +261,9 @@ function normalizeOfflineQueue(value: unknown): ScannerOfflineQueueItem[] {
     .filter((item): item is ScannerOfflineQueueItem => item !== null);
 }
 
-function normalizeOfflineState(value: string | null | undefined) {
+function normalizeOfflineState(
+  value: string | null | undefined,
+): ScannerOfflineQueueItem['state'] {
   if (value === 'synced' || value === 'rejected') {
     return value;
   }

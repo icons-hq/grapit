@@ -167,7 +167,9 @@ test.describe('phase27 QR check-in browser contracts', () => {
 
     await page.goto(`/field/check-in?ticket=${encodeURIComponent(rawQrToken)}`);
 
-    await expect(page.getByText('이 티켓을 검표할 권한이 없습니다')).toBeVisible({ timeout: 10000 });
+    await expect(
+      page.getByRole('alert', { name: '이 티켓을 검표할 권한이 없습니다' }),
+    ).toBeVisible({ timeout: 10000 });
     await expect(page.getByText('입장 처리가 완료되었습니다')).toHaveCount(0);
     await expect(page.getByText('예매 관리')).toHaveCount(0);
     await expect(page.getByText('회원 관리')).toHaveCount(0);
@@ -221,18 +223,24 @@ test.describe('phase27 QR check-in browser contracts', () => {
 
     await page.goto(`/field/check-in?ticket=${encodeURIComponent(rawQrToken)}`);
 
-    await expect(page.getByText('입장 가능 티켓입니다')).toBeVisible({ timeout: 10000 });
+    await expect(
+      page.getByRole('status', { name: '입장 가능 티켓입니다' }),
+    ).toBeVisible({ timeout: 10000 });
     await expect(page.getByText('입장 처리가 완료되었습니다')).toHaveCount(0);
     expect(consumeCalls).toBe(0);
 
     await page.getByRole('button', { name: '입장 처리' }).click();
 
-    await expect(page.getByText('입장 처리가 완료되었습니다')).toBeVisible();
+    await expect(
+      page.getByRole('status', { name: '입장 처리가 완료되었습니다' }),
+    ).toBeVisible();
     expect(consumeCalls).toBe(1);
 
     await page.goto(`/field/check-in?ticket=${encodeURIComponent(rawQrToken)}&duplicate=1`);
 
-    await expect(page.getByText('이미 입장 처리된 티켓입니다')).toBeVisible({ timeout: 10000 });
+    await expect(
+      page.getByRole('status', { name: '이미 입장 처리된 티켓입니다' }),
+    ).toBeVisible({ timeout: 10000 });
     await expect(page.getByRole('button', { name: '입장 처리' })).toHaveCount(0);
     expect(consumeCalls).toBe(1);
     await expectNoRawSecrets(page);

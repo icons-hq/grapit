@@ -180,10 +180,10 @@ export function ScannerCheckIn({
 
 function ScannerAccessDenied() {
   return (
-    <div className="mx-auto flex min-h-dvh w-full max-w-xl items-center bg-[#F5F5F7] p-4">
+    <main className="mx-auto flex min-h-dvh w-full max-w-xl items-center bg-[#F5F5F7] p-4">
       <section
         role="alert"
-        aria-labelledby="scanner-access-denied-title"
+        aria-label="이 티켓을 검표할 권한이 없습니다"
         className="w-full rounded-lg border border-[#F3C7C7] bg-white p-5 shadow-sm"
       >
         <div className="flex items-start gap-3">
@@ -192,8 +192,7 @@ function ScannerAccessDenied() {
           </div>
           <div className="min-w-0 flex-1">
             <h1
-              id="scanner-access-denied-title"
-              className="text-heading font-semibold leading-[1.2] text-gray-900"
+              className="block text-heading font-semibold leading-[1.2] text-gray-900"
             >
               이 티켓을 검표할 권한이 없습니다
             </h1>
@@ -203,7 +202,7 @@ function ScannerAccessDenied() {
           </div>
         </div>
       </section>
-    </div>
+    </main>
   );
 }
 
@@ -228,7 +227,11 @@ function ResultBand({
   const Icon = style.icon;
 
   return (
-    <section className={cn('rounded-lg border p-5', style.band)}>
+    <section
+      role="status"
+      aria-label={label}
+      className={cn('rounded-lg border p-5', style.band)}
+    >
       <div className="flex items-start gap-3">
         <Icon className="mt-0.5 h-6 w-6 shrink-0" />
         <div className="min-w-0 flex-1">
@@ -267,7 +270,7 @@ function TicketIdentity({
               {verification.reservationNumber ?? '예매 번호 확인 중'}
             </h2>
           </div>
-          <Badge className={style.badge}>{verification.ticketStatus ?? labelForResult(result)}</Badge>
+          <Badge className={style.badge}>{verification.ticketStatus ?? '검표 확인'}</Badge>
         </div>
 
         <dl className="space-y-3 text-base leading-[1.5]">
