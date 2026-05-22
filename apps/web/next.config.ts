@@ -6,8 +6,11 @@ import { resolve } from 'path';
 
 // Load .env from monorepo root (convention: single .env at monorepo root)
 // Next.js only loads .env from its own project dir (apps/web/),
-// so load the repo root with Next's dotenv-compatible parser before config runs.
-loadEnvConfig(resolve(__dirname, '../..'));
+// so force-reload the repo root with Next's dotenv-compatible parser after
+// Next's project-dir env pass has already run.
+const monorepoRoot = resolve(__dirname, '../..');
+const isDev = process.env.NODE_ENV !== 'production';
+loadEnvConfig(monorepoRoot, isDev, console, true);
 
 const r2Hostname = process.env.NEXT_PUBLIC_R2_HOSTNAME;
 
@@ -24,10 +27,10 @@ const allowedDevOrigins = devOriginsEnv
 const nextConfig: NextConfig = {
   allowedDevOrigins,
   output: 'standalone',
-  outputFileTracingRoot: resolve(__dirname, '../../'),
+  outputFileTracingRoot: monorepoRoot,
   transpilePackages: ['@grabit/shared'],
   turbopack: {
-    root: resolve(__dirname, '../../'),
+    root: monorepoRoot,
     rules: {
       '*.md': { as: '*.js', loaders: ['raw-loader'] },
       '*.md?raw': { as: '*.js', loaders: ['raw-loader'] },

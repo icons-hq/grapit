@@ -180,6 +180,7 @@ test.describe('phase27 QR check-in browser contracts', () => {
   test('scanner-only staff manually processes entry and then sees duplicate rejection on repeat scan', async ({ page }) => {
     let consumeCalls = 0;
     let consumed = false;
+    await page.setViewportSize({ width: 390, height: 844 });
     await enableBooking(page);
     await mockAuthenticatedSession(page, {
       role: 'admin',
@@ -226,6 +227,12 @@ test.describe('phase27 QR check-in browser contracts', () => {
     await expect(
       page.getByRole('status', { name: '입장 가능 티켓입니다' }),
     ).toBeVisible({ timeout: 10000 });
+    const actionBox = await page.getByTestId('scanner-sticky-action').boundingBox();
+    const statusBox = await page
+      .getByRole('status', { name: '입장 가능 티켓입니다' })
+      .boundingBox();
+    expect(actionBox?.width).toBeGreaterThan(320);
+    expect(statusBox?.width).toBeGreaterThan(320);
     await expect(page.getByText('입장 처리가 완료되었습니다')).toHaveCount(0);
     expect(consumeCalls).toBe(0);
 
