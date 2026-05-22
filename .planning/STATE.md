@@ -4,8 +4,8 @@ milestone: v2.0
 milestone_name: Fanmeet Launch
 status: executing
 stopped_at: Phase 27 planning complete
-last_updated: "2026-05-22T06:39:52.300Z"
-last_activity: 2026-05-22 - Completed quick task 260522-lr8: Fix QR ticket reservation detail after field check-in so used tickets render as entered instead of throwing 409
+last_updated: "2026-05-22T07:32:00.000Z"
+last_activity: 2026-05-22 - Completed quick task 260522-ms8: Keep QR ticket visible after entry by separating credential status from admission status
 progress:
   total_phases: 7
   completed_phases: 5
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-05-04)
 Phase: 27 (event-operations-settlement) — EXECUTING
 Plan: 15 of 16
 Status: Wave 6 complete; ready for final verification
-Last activity: 2026-05-22 - Completed quick task 260522-lr8: Fix QR ticket reservation detail after field check-in so used tickets render as entered instead of throwing 409
+Last activity: 2026-05-22 - Completed quick task 260522-ms8: Keep QR ticket visible after entry by separating credential status from admission status
 
 ## Deferred Items
 
@@ -317,6 +317,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 260522-ms8 | Keep QR ticket visible after entry by separating credential status from admission status | 2026-05-22 | 89d82342 | [260522-ms8-keep-qr-ticket-visible-after-entry-by-se](./quick/260522-ms8-keep-qr-ticket-visible-after-entry-by-se/) |
 | 260522-lr8 | Fix QR ticket reservation detail after field check-in so used tickets render as entered instead of throwing 409 | 2026-05-22 | d2ddd1de | [260522-lr8-fix-qr-ticket-reservation-detail-after-f](./quick/260522-lr8-fix-qr-ticket-reservation-detail-after-f/) |
 | 260518-o33 | 탈퇴 계정의 social account 연결을 삭제해 Naver 재가입/로그인 server_error 차단 | 2026-05-18 | committed | [260518-o33-fix-social-account-cleanup-on-withdrawal](./quick/260518-o33-fix-social-account-cleanup-on-withdrawal/) |
 | 260518-l47 | 회원탈퇴 기능 구현 및 어드민 회원 관리에서 회원 탈퇴/DB 삭제 기능 추가 | 2026-05-18 | a178f1c | [260518-l47-db](./quick/260518-l47-db/) |
