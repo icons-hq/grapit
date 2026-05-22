@@ -2336,12 +2336,14 @@ describe('ReservationService', () => {
       });
     });
 
-    it('loads reservation detail with used QR ticket after field check-in', async () => {
+    it('loads reservation detail with entered QR ticket after field check-in', async () => {
       const qrTicketService = {
         getOrIssueTicketForReservation: vi.fn().mockResolvedValue({
-          token: '',
-          jti: '',
-          status: 'USED',
+          token: 'signed-qr-token',
+          jti: 'qr-jti-1',
+          status: 'ACTIVE',
+          entryStatus: 'ENTERED',
+          enteredAt: '2026-07-10T09:05:00.000Z',
           issuedAt: '2026-07-10T09:00:00.000Z',
           emailScheduledAt: null,
           emailedAt: null,
@@ -2355,9 +2357,11 @@ describe('ReservationService', () => {
         .toMatchObject({
           id: reservationId,
           qrTicket: {
-            token: '',
-            jti: '',
-            status: 'USED',
+            token: 'signed-qr-token',
+            jti: 'qr-jti-1',
+            status: 'ACTIVE',
+            entryStatus: 'ENTERED',
+            enteredAt: '2026-07-10T09:05:00.000Z',
           },
         });
 

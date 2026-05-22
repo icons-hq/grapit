@@ -114,4 +114,33 @@ describe('ReservationDetailView QR ticket card', () => {
     expect(screen.queryByText('발급 시각')).not.toBeInTheDocument();
     expect(screen.queryByText('안내 메일 예약')).not.toBeInTheDocument();
   });
+
+  it('keeps the QR visible and shows entry completion after check-in', () => {
+    render(
+      <ReservationDetailView
+        reservation={createReservation({
+          qrTicket: {
+            token: rawQrToken,
+            jti: rawQrJti,
+            status: 'ACTIVE',
+            entryStatus: 'ENTERED',
+            enteredAt: '2026-07-04T09:05:00.000Z',
+            issuedAt: '2026-05-22T06:02:00.000Z',
+            emailScheduledAt: '2026-07-03T10:00:00.000Z',
+            emailedAt: null,
+          },
+        })}
+        onCancel={vi.fn()}
+        isCancelling={false}
+      />,
+    );
+
+    expect(screen.getByTestId('qr-ticket-image')).toBeInTheDocument();
+    expect(screen.getAllByText('QR 활성').length).toBeGreaterThan(0);
+    expect(screen.getByText('입장 완료')).toBeInTheDocument();
+    expect(screen.getByText('입장 처리가 완료되었습니다.')).toBeInTheDocument();
+    expect(
+      screen.getByText('QR 티켓은 현장 혜택 확인 등 추가 처리에 계속 사용할 수 있습니다.'),
+    ).toBeInTheDocument();
+  });
 });

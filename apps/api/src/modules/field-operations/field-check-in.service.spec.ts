@@ -148,6 +148,10 @@ describe('FieldCheckInService RED contract', () => {
     });
     expect(db.update).toHaveBeenCalledTimes(1);
     expect(db.update).toHaveBeenCalledWith(tickets);
+    expect(db.update.mock.results[0]?.value.set).toHaveBeenCalledWith({
+      usedAt: new Date('2026-07-04T09:00:00.000Z'),
+      updatedAt: new Date('2026-07-04T09:00:00.000Z'),
+    });
     expect(
       JSON.stringify(db.update.mock.calls[0], (_key, value) =>
         value === tickets ? '[tickets-table]' : value,

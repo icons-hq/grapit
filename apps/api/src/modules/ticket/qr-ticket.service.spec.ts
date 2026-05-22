@@ -441,7 +441,7 @@ describe('QrTicketService', () => {
     expect(mockDb.insert).not.toHaveBeenCalled();
   });
 
-  it('returns a used QR ticket snapshot without reissuing or exposing a reusable token', async () => {
+  it('returns an entered QR ticket snapshot without reissuing or hiding the reusable token', async () => {
     const mockDb = {
       select: vi
         .fn()
@@ -488,9 +488,11 @@ describe('QrTicketService', () => {
     });
 
     expect(ticket).toMatchObject({
-      token: '',
-      jti: '',
-      status: 'USED',
+      token: expect.any(String),
+      jti: 'qr-jti-1',
+      status: 'ACTIVE',
+      entryStatus: 'ENTERED',
+      enteredAt: '2026-07-10T09:05:00.000Z',
       issuedAt: '2026-07-10T09:00:00.000Z',
     });
     expect(mockDb.insert).not.toHaveBeenCalled();

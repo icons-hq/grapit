@@ -195,7 +195,7 @@ export class QrTicketService implements OnModuleInit {
     }
 
     const scheduledTicket =
-      this.mapEffectiveStatus(ticketRecord) === 'ACTIVE'
+      this.mapCredentialStatus(ticketRecord) === 'ACTIVE'
         ? await this.ensureReminderSchedule(ticketRecord)
         : ticketRecord;
     return this.toQrTicket(scheduledTicket);
@@ -336,7 +336,7 @@ export class QrTicketService implements OnModuleInit {
     return {
       tokenVersion: payload.secretVersion,
       ticketId: row.ticketId,
-      ticketStatus: this.mapEffectiveStatus(row),
+      ticketStatus: this.mapScannerStatus(row),
       reservationNumber: row.reservationNumber,
       reservationId: row.reservationId,
       paymentId: row.paymentId,
@@ -574,20 +574,22 @@ export class QrTicketService implements OnModuleInit {
   }
 
   private async toQrTicket(ticketRecord: TicketRecord): Promise<QrTicket> {
-    const status = this.mapEffectiveStatus(ticketRecord);
+    const status = this.mapCredentialStatus(ticketRecord);
     const isActive = status === 'ACTIVE';
 
     return {
       token: isActive ? await this.buildTicketToken(ticketRecord) : '',
       jti: isActive ? ticketRecord.qrTokenJti : '',
       status,
+      entryStatus: ticketRecord.usedAt ? 'ENTERED' : 'NOT_ENTERED',
+      enteredAt: ticketRecord.usedAt?.toISOString() ?? null,
       issuedAt: ticketRecord.issuedAt.toISOString(),
       emailScheduledAt: ticketRecord.emailScheduledAt?.toISOString() ?? null,
       emailedAt: ticketRecord.emailSentAt?.toISOString() ?? null,
     };
   }
 
-  private mapEffectiveStatus(
+  private mapCredentialStatus(
     ticketRecord: Pick<TicketRecord, 'status' | 'expiresAt' | 'usedAt' | 'revokedAt'>,
   ): QrTicketStatus {
     const isExpired =
@@ -598,15 +600,21 @@ export class QrTicketService implements OnModuleInit {
       return 'REVOKED';
     }
 
-    if (ticketRecord.usedAt || ticketRecord.status === 'used') {
-      return 'USED';
-    }
-
     if (isExpired || ticketRecord.status === 'expired') {
       return 'EXPIRED';
     }
 
     return 'ACTIVE';
+  }
+
+  private mapScannerStatus(
+    ticketRecord: Pick<TicketRecord, 'status' | 'expiresAt' | 'usedAt' | 'revokedAt'>,
+  ): QrTicketStatus {
+    if (ticketRecord.usedAt || ticketRecord.status === 'used') {
+      return 'USED';
+    }
+
+    return this.mapCredentialStatus(ticketRecord);
   }
 
   private calculateEmailScheduledAt(showtimeAt: Date, issuedAt: Date): Date {

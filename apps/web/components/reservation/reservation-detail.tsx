@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { ChevronLeft, Mail, QrCode } from 'lucide-react';
+import { CheckCircle2, ChevronLeft, Mail, QrCode } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -88,6 +88,12 @@ function getQrStatusLabel(
   }
 }
 
+function getEntryStatusLabel(
+  entryStatus: ReservationDetailType['qrTicket']['entryStatus'],
+): string {
+  return entryStatus === 'ENTERED' ? '입장 완료' : '입장 전';
+}
+
 const DELAYED_REOPEN_NOTICE =
   '취소된 좌석은 즉시 재오픈되지 않을 수 있으며, 잠시 후 다시 판매될 수 있습니다';
 
@@ -128,8 +134,9 @@ export function ReservationDetailView({
     reservation.refundTimeline.currentState !== 'COMPLETED';
   const hasExpectedDepositAt =
     Boolean(reservation.refundTimeline.expectedDepositAt) && showRefundTimeline;
-  const isQrActive = reservation.qrTicket?.status === 'ACTIVE';
-  const qrCheckInUrl = isQrActive
+  const isQrCredentialActive = reservation.qrTicket?.status === 'ACTIVE';
+  const isEntryComplete = reservation.qrTicket?.entryStatus === 'ENTERED';
+  const qrCheckInUrl = isQrCredentialActive && reservation.qrTicket.token
     ? buildQrCheckInUrl(reservation.qrTicket.token)
     : null;
   const shouldShowQrTicket = reservation.status === 'CONFIRMED';
@@ -228,19 +235,19 @@ export function ReservationDetailView({
                   <h2 className="text-base font-semibold text-gray-900">QR 티켓</h2>
                 </div>
                 <p className="text-sm text-gray-700">
-                  {isQrActive
-                    ? 'QR 티켓이 준비되었습니다. 입장 시 현장 스태프가 QR을 확인합니다.'
+                  {isQrCredentialActive
+                    ? 'QR 티켓이 준비되었습니다. 입장 및 현장 혜택 확인 시 스태프가 QR을 확인합니다.'
                     : '결제는 완료되었지만 QR 티켓을 확인하는 중입니다. 잠시 후 새로고침하거나 마이페이지에서 다시 확인하세요.'}
                 </p>
               </div>
               <Badge
                 className={
-                  isQrActive
+                  isQrCredentialActive
                     ? 'bg-[#F0FDF4] text-[#15803D] border-transparent'
                     : 'bg-[#FFFBEB] text-[#8B6306] border-transparent'
                 }
               >
-                {isQrActive ? 'QR 활성' : '확인 중'}
+                {isQrCredentialActive ? 'QR 활성' : '확인 중'}
               </Badge>
             </div>
 
@@ -277,9 +284,33 @@ export function ReservationDetailView({
                     label="티켓 상태"
                     value={getQrStatusLabel(reservation.qrTicket.status)}
                   />
+                  <Separator />
+                  <InfoRow
+                    label="입장 상태"
+                    value={getEntryStatusLabel(reservation.qrTicket.entryStatus)}
+                  />
                 </div>
               </div>
             </div>
+
+            {isEntryComplete && (
+              <div className="flex items-start gap-3 rounded-xl border border-[#BBF7D0] bg-[#F0FDF4] p-4">
+                <CheckCircle2 className="mt-0.5 h-4 w-4 text-[#15803D]" />
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-[#166534]">
+                    입장 처리가 완료되었습니다.
+                  </p>
+                  {reservation.qrTicket.enteredAt && (
+                    <p className="text-sm text-[#166534]">
+                      처리 시각 {formatDateTime(reservation.qrTicket.enteredAt)}
+                    </p>
+                  )}
+                  <p className="text-sm text-gray-700">
+                    QR 티켓은 현장 혜택 확인 등 추가 처리에 계속 사용할 수 있습니다.
+                  </p>
+                </div>
+              </div>
+            )}
 
             <div className="flex items-start gap-3 rounded-xl border border-white/70 bg-white/80 p-4">
               <Mail className="mt-0.5 h-4 w-4 text-[#6C3CE0]" />

@@ -204,7 +204,6 @@ export class FieldCheckInService {
       const [updated] = await tx
         .update(tickets)
         .set({
-          status: 'used',
           usedAt: consumedAt,
           updatedAt: consumedAt,
         })
