@@ -32,9 +32,12 @@ describe('admin fixture helpers', () => {
       'reviewer',
       'approver',
       'finance',
+      'scanner',
       'admin',
     ]);
     expect(fixtures.finance.adminCapabilities).toContain('reservations.export_raw');
     expect(fixtures.finance.adminCapabilities).not.toContain('seat.disable');
+    expect(fixtures.scanner.adminCapabilities).toContain('field.scan.consume');
+    expect(fixtures.scanner.adminCapabilities).not.toContain('settlement.export');
   });
 });

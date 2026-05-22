@@ -36,6 +36,7 @@ export function createAdminFixtureUsers(): Record<
     reviewer: createAdminFixtureUser('reviewer'),
     approver: createAdminFixtureUser('approver'),
     finance: createAdminFixtureUser('finance'),
+    scanner: createAdminFixtureUser('scanner'),
     admin: createAdminFixtureUser('admin'),
   };
 }
