@@ -290,7 +290,7 @@ Plans:
 
 **Merged from:** 41 QR verification + field monitor, 42 Event-day playbooks, 43 Settlement + retrospective
 
-**Plans:** 14/16 plans executed
+**Plans:** 15/16 plans executed
 
 Plans:
 **Wave 0**
@@ -320,7 +320,7 @@ Plans:
 - [x] 27-14-PLAN.md — Admin field monitor page and KPI-first UI
 
 **Wave 6**
-- [ ] 27-15-PLAN.md — Settlement dashboard/export UI and scanner permission assignment
+- [x] 27-15-PLAN.md — Settlement dashboard/export UI and scanner permission assignment
 
 **Wave 7**
 - [ ] 27-16-PLAN.md — Final verification, manual UAT checkpoint, and retrospective closure
