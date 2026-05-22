@@ -2,6 +2,14 @@ import { render, screen, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  addPendingScanAttempt,
+  clearPendingScanAttempts,
+  listPendingScanAttempts,
+  removePendingScanAttempt,
+  updatePendingScanAttempt,
+  type PendingScanAttemptRecord,
+} from '@/lib/field/offline-scan-store';
 import { ScannerCheckIn } from '../scanner-check-in';
 
 const scannerUser = {
@@ -149,5 +157,74 @@ describe('ScannerCheckIn', () => {
     expect(screen.queryByText('회원 관리')).not.toBeInTheDocument();
     expect(screen.queryByText('정산·내보내기')).not.toBeInTheDocument();
     expect(screen.queryByText('보안')).not.toBeInTheDocument();
+  });
+});
+
+describe('offline pending scan store', () => {
+  beforeEach(async () => {
+    await clearPendingScanAttempts();
+  });
+
+  it('adds, lists, updates, and removes safe pending scan attempt metadata', async () => {
+    const pending: PendingScanAttemptRecord = {
+      deviceAttemptId: 'device-attempt-store-1',
+      scannerUserId: 'scanner-user-1',
+      eventId: 'event-phase27',
+      showtimeId: '00000000-0000-4000-8000-000000000027',
+      redactedTokenRef: 'tok_abc...7890',
+      attemptedAt: '2026-07-04T09:59:00.000Z',
+      syncState: 'pending',
+    };
+
+    await addPendingScanAttempt(pending);
+    await expect(listPendingScanAttempts()).resolves.toEqual([pending]);
+
+    await updatePendingScanAttempt(pending.deviceAttemptId, {
+      syncState: 'synced',
+      lastSyncAttemptAt: '2026-07-04T10:03:00.000Z',
+    });
+
+    await expect(listPendingScanAttempts()).resolves.toEqual([
+      {
+        ...pending,
+        syncState: 'synced',
+        lastSyncAttemptAt: '2026-07-04T10:03:00.000Z',
+      },
+    ]);
+
+    await removePendingScanAttempt(pending.deviceAttemptId);
+    await expect(listPendingScanAttempts()).resolves.toEqual([]);
+  });
+
+  it('does not persist raw QR tokens, JTI, URLs, payment keys, cookies, IP, or buyer PII', async () => {
+    await addPendingScanAttempt({
+      deviceAttemptId: 'device-attempt-safe-1',
+      scannerUserId: 'scanner-user-1',
+      eventId: 'event-phase27',
+      showtimeId: '00000000-0000-4000-8000-000000000027',
+      redactedTokenRef: 'tok_abc...7890',
+      attemptedAt: '2026-07-04T09:59:00.000Z',
+      syncState: 'pending',
+    });
+
+    const [stored] = await listPendingScanAttempts();
+
+    expect(stored).toEqual({
+      deviceAttemptId: 'device-attempt-safe-1',
+      scannerUserId: 'scanner-user-1',
+      eventId: 'event-phase27',
+      showtimeId: '00000000-0000-4000-8000-000000000027',
+      redactedTokenRef: 'tok_abc...7890',
+      attemptedAt: '2026-07-04T09:59:00.000Z',
+      syncState: 'pending',
+    });
+    expect(stored).not.toHaveProperty('rawToken');
+    expect(stored).not.toHaveProperty('rawJti');
+    expect(stored).not.toHaveProperty('qrUrl');
+    expect(stored).not.toHaveProperty('buyerEmail');
+    expect(stored).not.toHaveProperty('buyerPhone');
+    expect(stored).not.toHaveProperty('paymentKey');
+    expect(stored).not.toHaveProperty('cookie');
+    expect(stored).not.toHaveProperty('ipAddress');
   });
 });
