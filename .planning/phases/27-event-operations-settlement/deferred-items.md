@@ -11,3 +11,7 @@
 ## 2026-05-22 - Plan 27-12
 
 - `pnpm --filter @grabit/web typecheck` no longer reports errors from Plan 27-12 files after the scanner route and hook type fixes, but still fails outside Plan 27-12 scope on missing future/sibling modules `components/admin/settlement-dashboard` and `components/field/field-monitor`, plus existing `admin-user-management` label-map drift for the scanner bundle and field/settlement permissions. Plan 27-12's targeted scanner component test and QR check-in E2E both pass.
+
+## 2026-05-22 - Plan 27-14
+
+- `pnpm --filter @grabit/web typecheck` reports no errors from the new Plan 27-14 field monitor route, component, hook, or tests, but still fails outside Plan 27-14 scope on sibling/future surfaces: missing `components/admin/settlement-dashboard`, existing `admin-user-management` label-map drift for the `scanner` bundle plus field/settlement capabilities, and pre-existing `components/i18n/locale-switcher.tsx` shared locale import/type issues. Plan 27-14's targeted field monitor test passes.
