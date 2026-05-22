@@ -124,7 +124,7 @@ describe('OfflineSyncService RED contract', () => {
     expect(fieldCheckInService.consume).toHaveBeenCalledTimes(2);
     expect(adminAuditService.write).toHaveBeenCalledWith(
       expect.objectContaining({
-        action: 'field.scan.sync',
+        action: 'field.scan.offline_sync',
         status: 'success',
         changedFields: ['offlineSync'],
       }),

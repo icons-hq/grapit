@@ -31,6 +31,8 @@ export interface FieldScannerContext {
   ipAddress?: string | null;
   userAgent?: string | null;
   requestId?: string | null;
+  scanSource?: 'online' | 'offline_sync';
+  offlineSyncState?: 'not_required' | 'synced' | 'rejected';
 }
 
 type PriorScanContext = NonNullable<FieldCheckInConsumeResponse['priorScan']>;
@@ -356,8 +358,9 @@ export class FieldCheckInService {
         showtimeId: input.contract.showtimeId,
         scannerUserId: input.context.scannerUserId,
         result: input.outcome,
-        source: 'online',
-        syncState: 'not_required',
+        source: input.context.scanSource ?? 'online',
+        syncState: input.context.offlineSyncState
+          ?? resolveScanSyncState(input.context.scanSource, input.outcome),
         deviceAttemptId: input.deviceAttemptId,
         maskedJti: input.contract.maskedJti,
         rejectionReason: input.rejectionReason ?? null,
@@ -461,6 +464,17 @@ function scanResultForOutcome(
     return 'tampered';
   }
   return outcome;
+}
+
+function resolveScanSyncState(
+  source: FieldScannerContext['scanSource'],
+  outcome: 'success' | 'duplicate' | 'tampered' | 'refunded_cancelled' | 'expired' | 'wrong_showtime' | 'already_used',
+): 'not_required' | 'synced' | 'rejected' {
+  if (source !== 'offline_sync') {
+    return 'not_required';
+  }
+
+  return outcome === 'success' ? 'synced' : 'rejected';
 }
 
 function rejectionReasonFor(outcome: FieldCheckInOutcome): string {
