@@ -12,6 +12,10 @@ export const ADMIN_CAPABILITIES = [
   'banner.manage',
   'audit.read',
   'security.manage',
+  'field.scan.verify',
+  'field.scan.consume',
+  'field.scan.sync',
+  'settlement.export',
 ] as const;
 
 export const ADMIN_CAPABILITY_BUNDLES = [
@@ -19,6 +23,7 @@ export const ADMIN_CAPABILITY_BUNDLES = [
   'reviewer',
   'approver',
   'finance',
+  'scanner',
   'admin',
 ] as const;
 
@@ -49,7 +54,13 @@ export const ADMIN_CAPABILITY_BUNDLE_CAPABILITIES = {
   ],
   finance: [
     'reservations.export_raw',
+    'settlement.export',
     'audit.read',
+  ],
+  scanner: [
+    'field.scan.verify',
+    'field.scan.consume',
+    'field.scan.sync',
   ],
   admin: ADMIN_CAPABILITIES,
 } as const satisfies Record<

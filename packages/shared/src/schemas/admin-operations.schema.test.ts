@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ADMIN_CAPABILITIES,
+  ADMIN_CAPABILITY_BUNDLES,
   ADMIN_CAPABILITY_BUNDLE_CAPABILITIES,
   adminAuditEventSchema,
   adminCapabilitySchema,
@@ -30,15 +31,46 @@ describe('admin operations contract', () => {
       'banner.manage',
       'audit.read',
       'security.manage',
+      'field.scan.verify',
+      'field.scan.consume',
+      'field.scan.sync',
+      'settlement.export',
     ];
 
     expect(ADMIN_CAPABILITIES).toEqual(requiredCapabilities);
-    expect(adminCapabilitySchema.parse('event.publish')).toBe('event.publish');
+    expect(adminCapabilitySchema.parse('field.scan.verify')).toBe('field.scan.verify');
     expect(ADMIN_CAPABILITY_BUNDLE_CAPABILITIES.admin).toEqual(requiredCapabilities);
     expect(ADMIN_CAPABILITY_BUNDLE_CAPABILITIES.operator).toContain('support.manage');
     expect(ADMIN_CAPABILITY_BUNDLE_CAPABILITIES.operator).not.toContain(
       'reservations.export_raw',
     );
+    expect(ADMIN_CAPABILITY_BUNDLE_CAPABILITIES.finance).toContain('settlement.export');
+  });
+
+  it('defines scanner as a lower-privilege field scan bundle only', () => {
+    expect(ADMIN_CAPABILITY_BUNDLES).toContain('scanner');
+    expect(ADMIN_CAPABILITY_BUNDLE_CAPABILITIES.scanner).toEqual([
+      'field.scan.verify',
+      'field.scan.consume',
+      'field.scan.sync',
+    ]);
+
+    const scannerCapabilities = ADMIN_CAPABILITY_BUNDLE_CAPABILITIES.scanner;
+    const sensitiveFragments = [
+      'reservations.export_raw',
+      'security.manage',
+      'settlement.export',
+      'refund',
+      'reservation',
+      'user',
+      'content',
+    ];
+
+    for (const fragment of sensitiveFragments) {
+      expect(
+        scannerCapabilities.some((capability) => capability.includes(fragment)),
+      ).toBe(false);
+    }
   });
 
   it('validates masked audit events for sensitive admin actions', () => {
@@ -146,6 +178,33 @@ describe('admin operations contract', () => {
     expect(limited.superuser).toBe(false);
     expect(limited.capabilities).toEqual(['support.manage']);
     expect(limited.capabilities).not.toContain('security.manage');
+  });
+
+  it('resolves scanner capability snapshots as non-superuser field scan access', () => {
+    const scanner = resolveAdminCapabilitySnapshot({
+      id: 'scanner-1',
+      role: 'admin',
+      adminCapabilityBundle: 'scanner',
+    });
+
+    expect(scanner.bundle).toBe('scanner');
+    expect(scanner.superuser).toBe(false);
+    expect(scanner.capabilities).toEqual([
+      'field.scan.verify',
+      'field.scan.consume',
+      'field.scan.sync',
+    ]);
+    expect(scanner.capabilities).not.toContain('settlement.export');
+    expect(scanner.capabilities).not.toContain('reservations.export_raw');
+    expect(scanner.capabilities).not.toContain('security.manage');
+
+    const fixtureScanner = resolveAdminCapabilitySnapshot({
+      id: 'scanner-2',
+      role: 'scanner',
+    });
+
+    expect(fixtureScanner.bundle).toBe('scanner');
+    expect(fixtureScanner.superuser).toBe(false);
   });
 
   it('requires a reason when raw reservation export can expose PII', () => {
