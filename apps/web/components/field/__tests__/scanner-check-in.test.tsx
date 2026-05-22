@@ -149,6 +149,44 @@ describe('ScannerCheckIn', () => {
     expect(screen.getByRole('button', { name: '보류 스캔 동기화' })).toBeEnabled();
   });
 
+  it('shows offline sync status before ticket details with pending, synced, and rejected rows', () => {
+    renderScanner({
+      verification: {
+        ...baseVerification,
+        offlineQueue: [
+          {
+            deviceAttemptId: 'device-attempt-pending',
+            state: 'pending',
+            attemptedAt: '2026-07-04T09:59:00.000Z',
+          },
+          {
+            deviceAttemptId: 'device-attempt-synced',
+            state: 'synced',
+            attemptedAt: '2026-07-04T10:00:00.000Z',
+            reason: '보류 스캔 동기화 완료',
+          },
+          {
+            deviceAttemptId: 'device-attempt-rejected',
+            state: 'rejected',
+            attemptedAt: '2026-07-04T10:01:00.000Z',
+            reason: '이미 입장 처리된 티켓입니다',
+          },
+        ],
+      },
+    });
+
+    const syncStatus = screen.getByTestId('offline-sync-status');
+    const ticketInfo = screen.getByText('티켓 정보');
+    const position = syncStatus.compareDocumentPosition(ticketInfo);
+
+    expect(position & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText('보류 1')).toBeInTheDocument();
+    expect(screen.getByText('동기화 1')).toBeInTheDocument();
+    expect(screen.getByText('거절 1')).toBeInTheDocument();
+    expect(screen.getByText('보류 스캔 동기화 완료')).toBeInTheDocument();
+    expect(screen.getByText('이미 입장 처리된 티켓입니다')).toBeInTheDocument();
+  });
+
   it('denies regular members and keeps scanner-only users out of the full admin sidebar', () => {
     renderScanner({ user: regularUser });
 
