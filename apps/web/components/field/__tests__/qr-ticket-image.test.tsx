@@ -3,29 +3,16 @@ import '@testing-library/jest-dom/vitest';
 import { describe, expect, it } from 'vitest';
 import { QrTicketImage } from '../qr-ticket-image';
 
-const qrCheckInUrl =
-  'https://heygrabit.com/field/check-in?ticket=phase27-opaque-ticket-token';
 const rawToken = 'raw-token-phase27-should-not-render';
 const rawJTI = 'raw-JTI-phase27-should-not-render';
-const rawJwtPayload = '{"sub":"ticket","jti":"raw-JTI-phase27-should-not-render"}';
+const qrCheckInUrl = `https://heygrabit.com/field/check-in?ticket=${rawToken}&jti=${rawJTI}`;
 
 function renderQrTicketImage() {
-  render(
-    <QrTicketImage
-      qrUrl={qrCheckInUrl}
-      qrToken={rawToken}
-      jti={rawJTI}
-      reservationNumber="GRP-27-QR-0001"
-      performanceTitle="Phase 27 Field Operations"
-      showtimeAt="2026-07-04T10:00:00.000Z"
-      seats={['VIP A열 1번']}
-      status="ACTIVE"
-    />,
-  );
+  render(<QrTicketImage value={qrCheckInUrl} />);
 }
 
 describe('QrTicketImage', () => {
-  it('renders a real 200px square qr image for the HTTPS Grabit check-in URL', () => {
+  it('renders a real stable 220px square qr image for the HTTPS Grabit check-in URL', () => {
     renderQrTicketImage();
 
     expect(
@@ -35,30 +22,44 @@ describe('QrTicketImage', () => {
 
     const qrRegion = screen.getByTestId('qr-ticket-image');
     expect(qrRegion).toHaveAttribute('data-qr-url', qrCheckInUrl);
-    expect(qrRegion).toHaveStyle({ minWidth: '200px', minHeight: '200px' });
+    expect(qrRegion).toHaveStyle({ minWidth: '220px', minHeight: '220px' });
 
     const qrElement = qrRegion.querySelector('svg, canvas, img');
     expect(qrElement).not.toBeNull();
+    expect(qrElement?.querySelector('title')).toHaveTextContent('티켓 검표 QR');
   });
 
-  it('shows only buyer-safe metadata next to the qr code', () => {
-    renderQrTicketImage();
+  it('supports an explicit safe title and custom square size', () => {
+    render(<QrTicketImage value={qrCheckInUrl} title="현장 입장 확인 QR" size={256} />);
 
-    expect(screen.getByText('GRP-27-QR-0001')).toBeInTheDocument();
-    expect(screen.getByText('Phase 27 Field Operations')).toBeInTheDocument();
-    expect(screen.getByText('VIP A열 1번')).toBeInTheDocument();
-    expect(screen.getByText('ACTIVE')).toBeInTheDocument();
+    const qrRegion = screen.getByTestId('qr-ticket-image');
+    expect(qrRegion).toHaveStyle({ minWidth: '256px', minHeight: '256px' });
+
+    const qrElement = qrRegion.querySelector('svg');
+    expect(qrElement?.querySelector('title')).toHaveTextContent('현장 입장 확인 QR');
   });
 
-  it('does not print raw token, raw JTI, JWT payload, or full deep-link URL as visible text', () => {
+  it('does not print raw token, raw JTI, or full deep-link URL as visible text', () => {
     renderQrTicketImage();
 
     expect(screen.queryByText(rawToken, { exact: true })).not.toBeInTheDocument();
     expect(screen.queryByText(rawJTI, { exact: true })).not.toBeInTheDocument();
-    expect(screen.queryByText(rawJwtPayload, { exact: true })).not.toBeInTheDocument();
     expect(screen.queryByText(qrCheckInUrl, { exact: true })).not.toBeInTheDocument();
 
     const qrRegion = screen.getByTestId('qr-ticket-image');
-    expect(within(qrRegion).queryByText(/phase27-opaque-ticket-token/)).not.toBeInTheDocument();
+    expect(within(qrRegion).queryByText(rawToken)).not.toBeInTheDocument();
+    expect(within(qrRegion).queryByText(rawJTI)).not.toBeInTheDocument();
+  });
+
+  it('shows a safe fallback for invalid QR values without printing the unsafe value', () => {
+    const invalidValue = `javascript:alert("${rawToken}")`;
+
+    render(<QrTicketImage value={invalidValue} />);
+
+    expect(screen.getByText('QR 티켓을 표시할 수 없습니다.')).toBeInTheDocument();
+    expect(screen.getByText('잠시 후 새로고침하거나 마이페이지에서 다시 확인하세요.')).toBeInTheDocument();
+    expect(screen.queryByText(invalidValue, { exact: true })).not.toBeInTheDocument();
+    expect(screen.queryByText(rawToken, { exact: false })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('qr-ticket-image')).not.toBeInTheDocument();
   });
 });
