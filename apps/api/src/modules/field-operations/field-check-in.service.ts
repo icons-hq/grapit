@@ -36,6 +36,7 @@ export interface FieldScannerContext {
 type PriorScanContext = NonNullable<FieldCheckInConsumeResponse['priorScan']>;
 type FieldCheckInTicketContext = NonNullable<FieldCheckInVerifyResponse['ticket']>;
 type ScanEventDb = Pick<DrizzleDB, 'insert' | 'select' | 'update'>;
+type AuditDb = Pick<DrizzleDB, 'insert' | 'select'>;
 
 @Injectable()
 export class FieldCheckInService {
@@ -166,74 +167,133 @@ export class FieldCheckInService {
       };
     }
 
-    const priorScan = await this.findPriorSuccessfulScan(this.db, contract);
-    if (priorScan) {
-      return {
-        outcome: 'duplicate',
-        ticket: ticketContext,
-        scanEventId: null,
-        rejectionReason: rejectionReasonFor('duplicate'),
-        priorScan,
-      };
-    }
+    return this.runInTransaction(async (tx) => {
+      const priorScan = await this.findPriorSuccessfulScan(tx, contract);
+      if (priorScan) {
+        const scanEventId = await this.recordScanEvent(tx, {
+          contract,
+          context,
+          outcome: 'duplicate',
+          deviceAttemptId: input.deviceAttemptId,
+          token,
+          rejectionReason: rejectionReasonFor('duplicate'),
+        });
+        await this.writeAudit({
+          action: 'field.scan.consume',
+          status: 'denied',
+          resourceId: contract.ticketId ?? contract.reservationId,
+          context,
+          after: {
+            outcome: 'duplicate',
+            redactedTokenRef: redactedTokenRef(token),
+            scanEventId,
+          },
+        }, tx);
 
-    const [updated] = await this.db
-      .update(tickets)
-      .set({
-        status: 'used',
-        usedAt: consumedAt,
-        updatedAt: consumedAt,
-      })
-      .where(
-        and(
-          eq(tickets.reservationId, contract.reservationId),
-          eq(tickets.paymentId, contract.paymentId),
-          eq(tickets.showtimeId, contract.showtimeId),
-          eq(tickets.status, 'active'),
-          isNull(tickets.usedAt),
-        ),
-      )
-      .returning({
-        ticketId: tickets.id,
-        usedAt: tickets.usedAt,
+        return {
+          outcome: 'duplicate',
+          ticket: ticketContext,
+          scanEventId,
+          rejectionReason: rejectionReasonFor('duplicate'),
+          priorScan,
+        };
+      }
+
+      const [updated] = await tx
+        .update(tickets)
+        .set({
+          status: 'used',
+          usedAt: consumedAt,
+          updatedAt: consumedAt,
+        })
+        .where(
+          and(
+            eq(tickets.reservationId, contract.reservationId),
+            eq(tickets.paymentId, contract.paymentId),
+            eq(tickets.showtimeId, contract.showtimeId),
+            eq(tickets.status, 'active'),
+            isNull(tickets.usedAt),
+          ),
+        )
+        .returning({
+          ticketId: tickets.id,
+          usedAt: tickets.usedAt,
+        });
+
+      if (!updated) {
+        const laterPriorScan = await this.findPriorSuccessfulScan(tx, contract);
+        const scanEventId = await this.recordScanEvent(tx, {
+          contract,
+          context,
+          outcome: 'already_used',
+          deviceAttemptId: input.deviceAttemptId,
+          token,
+          rejectionReason: rejectionReasonFor('already_used'),
+        });
+        await this.writeAudit({
+          action: 'field.scan.consume',
+          status: 'denied',
+          resourceId: contract.ticketId ?? contract.reservationId,
+          context,
+          after: {
+            outcome: 'already_used',
+            redactedTokenRef: redactedTokenRef(token),
+            scanEventId,
+          },
+        }, tx);
+
+        return {
+          outcome: 'already_used',
+          ticket: ticketContext,
+          scanEventId,
+          rejectionReason: rejectionReasonFor('already_used'),
+          priorScan: laterPriorScan,
+        };
+      }
+
+      const scanEventId = await this.recordScanEvent(tx, {
+        contract: {
+          ...contract,
+          ticketId: contract.ticketId ?? updated.ticketId,
+        },
+        context,
+        outcome: 'success',
+        deviceAttemptId: input.deviceAttemptId,
+        token,
       });
+      await this.writeAudit({
+        action: 'field.scan.consume',
+        status: 'success',
+        resourceId: updated.ticketId,
+        context,
+        after: {
+          outcome: 'entered',
+          redactedTokenRef: redactedTokenRef(token),
+          scanEventId,
+        },
+      }, tx);
 
-    if (!updated) {
-      const laterPriorScan = await this.findPriorSuccessfulScan(this.db, contract);
       return {
-        outcome: 'already_used',
+        outcome: 'entered',
         ticket: ticketContext,
-        scanEventId: null,
-        rejectionReason: rejectionReasonFor('already_used'),
-        priorScan: laterPriorScan,
+        scanEventId,
+        consumedAt: (updated.usedAt ?? consumedAt).toISOString(),
       };
+    });
+  }
+
+  private async runInTransaction<T>(
+    operation: (db: ScanEventDb) => Promise<T>,
+  ): Promise<T> {
+    const transactionResult = this.db.transaction?.((tx) =>
+      operation(tx as ScanEventDb),
+    );
+
+    if (transactionResult && typeof transactionResult.then === 'function') {
+      return transactionResult;
     }
 
-    const scanEventId = await this.recordScanEvent(this.db, {
-      contract,
-      context,
-      outcome: 'success',
-      deviceAttemptId: input.deviceAttemptId,
-      token,
-    });
-    await this.writeAudit({
-      action: 'field.scan.consume',
-      status: 'success',
-      resourceId: updated.ticketId,
-      context,
-      after: {
-        outcome: 'entered',
-        redactedTokenRef: redactedTokenRef(token),
-        scanEventId,
-      },
-    });
-
-    return {
-      outcome: 'entered',
-      ticket: ticketContext,
-      scanEventId,
-      consumedAt: (updated.usedAt ?? consumedAt).toISOString(),
-    };
+    return operation(this.db);
   }
 
   private async findPriorSuccessfulScan(
@@ -311,13 +371,16 @@ export class FieldCheckInService {
     return row?.id ?? fallbackId;
   }
 
-  private async writeAudit(input: {
-    action: 'field.scan.verify' | 'field.scan.consume';
-    status: AdminAuditStatus;
-    resourceId: string;
-    context?: Partial<FieldScannerContext>;
-    after: Record<string, unknown>;
-  }): Promise<void> {
+  private async writeAudit(
+    input: {
+      action: 'field.scan.verify' | 'field.scan.consume';
+      status: AdminAuditStatus;
+      resourceId: string;
+      context?: Partial<FieldScannerContext>;
+      after: Record<string, unknown>;
+    },
+    db: AuditDb = this.db,
+  ): Promise<void> {
     await this.adminAuditService.write(
       {
         actorUserId: input.context?.scannerUserId ?? UNKNOWN_SCANNER_USER_ID,
@@ -330,7 +393,7 @@ export class FieldCheckInService {
         userAgent: input.context?.userAgent ?? null,
         requestId: input.context?.requestId ?? null,
       },
-      this.db,
+      db,
     );
   }
 }
