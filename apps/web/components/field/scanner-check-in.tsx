@@ -4,7 +4,6 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock3,
-  RefreshCcw,
   ShieldAlert,
   TicketCheck,
   UserCheck,
@@ -15,6 +14,7 @@ import { hasAdminCapability } from '@grabit/shared';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { OfflineSyncStatus } from '@/components/field/offline-sync-status';
 import {
   labelForResult,
   type ScannerCheckInConsumeResult,
@@ -138,15 +138,15 @@ export function ScannerCheckIn({
           }
         />
 
-        <TicketIdentity verification={verification} result={activeResult} />
-
         {showOfflineQueue && (
-          <OfflineQueue
+          <OfflineSyncStatus
             queue={verification.offlineQueue}
             isSyncing={isSyncingOffline}
             onSyncOffline={onSyncOffline}
           />
         )}
+
+        <TicketIdentity verification={verification} result={activeResult} />
       </main>
 
       <div
@@ -295,53 +295,6 @@ function MetadataRow({ label, value }: { label: string; value?: string }) {
         {value && value.trim().length > 0 ? value : '확인 중'}
       </dd>
     </div>
-  );
-}
-
-function OfflineQueue({
-  queue,
-  isSyncing,
-  onSyncOffline,
-}: {
-  queue: ScannerCheckInVerification['offlineQueue'];
-  isSyncing: boolean;
-  onSyncOffline: () => void;
-}) {
-  return (
-    <Card className="border-[#FDE68A] bg-white shadow-sm">
-      <CardContent className="space-y-4 p-5">
-        <div>
-          <p className="text-heading font-semibold text-gray-900">보류 스캔</p>
-          <p className="mt-2 text-base leading-[1.5] text-[#8B6306]">
-            보류 상태는 최종 입장 증거가 아닙니다
-          </p>
-        </div>
-
-        {queue.length > 0 && (
-          <div className="space-y-2">
-            {queue.map((item) => (
-              <div
-                key={item.deviceAttemptId}
-                className="rounded-lg bg-[#FFFBEB] px-3 py-2 text-sm font-semibold text-[#8B6306]"
-              >
-                {formatTimestamp(item.attemptedAt)} · {item.state}
-              </div>
-            ))}
-          </div>
-        )}
-
-        <Button
-          type="button"
-          variant="outline"
-          className="h-11 w-full border-[#8B6306] text-[#8B6306]"
-          disabled={isSyncing}
-          onClick={onSyncOffline}
-        >
-          <RefreshCcw className="h-4 w-4" />
-          보류 스캔 동기화
-        </Button>
-      </CardContent>
-    </Card>
   );
 }
 
