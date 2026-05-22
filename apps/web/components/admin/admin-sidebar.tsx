@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
+  Activity,
   Theater,
   Image as ImageIcon,
   Ticket,
@@ -17,7 +18,9 @@ import {
   ShieldCheck,
   UsersRound,
 } from 'lucide-react';
+import { resolveAdminCapabilitySnapshot } from '@grabit/shared';
 import { cn } from '@/lib/cn';
+import { useAuthStore } from '@/stores/use-auth-store';
 
 const NAV_GROUPS = [
   {
@@ -69,6 +72,11 @@ const NAV_GROUPS = [
         icon: FileCheck2,
       },
       {
+        label: '현장 모니터',
+        href: '/admin/field-monitor',
+        icon: Activity,
+      },
+      {
         label: '예매 관리',
         href: '/admin/bookings',
         icon: Ticket,
@@ -113,6 +121,12 @@ interface AdminSidebarProps {
 
 export function AdminSidebar({ variant = 'desktop' }: AdminSidebarProps) {
   const pathname = usePathname();
+  const user = useAuthStore((state) => state.user);
+  const capabilitySnapshot = resolveAdminCapabilitySnapshot(user);
+
+  if (isScannerOnlySnapshot(capabilitySnapshot)) {
+    return null;
+  }
 
   return (
     <aside
@@ -160,5 +174,21 @@ export function AdminSidebar({ variant = 'desktop' }: AdminSidebarProps) {
         ))}
       </nav>
     </aside>
+  );
+}
+
+function isScannerOnlySnapshot(
+  snapshot: ReturnType<typeof resolveAdminCapabilitySnapshot>,
+): boolean {
+  if (snapshot.superuser) {
+    return false;
+  }
+
+  return (
+    snapshot.bundle === 'scanner' ||
+    (snapshot.capabilities.length > 0 &&
+      snapshot.capabilities.every((capability) =>
+        capability.startsWith('field.scan.'),
+      ))
   );
 }
