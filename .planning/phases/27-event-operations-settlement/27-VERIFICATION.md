@@ -1,6 +1,6 @@
 ---
 phase: 27-event-operations-settlement
-status: automated_green_manual_human_needed
+status: automated_green_deferred_followup
 verified_at: 2026-05-22
 evidence_policy: direct_evidence_required
 requirements:
@@ -13,7 +13,7 @@ requirements:
 
 # Phase 27 Verification
 
-Phase 27 automated implementation evidence is green. Manual-only event-day evidence remains `human_needed` and is tracked in `27-HUMAN-UAT.md`; it is not converted into a launch PASS here.
+Phase 27 automated implementation evidence is green. Computer Use verified the automatable manual-rehearsal surface. Per maintainer instruction on 2026-05-22, the remaining physical/external launch evidence is deferred to later manual testing and tracked in `27-HUMAN-UAT.md`.
 
 ## Automated Evidence
 
@@ -32,24 +32,24 @@ Phase 27 automated implementation evidence is green. Manual-only event-day evide
 
 | Requirement | Automated status | Manual status | Evidence |
 | --- | --- | --- | --- |
-| QR-02 | automated_green | partial_computer_use_verified | QR image, scanner verify/consume, duplicate rejection, and offline sync tests are green. Computer Use verified local scanner rehearsal and duplicate rejection; real physical phone-camera QR scan remains `human_needed` in `27-HUMAN-UAT.md`. |
-| FIELD-01 | automated_green | partial_computer_use_verified | Field monitor API/UI and offline pending/sync tests are green. Computer Use verified local offline pending, recovered sync, and rejected conflict; production/venue device evidence remains `human_needed`. |
-| OPS-03 | automated_green_artifact | human_needed | Playbook exists for six scenarios. External contact owner/date/status fields require operator approval or blocker classification. |
-| POST-01 | automated_green | partial_computer_use_verified | Settlement API/UI/export tests are green. Computer Use verified local finance summary/export confirmation and scanner-only denial; production/finance dataset sign-off remains required. |
-| POST-02 | artifact_ready | human_needed | Retrospective structure exists and validator is green. Event-day incidents/non-incidents/improvements/carry-forward need direct evidence or explicit blocker rows. |
+| QR-02 | automated_green | deferred_followup | QR image, scanner verify/consume, duplicate rejection, and offline sync tests are green. Computer Use verified local scanner rehearsal and duplicate rejection; real physical phone-camera QR scan is deferred in `27-HUMAN-UAT.md`. |
+| FIELD-01 | automated_green | computer_use_verified | Field monitor API/UI and offline pending/sync tests are green. Computer Use verified local offline pending, recovered sync, and rejected conflict. |
+| OPS-03 | automated_green_artifact | deferred_followup | Playbook exists for six scenarios. External contact owner/date/status fields are deferred in `27-HUMAN-UAT.md`. |
+| POST-01 | automated_green | deferred_followup | Settlement API/UI/export tests are green. Computer Use verified local finance summary/export confirmation and scanner-only denial; production/finance dataset sign-off is deferred in `27-HUMAN-UAT.md`. |
+| POST-02 | artifact_ready | deferred_followup | Retrospective structure exists and validator is green. Event-day incident/non-incident/improvement details are deferred to later launch/manual evidence. |
 
 ## Manual Gate
 
-The following rows must remain `human_needed` or explicitly limited until the maintainer supplies evidence notes:
+The following rows are deferred follow-up evidence, not blockers for this execute session:
 
 | Manual row | Required evidence |
 | --- | --- |
-| Real phone-camera QR open | Device/browser/account/event/showtime/timestamp/result and evidence path. |
+| Real phone-camera QR open | Deferred: device/browser/account/event/showtime/timestamp/result and evidence path. |
 | Scanner-only permission rehearsal | Computer Use local rehearsal is recorded in `.planning/debug/phase27-computer-use-human-uat.md`; production scanner account evidence can still be added if required before launch. |
 | Venue-like offline stale/recovered connectivity | Computer Use local pending/recovered/rejected states are recorded in `.planning/debug/phase27-computer-use-human-uat.md`; venue device evidence remains separate. |
-| External operational contacts | Owner/date/status or owner-approved not-applicable/blocker for forced refund, weather, facility, cast issue, on-site refund, and exchange. |
-| Settlement operator review | Computer Use local finance export rehearsal is recorded in `.planning/debug/phase27-computer-use-human-uat.md`; real production/finance dataset reconciliation remains separate. |
+| External operational contacts | Deferred: owner/date/status or owner-approved not-applicable/blocker for forced refund, weather, facility, cast issue, on-site refund, and exchange. |
+| Settlement operator review | Computer Use local finance export rehearsal is recorded in `.planning/debug/phase27-computer-use-human-uat.md`; real production/finance dataset reconciliation is deferred. |
 
 ## Conclusion
 
-Automated Phase 27 implementation verification is green, and the local Computer Use rehearsal verified the automatable manual-gate surfaces. Phase completion remains blocked on physical phone-camera evidence, external operational contacts, and any required production/venue dataset sign-off until those rows are approved or truthfully recorded as blocked.
+Automated Phase 27 implementation verification is green, and the local Computer Use rehearsal verified the automatable manual-gate surfaces. Per maintainer instruction, physical phone-camera evidence, external operational contacts, and production/venue dataset sign-off are deferred to later launch/manual testing, so this execute session can close with follow-up evidence tracked.

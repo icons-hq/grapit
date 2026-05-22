@@ -290,7 +290,7 @@ Plans:
 
 **Merged from:** 41 QR verification + field monitor, 42 Event-day playbooks, 43 Settlement + retrospective
 
-**Plans:** 15/16 plans executed
+**Plans:** 16/16 plans complete
 
 Plans:
 **Wave 0**
@@ -323,7 +323,7 @@ Plans:
 - [x] 27-15-PLAN.md — Settlement dashboard/export UI and scanner permission assignment
 
 **Wave 7**
-- [ ] 27-16-PLAN.md — Final verification, manual UAT checkpoint, and retrospective closure
+- [x] 27-16-PLAN.md — Final verification, manual UAT checkpoint, and retrospective closure
 
 **Success criteria:**
 1. QR scanner validates normal, duplicate, tampered, refunded, and offline cases.
@@ -332,6 +332,8 @@ Plans:
 4. Forced refund, weather, facility, cast issue, on-site refund, and exchange scenarios are documented with console actions and external contacts.
 5. Entry status, no-show reservation list, settlement, and accounting exports are generated.
 6. Retrospective records incidents, non-incidents, improvements, next-event carry-forward items, and v2.0 completion evidence.
+
+**Deferred launch/manual evidence:** Per maintainer instruction on 2026-05-22, physical phone-camera QR scan, external operational contact ownership, and production/venue dataset sign-off are recorded as follow-up evidence in Phase 27 artifacts instead of blocking this execute session.
 
 ## Progress
 
