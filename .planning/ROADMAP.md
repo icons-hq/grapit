@@ -290,7 +290,7 @@ Plans:
 
 **Merged from:** 41 QR verification + field monitor, 42 Event-day playbooks, 43 Settlement + retrospective
 
-**Plans:** 13/16 plans executed
+**Plans:** 14/16 plans executed
 
 Plans:
 **Wave 0**
@@ -317,7 +317,7 @@ Plans:
 
 **Wave 5**
 - [x] 27-13-PLAN.md — IndexedDB offline pending scan store and sync UI
-- [ ] 27-14-PLAN.md — Admin field monitor page and KPI-first UI
+- [x] 27-14-PLAN.md — Admin field monitor page and KPI-first UI
 
 **Wave 6**
 - [ ] 27-15-PLAN.md — Settlement dashboard/export UI and scanner permission assignment
