@@ -8,6 +8,7 @@ import { RefundModule } from '../refund/refund.module.js';
 import { AdminPerformanceController } from './admin-performance.controller.js';
 import { AdminBannerController } from './admin-banner.controller.js';
 import { AdminBookingController } from './admin-booking.controller.js';
+import { AdminSettlementController } from './admin-settlement.controller.js';
 import { AdminOperationsController } from './admin-operations.controller.js';
 import { AdminSupportContentController } from './admin-support-content.controller.js';
 import { AdminSeatOperationsController } from './admin-seat-operations.controller.js';
@@ -21,6 +22,7 @@ import { AdminDiagnosticsController } from './admin-diagnostics.controller.js';
 import { AdminService } from './admin.service.js';
 import { AdminAuditService } from './admin-audit.service.js';
 import { AdminBookingService } from './admin-booking.service.js';
+import { SettlementExportService } from './settlement-export.service.js';
 import { AdminOperationsService } from './admin-operations.service.js';
 import { AdminSupportContentService } from './admin-support-content.service.js';
 import { AdminSeatOperationsService } from './admin-seat-operations.service.js';
@@ -36,6 +38,7 @@ import { AdminDashboardService } from './admin-dashboard.service.js';
     AdminPerformanceController,
     AdminBannerController,
     AdminBookingController,
+    AdminSettlementController,
     AdminOperationsController,
     AdminSupportContentController,
     AdminSeatOperationsController,
@@ -52,6 +55,7 @@ import { AdminDashboardService } from './admin-dashboard.service.js';
     AdminAuditService,
     AdminCapabilitiesGuard,
     AdminBookingService,
+    SettlementExportService,
     AdminOperationsService,
     AdminSupportContentService,
     AdminSeatOperationsService,
