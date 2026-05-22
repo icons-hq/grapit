@@ -290,7 +290,7 @@ Plans:
 
 **Merged from:** 41 QR verification + field monitor, 42 Event-day playbooks, 43 Settlement + retrospective
 
-**Plans:** 11/16 plans executed
+**Plans:** 13/16 plans executed
 
 Plans:
 **Wave 0**
@@ -312,11 +312,11 @@ Plans:
 - [x] 27-07-PLAN.md — Server-side offline sync conflict resolution API
 
 **Wave 4**
-- [ ] 27-08-PLAN.md — KPI-first field monitor API
+- [x] 27-08-PLAN.md — KPI-first field monitor API
 - [x] 27-12-PLAN.md — Scanner-only web check-in route and online UI
 
 **Wave 5**
-- [ ] 27-13-PLAN.md — IndexedDB offline pending scan store and sync UI
+- [x] 27-13-PLAN.md — IndexedDB offline pending scan store and sync UI
 - [ ] 27-14-PLAN.md — Admin field monitor page and KPI-first UI
 
 **Wave 6**
