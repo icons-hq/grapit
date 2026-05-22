@@ -126,13 +126,31 @@ test.describe('phase27 QR check-in browser contracts', () => {
     );
 
     await expect(
-      page.getByText('QR 티켓이 준비되었습니다. 입장 시 현장 스태프가 QR을 확인합니다.'),
+      page
+        .getByText('QR 티켓이 준비되었습니다. 입장 시 현장 스태프가 QR을 확인합니다.')
+        .first(),
     ).toBeVisible({ timeout: 10000 });
     await expect(page.getByText('현장 검표 결과가 최종 입장 기준입니다.')).toBeVisible();
     await expect(page.getByTestId('qr-ticket-image')).toBeVisible();
     await expect(page.getByTestId('qr-ticket-image')).toHaveAttribute(
       'data-qr-url',
       /https:\/\/heygrabit\.com\/field\/check-in/,
+    );
+    await expectNoRawSecrets(page);
+  });
+
+  test('logged-out QR visitors are sent to login with a return target', async ({ page }) => {
+    await enableBooking(page);
+
+    await page.route('**/api/v1/auth/refresh', async (route: Route) => {
+      await route.fulfill({ status: 401, contentType: 'application/json', body: '{}' });
+    });
+
+    await page.goto(`/field/check-in?ticket=${encodeURIComponent(rawQrToken)}`);
+
+    await expect(page).toHaveURL(/\/auth\?returnTo=/);
+    expect(decodeURIComponent(new URL(page.url()).searchParams.get('returnTo') ?? '')).toBe(
+      `/field/check-in?ticket=${encodeURIComponent(rawQrToken)}`,
     );
     await expectNoRawSecrets(page);
   });
