@@ -72,8 +72,10 @@ export interface QrTicketTokenPayload {
 }
 
 export interface QrTicketScannerContract {
+  ticketId?: string;
   tokenVersion: string;
   ticketStatus: QrTicketStatus;
+  reservationNumber?: string;
   reservationId: string;
   paymentId: string;
   showtimeId: string;
@@ -81,6 +83,7 @@ export interface QrTicketScannerContract {
   performanceTitle: string;
   showtimeAt: string;
   venueName: string;
+  seatLabels?: string[];
   maskedJti: string;
   verifiedAt: string;
 }
