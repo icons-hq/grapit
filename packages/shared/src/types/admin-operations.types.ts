@@ -168,5 +168,11 @@ function normalizeAdminCapabilities(
 function isFixtureBundleRole(
   role: string | null | undefined,
 ): role is Exclude<AdminCapabilityBundle, 'admin'> {
-  return role === 'operator' || role === 'reviewer' || role === 'approver' || role === 'finance';
+  return (
+    role === 'operator' ||
+    role === 'reviewer' ||
+    role === 'approver' ||
+    role === 'finance' ||
+    role === 'scanner'
+  );
 }
