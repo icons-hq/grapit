@@ -93,10 +93,10 @@ describe('BookingComplete QR ticket card', () => {
     expect(qrImage.querySelector('svg, canvas, img')).not.toBeNull();
 
     expect(screen.getByText('현장 검표 결과가 최종 입장 기준입니다.')).toBeInTheDocument();
-    expect(screen.getByText('GRP-27-BOOKING-QR')).toBeInTheDocument();
-    expect(screen.getByText('Phase 27 Booking QR Performance')).toBeInTheDocument();
-    expect(screen.getByText('VIP A열 1번')).toBeInTheDocument();
-    expect(screen.getByText('QR 활성')).toBeInTheDocument();
+    expect(screen.getAllByText('GRP-27-BOOKING-QR').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Phase 27 Booking QR Performance').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('VIP A열 1번').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('QR 활성').length).toBeGreaterThan(0);
 
     expect(screen.queryByText(rawQrToken, { exact: true })).not.toBeInTheDocument();
     expect(screen.queryByText(rawQrJti, { exact: true })).not.toBeInTheDocument();

@@ -12,6 +12,30 @@ interface QrTicketImageProps {
 const DEFAULT_QR_SIZE = 220;
 const QR_PADDING = 16;
 const DEFAULT_QR_TITLE = '티켓 검표 QR';
+const DEFAULT_PUBLIC_WEB_ORIGIN = 'https://heygrabit.com';
+
+function getPublicWebOrigin(): string {
+  if (typeof window === 'undefined') {
+    return DEFAULT_PUBLIC_WEB_ORIGIN;
+  }
+
+  try {
+    const currentOrigin = new URL(window.location.origin);
+    if (currentOrigin.protocol === 'https:') {
+      return currentOrigin.origin;
+    }
+  } catch {
+    // Fall through to the production Grabit origin.
+  }
+
+  return DEFAULT_PUBLIC_WEB_ORIGIN;
+}
+
+export function buildQrCheckInUrl(token: string): string {
+  const url = new URL('/field/check-in', getPublicWebOrigin());
+  url.searchParams.set('ticket', token);
+  return url.toString();
+}
 
 function isHttpsQrValue(value: string): boolean {
   try {

@@ -15,6 +15,10 @@ import {
 } from '@/components/ui/tooltip';
 import { CancelConfirmModal } from '@/components/reservation/cancel-confirm-modal';
 import { RefundTimeline } from '@/components/reservation/refund-timeline';
+import {
+  buildQrCheckInUrl,
+  QrTicketImage,
+} from '@/components/field/qr-ticket-image';
 import type { ReservationDetail as ReservationDetailType, ReservationStatus } from '@grabit/shared';
 
 const STATUS_CONFIG: Record<
@@ -61,16 +65,27 @@ function formatDeadline(dateString: string): string {
   return `${y}.${m}.${d} ${h}:${min}까지`;
 }
 
-function maskIdentifier(value: string | null | undefined): string {
-  if (!value) {
-    return '발급 대기';
-  }
+function formatSeats(reservation: ReservationDetailType): string {
+  return reservation.seats
+    .map((seat) => `${seat.tierName} ${seat.row}열 ${seat.number}번`)
+    .join(', ');
+}
 
-  if (value.length <= 12) {
-    return value;
+function getQrStatusLabel(
+  status: ReservationDetailType['qrTicket']['status'],
+): string {
+  switch (status) {
+    case 'ACTIVE':
+      return 'QR 활성';
+    case 'USED':
+      return '사용됨';
+    case 'REVOKED':
+      return '해지됨';
+    case 'EXPIRED':
+      return '만료됨';
+    default:
+      return '확인 중';
   }
-
-  return `${value.slice(0, 7)}...${value.slice(-4)}`;
 }
 
 const DELAYED_REOPEN_NOTICE =
@@ -114,6 +129,9 @@ export function ReservationDetailView({
   const hasExpectedDepositAt =
     Boolean(reservation.refundTimeline.expectedDepositAt) && showRefundTimeline;
   const isQrActive = reservation.qrTicket?.status === 'ACTIVE';
+  const qrCheckInUrl = isQrActive
+    ? buildQrCheckInUrl(reservation.qrTicket.token)
+    : null;
   const shouldShowQrTicket = reservation.status === 'CONFIRMED';
 
   return (
@@ -211,7 +229,7 @@ export function ReservationDetailView({
                 </div>
                 <p className="text-sm text-gray-700">
                   {isQrActive
-                    ? '결제가 완료되었습니다. QR 티켓을 바로 확인할 수 있습니다.'
+                    ? 'QR 티켓이 준비되었습니다. 입장 시 현장 스태프가 QR을 확인합니다.'
                     : '결제는 완료되었지만 QR 티켓을 확인하는 중입니다. 잠시 후 새로고침하거나 마이페이지에서 다시 확인하세요.'}
                 </p>
               </div>
@@ -227,33 +245,40 @@ export function ReservationDetailView({
             </div>
 
             <div className="rounded-xl border border-white/80 bg-white/90 p-4">
-              <InfoRow label="상태" value={isQrActive ? 'QR 활성' : 'QR 확인 중'} />
-              <Separator />
-              <InfoRow
-                label="티켓 ID"
-                value={isQrActive ? maskIdentifier(reservation.qrTicket?.jti) : '발급 대기'}
-              />
-              <Separator />
-              <InfoRow label="예매번호" value={reservation.reservationNumber} />
-              <Separator />
-              <InfoRow
-                label="결제 상태"
-                value={reservation.paidAt ? '결제 완료' : '확인 중'}
-              />
-              <Separator />
-              <InfoRow
-                label="발급 시각"
-                value={isQrActive ? formatDateTime(reservation.qrTicket.issuedAt) : '확인 중'}
-              />
-              {isQrActive && reservation.qrTicket.emailScheduledAt && (
-                <>
+              <div className="grid gap-4 lg:grid-cols-[auto_1fr]">
+                {qrCheckInUrl ? (
+                  <QrTicketImage value={qrCheckInUrl} />
+                ) : (
+                  <div className="rounded-lg border border-[#F3E6A6] bg-[#FFFBEB] p-4 text-sm text-[#8B6306]">
+                    <p className="font-semibold">
+                      QR 티켓을 아직 표시할 수 없습니다.
+                    </p>
+                    <p className="mt-1">
+                      잠시 후 새로고침하거나 마이페이지에서 다시 확인하세요.
+                    </p>
+                    <p className="mt-2 text-gray-700">
+                      현장 검표 결과가 최종 입장 기준입니다.
+                    </p>
+                  </div>
+                )}
+                <div>
+                  <InfoRow label="예매번호" value={reservation.reservationNumber} />
+                  <Separator />
+                  <InfoRow label="공연명" value={reservation.performanceTitle} />
                   <Separator />
                   <InfoRow
-                    label="안내 메일 예약"
-                    value={formatDateTime(reservation.qrTicket.emailScheduledAt)}
+                    label="공연일시"
+                    value={formatDateTime(reservation.showDateTime)}
                   />
-                </>
-              )}
+                  <Separator />
+                  <InfoRow label="좌석" value={formatSeats(reservation)} />
+                  <Separator />
+                  <InfoRow
+                    label="티켓 상태"
+                    value={getQrStatusLabel(reservation.qrTicket.status)}
+                  />
+                </div>
+              </div>
             </div>
 
             <div className="flex items-start gap-3 rounded-xl border border-white/70 bg-white/80 p-4">
