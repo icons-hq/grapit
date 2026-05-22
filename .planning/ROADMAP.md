@@ -290,7 +290,7 @@ Plans:
 
 **Merged from:** 41 QR verification + field monitor, 42 Event-day playbooks, 43 Settlement + retrospective
 
-**Plans:** 9/16 plans executed
+**Plans:** 11/16 plans executed
 
 Plans:
 **Wave 0**
@@ -309,11 +309,11 @@ Plans:
 - [x] 27-11-PLAN.md — Buyer payment-complete and My Page real QR image integration
 
 **Wave 3**
-- [ ] 27-07-PLAN.md — Server-side offline sync conflict resolution API
+- [x] 27-07-PLAN.md — Server-side offline sync conflict resolution API
 
 **Wave 4**
 - [ ] 27-08-PLAN.md — KPI-first field monitor API
-- [ ] 27-12-PLAN.md — Scanner-only web check-in route and online UI
+- [x] 27-12-PLAN.md — Scanner-only web check-in route and online UI
 
 **Wave 5**
 - [ ] 27-13-PLAN.md — IndexedDB offline pending scan store and sync UI
