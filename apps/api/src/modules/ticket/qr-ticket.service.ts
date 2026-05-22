@@ -72,8 +72,10 @@ export interface QrTicketTokenPayload {
 }
 
 export interface QrTicketScannerContract {
+  ticketId?: string;
   tokenVersion: string;
   ticketStatus: QrTicketStatus;
+  reservationNumber?: string;
   reservationId: string;
   paymentId: string;
   showtimeId: string;
@@ -81,6 +83,7 @@ export interface QrTicketScannerContract {
   performanceTitle: string;
   showtimeAt: string;
   venueName: string;
+  seatLabels?: string[];
   maskedJti: string;
   verifiedAt: string;
 }
@@ -265,7 +268,9 @@ export class QrTicketService implements OnModuleInit {
     const payload = await this.verifyTicketToken(token);
     const [row] = await this.db
       .select({
+        ticketId: tickets.id,
         ticketStatus: tickets.status,
+        reservationNumber: reservations.reservationNumber,
         reservationId: reservations.id,
         paymentId: payments.id,
         showtimeId: showtimes.id,
@@ -298,7 +303,9 @@ export class QrTicketService implements OnModuleInit {
 
     return {
       tokenVersion: payload.secretVersion,
+      ticketId: row.ticketId,
       ticketStatus: this.mapStatus(row.ticketStatus),
+      reservationNumber: row.reservationNumber,
       reservationId: row.reservationId,
       paymentId: row.paymentId,
       showtimeId: row.showtimeId,

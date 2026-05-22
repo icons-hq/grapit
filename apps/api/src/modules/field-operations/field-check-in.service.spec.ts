@@ -148,7 +148,11 @@ describe('FieldCheckInService RED contract', () => {
     });
     expect(db.update).toHaveBeenCalledTimes(1);
     expect(db.update).toHaveBeenCalledWith(tickets);
-    expect(JSON.stringify(db.update.mock.calls[0])).not.toContain('verify');
+    expect(
+      JSON.stringify(db.update.mock.calls[0], (_key, value) =>
+        value === tickets ? '[tickets-table]' : value,
+      ),
+    ).not.toContain('verify');
     expect(adminAuditService.write).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'field.scan.consume',
