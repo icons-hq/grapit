@@ -129,7 +129,8 @@ describe('ReservationService', () => {
   });
 
   function createServiceWithQrTicketService(qrTicketService: {
-    ensureIssuedTicketForReservation: ReturnType<typeof vi.fn>;
+    ensureIssuedTicketForReservation?: ReturnType<typeof vi.fn>;
+    getOrIssueTicketForReservation?: ReturnType<typeof vi.fn>;
   }) {
     return new ReservationService(
       mockDb as any,
@@ -2306,7 +2307,7 @@ describe('ReservationService', () => {
 
     it('self-heals a confirmed DONE payment by issuing an active QR ticket on the read path', async () => {
       const qrTicketService = {
-        ensureIssuedTicketForReservation: vi.fn().mockResolvedValue({
+        getOrIssueTicketForReservation: vi.fn().mockResolvedValue({
           token: 'signed-qr-token',
           jti: 'qr-jti-1',
           status: 'ACTIVE',
@@ -2329,7 +2330,38 @@ describe('ReservationService', () => {
           },
         });
 
-      expect(qrTicketService.ensureIssuedTicketForReservation).toHaveBeenCalledWith({
+      expect(qrTicketService.getOrIssueTicketForReservation).toHaveBeenCalledWith({
+        reservationId,
+        paymentId: 'payment-1',
+      });
+    });
+
+    it('loads reservation detail with used QR ticket after field check-in', async () => {
+      const qrTicketService = {
+        getOrIssueTicketForReservation: vi.fn().mockResolvedValue({
+          token: '',
+          jti: '',
+          status: 'USED',
+          issuedAt: '2026-07-10T09:00:00.000Z',
+          emailScheduledAt: null,
+          emailedAt: null,
+        }),
+      };
+      const qrAwareService = createServiceWithQrTicketService(qrTicketService);
+      setupReservationDetailMocks({ reservationId, userId, amount: 150000 });
+
+      await expect(qrAwareService.getReservationDetail(reservationId, userId))
+        .resolves
+        .toMatchObject({
+          id: reservationId,
+          qrTicket: {
+            token: '',
+            jti: '',
+            status: 'USED',
+          },
+        });
+
+      expect(qrTicketService.getOrIssueTicketForReservation).toHaveBeenCalledWith({
         reservationId,
         paymentId: 'payment-1',
       });
@@ -2337,7 +2369,7 @@ describe('ReservationService', () => {
 
     it('does not expose a false ACTIVE QR state when confirmed reservation has no DONE payment', async () => {
       const qrTicketService = {
-        ensureIssuedTicketForReservation: vi.fn().mockResolvedValue({
+        getOrIssueTicketForReservation: vi.fn().mockResolvedValue({
           token: 'signed-qr-token',
           jti: 'qr-jti-1',
           status: 'ACTIVE',
@@ -2361,7 +2393,7 @@ describe('ReservationService', () => {
         jti: '',
         status: 'REVOKED',
       });
-      expect(qrTicketService.ensureIssuedTicketForReservation).not.toHaveBeenCalled();
+      expect(qrTicketService.getOrIssueTicketForReservation).not.toHaveBeenCalled();
     });
 
     it('keeps confirmed reservation detail in a blocking non-active QR state when QR runtime wiring is unavailable', async () => {

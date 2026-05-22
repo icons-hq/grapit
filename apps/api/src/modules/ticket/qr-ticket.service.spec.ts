@@ -441,6 +441,62 @@ describe('QrTicketService', () => {
     expect(mockDb.insert).not.toHaveBeenCalled();
   });
 
+  it('returns a used QR ticket snapshot without reissuing or exposing a reusable token', async () => {
+    const mockDb = {
+      select: vi
+        .fn()
+        .mockReturnValueOnce(chainResult([
+          createTicketRecord({
+            status: 'used',
+            usedAt: new Date('2026-07-10T09:05:00.000Z'),
+          }),
+        ]))
+        .mockReturnValueOnce(chainResult([
+          {
+            reservationId: 'reservation-1',
+            paymentId: 'payment-1',
+            paymentStatus: 'DONE',
+            showtimeId: 'showtime-1',
+            showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
+          },
+        ])),
+      insert: vi.fn(),
+      update: vi.fn(),
+    };
+    const service = new QrTicketService(
+      mockDb as never,
+      {
+        get: vi.fn((key: string) => {
+          if (key === 'QR_TICKET_SECRET') return 'current-secret';
+          if (key === 'QR_TICKET_SECRET_VERSION') return '2026-07';
+          return undefined;
+        }),
+      } as never,
+      new JwtService(),
+      { sendQrTicketReminderEmail: vi.fn() } as never,
+      {
+        isAvailable: false,
+        send: vi.fn(),
+        work: vi.fn(),
+        stop: vi.fn(),
+      } as never,
+    );
+
+    const ticket = await service.getOrIssueTicketForReservation({
+      reservationId: 'reservation-1',
+      paymentId: 'payment-1',
+    });
+
+    expect(ticket).toMatchObject({
+      token: '',
+      jti: '',
+      status: 'USED',
+      issuedAt: '2026-07-10T09:00:00.000Z',
+    });
+    expect(mockDb.insert).not.toHaveBeenCalled();
+    expect(mockDb.update).not.toHaveBeenCalled();
+  });
+
   it('verifies redacted Phase 27 scanner contract inputs without exposing the raw token or full JTI', async () => {
     const configService = {
       get: vi.fn((key: string) => {
@@ -473,16 +529,15 @@ describe('QrTicketService', () => {
     );
     const service = new QrTicketService(
       {
-        select: vi
-          .fn()
-          .mockReturnValueOnce(chainResult([
-            createVerifiableTicketRow({
-              ticket: { qrTokenJti: rawJti },
-            }),
-          ]))
-          .mockReturnValueOnce(chainResult([
+        select: vi.fn().mockReturnValueOnce(
+          chainResult([
             {
-              ticketStatus: 'active',
+              status: 'active',
+              expiresAt: null,
+              usedAt: null,
+              revokedAt: null,
+              ticketId: 'ticket-1',
+              reservationNumber: 'GRP-27-SCAN-0001',
               reservationId: 'reservation-1',
               paymentId: 'payment-1',
               showtimeId: 'showtime-1',
@@ -491,7 +546,8 @@ describe('QrTicketService', () => {
               showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
               venueName: '동해문화예술관 대극장',
             },
-          ])),
+          ]),
+        ),
       } as never,
       configService as never,
       jwtService,
@@ -521,5 +577,75 @@ describe('QrTicketService', () => {
     expect(result.showtimeAt).toBe('2026-07-18T11:00:00.000Z');
     expect(serialized).not.toContain(token);
     expect(serialized).not.toContain(rawJti);
+  });
+
+  it('reports used scanner contract state for a valid consumed QR token', async () => {
+    const configService = {
+      get: vi.fn((key: string) => {
+        if (key === 'QR_TICKET_SECRET') return 'current-secret';
+        if (key === 'QR_TICKET_SECRET_VERSION') return '2026-07';
+        if (key === 'QR_TICKET_SECRET_KEYRING_JSON') {
+          return JSON.stringify({ '2026-07': 'current-secret' });
+        }
+
+        return undefined;
+      }),
+    };
+    const jwtService = new JwtService();
+    const token = await jwtService.signAsync(
+      {
+        type: 'qr-ticket',
+        jti: 'qr-jti-used-ticket-1234567890',
+        reservationId: 'reservation-1',
+        paymentId: 'payment-1',
+        showtimeId: 'showtime-1',
+        secretVersion: '2026-07',
+        issuedAt: now.toISOString(),
+      },
+      {
+        secret: 'current-secret',
+        algorithm: 'HS256',
+        noTimestamp: true,
+      },
+    );
+    const service = new QrTicketService(
+      {
+        select: vi.fn().mockReturnValueOnce(chainResult([
+          {
+            status: 'used',
+            expiresAt: null,
+            usedAt: new Date('2026-07-10T09:05:00.000Z'),
+            revokedAt: null,
+            ticketId: 'ticket-1',
+            reservationNumber: 'GRP-27-SCAN-0001',
+            reservationId: 'reservation-1',
+            paymentId: 'payment-1',
+            showtimeId: 'showtime-1',
+            performanceId: 'performance-1',
+            performanceTitle: 'Girl Rules FAN MEETING IN SEOUL',
+            showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
+            venueName: '동해문화예술관 대극장',
+          },
+        ])),
+      } as never,
+      configService as never,
+      jwtService,
+      { sendQrTicketReminderEmail: vi.fn() } as never,
+      {
+        isAvailable: false,
+        send: vi.fn(),
+        work: vi.fn(),
+        stop: vi.fn(),
+      } as never,
+    );
+
+    const result = await service.verifyTicketForScannerContract(token);
+
+    expect(result).toMatchObject({
+      ticketStatus: 'USED',
+      reservationId: 'reservation-1',
+      paymentId: 'payment-1',
+      showtimeId: 'showtime-1',
+    });
   });
 });

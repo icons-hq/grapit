@@ -1377,7 +1377,7 @@ export class ReservationService {
       && payment?.id
       && payment.status === 'DONE'
       && this.qrTicketService
-        ? await this.qrTicketService.ensureIssuedTicketForReservation({
+        ? await this.qrTicketService.getOrIssueTicketForReservation({
             reservationId,
             paymentId: payment.id,
           })
