@@ -205,4 +205,37 @@ describe('OfflineSyncService RED contract', () => {
       }),
     ]);
   });
+
+  it('deduplicates repeated pending attempts by deviceAttemptId before server consume', async () => {
+    const { service, fieldCheckInService } = createDependencies();
+    fieldCheckInService.consume.mockResolvedValue({
+      outcome: 'entered',
+      scanEventId: 'scan-event-deduped',
+      consumedAt: '2026-07-04T09:20:00.000Z',
+      ticket: null,
+    });
+
+    const result = await service.syncPendingAttempts({
+      attempts: [
+        pendingAttempt({ deviceAttemptId: 'device-attempt-repeat' }),
+        pendingAttempt({
+          deviceAttemptId: 'device-attempt-repeat',
+          attemptedAt: '2026-07-04T09:01:00.000Z',
+        }),
+      ],
+    }, {
+      scannerUserId: 'scanner-user-1',
+      recoveredAt: '2026-07-04T09:20:00.000Z',
+    });
+
+    expect(fieldCheckInService.consume).toHaveBeenCalledTimes(1);
+    expect(result.results).toEqual([
+      expect.objectContaining({
+        deviceAttemptId: 'device-attempt-repeat',
+        syncState: 'synced',
+        scanEventId: 'scan-event-deduped',
+      }),
+    ]);
+    expectNoRawOfflineLeak(result);
+  });
 });
