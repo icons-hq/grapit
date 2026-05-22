@@ -290,14 +290,14 @@ Plans:
 
 **Merged from:** 41 QR verification + field monitor, 42 Event-day playbooks, 43 Settlement + retrospective
 
-**Plans:** 16 plans
+**Plans:** 4/16 plans executed
 
 Plans:
 **Wave 0**
-- [ ] 27-01-PLAN.md — Shared field operations contracts and scanner-only capability bundle
-- [ ] 27-02-PLAN.md — Backend Wave 0 tests for check-in, offline sync, monitor, and settlement export
-- [ ] 27-03-PLAN.md — Web and Playwright Wave 0 tests for QR, scanner, offline, monitor, and settlement UI
-- [ ] 27-04-PLAN.md — Event-day playbook and retrospective artifact contracts
+- [x] 27-01-PLAN.md — Shared field operations contracts and scanner-only capability bundle
+- [x] 27-02-PLAN.md — Backend Wave 0 tests for check-in, offline sync, monitor, and settlement export
+- [x] 27-03-PLAN.md — Web and Playwright Wave 0 tests for QR, scanner, offline, monitor, and settlement UI
+- [x] 27-04-PLAN.md — Event-day playbook and retrospective artifact contracts
 
 **Wave 1**
 - [ ] 27-05-PLAN.md — Ticket scan event schema, audit actions, and blocking local migration gate
