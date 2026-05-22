@@ -369,6 +369,61 @@ describe('AdminUserManagement', () => {
     });
   });
 
+  it('lets full admins assign scanner-only bundle without settlement or raw export capabilities', async () => {
+    const user = userEvent.setup();
+    mocks.apiPatch.mockResolvedValueOnce({
+      ...detailUser,
+      adminCapabilityBundle: 'scanner',
+      adminCapabilities: [
+        'field.scan.verify',
+        'field.scan.consume',
+        'field.scan.sync',
+      ],
+    });
+
+    renderWithClient(<AdminUserManagement />);
+
+    expect(await screen.findByText('Role / capability 편집')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('combobox', { name: 'Capability bundle' }));
+    await user.click(await screen.findByRole('option', { name: '스캐너' }));
+
+    expect(screen.getByText('검표 확인')).toBeInTheDocument();
+    expect(screen.getByText('입장 처리')).toBeInTheDocument();
+    expect(screen.getByText('보류 스캔 동기화')).toBeInTheDocument();
+
+    await user.type(
+      screen.getByLabelText('권한 변경 사유'),
+      '행사 당일 현장 검표 전용 계정으로 전환합니다.',
+    );
+    await user.click(screen.getByRole('checkbox', { name: '권한 변경 영향 확인' }));
+    await user.click(screen.getByRole('button', { name: '권한 변경 검토' }));
+    await user.click(await screen.findByRole('button', { name: '변경 확정' }));
+
+    await waitFor(() => {
+      expect(apiClient.patch).toHaveBeenCalledWith(
+        '/api/v1/admin/users/user-fan-1/permissions',
+        expect.objectContaining({
+          role: 'admin',
+          adminCapabilityBundle: 'scanner',
+          adminCapabilities: [
+            'field.scan.verify',
+            'field.scan.consume',
+            'field.scan.sync',
+          ],
+          confirmed: true,
+        }),
+      );
+    });
+
+    const payload = (apiClient.patch as ReturnType<typeof vi.fn>).mock.calls[0]?.[1];
+    expect(payload.adminCapabilities).not.toContain('settlement.export');
+    expect(payload.adminCapabilities).not.toContain('reservations.export_raw');
+    expect(payload.adminCapabilities).not.toContain('security.manage');
+    expect(payload.adminCapabilities).not.toContain('event.write');
+    expect(payload.adminCapabilities).not.toContain('banner.manage');
+  });
+
   it('shows an actionable mutation error without clearing the current detail view', async () => {
     const user = userEvent.setup();
     mocks.apiPatch.mockRejectedValueOnce(new Error('Forbidden'));

@@ -92,6 +92,7 @@ const BUNDLE_LABELS: Record<AdminCapabilityBundle, string> = {
   reviewer: '검수자',
   approver: '승인자',
   finance: '정산 담당',
+  scanner: '스캐너',
   admin: '전체 관리자',
 };
 
@@ -107,6 +108,10 @@ const CAPABILITY_LABELS: Record<AdminCapability, string> = {
   'banner.manage': '배너 관리',
   'audit.read': '감사 조회',
   'security.manage': '보안 권한 관리',
+  'field.scan.verify': '검표 확인',
+  'field.scan.consume': '입장 처리',
+  'field.scan.sync': '보류 스캔 동기화',
+  'settlement.export': '정산 내보내기',
 };
 
 const RESERVATION_STATUS_LABELS: Record<AdminUserReservationStatus, string> = {
