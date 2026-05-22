@@ -26,29 +26,30 @@ Phase 27 automated implementation evidence is green. Manual-only event-day evide
 | TypeScript integration | `pnpm --filter @grabit/api typecheck && pnpm --filter @grabit/web typecheck && pnpm --filter @grabit/shared typecheck` | PASS | `apps/api/tsconfig.json`; `apps/web/tsconfig.json`; `packages/shared/tsconfig.json` | Type-only verification; no evidence payloads. |
 | Retrospective validation | `node scripts/phase27/validate-retrospective.mjs .planning/phases/27-event-operations-settlement/27-RETROSPECTIVE.md` | PASS before final human checkpoint update | `scripts/phase27/validate-retrospective.mjs`; `.planning/phases/27-event-operations-settlement/27-RETROSPECTIVE.md` | Validator rejects sensitive token/header/payment/OTP/PII patterns. |
 | Event-day playbook structure | `rg "forced refund|weather|facility|cast|on-site refund|exchange|External contacts|Evidence fields|Console action" docs/runbooks/phase27-event-day-playbooks.md` | PASS | `docs/runbooks/phase27-event-day-playbooks.md`; `.planning/phases/27-event-operations-settlement/27-04-SUMMARY.md` | Runbook fields are placeholders for redacted operator evidence only. |
+| Computer Use human-rehearsal pass | Computer Use over Google Chrome for Testing plus targeted Vitest/E2E commands listed in `.planning/debug/phase27-computer-use-human-uat.md` | PARTIAL, automatable gates verified | `.planning/debug/phase27-computer-use-human-uat.md` | Redacted local mock sessions only; no raw QR token, JWT/JTI, cookie, payment key, OTP, full email, full phone, unmasked IP, raw customer row, or provider credential recorded. |
 
 ## Requirement Status
 
 | Requirement | Automated status | Manual status | Evidence |
 | --- | --- | --- | --- |
-| QR-02 | automated_green | human_needed | QR image, scanner verify/consume, duplicate rejection, offline sync tests are green. Real phone-camera scan and scanner-only rehearsal still need human evidence in `27-HUMAN-UAT.md`. |
-| FIELD-01 | automated_green | human_needed | Field monitor API/UI and offline pending/sync tests are green. Venue-like offline rehearsal and operator monitor review still need human evidence. |
+| QR-02 | automated_green | partial_computer_use_verified | QR image, scanner verify/consume, duplicate rejection, and offline sync tests are green. Computer Use verified local scanner rehearsal and duplicate rejection; real physical phone-camera QR scan remains `human_needed` in `27-HUMAN-UAT.md`. |
+| FIELD-01 | automated_green | partial_computer_use_verified | Field monitor API/UI and offline pending/sync tests are green. Computer Use verified local offline pending, recovered sync, and rejected conflict; production/venue device evidence remains `human_needed`. |
 | OPS-03 | automated_green_artifact | human_needed | Playbook exists for six scenarios. External contact owner/date/status fields require operator approval or blocker classification. |
-| POST-01 | automated_green | human_needed | Settlement API/UI/export tests are green. Operator review of exported datasets and source totals remains required. |
+| POST-01 | automated_green | partial_computer_use_verified | Settlement API/UI/export tests are green. Computer Use verified local finance summary/export confirmation and scanner-only denial; production/finance dataset sign-off remains required. |
 | POST-02 | artifact_ready | human_needed | Retrospective structure exists and validator is green. Event-day incidents/non-incidents/improvements/carry-forward need direct evidence or explicit blocker rows. |
 
 ## Manual Gate
 
-The following rows must remain `human_needed` until the maintainer supplies evidence notes:
+The following rows must remain `human_needed` or explicitly limited until the maintainer supplies evidence notes:
 
 | Manual row | Required evidence |
 | --- | --- |
 | Real phone-camera QR open | Device/browser/account/event/showtime/timestamp/result and evidence path. |
-| Scanner-only permission rehearsal | Scanner-only account can verify/consume/sync and is denied full admin, refund, reservation management, user management, content, security, settlement, and raw export surfaces. |
-| Venue-like offline stale/recovered connectivity | Pending, recovered sync, and synced/rejected evidence with device-local attempt ID and scanner context. |
+| Scanner-only permission rehearsal | Computer Use local rehearsal is recorded in `.planning/debug/phase27-computer-use-human-uat.md`; production scanner account evidence can still be added if required before launch. |
+| Venue-like offline stale/recovered connectivity | Computer Use local pending/recovered/rejected states are recorded in `.planning/debug/phase27-computer-use-human-uat.md`; venue device evidence remains separate. |
 | External operational contacts | Owner/date/status or owner-approved not-applicable/blocker for forced refund, weather, facility, cast issue, on-site refund, and exchange. |
-| Settlement operator review | Reviewer/timestamp plus entry status, no-show, reservation/payment/refund, and accounting input export evidence. |
+| Settlement operator review | Computer Use local finance export rehearsal is recorded in `.planning/debug/phase27-computer-use-human-uat.md`; real production/finance dataset reconciliation remains separate. |
 
 ## Conclusion
 
-Automated Phase 27 implementation verification is green. Phase completion remains blocked on the manual evidence checkpoint until the rows above are approved or truthfully recorded as blocked.
+Automated Phase 27 implementation verification is green, and the local Computer Use rehearsal verified the automatable manual-gate surfaces. Phase completion remains blocked on physical phone-camera evidence, external operational contacts, and any required production/venue dataset sign-off until those rows are approved or truthfully recorded as blocked.
