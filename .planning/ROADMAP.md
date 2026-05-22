@@ -290,7 +290,7 @@ Plans:
 
 **Merged from:** 41 QR verification + field monitor, 42 Event-day playbooks, 43 Settlement + retrospective
 
-**Plans:** 4/16 plans executed
+**Plans:** 6/16 plans executed
 
 Plans:
 **Wave 0**
@@ -300,8 +300,8 @@ Plans:
 - [x] 27-04-PLAN.md — Event-day playbook and retrospective artifact contracts
 
 **Wave 1**
-- [ ] 27-05-PLAN.md — Ticket scan event schema, audit actions, and blocking local migration gate
-- [ ] 27-10-PLAN.md — Web QR/offline dependencies and reusable QR ticket image component
+- [x] 27-05-PLAN.md — Ticket scan event schema, audit actions, and blocking local migration gate
+- [x] 27-10-PLAN.md — Web QR/offline dependencies and reusable QR ticket image component
 
 **Wave 2**
 - [ ] 27-06-PLAN.md — Online scanner verify and manual check-in consume API
