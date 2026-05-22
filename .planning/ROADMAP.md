@@ -290,7 +290,7 @@ Plans:
 
 **Merged from:** 41 QR verification + field monitor, 42 Event-day playbooks, 43 Settlement + retrospective
 
-**Plans:** 6/16 plans executed
+**Plans:** 9/16 plans executed
 
 Plans:
 **Wave 0**
@@ -304,9 +304,9 @@ Plans:
 - [x] 27-10-PLAN.md — Web QR/offline dependencies and reusable QR ticket image component
 
 **Wave 2**
-- [ ] 27-06-PLAN.md — Online scanner verify and manual check-in consume API
-- [ ] 27-09-PLAN.md — Protected settlement summary and CSV export API
-- [ ] 27-11-PLAN.md — Buyer payment-complete and My Page real QR image integration
+- [x] 27-06-PLAN.md — Online scanner verify and manual check-in consume API
+- [x] 27-09-PLAN.md — Protected settlement summary and CSV export API
+- [x] 27-11-PLAN.md — Buyer payment-complete and My Page real QR image integration
 
 **Wave 3**
 - [ ] 27-07-PLAN.md — Server-side offline sync conflict resolution API
