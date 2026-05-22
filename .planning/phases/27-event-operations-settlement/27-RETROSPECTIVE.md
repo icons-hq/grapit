@@ -1,6 +1,6 @@
 ---
 phase: 27-event-operations-settlement
-status: pending_event_evidence
+status: pending_manual_event_evidence
 source_requirements:
   - OPS-03
   - POST-02
@@ -9,30 +9,22 @@ evidence_policy: direct_evidence_required
 
 # Phase 27 Retrospective
 
-This artifact is the Phase 27 retrospective contract for `POST-02`. It records
-event-day incidents, non-incidents, improvements, next-event carry-forward
-items, field scan evidence, offline sync evidence, settlement evidence, and
-v2.0 completion evidence after the 2026-07-04 event.
+This artifact records Phase 27 retrospective evidence for the 2026-07-04 event-day operations loop. Automated product evidence is linked below. Physical phone-camera, scanner-only rehearsal, venue-like offline, external contact, and settlement operator evidence remains `human_needed` until the maintainer supplies redacted evidence paths.
 
-Admin retrospective management UI is out of scope per D-32/D-34. This markdown
-artifact is the Phase 27 retrospective surface unless a later phase introduces a
-repeated-event operations product need.
+Admin retrospective management UI is out of scope per D-32/D-34. This markdown artifact is the Phase 27 retrospective surface unless a later phase introduces a repeated-event operations product need.
 
 ## Operator Rules
 
 - Evidence must be redacted before it is committed.
-- Do not store raw QR tokens, raw JWT/JTI values, authorization headers,
-  cookies, Toss or provider payment keys, OTP values, full emails, full phone
-  numbers, unmasked IPs, raw customer rows, or provider credentials.
-- Direct evidence paths are required before any event-day result can receive an
-  affirmative classification.
+- Do not store raw QR tokens, raw JWT/JTI values, authorization headers, cookies, Toss or provider payment keys, OTP values, full emails, full phone numbers, unmasked IPs, raw customer rows, or provider credentials.
+- Direct evidence paths are required before any event-day result can receive an affirmative classification.
 - Accepted risk and narrative-only notes are not successful launch evidence.
 
 ## Incidents
 
 | Incident ID | Scenario | Owner | Evidence path | Result | Carry-forward |
 | --- | --- | --- | --- | --- | --- |
-| Pending event evidence | forced refund / weather / facility / cast issue / on-site refund / exchange | Operator-supplied | Pending event evidence | pending | pending |
+| Pending manual evidence | forced refund / weather / facility / cast issue / on-site refund / exchange | Operator-supplied | `.planning/phases/27-event-operations-settlement/27-HUMAN-UAT.md` | human_needed | pending operator review |
 
 Required evidence:
 - Incident timeline with redacted event/showtime scope.
@@ -44,9 +36,9 @@ Required evidence:
 
 | Watch area | Owner | Evidence path | Result | Notes |
 | --- | --- | --- | --- | --- |
-| Field check-in normal flow | Operator-supplied | Pending event evidence | pending | Record if no incident occurred. |
-| Duplicate/tamper/refunded-ticket rejection | Operator-supplied | Pending event evidence | pending | Record scanner rejection evidence. |
-| Weather/facility/cast monitoring | Operator-supplied | Pending event evidence | pending | Record non-incident watch evidence. |
+| Field check-in normal flow | Operator-supplied | `.planning/phases/27-event-operations-settlement/27-HUMAN-UAT.md` | human_needed | Record if no incident occurred. |
+| Duplicate/tamper/refunded-ticket rejection | Operator-supplied | `.planning/phases/27-event-operations-settlement/27-HUMAN-UAT.md` | human_needed | Record scanner rejection evidence. |
+| Weather/facility/cast monitoring | Operator-supplied | `.planning/phases/27-event-operations-settlement/27-HUMAN-UAT.md` | human_needed | Record non-incident watch evidence. |
 
 Required evidence:
 - Watch timestamp, scope, source, and redacted summary.
@@ -56,7 +48,7 @@ Required evidence:
 
 | Improvement | Source | Owner | Evidence path | Next action |
 | --- | --- | --- | --- | --- |
-| Pending event evidence | Operator retrospective | Operator-supplied | Pending event evidence | pending |
+| Pending operator retrospective | Event-day operations review | Operator-supplied | `.planning/phases/27-event-operations-settlement/27-HUMAN-UAT.md` | Fill after event-day evidence review. |
 
 Required evidence:
 - The event-day observation that triggered the improvement.
@@ -66,7 +58,7 @@ Required evidence:
 
 | Carry-forward item | Reason | Owner | Evidence path | Target phase |
 | --- | --- | --- | --- | --- |
-| Pending event evidence | Operator retrospective | Operator-supplied | Pending event evidence | pending |
+| Pending manual evidence classification | Physical event-day checks are not yet supplied. | Maintainer | `.planning/phases/27-event-operations-settlement/27-HUMAN-UAT.md` | Decide after manual checkpoint. |
 
 Required evidence:
 - Why the item was not handled in Phase 27.
@@ -76,10 +68,11 @@ Required evidence:
 
 | Evidence row | Owner | Evidence path | Required proof | Result |
 | --- | --- | --- | --- | --- |
-| Phone-camera QR open | Operator-supplied | Pending event evidence | Buyer QR opens HTTPS check-in URL and returns after login if needed. | pending |
-| Scanner-only admission | Operator-supplied | Pending event evidence | Scanner can verify and manually process entry without full admin surfaces. | pending |
-| Duplicate scan rejection | Operator-supplied | Pending event evidence | Second consume returns duplicate/already-used with safe prior context. | pending |
-| Tampered/refunded/expired rejection | Operator-supplied | Pending event evidence | Server rejects invalid ticket states without leaking raw token details. | pending |
+| Automated buyer QR and scanner path | Codex automated verification | `.planning/phases/27-event-operations-settlement/27-VERIFICATION.md` | QR image, scanner route, manual consume, duplicate rejection, and no raw token UI assertions. | automated_green |
+| Phone-camera QR open | Operator-supplied | `.planning/phases/27-event-operations-settlement/27-HUMAN-UAT.md` | Buyer QR opens HTTPS check-in URL and returns after login if needed. | human_needed |
+| Scanner-only admission | Operator-supplied | `.planning/phases/27-event-operations-settlement/27-HUMAN-UAT.md` | Scanner can verify and manually process entry without full admin surfaces. | human_needed |
+| Duplicate scan rejection | Codex automated verification plus operator rehearsal | `.planning/phases/27-event-operations-settlement/27-VERIFICATION.md`; `.planning/phases/27-event-operations-settlement/27-HUMAN-UAT.md` | Automated duplicate rejection is covered in the verification artifact; physical scanner evidence still pending. | human_needed |
+| Tampered/refunded/expired rejection | Codex automated verification plus operator rehearsal | `.planning/phases/27-event-operations-settlement/27-VERIFICATION.md`; `.planning/phases/27-event-operations-settlement/27-HUMAN-UAT.md` | Automated invalid-state rejection is covered in the verification artifact; physical scanner evidence still pending. | human_needed |
 
 Required evidence:
 - Duplicate scan evidence paths before field-scan completion is claimed.
@@ -89,9 +82,10 @@ Required evidence:
 
 | Evidence row | Owner | Evidence path | Required proof | Result |
 | --- | --- | --- | --- | --- |
-| Pending offline attempt | Operator-supplied | Pending event evidence | Local attempt remains pending while network is unavailable. | pending |
-| Recovered sync | Operator-supplied | Pending event evidence | Server re-verifies pending attempt after connectivity returns. | pending |
-| Rejected conflict | Operator-supplied | Pending event evidence | Duplicate/tampered/refunded/expired conflict is rejected at sync. | pending |
+| Automated offline pending and sync path | Codex automated verification | `.planning/phases/27-event-operations-settlement/27-VERIFICATION.md` | Offline pending store, sync endpoint, synced/rejected browser flows. | automated_green |
+| Pending offline attempt | Operator-supplied | `.planning/phases/27-event-operations-settlement/27-HUMAN-UAT.md` | Local attempt remains pending while network is unavailable. | human_needed |
+| Recovered sync | Operator-supplied | `.planning/phases/27-event-operations-settlement/27-HUMAN-UAT.md` | Server re-verifies pending attempt after connectivity returns. | human_needed |
+| Rejected conflict | Operator-supplied | `.planning/phases/27-event-operations-settlement/27-HUMAN-UAT.md` | Duplicate/tampered/refunded/expired conflict is rejected at sync. | human_needed |
 
 Required evidence:
 - Pending, synced, and rejected evidence paths.
@@ -102,13 +96,14 @@ Required evidence:
 
 | Evidence row | Owner | Evidence path | Required proof | Result |
 | --- | --- | --- | --- | --- |
-| Entry status export | Operator-supplied | Pending event evidence | Entry status dataset exists and is redacted. | pending |
-| No-show reservation list | Operator-supplied | Pending event evidence | No-show list reconciles with field scan totals. | pending |
-| Reservation/payment/refund summary | Operator-supplied | Pending event evidence | Summary reconciles with source reservation/payment/refund state. | pending |
-| Accounting input data | Operator-supplied | Pending event evidence | Export comes from Plan 27-09 safe CSV generation. | pending |
+| Automated settlement API and UI | Codex automated verification | `.planning/phases/27-event-operations-settlement/27-VERIFICATION.md` | Settlement summary/export API, dashboard, all D-29 datasets, scanner-only denial, safe CSV assertions. | automated_green |
+| Entry status export | Operator-supplied | `.planning/phases/27-event-operations-settlement/27-HUMAN-UAT.md` | Entry status dataset exists and is redacted. | human_needed |
+| No-show reservation list | Operator-supplied | `.planning/phases/27-event-operations-settlement/27-HUMAN-UAT.md` | No-show list reconciles with field scan totals. | human_needed |
+| Reservation/payment/refund summary | Operator-supplied | `.planning/phases/27-event-operations-settlement/27-HUMAN-UAT.md` | Summary reconciles with source reservation/payment/refund state. | human_needed |
+| Accounting input data | Operator-supplied | `.planning/phases/27-event-operations-settlement/27-HUMAN-UAT.md` | Export comes from safe CSV generation. | human_needed |
 
 Required evidence:
-- Export evidence from the settlement/export implementation plan.
+- Export evidence from the settlement/export implementation.
 - CSV safety proof for formula escaping and scanner-only denial.
 - Reviewer/timestamp for operator acceptance.
 
@@ -116,11 +111,16 @@ Required evidence:
 
 | Evidence row | Owner | Evidence path | Required proof | Result |
 | --- | --- | --- | --- | --- |
-| QR-02 closure | Operator-supplied | Pending event evidence | Field scan and offline sync evidence are present. | pending |
-| FIELD-01 closure | Operator-supplied | Pending event evidence | Event-day field monitor evidence is present. | pending |
-| OPS-03 closure | Operator-supplied | Pending event evidence | Six scenario playbooks have direct evidence or carry-forward classification. | pending |
-| POST-01 closure | Operator-supplied | Pending event evidence | Settlement/export evidence is present. | pending |
-| POST-02 closure | Operator-supplied | Pending event evidence | Retrospective is filled with evidence-backed findings. | pending |
+| QR-02 automated implementation | Codex automated verification | `.planning/phases/27-event-operations-settlement/27-VERIFICATION.md` | Buyer QR, scanner verify/consume, duplicate rejection, and offline sync assertions are recorded. | automated_green |
+| QR-02 physical closure | Operator-supplied | `.planning/phases/27-event-operations-settlement/27-HUMAN-UAT.md` | Phone-camera and scanner-only evidence are present. | human_needed |
+| FIELD-01 automated implementation | Codex automated verification | `.planning/phases/27-event-operations-settlement/27-VERIFICATION.md` | Field monitor API/UI and offline counts assertions are recorded. | automated_green |
+| FIELD-01 event-day closure | Operator-supplied | `.planning/phases/27-event-operations-settlement/27-HUMAN-UAT.md` | Event-day field monitor and offline rehearsal evidence are present. | human_needed |
+| OPS-03 playbook readiness | Codex automated verification | `docs/runbooks/phase27-event-day-playbooks.md`; `.planning/phases/27-event-operations-settlement/27-VERIFICATION.md` | Six scenario playbooks exist with external contact fields. | automated_green |
+| OPS-03 operator closure | Operator-supplied | `.planning/phases/27-event-operations-settlement/27-HUMAN-UAT.md` | External contact rows are filled, approved not-applicable, or blocked with owner/date. | human_needed |
+| POST-01 automated implementation | Codex automated verification | `.planning/phases/27-event-operations-settlement/27-VERIFICATION.md` | Settlement/export API and UI assertions are recorded. | automated_green |
+| POST-01 operator closure | Operator-supplied | `.planning/phases/27-event-operations-settlement/27-HUMAN-UAT.md` | Settlement reviewer/timestamp and exported dataset evidence are present. | human_needed |
+| POST-02 retrospective readiness | Codex automated verification | `.planning/phases/27-event-operations-settlement/27-RETROSPECTIVE.md`; `scripts/phase27/validate-retrospective.mjs` | Retrospective structure exists and validator passes. | automated_green |
+| POST-02 final closure | Operator-supplied | `.planning/phases/27-event-operations-settlement/27-HUMAN-UAT.md` | Retrospective is filled with evidence-backed findings after manual checkpoint. | human_needed |
 
 Required evidence:
 - Requirement-by-requirement evidence path.
