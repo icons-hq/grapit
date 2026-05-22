@@ -544,36 +544,36 @@ const csv = safeCsvRows([
 | A1 | Field monitor 10-second polling is sufficient for Phase 27 "real time" because UI-SPEC explicitly requests auto-refresh every 10s plus manual refresh. | Standard Stack, Architecture Patterns | If the user expects sub-second live updates, planner must add Socket.IO/WebSocket work. |
 | A2 | `ticket_scan_events` or equivalent new table is the right place for scan attempts, duplicate/rejected evidence, offline sync results, and monitor aggregation. | Architecture Patterns | If an existing audit table must be the only source, planner needs a different schema plan. |
 | A3 | Scanner check-in route can live outside `/admin` to avoid exposing the full admin sidebar. | Architecture Patterns | If product requires `/admin` URL, planner must capability-filter admin layout/sidebar first. |
-| A4 | Settlement/accounting input CSV columns can be derived from existing reservation/payment/refund/entry data because external accounting/tax/PG mapping is out of scope. | Phase Requirements, Standard Stack | If accountant-specific columns are mandatory, planner needs a user decision before export implementation. |
+| A4 | Settlement/accounting input CSV columns can be derived from existing reservation/payment/refund/entry data because external accounting/tax/PG mapping is out of scope. | Phase Requirements, Standard Stack | RESOLVED by Plans 27-09 and 27-15: export internal accounting-input datasets now; external accounting/tax/PG mapping remains out of scope by D-30. |
 | A5 | `@zxing/browser` is optional because locked decisions prefer normal phone camera opening an HTTPS URL, not a staff camera scanner web app. | Standard Stack | If staff must scan from inside a browser scanner page, add `@zxing/browser` and camera-permission tests. |
-| A6 | Event-day playbook external contacts are not currently defined in repo artifacts. | Phase Requirements, Open Questions | Planner must add a collection step or placeholders; otherwise OPS-03 cannot be fully verified. |
+| A6 | Event-day playbook external contacts are not currently defined in repo artifacts. | Phase Requirements, Open Questions | RESOLVED by Plans 27-04 and 27-16: create required contact fields/placeholders first, then require owner-filled or owner-approved not-applicable evidence before launch rehearsal. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Which event/showtime IDs are the launch scope for monitor, scanner, and settlement?**  
+1. **RESOLVED - Which event/showtime IDs are the launch scope for monitor, scanner, and settlement?**  
    What we know: Phase 27 is for 2026-07-04 event-day operations. [VERIFIED: .planning/ROADMAP.md]  
    What's unclear: Whether there is one showtime or multiple showtime scopes requiring separate monitor filters. [ASSUMED]  
-   Recommendation: Planner should make event/showtime selector scope explicit in Wave 0 and seed/test data. [ASSUMED]
+   Resolution source: Plans 27-06, 27-08, and 27-09 require event/showtime-scoped APIs; Plans 27-14 and 27-15 require event/showtime filters in the monitor and settlement UI; Plan 27-16 requires manual UAT evidence to record the exact event/showtime used. No hardcoded final business ID is invented in research.
 
-2. **What external contacts belong in the event-day playbooks?**  
+2. **RESOLVED - What external contacts belong in the event-day playbooks?**  
    What we know: Playbooks must cover forced refund, weather, facility, cast issue, on-site refund, and exchange scenarios with external contacts. [VERIFIED: .planning/REQUIREMENTS.md; VERIFIED: .planning/phases/27-event-operations-settlement/27-CONTEXT.md]  
    What's unclear: Actual venue, organizer, PG, artist agency, emergency, and operations contact values are not in the researched files. [ASSUMED]  
-   Recommendation: Planner should create a playbook artifact with required fields and mark missing values as human input before event-day verification. [ASSUMED]
+   Resolution source: Plan 27-04 creates `docs/runbooks/phase27-event-day-playbooks.md` with required external-contact fields and Plan 27-16 blocks final evidence until the fields are filled, owner-approved not-applicable, or marked blocker with owner/date.
 
-3. **What thresholds define duplicate spike, offline backlog, and sync failure alerts?**  
+3. **RESOLVED - What thresholds define duplicate spike, offline backlog, and sync failure alerts?**  
    What we know: Alert categories are required. [VERIFIED: .planning/phases/27-event-operations-settlement/27-CONTEXT.md]  
    What's unclear: Numeric threshold/window values are not specified. [ASSUMED]  
-   Recommendation: Planner should pick conservative configurable defaults and expose them in tests/artifact comments. [ASSUMED]
+   Resolution source: Plan 27-08 implements API alert aggregation with conservative configurable defaults for duplicate spikes, rejected/tampered scans, refunded/cancelled attempts, offline backlog, and sync failures; Plan 27-14 renders those alerts and verifies the UI contract. Final operational tuning remains configurable rather than a locked business value.
 
-4. **What exact settlement/accounting CSV columns does the operator need?**  
+4. **RESOLVED - What exact settlement/accounting CSV columns does the operator need?**  
    What we know: Entry status, no-show list, reservation/payment/refund summary, and settlement/accounting input data are required. [VERIFIED: .planning/REQUIREMENTS.md]  
    What's unclear: External accounting/PG mapping is out of scope, so final external column mapping is not defined. [VERIFIED: .planning/phases/27-event-operations-settlement/27-CONTEXT.md]  
-   Recommendation: Export core internal columns and label file as accounting input, not formal accounting settlement. [ASSUMED]
+   Resolution source: Plan 27-09 defines backend datasets `entry_status`, `no_show_reservations`, `reservation_payment_refund_summary`, and `settlement_accounting_input`; Plan 27-15 exposes matching CSV actions. These are internal accounting inputs, not formal external accounting/tax/PG mapped outputs per D-30.
 
-5. **What human evidence will prove real phone-camera scanning and venue offline rehearsal?**  
+5. **RESOLVED - What human evidence will prove real phone-camera scanning and venue offline rehearsal?**  
    What we know: Automation can test QR DOM, protected route, API consume, browser offline sync, and CSV export. [ASSUMED]  
    What's unclear: Real phone camera, venue connectivity, and staff account rehearsal require human/device evidence. [ASSUMED]  
-   Recommendation: Planner should include a human UAT checklist for phone-camera QR open, scanner-only login, offline stale/recovered connectivity, and post-sync result review. [ASSUMED]
+   Resolution source: Plan 27-16 creates `27-HUMAN-UAT.md` and a blocking human verification checkpoint for real phone-camera QR open, scanner-only permission rehearsal, venue-like stale/recovered offline sync, external operational contacts, and settlement operator review.
 
 ## Environment Availability
 
