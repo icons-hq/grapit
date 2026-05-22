@@ -4,6 +4,8 @@ const rawPaymentKey = 'phase26-raw-payment-key-should-not-render';
 const rawQrToken = 'phase26-raw-qr-token-should-not-render';
 const rawQrJti = 'phase26-qr-jti-1234567890';
 const maskedQrJti = 'phase26...7890';
+const rawJwtPayload = '"jti":"phase26-qr-jti-1234567890"';
+const qrCheckInUrl = `https://heygrabit.com/field/check-in?ticket=${rawQrToken}`;
 
 function createReservationDetail(overrides: Record<string, unknown> = {}) {
   return {
@@ -109,6 +111,10 @@ async function expectNoRawSecrets(page: Page) {
   await expect(page.getByText(rawPaymentKey, { exact: true })).toHaveCount(0);
   await expect(page.getByText(rawQrToken, { exact: true })).toHaveCount(0);
   await expect(page.getByText(rawQrJti, { exact: true })).toHaveCount(0);
+  await expect(page.getByText(rawJwtPayload, { exact: true })).toHaveCount(0);
+  await expect(page.getByText(qrCheckInUrl, { exact: true })).toHaveCount(0);
+  await expect(page.getByText(maskedQrJti, { exact: true })).toHaveCount(0);
+  await expect(page.getByText('티켓 ID', { exact: true })).toHaveCount(0);
 }
 
 test.describe('phase26 QR visibility', () => {
@@ -129,15 +135,22 @@ test.describe('phase26 QR visibility', () => {
     );
 
     await expect(
-      page.getByText('결제가 완료되었습니다. QR 티켓을 바로 확인할 수 있습니다.'),
+      page.getByText('QR 티켓이 준비되었습니다. 입장 시 현장 스태프가 QR을 확인합니다.').first(),
     ).toBeVisible({ timeout: 10000 });
     await expect(page.getByRole('button', { name: 'QR 티켓 보기' })).toBeVisible();
     await expect(page.getByText('QR 활성').first()).toBeVisible();
-    await expect(page.getByText(maskedQrJti)).toBeVisible();
+    await expect(page.getByTestId('qr-ticket-image')).toBeVisible();
+    await expect(page.getByTestId('qr-ticket-image')).toHaveAttribute(
+      'data-qr-url',
+      qrCheckInUrl,
+    );
+    await expect(
+      page.getByText('현장 검표 결과가 최종 입장 기준입니다.'),
+    ).toBeVisible();
     await expectNoRawSecrets(page);
   });
 
-  test('My Page reservation detail exposes active QR metadata without raw tokens', async ({ page }) => {
+  test('My Page reservation detail exposes a real active QR image without raw tokens', async ({ page }) => {
     await enableBooking(page);
     await mockAuthenticatedSession(page);
 
@@ -153,13 +166,19 @@ test.describe('phase26 QR visibility', () => {
 
     await expect(page.getByRole('heading', { name: 'QR 티켓' })).toBeVisible({ timeout: 10000 });
     await expect(page.getByText('QR 활성').first()).toBeVisible();
-    await expect(page.getByText(maskedQrJti)).toBeVisible();
-    await expect(page.getByText(/2026\.05\.20/).first()).toBeVisible();
+    await expect(page.getByTestId('qr-ticket-image')).toBeVisible();
+    await expect(page.getByTestId('qr-ticket-image')).toHaveAttribute(
+      'data-qr-url',
+      qrCheckInUrl,
+    );
+    await expect(
+      page.getByText('현장 검표 결과가 최종 입장 기준입니다.'),
+    ).toBeVisible();
     await expect(page.getByText('예매번호')).toBeVisible();
     await expect(page.getByText('GRP-26-QR-0001').first()).toBeVisible();
-    await expect(page.getByText('결제 완료')).toBeVisible();
-    await expect(page.getByText('Phase 26 QR Visibility Performance')).toBeVisible();
-    await expect(page.getByText('Phase 26 QR Venue')).toBeVisible();
+    await expect(page.getByText('Phase 26 QR Visibility Performance').first()).toBeVisible();
+    await expect(page.getByText('Phase 26 QR Venue').first()).toBeVisible();
+    await expect(page.getByText('VIP A열 1번').first()).toBeVisible();
     await expectNoRawSecrets(page);
   });
 });

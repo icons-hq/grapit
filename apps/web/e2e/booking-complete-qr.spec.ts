@@ -1,5 +1,11 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
 
+const rawPaymentKey = 'phase24-qr-payment-key';
+const rawQrToken = 'qr-token-phase24';
+const rawQrJti = 'qr-jti-phase24';
+const rawJwtPayload = '"jti":"qr-jti-phase24"';
+const qrCheckInUrl = `https://heygrabit.com/field/check-in?ticket=${rawQrToken}`;
+
 function createReservationDetail(overrides: Record<string, unknown> = {}) {
   return {
     id: 'phase24-qr-reservation',
@@ -28,7 +34,7 @@ function createReservationDetail(overrides: Record<string, unknown> = {}) {
     cancelDeadline: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000).toISOString(),
     cancelledAt: null,
     cancelReason: null,
-    paymentKey: 'phase24-qr-payment-key',
+    paymentKey: rawPaymentKey,
     queueAdmission: {
       queueSessionId: 'queue-phase24-qr',
       admissionToken: 'admission-phase24-qr',
@@ -53,8 +59,8 @@ function createReservationDetail(overrides: Record<string, unknown> = {}) {
     },
     cancelledSeatHold: null,
     qrTicket: {
-      token: 'qr-token-phase24',
-      jti: 'qr-jti-phase24',
+      token: rawQrToken,
+      jti: rawQrJti,
       status: 'ACTIVE',
       issuedAt: new Date().toISOString(),
       emailScheduledAt: new Date(Date.now() + 6 * 24 * 60 * 60 * 1000).toISOString(),
@@ -100,8 +106,18 @@ async function mockAuthenticatedSession(page: Page) {
   });
 }
 
+async function expectNoRawSecrets(page: Page) {
+  await expect(page.getByText(rawPaymentKey, { exact: true })).toHaveCount(0);
+  await expect(page.getByText(rawQrToken, { exact: true })).toHaveCount(0);
+  await expect(page.getByText(rawQrJti, { exact: true })).toHaveCount(0);
+  await expect(page.getByText(rawJwtPayload, { exact: true })).toHaveCount(0);
+  await expect(page.getByText(qrCheckInUrl, { exact: true })).toHaveCount(0);
+  await expect(page.getByText('qr-jti-...se24', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('티켓 ID', { exact: true })).toHaveCount(0);
+}
+
 test.describe('booking complete QR visibility', () => {
-  test('booking complete exposes QR follow-up CTA and D-1 email notice', async ({ page }) => {
+  test('booking complete exposes a real QR image, follow-up CTA, and D-1 email notice', async ({ page }) => {
     await enableBooking(page);
     await mockAuthenticatedSession(page);
 
@@ -118,9 +134,18 @@ test.describe('booking complete QR visibility', () => {
     );
 
     await expect(page.getByRole('button', { name: 'QR 티켓 보기' })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId('qr-ticket-image')).toBeVisible();
+    await expect(page.getByTestId('qr-ticket-image')).toHaveAttribute(
+      'data-qr-url',
+      qrCheckInUrl,
+    );
+    await expect(
+      page.getByText('현장 검표 결과가 최종 입장 기준입니다.'),
+    ).toBeVisible();
     await expect(
       page.getByText('QR 티켓 안내 메일은 공연 24시간 전에 다시 발송됩니다.'),
     ).toBeVisible({ timeout: 10000 });
+    await expectNoRawSecrets(page);
   });
 
   test('QR ticket is visible immediately from reservation detail', async ({ page }) => {
@@ -138,6 +163,14 @@ test.describe('booking complete QR visibility', () => {
     await page.goto('/mypage/reservations/phase24-qr-reservation');
 
     await expect(page.getByRole('heading', { name: 'QR 티켓' })).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText('qr-jti-...se24')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId('qr-ticket-image')).toBeVisible();
+    await expect(page.getByTestId('qr-ticket-image')).toHaveAttribute(
+      'data-qr-url',
+      qrCheckInUrl,
+    );
+    await expect(
+      page.getByText('현장 검표 결과가 최종 입장 기준입니다.'),
+    ).toBeVisible();
+    await expectNoRawSecrets(page);
   });
 });
