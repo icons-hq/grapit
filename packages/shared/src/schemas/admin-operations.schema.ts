@@ -176,6 +176,7 @@ export const adminNoticeAuthoringSchema = z.object({
 
 export const adminAuditActionSchema = z.enum([
   ...ADMIN_CAPABILITIES,
+  'field.scan.offline_sync',
   'event.update',
   'refund.admin_refund',
   'support.assign',
