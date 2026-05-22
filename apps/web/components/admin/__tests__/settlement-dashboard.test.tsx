@@ -86,7 +86,7 @@ describe('SettlementDashboard', () => {
     exportMutate.mockReset();
   });
 
-  it('renders dashboard summary and the required settlement tabs before export actions', () => {
+  it('renders dashboard summary, all settlement tabs, and all required dataset export actions', () => {
     renderDashboard();
 
     expect(screen.getByRole('heading', { name: '정산·내보내기' })).toBeInTheDocument();
@@ -101,6 +101,10 @@ describe('SettlementDashboard', () => {
     expect(
       summary.compareDocumentPosition(exportPanel) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+    expect(screen.getByRole('button', { name: '입장 상태 CSV 내보내기' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '노쇼 예약 CSV 내보내기' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '예매/결제/환불 CSV 내보내기' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '정산 CSV 내보내기' })).toBeInTheDocument();
   });
 
   it('requires confirmation and reason before settlement CSV export', async () => {
@@ -117,6 +121,14 @@ describe('SettlementDashboard', () => {
     ).toBeInTheDocument();
 
     const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('필터 요약')).toBeInTheDocument();
+    expect(within(dialog).getByText('phase27-event')).toBeInTheDocument();
+    expect(within(dialog).getByText('phase27-showtime')).toBeInTheDocument();
+    expect(within(dialog).getByText('2026-07-04 ~ 2026-07-04')).toBeInTheDocument();
+    expect(within(dialog).getByText('작업자')).toBeInTheDocument();
+    expect(within(dialog).getByText('finance-admin-1')).toBeInTheDocument();
+    expect(within(dialog).getByText('감사 로그에 내보내기 사유와 필터가 기록됩니다.')).toBeInTheDocument();
+
     const confirm = within(dialog).getByRole('button', { name: 'CSV 내보내기' });
     expect(confirm).toBeDisabled();
 
@@ -128,7 +140,7 @@ describe('SettlementDashboard', () => {
     expect(exportMutate).toHaveBeenCalledWith(
       expect.objectContaining({
         reason: '행사 종료 정산 대조',
-        exportType: 'settlement_input',
+        dataset: 'settlement_accounting_input',
       }),
     );
   });
