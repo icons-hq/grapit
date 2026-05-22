@@ -60,6 +60,7 @@ describe('ScannerCheckIn', () => {
     renderScanner();
 
     expect(screen.getByText('입장 가능 티켓입니다')).toBeInTheDocument();
+    expect(screen.queryByText('입장 처리가 완료되었습니다')).not.toBeInTheDocument();
     expect(screen.getByText('GRP-27-SCAN-0001')).toBeInTheDocument();
     expect(screen.getByText('Phase 27 Field Operations')).toBeInTheDocument();
 
@@ -73,6 +74,27 @@ describe('ScannerCheckIn', () => {
     await user.click(processButton);
 
     expect(onProcessEntry).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not render raw token, JTI, or full check-in URL text', () => {
+    const rawToken = 'raw-token-phase27-check-in-should-not-render';
+    const rawJti = 'raw-JTI-phase27-check-in-should-not-render';
+    const fullUrl = `https://heygrabit.com/field/check-in?ticket=${rawToken}`;
+
+    renderScanner({
+      verification: {
+        ...baseVerification,
+        rawToken,
+        rawJti,
+        qrUrl: fullUrl,
+        redactedTokenRef: rawToken,
+        maskedJti: rawJti,
+      } as unknown as typeof baseVerification,
+    });
+
+    expect(document.body).not.toHaveTextContent(rawToken);
+    expect(document.body).not.toHaveTextContent(rawJti);
+    expect(document.body).not.toHaveTextContent(fullUrl);
   });
 
   it.each([
