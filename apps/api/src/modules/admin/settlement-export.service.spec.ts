@@ -81,6 +81,42 @@ describe('SettlementExportService RED contract', () => {
     vi.restoreAllMocks();
   });
 
+  it('summarizes event-level sales, payment, refund, entry, and no-show totals', async () => {
+    const { service, db } = createDependencies();
+    db.select.mockReturnValueOnce(chainResult([
+      {
+        eventId: 'event-girl-rules-20260704',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
+        currency: 'KRW',
+        grossSalesAmount: 198000,
+        paidReservationCount: 2,
+        refundedAmount: 99000,
+        refundCount: 1,
+        enteredCount: 1,
+        noShowCount: 1,
+      },
+    ]));
+
+    await expect(
+      service.getSummary({
+        eventId: 'event-girl-rules-20260704',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
+      }),
+    ).resolves.toEqual({
+      eventId: 'event-girl-rules-20260704',
+      showtimeId: '00000000-0000-4000-8000-000000000001',
+      currency: 'KRW',
+      grossSalesAmount: 198000,
+      paidReservationCount: 2,
+      refundedAmount: 99000,
+      refundCount: 1,
+      enteredCount: 1,
+      noShowCount: 1,
+      entryRate: 0.5,
+      generatedAt: expect.any(String),
+    });
+  });
+
   it.each(DATASETS)('exports %s dataset with safeCsvRows and audited metadata only', async (dataset) => {
     const { service, db, adminAuditService } = createDependencies();
     const safeCsvRowsSpy = vi.spyOn(csvExport, 'safeCsvRows');
