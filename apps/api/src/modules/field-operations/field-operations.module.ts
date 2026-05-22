@@ -5,15 +5,18 @@ import { AdminAuditService } from '../admin/admin-audit.service.js';
 import { TicketModule } from '../ticket/ticket.module.js';
 import { FieldCheckInController } from './field-check-in.controller.js';
 import { FieldCheckInService } from './field-check-in.service.js';
+import { OfflineSyncController } from './offline-sync.controller.js';
+import { OfflineSyncService } from './offline-sync.service.js';
 
 @Module({
   imports: [TicketModule],
-  controllers: [FieldCheckInController],
+  controllers: [FieldCheckInController, OfflineSyncController],
   providers: [
     FieldCheckInService,
+    OfflineSyncService,
     AdminAuditService,
     AdminCapabilitiesGuard,
   ],
-  exports: [FieldCheckInService],
+  exports: [FieldCheckInService, OfflineSyncService],
 })
 export class FieldOperationsModule {}
