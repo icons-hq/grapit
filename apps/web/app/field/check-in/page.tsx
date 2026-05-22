@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { hasAdminCapability } from '@grabit/shared';
 import { AlertTriangle, Loader2, ScanLine } from 'lucide-react';
@@ -8,7 +8,18 @@ import { ScannerCheckIn } from '@/components/field/scanner-check-in';
 import {
   useFieldCheckInConsume,
   useFieldCheckInVerify,
+  useFieldOfflineSync,
+  type ScannerCheckInConsumeResult,
+  type ScannerCheckInVerification,
+  type ScannerOfflineQueueItem,
+  type ScannerOfflineSyncResult,
 } from '@/hooks/use-field-operations';
+import {
+  addPendingScanAttempt,
+  listPendingScanAttempts,
+  updatePendingScanAttempt,
+  type PendingScanAttemptRecord,
+} from '@/lib/field/offline-scan-store';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { useAuthStore } from '@/stores/use-auth-store';
@@ -22,6 +33,12 @@ export default function FieldCheckInPage() {
   const { isInitialized, accessToken, user } = useAuthStore();
   const ticketToken = searchParams.get('ticket') ?? searchParams.get('token') ?? '';
   const showtimeId = searchParams.get('showtimeId') ?? undefined;
+  const eventId = searchParams.get('eventId') ?? 'field-event';
+  const shouldSeedOfflineAttempt = searchParams.get('offlineAttempt') === '1';
+  const seededOfflineAttemptRef = useRef(false);
+  const [offlineQueue, setOfflineQueue] = useState<ScannerOfflineQueueItem[]>([]);
+  const [offlineConsumeResult, setOfflineConsumeResult] =
+    useState<ScannerCheckInConsumeResult | null>(null);
   const returnTarget = useMemo(() => {
     const query = searchParams.toString();
     return `${pathname}${query ? `?${query}` : ''}`;
@@ -44,6 +61,67 @@ export default function FieldCheckInPage() {
     enabled: isInitialized && Boolean(accessToken) && hasScannerAccess && ticketToken.length > 0,
   });
   const consumeMutation = useFieldCheckInConsume();
+  const offlineSyncMutation = useFieldOfflineSync();
+  const effectiveShowtimeId =
+    verifyQuery.data?.showtimeId ?? showtimeId ?? FALLBACK_SHOWTIME_ID;
+  const mergedVerification = useMemo(
+    () =>
+      verifyQuery.data
+        ? mergeVerificationOfflineQueue(verifyQuery.data, offlineQueue)
+        : null,
+    [offlineQueue, verifyQuery.data],
+  );
+
+  const refreshOfflineQueue = useCallback(async () => {
+    const records = await listPendingScanAttempts();
+    setOfflineQueue(records.map(pendingRecordToQueueItem));
+  }, []);
+
+  useEffect(() => {
+    if (!isInitialized || !accessToken || !hasScannerAccess) {
+      return;
+    }
+    void refreshOfflineQueue();
+  }, [accessToken, hasScannerAccess, isInitialized, refreshOfflineQueue]);
+
+  useEffect(() => {
+    if (
+      !shouldSeedOfflineAttempt ||
+      seededOfflineAttemptRef.current ||
+      !isInitialized ||
+      !accessToken ||
+      !hasScannerAccess ||
+      !verifyQuery.data
+    ) {
+      return;
+    }
+
+    seededOfflineAttemptRef.current = true;
+    void (async () => {
+      await addPendingScanAttempt(
+        createPendingAttempt({
+          deviceAttemptId: 'device-attempt-phase27-rejected',
+          scannerUserId: user?.id ?? 'scanner-session',
+          eventId,
+          showtimeId: effectiveShowtimeId,
+          token: ticketToken,
+          attemptedAt: new Date().toISOString(),
+        }),
+      );
+      await refreshOfflineQueue();
+    })();
+  }, [
+    accessToken,
+    effectiveShowtimeId,
+    eventId,
+    hasScannerAccess,
+    isInitialized,
+    refreshOfflineQueue,
+    shouldSeedOfflineAttempt,
+    ticketToken,
+    user?.id,
+    verifyQuery.data,
+  ]);
 
   if (!isInitialized || (!accessToken && isInitialized)) {
     return <ScannerLoading message="검표 세션을 확인하고 있습니다" />;
@@ -84,24 +162,95 @@ export default function FieldCheckInPage() {
   }
 
   return (
-    <ScannerCheckIn
-      user={user}
-      verification={verifyQuery.data ?? null}
-      consumeResult={consumeMutation.data ?? null}
-      isConsuming={consumeMutation.isPending}
-      onProcessEntry={() => {
-        if (!verifyQuery.data) {
-          return;
-        }
-        consumeMutation.mutate({
-          token: ticketToken,
-          showtimeId: verifyQuery.data.showtimeId ?? showtimeId ?? FALLBACK_SHOWTIME_ID,
-          deviceAttemptId,
-          confirmed: true,
-        });
-      }}
-      onSyncOffline={() => undefined}
-    />
+      <ScannerCheckIn
+        user={user}
+        verification={mergedVerification}
+        consumeResult={consumeMutation.data ?? offlineConsumeResult}
+        isConsuming={consumeMutation.isPending}
+        isSyncingOffline={offlineSyncMutation.isPending}
+        onProcessEntry={() => {
+          void (async () => {
+            if (!verifyQuery.data) {
+              return;
+            }
+
+            if (isBrowserOffline() && accessToken && user?.id) {
+              await addPendingScanAttempt(
+                createPendingAttempt({
+                  deviceAttemptId,
+                  scannerUserId: user.id,
+                  eventId,
+                  showtimeId: effectiveShowtimeId,
+                  token: ticketToken,
+                  attemptedAt: new Date().toISOString(),
+                }),
+              );
+              setOfflineConsumeResult({
+                result: 'offline-pending',
+                resultLabel:
+                  '네트워크 문제로 보류 스캔에 저장했습니다. 연결이 복구되면 서버와 동기화하세요.',
+              });
+              await refreshOfflineQueue();
+              return;
+            }
+
+            try {
+              setOfflineConsumeResult(null);
+              await consumeMutation.mutateAsync({
+                token: ticketToken,
+                showtimeId: effectiveShowtimeId,
+                deviceAttemptId,
+                confirmed: true,
+              });
+            } catch (error) {
+              if (!isNetworkFailure(error) || !accessToken || !user?.id) {
+                return;
+              }
+
+              await addPendingScanAttempt(
+                createPendingAttempt({
+                  deviceAttemptId,
+                  scannerUserId: user.id,
+                  eventId,
+                  showtimeId: effectiveShowtimeId,
+                  token: ticketToken,
+                  attemptedAt: new Date().toISOString(),
+                }),
+              );
+              setOfflineConsumeResult({
+                result: 'offline-pending',
+                resultLabel:
+                  '네트워크 문제로 보류 스캔에 저장했습니다. 연결이 복구되면 서버와 동기화하세요.',
+              });
+              await refreshOfflineQueue();
+            }
+          })();
+        }}
+        onSyncOffline={() => {
+          void (async () => {
+            const pendingAttempts = await listPendingScanAttempts({
+              syncState: 'pending',
+            });
+            if (pendingAttempts.length === 0) {
+              return;
+            }
+
+            const results = await offlineSyncMutation.mutateAsync({
+              attempts: pendingAttempts.map(pendingRecordToSyncAttempt),
+            });
+            await persistSyncResults({
+              results,
+              pendingAttempts,
+              eventId,
+              showtimeId: effectiveShowtimeId,
+              token: ticketToken,
+              scannerUserId: user?.id ?? 'scanner-session',
+            });
+            setOfflineConsumeResult(null);
+            await refreshOfflineQueue();
+          })();
+        }}
+      />
   );
 }
 
@@ -162,4 +311,154 @@ function createDeviceAttemptId(): string {
     return crypto.randomUUID();
   }
   return `scanner-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function mergeVerificationOfflineQueue(
+  verification: ScannerCheckInVerification,
+  offlineQueue: ScannerOfflineQueueItem[],
+): ScannerCheckInVerification {
+  const byId = new Map<string, ScannerOfflineQueueItem>();
+  for (const item of verification.offlineQueue) {
+    byId.set(item.deviceAttemptId, item);
+  }
+  for (const item of offlineQueue) {
+    byId.set(item.deviceAttemptId, item);
+  }
+
+  return {
+    ...verification,
+    offlineQueue: [...byId.values()].sort((a, b) =>
+      a.attemptedAt.localeCompare(b.attemptedAt),
+    ),
+  };
+}
+
+function createPendingAttempt({
+  deviceAttemptId,
+  scannerUserId,
+  eventId,
+  showtimeId,
+  token,
+  attemptedAt,
+}: {
+  deviceAttemptId: string;
+  scannerUserId: string;
+  eventId: string;
+  showtimeId: string;
+  token: string;
+  attemptedAt: string;
+}): PendingScanAttemptRecord {
+  return {
+    deviceAttemptId,
+    scannerUserId,
+    eventId,
+    showtimeId,
+    redactedTokenRef: redactedTokenRef(token),
+    attemptedAt,
+    syncState: 'pending',
+  };
+}
+
+function pendingRecordToQueueItem(
+  record: PendingScanAttemptRecord,
+): ScannerOfflineQueueItem {
+  return {
+    deviceAttemptId: record.deviceAttemptId,
+    state: record.syncState,
+    attemptedAt: record.attemptedAt,
+    reason: record.resultLabel ?? record.rejectionReason ?? null,
+  };
+}
+
+function pendingRecordToSyncAttempt(record: PendingScanAttemptRecord) {
+  return {
+    deviceAttemptId: record.deviceAttemptId,
+    scannerUserId: record.scannerUserId,
+    showtimeId: record.showtimeId,
+    attemptedAt: record.attemptedAt,
+    redactedTokenRef: record.redactedTokenRef,
+    syncState: record.syncState,
+    lastSyncAttemptAt: new Date().toISOString(),
+    rejectionReason: record.rejectionReason ?? null,
+  };
+}
+
+async function persistSyncResults({
+  results,
+  pendingAttempts,
+  eventId,
+  showtimeId,
+  token,
+  scannerUserId,
+}: {
+  results: ScannerOfflineSyncResult[];
+  pendingAttempts: PendingScanAttemptRecord[];
+  eventId: string;
+  showtimeId: string;
+  token: string;
+  scannerUserId: string;
+}) {
+  const pendingById = new Map(
+    pendingAttempts.map((attempt) => [attempt.deviceAttemptId, attempt]),
+  );
+
+  await Promise.all(
+    results.map(async (result) => {
+      const existing = pendingById.get(result.deviceAttemptId);
+      const updated = await updatePendingScanAttempt(result.deviceAttemptId, {
+        syncState: result.state,
+        lastSyncAttemptAt: new Date().toISOString(),
+        rejectionReason: result.reason ?? null,
+        result: result.result,
+        resultLabel: result.resultLabel,
+        scanEventId: result.scanEventId ?? null,
+        resolvedAt: result.resolvedAt ?? new Date().toISOString(),
+      });
+
+      if (updated) {
+        return;
+      }
+
+      await addPendingScanAttempt({
+        deviceAttemptId: result.deviceAttemptId,
+        scannerUserId,
+        eventId,
+        showtimeId: existing?.showtimeId ?? showtimeId,
+        redactedTokenRef: existing?.redactedTokenRef ?? redactedTokenRef(token),
+        attemptedAt: existing?.attemptedAt ?? new Date().toISOString(),
+        syncState: result.state,
+        lastSyncAttemptAt: new Date().toISOString(),
+        rejectionReason: result.reason ?? null,
+        result: result.result,
+        resultLabel: result.resultLabel,
+        scanEventId: result.scanEventId ?? null,
+        resolvedAt: result.resolvedAt ?? new Date().toISOString(),
+      });
+    }),
+  );
+}
+
+function redactedTokenRef(token: string): string {
+  const trimmed = token.trim();
+  if (trimmed.length <= 12) {
+    return 'tok_[redacted]';
+  }
+  return `tok_${trimmed.slice(0, 6)}...${trimmed.slice(-4)}`;
+}
+
+function isNetworkFailure(error: unknown): boolean {
+  if (isBrowserOffline()) {
+    return true;
+  }
+  if (error instanceof TypeError) {
+    return true;
+  }
+  if (error instanceof Error) {
+    return /network|fetch|failed to fetch|load failed/i.test(error.message);
+  }
+  return false;
+}
+
+function isBrowserOffline(): boolean {
+  return typeof navigator !== 'undefined' && navigator.onLine === false;
 }

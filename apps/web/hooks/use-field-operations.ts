@@ -6,6 +6,8 @@ import type {
   FieldCheckInConsumeResponse,
   FieldCheckInVerifyRequest,
   FieldCheckInVerifyResponse,
+  FieldOfflineSyncRequest,
+  FieldOfflineSyncResponse,
 } from '@grabit/shared';
 import { apiClient } from '@/lib/api-client';
 
@@ -26,6 +28,16 @@ export interface ScannerOfflineQueueItem {
   state: 'pending' | 'synced' | 'rejected';
   attemptedAt: string;
   reason?: string | null;
+}
+
+export interface ScannerOfflineSyncResult {
+  deviceAttemptId: string;
+  state: 'synced' | 'rejected';
+  result: ScannerCheckInResult;
+  resultLabel: string;
+  resolvedAt?: string;
+  reason?: string | null;
+  scanEventId?: string | null;
 }
 
 export interface ScannerPriorScanContext {
@@ -104,6 +116,24 @@ export function useFieldCheckInConsume() {
   });
 }
 
+export function useFieldOfflineSync() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: FieldOfflineSyncRequest) => {
+      const response = await apiClient.post<FieldOfflineSyncResponse>(
+        '/api/v1/field/check-in/offline-sync',
+        input,
+        { showErrorToast: false },
+      );
+      return normalizeOfflineSyncResponse(response);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['field', 'check-in'] });
+    },
+  });
+}
+
 export function normalizeVerifyResponse(
   response: FieldCheckInVerifyResponse | Record<string, unknown>,
 ): ScannerCheckInVerification {
@@ -155,6 +185,43 @@ export function normalizeConsumeResponse(
       record['priorScanContext'] ?? record['priorScan'],
     ),
   };
+}
+
+export function normalizeOfflineSyncResponse(
+  response: FieldOfflineSyncResponse | Record<string, unknown>,
+): ScannerOfflineSyncResult[] {
+  const record = asRecord(response) ?? {};
+  const results = Array.isArray(record['results']) ? record['results'] : [];
+
+  return results
+    .map((item): ScannerOfflineSyncResult | null => {
+      const row = asRecord(item);
+      const deviceAttemptId = stringValue(row?.['deviceAttemptId']);
+      const rawState = stringValue(row?.['syncState']) ?? stringValue(row?.['state']);
+      if (!deviceAttemptId || (rawState !== 'synced' && rawState !== 'rejected')) {
+        return null;
+      }
+
+      const result = normalizeResult(
+        stringValue(row?.['outcome']) ?? stringValue(row?.['result']),
+        false,
+      );
+      const reason =
+        stringValue(row?.['reason']) ??
+        stringValue(row?.['rejectionReason']) ??
+        stringValue(row?.['resultLabel']);
+
+      return {
+        deviceAttemptId,
+        state: rawState,
+        result,
+        resultLabel: stringValue(row?.['resultLabel']) ?? labelForResult(result),
+        resolvedAt: stringValue(row?.['resolvedAt']),
+        scanEventId: stringValue(row?.['scanEventId']),
+        reason,
+      };
+    })
+    .filter((item): item is ScannerOfflineSyncResult => item !== null);
 }
 
 export function labelForResult(result: ScannerCheckInResult): string {

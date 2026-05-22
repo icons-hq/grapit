@@ -63,16 +63,22 @@ test.describe('phase27 offline sync browser contracts', () => {
     await mockVerify(page);
 
     await page.goto(`/field/check-in?ticket=${encodeURIComponent(rawQrToken)}`);
-    await expect(page.getByText('입장 가능 티켓입니다')).toBeVisible({ timeout: 10000 });
+    await expect(
+      page.getByRole('status', { name: '입장 가능 티켓입니다' }),
+    ).toBeVisible({ timeout: 10000 });
 
     await page.context().setOffline(true);
     await page.getByRole('button', { name: '입장 처리' }).click();
 
     await expect(
-      page.getByText('네트워크 문제로 보류 스캔에 저장했습니다. 연결이 복구되면 서버와 동기화하세요.'),
+      page.getByRole('status', {
+        name: '네트워크 문제로 보류 스캔에 저장했습니다. 연결이 복구되면 서버와 동기화하세요.',
+      }),
     ).toBeVisible();
-    await expect(page.getByText('보류 상태는 최종 입장 증거가 아닙니다')).toBeVisible();
-    await expect(page.getByText('pending')).toBeVisible();
+    await expect(page.getByTestId('offline-sync-status')).toContainText(
+      '보류 상태는 최종 입장 증거가 아닙니다',
+    );
+    await expect(page.getByTestId('offline-sync-status')).toContainText('pending');
     await expect(page.getByText('입장 처리가 완료되었습니다')).toHaveCount(0);
 
     await page.context().setOffline(false);
@@ -94,8 +100,10 @@ test.describe('phase27 offline sync browser contracts', () => {
 
     await page.getByRole('button', { name: '보류 스캔 동기화' }).click();
 
-    await expect(page.getByText('보류 스캔 동기화 완료')).toBeVisible();
-    await expect(page.getByText('synced')).toBeVisible();
+    await expect(page.getByTestId('offline-sync-status')).toContainText(
+      '보류 스캔 동기화 완료',
+    );
+    await expect(page.getByTestId('offline-sync-status')).toContainText('synced');
     await expectNoRawSecrets(page);
   });
 
@@ -121,12 +129,16 @@ test.describe('phase27 offline sync browser contracts', () => {
     });
 
     await page.goto(`/field/check-in?ticket=${encodeURIComponent(rawQrToken)}&offlineAttempt=1`);
-    await expect(page.getByText('입장 가능 티켓입니다')).toBeVisible({ timeout: 10000 });
+    await expect(
+      page.getByRole('status', { name: '입장 가능 티켓입니다' }),
+    ).toBeVisible({ timeout: 10000 });
 
     await page.getByRole('button', { name: '보류 스캔 동기화' }).click();
 
-    await expect(page.getByText('rejected')).toBeVisible();
-    await expect(page.getByText('이미 입장 처리된 티켓입니다')).toBeVisible();
+    await expect(page.getByTestId('offline-sync-status')).toContainText('rejected');
+    await expect(page.getByTestId('offline-sync-status')).toContainText(
+      '이미 입장 처리된 티켓입니다',
+    );
     await expect(page.getByText('입장 처리가 완료되었습니다')).toHaveCount(0);
     await expectNoRawSecrets(page);
   });
