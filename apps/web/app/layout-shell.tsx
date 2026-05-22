@@ -12,7 +12,8 @@ export function LayoutShell({ children }: { children: React.ReactNode }) {
   // Hide GNB/Footer on booking seat selection and confirm pages, but show on complete page
   const isBookingCheckout =
     pathname.startsWith('/booking') && !pathname.endsWith('/complete');
-  const hideShell = isAdmin || isBookingCheckout;
+  const isFieldCheckIn = pathname.startsWith('/field/check-in');
+  const hideShell = isAdmin || isBookingCheckout || isFieldCheckIn;
 
   return (
     <>

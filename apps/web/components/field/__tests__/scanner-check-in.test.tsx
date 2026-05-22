@@ -23,6 +23,7 @@ const regularUser = {
 const baseVerification = {
   result: 'processable',
   resultLabel: '입장 가능 티켓입니다',
+  processable: true,
   reservationNumber: 'GRP-27-SCAN-0001',
   performanceTitle: 'Phase 27 Field Operations',
   showtimeAt: '2026-07-04T10:00:00.000Z',
@@ -60,6 +61,7 @@ describe('ScannerCheckIn', () => {
     renderScanner();
 
     expect(screen.getByText('입장 가능 티켓입니다')).toBeInTheDocument();
+    expect(screen.queryByText('입장 처리가 완료되었습니다')).not.toBeInTheDocument();
     expect(screen.getByText('GRP-27-SCAN-0001')).toBeInTheDocument();
     expect(screen.getByText('Phase 27 Field Operations')).toBeInTheDocument();
 
@@ -75,6 +77,27 @@ describe('ScannerCheckIn', () => {
     expect(onProcessEntry).toHaveBeenCalledTimes(1);
   });
 
+  it('does not render raw token, JTI, or full check-in URL text', () => {
+    const rawToken = 'raw-token-phase27-check-in-should-not-render';
+    const rawJti = 'raw-JTI-phase27-check-in-should-not-render';
+    const fullUrl = `https://heygrabit.com/field/check-in?ticket=${rawToken}`;
+
+    renderScanner({
+      verification: {
+        ...baseVerification,
+        rawToken,
+        rawJti,
+        qrUrl: fullUrl,
+        redactedTokenRef: rawToken,
+        maskedJti: rawJti,
+      } as unknown as typeof baseVerification,
+    });
+
+    expect(document.body).not.toHaveTextContent(rawToken);
+    expect(document.body).not.toHaveTextContent(rawJti);
+    expect(document.body).not.toHaveTextContent(fullUrl);
+  });
+
   it.each([
     ['duplicate', '이미 입장 처리된 티켓입니다'],
     ['refunded', '환불 또는 취소된 티켓입니다'],
@@ -86,6 +109,7 @@ describe('ScannerCheckIn', () => {
         ...baseVerification,
         result,
         resultLabel,
+        processable: false,
       },
     });
 
@@ -99,6 +123,7 @@ describe('ScannerCheckIn', () => {
         ...baseVerification,
         result: 'offline-pending',
         resultLabel: '네트워크 문제로 보류 스캔에 저장했습니다. 연결이 복구되면 서버와 동기화하세요.',
+        processable: false,
         offlineQueue: [
           {
             deviceAttemptId: 'device-attempt-1',

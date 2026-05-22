@@ -9,6 +9,7 @@ import { LoginForm } from '@/components/auth/login-form';
 import { SignupForm } from '@/components/auth/signup-form';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { getAuthLaunchCopy } from '@/components/auth/auth-launch-copy';
+import { resolveSafeReturnToFromSearch } from '@/lib/auth-return';
 
 export default function AuthPage() {
   const router = useRouter();
@@ -25,7 +26,11 @@ export default function AuthPage() {
         return;
       }
 
-      router.push(getLocalizedPathname('/', authCopy.locale));
+      const returnTo =
+        typeof window === 'undefined'
+          ? null
+          : resolveSafeReturnToFromSearch(window.location.search);
+      router.push(returnTo ?? getLocalizedPathname('/', authCopy.locale));
     }
   }, [isInitialized, accessToken, user, router, authCopy.locale]);
 
