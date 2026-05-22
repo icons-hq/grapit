@@ -183,7 +183,14 @@ describe('FieldMonitor', () => {
 
     expect(result.manualRefresh).toBe(refetchMock);
 
-    const options = useQueryMock.mock.calls[0]?.[0];
+    const calls = useQueryMock.mock.calls as unknown as Array<[
+      {
+        queryKey: readonly string[];
+        refetchInterval: typeof fieldMonitorRefetchInterval;
+        queryFn: () => Promise<unknown>;
+      },
+    ]>;
+    const options = calls[0][0];
     expect(options.queryKey).toEqual([
       'field',
       'monitor',
