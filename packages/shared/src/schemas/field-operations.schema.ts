@@ -127,6 +127,7 @@ export const fieldOfflineSyncAttemptSchema = z
     scannerUserId: z.string().trim().min(1, 'scanner user ID가 필요합니다'),
     showtimeId: showtimeIdSchema,
     attemptedAt: isoDatetime('오프라인 시도 시각'),
+    token: z.string().trim().min(1, 'QR token이 필요합니다'),
     redactedTokenRef: z.string().trim().min(1, 'redacted token reference가 필요합니다'),
     syncState: fieldOfflineSyncStateSchema,
     lastSyncAttemptAt: isoDatetime('마지막 동기화 시도 시각').nullable().optional(),

@@ -91,7 +91,7 @@ export class OfflineSyncService {
     try {
       const consumed = await this.fieldCheckInService.consume(
         {
-          token: attempt.redactedTokenRef,
+          token: attempt.token,
           showtimeId: attempt.showtimeId,
           deviceAttemptId: attempt.deviceAttemptId,
           confirmed: true,

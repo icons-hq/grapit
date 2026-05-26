@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, eq, gte, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, lte, sql } from 'drizzle-orm';
 import type {
   FieldCheckInOutcome,
   FieldMonitorAlert,
@@ -215,6 +215,7 @@ export class FieldMonitorService {
       .innerJoin(showtimes, eq(ticketScanEvents.showtimeId, showtimes.id))
       .innerJoin(performances, eq(showtimes.performanceId, performances.id))
       .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(ticketScanEvents.scannedAt), desc(ticketScanEvents.id))
       .limit(100);
   }
 }

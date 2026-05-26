@@ -12,6 +12,7 @@ export interface PendingScanAttemptRecord {
   scannerUserId: string;
   eventId: string;
   showtimeId: string;
+  token: string;
   redactedTokenRef: string;
   attemptedAt: string;
   syncState: FieldOfflineSyncState;
@@ -188,6 +189,7 @@ function sanitizePendingAttempt(
     scannerUserId: attempt.scannerUserId,
     eventId: attempt.eventId,
     showtimeId: attempt.showtimeId,
+    token: attempt.token,
     redactedTokenRef: attempt.redactedTokenRef,
     attemptedAt: attempt.attemptedAt,
     syncState: attempt.syncState,

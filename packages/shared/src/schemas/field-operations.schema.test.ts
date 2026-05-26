@@ -112,11 +112,13 @@ describe('field operations contract', () => {
       scannerUserId: 'scanner-user-1',
       showtimeId: VALID_SHOWTIME_ID,
       attemptedAt: VALID_ISO,
+      token: 'opaque-ticket-token',
       redactedTokenRef: 'tok_abc...xyz',
       syncState: 'pending',
     });
 
     expect(pending.syncState).toBe('pending');
+    expect(pending.token).toBe('opaque-ticket-token');
     expect(pending.redactedTokenRef).toBe('tok_abc...xyz');
 
     const response = fieldOfflineSyncResponseSchema.parse({

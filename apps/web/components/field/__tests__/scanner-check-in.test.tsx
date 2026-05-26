@@ -209,6 +209,7 @@ describe('offline pending scan store', () => {
       scannerUserId: 'scanner-user-1',
       eventId: 'event-phase27',
       showtimeId: '00000000-0000-4000-8000-000000000027',
+      token: 'opaque-ticket-token',
       redactedTokenRef: 'tok_abc...7890',
       attemptedAt: '2026-07-04T09:59:00.000Z',
       syncState: 'pending',
@@ -234,12 +235,13 @@ describe('offline pending scan store', () => {
     await expect(listPendingScanAttempts()).resolves.toEqual([]);
   });
 
-  it('does not persist raw QR tokens, JTI, URLs, payment keys, cookies, IP, or buyer PII', async () => {
+  it('persists the verifiable QR token for server sync without raw JTI, URLs, payment keys, cookies, IP, or buyer PII', async () => {
     await addPendingScanAttempt({
       deviceAttemptId: 'device-attempt-safe-1',
       scannerUserId: 'scanner-user-1',
       eventId: 'event-phase27',
       showtimeId: '00000000-0000-4000-8000-000000000027',
+      token: 'opaque-ticket-token',
       redactedTokenRef: 'tok_abc...7890',
       attemptedAt: '2026-07-04T09:59:00.000Z',
       syncState: 'pending',
@@ -252,10 +254,12 @@ describe('offline pending scan store', () => {
       scannerUserId: 'scanner-user-1',
       eventId: 'event-phase27',
       showtimeId: '00000000-0000-4000-8000-000000000027',
+      token: 'opaque-ticket-token',
       redactedTokenRef: 'tok_abc...7890',
       attemptedAt: '2026-07-04T09:59:00.000Z',
       syncState: 'pending',
     });
+    expect(stored?.token).toBe('opaque-ticket-token');
     expect(stored).not.toHaveProperty('rawToken');
     expect(stored).not.toHaveProperty('rawJti');
     expect(stored).not.toHaveProperty('qrUrl');

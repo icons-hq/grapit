@@ -45,6 +45,7 @@ function pendingAttempt(overrides: Partial<FieldOfflineSyncAttempt> = {}): Field
     scannerUserId: 'scanner-user-1',
     showtimeId: VALID_SHOWTIME_ID,
     attemptedAt: '2026-07-04T09:00:00.000Z',
+    token: RAW_QR_TOKEN,
     redactedTokenRef: 'tok_abc...7890',
     syncState: 'pending',
     ...overrides,
@@ -122,6 +123,12 @@ describe('OfflineSyncService RED contract', () => {
     });
     expect(result.results.map((row) => row.syncState)).not.toContain('success');
     expect(fieldCheckInService.consume).toHaveBeenCalledTimes(2);
+    expect(fieldCheckInService.consume.mock.calls[0]?.[0]).toMatchObject({
+      token: RAW_QR_TOKEN,
+      showtimeId: VALID_SHOWTIME_ID,
+      deviceAttemptId: 'device-attempt-ok',
+      confirmed: true,
+    });
     expect(adminAuditService.write).toHaveBeenCalledWith(
       expect.objectContaining({
         action: 'field.scan.offline_sync',
@@ -195,6 +202,7 @@ describe('OfflineSyncService RED contract', () => {
 
     expect(fieldCheckInService.consume).toHaveBeenCalledTimes(1);
     expect(fieldCheckInService.consume.mock.calls[0]?.[0]).toMatchObject({
+      token: RAW_QR_TOKEN,
       deviceAttemptId: 'device-attempt-pending',
       confirmed: true,
     });

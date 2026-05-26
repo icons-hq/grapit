@@ -3,14 +3,17 @@ import type { FieldMonitorSummary } from '@grabit/shared';
 
 import { FieldMonitorService } from './field-monitor.service.js';
 
-function chainResult<T>(rows: T[]) {
+function chainResult<T>(rows: T[], calls: string[] = []) {
   const handler: ProxyHandler<object> = {
     get(_target, prop) {
       if (prop === 'then') {
         return (resolve: (value: T[]) => void) => resolve(rows);
       }
 
-      return () => new Proxy({}, handler);
+      return () => {
+        calls.push(String(prop));
+        return new Proxy({}, handler);
+      };
     },
   };
 
@@ -144,6 +147,7 @@ describe('FieldMonitorService RED contract', () => {
 
   it('keeps raw token, raw JTI, and PII out of secondary monitor log rows', async () => {
     const { service, db } = createDependencies();
+    const calls: string[] = [];
     db.select.mockReturnValueOnce(chainResult([
       {
         id: 'scan-event-1',
@@ -161,7 +165,7 @@ describe('FieldMonitorService RED contract', () => {
         phone: '+821055501234',
         email: 'buyer@example.com',
       },
-    ]));
+    ], calls));
 
     const rows = await service.listScanLogs({
       eventId: 'event-girl-rules-20260704',
@@ -179,6 +183,8 @@ describe('FieldMonitorService RED contract', () => {
         rejectionReason: 'tampered signature',
       }),
     ]);
+    expect(calls.indexOf('orderBy')).toBeGreaterThan(-1);
+    expect(calls.indexOf('orderBy')).toBeLessThan(calls.indexOf('limit'));
     expectNoRawMonitorLeak(rows);
   });
 });
