@@ -9,8 +9,8 @@ import { CacheService } from '../cache.service.js';
  * - get() returns null on miss
  * - set() + get() round-trip with JSON serialization
  * - set() uses TTL 300 seconds ('EX', 300) as default (per D-08)
- * - invalidate() calls redis.del with provided keys
- * - invalidatePattern() calls redis.keys then redis.del
+ * - invalidate() deletes provided keys one by one for Valkey Cluster
+ * - invalidatePattern() scans matching keys and deletes them one by one
  * - invalidatePattern() no-op when keys array is empty
  * - Graceful degradation: get()/set() swallow redis errors
  */
@@ -102,12 +102,13 @@ describe('CacheService', () => {
   });
 
   describe('invalidate()', () => {
-    it('calls redis.del with provided keys when at least one key is passed', async () => {
-      mockRedis.del.mockResolvedValueOnce(2);
+    it('deletes provided keys one by one when at least one key is passed', async () => {
+      mockRedis.del.mockResolvedValue(1);
 
       await service.invalidate('cache:a', 'cache:b');
 
-      expect(mockRedis.del).toHaveBeenCalledWith('cache:a', 'cache:b');
+      expect(mockRedis.del).toHaveBeenNthCalledWith(1, 'cache:a');
+      expect(mockRedis.del).toHaveBeenNthCalledWith(2, 'cache:b');
     });
 
     it('does not call redis.del when no keys are passed', async () => {
@@ -118,20 +119,70 @@ describe('CacheService', () => {
   });
 
   describe('invalidatePattern()', () => {
-    it('calls redis.keys with the pattern and then redis.del for matches', async () => {
+    it('falls back to redis.keys when scan is unavailable and deletes matches one by one', async () => {
       mockRedis.keys.mockResolvedValueOnce([
         'cache:performances:list:musical:1:20:latest:false:none',
         'cache:performances:list:musical:2:20:latest:false:none',
       ]);
-      mockRedis.del.mockResolvedValueOnce(2);
+      mockRedis.del.mockResolvedValue(1);
 
       await service.invalidatePattern('cache:performances:list:*');
 
       expect(mockRedis.keys).toHaveBeenCalledWith('cache:performances:list:*');
-      expect(mockRedis.del).toHaveBeenCalledWith(
+      expect(mockRedis.del).toHaveBeenNthCalledWith(
+        1,
         'cache:performances:list:musical:1:20:latest:false:none',
+      );
+      expect(mockRedis.del).toHaveBeenNthCalledWith(
+        2,
         'cache:performances:list:musical:2:20:latest:false:none',
       );
+    });
+
+    it('scans every cluster master and deletes de-duplicated matches one by one', async () => {
+      const masterA = {
+        scan: vi.fn()
+          .mockResolvedValueOnce(['42', ['cache:home:banners']])
+          .mockResolvedValueOnce(['0', ['cache:home:hot:ko']]),
+      };
+      const masterB = {
+        scan: vi.fn()
+          .mockResolvedValueOnce(['0', ['cache:home:banners', 'cache:home:new:ko']]),
+      };
+      (mockRedis as unknown as {
+        nodes: ReturnType<typeof vi.fn>;
+      }).nodes = vi.fn().mockReturnValue([masterA, masterB]);
+      mockRedis.del.mockResolvedValue(1);
+
+      await service.invalidatePattern('cache:home:*');
+
+      expect(mockRedis.keys).not.toHaveBeenCalled();
+      expect(masterA.scan).toHaveBeenNthCalledWith(
+        1,
+        '0',
+        'MATCH',
+        'cache:home:*',
+        'COUNT',
+        250,
+      );
+      expect(masterA.scan).toHaveBeenNthCalledWith(
+        2,
+        '42',
+        'MATCH',
+        'cache:home:*',
+        'COUNT',
+        250,
+      );
+      expect(masterB.scan).toHaveBeenCalledWith(
+        '0',
+        'MATCH',
+        'cache:home:*',
+        'COUNT',
+        250,
+      );
+      expect(mockRedis.del).toHaveBeenNthCalledWith(1, 'cache:home:banners');
+      expect(mockRedis.del).toHaveBeenNthCalledWith(2, 'cache:home:hot:ko');
+      expect(mockRedis.del).toHaveBeenNthCalledWith(3, 'cache:home:new:ko');
     });
 
     it('does not call redis.del when keys() returns empty array', async () => {
@@ -153,6 +204,8 @@ describe('CacheService', () => {
         service.invalidate('cache:performances:detail:abc', 'cache:home:banners'),
       ).resolves.toBeUndefined();
 
+      expect(mockRedis.del).toHaveBeenNthCalledWith(1, 'cache:performances:detail:abc');
+      expect(mockRedis.del).toHaveBeenNthCalledWith(2, 'cache:home:banners');
       expect(warnSpy).toHaveBeenCalled();
       const warnCall = warnSpy.mock.calls[0] as unknown[];
       const payload = warnCall[0] as { err: string; op: string };
@@ -181,11 +234,15 @@ describe('CacheService', () => {
     });
 
     it('swallows redis.del errors after successful keys() lookup', async () => {
-      mockRedis.keys.mockResolvedValueOnce(['cache:home:banners']);
-      mockRedis.del.mockRejectedValueOnce(new Error('ECONNRESET'));
+      mockRedis.keys.mockResolvedValueOnce(['cache:home:banners', 'cache:home:hot:ko']);
+      mockRedis.del
+        .mockRejectedValueOnce(new Error('CROSSSLOT Keys in request don\'t hash to the same slot'))
+        .mockResolvedValueOnce(1);
       const warnSpy = vi.spyOn(service['logger'], 'warn').mockImplementation(() => {});
 
       await expect(service.invalidatePattern('cache:home:*')).resolves.toBeUndefined();
+      expect(mockRedis.del).toHaveBeenNthCalledWith(1, 'cache:home:banners');
+      expect(mockRedis.del).toHaveBeenNthCalledWith(2, 'cache:home:hot:ko');
       expect(warnSpy).toHaveBeenCalled();
 
       warnSpy.mockRestore();
