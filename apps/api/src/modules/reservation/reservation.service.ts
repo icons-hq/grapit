@@ -1377,7 +1377,7 @@ export class ReservationService {
       && payment?.id
       && payment.status === 'DONE'
       && this.qrTicketService
-        ? await this.qrTicketService.ensureIssuedTicketForReservation({
+        ? await this.qrTicketService.getOrIssueTicketForReservation({
             reservationId,
             paymentId: payment.id,
           })
@@ -1433,6 +1433,8 @@ export class ReservationService {
       token: '',
       jti: '',
       status: 'REVOKED',
+      entryStatus: 'NOT_ENTERED',
+      enteredAt: null,
       issuedAt: createdAt?.toISOString() ?? new Date(0).toISOString(),
       emailScheduledAt: null,
       emailedAt: null,

@@ -116,6 +116,8 @@ export const qrTicketSchema = z.object({
   token: z.string().min(1, 'QR token이 필요합니다'),
   jti: z.string().min(1, 'QR token JTI가 필요합니다'),
   status: z.enum(['ACTIVE', 'REVOKED', 'USED', 'EXPIRED']),
+  entryStatus: z.enum(['NOT_ENTERED', 'ENTERED']).optional(),
+  enteredAt: isoDatetime('입장 처리 시각').nullable().optional(),
   issuedAt: isoDatetime('QR 발급 시각'),
   emailScheduledAt: isoDatetime('QR 이메일 예약 시각').nullable().optional(),
   emailedAt: isoDatetime('QR 이메일 발송 시각').nullable().optional(),

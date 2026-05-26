@@ -290,6 +290,41 @@ Plans:
 
 **Merged from:** 41 QR verification + field monitor, 42 Event-day playbooks, 43 Settlement + retrospective
 
+**Plans:** 16/16 plans complete
+
+Plans:
+**Wave 0**
+- [x] 27-01-PLAN.md — Shared field operations contracts and scanner-only capability bundle
+- [x] 27-02-PLAN.md — Backend Wave 0 tests for check-in, offline sync, monitor, and settlement export
+- [x] 27-03-PLAN.md — Web and Playwright Wave 0 tests for QR, scanner, offline, monitor, and settlement UI
+- [x] 27-04-PLAN.md — Event-day playbook and retrospective artifact contracts
+
+**Wave 1**
+- [x] 27-05-PLAN.md — Ticket scan event schema, audit actions, and blocking local migration gate
+- [x] 27-10-PLAN.md — Web QR/offline dependencies and reusable QR ticket image component
+
+**Wave 2**
+- [x] 27-06-PLAN.md — Online scanner verify and manual check-in consume API
+- [x] 27-09-PLAN.md — Protected settlement summary and CSV export API
+- [x] 27-11-PLAN.md — Buyer payment-complete and My Page real QR image integration
+
+**Wave 3**
+- [x] 27-07-PLAN.md — Server-side offline sync conflict resolution API
+
+**Wave 4**
+- [x] 27-08-PLAN.md — KPI-first field monitor API
+- [x] 27-12-PLAN.md — Scanner-only web check-in route and online UI
+
+**Wave 5**
+- [x] 27-13-PLAN.md — IndexedDB offline pending scan store and sync UI
+- [x] 27-14-PLAN.md — Admin field monitor page and KPI-first UI
+
+**Wave 6**
+- [x] 27-15-PLAN.md — Settlement dashboard/export UI and scanner permission assignment
+
+**Wave 7**
+- [x] 27-16-PLAN.md — Final verification, manual UAT checkpoint, and retrospective closure
+
 **Success criteria:**
 1. QR scanner validates normal, duplicate, tampered, refunded, and offline cases.
 2. Entry monitor shows entered, not-entered, entry rate, duplicate scan, and abnormal access alerts.
@@ -297,6 +332,8 @@ Plans:
 4. Forced refund, weather, facility, cast issue, on-site refund, and exchange scenarios are documented with console actions and external contacts.
 5. Entry status, no-show reservation list, settlement, and accounting exports are generated.
 6. Retrospective records incidents, non-incidents, improvements, next-event carry-forward items, and v2.0 completion evidence.
+
+**Deferred launch/manual evidence:** Per maintainer instruction on 2026-05-22, physical phone-camera QR scan, external operational contact ownership, and production/venue dataset sign-off are recorded as follow-up evidence in Phase 27 artifacts instead of blocking this execute session.
 
 ## Progress
 

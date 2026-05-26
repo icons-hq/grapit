@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Fanmeet Launch
-status: human_needed
-stopped_at: Phase 26 verification complete; live cutover gates are no-go
-last_updated: "2026-05-20T07:21:36Z"
-last_activity: 2026-05-20 -- Phase 26 implementation complete; verification is human_needed/no-go pending operator/provider evidence
+status: "Phase 27 shipped — PR #82"
+stopped_at: Phase 27 execute complete; deferred launch/manual evidence tracked
+last_updated: "2026-05-26T06:43:53.000Z"
+last_activity: 2026-05-26
 progress:
   total_phases: 7
-  completed_phases: 4
-  total_plans: 83
-  completed_plans: 83
+  completed_phases: 6
+  total_plans: 99
+  completed_plans: 99
   percent: 100
 ---
 
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-04)
 
 **Core value:** 사용자가 원하는 공연을 발견하고, 좌석을 직접 선택하여, 안정적으로 예매를 완료할 수 있는 것
-**Current focus:** Phase 26 — m1-canary-cutover-gates
+**Current focus:** Phase 27 — event-operations-settlement
 
 ## Current Position
 
-Phase: 26 (m1-canary-cutover-gates) — HUMAN_NEEDED
-Plan: 12 of 12
-Status: Implementation and code review complete; live cutover remains no-go until external operator/provider gates pass
-Last activity: 2026-05-20 -- Phase 26 implementation complete; verification is human_needed/no-go pending operator/provider evidence
+Phase: 27 (event-operations-settlement) — EXECUTE COMPLETE
+Plan: 16 of 16
+Status: Phase 27 shipped — PR #82
+Last activity: 2026-05-26 - Completed quick task 260526-ln5: PR #82 Codex code-review fact-check and fix
 
 ## Deferred Items
 
@@ -113,7 +113,7 @@ Summary: 72 total items (debug sessions 5, quick tasks 43, seeds 2, UAT gaps 12,
 
 **Velocity:**
 
-- Current v2.0 planned tasks complete: 83/83 through Phase 26; Phase 26 live cutover remains human_needed/no-go pending external evidence
+- Current v2.0 plan scope: 83/99 plans complete through Phase 26; Phase 27 has 16 planned tasks ready for execution
 - Average duration: ~10min
 - Total execution time: ~3 hours
 
@@ -317,6 +317,9 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 260526-ln5 | PR #82 Codex code-review comments fact-check and confirmed fixes | 2026-05-26 | 8acfec1b | [260526-ln5-pr-82-codex-code-review-comments-fact-ch](./quick/260526-ln5-pr-82-codex-code-review-comments-fact-ch/) |
+| 260522-ms8 | Keep QR ticket visible after entry by separating credential status from admission status | 2026-05-22 | 89d82342 | [260522-ms8-keep-qr-ticket-visible-after-entry-by-se](./quick/260522-ms8-keep-qr-ticket-visible-after-entry-by-se/) |
+| 260522-lr8 | Fix QR ticket reservation detail after field check-in so used tickets render as entered instead of throwing 409 | 2026-05-22 | d2ddd1de | [260522-lr8-fix-qr-ticket-reservation-detail-after-f](./quick/260522-lr8-fix-qr-ticket-reservation-detail-after-f/) |
 | 260518-o33 | 탈퇴 계정의 social account 연결을 삭제해 Naver 재가입/로그인 server_error 차단 | 2026-05-18 | committed | [260518-o33-fix-social-account-cleanup-on-withdrawal](./quick/260518-o33-fix-social-account-cleanup-on-withdrawal/) |
 | 260518-l47 | 회원탈퇴 기능 구현 및 어드민 회원 관리에서 회원 탈퇴/DB 삭제 기능 추가 | 2026-05-18 | a178f1c | [260518-l47-db](./quick/260518-l47-db/) |
 | 260518-kib | favicon.ico 흰색 배경 제거 후 투명 아이콘으로 교체 | 2026-05-18 | committed | [260518-kib-favicon-ico](./quick/260518-kib-favicon-ico/) |
@@ -373,8 +376,8 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 
 ## Session Continuity
 
-Last session: 2026-05-20T04:28:25.530Z
-Stopped at: Phase 26 UI-SPEC approved
-Resume file: .planning/phases/26-m1-canary-cutover-gates/26-UI-SPEC.md
+Last session: 2026-05-22T16:55:00.000Z
+Stopped at: Phase 27 execute complete; deferred launch/manual evidence tracked
+Resume file: .planning/phases/27-event-operations-settlement/27-16-SUMMARY.md
 
-**Planned Phase:** v2.0 Phase 26 (m1-canary-cutover-gates) — Phase 25 is complete after 25-24 gap closure; D-08 admin MFA remains accepted risk in 25-VERIFICATION.md and 25-HUMAN-UAT.md.
+**Current routing:** Phase 27 execute is complete. Deferred launch/manual evidence remains in `27-HUMAN-UAT.md` for physical phone-camera QR scan, external operational contacts, and production/venue dataset sign-off.

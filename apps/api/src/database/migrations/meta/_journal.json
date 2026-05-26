@@ -169,6 +169,13 @@
       "when": 1779073200000,
       "tag": "0022_cleanup_withdrawn_social_accounts",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1779419068620,
+      "tag": "0023_phase27_ticket_scan_events",
+      "breakpoints": true
     }
   ]
 }

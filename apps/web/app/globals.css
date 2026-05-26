@@ -52,15 +52,6 @@
   --chart-4: #D1D1DB;
   --chart-5: #A1A1AA;
 
-  /* Spacing scale (4px base, 8-point grid) */
-  --spacing-xs: 4px;
-  --spacing-sm: 8px;
-  --spacing-md: 16px;
-  --spacing-lg: 24px;
-  --spacing-xl: 32px;
-  --spacing-2xl: 48px;
-  --spacing-3xl: 64px;
-
   /* Typography scale (semantic tokens) */
   --text-display: 28px;
   --text-heading: 20px;
@@ -130,6 +121,17 @@
  * Values must stay in sync with the @theme block above (Phase 11 UI-SPEC palette).
  */
 :root {
+  /* App spacing scale. Keep these outside Tailwind's --spacing-* namespace:
+   * v4 derives width/max-width utilities from that namespace.
+   */
+  --grabit-spacing-xs: 4px;
+  --grabit-spacing-sm: 8px;
+  --grabit-spacing-md: 16px;
+  --grabit-spacing-lg: 24px;
+  --grabit-spacing-xl: 32px;
+  --grabit-spacing-2xl: 48px;
+  --grabit-spacing-3xl: 64px;
+
   --chart-1: #6C3CE0;
   --chart-2: #8B6DE8;
   --chart-3: #B8A3EF;

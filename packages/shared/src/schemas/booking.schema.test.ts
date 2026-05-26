@@ -171,6 +171,8 @@ describe('prepareReservationSchema booking consent contract', () => {
         token: 'qr-token-1',
         jti: 'qr-jti-1',
         status: 'ACTIVE',
+        entryStatus: 'ENTERED',
+        enteredAt: '2026-05-08T11:50:00.000Z',
         issuedAt: '2026-05-08T11:46:00.000Z',
         emailScheduledAt: '2026-07-17T10:00:00.000Z',
       },
@@ -180,5 +182,6 @@ describe('prepareReservationSchema booking consent contract', () => {
     expect(detail.refundTimeline.currentState).toBe('PROCESSING_AT_PG');
     expect(detail.cancelledSeatHold?.releaseWindowMinutes.max).toBe(10);
     expect(detail.qrTicket.jti).toBe('qr-jti-1');
+    expect(detail.qrTicket.entryStatus).toBe('ENTERED');
   });
 });

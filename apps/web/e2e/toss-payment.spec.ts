@@ -68,7 +68,18 @@ test.describe('Toss Payments E2E', () => {
           showDateTime: new Date(Date.now() + 86400000).toISOString(),
           venue: 'E2E Venue',
           // Blocker B1: SeatSelection[] shape matching packages/shared/src/types/booking.types.ts
-          seats: [{ seatId: 's1', tierName: 'VIP', price: 50000, row: 'A', number: '1' }],
+          seats: [
+            {
+              seatId: 's1',
+              tierName: 'VIP',
+              price: 50000,
+              row: 'A',
+              number: '1',
+              floorKey: '1F',
+              floorLabel: '1층',
+              seatKey: '1F:A-1',
+            },
+          ],
           totalAmount: 50000,
           createdAt: new Date().toISOString(),
           // ReservationDetail additional fields (booking.types.ts:52-59)
@@ -78,6 +89,35 @@ test.describe('Toss Payments E2E', () => {
           cancelledAt: null,
           cancelReason: null,
           paymentKey: 'test_payment_key',
+          queueAdmission: {
+            queueSessionId: 'queue-toss-e2e',
+            admissionToken: 'admission-toss-e2e',
+            refreshFamilyId: 'family-toss-e2e',
+            deviceSlotKey: 'device-toss-e2e',
+            admittedAt: new Date().toISOString(),
+            activeUntilAt: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+            reentryGraceUntilAt: new Date(Date.now() + 12 * 60 * 1000).toISOString(),
+          },
+          paymentDeadlineAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+          bookingPolicy: {
+            maxTicketsPerOrder: 1,
+            cancellationChangePolicy: 'CANCEL_ONLY',
+            sameGradeChangeEnabled: false,
+            paymentWindowMinutes: 7,
+            seatHoldMinutes: 10,
+          },
+          refundTimeline: {
+            currentState: 'COMPLETED',
+            requestedAt: new Date().toISOString(),
+            customerServiceCtaVisible: false,
+          },
+          cancelledSeatHold: null,
+          qrTicket: {
+            token: 'toss-e2e-qr-token',
+            jti: 'toss-e2e-qr-jti',
+            status: 'ACTIVE',
+            issuedAt: new Date().toISOString(),
+          },
         }),
       });
     });

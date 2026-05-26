@@ -146,11 +146,14 @@ export interface CancelledSeatHold {
 }
 
 export type QrTicketStatus = 'ACTIVE' | 'REVOKED' | 'USED' | 'EXPIRED';
+export type QrTicketEntryStatus = 'NOT_ENTERED' | 'ENTERED';
 
 export interface QrTicket {
   token: string;
   jti: string;
   status: QrTicketStatus;
+  entryStatus?: QrTicketEntryStatus;
+  enteredAt?: string | null;
   issuedAt: string;
   emailScheduledAt?: string | null;
   emailedAt?: string | null;

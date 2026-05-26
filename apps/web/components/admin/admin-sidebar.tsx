@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import {
+  Activity,
   Theater,
   Image as ImageIcon,
   Ticket,
@@ -12,14 +13,28 @@ import {
   Languages,
   Inbox,
   FileQuestion,
+  FileSpreadsheet,
   Armchair,
   ScrollText,
   ShieldCheck,
   UsersRound,
+  type LucideIcon,
 } from 'lucide-react';
+import {
+  resolveAdminCapabilitySnapshot,
+  type AdminCapability,
+} from '@grabit/shared';
 import { cn } from '@/lib/cn';
+import { useAuthStore } from '@/stores/use-auth-store';
 
-const NAV_GROUPS = [
+interface NavItem {
+  label: string;
+  href: string;
+  icon: LucideIcon;
+  requiredCapability?: AdminCapability;
+}
+
+const NAV_GROUPS: readonly { label: string; items: readonly NavItem[] }[] = [
   {
     label: '개요',
     items: [
@@ -69,6 +84,17 @@ const NAV_GROUPS = [
         icon: FileCheck2,
       },
       {
+        label: '현장 모니터',
+        href: '/admin/field-monitor',
+        icon: Activity,
+      },
+      {
+        label: '정산·내보내기',
+        href: '/admin/settlement',
+        icon: FileSpreadsheet,
+        requiredCapability: 'settlement.export',
+      },
+      {
         label: '예매 관리',
         href: '/admin/bookings',
         icon: Ticket,
@@ -113,6 +139,12 @@ interface AdminSidebarProps {
 
 export function AdminSidebar({ variant = 'desktop' }: AdminSidebarProps) {
   const pathname = usePathname();
+  const user = useAuthStore((state) => state.user);
+  const capabilitySnapshot = resolveAdminCapabilitySnapshot(user);
+
+  if (isScannerOnlySnapshot(capabilitySnapshot)) {
+    return null;
+  }
 
   return (
     <aside
@@ -127,13 +159,22 @@ export function AdminSidebar({ variant = 'desktop' }: AdminSidebarProps) {
         </Link>
       </div>
       <nav className="flex flex-col gap-5 p-4" aria-label="관리자 네비게이션">
-        {NAV_GROUPS.map((group) => (
+        {NAV_GROUPS.map((group) => {
+          const visibleItems = group.items.filter((item) =>
+            canSeeNavItem(item, capabilitySnapshot),
+          );
+
+          if (visibleItems.length === 0) {
+            return null;
+          }
+
+          return (
           <div key={group.label} className="space-y-1.5">
             <p className="px-3 text-sm font-semibold text-gray-500">
               {group.label}
             </p>
             <div className="flex flex-col gap-1">
-              {group.items.map((item) => {
+              {visibleItems.map((item) => {
                 const isActive =
                   item.href === '/admin'
                     ? pathname === '/admin'
@@ -157,8 +198,36 @@ export function AdminSidebar({ variant = 'desktop' }: AdminSidebarProps) {
               })}
             </div>
           </div>
-        ))}
+          );
+        })}
       </nav>
     </aside>
+  );
+}
+
+function canSeeNavItem(
+  item: NavItem,
+  snapshot: ReturnType<typeof resolveAdminCapabilitySnapshot>,
+): boolean {
+  if (!item.requiredCapability) {
+    return true;
+  }
+
+  return snapshot.superuser || snapshot.capabilities.includes(item.requiredCapability);
+}
+
+function isScannerOnlySnapshot(
+  snapshot: ReturnType<typeof resolveAdminCapabilitySnapshot>,
+): boolean {
+  if (snapshot.superuser) {
+    return false;
+  }
+
+  return (
+    snapshot.bundle === 'scanner' ||
+    (snapshot.capabilities.length > 0 &&
+      snapshot.capabilities.every((capability) =>
+        capability.startsWith('field.scan.'),
+      ))
   );
 }

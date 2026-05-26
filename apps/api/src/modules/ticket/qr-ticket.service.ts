@@ -72,8 +72,10 @@ export interface QrTicketTokenPayload {
 }
 
 export interface QrTicketScannerContract {
+  ticketId?: string;
   tokenVersion: string;
   ticketStatus: QrTicketStatus;
+  reservationNumber?: string;
   reservationId: string;
   paymentId: string;
   showtimeId: string;
@@ -81,6 +83,7 @@ export interface QrTicketScannerContract {
   performanceTitle: string;
   showtimeAt: string;
   venueName: string;
+  seatLabels?: string[];
   maskedJti: string;
   verifiedAt: string;
 }
@@ -173,6 +176,31 @@ export class QrTicketService implements OnModuleInit {
     return this.toQrTicket(scheduledTicket);
   }
 
+  async getOrIssueTicketForReservation(input: {
+    reservationId: string;
+    paymentId: string;
+  }): Promise<QrTicket> {
+    const ticketRecord = await this.findTicketByReservationId(input.reservationId);
+
+    if (!ticketRecord) {
+      return this.ensureIssuedTicketForReservation(input);
+    }
+
+    const issueContext = await this.getReservationIssueContext(input);
+    if (
+      ticketRecord.paymentId !== issueContext.paymentId
+      || ticketRecord.showtimeId !== issueContext.showtimeId
+    ) {
+      throw new NotFoundException('QR 티켓 발급 대상 예매를 찾을 수 없습니다');
+    }
+
+    const scheduledTicket =
+      this.mapCredentialStatus(ticketRecord) === 'ACTIVE'
+        ? await this.ensureReminderSchedule(ticketRecord)
+        : ticketRecord;
+    return this.toQrTicket(scheduledTicket);
+  }
+
   async getOwnedTicketForReservation(
     reservationId: string,
     userId: string,
@@ -230,6 +258,13 @@ export class QrTicketService implements OnModuleInit {
   }
 
   async verifyTicketToken(token: string): Promise<QrTicketTokenPayload> {
+    const verified = await this.verifyTicketPayload(token);
+    await this.requireValidTicketState(verified);
+
+    return verified;
+  }
+
+  private async verifyTicketPayload(token: string): Promise<QrTicketTokenPayload> {
     const decoded = this.jwtService.decode<Record<string, unknown> | null>(token);
     const secretVersion =
       decoded && typeof decoded === 'object' && typeof decoded['secretVersion'] === 'string'
@@ -256,16 +291,19 @@ export class QrTicketService implements OnModuleInit {
       throw new UnauthorizedException('유효하지 않은 QR 티켓입니다');
     }
 
-    await this.requireValidTicketState(verified);
-
     return verified;
   }
 
   async verifyTicketForScannerContract(token: string): Promise<QrTicketScannerContract> {
-    const payload = await this.verifyTicketToken(token);
+    const payload = await this.verifyTicketPayload(token);
     const [row] = await this.db
       .select({
-        ticketStatus: tickets.status,
+        ticketId: tickets.id,
+        status: tickets.status,
+        expiresAt: tickets.expiresAt,
+        usedAt: tickets.usedAt,
+        revokedAt: tickets.revokedAt,
+        reservationNumber: reservations.reservationNumber,
         reservationId: reservations.id,
         paymentId: payments.id,
         showtimeId: showtimes.id,
@@ -288,7 +326,6 @@ export class QrTicketService implements OnModuleInit {
           eq(tickets.showtimeId, payload.showtimeId),
           eq(reservations.status, 'CONFIRMED'),
           eq(payments.status, 'DONE'),
-          eq(tickets.status, 'active'),
         ),
       );
 
@@ -298,7 +335,9 @@ export class QrTicketService implements OnModuleInit {
 
     return {
       tokenVersion: payload.secretVersion,
-      ticketStatus: this.mapStatus(row.ticketStatus),
+      ticketId: row.ticketId,
+      ticketStatus: this.mapScannerStatus(row),
+      reservationNumber: row.reservationNumber,
       reservationId: row.reservationId,
       paymentId: row.paymentId,
       showtimeId: row.showtimeId,
@@ -534,28 +573,48 @@ export class QrTicketService implements OnModuleInit {
     );
   }
 
-  private toQrTicket(ticketRecord: TicketRecord): QrTicket | Promise<QrTicket> {
-    return this.buildTicketToken(ticketRecord).then((token) => ({
-      token,
-      jti: ticketRecord.qrTokenJti,
-      status: this.mapStatus(ticketRecord.status),
+  private async toQrTicket(ticketRecord: TicketRecord): Promise<QrTicket> {
+    const status = this.mapCredentialStatus(ticketRecord);
+    const isActive = status === 'ACTIVE';
+
+    return {
+      token: isActive ? await this.buildTicketToken(ticketRecord) : '',
+      jti: isActive ? ticketRecord.qrTokenJti : '',
+      status,
+      entryStatus: ticketRecord.usedAt ? 'ENTERED' : 'NOT_ENTERED',
+      enteredAt: ticketRecord.usedAt?.toISOString() ?? null,
       issuedAt: ticketRecord.issuedAt.toISOString(),
       emailScheduledAt: ticketRecord.emailScheduledAt?.toISOString() ?? null,
       emailedAt: ticketRecord.emailSentAt?.toISOString() ?? null,
-    }));
+    };
   }
 
-  private mapStatus(status: TicketRecord['status']): QrTicketStatus {
-    switch (status) {
-      case 'active':
-        return 'ACTIVE';
-      case 'revoked':
-        return 'REVOKED';
-      case 'used':
-        return 'USED';
-      case 'expired':
-        return 'EXPIRED';
+  private mapCredentialStatus(
+    ticketRecord: Pick<TicketRecord, 'status' | 'expiresAt' | 'usedAt' | 'revokedAt'>,
+  ): QrTicketStatus {
+    const isExpired =
+      ticketRecord.expiresAt instanceof Date &&
+      ticketRecord.expiresAt.getTime() <= Date.now();
+
+    if (ticketRecord.revokedAt || ticketRecord.status === 'revoked') {
+      return 'REVOKED';
     }
+
+    if (isExpired || ticketRecord.status === 'expired') {
+      return 'EXPIRED';
+    }
+
+    return 'ACTIVE';
+  }
+
+  private mapScannerStatus(
+    ticketRecord: Pick<TicketRecord, 'status' | 'expiresAt' | 'usedAt' | 'revokedAt'>,
+  ): QrTicketStatus {
+    if (ticketRecord.usedAt || ticketRecord.status === 'used') {
+      return 'USED';
+    }
+
+    return this.mapCredentialStatus(ticketRecord);
   }
 
   private calculateEmailScheduledAt(showtimeAt: Date, issuedAt: Date): Date {

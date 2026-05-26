@@ -44,6 +44,12 @@ export { bookingPolicies } from './booking-policies.js';
 export { payments, paymentStatusEnum } from './payments.js';
 export { refunds, refundStatusEnum } from './refunds.js';
 export { tickets, ticketStatusEnum } from './tickets.js';
+export {
+  ticketScanEvents,
+  ticketScanResultEnum,
+  ticketScanSourceEnum,
+  ticketScanSyncStateEnum,
+} from './ticket-scan-events.js';
 export { paymentWebhookEvents } from './payment-webhook-events.js';
 export {
   bookingOperationActionEnum,

@@ -7,6 +7,7 @@ export * from './schemas/booking.schema';
 export * from './schemas/admin-dashboard.schema';
 export * from './schemas/consent.schema';
 export * from './schemas/admin-operations.schema';
+export * from './schemas/field-operations.schema';
 
 // Types
 export * from './types/auth.types';
