@@ -1,0 +1,92 @@
+{
+  "pr": {
+    "number": 82,
+    "title": "Phase 27: Event Operations + Settlement",
+    "url": "https://github.com/sangwopark19/grapit/pull/82",
+    "baseRefName": "main",
+    "headRefName": "gsd/phase-27-event-operations-settlement",
+    "fetchedHeadSha": "349af7180f1acf05c79e363dbd35f3edbecc97be",
+    "reviewedCommit": "7abb100bf1",
+    "fetchedAt": "2026-05-26T06:43:53Z"
+  },
+  "sources": {
+    "pullReviewComments": {
+      "path": "pr82-pull-review-comments.json",
+      "count": 2
+    },
+    "reviews": {
+      "path": "pr82-reviews.json",
+      "count": 1
+    },
+    "issueComments": {
+      "path": "pr82-issue-comments.json",
+      "count": 0
+    }
+  },
+  "findings": [
+    {
+      "id": "PR82-CODEX-001",
+      "source": "pull_request_review_comment",
+      "githubCommentId": 3301630938,
+      "url": "https://github.com/sangwopark19/grapit/pull/82#discussion_r3301630938",
+      "author": "chatgpt-codex-connector[bot]",
+      "path": "apps/api/src/modules/field-operations/offline-sync.service.ts",
+      "line": 94,
+      "severity": "P1",
+      "body_summary": "Offline sync passes masked redactedTokenRef to fieldCheckInService.consume, so recovered offline scans cannot pass QR token verification.",
+      "claim": "Offline sync must preserve a verifiable QR token for server consume instead of sending only tok_... masked text.",
+      "status": "confirmed_fixed",
+      "evidence": [
+        "Before fix, apps/api/src/modules/field-operations/offline-sync.service.ts line 94 passed attempt.redactedTokenRef as consume token.",
+        "apps/web/app/field/check-in/page.tsx createPendingAttempt produced only redactedTokenRef from redactedTokenRef(token), so the sync payload had no verifiable token.",
+        "packages/shared/src/schemas/field-operations.schema.ts now requires FieldOfflineSyncAttempt.token, and apps/api/src/modules/field-operations/offline-sync.service.ts now consumes attempt.token.",
+        "apps/api/src/modules/field-operations/offline-sync.service.spec.ts now asserts fieldCheckInService.consume receives RAW_QR_TOKEN while result/audit outputs remain redacted."
+      ],
+      "fix": {
+        "files": [
+          "packages/shared/src/schemas/field-operations.schema.ts",
+          "packages/shared/src/schemas/field-operations.schema.test.ts",
+          "apps/web/lib/field/offline-scan-store.ts",
+          "apps/web/app/field/check-in/page.tsx",
+          "apps/web/components/field/__tests__/scanner-check-in.test.tsx",
+          "apps/api/src/modules/field-operations/offline-sync.service.ts",
+          "apps/api/src/modules/field-operations/offline-sync.service.spec.ts"
+        ],
+        "summary": "Added a verifiable token field to offline sync attempts, persisted it in the browser pending queue, sent it in sync requests, and used it for server consume."
+      }
+    },
+    {
+      "id": "PR82-CODEX-002",
+      "source": "pull_request_review_comment",
+      "githubCommentId": 3301630946,
+      "url": "https://github.com/sangwopark19/grapit/pull/82#discussion_r3301630946",
+      "author": "chatgpt-codex-connector[bot]",
+      "path": "apps/api/src/modules/field-operations/field-monitor.service.ts",
+      "line": 218,
+      "severity": "P2",
+      "body_summary": "Field monitor scan log query limits to 100 rows without deterministic ordering.",
+      "claim": "Scan logs should be ordered before applying limit(100), otherwise current abnormal events may be omitted from the operations screen.",
+      "status": "confirmed_fixed",
+      "evidence": [
+        "Before fix, apps/api/src/modules/field-operations/field-monitor.service.ts ended the scan log query with .where(...).limit(100) and no orderBy.",
+        "Current code imports desc from drizzle-orm and applies .orderBy(desc(ticketScanEvents.scannedAt), desc(ticketScanEvents.id)) before .limit(100).",
+        "apps/api/src/modules/field-operations/field-monitor.service.spec.ts now records query builder calls and asserts orderBy appears before limit."
+      ],
+      "fix": {
+        "files": [
+          "apps/api/src/modules/field-operations/field-monitor.service.ts",
+          "apps/api/src/modules/field-operations/field-monitor.service.spec.ts"
+        ],
+        "summary": "Ordered field monitor scan logs by newest scan timestamp and stable id tie-breaker before limiting to 100 rows."
+      }
+    }
+  ],
+  "finalCounts": {
+    "confirmed_fixed": 2,
+    "already_fixed": 0,
+    "false_positive": 0,
+    "duplicate": 0,
+    "outdated_comment": 0,
+    "pending": 0
+  }
+}

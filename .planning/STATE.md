@@ -4,7 +4,7 @@ milestone: v2.0
 milestone_name: Fanmeet Launch
 status: "Phase 27 shipped — PR #82"
 stopped_at: Phase 27 execute complete; deferred launch/manual evidence tracked
-last_updated: "2026-05-26T06:15:42.911Z"
+last_updated: "2026-05-26T06:43:53.000Z"
 last_activity: 2026-05-26
 progress:
   total_phases: 7
@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-05-04)
 Phase: 27 (event-operations-settlement) — EXECUTE COMPLETE
 Plan: 16 of 16
 Status: Phase 27 shipped — PR #82
-Last activity: 2026-05-26
+Last activity: 2026-05-26 - Completed quick task 260526-ln5: PR #82 Codex code-review fact-check and fix
 
 ## Deferred Items
 
@@ -317,6 +317,7 @@ Full decision log in PROJECT.md Key Decisions table (10 decisions, all Good).
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
+| 260526-ln5 | PR #82 Codex code-review comments fact-check and confirmed fixes | 2026-05-26 | 8acfec1b | [260526-ln5-pr-82-codex-code-review-comments-fact-ch](./quick/260526-ln5-pr-82-codex-code-review-comments-fact-ch/) |
 | 260522-ms8 | Keep QR ticket visible after entry by separating credential status from admission status | 2026-05-22 | 89d82342 | [260522-ms8-keep-qr-ticket-visible-after-entry-by-se](./quick/260522-ms8-keep-qr-ticket-visible-after-entry-by-se/) |
 | 260522-lr8 | Fix QR ticket reservation detail after field check-in so used tickets render as entered instead of throwing 409 | 2026-05-22 | d2ddd1de | [260522-lr8-fix-qr-ticket-reservation-detail-after-f](./quick/260522-lr8-fix-qr-ticket-reservation-detail-after-f/) |
 | 260518-o33 | 탈퇴 계정의 social account 연결을 삭제해 Naver 재가입/로그인 server_error 차단 | 2026-05-18 | committed | [260518-o33-fix-social-account-cleanup-on-withdrawal](./quick/260518-o33-fix-social-account-cleanup-on-withdrawal/) |
