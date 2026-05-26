@@ -144,6 +144,17 @@ function invalidateBannerQueries(
   queryClient.invalidateQueries({ queryKey: ['home', 'banners'] });
 }
 
+function invalidatePublicPerformanceQueries(
+  queryClient: ReturnType<typeof useQueryClient>,
+  performanceId?: string,
+) {
+  if (performanceId) {
+    queryClient.invalidateQueries({ queryKey: ['performance', performanceId] });
+  }
+  queryClient.invalidateQueries({ queryKey: ['performances'] });
+  queryClient.invalidateQueries({ queryKey: ['home'] });
+}
+
 // Performance list for admin table
 export function useAdminPerformances(params: {
   status?: string;
@@ -273,6 +284,7 @@ export function useCreatePerformance() {
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'performances'] });
+      invalidatePublicPerformanceQueries(queryClient);
     },
   });
 }
@@ -292,6 +304,7 @@ export function useUpdatePerformance(id: string) {
       queryClient.invalidateQueries({
         queryKey: ['admin', 'performance', id],
       });
+      invalidatePublicPerformanceQueries(queryClient, id);
     },
   });
 }
@@ -310,6 +323,7 @@ export function usePublishPerformance(id: string) {
       queryClient.invalidateQueries({
         queryKey: ['admin', 'performance', id],
       });
+      invalidatePublicPerformanceQueries(queryClient, id);
     },
   });
 }
@@ -320,8 +334,9 @@ export function useDeletePerformance() {
   return useMutation({
     mutationFn: (id: string) =>
       apiClient.delete(`/api/v1/admin/performances/${id}`),
-    onSuccess: () => {
+    onSuccess: (_data, id) => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'performances'] });
+      invalidatePublicPerformanceQueries(queryClient, id);
     },
   });
 }
@@ -346,12 +361,19 @@ export function usePresignedUpload() {
 
 // Save seat map config
 export function useSaveSeatMap(performanceId: string) {
+  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (data: SaveSeatMapPayloadInput) =>
       apiClient.post(
         `/api/v1/admin/performances/${performanceId}/seat-map`,
         data,
       ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ['admin', 'performance', performanceId],
+      });
+      invalidatePublicPerformanceQueries(queryClient, performanceId);
+    },
   });
 }
 
