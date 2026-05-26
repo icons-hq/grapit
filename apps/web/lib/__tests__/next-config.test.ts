@@ -4,6 +4,10 @@ vi.mock('@sentry/nextjs', () => ({
   withSentryConfig: (config: unknown) => config,
 }));
 
+vi.mock('@next/env', () => ({
+  loadEnvConfig: vi.fn(),
+}));
+
 async function loadRewrites() {
   vi.resetModules();
   const mod = await import('../../next.config');
