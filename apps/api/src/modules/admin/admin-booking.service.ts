@@ -23,6 +23,10 @@ import { BookingGateway } from '../booking/booking.gateway.js';
 import { RefundService } from '../refund/refund.service.js';
 import { safeCsvRows } from './csv-export.util.js';
 import { AdminAuditService } from './admin-audit.service.js';
+import {
+  normalizeSeatIdentity,
+  toFloorAwareSeatSelection as toSharedFloorAwareSeatSelection,
+} from '@grabit/shared';
 import type {
   AdminBookingListItem,
   AdminReservationExportFilter,
@@ -104,12 +108,10 @@ type ReservationExportRow = {
 };
 
 function toFloorAwareSeatSelection(seat: SeatSelection): FloorAwareSeatSelection {
-  return {
-    ...seat,
-    floorKey: LEGACY_FLOOR_KEY,
-    floorLabel: LEGACY_FLOOR_LABEL,
-    seatKey: `${LEGACY_FLOOR_KEY}:${seat.seatId}`,
-  };
+  return toSharedFloorAwareSeatSelection(seat, {
+    defaultFloorKey: LEGACY_FLOOR_KEY,
+    defaultFloorLabel: LEGACY_FLOOR_LABEL,
+  });
 }
 
 function normalizeReservationSeatIdentity(seatId: string): {
@@ -117,22 +119,11 @@ function normalizeReservationSeatIdentity(seatId: string): {
   seatId: string;
   seatKey: string;
 } {
-  if (seatId.includes(':')) {
-    const separatorIndex = seatId.indexOf(':');
-    const floorKey = seatId.slice(0, separatorIndex) || '1F';
-    const rawSeatId = seatId.slice(separatorIndex + 1);
-
-    return {
-      floorKey,
-      seatId: rawSeatId,
-      seatKey: `${floorKey}:${rawSeatId}`,
-    };
-  }
-
+  const identity = normalizeSeatIdentity({ seatId });
   return {
-    floorKey: '1F',
-    seatId,
-    seatKey: `1F:${seatId}`,
+    floorKey: identity.floorKey,
+    seatId: identity.seatId,
+    seatKey: identity.seatKey,
   };
 }
 

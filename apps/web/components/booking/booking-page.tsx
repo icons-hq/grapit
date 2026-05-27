@@ -10,6 +10,7 @@ import type {
   SeatMapConfig,
   SeatState,
 } from '@grabit/shared';
+import { normalizeSeatIdentity } from '@grabit/shared';
 import { usePerformanceDetail } from '@/hooks/use-performances';
 import {
   useSeatStatus,
@@ -42,8 +43,6 @@ import { SeatLegend } from './seat-legend';
 import { SeatMapViewer } from './seat-map-viewer';
 import { TimerExpiredModal } from './timer-expired-modal';
 
-const DEFAULT_FLOOR_KEY = '1F';
-
 type RuntimeSeatState = SeatState | 'disabled';
 
 type RuntimeSeatIdentity = {
@@ -59,18 +58,12 @@ type TierSummary = {
 };
 
 function parseRuntimeSeatIdentity(rawSeatIdOrKey: string): RuntimeSeatIdentity {
-  const separatorIndex = rawSeatIdOrKey.indexOf(':');
-  const floorKey = separatorIndex > 0
-    ? rawSeatIdOrKey.slice(0, separatorIndex)
-    : DEFAULT_FLOOR_KEY;
-  const seatId = separatorIndex > 0
-    ? rawSeatIdOrKey.slice(separatorIndex + 1)
-    : rawSeatIdOrKey;
+  const identity = normalizeSeatIdentity({ seatId: rawSeatIdOrKey });
 
   return {
-    seatId,
-    floorKey,
-    seatKey: separatorIndex > 0 ? rawSeatIdOrKey : `${floorKey}:${seatId}`,
+    seatId: identity.seatId,
+    floorKey: identity.floorKey,
+    seatKey: identity.seatKey,
   };
 }
 

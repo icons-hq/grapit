@@ -9,7 +9,6 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
 import { eq, and, or, sql, desc, inArray } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
@@ -39,7 +38,14 @@ import { BookingGateway } from '../booking/booking.gateway.js';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
 import { ConsentService, type ConsentRequestMeta } from '../consent/consent.service.js';
 import { QrTicketService } from '../ticket/qr-ticket.service.js';
-import { DEFAULT_PERFORMANCE_BOOKING_POLICY } from '@grabit/shared';
+import { ReservationFinalizationService } from './reservation-finalization.service.js';
+import {
+  DEFAULT_PERFORMANCE_BOOKING_POLICY,
+  DEFAULT_SEAT_FLOOR_KEY,
+  DEFAULT_SEAT_FLOOR_LABEL,
+  normalizeSeatIdentity,
+  toFloorAwareSeatSelection,
+} from '@grabit/shared';
 import type {
   BookingPolicy,
   ConsentCaptureItem,
@@ -57,8 +63,6 @@ import type {
   SeatMapConfig,
 } from '@grabit/shared';
 
-const DEFAULT_FLOOR_KEY = '1F';
-const DEFAULT_FLOOR_LABEL = '1층';
 export const PAYMENT_DEADLINE_MINUTES = 7;
 
 type ApprovedPaymentSnapshot = {
@@ -91,41 +95,6 @@ type ShowtimeBookingContext = {
   bookingPolicy: BookingPolicy;
 };
 
-function normalizeSeatIdentity(seat: Pick<SeatSelectionLike, 'seatId'> & Partial<FloorAwareSeatSelection>) {
-  const separatorIndex = seat.seatId.includes(':') ? seat.seatId.indexOf(':') : -1;
-  const seatIdFromStoredValue = separatorIndex > 0 ? seat.seatId.slice(separatorIndex + 1) : undefined;
-  const floorKeyFromStoredValue = separatorIndex > 0 ? seat.seatId.slice(0, separatorIndex) : undefined;
-  const seatKeyFromField =
-    typeof seat.seatKey === 'string' && seat.seatKey.length > 0 ? seat.seatKey : undefined;
-  const floorKeyFromSeatKey = seatKeyFromField?.includes(':')
-    ? seatKeyFromField.slice(0, seatKeyFromField.indexOf(':'))
-    : undefined;
-  const seatIdFromSeatKey = seatKeyFromField?.includes(':')
-    ? seatKeyFromField.slice(seatKeyFromField.indexOf(':') + 1)
-    : undefined;
-  const floorKey = seat.floorKey ?? floorKeyFromSeatKey ?? floorKeyFromStoredValue ?? DEFAULT_FLOOR_KEY;
-  const seatId = seatIdFromSeatKey ?? seatIdFromStoredValue ?? seat.seatId;
-
-  return {
-    floorKey,
-    floorLabel: seat.floorLabel ?? (floorKey === DEFAULT_FLOOR_KEY ? DEFAULT_FLOOR_LABEL : floorKey),
-    seatId,
-    seatKey: `${floorKey}:${seatId}`,
-  };
-}
-
-function toFloorAwareSeatSelection(seat: SeatSelectionLike): FloorAwareSeatSelection {
-  const identity = normalizeSeatIdentity(seat);
-
-  return {
-    ...seat,
-    seatId: identity.seatId,
-    floorKey: identity.floorKey,
-    floorLabel: identity.floorLabel,
-    seatKey: identity.seatKey,
-  };
-}
-
 function mapPerformanceBookingPolicy(
   policy: Partial<PerformanceBookingPolicy> | null | undefined,
   options: { forceCancelOnly?: boolean } = {},
@@ -156,6 +125,7 @@ function assertBookingVerificationComplete(actor: BookingActor): void {
 @Injectable()
 export class ReservationService {
   private readonly logger = new Logger(ReservationService.name);
+  private readonly reservationFinalizationService: ReservationFinalizationService;
 
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
@@ -165,7 +135,18 @@ export class ReservationService {
     private readonly featureFlags: FeatureFlagsService,
     private readonly consentService: ConsentService,
     @Optional() private readonly qrTicketService?: QrTicketService,
-  ) {}
+    @Optional() reservationFinalizationService?: ReservationFinalizationService,
+  ) {
+    this.reservationFinalizationService =
+      reservationFinalizationService
+      ?? new ReservationFinalizationService(
+        db,
+        tossClient,
+        bookingService,
+        bookingGateway,
+        qrTicketService,
+      );
+  }
 
   generateReservationNumber(): string {
     const now = new Date();
@@ -371,9 +352,9 @@ export class ReservationService {
     const tierPriceByName = new Map(tiers.map((tier) => [tier.tierName, tier.price]));
     const seatTierByFloorKey = new Map(
       seatMapRows.map((row) => [
-        row.floorKey ?? DEFAULT_FLOOR_KEY,
+        row.floorKey ?? DEFAULT_SEAT_FLOOR_KEY,
         {
-          floorLabel: row.floorLabel ?? DEFAULT_FLOOR_LABEL,
+          floorLabel: row.floorLabel ?? DEFAULT_SEAT_FLOOR_LABEL,
           seatTierBySeatId: this.getSeatTierBySeatId(row.seatConfig),
         },
       ]),
@@ -725,39 +706,12 @@ export class ReservationService {
     this.featureFlags.assertBookingEnabled(actor);
     assertBookingVerificationComplete(actor);
 
-    const confirmLockToken = randomUUID();
-    const confirmLockAcquired = await this.bookingService.acquirePaymentConfirmLock(
-      dto.orderId,
-      confirmLockToken,
+    const result = await this.reservationFinalizationService.confirmAndCreateReservation(
+      dto,
+      userId,
     );
 
-    if (!confirmLockAcquired) {
-      throw new ConflictException('결제 확인이 이미 진행 중입니다.');
-    }
-
-    const refreshTimer = this.startPaymentConfirmLockRefresh(dto.orderId, confirmLockToken);
-
-    try {
-      const lockStillOwned = await this.bookingService.refreshPaymentConfirmLock(
-        dto.orderId,
-        confirmLockToken,
-      );
-      if (!lockStillOwned) {
-        throw new ConflictException('결제 확인이 이미 진행 중입니다.');
-      }
-
-      return await this.confirmAndCreateReservationLocked(dto, userId, confirmLockToken);
-    } finally {
-      clearInterval(refreshTimer);
-      try {
-        await this.bookingService.releasePaymentConfirmLock(dto.orderId, confirmLockToken);
-      } catch (releaseError) {
-        this.logger.error(
-          `Payment confirm lock release failed. orderId=${dto.orderId}`,
-          releaseError instanceof Error ? releaseError.stack : String(releaseError),
-        );
-      }
-    }
+    return this.getReservationDetail(result.reservationId, userId);
   }
 
   private startPaymentConfirmLockRefresh(

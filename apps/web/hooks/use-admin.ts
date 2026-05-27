@@ -2,6 +2,10 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api-client';
+import {
+  invalidatePublicBannerQueries,
+  invalidatePublicPerformanceQueries,
+} from '@/lib/catalog-freshness';
 import type {
   ConsentAuditFilters,
   ConsentAuditRow,
@@ -141,18 +145,7 @@ function invalidateBannerQueries(
   queryClient: ReturnType<typeof useQueryClient>,
 ) {
   queryClient.invalidateQueries({ queryKey: ['admin', 'banners'] });
-  queryClient.invalidateQueries({ queryKey: ['home', 'banners'] });
-}
-
-function invalidatePublicPerformanceQueries(
-  queryClient: ReturnType<typeof useQueryClient>,
-  performanceId?: string,
-) {
-  if (performanceId) {
-    queryClient.invalidateQueries({ queryKey: ['performance', performanceId] });
-  }
-  queryClient.invalidateQueries({ queryKey: ['performances'] });
-  queryClient.invalidateQueries({ queryKey: ['home'] });
+  invalidatePublicBannerQueries(queryClient);
 }
 
 // Performance list for admin table

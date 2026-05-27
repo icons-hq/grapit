@@ -27,6 +27,7 @@ import { useBookingAvailability } from '@/hooks/use-booking-availability';
 import { resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
 import { useBookingStore } from '@/stores/use-booking-store';
 import { useAuthStore } from '@/stores/use-auth-store';
+import { toFloorAwareSeatSelection as toSharedFloorAwareSeatSelection } from '@grabit/shared';
 import type { FloorAwareSeatSelection, SeatSelection } from '@grabit/shared';
 
 function generateOrderId(): string {
@@ -51,12 +52,10 @@ const LEGACY_FLOOR_KEY = 'default';
 const LEGACY_FLOOR_LABEL = '기본';
 
 function toFloorAwareSeatSelection(seat: SeatSelection): FloorAwareSeatSelection {
-  return {
-    ...seat,
-    floorKey: LEGACY_FLOOR_KEY,
-    floorLabel: LEGACY_FLOOR_LABEL,
-    seatKey: `${LEGACY_FLOOR_KEY}:${seat.seatId}`,
-  };
+  return toSharedFloorAwareSeatSelection(seat, {
+    defaultFloorKey: LEGACY_FLOOR_KEY,
+    defaultFloorLabel: LEGACY_FLOOR_LABEL,
+  });
 }
 
 function isLockFailureMessage(message: string): boolean {

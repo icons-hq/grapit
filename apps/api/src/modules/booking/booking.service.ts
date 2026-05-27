@@ -17,6 +17,9 @@ import { BookingGateway } from './booking.gateway.js';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
 import {
   DEFAULT_PERFORMANCE_BOOKING_POLICY,
+  decodeSeatRuntimeId,
+  encodeSeatRuntimeId,
+  normalizeSeatIdentity,
   type LockSeatResponse,
   type SeatState,
   type SeatStatusResponse,
@@ -25,8 +28,6 @@ import {
 
 /** Lock TTL in seconds (10 minutes, per BOOK-03) */
 const LOCK_TTL = 600;
-const DEFAULT_FLOOR_KEY = '1F';
-
 export const LOCK_EXPIRED_MESSAGE = '좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.';
 export const LOCK_OTHER_OWNER_MESSAGE = '이미 다른 사용자가 선택한 좌석입니다.';
 export const BOOKING_VERIFICATION_REQUIRED_MESSAGE =
@@ -49,27 +50,16 @@ type BookingActor = {
 };
 
 function parseRuntimeSeatIdentity(rawSeatIdOrKey: string): RuntimeSeatIdentity {
-  const separatorIndex = rawSeatIdOrKey.indexOf(':');
-  const floorKey = separatorIndex > 0
-    ? rawSeatIdOrKey.slice(0, separatorIndex)
-    : DEFAULT_FLOOR_KEY;
-  const seatId = separatorIndex > 0
-    ? rawSeatIdOrKey.slice(separatorIndex + 1)
-    : rawSeatIdOrKey;
-  const seatKey = separatorIndex > 0
-    ? rawSeatIdOrKey
-    : `${floorKey}:${seatId}`;
+  const identity = normalizeSeatIdentity({ seatId: rawSeatIdOrKey });
 
   return {
-    seatId,
-    floorKey,
-    seatKey,
-    runtimeSeatId: encodeURIComponent(seatKey),
+    ...identity,
+    runtimeSeatId: encodeSeatRuntimeId(identity.seatKey),
   };
 }
 
 function decodeRuntimeSeatId(runtimeSeatId: string): string {
-  return decodeURIComponent(runtimeSeatId);
+  return decodeSeatRuntimeId(runtimeSeatId);
 }
 
 function assertBookingVerificationComplete(actor: BookingActor): void {

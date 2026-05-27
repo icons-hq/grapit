@@ -23,7 +23,7 @@ import { AdminBannerController } from './admin-banner.controller.js';
 import { AdminPerformanceController } from './admin-performance.controller.js';
 import type { AdminAuditService } from './admin-audit.service.js';
 import { ADMIN_CAPABILITIES_KEY } from '../../common/decorators/admin-capabilities.decorator.js';
-import { CacheService } from '../performance/cache.service.js';
+import { CatalogFreshnessService } from '../performance/catalog-freshness.service.js';
 import {
   banners,
   bookingPolicies,
@@ -38,15 +38,13 @@ import {
   venueLayoutSeats,
 } from '../../database/schema/index.js';
 
-function createMockCacheService(): CacheService {
+function createMockCatalogFreshnessService(): CatalogFreshnessService {
   // Admin mutations trigger invalidate* — mocks swallow them so we can
   // still assert the DB-mutation side effects without an ioredis client.
   return {
-    get: vi.fn().mockResolvedValue(null),
-    set: vi.fn().mockResolvedValue(undefined),
-    invalidate: vi.fn().mockResolvedValue(undefined),
-    invalidatePattern: vi.fn().mockResolvedValue(undefined),
-  } as unknown as CacheService;
+    invalidatePerformance: vi.fn().mockResolvedValue(undefined),
+    invalidateBanners: vi.fn().mockResolvedValue(undefined),
+  } as unknown as CatalogFreshnessService;
 }
 
 /**
@@ -381,16 +379,16 @@ function createBannerRow(
 describe('AdminService', () => {
   let service: AdminService;
   let mockDb: ReturnType<typeof createMockDb>;
-  let mockCache: CacheService;
+  let mockCatalogFreshness: CatalogFreshnessService;
   let mockAudit: AdminAuditService;
 
   beforeEach(() => {
     mockDb = createMockDb();
-    mockCache = createMockCacheService();
+    mockCatalogFreshness = createMockCatalogFreshnessService();
     mockAudit = createMockAuditService();
     service = new AdminService(
       mockDb as unknown as ConstructorParameters<typeof AdminService>[0],
-      mockCache,
+      mockCatalogFreshness,
       mockAudit,
     );
   });
@@ -616,11 +614,8 @@ describe('AdminService', () => {
       expect(findInsertCallIndex(tx, seatMaps)).toBe(-1);
       expect(result.seatMaps).toEqual([]);
       expect(result.seatMap).toBeNull();
-      expect(mockCache.invalidate).toHaveBeenCalledWith(
-        'cache:performances:detail:perf-id-123',
-      );
-      expect(mockCache.invalidatePattern).toHaveBeenCalledWith(
-        'cache:performances:detail:perf-id-123:*',
+      expect(mockCatalogFreshness.invalidatePerformance).toHaveBeenCalledWith(
+        'perf-id-123',
       );
     });
 
@@ -859,7 +854,7 @@ describe('AdminService', () => {
           sortOrder: 3,
         }),
       );
-      expect(mockCache.invalidate).toHaveBeenCalledWith('cache:home:banners');
+      expect(mockCatalogFreshness.invalidateBanners).toHaveBeenCalled();
       expect(mockAudit.write).toHaveBeenCalledWith(
         expect.objectContaining({
           actorUserId: bannerMutationContext.actorUserId,
@@ -1026,7 +1021,7 @@ describe('AdminService', () => {
       await service.deleteBanner('banner-id-123', bannerMutationContext);
 
       expect(mockDb.delete).toHaveBeenCalled();
-      expect(mockCache.invalidate).toHaveBeenCalledWith('cache:home:banners');
+      expect(mockCatalogFreshness.invalidateBanners).toHaveBeenCalled();
       expect(mockAudit.write).toHaveBeenCalledWith(
         expect.objectContaining({
           actorUserId: bannerMutationContext.actorUserId,
@@ -1064,7 +1059,7 @@ describe('AdminService', () => {
       await service.reorderBanners(orderedIds, bannerMutationContext);
 
       expect(mockDb.transaction).toHaveBeenCalled();
-      expect(mockCache.invalidate).toHaveBeenCalledWith('cache:home:banners');
+      expect(mockCatalogFreshness.invalidateBanners).toHaveBeenCalled();
       expect(mockAudit.write).toHaveBeenCalledWith(
         expect.objectContaining({
           action: 'banner.manage',
@@ -1227,11 +1222,8 @@ describe('AdminService', () => {
         bookingPolicy: sampleBookingPolicy,
       });
 
-      expect(mockCache.invalidate).toHaveBeenCalledWith(
-        'cache:performances:detail:perf-id-123',
-      );
-      expect(mockCache.invalidatePattern).toHaveBeenCalledWith(
-        'cache:performances:detail:perf-id-123:*',
+      expect(mockCatalogFreshness.invalidatePerformance).toHaveBeenCalledWith(
+        'perf-id-123',
       );
     });
   });

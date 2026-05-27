@@ -1,13 +1,14 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type {
-  FieldCheckInConsumeRequest,
-  FieldCheckInConsumeResponse,
-  FieldCheckInVerifyRequest,
-  FieldCheckInVerifyResponse,
-  FieldOfflineSyncRequest,
-  FieldOfflineSyncResponse,
+import {
+  normalizeFieldCheckInOutcome,
+  type FieldCheckInConsumeRequest,
+  type FieldCheckInConsumeResponse,
+  type FieldCheckInVerifyRequest,
+  type FieldCheckInVerifyResponse,
+  type FieldOfflineSyncRequest,
+  type FieldOfflineSyncResponse,
 } from '@grabit/shared';
 import { apiClient } from '@/lib/api-client';
 
@@ -255,25 +256,21 @@ function normalizeResult(
     return 'processable';
   }
 
-  switch (value) {
+  const outcome = normalizeFieldCheckInOutcome(value);
+
+  switch (outcome) {
     case 'processable':
       return 'processable';
     case 'entered':
-    case 'processed':
       return 'processed';
     case 'duplicate':
     case 'already_used':
-    case 'already-used':
       return 'duplicate';
-    case 'refunded':
     case 'refunded_cancelled':
-    case 'refunded-cancelled':
       return 'refunded';
     case 'wrong_showtime':
-    case 'wrong-showtime':
       return 'wrong-showtime';
     case 'offline_pending':
-    case 'offline-pending':
       return 'offline-pending';
     case 'synced':
       return 'synced';

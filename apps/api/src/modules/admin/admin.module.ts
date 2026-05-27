@@ -31,6 +31,7 @@ import { AdminSecurityService } from './admin-security.service.js';
 import { AdminUserService } from './admin-user.service.js';
 import { UploadService } from './upload.service.js';
 import { AdminDashboardService } from './admin-dashboard.service.js';
+import { PerformanceIntakeService } from './performance-intake.service.js';
 
 @Module({
   imports: [PerformanceModule, PaymentModule, BookingModule, RefundModule],
@@ -69,6 +70,7 @@ import { AdminDashboardService } from './admin-dashboard.service.js';
     },
     UploadService,
     AdminDashboardService,
+    PerformanceIntakeService,
   ],
 })
 export class AdminModule {}
