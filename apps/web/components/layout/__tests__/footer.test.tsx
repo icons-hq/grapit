@@ -30,10 +30,10 @@ describe('Footer (D-03, D-04)', () => {
       expect(link?.className).toContain('font-semibold');
     });
 
-    it('고객센터 링크가 mailto:support@heygrabit.com 으로 변경된다', () => {
+    it('고객센터 링크가 신규 고객센터 이메일 mailto 로 연결된다', () => {
       render(<Footer />);
       const link = screen.getByText('고객센터').closest('a');
-      expect(link?.getAttribute('href')).toBe('mailto:support@heygrabit.com');
+      expect(link?.getAttribute('href')).toBe('mailto:wecordofficial_cs@mariannekate.com');
     });
 
     it('고객센터 링크에 target/rel 이 부착되지 않는다 (mailto 는 새 탭 의미 없음)', () => {
@@ -64,7 +64,9 @@ describe('Footer (D-03, D-04)', () => {
       expect(screen.getByText(/대표자: 정승준/)).toBeInTheDocument();
       expect(screen.getByText(/사업자등록번호: 109-86-27576/)).toBeInTheDocument();
       expect(screen.getByText(/통신판매업 신고번호: 2025-서울마포-1494/)).toBeInTheDocument();
-      expect(screen.getByText('고객센터: 02-325-1794')).toBeInTheDocument();
+      expect(
+        screen.getByText('고객센터: wecordofficial_cs@mariannekate.com'),
+      ).toBeInTheDocument();
       expect(screen.getByText(/개인정보 보호책임자: 정승준/)).toBeInTheDocument();
     });
 

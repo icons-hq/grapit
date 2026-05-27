@@ -29,7 +29,7 @@ export function Footer() {
             {copy.privacy}
           </Link>
           <span className="text-gray-400">|</span>
-          <a href="mailto:support@heygrabit.com" className="hover:underline">
+          <a href="mailto:wecordofficial_cs@mariannekate.com" className="hover:underline">
             {copy.support}
           </a>
         </div>
