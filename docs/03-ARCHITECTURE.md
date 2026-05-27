@@ -397,7 +397,7 @@ SVG seat maps are product-critical and must be treated as data with validation/s
 - Cloud Run stdout/stderr and Cloud Logging are the primary runtime log stream.
 - Health endpoint includes Redis/Valkey health evidence.
 - Phase 26/27 scripts under `scripts/phase26` and `scripts/phase27` provide gate validation, infra evidence, load evidence recording, field scan smoke, and retrospective validation.
-- Runbooks under `docs/runbooks` document canary rollback, queue/WAF/prewarm, cutover operations, live payment cutover, load/DR gates, direct deploy watch, and event-day playbooks.
+- `docs/runbooks/phase26-cutover-ops.md` remains the active cutover incident runbook referenced by Phase 26 evidence scripts; older phase runbooks are historical artifacts unless a live tool references them.
 
 Operational truth order for production incidents:
 
