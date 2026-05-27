@@ -3,6 +3,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { and, eq, sql, ilike, inArray } from 'drizzle-orm';
@@ -53,9 +54,10 @@ import {
   createBannerSchema,
   performanceDetailImagesSchema,
 } from '@grabit/shared';
-import { CacheService } from '../performance/cache.service.js';
+import { CatalogFreshnessService } from '../performance/catalog-freshness.service.js';
 import { parseAdminKstDateTime } from './admin-date.util.js';
 import { AdminAuditService } from './admin-audit.service.js';
+import { PerformanceIntakeService } from './performance-intake.service.js';
 
 function cloneDefaultBookingPolicy(): PerformanceBookingPolicy {
   return {
@@ -180,28 +182,24 @@ type SyncedLayoutOverlay = {
 
 @Injectable()
 export class AdminService {
+  private readonly performanceIntakeService: PerformanceIntakeService;
+
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
-    private readonly cacheService: CacheService,
+    private readonly catalogFreshnessService: CatalogFreshnessService,
     private readonly adminAuditService: AdminAuditService,
-  ) {}
+    @Optional() performanceIntakeService?: PerformanceIntakeService,
+  ) {
+    this.performanceIntakeService =
+      performanceIntakeService ?? new PerformanceIntakeService();
+  }
 
   /**
    * Invalidate all catalog caches (list + home + detail by id if provided).
    * Called after any mutation that can change the published catalog output.
    */
   private async invalidateCatalogCache(id?: string): Promise<void> {
-    const ops: Array<Promise<void>> = [
-      this.cacheService.invalidatePattern('cache:performances:list:*'),
-      this.cacheService.invalidatePattern('cache:home:*'),
-    ];
-    if (id) {
-      ops.push(
-        this.cacheService.invalidate(`cache:performances:detail:${id}`),
-        this.cacheService.invalidatePattern(`cache:performances:detail:${id}:*`),
-      );
-    }
-    await Promise.all(ops);
+    await this.catalogFreshnessService.invalidatePerformance(id);
   }
 
   private normalizeSeatMaps(
@@ -820,8 +818,10 @@ export class AdminService {
         .returning();
 
       const performanceId = perf!.id;
-      const validTierNames = this.assertUniquePriceTierNames(input.priceTiers);
-      const priceTierSnapshots = this.priceTierSnapshotsFromInput(input.priceTiers);
+      const validTierNames =
+        this.performanceIntakeService.assertUniquePriceTierNames(input.priceTiers);
+      const priceTierSnapshots =
+        this.performanceIntakeService.priceTierSnapshotsFromInput(input.priceTiers);
 
       // Insert price tiers
       if (input.priceTiers.length > 0) {
@@ -864,11 +864,11 @@ export class AdminService {
           );
       }
 
-      const normalizedSeatMaps = this.normalizeSeatMaps(
+      const normalizedSeatMaps = this.performanceIntakeService.normalizeSeatMaps(
         performanceId,
         input.seatMaps,
       );
-      await this.replaceSeatMaps(
+      await this.performanceIntakeService.replaceSeatMaps(
         tx as unknown as DrizzleDB,
         performanceId,
         venue?.id,
@@ -878,7 +878,7 @@ export class AdminService {
       );
 
       const bookingPolicy = input.bookingPolicy ?? cloneDefaultBookingPolicy();
-      await this.persistBookingPolicy(
+      await this.performanceIntakeService.persistBookingPolicy(
         tx as unknown as DrizzleDB,
         performanceId,
         bookingPolicy,
@@ -1022,8 +1022,10 @@ export class AdminService {
       let validTierNames: Set<string> | null = null;
       let priceTierSnapshots: PriceTierSnapshot[] | null = null;
       if (input.priceTiers) {
-        validTierNames = this.assertUniquePriceTierNames(input.priceTiers);
-        priceTierSnapshots = this.priceTierSnapshotsFromInput(input.priceTiers);
+        validTierNames =
+          this.performanceIntakeService.assertUniquePriceTierNames(input.priceTiers);
+        priceTierSnapshots =
+          this.performanceIntakeService.priceTierSnapshotsFromInput(input.priceTiers);
         await tx.delete(priceTiers).where(eq(priceTiers.performanceId, id));
         if (input.priceTiers.length > 0) {
           await tx
@@ -1041,7 +1043,11 @@ export class AdminService {
 
       // Replace showtimes if provided
       if (input.showtimes) {
-        await this.syncShowtimes(tx as unknown as DrizzleDB, id, input.showtimes);
+        await this.performanceIntakeService.syncShowtimes(
+          tx as unknown as DrizzleDB,
+          id,
+          input.showtimes,
+        );
       }
 
       // Replace castings if provided
@@ -1063,15 +1069,15 @@ export class AdminService {
       }
 
       if (input.seatMaps) {
-        validTierNames ??= await this.loadPriceTierNames(
+        validTierNames ??= await this.performanceIntakeService.loadPriceTierNames(
           tx as unknown as DrizzleDB,
           id,
         );
-        priceTierSnapshots ??= await this.loadPriceTierSnapshots(
+        priceTierSnapshots ??= await this.performanceIntakeService.loadPriceTierSnapshots(
           tx as unknown as DrizzleDB,
           id,
         );
-        await this.replaceSeatMaps(
+        await this.performanceIntakeService.replaceSeatMaps(
           tx as unknown as DrizzleDB,
           id,
           perf.venueId,
@@ -1083,14 +1089,15 @@ export class AdminService {
 
       const bookingPolicy = input.bookingPolicy ?? cloneDefaultBookingPolicy();
       if (input.bookingPolicy) {
-        await this.persistBookingPolicy(
+        await this.performanceIntakeService.persistBookingPolicy(
           tx as unknown as DrizzleDB,
           id,
           bookingPolicy,
         );
       }
 
-      const normalizedSeatMaps = this.normalizeSeatMaps(id, input.seatMaps ?? []);
+      const normalizedSeatMaps =
+        this.performanceIntakeService.normalizeSeatMaps(id, input.seatMaps ?? []);
 
       const response = {
         id: perf!.id,
@@ -1304,22 +1311,25 @@ export class AdminService {
         };
 
     const bookingPolicy = floorAwareInput.bookingPolicy ?? cloneDefaultBookingPolicy();
-    this.assertUniqueFloorKeys(floorAwareInput.seatMaps);
+    this.performanceIntakeService.assertUniqueFloorKeys(floorAwareInput.seatMaps);
     const [priceTierSnapshots, venueId] = await Promise.all([
-      this.loadPriceTierSnapshots(
+      this.performanceIntakeService.loadPriceTierSnapshots(
         this.db,
         performanceId,
       ),
-      this.loadPerformanceVenueId(
+      this.performanceIntakeService.loadPerformanceVenueId(
         this.db,
         performanceId,
       ),
     ]);
     const validTierNames = new Set(priceTierSnapshots.map((row) => row.tierName));
-    this.assertSeatMapConfigsValid(floorAwareInput.seatMaps, validTierNames);
+    this.performanceIntakeService.assertSeatMapConfigsValid(
+      floorAwareInput.seatMaps,
+      validTierNames,
+    );
 
     await this.db.transaction(async (tx) => {
-      await this.replaceSeatMaps(
+      await this.performanceIntakeService.replaceSeatMaps(
         tx as unknown as DrizzleDB,
         performanceId,
         venueId,
@@ -1329,7 +1339,7 @@ export class AdminService {
       );
 
       if (floorAwareInput.bookingPolicy) {
-        await this.persistBookingPolicy(
+        await this.performanceIntakeService.persistBookingPolicy(
           tx as unknown as DrizzleDB,
           performanceId,
           floorAwareInput.bookingPolicy,
@@ -1337,7 +1347,7 @@ export class AdminService {
       }
     });
 
-    const normalizedSeatMaps = this.normalizeSeatMaps(
+    const normalizedSeatMaps = this.performanceIntakeService.normalizeSeatMaps(
       performanceId,
       floorAwareInput.seatMaps,
     );
@@ -1440,7 +1450,7 @@ export class AdminService {
       })
       .returning();
 
-    await this.cacheService.invalidate('cache:home:banners');
+    await this.catalogFreshnessService.invalidateBanners();
     const banner = toBanner(result!);
 
     await this.writeBannerAudit('create', banner.id, context, {
@@ -1483,7 +1493,7 @@ export class AdminService {
       throw new NotFoundException(`배너를 찾을 수 없습니다 (id: ${id})`);
     }
 
-    await this.cacheService.invalidate('cache:home:banners');
+    await this.catalogFreshnessService.invalidateBanners();
     const banner = toBanner(result);
 
     await this.writeBannerAudit('update', id, context, {
@@ -1496,7 +1506,7 @@ export class AdminService {
 
   async deleteBanner(id: string, context?: BannerMutationContext): Promise<void> {
     await this.db.delete(banners).where(eq(banners.id, id));
-    await this.cacheService.invalidate('cache:home:banners');
+    await this.catalogFreshnessService.invalidateBanners();
 
     await this.writeBannerAudit('delete', id, context, {
       changedFields: ['deleted'],
@@ -1529,7 +1539,7 @@ export class AdminService {
           .where(eq(banners.id, orderedIds[i]!));
       }
     });
-    await this.cacheService.invalidate('cache:home:banners');
+    await this.catalogFreshnessService.invalidateBanners();
 
     await this.writeBannerAudit('reorder', 'bulk-reorder', context, {
       changedFields: ['sortOrder'],

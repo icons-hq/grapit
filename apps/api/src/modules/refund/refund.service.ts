@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
+import { normalizeSeatIdentity } from '@grabit/shared';
 import type { RefundTimeline } from '@grabit/shared';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
@@ -107,22 +108,11 @@ const TRANSIENT_TOSS_CANCEL_CODES = new Set([
 ]);
 
 export function normalizeReservationSeatIdentity(seatId: string): SeatIdentityPayload {
-  if (seatId.includes(':')) {
-    const separatorIndex = seatId.indexOf(':');
-    const floorKey = seatId.slice(0, separatorIndex) || '1F';
-    const rawSeatId = seatId.slice(separatorIndex + 1);
-
-    return {
-      floorKey,
-      seatId: rawSeatId,
-      seatKey: `${floorKey}:${rawSeatId}`,
-    };
-  }
-
+  const identity = normalizeSeatIdentity({ seatId });
   return {
-    floorKey: '1F',
-    seatId,
-    seatKey: `1F:${seatId}`,
+    floorKey: identity.floorKey,
+    seatId: identity.seatId,
+    seatKey: identity.seatKey,
   };
 }
 

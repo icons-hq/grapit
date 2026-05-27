@@ -18,6 +18,9 @@ export * from './types/booking.types';
 export * from './types/admin-dashboard.types';
 export * from './types/i18n.types';
 export * from './types/admin-operations.types';
+export * from './seat-identity';
+export * from './field-check-in-ingress';
+export * from './catalog-freshness';
 
 // Constants
 export * from './constants/index';

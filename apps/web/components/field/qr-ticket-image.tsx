@@ -2,6 +2,7 @@
 
 import type { CSSProperties } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
+import { buildFieldCheckInUrl } from '@grabit/shared';
 
 interface QrTicketImageProps {
   value: string;
@@ -32,9 +33,7 @@ function getPublicWebOrigin(): string {
 }
 
 export function buildQrCheckInUrl(token: string): string {
-  const url = new URL('/field/check-in', getPublicWebOrigin());
-  url.searchParams.set('ticket', token);
-  return url.toString();
+  return buildFieldCheckInUrl(token, getPublicWebOrigin());
 }
 
 function isHttpsQrValue(value: string): boolean {

@@ -9,6 +9,7 @@ import { and, desc, eq, type SQL } from 'drizzle-orm';
 
 import {
   adminSeatOperationShowtimeIdSchema,
+  normalizeSeatIdentity,
   type AdminSeatOperationHistory,
   type AdminSeatOperationRequest,
   type SeatMapConfig,
@@ -40,8 +41,6 @@ type SeatOperationInventoryRow = Pick<
   typeof seatInventories.$inferSelect,
   'id' | 'showtimeId' | 'seatId' | 'floorKey' | 'seatKey' | 'status'
 >;
-
-const DEFAULT_FLOOR_KEY = '1F';
 
 export interface AdminSeatOperationExecutionContext {
   now?: Date;
@@ -271,13 +270,8 @@ function assertSeatInventoryOperation(
 }
 
 function parseSeatOperationSeatKey(seatKey: string): SeatOperationIdentity {
-  const separatorIndex = seatKey.indexOf(':');
-  const floorKey = separatorIndex > 0
-    ? seatKey.slice(0, separatorIndex)
-    : DEFAULT_FLOOR_KEY;
-  const seatId = separatorIndex > 0
-    ? seatKey.slice(separatorIndex + 1)
-    : seatKey;
+  const identity = normalizeSeatIdentity({ seatId: seatKey });
+  const { floorKey, seatId } = identity;
 
   if (!floorKey.trim() || !seatId.trim()) {
     throw new BadRequestException('유효한 좌석 키가 필요합니다');
@@ -286,7 +280,7 @@ function parseSeatOperationSeatKey(seatKey: string): SeatOperationIdentity {
   return {
     floorKey,
     seatId,
-    seatKey: separatorIndex > 0 ? seatKey : `${floorKey}:${seatId}`,
+    seatKey: identity.seatKey,
   };
 }
 

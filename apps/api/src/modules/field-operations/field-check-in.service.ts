@@ -1,12 +1,13 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import { and, desc, eq, isNull } from 'drizzle-orm';
-import type {
-  FieldCheckInConsumeRequest,
-  FieldCheckInConsumeResponse,
-  FieldCheckInOutcome,
-  FieldCheckInVerifyRequest,
-  FieldCheckInVerifyResponse,
+import {
+  parseFieldCheckInToken,
+  type FieldCheckInConsumeRequest,
+  type FieldCheckInConsumeResponse,
+  type FieldCheckInOutcome,
+  type FieldCheckInVerifyRequest,
+  type FieldCheckInVerifyResponse,
 } from '@grabit/shared';
 
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
@@ -401,20 +402,7 @@ export class FieldCheckInService {
 }
 
 function extractToken(input: FieldCheckInVerifyRequest): string {
-  if (input.token?.trim()) {
-    return input.token.trim();
-  }
-
-  if (!input.qrUrl) {
-    return '';
-  }
-
-  try {
-    const url = new URL(input.qrUrl);
-    return url.searchParams.get('token')?.trim() ?? '';
-  } catch {
-    return '';
-  }
+  return parseFieldCheckInToken(input);
 }
 
 function classifyScannerContract(

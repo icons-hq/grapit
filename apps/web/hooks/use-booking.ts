@@ -4,6 +4,10 @@ import { apiClient } from '@/lib/api-client';
 import { BookingDisabledError } from '@/lib/runtime-flags';
 import { useBookingAvailability } from '@/hooks/use-booking-availability';
 import { useBookingStore } from '@/stores/use-booking-store';
+import {
+  normalizeSeatIdentity,
+  toFloorAwareSeatSelection as toSharedFloorAwareSeatSelection,
+} from '@grabit/shared';
 import type {
   BookingPolicy,
   ConfirmPaymentRequest,
@@ -34,8 +38,6 @@ interface MyLocksResponse {
 
 export type { SeatSelection, SeatStatusResponse, LockSeatRequest, LockSeatResponse, UnlockAllResponse };
 
-const DEFAULT_FLOOR_KEY = '1F';
-const DEFAULT_FLOOR_LABEL = '1층';
 const DEFAULT_PAYMENT_WINDOW_MINUTES = 7;
 const DEFAULT_SEAT_HOLD_MINUTES = 10;
 const DEFAULT_ALLOWED_PAYMENT_METHODS = ['CARD'] as const;
@@ -64,23 +66,15 @@ export interface BookingPaymentRecoverySnapshot {
 function toFloorAwareSeatSelection(
   seat: FloorAwareSeatSelection | SeatSelection,
 ): FloorAwareSeatSelection {
-  const candidate = seat as Partial<FloorAwareSeatSelection>;
-  const floorKey = candidate.floorKey?.trim() || DEFAULT_FLOOR_KEY;
-  const floorLabel = candidate.floorLabel?.trim()
-    || (floorKey === DEFAULT_FLOOR_KEY ? DEFAULT_FLOOR_LABEL : floorKey);
-
-  return {
-    ...seat,
-    floorKey,
-    floorLabel,
-    seatKey: candidate.seatKey?.trim() || `${floorKey}:${seat.seatId}`,
-  };
+  return toSharedFloorAwareSeatSelection(seat);
 }
 
 function toRuntimeSeatId(seat: Pick<LockSeatRequest, 'seatId' | 'seatKey' | 'floorKey'>): string {
-  return seat.seatKey?.trim() || (seat.floorKey?.trim()
-    ? `${seat.floorKey.trim()}:${seat.seatId}`
-    : seat.seatId);
+  const identity = normalizeSeatIdentity(seat);
+  if (seat.seatKey?.trim() || seat.floorKey?.trim()) {
+    return identity.seatKey;
+  }
+  return seat.seatId;
 }
 
 function toBookingPolicy(

@@ -169,6 +169,28 @@ describe('FieldCheckInService RED contract', () => {
     expectNoSensitiveLookupLeak(consumeResult);
   });
 
+  it.each(['ticket', 'token'] as const)(
+    'verifies scanner QR URLs using %s query parameter',
+    async (queryParam) => {
+      const { service, qrTicketService } = createDependencies();
+      qrTicketService.verifyTicketForScannerContract.mockResolvedValue(
+        scannerContract({ maskedJti: 'qr-jti...7890' }),
+      );
+
+      const verifyResult = await service.verify({
+        qrUrl: `https://heygrabit.com/field/check-in?${queryParam}=${encodeURIComponent(RAW_QR_TOKEN)}`,
+        showtimeId: '00000000-0000-4000-8000-000000000001',
+      });
+
+      expect(qrTicketService.verifyTicketForScannerContract).toHaveBeenCalledWith(RAW_QR_TOKEN);
+      expect(verifyResult).toMatchObject({
+        outcome: 'processable',
+        processable: true,
+      });
+      expectNoSensitiveLookupLeak(verifyResult);
+    },
+  );
+
   it('duplicate or already_used consume returns prior scan context with redacted staff/device values', async () => {
     const { service, qrTicketService, db } = createDependencies();
     qrTicketService.verifyTicketForScannerContract.mockResolvedValue(
