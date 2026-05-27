@@ -282,3 +282,17 @@ Do not make direct repo edits outside a GSD workflow unless the user explicitly 
 > Profile not yet configured. Run `/gsd:profile-user` to generate your developer profile.
 > This section is managed by `generate-claude-profile` -- do not edit manually.
 <!-- GSD:profile-end -->
+
+## Agent skills
+
+### Issue tracker
+
+Issues and PRDs are tracked in GitHub Issues for `sangwopark19/grapit`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the default mattpocock/skills triage label vocabulary. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context repo: use root `CONTEXT.md` and `docs/adr/` when present. See `docs/agents/domain.md`.
