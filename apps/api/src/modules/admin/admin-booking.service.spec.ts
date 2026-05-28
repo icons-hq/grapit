@@ -14,6 +14,38 @@ import {
 } from '../../database/schema/index.js';
 import type { AdminAuditService } from './admin-audit.service.js';
 
+function ticketItem(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'ticket-item-a1',
+    reservationId: 'reservation-1',
+    paymentId: 'payment-1',
+    showtimeId: 'showtime-1',
+    seatId: '1F:A-1',
+    seatKey: '1F:A-1',
+    floorKey: '1F',
+    floorLabel: '1층',
+    tierName: 'VIP',
+    row: 'A',
+    number: '1',
+    price: 77000,
+    serviceFee: 2000,
+    status: 'active',
+    admissionState: 'not_entered',
+    enteredAt: null,
+    cancelledAt: null,
+    cancelReason: null,
+    cancellationFee: 0,
+    serviceFeeRefund: 0,
+    refundableAmount: 0,
+    reopenState: 'not_required',
+    reopenHoldUntil: null,
+    reopenJobId: null,
+    createdAt: new Date('2026-07-01T03:01:00.000Z'),
+    updatedAt: new Date('2026-07-01T03:01:00.000Z'),
+    ...overrides,
+  };
+}
+
 function createMockDb() {
   return {
     select: vi.fn(),
@@ -321,6 +353,97 @@ describe('AdminBookingService', () => {
     });
   });
 
+  describe('detail', () => {
+    it('returns admin booking detail with ticket item status, admission, and refund fields', async () => {
+      mockDb.select
+        .mockReturnValueOnce(
+          createChainMock([
+            {
+              reservation: {
+                id: 'reservation-1',
+                reservationNumber: 'R-DETAIL-001',
+                status: 'CONFIRMED',
+                totalAmount: 158000,
+                createdAt: new Date('2026-07-01T03:00:00.000Z'),
+              },
+              user: {
+                name: '김예매',
+                phone: '+821012345678',
+              },
+              showtime: {
+                dateTime: new Date('2026-07-18T10:00:00.000Z'),
+              },
+              performance: {
+                title: 'Girl Rules Fanmeeting',
+              },
+            },
+          ]),
+        )
+        .mockReturnValueOnce(
+          createChainMock([
+            ticketItem({
+              id: 'ticket-item-a1',
+              seatKey: '1F:A-1',
+              number: '1',
+              status: 'active',
+              admissionState: 'entered',
+              enteredAt: new Date('2026-07-18T10:05:00.000Z'),
+            }),
+            ticketItem({
+              id: 'ticket-item-a2',
+              seatId: '1F:A-2',
+              seatKey: '1F:A-2',
+              number: '2',
+              status: 'cancelled',
+              cancelledAt: new Date('2026-07-02T01:00:00.000Z'),
+              cancelReason: '일정 변경',
+              serviceFeeRefund: 2000,
+              refundableAmount: 79000,
+              reopenState: 'available',
+            }),
+          ]),
+        )
+        .mockReturnValueOnce(
+          createChainMock([
+            {
+              paymentKey: 'payment-key-1',
+              method: 'CARD',
+              amount: 158000,
+              status: 'DONE',
+              paidAt: new Date('2026-07-01T03:01:00.000Z'),
+            },
+          ]),
+        );
+
+      const result = await service.getBookingDetail('reservation-1');
+
+      expect(result.seats).toEqual([
+        expect.objectContaining({ seatKey: '1F:A-1', number: '1' }),
+        expect.objectContaining({ seatKey: '1F:A-2', number: '2' }),
+      ]);
+      expect(result.ticketItems).toEqual([
+        expect.objectContaining({
+          id: 'ticket-item-a1',
+          status: 'ACTIVE',
+          admissionState: 'ENTERED',
+          enteredAt: '2026-07-18T10:05:00.000Z',
+          refundableAmount: 0,
+          reopenState: 'NOT_REQUIRED',
+        }),
+        expect.objectContaining({
+          id: 'ticket-item-a2',
+          status: 'CANCELLED',
+          admissionState: 'NOT_ENTERED',
+          cancelledAt: '2026-07-02T01:00:00.000Z',
+          cancelReason: '일정 변경',
+          serviceFeeRefund: 2000,
+          refundableAmount: 79000,
+          reopenState: 'AVAILABLE',
+        }),
+      ]);
+    });
+  });
+
   describe('exportReservations', () => {
     it('exports raw reservation CSV with all seven filters, formula neutralization, and metadata-only audit', async () => {
       mockDb.select.mockReturnValueOnce(
@@ -346,13 +469,20 @@ describe('AdminBookingService', () => {
               id: 'performance-1',
               title: 'Girl Rules Fanmeeting',
             },
-            seat: {
+            ticketItem: ticketItem({
+              id: 'ticket-item-raw-1',
+              reservationId: 'reservation-raw-1',
+              paymentId: 'payment-raw-1',
+              showtimeId: 'showtime-raw-1',
               seatId: '2F:A-1',
+              seatKey: '2F:A-1',
+              floorKey: '2F',
+              floorLabel: '2층',
               tierName: 'VIP',
               row: 'A',
               number: '1',
               price: 99000,
-            },
+            }),
             payment: {
               method: 'CARD',
               status: 'DONE',
@@ -416,6 +546,69 @@ describe('AdminBookingService', () => {
       expect(JSON.stringify(auditInput)).not.toContain('+821055501234');
       expect(JSON.stringify(auditInput)).not.toContain('R-RAW-001');
       expect(JSON.stringify(auditInput)).not.toContain('HYPERLINK');
+    });
+
+    it('exports raw reservation CSV as ticket-item rows with status, admission, and refund columns', async () => {
+      mockDb.select.mockReturnValueOnce(
+        createChainMock([
+          {
+            reservation: {
+              id: 'reservation-raw-1',
+              reservationNumber: 'R-RAW-001',
+              status: 'CONFIRMED',
+              totalAmount: 158000,
+              createdAt: new Date('2026-07-01T03:00:00.000Z'),
+            },
+            user: {
+              name: '김예매',
+              email: 'buyer@example.com',
+              phone: '+821055501234',
+              country: 'KR',
+            },
+            showtime: {
+              dateTime: new Date('2026-07-18T10:00:00.000Z'),
+            },
+            performance: {
+              id: 'performance-1',
+              title: 'Girl Rules Fanmeeting',
+            },
+            ticketItem: ticketItem({
+              id: 'ticket-item-a2',
+              status: 'cancelled',
+              admissionState: 'not_entered',
+              cancelledAt: new Date('2026-07-02T01:00:00.000Z'),
+              cancelReason: '일정 변경',
+              serviceFeeRefund: 2000,
+              refundableAmount: 79000,
+              reopenState: 'available',
+            }),
+            payment: {
+              method: 'CARD',
+              status: 'DONE',
+              paidAt: new Date('2026-07-01T03:01:00.000Z'),
+            },
+          },
+        ]),
+      );
+
+      const result = await service.exportReservations({
+        actorUserId: 'admin-1',
+        filters: {
+          eventId: 'performance-1',
+          exportType: 'raw_pii',
+          reason: '정산 대조',
+        },
+      });
+
+      expect(result.rowCount).toBe(1);
+      expect(result.csv).toContain('"Ticket Item ID"');
+      expect(result.csv).toContain('"Ticket Item Status"');
+      expect(result.csv).toContain('"Admission State"');
+      expect(result.csv).toContain('"Refundable Amount"');
+      expect(result.csv).toContain('"ticket-item-a2"');
+      expect(result.csv).toContain('"CANCELLED"');
+      expect(result.csv).toContain('"NOT_ENTERED"');
+      expect(result.csv).toContain('"79000"');
     });
 
     it('rejects raw exports without a reason before querying or auditing', async () => {

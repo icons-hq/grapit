@@ -92,6 +92,44 @@ describe('TossPaymentsClient', () => {
     );
   });
 
+  it('sends cancelAmount for Toss partial cancellation while preserving retry idempotency', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        ...paidResponse,
+        status: 'DONE',
+        cancels: [
+          {
+            cancelAmount: 79000,
+            cancelReason: 'ticket item cancel',
+            canceledAt: '2026-05-20T05:46:00.000Z',
+          },
+        ],
+      }),
+    });
+
+    await client.cancelPayment('pay_test_phase26_1', 'ticket item cancel', {
+      idempotencyKey: 'ticket-item-cancel:ticket-item-1',
+      cancelAmount: 79000,
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.tosspayments.com/v1/payments/pay_test_phase26_1/cancel',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: authHeader,
+          'Content-Type': 'application/json',
+          'Idempotency-Key': 'ticket-item-cancel:ticket-item-1',
+        }),
+        body: JSON.stringify({
+          cancelReason: 'ticket item cancel',
+          cancelAmount: 79000,
+        }),
+      }),
+    );
+  });
+
   it('queries Toss payment state with server-side secret auth', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,

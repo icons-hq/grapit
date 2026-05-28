@@ -22,6 +22,7 @@ import {
   reservationSeats,
   reservations,
   seatInventories,
+  ticketItems,
 } from '../../database/schema/index.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
 import {
@@ -40,6 +41,8 @@ type ApprovedPaymentSnapshot = {
   approvedAt: string;
   asyncStatus?: string | null;
 };
+
+const TICKET_SERVICE_FEE_KRW = 2000;
 
 export interface ReservationFinalizationResult {
   reservationId: string;
@@ -241,12 +244,18 @@ export class ReservationFinalizationService {
       throw new NotFoundException('예매 정보를 찾을 수 없습니다. 다시 시도해주세요.');
     }
 
-    if (reservation.status === 'CONFIRMED') {
-      return { reservationId: reservation.id };
+    if (reservation.status !== 'CONFIRMED' && reservation.status !== 'PENDING_PAYMENT') {
+      throw new ConflictException('좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.');
     }
 
-    if (reservation.status !== 'PENDING_PAYMENT') {
-      throw new ConflictException('좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.');
+    const pendingSeats = await this.getReservationSeatSelections(reservation.id);
+    const expectedAmount = this.calculatePayableTotal(pendingSeats);
+    if (reservation.totalAmount !== expectedAmount || dto.amount !== expectedAmount) {
+      throw new BadRequestException('금액이 일치하지 않습니다');
+    }
+
+    if (reservation.status === 'CONFIRMED') {
+      return { reservationId: reservation.id };
     }
 
     if (this.isPastWindow(reservation.admissionActiveUntilAt)) {
@@ -277,15 +286,10 @@ export class ReservationFinalizationService {
       throw new ConflictException('좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.');
     }
 
-    if (reservation.totalAmount !== dto.amount) {
-      throw new BadRequestException('금액이 일치하지 않습니다');
-    }
-
     if (existingPayment?.status === 'DONE') {
       this.assertExistingDonePaymentMatchesRequest(existingPayment, reservation, dto);
     }
 
-    const pendingSeats = await this.getReservationSeatSelections(reservation.id);
     const pendingSeatIds = pendingSeats.map((seat) => seat.seatKey);
     try {
       await this.bookingService.extendOwnedSeatLocks(
@@ -439,6 +443,30 @@ export class ReservationFinalizationService {
             committedPaymentId = insertedPayments[0]?.id ?? null;
           }
 
+          if (!committedPaymentId) {
+            throw new InternalServerErrorException('결제 정보 저장에 실패했습니다');
+          }
+          const ticketItemPaymentId = committedPaymentId;
+
+          await tx.insert(ticketItems).values(
+            pendingSeats.map((seat) => ({
+              reservationId: reservation.id,
+              paymentId: ticketItemPaymentId,
+              showtimeId: reservation.showtimeId,
+              seatId: seat.seatId,
+              seatKey: seat.seatKey,
+              floorKey: seat.floorKey,
+              floorLabel: seat.floorLabel,
+              tierName: seat.tierName,
+              row: seat.row,
+              number: seat.number,
+              price: seat.price,
+              serviceFee: TICKET_SERVICE_FEE_KRW,
+              status: 'active' as const,
+              admissionState: 'not_entered' as const,
+            })),
+          );
+
           for (const seat of pendingSeats) {
             const updated = await tx
               .update(seatInventories)
@@ -570,7 +598,7 @@ export class ReservationFinalizationService {
       }
 
       if (this.qrTicketService && committedPaymentId) {
-        await this.qrTicketService.ensureIssuedTicketForReservation({
+        await this.qrTicketService.ensureIssuedTicketsForReservation({
           reservationId: reservation.id,
           paymentId: committedPaymentId,
         });
@@ -597,6 +625,11 @@ export class ReservationFinalizationService {
       .where(eq(reservationSeats.reservationId, reservationId));
 
     return rows.map((seat) => toFloorAwareSeatSelection(seat));
+  }
+
+  private calculatePayableTotal(seats: FloorAwareSeatSelection[]): number {
+    const seatTotal = seats.reduce((total, seat) => total + seat.price, 0);
+    return seatTotal + seats.length * TICKET_SERVICE_FEE_KRW;
   }
 
   private async expirePendingReservation(reservationId: string): Promise<void> {

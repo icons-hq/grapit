@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { BadRequestException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { PaymentMethod } from '@grabit/shared';
+import { ticketItems } from '../../database/schema/index.js';
 import { PaymentService } from './payment.service.js';
 
 function createMockDb() {
@@ -64,7 +65,7 @@ describe('PaymentService', () => {
     broadcastSeatUpdate: ReturnType<typeof vi.fn>;
   };
   let mockQrTicketService: {
-    ensureIssuedTicketForReservation: ReturnType<typeof vi.fn>;
+    ensureIssuedTicketsForReservation: ReturnType<typeof vi.fn>;
   };
   let mockTossClient: {
     cancelPayment: ReturnType<typeof vi.fn>;
@@ -76,7 +77,7 @@ describe('PaymentService', () => {
       broadcastSeatUpdate: vi.fn(),
     };
     mockQrTicketService = {
-      ensureIssuedTicketForReservation: vi.fn().mockResolvedValue({}),
+      ensureIssuedTicketsForReservation: vi.fn().mockResolvedValue([]),
     };
     mockTossClient = {
       cancelPayment: vi.fn().mockResolvedValue({}),
@@ -248,6 +249,7 @@ describe('PaymentService', () => {
       };
       const updateReservation = createMutationChain();
       const insertPayment = createMutationChain([{ id: paymentId }]);
+      const insertTicketItems = createMutationChain();
       const updateFirstSeat = createMutationChain([]);
       const insertFirstSeat = createMutationChain([{ id: randomUUID() }]);
       const updateSecondSeat = createMutationChain([{ id: randomUUID() }]);
@@ -258,12 +260,12 @@ describe('PaymentService', () => {
           userId,
           showtimeId,
           status: 'PENDING_PAYMENT',
-          totalAmount: 150000,
+          totalAmount: 154000,
         }]))
         .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([
-          { seatId: '1F:A-1' },
-          { seatId: '2F:B-2' },
+          { seatId: '1F:A-1', tierName: 'VIP', price: 100000, row: 'A', number: '1' },
+          { seatId: '2F:B-2', tierName: 'R', price: 50000, row: 'B', number: '2' },
         ]));
       mockDb.transaction.mockImplementation(async (callback: (txArg: typeof tx) => Promise<void>) => {
         await callback(tx);
@@ -274,6 +276,7 @@ describe('PaymentService', () => {
         .mockReturnValueOnce(updateSecondSeat);
       tx.insert
         .mockReturnValueOnce(insertPayment)
+        .mockReturnValueOnce(insertTicketItems)
         .mockReturnValueOnce(insertFirstSeat);
 
       await service.upsertAsyncPaymentProgress(
@@ -287,7 +290,7 @@ describe('PaymentService', () => {
             method: 'FOREIGN_EASY_PAY',
             provider: 'ALIPAY',
             currency: 'USD',
-            totalAmount: 150000,
+            totalAmount: 154000,
             approvedAt: '2026-05-08T08:00:00.000Z',
           },
         },
@@ -303,7 +306,7 @@ describe('PaymentService', () => {
           reservationId,
           paymentKey: 'pay_async_done',
           tossOrderId: 'GRP-ASYNC-DONE',
-          amount: 150000,
+          amount: 154000,
           status: 'DONE',
           asyncStatus: 'payment_status_changed:done',
           method: 'FOREIGN_EASY_PAY',
@@ -316,6 +319,41 @@ describe('PaymentService', () => {
       expect(updateSecondSeat.where.mock.calls.some((args) =>
         args.some((arg) => sqlPredicateHasParamValue(arg, 'available')),
       )).toBe(true);
+      expect(tx.insert).toHaveBeenCalledWith(ticketItems);
+      expect(insertTicketItems.values).toHaveBeenCalledWith([
+        expect.objectContaining({
+          reservationId,
+          paymentId,
+          showtimeId,
+          seatId: 'A-1',
+          seatKey: '1F:A-1',
+          floorKey: '1F',
+          floorLabel: '1층',
+          tierName: 'VIP',
+          row: 'A',
+          number: '1',
+          price: 100000,
+          serviceFee: 2000,
+          status: 'active',
+          admissionState: 'not_entered',
+        }),
+        expect.objectContaining({
+          reservationId,
+          paymentId,
+          showtimeId,
+          seatId: 'B-2',
+          seatKey: '2F:B-2',
+          floorKey: '2F',
+          floorLabel: '2F',
+          tierName: 'R',
+          row: 'B',
+          number: '2',
+          price: 50000,
+          serviceFee: 2000,
+          status: 'active',
+          admissionState: 'not_entered',
+        }),
+      ]);
       expect(mockBookingGateway.broadcastSeatUpdate).toHaveBeenCalledWith(
         showtimeId,
         '1F:A-1',
@@ -328,7 +366,7 @@ describe('PaymentService', () => {
         'sold',
         userId,
       );
-      expect(mockQrTicketService.ensureIssuedTicketForReservation).toHaveBeenCalledWith({
+      expect(mockQrTicketService.ensureIssuedTicketsForReservation).toHaveBeenCalledWith({
         reservationId,
         paymentId,
       });
@@ -346,7 +384,11 @@ describe('PaymentService', () => {
           status: 'PENDING_PAYMENT',
           totalAmount: 150000,
         }]))
-        .mockReturnValueOnce(createSelectChain([]));
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([
+          { seatId: '1F:A-1', tierName: 'VIP', price: 73000, row: 'A', number: '1' },
+          { seatId: '1F:A-2', tierName: 'VIP', price: 73000, row: 'A', number: '2' },
+        ]));
       mockDb.insert.mockReturnValueOnce(insertRejectedPayment);
 
       await expect(service.upsertAsyncPaymentProgress(
@@ -379,7 +421,59 @@ describe('PaymentService', () => {
       );
       expect(mockDb.transaction).not.toHaveBeenCalled();
       expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
-      expect(mockQrTicketService.ensureIssuedTicketForReservation).not.toHaveBeenCalled();
+      expect(mockQrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
+    });
+
+    it('rejects seat-only legacy DONE webhook amount before finalizing reservation state', async () => {
+      const reservationId = randomUUID();
+      const insertRejectedPayment = createMutationChain();
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          userId: randomUUID(),
+          showtimeId: randomUUID(),
+          status: 'PENDING_PAYMENT',
+          totalAmount: 200000,
+        }]))
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([
+          { seatId: '1F:A-1', tierName: 'VIP', price: 100000, row: 'A', number: '1' },
+          { seatId: '1F:A-2', tierName: 'VIP', price: 100000, row: 'A', number: '2' },
+        ]));
+      mockDb.insert.mockReturnValueOnce(insertRejectedPayment);
+
+      await expect(service.upsertAsyncPaymentProgress(
+        {
+          eventId: 'evt-payment-seat-only',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_seat_only',
+            orderId: 'GRP-SEAT-ONLY',
+            status: 'DONE',
+            method: 'FOREIGN_EASY_PAY',
+            provider: 'ALIPAY_PLUS',
+            currency: 'USD',
+            totalAmount: 200000,
+            approvedAt: '2026-05-08T08:00:00.000Z',
+          },
+        },
+        'DONE',
+        'payment_status_changed:done',
+      )).rejects.toThrow('금액이 일치하지 않습니다');
+
+      expect(insertRejectedPayment.values).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reservationId,
+          paymentKey: 'pay_seat_only',
+          amount: 200000,
+          status: 'ABORTED',
+          asyncStatus: 'payment_amount_mismatch',
+        }),
+      );
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+      expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+      expect(mockQrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
     });
 
     it('cancels captured async DONE payment when disabled seats block finalization', async () => {
@@ -392,6 +486,7 @@ describe('PaymentService', () => {
       };
       const updateReservation = createMutationChain();
       const insertPayment = createMutationChain([{ id: randomUUID() }]);
+      const insertTicketItems = createMutationChain();
       const updateFirstSeat = createMutationChain([]);
       const insertFirstSeat = createMutationChain([]);
       const insertCanceledPayment = createMutationChain();
@@ -403,11 +498,11 @@ describe('PaymentService', () => {
           userId,
           showtimeId,
           status: 'PENDING_PAYMENT',
-          totalAmount: 150000,
+          totalAmount: 102000,
         }]))
         .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([
-          { seatId: '1F:A-1' },
+          { seatId: '1F:A-1', tierName: 'VIP', price: 100000, row: 'A', number: '1' },
         ]));
       mockDb.transaction.mockImplementation(async (callback: (txArg: typeof tx) => Promise<void>) => {
         await callback(tx);
@@ -417,6 +512,7 @@ describe('PaymentService', () => {
         .mockReturnValueOnce(updateFirstSeat);
       tx.insert
         .mockReturnValueOnce(insertPayment)
+        .mockReturnValueOnce(insertTicketItems)
         .mockReturnValueOnce(insertFirstSeat);
       mockDb.insert.mockReturnValueOnce(insertCanceledPayment);
       mockDb.update.mockReturnValueOnce(failReservation);
@@ -432,7 +528,7 @@ describe('PaymentService', () => {
             method: 'FOREIGN_EASY_PAY',
             provider: 'ALIPAY_PLUS',
             currency: 'USD',
-            totalAmount: 150000,
+            totalAmount: 102000,
             approvedAt: '2026-05-08T08:00:00.000Z',
           },
         },
@@ -458,7 +554,7 @@ describe('PaymentService', () => {
         status: 'FAILED',
       }));
       expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
-      expect(mockQrTicketService.ensureIssuedTicketForReservation).not.toHaveBeenCalled();
+      expect(mockQrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
     });
 
     it('retries QR issuance for already confirmed async DONE webhook replays', async () => {
@@ -472,16 +568,20 @@ describe('PaymentService', () => {
           userId,
           showtimeId: randomUUID(),
           status: 'CONFIRMED',
-          totalAmount: 150000,
+          totalAmount: 154000,
         }]))
         .mockReturnValueOnce(createSelectChain([{
           id: paymentId,
           reservationId,
           paymentKey: 'pay_async_done',
           tossOrderId: 'GRP-ASYNC-DONE',
-          amount: 150000,
+          amount: 154000,
           status: 'DONE',
-        }]));
+        }]))
+        .mockReturnValueOnce(createSelectChain([
+          { seatId: '1F:A-1', tierName: 'VIP', price: 100000, row: 'A', number: '1' },
+          { seatId: '2F:B-2', tierName: 'R', price: 50000, row: 'B', number: '2' },
+        ]));
 
       await service.upsertAsyncPaymentProgress(
         {
@@ -494,7 +594,7 @@ describe('PaymentService', () => {
             method: 'FOREIGN_EASY_PAY',
             provider: 'ALIPAY_PLUS',
             currency: 'USD',
-            totalAmount: 150000,
+            totalAmount: 154000,
             approvedAt: '2026-05-08T08:00:00.000Z',
           },
         },
@@ -503,10 +603,66 @@ describe('PaymentService', () => {
       );
 
       expect(mockDb.transaction).not.toHaveBeenCalled();
-      expect(mockQrTicketService.ensureIssuedTicketForReservation).toHaveBeenCalledWith({
+      expect(mockQrTicketService.ensureIssuedTicketsForReservation).toHaveBeenCalledWith({
         reservationId,
         paymentId,
       });
+      expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+    });
+
+    it('rejects confirmed replay when reservation, payment, and webhook amounts omit service fees', async () => {
+      const reservationId = randomUUID();
+      const paymentId = randomUUID();
+      const updateRejectedPayment = createMutationChain();
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          userId: randomUUID(),
+          showtimeId: randomUUID(),
+          status: 'CONFIRMED',
+          totalAmount: 200000,
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: paymentId,
+          reservationId,
+          paymentKey: 'pay_async_done',
+          tossOrderId: 'GRP-ASYNC-DONE',
+          amount: 200000,
+          status: 'DONE',
+        }]))
+        .mockReturnValueOnce(createSelectChain([
+          { seatId: '1F:A-1', tierName: 'VIP', price: 100000, row: 'A', number: '1' },
+          { seatId: '1F:A-2', tierName: 'VIP', price: 100000, row: 'A', number: '2' },
+        ]));
+      mockDb.update.mockReturnValueOnce(updateRejectedPayment);
+
+      await expect(service.upsertAsyncPaymentProgress(
+        {
+          eventId: 'evt-payment-confirmed-seat-only',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_async_done',
+            orderId: 'GRP-ASYNC-DONE',
+            status: 'DONE',
+            method: 'FOREIGN_EASY_PAY',
+            provider: 'ALIPAY_PLUS',
+            currency: 'USD',
+            totalAmount: 200000,
+            approvedAt: '2026-05-08T08:00:00.000Z',
+          },
+        },
+        'DONE',
+        'payment_status_changed:done',
+      )).rejects.toThrow('금액이 일치하지 않습니다');
+
+      expect(updateRejectedPayment.set).toHaveBeenCalledWith(expect.objectContaining({
+        amount: 200000,
+        status: 'ABORTED',
+        asyncStatus: 'payment_amount_mismatch',
+      }));
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+      expect(mockQrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
       expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
     });
 
@@ -551,7 +707,7 @@ describe('PaymentService', () => {
       )).rejects.toThrow('결제 정보가 예매와 일치하지 않습니다');
 
       expect(mockDb.transaction).not.toHaveBeenCalled();
-      expect(mockQrTicketService.ensureIssuedTicketForReservation).not.toHaveBeenCalled();
+      expect(mockQrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
       expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
     });
 
@@ -598,7 +754,7 @@ describe('PaymentService', () => {
       expect(mockDb.update).not.toHaveBeenCalled();
       expect(mockDb.insert).not.toHaveBeenCalled();
       expect(mockDb.transaction).not.toHaveBeenCalled();
-      expect(mockQrTicketService.ensureIssuedTicketForReservation).not.toHaveBeenCalled();
+      expect(mockQrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
       expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
     });
   });

@@ -178,6 +178,73 @@ describe('SettlementExportService RED contract', () => {
     expectNoRawExportLeak(adminAuditService.write.mock.calls[0]?.[0]);
   });
 
+  it('exports one row per ticket item with item-level cancellation and entry state', async () => {
+    const { service, db } = createDependencies();
+    db.select.mockReturnValueOnce(chainResult([
+      {
+        eventId: 'event-girl-rules-20260704',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
+        performanceTitle: 'Girl Rules Fanmeeting',
+        showtimeAt: new Date('2026-07-04T10:00:00.000Z'),
+        reservationId: 'reservation-1',
+        reservationNumber: 'R-20260704-001',
+        reservationStatus: 'CONFIRMED',
+        paymentStatus: 'DONE',
+        ticketItemId: 'ticket-item-a1',
+        seatKey: '1F:A-1',
+        ticketItemStatus: 'active',
+        admissionState: 'entered',
+        enteredAt: new Date('2026-07-04T10:05:00.000Z'),
+        ticketPrice: 77000,
+        serviceFee: 2000,
+        cancellationFee: 0,
+        serviceFeeRefund: 0,
+        refundableAmount: 0,
+        scanResult: 'success',
+        scannedAt: new Date('2026-07-04T10:05:00.000Z'),
+      },
+      {
+        eventId: 'event-girl-rules-20260704',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
+        performanceTitle: 'Girl Rules Fanmeeting',
+        showtimeAt: new Date('2026-07-04T10:00:00.000Z'),
+        reservationId: 'reservation-1',
+        reservationNumber: 'R-20260704-001',
+        reservationStatus: 'CONFIRMED',
+        paymentStatus: 'DONE',
+        ticketItemId: 'ticket-item-a2',
+        seatKey: '1F:A-2',
+        ticketItemStatus: 'cancelled',
+        admissionState: 'not_entered',
+        ticketPrice: 77000,
+        serviceFee: 2000,
+        cancellationFee: 0,
+        serviceFeeRefund: 2000,
+        refundableAmount: 79000,
+        reopenState: 'available',
+      },
+    ]));
+
+    const result = await service.exportDataset({
+      eventId: 'event-girl-rules-20260704',
+      showtimeId: '00000000-0000-4000-8000-000000000001',
+      dataset: 'entry_status',
+      reason: 'post-event settlement reconciliation',
+    }, FINANCE_ACTOR);
+
+    expect(result.rowCount).toBe(2);
+    expect(result.csv).toContain('"Ticket Item ID"');
+    expect(result.csv).toContain('"ticket-item-a1"');
+    expect(result.csv).toContain('"ticket-item-a2"');
+    expect(result.csv).toContain('"1F:A-1"');
+    expect(result.csv).toContain('"1F:A-2"');
+    expect(result.csv).toContain('"ACTIVE"');
+    expect(result.csv).toContain('"CANCELLED"');
+    expect(result.csv).toContain('"ENTERED"');
+    expect(result.csv).toContain('"refunded_or_cancelled"');
+    expect(result.csv).toContain('"79000"');
+  });
+
   it('neutralizes formula-leading CSV values through safeCsvRows instead of manual join', async () => {
     const { service, db } = createDependencies();
     db.select.mockReturnValueOnce(chainResult([

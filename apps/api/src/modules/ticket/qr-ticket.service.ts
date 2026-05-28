@@ -1,6 +1,5 @@
 import {
   Inject,
-  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -10,7 +9,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { randomUUID } from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
+import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { QrTicket, QrTicketStatus } from '@grabit/shared';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
@@ -18,6 +17,7 @@ import {
   performances,
   reservations,
   showtimes,
+  ticketItems,
   tickets,
   users,
   venues,
@@ -36,6 +36,7 @@ type TicketRecord = {
   reservationId: string;
   paymentId: string;
   showtimeId: string;
+  ticketItemId: string | null;
   qrTokenJti: string;
   secretVersion: string;
   status: 'active' | 'revoked' | 'used' | 'expired';
@@ -48,12 +49,37 @@ type TicketRecord = {
   emailJobId: string | null;
 };
 
+export type QrTicketSeatIdentity = {
+  seatId: string;
+  seatKey: string;
+  floorKey: string;
+  floorLabel: string;
+  row: string;
+  number: string;
+  tierName: string;
+};
+
+type TicketItemIssueRecord = QrTicketSeatIdentity & {
+  id: string;
+};
+
+type TicketWithSeatRecord = TicketRecord & {
+  ticketItemId: string;
+  seatIdentity: QrTicketSeatIdentity;
+};
+
+type TicketWithSeatRow = TicketRecord & QrTicketSeatIdentity;
+
 type ReservationIssueContext = {
   reservationId: string;
   paymentId: string;
   paymentStatus: string;
   showtimeId: string;
   showtimeAt: Date;
+};
+
+type ReservationIssueContextWithTicketItems = ReservationIssueContext & {
+  ticketItems: TicketItemIssueRecord[];
 };
 
 type QrTicketEmailJobPayload = {
@@ -67,12 +93,15 @@ export interface QrTicketTokenPayload {
   reservationId: string;
   paymentId: string;
   showtimeId: string;
+  ticketItemId: string;
+  seatIdentity: QrTicketSeatIdentity;
   secretVersion: string;
   issuedAt: string;
 }
 
 export interface QrTicketScannerContract {
   ticketId?: string;
+  ticketItemId: string;
   tokenVersion: string;
   ticketStatus: QrTicketStatus;
   reservationNumber?: string;
@@ -83,7 +112,8 @@ export interface QrTicketScannerContract {
   performanceTitle: string;
   showtimeAt: string;
   venueName: string;
-  seatLabels?: string[];
+  seatIdentity: QrTicketSeatIdentity;
+  seatLabels: string[];
   maskedJti: string;
   verifiedAt: string;
 }
@@ -128,31 +158,40 @@ export class QrTicketService implements OnModuleInit {
     reservationId: string;
     paymentId: string;
   }): Promise<QrTicket> {
-    let ticketRecord = await this.findTicketByReservationId(input.reservationId);
+    const [ticket] = await this.ensureIssuedTicketsForReservation(input);
+    if (!ticket) {
+      throw new NotFoundException('QR 티켓을 찾을 수 없습니다');
+    }
 
-    if (ticketRecord) {
-      const issueContext = await this.getReservationIssueContext(input);
-      if (
-        ticketRecord.paymentId !== issueContext.paymentId
-        || ticketRecord.showtimeId !== issueContext.showtimeId
-      ) {
-        throw new NotFoundException('QR 티켓 발급 대상 예매를 찾을 수 없습니다');
+    return ticket;
+  }
+
+  async ensureIssuedTicketsForReservation(input: {
+    reservationId: string;
+    paymentId: string;
+  }): Promise<QrTicket[]> {
+    const issueContext = await this.getReservationIssueContextWithTicketItems(input);
+    const ticketItemIds = issueContext.ticketItems.map((ticketItem) => ticketItem.id);
+    const existingTickets = await this.findActiveTicketsByTicketItemIds(ticketItemIds);
+    const existingTicketItemIds = new Set(
+      existingTickets.map((ticket) => ticket.ticketItemId),
+    );
+    const issuedAt = new Date();
+    const emailScheduledAt = this.calculateEmailScheduledAt(issueContext.showtimeAt, issuedAt);
+
+    for (const ticketItem of issueContext.ticketItems) {
+      if (existingTicketItemIds.has(ticketItem.id)) {
+        continue;
       }
-      if (ticketRecord.status !== 'active') {
-        throw new ConflictException('QR 티켓이 활성 상태가 아닙니다');
-      }
-    } else {
-      const issueContext = await this.getReservationIssueContext(input);
-      const issuedAt = new Date();
-      const emailScheduledAt = this.calculateEmailScheduledAt(issueContext.showtimeAt, issuedAt);
 
       try {
-        const inserted = await this.db
+        await this.db
           .insert(tickets)
           .values({
             reservationId: issueContext.reservationId,
             paymentId: issueContext.paymentId,
             showtimeId: issueContext.showtimeId,
+            ticketItemId: ticketItem.id,
             qrTokenJti: randomUUID(),
             secretVersion: this.getCurrentSecretVersion(),
             status: 'active',
@@ -161,26 +200,36 @@ export class QrTicketService implements OnModuleInit {
             updatedAt: issuedAt,
           })
           .returning(this.ticketRecordFields());
-
-        ticketRecord = inserted[0] ?? null;
       } catch (error) {
         if (!this.isUniqueViolation(error)) {
           throw error;
         }
       }
-
-      ticketRecord ??= await this.requireTicketByReservationId(input.reservationId);
     }
 
-    const scheduledTicket = await this.ensureReminderSchedule(ticketRecord);
-    return this.toQrTicket(scheduledTicket);
+    const activeTickets = await this.findActiveTicketsByTicketItemIds(ticketItemIds);
+    const activeTicketByItemId = new Map(
+      activeTickets.map((ticket) => [ticket.ticketItemId, ticket]),
+    );
+    const orderedTickets = issueContext.ticketItems.map((ticketItem) =>
+      activeTicketByItemId.get(ticketItem.id),
+    );
+
+    if (orderedTickets.some((ticket) => !ticket)) {
+      throw new NotFoundException('QR 티켓을 찾을 수 없습니다');
+    }
+
+    const scheduledTickets = await this.ensureSingleReminderSchedule(
+      orderedTickets as TicketWithSeatRecord[],
+    );
+    return Promise.all(scheduledTickets.map((ticket) => this.toQrTicket(ticket)));
   }
 
   async getOrIssueTicketForReservation(input: {
     reservationId: string;
     paymentId: string;
   }): Promise<QrTicket> {
-    const ticketRecord = await this.findTicketByReservationId(input.reservationId);
+    const ticketRecord = await this.findFirstTicketWithSeatByReservationId(input.reservationId);
 
     if (!ticketRecord) {
       return this.ensureIssuedTicketForReservation(input);
@@ -196,7 +245,10 @@ export class QrTicketService implements OnModuleInit {
 
     const scheduledTicket =
       this.mapCredentialStatus(ticketRecord) === 'ACTIVE'
-        ? await this.ensureReminderSchedule(ticketRecord)
+        ? this.withSeatIdentity(
+            await this.ensureReminderSchedule(ticketRecord),
+            ticketRecord,
+          )
         : ticketRecord;
     return this.toQrTicket(scheduledTicket);
   }
@@ -205,24 +257,18 @@ export class QrTicketService implements OnModuleInit {
     reservationId: string,
     userId: string,
   ): Promise<QrTicket> {
-    const [existingTicket] = await this.db
-      .select({
-        ticket: this.ticketRecordFields(),
-      })
-      .from(tickets)
-      .innerJoin(reservations, eq(tickets.reservationId, reservations.id))
-      .where(
-        and(
-          eq(tickets.reservationId, reservationId),
-          eq(reservations.userId, userId),
-        ),
-      );
-
-    if (existingTicket?.ticket) {
-      const scheduledTicket = await this.ensureReminderSchedule(existingTicket.ticket);
-      return this.toQrTicket(scheduledTicket);
+    const [ticket] = await this.getOwnedTicketsForReservation(reservationId, userId);
+    if (!ticket) {
+      throw new NotFoundException('QR 티켓을 찾을 수 없습니다');
     }
 
+    return ticket;
+  }
+
+  async getOwnedTicketsForReservation(
+    reservationId: string,
+    userId: string,
+  ): Promise<QrTicket[]> {
     const [reservationPayment] = await this.db
       .select({
         reservationId: reservations.id,
@@ -244,16 +290,19 @@ export class QrTicketService implements OnModuleInit {
       throw new NotFoundException('QR 티켓을 찾을 수 없습니다');
     }
 
-    return this.ensureIssuedTicketForReservation(reservationPayment);
+    return this.ensureIssuedTicketsForReservation(reservationPayment);
   }
 
   async getReservationTicket(reservationId: string): Promise<QrTicket | null> {
-    const ticketRecord = await this.findTicketByReservationId(reservationId);
+    const ticketRecord = await this.findFirstTicketWithSeatByReservationId(reservationId);
     if (!ticketRecord) {
       return null;
     }
 
-    const scheduledTicket = await this.ensureReminderSchedule(ticketRecord);
+    const scheduledTicket = this.withSeatIdentity(
+      await this.ensureReminderSchedule(ticketRecord),
+      ticketRecord,
+    );
     return this.toQrTicket(scheduledTicket);
   }
 
@@ -291,6 +340,10 @@ export class QrTicketService implements OnModuleInit {
       throw new UnauthorizedException('유효하지 않은 QR 티켓입니다');
     }
 
+    if (!this.isSeatLevelPayload(verified)) {
+      throw new UnauthorizedException('좌석별 QR 티켓을 다시 열어주세요');
+    }
+
     return verified;
   }
 
@@ -299,6 +352,9 @@ export class QrTicketService implements OnModuleInit {
     const [row] = await this.db
       .select({
         ticketId: tickets.id,
+        ticketItemId: ticketItems.id,
+        ticketItemStatus: ticketItems.status,
+        ticketItemAdmissionState: ticketItems.admissionState,
         status: tickets.status,
         expiresAt: tickets.expiresAt,
         usedAt: tickets.usedAt,
@@ -311,8 +367,18 @@ export class QrTicketService implements OnModuleInit {
         performanceTitle: performances.title,
         showtimeAt: showtimes.dateTime,
         venueName: venues.name,
+        seatIdentity: {
+          seatId: ticketItems.seatId,
+          seatKey: ticketItems.seatKey,
+          floorKey: ticketItems.floorKey,
+          floorLabel: ticketItems.floorLabel,
+          row: ticketItems.row,
+          number: ticketItems.number,
+          tierName: ticketItems.tierName,
+        },
       })
       .from(tickets)
+      .innerJoin(ticketItems, eq(tickets.ticketItemId, ticketItems.id))
       .innerJoin(reservations, eq(tickets.reservationId, reservations.id))
       .innerJoin(payments, eq(tickets.paymentId, payments.id))
       .innerJoin(showtimes, eq(tickets.showtimeId, showtimes.id))
@@ -321,6 +387,8 @@ export class QrTicketService implements OnModuleInit {
       .where(
         and(
           eq(tickets.qrTokenJti, payload.jti),
+          eq(tickets.ticketItemId, payload.ticketItemId),
+          eq(ticketItems.id, payload.ticketItemId),
           eq(tickets.reservationId, payload.reservationId),
           eq(tickets.paymentId, payload.paymentId),
           eq(tickets.showtimeId, payload.showtimeId),
@@ -332,11 +400,17 @@ export class QrTicketService implements OnModuleInit {
     if (!row) {
       throw new UnauthorizedException('사용할 수 없는 QR 티켓입니다');
     }
+    if (row.ticketItemStatus !== 'active') {
+      throw new UnauthorizedException('사용할 수 없는 QR 티켓입니다');
+    }
 
     return {
       tokenVersion: payload.secretVersion,
       ticketId: row.ticketId,
-      ticketStatus: this.mapScannerStatus(row),
+      ticketItemId: row.ticketItemId,
+      ticketStatus: row.ticketItemAdmissionState === 'entered'
+        ? 'USED'
+        : this.mapScannerStatus(row),
       reservationNumber: row.reservationNumber,
       reservationId: row.reservationId,
       paymentId: row.paymentId,
@@ -345,6 +419,8 @@ export class QrTicketService implements OnModuleInit {
       performanceTitle: row.performanceTitle,
       showtimeAt: row.showtimeAt.toISOString(),
       venueName: row.venueName ?? '',
+      seatIdentity: row.seatIdentity,
+      seatLabels: this.buildSeatLabels(row.seatIdentity),
       maskedJti: this.maskJti(payload.jti),
       verifiedAt: new Date().toISOString(),
     };
@@ -356,15 +432,18 @@ export class QrTicketService implements OnModuleInit {
     const [row] = await this.db
       .select({
         ticket: this.ticketRecordFields(),
+        ticketItemStatus: ticketItems.status,
         reservationStatus: reservations.status,
         paymentStatus: payments.status,
       })
       .from(tickets)
+      .innerJoin(ticketItems, eq(tickets.ticketItemId, ticketItems.id))
       .innerJoin(reservations, eq(tickets.reservationId, reservations.id))
       .innerJoin(payments, eq(tickets.paymentId, payments.id))
       .where(
         and(
           eq(tickets.qrTokenJti, payload.jti),
+          eq(tickets.ticketItemId, payload.ticketItemId),
           eq(tickets.reservationId, payload.reservationId),
           eq(tickets.paymentId, payload.paymentId),
           eq(tickets.showtimeId, payload.showtimeId),
@@ -385,6 +464,7 @@ export class QrTicketService implements OnModuleInit {
       || ticketRecord.usedAt
       || ticketRecord.revokedAt
       || isExpired
+      || row.ticketItemStatus !== 'active'
       || row.reservationStatus !== 'CONFIRMED'
       || row.paymentStatus !== 'DONE'
     ) {
@@ -392,22 +472,17 @@ export class QrTicketService implements OnModuleInit {
     }
   }
 
-  private async findTicketByReservationId(reservationId: string): Promise<TicketRecord | null> {
+  private async findFirstTicketWithSeatByReservationId(
+    reservationId: string,
+  ): Promise<TicketWithSeatRecord | null> {
     const [ticketRecord] = await this.db
-      .select(this.ticketRecordFields())
+      .select(this.ticketWithSeatRecordFields())
       .from(tickets)
-      .where(eq(tickets.reservationId, reservationId));
+      .innerJoin(ticketItems, eq(tickets.ticketItemId, ticketItems.id))
+      .where(eq(tickets.reservationId, reservationId))
+      .orderBy(asc(ticketItems.createdAt), asc(ticketItems.id));
 
-    return ticketRecord ?? null;
-  }
-
-  private async requireTicketByReservationId(reservationId: string): Promise<TicketRecord> {
-    const ticketRecord = await this.findTicketByReservationId(reservationId);
-    if (!ticketRecord) {
-      throw new NotFoundException('QR 티켓을 찾을 수 없습니다');
-    }
-
-    return ticketRecord;
+    return ticketRecord ? this.toTicketWithSeatRecord(ticketRecord) : null;
   }
 
   private async getReservationIssueContext(input: {
@@ -439,6 +514,87 @@ export class QrTicketService implements OnModuleInit {
     }
 
     return context;
+  }
+
+  private async getReservationIssueContextWithTicketItems(input: {
+    reservationId: string;
+    paymentId: string;
+  }): Promise<ReservationIssueContextWithTicketItems> {
+    const rows = await this.db
+      .select({
+        reservationId: reservations.id,
+        paymentId: payments.id,
+        paymentStatus: payments.status,
+        showtimeId: reservations.showtimeId,
+        showtimeAt: showtimes.dateTime,
+        ticketItem: {
+          id: ticketItems.id,
+          seatId: ticketItems.seatId,
+          seatKey: ticketItems.seatKey,
+          floorKey: ticketItems.floorKey,
+          floorLabel: ticketItems.floorLabel,
+          row: ticketItems.row,
+          number: ticketItems.number,
+          tierName: ticketItems.tierName,
+        },
+      })
+      .from(reservations)
+      .innerJoin(payments, eq(payments.reservationId, reservations.id))
+      .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
+      .innerJoin(
+        ticketItems,
+        and(
+          eq(ticketItems.reservationId, reservations.id),
+          eq(ticketItems.paymentId, payments.id),
+          eq(ticketItems.showtimeId, reservations.showtimeId),
+          eq(ticketItems.status, 'active'),
+        ),
+      )
+      .where(
+        and(
+          eq(reservations.id, input.reservationId),
+          eq(payments.id, input.paymentId),
+          eq(reservations.status, 'CONFIRMED'),
+          eq(payments.status, 'DONE'),
+        ),
+      )
+      .orderBy(asc(ticketItems.createdAt), asc(ticketItems.id));
+
+    const [first] = rows;
+    if (!first || first.paymentStatus !== 'DONE') {
+      throw new NotFoundException('QR 티켓 발급 대상 예매를 찾을 수 없습니다');
+    }
+
+    return {
+      reservationId: first.reservationId,
+      paymentId: first.paymentId,
+      paymentStatus: first.paymentStatus,
+      showtimeId: first.showtimeId,
+      showtimeAt: first.showtimeAt,
+      ticketItems: rows.map((row) => row.ticketItem),
+    };
+  }
+
+  private async findActiveTicketsByTicketItemIds(
+    ticketItemIds: string[],
+  ): Promise<TicketWithSeatRecord[]> {
+    if (ticketItemIds.length === 0) {
+      return [];
+    }
+
+    const rows = await this.db
+      .select(this.ticketWithSeatRecordFields())
+      .from(tickets)
+      .innerJoin(ticketItems, eq(tickets.ticketItemId, ticketItems.id))
+      .where(
+        and(
+          inArray(tickets.ticketItemId, ticketItemIds),
+          eq(tickets.status, 'active'),
+        ),
+      )
+      .orderBy(asc(ticketItems.createdAt), asc(ticketItems.id));
+
+    return rows.map((row) => this.toTicketWithSeatRecord(row));
   }
 
   private maskJti(jti: string): string {
@@ -486,10 +642,33 @@ export class QrTicketService implements OnModuleInit {
     return updated ?? { ...ticketRecord, emailJobId: jobId };
   }
 
+  private async ensureSingleReminderSchedule(
+    ticketRecords: TicketWithSeatRecord[],
+  ): Promise<TicketWithSeatRecord[]> {
+    if (
+      ticketRecords.length === 0
+      || ticketRecords.some((ticket) => ticket.emailJobId || ticket.emailSentAt)
+    ) {
+      return ticketRecords;
+    }
+
+    const candidate = ticketRecords.find((ticket) => ticket.emailScheduledAt) ?? ticketRecords[0];
+    if (!candidate) {
+      return ticketRecords;
+    }
+
+    const scheduled = await this.ensureReminderSchedule(candidate);
+    return ticketRecords.map((ticket) =>
+      ticket.id === scheduled.id
+        ? this.withSeatIdentity(scheduled, ticket)
+        : ticket,
+    );
+  }
+
   private async handleReminderEmailJob(payload: QrTicketEmailJobPayload): Promise<void> {
     const [row] = await this.db
       .select({
-        ticket: this.ticketRecordFields(),
+        ticket: this.ticketWithSeatRecordFields(),
         reservation: {
           id: reservations.id,
           reservationNumber: reservations.reservationNumber,
@@ -509,6 +688,7 @@ export class QrTicketService implements OnModuleInit {
         },
       })
       .from(tickets)
+      .innerJoin(ticketItems, eq(tickets.ticketItemId, ticketItems.id))
       .innerJoin(reservations, eq(tickets.reservationId, reservations.id))
       .innerJoin(users, eq(reservations.userId, users.id))
       .innerJoin(showtimes, eq(tickets.showtimeId, showtimes.id))
@@ -521,11 +701,12 @@ export class QrTicketService implements OnModuleInit {
       return;
     }
 
-    if (row.ticket.emailSentAt || row.ticket.status !== 'active') {
+    const ticket = this.toTicketWithSeatRecord(row.ticket);
+    if (ticket.emailSentAt || ticket.status !== 'active') {
       return;
     }
 
-    const ticketToken = await this.buildTicketToken(row.ticket);
+    const ticketToken = await this.buildTicketToken(ticket);
     const frontendUrl = (this.configService.get<string>('FRONTEND_URL') ?? 'http://localhost:3000').replace(
       /\/$/,
       '',
@@ -551,10 +732,10 @@ export class QrTicketService implements OnModuleInit {
         emailSentAt: new Date(),
         updatedAt: new Date(),
       })
-      .where(eq(tickets.id, row.ticket.id));
+      .where(eq(tickets.id, ticket.id));
   }
 
-  private async buildTicketToken(ticketRecord: TicketRecord): Promise<string> {
+  private async buildTicketToken(ticketRecord: TicketWithSeatRecord): Promise<string> {
     return this.jwtService.signAsync(
       {
         type: 'qr-ticket',
@@ -562,6 +743,8 @@ export class QrTicketService implements OnModuleInit {
         reservationId: ticketRecord.reservationId,
         paymentId: ticketRecord.paymentId,
         showtimeId: ticketRecord.showtimeId,
+        ticketItemId: ticketRecord.ticketItemId,
+        seatIdentity: ticketRecord.seatIdentity,
         secretVersion: ticketRecord.secretVersion,
         issuedAt: ticketRecord.issuedAt.toISOString(),
       } satisfies QrTicketTokenPayload,
@@ -573,11 +756,14 @@ export class QrTicketService implements OnModuleInit {
     );
   }
 
-  private async toQrTicket(ticketRecord: TicketRecord): Promise<QrTicket> {
+  private async toQrTicket(ticketRecord: TicketWithSeatRecord): Promise<QrTicket> {
     const status = this.mapCredentialStatus(ticketRecord);
     const isActive = status === 'ACTIVE';
 
     return {
+      id: ticketRecord.id,
+      ticketItemId: ticketRecord.ticketItemId,
+      seatIdentity: ticketRecord.seatIdentity,
       token: isActive ? await this.buildTicketToken(ticketRecord) : '',
       jti: isActive ? ticketRecord.qrTokenJti : '',
       status,
@@ -696,12 +882,62 @@ export class QrTicketService implements OnModuleInit {
     );
   }
 
+  private isSeatLevelPayload(
+    payload: QrTicketTokenPayload,
+  ): payload is QrTicketTokenPayload & {
+    ticketItemId: string;
+    seatIdentity: QrTicketSeatIdentity;
+  } {
+    return (
+      typeof payload.ticketItemId === 'string'
+      && payload.ticketItemId.length > 0
+      && this.isSeatIdentity(payload.seatIdentity)
+    );
+  }
+
+  private isSeatIdentity(value: unknown): value is QrTicketSeatIdentity {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return false;
+    }
+
+    const candidate = value as Partial<Record<keyof QrTicketSeatIdentity, unknown>>;
+    return [
+      candidate.seatId,
+      candidate.seatKey,
+      candidate.floorKey,
+      candidate.floorLabel,
+      candidate.row,
+      candidate.number,
+      candidate.tierName,
+    ].every((field) => typeof field === 'string' && field.length > 0);
+  }
+
+  private withSeatIdentity(
+    ticketRecord: TicketRecord,
+    source: Pick<TicketWithSeatRecord, 'seatIdentity'>,
+  ): TicketWithSeatRecord {
+    if (!ticketRecord.ticketItemId) {
+      throw new UnauthorizedException('좌석별 QR 티켓을 다시 열어주세요');
+    }
+
+    return {
+      ...ticketRecord,
+      ticketItemId: ticketRecord.ticketItemId,
+      seatIdentity: source.seatIdentity,
+    };
+  }
+
+  private buildSeatLabels(seatIdentity: QrTicketSeatIdentity): string[] {
+    return [`${seatIdentity.tierName} ${seatIdentity.row}열 ${seatIdentity.number}번`];
+  }
+
   private ticketRecordFields() {
     return {
       id: tickets.id,
       reservationId: tickets.reservationId,
       paymentId: tickets.paymentId,
       showtimeId: tickets.showtimeId,
+      ticketItemId: tickets.ticketItemId,
       qrTokenJti: tickets.qrTokenJti,
       secretVersion: tickets.secretVersion,
       status: tickets.status,
@@ -712,6 +948,52 @@ export class QrTicketService implements OnModuleInit {
       emailScheduledAt: tickets.emailScheduledAt,
       emailSentAt: tickets.emailSentAt,
       emailJobId: tickets.emailJobId,
+    };
+  }
+
+  private ticketWithSeatRecordFields() {
+    return {
+      ...this.ticketRecordFields(),
+      seatId: ticketItems.seatId,
+      seatKey: ticketItems.seatKey,
+      floorKey: ticketItems.floorKey,
+      floorLabel: ticketItems.floorLabel,
+      row: ticketItems.row,
+      number: ticketItems.number,
+      tierName: ticketItems.tierName,
+    };
+  }
+
+  private toTicketWithSeatRecord(row: TicketWithSeatRow): TicketWithSeatRecord {
+    if (!row.ticketItemId) {
+      throw new UnauthorizedException('좌석별 QR 티켓을 다시 열어주세요');
+    }
+
+    return {
+      id: row.id,
+      reservationId: row.reservationId,
+      paymentId: row.paymentId,
+      showtimeId: row.showtimeId,
+      ticketItemId: row.ticketItemId,
+      qrTokenJti: row.qrTokenJti,
+      secretVersion: row.secretVersion,
+      status: row.status,
+      issuedAt: row.issuedAt,
+      expiresAt: row.expiresAt,
+      usedAt: row.usedAt,
+      revokedAt: row.revokedAt,
+      emailScheduledAt: row.emailScheduledAt,
+      emailSentAt: row.emailSentAt,
+      emailJobId: row.emailJobId,
+      seatIdentity: {
+        seatId: row.seatId,
+        seatKey: row.seatKey,
+        floorKey: row.floorKey,
+        floorLabel: row.floorLabel,
+        row: row.row,
+        number: row.number,
+        tierName: row.tierName,
+      },
     };
   }
 }

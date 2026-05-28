@@ -4,7 +4,7 @@ import {
   Inject,
   Injectable,
 } from '@nestjs/common';
-import { and, desc, eq, gte, lte, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, lte, sql, type SQL } from 'drizzle-orm';
 import {
   resolveAdminCapabilitySnapshot,
   type AdminCapability,
@@ -21,8 +21,7 @@ import {
   refunds,
   reservations,
   showtimes,
-  ticketScanEvents,
-  tickets,
+  ticketItems,
   users,
 } from '../../database/schema/index.js';
 import { safeCsvRows } from './csv-export.util.js';
@@ -43,15 +42,21 @@ const DATASET_HEADERS = {
     'Reservation Number',
     'Performance Title',
     'Showtime',
-    'Ticket Status',
+    'Ticket Item ID',
+    'Seat Key',
+    'Ticket Item Status',
+    'Admission State',
     'Entry Status',
     'Scan Result',
     'Scanned At',
+    'Refundable Amount',
   ],
   no_show_reservations: [
     'Reservation Number',
     'Performance Title',
     'Showtime',
+    'Ticket Item ID',
+    'Seat Key',
     'Payment Status',
     'Refund Status',
     'Entry Status',
@@ -60,17 +65,24 @@ const DATASET_HEADERS = {
   ],
   reservation_payment_refund_summary: [
     'Reservation Number',
+    'Ticket Item ID',
+    'Seat Key',
     'Reservation Status',
+    'Ticket Item Status',
+    'Admission State',
     'Payment Status',
     'Payment Method',
     'Currency',
-    'Paid Amount',
+    'Ticket Price',
+    'Service Fee',
     'Refund Status',
     'Refund Amount',
   ],
   settlement_accounting_input: [
     '정산 입력 자료',
     'Reservation Number',
+    'Ticket Item ID',
+    'Seat Key',
     'Currency',
     'Gross Sales Amount',
     'Refund Amount',
@@ -79,6 +91,13 @@ const DATASET_HEADERS = {
     'No Show Reason',
     'Payment Status',
     'Refund Status',
+    'Ticket Item Status',
+    'Admission State',
+    'Ticket Price',
+    'Service Fee',
+    'Cancellation Fee',
+    'Service Fee Refund',
+    'Refundable Amount',
     'Settlement Memo',
   ],
 } as const satisfies Record<SettlementExportDataset, readonly string[]>;
@@ -268,24 +287,64 @@ export class SettlementExportService {
         refundId: refunds.id,
         refundStatus: refunds.status,
         refundCompletedAt: refunds.completedAt,
-        ticketId: tickets.id,
-        ticketStatus: tickets.status,
-        ticketUsedAt: tickets.usedAt,
-        scanResult: ticketScanEvents.result,
-        syncState: ticketScanEvents.syncState,
-        scannedAt: ticketScanEvents.scannedAt,
-        rejectionReason: ticketScanEvents.rejectionReason,
+        ticketItemId: ticketItems.id,
+        seatId: ticketItems.seatId,
+        seatKey: ticketItems.seatKey,
+        floorKey: ticketItems.floorKey,
+        floorLabel: ticketItems.floorLabel,
+        tierName: ticketItems.tierName,
+        row: ticketItems.row,
+        number: ticketItems.number,
+        ticketPrice: ticketItems.price,
+        serviceFee: ticketItems.serviceFee,
+        ticketItemStatus: ticketItems.status,
+        admissionState: ticketItems.admissionState,
+        enteredAt: ticketItems.enteredAt,
+        cancelledAt: ticketItems.cancelledAt,
+        cancelReason: ticketItems.cancelReason,
+        cancellationFee: ticketItems.cancellationFee,
+        serviceFeeRefund: ticketItems.serviceFeeRefund,
+        refundableAmount: ticketItems.refundableAmount,
+        reopenState: ticketItems.reopenState,
+        reopenHoldUntil: ticketItems.reopenHoldUntil,
+        scanResult: sql<string | null>`(
+          select tse.result::text
+          from ticket_scan_events tse
+          where tse.ticket_item_id = ${ticketItems.id}
+          order by tse.scanned_at desc, tse.created_at desc, tse.id desc
+          limit 1
+        )`,
+        syncState: sql<string | null>`(
+          select tse.sync_state::text
+          from ticket_scan_events tse
+          where tse.ticket_item_id = ${ticketItems.id}
+          order by tse.scanned_at desc, tse.created_at desc, tse.id desc
+          limit 1
+        )`,
+        scannedAt: sql<Date | null>`(
+          select tse.scanned_at
+          from ticket_scan_events tse
+          where tse.ticket_item_id = ${ticketItems.id}
+          order by tse.scanned_at desc, tse.created_at desc, tse.id desc
+          limit 1
+        )`,
+        rejectionReason: sql<string | null>`(
+          select tse.rejection_reason
+          from ticket_scan_events tse
+          where tse.ticket_item_id = ${ticketItems.id}
+          order by tse.scanned_at desc, tse.created_at desc, tse.id desc
+          limit 1
+        )`,
       })
       .from(reservations)
       .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
       .innerJoin(performances, eq(showtimes.performanceId, performances.id))
       .innerJoin(users, eq(reservations.userId, users.id))
-      .leftJoin(payments, eq(payments.reservationId, reservations.id))
+      .innerJoin(ticketItems, eq(ticketItems.reservationId, reservations.id))
+      .leftJoin(payments, eq(payments.id, ticketItems.paymentId))
       .leftJoin(refunds, eq(refunds.reservationId, reservations.id))
-      .leftJoin(tickets, eq(tickets.reservationId, reservations.id))
-      .leftJoin(ticketScanEvents, eq(ticketScanEvents.ticketId, tickets.id))
       .where(and(...predicates))
-      .orderBy(desc(reservations.createdAt));
+      .orderBy(desc(reservations.createdAt), asc(ticketItems.createdAt), asc(ticketItems.id));
   }
 }
 
@@ -351,16 +410,13 @@ function aggregateSettlementRows(rows: SettlementSourceRow[]) {
     }
 
     if (!countedGrossReservations.has(reservationKey)) {
-      grossSalesAmount += numberValue(row, 'paidAmount')
-        || numberValue(row, 'totalAmount');
+      grossSalesAmount += itemGrossAmount(row);
       countedGrossReservations.add(reservationKey);
     }
 
-    if (refundStatus) {
+    if (isRefundedOrCancelledRow(row) || hasRefundStatus(refundStatus)) {
       refundedReservations.add(reservationKey);
-      refundedAmount += numberValue(row, 'refundAmount')
-        || numberValue(row, 'paidAmount')
-        || numberValue(row, 'totalAmount');
+      refundedAmount += itemRefundAmount(row);
     }
 
     if (isEnteredRow(row)) {
@@ -399,18 +455,24 @@ function datasetRowToCsvValues(
         stringValue(row, 'reservationNumber'),
         stringValue(row, 'performanceTitle'),
         formatDateValue(rowValue(row, 'showtimeAt')),
-        stringValue(row, 'ticketStatus'),
+        stringValue(row, 'ticketItemId'),
+        stringValue(row, 'seatKey'),
+        csvTicketItemStatus(row),
+        csvAdmissionState(row),
         entryStatus(row),
         stringValue(row, 'scanResult'),
         formatDateValue(rowValue(row, 'scannedAt')),
+        itemRefundAmount(row),
       ];
     case 'no_show_reservations':
       return [
         stringValue(row, 'reservationNumber'),
         stringValue(row, 'performanceTitle'),
         formatDateValue(rowValue(row, 'showtimeAt')),
+        stringValue(row, 'ticketItemId'),
+        stringValue(row, 'seatKey'),
         stringValue(row, 'paymentStatus'),
-        stringValue(row, 'refundStatus') ?? 'NONE',
+        csvRefundStatus(row),
         entryStatus(row),
         maskEmail(stringValue(row, 'buyerEmail') ?? stringValue(row, 'customerEmail')),
         maskPhone(stringValue(row, 'buyerPhone') ?? stringValue(row, 'customerPhone')),
@@ -418,33 +480,41 @@ function datasetRowToCsvValues(
     case 'reservation_payment_refund_summary':
       return [
         stringValue(row, 'reservationNumber'),
+        stringValue(row, 'ticketItemId'),
+        stringValue(row, 'seatKey'),
         stringValue(row, 'reservationStatus'),
+        csvTicketItemStatus(row),
+        csvAdmissionState(row),
         stringValue(row, 'paymentStatus'),
         stringValue(row, 'paymentMethod'),
         stringValue(row, 'currency') ?? 'KRW',
-        numberValue(row, 'paidAmount') || numberValue(row, 'totalAmount'),
-        stringValue(row, 'refundStatus') ?? 'NONE',
-        numberValue(row, 'refundAmount'),
+        numberValue(row, 'ticketPrice'),
+        numberValue(row, 'serviceFee'),
+        csvRefundStatus(row),
+        itemRefundAmount(row),
       ];
     case 'settlement_accounting_input':
       return [
         '정산 입력 자료',
         stringValue(row, 'reservationNumber'),
+        stringValue(row, 'ticketItemId'),
+        stringValue(row, 'seatKey'),
         stringValue(row, 'currency') ?? 'KRW',
-        numberValue(row, 'grossSalesAmount')
-          || numberValue(row, 'paidAmount')
-          || numberValue(row, 'totalAmount'),
-        numberValue(row, 'refundAmount'),
+        itemGrossAmount(row),
+        itemRefundAmount(row),
         numberValue(row, 'settlementAmount')
-          || Math.max(
-            (numberValue(row, 'paidAmount') || numberValue(row, 'totalAmount'))
-              - numberValue(row, 'refundAmount'),
-            0,
-          ),
+          || Math.max(itemGrossAmount(row) - itemRefundAmount(row), 0),
         stringValue(row, 'entryStatus') ?? entryStatus(row),
         stringValue(row, 'noShowReason') ?? '',
         stringValue(row, 'paymentStatus'),
-        stringValue(row, 'refundStatus') ?? 'NONE',
+        csvRefundStatus(row),
+        csvTicketItemStatus(row),
+        csvAdmissionState(row),
+        numberValue(row, 'ticketPrice'),
+        numberValue(row, 'serviceFee'),
+        numberValue(row, 'cancellationFee'),
+        numberValue(row, 'serviceFeeRefund'),
+        numberValue(row, 'refundableAmount'),
         stringValue(row, 'settlementMemo') ?? '',
       ];
   }
@@ -455,8 +525,7 @@ function entryStatus(row: SettlementSourceRow): string {
     return 'entered';
   }
 
-  const refundStatus = stringValue(row, 'refundStatus');
-  if (refundStatus) {
+  if (isRefundedOrCancelledRow(row) || hasRefundStatus(stringValue(row, 'refundStatus'))) {
     return 'refunded_or_cancelled';
   }
 
@@ -466,10 +535,75 @@ function entryStatus(row: SettlementSourceRow): string {
 function isEnteredRow(row: SettlementSourceRow): boolean {
   return (
     stringValue(row, 'entryStatus') === 'entered'
+    || stringValue(row, 'admissionState') === 'entered'
+    || stringValue(row, 'admissionState') === 'ENTERED'
     || stringValue(row, 'scanResult') === 'success'
     || stringValue(row, 'ticketStatus') === 'used'
     || rowValue(row, 'ticketUsedAt') != null
+    || rowValue(row, 'enteredAt') != null
   );
+}
+
+function isRefundedOrCancelledRow(row: SettlementSourceRow): boolean {
+  const status = stringValue(row, 'ticketItemStatus');
+  return (
+    status === 'cancelled'
+    || status === 'CANCELLED'
+    || status === 'cancellation_pending'
+    || status === 'CANCELLATION_PENDING'
+    || numberValue(row, 'refundableAmount') > 0
+  );
+}
+
+function hasRefundStatus(status: string | null): boolean {
+  return Boolean(status && status !== 'NONE');
+}
+
+function csvTicketItemStatus(row: SettlementSourceRow): string {
+  switch (stringValue(row, 'ticketItemStatus')) {
+    case 'cancellation_pending':
+      return 'CANCELLATION_PENDING';
+    case 'cancelled':
+      return 'CANCELLED';
+    case 'expired':
+      return 'EXPIRED';
+    case 'active':
+      return 'ACTIVE';
+    default:
+      return stringValue(row, 'ticketItemStatus') ?? '';
+  }
+}
+
+function csvAdmissionState(row: SettlementSourceRow): string {
+  switch (stringValue(row, 'admissionState')) {
+    case 'entered':
+      return 'ENTERED';
+    case 'not_entered':
+      return 'NOT_ENTERED';
+    default:
+      return stringValue(row, 'admissionState') ?? '';
+  }
+}
+
+function csvRefundStatus(row: SettlementSourceRow): string {
+  const explicitStatus = stringValue(row, 'refundStatus');
+  if (isRefundedOrCancelledRow(row)) {
+    const reopenState = stringValue(row, 'reopenState');
+    if (reopenState === 'available' || reopenState === 'manual_opened') {
+      return 'COMPLETED';
+    }
+    return 'PROCESSING_AT_PG';
+  }
+  return explicitStatus ?? 'NONE';
+}
+
+function itemGrossAmount(row: SettlementSourceRow): number {
+  const itemAmount = numberValue(row, 'ticketPrice') + numberValue(row, 'serviceFee');
+  return itemAmount || numberValue(row, 'paidAmount') || numberValue(row, 'totalAmount');
+}
+
+function itemRefundAmount(row: SettlementSourceRow): number {
+  return numberValue(row, 'refundAmount') || numberValue(row, 'refundableAmount');
 }
 
 function settlementFiltersForAudit(
@@ -529,7 +663,8 @@ function dateOnlyEnd(date: string): Date {
 
 function rowKey(row: SettlementSourceRow): string {
   return (
-    stringValue(row, 'reservationId')
+    stringValue(row, 'ticketItemId')
+    ?? stringValue(row, 'reservationId')
     ?? stringValue(row, 'reservationNumber')
     ?? JSON.stringify(row)
   );

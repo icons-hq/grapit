@@ -3,6 +3,7 @@ import {
   ConflictException,
   Injectable,
   Inject,
+  InternalServerErrorException,
   NotFoundException,
   Optional,
 } from '@nestjs/common';
@@ -14,6 +15,7 @@ import {
   reservationSeats,
   reservations,
   seatInventories,
+  ticketItems,
 } from '../../database/schema/index.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
 import { QrTicketService } from '../ticket/qr-ticket.service.js';
@@ -29,6 +31,7 @@ import { TossPaymentsClient } from './toss-payments.client.js';
 type TossWebhookProvider = PaymentProvider | 'ALIPAY';
 
 const ASYNC_DONE_SEAT_FAILURE_CANCEL_REASON = '판매 불가능 좌석으로 인한 자동 취소';
+const TICKET_SERVICE_FEE_KRW = 2000;
 
 const ASYNC_FOREIGN_EASY_PAY_PROVIDERS = new Set<PaymentProvider>([
   'ALIPAY_PLUS',
@@ -111,7 +114,12 @@ type WebhookPaymentSnapshot = {
 type WebhookSeatSelection = {
   seatId: string;
   floorKey: string;
+  floorLabel: string;
   seatKey: string;
+  tierName: string;
+  row: string;
+  number: string;
+  price: number;
 };
 
 @Injectable()
@@ -315,7 +323,12 @@ export class PaymentService {
         payload,
       });
 
-      if (payload.data.totalAmount !== reservation.totalAmount) {
+      const pendingSeats = await this.getReservationSeatSelections(reservation.id);
+      const expectedAmount = this.calculatePayableTotal(pendingSeats);
+      if (
+        reservation.totalAmount !== expectedAmount
+        || payload.data.totalAmount !== expectedAmount
+      ) {
         await this.storeRejectedWebhookPayment({
           payload,
           reservation,
@@ -332,6 +345,7 @@ export class PaymentService {
         payload,
         reservation,
         existingPayment,
+        pendingSeats,
         provider,
         method,
         asyncStatus,
@@ -388,6 +402,7 @@ export class PaymentService {
     payload: TossWebhookRequestBody;
     reservation: WebhookReservationSnapshot;
     existingPayment?: WebhookPaymentSnapshot;
+    pendingSeats: WebhookSeatSelection[];
     provider: PaymentProvider;
     method: PaymentMethod['method'];
     asyncStatus: string;
@@ -396,6 +411,7 @@ export class PaymentService {
       payload,
       reservation,
       existingPayment,
+      pendingSeats,
       provider,
       method,
       asyncStatus,
@@ -417,7 +433,7 @@ export class PaymentService {
       && existingPayment.status === 'DONE'
     ) {
       if (this.qrTicketService) {
-        await this.qrTicketService.ensureIssuedTicketForReservation({
+        await this.qrTicketService.ensureIssuedTicketsForReservation({
           reservationId: reservation.id,
           paymentId: existingPayment.id,
         });
@@ -425,7 +441,6 @@ export class PaymentService {
       return;
     }
 
-    const pendingSeats = await this.getReservationSeatSelections(reservation.id);
     const paidAt = payload.data.approvedAt
       ? new Date(payload.data.approvedAt)
       : new Date();
@@ -469,6 +484,30 @@ export class PaymentService {
 
           committedPaymentId = insertedPayments[0]?.id ?? null;
         }
+
+        if (!committedPaymentId) {
+          throw new InternalServerErrorException('결제 정보 저장에 실패했습니다');
+        }
+        const ticketItemPaymentId = committedPaymentId;
+
+        await tx.insert(ticketItems).values(
+          pendingSeats.map((seat) => ({
+            reservationId: reservation.id,
+            paymentId: ticketItemPaymentId,
+            showtimeId: reservation.showtimeId,
+            seatId: seat.seatId,
+            seatKey: seat.seatKey,
+            floorKey: seat.floorKey,
+            floorLabel: seat.floorLabel,
+            tierName: seat.tierName,
+            row: seat.row,
+            number: seat.number,
+            price: seat.price,
+            serviceFee: TICKET_SERVICE_FEE_KRW,
+            status: 'active' as const,
+            admissionState: 'not_entered' as const,
+          })),
+        );
 
         for (const seat of pendingSeats) {
           const updated = await tx
@@ -540,7 +579,7 @@ export class PaymentService {
     }
 
     if (this.qrTicketService && committedPaymentId) {
-      await this.qrTicketService.ensureIssuedTicketForReservation({
+      await this.qrTicketService.ensureIssuedTicketsForReservation({
         reservationId: reservation.id,
         paymentId: committedPaymentId,
       });
@@ -594,14 +633,25 @@ export class PaymentService {
     const rows = await this.db
       .select({
         seatId: reservationSeats.seatId,
+        tierName: reservationSeats.tierName,
+        price: reservationSeats.price,
+        row: reservationSeats.row,
+        number: reservationSeats.number,
       })
       .from(reservationSeats)
       .where(eq(reservationSeats.reservationId, reservationId));
 
-    return rows.map((row) => this.normalizeReservationSeatIdentity(row.seatId));
+    return rows.map((row) => this.normalizeReservationSeatIdentity(row));
   }
 
-  private normalizeReservationSeatIdentity(seatId: string): WebhookSeatSelection {
+  private normalizeReservationSeatIdentity(row: {
+    seatId: string;
+    tierName: string;
+    price: number;
+    row: string;
+    number: string;
+  }): WebhookSeatSelection {
+    const { seatId } = row;
     if (seatId.includes(':')) {
       const separatorIndex = seatId.indexOf(':');
       const floorKey = seatId.slice(0, separatorIndex) || '1F';
@@ -609,16 +659,31 @@ export class PaymentService {
 
       return {
         floorKey,
+        floorLabel: floorKey === '1F' ? '1층' : floorKey,
         seatId: rawSeatId,
         seatKey: `${floorKey}:${rawSeatId}`,
+        tierName: row.tierName,
+        row: row.row,
+        number: row.number,
+        price: row.price,
       };
     }
 
     return {
       floorKey: '1F',
+      floorLabel: '1층',
       seatId,
       seatKey: `1F:${seatId}`,
+      tierName: row.tierName,
+      row: row.row,
+      number: row.number,
+      price: row.price,
     };
+  }
+
+  private calculatePayableTotal(seats: WebhookSeatSelection[]): number {
+    const seatTotal = seats.reduce((total, seat) => total + seat.price, 0);
+    return seatTotal + seats.length * TICKET_SERVICE_FEE_KRW;
   }
 
   private async storeRejectedWebhookPayment(input: {
