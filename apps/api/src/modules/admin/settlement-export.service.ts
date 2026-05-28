@@ -603,7 +603,16 @@ function itemGrossAmount(row: SettlementSourceRow): number {
 }
 
 function itemRefundAmount(row: SettlementSourceRow): number {
-  return numberValue(row, 'refundAmount') || numberValue(row, 'refundableAmount');
+  const itemLevelAmount = numberValue(row, 'refundAmount') || numberValue(row, 'refundableAmount');
+  if (itemLevelAmount > 0) {
+    return itemLevelAmount;
+  }
+
+  if (hasRefundStatus(stringValue(row, 'refundStatus'))) {
+    return numberValue(row, 'paidAmount') || numberValue(row, 'totalAmount');
+  }
+
+  return itemLevelAmount;
 }
 
 function settlementFiltersForAudit(

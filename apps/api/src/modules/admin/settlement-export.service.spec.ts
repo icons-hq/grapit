@@ -117,6 +117,74 @@ describe('SettlementExportService RED contract', () => {
     });
   });
 
+  it('falls back to paid amount when summarizing full-reservation refunds without item refundable amount', async () => {
+    const { service, db } = createDependencies();
+    db.select.mockReturnValueOnce(chainResult([
+      {
+        eventId: 'event-girl-rules-20260704',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
+        currency: 'KRW',
+        reservationId: 'reservation-full-refund-1',
+        reservationNumber: 'R-20260704-REFUND',
+        reservationStatus: 'CANCELLED',
+        paymentStatus: 'DONE',
+        refundStatus: 'completed',
+        ticketItemId: 'ticket-item-full-refund-1',
+        ticketItemStatus: 'active',
+        admissionState: 'not_entered',
+        paidAmount: 99000,
+        totalAmount: 99000,
+        ticketPrice: 0,
+        serviceFee: 0,
+        refundableAmount: 0,
+      },
+    ]));
+
+    await expect(
+      service.getSummary({
+        eventId: 'event-girl-rules-20260704',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
+      }),
+    ).resolves.toMatchObject({
+      grossSalesAmount: 99000,
+      refundedAmount: 99000,
+      refundCount: 1,
+    });
+  });
+
+  it('falls back to total amount in refund CSV when full-reservation refund has no item refundable amount', async () => {
+    const { service, db } = createDependencies();
+    db.select.mockReturnValueOnce(chainResult([
+      {
+        reservationId: 'reservation-full-refund-2',
+        reservationNumber: 'R-20260704-TOTAL-FALLBACK',
+        reservationStatus: 'CANCELLED',
+        paymentStatus: 'DONE',
+        refundStatus: 'completed',
+        paymentMethod: 'CARD',
+        currency: 'KRW',
+        ticketItemId: 'ticket-item-full-refund-2',
+        ticketItemStatus: 'active',
+        admissionState: 'not_entered',
+        seatKey: '1F:B-1',
+        totalAmount: 88000,
+        ticketPrice: 0,
+        serviceFee: 0,
+        refundableAmount: 0,
+      },
+    ]));
+
+    const result = await service.exportDataset({
+      eventId: 'event-girl-rules-20260704',
+      dataset: 'reservation_payment_refund_summary',
+      reason: 'post-event full refund reconciliation',
+    }, FINANCE_ACTOR);
+
+    expect(result.csv).toContain('"R-20260704-TOTAL-FALLBACK"');
+    expect(result.csv).toContain('"completed"');
+    expect(result.csv).toContain('"88000"');
+  });
+
   it.each(DATASETS)('exports %s dataset with safeCsvRows and audited metadata only', async (dataset) => {
     const { service, db, adminAuditService } = createDependencies();
     const safeCsvRowsSpy = vi.spyOn(csvExport, 'safeCsvRows');
