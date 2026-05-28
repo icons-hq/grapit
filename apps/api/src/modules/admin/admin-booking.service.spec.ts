@@ -163,6 +163,86 @@ describe('AdminBookingService', () => {
       expect(result.stats.totalRevenue).toBe(1500000);
       expect(result.stats.cancelRate).toBe(20); // 2/10 * 100
     });
+
+    it('should return reservation seats for a pending booking without ticket items', async () => {
+      mockDb.select
+        .mockReturnValueOnce(createChainMock([{ count: 1 }]))
+        .mockReturnValueOnce(createChainMock([{ sum: 0 }]))
+        .mockReturnValueOnce(createChainMock([{ count: 0 }]))
+        .mockReturnValueOnce(
+          createChainMock([
+            {
+              reservation: {
+                id: 'reservation-pending-1',
+                reservationNumber: 'R-PENDING-001',
+                status: 'PENDING_PAYMENT',
+                totalAmount: 158000,
+                createdAt: new Date('2026-07-01T03:00:00.000Z'),
+              },
+              user: {
+                name: '김대기',
+                phone: '+821055501234',
+              },
+              showtime: {
+                dateTime: new Date('2026-07-18T10:00:00.000Z'),
+              },
+              performance: {
+                title: 'Girl Rules Fanmeeting',
+              },
+            },
+          ]),
+        )
+        .mockReturnValueOnce(createChainMock([]))
+        .mockReturnValueOnce(
+          createChainMock([
+            {
+              id: 'reservation-seat-a1',
+              reservationId: 'reservation-pending-1',
+              seatId: '1F:A-1',
+              tierName: 'VIP',
+              price: 79000,
+              row: 'A',
+              number: '1',
+            },
+            {
+              id: 'reservation-seat-a2',
+              reservationId: 'reservation-pending-1',
+              seatId: '1F:A-2',
+              tierName: 'VIP',
+              price: 79000,
+              row: 'A',
+              number: '2',
+            },
+          ]),
+        );
+
+      const result = await service.getBookings({});
+
+      expect(result.bookings).toHaveLength(1);
+      expect(result.bookings[0]?.status).toBe('PENDING_PAYMENT');
+      expect(result.bookings[0]?.seats).toEqual([
+        {
+          seatId: 'A-1',
+          floorKey: '1F',
+          floorLabel: '1층',
+          seatKey: '1F:A-1',
+          tierName: 'VIP',
+          price: 79000,
+          row: 'A',
+          number: '1',
+        },
+        {
+          seatId: 'A-2',
+          floorKey: '1F',
+          floorLabel: '1층',
+          seatKey: '1F:A-2',
+          tierName: 'VIP',
+          price: 79000,
+          row: 'A',
+          number: '2',
+        },
+      ]);
+    });
   });
 
   describe('manualOpen', () => {

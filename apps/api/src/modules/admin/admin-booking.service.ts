@@ -24,7 +24,7 @@ import { BookingGateway } from '../booking/booking.gateway.js';
 import { RefundService } from '../refund/refund.service.js';
 import { safeCsvRows } from './csv-export.util.js';
 import { AdminAuditService } from './admin-audit.service.js';
-import { normalizeSeatIdentity } from '@grabit/shared';
+import { normalizeSeatIdentity, toFloorAwareSeatSelection } from '@grabit/shared';
 import type {
   AdminBookingListItem,
   AdminReservationExportFilter,
@@ -304,9 +304,26 @@ export class AdminBookingService {
       existing.push(ticketItem);
       ticketItemsByReservation.set(ticketItem.reservationId, existing);
     }
+    const reservationIdsWithoutTicketItems = reservationIds.filter(
+      (reservationId) => (ticketItemsByReservation.get(reservationId)?.length ?? 0) === 0,
+    );
+    const allReservationSeats = reservationIdsWithoutTicketItems.length > 0
+      ? await this.db
+          .select()
+          .from(reservationSeats)
+          .where(inArray(reservationSeats.reservationId, reservationIdsWithoutTicketItems))
+          .orderBy(asc(reservationSeats.id))
+      : [];
+    const reservationSeatsByReservation = new Map<string, typeof allReservationSeats>();
+    for (const reservationSeat of allReservationSeats) {
+      const existing = reservationSeatsByReservation.get(reservationSeat.reservationId) ?? [];
+      existing.push(reservationSeat);
+      reservationSeatsByReservation.set(reservationSeat.reservationId, existing);
+    }
 
     const bookings: AdminBookingListItem[] = rows.map((row) => {
       const reservationTicketItems = ticketItemsByReservation.get(row.reservation.id) ?? [];
+      const reservationSeatsFallback = reservationSeatsByReservation.get(row.reservation.id) ?? [];
       return {
         id: row.reservation.id,
         reservationNumber: row.reservation.reservationNumber,
@@ -314,7 +331,9 @@ export class AdminBookingService {
         userPhone: row.user.phone,
         performanceTitle: row.performance.title,
         showDateTime: row.showtime.dateTime?.toISOString() ?? '',
-        seats: reservationTicketItems.map(mapTicketItemToSeatSelection),
+        seats: reservationTicketItems.length > 0
+          ? reservationTicketItems.map(mapTicketItemToSeatSelection)
+          : reservationSeatsFallback.map(mapReservationSeatToSeatSelection),
         totalAmount: row.reservation.totalAmount,
         status: row.reservation.status as ReservationStatus,
         createdAt: row.reservation.createdAt?.toISOString() ?? '',
@@ -782,6 +801,18 @@ function mapTicketItemToSeatSelection(item: AdminTicketItemRow): FloorAwareSeatS
     row: item.row,
     number: item.number,
   };
+}
+
+function mapReservationSeatToSeatSelection(
+  seat: typeof reservationSeats.$inferSelect,
+): FloorAwareSeatSelection {
+  return toFloorAwareSeatSelection({
+    seatId: seat.seatId,
+    tierName: seat.tierName,
+    price: seat.price,
+    row: seat.row,
+    number: seat.number,
+  });
 }
 
 function mapTicketItemToAdminTicketItem(item: AdminTicketItemRow): AdminTicketItemDto {
