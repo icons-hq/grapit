@@ -609,6 +609,11 @@ function itemRefundAmount(row: SettlementSourceRow): number {
   }
 
   if (hasRefundStatus(stringValue(row, 'refundStatus'))) {
+    const rowGrossAmount = numberValue(row, 'ticketPrice') + numberValue(row, 'serviceFee');
+    if (rowGrossAmount > 0) {
+      return rowGrossAmount;
+    }
+
     return numberValue(row, 'paidAmount') || numberValue(row, 'totalAmount');
   }
 

@@ -152,6 +152,111 @@ describe('SettlementExportService RED contract', () => {
     });
   });
 
+  it('uses row gross amount for multi-ticket full-reservation refunds to avoid overcounting repeated payment totals', async () => {
+    const { service, db } = createDependencies();
+    db.select.mockReturnValueOnce(chainResult([
+      {
+        eventId: 'event-girl-rules-20260704',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
+        currency: 'KRW',
+        reservationId: 'reservation-full-refund-2-seats',
+        reservationNumber: 'R-20260704-2-SEATS',
+        reservationStatus: 'CANCELLED',
+        paymentStatus: 'DONE',
+        refundStatus: 'completed',
+        ticketItemId: 'ticket-item-full-refund-a1',
+        ticketItemStatus: 'active',
+        admissionState: 'not_entered',
+        paidAmount: 158000,
+        totalAmount: 158000,
+        ticketPrice: 77000,
+        serviceFee: 2000,
+        refundableAmount: 0,
+      },
+      {
+        eventId: 'event-girl-rules-20260704',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
+        currency: 'KRW',
+        reservationId: 'reservation-full-refund-2-seats',
+        reservationNumber: 'R-20260704-2-SEATS',
+        reservationStatus: 'CANCELLED',
+        paymentStatus: 'DONE',
+        refundStatus: 'completed',
+        ticketItemId: 'ticket-item-full-refund-a2',
+        ticketItemStatus: 'active',
+        admissionState: 'not_entered',
+        paidAmount: 158000,
+        totalAmount: 158000,
+        ticketPrice: 77000,
+        serviceFee: 2000,
+        refundableAmount: 0,
+      },
+    ]));
+
+    await expect(
+      service.getSummary({
+        eventId: 'event-girl-rules-20260704',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
+      }),
+    ).resolves.toMatchObject({
+      refundedAmount: 158000,
+    });
+  });
+
+  it('keeps explicit item refund amounts ahead of refund-status fallbacks', async () => {
+    const { service, db } = createDependencies();
+    db.select.mockReturnValueOnce(chainResult([
+      {
+        reservationId: 'reservation-item-refund-wins-1',
+        reservationNumber: 'R-20260704-ITEM-WINS',
+        reservationStatus: 'CONFIRMED',
+        paymentStatus: 'DONE',
+        refundStatus: 'completed',
+        paymentMethod: 'CARD',
+        currency: 'KRW',
+        ticketItemId: 'ticket-item-refund-amount-wins',
+        ticketItemStatus: 'cancelled',
+        admissionState: 'not_entered',
+        seatKey: '1F:C-1',
+        paidAmount: 158000,
+        totalAmount: 158000,
+        ticketPrice: 77000,
+        serviceFee: 2000,
+        refundAmount: 45000,
+        refundableAmount: 79000,
+      },
+      {
+        reservationId: 'reservation-item-refund-wins-2',
+        reservationNumber: 'R-20260704-REFUNDABLE-WINS',
+        reservationStatus: 'CONFIRMED',
+        paymentStatus: 'DONE',
+        refundStatus: 'completed',
+        paymentMethod: 'CARD',
+        currency: 'KRW',
+        ticketItemId: 'ticket-item-refundable-wins',
+        ticketItemStatus: 'cancelled',
+        admissionState: 'not_entered',
+        seatKey: '1F:C-2',
+        paidAmount: 158000,
+        totalAmount: 158000,
+        ticketPrice: 77000,
+        serviceFee: 2000,
+        refundableAmount: 52000,
+      },
+    ]));
+
+    const result = await service.exportDataset({
+      eventId: 'event-girl-rules-20260704',
+      dataset: 'reservation_payment_refund_summary',
+      reason: 'post-event item refund reconciliation',
+    }, FINANCE_ACTOR);
+
+    expect(result.csv).toContain('"R-20260704-ITEM-WINS","ticket-item-refund-amount-wins","1F:C-1"');
+    expect(result.csv).toContain('"45000"');
+    expect(result.csv).toContain('"R-20260704-REFUNDABLE-WINS","ticket-item-refundable-wins","1F:C-2"');
+    expect(result.csv).toContain('"52000"');
+  });
+
   it('falls back to total amount in refund CSV when full-reservation refund has no item refundable amount', async () => {
     const { service, db } = createDependencies();
     db.select.mockReturnValueOnce(chainResult([
