@@ -84,7 +84,7 @@ describe('SeatSelectionPanel', () => {
     expect(screen.getByText('130,000원')).toBeDefined();
   });
 
-  it('calculates total price correctly', () => {
+  it('calculates total price including per-ticket service fee', () => {
     render(
       <SeatSelectionPanel
         performanceTitle="테스트 공연"
@@ -96,8 +96,10 @@ describe('SeatSelectionPanel', () => {
         isLoading={false}
       />,
     );
-    // Total: 170,000 + 130,000 = 300,000
-    expect(screen.getByText('300,000원')).toBeDefined();
+    // Total: 170,000 + 130,000 + (2 * 2,000) = 304,000
+    expect(screen.getByText('예매 수수료')).toBeDefined();
+    expect(screen.getByText('4,000원')).toBeDefined();
+    expect(screen.getByText('304,000원')).toBeDefined();
     expect(screen.getByText('2석')).toBeDefined();
   });
 

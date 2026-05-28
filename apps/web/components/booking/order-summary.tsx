@@ -3,7 +3,7 @@
 import Image from 'next/image';
 import { Card, CardContent } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
-import type { SeatSelection } from '@grabit/shared';
+import { TICKET_SERVICE_FEE_KRW, type SeatSelection } from '@grabit/shared';
 
 interface OrderSummaryProps {
   performanceTitle: string;
@@ -22,6 +22,8 @@ export function OrderSummary({
   seats,
   totalPrice,
 }: OrderSummaryProps) {
+  const serviceFeeTotal = seats.length * TICKET_SERVICE_FEE_KRW;
+
   return (
     <Card>
       <CardContent className="space-y-4">
@@ -66,6 +68,17 @@ export function OrderSummary({
             </li>
           ))}
         </ul>
+
+        <Separator />
+
+        <div className="space-y-2 text-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-gray-600">예매 수수료</span>
+            <span className="text-gray-900">
+              {serviceFeeTotal.toLocaleString('ko-KR')}원
+            </span>
+          </div>
+        </div>
 
         <Separator />
 

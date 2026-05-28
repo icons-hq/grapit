@@ -87,6 +87,33 @@ function cancelledBooking() {
       status: 'CANCELED' as const,
       paidAt: '2026-05-14T01:05:00.000Z',
     },
+    ticketItems: [
+      {
+        id: 'ticket-item-a10',
+        reservationId: 'reservation-1',
+        paymentId: 'payment-1',
+        showtimeId: 'showtime-1',
+        seatId: 'A-10',
+        seatKey: '1F:A-10',
+        floorKey: '1F',
+        floorLabel: '1층',
+        tierName: 'VIP',
+        price: 120000,
+        row: 'A',
+        number: '10',
+        serviceFee: 2000,
+        status: 'CANCELLED' as const,
+        admissionState: 'NOT_ENTERED' as const,
+        enteredAt: null,
+        cancelledAt: '2026-05-14T01:10:00.000Z',
+        cancelReason: '일정 변경',
+        cancellationFee: 0,
+        serviceFeeRefund: 2000,
+        refundableAmount: 122000,
+        reopenState: 'AVAILABLE' as const,
+        reopenHoldUntil: null,
+      },
+    ],
   };
 }
 
@@ -174,6 +201,30 @@ describe('Admin seat operations UI', () => {
         queryKey: ['admin', 'seat-operations'],
       });
     });
+  });
+
+  it('shows ticket item status, admission, refund, and reopen fields in admin booking detail', () => {
+    mocks.bookingDetail.mockReturnValue({
+      data: cancelledBooking(),
+      isLoading: false,
+    });
+
+    renderWithClient(
+      <AdminBookingDetailModal
+        open
+        onOpenChange={vi.fn()}
+        bookingId="reservation-1"
+        onRefund={vi.fn()}
+        isRefunding={false}
+      />,
+    );
+
+    const table = screen.getByRole('table', { name: 'ticket item status' });
+    expect(within(table).getByText('VIP A열 10번')).toBeInTheDocument();
+    expect(within(table).getByText('CANCELLED')).toBeInTheDocument();
+    expect(within(table).getByText('NOT_ENTERED')).toBeInTheDocument();
+    expect(within(table).getByText('122,000원')).toBeInTheDocument();
+    expect(within(table).getByText('AVAILABLE')).toBeInTheDocument();
   });
 
   it('supports disable, reactivate, and history with reasoned confirmation in SeatOperationsPanel', async () => {

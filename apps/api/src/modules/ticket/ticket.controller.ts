@@ -10,6 +10,6 @@ export class TicketController {
     @Param('id') reservationId: string,
     @Request() req: { user: { id: string } },
   ) {
-    return this.qrTicketService.getOwnedTicketForReservation(reservationId, req.user.id);
+    return this.qrTicketService.getOwnedTicketsForReservation(reservationId, req.user.id);
   }
 }

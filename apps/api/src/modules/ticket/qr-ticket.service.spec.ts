@@ -40,6 +40,7 @@ function createTicketRecord(overrides: Record<string, unknown> = {}) {
     reservationId: 'reservation-1',
     paymentId: 'payment-1',
     showtimeId: 'showtime-1',
+    ticketItemId: 'ticket-item-1',
     qrTokenJti: 'qr-jti-1',
     secretVersion: '2026-07',
     status: 'active',
@@ -54,11 +55,51 @@ function createTicketRecord(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function createSeatIdentity(overrides: Record<string, unknown> = {}) {
+  return {
+    seatId: 'A-1',
+    seatKey: '1F:A-1',
+    floorKey: '1F',
+    floorLabel: '1층',
+    row: 'A',
+    number: '1',
+    tierName: 'VIP',
+    ...overrides,
+  };
+}
+
+function createTicketWithSeatRecord(overrides: Record<string, unknown> = {}) {
+  const { seatIdentity, ...ticketOverrides } = overrides;
+
+  return {
+    ...createTicketRecord(ticketOverrides),
+    ...createSeatIdentity(seatIdentity as Record<string, unknown> | undefined),
+  };
+}
+
+function createTokenPayload(overrides: Record<string, unknown> = {}) {
+  const { seatIdentity, ...payloadOverrides } = overrides;
+
+  return {
+    type: 'qr-ticket',
+    jti: 'qr-jti-1',
+    reservationId: 'reservation-1',
+    paymentId: 'payment-1',
+    showtimeId: 'showtime-1',
+    ticketItemId: 'ticket-item-1',
+    seatIdentity: createSeatIdentity(seatIdentity as Record<string, unknown> | undefined),
+    secretVersion: '2026-07',
+    issuedAt: '2026-07-10T09:00:00.000Z',
+    ...payloadOverrides,
+  };
+}
+
 function createVerifiableTicketRow(overrides: Record<string, unknown> = {}) {
   const { ticket, ...rowOverrides } = overrides;
 
   return {
     ticket: createTicketRecord(ticket as Record<string, unknown> | undefined),
+    ticketItemStatus: 'active',
     reservationStatus: 'CONFIRMED',
     paymentStatus: 'DONE',
     ...rowOverrides,
@@ -77,11 +118,110 @@ describe('QrTicketService', () => {
     vi.useRealTimers();
   });
 
-  it('issues a QR ticket with the latest secretVersion and schedules the D-1 email resend', async () => {
+  it('issues one active QR per active ticket item with distinct seat-level payloads', async () => {
+    const seatA1 = createSeatIdentity({
+      seatId: 'A-1',
+      seatKey: '1F:A-1',
+      row: 'A',
+      number: '1',
+      tierName: 'VIP',
+    });
+    const seatA2 = createSeatIdentity({
+      seatId: 'A-2',
+      seatKey: '1F:A-2',
+      row: 'A',
+      number: '2',
+      tierName: 'VIP',
+    });
+    const issuedTicketA1 = createTicketRecord({
+      id: 'ticket-a1',
+      ticketItemId: 'ticket-item-a1',
+      qrTokenJti: 'qr-jti-a1',
+    });
+    const issuedTicketA2 = createTicketRecord({
+      id: 'ticket-a2',
+      ticketItemId: 'ticket-item-a2',
+      qrTokenJti: 'qr-jti-a2',
+    });
     const mockDb = {
       select: vi
         .fn()
+        .mockReturnValueOnce(chainResult([
+          {
+            reservationId: 'reservation-1',
+            paymentId: 'payment-1',
+            paymentStatus: 'DONE',
+            showtimeId: 'showtime-1',
+            showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
+            ticketItem: { id: 'ticket-item-a1', ...seatA1 },
+          },
+          {
+            reservationId: 'reservation-1',
+            paymentId: 'payment-1',
+            paymentStatus: 'DONE',
+            showtimeId: 'showtime-1',
+            showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
+            ticketItem: { id: 'ticket-item-a2', ...seatA2 },
+          },
+        ]))
         .mockReturnValueOnce(chainResult([]))
+        .mockReturnValueOnce(chainResult([
+          { ...issuedTicketA1, ...seatA1 },
+          { ...issuedTicketA2, ...seatA2 },
+        ])),
+      insert: vi
+        .fn()
+        .mockReturnValueOnce(createInsertResult([issuedTicketA1]))
+        .mockReturnValueOnce(createInsertResult([issuedTicketA2])),
+      update: vi.fn(),
+    };
+    const jwtService = new JwtService();
+    const service = new QrTicketService(
+      mockDb as never,
+      {
+        get: vi.fn((key: string) => {
+          if (key === 'QR_TICKET_SECRET') return 'current-secret';
+          if (key === 'QR_TICKET_SECRET_VERSION') return '2026-07';
+          return undefined;
+        }),
+      } as never,
+      jwtService,
+      { sendQrTicketReminderEmail: vi.fn() } as never,
+      {
+        isAvailable: false,
+        send: vi.fn(),
+        work: vi.fn(),
+        stop: vi.fn(),
+      } as never,
+    );
+
+    const issuedTickets = await service.ensureIssuedTicketsForReservation({
+      reservationId: 'reservation-1',
+      paymentId: 'payment-1',
+    });
+
+    expect(issuedTickets).toHaveLength(2);
+    const payloads = issuedTickets.map((ticket) =>
+      jwtService.decode(ticket.token) as Record<string, unknown>,
+    );
+    expect(payloads.map((payload) => payload['ticketItemId'])).toEqual([
+      'ticket-item-a1',
+      'ticket-item-a2',
+    ]);
+    expect(payloads.map((payload) => payload['seatIdentity'])).toEqual([
+      seatA1,
+      seatA2,
+    ]);
+    expect(new Set(issuedTickets.map((ticket) => ticket.jti))).toHaveProperty('size', 2);
+    expect(mockDb.insert).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns the first seat QR ticket through the single-ticket wrapper and schedules one D-1 email resend', async () => {
+    const seatIdentity = createSeatIdentity();
+    const ticketRecord = createTicketRecord();
+    const mockDb = {
+      select: vi
+        .fn()
         .mockReturnValueOnce(
           chainResult([
             {
@@ -90,9 +230,20 @@ describe('QrTicketService', () => {
               paymentStatus: 'DONE',
               showtimeId: 'showtime-1',
               showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
+              ticketItem: {
+                id: 'ticket-item-1',
+                ...seatIdentity,
+              },
             },
           ]),
         )
+        .mockReturnValueOnce(chainResult([]))
+        .mockReturnValueOnce(chainResult([
+          {
+            ...ticketRecord,
+            ...seatIdentity,
+          },
+        ]))
         .mockReturnValueOnce(chainResult([createVerifiableTicketRow()])),
       insert: vi.fn().mockReturnValue(
         createInsertResult([
@@ -101,6 +252,7 @@ describe('QrTicketService', () => {
             reservationId: 'reservation-1',
             paymentId: 'payment-1',
             showtimeId: 'showtime-1',
+            ticketItemId: 'ticket-item-1',
             qrTokenJti: 'qr-jti-1',
             secretVersion: '2026-07',
             status: 'active',
@@ -118,6 +270,7 @@ describe('QrTicketService', () => {
             reservationId: 'reservation-1',
             paymentId: 'payment-1',
             showtimeId: 'showtime-1',
+            ticketItemId: 'ticket-item-1',
             qrTokenJti: 'qr-jti-1',
             secretVersion: '2026-07',
             status: 'active',
@@ -181,6 +334,106 @@ describe('QrTicketService', () => {
     expect(verified.secretVersion).toBe('2026-07');
     expect(verified.jti).toBe('qr-jti-1');
     expect(verified.reservationId).toBe('reservation-1');
+    expect(verified.ticketItemId).toBe('ticket-item-1');
+    expect(verified.seatIdentity).toEqual(seatIdentity);
+  });
+
+  it('returns every owned seat QR ticket for a reservation ticket read', async () => {
+    const seatA1 = createSeatIdentity({
+      seatId: 'A-1',
+      seatKey: '1F:A-1',
+      row: 'A',
+      number: '1',
+    });
+    const seatA2 = createSeatIdentity({
+      seatId: 'A-2',
+      seatKey: '1F:A-2',
+      row: 'A',
+      number: '2',
+    });
+    const issuedTicketA1 = createTicketRecord({
+      id: 'ticket-a1',
+      ticketItemId: 'ticket-item-a1',
+      qrTokenJti: 'qr-jti-a1',
+    });
+    const issuedTicketA2 = createTicketRecord({
+      id: 'ticket-a2',
+      ticketItemId: 'ticket-item-a2',
+      qrTokenJti: 'qr-jti-a2',
+    });
+    const mockDb = {
+      select: vi
+        .fn()
+        .mockReturnValueOnce(chainResult([
+          {
+            reservationId: 'reservation-1',
+            paymentId: 'payment-1',
+            paymentStatus: 'DONE',
+          },
+        ]))
+        .mockReturnValueOnce(chainResult([
+          {
+            reservationId: 'reservation-1',
+            paymentId: 'payment-1',
+            paymentStatus: 'DONE',
+            showtimeId: 'showtime-1',
+            showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
+            ticketItem: { id: 'ticket-item-a1', ...seatA1 },
+          },
+          {
+            reservationId: 'reservation-1',
+            paymentId: 'payment-1',
+            paymentStatus: 'DONE',
+            showtimeId: 'showtime-1',
+            showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
+            ticketItem: { id: 'ticket-item-a2', ...seatA2 },
+          },
+        ]))
+        .mockReturnValueOnce(chainResult([]))
+        .mockReturnValueOnce(chainResult([
+          { ...issuedTicketA1, ...seatA1 },
+          { ...issuedTicketA2, ...seatA2 },
+        ])),
+      insert: vi
+        .fn()
+        .mockReturnValueOnce(createInsertResult([issuedTicketA1]))
+        .mockReturnValueOnce(createInsertResult([issuedTicketA2])),
+      update: vi.fn(),
+    };
+    const jwtService = new JwtService();
+    const service = new QrTicketService(
+      mockDb as never,
+      {
+        get: vi.fn((key: string) => {
+          if (key === 'QR_TICKET_SECRET') return 'current-secret';
+          if (key === 'QR_TICKET_SECRET_VERSION') return '2026-07';
+          return undefined;
+        }),
+      } as never,
+      jwtService,
+      { sendQrTicketReminderEmail: vi.fn() } as never,
+      {
+        isAvailable: false,
+        send: vi.fn(),
+        work: vi.fn(),
+        stop: vi.fn(),
+      } as never,
+    );
+
+    const tickets = await service.getOwnedTicketsForReservation('reservation-1', 'user-1');
+
+    expect(tickets).toHaveLength(2);
+    expect(tickets.map((ticket) => ticket.ticketItemId)).toEqual([
+      'ticket-item-a1',
+      'ticket-item-a2',
+    ]);
+    expect(tickets.map((ticket) => ticket.seatIdentity?.seatKey)).toEqual([
+      '1F:A-1',
+      '1F:A-2',
+    ]);
+    expect(tickets.map((ticket) =>
+      (jwtService.decode(ticket.token) as Record<string, unknown>)['ticketItemId'],
+    )).toEqual(['ticket-item-a1', 'ticket-item-a2']);
   });
 
   it('consumes pg-boss batch payloads when the QR email worker runs', async () => {
@@ -232,15 +485,15 @@ describe('QrTicketService', () => {
     };
     const jwtService = new JwtService();
     const token = await jwtService.signAsync(
-      {
-        type: 'qr-ticket',
+      createTokenPayload({
         jti: 'qr-jti-prior',
         reservationId: 'reservation-legacy',
         paymentId: 'payment-legacy',
         showtimeId: 'showtime-legacy',
+        ticketItemId: 'ticket-item-legacy',
         secretVersion: '2026-05',
         issuedAt: '2026-05-01T00:00:00.000Z',
-      },
+      }),
       {
         secret: 'prior-secret',
         algorithm: 'HS256',
@@ -257,6 +510,7 @@ describe('QrTicketService', () => {
               reservationId: 'reservation-legacy',
               paymentId: 'payment-legacy',
               showtimeId: 'showtime-legacy',
+              ticketItemId: 'ticket-item-legacy',
               qrTokenJti: 'qr-jti-prior',
               secretVersion: '2026-05',
               issuedAt: new Date('2026-05-01T00:00:00.000Z'),
@@ -282,6 +536,54 @@ describe('QrTicketService', () => {
     expect(verified.secretVersion).toBe('2026-05');
     expect(verified.jti).toBe('qr-jti-prior');
     expect(verified.paymentId).toBe('payment-legacy');
+    expect(verified.ticketItemId).toBe('ticket-item-legacy');
+  });
+
+  it('rejects legacy reservation-level QR payloads without ticketItemId or seatIdentity', async () => {
+    const configService = {
+      get: vi.fn((key: string) => {
+        if (key === 'QR_TICKET_SECRET') return 'current-secret';
+        if (key === 'QR_TICKET_SECRET_VERSION') return '2026-07';
+        if (key === 'QR_TICKET_SECRET_KEYRING_JSON') {
+          return JSON.stringify({ '2026-07': 'current-secret' });
+        }
+
+        return undefined;
+      }),
+    };
+    const jwtService = new JwtService();
+    const token = await jwtService.signAsync(
+      {
+        type: 'qr-ticket',
+        jti: 'qr-jti-legacy-reservation',
+        reservationId: 'reservation-legacy',
+        paymentId: 'payment-legacy',
+        showtimeId: 'showtime-legacy',
+        secretVersion: '2026-07',
+        issuedAt: now.toISOString(),
+      },
+      {
+        secret: 'current-secret',
+        algorithm: 'HS256',
+        noTimestamp: true,
+      },
+    );
+    const service = new QrTicketService(
+      { select: vi.fn() } as never,
+      configService as never,
+      jwtService,
+      { sendQrTicketReminderEmail: vi.fn() } as never,
+      {
+        isAvailable: false,
+        send: vi.fn(),
+        work: vi.fn(),
+        stop: vi.fn(),
+      } as never,
+    );
+
+    await expect(service.verifyTicketToken(token)).rejects.toThrow(
+      '좌석별 QR 티켓을 다시 열어주세요',
+    );
   });
 
   it('rejects signed QR tokens when the persisted ticket is used, revoked, or expired', async () => {
@@ -298,15 +600,9 @@ describe('QrTicketService', () => {
     };
     const jwtService = new JwtService();
     const token = await jwtService.signAsync(
-      {
-        type: 'qr-ticket',
-        jti: 'qr-jti-1',
-        reservationId: 'reservation-1',
-        paymentId: 'payment-1',
-        showtimeId: 'showtime-1',
-        secretVersion: '2026-07',
+      createTokenPayload({
         issuedAt: now.toISOString(),
-      },
+      }),
       {
         secret: 'current-secret',
         algorithm: 'HS256',
@@ -318,6 +614,7 @@ describe('QrTicketService', () => {
       createVerifiableTicketRow({ ticket: { status: 'revoked' } }),
       createVerifiableTicketRow({ ticket: { usedAt: new Date('2026-07-10T09:00:00.000Z') } }),
       createVerifiableTicketRow({ ticket: { expiresAt: new Date('2026-07-10T08:59:59.000Z') } }),
+      createVerifiableTicketRow({ ticketItemStatus: 'cancelled' }),
     ];
 
     for (const ticketRecord of invalidRows) {
@@ -354,15 +651,9 @@ describe('QrTicketService', () => {
     };
     const jwtService = new JwtService();
     const token = await jwtService.signAsync(
-      {
-        type: 'qr-ticket',
-        jti: 'qr-jti-1',
-        reservationId: 'reservation-1',
-        paymentId: 'payment-1',
-        showtimeId: 'showtime-1',
-        secretVersion: '2026-07',
+      createTokenPayload({
         issuedAt: now.toISOString(),
-      },
+      }),
       {
         secret: 'current-secret',
         algorithm: 'HS256',
@@ -446,7 +737,7 @@ describe('QrTicketService', () => {
       select: vi
         .fn()
         .mockReturnValueOnce(chainResult([
-          createTicketRecord({
+          createTicketWithSeatRecord({
             status: 'used',
             usedAt: new Date('2026-07-10T09:05:00.000Z'),
           }),
@@ -514,15 +805,10 @@ describe('QrTicketService', () => {
     const jwtService = new JwtService();
     const rawJti = 'qr-jti-phase26-scanner-contract-1234567890';
     const token = await jwtService.signAsync(
-      {
-        type: 'qr-ticket',
+      createTokenPayload({
         jti: rawJti,
-        reservationId: 'reservation-1',
-        paymentId: 'payment-1',
-        showtimeId: 'showtime-1',
-        secretVersion: '2026-07',
         issuedAt: now.toISOString(),
-      },
+      }),
       {
         secret: 'current-secret',
         algorithm: 'HS256',
@@ -539,6 +825,9 @@ describe('QrTicketService', () => {
               usedAt: null,
               revokedAt: null,
               ticketId: 'ticket-1',
+              ticketItemId: 'ticket-item-1',
+              ticketItemStatus: 'active',
+              ticketItemAdmissionState: 'not_entered',
               reservationNumber: 'GRP-27-SCAN-0001',
               reservationId: 'reservation-1',
               paymentId: 'payment-1',
@@ -547,6 +836,7 @@ describe('QrTicketService', () => {
               performanceTitle: 'Girl Rules FAN MEETING IN SEOUL',
               showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
               venueName: '동해문화예술관 대극장',
+              seatIdentity: createSeatIdentity(),
             },
           ]),
         ),
@@ -568,6 +858,9 @@ describe('QrTicketService', () => {
     expect(result).toMatchObject({
       tokenVersion: '2026-07',
       ticketStatus: 'ACTIVE',
+      ticketItemId: 'ticket-item-1',
+      seatIdentity: createSeatIdentity(),
+      seatLabels: ['VIP A열 1번'],
       reservationId: 'reservation-1',
       paymentId: 'payment-1',
       showtimeId: 'showtime-1',
@@ -579,6 +872,137 @@ describe('QrTicketService', () => {
     expect(result.showtimeAt).toBe('2026-07-18T11:00:00.000Z');
     expect(serialized).not.toContain(token);
     expect(serialized).not.toContain(rawJti);
+  });
+
+  it('reports scanner contract as used when a migrated ticket item is already entered', async () => {
+    const configService = {
+      get: vi.fn((key: string) => {
+        if (key === 'QR_TICKET_SECRET') return 'current-secret';
+        if (key === 'QR_TICKET_SECRET_VERSION') return '2026-07';
+        if (key === 'QR_TICKET_SECRET_KEYRING_JSON') {
+          return JSON.stringify({ '2026-07': 'current-secret' });
+        }
+
+        return undefined;
+      }),
+    };
+    const jwtService = new JwtService();
+    const token = await jwtService.signAsync(
+      createTokenPayload({
+        issuedAt: now.toISOString(),
+      }),
+      {
+        secret: 'current-secret',
+        algorithm: 'HS256',
+        noTimestamp: true,
+      },
+    );
+    const service = new QrTicketService(
+      {
+        select: vi.fn().mockReturnValueOnce(
+          chainResult([
+            {
+              status: 'active',
+              expiresAt: null,
+              usedAt: null,
+              revokedAt: null,
+              ticketId: 'ticket-1',
+              ticketItemId: 'ticket-item-1',
+              ticketItemStatus: 'active',
+              ticketItemAdmissionState: 'entered',
+              reservationNumber: 'GRP-27-SCAN-0001',
+              reservationId: 'reservation-1',
+              paymentId: 'payment-1',
+              showtimeId: 'showtime-1',
+              performanceId: 'performance-1',
+              performanceTitle: 'Girl Rules FAN MEETING IN SEOUL',
+              showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
+              venueName: '동해문화예술관 대극장',
+              seatIdentity: createSeatIdentity(),
+            },
+          ]),
+        ),
+      } as never,
+      configService as never,
+      jwtService,
+      { sendQrTicketReminderEmail: vi.fn() } as never,
+      {
+        isAvailable: false,
+        send: vi.fn(),
+        work: vi.fn(),
+        stop: vi.fn(),
+      } as never,
+    );
+
+    await expect(service.verifyTicketForScannerContract(token)).resolves.toMatchObject({
+      ticketStatus: 'USED',
+      ticketItemId: 'ticket-item-1',
+      seatIdentity: createSeatIdentity(),
+    });
+  });
+
+  it('rejects scanner verification for a cancelled ticket item even when the ticket row is active', async () => {
+    const configService = {
+      get: vi.fn((key: string) => {
+        if (key === 'QR_TICKET_SECRET') return 'current-secret';
+        if (key === 'QR_TICKET_SECRET_VERSION') return '2026-07';
+        if (key === 'QR_TICKET_SECRET_KEYRING_JSON') {
+          return JSON.stringify({ '2026-07': 'current-secret' });
+        }
+
+        return undefined;
+      }),
+    };
+    const jwtService = new JwtService();
+    const token = await jwtService.signAsync(
+      createTokenPayload({
+        issuedAt: now.toISOString(),
+      }),
+      {
+        secret: 'current-secret',
+        algorithm: 'HS256',
+        noTimestamp: true,
+      },
+    );
+    const service = new QrTicketService(
+      {
+        select: vi.fn().mockReturnValueOnce(
+          chainResult([
+            {
+              status: 'active',
+              expiresAt: null,
+              usedAt: null,
+              revokedAt: null,
+              ticketId: 'ticket-1',
+              ticketItemId: 'ticket-item-1',
+              ticketItemStatus: 'cancelled',
+              reservationNumber: 'GRP-27-SCAN-0001',
+              reservationId: 'reservation-1',
+              paymentId: 'payment-1',
+              showtimeId: 'showtime-1',
+              performanceId: 'performance-1',
+              performanceTitle: 'Girl Rules FAN MEETING IN SEOUL',
+              showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
+              venueName: '동해문화예술관 대극장',
+              seatIdentity: createSeatIdentity(),
+            },
+          ]),
+        ),
+      } as never,
+      configService as never,
+      jwtService,
+      { sendQrTicketReminderEmail: vi.fn() } as never,
+      {
+        isAvailable: false,
+        send: vi.fn(),
+        work: vi.fn(),
+        stop: vi.fn(),
+      } as never,
+    );
+
+    await expect(service.verifyTicketForScannerContract(token)).rejects.toThrow(
+      '사용할 수 없는 QR 티켓입니다',
+    );
   });
 
   it('reports used scanner contract state for a valid consumed QR token', async () => {
@@ -595,15 +1019,10 @@ describe('QrTicketService', () => {
     };
     const jwtService = new JwtService();
     const token = await jwtService.signAsync(
-      {
-        type: 'qr-ticket',
+      createTokenPayload({
         jti: 'qr-jti-used-ticket-1234567890',
-        reservationId: 'reservation-1',
-        paymentId: 'payment-1',
-        showtimeId: 'showtime-1',
-        secretVersion: '2026-07',
         issuedAt: now.toISOString(),
-      },
+      }),
       {
         secret: 'current-secret',
         algorithm: 'HS256',
@@ -619,6 +1038,8 @@ describe('QrTicketService', () => {
             usedAt: new Date('2026-07-10T09:05:00.000Z'),
             revokedAt: null,
             ticketId: 'ticket-1',
+            ticketItemId: 'ticket-item-1',
+            ticketItemStatus: 'active',
             reservationNumber: 'GRP-27-SCAN-0001',
             reservationId: 'reservation-1',
             paymentId: 'payment-1',
@@ -627,6 +1048,7 @@ describe('QrTicketService', () => {
             performanceTitle: 'Girl Rules FAN MEETING IN SEOUL',
             showtimeAt: new Date('2026-07-18T11:00:00.000Z'),
             venueName: '동해문화예술관 대극장',
+            seatIdentity: createSeatIdentity(),
           },
         ])),
       } as never,

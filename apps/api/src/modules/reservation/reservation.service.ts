@@ -9,7 +9,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { eq, and, or, sql, desc, inArray } from 'drizzle-orm';
+import { eq, and, or, sql, desc, inArray, asc, ne } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
   reservations,
@@ -26,13 +26,18 @@ import {
   venueLayoutSeats,
   venueLayoutFloors,
   bookingPolicies,
+  ticketItems,
+  tickets,
   users,
 } from '../../database/schema/index.js';
-import { TossPaymentsClient } from '../payment/toss-payments.client.js';
+import {
+  TossPaymentError,
+  TossPaymentsClient,
+  type TossPaymentResponse,
+} from '../payment/toss-payments.client.js';
 import {
   BookingService,
   BOOKING_VERIFICATION_REQUIRED_MESSAGE,
-  PAYMENT_CONFIRM_LOCK_TTL,
 } from '../booking/booking.service.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
@@ -54,6 +59,7 @@ import type {
   PaymentStatus,
   QrTicket,
   SeatSelection,
+  TicketItem,
   ReservationStatus,
   ReservationListItem,
   ReservationDetail,
@@ -64,16 +70,7 @@ import type {
 } from '@grabit/shared';
 
 export const PAYMENT_DEADLINE_MINUTES = 7;
-
-type ApprovedPaymentSnapshot = {
-  existingPaymentId?: string;
-  paymentKey: string;
-  orderId: string;
-  method: string;
-  totalAmount: number;
-  approvedAt: string;
-  asyncStatus?: string | null;
-};
+const TICKET_SERVICE_FEE_KRW = 2000;
 
 type SeatSelectionLike = SeatSelection & Partial<FloorAwareSeatSelection>;
 type BookingActor = {
@@ -94,6 +91,58 @@ type ShowtimeBookingContext = {
   maxTicketsPerUser: number;
   bookingPolicy: BookingPolicy;
 };
+type ReservationSeatRow = typeof reservationSeats.$inferSelect;
+type TicketItemRow = typeof ticketItems.$inferSelect;
+type TicketItemCancellationContext = {
+  reservationId: string;
+  userId: string;
+  showtimeId: string;
+  reservationStatus: string;
+  reservationCreatedAt: Date;
+  showtimeAt: Date;
+  paymentId: string;
+  paymentKey: string;
+  paymentStatus: string;
+  ticketItemId: string;
+  ticketItemStatus: string;
+  admissionState: string;
+  seatId: string;
+  seatKey: string;
+  floorKey: string;
+  price: number;
+  serviceFee: number;
+  cancelledAt: Date | null;
+  cancelReason: string | null;
+  cancellationFee: number;
+  serviceFeeRefund: number;
+  refundableAmount: number;
+};
+type TicketItemCancellationQuote = {
+  cancellationFee: number;
+  serviceFeeRefund: number;
+  refundableAmount: number;
+};
+type PreparedTicketItemCancellation = {
+  context: TicketItemCancellationContext;
+  quote: TicketItemCancellationQuote;
+  reason: string;
+  isPendingRetry: boolean;
+  now: Date;
+};
+type TicketItemPaymentCancelOutcome =
+  | 'cancelled'
+  | 'definite_failure'
+  | 'ambiguous';
+
+const PLACEHOLDER_UUID = '00000000-0000-4000-8000-000000000000';
+const SEOUL_TIME_ZONE = 'Asia/Seoul';
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const seoulDateFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: SEOUL_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
 
 function mapPerformanceBookingPolicy(
   policy: Partial<PerformanceBookingPolicy> | null | undefined,
@@ -242,6 +291,14 @@ export class ReservationService {
 
   private calculateSeatTotal(seats: SeatSelection[]): number {
     return seats.reduce((total, seat) => total + seat.price, 0);
+  }
+
+  private calculateTicketServiceFeeTotal(seats: SeatSelection[]): number {
+    return seats.length * TICKET_SERVICE_FEE_KRW;
+  }
+
+  private calculatePayableTotal(seats: SeatSelection[]): number {
+    return this.calculateSeatTotal(seats) + this.calculateTicketServiceFeeTotal(seats);
   }
 
   private async getCanonicalSeatSelectionsFromOverlay(
@@ -402,11 +459,76 @@ export class ReservationService {
 
   async calculateTotalAmount(seats: SeatSelection[], performanceId: string): Promise<number> {
     const canonicalSeats = await this.getCanonicalSeatSelections(seats, performanceId);
-    return this.calculateSeatTotal(canonicalSeats);
+    return this.calculatePayableTotal(canonicalSeats);
   }
 
   calculateCancelDeadline(showDateTime: Date): Date {
     return new Date(showDateTime.getTime() - 24 * 60 * 60 * 1000);
+  }
+
+  private toDate(value: Date | string | null | undefined, fieldName: string): Date {
+    const date = value instanceof Date ? value : new Date(value ?? '');
+    if (Number.isNaN(date.getTime())) {
+      throw new InternalServerErrorException(`${fieldName} 값이 유효하지 않습니다`);
+    }
+
+    return date;
+  }
+
+  private getSeoulDayOrdinal(date: Date): number {
+    const parts = seoulDateFormatter.formatToParts(date);
+    const year = Number(parts.find((part) => part.type === 'year')?.value);
+    const month = Number(parts.find((part) => part.type === 'month')?.value);
+    const day = Number(parts.find((part) => part.type === 'day')?.value);
+
+    return Math.floor(Date.UTC(year, month - 1, day) / MS_PER_DAY);
+  }
+
+  private calculateTicketItemCancellationQuote(input: {
+    price: number;
+    serviceFee: number;
+    reservationCreatedAt: Date;
+    showtimeAt: Date;
+    now?: Date;
+  }): TicketItemCancellationQuote {
+    const now = input.now ?? new Date();
+    const today = this.getSeoulDayOrdinal(now);
+    const bookingDay = this.getSeoulDayOrdinal(input.reservationCreatedAt);
+    const showDay = this.getSeoulDayOrdinal(input.showtimeAt);
+    const daysBeforeShow = showDay - today;
+
+    if (daysBeforeShow <= 0) {
+      throw new ForbiddenException('관람일 당일에는 취소할 수 없습니다');
+    }
+
+    if (today === bookingDay) {
+      return {
+        cancellationFee: 0,
+        serviceFeeRefund: input.serviceFee,
+        refundableAmount: input.price + input.serviceFee,
+      };
+    }
+
+    let cancellationFee = 0;
+    if (daysBeforeShow <= 2) {
+      cancellationFee = Math.floor(input.price * 0.3);
+    } else if (daysBeforeShow <= 6) {
+      cancellationFee = Math.floor(input.price * 0.2);
+    } else if (daysBeforeShow <= 9) {
+      cancellationFee = Math.floor(input.price * 0.1);
+    } else {
+      const daysAfterBooking = Math.max(0, today - bookingDay);
+      cancellationFee =
+        daysAfterBooking <= 7
+          ? 0
+          : Math.min(4000, Math.floor(input.price * 0.1));
+    }
+
+    return {
+      cancellationFee,
+      serviceFeeRefund: 0,
+      refundableAmount: Math.max(0, input.price - cancellationFee),
+    };
   }
 
   private async getReservationSeatIds(reservationId: string): Promise<string[]> {
@@ -573,7 +695,7 @@ export class ReservationService {
         existingShowtime.performanceId,
       );
       this.assertSeatCountWithinPolicy(canonicalSeats, existingShowtime.maxTicketsPerUser);
-      const expectedAmount = this.calculateSeatTotal(canonicalSeats);
+      const expectedAmount = this.calculatePayableTotal(canonicalSeats);
       if (existing.totalAmount !== expectedAmount || dto.amount !== expectedAmount) {
         throw new ConflictException('기존 예매 요청과 일치하지 않습니다. 새 주문 ID로 다시 시도해주세요.');
       }
@@ -605,7 +727,7 @@ export class ReservationService {
     // 3. Calculate expected amount from DB and canonical seat map metadata
     const canonicalSeats = await this.getCanonicalSeatSelections(dto.seats, showtime.performanceId);
     this.assertSeatCountWithinPolicy(canonicalSeats, showtime.maxTicketsPerUser);
-    const expectedAmount = this.calculateSeatTotal(canonicalSeats);
+    const expectedAmount = this.calculatePayableTotal(canonicalSeats);
 
     if (expectedAmount !== dto.amount) {
       throw new BadRequestException('금액이 일치하지 않습니다');
@@ -712,489 +834,6 @@ export class ReservationService {
     );
 
     return this.getReservationDetail(result.reservationId, userId);
-  }
-
-  private startPaymentConfirmLockRefresh(
-    orderId: string,
-    lockToken: string,
-  ): ReturnType<typeof setInterval> {
-    const refreshEveryMs = Math.max(1000, Math.floor(PAYMENT_CONFIRM_LOCK_TTL * 1000 / 2));
-    return setInterval(() => {
-      void this.bookingService.refreshPaymentConfirmLock(orderId, lockToken).catch((refreshError) => {
-        this.logger.error(
-          `Payment confirm lock refresh failed. orderId=${orderId}`,
-          refreshError instanceof Error ? refreshError.stack : String(refreshError),
-        );
-      });
-    }, refreshEveryMs);
-  }
-
-  private startOwnedSeatLockRefresh(
-    userId: string,
-    showtimeId: string,
-    seatIds: string[],
-  ): ReturnType<typeof setInterval> {
-    const refreshEveryMs = Math.max(1000, Math.floor(PAYMENT_CONFIRM_LOCK_TTL * 1000 / 2));
-    return setInterval(() => {
-      void this.bookingService.extendOwnedSeatLocks(
-        userId,
-        showtimeId,
-        seatIds,
-        PAYMENT_CONFIRM_LOCK_TTL,
-      ).catch((refreshError) => {
-        this.logger.error(
-          `Seat lock refresh failed during payment confirm. showtimeId=${showtimeId}`,
-          refreshError instanceof Error ? refreshError.stack : String(refreshError),
-        );
-      });
-    }, refreshEveryMs);
-  }
-
-  private async cancelConfirmedPaymentOrThrow(paymentKey: string, reason: string): Promise<void> {
-    try {
-      await this.tossClient.cancelPayment(paymentKey, reason);
-      this.logger.log(`Compensation cancel succeeded. paymentKey=${paymentKey}`);
-    } catch (cancelError) {
-      this.logger.error(
-        `CRITICAL: compensation cancel failed. paymentKey=${paymentKey}. Manual refund required.`,
-        cancelError instanceof Error ? cancelError.stack : String(cancelError),
-      );
-      throw new InternalServerErrorException(
-        '결제는 승인되었으나 자동 취소에 실패했습니다. 고객센터에 문의해주세요.',
-      );
-    }
-  }
-
-  private async cancelExistingDonePaymentAfterFailure(input: {
-    paymentId: string;
-    paymentKey: string;
-    reservationId: string;
-    reason: string;
-  }): Promise<void> {
-    await this.cancelConfirmedPaymentOrThrow(input.paymentKey, input.reason);
-    await this.db
-      .update(payments)
-      .set({
-        status: 'CANCELED',
-        cancelledAt: new Date(),
-        cancelReason: input.reason,
-      })
-      .where(eq(payments.id, input.paymentId));
-    await this.expirePendingReservation(input.reservationId);
-  }
-
-  private async cancelApprovedPaymentAfterFailure(
-    approvedPayment: ApprovedPaymentSnapshot,
-    reservationId: string,
-    reason: string,
-  ): Promise<void> {
-    if (approvedPayment.existingPaymentId) {
-      await this.cancelExistingDonePaymentAfterFailure({
-        paymentId: approvedPayment.existingPaymentId,
-        paymentKey: approvedPayment.paymentKey,
-        reservationId,
-        reason,
-      });
-      return;
-    }
-
-    await this.cancelConfirmedPaymentOrThrow(approvedPayment.paymentKey, reason);
-  }
-
-  private async confirmAndCreateReservationLocked(
-    dto: ConfirmPaymentRequest,
-    userId: string,
-    confirmLockToken: string,
-  ): Promise<ReservationDetail> {
-    // 1. Idempotency: check if payment already exists for this orderId
-    const [existingPayment] = await this.db
-      .select()
-      .from(payments)
-      .where(eq(payments.tossOrderId, dto.orderId));
-
-    const legacyExistingPayment = existingPayment as { reservationId: string; status?: unknown } | undefined;
-    if (legacyExistingPayment && !legacyExistingPayment.status) {
-      return this.getReservationDetail(legacyExistingPayment.reservationId, userId);
-    }
-
-    // 2. Look up pending reservation by tossOrderId
-    const [reservation] = await this.db
-      .select()
-      .from(reservations)
-      .where(
-        and(
-          eq(reservations.tossOrderId, dto.orderId),
-          eq(reservations.userId, userId),
-        ),
-      );
-
-    if (!reservation) {
-      throw new NotFoundException('예매 정보를 찾을 수 없습니다. 다시 시도해주세요.');
-    }
-
-    if (reservation.status === 'CONFIRMED') {
-      return this.getReservationDetail(reservation.id, userId);
-    }
-
-    if (reservation.status !== 'PENDING_PAYMENT') {
-      throw new ConflictException('좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.');
-    }
-
-    if (this.isPastWindow(reservation.admissionActiveUntilAt)) {
-      if (existingPayment?.status === 'DONE') {
-        await this.cancelConfirmedPaymentOrThrow(
-          existingPayment.paymentKey,
-          '결제 유효 시간 초과로 인한 자동 취소',
-        );
-        await this.db
-          .update(payments)
-          .set({
-            status: 'CANCELED',
-            cancelledAt: new Date(),
-            cancelReason: '결제 유효 시간 초과로 인한 자동 취소',
-          })
-          .where(eq(payments.id, existingPayment.id));
-        await this.expirePendingReservation(reservation.id);
-      }
-
-      throw new ConflictException('좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.');
-    }
-
-    if (
-      existingPayment
-      && existingPayment.status
-      && existingPayment.status !== 'DONE'
-    ) {
-      throw new ConflictException('좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.');
-    }
-
-    // 3. Amount validation against the prepared reservation
-    if (reservation.totalAmount !== dto.amount) {
-      throw new BadRequestException('금액이 일치하지 않습니다');
-    }
-
-    if (existingPayment?.status === 'DONE') {
-      this.assertExistingDonePaymentMatchesRequest(existingPayment, reservation, dto);
-    }
-
-    const pendingSeats = await this.getReservationSeatSelections(reservation.id);
-    const pendingSeatIds = pendingSeats.map((seat) => seat.seatKey);
-    try {
-      await this.bookingService.extendOwnedSeatLocks(
-        userId,
-        reservation.showtimeId,
-        pendingSeatIds,
-        PAYMENT_CONFIRM_LOCK_TTL,
-      );
-    } catch (lockError) {
-      if (existingPayment?.status === 'DONE') {
-        const reason = lockError instanceof ConflictException
-          && lockError.message.includes('비활성화')
-          ? '판매 불가능 좌석으로 인한 자동 취소'
-          : '좌석 점유 만료로 인한 자동 취소';
-        await this.cancelExistingDonePaymentAfterFailure({
-          paymentId: existingPayment.id,
-          paymentKey: existingPayment.paymentKey,
-          reservationId: reservation.id,
-          reason,
-        });
-      }
-      throw lockError;
-    }
-
-    const seatLockRefreshTimer = this.startOwnedSeatLockRefresh(userId, reservation.showtimeId, pendingSeatIds);
-    try {
-    let approvedPayment: ApprovedPaymentSnapshot;
-    if (existingPayment?.status === 'DONE') {
-      approvedPayment = {
-        existingPaymentId: existingPayment.id,
-        paymentKey: existingPayment.paymentKey,
-        orderId: existingPayment.tossOrderId,
-        method: existingPayment.method,
-        totalAmount: existingPayment.amount,
-        approvedAt:
-          existingPayment.paidAt?.toISOString()
-          ?? new Date().toISOString(),
-        asyncStatus: existingPayment.asyncStatus,
-      };
-    } else {
-      // 4. Call Toss Payments confirm API
-      const tossResponse = await this.tossClient.confirmPayment({
-        paymentKey: dto.paymentKey,
-        orderId: dto.orderId,
-        amount: dto.amount,
-      });
-
-      approvedPayment = {
-        paymentKey: tossResponse.paymentKey,
-        orderId: tossResponse.orderId,
-        method: tossResponse.method,
-        totalAmount: tossResponse.totalAmount,
-        approvedAt: tossResponse.approvedAt,
-        asyncStatus: 'sync',
-      };
-    }
-
-    let confirmLockStillOwned: boolean;
-    try {
-      confirmLockStillOwned = await this.bookingService.refreshPaymentConfirmLock(
-        dto.orderId,
-        confirmLockToken,
-      );
-    } catch (lockError) {
-      this.logger.error(
-        `Payment confirm lock refresh failed after payment approval. paymentKey=${approvedPayment.paymentKey}, orderId=${dto.orderId}`,
-        lockError instanceof Error ? lockError.stack : String(lockError),
-      );
-      await this.cancelApprovedPaymentAfterFailure(
-        approvedPayment,
-        reservation.id,
-        '결제 확인 상태 검증 실패로 인한 자동 취소',
-      );
-      throw new InternalServerErrorException(
-        '결제는 승인되었으나 처리 중 오류가 발생했습니다. 자동 취소를 시도했습니다. 고객센터에 문의해주세요.',
-      );
-    }
-    if (!confirmLockStillOwned) {
-      this.logger.error(
-        `Payment confirm lock ownership lost after payment approval. paymentKey=${approvedPayment.paymentKey}, orderId=${dto.orderId}`,
-      );
-      await this.cancelApprovedPaymentAfterFailure(
-        approvedPayment,
-        reservation.id,
-        '결제 확인 중복 처리로 인한 자동 취소',
-      );
-      throw new ConflictException('결제 확인이 이미 진행 중입니다.');
-    }
-
-    try {
-      await this.bookingService.assertOwnedSeatLocks(userId, reservation.showtimeId, pendingSeatIds);
-    } catch (lockError) {
-      this.logger.error(
-        `Seat lock ownership lost after payment approval. paymentKey=${approvedPayment.paymentKey}, orderId=${dto.orderId}`,
-        lockError instanceof Error ? lockError.stack : String(lockError),
-      );
-      await this.cancelApprovedPaymentAfterFailure(
-        approvedPayment,
-        reservation.id,
-        '좌석 점유 만료로 인한 자동 취소',
-      );
-      throw lockError;
-    }
-
-    // 5. Update reservation status + create payment record + mark seats sold
-    let committedPaymentId: string | null = null;
-    try {
-      await this.db.transaction(async (tx) => {
-        await tx
-          .update(reservations)
-          .set({
-            status: 'CONFIRMED',
-            updatedAt: new Date(),
-          })
-          .where(eq(reservations.id, reservation.id));
-
-        if (approvedPayment.existingPaymentId) {
-          committedPaymentId = approvedPayment.existingPaymentId;
-          await tx
-            .update(payments)
-            .set({
-              status: 'DONE',
-              amount: approvedPayment.totalAmount,
-              paidAt: new Date(approvedPayment.approvedAt),
-              asyncStatus: approvedPayment.asyncStatus ?? 'pending_webhook',
-            })
-            .where(eq(payments.id, approvedPayment.existingPaymentId));
-        } else {
-          const insertedPayments = await tx
-            .insert(payments)
-            .values({
-              reservationId: reservation.id,
-              paymentKey: approvedPayment.paymentKey,
-              tossOrderId: approvedPayment.orderId,
-              method: approvedPayment.method,
-              provider: 'CARD',
-              currency: 'KRW',
-              asyncStatus: approvedPayment.asyncStatus ?? 'sync',
-              amount: approvedPayment.totalAmount,
-              status: 'DONE',
-              paidAt: new Date(approvedPayment.approvedAt),
-            })
-            .returning({ id: payments.id });
-
-          committedPaymentId = insertedPayments[0]?.id ?? null;
-        }
-
-        // Mark seats sold only when the inventory row is still available.
-        for (const seat of pendingSeats) {
-	          const updated = await tx
-	            .update(seatInventories)
-	            .set({
-	              status: 'sold',
-	              soldAt: new Date(),
-	              lockedBy: null,
-	              lockedUntil: null,
-	            })
-            .where(
-              and(
-                eq(seatInventories.showtimeId, reservation.showtimeId),
-                eq(seatInventories.floorKey, seat.floorKey),
-                or(
-                  eq(seatInventories.seatKey, seat.seatKey),
-                  and(
-                    sql`${seatInventories.seatKey} IS NULL`,
-                    eq(seatInventories.seatId, seat.seatId),
-                  ),
-                ),
-                eq(seatInventories.status, 'available'),
-              ),
-            )
-            .returning({ id: seatInventories.id });
-
-          if (updated.length > 0) continue;
-
-          const inserted = await tx
-            .insert(seatInventories)
-            .values({
-              showtimeId: reservation.showtimeId,
-              seatId: seat.seatId,
-              floorKey: seat.floorKey,
-              seatKey: seat.seatKey,
-              status: 'sold',
-              soldAt: new Date(),
-            })
-            .onConflictDoNothing()
-            .returning({ id: seatInventories.id });
-
-          if (inserted.length === 0) {
-            throw new ConflictException('판매 불가능한 좌석입니다');
-          }
-        }
-      });
-    } catch (dbError) {
-      if (dbError instanceof ConflictException) {
-        this.logger.error(
-          `Seat finalization failed after payment approval. paymentKey=${approvedPayment.paymentKey}, orderId=${dto.orderId}`,
-          dbError.stack,
-        );
-        await this.cancelApprovedPaymentAfterFailure(
-          approvedPayment,
-          reservation.id,
-          '판매 불가능 좌석으로 인한 자동 취소',
-        );
-        throw dbError;
-      }
-
-      if (approvedPayment.existingPaymentId) {
-        this.logger.error(
-          `DB transaction failed after existing payment recovery. paymentKey=${approvedPayment.paymentKey}, orderId=${dto.orderId}`,
-          dbError instanceof Error ? dbError.stack : String(dbError),
-        );
-        await this.cancelApprovedPaymentAfterFailure(
-          approvedPayment,
-          reservation.id,
-          '서버 오류로 인한 자동 취소',
-        );
-        throw new InternalServerErrorException(
-          '결제는 승인되었으나 처리 중 오류가 발생했습니다. 자동 취소를 시도했습니다. 고객센터에 문의해주세요.',
-        );
-      }
-
-      try {
-        const [committedPayment] = await this.db
-          .select()
-          .from(payments)
-          .where(eq(payments.tossOrderId, dto.orderId));
-
-        if (committedPayment) {
-          this.logger.warn(
-            `Payment row already exists after confirm transaction failure. orderId=${dto.orderId}, reservationId=${committedPayment.reservationId}`,
-          );
-          return this.getReservationDetail(committedPayment.reservationId, userId);
-        }
-      } catch (lookupError) {
-        this.logger.error(
-          `Failed to re-read payment after confirm transaction failure. orderId=${dto.orderId}`,
-          lookupError instanceof Error ? lookupError.stack : String(lookupError),
-        );
-      }
-
-      // Compensation: attempt to cancel the Toss payment
-      this.logger.error(
-        `DB transaction failed after payment approval. paymentKey=${approvedPayment.paymentKey}, orderId=${dto.orderId}`,
-        dbError instanceof Error ? dbError.stack : String(dbError),
-      );
-      await this.cancelConfirmedPaymentOrThrow(approvedPayment.paymentKey, '서버 오류로 인한 자동 취소');
-      throw new InternalServerErrorException(
-        '결제는 승인되었으나 처리 중 오류가 발생했습니다. 자동 취소를 시도했습니다. 고객센터에 문의해주세요.',
-      );
-    }
-
-    clearInterval(seatLockRefreshTimer);
-    try {
-      await this.bookingService.consumeOwnedSeatLocks(
-        userId,
-        reservation.showtimeId,
-        pendingSeatIds,
-        { skipUnavailableCheck: true },
-      );
-    } catch (cleanupError) {
-      this.logger.warn(
-        `Post-commit seat lock cleanup failed. reservationId=${reservation.id}`,
-        cleanupError instanceof Error ? cleanupError.stack : String(cleanupError),
-      );
-    }
-
-    // Broadcast sold status via WebSocket after the DB transaction commits.
-    for (const seat of pendingSeats) {
-      this.bookingGateway.broadcastSeatUpdate(
-        reservation.showtimeId,
-        seat.seatKey,
-        'sold',
-        userId,
-      );
-    }
-
-    if (this.qrTicketService && committedPaymentId) {
-      await this.qrTicketService.ensureIssuedTicketForReservation({
-        reservationId: reservation.id,
-        paymentId: committedPaymentId,
-      });
-    }
-
-    return this.getReservationDetail(reservation.id, userId);
-    } finally {
-      clearInterval(seatLockRefreshTimer);
-    }
-  }
-
-  private assertExistingDonePaymentMatchesRequest(
-    existingPayment: {
-      reservationId: string;
-      paymentKey: string;
-      tossOrderId: string;
-      amount: number;
-    },
-    reservation: {
-      id: string;
-      totalAmount: number;
-    },
-    dto: ConfirmPaymentRequest,
-  ): void {
-    if (
-      existingPayment.reservationId !== reservation.id
-      || existingPayment.paymentKey !== dto.paymentKey
-      || existingPayment.tossOrderId !== dto.orderId
-    ) {
-      throw new BadRequestException('결제 정보가 예매와 일치하지 않습니다');
-    }
-
-    if (
-      existingPayment.amount !== reservation.totalAmount
-      || existingPayment.amount !== dto.amount
-    ) {
-      throw new BadRequestException('금액이 일치하지 않습니다');
-    }
   }
 
   async getMyReservations(userId: string, status?: ReservationStatus): Promise<ReservationListItem[]> {
@@ -1326,16 +965,35 @@ export class ReservationService {
       .from(payments)
       .where(eq(payments.reservationId, reservationId));
 
-    const qrTicket: ReservationDetail['qrTicket'] =
+    const ticketItemRows = await this.db
+      .select()
+      .from(ticketItems)
+      .where(eq(ticketItems.reservationId, reservationId))
+      .orderBy(asc(ticketItems.createdAt), asc(ticketItems.id));
+
+    let qrTickets: QrTicket[] = [];
+    if (
       row.reservation.status === 'CONFIRMED'
       && payment?.id
       && payment.status === 'DONE'
       && this.qrTicketService
-        ? await this.qrTicketService.getOrIssueTicketForReservation({
-            reservationId,
-            paymentId: payment.id,
-          })
-        : this.createBlockingQrTicket(row.reservation.createdAt);
+      && ticketItemRows.some((ticketItem) => ticketItem.status === 'active')
+    ) {
+      qrTickets = await this.qrTicketService.ensureIssuedTicketsForReservation({
+        reservationId,
+        paymentId: payment.id,
+      });
+    }
+    const ticketItemDtos = ticketItemRows.length > 0
+      ? this.mapTicketItems(ticketItemRows, qrTickets)
+      : this.mapReservationSeatsToTicketItems({
+          seats,
+          reservationId,
+          paymentId: payment?.id ?? PLACEHOLDER_UUID,
+          showtimeId: row.reservation.showtimeId,
+        });
+    const qrTicket = qrTickets.find((ticket) => ticket.status === 'ACTIVE' && ticket.token)
+      ?? this.createBlockingQrTicket(row.reservation.createdAt);
 
     return {
       id: row.reservation.id,
@@ -1379,7 +1037,155 @@ export class ReservationService {
       },
       cancelledSeatHold: null,
       qrTicket,
+      ticketItems: ticketItemDtos,
     };
+  }
+
+  private mapTicketItems(rows: TicketItemRow[], qrTickets: QrTicket[]): TicketItem[] {
+    const activeQrByTicketItemId = new Map(
+      qrTickets
+        .filter((ticket) => ticket.ticketItemId)
+        .map((ticket) => [ticket.ticketItemId, ticket]),
+    );
+
+    return rows.map((row) => this.mapTicketItem(row, activeQrByTicketItemId.get(row.id)));
+  }
+
+  private mapReservationSeatsToTicketItems(input: {
+    seats: ReservationSeatRow[];
+    reservationId: string;
+    paymentId: string;
+    showtimeId: string;
+  }): TicketItem[] {
+    return input.seats.map((seat, index) => {
+      const floorSeat = toFloorAwareSeatSelection({
+        seatId: seat.seatId,
+        tierName: seat.tierName,
+        price: seat.price,
+        row: seat.row,
+        number: seat.number,
+      });
+
+      return {
+        id: seat.id ?? `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+        reservationId: input.reservationId,
+        paymentId: input.paymentId,
+        showtimeId: input.showtimeId,
+        seatId: floorSeat.seatId,
+        seatKey: floorSeat.seatKey,
+        floorKey: floorSeat.floorKey,
+        floorLabel: floorSeat.floorLabel,
+        row: floorSeat.row,
+        number: floorSeat.number,
+        tierName: floorSeat.tierName,
+        price: floorSeat.price,
+        serviceFee: TICKET_SERVICE_FEE_KRW,
+        status: 'ACTIVE',
+        admissionState: 'NOT_ENTERED',
+        enteredAt: null,
+        qrCredential: null,
+        cancellation: null,
+      };
+    });
+  }
+
+  private mapTicketItem(row: TicketItemRow, qrTicket?: QrTicket): TicketItem {
+    return {
+      id: row.id,
+      reservationId: row.reservationId,
+      paymentId: row.paymentId,
+      showtimeId: row.showtimeId,
+      seatId: row.seatId,
+      seatKey: row.seatKey,
+      floorKey: row.floorKey,
+      floorLabel: row.floorLabel,
+      row: row.row,
+      number: row.number,
+      tierName: row.tierName,
+      price: row.price,
+      serviceFee: row.serviceFee === 0 ? 0 : TICKET_SERVICE_FEE_KRW,
+      status: this.mapTicketItemStatus(row.status),
+      admissionState: this.mapTicketItemAdmissionState(row.admissionState),
+      enteredAt: row.enteredAt?.toISOString() ?? null,
+      qrCredential: this.mapTicketItemQrCredential(qrTicket),
+      cancellation: this.mapTicketItemCancellation(row),
+    };
+  }
+
+  private mapTicketItemStatus(status: TicketItemRow['status']): TicketItem['status'] {
+    switch (status) {
+      case 'cancellation_pending':
+        return 'CANCELLATION_PENDING';
+      case 'cancelled':
+        return 'CANCELLED';
+      case 'expired':
+        return 'EXPIRED';
+      case 'active':
+      default:
+        return 'ACTIVE';
+    }
+  }
+
+  private mapTicketItemAdmissionState(
+    admissionState: TicketItemRow['admissionState'],
+  ): TicketItem['admissionState'] {
+    return admissionState === 'entered' ? 'ENTERED' : 'NOT_ENTERED';
+  }
+
+  private mapTicketItemQrCredential(qrTicket?: QrTicket): TicketItem['qrCredential'] {
+    if (
+      !qrTicket
+      || qrTicket.status !== 'ACTIVE'
+      || !qrTicket.id
+      || !qrTicket.token
+      || !qrTicket.jti
+    ) {
+      return null;
+    }
+
+    return {
+      id: qrTicket.id,
+      token: qrTicket.token,
+      jti: qrTicket.jti,
+      status: 'ACTIVE',
+      issuedAt: qrTicket.issuedAt,
+      rotatedAt: null,
+      revokedAt: null,
+    };
+  }
+
+  private mapTicketItemCancellation(row: TicketItemRow): TicketItem['cancellation'] {
+    if (!row.cancelledAt) {
+      return null;
+    }
+
+    return {
+      cancelledAt: row.cancelledAt.toISOString(),
+      cancelReason: row.cancelReason ?? '취소',
+      cancellationFee: row.cancellationFee,
+      serviceFeeRefund: row.serviceFeeRefund,
+      refundableAmount: row.refundableAmount,
+      refundStatus: row.reopenState === 'available' || row.reopenState === 'manual_opened'
+        ? 'COMPLETED'
+        : 'PROCESSING_AT_PG',
+      reopenState: this.mapTicketItemReopenState(row.reopenState),
+      reopenAt: row.reopenHoldUntil?.toISOString() ?? null,
+    };
+  }
+
+  private mapTicketItemReopenState(
+    reopenState: TicketItemRow['reopenState'],
+  ): NonNullable<TicketItem['cancellation']>['reopenState'] {
+    switch (reopenState) {
+      case 'held_cancelled':
+        return 'HELD_CANCELLED';
+      case 'manual_opened':
+        return 'MANUAL_OPENED';
+      case 'available':
+      case 'not_required':
+      default:
+        return 'AVAILABLE';
+    }
   }
 
   private createBlockingQrTicket(createdAt?: Date | null): QrTicket {
@@ -1418,6 +1224,483 @@ export class ReservationService {
     return this.getReservationDetail(payment.reservationId, userId);
   }
 
+  private mapTicketItemCancellationContext(
+    row: Record<string, unknown> | undefined,
+    userId: string,
+  ): TicketItemCancellationContext {
+    if (!row || row['user_id'] !== userId) {
+      throw new NotFoundException('예매를 찾을 수 없습니다');
+    }
+
+    return {
+      reservationId: String(row['reservation_id']),
+      userId: String(row['user_id']),
+      showtimeId: String(row['showtime_id']),
+      reservationStatus: String(row['reservation_status']),
+      reservationCreatedAt: this.toDate(
+        row['reservation_created_at'] as Date | string,
+        'reservation_created_at',
+      ),
+      showtimeAt: this.toDate(row['showtime_at'] as Date | string, 'showtime_at'),
+      paymentId: String(row['payment_id']),
+      paymentKey: String(row['payment_key']),
+      paymentStatus: String(row['payment_status']),
+      ticketItemId: String(row['ticket_item_id']),
+      ticketItemStatus: String(row['ticket_item_status']),
+      admissionState: String(row['admission_state']),
+      seatId: String(row['seat_id']),
+      seatKey: String(row['seat_key']),
+      floorKey: String(row['floor_key']),
+      price: Number(row['price']),
+      serviceFee: Number(row['service_fee'] ?? 0),
+      cancelledAt: row['cancelled_at']
+        ? this.toDate(row['cancelled_at'] as Date | string, 'cancelled_at')
+        : null,
+      cancelReason: row['cancel_reason'] ? String(row['cancel_reason']) : null,
+      cancellationFee: Number(row['cancellation_fee'] ?? 0),
+      serviceFeeRefund: Number(row['service_fee_refund'] ?? 0),
+      refundableAmount: Number(row['refundable_amount'] ?? 0),
+    };
+  }
+
+  private assertTicketItemCancellable(context: TicketItemCancellationContext): void {
+    if (context.reservationStatus !== 'CONFIRMED') {
+      throw new BadRequestException('취소할 수 없는 예매 상태입니다');
+    }
+    if (context.paymentStatus !== 'DONE') {
+      throw new BadRequestException('취소할 수 없는 결제 상태입니다');
+    }
+    if (
+      context.ticketItemStatus !== 'active' &&
+      context.ticketItemStatus !== 'cancellation_pending'
+    ) {
+      throw new BadRequestException('취소할 수 없는 티켓 상태입니다');
+    }
+    if (context.admissionState === 'entered') {
+      throw new BadRequestException('입장 처리된 티켓은 취소할 수 없습니다');
+    }
+  }
+
+  private countMatchingTossCancellations(
+    payment: TossPaymentResponse,
+    amount: number,
+    reason: string,
+  ): number {
+    return payment.cancels?.filter((cancel) =>
+      cancel.cancelAmount === amount && cancel.cancelReason === reason,
+    ).length ?? 0;
+  }
+
+  private async cancelTicketItemPaymentOrConfirm(input: {
+    paymentKey: string;
+    reason: string;
+    refundableAmount: number;
+    ticketItemId: string;
+    isPendingRetry: boolean;
+  }): Promise<TicketItemPaymentCancelOutcome> {
+    let matchingCancelsBefore: number | undefined;
+    let matchingCancelsAfter: number | undefined;
+    try {
+      const beforePayment = await this.tossClient.queryPayment(input.paymentKey);
+      matchingCancelsBefore = this.countMatchingTossCancellations(
+        beforePayment,
+        input.refundableAmount,
+        input.reason,
+      );
+    } catch (queryError) {
+      this.logger.error(
+        `Toss ticket-item pre-cancel snapshot failed. ticketItemId=${input.ticketItemId}`,
+        queryError instanceof Error ? queryError.stack : String(queryError),
+      );
+    }
+
+    try {
+      await this.tossClient.cancelPayment(input.paymentKey, input.reason, {
+        cancelAmount: input.refundableAmount,
+        idempotencyKey: `ticket-item-cancel:${input.ticketItemId}`,
+      });
+      return 'cancelled';
+    } catch (cancelError) {
+      try {
+        const payment = await this.tossClient.queryPayment(input.paymentKey);
+        matchingCancelsAfter = this.countMatchingTossCancellations(
+          payment,
+          input.refundableAmount,
+          input.reason,
+        );
+        if (
+          matchingCancelsBefore !== undefined
+          && matchingCancelsAfter > matchingCancelsBefore
+        ) {
+          this.logger.warn(
+            `Recovered Toss ticket-item cancel from payment snapshot. ticketItemId=${input.ticketItemId}`,
+          );
+          return 'cancelled';
+        }
+      } catch (queryError) {
+        this.logger.error(
+          `Toss ticket-item cancel reconciliation query failed. ticketItemId=${input.ticketItemId}`,
+          queryError instanceof Error ? queryError.stack : String(queryError),
+        );
+      }
+
+      if (this.isDefiniteTossCancelFailure(cancelError)) {
+        if (input.isPendingRetry) {
+          const snapshotCounts = [matchingCancelsBefore, matchingCancelsAfter];
+          if (snapshotCounts.some((count) => count !== undefined && count > 0)) {
+            return 'ambiguous';
+          }
+          if (snapshotCounts.some((count) => count === 0)) {
+            return 'definite_failure';
+          }
+          return 'ambiguous';
+        }
+        return 'definite_failure';
+      }
+
+      return 'ambiguous';
+    }
+  }
+
+  private isDefiniteTossCancelFailure(error: unknown): boolean {
+    if (error instanceof TossPaymentError) {
+      return true;
+    }
+
+    const candidate = error as { name?: unknown; code?: unknown };
+    return candidate.name === 'TossPaymentError' && typeof candidate.code === 'string';
+  }
+
+  async cancelTicketItem(
+    reservationId: string,
+    ticketItemId: string,
+    userId: string,
+    reason: string,
+  ): Promise<ReservationDetail> {
+    let seatToBroadcast: { showtimeId: string; seatKey: string } | undefined;
+    let preparedCancellation: PreparedTicketItemCancellation | undefined;
+    let tossCancelAttempted = false;
+    let tossCancelSucceeded = false;
+
+    try {
+      preparedCancellation = await this.db.transaction(async (tx) => {
+        const result = await tx.execute(sql`
+          SELECT
+            r.id AS reservation_id,
+            r.user_id,
+            r.showtime_id,
+            r.status AS reservation_status,
+            r.created_at AS reservation_created_at,
+            s.date_time AS showtime_at,
+            p.id AS payment_id,
+            p.payment_key,
+            p.status AS payment_status,
+            ti.id AS ticket_item_id,
+            ti.status AS ticket_item_status,
+            ti.admission_state,
+            ti.seat_id,
+            ti.seat_key,
+            ti.floor_key,
+            ti.price,
+            ti.service_fee,
+            ti.cancelled_at,
+            ti.cancel_reason,
+            ti.cancellation_fee,
+            ti.service_fee_refund,
+            ti.refundable_amount
+          FROM reservations r
+          INNER JOIN payments p ON p.reservation_id = r.id
+          INNER JOIN ticket_items ti
+            ON ti.reservation_id = r.id
+            AND ti.payment_id = p.id
+          INNER JOIN showtimes s ON s.id = r.showtime_id
+          WHERE r.id = ${reservationId}
+            AND ti.id = ${ticketItemId}
+          FOR UPDATE OF r, p, ti
+        `);
+        const context = this.mapTicketItemCancellationContext(
+          result.rows[0] as Record<string, unknown> | undefined,
+          userId,
+        );
+        this.assertTicketItemCancellable(context);
+
+        const now = new Date();
+        const isPendingRetry = context.ticketItemStatus === 'cancellation_pending';
+        const quote = isPendingRetry
+          ? {
+              cancellationFee: context.cancellationFee,
+              serviceFeeRefund: context.serviceFeeRefund,
+              refundableAmount: context.refundableAmount,
+            }
+          : this.calculateTicketItemCancellationQuote({
+              price: context.price,
+              serviceFee: context.serviceFee,
+              reservationCreatedAt: context.reservationCreatedAt,
+              showtimeAt: context.showtimeAt,
+            });
+        const cancellationReason = isPendingRetry && context.cancelReason
+          ? context.cancelReason
+          : reason;
+        const preparedAt = isPendingRetry && context.cancelledAt
+          ? context.cancelledAt
+          : now;
+
+        await tx
+          .update(ticketItems)
+          .set({
+            status: 'cancellation_pending',
+            cancelledAt: preparedAt,
+            cancelReason: cancellationReason,
+            cancellationFee: quote.cancellationFee,
+            serviceFeeRefund: quote.serviceFeeRefund,
+            refundableAmount: quote.refundableAmount,
+            reopenState: 'held_cancelled',
+            reopenHoldUntil: null,
+            reopenJobId: null,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(ticketItems.id, ticketItemId),
+              eq(ticketItems.reservationId, reservationId),
+              inArray(ticketItems.status, ['active', 'cancellation_pending']),
+            ),
+          );
+
+        await tx
+          .update(tickets)
+          .set({
+            status: 'revoked',
+            revokedAt: now,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(tickets.ticketItemId, ticketItemId),
+              eq(tickets.status, 'active'),
+            ),
+          );
+
+        return {
+          context,
+          quote,
+          reason: cancellationReason,
+          isPendingRetry,
+          now: preparedAt,
+        };
+      });
+
+      if (preparedCancellation.quote.refundableAmount > 0) {
+        tossCancelAttempted = true;
+        const cancelOutcome = await this.cancelTicketItemPaymentOrConfirm({
+          paymentKey: preparedCancellation.context.paymentKey,
+          reason: preparedCancellation.reason,
+          refundableAmount: preparedCancellation.quote.refundableAmount,
+          ticketItemId,
+          isPendingRetry: preparedCancellation.isPendingRetry,
+        });
+
+        if (cancelOutcome === 'definite_failure') {
+          await this.restorePreparedTicketItemCancellation(
+            reservationId,
+            ticketItemId,
+            preparedCancellation.now,
+          );
+          throw new InternalServerErrorException(
+            '취소 처리 중 오류가 발생했습니다. 고객센터에 문의해주세요.',
+          );
+        }
+
+        if (cancelOutcome === 'ambiguous') {
+          this.logger.error(
+            `CRITICAL: Toss ticket-item cancel outcome is unresolved. ticketItemId=${ticketItemId}. Ticket remains cancellation_pending pending manual reconciliation.`,
+          );
+          throw new InternalServerErrorException(
+            '취소 처리 중 오류가 발생했습니다. 고객센터에 문의해주세요.',
+          );
+        }
+
+        tossCancelSucceeded = true;
+      }
+
+      const committedCancellation = preparedCancellation;
+      seatToBroadcast = await this.db.transaction(async (tx) => {
+        await tx
+          .update(ticketItems)
+          .set({
+            status: 'cancelled',
+            reopenState: 'available',
+            reopenHoldUntil: null,
+            reopenJobId: null,
+            updatedAt: new Date(),
+          })
+          .where(
+            and(
+              eq(ticketItems.id, ticketItemId),
+              eq(ticketItems.reservationId, reservationId),
+              eq(ticketItems.status, 'cancellation_pending'),
+            ),
+          );
+
+        const unresolvedSiblings = await tx
+          .select({ id: ticketItems.id })
+          .from(ticketItems)
+          .where(
+            and(
+              eq(ticketItems.reservationId, reservationId),
+              ne(ticketItems.id, ticketItemId),
+              inArray(ticketItems.status, ['active', 'cancellation_pending']),
+            ),
+          );
+
+        await tx
+          .update(seatInventories)
+          .set({
+            status: 'available',
+            soldAt: null,
+            lockedBy: null,
+            lockedUntil: null,
+            reopenHoldUntil: null,
+            reopenJobId: null,
+            heldCancelledAt: null,
+          })
+          .where(
+            and(
+              eq(seatInventories.showtimeId, committedCancellation.context.showtimeId),
+              eq(seatInventories.floorKey, committedCancellation.context.floorKey),
+              or(
+                eq(seatInventories.seatKey, committedCancellation.context.seatKey),
+                and(
+                  sql`${seatInventories.seatKey} IS NULL`,
+                  eq(seatInventories.seatId, committedCancellation.context.seatId),
+                ),
+              ),
+            ),
+          );
+
+        if (unresolvedSiblings.length === 0) {
+          await tx
+            .update(reservations)
+            .set({
+              status: 'CANCELLED',
+              cancelledAt: committedCancellation.now,
+              cancelReason: committedCancellation.reason,
+              updatedAt: new Date(),
+            })
+            .where(eq(reservations.id, reservationId));
+        }
+
+        return {
+          showtimeId: committedCancellation.context.showtimeId,
+          seatKey: committedCancellation.context.seatKey,
+        };
+      });
+    } catch (error) {
+      if (
+        error instanceof BadRequestException ||
+        error instanceof ConflictException ||
+        error instanceof ForbiddenException ||
+        error instanceof InternalServerErrorException ||
+        error instanceof NotFoundException
+      ) {
+        throw error;
+      }
+
+      if (preparedCancellation && tossCancelSucceeded) {
+        this.logger.error(
+          `CRITICAL: ticket-item cancellation failed after Toss cancel. ticketItemId=${ticketItemId}. Manual reconciliation required.`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      } else if (preparedCancellation && tossCancelAttempted) {
+        this.logger.error(
+          `CRITICAL: Toss ticket-item cancel outcome is unresolved. ticketItemId=${ticketItemId}. Ticket remains cancellation_pending pending manual reconciliation.`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      } else if (preparedCancellation) {
+        this.logger.error(
+          `Ticket-item cancellation failed after DB prepare. ticketItemId=${ticketItemId}. Attempting compensation.`,
+          error instanceof Error ? error.stack : String(error),
+        );
+        await this.restorePreparedTicketItemCancellation(
+          reservationId,
+          ticketItemId,
+          preparedCancellation.now,
+        )
+          .catch((restoreError) => {
+            this.logger.error(
+              `CRITICAL: ticket-item cancellation compensation failed. ticketItemId=${ticketItemId}. Manual reconciliation required.`,
+              restoreError instanceof Error ? restoreError.stack : String(restoreError),
+            );
+          });
+      } else {
+        this.logger.error(
+          `Ticket-item cancellation failed. ticketItemId=${ticketItemId}`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      }
+      throw new InternalServerErrorException(
+        '취소 처리 중 오류가 발생했습니다. 고객센터에 문의해주세요.',
+      );
+    }
+
+    if (seatToBroadcast) {
+      this.bookingGateway.broadcastSeatUpdate(
+        seatToBroadcast.showtimeId,
+        seatToBroadcast.seatKey,
+        'available',
+      );
+    }
+
+    return this.getReservationDetail(reservationId, userId);
+  }
+
+  private async restorePreparedTicketItemCancellation(
+    reservationId: string,
+    ticketItemId: string,
+    revokedAt: Date,
+  ): Promise<void> {
+    const now = new Date();
+    await this.db.transaction(async (tx) => {
+      await tx
+        .update(ticketItems)
+        .set({
+          status: 'active',
+          cancelledAt: null,
+          cancelReason: null,
+          cancellationFee: 0,
+          serviceFeeRefund: 0,
+          refundableAmount: 0,
+          reopenState: 'not_required',
+          reopenHoldUntil: null,
+          reopenJobId: null,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(ticketItems.id, ticketItemId),
+            eq(ticketItems.reservationId, reservationId),
+            eq(ticketItems.status, 'cancellation_pending'),
+            eq(ticketItems.reopenState, 'held_cancelled'),
+          ),
+        );
+
+      await tx
+        .update(tickets)
+        .set({
+          status: 'active',
+          revokedAt: null,
+          updatedAt: now,
+        })
+        .where(
+          and(
+            eq(tickets.ticketItemId, ticketItemId),
+            eq(tickets.status, 'revoked'),
+            eq(tickets.revokedAt, revokedAt),
+          ),
+        );
+    });
+  }
+
   async cancelReservation(reservationId: string, userId: string, reason: string): Promise<void> {
     let showtimeId: string | undefined;
 
@@ -1444,6 +1727,15 @@ export class ReservationService {
         }
 
         showtimeId = row.showtime_id;
+
+        const ticketItemRows = await tx
+          .select({ id: ticketItems.id })
+          .from(ticketItems)
+          .where(eq(ticketItems.reservationId, reservationId));
+
+        if (ticketItemRows.length > 0) {
+          throw new BadRequestException('좌석별 티켓은 개별 취소를 이용해주세요');
+        }
 
         // 2. Get payment within transaction
         const [payment] = await tx

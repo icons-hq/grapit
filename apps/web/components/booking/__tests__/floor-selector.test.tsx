@@ -272,7 +272,7 @@ describe('BookingPage floor selector', () => {
     expect(screen.getByText('selected ids: A-1')).toBeInTheDocument();
     expect(screen.getByText('총 2석')).toBeInTheDocument();
     expect(screen.getByText('총 결제 금액')).toBeInTheDocument();
-    expect(screen.getByText('220,000원')).toBeInTheDocument();
+    expect(screen.getByText('224,000원')).toBeInTheDocument();
   });
 
   it('clears all selected seats through the fixed bottom bar', async () => {

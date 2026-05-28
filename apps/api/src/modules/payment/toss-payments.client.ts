@@ -19,6 +19,10 @@ export interface TossPaymentRequestOptions {
   idempotencyKey?: string;
 }
 
+export interface TossPaymentCancelOptions extends TossPaymentRequestOptions {
+  cancelAmount?: number;
+}
+
 export class TossPaymentError extends Error {
   public readonly code: string;
 
@@ -117,14 +121,22 @@ export class TossPaymentsClient {
   async cancelPayment(
     paymentKey: string,
     reason: string,
-    options: TossPaymentRequestOptions = {},
+    options: TossPaymentCancelOptions = {},
   ): Promise<TossPaymentResponse> {
+    const body: { cancelReason: string; cancelAmount?: number } = {
+      cancelReason: reason,
+    };
+
+    if (options.cancelAmount !== undefined) {
+      body.cancelAmount = options.cancelAmount;
+    }
+
     const response = await fetch(
       `${this.baseUrl}/payments/${encodeURIComponent(paymentKey)}/cancel`,
       {
         method: 'POST',
         headers: this.buildHeaders(options),
-        body: JSON.stringify({ cancelReason: reason }),
+        body: JSON.stringify(body),
       },
     );
 

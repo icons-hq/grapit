@@ -8,6 +8,7 @@ export * from './schemas/admin-dashboard.schema';
 export * from './schemas/consent.schema';
 export * from './schemas/admin-operations.schema';
 export * from './schemas/field-operations.schema';
+export * from './schemas/ticket-item.schema';
 
 // Types
 export * from './types/auth.types';

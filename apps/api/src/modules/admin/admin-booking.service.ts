@@ -6,7 +6,7 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import { eq, and, sql, ilike, or, desc, inArray, gte, lte, ne, type SQL } from 'drizzle-orm';
+import { asc, eq, and, sql, ilike, or, desc, inArray, gte, lte, ne, type SQL } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
   reservations,
@@ -18,28 +18,22 @@ import {
   seatInventories,
   bookingPolicies,
   bookingOperationAuditLogs,
+  ticketItems,
 } from '../../database/schema/index.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
 import { RefundService } from '../refund/refund.service.js';
 import { safeCsvRows } from './csv-export.util.js';
 import { AdminAuditService } from './admin-audit.service.js';
-import {
-  normalizeSeatIdentity,
-  toFloorAwareSeatSelection as toSharedFloorAwareSeatSelection,
-} from '@grabit/shared';
+import { normalizeSeatIdentity, toFloorAwareSeatSelection } from '@grabit/shared';
 import type {
   AdminBookingListItem,
   AdminReservationExportFilter,
   BookingStats,
   FloorAwareSeatSelection,
-  PaymentInfo,
   PaymentStatus,
   ReservationStatus,
-  SeatSelection,
 } from '@grabit/shared';
 
-const LEGACY_FLOOR_KEY = 'default';
-const LEGACY_FLOOR_LABEL = '기본';
 const RAW_EXPORT_TYPE = 'raw_pii';
 const RESERVATION_EXPORT_HEADERS = [
   'Reservation Number',
@@ -56,6 +50,18 @@ const RESERVATION_EXPORT_HEADERS = [
   'Total Amount',
   'Reservation Status',
   'Reserved At',
+  'Ticket Item ID',
+  'Ticket Item Status',
+  'Admission State',
+  'Entered At',
+  'Cancelled At',
+  'Cancel Reason',
+  'Ticket Price',
+  'Service Fee',
+  'Cancellation Fee',
+  'Service Fee Refund',
+  'Refundable Amount',
+  'Reopen State',
 ] as const;
 
 export interface ReservationExportRequest {
@@ -71,6 +77,78 @@ export interface ReservationExportResult {
   csv: string;
   rowCount: number;
 }
+
+type AdminTicketItemStatus =
+  | 'ACTIVE'
+  | 'CANCELLATION_PENDING'
+  | 'CANCELLED'
+  | 'EXPIRED';
+
+type AdminTicketItemAdmissionState = 'NOT_ENTERED' | 'ENTERED';
+
+type AdminTicketItemReopenState =
+  | 'NOT_REQUIRED'
+  | 'HELD_CANCELLED'
+  | 'AVAILABLE'
+  | 'MANUAL_OPENED';
+
+type AdminPaymentInfo = {
+  paymentKey: string;
+  method: string;
+  amount: number;
+  status: PaymentStatus;
+  paidAt: string | null;
+};
+
+type AdminTicketItemDto = FloorAwareSeatSelection & {
+  id: string;
+  reservationId: string;
+  paymentId: string;
+  showtimeId: string;
+  serviceFee: number;
+  status: AdminTicketItemStatus;
+  admissionState: AdminTicketItemAdmissionState;
+  enteredAt: string | null;
+  cancelledAt: string | null;
+  cancelReason: string | null;
+  cancellationFee: number;
+  serviceFeeRefund: number;
+  refundableAmount: number;
+  reopenState: AdminTicketItemReopenState;
+  reopenHoldUntil: string | null;
+};
+
+type AdminBookingDetailDto = AdminBookingListItem & {
+  paymentInfo: AdminPaymentInfo;
+  ticketItems: AdminTicketItemDto[];
+};
+
+type AdminTicketItemRow = Pick<
+  typeof ticketItems.$inferSelect,
+  | 'id'
+  | 'reservationId'
+  | 'paymentId'
+  | 'showtimeId'
+  | 'seatId'
+  | 'seatKey'
+  | 'floorKey'
+  | 'floorLabel'
+  | 'tierName'
+  | 'row'
+  | 'number'
+  | 'price'
+  | 'serviceFee'
+  | 'status'
+  | 'admissionState'
+  | 'enteredAt'
+  | 'cancelledAt'
+  | 'cancelReason'
+  | 'cancellationFee'
+  | 'serviceFeeRefund'
+  | 'refundableAmount'
+  | 'reopenState'
+  | 'reopenHoldUntil'
+>;
 
 type ReservationExportRow = {
   reservation: {
@@ -93,26 +171,13 @@ type ReservationExportRow = {
     id: string;
     title: string;
   };
-  seat: {
-    seatId: string;
-    tierName: string;
-    row: string;
-    number: string;
-    price: number;
-  };
+  ticketItem: AdminTicketItemRow;
   payment: {
     method: string | null;
     status: string | null;
     paidAt: Date | null;
   } | null;
 };
-
-function toFloorAwareSeatSelection(seat: SeatSelection): FloorAwareSeatSelection {
-  return toSharedFloorAwareSeatSelection(seat, {
-    defaultFloorKey: LEGACY_FLOOR_KEY,
-    defaultFloorLabel: LEGACY_FLOOR_LABEL,
-  });
-}
 
 function normalizeReservationSeatIdentity(seatId: string): {
   floorKey: string;
@@ -224,23 +289,41 @@ export class AdminBookingService {
       .limit(limit)
       .offset(offset);
 
-    // Batch-fetch all seats for all reservations (eliminates N+1)
+    // Batch-fetch all ticket items for all reservations (eliminates N+1)
     const reservationIds = rows.map((r) => r.reservation.id);
-    const allSeats = reservationIds.length > 0
+    const allTicketItems = reservationIds.length > 0
+      ? await this.db
+          .select()
+          .from(ticketItems)
+          .where(inArray(ticketItems.reservationId, reservationIds))
+          .orderBy(asc(ticketItems.createdAt), asc(ticketItems.id))
+      : [];
+    const ticketItemsByReservation = new Map<string, typeof allTicketItems>();
+    for (const ticketItem of allTicketItems) {
+      const existing = ticketItemsByReservation.get(ticketItem.reservationId) ?? [];
+      existing.push(ticketItem);
+      ticketItemsByReservation.set(ticketItem.reservationId, existing);
+    }
+    const reservationIdsWithoutTicketItems = reservationIds.filter(
+      (reservationId) => (ticketItemsByReservation.get(reservationId)?.length ?? 0) === 0,
+    );
+    const allReservationSeats = reservationIdsWithoutTicketItems.length > 0
       ? await this.db
           .select()
           .from(reservationSeats)
-          .where(inArray(reservationSeats.reservationId, reservationIds))
+          .where(inArray(reservationSeats.reservationId, reservationIdsWithoutTicketItems))
+          .orderBy(asc(reservationSeats.id))
       : [];
-    const seatsByReservation = new Map<string, typeof allSeats>();
-    for (const seat of allSeats) {
-      const existing = seatsByReservation.get(seat.reservationId) ?? [];
-      existing.push(seat);
-      seatsByReservation.set(seat.reservationId, existing);
+    const reservationSeatsByReservation = new Map<string, typeof allReservationSeats>();
+    for (const reservationSeat of allReservationSeats) {
+      const existing = reservationSeatsByReservation.get(reservationSeat.reservationId) ?? [];
+      existing.push(reservationSeat);
+      reservationSeatsByReservation.set(reservationSeat.reservationId, existing);
     }
 
     const bookings: AdminBookingListItem[] = rows.map((row) => {
-      const seats = seatsByReservation.get(row.reservation.id) ?? [];
+      const reservationTicketItems = ticketItemsByReservation.get(row.reservation.id) ?? [];
+      const reservationSeatsFallback = reservationSeatsByReservation.get(row.reservation.id) ?? [];
       return {
         id: row.reservation.id,
         reservationNumber: row.reservation.reservationNumber,
@@ -248,13 +331,9 @@ export class AdminBookingService {
         userPhone: row.user.phone,
         performanceTitle: row.performance.title,
         showDateTime: row.showtime.dateTime?.toISOString() ?? '',
-        seats: seats.map((s) => toFloorAwareSeatSelection({
-          seatId: s.seatId,
-          tierName: s.tierName,
-          price: s.price,
-          row: s.row,
-          number: s.number,
-        })),
+        seats: reservationTicketItems.length > 0
+          ? reservationTicketItems.map(mapTicketItemToSeatSelection)
+          : reservationSeatsFallback.map(mapReservationSeatToSeatSelection),
         totalAmount: row.reservation.totalAmount,
         status: row.reservation.status as ReservationStatus,
         createdAt: row.reservation.createdAt?.toISOString() ?? '',
@@ -268,7 +347,7 @@ export class AdminBookingService {
     };
   }
 
-  async getBookingDetail(reservationId: string): Promise<AdminBookingListItem & { paymentInfo: PaymentInfo }> {
+  async getBookingDetail(reservationId: string): Promise<AdminBookingDetailDto> {
     const [row] = await this.db
       .select({
         reservation: {
@@ -299,10 +378,11 @@ export class AdminBookingService {
       throw new NotFoundException('예매를 찾을 수 없습니다');
     }
 
-    const seats = await this.db
+    const reservationTicketItems = await this.db
       .select()
-      .from(reservationSeats)
-      .where(eq(reservationSeats.reservationId, reservationId));
+      .from(ticketItems)
+      .where(eq(ticketItems.reservationId, reservationId))
+      .orderBy(asc(ticketItems.createdAt), asc(ticketItems.id));
 
     const [payment] = await this.db
       .select()
@@ -316,16 +396,11 @@ export class AdminBookingService {
       userPhone: row.user.phone,
       performanceTitle: row.performance.title,
       showDateTime: row.showtime.dateTime?.toISOString() ?? '',
-      seats: seats.map((s) => toFloorAwareSeatSelection({
-        seatId: s.seatId,
-        tierName: s.tierName,
-        price: s.price,
-        row: s.row,
-        number: s.number,
-      })),
+      seats: reservationTicketItems.map(mapTicketItemToSeatSelection),
       totalAmount: row.reservation.totalAmount,
       status: row.reservation.status as ReservationStatus,
       createdAt: row.reservation.createdAt?.toISOString() ?? '',
+      ticketItems: reservationTicketItems.map(mapTicketItemToAdminTicketItem),
       paymentInfo: payment
         ? {
             paymentKey: payment.paymentKey,
@@ -462,10 +537,15 @@ export class AdminBookingService {
       conditions.push(eq(performances.id, filters.eventId));
     }
     if (filters.tierName) {
-      conditions.push(eq(reservationSeats.tierName, filters.tierName));
+      conditions.push(eq(ticketItems.tierName, filters.tierName));
     }
     if (filters.zoneFloor) {
-      conditions.push(ilike(reservationSeats.seatId, `${filters.zoneFloor}:%`));
+      conditions.push(
+        or(
+          eq(ticketItems.floorKey, filters.zoneFloor),
+          ilike(ticketItems.seatKey, `${filters.zoneFloor}:%`),
+        )!,
+      );
     }
     if (filters.reservationStatus) {
       conditions.push(eq(reservations.status, filters.reservationStatus));
@@ -508,12 +588,30 @@ export class AdminBookingService {
           id: performances.id,
           title: performances.title,
         },
-        seat: {
-          seatId: reservationSeats.seatId,
-          tierName: reservationSeats.tierName,
-          row: reservationSeats.row,
-          number: reservationSeats.number,
-          price: reservationSeats.price,
+        ticketItem: {
+          id: ticketItems.id,
+          reservationId: ticketItems.reservationId,
+          paymentId: ticketItems.paymentId,
+          showtimeId: ticketItems.showtimeId,
+          seatId: ticketItems.seatId,
+          seatKey: ticketItems.seatKey,
+          floorKey: ticketItems.floorKey,
+          floorLabel: ticketItems.floorLabel,
+          tierName: ticketItems.tierName,
+          row: ticketItems.row,
+          number: ticketItems.number,
+          price: ticketItems.price,
+          serviceFee: ticketItems.serviceFee,
+          status: ticketItems.status,
+          admissionState: ticketItems.admissionState,
+          enteredAt: ticketItems.enteredAt,
+          cancelledAt: ticketItems.cancelledAt,
+          cancelReason: ticketItems.cancelReason,
+          cancellationFee: ticketItems.cancellationFee,
+          serviceFeeRefund: ticketItems.serviceFeeRefund,
+          refundableAmount: ticketItems.refundableAmount,
+          reopenState: ticketItems.reopenState,
+          reopenHoldUntil: ticketItems.reopenHoldUntil,
         },
         payment: {
           method: payments.method,
@@ -525,10 +623,10 @@ export class AdminBookingService {
       .innerJoin(users, eq(reservations.userId, users.id))
       .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
       .innerJoin(performances, eq(showtimes.performanceId, performances.id))
-      .innerJoin(reservationSeats, eq(reservationSeats.reservationId, reservations.id))
+      .innerJoin(ticketItems, eq(ticketItems.reservationId, reservations.id))
       .leftJoin(payments, eq(payments.reservationId, reservations.id))
       .where(conditions.length > 0 ? and(...conditions) : undefined)
-      .orderBy(desc(reservations.createdAt));
+      .orderBy(desc(reservations.createdAt), asc(ticketItems.createdAt), asc(ticketItems.id));
   }
 
   async manualOpen(
@@ -660,6 +758,7 @@ export class AdminBookingService {
 
 function reservationExportRowToCsvValues(row: ReservationExportRow): readonly unknown[] {
   const audienceRegion = row.user.country === 'KR' ? 'domestic' : 'overseas';
+  const ticketItem = mapTicketItemToAdminTicketItem(row.ticketItem);
 
   return [
     row.reservation.reservationNumber,
@@ -669,14 +768,112 @@ function reservationExportRowToCsvValues(row: ReservationExportRow): readonly un
     audienceRegion,
     row.performance.title,
     row.showtime.dateTime?.toISOString() ?? '',
-    row.seat.tierName,
-    row.seat.seatId,
+    row.ticketItem.tierName,
+    row.ticketItem.seatKey,
     row.payment?.method ?? '',
     row.payment?.status ?? '',
     row.reservation.totalAmount,
     row.reservation.status,
     row.reservation.createdAt?.toISOString() ?? '',
+    ticketItem.id,
+    ticketItem.status,
+    ticketItem.admissionState,
+    ticketItem.enteredAt ?? '',
+    ticketItem.cancelledAt ?? '',
+    ticketItem.cancelReason ?? '',
+    ticketItem.price,
+    ticketItem.serviceFee,
+    ticketItem.cancellationFee,
+    ticketItem.serviceFeeRefund,
+    ticketItem.refundableAmount,
+    ticketItem.reopenState,
   ];
+}
+
+function mapTicketItemToSeatSelection(item: AdminTicketItemRow): FloorAwareSeatSelection {
+  return {
+    seatId: item.seatId,
+    seatKey: item.seatKey,
+    floorKey: item.floorKey,
+    floorLabel: item.floorLabel,
+    tierName: item.tierName,
+    price: item.price,
+    row: item.row,
+    number: item.number,
+  };
+}
+
+function mapReservationSeatToSeatSelection(
+  seat: typeof reservationSeats.$inferSelect,
+): FloorAwareSeatSelection {
+  return toFloorAwareSeatSelection({
+    seatId: seat.seatId,
+    tierName: seat.tierName,
+    price: seat.price,
+    row: seat.row,
+    number: seat.number,
+  });
+}
+
+function mapTicketItemToAdminTicketItem(item: AdminTicketItemRow): AdminTicketItemDto {
+  return {
+    ...mapTicketItemToSeatSelection(item),
+    id: item.id,
+    reservationId: item.reservationId,
+    paymentId: item.paymentId,
+    showtimeId: item.showtimeId,
+    serviceFee: item.serviceFee,
+    status: mapAdminTicketItemStatus(item.status),
+    admissionState: mapAdminTicketItemAdmissionState(item.admissionState),
+    enteredAt: dateToIsoOrNull(item.enteredAt),
+    cancelledAt: dateToIsoOrNull(item.cancelledAt),
+    cancelReason: item.cancelReason ?? null,
+    cancellationFee: item.cancellationFee,
+    serviceFeeRefund: item.serviceFeeRefund,
+    refundableAmount: item.refundableAmount,
+    reopenState: mapAdminTicketItemReopenState(item.reopenState),
+    reopenHoldUntil: dateToIsoOrNull(item.reopenHoldUntil),
+  };
+}
+
+function mapAdminTicketItemStatus(status: string): AdminTicketItemStatus {
+  switch (status) {
+    case 'cancellation_pending':
+      return 'CANCELLATION_PENDING';
+    case 'cancelled':
+      return 'CANCELLED';
+    case 'expired':
+      return 'EXPIRED';
+    case 'active':
+    default:
+      return 'ACTIVE';
+  }
+}
+
+function mapAdminTicketItemAdmissionState(
+  admissionState: string,
+): AdminTicketItemAdmissionState {
+  return admissionState === 'entered' ? 'ENTERED' : 'NOT_ENTERED';
+}
+
+function mapAdminTicketItemReopenState(
+  reopenState: string,
+): AdminTicketItemReopenState {
+  switch (reopenState) {
+    case 'held_cancelled':
+      return 'HELD_CANCELLED';
+    case 'available':
+      return 'AVAILABLE';
+    case 'manual_opened':
+      return 'MANUAL_OPENED';
+    case 'not_required':
+    default:
+      return 'NOT_REQUIRED';
+  }
+}
+
+function dateToIsoOrNull(date: Date | null | undefined): string | null {
+  return date instanceof Date ? date.toISOString() : null;
 }
 
 function reservationExportFiltersForAudit(

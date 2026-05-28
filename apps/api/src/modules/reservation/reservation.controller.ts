@@ -19,9 +19,11 @@ import {
   queueAdmissionSchema,
   confirmPaymentSchema,
   cancelReservationSchema,
+  cancelTicketItemSchema,
   type PrepareReservationInput,
   type ConfirmPaymentInput,
   type CancelReservationInput,
+  type CancelTicketItemInput,
   type ReservationStatus,
 } from '@grabit/shared';
 import { resolveTrustedRequestIp } from '../../common/request-ip.js';
@@ -144,6 +146,21 @@ export class ReservationController {
   ) {
     await this.reservationService.cancelReservation(id, req.user.id, body.reason);
     return { message: '예매가 취소되었습니다' };
+  }
+
+  @Put('reservations/:id/ticket-items/:ticketItemId/cancel')
+  async cancelTicketItem(
+    @Param('id') id: string,
+    @Param('ticketItemId') ticketItemId: string,
+    @Body(new ZodValidationPipe(cancelTicketItemSchema)) body: CancelTicketItemInput,
+    @Request() req: { user: { id: string } },
+  ) {
+    return this.reservationService.cancelTicketItem(
+      id,
+      ticketItemId,
+      req.user.id,
+      body.reason,
+    );
   }
 
   @Put('reservations/:id/cancel-pending')

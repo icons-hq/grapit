@@ -367,7 +367,7 @@ async function assertPostSelectionState(page: Page) {
   await expect(summary.getByText('VIP')).toBeVisible();
   await expect(summary.getByText('총 1석')).toBeVisible();
   await expect(summary.getByText('총 결제 금액')).toBeVisible();
-  await expect(summary.getByText('110,000원')).toBeVisible();
+  await expect(summary.getByText('112,000원')).toBeVisible();
   await expect(
     page.getByRole('button', { name: '1층 A열 1번 선택 해제' }),
   ).toBeVisible();

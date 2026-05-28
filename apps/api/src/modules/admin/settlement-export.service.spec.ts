@@ -117,6 +117,213 @@ describe('SettlementExportService RED contract', () => {
     });
   });
 
+  it('falls back to paid amount when summarizing full-reservation refunds without item refundable amount', async () => {
+    const { service, db } = createDependencies();
+    db.select.mockReturnValueOnce(chainResult([
+      {
+        eventId: 'event-girl-rules-20260704',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
+        currency: 'KRW',
+        reservationId: 'reservation-full-refund-1',
+        reservationNumber: 'R-20260704-REFUND',
+        reservationStatus: 'CANCELLED',
+        paymentStatus: 'DONE',
+        refundStatus: 'completed',
+        ticketItemId: 'ticket-item-full-refund-1',
+        ticketItemStatus: 'active',
+        admissionState: 'not_entered',
+        paidAmount: 99000,
+        totalAmount: 99000,
+        ticketPrice: 0,
+        serviceFee: 0,
+        refundableAmount: 0,
+      },
+    ]));
+
+    await expect(
+      service.getSummary({
+        eventId: 'event-girl-rules-20260704',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
+      }),
+    ).resolves.toMatchObject({
+      grossSalesAmount: 99000,
+      refundedAmount: 99000,
+      refundCount: 1,
+    });
+  });
+
+  it('uses row gross amount for multi-ticket full-reservation refunds to avoid overcounting repeated payment totals', async () => {
+    const { service, db } = createDependencies();
+    db.select.mockReturnValueOnce(chainResult([
+      {
+        eventId: 'event-girl-rules-20260704',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
+        currency: 'KRW',
+        reservationId: 'reservation-full-refund-2-seats',
+        reservationNumber: 'R-20260704-2-SEATS',
+        reservationStatus: 'CANCELLED',
+        paymentStatus: 'DONE',
+        refundStatus: 'completed',
+        ticketItemId: 'ticket-item-full-refund-a1',
+        ticketItemStatus: 'active',
+        admissionState: 'not_entered',
+        paidAmount: 158000,
+        totalAmount: 158000,
+        ticketPrice: 77000,
+        serviceFee: 2000,
+        refundableAmount: 0,
+      },
+      {
+        eventId: 'event-girl-rules-20260704',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
+        currency: 'KRW',
+        reservationId: 'reservation-full-refund-2-seats',
+        reservationNumber: 'R-20260704-2-SEATS',
+        reservationStatus: 'CANCELLED',
+        paymentStatus: 'DONE',
+        refundStatus: 'completed',
+        ticketItemId: 'ticket-item-full-refund-a2',
+        ticketItemStatus: 'active',
+        admissionState: 'not_entered',
+        paidAmount: 158000,
+        totalAmount: 158000,
+        ticketPrice: 77000,
+        serviceFee: 2000,
+        refundableAmount: 0,
+      },
+    ]));
+
+    await expect(
+      service.getSummary({
+        eventId: 'event-girl-rules-20260704',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
+      }),
+    ).resolves.toMatchObject({
+      refundedAmount: 158000,
+    });
+  });
+
+  it('does not fall back to row gross amount for failed refund statuses', async () => {
+    const { service, db } = createDependencies();
+    db.select.mockReturnValueOnce(chainResult([
+      {
+        eventId: 'event-girl-rules-20260704',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
+        currency: 'KRW',
+        reservationId: 'reservation-failed-refund-active-item',
+        reservationNumber: 'R-20260704-FAILED-REFUND',
+        reservationStatus: 'CONFIRMED',
+        paymentStatus: 'DONE',
+        refundStatus: 'failed',
+        ticketItemId: 'ticket-item-failed-refund-active',
+        ticketItemStatus: 'active',
+        admissionState: 'not_entered',
+        paidAmount: 79000,
+        totalAmount: 79000,
+        ticketPrice: 77000,
+        serviceFee: 2000,
+        refundableAmount: 0,
+      },
+    ]));
+
+    await expect(
+      service.getSummary({
+        eventId: 'event-girl-rules-20260704',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
+      }),
+    ).resolves.toMatchObject({
+      refundedAmount: 0,
+      refundCount: 1,
+    });
+  });
+
+  it('keeps explicit item refund amounts ahead of refund-status fallbacks', async () => {
+    const { service, db } = createDependencies();
+    db.select.mockReturnValueOnce(chainResult([
+      {
+        reservationId: 'reservation-item-refund-wins-1',
+        reservationNumber: 'R-20260704-ITEM-WINS',
+        reservationStatus: 'CONFIRMED',
+        paymentStatus: 'DONE',
+        refundStatus: 'completed',
+        paymentMethod: 'CARD',
+        currency: 'KRW',
+        ticketItemId: 'ticket-item-refund-amount-wins',
+        ticketItemStatus: 'cancelled',
+        admissionState: 'not_entered',
+        seatKey: '1F:C-1',
+        paidAmount: 158000,
+        totalAmount: 158000,
+        ticketPrice: 77000,
+        serviceFee: 2000,
+        refundAmount: 45000,
+        refundableAmount: 79000,
+      },
+      {
+        reservationId: 'reservation-item-refund-wins-2',
+        reservationNumber: 'R-20260704-REFUNDABLE-WINS',
+        reservationStatus: 'CONFIRMED',
+        paymentStatus: 'DONE',
+        refundStatus: 'completed',
+        paymentMethod: 'CARD',
+        currency: 'KRW',
+        ticketItemId: 'ticket-item-refundable-wins',
+        ticketItemStatus: 'cancelled',
+        admissionState: 'not_entered',
+        seatKey: '1F:C-2',
+        paidAmount: 158000,
+        totalAmount: 158000,
+        ticketPrice: 77000,
+        serviceFee: 2000,
+        refundableAmount: 52000,
+      },
+    ]));
+
+    const result = await service.exportDataset({
+      eventId: 'event-girl-rules-20260704',
+      dataset: 'reservation_payment_refund_summary',
+      reason: 'post-event item refund reconciliation',
+    }, FINANCE_ACTOR);
+
+    expect(result.csv).toContain('"R-20260704-ITEM-WINS","ticket-item-refund-amount-wins","1F:C-1"');
+    expect(result.csv).toContain('"45000"');
+    expect(result.csv).toContain('"R-20260704-REFUNDABLE-WINS","ticket-item-refundable-wins","1F:C-2"');
+    expect(result.csv).toContain('"52000"');
+  });
+
+  it('falls back to total amount in refund CSV when full-reservation refund has no item refundable amount', async () => {
+    const { service, db } = createDependencies();
+    db.select.mockReturnValueOnce(chainResult([
+      {
+        reservationId: 'reservation-full-refund-2',
+        reservationNumber: 'R-20260704-TOTAL-FALLBACK',
+        reservationStatus: 'CANCELLED',
+        paymentStatus: 'DONE',
+        refundStatus: 'completed',
+        paymentMethod: 'CARD',
+        currency: 'KRW',
+        ticketItemId: 'ticket-item-full-refund-2',
+        ticketItemStatus: 'active',
+        admissionState: 'not_entered',
+        seatKey: '1F:B-1',
+        totalAmount: 88000,
+        ticketPrice: 0,
+        serviceFee: 0,
+        refundableAmount: 0,
+      },
+    ]));
+
+    const result = await service.exportDataset({
+      eventId: 'event-girl-rules-20260704',
+      dataset: 'reservation_payment_refund_summary',
+      reason: 'post-event full refund reconciliation',
+    }, FINANCE_ACTOR);
+
+    expect(result.csv).toContain('"R-20260704-TOTAL-FALLBACK"');
+    expect(result.csv).toContain('"completed"');
+    expect(result.csv).toContain('"88000"');
+  });
+
   it.each(DATASETS)('exports %s dataset with safeCsvRows and audited metadata only', async (dataset) => {
     const { service, db, adminAuditService } = createDependencies();
     const safeCsvRowsSpy = vi.spyOn(csvExport, 'safeCsvRows');
@@ -176,6 +383,73 @@ describe('SettlementExportService RED contract', () => {
       expect.anything(),
     );
     expectNoRawExportLeak(adminAuditService.write.mock.calls[0]?.[0]);
+  });
+
+  it('exports one row per ticket item with item-level cancellation and entry state', async () => {
+    const { service, db } = createDependencies();
+    db.select.mockReturnValueOnce(chainResult([
+      {
+        eventId: 'event-girl-rules-20260704',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
+        performanceTitle: 'Girl Rules Fanmeeting',
+        showtimeAt: new Date('2026-07-04T10:00:00.000Z'),
+        reservationId: 'reservation-1',
+        reservationNumber: 'R-20260704-001',
+        reservationStatus: 'CONFIRMED',
+        paymentStatus: 'DONE',
+        ticketItemId: 'ticket-item-a1',
+        seatKey: '1F:A-1',
+        ticketItemStatus: 'active',
+        admissionState: 'entered',
+        enteredAt: new Date('2026-07-04T10:05:00.000Z'),
+        ticketPrice: 77000,
+        serviceFee: 2000,
+        cancellationFee: 0,
+        serviceFeeRefund: 0,
+        refundableAmount: 0,
+        scanResult: 'success',
+        scannedAt: new Date('2026-07-04T10:05:00.000Z'),
+      },
+      {
+        eventId: 'event-girl-rules-20260704',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
+        performanceTitle: 'Girl Rules Fanmeeting',
+        showtimeAt: new Date('2026-07-04T10:00:00.000Z'),
+        reservationId: 'reservation-1',
+        reservationNumber: 'R-20260704-001',
+        reservationStatus: 'CONFIRMED',
+        paymentStatus: 'DONE',
+        ticketItemId: 'ticket-item-a2',
+        seatKey: '1F:A-2',
+        ticketItemStatus: 'cancelled',
+        admissionState: 'not_entered',
+        ticketPrice: 77000,
+        serviceFee: 2000,
+        cancellationFee: 0,
+        serviceFeeRefund: 2000,
+        refundableAmount: 79000,
+        reopenState: 'available',
+      },
+    ]));
+
+    const result = await service.exportDataset({
+      eventId: 'event-girl-rules-20260704',
+      showtimeId: '00000000-0000-4000-8000-000000000001',
+      dataset: 'entry_status',
+      reason: 'post-event settlement reconciliation',
+    }, FINANCE_ACTOR);
+
+    expect(result.rowCount).toBe(2);
+    expect(result.csv).toContain('"Ticket Item ID"');
+    expect(result.csv).toContain('"ticket-item-a1"');
+    expect(result.csv).toContain('"ticket-item-a2"');
+    expect(result.csv).toContain('"1F:A-1"');
+    expect(result.csv).toContain('"1F:A-2"');
+    expect(result.csv).toContain('"ACTIVE"');
+    expect(result.csv).toContain('"CANCELLED"');
+    expect(result.csv).toContain('"ENTERED"');
+    expect(result.csv).toContain('"refunded_or_cancelled"');
+    expect(result.csv).toContain('"79000"');
   });
 
   it('neutralizes formula-leading CSV values through safeCsvRows instead of manual join', async () => {

@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   pgTable,
   uuid,
@@ -10,6 +11,7 @@ import {
 import { reservations } from './reservations.js';
 import { payments } from './payments.js';
 import { showtimes } from './showtimes.js';
+import { ticketItems } from './ticket-items.js';
 
 export const ticketStatusEnum = pgEnum('ticket_status', [
   'active',
@@ -29,6 +31,9 @@ export const tickets = pgTable('tickets', {
   showtimeId: uuid('showtime_id')
     .notNull()
     .references(() => showtimes.id, { onDelete: 'cascade' }),
+  ticketItemId: uuid('ticket_item_id').references(() => ticketItems.id, {
+    onDelete: 'cascade',
+  }),
   qrTokenJti: varchar('qr_token_jti', { length: 200 }).notNull().unique(),
   secretVersion: varchar('secret_version', { length: 100 }).notNull(),
   status: ticketStatusEnum('status').notNull().default('active'),
@@ -48,8 +53,18 @@ export const tickets = pgTable('tickets', {
     .notNull()
     .defaultNow(),
 }, (table) => [
-  uniqueIndex('idx_tickets_reservation_id').on(table.reservationId),
-  uniqueIndex('idx_tickets_payment_id').on(table.paymentId),
+  index('idx_tickets_reservation_id').on(table.reservationId),
+  index('idx_tickets_payment_id').on(table.paymentId),
   index('idx_tickets_showtime_id').on(table.showtimeId),
+  uniqueIndex('idx_tickets_ticket_item_active')
+    .on(table.ticketItemId)
+    .where(sql`${table.ticketItemId} IS NOT NULL AND ${table.status} = 'active'`),
+  uniqueIndex('idx_tickets_legacy_reservation_active')
+    .on(table.reservationId)
+    .where(sql`${table.ticketItemId} IS NULL AND ${table.status} = 'active'`),
+  uniqueIndex('idx_tickets_legacy_payment_active')
+    .on(table.paymentId)
+    .where(sql`${table.ticketItemId} IS NULL AND ${table.status} = 'active'`),
+  index('idx_tickets_ticket_item_id').on(table.ticketItemId),
   index('idx_tickets_status').on(table.status),
 ]);

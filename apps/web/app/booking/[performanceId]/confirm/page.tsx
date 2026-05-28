@@ -27,7 +27,10 @@ import { useBookingAvailability } from '@/hooks/use-booking-availability';
 import { resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
 import { useBookingStore } from '@/stores/use-booking-store';
 import { useAuthStore } from '@/stores/use-auth-store';
-import { toFloorAwareSeatSelection as toSharedFloorAwareSeatSelection } from '@grabit/shared';
+import {
+  TICKET_SERVICE_FEE_KRW,
+  toFloorAwareSeatSelection as toSharedFloorAwareSeatSelection,
+} from '@grabit/shared';
 import type { FloorAwareSeatSelection, SeatSelection } from '@grabit/shared';
 
 function generateOrderId(): string {
@@ -102,7 +105,8 @@ function ConfirmPageContent() {
   const orderId = useMemo(() => generateOrderId(), []);
 
   const totalPrice = useMemo(
-    () => selectedSeats.reduce((sum, s) => sum + s.price, 0),
+    () => selectedSeats.reduce((sum, s) => sum + s.price, 0)
+      + selectedSeats.length * TICKET_SERVICE_FEE_KRW,
     [selectedSeats],
   );
 

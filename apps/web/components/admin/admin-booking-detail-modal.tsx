@@ -16,6 +16,14 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { useAdminManualOpenSeat } from '@/hooks/use-admin-seat-operations';
 import { useAdminBookingDetail } from '@/hooks/use-reservations';
 import { formatDateTime } from '@/lib/format-datetime';
@@ -52,6 +60,10 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
       </span>
     </div>
   );
+}
+
+function formatWon(amount: number): string {
+  return `${amount.toLocaleString('ko-KR')}원`;
 }
 
 interface AdminBookingDetailModalProps {
@@ -192,6 +204,53 @@ export function AdminBookingDetailModal({
                 )
               }
             />
+
+            {booking.ticketItems?.length > 0 && (
+              <>
+                <Separator />
+                <div className="py-2">
+                  <p className="mb-2 text-sm font-semibold text-gray-700">
+                    티켓별 상태
+                  </p>
+                  <div className="overflow-x-auto rounded-md border">
+                    <Table aria-label="ticket item status">
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="whitespace-nowrap">좌석</TableHead>
+                          <TableHead className="whitespace-nowrap">티켓 상태</TableHead>
+                          <TableHead className="whitespace-nowrap">입장 상태</TableHead>
+                          <TableHead className="whitespace-nowrap text-right">
+                            취소/환불
+                          </TableHead>
+                          <TableHead className="whitespace-nowrap">재오픈</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {booking.ticketItems.map((item) => (
+                          <TableRow key={item.id}>
+                            <TableCell className="whitespace-nowrap text-sm">
+                              {item.tierName} {item.row}열 {item.number}번
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap text-sm">
+                              {item.status}
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap text-sm">
+                              {item.admissionState}
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap text-right text-sm">
+                              {formatWon(item.refundableAmount)}
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap text-sm">
+                              {item.reopenState}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              </>
+            )}
 
             {booking.status === 'CONFIRMED' && (
               <Button

@@ -3,7 +3,11 @@
 import { use } from 'react';
 import { AuthGuard } from '@/components/auth/auth-guard';
 import { ReservationDetailView } from '@/components/reservation/reservation-detail';
-import { useReservationDetail, useCancelReservation } from '@/hooks/use-reservations';
+import {
+  useReservationDetail,
+  useCancelReservation,
+  useCancelTicketItem,
+} from '@/hooks/use-reservations';
 import { ReservationDetailSkeleton } from '@/components/skeletons';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
@@ -16,6 +20,7 @@ export default function ReservationDetailPage({ params }: ReservationDetailPageP
   const { id } = use(params);
   const { data: reservation, isLoading, isError, refetch } = useReservationDetail(id);
   const cancelMutation = useCancelReservation();
+  const cancelTicketItemMutation = useCancelTicketItem();
 
   async function handleCancel(reason: string) {
     try {
@@ -24,6 +29,21 @@ export default function ReservationDetailPage({ params }: ReservationDetailPageP
       refetch();
     } catch {
       toast.error('취소 처리에 실패했습니다. 잠시 후 다시 시도해주세요.');
+    }
+  }
+
+  async function handleCancelTicketItem(ticketItemId: string, reason: string) {
+    try {
+      await cancelTicketItemMutation.mutateAsync({
+        reservationId: id,
+        ticketItemId,
+        reason,
+      });
+      toast.success('티켓이 취소되었습니다');
+      refetch();
+    } catch (error) {
+      toast.error('티켓 취소 처리에 실패했습니다. 잠시 후 다시 시도해주세요.');
+      throw error;
     }
   }
 
@@ -48,6 +68,8 @@ export default function ReservationDetailPage({ params }: ReservationDetailPageP
             reservation={reservation}
             onCancel={handleCancel}
             isCancelling={cancelMutation.isPending}
+            onCancelTicketItem={handleCancelTicketItem}
+            isCancellingTicketItem={cancelTicketItemMutation.isPending}
           />
         )}
       </main>
