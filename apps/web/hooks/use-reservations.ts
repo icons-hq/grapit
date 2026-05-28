@@ -12,10 +12,10 @@ import { useAuthStore } from '@/stores/use-auth-store';
 import type {
   ReservationListItem,
   ReservationDetail,
+  AdminBookingDetail,
   AdminBookingListItem,
   AdminReservationExportFilter,
   BookingStats,
-  PaymentInfo,
 } from '@grabit/shared';
 
 export type ReservationExportPayload = AdminReservationExportFilter & {
@@ -62,6 +62,28 @@ export function useCancelReservation() {
   });
 }
 
+export function useCancelTicketItem() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      reservationId,
+      ticketItemId,
+      reason,
+    }: {
+      reservationId: string;
+      ticketItemId: string;
+      reason: string;
+    }) =>
+      apiClient.put<ReservationDetail>(
+        `/api/v1/reservations/${reservationId}/ticket-items/${ticketItemId}/cancel`,
+        { reason },
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['reservations'] });
+    },
+  });
+}
+
 export function useAdminBookings(params: {
   status?: string;
   search?: string;
@@ -89,7 +111,7 @@ export function useAdminBookingDetail(id: string | null) {
   return useQuery({
     queryKey: ['admin', 'bookings', id],
     queryFn: () =>
-      apiClient.get<AdminBookingListItem & { paymentInfo: PaymentInfo }>(
+      apiClient.get<AdminBookingDetail>(
         `/api/v1/admin/bookings/${id}`,
       ),
     enabled: !!id,

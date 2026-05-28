@@ -2,7 +2,7 @@
 
 import { useRef, useState, useCallback, useEffect } from 'react';
 import { Loader2 } from 'lucide-react';
-import type { SeatSelection, Showtime } from '@grabit/shared';
+import { TICKET_SERVICE_FEE_KRW, type SeatSelection, type Showtime } from '@grabit/shared';
 import { Button } from '@/components/ui/button';
 import { SeatRow } from './seat-row';
 
@@ -35,7 +35,9 @@ export function SeatSelectionSheet({
   const touchStartRef = useRef<{ y: number; time: number } | null>(null);
   const prevSeatCount = useRef(selectedSeats.length);
 
-  const totalPrice = selectedSeats.reduce((sum, s) => sum + s.price, 0);
+  const seatTotal = selectedSeats.reduce((sum, s) => sum + s.price, 0);
+  const serviceFeeTotal = selectedSeats.length * TICKET_SERVICE_FEE_KRW;
+  const totalPrice = seatTotal + serviceFeeTotal;
 
   // Auto-expand on first seat selection
   useEffect(() => {
@@ -138,6 +140,16 @@ export function SeatSelectionSheet({
             ))}
           </div>
           <div className="mt-3 border-t pt-3">
+            <div className="mb-2 space-y-1 text-sm text-gray-500">
+              <div className="flex items-center justify-between">
+                <span>좌석 금액</span>
+                <span>{seatTotal.toLocaleString()}원</span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>예매 수수료</span>
+                <span>{serviceFeeTotal.toLocaleString()}원</span>
+              </div>
+            </div>
             <div className="flex items-center justify-between">
               <span className="text-sm text-gray-500">
                 총 합계 {selectedSeats.length}석

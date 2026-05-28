@@ -10,7 +10,7 @@ import type {
   SeatMapConfig,
   SeatState,
 } from '@grabit/shared';
-import { normalizeSeatIdentity } from '@grabit/shared';
+import { normalizeSeatIdentity, TICKET_SERVICE_FEE_KRW } from '@grabit/shared';
 import { usePerformanceDetail } from '@/hooks/use-performances';
 import {
   useSeatStatus,
@@ -434,7 +434,8 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
   }, [sortedSelections]);
 
   const totalPrice = useMemo(
-    () => selectedSeats.reduce((sum, seat) => sum + seat.price, 0),
+    () => selectedSeats.reduce((sum, seat) => sum + seat.price, 0)
+      + selectedSeats.length * TICKET_SERVICE_FEE_KRW,
     [selectedSeats],
   );
 

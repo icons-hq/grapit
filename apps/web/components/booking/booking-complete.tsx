@@ -10,7 +10,7 @@ import {
   buildQrCheckInUrl,
   QrTicketImage,
 } from '@/components/field/qr-ticket-image';
-import type { ReservationDetail } from '@grabit/shared';
+import type { ReservationDetail, TicketItem } from '@grabit/shared';
 
 interface BookingCompleteProps {
   booking: ReservationDetail;
@@ -38,6 +38,10 @@ function formatSeats(booking: ReservationDetail): string {
     .join(', ');
 }
 
+function formatTicketItemSeat(ticketItem: TicketItem): string {
+  return `${ticketItem.tierName} ${ticketItem.row}열 ${ticketItem.number}번`;
+}
+
 function getQrStatusLabel(status: ReservationDetail['qrTicket']['status']): string {
   switch (status) {
     case 'ACTIVE':
@@ -53,12 +57,126 @@ function getQrStatusLabel(status: ReservationDetail['qrTicket']['status']): stri
   }
 }
 
+function getTicketItemStatusLabel(status: TicketItem['status']): string {
+  switch (status) {
+    case 'ACTIVE':
+      return '티켓 유효';
+    case 'CANCELLATION_PENDING':
+      return '취소 확인 중';
+    case 'CANCELLED':
+      return '취소됨';
+    case 'EXPIRED':
+      return '만료됨';
+    default:
+      return '확인 중';
+  }
+}
+
+function getAdmissionStateLabel(
+  admissionState: TicketItem['admissionState'] | ReservationDetail['qrTicket']['entryStatus'],
+): string {
+  return admissionState === 'ENTERED' ? '입장 완료' : '입장 전';
+}
+
+function getTicketItemQrBadgeLabel(status: TicketItem['status'], hasActiveQr: boolean): string {
+  if (hasActiveQr) {
+    return 'QR 활성';
+  }
+  if (status === 'CANCELLATION_PENDING') {
+    return '취소 확인 중';
+  }
+  if (status === 'CANCELLED') {
+    return '취소됨';
+  }
+  if (status === 'EXPIRED') {
+    return '만료됨';
+  }
+
+  return '확인 중';
+}
+
+function getTicketItemQrUnavailableCopy(status: TicketItem['status']) {
+  if (status === 'CANCELLATION_PENDING') {
+    return {
+      title: '취소 확인 중입니다.',
+      description: '부분취소 결과를 확인 중입니다. 처리 완료 전까지 QR 티켓은 사용할 수 없습니다.',
+    };
+  }
+  if (status === 'CANCELLED') {
+    return {
+      title: '취소된 티켓입니다.',
+      description: '이 좌석의 QR 티켓은 사용할 수 없습니다.',
+    };
+  }
+  if (status === 'EXPIRED') {
+    return {
+      title: '만료된 티켓입니다.',
+      description: '이 좌석의 QR 티켓은 사용할 수 없습니다.',
+    };
+  }
+
+  return {
+    title: 'QR 티켓을 아직 표시할 수 없습니다.',
+    description: '잠시 후 새로고침하거나 마이페이지에서 다시 확인하세요.',
+  };
+}
+
+type BuyerQrCard = {
+  id: string;
+  seatLabel: string;
+  floorLabel: string;
+  qrCheckInUrl: string | null;
+  qrBadgeLabel: string;
+  qrUnavailableTitle: string;
+  qrUnavailableDescription: string;
+  ticketStatusLabel: string;
+  admissionStatusLabel: string;
+};
+
+function getBuyerQrCards(booking: ReservationDetail): BuyerQrCard[] {
+  const ticketItems = Array.isArray(booking.ticketItems) ? booking.ticketItems : [];
+  if (ticketItems.length > 0) {
+    return ticketItems.map((ticketItem) => {
+      const credential = ticketItem.qrCredential;
+      const qrCheckInUrl = credential?.status === 'ACTIVE' && credential.token
+        ? buildQrCheckInUrl(credential.token)
+        : null;
+      const unavailableCopy = getTicketItemQrUnavailableCopy(ticketItem.status);
+
+      return {
+        id: ticketItem.id,
+        seatLabel: formatTicketItemSeat(ticketItem),
+        floorLabel: ticketItem.floorLabel,
+        qrCheckInUrl,
+        qrBadgeLabel: getTicketItemQrBadgeLabel(ticketItem.status, Boolean(qrCheckInUrl)),
+        qrUnavailableTitle: unavailableCopy.title,
+        qrUnavailableDescription: unavailableCopy.description,
+        ticketStatusLabel: getTicketItemStatusLabel(ticketItem.status),
+        admissionStatusLabel: getAdmissionStateLabel(ticketItem.admissionState),
+      };
+    });
+  }
+
+  const isQrActive = booking.qrTicket?.status === 'ACTIVE' && booking.qrTicket.token;
+  return [
+    {
+      id: 'legacy-qr-ticket',
+      seatLabel: formatSeats(booking),
+      floorLabel: '',
+      qrCheckInUrl: isQrActive ? buildQrCheckInUrl(booking.qrTicket.token) : null,
+      qrBadgeLabel: isQrActive ? 'QR 활성' : '확인 중',
+      qrUnavailableTitle: 'QR 티켓을 아직 표시할 수 없습니다.',
+      qrUnavailableDescription: '잠시 후 새로고침하거나 마이페이지에서 다시 확인하세요.',
+      ticketStatusLabel: getQrStatusLabel(booking.qrTicket.status),
+      admissionStatusLabel: getAdmissionStateLabel(booking.qrTicket.entryStatus),
+    },
+  ];
+}
+
 export function BookingComplete({ booking }: BookingCompleteProps) {
   const router = useRouter();
-  const isQrActive = booking.qrTicket?.status === 'ACTIVE';
-  const qrCheckInUrl = isQrActive
-    ? buildQrCheckInUrl(booking.qrTicket.token)
-    : null;
+  const qrCards = getBuyerQrCards(booking);
+  const hasActiveQr = qrCards.some((card) => card.qrCheckInUrl);
 
   return (
     <div className="flex flex-col items-center gap-6">
@@ -160,66 +278,101 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
                 <h2 className="text-base font-semibold text-gray-900">QR 티켓</h2>
               </div>
               <p className="text-sm text-gray-700">
-                {isQrActive
+                {hasActiveQr
                   ? 'QR 티켓이 준비되었습니다. 입장 시 현장 스태프가 QR을 확인합니다.'
                   : '결제는 완료되었지만 QR 티켓을 확인하는 중입니다. 잠시 후 새로고침하거나 마이페이지에서 다시 확인하세요.'}
               </p>
             </div>
             <Badge
               className={
-                isQrActive
+                hasActiveQr
                   ? 'bg-[#F0FDF4] text-[#15803D] border-transparent'
                   : 'bg-[#FFFBEB] text-[#8B6306] border-transparent'
               }
             >
-              {isQrActive ? 'QR 활성' : '확인 중'}
+              {hasActiveQr ? 'QR 활성' : '확인 중'}
             </Badge>
           </div>
 
-          <div className="rounded-xl border border-white/80 bg-white/90 p-4">
-            <div className="grid gap-4 lg:grid-cols-[auto_1fr]">
-              {qrCheckInUrl ? (
-                <QrTicketImage value={qrCheckInUrl} />
-              ) : (
-                <div className="rounded-lg border border-[#F3E6A6] bg-[#FFFBEB] p-4 text-sm text-[#8B6306]">
-                  <p className="font-semibold">
-                    QR 티켓을 아직 표시할 수 없습니다.
-                  </p>
-                  <p className="mt-1">
-                    잠시 후 새로고침하거나 마이페이지에서 다시 확인하세요.
-                  </p>
-                  <p className="mt-2 text-gray-700">
-                    현장 검표 결과가 최종 입장 기준입니다.
-                  </p>
+          <div className="space-y-3">
+            {qrCards.map((card) => (
+              <div
+                key={card.id}
+                data-testid={`qr-ticket-card-${card.id}`}
+                className="rounded-xl border border-white/80 bg-white/90 p-4"
+              >
+                <div className="mb-4 flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-900">{card.seatLabel}</h3>
+                    {card.floorLabel && (
+                      <p className="mt-1 text-xs text-gray-500">{card.floorLabel}</p>
+                    )}
+                  </div>
+                  <Badge
+                    className={
+                      card.qrCheckInUrl
+                        ? 'bg-[#F0FDF4] text-[#15803D] border-transparent'
+                        : 'bg-[#FFFBEB] text-[#8B6306] border-transparent'
+                    }
+                  >
+                    {card.qrBadgeLabel}
+                  </Badge>
                 </div>
-              )}
-              <div className="grid gap-3 text-sm sm:grid-cols-2">
-                <div>
-                  <span className="block text-gray-500">예매번호</span>
-                  <span className="font-semibold text-gray-900">{booking.reservationNumber}</span>
-                </div>
-                <div>
-                  <span className="block text-gray-500">공연명</span>
-                  <span className="font-semibold text-gray-900">{booking.performanceTitle}</span>
-                </div>
-                <div>
-                  <span className="block text-gray-500">공연일시</span>
-                  <span className="font-semibold text-gray-900">
-                    {formatDateTime(booking.showDateTime)}
-                  </span>
-                </div>
-                <div>
-                  <span className="block text-gray-500">좌석</span>
-                  <span className="font-semibold text-gray-900">{formatSeats(booking)}</span>
-                </div>
-                <div>
-                  <span className="block text-gray-500">티켓 상태</span>
-                  <span className="font-semibold text-gray-900">
-                    {getQrStatusLabel(booking.qrTicket.status)}
-                  </span>
+
+                <div className="grid gap-4 lg:grid-cols-[auto_1fr]">
+                  {card.qrCheckInUrl ? (
+                    <QrTicketImage
+                      value={card.qrCheckInUrl}
+                      title={`${card.seatLabel} 검표 QR`}
+                    />
+                  ) : (
+                    <div className="rounded-lg border border-[#F3E6A6] bg-[#FFFBEB] p-4 text-sm text-[#8B6306]">
+                      <p className="font-semibold">
+                        {card.qrUnavailableTitle}
+                      </p>
+                      <p className="mt-1">
+                        {card.qrUnavailableDescription}
+                      </p>
+                      <p className="mt-2 text-gray-700">
+                        현장 검표 결과가 최종 입장 기준입니다.
+                      </p>
+                    </div>
+                  )}
+                  <div className="grid gap-3 text-sm sm:grid-cols-2">
+                    <div>
+                      <span className="block text-gray-500">예매번호</span>
+                      <span className="font-semibold text-gray-900">{booking.reservationNumber}</span>
+                    </div>
+                    <div>
+                      <span className="block text-gray-500">공연명</span>
+                      <span className="font-semibold text-gray-900">{booking.performanceTitle}</span>
+                    </div>
+                    <div>
+                      <span className="block text-gray-500">공연일시</span>
+                      <span className="font-semibold text-gray-900">
+                        {formatDateTime(booking.showDateTime)}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="block text-gray-500">좌석</span>
+                      <span className="font-semibold text-gray-900">{card.seatLabel}</span>
+                    </div>
+                    <div>
+                      <span className="block text-gray-500">티켓 상태</span>
+                      <span className="font-semibold text-gray-900">
+                        {card.ticketStatusLabel}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="block text-gray-500">입장 상태</span>
+                      <span className="font-semibold text-gray-900">
+                        {card.admissionStatusLabel}
+                      </span>
+                    </div>
+                  </div>
                 </div>
               </div>
-            </div>
+            ))}
           </div>
 
           <div className="rounded-xl border border-white/80 bg-white/90 p-4">

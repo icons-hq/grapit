@@ -1,7 +1,7 @@
 'use client';
 
 import { Loader2 } from 'lucide-react';
-import type { SeatSelection, Showtime } from '@grabit/shared';
+import { TICKET_SERVICE_FEE_KRW, type SeatSelection, type Showtime } from '@grabit/shared';
 import { Button } from '@/components/ui/button';
 import { formatKstDateLabel, formatKstTimeLabel } from '@/lib/booking-datetime';
 import { SeatRow } from './seat-row';
@@ -27,7 +27,9 @@ export function SeatSelectionPanel({
   isLoading,
   disabledReason = null,
 }: SeatSelectionPanelProps) {
-  const totalPrice = selectedSeats.reduce((sum, s) => sum + s.price, 0);
+  const seatTotal = selectedSeats.reduce((sum, s) => sum + s.price, 0);
+  const serviceFeeTotal = selectedSeats.length * TICKET_SERVICE_FEE_KRW;
+  const totalPrice = seatTotal + serviceFeeTotal;
 
   return (
     <div className="hidden w-[360px] shrink-0 lg:block">
@@ -66,6 +68,18 @@ export function SeatSelectionPanel({
         {/* Total */}
         <div className="border-l-[3px] border-primary pl-4">
           <p className="text-sm text-gray-500">총 합계</p>
+          {selectedSeats.length > 0 && (
+            <div className="mt-2 space-y-1 text-sm text-gray-500">
+              <div className="flex justify-between">
+                <span>좌석 금액</span>
+                <span>{seatTotal.toLocaleString()}원</span>
+              </div>
+              <div className="flex justify-between">
+                <span>예매 수수료</span>
+                <span>{serviceFeeTotal.toLocaleString()}원</span>
+              </div>
+            </div>
+          )}
           <div className="mt-1 flex items-baseline justify-between">
             <span className="text-base text-gray-700">
               {selectedSeats.length}석
