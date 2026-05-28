@@ -203,6 +203,40 @@ describe('SettlementExportService RED contract', () => {
     });
   });
 
+  it('does not fall back to row gross amount for failed refund statuses', async () => {
+    const { service, db } = createDependencies();
+    db.select.mockReturnValueOnce(chainResult([
+      {
+        eventId: 'event-girl-rules-20260704',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
+        currency: 'KRW',
+        reservationId: 'reservation-failed-refund-active-item',
+        reservationNumber: 'R-20260704-FAILED-REFUND',
+        reservationStatus: 'CONFIRMED',
+        paymentStatus: 'DONE',
+        refundStatus: 'failed',
+        ticketItemId: 'ticket-item-failed-refund-active',
+        ticketItemStatus: 'active',
+        admissionState: 'not_entered',
+        paidAmount: 79000,
+        totalAmount: 79000,
+        ticketPrice: 77000,
+        serviceFee: 2000,
+        refundableAmount: 0,
+      },
+    ]));
+
+    await expect(
+      service.getSummary({
+        eventId: 'event-girl-rules-20260704',
+        showtimeId: '00000000-0000-4000-8000-000000000001',
+      }),
+    ).resolves.toMatchObject({
+      refundedAmount: 0,
+      refundCount: 1,
+    });
+  });
+
   it('keeps explicit item refund amounts ahead of refund-status fallbacks', async () => {
     const { service, db } = createDependencies();
     db.select.mockReturnValueOnce(chainResult([

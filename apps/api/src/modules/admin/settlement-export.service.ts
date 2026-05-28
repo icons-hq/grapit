@@ -559,6 +559,10 @@ function hasRefundStatus(status: string | null): boolean {
   return Boolean(status && status !== 'NONE');
 }
 
+function hasRefundAmountFallbackStatus(status: string | null): boolean {
+  return hasRefundStatus(status) && status !== 'failed';
+}
+
 function csvTicketItemStatus(row: SettlementSourceRow): string {
   switch (stringValue(row, 'ticketItemStatus')) {
     case 'cancellation_pending':
@@ -608,7 +612,7 @@ function itemRefundAmount(row: SettlementSourceRow): number {
     return itemLevelAmount;
   }
 
-  if (hasRefundStatus(stringValue(row, 'refundStatus'))) {
+  if (hasRefundAmountFallbackStatus(stringValue(row, 'refundStatus'))) {
     const rowGrossAmount = numberValue(row, 'ticketPrice') + numberValue(row, 'serviceFee');
     if (rowGrossAmount > 0) {
       return rowGrossAmount;
