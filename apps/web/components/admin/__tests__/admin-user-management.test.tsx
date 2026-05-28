@@ -148,6 +148,34 @@ const detailUser: AdminUserDetail = {
   ],
 };
 
+const userStats = {
+  total: 50,
+  active: 48,
+  withdrawn: 2,
+  verification: {
+    emailVerified: 40,
+    phoneVerified: 35,
+    fullyVerified: 32,
+  },
+  marketing: {
+    consented: 21,
+    notConsented: 29,
+  },
+  countries: [
+    { value: 'KR', count: 30, ratio: 0.6 },
+    { value: 'TH', count: 20, ratio: 0.4 },
+  ],
+  locales: [
+    { value: 'ko', count: 34, ratio: 0.68 },
+    { value: 'th', count: 16, ratio: 0.32 },
+  ],
+  signupTrend: [
+    { date: '2026-05-17', count: 2 },
+    { date: '2026-05-18', count: 3 },
+  ],
+  generatedAt: '2026-05-18T00:00:00.000Z',
+};
+
 const secondPageDetailUser: AdminUserDetail = {
   ...detailUser,
   ...secondPageUser,
@@ -184,6 +212,9 @@ function renderWithClient(ui: ReactNode, queryClient = createQueryClient()) {
 
 function mockSuccessfulApi() {
   mocks.apiGet.mockImplementation((path: string) => {
+    if (path === '/api/v1/admin/users/stats') {
+      return Promise.resolve(userStats);
+    }
     if (path.startsWith('/api/v1/admin/users?')) {
       const url = new URL(path, 'http://localhost');
       const page = Number(url.searchParams.get('page') ?? 1);
@@ -226,6 +257,14 @@ describe('AdminUserManagement', () => {
       value: vi.fn(),
       configurable: true,
     });
+    Object.defineProperty(URL, 'createObjectURL', {
+      value: vi.fn(() => 'blob:http://localhost/user-export'),
+      configurable: true,
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', {
+      value: vi.fn(),
+      configurable: true,
+    });
   });
 
   beforeEach(() => {
@@ -234,7 +273,50 @@ describe('AdminUserManagement', () => {
     mocks.apiPost.mockReset();
     mocks.toastSuccess.mockReset();
     mocks.toastError.mockReset();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response('"id","email"\n"user-1","fan@example.com"', {
+          status: 200,
+          headers: {
+            'content-disposition': 'attachment; filename="user-export-raw-2026-05-18.csv"',
+          },
+        }),
+      ),
+    );
     mockSuccessfulApi();
+  });
+
+  it('renders user statistics and downloads raw user CSV with a reason', async () => {
+    const user = userEvent.setup();
+    renderWithClient(<AdminUserManagement />);
+
+    expect(await screen.findByText('회원 데이터 통계')).toBeInTheDocument();
+    expect(await screen.findByText('총 가입자')).toBeInTheDocument();
+    expect(screen.getByText('50명')).toBeInTheDocument();
+    expect(screen.getByText('KR')).toBeInTheDocument();
+    expect(screen.getByText('30명 · 60.0%')).toBeInTheDocument();
+    expect(screen.getByText('최근 30일 가입 추이')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '회원 원본 CSV 다운로드' }));
+    await user.type(
+      await screen.findByLabelText('회원 CSV 다운로드 사유'),
+      '회원 운영 데이터 대조',
+    );
+    await user.click(screen.getByRole('button', { name: 'CSV 다운로드 확정' }));
+
+    await waitFor(() => {
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/v1/admin/users/export'),
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ reason: '회원 운영 데이터 대조' }),
+        }),
+      );
+    });
+    expect(mocks.toastSuccess).toHaveBeenCalledWith(
+      '회원 원본 CSV 다운로드를 시작했습니다.',
+    );
   });
 
   it('renders search, verification filters, user detail, reservation, CS, and masked audit context', async () => {
@@ -488,6 +570,9 @@ describe('AdminUserManagement', () => {
   it('shows hard-delete blocker categories returned by the API', async () => {
     const user = userEvent.setup();
     mocks.apiGet.mockImplementation((path: string) => {
+      if (path === '/api/v1/admin/users/stats') {
+        return Promise.resolve(userStats);
+      }
       if (path.startsWith('/api/v1/admin/users?')) {
         return Promise.resolve({
           items: [{ ...listUser, accountStatus: 'withdrawn' }],
@@ -533,8 +618,8 @@ describe('AdminUserManagement', () => {
         { reason: '테스트 데이터 정리', confirmed: true },
       );
     });
-    expect(await screen.findByRole('alert')).toHaveTextContent(
+    expect(await screen.findByText(
       '삭제 차단: 예매 이력 2건, 관리자 감사 로그 1건',
-    );
+    )).toBeInTheDocument();
   });
 });

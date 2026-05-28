@@ -68,6 +68,7 @@ describe('AdminAuditService', () => {
       'settlement.export',
       'security.allowlist.update',
       'security.permission.update',
+      'user.export_raw',
       'user.withdraw',
       'user.hard_delete',
     ]);

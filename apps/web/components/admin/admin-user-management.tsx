@@ -4,17 +4,24 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
 import {
   BadgeCheck,
+  BarChart3,
   CalendarClock,
   CheckCircle2,
+  Download,
+  Globe2,
   History,
+  Languages,
   Mail,
   MessageSquareText,
   Phone,
   Search,
   ShieldCheck,
+  ShieldAlert,
   Ticket,
   UserRound,
+  UsersRound,
   XCircle,
+  type LucideIcon,
 } from 'lucide-react';
 import {
   AlertDialog,
@@ -29,6 +36,14 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -55,6 +70,8 @@ import {
   ADMIN_CAPABILITY_BUNDLE_CAPABILITIES,
   ADMIN_CAPABILITY_BUNDLES,
   useAdminUserDetail,
+  useAdminUserExport,
+  useAdminUserStats,
   useAdminUsers,
   useHardDeleteAdminUser,
   useUpdateAdminUserPermissions,
@@ -67,6 +84,7 @@ import {
   type AdminUserReservationStatus,
   type AdminUserRole,
   type AdminUserVerificationFilter,
+  type AdminUsersStats,
 } from '@/hooks/use-admin-users';
 
 type BundleSelectValue = AdminCapabilityBundle | 'none';
@@ -180,75 +198,358 @@ export function AdminUserManagement() {
   }
 
   return (
-    <section className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 xl:grid-cols-[390px_minmax(0,1fr)]">
-      <div className="min-w-0 space-y-4">
-        <form
-          onSubmit={handleSearch}
-          className="grid gap-3 rounded-lg bg-white p-4 shadow-sm"
-        >
-          <Label htmlFor="admin-user-search">회원 검색</Label>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <Input
-              id="admin-user-search"
-              value={searchText}
-              onChange={(event) => setSearchText(event.target.value)}
-              placeholder="이름, 이메일, 전화번호"
-              aria-label="회원 검색어"
-              className="h-11 min-w-0"
-            />
-            <Button type="submit" className="h-11 w-full shrink-0 sm:w-auto">
-              <Search className="h-4 w-4" />
-              검색
-            </Button>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="admin-user-verification-filter">인증 필터</Label>
-            <Select
-              value={filters.verification ?? 'all'}
-              onValueChange={(value) =>
-                handleVerificationChange(value as AdminUserVerificationFilter)
-              }
-            >
-              <SelectTrigger
-                id="admin-user-verification-filter"
-                aria-label="인증 필터"
-                className="h-11 w-full bg-white"
+    <div className="space-y-4">
+      <UserInsightsPanel />
+      <section className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 xl:grid-cols-[390px_minmax(0,1fr)]">
+        <div className="min-w-0 space-y-4">
+          <form
+            onSubmit={handleSearch}
+            className="grid gap-3 rounded-lg bg-white p-4 shadow-sm"
+          >
+            <Label htmlFor="admin-user-search">회원 검색</Label>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Input
+                id="admin-user-search"
+                value={searchText}
+                onChange={(event) => setSearchText(event.target.value)}
+                placeholder="이름, 이메일, 전화번호"
+                aria-label="회원 검색어"
+                className="h-11 min-w-0"
+              />
+              <Button type="submit" className="h-11 w-full shrink-0 sm:w-auto">
+                <Search className="h-4 w-4" />
+                검색
+              </Button>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="admin-user-verification-filter">인증 필터</Label>
+              <Select
+                value={filters.verification ?? 'all'}
+                onValueChange={(value) =>
+                  handleVerificationChange(value as AdminUserVerificationFilter)
+                }
               >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {VERIFICATION_FILTERS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </form>
+                <SelectTrigger
+                  id="admin-user-verification-filter"
+                  aria-label="인증 필터"
+                  className="h-11 w-full bg-white"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {VERIFICATION_FILTERS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </form>
 
-        <UserList
-          users={users}
+          <UserList
+            users={users}
+            selectedUserId={activeUserId}
+            total={usersQuery.data?.total ?? 0}
+            page={usersQuery.data?.page ?? filters.page ?? 1}
+            limit={usersQuery.data?.limit ?? filters.limit ?? 25}
+            totalPages={usersQuery.data?.totalPages ?? 0}
+            isLoading={usersQuery.isLoading}
+            isError={usersQuery.isError}
+            onSelect={setSelectedUserId}
+            onPageChange={handlePageChange}
+          />
+        </div>
+
+        <UserDetailPanel
+          user={detailQuery.data}
           selectedUserId={activeUserId}
-          total={usersQuery.data?.total ?? 0}
-          page={usersQuery.data?.page ?? filters.page ?? 1}
-          limit={usersQuery.data?.limit ?? filters.limit ?? 25}
-          totalPages={usersQuery.data?.totalPages ?? 0}
-          isLoading={usersQuery.isLoading}
-          isError={usersQuery.isError}
-          onSelect={setSelectedUserId}
-          onPageChange={handlePageChange}
+          isLoading={detailQuery.isLoading}
+          isError={detailQuery.isError}
+          onDeleted={() => setSelectedUserId(null)}
         />
+      </section>
+    </div>
+  );
+}
+
+function UserInsightsPanel() {
+  const statsQuery = useAdminUserStats();
+  const exportMutation = useAdminUserExport();
+  const [reason, setReason] = useState('');
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const stats = statsQuery.data;
+  const canExport = reason.trim().length > 0 && !exportMutation.isPending;
+
+  async function handleExport() {
+    if (!canExport) return;
+
+    try {
+      await exportMutation.mutateAsync({ reason: reason.trim() });
+      toast.success('회원 원본 CSV 다운로드를 시작했습니다.');
+      setReason('');
+      setConfirmOpen(false);
+    } catch {
+      toast.error('회원 원본 CSV 다운로드에 실패했습니다.');
+    }
+  }
+
+  return (
+    <section className="space-y-4 rounded-lg bg-white p-4 shadow-sm" aria-labelledby="admin-user-stats-title">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="flex items-center gap-2">
+            <BarChart3 className="h-5 w-5 text-gray-600" aria-hidden="true" />
+            <h2 id="admin-user-stats-title" className="text-base font-semibold text-gray-900">
+              회원 데이터 통계
+            </h2>
+          </div>
+          <p className="mt-1 text-sm text-gray-600">
+            전체 가입자 기준 국가, 언어, 인증, 동의 상태와 최근 가입 추이를 확인합니다.
+          </p>
+        </div>
+        <Button
+          type="button"
+          className="h-11 w-full lg:w-auto"
+          onClick={() => setConfirmOpen(true)}
+        >
+          <Download className="h-4 w-4" />
+          회원 원본 CSV 다운로드
+        </Button>
       </div>
 
-      <UserDetailPanel
-        user={detailQuery.data}
-        selectedUserId={activeUserId}
-        isLoading={detailQuery.isLoading}
-        isError={detailQuery.isError}
-        onDeleted={() => setSelectedUserId(null)}
-      />
+      {statsQuery.isLoading && (
+        <div className="grid gap-3 md:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <Skeleton key={`admin-user-stats-${index}`} className="h-24 w-full" />
+          ))}
+        </div>
+      )}
+
+      {statsQuery.isError && (
+        <div
+          role="alert"
+          className="rounded-lg bg-[#FEF2F2] px-4 py-3 text-sm font-semibold text-[#C62828]"
+        >
+          회원 통계를 불러오지 못했습니다. 접근 권한과 네트워크 상태를 확인하세요.
+        </div>
+      )}
+
+      {stats && (
+        <div className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <InsightMetricCard
+              icon={UsersRound}
+              label="총 가입자"
+              value={`${stats.total.toLocaleString('ko-KR')}명`}
+            />
+            <InsightMetricCard
+              icon={CheckCircle2}
+              label="활성 계정"
+              value={`${stats.active.toLocaleString('ko-KR')}명`}
+            />
+            <InsightMetricCard
+              icon={BadgeCheck}
+              label="이메일+휴대폰 인증"
+              value={`${stats.verification.fullyVerified.toLocaleString('ko-KR')}명`}
+            />
+            <InsightMetricCard
+              icon={Mail}
+              label="마케팅 동의"
+              value={`${stats.marketing.consented.toLocaleString('ko-KR')}명`}
+            />
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.4fr)]">
+            <RatioList
+              icon={Globe2}
+              title="국가 비율"
+              items={stats.countries}
+            />
+            <RatioList
+              icon={Languages}
+              title="언어 비율"
+              items={stats.locales}
+            />
+            <SignupTrendChart stats={stats} />
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-3">
+            <CompactStatus label="탈퇴 계정" value={stats.withdrawn} total={stats.total} />
+            <CompactStatus
+              label="이메일 인증"
+              value={stats.verification.emailVerified}
+              total={stats.total}
+            />
+            <CompactStatus
+              label="휴대폰 인증"
+              value={stats.verification.phoneVerified}
+              total={stats.total}
+            />
+          </div>
+        </div>
+      )}
+
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>회원 원본 CSV를 다운로드하시겠습니까?</DialogTitle>
+            <DialogDescription>
+              users 테이블의 원본 개인정보가 포함됩니다. 다운로드 사유를 남긴 뒤 진행하세요.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div role="alert" className="flex gap-3 rounded-lg border border-[#F3C8C8] bg-[#FEF2F2] p-3 text-sm font-semibold text-[#C62828]">
+              <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+              <span>CSV에는 이메일, 휴대폰 번호, 생년월일, 계정 상태가 포함됩니다.</span>
+            </div>
+            <label className="space-y-1.5 text-sm font-semibold text-gray-700">
+              <span>회원 CSV 다운로드 사유</span>
+              <Textarea
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+                aria-label="회원 CSV 다운로드 사유"
+                placeholder="예: 회원 운영 데이터 대조"
+              />
+            </label>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setConfirmOpen(false)}
+            >
+              취소
+            </Button>
+            <Button
+              type="button"
+              disabled={!canExport}
+              onClick={() => void handleExport()}
+              className="bg-[#C62828] hover:bg-[#A81F1F]"
+            >
+              CSV 다운로드 확정
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
+  );
+}
+
+function InsightMetricCard({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-lg border bg-[#FAFAFA] p-3">
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm font-semibold text-gray-700">{label}</p>
+        <Icon className="h-4 w-4 text-gray-500" aria-hidden="true" />
+      </div>
+      <p className="mt-3 text-xl font-semibold text-gray-900">{value}</p>
+    </div>
+  );
+}
+
+function RatioList({
+  icon: Icon,
+  title,
+  items,
+}: {
+  icon: LucideIcon;
+  title: string;
+  items: AdminUsersStats['countries'];
+}) {
+  const visibleItems = items.slice(0, 5);
+
+  return (
+    <div className="rounded-lg border p-3">
+      <div className="flex items-center gap-2">
+        <Icon className="h-4 w-4 text-gray-600" aria-hidden="true" />
+        <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
+      </div>
+      <div className="mt-3 space-y-3">
+        {visibleItems.length === 0 ? (
+          <p className="text-sm text-gray-600">집계할 데이터가 없습니다.</p>
+        ) : (
+          visibleItems.map((item) => (
+            <div key={item.value} className="space-y-1">
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="font-semibold text-gray-900">{item.value}</span>
+                <span className="text-gray-600">
+                  {item.count.toLocaleString('ko-KR')}명 · {formatPercent(item.ratio)}
+                </span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-[#F5F5F7]">
+                <div
+                  className="h-full rounded-full bg-primary"
+                  style={{ width: `${Math.min(100, item.ratio * 100)}%` }}
+                />
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SignupTrendChart({ stats }: { stats: AdminUsersStats }) {
+  const maxCount = Math.max(1, ...stats.signupTrend.map((bucket) => bucket.count));
+  const visibleTrend = stats.signupTrend.slice(-14);
+
+  return (
+    <div className="rounded-lg border p-3">
+      <div className="flex items-center gap-2">
+        <BarChart3 className="h-4 w-4 text-gray-600" aria-hidden="true" />
+        <h3 className="text-sm font-semibold text-gray-900">최근 30일 가입 추이</h3>
+      </div>
+      <div className="mt-4 flex h-32 items-end gap-1" aria-label="최근 30일 가입 추이 차트">
+        {visibleTrend.map((bucket) => (
+          <div
+            key={bucket.date}
+            className="flex h-full min-w-0 flex-1 items-end"
+            title={`${bucket.date}: ${bucket.count.toLocaleString('ko-KR')}명`}
+          >
+            <div
+              className="w-full rounded-t bg-[#3B82F6]"
+              style={{ height: `${Math.max(4, (bucket.count / maxCount) * 100)}%` }}
+            />
+          </div>
+        ))}
+      </div>
+      <p className="mt-2 text-xs text-gray-600">
+        최근 14일 막대만 표시하며, 전체 30일 집계는 API 응답에 포함됩니다.
+      </p>
+    </div>
+  );
+}
+
+function CompactStatus({
+  label,
+  value,
+  total,
+}: {
+  label: string;
+  value: number;
+  total: number;
+}) {
+  const ratio = total > 0 ? value / total : 0;
+  return (
+    <div className="rounded-lg bg-[#F5F5F7] p-3 text-sm">
+      <div className="flex items-center justify-between gap-3">
+        <span className="font-semibold text-gray-700">{label}</span>
+        <span className="font-semibold text-gray-900">{formatPercent(ratio)}</span>
+      </div>
+      <p className="mt-1 text-gray-600">
+        {value.toLocaleString('ko-KR')} / {total.toLocaleString('ko-KR')}명
+      </p>
+    </div>
   );
 }
 
@@ -1182,6 +1483,10 @@ function formatCurrency(value: number | null | undefined) {
     currency: 'KRW',
     maximumFractionDigits: 0,
   }).format(value);
+}
+
+function formatPercent(value: number) {
+  return `${(value * 100).toFixed(1)}%`;
 }
 
 function extractBlockerLabels(error: unknown): string[] {

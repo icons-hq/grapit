@@ -13,12 +13,16 @@ import {
   type AdminCapability,
   type AdminCapabilityBundle,
   type AdminUserDetail as ApiAdminUserDetail,
+  type AdminUserExportRequest,
   type AdminUserListItem as ApiAdminUserListItem,
   type AdminUserListResponse as ApiAdminUserListResponse,
   type AdminUserRecentReservation as ApiAdminUserRecentReservation,
+  type AdminUserStatsResponse,
   type AdminUserSupportThreadSummary as ApiAdminUserSupportThreadSummary,
 } from '@grabit/shared';
 import { apiClient } from '@/lib/api-client';
+import { apiUrl } from '@/lib/api-url';
+import { useAuthStore } from '@/stores/use-auth-store';
 
 export {
   ADMIN_CAPABILITIES,
@@ -178,7 +182,16 @@ export interface AdminUserHardDeleteResponse {
   blockers: AdminUserDeletionBlocker[];
 }
 
+export type AdminUsersStats = AdminUserStatsResponse;
+
+export interface AdminUserExportDownload {
+  blob: Blob;
+  filename: string;
+}
+
 export const adminUsersQueryKey = ['admin', 'users'] as const;
+
+export const adminUserStatsQueryKey = ['admin', 'users', 'stats'] as const;
 
 export function useAdminUsers(params: AdminUserListParams = {}) {
   const normalized = normalizeAdminUserListParams(params);
@@ -208,6 +221,52 @@ export function useAdminUserDetail(userId: string | null) {
         )
         .then(mapDetail),
     enabled: Boolean(userId),
+  });
+}
+
+export function useAdminUserStats() {
+  return useQuery({
+    queryKey: adminUserStatsQueryKey,
+    queryFn: () =>
+      apiClient.get<AdminUserStatsResponse>('/api/v1/admin/users/stats'),
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useAdminUserExport() {
+  return useMutation({
+    mutationFn: async (
+      payload: AdminUserExportRequest,
+    ): Promise<AdminUserExportDownload> => {
+      const { accessToken } = useAuthStore.getState();
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+
+      if (accessToken) {
+        headers['Authorization'] = `Bearer ${accessToken}`;
+      }
+
+      const response = await fetch(apiUrl('/api/v1/admin/users/export'), {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify({ reason: payload.reason.trim() }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await resolveUserExportErrorMessage(response));
+      }
+
+      const blob = await response.blob();
+      const filename = resolveUserExportFilename(
+        response.headers.get('content-disposition'),
+      );
+      downloadBlob(blob, filename);
+
+      return { blob, filename };
+    },
   });
 }
 
@@ -548,4 +607,43 @@ function normalizeSupportStatus(
     return status;
   }
   return status === 'closed' ? 'resolved' : 'open';
+}
+
+async function resolveUserExportErrorMessage(response: Response): Promise<string> {
+  try {
+    const data = (await response.json()) as { message?: unknown };
+    if (typeof data.message === 'string') {
+      return data.message;
+    }
+  } catch {
+    // Keep the operator-facing fallback below.
+  }
+
+  return '회원 원본 CSV 다운로드에 실패했습니다.';
+}
+
+function resolveUserExportFilename(contentDisposition: string | null): string {
+  const fallback = 'user-export-raw.csv';
+  if (!contentDisposition) {
+    return fallback;
+  }
+
+  const match = /filename="?(?<filename>[^";]+)"?/i.exec(contentDisposition);
+  return match?.groups?.['filename'] ?? fallback;
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  if (typeof document === 'undefined') {
+    return;
+  }
+
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.rel = 'noopener';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }

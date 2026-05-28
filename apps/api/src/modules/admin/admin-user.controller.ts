@@ -7,15 +7,21 @@ import {
   Post,
   Query,
   Req,
+  Res,
+  StreamableFile,
   UseGuards,
 } from '@nestjs/common';
+import { Readable } from 'node:stream';
 import type { Request } from 'express';
+import type { Response } from 'express';
 import { z } from 'zod';
 import {
+  adminUserExportRequestSchema,
   adminUserListQuerySchema,
   adminUserHardDeleteSchema,
   adminUserPermissionUpdateSchema,
   adminUserWithdrawalSchema,
+  type AdminUserExportRequest,
   type AdminUserListQuery,
   type AdminUserHardDeleteInput,
   type AdminUserPermissionUpdate,
@@ -47,6 +53,38 @@ export class AdminUserController {
     query: AdminUserListQuery,
   ) {
     return this.adminUserService.listUsers(query);
+  }
+
+  @Get('stats')
+  @AdminCapabilities('audit.read')
+  async getUserStats() {
+    return this.adminUserService.getUserStats();
+  }
+
+  @Post('export')
+  @AdminCapabilities('security.manage')
+  async exportUsers(
+    @CurrentUser('id') actorUserId: string,
+    @Req() request: Request,
+    @Res({ passthrough: true }) response: Response,
+    @Body(new ZodValidationPipe(adminUserExportRequestSchema))
+    body: AdminUserExportRequest,
+  ) {
+    const result = await this.adminUserService.exportUsers({
+      actorUserId,
+      reason: body.reason,
+      ipAddress: resolveTrustedRequestIp(request),
+      userAgent: request.get('user-agent') ?? null,
+      requestId: request.get('x-request-id') ?? null,
+    });
+
+    response.set({
+      'Content-Type': result.contentType,
+      'Content-Disposition': `attachment; filename="${result.filename}"`,
+      'Cache-Control': 'no-store',
+    });
+
+    return new StreamableFile(Readable.from([result.csv]));
   }
 
   @Get(':id')

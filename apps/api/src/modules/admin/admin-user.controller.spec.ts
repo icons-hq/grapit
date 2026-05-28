@@ -17,6 +17,12 @@ function createRequest() {
   };
 }
 
+function createResponse() {
+  return {
+    set: vi.fn(),
+  };
+}
+
 describe('AdminUserController', () => {
   it('delegates user list queries to the admin user service', async () => {
     const service = {
@@ -54,6 +60,68 @@ describe('AdminUserController', () => {
     await controller.getUserDetail('user-1');
 
     expect(service.getUserDetail).toHaveBeenCalledWith('user-1');
+  });
+
+  it('delegates user stats to the admin user service', async () => {
+    const service = {
+      getUserStats: vi.fn().mockResolvedValue({
+        total: 0,
+        active: 0,
+        withdrawn: 0,
+        verification: {
+          emailVerified: 0,
+          phoneVerified: 0,
+          fullyVerified: 0,
+        },
+        marketing: {
+          consented: 0,
+          notConsented: 0,
+        },
+        countries: [],
+        locales: [],
+        signupTrend: [],
+        generatedAt: '2026-05-18T00:00:00.000Z',
+      }),
+    } as unknown as AdminUserService;
+    const controller = new AdminUserController(service);
+
+    await controller.getUserStats();
+
+    expect(service.getUserStats).toHaveBeenCalledWith();
+  });
+
+  it('streams raw user CSV exports with no-store headers and request metadata', async () => {
+    const service = {
+      exportUsers: vi.fn().mockResolvedValue({
+        filename: 'user-export-raw-2026-05-18.csv',
+        contentType: 'text/csv; charset=utf-8',
+        csv: '"id","email"\n"user-1","fan@example.com"',
+        rowCount: 1,
+      }),
+    } as unknown as AdminUserService;
+    const controller = new AdminUserController(service);
+    const response = createResponse();
+
+    const result = await controller.exportUsers(
+      'actor-admin',
+      createRequest() as never,
+      response as never,
+      { reason: 'membership operations reconciliation' },
+    );
+
+    expect(service.exportUsers).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: 'actor-admin',
+        reason: 'membership operations reconciliation',
+        userAgent: 'Vitest Admin Browser',
+      }),
+    );
+    expect(response.set).toHaveBeenCalledWith({
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': 'attachment; filename="user-export-raw-2026-05-18.csv"',
+      'Cache-Control': 'no-store',
+    });
+    expect(result).toBeDefined();
   });
 
   it('passes actor, reasoned permission body, and request metadata to permission updates', async () => {

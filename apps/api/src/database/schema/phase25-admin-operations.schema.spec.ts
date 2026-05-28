@@ -43,6 +43,7 @@ describe('Phase 25 admin operations security schema contracts', () => {
       'security.permission.update',
       'user.withdraw',
       'user.hard_delete',
+      'user.export_raw',
     ]);
     expect(adminAuditStatusEnum.enumValues).toEqual([
       'success',

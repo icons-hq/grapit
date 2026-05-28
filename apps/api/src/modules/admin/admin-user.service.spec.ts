@@ -293,3 +293,101 @@ describe('AdminUserService withdrawals', () => {
     );
   });
 });
+
+describe('AdminUserService raw user export and statistics', () => {
+  it('builds raw users CSV without secret columns and writes non-PII audit metadata', async () => {
+    const auditService = createAuditService();
+    const service = new AdminUserService({} as never, auditService);
+    vi.spyOn(service as never, 'selectUserExportRows').mockResolvedValue([
+      {
+        ...userRow({
+          id: 'user-formula',
+          email: '=fan@example.com',
+          role: 'admin',
+          adminCapabilityBundle: 'admin',
+          adminCapabilities: ['security.manage'],
+        }),
+        withdrawnAt: null,
+        withdrawalReason: null,
+        withdrawnByUserId: null,
+        withdrawalSource: null,
+      },
+    ]);
+
+    const result = await service.exportUsers({
+      actorUserId: 'actor-admin',
+      reason: 'membership operations reconciliation',
+      ipAddress: '203.0.113.10',
+      userAgent: 'Vitest Admin',
+    });
+
+    expect(result.filename).toMatch(/^user-export-raw-\d{4}-\d{2}-\d{2}\.csv$/);
+    expect(result.contentType).toBe('text/csv; charset=utf-8');
+    expect(result.rowCount).toBe(1);
+    expect(result.csv).toContain('"id","email","name","phone"');
+    expect(result.csv).toContain('"user-formula","\'=fan@example.com"');
+    expect(result.csv).not.toContain('password_hash');
+    expect(result.csv).not.toContain('refresh');
+    expect(auditService.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: 'actor-admin',
+        action: 'user.export_raw',
+        resourceType: 'user_export',
+        resourceId: 'raw_pii',
+        status: 'success',
+        reason: 'membership operations reconciliation',
+        changedFields: ['columns', 'rowCount'],
+        after: expect.objectContaining({
+          rowCount: 1,
+          columns: expect.arrayContaining(['id', 'email', 'updated_at']),
+        }),
+        ipAddress: '203.0.113.10',
+        userAgent: 'Vitest Admin',
+      }),
+    );
+  });
+
+  it('aggregates all-time user stats and fills a 30-day KST signup trend', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-18T03:00:00.000Z'));
+    const service = new AdminUserService({} as never, createAuditService());
+    vi.spyOn(service as never, 'selectUserStatsSummary').mockResolvedValue({
+      total: 10,
+      active: 8,
+      withdrawn: 2,
+      emailVerified: 7,
+      phoneVerified: 6,
+      fullyVerified: 5,
+      marketingConsented: 4,
+    });
+    vi.spyOn(service as never, 'selectUserStatsRatioRows')
+      .mockResolvedValueOnce([
+        { value: 'KR', count: 6 },
+        { value: 'TH', count: 4 },
+      ])
+      .mockResolvedValueOnce([
+        { value: 'ko', count: 7 },
+        { value: 'th', count: 3 },
+      ]);
+    vi.spyOn(service as never, 'selectUserSignupTrendRows').mockResolvedValue([
+      { date: '2026-05-17', count: 2 },
+      { date: '2026-05-18', count: 1 },
+    ]);
+
+    const stats = await service.getUserStats();
+    vi.useRealTimers();
+
+    expect(stats.total).toBe(10);
+    expect(stats.active).toBe(8);
+    expect(stats.withdrawn).toBe(2);
+    expect(stats.marketing).toEqual({ consented: 4, notConsented: 6 });
+    expect(stats.countries).toEqual([
+      { value: 'KR', count: 6, ratio: 0.6 },
+      { value: 'TH', count: 4, ratio: 0.4 },
+    ]);
+    expect(stats.locales[0]).toEqual({ value: 'ko', count: 7, ratio: 0.7 });
+    expect(stats.signupTrend).toHaveLength(30);
+    expect(stats.signupTrend.at(-2)).toEqual({ date: '2026-05-17', count: 2 });
+    expect(stats.signupTrend.at(-1)).toEqual({ date: '2026-05-18', count: 1 });
+  });
+});

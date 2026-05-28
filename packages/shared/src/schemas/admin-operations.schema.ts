@@ -184,6 +184,7 @@ export const adminAuditActionSchema = z.enum([
   'allowlist.update',
   'security.allowlist.update',
   'security.permission.update',
+  'user.export_raw',
   'user.withdraw',
   'user.hard_delete',
 ]);
@@ -382,6 +383,44 @@ export const adminUserListResponseSchema = z.object({
   totalPages: z.number().int().min(0),
 });
 
+export const adminUserStatsRatioSchema = z.object({
+  value: z.string().min(1),
+  count: z.number().int().min(0),
+  ratio: z.number().min(0).max(1),
+});
+
+export const adminUserSignupTrendBucketSchema = z.object({
+  date: dateOnly('가입일'),
+  count: z.number().int().min(0),
+});
+
+export const adminUserStatsResponseSchema = z.object({
+  total: z.number().int().min(0),
+  active: z.number().int().min(0),
+  withdrawn: z.number().int().min(0),
+  verification: z.object({
+    emailVerified: z.number().int().min(0),
+    phoneVerified: z.number().int().min(0),
+    fullyVerified: z.number().int().min(0),
+  }),
+  marketing: z.object({
+    consented: z.number().int().min(0),
+    notConsented: z.number().int().min(0),
+  }),
+  countries: z.array(adminUserStatsRatioSchema),
+  locales: z.array(adminUserStatsRatioSchema),
+  signupTrend: z.array(adminUserSignupTrendBucketSchema),
+  generatedAt: isoDatetime('회원 통계 생성 시각'),
+});
+
+export const adminUserExportRequestSchema = z.object({
+  reason: z
+    .string({ required_error: '회원 원본 CSV 내보내기 사유를 입력해주세요' })
+    .trim()
+    .min(1, '회원 원본 CSV 내보내기 사유를 입력해주세요')
+    .max(500),
+});
+
 export const adminUserPermissionUpdateSchema = z
   .object({
     role: adminUserRoleSchema,
@@ -489,6 +528,12 @@ export type AdminUserSupportThreadSummary = z.infer<
 >;
 export type AdminUserDetail = z.infer<typeof adminUserDetailSchema>;
 export type AdminUserListResponse = z.infer<typeof adminUserListResponseSchema>;
+export type AdminUserStatsRatio = z.infer<typeof adminUserStatsRatioSchema>;
+export type AdminUserSignupTrendBucket = z.infer<
+  typeof adminUserSignupTrendBucketSchema
+>;
+export type AdminUserStatsResponse = z.infer<typeof adminUserStatsResponseSchema>;
+export type AdminUserExportRequest = z.infer<typeof adminUserExportRequestSchema>;
 export type AdminUserPermissionUpdate = z.infer<
   typeof adminUserPermissionUpdateSchema
 >;
