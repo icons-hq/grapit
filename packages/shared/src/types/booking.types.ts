@@ -1,4 +1,5 @@
 import type { ConsentCaptureItem } from '../schemas/consent.schema';
+import type { TicketItem } from '../schemas/ticket-item.schema';
 
 export type SeatState = 'available' | 'locked' | 'sold' | 'held' | 'disabled';
 
@@ -148,7 +149,20 @@ export interface CancelledSeatHold {
 export type QrTicketStatus = 'ACTIVE' | 'REVOKED' | 'USED' | 'EXPIRED';
 export type QrTicketEntryStatus = 'NOT_ENTERED' | 'ENTERED';
 
+export interface QrTicketSeatIdentity {
+  seatId: string;
+  seatKey: string;
+  floorKey: string;
+  floorLabel: string;
+  row: string;
+  number: string;
+  tierName: string;
+}
+
 export interface QrTicket {
+  id?: string;
+  ticketItemId?: string | null;
+  seatIdentity?: QrTicketSeatIdentity;
   token: string;
   jti: string;
   status: QrTicketStatus;
@@ -185,6 +199,7 @@ export interface ReservationDetail extends ReservationListItem {
   refundTimeline: RefundTimeline;
   cancelledSeatHold: CancelledSeatHold | null;
   qrTicket: QrTicket;
+  ticketItems: TicketItem[];
 }
 
 export interface PaymentInfo {
@@ -216,6 +231,43 @@ export interface AdminBookingListItem {
   createdAt: string;
 }
 
+export type AdminTicketItemStatus =
+  | 'ACTIVE'
+  | 'CANCELLATION_PENDING'
+  | 'CANCELLED'
+  | 'EXPIRED';
+
+export type AdminTicketItemAdmissionState = 'NOT_ENTERED' | 'ENTERED';
+
+export type AdminTicketItemReopenState =
+  | 'NOT_REQUIRED'
+  | 'HELD_CANCELLED'
+  | 'AVAILABLE'
+  | 'MANUAL_OPENED';
+
+export interface AdminTicketItem extends FloorAwareSeatSelection {
+  id: string;
+  reservationId: string;
+  paymentId: string;
+  showtimeId: string;
+  serviceFee: number;
+  status: AdminTicketItemStatus;
+  admissionState: AdminTicketItemAdmissionState;
+  enteredAt: string | null;
+  cancelledAt: string | null;
+  cancelReason: string | null;
+  cancellationFee: number;
+  serviceFeeRefund: number;
+  refundableAmount: number;
+  reopenState: AdminTicketItemReopenState;
+  reopenHoldUntil: string | null;
+}
+
+export interface AdminBookingDetail extends AdminBookingListItem {
+  paymentInfo: PaymentInfo;
+  ticketItems: AdminTicketItem[];
+}
+
 export interface PrepareReservationRequest {
   orderId: string;
   showtimeId: string;
@@ -244,6 +296,10 @@ export interface ConfirmPaymentRequest {
 }
 
 export interface CancelReservationRequest {
+  reason: string;
+}
+
+export interface CancelTicketItemRequest {
   reason: string;
 }
 

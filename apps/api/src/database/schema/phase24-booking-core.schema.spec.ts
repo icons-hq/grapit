@@ -41,6 +41,38 @@ function makeSeat(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function makeTicketItem(overrides: Record<string, unknown> = {}) {
+  return {
+    id: '22222222-2222-4222-8222-000000000101',
+    reservationId: '22222222-2222-4222-8222-222222222222',
+    paymentId: '22222222-2222-4222-8222-000000000201',
+    showtimeId: '11111111-1111-4111-8111-111111111111',
+    seatId: 'A-1',
+    floorKey: '1F',
+    floorLabel: '1층',
+    seatKey: '1F:A-1',
+    tierName: 'VIP',
+    price: 150000,
+    serviceFee: 2000,
+    row: 'A',
+    number: '1',
+    status: 'ACTIVE',
+    admissionState: 'NOT_ENTERED',
+    enteredAt: null,
+    qrCredential: {
+      id: '22222222-2222-4222-8222-000000000301',
+      token: 'qr-token-seat-a1',
+      jti: 'qr-jti-seat-a1',
+      status: 'ACTIVE',
+      issuedAt: '2026-05-08T11:46:00.000Z',
+      rotatedAt: null,
+      revokedAt: null,
+    },
+    cancellation: null,
+    ...overrides,
+  };
+}
+
 function makeQueueAdmission(overrides: Record<string, unknown> = {}) {
   return {
     queueSessionId: 'queue-session-1',
@@ -177,11 +209,15 @@ describe('Phase 24 booking core shared contracts', () => {
         issuedAt: '2026-05-08T11:46:00.000Z',
         emailScheduledAt: '2026-07-17T10:00:00.000Z',
       },
+      ticketItems: [makeTicketItem()],
     });
 
     expect(parsedDetail.refundTimeline.currentState).toBe('PROCESSING_AT_PG');
     expect(parsedDetail.cancelledSeatHold.releaseWindowMinutes.max).toBe(10);
     expect(parsedDetail.qrTicket.jti).toBe('qr-jti-1');
+    expect(parsedDetail.ticketItems[0]?.qrCredential?.jti).toBe(
+      'qr-jti-seat-a1',
+    );
   });
 });
 

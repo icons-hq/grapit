@@ -13,6 +13,7 @@ import {
 
 import { reservations } from './reservations.js';
 import { showtimes } from './showtimes.js';
+import { ticketItems } from './ticket-items.js';
 import { tickets } from './tickets.js';
 import { users } from './users.js';
 
@@ -50,6 +51,9 @@ export const ticketScanEvents = pgTable(
     ticketId: uuid('ticket_id')
       .notNull()
       .references(() => tickets.id, { onDelete: 'restrict' }),
+    ticketItemId: uuid('ticket_item_id').references(() => ticketItems.id, {
+      onDelete: 'restrict',
+    }),
     reservationId: uuid('reservation_id')
       .notNull()
       .references(() => reservations.id, { onDelete: 'restrict' }),
@@ -78,6 +82,7 @@ export const ticketScanEvents = pgTable(
       .defaultNow(),
   },
   (table) => [
+    index('idx_ticket_scan_events_ticket_item_id').on(table.ticketItemId),
     index('idx_ticket_scan_events_showtime_id').on(table.showtimeId),
     index('idx_ticket_scan_events_result').on(table.result),
     index('idx_ticket_scan_events_scanner_user_id').on(table.scannerUserId),

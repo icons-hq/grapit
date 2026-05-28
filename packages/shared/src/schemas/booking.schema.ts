@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { consentCaptureItemSchema } from './consent.schema';
+import { ticketItemSchema } from './ticket-item.schema';
 
 const isoDatetime = (label: string) =>
   z.string().datetime({ message: `${label}은 ISO datetime 형식이어야 합니다` });
@@ -113,14 +114,49 @@ export const cancelledSeatHoldSchema = z.object({
 });
 
 export const qrTicketSchema = z.object({
-  token: z.string().min(1, 'QR token이 필요합니다'),
-  jti: z.string().min(1, 'QR token JTI가 필요합니다'),
+  id: z.string().uuid().optional(),
+  ticketItemId: z.string().uuid().nullable().optional(),
+  seatIdentity: z.object({
+    seatId: z.string().min(1),
+    seatKey: z.string().min(1),
+    floorKey: z.string().min(1),
+    floorLabel: z.string().min(1),
+    row: z.string().min(1),
+    number: z.string().min(1),
+    tierName: z.string().min(1),
+  }).optional(),
+  token: z.string(),
+  jti: z.string(),
   status: z.enum(['ACTIVE', 'REVOKED', 'USED', 'EXPIRED']),
   entryStatus: z.enum(['NOT_ENTERED', 'ENTERED']).optional(),
   enteredAt: isoDatetime('입장 처리 시각').nullable().optional(),
   issuedAt: isoDatetime('QR 발급 시각'),
   emailScheduledAt: isoDatetime('QR 이메일 예약 시각').nullable().optional(),
   emailedAt: isoDatetime('QR 이메일 발송 시각').nullable().optional(),
+}).superRefine((ticket, ctx) => {
+  if (ticket.status !== 'ACTIVE') {
+    return;
+  }
+  if (ticket.token.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.too_small,
+      minimum: 1,
+      type: 'string',
+      inclusive: true,
+      message: 'QR token이 필요합니다',
+      path: ['token'],
+    });
+  }
+  if (ticket.jti.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.too_small,
+      minimum: 1,
+      type: 'string',
+      inclusive: true,
+      message: 'QR token JTI가 필요합니다',
+      path: ['jti'],
+    });
+  }
 });
 
 export const prepareReservationSchema = z.object({
@@ -173,6 +209,10 @@ export const cancelReservationSchema = z.object({
 });
 
 export type CancelReservationInput = z.infer<typeof cancelReservationSchema>;
+
+export const cancelTicketItemSchema = cancelReservationSchema;
+
+export type CancelTicketItemInput = z.infer<typeof cancelTicketItemSchema>;
 
 export const adminRefundSchema = z.object({
   reason: z
@@ -228,4 +268,5 @@ export const reservationDetailSchema = reservationListItemSchema.extend({
   refundTimeline: refundTimelineSchema,
   cancelledSeatHold: cancelledSeatHoldSchema.nullable(),
   qrTicket: qrTicketSchema,
+  ticketItems: z.array(ticketItemSchema),
 });

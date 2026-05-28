@@ -43,6 +43,12 @@ export { reservationSeats } from './reservation-seats.js';
 export { bookingPolicies } from './booking-policies.js';
 export { payments, paymentStatusEnum } from './payments.js';
 export { refunds, refundStatusEnum } from './refunds.js';
+export {
+  ticketItems,
+  ticketItemStatusEnum,
+  ticketItemAdmissionStateEnum,
+  ticketItemReopenStateEnum,
+} from './ticket-items.js';
 export { tickets, ticketStatusEnum } from './tickets.js';
 export {
   ticketScanEvents,
