@@ -6,9 +6,23 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { and, desc, eq, ilike, inArray, isNull, or, sql, type SQL } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gte,
+  ilike,
+  inArray,
+  isNull,
+  lt,
+  or,
+  sql,
+  type SQL,
+} from 'drizzle-orm';
 import {
   ADMIN_CAPABILITIES,
+  adminUserExportRequestSchema,
   adminUserListQuerySchema,
   adminUserHardDeleteSchema,
   adminUserPermissionUpdateSchema,
@@ -18,6 +32,7 @@ import {
   type AdminCapabilityBundle,
   type AdminUserDeletionBlocker,
   type AdminUserDetail,
+  type AdminUserExportRequest,
   type AdminUserHardDeleteInput,
   type AdminUserHardDeleteResponse,
   type AdminUserListItem,
@@ -26,6 +41,9 @@ import {
   type AdminUserPermissionUpdate,
   type AdminUserRecentReservation,
   type AdminUserReservationSummary,
+  type AdminUserStatsResponse,
+  type AdminUserStatsRatio,
+  type AdminUserSignupTrendBucket,
   type AdminUserSupportThreadSummary,
   type AdminUserWithdrawalInput,
 } from '@grabit/shared';
@@ -45,6 +63,8 @@ import {
   AdminAuditService,
   type MaskedAdminAuditEvent,
 } from './admin-audit.service.js';
+import { safeCsvRows } from './csv-export.util.js';
+import { buildDailyBucketSkeleton, kstBoundaryToUtc } from './kst-boundary.js';
 
 type UserRow = Pick<
   typeof users.$inferSelect,
@@ -70,6 +90,51 @@ type UserRow = Pick<
   | 'createdAt'
   | 'updatedAt'
 >;
+
+type UserExportRow = Pick<
+  typeof users.$inferSelect,
+  | 'id'
+  | 'email'
+  | 'name'
+  | 'phone'
+  | 'gender'
+  | 'country'
+  | 'birthDate'
+  | 'preferredLocale'
+  | 'isPhoneVerified'
+  | 'isEmailVerified'
+  | 'marketingConsent'
+  | 'role'
+  | 'adminCapabilityBundle'
+  | 'adminCapabilities'
+  | 'accountStatus'
+  | 'withdrawnAt'
+  | 'withdrawalReason'
+  | 'withdrawnByUserId'
+  | 'withdrawalSource'
+  | 'createdAt'
+  | 'updatedAt'
+>;
+
+interface UserStatsSummaryRow {
+  total: number;
+  active: number;
+  withdrawn: number;
+  emailVerified: number;
+  phoneVerified: number;
+  fullyVerified: number;
+  marketingConsented: number;
+}
+
+interface UserStatsRatioRow {
+  value: string;
+  count: number;
+}
+
+interface UserSignupTrendRow {
+  date: string;
+  count: number;
+}
 
 type ReservationRow = Pick<
   typeof reservations.$inferSelect,
@@ -100,6 +165,45 @@ export interface AdminUserPermissionUpdateContext {
   userAgent?: string | null;
   requestId?: string | null;
 }
+
+export interface AdminUserExportServiceRequest {
+  actorUserId: string;
+  reason: string;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  requestId?: string | null;
+}
+
+export interface AdminUserExportResult {
+  filename: string;
+  contentType: string;
+  csv: string;
+  rowCount: number;
+}
+
+const USER_EXPORT_HEADERS = [
+  'id',
+  'email',
+  'name',
+  'phone',
+  'gender',
+  'country',
+  'birth_date',
+  'preferred_locale',
+  'is_phone_verified',
+  'is_email_verified',
+  'marketing_consent',
+  'role',
+  'admin_capability_bundle',
+  'admin_capabilities',
+  'account_status',
+  'withdrawn_at',
+  'withdrawal_reason',
+  'withdrawn_by_user_id',
+  'withdrawal_source',
+  'created_at',
+  'updated_at',
+] as const;
 
 @Injectable()
 export class AdminUserService {
@@ -158,6 +262,77 @@ export class AdminUserService {
       supportThreadSummary,
       recentAuditEvents,
     );
+  }
+
+  async getUserStats(): Promise<AdminUserStatsResponse> {
+    const [
+      summary,
+      countries,
+      locales,
+      signupRows,
+    ] = await Promise.all([
+      this.selectUserStatsSummary(),
+      this.selectUserStatsRatioRows('country'),
+      this.selectUserStatsRatioRows('locale'),
+      this.selectUserSignupTrendRows(),
+    ]);
+
+    return {
+      total: summary.total,
+      active: summary.active,
+      withdrawn: summary.withdrawn,
+      verification: {
+        emailVerified: summary.emailVerified,
+        phoneVerified: summary.phoneVerified,
+        fullyVerified: summary.fullyVerified,
+      },
+      marketing: {
+        consented: summary.marketingConsented,
+        notConsented: Math.max(0, summary.total - summary.marketingConsented),
+      },
+      countries: toRatioItems(countries, summary.total),
+      locales: toRatioItems(locales, summary.total),
+      signupTrend: buildSignupTrend(signupRows),
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
+  async exportUsers(
+    request: AdminUserExportServiceRequest,
+  ): Promise<AdminUserExportResult> {
+    const parsed: AdminUserExportRequest = adminUserExportRequestSchema.parse({
+      reason: request.reason,
+    });
+    const rows = await this.selectUserExportRows();
+    const csv = safeCsvRows([
+      USER_EXPORT_HEADERS,
+      ...rows.map(userExportRowToCsvValues),
+    ]);
+
+    await this.auditService.write({
+      actorUserId: request.actorUserId,
+      action: 'user.export_raw',
+      resourceType: 'user_export',
+      resourceId: 'raw_pii',
+      status: 'success',
+      reason: parsed.reason,
+      changedFields: ['columns', 'rowCount'],
+      before: {},
+      after: {
+        columns: [...USER_EXPORT_HEADERS],
+        rowCount: rows.length,
+      },
+      ipAddress: request.ipAddress ?? null,
+      userAgent: request.userAgent ?? null,
+      requestId: request.requestId ?? null,
+    });
+
+    return {
+      filename: `user-export-raw-${new Date().toISOString().slice(0, 10)}.csv`,
+      contentType: 'text/csv; charset=utf-8',
+      csv,
+      rowCount: rows.length,
+    };
   }
 
   async updatePermissions(
@@ -436,6 +611,74 @@ export class AdminUserService {
     return row;
   }
 
+  private async selectUserStatsSummary(): Promise<UserStatsSummaryRow> {
+    const [row] = await this.db
+      .select({
+        total: sql<number>`count(*)::int`,
+        active: sql<number>`count(*) filter (where ${users.accountStatus} <> 'withdrawn')::int`,
+        withdrawn: sql<number>`count(*) filter (where ${users.accountStatus} = 'withdrawn')::int`,
+        emailVerified: sql<number>`count(*) filter (where ${users.isEmailVerified} = true)::int`,
+        phoneVerified: sql<number>`count(*) filter (where ${users.isPhoneVerified} = true)::int`,
+        fullyVerified: sql<number>`count(*) filter (where ${users.isEmailVerified} = true and ${users.isPhoneVerified} = true)::int`,
+        marketingConsented: sql<number>`count(*) filter (where ${users.marketingConsent} = true)::int`,
+      })
+      .from(users);
+
+    return row ?? {
+      total: 0,
+      active: 0,
+      withdrawn: 0,
+      emailVerified: 0,
+      phoneVerified: 0,
+      fullyVerified: 0,
+      marketingConsented: 0,
+    };
+  }
+
+  private async selectUserStatsRatioRows(
+    dimension: 'country' | 'locale',
+  ): Promise<UserStatsRatioRow[]> {
+    const valueExpression = dimension === 'country'
+      ? users.country
+      : sql<string>`coalesce(${users.preferredLocale}::text, 'ko')`;
+
+    return this.db
+      .select({
+        value: valueExpression,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(users)
+      .groupBy(valueExpression)
+      .orderBy(sql`count(*) desc`, valueExpression);
+  }
+
+  private async selectUserSignupTrendRows(): Promise<UserSignupTrendRow[]> {
+    const { startUtc, endUtc } = kstBoundaryToUtc(30);
+    const bucketExpr = sql.raw(
+      `date_trunc('day', users.created_at AT TIME ZONE 'Asia/Seoul')`,
+    );
+    const bucketLabel = sql.raw(
+      `to_char(date_trunc('day', users.created_at AT TIME ZONE 'Asia/Seoul'), 'YYYY-MM-DD')`,
+    );
+
+    return this.db
+      .select({
+        date: sql<string>`${bucketLabel}`,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(users)
+      .where(and(gte(users.createdAt, startUtc), lt(users.createdAt, endUtc)))
+      .groupBy(bucketExpr)
+      .orderBy(bucketExpr);
+  }
+
+  private async selectUserExportRows(): Promise<UserExportRow[]> {
+    return this.db
+      .select(userExportSelectFields())
+      .from(users)
+      .orderBy(desc(users.createdAt), asc(users.id));
+  }
+
   private async fetchReservationSummaries(
     userIds: string[],
   ): Promise<Map<string, AdminUserReservationSummary>> {
@@ -615,6 +858,79 @@ function userSelectFields() {
     createdAt: users.createdAt,
     updatedAt: users.updatedAt,
   };
+}
+
+function userExportSelectFields() {
+  return {
+    id: users.id,
+    email: users.email,
+    name: users.name,
+    phone: users.phone,
+    gender: users.gender,
+    country: users.country,
+    birthDate: users.birthDate,
+    preferredLocale: users.preferredLocale,
+    isPhoneVerified: users.isPhoneVerified,
+    isEmailVerified: users.isEmailVerified,
+    marketingConsent: users.marketingConsent,
+    role: users.role,
+    adminCapabilityBundle: users.adminCapabilityBundle,
+    adminCapabilities: users.adminCapabilities,
+    accountStatus: users.accountStatus,
+    withdrawnAt: users.withdrawnAt,
+    withdrawalReason: users.withdrawalReason,
+    withdrawnByUserId: users.withdrawnByUserId,
+    withdrawalSource: users.withdrawalSource,
+    createdAt: users.createdAt,
+    updatedAt: users.updatedAt,
+  };
+}
+
+function userExportRowToCsvValues(row: UserExportRow): unknown[] {
+  return [
+    row.id,
+    row.email,
+    row.name,
+    row.phone,
+    row.gender,
+    row.country,
+    row.birthDate,
+    row.preferredLocale ?? '',
+    row.isPhoneVerified,
+    row.isEmailVerified,
+    row.marketingConsent,
+    row.role,
+    row.adminCapabilityBundle ?? '',
+    JSON.stringify(row.adminCapabilities ?? []),
+    row.accountStatus,
+    row.withdrawnAt?.toISOString() ?? '',
+    row.withdrawalReason ?? '',
+    row.withdrawnByUserId ?? '',
+    row.withdrawalSource ?? '',
+    row.createdAt.toISOString(),
+    row.updatedAt.toISOString(),
+  ];
+}
+
+function toRatioItems(
+  rows: UserStatsRatioRow[],
+  total: number,
+): AdminUserStatsRatio[] {
+  return rows.map((row) => ({
+    value: row.value,
+    count: row.count,
+    ratio: total > 0 ? row.count / total : 0,
+  }));
+}
+
+function buildSignupTrend(
+  rows: UserSignupTrendRow[],
+): AdminUserSignupTrendBucket[] {
+  const rowMap = new Map(rows.map((row) => [row.date, row.count]));
+  return buildDailyBucketSkeleton(30).map((date) => ({
+    date,
+    count: rowMap.get(date) ?? 0,
+  }));
 }
 
 function buildUserPredicates(query: AdminUserListQuery): SQL[] {

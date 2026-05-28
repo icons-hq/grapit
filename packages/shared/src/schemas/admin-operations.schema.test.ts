@@ -6,8 +6,10 @@ import {
   ADMIN_CAPABILITY_BUNDLE_CAPABILITIES,
   adminAuditEventSchema,
   adminCapabilitySchema,
+  adminUserExportRequestSchema,
   adminUserListItemSchema,
   adminUserPermissionUpdateSchema,
+  adminUserStatsResponseSchema,
   adminSeatOperationHistorySchema,
   adminReservationExportFilterSchema,
   adminSecurityStatusSchema,
@@ -96,6 +98,34 @@ describe('admin operations contract', () => {
     expect(parsed.diff.after).toEqual({ status: 'published' });
   });
 
+  it('validates raw user export audit actions and reasoned export requests', () => {
+    const audit = adminAuditEventSchema.parse({
+      id: 'audit-user-export-1',
+      actorUserId: 'admin-1',
+      action: 'user.export_raw',
+      resourceType: 'user_export',
+      resourceId: 'raw_pii',
+      status: 'success',
+      reason: 'membership operations reconciliation',
+      changedFields: ['columns', 'rowCount'],
+      diff: {
+        after: {
+          columns: ['id', 'email'],
+          rowCount: 2,
+        },
+      },
+      createdAt: '2026-05-18T00:00:00.000Z',
+    });
+
+    expect(audit.action).toBe('user.export_raw');
+    expect(() => adminUserExportRequestSchema.parse({ reason: '' })).toThrow(/사유/);
+    expect(
+      adminUserExportRequestSchema.parse({
+        reason: ' membership operations reconciliation ',
+      }).reason,
+    ).toBe('membership operations reconciliation');
+  });
+
   it('validates admin user list rows with masked contact fields and capability truth', () => {
     const parsed = adminUserListItemSchema.parse({
       id: 'user-1',
@@ -128,6 +158,39 @@ describe('admin operations contract', () => {
 
     expect(parsed.maskedEmail).toBe('fa***@example.com');
     expect(parsed.adminCapabilities).toContain('support.manage');
+  });
+
+  it('validates admin user statistics response with ratio buckets and signup trend', () => {
+    const parsed = adminUserStatsResponseSchema.parse({
+      total: 10,
+      active: 8,
+      withdrawn: 2,
+      verification: {
+        emailVerified: 7,
+        phoneVerified: 6,
+        fullyVerified: 5,
+      },
+      marketing: {
+        consented: 4,
+        notConsented: 6,
+      },
+      countries: [
+        { value: 'KR', count: 6, ratio: 0.6 },
+        { value: 'TH', count: 4, ratio: 0.4 },
+      ],
+      locales: [
+        { value: 'ko', count: 7, ratio: 0.7 },
+        { value: 'th', count: 3, ratio: 0.3 },
+      ],
+      signupTrend: [
+        { date: '2026-05-17', count: 1 },
+        { date: '2026-05-18', count: 2 },
+      ],
+      generatedAt: '2026-05-18T00:00:00.000Z',
+    });
+
+    expect(parsed.countries[0]?.ratio).toBe(0.6);
+    expect(parsed.signupTrend[1]?.count).toBe(2);
   });
 
   it('requires reason and explicit confirmation for admin permission updates', () => {

@@ -9,6 +9,7 @@ import {
   type AdminSeatOperationRequest,
   type AdminSecurityStatus,
   type AdminUserDetail,
+  type AdminUserExportRequest,
   type AdminUserHardDeleteInput,
   type AdminUserHardDeleteResponse,
   type AdminUserListItem,
@@ -18,6 +19,7 @@ import {
   type AdminUserRecentReservation,
   type AdminUserReservationSummary,
   type AdminUserRole,
+  type AdminUserStatsResponse,
   type AdminUserSupportThreadSummary,
   type AdminUserVerificationState,
   type AdminUserWithdrawalInput,
@@ -48,6 +50,10 @@ export type {
   AdminUserSupportThreadSummary,
   AdminUserDetail,
   AdminUserListResponse,
+  AdminUserStatsRatio,
+  AdminUserSignupTrendBucket,
+  AdminUserStatsResponse,
+  AdminUserExportRequest,
   AdminUserPermissionUpdate,
   AdminUserWithdrawalInput,
   AdminUserHardDeleteInput,
@@ -80,6 +86,8 @@ export interface AdminOperationsContract {
   userListQuery?: AdminUserListQuery;
   userListItems?: AdminUserListItem[];
   userDetail?: AdminUserDetail;
+  userStats?: AdminUserStatsResponse;
+  userExport?: AdminUserExportRequest;
   userPermissionUpdate?: AdminUserPermissionUpdate;
   userWithdrawal?: AdminUserWithdrawalInput;
   userHardDelete?: AdminUserHardDeleteInput;

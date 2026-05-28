@@ -20,6 +20,7 @@ export const ADMIN_AUDIT_ACTIONS = [
   'settlement.export',
   'security.allowlist.update',
   'security.permission.update',
+  'user.export_raw',
   'user.withdraw',
   'user.hard_delete',
 ] as const;

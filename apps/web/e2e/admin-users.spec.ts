@@ -116,6 +116,34 @@ const detailUser = {
   ],
 };
 
+const userStats = {
+  total: 50,
+  active: 48,
+  withdrawn: 2,
+  verification: {
+    emailVerified: 40,
+    phoneVerified: 35,
+    fullyVerified: 32,
+  },
+  marketing: {
+    consented: 21,
+    notConsented: 29,
+  },
+  countries: [
+    { value: 'KR', count: 30, ratio: 0.6 },
+    { value: 'TH', count: 20, ratio: 0.4 },
+  ],
+  locales: [
+    { value: 'ko', count: 34, ratio: 0.68 },
+    { value: 'th', count: 16, ratio: 0.32 },
+  ],
+  signupTrend: [
+    { date: '2026-05-17', count: 2 },
+    { date: '2026-05-18', count: 3 },
+  ],
+  generatedAt: '2026-05-18T00:00:00.000Z',
+};
+
 const secondPageDetailUser = {
   ...detailUser,
   ...secondPageUser,
@@ -159,6 +187,9 @@ test.describe('Admin user management', () => {
       '/admin/users',
     );
     await expect(page.getByRole('button', { name: '박팬 회원 상세 보기' })).toBeVisible();
+    await expect(page.getByText('회원 데이터 통계')).toBeVisible();
+    await expect(page.getByText('총 가입자')).toBeVisible();
+    await expect(page.getByText('50명', { exact: true })).toBeVisible();
     await expect(page.getByText('parkfan@example.com')).toBeVisible();
     await expect(page.getByText('예매 컨텍스트')).toBeVisible();
     await expect(page.getByText('걸룰스 팬미팅')).toBeVisible();
@@ -194,6 +225,24 @@ test.describe('Admin user management', () => {
     expect(requests.patchPayloads[0].adminCapabilities).not.toContain(
       'security.manage',
     );
+  });
+
+  test('downloads raw user CSV from the stats panel with an operator reason', async ({
+    page,
+  }) => {
+    await mockAdminAuth(page);
+    const requests = await mockAdminUsers(page);
+
+    await page.goto('/admin/users');
+
+    await page.getByRole('button', { name: '회원 원본 CSV 다운로드' }).click();
+    await page.getByLabel('회원 CSV 다운로드 사유').fill('회원 운영 데이터 대조');
+    await page.getByRole('button', { name: 'CSV 다운로드 확정' }).click();
+
+    await expect.poll(() => requests.exportPayloads.length).toBe(1);
+    expect(requests.exportPayloads[0]).toEqual({
+      reason: '회원 운영 데이터 대조',
+    });
   });
 
   test('submits admin withdrawal and surfaces hard-delete blockers in browser', async ({
@@ -270,6 +319,7 @@ async function mockAdminUsers(page: Page) {
   const patchPayloads: Array<Record<string, unknown>> = [];
   const withdrawPayloads: Array<Record<string, unknown>> = [];
   const hardDeletePayloads: Array<Record<string, unknown>> = [];
+  const exportPayloads: Array<Record<string, unknown>> = [];
   let currentDetailUser = { ...detailUser } as MockAdminDetailUser;
 
   await page.route('**/api/v1/admin/users**', async (route) => {
@@ -277,6 +327,7 @@ async function mockAdminUsers(page: Page) {
       patchPayloads,
       withdrawPayloads,
       hardDeletePayloads,
+      exportPayloads,
       getCurrentDetailUser: () => currentDetailUser,
       setCurrentDetailUser: (user) => {
         currentDetailUser = user;
@@ -284,7 +335,7 @@ async function mockAdminUsers(page: Page) {
     });
   });
 
-  return { patchPayloads, withdrawPayloads, hardDeletePayloads };
+  return { patchPayloads, withdrawPayloads, hardDeletePayloads, exportPayloads };
 }
 
 async function handleAdminUsersRoute(
@@ -293,6 +344,7 @@ async function handleAdminUsersRoute(
     patchPayloads: Array<Record<string, unknown>>;
     withdrawPayloads: Array<Record<string, unknown>>;
     hardDeletePayloads: Array<Record<string, unknown>>;
+    exportPayloads: Array<Record<string, unknown>>;
     getCurrentDetailUser: () => MockAdminDetailUser;
     setCurrentDetailUser: (user: MockAdminDetailUser) => void;
   },
@@ -300,6 +352,31 @@ async function handleAdminUsersRoute(
   const request = route.request();
   const url = new URL(request.url());
   const currentDetailUser = requests.getCurrentDetailUser();
+
+  if (
+    request.method() === 'GET' &&
+    url.pathname === '/api/v1/admin/users/stats'
+  ) {
+    await fulfillJson(route, userStats);
+    return;
+  }
+
+  if (
+    request.method() === 'POST' &&
+    url.pathname === '/api/v1/admin/users/export'
+  ) {
+    requests.exportPayloads.push(request.postDataJSON() as Record<string, unknown>);
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/csv; charset=utf-8',
+      headers: {
+        'content-disposition': 'attachment; filename="user-export-raw-2026-05-18.csv"',
+        'cache-control': 'no-store',
+      },
+      body: '"id","email"\n"user-fan-1","parkfan@example.com"',
+    });
+    return;
+  }
 
   if (request.method() === 'GET' && url.pathname === '/api/v1/admin/users') {
     const page = Number(url.searchParams.get('page') ?? 1);
