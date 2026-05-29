@@ -1,6 +1,7 @@
 import {
   Injectable,
   Inject,
+  BadRequestException,
   ConflictException,
   ForbiddenException,
 } from '@nestjs/common';
@@ -12,6 +13,7 @@ import type { DrizzleDB } from '../../database/drizzle.provider.js';
 import { seatInventories } from '../../database/schema/seat-inventories.js';
 import { bookingPolicies } from '../../database/schema/booking-policies.js';
 import { performances } from '../../database/schema/performances.js';
+import { seatMaps } from '../../database/schema/seat-maps.js';
 import { showtimes } from '../../database/schema/showtimes.js';
 import { BookingGateway } from './booking.gateway.js';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
@@ -26,8 +28,7 @@ import {
   type UnlockAllResponse,
 } from '@grabit/shared';
 
-/** Lock TTL in seconds (10 minutes, per BOOK-03) */
-const LOCK_TTL = 600;
+const DEFAULT_LOCK_TTL_SECONDS = DEFAULT_PERFORMANCE_BOOKING_POLICY.seatHoldMinutes * 60;
 export const LOCK_EXPIRED_MESSAGE = '좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.';
 export const LOCK_OTHER_OWNER_MESSAGE = '이미 다른 사용자가 선택한 좌석입니다.';
 export const BOOKING_VERIFICATION_REQUIRED_MESSAGE =
@@ -68,6 +69,23 @@ function assertBookingVerificationComplete(actor: BookingActor): void {
   }
 }
 
+function seatMapHasSeatId(seatConfig: unknown, seatId: string): boolean {
+  if (!seatConfig || typeof seatConfig !== 'object') {
+    return false;
+  }
+
+  const tiers = (seatConfig as { tiers?: unknown }).tiers;
+  return Array.isArray(tiers)
+    && tiers.some((tier) => {
+      if (!tier || typeof tier !== 'object') {
+        return false;
+      }
+
+      const seatIds = (tier as { seatIds?: unknown }).seatIds;
+      return Array.isArray(seatIds) && seatIds.includes(seatId);
+    });
+}
+
 /**
  * Lua script for atomic seat locking.
  * Cleans stale user-seats entries, checks count, SET NX, SADD + EXPIRE.
@@ -76,7 +94,7 @@ function assertBookingVerificationComplete(actor: BookingActor): void {
  * KEYS[2] = {showtimeId}:seat:{seatId}
  * KEYS[3] = {showtimeId}:locked-seats
  * ARGV[1] = userId
- * ARGV[2] = LOCK_TTL (600)
+ * ARGV[2] = lock TTL seconds
  * ARGV[3] = MAX_SEATS (4)
  * ARGV[4] = seatId
  * ARGV[5] = key prefix "{showtimeId}:seat:"
@@ -84,7 +102,9 @@ function assertBookingVerificationComplete(actor: BookingActor): void {
  * Hash tag {showtimeId} ensures all keys hash to the same Redis Cluster slot.
  */
 const LOCK_SEAT_LUA = `
+local requestedTtl = tonumber(ARGV[2])
 local members = redis.call('SMEMBERS', KEYS[1])
+local userSeatsTtl = redis.call('TTL', KEYS[1])
 local alive = 0
 for i, sid in ipairs(members) do
   local owner = redis.call('GET', ARGV[5] .. sid)
@@ -100,14 +120,20 @@ end
 if alive >= tonumber(ARGV[3]) then
   return {0, 'MAX_SEATS'}
 end
-local ok = redis.call('SET', KEYS[2], ARGV[1], 'NX', 'EX', tonumber(ARGV[2]))
+local effectiveTtl = requestedTtl
+if alive > 0 and userSeatsTtl > 0 then
+  effectiveTtl = userSeatsTtl
+end
+local ok = redis.call('SET', KEYS[2], ARGV[1], 'NX', 'EX', effectiveTtl)
 if not ok then
   return {0, 'CONFLICT'}
 end
 redis.call('SADD', KEYS[1], ARGV[4])
-redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
+if alive == 0 or userSeatsTtl < 0 then
+  redis.call('EXPIRE', KEYS[1], effectiveTtl)
+end
 redis.call('SADD', KEYS[3], ARGV[4])
-return {1, KEYS[2], ARGV[4]}
+return {1, KEYS[2], ARGV[4], tostring(effectiveTtl)}
 `;
 
 /**
@@ -275,16 +301,49 @@ export class BookingService {
     private readonly featureFlags: FeatureFlagsService,
   ) {}
 
-  private async getMaxTicketsPerUser(showtimeId: string): Promise<number> {
+  private async getSeatLockPolicy(showtimeId: string): Promise<{
+    maxTicketsPerUser: number;
+    lockTtlSeconds: number;
+  }> {
     const [row] = await this.db
       .select({
         maxTicketsPerUser: bookingPolicies.maxTicketsPerUser,
+        seatHoldMinutes: bookingPolicies.seatHoldMinutes,
       })
       .from(showtimes)
       .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, showtimes.performanceId))
       .where(eq(showtimes.id, showtimeId));
 
-    return row?.maxTicketsPerUser ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.maxTicketsPerUser;
+    const seatHoldMinutes =
+      row?.seatHoldMinutes ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.seatHoldMinutes;
+
+    return {
+      maxTicketsPerUser:
+        row?.maxTicketsPerUser ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.maxTicketsPerUser,
+      lockTtlSeconds: seatHoldMinutes * 60 || DEFAULT_LOCK_TTL_SECONDS,
+    };
+  }
+
+  private async assertSeatExistsInShowtimeSeatMap(
+    showtimeId: string,
+    seatIdentity: RuntimeSeatIdentity,
+  ): Promise<void> {
+    const [seatMap] = await this.db
+      .select({ seatConfig: seatMaps.seatConfig })
+      .from(showtimes)
+      .innerJoin(
+        seatMaps,
+        and(
+          eq(seatMaps.performanceId, showtimes.performanceId),
+          eq(seatMaps.floorKey, seatIdentity.floorKey),
+        ),
+      )
+      .where(eq(showtimes.id, showtimeId))
+      .limit(1);
+
+    if (!seatMapHasSeatId(seatMap?.seatConfig, seatIdentity.seatId)) {
+      throw new BadRequestException('유효하지 않은 좌석입니다');
+    }
   }
 
   /**
@@ -304,6 +363,7 @@ export class BookingService {
     assertBookingVerificationComplete(actor);
     await this.assertShowtimeBookingOpen(showtimeId, actor);
     const seatIdentity = parseRuntimeSeatIdentity(seatId);
+    await this.assertSeatExistsInShowtimeSeatMap(showtimeId, seatIdentity);
 
     // DB-level unavailable check: defense against Redis TTL expiry and delayed refund release races.
     const [unavailableRecord] = await this.db
@@ -341,7 +401,7 @@ export class BookingService {
       );
     }
 
-    const maxTicketsPerUser = await this.getMaxTicketsPerUser(showtimeId);
+    const { maxTicketsPerUser, lockTtlSeconds } = await this.getSeatLockPolicy(showtimeId);
 
     const userSeatsKey = `{${showtimeId}}:user-seats:${userId}`;
     const lockKey = `{${showtimeId}}:seat:${seatIdentity.runtimeSeatId}`;
@@ -355,11 +415,11 @@ export class BookingService {
       lockKey,
       lockedSeatsKey,
       userId,
-      String(LOCK_TTL),
+      String(lockTtlSeconds),
       String(maxTicketsPerUser),
       seatIdentity.runtimeSeatId,
       keyPrefix,
-    )) as [number, string, string?];
+    )) as [number, string, string?, string?];
 
     const [status, reason] = result;
 
@@ -372,6 +432,11 @@ export class BookingService {
 
     // Broadcast real-time update (include userId so sender can ignore own events)
     this.gateway.broadcastSeatUpdate(showtimeId, seatId, 'locked', userId);
+    const luaLockTtlSeconds = Number(result[3]);
+    const effectiveLockTtlSeconds =
+      Number.isFinite(luaLockTtlSeconds) && luaLockTtlSeconds > 0
+        ? luaLockTtlSeconds
+        : lockTtlSeconds;
 
     return {
       success: true,
@@ -379,7 +444,7 @@ export class BookingService {
       seatId,
       seatKey: seatIdentity.seatKey,
       floorKey: seatIdentity.floorKey,
-      expiresAt: Date.now() + LOCK_TTL * 1000,
+      expiresAt: Date.now() + effectiveLockTtlSeconds * 1000,
     };
   }
 

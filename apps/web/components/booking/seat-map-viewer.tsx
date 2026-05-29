@@ -15,6 +15,8 @@ type RuntimeSeatState = SeatState | 'disabled';
 
 interface SeatMapViewerProps {
   svgUrl: string;
+  floorKey?: string;
+  floorLabel?: string;
   seatConfig: SeatMapConfig;
   seatStates: ReadonlyMap<string, RuntimeSeatState>;
   selectedSeatIds: Set<string>;
@@ -34,18 +36,25 @@ function getLocalSeatId(runtimeSeatId: string) {
   return separatorIndex > 0 ? runtimeSeatId.slice(separatorIndex + 1) : runtimeSeatId;
 }
 
-function getSeatIdentity(element: Element | null) {
+function toRuntimeSeatId(seatId: string, floorKey?: string) {
+  return floorKey ? `${floorKey}:${seatId}` : seatId;
+}
+
+function getSeatIdentity(element: Element | null, floorKey?: string) {
   if (!element) {
     return null;
   }
 
   const seatKey = element.getAttribute(SEAT_KEY_ATTR);
   const seatId = element.getAttribute(SEAT_ID_ATTR) ?? (seatKey ? getLocalSeatId(seatKey) : null);
-  const runtimeSeatId = seatKey ?? seatId;
 
-  if (!runtimeSeatId || !seatId) {
+  if (!seatId) {
     return null;
   }
+
+  const runtimeSeatId = floorKey
+    ? toRuntimeSeatId(seatId, floorKey)
+    : seatKey ?? seatId;
 
   return { runtimeSeatId, seatId };
 }
@@ -75,7 +84,7 @@ function isExcludedSeatElement(el: Element, tierInfoExists: boolean) {
   );
 }
 
-function normalizeSeatLabelOverlays(doc: Document) {
+function normalizeSeatLabelOverlays(doc: Document, floorKey?: string) {
   const seatParents = new Set<Element>();
   doc.querySelectorAll(`[${SEAT_KEY_ATTR}],[${SEAT_ID_ATTR}]`).forEach((seatEl) => {
     if (seatEl.parentElement) {
@@ -95,7 +104,7 @@ function normalizeSeatLabelOverlays(doc: Document) {
       return;
     }
 
-    const identity = getSeatIdentity(seatChildren[0] ?? null);
+    const identity = getSeatIdentity(seatChildren[0] ?? null, floorKey);
     if (!identity) {
       return;
     }
@@ -125,14 +134,18 @@ function normalizeSeatLabelOverlays(doc: Document) {
   });
 }
 
-function findSeatElementByIdentity(container: ParentNode | null, runtimeSeatId: string) {
+function findSeatElementByIdentity(
+  container: ParentNode | null,
+  runtimeSeatId: string,
+  floorKey?: string,
+) {
   if (!container) {
     return null;
   }
 
   return Array.from(container.querySelectorAll<SVGElement>(`[${SEAT_KEY_ATTR}],[${SEAT_ID_ATTR}]`)).find(
     (element) => {
-      const identity = getSeatIdentity(element);
+      const identity = getSeatIdentity(element, floorKey);
       return identity?.runtimeSeatId === runtimeSeatId || identity?.seatId === runtimeSeatId;
     },
   ) ?? null;
@@ -140,6 +153,8 @@ function findSeatElementByIdentity(container: ParentNode | null, runtimeSeatId: 
 
 export function SeatMapViewer({
   svgUrl,
+  floorKey,
+  floorLabel,
   seatConfig,
   seatStates,
   selectedSeatIds,
@@ -273,8 +288,11 @@ export function SeatMapViewer({
     const seats = doc.querySelectorAll(`[${SEAT_KEY_ATTR}],[${SEAT_ID_ATTR}]`);
 
     seats.forEach((el) => {
-      const identity = getSeatIdentity(el);
+      const identity = getSeatIdentity(el, floorKey);
       if (!identity) return;
+      if (floorKey) {
+        el.setAttribute(SEAT_KEY_ATTR, identity.runtimeSeatId);
+      }
 
       const tierInfo = tierColorMap.get(identity.seatId) ?? tierColorMap.get(identity.runtimeSeatId);
       const isExcluded = isExcludedSeatElement(el, Boolean(tierInfo));
@@ -362,6 +380,15 @@ export function SeatMapViewer({
       const h = svgEl.getAttribute('height') || '600';
       svgEl.setAttribute('viewBox', `0 0 ${w} ${h}`);
     }
+    if (floorLabel) {
+      svgEl.setAttribute('aria-label', `${floorLabel} 좌석맵`);
+      const directTitle = Array.from(svgEl.children).find(
+        (child) => child.tagName.toLowerCase() === 'title',
+      );
+      if (directTitle) {
+        directTitle.textContent = `${floorLabel} 좌석맵`;
+      }
+    }
 
     // reviews revision HIGH #2 + W-1: unified parsing contract — descendant [data-stage] + VALID_STAGES enum
     // reviews revision LOW #8: viewBox split(/[\s,]+/) + [minX, minY, width, height] 모두 사용
@@ -439,7 +466,7 @@ export function SeatMapViewer({
       svgEl.appendChild(overlayG);
     }
 
-    normalizeSeatLabelOverlays(doc);
+    normalizeSeatLabelOverlays(doc, floorKey);
 
     // Remove fixed dimensions and make responsive
     svgEl.removeAttribute('width');
@@ -447,7 +474,7 @@ export function SeatMapViewer({
     svgEl.setAttribute('style', 'width:100%;height:auto;display:block;');
 
     return doc.documentElement.outerHTML;
-  }, [rawSvg, seatStates, selectedSeatIds, tierColorMap, pendingRemovals]);
+  }, [rawSvg, seatStates, selectedSeatIds, tierColorMap, pendingRemovals, floorKey, floorLabel]);
 
   // B-2-RESIDUAL-V2 Option C (reviews revision MED #4 D-13 BROADCAST PRIORITY):
   // dangerouslySetInnerHTML이 SVG를 재마운트한 *직후* 동일 element의 fill을 변경.
@@ -468,9 +495,9 @@ export function SeatMapViewer({
     // 선택 좌석: fill을 primary로 변경 + transition 부여
     // 단 D-13: unavailable 상태는 skip (broadcast 우선)
     selectedSeatIds.forEach((seatId) => {
-      const el = findSeatElementByIdentity(root, seatId);
+      const el = findSeatElementByIdentity(root, seatId, floorKey);
       if (!el) return;
-      const identity = getSeatIdentity(el);
+      const identity = getSeatIdentity(el, floorKey);
       if (!identity) return;
       const state = getSeatState(seatStates, identity.runtimeSeatId, identity.seatId);
       if (isUnavailableSeatState(state)) {
@@ -484,14 +511,14 @@ export function SeatMapViewer({
 
     // 해제 중인 좌석: fill을 원래 tier 색상으로 복원 + transition 유지
     pendingRemovals.forEach((seatId) => {
-      const el = findSeatElementByIdentity(root, seatId);
+      const el = findSeatElementByIdentity(root, seatId, floorKey);
       if (!el) return;
       el.style.transition = 'fill 150ms ease-out, stroke 150ms ease-out';
       const localSeatId = getLocalSeatId(seatId);
       const originalFill = tierColorMap.get(localSeatId)?.color ?? tierColorMap.get(seatId)?.color ?? LOCKED_COLOR;
       el.setAttribute('fill', originalFill);
     });
-  }, [selectedSeatIds, pendingRemovals, tierColorMap, seatStates, processedSvg]);
+  }, [selectedSeatIds, pendingRemovals, tierColorMap, seatStates, processedSvg, floorKey]);
 
   // Event delegation for seat clicks
   // review WR-02 + IN-01: maxSelect prop을 viewer 내부에서 방어적으로 사용.
@@ -508,12 +535,12 @@ export function SeatMapViewer({
       const overlayIdentity = target.getAttribute(SEAT_OVERLAY_ATTR);
       const identity = overlayIdentity
         ? { runtimeSeatId: overlayIdentity, seatId: getLocalSeatId(overlayIdentity) }
-        : getSeatIdentity(target);
+        : getSeatIdentity(target, floorKey);
       if (!identity) return;
 
       const seatElement = target.hasAttribute(SEAT_KEY_ATTR) || target.hasAttribute(SEAT_ID_ATTR)
         ? target
-        : findSeatElementByIdentity(containerRef.current, identity.runtimeSeatId);
+        : findSeatElementByIdentity(containerRef.current, identity.runtimeSeatId, floorKey);
       if (!seatElement || seatElement.getAttribute('data-seat-excluded') === 'true') {
         return;
       }
@@ -529,7 +556,7 @@ export function SeatMapViewer({
       }
       onSeatClick(identity.runtimeSeatId);
     },
-    [seatStates, selectedSeatIds, onSeatClick, maxSelect],
+    [seatStates, selectedSeatIds, onSeatClick, maxSelect, floorKey],
   );
 
   // Hover tooltip — uses refs only, no state changes, no re-renders
@@ -546,12 +573,12 @@ export function SeatMapViewer({
       const overlayIdentity = target.getAttribute(SEAT_OVERLAY_ATTR);
       const identity = overlayIdentity
         ? { runtimeSeatId: overlayIdentity, seatId: getLocalSeatId(overlayIdentity) }
-        : getSeatIdentity(target);
+        : getSeatIdentity(target, floorKey);
       if (!identity) return;
 
       const seatElement = target.hasAttribute(SEAT_KEY_ATTR) || target.hasAttribute(SEAT_ID_ATTR)
         ? target
-        : findSeatElementByIdentity(containerRef.current, identity.runtimeSeatId);
+        : findSeatElementByIdentity(containerRef.current, identity.runtimeSeatId, floorKey);
       if (!seatElement) return;
       if (seatElement.getAttribute('data-seat-excluded') === 'true') {
         if (tooltipRef.current) tooltipRef.current.style.display = 'none';
@@ -590,7 +617,7 @@ export function SeatMapViewer({
         }
       }
     },
-    [seatStates, selectedSeatIds, tierColorMap],
+    [seatStates, selectedSeatIds, tierColorMap, floorKey],
   );
 
   const handleMouseOut = useCallback(
@@ -605,12 +632,12 @@ export function SeatMapViewer({
       const overlayIdentity = target.getAttribute(SEAT_OVERLAY_ATTR);
       const identity = overlayIdentity
         ? { runtimeSeatId: overlayIdentity, seatId: getLocalSeatId(overlayIdentity) }
-        : getSeatIdentity(target);
+        : getSeatIdentity(target, floorKey);
       if (!identity) return;
 
       const seatElement = target.hasAttribute(SEAT_KEY_ATTR) || target.hasAttribute(SEAT_ID_ATTR)
         ? target
-        : findSeatElementByIdentity(containerRef.current, identity.runtimeSeatId);
+        : findSeatElementByIdentity(containerRef.current, identity.runtimeSeatId, floorKey);
       if (!seatElement) return;
 
       const isSelected = selectedSeatIds.has(identity.runtimeSeatId) || selectedSeatIds.has(identity.seatId);
@@ -625,7 +652,7 @@ export function SeatMapViewer({
     },
     // review IN-02: tierColorMap 미사용이므로 deps에서 제거.
     //   seatConfig 변경 시 불필요한 함수 재생성 방지.
-    [seatStates, selectedSeatIds],
+    [seatStates, selectedSeatIds, floorKey],
   );
 
   if (error) {
@@ -698,7 +725,7 @@ export function SeatMapViewer({
             ref={containerRef}
             className="mx-auto w-full max-w-full"
             role="grid"
-            aria-label="좌석 배치도"
+            aria-label={floorLabel ? `${floorLabel} 좌석 배치도` : '좌석 배치도'}
             onClick={handleClick}
             onMouseOver={handleMouseOver}
             onMouseOut={handleMouseOut}

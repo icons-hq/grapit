@@ -877,6 +877,8 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
 
                 <SeatMapViewer
                   svgUrl={currentSeatMap.svgUrl}
+                  floorKey={currentSeatMap.floorKey}
+                  floorLabel={currentSeatMap.floorLabel}
                   seatConfig={seatConfig}
                   seatStates={seatStatesMap}
                   selectedSeatIds={selectedSeatIds}
