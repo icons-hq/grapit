@@ -346,6 +346,32 @@ describe('SeatMapViewer', () => {
     expect(onSeatClick).not.toHaveBeenCalled();
   });
 
+  it('calls onSeatClick when clicking an already selected locked seat so it can be deselected', async () => {
+    const onSeatClick = vi.fn();
+    const seatStates = new Map<string, SeatState>([
+      ['A-1', 'locked'],
+    ]);
+
+    const { container } = render(
+      <SeatMapViewer
+        svgUrl="https://example.com/seats.svg"
+        seatConfig={mockSeatConfig}
+        seatStates={seatStates}
+        selectedSeatIds={new Set(['A-1'])}
+        onSeatClick={onSeatClick}
+        maxSelect={1}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-seat-id="A-1"]')).toBeTruthy();
+    });
+
+    const seatA1 = container.querySelector('[data-seat-id="A-1"]')!;
+    fireEvent.click(seatA1);
+    expect(onSeatClick).toHaveBeenCalledWith('A-1');
+  });
+
   it('PR18-CR-MAXSELECT-LOCKED: maxSelect 도달 후 locked 좌석 클릭은 viewer에서 차단된다', async () => {
     const onSeatClick = vi.fn();
     const seatStates = new Map<string, SeatState>([

@@ -164,11 +164,13 @@ async function mockAuthenticatedSession(page: Page) {
 async function stubFloorBrowserRoutes(
   page: Page,
   lockRequests: Array<{ seatId?: string }> = [],
+  unlockRequests: Array<{ seatId?: string }> = [],
 ) {
   await enableBooking(page);
   await mockAuthenticatedSession(page);
 
   const performanceDetail = createFloorBrowserPerformanceDetail();
+  const lockedSeatKeys = new Set<string>();
 
   await page.route(
     `**/api/v1/queue/performances/${FLOOR_BROWSER_PERFORMANCE_ID}/enter`,
@@ -209,8 +211,8 @@ async function stubFloorBrowserRoutes(
         body: JSON.stringify({
           showtimeId: FLOOR_BROWSER_SHOWTIME_ID,
           seats: {
-            '1F:A-1': 'available',
-            '2F:A-1': 'available',
+            '1F:A-1': lockedSeatKeys.has('1F:A-1') ? 'locked' : 'available',
+            '2F:A-1': lockedSeatKeys.has('2F:A-1') ? 'locked' : 'available',
           },
         }),
       });
@@ -234,6 +236,7 @@ async function stubFloorBrowserRoutes(
     };
     lockRequests.push(payload);
     const runtimeSeatId = payload.seatId ?? '1F:A-1';
+    lockedSeatKeys.add(runtimeSeatId);
     const separatorIndex = runtimeSeatId.indexOf(':');
     const floorKey = separatorIndex > 0 ? runtimeSeatId.slice(0, separatorIndex) : '1F';
     const seatId = separatorIndex > 0 ? runtimeSeatId.slice(separatorIndex + 1) : runtimeSeatId;
@@ -254,6 +257,7 @@ async function stubFloorBrowserRoutes(
   });
 
   await page.route('**/api/v1/booking/seats/lock-all/**', async (route: Route) => {
+    lockedSeatKeys.clear();
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -262,6 +266,10 @@ async function stubFloorBrowserRoutes(
   });
 
   await page.route('**/api/v1/booking/seats/lock/**', async (route: Route) => {
+    const pathSegments = new URL(route.request().url()).pathname.split('/');
+    const seatId = decodeURIComponent(pathSegments.at(-1) ?? '');
+    unlockRequests.push({ seatId });
+    lockedSeatKeys.delete(seatId);
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -417,7 +425,8 @@ async function createMobilePage(browser: Browser) {
 test.describe('booking floor-browser seat selection', () => {
   test('desktop center click updates summary, timer, CTA, and preserves 1F selection across floor switches', async ({ page }) => {
     const lockRequests: Array<{ seatId?: string }> = [];
-    await stubFloorBrowserRoutes(page, lockRequests);
+    const unlockRequests: Array<{ seatId?: string }> = [];
+    await stubFloorBrowserRoutes(page, lockRequests, unlockRequests);
 
     await page.goto(`/booking/${FLOOR_BROWSER_PERFORMANCE_ID}`);
     await selectDateAndShowtime(page);
@@ -426,6 +435,14 @@ test.describe('booking floor-browser seat selection', () => {
     await expect(getNextButton(page)).toBeDisabled();
     await clickSeatLabelCenter(page);
     expect(lockRequests[0]?.seatId).toBe('1F:A-1');
+    await assertPostSelectionState(page);
+    await clickSeatLabelCenter(page);
+    await expect(page.getByRole('button', { name: '1층 A열 1번 선택 해제' })).toHaveCount(0);
+    await expect(getNextButton(page)).toBeDisabled();
+    expect(unlockRequests.at(-1)?.seatId).toBe('1F:A-1');
+
+    await clickSeatLabelCenter(page);
+    expect(lockRequests.at(-1)?.seatId).toBe('1F:A-1');
     await assertPostSelectionState(page);
 
     await page.getByRole('radio', { name: '2층' }).click();

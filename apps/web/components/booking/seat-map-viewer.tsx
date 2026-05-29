@@ -546,12 +546,9 @@ export function SeatMapViewer({
       }
 
       const state = getSeatState(seatStates, identity.runtimeSeatId, identity.seatId);
-      if (isUnavailableSeatState(state)) return;
-      if (
-        !selectedSeatIds.has(identity.runtimeSeatId) &&
-        !selectedSeatIds.has(identity.seatId) &&
-        selectedSeatIds.size >= maxSelect
-      ) {
+      const isSelected = selectedSeatIds.has(identity.runtimeSeatId) || selectedSeatIds.has(identity.seatId);
+      if (isUnavailableSeatState(state) && !isSelected) return;
+      if (!isSelected && selectedSeatIds.size >= maxSelect) {
         return;
       }
       onSeatClick(identity.runtimeSeatId);
