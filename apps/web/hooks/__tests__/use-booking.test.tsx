@@ -735,7 +735,7 @@ describe('use-booking payment mutations', () => {
     });
     expect(resolvePaymentWidgetRenderAmount({ amount: 50000, variantKey: 'paypal' })).toEqual({
       currency: 'USD',
-      value: 50000,
+      value: 36,
     });
   });
 

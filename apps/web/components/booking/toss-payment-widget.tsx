@@ -17,6 +17,7 @@ import type { PaymentMethod, PaymentProvider } from '@grabit/shared';
 
 const OVERSEAS_PAYMENT_CONSENT_VERSION = '2026-05-08';
 const PAYPAL_VARIANT_KEY = 'paypal';
+const PAYPAL_WIDGET_USD_ESTIMATE_RATE = 0.00072;
 const FOREIGN_WALLET_CODES = new Set(['ALIPAY', 'TRUEMONEY', 'PAYPAL', '페이팔']);
 const OVERSEAS_CARD_CODES = new Set([
   'VISA',
@@ -161,8 +162,15 @@ export function resolvePaymentWidgetRenderAmount({
   amount: number;
   variantKey: string;
 }): { currency: 'KRW' | 'USD'; value: number } {
+  if (isPaypalPaymentWidgetVariant(variantKey)) {
+    return {
+      currency: 'USD',
+      value: Math.max(0.01, Math.round(amount * PAYPAL_WIDGET_USD_ESTIMATE_RATE * 100) / 100),
+    };
+  }
+
   return {
-    currency: isPaypalPaymentWidgetVariant(variantKey) ? 'USD' : 'KRW',
+    currency: 'KRW',
     value: amount,
   };
 }
@@ -324,6 +332,10 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
 
         const origin = window.location.origin;
         const selection = selectedPaymentMethodRef.current;
+        if (selection.paymentMethod.provider === 'PAYPAL') {
+          throw new Error('PayPal 결제는 USD 결제 금액 확정 후 활성화됩니다');
+        }
+
         const pendingUrl = selection.paymentMethod.pendingUrlRequired
           ? `${origin}/booking/${performanceId}/complete?pending=true&orderId=${encodeURIComponent(orderId)}&amount=${amount}`
           : undefined;

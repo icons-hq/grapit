@@ -185,6 +185,7 @@ function ConfirmPageContent() {
   }, [performanceId, router]);
 
   const requiresOverseasDisclaimer = selectedPaymentMethod?.requiresOverseasDisclaimer ?? false;
+  const isPayPalSelected = selectedPaymentMethod?.paymentMethod.provider === 'PAYPAL';
   const paymentMethod = useMemo(() => {
     if (!selectedPaymentMethod) {
       return {
@@ -218,6 +219,7 @@ function ConfirmPageContent() {
     if (lockFailureMessage) return;
     if (isPaymentDeadlineExpired) return;
     if (!paymentWidgetRef.current || !agreed || isProcessing) return;
+    if (isPayPalSelected) return;
     if (requiresOverseasDisclaimer && !overseasDisclaimerAgreed) return;
 
     setIsProcessing(true);
@@ -278,6 +280,7 @@ function ConfirmPageContent() {
     || !agreed
     || isProcessing
     || !widgetReady
+    || isPayPalSelected
     || isPaymentDeadlineExpired
     || (requiresOverseasDisclaimer && !overseasDisclaimerAgreed);
   const ctaText = !bookingAvailable
@@ -286,6 +289,8 @@ function ConfirmPageContent() {
     ? t('paymentRecovery.reselectPrompt')
     : isPaymentDeadlineExpired
     ? t('paymentRecovery.expiredCta')
+    : isPayPalSelected
+    ? 'PayPal 결제 준비 중'
     : isProcessing
     ? '결제 처리 중...'
     : requiresOverseasDisclaimer && !overseasDisclaimerAgreed
