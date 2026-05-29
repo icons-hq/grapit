@@ -13,6 +13,7 @@ import { ApiClientError, apiClient } from '@/lib/api-client';
 import {
   buildWidgetPaymentRequest,
   resolvePaymentMethodSelection,
+  resolvePaymentWidgetVariantKey,
 } from '@/components/booking/toss-payment-widget';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { useBookingStore } from '@/stores/use-booking-store';
@@ -658,6 +659,39 @@ describe('use-booking payment mutations', () => {
         pendingUrlRequired: true,
       },
     });
+  });
+
+  it('resolvePaymentWidgetVariantKey() defaults to DEFAULT for unset or blank env', () => {
+    const originalVariantKey = process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY;
+
+    try {
+      delete process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY;
+      expect(resolvePaymentWidgetVariantKey()).toBe('DEFAULT');
+
+      process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = '   ';
+      expect(resolvePaymentWidgetVariantKey()).toBe('DEFAULT');
+    } finally {
+      if (originalVariantKey === undefined) {
+        delete process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY;
+      } else {
+        process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = originalVariantKey;
+      }
+    }
+  });
+
+  it('resolvePaymentWidgetVariantKey() returns trimmed configured env value', () => {
+    const originalVariantKey = process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY;
+
+    try {
+      process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = '  CUSTOM_WIDGET  ';
+      expect(resolvePaymentWidgetVariantKey()).toBe('CUSTOM_WIDGET');
+    } finally {
+      if (originalVariantKey === undefined) {
+        delete process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY;
+      } else {
+        process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = originalVariantKey;
+      }
+    }
   });
 
   it('buildWidgetPaymentRequest() keeps pendingUrl for foreign wallets and international-card options for overseas card', () => {

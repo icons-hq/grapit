@@ -177,6 +177,7 @@ jobs:
             NEXT_PUBLIC_R2_HOSTNAME=${{ secrets.R2_PUBLIC_HOSTNAME }}
             NEXT_PUBLIC_SENTRY_DSN=${{ secrets.NEXT_PUBLIC_SENTRY_DSN }}
             NEXT_PUBLIC_TOSS_CLIENT_KEY=${{ secrets.NEXT_PUBLIC_TOSS_CLIENT_KEY }}
+            NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY=${{ vars.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY }}
           tags: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.WEB_SERVICE }}:${{ env.DEPLOY_SHA }}
           cache-from: type=gha,scope=grabit-web
           cache-to: type=gha,mode=max,scope=grabit-web

@@ -36,6 +36,8 @@ export default defineConfig({
         process.env['TOSS_CLIENT_KEY_TEST'] ??
         process.env['NEXT_PUBLIC_TOSS_CLIENT_KEY'] ??
         '',
+      NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY:
+        process.env['NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY'] ?? 'DEFAULT',
     },
   },
 });

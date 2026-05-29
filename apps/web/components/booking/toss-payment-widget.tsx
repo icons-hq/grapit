@@ -133,6 +133,11 @@ function resolvePaymentWidgetLocale(locale: string | undefined): PaymentWidgetLo
     : 'ko';
 }
 
+export function resolvePaymentWidgetVariantKey(): string {
+  const variantKey = process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY?.trim();
+  return variantKey ? variantKey : 'DEFAULT';
+}
+
 export function resolvePaymentMethodSelection(code: string): PaymentMethodSelection {
   if (FOREIGN_WALLET_CODES.has(code)) {
     return {
@@ -263,6 +268,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
     ref,
   ) {
     const locale = resolvePaymentWidgetLocale(useLocale());
+    const paymentWidgetVariantKey = resolvePaymentWidgetVariantKey();
     const [widgets, setWidgets] = useState<TossPaymentsWidgets | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -370,7 +376,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
           const [paymentMethodWidget, agreementWidget] = await Promise.all([
             activeWidgets.renderPaymentMethods({
               selector: '#payment-method',
-              variantKey: 'DEFAULT',
+              variantKey: paymentWidgetVariantKey,
             }),
             activeWidgets.renderAgreement({
               selector: '#agreement',
@@ -408,7 +414,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
         void paymentWidgetInstance?.destroy();
         void agreementWidgetInstance?.destroy();
       };
-    }, [widgets, amount, onReady, updateSelectedPaymentMethod]);
+    }, [widgets, amount, onReady, updateSelectedPaymentMethod, paymentWidgetVariantKey]);
 
     if (error) {
       return (
