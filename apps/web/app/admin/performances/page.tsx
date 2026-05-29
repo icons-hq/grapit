@@ -3,8 +3,12 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Plus, Trash2 } from 'lucide-react';
-import { useAdminPerformances, useDeletePerformance } from '@/hooks/use-admin';
+import { Archive, Plus, Trash2 } from 'lucide-react';
+import {
+  useAdminPerformances,
+  useArchivePerformance,
+  useDeletePerformance,
+} from '@/hooks/use-admin';
 import { StatusFilter } from '@/components/admin/status-filter';
 import { StatusBadge } from '@/components/performance/status-badge';
 import { PaginationNav } from '@/components/performance/pagination-nav';
@@ -63,6 +67,20 @@ export default function AdminPerformancesPage() {
   });
 
   const deleteMutation = useDeletePerformance();
+  const archiveMutation = useArchivePerformance();
+
+  function handleArchive(id: string) {
+    archiveMutation.mutate(id, {
+      onSuccess: () => {
+        toast.success('공연이 판매종료 처리되었습니다.');
+      },
+      onError: (error) => {
+        toast.error('판매종료 처리할 수 없습니다.', {
+          description: error instanceof Error ? error.message : undefined,
+        });
+      },
+    });
+  }
 
   function handleDelete(id: string) {
     deleteMutation.mutate(id, {
@@ -124,7 +142,7 @@ export default function AdminPerformancesPage() {
               <TableHead scope="col" className="hidden md:table-cell">장르</TableHead>
               <TableHead scope="col" className="hidden lg:table-cell">기간</TableHead>
               <TableHead scope="col">상태</TableHead>
-              <TableHead scope="col" className="w-16">액션</TableHead>
+              <TableHead scope="col" className="w-24">액션</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -196,46 +214,92 @@ export default function AdminPerformancesPage() {
                   <StatusBadge status={perf.status} />
                 </TableCell>
                 <TableCell>
-                  <AlertDialog>
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <AlertDialogTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="text-gray-400 hover:text-red-600"
-                              onClick={(e) => e.stopPropagation()}
-                              aria-label={`${perf.title} 삭제`}
+                  <div className="flex items-center justify-end gap-1">
+                    {perf.status !== 'ended' && (
+                      <AlertDialog>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <AlertDialogTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="text-gray-400 hover:text-primary"
+                                  onClick={(e) => e.stopPropagation()}
+                                  aria-label={`${perf.title} 판매종료 처리`}
+                                >
+                                  <Archive className="h-4 w-4" />
+                                </Button>
+                              </AlertDialogTrigger>
+                            </TooltipTrigger>
+                            <TooltipContent>판매종료 처리</TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                        <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>
+                              공연을 판매종료 처리하시겠습니까?
+                            </AlertDialogTitle>
+                            <AlertDialogDescription>
+                              공개 목록과 예매 진입에서는 숨기고, 기존 예매·결제·입장 이력은 그대로 보존합니다.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>취소</AlertDialogCancel>
+                            <AlertDialogAction
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleArchive(perf.id);
+                              }}
+                              disabled={archiveMutation.isPending}
                             >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </AlertDialogTrigger>
-                        </TooltipTrigger>
-                        <TooltipContent>삭제</TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                    <AlertDialogContent onClick={(e) => e.stopPropagation()}>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>공연을 삭제하시겠습니까?</AlertDialogTitle>
-                        <AlertDialogDescription>
-                          이 공연의 모든 정보(회차, 캐스팅, 좌석맵)가 함께 삭제됩니다. 이 작업은 되돌릴 수 없습니다.
-                        </AlertDialogDescription>
-                      </AlertDialogHeader>
-                      <AlertDialogFooter>
-                        <AlertDialogCancel>취소</AlertDialogCancel>
-                        <AlertDialogAction
-                          variant="destructive"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDelete(perf.id);
-                          }}
-                        >
-                          삭제
-                        </AlertDialogAction>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
+                              판매종료 처리
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    )}
+                    <AlertDialog>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <AlertDialogTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="text-gray-400 hover:text-red-600"
+                                onClick={(e) => e.stopPropagation()}
+                                aria-label={`${perf.title} 삭제`}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </AlertDialogTrigger>
+                          </TooltipTrigger>
+                          <TooltipContent>삭제</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                      <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>공연을 삭제하시겠습니까?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            이 공연의 모든 정보(회차, 캐스팅, 좌석맵)가 함께 삭제됩니다. 예매·결제·입장 이력이 있으면 삭제되지 않습니다. 운영 중인 공연은 판매종료 처리를 사용하세요.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>취소</AlertDialogCancel>
+                          <AlertDialogAction
+                            variant="destructive"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDelete(perf.id);
+                            }}
+                          >
+                            삭제
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}

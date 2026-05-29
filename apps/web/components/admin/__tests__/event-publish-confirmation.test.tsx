@@ -6,7 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { apiClient } from '@/lib/api-client';
-import { usePublishPerformance } from '@/hooks/use-admin';
+import { useArchivePerformance, usePublishPerformance } from '@/hooks/use-admin';
 import {
   EventPublishConfirmationDialog,
   type EventPublishReviewSummary,
@@ -178,5 +178,34 @@ describe('usePublishPerformance', () => {
         { showErrorToast: false },
       );
     });
+  });
+});
+
+describe('useArchivePerformance', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('marks a performance as ended without calling the hard-delete endpoint', async () => {
+    (apiClient.put as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      id: 'perf-1',
+      status: 'ended',
+    });
+
+    const archiveMutation = renderHook(
+      () => useArchivePerformance(),
+      { wrapper: createWrapper() },
+    );
+
+    await archiveMutation.result.current.mutateAsync('perf-1');
+
+    await waitFor(() => {
+      expect(apiClient.put).toHaveBeenCalledWith(
+        '/api/v1/admin/performances/perf-1',
+        { status: 'ended' },
+        { showErrorToast: false },
+      );
+    });
+    expect(apiClient.delete).not.toHaveBeenCalled();
   });
 });
