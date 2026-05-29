@@ -13,10 +13,19 @@ import { loadTossPayments, type TossPaymentsWidgets } from '@tosspayments/tosspa
 import { Loader2 } from 'lucide-react';
 import { apiClient } from '@/lib/api-client';
 import { resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
-import type { PaymentMethod, PaymentProvider } from '@grabit/shared';
+import { TICKET_SERVICE_FEE_KRW } from '@grabit/shared';
+import type {
+  FloorAwareSeatSelection,
+  PaymentMethod,
+  PaymentProvider,
+  PrepareReservationResponse,
+  ProviderChargeQuote,
+} from '@grabit/shared';
 
 const OVERSEAS_PAYMENT_CONSENT_VERSION = '2026-05-08';
-const FOREIGN_WALLET_CODES = new Set(['ALIPAY', 'TRUEMONEY']);
+const PAYPAL_VARIANT_KEY = 'paypal';
+const PAYPAL_WIDGET_USD_ESTIMATE_RATE = 0.00068;
+const FOREIGN_WALLET_CODES = new Set(['ALIPAY', 'TRUEMONEY', 'PAYPAL', '페이팔']);
 const OVERSEAS_CARD_CODES = new Set([
   'VISA',
   'MASTER',
@@ -36,6 +45,8 @@ const SIMPLE_PAY_PROVIDER_BY_CODE = {
 const FOREIGN_PROVIDER_BY_CODE = {
   ALIPAY: 'ALIPAY_PLUS',
   TRUEMONEY: 'TRUEMONEY',
+  PAYPAL: 'PAYPAL',
+  페이팔: 'PAYPAL',
 } as const satisfies Record<string, PaymentProvider>;
 
 const LOCALE_TO_COUNTRY = {
@@ -58,12 +69,13 @@ interface TossPaymentWidgetProps {
   customerName: string;
   customerEmail: string;
   customerMobilePhone?: string;
+  selectedSeats: FloorAwareSeatSelection[];
   onReady: () => void;
   onPaymentMethodChange?: (selection: PaymentMethodSelection) => void;
 }
 
 export interface TossPaymentWidgetRef {
-  requestPayment: () => Promise<void>;
+  requestPayment: (prepareResult?: PrepareReservationResponse) => Promise<void>;
 }
 
 export interface PaymentMethodSelection {
@@ -82,6 +94,9 @@ export interface TossPaymentBranchResponse {
   pendingUrl?: string;
   asyncStatus: 'sync' | 'pending_webhook';
   useInternationalCardOnly: boolean;
+  providerChargeQuote?: ProviderChargeQuote;
+  checkoutEnabled?: boolean;
+  disabledReason?: string;
 }
 
 interface WidgetPaymentRequestPayload {
@@ -133,16 +148,55 @@ function resolvePaymentWidgetLocale(locale: string | undefined): PaymentWidgetLo
     : 'ko';
 }
 
+export function resolvePaymentWidgetVariantKey(): string {
+  return resolvePaymentWidgetVariantKeys()[0] ?? 'DEFAULT';
+}
+
+export function resolvePaymentWidgetVariantKeys(): string[] {
+  const rawVariantKeys = process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY ?? 'DEFAULT';
+  const variantKeys = rawVariantKeys
+    .split(',')
+    .map((variantKey) => variantKey.trim())
+    .filter((variantKey) => variantKey.length > 0);
+
+  return variantKeys.length > 0 ? [...new Set(variantKeys)] : ['DEFAULT'];
+}
+
+export function isPaypalPaymentWidgetVariant(variantKey: string): boolean {
+  return variantKey.toLowerCase() === PAYPAL_VARIANT_KEY;
+}
+
+export function resolvePaymentWidgetRenderAmount({
+  amount,
+  variantKey,
+}: {
+  amount: number;
+  variantKey: string;
+}): { currency: 'KRW' | 'USD'; value: number } {
+  if (isPaypalPaymentWidgetVariant(variantKey)) {
+    return {
+      currency: 'USD',
+      value: Math.max(0.01, Math.round(amount * PAYPAL_WIDGET_USD_ESTIMATE_RATE * 100) / 100),
+    };
+  }
+
+  return {
+    currency: 'KRW',
+    value: amount,
+  };
+}
+
 export function resolvePaymentMethodSelection(code: string): PaymentMethodSelection {
   if (FOREIGN_WALLET_CODES.has(code)) {
+    const provider = FOREIGN_PROVIDER_BY_CODE[code as keyof typeof FOREIGN_PROVIDER_BY_CODE];
     return {
       code,
       requiresOverseasDisclaimer: true,
       paymentMethod: {
         method: 'FOREIGN_EASY_PAY',
-        provider: FOREIGN_PROVIDER_BY_CODE[code as keyof typeof FOREIGN_PROVIDER_BY_CODE],
+        provider,
         currency: 'USD',
-        pendingUrlRequired: true,
+        ...(provider === 'PAYPAL' ? {} : { pendingUrlRequired: true }),
         overseasPaymentConsent: createOverseasConsent(),
       },
     };
@@ -184,6 +238,63 @@ export function resolvePaymentMethodSelection(code: string): PaymentMethodSelect
   };
 }
 
+export function resolvePaymentRequestAmount({
+  amount,
+  currency,
+  providerChargeQuote,
+}: {
+  amount: number;
+  currency: string;
+  providerChargeQuote?: ProviderChargeQuote;
+}): { currency: string; value: number } {
+  if (providerChargeQuote) {
+    return {
+      currency: providerChargeQuote.currency,
+      value: providerChargeQuote.amountMinor / 100,
+    };
+  }
+
+  return {
+    currency,
+    value: amount,
+  };
+}
+
+function buildPayPalProducts({
+  selectedSeats,
+  providerChargeQuote,
+}: {
+  selectedSeats: FloorAwareSeatSelection[];
+  providerChargeQuote: ProviderChargeQuote;
+}): NonNullable<WidgetPaymentRequestPayload['foreignEasyPay']>['products'] {
+  const totalKrw = selectedSeats.reduce((sum, seat) => sum + seat.price, 0)
+    + selectedSeats.length * TICKET_SERVICE_FEE_KRW;
+  let allocatedMinor = 0;
+  const ticketProducts = selectedSeats.map((seat) => {
+    const unitAmountMinor = Math.floor((providerChargeQuote.amountMinor * seat.price) / totalKrw);
+    allocatedMinor += unitAmountMinor;
+
+    return {
+      name: `${seat.tierName} ${seat.row}열 ${seat.number}번`,
+      quantity: 1,
+      unitAmount: unitAmountMinor / 100,
+      currency: providerChargeQuote.currency,
+      description: `${seat.floorLabel} ${seat.row}열 ${seat.number}번`,
+    };
+  });
+
+  return [
+    ...ticketProducts,
+    {
+      name: 'Service fee / rounding adjustment',
+      quantity: 1,
+      unitAmount: (providerChargeQuote.amountMinor - allocatedMinor) / 100,
+      currency: providerChargeQuote.currency,
+      description: 'Service fee / rounding adjustment',
+    },
+  ];
+}
+
 export function buildWidgetPaymentRequest({
   branch,
   amount,
@@ -192,6 +303,7 @@ export function buildWidgetPaymentRequest({
   customerMobilePhone,
   orderName,
   locale,
+  selectedSeats = [],
 }: {
   branch: TossPaymentBranchResponse;
   amount: number;
@@ -200,6 +312,7 @@ export function buildWidgetPaymentRequest({
   customerMobilePhone?: string;
   orderName: string;
   locale: string;
+  selectedSeats?: FloorAwareSeatSelection[];
 }): WidgetPaymentRequestPayload {
   const resolvedLocale = resolvePaymentWidgetLocale(locale);
   const baseRequest: WidgetPaymentRequestPayload = {
@@ -217,11 +330,12 @@ export function buildWidgetPaymentRequest({
   }
 
   if (branch.method === 'FOREIGN_EASY_PAY') {
-    return {
-      ...baseRequest,
-      foreignEasyPay: {
-        country: LOCALE_TO_COUNTRY[resolvedLocale],
-        products: [
+    const products = branch.provider === 'PAYPAL' && branch.providerChargeQuote
+      ? buildPayPalProducts({
+          selectedSeats,
+          providerChargeQuote: branch.providerChargeQuote,
+        })
+      : [
           {
             name: orderName,
             quantity: 1,
@@ -229,7 +343,13 @@ export function buildWidgetPaymentRequest({
             currency: branch.currency,
             description: orderName,
           },
-        ],
+        ];
+
+    return {
+      ...baseRequest,
+      foreignEasyPay: {
+        country: LOCALE_TO_COUNTRY[resolvedLocale],
+        products,
       },
     };
   }
@@ -257,16 +377,20 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
       customerName,
       customerEmail,
       customerMobilePhone,
+      selectedSeats,
       onReady,
       onPaymentMethodChange,
     },
     ref,
   ) {
     const locale = resolvePaymentWidgetLocale(useLocale());
+    const paymentWidgetVariantKeys = resolvePaymentWidgetVariantKeys();
+    const [paymentWidgetVariantKey, setPaymentWidgetVariantKey] = useState(
+      paymentWidgetVariantKeys[0] ?? 'DEFAULT',
+    );
     const [widgets, setWidgets] = useState<TossPaymentsWidgets | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const readyRef = useRef(false);
     const initRef = useRef(false);
     const selectedPaymentMethodRef = useRef<PaymentMethodSelection>(resolvePaymentMethodSelection('CARD'));
 
@@ -277,13 +401,23 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
     }, [onPaymentMethodChange]);
 
     useImperativeHandle(ref, () => ({
-      requestPayment: async () => {
+      requestPayment: async (prepareResult) => {
         if (!widgets) {
           throw new Error('결제 위젯이 초기화되지 않았습니다');
+        }
+        if (isLoading) {
+          throw new Error('결제 위젯을 불러오는 중입니다');
         }
 
         const origin = window.location.origin;
         const selection = selectedPaymentMethodRef.current;
+        const paypalQuote = selection.paymentMethod.provider === 'PAYPAL'
+          ? prepareResult?.providerChargeQuote
+          : undefined;
+        if (selection.paymentMethod.provider === 'PAYPAL' && (prepareResult?.checkoutEnabled !== true || !paypalQuote)) {
+          throw new Error(prepareResult?.disabledReason ?? 'PayPal 결제 금액을 확정하지 못했습니다.');
+        }
+
         const pendingUrl = selection.paymentMethod.pendingUrlRequired
           ? `${origin}/booking/${performanceId}/complete?pending=true&orderId=${encodeURIComponent(orderId)}&amount=${amount}`
           : undefined;
@@ -297,11 +431,15 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
         }, {
           showErrorToast: false,
         });
+        if (selection.paymentMethod.provider === 'PAYPAL' && (branch.checkoutEnabled !== true || !branch.providerChargeQuote)) {
+          throw new Error(branch.disabledReason ?? 'PayPal 결제 금액을 확정하지 못했습니다.');
+        }
 
-        await widgets.setAmount({
+        await widgets.setAmount(resolvePaymentRequestAmount({
+          amount,
           currency: branch.currency,
-          value: amount,
-        });
+          providerChargeQuote: branch.providerChargeQuote,
+        }));
 
         const requestPayload = buildWidgetPaymentRequest({
           branch,
@@ -311,7 +449,14 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
           customerMobilePhone,
           orderName,
           locale,
+          selectedSeats,
         });
+        if (selection.paymentMethod.provider === 'PAYPAL' && branch.providerChargeQuote) {
+          const url = new URL(requestPayload.successUrl);
+          url.searchParams.set('provider', 'PAYPAL');
+          url.searchParams.set('providerChargeAmount', branch.providerChargeQuote.amountDecimal);
+          requestPayload.successUrl = url.toString();
+        }
 
         await widgets.requestPayment(
           requestPayload as Parameters<TossPaymentsWidgets['requestPayment']>[0],
@@ -327,6 +472,8 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
       customerMobilePhone,
       orderName,
       locale,
+      isLoading,
+      selectedSeats,
     ]);
 
     useEffect(() => {
@@ -356,7 +503,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
     }, [customerKey]);
 
     useEffect(() => {
-      if (!widgets || readyRef.current) return;
+      if (!widgets) return;
       const activeWidgets = widgets;
 
       let mounted = true;
@@ -365,12 +512,18 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
 
       async function render() {
         try {
-          await activeWidgets.setAmount({ currency: 'KRW', value: amount });
+          setIsLoading(true);
+          setError(null);
+
+          await activeWidgets.setAmount(resolvePaymentWidgetRenderAmount({
+            amount,
+            variantKey: paymentWidgetVariantKey,
+          }));
 
           const [paymentMethodWidget, agreementWidget] = await Promise.all([
             activeWidgets.renderPaymentMethods({
               selector: '#payment-method',
-              variantKey: 'DEFAULT',
+              variantKey: paymentWidgetVariantKey,
             }),
             activeWidgets.renderAgreement({
               selector: '#agreement',
@@ -388,7 +541,6 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
             return;
           }
 
-          readyRef.current = true;
           setIsLoading(false);
           onReady();
         } catch (err) {
@@ -408,7 +560,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
         void paymentWidgetInstance?.destroy();
         void agreementWidgetInstance?.destroy();
       };
-    }, [widgets, amount, onReady, updateSelectedPaymentMethod]);
+    }, [widgets, amount, onReady, updateSelectedPaymentMethod, paymentWidgetVariantKey]);
 
     if (error) {
       return (
@@ -420,6 +572,33 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
 
     return (
       <div className="space-y-4">
+        {paymentWidgetVariantKeys.length > 1 && (
+          <div
+            role="tablist"
+            aria-label="결제 UI"
+            className="grid grid-cols-2 gap-2 rounded-lg bg-gray-100 p-1"
+          >
+            {paymentWidgetVariantKeys.map((variantKey) => {
+              const selected = paymentWidgetVariantKey === variantKey;
+              return (
+                <button
+                  key={variantKey}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  className={`h-10 rounded-md px-3 text-sm font-semibold transition ${
+                    selected
+                      ? 'bg-white text-gray-950 shadow-sm'
+                      : 'text-gray-600 hover:text-gray-950'
+                  }`}
+                  onClick={() => setPaymentWidgetVariantKey(variantKey)}
+                >
+                  {isPaypalPaymentWidgetVariant(variantKey) ? 'PayPal' : '국내 결제'}
+                </button>
+              );
+            })}
+          </div>
+        )}
         {isLoading && (
           <div className="flex min-h-[200px] items-center justify-center">
             <Loader2 className="h-8 w-8 animate-spin text-gray-400" />

@@ -27,8 +27,16 @@ import type {
   PaymentStatus,
 } from '@grabit/shared';
 import { TossPaymentsClient } from './toss-payments.client.js';
+import { ProviderChargeQuoteService } from './provider-charge-quote.service.js';
 
 type TossWebhookProvider = PaymentProvider | 'ALIPAY';
+type ProviderChargeQuote = {
+  currency: 'USD';
+  amountMinor: number;
+  amountDecimal: string;
+  rate: string;
+  quotedAt: string;
+};
 
 const ASYNC_DONE_SEAT_FAILURE_CANCEL_REASON = '판매 불가능 좌석으로 인한 자동 취소';
 const TICKET_SERVICE_FEE_KRW = 2000;
@@ -58,6 +66,9 @@ export interface TossPaymentBranch {
   pendingUrl?: string;
   asyncStatus: TossPaymentAsyncStatus;
   useInternationalCardOnly: boolean;
+  providerChargeQuote?: ProviderChargeQuote;
+  checkoutEnabled?: boolean;
+  disabledReason?: string;
 }
 
 export type TossWebhookEventType =
@@ -129,9 +140,10 @@ export class PaymentService {
     @Optional() private readonly bookingGateway?: BookingGateway,
     @Optional() private readonly qrTicketService?: QrTicketService,
     @Optional() private readonly tossClient?: TossPaymentsClient,
+    @Optional() private readonly providerChargeQuoteService?: ProviderChargeQuoteService,
   ) {}
 
-  prepareTossPaymentBranch(input: TossPaymentBranchRequest): TossPaymentBranch {
+  async prepareTossPaymentBranch(input: TossPaymentBranchRequest): Promise<TossPaymentBranch> {
     const { orderId, paymentMethod, successUrl, failUrl, pendingUrl } = input;
 
     if (this.requiresAsyncWebhookBranch(paymentMethod)) {
@@ -149,6 +161,37 @@ export class PaymentService {
         pendingUrl,
         asyncStatus: 'pending_webhook',
         useInternationalCardOnly: false,
+      };
+    }
+
+    if (
+      paymentMethod.method === 'FOREIGN_EASY_PAY'
+      && paymentMethod.provider === 'PAYPAL'
+    ) {
+      const availability =
+        this.providerChargeQuoteService?.getPaypalAvailability()
+        ?? {
+          enabled: false,
+          disabledReason: 'PAYPAL_CHECKOUT_UNAVAILABLE',
+        };
+      const providerChargeQuote = await this.findStoredProviderChargeQuote(orderId);
+      const checkoutEnabled = availability.enabled && !!providerChargeQuote;
+      const disabledReason = availability.enabled
+        ? providerChargeQuote ? undefined : 'PAYPAL_PROVIDER_CHARGE_QUOTE_MISSING'
+        : availability.disabledReason;
+
+      return {
+        orderId,
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'PAYPAL',
+        currency: 'USD',
+        successUrl,
+        failUrl,
+        asyncStatus: 'sync',
+        useInternationalCardOnly: false,
+        checkoutEnabled,
+        ...(disabledReason ? { disabledReason } : {}),
+        ...(providerChargeQuote ? { providerChargeQuote } : {}),
       };
     }
 
@@ -175,6 +218,45 @@ export class PaymentService {
       asyncStatus: 'sync',
       useInternationalCardOnly: false,
     };
+  }
+
+  private async findStoredProviderChargeQuote(
+    orderId: string,
+  ): Promise<ProviderChargeQuote | undefined> {
+    const [reservation] = await this.db
+      .select({
+        providerChargeCurrency: reservations.providerChargeCurrency,
+        providerChargeAmountMinor: reservations.providerChargeAmountMinor,
+        providerChargeRate: reservations.providerChargeRate,
+        providerChargeQuotedAt: reservations.providerChargeQuotedAt,
+      })
+      .from(reservations)
+      .where(eq(reservations.tossOrderId, orderId));
+
+    if (
+      reservation?.providerChargeCurrency !== 'USD'
+      || typeof reservation.providerChargeAmountMinor !== 'number'
+      || !reservation.providerChargeRate
+      || !reservation.providerChargeQuotedAt
+    ) {
+      return undefined;
+    }
+
+    return {
+      currency: 'USD',
+      amountMinor: reservation.providerChargeAmountMinor,
+      amountDecimal: this.formatProviderMinorToDecimal(
+        reservation.providerChargeAmountMinor,
+      ),
+      rate: reservation.providerChargeRate,
+      quotedAt: reservation.providerChargeQuotedAt.toISOString(),
+    };
+  }
+
+  private formatProviderMinorToDecimal(amountMinor: number): string {
+    const whole = Math.floor(amountMinor / 100);
+    const fraction = String(amountMinor % 100).padStart(2, '0');
+    return `${whole}.${fraction}`;
   }
 
   async getPaymentByReservationId(reservationId: string): Promise<PaymentInfo | null> {
@@ -314,7 +396,22 @@ export class PaymentService {
 
     const provider = this.resolveWebhookProvider(payload);
     const method = this.resolveWebhookMethod(payload, provider);
-    const amount = payload.data.totalAmount ?? reservation.totalAmount;
+    const amount = provider === 'PAYPAL'
+      ? reservation.totalAmount
+      : payload.data.totalAmount ?? reservation.totalAmount;
+
+    if (
+      provider === 'PAYPAL'
+      && payload.eventType === 'PAYMENT_STATUS_CHANGED'
+      && (paymentStatus === 'IN_PROGRESS' || paymentStatus === 'DONE')
+    ) {
+      this.assertExistingPaymentIdentityMatchesWebhook({
+        existingPayment,
+        reservation,
+        payload,
+      });
+      return;
+    }
 
     if (paymentStatus === 'DONE') {
       this.assertExistingPaymentIdentityMatchesWebhook({
@@ -364,7 +461,7 @@ export class PaymentService {
       tossOrderId: payload.data.orderId,
       method,
       provider,
-      currency: payload.data.currency ?? 'KRW',
+      currency: provider === 'PAYPAL' ? 'KRW' : payload.data.currency ?? 'KRW',
       asyncStatus,
       amount,
       status: paymentStatus,

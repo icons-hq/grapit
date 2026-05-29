@@ -63,6 +63,32 @@ export const overseasPaymentConsentSchema = z.object({
   refundDelayNotice: z.string().min(1).nullable().optional(),
 });
 
+function isPositiveProviderDecimalString(value: string): boolean {
+  if (!/^\d+(\.\d{1,2})?$/.test(value)) {
+    return false;
+  }
+
+  const [whole, fraction = ''] = value.split('.');
+  const amountMinor =
+    BigInt(whole) * 100n + BigInt(fraction.padEnd(2, '0') || '0');
+  return amountMinor > 0n;
+}
+
+const providerDecimalStringSchema = z
+  .string()
+  .refine(
+    isPositiveProviderDecimalString,
+    'provider charge amount는 positive decimal string이어야 합니다',
+  );
+
+export const providerChargeQuoteSchema = z.object({
+  currency: z.literal('USD'),
+  amountMinor: z.number().int().positive('provider charge amount는 0보다 커야 합니다'),
+  amountDecimal: providerDecimalStringSchema,
+  rate: z.string().regex(/^\d+(\.\d+)?$/, 'provider charge rate는 decimal string이어야 합니다'),
+  quotedAt: isoDatetime('provider charge quote 시각'),
+});
+
 export const paymentMethodSchema = z.object({
   method: z.enum([
     'CARD',
@@ -79,6 +105,7 @@ export const paymentMethodSchema = z.object({
     'KAKAOPAY',
     'ALIPAY_PLUS',
     'TRUEMONEY',
+    'PAYPAL',
   ]),
   currency: z.string().min(1).optional(),
   pendingUrlRequired: z.boolean().optional(),
@@ -187,17 +214,32 @@ export const prepareReservationResponseSchema = z.object({
   paymentDeadlineAt: isoDatetime('결제 마감 시각'),
   bookingPolicy: bookingPolicySchema,
   paymentMethod: paymentMethodSchema,
+  providerChargeQuote: providerChargeQuoteSchema.optional(),
+  checkoutEnabled: z.boolean().optional(),
+  disabledReason: z.string().min(1).optional(),
 });
 
 export type PrepareReservationResponseInput = z.infer<
   typeof prepareReservationResponseSchema
 >;
 
-export const confirmPaymentSchema = z.object({
+const confirmPaymentBaseSchema = z.object({
   paymentKey: z.string().min(1, '결제 키가 필요합니다'),
   orderId: z.string().min(1, '주문 ID가 필요합니다'),
-  amount: z.number().int().positive('결제 금액은 0보다 커야 합니다'),
 });
+
+export const confirmPaymentSchema = z.union([
+  confirmPaymentBaseSchema.extend({
+    provider: z.literal('PAYPAL'),
+    providerChargeAmount: providerDecimalStringSchema,
+    amount: z.never().optional(),
+  }),
+  confirmPaymentBaseSchema.extend({
+    amount: z.number().int().positive('결제 금액은 0보다 커야 합니다'),
+    provider: z.never().optional(),
+    providerChargeAmount: z.never().optional(),
+  }),
+]);
 
 export type ConfirmPaymentInput = z.infer<typeof confirmPaymentSchema>;
 

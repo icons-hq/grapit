@@ -1125,6 +1125,142 @@ describe('ReservationService', () => {
       }
     });
 
+    it('prepareReservation stores and returns a PayPal provider charge quote when checkout is enabled', async () => {
+      vi.useFakeTimers();
+      const now = new Date('2026-05-29T10:00:00.000Z');
+      vi.setSystemTime(now);
+
+      try {
+        const userId = randomUUID();
+        const providerChargeQuoteService = {
+          getPaypalAvailability: vi.fn().mockReturnValue({ enabled: true }),
+          createPaypalQuote: vi.fn().mockReturnValue({
+            currency: 'USD',
+            amountMinor: 7490,
+            amountDecimal: '74.90',
+            rate: '0.00072',
+            quotedAt: now.toISOString(),
+          }),
+        };
+        const paypalService = new ReservationService(
+          mockDb as never,
+          mockTossClient as unknown as TossPaymentsClient,
+          mockBookingService as unknown as BookingService,
+          mockBookingGateway as unknown as BookingGateway,
+          mockFeatureFlags as unknown as FeatureFlagsService,
+          mockConsentService as unknown as ConsentService,
+          undefined,
+          undefined,
+          providerChargeQuoteService as never,
+        );
+        const dto = {
+          showtimeId: randomUUID(),
+          orderId: 'GRP-PAYPAL-PREPARE',
+          seats: [
+            { seatId: 'A-1', tierName: 'VIP', price: 50000, row: 'A', number: '1' },
+            { seatId: 'A-2', tierName: 'VIP', price: 50000, row: 'A', number: '2' },
+          ],
+          amount: 104000,
+          consentItems: makeConsentItems(),
+          queueAdmission: makeQueueAdmission(now),
+          paymentDeadlineAt: now.toISOString(),
+          bookingPolicy: {
+            maxTicketsPerOrder: 2,
+            cancellationChangePolicy: 'CANCEL_ONLY' as const,
+            sameGradeChangeEnabled: false,
+            paymentWindowMinutes: 7,
+            seatHoldMinutes: 10,
+          },
+          paymentMethod: {
+            method: 'FOREIGN_EASY_PAY' as const,
+            provider: 'PAYPAL' as const,
+            currency: 'USD',
+          },
+        };
+        const insertedValues: unknown[] = [];
+        setupPrepareBase(dto);
+        const mockTx = {
+          insert: vi.fn().mockReturnValue({
+            values: vi.fn((values: unknown) => {
+              insertedValues.push(values);
+              return {
+                returning: vi.fn().mockResolvedValue([{ id: 'reservation-created', tossOrderId: dto.orderId }]),
+              };
+            }),
+          }),
+        };
+        mockDb.transaction.mockImplementation(async (cb: (tx: typeof mockTx) => Promise<unknown>) => cb(mockTx));
+
+        const result = await paypalService.prepareReservation(dto, userId);
+
+        expect(providerChargeQuoteService.createPaypalQuote).toHaveBeenCalledWith({
+          reservationPayableAmount: 104000,
+          now,
+        });
+        expect(insertedValues[0]).toEqual(expect.objectContaining({
+          providerChargeCurrency: 'USD',
+          providerChargeAmountMinor: 7490,
+          providerChargeRate: '0.00072',
+          providerChargeQuotedAt: now,
+        }));
+        expect(result).toEqual(expect.objectContaining({
+          checkoutEnabled: true,
+          providerChargeQuote: {
+            currency: 'USD',
+            amountMinor: 7490,
+            amountDecimal: '74.90',
+            rate: '0.00072',
+            quotedAt: now.toISOString(),
+          },
+        }));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('prepareReservation keeps existing PayPal order disabled when its stored quote is missing', async () => {
+      const userId = randomUUID();
+      const providerChargeQuoteService = {
+        getPaypalAvailability: vi.fn().mockReturnValue({ enabled: true }),
+        createPaypalQuote: vi.fn(),
+      };
+      const paypalService = new ReservationService(
+        mockDb as never,
+        mockTossClient as unknown as TossPaymentsClient,
+        mockBookingService as unknown as BookingService,
+        mockBookingGateway as unknown as BookingGateway,
+        mockFeatureFlags as unknown as FeatureFlagsService,
+        mockConsentService as unknown as ConsentService,
+        undefined,
+        undefined,
+        providerChargeQuoteService as never,
+      );
+      const dto = {
+        showtimeId: randomUUID(),
+        orderId: 'GRP-PAYPAL-EXISTING-NO-QUOTE',
+        seats: [seatSelection('A-1')],
+        amount: 52000,
+        consentItems: makeConsentItems(),
+        paymentMethod: {
+          method: 'FOREIGN_EASY_PAY' as const,
+          provider: 'PAYPAL' as const,
+          currency: 'USD',
+        },
+      };
+      setupExistingPendingOrder({ ...dto, userId, seats: dto.seats });
+
+      const result = await paypalService.prepareReservation(dto, userId);
+
+      expect(result).toEqual(expect.objectContaining({
+        reservationId: 'reservation-existing',
+        checkoutEnabled: false,
+        disabledReason: 'PAYPAL_PROVIDER_CHARGE_QUOTE_MISSING',
+      }));
+      expect(result.providerChargeQuote).toBeUndefined();
+      expect(providerChargeQuoteService.createPaypalQuote).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
     it('prepareReservation stores canonical tierName and price from seat map config', async () => {
       const userId = randomUUID();
       const dto = {

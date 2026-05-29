@@ -252,7 +252,7 @@ function ConfirmPageContent() {
       reservationIdRef.current = result.reservationId;
 
       // 2. Initiate Toss payment — SDK redirects the browser
-      await paymentWidgetRef.current.requestPayment();
+      await paymentWidgetRef.current.requestPayment(result);
     } catch (err) {
       setIsProcessing(false);
       const errorMessage =
@@ -371,6 +371,7 @@ function ConfirmPageContent() {
               customerName={bookerInfo.name}
               customerEmail={user.email}
               customerMobilePhone={bookerInfo.phone}
+              selectedSeats={selectedSeats.map(toFloorAwareSeatSelection)}
               onReady={handleWidgetReady}
               onPaymentMethodChange={handlePaymentMethodChange}
             />

@@ -13,6 +13,7 @@ import {
   type BookingPaymentStatus,
 } from '@/hooks/use-booking';
 import { ApiClientError } from '@/lib/api-client';
+import { buildConfirmPaymentPayload } from '@/lib/booking/payment-return';
 import { useBookingStore } from '@/stores/use-booking-store';
 import type { ReservationDetail } from '@grabit/shared';
 
@@ -141,10 +142,17 @@ function CompletePageContent() {
   const paymentKey = searchParams.get('paymentKey');
   const orderId = searchParams.get('orderId');
   const amount = searchParams.get('amount');
+  const provider = searchParams.get('provider');
+  const providerChargeAmount = searchParams.get('providerChargeAmount');
   const parsedAmount = Number(amount);
   const hasValidAmount = amount !== null && Number.isFinite(parsedAmount) && parsedAmount > 0;
+  const hasValidProviderChargeAmount =
+    provider === 'PAYPAL'
+    && !!providerChargeAmount?.trim();
   const hasPendingReturnParams = isPendingReturn && !!orderId && hasValidAmount;
-  const hasConfirmParams = !!paymentKey && !!orderId && hasValidAmount;
+  const hasConfirmParams = !!paymentKey
+    && !!orderId
+    && (provider === 'PAYPAL' ? hasValidProviderChargeAmount : hasValidAmount);
 
   const clearBooking = useBookingStore((s) => s.clearBooking);
 
@@ -189,7 +197,7 @@ function CompletePageContent() {
       || isPendingReturn
       || !paymentKey
       || !orderId
-      || !hasValidAmount
+      || !(provider === 'PAYPAL' ? hasValidProviderChargeAmount : hasValidAmount)
     ) {
       return;
     }
@@ -199,11 +207,13 @@ function CompletePageContent() {
     setConfirmationError(null);
 
     try {
-      const result = await confirmMutation.mutateAsync({
+      const result = await confirmMutation.mutateAsync(buildConfirmPaymentPayload({
         paymentKey,
         orderId,
-        amount: parsedAmount,
-      });
+        amount,
+        provider,
+        providerChargeAmount,
+      }));
 
       if (result.status !== 'CONFIRMED') {
         setConfirmFailed(true);
@@ -237,8 +247,11 @@ function CompletePageContent() {
     isPendingReturn,
     paymentKey,
     orderId,
-    parsedAmount,
+    amount,
     hasValidAmount,
+    provider,
+    providerChargeAmount,
+    hasValidProviderChargeAmount,
     confirmMutation,
     clearBooking,
   ]);

@@ -144,8 +144,8 @@ describe('PaymentService', () => {
       };
     }
 
-    it('keeps domestic card on the synchronous confirm branch', () => {
-      const branch = service.prepareTossPaymentBranch({
+    it('keeps domestic card on the synchronous confirm branch', async () => {
+      const branch = await service.prepareTossPaymentBranch({
         orderId: 'GRP-DOMESTIC-CARD',
         paymentMethod: createPaymentMethod(),
         successUrl: 'https://grabit.test/booking/perf-1/complete',
@@ -163,8 +163,8 @@ describe('PaymentService', () => {
       expect(branch.pendingUrl).toBeUndefined();
     });
 
-    it('routes overseas card through CARD with useInternationalCardOnly=true', () => {
-      const branch = service.prepareTossPaymentBranch({
+    it('routes overseas card through CARD with useInternationalCardOnly=true', async () => {
+      const branch = await service.prepareTossPaymentBranch({
         orderId: 'GRP-FOREIGN-CARD',
         paymentMethod: createPaymentMethod({
           currency: 'USD',
@@ -189,8 +189,8 @@ describe('PaymentService', () => {
       expect(branch.pendingUrl).toBeUndefined();
     });
 
-    it('routes foreign easy-pay through pendingUrl + async webhook tracking', () => {
-      const branch = service.prepareTossPaymentBranch({
+    it('routes foreign easy-pay through pendingUrl + async webhook tracking', async () => {
+      const branch = await service.prepareTossPaymentBranch({
         orderId: 'GRP-ALIPAY',
         paymentMethod: createPaymentMethod({
           method: 'FOREIGN_EASY_PAY',
@@ -220,8 +220,126 @@ describe('PaymentService', () => {
       expect(branch.useInternationalCardOnly).toBe(false);
     });
 
-    it('rejects foreign easy-pay when pendingUrl is missing', () => {
-      expect(() =>
+    it('keeps TrueMoney on the async webhook branch', async () => {
+      const branch = await service.prepareTossPaymentBranch({
+        orderId: 'GRP-TRUEMONEY',
+        paymentMethod: createPaymentMethod({
+          method: 'FOREIGN_EASY_PAY',
+          provider: 'TRUEMONEY',
+          currency: 'THB',
+          pendingUrlRequired: true,
+          overseasPaymentConsent: {
+            required: true,
+            agreed: true,
+            agreementVersion: '2026-05-08',
+          },
+        }),
+        successUrl: 'https://grabit.test/booking/perf-1/complete',
+        failUrl: 'https://grabit.test/booking/perf-1/confirm?error=true',
+        pendingUrl: 'https://grabit.test/booking/perf-1/pending?orderId=GRP-TRUEMONEY',
+      });
+
+      expect(branch).toMatchObject({
+        orderId: 'GRP-TRUEMONEY',
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'TRUEMONEY',
+        currency: 'THB',
+        asyncStatus: 'pending_webhook',
+        pendingUrl:
+          'https://grabit.test/booking/perf-1/pending?orderId=GRP-TRUEMONEY',
+      });
+      expect(branch.useInternationalCardOnly).toBe(false);
+    });
+
+    it('routes PayPal through sync checkout with stored provider quote', async () => {
+      (service as unknown as {
+        providerChargeQuoteService: {
+          getPaypalAvailability: ReturnType<typeof vi.fn>;
+        };
+      }).providerChargeQuoteService = {
+        getPaypalAvailability: vi.fn().mockReturnValue({ enabled: true }),
+      };
+      mockDb.select.mockReturnValue(createSelectChain([{
+        providerChargeCurrency: 'USD',
+        providerChargeAmountMinor: 10800,
+        providerChargeRate: '0.00072',
+        providerChargeQuotedAt: new Date('2026-05-29T10:00:00.000Z'),
+      }]));
+
+      const branch = await service.prepareTossPaymentBranch({
+        orderId: 'GRP-PAYPAL',
+        paymentMethod: createPaymentMethod({
+          method: 'FOREIGN_EASY_PAY',
+          provider: 'PAYPAL',
+          currency: 'EUR',
+          overseasPaymentConsent: {
+            required: true,
+            agreed: true,
+            agreementVersion: '2026-05-08',
+          },
+        }),
+        successUrl: 'https://grabit.test/booking/perf-1/complete',
+        failUrl: 'https://grabit.test/booking/perf-1/confirm?error=true',
+      });
+
+      expect(branch).toMatchObject({
+        orderId: 'GRP-PAYPAL',
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'PAYPAL',
+        currency: 'USD',
+        asyncStatus: 'sync',
+        checkoutEnabled: true,
+        providerChargeQuote: {
+          currency: 'USD',
+          amountMinor: 10800,
+          amountDecimal: '108.00',
+          rate: '0.00072',
+          quotedAt: '2026-05-29T10:00:00.000Z',
+        },
+      });
+      expect(branch.useInternationalCardOnly).toBe(false);
+      expect(branch.pendingUrl).toBeUndefined();
+    });
+
+    it('keeps PayPal checkout disabled when the stored provider quote is missing', async () => {
+      (service as unknown as {
+        providerChargeQuoteService: {
+          getPaypalAvailability: ReturnType<typeof vi.fn>;
+        };
+      }).providerChargeQuoteService = {
+        getPaypalAvailability: vi.fn().mockReturnValue({ enabled: true }),
+      };
+      mockDb.select.mockReturnValue(createSelectChain([]));
+
+      const branch = await service.prepareTossPaymentBranch({
+        orderId: 'GRP-PAYPAL-NO-QUOTE',
+        paymentMethod: createPaymentMethod({
+          method: 'FOREIGN_EASY_PAY',
+          provider: 'PAYPAL',
+          currency: 'USD',
+          overseasPaymentConsent: {
+            required: true,
+            agreed: true,
+            agreementVersion: '2026-05-08',
+          },
+        }),
+        successUrl: 'https://grabit.test/booking/perf-1/complete',
+        failUrl: 'https://grabit.test/booking/perf-1/confirm?error=true',
+      });
+
+      expect(branch).toMatchObject({
+        orderId: 'GRP-PAYPAL-NO-QUOTE',
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'PAYPAL',
+        asyncStatus: 'sync',
+        checkoutEnabled: false,
+        disabledReason: 'PAYPAL_PROVIDER_CHARGE_QUOTE_MISSING',
+      });
+      expect(branch.providerChargeQuote).toBeUndefined();
+    });
+
+    it('rejects foreign easy-pay when pendingUrl is missing', async () => {
+      await expect(
         service.prepareTossPaymentBranch({
           orderId: 'GRP-NO-PENDING',
           paymentMethod: createPaymentMethod({
@@ -233,7 +351,9 @@ describe('PaymentService', () => {
           successUrl: 'https://grabit.test/booking/perf-1/complete',
           failUrl: 'https://grabit.test/booking/perf-1/confirm?error=true',
         }),
-      ).toThrow(new BadRequestException('FOREIGN_EASY_PAY 결제는 pendingUrl이 필요합니다'));
+      ).rejects.toThrow(
+        new BadRequestException('FOREIGN_EASY_PAY 결제는 pendingUrl이 필요합니다'),
+      );
     });
   });
 
@@ -472,6 +592,187 @@ describe('PaymentService', () => {
         }),
       );
       expect(mockDb.transaction).not.toHaveBeenCalled();
+      expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+      expect(mockQrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
+    });
+
+    it('acks PayPal DONE webhook before sync confirm without creating async payment rows', async () => {
+      const reservationId = randomUUID();
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          userId: randomUUID(),
+          showtimeId: randomUUID(),
+          status: 'PENDING_PAYMENT',
+          totalAmount: 150000,
+        }]))
+        .mockReturnValueOnce(createSelectChain([]));
+
+      await service.upsertAsyncPaymentProgress(
+        {
+          eventId: 'evt-paypal-done-before-confirm',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_paypal_before_confirm',
+            orderId: 'GRP-PAYPAL-BEFORE-CONFIRM',
+            status: 'DONE',
+            method: 'FOREIGN_EASY_PAY',
+            provider: 'PAYPAL',
+            currency: 'USD',
+            totalAmount: 108,
+            approvedAt: '2026-05-29T08:00:00.000Z',
+          },
+        },
+        'DONE',
+        'payment_status_changed:done',
+      );
+
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+      expect(mockDb.insert).not.toHaveBeenCalled();
+      expect(mockDb.update).not.toHaveBeenCalled();
+      expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+      expect(mockQrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
+    });
+
+    it('acks PayPal IN_PROGRESS webhook before sync confirm without creating async payment rows', async () => {
+      const reservationId = randomUUID();
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          userId: randomUUID(),
+          showtimeId: randomUUID(),
+          status: 'PENDING_PAYMENT',
+          totalAmount: 150000,
+        }]))
+        .mockReturnValueOnce(createSelectChain([]));
+
+      await service.upsertAsyncPaymentProgress(
+        {
+          eventId: 'evt-paypal-in-progress-before-confirm',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_paypal_in_progress',
+            orderId: 'GRP-PAYPAL-IN-PROGRESS',
+            status: 'IN_PROGRESS',
+            method: 'FOREIGN_EASY_PAY',
+            provider: 'PAYPAL',
+            currency: 'USD',
+            totalAmount: 108,
+          },
+        },
+        'IN_PROGRESS',
+        'payment_status_changed:in_progress',
+      );
+
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+      expect(mockDb.insert).not.toHaveBeenCalled();
+      expect(mockDb.update).not.toHaveBeenCalled();
+      expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+      expect(mockQrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
+    });
+
+    it('applies PayPal cancel webhook without overwriting the stored KRW payment amount', async () => {
+      const reservationId = randomUUID();
+      const paymentId = randomUUID();
+      const updatePayment = createMutationChain();
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          userId: randomUUID(),
+          showtimeId: randomUUID(),
+          status: 'CONFIRMED',
+          totalAmount: 150000,
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: paymentId,
+          reservationId,
+          paymentKey: 'pay_paypal_cancelled',
+          tossOrderId: 'GRP-PAYPAL-CANCELLED',
+          amount: 150000,
+          status: 'DONE',
+        }]));
+      mockDb.update.mockReturnValueOnce(updatePayment);
+
+      await service.upsertAsyncPaymentProgress(
+        {
+          eventId: 'evt-paypal-cancelled',
+          eventType: 'CANCEL_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_paypal_cancelled',
+            orderId: 'GRP-PAYPAL-CANCELLED',
+            status: 'CANCELED',
+            method: 'FOREIGN_EASY_PAY',
+            provider: 'PAYPAL',
+            currency: 'USD',
+            totalAmount: 108,
+            canceledAt: '2026-05-29T08:05:00.000Z',
+            cancelReason: 'provider cancellation',
+          },
+        },
+        'CANCELED',
+        'cancelled_webhook',
+      );
+
+      expect(updatePayment.set).toHaveBeenCalledWith(expect.objectContaining({
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'PAYPAL',
+        currency: 'KRW',
+        amount: 150000,
+        status: 'CANCELED',
+        asyncStatus: 'cancelled_webhook',
+        cancelReason: 'provider cancellation',
+      }));
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+      expect(mockDb.insert).not.toHaveBeenCalled();
+      expect(mockDb.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('acks PayPal DONE webhook after sync confirm without overwriting the KRW payment row', async () => {
+      const reservationId = randomUUID();
+      const paymentId = randomUUID();
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          userId: randomUUID(),
+          showtimeId: randomUUID(),
+          status: 'CONFIRMED',
+          totalAmount: 150000,
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: paymentId,
+          reservationId,
+          paymentKey: 'pay_paypal_after_confirm',
+          tossOrderId: 'GRP-PAYPAL-AFTER-CONFIRM',
+          amount: 150000,
+          status: 'DONE',
+        }]));
+
+      await service.upsertAsyncPaymentProgress(
+        {
+          eventId: 'evt-paypal-done-after-confirm',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_paypal_after_confirm',
+            orderId: 'GRP-PAYPAL-AFTER-CONFIRM',
+            status: 'DONE',
+            method: 'FOREIGN_EASY_PAY',
+            provider: 'PAYPAL',
+            currency: 'USD',
+            totalAmount: 108,
+            approvedAt: '2026-05-29T08:00:00.000Z',
+          },
+        },
+        'DONE',
+        'payment_status_changed:done',
+      );
+
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+      expect(mockDb.insert).not.toHaveBeenCalled();
+      expect(mockDb.update).not.toHaveBeenCalled();
       expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
       expect(mockQrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
     });

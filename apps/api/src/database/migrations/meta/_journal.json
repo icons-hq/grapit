@@ -190,6 +190,13 @@
       "when": 1779956240000,
       "tag": "0025_user_raw_export_audit_action",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1780021833000,
+      "tag": "0026_paypal_provider_charge_quotes",
+      "breakpoints": true
     }
   ]
 }

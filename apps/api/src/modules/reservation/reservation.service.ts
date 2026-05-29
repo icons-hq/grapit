@@ -36,6 +36,10 @@ import {
   type TossPaymentResponse,
 } from '../payment/toss-payments.client.js';
 import {
+  ProviderChargeQuoteService,
+  type PaypalProviderChargeQuote,
+} from '../payment/provider-charge-quote.service.js';
+import {
   BookingService,
   BOOKING_VERIFICATION_REQUIRED_MESSAGE,
 } from '../booking/booking.service.js';
@@ -133,6 +137,13 @@ type TicketItemPaymentCancelOutcome =
   | 'cancelled'
   | 'definite_failure'
   | 'ambiguous';
+type ProviderChargeQuote = {
+  currency: 'USD';
+  amountMinor: number;
+  amountDecimal: string;
+  rate: string;
+  quotedAt: string;
+};
 
 const PLACEHOLDER_UUID = '00000000-0000-4000-8000-000000000000';
 const SEOUL_TIME_ZONE = 'Asia/Seoul';
@@ -185,6 +196,7 @@ export class ReservationService {
     private readonly consentService: ConsentService,
     @Optional() private readonly qrTicketService?: QrTicketService,
     @Optional() reservationFinalizationService?: ReservationFinalizationService,
+    @Optional() private readonly providerChargeQuoteService?: ProviderChargeQuoteService,
   ) {
     this.reservationFinalizationService =
       reservationFinalizationService
@@ -194,6 +206,7 @@ export class ReservationService {
         bookingService,
         bookingGateway,
         qrTicketService,
+        providerChargeQuoteService,
       );
   }
 
@@ -299,6 +312,128 @@ export class ReservationService {
 
   private calculatePayableTotal(seats: SeatSelection[]): number {
     return this.calculateSeatTotal(seats) + this.calculateTicketServiceFeeTotal(seats);
+  }
+
+  private buildPaypalPrepareCharge(input: {
+    paymentMethod: PrepareReservationRequest['paymentMethod'];
+    reservationPayableAmount: number;
+    now: Date;
+  }): {
+    checkoutEnabled: boolean;
+    disabledReason?: string;
+    providerChargeQuote?: ProviderChargeQuote;
+    reservationQuoteValues: {
+      providerChargeCurrency?: 'USD';
+      providerChargeAmountMinor?: number;
+      providerChargeRate?: string;
+      providerChargeQuotedAt?: Date;
+    };
+  } | undefined {
+    if (
+      input.paymentMethod?.method !== 'FOREIGN_EASY_PAY'
+      || input.paymentMethod.provider !== 'PAYPAL'
+    ) {
+      return undefined;
+    }
+
+    const availability =
+      this.providerChargeQuoteService?.getPaypalAvailability()
+      ?? {
+        enabled: false,
+        disabledReason: 'PAYPAL_CHECKOUT_UNAVAILABLE',
+      };
+
+    if (!availability.enabled) {
+      return {
+        checkoutEnabled: false,
+        disabledReason: availability.disabledReason,
+        reservationQuoteValues: {},
+      };
+    }
+
+    const quote = this.providerChargeQuoteService!.createPaypalQuote({
+      reservationPayableAmount: input.reservationPayableAmount,
+      now: input.now,
+    });
+
+    return {
+      checkoutEnabled: true,
+      providerChargeQuote: quote,
+      reservationQuoteValues: this.toReservationProviderQuoteValues(quote),
+    };
+  }
+
+  private toReservationProviderQuoteValues(
+    quote: PaypalProviderChargeQuote,
+  ): {
+    providerChargeCurrency: 'USD';
+    providerChargeAmountMinor: number;
+    providerChargeRate: string;
+    providerChargeQuotedAt: Date;
+  } {
+    return {
+      providerChargeCurrency: quote.currency,
+      providerChargeAmountMinor: quote.amountMinor,
+      providerChargeRate: quote.rate,
+      providerChargeQuotedAt: new Date(quote.quotedAt),
+    };
+  }
+
+  private buildStoredPaypalPrepareCharge(input: {
+    paymentMethod: PrepareReservationRequest['paymentMethod'];
+    providerChargeCurrency?: string | null;
+    providerChargeAmountMinor?: number | null;
+    providerChargeRate?: string | null;
+    providerChargeQuotedAt?: Date | null;
+  }): {
+    checkoutEnabled: boolean;
+    disabledReason?: string;
+    providerChargeQuote?: ProviderChargeQuote;
+  } | undefined {
+    if (
+      input.paymentMethod?.method !== 'FOREIGN_EASY_PAY'
+      || input.paymentMethod.provider !== 'PAYPAL'
+    ) {
+      return undefined;
+    }
+
+    const availability =
+      this.providerChargeQuoteService?.getPaypalAvailability()
+      ?? {
+        enabled: false,
+        disabledReason: 'PAYPAL_CHECKOUT_UNAVAILABLE',
+      };
+    const providerChargeQuote =
+      input.providerChargeCurrency === 'USD'
+      && typeof input.providerChargeAmountMinor === 'number'
+      && input.providerChargeRate
+      && input.providerChargeQuotedAt
+        ? {
+            currency: 'USD' as const,
+            amountMinor: input.providerChargeAmountMinor,
+            amountDecimal: this.formatProviderMinorToDecimal(
+              input.providerChargeAmountMinor,
+            ),
+            rate: input.providerChargeRate,
+            quotedAt: input.providerChargeQuotedAt.toISOString(),
+          }
+        : undefined;
+    const checkoutEnabled = availability.enabled && !!providerChargeQuote;
+    const disabledReason = availability.enabled
+      ? providerChargeQuote ? undefined : 'PAYPAL_PROVIDER_CHARGE_QUOTE_MISSING'
+      : availability.disabledReason;
+
+    return {
+      checkoutEnabled,
+      ...(disabledReason ? { disabledReason } : {}),
+      ...(providerChargeQuote ? { providerChargeQuote } : {}),
+    };
+  }
+
+  private formatProviderMinorToDecimal(amountMinor: number): string {
+    const whole = Math.floor(amountMinor / 100);
+    const fraction = String(amountMinor % 100).padStart(2, '0');
+    return `${whole}.${fraction}`;
   }
 
   private async getCanonicalSeatSelectionsFromOverlay(
@@ -656,6 +791,10 @@ export class ReservationService {
         tossOrderId: reservations.tossOrderId,
         totalAmount: reservations.totalAmount,
         paymentDeadlineAt: reservations.paymentDeadlineAt,
+        providerChargeCurrency: reservations.providerChargeCurrency,
+        providerChargeAmountMinor: reservations.providerChargeAmountMinor,
+        providerChargeRate: reservations.providerChargeRate,
+        providerChargeQuotedAt: reservations.providerChargeQuotedAt,
       })
       .from(reservations)
       .where(eq(reservations.tossOrderId, dto.orderId));
@@ -707,6 +846,13 @@ export class ReservationService {
 
       const existingSeatIds = existingSeats.map((seat) => seat.seatKey);
       await this.bookingService.assertOwnedSeatLocks(userId, existing.showtimeId, existingSeatIds);
+      const existingPaypalCharge = this.buildStoredPaypalPrepareCharge({
+        paymentMethod: dto.paymentMethod,
+        providerChargeCurrency: existing.providerChargeCurrency,
+        providerChargeAmountMinor: existing.providerChargeAmountMinor,
+        providerChargeRate: existing.providerChargeRate,
+        providerChargeQuotedAt: existing.providerChargeQuotedAt,
+      });
 
       return {
         reservationId: existing.id,
@@ -717,6 +863,7 @@ export class ReservationService {
           ?? dto.paymentDeadlineAt,
         bookingPolicy: existingShowtime.bookingPolicy,
         paymentMethod: dto.paymentMethod,
+        ...(existingPaypalCharge ?? {}),
       };
     }
 
@@ -745,6 +892,11 @@ export class ReservationService {
     const paymentDeadlineAt = this.calculatePaymentDeadlineAt(preparedAt);
     const reservationNumber = this.generateReservationNumber();
     const cancelDeadline = this.calculateCancelDeadline(showtime.dateTime);
+    const paypalCharge = this.buildPaypalPrepareCharge({
+      paymentMethod: dto.paymentMethod,
+      reservationPayableAmount: expectedAmount,
+      now: preparedAt,
+    });
 
     const result = await this.db.transaction(async (tx) => {
       const [reservation] = await tx
@@ -765,6 +917,7 @@ export class ReservationService {
           reentryGraceUntilAt: this.toOptionalDate(dto.queueAdmission?.reentryGraceUntilAt),
           paymentDeadlineAt,
           cancelDeadline,
+          ...(paypalCharge?.reservationQuoteValues ?? {}),
         })
         .returning();
 
@@ -802,6 +955,17 @@ export class ReservationService {
       paymentDeadlineAt: paymentDeadlineAt.toISOString(),
       bookingPolicy: showtime.bookingPolicy,
       paymentMethod: dto.paymentMethod,
+      ...(paypalCharge
+        ? {
+            checkoutEnabled: paypalCharge.checkoutEnabled,
+            ...(paypalCharge.disabledReason
+              ? { disabledReason: paypalCharge.disabledReason }
+              : {}),
+            ...(paypalCharge.providerChargeQuote
+              ? { providerChargeQuote: paypalCharge.providerChargeQuote }
+              : {}),
+          }
+        : {}),
     };
   }
 

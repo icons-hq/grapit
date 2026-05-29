@@ -55,7 +55,8 @@ export type PaymentProvider =
   | 'NAVER_PAY'
   | 'KAKAOPAY'
   | 'ALIPAY_PLUS'
-  | 'TRUEMONEY';
+  | 'TRUEMONEY'
+  | 'PAYPAL';
 
 export interface OverseasPaymentConsent {
   required: boolean;
@@ -64,6 +65,14 @@ export interface OverseasPaymentConsent {
   agreedAt?: string | null;
   fxRateDisclaimer?: string | null;
   refundDelayNotice?: string | null;
+}
+
+export interface ProviderChargeQuote {
+  currency: 'USD';
+  amountMinor: number;
+  amountDecimal: string;
+  rate: string;
+  quotedAt: string;
 }
 
 export interface PaymentMethod {
@@ -287,13 +296,24 @@ export interface PrepareReservationResponse {
   paymentDeadlineAt: string;
   bookingPolicy: BookingPolicy;
   paymentMethod: PaymentMethod;
+  providerChargeQuote?: ProviderChargeQuote;
+  checkoutEnabled?: boolean;
+  disabledReason?: string;
 }
 
-export interface ConfirmPaymentRequest {
+export type ConfirmPaymentRequest = {
   paymentKey: string;
   orderId: string;
   amount: number;
-}
+  provider?: never;
+  providerChargeAmount?: never;
+} | {
+  paymentKey: string;
+  orderId: string;
+  provider: 'PAYPAL';
+  providerChargeAmount: string;
+  amount?: never;
+};
 
 export interface CancelReservationRequest {
   reason: string;

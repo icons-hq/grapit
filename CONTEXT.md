@@ -84,6 +84,18 @@ _Avoid_: Immediate resale, full reservation reopen, all-seat release.
 A fixed 2,000 KRW booking fee charged for each booked Ticket Item. Its refundability follows the Cancellation Fee Schedule.
 _Avoid_: Order fee, payment fee, platform total fee.
 
+**Reservation Payable Amount**:
+The KRW amount a Buyer owes for a Reservation before provider-specific charging. It is derived from Ticket Item prices plus Ticket Service Fees.
+_Avoid_: PayPal amount, provider amount, display estimate.
+
+**Provider Charge Amount**:
+The amount submitted to and validated against the payment provider for a Reservation payment, expressed in that provider's required currency. It can match the Reservation Payable Amount for domestic payments, but can be a distinct foreign-currency amount for PayPal.
+_Avoid_: Reservation total, KRW ticket total, client estimate.
+
+**Provider Charge Quote**:
+A snapshot of the Provider Charge Amount that the Buyer is asked to pay for a Reservation. It preserves the provider currency and amount used for payment authorization and validation.
+_Avoid_: Live exchange rate, UI estimate, mutable display price.
+
 **Cancellation Fee Schedule**:
 A NOL Ticket-style per-Ticket Item fee schedule that determines cancellation fees by cancellation timing. Same-day booking cancellation before 24:00 KST is the first-priority exception; otherwise show-date rules take priority over booking-date rules, and fee percentages apply to Ticket Item price only.
 _Avoid_: Flat refund penalty, Reservation-level cancellation fee.

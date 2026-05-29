@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   cancelTicketItemSchema,
+  confirmPaymentSchema,
   prepareReservationResponseSchema,
   prepareReservationSchema,
+  providerChargeQuoteSchema,
   reservationDetailSchema,
 } from './booking.schema';
 import {
@@ -94,6 +96,110 @@ function makePaymentMethod() {
 }
 
 describe('prepareReservationSchema booking consent contract', () => {
+  it('accepts backend-owned PayPal provider charge quotes', () => {
+    const parsed = providerChargeQuoteSchema.parse({
+      currency: 'USD',
+      amountMinor: 10800,
+      amountDecimal: '108.00',
+      rate: '0.00072',
+      quotedAt: '2026-05-29T00:00:00.000Z',
+    });
+
+    expect(parsed).toMatchObject({
+      currency: 'USD',
+      amountMinor: 10800,
+    });
+  });
+
+  it('rejects zero provider charge decimal strings', () => {
+    expect(() =>
+      providerChargeQuoteSchema.parse({
+        currency: 'USD',
+        amountMinor: 1,
+        amountDecimal: '0.00',
+        rate: '0.00072',
+        quotedAt: '2026-05-29T00:00:00.000Z',
+      }),
+    ).toThrow();
+  });
+
+  it('accepts PayPal confirm payload with provider charge amount', () => {
+    const parsed = confirmPaymentSchema.parse({
+      paymentKey: 'pay_paypal',
+      orderId: 'GRP-PAYPAL',
+      provider: 'PAYPAL',
+      providerChargeAmount: '108.00',
+    });
+
+    expect(parsed).toMatchObject({ provider: 'PAYPAL' });
+  });
+
+  it('rejects ambiguous confirm payloads', () => {
+    expect(() =>
+      confirmPaymentSchema.parse({
+        paymentKey: 'pay_card',
+        orderId: 'GRP-CARD',
+        amount: 150000,
+        providerChargeAmount: '108.00',
+      }),
+    ).toThrow();
+    expect(() =>
+      confirmPaymentSchema.parse({
+        paymentKey: 'pay_paypal',
+        orderId: 'GRP-PAYPAL',
+        provider: 'PAYPAL',
+        amount: 150000,
+        providerChargeAmount: '108.00',
+      }),
+    ).toThrow();
+    expect(() =>
+      confirmPaymentSchema.parse({
+        paymentKey: 'pay_paypal',
+        orderId: 'GRP-PAYPAL',
+        provider: 'PAYPAL',
+      }),
+    ).toThrow();
+    expect(() =>
+      confirmPaymentSchema.parse({
+        paymentKey: 'pay_card',
+        orderId: 'GRP-CARD',
+      }),
+    ).toThrow();
+    expect(() =>
+      confirmPaymentSchema.parse({
+        paymentKey: 'pay_paypal',
+        orderId: 'GRP-PAYPAL',
+        provider: 'PAYPAL',
+        providerChargeAmount: '0.00',
+      }),
+    ).toThrow();
+  });
+
+  it('keeps domestic confirm amount as a positive integer', () => {
+    expect(
+      confirmPaymentSchema.parse({
+        paymentKey: 'pay_card',
+        orderId: 'GRP-CARD',
+        amount: 150000,
+      }),
+    ).toMatchObject({ amount: 150000 });
+
+    expect(() =>
+      confirmPaymentSchema.parse({
+        paymentKey: 'pay_card',
+        orderId: 'GRP-CARD',
+        amount: '150000',
+      }),
+    ).toThrow();
+    expect(() =>
+      confirmPaymentSchema.parse({
+        paymentKey: 'pay_card',
+        orderId: 'GRP-CARD',
+        amount: 150000.5,
+      }),
+    ).toThrow();
+  });
+
   it('validates buyer ticket-item cancellation reason like reservation cancellation', () => {
     const parsed = cancelTicketItemSchema.parse({ reason: '단순 변심' });
 
