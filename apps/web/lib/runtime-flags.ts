@@ -23,6 +23,13 @@ export const BOOKING_VERIFICATION_REQUIRED_COPY: Record<RuntimeLocale, string> =
   'zh-CN': '请先完成电子邮箱和手机号验证后再预订门票。',
 };
 
+export const BOOKING_ENDED_COPY: Record<RuntimeLocale, string> = {
+  ko: '판매가 종료된 공연입니다',
+  en: 'Ticket sales have ended',
+  th: 'การจำหน่ายบัตรสิ้นสุดแล้ว',
+  'zh-CN': '门票销售已结束',
+};
+
 export class BookingDisabledError extends Error {
   constructor(message = BOOKING_DISABLED_COPY.ko) {
     super(message);
@@ -46,6 +53,14 @@ export function getBookingVerificationRequiredCopy(
     ? candidate
     : DEFAULT_LOCALE;
   return BOOKING_VERIFICATION_REQUIRED_COPY[supportedLocale];
+}
+
+export function getBookingEndedCopy(locale: string | undefined): string {
+  const candidate = locale ?? '';
+  const supportedLocale = isRuntimeLocale(candidate)
+    ? candidate
+    : DEFAULT_LOCALE;
+  return BOOKING_ENDED_COPY[supportedLocale];
 }
 
 function isRuntimeLocale(value: string): value is RuntimeLocale {

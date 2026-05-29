@@ -7,6 +7,7 @@ import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
 import {
   BOOKING_DISABLED_COPY,
+  BOOKING_ENDED_COPY,
   BOOKING_VERIFICATION_REQUIRED_COPY,
 } from '@/lib/runtime-flags';
 import { BookingPage } from '@/components/booking/booking-page';
@@ -169,11 +170,11 @@ vi.mock('@/components/booking/toss-payment-widget', async () => {
   };
 });
 
-function createPerformanceDetail() {
+function createPerformanceDetail(overrides: { status?: string } = {}) {
   return {
     id: 'performance-disabled',
     title: 'Girl Rules Fanmeet',
-    status: 'ON_SALE',
+    status: overrides.status ?? 'selling',
     posterUrl: null,
     startDate: '2026-07-04T09:00:00.000Z',
     endDate: '2026-07-04T11:00:00.000Z',
@@ -322,6 +323,15 @@ describe('runtime booking disabled UI', () => {
     });
   });
 
+  it('keeps exact booking-ended copy for all active launch locales', () => {
+    expect(BOOKING_ENDED_COPY).toEqual({
+      ko: '판매가 종료된 공연입니다',
+      en: 'Ticket sales have ended',
+      th: 'การจำหน่ายบัตรสิ้นสุดแล้ว',
+      'zh-CN': '门票销售已结束',
+    });
+  });
+
   it.each([
     ['ko', '예매는 추후 오픈 예정입니다'],
     ['en', 'Ticket booking will open later'],
@@ -382,6 +392,25 @@ describe('runtime booking disabled UI', () => {
     expect(screen.queryByRole('button', { name: '좌석 A-1' })).not.toBeInTheDocument();
     expect(screen.queryByText('seat legend')).not.toBeInTheDocument();
 
+    expect(lockSeatMutateMock).not.toHaveBeenCalled();
+  });
+
+  it('does not render booking controls for ended performances even when runtime booking is enabled', async () => {
+    useRuntimeFlagsMock.mockReturnValue({
+      bookingEnabled: true,
+      isLoading: false,
+      bookingDisabledMessage: '예매는 추후 오픈 예정입니다',
+    });
+    usePerformanceDetailMock.mockReturnValue({
+      data: createPerformanceDetail({ status: 'ended' }),
+      isLoading: false,
+      isError: false,
+    });
+
+    renderWithQuery(<BookingPage performanceId="performance-disabled" />);
+
+    expect(await screen.findAllByText('판매가 종료된 공연입니다')).not.toHaveLength(0);
+    expect(screen.queryByRole('button', { name: '좌석 A-1' })).not.toBeInTheDocument();
     expect(lockSeatMutateMock).not.toHaveBeenCalled();
   });
 

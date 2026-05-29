@@ -959,6 +959,27 @@ describe('ReservationService', () => {
       expect(mockDb.transaction).not.toHaveBeenCalled();
     });
 
+    it('prepareReservation rejects ended performances before lock validation', async () => {
+      const userId = randomUUID();
+      const dto = {
+        showtimeId: randomUUID(),
+        orderId: 'GRP-ENDED-PREPARE',
+        seats: [seatSelection('A-1')],
+        amount: 50000,
+        consentItems: makeConsentItems(),
+        performanceStatus: 'ended',
+      };
+      setupPrepareBase(dto);
+
+      await expect(service.prepareReservation(dto, userId))
+        .rejects
+        .toThrow('판매가 종료된 공연입니다');
+
+      expect(mockConsentService.assertRequiredConsents).toHaveBeenCalled();
+      expect(mockBookingService.assertOwnedSeatLocks).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
     it('prepareReservation checks active locks before creating a new pending reservation', async () => {
       const userId = randomUUID();
       const dto = {

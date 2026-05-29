@@ -138,7 +138,7 @@ describe('BookingService', () => {
 
     it('allows admin actor through disabled booking flag to existing lock validation', async () => {
       mockFeatureFlags.getFlags.mockReturnValue({ bookingEnabled: false });
-      mockNoSoldRecord(4, { includePerformanceStatus: false });
+      mockNoSoldRecord(4);
       mockRedis.eval.mockResolvedValue([1, `{${showtimeId}}:seat:${seatId}`, seatId]);
 
       await expect(service.lockSeat(
@@ -190,6 +190,20 @@ describe('BookingService', () => {
 
       await expect(promise).rejects.toThrow(ForbiddenException);
       await expect(promise).rejects.toThrow('예매는 추후 오픈 예정입니다');
+
+      expect(mockRedis.eval).not.toHaveBeenCalled();
+      expect(mockGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+    });
+
+    it('rejects public users for ended performances before Redis lock mutation', async () => {
+      mockDb.select.mockReturnValueOnce(
+        chainResult([{ performanceStatus: 'ended' }]),
+      );
+
+      const promise = service.lockSeat(userId, showtimeId, seatId);
+
+      await expect(promise).rejects.toThrow(ForbiddenException);
+      await expect(promise).rejects.toThrow('판매가 종료된 공연입니다');
 
       expect(mockRedis.eval).not.toHaveBeenCalled();
       expect(mockGateway.broadcastSeatUpdate).not.toHaveBeenCalled();

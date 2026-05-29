@@ -134,10 +134,14 @@ function getCachedPerformanceDetailForShowtime(
 function assertCachedPerformanceBookable(
   performance: PerformanceWithDetails | null,
   isAdmin: boolean,
-  message: string,
+  upcomingMessage: string,
+  endedMessage: string,
 ): void {
+  if (performance?.status === 'ended') {
+    throw new BookingDisabledError(endedMessage);
+  }
   if (performance?.status === 'upcoming' && !isAdmin) {
-    throw new BookingDisabledError(message);
+    throw new BookingDisabledError(upcomingMessage);
   }
 }
 
@@ -218,7 +222,7 @@ export function useBookingPaymentSnapshot(): BookingPaymentSnapshot {
 export function useLockSeat() {
   const queryClient = useQueryClient();
   const performanceId = useBookingStore((state) => state.performanceId);
-  const { bookingAvailable, bookingDisabledMessage, isAdmin } =
+  const { bookingAvailable, bookingDisabledMessage, bookingEndedMessage, isAdmin } =
     useBookingAvailability();
 
   return useMutation({
@@ -233,6 +237,7 @@ export function useLockSeat() {
         cachedPerformance,
         isAdmin,
         bookingDisabledMessage,
+        bookingEndedMessage,
       );
 
       return apiClient.post<LockSeatResponse>('/api/v1/booking/seats/lock', {
@@ -291,7 +296,7 @@ export function useUnlockAllSeats() {
 
 export function usePrepareReservation() {
   const queryClient = useQueryClient();
-  const { bookingAvailable, bookingDisabledMessage, isAdmin } =
+  const { bookingAvailable, bookingDisabledMessage, bookingEndedMessage, isAdmin } =
     useBookingAvailability();
   const selectedSeats = useBookingStore((state) => state.selectedSeats);
   const performanceId = useBookingStore((state) => state.performanceId);
@@ -309,6 +314,7 @@ export function usePrepareReservation() {
         cachedPerformance,
         isAdmin,
         bookingDisabledMessage,
+        bookingEndedMessage,
       );
       const seats = (selectedSeats.length > 0 ? selectedSeats : data.seats).map(toFloorAwareSeatSelection);
       const bookingPolicy = cachedPerformance?.bookingPolicy
