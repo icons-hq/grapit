@@ -482,7 +482,7 @@ describe('SeatMapViewer', () => {
     expect(onSeatClick).not.toHaveBeenCalled();
   });
 
-  it('prefers data-seat-key for click callbacks while legacy data-seat-id still works', async () => {
+  it('uses the current floor key for callbacks even when SVG data-seat-key is stale', async () => {
     const onSeatClick = vi.fn();
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -492,9 +492,11 @@ describe('SeatMapViewer', () => {
     const { container } = render(
       <SeatMapViewer
         svgUrl="https://example.com/seat-key.svg"
+        floorKey="1F"
+        floorLabel="1층"
         seatConfig={mockSeatConfig}
         seatStates={new Map<string, SeatState>([
-          ['2F:A-1', 'available'],
+          ['1F:A-1', 'available'],
           ['A-2', 'available'],
         ])}
         selectedSeatIds={new Set()}
@@ -504,17 +506,17 @@ describe('SeatMapViewer', () => {
     );
 
     await waitFor(() => {
-      expect(container.querySelector('[data-seat-key="2F:A-1"]')).toBeTruthy();
+      expect(container.querySelector('[data-seat-key="1F:A-1"]')).toBeTruthy();
     });
 
-    fireEvent.click(container.querySelector('[data-seat-key="2F:A-1"]')!);
-    expect(onSeatClick).toHaveBeenCalledWith('2F:A-1');
+    fireEvent.click(container.querySelector('[data-seat-key="1F:A-1"]')!);
+    expect(onSeatClick).toHaveBeenCalledWith('1F:A-1');
 
     fireEvent.click(container.querySelector('[data-seat-id="A-2"]')!);
-    expect(onSeatClick).toHaveBeenCalledWith('A-2');
+    expect(onSeatClick).toHaveBeenCalledWith('1F:A-2');
   });
 
-  it('uses data-seat-key for text overlay clicks and selected styling', async () => {
+  it('uses the canonical current-floor key for text overlay clicks and selected styling', async () => {
     const onSeatClick = vi.fn();
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -524,28 +526,30 @@ describe('SeatMapViewer', () => {
     const { container } = render(
       <SeatMapViewer
         svgUrl="https://example.com/seat-key-overlay.svg"
+        floorKey="1F"
+        floorLabel="1층"
         seatConfig={mockSeatConfig}
         seatStates={new Map<string, SeatState>([
-          ['2F:A-1', 'available'],
+          ['1F:A-1', 'available'],
         ])}
-        selectedSeatIds={new Set(['2F:A-1'])}
+        selectedSeatIds={new Set(['1F:A-1'])}
         onSeatClick={onSeatClick}
         maxSelect={4}
       />,
     );
 
     await waitFor(() => {
-      const seat = container.querySelector('[data-seat-key="2F:A-1"]') as SVGElement;
+      const seat = container.querySelector('[data-seat-key="1F:A-1"]') as SVGElement;
       expect(seat?.getAttribute('stroke')).toBe('#1A1A2E');
     });
 
     const seatLabel = Array.from(container.querySelectorAll('text')).find(
       (node) => node.textContent?.trim() === '1',
     );
-    expect(seatLabel?.getAttribute('data-seat-overlay-for')).toBe('2F:A-1');
+    expect(seatLabel?.getAttribute('data-seat-overlay-for')).toBe('1F:A-1');
 
     fireEvent.click(seatLabel!);
-    expect(onSeatClick).toHaveBeenCalledWith('2F:A-1');
+    expect(onSeatClick).toHaveBeenCalledWith('1F:A-1');
   });
 
   it('marks excluded seats as disabled and does not call onSeatClick', async () => {

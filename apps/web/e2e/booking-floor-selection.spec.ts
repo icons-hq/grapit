@@ -22,7 +22,7 @@ const FIRST_FLOOR_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 280">
   <text class="floor-title" x="200" y="28" text-anchor="middle">1층 맵</text>
   <g class="seat-cell">
-    <rect data-seat-id="A-1" x="174" y="124" width="52" height="36" rx="4" fill="#E5E7EB" stroke="#CBD5E1" />
+    <rect data-seat-id="A-1" data-seat-key="2F:A-1" x="174" y="124" width="52" height="36" rx="4" fill="#E5E7EB" stroke="#CBD5E1" />
     <text class="seat-number" x="200" y="146" text-anchor="middle">1</text>
   </g>
   <rect class="seat seat-excluded" data-seat-id="A-99" x="290" y="124" width="52" height="36" rx="4" fill="#F4D03F" />
@@ -33,7 +33,7 @@ const SECOND_FLOOR_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 280">
   <text class="floor-title" x="200" y="28" text-anchor="middle">2층 맵</text>
   <g class="seat-cell">
-    <rect data-seat-id="A-1" x="214" y="124" width="52" height="36" rx="4" fill="#E5E7EB" stroke="#CBD5E1" />
+    <rect data-seat-id="A-1" data-seat-key="3F:A-1" x="214" y="124" width="52" height="36" rx="4" fill="#E5E7EB" stroke="#CBD5E1" />
     <text class="seat-number" x="240" y="146" text-anchor="middle">1</text>
   </g>
   <rect data-seat-id="B-2" data-category="EXCLUDED" x="110" y="124" width="52" height="36" rx="4" fill="#F4D03F" />
@@ -161,7 +161,10 @@ async function mockAuthenticatedSession(page: Page) {
   });
 }
 
-async function stubFloorBrowserRoutes(page: Page) {
+async function stubFloorBrowserRoutes(
+  page: Page,
+  lockRequests: Array<{ seatId?: string }> = [],
+) {
   await enableBooking(page);
   await mockAuthenticatedSession(page);
 
@@ -228,13 +231,12 @@ async function stubFloorBrowserRoutes(page: Page) {
   await page.route('**/api/v1/booking/seats/lock', async (route: Route) => {
     const payload = JSON.parse(route.request().postData() ?? '{}') as {
       seatId?: string;
-      floorKey?: string;
-      floorLabel?: string;
-      seatKey?: string;
     };
-    const floorKey = payload.floorKey ?? '1F';
-    const seatId = payload.seatId ?? 'A-1';
-    const runtimeSeatId = payload.seatKey ?? `${floorKey}:${seatId}`;
+    lockRequests.push(payload);
+    const runtimeSeatId = payload.seatId ?? '1F:A-1';
+    const separatorIndex = runtimeSeatId.indexOf(':');
+    const floorKey = separatorIndex > 0 ? runtimeSeatId.slice(0, separatorIndex) : '1F';
+    const seatId = separatorIndex > 0 ? runtimeSeatId.slice(separatorIndex + 1) : runtimeSeatId;
 
     await route.fulfill({
       status: 200,
@@ -245,7 +247,7 @@ async function stubFloorBrowserRoutes(page: Page) {
         seatId,
         seatKey: runtimeSeatId,
         floorKey,
-        floorLabel: payload.floorLabel ?? (floorKey === '2F' ? '2층' : '1층'),
+        floorLabel: floorKey === '2F' ? '2층' : '1층',
         expiresAt: LOCK_EXPIRES_AT,
       }),
     });
@@ -414,7 +416,8 @@ async function createMobilePage(browser: Browser) {
 
 test.describe('booking floor-browser seat selection', () => {
   test('desktop center click updates summary, timer, CTA, and preserves 1F selection across floor switches', async ({ page }) => {
-    await stubFloorBrowserRoutes(page);
+    const lockRequests: Array<{ seatId?: string }> = [];
+    await stubFloorBrowserRoutes(page, lockRequests);
 
     await page.goto(`/booking/${FLOOR_BROWSER_PERFORMANCE_ID}`);
     await selectDateAndShowtime(page);
@@ -422,6 +425,7 @@ test.describe('booking floor-browser seat selection', () => {
     await clickExcludedSeat(page, 'A-99');
     await expect(getNextButton(page)).toBeDisabled();
     await clickSeatLabelCenter(page);
+    expect(lockRequests[0]?.seatId).toBe('1F:A-1');
     await assertPostSelectionState(page);
 
     await page.getByRole('radio', { name: '2층' }).click();
@@ -443,6 +447,7 @@ test.describe('booking floor-browser seat selection', () => {
     await page.reload();
     await selectDateAndShowtime(page);
     await clickSeatLabelCenter(page);
+    expect(lockRequests.at(-1)?.seatId).toBe('1F:A-1');
     await assertPostSelectionState(page);
     await page.getByRole('button', { name: '1층 A열 1번 선택 해제' }).click();
     await expect(page.getByRole('button', { name: '1층 A열 1번 선택 해제' })).toHaveCount(0);

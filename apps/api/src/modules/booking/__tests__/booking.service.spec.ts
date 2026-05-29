@@ -110,6 +110,11 @@ describe('BookingService', () => {
     }
 
     mockDb.select
+      .mockReturnValueOnce(chainResult([{
+        seatConfig: {
+          tiers: [{ tierName: 'VIP', seatIds: ['A-1', 'A-2'] }],
+        },
+      }]))
       .mockReturnValueOnce(chainResult([]))
       .mockReturnValueOnce(chainResult([{ maxTicketsPerUser }]));
   }
@@ -190,6 +195,21 @@ describe('BookingService', () => {
       expect(mockGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
     });
 
+    it('rejects seats that are not part of the showtime seat map before Redis lock mutation', async () => {
+      mockDb.select
+        .mockReturnValueOnce(chainResult([{ performanceStatus: 'selling' }]))
+        .mockReturnValueOnce(chainResult([]))
+        .mockReturnValueOnce(chainResult([{ maxTicketsPerUser: 4 }]));
+      mockRedis.eval.mockResolvedValue([1, `{${showtimeId}}:seat:1F%3AZ-999`, '1F%3AZ-999']);
+
+      await expect(service.lockSeat(userId, showtimeId, '1F:Z-999'))
+        .rejects
+        .toThrow('유효하지 않은 좌석입니다');
+
+      expect(mockRedis.eval).not.toHaveBeenCalled();
+      expect(mockGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+    });
+
     it('cleans stale user-seats entries before count check via Lua eval', async () => {
       mockNoSoldRecord();
       // Lua returns [1, lockKey, seatId] = success
@@ -248,6 +268,46 @@ describe('BookingService', () => {
       expect(flatArgs[2]).toBe('1');
     });
 
+    it('uses event-configured seatHoldMinutes as the Redis lock TTL', async () => {
+      mockDb.select
+        .mockReturnValueOnce(chainResult([{ performanceStatus: 'selling' }]))
+        .mockReturnValueOnce(chainResult([{
+          seatConfig: { tiers: [{ tierName: 'VIP', seatIds: ['A-1'] }] },
+        }]))
+        .mockReturnValueOnce(chainResult([]))
+        .mockReturnValueOnce(chainResult([{ maxTicketsPerUser: 4, seatHoldMinutes: 7 }]));
+      mockRedis.eval.mockResolvedValue([1, `{${showtimeId}}:seat:1F%3AA-1`, '1F%3AA-1']);
+
+      const before = Date.now();
+      const result = await service.lockSeat(userId, showtimeId, '1F:A-1');
+      const after = Date.now();
+
+      const callArgs = mockRedis.eval.mock.calls[0] as unknown[];
+      const numKeys = callArgs[1] as number;
+      const flatArgs = callArgs.slice(2 + numKeys) as string[];
+      expect(flatArgs[1]).toBe('420');
+      expect(result.expiresAt).toBeGreaterThanOrEqual(before + 420_000);
+      expect(result.expiresAt).toBeLessThanOrEqual(after + 420_000);
+    });
+
+    it('returns the effective Lua TTL when adding a seat to an existing cart hold', async () => {
+      mockDb.select
+        .mockReturnValueOnce(chainResult([{ performanceStatus: 'selling' }]))
+        .mockReturnValueOnce(chainResult([{
+          seatConfig: { tiers: [{ tierName: 'VIP', seatIds: ['A-2'] }] },
+        }]))
+        .mockReturnValueOnce(chainResult([]))
+        .mockReturnValueOnce(chainResult([{ maxTicketsPerUser: 4, seatHoldMinutes: 7 }]));
+      mockRedis.eval.mockResolvedValue([1, `{${showtimeId}}:seat:1F%3AA-2`, '1F%3AA-2', '315']);
+
+      const before = Date.now();
+      const result = await service.lockSeat(userId, showtimeId, '1F:A-2');
+      const after = Date.now();
+
+      expect(result.expiresAt).toBeGreaterThanOrEqual(before + 315_000);
+      expect(result.expiresAt).toBeLessThanOrEqual(after + 315_000);
+    });
+
     it('rejects when SET NX fails (seat taken)', async () => {
       mockNoSoldRecord();
       // Lua returns [0, "CONFLICT"] = seat already locked
@@ -287,14 +347,16 @@ describe('BookingService', () => {
 
     describe('unavailable seat defense', () => {
       it('should throw ConflictException when seat_inventories has status=sold', async () => {
-        mockDb.select.mockReturnValueOnce(
-          chainResult([{ performanceStatus: 'selling' }]),
-        );
-        mockDb.select.mockReturnValue({
-          from: vi.fn().mockReturnValue({
-            where: vi.fn().mockResolvedValue([{ id: randomUUID(), status: 'sold' }]),
-          }),
-        });
+        mockDb.select
+          .mockReturnValueOnce(chainResult([{ performanceStatus: 'selling' }]))
+          .mockReturnValueOnce(chainResult([{
+            seatConfig: { tiers: [{ tierName: 'VIP', seatIds: ['A-1'] }] },
+          }]))
+          .mockReturnValue({
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockResolvedValue([{ id: randomUUID(), status: 'sold' }]),
+            }),
+          });
 
         const promise = service.lockSeat(userId, showtimeId, seatId);
 
@@ -305,14 +367,16 @@ describe('BookingService', () => {
       });
 
       it('should throw ConflictException when seat_inventories has status=held_cancelled', async () => {
-        mockDb.select.mockReturnValueOnce(
-          chainResult([{ performanceStatus: 'selling' }]),
-        );
-        mockDb.select.mockReturnValue({
-          from: vi.fn().mockReturnValue({
-            where: vi.fn().mockResolvedValue([{ id: randomUUID(), status: 'held_cancelled' }]),
-          }),
-        });
+        mockDb.select
+          .mockReturnValueOnce(chainResult([{ performanceStatus: 'selling' }]))
+          .mockReturnValueOnce(chainResult([{
+            seatConfig: { tiers: [{ tierName: 'VIP', seatIds: ['A-1'] }] },
+          }]))
+          .mockReturnValue({
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockResolvedValue([{ id: randomUUID(), status: 'held_cancelled' }]),
+            }),
+          });
 
         const promise = service.lockSeat(userId, showtimeId, seatId);
 
@@ -323,14 +387,16 @@ describe('BookingService', () => {
       });
 
       it('should throw ConflictException when seat_inventories has status=disabled', async () => {
-        mockDb.select.mockReturnValueOnce(
-          chainResult([{ performanceStatus: 'selling' }]),
-        );
-        mockDb.select.mockReturnValue({
-          from: vi.fn().mockReturnValue({
-            where: vi.fn().mockResolvedValue([{ id: randomUUID(), status: 'disabled' }]),
-          }),
-        });
+        mockDb.select
+          .mockReturnValueOnce(chainResult([{ performanceStatus: 'selling' }]))
+          .mockReturnValueOnce(chainResult([{
+            seatConfig: { tiers: [{ tierName: 'VIP', seatIds: ['A-1'] }] },
+          }]))
+          .mockReturnValue({
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockResolvedValue([{ id: randomUUID(), status: 'disabled' }]),
+            }),
+          });
 
         const promise = service.lockSeat(userId, showtimeId, seatId);
 

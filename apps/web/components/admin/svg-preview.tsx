@@ -15,6 +15,7 @@ interface SvgPreviewProps {
   currentSvgUrl?: string;
   currentConfig?: SeatMapConfig | null;
   currentTotalSeats?: number;
+  expectedFloorKey?: string;
   onChange?: (value: {
     svgUrl: string;
     seatConfig: SeatMapConfigInput;
@@ -24,11 +25,29 @@ interface SvgPreviewProps {
   allowTierStructureEditing?: boolean;
 }
 
+function findInvalidSeatKey(doc: Document, expectedFloorKey?: string) {
+  const floorKey = expectedFloorKey?.trim();
+  if (!floorKey) {
+    return null;
+  }
+
+  for (const seat of Array.from(doc.querySelectorAll('[data-seat-key]'))) {
+    const seatKey = seat.getAttribute('data-seat-key')?.trim() ?? '';
+    const separatorIndex = seatKey.indexOf(':');
+    if (separatorIndex <= 0 || seatKey.slice(0, separatorIndex) !== floorKey) {
+      return seatKey || '(empty)';
+    }
+  }
+
+  return null;
+}
+
 export function SvgPreview({
   performanceId,
   currentSvgUrl,
   currentConfig,
   currentTotalSeats,
+  expectedFloorKey,
   onChange,
   inputId = 'svg-input',
   allowTierStructureEditing = true,
@@ -125,6 +144,14 @@ export function SvgPreview({
         return;
       }
 
+      const invalidSeatKey = findInvalidSeatKey(doc, expectedFloorKey);
+      if (invalidSeatKey) {
+        toast.error(
+          `SVG data-seat-key(${invalidSeatKey})가 현재 층 floorKey(${expectedFloorKey})와 다릅니다. data-seat-key를 제거하거나 현재 층 prefix로 다시 생성해주세요.`,
+        );
+        return;
+      }
+
       const hasStageText = Array.from(doc.querySelectorAll('text')).some(
         (t) => t.textContent?.trim() === 'STAGE',
       );
@@ -185,7 +212,7 @@ export function SvgPreview({
         toast.error('SVG 업로드에 실패했습니다.');
       }
     },
-    [isControlled, onChange, presignedUploadMutate, tiers],
+    [expectedFloorKey, isControlled, onChange, presignedUploadMutate, tiers],
   );
 
   function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {

@@ -28,15 +28,28 @@ import {
 
 function createBookingService(redis: IORedis, maxTicketsPerUser = 1): BookingService {
   const unavailableRows: Array<{ id: string; status: string }> = [];
+  function queryRows<T>(rows: T[]) {
+    return {
+      limit: async () => rows,
+      then: (resolve: (value: T[]) => void) => resolve(rows),
+    };
+  }
+
   const mockDb = {
-    select: () => ({
+    select: (selection?: Record<string, unknown>) => ({
       from: () => ({
-        where: async () => unavailableRows,
+        where: () => queryRows(unavailableRows),
         innerJoin: () => ({
-          where: async () => [{ performanceStatus: 'selling' }],
+          where: () => queryRows(Object.prototype.hasOwnProperty.call(selection ?? {}, 'seatConfig')
+            ? [{
+                seatConfig: {
+                  tiers: [{ tierName: 'VIP', seatIds: ['A-1', 'A-2', 'A-3'] }],
+                },
+              }]
+            : [{ performanceStatus: 'selling' }]),
         }),
         leftJoin: () => ({
-          where: async () => [{ maxTicketsPerUser }],
+          where: () => queryRows([{ maxTicketsPerUser, seatHoldMinutes: 10 }]),
         }),
       }),
     }),

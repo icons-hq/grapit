@@ -1071,6 +1071,7 @@ export function PerformanceForm({
                   currentSvgUrl={floor.svgUrl || undefined}
                   currentConfig={floor.seatConfig}
                   currentTotalSeats={floor.totalSeats}
+                  expectedFloorKey={floor.floorKey}
                   allowTierStructureEditing={false}
                   onChange={({ svgUrl, seatConfig, totalSeats }) => {
                     setSeatMapDuplicateError(null);
