@@ -41,6 +41,7 @@ import {
 } from '../payment/provider-charge-quote.service.js';
 import {
   BookingService,
+  BOOKING_ENDED_MESSAGE,
   BOOKING_VERIFICATION_REQUIRED_MESSAGE,
 } from '../booking/booking.service.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
@@ -759,6 +760,9 @@ export class ReservationService {
     performanceStatus: string,
     actor: BookingActor,
   ): void {
+    if (performanceStatus === 'ended') {
+      throw new ForbiddenException(BOOKING_ENDED_MESSAGE);
+    }
     if (performanceStatus === 'upcoming' && actor.role !== 'admin') {
       throw new ForbiddenException('예매는 추후 오픈 예정입니다');
     }

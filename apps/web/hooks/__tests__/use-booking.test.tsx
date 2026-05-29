@@ -401,6 +401,46 @@ describe('use-booking payment mutations', () => {
     expect(apiClient.post).not.toHaveBeenCalled();
   });
 
+  it('does not call lockSeat API when the cached performance is ended', async () => {
+    useBookingStore.getState().setBookingData({
+      selectedSeats: [],
+      showtimeId: 'showtime-ended',
+      performanceId: 'performance-ended',
+      performanceTitle: '판매종료 공연',
+      showDateTime: '2026-07-18T09:00:00.000Z',
+      venue: '서울 공연장',
+      posterUrl: null,
+      expiresAt: null,
+    });
+    const { Wrapper, queryClient } = createWrapper();
+    queryClient.setQueryData(
+      ['performance', 'performance-ended'],
+      createPerformanceDetail({
+        id: 'performance-ended',
+        status: 'ended',
+        showtimes: [{
+          id: 'showtime-ended',
+          performanceId: 'performance-ended',
+          dateTime: '2026-07-18T09:00:00.000Z',
+        }],
+      }),
+    );
+
+    const { result } = renderHook(() => useLockSeat(), {
+      wrapper: Wrapper,
+    });
+
+    await expect(
+      result.current.mutateAsync({
+        showtimeId: 'showtime-ended',
+        seatId: 'A-1',
+      }),
+    ).rejects.toMatchObject({
+      message: '판매가 종료된 공연입니다',
+    });
+    expect(apiClient.post).not.toHaveBeenCalled();
+  });
+
   it('calls lockSeat API for admin when runtime booking is disabled', async () => {
     runtimeFlagsMock.mockReturnValue({
       bookingEnabled: false,
@@ -451,6 +491,45 @@ describe('use-booking payment mutations', () => {
 
     await expect(result.current.mutateAsync(payload)).rejects.toMatchObject({
       message: '예매는 추후 오픈 예정입니다',
+    });
+    expect(apiClient.post).not.toHaveBeenCalled();
+  });
+
+  it('does not call prepare reservation API when the cached performance is ended', async () => {
+    useBookingStore.getState().setBookingData({
+      selectedSeats: [],
+      showtimeId: 'showtime-ended',
+      performanceId: 'performance-ended',
+      performanceTitle: '판매종료 공연',
+      showDateTime: '2026-07-18T09:00:00.000Z',
+      venue: '서울 공연장',
+      posterUrl: null,
+      expiresAt: null,
+    });
+    const payload = createPrepareReservationPayload({
+      orderId: 'GRP-ENDED-PREPARE',
+      showtimeId: 'showtime-ended',
+    });
+    const { Wrapper, queryClient } = createWrapper();
+    queryClient.setQueryData(
+      ['performance', 'performance-ended'],
+      createPerformanceDetail({
+        id: 'performance-ended',
+        status: 'ended',
+        showtimes: [{
+          id: 'showtime-ended',
+          performanceId: 'performance-ended',
+          dateTime: '2026-07-18T09:00:00.000Z',
+        }],
+      }),
+    );
+
+    const { result } = renderHook(() => usePrepareReservation(), {
+      wrapper: Wrapper,
+    });
+
+    await expect(result.current.mutateAsync(payload)).rejects.toMatchObject({
+      message: '판매가 종료된 공연입니다',
     });
     expect(apiClient.post).not.toHaveBeenCalled();
   });

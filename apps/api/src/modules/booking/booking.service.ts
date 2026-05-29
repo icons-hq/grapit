@@ -31,6 +31,7 @@ import {
 const DEFAULT_LOCK_TTL_SECONDS = DEFAULT_PERFORMANCE_BOOKING_POLICY.seatHoldMinutes * 60;
 export const LOCK_EXPIRED_MESSAGE = '좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.';
 export const LOCK_OTHER_OWNER_MESSAGE = '이미 다른 사용자가 선택한 좌석입니다.';
+export const BOOKING_ENDED_MESSAGE = '판매가 종료된 공연입니다';
 export const BOOKING_VERIFICATION_REQUIRED_MESSAGE =
   '이메일 인증과 휴대폰 인증을 완료해야 예매할 수 있습니다.';
 
@@ -452,17 +453,16 @@ export class BookingService {
     showtimeId: string,
     actor: BookingActor,
   ): Promise<void> {
-    if (actor.role === 'admin') {
-      return;
-    }
-
     const [row] = await this.db
       .select({ performanceStatus: performances.status })
       .from(showtimes)
       .innerJoin(performances, eq(showtimes.performanceId, performances.id))
       .where(eq(showtimes.id, showtimeId));
 
-    if (row?.performanceStatus === 'upcoming') {
+    if (row?.performanceStatus === 'ended') {
+      throw new ForbiddenException(BOOKING_ENDED_MESSAGE);
+    }
+    if (row?.performanceStatus === 'upcoming' && actor.role !== 'admin') {
       throw new ForbiddenException('예매는 추후 오픈 예정입니다');
     }
   }
