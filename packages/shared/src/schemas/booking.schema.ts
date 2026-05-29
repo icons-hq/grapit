@@ -79,6 +79,7 @@ export const paymentMethodSchema = z.object({
     'KAKAOPAY',
     'ALIPAY_PLUS',
     'TRUEMONEY',
+    'PAYPAL',
   ]),
   currency: z.string().min(1).optional(),
   pendingUrlRequired: z.boolean().optional(),

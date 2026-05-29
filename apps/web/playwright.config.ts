@@ -37,7 +37,7 @@ export default defineConfig({
         process.env['NEXT_PUBLIC_TOSS_CLIENT_KEY'] ??
         '',
       NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY:
-        process.env['NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY'] ?? 'DEFAULT',
+        process.env['NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY'] ?? 'DEFAULT,paypal',
     },
   },
 });

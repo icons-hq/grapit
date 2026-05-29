@@ -16,7 +16,8 @@ import { resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
 import type { PaymentMethod, PaymentProvider } from '@grabit/shared';
 
 const OVERSEAS_PAYMENT_CONSENT_VERSION = '2026-05-08';
-const FOREIGN_WALLET_CODES = new Set(['ALIPAY', 'TRUEMONEY']);
+const PAYPAL_VARIANT_KEY = 'paypal';
+const FOREIGN_WALLET_CODES = new Set(['ALIPAY', 'TRUEMONEY', 'PAYPAL', '페이팔']);
 const OVERSEAS_CARD_CODES = new Set([
   'VISA',
   'MASTER',
@@ -36,6 +37,8 @@ const SIMPLE_PAY_PROVIDER_BY_CODE = {
 const FOREIGN_PROVIDER_BY_CODE = {
   ALIPAY: 'ALIPAY_PLUS',
   TRUEMONEY: 'TRUEMONEY',
+  PAYPAL: 'PAYPAL',
+  페이팔: 'PAYPAL',
 } as const satisfies Record<string, PaymentProvider>;
 
 const LOCALE_TO_COUNTRY = {
@@ -134,8 +137,34 @@ function resolvePaymentWidgetLocale(locale: string | undefined): PaymentWidgetLo
 }
 
 export function resolvePaymentWidgetVariantKey(): string {
-  const variantKey = process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY?.trim();
-  return variantKey ? variantKey : 'DEFAULT';
+  return resolvePaymentWidgetVariantKeys()[0] ?? 'DEFAULT';
+}
+
+export function resolvePaymentWidgetVariantKeys(): string[] {
+  const rawVariantKeys = process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY ?? 'DEFAULT';
+  const variantKeys = rawVariantKeys
+    .split(',')
+    .map((variantKey) => variantKey.trim())
+    .filter((variantKey) => variantKey.length > 0);
+
+  return variantKeys.length > 0 ? [...new Set(variantKeys)] : ['DEFAULT'];
+}
+
+export function isPaypalPaymentWidgetVariant(variantKey: string): boolean {
+  return variantKey.toLowerCase() === PAYPAL_VARIANT_KEY;
+}
+
+export function resolvePaymentWidgetRenderAmount({
+  amount,
+  variantKey,
+}: {
+  amount: number;
+  variantKey: string;
+}): { currency: 'KRW' | 'USD'; value: number } {
+  return {
+    currency: isPaypalPaymentWidgetVariant(variantKey) ? 'USD' : 'KRW',
+    value: amount,
+  };
 }
 
 export function resolvePaymentMethodSelection(code: string): PaymentMethodSelection {
@@ -268,11 +297,13 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
     ref,
   ) {
     const locale = resolvePaymentWidgetLocale(useLocale());
-    const paymentWidgetVariantKey = resolvePaymentWidgetVariantKey();
+    const paymentWidgetVariantKeys = resolvePaymentWidgetVariantKeys();
+    const [paymentWidgetVariantKey, setPaymentWidgetVariantKey] = useState(
+      paymentWidgetVariantKeys[0] ?? 'DEFAULT',
+    );
     const [widgets, setWidgets] = useState<TossPaymentsWidgets | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const readyRef = useRef(false);
     const initRef = useRef(false);
     const selectedPaymentMethodRef = useRef<PaymentMethodSelection>(resolvePaymentMethodSelection('CARD'));
 
@@ -286,6 +317,9 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
       requestPayment: async () => {
         if (!widgets) {
           throw new Error('결제 위젯이 초기화되지 않았습니다');
+        }
+        if (isLoading) {
+          throw new Error('결제 위젯을 불러오는 중입니다');
         }
 
         const origin = window.location.origin;
@@ -333,6 +367,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
       customerMobilePhone,
       orderName,
       locale,
+      isLoading,
     ]);
 
     useEffect(() => {
@@ -362,7 +397,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
     }, [customerKey]);
 
     useEffect(() => {
-      if (!widgets || readyRef.current) return;
+      if (!widgets) return;
       const activeWidgets = widgets;
 
       let mounted = true;
@@ -371,7 +406,13 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
 
       async function render() {
         try {
-          await activeWidgets.setAmount({ currency: 'KRW', value: amount });
+          setIsLoading(true);
+          setError(null);
+
+          await activeWidgets.setAmount(resolvePaymentWidgetRenderAmount({
+            amount,
+            variantKey: paymentWidgetVariantKey,
+          }));
 
           const [paymentMethodWidget, agreementWidget] = await Promise.all([
             activeWidgets.renderPaymentMethods({
@@ -394,7 +435,6 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
             return;
           }
 
-          readyRef.current = true;
           setIsLoading(false);
           onReady();
         } catch (err) {
@@ -426,6 +466,33 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
 
     return (
       <div className="space-y-4">
+        {paymentWidgetVariantKeys.length > 1 && (
+          <div
+            role="tablist"
+            aria-label="결제 UI"
+            className="grid grid-cols-2 gap-2 rounded-lg bg-gray-100 p-1"
+          >
+            {paymentWidgetVariantKeys.map((variantKey) => {
+              const selected = paymentWidgetVariantKey === variantKey;
+              return (
+                <button
+                  key={variantKey}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  className={`h-10 rounded-md px-3 text-sm font-semibold transition ${
+                    selected
+                      ? 'bg-white text-gray-950 shadow-sm'
+                      : 'text-gray-600 hover:text-gray-950'
+                  }`}
+                  onClick={() => setPaymentWidgetVariantKey(variantKey)}
+                >
+                  {isPaypalPaymentWidgetVariant(variantKey) ? 'PayPal' : '국내 결제'}
+                </button>
+              );
+            })}
+          </div>
+        )}
         {isLoading && (
           <div className="flex min-h-[200px] items-center justify-center">
             <Loader2 className="h-8 w-8 animate-spin text-gray-400" />

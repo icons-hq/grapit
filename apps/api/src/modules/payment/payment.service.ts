@@ -36,6 +36,7 @@ const TICKET_SERVICE_FEE_KRW = 2000;
 const ASYNC_FOREIGN_EASY_PAY_PROVIDERS = new Set<PaymentProvider>([
   'ALIPAY_PLUS',
   'TRUEMONEY',
+  'PAYPAL',
 ]);
 
 export type TossPaymentAsyncStatus = 'sync' | 'pending_webhook';

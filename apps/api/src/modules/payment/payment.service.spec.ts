@@ -220,6 +220,37 @@ describe('PaymentService', () => {
       expect(branch.useInternationalCardOnly).toBe(false);
     });
 
+    it('routes PayPal through pendingUrl + async webhook tracking', () => {
+      const branch = service.prepareTossPaymentBranch({
+        orderId: 'GRP-PAYPAL',
+        paymentMethod: createPaymentMethod({
+          method: 'FOREIGN_EASY_PAY',
+          provider: 'PAYPAL',
+          currency: 'USD',
+          pendingUrlRequired: true,
+          overseasPaymentConsent: {
+            required: true,
+            agreed: true,
+            agreementVersion: '2026-05-08',
+          },
+        }),
+        successUrl: 'https://grabit.test/booking/perf-1/complete',
+        failUrl: 'https://grabit.test/booking/perf-1/confirm?error=true',
+        pendingUrl: 'https://grabit.test/booking/perf-1/pending?orderId=GRP-PAYPAL',
+      });
+
+      expect(branch).toMatchObject({
+        orderId: 'GRP-PAYPAL',
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'PAYPAL',
+        currency: 'USD',
+        asyncStatus: 'pending_webhook',
+        pendingUrl:
+          'https://grabit.test/booking/perf-1/pending?orderId=GRP-PAYPAL',
+      });
+      expect(branch.useInternationalCardOnly).toBe(false);
+    });
+
     it('rejects foreign easy-pay when pendingUrl is missing', () => {
       expect(() =>
         service.prepareTossPaymentBranch({

@@ -55,7 +55,8 @@ export type PaymentProvider =
   | 'NAVER_PAY'
   | 'KAKAOPAY'
   | 'ALIPAY_PLUS'
-  | 'TRUEMONEY';
+  | 'TRUEMONEY'
+  | 'PAYPAL';
 
 export interface OverseasPaymentConsent {
   required: boolean;

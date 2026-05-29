@@ -29,6 +29,7 @@ const tossWebhookProviderSchema = z
     'ALIPAY',
     'ALIPAY_PLUS',
     'TRUEMONEY',
+    'PAYPAL',
   ])
   .optional()
   .catch(undefined);

@@ -12,8 +12,10 @@ import {
 import { ApiClientError, apiClient } from '@/lib/api-client';
 import {
   buildWidgetPaymentRequest,
+  resolvePaymentWidgetRenderAmount,
   resolvePaymentMethodSelection,
   resolvePaymentWidgetVariantKey,
+  resolvePaymentWidgetVariantKeys,
 } from '@/components/booking/toss-payment-widget';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { useBookingStore } from '@/stores/use-booking-store';
@@ -661,15 +663,29 @@ describe('use-booking payment mutations', () => {
     });
   });
 
+  it('resolvePaymentMethodSelection() maps PayPal to foreign easy pay', () => {
+    expect(resolvePaymentMethodSelection('PAYPAL')).toMatchObject({
+      requiresOverseasDisclaimer: true,
+      paymentMethod: {
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'PAYPAL',
+        currency: 'USD',
+        pendingUrlRequired: true,
+      },
+    });
+  });
+
   it('resolvePaymentWidgetVariantKey() defaults to DEFAULT for unset or blank env', () => {
     const originalVariantKey = process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY;
 
     try {
       delete process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY;
       expect(resolvePaymentWidgetVariantKey()).toBe('DEFAULT');
+      expect(resolvePaymentWidgetVariantKeys()).toEqual(['DEFAULT']);
 
       process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = '   ';
       expect(resolvePaymentWidgetVariantKey()).toBe('DEFAULT');
+      expect(resolvePaymentWidgetVariantKeys()).toEqual(['DEFAULT']);
     } finally {
       if (originalVariantKey === undefined) {
         delete process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY;
@@ -685,6 +701,7 @@ describe('use-booking payment mutations', () => {
     try {
       process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = '  CUSTOM_WIDGET  ';
       expect(resolvePaymentWidgetVariantKey()).toBe('CUSTOM_WIDGET');
+      expect(resolvePaymentWidgetVariantKeys()).toEqual(['CUSTOM_WIDGET']);
     } finally {
       if (originalVariantKey === undefined) {
         delete process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY;
@@ -692,6 +709,34 @@ describe('use-booking payment mutations', () => {
         process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = originalVariantKey;
       }
     }
+  });
+
+  it('resolvePaymentWidgetVariantKeys() parses comma-separated widget variants', () => {
+    const originalVariantKey = process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY;
+
+    try {
+      process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = ' DEFAULT, paypal, DEFAULT ';
+
+      expect(resolvePaymentWidgetVariantKey()).toBe('DEFAULT');
+      expect(resolvePaymentWidgetVariantKeys()).toEqual(['DEFAULT', 'paypal']);
+    } finally {
+      if (originalVariantKey === undefined) {
+        delete process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY;
+      } else {
+        process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = originalVariantKey;
+      }
+    }
+  });
+
+  it('resolvePaymentWidgetRenderAmount() uses USD for PayPal widget rendering', () => {
+    expect(resolvePaymentWidgetRenderAmount({ amount: 50000, variantKey: 'DEFAULT' })).toEqual({
+      currency: 'KRW',
+      value: 50000,
+    });
+    expect(resolvePaymentWidgetRenderAmount({ amount: 50000, variantKey: 'paypal' })).toEqual({
+      currency: 'USD',
+      value: 50000,
+    });
   });
 
   it('buildWidgetPaymentRequest() keeps pendingUrl for foreign wallets and international-card options for overseas card', () => {
