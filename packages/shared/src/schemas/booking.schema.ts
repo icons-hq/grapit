@@ -223,48 +223,23 @@ export type PrepareReservationResponseInput = z.infer<
   typeof prepareReservationResponseSchema
 >;
 
-export const confirmPaymentSchema = z
-  .object({
-    paymentKey: z.string().min(1, '결제 키가 필요합니다'),
-    orderId: z.string().min(1, '주문 ID가 필요합니다'),
-    amount: z.number().int().positive('결제 금액은 0보다 커야 합니다').optional(),
-    provider: z.literal('PAYPAL').optional(),
-    providerChargeAmount: providerDecimalStringSchema.optional(),
-  })
-  .superRefine((input, ctx) => {
-    if (input.provider === 'PAYPAL') {
-      if (input.amount !== undefined) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: 'PayPal confirm에는 KRW amount를 보낼 수 없습니다',
-          path: ['amount'],
-        });
-      }
-      if (!input.providerChargeAmount) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: 'PayPal provider charge amount가 필요합니다',
-          path: ['providerChargeAmount'],
-        });
-      }
-      return;
-    }
+const confirmPaymentBaseSchema = z.object({
+  paymentKey: z.string().min(1, '결제 키가 필요합니다'),
+  orderId: z.string().min(1, '주문 ID가 필요합니다'),
+});
 
-    if (input.providerChargeAmount !== undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: '국내 결제 confirm에는 provider charge amount를 보낼 수 없습니다',
-        path: ['providerChargeAmount'],
-      });
-    }
-    if (input.amount === undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: '결제 금액이 필요합니다',
-        path: ['amount'],
-      });
-    }
-  });
+export const confirmPaymentSchema = z.union([
+  confirmPaymentBaseSchema.extend({
+    provider: z.literal('PAYPAL'),
+    providerChargeAmount: providerDecimalStringSchema,
+    amount: z.never().optional(),
+  }),
+  confirmPaymentBaseSchema.extend({
+    amount: z.number().int().positive('결제 금액은 0보다 커야 합니다'),
+    provider: z.never().optional(),
+    providerChargeAmount: z.never().optional(),
+  }),
+]);
 
 export type ConfirmPaymentInput = z.infer<typeof confirmPaymentSchema>;
 

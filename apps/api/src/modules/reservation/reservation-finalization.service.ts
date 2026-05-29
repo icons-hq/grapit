@@ -48,9 +48,13 @@ type ApprovedPaymentSnapshot = {
   providerChargeRate?: string | null;
   providerChargeQuotedAt?: Date | null;
 };
-type PaypalConfirmPaymentRequest = ConfirmPaymentRequest & {
-  provider: 'PAYPAL';
-  providerChargeAmount: string;
+type PaypalConfirmPaymentRequest = Extract<ConfirmPaymentRequest, { provider: 'PAYPAL' }>;
+type PaypalResolvedProviderCharge = {
+  currency: 'USD';
+  amountMinor: number;
+  amountDecimal: string;
+  rate: string;
+  quotedAt: Date;
 };
 
 const TICKET_SERVICE_FEE_KRW = 2000;
@@ -268,10 +272,17 @@ export class ReservationFinalizationService {
 
     const pendingSeats = await this.getReservationSeatSelections(reservation.id);
     const expectedAmount = this.calculatePayableTotal(pendingSeats);
-    const paypalProviderCharge = this.resolvePaypalProviderCharge(dto, reservation);
+    let paypalProviderCharge: PaypalResolvedProviderCharge | null = null;
+    let confirmAmount: number;
+    if (isPaypalConfirmPaymentRequest(dto)) {
+      paypalProviderCharge = this.resolvePaypalProviderCharge(dto, reservation);
+      confirmAmount = Number(paypalProviderCharge.amountDecimal);
+    } else {
+      confirmAmount = dto.amount;
+    }
     if (
       reservation.totalAmount !== expectedAmount
-      || (!paypalProviderCharge && dto.amount !== expectedAmount)
+      || (!paypalProviderCharge && confirmAmount !== expectedAmount)
     ) {
       throw new BadRequestException('금액이 일치하지 않습니다');
     }
@@ -365,9 +376,7 @@ export class ReservationFinalizationService {
         const tossResponse = await this.tossClient.confirmPayment({
           paymentKey: dto.paymentKey,
           orderId: dto.orderId,
-          amount: paypalProviderCharge
-            ? Number(paypalProviderCharge.amountDecimal)
-            : dto.amount,
+          amount: confirmAmount,
         });
 
         approvedPayment = {
@@ -676,24 +685,14 @@ export class ReservationFinalizationService {
   }
 
   private resolvePaypalProviderCharge(
-    dto: ConfirmPaymentRequest,
+    dto: PaypalConfirmPaymentRequest,
     reservation: {
       providerChargeCurrency?: string | null;
       providerChargeAmountMinor?: number | null;
       providerChargeRate?: string | null;
       providerChargeQuotedAt?: Date | null;
     },
-  ): {
-    currency: 'USD';
-    amountMinor: number;
-    amountDecimal: string;
-    rate: string;
-    quotedAt: Date;
-  } | null {
-    if (!isPaypalConfirmPaymentRequest(dto)) {
-      return null;
-    }
-
+  ): PaypalResolvedProviderCharge {
     if (!this.providerChargeQuoteService) {
       throw new BadRequestException('PayPal 결제 금액을 검증할 수 없습니다');
     }
