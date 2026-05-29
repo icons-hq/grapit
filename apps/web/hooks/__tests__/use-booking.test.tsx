@@ -737,7 +737,7 @@ describe('use-booking payment mutations', () => {
     });
     expect(resolvePaymentWidgetRenderAmount({ amount: 50000, variantKey: 'paypal' })).toEqual({
       currency: 'USD',
-      value: 36,
+      value: 34,
     });
   });
 
@@ -747,14 +747,14 @@ describe('use-booking payment mutations', () => {
       currency: 'KRW',
       providerChargeQuote: {
         currency: 'USD',
-        amountMinor: 3612,
-        amountDecimal: '36.12',
-        rate: '0.0007224',
+        amountMinor: 3400,
+        amountDecimal: '34.00',
+        rate: '0.00068',
         quotedAt: '2026-05-29T00:00:00.000Z',
       },
     })).toEqual({
       currency: 'USD',
-      value: 36.12,
+      value: 34,
     });
     expect(resolvePaymentRequestAmount({
       amount: 50000,
@@ -772,15 +772,15 @@ describe('use-booking payment mutations', () => {
         method: 'FOREIGN_EASY_PAY',
         provider: 'PAYPAL',
         currency: 'USD',
-        successUrl: 'https://grabit.test/success?provider=PAYPAL&providerChargeAmount=52.34',
+        successUrl: 'https://grabit.test/success?provider=PAYPAL&providerChargeAmount=48.96',
         failUrl: 'https://grabit.test/fail',
         asyncStatus: 'sync',
         useInternationalCardOnly: false,
         providerChargeQuote: {
           currency: 'USD',
-          amountMinor: 5234,
-          amountDecimal: '52.34',
-          rate: '0.00072',
+          amountMinor: 4896,
+          amountDecimal: '48.96',
+          rate: '0.00068',
           quotedAt: '2026-05-29T00:00:00.000Z',
         },
         checkoutEnabled: true,
@@ -805,11 +805,11 @@ describe('use-booking payment mutations', () => {
       'VIP A열 2번',
       'Service fee / rounding adjustment',
     ]);
-    expect(products.reduce((sum, product) => sum + product.quantity * product.unitAmount, 0)).toBeCloseTo(52.34);
+    expect(products.reduce((sum, product) => sum + product.quantity * product.unitAmount, 0)).toBeCloseTo(48.96);
     expect(products.reduce(
       (sum, product) => sum + product.quantity * Math.round(product.unitAmount * 100),
       0,
-    )).toBe(5234);
+    )).toBe(4896);
     expect(products.every((product) => product.currency === 'USD')).toBe(true);
   });
 

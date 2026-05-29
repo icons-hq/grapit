@@ -53,17 +53,17 @@ Add tests proving:
 ```ts
 expect(providerChargeQuoteSchema.parse({
   currency: 'USD',
-  amountMinor: 10800,
-  amountDecimal: '108.00',
-  rate: '0.00072',
+  amountMinor: 10200,
+  amountDecimal: '102.00',
+  rate: '0.00068',
   quotedAt: '2026-05-29T00:00:00.000Z',
-})).toMatchObject({ currency: 'USD', amountMinor: 10800 });
+})).toMatchObject({ currency: 'USD', amountMinor: 10200 });
 
 expect(confirmPaymentSchema.parse({
   paymentKey: 'pay_paypal',
   orderId: 'GRP-PAYPAL',
   provider: 'PAYPAL',
-  providerChargeAmount: '108.00',
+  providerChargeAmount: '102.00',
 })).toMatchObject({ provider: 'PAYPAL' });
 ```
 
@@ -83,10 +83,10 @@ expect(() => new ProviderChargeQuoteService(config({ PAYPAL_CHECKOUT_ENABLED: 't
 
 const service = new ProviderChargeQuoteService(config({
   PAYPAL_CHECKOUT_ENABLED: 'true',
-  PAYPAL_KRW_USD_RATE: '0.00072',
+  PAYPAL_KRW_USD_RATE: '0.00068',
 }));
 expect(service.createPaypalQuote({ reservationPayableAmount: 150000, now: new Date('2026-05-29T00:00:00Z') }))
-  .toMatchObject({ currency: 'USD', amountMinor: 10800, amountDecimal: '108.00', rate: '0.00072' });
+  .toMatchObject({ currency: 'USD', amountMinor: 10200, amountDecimal: '102.00', rate: '0.00068' });
 ```
 
 - [ ] **Step 4: Run API quote service RED**

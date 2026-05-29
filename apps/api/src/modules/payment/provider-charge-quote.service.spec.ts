@@ -23,7 +23,7 @@ describe('ProviderChargeQuoteService', () => {
     const service = new ProviderChargeQuoteService(
       config({
         PAYPAL_CHECKOUT_ENABLED: 'true',
-        PAYPAL_KRW_USD_RATE: '0.00072',
+        PAYPAL_KRW_USD_RATE: '0.00068',
       }),
     );
 
@@ -34,9 +34,9 @@ describe('ProviderChargeQuoteService', () => {
       }),
     ).toMatchObject({
       currency: 'USD',
-      amountMinor: 10800,
-      amountDecimal: '108.00',
-      rate: '0.00072',
+      amountMinor: 10200,
+      amountDecimal: '102.00',
+      rate: '0.00068',
       quotedAt: '2026-05-29T00:00:00.000Z',
     });
   });
@@ -45,7 +45,7 @@ describe('ProviderChargeQuoteService', () => {
     const service = new ProviderChargeQuoteService(
       config({
         PAYPAL_CHECKOUT_ENABLED: 'true',
-        PAYPAL_KRW_USD_RATE: '0.000721234567890123456',
+        PAYPAL_KRW_USD_RATE: '0.000681234567890123456',
       }),
     );
 
@@ -55,9 +55,9 @@ describe('ProviderChargeQuoteService', () => {
         now: new Date('2026-05-29T00:00:00.000Z'),
       }),
     ).toMatchObject({
-      amountMinor: 10819,
-      amountDecimal: '108.19',
-      rate: '0.000721234567890123456',
+      amountMinor: 10219,
+      amountDecimal: '102.19',
+      rate: '0.000681234567890123456',
     });
   });
 
@@ -77,7 +77,7 @@ describe('ProviderChargeQuoteService', () => {
     const service = new ProviderChargeQuoteService(
       config({
         PAYPAL_CHECKOUT_ENABLED: 'true',
-        PAYPAL_KRW_USD_RATE: '0.00072',
+        PAYPAL_KRW_USD_RATE: '0.00068',
       }),
     );
 
