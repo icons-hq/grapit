@@ -321,6 +321,25 @@ export function usePublishPerformance(id: string) {
   });
 }
 
+export function useArchivePerformance() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiClient.put<PerformanceWithDetails>(
+        `/api/v1/admin/performances/${id}`,
+        { status: 'ended' } satisfies UpdatePerformanceInput,
+        { showErrorToast: false },
+      ),
+    onSuccess: (_data, id) => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'performances'] });
+      queryClient.invalidateQueries({
+        queryKey: ['admin', 'performance', id],
+      });
+      invalidatePublicPerformanceQueries(queryClient, id);
+    },
+  });
+}
+
 // Delete performance
 export function useDeletePerformance() {
   const queryClient = useQueryClient();
