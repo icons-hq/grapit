@@ -30,6 +30,7 @@ import {
   PAYMENT_CONFIRM_LOCK_TTL,
 } from '../booking/booking.service.js';
 import { TossPaymentsClient } from '../payment/toss-payments.client.js';
+import { ProviderChargeQuoteService } from '../payment/provider-charge-quote.service.js';
 import { QrTicketService } from '../ticket/qr-ticket.service.js';
 
 type ApprovedPaymentSnapshot = {
@@ -37,12 +38,28 @@ type ApprovedPaymentSnapshot = {
   paymentKey: string;
   orderId: string;
   method: string;
+  provider: string;
+  currency: string;
   totalAmount: number;
   approvedAt: string;
   asyncStatus?: string | null;
+  providerChargeCurrency?: string | null;
+  providerChargeAmountMinor?: number | null;
+  providerChargeRate?: string | null;
+  providerChargeQuotedAt?: Date | null;
+};
+type PaypalConfirmPaymentRequest = ConfirmPaymentRequest & {
+  provider: 'PAYPAL';
+  providerChargeAmount: string;
 };
 
 const TICKET_SERVICE_FEE_KRW = 2000;
+
+function isPaypalConfirmPaymentRequest(
+  dto: ConfirmPaymentRequest,
+): dto is PaypalConfirmPaymentRequest {
+  return 'provider' in dto && dto.provider === 'PAYPAL';
+}
 
 export interface ReservationFinalizationResult {
   reservationId: string;
@@ -58,6 +75,7 @@ export class ReservationFinalizationService {
     private readonly bookingService: BookingService,
     private readonly bookingGateway: BookingGateway,
     @Optional() private readonly qrTicketService?: QrTicketService,
+    @Optional() private readonly providerChargeQuoteService?: ProviderChargeQuoteService,
   ) {}
 
   async confirmAndCreateReservation(
@@ -250,7 +268,11 @@ export class ReservationFinalizationService {
 
     const pendingSeats = await this.getReservationSeatSelections(reservation.id);
     const expectedAmount = this.calculatePayableTotal(pendingSeats);
-    if (reservation.totalAmount !== expectedAmount || dto.amount !== expectedAmount) {
+    const paypalProviderCharge = this.resolvePaypalProviderCharge(dto, reservation);
+    if (
+      reservation.totalAmount !== expectedAmount
+      || (!paypalProviderCharge && dto.amount !== expectedAmount)
+    ) {
       throw new BadRequestException('금액이 일치하지 않습니다');
     }
 
@@ -327,26 +349,48 @@ export class ReservationFinalizationService {
           paymentKey: existingPayment.paymentKey,
           orderId: existingPayment.tossOrderId,
           method: existingPayment.method,
+          provider: existingPayment.provider,
+          currency: existingPayment.currency,
           totalAmount: existingPayment.amount,
           approvedAt:
             existingPayment.paidAt?.toISOString()
             ?? new Date().toISOString(),
           asyncStatus: existingPayment.asyncStatus,
+          providerChargeCurrency: existingPayment.providerChargeCurrency,
+          providerChargeAmountMinor: existingPayment.providerChargeAmountMinor,
+          providerChargeRate: existingPayment.providerChargeRate,
+          providerChargeQuotedAt: existingPayment.providerChargeQuotedAt,
         };
       } else {
         const tossResponse = await this.tossClient.confirmPayment({
           paymentKey: dto.paymentKey,
           orderId: dto.orderId,
-          amount: dto.amount,
+          amount: paypalProviderCharge
+            ? Number(paypalProviderCharge.amountDecimal)
+            : dto.amount,
         });
 
         approvedPayment = {
           paymentKey: tossResponse.paymentKey,
           orderId: tossResponse.orderId,
-          method: tossResponse.method,
-          totalAmount: tossResponse.totalAmount,
+          method: paypalProviderCharge
+            ? tossResponse.method || 'FOREIGN_EASY_PAY'
+            : tossResponse.method,
+          provider: paypalProviderCharge ? 'PAYPAL' : 'CARD',
+          currency: 'KRW',
+          totalAmount: paypalProviderCharge
+            ? reservation.totalAmount
+            : tossResponse.totalAmount,
           approvedAt: tossResponse.approvedAt,
           asyncStatus: 'sync',
+          ...(paypalProviderCharge
+            ? {
+                providerChargeCurrency: paypalProviderCharge.currency,
+                providerChargeAmountMinor: paypalProviderCharge.amountMinor,
+                providerChargeRate: paypalProviderCharge.rate,
+                providerChargeQuotedAt: paypalProviderCharge.quotedAt,
+              }
+            : {}),
         };
       }
 
@@ -414,6 +458,7 @@ export class ReservationFinalizationService {
 
           if (approvedPayment.existingPaymentId) {
             committedPaymentId = approvedPayment.existingPaymentId;
+            const providerChargeValues = this.toPaymentProviderChargeValues(approvedPayment);
             await tx
               .update(payments)
               .set({
@@ -421,9 +466,11 @@ export class ReservationFinalizationService {
                 amount: approvedPayment.totalAmount,
                 paidAt: new Date(approvedPayment.approvedAt),
                 asyncStatus: approvedPayment.asyncStatus ?? 'pending_webhook',
+                ...providerChargeValues,
               })
               .where(eq(payments.id, approvedPayment.existingPaymentId));
           } else {
+            const providerChargeValues = this.toPaymentProviderChargeValues(approvedPayment);
             const insertedPayments = await tx
               .insert(payments)
               .values({
@@ -431,12 +478,13 @@ export class ReservationFinalizationService {
                 paymentKey: approvedPayment.paymentKey,
                 tossOrderId: approvedPayment.orderId,
                 method: approvedPayment.method,
-                provider: 'CARD',
-                currency: 'KRW',
+                provider: approvedPayment.provider,
+                currency: approvedPayment.currency,
                 asyncStatus: approvedPayment.asyncStatus ?? 'sync',
                 amount: approvedPayment.totalAmount,
                 status: 'DONE',
                 paidAt: new Date(approvedPayment.approvedAt),
+                ...providerChargeValues,
               })
               .returning({ id: payments.id });
 
@@ -627,6 +675,82 @@ export class ReservationFinalizationService {
     return rows.map((seat) => toFloorAwareSeatSelection(seat));
   }
 
+  private resolvePaypalProviderCharge(
+    dto: ConfirmPaymentRequest,
+    reservation: {
+      providerChargeCurrency?: string | null;
+      providerChargeAmountMinor?: number | null;
+      providerChargeRate?: string | null;
+      providerChargeQuotedAt?: Date | null;
+    },
+  ): {
+    currency: 'USD';
+    amountMinor: number;
+    amountDecimal: string;
+    rate: string;
+    quotedAt: Date;
+  } | null {
+    if (!isPaypalConfirmPaymentRequest(dto)) {
+      return null;
+    }
+
+    if (!this.providerChargeQuoteService) {
+      throw new BadRequestException('PayPal 결제 금액을 검증할 수 없습니다');
+    }
+
+    let amountMinor: number;
+    try {
+      amountMinor = this.providerChargeQuoteService.parseProviderDecimalToMinor(
+        dto.providerChargeAmount,
+      );
+    } catch {
+      throw new BadRequestException('PayPal 결제 금액이 올바르지 않습니다');
+    }
+
+    if (
+      reservation.providerChargeCurrency !== 'USD'
+      || typeof reservation.providerChargeAmountMinor !== 'number'
+      || !reservation.providerChargeRate
+      || !reservation.providerChargeQuotedAt
+      || reservation.providerChargeAmountMinor !== amountMinor
+    ) {
+      throw new BadRequestException('PayPal 결제 금액이 일치하지 않습니다');
+    }
+
+    return {
+      currency: 'USD',
+      amountMinor,
+      amountDecimal: dto.providerChargeAmount,
+      rate: reservation.providerChargeRate,
+      quotedAt: reservation.providerChargeQuotedAt,
+    };
+  }
+
+  private toPaymentProviderChargeValues(
+    approvedPayment: ApprovedPaymentSnapshot,
+  ): {
+    providerChargeCurrency?: string;
+    providerChargeAmountMinor?: number;
+    providerChargeRate?: string;
+    providerChargeQuotedAt?: Date;
+  } {
+    if (
+      !approvedPayment.providerChargeCurrency
+      || typeof approvedPayment.providerChargeAmountMinor !== 'number'
+      || !approvedPayment.providerChargeRate
+      || !approvedPayment.providerChargeQuotedAt
+    ) {
+      return {};
+    }
+
+    return {
+      providerChargeCurrency: approvedPayment.providerChargeCurrency,
+      providerChargeAmountMinor: approvedPayment.providerChargeAmountMinor,
+      providerChargeRate: approvedPayment.providerChargeRate,
+      providerChargeQuotedAt: approvedPayment.providerChargeQuotedAt,
+    };
+  }
+
   private calculatePayableTotal(seats: FloorAwareSeatSelection[]): number {
     const seatTotal = seats.reduce((total, seat) => total + seat.price, 0);
     return seatTotal + seats.length * TICKET_SERVICE_FEE_KRW;
@@ -657,10 +781,13 @@ export class ReservationFinalizationService {
       paymentKey: string;
       tossOrderId: string;
       amount: number;
+      provider?: string | null;
+      providerChargeAmountMinor?: number | null;
     },
     reservation: {
       id: string;
       totalAmount: number;
+      providerChargeAmountMinor?: number | null;
     },
     dto: ConfirmPaymentRequest,
   ): void {
@@ -670,6 +797,23 @@ export class ReservationFinalizationService {
       || existingPayment.tossOrderId !== dto.orderId
     ) {
       throw new BadRequestException('결제 정보가 예매와 일치하지 않습니다');
+    }
+
+    if (isPaypalConfirmPaymentRequest(dto)) {
+      const amountMinor =
+        this.providerChargeQuoteService?.parseProviderDecimalToMinor(
+          dto.providerChargeAmount,
+        );
+
+      if (
+        existingPayment.provider !== 'PAYPAL'
+        || existingPayment.amount !== reservation.totalAmount
+        || existingPayment.providerChargeAmountMinor !== amountMinor
+        || reservation.providerChargeAmountMinor !== amountMinor
+      ) {
+        throw new BadRequestException('PayPal 결제 금액이 일치하지 않습니다');
+      }
+      return;
     }
 
     if (

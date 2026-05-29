@@ -10,8 +10,10 @@ import {
   useUnlockSeat,
 } from '../use-booking';
 import { ApiClientError, apiClient } from '@/lib/api-client';
+import { buildConfirmPaymentPayload } from '@/lib/booking/payment-return';
 import {
   buildWidgetPaymentRequest,
+  resolvePaymentRequestAmount,
   resolvePaymentWidgetRenderAmount,
   resolvePaymentMethodSelection,
   resolvePaymentWidgetVariantKey,
@@ -663,16 +665,16 @@ describe('use-booking payment mutations', () => {
     });
   });
 
-  it('resolvePaymentMethodSelection() maps PayPal to foreign easy pay', () => {
+  it('resolvePaymentMethodSelection() maps PayPal to foreign easy pay without pending return flow', () => {
     expect(resolvePaymentMethodSelection('PAYPAL')).toMatchObject({
       requiresOverseasDisclaimer: true,
       paymentMethod: {
         method: 'FOREIGN_EASY_PAY',
         provider: 'PAYPAL',
         currency: 'USD',
-        pendingUrlRequired: true,
       },
     });
+    expect(resolvePaymentMethodSelection('PAYPAL').paymentMethod.pendingUrlRequired).toBeUndefined();
   });
 
   it('resolvePaymentWidgetVariantKey() defaults to DEFAULT for unset or blank env', () => {
@@ -739,6 +741,78 @@ describe('use-booking payment mutations', () => {
     });
   });
 
+  it('resolvePaymentRequestAmount() uses the exact PayPal provider quote for Toss request amount', () => {
+    expect(resolvePaymentRequestAmount({
+      amount: 50000,
+      currency: 'KRW',
+      providerChargeQuote: {
+        currency: 'USD',
+        amountMinor: 3612,
+        amountDecimal: '36.12',
+        rate: '0.0007224',
+        quotedAt: '2026-05-29T00:00:00.000Z',
+      },
+    })).toEqual({
+      currency: 'USD',
+      value: 36.12,
+    });
+    expect(resolvePaymentRequestAmount({
+      amount: 50000,
+      currency: 'THB',
+    })).toEqual({
+      currency: 'THB',
+      value: 50000,
+    });
+  });
+
+  it('buildWidgetPaymentRequest() itemizes PayPal products so USD decimals match the provider quote', () => {
+    const request = buildWidgetPaymentRequest({
+      branch: {
+        orderId: 'GRP-PAYPAL',
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'PAYPAL',
+        currency: 'USD',
+        successUrl: 'https://grabit.test/success?provider=PAYPAL&providerChargeAmount=52.34',
+        failUrl: 'https://grabit.test/fail',
+        asyncStatus: 'sync',
+        useInternationalCardOnly: false,
+        providerChargeQuote: {
+          currency: 'USD',
+          amountMinor: 5234,
+          amountDecimal: '52.34',
+          rate: '0.00072',
+          quotedAt: '2026-05-29T00:00:00.000Z',
+        },
+        checkoutEnabled: true,
+      },
+      amount: 72000,
+      customerEmail: 'fan@example.com',
+      customerName: '해외 팬',
+      customerMobilePhone: '821012345678',
+      orderName: '팬미팅 티켓 2매',
+      locale: 'en',
+      selectedSeats: [
+        createFloorAwareSeat({ seatId: 'A-1', price: 30000 }),
+        createFloorAwareSeat({ seatId: 'A-2', number: '2', price: 38000 }),
+      ],
+    });
+
+    const products = request.foreignEasyPay?.products ?? [];
+
+    expect(products).toHaveLength(3);
+    expect(products.map((product) => product.name)).toEqual([
+      'VIP A열 1번',
+      'VIP A열 2번',
+      'Service fee / rounding adjustment',
+    ]);
+    expect(products.reduce((sum, product) => sum + product.quantity * product.unitAmount, 0)).toBeCloseTo(52.34);
+    expect(products.reduce(
+      (sum, product) => sum + product.quantity * Math.round(product.unitAmount * 100),
+      0,
+    )).toBe(5234);
+    expect(products.every((product) => product.currency === 'USD')).toBe(true);
+  });
+
   it('buildWidgetPaymentRequest() keeps pendingUrl for foreign wallets and international-card options for overseas card', () => {
     const foreignWalletRequest = buildWidgetPaymentRequest({
       branch: {
@@ -790,6 +864,45 @@ describe('use-booking payment mutations', () => {
       card: {
         useInternationalCardOnly: true,
       },
+    });
+  });
+
+  it('buildConfirmPaymentPayload() preserves PayPal providerChargeAmount as a raw decimal string', () => {
+    expect(buildConfirmPaymentPayload({
+      paymentKey: 'paypal_payment_key',
+      orderId: 'GRP-PAYPAL-CONFIRM',
+      amount: '52',
+      provider: 'PAYPAL',
+      providerChargeAmount: '52.30',
+    })).toEqual({
+      paymentKey: 'paypal_payment_key',
+      orderId: 'GRP-PAYPAL-CONFIRM',
+      provider: 'PAYPAL',
+      providerChargeAmount: '52.30',
+    });
+    expect(buildConfirmPaymentPayload({
+      paymentKey: 'paypal_payment_key',
+      orderId: 'GRP-PAYPAL-CONFIRM',
+      amount: '52.30',
+      provider: 'PAYPAL',
+      providerChargeAmount: null,
+    })).toEqual({
+      paymentKey: 'paypal_payment_key',
+      orderId: 'GRP-PAYPAL-CONFIRM',
+      provider: 'PAYPAL',
+      providerChargeAmount: '',
+    });
+
+    expect(buildConfirmPaymentPayload({
+      paymentKey: 'card_payment_key',
+      orderId: 'GRP-CARD-CONFIRM',
+      amount: '50000',
+      provider: null,
+      providerChargeAmount: null,
+    })).toEqual({
+      paymentKey: 'card_payment_key',
+      orderId: 'GRP-CARD-CONFIRM',
+      amount: 50000,
     });
   });
 });

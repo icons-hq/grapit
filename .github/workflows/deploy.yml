@@ -230,6 +230,8 @@ jobs:
             DB_POOL_CONNECTION_TIMEOUT_MS=5000
             CUTOVER_GATE_LEDGER_PATH=/app/phase26/26-GATE-LEDGER.json
             R2_UPLOAD_CACHE_CONTROL_ENABLED=true
+            PAYPAL_CHECKOUT_ENABLED=${{ vars.PAYPAL_CHECKOUT_ENABLED || 'false' }}
+            PAYPAL_KRW_USD_RATE=${{ vars.PAYPAL_KRW_USD_RATE }}
           secrets: |
             DATABASE_URL=database-url:latest
             JWT_SECRET=jwt-secret:latest

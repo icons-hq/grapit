@@ -67,6 +67,14 @@ export interface OverseasPaymentConsent {
   refundDelayNotice?: string | null;
 }
 
+export interface ProviderChargeQuote {
+  currency: 'USD';
+  amountMinor: number;
+  amountDecimal: string;
+  rate: string;
+  quotedAt: string;
+}
+
 export interface PaymentMethod {
   method: PaymentMethodType;
   provider: PaymentProvider;
@@ -288,13 +296,24 @@ export interface PrepareReservationResponse {
   paymentDeadlineAt: string;
   bookingPolicy: BookingPolicy;
   paymentMethod: PaymentMethod;
+  providerChargeQuote?: ProviderChargeQuote;
+  checkoutEnabled?: boolean;
+  disabledReason?: string;
 }
 
-export interface ConfirmPaymentRequest {
+export type ConfirmPaymentRequest = {
   paymentKey: string;
   orderId: string;
   amount: number;
-}
+  provider?: never;
+  providerChargeAmount?: never;
+} | {
+  paymentKey: string;
+  orderId: string;
+  provider: 'PAYPAL';
+  providerChargeAmount: string;
+  amount?: never;
+};
 
 export interface CancelReservationRequest {
   reason: string;

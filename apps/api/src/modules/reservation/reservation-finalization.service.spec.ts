@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -45,6 +46,9 @@ function createDependencies() {
   const qrTicketService = {
     ensureIssuedTicketsForReservation: vi.fn(),
   };
+  const providerChargeQuoteService = {
+    parseProviderDecimalToMinor: vi.fn(),
+  };
 
   const service = new ReservationFinalizationService(
     db as never,
@@ -52,6 +56,7 @@ function createDependencies() {
     bookingService as never,
     bookingGateway as never,
     qrTicketService as never,
+    providerChargeQuoteService as never,
   );
 
   return {
@@ -61,10 +66,191 @@ function createDependencies() {
     bookingService,
     bookingGateway,
     qrTicketService,
+    providerChargeQuoteService,
   };
 }
 
 describe('ReservationFinalizationService', () => {
+  it('confirms PayPal with the stored USD provider quote and stores KRW payment totals', async () => {
+    const {
+      service,
+      db,
+      tossClient,
+      bookingService,
+      qrTicketService,
+      providerChargeQuoteService,
+    } = createDependencies();
+    const insertedValues: unknown[] = [];
+    providerChargeQuoteService.parseProviderDecimalToMinor.mockReturnValue(10800);
+
+    db.select
+      .mockReturnValueOnce(chainResult([]))
+      .mockReturnValueOnce(chainResult([
+        {
+          id: 'reservation-paypal-1',
+          userId: 'user-1',
+          showtimeId: 'showtime-1',
+          status: 'PENDING_PAYMENT',
+          totalAmount: 150000,
+          admissionActiveUntilAt: new Date(Date.now() + 60_000),
+          providerChargeCurrency: 'USD',
+          providerChargeAmountMinor: 10800,
+          providerChargeRate: '0.00072',
+          providerChargeQuotedAt: new Date('2026-05-29T10:00:00.000Z'),
+        },
+      ]))
+      .mockReturnValueOnce(chainResult([
+        {
+          seatId: '1F:A-1',
+          tierName: 'VIP',
+          price: 100000,
+          row: 'A',
+          number: '1',
+        },
+        {
+          seatId: '1F:A-2',
+          tierName: 'R',
+          price: 46000,
+          row: 'A',
+          number: '2',
+        },
+      ]));
+    tossClient.confirmPayment.mockResolvedValue({
+      paymentKey: 'payment-key-paypal',
+      orderId: 'order-paypal-1',
+      method: 'FOREIGN_EASY_PAY',
+      totalAmount: 108,
+      approvedAt: '2026-05-29T10:01:00.000Z',
+    });
+
+    const tx = {
+      update: vi.fn().mockReturnValue({
+        set: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            returning: vi.fn().mockResolvedValue([{ id: 'seat-inventory-1' }]),
+          }),
+        }),
+      }),
+      insert: vi.fn((table: unknown) => ({
+        values: vi.fn((values: unknown) => {
+          insertedValues.push({ table, values });
+          if (table === payments) {
+            return {
+              returning: vi.fn().mockResolvedValue([{ id: 'payment-paypal-1' }]),
+            };
+          }
+          if (table === seatInventories) {
+            return {
+              onConflictDoNothing: vi.fn().mockReturnValue({
+                returning: vi.fn().mockResolvedValue([{ id: 'seat-inventory-1' }]),
+              }),
+            };
+          }
+          return {};
+        }),
+      })),
+    };
+    db.transaction.mockImplementation(async (cb: (tx: typeof tx) => Promise<unknown>) => cb(tx));
+
+    await expect(
+      service.confirmAndCreateReservation(
+        {
+          paymentKey: 'payment-key-paypal',
+          orderId: 'order-paypal-1',
+          provider: 'PAYPAL',
+          providerChargeAmount: '108.00',
+        },
+        'user-1',
+      ),
+    ).resolves.toEqual({ reservationId: 'reservation-paypal-1' });
+
+    expect(providerChargeQuoteService.parseProviderDecimalToMinor).toHaveBeenCalledWith('108.00');
+    expect(tossClient.confirmPayment).toHaveBeenCalledWith({
+      paymentKey: 'payment-key-paypal',
+      orderId: 'order-paypal-1',
+      amount: 108,
+    });
+    expect(insertedValues).toContainEqual({
+      table: payments,
+      values: expect.objectContaining({
+        reservationId: 'reservation-paypal-1',
+        paymentKey: 'payment-key-paypal',
+        tossOrderId: 'order-paypal-1',
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'PAYPAL',
+        currency: 'KRW',
+        asyncStatus: 'sync',
+        amount: 150000,
+        status: 'DONE',
+        providerChargeCurrency: 'USD',
+        providerChargeAmountMinor: 10800,
+        providerChargeRate: '0.00072',
+        providerChargeQuotedAt: new Date('2026-05-29T10:00:00.000Z'),
+      }),
+    });
+    expect(qrTicketService.ensureIssuedTicketsForReservation).toHaveBeenCalledWith({
+      reservationId: 'reservation-paypal-1',
+      paymentId: 'payment-paypal-1',
+    });
+    expect(bookingService.consumeOwnedSeatLocks).toHaveBeenCalledWith(
+      'user-1',
+      'showtime-1',
+      ['1F:A-1', '1F:A-2'],
+      { skipUnavailableCheck: true },
+    );
+  });
+
+  it('rejects PayPal provider amount mismatch before confirming with Toss', async () => {
+    const {
+      service,
+      db,
+      tossClient,
+      providerChargeQuoteService,
+    } = createDependencies();
+    providerChargeQuoteService.parseProviderDecimalToMinor.mockReturnValue(10799);
+
+    db.select
+      .mockReturnValueOnce(chainResult([]))
+      .mockReturnValueOnce(chainResult([
+        {
+          id: 'reservation-paypal-mismatch',
+          userId: 'user-1',
+          showtimeId: 'showtime-1',
+          status: 'PENDING_PAYMENT',
+          totalAmount: 150000,
+          admissionActiveUntilAt: new Date(Date.now() + 60_000),
+          providerChargeCurrency: 'USD',
+          providerChargeAmountMinor: 10800,
+          providerChargeRate: '0.00072',
+          providerChargeQuotedAt: new Date('2026-05-29T10:00:00.000Z'),
+        },
+      ]))
+      .mockReturnValueOnce(chainResult([
+        {
+          seatId: '1F:A-1',
+          tierName: 'VIP',
+          price: 148000,
+          row: 'A',
+          number: '1',
+        },
+      ]));
+
+    await expect(
+      service.confirmAndCreateReservation(
+        {
+          paymentKey: 'payment-key-paypal',
+          orderId: 'order-paypal-mismatch',
+          provider: 'PAYPAL',
+          providerChargeAmount: '107.99',
+        },
+        'user-1',
+      ),
+    ).rejects.toThrow(new BadRequestException('PayPal 결제 금액이 일치하지 않습니다'));
+
+    expect(tossClient.confirmPayment).not.toHaveBeenCalled();
+    expect(db.transaction).not.toHaveBeenCalled();
+  });
+
   it('returns reservationId for already confirmed reservations without rendering detail', async () => {
     const { service, db, tossClient, bookingService } = createDependencies();
     db.select
