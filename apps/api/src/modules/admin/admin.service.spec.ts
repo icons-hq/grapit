@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   BadRequestException,
+  ConflictException,
   NotFoundException,
   UnprocessableEntityException,
 } from '@nestjs/common';
@@ -232,6 +233,14 @@ function createMockDb() {
     }),
     delete: vi.fn().mockReturnValue({
       where: vi.fn().mockResolvedValue([]),
+    }),
+    execute: vi.fn().mockResolvedValue({
+      rows: [{
+        performance_count: 1,
+        reservations_count: 0,
+        ticket_scan_events_count: 0,
+        seat_operation_history_count: 0,
+      }],
     }),
     select: vi.fn().mockReturnValue(dbSelectChain),
     _tx: mockTx,
@@ -781,6 +790,40 @@ describe('AdminService', () => {
       // When GREEN, should verify DELETE FROM performances WHERE id = 'perf-id-123'
       // Cascade will handle child tables (priceTiers, showtimes, castings, seatMaps)
       expect(mockDb.delete).toHaveBeenCalled();
+    });
+
+    it('blocks delete when booking or field operation history is linked', async () => {
+      mockDb.execute.mockResolvedValueOnce({
+        rows: [{
+          performance_count: 1,
+          reservations_count: 1,
+          ticket_scan_events_count: 1,
+          seat_operation_history_count: 0,
+        }],
+      });
+
+      await expect(service.deletePerformance('perf-id-123')).rejects.toBeInstanceOf(
+        ConflictException,
+      );
+
+      expect(mockDb.delete).not.toHaveBeenCalled();
+    });
+
+    it('returns not found when deleting a missing performance', async () => {
+      mockDb.execute.mockResolvedValueOnce({
+        rows: [{
+          performance_count: 0,
+          reservations_count: 0,
+          ticket_scan_events_count: 0,
+          seat_operation_history_count: 0,
+        }],
+      });
+
+      await expect(service.deletePerformance('missing-id')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+
+      expect(mockDb.delete).not.toHaveBeenCalled();
     });
   });
 

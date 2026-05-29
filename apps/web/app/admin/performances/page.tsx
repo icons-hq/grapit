@@ -69,8 +69,10 @@ export default function AdminPerformancesPage() {
       onSuccess: () => {
         toast.success('공연이 삭제되었습니다.');
       },
-      onError: () => {
-        toast.error('공연 삭제에 실패했습니다.');
+      onError: (error) => {
+        toast.error('공연을 삭제할 수 없습니다.', {
+          description: error instanceof Error ? error.message : undefined,
+        });
       },
     });
   }
@@ -213,7 +215,7 @@ export default function AdminPerformancesPage() {
                         <TooltipContent>삭제</TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
-                    <AlertDialogContent>
+                    <AlertDialogContent onClick={(e) => e.stopPropagation()}>
                       <AlertDialogHeader>
                         <AlertDialogTitle>공연을 삭제하시겠습니까?</AlertDialogTitle>
                         <AlertDialogDescription>
@@ -224,7 +226,10 @@ export default function AdminPerformancesPage() {
                         <AlertDialogCancel>취소</AlertDialogCancel>
                         <AlertDialogAction
                           variant="destructive"
-                          onClick={() => handleDelete(perf.id)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDelete(perf.id);
+                          }}
                         >
                           삭제
                         </AlertDialogAction>

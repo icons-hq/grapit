@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   NotFoundException,
@@ -93,6 +94,10 @@ function normalizePerformanceDetailImages(
     .sort((a, b) => a.sortOrder - b.sortOrder);
 }
 
+function countValue(value: unknown): number {
+  return Number(value ?? 0);
+}
+
 type LegacySeatMapSaveInput = {
   svgUrl: string;
   seatConfig: SeatMapConfigInput;
@@ -113,6 +118,13 @@ type SeatMapSaveResult = Pick<
 >;
 
 type BannerMutationContext = AdminEventMutationContext;
+
+type PerformanceDeleteBlockerCounts = {
+  performance_count: unknown;
+  reservations_count: unknown;
+  ticket_scan_events_count: unknown;
+  seat_operation_history_count: unknown;
+};
 
 type BannerRow = {
   id: string;
@@ -1282,6 +1294,63 @@ export class AdminService {
   }
 
   async deletePerformance(id: string): Promise<void> {
+    const blockerResult = await this.db.execute(sql`
+      WITH target_performance AS (
+        SELECT id
+        FROM performances
+        WHERE id = ${id}
+      ),
+      target_showtimes AS (
+        SELECT id
+        FROM showtimes
+        WHERE performance_id = ${id}
+      )
+      SELECT
+        (SELECT count(*)::int FROM target_performance) AS performance_count,
+        (
+          SELECT count(*)::int
+          FROM reservations
+          WHERE showtime_id IN (SELECT id FROM target_showtimes)
+        ) AS reservations_count,
+        (
+          SELECT count(*)::int
+          FROM ticket_scan_events
+          WHERE showtime_id IN (SELECT id FROM target_showtimes)
+        ) AS ticket_scan_events_count,
+        (
+          SELECT count(*)::int
+          FROM seat_operation_history
+          WHERE showtime_id IN (SELECT id FROM target_showtimes)
+        ) AS seat_operation_history_count
+    `);
+    const counts = blockerResult.rows[0] as
+      | PerformanceDeleteBlockerCounts
+      | undefined;
+
+    if (!counts || countValue(counts.performance_count) === 0) {
+      throw new NotFoundException('공연을 찾을 수 없습니다');
+    }
+
+    const blockers: string[] = [];
+    const reservationsCount = countValue(counts.reservations_count);
+    const ticketScanEventsCount = countValue(counts.ticket_scan_events_count);
+    const seatOperationHistoryCount = countValue(counts.seat_operation_history_count);
+
+    if (reservationsCount > 0) blockers.push(`예매 ${reservationsCount}건`);
+    if (ticketScanEventsCount > 0) {
+      blockers.push(`입장 스캔 이력 ${ticketScanEventsCount}건`);
+    }
+    if (seatOperationHistoryCount > 0) {
+      blockers.push(`좌석 운영 이력 ${seatOperationHistoryCount}건`);
+    }
+
+    if (blockers.length > 0) {
+      throw new ConflictException({
+        message: `연결된 운영 이력이 있어 공연을 삭제할 수 없습니다: ${blockers.join(', ')}`,
+        blockers,
+      });
+    }
+
     await this.db.delete(performances).where(eq(performances.id, id));
     await this.invalidateCatalogCache(id);
   }
