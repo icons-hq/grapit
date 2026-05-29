@@ -6,7 +6,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { and, desc, eq, gte, lte, ne, type SQL } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, lte, ne, type SQL } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import { translationDrafts } from '../../database/schema/translation-drafts.js';
 import { translationSources } from '../../database/schema/translation-sources.js';
@@ -163,6 +163,8 @@ export class TranslationService {
     }
     if (filters.locale) {
       predicates.push(eq(translationDrafts.targetLocale, filters.locale));
+    } else {
+      predicates.push(inArray(translationDrafts.targetLocale, [...TRANSLATION_TARGET_LOCALES]));
     }
     if (filters.status) {
       predicates.push(eq(translationDrafts.status, filters.status));
@@ -449,6 +451,9 @@ export class TranslationService {
     source: SourceRow,
     filters: TranslationQueueFilters,
   ): boolean {
+    if (!TRANSLATION_TARGET_LOCALES.includes(draft.targetLocale as TranslationTargetLocale)) {
+      return false;
+    }
     if (filters.contentType && source.entityType !== filters.contentType) return false;
     if (filters.locale && draft.targetLocale !== filters.locale) return false;
     if (filters.status && draft.status !== filters.status) return false;

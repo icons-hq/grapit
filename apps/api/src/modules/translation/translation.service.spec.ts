@@ -18,7 +18,7 @@ type SourceRow = {
 type DraftRow = {
   id: string;
   sourceId: string;
-  targetLocale: 'en' | 'th' | 'zh-CN';
+  targetLocale: string;
   status: 'draft' | 'review' | 'published' | 'stale';
   translatedText: string;
   sourceContentHash: string;
@@ -113,6 +113,30 @@ describe('TranslationService', () => {
     expect(drafts.map((draft) => draft.locale)).toEqual(['en', 'th', 'zh-CN']);
     expect(drafts.every((draft) => draft.status === 'draft')).toBe(true);
     expect(drafts.every((draft) => draft.automaticTranslationLabel === true)).toBe(true);
+  });
+
+  it('excludes stale unsupported target locales from the admin queue', async () => {
+    const source = await service.createSource({
+      entityType: 'fanmeet',
+      entityId: '11111111-1111-1111-1111-111111111111',
+      field: 'description',
+      sourceText: '팬미팅 안내',
+      createdBy: '22222222-2222-2222-2222-222222222222',
+    });
+    await service.generateDrafts(source.id);
+    store.createDraft({
+      sourceId: source.id,
+      targetLocale: 'zh-TW',
+      status: 'published',
+      translatedText: '繁體中文舊資料',
+      sourceContentHash: source.contentHash,
+      reviewedBy: null,
+      publishedAt: new Date('2026-05-06T00:00:00.000Z'),
+    });
+
+    const queue = await service.listQueue();
+
+    expect(queue.map((draft) => draft.locale)).toEqual(['en', 'th', 'zh-CN']);
   });
 
   it('requires operator review before publishing a draft', async () => {

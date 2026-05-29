@@ -229,6 +229,7 @@ export function FieldMonitor({
   const logs = normalizeLogs(controlledLogs ?? logsQuery.logs);
   const isLoading = summaryQuery.isLoading || logsQuery.isLoading;
   const isError = summaryQuery.isError || logsQuery.isError;
+  const canRefresh = Boolean(filters.eventId && filters.showtimeId);
 
   function updateFilter<K extends keyof FieldMonitorLogFilter>(
     key: K,
@@ -241,6 +242,10 @@ export function FieldMonitor({
   }
 
   function handleRefresh() {
+    if (!canRefresh) {
+      return;
+    }
+
     void summaryQuery.manualRefresh();
     void logsQuery.manualRefresh();
   }
@@ -259,7 +264,7 @@ export function FieldMonitor({
           variant="outline"
           className="h-11 w-full sm:w-auto"
           onClick={handleRefresh}
-          disabled={summaryQuery.isFetching || logsQuery.isFetching}
+          disabled={!canRefresh || summaryQuery.isFetching || logsQuery.isFetching}
         >
           <RefreshCcw className="h-4 w-4" />
           {summaryQuery.isFetching || logsQuery.isFetching

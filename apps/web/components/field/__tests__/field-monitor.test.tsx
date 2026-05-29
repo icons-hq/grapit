@@ -175,6 +175,13 @@ describe('FieldMonitor', () => {
     expect(screen.queryByText(rawBuyerPhone, { exact: true })).not.toBeInTheDocument();
   });
 
+  it('keeps manual refresh disabled until required monitor filters are present', () => {
+    render(<FieldMonitor />);
+
+    expect(screen.getByRole('button', { name: '새로고침' })).toBeDisabled();
+    expect(refetchMock).not.toHaveBeenCalled();
+  });
+
   it('configures the monitor summary hook for visible 10 second polling and manual refresh', async () => {
     const result = useFieldMonitorSummary({
       eventId: 'phase27-event',

@@ -326,7 +326,9 @@ export function useDeletePerformance() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
-      apiClient.delete(`/api/v1/admin/performances/${id}`),
+      apiClient.delete(`/api/v1/admin/performances/${id}`, {
+        showErrorToast: false,
+      }),
     onSuccess: (_data, id) => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'performances'] });
       invalidatePublicPerformanceQueries(queryClient, id);
