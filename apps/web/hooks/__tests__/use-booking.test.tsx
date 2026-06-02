@@ -848,7 +848,7 @@ describe('use-booking payment mutations', () => {
     const originalVariantKey = process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY;
 
     try {
-      process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = ' DEFAULT, paypal, DEFAULT ';
+      process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = ' DEFAULT, paypal, alipay, DEFAULT ';
 
       expect(resolvePaymentWidgetVariantKey()).toBe('DEFAULT');
       expect(resolvePaymentWidgetVariantKeys()).toEqual(['DEFAULT', 'paypal']);
@@ -875,12 +875,12 @@ describe('use-booking payment mutations', () => {
   it('resolvePaymentWidgetVariantLabel() labels foreign payment variants without duplicate PayPal copy', () => {
     expect(resolvePaymentWidgetVariantLabel('DEFAULT')).toBe('국내 결제');
     expect(resolvePaymentWidgetVariantLabel('paypal')).toBe('해외 결제');
-    expect(resolvePaymentWidgetVariantLabel('alipay')).toBe('Alipay');
   });
 
-  it('resolvePaymentWidgetRenderVariantKey() normalizes PayPal variant for Toss widget API', () => {
+  it('resolvePaymentWidgetRenderVariantKey() normalizes foreign variants for Toss widget API', () => {
     expect(resolvePaymentWidgetRenderVariantKey('paypal')).toBe('PAYPAL');
     expect(resolvePaymentWidgetRenderVariantKey('PAYPAL')).toBe('PAYPAL');
+    expect(resolvePaymentWidgetRenderVariantKey('alipay')).toBe('PAYPAL');
     expect(resolvePaymentWidgetRenderVariantKey('DEFAULT')).toBe('DEFAULT');
   });
 
