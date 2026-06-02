@@ -143,4 +143,21 @@ describe('TossPaymentWidget', () => {
     expect(screen.getByRole('button', { name: /Alipay\s+USD/ })).toBeInTheDocument();
     expect(screen.queryByText('결제 위젯을 불러오는데 실패했습니다.')).not.toBeInTheDocument();
   });
+
+  it('destroys the previous agreement widget before rendering a foreign widget variant', async () => {
+    process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = 'DEFAULT,paypal';
+    const user = userEvent.setup();
+    render(<TossPaymentWidget {...defaultProps} />);
+
+    await waitFor(() => expect(renderAgreementMock).toHaveBeenCalledTimes(1));
+
+    await user.click(screen.getByRole('tab', { name: '해외 결제' }));
+
+    await waitFor(() => expect(renderAgreementMock).toHaveBeenCalledTimes(2));
+    expect(agreementDestroyMock).toHaveBeenCalled();
+    expect(agreementDestroyMock.mock.invocationCallOrder[0]).toBeLessThan(
+      renderAgreementMock.mock.invocationCallOrder[1],
+    );
+    expect(screen.queryByText('결제 위젯을 불러오는데 실패했습니다.')).not.toBeInTheDocument();
+  });
 });

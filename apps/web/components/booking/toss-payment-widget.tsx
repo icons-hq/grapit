@@ -640,6 +640,8 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
     const selectedPaymentMethodRef = useRef<PaymentMethodSelection>(
       resolveInitialPaymentMethodSelection(paymentWidgetVariantKey),
     );
+    const paymentWidgetInstanceRef = useRef<PaymentMethodWidget | null>(null);
+    const agreementWidgetInstanceRef = useRef<AgreementWidget | null>(null);
     const shouldRenderPaymentWidgets = !isAlipayPaymentWidgetVariant(paymentWidgetVariantKey);
 
     const updateSelectedPaymentMethod = useCallback((selection: SelectedWidgetPaymentMethod) => {
@@ -847,6 +849,14 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
       let mounted = true;
       async function init() {
         try {
+          const previousPaymentWidget = paymentWidgetInstanceRef.current;
+          const previousAgreementWidget = agreementWidgetInstanceRef.current;
+          paymentWidgetInstanceRef.current = null;
+          agreementWidgetInstanceRef.current = null;
+          await Promise.all([
+            previousPaymentWidget?.destroy(),
+            previousAgreementWidget?.destroy(),
+          ]);
           setWidgets(null);
           setIsLoading(true);
           setError(null);
@@ -919,19 +929,30 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
           });
           await activeWidgets.setAmount(renderAmount);
 
-          const [paymentMethodWidget, agreementWidget] = await Promise.all([
-            activeWidgets.renderPaymentMethods({
-              selector: '#payment-method',
-              variantKey: resolvePaymentWidgetRenderVariantKey(paymentWidgetVariantKey),
-            }),
-            activeWidgets.renderAgreement({
-              selector: '#agreement',
-              variantKey: 'AGREEMENT',
-            }),
+          const previousPaymentWidget = paymentWidgetInstanceRef.current;
+          const previousAgreementWidget = agreementWidgetInstanceRef.current;
+          paymentWidgetInstanceRef.current = null;
+          agreementWidgetInstanceRef.current = null;
+          await Promise.all([
+            previousPaymentWidget?.destroy(),
+            previousAgreementWidget?.destroy(),
           ]);
+          document.getElementById('payment-method')?.replaceChildren();
+          document.getElementById('agreement')?.replaceChildren();
+
+          const paymentMethodWidget = await activeWidgets.renderPaymentMethods({
+            selector: '#payment-method',
+            variantKey: resolvePaymentWidgetRenderVariantKey(paymentWidgetVariantKey),
+          });
+          const agreementWidget = await activeWidgets.renderAgreement({
+            selector: '#agreement',
+            variantKey: 'AGREEMENT',
+          });
 
           paymentWidgetInstance = paymentMethodWidget;
           agreementWidgetInstance = agreementWidget;
+          paymentWidgetInstanceRef.current = paymentMethodWidget;
+          agreementWidgetInstanceRef.current = agreementWidget;
           paymentMethodWidget.on('paymentMethodSelect', updateSelectedPaymentMethod);
           agreementWidget.on('agreementStatusChange', updateWidgetAgreement);
           const selectedPaymentMethod = await paymentMethodWidget.getSelectedPaymentMethod();
@@ -957,6 +978,12 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
 
       return () => {
         mounted = false;
+        if (paymentWidgetInstanceRef.current === paymentWidgetInstance) {
+          paymentWidgetInstanceRef.current = null;
+        }
+        if (agreementWidgetInstanceRef.current === agreementWidgetInstance) {
+          agreementWidgetInstanceRef.current = null;
+        }
         void paymentWidgetInstance?.destroy();
         void agreementWidgetInstance?.destroy();
       };
