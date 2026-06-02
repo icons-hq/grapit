@@ -500,7 +500,7 @@ describe('ReservationService', () => {
       showtime_id: args.showtimeId ?? 'showtime-1',
       reservation_status: args.reservationStatus ?? 'CONFIRMED',
       reservation_created_at: args.reservationCreatedAt ?? new Date('2026-05-08T01:00:00.000Z'),
-      showtime_at: args.showtimeAt ?? new Date('2026-06-01T10:00:00.000Z'),
+      showtime_at: args.showtimeAt ?? new Date('2026-06-30T10:00:00.000Z'),
       payment_id: args.paymentId ?? 'payment-1',
       payment_key: args.paymentKey ?? 'pk_ticket_item_cancel',
       payment_status: args.paymentStatus ?? 'DONE',
@@ -1234,6 +1234,188 @@ describe('ReservationService', () => {
             quotedAt: now.toISOString(),
           },
         }));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('prepareReservation stores and returns an Alipay provider charge quote when checkout is enabled', async () => {
+      vi.useFakeTimers();
+      const now = new Date('2026-05-29T10:00:00.000Z');
+      vi.setSystemTime(now);
+
+      try {
+        const userId = randomUUID();
+        const providerChargeQuoteService = {
+          getForeignEasyPayAvailability: vi.fn().mockReturnValue({ enabled: true }),
+          createForeignEasyPayQuote: vi.fn().mockReturnValue({
+            currency: 'USD',
+            amountMinor: 7490,
+            amountDecimal: '74.90',
+            rate: '0.00072',
+            quotedAt: now.toISOString(),
+          }),
+        };
+        const alipayService = new ReservationService(
+          mockDb as never,
+          mockTossClient as unknown as TossPaymentsClient,
+          mockBookingService as unknown as BookingService,
+          mockBookingGateway as unknown as BookingGateway,
+          mockFeatureFlags as unknown as FeatureFlagsService,
+          mockConsentService as unknown as ConsentService,
+          undefined,
+          undefined,
+          providerChargeQuoteService as never,
+        );
+        const dto = {
+          showtimeId: randomUUID(),
+          orderId: 'GRP-ALIPAY-PREPARE',
+          seats: [
+            { seatId: 'A-1', tierName: 'VIP', price: 50000, row: 'A', number: '1' },
+            { seatId: 'A-2', tierName: 'VIP', price: 50000, row: 'A', number: '2' },
+          ],
+          amount: 104000,
+          consentItems: makeConsentItems(),
+          queueAdmission: makeQueueAdmission(now),
+          paymentDeadlineAt: now.toISOString(),
+          bookingPolicy: {
+            maxTicketsPerOrder: 2,
+            cancellationChangePolicy: 'CANCEL_ONLY' as const,
+            sameGradeChangeEnabled: false,
+            paymentWindowMinutes: 7,
+            seatHoldMinutes: 10,
+          },
+          paymentMethod: {
+            method: 'FOREIGN_EASY_PAY' as const,
+            provider: 'ALIPAY_PLUS' as const,
+            currency: 'USD',
+            pendingUrlRequired: true,
+          },
+        };
+        const insertedValues: unknown[] = [];
+        setupPrepareBase(dto);
+        const mockTx = {
+          insert: vi.fn().mockReturnValue({
+            values: vi.fn((values: unknown) => {
+              insertedValues.push(values);
+              return {
+                returning: vi.fn().mockResolvedValue([{ id: 'reservation-created', tossOrderId: dto.orderId }]),
+              };
+            }),
+          }),
+        };
+        mockDb.transaction.mockImplementation(async (cb: (tx: typeof mockTx) => Promise<unknown>) => cb(mockTx));
+
+        const result = await alipayService.prepareReservation(dto, userId);
+
+        expect(providerChargeQuoteService.createForeignEasyPayQuote).toHaveBeenCalledWith({
+          reservationPayableAmount: 104000,
+          now,
+        });
+        expect(insertedValues[0]).toEqual(expect.objectContaining({
+          providerChargeCurrency: 'USD',
+          providerChargeAmountMinor: 7490,
+          providerChargeRate: '0.00072',
+          providerChargeQuotedAt: now,
+        }));
+        expect(result).toEqual(expect.objectContaining({
+          checkoutEnabled: true,
+          providerChargeQuote: {
+            currency: 'USD',
+            amountMinor: 7490,
+            amountDecimal: '74.90',
+            rate: '0.00072',
+            quotedAt: now.toISOString(),
+          },
+        }));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('prepareReservation keeps Alipay checkout disabled when the Alipay provider flag is off', async () => {
+      vi.useFakeTimers();
+      const now = new Date('2026-05-29T10:00:00.000Z');
+      vi.setSystemTime(now);
+
+      try {
+        const userId = randomUUID();
+        const providerChargeQuoteService = {
+          getAlipayAvailability: vi.fn().mockReturnValue({
+            enabled: false,
+            disabledReason: 'ALIPAY_CHECKOUT_DISABLED',
+          }),
+          getForeignEasyPayAvailability: vi.fn().mockReturnValue({ enabled: true }),
+          createForeignEasyPayQuote: vi.fn().mockReturnValue({
+            currency: 'USD',
+            amountMinor: 7490,
+            amountDecimal: '74.90',
+            rate: '0.00072',
+            quotedAt: now.toISOString(),
+          }),
+        };
+        const alipayService = new ReservationService(
+          mockDb as never,
+          mockTossClient as unknown as TossPaymentsClient,
+          mockBookingService as unknown as BookingService,
+          mockBookingGateway as unknown as BookingGateway,
+          mockFeatureFlags as unknown as FeatureFlagsService,
+          mockConsentService as unknown as ConsentService,
+          undefined,
+          undefined,
+          providerChargeQuoteService as never,
+        );
+        const dto = {
+          showtimeId: randomUUID(),
+          orderId: 'GRP-ALIPAY-DISABLED-PREPARE',
+          seats: [
+            { seatId: 'A-1', tierName: 'VIP', price: 50000, row: 'A', number: '1' },
+            { seatId: 'A-2', tierName: 'VIP', price: 50000, row: 'A', number: '2' },
+          ],
+          amount: 104000,
+          consentItems: makeConsentItems(),
+          queueAdmission: makeQueueAdmission(now),
+          paymentDeadlineAt: now.toISOString(),
+          bookingPolicy: {
+            maxTicketsPerOrder: 2,
+            cancellationChangePolicy: 'CANCEL_ONLY' as const,
+            sameGradeChangeEnabled: false,
+            paymentWindowMinutes: 7,
+            seatHoldMinutes: 10,
+          },
+          paymentMethod: {
+            method: 'FOREIGN_EASY_PAY' as const,
+            provider: 'ALIPAY_PLUS' as const,
+            currency: 'USD',
+            pendingUrlRequired: true,
+          },
+        };
+        const insertedValues: unknown[] = [];
+        setupPrepareBase(dto);
+        const mockTx = {
+          insert: vi.fn().mockReturnValue({
+            values: vi.fn((values: unknown) => {
+              insertedValues.push(values);
+              return {
+                returning: vi.fn().mockResolvedValue([{ id: 'reservation-created', tossOrderId: dto.orderId }]),
+              };
+            }),
+          }),
+        };
+        mockDb.transaction.mockImplementation(async (cb: (tx: typeof mockTx) => Promise<unknown>) => cb(mockTx));
+
+        const result = await alipayService.prepareReservation(dto, userId);
+
+        expect(providerChargeQuoteService.getAlipayAvailability).toHaveBeenCalled();
+        expect(providerChargeQuoteService.createForeignEasyPayQuote).not.toHaveBeenCalled();
+        expect(insertedValues[0]).not.toEqual(expect.objectContaining({
+          providerChargeCurrency: 'USD',
+        }));
+        expect(result).toEqual(expect.objectContaining({
+          checkoutEnabled: false,
+          disabledReason: 'ALIPAY_CHECKOUT_DISABLED',
+        }));
+        expect(result.providerChargeQuote).toBeUndefined();
       } finally {
         vi.useRealTimers();
       }

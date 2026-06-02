@@ -255,6 +255,7 @@ test.describe('Toss Payments E2E', () => {
     await expect(page.locator('#payment-method iframe')).toBeVisible({ timeout: 20000 });
 
     await page.getByLabel('전체 동의').click();
+    await agreeToTossRequiredTerms(page);
     await page.getByRole('button', { name: '결제하기' }).click();
 
     await expect(page.getByText('좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.')).toBeVisible({
@@ -374,5 +375,11 @@ test.describe('Toss Payments E2E', () => {
         body: JSON.stringify({ bookingEnabled: true }),
       });
     });
+  }
+
+  async function agreeToTossRequiredTerms(page: import('@playwright/test').Page) {
+    const agreementFrame = page.frameLocator('#agreement iframe');
+    await agreementFrame.getByRole('checkbox').click({ timeout: 10000 });
+    await expect(page.getByRole('button', { name: '결제하기' })).toBeVisible({ timeout: 10000 });
   }
 });

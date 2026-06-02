@@ -7,6 +7,8 @@ type ParsedDecimalRate = {
   scale: bigint;
 };
 
+const DEFAULT_LOCAL_TEST_KRW_USD_RATE = '0.00068';
+
 export type PaypalProviderChargeQuote = {
   currency: 'USD';
   amountMinor: number;
@@ -15,26 +17,56 @@ export type PaypalProviderChargeQuote = {
   quotedAt: string;
 };
 
+export type ForeignEasyPayProviderChargeQuote = PaypalProviderChargeQuote;
+
 @Injectable()
 export class ProviderChargeQuoteService {
   private readonly paypalCheckoutEnabled: boolean;
+  private readonly alipayCheckoutRequested: boolean;
+  private readonly alipayCheckoutEnabled: boolean;
+  private readonly alipaySecretConfigured: boolean;
   private readonly paypalRate?: ParsedDecimalRate;
 
   constructor(private readonly configService: ConfigService) {
-    this.paypalCheckoutEnabled =
-      this.configService.get<string>('PAYPAL_CHECKOUT_ENABLED')?.trim().toLowerCase()
-      === 'true';
+    const paypalCheckoutFlag = this.configService
+      .get<string>('PAYPAL_CHECKOUT_ENABLED')
+      ?.trim()
+      .toLowerCase();
+    const isPaypalExplicitlyConfigured =
+      paypalCheckoutFlag !== undefined && paypalCheckoutFlag.length > 0;
+    const useLocalTestDefault =
+      !isPaypalExplicitlyConfigured && this.isLocalTestKeyEnvironment();
 
-    if (!this.paypalCheckoutEnabled) {
+    this.paypalCheckoutEnabled = isPaypalExplicitlyConfigured
+      ? paypalCheckoutFlag === 'true'
+      : useLocalTestDefault;
+
+    const alipayCheckoutFlag = this.configService
+      .get<string>('ALIPAY_CHECKOUT_ENABLED')
+      ?.trim()
+      .toLowerCase();
+    this.alipayCheckoutRequested = alipayCheckoutFlag === 'true';
+    this.alipaySecretConfigured =
+      (this.configService.get<string>('TOSS_FOREIGN_EASY_PAY_SECRET_KEY') ?? '').trim().length > 0;
+    this.alipayCheckoutEnabled =
+      this.alipayCheckoutRequested && this.alipaySecretConfigured;
+
+    if (!this.paypalCheckoutEnabled && !this.alipayCheckoutEnabled) {
       return;
     }
 
-    const rate = this.configService.get<string>('PAYPAL_KRW_USD_RATE');
+    const rate =
+      this.configService.get<string>('PAYPAL_KRW_USD_RATE')
+      ?? (useLocalTestDefault ? DEFAULT_LOCAL_TEST_KRW_USD_RATE : undefined);
     this.paypalRate = this.parseRate(rate);
   }
 
   isPaypalCheckoutEnabled(): boolean {
     return this.paypalCheckoutEnabled;
+  }
+
+  isAlipayCheckoutEnabled(): boolean {
+    return this.alipayCheckoutEnabled;
   }
 
   getPaypalAvailability(): { enabled: boolean; disabledReason?: string } {
@@ -48,12 +80,56 @@ export class ProviderChargeQuoteService {
     };
   }
 
+  getAlipayAvailability(): { enabled: boolean; disabledReason?: string } {
+    if (this.alipayCheckoutEnabled) {
+      return { enabled: true };
+    }
+
+    if (this.alipayCheckoutRequested && !this.alipaySecretConfigured) {
+      return {
+        enabled: false,
+        disabledReason: 'ALIPAY_SECRET_KEY_MISSING',
+      };
+    }
+
+    return {
+      enabled: false,
+      disabledReason: 'ALIPAY_CHECKOUT_DISABLED',
+    };
+  }
+
+  getForeignEasyPayAvailability(): { enabled: boolean; disabledReason?: string } {
+    return this.getPaypalAvailability();
+  }
+
   createPaypalQuote(input: {
     reservationPayableAmount: number;
     now: Date;
   }): PaypalProviderChargeQuote {
-    if (!this.paypalCheckoutEnabled || !this.paypalRate) {
+    if (!this.paypalCheckoutEnabled) {
       throw new Error('PAYPAL_CHECKOUT_ENABLED is false');
+    }
+
+    return this.createProviderChargeQuote(input);
+  }
+
+  createForeignEasyPayQuote(input: {
+    reservationPayableAmount: number;
+    now: Date;
+  }): ForeignEasyPayProviderChargeQuote {
+    if ((!this.paypalCheckoutEnabled && !this.alipayCheckoutEnabled) || !this.paypalRate) {
+      throw new Error('foreign easy pay checkout is disabled');
+    }
+
+    return this.createProviderChargeQuote(input);
+  }
+
+  private createProviderChargeQuote(input: {
+    reservationPayableAmount: number;
+    now: Date;
+  }): ForeignEasyPayProviderChargeQuote {
+    if (!this.paypalRate) {
+      throw new Error('PAYPAL_KRW_USD_RATE must be configured');
     }
     if (!Number.isInteger(input.reservationPayableAmount) || input.reservationPayableAmount <= 0) {
       throw new Error('reservationPayableAmount must be a positive integer');
@@ -118,6 +194,15 @@ export class ProviderChargeQuoteService {
     }
 
     return { normalized, numerator, scale };
+  }
+
+  private isLocalTestKeyEnvironment(): boolean {
+    const nodeEnv = this.configService.get<string>('NODE_ENV')?.trim().toLowerCase();
+    if (nodeEnv === 'production') {
+      return false;
+    }
+
+    return this.configService.get<string>('TOSS_SECRET_KEY')?.startsWith('test_') === true;
   }
 
   private normalizeDecimalString(value: string): string {

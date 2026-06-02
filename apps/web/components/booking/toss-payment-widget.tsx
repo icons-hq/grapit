@@ -9,7 +9,12 @@ import {
   useImperativeHandle,
 } from 'react';
 import { useLocale } from 'next-intl';
-import { loadTossPayments, type TossPaymentsWidgets } from '@tosspayments/tosspayments-sdk';
+import {
+  loadTossPayments,
+  type TossPaymentsPayment,
+  type TossPaymentsWidgets,
+  type WidgetAgreementStatus,
+} from '@tosspayments/tosspayments-sdk';
 import { Loader2 } from 'lucide-react';
 import { apiClient } from '@/lib/api-client';
 import { resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
@@ -24,8 +29,11 @@ import type {
 
 const OVERSEAS_PAYMENT_CONSENT_VERSION = '2026-05-08';
 const PAYPAL_VARIANT_KEY = 'paypal';
+const ALIPAY_VARIANT_KEY = 'alipay';
 const PAYPAL_WIDGET_USD_ESTIMATE_RATE = 0.00068;
-const FOREIGN_WALLET_CODES = new Set(['ALIPAY', 'TRUEMONEY', 'PAYPAL', '페이팔']);
+const FOREIGN_WALLET_CODES = new Set(['ALIPAY', 'ALIPAY_PLUS', 'TRUEMONEY', 'PAYPAL', '페이팔']);
+const PROVIDER_CHARGE_QUOTE_PROVIDERS = new Set<PaymentProvider>(['ALIPAY_PLUS', 'PAYPAL']);
+const PLACEHOLDER_PHONE_NUMBERS = new Set(['01000000000']);
 const OVERSEAS_CARD_CODES = new Set([
   'VISA',
   'MASTER',
@@ -44,6 +52,7 @@ const SIMPLE_PAY_PROVIDER_BY_CODE = {
 
 const FOREIGN_PROVIDER_BY_CODE = {
   ALIPAY: 'ALIPAY_PLUS',
+  ALIPAY_PLUS: 'ALIPAY_PLUS',
   TRUEMONEY: 'TRUEMONEY',
   PAYPAL: 'PAYPAL',
   페이팔: 'PAYPAL',
@@ -58,6 +67,7 @@ const LOCALE_TO_COUNTRY = {
 type PaymentWidgetLocale = keyof typeof LOCALE_TO_COUNTRY;
 
 type PaymentMethodWidget = Awaited<ReturnType<TossPaymentsWidgets['renderPaymentMethods']>>;
+type AgreementWidget = Awaited<ReturnType<TossPaymentsWidgets['renderAgreement']>>;
 type SelectedWidgetPaymentMethod = Awaited<ReturnType<PaymentMethodWidget['getSelectedPaymentMethod']>>;
 
 interface TossPaymentWidgetProps {
@@ -72,6 +82,7 @@ interface TossPaymentWidgetProps {
   selectedSeats: FloorAwareSeatSelection[];
   onReady: () => void;
   onPaymentMethodChange?: (selection: PaymentMethodSelection) => void;
+  onWidgetAgreementChange?: (agreed: boolean) => void;
 }
 
 export interface TossPaymentWidgetRef {
@@ -82,6 +93,7 @@ export interface PaymentMethodSelection {
   code: string;
   paymentMethod: PaymentMethod;
   requiresOverseasDisclaimer: boolean;
+  requestFlow: 'widget' | 'direct_card' | 'direct_foreign_easy_pay';
 }
 
 export interface TossPaymentBranchResponse {
@@ -123,12 +135,53 @@ interface WidgetPaymentRequestPayload {
   };
 }
 
+interface DirectCardPaymentRequestPayload {
+  method: 'CARD';
+  amount: {
+    currency: 'KRW';
+    value: number;
+  };
+  orderId: string;
+  orderName: string;
+  successUrl: string;
+  failUrl: string;
+  customerEmail?: string;
+  customerName?: string;
+  customerMobilePhone?: string;
+  card: {
+    useInternationalCardOnly: true;
+  };
+}
+
+interface DirectForeignEasyPayPaymentRequestPayload {
+  method: 'FOREIGN_EASY_PAY';
+  amount: {
+    currency: 'USD';
+    value: number;
+  };
+  orderId: string;
+  orderName: string;
+  successUrl: string;
+  failUrl: string;
+  pendingUrl: string;
+  customerEmail?: string;
+  customerName?: string;
+  customerMobilePhone?: string;
+  foreignEasyPay: {
+    provider: 'ALIPAY';
+    country: 'CN';
+  };
+}
+
 function sanitizePhoneNumber(phone: string | undefined): string | undefined {
   if (!phone) {
     return undefined;
   }
 
   const normalized = phone.replace(/\D/g, '');
+  if (PLACEHOLDER_PHONE_NUMBERS.has(normalized)) {
+    return undefined;
+  }
   return normalized.length > 0 ? normalized : undefined;
 }
 
@@ -162,8 +215,40 @@ export function resolvePaymentWidgetVariantKeys(): string[] {
   return variantKeys.length > 0 ? [...new Set(variantKeys)] : ['DEFAULT'];
 }
 
+export function resolvePaymentWidgetRenderVariantKey(variantKey: string): string {
+  const trimmedVariantKey = variantKey.trim();
+  if (trimmedVariantKey.toLowerCase() === PAYPAL_VARIANT_KEY) {
+    return 'PAYPAL';
+  }
+  return trimmedVariantKey.length > 0 ? trimmedVariantKey : 'DEFAULT';
+}
+
+export function resolvePaymentWidgetClientKey(variantKey: string): string | undefined {
+  if (isForeignPaymentWidgetVariant(variantKey)) {
+    return process.env.NEXT_PUBLIC_TOSS_FOREIGN_PAYMENT_WIDGET_CLIENT_KEY
+      || process.env.NEXT_PUBLIC_TOSS_CLIENT_KEY;
+  }
+  return process.env.NEXT_PUBLIC_TOSS_CLIENT_KEY;
+}
+
 export function isPaypalPaymentWidgetVariant(variantKey: string): boolean {
   return variantKey.toLowerCase() === PAYPAL_VARIANT_KEY;
+}
+
+export function isForeignPaymentWidgetVariant(variantKey: string): boolean {
+  const normalized = variantKey.toLowerCase();
+  return normalized === PAYPAL_VARIANT_KEY || normalized === ALIPAY_VARIANT_KEY;
+}
+
+export function resolvePaymentWidgetVariantLabel(variantKey: string): string {
+  const normalized = variantKey.toLowerCase();
+  if (normalized === PAYPAL_VARIANT_KEY) {
+    return '해외 결제';
+  }
+  if (normalized === ALIPAY_VARIANT_KEY) {
+    return 'Alipay';
+  }
+  return '국내 결제';
 }
 
 export function resolvePaymentWidgetRenderAmount({
@@ -173,7 +258,7 @@ export function resolvePaymentWidgetRenderAmount({
   amount: number;
   variantKey: string;
 }): { currency: 'KRW' | 'USD'; value: number } {
-  if (isPaypalPaymentWidgetVariant(variantKey)) {
+  if (isForeignPaymentWidgetVariant(variantKey)) {
     return {
       currency: 'USD',
       value: Math.max(0.01, Math.round(amount * PAYPAL_WIDGET_USD_ESTIMATE_RATE * 100) / 100),
@@ -186,11 +271,83 @@ export function resolvePaymentWidgetRenderAmount({
   };
 }
 
-export function resolvePaymentMethodSelection(code: string): PaymentMethodSelection {
-  if (FOREIGN_WALLET_CODES.has(code)) {
-    const provider = FOREIGN_PROVIDER_BY_CODE[code as keyof typeof FOREIGN_PROVIDER_BY_CODE];
+function normalizePaymentMethodCode(code: string): string {
+  return code === '페이팔' ? code : code.toUpperCase();
+}
+
+function usesProviderChargeQuote(provider: PaymentProvider): boolean {
+  return PROVIDER_CHARGE_QUOTE_PROVIDERS.has(provider);
+}
+
+function usesProviderChargeQuoteForPaymentMethod(paymentMethod: PaymentMethod): boolean {
+  return usesProviderChargeQuote(paymentMethod.provider)
+    || (
+      paymentMethod.method === 'CARD'
+      && paymentMethod.provider === 'CARD'
+      && paymentMethod.currency?.toUpperCase() === 'USD'
+      && paymentMethod.overseasPaymentConsent?.required === true
+    );
+}
+
+export function resolveProviderChargeDisabledMessage(
+  provider: PaymentProvider,
+  disabledReason?: string,
+): string {
+  if (provider === 'ALIPAY_PLUS') {
+    return 'Alipay 결제 설정이 완료되지 않았습니다. 관리자에게 문의해주세요.';
+  }
+  if (provider === 'PAYPAL') {
+    return 'PayPal 결제 설정이 완료되지 않았습니다. 관리자에게 문의해주세요.';
+  }
+  if (provider === 'CARD') {
+    return '해외 카드 결제 설정이 완료되지 않았습니다. 관리자에게 문의해주세요.';
+  }
+  return disabledReason ?? '해외 결제 설정이 완료되지 않았습니다. 관리자에게 문의해주세요.';
+}
+
+export function resolvePaymentMethodSelection(
+  code: string,
+  variantKey = 'DEFAULT',
+): PaymentMethodSelection {
+  const normalizedCode = normalizePaymentMethodCode(code);
+
+  if (
+    isForeignPaymentWidgetVariant(variantKey)
+    && (normalizedCode === 'ALIPAY' || normalizedCode === 'ALIPAY_PLUS')
+  ) {
     return {
       code,
+      requestFlow: 'direct_foreign_easy_pay',
+      requiresOverseasDisclaimer: true,
+      paymentMethod: {
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'ALIPAY_PLUS',
+        currency: 'USD',
+        pendingUrlRequired: true,
+        overseasPaymentConsent: createOverseasConsent(),
+      },
+    };
+  }
+
+  if (normalizedCode === 'CARD' && isForeignPaymentWidgetVariant(variantKey)) {
+    return {
+      code,
+      requestFlow: 'widget',
+      requiresOverseasDisclaimer: true,
+      paymentMethod: {
+        method: 'CARD',
+        provider: 'CARD',
+        currency: 'USD',
+        overseasPaymentConsent: createOverseasConsent(),
+      },
+    };
+  }
+
+  if (FOREIGN_WALLET_CODES.has(normalizedCode)) {
+    const provider = FOREIGN_PROVIDER_BY_CODE[normalizedCode as keyof typeof FOREIGN_PROVIDER_BY_CODE];
+    return {
+      code,
+      requestFlow: 'widget',
       requiresOverseasDisclaimer: true,
       paymentMethod: {
         method: 'FOREIGN_EASY_PAY',
@@ -202,9 +359,13 @@ export function resolvePaymentMethodSelection(code: string): PaymentMethodSelect
     };
   }
 
-  if (OVERSEAS_CARD_CODES.has(code)) {
+  if (
+    (normalizedCode === 'OVERSEAS_CARD' && isForeignPaymentWidgetVariant(variantKey))
+    || OVERSEAS_CARD_CODES.has(normalizedCode)
+  ) {
     return {
       code,
+      requestFlow: 'direct_card',
       requiresOverseasDisclaimer: true,
       paymentMethod: {
         method: 'CARD',
@@ -218,6 +379,7 @@ export function resolvePaymentMethodSelection(code: string): PaymentMethodSelect
   if (code in SIMPLE_PAY_PROVIDER_BY_CODE) {
     return {
       code,
+      requestFlow: 'widget',
       requiresOverseasDisclaimer: false,
       paymentMethod: {
         method: 'SIMPLE_PAY',
@@ -229,6 +391,7 @@ export function resolvePaymentMethodSelection(code: string): PaymentMethodSelect
 
   return {
     code,
+    requestFlow: 'widget',
     requiresOverseasDisclaimer: false,
     paymentMethod: {
       method: 'CARD',
@@ -260,7 +423,7 @@ export function resolvePaymentRequestAmount({
   };
 }
 
-function buildPayPalProducts({
+function buildProviderChargeProducts({
   selectedSeats,
   providerChargeQuote,
 }: {
@@ -330,8 +493,8 @@ export function buildWidgetPaymentRequest({
   }
 
   if (branch.method === 'FOREIGN_EASY_PAY') {
-    const products = branch.provider === 'PAYPAL' && branch.providerChargeQuote
-      ? buildPayPalProducts({
+    const products = branch.providerChargeQuote
+      ? buildProviderChargeProducts({
           selectedSeats,
           providerChargeQuote: branch.providerChargeQuote,
         })
@@ -354,16 +517,79 @@ export function buildWidgetPaymentRequest({
     };
   }
 
-  if (branch.method === 'CARD' && branch.useInternationalCardOnly) {
-    return {
-      ...baseRequest,
-      card: {
-        useInternationalCardOnly: true,
-      },
-    };
+  return baseRequest;
+}
+
+export function buildDirectCardPaymentRequest({
+  branch,
+  amount,
+  customerEmail,
+  customerName,
+  customerMobilePhone,
+  orderName,
+}: {
+  branch: TossPaymentBranchResponse;
+  amount: number;
+  customerEmail: string;
+  customerName: string;
+  customerMobilePhone?: string;
+  orderName: string;
+}): DirectCardPaymentRequestPayload {
+  return {
+    method: 'CARD',
+    amount: {
+      currency: 'KRW',
+      value: amount,
+    },
+    orderId: branch.orderId,
+    orderName,
+    successUrl: branch.successUrl,
+    failUrl: branch.failUrl,
+    customerEmail,
+    customerName,
+    customerMobilePhone: sanitizePhoneNumber(customerMobilePhone),
+    card: {
+      useInternationalCardOnly: true,
+    },
+  };
+}
+
+export function buildDirectForeignEasyPayPaymentRequest({
+  branch,
+  customerEmail,
+  customerName,
+  customerMobilePhone,
+  orderName,
+}: {
+  branch: TossPaymentBranchResponse;
+  customerEmail: string;
+  customerName: string;
+  customerMobilePhone?: string;
+  orderName: string;
+}): DirectForeignEasyPayPaymentRequestPayload {
+  if (!branch.pendingUrl || !branch.providerChargeQuote) {
+    throw new Error('Alipay 결제 금액을 확정하지 못했습니다.');
   }
 
-  return baseRequest;
+  return {
+    method: 'FOREIGN_EASY_PAY',
+    amount: {
+      currency: branch.providerChargeQuote.currency,
+      value: branch.providerChargeQuote.amountMinor / 100,
+    },
+    orderId: branch.orderId,
+    orderName,
+    successUrl: branch.successUrl,
+    failUrl: branch.failUrl,
+    pendingUrl: branch.pendingUrl,
+    customerEmail,
+    customerName,
+    customerMobilePhone: sanitizePhoneNumber(customerMobilePhone),
+    foreignEasyPay: {
+      provider: 'ALIPAY',
+      country: 'CN',
+    },
+  };
 }
 
 export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWidgetProps>(
@@ -380,6 +606,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
       selectedSeats,
       onReady,
       onPaymentMethodChange,
+      onWidgetAgreementChange,
     },
     ref,
   ) {
@@ -391,55 +618,159 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
     const [widgets, setWidgets] = useState<TossPaymentsWidgets | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const initRef = useRef(false);
-    const selectedPaymentMethodRef = useRef<PaymentMethodSelection>(resolvePaymentMethodSelection('CARD'));
+    const [directForeignEasyPayCode, setDirectForeignEasyPayCode] = useState<string | null>(null);
+    const paymentWidgetClientKey = resolvePaymentWidgetClientKey(paymentWidgetVariantKey);
+    const selectedPaymentMethodRef = useRef<PaymentMethodSelection>(
+      resolvePaymentMethodSelection('CARD', paymentWidgetVariantKey),
+    );
 
     const updateSelectedPaymentMethod = useCallback((selection: SelectedWidgetPaymentMethod) => {
-      const normalized = resolvePaymentMethodSelection(selection.code);
+      const normalized = resolvePaymentMethodSelection(selection.code, paymentWidgetVariantKey);
+      setDirectForeignEasyPayCode(null);
       selectedPaymentMethodRef.current = normalized;
       onPaymentMethodChange?.(normalized);
-    }, [onPaymentMethodChange]);
+    }, [onPaymentMethodChange, paymentWidgetVariantKey]);
+
+    const selectDirectAlipay = useCallback(() => {
+      const normalized = resolvePaymentMethodSelection('ALIPAY', paymentWidgetVariantKey);
+      setDirectForeignEasyPayCode('ALIPAY');
+      selectedPaymentMethodRef.current = normalized;
+      onPaymentMethodChange?.(normalized);
+    }, [onPaymentMethodChange, paymentWidgetVariantKey]);
+
+    const updateWidgetAgreement = useCallback((status: WidgetAgreementStatus) => {
+      onWidgetAgreementChange?.(status.agreedRequiredTerms);
+    }, [onWidgetAgreementChange]);
+
+    const changePaymentWidgetVariant = useCallback((variantKey: string) => {
+      setDirectForeignEasyPayCode(null);
+      onWidgetAgreementChange?.(false);
+      setPaymentWidgetVariantKey(variantKey);
+      const normalized = resolvePaymentMethodSelection('CARD', variantKey);
+      selectedPaymentMethodRef.current = normalized;
+      onPaymentMethodChange?.(normalized);
+    }, [onPaymentMethodChange, onWidgetAgreementChange]);
 
     useImperativeHandle(ref, () => ({
       requestPayment: async (prepareResult) => {
-        if (!widgets) {
-          throw new Error('결제 위젯이 초기화되지 않았습니다');
-        }
-        if (isLoading) {
-          throw new Error('결제 위젯을 불러오는 중입니다');
-        }
-
         const origin = window.location.origin;
         const selection = selectedPaymentMethodRef.current;
-        const paypalQuote = selection.paymentMethod.provider === 'PAYPAL'
+        if (selection.requestFlow === 'widget') {
+          if (!widgets) {
+            throw new Error('결제 위젯이 초기화되지 않았습니다');
+          }
+          if (isLoading) {
+            throw new Error('결제 위젯을 불러오는 중입니다');
+          }
+        }
+
+        const requiresProviderChargeQuote = usesProviderChargeQuoteForPaymentMethod(
+          selection.paymentMethod,
+        );
+        const providerChargeQuote = requiresProviderChargeQuote
           ? prepareResult?.providerChargeQuote
           : undefined;
-        if (selection.paymentMethod.provider === 'PAYPAL' && (prepareResult?.checkoutEnabled !== true || !paypalQuote)) {
-          throw new Error(prepareResult?.disabledReason ?? 'PayPal 결제 금액을 확정하지 못했습니다.');
+        if (
+          requiresProviderChargeQuote
+          && (prepareResult?.checkoutEnabled !== true || !providerChargeQuote)
+        ) {
+          throw new Error(resolveProviderChargeDisabledMessage(
+            selection.paymentMethod.provider,
+            prepareResult?.disabledReason,
+          ));
         }
 
         const pendingUrl = selection.paymentMethod.pendingUrlRequired
-          ? `${origin}/booking/${performanceId}/complete?pending=true&orderId=${encodeURIComponent(orderId)}&amount=${amount}`
+          ? `${origin}/booking/${performanceId}/complete?pending=true&orderId=${encodeURIComponent(orderId)}&provider=${selection.paymentMethod.provider}`
           : undefined;
 
+        const branchPaymentMethod = prepareResult?.paymentMethod ?? selection.paymentMethod;
         const branch = await apiClient.post<TossPaymentBranchResponse>('/api/v1/payments/branch', {
           orderId,
-          paymentMethod: selection.paymentMethod,
+          paymentMethod: branchPaymentMethod,
           successUrl: `${origin}/booking/${performanceId}/complete`,
           failUrl: `${origin}/booking/${performanceId}/confirm?error=true`,
           pendingUrl,
         }, {
           showErrorToast: false,
         });
-        if (selection.paymentMethod.provider === 'PAYPAL' && (branch.checkoutEnabled !== true || !branch.providerChargeQuote)) {
-          throw new Error(branch.disabledReason ?? 'PayPal 결제 금액을 확정하지 못했습니다.');
+        if (
+          requiresProviderChargeQuote
+          && (branch.checkoutEnabled !== true || !branch.providerChargeQuote)
+        ) {
+          throw new Error(resolveProviderChargeDisabledMessage(
+            selection.paymentMethod.provider,
+            branch.disabledReason,
+          ));
         }
 
-        await widgets.setAmount(resolvePaymentRequestAmount({
-          amount,
-          currency: branch.currency,
-          providerChargeQuote: branch.providerChargeQuote,
-        }));
+        if (selection.requestFlow === 'direct_card') {
+          if (!branch.useInternationalCardOnly) {
+            throw new Error('해외카드 결제 설정이 올바르지 않습니다.');
+          }
+          const overseasCardClientKey =
+            process.env.NEXT_PUBLIC_TOSS_OVERSEAS_CARD_CLIENT_KEY
+            || process.env.NEXT_PUBLIC_TOSS_FOREIGN_EASY_PAY_CLIENT_KEY;
+          if (!overseasCardClientKey) {
+            throw new Error('해외카드 결제 설정이 완료되지 않았습니다. 관리자에게 문의해주세요.');
+          }
+
+          const successUrl = new URL(branch.successUrl);
+          successUrl.searchParams.set('provider', 'OVERSEAS_CARD');
+          const directCardBranch = {
+            ...branch,
+            successUrl: successUrl.toString(),
+          };
+          const directCardPayload = buildDirectCardPaymentRequest({
+            branch: directCardBranch,
+            amount,
+            customerEmail,
+            customerName,
+            customerMobilePhone,
+            orderName,
+          });
+          const tossPayments = await loadTossPayments(overseasCardClientKey);
+          const payment = tossPayments.payment({ customerKey });
+          await payment.requestPayment(
+            directCardPayload as unknown as Parameters<TossPaymentsPayment['requestPayment']>[0],
+          );
+          return;
+        }
+
+        if (selection.requestFlow === 'direct_foreign_easy_pay') {
+          if (
+            branch.method !== 'FOREIGN_EASY_PAY'
+            || branch.provider !== 'ALIPAY_PLUS'
+            || !branch.pendingUrl
+            || !branch.providerChargeQuote
+          ) {
+            throw new Error(branch.disabledReason ?? 'Alipay 결제 설정이 올바르지 않습니다.');
+          }
+
+          const foreignEasyPayClientKey =
+            process.env.NEXT_PUBLIC_TOSS_FOREIGN_EASY_PAY_CLIENT_KEY;
+          if (!foreignEasyPayClientKey) {
+            throw new Error('Alipay 결제 설정이 완료되지 않았습니다. 관리자에게 문의해주세요.');
+          }
+
+          const directForeignEasyPayPayload = buildDirectForeignEasyPayPaymentRequest({
+            branch,
+            customerEmail,
+            customerName,
+            customerMobilePhone,
+            orderName,
+          });
+          const tossPayments = await loadTossPayments(foreignEasyPayClientKey);
+          const payment = tossPayments.payment({ customerKey });
+          await payment.requestPayment(
+            directForeignEasyPayPayload as unknown as Parameters<TossPaymentsPayment['requestPayment']>[0],
+          );
+          return;
+        }
+
+        if (!widgets) {
+          throw new Error('결제 위젯이 초기화되지 않았습니다');
+        }
 
         const requestPayload = buildWidgetPaymentRequest({
           branch,
@@ -454,6 +785,15 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
         if (selection.paymentMethod.provider === 'PAYPAL' && branch.providerChargeQuote) {
           const url = new URL(requestPayload.successUrl);
           url.searchParams.set('provider', 'PAYPAL');
+          url.searchParams.set('providerChargeAmount', branch.providerChargeQuote.amountDecimal);
+          requestPayload.successUrl = url.toString();
+        } else if (
+          selection.paymentMethod.provider === 'CARD'
+          && branch.useInternationalCardOnly
+          && branch.providerChargeQuote
+        ) {
+          const url = new URL(requestPayload.successUrl);
+          url.searchParams.set('provider', 'OVERSEAS_CARD');
           url.searchParams.set('providerChargeAmount', branch.providerChargeQuote.amountDecimal);
           requestPayload.successUrl = url.toString();
         }
@@ -474,33 +814,47 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
       locale,
       isLoading,
       selectedSeats,
+      customerKey,
     ]);
 
-    useEffect(() => {
-      if (initRef.current) return;
-      initRef.current = true;
+    const showDirectForeignPaymentButtons = isForeignPaymentWidgetVariant(paymentWidgetVariantKey);
 
+    useEffect(() => {
+      let mounted = true;
       async function init() {
         try {
-          const clientKey = process.env.NEXT_PUBLIC_TOSS_CLIENT_KEY;
-          if (!clientKey) {
+          setWidgets(null);
+          setIsLoading(true);
+          setError(null);
+          onWidgetAgreementChange?.(false);
+
+          if (!paymentWidgetClientKey) {
             setError('결제 설정이 완료되지 않았습니다. 관리자에게 문의해주세요.');
             setIsLoading(false);
             return;
           }
 
-          const tossPayments = await loadTossPayments(clientKey);
+          const tossPayments = await loadTossPayments(paymentWidgetClientKey);
           const w = tossPayments.widgets({ customerKey });
+          if (!mounted) {
+            return;
+          }
           setWidgets(w);
         } catch (err) {
           console.error('Toss Payments SDK 초기화 실패:', err);
+          if (!mounted) {
+            return;
+          }
           setError('결제 시스템 로딩에 실패했습니다. 페이지를 새로고침해주세요.');
           setIsLoading(false);
         }
       }
 
       init();
-    }, [customerKey]);
+      return () => {
+        mounted = false;
+      };
+    }, [customerKey, onWidgetAgreementChange, paymentWidgetClientKey]);
 
     useEffect(() => {
       if (!widgets) return;
@@ -508,22 +862,23 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
 
       let mounted = true;
       let paymentWidgetInstance: PaymentMethodWidget | null = null;
-      let agreementWidgetInstance: Awaited<ReturnType<TossPaymentsWidgets['renderAgreement']>> | null = null;
+      let agreementWidgetInstance: AgreementWidget | null = null;
 
       async function render() {
         try {
           setIsLoading(true);
           setError(null);
 
-          await activeWidgets.setAmount(resolvePaymentWidgetRenderAmount({
+          const renderAmount = resolvePaymentWidgetRenderAmount({
             amount,
             variantKey: paymentWidgetVariantKey,
-          }));
+          });
+          await activeWidgets.setAmount(renderAmount);
 
           const [paymentMethodWidget, agreementWidget] = await Promise.all([
             activeWidgets.renderPaymentMethods({
               selector: '#payment-method',
-              variantKey: paymentWidgetVariantKey,
+              variantKey: resolvePaymentWidgetRenderVariantKey(paymentWidgetVariantKey),
             }),
             activeWidgets.renderAgreement({
               selector: '#agreement',
@@ -534,6 +889,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
           paymentWidgetInstance = paymentMethodWidget;
           agreementWidgetInstance = agreementWidget;
           paymentMethodWidget.on('paymentMethodSelect', updateSelectedPaymentMethod);
+          agreementWidget.on('agreementStatusChange', updateWidgetAgreement);
           const selectedPaymentMethod = await paymentMethodWidget.getSelectedPaymentMethod();
           updateSelectedPaymentMethod(selectedPaymentMethod);
 
@@ -560,7 +916,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
         void paymentWidgetInstance?.destroy();
         void agreementWidgetInstance?.destroy();
       };
-    }, [widgets, amount, onReady, updateSelectedPaymentMethod, paymentWidgetVariantKey]);
+    }, [widgets, amount, onReady, updateSelectedPaymentMethod, updateWidgetAgreement, paymentWidgetVariantKey]);
 
     if (error) {
       return (
@@ -576,7 +932,10 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
           <div
             role="tablist"
             aria-label="결제 UI"
-            className="grid grid-cols-2 gap-2 rounded-lg bg-gray-100 p-1"
+            className="grid gap-2 rounded-lg bg-gray-100 p-1"
+            style={{
+              gridTemplateColumns: `repeat(${paymentWidgetVariantKeys.length}, minmax(0, 1fr))`,
+            }}
           >
             {paymentWidgetVariantKeys.map((variantKey) => {
               const selected = paymentWidgetVariantKey === variantKey;
@@ -591,9 +950,9 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
                       ? 'bg-white text-gray-950 shadow-sm'
                       : 'text-gray-600 hover:text-gray-950'
                   }`}
-                  onClick={() => setPaymentWidgetVariantKey(variantKey)}
+                  onClick={() => changePaymentWidgetVariant(variantKey)}
                 >
-                  {isPaypalPaymentWidgetVariant(variantKey) ? 'PayPal' : '국내 결제'}
+                  {resolvePaymentWidgetVariantLabel(variantKey)}
                 </button>
               );
             })}
@@ -609,6 +968,24 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
           aria-label="결제 수단 선택"
           className={isLoading ? 'hidden' : ''}
         />
+        {showDirectForeignPaymentButtons && (
+          <div className={`grid gap-2 ${isLoading ? 'hidden' : ''}`}>
+            <button
+              type="button"
+              aria-pressed={directForeignEasyPayCode === 'ALIPAY'}
+              className={`flex h-12 w-full items-center justify-between rounded-lg border px-4 text-left text-sm font-semibold transition ${
+                directForeignEasyPayCode === 'ALIPAY'
+                  ? 'border-gray-950 bg-gray-950 text-white'
+                  : 'border-gray-200 bg-white text-gray-900 hover:border-gray-400'
+              }`}
+              disabled={isLoading}
+              onClick={selectDirectAlipay}
+            >
+              <span>Alipay</span>
+              <span className="text-xs font-medium opacity-70">USD</span>
+            </button>
+          </div>
+        )}
         <div
           id="agreement"
           className={isLoading ? 'hidden' : ''}

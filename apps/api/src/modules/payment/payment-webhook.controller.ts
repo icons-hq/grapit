@@ -7,7 +7,11 @@ import {
   PaymentService,
   type TossWebhookRequestBody,
 } from './payment.service.js';
-import { TossPaymentsClient, type TossPaymentResponse } from './toss-payments.client.js';
+import {
+  TossPaymentsClient,
+  type TossPaymentRequestOptions,
+  type TossPaymentResponse,
+} from './toss-payments.client.js';
 import { TossWebhookGuard } from './toss-webhook.guard.js';
 
 const paymentStatusPriority = {
@@ -174,7 +178,10 @@ export class PaymentWebhookController {
   private async withProviderVerifiedState(
     body: TossWebhookRequestBody,
   ): Promise<TossWebhookRequestBody> {
-    const queried = await this.tossPaymentsClient.queryPayment(body.data.paymentKey);
+    const queryOptions = this.getProviderQueryOptions(body);
+    const queried = queryOptions
+      ? await this.tossPaymentsClient.queryPayment(body.data.paymentKey, queryOptions)
+      : await this.tossPaymentsClient.queryPayment(body.data.paymentKey);
     this.assertProviderStateMatchesWebhook(body, queried);
 
     const providerData: TossWebhookRequestBody['data'] = {
@@ -200,6 +207,21 @@ export class PaymentWebhookController {
       ...body,
       data: providerData,
     };
+  }
+
+  private getProviderQueryOptions(
+    body: TossWebhookRequestBody,
+  ): TossPaymentRequestOptions | undefined {
+    if (
+      body.data.method === 'FOREIGN_EASY_PAY'
+      || body.data.provider === 'ALIPAY'
+      || body.data.provider === 'ALIPAY_PLUS'
+      || body.data.provider === 'TRUEMONEY'
+    ) {
+      return { secretKeyScope: 'foreign-easy-pay' };
+    }
+
+    return undefined;
   }
 
   private assertProviderStateMatchesWebhook(

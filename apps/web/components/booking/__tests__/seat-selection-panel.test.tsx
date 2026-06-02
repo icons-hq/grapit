@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { SeatSelectionPanel } from '../seat-selection-panel';
-import type { SeatSelection, Showtime } from '@grabit/shared';
+import type { FloorAwareSeatSelection, SeatSelection, Showtime } from '@grabit/shared';
 
 const mockShowtime: Showtime = {
   id: 'st-1',
@@ -26,6 +26,15 @@ const mockSeats: SeatSelection[] = [
     row: 'B',
     number: '3',
     price: 130000,
+  },
+];
+
+const floorAwareSeats: FloorAwareSeatSelection[] = [
+  {
+    ...mockSeats[0],
+    floorKey: '1F',
+    floorLabel: '1층',
+    seatKey: '1F:A-1',
   },
 ];
 
@@ -139,5 +148,25 @@ describe('SeatSelectionPanel', () => {
     });
     await user.click(removeButtons[0]);
     expect(onRemove).toHaveBeenCalledWith('A-1');
+  });
+
+  it('calls onRemove with the floor-aware seat key when present', async () => {
+    const onRemove = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <SeatSelectionPanel
+        performanceTitle="테스트 공연"
+        selectedDate={new Date(2026, 4, 10)}
+        selectedShowtime={mockShowtime}
+        selectedSeats={floorAwareSeats}
+        onRemove={onRemove}
+        onProceed={() => {}}
+        isLoading={false}
+      />,
+    );
+    await user.click(screen.getByRole('button', {
+      name: '좌석 선택 해제',
+    }));
+    expect(onRemove).toHaveBeenCalledWith('1F:A-1');
   });
 });

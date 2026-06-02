@@ -1,14 +1,16 @@
 'use client';
 
 import { X } from 'lucide-react';
-import type { SeatSelection } from '@grabit/shared';
+import type { FloorAwareSeatSelection, SeatSelection } from '@grabit/shared';
 
 interface SeatRowProps {
-  seat: SeatSelection;
-  onRemove: (seatId: string) => void;
+  seat: FloorAwareSeatSelection | SeatSelection;
+  onRemove: (seatKey: string) => void;
 }
 
 export function SeatRow({ seat, onRemove }: SeatRowProps) {
+  const removalKey = 'seatKey' in seat ? seat.seatKey : seat.seatId;
+
   return (
     <div className="flex items-center justify-between py-2">
       <div className="flex items-center gap-2">
@@ -27,7 +29,7 @@ export function SeatRow({ seat, onRemove }: SeatRowProps) {
         </span>
         <button
           type="button"
-          onClick={() => onRemove(seat.seatId)}
+          onClick={() => onRemove(removalKey)}
           aria-label="좌석 선택 해제"
           className="flex size-6 items-center justify-center rounded text-gray-400 hover:text-gray-600"
         >

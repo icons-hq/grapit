@@ -10,6 +10,7 @@ import { BookingComplete } from '@/components/booking/booking-complete';
 import {
   useBookingPaymentRecovery,
   useConfirmPayment,
+  useReconcileAsyncPaymentReturn,
   type BookingPaymentStatus,
 } from '@/hooks/use-booking';
 import { ApiClientError } from '@/lib/api-client';
@@ -149,14 +150,19 @@ function CompletePageContent() {
   const hasValidProviderChargeAmount =
     provider === 'PAYPAL'
     && !!providerChargeAmount?.trim();
-  const hasPendingReturnParams = isPendingReturn && !!orderId && hasValidAmount;
+  const hasPendingReturnParams = isPendingReturn && !!orderId;
   const hasConfirmParams = !!paymentKey
     && !!orderId
     && (provider === 'PAYPAL' ? hasValidProviderChargeAmount : hasValidAmount);
+  const asyncReturnProvider =
+    provider === 'ALIPAY_PLUS' || provider === 'TRUEMONEY'
+      ? provider
+      : undefined;
 
   const clearBooking = useBookingStore((s) => s.clearBooking);
 
   const confirmMutation = useConfirmPayment();
+  const asyncReturnMutation = useReconcileAsyncPaymentReturn();
   const [bookingData, setBookingData] = useState<ReservationDetail | null>(null);
   const [isConfirming, setIsConfirming] = useState(false);
   const [confirmationError, setConfirmationError] = useState<{
@@ -164,6 +170,7 @@ function CompletePageContent() {
     paymentStatus: Extract<BookingPaymentStatus, 'failed' | 'expired'>;
   } | null>(null);
   const hasConfirmedRef = useRef(false);
+  const hasReconciledAsyncReturnRef = useRef(false);
 
   const [confirmFailed, setConfirmFailed] = useState(false);
   const shouldRecoverByOrderId = !!orderId && (confirmFailed || isPendingReturn);
@@ -261,6 +268,40 @@ function CompletePageContent() {
       confirmPayment();
     }
   }, [confirmPayment, hasConfirmParams, isPendingReturn]);
+
+  useEffect(() => {
+    if (
+      hasReconciledAsyncReturnRef.current
+      || !isPendingReturn
+      || !paymentKey
+      || !orderId
+      || !asyncReturnProvider
+    ) {
+      return;
+    }
+
+    hasReconciledAsyncReturnRef.current = true;
+    void asyncReturnMutation.mutateAsync({
+      paymentKey,
+      orderId,
+      provider: asyncReturnProvider,
+      ...(hasValidAmount ? { amount: parsedAmount } : {}),
+    }).then(() => {
+      void paymentRecovery.refetch();
+    }).catch((err) => {
+      toast.error(err instanceof Error ? err.message : '결제 상태 확인에 실패했습니다.');
+      setConfirmFailed(true);
+    });
+  }, [
+    asyncReturnMutation,
+    asyncReturnProvider,
+    hasValidAmount,
+    isPendingReturn,
+    orderId,
+    parsedAmount,
+    paymentKey,
+    paymentRecovery,
+  ]);
 
   // Focus heading on success
   useEffect(() => {

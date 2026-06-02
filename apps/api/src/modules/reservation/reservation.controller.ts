@@ -22,6 +22,7 @@ import {
   cancelTicketItemSchema,
   type PrepareReservationInput,
   type ConfirmPaymentInput,
+  type ConfirmPaymentRequest,
   type CancelReservationInput,
   type CancelTicketItemInput,
   type ReservationStatus,
@@ -101,7 +102,7 @@ export class ReservationController {
     @Request() req: { user: AuthenticatedReservationUser },
   ) {
     return this.reservationService.confirmAndCreateReservation(
-      body,
+      body as ConfirmPaymentRequest,
       {
         id: req.user.id,
         role: req.user.role,

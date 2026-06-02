@@ -146,7 +146,7 @@
     },
     "paymentDisclaimer": {
       "title": "해외 결제 안내",
-      "description": "해외 카드, Alipay+, TrueMoney 결제 전 아래 내용을 확인해주세요.",
+      "description": "해외 카드, Alipay, PayPal 결제 전 아래 내용을 확인해주세요.",
       "krwPrimary": "결제 금액은 KRW 기준으로 청구됩니다.",
       "fxHelper": "예상 환율과 카드사/지갑사 수수료는 참고용이며 실제 청구 시점에 달라질 수 있습니다.",
       "refundDelay": "해외 결제 취소/환불은 카드사 또는 지갑사 반영까지 추가 시간이 걸릴 수 있습니다.",

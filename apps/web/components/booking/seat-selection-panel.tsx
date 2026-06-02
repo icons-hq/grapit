@@ -1,7 +1,12 @@
 'use client';
 
 import { Loader2 } from 'lucide-react';
-import { TICKET_SERVICE_FEE_KRW, type SeatSelection, type Showtime } from '@grabit/shared';
+import {
+  TICKET_SERVICE_FEE_KRW,
+  type FloorAwareSeatSelection,
+  type SeatSelection,
+  type Showtime,
+} from '@grabit/shared';
 import { Button } from '@/components/ui/button';
 import { formatKstDateLabel, formatKstTimeLabel } from '@/lib/booking-datetime';
 import { SeatRow } from './seat-row';
@@ -10,8 +15,8 @@ interface SeatSelectionPanelProps {
   performanceTitle: string;
   selectedDate: Date | null;
   selectedShowtime: Showtime | null;
-  selectedSeats: SeatSelection[];
-  onRemove: (seatId: string) => void;
+  selectedSeats: Array<FloorAwareSeatSelection | SeatSelection>;
+  onRemove: (seatKey: string) => void;
   onProceed: () => void;
   isLoading: boolean;
   disabledReason?: string | null;
@@ -56,7 +61,11 @@ export function SeatSelectionPanel({
           ) : (
             <div className="mt-3 divide-y">
               {selectedSeats.map((seat) => (
-                <SeatRow key={seat.seatId} seat={seat} onRemove={onRemove} />
+                <SeatRow
+                  key={'seatKey' in seat ? seat.seatKey : seat.seatId}
+                  seat={seat}
+                  onRemove={onRemove}
+                />
               ))}
             </div>
           )}

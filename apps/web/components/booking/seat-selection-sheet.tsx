@@ -2,7 +2,12 @@
 
 import { useRef, useState, useCallback, useEffect } from 'react';
 import { Loader2 } from 'lucide-react';
-import { TICKET_SERVICE_FEE_KRW, type SeatSelection, type Showtime } from '@grabit/shared';
+import {
+  TICKET_SERVICE_FEE_KRW,
+  type FloorAwareSeatSelection,
+  type SeatSelection,
+  type Showtime,
+} from '@grabit/shared';
 import { Button } from '@/components/ui/button';
 import { SeatRow } from './seat-row';
 
@@ -10,8 +15,8 @@ interface SeatSelectionSheetProps {
   performanceTitle: string;
   selectedDate: Date | null;
   selectedShowtime: Showtime | null;
-  selectedSeats: SeatSelection[];
-  onRemove: (seatId: string) => void;
+  selectedSeats: Array<FloorAwareSeatSelection | SeatSelection>;
+  onRemove: (seatKey: string) => void;
   onProceed: () => void;
   isLoading: boolean;
   disabledReason?: string | null;
@@ -136,7 +141,11 @@ export function SeatSelectionSheet({
           </h2>
           <div className="flex-1 divide-y overflow-y-auto">
             {selectedSeats.map((seat) => (
-              <SeatRow key={seat.seatId} seat={seat} onRemove={onRemove} />
+              <SeatRow
+                key={'seatKey' in seat ? seat.seatKey : seat.seatId}
+                seat={seat}
+                onRemove={onRemove}
+              />
             ))}
           </div>
           <div className="mt-3 border-t pt-3">
