@@ -210,20 +210,13 @@ export function resolvePaymentWidgetVariantKeys(): string[] {
   const variantKeys = rawVariantKeys
     .split(',')
     .map((variantKey) => variantKey.trim())
-    .map(normalizePaymentWidgetVariantKey)
     .filter((variantKey) => variantKey.length > 0);
 
   return variantKeys.length > 0 ? [...new Set(variantKeys)] : ['DEFAULT'];
 }
 
-function normalizePaymentWidgetVariantKey(variantKey: string): string {
-  return variantKey.toLowerCase() === ALIPAY_VARIANT_KEY
-    ? PAYPAL_VARIANT_KEY
-    : variantKey;
-}
-
 export function resolvePaymentWidgetRenderVariantKey(variantKey: string): string {
-  const trimmedVariantKey = normalizePaymentWidgetVariantKey(variantKey.trim());
+  const trimmedVariantKey = variantKey.trim();
   if (trimmedVariantKey.toLowerCase() === PAYPAL_VARIANT_KEY) {
     return 'PAYPAL';
   }
@@ -231,9 +224,8 @@ export function resolvePaymentWidgetRenderVariantKey(variantKey: string): string
 }
 
 export function resolvePaymentWidgetClientKey(variantKey: string): string | undefined {
-  if (isForeignPaymentWidgetVariant(variantKey)) {
+  if (isPaypalPaymentWidgetVariant(variantKey)) {
     return process.env.NEXT_PUBLIC_TOSS_FOREIGN_PAYMENT_WIDGET_CLIENT_KEY
-      || process.env.NEXT_PUBLIC_TOSS_FOREIGN_EASY_PAY_CLIENT_KEY
       || process.env.NEXT_PUBLIC_TOSS_CLIENT_KEY;
   }
   return process.env.NEXT_PUBLIC_TOSS_CLIENT_KEY;
@@ -241,6 +233,10 @@ export function resolvePaymentWidgetClientKey(variantKey: string): string | unde
 
 export function isPaypalPaymentWidgetVariant(variantKey: string): boolean {
   return variantKey.toLowerCase() === PAYPAL_VARIANT_KEY;
+}
+
+function isDirectAlipayPaymentWidgetVariant(variantKey: string): boolean {
+  return variantKey.toLowerCase() === ALIPAY_VARIANT_KEY;
 }
 
 export function isForeignPaymentWidgetVariant(variantKey: string): boolean {
@@ -266,7 +262,7 @@ export function resolvePaymentWidgetRenderAmount({
   amount: number;
   variantKey: string;
 }): { currency: 'KRW' | 'USD'; value: number } {
-  if (isForeignPaymentWidgetVariant(variantKey)) {
+  if (isPaypalPaymentWidgetVariant(variantKey)) {
     return {
       currency: 'USD',
       value: Math.max(0.01, Math.round(amount * PAYPAL_WIDGET_USD_ESTIMATE_RATE * 100) / 100),
@@ -429,6 +425,12 @@ export function resolvePaymentRequestAmount({
     currency,
     value: amount,
   };
+}
+
+function resolveInitialPaymentMethodSelection(variantKey: string): PaymentMethodSelection {
+  return isDirectAlipayPaymentWidgetVariant(variantKey)
+    ? resolvePaymentMethodSelection('ALIPAY', variantKey)
+    : resolvePaymentMethodSelection('CARD', variantKey);
 }
 
 function buildProviderChargeProducts({
@@ -629,7 +631,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
     const [directForeignEasyPayCode, setDirectForeignEasyPayCode] = useState<string | null>(null);
     const paymentWidgetClientKey = resolvePaymentWidgetClientKey(paymentWidgetVariantKey);
     const selectedPaymentMethodRef = useRef<PaymentMethodSelection>(
-      resolvePaymentMethodSelection('CARD', paymentWidgetVariantKey),
+      resolveInitialPaymentMethodSelection(paymentWidgetVariantKey),
     );
 
     const updateSelectedPaymentMethod = useCallback((selection: SelectedWidgetPaymentMethod) => {
@@ -651,10 +653,12 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
     }, [onWidgetAgreementChange]);
 
     const changePaymentWidgetVariant = useCallback((variantKey: string) => {
-      setDirectForeignEasyPayCode(null);
-      onWidgetAgreementChange?.(false);
       setPaymentWidgetVariantKey(variantKey);
-      const normalized = resolvePaymentMethodSelection('CARD', variantKey);
+      const normalized = resolveInitialPaymentMethodSelection(variantKey);
+      setDirectForeignEasyPayCode(
+        isDirectAlipayPaymentWidgetVariant(variantKey) ? 'ALIPAY' : null,
+      );
+      onWidgetAgreementChange?.(isDirectAlipayPaymentWidgetVariant(variantKey));
       selectedPaymentMethodRef.current = normalized;
       onPaymentMethodChange?.(normalized);
     }, [onPaymentMethodChange, onWidgetAgreementChange]);
@@ -826,6 +830,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
     ]);
 
     const showDirectForeignPaymentButtons = isForeignPaymentWidgetVariant(paymentWidgetVariantKey);
+    const shouldRenderPaymentWidgets = !isDirectAlipayPaymentWidgetVariant(paymentWidgetVariantKey);
 
     useEffect(() => {
       let mounted = true;
@@ -835,6 +840,17 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
           setIsLoading(true);
           setError(null);
           onWidgetAgreementChange?.(false);
+
+          if (!shouldRenderPaymentWidgets) {
+            const normalized = resolvePaymentMethodSelection('ALIPAY', paymentWidgetVariantKey);
+            setDirectForeignEasyPayCode('ALIPAY');
+            selectedPaymentMethodRef.current = normalized;
+            onPaymentMethodChange?.(normalized);
+            onWidgetAgreementChange?.(true);
+            setIsLoading(false);
+            onReady();
+            return;
+          }
 
           if (!paymentWidgetClientKey) {
             setError('결제 설정이 완료되지 않았습니다. 관리자에게 문의해주세요.');
@@ -862,7 +878,15 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
       return () => {
         mounted = false;
       };
-    }, [customerKey, onWidgetAgreementChange, paymentWidgetClientKey]);
+    }, [
+      customerKey,
+      onPaymentMethodChange,
+      onReady,
+      onWidgetAgreementChange,
+      paymentWidgetClientKey,
+      paymentWidgetVariantKey,
+      shouldRenderPaymentWidgets,
+    ]);
 
     useEffect(() => {
       if (!widgets) return;
@@ -966,16 +990,18 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
             })}
           </div>
         )}
-        {isLoading && (
+        {shouldRenderPaymentWidgets && isLoading && (
           <div className="flex min-h-[200px] items-center justify-center">
             <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
           </div>
         )}
-        <div
-          id="payment-method"
-          aria-label="결제 수단 선택"
-          className={isLoading ? 'hidden' : ''}
-        />
+        {shouldRenderPaymentWidgets && (
+          <div
+            id="payment-method"
+            aria-label="결제 수단 선택"
+            className={isLoading ? 'hidden' : ''}
+          />
+        )}
         {showDirectForeignPaymentButtons && (
           <div className={`grid gap-2 ${isLoading ? 'hidden' : ''}`}>
             <button
@@ -994,10 +1020,12 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
             </button>
           </div>
         )}
-        <div
-          id="agreement"
-          className={isLoading ? 'hidden' : ''}
-        />
+        {shouldRenderPaymentWidgets && (
+          <div
+            id="agreement"
+            className={isLoading ? 'hidden' : ''}
+          />
+        )}
       </div>
     );
   },

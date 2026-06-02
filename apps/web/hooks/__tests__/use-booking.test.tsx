@@ -852,7 +852,7 @@ describe('use-booking payment mutations', () => {
       process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = ' DEFAULT, paypal, alipay, DEFAULT ';
 
       expect(resolvePaymentWidgetVariantKey()).toBe('DEFAULT');
-      expect(resolvePaymentWidgetVariantKeys()).toEqual(['DEFAULT', 'paypal']);
+      expect(resolvePaymentWidgetVariantKeys()).toEqual(['DEFAULT', 'paypal', 'alipay']);
     } finally {
       if (originalVariantKey === undefined) {
         delete process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY;
@@ -862,7 +862,7 @@ describe('use-booking payment mutations', () => {
     }
   });
 
-  it('resolvePaymentWidgetClientKey() uses the foreign easy pay client key for foreign variants', () => {
+  it('resolvePaymentWidgetClientKey() does not use direct foreign easy pay keys for widget variants', () => {
     const originalClientKey = process.env.NEXT_PUBLIC_TOSS_CLIENT_KEY;
     const originalForeignWidgetClientKey = process.env.NEXT_PUBLIC_TOSS_FOREIGN_PAYMENT_WIDGET_CLIENT_KEY;
     const originalForeignEasyPayClientKey = process.env.NEXT_PUBLIC_TOSS_FOREIGN_EASY_PAY_CLIENT_KEY;
@@ -872,8 +872,8 @@ describe('use-booking payment mutations', () => {
       delete process.env.NEXT_PUBLIC_TOSS_FOREIGN_PAYMENT_WIDGET_CLIENT_KEY;
       process.env.NEXT_PUBLIC_TOSS_FOREIGN_EASY_PAY_CLIENT_KEY = 'foreign-easy-pay-client-key';
 
-      expect(resolvePaymentWidgetClientKey('paypal')).toBe('foreign-easy-pay-client-key');
-      expect(resolvePaymentWidgetClientKey('alipay')).toBe('foreign-easy-pay-client-key');
+      expect(resolvePaymentWidgetClientKey('paypal')).toBe('domestic-client-key');
+      expect(resolvePaymentWidgetClientKey('alipay')).toBe('domestic-client-key');
 
       process.env.NEXT_PUBLIC_TOSS_FOREIGN_PAYMENT_WIDGET_CLIENT_KEY = 'foreign-widget-client-key';
       expect(resolvePaymentWidgetClientKey('paypal')).toBe('foreign-widget-client-key');
@@ -906,17 +906,22 @@ describe('use-booking payment mutations', () => {
       currency: 'USD',
       value: 34,
     });
+    expect(resolvePaymentWidgetRenderAmount({ amount: 50000, variantKey: 'alipay' })).toEqual({
+      currency: 'KRW',
+      value: 50000,
+    });
   });
 
   it('resolvePaymentWidgetVariantLabel() labels foreign payment variants without duplicate PayPal copy', () => {
     expect(resolvePaymentWidgetVariantLabel('DEFAULT')).toBe('국내 결제');
     expect(resolvePaymentWidgetVariantLabel('paypal')).toBe('해외 결제');
+    expect(resolvePaymentWidgetVariantLabel('alipay')).toBe('Alipay');
   });
 
   it('resolvePaymentWidgetRenderVariantKey() normalizes foreign variants for Toss widget API', () => {
     expect(resolvePaymentWidgetRenderVariantKey('paypal')).toBe('PAYPAL');
     expect(resolvePaymentWidgetRenderVariantKey('PAYPAL')).toBe('PAYPAL');
-    expect(resolvePaymentWidgetRenderVariantKey('alipay')).toBe('PAYPAL');
+    expect(resolvePaymentWidgetRenderVariantKey('alipay')).toBe('alipay');
     expect(resolvePaymentWidgetRenderVariantKey('DEFAULT')).toBe('DEFAULT');
   });
 
