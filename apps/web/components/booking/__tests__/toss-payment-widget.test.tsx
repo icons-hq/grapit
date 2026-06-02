@@ -164,4 +164,56 @@ describe('TossPaymentWidget', () => {
     );
     expect(screen.queryByText('결제 위젯을 불러오는데 실패했습니다.')).not.toBeInTheDocument();
   });
+
+  it('does not render a foreign variant with the previous widgets instance', async () => {
+    process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = 'DEFAULT,paypal';
+
+    const firstRenderPaymentMethods = vi.fn().mockResolvedValue({
+      on: vi.fn(),
+      getSelectedPaymentMethod: vi.fn().mockResolvedValue({ code: 'CARD' }),
+      destroy: vi.fn().mockResolvedValue(undefined),
+    });
+    const firstRenderAgreement = vi.fn().mockResolvedValue({
+      on: vi.fn(),
+      destroy: vi.fn().mockResolvedValue(undefined),
+    });
+    const secondRenderPaymentMethods = vi.fn().mockResolvedValue({
+      on: vi.fn(),
+      getSelectedPaymentMethod: vi.fn().mockResolvedValue({ code: 'CARD' }),
+      destroy: vi.fn().mockResolvedValue(undefined),
+    });
+    const secondRenderAgreement = vi.fn().mockResolvedValue({
+      on: vi.fn(),
+      destroy: vi.fn().mockResolvedValue(undefined),
+    });
+
+    widgetsFactoryMock
+      .mockReturnValueOnce({
+        setAmount: vi.fn().mockResolvedValue(undefined),
+        renderPaymentMethods: firstRenderPaymentMethods,
+        renderAgreement: firstRenderAgreement,
+      })
+      .mockReturnValueOnce({
+        setAmount: vi.fn().mockResolvedValue(undefined),
+        renderPaymentMethods: secondRenderPaymentMethods,
+        renderAgreement: secondRenderAgreement,
+      });
+
+    const user = userEvent.setup();
+    render(<TossPaymentWidget {...defaultProps} />);
+
+    await waitFor(() => expect(firstRenderAgreement).toHaveBeenCalledTimes(1));
+
+    await user.click(screen.getByRole('tab', { name: '해외 결제' }));
+
+    await waitFor(() => expect(secondRenderAgreement).toHaveBeenCalledTimes(1));
+    expect(firstRenderPaymentMethods).toHaveBeenCalledTimes(1);
+    expect(firstRenderPaymentMethods).toHaveBeenCalledWith(expect.objectContaining({
+      variantKey: 'DEFAULT',
+    }));
+    expect(secondRenderPaymentMethods).toHaveBeenCalledWith(expect.objectContaining({
+      variantKey: 'PAYPAL',
+    }));
+    expect(screen.queryByText('결제 위젯을 불러오는데 실패했습니다.')).not.toBeInTheDocument();
+  });
 });

@@ -70,6 +70,11 @@ type PaymentMethodWidget = Awaited<ReturnType<TossPaymentsWidgets['renderPayment
 type AgreementWidget = Awaited<ReturnType<TossPaymentsWidgets['renderAgreement']>>;
 type SelectedWidgetPaymentMethod = Awaited<ReturnType<PaymentMethodWidget['getSelectedPaymentMethod']>>;
 
+interface PaymentWidgetState {
+  variantKey: string;
+  widgets: TossPaymentsWidgets;
+}
+
 interface TossPaymentWidgetProps {
   orderId: string;
   orderName: string;
@@ -632,11 +637,14 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
     const [paymentWidgetVariantKey, setPaymentWidgetVariantKey] = useState(
       paymentWidgetVariantKeys[0] ?? 'DEFAULT',
     );
-    const [widgets, setWidgets] = useState<TossPaymentsWidgets | null>(null);
+    const [widgetState, setWidgetState] = useState<PaymentWidgetState | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [foreignEasyPayCode, setForeignEasyPayCode] = useState<string | null>(null);
     const paymentWidgetClientKey = resolvePaymentWidgetClientKey(paymentWidgetVariantKey);
+    const widgets = widgetState?.variantKey === paymentWidgetVariantKey
+      ? widgetState.widgets
+      : null;
     const selectedPaymentMethodRef = useRef<PaymentMethodSelection>(
       resolveInitialPaymentMethodSelection(paymentWidgetVariantKey),
     );
@@ -700,6 +708,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
     }, [destroyWidgetInstance]);
 
     const changePaymentWidgetVariant = useCallback((variantKey: string) => {
+      setWidgetState(null);
       setPaymentWidgetVariantKey(variantKey);
       const normalized = resolveInitialPaymentMethodSelection(variantKey);
       setForeignEasyPayCode(
@@ -882,8 +891,8 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
       let mounted = true;
       async function init() {
         try {
+          setWidgetState(null);
           await destroyRenderedWidgets();
-          setWidgets(null);
           setIsLoading(true);
           setError(null);
           onWidgetAgreementChange?.(false);
@@ -910,7 +919,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
           if (!mounted) {
             return;
           }
-          setWidgets(w);
+          setWidgetState({ widgets: w, variantKey: paymentWidgetVariantKey });
         } catch (err) {
           console.error('Toss Payments SDK 초기화 실패:', err);
           if (!mounted) {
