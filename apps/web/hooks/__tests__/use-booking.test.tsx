@@ -12,7 +12,6 @@ import {
 import { ApiClientError, apiClient } from '@/lib/api-client';
 import { buildConfirmPaymentPayload } from '@/lib/booking/payment-return';
 import {
-  buildDirectForeignEasyPayPaymentRequest,
   buildDirectCardPaymentRequest,
   buildWidgetPaymentRequest,
   resolveProviderChargeDisabledMessage,
@@ -787,9 +786,9 @@ describe('use-booking payment mutations', () => {
       },
     });
 
-    expect(resolvePaymentMethodSelection('ALIPAY', 'paypal')).toMatchObject({
+    expect(resolvePaymentMethodSelection('ALIPAY', 'alipay')).toMatchObject({
       requiresOverseasDisclaimer: true,
-      requestFlow: 'direct_foreign_easy_pay',
+      requestFlow: 'widget',
       paymentMethod: {
         method: 'FOREIGN_EASY_PAY',
         provider: 'ALIPAY_PLUS',
@@ -897,7 +896,7 @@ describe('use-booking payment mutations', () => {
     }
   });
 
-  it('resolvePaymentWidgetRenderAmount() uses USD for PayPal widget rendering', () => {
+  it('resolvePaymentWidgetRenderAmount() uses USD for foreign widget rendering', () => {
     expect(resolvePaymentWidgetRenderAmount({ amount: 50000, variantKey: 'DEFAULT' })).toEqual({
       currency: 'KRW',
       value: 50000,
@@ -907,8 +906,8 @@ describe('use-booking payment mutations', () => {
       value: 34,
     });
     expect(resolvePaymentWidgetRenderAmount({ amount: 50000, variantKey: 'alipay' })).toEqual({
-      currency: 'KRW',
-      value: 50000,
+      currency: 'USD',
+      value: 34,
     });
   });
 
@@ -1126,47 +1125,6 @@ describe('use-booking payment mutations', () => {
     });
 
     expect(request.customerMobilePhone).toBeUndefined();
-  });
-
-  it('buildDirectForeignEasyPayPaymentRequest() sends Alipay through direct FOREIGN_EASY_PAY with USD quote', () => {
-    expect(buildDirectForeignEasyPayPaymentRequest({
-      branch: {
-        orderId: 'GRP-DIRECT-ALIPAY',
-        method: 'FOREIGN_EASY_PAY',
-        provider: 'ALIPAY_PLUS',
-        currency: 'USD',
-        successUrl: 'https://grabit.test/success',
-        failUrl: 'https://grabit.test/fail',
-        pendingUrl: 'https://grabit.test/pending?provider=ALIPAY_PLUS',
-        asyncStatus: 'pending_webhook',
-        useInternationalCardOnly: false,
-        providerChargeQuote: {
-          currency: 'USD',
-          amountMinor: 4896,
-          amountDecimal: '48.96',
-          rate: '0.00068',
-          quotedAt: '2026-05-29T00:00:00.000Z',
-        },
-        checkoutEnabled: true,
-      },
-      customerEmail: 'fan@example.com',
-      customerName: '해외 팬',
-      customerMobilePhone: '+82-10-1234-5678',
-      orderName: '팬미팅 티켓 2매',
-    })).toMatchObject({
-      method: 'FOREIGN_EASY_PAY',
-      amount: {
-        currency: 'USD',
-        value: 48.96,
-      },
-      orderId: 'GRP-DIRECT-ALIPAY',
-      pendingUrl: 'https://grabit.test/pending?provider=ALIPAY_PLUS',
-      customerMobilePhone: '821012345678',
-      foreignEasyPay: {
-        provider: 'ALIPAY',
-        country: 'CN',
-      },
-    });
   });
 
   it('resolveProviderChargeDisabledMessage() does not expose raw PayPal disabled codes for Alipay', () => {
