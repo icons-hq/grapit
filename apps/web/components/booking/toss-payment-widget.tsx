@@ -210,13 +210,20 @@ export function resolvePaymentWidgetVariantKeys(): string[] {
   const variantKeys = rawVariantKeys
     .split(',')
     .map((variantKey) => variantKey.trim())
+    .map(normalizePaymentWidgetVariantKey)
     .filter((variantKey) => variantKey.length > 0);
 
   return variantKeys.length > 0 ? [...new Set(variantKeys)] : ['DEFAULT'];
 }
 
+function normalizePaymentWidgetVariantKey(variantKey: string): string {
+  return variantKey.toLowerCase() === ALIPAY_VARIANT_KEY
+    ? PAYPAL_VARIANT_KEY
+    : variantKey;
+}
+
 export function resolvePaymentWidgetRenderVariantKey(variantKey: string): string {
-  const trimmedVariantKey = variantKey.trim();
+  const trimmedVariantKey = normalizePaymentWidgetVariantKey(variantKey.trim());
   if (trimmedVariantKey.toLowerCase() === PAYPAL_VARIANT_KEY) {
     return 'PAYPAL';
   }
