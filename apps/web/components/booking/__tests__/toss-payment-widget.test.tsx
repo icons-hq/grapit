@@ -154,6 +154,10 @@ describe('TossPaymentWidget', () => {
     await user.click(screen.getByRole('tab', { name: '해외 결제' }));
 
     await waitFor(() => expect(renderAgreementMock).toHaveBeenCalledTimes(2));
+    expect(paymentMethodDestroyMock).toHaveBeenCalled();
+    expect(paymentMethodDestroyMock.mock.invocationCallOrder[0]).toBeLessThan(
+      renderPaymentMethodsMock.mock.invocationCallOrder[1],
+    );
     expect(agreementDestroyMock).toHaveBeenCalled();
     expect(agreementDestroyMock.mock.invocationCallOrder[0]).toBeLessThan(
       renderAgreementMock.mock.invocationCallOrder[1],
