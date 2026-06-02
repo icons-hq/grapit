@@ -13,6 +13,7 @@ import { ApiClientError, apiClient } from '@/lib/api-client';
 import { buildConfirmPaymentPayload } from '@/lib/booking/payment-return';
 import {
   buildDirectCardPaymentRequest,
+  buildDirectForeignEasyPayPaymentRequest,
   buildWidgetPaymentRequest,
   resolveProviderChargeDisabledMessage,
   resolvePaymentWidgetVariantLabel,
@@ -788,7 +789,7 @@ describe('use-booking payment mutations', () => {
 
     expect(resolvePaymentMethodSelection('ALIPAY', 'alipay')).toMatchObject({
       requiresOverseasDisclaimer: true,
-      requestFlow: 'widget',
+      requestFlow: 'direct_foreign_easy_pay',
       paymentMethod: {
         method: 'FOREIGN_EASY_PAY',
         provider: 'ALIPAY_PLUS',
@@ -861,7 +862,7 @@ describe('use-booking payment mutations', () => {
     }
   });
 
-  it('resolvePaymentWidgetClientKey() does not use direct foreign easy pay keys for widget variants', () => {
+  it('resolvePaymentWidgetClientKey() uses widget keys only for widget-rendered variants', () => {
     const originalClientKey = process.env.NEXT_PUBLIC_TOSS_CLIENT_KEY;
     const originalForeignWidgetClientKey = process.env.NEXT_PUBLIC_TOSS_FOREIGN_PAYMENT_WIDGET_CLIENT_KEY;
     const originalForeignEasyPayClientKey = process.env.NEXT_PUBLIC_TOSS_FOREIGN_EASY_PAY_CLIENT_KEY;
@@ -876,7 +877,7 @@ describe('use-booking payment mutations', () => {
 
       process.env.NEXT_PUBLIC_TOSS_FOREIGN_PAYMENT_WIDGET_CLIENT_KEY = 'foreign-widget-client-key';
       expect(resolvePaymentWidgetClientKey('paypal')).toBe('foreign-widget-client-key');
-      expect(resolvePaymentWidgetClientKey('alipay')).toBe('foreign-widget-client-key');
+      expect(resolvePaymentWidgetClientKey('alipay')).toBe('domestic-client-key');
       expect(resolvePaymentWidgetClientKey('DEFAULT')).toBe('domestic-client-key');
     } finally {
       if (originalClientKey === undefined) {
@@ -897,7 +898,7 @@ describe('use-booking payment mutations', () => {
     }
   });
 
-  it('resolvePaymentWidgetRenderAmount() uses USD for foreign widget rendering', () => {
+  it('resolvePaymentWidgetRenderAmount() uses USD for PayPal widget rendering only', () => {
     expect(resolvePaymentWidgetRenderAmount({ amount: 50000, variantKey: 'DEFAULT' })).toEqual({
       currency: 'KRW',
       value: 50000,
@@ -907,8 +908,8 @@ describe('use-booking payment mutations', () => {
       value: 34,
     });
     expect(resolvePaymentWidgetRenderAmount({ amount: 50000, variantKey: 'alipay' })).toEqual({
-      currency: 'USD',
-      value: 34,
+      currency: 'KRW',
+      value: 50000,
     });
   });
 
@@ -1065,6 +1066,47 @@ describe('use-booking payment mutations', () => {
         useInternationalCardOnly: true,
       },
       customerMobilePhone: '821012345678',
+    });
+  });
+
+  it('buildDirectForeignEasyPayPaymentRequest() opens Alipay with the stored USD provider quote', () => {
+    expect(buildDirectForeignEasyPayPaymentRequest({
+      branch: {
+        orderId: 'GRP-ALIPAY',
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'ALIPAY_PLUS',
+        currency: 'USD',
+        successUrl: 'https://grabit.test/success',
+        failUrl: 'https://grabit.test/fail',
+        pendingUrl: 'https://grabit.test/pending',
+        asyncStatus: 'pending_webhook',
+        useInternationalCardOnly: false,
+        providerChargeQuote: {
+          currency: 'USD',
+          amountMinor: 4896,
+          amountDecimal: '48.96',
+          rate: '0.00068',
+          quotedAt: '2026-05-29T00:00:00.000Z',
+        },
+        checkoutEnabled: true,
+      },
+      customerEmail: 'fan@example.com',
+      customerName: '해외 팬',
+      customerMobilePhone: '+82-10-1234-5678',
+      orderName: '팬미팅 티켓 1매',
+    })).toMatchObject({
+      method: 'FOREIGN_EASY_PAY',
+      amount: {
+        currency: 'USD',
+        value: 48.96,
+      },
+      orderId: 'GRP-ALIPAY',
+      pendingUrl: 'https://grabit.test/pending',
+      customerMobilePhone: '821012345678',
+      foreignEasyPay: {
+        provider: 'ALIPAY',
+        country: 'CN',
+      },
     });
   });
 
