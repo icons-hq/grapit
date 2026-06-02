@@ -876,6 +876,7 @@ describe('use-booking payment mutations', () => {
 
       process.env.NEXT_PUBLIC_TOSS_FOREIGN_PAYMENT_WIDGET_CLIENT_KEY = 'foreign-widget-client-key';
       expect(resolvePaymentWidgetClientKey('paypal')).toBe('foreign-widget-client-key');
+      expect(resolvePaymentWidgetClientKey('alipay')).toBe('foreign-widget-client-key');
       expect(resolvePaymentWidgetClientKey('DEFAULT')).toBe('domestic-client-key');
     } finally {
       if (originalClientKey === undefined) {
