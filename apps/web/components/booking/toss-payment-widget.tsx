@@ -204,7 +204,7 @@ export function resolvePaymentWidgetRenderVariantKey(variantKey: string): string
 }
 
 export function resolvePaymentWidgetClientKey(variantKey: string): string | undefined {
-  if (isPaypalPaymentWidgetVariant(variantKey)) {
+  if (isForeignPaymentWidgetVariant(variantKey)) {
     return process.env.NEXT_PUBLIC_TOSS_FOREIGN_PAYMENT_WIDGET_CLIENT_KEY
       || process.env.NEXT_PUBLIC_TOSS_CLIENT_KEY;
   }
