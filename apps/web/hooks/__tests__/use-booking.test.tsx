@@ -18,6 +18,7 @@ import {
   resolveProviderChargeDisabledMessage,
   resolvePaymentWidgetVariantLabel,
   resolvePaymentWidgetRenderVariantKey,
+  resolvePaymentWidgetClientKey,
   resolvePaymentRequestAmount,
   resolvePaymentWidgetRenderAmount,
   resolvePaymentMethodSelection,
@@ -857,6 +858,41 @@ describe('use-booking payment mutations', () => {
         delete process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY;
       } else {
         process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = originalVariantKey;
+      }
+    }
+  });
+
+  it('resolvePaymentWidgetClientKey() uses the foreign easy pay client key for foreign variants', () => {
+    const originalClientKey = process.env.NEXT_PUBLIC_TOSS_CLIENT_KEY;
+    const originalForeignWidgetClientKey = process.env.NEXT_PUBLIC_TOSS_FOREIGN_PAYMENT_WIDGET_CLIENT_KEY;
+    const originalForeignEasyPayClientKey = process.env.NEXT_PUBLIC_TOSS_FOREIGN_EASY_PAY_CLIENT_KEY;
+
+    try {
+      process.env.NEXT_PUBLIC_TOSS_CLIENT_KEY = 'domestic-client-key';
+      delete process.env.NEXT_PUBLIC_TOSS_FOREIGN_PAYMENT_WIDGET_CLIENT_KEY;
+      process.env.NEXT_PUBLIC_TOSS_FOREIGN_EASY_PAY_CLIENT_KEY = 'foreign-easy-pay-client-key';
+
+      expect(resolvePaymentWidgetClientKey('paypal')).toBe('foreign-easy-pay-client-key');
+      expect(resolvePaymentWidgetClientKey('alipay')).toBe('foreign-easy-pay-client-key');
+
+      process.env.NEXT_PUBLIC_TOSS_FOREIGN_PAYMENT_WIDGET_CLIENT_KEY = 'foreign-widget-client-key';
+      expect(resolvePaymentWidgetClientKey('paypal')).toBe('foreign-widget-client-key');
+      expect(resolvePaymentWidgetClientKey('DEFAULT')).toBe('domestic-client-key');
+    } finally {
+      if (originalClientKey === undefined) {
+        delete process.env.NEXT_PUBLIC_TOSS_CLIENT_KEY;
+      } else {
+        process.env.NEXT_PUBLIC_TOSS_CLIENT_KEY = originalClientKey;
+      }
+      if (originalForeignWidgetClientKey === undefined) {
+        delete process.env.NEXT_PUBLIC_TOSS_FOREIGN_PAYMENT_WIDGET_CLIENT_KEY;
+      } else {
+        process.env.NEXT_PUBLIC_TOSS_FOREIGN_PAYMENT_WIDGET_CLIENT_KEY = originalForeignWidgetClientKey;
+      }
+      if (originalForeignEasyPayClientKey === undefined) {
+        delete process.env.NEXT_PUBLIC_TOSS_FOREIGN_EASY_PAY_CLIENT_KEY;
+      } else {
+        process.env.NEXT_PUBLIC_TOSS_FOREIGN_EASY_PAY_CLIENT_KEY = originalForeignEasyPayClientKey;
       }
     }
   });
