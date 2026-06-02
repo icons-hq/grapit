@@ -984,6 +984,7 @@ describe('use-booking payment mutations', () => {
 
     const products = request.foreignEasyPay?.products ?? [];
 
+    expect(request.windowTarget).toBe('self');
     expect(products).toHaveLength(3);
     expect(products.map((product) => product.name)).toEqual([
       'VIP A열 1번',
@@ -1031,6 +1032,7 @@ describe('use-booking payment mutations', () => {
     });
 
     expect(request.pendingUrl).toBe('https://grabit.test/pending');
+    expect(request.windowTarget).toBe('self');
     expect(request.foreignEasyPay?.products.reduce(
       (sum, product) => sum + product.quantity * Math.round(product.unitAmount * 100),
       0,
@@ -1062,6 +1064,7 @@ describe('use-booking payment mutations', () => {
         value: 50000,
       },
       orderId: 'GRP-OVERSEAS-CARD',
+      windowTarget: 'self',
       card: {
         useInternationalCardOnly: true,
       },
@@ -1102,6 +1105,7 @@ describe('use-booking payment mutations', () => {
       },
       orderId: 'GRP-ALIPAY',
       pendingUrl: 'https://grabit.test/pending',
+      windowTarget: 'self',
       customerMobilePhone: '821012345678',
       foreignEasyPay: {
         provider: 'ALIPAY',
@@ -1142,6 +1146,7 @@ describe('use-booking payment mutations', () => {
     expect(request).toMatchObject({
       orderId: 'GRP-OVERSEAS-CARD-USD',
       successUrl: 'https://grabit.test/success?provider=OVERSEAS_CARD&providerChargeAmount=48.96',
+      windowTarget: 'self',
     });
     expect(request.card).toBeUndefined();
     expect(request.foreignEasyPay).toBeUndefined();
@@ -1200,6 +1205,7 @@ describe('use-booking payment mutations', () => {
 
     expect(foreignWalletRequest).toMatchObject({
       pendingUrl: 'https://grabit.test/pending',
+      windowTarget: 'self',
       foreignEasyPay: {
         country: 'TH',
       },
@@ -1225,6 +1231,7 @@ describe('use-booking payment mutations', () => {
     });
 
     expect(overseasCardRequest.card).toBeUndefined();
+    expect(overseasCardRequest.windowTarget).toBe('self');
   });
 
   it('buildConfirmPaymentPayload() preserves PayPal providerChargeAmount as a raw decimal string', () => {

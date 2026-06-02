@@ -116,6 +116,7 @@ interface WidgetPaymentRequestPayload {
   orderName: string;
   successUrl: string;
   failUrl: string;
+  windowTarget: 'self';
   pendingUrl?: string;
   customerEmail?: string;
   customerName?: string;
@@ -145,6 +146,7 @@ interface DirectCardPaymentRequestPayload {
   orderName: string;
   successUrl: string;
   failUrl: string;
+  windowTarget: 'self';
   customerEmail?: string;
   customerName?: string;
   customerMobilePhone?: string;
@@ -164,6 +166,7 @@ interface DirectForeignEasyPayPaymentRequestPayload {
   successUrl: string;
   failUrl: string;
   pendingUrl: string;
+  windowTarget: 'self';
   customerEmail?: string;
   customerName?: string;
   customerMobilePhone?: string;
@@ -493,6 +496,7 @@ export function buildWidgetPaymentRequest({
     orderName,
     successUrl: branch.successUrl,
     failUrl: branch.failUrl,
+    windowTarget: 'self',
     customerEmail,
     customerName,
     customerMobilePhone: sanitizePhoneNumber(customerMobilePhone),
@@ -555,6 +559,7 @@ export function buildDirectCardPaymentRequest({
     orderName,
     successUrl: branch.successUrl,
     failUrl: branch.failUrl,
+    windowTarget: 'self',
     customerEmail,
     customerName,
     customerMobilePhone: sanitizePhoneNumber(customerMobilePhone),
@@ -593,6 +598,7 @@ export function buildDirectForeignEasyPayPaymentRequest({
     successUrl: branch.successUrl,
     failUrl: branch.failUrl,
     pendingUrl: branch.pendingUrl,
+    windowTarget: 'self',
     customerEmail,
     customerName,
     customerMobilePhone: sanitizePhoneNumber(customerMobilePhone),
