@@ -107,7 +107,7 @@ describe('TossPaymentWidget', () => {
     }
   });
 
-  it('does not render Toss widget containers after switching to direct Alipay', async () => {
+  it('renders Toss widget containers after switching to the Alipay widget variant', async () => {
     const user = userEvent.setup();
     render(<TossPaymentWidget {...defaultProps} />);
 
@@ -115,9 +115,26 @@ describe('TossPaymentWidget', () => {
 
     await user.click(screen.getByRole('tab', { name: 'Alipay' }));
 
-    await waitFor(() => expect(screen.getByText('USD')).toBeInTheDocument());
-    expect(renderPaymentMethodsMock).toHaveBeenCalledTimes(1);
-    expect(renderAgreementMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(renderPaymentMethodsMock).toHaveBeenCalledTimes(2));
+    expect(setAmountMock).toHaveBeenLastCalledWith({
+      currency: 'USD',
+      value: 34,
+    });
+    expect(renderPaymentMethodsMock).toHaveBeenLastCalledWith({
+      selector: '#payment-method',
+      variantKey: 'alipay',
+    });
+    expect(renderAgreementMock).toHaveBeenCalledTimes(2);
+    expect(defaultProps.onPaymentMethodChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        requestFlow: 'widget',
+        paymentMethod: expect.objectContaining({
+          method: 'FOREIGN_EASY_PAY',
+          provider: 'ALIPAY_PLUS',
+          currency: 'USD',
+        }),
+      }),
+    );
     expect(screen.queryByText('결제 위젯을 불러오는데 실패했습니다.')).not.toBeInTheDocument();
   });
 });
