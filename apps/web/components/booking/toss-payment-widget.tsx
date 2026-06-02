@@ -889,7 +889,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
     ]);
 
     useEffect(() => {
-      if (!widgets) return;
+      if (!widgets || !shouldRenderPaymentWidgets) return;
       const activeWidgets = widgets;
 
       let mounted = true;
@@ -948,7 +948,15 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
         void paymentWidgetInstance?.destroy();
         void agreementWidgetInstance?.destroy();
       };
-    }, [widgets, amount, onReady, updateSelectedPaymentMethod, updateWidgetAgreement, paymentWidgetVariantKey]);
+    }, [
+      widgets,
+      amount,
+      onReady,
+      updateSelectedPaymentMethod,
+      updateWidgetAgreement,
+      paymentWidgetVariantKey,
+      shouldRenderPaymentWidgets,
+    ]);
 
     if (error) {
       return (
