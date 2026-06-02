@@ -177,6 +177,8 @@ jobs:
             NEXT_PUBLIC_R2_HOSTNAME=${{ secrets.R2_PUBLIC_HOSTNAME }}
             NEXT_PUBLIC_SENTRY_DSN=${{ secrets.NEXT_PUBLIC_SENTRY_DSN }}
             NEXT_PUBLIC_TOSS_CLIENT_KEY=${{ secrets.NEXT_PUBLIC_TOSS_CLIENT_KEY }}
+            NEXT_PUBLIC_TOSS_OVERSEAS_CARD_CLIENT_KEY=${{ secrets.NEXT_PUBLIC_TOSS_OVERSEAS_CARD_CLIENT_KEY }}
+            NEXT_PUBLIC_TOSS_FOREIGN_EASY_PAY_CLIENT_KEY=${{ secrets.NEXT_PUBLIC_TOSS_FOREIGN_EASY_PAY_CLIENT_KEY }}
             NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY=${{ vars.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY }}
           tags: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.WEB_SERVICE }}:${{ env.DEPLOY_SHA }}
           cache-from: type=gha,scope=grabit-web
@@ -231,6 +233,7 @@ jobs:
             CUTOVER_GATE_LEDGER_PATH=/app/phase26/26-GATE-LEDGER.json
             R2_UPLOAD_CACHE_CONTROL_ENABLED=true
             PAYPAL_CHECKOUT_ENABLED=${{ vars.PAYPAL_CHECKOUT_ENABLED || 'false' }}
+            ALIPAY_CHECKOUT_ENABLED=${{ vars.ALIPAY_CHECKOUT_ENABLED || 'false' }}
             PAYPAL_KRW_USD_RATE=${{ vars.PAYPAL_KRW_USD_RATE }}
           secrets: |
             DATABASE_URL=database-url:latest
@@ -259,6 +262,8 @@ jobs:
             TWILIO_VERIFY_SERVICE_SID=twilio-verify-service-sid:latest
             SENTRY_DSN=sentry-dsn:latest
             TOSS_SECRET_KEY=toss-secret-key:latest
+            TOSS_OVERSEAS_CARD_SECRET_KEY=toss-overseas-card-secret-key:latest
+            TOSS_FOREIGN_EASY_PAY_SECRET_KEY=toss-foreign-easy-pay-secret-key:latest
             TOSS_WEBHOOK_SECRET=toss-webhook-secret:latest
             QR_TICKET_SECRET=qr-ticket-secret:latest
             QR_TICKET_SECRET_VERSION=qr-ticket-secret-version:latest
