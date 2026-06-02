@@ -341,6 +341,20 @@ export function useConfirmPayment() {
   });
 }
 
+export function useReconcileAsyncPaymentReturn() {
+  return useMutation({
+    mutationFn: (data: {
+      paymentKey: string;
+      orderId: string;
+      amount?: number;
+      provider?: 'ALIPAY_PLUS' | 'TRUEMONEY';
+    }) =>
+      apiClient.post<{ acknowledged: true }>('/api/v1/payments/async-return', data, {
+        showErrorToast: false,
+      }),
+  });
+}
+
 export function useBookingDetail(reservationId: string) {
   return useQuery({
     queryKey: ['reservations', reservationId],

@@ -146,7 +146,7 @@
     },
     "paymentDisclaimer": {
       "title": "Overseas payment notice",
-      "description": "Review this notice before using an overseas card, Alipay+, or TrueMoney.",
+      "description": "Review this notice before using an overseas card, Alipay, or PayPal.",
       "krwPrimary": "The primary charge is processed in KRW.",
       "fxHelper": "The displayed FX estimate and card or wallet fees are informational and may differ at the actual charge time.",
       "refundDelay": "Refunds for overseas payments may take extra time to appear on the card or wallet statement.",

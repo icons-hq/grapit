@@ -146,7 +146,7 @@
     },
     "paymentDisclaimer": {
       "title": "海外支付提示",
-      "description": "使用海外银行卡、Alipay+ 或 TrueMoney 前，请先确认以下说明。",
+      "description": "使用海外银行卡、Alipay 或 PayPal 前，请先确认以下说明。",
       "krwPrimary": "实际扣款将以 KRW 为主币种处理。",
       "fxHelper": "页面展示的汇率预估和卡组织或钱包手续费仅供参考，实际扣款时可能不同。",
       "refundDelay": "海外支付的取消或退款，可能需要更长时间才会显示在银行卡或钱包账单中。",

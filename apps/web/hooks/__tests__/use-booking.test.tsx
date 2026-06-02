@@ -12,7 +12,12 @@ import {
 import { ApiClientError, apiClient } from '@/lib/api-client';
 import { buildConfirmPaymentPayload } from '@/lib/booking/payment-return';
 import {
+  buildDirectForeignEasyPayPaymentRequest,
+  buildDirectCardPaymentRequest,
   buildWidgetPaymentRequest,
+  resolveProviderChargeDisabledMessage,
+  resolvePaymentWidgetVariantLabel,
+  resolvePaymentWidgetRenderVariantKey,
   resolvePaymentRequestAmount,
   resolvePaymentWidgetRenderAmount,
   resolvePaymentMethodSelection,
@@ -756,6 +761,53 @@ describe('use-booking payment mutations', () => {
     expect(resolvePaymentMethodSelection('PAYPAL').paymentMethod.pendingUrlRequired).toBeUndefined();
   });
 
+  it('resolvePaymentMethodSelection() maps CARD by widget variant context', () => {
+    expect(resolvePaymentMethodSelection('CARD', 'DEFAULT')).toMatchObject({
+      requiresOverseasDisclaimer: false,
+      requestFlow: 'widget',
+      paymentMethod: {
+        method: 'CARD',
+        provider: 'CARD',
+        currency: 'KRW',
+      },
+    });
+
+    expect(resolvePaymentMethodSelection('CARD', 'paypal')).toMatchObject({
+      requiresOverseasDisclaimer: true,
+      requestFlow: 'widget',
+      paymentMethod: {
+        method: 'CARD',
+        provider: 'CARD',
+        currency: 'USD',
+        overseasPaymentConsent: {
+          required: true,
+          agreed: false,
+        },
+      },
+    });
+
+    expect(resolvePaymentMethodSelection('ALIPAY', 'paypal')).toMatchObject({
+      requiresOverseasDisclaimer: true,
+      requestFlow: 'direct_foreign_easy_pay',
+      paymentMethod: {
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'ALIPAY_PLUS',
+        currency: 'USD',
+        pendingUrlRequired: true,
+      },
+    });
+
+    expect(resolvePaymentMethodSelection('OVERSEAS_CARD', 'paypal')).toMatchObject({
+      requiresOverseasDisclaimer: true,
+      requestFlow: 'direct_card',
+      paymentMethod: {
+        method: 'CARD',
+        provider: 'CARD',
+        currency: 'KRW',
+      },
+    });
+  });
+
   it('resolvePaymentWidgetVariantKey() defaults to DEFAULT for unset or blank env', () => {
     const originalVariantKey = process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY;
 
@@ -818,6 +870,18 @@ describe('use-booking payment mutations', () => {
       currency: 'USD',
       value: 34,
     });
+  });
+
+  it('resolvePaymentWidgetVariantLabel() labels foreign payment variants without duplicate PayPal copy', () => {
+    expect(resolvePaymentWidgetVariantLabel('DEFAULT')).toBe('국내 결제');
+    expect(resolvePaymentWidgetVariantLabel('paypal')).toBe('해외 결제');
+    expect(resolvePaymentWidgetVariantLabel('alipay')).toBe('Alipay');
+  });
+
+  it('resolvePaymentWidgetRenderVariantKey() normalizes PayPal variant for Toss widget API', () => {
+    expect(resolvePaymentWidgetRenderVariantKey('paypal')).toBe('PAYPAL');
+    expect(resolvePaymentWidgetRenderVariantKey('PAYPAL')).toBe('PAYPAL');
+    expect(resolvePaymentWidgetRenderVariantKey('DEFAULT')).toBe('DEFAULT');
   });
 
   it('resolvePaymentRequestAmount() uses the exact PayPal provider quote for Toss request amount', () => {
@@ -892,7 +956,186 @@ describe('use-booking payment mutations', () => {
     expect(products.every((product) => product.currency === 'USD')).toBe(true);
   });
 
-  it('buildWidgetPaymentRequest() keeps pendingUrl for foreign wallets and international-card options for overseas card', () => {
+  it('buildWidgetPaymentRequest() itemizes Alipay products with the stored USD provider quote', () => {
+    const request = buildWidgetPaymentRequest({
+      branch: {
+        orderId: 'GRP-ALIPAY',
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'ALIPAY_PLUS',
+        currency: 'USD',
+        successUrl: 'https://grabit.test/success',
+        failUrl: 'https://grabit.test/fail',
+        pendingUrl: 'https://grabit.test/pending',
+        asyncStatus: 'pending_webhook',
+        useInternationalCardOnly: false,
+        providerChargeQuote: {
+          currency: 'USD',
+          amountMinor: 4896,
+          amountDecimal: '48.96',
+          rate: '0.00068',
+          quotedAt: '2026-05-29T00:00:00.000Z',
+        },
+        checkoutEnabled: true,
+      },
+      amount: 72000,
+      customerEmail: 'fan@example.com',
+      customerName: '해외 팬',
+      orderName: '팬미팅 티켓 2매',
+      locale: 'en',
+      selectedSeats: [
+        createFloorAwareSeat({ seatId: 'A-1', price: 30000 }),
+        createFloorAwareSeat({ seatId: 'A-2', number: '2', price: 38000 }),
+      ],
+    });
+
+    expect(request.pendingUrl).toBe('https://grabit.test/pending');
+    expect(request.foreignEasyPay?.products.reduce(
+      (sum, product) => sum + product.quantity * Math.round(product.unitAmount * 100),
+      0,
+    )).toBe(4896);
+    expect(request.foreignEasyPay?.products.every((product) => product.currency === 'USD')).toBe(true);
+  });
+
+  it('buildDirectCardPaymentRequest() sends overseas card through direct CARD payment with KRW amount', () => {
+    expect(buildDirectCardPaymentRequest({
+      branch: {
+        orderId: 'GRP-OVERSEAS-CARD',
+        method: 'CARD',
+        provider: 'CARD',
+        currency: 'KRW',
+        successUrl: 'https://grabit.test/success?provider=OVERSEAS_CARD',
+        failUrl: 'https://grabit.test/fail',
+        asyncStatus: 'sync',
+        useInternationalCardOnly: true,
+      },
+      amount: 50000,
+      customerEmail: 'fan@example.com',
+      customerName: '해외 팬',
+      customerMobilePhone: '+82-10-1234-5678',
+      orderName: '팬미팅 티켓 1매',
+    })).toMatchObject({
+      method: 'CARD',
+      amount: {
+        currency: 'KRW',
+        value: 50000,
+      },
+      orderId: 'GRP-OVERSEAS-CARD',
+      card: {
+        useInternationalCardOnly: true,
+      },
+      customerMobilePhone: '821012345678',
+    });
+  });
+
+  it('buildWidgetPaymentRequest() keeps USD overseas card requests on the card branch', () => {
+    const request = buildWidgetPaymentRequest({
+      branch: {
+        orderId: 'GRP-OVERSEAS-CARD-USD',
+        method: 'CARD',
+        provider: 'CARD',
+        currency: 'USD',
+        successUrl: 'https://grabit.test/success?provider=OVERSEAS_CARD&providerChargeAmount=48.96',
+        failUrl: 'https://grabit.test/fail',
+        asyncStatus: 'sync',
+        useInternationalCardOnly: true,
+        providerChargeQuote: {
+          currency: 'USD',
+          amountMinor: 4896,
+          amountDecimal: '48.96',
+          rate: '0.00068',
+          quotedAt: '2026-05-29T00:00:00.000Z',
+        },
+        checkoutEnabled: true,
+      },
+      amount: 72000,
+      customerEmail: 'fan@example.com',
+      customerName: '해외 팬',
+      customerMobilePhone: '010-0000-0000',
+      orderName: '팬미팅 티켓 1매',
+      locale: 'en',
+      selectedSeats: [createFloorAwareSeat({ price: 70000 })],
+    });
+
+    expect(request).toMatchObject({
+      orderId: 'GRP-OVERSEAS-CARD-USD',
+      successUrl: 'https://grabit.test/success?provider=OVERSEAS_CARD&providerChargeAmount=48.96',
+    });
+    expect(request.card).toBeUndefined();
+    expect(request.foreignEasyPay).toBeUndefined();
+    expect(request.customerMobilePhone).toBeUndefined();
+  });
+
+  it('buildDirectCardPaymentRequest() omits placeholder admin phone numbers', () => {
+    const request = buildDirectCardPaymentRequest({
+      branch: {
+        orderId: 'GRP-OVERSEAS-CARD',
+        method: 'CARD',
+        provider: 'CARD',
+        currency: 'KRW',
+        successUrl: 'https://grabit.test/success?provider=OVERSEAS_CARD',
+        failUrl: 'https://grabit.test/fail',
+        asyncStatus: 'sync',
+        useInternationalCardOnly: true,
+      },
+      amount: 50000,
+      customerEmail: 'admin@example.com',
+      customerName: '관리자',
+      customerMobilePhone: '010-0000-0000',
+      orderName: '팬미팅 티켓 1매',
+    });
+
+    expect(request.customerMobilePhone).toBeUndefined();
+  });
+
+  it('buildDirectForeignEasyPayPaymentRequest() sends Alipay through direct FOREIGN_EASY_PAY with USD quote', () => {
+    expect(buildDirectForeignEasyPayPaymentRequest({
+      branch: {
+        orderId: 'GRP-DIRECT-ALIPAY',
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'ALIPAY_PLUS',
+        currency: 'USD',
+        successUrl: 'https://grabit.test/success',
+        failUrl: 'https://grabit.test/fail',
+        pendingUrl: 'https://grabit.test/pending?provider=ALIPAY_PLUS',
+        asyncStatus: 'pending_webhook',
+        useInternationalCardOnly: false,
+        providerChargeQuote: {
+          currency: 'USD',
+          amountMinor: 4896,
+          amountDecimal: '48.96',
+          rate: '0.00068',
+          quotedAt: '2026-05-29T00:00:00.000Z',
+        },
+        checkoutEnabled: true,
+      },
+      customerEmail: 'fan@example.com',
+      customerName: '해외 팬',
+      customerMobilePhone: '+82-10-1234-5678',
+      orderName: '팬미팅 티켓 2매',
+    })).toMatchObject({
+      method: 'FOREIGN_EASY_PAY',
+      amount: {
+        currency: 'USD',
+        value: 48.96,
+      },
+      orderId: 'GRP-DIRECT-ALIPAY',
+      pendingUrl: 'https://grabit.test/pending?provider=ALIPAY_PLUS',
+      customerMobilePhone: '821012345678',
+      foreignEasyPay: {
+        provider: 'ALIPAY',
+        country: 'CN',
+      },
+    });
+  });
+
+  it('resolveProviderChargeDisabledMessage() does not expose raw PayPal disabled codes for Alipay', () => {
+    expect(resolveProviderChargeDisabledMessage('ALIPAY_PLUS', 'PAYPAL_CHECKOUT_DISABLED'))
+      .toBe('Alipay 결제 설정이 완료되지 않았습니다. 관리자에게 문의해주세요.');
+    expect(resolveProviderChargeDisabledMessage('PAYPAL', 'PAYPAL_CHECKOUT_DISABLED'))
+      .toBe('PayPal 결제 설정이 완료되지 않았습니다. 관리자에게 문의해주세요.');
+  });
+
+  it('buildWidgetPaymentRequest() keeps pendingUrl for foreign wallets and omits direct-card-only options for overseas card widgets', () => {
     const foreignWalletRequest = buildWidgetPaymentRequest({
       branch: {
         orderId: 'GRP-FOREIGN-EASY-PAY',
@@ -939,11 +1182,7 @@ describe('use-booking payment mutations', () => {
       locale: 'en',
     });
 
-    expect(overseasCardRequest).toMatchObject({
-      card: {
-        useInternationalCardOnly: true,
-      },
-    });
+    expect(overseasCardRequest.card).toBeUndefined();
   });
 
   it('buildConfirmPaymentPayload() preserves PayPal providerChargeAmount as a raw decimal string', () => {
@@ -982,6 +1221,31 @@ describe('use-booking payment mutations', () => {
       paymentKey: 'card_payment_key',
       orderId: 'GRP-CARD-CONFIRM',
       amount: 50000,
+    });
+
+    expect(buildConfirmPaymentPayload({
+      paymentKey: 'overseas_card_payment_key',
+      orderId: 'GRP-OVERSEAS-CARD-CONFIRM',
+      amount: '50000',
+      provider: 'OVERSEAS_CARD',
+      providerChargeAmount: null,
+    })).toEqual({
+      paymentKey: 'overseas_card_payment_key',
+      orderId: 'GRP-OVERSEAS-CARD-CONFIRM',
+      provider: 'OVERSEAS_CARD',
+      amount: 50000,
+    });
+    expect(buildConfirmPaymentPayload({
+      paymentKey: 'overseas_card_usd_payment_key',
+      orderId: 'GRP-OVERSEAS-CARD-USD-CONFIRM',
+      amount: '48.96',
+      provider: 'OVERSEAS_CARD',
+      providerChargeAmount: '48.96',
+    })).toEqual({
+      paymentKey: 'overseas_card_usd_payment_key',
+      orderId: 'GRP-OVERSEAS-CARD-USD-CONFIRM',
+      provider: 'OVERSEAS_CARD',
+      providerChargeAmount: '48.96',
     });
   });
 });

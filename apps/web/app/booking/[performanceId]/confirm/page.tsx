@@ -87,6 +87,7 @@ function ConfirmPageContent() {
   const [overseasDisclaimerAgreed, setOverseasDisclaimerAgreed] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [widgetReady, setWidgetReady] = useState(false);
+  const [widgetAgreementAgreed, setWidgetAgreementAgreed] = useState(false);
   const [lockFailureMessage, setLockFailureMessage] = useState<string | null>(null);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<PaymentMethodSelection | null>(null);
   const [bookerInfo, setBookerInfo] = useState<{ name: string; phone: string }>({
@@ -96,13 +97,13 @@ function ConfirmPageContent() {
 
   const paymentWidgetRef = useRef<TossPaymentWidgetRef>(null);
   const reservationIdRef = useRef<string | null>(null);
+  const paymentRequestInFlightRef = useRef(false);
   const { bookingAvailable, bookingDisabledMessage } = useBookingAvailability();
   const prepareMutation = usePrepareReservation();
   const unlockAll = useUnlockAllSeats();
   const cancelPending = useCancelPendingReservation();
 
-  // Generate orderId once per mount
-  const orderId = useMemo(() => generateOrderId(), []);
+  const [orderId, setOrderId] = useState(() => generateOrderId());
 
   const totalPrice = useMemo(
     () => selectedSeats.reduce((sum, s) => sum + s.price, 0)
@@ -175,6 +176,10 @@ function ConfirmPageContent() {
     setOverseasDisclaimerAgreed(false);
   }, []);
 
+  const handleWidgetAgreementChange = useCallback((value: boolean) => {
+    setWidgetAgreementAgreed(value);
+  }, []);
+
   const handleBookerUpdate = useCallback((data: { name: string; phone: string }) => {
     setBookerInfo(data);
   }, []);
@@ -217,10 +222,18 @@ function ConfirmPageContent() {
     if (!bookingAvailable) return;
     if (lockFailureMessage) return;
     if (isPaymentDeadlineExpired) return;
-    if (!paymentWidgetRef.current || !agreed || isProcessing) return;
+    if (
+      !paymentWidgetRef.current
+      || !agreed
+      || !widgetAgreementAgreed
+      || isProcessing
+      || paymentRequestInFlightRef.current
+    ) return;
     if (requiresOverseasDisclaimer && !overseasDisclaimerAgreed) return;
 
+    paymentRequestInFlightRef.current = true;
     setIsProcessing(true);
+    let preparedReservationId: string | null = null;
     try {
       // 1. Create pending reservation on server before payment
       const now = new Date();
@@ -249,12 +262,19 @@ function ConfirmPageContent() {
         bookingPolicy,
         paymentMethod,
       });
+      preparedReservationId = result.reservationId;
       reservationIdRef.current = result.reservationId;
 
       // 2. Initiate Toss payment — SDK redirects the browser
       await paymentWidgetRef.current.requestPayment(result);
     } catch (err) {
+      paymentRequestInFlightRef.current = false;
       setIsProcessing(false);
+      if (preparedReservationId) {
+        reservationIdRef.current = null;
+        await cancelPending.mutateAsync(preparedReservationId).catch(() => {});
+        setOrderId(generateOrderId());
+      }
       const errorMessage =
         err instanceof Error ? err.message : '결제 요청에 실패했습니다.';
       if (isLockFailureMessage(errorMessage)) {
@@ -276,6 +296,7 @@ function ConfirmPageContent() {
   const ctaDisabled = !bookingAvailable
     || !!lockFailureMessage
     || !agreed
+    || !widgetAgreementAgreed
     || isProcessing
     || !widgetReady
     || isPaymentDeadlineExpired
@@ -292,6 +313,8 @@ function ConfirmPageContent() {
     ? t('paymentDisclaimer.ctaPending')
     : !agreed
       ? '약관에 동의해주세요'
+      : !widgetAgreementAgreed
+      ? '결제 약관에 동의해주세요'
       : t('paymentDisclaimer.payNow');
 
   return (
@@ -374,6 +397,7 @@ function ConfirmPageContent() {
               selectedSeats={selectedSeats.map(toFloorAwareSeatSelection)}
               onReady={handleWidgetReady}
               onPaymentMethodChange={handlePaymentMethodChange}
+              onWidgetAgreementChange={handleWidgetAgreementChange}
             />
           )}
         </section>

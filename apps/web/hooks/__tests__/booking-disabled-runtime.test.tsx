@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { Suspense, forwardRef, useEffect, useImperativeHandle } from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
 import {
@@ -20,6 +20,8 @@ const {
   lockSeatMutateMock,
   prepareReservationMock,
   requestPaymentMock,
+  cancelPendingReservationMock,
+  cancelPendingReservationAsyncMock,
   routerPushMock,
   routerReplaceMock,
   usePerformanceDetailMock,
@@ -30,6 +32,8 @@ const {
   lockSeatMutateMock: vi.fn(),
   prepareReservationMock: vi.fn(),
   requestPaymentMock: vi.fn(),
+  cancelPendingReservationMock: vi.fn(),
+  cancelPendingReservationAsyncMock: vi.fn(),
   routerPushMock: vi.fn(),
   routerReplaceMock: vi.fn(),
   usePerformanceDetailMock: vi.fn(),
@@ -120,7 +124,10 @@ vi.mock('@/hooks/use-booking', () => ({
   useLockSeat: () => ({ mutate: lockSeatMutateMock, isPending: false }),
   useUnlockSeat: () => ({ mutate: vi.fn(), isPending: false }),
   useUnlockAllSeats: () => ({ mutate: vi.fn(), isPending: false }),
-  useCancelPendingReservation: () => ({ mutate: vi.fn() }),
+  useCancelPendingReservation: () => ({
+    mutate: cancelPendingReservationMock,
+    mutateAsync: cancelPendingReservationAsyncMock,
+  }),
   usePrepareReservation: () => ({ mutateAsync: prepareReservationMock }),
 }));
 
@@ -156,7 +163,13 @@ vi.mock('@/components/booking/toss-payment-widget', async () => {
   const React = await import('react');
   return {
     TossPaymentWidget: forwardRef(function TossPaymentWidget(
-      { onReady }: { onReady: () => void },
+      {
+        onReady,
+        onWidgetAgreementChange,
+      }: {
+        onReady: () => void;
+        onWidgetAgreementChange?: (agreed: boolean) => void;
+      },
       ref,
     ) {
       useImperativeHandle(ref, () => ({
@@ -164,7 +177,8 @@ vi.mock('@/components/booking/toss-payment-widget', async () => {
       }));
       useEffect(() => {
         onReady();
-      }, [onReady]);
+        onWidgetAgreementChange?.(true);
+      }, [onReady, onWidgetAgreementChange]);
       return <div>payment widget</div>;
     }),
   };
@@ -288,6 +302,9 @@ describe('runtime booking disabled UI', () => {
     lockSeatMutateMock.mockReset();
     prepareReservationMock.mockReset();
     requestPaymentMock.mockReset();
+    cancelPendingReservationMock.mockReset();
+    cancelPendingReservationAsyncMock.mockReset();
+    cancelPendingReservationAsyncMock.mockResolvedValue(undefined);
     routerPushMock.mockReset();
     routerReplaceMock.mockReset();
     usePerformanceDetailMock.mockReset();
@@ -508,6 +525,90 @@ describe('runtime booking disabled UI', () => {
       expect(prepareReservationMock).toHaveBeenCalledTimes(1);
     });
     expect(requestPaymentMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('prevents duplicate payment preparation when the confirm CTA is clicked twice before React state settles', async () => {
+    const user = userEvent.setup();
+    let resolvePrepare: (value: { reservationId: string; orderId: string }) => void = () => {};
+    useRuntimeFlagsMock.mockReturnValue({
+      bookingEnabled: true,
+      isLoading: false,
+      bookingDisabledMessage: '예매는 추후 오픈 예정입니다',
+    });
+    prepareReservationMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvePrepare = resolve;
+        }),
+    );
+    requestPaymentMock.mockResolvedValue(undefined);
+
+    renderWithQuery(<ConfirmPage />);
+
+    await user.click(await screen.findByLabelText('전체 동의'));
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: '결제하기' })).toHaveLength(2);
+    });
+
+    const paymentButton = screen.getAllByRole('button', { name: '결제하기' })[0]!;
+    fireEvent.click(paymentButton);
+    fireEvent.click(paymentButton);
+
+    expect(prepareReservationMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolvePrepare({
+        reservationId: 'reservation-1',
+        orderId: 'order-1',
+      });
+    });
+
+    await waitFor(() => {
+      expect(requestPaymentMock).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('cancels the prepared reservation and rotates orderId after Toss requestPayment rejects', async () => {
+    const user = userEvent.setup();
+    const preparedOrderIds: string[] = [];
+    useRuntimeFlagsMock.mockReturnValue({
+      bookingEnabled: true,
+      isLoading: false,
+      bookingDisabledMessage: '예매는 추후 오픈 예정입니다',
+    });
+    prepareReservationMock.mockImplementation(async (payload: { orderId: string }) => {
+      preparedOrderIds.push(payload.orderId);
+      return {
+        reservationId: `reservation-${preparedOrderIds.length}`,
+        orderId: payload.orderId,
+      };
+    });
+    requestPaymentMock
+      .mockRejectedValueOnce(new Error('Payment has already been requested.'))
+      .mockResolvedValueOnce(undefined);
+
+    renderWithQuery(<ConfirmPage />);
+
+    await user.click(await screen.findByLabelText('전체 동의'));
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: '결제하기' })).toHaveLength(2);
+    });
+
+    const firstPaymentButton = screen.getAllByRole('button', { name: '결제하기' })[0]!;
+    await user.click(firstPaymentButton);
+
+    await waitFor(() => {
+      expect(cancelPendingReservationAsyncMock).toHaveBeenCalledWith('reservation-1');
+    });
+
+    await user.click(screen.getAllByRole('button', { name: '결제하기' })[0]!);
+
+    await waitFor(() => {
+      expect(prepareReservationMock).toHaveBeenCalledTimes(2);
+    });
+    expect(requestPaymentMock).toHaveBeenCalledTimes(2);
+    expect(preparedOrderIds).toHaveLength(2);
+    expect(preparedOrderIds[1]).not.toBe(preparedOrderIds[0]);
   });
 
   it('switches the confirm CTA to 결제하기 after required agreements when booking is enabled', async () => {
