@@ -126,14 +126,30 @@ function ConfirmPageContent() {
 
   // Handle error return from Toss. Guard with useRef so React StrictMode's
   // double-effect in dev mode does not fire two toasts for the same URL.
-  const errorToastFiredRef = useRef(false);
+  const errorToastKeyRef = useRef<string | null>(null);
   useEffect(() => {
     const hasError = searchParams.get('error');
-    if (hasError !== 'true' || errorToastFiredRef.current) return;
-    errorToastFiredRef.current = true;
-
     const code = searchParams.get('code');
     const message = searchParams.get('message');
+    const failedOrderId = searchParams.get('orderId');
+    const errorToastKey = `${code ?? ''}:${message ?? ''}:${failedOrderId ?? ''}`;
+    if (hasError !== 'true' || errorToastKeyRef.current === errorToastKey) return;
+    errorToastKeyRef.current = errorToastKey;
+
+    paymentRequestInFlightRef.current = false;
+    queueMicrotask(() => {
+      setIsProcessing(false);
+
+      if (failedOrderId && failedOrderId === orderId) {
+        setOrderId(generateOrderId());
+      }
+    });
+
+    if (reservationIdRef.current) {
+      const reservationId = reservationIdRef.current;
+      reservationIdRef.current = null;
+      cancelPending.mutate(reservationId);
+    }
 
     if (code === 'PAY_PROCESS_CANCELED') {
       toast.error('결제가 취소되었습니다.');
@@ -149,7 +165,7 @@ function ConfirmPageContent() {
     url.searchParams.delete('code');
     url.searchParams.delete('message');
     window.history.replaceState({}, '', url.pathname);
-  }, [searchParams]);
+  }, [cancelPending, orderId, searchParams]);
 
   const handleExpire = useCallback(() => {
     const { selectedShowtimeId } = useBookingStore.getState();

@@ -28,6 +28,7 @@ const {
   useLocaleMock,
   useTranslationsMock,
   useRuntimeFlagsMock,
+  searchParamsRef,
 } = vi.hoisted(() => ({
   lockSeatMutateMock: vi.fn(),
   prepareReservationMock: vi.fn(),
@@ -38,6 +39,9 @@ const {
   routerReplaceMock: vi.fn(),
   usePerformanceDetailMock: vi.fn(),
   useLocaleMock: vi.fn(() => 'ko'),
+  searchParamsRef: {
+    current: new URLSearchParams(),
+  },
   useTranslationsMock: vi.fn(() => (key: string, values?: Record<string, string>) => {
     const messages: Record<string, string> = {
       'paymentDeadline.badge': '결제 가능 시간',
@@ -88,7 +92,7 @@ vi.mock('next/navigation', () => ({
     push: routerPushMock,
     replace: routerReplaceMock,
   }),
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => searchParamsRef.current,
 }));
 
 vi.mock('@/hooks/use-runtime-flags', () => ({
@@ -235,11 +239,15 @@ function renderWithQuery(ui: ReactNode) {
     },
   });
 
-  return render(
-    <QueryClientProvider client={queryClient}>
-      {ui}
-    </QueryClientProvider>,
-  );
+  function Wrapper({ children }: { children: ReactNode }) {
+    return (
+      <QueryClientProvider client={queryClient}>
+        {children}
+      </QueryClientProvider>
+    );
+  }
+
+  return render(ui, { wrapper: Wrapper });
 }
 
 function fulfilledParams(id: string) {
@@ -307,6 +315,7 @@ describe('runtime booking disabled UI', () => {
     cancelPendingReservationAsyncMock.mockResolvedValue(undefined);
     routerPushMock.mockReset();
     routerReplaceMock.mockReset();
+    searchParamsRef.current = new URLSearchParams();
     usePerformanceDetailMock.mockReset();
     usePerformanceDetailMock.mockReturnValue({
       data: createPerformanceDetail(),
@@ -608,6 +617,58 @@ describe('runtime booking disabled UI', () => {
     });
     expect(requestPaymentMock).toHaveBeenCalledTimes(2);
     expect(preparedOrderIds).toHaveLength(2);
+    expect(preparedOrderIds[1]).not.toBe(preparedOrderIds[0]);
+  });
+
+  it('resets processing and rotates orderId when Toss returns to failUrl after request handoff', async () => {
+    const user = userEvent.setup();
+    const preparedOrderIds: string[] = [];
+    useRuntimeFlagsMock.mockReturnValue({
+      bookingEnabled: true,
+      isLoading: false,
+      bookingDisabledMessage: '예매는 추후 오픈 예정입니다',
+    });
+    prepareReservationMock.mockImplementation(async (payload: { orderId: string }) => {
+      preparedOrderIds.push(payload.orderId);
+      return {
+        reservationId: `reservation-${preparedOrderIds.length}`,
+        orderId: payload.orderId,
+      };
+    });
+    requestPaymentMock.mockImplementation(() => new Promise(() => {}));
+
+    const view = renderWithQuery(<ConfirmPage />);
+
+    await user.click(await screen.findByLabelText('전체 동의'));
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: '결제하기' })).toHaveLength(2);
+    });
+
+    await user.click(screen.getAllByRole('button', { name: '결제하기' })[0]!);
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: '결제 처리 중...' })[0]).toBeDisabled();
+    });
+    expect(preparedOrderIds).toHaveLength(1);
+
+    searchParamsRef.current = new URLSearchParams({
+      error: 'true',
+      code: 'INVALID_PAYMENT_METHOD',
+      message: 'Payment has already been requested.',
+      orderId: preparedOrderIds[0]!,
+    });
+    view.rerender(<ConfirmPage />);
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: '결제하기' })[0]).toBeEnabled();
+    });
+    expect(cancelPendingReservationMock).toHaveBeenCalledWith('reservation-1');
+
+    await user.click(screen.getAllByRole('button', { name: '결제하기' })[0]!);
+
+    await waitFor(() => {
+      expect(prepareReservationMock).toHaveBeenCalledTimes(2);
+    });
     expect(preparedOrderIds[1]).not.toBe(preparedOrderIds[0]);
   });
 
