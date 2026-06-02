@@ -313,6 +313,18 @@ export type ConfirmPaymentRequest = {
   provider: 'PAYPAL';
   providerChargeAmount: string;
   amount?: never;
+} | {
+  paymentKey: string;
+  orderId: string;
+  provider: 'OVERSEAS_CARD';
+  amount: number;
+  providerChargeAmount?: never;
+} | {
+  paymentKey: string;
+  orderId: string;
+  provider: 'OVERSEAS_CARD';
+  providerChargeAmount: string;
+  amount?: never;
 };
 
 export interface CancelReservationRequest {

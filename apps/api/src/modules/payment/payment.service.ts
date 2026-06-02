@@ -46,6 +46,11 @@ const ASYNC_FOREIGN_EASY_PAY_PROVIDERS = new Set<PaymentProvider>([
   'TRUEMONEY',
 ]);
 
+const PROVIDER_CHARGE_QUOTE_PROVIDERS = new Set<PaymentProvider>([
+  'ALIPAY_PLUS',
+  'PAYPAL',
+]);
+
 export type TossPaymentAsyncStatus = 'sync' | 'pending_webhook';
 
 export interface TossPaymentBranchRequest {
@@ -69,6 +74,14 @@ export interface TossPaymentBranch {
   providerChargeQuote?: ProviderChargeQuote;
   checkoutEnabled?: boolean;
   disabledReason?: string;
+}
+
+export interface TossPaymentAsyncReturnRequest {
+  orderId: string;
+  paymentKey: string;
+  amount?: number;
+  provider?: Extract<PaymentProvider, 'ALIPAY_PLUS' | 'TRUEMONEY'>;
+  userId: string;
 }
 
 export type TossWebhookEventType =
@@ -111,6 +124,10 @@ type WebhookReservationSnapshot = {
   showtimeId: string;
   status: ReservationStatus;
   totalAmount: number;
+  providerChargeCurrency?: string | null;
+  providerChargeAmountMinor?: number | null;
+  providerChargeRate?: string | null;
+  providerChargeQuotedAt?: Date | null;
 };
 
 type WebhookPaymentSnapshot = {
@@ -120,6 +137,7 @@ type WebhookPaymentSnapshot = {
   tossOrderId: string;
   amount: number;
   status: PaymentStatus;
+  providerChargeAmountMinor?: number | null;
 };
 
 type WebhookSeatSelection = {
@@ -146,6 +164,46 @@ export class PaymentService {
   async prepareTossPaymentBranch(input: TossPaymentBranchRequest): Promise<TossPaymentBranch> {
     const { orderId, paymentMethod, successUrl, failUrl, pendingUrl } = input;
 
+    if (this.usesProviderChargeQuoteForPaymentMethod(paymentMethod)) {
+      if (this.requiresAsyncWebhookBranch(paymentMethod) && !pendingUrl) {
+        throw new BadRequestException('FOREIGN_EASY_PAY 결제는 pendingUrl이 필요합니다');
+      }
+
+      const availability =
+        this.getProviderChargeAvailability(paymentMethod.provider)
+        ?? {
+          enabled: false,
+          disabledReason: 'PAYPAL_CHECKOUT_UNAVAILABLE',
+        };
+      const providerChargeQuote = availability.enabled
+        ? await this.findStoredProviderChargeQuote(orderId)
+        : undefined;
+      const checkoutEnabled = availability.enabled && !!providerChargeQuote;
+      const disabledReason = availability.enabled
+        ? providerChargeQuote ? undefined : 'PAYPAL_PROVIDER_CHARGE_QUOTE_MISSING'
+        : availability.disabledReason;
+      const asyncStatus = this.requiresAsyncWebhookBranch(paymentMethod)
+        ? 'pending_webhook'
+        : 'sync';
+
+      const method = paymentMethod.method === 'CARD' ? 'CARD' : 'FOREIGN_EASY_PAY';
+
+      return {
+        orderId,
+        method,
+        provider: paymentMethod.provider,
+        currency: 'USD',
+        successUrl,
+        failUrl,
+        ...(pendingUrl ? { pendingUrl } : {}),
+        asyncStatus,
+        useInternationalCardOnly: method === 'CARD',
+        checkoutEnabled,
+        ...(disabledReason ? { disabledReason } : {}),
+        ...(providerChargeQuote ? { providerChargeQuote } : {}),
+      };
+    }
+
     if (this.requiresAsyncWebhookBranch(paymentMethod)) {
       if (!pendingUrl) {
         throw new BadRequestException('FOREIGN_EASY_PAY 결제는 pendingUrl이 필요합니다');
@@ -161,37 +219,6 @@ export class PaymentService {
         pendingUrl,
         asyncStatus: 'pending_webhook',
         useInternationalCardOnly: false,
-      };
-    }
-
-    if (
-      paymentMethod.method === 'FOREIGN_EASY_PAY'
-      && paymentMethod.provider === 'PAYPAL'
-    ) {
-      const availability =
-        this.providerChargeQuoteService?.getPaypalAvailability()
-        ?? {
-          enabled: false,
-          disabledReason: 'PAYPAL_CHECKOUT_UNAVAILABLE',
-        };
-      const providerChargeQuote = await this.findStoredProviderChargeQuote(orderId);
-      const checkoutEnabled = availability.enabled && !!providerChargeQuote;
-      const disabledReason = availability.enabled
-        ? providerChargeQuote ? undefined : 'PAYPAL_PROVIDER_CHARGE_QUOTE_MISSING'
-        : availability.disabledReason;
-
-      return {
-        orderId,
-        method: 'FOREIGN_EASY_PAY',
-        provider: 'PAYPAL',
-        currency: 'USD',
-        successUrl,
-        failUrl,
-        asyncStatus: 'sync',
-        useInternationalCardOnly: false,
-        checkoutEnabled,
-        ...(disabledReason ? { disabledReason } : {}),
-        ...(providerChargeQuote ? { providerChargeQuote } : {}),
       };
     }
 
@@ -259,6 +286,57 @@ export class PaymentService {
     return `${whole}.${fraction}`;
   }
 
+  private getReservationProviderChargeQuote(
+    reservation: WebhookReservationSnapshot,
+  ): ProviderChargeQuote | undefined {
+    if (
+      reservation.providerChargeCurrency !== 'USD'
+      || typeof reservation.providerChargeAmountMinor !== 'number'
+      || !reservation.providerChargeRate
+      || !reservation.providerChargeQuotedAt
+    ) {
+      return undefined;
+    }
+
+    return {
+      currency: 'USD',
+      amountMinor: reservation.providerChargeAmountMinor,
+      amountDecimal: this.formatProviderMinorToDecimal(
+        reservation.providerChargeAmountMinor,
+      ),
+      rate: reservation.providerChargeRate,
+      quotedAt: reservation.providerChargeQuotedAt.toISOString(),
+    };
+  }
+
+  private toPaymentProviderChargeValues(
+    quote: ProviderChargeQuote | undefined,
+  ): {
+    providerChargeCurrency?: 'USD';
+    providerChargeAmountMinor?: number;
+    providerChargeRate?: string;
+    providerChargeQuotedAt?: Date;
+  } {
+    if (!quote) {
+      return {};
+    }
+
+    return {
+      providerChargeCurrency: quote.currency,
+      providerChargeAmountMinor: quote.amountMinor,
+      providerChargeRate: quote.rate,
+      providerChargeQuotedAt: new Date(quote.quotedAt),
+    };
+  }
+
+  private toProviderAmountMinor(totalAmount: number | undefined): number | undefined {
+    if (typeof totalAmount !== 'number' || !Number.isFinite(totalAmount) || totalAmount <= 0) {
+      return undefined;
+    }
+
+    return Math.round(totalAmount * 100);
+  }
+
   async getPaymentByReservationId(reservationId: string): Promise<PaymentInfo | null> {
     const [payment] = await this.db
       .select()
@@ -322,6 +400,56 @@ export class PaymentService {
     };
   }
 
+  async reconcileAsyncPaymentReturn(input: TossPaymentAsyncReturnRequest): Promise<void> {
+    if (!this.tossClient) {
+      throw new InternalServerErrorException('Toss 결제 상태 조회 클라이언트가 설정되지 않았습니다');
+    }
+
+    const [reservation] = await this.db
+      .select({
+        id: reservations.id,
+        userId: reservations.userId,
+        status: reservations.status,
+      })
+      .from(reservations)
+      .where(eq(reservations.tossOrderId, input.orderId));
+
+    if (!reservation || reservation.userId !== input.userId) {
+      throw new NotFoundException('예매 정보를 찾을 수 없습니다. 다시 시도해주세요.');
+    }
+
+    const queriedPayment = await this.tossClient.queryPayment(input.paymentKey, {
+      secretKeyScope: this.usesForeignEasyPaySecret(input.provider)
+        ? 'foreign-easy-pay'
+        : 'default',
+    });
+    this.assertQueriedPaymentMatchesAsyncReturn(input, queriedPayment);
+
+    const paymentStatus = this.normalizeTossPaymentStatus(queriedPayment.status);
+    await this.upsertAsyncPaymentProgress(
+      {
+        eventId: [
+          'client-return',
+          queriedPayment.orderId,
+          queriedPayment.paymentKey,
+          queriedPayment.status,
+        ].join(':'),
+        eventType: 'PAYMENT_STATUS_CHANGED',
+        data: {
+          paymentKey: queriedPayment.paymentKey,
+          orderId: queriedPayment.orderId,
+          status: queriedPayment.status,
+          method: queriedPayment.method || 'FOREIGN_EASY_PAY',
+          provider: this.toWebhookProvider(input.provider),
+          totalAmount: queriedPayment.totalAmount,
+          approvedAt: queriedPayment.approvedAt,
+        },
+      },
+      paymentStatus,
+      `client_return:${paymentStatus.toLowerCase()}`,
+    );
+  }
+
   async findAsyncPaymentProgress(
     orderId: string,
     paymentKey: string,
@@ -369,6 +497,10 @@ export class PaymentService {
         showtimeId: reservations.showtimeId,
         status: reservations.status,
         totalAmount: reservations.totalAmount,
+        providerChargeCurrency: reservations.providerChargeCurrency,
+        providerChargeAmountMinor: reservations.providerChargeAmountMinor,
+        providerChargeRate: reservations.providerChargeRate,
+        providerChargeQuotedAt: reservations.providerChargeQuotedAt,
       })
       .from(reservations)
       .where(eq(reservations.tossOrderId, payload.data.orderId));
@@ -385,6 +517,7 @@ export class PaymentService {
         tossOrderId: payments.tossOrderId,
         amount: payments.amount,
         status: payments.status,
+        providerChargeAmountMinor: payments.providerChargeAmountMinor,
       })
       .from(payments)
       .where(
@@ -396,9 +529,17 @@ export class PaymentService {
 
     const provider = this.resolveWebhookProvider(payload);
     const method = this.resolveWebhookMethod(payload, provider);
-    const amount = provider === 'PAYPAL'
+    const providerChargeQuote = this.getReservationProviderChargeQuote(reservation);
+    const usesProviderChargeQuote =
+      this.usesProviderChargeQuote(provider) && providerChargeQuote !== undefined;
+    const storesWebhookAmountAsKrw = this.storesWebhookAmountAsKrw(
+      provider,
+      providerChargeQuote,
+    );
+    const amount = storesWebhookAmountAsKrw
       ? reservation.totalAmount
       : payload.data.totalAmount ?? reservation.totalAmount;
+    const currency = storesWebhookAmountAsKrw ? 'KRW' : payload.data.currency ?? 'KRW';
 
     if (
       provider === 'PAYPAL'
@@ -422,18 +563,20 @@ export class PaymentService {
 
       const pendingSeats = await this.getReservationSeatSelections(reservation.id);
       const expectedAmount = this.calculatePayableTotal(pendingSeats);
-      if (
-        reservation.totalAmount !== expectedAmount
-        || payload.data.totalAmount !== expectedAmount
-      ) {
+      const providerChargeAmountMatches = usesProviderChargeQuote
+        ? providerChargeQuote !== undefined
+          && this.toProviderAmountMinor(payload.data.totalAmount) === providerChargeQuote.amountMinor
+        : payload.data.totalAmount === expectedAmount;
+      if (reservation.totalAmount !== expectedAmount || !providerChargeAmountMatches) {
         await this.storeRejectedWebhookPayment({
           payload,
           reservation,
           existingPayment,
           provider,
           method,
-          amount: payload.data.totalAmount ?? 0,
+          amount,
           asyncStatus: 'payment_amount_mismatch',
+          providerChargeQuote,
         });
         throw new BadRequestException('결제 금액이 일치하지 않습니다');
       }
@@ -446,6 +589,7 @@ export class PaymentService {
         provider,
         method,
         asyncStatus,
+        providerChargeQuote,
       });
       return;
     }
@@ -461,13 +605,14 @@ export class PaymentService {
       tossOrderId: payload.data.orderId,
       method,
       provider,
-      currency: provider === 'PAYPAL' ? 'KRW' : payload.data.currency ?? 'KRW',
+      currency,
       asyncStatus,
       amount,
       status: paymentStatus,
       paidAt,
       cancelledAt,
       cancelReason: payload.data.cancelReason ?? null,
+      ...this.toPaymentProviderChargeValues(providerChargeQuote),
     } as const;
 
     if (existingPayment) {
@@ -503,6 +648,7 @@ export class PaymentService {
     provider: PaymentProvider;
     method: PaymentMethod['method'];
     asyncStatus: string;
+    providerChargeQuote?: ProviderChargeQuote;
   }): Promise<void> {
     const {
       payload,
@@ -512,6 +658,7 @@ export class PaymentService {
       provider,
       method,
       asyncStatus,
+      providerChargeQuote,
     } = input;
 
     if (reservation.status !== 'PENDING_PAYMENT' && reservation.status !== 'CONFIRMED') {
@@ -559,13 +706,16 @@ export class PaymentService {
           tossOrderId: payload.data.orderId,
           method,
           provider,
-          currency: payload.data.currency ?? 'KRW',
+          currency: this.storesWebhookAmountAsKrw(provider, providerChargeQuote)
+            ? 'KRW'
+            : payload.data.currency ?? 'KRW',
           asyncStatus,
           amount: reservation.totalAmount,
           status: 'DONE' as const,
           paidAt,
           cancelledAt: null,
           cancelReason: null,
+          ...this.toPaymentProviderChargeValues(providerChargeQuote),
         };
 
         if (existingPayment) {
@@ -661,6 +811,7 @@ export class PaymentService {
           method,
           amount: reservation.totalAmount,
           asyncStatus,
+          providerChargeQuote,
         });
       }
       throw error;
@@ -791,6 +942,7 @@ export class PaymentService {
     method: PaymentMethod['method'];
     amount: number;
     asyncStatus: string;
+    providerChargeQuote?: ProviderChargeQuote;
   }): Promise<void> {
     const {
       payload,
@@ -800,6 +952,7 @@ export class PaymentService {
       method,
       amount,
       asyncStatus,
+      providerChargeQuote,
     } = input;
 
     const paymentValues = {
@@ -808,13 +961,16 @@ export class PaymentService {
       tossOrderId: payload.data.orderId,
       method,
       provider,
-      currency: payload.data.currency ?? 'KRW',
+      currency: this.storesWebhookAmountAsKrw(provider, providerChargeQuote)
+        ? 'KRW'
+        : payload.data.currency ?? 'KRW',
       asyncStatus,
       amount,
       status: 'ABORTED' as const,
       paidAt: null,
       cancelledAt: null,
       cancelReason: '결제 금액 불일치',
+      ...this.toPaymentProviderChargeValues(providerChargeQuote),
     };
 
     if (existingPayment) {
@@ -836,6 +992,7 @@ export class PaymentService {
     method: PaymentMethod['method'];
     amount: number;
     asyncStatus: string;
+    providerChargeQuote?: ProviderChargeQuote;
   }): Promise<void> {
     const {
       payload,
@@ -845,6 +1002,7 @@ export class PaymentService {
       method,
       amount,
       asyncStatus,
+      providerChargeQuote,
     } = input;
 
     if (!this.tossClient) {
@@ -868,13 +1026,16 @@ export class PaymentService {
       tossOrderId: payload.data.orderId,
       method,
       provider,
-      currency: payload.data.currency ?? 'KRW',
+      currency: this.storesWebhookAmountAsKrw(provider, providerChargeQuote)
+        ? 'KRW'
+        : payload.data.currency ?? 'KRW',
       asyncStatus,
       amount,
       status: 'CANCELED' as const,
       paidAt: payload.data.approvedAt ? new Date(payload.data.approvedAt) : new Date(),
       cancelledAt: new Date(),
       cancelReason: ASYNC_DONE_SEAT_FAILURE_CANCEL_REASON,
+      ...this.toPaymentProviderChargeValues(providerChargeQuote),
     };
 
     if (existingPayment) {
@@ -940,6 +1101,105 @@ export class PaymentService {
     );
   }
 
+  private usesForeignEasyPaySecret(
+    provider: TossPaymentAsyncReturnRequest['provider'],
+  ): boolean {
+    return provider !== undefined && ASYNC_FOREIGN_EASY_PAY_PROVIDERS.has(provider);
+  }
+
+  private usesProviderChargeQuote(provider: PaymentProvider): boolean {
+    return PROVIDER_CHARGE_QUOTE_PROVIDERS.has(provider);
+  }
+
+  private assertQueriedPaymentMatchesAsyncReturn(
+    input: TossPaymentAsyncReturnRequest,
+    queriedPayment: {
+      paymentKey: string;
+      orderId: string;
+      totalAmount: number;
+    },
+  ): void {
+    const mismatches: string[] = [];
+
+    if (queriedPayment.paymentKey !== input.paymentKey) {
+      mismatches.push('paymentKey');
+    }
+    if (queriedPayment.orderId !== input.orderId) {
+      mismatches.push('orderId');
+    }
+    if (
+      typeof input.amount === 'number'
+      && Number.isFinite(input.amount)
+      && this.toProviderAmountMinor(queriedPayment.totalAmount) !== this.toProviderAmountMinor(input.amount)
+    ) {
+      mismatches.push('amount');
+    }
+
+    if (mismatches.length > 0) {
+      throw new BadRequestException(
+        `Toss provider state mismatch: ${mismatches.join(', ')}`,
+      );
+    }
+  }
+
+  private normalizeTossPaymentStatus(status: string): PaymentStatus {
+    switch (status) {
+      case 'DONE':
+        return 'DONE';
+      case 'CANCELED':
+        return 'CANCELED';
+      case 'ABORTED':
+        return 'ABORTED';
+      case 'EXPIRED':
+        return 'EXPIRED';
+      default:
+        return 'IN_PROGRESS';
+    }
+  }
+
+  private toWebhookProvider(
+    provider: TossPaymentAsyncReturnRequest['provider'],
+  ): TossWebhookProvider | undefined {
+    if (provider === 'ALIPAY_PLUS') {
+      return 'ALIPAY';
+    }
+
+    return provider;
+  }
+
+  private storesWebhookAmountAsKrw(
+    provider: PaymentProvider,
+    providerChargeQuote?: ProviderChargeQuote,
+  ): boolean {
+    return provider === 'PAYPAL'
+      || (providerChargeQuote !== undefined && (
+        provider === 'CARD'
+        || this.usesProviderChargeQuote(provider)
+      ));
+  }
+
+  private getProviderChargeAvailability(
+    provider: PaymentProvider,
+  ):
+    | { enabled: boolean; disabledReason?: string }
+    | undefined {
+    const service = this.providerChargeQuoteService as
+      | {
+          getAlipayAvailability?: () => { enabled: boolean; disabledReason?: string };
+          getForeignEasyPayAvailability?: () => { enabled: boolean; disabledReason?: string };
+          getPaypalAvailability?: () => { enabled: boolean; disabledReason?: string };
+        }
+      | undefined;
+
+    if (provider === 'ALIPAY_PLUS') {
+      return service?.getAlipayAvailability?.()
+        ?? service?.getForeignEasyPayAvailability?.();
+    }
+
+    return service?.getPaypalAvailability?.()
+      ?? service?.getForeignEasyPayAvailability?.();
+  }
+
   private isOverseasCardBranch(paymentMethod: PaymentMethod): boolean {
     return (
       paymentMethod.method === 'CARD'
@@ -950,6 +1210,16 @@ export class PaymentService {
         || paymentMethod.overseasPaymentConsent?.required === true
       )
     );
+  }
+
+  private usesProviderChargeQuoteForPaymentMethod(paymentMethod: PaymentMethod): boolean {
+    return this.usesProviderChargeQuote(paymentMethod.provider)
+      || (
+        paymentMethod.method === 'CARD'
+        && paymentMethod.provider === 'CARD'
+        && paymentMethod.currency?.toUpperCase() === 'USD'
+        && paymentMethod.overseasPaymentConsent?.required === true
+      );
   }
 
   private resolveWebhookProvider(payload: TossWebhookRequestBody): PaymentProvider {

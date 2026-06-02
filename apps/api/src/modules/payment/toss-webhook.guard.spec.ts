@@ -42,10 +42,10 @@ describe('TossWebhookGuard', () => {
     ).toBe(true);
   });
 
-  it('rejects webhook requests with the configured shared secret query parameter', () => {
+  it('allows webhook requests with the configured shared secret query parameter', () => {
     const guard = new TossWebhookGuard(createConfigService('webhook-secret'));
 
-    expect(() =>
+    expect(
       guard.canActivate(
         createExecutionContext({
           query: {
@@ -53,7 +53,7 @@ describe('TossWebhookGuard', () => {
           },
         }),
       ),
-    ).toThrow(UnauthorizedException);
+    ).toBe(true);
   });
 
   it('rejects webhook requests with an invalid shared secret', () => {

@@ -278,7 +278,9 @@ describe('PaymentWebhookController', () => {
       },
     });
 
-    expect(tossClient.queryPayment).toHaveBeenCalledWith('pay_async_1');
+    expect(tossClient.queryPayment).toHaveBeenCalledWith('pay_async_1', {
+      secretKeyScope: 'foreign-easy-pay',
+    });
     expect(paymentService.upsertAsyncPaymentProgress).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -289,6 +291,23 @@ describe('PaymentWebhookController', () => {
       'DONE',
       'payment_status_changed:done',
     );
+  });
+
+  it('uses the foreign easy pay secret scope for Toss Alipay provider verification', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
+
+    await controller.handleTossWebhook({
+      ...paymentStatusChangedEvent,
+      data: {
+        ...paymentStatusChangedEvent.data,
+        provider: 'ALIPAY',
+      },
+    });
+
+    expect(tossClient.queryPayment).toHaveBeenCalledWith('pay_async_1', {
+      secretKeyScope: 'foreign-easy-pay',
+    });
   });
 
   it('fails closed when a DONE webhook disagrees with queried Toss state', async () => {

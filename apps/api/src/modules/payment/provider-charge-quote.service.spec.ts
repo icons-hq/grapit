@@ -41,6 +41,67 @@ describe('ProviderChargeQuoteService', () => {
     });
   });
 
+  it('enables local test-key checkout with the default KRW/USD rate when no explicit flag is set', () => {
+    const service = new ProviderChargeQuoteService(
+      config({
+        NODE_ENV: 'development',
+        TOSS_SECRET_KEY: 'test_sk_local_checkout',
+      }),
+    );
+
+    expect(service.getForeignEasyPayAvailability()).toEqual({ enabled: true });
+    expect(service.createForeignEasyPayQuote({
+      reservationPayableAmount: 150000,
+      now: new Date('2026-05-29T00:00:00.000Z'),
+    })).toMatchObject({
+      currency: 'USD',
+      amountMinor: 10200,
+      amountDecimal: '102.00',
+      rate: '0.00068',
+    });
+  });
+
+  it('keeps Alipay unavailable unless it is explicitly enabled', () => {
+    const localTestService = new ProviderChargeQuoteService(
+      config({
+        NODE_ENV: 'development',
+        TOSS_SECRET_KEY: 'test_sk_local_checkout',
+      }),
+    );
+
+    expect(localTestService.isAlipayCheckoutEnabled()).toBe(false);
+    expect(localTestService.getAlipayAvailability()).toEqual({
+      enabled: false,
+      disabledReason: 'ALIPAY_CHECKOUT_DISABLED',
+    });
+
+    const enabledService = new ProviderChargeQuoteService(
+      config({
+        ALIPAY_CHECKOUT_ENABLED: 'true',
+        PAYPAL_KRW_USD_RATE: '0.00068',
+        TOSS_FOREIGN_EASY_PAY_SECRET_KEY: 'test_sk_foreign_easy_pay',
+      }),
+    );
+
+    expect(enabledService.isAlipayCheckoutEnabled()).toBe(true);
+    expect(enabledService.getAlipayAvailability()).toEqual({ enabled: true });
+  });
+
+  it('keeps Alipay unavailable when the foreign easy pay secret is missing', () => {
+    const service = new ProviderChargeQuoteService(
+      config({
+        ALIPAY_CHECKOUT_ENABLED: 'true',
+        PAYPAL_KRW_USD_RATE: '0.00068',
+      }),
+    );
+
+    expect(service.isAlipayCheckoutEnabled()).toBe(false);
+    expect(service.getAlipayAvailability()).toEqual({
+      enabled: false,
+      disabledReason: 'ALIPAY_SECRET_KEY_MISSING',
+    });
+  });
+
   it('rounds high precision rates with integer decimal arithmetic', () => {
     const service = new ProviderChargeQuoteService(
       config({

@@ -134,6 +134,34 @@ describe('prepareReservationSchema booking consent contract', () => {
     expect(parsed).toMatchObject({ provider: 'PAYPAL' });
   });
 
+  it('accepts overseas-card confirm payload with a KRW amount marker', () => {
+    const parsed = confirmPaymentSchema.parse({
+      paymentKey: 'pay_overseas_card',
+      orderId: 'GRP-OVERSEAS-CARD',
+      provider: 'OVERSEAS_CARD',
+      amount: 150000,
+    });
+
+    expect(parsed).toMatchObject({
+      provider: 'OVERSEAS_CARD',
+      amount: 150000,
+    });
+  });
+
+  it('accepts overseas-card confirm payload with a USD provider charge amount', () => {
+    const parsed = confirmPaymentSchema.parse({
+      paymentKey: 'pay_overseas_card_usd',
+      orderId: 'GRP-OVERSEAS-CARD-USD',
+      provider: 'OVERSEAS_CARD',
+      providerChargeAmount: '108.00',
+    });
+
+    expect(parsed).toMatchObject({
+      provider: 'OVERSEAS_CARD',
+      providerChargeAmount: '108.00',
+    });
+  });
+
   it('rejects ambiguous confirm payloads', () => {
     expect(() =>
       confirmPaymentSchema.parse({
@@ -171,6 +199,22 @@ describe('prepareReservationSchema booking consent contract', () => {
         orderId: 'GRP-PAYPAL',
         provider: 'PAYPAL',
         providerChargeAmount: '0.00',
+      }),
+    ).toThrow();
+    expect(() =>
+      confirmPaymentSchema.parse({
+        paymentKey: 'pay_overseas_card',
+        orderId: 'GRP-OVERSEAS-CARD',
+        provider: 'OVERSEAS_CARD',
+      }),
+    ).toThrow();
+    expect(() =>
+      confirmPaymentSchema.parse({
+        paymentKey: 'pay_overseas_card',
+        orderId: 'GRP-OVERSEAS-CARD',
+        provider: 'OVERSEAS_CARD',
+        amount: 150000,
+        providerChargeAmount: '108.00',
       }),
     ).toThrow();
   });

@@ -49,6 +49,7 @@ type ApprovedPaymentSnapshot = {
   providerChargeQuotedAt?: Date | null;
 };
 type PaypalConfirmPaymentRequest = Extract<ConfirmPaymentRequest, { provider: 'PAYPAL' }>;
+type OverseasCardConfirmPaymentRequest = Extract<ConfirmPaymentRequest, { provider: 'OVERSEAS_CARD' }>;
 type PaypalResolvedProviderCharge = {
   currency: 'USD';
   amountMinor: number;
@@ -63,6 +64,12 @@ function isPaypalConfirmPaymentRequest(
   dto: ConfirmPaymentRequest,
 ): dto is PaypalConfirmPaymentRequest {
   return 'provider' in dto && dto.provider === 'PAYPAL';
+}
+
+function isOverseasCardConfirmPaymentRequest(
+  dto: ConfirmPaymentRequest,
+): dto is OverseasCardConfirmPaymentRequest {
+  return 'provider' in dto && dto.provider === 'OVERSEAS_CARD';
 }
 
 export interface ReservationFinalizationResult {
@@ -273,16 +280,28 @@ export class ReservationFinalizationService {
     const pendingSeats = await this.getReservationSeatSelections(reservation.id);
     const expectedAmount = this.calculatePayableTotal(pendingSeats);
     let paypalProviderCharge: PaypalResolvedProviderCharge | null = null;
+    let overseasCardProviderCharge: PaypalResolvedProviderCharge | null = null;
+    const isOverseasCardConfirm = isOverseasCardConfirmPaymentRequest(dto);
     let confirmAmount: number;
     if (isPaypalConfirmPaymentRequest(dto)) {
       paypalProviderCharge = this.resolvePaypalProviderCharge(dto, reservation);
       confirmAmount = Number(paypalProviderCharge.amountDecimal);
-    } else {
+    } else if (
+      isOverseasCardConfirm
+      && 'providerChargeAmount' in dto
+      && dto.providerChargeAmount
+    ) {
+      overseasCardProviderCharge = this.resolveOverseasCardProviderCharge(dto, reservation);
+      confirmAmount = Number(overseasCardProviderCharge.amountDecimal);
+    } else if (typeof dto.amount === 'number') {
       confirmAmount = dto.amount;
+    } else {
+      throw new BadRequestException('해외카드 결제 금액이 필요합니다');
     }
+    const providerCharge = paypalProviderCharge ?? overseasCardProviderCharge;
     if (
       reservation.totalAmount !== expectedAmount
-      || (!paypalProviderCharge && confirmAmount !== expectedAmount)
+      || (!providerCharge && confirmAmount !== expectedAmount)
     ) {
       throw new BadRequestException('금액이 일치하지 않습니다');
     }
@@ -377,6 +396,7 @@ export class ReservationFinalizationService {
           paymentKey: dto.paymentKey,
           orderId: dto.orderId,
           amount: confirmAmount,
+          ...(isOverseasCardConfirm ? { secretKeyScope: 'overseas-card' as const } : {}),
         });
 
         approvedPayment = {
@@ -387,17 +407,17 @@ export class ReservationFinalizationService {
             : tossResponse.method,
           provider: paypalProviderCharge ? 'PAYPAL' : 'CARD',
           currency: 'KRW',
-          totalAmount: paypalProviderCharge
+          totalAmount: providerCharge
             ? reservation.totalAmount
             : tossResponse.totalAmount,
           approvedAt: tossResponse.approvedAt,
           asyncStatus: 'sync',
-          ...(paypalProviderCharge
+          ...(providerCharge
             ? {
-                providerChargeCurrency: paypalProviderCharge.currency,
-                providerChargeAmountMinor: paypalProviderCharge.amountMinor,
-                providerChargeRate: paypalProviderCharge.rate,
-                providerChargeQuotedAt: paypalProviderCharge.quotedAt,
+                providerChargeCurrency: providerCharge.currency,
+                providerChargeAmountMinor: providerCharge.amountMinor,
+                providerChargeRate: providerCharge.rate,
+                providerChargeQuotedAt: providerCharge.quotedAt,
               }
             : {}),
         };
@@ -725,6 +745,47 @@ export class ReservationFinalizationService {
     };
   }
 
+  private resolveOverseasCardProviderCharge(
+    dto: Extract<OverseasCardConfirmPaymentRequest, { providerChargeAmount: string }>,
+    reservation: {
+      providerChargeCurrency?: string | null;
+      providerChargeAmountMinor?: number | null;
+      providerChargeRate?: string | null;
+      providerChargeQuotedAt?: Date | null;
+    },
+  ): PaypalResolvedProviderCharge {
+    if (!this.providerChargeQuoteService) {
+      throw new BadRequestException('해외카드 결제 금액을 검증할 수 없습니다');
+    }
+
+    let amountMinor: number;
+    try {
+      amountMinor = this.providerChargeQuoteService.parseProviderDecimalToMinor(
+        dto.providerChargeAmount,
+      );
+    } catch {
+      throw new BadRequestException('해외카드 결제 금액이 올바르지 않습니다');
+    }
+
+    if (
+      reservation.providerChargeCurrency !== 'USD'
+      || typeof reservation.providerChargeAmountMinor !== 'number'
+      || !reservation.providerChargeRate
+      || !reservation.providerChargeQuotedAt
+      || reservation.providerChargeAmountMinor !== amountMinor
+    ) {
+      throw new BadRequestException('해외카드 결제 금액이 일치하지 않습니다');
+    }
+
+    return {
+      currency: 'USD',
+      amountMinor,
+      amountDecimal: dto.providerChargeAmount,
+      rate: reservation.providerChargeRate,
+      quotedAt: reservation.providerChargeQuotedAt,
+    };
+  }
+
   private toPaymentProviderChargeValues(
     approvedPayment: ApprovedPaymentSnapshot,
   ): {
@@ -811,6 +872,27 @@ export class ReservationFinalizationService {
         || reservation.providerChargeAmountMinor !== amountMinor
       ) {
         throw new BadRequestException('PayPal 결제 금액이 일치하지 않습니다');
+      }
+      return;
+    }
+
+    if (
+      isOverseasCardConfirmPaymentRequest(dto)
+      && 'providerChargeAmount' in dto
+      && dto.providerChargeAmount
+    ) {
+      const amountMinor =
+        this.providerChargeQuoteService?.parseProviderDecimalToMinor(
+          dto.providerChargeAmount,
+        );
+
+      if (
+        existingPayment.provider !== 'CARD'
+        || existingPayment.amount !== reservation.totalAmount
+        || existingPayment.providerChargeAmountMinor !== amountMinor
+        || reservation.providerChargeAmountMinor !== amountMinor
+      ) {
+        throw new BadRequestException('해외카드 결제 금액이 일치하지 않습니다');
       }
       return;
     }

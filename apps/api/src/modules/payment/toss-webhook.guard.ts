@@ -54,7 +54,8 @@ export class TossWebhookGuard implements CanActivate {
       return authorization.slice('Bearer '.length).trim();
     }
 
-    return null;
+    const querySecret = request.query?.tossWebhookSecret;
+    return typeof querySecret === 'string' ? querySecret.trim() || null : null;
   }
 
   private getHeader(

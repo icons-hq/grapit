@@ -69,6 +69,7 @@ describe('PaymentService', () => {
   };
   let mockTossClient: {
     cancelPayment: ReturnType<typeof vi.fn>;
+    queryPayment: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(() => {
@@ -81,6 +82,7 @@ describe('PaymentService', () => {
     };
     mockTossClient = {
       cancelPayment: vi.fn().mockResolvedValue({}),
+      queryPayment: vi.fn(),
     };
     service = new PaymentService(
       mockDb as any,
@@ -164,6 +166,20 @@ describe('PaymentService', () => {
     });
 
     it('routes overseas card through CARD with useInternationalCardOnly=true', async () => {
+      (service as unknown as {
+        providerChargeQuoteService: {
+          getForeignEasyPayAvailability: ReturnType<typeof vi.fn>;
+        };
+      }).providerChargeQuoteService = {
+        getForeignEasyPayAvailability: vi.fn().mockReturnValue({ enabled: true }),
+      };
+      mockDb.select.mockReturnValue(createSelectChain([{
+        providerChargeCurrency: 'USD',
+        providerChargeAmountMinor: 10800,
+        providerChargeRate: '0.00072',
+        providerChargeQuotedAt: new Date('2026-05-29T10:00:00.000Z'),
+      }]));
+
       const branch = await service.prepareTossPaymentBranch({
         orderId: 'GRP-FOREIGN-CARD',
         paymentMethod: createPaymentMethod({
@@ -182,9 +198,15 @@ describe('PaymentService', () => {
         orderId: 'GRP-FOREIGN-CARD',
         method: 'CARD',
         provider: 'CARD',
-        currency: 'KRW',
+        currency: 'USD',
         asyncStatus: 'sync',
         useInternationalCardOnly: true,
+        checkoutEnabled: true,
+        providerChargeQuote: {
+          currency: 'USD',
+          amountMinor: 10800,
+          amountDecimal: '108.00',
+        },
       });
       expect(branch.pendingUrl).toBeUndefined();
     });
@@ -218,6 +240,107 @@ describe('PaymentService', () => {
           'https://grabit.test/booking/perf-1/pending?orderId=GRP-ALIPAY',
       });
       expect(branch.useInternationalCardOnly).toBe(false);
+    });
+
+    it('routes Alipay through async webhook checkout with the stored provider quote', async () => {
+      (service as unknown as {
+        providerChargeQuoteService: {
+          getForeignEasyPayAvailability: ReturnType<typeof vi.fn>;
+        };
+      }).providerChargeQuoteService = {
+        getForeignEasyPayAvailability: vi.fn().mockReturnValue({ enabled: true }),
+      };
+      mockDb.select.mockReturnValue(createSelectChain([{
+        providerChargeCurrency: 'USD',
+        providerChargeAmountMinor: 10800,
+        providerChargeRate: '0.00072',
+        providerChargeQuotedAt: new Date('2026-05-29T10:00:00.000Z'),
+      }]));
+
+      const branch = await service.prepareTossPaymentBranch({
+        orderId: 'GRP-ALIPAY-QUOTE',
+        paymentMethod: createPaymentMethod({
+          method: 'FOREIGN_EASY_PAY',
+          provider: 'ALIPAY_PLUS',
+          currency: 'USD',
+          pendingUrlRequired: true,
+          overseasPaymentConsent: {
+            required: true,
+            agreed: true,
+            agreementVersion: '2026-05-08',
+          },
+        }),
+        successUrl: 'https://grabit.test/booking/perf-1/complete',
+        failUrl: 'https://grabit.test/booking/perf-1/confirm?error=true',
+        pendingUrl: 'https://grabit.test/booking/perf-1/complete?pending=true&orderId=GRP-ALIPAY-QUOTE',
+      });
+
+      expect(branch).toMatchObject({
+        orderId: 'GRP-ALIPAY-QUOTE',
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'ALIPAY_PLUS',
+        currency: 'USD',
+        asyncStatus: 'pending_webhook',
+        pendingUrl:
+          'https://grabit.test/booking/perf-1/complete?pending=true&orderId=GRP-ALIPAY-QUOTE',
+        checkoutEnabled: true,
+        providerChargeQuote: {
+          currency: 'USD',
+          amountMinor: 10800,
+          amountDecimal: '108.00',
+        },
+      });
+      expect(branch.useInternationalCardOnly).toBe(false);
+    });
+
+    it('keeps Alipay checkout disabled when the Alipay provider flag is off', async () => {
+      const providerChargeQuoteService = {
+        getAlipayAvailability: vi.fn().mockReturnValue({
+          enabled: false,
+          disabledReason: 'ALIPAY_CHECKOUT_DISABLED',
+        }),
+        getForeignEasyPayAvailability: vi.fn().mockReturnValue({ enabled: true }),
+      };
+      (service as unknown as {
+        providerChargeQuoteService: typeof providerChargeQuoteService;
+      }).providerChargeQuoteService = providerChargeQuoteService;
+      mockDb.select.mockReturnValue(createSelectChain([{
+        providerChargeCurrency: 'USD',
+        providerChargeAmountMinor: 10800,
+        providerChargeRate: '0.00072',
+        providerChargeQuotedAt: new Date('2026-05-29T10:00:00.000Z'),
+      }]));
+
+      const branch = await service.prepareTossPaymentBranch({
+        orderId: 'GRP-ALIPAY-DISABLED',
+        paymentMethod: createPaymentMethod({
+          method: 'FOREIGN_EASY_PAY',
+          provider: 'ALIPAY_PLUS',
+          currency: 'USD',
+          pendingUrlRequired: true,
+          overseasPaymentConsent: {
+            required: true,
+            agreed: true,
+            agreementVersion: '2026-05-08',
+          },
+        }),
+        successUrl: 'https://grabit.test/booking/perf-1/complete',
+        failUrl: 'https://grabit.test/booking/perf-1/confirm?error=true',
+        pendingUrl: 'https://grabit.test/booking/perf-1/complete?pending=true&orderId=GRP-ALIPAY-DISABLED',
+      });
+
+      expect(branch).toMatchObject({
+        orderId: 'GRP-ALIPAY-DISABLED',
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'ALIPAY_PLUS',
+        currency: 'USD',
+        asyncStatus: 'pending_webhook',
+        checkoutEnabled: false,
+        disabledReason: 'ALIPAY_CHECKOUT_DISABLED',
+      });
+      expect(branch.providerChargeQuote).toBeUndefined();
+      expect(providerChargeQuoteService.getAlipayAvailability).toHaveBeenCalled();
+      expect(mockDb.select).not.toHaveBeenCalled();
     });
 
     it('keeps TrueMoney on the async webhook branch', async () => {
@@ -490,6 +613,233 @@ describe('PaymentService', () => {
         reservationId,
         paymentId,
       });
+    });
+
+    it('finalizes Alipay DONE webhook only when provider totalAmount matches the stored USD quote', async () => {
+      const reservationId = randomUUID();
+      const showtimeId = randomUUID();
+      const userId = randomUUID();
+      const paymentId = randomUUID();
+      const quotedAt = new Date('2026-05-29T10:00:00.000Z');
+      const tx = {
+        update: vi.fn(),
+        insert: vi.fn(),
+      };
+      const updateReservation = createMutationChain();
+      const insertPayment = createMutationChain([{ id: paymentId }]);
+      const insertTicketItems = createMutationChain();
+      const updateSeat = createMutationChain([{ id: randomUUID() }]);
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          userId,
+          showtimeId,
+          status: 'PENDING_PAYMENT',
+          totalAmount: 150000,
+          providerChargeCurrency: 'USD',
+          providerChargeAmountMinor: 10800,
+          providerChargeRate: '0.00072',
+          providerChargeQuotedAt: quotedAt,
+        }]))
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([
+          { seatId: '1F:A-1', tierName: 'VIP', price: 148000, row: 'A', number: '1' },
+        ]));
+      mockDb.transaction.mockImplementation(async (callback: (txArg: typeof tx) => Promise<void>) => {
+        await callback(tx);
+      });
+      tx.update
+        .mockReturnValueOnce(updateReservation)
+        .mockReturnValueOnce(updateSeat);
+      tx.insert
+        .mockReturnValueOnce(insertPayment)
+        .mockReturnValueOnce(insertTicketItems);
+
+      await service.upsertAsyncPaymentProgress(
+        {
+          eventId: 'evt-alipay-done-provider-quote',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_alipay_provider_quote',
+            orderId: 'GRP-ALIPAY-PROVIDER-QUOTE',
+            status: 'DONE',
+            method: 'FOREIGN_EASY_PAY',
+            provider: 'ALIPAY',
+            currency: 'USD',
+            totalAmount: 108,
+            approvedAt: '2026-05-29T08:00:00.000Z',
+          },
+        },
+        'DONE',
+        'payment_status_changed:done',
+      );
+
+      expect(insertPayment.values).toHaveBeenCalledWith(expect.objectContaining({
+        reservationId,
+        paymentKey: 'pay_alipay_provider_quote',
+        tossOrderId: 'GRP-ALIPAY-PROVIDER-QUOTE',
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'ALIPAY_PLUS',
+        currency: 'KRW',
+        amount: 150000,
+        status: 'DONE',
+        providerChargeCurrency: 'USD',
+        providerChargeAmountMinor: 10800,
+        providerChargeRate: '0.00072',
+        providerChargeQuotedAt: quotedAt,
+      }));
+      expect(mockQrTicketService.ensureIssuedTicketsForReservation).toHaveBeenCalledWith({
+        reservationId,
+        paymentId,
+      });
+    });
+
+    it('reconciles Alipay pending return by querying Toss and finalizing the async payment', async () => {
+      const reservationId = randomUUID();
+      const showtimeId = randomUUID();
+      const userId = randomUUID();
+      const paymentId = randomUUID();
+      const quotedAt = new Date('2026-05-29T10:00:00.000Z');
+      const tx = {
+        update: vi.fn(),
+        insert: vi.fn(),
+      };
+      const updateReservation = createMutationChain();
+      const insertPayment = createMutationChain([{ id: paymentId }]);
+      const insertTicketItems = createMutationChain();
+      const updateSeat = createMutationChain([{ id: randomUUID() }]);
+
+      mockTossClient.queryPayment.mockResolvedValueOnce({
+        paymentKey: 'pay_alipay_return',
+        orderId: 'GRP-ALIPAY-RETURN',
+        method: 'FOREIGN_EASY_PAY',
+        totalAmount: 108,
+        status: 'DONE',
+        approvedAt: '2026-05-29T08:00:00.000Z',
+      });
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          userId,
+          status: 'PENDING_PAYMENT',
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          userId,
+          showtimeId,
+          status: 'PENDING_PAYMENT',
+          totalAmount: 150000,
+          providerChargeCurrency: 'USD',
+          providerChargeAmountMinor: 10800,
+          providerChargeRate: '0.00072',
+          providerChargeQuotedAt: quotedAt,
+        }]))
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([
+          { seatId: '1F:A-1', tierName: 'VIP', price: 148000, row: 'A', number: '1' },
+        ]));
+      mockDb.transaction.mockImplementation(async (callback: (txArg: typeof tx) => Promise<void>) => {
+        await callback(tx);
+      });
+      tx.update
+        .mockReturnValueOnce(updateReservation)
+        .mockReturnValueOnce(updateSeat);
+      tx.insert
+        .mockReturnValueOnce(insertPayment)
+        .mockReturnValueOnce(insertTicketItems);
+
+      await (service as unknown as {
+        reconcileAsyncPaymentReturn: (input: {
+          orderId: string;
+          paymentKey: string;
+          amount: number;
+          provider: 'ALIPAY_PLUS';
+          userId: string;
+        }) => Promise<void>;
+      }).reconcileAsyncPaymentReturn({
+        orderId: 'GRP-ALIPAY-RETURN',
+        paymentKey: 'pay_alipay_return',
+        amount: 108,
+        provider: 'ALIPAY_PLUS',
+        userId,
+      });
+
+      expect(mockTossClient.queryPayment).toHaveBeenCalledWith('pay_alipay_return', {
+        secretKeyScope: 'foreign-easy-pay',
+      });
+      expect(insertPayment.values).toHaveBeenCalledWith(expect.objectContaining({
+        reservationId,
+        paymentKey: 'pay_alipay_return',
+        tossOrderId: 'GRP-ALIPAY-RETURN',
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'ALIPAY_PLUS',
+        currency: 'KRW',
+        amount: 150000,
+        status: 'DONE',
+        providerChargeCurrency: 'USD',
+        providerChargeAmountMinor: 10800,
+      }));
+      expect(mockQrTicketService.ensureIssuedTicketsForReservation).toHaveBeenCalledWith({
+        reservationId,
+        paymentId,
+      });
+    });
+
+    it('rejects Alipay DONE webhook when provider totalAmount differs from the stored USD quote', async () => {
+      const reservationId = randomUUID();
+      const insertRejectedPayment = createMutationChain();
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          userId: randomUUID(),
+          showtimeId: randomUUID(),
+          status: 'PENDING_PAYMENT',
+          totalAmount: 150000,
+          providerChargeCurrency: 'USD',
+          providerChargeAmountMinor: 10800,
+          providerChargeRate: '0.00072',
+          providerChargeQuotedAt: new Date('2026-05-29T10:00:00.000Z'),
+        }]))
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([
+          { seatId: '1F:A-1', tierName: 'VIP', price: 148000, row: 'A', number: '1' },
+        ]));
+      mockDb.insert.mockReturnValueOnce(insertRejectedPayment);
+
+      await expect(service.upsertAsyncPaymentProgress(
+        {
+          eventId: 'evt-alipay-provider-mismatch',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_alipay_provider_mismatch',
+            orderId: 'GRP-ALIPAY-PROVIDER-MISMATCH',
+            status: 'DONE',
+            method: 'FOREIGN_EASY_PAY',
+            provider: 'ALIPAY_PLUS',
+            currency: 'USD',
+            totalAmount: 107.99,
+            approvedAt: '2026-05-29T08:00:00.000Z',
+          },
+        },
+        'DONE',
+        'payment_status_changed:done',
+      )).rejects.toThrow('결제 금액이 일치하지 않습니다');
+
+      expect(insertRejectedPayment.values).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reservationId,
+          paymentKey: 'pay_alipay_provider_mismatch',
+          amount: 150000,
+          status: 'ABORTED',
+          asyncStatus: 'payment_amount_mismatch',
+          providerChargeCurrency: 'USD',
+          providerChargeAmountMinor: 10800,
+        }),
+      );
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+      expect(mockQrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
     });
 
     it('rejects amount-mismatched DONE webhook without finalizing reservation state', async () => {

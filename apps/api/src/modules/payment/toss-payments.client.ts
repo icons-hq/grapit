@@ -17,6 +17,7 @@ export interface TossPaymentResponse {
 
 export interface TossPaymentRequestOptions {
   idempotencyKey?: string;
+  secretKeyScope?: 'default' | 'overseas-card' | 'foreign-easy-pay';
 }
 
 export interface TossPaymentCancelOptions extends TossPaymentRequestOptions {
@@ -36,21 +37,44 @@ export class TossPaymentError extends Error {
 @Injectable()
 export class TossPaymentsClient {
   private readonly secretKey: string;
+  private readonly overseasCardSecretKey: string;
+  private readonly foreignEasyPaySecretKey: string;
   private readonly baseUrl = 'https://api.tosspayments.com/v1';
 
   constructor(private readonly configService: ConfigService) {
     this.secretKey = this.configService.get<string>('TOSS_SECRET_KEY', '');
+    this.overseasCardSecretKey =
+      this.configService.get<string>('TOSS_OVERSEAS_CARD_SECRET_KEY', '');
+    this.foreignEasyPaySecretKey =
+      this.configService.get<string>('TOSS_FOREIGN_EASY_PAY_SECRET_KEY', '');
   }
 
-  private getAuthHeader(): string {
-    return `Basic ${Buffer.from(this.secretKey + ':').toString('base64')}`;
+  private getSecretKey(scope: TossPaymentRequestOptions['secretKeyScope']): string {
+    if (scope === 'overseas-card') {
+      return this.overseasCardSecretKey || this.secretKey;
+    }
+    if (scope === 'foreign-easy-pay') {
+      if (!this.foreignEasyPaySecretKey) {
+        throw new TossPaymentError(
+          'MISSING_FOREIGN_EASY_PAY_SECRET_KEY',
+          'TOSS_FOREIGN_EASY_PAY_SECRET_KEY is required for foreign easy pay payments',
+        );
+      }
+      return this.foreignEasyPaySecretKey;
+    }
+
+    return this.secretKey;
+  }
+
+  private getAuthHeader(scope?: TossPaymentRequestOptions['secretKeyScope']): string {
+    return `Basic ${Buffer.from(this.getSecretKey(scope) + ':').toString('base64')}`;
   }
 
   private buildHeaders(
     options: TossPaymentRequestOptions = {},
   ): Record<string, string> {
     const headers: Record<string, string> = {
-      Authorization: this.getAuthHeader(),
+      Authorization: this.getAuthHeader(options.secretKeyScope),
       'Content-Type': 'application/json',
     };
 
@@ -82,6 +106,18 @@ export class TossPaymentsClient {
         '[redacted toss secret]',
       );
     }
+    if (this.overseasCardSecretKey) {
+      redacted = redacted.replace(
+        new RegExp(this.escapeRegExp(this.overseasCardSecretKey), 'g'),
+        '[redacted toss secret]',
+      );
+    }
+    if (this.foreignEasyPaySecretKey) {
+      redacted = redacted.replace(
+        new RegExp(this.escapeRegExp(this.foreignEasyPaySecretKey), 'g'),
+        '[redacted toss secret]',
+      );
+    }
 
     return redacted
       .replace(/\b(?:test|live)_sk_[A-Za-z0-9_-]+/g, '[redacted toss secret]')
@@ -97,10 +133,14 @@ export class TossPaymentsClient {
     orderId: string;
     amount: number;
     idempotencyKey?: string;
+    secretKeyScope?: TossPaymentRequestOptions['secretKeyScope'];
   }): Promise<TossPaymentResponse> {
     const response = await fetch(`${this.baseUrl}/payments/confirm`, {
       method: 'POST',
-      headers: this.buildHeaders({ idempotencyKey: params.idempotencyKey }),
+      headers: this.buildHeaders({
+        idempotencyKey: params.idempotencyKey,
+        secretKeyScope: params.secretKeyScope,
+      }),
       body: JSON.stringify({
         paymentKey: params.paymentKey,
         orderId: params.orderId,
@@ -150,13 +190,16 @@ export class TossPaymentsClient {
     return data as TossPaymentResponse;
   }
 
-  async queryPayment(paymentKey: string): Promise<TossPaymentResponse> {
+  async queryPayment(
+    paymentKey: string,
+    options: TossPaymentRequestOptions = {},
+  ): Promise<TossPaymentResponse> {
     const response = await fetch(
       `${this.baseUrl}/payments/${encodeURIComponent(paymentKey)}`,
       {
         method: 'GET',
         headers: {
-          Authorization: this.getAuthHeader(),
+          Authorization: this.getAuthHeader(options.secretKeyScope),
         },
       },
     );

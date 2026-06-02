@@ -25,7 +25,10 @@ describe('TossPaymentsClient', () => {
     fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
     client = new TossPaymentsClient({
-      get: vi.fn().mockReturnValue(secretKey),
+      get: vi.fn((key: string, fallback?: string) => {
+        if (key === 'TOSS_SECRET_KEY') return secretKey;
+        return fallback;
+      }),
     } as unknown as ConfigService);
   });
 
@@ -54,6 +57,68 @@ describe('TossPaymentsClient', () => {
           Authorization: authHeader,
           'Content-Type': 'application/json',
           'Idempotency-Key': 'idem_confirm_phase26_1',
+        }),
+      }),
+    );
+  });
+
+  it('uses the overseas card secret when confirming an overseas card payment', async () => {
+    const overseasCardSecretKey = 'test_sk_overseas_card_secret';
+    const overseasCardAuthHeader =
+      `Basic ${Buffer.from(`${overseasCardSecretKey}:`).toString('base64')}`;
+    client = new TossPaymentsClient({
+      get: vi.fn((key: string, fallback?: string) => {
+        if (key === 'TOSS_SECRET_KEY') return secretKey;
+        if (key === 'TOSS_OVERSEAS_CARD_SECRET_KEY') return overseasCardSecretKey;
+        return fallback;
+      }),
+    } as unknown as ConfigService);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: vi.fn().mockResolvedValue(paidResponse),
+    });
+
+    await client.confirmPayment({
+      paymentKey: 'pay_overseas_card',
+      orderId: 'GRP-OVERSEAS-CARD',
+      amount: 150000,
+      secretKeyScope: 'overseas-card',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.tosspayments.com/v1/payments/confirm',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: overseasCardAuthHeader,
+        }),
+      }),
+    );
+  });
+
+  it('falls back to the default secret when the overseas card secret is missing', async () => {
+    client = new TossPaymentsClient({
+      get: vi.fn((key: string, fallback?: string) => {
+        if (key === 'TOSS_SECRET_KEY') return secretKey;
+        return fallback;
+      }),
+    } as unknown as ConfigService);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: vi.fn().mockResolvedValue(paidResponse),
+    });
+
+    await client.confirmPayment({
+      paymentKey: 'pay_overseas_card',
+      orderId: 'GRP-OVERSEAS-CARD',
+      amount: 150000,
+      secretKeyScope: 'overseas-card',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.tosspayments.com/v1/payments/confirm',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: authHeader,
         }),
       }),
     );
@@ -148,6 +213,81 @@ describe('TossPaymentsClient', () => {
         }),
       }),
     );
+  });
+
+  it('uses the foreign easy pay secret when querying foreign easy pay payment state', async () => {
+    const foreignEasyPaySecretKey = 'test_sk_foreign_easy_pay_secret';
+    const foreignEasyPayAuthHeader =
+      `Basic ${Buffer.from(`${foreignEasyPaySecretKey}:`).toString('base64')}`;
+    client = new TossPaymentsClient({
+      get: vi.fn((key: string, fallback?: string) => {
+        if (key === 'TOSS_SECRET_KEY') return secretKey;
+        if (key === 'TOSS_FOREIGN_EASY_PAY_SECRET_KEY') return foreignEasyPaySecretKey;
+        return fallback;
+      }),
+    } as unknown as ConfigService);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        ...paidResponse,
+        method: 'FOREIGN_EASY_PAY',
+      }),
+    });
+
+    await client.queryPayment('pay_foreign_easy_pay', {
+      secretKeyScope: 'foreign-easy-pay',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.tosspayments.com/v1/payments/pay_foreign_easy_pay',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: foreignEasyPayAuthHeader,
+        }),
+      }),
+    );
+  });
+
+  it('does not fall back to the default secret for foreign easy pay payment state queries', async () => {
+    await expect(
+      client.queryPayment('pay_foreign_easy_pay', {
+        secretKeyScope: 'foreign-easy-pay',
+      }),
+    ).rejects.toMatchObject({
+      code: 'MISSING_FOREIGN_EASY_PAY_SECRET_KEY',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('redacts the foreign easy pay secret from query errors', async () => {
+    const foreignEasyPaySecretKey = 'test_sk_foreign_easy_pay_redaction_secret';
+    client = new TossPaymentsClient({
+      get: vi.fn((key: string, fallback?: string) => {
+        if (key === 'TOSS_SECRET_KEY') return secretKey;
+        if (key === 'TOSS_FOREIGN_EASY_PAY_SECRET_KEY') return foreignEasyPaySecretKey;
+        return fallback;
+      }),
+    } as unknown as ConfigService);
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      json: vi.fn().mockResolvedValue({
+        code: 'UNAUTHORIZED_KEY',
+        message: `wrong ${foreignEasyPaySecretKey} for pay_foreign_easy_pay_sensitive`,
+      }),
+    });
+
+    let caught: unknown;
+    try {
+      await client.queryPayment('pay_foreign_easy_pay_sensitive', {
+        secretKeyScope: 'foreign-easy-pay',
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(TossPaymentError);
+    expect((caught as Error).message).not.toContain(foreignEasyPaySecretKey);
+    expect((caught as Error).message).not.toContain('pay_foreign_easy_pay_sensitive');
   });
 
   it('redacts Toss query errors before surfacing them to callers', async () => {
