@@ -45,6 +45,10 @@ uploads/
 # Local images
 image/
 
+# Local debug artifacts
+/foreign-payment-ui.png
+apps/web/public/dev/
+
 # IDE
 .idea/
 .vscode/
