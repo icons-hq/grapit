@@ -85,7 +85,7 @@ describe('payment cancel policy', () => {
     expect(request.options).not.toHaveProperty('cancelAmount');
   });
 
-  it('builds Alipay and Alipay+ full cancel with foreign-easy-pay scope and cancelRequestId', () => {
+  it('builds Alipay and Alipay+ full cancel with safe foreign-easy-pay cancelRequestId', () => {
     for (const provider of ['ALIPAY', 'ALIPAY_PLUS']) {
       const request = buildFullPaymentCancelRequest({
         payment: basePayment({
@@ -101,11 +101,59 @@ describe('payment cancel policy', () => {
       expect(request.options).toEqual({
         idempotencyKey: `payment-cancel:${provider}`,
         secretKeyScope: 'foreign-easy-pay',
-        cancelRequestId: `payment-cancel:${provider}`,
+        cancelRequestId: `cancel_${provider}`,
       });
+      expect(request.options.cancelRequestId).toMatch(/^[A-Za-z0-9_-]{1,64}$/);
+      expect(request.options.cancelRequestId).not.toContain(':');
       expect(request.options).not.toHaveProperty('cancelAmount');
       expect(request.options).not.toHaveProperty('currency');
     }
+  });
+
+  it('fails fast when async full cancel has no safe cancelRequestId seed', () => {
+    expect(() => buildFullPaymentCancelRequest({
+      payment: basePayment({
+        id: undefined,
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'ALIPAY',
+      }),
+      reason: 'alipay full cancel',
+    })).toThrow('cancelRequestId seed is required for async foreign payment cancellation');
+  });
+
+  it('sanitizes idempotency key when it is the last async full cancelRequestId seed', () => {
+    const request = buildFullPaymentCancelRequest({
+      payment: basePayment({
+        id: undefined,
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'ALIPAY',
+      }),
+      reason: 'alipay full cancel',
+      idempotencyKey: 'payment-cancel:alipay#1',
+    });
+
+    expect(request.options.cancelRequestId).toBe('cancel_payment-cancel_alipay_1');
+    expect(request.options.cancelRequestId).toMatch(/^[A-Za-z0-9_-]{1,64}$/);
+    expect(request.options.cancelRequestId).not.toContain(':');
+  });
+
+  it('builds TrueMoney full cancel with foreign-easy-pay scope and safe cancelRequestId', () => {
+    const request = buildFullPaymentCancelRequest({
+      payment: basePayment({
+        id: 'payment-truemoney-1',
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'TRUEMONEY',
+      }),
+      reason: 'truemoney full cancel',
+      idempotencyKey: 'payment-cancel:truemoney-1',
+    });
+
+    expect(request.options).toEqual({
+      idempotencyKey: 'payment-cancel:truemoney-1',
+      secretKeyScope: 'foreign-easy-pay',
+      cancelRequestId: 'cancel_payment-truemoney-1',
+    });
+    expect(request.options.cancelRequestId).toMatch(/^[A-Za-z0-9_-]{1,64}$/);
   });
 
   it('builds partial domestic ticket-item cancel with KRW cancelAmount and idempotency key', () => {
@@ -148,32 +196,74 @@ describe('payment cancel policy', () => {
         cancelAmount: 36,
         currency: 'USD',
       });
+      if (provider === 'ALIPAY_PLUS') {
+        expect(request.options.cancelRequestId).toBe(
+          'cancel_ticket-item-ALIPAY_PLUS',
+        );
+        expect(request.options.cancelRequestId).toMatch(/^[A-Za-z0-9_-]{1,64}$/);
+        expect(request.options.cancelRequestId).not.toContain(':');
+      }
     }
   });
 
-  it('builds partial Alipay cancel with deterministic cancelRequestId', () => {
+  it('builds overseas-card provider-currency partial cancel with overseas-card scope', () => {
     const request = buildTicketItemPaymentCancelRequest({
       payment: basePayment({
+        provider: 'CARD',
+        providerMetadata: { secretKeyScope: 'overseas-card' },
+        currency: 'USD',
+        providerChargeCurrency: 'USD',
+        providerChargeAmountMinor: 10_800,
+      }),
+      ticketItem: ticketItem({ id: 'ticket-item-overseas-card-1' }),
+      activeTicketItems: [
+        ticketItem({ id: 'ticket-item-overseas-card-1' }),
+        ticketItem({ id: 'ticket-item-overseas-card-2', refundableAmount: 100_000 }),
+      ],
+      reason: 'overseas-card ticket cancel',
+    });
+
+    expect(request.options).toEqual({
+      idempotencyKey: 'ticket-item-cancel:ticket-item-overseas-card-1',
+      secretKeyScope: 'overseas-card',
+      cancelAmount: 36,
+      currency: 'USD',
+    });
+  });
+
+  it('throws when PayPal partial cancel is missing provider charge data', () => {
+    expect(() => buildTicketItemPaymentCancelRequest({
+      payment: basePayment({
+        method: 'PAYPAL',
+        provider: 'PAYPAL',
+        currency: 'USD',
+      }),
+      ticketItem: ticketItem({ id: 'ticket-item-paypal-missing-charge' }),
+      activeTicketItems: [
+        ticketItem({ id: 'ticket-item-paypal-missing-charge' }),
+        ticketItem({ id: 'ticket-item-paypal-active-2', refundableAmount: 100_000 }),
+      ],
+      reason: 'paypal ticket cancel',
+    })).toThrow('Provider-currency partial cancellation requires provider charge data');
+  });
+
+  it('throws when provider-currency partial cancel has invalid allocation values', () => {
+    expect(() => buildTicketItemPaymentCancelRequest({
+      payment: basePayment({
+        amount: 0,
         method: 'FOREIGN_EASY_PAY',
         provider: 'ALIPAY_PLUS',
         currency: 'USD',
         providerChargeCurrency: 'USD',
         providerChargeAmountMinor: 10_800,
       }),
-      ticketItem: ticketItem({
-        id: 'ticket-item-alipay-1',
-        refundableAmount: 50_000,
-      }),
+      ticketItem: ticketItem({ id: 'ticket-item-alipay-invalid-amount' }),
       activeTicketItems: [
-        ticketItem({ id: 'ticket-item-alipay-1', refundableAmount: 50_000 }),
-        ticketItem({ id: 'ticket-item-alipay-2', refundableAmount: 100_000 }),
+        ticketItem({ id: 'ticket-item-alipay-invalid-amount' }),
+        ticketItem({ id: 'ticket-item-alipay-active-2', refundableAmount: 100_000 }),
       ],
       reason: 'alipay ticket cancel',
-    });
-
-    expect(request.options.cancelRequestId).toBe(
-      'ticket-item-cancel:ticket-item-alipay-1',
-    );
+    })).toThrow('payment.amount must be a positive integer');
   });
 
   it('treats last active ticket-item cancel as full cancel even when refundable amount exists', () => {

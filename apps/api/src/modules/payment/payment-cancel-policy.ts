@@ -45,6 +45,7 @@ const FOREIGN_EASY_PAY_PROVIDERS = new Set([
   'ALIPAY_PLUS',
   'TRUEMONEY',
 ]);
+const SAFE_CANCEL_REQUEST_ID_MAX_LENGTH = 64;
 
 export function resolvePaymentCancelSecretScope(
   payment: PaymentCancelPaymentSnapshot,
@@ -73,10 +74,7 @@ export function buildFullPaymentCancelRequest(
 
   if (requiresCancelRequestId(input.payment)) {
     options.cancelRequestId = buildPaymentCancelRequestId(
-      input.cancelRequestIdSeed
-      ?? input.payment.id
-      ?? input.idempotencyKey
-      ?? input.payment.paymentKey,
+      selectFullCancelRequestIdSeed(input),
     );
   }
 
@@ -118,7 +116,7 @@ export function buildTicketItemPaymentCancelRequest(
   }
 
   if (requiresCancelRequestId(input.payment)) {
-    options.cancelRequestId = idempotencyKey;
+    options.cancelRequestId = buildPaymentCancelRequestId(input.ticketItem.id);
   }
 
   return {
@@ -134,6 +132,14 @@ function usesForeignEasyPaySecret(payment: PaymentCancelPaymentSnapshot): boolea
 
 function requiresCancelRequestId(payment: PaymentCancelPaymentSnapshot): boolean {
   return FOREIGN_EASY_PAY_PROVIDERS.has(payment.provider.toUpperCase());
+}
+
+function requiresProviderCurrencyPartialCancel(
+  payment: PaymentCancelPaymentSnapshot,
+): boolean {
+  const provider = payment.provider.toUpperCase();
+
+  return provider === 'PAYPAL' || FOREIGN_EASY_PAY_PROVIDERS.has(provider);
 }
 
 function isOverseasCardPayment(payment: PaymentCancelPaymentSnapshot): boolean {
@@ -152,7 +158,35 @@ function isOverseasCardPayment(payment: PaymentCancelPaymentSnapshot): boolean {
 }
 
 function buildPaymentCancelRequestId(seed: string): string {
-  return `payment-cancel:${seed}`;
+  const safeSeed = seed
+    .trim()
+    .replace(/[^A-Za-z0-9_-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  if (!safeSeed) {
+    throw new Error('cancelRequestId seed must contain a safe character');
+  }
+
+  return `cancel_${safeSeed}`.slice(0, SAFE_CANCEL_REQUEST_ID_MAX_LENGTH);
+}
+
+function selectFullCancelRequestIdSeed(
+  input: BuildFullPaymentCancelRequestInput,
+): string {
+  const seed = [
+    input.cancelRequestIdSeed,
+    input.payment.id,
+    input.idempotencyKey,
+  ].find((value) => typeof value === 'string' && value.trim().length > 0);
+
+  if (!seed) {
+    throw new Error(
+      'cancelRequestId seed is required for async foreign payment cancellation',
+    );
+  }
+
+  return seed;
 }
 
 function isLastActiveTicketItem(
@@ -166,23 +200,51 @@ function buildProviderCurrencyCancelAmount(
   payment: PaymentCancelPaymentSnapshot,
   ticketItem: PaymentCancelTicketItemSnapshot,
 ): { cancelAmount: number; currency: string } | null {
+  const providerChargeCurrency = payment.providerChargeCurrency?.trim().toUpperCase();
+
   if (
-    !payment.providerChargeCurrency
-    || payment.providerChargeCurrency === 'KRW'
+    !providerChargeCurrency
+    || providerChargeCurrency === 'KRW'
     || typeof payment.providerChargeAmountMinor !== 'number'
   ) {
+    if (requiresProviderCurrencyPartialCancel(payment)) {
+      throw new Error(
+        'Provider-currency partial cancellation requires provider charge data',
+      );
+    }
+
     return null;
   }
 
+  assertPositiveInteger('payment.amount', payment.amount);
+  assertPositiveInteger(
+    'providerChargeAmountMinor',
+    payment.providerChargeAmountMinor,
+  );
+  assertPositiveInteger('ticketItem.refundableAmount', ticketItem.refundableAmount);
+
+  const allocatedMinor = Math.round(
+    payment.providerChargeAmountMinor
+    * ticketItem.refundableAmount
+    / payment.amount,
+  );
+
+  if (allocatedMinor <= 0) {
+    throw new Error(
+      'Provider-currency partial cancellation amount must be greater than zero',
+    );
+  }
+
   return {
-    cancelAmount:
-      Math.round(
-        payment.providerChargeAmountMinor
-        * ticketItem.refundableAmount
-        / payment.amount,
-      ) / 100,
-    currency: payment.providerChargeCurrency,
+    cancelAmount: allocatedMinor / 100,
+    currency: providerChargeCurrency,
   };
+}
+
+function assertPositiveInteger(label: string, value: number): void {
+  if (!Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
+    throw new Error(`${label} must be a positive integer`);
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
