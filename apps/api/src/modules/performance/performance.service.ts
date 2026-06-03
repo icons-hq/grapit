@@ -263,10 +263,15 @@ export class PerformanceService {
     // Increment view count BEFORE the cache check so view counters keep
     // accruing on every request, not just on DB hits (per plan acceptance).
     // no-op if ID doesn't exist or is hidden from the current read path.
-    await this.db
+    const visibilityRows = await this.db
       .update(performances)
       .set({ viewCount: sql`${performances.viewCount} + 1` })
-      .where(visibilityCondition);
+      .where(visibilityCondition)
+      .returning({ id: performances.id });
+
+    if (visibilityRows.length === 0) {
+      return null;
+    }
 
     const cacheKey = `cache:performances:detail:${id}:${targetLocale}:${PERFORMANCE_DETAIL_CACHE_VERSION}`;
     if (!includeHiddenCopy) {

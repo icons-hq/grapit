@@ -180,7 +180,12 @@ const translatedFieldRows = [
 
 function createMockDb() {
   const chainable = createChainableMock();
-  const updateWhere = vi.fn().mockResolvedValue([]);
+  const updateReturning = vi.fn().mockResolvedValue([
+    { id: PHASE23_I18N_SMOKE_PERFORMANCE_ID },
+  ]);
+  const updateWhere = vi.fn().mockReturnValue({
+    returning: updateReturning,
+  });
   return {
     select: vi.fn().mockReturnValue(chainable),
     insert: vi.fn().mockReturnValue({
@@ -210,6 +215,7 @@ function createMockDb() {
     },
     execute: vi.fn().mockResolvedValue([]),
     _chainable: chainable,
+    _updateReturning: updateReturning,
     _updateWhere: updateWhere,
   };
 }
@@ -325,6 +331,7 @@ describe('PerformanceService', () => {
     });
 
     it('does not increment hidden performance viewCount through public detail reads', async () => {
+      mockDb._updateReturning.mockResolvedValueOnce([]);
       mockDb.select.mockReturnValueOnce(
         createNonPublishedDetailResult([
           createPerformanceRow(PHASE23_I18N_SMOKE_PERFORMANCE_ID, {
@@ -337,6 +344,20 @@ describe('PerformanceService', () => {
 
       const [updateWhere] = mockDb._updateWhere.mock.calls[0] ?? [];
       expect(hasPublishStatePublishedFilter(updateWhere)).toBe(true);
+    });
+
+    it('does not return a stale cached public detail after visibility is revoked', async () => {
+      const cached = {
+        id: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
+        title: 'Cached published title',
+      } as PerformanceWithDetails;
+      vi.mocked(mockCache.get).mockResolvedValueOnce(cached);
+      mockDb._updateReturning.mockResolvedValueOnce([]);
+
+      const result = await service.findById(PHASE23_I18N_SMOKE_PERFORMANCE_ID);
+
+      expect(result).toBeNull();
+      expect(mockCache.get).not.toHaveBeenCalled();
     });
 
     it('should return null for non-existent id', async () => {
