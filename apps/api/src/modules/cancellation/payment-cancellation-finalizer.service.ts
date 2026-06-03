@@ -1,6 +1,13 @@
-import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  Logger,
+  NotFoundException,
+  Optional,
+} from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { normalizeSeatIdentity } from '@grabit/shared';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
@@ -21,6 +28,7 @@ import {
   type SeatIdentityPayload,
 } from '../jobs/pgboss.provider.js';
 
+// Keep local to avoid importing RefundService while this split-out module is not wired yet.
 export const JOB_ENQUEUE_FAILED = 'JOB_ENQUEUE_FAILED';
 
 const DEFAULT_CANCELLED_SEAT_HOLD_MINUTES = 1;
@@ -91,6 +99,22 @@ function normalizeReservationSeatIdentity(seatId: string): SeatIdentityPayload {
   };
 }
 
+function uniqueSeatIdentities(seats: Array<{ seatId: string }>): SeatIdentityPayload[] {
+  const seen = new Set<string>();
+  const seatIdentities: SeatIdentityPayload[] = [];
+
+  for (const seat of seats) {
+    const seatIdentity = normalizeReservationSeatIdentity(seat.seatId);
+    if (seen.has(seatIdentity.seatKey)) {
+      continue;
+    }
+    seen.add(seatIdentity.seatKey);
+    seatIdentities.push(seatIdentity);
+  }
+
+  return seatIdentities;
+}
+
 @Injectable()
 export class PaymentCancellationFinalizerService {
   private readonly logger = new Logger(PaymentCancellationFinalizerService.name);
@@ -110,23 +134,14 @@ export class PaymentCancellationFinalizerService {
       holdWindow.max,
     );
     const releaseAt = new Date(now.getTime() + delaySeconds * 1000);
-    const seatIdentities = input.context.seats.map((seat) =>
-      normalizeReservationSeatIdentity(seat.seatId),
-    );
+    const seatIdentities = uniqueSeatIdentities(input.context.seats);
     const preallocatedReleaseJobId = randomUUID();
-    const releaseEnqueued = await this.scheduleCancelledSeatRelease(
-      input.context,
-      seatIdentities,
-      releaseAt,
-      preallocatedReleaseJobId,
-    );
-    const releaseJobId = releaseEnqueued
-      ? preallocatedReleaseJobId
-      : JOB_ENQUEUE_FAILED;
+    let releaseEnqueued = false;
+    let releaseJobId = JOB_ENQUEUE_FAILED;
 
     await this.db.transaction(async (tx) => {
       if (input.refundId) {
-        await tx
+        const updatedRefunds = await tx
           .update(refunds)
           .set({
             status: 'completed',
@@ -144,7 +159,18 @@ export class PaymentCancellationFinalizerService {
               source: input.source,
             },
           })
-          .where(eq(refunds.id, input.refundId));
+          .where(
+            and(
+              eq(refunds.id, input.refundId),
+              eq(refunds.reservationId, input.context.reservation.id),
+              eq(refunds.paymentId, input.context.payment.id),
+            ),
+          )
+          .returning({ id: refunds.id });
+
+        if (updatedRefunds.length === 0) {
+          throw new NotFoundException('환불 정보를 찾을 수 없습니다');
+        }
       }
 
       await tx
@@ -180,18 +206,49 @@ export class PaymentCancellationFinalizerService {
         })
         .where(eq(tickets.reservationId, input.context.reservation.id));
 
-      await tx
-        .update(ticketItems)
-        .set({
-          status: 'cancelled',
-          cancelledAt: now,
-          cancelReason: input.reason,
-          reopenState: 'held_cancelled',
-          reopenHoldUntil: releaseAt,
-          reopenJobId: releaseJobId,
-          updatedAt: now,
-        })
-        .where(eq(ticketItems.reservationId, input.context.reservation.id));
+      if (seatIdentities.length > 0) {
+        const updatedTicketItems = await tx
+          .update(ticketItems)
+          .set({
+            status: 'cancelled',
+            cancelledAt: now,
+            cancelReason: input.reason,
+            cancellationFee: 0,
+            serviceFeeRefund: sql`${ticketItems.serviceFee}`,
+            refundableAmount: sql`${ticketItems.price} + ${ticketItems.serviceFee}`,
+            reopenState: 'not_required',
+            reopenHoldUntil: null,
+            reopenJobId: null,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(ticketItems.reservationId, input.context.reservation.id),
+              eq(ticketItems.paymentId, input.context.payment.id),
+              eq(ticketItems.showtimeId, input.context.reservation.showtimeId),
+              inArray(
+                ticketItems.seatKey,
+                seatIdentities.map((seatIdentity) => seatIdentity.seatKey),
+              ),
+              inArray(ticketItems.status, ['active', 'cancellation_pending']),
+            ),
+          )
+          .returning({ id: ticketItems.id });
+
+        if (updatedTicketItems.length < seatIdentities.length) {
+          throw new BadRequestException('취소할 티켓 항목 수가 일치하지 않습니다');
+        }
+      }
+
+      releaseEnqueued = await this.scheduleCancelledSeatRelease(
+        input.context,
+        seatIdentities,
+        releaseAt,
+        preallocatedReleaseJobId,
+      );
+      releaseJobId = releaseEnqueued
+        ? preallocatedReleaseJobId
+        : JOB_ENQUEUE_FAILED;
 
       for (const seatIdentity of seatIdentities) {
         await tx

@@ -46,17 +46,75 @@ function createContext(
   };
 }
 
-function createTransactionMock() {
-  const updateCalls: Array<{ table: unknown; values: Record<string, unknown> }> = [];
+type UpdateCall = {
+  table: unknown;
+  values: Record<string, unknown>;
+  whereArgs: unknown[];
+  returningSelection?: unknown;
+};
+
+function objectGraphContains(root: unknown, needle: unknown): boolean {
+  const seen = new Set<unknown>();
+
+  function visit(value: unknown): boolean {
+    if (value === needle) {
+      return true;
+    }
+    if (value === null || value === undefined) {
+      return false;
+    }
+    if (typeof value !== 'object') {
+      return value === needle;
+    }
+    if (seen.has(value)) {
+      return false;
+    }
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      return value.some(visit);
+    }
+
+    return Object.values(value as Record<string, unknown>).some(visit);
+  }
+
+  return visit(root);
+}
+
+function createTransactionMock(options: {
+  refundReturning?: Array<{ id: string }>;
+  ticketItemReturning?: Array<{ id: string }>;
+} = {}) {
+  const updateCalls: UpdateCall[] = [];
   const insertCalls: Array<{ table: unknown; values: unknown }> = [];
+  const refundReturning = options.refundReturning ?? [{ id: 'refund-1' }];
+  const ticketItemReturning = options.ticketItemReturning ?? [
+    { id: 'ticket-item-1' },
+    { id: 'ticket-item-2' },
+  ];
 
   const tx = {
     update(table: unknown) {
       return {
         set(values: Record<string, unknown>) {
-          updateCalls.push({ table, values });
+          const call: UpdateCall = { table, values, whereArgs: [] };
+          updateCalls.push(call);
           return {
-            where: vi.fn().mockResolvedValue(undefined),
+            where: vi.fn((...whereArgs: unknown[]) => {
+              call.whereArgs = whereArgs;
+              return {
+                returning: vi.fn((selection: unknown) => {
+                  call.returningSelection = selection;
+                  if (table === refunds) {
+                    return Promise.resolve(refundReturning);
+                  }
+                  if (table === ticketItems) {
+                    return Promise.resolve(ticketItemReturning);
+                  }
+                  return Promise.resolve([{ id: 'updated-row-1' }]);
+                }),
+              };
+            }),
           };
         },
       };
@@ -77,8 +135,8 @@ function createTransactionMock() {
 function createService(pgBoss?: {
   isAvailable: boolean;
   send: ReturnType<typeof vi.fn>;
-}) {
-  const transaction = createTransactionMock();
+}, transactionOptions?: Parameters<typeof createTransactionMock>[0]) {
+  const transaction = createTransactionMock(transactionOptions);
   const db = {
     transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
       callback(transaction.tx),
@@ -116,7 +174,7 @@ describe('PaymentCancellationFinalizerService', () => {
     vi.useRealTimers();
   });
 
-  it('finalizes a full cancellation and merges payment provider metadata', async () => {
+  it('finalizes a full cancellation, merges payment metadata, and sets item refund SQL fields', async () => {
     const pgBoss = {
       isAvailable: false,
       send: vi.fn(),
@@ -182,11 +240,16 @@ describe('PaymentCancellationFinalizerService', () => {
         status: 'cancelled',
         cancelledAt: NOW,
         cancelReason: '사용자 환불',
-        reopenState: 'held_cancelled',
-        reopenHoldUntil: RELEASE_AT,
-        reopenJobId: JOB_ENQUEUE_FAILED,
+        cancellationFee: 0,
+        reopenState: 'not_required',
+        reopenHoldUntil: null,
+        reopenJobId: null,
         updatedAt: NOW,
       });
+    expect(transaction.updateCalls.find((call) => call.table === ticketItems)?.values)
+      .toHaveProperty('serviceFeeRefund');
+    expect(transaction.updateCalls.find((call) => call.table === ticketItems)?.values)
+      .toHaveProperty('refundableAmount');
 
     const seatUpdates = transaction.updateCalls.filter(
       (call) => call.table === seatInventories,
@@ -281,7 +344,9 @@ describe('PaymentCancellationFinalizerService', () => {
 
     expect(transaction.updateCalls.find((call) => call.table === ticketItems)?.values)
       .toMatchObject({
-        reopenJobId: releaseJobId,
+        reopenState: 'not_required',
+        reopenHoldUntil: null,
+        reopenJobId: null,
       });
     expect(transaction.updateCalls.filter((call) => call.table === seatInventories))
       .toEqual([
@@ -292,6 +357,77 @@ describe('PaymentCancellationFinalizerService', () => {
           values: expect.objectContaining({ reopenJobId: releaseJobId }),
         }),
       ]);
+  });
+
+  it('aborts before reservation state changes when the scoped refund update returns no row', async () => {
+    const { service, transaction } = createService(
+      {
+        isAvailable: false,
+        send: vi.fn(),
+      },
+      { refundReturning: [] },
+    );
+
+    await expect(
+      service.finalizeFullPaymentCancellation(baseInput({ refundId: 'wrong-refund' })),
+    ).rejects.toThrow();
+
+    expect(transaction.updateCalls.find((call) => call.table === refunds)?.returningSelection)
+      .toEqual({ id: refunds.id });
+    const refundWhere = transaction.updateCalls.find((call) => call.table === refunds)
+      ?.whereArgs[0];
+    expect(objectGraphContains(refundWhere, refunds.id)).toBe(true);
+    expect(objectGraphContains(refundWhere, refunds.reservationId)).toBe(true);
+    expect(objectGraphContains(refundWhere, refunds.paymentId)).toBe(true);
+    expect(objectGraphContains(refundWhere, 'wrong-refund')).toBe(true);
+    expect(objectGraphContains(refundWhere, 'reservation-1')).toBe(true);
+    expect(objectGraphContains(refundWhere, 'payment-1')).toBe(true);
+    expect(transaction.updateCalls.some((call) => call.table === reservations)).toBe(false);
+    expect(transaction.updateCalls.some((call) => call.table === payments)).toBe(false);
+    expect(transaction.updateCalls.some((call) => call.table === tickets)).toBe(false);
+    expect(transaction.updateCalls.some((call) => call.table === ticketItems)).toBe(false);
+    expect(transaction.updateCalls.some((call) => call.table === seatInventories)).toBe(false);
+  });
+
+  it('scopes ticket item cancellation to expected active or pending seat keys only', async () => {
+    const { service, transaction } = createService({
+      isAvailable: false,
+      send: vi.fn(),
+    });
+
+    await service.finalizeFullPaymentCancellation(baseInput());
+
+    const ticketItemUpdate = transaction.updateCalls.find(
+      (call) => call.table === ticketItems,
+    );
+    const where = ticketItemUpdate?.whereArgs[0];
+    expect(where).toBeDefined();
+    expect(objectGraphContains(where, ticketItems.reservationId)).toBe(true);
+    expect(objectGraphContains(where, ticketItems.paymentId)).toBe(true);
+    expect(objectGraphContains(where, ticketItems.showtimeId)).toBe(true);
+    expect(objectGraphContains(where, ticketItems.seatKey)).toBe(true);
+    expect(objectGraphContains(where, ticketItems.status)).toBe(true);
+    expect(objectGraphContains(where, '1F:A-10')).toBe(true);
+    expect(objectGraphContains(where, '2F:B-20')).toBe(true);
+    expect(objectGraphContains(where, 'active')).toBe(true);
+    expect(objectGraphContains(where, 'cancellation_pending')).toBe(true);
+    expect(objectGraphContains(where, '1F:already-cancelled-sibling')).toBe(false);
+  });
+
+  it('aborts seat state updates when not every expected ticket item row is updated', async () => {
+    const { service, transaction } = createService(
+      {
+        isAvailable: false,
+        send: vi.fn(),
+      },
+      { ticketItemReturning: [{ id: 'ticket-item-1' }] },
+    );
+
+    await expect(service.finalizeFullPaymentCancellation(baseInput())).rejects.toThrow();
+
+    expect(transaction.updateCalls.find((call) => call.table === ticketItems)?.returningSelection)
+      .toEqual({ id: ticketItems.id });
+    expect(transaction.updateCalls.some((call) => call.table === seatInventories)).toBe(false);
   });
 
   it('persists JOB_ENQUEUE_FAILED when pgBoss send fails', async () => {
@@ -309,7 +445,9 @@ describe('PaymentCancellationFinalizerService', () => {
     });
     expect(transaction.updateCalls.find((call) => call.table === ticketItems)?.values)
       .toMatchObject({
-        reopenJobId: JOB_ENQUEUE_FAILED,
+        reopenState: 'not_required',
+        reopenHoldUntil: null,
+        reopenJobId: null,
       });
     expect(transaction.updateCalls.filter((call) => call.table === seatInventories))
       .toEqual([
