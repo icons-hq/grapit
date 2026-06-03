@@ -294,6 +294,10 @@ describe('ReservationFinalizationService', () => {
         tossOrderId: 'order-overseas-card-1',
         method: 'CARD',
         provider: 'CARD',
+        providerMetadata: {
+          requestedProvider: 'OVERSEAS_CARD',
+          secretKeyScope: 'overseas-card',
+        },
         currency: 'KRW',
         asyncStatus: 'sync',
         amount: 150000,
@@ -413,6 +417,10 @@ describe('ReservationFinalizationService', () => {
         tossOrderId: 'order-overseas-card-usd-1',
         method: 'CARD',
         provider: 'CARD',
+        providerMetadata: {
+          requestedProvider: 'OVERSEAS_CARD',
+          secretKeyScope: 'overseas-card',
+        },
         currency: 'KRW',
         asyncStatus: 'sync',
         amount: 150000,

@@ -47,6 +47,7 @@ type ApprovedPaymentSnapshot = {
   providerChargeAmountMinor?: number | null;
   providerChargeRate?: string | null;
   providerChargeQuotedAt?: Date | null;
+  providerMetadata?: Record<string, unknown> | null;
 };
 type PaypalConfirmPaymentRequest = Extract<ConfirmPaymentRequest, { provider: 'PAYPAL' }>;
 type OverseasCardConfirmPaymentRequest = Extract<ConfirmPaymentRequest, { provider: 'OVERSEAS_CARD' }>;
@@ -59,6 +60,10 @@ type PaypalResolvedProviderCharge = {
 };
 
 const TICKET_SERVICE_FEE_KRW = 2000;
+const OVERSEAS_CARD_PROVIDER_METADATA = {
+  requestedProvider: 'OVERSEAS_CARD',
+  secretKeyScope: 'overseas-card',
+} as const;
 
 function isPaypalConfirmPaymentRequest(
   dto: ConfirmPaymentRequest,
@@ -70,6 +75,20 @@ function isOverseasCardConfirmPaymentRequest(
   dto: ConfirmPaymentRequest,
 ): dto is OverseasCardConfirmPaymentRequest {
   return 'provider' in dto && dto.provider === 'OVERSEAS_CARD';
+}
+
+function createOverseasCardProviderMetadata(): Record<string, unknown> {
+  return { ...OVERSEAS_CARD_PROVIDER_METADATA };
+}
+
+function getExistingPaymentProviderMetadata(
+  value: unknown,
+): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
 }
 
 export interface ReservationFinalizationResult {
@@ -374,6 +393,12 @@ export class ReservationFinalizationService {
     try {
       let approvedPayment: ApprovedPaymentSnapshot;
       if (existingPayment?.status === 'DONE') {
+        const hasExistingProviderMetadata =
+          existingPayment.providerMetadata !== null
+          && existingPayment.providerMetadata !== undefined;
+        const existingProviderMetadata = getExistingPaymentProviderMetadata(
+          existingPayment.providerMetadata,
+        );
         approvedPayment = {
           existingPaymentId: existingPayment.id,
           paymentKey: existingPayment.paymentKey,
@@ -390,6 +415,10 @@ export class ReservationFinalizationService {
           providerChargeAmountMinor: existingPayment.providerChargeAmountMinor,
           providerChargeRate: existingPayment.providerChargeRate,
           providerChargeQuotedAt: existingPayment.providerChargeQuotedAt,
+          providerMetadata: existingProviderMetadata
+            ?? (!hasExistingProviderMetadata && isOverseasCardConfirm
+              ? createOverseasCardProviderMetadata()
+              : null),
         };
       } else {
         const tossResponse = await this.tossClient.confirmPayment({
@@ -412,6 +441,9 @@ export class ReservationFinalizationService {
             : tossResponse.totalAmount,
           approvedAt: tossResponse.approvedAt,
           asyncStatus: 'sync',
+          providerMetadata: isOverseasCardConfirm
+            ? createOverseasCardProviderMetadata()
+            : null,
           ...(providerCharge
             ? {
                 providerChargeCurrency: providerCharge.currency,
@@ -488,6 +520,7 @@ export class ReservationFinalizationService {
           if (approvedPayment.existingPaymentId) {
             committedPaymentId = approvedPayment.existingPaymentId;
             const providerChargeValues = this.toPaymentProviderChargeValues(approvedPayment);
+            const providerMetadataValues = this.toPaymentProviderMetadataValues(approvedPayment);
             await tx
               .update(payments)
               .set({
@@ -496,10 +529,12 @@ export class ReservationFinalizationService {
                 paidAt: new Date(approvedPayment.approvedAt),
                 asyncStatus: approvedPayment.asyncStatus ?? 'pending_webhook',
                 ...providerChargeValues,
+                ...providerMetadataValues,
               })
               .where(eq(payments.id, approvedPayment.existingPaymentId));
           } else {
             const providerChargeValues = this.toPaymentProviderChargeValues(approvedPayment);
+            const providerMetadataValues = this.toPaymentProviderMetadataValues(approvedPayment);
             const insertedPayments = await tx
               .insert(payments)
               .values({
@@ -514,6 +549,7 @@ export class ReservationFinalizationService {
                 status: 'DONE',
                 paidAt: new Date(approvedPayment.approvedAt),
                 ...providerChargeValues,
+                ...providerMetadataValues,
               })
               .returning({ id: payments.id });
 
@@ -809,6 +845,18 @@ export class ReservationFinalizationService {
       providerChargeRate: approvedPayment.providerChargeRate,
       providerChargeQuotedAt: approvedPayment.providerChargeQuotedAt,
     };
+  }
+
+  private toPaymentProviderMetadataValues(
+    approvedPayment: ApprovedPaymentSnapshot,
+  ): {
+    providerMetadata?: Record<string, unknown>;
+  } {
+    if (!approvedPayment.providerMetadata) {
+      return {};
+    }
+
+    return { providerMetadata: approvedPayment.providerMetadata };
   }
 
   private calculatePayableTotal(seats: FloorAwareSeatSelection[]): number {
