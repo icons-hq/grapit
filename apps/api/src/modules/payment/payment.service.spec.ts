@@ -481,6 +481,49 @@ describe('PaymentService', () => {
   });
 
   describe('upsertAsyncPaymentProgress', () => {
+    function createConfirmedCancelWebhookPayload(
+      paymentKey: string,
+      orderId: string,
+    ) {
+      return {
+        eventId: 'evt-paypal-cancelled',
+        eventType: 'CANCEL_STATUS_CHANGED' as const,
+        data: {
+          paymentKey,
+          orderId,
+          status: 'CANCELED',
+          method: 'FOREIGN_EASY_PAY',
+          provider: 'PAYPAL' as const,
+          currency: 'USD',
+          totalAmount: 108,
+          canceledAt: '2026-05-29T08:05:00.000Z',
+          cancelReason: 'provider cancellation',
+        },
+      };
+    }
+
+    function createConfirmedCancelProviderResponse(
+      paymentKey: string,
+      orderId: string,
+    ) {
+      return {
+        paymentKey,
+        orderId,
+        method: 'FOREIGN_EASY_PAY',
+        totalAmount: 108,
+        status: 'CANCELED',
+        approvedAt: '2026-05-29T08:00:00.000Z',
+        cancels: [
+          {
+            cancelAmount: 108,
+            cancelReason: 'provider cancellation',
+            canceledAt: '2026-05-29T08:05:00.000Z',
+            cancelStatus: 'DONE',
+          },
+        ],
+      };
+    }
+
     it('finalizes async DONE webhook by confirming reservation, selling seats, and issuing QR ticket', async () => {
       const reservationId = randomUUID();
       const showtimeId = randomUUID();
@@ -1114,6 +1157,7 @@ describe('PaymentService', () => {
           status: 'CANCELED',
           providerMetadata: { requestedProvider: 'PAYPAL' },
         }]))
+        .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([{
           id: 'showtime-1',
           performanceId: 'performance-1',
@@ -1128,37 +1172,14 @@ describe('PaymentService', () => {
         ]));
 
       const result = await service.finalizeConfirmedCancelWebhook(
-        {
-          eventId: 'evt-paypal-cancelled',
-          eventType: 'CANCEL_STATUS_CHANGED',
-          data: {
-            paymentKey: 'pay_paypal_cancelled',
-            orderId: 'GRP-PAYPAL-CANCELLED',
-            status: 'CANCELED',
-            method: 'FOREIGN_EASY_PAY',
-            provider: 'PAYPAL',
-            currency: 'USD',
-            totalAmount: 108,
-            canceledAt: '2026-05-29T08:05:00.000Z',
-            cancelReason: 'provider cancellation',
-          },
-        },
-        {
-          paymentKey: 'pay_paypal_cancelled',
-          orderId: 'GRP-PAYPAL-CANCELLED',
-          method: 'FOREIGN_EASY_PAY',
-          totalAmount: 108,
-          status: 'CANCELED',
-          approvedAt: '2026-05-29T08:00:00.000Z',
-          cancels: [
-            {
-              cancelAmount: 108,
-              cancelReason: 'provider cancellation',
-              canceledAt: '2026-05-29T08:05:00.000Z',
-              cancelStatus: 'DONE',
-            },
-          ],
-        },
+        createConfirmedCancelWebhookPayload(
+          'pay_paypal_cancelled',
+          'GRP-PAYPAL-CANCELLED',
+        ),
+        createConfirmedCancelProviderResponse(
+          'pay_paypal_cancelled',
+          'GRP-PAYPAL-CANCELLED',
+        ),
       );
 
       expect(result).toBe('finalized');
@@ -1187,6 +1208,76 @@ describe('PaymentService', () => {
       });
       expect(mockDb.update).not.toHaveBeenCalled();
       expect(mockDb.insert).not.toHaveBeenCalled();
+    });
+
+    it('passes a matching processing refund id to the confirmed cancel webhook finalizer', async () => {
+      const reservationId = randomUUID();
+      const paymentId = randomUUID();
+      const refundId = randomUUID();
+      const finalizer = {
+        finalizeFullPaymentCancellation: vi.fn().mockResolvedValue({
+          releaseJobId: 'release-job-1',
+          releaseEnqueued: true,
+        }),
+      };
+      (service as unknown as {
+        paymentCancellationFinalizer: typeof finalizer;
+      }).paymentCancellationFinalizer = finalizer;
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          reservationNumber: 'GRP-20260508-ABCDE',
+          userId: randomUUID(),
+          showtimeId: 'showtime-1',
+          status: 'CONFIRMED',
+          totalAmount: 150000,
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: paymentId,
+          reservationId,
+          paymentKey: 'pay_refund_async_cancelled',
+          tossOrderId: 'GRP-REFUND-ASYNC-CANCELLED',
+          method: 'FOREIGN_EASY_PAY',
+          provider: 'ALIPAY',
+          currency: 'KRW',
+          amount: 150000,
+          status: 'CANCELED',
+          providerMetadata: { requestedProvider: 'ALIPAY' },
+        }]))
+        .mockReturnValueOnce(createSelectChain([{ id: refundId }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: 'showtime-1',
+          performanceId: 'performance-1',
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          cancelledSeatHoldMinMinutes: 1,
+          cancelledSeatHoldMaxMinutes: 10,
+        }]))
+        .mockReturnValueOnce(createSelectChain([{ seatId: '1F:A-10' }]));
+
+      const result = await service.finalizeConfirmedCancelWebhook(
+        createConfirmedCancelWebhookPayload(
+          'pay_refund_async_cancelled',
+          'GRP-REFUND-ASYNC-CANCELLED',
+        ),
+        createConfirmedCancelProviderResponse(
+          'pay_refund_async_cancelled',
+          'GRP-REFUND-ASYNC-CANCELLED',
+        ),
+      );
+
+      expect(result).toBe('finalized');
+      expect(finalizer.finalizeFullPaymentCancellation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source: 'cancel_webhook',
+          refundId,
+          context: expect.objectContaining({
+            reservation: expect.objectContaining({ id: reservationId }),
+            payment: expect.objectContaining({ id: paymentId }),
+          }),
+        }),
+      );
     });
 
     it('acks PayPal DONE webhook after sync confirm without overwriting the KRW payment row', async () => {

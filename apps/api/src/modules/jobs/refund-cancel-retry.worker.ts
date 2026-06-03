@@ -234,7 +234,7 @@ export class RefundCancelRetryWorker implements OnModuleInit {
     }
 
     return response.cancels?.some((cancel) =>
-      cancel.cancelRequestId === cancelRequestId && cancel.cancelStatus !== 'DONE'
+      cancel.cancelRequestId === cancelRequestId && cancel.cancelStatus === 'IN_PROGRESS'
     ) ?? false;
   }
 

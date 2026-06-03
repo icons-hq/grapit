@@ -436,6 +436,56 @@ describe('RefundCancelRetryWorker', () => {
     expect(result.status).toBe('status_wait');
   });
 
+  it('marks failed at max retries when matching async cancel is aborted', async () => {
+    const tossPaymentsClient = {
+      queryPayment: vi.fn().mockResolvedValue({
+        paymentKey: 'pay-key-1',
+        orderId: 'GRP-20260508-ABCDE',
+        method: 'FOREIGN_EASY_PAY',
+        totalAmount: 132000,
+        status: 'DONE',
+        approvedAt: '2026-05-08T03:00:00.000Z',
+        cancels: [
+          {
+            cancelAmount: 132000,
+            cancelReason: '단순 변심',
+            canceledAt: '2026-05-08T03:05:00.000Z',
+            cancelStatus: 'ABORTED',
+            cancelRequestId: 'cancel_refund-1',
+          },
+        ],
+      }),
+      cancelPayment: vi.fn(),
+    };
+    const worker = new RefundCancelRetryWorker(
+      {} as never,
+      tossPaymentsClient as never,
+      { finalizeFullPaymentCancellation: vi.fn() } as never,
+      { isAvailable: true, work: vi.fn(), send: vi.fn(), stop: vi.fn() } as never,
+    );
+    const context = createRetryContext();
+    context.refund.retryCount = REFUND_CANCEL_MAX_RETRIES;
+    context.payment.method = 'FOREIGN_EASY_PAY';
+    context.payment.provider = 'ALIPAY';
+    context.payment.currency = 'USD';
+
+    vi.spyOn(worker as never, 'loadRetryContext').mockResolvedValue(context as never);
+    const processingSpy = vi.spyOn(worker as never, 'markRefundProcessing');
+    const exhaustedSpy = vi
+      .spyOn(worker as never, 'markRetryExhausted')
+      .mockResolvedValue(undefined as never);
+
+    const result = await worker.handleJob({ refundId: 'refund-1', attempt: 4 });
+
+    expect(tossPaymentsClient.queryPayment).toHaveBeenCalledWith('pay-key-1', {
+      secretKeyScope: 'foreign-easy-pay',
+    });
+    expect(tossPaymentsClient.cancelPayment).not.toHaveBeenCalled();
+    expect(processingSpy).not.toHaveBeenCalled();
+    expect(exhaustedSpy).toHaveBeenCalledWith('refund-1', '단순 변심');
+    expect(result.status).toBe('failed');
+  });
+
   it('reissues retry cancel with the same policy options when query is not terminal', async () => {
     const tossPaymentsClient = {
       queryPayment: vi.fn().mockResolvedValue({

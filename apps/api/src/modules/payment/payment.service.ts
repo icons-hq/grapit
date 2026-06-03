@@ -7,12 +7,13 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import { and, eq, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
   bookingPolicies,
   paymentWebhookEvents,
   payments,
+  refunds,
   reservationSeats,
   reservations,
   seatInventories,
@@ -733,6 +734,19 @@ export class PaymentService {
       return 'no_local_match';
     }
 
+    const [matchingRefund] = await this.db
+      .select({
+        id: refunds.id,
+      })
+      .from(refunds)
+      .where(
+        and(
+          eq(refunds.reservationId, reservation.id),
+          eq(refunds.paymentId, payment.id),
+          inArray(refunds.status, ['sent_to_pg', 'processing_at_pg']),
+        ),
+      );
+
     const [showtime] = await this.db
       .select({
         id: showtimes.id,
@@ -762,6 +776,7 @@ export class PaymentService {
 
     await this.paymentCancellationFinalizer.finalizeFullPaymentCancellation({
       source: 'cancel_webhook',
+      ...(matchingRefund ? { refundId: matchingRefund.id } : {}),
       context: {
         reservation: {
           id: reservation.id,
