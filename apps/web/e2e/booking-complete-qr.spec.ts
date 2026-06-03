@@ -1,10 +1,15 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
+import {
+  buildQrCheckInUrlPattern,
+  getQrCheckInUrlsForVisibleTextGuard,
+} from './helpers/qr-origin';
 
 const rawPaymentKey = 'phase24-qr-payment-key';
 const rawQrToken = 'qr-token-phase24';
 const rawQrJti = 'qr-jti-phase24';
 const rawJwtPayload = '"jti":"qr-jti-phase24"';
-const qrCheckInUrl = `https://heygrabit.com/field/check-in?ticket=${rawQrToken}`;
+const qrCheckInUrlPattern = buildQrCheckInUrlPattern(rawQrToken);
+const qrCheckInUrlsForVisibleTextGuard = getQrCheckInUrlsForVisibleTextGuard(rawQrToken);
 
 function createReservationDetail(overrides: Record<string, unknown> = {}) {
   return {
@@ -111,7 +116,9 @@ async function expectNoRawSecrets(page: Page) {
   await expect(page.getByText(rawQrToken, { exact: true })).toHaveCount(0);
   await expect(page.getByText(rawQrJti, { exact: true })).toHaveCount(0);
   await expect(page.getByText(rawJwtPayload, { exact: true })).toHaveCount(0);
-  await expect(page.getByText(qrCheckInUrl, { exact: true })).toHaveCount(0);
+  for (const qrCheckInUrl of qrCheckInUrlsForVisibleTextGuard) {
+    await expect(page.getByText(qrCheckInUrl, { exact: true })).toHaveCount(0);
+  }
   await expect(page.getByText('qr-jti-...se24', { exact: true })).toHaveCount(0);
   await expect(page.getByText('티켓 ID', { exact: true })).toHaveCount(0);
 }
@@ -137,7 +144,7 @@ test.describe('booking complete QR visibility', () => {
     await expect(page.getByTestId('qr-ticket-image')).toBeVisible();
     await expect(page.getByTestId('qr-ticket-image')).toHaveAttribute(
       'data-qr-url',
-      qrCheckInUrl,
+      qrCheckInUrlPattern,
     );
     await expect(
       page.getByText('현장 검표 결과가 최종 입장 기준입니다.'),
@@ -166,7 +173,7 @@ test.describe('booking complete QR visibility', () => {
     await expect(page.getByTestId('qr-ticket-image')).toBeVisible();
     await expect(page.getByTestId('qr-ticket-image')).toHaveAttribute(
       'data-qr-url',
-      qrCheckInUrl,
+      qrCheckInUrlPattern,
     );
     await expect(
       page.getByText('현장 검표 결과가 최종 입장 기준입니다.'),

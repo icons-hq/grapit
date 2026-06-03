@@ -50,6 +50,38 @@ describe('QrTicketImage', () => {
     );
   });
 
+  it('ignores configured origins that include userinfo', async () => {
+    vi.resetModules();
+    vi.stubEnv('NEXT_PUBLIC_QR_PUBLIC_WEB_ORIGIN', 'https://user@example.com');
+    vi.stubGlobal('window', {
+      location: {
+        origin: 'https://browser-origin.example.com',
+      },
+    });
+
+    const { buildQrCheckInUrl } = await import('../qr-ticket-image');
+
+    expect(buildQrCheckInUrl('token')).toBe(
+      'https://browser-origin.example.com/field/check-in?ticket=token',
+    );
+  });
+
+  it('ignores malformed configured origin values', async () => {
+    vi.resetModules();
+    vi.stubEnv('NEXT_PUBLIC_QR_PUBLIC_WEB_ORIGIN', 'not a url');
+    vi.stubGlobal('window', {
+      location: {
+        origin: 'https://browser-origin.example.com',
+      },
+    });
+
+    const { buildQrCheckInUrl } = await import('../qr-ticket-image');
+
+    expect(buildQrCheckInUrl('token')).toBe(
+      'https://browser-origin.example.com/field/check-in?ticket=token',
+    );
+  });
+
   it.each([
     'http://localhost:3000',
     'http://127.0.0.1:3000',
