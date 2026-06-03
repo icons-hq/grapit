@@ -96,6 +96,46 @@ _Avoid_: Reservation total, KRW ticket total, client estimate.
 A snapshot of the Provider Charge Amount that the Buyer is asked to pay for a Reservation. It preserves the provider currency and amount used for payment authorization and validation.
 _Avoid_: Live exchange rate, UI estimate, mutable display price.
 
+**Production Payment Matrix**:
+The set of payment methods and provider paths that Buyers can actually see and use in the production checkout for a Performance. It is defined by the buyer-visible checkout UI and provider widget, while API allowed methods and provider admin settings are cross-checks rather than the primary source.
+_Avoid_: Code-supported payment list, test-only method list, provider wishlist.
+
+**Launch Evidence Approval**:
+The owner or reviewer decision that required public-open checks have accepted evidence or an explicit Evidence Waiver before real buyers are allowed to book.
+_Avoid_: Code fix, deploy success, runtime health.
+
+**Evidence Waiver**:
+An owner-approved decision to proceed despite missing or incomplete launch evidence, with the operational risk accepted rather than treated as proven.
+_Avoid_: PASS, verified evidence, silent exception.
+
+**Sitewide Booking Gate**:
+A platform-wide launch control that keeps buyer booking closed across performances until Launch Evidence Approval is in place. It is separate from whether a specific Performance is publicly visible or sale-open.
+_Avoid_: Performance Sale Status, Performance Publication, public catalog visibility.
+
+**Performance Publication**:
+The operator decision that makes a Performance visible on public buyer surfaces. It does not by itself make seats bookable.
+_Avoid_: Performance Sale Status, Sitewide Booking Gate, ticketing open.
+
+**Performance Sale Status**:
+The operator-owned sale state of a Performance, such as upcoming, open, closing soon, or ended. A Performance must be published, pass the Sitewide Booking Gate, and be in an open sale state before real buyers can book it.
+_Avoid_: Performance Publication, Launch Evidence Approval, public open approval.
+
+**Published Upcoming Performance**:
+A Performance that is visible to Buyers before sales begin because it has Performance Publication but its Performance Sale Status is still upcoming. Buyers can discover and read it, but they cannot book it until the Sitewide Booking Gate is open and the Performance Sale Status changes to open.
+_Avoid_: Hidden draft, public open, ticketing open.
+
+**Admin Pre-Open Booking Smoke**:
+A controlled booking and payment run by an authorized admin against a Published Upcoming Performance before Buyer sales open. It proves the real booking path across the Production Payment Matrix while ordinary Buyers remain blocked.
+_Avoid_: Public open, buyer sale, sandbox-only test, single-method-only smoke.
+
+**Admin Booking Bypass**:
+A limited operator permission for Admin Pre-Open Booking Smoke that lets an authorized admin book while Buyers are still blocked by the Sitewide Booking Gate or Performance Sale Status. It is not buyer access and is not evidence that public sales are open.
+_Avoid_: Public booking access, launch approval, general buyer bypass.
+
+**Smoke Booking Cleanup**:
+The immediate cancellation, refund, and verified inventory restoration step after an Admin Pre-Open Booking Smoke. If normal cancellation does not return the Seat Identity to sellable inventory, the cleanup uses a controlled reopen path so real Performance inventory, settlement, and entry data stay clean.
+_Avoid_: Optional cleanup, manual note, leaving a paid test reservation.
+
 **Cancellation Fee Schedule**:
 A NOL Ticket-style per-Ticket Item fee schedule that determines cancellation fees by cancellation timing. Same-day booking cancellation before 24:00 KST is the first-priority exception; otherwise show-date rules take priority over booking-date rules, and fee percentages apply to Ticket Item price only.
 _Avoid_: Flat refund penalty, Reservation-level cancellation fee.
@@ -173,3 +213,31 @@ Domain expert: "Send and show all four QR Credentials to the Reservation Owner."
 Dev: "Can Offline Pending Scans count as final admitted attendees?"
 
 Domain expert: "No. They only become final after server-authoritative sync."
+
+Dev: "If launch evidence is approved and the sitewide booking gate is open, can buyers book a published Performance that is still upcoming?"
+
+Domain expert: "No. Performance Publication only exposes the Performance. Buyer booking starts only when its Performance Sale Status is open."
+
+Dev: "Should a Performance be hidden before the sale moment?"
+
+Domain expert: "No. Use a Published Upcoming Performance when Buyers should see the page before ticketing opens."
+
+Dev: "Can an admin run a real payment test on a Published Upcoming Performance before Buyers can book?"
+
+Domain expert: "Yes, but only as an Admin Pre-Open Booking Smoke through Admin Booking Bypass. Buyers must still be blocked until the sale status changes to open."
+
+Dev: "Should Admin Pre-Open Booking Smoke test only domestic card payment?"
+
+Domain expert: "No. It should cover the Production Payment Matrix so pre-open evidence matches what Buyers will see at launch."
+
+Dev: "Can the paid admin smoke booking remain in the real Performance?"
+
+Domain expert: "No. Complete Smoke Booking Cleanup immediately. The cleanup is done only when the seat is verified as sellable again, even if that requires controlled reopen."
+
+Dev: "Does changing a Performance Sale Status to open approve the whole public launch?"
+
+Domain expert: "No. It is the final performance-level switch after Launch Evidence Approval and the Sitewide Booking Gate."
+
+Dev: "If the owner approves launch without running every drill, should those gates be marked as passed?"
+
+Domain expert: "No. Mark them as Evidence Waivers so future operators can see the difference between proven evidence and accepted risk."

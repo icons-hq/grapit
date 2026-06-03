@@ -13,7 +13,8 @@ source: docs/uat/ticketing-open-readiness-remediation-2026-06-03.md
 못한 운영 evidence gate를 실제 작업 단위로 나누기 위한 문서다.
 
 이 문서는 public ticketing open 승인이 아니다. 아래 gate가 모두
-`EVIDENCE_ACCEPTED`가 되기 전까지 public open status는 `NO-GO`다.
+`EVIDENCE_ACCEPTED`이거나 명시적으로 `WAIVED`되기 전까지 public open
+status는 `NO-GO`다.
 
 ## Status Terms
 
@@ -35,8 +36,10 @@ source: docs/uat/ticketing-open-readiness-remediation-2026-06-03.md
 2. 결제, SMS, Cloud Run traffic shift, Cloud SQL restore, WAF rule change,
    cleanup 실행은 모두 외부 상태를 바꿀 수 있다. 명시 승인된 window 밖에서
    실행하지 않는다.
-3. Real Girl Rules users, reservations, payments, tickets, seat state, and
-   support records are not rehearsal or cleanup targets.
+3. Existing Girl Rules buyer users, reservations, payments, tickets, seat state,
+   and support records are not rehearsal or cleanup targets. Only approved admin
+   smoke records created during this runbook may be cancelled, refunded,
+   reopened, or otherwise cleaned up.
 4. 각 gate는 실행 전에 `Research Packet`을 먼저 채운다. 오래된 문서보다 현재
    repo, deployed runtime, provider admin UI, logs, and dashboards를 우선한다.
 5. Evidence는 재현 가능한 command, timestamp, environment, redacted artifact
@@ -50,7 +53,7 @@ source: docs/uat/ticketing-open-readiness-remediation-2026-06-03.md
 | --- | --- | --- | --- | --- | --- |
 | Final booking enablement and cutover approval | `BLOCKED` | TBD | TBD | TBD | TBD |
 | Toss sandbox gateway smoke | `BLOCKED` | TBD | TBD | TBD | TBD |
-| Toss real gateway happy path and live-key smoke | `BLOCKED` | TBD | TBD | TBD | TBD |
+| Admin pre-open booking smoke across Production Payment Matrix | `BLOCKED` | TBD | `docs/uat/ticketing-open-admin-preopen-smoke-2026-06-03.md` | TBD | TBD |
 | Real SMS OTP happy path with controlled provider-mode number | `BLOCKED` | TBD | TBD | TBD | TBD |
 | Production/cluster Valkey rehearsal and health evidence | `BLOCKED` | TBD | TBD | TBD | TBD |
 | Load baseline and stress evidence for 10K/20K traffic | `BLOCKED` | TBD | TBD | TBD | TBD |
@@ -91,6 +94,41 @@ Use this workflow for every gate before changing runtime or provider state.
 | Mutable actions planned | TBD |
 | Stop criteria | TBD |
 | Evidence artifact link | TBD |
+| Reviewer decision | TBD |
+
+### Admin Pre-Open Booking Smoke Evidence Template
+
+Fill one Markdown row per payment method or provider path, then link redacted
+screenshots, logs, provider artifacts, and admin artifacts from that row.
+Screenshots alone are not accepted as the full evidence chain. Do not paste raw
+payment keys, QR tokens, cookies, full phone numbers, full e-mail addresses, or
+full seat/order identifiers into the artifact.
+
+Default evidence artifact:
+`docs/uat/ticketing-open-admin-preopen-smoke-2026-06-03.md`.
+
+| Field | Value |
+| --- | --- |
+| Payment path | TBD |
+| Provider path | TBD |
+| Evidence row artifact | Markdown row link |
+| Buyer-visible checkout/widget evidence | Redacted screenshot or artifact |
+| API allowed-method cross-check | Redacted API response or internal artifact |
+| Provider admin cross-check | Redacted provider/admin artifact |
+| Target Performance | Girl Rules, masked internal reference |
+| Performance Sale Status before smoke | `오픈예정` |
+| Authorized admin account | Masked internal reference |
+| Ordinary Buyer block before path | UI/CTA evidence + blocked seat-lock or earliest-safe mutation evidence |
+| Selected test seat | Masked/internal seat reference |
+| Order / reservation reference | Masked/internal reference |
+| Provider approval evidence | Redacted provider/admin artifact |
+| API confirm/finalization evidence | Redacted app/log/admin artifact |
+| Reservation / payment / ticket state | Redacted internal state chain |
+| QR visibility evidence | Redacted screenshot or internal artifact |
+| Cleanup action | Cancel/refund, or cancel/refund plus controlled reopen |
+| Cleanup result | Refunded/cancelled state + sellable inventory verification |
+| Ordinary Buyer block after final cleanup | UI/CTA evidence + blocked seat-lock or earliest-safe mutation evidence |
+| Stop/failure notes | TBD |
 | Reviewer decision | TBD |
 
 ## Gate 1: Final Booking Enablement And Cutover Approval
@@ -184,50 +222,75 @@ credentials and does not depend on live-only configuration.
 - Provider approval succeeds but internal finalization fails.
 - Internal booking succeeds without provider-approved payment.
 
-## Gate 3: Toss Real Gateway Happy Path
+## Gate 3: Admin Pre-Open Booking Smoke Across Production Payment Matrix
 
 ### Objective
 
-Prove that a real buyer payment can move through request, provider approval,
-confirm, webhook/finalization, ticket issuance, and reconciliation-safe admin
-visibility without exposing sensitive identifiers.
+Prove that an authorized admin can run the same production-visible booking,
+payment, QR, inventory, and cleanup paths Buyers will use on the real Girl Rules
+Performance while ordinary Buyers remain blocked until public sale opens.
 
 ### Pre-Research
 
-- [ ] Confirm current Toss live configuration in provider admin UI.
+- [ ] Confirm the Production Payment Matrix visible to Buyers for the Girl Rules
+      Performance from the production checkout UI and provider widget.
+- [ ] Cross-check the matrix against API `allowedPaymentMethods` and provider
+      admin settings, but do not treat code-supported payment lists as the
+      primary source.
+- [ ] Confirm current Toss live configuration for every method/provider path in
+      the matrix.
 - [ ] Confirm deployed API/web revisions and environment flag state.
-- [ ] Confirm test product/showtime/reservation target is not a real customer
-      record.
-- [ ] Confirm final settlement/reconciliation check fields that can be safely
-      recorded with masked identifiers.
-- [ ] Confirm refund/cancel handling for the test transaction, if the runbook
-      requires reversing the payment after evidence capture.
+- [ ] Confirm the target Performance remains `오픈예정` and ordinary Buyers are
+      blocked.
+- [ ] Confirm the authorized admin account that can use Admin Booking Bypass.
+- [ ] Select one low-risk test seat for each method/provider path, or document
+      when the same seat will be reused after cleanup verification.
+- [ ] Confirm final settlement, reconciliation, refund/cancel, and controlled
+      reopen evidence fields that can be safely recorded with masked identifiers.
 
 ### Execution Checklist
 
-- [ ] Use an approved controlled account/device/browser.
-- [ ] Start from public performance detail and enter the normal booking flow.
-- [ ] Complete Toss provider approval on the real gateway.
-- [ ] Confirm API payment confirm path reaches final accepted state.
-- [ ] Confirm webhook/finalization evidence is present.
+- [ ] Capture ordinary Buyer block evidence before the first payment path:
+      public UI/CTA state plus blocked seat-lock or earliest-safe booking
+      mutation evidence.
+- [ ] For each method/provider path, start from public performance detail as the
+      authorized admin.
+- [ ] Use one order and one low-risk seat for that path.
+- [ ] Complete provider approval on the real gateway.
+- [ ] Confirm API payment confirm/finalization reaches final accepted state.
 - [ ] Confirm reservation, payment, ticket, and QR read paths are consistent.
-- [ ] Confirm admin or reconciliation view can identify the transaction using
-      only masked identifiers.
+- [ ] Complete Smoke Booking Cleanup for that path before starting the next path:
+      cancel/refund, then verify the seat is sellable again.
+- [ ] If normal cleanup does not restore the seat, use the admin controlled
+      reopen path with an explicit reason and audit evidence.
+- [ ] Capture ordinary Buyer block evidence again after the final cleanup.
 
 ### Required Evidence
 
 - [ ] Timestamped runtime revision for web and API.
-- [ ] Redacted booking/reservation/payment status chain.
-- [ ] Redacted provider dashboard confirmation.
-- [ ] Redacted webhook or finalization log excerpt.
-- [ ] QR/ticket visibility smoke evidence.
-- [ ] Refund/cancel evidence if the test transaction is reversed.
+- [ ] Production Payment Matrix inventory.
+- [ ] Buyer-visible checkout/widget evidence for the matrix.
+- [ ] API allowed-method and provider admin cross-check evidence.
+- [ ] Ordinary Buyer block evidence before the first payment path.
+- [ ] One filled Markdown Admin Pre-Open Booking Smoke Evidence Template row per
+      method/provider path, with links to redacted screenshots/logs/artifacts.
+- [ ] Redacted provider dashboard confirmation per path.
+- [ ] Redacted webhook or finalization log excerpt per path, when applicable.
+- [ ] QR/ticket visibility smoke evidence per path.
+- [ ] Cancel/refund evidence and sellable inventory verification per path.
+- [ ] Controlled reopen reason and audit evidence for any path that requires
+      manual reopen.
+- [ ] Ordinary Buyer block evidence after final cleanup.
 
 ### Pass Criteria
 
-- Buyer-visible booking completes without manual DB edits.
-- Reservation, payment, ticket, and QR states agree.
-- Provider status and internal status agree.
+- Every production-visible method/provider path completes without manual DB
+  edits.
+- Reservation, payment, ticket, QR, provider status, and internal status agree
+  for every path.
+- Every smoke booking is cancelled/refunded and the selected seat is verified as
+  sellable again.
+- Ordinary Buyers remain blocked before and after the admin smoke matrix.
 - No sensitive value appears in evidence.
 
 ### Fail / Stop Criteria
@@ -235,6 +298,10 @@ visibility without exposing sensitive identifiers.
 - Provider approval succeeds but internal confirm/finalization fails.
 - Internal booking succeeds without provider-approved payment.
 - QR or ticket issuance is missing after accepted payment.
+- Cleanup cannot cancel/refund, or inventory cannot be verified as sellable
+  again.
+- Ordinary Buyer block evidence fails before the first path or after final
+  cleanup.
 - Any customer-impacting or irreversible action exceeds the approved window.
 
 ## Gate 4: Real SMS OTP Happy Path
@@ -738,7 +805,7 @@ Public open can move from `NO-GO` to `GO` only when every gate below is
 | --- | --- | --- | --- | --- |
 | Final booking enablement and cutover approval | TBD | TBD | TBD | TBD |
 | Toss sandbox gateway smoke | TBD | TBD | TBD | TBD |
-| Toss real gateway happy path | TBD | TBD | TBD | TBD |
+| Admin pre-open booking smoke across Production Payment Matrix | TBD | `docs/uat/ticketing-open-admin-preopen-smoke-2026-06-03.md` | TBD | TBD |
 | Real SMS OTP happy path | TBD | TBD | TBD | TBD |
 | Production/cluster Valkey rehearsal | TBD | TBD | TBD | TBD |
 | Load baseline and stress | TBD | TBD | TBD | TBD |
