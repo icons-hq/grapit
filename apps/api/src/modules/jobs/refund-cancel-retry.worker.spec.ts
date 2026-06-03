@@ -350,6 +350,7 @@ describe('RefundCancelRetryWorker', () => {
       '단순 변심',
       1,
     );
+    expect(scheduleRetrySpy).toHaveBeenCalledWith('refund-1', 1);
     expect(recordScheduleSpy).toHaveBeenCalledWith(
       'refund-1',
       {

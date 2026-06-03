@@ -201,16 +201,6 @@ function getRefundCancelRetryJobId(refund: Pick<RefundRecord, 'providerMetadata'
   return null;
 }
 
-function pickCancelledSeatReleaseDelaySeconds(
-  minMinutes: number,
-  maxMinutes: number,
-  rng: () => number = Math.random,
-): number {
-  const minSeconds = Math.max(60, Math.floor(minMinutes * 60));
-  const maxSeconds = Math.max(minSeconds, Math.floor(maxMinutes * 60));
-  return Math.floor(rng() * (maxSeconds - minSeconds + 1)) + minSeconds;
-}
-
 function toTimeline(refund: RefundRecord, now: Date = new Date()): RefundTimeline {
   const expectedDepositAt =
     refund.expectedDepositAt instanceof Date ? refund.expectedDepositAt : null;
