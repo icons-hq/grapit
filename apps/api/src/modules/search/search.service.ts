@@ -24,7 +24,9 @@ export class SearchService {
     const locale = resolvePerformanceTranslationLocale(query.locale);
     const offset = (page - 1) * limit;
 
-    const conditions: ReturnType<typeof eq>[] = [];
+    const conditions: ReturnType<typeof eq>[] = [
+      eq(performances.publishState, 'published'),
+    ];
 
     if (genre) {
       conditions.push(eq(performances.genre, genre));

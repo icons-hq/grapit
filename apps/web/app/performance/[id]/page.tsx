@@ -18,7 +18,10 @@ import { DEFAULT_LOCALE, isSupportedLocale } from '@grabit/shared';
 import type { SupportedLocale } from '@grabit/shared';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Separator } from '@/components/ui/separator';
-import { StatusBadge } from '@/components/performance/status-badge';
+import {
+  getDisplayPerformanceStatus,
+  StatusBadge,
+} from '@/components/performance/status-badge';
 import { AutomaticTranslationLabel } from '@/components/i18n/automatic-translation-label';
 import { CurrencyDisplay } from '@/components/i18n/currency-display';
 import { KstTime } from '@/components/i18n/kst-time';
@@ -62,7 +65,11 @@ export default function PerformanceDetailPage({
   const activeLocale = useActiveLocale();
   const copy = getVisibleCopy(activeLocale);
   const { data: performance, isLoading, isError } = usePerformanceDetail(id);
-  const { bookingAvailable, bookingDisabledMessage } = useBookingAvailability({
+  const {
+    bookingAvailable,
+    bookingDisabledMessage,
+    bookingEnabled,
+  } = useBookingAvailability({
     performanceStatus: performance?.status,
   });
   const showAutomaticTranslationLabel =
@@ -92,6 +99,10 @@ export default function PerformanceDetailPage({
 
   const showDescriptionSection = performance.descriptionVisible !== false;
   const showSalesSection = performance.salesInfoVisible !== false;
+  const displayStatus = getDisplayPerformanceStatus(
+    performance.status,
+    bookingEnabled,
+  );
 
   return (
     <>
@@ -116,7 +127,7 @@ export default function PerformanceDetailPage({
                   </div>
                 )}
                 <StatusBadge
-                  status={performance.status}
+                  status={displayStatus}
                   locale={activeLocale}
                   className="absolute left-3 top-3"
                 />

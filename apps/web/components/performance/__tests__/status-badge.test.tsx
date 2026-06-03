@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { StatusBadge } from '../status-badge';
+import { getDisplayPerformanceStatus, StatusBadge } from '../status-badge';
 
 describe('StatusBadge', () => {
   it('renders correct label for selling status', () => {
@@ -33,5 +33,21 @@ describe('StatusBadge', () => {
 
     expect(screen.getByText('销售中')).toBeDefined();
     expect(screen.getByLabelText('Status: 销售中')).toBeDefined();
+  });
+
+  it('displays selling as upcoming while the booking gate is closed', () => {
+    expect(getDisplayPerformanceStatus('selling', false)).toBe('upcoming');
+  });
+
+  it('displays closing soon as upcoming while the booking gate is closed', () => {
+    expect(getDisplayPerformanceStatus('closing_soon', false)).toBe('upcoming');
+  });
+
+  it('keeps ended as ended while the booking gate is closed', () => {
+    expect(getDisplayPerformanceStatus('ended', false)).toBe('ended');
+  });
+
+  it('keeps selling as selling while the booking gate is open', () => {
+    expect(getDisplayPerformanceStatus('selling', true)).toBe('selling');
   });
 });

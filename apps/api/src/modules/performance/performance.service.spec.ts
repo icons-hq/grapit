@@ -55,6 +55,47 @@ function createChainableResult<T>(result: T) {
   return chain;
 }
 
+function collectSqlNodes(value: unknown): unknown[] {
+  if (!value || typeof value !== 'object') return [];
+
+  const chunks = (value as { queryChunks?: unknown[] }).queryChunks;
+  return [
+    value,
+    ...(Array.isArray(chunks) ? chunks.flatMap(collectSqlNodes) : []),
+  ];
+}
+
+function hasPublishStatePublishedFilter(condition: unknown): boolean {
+  return collectSqlNodes(condition).some((node) => {
+    const param = node as {
+      value?: unknown;
+      encoder?: { name?: unknown; config?: { name?: unknown } };
+    };
+
+    return (
+      param.value === 'published' &&
+      (param.encoder?.name === 'publish_state' ||
+        param.encoder?.config?.name === 'publish_state')
+    );
+  });
+}
+
+function createNonPublishedDetailResult<T>(result: T) {
+  const chain = createChainableMock();
+  let whereCondition: unknown;
+
+  chain.where.mockImplementation((condition: unknown) => {
+    whereCondition = condition;
+    return chain;
+  });
+  (chain as { then?: unknown }).then = vi.fn(
+    (resolve: (value: T | []) => void) =>
+      resolve(hasPublishStatePublishedFilter(whereCondition) ? [] : result),
+  );
+
+  return chain;
+}
+
 function createPerformanceRow(
   id = PHASE23_I18N_SMOKE_PERFORMANCE_ID,
   performanceOverrides: Record<string, unknown> = {},
@@ -230,6 +271,21 @@ describe('PerformanceService', () => {
       expect(mockDb.select).toHaveBeenCalled();
     });
 
+    it('filters public genre lists to published performances', async () => {
+      await service.findByGenre('artist_celebrity', {
+        page: 1,
+        limit: 20,
+        sort: 'latest',
+        ended: false,
+      });
+
+      const whereConditions = mockDb._chainable.where.mock.calls.map(
+        ([condition]) => condition,
+      );
+      expect(whereConditions).toHaveLength(2);
+      expect(whereConditions.every(hasPublishStatePublishedFilter)).toBe(true);
+    });
+
     it('should sort by viewCount DESC when sort=popular', async () => {
       await service.findByGenre('ip_popup', {
         page: 1,
@@ -269,6 +325,27 @@ describe('PerformanceService', () => {
     it('should return null for non-existent id', async () => {
       const nonExistentId = '00000000-0000-0000-0000-000000000000';
       const result = await service.findById(nonExistentId);
+
+      expect(result).toBeNull();
+    });
+
+    it('filters public detail reads to published performances', async () => {
+      await service.findById(PHASE23_I18N_SMOKE_PERFORMANCE_ID);
+
+      const [detailWhere] = mockDb._chainable.where.mock.calls[0] ?? [];
+      expect(hasPublishStatePublishedFilter(detailWhere)).toBe(true);
+    });
+
+    it('returns null for non-published public detail rows', async () => {
+      mockDb.select.mockReturnValueOnce(
+        createNonPublishedDetailResult([
+          createPerformanceRow(PHASE23_I18N_SMOKE_PERFORMANCE_ID, {
+            publishState: 'draft',
+          }),
+        ]),
+      );
+
+      const result = await service.findById(PHASE23_I18N_SMOKE_PERFORMANCE_ID);
 
       expect(result).toBeNull();
     });
@@ -350,13 +427,16 @@ describe('PerformanceService', () => {
     });
 
     it('keeps hidden copy available for guarded admin detail fetches', async () => {
+      const detailQuery = createChainableResult([
+        createPerformanceRow(PHASE23_I18N_SMOKE_PERFORMANCE_ID, {
+          descriptionVisible: false,
+          salesInfoVisible: false,
+          publishState: 'draft',
+        }),
+      ]);
+
       mockDb.select
-        .mockReturnValueOnce(createChainableResult([
-          createPerformanceRow(PHASE23_I18N_SMOKE_PERFORMANCE_ID, {
-            descriptionVisible: false,
-            salesInfoVisible: false,
-          }),
-        ]))
+        .mockReturnValueOnce(detailQuery)
         .mockReturnValueOnce(createChainableResult([]))
         .mockReturnValueOnce(createChainableResult([]))
         .mockReturnValueOnce(createChainableResult([]))
@@ -379,6 +459,9 @@ describe('PerformanceService', () => {
       expect(result.salesInfoVisible).toBe(false);
       expect(result.description).toBe('한국어 상세 소개');
       expect(result.salesInfo).toBe('한국어 판매 정보');
+      expect(
+        hasPublishStatePublishedFilter(detailQuery.where.mock.calls[0]?.[0]),
+      ).toBe(false);
     });
 
     it('keeps Korean detail canonical without automatic translation metadata', async () => {
@@ -555,6 +638,13 @@ describe('PerformanceService', () => {
       expect(Array.isArray(result)).toBe(true);
       expect(result.length).toBeLessThanOrEqual(4);
     });
+
+    it('filters public hot performance cards to published performances', async () => {
+      await service.getHotPerformances();
+
+      const [whereCondition] = mockDb._chainable.where.mock.calls[0] ?? [];
+      expect(hasPublishStatePublishedFilter(whereCondition)).toBe(true);
+    });
   });
 
   describe('getNewPerformances', () => {
@@ -567,6 +657,13 @@ describe('PerformanceService', () => {
       // - Only non-ended performances
       expect(Array.isArray(result)).toBe(true);
       expect(result.length).toBeLessThanOrEqual(4);
+    });
+
+    it('filters public new performance cards to published performances', async () => {
+      await service.getNewPerformances();
+
+      const [whereCondition] = mockDb._chainable.where.mock.calls[0] ?? [];
+      expect(hasPublishStatePublishedFilter(whereCondition)).toBe(true);
     });
   });
 });

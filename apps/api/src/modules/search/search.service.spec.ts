@@ -44,6 +44,31 @@ function createChainableResult<T>(result: T) {
   return chain;
 }
 
+function collectSqlNodes(value: unknown): unknown[] {
+  if (!value || typeof value !== 'object') return [];
+
+  const chunks = (value as { queryChunks?: unknown[] }).queryChunks;
+  return [
+    value,
+    ...(Array.isArray(chunks) ? chunks.flatMap(collectSqlNodes) : []),
+  ];
+}
+
+function hasPublishStatePublishedFilter(condition: unknown): boolean {
+  return collectSqlNodes(condition).some((node) => {
+    const param = node as {
+      value?: unknown;
+      encoder?: { name?: unknown; config?: { name?: unknown } };
+    };
+
+    return (
+      param.value === 'published' &&
+      (param.encoder?.name === 'publish_state' ||
+        param.encoder?.config?.name === 'publish_state')
+    );
+  });
+}
+
 function createMockDb() {
   const chainable = createChainableMock();
   return {
@@ -111,6 +136,20 @@ describe('SearchService', () => {
 
       // When GREEN, should verify WHERE status != 'ended'
       expect(result).toHaveProperty('data');
+    });
+
+    it('filters public search results to published performances', async () => {
+      await service.search({
+        q: 'fanmeet',
+        page: 1,
+        limit: 20,
+      });
+
+      const whereConditions = mockDb._chainable.where.mock.calls.map(
+        ([condition]) => condition,
+      );
+      expect(whereConditions).toHaveLength(2);
+      expect(whereConditions.every(hasPublishStatePublishedFilter)).toBe(true);
     });
 
     it('should return paginated SearchResponse with query field', async () => {

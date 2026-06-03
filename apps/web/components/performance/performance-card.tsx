@@ -10,7 +10,8 @@ import {
   getVisibleCopy,
   resolveVisibleCopyLocale,
 } from '@/lib/i18n/visible-copy';
-import { StatusBadge } from './status-badge';
+import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
+import { getDisplayPerformanceStatus, StatusBadge } from './status-badge';
 import type { PerformanceCardData } from '@grabit/shared';
 
 function formatDate(iso: string): string {
@@ -45,6 +46,11 @@ export function PerformanceCard({
 }: PerformanceCardProps) {
   const activeLocale = resolveVisibleCopyLocale(useLocale());
   const copy = getVisibleCopy(activeLocale);
+  const { bookingEnabled } = useRuntimeFlags();
+  const displayStatus = getDisplayPerformanceStatus(
+    performance.status,
+    bookingEnabled,
+  );
 
   return (
     <Link
@@ -73,7 +79,7 @@ export function PerformanceCard({
           </div>
         )}
         <StatusBadge
-          status={performance.status}
+          status={displayStatus}
           locale={activeLocale}
           className="absolute left-2 top-2"
         />
