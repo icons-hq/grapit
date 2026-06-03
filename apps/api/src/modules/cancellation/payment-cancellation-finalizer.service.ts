@@ -179,8 +179,6 @@ export class PaymentCancellationFinalizerService {
     const providerCancellation = sanitizeProviderCancellationPayload(
       input.providerResponse,
     );
-    let releaseEnqueued = false;
-    let releaseJobId = JOB_ENQUEUE_FAILED;
 
     await this.db.transaction(async (tx) => {
       if (input.refundId) {
@@ -288,18 +286,8 @@ export class PaymentCancellationFinalizerService {
         }
       }
 
-      releaseEnqueued = await this.scheduleCancelledSeatRelease(
-        input.context,
-        seatIdentities,
-        releaseAt,
-        preallocatedReleaseJobId,
-      );
-      releaseJobId = releaseEnqueued
-        ? preallocatedReleaseJobId
-        : JOB_ENQUEUE_FAILED;
-
       for (const seatIdentity of seatIdentities) {
-        await tx
+        const updatedSeatInventory = await tx
           .update(seatInventories)
           .set({
             status: 'held_cancelled',
@@ -308,15 +296,21 @@ export class PaymentCancellationFinalizerService {
             soldAt: null,
             heldCancelledAt: now,
             reopenHoldUntil: releaseAt,
-            reopenJobId: releaseJobId,
+            reopenJobId: preallocatedReleaseJobId,
           })
           .where(
             and(
               eq(seatInventories.showtimeId, input.context.reservation.showtimeId),
               eq(seatInventories.floorKey, seatIdentity.floorKey),
               eq(seatInventories.seatKey, seatIdentity.seatKey),
+              eq(seatInventories.status, 'sold'),
             ),
-          );
+          )
+          .returning({ id: seatInventories.id });
+
+        if (updatedSeatInventory.length !== 1) {
+          throw new BadRequestException('취소할 좌석 재고 상태가 유효하지 않습니다');
+        }
       }
 
       if (input.actor?.kind === 'admin' && seatIdentities.length > 0) {
@@ -333,9 +327,30 @@ export class PaymentCancellationFinalizerService {
       }
     });
 
+    const releaseEnqueued = await this.scheduleCancelledSeatRelease(
+      input.context,
+      seatIdentities,
+      releaseAt,
+      preallocatedReleaseJobId,
+    );
+    if (releaseEnqueued) {
+      return {
+        releaseJobId: preallocatedReleaseJobId,
+        releaseEnqueued: true,
+      };
+    }
+
+    const failedJobIdPersisted = await this.persistReleaseJobEnqueueFailure(
+      input.context,
+      seatIdentities,
+      preallocatedReleaseJobId,
+    );
+
     return {
-      releaseJobId,
-      releaseEnqueued,
+      releaseJobId: failedJobIdPersisted
+        ? JOB_ENQUEUE_FAILED
+        : preallocatedReleaseJobId,
+      releaseEnqueued: false,
     };
   }
 
@@ -393,5 +408,36 @@ export class PaymentCancellationFinalizerService {
       );
       return false;
     }
+  }
+
+  private async persistReleaseJobEnqueueFailure(
+    context: FullPaymentCancellationContext,
+    seatIdentities: SeatIdentityPayload[],
+    releaseJobId: string,
+  ): Promise<boolean> {
+    for (const seatIdentity of seatIdentities) {
+      const updatedSeatInventory = await this.db
+        .update(seatInventories)
+        .set({ reopenJobId: JOB_ENQUEUE_FAILED })
+        .where(
+          and(
+            eq(seatInventories.showtimeId, context.reservation.showtimeId),
+            eq(seatInventories.floorKey, seatIdentity.floorKey),
+            eq(seatInventories.seatKey, seatIdentity.seatKey),
+            eq(seatInventories.status, 'held_cancelled'),
+            eq(seatInventories.reopenJobId, releaseJobId),
+          ),
+        )
+        .returning({ id: seatInventories.id });
+
+      if (updatedSeatInventory.length !== 1) {
+        this.logger.error(
+          `Failed to persist release-cancelled-seat enqueue failure for reservationId=${context.reservation.id}, seatKey=${seatIdentity.seatKey}`,
+        );
+        return false;
+      }
+    }
+
+    return true;
   }
 }
