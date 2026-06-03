@@ -40,6 +40,16 @@ const SOCIAL_LOGIN_ERROR_KEYS = {
   account_conflict: 'accountConflict',
 } as const satisfies Record<string, keyof AuthLaunchCopy['socialErrors']>;
 
+type SocialProvider = 'kakao' | 'naver' | 'google';
+
+export function getSocialLoginPath(
+  provider: SocialProvider,
+  locale: AuthLaunchCopy['locale'],
+): `/${string}` {
+  const params = new URLSearchParams({ locale });
+  return `/api/v1/auth/social/${provider}?${params.toString()}`;
+}
+
 function getPostLoginDestination(
   res: AuthResponse,
   locale: AuthLaunchCopy['locale'],
@@ -130,9 +140,9 @@ export function LoginForm() {
     }
   }
 
-  function handleSocialLogin(provider: 'kakao' | 'naver' | 'google') {
+  function handleSocialLogin(provider: SocialProvider) {
     setSocialLoading(provider);
-    window.location.href = apiUrl(`/api/v1/auth/social/${provider}`);
+    window.location.href = apiUrl(getSocialLoginPath(provider, authCopy.locale));
   }
 
   return (

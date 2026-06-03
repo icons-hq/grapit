@@ -36,6 +36,10 @@ import {
   NaverAuthGuard,
   GoogleAuthGuard,
 } from './guards/social-auth.guard.js';
+import {
+  buildSocialCallbackUrl,
+  getSocialCallbackLocaleFromRequest,
+} from './social-callback-url.js';
 import type { SocialProfile } from './interfaces/social-profile.interface.js';
 import { AUTH_COOKIE_NAME } from '@grabit/shared/constants/index.js';
 import type { EmailAvailabilityResponse } from '@grabit/shared/types/auth.types.js';
@@ -325,6 +329,7 @@ export class AuthController {
 
   private async handleSocialCallback(req: Request, res: Response): Promise<void> {
     const frontendUrl = this.configService.get<string>('FRONTEND_URL', 'http://localhost:3000');
+    const callbackLocale = getSocialCallbackLocaleFromRequest(req, 'state');
 
     if (res.headersSent || !req.user) {
       if (!res.headersSent) {
@@ -344,21 +349,36 @@ export class AuthController {
         if (result.refreshToken) {
           this.setRefreshTokenCookie(res, result.refreshToken);
         }
-        res.redirect(`${frontendUrl}/auth/callback?status=authenticated`);
+        res.redirect(
+          buildSocialCallbackUrl(frontendUrl, callbackLocale, {
+            status: 'authenticated',
+          }),
+        );
       } else if (result.status === 'needs_registration') {
         this.logger.log(`Social login needs registration: provider=${profile.provider}`);
         res.redirect(
-          `${frontendUrl}/auth/callback?registrationToken=${result.registrationToken}&status=needs_registration`,
+          buildSocialCallbackUrl(frontendUrl, callbackLocale, {
+            registrationToken: result.registrationToken,
+            status: 'needs_registration',
+          }),
         );
       } else {
         this.logger.log(`Social login requires email verification: provider=${profile.provider}`);
         res.redirect(
-          `${frontendUrl}/auth/callback?status=email_verification_required&email=${encodeURIComponent(result.email)}`,
+          buildSocialCallbackUrl(frontendUrl, callbackLocale, {
+            status: 'email_verification_required',
+            email: result.email,
+          }),
         );
       }
     } catch (error) {
       this.logger.error(`Social callback failed: provider=${profile.provider}`, (error as Error).stack);
-      res.redirect(`${frontendUrl}/auth/callback?error=server_error&provider=${profile.provider}`);
+      res.redirect(
+        buildSocialCallbackUrl(frontendUrl, callbackLocale, {
+          error: 'server_error',
+          provider: profile.provider,
+        }),
+      );
     }
   }
 

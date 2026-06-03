@@ -96,6 +96,17 @@ export function SignupStep3({
     });
   }
 
+  function handlePhoneChange(value: string) {
+    const previousPhone = form.getValues('phone');
+    if (isPhoneVerified && value !== previousPhone) {
+      setIsPhoneVerified(false);
+      form.setValue('phoneVerificationToken', '', {
+        shouldValidate: true,
+      });
+    }
+    form.setValue('phone', value, { shouldValidate: true });
+  }
+
   function onSubmit(data: RegisterStep3Input) {
     if (!isPhoneVerified) return;
     onComplete(data);
@@ -264,9 +275,7 @@ export function SignupStep3({
           <div className="mt-2">
             <PhoneVerification
               phone={phoneValue}
-              onPhoneChange={(value) =>
-                form.setValue('phone', value, { shouldValidate: true })
-              }
+              onPhoneChange={handlePhoneChange}
               onVerified={handlePhoneVerified}
               isVerified={isPhoneVerified}
               error={form.formState.errors.phone?.message}

@@ -14,7 +14,7 @@ describe('SocialAuthGuards', () => {
 
     mockContext = {
       switchToHttp: vi.fn().mockReturnValue({
-        getRequest: vi.fn().mockReturnValue({}),
+        getRequest: vi.fn().mockReturnValue({ query: {} }),
         getResponse: vi.fn().mockReturnValue(mockResponse),
       }),
     };
@@ -40,6 +40,38 @@ describe('SocialAuthGuards', () => {
       expect(mockResponse.redirect).toHaveBeenCalledWith(
         'http://localhost:3000/auth/callback?error=oauth_failed&provider=kakao',
       );
+    });
+
+    it('should preserve a supported locale state on OAuth failure redirects', async () => {
+      const { KakaoAuthGuard } = await import('./social-auth.guard.js');
+      mockContext.switchToHttp = vi.fn().mockReturnValue({
+        getRequest: vi.fn().mockReturnValue({ query: { state: 'en' } }),
+        getResponse: vi.fn().mockReturnValue(mockResponse),
+      });
+
+      const guard = new KakaoAuthGuard(mockConfigService as never);
+      const error = new Error('Authentication failed');
+
+      guard.handleRequest(error, null, undefined, mockContext as ExecutionContext);
+
+      expect(mockResponse.redirect).toHaveBeenCalledWith(
+        'http://localhost:3000/en/auth/callback?error=oauth_failed&provider=kakao',
+      );
+    });
+
+    it('should pass supported locale query as OAuth state on provider start', async () => {
+      const { KakaoAuthGuard } = await import('./social-auth.guard.js');
+      mockContext.switchToHttp = vi.fn().mockReturnValue({
+        getRequest: vi.fn().mockReturnValue({ query: { locale: 'en' } }),
+        getResponse: vi.fn().mockReturnValue(mockResponse),
+      });
+
+      const guard = new KakaoAuthGuard(mockConfigService as never);
+      const options = (guard as unknown as {
+        getAuthenticateOptions(context: ExecutionContext): { state?: string };
+      }).getAuthenticateOptions(mockContext as ExecutionContext);
+
+      expect(options).toEqual({ state: 'en' });
     });
 
     it('should redirect with oauth_denied when user denied access', async () => {

@@ -592,6 +592,7 @@ describe('AuthController', () => {
         status: 'needs_registration',
         registrationToken: 'reg-token-xyz',
       });
+      mockRequest.query = { state: 'en' };
 
       await controller.socialKakaoCallback(
         mockRequest as Request,
@@ -599,8 +600,26 @@ describe('AuthController', () => {
       );
 
       const redirectUrl = mockResponse.redirect.mock.calls[0]![0] as string;
+      expect(redirectUrl).toContain('/en/auth/callback?');
       expect(redirectUrl).toContain('registrationToken=reg-token-xyz');
       expect(redirectUrl).toContain('status=needs_registration');
+    });
+
+    it('invalid social callback locale state falls back to the default callback path', async () => {
+      mockAuthService.findOrCreateSocialUser.mockResolvedValue({
+        status: 'needs_registration',
+        registrationToken: 'reg-token-xyz',
+      });
+      mockRequest.query = { state: 'fr' };
+
+      await controller.socialKakaoCallback(
+        mockRequest as Request,
+        mockResponse as unknown as Response,
+      );
+
+      const redirectUrl = mockResponse.redirect.mock.calls[0]![0] as string;
+      expect(redirectUrl).toContain('/auth/callback?');
+      expect(redirectUrl).not.toContain('/fr/auth/callback');
     });
 
     it('status=email_verification_required 시 refresh cookie 없이 pending callback으로 redirect된다', async () => {
