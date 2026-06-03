@@ -134,7 +134,7 @@ async function mockUser(page: Page, user: { role: 'user' | 'admin' }) {
         email: `${user.role}@grapit.test`,
         name: user.role === 'admin' ? '관리자' : '일반 사용자',
         role: user.role,
-        phone: '010-0000-0000',
+        phone: '+821000000000',
         gender: 'unspecified',
         country: 'KR',
         birthDate: '1990-01-01',

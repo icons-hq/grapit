@@ -153,7 +153,7 @@ async function mockAuthenticatedSession(page: Page) {
         email: 'admin@grabit.test',
         name: 'Floor Browser Tester',
         role: 'user',
-        phone: '010-1234-5678',
+        phone: '+821012345678',
         isEmailVerified: true,
         isPhoneVerified: true,
       }),

@@ -99,7 +99,7 @@ async function mockAuthenticatedSession(page: Page) {
         email: 'admin@grabit.test',
         name: 'Phase26 QR Tester',
         role: 'user',
-        phone: '010-0000-0000',
+        phone: '+821000000000',
         isEmailVerified: true,
         isPhoneVerified: true,
       }),

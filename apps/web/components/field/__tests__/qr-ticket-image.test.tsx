@@ -1,6 +1,6 @@
 import { render, screen, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { QrTicketImage } from '../qr-ticket-image';
 
 const rawToken = 'raw-token-phase27-should-not-render';
@@ -12,6 +12,96 @@ function renderQrTicketImage() {
 }
 
 describe('QrTicketImage', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  it('uses the configured HTTPS public web origin before the browser origin for check-in QR URLs', async () => {
+    vi.resetModules();
+    vi.stubEnv('NEXT_PUBLIC_QR_PUBLIC_WEB_ORIGIN', 'https://field-rehearsal.example.com');
+    vi.stubGlobal('window', {
+      location: {
+        origin: 'https://browser-origin.example.com',
+      },
+    });
+
+    const { buildQrCheckInUrl } = await import('../qr-ticket-image');
+
+    expect(buildQrCheckInUrl('token')).toBe(
+      'https://field-rehearsal.example.com/field/check-in?ticket=token',
+    );
+  });
+
+  it('ignores configured origins that include path components', async () => {
+    vi.resetModules();
+    vi.stubEnv('NEXT_PUBLIC_QR_PUBLIC_WEB_ORIGIN', 'https://field-rehearsal.example.com/check-in');
+    vi.stubGlobal('window', {
+      location: {
+        origin: 'https://browser-origin.example.com',
+      },
+    });
+
+    const { buildQrCheckInUrl } = await import('../qr-ticket-image');
+
+    expect(buildQrCheckInUrl('token')).toBe(
+      'https://browser-origin.example.com/field/check-in?ticket=token',
+    );
+  });
+
+  it.each([
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'http://192.168.1.27:3000',
+  ])('allows configured non-production HTTP rehearsal origin %s', async (origin) => {
+    vi.resetModules();
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('NEXT_PUBLIC_QR_PUBLIC_WEB_ORIGIN', origin);
+    vi.stubGlobal('window', {
+      location: {
+        origin: 'http://browser-origin.example.com',
+      },
+    });
+
+    const { buildQrCheckInUrl, QrTicketImage: RehearsalQrTicketImage } = await import(
+      '../qr-ticket-image'
+    );
+    const qrUrl = buildQrCheckInUrl('token');
+
+    expect(qrUrl).toBe(`${origin}/field/check-in?ticket=token`);
+
+    render(<RehearsalQrTicketImage value={qrUrl} />);
+
+    expect(screen.getByTestId('qr-ticket-image')).toHaveAttribute('data-qr-url', qrUrl);
+  });
+
+  it('ignores configured HTTP origins in production and keeps the render guard HTTPS-only', async () => {
+    vi.resetModules();
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('NEXT_PUBLIC_QR_PUBLIC_WEB_ORIGIN', 'http://localhost:3000');
+    vi.stubGlobal('window', {
+      location: {
+        origin: 'https://browser-origin.example.com',
+      },
+    });
+
+    const { buildQrCheckInUrl, QrTicketImage: ProductionQrTicketImage } = await import(
+      '../qr-ticket-image'
+    );
+
+    expect(buildQrCheckInUrl('token')).toBe(
+      'https://browser-origin.example.com/field/check-in?ticket=token',
+    );
+
+    render(
+      <ProductionQrTicketImage value="http://localhost:3000/field/check-in?ticket=token" />,
+    );
+
+    expect(screen.getByText('QR 티켓을 표시할 수 없습니다.')).toBeInTheDocument();
+    expect(screen.queryByTestId('qr-ticket-image')).not.toBeInTheDocument();
+  });
+
   it('renders a real stable 220px square qr image for the HTTPS Grabit check-in URL', () => {
     renderQrTicketImage();
 

@@ -89,7 +89,7 @@ async function mockAuthenticatedSession(
         email: user.role === 'admin' ? 'scanner@grabit.test' : rawBuyerEmail,
         name: user.role === 'admin' ? 'Phase27 Scanner' : 'Phase27 Buyer',
         role: user.role,
-        phone: '010-0000-2727',
+        phone: '+821000002727',
         isEmailVerified: true,
         isPhoneVerified: true,
         adminCapabilityBundle: user.adminCapabilityBundle ?? null,

@@ -23,7 +23,7 @@ export async function mockAdminAuth(page: Page) {
       email: 'admin@grapit.test',
       name: '관리자',
       role: 'admin',
-      phone: '010-0000-0000',
+      phone: '+821000000000',
       gender: 'unspecified',
       country: 'KR',
       birthDate: '1990-01-01',
