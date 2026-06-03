@@ -218,7 +218,7 @@ export class PaymentCancellationFinalizerService {
         }
       }
 
-      await tx
+      const updatedReservations = await tx
         .update(reservations)
         .set({
           status: 'CANCELLED',
@@ -226,9 +226,17 @@ export class PaymentCancellationFinalizerService {
           cancelReason: input.reason,
           updatedAt: now,
         })
-        .where(eq(reservations.id, input.context.reservation.id));
+        .where(eq(reservations.id, input.context.reservation.id))
+        .returning({ id: reservations.id });
 
-      await tx
+      if (updatedReservations.length === 0) {
+        throw new NotFoundException('예매 정보를 찾을 수 없습니다');
+      }
+      if (updatedReservations.length !== 1) {
+        throw new BadRequestException('예매 취소 업데이트 결과가 유효하지 않습니다');
+      }
+
+      const updatedPayments = await tx
         .update(payments)
         .set({
           status: 'CANCELED',
@@ -241,16 +249,29 @@ export class PaymentCancellationFinalizerService {
             ...(providerCancellation ? { providerCancellation } : {}),
           },
         })
-        .where(eq(payments.id, input.context.payment.id));
+        .where(eq(payments.id, input.context.payment.id))
+        .returning({ id: payments.id });
 
-      await tx
+      if (updatedPayments.length === 0) {
+        throw new NotFoundException('결제 정보를 찾을 수 없습니다');
+      }
+      if (updatedPayments.length !== 1) {
+        throw new BadRequestException('결제 취소 업데이트 결과가 유효하지 않습니다');
+      }
+
+      const updatedTickets = await tx
         .update(tickets)
         .set({
           status: 'revoked',
           revokedAt: now,
           updatedAt: now,
         })
-        .where(eq(tickets.reservationId, input.context.reservation.id));
+        .where(eq(tickets.reservationId, input.context.reservation.id))
+        .returning({ id: tickets.id });
+
+      if (updatedTickets.length < seatIdentities.length) {
+        throw new BadRequestException('취소할 티켓 수가 일치하지 않습니다');
+      }
 
       if (seatIdentities.length > 0) {
         const updatedTicketItems = await tx

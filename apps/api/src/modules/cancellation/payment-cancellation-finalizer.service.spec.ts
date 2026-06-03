@@ -83,6 +83,9 @@ function objectGraphContains(root: unknown, needle: unknown): boolean {
 
 function createTransactionMock(options: {
   refundReturning?: Array<{ id: string }>;
+  reservationReturning?: Array<{ id: string }>;
+  paymentReturning?: Array<{ id: string }>;
+  ticketReturning?: Array<{ id: string }>;
   ticketItemReturning?: Array<{ id: string }>;
   seatInventoryReturning?: Array<Array<{ id: string }>>;
   postCommitSeatInventoryReturning?: Array<Array<{ id: string }>>;
@@ -91,6 +94,12 @@ function createTransactionMock(options: {
   const postCommitUpdateCalls: UpdateCall[] = [];
   const insertCalls: Array<{ table: unknown; values: unknown }> = [];
   const refundReturning = options.refundReturning ?? [{ id: 'refund-1' }];
+  const reservationReturning = options.reservationReturning ?? [{ id: 'reservation-1' }];
+  const paymentReturning = options.paymentReturning ?? [{ id: 'payment-1' }];
+  const ticketReturning = options.ticketReturning ?? [
+    { id: 'ticket-1' },
+    { id: 'ticket-2' },
+  ];
   const ticketItemReturning = options.ticketItemReturning ?? [
     { id: 'ticket-item-1' },
     { id: 'ticket-item-2' },
@@ -120,6 +129,15 @@ function createTransactionMock(options: {
                 call.returningSelection = selection;
                 if (table === refunds) {
                   return Promise.resolve(refundReturning);
+                }
+                if (table === reservations) {
+                  return Promise.resolve(reservationReturning);
+                }
+                if (table === payments) {
+                  return Promise.resolve(paymentReturning);
+                }
+                if (table === tickets) {
+                  return Promise.resolve(ticketReturning);
                 }
                 if (table === ticketItems) {
                   return Promise.resolve(ticketItemReturning);
@@ -604,6 +622,75 @@ describe('PaymentCancellationFinalizerService', () => {
     expect(transaction.updateCalls.some((call) => call.table === tickets)).toBe(false);
     expect(transaction.updateCalls.some((call) => call.table === ticketItems)).toBe(false);
     expect(transaction.updateCalls.some((call) => call.table === seatInventories)).toBe(false);
+  });
+
+  it('aborts without enqueueing when the reservation update returns no row', async () => {
+    const pgBoss = {
+      isAvailable: true,
+      send: vi.fn((_name: unknown, _payload: unknown, options: { id: string }) =>
+        Promise.resolve(options.id),
+      ),
+    };
+    const { service, transaction, transactionCommitted } = createService(pgBoss, {
+      reservationReturning: [],
+    });
+
+    await expect(service.finalizeFullPaymentCancellation(baseInput())).rejects.toThrow();
+
+    expect(transaction.updateCalls.find((call) => call.table === reservations)
+      ?.returningSelection).toEqual({ id: reservations.id });
+    expect(transaction.updateCalls.some((call) => call.table === payments)).toBe(false);
+    expect(transaction.updateCalls.some((call) => call.table === tickets)).toBe(false);
+    expect(transaction.updateCalls.some((call) => call.table === ticketItems)).toBe(false);
+    expect(transaction.updateCalls.some((call) => call.table === seatInventories)).toBe(false);
+    expect(transactionCommitted).not.toHaveBeenCalled();
+    expect(pgBoss.send).not.toHaveBeenCalled();
+    expect(transaction.postCommitUpdateCalls).toHaveLength(0);
+  });
+
+  it('aborts without enqueueing when the payment update returns no row', async () => {
+    const pgBoss = {
+      isAvailable: true,
+      send: vi.fn((_name: unknown, _payload: unknown, options: { id: string }) =>
+        Promise.resolve(options.id),
+      ),
+    };
+    const { service, transaction, transactionCommitted } = createService(pgBoss, {
+      paymentReturning: [],
+    });
+
+    await expect(service.finalizeFullPaymentCancellation(baseInput())).rejects.toThrow();
+
+    expect(transaction.updateCalls.find((call) => call.table === payments)
+      ?.returningSelection).toEqual({ id: payments.id });
+    expect(transaction.updateCalls.some((call) => call.table === tickets)).toBe(false);
+    expect(transaction.updateCalls.some((call) => call.table === ticketItems)).toBe(false);
+    expect(transaction.updateCalls.some((call) => call.table === seatInventories)).toBe(false);
+    expect(transactionCommitted).not.toHaveBeenCalled();
+    expect(pgBoss.send).not.toHaveBeenCalled();
+    expect(transaction.postCommitUpdateCalls).toHaveLength(0);
+  });
+
+  it('aborts without enqueueing when revoked tickets are fewer than expected seats', async () => {
+    const pgBoss = {
+      isAvailable: true,
+      send: vi.fn((_name: unknown, _payload: unknown, options: { id: string }) =>
+        Promise.resolve(options.id),
+      ),
+    };
+    const { service, transaction, transactionCommitted } = createService(pgBoss, {
+      ticketReturning: [{ id: 'ticket-1' }],
+    });
+
+    await expect(service.finalizeFullPaymentCancellation(baseInput())).rejects.toThrow();
+
+    expect(transaction.updateCalls.find((call) => call.table === tickets)
+      ?.returningSelection).toEqual({ id: tickets.id });
+    expect(transaction.updateCalls.some((call) => call.table === ticketItems)).toBe(false);
+    expect(transaction.updateCalls.some((call) => call.table === seatInventories)).toBe(false);
+    expect(transactionCommitted).not.toHaveBeenCalled();
+    expect(pgBoss.send).not.toHaveBeenCalled();
+    expect(transaction.postCommitUpdateCalls).toHaveLength(0);
   });
 
   it('scopes ticket item cancellation to expected active or pending seat keys only', async () => {
