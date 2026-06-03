@@ -18,7 +18,10 @@ function createMockPaymentService() {
   return {
     recordWebhookEvent: vi.fn<PaymentService['recordWebhookEvent']>(),
     findAsyncPaymentProgress: vi.fn<PaymentService['findAsyncPaymentProgress']>(),
+    findPaymentCancelSnapshot: vi.fn(),
+    findPaymentCancelSnapshotByCancelRequestId: vi.fn(),
     upsertAsyncPaymentProgress: vi.fn<PaymentService['upsertAsyncPaymentProgress']>(),
+    finalizeConfirmedCancelWebhook: vi.fn().mockResolvedValue('finalized'),
     markWebhookEventProcessed: vi.fn<PaymentService['markWebhookEventProcessed']>(),
     markWebhookEventFailed: vi.fn<PaymentService['markWebhookEventFailed']>(),
   };
@@ -56,15 +59,8 @@ describe('PaymentWebhookController', () => {
     eventType: 'CANCEL_STATUS_CHANGED',
     createdAt: '2026-05-08T07:02:00.000Z',
     data: {
-      paymentKey: 'pay_async_1',
-      orderId: 'GRP-ASYNC-1',
-      status: 'CANCELED',
-      method: 'FOREIGN_EASY_PAY',
-      provider: 'ALIPAY_PLUS',
-      currency: 'USD',
-      totalAmount: 150000,
-      canceledAt: '2026-05-08T07:02:05.000Z',
-      cancelReason: 'buyer changed mind',
+      cancelStatus: 'DONE',
+      cancelRequestId: 'cancel_refund-1',
     },
   };
 
@@ -72,6 +68,15 @@ describe('PaymentWebhookController', () => {
     paymentService = createMockPaymentService();
     tossClient = createMockTossClient();
     tossClient.queryPayment.mockResolvedValue(makeQueriedPayment());
+    paymentService.findPaymentCancelSnapshotByCancelRequestId.mockResolvedValue({
+      id: 'payment-alipay-1',
+      paymentKey: 'pay_async_1',
+      method: 'FOREIGN_EASY_PAY',
+      provider: 'ALIPAY',
+      currency: 'USD',
+      amount: 150000,
+      providerMetadata: null,
+    });
     controller = new PaymentWebhookController(
       paymentService as unknown as PaymentService,
       tossClient as unknown as TossPaymentsClient,
@@ -379,6 +384,8 @@ describe('PaymentWebhookController', () => {
             cancelAmount: 150000,
             cancelReason: 'buyer changed mind',
             canceledAt: '2026-05-08T07:02:05.000Z',
+            cancelStatus: 'DONE',
+            cancelRequestId: 'cancel_refund-1',
           },
         ],
       }),
@@ -392,7 +399,16 @@ describe('PaymentWebhookController', () => {
       processingResultCode: 'CANCEL_STATUS_CHANGED_APPLIED',
     });
     expect(paymentService.upsertAsyncPaymentProgress).toHaveBeenCalledWith(
-      cancelStatusChangedEvent,
+      expect.objectContaining({
+        eventType: 'CANCEL_STATUS_CHANGED',
+        data: expect.objectContaining({
+          paymentKey: 'pay_async_1',
+          orderId: 'GRP-ASYNC-1',
+          status: 'CANCELED',
+          cancelStatus: 'DONE',
+          cancelRequestId: 'cancel_refund-1',
+        }),
+      }),
       'CANCELED',
       'cancelled_webhook',
     );
@@ -401,6 +417,273 @@ describe('PaymentWebhookController', () => {
       'CANCEL_STATUS_CHANGED_APPLIED',
       undefined,
     );
+  });
+
+  it('finalizes confirmed reservation cancellation through PaymentService instead of payment-only progress', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(
+      makeLedgerResult({
+        eventId: 'evt-cancel-1',
+      }),
+    );
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(
+      makeProgress({
+        reservationStatus: 'CONFIRMED',
+        paymentStatus: 'CANCELED',
+      }),
+    );
+    tossClient.queryPayment.mockResolvedValueOnce(
+      makeQueriedPayment({
+        status: 'CANCELED',
+        cancels: [
+          {
+            cancelAmount: 150000,
+            cancelReason: 'buyer changed mind',
+            canceledAt: '2026-05-08T07:02:05.000Z',
+            cancelStatus: 'DONE',
+            cancelRequestId: 'cancel_refund-1',
+          },
+        ],
+      }),
+    );
+
+    const result = await controller.handleTossWebhook(cancelStatusChangedEvent);
+
+    expect(result.processingResultCode).toBe('CANCEL_STATUS_CHANGED_FINALIZED');
+    expect(paymentService.finalizeConfirmedCancelWebhook).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'CANCEL_STATUS_CHANGED',
+        data: expect.objectContaining({
+          status: 'CANCELED',
+          cancelStatus: 'DONE',
+          cancelRequestId: 'cancel_refund-1',
+          canceledAt: '2026-05-08T07:02:05.000Z',
+          cancelReason: 'buyer changed mind',
+        }),
+      }),
+      expect.objectContaining({ status: 'CANCELED' }),
+    );
+    expect(paymentService.upsertAsyncPaymentProgress).not.toHaveBeenCalled();
+    expect(paymentService.markWebhookEventProcessed).toHaveBeenCalledWith(
+      'evt-cancel-1',
+      'CANCEL_STATUS_CHANGED_FINALIZED',
+      undefined,
+    );
+  });
+
+  it('does not finalize a confirmed reservation for an IN_PROGRESS cancel webhook', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(
+      makeLedgerResult({
+        eventId: 'evt-cancel-in-progress-1',
+      }),
+    );
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(
+      makeProgress({
+        reservationStatus: 'CONFIRMED',
+        paymentStatus: 'DONE',
+      }),
+    );
+    tossClient.queryPayment.mockResolvedValueOnce(
+      makeQueriedPayment({
+        status: 'DONE',
+        cancels: [
+          {
+            cancelAmount: 150000,
+            cancelReason: 'buyer changed mind',
+            canceledAt: '2026-05-08T07:02:05.000Z',
+            cancelStatus: 'IN_PROGRESS',
+            cancelRequestId: 'cancel_refund-1',
+          },
+        ],
+      }),
+    );
+
+    const result = await controller.handleTossWebhook({
+      eventId: 'evt-cancel-in-progress-1',
+      eventType: 'CANCEL_STATUS_CHANGED',
+      data: {
+        cancelStatus: 'IN_PROGRESS',
+        cancelRequestId: 'cancel_refund-1',
+      },
+    });
+
+    expect(result.processingResultCode).toBe('CANCEL_STATUS_CHANGED_APPLIED');
+    expect(paymentService.finalizeConfirmedCancelWebhook).not.toHaveBeenCalled();
+    expect(paymentService.upsertAsyncPaymentProgress).not.toHaveBeenCalled();
+  });
+
+  it('uses default secret scope for PayPal cancel webhook from persisted payment facts', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(
+      makeLedgerResult({
+        eventId: 'evt-paypal-cancel-1',
+      }),
+    );
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(
+      makeProgress({
+        reservationStatus: 'CONFIRMED',
+        paymentStatus: 'DONE',
+      }),
+    );
+    paymentService.findPaymentCancelSnapshotByCancelRequestId.mockResolvedValueOnce({
+      id: 'payment-paypal-1',
+      paymentKey: 'pay_paypal_1',
+      method: 'FOREIGN_EASY_PAY',
+      provider: 'PAYPAL',
+      currency: 'KRW',
+      amount: 150000,
+      providerMetadata: { requestedProvider: 'PAYPAL' },
+      providerChargeCurrency: 'USD',
+      providerChargeAmountMinor: 10800,
+    });
+    paymentService.findPaymentCancelSnapshot.mockResolvedValueOnce({
+      id: 'payment-paypal-1',
+      paymentKey: 'pay_paypal_1',
+      method: 'FOREIGN_EASY_PAY',
+      provider: 'PAYPAL',
+      currency: 'KRW',
+      amount: 150000,
+      providerMetadata: { requestedProvider: 'PAYPAL' },
+      providerChargeCurrency: 'USD',
+      providerChargeAmountMinor: 10800,
+    });
+    tossClient.queryPayment.mockResolvedValueOnce(
+      makeQueriedPayment({
+        paymentKey: 'pay_paypal_1',
+        orderId: 'GRP-PAYPAL-1',
+        method: 'FOREIGN_EASY_PAY',
+        status: 'CANCELED',
+        cancels: [
+          {
+            cancelAmount: 150000,
+            cancelReason: 'buyer changed mind',
+            canceledAt: '2026-05-08T07:02:05.000Z',
+            cancelStatus: 'DONE',
+            cancelRequestId: 'cancel_paypal-1',
+          },
+        ],
+      }),
+    );
+
+    await controller.handleTossWebhook({
+      eventId: 'evt-paypal-cancel-1',
+      eventType: 'CANCEL_STATUS_CHANGED',
+      data: {
+        cancelStatus: 'DONE',
+        cancelRequestId: 'cancel_paypal-1',
+      },
+    });
+
+    expect(paymentService.findPaymentCancelSnapshotByCancelRequestId).toHaveBeenCalledWith(
+      'cancel_paypal-1',
+    );
+    expect(tossClient.queryPayment).toHaveBeenCalledWith('pay_paypal_1', {
+      secretKeyScope: 'default',
+    });
+  });
+
+  it('uses overseas-card secret scope for cancel webhook from persisted provider metadata', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(
+      makeLedgerResult({
+        eventId: 'evt-overseas-card-cancel-1',
+      }),
+    );
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(
+      makeProgress({
+        reservationStatus: 'CONFIRMED',
+        paymentStatus: 'DONE',
+      }),
+    );
+    paymentService.findPaymentCancelSnapshotByCancelRequestId.mockResolvedValueOnce({
+      id: 'payment-overseas-card-1',
+      paymentKey: 'pay_overseas_card_1',
+      method: 'CARD',
+      provider: 'CARD',
+      currency: 'USD',
+      amount: 150000,
+      providerMetadata: { requestedProvider: 'OVERSEAS_CARD' },
+      providerChargeCurrency: 'USD',
+      providerChargeAmountMinor: 10800,
+    });
+    paymentService.findPaymentCancelSnapshot.mockResolvedValueOnce({
+      id: 'payment-overseas-card-1',
+      paymentKey: 'pay_overseas_card_1',
+      method: 'CARD',
+      provider: 'CARD',
+      currency: 'USD',
+      amount: 150000,
+      providerMetadata: { requestedProvider: 'OVERSEAS_CARD' },
+      providerChargeCurrency: 'USD',
+      providerChargeAmountMinor: 10800,
+    });
+    tossClient.queryPayment.mockResolvedValueOnce(
+      makeQueriedPayment({
+        paymentKey: 'pay_overseas_card_1',
+        orderId: 'GRP-OVERSEAS-CARD-1',
+        method: 'CARD',
+        status: 'CANCELED',
+        cancels: [
+          {
+            cancelAmount: 150000,
+            cancelReason: 'buyer changed mind',
+            canceledAt: '2026-05-08T07:02:05.000Z',
+            cancelStatus: 'DONE',
+            cancelRequestId: 'cancel_overseas-card-1',
+          },
+        ],
+      }),
+    );
+
+    await controller.handleTossWebhook({
+      eventId: 'evt-overseas-card-cancel-1',
+      eventType: 'CANCEL_STATUS_CHANGED',
+      data: {
+        cancelStatus: 'DONE',
+        cancelRequestId: 'cancel_overseas-card-1',
+      },
+    });
+
+    expect(tossClient.queryPayment).toHaveBeenCalledWith('pay_overseas_card_1', {
+      secretKeyScope: 'overseas-card',
+    });
+  });
+
+  it('keeps pending-payment cancel webhook behavior on the payment progress path', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(
+      makeLedgerResult({
+        eventId: 'evt-cancel-1',
+      }),
+    );
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(
+      makeProgress({
+        reservationStatus: 'PENDING_PAYMENT',
+        paymentStatus: 'IN_PROGRESS',
+      }),
+    );
+    tossClient.queryPayment.mockResolvedValueOnce(
+      makeQueriedPayment({
+        status: 'CANCELED',
+        cancels: [
+          {
+            cancelAmount: 150000,
+            cancelReason: 'buyer changed mind',
+            canceledAt: '2026-05-08T07:02:05.000Z',
+            cancelStatus: 'DONE',
+            cancelRequestId: 'cancel_refund-1',
+          },
+        ],
+      }),
+    );
+
+    await controller.handleTossWebhook(cancelStatusChangedEvent);
+
+    expect(paymentService.upsertAsyncPaymentProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'CANCEL_STATUS_CHANGED',
+        data: expect.objectContaining({ status: 'CANCELED' }),
+      }),
+      'CANCELED',
+      'cancelled_webhook',
+    );
+    expect(paymentService.finalizeConfirmedCancelWebhook).not.toHaveBeenCalled();
   });
 
   it('fails closed when a cancel webhook disagrees with queried Toss state', async () => {

@@ -5,8 +5,7 @@ import {
   OnModuleInit,
   Optional,
 } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
   bookingPolicies,
@@ -14,32 +13,25 @@ import {
   refunds,
   reservationSeats,
   reservations,
-  seatInventories,
   showtimes,
-  tickets,
 } from '../../database/schema/index.js';
 import {
   calculateExpectedRefundDepositAt,
-  DEFAULT_CANCELLED_SEAT_HOLD_MAX_MINUTES,
-  DEFAULT_CANCELLED_SEAT_HOLD_MINUTES,
   getRefundErrorCode,
   getRefundErrorMessage,
   isTossCancelCompleted,
   isTransientRefundCancelFailure,
-  normalizeReservationSeatIdentity,
   REFUND_CANCEL_MAX_RETRIES,
-  SEAT_RELEASE_ENQUEUE_FAILED_JOB_ID,
 } from '../refund/refund.service.js';
 import { TossPaymentsClient, type TossPaymentResponse } from '../payment/toss-payments.client.js';
+import { PaymentCancellationFinalizerService } from '../cancellation/payment-cancellation-finalizer.service.js';
+import { buildFullPaymentCancelRequest } from '../payment/payment-cancel-policy.js';
 import {
   PG_BOSS,
   PG_BOSS_JOB_NAMES,
   type PgBossContract,
   type RefundCancelRetryJobPayload,
-  type ReleaseCancelledSeatJobPayload,
-  type SeatIdentityPayload,
 } from './pgboss.provider.js';
-import { pickCancelledSeatReleaseDelaySeconds } from './cancelled-seat-release.worker.js';
 
 type RefundRecord = typeof refunds.$inferSelect;
 type ReservationRecord = typeof reservations.$inferSelect;
@@ -72,6 +64,7 @@ export class RefundCancelRetryWorker implements OnModuleInit {
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly tossPaymentsClient: TossPaymentsClient,
+    private readonly paymentCancellationFinalizer: PaymentCancellationFinalizerService,
     @Optional() @Inject(PG_BOSS) private readonly pgBoss?: PgBossContract,
   ) {}
 
@@ -100,7 +93,8 @@ export class RefundCancelRetryWorker implements OnModuleInit {
       | 'retry_schedule_failed'
       | 'failed'
       | 'completed'
-      | 'processing';
+      | 'processing'
+      | 'status_wait';
   }> {
     const context = await this.loadRetryContext(payload.refundId);
     if (!context) {
@@ -111,24 +105,65 @@ export class RefundCancelRetryWorker implements OnModuleInit {
       return { status: 'already_terminal' };
     }
 
-    if (context.refund.retryCount >= REFUND_CANCEL_MAX_RETRIES) {
-      const reason = this.resolveCancelReason(context.refund);
-      await this.markRetryExhausted(context.refund.id, reason);
-      return { status: 'failed' };
-    }
-
     const reason = this.resolveCancelReason(context.refund);
-    const nextRetryCount = context.refund.retryCount + 1;
+    const retryPolicyExhausted = context.refund.retryCount >= REFUND_CANCEL_MAX_RETRIES;
+    const nextRetryCount = Math.min(
+      context.refund.retryCount + 1,
+      REFUND_CANCEL_MAX_RETRIES,
+    );
+    const command = buildFullPaymentCancelRequest({
+      payment: context.payment,
+      reason,
+      idempotencyKey: this.buildRefundCancelIdempotencyKey(context.refund.id),
+      cancelRequestIdSeed: context.refund.id,
+    });
 
     try {
+      const queried = await this.tossPaymentsClient.queryPayment(command.paymentKey, {
+        secretKeyScope: command.options.secretKeyScope,
+      });
+
+      if (isTossCancelCompleted(queried, command.options.cancelRequestId)) {
+        await this.finalizeFullPaymentCancellation(context, queried, reason);
+        return { status: 'completed' };
+      }
+
+      if (this.hasMatchingInProgressCancel(queried, command.options.cancelRequestId)) {
+        return await this.keepWaitingForMatchingAsyncCancel(
+          context,
+          queried,
+          reason,
+          nextRetryCount,
+          command.options.cancelRequestId,
+          retryPolicyExhausted,
+        );
+      }
+
+      if (retryPolicyExhausted) {
+        await this.markRetryExhausted(context.refund.id, reason);
+        return { status: 'failed' };
+      }
+
       const response = await this.tossPaymentsClient.cancelPayment(
-        context.payment.paymentKey,
-        reason,
+        command.paymentKey,
+        command.reason,
+        command.options,
       );
 
-      if (isTossCancelCompleted(response)) {
-        await this.finalizeSuccessfulRetry(context, response, reason);
+      if (isTossCancelCompleted(response, command.options.cancelRequestId)) {
+        await this.finalizeFullPaymentCancellation(context, response, reason);
         return { status: 'completed' };
+      }
+
+      if (this.hasMatchingInProgressCancel(response, command.options.cancelRequestId)) {
+        return await this.keepWaitingForMatchingAsyncCancel(
+          context,
+          response,
+          reason,
+          nextRetryCount,
+          command.options.cancelRequestId,
+          nextRetryCount >= REFUND_CANCEL_MAX_RETRIES,
+        );
       }
 
       await this.markRefundProcessing(context.refund.id, response, reason, nextRetryCount);
@@ -184,6 +219,86 @@ export class RefundCancelRetryWorker implements OnModuleInit {
     return typeof metadata?.cancelReason === 'string'
       ? metadata.cancelReason
       : refund.failureReason ?? '사용자 환불 요청';
+  }
+
+  protected buildRefundCancelIdempotencyKey(refundId: string): string {
+    return `refund-cancel:${refundId}`;
+  }
+
+  protected hasMatchingInProgressCancel(
+    response: TossPaymentResponse,
+    cancelRequestId: string | undefined,
+  ): boolean {
+    if (!cancelRequestId) {
+      return false;
+    }
+
+    return response.cancels?.some((cancel) =>
+      cancel.cancelRequestId === cancelRequestId && cancel.cancelStatus === 'IN_PROGRESS'
+    ) ?? false;
+  }
+
+  protected async keepWaitingForMatchingAsyncCancel(
+    context: RetryContext,
+    response: TossPaymentResponse,
+    reason: string,
+    retryCount: number,
+    cancelRequestId: string | undefined,
+    retryPolicyExhausted: boolean,
+  ): Promise<{ status: 'processing' | 'retry_schedule_failed' | 'status_wait' }> {
+    await this.markRefundProcessing(
+      context.refund.id,
+      response,
+      reason,
+      retryCount,
+    );
+
+    const jobId = await this.scheduleRetry(context.refund.id, retryCount);
+    await this.recordRetryScheduleState(
+      context.refund.id,
+      {
+        cancelReason: reason,
+        paymentStatus: response.status,
+        cancelRequestId,
+        ...(retryPolicyExhausted && !jobId ? { manualReviewRequired: true } : {}),
+      },
+      retryCount,
+      jobId,
+    );
+
+    if (retryPolicyExhausted) {
+      return { status: jobId ? 'processing' : 'status_wait' };
+    }
+
+    return { status: jobId ? 'processing' : 'retry_schedule_failed' };
+  }
+
+  protected async finalizeFullPaymentCancellation(
+    context: RetryContext,
+    response: TossPaymentResponse,
+    reason: string,
+  ): Promise<void> {
+    await this.paymentCancellationFinalizer.finalizeFullPaymentCancellation({
+      source: 'refund_retry',
+      refundId: context.refund.id,
+      context: {
+        reservation: {
+          id: context.reservation.id,
+          showtimeId: context.reservation.showtimeId,
+          reservationNumber: context.reservation.reservationNumber,
+        },
+        payment: {
+          id: context.payment.id,
+          paymentKey: context.payment.paymentKey,
+          providerMetadata: context.payment.providerMetadata,
+        },
+        bookingPolicy: context.bookingPolicy,
+        seats: context.seats.map((seat) => ({ seatId: seat.seatId })),
+      },
+      reason,
+      providerResponse: response as unknown as Record<string, unknown>,
+      actor: { kind: 'system' },
+    });
   }
 
   protected async loadRetryContext(refundId: string): Promise<RetryContext | null> {
@@ -342,159 +457,6 @@ export class RefundCancelRetryWorker implements OnModuleInit {
         updatedAt: new Date(),
       })
       .where(eq(refunds.id, refundId));
-  }
-
-  protected resolveHoldWindowMinutes(bookingPolicy: BookingPolicyRecord | null) {
-    return {
-      min:
-        bookingPolicy?.cancelledSeatHoldMinMinutes ??
-        DEFAULT_CANCELLED_SEAT_HOLD_MINUTES,
-      max:
-        bookingPolicy?.cancelledSeatHoldMaxMinutes ??
-        DEFAULT_CANCELLED_SEAT_HOLD_MAX_MINUTES,
-    };
-  }
-
-  protected async finalizeSuccessfulRetry(
-    context: RetryContext,
-    response: TossPaymentResponse,
-    reason: string,
-  ): Promise<void> {
-    const now = new Date();
-    const holdWindow = this.resolveHoldWindowMinutes(context.bookingPolicy);
-    const delaySeconds = pickCancelledSeatReleaseDelaySeconds(
-      holdWindow.min,
-      holdWindow.max,
-    );
-    const releaseAt = new Date(now.getTime() + delaySeconds * 1000);
-    const seatIdentities = context.seats.map((seat) =>
-      normalizeReservationSeatIdentity(seat.seatId),
-    );
-    const releaseJobId = randomUUID();
-    const releaseEnqueued = await this.scheduleReleaseJob(
-      context,
-      seatIdentities,
-      releaseAt,
-      releaseJobId,
-    );
-    const persistedReleaseJobId = releaseEnqueued
-      ? releaseJobId
-      : SEAT_RELEASE_ENQUEUE_FAILED_JOB_ID;
-
-    await this.db.transaction(async (tx) => {
-      await tx
-        .update(refunds)
-        .set({
-          status: 'completed',
-          sentToPgAt: now,
-          completedAt: now,
-          retryCount: context.refund.retryCount + 1,
-          resultCode: response.status,
-          resultMessage: 'PG cancel completed after retry',
-          failureReason: null,
-          expectedDepositAt: calculateExpectedRefundDepositAt(now),
-          customerServiceCtaVisible: false,
-          providerMetadata: {
-            cancelReason: reason,
-            paymentStatus: response.status,
-          },
-          updatedAt: now,
-        })
-        .where(eq(refunds.id, context.refund.id));
-
-      await tx
-        .update(reservations)
-        .set({
-          status: 'CANCELLED',
-          cancelledAt: now,
-          cancelReason: reason,
-          updatedAt: now,
-        })
-        .where(eq(reservations.id, context.reservation.id));
-
-      await tx
-        .update(payments)
-        .set({
-          status: 'CANCELED',
-          cancelledAt: now,
-          cancelReason: reason,
-          providerMetadata: {
-            ...(context.payment.providerMetadata as Record<string, unknown> | null),
-            refundCompletedAt: now.toISOString(),
-          },
-        })
-        .where(eq(payments.id, context.payment.id));
-
-      await tx
-        .update(tickets)
-        .set({
-          status: 'revoked',
-          revokedAt: now,
-          updatedAt: now,
-        })
-        .where(eq(tickets.reservationId, context.reservation.id));
-
-      for (const seatIdentity of seatIdentities) {
-        await tx
-          .update(seatInventories)
-          .set({
-            status: 'held_cancelled',
-            lockedBy: null,
-            lockedUntil: null,
-            heldCancelledAt: now,
-            reopenHoldUntil: releaseAt,
-            reopenJobId: persistedReleaseJobId,
-            soldAt: null,
-          })
-          .where(
-            and(
-              eq(seatInventories.showtimeId, context.reservation.showtimeId),
-              eq(seatInventories.floorKey, seatIdentity.floorKey),
-              eq(seatInventories.seatKey, seatIdentity.seatKey),
-            ),
-          );
-      }
-    });
-
-  }
-
-  protected async scheduleReleaseJob(
-    context: RetryContext,
-    seatIdentities: SeatIdentityPayload[],
-    releaseAt: Date,
-    releaseJobId: string,
-  ): Promise<boolean> {
-    if (!this.pgBoss?.isAvailable) {
-      this.logger.warn(
-        `pg-boss unavailable. delayed seat release skipped for refundId=${context.refund.id}`,
-      );
-      return false;
-    }
-
-    const payload: ReleaseCancelledSeatJobPayload = {
-      reservationId: context.reservation.id,
-      showtimeId: context.reservation.showtimeId,
-      releaseAt: releaseAt.toISOString(),
-      seatIdentities,
-    };
-
-    try {
-      const jobId = await this.pgBoss.send(PG_BOSS_JOB_NAMES.releaseCancelledSeat, payload, {
-        id: releaseJobId,
-        startAfter: releaseAt,
-        singletonKey: context.reservation.id,
-        retryLimit: 3,
-        retryBackoff: true,
-        retryDelay: 30,
-      });
-      return jobId === releaseJobId;
-    } catch (error) {
-      this.logger.error(
-        `pg-boss release-cancelled-seat enqueue failed for refundId=${context.refund.id}`,
-        error instanceof Error ? error.stack : String(error),
-      );
-      return false;
-    }
   }
 
   protected async scheduleRetry(refundId: string, retryCount: number): Promise<string | null> {

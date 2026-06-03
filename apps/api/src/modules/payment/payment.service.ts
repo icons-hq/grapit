@@ -7,14 +7,17 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import { and, eq, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
+  bookingPolicies,
   paymentWebhookEvents,
   payments,
+  refunds,
   reservationSeats,
   reservations,
   seatInventories,
+  showtimes,
   ticketItems,
 } from '../../database/schema/index.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
@@ -26,8 +29,13 @@ import type {
   ReservationStatus,
   PaymentStatus,
 } from '@grabit/shared';
-import { TossPaymentsClient } from './toss-payments.client.js';
+import { TossPaymentsClient, type TossPaymentResponse } from './toss-payments.client.js';
 import { ProviderChargeQuoteService } from './provider-charge-quote.service.js';
+import { PaymentCancellationFinalizerService } from '../cancellation/payment-cancellation-finalizer.service.js';
+import {
+  buildFullPaymentCancelRequest,
+  type PaymentCancelPaymentSnapshot,
+} from './payment-cancel-policy.js';
 
 type TossWebhookProvider = PaymentProvider | 'ALIPAY';
 type ProviderChargeQuote = {
@@ -93,9 +101,9 @@ export interface TossWebhookRequestBody {
   eventType: TossWebhookEventType;
   createdAt?: string;
   data: {
-    paymentKey: string;
-    orderId: string;
-    status: string;
+    paymentKey?: string;
+    orderId?: string;
+    status?: string;
     method?: string;
     provider?: TossWebhookProvider;
     currency?: string;
@@ -103,6 +111,8 @@ export interface TossWebhookRequestBody {
     approvedAt?: string;
     canceledAt?: string;
     cancelReason?: string;
+    cancelStatus?: string;
+    cancelRequestId?: string;
   };
 }
 
@@ -135,8 +145,12 @@ type WebhookPaymentSnapshot = {
   reservationId: string;
   paymentKey: string;
   tossOrderId: string;
+  method?: string;
+  provider?: string;
+  currency?: string;
   amount: number;
   status: PaymentStatus;
+  providerMetadata?: unknown;
   providerChargeAmountMinor?: number | null;
 };
 
@@ -159,6 +173,8 @@ export class PaymentService {
     @Optional() private readonly qrTicketService?: QrTicketService,
     @Optional() private readonly tossClient?: TossPaymentsClient,
     @Optional() private readonly providerChargeQuoteService?: ProviderChargeQuoteService,
+    @Optional()
+    private readonly paymentCancellationFinalizer?: PaymentCancellationFinalizerService,
   ) {}
 
   async prepareTossPaymentBranch(input: TossPaymentBranchRequest): Promise<TossPaymentBranch> {
@@ -362,8 +378,8 @@ export class PaymentService {
       .values({
         eventId: payload.eventId,
         eventType: payload.eventType,
-        paymentKey: payload.data.paymentKey,
-        tossOrderId: payload.data.orderId,
+        paymentKey: payload.data.paymentKey ?? null,
+        tossOrderId: payload.data.orderId ?? null,
         payload,
         receivedAt: new Date(),
       })
@@ -485,11 +501,149 @@ export class PaymentService {
     };
   }
 
+  async findPaymentCancelSnapshot(
+    orderId: string,
+    paymentKey: string,
+  ): Promise<PaymentCancelPaymentSnapshot | null> {
+    const [payment] = await this.db
+      .select({
+        id: payments.id,
+        paymentKey: payments.paymentKey,
+        method: payments.method,
+        provider: payments.provider,
+        currency: payments.currency,
+        amount: payments.amount,
+        providerMetadata: payments.providerMetadata,
+        providerChargeCurrency: payments.providerChargeCurrency,
+        providerChargeAmountMinor: payments.providerChargeAmountMinor,
+      })
+      .from(payments)
+      .where(
+        or(
+          eq(payments.tossOrderId, orderId),
+          eq(payments.paymentKey, paymentKey),
+        ),
+      );
+
+    return payment ?? null;
+  }
+
+  async findPaymentCancelSnapshotByCancelRequestId(
+    cancelRequestId: string,
+  ): Promise<PaymentCancelPaymentSnapshot | null> {
+    const localId = this.parseGeneratedCancelRequestId(cancelRequestId);
+    if (!localId) {
+      return null;
+    }
+
+    return await this.findPaymentCancelSnapshotByRefundId(localId)
+      ?? await this.findPaymentCancelSnapshotByTicketItemId(localId)
+      ?? await this.findPaymentCancelSnapshotByPaymentId(localId)
+      ?? await this.findPaymentCancelSnapshotByReservationId(localId);
+  }
+
+  private async findPaymentCancelSnapshotByRefundId(
+    refundId: string,
+  ): Promise<PaymentCancelPaymentSnapshot | null> {
+    const [payment] = await this.db
+      .select({
+        id: payments.id,
+        paymentKey: payments.paymentKey,
+        method: payments.method,
+        provider: payments.provider,
+        currency: payments.currency,
+        amount: payments.amount,
+        providerMetadata: payments.providerMetadata,
+        providerChargeCurrency: payments.providerChargeCurrency,
+        providerChargeAmountMinor: payments.providerChargeAmountMinor,
+      })
+      .from(refunds)
+      .innerJoin(payments, eq(refunds.paymentId, payments.id))
+      .where(eq(refunds.id, refundId));
+
+    return payment ?? null;
+  }
+
+  private async findPaymentCancelSnapshotByTicketItemId(
+    ticketItemId: string,
+  ): Promise<PaymentCancelPaymentSnapshot | null> {
+    const [payment] = await this.db
+      .select({
+        id: payments.id,
+        paymentKey: payments.paymentKey,
+        method: payments.method,
+        provider: payments.provider,
+        currency: payments.currency,
+        amount: payments.amount,
+        providerMetadata: payments.providerMetadata,
+        providerChargeCurrency: payments.providerChargeCurrency,
+        providerChargeAmountMinor: payments.providerChargeAmountMinor,
+      })
+      .from(ticketItems)
+      .innerJoin(payments, eq(ticketItems.paymentId, payments.id))
+      .where(eq(ticketItems.id, ticketItemId));
+
+    return payment ?? null;
+  }
+
+  private async findPaymentCancelSnapshotByPaymentId(
+    paymentId: string,
+  ): Promise<PaymentCancelPaymentSnapshot | null> {
+    const [payment] = await this.db
+      .select({
+        id: payments.id,
+        paymentKey: payments.paymentKey,
+        method: payments.method,
+        provider: payments.provider,
+        currency: payments.currency,
+        amount: payments.amount,
+        providerMetadata: payments.providerMetadata,
+        providerChargeCurrency: payments.providerChargeCurrency,
+        providerChargeAmountMinor: payments.providerChargeAmountMinor,
+      })
+      .from(payments)
+      .where(eq(payments.id, paymentId));
+
+    return payment ?? null;
+  }
+
+  private async findPaymentCancelSnapshotByReservationId(
+    reservationId: string,
+  ): Promise<PaymentCancelPaymentSnapshot | null> {
+    const [payment] = await this.db
+      .select({
+        id: payments.id,
+        paymentKey: payments.paymentKey,
+        method: payments.method,
+        provider: payments.provider,
+        currency: payments.currency,
+        amount: payments.amount,
+        providerMetadata: payments.providerMetadata,
+        providerChargeCurrency: payments.providerChargeCurrency,
+        providerChargeAmountMinor: payments.providerChargeAmountMinor,
+      })
+      .from(payments)
+      .where(eq(payments.reservationId, reservationId));
+
+    return payment ?? null;
+  }
+
+  private parseGeneratedCancelRequestId(cancelRequestId: string): string | null {
+    if (!cancelRequestId.startsWith('cancel_')) {
+      return null;
+    }
+
+    const localId = cancelRequestId.slice('cancel_'.length).trim();
+    return localId.length > 0 ? localId : null;
+  }
+
   async upsertAsyncPaymentProgress(
     payload: TossWebhookRequestBody,
     paymentStatus: PaymentStatus,
     asyncStatus: string,
   ): Promise<void> {
+    const orderId = this.requireWebhookOrderId(payload);
+    const paymentKey = this.requireWebhookPaymentKey(payload);
     const [reservation] = await this.db
       .select({
         id: reservations.id,
@@ -503,7 +657,7 @@ export class PaymentService {
         providerChargeQuotedAt: reservations.providerChargeQuotedAt,
       })
       .from(reservations)
-      .where(eq(reservations.tossOrderId, payload.data.orderId));
+      .where(eq(reservations.tossOrderId, orderId));
 
     if (!reservation) {
       throw new NotFoundException('웹훅 대상 예매를 찾을 수 없습니다');
@@ -522,8 +676,8 @@ export class PaymentService {
       .from(payments)
       .where(
         or(
-          eq(payments.tossOrderId, payload.data.orderId),
-          eq(payments.paymentKey, payload.data.paymentKey),
+          eq(payments.tossOrderId, orderId),
+          eq(payments.paymentKey, paymentKey),
         ),
       );
 
@@ -601,8 +755,8 @@ export class PaymentService {
 
     const paymentValues = {
       reservationId: reservation.id,
-      paymentKey: payload.data.paymentKey,
-      tossOrderId: payload.data.orderId,
+      paymentKey,
+      tossOrderId: orderId,
       method,
       provider,
       currency,
@@ -640,6 +794,188 @@ export class PaymentService {
     }
   }
 
+  async finalizeConfirmedCancelWebhook(
+    payload: TossWebhookRequestBody,
+    providerResponse: TossPaymentResponse,
+  ): Promise<'finalized' | 'already_finalized' | 'no_local_match'> {
+    if (!this.paymentCancellationFinalizer) {
+      throw new InternalServerErrorException('결제 취소 최종화 서비스가 설정되지 않았습니다');
+    }
+
+    const orderId = this.requireWebhookOrderId(payload);
+    const paymentKey = this.requireWebhookPaymentKey(payload);
+    const [reservation] = await this.db
+      .select({
+        id: reservations.id,
+        reservationNumber: reservations.reservationNumber,
+        showtimeId: reservations.showtimeId,
+        status: reservations.status,
+      })
+      .from(reservations)
+      .where(eq(reservations.tossOrderId, orderId));
+
+    if (!reservation) {
+      return 'no_local_match';
+    }
+
+    const [payment] = await this.db
+      .select({
+        id: payments.id,
+        reservationId: payments.reservationId,
+        paymentKey: payments.paymentKey,
+        tossOrderId: payments.tossOrderId,
+        method: payments.method,
+        provider: payments.provider,
+        currency: payments.currency,
+        amount: payments.amount,
+        status: payments.status,
+        providerMetadata: payments.providerMetadata,
+      })
+      .from(payments)
+      .where(
+        and(
+          eq(payments.reservationId, reservation.id),
+          eq(payments.paymentKey, paymentKey),
+          eq(payments.tossOrderId, orderId),
+        ),
+      );
+
+    if (!payment) {
+      return 'no_local_match';
+    }
+
+    if (reservation.status === 'CANCELLED') {
+      return 'already_finalized';
+    }
+
+    if (reservation.status !== 'CONFIRMED') {
+      return 'no_local_match';
+    }
+
+    const [matchingRefund] = await this.db
+      .select({
+        id: refunds.id,
+      })
+      .from(refunds)
+      .where(
+        and(
+          eq(refunds.reservationId, reservation.id),
+          eq(refunds.paymentId, payment.id),
+          inArray(refunds.status, ['sent_to_pg', 'processing_at_pg', 'failed']),
+        ),
+      );
+
+    const [showtime] = await this.db
+      .select({
+        id: showtimes.id,
+        performanceId: showtimes.performanceId,
+      })
+      .from(showtimes)
+      .where(eq(showtimes.id, reservation.showtimeId));
+
+    if (!showtime) {
+      return 'no_local_match';
+    }
+
+    const [bookingPolicy] = await this.db
+      .select({
+        cancelledSeatHoldMinMinutes: bookingPolicies.cancelledSeatHoldMinMinutes,
+        cancelledSeatHoldMaxMinutes: bookingPolicies.cancelledSeatHoldMaxMinutes,
+      })
+      .from(bookingPolicies)
+      .where(eq(bookingPolicies.performanceId, showtime.performanceId));
+
+    const seats = await this.db
+      .select({
+        seatId: reservationSeats.seatId,
+      })
+      .from(reservationSeats)
+      .where(eq(reservationSeats.reservationId, reservation.id));
+    const ticketItemCancellation =
+      await this.findCancelWebhookTicketItemCancellation(payload, payment.id);
+
+    await this.paymentCancellationFinalizer.finalizeFullPaymentCancellation({
+      source: 'cancel_webhook',
+      ...(matchingRefund ? { refundId: matchingRefund.id } : {}),
+      ...(ticketItemCancellation ? { ticketItemCancellation } : {}),
+      context: {
+        reservation: {
+          id: reservation.id,
+          showtimeId: reservation.showtimeId,
+          reservationNumber: reservation.reservationNumber,
+        },
+        payment: {
+          id: payment.id,
+          paymentKey: payment.paymentKey,
+          providerMetadata: payment.providerMetadata,
+        },
+        bookingPolicy: bookingPolicy ?? null,
+        seats,
+      },
+      reason: this.resolveCancelWebhookReason(payload, providerResponse),
+      providerResponse: providerResponse as unknown as Record<string, unknown>,
+      actor: { kind: 'system' },
+    });
+
+    return 'finalized';
+  }
+
+  private async findCancelWebhookTicketItemCancellation(
+    payload: TossWebhookRequestBody,
+    paymentId: string,
+  ): Promise<{
+    ticketItemId: string;
+    cancellationFee: number;
+    serviceFeeRefund: number;
+    refundableAmount: number;
+  } | null> {
+    if (payload.eventType !== 'CANCEL_STATUS_CHANGED') {
+      return null;
+    }
+
+    const ticketItemId = this.parseGeneratedCancelRequestId(
+      payload.data.cancelRequestId ?? '',
+    );
+    if (!ticketItemId) {
+      return null;
+    }
+
+    const [ticketItem] = await this.db
+      .select({
+        ticketItemId: ticketItems.id,
+        cancellationFee: ticketItems.cancellationFee,
+        serviceFeeRefund: ticketItems.serviceFeeRefund,
+        refundableAmount: ticketItems.refundableAmount,
+      })
+      .from(ticketItems)
+      .where(
+        and(
+          eq(ticketItems.id, ticketItemId),
+          eq(ticketItems.paymentId, paymentId),
+        ),
+      );
+
+    return ticketItem ?? null;
+  }
+
+  private resolveCancelWebhookReason(
+    payload: TossWebhookRequestBody,
+    providerResponse: TossPaymentResponse,
+  ): string {
+    const cancels = providerResponse.cancels;
+    const latestCancel = Array.isArray(cancels) ? cancels.at(-1) : null;
+    if (
+      latestCancel
+      && typeof latestCancel === 'object'
+      && !Array.isArray(latestCancel)
+      && typeof (latestCancel as { cancelReason?: unknown }).cancelReason === 'string'
+    ) {
+      return (latestCancel as { cancelReason: string }).cancelReason;
+    }
+
+    return payload.data.cancelReason ?? 'provider cancellation';
+  }
+
   private async finalizeAsyncDonePayment(input: {
     payload: TossWebhookRequestBody;
     reservation: WebhookReservationSnapshot;
@@ -665,6 +1001,8 @@ export class PaymentService {
       throw new ConflictException('결제 완료 처리 대상 예매 상태가 아닙니다');
     }
 
+    const orderId = this.requireWebhookOrderId(payload);
+    const paymentKey = this.requireWebhookPaymentKey(payload);
     this.assertExistingPaymentMatchesWebhook({
       existingPayment,
       reservation,
@@ -702,8 +1040,8 @@ export class PaymentService {
 
         const paymentValues = {
           reservationId: reservation.id,
-          paymentKey: payload.data.paymentKey,
-          tossOrderId: payload.data.orderId,
+          paymentKey,
+          tossOrderId: orderId,
           method,
           provider,
           currency: this.storesWebhookAmountAsKrw(provider, providerChargeQuote)
@@ -858,6 +1196,8 @@ export class PaymentService {
     payload: TossWebhookRequestBody;
   }): void {
     const { existingPayment, reservation, payload } = input;
+    const orderId = this.requireWebhookOrderId(payload);
+    const paymentKey = this.requireWebhookPaymentKey(payload);
 
     if (!existingPayment) {
       return;
@@ -868,8 +1208,8 @@ export class PaymentService {
     }
 
     if (
-      existingPayment.paymentKey !== payload.data.paymentKey
-      || existingPayment.tossOrderId !== payload.data.orderId
+      existingPayment.paymentKey !== paymentKey
+      || existingPayment.tossOrderId !== orderId
     ) {
       throw new BadRequestException('결제 정보가 예매와 일치하지 않습니다');
     }
@@ -954,11 +1294,13 @@ export class PaymentService {
       asyncStatus,
       providerChargeQuote,
     } = input;
+    const orderId = this.requireWebhookOrderId(payload);
+    const paymentKey = this.requireWebhookPaymentKey(payload);
 
     const paymentValues = {
       reservationId: reservation.id,
-      paymentKey: payload.data.paymentKey,
-      tossOrderId: payload.data.orderId,
+      paymentKey,
+      tossOrderId: orderId,
       method,
       provider,
       currency: this.storesWebhookAmountAsKrw(provider, providerChargeQuote)
@@ -1009,31 +1351,49 @@ export class PaymentService {
       throw new ConflictException('판매 불가능한 좌석입니다');
     }
 
-    await this.tossClient.cancelPayment(
-      payload.data.paymentKey,
-      ASYNC_DONE_SEAT_FAILURE_CANCEL_REASON,
-      {
-        idempotencyKey: this.buildWebhookCancelIdempotencyKey(
-          payload,
-          'seat-failure-cancel',
-        ),
+    const orderId = this.requireWebhookOrderId(payload);
+    const paymentKey = this.requireWebhookPaymentKey(payload);
+    const cancelCommand = buildFullPaymentCancelRequest({
+      payment: {
+        id: existingPayment?.id,
+        paymentKey,
+        method,
+        provider,
+        currency: this.storesWebhookAmountAsKrw(provider, providerChargeQuote)
+          ? 'KRW'
+          : payload.data.currency ?? 'KRW',
+        amount,
+        providerChargeCurrency: providerChargeQuote?.currency,
+        providerChargeAmountMinor: providerChargeQuote?.amountMinor,
       },
+      reason: ASYNC_DONE_SEAT_FAILURE_CANCEL_REASON,
+      idempotencyKey: this.buildWebhookCancelIdempotencyKey(
+        payload,
+        'seat-failure-cancel',
+      ),
+      cancelRequestIdSeed: reservation.id,
+    });
+    const cancelResponse = await this.tossClient.cancelPayment(
+      cancelCommand.paymentKey,
+      cancelCommand.reason,
+      cancelCommand.options,
     );
+    const terminalCancelCompleted = this.isProviderFullCancelCompleted(cancelResponse);
 
     const paymentValues = {
       reservationId: reservation.id,
-      paymentKey: payload.data.paymentKey,
-      tossOrderId: payload.data.orderId,
+      paymentKey,
+      tossOrderId: orderId,
       method,
       provider,
       currency: this.storesWebhookAmountAsKrw(provider, providerChargeQuote)
         ? 'KRW'
         : payload.data.currency ?? 'KRW',
-      asyncStatus,
+      asyncStatus: terminalCancelCompleted ? asyncStatus : 'cancel_pending',
       amount,
-      status: 'CANCELED' as const,
+      status: terminalCancelCompleted ? 'CANCELED' as const : 'DONE' as const,
       paidAt: payload.data.approvedAt ? new Date(payload.data.approvedAt) : new Date(),
-      cancelledAt: new Date(),
+      cancelledAt: terminalCancelCompleted ? new Date() : null,
       cancelReason: ASYNC_DONE_SEAT_FAILURE_CANCEL_REASON,
       ...this.toPaymentProviderChargeValues(providerChargeQuote),
     };
@@ -1047,7 +1407,7 @@ export class PaymentService {
       await this.db.insert(payments).values(paymentValues);
     }
 
-    if (reservation.status === 'PENDING_PAYMENT') {
+    if (terminalCancelCompleted && reservation.status === 'PENDING_PAYMENT') {
       await this.db
         .update(reservations)
         .set({
@@ -1056,6 +1416,16 @@ export class PaymentService {
         })
         .where(eq(reservations.id, reservation.id));
     }
+  }
+
+  private isProviderFullCancelCompleted(response: TossPaymentResponse): boolean {
+    return response.status === 'CANCELED'
+      && (
+        !Array.isArray(response.cancels)
+        || response.cancels.some((cancel) =>
+          cancel.cancelStatus === undefined || cancel.cancelStatus === 'DONE'
+        )
+      );
   }
 
   private buildWebhookCancelIdempotencyKey(
@@ -1256,5 +1626,21 @@ export class PaymentService {
     if (payload.data.method === 'SIMPLE_PAY') return 'SIMPLE_PAY';
 
     return 'CARD';
+  }
+
+  private requireWebhookOrderId(payload: TossWebhookRequestBody): string {
+    if (!payload.data.orderId) {
+      throw new BadRequestException('웹훅 orderId가 필요합니다');
+    }
+
+    return payload.data.orderId;
+  }
+
+  private requireWebhookPaymentKey(payload: TossWebhookRequestBody): string {
+    if (!payload.data.paymentKey) {
+      throw new BadRequestException('웹훅 paymentKey가 필요합니다');
+    }
+
+    return payload.data.paymentKey;
   }
 }

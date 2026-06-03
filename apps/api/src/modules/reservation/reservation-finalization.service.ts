@@ -9,7 +9,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { and, eq, or, sql } from 'drizzle-orm';
+import { and, eq, isNull, or, sql } from 'drizzle-orm';
 import {
   toFloorAwareSeatSelection,
   type ConfirmPaymentRequest,
@@ -32,6 +32,7 @@ import {
 import { TossPaymentsClient } from '../payment/toss-payments.client.js';
 import { ProviderChargeQuoteService } from '../payment/provider-charge-quote.service.js';
 import { QrTicketService } from '../ticket/qr-ticket.service.js';
+import { buildFullPaymentCancelRequest } from '../payment/payment-cancel-policy.js';
 
 type ApprovedPaymentSnapshot = {
   existingPaymentId?: string;
@@ -47,6 +48,7 @@ type ApprovedPaymentSnapshot = {
   providerChargeAmountMinor?: number | null;
   providerChargeRate?: string | null;
   providerChargeQuotedAt?: Date | null;
+  providerMetadata?: Record<string, unknown> | null;
 };
 type PaypalConfirmPaymentRequest = Extract<ConfirmPaymentRequest, { provider: 'PAYPAL' }>;
 type OverseasCardConfirmPaymentRequest = Extract<ConfirmPaymentRequest, { provider: 'OVERSEAS_CARD' }>;
@@ -59,6 +61,10 @@ type PaypalResolvedProviderCharge = {
 };
 
 const TICKET_SERVICE_FEE_KRW = 2000;
+const OVERSEAS_CARD_PROVIDER_METADATA = {
+  requestedProvider: 'OVERSEAS_CARD',
+  secretKeyScope: 'overseas-card',
+} as const;
 
 function isPaypalConfirmPaymentRequest(
   dto: ConfirmPaymentRequest,
@@ -70,6 +76,20 @@ function isOverseasCardConfirmPaymentRequest(
   dto: ConfirmPaymentRequest,
 ): dto is OverseasCardConfirmPaymentRequest {
   return 'provider' in dto && dto.provider === 'OVERSEAS_CARD';
+}
+
+function createOverseasCardProviderMetadata(): Record<string, unknown> {
+  return { ...OVERSEAS_CARD_PROVIDER_METADATA };
+}
+
+function getExistingPaymentProviderMetadata(
+  value: unknown,
+): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as Record<string, unknown>;
 }
 
 export interface ReservationFinalizationResult {
@@ -188,16 +208,38 @@ export class ReservationFinalizationService {
     }, refreshEveryMs);
   }
 
-  private async cancelConfirmedPaymentOrThrow(
-    paymentKey: string,
+  private async cancelApprovedPaymentOrThrow(
+    approvedPayment: ApprovedPaymentSnapshot,
     reason: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
+    const command = buildFullPaymentCancelRequest({
+      payment: {
+        id: approvedPayment.existingPaymentId,
+        paymentKey: approvedPayment.paymentKey,
+        method: approvedPayment.method,
+        provider: approvedPayment.provider,
+        currency: approvedPayment.currency,
+        amount: approvedPayment.totalAmount,
+        providerMetadata: approvedPayment.providerMetadata,
+        providerChargeCurrency: approvedPayment.providerChargeCurrency,
+        providerChargeAmountMinor: approvedPayment.providerChargeAmountMinor,
+      },
+      reason,
+      idempotencyKey: `reservation-finalization-cancel:${approvedPayment.orderId}`,
+      cancelRequestIdSeed: approvedPayment.existingPaymentId ?? approvedPayment.orderId,
+    });
+
     try {
-      await this.tossClient.cancelPayment(paymentKey, reason);
-      this.logger.log(`Compensation cancel succeeded. paymentKey=${paymentKey}`);
+      const response = await this.tossClient.cancelPayment(
+        command.paymentKey,
+        command.reason,
+        command.options,
+      );
+      this.logger.log(`Compensation cancel succeeded. paymentKey=${approvedPayment.paymentKey}`);
+      return this.isProviderFullCancelCompleted(response);
     } catch (cancelError) {
       this.logger.error(
-        `CRITICAL: compensation cancel failed. paymentKey=${paymentKey}. Manual refund required.`,
+        `CRITICAL: compensation cancel failed. paymentKey=${approvedPayment.paymentKey}. Manual refund required.`,
         cancelError instanceof Error ? cancelError.stack : String(cancelError),
       );
       throw new InternalServerErrorException(
@@ -207,12 +249,18 @@ export class ReservationFinalizationService {
   }
 
   private async cancelExistingDonePaymentAfterFailure(input: {
-    paymentId: string;
-    paymentKey: string;
+    payment: ApprovedPaymentSnapshot & { existingPaymentId: string };
     reservationId: string;
     reason: string;
   }): Promise<void> {
-    await this.cancelConfirmedPaymentOrThrow(input.paymentKey, input.reason);
+    const terminalCancelCompleted = await this.cancelApprovedPaymentOrThrow(
+      input.payment,
+      input.reason,
+    );
+    if (!terminalCancelCompleted) {
+      return;
+    }
+
     await this.db
       .update(payments)
       .set({
@@ -220,7 +268,7 @@ export class ReservationFinalizationService {
         cancelledAt: new Date(),
         cancelReason: input.reason,
       })
-      .where(eq(payments.id, input.paymentId));
+      .where(eq(payments.id, input.payment.existingPaymentId));
     await this.expirePendingReservation(input.reservationId);
   }
 
@@ -231,15 +279,14 @@ export class ReservationFinalizationService {
   ): Promise<void> {
     if (approvedPayment.existingPaymentId) {
       await this.cancelExistingDonePaymentAfterFailure({
-        paymentId: approvedPayment.existingPaymentId,
-        paymentKey: approvedPayment.paymentKey,
+        payment: approvedPayment as ApprovedPaymentSnapshot & { existingPaymentId: string },
         reservationId,
         reason,
       });
       return;
     }
 
-    await this.cancelConfirmedPaymentOrThrow(approvedPayment.paymentKey, reason);
+    await this.cancelApprovedPaymentOrThrow(approvedPayment, reason);
   }
 
   private async confirmAndCreateReservationLocked(
@@ -307,24 +354,28 @@ export class ReservationFinalizationService {
     }
 
     if (reservation.status === 'CONFIRMED') {
+      if (
+        isOverseasCardConfirm
+        && existingPayment?.status === 'DONE'
+        && this.canBackfillOverseasCardProviderMetadata(
+          existingPayment,
+          reservation,
+          dto,
+        )
+      ) {
+        await this.backfillOverseasCardProviderMetadataIfMissing(existingPayment);
+      }
+
       return { reservationId: reservation.id };
     }
 
     if (this.isPastWindow(reservation.admissionActiveUntilAt)) {
       if (existingPayment?.status === 'DONE') {
-        await this.cancelConfirmedPaymentOrThrow(
-          existingPayment.paymentKey,
-          '결제 유효 시간 초과로 인한 자동 취소',
-        );
-        await this.db
-          .update(payments)
-          .set({
-            status: 'CANCELED',
-            cancelledAt: new Date(),
-            cancelReason: '결제 유효 시간 초과로 인한 자동 취소',
-          })
-          .where(eq(payments.id, existingPayment.id));
-        await this.expirePendingReservation(reservation.id);
+        await this.cancelExistingDonePaymentAfterFailure({
+          payment: this.toApprovedPaymentSnapshot(existingPayment),
+          reservationId: reservation.id,
+          reason: '결제 유효 시간 초과로 인한 자동 취소',
+        });
       }
 
       throw new ConflictException('좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.');
@@ -357,8 +408,7 @@ export class ReservationFinalizationService {
           ? '판매 불가능 좌석으로 인한 자동 취소'
           : '좌석 점유 만료로 인한 자동 취소';
         await this.cancelExistingDonePaymentAfterFailure({
-          paymentId: existingPayment.id,
-          paymentKey: existingPayment.paymentKey,
+          payment: this.toApprovedPaymentSnapshot(existingPayment),
           reservationId: reservation.id,
           reason,
         });
@@ -374,6 +424,12 @@ export class ReservationFinalizationService {
     try {
       let approvedPayment: ApprovedPaymentSnapshot;
       if (existingPayment?.status === 'DONE') {
+        const hasExistingProviderMetadata =
+          existingPayment.providerMetadata !== null
+          && existingPayment.providerMetadata !== undefined;
+        const existingProviderMetadata = getExistingPaymentProviderMetadata(
+          existingPayment.providerMetadata,
+        );
         approvedPayment = {
           existingPaymentId: existingPayment.id,
           paymentKey: existingPayment.paymentKey,
@@ -390,6 +446,16 @@ export class ReservationFinalizationService {
           providerChargeAmountMinor: existingPayment.providerChargeAmountMinor,
           providerChargeRate: existingPayment.providerChargeRate,
           providerChargeQuotedAt: existingPayment.providerChargeQuotedAt,
+          providerMetadata: existingProviderMetadata
+            ?? (!hasExistingProviderMetadata
+              && isOverseasCardConfirm
+              && this.canBackfillOverseasCardProviderMetadata(
+                existingPayment,
+                reservation,
+                dto,
+              )
+              ? createOverseasCardProviderMetadata()
+              : null),
         };
       } else {
         const tossResponse = await this.tossClient.confirmPayment({
@@ -412,6 +478,9 @@ export class ReservationFinalizationService {
             : tossResponse.totalAmount,
           approvedAt: tossResponse.approvedAt,
           asyncStatus: 'sync',
+          providerMetadata: isOverseasCardConfirm
+            ? createOverseasCardProviderMetadata()
+            : null,
           ...(providerCharge
             ? {
                 providerChargeCurrency: providerCharge.currency,
@@ -488,6 +557,7 @@ export class ReservationFinalizationService {
           if (approvedPayment.existingPaymentId) {
             committedPaymentId = approvedPayment.existingPaymentId;
             const providerChargeValues = this.toPaymentProviderChargeValues(approvedPayment);
+            const providerMetadataValues = this.toPaymentProviderMetadataValues(approvedPayment);
             await tx
               .update(payments)
               .set({
@@ -496,10 +566,12 @@ export class ReservationFinalizationService {
                 paidAt: new Date(approvedPayment.approvedAt),
                 asyncStatus: approvedPayment.asyncStatus ?? 'pending_webhook',
                 ...providerChargeValues,
+                ...providerMetadataValues,
               })
               .where(eq(payments.id, approvedPayment.existingPaymentId));
           } else {
             const providerChargeValues = this.toPaymentProviderChargeValues(approvedPayment);
+            const providerMetadataValues = this.toPaymentProviderMetadataValues(approvedPayment);
             const insertedPayments = await tx
               .insert(payments)
               .values({
@@ -514,6 +586,7 @@ export class ReservationFinalizationService {
                 status: 'DONE',
                 paidAt: new Date(approvedPayment.approvedAt),
                 ...providerChargeValues,
+                ...providerMetadataValues,
               })
               .returning({ id: payments.id });
 
@@ -641,8 +714,9 @@ export class ReservationFinalizationService {
           `DB transaction failed after payment approval. paymentKey=${approvedPayment.paymentKey}, orderId=${dto.orderId}`,
           dbError instanceof Error ? dbError.stack : String(dbError),
         );
-        await this.cancelConfirmedPaymentOrThrow(
-          approvedPayment.paymentKey,
+        await this.cancelApprovedPaymentAfterFailure(
+          approvedPayment,
+          reservation.id,
           '서버 오류로 인한 자동 취소',
         );
         throw new InternalServerErrorException(
@@ -809,6 +883,118 @@ export class ReservationFinalizationService {
       providerChargeRate: approvedPayment.providerChargeRate,
       providerChargeQuotedAt: approvedPayment.providerChargeQuotedAt,
     };
+  }
+
+  private toPaymentProviderMetadataValues(
+    approvedPayment: ApprovedPaymentSnapshot,
+  ): {
+    providerMetadata?: Record<string, unknown>;
+  } {
+    if (!approvedPayment.providerMetadata) {
+      return {};
+    }
+
+    return { providerMetadata: approvedPayment.providerMetadata };
+  }
+
+  private toApprovedPaymentSnapshot(
+    payment: {
+      id: string;
+      paymentKey: string;
+      tossOrderId: string;
+      method: string;
+      provider: string;
+      currency: string;
+      amount: number;
+      paidAt?: Date | null;
+      asyncStatus?: string | null;
+      providerChargeCurrency?: string | null;
+      providerChargeAmountMinor?: number | null;
+      providerChargeRate?: string | null;
+      providerChargeQuotedAt?: Date | null;
+      providerMetadata?: unknown;
+    },
+  ): ApprovedPaymentSnapshot & { existingPaymentId: string } {
+    return {
+      existingPaymentId: payment.id,
+      paymentKey: payment.paymentKey,
+      orderId: payment.tossOrderId,
+      method: payment.method,
+      provider: payment.provider,
+      currency: payment.currency,
+      totalAmount: payment.amount,
+      approvedAt: payment.paidAt?.toISOString() ?? new Date().toISOString(),
+      asyncStatus: payment.asyncStatus,
+      providerChargeCurrency: payment.providerChargeCurrency,
+      providerChargeAmountMinor: payment.providerChargeAmountMinor,
+      providerChargeRate: payment.providerChargeRate,
+      providerChargeQuotedAt: payment.providerChargeQuotedAt,
+      providerMetadata: getExistingPaymentProviderMetadata(payment.providerMetadata),
+    };
+  }
+
+  private isProviderFullCancelCompleted(response: {
+    status: string;
+    cancels?: Array<{ cancelStatus?: string }>;
+  }): boolean {
+    return response.status === 'CANCELED'
+      && (
+        !Array.isArray(response.cancels)
+        || response.cancels.some((cancel) =>
+          cancel.cancelStatus === undefined || cancel.cancelStatus === 'DONE'
+        )
+      );
+  }
+
+  private async backfillOverseasCardProviderMetadataIfMissing(
+    existingPayment: {
+      id: string;
+      providerMetadata?: unknown;
+    },
+  ): Promise<void> {
+    if (
+      existingPayment.providerMetadata !== null
+      && existingPayment.providerMetadata !== undefined
+    ) {
+      return;
+    }
+
+    await this.db
+      .update(payments)
+      .set({ providerMetadata: createOverseasCardProviderMetadata() })
+      .where(and(
+        eq(payments.id, existingPayment.id),
+        isNull(payments.providerMetadata),
+      ));
+  }
+
+  private canBackfillOverseasCardProviderMetadata(
+    existingPayment: {
+      reservationId: string;
+      paymentKey: string;
+      tossOrderId: string;
+      amount: number;
+      method?: string | null;
+      provider?: string | null;
+      providerChargeAmountMinor?: number | null;
+    },
+    reservation: {
+      id: string;
+      totalAmount: number;
+      providerChargeAmountMinor?: number | null;
+    },
+    dto: OverseasCardConfirmPaymentRequest,
+  ): boolean {
+    if (existingPayment.provider !== 'CARD' || existingPayment.method !== 'CARD') {
+      return false;
+    }
+
+    try {
+      this.assertExistingDonePaymentMatchesRequest(existingPayment, reservation, dto);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private calculatePayableTotal(seats: FloorAwareSeatSelection[]): number {
