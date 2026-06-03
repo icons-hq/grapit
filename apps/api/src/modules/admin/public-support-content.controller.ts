@@ -10,7 +10,7 @@ import {
   type PublishedSupportContentFilters,
 } from './admin-support-content.service.js';
 
-const publishedSupportContentQuerySchema = z.object({
+export const publishedSupportContentQuerySchema = z.object({
   locale: z.enum(SUPPORT_CONTENT_LOCALES),
 });
 
