@@ -39,9 +39,9 @@ const tossWebhookProviderSchema = z
   .optional()
   .catch(undefined);
 
-export const tossWebhookSchema = z.object({
+const tossPaymentStatusChangedWebhookSchema = z.object({
   eventId: z.string().min(1, 'eventId가 필요합니다').optional(),
-  eventType: z.enum(['PAYMENT_STATUS_CHANGED', 'CANCEL_STATUS_CHANGED']),
+  eventType: z.literal('PAYMENT_STATUS_CHANGED'),
   createdAt: tossWebhookDatetimeSchema.optional(),
   data: z.object({
     paymentKey: z.string().min(1, 'paymentKey가 필요합니다'),
@@ -56,6 +56,31 @@ export const tossWebhookSchema = z.object({
     cancelReason: z.string().min(1).optional(),
   }),
 });
+
+const tossCancelStatusChangedWebhookSchema = z.object({
+  eventId: z.string().min(1, 'eventId가 필요합니다').optional(),
+  eventType: z.literal('CANCEL_STATUS_CHANGED'),
+  createdAt: tossWebhookDatetimeSchema.optional(),
+  data: z.object({
+    cancelStatus: z.enum(['IN_PROGRESS', 'DONE', 'ABORTED']),
+    cancelRequestId: z.string().min(1, 'cancelRequestId가 필요합니다'),
+    paymentKey: z.string().min(1).optional(),
+    orderId: z.string().min(1).optional(),
+    status: z.string().min(1).optional(),
+    method: z.string().min(1).optional(),
+    provider: tossWebhookProviderSchema,
+    currency: z.string().min(1).optional(),
+    totalAmount: z.number().int().positive().optional(),
+    canceledAt: tossWebhookDatetimeSchema.optional(),
+    cancelReason: z.string().min(1).optional(),
+    cancelAmount: z.number().positive().optional(),
+  }),
+});
+
+export const tossWebhookSchema = z.discriminatedUnion('eventType', [
+  tossPaymentStatusChangedWebhookSchema,
+  tossCancelStatusChangedWebhookSchema,
+]);
 
 type TossWebhookDto = z.infer<typeof tossWebhookSchema>;
 
@@ -91,8 +116,8 @@ export class PaymentWebhookController {
         providerResponse,
       } = await this.withProviderVerifiedState(webhook);
       const progress = await this.paymentService.findAsyncPaymentProgress(
-        providerVerifiedWebhook.data.orderId,
-        providerVerifiedWebhook.data.paymentKey,
+        this.requireWebhookOrderId(providerVerifiedWebhook),
+        this.requireWebhookPaymentKey(providerVerifiedWebhook),
       );
       const processingResult = await this.processEvent(
         providerVerifiedWebhook,
@@ -133,12 +158,14 @@ export class PaymentWebhookController {
         ?? transmissionId
         ?? [
           body.eventType,
-          body.data.orderId,
-          body.data.paymentKey,
-          body.data.status,
+          body.data.orderId
+          ?? ('cancelRequestId' in body.data ? body.data.cancelRequestId : undefined),
+          body.data.paymentKey ?? 'unknown-payment-key',
+          body.data.status
+          ?? ('cancelStatus' in body.data ? body.data.cancelStatus : undefined),
           body.createdAt ?? 'unknown-created-at',
         ].join(':'),
-    };
+    } as TossWebhookRequestBody;
   }
 
   private async processEvent(
@@ -168,7 +195,10 @@ export class PaymentWebhookController {
         };
       }
 
-      if (progress.reservationStatus === 'CONFIRMED' && body.data.status === 'CANCELED') {
+      if (
+        progress.reservationStatus === 'CONFIRMED'
+        && this.hasTerminalFullCancel(body, providerResponse)
+      ) {
         const result = await this.paymentService.finalizeConfirmedCancelWebhook(
           body,
           providerResponse,
@@ -191,16 +221,18 @@ export class PaymentWebhookController {
         };
       }
 
-      await this.paymentService.upsertAsyncPaymentProgress(
-        body,
-        'CANCELED',
-        'cancelled_webhook',
-      );
+      if (this.hasTerminalFullCancel(body, providerResponse)) {
+        await this.paymentService.upsertAsyncPaymentProgress(
+          body,
+          'CANCELED',
+          'cancelled_webhook',
+        );
+      }
 
       return { code: 'CANCEL_STATUS_CHANGED_APPLIED' };
     }
 
-    const incomingStatus = this.normalizePaymentStatus(body.data.status);
+    const incomingStatus = this.normalizePaymentStatus(this.requirePaymentStatus(body));
     if (this.shouldIgnorePaymentEvent(progress, incomingStatus)) {
       return {
         code: 'IGNORED_STALE_PAYMENT_EVENT',
@@ -220,10 +252,14 @@ export class PaymentWebhookController {
   private async withProviderVerifiedState(
     body: TossWebhookRequestBody,
   ): Promise<{ webhook: TossWebhookRequestBody; providerResponse: TossPaymentResponse }> {
-    const queryOptions = await this.getProviderQueryOptions(body);
+    const cancelPaymentSnapshot = body.eventType === 'CANCEL_STATUS_CHANGED'
+      ? await this.resolveCancelPaymentSnapshot(body)
+      : null;
+    const queryPaymentKey = this.getProviderQueryPaymentKey(body, cancelPaymentSnapshot);
+    const queryOptions = this.getProviderQueryOptions(body, cancelPaymentSnapshot);
     const queried = queryOptions
-      ? await this.tossPaymentsClient.queryPayment(body.data.paymentKey, queryOptions)
-      : await this.tossPaymentsClient.queryPayment(body.data.paymentKey);
+      ? await this.tossPaymentsClient.queryPayment(queryPaymentKey, queryOptions)
+      : await this.tossPaymentsClient.queryPayment(queryPaymentKey);
     this.assertProviderStateMatchesWebhook(body, queried);
 
     const providerData: TossWebhookRequestBody['data'] = {
@@ -240,9 +276,11 @@ export class PaymentWebhookController {
     }
 
     if (body.eventType === 'CANCEL_STATUS_CHANGED') {
-      const latestCancel = queried.cancels?.[queried.cancels.length - 1];
-      providerData.canceledAt = latestCancel?.canceledAt ?? body.data.canceledAt;
-      providerData.cancelReason = latestCancel?.cancelReason ?? body.data.cancelReason;
+      const matchingCancel = this.findMatchingCancel(body, queried);
+      providerData.cancelStatus = body.data.cancelStatus;
+      providerData.cancelRequestId = body.data.cancelRequestId;
+      providerData.canceledAt = matchingCancel?.canceledAt ?? body.data.canceledAt;
+      providerData.cancelReason = matchingCancel?.cancelReason ?? body.data.cancelReason;
     }
 
     return {
@@ -254,14 +292,12 @@ export class PaymentWebhookController {
     };
   }
 
-  private async getProviderQueryOptions(
+  private getProviderQueryOptions(
     body: TossWebhookRequestBody,
-  ): Promise<TossPaymentRequestOptions | undefined> {
+    cancelPaymentSnapshot: Awaited<ReturnType<PaymentWebhookController['resolveCancelPaymentSnapshot']>> = null,
+  ): TossPaymentRequestOptions | undefined {
     if (body.eventType === 'CANCEL_STATUS_CHANGED') {
-      const payment = await this.paymentService.findPaymentCancelSnapshot(
-        body.data.orderId,
-        body.data.paymentKey,
-      );
+      const payment = cancelPaymentSnapshot;
 
       if (payment) {
         return { secretKeyScope: resolvePaymentCancelSecretScope(payment) };
@@ -271,6 +307,49 @@ export class PaymentWebhookController {
     }
 
     return this.getWebhookProviderQueryOptions(body, false);
+  }
+
+  private getProviderQueryPaymentKey(
+    body: TossWebhookRequestBody,
+    cancelPaymentSnapshot: Awaited<ReturnType<PaymentWebhookController['resolveCancelPaymentSnapshot']>> = null,
+  ): string {
+    if (body.data.paymentKey) {
+      return body.data.paymentKey;
+    }
+
+    if (body.eventType === 'CANCEL_STATUS_CHANGED') {
+      if (cancelPaymentSnapshot) {
+        return cancelPaymentSnapshot.paymentKey;
+      }
+    }
+
+    throw new BadRequestException('cancel webhook local payment lookup failed');
+  }
+
+  private async resolveCancelPaymentSnapshot(
+    body: TossWebhookRequestBody,
+  ) {
+    if (body.eventType !== 'CANCEL_STATUS_CHANGED') {
+      return null;
+    }
+
+    const byCancelRequestId =
+      await this.paymentService.findPaymentCancelSnapshotByCancelRequestId(
+        body.data.cancelRequestId ?? '',
+      );
+
+    if (byCancelRequestId) {
+      return byCancelRequestId;
+    }
+
+    if (body.data.orderId && body.data.paymentKey) {
+      return await this.paymentService.findPaymentCancelSnapshot(
+        body.data.orderId,
+        body.data.paymentKey,
+      );
+    }
+
+    return null;
   }
 
   private getWebhookProviderQueryOptions(
@@ -293,6 +372,11 @@ export class PaymentWebhookController {
     body: TossWebhookRequestBody,
     queried: TossPaymentResponse,
   ): void {
+    if (body.eventType === 'CANCEL_STATUS_CHANGED') {
+      this.assertProviderCancelStateMatchesWebhook(body, queried);
+      return;
+    }
+
     const mismatches: string[] = [];
 
     if (queried.paymentKey !== body.data.paymentKey) {
@@ -319,6 +403,86 @@ export class PaymentWebhookController {
         `Toss provider state mismatch: ${mismatches.join(', ')}`,
       );
     }
+  }
+
+  private assertProviderCancelStateMatchesWebhook(
+    body: TossWebhookRequestBody,
+    queried: TossPaymentResponse,
+  ): void {
+    const mismatches: string[] = [];
+
+    if (body.data.paymentKey && queried.paymentKey !== body.data.paymentKey) {
+      mismatches.push('paymentKey');
+    }
+
+    if (body.data.orderId && queried.orderId !== body.data.orderId) {
+      mismatches.push('orderId');
+    }
+
+    if (
+      typeof body.data.totalAmount === 'number'
+      && queried.totalAmount !== body.data.totalAmount
+    ) {
+      mismatches.push('totalAmount');
+    }
+
+    if (!this.findMatchingCancel(body, queried)) {
+      mismatches.push('cancel');
+    }
+
+    if (mismatches.length > 0) {
+      throw new BadRequestException(
+        `Toss provider state mismatch: ${mismatches.join(', ')}`,
+      );
+    }
+  }
+
+  private findMatchingCancel(
+    body: TossWebhookRequestBody,
+    queried: TossPaymentResponse,
+  ) {
+    if (body.eventType !== 'CANCEL_STATUS_CHANGED') {
+      return undefined;
+    }
+
+    return queried.cancels?.find((cancel) =>
+      cancel.cancelRequestId === body.data.cancelRequestId
+      && cancel.cancelStatus === body.data.cancelStatus
+    );
+  }
+
+  private hasTerminalFullCancel(
+    body: TossWebhookRequestBody,
+    providerResponse: TossPaymentResponse,
+  ): boolean {
+    return body.eventType === 'CANCEL_STATUS_CHANGED'
+      && body.data.cancelStatus === 'DONE'
+      && providerResponse.status === 'CANCELED'
+      && this.findMatchingCancel(body, providerResponse) !== undefined;
+  }
+
+  private requirePaymentStatus(body: TossWebhookRequestBody): string {
+    if (!body.data.status) {
+      throw new BadRequestException('payment status webhook status is required');
+    }
+
+    return body.data.status;
+  }
+
+  private requireWebhookOrderId(body: TossWebhookRequestBody): string {
+    if (!body.data.orderId) {
+      throw new BadRequestException('webhook orderId is required after provider verification');
+    }
+
+    return body.data.orderId;
+  }
+
+  private requireWebhookPaymentKey(body: TossWebhookRequestBody): string {
+    if (!body.data.paymentKey) {
+      throw new BadRequestException('webhook paymentKey is required after provider verification');
+    }
+
+    return body.data.paymentKey;
   }
 
   private normalizePaymentStatus(status: string) {

@@ -32,6 +32,7 @@ import {
 import { TossPaymentsClient } from '../payment/toss-payments.client.js';
 import { ProviderChargeQuoteService } from '../payment/provider-charge-quote.service.js';
 import { QrTicketService } from '../ticket/qr-ticket.service.js';
+import { buildFullPaymentCancelRequest } from '../payment/payment-cancel-policy.js';
 
 type ApprovedPaymentSnapshot = {
   existingPaymentId?: string;
@@ -207,16 +208,38 @@ export class ReservationFinalizationService {
     }, refreshEveryMs);
   }
 
-  private async cancelConfirmedPaymentOrThrow(
-    paymentKey: string,
+  private async cancelApprovedPaymentOrThrow(
+    approvedPayment: ApprovedPaymentSnapshot,
     reason: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
+    const command = buildFullPaymentCancelRequest({
+      payment: {
+        id: approvedPayment.existingPaymentId,
+        paymentKey: approvedPayment.paymentKey,
+        method: approvedPayment.method,
+        provider: approvedPayment.provider,
+        currency: approvedPayment.currency,
+        amount: approvedPayment.totalAmount,
+        providerMetadata: approvedPayment.providerMetadata,
+        providerChargeCurrency: approvedPayment.providerChargeCurrency,
+        providerChargeAmountMinor: approvedPayment.providerChargeAmountMinor,
+      },
+      reason,
+      idempotencyKey: `reservation-finalization-cancel:${approvedPayment.orderId}`,
+      cancelRequestIdSeed: approvedPayment.existingPaymentId ?? approvedPayment.orderId,
+    });
+
     try {
-      await this.tossClient.cancelPayment(paymentKey, reason);
-      this.logger.log(`Compensation cancel succeeded. paymentKey=${paymentKey}`);
+      const response = await this.tossClient.cancelPayment(
+        command.paymentKey,
+        command.reason,
+        command.options,
+      );
+      this.logger.log(`Compensation cancel succeeded. paymentKey=${approvedPayment.paymentKey}`);
+      return this.isProviderFullCancelCompleted(response);
     } catch (cancelError) {
       this.logger.error(
-        `CRITICAL: compensation cancel failed. paymentKey=${paymentKey}. Manual refund required.`,
+        `CRITICAL: compensation cancel failed. paymentKey=${approvedPayment.paymentKey}. Manual refund required.`,
         cancelError instanceof Error ? cancelError.stack : String(cancelError),
       );
       throw new InternalServerErrorException(
@@ -226,12 +249,18 @@ export class ReservationFinalizationService {
   }
 
   private async cancelExistingDonePaymentAfterFailure(input: {
-    paymentId: string;
-    paymentKey: string;
+    payment: ApprovedPaymentSnapshot & { existingPaymentId: string };
     reservationId: string;
     reason: string;
   }): Promise<void> {
-    await this.cancelConfirmedPaymentOrThrow(input.paymentKey, input.reason);
+    const terminalCancelCompleted = await this.cancelApprovedPaymentOrThrow(
+      input.payment,
+      input.reason,
+    );
+    if (!terminalCancelCompleted) {
+      return;
+    }
+
     await this.db
       .update(payments)
       .set({
@@ -239,7 +268,7 @@ export class ReservationFinalizationService {
         cancelledAt: new Date(),
         cancelReason: input.reason,
       })
-      .where(eq(payments.id, input.paymentId));
+      .where(eq(payments.id, input.payment.existingPaymentId));
     await this.expirePendingReservation(input.reservationId);
   }
 
@@ -250,15 +279,14 @@ export class ReservationFinalizationService {
   ): Promise<void> {
     if (approvedPayment.existingPaymentId) {
       await this.cancelExistingDonePaymentAfterFailure({
-        paymentId: approvedPayment.existingPaymentId,
-        paymentKey: approvedPayment.paymentKey,
+        payment: approvedPayment as ApprovedPaymentSnapshot & { existingPaymentId: string },
         reservationId,
         reason,
       });
       return;
     }
 
-    await this.cancelConfirmedPaymentOrThrow(approvedPayment.paymentKey, reason);
+    await this.cancelApprovedPaymentOrThrow(approvedPayment, reason);
   }
 
   private async confirmAndCreateReservationLocked(
@@ -343,19 +371,11 @@ export class ReservationFinalizationService {
 
     if (this.isPastWindow(reservation.admissionActiveUntilAt)) {
       if (existingPayment?.status === 'DONE') {
-        await this.cancelConfirmedPaymentOrThrow(
-          existingPayment.paymentKey,
-          '결제 유효 시간 초과로 인한 자동 취소',
-        );
-        await this.db
-          .update(payments)
-          .set({
-            status: 'CANCELED',
-            cancelledAt: new Date(),
-            cancelReason: '결제 유효 시간 초과로 인한 자동 취소',
-          })
-          .where(eq(payments.id, existingPayment.id));
-        await this.expirePendingReservation(reservation.id);
+        await this.cancelExistingDonePaymentAfterFailure({
+          payment: this.toApprovedPaymentSnapshot(existingPayment),
+          reservationId: reservation.id,
+          reason: '결제 유효 시간 초과로 인한 자동 취소',
+        });
       }
 
       throw new ConflictException('좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.');
@@ -388,8 +408,7 @@ export class ReservationFinalizationService {
           ? '판매 불가능 좌석으로 인한 자동 취소'
           : '좌석 점유 만료로 인한 자동 취소';
         await this.cancelExistingDonePaymentAfterFailure({
-          paymentId: existingPayment.id,
-          paymentKey: existingPayment.paymentKey,
+          payment: this.toApprovedPaymentSnapshot(existingPayment),
           reservationId: reservation.id,
           reason,
         });
@@ -695,8 +714,9 @@ export class ReservationFinalizationService {
           `DB transaction failed after payment approval. paymentKey=${approvedPayment.paymentKey}, orderId=${dto.orderId}`,
           dbError instanceof Error ? dbError.stack : String(dbError),
         );
-        await this.cancelConfirmedPaymentOrThrow(
-          approvedPayment.paymentKey,
+        await this.cancelApprovedPaymentAfterFailure(
+          approvedPayment,
+          reservation.id,
           '서버 오류로 인한 자동 취소',
         );
         throw new InternalServerErrorException(
@@ -875,6 +895,55 @@ export class ReservationFinalizationService {
     }
 
     return { providerMetadata: approvedPayment.providerMetadata };
+  }
+
+  private toApprovedPaymentSnapshot(
+    payment: {
+      id: string;
+      paymentKey: string;
+      tossOrderId: string;
+      method: string;
+      provider: string;
+      currency: string;
+      amount: number;
+      paidAt?: Date | null;
+      asyncStatus?: string | null;
+      providerChargeCurrency?: string | null;
+      providerChargeAmountMinor?: number | null;
+      providerChargeRate?: string | null;
+      providerChargeQuotedAt?: Date | null;
+      providerMetadata?: unknown;
+    },
+  ): ApprovedPaymentSnapshot & { existingPaymentId: string } {
+    return {
+      existingPaymentId: payment.id,
+      paymentKey: payment.paymentKey,
+      orderId: payment.tossOrderId,
+      method: payment.method,
+      provider: payment.provider,
+      currency: payment.currency,
+      totalAmount: payment.amount,
+      approvedAt: payment.paidAt?.toISOString() ?? new Date().toISOString(),
+      asyncStatus: payment.asyncStatus,
+      providerChargeCurrency: payment.providerChargeCurrency,
+      providerChargeAmountMinor: payment.providerChargeAmountMinor,
+      providerChargeRate: payment.providerChargeRate,
+      providerChargeQuotedAt: payment.providerChargeQuotedAt,
+      providerMetadata: getExistingPaymentProviderMetadata(payment.providerMetadata),
+    };
+  }
+
+  private isProviderFullCancelCompleted(response: {
+    status: string;
+    cancels?: Array<{ cancelStatus?: string }>;
+  }): boolean {
+    return response.status === 'CANCELED'
+      && (
+        !Array.isArray(response.cancels)
+        || response.cancels.some((cancel) =>
+          cancel.cancelStatus === undefined || cancel.cancelStatus === 'DONE'
+        )
+      );
   }
 
   private async backfillOverseasCardProviderMetadataIfMissing(

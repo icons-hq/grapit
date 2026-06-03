@@ -123,7 +123,7 @@ export class RefundCancelRetryWorker implements OnModuleInit {
         secretKeyScope: command.options.secretKeyScope,
       });
 
-      if (isTossCancelCompleted(queried)) {
+      if (isTossCancelCompleted(queried, command.options.cancelRequestId)) {
         await this.finalizeFullPaymentCancellation(context, queried, reason);
         return { status: 'completed' };
       }
@@ -150,7 +150,7 @@ export class RefundCancelRetryWorker implements OnModuleInit {
         command.options,
       );
 
-      if (isTossCancelCompleted(response)) {
+      if (isTossCancelCompleted(response, command.options.cancelRequestId)) {
         await this.finalizeFullPaymentCancellation(context, response, reason);
         return { status: 'completed' };
       }

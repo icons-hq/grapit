@@ -66,6 +66,26 @@ describe('RefundService', () => {
     expect(isTossCancelCompleted({ status: 'CANCELED' } as never)).toBe(true);
     expect(isTossCancelCompleted({ status: 'DONE' } as never)).toBe(false);
     expect(isTossCancelCompleted({ status: 'PARTIAL_CANCELED' } as never)).toBe(false);
+    expect(isTossCancelCompleted({
+      status: 'CANCELED',
+      cancels: [{
+        cancelAmount: 132000,
+        cancelReason: '단순 변심',
+        canceledAt: '2026-05-08T03:05:00.000Z',
+        cancelStatus: 'IN_PROGRESS',
+        cancelRequestId: 'cancel_refund-1',
+      }],
+    } as never, 'cancel_refund-1')).toBe(false);
+    expect(isTossCancelCompleted({
+      status: 'CANCELED',
+      cancels: [{
+        cancelAmount: 132000,
+        cancelReason: '단순 변심',
+        canceledAt: '2026-05-08T03:05:00.000Z',
+        cancelStatus: 'DONE',
+        cancelRequestId: 'cancel_refund-1',
+      }],
+    } as never, 'cancel_refund-1')).toBe(true);
   });
 
   it('returns existing refund state for duplicate requests without calling Toss again', async () => {

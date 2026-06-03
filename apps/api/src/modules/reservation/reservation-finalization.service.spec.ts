@@ -919,6 +919,112 @@ describe('ReservationFinalizationService', () => {
     );
   });
 
+  it('uses overseas-card secret scope when compensating an existing approved overseas-card payment', async () => {
+    const { service, db, tossClient, bookingService } = createDependencies();
+    const updateValues: Record<string, unknown>[] = [];
+    db.select
+      .mockReturnValueOnce(chainResult([
+        {
+          id: 'payment-overseas-card-compensation-1',
+          reservationId: 'reservation-overseas-card-compensation-1',
+          status: 'DONE',
+          paymentKey: 'payment-key-overseas-card-compensation',
+          tossOrderId: 'order-overseas-card-compensation-1',
+          method: 'CARD',
+          provider: 'CARD',
+          providerMetadata: {
+            requestedProvider: 'OVERSEAS_CARD',
+            secretKeyScope: 'overseas-card',
+          },
+          currency: 'KRW',
+          amount: 154000,
+          paidAt: new Date('2026-06-02T10:01:00.000Z'),
+          asyncStatus: 'sync',
+        },
+      ]))
+      .mockReturnValueOnce(chainResult([
+        {
+          id: 'reservation-overseas-card-compensation-1',
+          userId: 'user-1',
+          showtimeId: 'showtime-1',
+          status: 'PENDING_PAYMENT',
+          totalAmount: 154000,
+          admissionActiveUntilAt: new Date(Date.now() + 60_000),
+        },
+      ]))
+      .mockReturnValueOnce(chainResult([
+        {
+          seatId: '1F:A-1',
+          tierName: 'VIP',
+          price: 100000,
+          row: 'A',
+          number: '1',
+        },
+        {
+          seatId: '1F:A-2',
+          tierName: 'R',
+          price: 50000,
+          row: 'A',
+          number: '2',
+        },
+      ]));
+    db.update.mockReturnValue({
+      set: vi.fn((values: Record<string, unknown>) => {
+        updateValues.push(values);
+        return {
+          where: vi.fn().mockResolvedValue(undefined),
+        };
+      }),
+    });
+    bookingService.extendOwnedSeatLocks.mockRejectedValue(
+      new Error('seat lock unavailable'),
+    );
+    tossClient.cancelPayment.mockResolvedValue({
+      paymentKey: 'payment-key-overseas-card-compensation',
+      orderId: 'order-overseas-card-compensation-1',
+      method: 'CARD',
+      totalAmount: 154000,
+      status: 'CANCELED',
+      approvedAt: '2026-06-02T10:01:00.000Z',
+      cancels: [
+        {
+          cancelAmount: 154000,
+          cancelReason: '좌석 점유 만료로 인한 자동 취소',
+          canceledAt: '2026-06-02T10:02:00.000Z',
+          cancelStatus: 'DONE',
+        },
+      ],
+    });
+
+    await expect(
+      service.confirmAndCreateReservation(
+        {
+          paymentKey: 'payment-key-overseas-card-compensation',
+          orderId: 'order-overseas-card-compensation-1',
+          provider: 'OVERSEAS_CARD',
+          amount: 154000,
+        },
+        'user-1',
+      ),
+    ).rejects.toThrow('seat lock unavailable');
+
+    expect(tossClient.cancelPayment).toHaveBeenCalledWith(
+      'payment-key-overseas-card-compensation',
+      '좌석 점유 만료로 인한 자동 취소',
+      expect.objectContaining({
+        secretKeyScope: 'overseas-card',
+        idempotencyKey: 'reservation-finalization-cancel:order-overseas-card-compensation-1',
+      }),
+    );
+    expect(updateValues).toContainEqual(expect.objectContaining({
+      status: 'CANCELED',
+      cancelReason: '좌석 점유 만료로 인한 자동 취소',
+    }));
+    expect(updateValues).toContainEqual(expect.objectContaining({
+      status: 'FAILED',
+    }));
+  });
+
   it('rejects confirmed retry when stored and requested amounts omit service fees', async () => {
     const { service, db, tossClient } = createDependencies();
     db.select

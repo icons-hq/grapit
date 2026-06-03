@@ -161,7 +161,16 @@ export function getRefundErrorMessage(error: unknown): string {
   return '알 수 없는 환불 오류';
 }
 
-export function isTossCancelCompleted(response: TossPaymentResponse): boolean {
+export function isTossCancelCompleted(
+  response: TossPaymentResponse,
+  cancelRequestId?: string,
+): boolean {
+  if (cancelRequestId) {
+    return response.cancels?.some((cancel) =>
+      cancel.cancelRequestId === cancelRequestId && cancel.cancelStatus === 'DONE'
+    ) ?? false;
+  }
+
   return response.status === 'CANCELED';
 }
 
@@ -300,7 +309,7 @@ export class RefundService {
         command.options,
       );
 
-      if (isTossCancelCompleted(cancelResult)) {
+      if (isTossCancelCompleted(cancelResult, command.options.cancelRequestId)) {
         await this.paymentCancellationFinalizer.finalizeFullPaymentCancellation({
           source: 'refund_request',
           refundId: requestedRefund.id,

@@ -508,6 +508,15 @@ describe('RefundCancelRetryWorker', () => {
         totalAmount: 132000,
         status: 'CANCELED',
         approvedAt: '2026-05-08T03:00:00.000Z',
+        cancels: [
+          {
+            cancelAmount: 132000,
+            cancelReason: '단순 변심',
+            canceledAt: '2026-05-08T03:05:00.000Z',
+            cancelStatus: 'DONE',
+            cancelRequestId: 'cancel_refund-1',
+          },
+        ],
       }),
     };
     const finalizer = {

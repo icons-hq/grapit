@@ -1453,6 +1453,23 @@ describe('PaymentService', () => {
         .mockReturnValueOnce(insertFirstSeat);
       mockDb.insert.mockReturnValueOnce(insertCanceledPayment);
       mockDb.update.mockReturnValueOnce(failReservation);
+      mockTossClient.cancelPayment.mockResolvedValueOnce({
+        paymentKey: 'pay_async_done',
+        orderId: 'GRP-ASYNC-DONE',
+        method: 'FOREIGN_EASY_PAY',
+        totalAmount: 102000,
+        status: 'DONE',
+        approvedAt: '2026-05-08T08:00:00.000Z',
+        cancels: [
+          {
+            cancelAmount: 102000,
+            cancelReason: '판매 불가능 좌석으로 인한 자동 취소',
+            canceledAt: '2026-05-08T08:00:05.000Z',
+            cancelStatus: 'IN_PROGRESS',
+            cancelRequestId: `cancel_${reservationId}`,
+          },
+        ],
+      });
 
       await expect(service.upsertAsyncPaymentProgress(
         {
@@ -1478,18 +1495,19 @@ describe('PaymentService', () => {
         expect.stringContaining('판매 불가능'),
         {
           idempotencyKey: 'toss-webhook:evt-payment-done-disabled-seat:seat-failure-cancel',
+          secretKeyScope: 'foreign-easy-pay',
+          cancelRequestId: `cancel_${reservationId}`,
         },
       );
       expect(insertCanceledPayment.values).toHaveBeenCalledWith(expect.objectContaining({
         reservationId,
         paymentKey: 'pay_async_done',
         tossOrderId: 'GRP-ASYNC-DONE',
-        status: 'CANCELED',
+        status: 'DONE',
+        asyncStatus: 'cancel_pending',
         cancelReason: expect.stringContaining('판매 불가능'),
       }));
-      expect(failReservation.set).toHaveBeenCalledWith(expect.objectContaining({
-        status: 'FAILED',
-      }));
+      expect(failReservation.set).not.toHaveBeenCalled();
       expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
       expect(mockQrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
     });
