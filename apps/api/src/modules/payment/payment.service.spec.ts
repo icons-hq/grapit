@@ -17,9 +17,11 @@ function createMockDb() {
 function createSelectChain<T>(rows: T[]) {
   const chain = {
     from: vi.fn(),
+    innerJoin: vi.fn(),
     where: vi.fn(),
   };
   chain.from.mockReturnValue(chain);
+  chain.innerJoin.mockReturnValue(chain);
   chain.where.mockResolvedValue(rows);
   return chain;
 }
@@ -148,6 +150,40 @@ describe('PaymentService', () => {
 
       const result = await service.getPaymentByReservationId(reservationId);
       expect(result).toBeNull();
+    });
+  });
+
+  describe('findPaymentCancelSnapshotByCancelRequestId', () => {
+    it('resolves generated cancel request ids that point directly at a payment id', async () => {
+      const paymentId = randomUUID();
+      const payment = {
+        id: paymentId,
+        paymentKey: 'pay_async_1',
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'ALIPAY_PLUS',
+        currency: 'USD',
+        amount: 150000,
+        providerMetadata: null,
+        providerChargeCurrency: 'USD',
+        providerChargeAmountMinor: 10800,
+      };
+      const paymentLookup = createSelectChain([payment]);
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(paymentLookup);
+
+      const result = await service.findPaymentCancelSnapshotByCancelRequestId(
+        `cancel_${paymentId}`,
+      );
+
+      expect(result).toEqual(payment);
+      expect(paymentLookup.where).toHaveBeenCalledOnce();
+      expect(sqlPredicateHasParamValue(
+        paymentLookup.where.mock.calls[0]?.[0],
+        paymentId,
+      )).toBe(true);
     });
   });
 
@@ -501,6 +537,7 @@ describe('PaymentService', () => {
     function createConfirmedCancelWebhookPayload(
       paymentKey: string,
       orderId: string,
+      cancelRequestId?: string,
     ) {
       return {
         eventId: 'evt-paypal-cancelled',
@@ -515,6 +552,7 @@ describe('PaymentService', () => {
           totalAmount: 108,
           canceledAt: '2026-05-29T08:05:00.000Z',
           cancelReason: 'provider cancellation',
+          ...(cancelRequestId ? { cancelRequestId } : {}),
         },
       };
     }
@@ -1186,7 +1224,8 @@ describe('PaymentService', () => {
         .mockReturnValueOnce(createSelectChain([
           { seatId: '1F:A-10' },
           { seatId: '1F:A-11' },
-        ]));
+        ]))
+        .mockReturnValueOnce(createSelectChain([]));
 
       const result = await service.finalizeConfirmedCancelWebhook(
         createConfirmedCancelWebhookPayload(
@@ -1271,7 +1310,8 @@ describe('PaymentService', () => {
           cancelledSeatHoldMinMinutes: 1,
           cancelledSeatHoldMaxMinutes: 10,
         }]))
-        .mockReturnValueOnce(createSelectChain([{ seatId: '1F:A-10' }]));
+        .mockReturnValueOnce(createSelectChain([{ seatId: '1F:A-10' }]))
+        .mockReturnValueOnce(createSelectChain([]));
 
       const result = await service.finalizeConfirmedCancelWebhook(
         createConfirmedCancelWebhookPayload(
@@ -1342,7 +1382,8 @@ describe('PaymentService', () => {
           cancelledSeatHoldMinMinutes: 1,
           cancelledSeatHoldMaxMinutes: 10,
         }]))
-        .mockReturnValueOnce(createSelectChain([{ seatId: '1F:A-10' }]));
+        .mockReturnValueOnce(createSelectChain([{ seatId: '1F:A-10' }]))
+        .mockReturnValueOnce(createSelectChain([]));
 
       const result = await service.finalizeConfirmedCancelWebhook(
         createConfirmedCancelWebhookPayload(
@@ -1362,6 +1403,84 @@ describe('PaymentService', () => {
         expect.objectContaining({
           source: 'cancel_webhook',
           refundId,
+        }),
+      );
+    });
+
+    it('passes prepared ticket item cancellation economics for ticket-item async cancel webhooks', async () => {
+      const reservationId = randomUUID();
+      const paymentId = randomUUID();
+      const ticketItemId = randomUUID();
+      const finalizer = {
+        finalizeFullPaymentCancellation: vi.fn().mockResolvedValue({
+          releaseJobId: 'release-job-1',
+          releaseEnqueued: true,
+        }),
+      };
+      (service as unknown as {
+        paymentCancellationFinalizer: typeof finalizer;
+      }).paymentCancellationFinalizer = finalizer;
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          reservationNumber: 'GRP-20260508-ABCDE',
+          userId: randomUUID(),
+          showtimeId: 'showtime-1',
+          status: 'CONFIRMED',
+          totalAmount: 150000,
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: paymentId,
+          reservationId,
+          paymentKey: 'pay_ticket_item_cancelled',
+          tossOrderId: 'GRP-TICKET-ITEM-CANCELLED',
+          method: 'FOREIGN_EASY_PAY',
+          provider: 'ALIPAY',
+          currency: 'KRW',
+          amount: 150000,
+          status: 'CANCELED',
+          providerMetadata: { requestedProvider: 'ALIPAY' },
+        }]))
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: 'showtime-1',
+          performanceId: 'performance-1',
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          cancelledSeatHoldMinMinutes: 1,
+          cancelledSeatHoldMaxMinutes: 10,
+        }]))
+        .mockReturnValueOnce(createSelectChain([{ seatId: '1F:A-10' }]))
+        .mockReturnValueOnce(createSelectChain([{
+          ticketItemId,
+          cancellationFee: 7700,
+          serviceFeeRefund: 0,
+          refundableAmount: 69300,
+        }]));
+
+      const result = await service.finalizeConfirmedCancelWebhook(
+        createConfirmedCancelWebhookPayload(
+          'pay_ticket_item_cancelled',
+          'GRP-TICKET-ITEM-CANCELLED',
+          `cancel_${ticketItemId}`,
+        ),
+        createConfirmedCancelProviderResponse(
+          'pay_ticket_item_cancelled',
+          'GRP-TICKET-ITEM-CANCELLED',
+        ),
+      );
+
+      expect(result).toBe('finalized');
+      expect(finalizer.finalizeFullPaymentCancellation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source: 'cancel_webhook',
+          ticketItemCancellation: {
+            ticketItemId,
+            cancellationFee: 7700,
+            serviceFeeRefund: 0,
+            refundableAmount: 69300,
+          },
         }),
       );
     });

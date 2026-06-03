@@ -141,7 +141,10 @@ method is either fully closed or explicitly marked `STOPPED`.
    - Alipay: has `cancelRequestId`;
    - partial currency is not used for these one-seat full-cancel tests.
 9. Confirm provider cancel state:
-   - `CANCELED`/`DONE` means proceed to internal finalization checks;
+   - overseas card/PayPal: provider `status=CANCELED` means proceed to
+     internal finalization checks;
+   - Alipay: provider `status=CANCELED` and the matching `cancelRequestId`
+     cancel object with `cancelStatus=DONE` means proceed;
    - `IN_PROGRESS` means wait for webhook and query provider until final;
    - `ABORTED` or missing provider cancel means stop and escalate.
 10. Confirm Grabit final state:
@@ -164,7 +167,8 @@ Alipay must not be treated as done just because the cancel API returned.
 - Wait for `CANCEL_STATUS_CHANGED`.
 - Query Toss with the same secret scope and compare `paymentKey`, `orderId`,
   `status`, and latest cancel object.
-- Only provider `CANCELED` or latest cancel `DONE` closes the internal state.
+- Only provider `status=CANCELED` and the matching `cancelRequestId` cancel
+  object with `cancelStatus=DONE` closes the internal state.
 - If no webhook arrives within 10 minutes, stop new live tests and escalate with
   provider query evidence.
 

@@ -166,6 +166,10 @@ export function isTossCancelCompleted(
   cancelRequestId?: string,
 ): boolean {
   if (cancelRequestId) {
+    if (response.status !== 'CANCELED') {
+      return false;
+    }
+
     return response.cancels?.some((cancel) =>
       cancel.cancelRequestId === cancelRequestId && cancel.cancelStatus === 'DONE'
     ) ?? false;

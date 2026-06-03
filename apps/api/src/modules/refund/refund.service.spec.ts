@@ -77,6 +77,16 @@ describe('RefundService', () => {
       }],
     } as never, 'cancel_refund-1')).toBe(false);
     expect(isTossCancelCompleted({
+      status: 'DONE',
+      cancels: [{
+        cancelAmount: 132000,
+        cancelReason: '단순 변심',
+        canceledAt: '2026-05-08T03:05:00.000Z',
+        cancelStatus: 'DONE',
+        cancelRequestId: 'cancel_refund-1',
+      }],
+    } as never, 'cancel_refund-1')).toBe(false);
+    expect(isTossCancelCompleted({
       status: 'CANCELED',
       cancels: [{
         cancelAmount: 132000,

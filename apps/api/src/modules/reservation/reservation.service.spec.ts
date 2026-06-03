@@ -3681,7 +3681,14 @@ describe('ReservationService', () => {
       expect(mockBookingService.extendOwnedSeatLocks).toHaveBeenCalledWith(userId, showtimeId, ['1F:A-1', '1F:A-2'], 60);
       expect(mockTossClient.confirmPayment).toHaveBeenCalledOnce();
       expect(mockBookingService.assertOwnedSeatLocks).toHaveBeenCalledWith(userId, showtimeId, ['1F:A-1', '1F:A-2']);
-      expect(mockTossClient.cancelPayment).toHaveBeenCalledWith('pk_test_123', '좌석 점유 만료로 인한 자동 취소');
+      expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
+        'pk_test_123',
+        '좌석 점유 만료로 인한 자동 취소',
+        {
+          idempotencyKey: 'reservation-finalization-cancel:GRP-20260403-ABCDE',
+          secretKeyScope: 'default',
+        },
+      );
       expect(mockDb.transaction).not.toHaveBeenCalled();
       expect(mockBookingService.consumeOwnedSeatLocks).not.toHaveBeenCalled();
       expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
@@ -3710,7 +3717,14 @@ describe('ReservationService', () => {
       expect(mockBookingService.extendOwnedSeatLocks).toHaveBeenCalledWith(userId, showtimeId, ['1F:A-1', '1F:A-2'], 60);
       expect(mockTossClient.confirmPayment).toHaveBeenCalledOnce();
       expect(mockBookingService.assertOwnedSeatLocks).not.toHaveBeenCalled();
-      expect(mockTossClient.cancelPayment).toHaveBeenCalledWith('pk_test_123', '결제 확인 중복 처리로 인한 자동 취소');
+      expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
+        'pk_test_123',
+        '결제 확인 중복 처리로 인한 자동 취소',
+        {
+          idempotencyKey: 'reservation-finalization-cancel:GRP-20260403-ABCDE',
+          secretKeyScope: 'default',
+        },
+      );
       expect(mockDb.transaction).not.toHaveBeenCalled();
       expect(mockBookingService.consumeOwnedSeatLocks).not.toHaveBeenCalled();
       expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
@@ -3738,7 +3752,14 @@ describe('ReservationService', () => {
       )).rejects.toThrow('결제는 승인되었으나 자동 취소에 실패했습니다. 고객센터에 문의해주세요.');
 
       expect(mockTossClient.confirmPayment).toHaveBeenCalledOnce();
-      expect(mockTossClient.cancelPayment).toHaveBeenCalledWith('pk_test_123', '결제 확인 중복 처리로 인한 자동 취소');
+      expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
+        'pk_test_123',
+        '결제 확인 중복 처리로 인한 자동 취소',
+        {
+          idempotencyKey: 'reservation-finalization-cancel:GRP-20260403-ABCDE',
+          secretKeyScope: 'default',
+        },
+      );
       expect(mockDb.transaction).not.toHaveBeenCalled();
       expect(mockBookingService.consumeOwnedSeatLocks).not.toHaveBeenCalled();
       const lockToken = mockBookingService.acquirePaymentConfirmLock.mock.calls[0]?.[1];
@@ -3765,7 +3786,14 @@ describe('ReservationService', () => {
       expect(mockBookingService.extendOwnedSeatLocks).toHaveBeenCalledWith(userId, showtimeId, ['1F:A-1', '1F:A-2'], 60);
       expect(mockTossClient.confirmPayment).toHaveBeenCalledOnce();
       expect(mockBookingService.assertOwnedSeatLocks).not.toHaveBeenCalled();
-      expect(mockTossClient.cancelPayment).toHaveBeenCalledWith('pk_test_123', '결제 확인 상태 검증 실패로 인한 자동 취소');
+      expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
+        'pk_test_123',
+        '결제 확인 상태 검증 실패로 인한 자동 취소',
+        {
+          idempotencyKey: 'reservation-finalization-cancel:GRP-20260403-ABCDE',
+          secretKeyScope: 'default',
+        },
+      );
       expect(mockDb.transaction).not.toHaveBeenCalled();
       expect(mockBookingService.consumeOwnedSeatLocks).not.toHaveBeenCalled();
       expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
@@ -3881,6 +3909,11 @@ describe('ReservationService', () => {
       expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
         'pay_async_1',
         expect.stringContaining('판매 불가능'),
+        {
+          cancelRequestId: 'cancel_payment-existing',
+          idempotencyKey: 'reservation-finalization-cancel:GRP-LOCK-CONFIRM-ABCDE',
+          secretKeyScope: 'foreign-easy-pay',
+        },
       );
       expect(rootUpdate.set).toHaveBeenCalledWith(expect.objectContaining({
         status: 'CANCELED',
@@ -3932,6 +3965,11 @@ describe('ReservationService', () => {
       expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
         'pay_async_1',
         expect.stringContaining('판매 불가능'),
+        {
+          cancelRequestId: 'cancel_payment-existing',
+          idempotencyKey: 'reservation-finalization-cancel:GRP-LOCK-CONFIRM-ABCDE',
+          secretKeyScope: 'foreign-easy-pay',
+        },
       );
       expect(rootUpdate.set).toHaveBeenCalledWith(expect.objectContaining({
         status: 'CANCELED',
@@ -3985,6 +4023,10 @@ describe('ReservationService', () => {
       expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
         'pk_test_123',
         expect.stringContaining('판매 불가능'),
+        {
+          idempotencyKey: 'reservation-finalization-cancel:GRP-20260403-ABCDE',
+          secretKeyScope: 'default',
+        },
       );
       expect(mockBookingService.assertOwnedSeatLocks).toHaveBeenCalledWith(userId, showtimeId, ['1F:A-1', '1F:A-2']);
       expect(mockBookingService.assertOwnedSeatLocks.mock.invocationCallOrder[0])
@@ -4063,6 +4105,11 @@ describe('ReservationService', () => {
       expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
         'pay_async_1',
         '서버 오류로 인한 자동 취소',
+        {
+          cancelRequestId: 'cancel_payment-existing',
+          idempotencyKey: 'reservation-finalization-cancel:GRP-LOCK-CONFIRM-ABCDE',
+          secretKeyScope: 'foreign-easy-pay',
+        },
       );
       expect(rootUpdate.set).toHaveBeenCalledWith(expect.objectContaining({
         status: 'CANCELED',

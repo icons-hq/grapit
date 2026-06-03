@@ -538,6 +538,7 @@ export class PaymentService {
 
     return await this.findPaymentCancelSnapshotByRefundId(localId)
       ?? await this.findPaymentCancelSnapshotByTicketItemId(localId)
+      ?? await this.findPaymentCancelSnapshotByPaymentId(localId)
       ?? await this.findPaymentCancelSnapshotByReservationId(localId);
   }
 
@@ -581,6 +582,27 @@ export class PaymentService {
       .from(ticketItems)
       .innerJoin(payments, eq(ticketItems.paymentId, payments.id))
       .where(eq(ticketItems.id, ticketItemId));
+
+    return payment ?? null;
+  }
+
+  private async findPaymentCancelSnapshotByPaymentId(
+    paymentId: string,
+  ): Promise<PaymentCancelPaymentSnapshot | null> {
+    const [payment] = await this.db
+      .select({
+        id: payments.id,
+        paymentKey: payments.paymentKey,
+        method: payments.method,
+        provider: payments.provider,
+        currency: payments.currency,
+        amount: payments.amount,
+        providerMetadata: payments.providerMetadata,
+        providerChargeCurrency: payments.providerChargeCurrency,
+        providerChargeAmountMinor: payments.providerChargeAmountMinor,
+      })
+      .from(payments)
+      .where(eq(payments.id, paymentId));
 
     return payment ?? null;
   }
@@ -869,10 +891,13 @@ export class PaymentService {
       })
       .from(reservationSeats)
       .where(eq(reservationSeats.reservationId, reservation.id));
+    const ticketItemCancellation =
+      await this.findCancelWebhookTicketItemCancellation(payload, payment.id);
 
     await this.paymentCancellationFinalizer.finalizeFullPaymentCancellation({
       source: 'cancel_webhook',
       ...(matchingRefund ? { refundId: matchingRefund.id } : {}),
+      ...(ticketItemCancellation ? { ticketItemCancellation } : {}),
       context: {
         reservation: {
           id: reservation.id,
@@ -893,6 +918,44 @@ export class PaymentService {
     });
 
     return 'finalized';
+  }
+
+  private async findCancelWebhookTicketItemCancellation(
+    payload: TossWebhookRequestBody,
+    paymentId: string,
+  ): Promise<{
+    ticketItemId: string;
+    cancellationFee: number;
+    serviceFeeRefund: number;
+    refundableAmount: number;
+  } | null> {
+    if (payload.eventType !== 'CANCEL_STATUS_CHANGED') {
+      return null;
+    }
+
+    const ticketItemId = this.parseGeneratedCancelRequestId(
+      payload.data.cancelRequestId ?? '',
+    );
+    if (!ticketItemId) {
+      return null;
+    }
+
+    const [ticketItem] = await this.db
+      .select({
+        ticketItemId: ticketItems.id,
+        cancellationFee: ticketItems.cancellationFee,
+        serviceFeeRefund: ticketItems.serviceFeeRefund,
+        refundableAmount: ticketItems.refundableAmount,
+      })
+      .from(ticketItems)
+      .where(
+        and(
+          eq(ticketItems.id, ticketItemId),
+          eq(ticketItems.paymentId, paymentId),
+        ),
+      );
+
+    return ticketItem ?? null;
   }
 
   private resolveCancelWebhookReason(
