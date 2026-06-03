@@ -359,6 +359,52 @@ describe('PaymentCancellationFinalizerService', () => {
     expect(transaction.postCommitUpdateCalls).toHaveLength(0);
   });
 
+  it('preserves ticket-item cancellation economics when finalizing a ticket-item full cancel', async () => {
+    const { service, transaction } = createService(
+      {
+        isAvailable: false,
+        send: vi.fn(),
+      },
+      {
+        ticketItemReturning: [{ id: 'ticket-item-1' }],
+        ticketReturning: [{ id: 'ticket-1' }],
+        seatInventoryReturning: [[{ id: 'seat-inventory-1' }]],
+      },
+    );
+
+    await service.finalizeFullPaymentCancellation(
+      baseInput({
+        refundId: undefined,
+        source: 'ticket_item',
+        reason: '일정 변경',
+        context: createContext({
+          seats: [{ seatId: '1F:A-10' }],
+        }),
+        ticketItemCancellation: {
+          ticketItemId: 'ticket-item-1',
+          cancellationFee: 7700,
+          serviceFeeRefund: 0,
+          refundableAmount: 69300,
+        },
+      }),
+    );
+
+    const ticketItemUpdate = transaction.updateCalls.find((call) =>
+      call.table === ticketItems
+    );
+    expect(ticketItemUpdate?.values).toMatchObject({
+      status: 'cancelled',
+      cancelReason: '일정 변경',
+      cancellationFee: 7700,
+      serviceFeeRefund: 0,
+      refundableAmount: 69300,
+    });
+    expect(objectGraphContains(ticketItemUpdate?.whereArgs[0], 'ticket-item-1'))
+      .toBe(true);
+    expect(objectGraphContains(ticketItemUpdate?.whereArgs[0], 'ticket-item-2'))
+      .toBe(false);
+  });
+
   it('stores sanitized provider cancellation payload in refund and payment metadata', async () => {
     const { service, transaction } = createService({
       isAvailable: false,

@@ -60,6 +60,12 @@ export type PaymentCancellationActor =
 export interface FinalizeFullPaymentCancellationInput {
   context: FullPaymentCancellationContext;
   refundId?: string;
+  ticketItemCancellation?: {
+    ticketItemId: string;
+    cancellationFee: number;
+    serviceFeeRefund: number;
+    refundableAmount: number;
+  };
   reason: string;
   providerResponse?: PaymentCancellationProviderResponse;
   actor?: PaymentCancellationActor;
@@ -265,29 +271,47 @@ export class PaymentCancellationFinalizerService {
       }
 
       if (seatIdentities.length > 0) {
+        const ticketItemCancellation = input.ticketItemCancellation;
+        const ticketItemUpdateValues = ticketItemCancellation
+          ? {
+              status: 'cancelled' as const,
+              cancelledAt: now,
+              cancelReason: input.reason,
+              cancellationFee: ticketItemCancellation.cancellationFee,
+              serviceFeeRefund: ticketItemCancellation.serviceFeeRefund,
+              refundableAmount: ticketItemCancellation.refundableAmount,
+              reopenState: 'not_required' as const,
+              reopenHoldUntil: null,
+              reopenJobId: null,
+              updatedAt: now,
+            }
+          : {
+              status: 'cancelled' as const,
+              cancelledAt: now,
+              cancelReason: input.reason,
+              cancellationFee: 0,
+              serviceFeeRefund: sql`${ticketItems.serviceFee}`,
+              refundableAmount: sql`${ticketItems.price} + ${ticketItems.serviceFee}`,
+              reopenState: 'not_required' as const,
+              reopenHoldUntil: null,
+              reopenJobId: null,
+              updatedAt: now,
+            };
+        const ticketItemScope = ticketItemCancellation
+          ? eq(ticketItems.id, ticketItemCancellation.ticketItemId)
+          : inArray(
+              ticketItems.seatKey,
+              seatIdentities.map((seatIdentity) => seatIdentity.seatKey),
+            );
         const updatedTicketItems = await tx
           .update(ticketItems)
-          .set({
-            status: 'cancelled',
-            cancelledAt: now,
-            cancelReason: input.reason,
-            cancellationFee: 0,
-            serviceFeeRefund: sql`${ticketItems.serviceFee}`,
-            refundableAmount: sql`${ticketItems.price} + ${ticketItems.serviceFee}`,
-            reopenState: 'not_required',
-            reopenHoldUntil: null,
-            reopenJobId: null,
-            updatedAt: now,
-          })
+          .set(ticketItemUpdateValues)
           .where(
             and(
               eq(ticketItems.reservationId, input.context.reservation.id),
               eq(ticketItems.paymentId, input.context.payment.id),
               eq(ticketItems.showtimeId, input.context.reservation.showtimeId),
-              inArray(
-                ticketItems.seatKey,
-                seatIdentities.map((seatIdentity) => seatIdentity.seatKey),
-              ),
+              ticketItemScope,
               inArray(ticketItems.status, ['active', 'cancellation_pending', 'cancelled']),
             ),
           )

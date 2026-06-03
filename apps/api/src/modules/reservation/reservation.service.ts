@@ -159,6 +159,9 @@ type TicketItemPaymentCancelOutcome =
   | { status: 'cancelled'; providerResponse: TossPaymentResponse }
   | { status: 'definite_failure' }
   | { status: 'ambiguous' };
+type TicketItemCancellationSnapshot = PaymentCancelTicketItemSnapshot & {
+  seatId: string;
+};
 type ProviderChargeQuote = {
   currency: 'USD';
   amountMinor: number;
@@ -1690,6 +1693,7 @@ export class ReservationService {
         );
         if (
           !input.isFullPaymentCancellation
+          && input.request.options.cancelRequestId !== undefined
           && matchingCancelsBefore !== undefined
           && matchingCancelsAfter > matchingCancelsBefore
         ) {
@@ -1725,16 +1729,17 @@ export class ReservationService {
 
   private toPaymentCancelTicketItemSnapshot(
     row: Record<string, unknown>,
-  ): PaymentCancelTicketItemSnapshot {
+  ): TicketItemCancellationSnapshot {
     return {
       id: String(row['id']),
       refundableAmount: Number(row['refundable_amount'] ?? 0),
+      seatId: String(row['seat_id']),
     };
   }
 
   private buildTicketItemFinalizerContext(input: {
     context: TicketItemCancellationContext;
-    seats: Array<{ seatId: string }>;
+    activeTicketItems: TicketItemCancellationSnapshot[];
   }): FullPaymentCancellationContext {
     return {
       reservation: {
@@ -1750,14 +1755,16 @@ export class ReservationService {
         providerMetadata: input.context.providerMetadata,
       },
       bookingPolicy: input.context.bookingPolicy,
-      seats: input.seats,
+      seats: input.activeTicketItems.map((ticketItem) => ({
+        seatId: ticketItem.seatId,
+      })),
     };
   }
 
   private buildTicketItemPaymentCancelRequest(input: {
     context: TicketItemCancellationContext;
     quote: TicketItemCancellationQuote;
-    activeTicketItems: PaymentCancelTicketItemSnapshot[];
+    activeTicketItems: TicketItemCancellationSnapshot[];
     reason: string;
   }): PaymentCancelRequest {
     const currentTicketItem = {
@@ -1886,7 +1893,8 @@ export class ReservationService {
         const activeTicketItemResult = await tx.execute(sql`
           SELECT
             ti.id,
-            ti.refundable_amount
+            ti.refundable_amount,
+            ti.seat_id
           FROM ticket_items ti
           WHERE ti.reservation_id = ${reservationId}
             AND ti.payment_id = ${context.paymentId}
@@ -1896,16 +1904,9 @@ export class ReservationService {
         const activeTicketItems = activeTicketItemResult.rows.map((row) =>
           this.toPaymentCancelTicketItemSnapshot(row as Record<string, unknown>)
         );
-        const reservationSeatResult = await tx.execute(sql`
-          SELECT rs.seat_id
-          FROM reservation_seats rs
-          WHERE rs.reservation_id = ${reservationId}
-        `);
         const finalizerContext = this.buildTicketItemFinalizerContext({
           context,
-          seats: reservationSeatResult.rows.map((row) => ({
-            seatId: String((row as Record<string, unknown>)['seat_id']),
-          })),
+          activeTicketItems,
         });
         const paymentCancelRequest = this.buildTicketItemPaymentCancelRequest({
           context,
@@ -2004,6 +2005,12 @@ export class ReservationService {
               source: 'ticket_item',
               context: preparedCancellation.finalizerContext,
               reason: preparedCancellation.reason,
+              ticketItemCancellation: {
+                ticketItemId,
+                cancellationFee: preparedCancellation.quote.cancellationFee,
+                serviceFeeRefund: preparedCancellation.quote.serviceFeeRefund,
+                refundableAmount: preparedCancellation.quote.refundableAmount,
+              },
               providerResponse:
                 cancelOutcome.providerResponse as unknown as Record<string, unknown>,
               actor: { kind: 'user' },

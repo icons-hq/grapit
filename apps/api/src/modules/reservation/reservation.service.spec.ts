@@ -531,7 +531,7 @@ describe('ReservationService', () => {
     cancellationFee?: number;
     serviceFeeRefund?: number;
     refundableAmount?: number;
-    activeRemainingRows?: Array<{ id: string; refundableAmount?: number }>;
+    activeRemainingRows?: Array<{ id: string; refundableAmount?: number; seatId?: string }>;
     reservationSeatRows?: Array<{ seat_id: string }>;
   }) {
     const row = {
@@ -572,10 +572,12 @@ describe('ReservationService', () => {
       {
         id: args.ticketItemId,
         refundable_amount: args.refundableAmount ?? 0,
+        seat_id: 'A-1',
       },
-      ...(args.activeRemainingRows ?? [{ id: 'ticket-item-sibling' }]).map((item) => ({
+      ...(args.activeRemainingRows ?? [{ id: 'ticket-item-sibling' }]).map((item, index) => ({
         id: item.id,
         refundable_amount: item.refundableAmount ?? 0,
+        seat_id: item.seatId ?? `A-${index + 2}`,
       })),
     ];
     const reservationSeatRows = args.reservationSeatRows ?? [
@@ -2230,6 +2232,12 @@ describe('ReservationService', () => {
             }),
           }),
           reason: '일정 변경',
+          ticketItemCancellation: {
+            ticketItemId,
+            cancellationFee: 7700,
+            serviceFeeRefund: 0,
+            refundableAmount: 69300,
+          },
           providerResponse: expect.objectContaining({ status: 'CANCELED' }),
           actor: { kind: 'user' },
         });
@@ -2406,6 +2414,7 @@ describe('ReservationService', () => {
         providerChargeAmountMinor: 10800,
         providerMetadata: { asyncStatus: 'DONE' },
         activeRemainingRows: [],
+        reservationSeatRows: [{ seat_id: 'A-1' }, { seat_id: 'A-2' }],
       });
 
       await expect(service.cancelTicketItem(
@@ -2444,6 +2453,12 @@ describe('ReservationService', () => {
           },
           seats: [{ seatId: 'A-1' }],
         }),
+        ticketItemCancellation: {
+          ticketItemId,
+          cancellationFee: 4000,
+          serviceFeeRefund: 0,
+          refundableAmount: 73000,
+        },
         reason: '단순 변심',
         providerResponse: expect.objectContaining({ status: 'CANCELED' }),
         actor: { kind: 'user' },
@@ -2642,7 +2657,7 @@ describe('ReservationService', () => {
       );
     });
 
-    it('continues cancellation when Toss query confirms a lost partial-cancel response', async () => {
+    it('keeps domestic lost partial-cancel response ambiguous without cancelRequestId', async () => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date('2026-05-08T14:50:00.000Z'));
 
@@ -2690,12 +2705,79 @@ describe('ReservationService', () => {
           ticketItemId,
           userId,
           '단순 변심',
-        )).resolves.toMatchObject({ id: reservationId });
+        )).rejects.toThrow('취소 처리 중 오류가 발생했습니다. 고객센터에 문의해주세요.');
 
         const ticketItemUpdates = updateCalls.filter((call) => call.table === ticketItems);
         expect(ticketItemUpdates[0]?.values).toMatchObject({
           status: 'cancellation_pending',
         });
+        expect(ticketItemUpdates).toHaveLength(1);
+        expect(updateCalls.some((call) => call.table === seatInventories)).toBe(false);
+        expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('continues Alipay cancellation when Toss query confirms the matching cancelRequestId', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-05-08T14:50:00.000Z'));
+
+      try {
+        const reservationId = randomUUID();
+        const userId = randomUUID();
+        const ticketItemId = randomUUID();
+        vi.spyOn(service, 'getReservationDetail').mockResolvedValue({
+          id: reservationId,
+          ticketItems: [],
+        } as never);
+        mockTossClient.cancelPayment.mockRejectedValueOnce(new Error('network timeout'));
+        mockTossClient.queryPayment
+          .mockResolvedValueOnce({
+            paymentKey: 'pk_ticket_item_cancel',
+            orderId: 'GRP-20260403-ABCDE',
+            method: 'FOREIGN_EASY_PAY',
+            totalAmount: 10800,
+            status: 'DONE',
+            approvedAt: '2026-04-03T10:00:00+09:00',
+            cancels: [],
+          })
+          .mockResolvedValueOnce({
+            paymentKey: 'pk_ticket_item_cancel',
+            orderId: 'GRP-20260403-ABCDE',
+            method: 'FOREIGN_EASY_PAY',
+            totalAmount: 10800,
+            status: 'DONE',
+            approvedAt: '2026-04-03T10:00:00+09:00',
+            cancels: [{
+              cancelAmount: 52.56,
+              cancelReason: '단순 변심',
+              canceledAt: '2026-04-03T11:00:00+09:00',
+              cancelStatus: 'DONE',
+              cancelRequestId: `cancel_${ticketItemId}`,
+            }],
+          });
+        const { updateCalls } = setupTicketItemCancelTransaction({
+          reservationId,
+          userId,
+          ticketItemId,
+          paymentMethod: 'FOREIGN_EASY_PAY',
+          paymentProvider: 'ALIPAY',
+          paymentCurrency: 'USD',
+          paymentAmount: 150000,
+          providerChargeCurrency: 'USD',
+          providerChargeAmountMinor: 10800,
+          activeRemainingRows: [{ id: randomUUID() }],
+        });
+
+        await expect(service.cancelTicketItem(
+          reservationId,
+          ticketItemId,
+          userId,
+          '단순 변심',
+        )).resolves.toMatchObject({ id: reservationId });
+
+        const ticketItemUpdates = updateCalls.filter((call) => call.table === ticketItems);
         expect(ticketItemUpdates[1]?.values).toMatchObject({
           status: 'cancelled',
           reopenState: 'available',
