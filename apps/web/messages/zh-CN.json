@@ -30,7 +30,10 @@
     "loadError": "无法加载演出信息。请稍后再试。",
     "retry": "重试",
     "emptyHeading": "没有搜索结果",
-    "emptyBody": "请尝试其他关键词或按活动分类浏览"
+    "emptyBody": "请尝试其他关键词或按活动分类浏览",
+    "paginationNav": "搜索结果页面",
+    "previousPage": "上一页",
+    "nextPage": "下一页"
   },
   "genres": {
     "artist_celebrity": "艺人",
@@ -76,6 +79,19 @@
     "upcomingDateLabel": "即将开售",
     "detailImagesTitle": "详情图片",
     "detailImageAlt": "{title} 详情图片 {index}"
+  },
+  "support": {
+    "title": "客户支持",
+    "noticeHeading": "公告",
+    "faqHeading": "常见问题",
+    "emptyNotice": "客户支持内容正在为上线做准备。重要公告会在票务开放前更新。",
+    "contactEmailLabel": "联系：",
+    "fallbackBookingQuestion": "何时开放预订？",
+    "fallbackBookingAnswer": "预订开放时间会显示在各活动详情页。开放前，预订按钮可能保持不可用。",
+    "fallbackPaymentQuestion": "付款与 QR 入场",
+    "fallbackPaymentAnswer": "付款完成后，可在我的页面查看预订记录和 QR 门票。入场时请准备好 QR 画面。",
+    "fallbackRefundQuestion": "退款或账号支持",
+    "fallbackRefundAnswer": "请将预订编号、账号邮箱和咨询内容发送至客户支持邮箱。我们会审核后按顺序回复。"
   },
   "booking": {
     "disabled": "门票预订将于稍后开放",

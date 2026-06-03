@@ -6,6 +6,7 @@ export const LAUNCH_COPY_NAMESPACES = [
   'search',
   'performance',
   'booking',
+  'support',
   'auth.form',
   'auth.signup',
   'auth.consent',
@@ -42,6 +43,9 @@ const searchKeys = [
   'retry',
   'emptyHeading',
   'emptyBody',
+  'paginationNav',
+  'previousPage',
+  'nextPage',
 ] as const;
 
 const performanceKeys = [
@@ -57,6 +61,20 @@ const performanceKeys = [
 ] as const;
 
 const bookingKeys = ['disabled'] as const;
+
+const supportKeys = [
+  'title',
+  'noticeHeading',
+  'faqHeading',
+  'emptyNotice',
+  'contactEmailLabel',
+  'fallbackBookingQuestion',
+  'fallbackBookingAnswer',
+  'fallbackPaymentQuestion',
+  'fallbackPaymentAnswer',
+  'fallbackRefundQuestion',
+  'fallbackRefundAnswer',
+] as const;
 
 const authFormKeys = [
   'email',
@@ -195,6 +213,7 @@ export const LAUNCH_COPY_KEYS = {
   search: forLaunchLocales(searchKeys),
   performance: forLaunchLocales(performanceKeys),
   booking: forLaunchLocales(bookingKeys),
+  support: forLaunchLocales(supportKeys),
   'auth.form': forLaunchLocales(authFormKeys),
   'auth.signup': forLaunchLocales(authSignupKeys),
   'auth.consent': forLaunchLocales(authConsentKeys),

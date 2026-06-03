@@ -12,11 +12,38 @@ describe('PaginationNav', () => {
 
   it('renders navigation with correct aria-label', () => {
     render(
-      <PaginationNav currentPage={1} totalPages={5} onPageChange={vi.fn()} />,
+      <PaginationNav
+        currentPage={1}
+        totalPages={5}
+        onPageChange={vi.fn()}
+        labels={{
+          navigation: 'Search results pages',
+          previous: 'Previous page',
+          next: 'Next page',
+        }}
+      />,
     );
     expect(
-      screen.getByRole('navigation', { name: '페이지 네비게이션' }),
+      screen.getByRole('navigation', { name: 'Search results pages' }),
     ).toBeDefined();
+  });
+
+  it('localizes previous and next button labels', () => {
+    render(
+      <PaginationNav
+        currentPage={2}
+        totalPages={5}
+        onPageChange={vi.fn()}
+        labels={{
+          navigation: 'Search results pages',
+          previous: 'Previous page',
+          next: 'Next page',
+        }}
+      />,
+    );
+
+    expect(screen.getByLabelText('Previous page')).toBeDefined();
+    expect(screen.getByLabelText('Next page')).toBeDefined();
   });
 
   it('marks current page with aria-current', () => {

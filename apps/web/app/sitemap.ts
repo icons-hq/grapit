@@ -6,6 +6,7 @@ const LAST_MODIFIED = new Date('2026-05-06T00:00:00.000Z');
 
 const PUBLIC_SITEMAP_PATHS = [
   '/',
+  '/support',
   '/legal/terms',
   '/legal/privacy',
   '/legal/marketing',

@@ -12,6 +12,8 @@ describe('getVisibleCopy', () => {
     expect(copy.performance.bookCta).toBe('Book tickets');
     expect(copy.performance.upcomingDateLabel).toBe('Coming soon');
     expect(copy.booking.disabled).toBe('Ticket booking will open later');
+    expect(copy.support.title).toBe('Support');
+    expect(copy.support.fallbackPaymentQuestion).toBe('Payment and QR entry');
     expect(copy.footer.terms).toBe('Terms of Service');
     expect(copy.auth.tabs.login).toBe('Login');
     expect(copy.auth.form.email).toBe('Email');
@@ -24,6 +26,7 @@ describe('getVisibleCopy', () => {
 
     expect(copy.nav.searchPlaceholder).toBe('공연명, 아티스트를 검색하세요');
     expect(copy.booking.disabled).toBe('예매는 추후 오픈 예정입니다');
+    expect(copy.support.title).toBe('고객센터');
     expect(copy.auth.tabs.login).toBe('로그인');
     expect(copy.locale.dismiss).toBe('나중에');
   });

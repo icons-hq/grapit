@@ -29,9 +29,12 @@ export function Footer() {
             {copy.privacy}
           </Link>
           <span className="text-gray-400">|</span>
-          <a href="mailto:wecordofficial_cs@mariannekate.com" className="hover:underline">
+          <Link
+            href={getLocalizedPathname('/support', activeLocale)}
+            className="hover:underline"
+          >
             {copy.support}
-          </a>
+          </Link>
         </div>
 
         {/* Copyright */}

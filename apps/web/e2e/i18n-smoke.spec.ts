@@ -24,6 +24,7 @@ const localeCases = [
     resultTitle: '2026 걸룰스 팬미팅',
     authCopy: '로그인',
     detailCopy: '상세정보',
+    supportCopy: '고객센터',
     bookingDisabledCopy: '예매는 추후 오픈 예정입니다',
     expectsTranslationLabel: false,
   },
@@ -37,6 +38,7 @@ const localeCases = [
     resultTitle: '2026 Girl Rules Fanmeeting',
     authCopy: 'Login',
     detailCopy: 'Details',
+    supportCopy: 'Support',
     bookingDisabledCopy: 'Ticket booking will open later',
     expectsTranslationLabel: true,
   },
@@ -50,6 +52,7 @@ const localeCases = [
     resultTitle: 'แฟนมีตติ้ง Girl Rules 2026',
     authCopy: 'เข้าสู่ระบบ',
     detailCopy: 'รายละเอียด',
+    supportCopy: 'ศูนย์ช่วยเหลือ',
     bookingDisabledCopy: 'การจองบัตรจะเปิดให้บริการในภายหลัง',
     expectsTranslationLabel: true,
   },
@@ -63,6 +66,7 @@ const localeCases = [
     resultTitle: '2026 Girl Rules 粉丝见面会',
     authCopy: '登录',
     detailCopy: '详细信息',
+    supportCopy: '客户支持',
     bookingDisabledCopy: '门票预订将于稍后开放',
     expectsTranslationLabel: true,
   },
@@ -113,6 +117,15 @@ test.describe('Phase 23 i18n canary smoke', () => {
       assertKoreanRewriteHeader(localeCase.prefix, searchResponse);
       await expect(page.getByText(localeCase.searchCopy)).toBeVisible();
       await expect(page.getByText(localeCase.resultTitle).first()).toBeVisible();
+
+      const supportResponse = await gotoSmokeRoute(
+        page,
+        withLocalePrefix(localeCase.prefix, '/support'),
+      );
+      assertKoreanRewriteHeader(localeCase.prefix, supportResponse);
+      await expect(
+        page.getByRole('heading', { level: 1, name: localeCase.supportCopy }),
+      ).toBeVisible();
 
       const performanceResponse = await gotoSmokeRoute(
         page,
