@@ -124,6 +124,34 @@ describe('TossPaymentsClient', () => {
     );
   });
 
+  it('omits optional cancel fields for full Toss cancellation', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        ...paidResponse,
+        status: 'CANCELED',
+        cancels: [
+          {
+            cancelAmount: 150000,
+            cancelReason: 'full cancel',
+            canceledAt: '2026-05-20T05:46:00.000Z',
+          },
+        ],
+      }),
+    });
+
+    await client.cancelPayment('pay_test_phase26_1', 'full cancel');
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+    expect(body).toEqual({
+      cancelReason: 'full cancel',
+    });
+    expect(body).not.toHaveProperty('cancelAmount');
+    expect(body).not.toHaveProperty('currency');
+    expect(body).not.toHaveProperty('cancelRequestId');
+  });
+
   it('sends Idempotency-Key when cancelling a Toss payment retry', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
@@ -157,7 +185,7 @@ describe('TossPaymentsClient', () => {
     );
   });
 
-  it('sends cancelAmount for Toss partial cancellation while preserving retry idempotency', async () => {
+  it('sends cancelAmount for Toss partial cancellation', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
       json: vi.fn().mockResolvedValue({
@@ -174,7 +202,6 @@ describe('TossPaymentsClient', () => {
     });
 
     await client.cancelPayment('pay_test_phase26_1', 'ticket item cancel', {
-      idempotencyKey: 'ticket-item-cancel:ticket-item-1',
       cancelAmount: 79000,
     });
 
@@ -185,11 +212,62 @@ describe('TossPaymentsClient', () => {
         headers: expect.objectContaining({
           Authorization: authHeader,
           'Content-Type': 'application/json',
-          'Idempotency-Key': 'ticket-item-cancel:ticket-item-1',
         }),
         body: JSON.stringify({
           cancelReason: 'ticket item cancel',
           cancelAmount: 79000,
+        }),
+      }),
+    );
+  });
+
+  it('sends currency for Toss foreign partial cancellation', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        ...paidResponse,
+        method: 'FOREIGN_EASY_PAY',
+        status: 'DONE',
+      }),
+    });
+
+    await client.cancelPayment('pay_foreign_easy_pay', 'foreign partial cancel', {
+      cancelAmount: 10,
+      currency: 'USD',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.tosspayments.com/v1/payments/pay_foreign_easy_pay/cancel',
+      expect.objectContaining({
+        body: JSON.stringify({
+          cancelReason: 'foreign partial cancel',
+          cancelAmount: 10,
+          currency: 'USD',
+        }),
+      }),
+    );
+  });
+
+  it('sends cancelRequestId for Toss async foreign cancellation', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        ...paidResponse,
+        method: 'FOREIGN_EASY_PAY',
+        status: 'DONE',
+      }),
+    });
+
+    await client.cancelPayment('pay_alipay_async', 'alipay async cancel', {
+      cancelRequestId: 'cancel-request-alipay-1',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.tosspayments.com/v1/payments/pay_alipay_async/cancel',
+      expect.objectContaining({
+        body: JSON.stringify({
+          cancelReason: 'alipay async cancel',
+          cancelRequestId: 'cancel-request-alipay-1',
         }),
       }),
     );
