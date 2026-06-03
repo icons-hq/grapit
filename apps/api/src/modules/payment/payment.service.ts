@@ -31,6 +31,7 @@ import type {
 import { TossPaymentsClient, type TossPaymentResponse } from './toss-payments.client.js';
 import { ProviderChargeQuoteService } from './provider-charge-quote.service.js';
 import { PaymentCancellationFinalizerService } from '../cancellation/payment-cancellation-finalizer.service.js';
+import type { PaymentCancelPaymentSnapshot } from './payment-cancel-policy.js';
 
 type TossWebhookProvider = PaymentProvider | 'ALIPAY';
 type ProviderChargeQuote = {
@@ -492,6 +493,33 @@ export class PaymentService {
       reservationStatus: reservation.reservationStatus as ReservationStatus,
       paymentStatus: payment?.paymentStatus as PaymentStatus | undefined ?? null,
     };
+  }
+
+  async findPaymentCancelSnapshot(
+    orderId: string,
+    paymentKey: string,
+  ): Promise<PaymentCancelPaymentSnapshot | null> {
+    const [payment] = await this.db
+      .select({
+        id: payments.id,
+        paymentKey: payments.paymentKey,
+        method: payments.method,
+        provider: payments.provider,
+        currency: payments.currency,
+        amount: payments.amount,
+        providerMetadata: payments.providerMetadata,
+        providerChargeCurrency: payments.providerChargeCurrency,
+        providerChargeAmountMinor: payments.providerChargeAmountMinor,
+      })
+      .from(payments)
+      .where(
+        or(
+          eq(payments.tossOrderId, orderId),
+          eq(payments.paymentKey, paymentKey),
+        ),
+      );
+
+    return payment ?? null;
   }
 
   async upsertAsyncPaymentProgress(

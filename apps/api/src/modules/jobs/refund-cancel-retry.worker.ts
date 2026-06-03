@@ -93,7 +93,8 @@ export class RefundCancelRetryWorker implements OnModuleInit {
       | 'retry_schedule_failed'
       | 'failed'
       | 'completed'
-      | 'processing';
+      | 'processing'
+      | 'status_wait';
   }> {
     const context = await this.loadRetryContext(payload.refundId);
     if (!context) {
@@ -104,14 +105,12 @@ export class RefundCancelRetryWorker implements OnModuleInit {
       return { status: 'already_terminal' };
     }
 
-    if (context.refund.retryCount >= REFUND_CANCEL_MAX_RETRIES) {
-      const reason = this.resolveCancelReason(context.refund);
-      await this.markRetryExhausted(context.refund.id, reason);
-      return { status: 'failed' };
-    }
-
     const reason = this.resolveCancelReason(context.refund);
-    const nextRetryCount = context.refund.retryCount + 1;
+    const retryPolicyExhausted = context.refund.retryCount >= REFUND_CANCEL_MAX_RETRIES;
+    const nextRetryCount = Math.min(
+      context.refund.retryCount + 1,
+      REFUND_CANCEL_MAX_RETRIES,
+    );
     const command = buildFullPaymentCancelRequest({
       payment: context.payment,
       reason,
@@ -130,24 +129,19 @@ export class RefundCancelRetryWorker implements OnModuleInit {
       }
 
       if (this.hasMatchingInProgressCancel(queried, command.options.cancelRequestId)) {
-        await this.markRefundProcessing(
-          context.refund.id,
+        return await this.keepWaitingForMatchingAsyncCancel(
+          context,
           queried,
           reason,
           nextRetryCount,
+          command.options.cancelRequestId,
+          retryPolicyExhausted,
         );
-        const jobId = await this.scheduleRetry(context.refund.id, nextRetryCount);
-        await this.recordRetryScheduleState(
-          context.refund.id,
-          {
-            cancelReason: reason,
-            paymentStatus: queried.status,
-            cancelRequestId: command.options.cancelRequestId,
-          },
-          nextRetryCount,
-          jobId,
-        );
-        return { status: jobId ? 'processing' : 'retry_schedule_failed' };
+      }
+
+      if (retryPolicyExhausted) {
+        await this.markRetryExhausted(context.refund.id, reason);
+        return { status: 'failed' };
       }
 
       const response = await this.tossPaymentsClient.cancelPayment(
@@ -159,6 +153,17 @@ export class RefundCancelRetryWorker implements OnModuleInit {
       if (isTossCancelCompleted(response)) {
         await this.finalizeFullPaymentCancellation(context, response, reason);
         return { status: 'completed' };
+      }
+
+      if (this.hasMatchingInProgressCancel(response, command.options.cancelRequestId)) {
+        return await this.keepWaitingForMatchingAsyncCancel(
+          context,
+          response,
+          reason,
+          nextRetryCount,
+          command.options.cancelRequestId,
+          nextRetryCount >= REFUND_CANCEL_MAX_RETRIES,
+        );
       }
 
       await this.markRefundProcessing(context.refund.id, response, reason, nextRetryCount);
@@ -231,6 +236,43 @@ export class RefundCancelRetryWorker implements OnModuleInit {
     return response.cancels?.some((cancel) =>
       cancel.cancelRequestId === cancelRequestId && cancel.cancelStatus !== 'DONE'
     ) ?? false;
+  }
+
+  protected async keepWaitingForMatchingAsyncCancel(
+    context: RetryContext,
+    response: TossPaymentResponse,
+    reason: string,
+    retryCount: number,
+    cancelRequestId: string | undefined,
+    retryPolicyExhausted: boolean,
+  ): Promise<{ status: 'processing' | 'retry_schedule_failed' | 'status_wait' }> {
+    await this.markRefundProcessing(
+      context.refund.id,
+      response,
+      reason,
+      retryCount,
+    );
+
+    const jobId = retryPolicyExhausted
+      ? null
+      : await this.scheduleRetry(context.refund.id, retryCount);
+    await this.recordRetryScheduleState(
+      context.refund.id,
+      {
+        cancelReason: reason,
+        paymentStatus: response.status,
+        cancelRequestId,
+        ...(retryPolicyExhausted ? { manualReviewRequired: true } : {}),
+      },
+      retryCount,
+      jobId,
+    );
+
+    if (retryPolicyExhausted) {
+      return { status: 'status_wait' };
+    }
+
+    return { status: jobId ? 'processing' : 'retry_schedule_failed' };
   }
 
   protected async finalizeFullPaymentCancellation(

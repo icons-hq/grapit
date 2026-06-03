@@ -13,6 +13,7 @@ import {
   type TossPaymentResponse,
 } from './toss-payments.client.js';
 import { TossWebhookGuard } from './toss-webhook.guard.js';
+import { resolvePaymentCancelSecretScope } from './payment-cancel-policy.js';
 
 const paymentStatusPriority = {
   READY: 0,
@@ -219,7 +220,7 @@ export class PaymentWebhookController {
   private async withProviderVerifiedState(
     body: TossWebhookRequestBody,
   ): Promise<{ webhook: TossWebhookRequestBody; providerResponse: TossPaymentResponse }> {
-    const queryOptions = this.getProviderQueryOptions(body);
+    const queryOptions = await this.getProviderQueryOptions(body);
     const queried = queryOptions
       ? await this.tossPaymentsClient.queryPayment(body.data.paymentKey, queryOptions)
       : await this.tossPaymentsClient.queryPayment(body.data.paymentKey);
@@ -253,14 +254,34 @@ export class PaymentWebhookController {
     };
   }
 
-  private getProviderQueryOptions(
+  private async getProviderQueryOptions(
     body: TossWebhookRequestBody,
+  ): Promise<TossPaymentRequestOptions | undefined> {
+    if (body.eventType === 'CANCEL_STATUS_CHANGED') {
+      const payment = await this.paymentService.findPaymentCancelSnapshot(
+        body.data.orderId,
+        body.data.paymentKey,
+      );
+
+      if (payment) {
+        return { secretKeyScope: resolvePaymentCancelSecretScope(payment) };
+      }
+
+      return this.getWebhookProviderQueryOptions(body, true);
+    }
+
+    return this.getWebhookProviderQueryOptions(body, false);
+  }
+
+  private getWebhookProviderQueryOptions(
+    body: TossWebhookRequestBody,
+    isCancelEvent: boolean,
   ): TossPaymentRequestOptions | undefined {
     if (
-      body.data.method === 'FOREIGN_EASY_PAY'
-      || body.data.provider === 'ALIPAY'
+      body.data.provider === 'ALIPAY'
       || body.data.provider === 'ALIPAY_PLUS'
       || body.data.provider === 'TRUEMONEY'
+      || (!isCancelEvent && body.data.method === 'FOREIGN_EASY_PAY')
     ) {
       return { secretKeyScope: 'foreign-easy-pay' };
     }

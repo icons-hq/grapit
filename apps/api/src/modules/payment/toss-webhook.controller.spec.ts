@@ -18,6 +18,7 @@ function createMockPaymentService() {
   return {
     recordWebhookEvent: vi.fn<PaymentService['recordWebhookEvent']>(),
     findAsyncPaymentProgress: vi.fn<PaymentService['findAsyncPaymentProgress']>(),
+    findPaymentCancelSnapshot: vi.fn(),
     upsertAsyncPaymentProgress: vi.fn<PaymentService['upsertAsyncPaymentProgress']>(),
     finalizeConfirmedCancelWebhook: vi.fn().mockResolvedValue('finalized'),
     markWebhookEventProcessed: vi.fn<PaymentService['markWebhookEventProcessed']>(),
@@ -451,6 +452,126 @@ describe('PaymentWebhookController', () => {
       'CANCEL_STATUS_CHANGED_FINALIZED',
       undefined,
     );
+  });
+
+  it('uses default secret scope for PayPal cancel webhook from persisted payment facts', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(
+      makeLedgerResult({
+        eventId: 'evt-paypal-cancel-1',
+      }),
+    );
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(
+      makeProgress({
+        reservationStatus: 'CONFIRMED',
+        paymentStatus: 'DONE',
+      }),
+    );
+    paymentService.findPaymentCancelSnapshot.mockResolvedValueOnce({
+      id: 'payment-paypal-1',
+      paymentKey: 'pay_paypal_1',
+      method: 'FOREIGN_EASY_PAY',
+      provider: 'PAYPAL',
+      currency: 'KRW',
+      amount: 150000,
+      providerMetadata: { requestedProvider: 'PAYPAL' },
+      providerChargeCurrency: 'USD',
+      providerChargeAmountMinor: 10800,
+    });
+    tossClient.queryPayment.mockResolvedValueOnce(
+      makeQueriedPayment({
+        paymentKey: 'pay_paypal_1',
+        orderId: 'GRP-PAYPAL-1',
+        method: 'FOREIGN_EASY_PAY',
+        status: 'CANCELED',
+        cancels: [
+          {
+            cancelAmount: 150000,
+            cancelReason: 'buyer changed mind',
+            canceledAt: '2026-05-08T07:02:05.000Z',
+            cancelStatus: 'DONE',
+          },
+        ],
+      }),
+    );
+
+    await controller.handleTossWebhook({
+      eventId: 'evt-paypal-cancel-1',
+      eventType: 'CANCEL_STATUS_CHANGED',
+      data: {
+        paymentKey: 'pay_paypal_1',
+        orderId: 'GRP-PAYPAL-1',
+        status: 'CANCELED',
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'PAYPAL',
+        totalAmount: 150000,
+      },
+    });
+
+    expect(paymentService.findPaymentCancelSnapshot).toHaveBeenCalledWith(
+      'GRP-PAYPAL-1',
+      'pay_paypal_1',
+    );
+    expect(tossClient.queryPayment).toHaveBeenCalledWith('pay_paypal_1', {
+      secretKeyScope: 'default',
+    });
+  });
+
+  it('uses overseas-card secret scope for cancel webhook from persisted provider metadata', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(
+      makeLedgerResult({
+        eventId: 'evt-overseas-card-cancel-1',
+      }),
+    );
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(
+      makeProgress({
+        reservationStatus: 'CONFIRMED',
+        paymentStatus: 'DONE',
+      }),
+    );
+    paymentService.findPaymentCancelSnapshot.mockResolvedValueOnce({
+      id: 'payment-overseas-card-1',
+      paymentKey: 'pay_overseas_card_1',
+      method: 'CARD',
+      provider: 'CARD',
+      currency: 'USD',
+      amount: 150000,
+      providerMetadata: { requestedProvider: 'OVERSEAS_CARD' },
+      providerChargeCurrency: 'USD',
+      providerChargeAmountMinor: 10800,
+    });
+    tossClient.queryPayment.mockResolvedValueOnce(
+      makeQueriedPayment({
+        paymentKey: 'pay_overseas_card_1',
+        orderId: 'GRP-OVERSEAS-CARD-1',
+        method: 'CARD',
+        status: 'CANCELED',
+        cancels: [
+          {
+            cancelAmount: 150000,
+            cancelReason: 'buyer changed mind',
+            canceledAt: '2026-05-08T07:02:05.000Z',
+            cancelStatus: 'DONE',
+          },
+        ],
+      }),
+    );
+
+    await controller.handleTossWebhook({
+      eventId: 'evt-overseas-card-cancel-1',
+      eventType: 'CANCEL_STATUS_CHANGED',
+      data: {
+        paymentKey: 'pay_overseas_card_1',
+        orderId: 'GRP-OVERSEAS-CARD-1',
+        status: 'CANCELED',
+        method: 'CARD',
+        provider: 'CARD',
+        totalAmount: 150000,
+      },
+    });
+
+    expect(tossClient.queryPayment).toHaveBeenCalledWith('pay_overseas_card_1', {
+      secretKeyScope: 'overseas-card',
+    });
   });
 
   it('keeps pending-payment cancel webhook behavior on the payment progress path', async () => {

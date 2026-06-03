@@ -363,6 +363,79 @@ describe('RefundCancelRetryWorker', () => {
     expect(result.status).toBe('processing');
   });
 
+  it('keeps waiting at max retries when provider shows matching async cancel in progress', async () => {
+    const tossPaymentsClient = {
+      queryPayment: vi.fn().mockResolvedValue({
+        paymentKey: 'pay-key-1',
+        orderId: 'GRP-20260508-ABCDE',
+        method: 'FOREIGN_EASY_PAY',
+        totalAmount: 132000,
+        status: 'DONE',
+        approvedAt: '2026-05-08T03:00:00.000Z',
+        cancels: [
+          {
+            cancelAmount: 132000,
+            cancelReason: '단순 변심',
+            canceledAt: '2026-05-08T03:05:00.000Z',
+            cancelStatus: 'IN_PROGRESS',
+            cancelRequestId: 'cancel_refund-1',
+          },
+        ],
+      }),
+      cancelPayment: vi.fn(),
+    };
+    const worker = new RefundCancelRetryWorker(
+      {} as never,
+      tossPaymentsClient as never,
+      { finalizeFullPaymentCancellation: vi.fn() } as never,
+      { isAvailable: true, work: vi.fn(), send: vi.fn(), stop: vi.fn() } as never,
+    );
+    const context = createRetryContext();
+    context.refund.retryCount = REFUND_CANCEL_MAX_RETRIES;
+    context.payment.method = 'FOREIGN_EASY_PAY';
+    context.payment.provider = 'ALIPAY';
+    context.payment.currency = 'USD';
+
+    vi.spyOn(worker as never, 'loadRetryContext').mockResolvedValue(context as never);
+    const markProcessingSpy = vi
+      .spyOn(worker as never, 'markRefundProcessing')
+      .mockResolvedValue(undefined as never);
+    const scheduleRetrySpy = vi.spyOn(worker as never, 'scheduleRetry');
+    const recordScheduleSpy = vi
+      .spyOn(worker as never, 'recordRetryScheduleState')
+      .mockResolvedValue(undefined as never);
+    const exhaustedSpy = vi.spyOn(worker as never, 'markRetryExhausted');
+    const finalFailureSpy = vi.spyOn(worker as never, 'markFinalFailure');
+
+    const result = await worker.handleJob({ refundId: 'refund-1', attempt: 4 });
+
+    expect(tossPaymentsClient.queryPayment).toHaveBeenCalledWith('pay-key-1', {
+      secretKeyScope: 'foreign-easy-pay',
+    });
+    expect(tossPaymentsClient.cancelPayment).not.toHaveBeenCalled();
+    expect(markProcessingSpy).toHaveBeenCalledWith(
+      'refund-1',
+      expect.objectContaining({ status: 'DONE' }),
+      '단순 변심',
+      REFUND_CANCEL_MAX_RETRIES,
+    );
+    expect(scheduleRetrySpy).not.toHaveBeenCalled();
+    expect(recordScheduleSpy).toHaveBeenCalledWith(
+      'refund-1',
+      {
+        cancelReason: '단순 변심',
+        paymentStatus: 'DONE',
+        cancelRequestId: 'cancel_refund-1',
+        manualReviewRequired: true,
+      },
+      REFUND_CANCEL_MAX_RETRIES,
+      null,
+    );
+    expect(exhaustedSpy).not.toHaveBeenCalled();
+    expect(finalFailureSpy).not.toHaveBeenCalled();
+    expect(result.status).toBe('status_wait');
+  });
+
   it('reissues retry cancel with the same policy options when query is not terminal', async () => {
     const tossPaymentsClient = {
       queryPayment: vi.fn().mockResolvedValue({
