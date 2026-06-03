@@ -26,7 +26,7 @@ export function NewSection() {
     <section className="mt-8 md:mt-12">
       <div className="mb-4 flex items-end justify-between md:mb-6">
         <h2 className="text-xl font-semibold leading-tight text-gray-950 md:text-display md:leading-[1.2]">
-          New
+          {copy.home.newOpen}
         </h2>
         <Link
           href={`${getLocalizedPathname('/genre/artist_celebrity', activeLocale)}?sort=latest`}

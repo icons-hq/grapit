@@ -256,14 +256,17 @@ export class PerformanceService {
   ): Promise<PerformanceWithDetails | null> {
     const targetLocale = resolvePerformanceTranslationLocale(locale);
     const includeHiddenCopy = options.includeHiddenCopy === true;
+    const visibilityCondition = includeHiddenCopy
+      ? eq(performances.id, id)
+      : and(eq(performances.id, id), eq(performances.publishState, 'published'));
 
     // Increment view count BEFORE the cache check so view counters keep
     // accruing on every request, not just on DB hits (per plan acceptance).
-    // no-op if ID doesn't exist.
+    // no-op if ID doesn't exist or is hidden from the current read path.
     await this.db
       .update(performances)
       .set({ viewCount: sql`${performances.viewCount} + 1` })
-      .where(eq(performances.id, id));
+      .where(visibilityCondition);
 
     const cacheKey = `cache:performances:detail:${id}:${targetLocale}:${PERFORMANCE_DETAIL_CACHE_VERSION}`;
     if (!includeHiddenCopy) {
@@ -276,14 +279,7 @@ export class PerformanceService {
       .select()
       .from(performances)
       .leftJoin(venues, eq(performances.venueId, venues.id))
-      .where(
-        includeHiddenCopy
-          ? eq(performances.id, id)
-          : and(
-              eq(performances.id, id),
-              eq(performances.publishState, 'published'),
-            ),
-      );
+      .where(visibilityCondition);
 
     if (!performanceRow) {
       return null;

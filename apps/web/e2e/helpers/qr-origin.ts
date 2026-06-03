@@ -63,7 +63,7 @@ function resolveConfiguredQrOrigin(): string | null {
   return null;
 }
 
-function resolvePlaywrightHttpsOrigin(): string | null {
+function resolvePlaywrightOrigin(): string | null {
   const baseUrl = process.env.PLAYWRIGHT_BASE_URL?.trim();
   if (!baseUrl) {
     return null;
@@ -71,25 +71,31 @@ function resolvePlaywrightHttpsOrigin(): string | null {
 
   try {
     const url = new URL(baseUrl);
-    return url.protocol === 'https:' ? url.origin : null;
+    if (url.protocol === 'https:' || isAllowedHttpRehearsalOrigin(url)) {
+      return url.origin;
+    }
   } catch {
     return null;
   }
+
+  return null;
 }
 
 function getAcceptedQrOrigins(): string[] {
-  const origins = new Set<string>([DEFAULT_QR_PUBLIC_WEB_ORIGIN]);
+  const origins = new Set<string>();
   const configuredOrigin = resolveConfiguredQrOrigin();
-  const playwrightHttpsOrigin = resolvePlaywrightHttpsOrigin();
+  const playwrightOrigin = resolvePlaywrightOrigin();
 
   if (configuredOrigin) {
     origins.add(configuredOrigin);
   }
-  if (playwrightHttpsOrigin) {
-    origins.add(playwrightHttpsOrigin);
+  if (playwrightOrigin) {
+    origins.add(playwrightOrigin);
   }
   if (!isProduction()) {
     origins.add(DOCUMENTED_LOCAL_QR_PUBLIC_WEB_ORIGIN);
+  } else {
+    origins.add(DEFAULT_QR_PUBLIC_WEB_ORIGIN);
   }
 
   return Array.from(origins);

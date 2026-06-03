@@ -69,6 +69,9 @@ describe('SupportPage', () => {
     expect(
       screen.getByText('Complete payment before the timer expires.'),
     ).toBeInTheDocument();
+    expect(
+      screen.getByText('Complete payment before the timer expires.'),
+    ).toHaveClass('break-words');
     expect(screen.getByText('When does booking open?')).toBeInTheDocument();
     expect(
       screen.getByText('Booking opens from the event detail page.'),

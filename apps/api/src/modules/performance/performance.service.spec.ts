@@ -180,6 +180,7 @@ const translatedFieldRows = [
 
 function createMockDb() {
   const chainable = createChainableMock();
+  const updateWhere = vi.fn().mockResolvedValue([]);
   return {
     select: vi.fn().mockReturnValue(chainable),
     insert: vi.fn().mockReturnValue({
@@ -192,7 +193,7 @@ function createMockDb() {
     }),
     update: vi.fn().mockReturnValue({
       set: vi.fn().mockReturnValue({
-        where: vi.fn().mockResolvedValue([]),
+        where: updateWhere,
       }),
     }),
     delete: vi.fn().mockReturnValue({
@@ -209,6 +210,7 @@ function createMockDb() {
     },
     execute: vi.fn().mockResolvedValue([]),
     _chainable: chainable,
+    _updateWhere: updateWhere,
   };
 }
 
@@ -320,6 +322,21 @@ describe('PerformanceService', () => {
 
       // When GREEN, should verify UPDATE performances SET view_count = view_count + 1
       expect(mockDb.update).toHaveBeenCalled();
+    });
+
+    it('does not increment hidden performance viewCount through public detail reads', async () => {
+      mockDb.select.mockReturnValueOnce(
+        createNonPublishedDetailResult([
+          createPerformanceRow(PHASE23_I18N_SMOKE_PERFORMANCE_ID, {
+            publishState: 'draft',
+          }),
+        ]),
+      );
+
+      await service.findById(PHASE23_I18N_SMOKE_PERFORMANCE_ID);
+
+      const [updateWhere] = mockDb._updateWhere.mock.calls[0] ?? [];
+      expect(hasPublishStatePublishedFilter(updateWhere)).toBe(true);
     });
 
     it('should return null for non-existent id', async () => {

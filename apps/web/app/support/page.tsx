@@ -62,10 +62,10 @@ export default function SupportPage() {
                 key={notice.id}
                 className="rounded-lg border border-gray-200 bg-white p-4"
               >
-                <h3 className="text-sm font-semibold text-gray-950">
+                <h3 className="break-words text-sm font-semibold text-gray-950">
                   {notice.title}
                 </h3>
-                <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">
+                <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-gray-700">
                   {notice.body}
                 </p>
               </article>
@@ -91,10 +91,10 @@ export default function SupportPage() {
         <div className="mt-4 divide-y divide-gray-200 rounded-lg border border-gray-200 bg-white">
           {(faqs.length > 0 ? faqs : fallbackFaqs).map((faq) => (
             <article key={faq.question} className="p-4">
-              <h3 className="text-sm font-semibold text-gray-950">
+              <h3 className="break-words text-sm font-semibold text-gray-950">
                 {faq.question}
               </h3>
-              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-gray-700">
+              <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-gray-700">
                 {faq.answer}
               </p>
             </article>

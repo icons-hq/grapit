@@ -14,6 +14,7 @@ const DEFAULT_QR_SIZE = 220;
 const QR_PADDING = 16;
 const DEFAULT_QR_TITLE = '티켓 검표 QR';
 const DEFAULT_PUBLIC_WEB_ORIGIN = 'https://heygrabit.com';
+const DEFAULT_LOCAL_QR_REHEARSAL_ORIGIN = 'http://localhost:3000';
 
 function isProduction(): boolean {
   return process.env.NODE_ENV === 'production';
@@ -76,14 +77,17 @@ function getConfiguredPublicWebOrigin(): string | null {
   return null;
 }
 
-function getBrowserHttpsOrigin(): string | null {
+function getBrowserPublicWebOrigin(): string | null {
   if (typeof window === 'undefined') {
     return null;
   }
 
   try {
     const currentOrigin = new URL(window.location.origin);
-    if (currentOrigin.protocol === 'https:') {
+    if (
+      currentOrigin.protocol === 'https:' ||
+      isAllowedHttpRehearsalOrigin(currentOrigin)
+    ) {
       return currentOrigin.origin;
     }
   } catch {
@@ -96,8 +100,10 @@ function getBrowserHttpsOrigin(): string | null {
 function getPublicWebOrigin(): string {
   return (
     getConfiguredPublicWebOrigin() ??
-    getBrowserHttpsOrigin() ??
-    DEFAULT_PUBLIC_WEB_ORIGIN
+    getBrowserPublicWebOrigin() ??
+    (isProduction()
+      ? DEFAULT_PUBLIC_WEB_ORIGIN
+      : DEFAULT_LOCAL_QR_REHEARSAL_ORIGIN)
   );
 }
 
@@ -112,10 +118,9 @@ function isAllowedQrValue(value: string): boolean {
       return true;
     }
 
-    const configuredOrigin = getConfiguredPublicWebOrigin();
     return (
-      configuredOrigin !== null &&
-      url.origin === configuredOrigin &&
+      !isProduction() &&
+      url.origin === getPublicWebOrigin() &&
       isAllowedHttpRehearsalOrigin(url)
     );
   } catch {

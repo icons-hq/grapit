@@ -174,11 +174,11 @@ describe('ReservationDetailView QR ticket card', () => {
     expect(qrImages).toHaveLength(2);
     expect(qrImages[0]).toHaveAttribute(
       'data-qr-url',
-      `https://heygrabit.com/field/check-in?ticket=${encodeURIComponent(rawQrToken)}`,
+      `http://localhost:3000/field/check-in?ticket=${encodeURIComponent(rawQrToken)}`,
     );
     expect(qrImages[1]).toHaveAttribute(
       'data-qr-url',
-      `https://heygrabit.com/field/check-in?ticket=${encodeURIComponent(secondRawQrToken)}`,
+      `http://localhost:3000/field/check-in?ticket=${encodeURIComponent(secondRawQrToken)}`,
     );
     expect(qrImages[0]?.querySelector('svg, canvas, img')).not.toBeNull();
     expect(qrImages[1]?.querySelector('svg, canvas, img')).not.toBeNull();
@@ -196,7 +196,7 @@ describe('ReservationDetailView QR ticket card', () => {
     expect(screen.queryByText(secondRawQrJti, { exact: true })).not.toBeInTheDocument();
     expect(screen.queryByText(rawPaymentKey, { exact: true })).not.toBeInTheDocument();
     expect(
-      screen.queryByText(/https:\/\/heygrabit\.com\/field\/check-in/),
+      screen.queryByText(/\/field\/check-in/),
     ).not.toBeInTheDocument();
     expect(screen.queryByText('티켓 ID')).not.toBeInTheDocument();
     expect(screen.queryByText('발급 시각')).not.toBeInTheDocument();

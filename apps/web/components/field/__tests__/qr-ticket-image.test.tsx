@@ -108,6 +108,43 @@ describe('QrTicketImage', () => {
     expect(screen.getByTestId('qr-ticket-image')).toHaveAttribute('data-qr-url', qrUrl);
   });
 
+  it('uses the current non-production browser HTTP origin instead of production fallback', async () => {
+    vi.resetModules();
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubGlobal('window', {
+      location: {
+        origin: 'http://127.0.0.1:3000',
+      },
+    });
+
+    const { buildQrCheckInUrl, QrTicketImage: BrowserQrTicketImage } = await import(
+      '../qr-ticket-image'
+    );
+    const qrUrl = buildQrCheckInUrl('token');
+
+    expect(qrUrl).toBe('http://127.0.0.1:3000/field/check-in?ticket=token');
+
+    render(<BrowserQrTicketImage value={qrUrl} />);
+
+    expect(screen.getByTestId('qr-ticket-image')).toHaveAttribute('data-qr-url', qrUrl);
+  });
+
+  it('uses documented localhost rehearsal origin in non-production without browser origin', async () => {
+    vi.resetModules();
+    vi.stubEnv('NODE_ENV', 'development');
+
+    const { buildQrCheckInUrl, QrTicketImage: LocalQrTicketImage } = await import(
+      '../qr-ticket-image'
+    );
+    const qrUrl = buildQrCheckInUrl('token');
+
+    expect(qrUrl).toBe('http://localhost:3000/field/check-in?ticket=token');
+
+    render(<LocalQrTicketImage value={qrUrl} />);
+
+    expect(screen.getByTestId('qr-ticket-image')).toHaveAttribute('data-qr-url', qrUrl);
+  });
+
   it('ignores configured HTTP origins in production and keeps the render guard HTTPS-only', async () => {
     vi.resetModules();
     vi.stubEnv('NODE_ENV', 'production');

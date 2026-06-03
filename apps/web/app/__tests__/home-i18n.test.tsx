@@ -72,7 +72,7 @@ describe('home i18n visible copy', () => {
     ).toBe('/en/genre/artist_celebrity');
     expect(screen.getByText('Search fanmeet and popup events or browse by category.')).toBeDefined();
     expect(screen.getByRole('heading', { name: 'HOT' })).toBeDefined();
-    expect(screen.getByRole('heading', { name: 'New' })).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Newly opened' })).toBeDefined();
     expect(screen.getByRole('heading', { name: 'Browse by category' })).toBeDefined();
     expect(screen.getByRole('link', { name: 'Artist' })).toBeDefined();
     expect(screen.queryByRole('link', { name: 'IP Popup' })).toBeNull();
