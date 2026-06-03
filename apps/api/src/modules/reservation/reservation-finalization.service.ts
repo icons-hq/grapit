@@ -326,6 +326,10 @@ export class ReservationFinalizationService {
     }
 
     if (reservation.status === 'CONFIRMED') {
+      if (isOverseasCardConfirm && existingPayment?.status === 'DONE') {
+        await this.backfillOverseasCardProviderMetadataIfMissing(existingPayment);
+      }
+
       return { reservationId: reservation.id };
     }
 
@@ -857,6 +861,25 @@ export class ReservationFinalizationService {
     }
 
     return { providerMetadata: approvedPayment.providerMetadata };
+  }
+
+  private async backfillOverseasCardProviderMetadataIfMissing(
+    existingPayment: {
+      id: string;
+      providerMetadata?: unknown;
+    },
+  ): Promise<void> {
+    if (
+      existingPayment.providerMetadata !== null
+      && existingPayment.providerMetadata !== undefined
+    ) {
+      return;
+    }
+
+    await this.db
+      .update(payments)
+      .set({ providerMetadata: createOverseasCardProviderMetadata() })
+      .where(eq(payments.id, existingPayment.id));
   }
 
   private calculatePayableTotal(seats: FloorAwareSeatSelection[]): number {

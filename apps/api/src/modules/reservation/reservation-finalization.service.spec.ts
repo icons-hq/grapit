@@ -548,6 +548,144 @@ describe('ReservationFinalizationService', () => {
     expect(db.transaction).not.toHaveBeenCalled();
   });
 
+  it('backfills overseas card metadata before returning confirmed duplicate payment', async () => {
+    const { service, db, tossClient } = createDependencies();
+    const setPaymentValues = vi.fn().mockReturnValue({
+      where: vi.fn().mockResolvedValue(undefined),
+    });
+    db.update.mockReturnValue({
+      set: setPaymentValues,
+    });
+    db.select
+      .mockReturnValueOnce(chainResult([
+        {
+          id: 'payment-overseas-card-confirmed-1',
+          reservationId: 'reservation-overseas-card-confirmed-1',
+          status: 'DONE',
+          paymentKey: 'payment-key-overseas-card-confirmed',
+          tossOrderId: 'order-overseas-card-confirmed-1',
+          method: 'CARD',
+          provider: 'CARD',
+          providerMetadata: null,
+          currency: 'KRW',
+          amount: 154000,
+          paidAt: new Date('2026-06-02T10:01:00.000Z'),
+          asyncStatus: 'sync',
+        },
+      ]))
+      .mockReturnValueOnce(chainResult([
+        {
+          id: 'reservation-overseas-card-confirmed-1',
+          userId: 'user-1',
+          showtimeId: 'showtime-1',
+          status: 'CONFIRMED',
+          totalAmount: 154000,
+          admissionActiveUntilAt: null,
+        },
+      ]))
+      .mockReturnValueOnce(chainResult([
+        {
+          seatId: '1F:A-1',
+          tierName: 'VIP',
+          price: 100000,
+          row: 'A',
+          number: '1',
+        },
+        {
+          seatId: '1F:A-2',
+          tierName: 'R',
+          price: 50000,
+          row: 'A',
+          number: '2',
+        },
+      ]));
+
+    await expect(
+      service.confirmAndCreateReservation(
+        {
+          paymentKey: 'payment-key-overseas-card-confirmed',
+          orderId: 'order-overseas-card-confirmed-1',
+          provider: 'OVERSEAS_CARD',
+          amount: 154000,
+        },
+        'user-1',
+      ),
+    ).resolves.toEqual({ reservationId: 'reservation-overseas-card-confirmed-1' });
+
+    expect(db.update).toHaveBeenCalledWith(payments);
+    expect(setPaymentValues).toHaveBeenCalledWith({
+      providerMetadata: {
+        requestedProvider: 'OVERSEAS_CARD',
+        secretKeyScope: 'overseas-card',
+      },
+    });
+    expect(tossClient.confirmPayment).not.toHaveBeenCalled();
+    expect(db.transaction).not.toHaveBeenCalled();
+  });
+
+  it('preserves existing object metadata when returning confirmed duplicate payment', async () => {
+    const { service, db, tossClient } = createDependencies();
+    db.select
+      .mockReturnValueOnce(chainResult([
+        {
+          id: 'payment-overseas-card-confirmed-2',
+          reservationId: 'reservation-overseas-card-confirmed-2',
+          status: 'DONE',
+          paymentKey: 'payment-key-overseas-card-confirmed-2',
+          tossOrderId: 'order-overseas-card-confirmed-2',
+          method: 'CARD',
+          provider: 'CARD',
+          providerMetadata: { existing: true },
+          currency: 'KRW',
+          amount: 154000,
+          paidAt: new Date('2026-06-02T10:01:00.000Z'),
+          asyncStatus: 'sync',
+        },
+      ]))
+      .mockReturnValueOnce(chainResult([
+        {
+          id: 'reservation-overseas-card-confirmed-2',
+          userId: 'user-1',
+          showtimeId: 'showtime-1',
+          status: 'CONFIRMED',
+          totalAmount: 154000,
+          admissionActiveUntilAt: null,
+        },
+      ]))
+      .mockReturnValueOnce(chainResult([
+        {
+          seatId: '1F:A-1',
+          tierName: 'VIP',
+          price: 100000,
+          row: 'A',
+          number: '1',
+        },
+        {
+          seatId: '1F:A-2',
+          tierName: 'R',
+          price: 50000,
+          row: 'A',
+          number: '2',
+        },
+      ]));
+
+    await expect(
+      service.confirmAndCreateReservation(
+        {
+          paymentKey: 'payment-key-overseas-card-confirmed-2',
+          orderId: 'order-overseas-card-confirmed-2',
+          provider: 'OVERSEAS_CARD',
+          amount: 154000,
+        },
+        'user-1',
+      ),
+    ).resolves.toEqual({ reservationId: 'reservation-overseas-card-confirmed-2' });
+
+    expect(db.update).not.toHaveBeenCalled();
+    expect(tossClient.confirmPayment).not.toHaveBeenCalled();
+    expect(db.transaction).not.toHaveBeenCalled();
+  });
+
   it('rejects confirmed retry when stored and requested amounts omit service fees', async () => {
     const { service, db, tossClient } = createDependencies();
     db.select
