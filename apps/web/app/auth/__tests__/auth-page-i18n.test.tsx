@@ -23,6 +23,7 @@ vi.mock('@/components/auth/signup-form', () => ({
 }));
 
 import AuthPage from '../page';
+import { getSocialLoginPath } from '@/components/auth/login-form';
 
 describe('auth page i18n visible copy', () => {
   it('renders auth tabs and login form copy from the active locale', () => {
@@ -34,5 +35,14 @@ describe('auth page i18n visible copy', () => {
     expect(screen.getByPlaceholderText('Enter your password')).toBeDefined();
     expect(screen.getByRole('button', { name: 'Login' })).toBeDefined();
     expect(screen.getByText('Forgot password?')).toBeDefined();
+  });
+
+  it('builds social login start URLs with the active locale', () => {
+    expect(getSocialLoginPath('google', 'en')).toBe(
+      '/api/v1/auth/social/google?locale=en',
+    );
+    expect(getSocialLoginPath('kakao', 'ko')).toBe(
+      '/api/v1/auth/social/kakao?locale=ko',
+    );
   });
 });

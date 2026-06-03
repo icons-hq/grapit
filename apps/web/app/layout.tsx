@@ -12,6 +12,9 @@ import './globals.css';
 export const metadata: Metadata = {
   title: 'Grabit - 공연 티켓 예매',
   description: '공연, 전시, 스포츠 등 라이브 엔터테인먼트 티켓 예매 플랫폼',
+  other: {
+    google: 'notranslate',
+  },
 };
 
 export default async function RootLayout({
@@ -23,7 +26,7 @@ export default async function RootLayout({
   const messages = await getMessages();
 
   return (
-    <html lang={locale} className={pretendard.variable}>
+    <html lang={locale} translate="no" className={`${pretendard.variable} notranslate`}>
       <body className="flex min-h-screen flex-col">
         <NextIntlClientProvider locale={locale} messages={messages} timeZone="Asia/Seoul">
           <Providers>

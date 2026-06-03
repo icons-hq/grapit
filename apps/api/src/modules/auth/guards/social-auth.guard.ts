@@ -1,7 +1,11 @@
 import { Injectable, type ExecutionContext, Logger } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ConfigService } from '@nestjs/config';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
+import {
+  buildSocialCallbackUrl,
+  getSocialCallbackLocaleFromRequest,
+} from '../social-callback-url.js';
 
 function handleSocialAuthRequest<T>(
   err: Error | null,
@@ -21,12 +25,26 @@ function handleSocialAuthRequest<T>(
 
     logger.warn(`${providerName} OAuth failed: ${err?.message ?? 'no user returned'}`);
 
-    const res = context.switchToHttp().getResponse<Response>();
-    res.redirect(`${frontendUrl}/auth/callback?error=${errorCode}&provider=${providerName}`);
+    const http = context.switchToHttp();
+    const req = http.getRequest<Request>();
+    const res = http.getResponse<Response>();
+    res.redirect(
+      buildSocialCallbackUrl(
+        frontendUrl,
+        getSocialCallbackLocaleFromRequest(req, 'state'),
+        { error: errorCode, provider: providerName },
+      ),
+    );
     return null as T;
   }
 
   return user;
+}
+
+function getSocialAuthenticateOptions(context: ExecutionContext): { state: string } | undefined {
+  const req = context.switchToHttp().getRequest<Request>();
+  const locale = getSocialCallbackLocaleFromRequest(req, 'locale');
+  return locale ? { state: locale } : undefined;
 }
 
 @Injectable()
@@ -39,6 +57,10 @@ export class KakaoAuthGuard extends AuthGuard('kakao') {
 
   canActivate(context: ExecutionContext) {
     return super.canActivate(context);
+  }
+
+  getAuthenticateOptions(context: ExecutionContext) {
+    return getSocialAuthenticateOptions(context);
   }
 
   handleRequest<T>(err: Error | null, user: T, _info: unknown, context: ExecutionContext): T {
@@ -58,6 +80,10 @@ export class NaverAuthGuard extends AuthGuard('naver') {
     return super.canActivate(context);
   }
 
+  getAuthenticateOptions(context: ExecutionContext) {
+    return getSocialAuthenticateOptions(context);
+  }
+
   handleRequest<T>(err: Error | null, user: T, _info: unknown, context: ExecutionContext): T {
     return handleSocialAuthRequest(err, user, context, this.configService, 'naver', this.logger);
   }
@@ -73,6 +99,10 @@ export class GoogleAuthGuard extends AuthGuard('google') {
 
   canActivate(context: ExecutionContext) {
     return super.canActivate(context);
+  }
+
+  getAuthenticateOptions(context: ExecutionContext) {
+    return getSocialAuthenticateOptions(context);
   }
 
   handleRequest<T>(err: Error | null, user: T, _info: unknown, context: ExecutionContext): T {

@@ -16,11 +16,16 @@ vi.mock('next-intl', () => ({
 
 vi.mock('../phone-verification', () => ({
   PhoneVerification: (props: {
+    phone: string;
     onPhoneChange: (value: string) => void;
     onVerified: (token: string) => void;
+    isVerified: boolean;
     error?: string;
   }) => (
     <div>
+      <span data-testid="phone-verification-state">
+        {props.isVerified ? 'verified' : 'unverified'}
+      </span>
       <button
         type="button"
         onClick={() => {
@@ -29,6 +34,12 @@ vi.mock('../phone-verification', () => ({
         }}
       >
         verify phone
+      </button>
+      <button
+        type="button"
+        onClick={() => props.onPhoneChange('+821099999999')}
+      >
+        change phone
       </button>
       {props.error ? <p role="alert">{props.error}</p> : null}
     </div>
@@ -106,5 +117,40 @@ describe('SignupStep3 i18n visible copy', () => {
     expect(screen.getAllByRole('option')).toHaveLength(COUNTRY_OPTIONS.length);
     expect(screen.queryByRole('option', { name: '韩国' })).not.toBeInTheDocument();
     expect(screen.queryByRole('option', { name: '其他' })).not.toBeInTheDocument();
+  });
+
+  it('requires phone verification again after the verified phone number changes', async () => {
+    const onComplete = vi.fn();
+    const user = userEvent.setup();
+
+    render(
+      <SignupStep3
+        onComplete={onComplete}
+        onBack={vi.fn()}
+        isSubmitting={false}
+      />,
+    );
+
+    await user.type(screen.getByPlaceholderText('Enter your name'), 'Social User');
+    await user.click(screen.getByRole('button', { name: 'Female' }));
+    await user.type(screen.getByLabelText('Birth year'), '1995');
+    await user.type(screen.getByLabelText('Birth month'), '01');
+    await user.type(screen.getByLabelText('Birth day'), '02');
+    await user.click(screen.getByRole('button', { name: 'verify phone' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Complete sign-up' })).toBeEnabled();
+      expect(screen.getByTestId('phone-verification-state')).toHaveTextContent('verified');
+    });
+
+    await user.click(screen.getByRole('button', { name: 'change phone' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Complete sign-up' })).toBeDisabled();
+      expect(screen.getByTestId('phone-verification-state')).toHaveTextContent('unverified');
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Complete sign-up' }));
+    expect(onComplete).not.toHaveBeenCalled();
   });
 });
