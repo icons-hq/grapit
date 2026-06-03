@@ -40,6 +40,15 @@ import {
   type ForeignEasyPayProviderChargeQuote,
 } from '../payment/provider-charge-quote.service.js';
 import {
+  buildTicketItemPaymentCancelRequest,
+  type PaymentCancelRequest,
+  type PaymentCancelTicketItemSnapshot,
+} from '../payment/payment-cancel-policy.js';
+import {
+  PaymentCancellationFinalizerService,
+  type FullPaymentCancellationContext,
+} from '../cancellation/payment-cancellation-finalizer.service.js';
+import {
   BookingService,
   BOOKING_ENDED_MESSAGE,
   BOOKING_VERIFICATION_REQUIRED_MESSAGE,
@@ -102,12 +111,21 @@ type TicketItemCancellationContext = {
   reservationId: string;
   userId: string;
   showtimeId: string;
+  reservationNumber?: string;
   reservationStatus: string;
   reservationCreatedAt: Date;
   showtimeAt: Date;
   paymentId: string;
   paymentKey: string;
+  paymentMethod: string;
+  paymentProvider: string;
+  paymentCurrency: string;
+  paymentAmount: number;
+  providerMetadata?: unknown;
+  providerChargeCurrency?: string | null;
+  providerChargeAmountMinor?: number | null;
   paymentStatus: string;
+  bookingPolicy: FullPaymentCancellationContext['bookingPolicy'];
   ticketItemId: string;
   ticketItemStatus: string;
   admissionState: string;
@@ -132,12 +150,15 @@ type PreparedTicketItemCancellation = {
   quote: TicketItemCancellationQuote;
   reason: string;
   isPendingRetry: boolean;
+  paymentCancelRequest: PaymentCancelRequest;
+  isFullPaymentCancellation: boolean;
+  finalizerContext: FullPaymentCancellationContext;
   now: Date;
 };
 type TicketItemPaymentCancelOutcome =
-  | 'cancelled'
-  | 'definite_failure'
-  | 'ambiguous';
+  | { status: 'cancelled'; providerResponse: TossPaymentResponse }
+  | { status: 'definite_failure' }
+  | { status: 'ambiguous' };
 type ProviderChargeQuote = {
   currency: 'USD';
   amountMinor: number;
@@ -198,6 +219,7 @@ export class ReservationService {
     @Optional() private readonly qrTicketService?: QrTicketService,
     @Optional() reservationFinalizationService?: ReservationFinalizationService,
     @Optional() private readonly providerChargeQuoteService?: ProviderChargeQuoteService,
+    @Optional() private readonly paymentCancellationFinalizer?: PaymentCancellationFinalizerService,
   ) {
     this.reservationFinalizationService =
       reservationFinalizationService
@@ -1474,6 +1496,9 @@ export class ReservationService {
       reservationId: String(row['reservation_id']),
       userId: String(row['user_id']),
       showtimeId: String(row['showtime_id']),
+      reservationNumber: row['reservation_number']
+        ? String(row['reservation_number'])
+        : undefined,
       reservationStatus: String(row['reservation_status']),
       reservationCreatedAt: this.toDate(
         row['reservation_created_at'] as Date | string,
@@ -1482,7 +1507,36 @@ export class ReservationService {
       showtimeAt: this.toDate(row['showtime_at'] as Date | string, 'showtime_at'),
       paymentId: String(row['payment_id']),
       paymentKey: String(row['payment_key']),
+      paymentMethod: String(row['payment_method']),
+      paymentProvider: String(row['payment_provider']),
+      paymentCurrency: String(row['payment_currency']),
+      paymentAmount: Number(row['payment_amount']),
+      providerMetadata: row['provider_metadata'] ?? undefined,
+      providerChargeCurrency: row['provider_charge_currency']
+        ? String(row['provider_charge_currency'])
+        : null,
+      providerChargeAmountMinor:
+        row['provider_charge_amount_minor'] === null
+          || row['provider_charge_amount_minor'] === undefined
+          ? null
+          : Number(row['provider_charge_amount_minor']),
       paymentStatus: String(row['payment_status']),
+      bookingPolicy:
+        row['cancelled_seat_hold_min_minutes'] === null
+          && row['cancelled_seat_hold_max_minutes'] === null
+          ? null
+          : {
+              cancelledSeatHoldMinMinutes:
+                row['cancelled_seat_hold_min_minutes'] === null
+                  || row['cancelled_seat_hold_min_minutes'] === undefined
+                  ? null
+                  : Number(row['cancelled_seat_hold_min_minutes']),
+              cancelledSeatHoldMaxMinutes:
+                row['cancelled_seat_hold_max_minutes'] === null
+                  || row['cancelled_seat_hold_max_minutes'] === undefined
+                  ? null
+                  : Number(row['cancelled_seat_hold_max_minutes']),
+            },
       ticketItemId: String(row['ticket_item_id']),
       ticketItemStatus: String(row['ticket_item_status']),
       admissionState: String(row['admission_state']),
@@ -1519,31 +1573,74 @@ export class ReservationService {
     }
   }
 
-  private countMatchingTossCancellations(
+  private countMatchingCompletedTossCancellations(
     payment: TossPaymentResponse,
-    amount: number,
-    reason: string,
+    request: PaymentCancelRequest,
   ): number {
-    return payment.cancels?.filter((cancel) =>
-      cancel.cancelAmount === amount && cancel.cancelReason === reason,
-    ).length ?? 0;
+    return payment.cancels?.filter((cancel) => {
+      if (!this.isTossCancelEntryCompleted(cancel)) {
+        return false;
+      }
+      if (request.options.cancelRequestId) {
+        return cancel.cancelRequestId === request.options.cancelRequestId;
+      }
+      return (
+        request.options.cancelAmount !== undefined
+        && cancel.cancelAmount === request.options.cancelAmount
+        && cancel.cancelReason === request.reason
+      );
+    }).length ?? 0;
+  }
+
+  private hasMatchingInProgressTossCancellation(
+    payment: TossPaymentResponse,
+    request: PaymentCancelRequest,
+  ): boolean {
+    const cancelRequestId = request.options.cancelRequestId;
+    if (!cancelRequestId) {
+      return false;
+    }
+    return payment.cancels?.some((cancel) =>
+      cancel.cancelRequestId === cancelRequestId
+      && cancel.cancelStatus === 'IN_PROGRESS'
+    ) ?? false;
+  }
+
+  private isTossCancelEntryCompleted(
+    cancel: NonNullable<TossPaymentResponse['cancels']>[number],
+  ): boolean {
+    return cancel.cancelStatus === undefined || cancel.cancelStatus === 'DONE';
+  }
+
+  private isFullTossCancelCompleted(payment: TossPaymentResponse): boolean {
+    return payment.status === 'CANCELED';
   }
 
   private async cancelTicketItemPaymentOrConfirm(input: {
-    paymentKey: string;
-    reason: string;
-    refundableAmount: number;
+    request: PaymentCancelRequest;
     ticketItemId: string;
     isPendingRetry: boolean;
+    isFullPaymentCancellation: boolean;
   }): Promise<TicketItemPaymentCancelOutcome> {
     let matchingCancelsBefore: number | undefined;
     let matchingCancelsAfter: number | undefined;
+    const queryOptions = {
+      secretKeyScope: input.request.options.secretKeyScope,
+    };
     try {
-      const beforePayment = await this.tossClient.queryPayment(input.paymentKey);
-      matchingCancelsBefore = this.countMatchingTossCancellations(
+      const beforePayment = await this.tossClient.queryPayment(
+        input.request.paymentKey,
+        queryOptions,
+      );
+      if (
+        input.isFullPaymentCancellation
+        && this.isFullTossCancelCompleted(beforePayment)
+      ) {
+        return { status: 'cancelled', providerResponse: beforePayment };
+      }
+      matchingCancelsBefore = this.countMatchingCompletedTossCancellations(
         beforePayment,
-        input.refundableAmount,
-        input.reason,
+        input.request,
       );
     } catch (queryError) {
       this.logger.error(
@@ -1553,27 +1650,53 @@ export class ReservationService {
     }
 
     try {
-      await this.tossClient.cancelPayment(input.paymentKey, input.reason, {
-        cancelAmount: input.refundableAmount,
-        idempotencyKey: `ticket-item-cancel:${input.ticketItemId}`,
-      });
-      return 'cancelled';
+      const response = await this.tossClient.cancelPayment(
+        input.request.paymentKey,
+        input.request.reason,
+        input.request.options,
+      );
+      if (input.isFullPaymentCancellation) {
+        return this.isFullTossCancelCompleted(response)
+          ? { status: 'cancelled', providerResponse: response }
+          : { status: 'ambiguous' };
+      }
+      return this.countMatchingCompletedTossCancellations(response, input.request) > 0
+        ? { status: 'cancelled', providerResponse: response }
+        : { status: 'ambiguous' };
     } catch (cancelError) {
       try {
-        const payment = await this.tossClient.queryPayment(input.paymentKey);
-        matchingCancelsAfter = this.countMatchingTossCancellations(
-          payment,
-          input.refundableAmount,
-          input.reason,
+        const payment = await this.tossClient.queryPayment(
+          input.request.paymentKey,
+          queryOptions,
         );
         if (
-          matchingCancelsBefore !== undefined
+          input.isFullPaymentCancellation
+          && this.isFullTossCancelCompleted(payment)
+        ) {
+          this.logger.warn(
+            `Recovered Toss full ticket-item cancel from payment snapshot. ticketItemId=${input.ticketItemId}`,
+          );
+          return { status: 'cancelled', providerResponse: payment };
+        }
+        if (
+          input.isFullPaymentCancellation
+          && this.hasMatchingInProgressTossCancellation(payment, input.request)
+        ) {
+          return { status: 'ambiguous' };
+        }
+        matchingCancelsAfter = this.countMatchingCompletedTossCancellations(
+          payment,
+          input.request,
+        );
+        if (
+          !input.isFullPaymentCancellation
+          && matchingCancelsBefore !== undefined
           && matchingCancelsAfter > matchingCancelsBefore
         ) {
           this.logger.warn(
             `Recovered Toss ticket-item cancel from payment snapshot. ticketItemId=${input.ticketItemId}`,
           );
-          return 'cancelled';
+          return { status: 'cancelled', providerResponse: payment };
         }
       } catch (queryError) {
         this.logger.error(
@@ -1586,18 +1709,85 @@ export class ReservationService {
         if (input.isPendingRetry) {
           const snapshotCounts = [matchingCancelsBefore, matchingCancelsAfter];
           if (snapshotCounts.some((count) => count !== undefined && count > 0)) {
-            return 'ambiguous';
+            return { status: 'ambiguous' };
           }
           if (snapshotCounts.some((count) => count === 0)) {
-            return 'definite_failure';
+            return { status: 'definite_failure' };
           }
-          return 'ambiguous';
+          return { status: 'ambiguous' };
         }
-        return 'definite_failure';
+        return { status: 'definite_failure' };
       }
 
-      return 'ambiguous';
+      return { status: 'ambiguous' };
     }
+  }
+
+  private toPaymentCancelTicketItemSnapshot(
+    row: Record<string, unknown>,
+  ): PaymentCancelTicketItemSnapshot {
+    return {
+      id: String(row['id']),
+      refundableAmount: Number(row['refundable_amount'] ?? 0),
+    };
+  }
+
+  private buildTicketItemFinalizerContext(input: {
+    context: TicketItemCancellationContext;
+    seats: Array<{ seatId: string }>;
+  }): FullPaymentCancellationContext {
+    return {
+      reservation: {
+        id: input.context.reservationId,
+        showtimeId: input.context.showtimeId,
+        ...(input.context.reservationNumber
+          ? { reservationNumber: input.context.reservationNumber }
+          : {}),
+      },
+      payment: {
+        id: input.context.paymentId,
+        paymentKey: input.context.paymentKey,
+        providerMetadata: input.context.providerMetadata,
+      },
+      bookingPolicy: input.context.bookingPolicy,
+      seats: input.seats,
+    };
+  }
+
+  private buildTicketItemPaymentCancelRequest(input: {
+    context: TicketItemCancellationContext;
+    quote: TicketItemCancellationQuote;
+    activeTicketItems: PaymentCancelTicketItemSnapshot[];
+    reason: string;
+  }): PaymentCancelRequest {
+    const currentTicketItem = {
+      id: input.context.ticketItemId,
+      refundableAmount: input.quote.refundableAmount,
+    };
+    const activeTicketItems = input.activeTicketItems.some((item) =>
+      item.id === currentTicketItem.id
+    )
+      ? input.activeTicketItems.map((item) =>
+          item.id === currentTicketItem.id ? currentTicketItem : item
+        )
+      : [currentTicketItem, ...input.activeTicketItems];
+
+    return buildTicketItemPaymentCancelRequest({
+      payment: {
+        id: input.context.paymentId,
+        paymentKey: input.context.paymentKey,
+        method: input.context.paymentMethod,
+        provider: input.context.paymentProvider,
+        currency: input.context.paymentCurrency,
+        amount: input.context.paymentAmount,
+        providerMetadata: input.context.providerMetadata,
+        providerChargeCurrency: input.context.providerChargeCurrency,
+        providerChargeAmountMinor: input.context.providerChargeAmountMinor,
+      },
+      ticketItem: currentTicketItem,
+      activeTicketItems,
+      reason: input.reason,
+    });
   }
 
   private isDefiniteTossCancelFailure(error: unknown): boolean {
@@ -1627,12 +1817,22 @@ export class ReservationService {
             r.id AS reservation_id,
             r.user_id,
             r.showtime_id,
+            r.reservation_number,
             r.status AS reservation_status,
             r.created_at AS reservation_created_at,
             s.date_time AS showtime_at,
             p.id AS payment_id,
             p.payment_key,
+            p.method AS payment_method,
+            p.provider AS payment_provider,
+            p.currency AS payment_currency,
+            p.amount AS payment_amount,
+            p.provider_metadata,
+            p.provider_charge_currency,
+            p.provider_charge_amount_minor,
             p.status AS payment_status,
+            bp.cancelled_seat_hold_min_minutes,
+            bp.cancelled_seat_hold_max_minutes,
             ti.id AS ticket_item_id,
             ti.status AS ticket_item_status,
             ti.admission_state,
@@ -1652,6 +1852,7 @@ export class ReservationService {
             ON ti.reservation_id = r.id
             AND ti.payment_id = p.id
           INNER JOIN showtimes s ON s.id = r.showtime_id
+          LEFT JOIN booking_policies bp ON bp.performance_id = s.performance_id
           WHERE r.id = ${reservationId}
             AND ti.id = ${ticketItemId}
           FOR UPDATE OF r, p, ti
@@ -1682,6 +1883,36 @@ export class ReservationService {
         const preparedAt = isPendingRetry && context.cancelledAt
           ? context.cancelledAt
           : now;
+        const activeTicketItemResult = await tx.execute(sql`
+          SELECT
+            ti.id,
+            ti.refundable_amount
+          FROM ticket_items ti
+          WHERE ti.reservation_id = ${reservationId}
+            AND ti.payment_id = ${context.paymentId}
+            AND ti.status IN ('active', 'cancellation_pending')
+          FOR UPDATE OF ti
+        `);
+        const activeTicketItems = activeTicketItemResult.rows.map((row) =>
+          this.toPaymentCancelTicketItemSnapshot(row as Record<string, unknown>)
+        );
+        const reservationSeatResult = await tx.execute(sql`
+          SELECT rs.seat_id
+          FROM reservation_seats rs
+          WHERE rs.reservation_id = ${reservationId}
+        `);
+        const finalizerContext = this.buildTicketItemFinalizerContext({
+          context,
+          seats: reservationSeatResult.rows.map((row) => ({
+            seatId: String((row as Record<string, unknown>)['seat_id']),
+          })),
+        });
+        const paymentCancelRequest = this.buildTicketItemPaymentCancelRequest({
+          context,
+          quote,
+          activeTicketItems,
+          reason: cancellationReason,
+        });
 
         await tx
           .update(ticketItems)
@@ -1724,6 +1955,10 @@ export class ReservationService {
           quote,
           reason: cancellationReason,
           isPendingRetry,
+          paymentCancelRequest,
+          isFullPaymentCancellation:
+            paymentCancelRequest.options.cancelAmount === undefined,
+          finalizerContext,
           now: preparedAt,
         };
       });
@@ -1731,14 +1966,13 @@ export class ReservationService {
       if (preparedCancellation.quote.refundableAmount > 0) {
         tossCancelAttempted = true;
         const cancelOutcome = await this.cancelTicketItemPaymentOrConfirm({
-          paymentKey: preparedCancellation.context.paymentKey,
-          reason: preparedCancellation.reason,
-          refundableAmount: preparedCancellation.quote.refundableAmount,
+          request: preparedCancellation.paymentCancelRequest,
           ticketItemId,
           isPendingRetry: preparedCancellation.isPendingRetry,
+          isFullPaymentCancellation: preparedCancellation.isFullPaymentCancellation,
         });
 
-        if (cancelOutcome === 'definite_failure') {
+        if (cancelOutcome.status === 'definite_failure') {
           await this.restorePreparedTicketItemCancellation(
             reservationId,
             ticketItemId,
@@ -1749,7 +1983,7 @@ export class ReservationService {
           );
         }
 
-        if (cancelOutcome === 'ambiguous') {
+        if (cancelOutcome.status === 'ambiguous') {
           this.logger.error(
             `CRITICAL: Toss ticket-item cancel outcome is unresolved. ticketItemId=${ticketItemId}. Ticket remains cancellation_pending pending manual reconciliation.`,
           );
@@ -1759,6 +1993,34 @@ export class ReservationService {
         }
 
         tossCancelSucceeded = true;
+        if (preparedCancellation.isFullPaymentCancellation) {
+          if (!this.paymentCancellationFinalizer) {
+            throw new InternalServerErrorException(
+              '취소 처리 중 오류가 발생했습니다. 고객센터에 문의해주세요.',
+            );
+          }
+          try {
+            await this.paymentCancellationFinalizer.finalizeFullPaymentCancellation({
+              source: 'ticket_item',
+              context: preparedCancellation.finalizerContext,
+              reason: preparedCancellation.reason,
+              providerResponse:
+                cancelOutcome.providerResponse as unknown as Record<string, unknown>,
+              actor: { kind: 'user' },
+            });
+          } catch (finalizerError) {
+            this.logger.error(
+              `CRITICAL: full ticket-item cancellation finalization failed after Toss cancel. ticketItemId=${ticketItemId}. Manual reconciliation required.`,
+              finalizerError instanceof Error
+                ? finalizerError.stack
+                : String(finalizerError),
+            );
+            throw new InternalServerErrorException(
+              '취소 처리 중 오류가 발생했습니다. 고객센터에 문의해주세요.',
+            );
+          }
+          return this.getReservationDetail(reservationId, userId);
+        }
       }
 
       const committedCancellation = preparedCancellation;

@@ -7,9 +7,17 @@ import { ReservationFinalizationService } from './reservation-finalization.servi
 import { FeatureFlagsModule } from '../feature-flags/feature-flags.module.js';
 import { ConsentModule } from '../consent/consent.module.js';
 import { TicketModule } from '../ticket/ticket.module.js';
+import { CancellationModule } from '../cancellation/cancellation.module.js';
 
 @Module({
-  imports: [PaymentModule, BookingModule, FeatureFlagsModule, ConsentModule, TicketModule],
+  imports: [
+    PaymentModule,
+    BookingModule,
+    FeatureFlagsModule,
+    ConsentModule,
+    TicketModule,
+    CancellationModule,
+  ],
   controllers: [ReservationController],
   providers: [ReservationService, ReservationFinalizationService],
   exports: [ReservationService],
