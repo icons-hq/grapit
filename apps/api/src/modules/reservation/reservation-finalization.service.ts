@@ -9,7 +9,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { and, eq, or, sql } from 'drizzle-orm';
+import { and, eq, isNull, or, sql } from 'drizzle-orm';
 import {
   toFloorAwareSeatSelection,
   type ConfirmPaymentRequest,
@@ -326,7 +326,15 @@ export class ReservationFinalizationService {
     }
 
     if (reservation.status === 'CONFIRMED') {
-      if (isOverseasCardConfirm && existingPayment?.status === 'DONE') {
+      if (
+        isOverseasCardConfirm
+        && existingPayment?.status === 'DONE'
+        && this.canBackfillOverseasCardProviderMetadata(
+          existingPayment,
+          reservation,
+          dto,
+        )
+      ) {
         await this.backfillOverseasCardProviderMetadataIfMissing(existingPayment);
       }
 
@@ -879,7 +887,39 @@ export class ReservationFinalizationService {
     await this.db
       .update(payments)
       .set({ providerMetadata: createOverseasCardProviderMetadata() })
-      .where(eq(payments.id, existingPayment.id));
+      .where(and(
+        eq(payments.id, existingPayment.id),
+        isNull(payments.providerMetadata),
+      ));
+  }
+
+  private canBackfillOverseasCardProviderMetadata(
+    existingPayment: {
+      reservationId: string;
+      paymentKey: string;
+      tossOrderId: string;
+      amount: number;
+      method?: string | null;
+      provider?: string | null;
+      providerChargeAmountMinor?: number | null;
+    },
+    reservation: {
+      id: string;
+      totalAmount: number;
+      providerChargeAmountMinor?: number | null;
+    },
+    dto: OverseasCardConfirmPaymentRequest,
+  ): boolean {
+    if (existingPayment.provider !== 'CARD' || existingPayment.method !== 'CARD') {
+      return false;
+    }
+
+    try {
+      this.assertExistingDonePaymentMatchesRequest(existingPayment, reservation, dto);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private calculatePayableTotal(seats: FloorAwareSeatSelection[]): number {

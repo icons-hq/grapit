@@ -686,6 +686,142 @@ describe('ReservationFinalizationService', () => {
     expect(db.transaction).not.toHaveBeenCalled();
   });
 
+  it('does not backfill domestic card metadata on overseas-card confirmed retry', async () => {
+    const { service, db, tossClient } = createDependencies();
+    db.update.mockReturnValue({
+      set: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue(undefined),
+      }),
+    });
+    db.select
+      .mockReturnValueOnce(chainResult([
+        {
+          id: 'payment-domestic-card-confirmed-1',
+          reservationId: 'reservation-domestic-card-confirmed-1',
+          status: 'DONE',
+          paymentKey: 'payment-key-domestic-card-confirmed',
+          tossOrderId: 'order-domestic-card-confirmed-1',
+          method: '카드',
+          provider: 'CARD',
+          providerMetadata: null,
+          currency: 'KRW',
+          amount: 154000,
+          paidAt: new Date('2026-06-02T10:01:00.000Z'),
+          asyncStatus: 'sync',
+        },
+      ]))
+      .mockReturnValueOnce(chainResult([
+        {
+          id: 'reservation-domestic-card-confirmed-1',
+          userId: 'user-1',
+          showtimeId: 'showtime-1',
+          status: 'CONFIRMED',
+          totalAmount: 154000,
+          admissionActiveUntilAt: null,
+        },
+      ]))
+      .mockReturnValueOnce(chainResult([
+        {
+          seatId: '1F:A-1',
+          tierName: 'VIP',
+          price: 100000,
+          row: 'A',
+          number: '1',
+        },
+        {
+          seatId: '1F:A-2',
+          tierName: 'R',
+          price: 50000,
+          row: 'A',
+          number: '2',
+        },
+      ]));
+
+    await expect(
+      service.confirmAndCreateReservation(
+        {
+          paymentKey: 'payment-key-domestic-card-confirmed',
+          orderId: 'order-domestic-card-confirmed-1',
+          provider: 'OVERSEAS_CARD',
+          amount: 154000,
+        },
+        'user-1',
+      ),
+    ).resolves.toEqual({ reservationId: 'reservation-domestic-card-confirmed-1' });
+
+    expect(db.update).not.toHaveBeenCalled();
+    expect(tossClient.confirmPayment).not.toHaveBeenCalled();
+    expect(db.transaction).not.toHaveBeenCalled();
+  });
+
+  it('does not backfill confirmed duplicate metadata when payment identity mismatches', async () => {
+    const { service, db, tossClient } = createDependencies();
+    db.update.mockReturnValue({
+      set: vi.fn().mockReturnValue({
+        where: vi.fn().mockResolvedValue(undefined),
+      }),
+    });
+    db.select
+      .mockReturnValueOnce(chainResult([
+        {
+          id: 'payment-overseas-card-confirmed-mismatch',
+          reservationId: 'reservation-overseas-card-confirmed-mismatch',
+          status: 'DONE',
+          paymentKey: 'different-payment-key',
+          tossOrderId: 'different-order-id',
+          method: 'CARD',
+          provider: 'CARD',
+          providerMetadata: null,
+          currency: 'KRW',
+          amount: 154000,
+          paidAt: new Date('2026-06-02T10:01:00.000Z'),
+          asyncStatus: 'sync',
+        },
+      ]))
+      .mockReturnValueOnce(chainResult([
+        {
+          id: 'reservation-overseas-card-confirmed-mismatch',
+          userId: 'user-1',
+          showtimeId: 'showtime-1',
+          status: 'CONFIRMED',
+          totalAmount: 154000,
+          admissionActiveUntilAt: null,
+        },
+      ]))
+      .mockReturnValueOnce(chainResult([
+        {
+          seatId: '1F:A-1',
+          tierName: 'VIP',
+          price: 100000,
+          row: 'A',
+          number: '1',
+        },
+        {
+          seatId: '1F:A-2',
+          tierName: 'R',
+          price: 50000,
+          row: 'A',
+          number: '2',
+        },
+      ]));
+
+    await expect(
+      service.confirmAndCreateReservation(
+        {
+          paymentKey: 'payment-key-overseas-card-confirmed-mismatch',
+          orderId: 'order-overseas-card-confirmed-mismatch',
+          provider: 'OVERSEAS_CARD',
+          amount: 154000,
+        },
+        'user-1',
+      ),
+    ).resolves.toEqual({ reservationId: 'reservation-overseas-card-confirmed-mismatch' });
+
+    expect(db.update).not.toHaveBeenCalled();
+    expect(tossClient.confirmPayment).not.toHaveBeenCalled();
+    expect(db.transaction).not.toHaveBeenCalled();
+  });
+
   it('rejects confirmed retry when stored and requested amounts omit service fees', async () => {
     const { service, db, tossClient } = createDependencies();
     db.select
