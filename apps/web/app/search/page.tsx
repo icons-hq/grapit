@@ -177,6 +177,11 @@ export default function SearchPage() {
             currentPage={data.page}
             totalPages={data.totalPages}
             onPageChange={(page) => updateParam('page', String(page))}
+            labels={{
+              navigation: copy.search.paginationNav,
+              previous: copy.search.previousPage,
+              next: copy.search.nextPage,
+            }}
           />
         </div>
       )}

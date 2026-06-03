@@ -40,7 +40,8 @@ type FindPerformanceByIdOptions = {
   includeHiddenCopy?: boolean;
 };
 
-const PERFORMANCE_TAXONOMY_CACHE_VERSION = 'event-category-v1';
+const PERFORMANCE_TAXONOMY_CACHE_VERSION = 'event-category-v1-public-published';
+const PERFORMANCE_DETAIL_CACHE_VERSION = 'public-published-v1';
 const DEFAULT_FLOOR_KEY = '1F';
 const DEFAULT_FLOOR_LABEL = '1층';
 
@@ -178,6 +179,7 @@ export class PerformanceService {
     const offset = (page - 1) * limit;
 
     const conditions = [
+      eq(performances.publishState, 'published'),
       eq(
         performances.genre,
         genre as (typeof performances.genre.enumValues)[number],
@@ -254,16 +256,24 @@ export class PerformanceService {
   ): Promise<PerformanceWithDetails | null> {
     const targetLocale = resolvePerformanceTranslationLocale(locale);
     const includeHiddenCopy = options.includeHiddenCopy === true;
+    const visibilityCondition = includeHiddenCopy
+      ? eq(performances.id, id)
+      : and(eq(performances.id, id), eq(performances.publishState, 'published'));
 
     // Increment view count BEFORE the cache check so view counters keep
     // accruing on every request, not just on DB hits (per plan acceptance).
-    // no-op if ID doesn't exist.
-    await this.db
+    // no-op if ID doesn't exist or is hidden from the current read path.
+    const visibilityRows = await this.db
       .update(performances)
       .set({ viewCount: sql`${performances.viewCount} + 1` })
-      .where(eq(performances.id, id));
+      .where(visibilityCondition)
+      .returning({ id: performances.id });
 
-    const cacheKey = `cache:performances:detail:${id}:${targetLocale}`;
+    if (visibilityRows.length === 0) {
+      return null;
+    }
+
+    const cacheKey = `cache:performances:detail:${id}:${targetLocale}:${PERFORMANCE_DETAIL_CACHE_VERSION}`;
     if (!includeHiddenCopy) {
       const cached = await this.cacheService.get<PerformanceWithDetails>(cacheKey);
       if (cached) return cached;
@@ -274,7 +284,7 @@ export class PerformanceService {
       .select()
       .from(performances)
       .leftJoin(venues, eq(performances.venueId, venues.id))
-      .where(eq(performances.id, id));
+      .where(visibilityCondition);
 
     if (!performanceRow) {
       return null;
@@ -426,7 +436,12 @@ export class PerformanceService {
       })
       .from(performances)
       .leftJoin(venues, eq(performances.venueId, venues.id))
-      .where(inArray(performances.status, ['selling', 'closing_soon']))
+      .where(
+        and(
+          eq(performances.publishState, 'published'),
+          inArray(performances.status, ['selling', 'closing_soon']),
+        ),
+      )
       .orderBy(desc(performances.viewCount))
       .limit(4);
 
@@ -472,7 +487,10 @@ export class PerformanceService {
       .from(performances)
       .leftJoin(venues, eq(performances.venueId, venues.id))
       .where(
-        inArray(performances.status, ['selling', 'upcoming', 'closing_soon']),
+        and(
+          eq(performances.publishState, 'published'),
+          inArray(performances.status, ['selling', 'upcoming', 'closing_soon']),
+        ),
       )
       .orderBy(desc(performances.createdAt))
       .limit(4);

@@ -12,6 +12,20 @@ const STATUS_STYLES: Record<PerformanceStatus, string> = {
   upcoming: 'bg-primary text-white hover:bg-primary',
 };
 
+export function getDisplayPerformanceStatus(
+  status: PerformanceStatus,
+  bookingEnabled: boolean,
+): PerformanceStatus {
+  if (
+    !bookingEnabled &&
+    (status === 'selling' || status === 'closing_soon')
+  ) {
+    return 'upcoming';
+  }
+
+  return status;
+}
+
 interface StatusBadgeProps {
   status: PerformanceStatus;
   className?: string;

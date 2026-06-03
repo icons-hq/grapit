@@ -23,7 +23,7 @@ async function mockScannerSession(page: Page) {
         email: 'scanner-offline@grabit.test',
         name: 'Phase27 Offline Scanner',
         role: 'admin',
-        phone: '010-0000-2727',
+        phone: '+821000002727',
         isEmailVerified: true,
         isPhoneVerified: true,
         adminCapabilityBundle: 'scanner',

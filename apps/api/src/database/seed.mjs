@@ -171,7 +171,7 @@ async function seed() {
 
     await client.query(`
       INSERT INTO users (id, email, password_hash, name, phone, gender, country, birth_date, role, is_phone_verified, is_email_verified)
-      VALUES (gen_random_uuid(), 'admin@grabit.test', $1, '관리자', '010-0000-0000', 'unspecified', 'KR', '1990-01-01', 'admin', true, true)
+      VALUES (gen_random_uuid(), 'admin@grabit.test', $1, '관리자', '+821000000000', 'unspecified', 'KR', '1990-01-01', 'admin', true, true)
     `, [adminPasswordHash]);
     console.log('Inserted admin user: admin@grabit.test');
 

@@ -155,6 +155,36 @@ export interface AdminSupportContentList {
   notices: AdminSupportNotice[];
 }
 
+export interface PublicSupportFaq {
+  id: string;
+  category: SupportFaqCategory;
+  locale: SupportContentLocale;
+  question: string;
+  answer: string;
+  sortOrder: number;
+  isPinned: boolean;
+  updatedAt: string;
+}
+
+export interface PublicSupportNotice {
+  id: string;
+  category: SupportNoticeCategory;
+  locale: SupportContentLocale;
+  title: string;
+  body: string;
+  priority: SupportNoticePriority;
+  publishedAt: string | null;
+}
+
+export interface PublicSupportContentList {
+  faqs: PublicSupportFaq[];
+  notices: PublicSupportNotice[];
+}
+
+export interface PublishedSupportContentFilters {
+  locale: SupportContentLocale;
+}
+
 @Injectable()
 export class AdminSupportContentService {
   constructor(@Inject(DRIZZLE) private readonly store: SupportContentStore) {}
@@ -170,6 +200,20 @@ export class AdminSupportContentService {
     return {
       faqs: faqs.map((row) => this.mapFaq(row)),
       notices: notices.map((row) => this.mapNotice(row)),
+    };
+  }
+
+  async listPublished(
+    filters: PublishedSupportContentFilters,
+  ): Promise<PublicSupportContentList> {
+    const [faqs, notices] = await Promise.all([
+      this.listPublishedFaqRows(filters.locale),
+      this.listPublishedNoticeRows(filters.locale),
+    ]);
+
+    return {
+      faqs: faqs.map((row) => this.mapPublicFaq(row)),
+      notices: notices.map((row) => this.mapPublicNotice(row)),
     };
   }
 
@@ -540,6 +584,54 @@ export class AdminSupportContentService {
       .orderBy(desc(supportNotices.updatedAt));
   }
 
+  private async listPublishedFaqRows(
+    locale: SupportContentLocale,
+  ): Promise<FaqRow[]> {
+    const rows = isMemoryStore(this.store)
+      ? this.store.faqs
+      : await this.store
+          .select()
+          .from(supportFaqs)
+          .where(
+            and(
+              eq(supportFaqs.locale, locale),
+              eq(supportFaqs.reviewState, 'published'),
+            ),
+          );
+
+    return rows
+      .filter(
+        (row) => row.locale === locale && row.reviewState === 'published',
+      )
+      .sort(comparePublicFaqRows);
+  }
+
+  private async listPublishedNoticeRows(
+    locale: SupportContentLocale,
+  ): Promise<NoticeRow[]> {
+    const rows = isMemoryStore(this.store)
+      ? this.store.notices
+      : await this.store
+          .select()
+          .from(supportNotices)
+          .where(
+            and(
+              eq(supportNotices.locale, locale),
+              eq(supportNotices.status, 'published'),
+              eq(supportNotices.reviewState, 'published'),
+            ),
+          );
+
+    return rows
+      .filter(
+        (row) =>
+          row.locale === locale &&
+          row.status === 'published' &&
+          row.reviewState === 'published',
+      )
+      .sort(comparePublicNoticeRows);
+  }
+
   private async requireFaqRow(id: string): Promise<FaqRow> {
     if (isMemoryStore(this.store)) {
       const row = this.store.faqs.find((faq) => faq.id === id);
@@ -667,6 +759,31 @@ export class AdminSupportContentService {
     };
   }
 
+  private mapPublicFaq(row: FaqRow): PublicSupportFaq {
+    return {
+      id: row.id,
+      category: row.category as SupportFaqCategory,
+      locale: row.locale as SupportContentLocale,
+      question: row.question,
+      answer: row.answer,
+      sortOrder: row.sortOrder,
+      isPinned: row.isPinned,
+      updatedAt: toIso(row.updatedAt)!,
+    };
+  }
+
+  private mapPublicNotice(row: NoticeRow): PublicSupportNotice {
+    return {
+      id: row.id,
+      category: row.category as SupportNoticeCategory,
+      locale: row.locale as SupportContentLocale,
+      title: row.title,
+      body: row.body,
+      priority: row.priority as SupportNoticePriority,
+      publishedAt: toIso(row.publishedAt),
+    };
+  }
+
   private now(): Date {
     return new Date();
   }
@@ -730,6 +847,33 @@ function matchesListFilters(
   if (filters.reviewState && row.reviewState !== filters.reviewState) return false;
   if (!filters.includeArchived && row.reviewState === 'archived') return false;
   return true;
+}
+
+function comparePublicFaqRows(a: FaqRow, b: FaqRow) {
+  if (a.isPinned !== b.isPinned) return a.isPinned ? -1 : 1;
+  if (a.sortOrder !== b.sortOrder) return a.sortOrder - b.sortOrder;
+  return b.updatedAt.getTime() - a.updatedAt.getTime();
+}
+
+const noticePriorityRank: Record<SupportNoticePriority, number> = {
+  urgent: 0,
+  high: 1,
+  normal: 2,
+  low: 3,
+};
+
+function comparePublicNoticeRows(a: NoticeRow, b: NoticeRow) {
+  const priorityDelta =
+    noticePriorityRank[a.priority as SupportNoticePriority] -
+    noticePriorityRank[b.priority as SupportNoticePriority];
+  if (priorityDelta !== 0) return priorityDelta;
+  return dateTimeOrZero(b.publishedAt) - dateTimeOrZero(a.publishedAt);
+}
+
+function dateTimeOrZero(value: Date | string | null | undefined) {
+  if (!value) return 0;
+  if (typeof value === 'string') return new Date(value).getTime();
+  return value.getTime();
 }
 
 function toIso(value: Date | string | null | undefined): string | null {

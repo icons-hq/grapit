@@ -13,6 +13,7 @@ const expectedNamespaces = [
   'search',
   'performance',
   'booking',
+  'support',
   'auth.form',
   'auth.signup',
   'auth.consent',
@@ -80,6 +81,9 @@ describe('launch copy key manifest', () => {
       'retry',
       'emptyHeading',
       'emptyBody',
+      'paginationNav',
+      'previousPage',
+      'nextPage',
     ]);
     expect(LAUNCH_COPY_KEYS.performance.ko).toEqual([
       'posterAltSuffix',
@@ -93,6 +97,19 @@ describe('launch copy key manifest', () => {
       'bookCta',
     ]);
     expect(LAUNCH_COPY_KEYS.booking.ko).toEqual(['disabled']);
+    expect(LAUNCH_COPY_KEYS.support.ko).toEqual([
+      'title',
+      'noticeHeading',
+      'faqHeading',
+      'emptyNotice',
+      'contactEmailLabel',
+      'fallbackBookingQuestion',
+      'fallbackBookingAnswer',
+      'fallbackPaymentQuestion',
+      'fallbackPaymentAnswer',
+      'fallbackRefundQuestion',
+      'fallbackRefundAnswer',
+    ]);
     expect(LAUNCH_COPY_KEYS['auth.form'].ko).toEqual([
       'email',
       'password',

@@ -30,7 +30,10 @@
     "loadError": "이벤트 정보를 불러오지 못했습니다. 잠시 후 다시 시도해주세요.",
     "retry": "다시 시도",
     "emptyHeading": "검색 결과가 없습니다",
-    "emptyBody": "다른 키워드로 검색하거나 이벤트 분류를 둘러보세요"
+    "emptyBody": "다른 키워드로 검색하거나 이벤트 분류를 둘러보세요",
+    "paginationNav": "검색 결과 페이지",
+    "previousPage": "이전 페이지",
+    "nextPage": "다음 페이지"
   },
   "genres": {
     "artist_celebrity": "아티스트",
@@ -76,6 +79,19 @@
     "upcomingDateLabel": "오픈예정",
     "detailImagesTitle": "상세 이미지",
     "detailImageAlt": "{title} 상세 이미지 {index}"
+  },
+  "support": {
+    "title": "고객센터",
+    "noticeHeading": "공지",
+    "faqHeading": "자주 묻는 질문",
+    "emptyNotice": "런칭 준비 중인 고객센터 안내입니다. 예매 오픈 전 주요 안내를 순차적으로 업데이트합니다.",
+    "contactEmailLabel": "문의:",
+    "fallbackBookingQuestion": "예매는 언제 열리나요?",
+    "fallbackBookingAnswer": "예매 오픈 일정은 각 이벤트 상세 페이지에서 확인할 수 있습니다. 오픈 전에는 예매 버튼이 비활성화될 수 있습니다.",
+    "fallbackPaymentQuestion": "결제와 QR 입장은 어떻게 진행되나요?",
+    "fallbackPaymentAnswer": "결제가 완료되면 마이페이지에서 예매 내역과 QR 티켓을 확인할 수 있습니다. 현장 입장 시 QR 화면을 준비해주세요.",
+    "fallbackRefundQuestion": "환불이나 계정 문의는 어디로 보내나요?",
+    "fallbackRefundAnswer": "예매 번호, 가입 이메일, 문의 내용을 정리해 고객센터 이메일로 보내주세요. 확인 후 순서대로 답변합니다."
   },
   "booking": {
     "disabled": "예매는 추후 오픈 예정입니다",

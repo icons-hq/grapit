@@ -25,6 +25,7 @@ import { AdminBookingService } from './admin-booking.service.js';
 import { SettlementExportService } from './settlement-export.service.js';
 import { AdminOperationsService } from './admin-operations.service.js';
 import { AdminSupportContentService } from './admin-support-content.service.js';
+import { PublicSupportContentController } from './public-support-content.controller.js';
 import { AdminSeatOperationsService } from './admin-seat-operations.service.js';
 import { AdminCutoverService } from './admin-cutover.service.js';
 import { AdminSecurityService } from './admin-security.service.js';
@@ -42,6 +43,7 @@ import { PerformanceIntakeService } from './performance-intake.service.js';
     AdminSettlementController,
     AdminOperationsController,
     AdminSupportContentController,
+    PublicSupportContentController,
     AdminSeatOperationsController,
     AdminAuditController,
     AdminCutoverController,

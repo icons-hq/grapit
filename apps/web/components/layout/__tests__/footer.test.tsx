@@ -30,13 +30,13 @@ describe('Footer (D-03, D-04)', () => {
       expect(link?.className).toContain('font-semibold');
     });
 
-    it('고객센터 링크가 신규 고객센터 이메일 mailto 로 연결된다', () => {
+    it('고객센터 링크가 로컬라이즈된 고객센터 페이지로 연결된다', () => {
       render(<Footer />);
       const link = screen.getByText('고객센터').closest('a');
-      expect(link?.getAttribute('href')).toBe('mailto:wecordofficial_cs@mariannekate.com');
+      expect(link?.getAttribute('href')).toBe('/support');
     });
 
-    it('고객센터 링크에 target/rel 이 부착되지 않는다 (mailto 는 새 탭 의미 없음)', () => {
+    it('고객센터 링크에 target/rel 이 부착되지 않는다', () => {
       render(<Footer />);
       const link = screen.getByText('고객센터').closest('a');
       expect(link?.getAttribute('target')).toBeNull();
@@ -104,6 +104,10 @@ describe('Footer (D-03, D-04)', () => {
       expect(screen.getByText('Privacy Policy').closest('a')).toHaveAttribute(
         'href',
         '/en/legal/privacy',
+      );
+      expect(screen.getByText('Support').closest('a')).toHaveAttribute(
+        'href',
+        '/en/support',
       );
       expect(screen.getByText(/Company: ICONS Co\., Ltd\./)).toBeInTheDocument();
       expect(screen.queryByText(/사업자명:/)).not.toBeInTheDocument();

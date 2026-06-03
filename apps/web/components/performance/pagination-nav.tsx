@@ -7,7 +7,20 @@ interface PaginationNavProps {
   currentPage: number;
   totalPages: number;
   onPageChange: (page: number) => void;
+  labels?: PaginationNavLabels;
 }
+
+interface PaginationNavLabels {
+  navigation: string;
+  previous: string;
+  next: string;
+}
+
+const DEFAULT_LABELS: PaginationNavLabels = {
+  navigation: '페이지 네비게이션',
+  previous: '이전 페이지',
+  next: '다음 페이지',
+};
 
 function getPageNumbers(current: number, total: number): (number | '...')[] {
   if (total <= 7) {
@@ -41,6 +54,7 @@ export function PaginationNav({
   currentPage,
   totalPages,
   onPageChange,
+  labels = DEFAULT_LABELS,
 }: PaginationNavProps) {
   if (totalPages <= 1) return null;
 
@@ -52,12 +66,12 @@ export function PaginationNav({
   }
 
   return (
-    <nav aria-label="페이지 네비게이션" className="flex items-center justify-center gap-1">
+    <nav aria-label={labels.navigation} className="flex items-center justify-center gap-1">
       <button
         type="button"
         disabled={currentPage === 1}
         onClick={() => handlePageChange(currentPage - 1)}
-        aria-label="이전 페이지"
+        aria-label={labels.previous}
         className={cn(
           'flex h-9 w-9 items-center justify-center rounded-lg text-sm',
           currentPage === 1
@@ -98,7 +112,7 @@ export function PaginationNav({
         type="button"
         disabled={currentPage === totalPages}
         onClick={() => handlePageChange(currentPage + 1)}
-        aria-label="다음 페이지"
+        aria-label={labels.next}
         className={cn(
           'flex h-9 w-9 items-center justify-center rounded-lg text-sm',
           currentPage === totalPages

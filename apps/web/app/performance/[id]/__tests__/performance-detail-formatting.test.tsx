@@ -4,8 +4,16 @@ import { render, screen } from '@testing-library/react';
 import type { PerformanceWithDetails } from '@grabit/shared';
 import PerformanceDetailPage from '../page';
 
+const localeMock = vi.hoisted(() => ({
+  activeLocale: 'th',
+}));
+
+const runtimeFlagsMock = vi.hoisted(() => ({
+  bookingEnabled: true,
+}));
+
 vi.mock('next-intl', () => ({
-  useLocale: () => 'th',
+  useLocale: () => localeMock.activeLocale,
 }));
 
 vi.mock('@/hooks/use-performances', () => ({
@@ -18,8 +26,10 @@ vi.mock('@/hooks/use-performances', () => ({
 
 vi.mock('@/hooks/use-runtime-flags', () => ({
   useRuntimeFlags: () => ({
-    bookingEnabled: true,
+    bookingEnabled: runtimeFlagsMock.bookingEnabled,
+    locale: localeMock.activeLocale,
     isLoading: false,
+    isResolved: true,
     bookingDisabledMessage: 'Ticket booking will open later',
   }),
 }));
@@ -92,6 +102,8 @@ const fixturePerformance: PerformanceWithDetails = {
 
 describe('PerformanceDetailPage i18n formatting', () => {
   beforeEach(() => {
+    localeMock.activeLocale = 'th';
+    runtimeFlagsMock.bookingEnabled = true;
     fixturePerformance.status = 'selling';
     fixturePerformance.description = 'Fanmeet fixture';
     fixturePerformance.descriptionVisible = true;
@@ -199,5 +211,29 @@ describe('PerformanceDetailPage i18n formatting', () => {
     expect(await screen.findAllByText('เร็วๆ นี้')).not.toHaveLength(0);
     expect(screen.queryByText('오픈예정')).toBeNull();
     expect(screen.queryByText(/KST/)).toBeNull();
+  });
+
+  it('shows the upcoming badge instead of the Korean on-sale badge while booking is disabled', async () => {
+    localeMock.activeLocale = 'ko';
+    runtimeFlagsMock.bookingEnabled = false;
+    fixturePerformance.status = 'selling';
+    const params = Promise.resolve({ id: 'perf-23-14' }) as Promise<{
+      id: string;
+    }> & {
+      status: 'fulfilled';
+      value: { id: string };
+    };
+    params.status = 'fulfilled';
+    params.value = { id: 'perf-23-14' };
+
+    render(
+      <Suspense fallback={<div>loading</div>}>
+        <PerformanceDetailPage params={params} />
+      </Suspense>,
+    );
+
+    expect(await screen.findByLabelText('상태: 오픈예정')).toBeDefined();
+    expect(screen.queryByLabelText('상태: 오픈')).toBeNull();
+    expect(screen.queryByText('오픈')).toBeNull();
   });
 });

@@ -30,7 +30,10 @@
     "loadError": "Could not load show information. Please try again shortly.",
     "retry": "Retry",
     "emptyHeading": "No results found",
-    "emptyBody": "Try another keyword or browse event categories"
+    "emptyBody": "Try another keyword or browse event categories",
+    "paginationNav": "Search results pages",
+    "previousPage": "Previous page",
+    "nextPage": "Next page"
   },
   "genres": {
     "artist_celebrity": "Artist",
@@ -76,6 +79,19 @@
     "upcomingDateLabel": "Coming soon",
     "detailImagesTitle": "Detail images",
     "detailImageAlt": "{title} detail image {index}"
+  },
+  "support": {
+    "title": "Support",
+    "noticeHeading": "Notices",
+    "faqHeading": "Frequently asked questions",
+    "emptyNotice": "Support content is being prepared for launch.",
+    "contactEmailLabel": "Contact:",
+    "fallbackBookingQuestion": "When does booking open?",
+    "fallbackBookingAnswer": "Booking schedules are shown on each event detail page. The booking button may stay disabled before opening.",
+    "fallbackPaymentQuestion": "Payment and QR entry",
+    "fallbackPaymentAnswer": "After payment is complete, your booking and QR ticket are available on My page. Please prepare the QR screen for venue entry.",
+    "fallbackRefundQuestion": "Refund or account support",
+    "fallbackRefundAnswer": "Send your booking number, account email, and request details to the support email. We respond in order after review."
   },
   "booking": {
     "disabled": "Ticket booking will open later",

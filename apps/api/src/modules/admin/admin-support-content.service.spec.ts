@@ -206,6 +206,162 @@ describe('AdminSupportContentService', () => {
     });
   });
 
+  it('lists only published public English FAQ and notice content in launch order', async () => {
+    const { service, store } = createService();
+
+    const regularFaq = await service.createFaq({
+      actorUserId: OPERATOR_ID,
+      category: 'payment_error',
+      locale: 'en',
+      question: 'How do I check my payment?',
+      answer: 'Check My page after payment.',
+      sortOrder: 1,
+    });
+    const pinnedFaq = await service.createFaq({
+      actorUserId: OPERATOR_ID,
+      category: 'booking',
+      locale: 'en',
+      question: 'When does booking open?',
+      answer: 'Booking opens from each event detail page.',
+      sortOrder: 20,
+      isPinned: true,
+    });
+    const archivedFaq = await service.createFaq({
+      actorUserId: OPERATOR_ID,
+      category: 'account',
+      locale: 'en',
+      question: 'Archived question',
+      answer: 'Do not show.',
+    });
+    await service.createFaq({
+      actorUserId: OPERATOR_ID,
+      category: 'booking',
+      locale: 'ko',
+      question: '한국어 질문',
+      answer: '영문 페이지에서는 제외합니다.',
+      isPinned: true,
+    });
+
+    await service.publishFaq(regularFaq.id, { actorUserId: OPERATOR_ID });
+    await service.publishFaq(pinnedFaq.id, { actorUserId: OPERATOR_ID });
+    await service.publishFaq(archivedFaq.id, { actorUserId: OPERATOR_ID });
+    await service.archiveFaq(archivedFaq.id, { actorUserId: OPERATOR_ID });
+
+    store.faqs.find((faq) => faq.id === regularFaq.id)!.updatedAt = new Date(
+      '2026-06-03T09:00:00.000Z',
+    );
+    store.faqs.find((faq) => faq.id === pinnedFaq.id)!.updatedAt = new Date(
+      '2026-06-03T08:00:00.000Z',
+    );
+
+    const highNotice = await service.createNotice({
+      actorUserId: OPERATOR_ID,
+      category: 'payment',
+      locale: 'en',
+      title: 'Payment notice',
+      body: 'Payment windows may vary by method.',
+      priority: 'high',
+    });
+    const urgentNotice = await service.createNotice({
+      actorUserId: OPERATOR_ID,
+      category: 'urgent',
+      locale: 'en',
+      title: 'Entry notice',
+      body: 'Bring your QR ticket.',
+      priority: 'urgent',
+    });
+    const draftNotice = await service.createNotice({
+      actorUserId: OPERATOR_ID,
+      category: 'general',
+      locale: 'en',
+      title: 'Draft notice',
+      body: 'Do not show.',
+    });
+    const archivedNotice = await service.createNotice({
+      actorUserId: OPERATOR_ID,
+      category: 'general',
+      locale: 'en',
+      title: 'Archived notice',
+      body: 'Do not show.',
+    });
+    await service.createNotice({
+      actorUserId: OPERATOR_ID,
+      category: 'general',
+      locale: 'ko',
+      title: '한국어 공지',
+      body: '영문 페이지에서는 제외합니다.',
+      priority: 'urgent',
+    });
+
+    await service.publishNotice(highNotice.id, { actorUserId: OPERATOR_ID });
+    await service.publishNotice(urgentNotice.id, { actorUserId: OPERATOR_ID });
+    await service.publishNotice(archivedNotice.id, { actorUserId: OPERATOR_ID });
+    await service.archiveNotice(archivedNotice.id, { actorUserId: OPERATOR_ID });
+
+    store.notices.find((notice) => notice.id === highNotice.id)!.publishedAt =
+      new Date('2026-06-03T10:00:00.000Z');
+    store.notices.find((notice) => notice.id === urgentNotice.id)!.publishedAt =
+      new Date('2026-06-03T09:00:00.000Z');
+
+    const publicContent = await service.listPublished({ locale: 'en' });
+
+    expect(publicContent.faqs).toEqual([
+      {
+        id: pinnedFaq.id,
+        category: 'booking',
+        locale: 'en',
+        question: 'When does booking open?',
+        answer: 'Booking opens from each event detail page.',
+        sortOrder: 20,
+        isPinned: true,
+        updatedAt: '2026-06-03T08:00:00.000Z',
+      },
+      {
+        id: regularFaq.id,
+        category: 'payment_error',
+        locale: 'en',
+        question: 'How do I check my payment?',
+        answer: 'Check My page after payment.',
+        sortOrder: 1,
+        isPinned: false,
+        updatedAt: '2026-06-03T09:00:00.000Z',
+      },
+    ]);
+    expect(publicContent.notices).toEqual([
+      {
+        id: urgentNotice.id,
+        category: 'urgent',
+        locale: 'en',
+        title: 'Entry notice',
+        body: 'Bring your QR ticket.',
+        priority: 'urgent',
+        publishedAt: '2026-06-03T09:00:00.000Z',
+      },
+      {
+        id: highNotice.id,
+        category: 'payment',
+        locale: 'en',
+        title: 'Payment notice',
+        body: 'Payment windows may vary by method.',
+        priority: 'high',
+        publishedAt: '2026-06-03T10:00:00.000Z',
+      },
+    ]);
+    expect(publicContent.faqs).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: archivedFaq.id }),
+        expect.objectContaining({ locale: 'ko' }),
+      ]),
+    );
+    expect(publicContent.notices).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: draftNotice.id }),
+        expect.objectContaining({ id: archivedNotice.id }),
+        expect.objectContaining({ locale: 'ko' }),
+      ]),
+    );
+  });
+
   it('returns detail rows and rejects missing support content ids', async () => {
     const { service } = createService();
 

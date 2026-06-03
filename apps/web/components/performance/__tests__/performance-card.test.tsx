@@ -7,8 +7,18 @@ const localeMock = vi.hoisted(() => ({
   activeLocale: 'ko',
 }));
 
+const runtimeFlagsMock = vi.hoisted(() => ({
+  bookingEnabled: true,
+}));
+
 vi.mock('next-intl', () => ({
   useLocale: () => localeMock.activeLocale,
+}));
+
+vi.mock('@/hooks/use-runtime-flags', () => ({
+  useRuntimeFlags: () => ({
+    bookingEnabled: runtimeFlagsMock.bookingEnabled,
+  }),
 }));
 
 vi.mock('next/image', () => ({
@@ -35,6 +45,7 @@ const basePerformance: PerformanceCardData = {
 describe('PerformanceCard', () => {
   beforeEach(() => {
     localeMock.activeLocale = 'ko';
+    runtimeFlagsMock.bookingEnabled = true;
   });
 
   it('shows 오픈예정 instead of stored dates for upcoming performances', () => {
@@ -70,5 +81,15 @@ describe('PerformanceCard', () => {
     render(<PerformanceCard performance={basePerformance} />);
 
     expect(screen.getByText('2026.07.18 ~ 2026.07.18')).toBeDefined();
+  });
+
+  it('shows 오픈예정 instead of 오픈 while booking is disabled', () => {
+    runtimeFlagsMock.bookingEnabled = false;
+
+    render(<PerformanceCard performance={basePerformance} />);
+
+    expect(screen.getByLabelText('상태: 오픈예정')).toBeDefined();
+    expect(screen.queryByLabelText('상태: 오픈')).toBeNull();
+    expect(screen.queryByText('오픈')).toBeNull();
   });
 });

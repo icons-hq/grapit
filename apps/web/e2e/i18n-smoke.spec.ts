@@ -5,7 +5,7 @@ const koMessages = JSON.parse(
   readFileSync(new URL('../messages/ko.json', import.meta.url), 'utf8'),
 ) as {
   home: {
-    hot: string;
+    genreShortcuts: string;
   };
 };
 
@@ -13,17 +13,25 @@ const PHASE23_I18N_SMOKE_PERFORMANCE_ID =
   process.env['PHASE23_I18N_SMOKE_PERFORMANCE_ID'] ??
   '00000000-0000-4000-8000-000000000023';
 
+const localeResultTitles = {
+  ko: '2026 걸룰스 팬미팅',
+  en: '2026 Girl Rules Fanmeeting',
+  th: 'แฟนมีตติ้ง Girl Rules 2026',
+  'zh-CN': '2026 Girl Rules 粉丝见面会',
+} as const;
+
 const localeCases = [
   {
     locale: 'ko',
     prefix: '',
     nativeName: '한국어',
     searchQuery: '걸룰스',
-    homeCopy: koMessages.home.hot,
+    homeCopy: koMessages.home.genreShortcuts,
     searchCopy: "'걸룰스' 검색 결과",
     resultTitle: '2026 걸룰스 팬미팅',
     authCopy: '로그인',
     detailCopy: '상세정보',
+    supportCopy: '고객센터',
     bookingDisabledCopy: '예매는 추후 오픈 예정입니다',
     expectsTranslationLabel: false,
   },
@@ -32,11 +40,12 @@ const localeCases = [
     prefix: '/en',
     nativeName: 'English',
     searchQuery: 'girl',
-    homeCopy: 'HOT',
+    homeCopy: 'Browse by category',
     searchCopy: "Results for 'girl'",
     resultTitle: '2026 Girl Rules Fanmeeting',
     authCopy: 'Login',
     detailCopy: 'Details',
+    supportCopy: 'Support',
     bookingDisabledCopy: 'Ticket booking will open later',
     expectsTranslationLabel: true,
   },
@@ -45,11 +54,12 @@ const localeCases = [
     prefix: '/th',
     nativeName: 'ไทย',
     searchQuery: 'girl',
-    homeCopy: 'การแสดงยอดนิยม',
+    homeCopy: 'เลือกตามหมวดหมู่อีเวนต์',
     searchCopy: "ผลการค้นหา 'girl'",
     resultTitle: 'แฟนมีตติ้ง Girl Rules 2026',
     authCopy: 'เข้าสู่ระบบ',
     detailCopy: 'รายละเอียด',
+    supportCopy: 'ศูนย์ช่วยเหลือ',
     bookingDisabledCopy: 'การจองบัตรจะเปิดให้บริการในภายหลัง',
     expectsTranslationLabel: true,
   },
@@ -58,11 +68,12 @@ const localeCases = [
     prefix: '/zh-CN',
     nativeName: '简体中文',
     searchQuery: 'girl',
-    homeCopy: '热门演出',
+    homeCopy: '按活动分类浏览',
     searchCopy: "'girl' 的搜索结果",
     resultTitle: '2026 Girl Rules 粉丝见面会',
     authCopy: '登录',
     detailCopy: '详细信息',
+    supportCopy: '客户支持',
     bookingDisabledCopy: '门票预订将于稍后开放',
     expectsTranslationLabel: true,
   },
@@ -73,6 +84,7 @@ test.describe('Phase 23 i18n canary smoke', () => {
     page,
   }) => {
     await neutralizeSessionRefresh(page);
+    await mockI18nPublicApis(page);
     const browserProblems = collectBrowserProblems(page);
     const forbiddenSideEffects = collectForbiddenBookingSideEffects(page);
 
@@ -113,6 +125,15 @@ test.describe('Phase 23 i18n canary smoke', () => {
       assertKoreanRewriteHeader(localeCase.prefix, searchResponse);
       await expect(page.getByText(localeCase.searchCopy)).toBeVisible();
       await expect(page.getByText(localeCase.resultTitle).first()).toBeVisible();
+
+      const supportResponse = await gotoSmokeRoute(
+        page,
+        withLocalePrefix(localeCase.prefix, '/support'),
+      );
+      assertKoreanRewriteHeader(localeCase.prefix, supportResponse);
+      await expect(
+        page.getByRole('heading', { level: 1, name: localeCase.supportCopy }),
+      ).toBeVisible();
 
       const performanceResponse = await gotoSmokeRoute(
         page,
@@ -179,6 +200,130 @@ function assertKoreanRewriteHeader(prefix: string, response: Response | null) {
   if (!prefix) {
     expect(rewriteHeader).not.toMatch(/\/ko(?:\/|$)/);
   }
+}
+
+async function mockI18nPublicApis(page: Page) {
+  await page.route('**/api/v1/home/banners', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
+  );
+  await page.route('**/api/v1/home/hot**', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
+  );
+  await page.route('**/api/v1/home/new**', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
+  );
+  await page.route('**/api/v1/support-content**', (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ faqs: [], notices: [] }),
+    }),
+  );
+  await page.route('**/api/v1/search**', (route) => {
+    const url = new URL(route.request().url());
+    const locale = resolveSmokeLocale(url.searchParams.get('locale'));
+    const performance = createSmokePerformance(locale);
+
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: [{
+          id: performance.id,
+          title: performance.title,
+          genre: performance.genre,
+          posterUrl: performance.posterUrl,
+          status: performance.status,
+          startDate: performance.startDate,
+          endDate: performance.endDate,
+          venueName: performance.venue.name,
+          ...(locale === 'ko' ? {} : { automaticTranslationLabel: true }),
+        }],
+        total: 1,
+        page: 1,
+        limit: 20,
+        totalPages: 1,
+        query: url.searchParams.get('q') ?? '',
+      }),
+    });
+  });
+  await page.route(
+    `**/api/v1/performances/${PHASE23_I18N_SMOKE_PERFORMANCE_ID}**`,
+    (route) => {
+      const url = new URL(route.request().url());
+      const locale = resolveSmokeLocale(url.searchParams.get('locale'));
+
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(createSmokePerformance(locale)),
+      });
+    },
+  );
+}
+
+function resolveSmokeLocale(locale: string | null) {
+  return locale === 'en' || locale === 'th' || locale === 'zh-CN'
+    ? locale
+    : 'ko';
+}
+
+function createSmokePerformance(locale: keyof typeof localeResultTitles) {
+  const isTranslated = locale !== 'ko';
+  return {
+    id: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
+    title: localeResultTitles[locale],
+    genre: 'artist_celebrity',
+    subcategory: null,
+    venueId: 'phase23-i18n-venue',
+    posterUrl: null,
+    description: 'Phase 23 i18n smoke performance.',
+    descriptionVisible: true,
+    startDate: '2026-07-01T10:00:00.000Z',
+    endDate: '2026-07-01T12:00:00.000Z',
+    runtime: '120분',
+    ageRating: '전체 관람가',
+    status: 'selling',
+    publishState: 'published',
+    publishedAt: '2026-06-01T00:00:00.000Z',
+    salesInfo: 'Phase 23 i18n smoke sales info.',
+    salesInfoVisible: true,
+    detailImages: [],
+    viewCount: 0,
+    createdAt: '2026-06-01T00:00:00.000Z',
+    updatedAt: '2026-06-01T00:00:00.000Z',
+    venue: {
+      id: 'phase23-i18n-venue',
+      name: 'Phase 23 Hall',
+      address: 'Seoul',
+    },
+    priceTiers: [{
+      id: 'phase23-i18n-tier',
+      performanceId: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
+      tierName: 'VIP',
+      price: 77000,
+      sortOrder: 0,
+    }],
+    showtimes: [{
+      id: 'phase23-i18n-showtime',
+      performanceId: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
+      dateTime: '2026-07-01T10:00:00.000Z',
+    }],
+    castings: [],
+    seatMaps: [],
+    seatMap: null,
+    bookingPolicy: {
+      maxTicketsPerUser: 1,
+      allowedPaymentMethods: ['CARD'],
+      changePolicyEnabled: false,
+      paymentWindowMinutes: 7,
+      seatHoldMinutes: 10,
+      cancelledSeatHoldMinMinutes: 1,
+      cancelledSeatHoldMaxMinutes: 10,
+      manualOpenEnabled: true,
+    },
+    ...(isTranslated ? { automaticTranslationLabel: true } : {}),
+  };
 }
 
 function collectBrowserProblems(page: Page) {

@@ -1,11 +1,16 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
+import {
+  buildQrCheckInUrlPattern,
+  getQrCheckInUrlsForVisibleTextGuard,
+} from './helpers/qr-origin';
 
 const rawQrToken = 'raw-token-phase27-check-in-should-not-render';
 const rawQrJTI = 'raw-JTI-phase27-check-in-should-not-render';
 const rawPaymentKey = 'raw-payment-key-phase27-should-not-render';
 const rawCookie = 'raw-cookie-phase27-should-not-render';
 const rawBuyerEmail = 'buyer-phase27@example.com';
-const checkInUrl = `https://heygrabit.com/field/check-in?ticket=${rawQrToken}`;
+const checkInUrlPattern = buildQrCheckInUrlPattern(rawQrToken);
+const checkInUrlsForVisibleTextGuard = getQrCheckInUrlsForVisibleTextGuard(rawQrToken);
 
 function createReservationDetail(overrides: Record<string, unknown> = {}) {
   return {
@@ -89,7 +94,7 @@ async function mockAuthenticatedSession(
         email: user.role === 'admin' ? 'scanner@grabit.test' : rawBuyerEmail,
         name: user.role === 'admin' ? 'Phase27 Scanner' : 'Phase27 Buyer',
         role: user.role,
-        phone: '010-0000-2727',
+        phone: '+821000002727',
         isEmailVerified: true,
         isPhoneVerified: true,
         adminCapabilityBundle: user.adminCapabilityBundle ?? null,
@@ -105,7 +110,9 @@ async function expectNoRawSecrets(page: Page) {
   await expect(page.getByText(rawPaymentKey, { exact: true })).toHaveCount(0);
   await expect(page.getByText(rawCookie, { exact: true })).toHaveCount(0);
   await expect(page.getByText(rawBuyerEmail, { exact: true })).toHaveCount(0);
-  await expect(page.getByText(checkInUrl, { exact: true })).toHaveCount(0);
+  for (const checkInUrl of checkInUrlsForVisibleTextGuard) {
+    await expect(page.getByText(checkInUrl, { exact: true })).toHaveCount(0);
+  }
 }
 
 test.describe('phase27 QR check-in browser contracts', () => {
@@ -134,7 +141,7 @@ test.describe('phase27 QR check-in browser contracts', () => {
     await expect(page.getByTestId('qr-ticket-image')).toBeVisible();
     await expect(page.getByTestId('qr-ticket-image')).toHaveAttribute(
       'data-qr-url',
-      /https:\/\/heygrabit\.com\/field\/check-in/,
+      checkInUrlPattern,
     );
     await expectNoRawSecrets(page);
   });

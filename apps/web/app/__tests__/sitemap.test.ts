@@ -46,6 +46,7 @@ describe('localized sitemap', () => {
     const urls = entries.map((entry) => entry.url);
 
     expect(urls).toContain(`${SITE_URL}/`);
+    expect(urls).toContain(`${SITE_URL}/support`);
     expect(urls).toContain(`${SITE_URL}/legal/terms`);
     expect(urls).toContain(`${SITE_URL}/legal/privacy`);
     expect(urls).toContain(`${SITE_URL}/legal/marketing`);
@@ -57,5 +58,18 @@ describe('localized sitemap', () => {
         buildLocalizedAlternates(new URL(entry.url).pathname),
       );
     }
+  });
+
+  it('includes support with localized alternates', () => {
+    const supportEntry = sitemap().find(
+      (entry) => entry.url === `${SITE_URL}/support`,
+    );
+
+    expect(supportEntry?.alternates?.languages).toEqual({
+      ko: `${SITE_URL}/support`,
+      en: `${SITE_URL}/en/support`,
+      th: `${SITE_URL}/th/support`,
+      'zh-CN': `${SITE_URL}/zh-CN/support`,
+    });
   });
 });
