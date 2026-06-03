@@ -671,7 +671,7 @@ describe('PaymentCancellationFinalizerService', () => {
     expect(transaction.postCommitUpdateCalls).toHaveLength(0);
   });
 
-  it('aborts without enqueueing when revoked tickets are fewer than expected seats', async () => {
+  it('aborts without enqueueing when target ticket rows are fewer than target ticket items', async () => {
     const pgBoss = {
       isAvailable: true,
       send: vi.fn((_name: unknown, _payload: unknown, options: { id: string }) =>
@@ -686,7 +686,8 @@ describe('PaymentCancellationFinalizerService', () => {
 
     expect(transaction.updateCalls.find((call) => call.table === tickets)
       ?.returningSelection).toEqual({ id: tickets.id });
-    expect(transaction.updateCalls.some((call) => call.table === ticketItems)).toBe(false);
+    expect(transaction.updateCalls.find((call) => call.table === ticketItems)
+      ?.returningSelection).toEqual({ id: ticketItems.id });
     expect(transaction.updateCalls.some((call) => call.table === seatInventories)).toBe(false);
     expect(transactionCommitted).not.toHaveBeenCalled();
     expect(pgBoss.send).not.toHaveBeenCalled();
@@ -716,6 +717,66 @@ describe('PaymentCancellationFinalizerService', () => {
     expect(objectGraphContains(where, 'active')).toBe(true);
     expect(objectGraphContains(where, 'cancellation_pending')).toBe(true);
     expect(objectGraphContains(where, '1F:already-cancelled-sibling')).toBe(false);
+  });
+
+  it('scopes ticket revocation to target ticket item ids and not broad reservation tickets', async () => {
+    const { service, transaction } = createService({
+      isAvailable: false,
+      send: vi.fn(),
+    });
+
+    await service.finalizeFullPaymentCancellation(baseInput());
+
+    const ticketItemUpdateIndex = transaction.updateCalls.findIndex(
+      (call) => call.table === ticketItems,
+    );
+    const ticketUpdateIndex = transaction.updateCalls.findIndex(
+      (call) => call.table === tickets,
+    );
+    expect(ticketItemUpdateIndex).toBeGreaterThanOrEqual(0);
+    expect(ticketUpdateIndex).toBeGreaterThanOrEqual(0);
+    expect(ticketItemUpdateIndex).toBeLessThan(ticketUpdateIndex);
+
+    const ticketUpdate = transaction.updateCalls[ticketUpdateIndex]!;
+    const where = ticketUpdate.whereArgs[0];
+    expect(ticketUpdate.returningSelection).toEqual({ id: tickets.id });
+    expect(objectGraphContains(where, tickets.reservationId)).toBe(true);
+    expect(objectGraphContains(where, tickets.paymentId)).toBe(true);
+    expect(objectGraphContains(where, tickets.showtimeId)).toBe(true);
+    expect(objectGraphContains(where, tickets.ticketItemId)).toBe(true);
+    expect(objectGraphContains(where, tickets.status)).toBe(true);
+    expect(objectGraphContains(where, 'ticket-item-1')).toBe(true);
+    expect(objectGraphContains(where, 'ticket-item-2')).toBe(true);
+    expect(objectGraphContains(where, 'ticket-item-extra-sibling')).toBe(false);
+    expect(objectGraphContains(where, 'active')).toBe(true);
+    expect(objectGraphContains(where, 'revoked')).toBe(true);
+  });
+
+  it('aborts without enqueueing when ticket revocation returns more rows than target ticket items', async () => {
+    const pgBoss = {
+      isAvailable: true,
+      send: vi.fn((_name: unknown, _payload: unknown, options: { id: string }) =>
+        Promise.resolve(options.id),
+      ),
+    };
+    const { service, transaction, transactionCommitted } = createService(pgBoss, {
+      ticketReturning: [
+        { id: 'ticket-1' },
+        { id: 'ticket-2' },
+        { id: 'ticket-extra-sibling' },
+      ],
+    });
+
+    await expect(service.finalizeFullPaymentCancellation(baseInput())).rejects.toThrow();
+
+    expect(transaction.updateCalls.find((call) => call.table === ticketItems)
+      ?.returningSelection).toEqual({ id: ticketItems.id });
+    expect(transaction.updateCalls.find((call) => call.table === tickets)
+      ?.returningSelection).toEqual({ id: tickets.id });
+    expect(transaction.updateCalls.some((call) => call.table === seatInventories)).toBe(false);
+    expect(transactionCommitted).not.toHaveBeenCalled();
+    expect(pgBoss.send).not.toHaveBeenCalled();
+    expect(transaction.postCommitUpdateCalls).toHaveLength(0);
   });
 
   it('aborts seat state updates when not every expected ticket item row is updated', async () => {

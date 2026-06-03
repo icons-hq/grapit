@@ -259,20 +259,6 @@ export class PaymentCancellationFinalizerService {
         throw new BadRequestException('결제 취소 업데이트 결과가 유효하지 않습니다');
       }
 
-      const updatedTickets = await tx
-        .update(tickets)
-        .set({
-          status: 'revoked',
-          revokedAt: now,
-          updatedAt: now,
-        })
-        .where(eq(tickets.reservationId, input.context.reservation.id))
-        .returning({ id: tickets.id });
-
-      if (updatedTickets.length < seatIdentities.length) {
-        throw new BadRequestException('취소할 티켓 수가 일치하지 않습니다');
-      }
-
       if (seatIdentities.length > 0) {
         const updatedTicketItems = await tx
           .update(ticketItems)
@@ -304,6 +290,32 @@ export class PaymentCancellationFinalizerService {
 
         if (updatedTicketItems.length < seatIdentities.length) {
           throw new BadRequestException('취소할 티켓 항목 수가 일치하지 않습니다');
+        }
+
+        const targetTicketItemIds = updatedTicketItems.map(
+          (ticketItem) => ticketItem.id,
+        );
+
+        const updatedTickets = await tx
+          .update(tickets)
+          .set({
+            status: 'revoked',
+            revokedAt: now,
+            updatedAt: now,
+          })
+          .where(
+            and(
+              eq(tickets.reservationId, input.context.reservation.id),
+              eq(tickets.paymentId, input.context.payment.id),
+              eq(tickets.showtimeId, input.context.reservation.showtimeId),
+              inArray(tickets.ticketItemId, targetTicketItemIds),
+              inArray(tickets.status, ['active', 'revoked']),
+            ),
+          )
+          .returning({ id: tickets.id });
+
+        if (updatedTickets.length !== targetTicketItemIds.length) {
+          throw new BadRequestException('취소할 티켓 수가 일치하지 않습니다');
         }
       }
 
