@@ -41,21 +41,38 @@ function createMutationChain<T>(returningRows: T[] = []) {
 }
 
 function sqlPredicateHasParamValue(predicate: unknown, value: string): boolean {
-  const candidate = predicate as {
-    constructor?: { name?: string };
-    queryChunks?: unknown[];
-    value?: unknown;
-  };
+  const seen = new Set<unknown>();
 
-  if (candidate.constructor?.name === 'Param') {
-    return candidate.value === value;
+  function visit(candidateValue: unknown): boolean {
+    if (candidateValue === value) {
+      return true;
+    }
+    if (candidateValue === null || candidateValue === undefined) {
+      return false;
+    }
+    if (Array.isArray(candidateValue)) {
+      return candidateValue.some(visit);
+    }
+    if (typeof candidateValue !== 'object') {
+      return false;
+    }
+    if (seen.has(candidateValue)) {
+      return false;
+    }
+    seen.add(candidateValue);
+
+    const candidate = candidateValue as {
+      constructor?: { name?: string };
+      value?: unknown;
+    };
+    if (candidate.constructor?.name === 'Param') {
+      return visit(candidate.value);
+    }
+
+    return Object.values(candidateValue as Record<string, unknown>).some(visit);
   }
 
-  if (!Array.isArray(candidate.queryChunks)) {
-    return false;
-  }
-
-  return candidate.queryChunks.some((chunk) => sqlPredicateHasParamValue(chunk, value));
+  return visit(predicate);
 }
 
 describe('PaymentService', () => {
@@ -1276,6 +1293,75 @@ describe('PaymentService', () => {
             reservation: expect.objectContaining({ id: reservationId }),
             payment: expect.objectContaining({ id: paymentId }),
           }),
+        }),
+      );
+    });
+
+    it('passes a matching failed refund id to reconcile a late confirmed cancel webhook', async () => {
+      const reservationId = randomUUID();
+      const paymentId = randomUUID();
+      const refundId = randomUUID();
+      const refundSelect = createSelectChain([{ id: refundId }]);
+      const finalizer = {
+        finalizeFullPaymentCancellation: vi.fn().mockResolvedValue({
+          releaseJobId: 'release-job-1',
+          releaseEnqueued: true,
+        }),
+      };
+      (service as unknown as {
+        paymentCancellationFinalizer: typeof finalizer;
+      }).paymentCancellationFinalizer = finalizer;
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          reservationNumber: 'GRP-20260508-ABCDE',
+          userId: randomUUID(),
+          showtimeId: 'showtime-1',
+          status: 'CONFIRMED',
+          totalAmount: 150000,
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: paymentId,
+          reservationId,
+          paymentKey: 'pay_failed_refund_cancelled',
+          tossOrderId: 'GRP-FAILED-REFUND-CANCELLED',
+          method: 'FOREIGN_EASY_PAY',
+          provider: 'ALIPAY',
+          currency: 'KRW',
+          amount: 150000,
+          status: 'CANCELED',
+          providerMetadata: { requestedProvider: 'ALIPAY' },
+        }]))
+        .mockReturnValueOnce(refundSelect)
+        .mockReturnValueOnce(createSelectChain([{
+          id: 'showtime-1',
+          performanceId: 'performance-1',
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          cancelledSeatHoldMinMinutes: 1,
+          cancelledSeatHoldMaxMinutes: 10,
+        }]))
+        .mockReturnValueOnce(createSelectChain([{ seatId: '1F:A-10' }]));
+
+      const result = await service.finalizeConfirmedCancelWebhook(
+        createConfirmedCancelWebhookPayload(
+          'pay_failed_refund_cancelled',
+          'GRP-FAILED-REFUND-CANCELLED',
+        ),
+        createConfirmedCancelProviderResponse(
+          'pay_failed_refund_cancelled',
+          'GRP-FAILED-REFUND-CANCELLED',
+        ),
+      );
+
+      expect(result).toBe('finalized');
+      expect(sqlPredicateHasParamValue(refundSelect.where.mock.calls[0]?.[0], 'failed'))
+        .toBe(true);
+      expect(finalizer.finalizeFullPaymentCancellation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source: 'cancel_webhook',
+          refundId,
         }),
       );
     });

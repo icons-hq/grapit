@@ -743,7 +743,7 @@ export class PaymentService {
         and(
           eq(refunds.reservationId, reservation.id),
           eq(refunds.paymentId, payment.id),
-          inArray(refunds.status, ['sent_to_pg', 'processing_at_pg']),
+          inArray(refunds.status, ['sent_to_pg', 'processing_at_pg', 'failed']),
         ),
       );
 

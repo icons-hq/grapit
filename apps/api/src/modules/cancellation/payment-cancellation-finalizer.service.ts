@@ -76,6 +76,10 @@ export interface FinalizeFullPaymentCancellationResult {
 }
 
 type CancellationSource = FinalizeFullPaymentCancellationInput['source'];
+type SeatReleaseState = {
+  seatIdentity: SeatIdentityPayload;
+  reopenJobId: string | null;
+};
 
 const RESULT_MESSAGE_BY_SOURCE: Record<CancellationSource, string> = {
   refund_request: 'PG cancel completed',
@@ -179,6 +183,7 @@ export class PaymentCancellationFinalizerService {
     const providerCancellation = sanitizeProviderCancellationPayload(
       input.providerResponse,
     );
+    const seatReleaseStates: SeatReleaseState[] = [];
 
     await this.db.transaction(async (tx) => {
       if (input.refundId) {
@@ -283,7 +288,7 @@ export class PaymentCancellationFinalizerService {
                 ticketItems.seatKey,
                 seatIdentities.map((seatIdentity) => seatIdentity.seatKey),
               ),
-              inArray(ticketItems.status, ['active', 'cancellation_pending']),
+              inArray(ticketItems.status, ['active', 'cancellation_pending', 'cancelled']),
             ),
           )
           .returning({ id: ticketItems.id });
@@ -320,7 +325,7 @@ export class PaymentCancellationFinalizerService {
       }
 
       for (const seatIdentity of seatIdentities) {
-        const updatedSeatInventory = await tx
+        const updatedSoldSeatInventory = await tx
           .update(seatInventories)
           .set({
             status: 'held_cancelled',
@@ -341,9 +346,50 @@ export class PaymentCancellationFinalizerService {
           )
           .returning({ id: seatInventories.id });
 
-        if (updatedSeatInventory.length !== 1) {
+        if (updatedSoldSeatInventory.length === 1) {
+          seatReleaseStates.push({
+            seatIdentity,
+            reopenJobId: JOB_ENQUEUE_FAILED,
+          });
+          continue;
+        }
+
+        if (updatedSoldSeatInventory.length > 1) {
           throw new BadRequestException('취소할 좌석 재고 상태가 유효하지 않습니다');
         }
+
+        const updatedHeldCancelledSeatInventory = await tx
+          .update(seatInventories)
+          .set({
+            status: 'held_cancelled',
+            lockedBy: null,
+            lockedUntil: null,
+            soldAt: null,
+            heldCancelledAt: sql`coalesce(${seatInventories.heldCancelledAt}, ${now})`,
+            reopenHoldUntil: sql`case when ${seatInventories.reopenJobId} is not null and ${seatInventories.reopenJobId} <> ${JOB_ENQUEUE_FAILED} then ${seatInventories.reopenHoldUntil} else ${releaseAt} end`,
+            reopenJobId: sql`case when ${seatInventories.reopenJobId} is not null and ${seatInventories.reopenJobId} <> ${JOB_ENQUEUE_FAILED} then ${seatInventories.reopenJobId} else ${JOB_ENQUEUE_FAILED} end`,
+          })
+          .where(
+            and(
+              eq(seatInventories.showtimeId, input.context.reservation.showtimeId),
+              eq(seatInventories.floorKey, seatIdentity.floorKey),
+              eq(seatInventories.seatKey, seatIdentity.seatKey),
+              eq(seatInventories.status, 'held_cancelled'),
+            ),
+          )
+          .returning({
+            id: seatInventories.id,
+            reopenJobId: seatInventories.reopenJobId,
+          });
+
+        if (updatedHeldCancelledSeatInventory.length !== 1) {
+          throw new BadRequestException('취소할 좌석 재고 상태가 유효하지 않습니다');
+        }
+
+        seatReleaseStates.push({
+          seatIdentity,
+          reopenJobId: updatedHeldCancelledSeatInventory[0]?.reopenJobId ?? JOB_ENQUEUE_FAILED,
+        });
       }
 
       if (input.actor?.kind === 'admin' && seatIdentities.length > 0) {
@@ -360,16 +406,39 @@ export class PaymentCancellationFinalizerService {
       }
     });
 
+    const seatIdentitiesNeedingReleaseJob = seatReleaseStates
+      .filter((state) =>
+        !state.reopenJobId || state.reopenJobId === JOB_ENQUEUE_FAILED
+      )
+      .map((state) => state.seatIdentity);
+    const existingReleaseJobId = seatReleaseStates
+      .map((state) => state.reopenJobId)
+      .find((reopenJobId) =>
+        Boolean(reopenJobId) && reopenJobId !== JOB_ENQUEUE_FAILED
+      );
+
+    if (seatIdentities.length > 0 && seatIdentitiesNeedingReleaseJob.length === 0) {
+      return {
+        releaseJobId: existingReleaseJobId ?? JOB_ENQUEUE_FAILED,
+        releaseEnqueued: Boolean(existingReleaseJobId),
+      };
+    }
+
+    const releaseTargetSeatIdentities =
+      seatIdentitiesNeedingReleaseJob.length > 0
+        ? seatIdentitiesNeedingReleaseJob
+        : seatIdentities;
+
     const releaseEnqueued = await this.scheduleCancelledSeatRelease(
       input.context,
-      seatIdentities,
+      releaseTargetSeatIdentities,
       releaseAt,
       preallocatedReleaseJobId,
     );
     if (releaseEnqueued) {
       const actualJobIdPersisted = await this.persistReleaseJobEnqueueSuccess(
         input.context,
-        seatIdentities,
+        releaseTargetSeatIdentities,
         preallocatedReleaseJobId,
       );
       if (actualJobIdPersisted) {

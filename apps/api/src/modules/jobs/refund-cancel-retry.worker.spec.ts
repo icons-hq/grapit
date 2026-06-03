@@ -400,7 +400,9 @@ describe('RefundCancelRetryWorker', () => {
     const markProcessingSpy = vi
       .spyOn(worker as never, 'markRefundProcessing')
       .mockResolvedValue(undefined as never);
-    const scheduleRetrySpy = vi.spyOn(worker as never, 'scheduleRetry');
+    const scheduleRetrySpy = vi
+      .spyOn(worker as never, 'scheduleRetry')
+      .mockResolvedValue('refund-retry-job-max' as never);
     const recordScheduleSpy = vi
       .spyOn(worker as never, 'recordRetryScheduleState')
       .mockResolvedValue(undefined as never);
@@ -419,21 +421,23 @@ describe('RefundCancelRetryWorker', () => {
       '단순 변심',
       REFUND_CANCEL_MAX_RETRIES,
     );
-    expect(scheduleRetrySpy).not.toHaveBeenCalled();
+    expect(scheduleRetrySpy).toHaveBeenCalledWith(
+      'refund-1',
+      REFUND_CANCEL_MAX_RETRIES,
+    );
     expect(recordScheduleSpy).toHaveBeenCalledWith(
       'refund-1',
       {
         cancelReason: '단순 변심',
         paymentStatus: 'DONE',
         cancelRequestId: 'cancel_refund-1',
-        manualReviewRequired: true,
       },
       REFUND_CANCEL_MAX_RETRIES,
-      null,
+      'refund-retry-job-max',
     );
     expect(exhaustedSpy).not.toHaveBeenCalled();
     expect(finalFailureSpy).not.toHaveBeenCalled();
-    expect(result.status).toBe('status_wait');
+    expect(result.status).toBe('processing');
   });
 
   it('marks failed at max retries when matching async cancel is aborted', async () => {

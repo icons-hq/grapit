@@ -253,23 +253,21 @@ export class RefundCancelRetryWorker implements OnModuleInit {
       retryCount,
     );
 
-    const jobId = retryPolicyExhausted
-      ? null
-      : await this.scheduleRetry(context.refund.id, retryCount);
+    const jobId = await this.scheduleRetry(context.refund.id, retryCount);
     await this.recordRetryScheduleState(
       context.refund.id,
       {
         cancelReason: reason,
         paymentStatus: response.status,
         cancelRequestId,
-        ...(retryPolicyExhausted ? { manualReviewRequired: true } : {}),
+        ...(retryPolicyExhausted && !jobId ? { manualReviewRequired: true } : {}),
       },
       retryCount,
       jobId,
     );
 
     if (retryPolicyExhausted) {
-      return { status: 'status_wait' };
+      return { status: jobId ? 'processing' : 'status_wait' };
     }
 
     return { status: jobId ? 'processing' : 'retry_schedule_failed' };

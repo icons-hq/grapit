@@ -53,6 +53,12 @@ type UpdateCall = {
   returningSelection?: unknown;
 };
 
+type SeatInventoryReturningRow = {
+  id: string;
+  reopenJobId?: string | null;
+  reopenHoldUntil?: Date | null;
+};
+
 function objectGraphContains(root: unknown, needle: unknown): boolean {
   const seen = new Set<unknown>();
 
@@ -87,7 +93,7 @@ function createTransactionMock(options: {
   paymentReturning?: Array<{ id: string }>;
   ticketReturning?: Array<{ id: string }>;
   ticketItemReturning?: Array<{ id: string }>;
-  seatInventoryReturning?: Array<Array<{ id: string }>>;
+  seatInventoryReturning?: Array<Array<SeatInventoryReturningRow>>;
   postCommitSeatInventoryReturning?: Array<Array<{ id: string }>>;
 } = {}) {
   const updateCalls: UpdateCall[] = [];
@@ -529,6 +535,62 @@ describe('PaymentCancellationFinalizerService', () => {
     expect(objectGraphContains(where, JOB_ENQUEUE_FAILED)).toBe(true);
     expect(objectGraphContains(where, '1F:A-10')).toBe(true);
     expect(objectGraphContains(where, '2F:B-20')).toBe(true);
+  });
+
+  it('treats an already finalized full cancellation as idempotent when release jobs are persisted', async () => {
+    const existingReleaseJobId = 'release-job-existing';
+    const pgBoss = {
+      isAvailable: true,
+      send: vi.fn((_name: unknown, _payload: unknown, options: { id: string }) =>
+        Promise.resolve(options.id),
+      ),
+    };
+    const { service, transaction } = createService(pgBoss, {
+      seatInventoryReturning: [
+        [],
+        [{
+          id: 'seat-inventory-1',
+          reopenJobId: existingReleaseJobId,
+          reopenHoldUntil: RELEASE_AT,
+        }],
+        [],
+        [{
+          id: 'seat-inventory-2',
+          reopenJobId: existingReleaseJobId,
+          reopenHoldUntil: RELEASE_AT,
+        }],
+      ],
+    });
+
+    const result = await service.finalizeFullPaymentCancellation(
+      baseInput({ source: 'cancel_webhook' }),
+    );
+
+    expect(result).toEqual({
+      releaseJobId: existingReleaseJobId,
+      releaseEnqueued: true,
+    });
+    expect(pgBoss.send).not.toHaveBeenCalled();
+    expect(transaction.postCommitUpdateCalls).toHaveLength(0);
+
+    const ticketItemWhere = transaction.updateCalls.find(
+      (call) => call.table === ticketItems,
+    )?.whereArgs[0];
+    expect(objectGraphContains(ticketItemWhere, 'active')).toBe(true);
+    expect(objectGraphContains(ticketItemWhere, 'cancellation_pending')).toBe(true);
+    expect(objectGraphContains(ticketItemWhere, 'cancelled')).toBe(true);
+
+    const seatUpdates = transaction.updateCalls.filter(
+      (call) => call.table === seatInventories,
+    );
+    expect(seatUpdates).toHaveLength(4);
+    expect(objectGraphContains(seatUpdates[0]?.whereArgs[0], 'sold')).toBe(true);
+    expect(objectGraphContains(seatUpdates[2]?.whereArgs[0], 'sold')).toBe(true);
+    for (const update of [seatUpdates[1], seatUpdates[3]]) {
+      expect(objectGraphContains(update.whereArgs[0], 'held_cancelled')).toBe(true);
+      expect(update.values.reopenJobId).not.toBe(JOB_ENQUEUE_FAILED);
+      expect(update.values.reopenHoldUntil).not.toBe(RELEASE_AT);
+    }
   });
 
   it('scopes seat inventory updates to sold reservation seats and records returning ids', async () => {
