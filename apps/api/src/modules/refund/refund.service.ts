@@ -6,30 +6,27 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
 import { and, eq } from 'drizzle-orm';
 import { normalizeSeatIdentity } from '@grabit/shared';
 import type { RefundTimeline } from '@grabit/shared';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
-  bookingOperationAuditLogs,
   bookingPolicies,
   payments,
   refunds,
   reservationSeats,
   reservations,
-  seatInventories,
   showtimes,
-  tickets,
 } from '../../database/schema/index.js';
 import {
   PG_BOSS,
   PG_BOSS_JOB_NAMES,
   type PgBossContract,
-  type ReleaseCancelledSeatJobPayload,
   type SeatIdentityPayload,
 } from '../jobs/pgboss.provider.js';
 import { TossPaymentError, TossPaymentsClient, type TossPaymentResponse } from '../payment/toss-payments.client.js';
+import { PaymentCancellationFinalizerService } from '../cancellation/payment-cancellation-finalizer.service.js';
+import { buildFullPaymentCancelRequest } from '../payment/payment-cancel-policy.js';
 
 type RefundRecord = typeof refunds.$inferSelect;
 type ReservationRecord = typeof reservations.$inferSelect;
@@ -228,6 +225,7 @@ export class RefundService {
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly tossPaymentsClient: TossPaymentsClient,
+    private readonly paymentCancellationFinalizer: PaymentCancellationFinalizerService,
     @Optional() @Inject(PG_BOSS) private readonly pgBoss?: PgBossContract,
   ) {}
 
@@ -288,21 +286,30 @@ export class RefundService {
     }
 
     const requestedRefund = await this.insertRequestedRefund(context, reason, actor);
+    const command = buildFullPaymentCancelRequest({
+      payment: context.payment,
+      reason,
+      idempotencyKey: this.buildRefundCancelIdempotencyKey(requestedRefund.id),
+      cancelRequestIdSeed: requestedRefund.id,
+    });
 
     try {
       const cancelResult = await this.tossPaymentsClient.cancelPayment(
-        context.payment.paymentKey,
-        reason,
+        command.paymentKey,
+        command.reason,
+        command.options,
       );
 
       if (isTossCancelCompleted(cancelResult)) {
-        const completedRefund = await this.finalizeRefundSuccess(
-          context,
-          requestedRefund.id,
+        await this.paymentCancellationFinalizer.finalizeFullPaymentCancellation({
+          source: 'refund_request',
+          refundId: requestedRefund.id,
+          context: this.toFullPaymentCancellationContext(context),
           reason,
-          cancelResult,
+          providerResponse: cancelResult as unknown as Record<string, unknown>,
           actor,
-        );
+        });
+        const completedRefund = await this.loadRefundById(requestedRefund.id);
 
         return this.buildRequestResponse(context, completedRefund, {
           idempotent: false,
@@ -510,6 +517,40 @@ export class RefundService {
     return refund ?? null;
   }
 
+  protected async loadRefundById(refundId: string): Promise<RefundRecord> {
+    const [refund] = await this.db
+      .select()
+      .from(refunds)
+      .where(eq(refunds.id, refundId));
+
+    if (!refund) {
+      throw new NotFoundException('환불 상태를 찾을 수 없습니다');
+    }
+
+    return refund;
+  }
+
+  protected buildRefundCancelIdempotencyKey(refundId: string): string {
+    return `refund-cancel:${refundId}`;
+  }
+
+  protected toFullPaymentCancellationContext(context: ReservationRefundContext) {
+    return {
+      reservation: {
+        id: context.reservation.id,
+        showtimeId: context.reservation.showtimeId,
+        reservationNumber: context.reservation.reservationNumber,
+      },
+      payment: {
+        id: context.payment.id,
+        paymentKey: context.payment.paymentKey,
+        providerMetadata: context.payment.providerMetadata,
+      },
+      bookingPolicy: context.bookingPolicy,
+      seats: context.seats.map((seat) => ({ seatId: seat.seatId })),
+    };
+  }
+
   protected async insertRequestedRefund(
     context: ReservationRefundContext,
     reason: string,
@@ -668,169 +709,6 @@ export class RefundService {
       customerServiceCtaVisible: !jobId,
       updatedAt: now,
     });
-  }
-
-  protected async finalizeRefundSuccess(
-    context: ReservationRefundContext,
-    refundId: string,
-    reason: string,
-    response: TossPaymentResponse,
-    actor: RefundRequestActor = { kind: 'user' },
-  ): Promise<RefundRecord> {
-    const now = new Date();
-    const holdWindow = this.resolveHoldWindowMinutes(context.bookingPolicy);
-    const delaySeconds = pickCancelledSeatReleaseDelaySeconds(
-      holdWindow.min,
-      holdWindow.max,
-    );
-    const releaseAt = new Date(now.getTime() + delaySeconds * 1000);
-    const seatIdentities = context.seats.map((seat) =>
-      normalizeReservationSeatIdentity(seat.seatId),
-    );
-    const releaseJobId = randomUUID();
-    const releaseEnqueued = await this.scheduleCancelledSeatRelease(
-      context,
-      seatIdentities,
-      releaseAt,
-      releaseJobId,
-    );
-    const persistedReleaseJobId = releaseEnqueued
-      ? releaseJobId
-      : SEAT_RELEASE_ENQUEUE_FAILED_JOB_ID;
-
-    const [completedRefund] = await this.db.transaction(async (tx) => {
-      const [updatedRefund] = await tx
-        .update(refunds)
-        .set({
-          status: 'completed',
-          sentToPgAt: now,
-          completedAt: now,
-          resultCode: response.status,
-          resultMessage: 'PG cancel completed',
-          failureReason: null,
-          expectedDepositAt: calculateExpectedRefundDepositAt(now),
-          customerServiceCtaVisible: false,
-          providerMetadata: {
-            cancelReason: reason,
-            paymentStatus: response.status,
-          },
-          updatedAt: now,
-        })
-        .where(eq(refunds.id, refundId))
-        .returning();
-
-      await tx
-        .update(reservations)
-        .set({
-          status: 'CANCELLED',
-          cancelledAt: now,
-          cancelReason: reason,
-          updatedAt: now,
-        })
-        .where(eq(reservations.id, context.reservation.id));
-
-      await tx
-        .update(payments)
-        .set({
-          status: 'CANCELED',
-          cancelledAt: now,
-          cancelReason: reason,
-          providerMetadata: {
-            ...(context.payment.providerMetadata as Record<string, unknown> | null),
-            refundCompletedAt: now.toISOString(),
-          },
-        })
-        .where(eq(payments.id, context.payment.id));
-
-      await tx
-        .update(tickets)
-        .set({
-          status: 'revoked',
-          revokedAt: now,
-          updatedAt: now,
-        })
-        .where(eq(tickets.reservationId, context.reservation.id));
-
-      for (const seatIdentity of seatIdentities) {
-        await tx
-          .update(seatInventories)
-          .set({
-            status: 'held_cancelled',
-            lockedBy: null,
-            lockedUntil: null,
-            heldCancelledAt: now,
-            reopenHoldUntil: releaseAt,
-            reopenJobId: persistedReleaseJobId,
-            soldAt: null,
-          })
-          .where(
-            and(
-              eq(seatInventories.showtimeId, context.reservation.showtimeId),
-              eq(seatInventories.floorKey, seatIdentity.floorKey),
-              eq(seatInventories.seatKey, seatIdentity.seatKey),
-            ),
-          );
-      }
-
-      if (actor.kind === 'admin' && seatIdentities.length > 0) {
-        await tx.insert(bookingOperationAuditLogs).values(
-          seatIdentities.map((seatIdentity) => ({
-            operatorUserId: actor.operatorUserId,
-            action: 'admin_refund' as const,
-            seatKey: seatIdentity.seatKey,
-            reservationId: context.reservation.id,
-            createdAt: now,
-          })),
-        );
-      }
-
-      return [updatedRefund];
-    });
-
-    if (!completedRefund) {
-      throw new NotFoundException('완료된 환불 상태를 저장하지 못했습니다');
-    }
-
-    return completedRefund;
-  }
-
-  protected async scheduleCancelledSeatRelease(
-    context: ReservationRefundContext,
-    seatIdentities: SeatIdentityPayload[],
-    releaseAt: Date,
-    releaseJobId: string,
-  ): Promise<boolean> {
-    if (!this.pgBoss?.isAvailable) {
-      this.logger.warn(
-        `pg-boss unavailable. release-cancelled-seat job skipped for reservationId=${context.reservation.id}`,
-      );
-      return false;
-    }
-
-    const payload: ReleaseCancelledSeatJobPayload = {
-      reservationId: context.reservation.id,
-      showtimeId: context.reservation.showtimeId,
-      releaseAt: releaseAt.toISOString(),
-      seatIdentities,
-    };
-
-    try {
-      const jobId = await this.pgBoss.send(PG_BOSS_JOB_NAMES.releaseCancelledSeat, payload, {
-        id: releaseJobId,
-        startAfter: releaseAt,
-        singletonKey: context.reservation.id,
-        retryLimit: 3,
-        retryBackoff: true,
-        retryDelay: 30,
-      });
-      return jobId === releaseJobId;
-    } catch (error) {
-      this.logger.error(
-        `pg-boss release-cancelled-seat enqueue failed for reservationId=${context.reservation.id}`,
-        error instanceof Error ? error.stack : String(error),
-      );
-      return false;
-    }
   }
 
   protected async scheduleRefundCancelRetry(

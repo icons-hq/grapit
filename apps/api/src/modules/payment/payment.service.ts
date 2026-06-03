@@ -10,11 +10,13 @@ import {
 import { and, eq, or, sql } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
+  bookingPolicies,
   paymentWebhookEvents,
   payments,
   reservationSeats,
   reservations,
   seatInventories,
+  showtimes,
   ticketItems,
 } from '../../database/schema/index.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
@@ -26,8 +28,9 @@ import type {
   ReservationStatus,
   PaymentStatus,
 } from '@grabit/shared';
-import { TossPaymentsClient } from './toss-payments.client.js';
+import { TossPaymentsClient, type TossPaymentResponse } from './toss-payments.client.js';
 import { ProviderChargeQuoteService } from './provider-charge-quote.service.js';
+import { PaymentCancellationFinalizerService } from '../cancellation/payment-cancellation-finalizer.service.js';
 
 type TossWebhookProvider = PaymentProvider | 'ALIPAY';
 type ProviderChargeQuote = {
@@ -135,8 +138,12 @@ type WebhookPaymentSnapshot = {
   reservationId: string;
   paymentKey: string;
   tossOrderId: string;
+  method?: string;
+  provider?: string;
+  currency?: string;
   amount: number;
   status: PaymentStatus;
+  providerMetadata?: unknown;
   providerChargeAmountMinor?: number | null;
 };
 
@@ -159,6 +166,8 @@ export class PaymentService {
     @Optional() private readonly qrTicketService?: QrTicketService,
     @Optional() private readonly tossClient?: TossPaymentsClient,
     @Optional() private readonly providerChargeQuoteService?: ProviderChargeQuoteService,
+    @Optional()
+    private readonly paymentCancellationFinalizer?: PaymentCancellationFinalizerService,
   ) {}
 
   async prepareTossPaymentBranch(input: TossPaymentBranchRequest): Promise<TossPaymentBranch> {
@@ -638,6 +647,131 @@ export class PaymentService {
         })
         .where(eq(reservations.id, reservation.id));
     }
+  }
+
+  async finalizeConfirmedCancelWebhook(
+    payload: TossWebhookRequestBody,
+    providerResponse: TossPaymentResponse,
+  ): Promise<'finalized' | 'already_finalized' | 'no_local_match'> {
+    if (!this.paymentCancellationFinalizer) {
+      throw new InternalServerErrorException('결제 취소 최종화 서비스가 설정되지 않았습니다');
+    }
+
+    const [reservation] = await this.db
+      .select({
+        id: reservations.id,
+        reservationNumber: reservations.reservationNumber,
+        showtimeId: reservations.showtimeId,
+        status: reservations.status,
+      })
+      .from(reservations)
+      .where(eq(reservations.tossOrderId, payload.data.orderId));
+
+    if (!reservation) {
+      return 'no_local_match';
+    }
+
+    const [payment] = await this.db
+      .select({
+        id: payments.id,
+        reservationId: payments.reservationId,
+        paymentKey: payments.paymentKey,
+        tossOrderId: payments.tossOrderId,
+        method: payments.method,
+        provider: payments.provider,
+        currency: payments.currency,
+        amount: payments.amount,
+        status: payments.status,
+        providerMetadata: payments.providerMetadata,
+      })
+      .from(payments)
+      .where(
+        and(
+          eq(payments.reservationId, reservation.id),
+          eq(payments.paymentKey, payload.data.paymentKey),
+          eq(payments.tossOrderId, payload.data.orderId),
+        ),
+      );
+
+    if (!payment) {
+      return 'no_local_match';
+    }
+
+    if (reservation.status === 'CANCELLED') {
+      return 'already_finalized';
+    }
+
+    if (reservation.status !== 'CONFIRMED') {
+      return 'no_local_match';
+    }
+
+    const [showtime] = await this.db
+      .select({
+        id: showtimes.id,
+        performanceId: showtimes.performanceId,
+      })
+      .from(showtimes)
+      .where(eq(showtimes.id, reservation.showtimeId));
+
+    if (!showtime) {
+      return 'no_local_match';
+    }
+
+    const [bookingPolicy] = await this.db
+      .select({
+        cancelledSeatHoldMinMinutes: bookingPolicies.cancelledSeatHoldMinMinutes,
+        cancelledSeatHoldMaxMinutes: bookingPolicies.cancelledSeatHoldMaxMinutes,
+      })
+      .from(bookingPolicies)
+      .where(eq(bookingPolicies.performanceId, showtime.performanceId));
+
+    const seats = await this.db
+      .select({
+        seatId: reservationSeats.seatId,
+      })
+      .from(reservationSeats)
+      .where(eq(reservationSeats.reservationId, reservation.id));
+
+    await this.paymentCancellationFinalizer.finalizeFullPaymentCancellation({
+      source: 'cancel_webhook',
+      context: {
+        reservation: {
+          id: reservation.id,
+          showtimeId: reservation.showtimeId,
+          reservationNumber: reservation.reservationNumber,
+        },
+        payment: {
+          id: payment.id,
+          paymentKey: payment.paymentKey,
+          providerMetadata: payment.providerMetadata,
+        },
+        bookingPolicy: bookingPolicy ?? null,
+        seats,
+      },
+      reason: this.resolveCancelWebhookReason(payload, providerResponse),
+      providerResponse: providerResponse as unknown as Record<string, unknown>,
+      actor: { kind: 'system' },
+    });
+
+    return 'finalized';
+  }
+
+  private resolveCancelWebhookReason(
+    payload: TossWebhookRequestBody,
+    providerResponse: TossPaymentResponse,
+  ): string {
+    const cancels = providerResponse.cancels;
+    const latestCancel = Array.isArray(cancels) ? cancels.at(-1) : null;
+    if (
+      latestCancel
+      && typeof latestCancel === 'object'
+      && !Array.isArray(latestCancel)
+      && typeof (latestCancel as { cancelReason?: unknown }).cancelReason === 'string'
+    ) {
+      return (latestCancel as { cancelReason: string }).cancelReason;
+    }
+
+    return payload.data.cancelReason ?? 'provider cancellation';
   }
 
   private async finalizeAsyncDonePayment(input: {

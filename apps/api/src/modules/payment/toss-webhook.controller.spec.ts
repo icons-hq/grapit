@@ -19,6 +19,7 @@ function createMockPaymentService() {
     recordWebhookEvent: vi.fn<PaymentService['recordWebhookEvent']>(),
     findAsyncPaymentProgress: vi.fn<PaymentService['findAsyncPaymentProgress']>(),
     upsertAsyncPaymentProgress: vi.fn<PaymentService['upsertAsyncPaymentProgress']>(),
+    finalizeConfirmedCancelWebhook: vi.fn().mockResolvedValue('finalized'),
     markWebhookEventProcessed: vi.fn<PaymentService['markWebhookEventProcessed']>(),
     markWebhookEventFailed: vi.fn<PaymentService['markWebhookEventFailed']>(),
   };
@@ -401,6 +402,94 @@ describe('PaymentWebhookController', () => {
       'CANCEL_STATUS_CHANGED_APPLIED',
       undefined,
     );
+  });
+
+  it('finalizes confirmed reservation cancellation through PaymentService instead of payment-only progress', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(
+      makeLedgerResult({
+        eventId: 'evt-cancel-1',
+      }),
+    );
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(
+      makeProgress({
+        reservationStatus: 'CONFIRMED',
+        paymentStatus: 'CANCELED',
+      }),
+    );
+    tossClient.queryPayment.mockResolvedValueOnce(
+      makeQueriedPayment({
+        status: 'CANCELED',
+        cancels: [
+          {
+            cancelAmount: 150000,
+            cancelReason: 'buyer changed mind',
+            canceledAt: '2026-05-08T07:02:05.000Z',
+            cancelStatus: 'DONE',
+            cancelRequestId: 'cancel_refund-1',
+          },
+        ],
+      }),
+    );
+
+    const result = await controller.handleTossWebhook(cancelStatusChangedEvent);
+
+    expect(result.processingResultCode).toBe('CANCEL_STATUS_CHANGED_FINALIZED');
+    expect(paymentService.finalizeConfirmedCancelWebhook).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'CANCEL_STATUS_CHANGED',
+        data: expect.objectContaining({
+          status: 'CANCELED',
+          canceledAt: '2026-05-08T07:02:05.000Z',
+          cancelReason: 'buyer changed mind',
+        }),
+      }),
+      expect.objectContaining({ status: 'CANCELED' }),
+    );
+    expect(paymentService.upsertAsyncPaymentProgress).not.toHaveBeenCalled();
+    expect(paymentService.markWebhookEventProcessed).toHaveBeenCalledWith(
+      'evt-cancel-1',
+      'CANCEL_STATUS_CHANGED_FINALIZED',
+      undefined,
+    );
+  });
+
+  it('keeps pending-payment cancel webhook behavior on the payment progress path', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(
+      makeLedgerResult({
+        eventId: 'evt-cancel-1',
+      }),
+    );
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(
+      makeProgress({
+        reservationStatus: 'PENDING_PAYMENT',
+        paymentStatus: 'IN_PROGRESS',
+      }),
+    );
+    tossClient.queryPayment.mockResolvedValueOnce(
+      makeQueriedPayment({
+        status: 'CANCELED',
+        cancels: [
+          {
+            cancelAmount: 150000,
+            cancelReason: 'buyer changed mind',
+            canceledAt: '2026-05-08T07:02:05.000Z',
+            cancelStatus: 'DONE',
+          },
+        ],
+      }),
+    );
+
+    await controller.handleTossWebhook(cancelStatusChangedEvent);
+
+    expect(paymentService.upsertAsyncPaymentProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'CANCEL_STATUS_CHANGED',
+        data: expect.objectContaining({ status: 'CANCELED' }),
+      }),
+      'CANCELED',
+      'cancelled_webhook',
+    );
+    expect(paymentService.finalizeConfirmedCancelWebhook).not.toHaveBeenCalled();
   });
 
   it('fails closed when a cancel webhook disagrees with queried Toss state', async () => {

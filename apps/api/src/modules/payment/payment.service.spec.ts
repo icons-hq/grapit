@@ -1080,6 +1080,115 @@ describe('PaymentService', () => {
       expect(mockDb.update).toHaveBeenCalledTimes(1);
     });
 
+    it('finalizes a confirmed cancel webhook with the shared cancellation finalizer', async () => {
+      const reservationId = randomUUID();
+      const paymentId = randomUUID();
+      const finalizer = {
+        finalizeFullPaymentCancellation: vi.fn().mockResolvedValue({
+          releaseJobId: 'release-job-1',
+          releaseEnqueued: true,
+        }),
+      };
+      (service as unknown as {
+        paymentCancellationFinalizer: typeof finalizer;
+      }).paymentCancellationFinalizer = finalizer;
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          reservationNumber: 'GRP-20260508-ABCDE',
+          userId: randomUUID(),
+          showtimeId: 'showtime-1',
+          status: 'CONFIRMED',
+          totalAmount: 150000,
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: paymentId,
+          reservationId,
+          paymentKey: 'pay_paypal_cancelled',
+          tossOrderId: 'GRP-PAYPAL-CANCELLED',
+          method: 'FOREIGN_EASY_PAY',
+          provider: 'PAYPAL',
+          currency: 'KRW',
+          amount: 150000,
+          status: 'CANCELED',
+          providerMetadata: { requestedProvider: 'PAYPAL' },
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: 'showtime-1',
+          performanceId: 'performance-1',
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          cancelledSeatHoldMinMinutes: 1,
+          cancelledSeatHoldMaxMinutes: 10,
+        }]))
+        .mockReturnValueOnce(createSelectChain([
+          { seatId: '1F:A-10' },
+          { seatId: '1F:A-11' },
+        ]));
+
+      const result = await service.finalizeConfirmedCancelWebhook(
+        {
+          eventId: 'evt-paypal-cancelled',
+          eventType: 'CANCEL_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_paypal_cancelled',
+            orderId: 'GRP-PAYPAL-CANCELLED',
+            status: 'CANCELED',
+            method: 'FOREIGN_EASY_PAY',
+            provider: 'PAYPAL',
+            currency: 'USD',
+            totalAmount: 108,
+            canceledAt: '2026-05-29T08:05:00.000Z',
+            cancelReason: 'provider cancellation',
+          },
+        },
+        {
+          paymentKey: 'pay_paypal_cancelled',
+          orderId: 'GRP-PAYPAL-CANCELLED',
+          method: 'FOREIGN_EASY_PAY',
+          totalAmount: 108,
+          status: 'CANCELED',
+          approvedAt: '2026-05-29T08:00:00.000Z',
+          cancels: [
+            {
+              cancelAmount: 108,
+              cancelReason: 'provider cancellation',
+              canceledAt: '2026-05-29T08:05:00.000Z',
+              cancelStatus: 'DONE',
+            },
+          ],
+        },
+      );
+
+      expect(result).toBe('finalized');
+      expect(finalizer.finalizeFullPaymentCancellation).toHaveBeenCalledWith({
+        source: 'cancel_webhook',
+        context: {
+          reservation: {
+            id: reservationId,
+            showtimeId: 'showtime-1',
+            reservationNumber: 'GRP-20260508-ABCDE',
+          },
+          payment: {
+            id: paymentId,
+            paymentKey: 'pay_paypal_cancelled',
+            providerMetadata: { requestedProvider: 'PAYPAL' },
+          },
+          bookingPolicy: {
+            cancelledSeatHoldMinMinutes: 1,
+            cancelledSeatHoldMaxMinutes: 10,
+          },
+          seats: [{ seatId: '1F:A-10' }, { seatId: '1F:A-11' }],
+        },
+        reason: 'provider cancellation',
+        providerResponse: expect.objectContaining({ status: 'CANCELED' }),
+        actor: { kind: 'system' },
+      });
+      expect(mockDb.update).not.toHaveBeenCalled();
+      expect(mockDb.insert).not.toHaveBeenCalled();
+    });
+
     it('acks PayPal DONE webhook after sync confirm without overwriting the KRW payment row', async () => {
       const reservationId = randomUUID();
       const paymentId = randomUUID();

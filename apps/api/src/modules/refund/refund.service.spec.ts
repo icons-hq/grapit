@@ -3,13 +3,7 @@ import { TossPaymentError } from '../payment/toss-payments.client.js';
 import {
   isTossCancelCompleted,
   RefundService,
-  SEAT_RELEASE_ENQUEUE_FAILED_JOB_ID,
 } from './refund.service.js';
-import {
-  bookingOperationAuditLogs,
-  seatInventories,
-  tickets,
-} from '../../database/schema/index.js';
 
 function createRefund(overrides: Record<string, unknown> = {}) {
   return {
@@ -48,6 +42,9 @@ function createContext() {
     payment: {
       id: 'payment-1',
       paymentKey: 'pay-key-1',
+      method: 'CARD',
+      provider: 'CARD',
+      currency: 'KRW',
       amount: 132000,
       providerMetadata: null,
     },
@@ -62,36 +59,6 @@ function createContext() {
     },
     seats: [{ seatId: '1F:A-10' }],
   };
-}
-
-function createRefundTransactionMock(completedRefund: ReturnType<typeof createRefund>) {
-  const updateCalls: Array<{ table: unknown; values: Record<string, unknown> }> = [];
-  const insertCalls: Array<{ table: unknown; values: unknown }> = [];
-
-  const tx = {
-    update(table: unknown) {
-      return {
-        set(values: Record<string, unknown>) {
-          updateCalls.push({ table, values });
-          return {
-            where: vi.fn(() => ({
-              returning: vi.fn().mockResolvedValue([completedRefund]),
-            })),
-          };
-        },
-      };
-    },
-    insert(table: unknown) {
-      return {
-        values(values: unknown) {
-          insertCalls.push({ table, values });
-          return Promise.resolve(values);
-        },
-      };
-    },
-  };
-
-  return { tx, updateCalls, insertCalls };
 }
 
 describe('RefundService', () => {
@@ -110,7 +77,12 @@ describe('RefundService', () => {
       send: vi.fn(),
     };
 
-    const service = new RefundService({} as never, tossPaymentsClient as never, pgBoss as never);
+    const service = new RefundService(
+      {} as never,
+      tossPaymentsClient as never,
+      { finalizeFullPaymentCancellation: vi.fn() } as never,
+      pgBoss as never,
+    );
     const context = createContext();
     const existingRefund = createRefund({
       status: 'processing_at_pg',
@@ -146,7 +118,12 @@ describe('RefundService', () => {
       isAvailable: true,
       send: vi.fn(),
     };
-    const service = new RefundService({} as never, tossPaymentsClient as never, pgBoss as never);
+    const service = new RefundService(
+      {} as never,
+      tossPaymentsClient as never,
+      { finalizeFullPaymentCancellation: vi.fn() } as never,
+      pgBoss as never,
+    );
     const context = createContext();
     const existingRefund = createRefund({
       status: 'sent_to_pg',
@@ -200,7 +177,12 @@ describe('RefundService', () => {
       send: vi.fn().mockResolvedValue('job-refund-retry-1'),
     };
 
-    const service = new RefundService({} as never, tossPaymentsClient as never, pgBoss as never);
+    const service = new RefundService(
+      {} as never,
+      tossPaymentsClient as never,
+      { finalizeFullPaymentCancellation: vi.fn() } as never,
+      pgBoss as never,
+    );
     const context = createContext();
     const requestedRefund = createRefund();
     const retryableRefund = createRefund({
@@ -235,7 +217,10 @@ describe('RefundService', () => {
 
     const result = await service.requestRefund('reservation-1', 'user-1', '단순 변심');
 
-    expect(tossPaymentsClient.cancelPayment).toHaveBeenCalledWith('pay-key-1', '단순 변심');
+    expect(tossPaymentsClient.cancelPayment).toHaveBeenCalledWith('pay-key-1', '단순 변심', {
+      idempotencyKey: 'refund-cancel:refund-1',
+      secretKeyScope: 'default',
+    });
     expect(retrySpy).toHaveBeenCalledWith(requestedRefund.id, requestedRefund.retryCount);
     expect(recordScheduleSpy).toHaveBeenCalledWith(
       retryableRefund,
@@ -256,7 +241,12 @@ describe('RefundService', () => {
       isAvailable: true,
       send: vi.fn().mockRejectedValue(new Error('Queue refund-cancel-retry does not exist')),
     };
-    const service = new RefundService({} as never, tossPaymentsClient as never, pgBoss as never);
+    const service = new RefundService(
+      {} as never,
+      tossPaymentsClient as never,
+      { finalizeFullPaymentCancellation: vi.fn() } as never,
+      pgBoss as never,
+    );
     const context = createContext();
     const requestedRefund = createRefund();
     const processingRefund = createRefund({
@@ -296,134 +286,83 @@ describe('RefundService', () => {
     expect(result.refundTimeline?.currentState).toBe('PROCESSING_AT_PG');
   });
 
-  it('holds refunded seats and writes admin refund audit rows on admin refund completion', async () => {
-    const completedRefund = createRefund({
-      status: 'completed',
-      resultCode: 'CANCELED',
-      resultMessage: 'PG cancel completed',
-      completedAt: new Date('2026-05-08T03:10:00.000Z'),
-    });
-    const transaction = createRefundTransactionMock(completedRefund);
-    const db = {
-      transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
-        callback(transaction.tx),
-      ),
-      update: vi.fn(() => ({
-        set: vi.fn(() => ({
-          where: vi.fn().mockResolvedValue(undefined),
-        })),
-      })),
-    };
-    const pgBoss = {
-      isAvailable: false,
-      send: vi.fn(),
-    };
-    const service = new RefundService(
-      db as never,
-      { cancelPayment: vi.fn() } as never,
-      pgBoss as never,
-    );
-    const context = createContext();
-
-    const result = await (service as any).finalizeRefundSuccess(
-      context,
-      'refund-1',
-      '관리자 환불',
-      {
+  it('uses policy-built Alipay full-cancel options and finalizes through the shared finalizer', async () => {
+    const tossPaymentsClient = {
+      cancelPayment: vi.fn().mockResolvedValue({
         paymentKey: 'pay-key-1',
         orderId: 'GRP-20260508-ABCDE',
-        method: '카드',
+        method: 'FOREIGN_EASY_PAY',
         totalAmount: 132000,
         status: 'CANCELED',
         approvedAt: '2026-05-08T12:00:00+09:00',
-        cancels: [],
-      },
-      { kind: 'admin', operatorUserId: 'admin-1' },
-    );
-
-    expect(result).toBe(completedRefund);
-    const seatUpdates = transaction.updateCalls.filter(
-      (call) => call.table === seatInventories,
-    );
-    expect(seatUpdates).toHaveLength(1);
-    expect(seatUpdates[0]?.values).toMatchObject({
-      status: 'held_cancelled',
-      lockedBy: null,
-      lockedUntil: null,
-      reopenJobId: SEAT_RELEASE_ENQUEUE_FAILED_JOB_ID,
-    });
-    const ticketUpdates = transaction.updateCalls.filter((call) => call.table === tickets);
-    expect(ticketUpdates).toHaveLength(1);
-    expect(ticketUpdates[0]?.values).toMatchObject({
-      status: 'revoked',
-      revokedAt: expect.any(Date),
-    });
-
-    expect(transaction.insertCalls).toHaveLength(1);
-    expect(transaction.insertCalls[0]?.table).toBe(bookingOperationAuditLogs);
-    expect(transaction.insertCalls[0]?.values).toEqual([
-      expect.objectContaining({
-        operatorUserId: 'admin-1',
-        action: 'admin_refund',
-        seatKey: '1F:A-10',
-        reservationId: 'reservation-1',
+        cancels: [
+          {
+            cancelAmount: 132000,
+            cancelReason: '단순 변심',
+            canceledAt: '2026-05-08T12:05:00+09:00',
+            cancelStatus: 'DONE',
+            cancelRequestId: 'cancel_refund-1',
+          },
+        ],
       }),
-    ]);
-    expect(pgBoss.send).not.toHaveBeenCalled();
-  });
-
-  it('persists the preallocated release job id with refunded seats when enqueue succeeds', async () => {
+    };
+    const finalizer = {
+      finalizeFullPaymentCancellation: vi.fn().mockResolvedValue({
+        releaseJobId: 'release-job-1',
+        releaseEnqueued: true,
+      }),
+    };
+    const service = new RefundService(
+      {} as never,
+      tossPaymentsClient as never,
+      finalizer as never,
+      { isAvailable: false, send: vi.fn() } as never,
+    );
+    const context = createContext();
+    context.payment.method = 'FOREIGN_EASY_PAY';
+    context.payment.provider = 'ALIPAY';
+    context.payment.currency = 'USD';
+    const requestedRefund = createRefund();
     const completedRefund = createRefund({
       status: 'completed',
       resultCode: 'CANCELED',
       resultMessage: 'PG cancel completed',
       completedAt: new Date('2026-05-08T03:10:00.000Z'),
     });
-    const transaction = createRefundTransactionMock(completedRefund);
-    const db = {
-      transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) =>
-        callback(transaction.tx),
-      ),
-    };
-    const pgBoss = {
-      isAvailable: true,
-      send: vi.fn((_queue: unknown, _payload: unknown, options: { id: string }) =>
-        Promise.resolve(options.id),
-      ),
-    };
-    const service = new RefundService(
-      db as never,
-      { cancelPayment: vi.fn() } as never,
-      pgBoss as never,
-    );
-    const context = createContext();
 
-    await (service as any).finalizeRefundSuccess(
-      context,
-      'refund-1',
-      '사용자 환불',
-      {
-        paymentKey: 'pay-key-1',
-        orderId: 'GRP-20260508-ABCDE',
-        method: '카드',
-        totalAmount: 132000,
-        status: 'CANCELED',
-        approvedAt: '2026-05-08T12:00:00+09:00',
-        cancels: [],
-      },
-      { kind: 'user' },
-    );
+    vi.spyOn(service as never, 'loadReservationContext').mockResolvedValue(context as never);
+    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(null as never);
+    vi.spyOn(service as never, 'insertRequestedRefund').mockResolvedValue(requestedRefund as never);
+    vi.spyOn(service as never, 'loadRefundById').mockResolvedValue(completedRefund as never);
 
-    const sendOptions = pgBoss.send.mock.calls[0]?.[2] as { id?: string } | undefined;
-    expect(sendOptions).toEqual(expect.objectContaining({ id: expect.any(String) }));
+    const result = await service.requestRefund('reservation-1', 'user-1', '단순 변심');
 
-    const seatUpdates = transaction.updateCalls.filter(
-      (call) => call.table === seatInventories,
-    );
-    expect(seatUpdates).toHaveLength(1);
-    expect(seatUpdates[0]?.values).toMatchObject({
-      status: 'held_cancelled',
-      reopenJobId: sendOptions?.id,
+    expect(tossPaymentsClient.cancelPayment).toHaveBeenCalledWith('pay-key-1', '단순 변심', {
+      idempotencyKey: 'refund-cancel:refund-1',
+      secretKeyScope: 'foreign-easy-pay',
+      cancelRequestId: 'cancel_refund-1',
     });
+    expect(tossPaymentsClient.cancelPayment.mock.calls[0]?.[2]).not.toHaveProperty(
+      'cancelAmount',
+    );
+    expect(finalizer.finalizeFullPaymentCancellation).toHaveBeenCalledWith({
+      source: 'refund_request',
+      refundId: 'refund-1',
+      context: expect.objectContaining({
+        reservation: expect.objectContaining({
+          id: 'reservation-1',
+          showtimeId: 'showtime-1',
+        }),
+        payment: expect.objectContaining({
+          id: 'payment-1',
+          paymentKey: 'pay-key-1',
+        }),
+        seats: [{ seatId: '1F:A-10' }],
+      }),
+      reason: '단순 변심',
+      providerResponse: expect.objectContaining({ status: 'CANCELED' }),
+      actor: { kind: 'user' },
+    });
+    expect(result.refundTimeline?.currentState).toBe('COMPLETED');
   });
 });

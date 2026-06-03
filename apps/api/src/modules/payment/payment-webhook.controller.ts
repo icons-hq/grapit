@@ -85,12 +85,19 @@ export class PaymentWebhookController {
     }
 
     try {
-      const providerVerifiedWebhook = await this.withProviderVerifiedState(webhook);
+      const {
+        webhook: providerVerifiedWebhook,
+        providerResponse,
+      } = await this.withProviderVerifiedState(webhook);
       const progress = await this.paymentService.findAsyncPaymentProgress(
         providerVerifiedWebhook.data.orderId,
         providerVerifiedWebhook.data.paymentKey,
       );
-      const processingResult = await this.processEvent(providerVerifiedWebhook, progress);
+      const processingResult = await this.processEvent(
+        providerVerifiedWebhook,
+        progress,
+        providerResponse,
+      );
 
       await this.paymentService.markWebhookEventProcessed(
         webhook.eventId,
@@ -136,16 +143,50 @@ export class PaymentWebhookController {
   private async processEvent(
     body: TossWebhookRequestBody,
     progress: AsyncPaymentProgressSnapshot | null,
+    providerResponse: TossPaymentResponse,
   ): Promise<{ code: string; message?: string }> {
     if (body.eventType === 'CANCEL_STATUS_CHANGED') {
       if (
-        progress?.paymentStatus === 'CANCELED'
-        || progress?.reservationStatus === 'FAILED'
+        progress?.reservationStatus === 'FAILED'
         || progress?.reservationStatus === 'CANCELLED'
+        || (
+          progress?.paymentStatus === 'CANCELED'
+          && progress.reservationStatus !== 'CONFIRMED'
+        )
       ) {
         return {
           code: 'IGNORED_DUPLICATE_CANCEL_EVENT',
           message: 'cancel event already applied',
+        };
+      }
+
+      if (!progress) {
+        return {
+          code: 'IGNORED_CANCEL_EVENT_NO_LOCAL_MATCH',
+          message: 'cancel event has no matching local reservation',
+        };
+      }
+
+      if (progress.reservationStatus === 'CONFIRMED' && body.data.status === 'CANCELED') {
+        const result = await this.paymentService.finalizeConfirmedCancelWebhook(
+          body,
+          providerResponse,
+        );
+
+        if (result === 'finalized') {
+          return { code: 'CANCEL_STATUS_CHANGED_FINALIZED' };
+        }
+
+        if (result === 'already_finalized') {
+          return {
+            code: 'IGNORED_DUPLICATE_CANCEL_EVENT',
+            message: 'cancel event already applied',
+          };
+        }
+
+        return {
+          code: 'IGNORED_CANCEL_EVENT_NO_LOCAL_MATCH',
+          message: 'cancel event has no matching local payment/reservation',
         };
       }
 
@@ -177,7 +218,7 @@ export class PaymentWebhookController {
 
   private async withProviderVerifiedState(
     body: TossWebhookRequestBody,
-  ): Promise<TossWebhookRequestBody> {
+  ): Promise<{ webhook: TossWebhookRequestBody; providerResponse: TossPaymentResponse }> {
     const queryOptions = this.getProviderQueryOptions(body);
     const queried = queryOptions
       ? await this.tossPaymentsClient.queryPayment(body.data.paymentKey, queryOptions)
@@ -204,8 +245,11 @@ export class PaymentWebhookController {
     }
 
     return {
-      ...body,
-      data: providerData,
+      webhook: {
+        ...body,
+        data: providerData,
+      },
+      providerResponse: queried,
     };
   }
 
