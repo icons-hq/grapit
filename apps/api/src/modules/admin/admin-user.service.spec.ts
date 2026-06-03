@@ -11,6 +11,7 @@ import { AdminUserService } from './admin-user.service.js';
 function userRow(overrides: Partial<{
   id: string;
   email: string;
+  name: string;
   role: string;
   adminCapabilityBundle: string | null;
   adminCapabilities: string[];
@@ -18,7 +19,7 @@ function userRow(overrides: Partial<{
   return {
     id: overrides.id ?? 'user-1',
     email: overrides.email ?? 'fan@example.com',
-    name: 'Fan',
+    name: overrides.name ?? 'Fan',
     phone: '+821012345678',
     gender: 'unspecified' as const,
     country: 'KR',
@@ -345,6 +346,25 @@ describe('AdminUserService raw user export and statistics', () => {
         userAgent: 'Vitest Admin',
       }),
     );
+  });
+
+  it('prefixes raw users CSV with a UTF-8 BOM for Excel-compatible Korean names', async () => {
+    const auditService = createAuditService();
+    const service = new AdminUserService({} as never, auditService);
+    vi.spyOn(service as never, 'selectUserExportRows').mockResolvedValue([
+      userRow({
+        id: 'user-korean',
+        name: '김예매',
+      }),
+    ]);
+
+    const result = await service.exportUsers({
+      actorUserId: 'actor-admin',
+      reason: 'membership operations reconciliation',
+    });
+
+    expect(result.csv.charCodeAt(0)).toBe(0xfeff);
+    expect(result.csv).toContain('"김예매"');
   });
 
   it('aggregates all-time user stats and fills a 30-day KST signup trend', async () => {
