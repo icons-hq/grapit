@@ -428,7 +428,13 @@ export class ReservationFinalizationService {
           providerChargeRate: existingPayment.providerChargeRate,
           providerChargeQuotedAt: existingPayment.providerChargeQuotedAt,
           providerMetadata: existingProviderMetadata
-            ?? (!hasExistingProviderMetadata && isOverseasCardConfirm
+            ?? (!hasExistingProviderMetadata
+              && isOverseasCardConfirm
+              && this.canBackfillOverseasCardProviderMetadata(
+                existingPayment,
+                reservation,
+                dto,
+              )
               ? createOverseasCardProviderMetadata()
               : null),
         };

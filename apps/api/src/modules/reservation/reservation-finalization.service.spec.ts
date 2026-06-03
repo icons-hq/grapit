@@ -822,6 +822,103 @@ describe('ReservationFinalizationService', () => {
     expect(db.transaction).not.toHaveBeenCalled();
   });
 
+  it('does not write overseas-card metadata when recovering a domestic card payment', async () => {
+    const { service, db, tossClient, bookingService, qrTicketService } = createDependencies();
+    const updatedValues: Array<{ table: unknown; values: Record<string, unknown> }> = [];
+
+    db.select
+      .mockReturnValueOnce(chainResult([
+        {
+          id: 'payment-domestic-card-recovery-1',
+          reservationId: 'reservation-domestic-card-recovery-1',
+          status: 'DONE',
+          paymentKey: 'payment-key-domestic-card-recovery',
+          tossOrderId: 'order-domestic-card-recovery-1',
+          method: '카드',
+          provider: 'CARD',
+          providerMetadata: null,
+          currency: 'KRW',
+          amount: 154000,
+          paidAt: new Date('2026-06-02T10:01:00.000Z'),
+          asyncStatus: 'sync',
+        },
+      ]))
+      .mockReturnValueOnce(chainResult([
+        {
+          id: 'reservation-domestic-card-recovery-1',
+          userId: 'user-1',
+          showtimeId: 'showtime-1',
+          status: 'PENDING_PAYMENT',
+          totalAmount: 154000,
+          admissionActiveUntilAt: new Date(Date.now() + 60_000),
+        },
+      ]))
+      .mockReturnValueOnce(chainResult([
+        {
+          seatId: '1F:A-1',
+          tierName: 'VIP',
+          price: 100000,
+          row: 'A',
+          number: '1',
+        },
+        {
+          seatId: '1F:A-2',
+          tierName: 'R',
+          price: 50000,
+          row: 'A',
+          number: '2',
+        },
+      ]));
+
+    const tx = {
+      update: vi.fn((table: unknown) => ({
+        set: vi.fn((values: Record<string, unknown>) => {
+          updatedValues.push({ table, values });
+          return {
+            where: vi.fn().mockReturnValue({
+              returning: vi.fn().mockResolvedValue([{ id: 'seat-inventory-1' }]),
+            }),
+          };
+        }),
+      })),
+      insert: vi.fn(() => ({
+        values: vi.fn().mockReturnValue({}),
+      })),
+    };
+    db.transaction.mockImplementation(async (cb: (tx: typeof tx) => Promise<unknown>) => cb(tx));
+
+    await expect(
+      service.confirmAndCreateReservation(
+        {
+          paymentKey: 'payment-key-domestic-card-recovery',
+          orderId: 'order-domestic-card-recovery-1',
+          provider: 'OVERSEAS_CARD',
+          amount: 154000,
+        },
+        'user-1',
+      ),
+    ).resolves.toEqual({ reservationId: 'reservation-domestic-card-recovery-1' });
+
+    const paymentUpdate = updatedValues.find((entry) => entry.table === payments);
+    expect(paymentUpdate?.values).toEqual(expect.objectContaining({
+      status: 'DONE',
+      amount: 154000,
+      asyncStatus: 'sync',
+    }));
+    expect(paymentUpdate?.values).not.toHaveProperty('providerMetadata');
+    expect(tossClient.confirmPayment).not.toHaveBeenCalled();
+    expect(qrTicketService.ensureIssuedTicketsForReservation).toHaveBeenCalledWith({
+      reservationId: 'reservation-domestic-card-recovery-1',
+      paymentId: 'payment-domestic-card-recovery-1',
+    });
+    expect(bookingService.consumeOwnedSeatLocks).toHaveBeenCalledWith(
+      'user-1',
+      'showtime-1',
+      ['1F:A-1', '1F:A-2'],
+      { skipUnavailableCheck: true },
+    );
+  });
+
   it('rejects confirmed retry when stored and requested amounts omit service fees', async () => {
     const { service, db, tossClient } = createDependencies();
     db.select
