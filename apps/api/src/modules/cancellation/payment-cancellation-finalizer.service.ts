@@ -7,7 +7,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import { normalizeSeatIdentity } from '@grabit/shared';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
@@ -296,7 +296,7 @@ export class PaymentCancellationFinalizerService {
             soldAt: null,
             heldCancelledAt: now,
             reopenHoldUntil: releaseAt,
-            reopenJobId: preallocatedReleaseJobId,
+            reopenJobId: JOB_ENQUEUE_FAILED,
           })
           .where(
             and(
@@ -334,22 +334,21 @@ export class PaymentCancellationFinalizerService {
       preallocatedReleaseJobId,
     );
     if (releaseEnqueued) {
-      return {
-        releaseJobId: preallocatedReleaseJobId,
-        releaseEnqueued: true,
-      };
+      const actualJobIdPersisted = await this.persistReleaseJobEnqueueSuccess(
+        input.context,
+        seatIdentities,
+        preallocatedReleaseJobId,
+      );
+      if (actualJobIdPersisted) {
+        return {
+          releaseJobId: preallocatedReleaseJobId,
+          releaseEnqueued: true,
+        };
+      }
     }
 
-    const failedJobIdPersisted = await this.persistReleaseJobEnqueueFailure(
-      input.context,
-      seatIdentities,
-      preallocatedReleaseJobId,
-    );
-
     return {
-      releaseJobId: failedJobIdPersisted
-        ? JOB_ENQUEUE_FAILED
-        : preallocatedReleaseJobId,
+      releaseJobId: JOB_ENQUEUE_FAILED,
       releaseEnqueued: false,
     };
   }
@@ -410,34 +409,59 @@ export class PaymentCancellationFinalizerService {
     }
   }
 
-  private async persistReleaseJobEnqueueFailure(
+  private async persistReleaseJobEnqueueSuccess(
     context: FullPaymentCancellationContext,
     seatIdentities: SeatIdentityPayload[],
     releaseJobId: string,
   ): Promise<boolean> {
-    for (const seatIdentity of seatIdentities) {
-      const updatedSeatInventory = await this.db
-        .update(seatInventories)
-        .set({ reopenJobId: JOB_ENQUEUE_FAILED })
-        .where(
-          and(
-            eq(seatInventories.showtimeId, context.reservation.showtimeId),
-            eq(seatInventories.floorKey, seatIdentity.floorKey),
-            eq(seatInventories.seatKey, seatIdentity.seatKey),
-            eq(seatInventories.status, 'held_cancelled'),
-            eq(seatInventories.reopenJobId, releaseJobId),
-          ),
-        )
-        .returning({ id: seatInventories.id });
-
-      if (updatedSeatInventory.length !== 1) {
-        this.logger.error(
-          `Failed to persist release-cancelled-seat enqueue failure for reservationId=${context.reservation.id}, seatKey=${seatIdentity.seatKey}`,
-        );
-        return false;
-      }
+    if (seatIdentities.length === 0) {
+      return true;
     }
 
-    return true;
+    try {
+      await this.db.transaction(async (tx) => {
+        const seatIdentityFilter =
+          seatIdentities.length === 1
+            ? and(
+                eq(seatInventories.floorKey, seatIdentities[0]!.floorKey),
+                eq(seatInventories.seatKey, seatIdentities[0]!.seatKey),
+              )
+            : or(
+                ...seatIdentities.map((seatIdentity) =>
+                  and(
+                    eq(seatInventories.floorKey, seatIdentity.floorKey),
+                    eq(seatInventories.seatKey, seatIdentity.seatKey),
+                  ),
+                ),
+              );
+
+        const updatedSeatInventories = await tx
+          .update(seatInventories)
+          .set({ reopenJobId: releaseJobId })
+          .where(
+            and(
+              eq(seatInventories.showtimeId, context.reservation.showtimeId),
+              eq(seatInventories.status, 'held_cancelled'),
+              eq(seatInventories.reopenJobId, JOB_ENQUEUE_FAILED),
+              seatIdentityFilter,
+            ),
+          )
+          .returning({ id: seatInventories.id });
+
+        if (updatedSeatInventories.length !== seatIdentities.length) {
+          throw new Error(
+            `Expected ${seatIdentities.length} released seat rows, updated ${updatedSeatInventories.length}`,
+          );
+        }
+      });
+
+      return true;
+    } catch (error) {
+      this.logger.error(
+        `Manual reconciliation required: release-cancelled-seat job was enqueued but seat reopen job id was not persisted for reservationId=${context.reservation.id}, releaseJobId=${releaseJobId}`,
+        error instanceof Error ? error.stack : String(error),
+      );
+      return false;
+    }
   }
 }

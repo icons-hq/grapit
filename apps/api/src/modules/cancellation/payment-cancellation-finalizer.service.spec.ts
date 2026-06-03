@@ -103,8 +103,7 @@ function createTransactionMock(options: {
   ];
   const postCommitSeatInventoryReturning = [
     ...(options.postCommitSeatInventoryReturning ?? [
-      [{ id: 'seat-inventory-1' }],
-      [{ id: 'seat-inventory-2' }],
+      [{ id: 'seat-inventory-1' }, { id: 'seat-inventory-2' }],
     ]),
   ];
 
@@ -153,9 +152,15 @@ function createTransactionMock(options: {
       };
     },
   };
+  const postCommitTx = {
+    update(table: unknown) {
+      return update(table, postCommitUpdateCalls, true);
+    },
+  };
 
   return {
     tx,
+    postCommitTx,
     updateCalls,
     postCommitUpdateCalls,
     insertCalls,
@@ -169,9 +174,12 @@ function createService(pgBoss?: {
 }, transactionOptions?: Parameters<typeof createTransactionMock>[0]) {
   const transaction = createTransactionMock(transactionOptions);
   const transactionCommitted = vi.fn();
+  let transactionCount = 0;
   const db = {
     transaction: vi.fn(async (callback: (tx: unknown) => Promise<unknown>) => {
-      const result = await callback(transaction.tx);
+      transactionCount += 1;
+      const tx = transactionCount === 1 ? transaction.tx : transaction.postCommitTx;
+      const result = await callback(tx);
       transactionCommitted();
       return result;
     }),
@@ -321,19 +329,10 @@ describe('PaymentCancellationFinalizerService', () => {
         soldAt: null,
         heldCancelledAt: NOW,
         reopenHoldUntil: RELEASE_AT,
-        reopenJobId: expect.any(String),
+        reopenJobId: JOB_ENQUEUE_FAILED,
       });
-      expect(update.values.reopenJobId).not.toBe(JOB_ENQUEUE_FAILED);
     }
-    expect(transaction.postCommitUpdateCalls.filter((call) => call.table === seatInventories))
-      .toEqual([
-        expect.objectContaining({
-          values: expect.objectContaining({ reopenJobId: JOB_ENQUEUE_FAILED }),
-        }),
-        expect.objectContaining({
-          values: expect.objectContaining({ reopenJobId: JOB_ENQUEUE_FAILED }),
-        }),
-      ]);
+    expect(transaction.postCommitUpdateCalls).toHaveLength(0);
   });
 
   it('stores sanitized provider cancellation payload in refund and payment metadata', async () => {
@@ -432,7 +431,7 @@ describe('PaymentCancellationFinalizerService', () => {
     ]);
   });
 
-  it('persists the preallocated release job id when pgBoss send succeeds', async () => {
+  it('replaces the failed marker with the preallocated release job id after pgBoss send succeeds', async () => {
     const pgBoss = {
       isAvailable: true,
       send: vi.fn((_name: unknown, _payload: unknown, options: { id: string }) =>
@@ -484,12 +483,34 @@ describe('PaymentCancellationFinalizerService', () => {
     expect(transaction.updateCalls.filter((call) => call.table === seatInventories))
       .toEqual([
         expect.objectContaining({
-          values: expect.objectContaining({ reopenJobId: releaseJobId }),
+          values: expect.objectContaining({ reopenJobId: JOB_ENQUEUE_FAILED }),
         }),
         expect.objectContaining({
-          values: expect.objectContaining({ reopenJobId: releaseJobId }),
+          values: expect.objectContaining({ reopenJobId: JOB_ENQUEUE_FAILED }),
         }),
       ]);
+
+    const postCommitSeatUpdate = transaction.postCommitUpdateCalls.find(
+      (call) => call.table === seatInventories,
+    );
+    expect(postCommitSeatUpdate).toEqual(
+      expect.objectContaining({
+        values: expect.objectContaining({ reopenJobId: releaseJobId }),
+        returningSelection: { id: seatInventories.id },
+      }),
+    );
+    expect(transaction.postCommitUpdateCalls.filter((call) => call.table === seatInventories))
+      .toHaveLength(1);
+    const where = postCommitSeatUpdate?.whereArgs[0];
+    expect(objectGraphContains(where, seatInventories.showtimeId)).toBe(true);
+    expect(objectGraphContains(where, seatInventories.floorKey)).toBe(true);
+    expect(objectGraphContains(where, seatInventories.seatKey)).toBe(true);
+    expect(objectGraphContains(where, seatInventories.status)).toBe(true);
+    expect(objectGraphContains(where, seatInventories.reopenJobId)).toBe(true);
+    expect(objectGraphContains(where, 'held_cancelled')).toBe(true);
+    expect(objectGraphContains(where, JOB_ENQUEUE_FAILED)).toBe(true);
+    expect(objectGraphContains(where, '1F:A-10')).toBe(true);
+    expect(objectGraphContains(where, '2F:B-20')).toBe(true);
   });
 
   it('scopes seat inventory updates to sold reservation seats and records returning ids', async () => {
@@ -648,13 +669,34 @@ describe('PaymentCancellationFinalizerService', () => {
     expect(transaction.updateCalls.filter((call) => call.table === seatInventories))
       .toEqual([
         expect.objectContaining({
-          values: expect.objectContaining({ reopenJobId: expect.any(String) }),
+          values: expect.objectContaining({ reopenJobId: JOB_ENQUEUE_FAILED }),
         }),
         expect.objectContaining({
-          values: expect.objectContaining({ reopenJobId: expect.any(String) }),
+          values: expect.objectContaining({ reopenJobId: JOB_ENQUEUE_FAILED }),
         }),
       ]);
-    expect(transaction.postCommitUpdateCalls.filter((call) => call.table === seatInventories))
+    expect(transaction.postCommitUpdateCalls).toHaveLength(0);
+  });
+
+  it('leaves the failed marker and returns failed when post-commit job id replacement is incomplete', async () => {
+    const pgBoss = {
+      isAvailable: true,
+      send: vi.fn((_name: unknown, _payload: unknown, options: { id: string }) =>
+        Promise.resolve(options.id),
+      ),
+    };
+    const { service, transaction, transactionCommitted } = createService(pgBoss, {
+      postCommitSeatInventoryReturning: [[{ id: 'seat-inventory-1' }]],
+    });
+
+    const result = await service.finalizeFullPaymentCancellation(baseInput());
+
+    expect(result).toEqual({
+      releaseJobId: JOB_ENQUEUE_FAILED,
+      releaseEnqueued: false,
+    });
+    expect(pgBoss.send).toHaveBeenCalledTimes(1);
+    expect(transaction.updateCalls.filter((call) => call.table === seatInventories))
       .toEqual([
         expect.objectContaining({
           values: expect.objectContaining({ reopenJobId: JOB_ENQUEUE_FAILED }),
@@ -663,6 +705,14 @@ describe('PaymentCancellationFinalizerService', () => {
           values: expect.objectContaining({ reopenJobId: JOB_ENQUEUE_FAILED }),
         }),
       ]);
+    expect(transaction.postCommitUpdateCalls.filter((call) => call.table === seatInventories))
+      .toEqual([
+        expect.objectContaining({
+          values: expect.objectContaining({ reopenJobId: expect.any(String) }),
+          returningSelection: { id: seatInventories.id },
+        }),
+      ]);
+    expect(transactionCommitted).toHaveBeenCalledTimes(1);
   });
 
   it('skips refund updates when refundId is omitted', async () => {
