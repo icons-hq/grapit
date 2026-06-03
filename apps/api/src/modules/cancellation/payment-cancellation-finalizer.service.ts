@@ -61,10 +61,14 @@ export interface FinalizeFullPaymentCancellationInput {
   context: FullPaymentCancellationContext;
   refundId?: string;
   reason: string;
-  providerResponse?: { status?: string };
+  providerResponse?: PaymentCancellationProviderResponse;
   actor?: PaymentCancellationActor;
   source: 'refund_request' | 'refund_retry' | 'cancel_webhook' | 'ticket_item';
 }
+
+export type PaymentCancellationProviderResponse = {
+  status?: string;
+} & Record<string, unknown>;
 
 export interface FinalizeFullPaymentCancellationResult {
   releaseJobId: string;
@@ -80,6 +84,10 @@ const RESULT_MESSAGE_BY_SOURCE: Record<CancellationSource, string> = {
   ticket_item: 'PG cancel completed for ticket item',
 };
 
+const REDACTED_PROVIDER_METADATA_VALUE = '[REDACTED]';
+const SENSITIVE_PROVIDER_METADATA_KEY =
+  /(secret|password|authorization|credential|access[-_]?token|refresh[-_]?token|id[-_]?token|api[-_]?key)/i;
+
 function addDays(date: Date, days: number): Date {
   return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
 }
@@ -88,6 +96,38 @@ function toRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function sanitizeProviderMetadata(value: unknown, key?: string): unknown {
+  if (key && SENSITIVE_PROVIDER_METADATA_KEY.test(key)) {
+    return REDACTED_PROVIDER_METADATA_VALUE;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeProviderMetadata(item));
+  }
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([entryKey, entryValue]) => [
+        entryKey,
+        sanitizeProviderMetadata(entryValue, entryKey),
+      ]),
+    );
+  }
+
+  return value;
+}
+
+function sanitizeProviderCancellationPayload(
+  providerResponse: PaymentCancellationProviderResponse | undefined,
+): Record<string, unknown> | undefined {
+  if (!providerResponse) {
+    return undefined;
+  }
+
+  return sanitizeProviderMetadata(providerResponse) as Record<string, unknown>;
 }
 
 function normalizeReservationSeatIdentity(seatId: string): SeatIdentityPayload {
@@ -136,6 +176,9 @@ export class PaymentCancellationFinalizerService {
     const releaseAt = new Date(now.getTime() + delaySeconds * 1000);
     const seatIdentities = uniqueSeatIdentities(input.context.seats);
     const preallocatedReleaseJobId = randomUUID();
+    const providerCancellation = sanitizeProviderCancellationPayload(
+      input.providerResponse,
+    );
     let releaseEnqueued = false;
     let releaseJobId = JOB_ENQUEUE_FAILED;
 
@@ -157,6 +200,7 @@ export class PaymentCancellationFinalizerService {
               cancelReason: input.reason,
               paymentStatus: input.providerResponse?.status ?? 'CANCELED',
               source: input.source,
+              ...(providerCancellation ? { providerCancellation } : {}),
             },
           })
           .where(
@@ -170,6 +214,9 @@ export class PaymentCancellationFinalizerService {
 
         if (updatedRefunds.length === 0) {
           throw new NotFoundException('환불 정보를 찾을 수 없습니다');
+        }
+        if (updatedRefunds.length !== 1) {
+          throw new BadRequestException('환불 업데이트 결과가 유효하지 않습니다');
         }
       }
 
@@ -193,6 +240,7 @@ export class PaymentCancellationFinalizerService {
             ...toRecord(input.context.payment.providerMetadata),
             refundCompletedAt: now.toISOString(),
             cancellationSource: input.source,
+            ...(providerCancellation ? { providerCancellation } : {}),
           },
         })
         .where(eq(payments.id, input.context.payment.id));

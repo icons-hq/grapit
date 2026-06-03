@@ -161,6 +161,29 @@ function baseInput(
   };
 }
 
+function providerCancellationResponse() {
+  return {
+    status: 'CANCELED',
+    cancels: [
+      {
+        cancelAmount: 158000,
+        cancelReason: '사용자 환불',
+        transactionKey: 'tx-cancel-1',
+        canceledAt: '2026-05-08T12:10:00+09:00',
+      },
+    ],
+    metadata: {
+      receiptUrl: 'https://dashboard.tosspayments.com/receipt/abc',
+      nested: {
+        safeValue: 'stored',
+        clientSecret: 'should-redact',
+      },
+    },
+    secretKey: 'should-redact',
+    authorization: 'Bearer should-redact',
+  };
+}
+
 describe('PaymentCancellationFinalizerService', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -266,6 +289,69 @@ describe('PaymentCancellationFinalizerService', () => {
         reopenJobId: JOB_ENQUEUE_FAILED,
       });
     }
+  });
+
+  it('stores sanitized provider cancellation payload in refund and payment metadata', async () => {
+    const { service, transaction } = createService({
+      isAvailable: false,
+      send: vi.fn(),
+    });
+
+    await service.finalizeFullPaymentCancellation(
+      baseInput({ providerResponse: providerCancellationResponse() }),
+    );
+
+    const refundMetadata = transaction.updateCalls.find((call) => call.table === refunds)
+      ?.values.providerMetadata;
+    expect(refundMetadata).toMatchObject({
+      cancelReason: '사용자 환불',
+      paymentStatus: 'CANCELED',
+      source: 'refund_request',
+      providerCancellation: {
+        status: 'CANCELED',
+        cancels: [
+          expect.objectContaining({
+            cancelAmount: 158000,
+            transactionKey: 'tx-cancel-1',
+          }),
+        ],
+        metadata: {
+          receiptUrl: 'https://dashboard.tosspayments.com/receipt/abc',
+          nested: {
+            safeValue: 'stored',
+            clientSecret: '[REDACTED]',
+          },
+        },
+        secretKey: '[REDACTED]',
+        authorization: '[REDACTED]',
+      },
+    });
+
+    const paymentMetadata = transaction.updateCalls.find((call) => call.table === payments)
+      ?.values.providerMetadata;
+    expect(paymentMetadata).toMatchObject({
+      requestedProvider: 'OVERSEAS_CARD',
+      secretKeyScope: 'overseas-card',
+      refundCompletedAt: NOW.toISOString(),
+      cancellationSource: 'refund_request',
+      providerCancellation: {
+        status: 'CANCELED',
+        cancels: [
+          expect.objectContaining({
+            cancelAmount: 158000,
+            transactionKey: 'tx-cancel-1',
+          }),
+        ],
+        metadata: {
+          nested: {
+            safeValue: 'stored',
+            clientSecret: '[REDACTED]',
+          },
+        },
+        secretKey: '[REDACTED]',
+        authorization: '[REDACTED]',
+      },
+    });
   });
 
   it('writes booking operation audit rows for admin actors', async () => {
@@ -382,6 +468,26 @@ describe('PaymentCancellationFinalizerService', () => {
     expect(objectGraphContains(refundWhere, 'wrong-refund')).toBe(true);
     expect(objectGraphContains(refundWhere, 'reservation-1')).toBe(true);
     expect(objectGraphContains(refundWhere, 'payment-1')).toBe(true);
+    expect(transaction.updateCalls.some((call) => call.table === reservations)).toBe(false);
+    expect(transaction.updateCalls.some((call) => call.table === payments)).toBe(false);
+    expect(transaction.updateCalls.some((call) => call.table === tickets)).toBe(false);
+    expect(transaction.updateCalls.some((call) => call.table === ticketItems)).toBe(false);
+    expect(transaction.updateCalls.some((call) => call.table === seatInventories)).toBe(false);
+  });
+
+  it('aborts before reservation state changes when the scoped refund update returns multiple rows', async () => {
+    const { service, transaction } = createService(
+      {
+        isAvailable: false,
+        send: vi.fn(),
+      },
+      { refundReturning: [{ id: 'refund-1' }, { id: 'refund-duplicate' }] },
+    );
+
+    await expect(service.finalizeFullPaymentCancellation(baseInput())).rejects.toThrow();
+
+    expect(transaction.updateCalls.find((call) => call.table === refunds)?.returningSelection)
+      .toEqual({ id: refunds.id });
     expect(transaction.updateCalls.some((call) => call.table === reservations)).toBe(false);
     expect(transaction.updateCalls.some((call) => call.table === payments)).toBe(false);
     expect(transaction.updateCalls.some((call) => call.table === tickets)).toBe(false);
