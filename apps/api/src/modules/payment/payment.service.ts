@@ -894,6 +894,9 @@ export class PaymentService {
       .where(eq(reservationSeats.reservationId, reservation.id));
     const ticketItemCancellation =
       await this.findCancelWebhookTicketItemCancellation(payload, payment.id);
+    if (providerResponse.status === 'PARTIAL_CANCELED' && !ticketItemCancellation) {
+      return 'no_local_match';
+    }
     const seats = ticketItemCancellation
       ? [{
           seatId: ticketItemCancellation.seatId,
