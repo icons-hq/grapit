@@ -22,7 +22,6 @@ import {
   type CreatePerformanceFormInput,
   type PerformanceAllowedPaymentMethod,
   type PerformanceDetailImageInput,
-  PERFORMANCE_ALLOWED_PAYMENT_METHODS,
   type PerformanceSeatMapInput,
   type PerformanceWithDetails,
   GENRES,
@@ -75,13 +74,23 @@ const AGE_RATINGS = [
 ] as const;
 
 const PAYMENT_METHOD_LABELS: Record<PerformanceAllowedPaymentMethod, string> = {
-  CARD: '카드 결제',
+  CARD: '카드 결제(국내/해외)',
   VIRTUAL_ACCOUNT: '가상계좌',
   TRANSFER: '계좌이체',
   MOBILE_PHONE: '휴대폰 결제',
   FOREIGN_EASY_PAY: '해외 간편결제',
   SIMPLE_PAY: '국내 간편결제',
 };
+
+const ACTIVE_BOOKING_PAYMENT_METHODS = [
+  'CARD',
+  'TRANSFER',
+  'FOREIGN_EASY_PAY',
+] as const satisfies readonly PerformanceAllowedPaymentMethod[];
+
+const ACTIVE_BOOKING_PAYMENT_METHOD_SET = new Set<PerformanceAllowedPaymentMethod>(
+  ACTIVE_BOOKING_PAYMENT_METHODS,
+);
 
 const ADMIN_EVENT_LOCALE_ORDER = ['ko', 'en', 'th', 'zh-CN'] as const;
 const PERFORMANCE_OPEN_STATUS_OPTIONS: Array<{
@@ -221,6 +230,29 @@ function copyVisibilityChipClasses(visible: boolean): string {
     : 'border-gray-300 bg-gray-100 text-gray-700';
 }
 
+function normalizeAllowedBookingPaymentMethods(
+  methods: PerformanceAllowedPaymentMethod[] | null | undefined,
+): PerformanceAllowedPaymentMethod[] {
+  const filtered = (methods ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.allowedPaymentMethods)
+    .filter((method) => ACTIVE_BOOKING_PAYMENT_METHOD_SET.has(method));
+
+  return filtered.length > 0
+    ? filtered
+    : [...DEFAULT_PERFORMANCE_BOOKING_POLICY.allowedPaymentMethods];
+}
+
+function normalizeBookingPolicy(
+  bookingPolicy: CreatePerformanceFormInput['bookingPolicy'] | undefined,
+): NonNullable<CreatePerformanceFormInput['bookingPolicy']> {
+  return {
+    ...DEFAULT_PERFORMANCE_BOOKING_POLICY,
+    ...bookingPolicy,
+    allowedPaymentMethods: normalizeAllowedBookingPaymentMethods(
+      bookingPolicy?.allowedPaymentMethods,
+    ),
+  };
+}
+
 function mapToFormValues(
   data: PerformanceWithDetails,
 ): CreatePerformanceFormInput {
@@ -265,9 +297,7 @@ function mapToFormValues(
       sortOrder: c.sortOrder,
     })),
     seatMaps: mappedSeatMaps,
-    bookingPolicy: data.bookingPolicy ?? {
-      ...DEFAULT_PERFORMANCE_BOOKING_POLICY,
-    },
+    bookingPolicy: normalizeBookingPolicy(data.bookingPolicy),
   };
 }
 
@@ -505,6 +535,7 @@ export function PerformanceForm({
     const payload: CreatePerformanceInput = {
       ...data,
       detailImages: normalizeDetailImagesForSave(data.detailImages),
+      bookingPolicy: normalizeBookingPolicy(data.bookingPolicy),
     };
     const duplicateFloorKeys = findDuplicateFloorKeys(data.seatMaps ?? []);
 
@@ -1118,7 +1149,7 @@ export function PerformanceForm({
                   name="bookingPolicy.allowedPaymentMethods"
                   render={({ field }) => (
                     <div className="grid gap-3 sm:grid-cols-2">
-                      {PERFORMANCE_ALLOWED_PAYMENT_METHODS.map((method) => {
+                      {ACTIVE_BOOKING_PAYMENT_METHODS.map((method) => {
                         const checked = field.value?.includes(method) ?? false;
 
                         return (
