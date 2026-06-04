@@ -1259,14 +1259,14 @@ describe('use-booking payment mutations', () => {
     expect(buildConfirmPaymentPayload({
       paymentKey: 'overseas_card_usd_payment_key',
       orderId: 'GRP-OVERSEAS-CARD-USD-CONFIRM',
-      amount: '72000',
+      amount: '108',
       provider: 'OVERSEAS_CARD',
-      providerChargeAmount: '48.96',
+      providerChargeAmount: '108.00',
     })).toEqual({
       paymentKey: 'overseas_card_usd_payment_key',
       orderId: 'GRP-OVERSEAS-CARD-USD-CONFIRM',
       provider: 'OVERSEAS_CARD',
-      amount: 72000,
+      providerChargeAmount: '108.00',
     });
   });
 });
