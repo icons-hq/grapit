@@ -107,41 +107,14 @@ describe('TossPaymentWidget', () => {
     }
   });
 
-  it('selects direct Alipay without rendering Toss widget containers', async () => {
-    const user = userEvent.setup();
+  it('filters the deprecated standalone Alipay variant out of the payment tabs', async () => {
     render(<TossPaymentWidget {...defaultProps} />);
 
     await waitFor(() => expect(renderPaymentMethodsMock).toHaveBeenCalledTimes(1));
 
-    await user.click(screen.getByRole('tab', { name: 'Alipay' }));
-
-    await waitFor(() => expect(defaultProps.onPaymentMethodChange).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        requestFlow: 'direct_foreign_easy_pay',
-        paymentMethod: expect.objectContaining({
-          method: 'FOREIGN_EASY_PAY',
-          provider: 'ALIPAY_PLUS',
-          currency: 'USD',
-        }),
-      }),
-    ));
-    expect(renderPaymentMethodsMock).toHaveBeenCalledTimes(1);
-    expect(renderAgreementMock).toHaveBeenCalledTimes(1);
-    expect(setAmountMock).toHaveBeenCalledTimes(1);
-    expect(defaultProps.onPaymentMethodChange).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        requestFlow: 'direct_foreign_easy_pay',
-        paymentMethod: expect.objectContaining({
-          method: 'FOREIGN_EASY_PAY',
-          provider: 'ALIPAY_PLUS',
-          currency: 'USD',
-        }),
-      }),
-    );
-    expect(defaultProps.onWidgetAgreementChange).toHaveBeenLastCalledWith(true);
-    expect(screen.queryByLabelText('결제 수단 선택')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Alipay\s+USD/ })).toBeInTheDocument();
-    expect(screen.queryByText('결제 위젯을 불러오는데 실패했습니다.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Alipay' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Alipay\s+USD/ })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('결제 수단 선택')).toBeInTheDocument();
   });
 
   it('destroys the previous agreement widget before rendering a foreign widget variant', async () => {

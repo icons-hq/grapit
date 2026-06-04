@@ -13,7 +13,6 @@ import { ApiClientError, apiClient } from '@/lib/api-client';
 import { buildConfirmPaymentPayload } from '@/lib/booking/payment-return';
 import {
   buildDirectCardPaymentRequest,
-  buildDirectForeignEasyPayPaymentRequest,
   buildWidgetPaymentRequest,
   resolveProviderChargeDisabledMessage,
   resolvePaymentWidgetVariantLabel,
@@ -787,9 +786,9 @@ describe('use-booking payment mutations', () => {
       },
     });
 
-    expect(resolvePaymentMethodSelection('ALIPAY', 'alipay')).toMatchObject({
+    expect(resolvePaymentMethodSelection('ALIPAY', 'paypal')).toMatchObject({
       requiresOverseasDisclaimer: true,
-      requestFlow: 'direct_foreign_easy_pay',
+      requestFlow: 'widget',
       paymentMethod: {
         method: 'FOREIGN_EASY_PAY',
         provider: 'ALIPAY_PLUS',
@@ -852,7 +851,7 @@ describe('use-booking payment mutations', () => {
       process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = ' DEFAULT, paypal, alipay, DEFAULT ';
 
       expect(resolvePaymentWidgetVariantKey()).toBe('DEFAULT');
-      expect(resolvePaymentWidgetVariantKeys()).toEqual(['DEFAULT', 'paypal', 'alipay']);
+      expect(resolvePaymentWidgetVariantKeys()).toEqual(['DEFAULT', 'paypal']);
     } finally {
       if (originalVariantKey === undefined) {
         delete process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY;
@@ -916,7 +915,7 @@ describe('use-booking payment mutations', () => {
   it('resolvePaymentWidgetVariantLabel() labels foreign payment variants without duplicate PayPal copy', () => {
     expect(resolvePaymentWidgetVariantLabel('DEFAULT')).toBe('국내 결제');
     expect(resolvePaymentWidgetVariantLabel('paypal')).toBe('해외 결제');
-    expect(resolvePaymentWidgetVariantLabel('alipay')).toBe('Alipay');
+    expect(resolvePaymentWidgetVariantLabel('alipay')).toBe('국내 결제');
   });
 
   it('resolvePaymentWidgetRenderVariantKey() normalizes foreign variants for Toss widget API', () => {
@@ -1069,48 +1068,6 @@ describe('use-booking payment mutations', () => {
         useInternationalCardOnly: true,
       },
       customerMobilePhone: '821012345678',
-    });
-  });
-
-  it('buildDirectForeignEasyPayPaymentRequest() opens Alipay with the stored USD provider quote', () => {
-    expect(buildDirectForeignEasyPayPaymentRequest({
-      branch: {
-        orderId: 'GRP-ALIPAY',
-        method: 'FOREIGN_EASY_PAY',
-        provider: 'ALIPAY_PLUS',
-        currency: 'USD',
-        successUrl: 'https://grabit.test/success',
-        failUrl: 'https://grabit.test/fail',
-        pendingUrl: 'https://grabit.test/pending',
-        asyncStatus: 'pending_webhook',
-        useInternationalCardOnly: false,
-        providerChargeQuote: {
-          currency: 'USD',
-          amountMinor: 4896,
-          amountDecimal: '48.96',
-          rate: '0.00068',
-          quotedAt: '2026-05-29T00:00:00.000Z',
-        },
-        checkoutEnabled: true,
-      },
-      customerEmail: 'fan@example.com',
-      customerName: '해외 팬',
-      customerMobilePhone: '+82-10-1234-5678',
-      orderName: '팬미팅 티켓 1매',
-    })).toMatchObject({
-      method: 'FOREIGN_EASY_PAY',
-      amount: {
-        currency: 'USD',
-        value: 48.96,
-      },
-      orderId: 'GRP-ALIPAY',
-      pendingUrl: 'https://grabit.test/pending',
-      windowTarget: 'self',
-      customerMobilePhone: '821012345678',
-      foreignEasyPay: {
-        provider: 'ALIPAY',
-        country: 'CN',
-      },
     });
   });
 
