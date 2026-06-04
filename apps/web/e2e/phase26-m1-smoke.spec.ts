@@ -136,7 +136,7 @@ test.describe('Phase 26 M1 direct deploy smoke', () => {
   }) => {
     const browserProblems = collectBrowserProblems(page);
     await mockRuntimeFlags(page, true);
-    await mockAnonymousSession(page);
+    await mockAuthenticatedSession(page);
     await mockQueueEntry(page);
 
     await gotoSmokeRoute(page, `/booking/${PHASE26_M1_PERFORMANCE_ID}`);
@@ -212,12 +212,6 @@ async function mockAuthenticatedSession(page: Page) {
   });
 
   return state;
-}
-
-async function mockAnonymousSession(page: Page) {
-  await page.route('**/api/v1/auth/refresh', async (route: Route) => {
-    await route.fulfill({ status: 204, body: '' });
-  });
 }
 
 async function mockRuntimeFlags(page: Page, bookingEnabled: boolean) {

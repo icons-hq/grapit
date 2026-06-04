@@ -19,6 +19,7 @@ export type QueueStatus =
   | 'waiting'
   | 'admitted'
   | 'expired'
+  | 'authRequired'
   | 'retry'
   | 'challenge'
   | 'blocked';
@@ -113,6 +114,10 @@ function normalizeSnapshot(snapshot: QueueSnapshot): QueueSnapshot {
 
 function mapQueueError(error: unknown): QueueStatus {
   if (error instanceof ApiClientError) {
+    if (error.statusCode === 401) {
+      return 'authRequired';
+    }
+
     if (
       error.statusCode === 429 ||
       error.message === 'TRAFFIC_RATE_LIMITED'

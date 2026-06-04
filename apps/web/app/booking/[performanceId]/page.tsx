@@ -5,6 +5,7 @@ import { BookingPage } from '@/components/booking/booking-page';
 import { QueueWaiting } from '@/components/booking/queue-waiting';
 import { useQueue } from '@/hooks/use-queue';
 import { useBookingAvailability } from '@/hooks/use-booking-availability';
+import { useAuthStore } from '@/stores/use-auth-store';
 
 export default function BookingRoute({
   params,
@@ -18,9 +19,15 @@ export default function BookingRoute({
     isAdminBookingBypassActive,
     isResolved: runtimeFlagsResolved,
   } = useBookingAvailability();
+  const { isInitialized: authInitialized, accessToken } = useAuthStore();
   const queue = useQueue({
     performanceId,
-    enabled: runtimeFlagsResolved && bookingAvailable && !isAdminBookingBypassActive,
+    enabled:
+      runtimeFlagsResolved &&
+      authInitialized &&
+      Boolean(accessToken) &&
+      bookingAvailable &&
+      !isAdminBookingBypassActive,
   });
 
   if (!runtimeFlagsResolved) {
@@ -35,7 +42,35 @@ export default function BookingRoute({
     );
   }
 
-  if (!bookingAvailable || isAdminBookingBypassActive || queue.isReady) {
+  if (!bookingAvailable || isAdminBookingBypassActive) {
+    return <BookingPage performanceId={performanceId} />;
+  }
+
+  if (!authInitialized) {
+    return (
+      <QueueWaiting
+        status="loading"
+        position={0}
+        etaSeconds={0}
+        remainingSeats={0}
+        autoEnter={false}
+      />
+    );
+  }
+
+  if (!accessToken) {
+    return (
+      <QueueWaiting
+        status="authRequired"
+        position={0}
+        etaSeconds={0}
+        remainingSeats={0}
+        autoEnter={false}
+      />
+    );
+  }
+
+  if (queue.isReady) {
     return <BookingPage performanceId={performanceId} />;
   }
 
