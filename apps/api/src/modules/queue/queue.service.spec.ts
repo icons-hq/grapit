@@ -280,4 +280,22 @@ describe('QueueService', () => {
     );
     expect(mockGateway.emitPosition).toHaveBeenCalledTimes(2);
   });
+
+  it('keeps the reconcile lock long enough for high-admission batches', async () => {
+    vi.spyOn(service as never, 'reconcilePerformanceQueue').mockResolvedValue(undefined);
+
+    await (
+      service as unknown as {
+        reconcilePerformanceQueueIfDue: (targetPerformanceId: string) => Promise<void>;
+      }
+    ).reconcilePerformanceQueueIfDue(performanceId);
+
+    expect(mockRedis.set).toHaveBeenCalledWith(
+      `{queue:${performanceId}}:reconcile-lock`,
+      '1',
+      'PX',
+      30_000,
+      'NX',
+    );
+  });
 });
