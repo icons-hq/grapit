@@ -713,6 +713,68 @@ describe('PaymentService', () => {
       });
     });
 
+    it('records live Alipay failed webhook as foreign easy pay from easyPay payload', async () => {
+      const reservationId = randomUUID();
+      const showtimeId = randomUUID();
+      const userId = randomUUID();
+      const providerChargeQuotedAt = new Date('2026-06-04T01:17:34.000Z');
+      const insertPayment = createMutationChain();
+      const updateReservation = createMutationChain();
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          userId,
+          showtimeId,
+          status: 'PENDING_PAYMENT',
+          totalAmount: 82000,
+          providerChargeCurrency: 'USD',
+          providerChargeAmountMinor: 5576,
+          providerChargeRate: '0.00068',
+          providerChargeQuotedAt,
+        }]))
+        .mockReturnValueOnce(createSelectChain([]));
+      mockDb.insert.mockReturnValueOnce(insertPayment);
+      mockDb.update.mockReturnValueOnce(updateReservation);
+
+      await service.upsertAsyncPaymentProgress(
+        {
+          eventId: 'evt-live-alipay-aborted',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_live_alipay',
+            orderId: 'GRP-LIVE-ALIPAY',
+            status: 'ABORTED',
+            method: '해외간편결제',
+            easyPay: '알리페이',
+            currency: 'USD',
+            totalAmount: 55.76,
+          },
+        },
+        'ABORTED',
+        'payment_status_changed:aborted',
+      );
+
+      expect(insertPayment.values).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reservationId,
+          paymentKey: 'pay_live_alipay',
+          tossOrderId: 'GRP-LIVE-ALIPAY',
+          method: 'FOREIGN_EASY_PAY',
+          provider: 'ALIPAY_PLUS',
+          currency: 'KRW',
+          amount: 82000,
+          status: 'ABORTED',
+          asyncStatus: 'payment_status_changed:aborted',
+          providerChargeCurrency: 'USD',
+          providerChargeAmountMinor: 5576,
+        }),
+      );
+      expect(updateReservation.set).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'FAILED' }),
+      );
+    });
+
     it('finalizes Alipay DONE webhook only when provider totalAmount matches the stored USD quote', async () => {
       const reservationId = randomUUID();
       const showtimeId = randomUUID();

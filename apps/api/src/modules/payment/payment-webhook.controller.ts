@@ -25,6 +25,14 @@ const paymentStatusPriority = {
 } as const;
 
 const tossWebhookDatetimeSchema = z.string().min(1);
+const tossWebhookOptionalStringSchema = z.preprocess(
+  (value) => value === null ? undefined : value,
+  z.string().min(1).optional(),
+);
+const tossWebhookOptionalAmountSchema = z.preprocess(
+  (value) => value === null ? undefined : value,
+  z.number().positive().optional(),
+);
 const tossWebhookProviderSchema = z
   .enum([
     'CARD',
@@ -47,13 +55,20 @@ const tossPaymentStatusChangedWebhookSchema = z.object({
     paymentKey: z.string().min(1, 'paymentKey가 필요합니다'),
     orderId: z.string().min(1, 'orderId가 필요합니다'),
     status: z.string().min(1, 'status가 필요합니다'),
-    method: z.string().min(1).optional(),
+    method: tossWebhookOptionalStringSchema,
     provider: tossWebhookProviderSchema,
-    currency: z.string().min(1).optional(),
-    totalAmount: z.number().int().positive().optional(),
-    approvedAt: tossWebhookDatetimeSchema.optional(),
-    canceledAt: tossWebhookDatetimeSchema.optional(),
-    cancelReason: z.string().min(1).optional(),
+    currency: tossWebhookOptionalStringSchema,
+    totalAmount: tossWebhookOptionalAmountSchema,
+    approvedAt: z.preprocess(
+      (value) => value === null ? undefined : value,
+      tossWebhookDatetimeSchema.optional(),
+    ),
+    canceledAt: z.preprocess(
+      (value) => value === null ? undefined : value,
+      tossWebhookDatetimeSchema.optional(),
+    ),
+    cancelReason: tossWebhookOptionalStringSchema,
+    easyPay: tossWebhookOptionalStringSchema,
   }),
 });
 
@@ -269,6 +284,7 @@ export class PaymentWebhookController {
       status: queried.status,
       method: queried.method ?? body.data.method,
       totalAmount: queried.totalAmount,
+      easyPay: body.data.easyPay,
     };
 
     if (body.eventType === 'PAYMENT_STATUS_CHANGED' && queried.approvedAt) {
@@ -360,12 +376,20 @@ export class PaymentWebhookController {
       body.data.provider === 'ALIPAY'
       || body.data.provider === 'ALIPAY_PLUS'
       || body.data.provider === 'TRUEMONEY'
-      || (!isCancelEvent && body.data.method === 'FOREIGN_EASY_PAY')
+      || (!isCancelEvent && (
+        body.data.method === 'FOREIGN_EASY_PAY'
+        || this.isAlipayWebhook(body)
+      ))
     ) {
       return { secretKeyScope: 'foreign-easy-pay' };
     }
 
     return undefined;
+  }
+
+  private isAlipayWebhook(body: TossWebhookRequestBody): boolean {
+    const easyPay = body.data.easyPay?.trim().toUpperCase();
+    return easyPay === 'ALIPAY' || easyPay === '알리페이';
   }
 
   private assertProviderStateMatchesWebhook(
