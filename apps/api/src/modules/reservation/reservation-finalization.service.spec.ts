@@ -21,14 +21,30 @@ function chainResult<T>(rows: T[]) {
   return new Proxy({}, handler);
 }
 
+function ticketLimitResult({
+  performanceId = 'performance-1',
+  maxTicketsPerUser = 999,
+  activeTicketCount = 0,
+}: {
+  performanceId?: string;
+  maxTicketsPerUser?: number;
+  activeTicketCount?: number;
+} = {}) {
+  return {
+    rows: [{
+      performance_id: performanceId,
+      max_tickets_per_user: maxTicketsPerUser,
+      active_ticket_count: activeTicketCount,
+    }],
+  };
+}
+
 function createDependencies() {
   const db = {
     select: vi.fn(),
     update: vi.fn(),
     insert: vi.fn(),
-    execute: vi.fn().mockResolvedValue({
-      rows: [{ max_tickets_per_user: 999, active_ticket_count: 0 }],
-    }),
+    execute: vi.fn().mockResolvedValue(ticketLimitResult()),
     transaction: vi.fn(),
   };
   const tossClient = {
@@ -117,9 +133,10 @@ describe('ReservationFinalizationService', () => {
           number: '3',
         },
       ]));
-    db.execute.mockResolvedValueOnce({
-      rows: [{ max_tickets_per_user: 4, active_ticket_count: 2 }],
-    });
+    db.execute.mockResolvedValueOnce(ticketLimitResult({
+      maxTicketsPerUser: 4,
+      activeTicketCount: 2,
+    }));
 
     await expect(
       service.confirmAndCreateReservation(
@@ -131,6 +148,97 @@ describe('ReservationFinalizationService', () => {
     expect(tossClient.confirmPayment).not.toHaveBeenCalled();
     expect(bookingService.extendOwnedSeatLocks).not.toHaveBeenCalled();
     expect(db.transaction).not.toHaveBeenCalled();
+  });
+
+  it('rechecks the cumulative ticket limit under an advisory transaction lock before issuing tickets', async () => {
+    const {
+      service,
+      db,
+      tossClient,
+      bookingService,
+      qrTicketService,
+    } = createDependencies();
+
+    db.select
+      .mockReturnValueOnce(chainResult([]))
+      .mockReturnValueOnce(chainResult([
+        {
+          id: 'reservation-race-limit-1',
+          userId: 'user-1',
+          showtimeId: 'showtime-1',
+          status: 'PENDING_PAYMENT',
+          totalAmount: 204000,
+          admissionActiveUntilAt: new Date(Date.now() + 60_000),
+        },
+      ]))
+      .mockReturnValueOnce(chainResult([
+        {
+          seatId: '1F:A-1',
+          tierName: 'VIP',
+          price: 100000,
+          row: 'A',
+          number: '1',
+        },
+        {
+          seatId: '1F:A-2',
+          tierName: 'VIP',
+          price: 100000,
+          row: 'A',
+          number: '2',
+        },
+      ]));
+    db.execute.mockResolvedValueOnce(ticketLimitResult({
+      maxTicketsPerUser: 2,
+      activeTicketCount: 0,
+    }));
+    tossClient.confirmPayment.mockResolvedValue({
+      paymentKey: 'payment-key-race-limit',
+      orderId: 'order-race-limit-1',
+      method: '카드',
+      totalAmount: 204000,
+      approvedAt: '2026-06-04T04:20:00.000Z',
+    });
+    tossClient.cancelPayment.mockResolvedValue({
+      paymentKey: 'payment-key-race-limit',
+      orderId: 'order-race-limit-1',
+      method: '카드',
+      totalAmount: 204000,
+      status: 'CANCELED',
+      cancels: [{ cancelStatus: 'DONE' }],
+    });
+
+    const tx = {
+      execute: vi.fn()
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce(ticketLimitResult({
+          maxTicketsPerUser: 2,
+          activeTicketCount: 1,
+        })),
+      update: vi.fn(),
+      insert: vi.fn(),
+    };
+    db.transaction.mockImplementation(async (cb: (tx: typeof tx) => Promise<unknown>) => cb(tx));
+
+    await expect(
+      service.confirmAndCreateReservation(
+        { paymentKey: 'payment-key-race-limit', orderId: 'order-race-limit-1', amount: 204000 },
+        'user-1',
+      ),
+    ).rejects.toThrow('이 공연은 1인 최대 2매까지 예매할 수 있습니다');
+
+    expect(tossClient.confirmPayment).toHaveBeenCalled();
+    expect(tx.execute).toHaveBeenCalledTimes(2);
+    expect(tx.update).not.toHaveBeenCalled();
+    expect(tx.insert).not.toHaveBeenCalled();
+    expect(tossClient.cancelPayment).toHaveBeenCalledWith(
+      'payment-key-race-limit',
+      '예매 매수 제한 초과로 인한 자동 취소',
+      expect.objectContaining({
+        idempotencyKey: 'reservation-finalization-cancel:order-race-limit-1',
+      }),
+    );
+    expect(qrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
+    expect(bookingService.consumeOwnedSeatLocks).not.toHaveBeenCalled();
   });
 
   it('confirms PayPal with the stored USD provider quote and stores KRW payment totals', async () => {
@@ -186,6 +294,7 @@ describe('ReservationFinalizationService', () => {
     });
 
     const tx = {
+      execute: vi.fn().mockResolvedValue(ticketLimitResult()),
       update: vi.fn().mockReturnValue({
         set: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
@@ -302,6 +411,7 @@ describe('ReservationFinalizationService', () => {
     });
 
     const tx = {
+      execute: vi.fn().mockResolvedValue(ticketLimitResult()),
       update: vi.fn().mockReturnValue({
         set: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
@@ -424,6 +534,7 @@ describe('ReservationFinalizationService', () => {
     });
 
     const tx = {
+      execute: vi.fn().mockResolvedValue(ticketLimitResult()),
       update: vi.fn().mockReturnValue({
         set: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
@@ -933,6 +1044,7 @@ describe('ReservationFinalizationService', () => {
       ]));
 
     const tx = {
+      execute: vi.fn().mockResolvedValue(ticketLimitResult()),
       update: vi.fn((table: unknown) => ({
         set: vi.fn((values: Record<string, unknown>) => {
           updatedValues.push({ table, values });
@@ -1227,6 +1339,7 @@ describe('ReservationFinalizationService', () => {
     });
 
     const tx = {
+      execute: vi.fn().mockResolvedValue(ticketLimitResult()),
       update: vi.fn().mockReturnValue({
         set: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({

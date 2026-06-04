@@ -62,9 +62,11 @@ type PaypalResolvedProviderCharge = {
   quotedAt: Date;
 };
 type TicketLimitSnapshot = {
+  performanceId: string;
   maxTicketsPerUser: number;
   activeTicketCount: number;
 };
+type TicketLimitExecutor = Pick<DrizzleDB, 'execute'>;
 
 const TICKET_SERVICE_FEE_KRW = 2000;
 const OVERSEAS_CARD_PROVIDER_METADATA = {
@@ -571,6 +573,22 @@ export class ReservationFinalizationService {
       let committedPaymentId: string | null = null;
       try {
         await this.db.transaction(async (tx) => {
+          await this.lockTicketLimitScope(tx, userId, ticketLimit.performanceId);
+          const lockedTicketLimit = await this.getTicketLimitSnapshot(
+            userId,
+            reservation.id,
+            reservation.showtimeId,
+            tx,
+          );
+          if (
+            lockedTicketLimit.activeTicketCount + pendingSeats.length
+            > lockedTicketLimit.maxTicketsPerUser
+          ) {
+            throw new ConflictException(
+              buildMaxTicketsPerUserExceededMessage(lockedTicketLimit.maxTicketsPerUser),
+            );
+          }
+
           await tx
             .update(reservations)
             .set({
@@ -696,7 +714,7 @@ export class ReservationFinalizationService {
           await this.cancelApprovedPaymentAfterFailure(
             approvedPayment,
             reservation.id,
-            '판매 불가능 좌석으로 인한 자동 취소',
+            this.resolvePostApprovalConflictCancelReason(dbError),
           );
           throw dbError;
         }
@@ -807,9 +825,11 @@ export class ReservationFinalizationService {
     userId: string,
     reservationId: string,
     showtimeId: string,
+    executor: TicketLimitExecutor = this.db,
   ): Promise<TicketLimitSnapshot> {
-    const result = await this.db.execute(sql`
+    const result = await executor.execute(sql`
       SELECT
+        s.performance_id,
         coalesce(
           bp.max_tickets_per_user,
           ${DEFAULT_PERFORMANCE_BOOKING_POLICY.maxTicketsPerUser}
@@ -831,6 +851,7 @@ export class ReservationFinalizationService {
     `);
     const row = result.rows[0] as
       | {
+        performance_id?: unknown;
         max_tickets_per_user?: unknown;
         active_ticket_count?: unknown;
       }
@@ -841,9 +862,28 @@ export class ReservationFinalizationService {
     }
 
     return {
+      performanceId: String(row.performance_id),
       maxTicketsPerUser: this.toInteger(row.max_tickets_per_user),
       activeTicketCount: this.toInteger(row.active_ticket_count),
     };
+  }
+
+  private async lockTicketLimitScope(
+    executor: TicketLimitExecutor,
+    userId: string,
+    performanceId: string,
+  ): Promise<void> {
+    await executor.execute(sql`
+      SELECT pg_advisory_xact_lock(
+        hashtextextended(${`ticket-limit:${userId}:${performanceId}`}, 0)
+      )
+    `);
+  }
+
+  private resolvePostApprovalConflictCancelReason(error: ConflictException): string {
+    return error.message.includes('1인 최대')
+      ? '예매 매수 제한 초과로 인한 자동 취소'
+      : '판매 불가능 좌석으로 인한 자동 취소';
   }
 
   private toInteger(value: unknown): number {

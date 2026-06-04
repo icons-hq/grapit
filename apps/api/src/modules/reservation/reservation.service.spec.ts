@@ -25,14 +25,30 @@ import {
   tickets,
 } from '../../database/schema/index.js';
 
+function ticketLimitResult({
+  performanceId = 'performance-1',
+  maxTicketsPerUser = 999,
+  activeTicketCount = 0,
+}: {
+  performanceId?: string;
+  maxTicketsPerUser?: number;
+  activeTicketCount?: number;
+} = {}) {
+  return {
+    rows: [{
+      performance_id: performanceId,
+      max_tickets_per_user: maxTicketsPerUser,
+      active_ticket_count: activeTicketCount,
+    }],
+  };
+}
+
 function createMockDb() {
   return {
     select: vi.fn(),
     insert: vi.fn(),
     update: vi.fn(),
-    execute: vi.fn().mockResolvedValue({
-      rows: [{ max_tickets_per_user: 999, active_ticket_count: 0 }],
-    }),
+    execute: vi.fn().mockResolvedValue(ticketLimitResult()),
     transaction: vi.fn(),
   };
 }
@@ -3317,6 +3333,7 @@ describe('ReservationService', () => {
       // Track all tx operations
       const txOps: { operation: string; args: unknown[] }[] = [];
       const mockTx = {
+        execute: vi.fn().mockResolvedValue(ticketLimitResult()),
         update: vi.fn().mockImplementation((...args: unknown[]) => {
           txOps.push({ operation: 'update', args });
           const updateWhere = vi.fn().mockImplementation((...whereArgs: unknown[]) => {
@@ -3898,6 +3915,7 @@ describe('ReservationService', () => {
         .mockReturnValueOnce(chainResult([{ reservationId, tossOrderId: orderId }]));
 
       const mockTx = {
+        execute: vi.fn().mockResolvedValue(ticketLimitResult()),
         update: vi.fn()
           .mockReturnValueOnce({
             set: vi.fn().mockReturnValue({
@@ -4023,6 +4041,7 @@ describe('ReservationService', () => {
       });
 
       const mockTx = {
+        execute: vi.fn().mockResolvedValue(ticketLimitResult()),
         update: vi.fn().mockReturnValue({
           set: vi.fn().mockReturnValue({
             where: vi.fn().mockReturnValue({
@@ -4202,6 +4221,7 @@ describe('ReservationService', () => {
           .mockReturnValueOnce(chainResult(reservationSeatRowsForAmount(['A-1', 'A-2'], 150000)));
 
         const mockTx = {
+          execute: vi.fn().mockResolvedValue(ticketLimitResult()),
           update: vi.fn().mockImplementation(() => ({
             set: vi.fn().mockReturnValue({
               where: vi.fn().mockReturnValue({
