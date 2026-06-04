@@ -176,6 +176,9 @@
       "expiredCta": "Payment time expired",
       "reselectCta": "Choose seats again",
       "reselectPrompt": "Please choose your seats again",
+      "failedTitle": "Payment request failed",
+      "failedBody": "The payment was not completed. Your seat selection may have expired, so choose your seats again before retrying payment.",
+      "providerMessagePrefix": "Payment provider response",
       "pendingTitle": "Waiting for overseas payment authorization",
       "pendingBody": "Once the wallet provider finishes authorization, you can resume the same order status check."
     }

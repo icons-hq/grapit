@@ -54,6 +54,11 @@ const BOOKING_CONSENT_KEYS = [
 const LEGACY_FLOOR_KEY = 'default';
 const LEGACY_FLOOR_LABEL = '기본';
 
+interface PaymentReturnError {
+  message: string;
+  providerMessage: string | null;
+}
+
 function toFloorAwareSeatSelection(seat: SeatSelection): FloorAwareSeatSelection {
   return toSharedFloorAwareSeatSelection(seat, {
     defaultFloorKey: LEGACY_FLOOR_KEY,
@@ -89,6 +94,7 @@ function ConfirmPageContent() {
   const [widgetReady, setWidgetReady] = useState(false);
   const [widgetAgreementAgreed, setWidgetAgreementAgreed] = useState(false);
   const [lockFailureMessage, setLockFailureMessage] = useState<string | null>(null);
+  const [paymentReturnError, setPaymentReturnError] = useState<PaymentReturnError | null>(null);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<PaymentMethodSelection | null>(null);
   const [bookerInfo, setBookerInfo] = useState<{ name: string; phone: string }>({
     name: user?.name ?? '',
@@ -104,6 +110,7 @@ function ConfirmPageContent() {
   const cancelPending = useCancelPendingReservation();
 
   const [orderId, setOrderId] = useState(() => generateOrderId());
+  const hasPaymentErrorReturn = searchParams.get('error') === 'true';
 
   const totalPrice = useMemo(
     () => selectedSeats.reduce((sum, s) => sum + s.price, 0)
@@ -119,10 +126,10 @@ function ConfirmPageContent() {
 
   // Redirect if no booking data
   useEffect(() => {
-    if (selectedSeats.length === 0) {
+    if (selectedSeats.length === 0 && !hasPaymentErrorReturn && !paymentReturnError) {
       router.replace(`/booking/${performanceId}`);
     }
-  }, [selectedSeats.length, performanceId, router]);
+  }, [hasPaymentErrorReturn, paymentReturnError, selectedSeats.length, performanceId, router]);
 
   // Handle error return from Toss. Guard with useRef so React StrictMode's
   // double-effect in dev mode does not fire two toasts for the same URL.
@@ -137,10 +144,18 @@ function ConfirmPageContent() {
     errorToastKeyRef.current = errorToastKey;
     const reservationId = reservationIdRef.current;
     const shouldRotateOrderId = Boolean(reservationId) || failedOrderId === orderId;
+    const fallbackMessage = '결제에 실패했습니다. 다시 시도해주세요.';
+    const userMessage = code === 'PAY_PROCESS_CANCELED'
+      ? '결제가 취소되었습니다.'
+      : message ?? fallbackMessage;
 
     paymentRequestInFlightRef.current = false;
     queueMicrotask(() => {
       setIsProcessing(false);
+      setPaymentReturnError({
+        message: userMessage,
+        providerMessage: message && message !== userMessage ? message : null,
+      });
 
       if (shouldRotateOrderId) {
         setOrderId(generateOrderId());
@@ -167,6 +182,12 @@ function ConfirmPageContent() {
     url.searchParams.delete('message');
     window.history.replaceState({}, '', url.pathname);
   }, [cancelPending, orderId, searchParams]);
+
+  const handlePaymentReturnRecovery = useCallback(() => {
+    setPaymentReturnError(null);
+    useBookingStore.getState().clearBooking();
+    router.replace(`/booking/${performanceId}`);
+  }, [performanceId, router]);
 
   const handleExpire = useCallback(() => {
     const { selectedShowtimeId } = useBookingStore.getState();
@@ -304,6 +325,39 @@ function ConfirmPageContent() {
   }
 
   if (selectedSeats.length === 0) {
+    if (paymentReturnError) {
+      return (
+        <div className="flex min-h-dvh items-center justify-center px-4 py-10">
+          <section
+            role="alert"
+            className="w-full max-w-[420px] rounded-lg border border-red-200 bg-red-50 p-5 text-center"
+          >
+            <h1 className="text-base font-semibold text-red-800">
+              {t('paymentRecovery.failedTitle')}
+            </h1>
+            <p className="mt-2 text-sm text-red-700">
+              {t('paymentRecovery.failedBody')}
+            </p>
+            <p className="mt-3 text-sm font-medium text-red-800">
+              {paymentReturnError.message}
+            </p>
+            {paymentReturnError.providerMessage && (
+              <p className="mt-1 text-xs text-red-700">
+                {t('paymentRecovery.providerMessagePrefix')}: {paymentReturnError.providerMessage}
+              </p>
+            )}
+            <Button
+              type="button"
+              className="mt-5 w-full"
+              onClick={handlePaymentReturnRecovery}
+            >
+              {t('paymentRecovery.reselectCta')}
+            </Button>
+          </section>
+        </div>
+      );
+    }
+
     return (
       <div className="flex min-h-[50vh] items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
