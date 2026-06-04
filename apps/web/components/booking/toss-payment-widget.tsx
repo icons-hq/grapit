@@ -219,6 +219,14 @@ export function resolvePaymentWidgetClientKey(variantKey: string): string | unde
   return process.env.NEXT_PUBLIC_TOSS_CLIENT_KEY;
 }
 
+export function resolveOverseasCardClientKey(): string | undefined {
+  const clientKey = process.env.NEXT_PUBLIC_TOSS_OVERSEAS_CARD_CLIENT_KEY?.trim();
+  if (!clientKey || !/^(test|live)_ck_/.test(clientKey)) {
+    return undefined;
+  }
+  return clientKey;
+}
+
 export function isUsPayPaymentWidgetVariant(variantKey: string): boolean {
   return variantKey.toLowerCase() === USPAY_VARIANT_KEY;
 }
@@ -689,9 +697,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
           if (!branch.useInternationalCardOnly) {
             throw new Error('해외카드 결제 설정이 올바르지 않습니다.');
           }
-          const overseasCardClientKey =
-            process.env.NEXT_PUBLIC_TOSS_OVERSEAS_CARD_CLIENT_KEY
-            || process.env.NEXT_PUBLIC_TOSS_FOREIGN_EASY_PAY_CLIENT_KEY;
+          const overseasCardClientKey = resolveOverseasCardClientKey();
           if (!overseasCardClientKey) {
             throw new Error('해외카드 결제 설정이 완료되지 않았습니다. 관리자에게 문의해주세요.');
           }
