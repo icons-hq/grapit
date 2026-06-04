@@ -51,7 +51,15 @@ import { redisConfig } from './config/redis.config.js';
         return {
           // [Review #6] @nestjs/throttler v6 uses ms units: 60_000ms = 1 minute global default
           throttlers: [
-            { name: 'default', ttl: 60_000, limit: 60 },
+            {
+              name: 'default',
+              ttl: 60_000,
+              limit: 60,
+              getTracker: (req) =>
+                trafficDefense.resolveDefaultTracker(
+                  req as Parameters<TrafficDefenseService['resolveDefaultTracker']>[0],
+                ),
+            },
             ...trafficDefense.getThrottlerOptions(),
           ],
           errorMessage: TRAFFIC_RATE_LIMITED,
@@ -84,11 +92,11 @@ import { redisConfig } from './config/redis.config.js';
   providers: [
     {
       provide: APP_GUARD,
-      useClass: ThrottlerGuard,
+      useClass: JwtAuthGuard,
     },
     {
       provide: APP_GUARD,
-      useClass: JwtAuthGuard,
+      useClass: ThrottlerGuard,
     },
   ],
 })
