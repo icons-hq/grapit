@@ -101,12 +101,15 @@ describe('BookingService', () => {
   // Helper: mock DB select to return no unavailable record (used by lockSeat DB defense)
   function mockNoSoldRecord(
     maxTicketsPerUser = 4,
-    options: { includePerformanceStatus?: boolean } = {},
+    options: { includePerformanceStatus?: boolean; performanceStatus?: string; bookingStartsAt?: Date | null } = {},
   ) {
     const includePerformanceStatus = options.includePerformanceStatus ?? true;
     if (includePerformanceStatus) {
       mockDb.select.mockReturnValueOnce(
-        chainResult([{ performanceStatus: 'selling' }]),
+        chainResult([{
+          performanceStatus: options.performanceStatus ?? 'selling',
+          bookingStartsAt: options.bookingStartsAt ?? null,
+        }]),
       );
     }
 
@@ -184,7 +187,7 @@ describe('BookingService', () => {
 
     it('rejects public users for upcoming performances before Redis lock mutation', async () => {
       mockDb.select.mockReturnValueOnce(
-        chainResult([{ performanceStatus: 'upcoming' }]),
+        chainResult([{ performanceStatus: 'upcoming', bookingStartsAt: null }]),
       );
 
       const promise = service.lockSeat(userId, showtimeId, seatId);
@@ -196,9 +199,58 @@ describe('BookingService', () => {
       expect(mockGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
     });
 
+    it('rejects public users before a scheduled booking start even when sale status is open', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-06-04T09:59:59.000Z'));
+      try {
+        mockDb.select.mockReturnValueOnce(
+          chainResult([{
+            performanceStatus: 'selling',
+            bookingStartsAt: new Date('2026-06-04T10:00:00.000Z'),
+          }]),
+        );
+
+        const promise = service.lockSeat(userId, showtimeId, seatId);
+
+        await expect(promise).rejects.toThrow(ForbiddenException);
+        await expect(promise).rejects.toThrow('예매는 추후 오픈 예정입니다');
+
+        expect(mockRedis.eval).not.toHaveBeenCalled();
+        expect(mockGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('allows public users after a scheduled booking start even while stored status is upcoming', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-06-04T10:00:00.000Z'));
+      try {
+        mockNoSoldRecord(4, {
+          performanceStatus: 'upcoming',
+          bookingStartsAt: new Date('2026-06-04T10:00:00.000Z'),
+        });
+        mockRedis.eval.mockResolvedValue([1, `{${showtimeId}}:seat:${seatId}`, seatId]);
+
+        await expect(service.lockSeat(userId, showtimeId, seatId))
+          .resolves
+          .toEqual(expect.objectContaining({ success: true, seatId }));
+
+        expect(mockRedis.eval).toHaveBeenCalled();
+        expect(mockGateway.broadcastSeatUpdate).toHaveBeenCalledWith(
+          showtimeId,
+          seatId,
+          'locked',
+          userId,
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('rejects public users for ended performances before Redis lock mutation', async () => {
       mockDb.select.mockReturnValueOnce(
-        chainResult([{ performanceStatus: 'ended' }]),
+        chainResult([{ performanceStatus: 'ended', bookingStartsAt: null }]),
       );
 
       const promise = service.lockSeat(userId, showtimeId, seatId);

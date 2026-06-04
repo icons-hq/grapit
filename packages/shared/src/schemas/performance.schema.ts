@@ -118,6 +118,7 @@ export const performanceBookingPolicySchema = z.object({
     .int()
     .positive('취소 좌석 hold 최대 시간은 1분 이상이어야 합니다'),
   manualOpenEnabled: z.boolean(),
+  bookingStartsAt: isoDatetime('예매 오픈 시각').nullable().optional().default(null),
 }).superRefine((value, ctx) => {
   if (value.cancelledSeatHoldMaxMinutes < value.cancelledSeatHoldMinMinutes) {
     ctx.addIssue({

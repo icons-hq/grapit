@@ -156,6 +156,7 @@ function createBookingPolicyRow(overrides: Record<string, unknown> = {}) {
     cancelledSeatHoldMinMinutes: 1,
     cancelledSeatHoldMaxMinutes: 10,
     manualOpenEnabled: true,
+    bookingStartsAt: null,
     ...overrides,
   };
 }
@@ -565,6 +566,75 @@ describe('PerformanceService', () => {
         allowedPaymentMethods: ['CARD', 'FOREIGN_EASY_PAY'],
         changePolicyEnabled: false,
       });
+    });
+
+    it('returns effective selling status after a scheduled booking start even when stored status is upcoming', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-06-04T10:00:00.000Z'));
+      try {
+        mockDb.select
+          .mockReturnValueOnce(createChainableResult([
+            createPerformanceRow(PHASE23_I18N_SMOKE_PERFORMANCE_ID, {
+              status: 'upcoming',
+            }),
+          ]))
+          .mockReturnValueOnce(createChainableResult([]))
+          .mockReturnValueOnce(createChainableResult([]))
+          .mockReturnValueOnce(createChainableResult([]))
+          .mockReturnValueOnce(createChainableResult([createSeatMapRow()]))
+          .mockReturnValueOnce(createChainableResult([
+            createBookingPolicyRow({
+              bookingStartsAt: new Date('2026-06-04T10:00:00.000Z'),
+            }),
+          ]));
+
+        const result = await (
+          service as unknown as {
+            findById(id: string, locale: string): Promise<PerformanceWithDetails>;
+          }
+        ).findById(PHASE23_I18N_SMOKE_PERFORMANCE_ID, 'ko');
+
+        expect(result.status).toBe('selling');
+        expect(result.bookingPolicy.bookingStartsAt).toBe('2026-06-04T10:00:00.000Z');
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('caps public detail cache TTL at the next scheduled booking start', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-06-04T09:59:30.000Z'));
+      try {
+        mockDb.select
+          .mockReturnValueOnce(createChainableResult([
+            createPerformanceRow(PHASE23_I18N_SMOKE_PERFORMANCE_ID, {
+              status: 'upcoming',
+            }),
+          ]))
+          .mockReturnValueOnce(createChainableResult([]))
+          .mockReturnValueOnce(createChainableResult([]))
+          .mockReturnValueOnce(createChainableResult([]))
+          .mockReturnValueOnce(createChainableResult([createSeatMapRow()]))
+          .mockReturnValueOnce(createChainableResult([
+            createBookingPolicyRow({
+              bookingStartsAt: new Date('2026-06-04T10:00:00.000Z'),
+            }),
+          ]));
+
+        await (
+          service as unknown as {
+            findById(id: string, locale: string): Promise<PerformanceWithDetails>;
+          }
+        ).findById(PHASE23_I18N_SMOKE_PERFORMANCE_ID, 'ko');
+
+        expect(mockCache.set).toHaveBeenCalledWith(
+          expect.any(String),
+          expect.any(Object),
+          30,
+        );
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('synthesizes default 1F values for legacy single-floor seat-map rows', async () => {

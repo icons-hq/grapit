@@ -199,6 +199,7 @@ describe('performance floor and booking policy schema', () => {
         cancelledSeatHoldMinMinutes: 2,
         cancelledSeatHoldMaxMinutes: 8,
         manualOpenEnabled: false,
+        bookingStartsAt: '2026-06-04T10:00:00.000Z',
       },
       detailImages: [
         {
@@ -215,6 +216,7 @@ describe('performance floor and booking policy schema', () => {
     expect(parsed.seatMaps?.[0]?.floorLabel).toBe('1층');
     expect(parsed.bookingPolicy?.maxTicketsPerUser).toBe(2);
     expect(parsed.bookingPolicy?.manualOpenEnabled).toBe(false);
+    expect(parsed.bookingPolicy?.bookingStartsAt).toBe('2026-06-04T10:00:00.000Z');
     expect(parsed.detailImages?.[0]?.imageUrl).toBe(
       'https://cdn.example.com/detail/location.jpg',
     );

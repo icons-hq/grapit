@@ -236,6 +236,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
   const unlockAll = useUnlockAllSeats();
   const { bookingAvailable, bookingDisabledMessage } = useBookingAvailability({
     performanceStatus: performance?.status,
+    bookingStartsAt: performance?.bookingPolicy?.bookingStartsAt,
   });
   const bookingDisabledReason = bookingAvailable ? null : bookingDisabledMessage;
 

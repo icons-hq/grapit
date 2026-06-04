@@ -245,6 +245,9 @@ export class PerformanceIntakeService {
         cancelledSeatHoldMinMinutes: bookingPolicy.cancelledSeatHoldMinMinutes,
         cancelledSeatHoldMaxMinutes: bookingPolicy.cancelledSeatHoldMaxMinutes,
         manualOpenEnabled: bookingPolicy.manualOpenEnabled,
+        bookingStartsAt: bookingPolicy.bookingStartsAt
+          ? parseAdminKstDateTime(bookingPolicy.bookingStartsAt)
+          : null,
       })
       .onConflictDoUpdate({
         target: bookingPolicies.performanceId,
@@ -257,6 +260,9 @@ export class PerformanceIntakeService {
           cancelledSeatHoldMinMinutes: bookingPolicy.cancelledSeatHoldMinMinutes,
           cancelledSeatHoldMaxMinutes: bookingPolicy.cancelledSeatHoldMaxMinutes,
           manualOpenEnabled: bookingPolicy.manualOpenEnabled,
+          bookingStartsAt: bookingPolicy.bookingStartsAt
+            ? parseAdminKstDateTime(bookingPolicy.bookingStartsAt)
+            : null,
           updatedAt: new Date(),
         },
       })

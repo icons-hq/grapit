@@ -191,7 +191,10 @@ vi.mock('@/components/booking/toss-payment-widget', async () => {
   };
 });
 
-function createPerformanceDetail(overrides: { status?: string } = {}) {
+function createPerformanceDetail(overrides: {
+  status?: string;
+  bookingStartsAt?: string | null;
+} = {}) {
   return {
     id: 'performance-disabled',
     title: 'Girl Rules Fanmeet',
@@ -230,6 +233,17 @@ function createPerformanceDetail(overrides: { status?: string } = {}) {
           },
         ],
       },
+    },
+    bookingPolicy: {
+      maxTicketsPerUser: 1,
+      allowedPaymentMethods: ['CARD'],
+      changePolicyEnabled: false,
+      paymentWindowMinutes: 7,
+      seatHoldMinutes: 10,
+      cancelledSeatHoldMinMinutes: 1,
+      cancelledSeatHoldMaxMinutes: 10,
+      manualOpenEnabled: true,
+      bookingStartsAt: overrides.bookingStartsAt ?? null,
     },
   };
 }
@@ -422,6 +436,67 @@ describe('runtime booking disabled UI', () => {
     expect(screen.queryByText('seat legend')).not.toBeInTheDocument();
 
     expect(lockSeatMutateMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps public booking blocked before a scheduled booking start even when runtime booking is enabled', async () => {
+    useRuntimeFlagsMock.mockReturnValue({
+      bookingEnabled: true,
+      isLoading: false,
+      bookingDisabledMessage: '예매는 추후 오픈 예정입니다',
+    });
+    usePerformanceDetailMock.mockReturnValue({
+      data: createPerformanceDetail({
+        status: 'selling',
+        bookingStartsAt: '2026-06-04T10:00:00.000Z',
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-04T09:59:59.000Z'));
+
+    try {
+      renderWithQuery(<BookingPage performanceId="performance-disabled" />);
+
+      expect(screen.getAllByText('예매는 추후 오픈 예정입니다')).not.toHaveLength(0);
+      expect(screen.queryByRole('button', { name: '좌석 A-1' })).not.toBeInTheDocument();
+      expect(lockSeatMutateMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('opens public booking automatically when the scheduled booking start arrives', async () => {
+    useRuntimeFlagsMock.mockReturnValue({
+      bookingEnabled: true,
+      isLoading: false,
+      bookingDisabledMessage: '예매는 추후 오픈 예정입니다',
+    });
+    usePerformanceDetailMock.mockReturnValue({
+      data: createPerformanceDetail({
+        status: 'upcoming',
+        bookingStartsAt: '2026-06-04T10:00:00.000Z',
+      }),
+      isLoading: false,
+      isError: false,
+    });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-04T09:59:59.000Z'));
+
+    try {
+      renderWithQuery(<BookingPage performanceId="performance-disabled" />);
+
+      expect(screen.getAllByText('예매는 추후 오픈 예정입니다')).not.toHaveLength(0);
+
+      await act(async () => {
+        vi.advanceTimersByTime(1000);
+      });
+
+      expect(screen.getByRole('button', { name: '좌석 A-1' })).toBeInTheDocument();
+      expect(screen.queryByText('예매는 추후 오픈 예정입니다')).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does not render booking controls for ended performances even when runtime booking is enabled', async () => {
