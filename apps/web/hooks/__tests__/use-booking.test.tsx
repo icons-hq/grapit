@@ -797,11 +797,11 @@ describe('use-booking payment mutations', () => {
 
     expect(resolvePaymentMethodSelection('CARD', 'uspay')).toMatchObject({
       requiresOverseasDisclaimer: true,
-      requestFlow: 'widget',
+      requestFlow: 'direct_card',
       paymentMethod: {
         method: 'CARD',
         provider: 'CARD',
-        currency: 'USD',
+        currency: 'KRW',
         overseasPaymentConsent: {
           required: true,
           agreed: false,
@@ -1094,25 +1094,17 @@ describe('use-booking payment mutations', () => {
     });
   });
 
-  it('buildWidgetPaymentRequest() keeps USD overseas card requests on the card branch', () => {
+  it('buildWidgetPaymentRequest() does not attach provider-charge fields to overseas card requests', () => {
     const request = buildWidgetPaymentRequest({
       branch: {
         orderId: 'GRP-OVERSEAS-CARD-USD',
         method: 'CARD',
         provider: 'CARD',
-        currency: 'USD',
-        successUrl: 'https://grabit.test/success?provider=OVERSEAS_CARD&providerChargeAmount=48.96',
+        currency: 'KRW',
+        successUrl: 'https://grabit.test/success?provider=OVERSEAS_CARD',
         failUrl: 'https://grabit.test/fail',
         asyncStatus: 'sync',
         useInternationalCardOnly: true,
-        providerChargeQuote: {
-          currency: 'USD',
-          amountMinor: 4896,
-          amountDecimal: '48.96',
-          rate: '0.00068',
-          quotedAt: '2026-05-29T00:00:00.000Z',
-        },
-        checkoutEnabled: true,
       },
       amount: 72000,
       customerEmail: 'fan@example.com',
@@ -1125,7 +1117,7 @@ describe('use-booking payment mutations', () => {
 
     expect(request).toMatchObject({
       orderId: 'GRP-OVERSEAS-CARD-USD',
-      successUrl: 'https://grabit.test/success?provider=OVERSEAS_CARD&providerChargeAmount=48.96',
+      successUrl: 'https://grabit.test/success?provider=OVERSEAS_CARD',
       windowTarget: 'self',
     });
     expect(request.card).toBeUndefined();
@@ -1267,14 +1259,14 @@ describe('use-booking payment mutations', () => {
     expect(buildConfirmPaymentPayload({
       paymentKey: 'overseas_card_usd_payment_key',
       orderId: 'GRP-OVERSEAS-CARD-USD-CONFIRM',
-      amount: '48.96',
+      amount: '108',
       provider: 'OVERSEAS_CARD',
-      providerChargeAmount: '48.96',
+      providerChargeAmount: '108.00',
     })).toEqual({
       paymentKey: 'overseas_card_usd_payment_key',
       orderId: 'GRP-OVERSEAS-CARD-USD-CONFIRM',
       provider: 'OVERSEAS_CARD',
-      providerChargeAmount: '48.96',
+      providerChargeAmount: '108.00',
     });
   });
 });

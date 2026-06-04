@@ -34,11 +34,21 @@ export function buildConfirmPaymentPayload({
       };
     }
 
+    const numericAmount = Number(amount);
+    if (Number.isInteger(numericAmount) && numericAmount > 0) {
+      return {
+        paymentKey,
+        orderId,
+        provider: 'OVERSEAS_CARD',
+        amount: numericAmount,
+      };
+    }
+
     return {
       paymentKey,
       orderId,
       provider: 'OVERSEAS_CARD',
-      amount: Number(amount),
+      amount: numericAmount,
     };
   }
 

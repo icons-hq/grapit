@@ -335,25 +335,19 @@ export class ReservationFinalizationService {
     const pendingSeats = await this.getReservationSeatSelections(reservation.id);
     const expectedAmount = this.calculatePayableTotal(pendingSeats);
     let paypalProviderCharge: PaypalResolvedProviderCharge | null = null;
-    let overseasCardProviderCharge: PaypalResolvedProviderCharge | null = null;
     const isOverseasCardConfirm = isOverseasCardConfirmPaymentRequest(dto);
     let confirmAmount: number;
     if (isPaypalConfirmPaymentRequest(dto)) {
       paypalProviderCharge = this.resolvePaypalProviderCharge(dto, reservation);
       confirmAmount = Number(paypalProviderCharge.amountDecimal);
-    } else if (
-      isOverseasCardConfirm
-      && 'providerChargeAmount' in dto
-      && dto.providerChargeAmount
-    ) {
-      overseasCardProviderCharge = this.resolveOverseasCardProviderCharge(dto, reservation);
-      confirmAmount = Number(overseasCardProviderCharge.amountDecimal);
+    } else if (isOverseasCardConfirm && 'providerChargeAmount' in dto && dto.providerChargeAmount) {
+      confirmAmount = reservation.totalAmount;
     } else if (typeof dto.amount === 'number') {
       confirmAmount = dto.amount;
     } else {
       throw new BadRequestException('해외카드 결제 금액이 필요합니다');
     }
-    const providerCharge = paypalProviderCharge ?? overseasCardProviderCharge;
+    const providerCharge = paypalProviderCharge;
     if (
       reservation.totalAmount !== expectedAmount
       || (!providerCharge && confirmAmount !== expectedAmount)
@@ -931,47 +925,6 @@ export class ReservationFinalizationService {
     };
   }
 
-  private resolveOverseasCardProviderCharge(
-    dto: Extract<OverseasCardConfirmPaymentRequest, { providerChargeAmount: string }>,
-    reservation: {
-      providerChargeCurrency?: string | null;
-      providerChargeAmountMinor?: number | null;
-      providerChargeRate?: string | null;
-      providerChargeQuotedAt?: Date | null;
-    },
-  ): PaypalResolvedProviderCharge {
-    if (!this.providerChargeQuoteService) {
-      throw new BadRequestException('해외카드 결제 금액을 검증할 수 없습니다');
-    }
-
-    let amountMinor: number;
-    try {
-      amountMinor = this.providerChargeQuoteService.parseProviderDecimalToMinor(
-        dto.providerChargeAmount,
-      );
-    } catch {
-      throw new BadRequestException('해외카드 결제 금액이 올바르지 않습니다');
-    }
-
-    if (
-      reservation.providerChargeCurrency !== 'USD'
-      || typeof reservation.providerChargeAmountMinor !== 'number'
-      || !reservation.providerChargeRate
-      || !reservation.providerChargeQuotedAt
-      || reservation.providerChargeAmountMinor !== amountMinor
-    ) {
-      throw new BadRequestException('해외카드 결제 금액이 일치하지 않습니다');
-    }
-
-    return {
-      currency: 'USD',
-      amountMinor,
-      amountDecimal: dto.providerChargeAmount,
-      rate: reservation.providerChargeRate,
-      quotedAt: reservation.providerChargeQuotedAt,
-    };
-  }
-
   private toPaymentProviderChargeValues(
     approvedPayment: ApprovedPaymentSnapshot,
   ): {
@@ -1174,30 +1127,13 @@ export class ReservationFinalizationService {
       return;
     }
 
-    if (
-      isOverseasCardConfirmPaymentRequest(dto)
-      && 'providerChargeAmount' in dto
-      && dto.providerChargeAmount
-    ) {
-      const amountMinor =
-        this.providerChargeQuoteService?.parseProviderDecimalToMinor(
-          dto.providerChargeAmount,
-        );
-
-      if (
-        existingPayment.provider !== 'CARD'
-        || existingPayment.amount !== reservation.totalAmount
-        || existingPayment.providerChargeAmountMinor !== amountMinor
-        || reservation.providerChargeAmountMinor !== amountMinor
-      ) {
-        throw new BadRequestException('해외카드 결제 금액이 일치하지 않습니다');
-      }
-      return;
-    }
+    const expectedRequestAmount = isOverseasCardConfirmPaymentRequest(dto)
+      ? reservation.totalAmount
+      : dto.amount;
 
     if (
       existingPayment.amount !== reservation.totalAmount
-      || existingPayment.amount !== dto.amount
+      || existingPayment.amount !== expectedRequestAmount
     ) {
       throw new BadRequestException('금액이 일치하지 않습니다');
     }

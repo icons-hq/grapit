@@ -1584,13 +1584,7 @@ export class PaymentService {
   }
 
   private usesProviderChargeQuoteForPaymentMethod(paymentMethod: PaymentMethod): boolean {
-    return this.usesProviderChargeQuote(paymentMethod.provider)
-      || (
-        paymentMethod.method === 'CARD'
-        && paymentMethod.provider === 'CARD'
-        && paymentMethod.currency?.toUpperCase() === 'USD'
-        && paymentMethod.overseasPaymentConsent?.required === true
-      );
+    return this.usesProviderChargeQuote(paymentMethod.provider);
   }
 
   private resolveWebhookProvider(payload: TossWebhookRequestBody): PaymentProvider {

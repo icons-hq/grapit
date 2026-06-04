@@ -1394,6 +1394,96 @@ describe('ReservationService', () => {
       }
     });
 
+    it('prepareReservation does not create a provider charge quote for overseas card', async () => {
+      vi.useFakeTimers();
+      const now = new Date('2026-05-29T10:00:00.000Z');
+      vi.setSystemTime(now);
+
+      try {
+        const userId = randomUUID();
+        const providerChargeQuoteService = {
+          getPaypalAvailability: vi.fn().mockReturnValue({ enabled: true }),
+          createPaypalQuote: vi.fn().mockReturnValue({
+            currency: 'USD',
+            amountMinor: 7490,
+            amountDecimal: '74.90',
+            rate: '0.00072',
+            quotedAt: now.toISOString(),
+          }),
+        };
+        const overseasCardService = new ReservationService(
+          mockDb as never,
+          mockTossClient as unknown as TossPaymentsClient,
+          mockBookingService as unknown as BookingService,
+          mockBookingGateway as unknown as BookingGateway,
+          mockFeatureFlags as unknown as FeatureFlagsService,
+          mockConsentService as unknown as ConsentService,
+          undefined,
+          undefined,
+          providerChargeQuoteService as never,
+        );
+        const dto = {
+          showtimeId: randomUUID(),
+          orderId: 'GRP-OVERSEAS-CARD-PREPARE',
+          seats: [
+            { seatId: 'A-1', tierName: 'VIP', price: 50000, row: 'A', number: '1' },
+            { seatId: 'A-2', tierName: 'VIP', price: 50000, row: 'A', number: '2' },
+          ],
+          amount: 104000,
+          consentItems: makeConsentItems(),
+          queueAdmission: makeQueueAdmission(now),
+          paymentDeadlineAt: now.toISOString(),
+          bookingPolicy: {
+            maxTicketsPerOrder: 2,
+            cancellationChangePolicy: 'CANCEL_ONLY' as const,
+            sameGradeChangeEnabled: false,
+            paymentWindowMinutes: 7,
+            seatHoldMinutes: 10,
+          },
+          paymentMethod: {
+            method: 'CARD' as const,
+            provider: 'CARD' as const,
+            currency: 'KRW',
+            overseasPaymentConsent: {
+              required: true,
+              agreed: true,
+              agreedAt: now.toISOString(),
+            },
+          },
+        };
+        const insertedValues: unknown[] = [];
+        setupPrepareBase(dto);
+        const mockTx = {
+          insert: vi.fn().mockReturnValue({
+            values: vi.fn((values: unknown) => {
+              insertedValues.push(values);
+              return {
+                returning: vi.fn().mockResolvedValue([{ id: 'reservation-created', tossOrderId: dto.orderId }]),
+              };
+            }),
+          }),
+        };
+        mockDb.transaction.mockImplementation(async (cb: (tx: typeof mockTx) => Promise<unknown>) => cb(mockTx));
+
+        const result = await overseasCardService.prepareReservation(dto, userId);
+
+        expect(providerChargeQuoteService.getPaypalAvailability).not.toHaveBeenCalled();
+        expect(providerChargeQuoteService.createPaypalQuote).not.toHaveBeenCalled();
+        expect(insertedValues[0]).toEqual(expect.not.objectContaining({
+          providerChargeCurrency: expect.anything(),
+          providerChargeAmountMinor: expect.anything(),
+          providerChargeRate: expect.anything(),
+          providerChargeQuotedAt: expect.anything(),
+        }));
+        expect(result).toEqual(expect.not.objectContaining({
+          checkoutEnabled: expect.anything(),
+          providerChargeQuote: expect.anything(),
+        }));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it('prepareReservation stores and returns an Alipay provider charge quote when checkout is enabled', async () => {
       vi.useFakeTimers();
       const now = new Date('2026-05-29T10:00:00.000Z');
