@@ -29,6 +29,9 @@ const QUEUE_WAIT_SESSION_SECONDS = 1_800;
 const QUEUE_EXPIRED_RETENTION_SECONDS = 300;
 const QUEUE_MAX_ACTIVE_ADMISSIONS = 25;
 const QUEUE_POSITION_STEP_SECONDS = 15;
+const QUEUE_RECONCILE_MIN_INTERVAL_MS = 1_000;
+const QUEUE_POSITION_BROADCAST_LIMIT = 500;
+const QUEUE_REMAINING_SEATS_CACHE_SECONDS = 2;
 
 export const WAITING = 'WAITING';
 export const ADMITTED = 'ADMITTED';
@@ -223,7 +226,7 @@ export class QueueService {
     if (params.bypassQueue) {
       await this.admitQueueSession(params.performanceId, lease.queueSessionId);
     } else {
-      await this.reconcilePerformanceQueue(params.performanceId);
+      await this.reconcilePerformanceQueueIfDue(params.performanceId);
     }
 
     const snapshot = await this.getQueueSessionStatus({
@@ -278,7 +281,7 @@ export class QueueService {
       throw new NotFoundException('대기열 세션을 찾을 수 없습니다');
     }
 
-    await this.reconcilePerformanceQueue(performanceId);
+    await this.reconcilePerformanceQueueIfDue(performanceId);
 
     const record = await this.readQueueSessionRecord(performanceId, params.queueSessionId);
     if (!record) {
@@ -350,7 +353,7 @@ export class QueueService {
   private async assertAdmissionForPerformance(
     params: QueueActionParams,
   ): Promise<ValidatedAdmission> {
-    await this.reconcilePerformanceQueue(params.performanceId);
+    await this.reconcilePerformanceQueueIfDue(params.performanceId);
 
     const record = await this.findQueueSessionByAdmissionToken(params.admissionToken);
     if (!record) {
@@ -430,7 +433,6 @@ export class QueueService {
     );
 
     if (slotsToFill <= 0) {
-      await this.broadcastWaitingPositions(performanceId);
       return;
     }
 
@@ -459,6 +461,22 @@ export class QueueService {
     }
 
     await this.broadcastWaitingPositions(performanceId);
+  }
+
+  private async reconcilePerformanceQueueIfDue(performanceId: string): Promise<void> {
+    const acquired = await this.redis.set(
+      this.reconcileLockKey(performanceId),
+      '1',
+      'PX',
+      QUEUE_RECONCILE_MIN_INTERVAL_MS,
+      'NX',
+    );
+
+    if (acquired !== 'OK') {
+      return;
+    }
+
+    await this.reconcilePerformanceQueue(performanceId);
   }
 
   private async expireStaleSessions(performanceId: string): Promise<void> {
@@ -738,7 +756,11 @@ export class QueueService {
   }
 
   private async broadcastWaitingPositions(performanceId: string): Promise<void> {
-    const waitingIds = await this.redis.zrange(this.waitingQueueKey(performanceId), 0, -1);
+    const waitingIds = await this.redis.zrange(
+      this.waitingQueueKey(performanceId),
+      0,
+      QUEUE_POSITION_BROADCAST_LIMIT - 1,
+    );
 
     for (const queueSessionId of waitingIds) {
       const record = await this.readQueueSessionRecord(performanceId, queueSessionId);
@@ -751,6 +773,23 @@ export class QueueService {
   }
 
   private async calculateRemainingSeats(performanceId: string): Promise<number> {
+    const cached = await this.redis.get(this.remainingSeatsCacheKey(performanceId));
+    if (cached !== null) {
+      return Math.max(Number(cached) || 0, 0);
+    }
+
+    const remainingSeats = await this.calculateRemainingSeatsFresh(performanceId);
+    await this.redis.set(
+      this.remainingSeatsCacheKey(performanceId),
+      String(remainingSeats),
+      'EX',
+      QUEUE_REMAINING_SEATS_CACHE_SECONDS,
+    );
+
+    return remainingSeats;
+  }
+
+  private async calculateRemainingSeatsFresh(performanceId: string): Promise<number> {
     const [seatCapacity] = await this.db
       .select({
         totalSeats: sql<number>`coalesce(sum(${seatMaps.totalSeats}), 0)`,
@@ -795,6 +834,14 @@ export class QueueService {
 
   private activeAdmissionsKey(performanceId: string): string {
     return `${this.queuePrefix(performanceId)}:active`;
+  }
+
+  private reconcileLockKey(performanceId: string): string {
+    return `${this.queuePrefix(performanceId)}:reconcile-lock`;
+  }
+
+  private remainingSeatsCacheKey(performanceId: string): string {
+    return `${this.queuePrefix(performanceId)}:remaining-seats`;
   }
 
   private sessionKey(performanceId: string, queueSessionId: string): string {

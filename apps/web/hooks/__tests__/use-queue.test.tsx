@@ -177,6 +177,7 @@ describe('useQueue', () => {
   });
 
   it('polls waiting sessions when socket admission events do not arrive', async () => {
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
     postMock.mockResolvedValueOnce({
       queueSessionId: 'queue-session-poll',
     });
@@ -220,11 +221,12 @@ describe('useQueue', () => {
     expect(result.current.status).toBe('waiting');
 
     await act(async () => {
-      vi.advanceTimersByTime(2500);
+      vi.advanceTimersByTime(15000);
       await Promise.resolve();
     });
 
     expect(getMock).toHaveBeenCalledTimes(2);
     expect(result.current.status).toBe('admitted');
+    randomSpy.mockRestore();
   });
 });

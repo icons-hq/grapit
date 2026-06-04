@@ -62,6 +62,32 @@ describe('TrafficDefenseService', () => {
     expect(tracker).toContain('user:user-1');
   });
 
+  it('uses authenticated userId first for the global default throttler', () => {
+    const service = new TrafficDefenseService();
+
+    const tracker = service.resolveDefaultTracker(
+      createRequest({
+        user: { id: 'user-1' },
+        cookies: { refreshToken: 'refresh-cookie' },
+      }),
+    );
+
+    expect(tracker).toBe('default:user:user-1');
+  });
+
+  it('falls back to a hashed session cookie for the global default throttler', () => {
+    const service = new TrafficDefenseService();
+
+    const tracker = service.resolveDefaultTracker(
+      createRequest({
+        cookies: { refreshToken: 'refresh-cookie' },
+      }),
+    );
+
+    expect(tracker).toContain('default:session:');
+    expect(tracker).not.toContain('refresh-cookie');
+  });
+
   it('falls back to session cookie + IP for anonymous queue-entry requests before admission exists', () => {
     const service = new TrafficDefenseService();
 
@@ -154,5 +180,6 @@ describe('TrafficDefenseService', () => {
 
     expect(appModuleSource).toContain('TrafficModule');
     expect(appModuleSource).toContain('TrafficDefenseService');
+    expect(appModuleSource).toContain('resolveDefaultTracker');
   });
 });
