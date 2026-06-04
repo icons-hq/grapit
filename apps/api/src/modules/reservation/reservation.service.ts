@@ -519,11 +519,6 @@ export class ReservationService {
     return (
       paymentMethod.method === 'FOREIGN_EASY_PAY'
       && this.usesProviderChargeQuote(paymentMethod.provider)
-    ) || (
-      paymentMethod.method === 'CARD'
-      && paymentMethod.provider === 'CARD'
-      && paymentMethod.currency?.toUpperCase() === 'USD'
-      && paymentMethod.overseasPaymentConsent?.required === true
     );
   }
 

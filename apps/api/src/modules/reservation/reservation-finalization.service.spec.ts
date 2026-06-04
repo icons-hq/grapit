@@ -488,7 +488,7 @@ describe('ReservationFinalizationService', () => {
     );
   });
 
-  it('confirms USD overseas card with the stored provider quote and stores KRW card totals', async () => {
+  it('confirms overseas card with the KRW reservation total even when a stale providerChargeAmount is present', async () => {
     const {
       service,
       db,
@@ -498,8 +498,6 @@ describe('ReservationFinalizationService', () => {
       providerChargeQuoteService,
     } = createDependencies();
     const insertedValues: unknown[] = [];
-    providerChargeQuoteService.parseProviderDecimalToMinor.mockReturnValue(10800);
-
     db.select
       .mockReturnValueOnce(chainResult([]))
       .mockReturnValueOnce(chainResult([
@@ -510,10 +508,6 @@ describe('ReservationFinalizationService', () => {
           status: 'PENDING_PAYMENT',
           totalAmount: 150000,
           admissionActiveUntilAt: new Date(Date.now() + 60_000),
-          providerChargeCurrency: 'USD',
-          providerChargeAmountMinor: 10800,
-          providerChargeRate: '0.00072',
-          providerChargeQuotedAt: new Date('2026-05-29T10:00:00.000Z'),
         },
       ]))
       .mockReturnValueOnce(chainResult([
@@ -529,7 +523,7 @@ describe('ReservationFinalizationService', () => {
       paymentKey: 'payment-key-overseas-card-usd',
       orderId: 'order-overseas-card-usd-1',
       method: 'CARD',
-      totalAmount: 108,
+      totalAmount: 150000,
       approvedAt: '2026-06-02T10:01:00.000Z',
     });
 
@@ -575,11 +569,11 @@ describe('ReservationFinalizationService', () => {
       ),
     ).resolves.toEqual({ reservationId: 'reservation-overseas-card-usd-1' });
 
-    expect(providerChargeQuoteService.parseProviderDecimalToMinor).toHaveBeenCalledWith('108.00');
+    expect(providerChargeQuoteService.parseProviderDecimalToMinor).not.toHaveBeenCalled();
     expect(tossClient.confirmPayment).toHaveBeenCalledWith({
       paymentKey: 'payment-key-overseas-card-usd',
       orderId: 'order-overseas-card-usd-1',
-      amount: 108,
+      amount: 150000,
       secretKeyScope: 'overseas-card',
     });
     expect(insertedValues).toContainEqual({
@@ -598,10 +592,6 @@ describe('ReservationFinalizationService', () => {
         asyncStatus: 'sync',
         amount: 150000,
         status: 'DONE',
-        providerChargeCurrency: 'USD',
-        providerChargeAmountMinor: 10800,
-        providerChargeRate: '0.00072',
-        providerChargeQuotedAt: new Date('2026-05-29T10:00:00.000Z'),
       }),
     });
     expect(qrTicketService.ensureIssuedTicketsForReservation).toHaveBeenCalledWith({

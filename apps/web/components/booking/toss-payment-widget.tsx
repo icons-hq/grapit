@@ -262,13 +262,7 @@ function usesProviderChargeQuote(provider: PaymentProvider): boolean {
 }
 
 function usesProviderChargeQuoteForPaymentMethod(paymentMethod: PaymentMethod): boolean {
-  return usesProviderChargeQuote(paymentMethod.provider)
-    || (
-      paymentMethod.method === 'CARD'
-      && paymentMethod.provider === 'CARD'
-      && paymentMethod.currency?.toUpperCase() === 'USD'
-      && paymentMethod.overseasPaymentConsent?.required === true
-    );
+  return usesProviderChargeQuote(paymentMethod.provider);
 }
 
 export function resolveProviderChargeDisabledMessage(
@@ -314,12 +308,12 @@ export function resolvePaymentMethodSelection(
   if (normalizedCode === 'CARD' && isForeignPaymentWidgetVariant(variantKey)) {
     return {
       code,
-      requestFlow: 'widget',
+      requestFlow: 'direct_card',
       requiresOverseasDisclaimer: true,
       paymentMethod: {
         method: 'CARD',
         provider: 'CARD',
-        currency: 'USD',
+        currency: 'KRW',
         overseasPaymentConsent: createOverseasConsent(),
       },
     };
@@ -734,15 +728,6 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
         if (selection.paymentMethod.provider === 'PAYPAL' && branch.providerChargeQuote) {
           const url = new URL(requestPayload.successUrl);
           url.searchParams.set('provider', 'PAYPAL');
-          url.searchParams.set('providerChargeAmount', branch.providerChargeQuote.amountDecimal);
-          requestPayload.successUrl = url.toString();
-        } else if (
-          selection.paymentMethod.provider === 'CARD'
-          && branch.useInternationalCardOnly
-          && branch.providerChargeQuote
-        ) {
-          const url = new URL(requestPayload.successUrl);
-          url.searchParams.set('provider', 'OVERSEAS_CARD');
           url.searchParams.set('providerChargeAmount', branch.providerChargeQuote.amountDecimal);
           requestPayload.successUrl = url.toString();
         }

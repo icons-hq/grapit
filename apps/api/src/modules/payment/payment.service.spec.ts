@@ -251,17 +251,13 @@ describe('PaymentService', () => {
         orderId: 'GRP-FOREIGN-CARD',
         method: 'CARD',
         provider: 'CARD',
-        currency: 'USD',
+        currency: 'KRW',
         asyncStatus: 'sync',
         useInternationalCardOnly: true,
-        checkoutEnabled: true,
-        providerChargeQuote: {
-          currency: 'USD',
-          amountMinor: 10800,
-          amountDecimal: '108.00',
-        },
       });
       expect(branch.pendingUrl).toBeUndefined();
+      expect(branch.providerChargeQuote).toBeUndefined();
+      expect(mockDb.select).not.toHaveBeenCalled();
     });
 
     it('routes foreign easy-pay through pendingUrl + async webhook tracking', async () => {
