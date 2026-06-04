@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
 
 const mockZoomIn = vi.fn();
@@ -53,5 +54,14 @@ describe('SeatMapControls', () => {
     expect(buttons[0].getAttribute('aria-label')).toBe('확대');
     expect(buttons[1].getAttribute('aria-label')).toBe('축소');
     expect(buttons[2].getAttribute('aria-label')).toBe('전체 보기');
+  });
+
+  it('uses an inline mobile toolbar and keeps overlay positioning for desktop only', () => {
+    render(<SeatMapControls />);
+
+    const group = screen.getByLabelText('좌석맵 보기 조절');
+    expect(group).toHaveClass('justify-end');
+    expect(group).toHaveClass('lg:absolute');
+    expect(group).not.toHaveClass('absolute');
   });
 });

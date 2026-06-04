@@ -33,15 +33,7 @@ export function CountdownTimer({ expiresAt, onExpire }: CountdownTimerProps) {
   }, [isActive]);
 
   if (!isActive && expiresAt === null) {
-    return (
-      <div className="flex items-center gap-1 rounded-full bg-gray-200 px-3 py-1">
-        <Clock className="size-4 text-gray-500" />
-        <span className="text-sm text-gray-500">
-          <span className="text-xs">남은시간</span>{' '}
-          <span className="font-mono font-semibold">--:--</span>
-        </span>
-      </div>
-    );
+    return null;
   }
 
   const formattedTime = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
@@ -60,7 +52,7 @@ export function CountdownTimer({ expiresAt, onExpire }: CountdownTimerProps) {
         ) : (
           <Clock className="size-4" />
         )}
-        <span className="text-sm">
+        <span className="whitespace-nowrap text-sm">
           <span className="text-xs">남은시간</span>{' '}
           <span className="font-mono text-base font-semibold">
             {formattedTime}
