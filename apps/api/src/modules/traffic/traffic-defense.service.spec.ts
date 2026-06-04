@@ -45,6 +45,25 @@ describe('TrafficDefenseService', () => {
     expect(service.getThrottlerOptions().map((policy) => policy.name)).not.toContain('sms');
   });
 
+  it('does not count CORS preflight requests against queue-entry throttling', () => {
+    const service = new TrafficDefenseService();
+    const queueEntry = service
+      .getThrottlerOptions()
+      .find((policy) => policy.name === 'queue-entry');
+
+    expect(
+      queueEntry?.skipIf?.(
+        createExecutionContext(
+          createRequest({
+            method: 'OPTIONS',
+            originalUrl:
+              '/api/v1/queue/performances/18a3bcc6-5e75-463d-abfd-634601328754/enter',
+          }),
+        ),
+      ),
+    ).toBe(true);
+  });
+
   it('uses authenticated userId first for queue-entry tracker resolution', () => {
     const service = new TrafficDefenseService();
 
@@ -73,6 +92,16 @@ describe('TrafficDefenseService', () => {
     );
 
     expect(tracker).toBe('default:user:user-1');
+  });
+
+  it('does not count CORS preflight requests against the global default throttler', () => {
+    const service = new TrafficDefenseService();
+
+    expect(
+      service.shouldSkipDefaultThrottle(
+        createExecutionContext(createRequest({ method: 'OPTIONS' })),
+      ),
+    ).toBe(true);
   });
 
   it('falls back to a hashed session cookie for the global default throttler', () => {
@@ -183,3 +212,12 @@ describe('TrafficDefenseService', () => {
     expect(appModuleSource).toContain('resolveDefaultTracker');
   });
 });
+
+function createExecutionContext(request: ReturnType<typeof createRequest>) {
+  return {
+    getType: () => 'http',
+    switchToHttp: () => ({
+      getRequest: () => request,
+    }),
+  } as never;
+}

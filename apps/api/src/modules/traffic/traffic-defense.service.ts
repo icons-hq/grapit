@@ -186,6 +186,15 @@ export class TrafficDefenseService {
     return `default:ip:${ip}`;
   }
 
+  shouldSkipDefaultThrottle(context: ExecutionContext): boolean {
+    if (context.getType<'http' | 'ws' | 'rpc'>() !== 'http') {
+      return true;
+    }
+
+    const request = context.switchToHttp().getRequest<RequestLike>();
+    return (request.method ?? 'GET').toUpperCase() === 'OPTIONS';
+  }
+
   rateLimited(policy: TrafficPolicyName): TrafficDecision {
     return {
       action: 'rate-limit',
