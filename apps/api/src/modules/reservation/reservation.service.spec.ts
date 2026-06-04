@@ -30,6 +30,9 @@ function createMockDb() {
     select: vi.fn(),
     insert: vi.fn(),
     update: vi.fn(),
+    execute: vi.fn().mockResolvedValue({
+      rows: [{ max_tickets_per_user: 999, active_ticket_count: 0 }],
+    }),
     transaction: vi.fn(),
   };
 }
@@ -1708,6 +1711,31 @@ describe('ReservationService', () => {
       await expect(service.prepareReservation(dto, userId))
         .rejects
         .toThrow('최대 1석까지 선택할 수 있습니다');
+
+      expect(mockBookingService.assertOwnedSeatLocks).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
+    it('prepareReservation rejects when existing active tickets plus requested seats exceed maxTicketsPerUser', async () => {
+      const userId = randomUUID();
+      const dto = {
+        showtimeId: randomUUID(),
+        orderId: 'GRP-POLICY-LIMIT-CUMULATIVE',
+        seats: [
+          floorAwareSeatSelection('1F:A-1'),
+          floorAwareSeatSelection('1F:A-2'),
+          floorAwareSeatSelection('1F:A-3'),
+        ],
+        amount: 156000,
+        consentItems: makeConsentItems(),
+      };
+
+      setupPrepareBase(dto);
+      mockDb.execute.mockResolvedValueOnce({ rows: [{ active_ticket_count: 2 }] });
+
+      await expect(service.prepareReservation(dto, userId))
+        .rejects
+        .toThrow('이 공연은 1인 최대 4매까지 예매할 수 있습니다');
 
       expect(mockBookingService.assertOwnedSeatLocks).not.toHaveBeenCalled();
       expect(mockDb.transaction).not.toHaveBeenCalled();

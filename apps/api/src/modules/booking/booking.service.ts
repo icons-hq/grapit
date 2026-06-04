@@ -6,7 +6,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import type IORedis from 'ioredis';
-import { eq, and, or, isNull } from 'drizzle-orm';
+import { eq, and, or, isNull, sql } from 'drizzle-orm';
 import { REDIS_CLIENT } from './providers/redis.provider.js';
 import { DRIZZLE } from '../../database/drizzle.provider.js';
 import type { DrizzleDB } from '../../database/drizzle.provider.js';
@@ -34,6 +34,10 @@ export const LOCK_OTHER_OWNER_MESSAGE = '이미 다른 사용자가 선택한 �
 export const BOOKING_ENDED_MESSAGE = '판매가 종료된 공연입니다';
 export const BOOKING_VERIFICATION_REQUIRED_MESSAGE =
   '이메일 인증과 휴대폰 인증을 완료해야 예매할 수 있습니다.';
+
+export function buildMaxTicketsPerUserExceededMessage(maxTicketsPerUser: number): string {
+  return `이 공연은 1인 최대 ${maxTicketsPerUser}매까지 예매할 수 있습니다`;
+}
 
 export type SeatLockOwnershipFailureReason = 'MISSING' | 'OTHER_OWNER';
 
@@ -303,11 +307,13 @@ export class BookingService {
   ) {}
 
   private async getSeatLockPolicy(showtimeId: string): Promise<{
+    performanceId: string | null;
     maxTicketsPerUser: number;
     lockTtlSeconds: number;
   }> {
     const [row] = await this.db
       .select({
+        performanceId: showtimes.performanceId,
         maxTicketsPerUser: bookingPolicies.maxTicketsPerUser,
         seatHoldMinutes: bookingPolicies.seatHoldMinutes,
       })
@@ -319,10 +325,31 @@ export class BookingService {
       row?.seatHoldMinutes ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.seatHoldMinutes;
 
     return {
+      performanceId: row?.performanceId ?? null,
       maxTicketsPerUser:
         row?.maxTicketsPerUser ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.maxTicketsPerUser,
       lockTtlSeconds: seatHoldMinutes * 60 || DEFAULT_LOCK_TTL_SECONDS,
     };
+  }
+
+  private async countUserActiveTicketsForPerformance(
+    userId: string,
+    performanceId: string,
+  ): Promise<number> {
+    const result = await this.db.execute(sql`
+      SELECT count(*)::int AS active_ticket_count
+      FROM ticket_items ti
+      INNER JOIN reservations r ON r.id = ti.reservation_id
+      INNER JOIN showtimes s ON s.id = ti.showtime_id
+      WHERE r.user_id = ${userId}
+        AND s.performance_id = ${performanceId}
+        AND r.status = 'CONFIRMED'
+        AND ti.status IN ('active', 'cancellation_pending')
+    `);
+    const count = (result.rows[0] as { active_ticket_count?: unknown } | undefined)
+      ?.active_ticket_count;
+
+    return typeof count === 'number' ? count : Number(count ?? 0);
   }
 
   private async assertSeatExistsInShowtimeSeatMap(
@@ -402,7 +429,16 @@ export class BookingService {
       );
     }
 
-    const { maxTicketsPerUser, lockTtlSeconds } = await this.getSeatLockPolicy(showtimeId);
+    const { performanceId, maxTicketsPerUser, lockTtlSeconds } =
+      await this.getSeatLockPolicy(showtimeId);
+    const activeTicketCount = performanceId
+      ? await this.countUserActiveTicketsForPerformance(userId, performanceId)
+      : 0;
+    const maxLockableSeats = maxTicketsPerUser - activeTicketCount;
+
+    if (maxLockableSeats <= 0) {
+      throw new ConflictException(buildMaxTicketsPerUserExceededMessage(maxTicketsPerUser));
+    }
 
     const userSeatsKey = `{${showtimeId}}:user-seats:${userId}`;
     const lockKey = `{${showtimeId}}:seat:${seatIdentity.runtimeSeatId}`;
@@ -417,7 +453,7 @@ export class BookingService {
       lockedSeatsKey,
       userId,
       String(lockTtlSeconds),
-      String(maxTicketsPerUser),
+      String(maxLockableSeats),
       seatIdentity.runtimeSeatId,
       keyPrefix,
     )) as [number, string, string?, string?];
@@ -426,7 +462,11 @@ export class BookingService {
 
     if (status === 0) {
       if (reason === 'MAX_SEATS') {
-        throw new ConflictException(`최대 ${maxTicketsPerUser}석까지 선택할 수 있습니다`);
+        throw new ConflictException(
+          activeTicketCount > 0
+            ? buildMaxTicketsPerUserExceededMessage(maxTicketsPerUser)
+            : `최대 ${maxTicketsPerUser}석까지 선택할 수 있습니다`,
+        );
       }
       throw new ConflictException('이미 다른 사용자가 선택한 좌석입니다');
     }

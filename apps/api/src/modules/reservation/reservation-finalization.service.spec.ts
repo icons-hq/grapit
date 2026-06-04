@@ -26,6 +26,9 @@ function createDependencies() {
     select: vi.fn(),
     update: vi.fn(),
     insert: vi.fn(),
+    execute: vi.fn().mockResolvedValue({
+      rows: [{ max_tickets_per_user: 999, active_ticket_count: 0 }],
+    }),
     transaction: vi.fn(),
   };
   const tossClient = {
@@ -71,6 +74,65 @@ function createDependencies() {
 }
 
 describe('ReservationFinalizationService', () => {
+  it('rejects before Toss confirm when active tickets plus pending seats exceed maxTicketsPerUser', async () => {
+    const {
+      service,
+      db,
+      tossClient,
+      bookingService,
+    } = createDependencies();
+
+    db.select
+      .mockReturnValueOnce(chainResult([]))
+      .mockReturnValueOnce(chainResult([
+        {
+          id: 'reservation-cumulative-limit-1',
+          userId: 'user-1',
+          showtimeId: 'showtime-1',
+          status: 'PENDING_PAYMENT',
+          totalAmount: 156000,
+          admissionActiveUntilAt: new Date(Date.now() + 60_000),
+        },
+      ]))
+      .mockReturnValueOnce(chainResult([
+        {
+          seatId: '1F:A-1',
+          tierName: 'VIP',
+          price: 50000,
+          row: 'A',
+          number: '1',
+        },
+        {
+          seatId: '1F:A-2',
+          tierName: 'VIP',
+          price: 50000,
+          row: 'A',
+          number: '2',
+        },
+        {
+          seatId: '1F:A-3',
+          tierName: 'VIP',
+          price: 50000,
+          row: 'A',
+          number: '3',
+        },
+      ]));
+    db.execute.mockResolvedValueOnce({
+      rows: [{ max_tickets_per_user: 4, active_ticket_count: 2 }],
+    });
+
+    await expect(
+      service.confirmAndCreateReservation(
+        { paymentKey: 'payment-key-1', orderId: 'order-cumulative-limit-1', amount: 156000 },
+        'user-1',
+      ),
+    ).rejects.toThrow('이 공연은 1인 최대 4매까지 예매할 수 있습니다');
+
+    expect(tossClient.confirmPayment).not.toHaveBeenCalled();
+    expect(bookingService.extendOwnedSeatLocks).not.toHaveBeenCalled();
+    expect(db.transaction).not.toHaveBeenCalled();
+  });
+
   it('confirms PayPal with the stored USD provider quote and stores KRW payment totals', async () => {
     const {
       service,
