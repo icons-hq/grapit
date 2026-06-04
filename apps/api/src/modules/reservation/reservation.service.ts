@@ -1716,7 +1716,20 @@ export class ReservationService {
   }
 
   private isFullTossCancelCompleted(payment: TossPaymentResponse): boolean {
-    return payment.status === 'CANCELED';
+    if (payment.status === 'CANCELED') {
+      return true;
+    }
+    if (payment.status !== 'PARTIAL_CANCELED') {
+      return false;
+    }
+    if (payment.balanceAmount !== undefined) {
+      return payment.balanceAmount === 0;
+    }
+
+    const completedCancelAmount = payment.cancels
+      ?.filter((cancel) => this.isTossCancelEntryCompleted(cancel))
+      .reduce((total, cancel) => total + cancel.cancelAmount, 0) ?? 0;
+    return completedCancelAmount >= payment.totalAmount;
   }
 
   private async cancelTicketItemPaymentOrConfirm(input: {
