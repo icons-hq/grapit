@@ -187,4 +187,42 @@ describe('QueueService', () => {
     expect(serviceSource).toContain('remainingSeats');
     expect(serviceSource).toContain("['sold', 'held_cancelled', 'disabled']");
   });
+
+  it('limits waiting position broadcasts instead of scanning the whole queue', async () => {
+    const record = {
+      queueSessionId: 'queue-session-1',
+      performanceId,
+      userId: identity.userId,
+      refreshTokenFamilyId: identity.refreshTokenFamilyId,
+      deviceSlotId: identity.deviceSlotId,
+      admissionTokenHash: 'token-hash',
+      state: 'WAITING',
+      enteredAt: new Date('2026-05-08T00:00:00.000Z').toISOString(),
+      admittedAt: null,
+      activeUntilAt: null,
+      reentryGraceUntilAt: null,
+      paymentRecoveryUntilAt: null,
+      expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+    };
+
+    mockRedis.zrange.mockResolvedValueOnce([
+      'queue-session-1',
+      'queue-session-2',
+    ]);
+    vi.spyOn(service as never, 'readQueueSessionRecord').mockResolvedValue(record);
+    vi.spyOn(service as never, 'calculateRemainingSeats').mockResolvedValue(1_000);
+
+    await (
+      service as unknown as {
+        broadcastWaitingPositions: (targetPerformanceId: string) => Promise<void>;
+      }
+    ).broadcastWaitingPositions(performanceId);
+
+    expect(mockRedis.zrange).toHaveBeenCalledWith(
+      `{queue:${performanceId}}:waiting`,
+      0,
+      499,
+    );
+    expect(mockGateway.emitPosition).toHaveBeenCalledTimes(2);
+  });
 });

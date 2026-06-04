@@ -170,6 +170,22 @@ export class TrafficDefenseService {
     return `${policy}:ip:${ip}`;
   }
 
+  resolveDefaultTracker(req: RequestLike): string {
+    const userId = this.resolveUserId(req);
+    const sessionCookie = this.resolveSessionCookie(req);
+    const ip = resolveTrustedRequestIp(req);
+
+    if (userId) {
+      return `default:user:${userId}`;
+    }
+
+    if (sessionCookie) {
+      return `default:session:${this.hashIdentity(sessionCookie)}`;
+    }
+
+    return `default:ip:${ip}`;
+  }
+
   rateLimited(policy: TrafficPolicyName): TrafficDecision {
     return {
       action: 'rate-limit',

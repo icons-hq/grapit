@@ -27,6 +27,7 @@ status는 `NO-GO`다.
 | `EVIDENCE_ACCEPTED` | reviewer가 evidence를 승인했고 public-open ledger에 반영 가능하다. |
 | `FAILED` | pass criteria를 만족하지 못했다. public open 전 재작업이 필요하다. |
 | `WAIVED` | owner와 reviewer가 명시적으로 위험을 수용했다. waiver 사유와 만료일이 필요하다. |
+| `DEFERRED` | 이번 remediation 범위에서 제외됐다. public open 전에는 evidence 또는 explicit waiver가 별도로 필요하다. |
 
 ## Operator Rules
 
@@ -54,7 +55,7 @@ status는 `NO-GO`다.
 | Final booking enablement and cutover approval | `BLOCKED` | TBD | TBD | TBD | TBD |
 | Toss sandbox gateway smoke | `BLOCKED` | TBD | TBD | TBD | TBD |
 | Admin pre-open booking smoke across Production Payment Matrix | `BLOCKED` | TBD | `docs/uat/ticketing-open-admin-preopen-smoke-2026-06-03.md` | TBD | TBD |
-| Real SMS OTP happy path with controlled provider-mode number | `BLOCKED` | TBD | TBD | TBD | TBD |
+| Real SMS OTP happy path with controlled provider-mode number | `DEFERRED` | Owner request | Deferred by 2026-06-04 operator decision; evidence still required or waived before public open | TBD | 2026-06-04 |
 | Production/cluster Valkey rehearsal and health evidence | `BLOCKED` | TBD | TBD | TBD | TBD |
 | Load baseline and stress evidence for 10K/20K traffic | `BLOCKED` | TBD | TBD | TBD | TBD |
 | Cloud Run rollback drill | `BLOCKED` | TBD | TBD | TBD | TBD |

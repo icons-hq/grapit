@@ -72,6 +72,16 @@ describe('AppModule ThrottlerModule configuration', () => {
     expect(source).toContain('limit: 60');
   });
 
+  it('should authenticate before throttling so protected routes are tracked by verified user identity', async () => {
+    const { readFile } = await import('fs/promises');
+    const { resolve } = await import('path');
+    const source = await readFile(resolve(__dirname, 'app.module.ts'), 'utf-8');
+
+    expect(source.indexOf('useClass: JwtAuthGuard')).toBeLessThan(
+      source.indexOf('useClass: ThrottlerGuard'),
+    );
+  });
+
   it('InMemoryRedis should NOT have incr method (confirms guard necessity)', async () => {
     const { readFile } = await import('fs/promises');
     const { resolve } = await import('path');
