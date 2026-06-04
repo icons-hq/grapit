@@ -161,6 +161,8 @@ type PreparedTicketItemCancellation = {
 };
 type TicketItemPaymentCancelOutcome =
   | { status: 'cancelled'; providerResponse: TossPaymentResponse }
+  | { status: 'processing'; providerResponse: TossPaymentResponse }
+  | { status: 'not_partial_cancelable' }
   | { status: 'definite_failure' }
   | { status: 'ambiguous' };
 type TicketItemCancellationSnapshot = PaymentCancelTicketItemSnapshot & {
@@ -1682,18 +1684,33 @@ export class ReservationService {
     request: PaymentCancelRequest,
   ): number {
     return payment.cancels?.filter((cancel) => {
-      if (!this.isTossCancelEntryCompleted(cancel)) {
-        return false;
-      }
-      if (request.options.cancelRequestId) {
-        return cancel.cancelRequestId === request.options.cancelRequestId;
-      }
-      return (
-        request.options.cancelAmount !== undefined
-        && cancel.cancelAmount === request.options.cancelAmount
-        && cancel.cancelReason === request.reason
-      );
+      return this.isTossCancelEntryCompleted(cancel)
+        && this.isMatchingTossCancellation(cancel, request);
     }).length ?? 0;
+  }
+
+  private countMatchingAcceptedTossCancellations(
+    payment: TossPaymentResponse,
+    request: PaymentCancelRequest,
+  ): number {
+    return payment.cancels?.filter((cancel) => {
+      return this.isTossCancelEntryAccepted(cancel)
+        && this.isMatchingTossCancellation(cancel, request);
+    }).length ?? 0;
+  }
+
+  private isMatchingTossCancellation(
+    cancel: NonNullable<TossPaymentResponse['cancels']>[number],
+    request: PaymentCancelRequest,
+  ): boolean {
+    if (request.options.cancelRequestId) {
+      return cancel.cancelRequestId === request.options.cancelRequestId;
+    }
+    return (
+      request.options.cancelAmount !== undefined
+      && cancel.cancelAmount === request.options.cancelAmount
+      && cancel.cancelReason === request.reason
+    );
   }
 
   private hasMatchingInProgressTossCancellation(
@@ -1714,6 +1731,15 @@ export class ReservationService {
     cancel: NonNullable<TossPaymentResponse['cancels']>[number],
   ): boolean {
     return cancel.cancelStatus === undefined || cancel.cancelStatus === 'DONE';
+  }
+
+  private isTossCancelEntryAccepted(
+    cancel: NonNullable<TossPaymentResponse['cancels']>[number],
+  ): boolean {
+    return (
+      this.isTossCancelEntryCompleted(cancel)
+      || cancel.cancelStatus === 'IN_PROGRESS'
+    );
   }
 
   private isFullTossCancelCompleted(payment: TossPaymentResponse): boolean {
@@ -1750,12 +1776,40 @@ export class ReservationService {
         queryOptions,
       );
       if (
+        !input.isFullPaymentCancellation
+        && input.request.options.cancelAmount !== undefined
+        && input.isPendingRetry
+      ) {
+        const completedCancelsBefore = this.countMatchingCompletedTossCancellations(
+          beforePayment,
+          input.request,
+        );
+        if (completedCancelsBefore > 0) {
+          return { status: 'cancelled', providerResponse: beforePayment };
+        }
+
+        matchingCancelsBefore = this.countMatchingAcceptedTossCancellations(
+          beforePayment,
+          input.request,
+        );
+        if (matchingCancelsBefore > 0) {
+          return { status: 'processing', providerResponse: beforePayment };
+        }
+      }
+      if (
+        !input.isFullPaymentCancellation
+        && input.request.options.cancelAmount !== undefined
+        && beforePayment.isPartialCancelable === false
+      ) {
+        return { status: 'not_partial_cancelable' };
+      }
+      if (
         input.isFullPaymentCancellation
         && this.isFullTossCancelCompleted(beforePayment)
       ) {
         return { status: 'cancelled', providerResponse: beforePayment };
       }
-      matchingCancelsBefore = this.countMatchingCompletedTossCancellations(
+      matchingCancelsBefore = this.countMatchingAcceptedTossCancellations(
         beforePayment,
         input.request,
       );
@@ -1777,9 +1831,13 @@ export class ReservationService {
           ? { status: 'cancelled', providerResponse: response }
           : { status: 'ambiguous' };
       }
-      return this.countMatchingCompletedTossCancellations(response, input.request) > 0
-        ? { status: 'cancelled', providerResponse: response }
-        : { status: 'ambiguous' };
+      if (this.countMatchingCompletedTossCancellations(response, input.request) > 0) {
+        return { status: 'cancelled', providerResponse: response };
+      }
+      if (this.countMatchingAcceptedTossCancellations(response, input.request) > 0) {
+        return { status: 'processing', providerResponse: response };
+      }
+      return { status: 'ambiguous' };
     } catch (cancelError) {
       try {
         const payment = await this.tossClient.queryPayment(
@@ -1801,7 +1859,9 @@ export class ReservationService {
         ) {
           return { status: 'ambiguous' };
         }
-        matchingCancelsAfter = this.countMatchingCompletedTossCancellations(
+        const matchingCompletedCancelsAfter =
+          this.countMatchingCompletedTossCancellations(payment, input.request);
+        matchingCancelsAfter = this.countMatchingAcceptedTossCancellations(
           payment,
           input.request,
         );
@@ -1809,12 +1869,20 @@ export class ReservationService {
           !input.isFullPaymentCancellation
           && input.request.options.cancelRequestId !== undefined
           && matchingCancelsBefore !== undefined
-          && matchingCancelsAfter > matchingCancelsBefore
+          && matchingCompletedCancelsAfter > matchingCancelsBefore
         ) {
           this.logger.warn(
             `Recovered Toss ticket-item cancel from payment snapshot. ticketItemId=${input.ticketItemId}`,
           );
           return { status: 'cancelled', providerResponse: payment };
+        }
+        if (
+          !input.isFullPaymentCancellation
+          && input.request.options.cancelRequestId !== undefined
+          && matchingCancelsBefore !== undefined
+          && matchingCancelsAfter > matchingCancelsBefore
+        ) {
+          return { status: 'processing', providerResponse: payment };
         }
       } catch (queryError) {
         this.logger.error(
@@ -1913,13 +1981,6 @@ export class ReservationService {
       activeTicketItems,
       reason: input.reason,
     });
-  }
-
-  private isAccountTransferPayment(context: TicketItemCancellationContext): boolean {
-    return (
-      context.paymentMethod.toUpperCase() === 'TRANSFER'
-      || context.paymentProvider.toUpperCase() === 'TOSS_TRANSFER'
-    );
   }
 
   private isDefiniteTossCancelFailure(error: unknown): boolean {
@@ -2041,15 +2102,6 @@ export class ReservationService {
           activeTicketItems,
           reason: cancellationReason,
         });
-        if (
-          paymentCancelRequest.options.cancelAmount !== undefined
-          && this.isAccountTransferPayment(context)
-        ) {
-          throw new BadRequestException(
-            '계좌이체 결제는 좌석별 부분취소를 지원하지 않습니다. 전체 예약 취소가 필요하면 고객센터로 문의해주세요.',
-          );
-        }
-
         await tx
           .update(ticketItems)
           .set({
@@ -2107,6 +2159,21 @@ export class ReservationService {
           isPendingRetry: preparedCancellation.isPendingRetry,
           isFullPaymentCancellation: preparedCancellation.isFullPaymentCancellation,
         });
+
+        if (cancelOutcome.status === 'processing') {
+          return this.getReservationDetail(reservationId, userId);
+        }
+
+        if (cancelOutcome.status === 'not_partial_cancelable') {
+          await this.restorePreparedTicketItemCancellation(
+            reservationId,
+            ticketItemId,
+            preparedCancellation.now,
+          );
+          throw new BadRequestException(
+            '이 결제수단은 좌석별 부분취소를 지원하지 않습니다. 전체 예약 취소가 필요하면 고객센터로 문의해주세요.',
+          );
+        }
 
         if (cancelOutcome.status === 'definite_failure') {
           await this.restorePreparedTicketItemCancellation(
