@@ -640,14 +640,13 @@ describe('AuthService', () => {
         createdAt: row.createdAt,
       }));
 
-    it('keeps one to three active refresh-token families without revocation', async () => {
+    it('keeps one or two active refresh-token families without revocation', async () => {
       mockDb.select.mockReturnValue({
         from: vi.fn().mockReturnValue({
           where: vi.fn().mockResolvedValue(
             familyRows([
               { family: 'family-1', createdAt: new Date('2026-05-01T00:00:00Z') },
               { family: 'family-2', createdAt: new Date('2026-05-02T00:00:00Z') },
-              { family: 'family-3', createdAt: new Date('2026-05-03T00:00:00Z') },
             ]),
           ),
         }),
@@ -659,7 +658,7 @@ describe('AuthService', () => {
       expect(mockDb.update).not.toHaveBeenCalled();
     });
 
-    it('revokes the oldest active family on the fourth login and returns the user-visible notice', async () => {
+    it('revokes the oldest active family on the third user login and returns the user-visible notice', async () => {
       const updateWhereMock = vi.fn().mockResolvedValue([]);
       const updateSetMock = vi.fn().mockReturnValue({ where: updateWhereMock });
       mockDb.select.mockReturnValue({
@@ -668,8 +667,7 @@ describe('AuthService', () => {
             familyRows([
               { family: 'oldest-family', createdAt: new Date('2026-05-01T00:00:00Z') },
               { family: 'family-2', createdAt: new Date('2026-05-02T00:00:00Z') },
-              { family: 'family-3', createdAt: new Date('2026-05-03T00:00:00Z') },
-              { family: 'newest-family', createdAt: new Date('2026-05-04T00:00:00Z') },
+              { family: 'newest-family', createdAt: new Date('2026-05-03T00:00:00Z') },
             ]),
           ),
         }),
@@ -684,6 +682,29 @@ describe('AuthService', () => {
       });
       expect(updateSetMock).toHaveBeenCalledWith({ revokedAt: expect.any(Date) });
       expect(containsPrimitiveValue(updateWhereMock.mock.calls, 'oldest-family')).toBe(true);
+    });
+
+    it('does not enforce the refresh-token family limit for admin logins', async () => {
+      await authService.login({
+        id: mockUser.id,
+        email: mockUser.email,
+        role: 'admin',
+        name: mockUser.name,
+        phone: mockUser.phone,
+        gender: mockUser.gender,
+        country: mockUser.country,
+        birthDate: mockUser.birthDate,
+        isEmailVerified: mockUser.isEmailVerified,
+        isPhoneVerified: mockUser.isPhoneVerified,
+        marketingConsent: mockUser.marketingConsent,
+        createdAt: mockUser.createdAt,
+        adminCapabilityBundle: 'admin',
+        adminCapabilities: ['security.manage'],
+      });
+
+      expect(mockDb.insert).toHaveBeenCalledTimes(1);
+      expect(mockDb.select).not.toHaveBeenCalled();
+      expect(mockDb.update).not.toHaveBeenCalled();
     });
 
     it('refresh within the same family does not consume a new device slot', async () => {
