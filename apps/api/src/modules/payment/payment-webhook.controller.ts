@@ -212,7 +212,7 @@ export class PaymentWebhookController {
 
       if (
         progress.reservationStatus === 'CONFIRMED'
-        && this.hasTerminalFullCancel(body, providerResponse)
+        && this.hasTerminalCompletedCancel(body, providerResponse)
       ) {
         const result = await this.paymentService.finalizeConfirmedCancelWebhook(
           body,
@@ -482,6 +482,19 @@ export class PaymentWebhookController {
     return body.eventType === 'CANCEL_STATUS_CHANGED'
       && body.data.cancelStatus === 'DONE'
       && providerResponse.status === 'CANCELED'
+      && this.findMatchingCancel(body, providerResponse) !== undefined;
+  }
+
+  private hasTerminalCompletedCancel(
+    body: TossWebhookRequestBody,
+    providerResponse: TossPaymentResponse,
+  ): boolean {
+    return body.eventType === 'CANCEL_STATUS_CHANGED'
+      && body.data.cancelStatus === 'DONE'
+      && (
+        providerResponse.status === 'CANCELED'
+        || providerResponse.status === 'PARTIAL_CANCELED'
+      )
       && this.findMatchingCancel(body, providerResponse) !== undefined;
   }
 
