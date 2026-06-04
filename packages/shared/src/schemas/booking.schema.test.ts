@@ -70,6 +70,19 @@ function makeTicketItem(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function makeTicketEmailDelivery(overrides: Record<string, unknown> = {}) {
+  return {
+    email: 'buyer@example.com',
+    isEmailVerified: true,
+    isPlaceholderEmail: false,
+    canSend: true,
+    status: 'ready',
+    scheduledAt: '2026-07-17T10:00:00.000Z',
+    lastSentAt: null,
+    ...overrides,
+  };
+}
+
 function makeQueueAdmission() {
   return {
     queueSessionId: 'queue-session-1',
@@ -367,6 +380,7 @@ describe('prepareReservationSchema booking consent contract', () => {
         issuedAt: '2026-05-08T11:46:00.000Z',
         emailScheduledAt: '2026-07-17T10:00:00.000Z',
       },
+      ticketEmailDelivery: makeTicketEmailDelivery(),
       ticketItems: [
         makeTicketItem(),
         makeTicketItem({
@@ -394,6 +408,7 @@ describe('prepareReservationSchema booking consent contract', () => {
     expect(detail.cancelledSeatHold?.releaseWindowMinutes.max).toBe(10);
     expect(detail.qrTicket.jti).toBe('qr-jti-1');
     expect(detail.qrTicket.entryStatus).toBe('ENTERED');
+    expect(detail.ticketEmailDelivery.canSend).toBe(true);
     expect(detail.ticketItems).toHaveLength(2);
     expect(detail.ticketItems.map((item) => item.qrCredential?.jti)).toEqual([
       'qr-jti-seat-a1',
@@ -443,6 +458,11 @@ describe('prepareReservationSchema booking consent contract', () => {
         emailScheduledAt: null,
         emailedAt: null,
       },
+      ticketEmailDelivery: makeTicketEmailDelivery({
+        canSend: false,
+        status: 'verification_required',
+        scheduledAt: null,
+      }),
       ticketItems: [
         makeTicketItem({
           status: 'CANCELLATION_PENDING',
@@ -474,5 +494,65 @@ describe('prepareReservationSchema booking consent contract', () => {
         },
       }),
     ).toThrow(/QR token/);
+  });
+
+  it('requires ticket email delivery state on reservation detail responses', () => {
+    const parsed = reservationDetailSchema.parse({
+      id: '11111111-1111-4111-8111-111111111111',
+      reservationNumber: 'GRP-24003',
+      status: 'CONFIRMED',
+      performanceTitle: 'Girl Rules Fanmeet',
+      posterUrl: null,
+      showDateTime: '2026-07-18T10:00:00.000Z',
+      venue: 'Donghae Arts Center',
+      seats: [makeSeat()],
+      totalAmount: 50000,
+      createdAt: '2026-05-08T11:45:00.000Z',
+      paymentMethod: 'CARD',
+      paidAt: '2026-05-08T11:46:00.000Z',
+      cancelDeadline: '2026-07-15T14:00:00.000Z',
+      cancelledAt: null,
+      cancelReason: null,
+      paymentKey: 'payment-key-1',
+      queueAdmission: makeQueueAdmission(),
+      paymentDeadlineAt: '2026-05-08T11:52:00.000Z',
+      bookingPolicy: {
+        maxTicketsPerOrder: 1,
+        cancellationChangePolicy: 'CANCEL_ONLY',
+        sameGradeChangeEnabled: false,
+      },
+      refundTimeline: {
+        currentState: 'COMPLETED',
+        requestedAt: '2026-05-08T12:00:00.000Z',
+        completedAt: '2026-05-08T12:01:00.000Z',
+        customerServiceCtaVisible: false,
+      },
+      cancelledSeatHold: null,
+      qrTicket: {
+        token: 'qr-token-1',
+        jti: 'qr-jti-1',
+        status: 'ACTIVE',
+        entryStatus: 'NOT_ENTERED',
+        enteredAt: null,
+        issuedAt: '2026-05-08T11:46:00.000Z',
+        emailScheduledAt: '2026-07-17T10:00:00.000Z',
+        emailedAt: '2026-07-17T10:01:00.000Z',
+      },
+      ticketEmailDelivery: makeTicketEmailDelivery({
+        lastSentAt: '2026-07-17T10:01:00.000Z',
+        status: 'sent',
+      }),
+      ticketItems: [],
+    });
+
+    expect(parsed.ticketEmailDelivery).toEqual({
+      email: 'buyer@example.com',
+      isEmailVerified: true,
+      isPlaceholderEmail: false,
+      canSend: true,
+      status: 'sent',
+      scheduledAt: '2026-07-17T10:00:00.000Z',
+      lastSentAt: '2026-07-17T10:01:00.000Z',
+    });
   });
 });

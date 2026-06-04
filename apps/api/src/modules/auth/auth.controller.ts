@@ -17,6 +17,7 @@ import { SkipThrottle, Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { Public } from '../../common/decorators/public.decorator.js';
+import { CurrentUser, type RequestUser } from '../../common/decorators/current-user.decorator.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import { resolveTrustedRequestIp } from '../../common/request-ip.js';
 import { AuthService, type ValidatedUser } from './auth.service.js';
@@ -52,6 +53,14 @@ const emailVerificationRequestSchema = z.object({
   email: z.string().email(),
   locale: launchLocaleSchema.optional(),
   frontendOrigin: z.string().url().max(200).optional(),
+});
+const accountEmailVerificationRequestSchema = z.object({
+  email: z.string().email(),
+  locale: launchLocaleSchema.optional(),
+});
+const accountEmailVerificationVerifySchema = z.object({
+  email: z.string().email(),
+  code: z.string().regex(/^\d{6}$/, '인증번호는 6자리입니다'),
 });
 const emailVerificationVerifySchema = z.union([
   z.object({
@@ -236,6 +245,38 @@ export class AuthController {
     }
 
     return this.authService.verifyEmailVerificationCode(dto.email, dto.code);
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('email-verification/account-email/request')
+  async requestAccountEmailVerification(
+    @CurrentUser() user: RequestUser,
+    @Body(new ZodValidationPipe(accountEmailVerificationRequestSchema))
+    dto: z.infer<typeof accountEmailVerificationRequestSchema>,
+  ) {
+    const result = await this.authService.requestAccountEmailVerification(
+      user.id,
+      dto.email,
+      dto.locale,
+    );
+    return {
+      message: '인증번호를 이메일로 발송했습니다',
+      expiresAt: result.expiresAt,
+    };
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('email-verification/account-email/verify')
+  async verifyAccountEmailVerification(
+    @CurrentUser() user: RequestUser,
+    @Body(new ZodValidationPipe(accountEmailVerificationVerifySchema))
+    dto: z.infer<typeof accountEmailVerificationVerifySchema>,
+  ) {
+    return this.authService.verifyAccountEmailVerificationCode(
+      user.id,
+      dto.email,
+      dto.code,
+    );
   }
 
   // -- Social OAuth endpoints --

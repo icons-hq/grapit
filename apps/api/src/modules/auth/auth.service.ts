@@ -20,6 +20,7 @@ import type { SmsVerificationPurpose } from '../sms/sms.service.js';
 import { EmailService } from './email/email.service.js';
 import { ConsentService } from '../consent/consent.service.js';
 import type { ConsentRequestMeta } from '../consent/consent.service.js';
+import { isSocialPlaceholderEmail } from '../../common/email-address.js';
 import type { RegisterBody } from './dto/register.dto.js';
 import type { SocialRegisterBody } from './dto/social-register.dto.js';
 import type { SocialProfile } from './interfaces/social-profile.interface.js';
@@ -83,6 +84,7 @@ interface RegistrationPendingResult {
 
 const EMAIL_VERIFICATION_EXPIRY_MS = 30 * 60 * 1000;
 const EMAIL_VERIFICATION_PURPOSE = 'signup';
+const ACCOUNT_EMAIL_VERIFICATION_PURPOSE = 'account_email';
 const EMAIL_VERIFICATION_CODE_DIGITS = 6;
 const REFRESH_FAMILY_LIMIT_NOTICE = '다른 기기에서 로그인되어 가장 오래된 세션이 종료되었습니다.';
 const DEFAULT_FRONTEND_ORIGIN = 'http://localhost:3000';
@@ -374,6 +376,105 @@ export class AuthService {
     return this.issueEmailVerification(email, locale);
   }
 
+  async requestAccountEmailVerification(
+    userId: string,
+    email: string,
+    locale: string = 'ko',
+  ): Promise<{ expiresAt: Date }> {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (isSocialPlaceholderEmail(normalizedEmail)) {
+      throw new BadRequestException('실제 수신 가능한 이메일을 입력해주세요');
+    }
+
+    const currentUser = await this.userRepository.findById(userId);
+    if (!currentUser || currentUser.accountStatus === 'withdrawn') {
+      throw new UnauthorizedException('사용자 인증이 필요합니다');
+    }
+
+    const existingUser = await this.userRepository.findByEmail(normalizedEmail);
+    if (existingUser && existingUser.id !== userId) {
+      throw new ConflictException('이미 사용 중인 이메일입니다');
+    }
+
+    return this.issueEmailVerificationForUser(
+      userId,
+      normalizedEmail,
+      locale,
+      ACCOUNT_EMAIL_VERIFICATION_PURPOSE,
+    );
+  }
+
+  async verifyAccountEmailVerificationCode(
+    userId: string,
+    email: string,
+    code: string,
+  ): Promise<{ verified: true; user: UserProfile }> {
+    const normalizedEmail = email.trim().toLowerCase();
+    const latestRows = await this.db
+      .select()
+      .from(schema.emailVerificationTokens)
+      .where(
+        and(
+          eq(schema.emailVerificationTokens.userId, userId),
+          eq(schema.emailVerificationTokens.email, normalizedEmail),
+          eq(schema.emailVerificationTokens.purpose, ACCOUNT_EMAIL_VERIFICATION_PURPOSE),
+        ),
+      );
+    const latestRecord = [...latestRows].sort(
+      (a, b) => b.createdAt.getTime() - a.createdAt.getTime(),
+    )[0];
+
+    if (!latestRecord) {
+      throw new BadRequestException('인증번호가 일치하지 않습니다');
+    }
+
+    if (latestRecord.consumedAt) {
+      throw new GoneException('이미 사용된 인증번호입니다');
+    }
+
+    if (latestRecord.expiresAt < new Date()) {
+      throw new GoneException('인증번호가 만료되었습니다. 새 인증 메일을 요청해주세요.');
+    }
+
+    const codeHash = this.hashEmailVerificationCode(
+      normalizedEmail,
+      code,
+      ACCOUNT_EMAIL_VERIFICATION_PURPOSE,
+    );
+    if (latestRecord.tokenHash !== codeHash) {
+      throw new BadRequestException('인증번호가 일치하지 않습니다');
+    }
+
+    const existingUser = await this.userRepository.findByEmail(normalizedEmail);
+    if (existingUser && existingUser.id !== userId) {
+      throw new ConflictException('이미 사용 중인 이메일입니다');
+    }
+
+    await this.db
+      .update(schema.emailVerificationTokens)
+      .set({ consumedAt: new Date() })
+      .where(eq(schema.emailVerificationTokens.id, latestRecord.id));
+
+    const [updatedUser] = await this.db
+      .update(schema.users)
+      .set({
+        email: normalizedEmail,
+        isEmailVerified: true,
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.users.id, userId))
+      .returning();
+
+    if (!updatedUser) {
+      throw new UnauthorizedException('사용자 인증이 필요합니다');
+    }
+
+    return {
+      verified: true,
+      user: this.mapToProfile(updatedUser),
+    };
+  }
+
   async verifyEmailVerificationCode(
     email: string,
     code: string,
@@ -403,7 +504,7 @@ export class AuthService {
       throw new GoneException('인증번호가 만료되었습니다. 새 인증 메일을 요청해주세요.');
     }
 
-    const codeHash = this.hashEmailVerificationCode(email, code);
+    const codeHash = this.hashEmailVerificationCode(email, code, latestRecord.purpose);
     if (latestRecord.tokenHash !== codeHash) {
       throw new BadRequestException('인증번호가 일치하지 않습니다');
     }
@@ -822,15 +923,16 @@ export class AuthService {
     userId: string,
     email: string,
     locale: string,
+    purpose = EMAIL_VERIFICATION_PURPOSE,
   ): Promise<{ expiresAt: Date }> {
     const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_EXPIRY_MS);
     const verificationCode = this.generateEmailVerificationCode();
-    const tokenHash = this.hashEmailVerificationCode(email, verificationCode);
+    const tokenHash = this.hashEmailVerificationCode(email, verificationCode, purpose);
 
     await this.db.insert(schema.emailVerificationTokens).values({
       userId,
       email,
-      purpose: EMAIL_VERIFICATION_PURPOSE,
+      purpose,
       tokenHash,
       expiresAt,
     });
@@ -846,14 +948,18 @@ export class AuthService {
       .padStart(EMAIL_VERIFICATION_CODE_DIGITS, '0');
   }
 
-  private hashEmailVerificationCode(email: string, code: string): string {
+  private hashEmailVerificationCode(
+    email: string,
+    code: string,
+    purpose = EMAIL_VERIFICATION_PURPOSE,
+  ): string {
     const secret =
       this.configService.get<string>('auth.jwtSecret') ??
       this.configService.get<string>('JWT_SECRET') ??
       'dev-email-verification-code-secret';
 
     return createHmac('sha256', secret)
-      .update(`${EMAIL_VERIFICATION_PURPOSE}:${email.toLowerCase()}:${code}`)
+      .update(`${purpose}:${email.toLowerCase()}:${code}`)
       .digest('hex');
   }
 

@@ -468,6 +468,8 @@ describe('ReservationService', () => {
     paymentStatus?: string;
     seats?: string[];
     ticketItems?: Array<Record<string, unknown>>;
+    userEmail?: string;
+    isEmailVerified?: boolean;
   }) {
     const seats = args.seats ?? ['A-1', 'A-2'];
     mockDb.select
@@ -516,7 +518,11 @@ describe('ReservationService', () => {
         reservationId: args.reservationId,
         seats,
         amount: args.amount,
-      })));
+      })))
+      .mockReturnValueOnce(chainResult([{
+        email: args.userEmail ?? 'buyer@example.com',
+        isEmailVerified: args.isEmailVerified ?? true,
+      }]));
   }
 
   function setupTicketItemCancelTransaction(args: {
@@ -3422,6 +3428,12 @@ describe('ReservationService', () => {
       // select ticket items for reservation detail
       mockDb.select.mockReturnValueOnce(chainResult([]));
 
+      // select user email delivery context
+      mockDb.select.mockReturnValueOnce(chainResult([{
+        email: 'buyer@example.com',
+        isEmailVerified: true,
+      }]));
+
       return { mockTx, txOps };
     }
 
@@ -4330,6 +4342,45 @@ describe('ReservationService', () => {
       expect(qrTicketService.ensureIssuedTicketsForReservation).toHaveBeenCalledWith({
         reservationId,
         paymentId: 'payment-1',
+      });
+    });
+
+    it('marks social placeholder emails as verification-required for ticket email delivery', async () => {
+      const qrTicketService = {
+        ensureIssuedTicketsForReservation: vi.fn().mockResolvedValue([
+          {
+            id: '00000000-0000-4000-8000-000000000201',
+            ticketItemId: '00000000-0000-4000-8000-000000000101',
+            token: 'signed-qr-token-a1',
+            jti: 'qr-jti-a1',
+            status: 'ACTIVE',
+            entryStatus: 'NOT_ENTERED',
+            enteredAt: null,
+            issuedAt: '2026-07-10T09:00:00.000Z',
+            emailScheduledAt: '2026-07-17T10:00:00.000Z',
+            emailedAt: null,
+          },
+        ]),
+      };
+      const qrAwareService = createServiceWithQrTicketService(qrTicketService);
+      setupReservationDetailMocks({
+        reservationId,
+        userId,
+        amount: 150000,
+        userEmail: 'kakao_123@social.grabit.com',
+        isEmailVerified: true,
+      });
+
+      const detail = await qrAwareService.getReservationDetail(reservationId, userId);
+
+      expect(detail.ticketEmailDelivery).toEqual({
+        email: 'kakao_123@social.grabit.com',
+        isEmailVerified: true,
+        isPlaceholderEmail: true,
+        canSend: false,
+        status: 'verification_required',
+        scheduledAt: '2026-07-17T10:00:00.000Z',
+        lastSentAt: null,
       });
     });
 

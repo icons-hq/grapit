@@ -1,4 +1,12 @@
-import { Controller, Get, Param, Request } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Post,
+  Request,
+} from '@nestjs/common';
 import { QrTicketService } from './qr-ticket.service.js';
 
 @Controller('tickets')
@@ -11,5 +19,17 @@ export class TicketController {
     @Request() req: { user: { id: string } },
   ) {
     return this.qrTicketService.getOwnedTicketsForReservation(reservationId, req.user.id);
+  }
+
+  @HttpCode(HttpStatus.OK)
+  @Post('reservations/:id/email')
+  async sendReservationTicketEmail(
+    @Param('id') reservationId: string,
+    @Request() req: { user: { id: string } },
+  ) {
+    return this.qrTicketService.sendOwnedTicketsForReservationEmail(
+      reservationId,
+      req.user.id,
+    );
   }
 }

@@ -468,6 +468,131 @@ describe('QrTicketService', () => {
     expect(handleReminderSpy).toHaveBeenCalledWith(payload);
   });
 
+  it('rejects manual ticket email sends for social placeholder emails', async () => {
+    const emailService = { sendQrTicketReminderEmail: vi.fn() };
+    const service = new QrTicketService(
+      {
+        select: vi.fn().mockReturnValue(chainResult([
+          {
+            ticket: createTicketWithSeatRecord(),
+            reservation: {
+              id: 'reservation-1',
+              reservationNumber: 'GRP-24001',
+            },
+            user: {
+              email: 'kakao_123@social.grabit.com',
+              isEmailVerified: true,
+              preferredLocale: 'ko',
+            },
+            showtime: {
+              dateTime: new Date('2026-07-18T11:00:00.000Z'),
+            },
+            performance: {
+              title: 'Girl Rules Fanmeet',
+            },
+            venue: {
+              name: 'Donghae Arts Center',
+            },
+          },
+        ])),
+        update: vi.fn(),
+      } as never,
+      {
+        get: vi.fn((key: string) => {
+          if (key === 'QR_TICKET_SECRET') return 'current-secret';
+          if (key === 'QR_TICKET_SECRET_VERSION') return '2026-07';
+          if (key === 'FRONTEND_URL') return 'https://heygrabit.com';
+          return undefined;
+        }),
+      } as never,
+      new JwtService(),
+      emailService as never,
+      {
+        isAvailable: false,
+        send: vi.fn(),
+        work: vi.fn(),
+        stop: vi.fn(),
+      } as never,
+    );
+
+    await expect(service.sendOwnedTicketsForReservationEmail('reservation-1', 'user-1'))
+      .rejects
+      .toThrow('티켓을 받을 이메일 인증이 필요합니다');
+    expect(emailService.sendQrTicketReminderEmail).not.toHaveBeenCalled();
+  });
+
+  it('sends manual ticket email to a verified real email and marks the ticket emailed', async () => {
+    const mockDb = {
+      select: vi.fn().mockReturnValue(chainResult([
+        {
+          ticket: createTicketWithSeatRecord(),
+          reservation: {
+            id: 'reservation-1',
+            reservationNumber: 'GRP-24001',
+          },
+          user: {
+            email: 'buyer@example.com',
+            isEmailVerified: true,
+            preferredLocale: 'ko',
+          },
+          showtime: {
+            dateTime: new Date('2026-07-18T11:00:00.000Z'),
+          },
+          performance: {
+            title: 'Girl Rules Fanmeet',
+          },
+          venue: {
+            name: 'Donghae Arts Center',
+          },
+        },
+      ])),
+      update: vi.fn().mockReturnValue(createUpdateResult([
+        createTicketRecord({ emailSentAt: new Date('2026-07-10T09:00:00.000Z') }),
+      ])),
+    };
+    const emailService = {
+      sendQrTicketReminderEmail: vi.fn().mockResolvedValue({ success: true }),
+    };
+    const service = new QrTicketService(
+      mockDb as never,
+      {
+        get: vi.fn((key: string) => {
+          if (key === 'QR_TICKET_SECRET') return 'current-secret';
+          if (key === 'QR_TICKET_SECRET_VERSION') return '2026-07';
+          if (key === 'FRONTEND_URL') return 'https://heygrabit.com';
+          return undefined;
+        }),
+      } as never,
+      new JwtService(),
+      emailService as never,
+      {
+        isAvailable: false,
+        send: vi.fn(),
+        work: vi.fn(),
+        stop: vi.fn(),
+      } as never,
+    );
+
+    await expect(service.sendOwnedTicketsForReservationEmail('reservation-1', 'user-1'))
+      .resolves
+      .toMatchObject({
+        ticketEmailDelivery: {
+          email: 'buyer@example.com',
+          canSend: true,
+          status: 'sent',
+        },
+      });
+    expect(emailService.sendQrTicketReminderEmail).toHaveBeenCalledWith(
+      'buyer@example.com',
+      expect.objectContaining({
+        reservationNumber: 'GRP-24001',
+        performanceTitle: 'Girl Rules Fanmeet',
+        ticketUrl: 'https://heygrabit.com/mypage/reservations/reservation-1',
+      }),
+    );
+    expect(mockDb.update).toHaveBeenCalled();
+  });
+
   it('verifies a previously issued token via QR_TICKET_SECRET_KEYRING_JSON lookup', async () => {
     const configService = {
       get: vi.fn((key: string) => {

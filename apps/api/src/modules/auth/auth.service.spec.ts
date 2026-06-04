@@ -779,12 +779,22 @@ describe('AuthService', () => {
         ): Promise<{ expiresAt: Date }>;
         verifyEmailVerificationCode(email: string, code: string): Promise<{ verified: true }>;
         verifyEmailVerificationToken(token: string): Promise<{ verified: true }>;
+        requestAccountEmailVerification(
+          userId: string,
+          email: string,
+          locale?: string,
+        ): Promise<{ expiresAt: Date }>;
+        verifyAccountEmailVerificationCode(
+          userId: string,
+          email: string,
+          code: string,
+        ): Promise<{ verified: true; user: { email: string; isEmailVerified: boolean } }>;
       };
     }
 
-    function hashEmailCode(email: string, code: string): string {
+    function hashEmailCode(email: string, code: string, purpose = 'signup'): string {
       return createHmac('sha256', 'test-jwt-secret')
-        .update(`signup:${email.toLowerCase()}:${code}`)
+        .update(`${purpose}:${email.toLowerCase()}:${code}`)
         .digest('hex');
     }
 
@@ -845,6 +855,70 @@ describe('AuthService', () => {
 
       expect(mockDb.insert).toHaveBeenCalledTimes(2);
       expect(mockEmailService.sendEmailVerificationEmail).toHaveBeenCalledTimes(2);
+    });
+
+    it('rejects account email verification requests for social placeholder addresses', async () => {
+      await expect(
+        authEmailVerificationApi().requestAccountEmailVerification(
+          mockUser.id,
+          'kakao_123@social.grabit.com',
+          'ko',
+        ),
+      ).rejects.toThrow(BadRequestException);
+
+      expect(mockEmailService.sendEmailVerificationEmail).not.toHaveBeenCalled();
+      expect(mockDb.insert).not.toHaveBeenCalled();
+    });
+
+    it('verifies account email change and marks the new address verified', async () => {
+      const email = 'buyer@example.com';
+      const code = '123456';
+      const tokenRecord = {
+        id: randomUUID(),
+        userId: mockUser.id,
+        email,
+        purpose: 'account_email',
+        tokenHash: hashEmailCode(email, code, 'account_email'),
+        expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+        consumedAt: null,
+        createdAt: new Date('2026-05-06T05:00:00.000Z'),
+      };
+      const updatedUser = {
+        ...mockUser,
+        email,
+        isEmailVerified: true,
+      };
+      mockUserRepo.findByEmail.mockResolvedValue(null);
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([tokenRecord]) }),
+      });
+      mockDb.update
+        .mockReturnValueOnce({
+          set: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([]) }),
+        })
+        .mockReturnValueOnce({
+          set: vi.fn().mockReturnValue({
+            where: vi.fn().mockReturnValue({
+              returning: vi.fn().mockResolvedValue([updatedUser]),
+            }),
+          }),
+        });
+
+      await expect(
+        authEmailVerificationApi().verifyAccountEmailVerificationCode(
+          mockUser.id,
+          email,
+          code,
+        ),
+      ).resolves.toMatchObject({
+        verified: true,
+        user: {
+          email,
+          isEmailVerified: true,
+        },
+      });
+
+      expect(mockDb.update).toHaveBeenCalledTimes(2);
     });
 
     it('verifies the latest 6-digit email code and marks the user verified', async () => {
