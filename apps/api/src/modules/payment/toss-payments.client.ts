@@ -5,6 +5,7 @@ export interface TossPaymentResponse {
   paymentKey: string;
   orderId: string;
   method?: string | null;
+  isPartialCancelable?: boolean;
   totalAmount: number;
   balanceAmount?: number;
   status: string;

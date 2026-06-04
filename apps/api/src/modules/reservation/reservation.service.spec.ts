@@ -2559,16 +2559,112 @@ describe('ReservationService', () => {
         }));
     });
 
-    it('rejects account-transfer ticket-item partial cancellation before calling Toss', async () => {
+    it('accepts BankPay account-transfer partial cancellation when Toss marks the refund in progress', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-06-04T13:48:00.000Z'));
+
+      try {
+        const reservationId = randomUUID();
+        const userId = randomUUID();
+        const ticketItemId = randomUUID();
+        vi.spyOn(service, 'getReservationDetail').mockResolvedValue({
+          id: reservationId,
+          ticketItems: [],
+        } as never);
+        mockTossClient.queryPayment.mockResolvedValueOnce({
+          paymentKey: 'pk_ticket_item_cancel',
+          orderId: 'GRP-20260604-UTFFP',
+          method: '계좌이체',
+          isPartialCancelable: true,
+          totalAmount: 724000,
+          balanceAmount: 724000,
+          status: 'DONE',
+          approvedAt: '2026-06-04T10:43:12+09:00',
+          cancels: [],
+        });
+        mockTossClient.cancelPayment.mockResolvedValueOnce({
+          paymentKey: 'pk_ticket_item_cancel',
+          orderId: 'GRP-20260604-UTFFP',
+          method: '계좌이체',
+          isPartialCancelable: true,
+          totalAmount: 724000,
+          balanceAmount: 362000,
+          status: 'PARTIAL_CANCELED',
+          approvedAt: '2026-06-04T10:43:12+09:00',
+          cancels: [{
+            cancelAmount: 362000,
+            cancelReason: '다른 좌석으로 재예매',
+            canceledAt: '2026-06-04T22:48:00+09:00',
+            cancelStatus: 'IN_PROGRESS',
+          }],
+        });
+        const { updateCalls } = setupTicketItemCancelTransaction({
+          reservationId,
+          userId,
+          ticketItemId,
+          paymentMethod: '계좌이체',
+          paymentProvider: 'CARD',
+          paymentAmount: 724000,
+          reservationCreatedAt: new Date('2026-06-04T01:43:12.000Z'),
+          showtimeAt: new Date('2026-07-04T06:00:00.000Z'),
+          price: 360000,
+          serviceFee: TICKET_SERVICE_FEE_KRW,
+          activeRemainingRows: [{ id: randomUUID() }],
+        });
+
+        await expect(service.cancelTicketItem(
+          reservationId,
+          ticketItemId,
+          userId,
+          '다른 좌석으로 재예매',
+        )).resolves.toMatchObject({ id: reservationId });
+
+        expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
+          'pk_ticket_item_cancel',
+          '다른 좌석으로 재예매',
+          {
+            cancelAmount: 362000,
+            idempotencyKey: `ticket-item-cancel:${ticketItemId}`,
+            secretKeyScope: 'default',
+          },
+        );
+        const ticketItemUpdates = updateCalls.filter((call) => call.table === ticketItems);
+        expect(ticketItemUpdates[0]?.values).toMatchObject({
+          status: 'cancellation_pending',
+        });
+        expect(ticketItemUpdates[1]?.values).toMatchObject({
+          status: 'cancelled',
+          reopenState: 'available',
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('restores the ticket item when Toss reports partial cancellation is unavailable', async () => {
       const reservationId = randomUUID();
       const userId = randomUUID();
       const ticketItemId = randomUUID();
+      mockTossClient.queryPayment.mockResolvedValueOnce({
+        paymentKey: 'pk_ticket_item_cancel',
+        orderId: 'GRP-20260604-UTFFP',
+        method: '계좌이체',
+        isPartialCancelable: false,
+        totalAmount: 724000,
+        balanceAmount: 724000,
+        status: 'DONE',
+        approvedAt: '2026-06-04T10:43:12+09:00',
+        cancels: [],
+      });
       const { updateCalls } = setupTicketItemCancelTransaction({
         reservationId,
         userId,
         ticketItemId,
-        paymentMethod: 'TRANSFER',
-        paymentProvider: 'TOSS_TRANSFER',
+        paymentMethod: '계좌이체',
+        paymentProvider: 'CARD',
+        paymentAmount: 724000,
+        price: 360000,
+        serviceFee: TICKET_SERVICE_FEE_KRW,
         activeRemainingRows: [{ id: randomUUID() }],
       });
 
@@ -2577,10 +2673,18 @@ describe('ReservationService', () => {
         ticketItemId,
         userId,
         '다른 좌석으로 재예매',
-      )).rejects.toThrow('계좌이체 결제는 좌석별 부분취소를 지원하지 않습니다');
+      )).rejects.toThrow('이 결제수단은 좌석별 부분취소를 지원하지 않습니다');
 
       expect(mockTossClient.cancelPayment).not.toHaveBeenCalled();
-      expect(updateCalls).toHaveLength(0);
+      const ticketItemUpdates = updateCalls.filter((call) => call.table === ticketItems);
+      expect(ticketItemUpdates[0]?.values).toMatchObject({
+        status: 'cancellation_pending',
+      });
+      expect(ticketItemUpdates[1]?.values).toMatchObject({
+        status: 'active',
+        cancelledAt: null,
+        reopenState: 'not_required',
+      });
     });
 
     it('uses provider-currency PayPal partial cancel options for a non-last ticket item', async () => {
