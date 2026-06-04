@@ -55,6 +55,7 @@ import { redisConfig } from './config/redis.config.js';
               name: 'default',
               ttl: 60_000,
               limit: 60,
+              skipIf: (context) => trafficDefense.shouldSkipDefaultThrottle(context),
               getTracker: (req) =>
                 trafficDefense.resolveDefaultTracker(
                   req as Parameters<TrafficDefenseService['resolveDefaultTracker']>[0],

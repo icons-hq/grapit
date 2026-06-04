@@ -229,4 +229,42 @@ describe('useQueue', () => {
     expect(result.current.status).toBe('admitted');
     randomSpy.mockRestore();
   });
+
+  it('keeps authentication failures distinct from retryable queue throttling', async () => {
+    postMock.mockRejectedValueOnce(
+      new ApiClientErrorMock('인증이 만료되었습니다. 다시 로그인해주세요.', 401),
+    );
+
+    const { result } = renderHook(
+      () =>
+        useQueue({
+          performanceId: 'performance-auth-required',
+        }),
+      {
+        wrapper: createWrapper(),
+      },
+    );
+
+    await flushQueueEffects();
+
+    expect(result.current.status).toBe('authRequired');
+  });
+
+  it('does not enter the queue while the booking route is disabled by auth gating', async () => {
+    const { result } = renderHook(
+      () =>
+        useQueue({
+          performanceId: 'performance-disabled',
+          enabled: false,
+        }),
+      {
+        wrapper: createWrapper(),
+      },
+    );
+
+    await flushQueueEffects();
+
+    expect(postMock).not.toHaveBeenCalled();
+    expect(result.current.status).toBe('loading');
+  });
 });

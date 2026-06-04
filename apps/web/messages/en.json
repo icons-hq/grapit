@@ -121,6 +121,12 @@
           "description": "Rejoin the queue to receive a fresh admission window.",
           "helper": "After rejoining, you can still see position, ETA, and remaining seats."
         },
+        "authRequired": {
+          "badge": "Login required",
+          "title": "Log in before entering the booking queue",
+          "description": "Check your login state and start booking again.",
+          "helper": "After logging in, use the booking button to enter the queue."
+        },
         "retry": {
           "badge": "Try again shortly",
           "title": "Too many requests. Please try again shortly",

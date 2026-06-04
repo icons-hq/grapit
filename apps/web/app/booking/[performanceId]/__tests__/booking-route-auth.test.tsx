@@ -1,0 +1,129 @@
+import { Suspense, type ReactNode } from 'react';
+import { render, screen, waitFor } from '@testing-library/react';
+import '@testing-library/jest-dom/vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import BookingRoute from '../page';
+
+const {
+  useQueueMock,
+  useBookingAvailabilityMock,
+  useAuthStoreMock,
+} = vi.hoisted(() => ({
+  useQueueMock: vi.fn(),
+  useBookingAvailabilityMock: vi.fn(),
+  useAuthStoreMock: vi.fn(),
+}));
+
+vi.mock('@/hooks/use-queue', () => ({
+  useQueue: useQueueMock,
+}));
+
+vi.mock('@/hooks/use-booking-availability', () => ({
+  useBookingAvailability: useBookingAvailabilityMock,
+}));
+
+vi.mock('@/stores/use-auth-store', () => ({
+  useAuthStore: useAuthStoreMock,
+}));
+
+vi.mock('@/components/auth/auth-guard', () => ({
+  AuthGuard: ({ children }: { children: ReactNode }) => <>{children}</>,
+}));
+
+vi.mock('@/components/booking/booking-page', () => ({
+  BookingPage: ({ performanceId }: { performanceId: string }) => (
+    <div>booking page {performanceId}</div>
+  ),
+}));
+
+vi.mock('@/components/booking/queue-waiting', () => ({
+  QueueWaiting: ({ status }: { status: string }) => <div>queue {status}</div>,
+}));
+
+describe('BookingRoute auth gating', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useBookingAvailabilityMock.mockReturnValue({
+      bookingAvailable: true,
+      isAdminBookingBypassActive: false,
+      isResolved: true,
+    });
+    useQueueMock.mockReturnValue({
+      status: 'loading',
+      position: 0,
+      etaSeconds: 0,
+      remainingSeats: 0,
+      autoEnter: false,
+      isReady: false,
+      retry: vi.fn(),
+      enterNow: vi.fn(),
+    });
+  });
+
+  it('does not enable queue entry before auth initialization completes', async () => {
+    useAuthStoreMock.mockReturnValue({
+      isInitialized: false,
+      accessToken: null,
+    });
+
+    renderBookingRoute();
+
+    await waitFor(() => {
+      expect(useQueueMock).toHaveBeenCalledWith({
+        performanceId: 'performance-auth',
+        enabled: false,
+      });
+    });
+    expect(await screen.findByText('queue loading')).toBeInTheDocument();
+  });
+
+  it('does not enable queue entry for signed-out visitors', async () => {
+    useAuthStoreMock.mockReturnValue({
+      isInitialized: true,
+      accessToken: null,
+    });
+
+    renderBookingRoute();
+
+    await waitFor(() => {
+      expect(useQueueMock).toHaveBeenCalledWith({
+        performanceId: 'performance-auth',
+        enabled: false,
+      });
+    });
+  });
+
+  it('enables queue entry after the visitor has an access token', async () => {
+    useAuthStoreMock.mockReturnValue({
+      isInitialized: true,
+      accessToken: 'access-token',
+    });
+
+    renderBookingRoute();
+
+    await waitFor(() => {
+      expect(useQueueMock).toHaveBeenCalledWith({
+        performanceId: 'performance-auth',
+        enabled: true,
+      });
+    });
+  });
+});
+
+function renderBookingRoute() {
+  render(
+    <Suspense fallback={<div>loading params</div>}>
+      <BookingRoute
+        params={fulfilledParams({ performanceId: 'performance-auth' })}
+      />
+    </Suspense>,
+  );
+}
+
+function fulfilledParams<T>(value: T): Promise<T> {
+  return {
+    status: 'fulfilled',
+    value,
+    then: vi.fn(),
+  } as unknown as Promise<T>;
+}
