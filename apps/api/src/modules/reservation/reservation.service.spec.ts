@@ -504,6 +504,13 @@ describe('ReservationService', () => {
       payment_id: args.paymentId ?? 'payment-1',
       payment_key: args.paymentKey ?? 'pk_ticket_item_cancel',
       payment_status: args.paymentStatus ?? 'DONE',
+      payment_method: '카드',
+      payment_provider: 'TOSS_PAYMENTS',
+      payment_currency: 'KRW',
+      payment_amount: 150000,
+      payment_provider_metadata: null,
+      payment_provider_charge_currency: null,
+      payment_provider_charge_amount_minor: null,
       ticket_item_id: args.ticketItemId,
       ticket_item_status: args.ticketItemStatus ?? 'active',
       admission_state: args.admissionState ?? 'not_entered',
@@ -536,8 +543,7 @@ describe('ReservationService', () => {
       }
     > = [];
     const transactionCommitted = vi.fn();
-    const selectChain = (() => {
-      const rows = args.activeRemainingRows ?? [{ id: 'ticket-item-sibling' }];
+    function makeSelectChain(rows: Array<{ id: string }>) {
       const handler: ProxyHandler<object> = {
         get(_target, prop) {
           if (prop === 'then') {
@@ -555,10 +561,16 @@ describe('ReservationService', () => {
       };
 
       return new Proxy({}, handler);
-    })();
+    }
+    const siblingRows = args.activeRemainingRows ?? [{ id: 'ticket-item-sibling' }];
+    const activeRows = [{ id: args.ticketItemId }, ...siblingRows];
+    let selectCount = 0;
     const mockTx = {
       execute: vi.fn().mockResolvedValue({ rows: [row] }),
-      select: vi.fn().mockReturnValue(selectChain),
+      select: vi.fn(() => {
+        selectCount += 1;
+        return makeSelectChain(selectCount === 1 ? activeRows : siblingRows);
+      }),
       update: vi.fn((table: unknown) => ({
         set: vi.fn((values: Record<string, unknown>) => {
           const call = { table, values } as {
@@ -1993,7 +2005,9 @@ describe('ReservationService', () => {
       await expect(service.cancelReservation(reservationId, userId, '단순 변심'))
         .resolves.not.toThrow();
 
-      expect(mockTossClient.cancelPayment).toHaveBeenCalledWith('pk_test_123', '단순 변심');
+      expect(mockTossClient.cancelPayment).toHaveBeenCalledWith('pk_test_123', '단순 변심', {
+        idempotencyKey: expect.stringMatching(/^reservation-cancel:/),
+      });
     });
 
     it('rejects reservation-level cancel when seat-level ticket items exist, including cancelled items', async () => {
@@ -2137,10 +2151,9 @@ describe('ReservationService', () => {
         expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
           'pk_ticket_item_cancel',
           '일정 변경',
-          expect.objectContaining({
-            cancelAmount: 69300,
+          {
             idempotencyKey: `ticket-item-cancel:${ticketItemId}`,
-          }),
+          },
         );
         expect(updateCalls.find((call) => call.table === ticketItems)?.values).toMatchObject({
           cancellationFee: 7700,
@@ -2151,7 +2164,10 @@ describe('ReservationService', () => {
           status: 'CANCELLED',
           cancelReason: '일정 변경',
         });
-        expect(updateCalls.some((call) => call.table === payments)).toBe(false);
+        expect(updateCalls.find((call) => call.table === payments)?.values).toMatchObject({
+          status: 'CANCELED',
+          cancelReason: '일정 변경',
+        });
       } finally {
         vi.useRealTimers();
       }
@@ -2291,7 +2307,7 @@ describe('ReservationService', () => {
       });
       expect(updateCalls.some((call) => call.table === seatInventories)).toBe(false);
       expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
-      expect(mockTossClient.queryPayment).toHaveBeenCalledWith('pk_ticket_item_cancel');
+      expect(mockTossClient.queryPayment).toHaveBeenCalledWith('pk_ticket_item_cancel', {});
     });
 
     it('continues cancellation when Toss query confirms a lost partial-cancel response', async () => {
@@ -2642,8 +2658,11 @@ describe('ReservationService', () => {
         '단순 변심',
       )).resolves.toMatchObject({ id: reservationId });
 
-      expect(sqlPredicateHasParamValue(selectWhereCalls[0], 'cancellation_pending')).toBe(true);
-      expect(sqlPredicateHasParamValue(selectWhereCalls[0], ticketItemId)).toBe(true);
+      const siblingPredicate = selectWhereCalls.find((predicate) =>
+        sqlPredicateHasParamValue(predicate, 'cancellation_pending') &&
+        sqlPredicateHasParamValue(predicate, ticketItemId),
+      );
+      expect(siblingPredicate).toBeDefined();
       expect(updateCalls.some((call) => call.table === reservations)).toBe(false);
     });
 

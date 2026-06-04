@@ -47,6 +47,7 @@ type ApprovedPaymentSnapshot = {
   providerChargeAmountMinor?: number | null;
   providerChargeRate?: string | null;
   providerChargeQuotedAt?: Date | null;
+  providerMetadata?: Record<string, unknown> | null;
 };
 type PaypalConfirmPaymentRequest = Extract<ConfirmPaymentRequest, { provider: 'PAYPAL' }>;
 type OverseasCardConfirmPaymentRequest = Extract<ConfirmPaymentRequest, { provider: 'OVERSEAS_CARD' }>;
@@ -390,6 +391,7 @@ export class ReservationFinalizationService {
           providerChargeAmountMinor: existingPayment.providerChargeAmountMinor,
           providerChargeRate: existingPayment.providerChargeRate,
           providerChargeQuotedAt: existingPayment.providerChargeQuotedAt,
+          providerMetadata: existingPayment.providerMetadata as Record<string, unknown> | null,
         };
       } else {
         const tossResponse = await this.tossClient.confirmPayment({
@@ -404,14 +406,20 @@ export class ReservationFinalizationService {
           orderId: tossResponse.orderId,
           method: paypalProviderCharge
             ? tossResponse.method || 'FOREIGN_EASY_PAY'
-            : tossResponse.method,
+            : tossResponse.method || 'CARD',
           provider: paypalProviderCharge ? 'PAYPAL' : 'CARD',
           currency: 'KRW',
           totalAmount: providerCharge
             ? reservation.totalAmount
             : tossResponse.totalAmount,
-          approvedAt: tossResponse.approvedAt,
+          approvedAt: tossResponse.approvedAt ?? new Date().toISOString(),
           asyncStatus: 'sync',
+          providerMetadata: isOverseasCardConfirm
+            ? {
+                requestedProvider: 'OVERSEAS_CARD',
+                secretKeyScope: 'overseas-card',
+              }
+            : null,
           ...(providerCharge
             ? {
                 providerChargeCurrency: providerCharge.currency,
@@ -495,6 +503,7 @@ export class ReservationFinalizationService {
                 amount: approvedPayment.totalAmount,
                 paidAt: new Date(approvedPayment.approvedAt),
                 asyncStatus: approvedPayment.asyncStatus ?? 'pending_webhook',
+                providerMetadata: approvedPayment.providerMetadata ?? undefined,
                 ...providerChargeValues,
               })
               .where(eq(payments.id, approvedPayment.existingPaymentId));
@@ -513,6 +522,7 @@ export class ReservationFinalizationService {
                 amount: approvedPayment.totalAmount,
                 status: 'DONE',
                 paidAt: new Date(approvedPayment.approvedAt),
+                providerMetadata: approvedPayment.providerMetadata ?? undefined,
                 ...providerChargeValues,
               })
               .returning({ id: payments.id });

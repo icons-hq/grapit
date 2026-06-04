@@ -235,7 +235,9 @@ describe('RefundService', () => {
 
     const result = await service.requestRefund('reservation-1', 'user-1', '단순 변심');
 
-    expect(tossPaymentsClient.cancelPayment).toHaveBeenCalledWith('pay-key-1', '단순 변심');
+    expect(tossPaymentsClient.cancelPayment).toHaveBeenCalledWith('pay-key-1', '단순 변심', {
+      idempotencyKey: 'reservation-cancel:reservation-1:payment-1',
+    });
     expect(retrySpy).toHaveBeenCalledWith(requestedRefund.id, requestedRefund.retryCount);
     expect(recordScheduleSpy).toHaveBeenCalledWith(
       retryableRefund,

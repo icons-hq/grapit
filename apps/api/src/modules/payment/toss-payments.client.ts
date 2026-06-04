@@ -4,14 +4,19 @@ import { ConfigService } from '@nestjs/config';
 export interface TossPaymentResponse {
   paymentKey: string;
   orderId: string;
-  method: string;
+  method?: string | null;
   totalAmount: number;
+  balanceAmount?: number;
   status: string;
-  approvedAt: string;
+  approvedAt?: string | null;
   cancels?: Array<{
     cancelAmount: number;
     cancelReason: string;
     canceledAt: string;
+    cancelStatus?: string | null;
+    transactionKey?: string | null;
+    cancelRequestId?: string | null;
+    refundableAmount?: number | null;
   }>;
 }
 
@@ -22,6 +27,8 @@ export interface TossPaymentRequestOptions {
 
 export interface TossPaymentCancelOptions extends TossPaymentRequestOptions {
   cancelAmount?: number;
+  currency?: string;
+  cancelRequestId?: string;
 }
 
 export class TossPaymentError extends Error {
@@ -163,12 +170,23 @@ export class TossPaymentsClient {
     reason: string,
     options: TossPaymentCancelOptions = {},
   ): Promise<TossPaymentResponse> {
-    const body: { cancelReason: string; cancelAmount?: number } = {
+    const body: {
+      cancelReason: string;
+      cancelAmount?: number;
+      currency?: string;
+      cancelRequestId?: string;
+    } = {
       cancelReason: reason,
     };
 
     if (options.cancelAmount !== undefined) {
       body.cancelAmount = options.cancelAmount;
+    }
+    if (options.currency !== undefined) {
+      body.currency = options.currency;
+    }
+    if (options.cancelRequestId !== undefined) {
+      body.cancelRequestId = options.cancelRequestId;
     }
 
     const response = await fetch(

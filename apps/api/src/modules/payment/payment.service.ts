@@ -10,12 +10,14 @@ import {
 import { and, eq, or, sql } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
+  refunds,
   paymentWebhookEvents,
   payments,
   reservationSeats,
   reservations,
   seatInventories,
   ticketItems,
+  tickets,
 } from '../../database/schema/index.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
 import { QrTicketService } from '../ticket/qr-ticket.service.js';
@@ -26,8 +28,10 @@ import type {
   ReservationStatus,
   PaymentStatus,
 } from '@grabit/shared';
-import { TossPaymentsClient } from './toss-payments.client.js';
+import { normalizeSeatIdentity } from '@grabit/shared';
+import { TossPaymentsClient, type TossPaymentRequestOptions } from './toss-payments.client.js';
 import { ProviderChargeQuoteService } from './provider-charge-quote.service.js';
+import { resolvePaymentCancelSecretScope } from './payment-cancel-policy.js';
 
 type TossWebhookProvider = PaymentProvider | 'ALIPAY';
 type ProviderChargeQuote = {
@@ -103,6 +107,7 @@ export interface TossWebhookRequestBody {
     approvedAt?: string;
     canceledAt?: string;
     cancelReason?: string;
+    easyPay?: string;
   };
 }
 
@@ -137,6 +142,11 @@ type WebhookPaymentSnapshot = {
   tossOrderId: string;
   amount: number;
   status: PaymentStatus;
+  method: string;
+  provider: string;
+  currency: string;
+  providerMetadata?: unknown;
+  providerChargeCurrency?: string | null;
   providerChargeAmountMinor?: number | null;
 };
 
@@ -442,7 +452,7 @@ export class PaymentService {
           method: queriedPayment.method || 'FOREIGN_EASY_PAY',
           provider: this.toWebhookProvider(input.provider),
           totalAmount: queriedPayment.totalAmount,
-          approvedAt: queriedPayment.approvedAt,
+          approvedAt: queriedPayment.approvedAt ?? undefined,
         },
       },
       paymentStatus,
@@ -485,6 +495,38 @@ export class PaymentService {
     };
   }
 
+  async findProviderQueryOptions(
+    orderId: string,
+    paymentKey: string,
+  ): Promise<TossPaymentRequestOptions | undefined> {
+    const [payment] = await this.db
+      .select({
+        id: payments.id,
+        reservationId: payments.reservationId,
+        paymentKey: payments.paymentKey,
+        method: payments.method,
+        provider: payments.provider,
+        currency: payments.currency,
+        amount: payments.amount,
+        providerMetadata: payments.providerMetadata,
+        providerChargeCurrency: payments.providerChargeCurrency,
+        providerChargeAmountMinor: payments.providerChargeAmountMinor,
+      })
+      .from(payments)
+      .where(
+        or(
+          eq(payments.tossOrderId, orderId),
+          eq(payments.paymentKey, paymentKey),
+        ),
+      );
+    if (!payment) {
+      return undefined;
+    }
+
+    const secretKeyScope = resolvePaymentCancelSecretScope(payment);
+    return secretKeyScope ? { secretKeyScope } : undefined;
+  }
+
   async upsertAsyncPaymentProgress(
     payload: TossWebhookRequestBody,
     paymentStatus: PaymentStatus,
@@ -517,6 +559,11 @@ export class PaymentService {
         tossOrderId: payments.tossOrderId,
         amount: payments.amount,
         status: payments.status,
+        method: payments.method,
+        provider: payments.provider,
+        currency: payments.currency,
+        providerMetadata: payments.providerMetadata,
+        providerChargeCurrency: payments.providerChargeCurrency,
         providerChargeAmountMinor: payments.providerChargeAmountMinor,
       })
       .from(payments)
@@ -638,6 +685,137 @@ export class PaymentService {
         })
         .where(eq(reservations.id, reservation.id));
     }
+
+    if (
+      paymentStatus === 'CANCELED'
+      && reservation.status === 'CONFIRMED'
+      && existingPayment
+    ) {
+      await this.finalizeConfirmedProviderCancel({
+        reservation,
+        payment: existingPayment,
+        reason: payload.data.cancelReason ?? 'Toss 결제 취소 완료',
+        cancelledAt: cancelledAt ?? new Date(),
+      });
+    }
+  }
+
+  private async finalizeConfirmedProviderCancel(input: {
+    reservation: WebhookReservationSnapshot;
+    payment: WebhookPaymentSnapshot;
+    reason: string;
+    cancelledAt: Date;
+  }): Promise<void> {
+    const { reservation, payment, reason, cancelledAt } = input;
+    const ticketItemRows = await this.db
+      .select({
+        id: ticketItems.id,
+        seatId: ticketItems.seatId,
+        floorKey: ticketItems.floorKey,
+        seatKey: ticketItems.seatKey,
+      })
+      .from(ticketItems)
+      .where(eq(ticketItems.reservationId, reservation.id));
+    const legacySeatRows = ticketItemRows.length > 0
+      ? []
+      : await this.db
+        .select({ seatId: reservationSeats.seatId })
+        .from(reservationSeats)
+        .where(eq(reservationSeats.reservationId, reservation.id));
+    const seatIdentities = ticketItemRows.length > 0
+      ? ticketItemRows.map((item) => ({
+          seatId: item.seatId,
+          floorKey: item.floorKey,
+          seatKey: item.seatKey,
+        }))
+      : legacySeatRows.map((seat) => normalizeSeatIdentity({ seatId: seat.seatId }));
+    const now = new Date();
+
+    await this.db.transaction(async (tx) => {
+      await tx
+        .update(reservations)
+        .set({
+          status: 'CANCELLED',
+          cancelledAt,
+          cancelReason: reason,
+          updatedAt: now,
+        })
+        .where(eq(reservations.id, reservation.id));
+
+      await tx
+        .update(payments)
+        .set({
+          status: 'CANCELED',
+          cancelledAt,
+          cancelReason: reason,
+          providerMetadata: {
+            ...(payment.providerMetadata as Record<string, unknown> | null),
+            providerCancelFinalizedAt: now.toISOString(),
+          },
+        })
+        .where(eq(payments.id, payment.id));
+
+      await tx
+        .insert(refunds)
+        .values({
+          reservationId: reservation.id,
+          paymentId: payment.id,
+          status: 'completed',
+          provider: 'toss_payments',
+          resultCode: 'CANCELED',
+          resultMessage: 'Provider cancel completed by webhook',
+          providerMetadata: {
+            cancelReason: reason,
+            source: 'CANCEL_STATUS_CHANGED',
+          },
+          requestedAt: cancelledAt,
+          sentToPgAt: cancelledAt,
+          completedAt: now,
+          expectedDepositAt: new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000),
+          createdAt: now,
+          updatedAt: now,
+        })
+        .onConflictDoNothing({ target: refunds.reservationId });
+
+      await tx
+        .update(ticketItems)
+        .set({
+          status: 'cancelled',
+          cancelledAt,
+          cancelReason: reason,
+          reopenState: 'held_cancelled',
+          updatedAt: now,
+        })
+        .where(eq(ticketItems.reservationId, reservation.id));
+
+      await tx
+        .update(tickets)
+        .set({
+          status: 'revoked',
+          revokedAt: cancelledAt,
+          updatedAt: now,
+        })
+        .where(eq(tickets.reservationId, reservation.id));
+
+      for (const seatIdentity of seatIdentities) {
+        await tx
+          .update(seatInventories)
+          .set({
+            status: 'held_cancelled',
+            lockedBy: null,
+            lockedUntil: null,
+            heldCancelledAt: cancelledAt,
+            soldAt: null,
+          })
+          .where(
+            and(
+              eq(seatInventories.showtimeId, reservation.showtimeId),
+              eq(seatInventories.floorKey, seatIdentity.floorKey),
+              eq(seatInventories.seatKey, seatIdentity.seatKey),
+            ),
+          );
+      }
+    });
   }
 
   private async finalizeAsyncDonePayment(input: {
@@ -1229,6 +1407,14 @@ export class PaymentService {
 
     if (payload.data.provider) {
       return payload.data.provider;
+    }
+
+    const easyPay = payload.data.easyPay?.trim().toUpperCase();
+    if (easyPay === 'ALIPAY' || easyPay === '알리페이') {
+      return 'ALIPAY_PLUS';
+    }
+    if (easyPay === 'PAYPAL' || easyPay === '페이팔') {
+      return 'PAYPAL';
     }
 
     if (payload.data.method === 'FOREIGN_EASY_PAY') {

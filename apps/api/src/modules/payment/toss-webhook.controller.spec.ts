@@ -18,6 +18,7 @@ function createMockPaymentService() {
   return {
     recordWebhookEvent: vi.fn<PaymentService['recordWebhookEvent']>(),
     findAsyncPaymentProgress: vi.fn<PaymentService['findAsyncPaymentProgress']>(),
+    findProviderQueryOptions: vi.fn<PaymentService['findProviderQueryOptions']>(),
     upsertAsyncPaymentProgress: vi.fn<PaymentService['upsertAsyncPaymentProgress']>(),
     markWebhookEventProcessed: vi.fn<PaymentService['markWebhookEventProcessed']>(),
     markWebhookEventFailed: vi.fn<PaymentService['markWebhookEventFailed']>(),
@@ -170,6 +171,32 @@ describe('PaymentWebhookController', () => {
     expect(parsed.data.provider).toBe('ALIPAY');
   });
 
+  it('accepts live Toss nullable fields and decimal foreign easy-pay totals', () => {
+    const parsed = tossWebhookSchema.parse({
+      eventType: 'PAYMENT_STATUS_CHANGED',
+      createdAt: '2026-06-04T10:17:34.772742',
+      data: {
+        mId: 'heygramkfw',
+        paymentKey: 'pay_live_alipay',
+        orderId: 'GRP-LIVE-ALIPAY',
+        status: 'ABORTED',
+        method: '해외간편결제',
+        provider: null,
+        easyPay: '알리페이',
+        currency: 'USD',
+        totalAmount: 55.76,
+        approvedAt: null,
+        canceledAt: null,
+        cancelReason: null,
+      },
+    });
+
+    expect(parsed.data.provider).toBeUndefined();
+    expect(parsed.data.easyPay).toBe('알리페이');
+    expect(parsed.data.totalAmount).toBe(55.76);
+    expect(parsed.data.approvedAt).toBeUndefined();
+  });
+
   it('uses Toss transmission header when the payment webhook body has no eventId', async () => {
     paymentService.recordWebhookEvent.mockResolvedValueOnce(
       makeLedgerResult({
@@ -308,6 +335,53 @@ describe('PaymentWebhookController', () => {
     expect(tossClient.queryPayment).toHaveBeenCalledWith('pay_async_1', {
       secretKeyScope: 'foreign-easy-pay',
     });
+  });
+
+  it('uses the foreign easy pay secret scope for live Alipay easyPay webhooks without provider', async () => {
+    const liveAlipayWebhook: TossWebhookRequestBody = {
+      eventId: 'evt-live-alipay-aborted',
+      eventType: 'PAYMENT_STATUS_CHANGED',
+      createdAt: '2026-06-04T10:17:34.772742',
+      data: {
+        paymentKey: 'pay_live_alipay',
+        orderId: 'GRP-LIVE-ALIPAY',
+        status: 'ABORTED',
+        method: '해외간편결제',
+        easyPay: '알리페이',
+        currency: 'USD',
+        totalAmount: 55.76,
+      },
+    };
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(
+      makeLedgerResult({ eventId: liveAlipayWebhook.eventId }),
+    );
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
+    tossClient.queryPayment.mockResolvedValueOnce(
+      makeQueriedPayment({
+        paymentKey: 'pay_live_alipay',
+        orderId: 'GRP-LIVE-ALIPAY',
+        status: 'ABORTED',
+        method: '해외간편결제',
+        totalAmount: 55.76,
+        approvedAt: null,
+      }),
+    );
+
+    await controller.handleTossWebhook(liveAlipayWebhook);
+
+    expect(tossClient.queryPayment).toHaveBeenCalledWith('pay_live_alipay', {
+      secretKeyScope: 'foreign-easy-pay',
+    });
+    expect(paymentService.upsertAsyncPaymentProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          easyPay: '알리페이',
+          status: 'ABORTED',
+        }),
+      }),
+      'ABORTED',
+      'payment_status_changed:aborted',
+    );
   });
 
   it('fails closed when a DONE webhook disagrees with queried Toss state', async () => {

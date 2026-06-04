@@ -20,6 +20,7 @@ import {
   reservations,
   seatInventories,
   showtimes,
+  ticketItems,
   tickets,
 } from '../../database/schema/index.js';
 import {
@@ -29,6 +30,7 @@ import {
   type ReleaseCancelledSeatJobPayload,
   type SeatIdentityPayload,
 } from '../jobs/pgboss.provider.js';
+import { buildFullPaymentCancelRequest } from '../payment/payment-cancel-policy.js';
 import { TossPaymentError, TossPaymentsClient, type TossPaymentResponse } from '../payment/toss-payments.client.js';
 
 type RefundRecord = typeof refunds.$inferSelect;
@@ -290,9 +292,16 @@ export class RefundService {
     const requestedRefund = await this.insertRequestedRefund(context, reason, actor);
 
     try {
-      const cancelResult = await this.tossPaymentsClient.cancelPayment(
-        context.payment.paymentKey,
+      const cancelRequest = buildFullPaymentCancelRequest({
+        payment: context.payment,
         reason,
+        idempotencyKey: `reservation-cancel:${context.reservation.id}:${context.payment.id}`,
+        cancelRequestSeed: requestedRefund.id,
+      });
+      const cancelResult = await this.tossPaymentsClient.cancelPayment(
+        cancelRequest.paymentKey,
+        cancelRequest.reason,
+        cancelRequest.options,
       );
 
       if (isTossCancelCompleted(cancelResult)) {
@@ -594,6 +603,7 @@ export class RefundService {
       providerMetadata: {
         cancelReason: reason,
         paymentStatus: response.status,
+        latestCancel: response.cancels?.[response.cancels.length - 1] ?? null,
       },
       updatedAt: now,
     });
@@ -750,6 +760,19 @@ export class RefundService {
           updatedAt: now,
         })
         .where(eq(tickets.reservationId, context.reservation.id));
+
+      await tx
+        .update(ticketItems)
+        .set({
+          status: 'cancelled',
+          cancelledAt: now,
+          cancelReason: reason,
+          reopenState: 'held_cancelled',
+          reopenHoldUntil: releaseAt,
+          reopenJobId: persistedReleaseJobId,
+          updatedAt: now,
+        })
+        .where(eq(ticketItems.reservationId, context.reservation.id));
 
       for (const seatIdentity of seatIdentities) {
         await tx

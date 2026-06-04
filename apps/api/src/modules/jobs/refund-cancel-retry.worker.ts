@@ -16,6 +16,7 @@ import {
   reservations,
   seatInventories,
   showtimes,
+  ticketItems,
   tickets,
 } from '../../database/schema/index.js';
 import {
@@ -31,6 +32,7 @@ import {
   SEAT_RELEASE_ENQUEUE_FAILED_JOB_ID,
 } from '../refund/refund.service.js';
 import { TossPaymentsClient, type TossPaymentResponse } from '../payment/toss-payments.client.js';
+import { buildFullPaymentCancelRequest } from '../payment/payment-cancel-policy.js';
 import {
   PG_BOSS,
   PG_BOSS_JOB_NAMES,
@@ -58,6 +60,10 @@ type RetryContext = {
 };
 
 const REFUND_CANCEL_RETRY_METADATA_KEY = 'refundCancelRetry';
+
+function latestCancelStatus(response: TossPaymentResponse): string | null {
+  return response.cancels?.[response.cancels.length - 1]?.cancelStatus ?? null;
+}
 
 function getRefundProviderMetadata(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
@@ -119,11 +125,44 @@ export class RefundCancelRetryWorker implements OnModuleInit {
 
     const reason = this.resolveCancelReason(context.refund);
     const nextRetryCount = context.refund.retryCount + 1;
+    const cancelRequest = buildFullPaymentCancelRequest({
+      payment: context.payment,
+      reason,
+      idempotencyKey: `reservation-cancel:${context.reservation.id}:${context.payment.id}`,
+      cancelRequestSeed: context.refund.id,
+    });
 
     try {
-      const response = await this.tossPaymentsClient.cancelPayment(
+      const queried = await this.tossPaymentsClient.queryPayment(
         context.payment.paymentKey,
-        reason,
+        cancelRequest.options.secretKeyScope
+          ? { secretKeyScope: cancelRequest.options.secretKeyScope }
+          : {},
+      );
+      if (isTossCancelCompleted(queried)) {
+        await this.finalizeSuccessfulRetry(context, queried, reason);
+        return { status: 'completed' };
+      }
+      if (latestCancelStatus(queried) === 'IN_PROGRESS') {
+        await this.markRefundProcessing(context.refund.id, queried, reason, nextRetryCount);
+        const jobId = await this.scheduleRetry(context.refund.id, nextRetryCount);
+        await this.recordRetryScheduleState(
+          context.refund.id,
+          {
+            cancelReason: reason,
+            paymentStatus: queried.status,
+            cancelStatus: 'IN_PROGRESS',
+          },
+          nextRetryCount,
+          jobId,
+        );
+        return { status: jobId ? 'processing' : 'retry_schedule_failed' };
+      }
+
+      const response = await this.tossPaymentsClient.cancelPayment(
+        cancelRequest.paymentKey,
+        cancelRequest.reason,
+        cancelRequest.options,
       );
 
       if (isTossCancelCompleted(response)) {
@@ -138,6 +177,7 @@ export class RefundCancelRetryWorker implements OnModuleInit {
         {
           cancelReason: reason,
           paymentStatus: response.status,
+          latestCancel: response.cancels?.[response.cancels.length - 1] ?? null,
         },
         nextRetryCount,
         jobId,
@@ -433,6 +473,19 @@ export class RefundCancelRetryWorker implements OnModuleInit {
           updatedAt: now,
         })
         .where(eq(tickets.reservationId, context.reservation.id));
+
+      await tx
+        .update(ticketItems)
+        .set({
+          status: 'cancelled',
+          cancelledAt: now,
+          cancelReason: reason,
+          reopenState: 'held_cancelled',
+          reopenHoldUntil: releaseAt,
+          reopenJobId: persistedReleaseJobId,
+          updatedAt: now,
+        })
+        .where(eq(ticketItems.reservationId, context.reservation.id));
 
       for (const seatIdentity of seatIdentities) {
         await tx

@@ -195,6 +195,63 @@ describe('TossPaymentsClient', () => {
     );
   });
 
+  it('sends currency and cancelRequestId for async foreign easy-pay partial cancellation', async () => {
+    const foreignEasyPaySecretKey = 'test_sk_foreign_easy_pay_secret';
+    const foreignEasyPayAuthHeader =
+      `Basic ${Buffer.from(`${foreignEasyPaySecretKey}:`).toString('base64')}`;
+    client = new TossPaymentsClient({
+      get: vi.fn((key: string, fallback?: string) => {
+        if (key === 'TOSS_SECRET_KEY') return secretKey;
+        if (key === 'TOSS_FOREIGN_EASY_PAY_SECRET_KEY') return foreignEasyPaySecretKey;
+        return fallback;
+      }),
+    } as unknown as ConfigService);
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        ...paidResponse,
+        status: 'PARTIAL_CANCELED',
+        cancels: [
+          {
+            cancelAmount: 17,
+            cancelReason: 'Alipay ticket cancel',
+            canceledAt: '2026-06-04T11:00:00+09:00',
+            cancelStatus: 'DONE',
+            transactionKey: 'tx_cancel_alipay_1',
+            cancelRequestId: 'cancel_ticket-item-1',
+            refundableAmount: 51,
+          },
+        ],
+      }),
+    });
+
+    await client.cancelPayment('pay_foreign_easy_pay', 'Alipay ticket cancel', {
+      idempotencyKey: 'ticket-item-cancel:ticket-item-1',
+      secretKeyScope: 'foreign-easy-pay',
+      cancelAmount: 17,
+      currency: 'USD',
+      cancelRequestId: 'cancel_ticket-item-1',
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.tosspayments.com/v1/payments/pay_foreign_easy_pay/cancel',
+      expect.objectContaining({
+        method: 'POST',
+        headers: expect.objectContaining({
+          Authorization: foreignEasyPayAuthHeader,
+          'Content-Type': 'application/json',
+          'Idempotency-Key': 'ticket-item-cancel:ticket-item-1',
+        }),
+        body: JSON.stringify({
+          cancelReason: 'Alipay ticket cancel',
+          cancelAmount: 17,
+          currency: 'USD',
+          cancelRequestId: 'cancel_ticket-item-1',
+        }),
+      }),
+    );
+  });
+
   it('queries Toss payment state with server-side secret auth', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,

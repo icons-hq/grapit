@@ -2,7 +2,14 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { BadRequestException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { PaymentMethod } from '@grabit/shared';
-import { ticketItems } from '../../database/schema/index.js';
+import {
+  payments,
+  refunds,
+  reservations,
+  seatInventories,
+  ticketItems,
+  tickets,
+} from '../../database/schema/index.js';
 import { PaymentService } from './payment.service.js';
 
 function createMockDb() {
@@ -615,6 +622,68 @@ describe('PaymentService', () => {
       });
     });
 
+    it('records live Alipay failed webhook as foreign easy pay from easyPay payload', async () => {
+      const reservationId = randomUUID();
+      const showtimeId = randomUUID();
+      const userId = randomUUID();
+      const providerChargeQuotedAt = new Date('2026-06-04T01:17:34.000Z');
+      const insertPayment = createMutationChain();
+      const updateReservation = createMutationChain();
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          userId,
+          showtimeId,
+          status: 'PENDING_PAYMENT',
+          totalAmount: 82000,
+          providerChargeCurrency: 'USD',
+          providerChargeAmountMinor: 5576,
+          providerChargeRate: '0.00068',
+          providerChargeQuotedAt,
+        }]))
+        .mockReturnValueOnce(createSelectChain([]));
+      mockDb.insert.mockReturnValueOnce(insertPayment);
+      mockDb.update.mockReturnValueOnce(updateReservation);
+
+      await service.upsertAsyncPaymentProgress(
+        {
+          eventId: 'evt-live-alipay-aborted',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_live_alipay',
+            orderId: 'GRP-LIVE-ALIPAY',
+            status: 'ABORTED',
+            method: '해외간편결제',
+            easyPay: '알리페이',
+            currency: 'USD',
+            totalAmount: 55.76,
+          },
+        },
+        'ABORTED',
+        'payment_status_changed:aborted',
+      );
+
+      expect(insertPayment.values).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reservationId,
+          paymentKey: 'pay_live_alipay',
+          tossOrderId: 'GRP-LIVE-ALIPAY',
+          method: 'FOREIGN_EASY_PAY',
+          provider: 'ALIPAY_PLUS',
+          currency: 'KRW',
+          amount: 82000,
+          status: 'ABORTED',
+          asyncStatus: 'payment_status_changed:aborted',
+          providerChargeCurrency: 'USD',
+          providerChargeAmountMinor: 5576,
+        }),
+      );
+      expect(updateReservation.set).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'FAILED' }),
+      );
+    });
+
     it('finalizes Alipay DONE webhook only when provider totalAmount matches the stored USD quote', async () => {
       const reservationId = randomUUID();
       const showtimeId = randomUUID();
@@ -1027,6 +1096,26 @@ describe('PaymentService', () => {
       const reservationId = randomUUID();
       const paymentId = randomUUID();
       const updatePayment = createMutationChain();
+      const txUpdateCalls: Array<{ table: unknown; values: Record<string, unknown> }> = [];
+      const txInsertCalls: Array<{ table: unknown; values: Record<string, unknown> }> = [];
+      const tx = {
+        update: vi.fn((table: unknown) => ({
+          set: vi.fn((values: Record<string, unknown>) => {
+            txUpdateCalls.push({ table, values });
+            return {
+              where: vi.fn().mockResolvedValue(undefined),
+            };
+          }),
+        })),
+        insert: vi.fn((table: unknown) => ({
+          values: vi.fn((values: Record<string, unknown>) => {
+            txInsertCalls.push({ table, values });
+            return {
+              onConflictDoNothing: vi.fn().mockResolvedValue(undefined),
+            };
+          }),
+        })),
+      };
 
       mockDb.select
         .mockReturnValueOnce(createSelectChain([{
@@ -1043,8 +1132,18 @@ describe('PaymentService', () => {
           tossOrderId: 'GRP-PAYPAL-CANCELLED',
           amount: 150000,
           status: 'DONE',
+          providerMetadata: null,
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: randomUUID(),
+          seatId: 'A-1',
+          floorKey: '1F',
+          seatKey: '1F:A-1',
         }]));
       mockDb.update.mockReturnValueOnce(updatePayment);
+      mockDb.transaction.mockImplementationOnce(
+        async (callback: (txArg: typeof tx) => Promise<unknown>) => callback(tx),
+      );
 
       await service.upsertAsyncPaymentProgress(
         {
@@ -1075,8 +1174,27 @@ describe('PaymentService', () => {
         asyncStatus: 'cancelled_webhook',
         cancelReason: 'provider cancellation',
       }));
-      expect(mockDb.transaction).not.toHaveBeenCalled();
-      expect(mockDb.insert).not.toHaveBeenCalled();
+      expect(txUpdateCalls.find((call) => call.table === reservations)?.values).toMatchObject({
+        status: 'CANCELLED',
+        cancelReason: 'provider cancellation',
+      });
+      expect(txUpdateCalls.find((call) => call.table === payments)?.values).toMatchObject({
+        status: 'CANCELED',
+        cancelReason: 'provider cancellation',
+      });
+      expect(txInsertCalls.find((call) => call.table === refunds)?.values).toMatchObject({
+        status: 'completed',
+        paymentId,
+      });
+      expect(txUpdateCalls.find((call) => call.table === ticketItems)?.values).toMatchObject({
+        status: 'cancelled',
+      });
+      expect(txUpdateCalls.find((call) => call.table === tickets)?.values).toMatchObject({
+        status: 'revoked',
+      });
+      expect(txUpdateCalls.find((call) => call.table === seatInventories)?.values).toMatchObject({
+        status: 'held_cancelled',
+      });
       expect(mockDb.update).toHaveBeenCalledTimes(1);
     });
 

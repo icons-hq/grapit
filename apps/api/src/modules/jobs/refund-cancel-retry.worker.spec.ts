@@ -104,6 +104,15 @@ describe('RefundCancelRetryWorker', () => {
       stop: vi.fn(),
     };
     const tossPaymentsClient = {
+      queryPayment: vi.fn().mockResolvedValue({
+        paymentKey: 'pay-key-1',
+        orderId: 'GRP-REFUND-1',
+        method: '카드',
+        totalAmount: 150000,
+        status: 'DONE',
+        approvedAt: '2026-05-08T03:00:00.000Z',
+        cancels: [],
+      }),
       cancelPayment: vi
         .fn()
         .mockRejectedValue(new TossPaymentError('INTERNAL_SERVER_ERROR', 'provider 5xx')),
@@ -132,7 +141,10 @@ describe('RefundCancelRetryWorker', () => {
       attempt: 1,
     });
 
-    expect(tossPaymentsClient.cancelPayment).toHaveBeenCalledWith('pay-key-1', '단순 변심');
+    expect(tossPaymentsClient.queryPayment).toHaveBeenCalledWith('pay-key-1', {});
+    expect(tossPaymentsClient.cancelPayment).toHaveBeenCalledWith('pay-key-1', '단순 변심', {
+      idempotencyKey: 'reservation-cancel:reservation-1:payment-1',
+    });
     expect(recordTransientSpy).toHaveBeenCalled();
     expect(scheduleRetrySpy).toHaveBeenCalledWith('refund-1', 1);
     expect(recordScheduleSpy).toHaveBeenCalledWith(
@@ -155,6 +167,15 @@ describe('RefundCancelRetryWorker', () => {
       stop: vi.fn(),
     };
     const tossPaymentsClient = {
+      queryPayment: vi.fn().mockResolvedValue({
+        paymentKey: 'pay-key-1',
+        orderId: 'GRP-REFUND-1',
+        method: '카드',
+        totalAmount: 150000,
+        status: 'DONE',
+        approvedAt: '2026-05-08T03:00:00.000Z',
+        cancels: [],
+      }),
       cancelPayment: vi
         .fn()
         .mockRejectedValue(new TossPaymentError('INTERNAL_SERVER_ERROR', 'provider 5xx')),
@@ -196,6 +217,15 @@ describe('RefundCancelRetryWorker', () => {
 
   it('attempts the configured final retry before marking retry exhausted', async () => {
     const tossPaymentsClient = {
+      queryPayment: vi.fn().mockResolvedValue({
+        paymentKey: 'pay-key-1',
+        orderId: 'GRP-REFUND-1',
+        method: '카드',
+        totalAmount: 150000,
+        status: 'DONE',
+        approvedAt: '2026-05-08T03:00:00.000Z',
+        cancels: [],
+      }),
       cancelPayment: vi
         .fn()
         .mockRejectedValue(new TossPaymentError('INTERNAL_SERVER_ERROR', 'provider 5xx')),
@@ -223,7 +253,9 @@ describe('RefundCancelRetryWorker', () => {
 
     const result = await worker.handleJob({ refundId: 'refund-1', attempt: 3 });
 
-    expect(tossPaymentsClient.cancelPayment).toHaveBeenCalledWith('pay-key-1', '단순 변심');
+    expect(tossPaymentsClient.cancelPayment).toHaveBeenCalledWith('pay-key-1', '단순 변심', {
+      idempotencyKey: 'reservation-cancel:reservation-1:payment-1',
+    });
     expect(recordTransientSpy).toHaveBeenCalledWith(
       'refund-1',
       expect.any(TossPaymentError),

@@ -36,6 +36,11 @@ import {
   type TossPaymentResponse,
 } from '../payment/toss-payments.client.js';
 import {
+  buildFullPaymentCancelRequest,
+  buildTicketItemPaymentCancelRequest,
+  type PaymentCancelPolicyPayment,
+} from '../payment/payment-cancel-policy.js';
+import {
   ProviderChargeQuoteService,
   type ForeignEasyPayProviderChargeQuote,
 } from '../payment/provider-charge-quote.service.js';
@@ -108,6 +113,13 @@ type TicketItemCancellationContext = {
   paymentId: string;
   paymentKey: string;
   paymentStatus: string;
+  paymentMethod: string;
+  paymentProvider: string;
+  paymentCurrency: string;
+  paymentAmount: number;
+  paymentProviderMetadata: unknown;
+  paymentProviderChargeCurrency: string | null;
+  paymentProviderChargeAmountMinor: number | null;
   ticketItemId: string;
   ticketItemStatus: string;
   admissionState: string;
@@ -133,6 +145,7 @@ type PreparedTicketItemCancellation = {
   reason: string;
   isPendingRetry: boolean;
   now: Date;
+  activeTicketItemCount: number;
 };
 type TicketItemPaymentCancelOutcome =
   | 'cancelled'
@@ -1483,6 +1496,18 @@ export class ReservationService {
       paymentId: String(row['payment_id']),
       paymentKey: String(row['payment_key']),
       paymentStatus: String(row['payment_status']),
+      paymentMethod: String(row['payment_method']),
+      paymentProvider: String(row['payment_provider']),
+      paymentCurrency: String(row['payment_currency']),
+      paymentAmount: Number(row['payment_amount']),
+      paymentProviderMetadata: row['payment_provider_metadata'],
+      paymentProviderChargeCurrency: row['payment_provider_charge_currency']
+        ? String(row['payment_provider_charge_currency'])
+        : null,
+      paymentProviderChargeAmountMinor: row['payment_provider_charge_amount_minor'] === null
+        || row['payment_provider_charge_amount_minor'] === undefined
+        ? null
+        : Number(row['payment_provider_charge_amount_minor']),
       ticketItemId: String(row['ticket_item_id']),
       ticketItemStatus: String(row['ticket_item_status']),
       admissionState: String(row['admission_state']),
@@ -1530,21 +1555,37 @@ export class ReservationService {
   }
 
   private async cancelTicketItemPaymentOrConfirm(input: {
-    paymentKey: string;
+    payment: PaymentCancelPolicyPayment;
     reason: string;
     refundableAmount: number;
     ticketItemId: string;
+    activeTicketItemCount: number;
     isPendingRetry: boolean;
   }): Promise<TicketItemPaymentCancelOutcome> {
+    const cancelRequest = buildTicketItemPaymentCancelRequest({
+      payment: input.payment,
+      reason: input.reason,
+      cancelAmountKrw: input.refundableAmount,
+      activeTicketItemCount: input.activeTicketItemCount,
+      idempotencyKey: `ticket-item-cancel:${input.ticketItemId}`,
+      cancelRequestSeed: input.ticketItemId,
+    });
     let matchingCancelsBefore: number | undefined;
     let matchingCancelsAfter: number | undefined;
     try {
-      const beforePayment = await this.tossClient.queryPayment(input.paymentKey);
-      matchingCancelsBefore = this.countMatchingTossCancellations(
-        beforePayment,
-        input.refundableAmount,
-        input.reason,
+      const beforePayment = await this.tossClient.queryPayment(
+        input.payment.paymentKey,
+        cancelRequest.options.secretKeyScope
+          ? { secretKeyScope: cancelRequest.options.secretKeyScope }
+          : {},
       );
+      if (cancelRequest.options.cancelAmount !== undefined) {
+        matchingCancelsBefore = this.countMatchingTossCancellations(
+          beforePayment,
+          cancelRequest.options.cancelAmount,
+          input.reason,
+        );
+      }
     } catch (queryError) {
       this.logger.error(
         `Toss ticket-item pre-cancel snapshot failed. ticketItemId=${input.ticketItemId}`,
@@ -1553,21 +1594,33 @@ export class ReservationService {
     }
 
     try {
-      await this.tossClient.cancelPayment(input.paymentKey, input.reason, {
-        cancelAmount: input.refundableAmount,
-        idempotencyKey: `ticket-item-cancel:${input.ticketItemId}`,
-      });
+      await this.tossClient.cancelPayment(
+        cancelRequest.paymentKey,
+        cancelRequest.reason,
+        cancelRequest.options,
+      );
       return 'cancelled';
     } catch (cancelError) {
       try {
-        const payment = await this.tossClient.queryPayment(input.paymentKey);
-        matchingCancelsAfter = this.countMatchingTossCancellations(
-          payment,
-          input.refundableAmount,
-          input.reason,
+        const payment = await this.tossClient.queryPayment(
+          input.payment.paymentKey,
+          cancelRequest.options.secretKeyScope
+            ? { secretKeyScope: cancelRequest.options.secretKeyScope }
+            : {},
         );
+        if (cancelRequest.options.cancelAmount === undefined && payment.status === 'CANCELED') {
+          return 'cancelled';
+        }
+        if (cancelRequest.options.cancelAmount !== undefined) {
+          matchingCancelsAfter = this.countMatchingTossCancellations(
+            payment,
+            cancelRequest.options.cancelAmount,
+            input.reason,
+          );
+        }
         if (
           matchingCancelsBefore !== undefined
+          && matchingCancelsAfter !== undefined
           && matchingCancelsAfter > matchingCancelsBefore
         ) {
           this.logger.warn(
@@ -1633,6 +1686,13 @@ export class ReservationService {
             p.id AS payment_id,
             p.payment_key,
             p.status AS payment_status,
+            p.method AS payment_method,
+            p.provider AS payment_provider,
+            p.currency AS payment_currency,
+            p.amount AS payment_amount,
+            p.provider_metadata AS payment_provider_metadata,
+            p.provider_charge_currency AS payment_provider_charge_currency,
+            p.provider_charge_amount_minor AS payment_provider_charge_amount_minor,
             ti.id AS ticket_item_id,
             ti.status AS ticket_item_status,
             ti.admission_state,
@@ -1661,6 +1721,15 @@ export class ReservationService {
           userId,
         );
         this.assertTicketItemCancellable(context);
+        const activeTicketItemRows = await tx
+          .select({ id: ticketItems.id })
+          .from(ticketItems)
+          .where(
+            and(
+              eq(ticketItems.reservationId, reservationId),
+              inArray(ticketItems.status, ['active', 'cancellation_pending']),
+            ),
+          );
 
         const now = new Date();
         const isPendingRetry = context.ticketItemStatus === 'cancellation_pending';
@@ -1725,16 +1794,31 @@ export class ReservationService {
           reason: cancellationReason,
           isPendingRetry,
           now: preparedAt,
+          activeTicketItemCount: activeTicketItemRows.length,
         };
       });
 
       if (preparedCancellation.quote.refundableAmount > 0) {
         tossCancelAttempted = true;
         const cancelOutcome = await this.cancelTicketItemPaymentOrConfirm({
-          paymentKey: preparedCancellation.context.paymentKey,
+          payment: {
+            id: preparedCancellation.context.paymentId,
+            reservationId,
+            paymentKey: preparedCancellation.context.paymentKey,
+            method: preparedCancellation.context.paymentMethod,
+            provider: preparedCancellation.context.paymentProvider,
+            currency: preparedCancellation.context.paymentCurrency,
+            amount: preparedCancellation.context.paymentAmount,
+            providerMetadata: preparedCancellation.context.paymentProviderMetadata,
+            providerChargeCurrency:
+              preparedCancellation.context.paymentProviderChargeCurrency,
+            providerChargeAmountMinor:
+              preparedCancellation.context.paymentProviderChargeAmountMinor,
+          },
           reason: preparedCancellation.reason,
           refundableAmount: preparedCancellation.quote.refundableAmount,
           ticketItemId,
+          activeTicketItemCount: preparedCancellation.activeTicketItemCount,
           isPendingRetry: preparedCancellation.isPendingRetry,
         });
 
@@ -1826,6 +1910,14 @@ export class ReservationService {
               updatedAt: new Date(),
             })
             .where(eq(reservations.id, reservationId));
+          await tx
+            .update(payments)
+            .set({
+              status: 'CANCELED',
+              cancelledAt: committedCancellation.now,
+              cancelReason: committedCancellation.reason,
+            })
+            .where(eq(payments.id, committedCancellation.context.paymentId));
         }
 
         return {
@@ -1941,9 +2033,11 @@ export class ReservationService {
 
   async cancelReservation(reservationId: string, userId: string, reason: string): Promise<void> {
     let showtimeId: string | undefined;
+    let tossCancelAttempted = false;
+    let dbUpdateStarted = false;
 
     try {
-      await this.db.transaction(async (tx) => {
+      const prepared = await this.db.transaction(async (tx) => {
         // 1. SELECT FOR UPDATE to lock the reservation row (prevents double-cancel race)
         const result = await tx.execute(
           sql`SELECT id, user_id, showtime_id, status, cancel_deadline FROM reservations WHERE id = ${reservationId} FOR UPDATE`,
@@ -1981,11 +2075,31 @@ export class ReservationService {
           .from(payments)
           .where(eq(payments.reservationId, reservationId));
 
-        // 3. Call Toss cancel before DB updates
-        if (payment) {
-          await this.tossClient.cancelPayment(payment.paymentKey, reason);
-        }
+        const cancelledSeats = await tx
+          .select({ seatId: reservationSeats.seatId })
+          .from(reservationSeats)
+          .where(eq(reservationSeats.reservationId, reservationId));
 
+        return { row, payment: payment ?? null, cancelledSeats };
+      });
+
+      if (prepared.payment) {
+        const cancelRequest = buildFullPaymentCancelRequest({
+          payment: prepared.payment,
+          reason,
+          idempotencyKey: `reservation-cancel:${reservationId}:${prepared.payment.id}`,
+          cancelRequestSeed: reservationId,
+        });
+        tossCancelAttempted = true;
+        await this.tossClient.cancelPayment(
+          cancelRequest.paymentKey,
+          cancelRequest.reason,
+          cancelRequest.options,
+        );
+      }
+
+      dbUpdateStarted = true;
+      await this.db.transaction(async (tx) => {
         // 4. Update reservation + payment + restore seats
         const now = new Date();
         await tx
@@ -1998,7 +2112,7 @@ export class ReservationService {
           })
           .where(eq(reservations.id, reservationId));
 
-        if (payment) {
+        if (prepared.payment) {
           await tx
             .update(payments)
             .set({
@@ -2010,19 +2124,14 @@ export class ReservationService {
         }
 
         // Restore seat_inventories to available
-        const cancelledSeats = await tx
-          .select({ seatId: reservationSeats.seatId })
-          .from(reservationSeats)
-          .where(eq(reservationSeats.reservationId, reservationId));
-
-        for (const seat of cancelledSeats) {
+        for (const seat of prepared.cancelledSeats) {
           const seatIdentity = normalizeSeatIdentity({ seatId: seat.seatId });
           await tx
             .update(seatInventories)
             .set({ status: 'available', soldAt: null, lockedBy: null, lockedUntil: null })
             .where(
               and(
-                eq(seatInventories.showtimeId, row.showtime_id),
+                eq(seatInventories.showtimeId, prepared.row.showtime_id),
                 eq(seatInventories.floorKey, seatIdentity.floorKey),
                 or(
                   eq(seatInventories.seatKey, seatIdentity.seatKey),
@@ -2044,11 +2153,17 @@ export class ReservationService {
       ) {
         throw error;
       }
-      // Toss cancel succeeded but DB failed — log CRITICAL for manual reconciliation
-      this.logger.error(
-        `CRITICAL: DB transaction failed after Toss cancel. reservationId=${reservationId}. Manual reconciliation required.`,
-        error instanceof Error ? error.stack : String(error),
-      );
+      if (tossCancelAttempted && dbUpdateStarted) {
+        this.logger.error(
+          `CRITICAL: DB transaction failed after Toss cancel. reservationId=${reservationId}. Manual reconciliation required.`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      } else {
+        this.logger.error(
+          `Reservation cancel failed. reservationId=${reservationId}`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      }
       throw new InternalServerErrorException(
         '취소 처리 중 오류가 발생했습니다. 고객센터에 문의해주세요.',
       );
