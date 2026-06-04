@@ -209,12 +209,22 @@ describe('Phase 24 booking core shared contracts', () => {
         issuedAt: '2026-05-08T11:46:00.000Z',
         emailScheduledAt: '2026-07-17T10:00:00.000Z',
       },
+      ticketEmailDelivery: {
+        email: 'buyer@example.com',
+        isEmailVerified: true,
+        isPlaceholderEmail: false,
+        canSend: true,
+        status: 'ready',
+        scheduledAt: '2026-07-17T10:00:00.000Z',
+        lastSentAt: null,
+      },
       ticketItems: [makeTicketItem()],
     });
 
     expect(parsedDetail.refundTimeline.currentState).toBe('PROCESSING_AT_PG');
     expect(parsedDetail.cancelledSeatHold.releaseWindowMinutes.max).toBe(10);
     expect(parsedDetail.qrTicket.jti).toBe('qr-jti-1');
+    expect(parsedDetail.ticketEmailDelivery.canSend).toBe(true);
     expect(parsedDetail.ticketItems[0]?.qrCredential?.jti).toBe(
       'qr-jti-seat-a1',
     );

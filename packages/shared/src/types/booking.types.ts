@@ -75,6 +75,21 @@ export interface ProviderChargeQuote {
   quotedAt: string;
 }
 
+export type TicketEmailDeliveryStatus =
+  | 'verification_required'
+  | 'ready'
+  | 'sent';
+
+export interface TicketEmailDelivery {
+  email: string;
+  isEmailVerified: boolean;
+  isPlaceholderEmail: boolean;
+  canSend: boolean;
+  status: TicketEmailDeliveryStatus;
+  scheduledAt: string | null;
+  lastSentAt: string | null;
+}
+
 export interface PaymentMethod {
   method: PaymentMethodType;
   provider: PaymentProvider;
@@ -208,6 +223,7 @@ export interface ReservationDetail extends ReservationListItem {
   refundTimeline: RefundTimeline;
   cancelledSeatHold: CancelledSeatHold | null;
   qrTicket: QrTicket;
+  ticketEmailDelivery: TicketEmailDelivery;
   ticketItems: TicketItem[];
 }
 

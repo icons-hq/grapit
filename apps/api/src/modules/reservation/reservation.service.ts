@@ -58,6 +58,7 @@ import { BookingGateway } from '../booking/booking.gateway.js';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
 import { ConsentService, type ConsentRequestMeta } from '../consent/consent.service.js';
 import { QrTicketService } from '../ticket/qr-ticket.service.js';
+import { resolveTicketEmailDelivery } from '../ticket/ticket-email-delivery.js';
 import { ReservationFinalizationService } from './reservation-finalization.service.js';
 import {
   DEFAULT_PERFORMANCE_BOOKING_POLICY,
@@ -1308,6 +1309,23 @@ export class ReservationService {
         });
     const qrTicket = qrTickets.find((ticket) => ticket.status === 'ACTIVE' && ticket.token)
       ?? this.createBlockingQrTicket(row.reservation.createdAt);
+    const [ticketEmailUser] = await this.db
+      .select({
+        email: users.email,
+        isEmailVerified: users.isEmailVerified,
+      })
+      .from(users)
+      .where(eq(users.id, userId));
+    if (!ticketEmailUser) {
+      throw new NotFoundException('사용자를 찾을 수 없습니다');
+    }
+    const scheduledAt =
+      qrTickets.find((ticket) => ticket.emailScheduledAt)?.emailScheduledAt ?? null;
+    const sentAtValues = qrTickets
+      .map((ticket) => ticket.emailedAt)
+      .filter((value): value is string => typeof value === 'string' && value.length > 0)
+      .sort();
+    const lastSentAt = sentAtValues.at(-1) ?? null;
 
     return {
       id: row.reservation.id,
@@ -1351,6 +1369,12 @@ export class ReservationService {
       },
       cancelledSeatHold: null,
       qrTicket,
+      ticketEmailDelivery: resolveTicketEmailDelivery({
+        email: ticketEmailUser.email,
+        isEmailVerified: ticketEmailUser.isEmailVerified,
+        scheduledAt,
+        lastSentAt,
+      }),
       ticketItems: ticketItemDtos,
     };
   }

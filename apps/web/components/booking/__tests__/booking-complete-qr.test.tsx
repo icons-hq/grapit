@@ -10,6 +10,12 @@ vi.mock('next/navigation', () => ({
   }),
 }));
 
+vi.mock('@/components/reservation/ticket-email-delivery-panel', () => ({
+  TicketEmailDeliveryPanel: () => (
+    <div>QR 티켓 안내 메일은 공연 24시간 전에 다시 발송됩니다.</div>
+  ),
+}));
+
 const rawQrToken = 'raw-token-booking-complete-should-not-render';
 const rawQrJti = 'raw-jti-booking-complete-should-not-render';
 const secondRawQrToken = 'raw-token-booking-complete-seat-2-should-not-render';
@@ -87,6 +93,15 @@ function createReservation(
       issuedAt: '2026-05-22T06:02:00.000Z',
       emailScheduledAt: '2026-07-03T10:00:00.000Z',
       emailedAt: null,
+    },
+    ticketEmailDelivery: {
+      email: 'customer@grabit.test',
+      isEmailVerified: true,
+      isPlaceholderEmail: false,
+      canSend: true,
+      status: 'ready',
+      scheduledAt: '2026-07-03T10:00:00.000Z',
+      lastSentAt: null,
     },
     ticketItems: [
       {

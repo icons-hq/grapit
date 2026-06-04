@@ -5,6 +5,7 @@ import { render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
 import { BookingPage } from '@/components/booking/booking-page';
+import { ApiClientError } from '@/lib/api-client';
 import { useBookingStore } from '@/stores/use-booking-store';
 
 const {
@@ -14,6 +15,7 @@ const {
   routerPushMock,
   useLocaleMock,
   seatStatusSeatsMock,
+  toastInfoMock,
 } = vi.hoisted(() => ({
   lockSeatMutateMock: vi.fn(),
   unlockSeatMutateMock: vi.fn(),
@@ -24,10 +26,18 @@ const {
     '1F:A-1': 'available',
     '2F:A-1': 'available',
   })),
+  toastInfoMock: vi.fn(),
 }));
 
 vi.mock('next-intl', () => ({
   useLocale: useLocaleMock,
+}));
+
+vi.mock('sonner', () => ({
+  toast: {
+    info: toastInfoMock,
+    error: vi.fn(),
+  },
 }));
 
 vi.mock('next/navigation', () => ({
@@ -224,6 +234,7 @@ describe('BookingPage floor selector', () => {
     unlockSeatMutateMock.mockReset();
     unlockAllMutateMock.mockReset();
     routerPushMock.mockReset();
+    toastInfoMock.mockReset();
     useLocaleMock.mockReturnValue('ko');
     seatStatusSeatsMock.mockReset();
     seatStatusSeatsMock.mockReturnValue({
@@ -306,6 +317,26 @@ describe('BookingPage floor selector', () => {
     expect(
       screen.getByText(/결제 완료 후 좌석 변경은 지원되지 않으며, 취소\/환불 후 다시 예매해야 합니다\./),
     ).toBeInTheDocument();
+  });
+
+  it('surfaces backend 409 messages instead of replacing every conflict with other-owner copy', async () => {
+    const user = userEvent.setup();
+    lockSeatMutateMock.mockImplementation((variables, options) => {
+      options?.onError?.(
+        new ApiClientError('이 공연은 1인 최대 4매까지 예매할 수 있습니다', 409),
+        variables,
+        undefined as never,
+      );
+    });
+
+    renderWithQuery(<BookingPage performanceId="performance-floor-aware" />);
+
+    await user.click(screen.getByRole('button', { name: '현재 층 좌석 선택' }));
+
+    expect(toastInfoMock).toHaveBeenCalledWith(
+      '이 공연은 1인 최대 4매까지 예매할 수 있습니다',
+    );
+    expect(toastInfoMock).not.toHaveBeenCalledWith('이미 다른 사용자가 선택한 좌석입니다');
   });
 
   it('marks floors unavailable when all seats are held or disabled', () => {

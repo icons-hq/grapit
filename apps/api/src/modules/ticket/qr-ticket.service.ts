@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Inject,
   Injectable,
   Logger,
@@ -11,6 +12,7 @@ import { JwtService } from '@nestjs/jwt';
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import type { QrTicket, QrTicketStatus } from '@grabit/shared';
+import type { TicketEmailDelivery } from '@grabit/shared/types/booking.types.js';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
   payments,
@@ -23,6 +25,7 @@ import {
   venues,
 } from '../../database/schema/index.js';
 import { EmailService } from '../auth/email/email.service.js';
+import { resolveTicketEmailDelivery } from './ticket-email-delivery.js';
 import {
   PG_BOSS,
   PG_BOSS_JOB_NAMES,
@@ -85,6 +88,28 @@ type ReservationIssueContextWithTicketItems = ReservationIssueContext & {
 type QrTicketEmailJobPayload = {
   ticketId: string;
   reservationId: string;
+};
+
+type TicketEmailContextRow = {
+  ticket: TicketWithSeatRow;
+  reservation: {
+    id: string;
+    reservationNumber: string;
+  };
+  user: {
+    email: string;
+    isEmailVerified: boolean;
+    preferredLocale: string | null;
+  };
+  showtime: {
+    dateTime: Date;
+  };
+  performance: {
+    title: string;
+  };
+  venue: {
+    name: string | null;
+  } | null;
 };
 
 export interface QrTicketTokenPayload {
@@ -304,6 +329,42 @@ export class QrTicketService implements OnModuleInit {
       ticketRecord,
     );
     return this.toQrTicket(scheduledTicket);
+  }
+
+  async sendOwnedTicketsForReservationEmail(
+    reservationId: string,
+    userId: string,
+  ): Promise<{ ticketEmailDelivery: TicketEmailDelivery }> {
+    const row = await this.findTicketEmailContext({ reservationId, userId });
+    if (!row) {
+      throw new NotFoundException('QR 티켓을 찾을 수 없습니다');
+    }
+
+    const ticket = this.toTicketWithSeatRecord(row.ticket);
+    const delivery = this.resolveTicketEmailDelivery(row, ticket);
+    if (!delivery.canSend) {
+      throw new BadRequestException('티켓을 받을 이메일 인증이 필요합니다');
+    }
+
+    await this.sendTicketEmail(row, ticket);
+
+    const sentAt = new Date();
+    await this.db
+      .update(tickets)
+      .set({
+        emailSentAt: sentAt,
+        updatedAt: sentAt,
+      })
+      .where(eq(tickets.id, ticket.id));
+
+    return {
+      ticketEmailDelivery: resolveTicketEmailDelivery({
+        email: row.user.email,
+        isEmailVerified: row.user.isEmailVerified,
+        scheduledAt: ticket.emailScheduledAt?.toISOString() ?? null,
+        lastSentAt: sentAt.toISOString(),
+      }),
+    };
   }
 
   async verifyTicketToken(token: string): Promise<QrTicketTokenPayload> {
@@ -675,6 +736,7 @@ export class QrTicketService implements OnModuleInit {
         },
         user: {
           email: users.email,
+          isEmailVerified: users.isEmailVerified,
           preferredLocale: users.preferredLocale,
         },
         showtime: {
@@ -706,11 +768,92 @@ export class QrTicketService implements OnModuleInit {
       return;
     }
 
+    const delivery = this.resolveTicketEmailDelivery(row as TicketEmailContextRow, ticket);
+    if (!delivery.canSend) {
+      this.logger.warn(
+        `QR reminder skipped: ticket email verification required for reservationId=${row.reservation.id}`,
+      );
+      return;
+    }
+
+    await this.sendTicketEmail(row as TicketEmailContextRow, ticket);
+
+    await this.db
+      .update(tickets)
+      .set({
+        emailSentAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(tickets.id, ticket.id));
+  }
+
+  private async findTicketEmailContext(input: {
+    reservationId: string;
+    userId: string;
+  }): Promise<TicketEmailContextRow | undefined> {
+    const [row] = await this.db
+      .select({
+        ticket: this.ticketWithSeatRecordFields(),
+        reservation: {
+          id: reservations.id,
+          reservationNumber: reservations.reservationNumber,
+        },
+        user: {
+          email: users.email,
+          isEmailVerified: users.isEmailVerified,
+          preferredLocale: users.preferredLocale,
+        },
+        showtime: {
+          dateTime: showtimes.dateTime,
+        },
+        performance: {
+          title: performances.title,
+        },
+        venue: {
+          name: venues.name,
+        },
+      })
+      .from(tickets)
+      .innerJoin(ticketItems, eq(tickets.ticketItemId, ticketItems.id))
+      .innerJoin(reservations, eq(tickets.reservationId, reservations.id))
+      .innerJoin(payments, eq(tickets.paymentId, payments.id))
+      .innerJoin(users, eq(reservations.userId, users.id))
+      .innerJoin(showtimes, eq(tickets.showtimeId, showtimes.id))
+      .innerJoin(performances, eq(showtimes.performanceId, performances.id))
+      .leftJoin(venues, eq(performances.venueId, venues.id))
+      .where(
+        and(
+          eq(tickets.reservationId, input.reservationId),
+          eq(reservations.userId, input.userId),
+          eq(reservations.status, 'CONFIRMED'),
+          eq(payments.status, 'DONE'),
+          eq(tickets.status, 'active'),
+        ),
+      );
+
+    return row as TicketEmailContextRow | undefined;
+  }
+
+  private resolveTicketEmailDelivery(
+    row: TicketEmailContextRow,
+    ticket: TicketWithSeatRecord,
+  ): TicketEmailDelivery {
+    return resolveTicketEmailDelivery({
+      email: row.user.email,
+      isEmailVerified: row.user.isEmailVerified,
+      scheduledAt: ticket.emailScheduledAt?.toISOString() ?? null,
+      lastSentAt: ticket.emailSentAt?.toISOString() ?? null,
+    });
+  }
+
+  private async sendTicketEmail(
+    row: TicketEmailContextRow,
+    ticket: TicketWithSeatRecord,
+  ): Promise<void> {
     const ticketToken = await this.buildTicketToken(ticket);
-    const frontendUrl = (this.configService.get<string>('FRONTEND_URL') ?? 'http://localhost:3000').replace(
-      /\/$/,
-      '',
-    );
+    const frontendUrl = (
+      this.configService.get<string>('FRONTEND_URL') ?? 'http://localhost:3000'
+    ).replace(/\/$/, '');
     const ticketUrl = `${frontendUrl}/mypage/reservations/${row.reservation.id}`;
     const result = await this.emailService.sendQrTicketReminderEmail(row.user.email, {
       reservationNumber: row.reservation.reservationNumber,
@@ -725,14 +868,6 @@ export class QrTicketService implements OnModuleInit {
     if (!result.success) {
       throw new Error(result.error ?? 'QR reminder email send failed');
     }
-
-    await this.db
-      .update(tickets)
-      .set({
-        emailSentAt: new Date(),
-        updatedAt: new Date(),
-      })
-      .where(eq(tickets.id, ticket.id));
   }
 
   private async buildTicketToken(ticketRecord: TicketWithSeatRecord): Promise<string> {

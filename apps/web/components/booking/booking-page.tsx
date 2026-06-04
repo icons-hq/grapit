@@ -585,7 +585,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
           onError: (error: unknown) => {
             removeSeat(seatSelection.seatKey);
             if (error instanceof ApiClientError && error.statusCode === 409) {
-              toast.info('이미 다른 사용자가 선택한 좌석입니다');
+              toast.info(error.message.trim() || '이미 다른 사용자가 선택한 좌석입니다');
               return;
             }
 

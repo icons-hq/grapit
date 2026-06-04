@@ -186,6 +186,22 @@ export const qrTicketSchema = z.object({
   }
 });
 
+export const ticketEmailDeliveryStatusSchema = z.enum([
+  'verification_required',
+  'ready',
+  'sent',
+]);
+
+export const ticketEmailDeliverySchema = z.object({
+  email: z.string().email(),
+  isEmailVerified: z.boolean(),
+  isPlaceholderEmail: z.boolean(),
+  canSend: z.boolean(),
+  status: ticketEmailDeliveryStatusSchema,
+  scheduledAt: isoDatetime('QR 이메일 예약 시각').nullable(),
+  lastSentAt: isoDatetime('QR 이메일 최종 발송 시각').nullable(),
+});
+
 export const prepareReservationSchema = z.object({
   orderId: z.string().min(1, '주문 ID가 필요합니다'),
   showtimeId: z.string().uuid('유효한 회차 ID가 필요합니다'),
@@ -323,5 +339,6 @@ export const reservationDetailSchema = reservationListItemSchema.extend({
   refundTimeline: refundTimelineSchema,
   cancelledSeatHold: cancelledSeatHoldSchema.nullable(),
   qrTicket: qrTicketSchema,
+  ticketEmailDelivery: ticketEmailDeliverySchema,
   ticketItems: z.array(ticketItemSchema),
 });

@@ -7,7 +7,10 @@ export function SeatMapControls() {
   const { zoomIn, zoomOut, resetTransform } = useControls();
 
   return (
-    <div className="absolute bottom-4 right-4 z-50 flex flex-col gap-2">
+    <div
+      aria-label="좌석맵 보기 조절"
+      className="z-50 flex justify-end gap-2 bg-gray-50 px-3 pt-3 lg:absolute lg:right-4 lg:bottom-4 lg:flex-col lg:bg-transparent lg:p-0"
+    >
       <button
         type="button"
         onClick={() => zoomIn()}

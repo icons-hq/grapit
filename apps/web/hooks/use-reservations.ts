@@ -16,6 +16,8 @@ import type {
   AdminBookingListItem,
   AdminReservationExportFilter,
   BookingStats,
+  TicketEmailDelivery,
+  UserProfile,
 } from '@grabit/shared';
 
 export type ReservationExportPayload = AdminReservationExportFilter & {
@@ -80,6 +82,43 @@ export function useCancelTicketItem() {
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['reservations'] });
+    },
+  });
+}
+
+export function useRequestAccountEmailVerification() {
+  return useMutation({
+    mutationFn: ({ email, locale = 'ko' }: { email: string; locale?: string }) =>
+      apiClient.post<{ message: string; expiresAt: string }>(
+        '/api/v1/auth/email-verification/account-email/request',
+        { email, locale },
+      ),
+  });
+}
+
+export function useVerifyAccountEmail() {
+  return useMutation({
+    mutationFn: ({ email, code }: { email: string; code: string }) =>
+      apiClient.post<{ verified: boolean; user: UserProfile }>(
+        '/api/v1/auth/email-verification/account-email/verify',
+        { email, code },
+      ),
+  });
+}
+
+export function useSendReservationTicketEmail() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ reservationId }: { reservationId: string }) =>
+      apiClient.post<{ ticketEmailDelivery: TicketEmailDelivery }>(
+        `/api/v1/tickets/reservations/${reservationId}/email`,
+      ),
+    onSuccess: (_result, variables) => {
+      queryClient.invalidateQueries({
+        queryKey: ['reservations', variables.reservationId],
+      });
+      queryClient.invalidateQueries({ queryKey: ['reservations', 'me'] });
     },
   });
 }

@@ -1,11 +1,12 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { CheckCircle2, Mail, QrCode } from 'lucide-react';
+import { CheckCircle2, QrCode } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
+import { TicketEmailDeliveryPanel } from '@/components/reservation/ticket-email-delivery-panel';
 import {
   buildQrCheckInUrl,
   QrTicketImage,
@@ -375,14 +376,10 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
             ))}
           </div>
 
-          <div className="rounded-xl border border-white/80 bg-white/90 p-4">
-            <div className="flex items-start gap-3">
-              <Mail className="mt-0.5 h-4 w-4 text-[#6C3CE0]" />
-              <p className="text-sm text-gray-700">
-                QR 티켓 안내 메일은 공연 24시간 전에 다시 발송됩니다.
-              </p>
-            </div>
-          </div>
+          <TicketEmailDeliveryPanel
+            reservationId={booking.id}
+            delivery={booking.ticketEmailDelivery}
+          />
         </CardContent>
       </Card>
 
