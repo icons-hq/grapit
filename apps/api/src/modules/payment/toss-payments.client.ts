@@ -6,6 +6,7 @@ export interface TossPaymentResponse {
   orderId: string;
   method?: string | null;
   totalAmount: number;
+  balanceAmount?: number;
   status: string;
   approvedAt?: string | null;
   cancels?: Array<{

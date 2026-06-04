@@ -2508,6 +2508,65 @@ describe('ReservationService', () => {
       }
     });
 
+    it('finalizes the last domestic card ticket item when Toss reports partial-canceled with zero balance', async () => {
+      const reservationId = randomUUID();
+      const userId = randomUUID();
+      const ticketItemId = randomUUID();
+      vi.spyOn(service, 'getReservationDetail').mockResolvedValue({
+        id: reservationId,
+        status: 'CANCELLED',
+        ticketItems: [],
+      } as never);
+      mockTossClient.cancelPayment.mockResolvedValueOnce({
+        paymentKey: 'pk_ticket_item_cancel',
+        orderId: 'GRP-20260604-7F0XW',
+        method: '카드',
+        totalAmount: 724000,
+        balanceAmount: 0,
+        status: 'PARTIAL_CANCELED',
+        approvedAt: '2026-06-04T19:33:38+09:00',
+        cancels: [
+          {
+            cancelAmount: 362000,
+            cancelReason: '다른 좌석으로 재예매',
+            canceledAt: '2026-06-04T19:40:42+09:00',
+            cancelStatus: 'DONE',
+          },
+          {
+            cancelAmount: 362000,
+            cancelReason: '다른 좌석으로 재예매',
+            canceledAt: '2026-06-04T19:40:53+09:00',
+            cancelStatus: 'DONE',
+          },
+        ],
+      });
+      setupTicketItemCancelTransaction({
+        reservationId,
+        userId,
+        ticketItemId,
+        paymentAmount: 724000,
+        price: 360000,
+        serviceFee: TICKET_SERVICE_FEE_KRW,
+        activeRemainingRows: [],
+      });
+
+      await expect(service.cancelTicketItem(
+        reservationId,
+        ticketItemId,
+        userId,
+        '다른 좌석으로 재예매',
+      )).resolves.toMatchObject({ id: reservationId });
+
+      expect(mockPaymentCancellationFinalizer.finalizeFullPaymentCancellation)
+        .toHaveBeenCalledWith(expect.objectContaining({
+          source: 'ticket_item',
+          providerResponse: expect.objectContaining({
+            status: 'PARTIAL_CANCELED',
+            balanceAmount: 0,
+          }),
+        }));
+    });
+
     it('passes floor-aware seat identity to full cancellation finalization for the last ticket item', async () => {
       const reservationId = randomUUID();
       const userId = randomUUID();
