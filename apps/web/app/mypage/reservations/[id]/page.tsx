@@ -33,18 +33,13 @@ export default function ReservationDetailPage({ params }: ReservationDetailPageP
   }
 
   async function handleCancelTicketItem(ticketItemId: string, reason: string) {
-    try {
-      await cancelTicketItemMutation.mutateAsync({
-        reservationId: id,
-        ticketItemId,
-        reason,
-      });
-      toast.success('티켓이 취소되었습니다');
-      refetch();
-    } catch (error) {
-      toast.error('티켓 취소 처리에 실패했습니다. 잠시 후 다시 시도해주세요.');
-      throw error;
-    }
+    await cancelTicketItemMutation.mutateAsync({
+      reservationId: id,
+      ticketItemId,
+      reason,
+    });
+    toast.success('티켓이 취소되었습니다');
+    refetch();
   }
 
   return (

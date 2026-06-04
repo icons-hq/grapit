@@ -550,7 +550,9 @@ describe('ReservationService', () => {
     admissionState?: string;
     reservationCreatedAt?: Date;
     showtimeAt?: Date;
+    seatId?: string;
     seatKey?: string;
+    floorKey?: string;
     price?: number;
     serviceFee?: number;
     cancelledAt?: Date | null;
@@ -558,7 +560,13 @@ describe('ReservationService', () => {
     cancellationFee?: number;
     serviceFeeRefund?: number;
     refundableAmount?: number;
-    activeRemainingRows?: Array<{ id: string; refundableAmount?: number; seatId?: string }>;
+    activeRemainingRows?: Array<{
+      id: string;
+      refundableAmount?: number;
+      seatId?: string;
+      floorKey?: string;
+      seatKey?: string;
+    }>;
     reservationSeatRows?: Array<{ seat_id: string }>;
   }) {
     const row = {
@@ -584,9 +592,9 @@ describe('ReservationService', () => {
       ticket_item_id: args.ticketItemId,
       ticket_item_status: args.ticketItemStatus ?? 'active',
       admission_state: args.admissionState ?? 'not_entered',
-      seat_id: 'A-1',
+      seat_id: args.seatId ?? 'A-1',
       seat_key: args.seatKey ?? '1F:A-1',
-      floor_key: '1F',
+      floor_key: args.floorKey ?? '1F',
       price: args.price ?? 77000,
       service_fee: args.serviceFee ?? TICKET_SERVICE_FEE_KRW,
       cancelled_at: args.cancelledAt ?? null,
@@ -599,12 +607,16 @@ describe('ReservationService', () => {
       {
         id: args.ticketItemId,
         refundable_amount: args.refundableAmount ?? 0,
-        seat_id: 'A-1',
+        seat_id: args.seatId ?? 'A-1',
+        seat_key: args.seatKey ?? '1F:A-1',
+        floor_key: args.floorKey ?? '1F',
       },
       ...(args.activeRemainingRows ?? [{ id: 'ticket-item-sibling' }]).map((item, index) => ({
         id: item.id,
         refundable_amount: item.refundableAmount ?? 0,
         seat_id: item.seatId ?? `A-${index + 2}`,
+        floor_key: item.floorKey ?? '1F',
+        seat_key: item.seatKey ?? `1F:A-${index + 2}`,
       })),
     ];
     const reservationSeatRows = args.reservationSeatRows ?? [
@@ -2266,28 +2278,76 @@ describe('ReservationService', () => {
       expect(mockTossClient.cancelPayment).toHaveBeenCalledWith('pk_test_123', '단순 변심');
     });
 
-    it('rejects reservation-level cancel when seat-level ticket items exist, including cancelled items', async () => {
+    it('cancels the whole reservation when seat-level ticket items exist', async () => {
       const reservationId = randomUUID();
       const userId = randomUUID();
+      const showtimeId = randomUUID();
       const futureDeadline = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      const updateCalls: Array<{ table: unknown; values: Record<string, unknown> }> = [];
       const mockTx = {
         execute: vi.fn().mockResolvedValue({
           rows: [{
             id: reservationId,
             user_id: userId,
-            showtime_id: randomUUID(),
+            showtime_id: showtimeId,
             status: 'CONFIRMED',
             cancel_deadline: futureDeadline,
           }],
         }),
-        select: vi.fn().mockReturnValueOnce(chainResult([{ id: 'ticket-item-cancelled' }])),
+        select: vi.fn()
+          .mockReturnValueOnce(chainResult([
+            { id: 'ticket-item-1', price: 77000, serviceFee: 2000 },
+            { id: 'ticket-item-2', price: 77000, serviceFee: 2000 },
+          ]))
+          .mockReturnValueOnce({
+            from: vi.fn().mockReturnValue({
+              where: vi.fn().mockResolvedValue([{
+                id: randomUUID(),
+                paymentKey: 'pk_seat_level_full_cancel',
+              }]),
+            }),
+          })
+          .mockReturnValueOnce(chainResult([{ seatId: 'A-1' }, { seatId: 'A-2' }])),
+        update: vi.fn((table: unknown) => ({
+          set: vi.fn((values: Record<string, unknown>) => {
+            updateCalls.push({ table, values });
+            return { where: vi.fn().mockResolvedValue([]) };
+          }),
+        })),
       };
       mockDb.transaction.mockImplementation(async (cb: (tx: typeof mockTx) => Promise<unknown>) => cb(mockTx));
+      mockDb.select.mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([{ seatId: 'A-1' }, { seatId: 'A-2' }]),
+        }),
+      });
 
       await expect(service.cancelReservation(reservationId, userId, '단순 변심'))
-        .rejects
-        .toThrow('좌석별 티켓은 개별 취소를 이용해주세요');
-      expect(mockTossClient.cancelPayment).not.toHaveBeenCalled();
+        .resolves.not.toThrow();
+
+      expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
+        'pk_seat_level_full_cancel',
+        '단순 변심',
+      );
+      expect(updateCalls.find((call) => call.table === reservations)?.values)
+        .toMatchObject({ status: 'CANCELLED', cancelReason: '단순 변심' });
+      expect(updateCalls.find((call) => call.table === payments)?.values)
+        .toMatchObject({ status: 'CANCELED', cancelReason: '단순 변심' });
+      expect(updateCalls.find((call) => call.table === ticketItems)?.values)
+        .toMatchObject({
+          status: 'cancelled',
+          cancelReason: '단순 변심',
+          cancellationFee: 0,
+          reopenState: 'available',
+        });
+      expect(updateCalls.find((call) => call.table === tickets)?.values)
+        .toMatchObject({ status: 'revoked' });
+      expect(updateCalls.some((call) => call.table === seatInventories)).toBe(true);
+      expect(mockBookingGateway.broadcastSeatUpdate).toHaveBeenCalledWith(
+        showtimeId,
+        'A-1',
+        'available',
+      );
     });
   });
 
@@ -2446,6 +2506,63 @@ describe('ReservationService', () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    it('passes floor-aware seat identity to full cancellation finalization for the last ticket item', async () => {
+      const reservationId = randomUUID();
+      const userId = randomUUID();
+      const ticketItemId = randomUUID();
+      vi.spyOn(service, 'getReservationDetail').mockResolvedValue({
+        id: reservationId,
+        status: 'CANCELLED',
+        ticketItems: [],
+      } as never);
+      setupTicketItemCancelTransaction({
+        reservationId,
+        userId,
+        ticketItemId,
+        seatId: 'S-118',
+        seatKey: '2F:S-118',
+        floorKey: '2F',
+        activeRemainingRows: [],
+      });
+
+      await service.cancelTicketItem(reservationId, ticketItemId, userId, '다른 좌석으로 재예매');
+
+      expect(mockPaymentCancellationFinalizer.finalizeFullPaymentCancellation)
+        .toHaveBeenCalledWith(expect.objectContaining({
+          context: expect.objectContaining({
+            seats: [{
+              seatId: 'S-118',
+              floorKey: '2F',
+              seatKey: '2F:S-118',
+            }],
+          }),
+        }));
+    });
+
+    it('rejects account-transfer ticket-item partial cancellation before calling Toss', async () => {
+      const reservationId = randomUUID();
+      const userId = randomUUID();
+      const ticketItemId = randomUUID();
+      const { updateCalls } = setupTicketItemCancelTransaction({
+        reservationId,
+        userId,
+        ticketItemId,
+        paymentMethod: 'TRANSFER',
+        paymentProvider: 'TOSS_TRANSFER',
+        activeRemainingRows: [{ id: randomUUID() }],
+      });
+
+      await expect(service.cancelTicketItem(
+        reservationId,
+        ticketItemId,
+        userId,
+        '다른 좌석으로 재예매',
+      )).rejects.toThrow('계좌이체 결제는 좌석별 부분취소를 지원하지 않습니다');
+
+      expect(mockTossClient.cancelPayment).not.toHaveBeenCalled();
+      expect(updateCalls).toHaveLength(0);
     });
 
     it('uses provider-currency PayPal partial cancel options for a non-last ticket item', async () => {
@@ -2650,7 +2767,7 @@ describe('ReservationService', () => {
             cancelledSeatHoldMinMinutes: 1,
             cancelledSeatHoldMaxMinutes: 10,
           },
-          seats: [{ seatId: 'A-1' }],
+          seats: [{ seatId: 'A-1', floorKey: '1F', seatKey: '1F:A-1' }],
         }),
         ticketItemCancellation: {
           ticketItemId,

@@ -369,6 +369,20 @@ describe('ReservationDetailView QR ticket card', () => {
     expect(screen.getByText('좌석별 티켓 상태를 확인할 수 있습니다. 취소된 티켓의 QR은 표시되지 않습니다.')).toBeInTheDocument();
   });
 
+  it('shows whole-reservation cancellation for active seat-level reservations', () => {
+    render(
+      <ReservationDetailView
+        reservation={createReservation()}
+        onCancel={vi.fn()}
+        isCancelling={false}
+        onCancelTicketItem={vi.fn()}
+        isCancellingTicketItem={false}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: '예매 취소' })).toBeInTheDocument();
+  });
+
   it('opens ticket-item cancellation dialog only from active not-entered ticket cards', () => {
     const reservation = createReservation();
     render(

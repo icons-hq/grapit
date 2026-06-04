@@ -49,7 +49,11 @@ export interface FullPaymentCancellationContext {
     cancelledSeatHoldMinMinutes?: number | null;
     cancelledSeatHoldMaxMinutes?: number | null;
   } | null;
-  seats: Array<{ seatId: string }>;
+  seats: Array<{
+    seatId: string;
+    floorKey?: string | null;
+    seatKey?: string | null;
+  }>;
 }
 
 export type PaymentCancellationActor =
@@ -140,8 +144,12 @@ function sanitizeProviderCancellationPayload(
   return sanitizeProviderMetadata(providerResponse) as Record<string, unknown>;
 }
 
-function normalizeReservationSeatIdentity(seatId: string): SeatIdentityPayload {
-  const identity = normalizeSeatIdentity({ seatId });
+function normalizeReservationSeatIdentity(seat: {
+  seatId: string;
+  floorKey?: string | null;
+  seatKey?: string | null;
+}): SeatIdentityPayload {
+  const identity = normalizeSeatIdentity(seat);
   return {
     floorKey: identity.floorKey,
     seatId: identity.seatId,
@@ -149,12 +157,14 @@ function normalizeReservationSeatIdentity(seatId: string): SeatIdentityPayload {
   };
 }
 
-function uniqueSeatIdentities(seats: Array<{ seatId: string }>): SeatIdentityPayload[] {
+function uniqueSeatIdentities(
+  seats: FullPaymentCancellationContext['seats'],
+): SeatIdentityPayload[] {
   const seen = new Set<string>();
   const seatIdentities: SeatIdentityPayload[] = [];
 
   for (const seat of seats) {
-    const seatIdentity = normalizeReservationSeatIdentity(seat.seatId);
+    const seatIdentity = normalizeReservationSeatIdentity(seat);
     if (seen.has(seatIdentity.seatKey)) {
       continue;
     }

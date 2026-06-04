@@ -333,9 +333,9 @@ export function ReservationDetailView({
     hasSeatLevelTicketItems && ticketItemRefundTotal > 0
       ? ticketItemRefundTotal
       : reservation.totalAmount;
-  const showCancelButton = reservation.status !== 'CANCELLED' && !hasSeatLevelTicketItems;
+  const showCancelButton = reservation.status !== 'CANCELLED';
   const showRefundPreview =
-    (!hasSeatLevelTicketItems && reservation.status === 'CONFIRMED') ||
+    reservation.status === 'CONFIRMED' ||
     reservation.status === 'CANCELLED';
   const showRefundTimeline =
     reservation.status === 'CANCELLED' ||
