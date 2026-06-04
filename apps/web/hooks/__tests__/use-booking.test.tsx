@@ -605,8 +605,9 @@ describe('use-booking payment mutations', () => {
   it('useUnlockSeat() URL-encodes runtime seat keys before path transport', async () => {
     deleteMock.mockResolvedValueOnce(undefined);
 
+    const { Wrapper } = createWrapper();
     const { result } = renderHook(() => useUnlockSeat(), {
-      wrapper: createWrapper().Wrapper,
+      wrapper: Wrapper,
     });
 
     await result.current.mutateAsync({
@@ -617,6 +618,28 @@ describe('use-booking payment mutations', () => {
     expect(apiClient.delete).toHaveBeenCalledWith(
       '/api/v1/booking/seats/lock/showtime%2Ffloor-aware/2F%3AA%2F1%3F%23',
     );
+  });
+
+  it('useUnlockSeat() invalidates my-locks after releasing a single owned lock', async () => {
+    deleteMock.mockResolvedValueOnce(undefined);
+
+    const { Wrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    const { result } = renderHook(() => useUnlockSeat(), {
+      wrapper: Wrapper,
+    });
+
+    await result.current.mutateAsync({
+      showtimeId: 'showtime-floor-aware',
+      seatId: '1F:A-1',
+    });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ['seat-status', 'showtime-floor-aware'],
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: ['my-locks', 'showtime-floor-aware'],
+    });
   });
 
   it('usePrepareReservation() uses floor-aware store seats and cached event policy instead of legacy payload defaults', async () => {

@@ -270,6 +270,9 @@ export function useUnlockSeat() {
       queryClient.invalidateQueries({
         queryKey: ['seat-status', variables.showtimeId],
       });
+      queryClient.invalidateQueries({
+        queryKey: ['my-locks', variables.showtimeId],
+      });
     },
   });
 }

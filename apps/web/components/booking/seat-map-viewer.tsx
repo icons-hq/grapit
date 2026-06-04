@@ -20,6 +20,7 @@ interface SeatMapViewerProps {
   seatConfig: SeatMapConfig;
   seatStates: ReadonlyMap<string, RuntimeSeatState>;
   selectedSeatIds: Set<string>;
+  myLockedSeatIds?: Set<string>;
   onSeatClick: (runtimeSeatId: string) => void;
   maxSelect: number;
 }
@@ -30,6 +31,7 @@ const EXCLUDED_COLOR = '#F4D03F';
 const SEAT_ID_ATTR = 'data-seat-id';
 const SEAT_KEY_ATTR = 'data-seat-key';
 const SEAT_OVERLAY_ATTR = 'data-seat-overlay-for';
+const EMPTY_SEAT_ID_SET = new Set<string>();
 
 function getLocalSeatId(runtimeSeatId: string) {
   const separatorIndex = runtimeSeatId.indexOf(':');
@@ -158,6 +160,7 @@ export function SeatMapViewer({
   seatConfig,
   seatStates,
   selectedSeatIds,
+  myLockedSeatIds = EMPTY_SEAT_ID_SET,
   onSeatClick,
   maxSelect,
 }: SeatMapViewerProps) {
@@ -297,9 +300,11 @@ export function SeatMapViewer({
       const tierInfo = tierColorMap.get(identity.seatId) ?? tierColorMap.get(identity.runtimeSeatId);
       const isExcluded = isExcludedSeatElement(el, Boolean(tierInfo));
       const state = getSeatState(seatStates, identity.runtimeSeatId, identity.seatId);
+      const isMyLocked = state === 'locked'
+        && (myLockedSeatIds.has(identity.runtimeSeatId) || myLockedSeatIds.has(identity.seatId));
       const isSelected = selectedSeatIds.has(identity.runtimeSeatId) || selectedSeatIds.has(identity.seatId);
       const isRemoving = pendingRemovals.has(identity.runtimeSeatId) || pendingRemovals.has(identity.seatId);
-      const showCheckmark = isSelected || isRemoving;
+      const showCheckmark = isSelected || isMyLocked || isRemoving;
 
       if (isExcluded) {
         el.setAttribute('data-seat-excluded', 'true');
@@ -314,7 +319,7 @@ export function SeatMapViewer({
       // reviews revision MED #4 D-13 BROADCAST PRIORITY: unavailable 상태가 선택보다 우선
       // — broadcast 즉시 회색 + transition:none 유지. useMemo에서 LOCKED_COLOR 박아두고
       // Task 3 useEffect는 seatStates 체크로 primary 색 변경 skip.
-      if (isUnavailableSeatState(state)) {
+      if (isUnavailableSeatState(state) && !isMyLocked) {
         el.setAttribute('fill', LOCKED_COLOR);
         el.removeAttribute('stroke');
         el.setAttribute('stroke-width', '0');
@@ -500,7 +505,9 @@ export function SeatMapViewer({
       const identity = getSeatIdentity(el, floorKey);
       if (!identity) return;
       const state = getSeatState(seatStates, identity.runtimeSeatId, identity.seatId);
-      if (isUnavailableSeatState(state)) {
+      const isMyLocked = state === 'locked'
+        && (myLockedSeatIds.has(identity.runtimeSeatId) || myLockedSeatIds.has(identity.seatId));
+      if (isUnavailableSeatState(state) && !isMyLocked) {
         // reviews revision MED #4: useMemo가 이미 LOCKED_COLOR + transition:none으로 박아둠.
         // useEffect는 건드리지 않음 → D-13 broadcast 즉시 회색 정책 유지.
         return;
@@ -518,7 +525,7 @@ export function SeatMapViewer({
       const originalFill = tierColorMap.get(localSeatId)?.color ?? tierColorMap.get(seatId)?.color ?? LOCKED_COLOR;
       el.setAttribute('fill', originalFill);
     });
-  }, [selectedSeatIds, pendingRemovals, tierColorMap, seatStates, processedSvg, floorKey]);
+  }, [selectedSeatIds, myLockedSeatIds, pendingRemovals, tierColorMap, seatStates, processedSvg, floorKey]);
 
   // Event delegation for seat clicks
   // review WR-02 + IN-01: maxSelect prop을 viewer 내부에서 방어적으로 사용.
@@ -547,13 +554,15 @@ export function SeatMapViewer({
 
       const state = getSeatState(seatStates, identity.runtimeSeatId, identity.seatId);
       const isSelected = selectedSeatIds.has(identity.runtimeSeatId) || selectedSeatIds.has(identity.seatId);
-      if (isUnavailableSeatState(state) && !isSelected) return;
-      if (!isSelected && selectedSeatIds.size >= maxSelect) {
+      const isMyLocked = state === 'locked'
+        && (myLockedSeatIds.has(identity.runtimeSeatId) || myLockedSeatIds.has(identity.seatId));
+      if (isUnavailableSeatState(state) && !isSelected && !isMyLocked) return;
+      if (!isSelected && !isMyLocked && selectedSeatIds.size >= maxSelect) {
         return;
       }
       onSeatClick(identity.runtimeSeatId);
     },
-    [seatStates, selectedSeatIds, onSeatClick, maxSelect, floorKey],
+    [seatStates, selectedSeatIds, myLockedSeatIds, onSeatClick, maxSelect, floorKey],
   );
 
   // Hover tooltip — uses refs only, no state changes, no re-renders
