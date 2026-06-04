@@ -37,6 +37,7 @@ vi.mock('@tosspayments/tosspayments-sdk', () => ({
 }));
 
 const originalClientKey = process.env.NEXT_PUBLIC_TOSS_CLIENT_KEY;
+const originalForeignEasyPayClientKey = process.env.NEXT_PUBLIC_TOSS_FOREIGN_EASY_PAY_CLIENT_KEY;
 const originalVariantKey = process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY;
 
 const defaultProps = {
@@ -70,6 +71,7 @@ describe('TossPaymentWidget', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.NEXT_PUBLIC_TOSS_CLIENT_KEY = 'test-client-key';
+    process.env.NEXT_PUBLIC_TOSS_FOREIGN_EASY_PAY_CLIENT_KEY = 'test-foreign-widget-key';
     process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = 'DEFAULT, alipay';
 
     setAmountMock.mockResolvedValue(undefined);
@@ -105,6 +107,12 @@ describe('TossPaymentWidget', () => {
     } else {
       process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = originalVariantKey;
     }
+
+    if (originalForeignEasyPayClientKey === undefined) {
+      delete process.env.NEXT_PUBLIC_TOSS_FOREIGN_EASY_PAY_CLIENT_KEY;
+    } else {
+      process.env.NEXT_PUBLIC_TOSS_FOREIGN_EASY_PAY_CLIENT_KEY = originalForeignEasyPayClientKey;
+    }
   });
 
   it('filters the deprecated standalone Alipay variant out of the payment tabs', async () => {
@@ -118,7 +126,7 @@ describe('TossPaymentWidget', () => {
   });
 
   it('destroys the previous agreement widget before rendering a foreign widget variant', async () => {
-    process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = 'DEFAULT,paypal';
+    process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = 'DEFAULT,uspay';
     const user = userEvent.setup();
     render(<TossPaymentWidget {...defaultProps} />);
 
@@ -139,7 +147,7 @@ describe('TossPaymentWidget', () => {
   });
 
   it('does not render a foreign variant with the previous widgets instance', async () => {
-    process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = 'DEFAULT,paypal';
+    process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = 'DEFAULT,uspay';
 
     const firstRenderPaymentMethods = vi.fn().mockResolvedValue({
       on: vi.fn(),
@@ -185,8 +193,9 @@ describe('TossPaymentWidget', () => {
       variantKey: 'DEFAULT',
     }));
     expect(secondRenderPaymentMethods).toHaveBeenCalledWith(expect.objectContaining({
-      variantKey: 'PAYPAL',
+      variantKey: 'uspay',
     }));
+    expect(loadTossPaymentsMock).toHaveBeenLastCalledWith('test-foreign-widget-key');
     expect(screen.queryByText('결제 위젯을 불러오는데 실패했습니다.')).not.toBeInTheDocument();
   });
 });
