@@ -4,10 +4,10 @@ import { ConfigService } from '@nestjs/config';
 export interface TossPaymentResponse {
   paymentKey: string;
   orderId: string;
-  method: string;
+  method?: string | null;
   totalAmount: number;
   status: string;
-  approvedAt: string;
+  approvedAt?: string | null;
   cancels?: Array<{
     cancelAmount: number;
     cancelReason: string;

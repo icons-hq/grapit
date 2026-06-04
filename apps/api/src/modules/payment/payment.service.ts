@@ -113,6 +113,7 @@ export interface TossWebhookRequestBody {
     cancelReason?: string;
     cancelStatus?: string;
     cancelRequestId?: string;
+    easyPay?: string;
   };
 }
 
@@ -458,7 +459,7 @@ export class PaymentService {
           method: queriedPayment.method || 'FOREIGN_EASY_PAY',
           provider: this.toWebhookProvider(input.provider),
           totalAmount: queriedPayment.totalAmount,
-          approvedAt: queriedPayment.approvedAt,
+          approvedAt: queriedPayment.approvedAt ?? undefined,
         },
       },
       paymentStatus,
@@ -1599,6 +1600,14 @@ export class PaymentService {
 
     if (payload.data.provider) {
       return payload.data.provider;
+    }
+
+    const easyPay = payload.data.easyPay?.trim().toUpperCase();
+    if (easyPay === 'ALIPAY' || easyPay === '알리페이') {
+      return 'ALIPAY_PLUS';
+    }
+    if (easyPay === 'PAYPAL' || easyPay === '페이팔') {
+      return 'PAYPAL';
     }
 
     if (payload.data.method === 'FOREIGN_EASY_PAY') {

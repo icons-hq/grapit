@@ -470,13 +470,13 @@ export class ReservationFinalizationService {
           orderId: tossResponse.orderId,
           method: paypalProviderCharge
             ? tossResponse.method || 'FOREIGN_EASY_PAY'
-            : tossResponse.method,
+            : tossResponse.method || 'CARD',
           provider: paypalProviderCharge ? 'PAYPAL' : 'CARD',
           currency: 'KRW',
           totalAmount: providerCharge
             ? reservation.totalAmount
             : tossResponse.totalAmount,
-          approvedAt: tossResponse.approvedAt,
+          approvedAt: tossResponse.approvedAt ?? new Date().toISOString(),
           asyncStatus: 'sync',
           providerMetadata: isOverseasCardConfirm
             ? createOverseasCardProviderMetadata()
