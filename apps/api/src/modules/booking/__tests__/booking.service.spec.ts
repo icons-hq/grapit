@@ -44,6 +44,7 @@ function createMockDb() {
   return {
     select: vi.fn(),
     insert: vi.fn(),
+    execute: vi.fn().mockResolvedValue({ rows: [{ active_ticket_count: 0 }] }),
   };
 }
 
@@ -280,6 +281,51 @@ describe('BookingService', () => {
       const flatArgs = callArgs.slice(2 + numKeys) as string[];
       expect(flatKeys).toContain(`{${showtimeId}}:seat:1F%3AA-1`);
       expect(flatArgs[2]).toBe('1');
+    });
+
+    it('limits additional locks by existing active tickets for the performance', async () => {
+      mockDb.select
+        .mockReturnValueOnce(chainResult([{ performanceStatus: 'selling' }]))
+        .mockReturnValueOnce(chainResult([{
+          seatConfig: { tiers: [{ tierName: 'VIP', seatIds: ['A-1'] }] },
+        }]))
+        .mockReturnValueOnce(chainResult([]))
+        .mockReturnValueOnce(chainResult([{
+          performanceId: 'performance-1',
+          maxTicketsPerUser: 4,
+          seatHoldMinutes: 7,
+        }]));
+      mockDb.execute.mockResolvedValueOnce({ rows: [{ active_ticket_count: 2 }] });
+      mockRedis.eval.mockResolvedValue([1, `{${showtimeId}}:seat:1F%3AA-1`, '1F%3AA-1']);
+
+      await service.lockSeat(userId, showtimeId, '1F:A-1');
+
+      const callArgs = mockRedis.eval.mock.calls[0] as unknown[];
+      const numKeys = callArgs[1] as number;
+      const flatArgs = callArgs.slice(2 + numKeys) as string[];
+      expect(flatArgs[2]).toBe('2');
+    });
+
+    it('rejects a new lock when existing active tickets already reach the performance limit', async () => {
+      mockDb.select
+        .mockReturnValueOnce(chainResult([{ performanceStatus: 'selling' }]))
+        .mockReturnValueOnce(chainResult([{
+          seatConfig: { tiers: [{ tierName: 'VIP', seatIds: ['A-1'] }] },
+        }]))
+        .mockReturnValueOnce(chainResult([]))
+        .mockReturnValueOnce(chainResult([{
+          performanceId: 'performance-1',
+          maxTicketsPerUser: 4,
+          seatHoldMinutes: 7,
+        }]));
+      mockDb.execute.mockResolvedValueOnce({ rows: [{ active_ticket_count: 4 }] });
+
+      await expect(service.lockSeat(userId, showtimeId, '1F:A-1'))
+        .rejects
+        .toThrow('이 공연은 1인 최대 4매까지 예매할 수 있습니다');
+
+      expect(mockRedis.eval).not.toHaveBeenCalled();
+      expect(mockGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
     });
 
     it('uses event-configured seatHoldMinutes as the Redis lock TTL', async () => {

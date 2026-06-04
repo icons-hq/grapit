@@ -52,6 +52,7 @@ import {
   BookingService,
   BOOKING_ENDED_MESSAGE,
   BOOKING_VERIFICATION_REQUIRED_MESSAGE,
+  buildMaxTicketsPerUserExceededMessage,
 } from '../booking/booking.service.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service.js';
@@ -287,6 +288,44 @@ export class ReservationService {
   ): void {
     if (seats.length > maxTicketsPerUser) {
       throw new ConflictException(`최대 ${maxTicketsPerUser}석까지 선택할 수 있습니다`);
+    }
+  }
+
+  private async countUserActiveTicketsForPerformance(
+    userId: string,
+    performanceId: string,
+  ): Promise<number> {
+    const result = await this.db.execute(sql`
+      SELECT count(*)::int AS active_ticket_count
+      FROM ticket_items ti
+      INNER JOIN reservations r ON r.id = ti.reservation_id
+      INNER JOIN showtimes s ON s.id = ti.showtime_id
+      WHERE r.user_id = ${userId}
+        AND s.performance_id = ${performanceId}
+        AND r.status = 'CONFIRMED'
+        AND ti.status IN ('active', 'cancellation_pending')
+    `);
+    const count = (result.rows[0] as { active_ticket_count?: unknown } | undefined)
+      ?.active_ticket_count;
+
+    return typeof count === 'number' ? count : Number(count ?? 0);
+  }
+
+  private async assertUserTicketLimitAvailable(input: {
+    userId: string;
+    performanceId: string;
+    requestedSeatCount: number;
+    maxTicketsPerUser: number;
+  }): Promise<void> {
+    const activeTicketCount = await this.countUserActiveTicketsForPerformance(
+      input.userId,
+      input.performanceId,
+    );
+
+    if (activeTicketCount + input.requestedSeatCount > input.maxTicketsPerUser) {
+      throw new ConflictException(
+        buildMaxTicketsPerUserExceededMessage(input.maxTicketsPerUser),
+      );
     }
   }
 
@@ -933,6 +972,12 @@ export class ReservationService {
         existingShowtime.performanceId,
       );
       this.assertSeatCountWithinPolicy(canonicalSeats, existingShowtime.maxTicketsPerUser);
+      await this.assertUserTicketLimitAvailable({
+        userId,
+        performanceId: existingShowtime.performanceId,
+        requestedSeatCount: canonicalSeats.length,
+        maxTicketsPerUser: existingShowtime.maxTicketsPerUser,
+      });
       const expectedAmount = this.calculatePayableTotal(canonicalSeats);
       if (existing.totalAmount !== expectedAmount || dto.amount !== expectedAmount) {
         throw new ConflictException('기존 예매 요청과 일치하지 않습니다. 새 주문 ID로 다시 시도해주세요.');
@@ -973,6 +1018,12 @@ export class ReservationService {
     // 3. Calculate expected amount from DB and canonical seat map metadata
     const canonicalSeats = await this.getCanonicalSeatSelections(dto.seats, showtime.performanceId);
     this.assertSeatCountWithinPolicy(canonicalSeats, showtime.maxTicketsPerUser);
+    await this.assertUserTicketLimitAvailable({
+      userId,
+      performanceId: showtime.performanceId,
+      requestedSeatCount: canonicalSeats.length,
+      maxTicketsPerUser: showtime.maxTicketsPerUser,
+    });
     const expectedAmount = this.calculatePayableTotal(canonicalSeats);
 
     if (expectedAmount !== dto.amount) {

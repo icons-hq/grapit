@@ -11,6 +11,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { and, eq, isNull, or, sql } from 'drizzle-orm';
 import {
+  DEFAULT_PERFORMANCE_BOOKING_POLICY,
   toFloorAwareSeatSelection,
   type ConfirmPaymentRequest,
   type FloorAwareSeatSelection,
@@ -28,6 +29,7 @@ import { BookingGateway } from '../booking/booking.gateway.js';
 import {
   BookingService,
   PAYMENT_CONFIRM_LOCK_TTL,
+  buildMaxTicketsPerUserExceededMessage,
 } from '../booking/booking.service.js';
 import { TossPaymentsClient } from '../payment/toss-payments.client.js';
 import { ProviderChargeQuoteService } from '../payment/provider-charge-quote.service.js';
@@ -58,6 +60,10 @@ type PaypalResolvedProviderCharge = {
   amountDecimal: string;
   rate: string;
   quotedAt: Date;
+};
+type TicketLimitSnapshot = {
+  maxTicketsPerUser: number;
+  activeTicketCount: number;
 };
 
 const TICKET_SERVICE_FEE_KRW = 2000;
@@ -391,6 +397,25 @@ export class ReservationFinalizationService {
 
     if (existingPayment?.status === 'DONE') {
       this.assertExistingDonePaymentMatchesRequest(existingPayment, reservation, dto);
+    }
+
+    const ticketLimit = await this.getTicketLimitSnapshot(
+      userId,
+      reservation.id,
+      reservation.showtimeId,
+    );
+    if (ticketLimit.activeTicketCount + pendingSeats.length > ticketLimit.maxTicketsPerUser) {
+      if (existingPayment?.status === 'DONE') {
+        await this.cancelExistingDonePaymentAfterFailure({
+          payment: this.toApprovedPaymentSnapshot(existingPayment),
+          reservationId: reservation.id,
+          reason: '예매 매수 제한 초과로 인한 자동 취소',
+        });
+      }
+
+      throw new ConflictException(
+        buildMaxTicketsPerUserExceededMessage(ticketLimit.maxTicketsPerUser),
+      );
     }
 
     const pendingSeatIds = pendingSeats.map((seat) => seat.seatKey);
@@ -776,6 +801,53 @@ export class ReservationFinalizationService {
       .where(eq(reservationSeats.reservationId, reservationId));
 
     return rows.map((seat) => toFloorAwareSeatSelection(seat));
+  }
+
+  private async getTicketLimitSnapshot(
+    userId: string,
+    reservationId: string,
+    showtimeId: string,
+  ): Promise<TicketLimitSnapshot> {
+    const result = await this.db.execute(sql`
+      SELECT
+        coalesce(
+          bp.max_tickets_per_user,
+          ${DEFAULT_PERFORMANCE_BOOKING_POLICY.maxTicketsPerUser}
+        )::int AS max_tickets_per_user,
+        (
+          SELECT count(*)::int
+          FROM ticket_items ti
+          INNER JOIN reservations r ON r.id = ti.reservation_id
+          INNER JOIN showtimes ticket_showtimes ON ticket_showtimes.id = ti.showtime_id
+          WHERE r.user_id = ${userId}
+            AND r.id <> ${reservationId}
+            AND ticket_showtimes.performance_id = s.performance_id
+            AND r.status = 'CONFIRMED'
+            AND ti.status IN ('active', 'cancellation_pending')
+        ) AS active_ticket_count
+      FROM showtimes s
+      LEFT JOIN booking_policies bp ON bp.performance_id = s.performance_id
+      WHERE s.id = ${showtimeId}
+    `);
+    const row = result.rows[0] as
+      | {
+        max_tickets_per_user?: unknown;
+        active_ticket_count?: unknown;
+      }
+      | undefined;
+
+    if (!row) {
+      throw new NotFoundException('회차를 찾을 수 없습니다');
+    }
+
+    return {
+      maxTicketsPerUser: this.toInteger(row.max_tickets_per_user),
+      activeTicketCount: this.toInteger(row.active_ticket_count),
+    };
+  }
+
+  private toInteger(value: unknown): number {
+    return typeof value === 'number' ? value : Number(value ?? 0);
   }
 
   private resolvePaypalProviderCharge(
