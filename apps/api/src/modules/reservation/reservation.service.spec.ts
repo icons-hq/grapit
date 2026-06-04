@@ -1709,6 +1709,34 @@ describe('ReservationService', () => {
       expect(mockDb.transaction).not.toHaveBeenCalled();
     });
 
+    it('prepareReservation reuses an owned pending order without requiring a live Redis seat lock', async () => {
+      const userId = randomUUID();
+      const dto = {
+        showtimeId: randomUUID(),
+        orderId: 'GRP-PENDING-RESUME',
+        seats: [seatSelection('A-1')],
+        amount: 52000,
+        consentItems: makeConsentItems(),
+        paymentMethod: {
+          method: 'CARD' as const,
+          provider: 'CARD' as const,
+          currency: 'KRW',
+        },
+      };
+      setupExistingPendingOrder({ ...dto, userId, seats: dto.seats });
+      mockBookingService.assertOwnedSeatLocks.mockRejectedValueOnce(
+        new Error('좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.'),
+      );
+
+      await expect(service.prepareReservation(dto, userId)).resolves.toEqual(expect.objectContaining({
+        reservationId: 'reservation-existing',
+        orderId: dto.orderId,
+        paymentMethod: dto.paymentMethod,
+      }));
+      expect(mockBookingService.assertOwnedSeatLocks).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
     it('prepareReservation stores canonical tierName and price from seat map config', async () => {
       const userId = randomUUID();
       const dto = {
@@ -1999,7 +2027,7 @@ describe('ReservationService', () => {
       expect(mockDb.transaction).not.toHaveBeenCalled();
     });
 
-    it('Existing pending order cannot bypass active lock ownership', async () => {
+    it('Existing pending order can resume after Redis seat lock expires', async () => {
       const userId = randomUUID();
       const dto = {
         showtimeId: randomUUID(),
@@ -2013,11 +2041,14 @@ describe('ReservationService', () => {
         new ConflictException(LOCK_EXPIRED_MESSAGE),
       );
 
-      await expect(service.prepareReservation(dto, userId))
-        .rejects
-        .toThrow(LOCK_EXPIRED_MESSAGE);
+      await expect(service.prepareReservation(dto, userId)).resolves.toEqual(
+        expect.objectContaining({
+          reservationId: 'reservation-existing',
+          orderId: dto.orderId,
+        }),
+      );
 
-      expect(mockBookingService.assertOwnedSeatLocks).toHaveBeenCalledWith(userId, dto.showtimeId, ['1F:A-1', '1F:A-2']);
+      expect(mockBookingService.assertOwnedSeatLocks).not.toHaveBeenCalled();
       expect(mockDb.transaction).not.toHaveBeenCalled();
     });
 

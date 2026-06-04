@@ -698,6 +698,83 @@ describe('runtime booking disabled UI', () => {
     expect(preparedOrderIds[1]).not.toBe(preparedOrderIds[0]);
   });
 
+  it('keeps a resumed pending reservation when Toss requestPayment rejects', async () => {
+    const user = userEvent.setup();
+    const preparedOrderIds: string[] = [];
+    useRuntimeFlagsMock.mockReturnValue({
+      bookingEnabled: true,
+      isLoading: false,
+      bookingDisabledMessage: '예매는 추후 오픈 예정입니다',
+    });
+    searchParamsRef.current = new URLSearchParams({
+      resumeOrderId: 'GRP-RESUME-PENDING',
+    });
+    prepareReservationMock.mockImplementation(async (payload: { orderId: string }) => {
+      preparedOrderIds.push(payload.orderId);
+      return {
+        reservationId: 'reservation-existing',
+        orderId: payload.orderId,
+      };
+    });
+    requestPaymentMock.mockRejectedValueOnce(new Error('Payment has already been requested.'));
+
+    renderWithQuery(<ConfirmPage />);
+
+    await user.click(await screen.findByLabelText('전체 동의'));
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: '결제하기' })[0]).toBeEnabled();
+    });
+
+    await user.click(screen.getAllByRole('button', { name: '결제하기' })[0]!);
+
+    await waitFor(() => {
+      expect(requestPaymentMock).toHaveBeenCalledTimes(1);
+    });
+    expect(preparedOrderIds).toEqual(['GRP-RESUME-PENDING']);
+    expect(cancelPendingReservationAsyncMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps a resumed pending reservation when Toss returns to failUrl', async () => {
+    const user = userEvent.setup();
+    useRuntimeFlagsMock.mockReturnValue({
+      bookingEnabled: true,
+      isLoading: false,
+      bookingDisabledMessage: '예매는 추후 오픈 예정입니다',
+    });
+    searchParamsRef.current = new URLSearchParams({
+      resumeOrderId: 'GRP-RESUME-PENDING',
+    });
+    prepareReservationMock.mockResolvedValue({
+      reservationId: 'reservation-existing',
+      orderId: 'GRP-RESUME-PENDING',
+    });
+    requestPaymentMock.mockImplementation(() => new Promise(() => {}));
+
+    const view = renderWithQuery(<ConfirmPage />);
+
+    await user.click(await screen.findByLabelText('전체 동의'));
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: '결제하기' })[0]).toBeEnabled();
+    });
+    await user.click(screen.getAllByRole('button', { name: '결제하기' })[0]!);
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: '결제 처리 중...' })[0]).toBeDisabled();
+    });
+
+    searchParamsRef.current = new URLSearchParams({
+      error: 'true',
+      resumeOrderId: 'GRP-RESUME-PENDING',
+      code: 'PAY_PROCESS_CANCELED',
+      message: '결제가 취소되었습니다.',
+    });
+    view.rerender(<ConfirmPage />);
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: '결제하기' })[0]).toBeEnabled();
+    });
+    expect(cancelPendingReservationMock).not.toHaveBeenCalled();
+  });
+
   it('resets processing and rotates orderId when Toss returns to failUrl after request handoff', async () => {
     const user = userEvent.setup();
     const preparedOrderIds: string[] = [];

@@ -218,6 +218,50 @@ describe('ReservationDetailView QR ticket card', () => {
     expect(screen.queryByText('안내 메일 예약')).not.toBeInTheDocument();
   });
 
+  it('shows pending payment details without QR tickets and exposes a resume payment action', () => {
+    const onResumePayment = vi.fn();
+
+    render(
+      <ReservationDetailView
+        reservation={createReservation({
+          status: 'PENDING_PAYMENT',
+          paidAt: null,
+          paymentMethod: null,
+          paymentKey: null,
+          tossOrderId: 'GRP-20260604-7O7YM',
+          performanceId: 'performance-girl-rules',
+          showtimeId: 'showtime-girl-rules',
+          paymentDeadlineAt: '2099-05-22T06:08:00.000Z',
+          ticketItems: [],
+          qrTicket: {
+            token: '',
+            jti: '',
+            status: 'REVOKED',
+            entryStatus: 'NOT_ENTERED',
+            enteredAt: null,
+            issuedAt: '2026-05-22T06:00:00.000Z',
+            emailScheduledAt: null,
+            emailedAt: null,
+          },
+        })}
+        onCancel={vi.fn()}
+        isCancelling={false}
+        onResumePayment={onResumePayment}
+      />,
+    );
+
+    expect(screen.getByText('결제대기')).toBeInTheDocument();
+    expect(screen.getByText('결제 전')).toBeInTheDocument();
+    expect(screen.queryByText(/NaN/)).not.toBeInTheDocument();
+    expect(screen.queryByText('QR 티켓')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '결제 계속하기' }));
+    expect(onResumePayment).toHaveBeenCalledWith(expect.objectContaining({
+      reservationNumber: 'GRP-27-DETAIL-QR',
+      tossOrderId: 'GRP-20260604-7O7YM',
+    }));
+  });
+
   it('keeps the QR visible and shows entry completion after check-in', () => {
     render(
       <ReservationDetailView

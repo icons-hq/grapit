@@ -1003,8 +1003,6 @@ export class ReservationService {
         throw new ConflictException('기존 예매 요청과 일치하지 않습니다. 새 주문 ID로 다시 시도해주세요.');
       }
 
-      const existingSeatIds = existingSeats.map((seat) => seat.seatKey);
-      await this.bookingService.assertOwnedSeatLocks(userId, existing.showtimeId, existingSeatIds);
       const existingForeignEasyPayCharge = this.buildStoredForeignProviderCharge({
         paymentMethod: dto.paymentMethod,
         providerChargeCurrency: existing.providerChargeCurrency,
@@ -1262,6 +1260,7 @@ export class ReservationService {
           admissionActiveUntilAt: reservations.admissionActiveUntilAt,
           reentryGraceUntilAt: reservations.reentryGraceUntilAt,
           paymentDeadlineAt: reservations.paymentDeadlineAt,
+          tossOrderId: reservations.tossOrderId,
           cancelDeadline: reservations.cancelDeadline,
           cancelledAt: reservations.cancelledAt,
           cancelReason: reservations.cancelReason,
@@ -1271,6 +1270,7 @@ export class ReservationService {
           dateTime: showtimes.dateTime,
         },
         performance: {
+          id: performances.id,
           title: performances.title,
           posterUrl: performances.posterUrl,
         },
@@ -1349,6 +1349,9 @@ export class ReservationService {
       id: row.reservation.id,
       reservationNumber: row.reservation.reservationNumber,
       status: row.reservation.status as ReservationStatus,
+      performanceId: row.performance.id,
+      showtimeId: row.reservation.showtimeId,
+      tossOrderId: row.reservation.tossOrderId ?? null,
       performanceTitle: row.performance.title,
       posterUrl: row.performance.posterUrl,
       showDateTime: row.showtime.dateTime?.toISOString() ?? '',
@@ -1362,12 +1365,12 @@ export class ReservationService {
       })),
       totalAmount: row.reservation.totalAmount,
       createdAt: row.reservation.createdAt?.toISOString() ?? '',
-      paymentMethod: payment?.method ?? '',
-      paidAt: payment?.paidAt?.toISOString() ?? '',
+      paymentMethod: payment?.method ?? null,
+      paidAt: payment?.paidAt?.toISOString() ?? null,
       cancelDeadline: row.reservation.cancelDeadline?.toISOString() ?? '',
       cancelledAt: row.reservation.cancelledAt?.toISOString() ?? null,
       cancelReason: row.reservation.cancelReason ?? null,
-      paymentKey: payment?.paymentKey ?? '',
+      paymentKey: payment?.paymentKey ?? null,
       queueAdmission: {
         queueSessionId: row.reservation.queueSessionId ?? '',
         admissionToken: row.reservation.admissionToken ?? '',

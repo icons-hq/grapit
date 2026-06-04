@@ -211,12 +211,15 @@ export interface ReservationListItem {
 }
 
 export interface ReservationDetail extends ReservationListItem {
-  paymentMethod: string;
-  paidAt: string;
+  performanceId?: string;
+  showtimeId?: string;
+  tossOrderId?: string | null;
+  paymentMethod: string | null;
+  paidAt: string | null;
   cancelDeadline: string;
   cancelledAt: string | null;
   cancelReason: string | null;
-  paymentKey: string;
+  paymentKey: string | null;
   queueAdmission: QueueAdmissionContext;
   paymentDeadlineAt: string;
   bookingPolicy: BookingPolicy;
