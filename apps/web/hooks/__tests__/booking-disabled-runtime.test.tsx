@@ -62,6 +62,9 @@ const {
       'paymentRecovery.expiredTitle': '결제 가능 시간이 만료되었습니다',
       'paymentRecovery.expiredBody': '좌석을 다시 선택한 뒤 새 결제를 시작해주세요.',
       'paymentRecovery.expiredCta': '결제 시간이 만료되었습니다',
+      'paymentRecovery.failedTitle': '결제 요청에 실패했습니다',
+      'paymentRecovery.failedBody': '결제가 완료되지 않았습니다. 좌석 선택 정보가 만료되었을 수 있으니 다시 선택한 뒤 결제를 진행해주세요.',
+      'paymentRecovery.providerMessagePrefix': '결제사 응답',
     };
 
     let message = messages[key] ?? key;
@@ -672,6 +675,34 @@ describe('runtime booking disabled UI', () => {
       expect(prepareReservationMock).toHaveBeenCalledTimes(2);
     });
     expect(preparedOrderIds[1]).not.toBe(preparedOrderIds[0]);
+  });
+
+  it('shows payment failure recovery instead of an indefinite loader when Toss failUrl returns without booking state', async () => {
+    const user = userEvent.setup();
+    useRuntimeFlagsMock.mockReturnValue({
+      bookingEnabled: true,
+      isLoading: false,
+      bookingDisabledMessage: '예매는 추후 오픈 예정입니다',
+    });
+    useBookingStore.getState().resetBooking();
+    setCurrentUserRole('user');
+    searchParamsRef.current = new URLSearchParams({
+      error: 'true',
+      code: 'INVALID_PAYMENT_METHOD',
+      message: 'Payment has already been requested.',
+      orderId: 'GRP-1780542343036-SL6OU',
+    });
+
+    renderWithQuery(<ConfirmPage />);
+
+    expect(await screen.findByRole('heading', { name: '결제 요청에 실패했습니다' }))
+      .toBeInTheDocument();
+    expect(screen.getByText('Payment has already been requested.')).toBeInTheDocument();
+    expect(routerReplaceMock).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: '좌석 다시 선택하기' }));
+
+    expect(routerReplaceMock).toHaveBeenCalledWith('/booking/performance-disabled');
   });
 
   it('handles repeated Toss cancel returns with the same error key after a new payment request', async () => {

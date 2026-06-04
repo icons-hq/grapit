@@ -176,6 +176,9 @@
       "expiredCta": "결제 시간이 만료되었습니다",
       "reselectCta": "좌석 다시 선택하기",
       "reselectPrompt": "좌석을 다시 선택해주세요",
+      "failedTitle": "결제 요청에 실패했습니다",
+      "failedBody": "결제가 완료되지 않았습니다. 좌석 선택 정보가 만료되었을 수 있으니 다시 선택한 뒤 결제를 진행해주세요.",
+      "providerMessagePrefix": "결제사 응답",
       "pendingTitle": "해외 결제 인증을 기다리고 있습니다",
       "pendingBody": "지갑사 인증이 끝나면 같은 주문으로 예매 상태를 다시 확인할 수 있습니다."
     }

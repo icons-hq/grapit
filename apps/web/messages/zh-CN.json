@@ -176,6 +176,9 @@
       "expiredCta": "支付时间已到期",
       "reselectCta": "重新选择座位",
       "reselectPrompt": "请重新选择座位",
+      "failedTitle": "支付请求失败",
+      "failedBody": "支付未完成。座位选择信息可能已过期，请重新选择座位后再支付。",
+      "providerMessagePrefix": "支付服务商返回",
       "pendingTitle": "正在等待海外支付认证完成",
       "pendingBody": "钱包服务商完成认证后，您可以继续查询同一笔订单的状态。"
     }
