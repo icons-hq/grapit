@@ -28,7 +28,7 @@ import type {
 } from '@grabit/shared';
 
 const OVERSEAS_PAYMENT_CONSENT_VERSION = '2026-05-08';
-const PAYPAL_VARIANT_KEY = 'paypal';
+const USPAY_VARIANT_KEY = 'uspay';
 const PAYPAL_WIDGET_USD_ESTIMATE_RATE = 0.00068;
 const FOREIGN_WALLET_CODES = new Set(['ALIPAY', 'ALIPAY_PLUS', 'TRUEMONEY', 'PAYPAL', '페이팔']);
 const PROVIDER_CHARGE_QUOTE_PROVIDERS = new Set<PaymentProvider>(['ALIPAY_PLUS', 'PAYPAL']);
@@ -206,14 +206,11 @@ export function resolvePaymentWidgetVariantKeys(): string[] {
 
 export function resolvePaymentWidgetRenderVariantKey(variantKey: string): string {
   const trimmedVariantKey = variantKey.trim();
-  if (trimmedVariantKey.toLowerCase() === PAYPAL_VARIANT_KEY) {
-    return 'PAYPAL';
-  }
   return trimmedVariantKey.length > 0 ? trimmedVariantKey : 'DEFAULT';
 }
 
 export function resolvePaymentWidgetClientKey(variantKey: string): string | undefined {
-  if (isPaypalPaymentWidgetVariant(variantKey)) {
+  if (isUsPayPaymentWidgetVariant(variantKey)) {
     return process.env.NEXT_PUBLIC_TOSS_FOREIGN_EASY_PAY_CLIENT_KEY
       || process.env.NEXT_PUBLIC_TOSS_FOREIGN_PAYMENT_WIDGET_CLIENT_KEY
       || process.env.NEXT_PUBLIC_TOSS_CLIENT_KEY;
@@ -221,17 +218,16 @@ export function resolvePaymentWidgetClientKey(variantKey: string): string | unde
   return process.env.NEXT_PUBLIC_TOSS_CLIENT_KEY;
 }
 
-export function isPaypalPaymentWidgetVariant(variantKey: string): boolean {
-  return variantKey.toLowerCase() === PAYPAL_VARIANT_KEY;
+export function isUsPayPaymentWidgetVariant(variantKey: string): boolean {
+  return variantKey.toLowerCase() === USPAY_VARIANT_KEY;
 }
 
 export function isForeignPaymentWidgetVariant(variantKey: string): boolean {
-  return variantKey.toLowerCase() === PAYPAL_VARIANT_KEY;
+  return isUsPayPaymentWidgetVariant(variantKey);
 }
 
 export function resolvePaymentWidgetVariantLabel(variantKey: string): string {
-  const normalized = variantKey.toLowerCase();
-  if (normalized === PAYPAL_VARIANT_KEY) {
+  if (isForeignPaymentWidgetVariant(variantKey)) {
     return '해외 결제';
   }
   return '국내 결제';
@@ -244,7 +240,7 @@ export function resolvePaymentWidgetRenderAmount({
   amount: number;
   variantKey: string;
 }): { currency: 'KRW' | 'USD'; value: number } {
-  if (isPaypalPaymentWidgetVariant(variantKey)) {
+  if (isUsPayPaymentWidgetVariant(variantKey)) {
     return {
       currency: 'USD',
       value: Math.max(0.01, Math.round(amount * PAYPAL_WIDGET_USD_ESTIMATE_RATE * 100) / 100),
