@@ -343,7 +343,7 @@ export function ReservationDetailView({
     hasSeatLevelTicketItems && ticketItemRefundTotal > 0
       ? ticketItemRefundTotal
       : reservation.totalAmount;
-  const showCancelButton = reservation.status === 'CONFIRMED';
+  const showCancelButton = reservation.status === 'CONFIRMED' && !hasSeatLevelTicketItems;
   const canResumePayment =
     reservation.status === 'PENDING_PAYMENT' &&
     !isPaymentDeadlinePassed &&
