@@ -63,8 +63,14 @@ const STATUS_CONFIG: Record<
   },
 };
 
-function formatDateTime(dateString: string): string {
+function formatDateTime(dateString: string | null | undefined, fallback = '-'): string {
+  if (!dateString) {
+    return fallback;
+  }
   const date = new Date(dateString);
+  if (Number.isNaN(date.getTime())) {
+    return fallback;
+  }
   const days = ['일', '월', '화', '수', '목', '금', '토'];
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, '0');
@@ -302,6 +308,7 @@ interface ReservationDetailProps {
   reservation: ReservationDetailType;
   onCancel: (reason: string) => void;
   isCancelling: boolean;
+  onResumePayment?: (reservation: ReservationDetailType) => void;
   onCancelTicketItem?: (ticketItemId: string, reason: string) => void | Promise<void>;
   isCancellingTicketItem?: boolean;
 }
@@ -310,6 +317,7 @@ export function ReservationDetailView({
   reservation,
   onCancel,
   isCancelling,
+  onResumePayment,
   onCancelTicketItem,
   isCancellingTicketItem = false,
 }: ReservationDetailProps) {
@@ -318,8 +326,10 @@ export function ReservationDetailView({
   const [ticketCancelTarget, setTicketCancelTarget] = useState<BuyerQrCard | null>(null);
   const [ticketCancelReason, setTicketCancelReason] = useState('');
   const statusConfig = STATUS_CONFIG[reservation.status];
+  const paymentMethodLabel = reservation.paymentMethod ?? '결제수단';
 
   const isDeadlinePassed = new Date(reservation.cancelDeadline) < new Date();
+  const isPaymentDeadlinePassed = new Date(reservation.paymentDeadlineAt) < new Date();
   const canCancel = reservation.status === 'CONFIRMED' && !isDeadlinePassed;
   const hasSeatLevelTicketItems = Array.isArray(reservation.ticketItems) &&
     reservation.ticketItems.length > 0;
@@ -333,9 +343,13 @@ export function ReservationDetailView({
     hasSeatLevelTicketItems && ticketItemRefundTotal > 0
       ? ticketItemRefundTotal
       : reservation.totalAmount;
-  const showCancelButton = reservation.status !== 'CANCELLED' && !hasSeatLevelTicketItems;
+  const showCancelButton = reservation.status === 'CONFIRMED';
+  const canResumePayment =
+    reservation.status === 'PENDING_PAYMENT' &&
+    !isPaymentDeadlinePassed &&
+    Boolean(onResumePayment);
   const showRefundPreview =
-    (!hasSeatLevelTicketItems && reservation.status === 'CONFIRMED') ||
+    reservation.status === 'CONFIRMED' ||
     reservation.status === 'CANCELLED';
   const showRefundTimeline =
     reservation.status === 'CANCELLED' ||
@@ -345,7 +359,9 @@ export function ReservationDetailView({
     Boolean(reservation.refundTimeline.expectedDepositAt) && showRefundTimeline;
   const qrCards = getBuyerQrCards(reservation);
   const hasActiveQr = qrCards.some((card) => card.qrCheckInUrl);
-  const shouldShowQrTicket = reservation.status === 'CONFIRMED' || hasSeatLevelTicketItems;
+  const shouldShowQrTicket =
+    reservation.status !== 'PENDING_PAYMENT' &&
+    (reservation.status === 'CONFIRMED' || hasSeatLevelTicketItems);
   const qrSectionDescription = hasActiveQr
     ? 'QR 티켓이 준비되었습니다. 입장 및 현장 혜택 확인 시 스태프가 QR을 확인합니다.'
     : hasSeatLevelTicketItems
@@ -449,14 +465,41 @@ export function ReservationDetailView({
             value={`${reservation.totalAmount.toLocaleString('ko-KR')}원`}
           />
           <Separator />
-          <InfoRow label="결제수단" value={reservation.paymentMethod} />
+          <InfoRow label="결제수단" value={reservation.paymentMethod ?? '선택 전'} />
           <Separator />
           <InfoRow
             label="결제일시"
-            value={formatDateTime(reservation.paidAt)}
+            value={formatDateTime(reservation.paidAt, '결제 전')}
           />
         </CardContent>
       </Card>
+
+      {reservation.status === 'PENDING_PAYMENT' && (
+        <Card className="mt-4 border-[#F3E6A6] bg-[#FFFBEB] py-4">
+          <CardContent className="space-y-4">
+            <div>
+              <h2 className="text-base font-semibold text-[#8B6306]">결제 대기 중</h2>
+              <p className="mt-1 text-sm text-gray-700">
+                결제를 완료해야 예매와 QR 티켓이 확정됩니다.
+              </p>
+              {isPaymentDeadlinePassed && (
+                <p className="mt-2 text-sm font-medium text-[#C62828]">
+                  결제 가능 시간이 만료되었습니다. 좌석을 다시 선택해주세요.
+                </p>
+              )}
+            </div>
+            {canResumePayment && (
+              <Button
+                type="button"
+                className="h-12 w-full"
+                onClick={() => onResumePayment?.(reservation)}
+              >
+                결제 계속하기
+              </Button>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {shouldShowQrTicket && (
         <Card className="mt-4 border-[#E9DFFF] bg-[#F8F5FF] py-4">
@@ -626,7 +669,7 @@ export function ReservationDetailView({
               <Separator />
               <InfoRow
                 label="환불 수단"
-                value={`${reservation.paymentMethod} 결제 취소`}
+                value={`${paymentMethodLabel} 결제 취소`}
               />
               {hasExpectedDepositAt && reservation.refundTimeline.expectedDepositAt && (
                 <>
@@ -822,7 +865,7 @@ export function ReservationDetailView({
         open={cancelModalOpen}
         onOpenChange={setCancelModalOpen}
         refundAmount={displayedRefundAmount}
-        paymentMethod={reservation.paymentMethod}
+        paymentMethod={paymentMethodLabel}
         expectedDepositAt={reservation.refundTimeline.expectedDepositAt ?? null}
         releaseWindowMinutes={reservation.cancelledSeatHold?.releaseWindowMinutes ?? null}
         onConfirm={onCancel}

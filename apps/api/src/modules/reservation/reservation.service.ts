@@ -165,6 +165,8 @@ type TicketItemPaymentCancelOutcome =
   | { status: 'ambiguous' };
 type TicketItemCancellationSnapshot = PaymentCancelTicketItemSnapshot & {
   seatId: string;
+  floorKey: string;
+  seatKey: string;
 };
 type ProviderChargeQuote = {
   currency: 'USD';
@@ -1262,6 +1264,7 @@ export class ReservationService {
           admissionActiveUntilAt: reservations.admissionActiveUntilAt,
           reentryGraceUntilAt: reservations.reentryGraceUntilAt,
           paymentDeadlineAt: reservations.paymentDeadlineAt,
+          tossOrderId: reservations.tossOrderId,
           cancelDeadline: reservations.cancelDeadline,
           cancelledAt: reservations.cancelledAt,
           cancelReason: reservations.cancelReason,
@@ -1271,6 +1274,7 @@ export class ReservationService {
           dateTime: showtimes.dateTime,
         },
         performance: {
+          id: performances.id,
           title: performances.title,
           posterUrl: performances.posterUrl,
         },
@@ -1349,6 +1353,9 @@ export class ReservationService {
       id: row.reservation.id,
       reservationNumber: row.reservation.reservationNumber,
       status: row.reservation.status as ReservationStatus,
+      performanceId: row.performance.id,
+      showtimeId: row.reservation.showtimeId,
+      tossOrderId: row.reservation.tossOrderId ?? null,
       performanceTitle: row.performance.title,
       posterUrl: row.performance.posterUrl,
       showDateTime: row.showtime.dateTime?.toISOString() ?? '',
@@ -1362,12 +1369,12 @@ export class ReservationService {
       })),
       totalAmount: row.reservation.totalAmount,
       createdAt: row.reservation.createdAt?.toISOString() ?? '',
-      paymentMethod: payment?.method ?? '',
-      paidAt: payment?.paidAt?.toISOString() ?? '',
+      paymentMethod: payment?.method ?? null,
+      paidAt: payment?.paidAt?.toISOString() ?? null,
       cancelDeadline: row.reservation.cancelDeadline?.toISOString() ?? '',
       cancelledAt: row.reservation.cancelledAt?.toISOString() ?? null,
       cancelReason: row.reservation.cancelReason ?? null,
-      paymentKey: payment?.paymentKey ?? '',
+      paymentKey: payment?.paymentKey ?? null,
       queueAdmission: {
         queueSessionId: row.reservation.queueSessionId ?? '',
         admissionToken: row.reservation.admissionToken ?? '',
@@ -1827,6 +1834,8 @@ export class ReservationService {
       id: String(row['id']),
       refundableAmount: Number(row['refundable_amount'] ?? 0),
       seatId: String(row['seat_id']),
+      floorKey: String(row['floor_key']),
+      seatKey: String(row['seat_key']),
     };
   }
 
@@ -1850,6 +1859,8 @@ export class ReservationService {
       bookingPolicy: input.context.bookingPolicy,
       seats: input.activeTicketItems.map((ticketItem) => ({
         seatId: ticketItem.seatId,
+        floorKey: ticketItem.floorKey,
+        seatKey: ticketItem.seatKey,
       })),
     };
   }
@@ -1888,6 +1899,13 @@ export class ReservationService {
       activeTicketItems,
       reason: input.reason,
     });
+  }
+
+  private isAccountTransferPayment(context: TicketItemCancellationContext): boolean {
+    return (
+      context.paymentMethod.toUpperCase() === 'TRANSFER'
+      || context.paymentProvider.toUpperCase() === 'TOSS_TRANSFER'
+    );
   }
 
   private isDefiniteTossCancelFailure(error: unknown): boolean {
@@ -1987,7 +2005,9 @@ export class ReservationService {
           SELECT
             ti.id,
             ti.refundable_amount,
-            ti.seat_id
+            ti.seat_id,
+            ti.floor_key,
+            ti.seat_key
           FROM ticket_items ti
           WHERE ti.reservation_id = ${reservationId}
             AND ti.payment_id = ${context.paymentId}
@@ -2007,6 +2027,14 @@ export class ReservationService {
           activeTicketItems,
           reason: cancellationReason,
         });
+        if (
+          paymentCancelRequest.options.cancelAmount !== undefined
+          && this.isAccountTransferPayment(context)
+        ) {
+          throw new BadRequestException(
+            '계좌이체 결제는 좌석별 부분취소를 지원하지 않습니다. 전체 예약 취소가 필요하면 고객센터로 문의해주세요.',
+          );
+        }
 
         await tx
           .update(ticketItems)
@@ -2329,13 +2357,13 @@ export class ReservationService {
         showtimeId = row.showtime_id;
 
         const ticketItemRows = await tx
-          .select({ id: ticketItems.id })
+          .select({
+            id: ticketItems.id,
+            price: ticketItems.price,
+            serviceFee: ticketItems.serviceFee,
+          })
           .from(ticketItems)
           .where(eq(ticketItems.reservationId, reservationId));
-
-        if (ticketItemRows.length > 0) {
-          throw new BadRequestException('좌석별 티켓은 개별 취소를 이용해주세요');
-        }
 
         // 2. Get payment within transaction
         const [payment] = await tx
@@ -2369,6 +2397,43 @@ export class ReservationService {
               cancelReason: reason,
             })
             .where(eq(payments.reservationId, reservationId));
+        }
+
+        if (ticketItemRows.length > 0) {
+          await tx
+            .update(ticketItems)
+            .set({
+              status: 'cancelled',
+              cancelledAt: now,
+              cancelReason: reason,
+              cancellationFee: 0,
+              serviceFeeRefund: sql`${ticketItems.serviceFee}`,
+              refundableAmount: sql`${ticketItems.price} + ${ticketItems.serviceFee}`,
+              reopenState: 'available',
+              reopenHoldUntil: null,
+              reopenJobId: null,
+              updatedAt: now,
+            })
+            .where(
+              and(
+                eq(ticketItems.reservationId, reservationId),
+                inArray(ticketItems.status, ['active', 'cancellation_pending']),
+              ),
+            );
+
+          await tx
+            .update(tickets)
+            .set({
+              status: 'revoked',
+              revokedAt: now,
+              updatedAt: now,
+            })
+            .where(
+              and(
+                eq(tickets.reservationId, reservationId),
+                eq(tickets.status, 'active'),
+              ),
+            );
         }
 
         // Restore seat_inventories to available

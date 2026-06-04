@@ -218,6 +218,50 @@ describe('ReservationDetailView QR ticket card', () => {
     expect(screen.queryByText('안내 메일 예약')).not.toBeInTheDocument();
   });
 
+  it('shows pending payment details without QR tickets and exposes a resume payment action', () => {
+    const onResumePayment = vi.fn();
+
+    render(
+      <ReservationDetailView
+        reservation={createReservation({
+          status: 'PENDING_PAYMENT',
+          paidAt: null,
+          paymentMethod: null,
+          paymentKey: null,
+          tossOrderId: 'GRP-20260604-7O7YM',
+          performanceId: 'performance-girl-rules',
+          showtimeId: 'showtime-girl-rules',
+          paymentDeadlineAt: '2099-05-22T06:08:00.000Z',
+          ticketItems: [],
+          qrTicket: {
+            token: '',
+            jti: '',
+            status: 'REVOKED',
+            entryStatus: 'NOT_ENTERED',
+            enteredAt: null,
+            issuedAt: '2026-05-22T06:00:00.000Z',
+            emailScheduledAt: null,
+            emailedAt: null,
+          },
+        })}
+        onCancel={vi.fn()}
+        isCancelling={false}
+        onResumePayment={onResumePayment}
+      />,
+    );
+
+    expect(screen.getByText('결제대기')).toBeInTheDocument();
+    expect(screen.getByText('결제 전')).toBeInTheDocument();
+    expect(screen.queryByText(/NaN/)).not.toBeInTheDocument();
+    expect(screen.queryByText('QR 티켓')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '결제 계속하기' }));
+    expect(onResumePayment).toHaveBeenCalledWith(expect.objectContaining({
+      reservationNumber: 'GRP-27-DETAIL-QR',
+      tossOrderId: 'GRP-20260604-7O7YM',
+    }));
+  });
+
   it('keeps the QR visible and shows entry completion after check-in', () => {
     render(
       <ReservationDetailView
@@ -367,6 +411,20 @@ describe('ReservationDetailView QR ticket card', () => {
     expect(screen.getByTestId('qr-ticket-card-00000000-0000-4000-8000-000000000102')).toBeInTheDocument();
     expect(screen.getAllByText('취소된 티켓입니다.')).toHaveLength(2);
     expect(screen.getByText('좌석별 티켓 상태를 확인할 수 있습니다. 취소된 티켓의 QR은 표시되지 않습니다.')).toBeInTheDocument();
+  });
+
+  it('shows whole-reservation cancellation for active seat-level reservations', () => {
+    render(
+      <ReservationDetailView
+        reservation={createReservation()}
+        onCancel={vi.fn()}
+        isCancelling={false}
+        onCancelTicketItem={vi.fn()}
+        isCancellingTicketItem={false}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: '예매 취소' })).toBeInTheDocument();
   });
 
   it('opens ticket-item cancellation dialog only from active not-entered ticket cards', () => {

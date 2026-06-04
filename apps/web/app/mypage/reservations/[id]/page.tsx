@@ -1,6 +1,7 @@
 'use client';
 
 import { use } from 'react';
+import { useRouter } from 'next/navigation';
 import { AuthGuard } from '@/components/auth/auth-guard';
 import { ReservationDetailView } from '@/components/reservation/reservation-detail';
 import {
@@ -10,6 +11,8 @@ import {
 } from '@/hooks/use-reservations';
 import { ReservationDetailSkeleton } from '@/components/skeletons';
 import { Button } from '@/components/ui/button';
+import { useBookingStore } from '@/stores/use-booking-store';
+import type { ReservationDetail } from '@grabit/shared';
 import { toast } from 'sonner';
 
 interface ReservationDetailPageProps {
@@ -18,6 +21,7 @@ interface ReservationDetailPageProps {
 
 export default function ReservationDetailPage({ params }: ReservationDetailPageProps) {
   const { id } = use(params);
+  const router = useRouter();
   const { data: reservation, isLoading, isError, refetch } = useReservationDetail(id);
   const cancelMutation = useCancelReservation();
   const cancelTicketItemMutation = useCancelTicketItem();
@@ -33,18 +37,35 @@ export default function ReservationDetailPage({ params }: ReservationDetailPageP
   }
 
   async function handleCancelTicketItem(ticketItemId: string, reason: string) {
-    try {
-      await cancelTicketItemMutation.mutateAsync({
-        reservationId: id,
-        ticketItemId,
-        reason,
-      });
-      toast.success('티켓이 취소되었습니다');
-      refetch();
-    } catch (error) {
-      toast.error('티켓 취소 처리에 실패했습니다. 잠시 후 다시 시도해주세요.');
-      throw error;
+    await cancelTicketItemMutation.mutateAsync({
+      reservationId: id,
+      ticketItemId,
+      reason,
+    });
+    toast.success('티켓이 취소되었습니다');
+    refetch();
+  }
+
+  function handleResumePayment(target: ReservationDetail) {
+    if (!target.performanceId || !target.showtimeId || !target.tossOrderId) {
+      toast.error('결제 정보를 복원하지 못했습니다. 좌석을 다시 선택해주세요.');
+      return;
     }
+    const paymentDeadlineMs = Date.parse(target.paymentDeadlineAt);
+
+    useBookingStore.getState().setBookingData({
+      selectedSeats: target.seats,
+      showtimeId: target.showtimeId,
+      performanceId: target.performanceId,
+      performanceTitle: target.performanceTitle,
+      showDateTime: target.showDateTime,
+      venue: target.venue,
+      posterUrl: target.posterUrl,
+      expiresAt: Number.isFinite(paymentDeadlineMs) ? paymentDeadlineMs : Date.now(),
+    });
+    router.push(
+      `/booking/${target.performanceId}/confirm?resumeOrderId=${encodeURIComponent(target.tossOrderId)}`,
+    );
   }
 
   return (
@@ -68,6 +89,7 @@ export default function ReservationDetailPage({ params }: ReservationDetailPageP
             reservation={reservation}
             onCancel={handleCancel}
             isCancelling={cancelMutation.isPending}
+            onResumePayment={handleResumePayment}
             onCancelTicketItem={handleCancelTicketItem}
             isCancellingTicketItem={cancelTicketItemMutation.isPending}
           />
