@@ -663,6 +663,8 @@ describe('runtime booking disabled UI', () => {
       expect(screen.getAllByRole('button', { name: '결제하기' })[0]).toBeEnabled();
     });
     expect(cancelPendingReservationMock).toHaveBeenCalledWith('reservation-1');
+    searchParamsRef.current = new URLSearchParams();
+    view.rerender(<ConfirmPage />);
 
     await user.click(screen.getAllByRole('button', { name: '결제하기' })[0]!);
 
@@ -670,6 +672,68 @@ describe('runtime booking disabled UI', () => {
       expect(prepareReservationMock).toHaveBeenCalledTimes(2);
     });
     expect(preparedOrderIds[1]).not.toBe(preparedOrderIds[0]);
+  });
+
+  it('handles repeated Toss cancel returns with the same error key after a new payment request', async () => {
+    const user = userEvent.setup();
+    const preparedOrderIds: string[] = [];
+    useRuntimeFlagsMock.mockReturnValue({
+      bookingEnabled: true,
+      isLoading: false,
+      bookingDisabledMessage: '예매는 추후 오픈 예정입니다',
+    });
+    prepareReservationMock.mockImplementation(async (payload: { orderId: string }) => {
+      preparedOrderIds.push(payload.orderId);
+      return {
+        reservationId: `reservation-${preparedOrderIds.length}`,
+        orderId: payload.orderId,
+      };
+    });
+    requestPaymentMock.mockImplementation(() => new Promise(() => {}));
+
+    const view = renderWithQuery(<ConfirmPage />);
+
+    await user.click(await screen.findByLabelText('전체 동의'));
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: '결제하기' })[0]).toBeEnabled();
+    });
+
+    await user.click(screen.getAllByRole('button', { name: '결제하기' })[0]!);
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: '결제 처리 중...' })[0]).toBeDisabled();
+    });
+
+    searchParamsRef.current = new URLSearchParams({
+      error: 'true',
+      code: 'PAY_PROCESS_CANCELED',
+      message: '결제가 취소되었습니다.',
+    });
+    view.rerender(<ConfirmPage />);
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: '결제하기' })[0]).toBeEnabled();
+    });
+    expect(cancelPendingReservationMock).toHaveBeenCalledWith('reservation-1');
+    searchParamsRef.current = new URLSearchParams();
+    view.rerender(<ConfirmPage />);
+
+    await user.click(screen.getAllByRole('button', { name: '결제하기' })[0]!);
+    await waitFor(() => {
+      expect(prepareReservationMock).toHaveBeenCalledTimes(2);
+    });
+    expect(preparedOrderIds[1]).not.toBe(preparedOrderIds[0]);
+
+    searchParamsRef.current = new URLSearchParams({
+      error: 'true',
+      code: 'PAY_PROCESS_CANCELED',
+      message: '결제가 취소되었습니다.',
+    });
+    view.rerender(<ConfirmPage />);
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: '결제하기' })[0]).toBeEnabled();
+    });
+    expect(cancelPendingReservationMock).toHaveBeenCalledWith('reservation-2');
   });
 
   it('switches the confirm CTA to 결제하기 after required agreements when booking is enabled', async () => {
