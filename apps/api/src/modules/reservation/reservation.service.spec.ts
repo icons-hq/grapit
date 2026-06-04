@@ -2559,7 +2559,7 @@ describe('ReservationService', () => {
         }));
     });
 
-    it('accepts BankPay account-transfer partial cancellation when Toss marks the refund in progress', async () => {
+    it('keeps BankPay account-transfer partial cancellation pending while Toss refund is in progress', async () => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date('2026-06-04T13:48:00.000Z'));
 
@@ -2632,13 +2632,74 @@ describe('ReservationService', () => {
         expect(ticketItemUpdates[0]?.values).toMatchObject({
           status: 'cancellation_pending',
         });
-        expect(ticketItemUpdates[1]?.values).toMatchObject({
-          status: 'cancelled',
-          reopenState: 'available',
-        });
+        expect(ticketItemUpdates).toHaveLength(1);
+        expect(updateCalls.some((call) => call.table === seatInventories)).toBe(false);
+        expect(mockPaymentCancellationFinalizer.finalizeFullPaymentCancellation)
+          .not.toHaveBeenCalled();
+        expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    it('keeps pending retry open when Toss already has a matching in-progress partial cancel', async () => {
+      const reservationId = randomUUID();
+      const userId = randomUUID();
+      const ticketItemId = randomUUID();
+      vi.spyOn(service, 'getReservationDetail').mockResolvedValue({
+        id: reservationId,
+        ticketItems: [],
+      } as never);
+      mockTossClient.queryPayment.mockResolvedValueOnce({
+        paymentKey: 'pk_ticket_item_cancel',
+        orderId: 'GRP-20260604-UTFFP',
+        method: '계좌이체',
+        isPartialCancelable: false,
+        totalAmount: 724000,
+        balanceAmount: 724000,
+        status: 'DONE',
+        approvedAt: '2026-06-04T10:43:12+09:00',
+        cancels: [{
+          cancelAmount: 362000,
+          cancelReason: '다른 좌석으로 재예매',
+          canceledAt: '2026-06-04T22:48:00+09:00',
+          cancelStatus: 'IN_PROGRESS',
+        }],
+      });
+      const { updateCalls } = setupTicketItemCancelTransaction({
+        reservationId,
+        userId,
+        ticketItemId,
+        paymentMethod: '계좌이체',
+        paymentProvider: 'CARD',
+        paymentAmount: 724000,
+        ticketItemStatus: 'cancellation_pending',
+        cancelReason: '다른 좌석으로 재예매',
+        cancellationFee: 0,
+        serviceFeeRefund: TICKET_SERVICE_FEE_KRW,
+        refundableAmount: 362000,
+        price: 360000,
+        serviceFee: TICKET_SERVICE_FEE_KRW,
+        activeRemainingRows: [{ id: randomUUID() }],
+      });
+
+      await expect(service.cancelTicketItem(
+        reservationId,
+        ticketItemId,
+        userId,
+        '사용자가 재시도',
+      )).resolves.toMatchObject({ id: reservationId });
+
+      expect(mockTossClient.cancelPayment).not.toHaveBeenCalled();
+      const ticketItemUpdates = updateCalls.filter((call) => call.table === ticketItems);
+      expect(ticketItemUpdates[0]?.values).toMatchObject({
+        status: 'cancellation_pending',
+        cancelReason: '다른 좌석으로 재예매',
+        refundableAmount: 362000,
+      });
+      expect(ticketItemUpdates).toHaveLength(1);
+      expect(updateCalls.some((call) => call.table === seatInventories)).toBe(false);
+      expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
     });
 
     it('restores the ticket item when Toss reports partial cancellation is unavailable', async () => {
@@ -3514,43 +3575,27 @@ describe('ReservationService', () => {
       expect(updateCalls.some((call) => call.table === reservations)).toBe(false);
     });
 
-    it('keeps pending retry unresolved instead of restoring active when Toss already shows a matching cancel snapshot', async () => {
+    it('finalizes pending retry when Toss already shows a matching completed cancel snapshot', async () => {
       const reservationId = randomUUID();
       const userId = randomUUID();
       const ticketItemId = randomUUID();
-      mockTossClient.cancelPayment.mockRejectedValueOnce(
-        Object.assign(new Error('already cancelled'), {
-          name: 'TossPaymentError',
-          code: 'ALREADY_CANCELED',
-        }),
-      );
-      mockTossClient.queryPayment
-        .mockResolvedValueOnce({
-          paymentKey: 'pk_ticket_item_cancel',
-          orderId: 'GRP-20260403-ABCDE',
-          method: '카드',
-          totalAmount: 150000,
-          status: 'DONE',
-          approvedAt: '2026-04-03T10:00:00+09:00',
-          cancels: [{
-            cancelAmount: 74000,
-            cancelReason: '단순 변심',
-            canceledAt: '2026-04-03T11:00:00+09:00',
-          }],
-        })
-        .mockResolvedValueOnce({
-          paymentKey: 'pk_ticket_item_cancel',
-          orderId: 'GRP-20260403-ABCDE',
-          method: '카드',
-          totalAmount: 150000,
-          status: 'DONE',
-          approvedAt: '2026-04-03T10:00:00+09:00',
-          cancels: [{
-            cancelAmount: 74000,
-            cancelReason: '단순 변심',
-            canceledAt: '2026-04-03T11:00:00+09:00',
-          }],
-        });
+      vi.spyOn(service, 'getReservationDetail').mockResolvedValue({
+        id: reservationId,
+        ticketItems: [],
+      } as never);
+      mockTossClient.queryPayment.mockResolvedValueOnce({
+        paymentKey: 'pk_ticket_item_cancel',
+        orderId: 'GRP-20260403-ABCDE',
+        method: '카드',
+        totalAmount: 150000,
+        status: 'DONE',
+        approvedAt: '2026-04-03T10:00:00+09:00',
+        cancels: [{
+          cancelAmount: 74000,
+          cancelReason: '단순 변심',
+          canceledAt: '2026-04-03T11:00:00+09:00',
+        }],
+      });
       const pendingCancelledAt = new Date('2026-05-08T03:00:00.000Z');
       const { updateCalls } = setupTicketItemCancelTransaction({
         reservationId,
@@ -3570,19 +3615,24 @@ describe('ReservationService', () => {
         ticketItemId,
         userId,
         '단순 변심',
-      )).rejects.toThrow('취소 처리 중 오류가 발생했습니다. 고객센터에 문의해주세요.');
+      )).resolves.toMatchObject({ id: reservationId });
+
+      expect(mockTossClient.cancelPayment).not.toHaveBeenCalled();
 
       const ticketItemUpdates = updateCalls.filter((call) => call.table === ticketItems);
-      expect(ticketItemUpdates).toHaveLength(1);
       expect(ticketItemUpdates[0]?.values).toMatchObject({
         status: 'cancellation_pending',
         cancelledAt: pendingCancelledAt,
         reopenState: 'held_cancelled',
         refundableAmount: 74000,
       });
-      expect(updateCalls.some((call) => call.table === tickets && call.values.status === 'active')).toBe(false);
-      expect(updateCalls.some((call) => call.table === seatInventories)).toBe(false);
-      expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+      expect(ticketItemUpdates[1]?.values).toMatchObject({
+        status: 'cancelled',
+        reopenState: 'available',
+      });
+      expect(updateCalls.find((call) => call.table === seatInventories)?.values)
+        .toMatchObject({ status: 'available' });
+      expect(mockBookingGateway.broadcastSeatUpdate).toHaveBeenCalled();
     });
 
     it('keeps pending retry unresolved when Toss definite failure cannot be checked against a payment snapshot', async () => {

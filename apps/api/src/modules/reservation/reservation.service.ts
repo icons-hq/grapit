@@ -161,6 +161,7 @@ type PreparedTicketItemCancellation = {
 };
 type TicketItemPaymentCancelOutcome =
   | { status: 'cancelled'; providerResponse: TossPaymentResponse }
+  | { status: 'processing'; providerResponse: TossPaymentResponse }
   | { status: 'not_partial_cancelable' }
   | { status: 'definite_failure' }
   | { status: 'ambiguous' };
@@ -1777,6 +1778,27 @@ export class ReservationService {
       if (
         !input.isFullPaymentCancellation
         && input.request.options.cancelAmount !== undefined
+        && input.isPendingRetry
+      ) {
+        const completedCancelsBefore = this.countMatchingCompletedTossCancellations(
+          beforePayment,
+          input.request,
+        );
+        if (completedCancelsBefore > 0) {
+          return { status: 'cancelled', providerResponse: beforePayment };
+        }
+
+        matchingCancelsBefore = this.countMatchingAcceptedTossCancellations(
+          beforePayment,
+          input.request,
+        );
+        if (matchingCancelsBefore > 0) {
+          return { status: 'processing', providerResponse: beforePayment };
+        }
+      }
+      if (
+        !input.isFullPaymentCancellation
+        && input.request.options.cancelAmount !== undefined
         && beforePayment.isPartialCancelable === false
       ) {
         return { status: 'not_partial_cancelable' };
@@ -1809,10 +1831,13 @@ export class ReservationService {
           ? { status: 'cancelled', providerResponse: response }
           : { status: 'ambiguous' };
       }
-      return this.countMatchingCompletedTossCancellations(response, input.request) > 0
-        || this.countMatchingAcceptedTossCancellations(response, input.request) > 0
-        ? { status: 'cancelled', providerResponse: response }
-        : { status: 'ambiguous' };
+      if (this.countMatchingCompletedTossCancellations(response, input.request) > 0) {
+        return { status: 'cancelled', providerResponse: response };
+      }
+      if (this.countMatchingAcceptedTossCancellations(response, input.request) > 0) {
+        return { status: 'processing', providerResponse: response };
+      }
+      return { status: 'ambiguous' };
     } catch (cancelError) {
       try {
         const payment = await this.tossClient.queryPayment(
@@ -1834,6 +1859,8 @@ export class ReservationService {
         ) {
           return { status: 'ambiguous' };
         }
+        const matchingCompletedCancelsAfter =
+          this.countMatchingCompletedTossCancellations(payment, input.request);
         matchingCancelsAfter = this.countMatchingAcceptedTossCancellations(
           payment,
           input.request,
@@ -1842,12 +1869,20 @@ export class ReservationService {
           !input.isFullPaymentCancellation
           && input.request.options.cancelRequestId !== undefined
           && matchingCancelsBefore !== undefined
-          && matchingCancelsAfter > matchingCancelsBefore
+          && matchingCompletedCancelsAfter > matchingCancelsBefore
         ) {
           this.logger.warn(
             `Recovered Toss ticket-item cancel from payment snapshot. ticketItemId=${input.ticketItemId}`,
           );
           return { status: 'cancelled', providerResponse: payment };
+        }
+        if (
+          !input.isFullPaymentCancellation
+          && input.request.options.cancelRequestId !== undefined
+          && matchingCancelsBefore !== undefined
+          && matchingCancelsAfter > matchingCancelsBefore
+        ) {
+          return { status: 'processing', providerResponse: payment };
         }
       } catch (queryError) {
         this.logger.error(
@@ -2124,6 +2159,10 @@ export class ReservationService {
           isPendingRetry: preparedCancellation.isPendingRetry,
           isFullPaymentCancellation: preparedCancellation.isFullPaymentCancellation,
         });
+
+        if (cancelOutcome.status === 'processing') {
+          return this.getReservationDetail(reservationId, userId);
+        }
 
         if (cancelOutcome.status === 'not_partial_cancelable') {
           await this.restorePreparedTicketItemCancellation(
