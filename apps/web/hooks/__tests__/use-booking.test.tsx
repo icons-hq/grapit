@@ -15,6 +15,7 @@ import {
   buildDirectCardPaymentRequest,
   buildWidgetPaymentRequest,
   resolveProviderChargeDisabledMessage,
+  resolveOverseasCardClientKey,
   resolvePaymentWidgetVariantLabel,
   resolvePaymentWidgetRenderVariantKey,
   resolvePaymentWidgetClientKey,
@@ -1092,6 +1093,26 @@ describe('use-booking payment mutations', () => {
       },
       customerMobilePhone: '821012345678',
     });
+  });
+
+  it('resolveOverseasCardClientKey() requires a direct payment client key for overseas cards', () => {
+    const originalOverseasCardClientKey = process.env.NEXT_PUBLIC_TOSS_OVERSEAS_CARD_CLIENT_KEY;
+    try {
+      delete process.env.NEXT_PUBLIC_TOSS_OVERSEAS_CARD_CLIENT_KEY;
+      expect(resolveOverseasCardClientKey()).toBeUndefined();
+
+      process.env.NEXT_PUBLIC_TOSS_OVERSEAS_CARD_CLIENT_KEY = 'live_gck_widget_key';
+      expect(resolveOverseasCardClientKey()).toBeUndefined();
+
+      process.env.NEXT_PUBLIC_TOSS_OVERSEAS_CARD_CLIENT_KEY = 'test_ck_direct_key';
+      expect(resolveOverseasCardClientKey()).toBe('test_ck_direct_key');
+    } finally {
+      if (originalOverseasCardClientKey === undefined) {
+        delete process.env.NEXT_PUBLIC_TOSS_OVERSEAS_CARD_CLIENT_KEY;
+      } else {
+        process.env.NEXT_PUBLIC_TOSS_OVERSEAS_CARD_CLIENT_KEY = originalOverseasCardClientKey;
+      }
+    }
   });
 
   it('buildWidgetPaymentRequest() does not attach provider-charge fields to overseas card requests', () => {
