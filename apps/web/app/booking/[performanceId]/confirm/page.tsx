@@ -135,18 +135,19 @@ function ConfirmPageContent() {
     const errorToastKey = `${code ?? ''}:${message ?? ''}:${failedOrderId ?? ''}`;
     if (hasError !== 'true' || errorToastKeyRef.current === errorToastKey) return;
     errorToastKeyRef.current = errorToastKey;
+    const reservationId = reservationIdRef.current;
+    const shouldRotateOrderId = Boolean(reservationId) || failedOrderId === orderId;
 
     paymentRequestInFlightRef.current = false;
     queueMicrotask(() => {
       setIsProcessing(false);
 
-      if (failedOrderId && failedOrderId === orderId) {
+      if (shouldRotateOrderId) {
         setOrderId(generateOrderId());
       }
     });
 
-    if (reservationIdRef.current) {
-      const reservationId = reservationIdRef.current;
+    if (reservationId) {
       reservationIdRef.current = null;
       cancelPending.mutate(reservationId);
     }
@@ -248,6 +249,7 @@ function ConfirmPageContent() {
     if (requiresOverseasDisclaimer && !overseasDisclaimerAgreed) return;
 
     paymentRequestInFlightRef.current = true;
+    errorToastKeyRef.current = null;
     setIsProcessing(true);
     let preparedReservationId: string | null = null;
     try {
