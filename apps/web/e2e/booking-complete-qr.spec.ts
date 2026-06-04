@@ -71,6 +71,15 @@ function createReservationDetail(overrides: Record<string, unknown> = {}) {
       emailScheduledAt: new Date(Date.now() + 6 * 24 * 60 * 60 * 1000).toISOString(),
       emailedAt: null,
     },
+    ticketEmailDelivery: {
+      email: 'phase24-buyer@example.com',
+      isEmailVerified: true,
+      isPlaceholderEmail: false,
+      canSend: true,
+      status: 'ready',
+      scheduledAt: new Date(Date.now() + 6 * 24 * 60 * 60 * 1000).toISOString(),
+      lastSentAt: null,
+    },
     ...overrides,
   };
 }
@@ -150,7 +159,7 @@ test.describe('booking complete QR visibility', () => {
       page.getByText('현장 검표 결과가 최종 입장 기준입니다.'),
     ).toBeVisible();
     await expect(
-      page.getByText('QR 티켓 안내 메일은 공연 24시간 전에 다시 발송됩니다.'),
+      page.getByText(/^예약 발송 /),
     ).toBeVisible({ timeout: 10000 });
     await expectNoRawSecrets(page);
   });

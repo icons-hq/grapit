@@ -59,6 +59,15 @@ function createReservationDetail(overrides: Record<string, unknown> = {}) {
       status: 'REVOKED',
       issuedAt: new Date().toISOString(),
     },
+    ticketEmailDelivery: {
+      email: 'phase24-buyer@example.com',
+      isEmailVerified: true,
+      isPlaceholderEmail: false,
+      canSend: true,
+      status: 'ready',
+      scheduledAt: null,
+      lastSentAt: null,
+    },
     ...overrides,
   };
 }

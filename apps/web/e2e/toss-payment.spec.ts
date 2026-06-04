@@ -118,6 +118,15 @@ test.describe('Toss Payments E2E', () => {
             status: 'ACTIVE',
             issuedAt: new Date().toISOString(),
           },
+          ticketEmailDelivery: {
+            email: 'toss-e2e-buyer@example.com',
+            isEmailVerified: true,
+            isPlaceholderEmail: false,
+            canSend: true,
+            status: 'ready',
+            scheduledAt: null,
+            lastSentAt: null,
+          },
         }),
       });
     });

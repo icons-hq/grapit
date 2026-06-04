@@ -55,6 +55,15 @@ function createReservationDetail(overrides: Record<string, unknown> = {}) {
       emailScheduledAt: '2026-07-03T10:00:00.000Z',
       emailedAt: null,
     },
+    ticketEmailDelivery: {
+      email: rawBuyerEmail,
+      isEmailVerified: true,
+      isPlaceholderEmail: false,
+      canSend: true,
+      status: 'ready',
+      scheduledAt: '2026-07-03T10:00:00.000Z',
+      lastSentAt: null,
+    },
     ...overrides,
   };
 }
@@ -104,12 +113,14 @@ async function mockAuthenticatedSession(
   });
 }
 
-async function expectNoRawSecrets(page: Page) {
+async function expectNoRawSecrets(page: Page, options: { allowBuyerEmail?: boolean } = {}) {
   await expect(page.getByText(rawQrToken, { exact: true })).toHaveCount(0);
   await expect(page.getByText(rawQrJTI, { exact: true })).toHaveCount(0);
   await expect(page.getByText(rawPaymentKey, { exact: true })).toHaveCount(0);
   await expect(page.getByText(rawCookie, { exact: true })).toHaveCount(0);
-  await expect(page.getByText(rawBuyerEmail, { exact: true })).toHaveCount(0);
+  if (!options.allowBuyerEmail) {
+    await expect(page.getByText(rawBuyerEmail, { exact: true })).toHaveCount(0);
+  }
   for (const checkInUrl of checkInUrlsForVisibleTextGuard) {
     await expect(page.getByText(checkInUrl, { exact: true })).toHaveCount(0);
   }
@@ -143,7 +154,7 @@ test.describe('phase27 QR check-in browser contracts', () => {
       'data-qr-url',
       checkInUrlPattern,
     );
-    await expectNoRawSecrets(page);
+    await expectNoRawSecrets(page, { allowBuyerEmail: true });
   });
 
   test('logged-out QR visitors are sent to login with a return target', async ({ page }) => {

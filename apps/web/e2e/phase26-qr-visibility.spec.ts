@@ -72,6 +72,15 @@ function createReservationDetail(overrides: Record<string, unknown> = {}) {
       emailScheduledAt: '2026-07-17T10:00:00.000Z',
       emailedAt: null,
     },
+    ticketEmailDelivery: {
+      email: 'phase26-buyer@example.com',
+      isEmailVerified: true,
+      isPlaceholderEmail: false,
+      canSend: true,
+      status: 'ready',
+      scheduledAt: '2026-07-17T10:00:00.000Z',
+      lastSentAt: null,
+    },
     ...overrides,
   };
 }
