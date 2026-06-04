@@ -400,6 +400,47 @@ describe('SeatMapViewer', () => {
     expect(onSeatClick).toHaveBeenCalledWith('A-1');
   });
 
+  it('refreshes owned locked seat styling when my-locks load after SVG processing', async () => {
+    const seatStates = new Map<string, SeatState>([
+      ['A-1', 'locked'],
+    ]);
+    const selectedSeatIds = new Set<string>();
+
+    const { container, rerender } = render(
+      <SeatMapViewer
+        svgUrl="https://example.com/seats.svg"
+        seatConfig={mockSeatConfig}
+        seatStates={seatStates}
+        selectedSeatIds={selectedSeatIds}
+        myLockedSeatIds={new Set()}
+        onSeatClick={() => {}}
+        maxSelect={1}
+      />,
+    );
+
+    await waitFor(() => {
+      const seatA1 = container.querySelector('[data-seat-id="A-1"]')!;
+      expect(seatA1.getAttribute('fill')?.toLowerCase()).toBe('#d1d5db');
+    });
+
+    rerender(
+      <SeatMapViewer
+        svgUrl="https://example.com/seats.svg"
+        seatConfig={mockSeatConfig}
+        seatStates={seatStates}
+        selectedSeatIds={selectedSeatIds}
+        myLockedSeatIds={new Set(['A-1'])}
+        onSeatClick={() => {}}
+        maxSelect={1}
+      />,
+    );
+
+    await waitFor(() => {
+      const seatA1 = container.querySelector('[data-seat-id="A-1"]')!;
+      expect(seatA1.getAttribute('stroke')).toBe('#1A1A2E');
+    });
+  });
+
   it('PR18-CR-MAXSELECT-LOCKED: maxSelect 도달 후 locked 좌석 클릭은 viewer에서 차단된다', async () => {
     const onSeatClick = vi.fn();
     const seatStates = new Map<string, SeatState>([

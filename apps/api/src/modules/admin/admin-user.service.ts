@@ -12,6 +12,7 @@ import {
   desc,
   eq,
   gte,
+  gt,
   ilike,
   inArray,
   isNull,
@@ -65,6 +66,8 @@ import {
 } from './admin-audit.service.js';
 import { safeCsvRows } from './csv-export.util.js';
 import { buildDailyBucketSkeleton, kstBoundaryToUtc } from './kst-boundary.js';
+
+const USER_REFRESH_FAMILY_LIMIT = 2;
 
 type UserRow = Pick<
   typeof users.$inferSelect,
@@ -362,6 +365,7 @@ export class AdminUserService {
         adminCapabilities: normalized.adminCapabilities,
       };
       const changedFields = changedPermissionFields(beforeSnapshot, afterSnapshot);
+      const isDowngradeToUser = beforeSnapshot.role === 'admin' && afterSnapshot.role === 'user';
 
       if (changedFields.length === 0) {
         return;
@@ -394,6 +398,10 @@ export class AdminUserService {
         })
         .where(eq(users.id, targetUserId));
 
+      if (isDowngradeToUser) {
+        await this.enforceUserRefreshFamilyLimit(targetUserId, tx as DrizzleDB);
+      }
+
       await this.auditService.write(
         {
           actorUserId,
@@ -422,6 +430,56 @@ export class AdminUserService {
     });
 
     return this.getUserDetail(targetUserId);
+  }
+
+  private async enforceUserRefreshFamilyLimit(
+    targetUserId: string,
+    db: Pick<DrizzleDB, 'select' | 'update'>,
+  ): Promise<void> {
+    const now = new Date();
+    const activeRows = await db
+      .select({
+        family: refreshTokens.family,
+        createdAt: refreshTokens.createdAt,
+      })
+      .from(refreshTokens)
+      .where(
+        and(
+          eq(refreshTokens.userId, targetUserId),
+          isNull(refreshTokens.revokedAt),
+          gt(refreshTokens.expiresAt, now),
+        ),
+      );
+
+    const oldestByFamily = new Map<string, Date>();
+    for (const row of activeRows) {
+      const currentOldest = oldestByFamily.get(row.family);
+      if (!currentOldest || row.createdAt < currentOldest) {
+        oldestByFamily.set(row.family, row.createdAt);
+      }
+    }
+
+    const activeFamilies = [...oldestByFamily.entries()]
+      .map(([family, createdAt]) => ({ family, createdAt }))
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+
+    const familiesToRevoke = activeFamilies.slice(
+      0,
+      Math.max(0, activeFamilies.length - USER_REFRESH_FAMILY_LIMIT),
+    );
+
+    for (const family of familiesToRevoke) {
+      await db
+        .update(refreshTokens)
+        .set({ revokedAt: now })
+        .where(
+          and(
+            eq(refreshTokens.userId, targetUserId),
+            eq(refreshTokens.family, family.family),
+            isNull(refreshTokens.revokedAt),
+          ),
+        );
+    }
   }
 
   async withdrawUser(

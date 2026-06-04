@@ -479,7 +479,7 @@ export function SeatMapViewer({
     svgEl.setAttribute('style', 'width:100%;height:auto;display:block;');
 
     return doc.documentElement.outerHTML;
-  }, [rawSvg, seatStates, selectedSeatIds, tierColorMap, pendingRemovals, floorKey, floorLabel]);
+  }, [rawSvg, seatStates, selectedSeatIds, myLockedSeatIds, tierColorMap, pendingRemovals, floorKey, floorLabel]);
 
   // B-2-RESIDUAL-V2 Option C (reviews revision MED #4 D-13 BROADCAST PRIORITY):
   // dangerouslySetInnerHTML이 SVG를 재마운트한 *직후* 동일 element의 fill을 변경.
