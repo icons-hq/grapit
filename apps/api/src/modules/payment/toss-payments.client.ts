@@ -55,7 +55,13 @@ export class TossPaymentsClient {
 
   private getSecretKey(scope: TossPaymentRequestOptions['secretKeyScope']): string {
     if (scope === 'overseas-card') {
-      return this.overseasCardSecretKey || this.secretKey;
+      if (!this.overseasCardSecretKey) {
+        throw new TossPaymentError(
+          'MISSING_OVERSEAS_CARD_SECRET_KEY',
+          'TOSS_OVERSEAS_CARD_SECRET_KEY is required for overseas card payments',
+        );
+      }
+      return this.overseasCardSecretKey;
     }
     if (scope === 'foreign-easy-pay') {
       if (!this.foreignEasyPaySecretKey) {

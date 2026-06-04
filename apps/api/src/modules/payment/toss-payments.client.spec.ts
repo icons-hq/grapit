@@ -95,33 +95,25 @@ describe('TossPaymentsClient', () => {
     );
   });
 
-  it('falls back to the default secret when the overseas card secret is missing', async () => {
+  it('does not fall back to the default secret for overseas card payment confirms', async () => {
     client = new TossPaymentsClient({
       get: vi.fn((key: string, fallback?: string) => {
         if (key === 'TOSS_SECRET_KEY') return secretKey;
         return fallback;
       }),
     } as unknown as ConfigService);
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: vi.fn().mockResolvedValue(paidResponse),
-    });
 
-    await client.confirmPayment({
-      paymentKey: 'pay_overseas_card',
-      orderId: 'GRP-OVERSEAS-CARD',
-      amount: 150000,
-      secretKeyScope: 'overseas-card',
-    });
-
-    expect(fetchMock).toHaveBeenCalledWith(
-      'https://api.tosspayments.com/v1/payments/confirm',
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          Authorization: authHeader,
-        }),
+    await expect(
+      client.confirmPayment({
+        paymentKey: 'pay_overseas_card',
+        orderId: 'GRP-OVERSEAS-CARD',
+        amount: 150000,
+        secretKeyScope: 'overseas-card',
       }),
-    );
+    ).rejects.toMatchObject({
+      code: 'MISSING_OVERSEAS_CARD_SECRET_KEY',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('omits optional cancel fields for full Toss cancellation', async () => {
