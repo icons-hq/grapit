@@ -405,6 +405,53 @@ describe('PaymentCancellationFinalizerService', () => {
       .toBe(false);
   });
 
+  it('does not close the parent reservation or payment for a ticket-item partial cancel', async () => {
+    const { service, transaction } = createService(
+      {
+        isAvailable: false,
+        send: vi.fn(),
+      },
+      {
+        ticketItemReturning: [{ id: 'ticket-item-1' }],
+        ticketReturning: [{ id: 'ticket-1' }],
+        seatInventoryReturning: [[{ id: 'seat-inventory-1' }]],
+      },
+    );
+
+    await service.finalizeFullPaymentCancellation(
+      baseInput({
+        refundId: undefined,
+        source: 'cancel_webhook',
+        reason: '다른 좌석으로 재예매',
+        providerResponse: {
+          status: 'PARTIAL_CANCELED',
+          cancels: [{
+            cancelAmount: 79000,
+            cancelReason: '다른 좌석으로 재예매',
+            cancelStatus: 'DONE',
+            cancelRequestId: 'cancel_ticket-item-1',
+          }],
+        },
+        context: createContext({
+          seats: [{ seatId: '1F:A-10' }],
+        }),
+        ticketItemCancellation: {
+          ticketItemId: 'ticket-item-1',
+          cancellationFee: 0,
+          serviceFeeRefund: 2000,
+          refundableAmount: 79000,
+        },
+      }),
+    );
+
+    expect(transaction.updateCalls.some((call) => call.table === reservations)).toBe(false);
+    expect(transaction.updateCalls.some((call) => call.table === payments)).toBe(false);
+    expect(transaction.updateCalls.some((call) => call.table === ticketItems)).toBe(true);
+    expect(transaction.updateCalls.some((call) => call.table === tickets)).toBe(true);
+    expect(transaction.updateCalls.filter((call) => call.table === seatInventories))
+      .toHaveLength(1);
+  });
+
   it('stores sanitized provider cancellation payload in refund and payment metadata', async () => {
     const { service, transaction } = createService({
       isAvailable: false,

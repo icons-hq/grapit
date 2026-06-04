@@ -1448,6 +1448,7 @@ export class ReservationService {
         enteredAt: null,
         qrCredential: null,
         cancellation: null,
+        isLegacyFallback: true,
       };
     });
   }

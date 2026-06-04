@@ -58,6 +58,7 @@ export const ticketItemSchema = z.object({
   enteredAt: isoDatetime('입장 처리 시각').nullable(),
   qrCredential: ticketItemQrCredentialSchema.nullable(),
   cancellation: ticketItemCancellationSchema.nullable(),
+  isLegacyFallback: z.boolean().optional(),
 });
 
 export const ticketItemCancellationPolicyCodeSchema = z.enum([

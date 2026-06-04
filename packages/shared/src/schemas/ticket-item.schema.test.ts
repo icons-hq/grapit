@@ -66,9 +66,11 @@ describe('ticket item shared contracts', () => {
       enteredAt: null,
       qrCredential: null,
       cancellation: null,
+      isLegacyFallback: true,
     });
 
     expect(parsed.serviceFee).toBe(0);
+    expect(parsed.isLegacyFallback).toBe(true);
   });
 
   it('accepts cancellation pending as a seat-level ticket item status', () => {

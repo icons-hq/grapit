@@ -441,6 +441,29 @@ describe('ReservationDetailView QR ticket card', () => {
     expect(screen.getByRole('button', { name: '예매 취소' })).toBeInTheDocument();
   });
 
+  it('shows whole-reservation cancellation for legacy fallback ticket items', () => {
+    const reservation = createReservation();
+
+    render(
+      <ReservationDetailView
+        reservation={createReservation({
+          ticketItems: reservation.ticketItems.map((ticketItem) => ({
+            ...ticketItem,
+            qrCredential: null,
+            isLegacyFallback: true,
+          })),
+        })}
+        onCancel={vi.fn()}
+        isCancelling={false}
+        onCancelTicketItem={vi.fn()}
+        isCancellingTicketItem={false}
+      />,
+    );
+
+    expect(screen.getByRole('button', { name: '예매 취소' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '이 티켓 취소' })).not.toBeInTheDocument();
+  });
+
   it('opens ticket-item cancellation dialog only from active not-entered ticket cards', () => {
     const reservation = createReservation();
     render(
