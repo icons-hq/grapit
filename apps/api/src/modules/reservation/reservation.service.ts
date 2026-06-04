@@ -51,6 +51,7 @@ import {
 import {
   BookingService,
   BOOKING_ENDED_MESSAGE,
+  BOOKING_NOT_OPEN_MESSAGE,
   BOOKING_VERIFICATION_REQUIRED_MESSAGE,
   buildMaxTicketsPerUserExceededMessage,
 } from '../booking/booking.service.js';
@@ -103,6 +104,7 @@ type ShowtimeBookingContext = {
   id: string;
   performanceId: string;
   performanceStatus: string;
+  bookingStartsAt: Date | null;
   dateTime: Date;
   maxTicketsPerUser: number;
   bookingPolicy: BookingPolicy;
@@ -207,6 +209,10 @@ function assertBookingVerificationComplete(actor: BookingActor): void {
   if (actor.isEmailVerified !== true || actor.isPhoneVerified !== true) {
     throw new ForbiddenException(BOOKING_VERIFICATION_REQUIRED_MESSAGE);
   }
+}
+
+function isBookingStartReached(value: Date | null | undefined, now: Date = new Date()): boolean {
+  return value instanceof Date && !Number.isNaN(value.getTime()) && value.getTime() <= now.getTime();
 }
 
 @Injectable()
@@ -860,6 +866,7 @@ export class ReservationService {
         id: showtimes.id,
         performanceId: showtimes.performanceId,
         performanceStatus: performances.status,
+        bookingStartsAt: bookingPolicies.bookingStartsAt,
         dateTime: showtimes.dateTime,
         maxTicketsPerUser: bookingPolicies.maxTicketsPerUser,
         changePolicyEnabled: bookingPolicies.changePolicyEnabled,
@@ -879,6 +886,7 @@ export class ReservationService {
       id: showtime.id,
       performanceId: showtime.performanceId,
       performanceStatus: showtime.performanceStatus,
+      bookingStartsAt: showtime.bookingStartsAt ?? null,
       dateTime: showtime.dateTime,
       maxTicketsPerUser:
         showtime.maxTicketsPerUser ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.maxTicketsPerUser,
@@ -893,13 +901,20 @@ export class ReservationService {
 
   private assertPerformanceBookingOpen(
     performanceStatus: string,
+    bookingStartsAt: Date | null,
     actor: BookingActor,
   ): void {
     if (performanceStatus === 'ended') {
       throw new ForbiddenException(BOOKING_ENDED_MESSAGE);
     }
-    if (performanceStatus === 'upcoming' && actor.role !== 'admin') {
-      throw new ForbiddenException('예매는 추후 오픈 예정입니다');
+    if (actor.role === 'admin') {
+      return;
+    }
+    if (bookingStartsAt && !isBookingStartReached(bookingStartsAt)) {
+      throw new ForbiddenException(BOOKING_NOT_OPEN_MESSAGE);
+    }
+    if (performanceStatus === 'upcoming' && !isBookingStartReached(bookingStartsAt)) {
+      throw new ForbiddenException(BOOKING_NOT_OPEN_MESSAGE);
     }
   }
 
@@ -966,7 +981,11 @@ export class ReservationService {
       }
 
       const existingShowtime = await this.getShowtimeBookingContext(existing.showtimeId);
-      this.assertPerformanceBookingOpen(existingShowtime.performanceStatus, actor);
+      this.assertPerformanceBookingOpen(
+        existingShowtime.performanceStatus,
+        existingShowtime.bookingStartsAt,
+        actor,
+      );
 
       const canonicalSeats = await this.getCanonicalSeatSelections(
         dto.seats,
@@ -1014,7 +1033,11 @@ export class ReservationService {
 
     // 2. Get showtime to determine performanceId and dateTime
     const showtime = await this.getShowtimeBookingContext(dto.showtimeId);
-    this.assertPerformanceBookingOpen(showtime.performanceStatus, actor);
+    this.assertPerformanceBookingOpen(
+      showtime.performanceStatus,
+      showtime.bookingStartsAt,
+      actor,
+    );
 
     // 3. Calculate expected amount from DB and canonical seat map metadata
     const canonicalSeats = await this.getCanonicalSeatSelections(dto.seats, showtime.performanceId);

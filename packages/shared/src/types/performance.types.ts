@@ -226,6 +226,7 @@ export interface PerformanceBookingPolicy {
   cancelledSeatHoldMinMinutes: number;
   cancelledSeatHoldMaxMinutes: number;
   manualOpenEnabled: boolean;
+  bookingStartsAt?: string | null;
 }
 
 export const DEFAULT_PERFORMANCE_BOOKING_POLICY: PerformanceBookingPolicy = {
@@ -237,6 +238,7 @@ export const DEFAULT_PERFORMANCE_BOOKING_POLICY: PerformanceBookingPolicy = {
   cancelledSeatHoldMinMinutes: 1,
   cancelledSeatHoldMaxMinutes: 10,
   manualOpenEnabled: true,
+  bookingStartsAt: null,
 };
 
 export interface Banner {

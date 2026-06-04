@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { eq, desc, sql, and, inArray, ne } from 'drizzle-orm';
+import { eq, desc, sql, and, inArray, ne, or, lte } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
   performances,
@@ -24,6 +24,7 @@ import type {
   Banner,
   PerformanceQuery,
   SeatMap,
+  PerformanceStatus,
 } from '@grabit/shared';
 import { CacheService } from './cache.service.js';
 import {
@@ -40,8 +41,9 @@ type FindPerformanceByIdOptions = {
   includeHiddenCopy?: boolean;
 };
 
-const PERFORMANCE_TAXONOMY_CACHE_VERSION = 'event-category-v1-public-published';
-const PERFORMANCE_DETAIL_CACHE_VERSION = 'public-published-v1';
+const PERFORMANCE_TAXONOMY_CACHE_VERSION = 'event-category-v2-booking-start';
+const PERFORMANCE_DETAIL_CACHE_VERSION = 'public-published-v2-booking-start';
+const DEFAULT_CACHE_TTL_SECONDS = 300;
 const DEFAULT_FLOOR_KEY = '1F';
 const DEFAULT_FLOOR_LABEL = '1층';
 
@@ -107,6 +109,7 @@ function mapBookingPolicyRow(
         cancelledSeatHoldMinMinutes: number | null;
         cancelledSeatHoldMaxMinutes: number | null;
         manualOpenEnabled: boolean | null;
+        bookingStartsAt?: Date | string | null;
       }
     | null
     | undefined,
@@ -138,7 +141,49 @@ function mapBookingPolicyRow(
       ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.cancelledSeatHoldMaxMinutes,
     manualOpenEnabled:
       row.manualOpenEnabled ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.manualOpenEnabled,
+    bookingStartsAt: toOptionalIsoString(row.bookingStartsAt),
   };
+}
+
+function resolveEffectivePerformanceStatus(
+  status: PerformanceStatus,
+  bookingStartsAt: Date | string | null | undefined,
+  now: Date = new Date(),
+): PerformanceStatus {
+  if (status !== 'upcoming' || !bookingStartsAt) {
+    return status;
+  }
+
+  const startsAtMs =
+    bookingStartsAt instanceof Date
+      ? bookingStartsAt.getTime()
+      : Date.parse(bookingStartsAt);
+  if (!Number.isFinite(startsAtMs)) {
+    return status;
+  }
+
+  return startsAtMs <= now.getTime() ? 'selling' : status;
+}
+
+function cacheTtlUntilNextBookingStart(
+  startsAtValues: Array<Date | string | null | undefined>,
+  now: Date = new Date(),
+): number {
+  const nowMs = now.getTime();
+  const nextStartsInSeconds = startsAtValues
+    .map((value) => {
+      if (!value) return null;
+      const startsAtMs = value instanceof Date ? value.getTime() : Date.parse(value);
+      if (!Number.isFinite(startsAtMs) || startsAtMs <= nowMs) return null;
+      return Math.ceil((startsAtMs - nowMs) / 1000);
+    })
+    .filter((value): value is number => typeof value === 'number');
+
+  if (nextStartsInSeconds.length === 0) {
+    return DEFAULT_CACHE_TTL_SECONDS;
+  }
+
+  return Math.max(1, Math.min(DEFAULT_CACHE_TTL_SECONDS, ...nextStartsInSeconds));
 }
 
 function toOptionalIsoString(value: Date | string | null | undefined): string | null {
@@ -208,12 +253,14 @@ export class PerformanceService {
           genre: performances.genre,
           posterUrl: performances.posterUrl,
           status: performances.status,
+          bookingStartsAt: bookingPolicies.bookingStartsAt,
           startDate: performances.startDate,
           endDate: performances.endDate,
           venueName: venues.name,
         })
         .from(performances)
         .leftJoin(venues, eq(performances.venueId, venues.id))
+        .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, performances.id))
         .where(whereClause)
         .orderBy(orderByClause)
         .limit(limit)
@@ -231,7 +278,10 @@ export class PerformanceService {
       title: row.title,
       genre: row.genre,
       posterUrl: row.posterUrl,
-      status: row.status,
+      status: resolveEffectivePerformanceStatus(
+        row.status,
+        row.bookingStartsAt,
+      ),
       startDate: row.startDate?.toISOString() ?? '',
       endDate: row.endDate?.toISOString() ?? '',
       venueName: row.venueName ?? null,
@@ -245,7 +295,11 @@ export class PerformanceService {
       totalPages: Math.ceil(total / limit),
     };
 
-    await this.cacheService.set(cacheKey, result);
+    await this.cacheService.set(
+      cacheKey,
+      result,
+      cacheTtlUntilNextBookingStart(data.map((row) => row.bookingStartsAt)),
+    );
     return result;
   }
 
@@ -341,7 +395,10 @@ export class PerformanceService {
           endDate: perf.endDate?.toISOString() ?? '',
           runtime: perf.runtime,
           ageRating: perf.ageRating,
-          status: perf.status,
+          status: resolveEffectivePerformanceStatus(
+            perf.status,
+            bookingPolicy.bookingStartsAt,
+          ),
           salesInfo: perf.salesInfo,
           salesInfoVisible: perf.salesInfoVisible,
           viewCount: perf.viewCount,
@@ -382,7 +439,11 @@ export class PerformanceService {
       : maskHiddenPerformanceCopy(result);
 
     if (!includeHiddenCopy) {
-      await this.cacheService.set(cacheKey, response);
+      await this.cacheService.set(
+        cacheKey,
+        response,
+        cacheTtlUntilNextBookingStart([bookingPolicy.bookingStartsAt]),
+      );
     }
     return response;
   }
@@ -428,20 +489,28 @@ export class PerformanceService {
         id: performances.id,
         title: performances.title,
         genre: performances.genre,
-        posterUrl: performances.posterUrl,
-        status: performances.status,
-        startDate: performances.startDate,
-        endDate: performances.endDate,
-        venueName: venues.name,
-      })
-      .from(performances)
-      .leftJoin(venues, eq(performances.venueId, venues.id))
-      .where(
-        and(
-          eq(performances.publishState, 'published'),
-          inArray(performances.status, ['selling', 'closing_soon']),
-        ),
-      )
+          posterUrl: performances.posterUrl,
+          status: performances.status,
+          bookingStartsAt: bookingPolicies.bookingStartsAt,
+          startDate: performances.startDate,
+          endDate: performances.endDate,
+          venueName: venues.name,
+        })
+        .from(performances)
+        .leftJoin(venues, eq(performances.venueId, venues.id))
+        .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, performances.id))
+        .where(
+          and(
+            eq(performances.publishState, 'published'),
+            or(
+              inArray(performances.status, ['selling', 'closing_soon']),
+              and(
+                eq(performances.status, 'upcoming'),
+                lte(bookingPolicies.bookingStartsAt, new Date()),
+              ),
+            ),
+          ),
+        )
       .orderBy(desc(performances.viewCount))
       .limit(4);
 
@@ -450,7 +519,10 @@ export class PerformanceService {
       title: row.title,
       genre: row.genre,
       posterUrl: row.posterUrl,
-      status: row.status,
+      status: resolveEffectivePerformanceStatus(
+        row.status,
+        row.bookingStartsAt,
+      ),
       startDate: row.startDate?.toISOString() ?? '',
       endDate: row.endDate?.toISOString() ?? '',
       venueName: row.venueName ?? null,
@@ -461,7 +533,11 @@ export class PerformanceService {
       targetLocale,
     );
 
-    await this.cacheService.set(cacheKey, result);
+    await this.cacheService.set(
+      cacheKey,
+      result,
+      cacheTtlUntilNextBookingStart(rows.map((row) => row.bookingStartsAt)),
+    );
     return result;
   }
 
@@ -478,17 +554,19 @@ export class PerformanceService {
         id: performances.id,
         title: performances.title,
         genre: performances.genre,
-        posterUrl: performances.posterUrl,
-        status: performances.status,
-        startDate: performances.startDate,
-        endDate: performances.endDate,
-        venueName: venues.name,
-      })
-      .from(performances)
-      .leftJoin(venues, eq(performances.venueId, venues.id))
-      .where(
-        and(
-          eq(performances.publishState, 'published'),
+          posterUrl: performances.posterUrl,
+          status: performances.status,
+          bookingStartsAt: bookingPolicies.bookingStartsAt,
+          startDate: performances.startDate,
+          endDate: performances.endDate,
+          venueName: venues.name,
+        })
+        .from(performances)
+        .leftJoin(venues, eq(performances.venueId, venues.id))
+        .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, performances.id))
+        .where(
+          and(
+            eq(performances.publishState, 'published'),
           inArray(performances.status, ['selling', 'upcoming', 'closing_soon']),
         ),
       )
@@ -500,7 +578,10 @@ export class PerformanceService {
       title: row.title,
       genre: row.genre,
       posterUrl: row.posterUrl,
-      status: row.status,
+      status: resolveEffectivePerformanceStatus(
+        row.status,
+        row.bookingStartsAt,
+      ),
       startDate: row.startDate?.toISOString() ?? '',
       endDate: row.endDate?.toISOString() ?? '',
       venueName: row.venueName ?? null,
@@ -511,7 +592,11 @@ export class PerformanceService {
       targetLocale,
     );
 
-    await this.cacheService.set(cacheKey, result);
+    await this.cacheService.set(
+      cacheKey,
+      result,
+      cacheTtlUntilNextBookingStart(rows.map((row) => row.bookingStartsAt)),
+    );
     return result;
   }
 }

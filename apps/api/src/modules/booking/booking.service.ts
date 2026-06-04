@@ -34,6 +34,7 @@ export const LOCK_OTHER_OWNER_MESSAGE = '이미 다른 사용자가 선택한 �
 export const BOOKING_ENDED_MESSAGE = '판매가 종료된 공연입니다';
 export const BOOKING_VERIFICATION_REQUIRED_MESSAGE =
   '이메일 인증과 휴대폰 인증을 완료해야 예매할 수 있습니다.';
+export const BOOKING_NOT_OPEN_MESSAGE = '예매는 추후 오픈 예정입니다';
 
 export function buildMaxTicketsPerUserExceededMessage(maxTicketsPerUser: number): string {
   return `이 공연은 1인 최대 ${maxTicketsPerUser}매까지 예매할 수 있습니다`;
@@ -72,6 +73,10 @@ function assertBookingVerificationComplete(actor: BookingActor): void {
   if (actor.isEmailVerified !== true || actor.isPhoneVerified !== true) {
     throw new ForbiddenException(BOOKING_VERIFICATION_REQUIRED_MESSAGE);
   }
+}
+
+function isBookingStartReached(value: Date | null | undefined, now: Date = new Date()): boolean {
+  return value instanceof Date && !Number.isNaN(value.getTime()) && value.getTime() <= now.getTime();
 }
 
 function seatMapHasSeatId(seatConfig: unknown, seatId: string): boolean {
@@ -494,16 +499,26 @@ export class BookingService {
     actor: BookingActor,
   ): Promise<void> {
     const [row] = await this.db
-      .select({ performanceStatus: performances.status })
+      .select({
+        performanceStatus: performances.status,
+        bookingStartsAt: bookingPolicies.bookingStartsAt,
+      })
       .from(showtimes)
       .innerJoin(performances, eq(showtimes.performanceId, performances.id))
+      .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, showtimes.performanceId))
       .where(eq(showtimes.id, showtimeId));
 
     if (row?.performanceStatus === 'ended') {
       throw new ForbiddenException(BOOKING_ENDED_MESSAGE);
     }
-    if (row?.performanceStatus === 'upcoming' && actor.role !== 'admin') {
-      throw new ForbiddenException('예매는 추후 오픈 예정입니다');
+    if (actor.role === 'admin') {
+      return;
+    }
+    if (row?.bookingStartsAt && !isBookingStartReached(row.bookingStartsAt)) {
+      throw new ForbiddenException(BOOKING_NOT_OPEN_MESSAGE);
+    }
+    if (row?.performanceStatus === 'upcoming' && !isBookingStartReached(row.bookingStartsAt)) {
+      throw new ForbiddenException(BOOKING_NOT_OPEN_MESSAGE);
     }
   }
 

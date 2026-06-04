@@ -243,13 +243,14 @@ function normalizeAllowedBookingPaymentMethods(
 
 function normalizeBookingPolicy(
   bookingPolicy: CreatePerformanceFormInput['bookingPolicy'] | undefined,
-): NonNullable<CreatePerformanceFormInput['bookingPolicy']> {
+): NonNullable<CreatePerformanceInput['bookingPolicy']> {
   return {
     ...DEFAULT_PERFORMANCE_BOOKING_POLICY,
     ...bookingPolicy,
     allowedPaymentMethods: normalizeAllowedBookingPaymentMethods(
       bookingPolicy?.allowedPaymentMethods,
     ),
+    bookingStartsAt: bookingPolicy?.bookingStartsAt ?? null,
   };
 }
 
