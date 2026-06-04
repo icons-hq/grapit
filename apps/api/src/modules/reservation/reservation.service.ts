@@ -1448,6 +1448,7 @@ export class ReservationService {
         enteredAt: null,
         qrCredential: null,
         cancellation: null,
+        isLegacyFallback: true,
       };
     });
   }
@@ -2344,6 +2345,7 @@ export class ReservationService {
 
   async cancelReservation(reservationId: string, userId: string, reason: string): Promise<void> {
     let showtimeId: string | undefined;
+    let tossCancelCompleted = false;
 
     try {
       await this.db.transaction(async (tx) => {
@@ -2372,11 +2374,12 @@ export class ReservationService {
         const ticketItemRows = await tx
           .select({
             id: ticketItems.id,
-            price: ticketItems.price,
-            serviceFee: ticketItems.serviceFee,
           })
           .from(ticketItems)
           .where(eq(ticketItems.reservationId, reservationId));
+        if (ticketItemRows.length > 0) {
+          throw new BadRequestException('좌석별 티켓은 티켓 단위로 취소해주세요.');
+        }
 
         // 2. Get payment within transaction
         const [payment] = await tx
@@ -2387,6 +2390,7 @@ export class ReservationService {
         // 3. Call Toss cancel before DB updates
         if (payment) {
           await this.tossClient.cancelPayment(payment.paymentKey, reason);
+          tossCancelCompleted = true;
         }
 
         // 4. Update reservation + payment + restore seats
@@ -2410,43 +2414,6 @@ export class ReservationService {
               cancelReason: reason,
             })
             .where(eq(payments.reservationId, reservationId));
-        }
-
-        if (ticketItemRows.length > 0) {
-          await tx
-            .update(ticketItems)
-            .set({
-              status: 'cancelled',
-              cancelledAt: now,
-              cancelReason: reason,
-              cancellationFee: 0,
-              serviceFeeRefund: sql`${ticketItems.serviceFee}`,
-              refundableAmount: sql`${ticketItems.price} + ${ticketItems.serviceFee}`,
-              reopenState: 'available',
-              reopenHoldUntil: null,
-              reopenJobId: null,
-              updatedAt: now,
-            })
-            .where(
-              and(
-                eq(ticketItems.reservationId, reservationId),
-                inArray(ticketItems.status, ['active', 'cancellation_pending']),
-              ),
-            );
-
-          await tx
-            .update(tickets)
-            .set({
-              status: 'revoked',
-              revokedAt: now,
-              updatedAt: now,
-            })
-            .where(
-              and(
-                eq(tickets.reservationId, reservationId),
-                eq(tickets.status, 'active'),
-              ),
-            );
         }
 
         // Restore seat_inventories to available
@@ -2484,11 +2451,17 @@ export class ReservationService {
       ) {
         throw error;
       }
-      // Toss cancel succeeded but DB failed — log CRITICAL for manual reconciliation
-      this.logger.error(
-        `CRITICAL: DB transaction failed after Toss cancel. reservationId=${reservationId}. Manual reconciliation required.`,
-        error instanceof Error ? error.stack : String(error),
-      );
+      if (tossCancelCompleted) {
+        this.logger.error(
+          `CRITICAL: DB transaction failed after Toss cancel. reservationId=${reservationId}. Manual reconciliation required.`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      } else {
+        this.logger.error(
+          `Reservation cancel failed before Toss cancel completed. reservationId=${reservationId}.`,
+          error instanceof Error ? error.stack : String(error),
+        );
+      }
       throw new InternalServerErrorException(
         '취소 처리 중 오류가 발생했습니다. 고객센터에 문의해주세요.',
       );

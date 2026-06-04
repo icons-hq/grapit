@@ -886,7 +886,7 @@ export class PaymentService {
       .from(bookingPolicies)
       .where(eq(bookingPolicies.performanceId, showtime.performanceId));
 
-    const seats = await this.db
+    const reservationSeatSelections = await this.db
       .select({
         seatId: reservationSeats.seatId,
       })
@@ -894,6 +894,16 @@ export class PaymentService {
       .where(eq(reservationSeats.reservationId, reservation.id));
     const ticketItemCancellation =
       await this.findCancelWebhookTicketItemCancellation(payload, payment.id);
+    if (providerResponse.status === 'PARTIAL_CANCELED' && !ticketItemCancellation) {
+      return 'no_local_match';
+    }
+    const seats = ticketItemCancellation
+      ? [{
+          seatId: ticketItemCancellation.seatId,
+          floorKey: ticketItemCancellation.floorKey,
+          seatKey: ticketItemCancellation.seatKey,
+        }]
+      : reservationSeatSelections;
 
     await this.paymentCancellationFinalizer.finalizeFullPaymentCancellation({
       source: 'cancel_webhook',
@@ -926,6 +936,9 @@ export class PaymentService {
     paymentId: string,
   ): Promise<{
     ticketItemId: string;
+    seatId: string;
+    floorKey: string;
+    seatKey: string;
     cancellationFee: number;
     serviceFeeRefund: number;
     refundableAmount: number;
@@ -944,6 +957,9 @@ export class PaymentService {
     const [ticketItem] = await this.db
       .select({
         ticketItemId: ticketItems.id,
+        seatId: ticketItems.seatId,
+        floorKey: ticketItems.floorKey,
+        seatKey: ticketItems.seatKey,
         cancellationFee: ticketItems.cancellationFee,
         serviceFeeRefund: ticketItems.serviceFeeRefund,
         refundableAmount: ticketItems.refundableAmount,

@@ -259,6 +259,11 @@ function getBuyerQrCards(reservation: ReservationDetailType): BuyerQrCard[] {
   ];
 }
 
+function hasPersistedTicketItems(reservation: ReservationDetailType): boolean {
+  const ticketItems = Array.isArray(reservation.ticketItems) ? reservation.ticketItems : [];
+  return ticketItems.some((ticketItem) => ticketItem.isLegacyFallback !== true);
+}
+
 const DELAYED_REOPEN_NOTICE =
   '취소된 좌석은 즉시 재오픈되지 않을 수 있으며, 잠시 후 다시 판매될 수 있습니다';
 const TICKET_CANCEL_REASONS = [
@@ -331,8 +336,7 @@ export function ReservationDetailView({
   const isDeadlinePassed = new Date(reservation.cancelDeadline) < new Date();
   const isPaymentDeadlinePassed = new Date(reservation.paymentDeadlineAt) < new Date();
   const canCancel = reservation.status === 'CONFIRMED' && !isDeadlinePassed;
-  const hasSeatLevelTicketItems = Array.isArray(reservation.ticketItems) &&
-    reservation.ticketItems.length > 0;
+  const hasSeatLevelTicketItems = hasPersistedTicketItems(reservation);
   const ticketItemRefundTotal = hasSeatLevelTicketItems
     ? reservation.ticketItems.reduce(
         (total, ticketItem) => total + (ticketItem.cancellation?.refundableAmount ?? 0),
@@ -343,7 +347,7 @@ export function ReservationDetailView({
     hasSeatLevelTicketItems && ticketItemRefundTotal > 0
       ? ticketItemRefundTotal
       : reservation.totalAmount;
-  const showCancelButton = reservation.status === 'CONFIRMED';
+  const showCancelButton = reservation.status === 'CONFIRMED' && !hasSeatLevelTicketItems;
   const canResumePayment =
     reservation.status === 'PENDING_PAYMENT' &&
     !isPaymentDeadlinePassed &&
@@ -369,6 +373,7 @@ export function ReservationDetailView({
       : '결제는 완료되었지만 QR 티켓을 확인하는 중입니다. 잠시 후 새로고침하거나 마이페이지에서 다시 확인하세요.';
   const canCancelTicketItems =
     reservation.status === 'CONFIRMED' &&
+    hasSeatLevelTicketItems &&
     isBeforeShowDateInSeoul(reservation.showDateTime) &&
     Boolean(onCancelTicketItem);
 

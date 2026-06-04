@@ -1543,6 +1543,186 @@ describe('PaymentService', () => {
       );
     });
 
+    it('limits ticket-item async cancel webhook finalization to the cancelled seat', async () => {
+      const reservationId = randomUUID();
+      const paymentId = randomUUID();
+      const ticketItemId = randomUUID();
+      const finalizer = {
+        finalizeFullPaymentCancellation: vi.fn().mockResolvedValue({
+          releaseJobId: 'release-job-1',
+          releaseEnqueued: true,
+        }),
+      };
+      (service as unknown as {
+        paymentCancellationFinalizer: typeof finalizer;
+      }).paymentCancellationFinalizer = finalizer;
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          reservationNumber: 'GRP-20260604-2IO8C',
+          userId: randomUUID(),
+          showtimeId: 'showtime-1',
+          status: 'CONFIRMED',
+          totalAmount: 724000,
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: paymentId,
+          reservationId,
+          paymentKey: 'pay_ticket_item_partial_cancelled',
+          tossOrderId: 'GRP-TICKET-ITEM-PARTIAL-CANCELLED',
+          method: 'CARD',
+          provider: 'CARD',
+          currency: 'KRW',
+          amount: 724000,
+          status: 'DONE',
+          providerMetadata: null,
+        }]))
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: 'showtime-1',
+          performanceId: 'performance-1',
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          cancelledSeatHoldMinMinutes: 1,
+          cancelledSeatHoldMaxMinutes: 10,
+        }]))
+        .mockReturnValueOnce(createSelectChain([
+          { seatId: '1F:라-100' },
+          { seatId: '1F:라-81' },
+        ]))
+        .mockReturnValueOnce(createSelectChain([{
+          ticketItemId,
+          seatId: '라-81',
+          floorKey: '1F',
+          seatKey: '1F:라-81',
+          cancellationFee: 0,
+          serviceFeeRefund: 2000,
+          refundableAmount: 362000,
+        }]));
+
+      const result = await service.finalizeConfirmedCancelWebhook(
+        createConfirmedCancelWebhookPayload(
+          'pay_ticket_item_partial_cancelled',
+          'GRP-TICKET-ITEM-PARTIAL-CANCELLED',
+          `cancel_${ticketItemId}`,
+        ),
+        {
+          ...createConfirmedCancelProviderResponse(
+            'pay_ticket_item_partial_cancelled',
+            'GRP-TICKET-ITEM-PARTIAL-CANCELLED',
+          ),
+          status: 'PARTIAL_CANCELED',
+          totalAmount: 724000,
+          balanceAmount: 362000,
+          cancels: [
+            {
+              cancelAmount: 362000,
+              cancelReason: '다른 좌석으로 재예매',
+              canceledAt: '2026-06-04T20:15:45+09:00',
+              cancelStatus: 'DONE',
+              cancelRequestId: `cancel_${ticketItemId}`,
+            },
+          ],
+        },
+      );
+
+      expect(result).toBe('finalized');
+      expect(finalizer.finalizeFullPaymentCancellation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          context: expect.objectContaining({
+            seats: [
+              {
+                seatId: '라-81',
+                floorKey: '1F',
+                seatKey: '1F:라-81',
+              },
+            ],
+          }),
+          ticketItemCancellation: expect.objectContaining({
+            ticketItemId,
+            refundableAmount: 362000,
+          }),
+        }),
+      );
+    });
+
+    it('does not finalize partial cancel webhooks without a ticket-item match', async () => {
+      const reservationId = randomUUID();
+      const paymentId = randomUUID();
+      const finalizer = {
+        finalizeFullPaymentCancellation: vi.fn(),
+      };
+      (service as unknown as {
+        paymentCancellationFinalizer: typeof finalizer;
+      }).paymentCancellationFinalizer = finalizer;
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          reservationNumber: 'GRP-20260604-PARTIAL-NO-MATCH',
+          userId: randomUUID(),
+          showtimeId: 'showtime-1',
+          status: 'CONFIRMED',
+          totalAmount: 724000,
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: paymentId,
+          reservationId,
+          paymentKey: 'pay_partial_no_ticket_match',
+          tossOrderId: 'GRP-PARTIAL-NO-TICKET-MATCH',
+          method: 'CARD',
+          provider: 'CARD',
+          currency: 'KRW',
+          amount: 724000,
+          status: 'DONE',
+          providerMetadata: null,
+        }]))
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: 'showtime-1',
+          performanceId: 'performance-1',
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          cancelledSeatHoldMinMinutes: 1,
+          cancelledSeatHoldMaxMinutes: 10,
+        }]))
+        .mockReturnValueOnce(createSelectChain([
+          { seatId: '1F:라-100' },
+          { seatId: '1F:라-81' },
+        ]))
+        .mockReturnValueOnce(createSelectChain([]));
+
+      const result = await service.finalizeConfirmedCancelWebhook(
+        createConfirmedCancelWebhookPayload(
+          'pay_partial_no_ticket_match',
+          'GRP-PARTIAL-NO-TICKET-MATCH',
+          'cancel_external-partial-1',
+        ),
+        {
+          ...createConfirmedCancelProviderResponse(
+            'pay_partial_no_ticket_match',
+            'GRP-PARTIAL-NO-TICKET-MATCH',
+          ),
+          status: 'PARTIAL_CANCELED',
+          totalAmount: 724000,
+          balanceAmount: 362000,
+          cancels: [
+            {
+              cancelAmount: 362000,
+              cancelReason: 'external partial cancel',
+              canceledAt: '2026-06-04T20:15:45+09:00',
+              cancelStatus: 'DONE',
+              cancelRequestId: 'cancel_external-partial-1',
+            },
+          ],
+        },
+      );
+
+      expect(result).toBe('no_local_match');
+      expect(finalizer.finalizeFullPaymentCancellation).not.toHaveBeenCalled();
+    });
+
     it('acks PayPal DONE webhook after sync confirm without overwriting the KRW payment row', async () => {
       const reservationId = randomUUID();
       const paymentId = randomUUID();

@@ -2278,12 +2278,11 @@ describe('ReservationService', () => {
       expect(mockTossClient.cancelPayment).toHaveBeenCalledWith('pk_test_123', '단순 변심');
     });
 
-    it('cancels the whole reservation when seat-level ticket items exist', async () => {
+    it('rejects whole-reservation cancellation when seat-level ticket items exist', async () => {
       const reservationId = randomUUID();
       const userId = randomUUID();
       const showtimeId = randomUUID();
       const futureDeadline = new Date(Date.now() + 24 * 60 * 60 * 1000);
-      const updateCalls: Array<{ table: unknown; values: Record<string, unknown> }> = [];
       const mockTx = {
         execute: vi.fn().mockResolvedValue({
           rows: [{
@@ -2298,56 +2297,16 @@ describe('ReservationService', () => {
           .mockReturnValueOnce(chainResult([
             { id: 'ticket-item-1', price: 77000, serviceFee: 2000 },
             { id: 'ticket-item-2', price: 77000, serviceFee: 2000 },
-          ]))
-          .mockReturnValueOnce({
-            from: vi.fn().mockReturnValue({
-              where: vi.fn().mockResolvedValue([{
-                id: randomUUID(),
-                paymentKey: 'pk_seat_level_full_cancel',
-              }]),
-            }),
-          })
-          .mockReturnValueOnce(chainResult([{ seatId: 'A-1' }, { seatId: 'A-2' }])),
-        update: vi.fn((table: unknown) => ({
-          set: vi.fn((values: Record<string, unknown>) => {
-            updateCalls.push({ table, values });
-            return { where: vi.fn().mockResolvedValue([]) };
-          }),
-        })),
+          ])),
+        update: vi.fn(),
       };
       mockDb.transaction.mockImplementation(async (cb: (tx: typeof mockTx) => Promise<unknown>) => cb(mockTx));
-      mockDb.select.mockReturnValueOnce({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([{ seatId: 'A-1' }, { seatId: 'A-2' }]),
-        }),
-      });
 
       await expect(service.cancelReservation(reservationId, userId, '단순 변심'))
-        .resolves.not.toThrow();
-
-      expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
-        'pk_seat_level_full_cancel',
-        '단순 변심',
-      );
-      expect(updateCalls.find((call) => call.table === reservations)?.values)
-        .toMatchObject({ status: 'CANCELLED', cancelReason: '단순 변심' });
-      expect(updateCalls.find((call) => call.table === payments)?.values)
-        .toMatchObject({ status: 'CANCELED', cancelReason: '단순 변심' });
-      expect(updateCalls.find((call) => call.table === ticketItems)?.values)
-        .toMatchObject({
-          status: 'cancelled',
-          cancelReason: '단순 변심',
-          cancellationFee: 0,
-          reopenState: 'available',
-        });
-      expect(updateCalls.find((call) => call.table === tickets)?.values)
-        .toMatchObject({ status: 'revoked' });
-      expect(updateCalls.some((call) => call.table === seatInventories)).toBe(true);
-      expect(mockBookingGateway.broadcastSeatUpdate).toHaveBeenCalledWith(
-        showtimeId,
-        'A-1',
-        'available',
-      );
+        .rejects.toThrow('좌석별 티켓은 티켓 단위로 취소해주세요');
+      expect(mockTossClient.cancelPayment).not.toHaveBeenCalled();
+      expect(mockTx.update).not.toHaveBeenCalled();
+      expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
     });
   });
 

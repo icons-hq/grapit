@@ -543,6 +543,62 @@ describe('PaymentWebhookController', () => {
     );
   });
 
+  it('finalizes confirmed ticket-item cancel webhooks when Toss reports partial cancellation done', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(
+      makeLedgerResult({
+        eventId: 'evt-ticket-item-partial-cancel-1',
+      }),
+    );
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(
+      makeProgress({
+        reservationStatus: 'CONFIRMED',
+        paymentStatus: 'DONE',
+      }),
+    );
+    tossClient.queryPayment.mockResolvedValueOnce(
+      makeQueriedPayment({
+        paymentKey: 'pay_async_1',
+        orderId: 'GRP-ASYNC-1',
+        status: 'PARTIAL_CANCELED',
+        balanceAmount: 362000,
+        cancels: [
+          {
+            cancelAmount: 362000,
+            cancelReason: '다른 좌석으로 재예매',
+            canceledAt: '2026-06-04T20:15:45+09:00',
+            cancelStatus: 'DONE',
+            cancelRequestId: 'cancel_ticket-item-1',
+          },
+        ],
+      }),
+    );
+
+    const result = await controller.handleTossWebhook({
+      eventId: 'evt-ticket-item-partial-cancel-1',
+      eventType: 'CANCEL_STATUS_CHANGED',
+      data: {
+        cancelStatus: 'DONE',
+        cancelRequestId: 'cancel_ticket-item-1',
+      },
+    });
+
+    expect(result.processingResultCode).toBe('CANCEL_STATUS_CHANGED_FINALIZED');
+    expect(paymentService.finalizeConfirmedCancelWebhook).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'CANCEL_STATUS_CHANGED',
+        data: expect.objectContaining({
+          status: 'PARTIAL_CANCELED',
+          cancelStatus: 'DONE',
+          cancelRequestId: 'cancel_ticket-item-1',
+          canceledAt: '2026-06-04T20:15:45+09:00',
+          cancelReason: '다른 좌석으로 재예매',
+        }),
+      }),
+      expect.objectContaining({ status: 'PARTIAL_CANCELED' }),
+    );
+    expect(paymentService.upsertAsyncPaymentProgress).not.toHaveBeenCalled();
+  });
+
   it('does not finalize a confirmed reservation for an IN_PROGRESS cancel webhook', async () => {
     paymentService.recordWebhookEvent.mockResolvedValueOnce(
       makeLedgerResult({

@@ -199,6 +199,9 @@ export class PaymentCancellationFinalizerService {
     const providerCancellation = sanitizeProviderCancellationPayload(
       input.providerResponse,
     );
+    const isPartialTicketItemCancellation =
+      input.ticketItemCancellation !== undefined
+      && input.providerResponse?.status === 'PARTIAL_CANCELED';
     const seatReleaseStates: SeatReleaseState[] = [];
 
     await this.db.transaction(async (tx) => {
@@ -239,45 +242,47 @@ export class PaymentCancellationFinalizerService {
         }
       }
 
-      const updatedReservations = await tx
-        .update(reservations)
-        .set({
-          status: 'CANCELLED',
-          cancelledAt: now,
-          cancelReason: input.reason,
-          updatedAt: now,
-        })
-        .where(eq(reservations.id, input.context.reservation.id))
-        .returning({ id: reservations.id });
+      if (!isPartialTicketItemCancellation) {
+        const updatedReservations = await tx
+          .update(reservations)
+          .set({
+            status: 'CANCELLED',
+            cancelledAt: now,
+            cancelReason: input.reason,
+            updatedAt: now,
+          })
+          .where(eq(reservations.id, input.context.reservation.id))
+          .returning({ id: reservations.id });
 
-      if (updatedReservations.length === 0) {
-        throw new NotFoundException('예매 정보를 찾을 수 없습니다');
-      }
-      if (updatedReservations.length !== 1) {
-        throw new BadRequestException('예매 취소 업데이트 결과가 유효하지 않습니다');
-      }
+        if (updatedReservations.length === 0) {
+          throw new NotFoundException('예매 정보를 찾을 수 없습니다');
+        }
+        if (updatedReservations.length !== 1) {
+          throw new BadRequestException('예매 취소 업데이트 결과가 유효하지 않습니다');
+        }
 
-      const updatedPayments = await tx
-        .update(payments)
-        .set({
-          status: 'CANCELED',
-          cancelledAt: now,
-          cancelReason: input.reason,
-          providerMetadata: {
-            ...toRecord(input.context.payment.providerMetadata),
-            refundCompletedAt: now.toISOString(),
-            cancellationSource: input.source,
-            ...(providerCancellation ? { providerCancellation } : {}),
-          },
-        })
-        .where(eq(payments.id, input.context.payment.id))
-        .returning({ id: payments.id });
+        const updatedPayments = await tx
+          .update(payments)
+          .set({
+            status: 'CANCELED',
+            cancelledAt: now,
+            cancelReason: input.reason,
+            providerMetadata: {
+              ...toRecord(input.context.payment.providerMetadata),
+              refundCompletedAt: now.toISOString(),
+              cancellationSource: input.source,
+              ...(providerCancellation ? { providerCancellation } : {}),
+            },
+          })
+          .where(eq(payments.id, input.context.payment.id))
+          .returning({ id: payments.id });
 
-      if (updatedPayments.length === 0) {
-        throw new NotFoundException('결제 정보를 찾을 수 없습니다');
-      }
-      if (updatedPayments.length !== 1) {
-        throw new BadRequestException('결제 취소 업데이트 결과가 유효하지 않습니다');
+        if (updatedPayments.length === 0) {
+          throw new NotFoundException('결제 정보를 찾을 수 없습니다');
+        }
+        if (updatedPayments.length !== 1) {
+          throw new BadRequestException('결제 취소 업데이트 결과가 유효하지 않습니다');
+        }
       }
 
       if (seatIdentities.length > 0) {
