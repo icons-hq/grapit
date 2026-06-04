@@ -109,7 +109,9 @@ function ConfirmPageContent() {
   const unlockAll = useUnlockAllSeats();
   const cancelPending = useCancelPendingReservation();
 
-  const [orderId, setOrderId] = useState(() => generateOrderId());
+  const resumeOrderId = searchParams.get('resumeOrderId');
+  const isResumingPendingPayment = Boolean(resumeOrderId);
+  const [orderId, setOrderId] = useState(() => resumeOrderId ?? generateOrderId());
   const hasPaymentErrorReturn = searchParams.get('error') === 'true';
 
   const totalPrice = useMemo(
@@ -143,7 +145,8 @@ function ConfirmPageContent() {
     if (hasError !== 'true' || errorToastKeyRef.current === errorToastKey) return;
     errorToastKeyRef.current = errorToastKey;
     const reservationId = reservationIdRef.current;
-    const shouldRotateOrderId = Boolean(reservationId) || failedOrderId === orderId;
+    const shouldRotateOrderId =
+      !isResumingPendingPayment && (Boolean(reservationId) || failedOrderId === orderId);
     const fallbackMessage = '결제에 실패했습니다. 다시 시도해주세요.';
     const userMessage = code === 'PAY_PROCESS_CANCELED'
       ? '결제가 취소되었습니다.'
@@ -162,7 +165,7 @@ function ConfirmPageContent() {
       }
     });
 
-    if (reservationId) {
+    if (reservationId && !isResumingPendingPayment) {
       reservationIdRef.current = null;
       cancelPending.mutate(reservationId);
     }
@@ -180,8 +183,11 @@ function ConfirmPageContent() {
     url.searchParams.delete('error');
     url.searchParams.delete('code');
     url.searchParams.delete('message');
-    window.history.replaceState({}, '', url.pathname);
-  }, [cancelPending, orderId, searchParams]);
+    if (!isResumingPendingPayment) {
+      url.searchParams.delete('orderId');
+    }
+    window.history.replaceState({}, '', `${url.pathname}${url.search}`);
+  }, [cancelPending, isResumingPendingPayment, orderId, searchParams]);
 
   const handlePaymentReturnRecovery = useCallback(() => {
     setPaymentReturnError(null);
@@ -309,7 +315,7 @@ function ConfirmPageContent() {
     } catch (err) {
       paymentRequestInFlightRef.current = false;
       setIsProcessing(false);
-      if (preparedReservationId) {
+      if (preparedReservationId && !isResumingPendingPayment) {
         reservationIdRef.current = null;
         await cancelPending.mutateAsync(preparedReservationId).catch(() => {});
         setOrderId(generateOrderId());
@@ -467,6 +473,7 @@ function ConfirmPageContent() {
               customerEmail={user.email}
               customerMobilePhone={bookerInfo.phone}
               selectedSeats={selectedSeats.map(toFloorAwareSeatSelection)}
+              resumeOrderId={resumeOrderId ?? undefined}
               onReady={handleWidgetReady}
               onPaymentMethodChange={handlePaymentMethodChange}
               onWidgetAgreementChange={handleWidgetAgreementChange}

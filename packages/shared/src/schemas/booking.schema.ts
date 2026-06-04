@@ -327,12 +327,15 @@ export const reservationListItemSchema = z.object({
 });
 
 export const reservationDetailSchema = reservationListItemSchema.extend({
-  paymentMethod: z.string().min(1, '결제 수단 라벨이 필요합니다'),
-  paidAt: isoDatetime('결제 완료 시각'),
+  performanceId: z.string().uuid('유효한 performance ID가 필요합니다').optional(),
+  showtimeId: z.string().uuid('유효한 showtime ID가 필요합니다').optional(),
+  tossOrderId: z.string().min(1, 'Toss 주문 ID가 필요합니다').nullable().optional(),
+  paymentMethod: z.string().min(1, '결제 수단 라벨이 필요합니다').nullable(),
+  paidAt: isoDatetime('결제 완료 시각').nullable(),
   cancelDeadline: isoDatetime('취소 마감 시각'),
   cancelledAt: isoDatetime('취소 시각').nullable(),
   cancelReason: z.string().max(200).nullable(),
-  paymentKey: z.string().min(1, '결제 키가 필요합니다'),
+  paymentKey: z.string().min(1, '결제 키가 필요합니다').nullable(),
   queueAdmission: queueAdmissionSchema,
   paymentDeadlineAt: isoDatetime('결제 마감 시각'),
   bookingPolicy: bookingPolicySchema,

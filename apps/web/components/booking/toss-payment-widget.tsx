@@ -84,6 +84,7 @@ interface TossPaymentWidgetProps {
   customerEmail: string;
   customerMobilePhone?: string;
   selectedSeats: FloorAwareSeatSelection[];
+  resumeOrderId?: string;
   onReady: () => void;
   onPaymentMethodChange?: (selection: PaymentMethodSelection) => void;
   onWidgetAgreementChange?: (agreed: boolean) => void;
@@ -548,6 +549,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
       customerEmail,
       customerMobilePhone,
       selectedSeats,
+      resumeOrderId,
       onReady,
       onPaymentMethodChange,
       onWidgetAgreementChange,
@@ -658,12 +660,17 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
           ? `${origin}/booking/${performanceId}/complete?pending=true&orderId=${encodeURIComponent(orderId)}&provider=${selection.paymentMethod.provider}`
           : undefined;
 
+        const failUrl = new URL(`${origin}/booking/${performanceId}/confirm`);
+        failUrl.searchParams.set('error', 'true');
+        if (resumeOrderId) {
+          failUrl.searchParams.set('resumeOrderId', resumeOrderId);
+        }
         const branchPaymentMethod = prepareResult?.paymentMethod ?? selection.paymentMethod;
         const branch = await apiClient.post<TossPaymentBranchResponse>('/api/v1/payments/branch', {
           orderId,
           paymentMethod: branchPaymentMethod,
           successUrl: `${origin}/booking/${performanceId}/complete`,
-          failUrl: `${origin}/booking/${performanceId}/confirm?error=true`,
+          failUrl: failUrl.toString(),
           pendingUrl,
         }, {
           showErrorToast: false,
@@ -749,6 +756,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
       isLoading,
       selectedSeats,
       customerKey,
+      resumeOrderId,
     ]);
 
     useEffect(() => {

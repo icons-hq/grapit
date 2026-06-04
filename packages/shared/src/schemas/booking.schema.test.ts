@@ -496,6 +496,64 @@ describe('prepareReservationSchema booking consent contract', () => {
     ).toThrow(/QR token/);
   });
 
+  it('accepts pending payment reservation details without completed payment fields', () => {
+    const parsed = reservationDetailSchema.parse({
+      id: '11111111-1111-4111-8111-111111111111',
+      reservationNumber: 'GRP-24004',
+      status: 'PENDING_PAYMENT',
+      performanceId: '11111111-1111-4111-8111-000000000301',
+      showtimeId: '11111111-1111-4111-8111-000000000302',
+      tossOrderId: 'GRP-20260604-7O7YM',
+      performanceTitle: 'Girl Rules Fanmeet',
+      posterUrl: null,
+      showDateTime: '2026-07-18T10:00:00.000Z',
+      venue: 'Donghae Arts Center',
+      seats: [makeSeat()],
+      totalAmount: 50000,
+      createdAt: '2026-05-08T11:45:00.000Z',
+      paymentMethod: null,
+      paidAt: null,
+      cancelDeadline: '2026-07-15T14:00:00.000Z',
+      cancelledAt: null,
+      cancelReason: null,
+      paymentKey: null,
+      queueAdmission: makeQueueAdmission(),
+      paymentDeadlineAt: '2026-05-08T11:52:00.000Z',
+      bookingPolicy: {
+        maxTicketsPerOrder: 1,
+        cancellationChangePolicy: 'CANCEL_ONLY',
+        sameGradeChangeEnabled: false,
+      },
+      refundTimeline: {
+        currentState: 'COMPLETED',
+        requestedAt: '2026-05-08T11:45:00.000Z',
+        customerServiceCtaVisible: false,
+      },
+      cancelledSeatHold: null,
+      qrTicket: {
+        token: '',
+        jti: '',
+        status: 'REVOKED',
+        entryStatus: 'NOT_ENTERED',
+        enteredAt: null,
+        issuedAt: '2026-05-08T11:45:00.000Z',
+        emailScheduledAt: null,
+        emailedAt: null,
+      },
+      ticketEmailDelivery: makeTicketEmailDelivery({
+        canSend: false,
+        status: 'verification_required',
+        scheduledAt: null,
+      }),
+      ticketItems: [],
+    });
+
+    expect(parsed.status).toBe('PENDING_PAYMENT');
+    expect(parsed.paidAt).toBeNull();
+    expect(parsed.paymentKey).toBeNull();
+    expect(parsed.tossOrderId).toBe('GRP-20260604-7O7YM');
+  });
+
   it('requires ticket email delivery state on reservation detail responses', () => {
     const parsed = reservationDetailSchema.parse({
       id: '11111111-1111-4111-8111-111111111111',
