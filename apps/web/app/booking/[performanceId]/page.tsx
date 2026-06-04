@@ -1,7 +1,6 @@
 'use client';
 
 import { use } from 'react';
-import { AuthGuard } from '@/components/auth/auth-guard';
 import { BookingPage } from '@/components/booking/booking-page';
 import { QueueWaiting } from '@/components/booking/queue-waiting';
 import { useQueue } from '@/hooks/use-queue';
@@ -31,41 +30,61 @@ export default function BookingRoute({
       !isAdminBookingBypassActive,
   });
 
-  if (!runtimeFlagsResolved || !authInitialized) {
+  if (!runtimeFlagsResolved) {
     return (
-      <AuthGuard>
-        <QueueWaiting
-          status="loading"
-          position={0}
-          etaSeconds={0}
-          remainingSeats={0}
-          autoEnter={false}
-        />
-      </AuthGuard>
+      <QueueWaiting
+        status="loading"
+        position={0}
+        etaSeconds={0}
+        remainingSeats={0}
+        autoEnter={false}
+      />
     );
   }
 
-  if (!bookingAvailable || isAdminBookingBypassActive || queue.isReady) {
+  if (!bookingAvailable || isAdminBookingBypassActive) {
+    return <BookingPage performanceId={performanceId} />;
+  }
+
+  if (!authInitialized) {
     return (
-      <AuthGuard>
-        <BookingPage performanceId={performanceId} />
-      </AuthGuard>
+      <QueueWaiting
+        status="loading"
+        position={0}
+        etaSeconds={0}
+        remainingSeats={0}
+        autoEnter={false}
+      />
     );
+  }
+
+  if (!accessToken) {
+    return (
+      <QueueWaiting
+        status="authRequired"
+        position={0}
+        etaSeconds={0}
+        remainingSeats={0}
+        autoEnter={false}
+      />
+    );
+  }
+
+  if (queue.isReady) {
+    return <BookingPage performanceId={performanceId} />;
   }
 
   return (
-    <AuthGuard>
-      <QueueWaiting
-        status={queue.status}
-        position={queue.position}
-        etaSeconds={queue.etaSeconds}
-        remainingSeats={queue.remainingSeats}
-        autoEnter={queue.autoEnter}
-        onRetry={() => {
-          void queue.retry();
-        }}
-        onEnterNow={queue.enterNow}
-      />
-    </AuthGuard>
+    <QueueWaiting
+      status={queue.status}
+      position={queue.position}
+      etaSeconds={queue.etaSeconds}
+      remainingSeats={queue.remainingSeats}
+      autoEnter={queue.autoEnter}
+      onRetry={() => {
+        void queue.retry();
+      }}
+      onEnterNow={queue.enterNow}
+    />
   );
 }

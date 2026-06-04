@@ -1,4 +1,4 @@
-import { expect, test, type Route } from '@playwright/test';
+import { expect, test, type Page, type Route } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 
 const koMessages = JSON.parse(
@@ -64,7 +64,7 @@ const failureCases = [
 
 test.describe('booking queue route', () => {
   test.beforeEach(async ({ page }) => {
-    await stubAnonymousAuth(page);
+    await mockAuthenticatedSession(page);
     await enableBooking(page);
   });
 
@@ -153,13 +153,30 @@ function formatQueueEta(etaSeconds: number): string {
   return `${minutes}m ${seconds.toString().padStart(2, '0')}s`;
 }
 
-async function stubAnonymousAuth(page: import('@playwright/test').Page) {
+async function mockAuthenticatedSession(page: Page) {
   await page.route('**/api/v1/auth/refresh', async (route: Route) => {
-    await route.fulfill({ status: 204, body: '' });
+    await fulfillJson(route, 200, { accessToken: 'booking-queue-access-token' });
+  });
+  await page.route('**/api/v1/users/me', async (route: Route) => {
+    await fulfillJson(route, 200, {
+      id: 'booking-queue-user',
+      email: 'booking-queue-user@example.test',
+      name: 'Booking Queue User',
+      phone: '+821012345678',
+      gender: 'unspecified',
+      country: 'KR',
+      birthDate: '1990-01-01',
+      preferredLocale: 'ko',
+      isEmailVerified: true,
+      isPhoneVerified: true,
+      marketingConsent: false,
+      role: 'user',
+      createdAt: '2026-05-20T00:00:00.000Z',
+    });
   });
 }
 
-async function enableBooking(page: import('@playwright/test').Page) {
+async function enableBooking(page: Page) {
   await page.route('**/api/runtime-flags', async (route: Route) => {
     await fulfillJson(route, 200, { bookingEnabled: true });
   });

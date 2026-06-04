@@ -1,4 +1,4 @@
-import { Suspense, type ReactNode } from 'react';
+import { Suspense } from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -24,10 +24,6 @@ vi.mock('@/hooks/use-booking-availability', () => ({
 
 vi.mock('@/stores/use-auth-store', () => ({
   useAuthStore: useAuthStoreMock,
-}));
-
-vi.mock('@/components/auth/auth-guard', () => ({
-  AuthGuard: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
 vi.mock('@/components/booking/booking-page', () => ({
@@ -91,6 +87,7 @@ describe('BookingRoute auth gating', () => {
         enabled: false,
       });
     });
+    expect(await screen.findByText('queue authRequired')).toBeInTheDocument();
   });
 
   it('enables queue entry after the visitor has an access token', async () => {
