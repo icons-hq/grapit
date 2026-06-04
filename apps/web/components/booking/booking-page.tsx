@@ -236,6 +236,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
   const unlockAll = useUnlockAllSeats();
   const { bookingAvailable, bookingDisabledMessage } = useBookingAvailability({
     performanceStatus: performance?.status,
+    bookingStartsAt: performance?.bookingPolicy?.bookingStartsAt,
   });
   const bookingDisabledReason = bookingAvailable ? null : bookingDisabledMessage;
 
@@ -357,6 +358,22 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
     ),
     [currentSeatMap?.floorKey, selectedSeats],
   );
+
+  const myLockedSeatIds = useMemo(() => {
+    const seatIds = new Set<string>();
+    if (!currentSeatMap || !myLocksData?.seatIds) {
+      return seatIds;
+    }
+
+    for (const runtimeSeatId of myLocksData.seatIds) {
+      const seatIdentity = parseRuntimeSeatIdentity(runtimeSeatId);
+      if (seatIdentity.floorKey === currentSeatMap.floorKey) {
+        seatIds.add(seatIdentity.seatId);
+      }
+    }
+
+    return seatIds;
+  }, [currentSeatMap, myLocksData]);
 
   const seatConfig: SeatMapConfig | null = currentSeatMap?.seatConfig ?? null;
   const tierInfoMap = useMemo(
@@ -524,7 +541,8 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
         (seat) => seat.seatKey === seatIdentity.seatKey
           || (seat.floorKey === floorSeatMap.floorKey && seat.seatId === seatIdentity.seatId),
       );
-      if (isUnavailableSeatState(seatState) && !isSelected) {
+      const isMyLockedSeat = seatState === 'locked' && myLockedSeatIds.has(seatIdentity.seatId);
+      if (isUnavailableSeatState(seatState) && !isSelected && !isMyLockedSeat) {
         toast.info('이미 다른 사용자가 선택한 좌석입니다');
         return;
       }
@@ -536,6 +554,11 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
       if (existingSeat) {
         removeSeat(existingSeat.seatKey);
         unlockSeat.mutate({ showtimeId: selectedShowtimeId, seatId: existingSeat.seatKey });
+        return;
+      }
+
+      if (isMyLockedSeat) {
+        unlockSeat.mutate({ showtimeId: selectedShowtimeId, seatId: seatIdentity.seatKey });
         return;
       }
 
@@ -602,6 +625,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
       currentSeatMap,
       lockSeat,
       maxTicketsPerUser,
+      myLockedSeatIds,
       removeSeat,
       seatStatesMap,
       seatStatesByFloorKey,
@@ -882,6 +906,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
                   seatConfig={seatConfig}
                   seatStates={seatStatesMap}
                   selectedSeatIds={selectedSeatIds}
+                  myLockedSeatIds={myLockedSeatIds}
                   onSeatClick={handleSeatClick}
                   maxSelect={maxTicketsPerUser}
                 />

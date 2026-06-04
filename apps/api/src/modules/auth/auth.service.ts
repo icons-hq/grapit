@@ -86,6 +86,7 @@ const EMAIL_VERIFICATION_EXPIRY_MS = 30 * 60 * 1000;
 const EMAIL_VERIFICATION_PURPOSE = 'signup';
 const ACCOUNT_EMAIL_VERIFICATION_PURPOSE = 'account_email';
 const EMAIL_VERIFICATION_CODE_DIGITS = 6;
+const USER_REFRESH_FAMILY_LIMIT = 2;
 const REFRESH_FAMILY_LIMIT_NOTICE = '다른 기기에서 로그인되어 가장 오래된 세션이 종료되었습니다.';
 const DEFAULT_FRONTEND_ORIGIN = 'http://localhost:3000';
 const LOCAL_FRONTEND_HOSTNAMES = new Set([
@@ -579,7 +580,7 @@ export class AuthService {
 
   async enforceRefreshFamilyLimit(
     userId: string,
-    maxFamilies = 3,
+    maxFamilies = USER_REFRESH_FAMILY_LIMIT,
   ): Promise<{ revokedFamily: string | null; notice?: string }> {
     const now = new Date();
     const activeRows = await this.db
@@ -1046,7 +1047,9 @@ export class AuthService {
         Date.now() + REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000,
       ),
     });
-    const limitResult = await this.enforceRefreshFamilyLimit(userId);
+    const limitResult = role === 'admin'
+      ? { revokedFamily: null }
+      : await this.enforceRefreshFamilyLimit(userId);
 
     return {
       accessToken,

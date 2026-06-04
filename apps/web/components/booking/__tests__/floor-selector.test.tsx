@@ -8,6 +8,11 @@ import { BookingPage } from '@/components/booking/booking-page';
 import { ApiClientError } from '@/lib/api-client';
 import { useBookingStore } from '@/stores/use-booking-store';
 
+type MyLocksMockData = {
+  seatIds: string[];
+  expiresAt: number | null;
+};
+
 const {
   lockSeatMutateMock,
   unlockSeatMutateMock,
@@ -15,6 +20,7 @@ const {
   routerPushMock,
   useLocaleMock,
   seatStatusSeatsMock,
+  myLocksDataMock,
   toastInfoMock,
 } = vi.hoisted(() => ({
   lockSeatMutateMock: vi.fn(),
@@ -26,6 +32,7 @@ const {
     '1F:A-1': 'available',
     '2F:A-1': 'available',
   })),
+  myLocksDataMock: vi.fn<() => MyLocksMockData>(() => ({ seatIds: [], expiresAt: null })),
   toastInfoMock: vi.fn(),
 }));
 
@@ -72,7 +79,7 @@ vi.mock('@/hooks/use-booking', () => ({
       seats: seatStatusSeatsMock(),
     },
   }),
-  useMyLocks: () => ({ data: { seatIds: [], expiresAt: null } }),
+  useMyLocks: () => ({ data: myLocksDataMock() }),
   useLockSeat: () => ({
     mutate: lockSeatMutateMock,
     isPending: false,
@@ -91,15 +98,18 @@ vi.mock('@/components/booking/seat-map-viewer', () => ({
   SeatMapViewer: ({
     svgUrl,
     selectedSeatIds,
+    myLockedSeatIds,
     onSeatClick,
   }: {
     svgUrl: string;
     selectedSeatIds: Set<string>;
+    myLockedSeatIds?: Set<string>;
     onSeatClick: (seatId: string) => void;
   }) => (
     <div>
       <p>{`current map: ${svgUrl}`}</p>
       <p>{`selected ids: ${Array.from(selectedSeatIds).join(',') || 'none'}`}</p>
+      <p>{`my locked ids: ${Array.from(myLockedSeatIds ?? []).join(',') || 'none'}`}</p>
       <button
         type="button"
         onClick={() => onSeatClick(svgUrl.includes('/2F-') ? '2F:A-1' : 'A-1')}
@@ -237,10 +247,12 @@ describe('BookingPage floor selector', () => {
     toastInfoMock.mockReset();
     useLocaleMock.mockReturnValue('ko');
     seatStatusSeatsMock.mockReset();
+    myLocksDataMock.mockReset();
     seatStatusSeatsMock.mockReturnValue({
       '1F:A-1': 'available',
       '2F:A-1': 'available',
     });
+    myLocksDataMock.mockReturnValue({ seatIds: [], expiresAt: null });
     lockSeatMutateMock.mockImplementation((variables, options) => {
       options?.onSuccess?.(
         {
@@ -305,6 +317,32 @@ describe('BookingPage floor selector', () => {
       screen.queryByRole('button', { name: '1층 A열 1번 선택 해제' }),
     ).not.toBeInTheDocument();
     expect(screen.getByText('총 0석')).toBeInTheDocument();
+  });
+
+  it('restores owned locks as removable selections after returning from checkout', async () => {
+    const user = userEvent.setup();
+    seatStatusSeatsMock.mockReturnValue({
+      '1F:A-1': 'locked',
+      '2F:A-1': 'available',
+    });
+    myLocksDataMock.mockReturnValue({
+      seatIds: ['1F:A-1'],
+      expiresAt: Date.now() + 7 * 60 * 1000,
+    });
+
+    renderWithQuery(<BookingPage performanceId="performance-floor-aware" />);
+
+    expect(
+      await screen.findByRole('button', { name: '1층 A열 1번 선택 해제' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('my locked ids: A-1')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '1층 A열 1번 선택 해제' }));
+
+    expect(unlockSeatMutateMock).toHaveBeenCalledWith({
+      showtimeId: 'showtime-floor-aware',
+      seatId: '1F:A-1',
+    });
   });
 
   it('shows policy-driven limit copy and removes the hardcoded 최대 4석 helper', () => {

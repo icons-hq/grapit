@@ -18,6 +18,7 @@ import { seatInventories } from '../../database/schema/seat-inventories.js';
 import { seatMaps } from '../../database/schema/seat-maps.js';
 import { showtimes } from '../../database/schema/showtimes.js';
 import { performances } from '../../database/schema/performances.js';
+import { bookingPolicies } from '../../database/schema/booking-policies.js';
 import { QueueGateway } from './queue.gateway.js';
 
 export const QUEUE_ADMISSION_COOKIE_NAME = 'grabit_queue_admission';
@@ -32,11 +33,16 @@ const QUEUE_POSITION_STEP_SECONDS = 15;
 const QUEUE_RECONCILE_MIN_INTERVAL_MS = 1_000;
 const QUEUE_POSITION_BROADCAST_LIMIT = 500;
 const QUEUE_REMAINING_SEATS_CACHE_SECONDS = 2;
+const BOOKING_NOT_OPEN_MESSAGE = '예매는 추후 오픈 예정입니다';
 
 export const WAITING = 'WAITING';
 export const ADMITTED = 'ADMITTED';
 export const PAYMENT_RECOVERY = 'PAYMENT_RECOVERY';
 export const EXPIRED = 'EXPIRED';
+
+function isBookingStartReached(value: Date | null | undefined, now: Date = new Date()): boolean {
+  return value instanceof Date && !Number.isNaN(value.getTime()) && value.getTime() <= now.getTime();
+}
 
 export type QueueSessionState =
   | typeof WAITING
@@ -250,12 +256,19 @@ export class QueueService {
     }
 
     const [row] = await this.db
-      .select({ status: performances.status })
+      .select({
+        status: performances.status,
+        bookingStartsAt: bookingPolicies.bookingStartsAt,
+      })
       .from(performances)
+      .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, performances.id))
       .where(eq(performances.id, performanceId));
 
-    if (row?.status === 'upcoming') {
-      throw new ForbiddenException('예매는 추후 오픈 예정입니다');
+    if (row?.bookingStartsAt && !isBookingStartReached(row.bookingStartsAt)) {
+      throw new ForbiddenException(BOOKING_NOT_OPEN_MESSAGE);
+    }
+    if (row?.status === 'upcoming' && !isBookingStartReached(row.bookingStartsAt)) {
+      throw new ForbiddenException(BOOKING_NOT_OPEN_MESSAGE);
     }
   }
 

@@ -136,11 +136,22 @@ function assertCachedPerformanceBookable(
   isAdmin: boolean,
   upcomingMessage: string,
   endedMessage: string,
+  now = Date.now(),
 ): void {
   if (performance?.status === 'ended') {
     throw new BookingDisabledError(endedMessage);
   }
-  if (performance?.status === 'upcoming' && !isAdmin) {
+  if (isAdmin) {
+    return;
+  }
+  const bookingStartsAt = performance?.bookingPolicy?.bookingStartsAt;
+  const bookingStartsAtMs = bookingStartsAt ? Date.parse(bookingStartsAt) : Number.NaN;
+  const isBeforeScheduledBookingStart =
+    Number.isFinite(bookingStartsAtMs) && bookingStartsAtMs > now;
+  const isUpcomingClosed =
+    performance?.status === 'upcoming' &&
+    (!Number.isFinite(bookingStartsAtMs) || bookingStartsAtMs > now);
+  if (isBeforeScheduledBookingStart || isUpcomingClosed) {
     throw new BookingDisabledError(upcomingMessage);
   }
 }
@@ -269,6 +280,9 @@ export function useUnlockSeat() {
     onSuccess: (_data, variables) => {
       queryClient.invalidateQueries({
         queryKey: ['seat-status', variables.showtimeId],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ['my-locks', variables.showtimeId],
       });
     },
   });

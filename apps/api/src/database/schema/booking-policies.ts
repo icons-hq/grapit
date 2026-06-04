@@ -30,6 +30,7 @@ export const bookingPolicies = pgTable('booking_policies', {
     .notNull()
     .default(10),
   manualOpenEnabled: boolean('manual_open_enabled').notNull().default(true),
+  bookingStartsAt: timestamp('booking_starts_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [

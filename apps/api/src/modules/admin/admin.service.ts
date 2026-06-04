@@ -452,6 +452,7 @@ export class AdminService {
         cancelledSeatHoldMinMinutes: bookingPolicy.cancelledSeatHoldMinMinutes,
         cancelledSeatHoldMaxMinutes: bookingPolicy.cancelledSeatHoldMaxMinutes,
         manualOpenEnabled: bookingPolicy.manualOpenEnabled,
+        bookingStartsAt: parseOptionalIsoDate(bookingPolicy.bookingStartsAt),
       })
       .onConflictDoUpdate({
         target: bookingPolicies.performanceId,
@@ -464,6 +465,7 @@ export class AdminService {
           cancelledSeatHoldMinMinutes: bookingPolicy.cancelledSeatHoldMinMinutes,
           cancelledSeatHoldMaxMinutes: bookingPolicy.cancelledSeatHoldMaxMinutes,
           manualOpenEnabled: bookingPolicy.manualOpenEnabled,
+          bookingStartsAt: parseOptionalIsoDate(bookingPolicy.bookingStartsAt),
           updatedAt: new Date(),
         },
       })

@@ -251,6 +251,31 @@ describe('AdminUserService permission updates', () => {
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
   });
+
+  it('reapplies the user refresh-token family limit when an admin is downgraded to user', async () => {
+    const actor = userRow({ id: 'actor-admin', adminCapabilityBundle: 'admin' });
+    const target = userRow({ id: 'target-user', adminCapabilityBundle: 'operator' });
+    const mockDb = createMockDb([actor, target]);
+    const service = new AdminUserService(mockDb.db as never, createAuditService());
+    const enforceSpy = vi
+      .spyOn(service as never, 'enforceUserRefreshFamilyLimit')
+      .mockResolvedValue(undefined);
+
+    vi.spyOn(service as never, 'findUserById').mockImplementation((id: string) =>
+      Promise.resolve(id === 'actor-admin' ? actor : target),
+    );
+    vi.spyOn(service, 'getUserDetail').mockResolvedValue(detailStub('target-user'));
+
+    await service.updatePermissions('actor-admin', 'target-user', {
+      role: 'user',
+      adminCapabilityBundle: null,
+      adminCapabilities: [],
+      reason: 'downgrade temporary admin',
+      confirmed: true,
+    });
+
+    expect(enforceSpy).toHaveBeenCalledWith('target-user', mockDb.tx);
+  });
 });
 
 describe('AdminUserService withdrawals', () => {

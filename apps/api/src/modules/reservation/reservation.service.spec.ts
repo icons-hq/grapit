@@ -372,6 +372,7 @@ describe('ReservationService', () => {
     seats: SeatSelection[];
     amount: number;
     performanceStatus?: string;
+    bookingStartsAt?: Date | null;
   }) {
     mockDb.select
       .mockReturnValueOnce(chainResult([]))
@@ -379,6 +380,7 @@ describe('ReservationService', () => {
         id: dto.showtimeId,
         performanceId: 'performance-1',
         performanceStatus: dto.performanceStatus ?? 'selling',
+        bookingStartsAt: dto.bookingStartsAt ?? null,
         dateTime: new Date(),
         maxTicketsPerUser: 4,
         changePolicyEnabled: false,
@@ -1053,6 +1055,63 @@ describe('ReservationService', () => {
       expect(mockConsentService.assertRequiredConsents).toHaveBeenCalled();
       expect(mockBookingService.assertOwnedSeatLocks).not.toHaveBeenCalled();
       expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
+    it('prepareReservation rejects public users before a scheduled booking start', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-06-04T09:59:59.000Z'));
+      try {
+        const userId = randomUUID();
+        const dto = {
+          showtimeId: randomUUID(),
+          orderId: 'GRP-SCHEDULED-PREPARE-BEFORE',
+          seats: [seatSelection('A-1')],
+          amount: 52000,
+          consentItems: makeConsentItems(),
+          performanceStatus: 'selling',
+          bookingStartsAt: new Date('2026-06-04T10:00:00.000Z'),
+        };
+        setupPrepareBase(dto);
+
+        await expect(service.prepareReservation(dto, userId))
+          .rejects
+          .toThrow('예매는 추후 오픈 예정입니다');
+
+        expect(mockBookingService.assertOwnedSeatLocks).not.toHaveBeenCalled();
+        expect(mockDb.transaction).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('prepareReservation allows public users after a scheduled booking start while stored status is upcoming', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-06-04T10:00:00.000Z'));
+      try {
+        const userId = randomUUID();
+        const dto = {
+          showtimeId: randomUUID(),
+          orderId: 'GRP-SCHEDULED-PREPARE-AFTER',
+          seats: [seatSelection('A-1')],
+          amount: 52000,
+          consentItems: makeConsentItems(),
+          performanceStatus: 'upcoming',
+          bookingStartsAt: new Date('2026-06-04T10:00:00.000Z'),
+        };
+        setupPrepareBase(dto);
+
+        await expect(service.prepareReservation(dto, userId))
+          .resolves
+          .toEqual(expect.objectContaining({
+            reservationId: 'reservation-created',
+            orderId: dto.orderId,
+          }));
+
+        expect(mockBookingService.assertOwnedSeatLocks).toHaveBeenCalled();
+        expect(mockDb.transaction).toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('prepareReservation rejects ended performances before lock validation', async () => {

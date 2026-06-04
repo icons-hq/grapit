@@ -27,6 +27,17 @@ function createMockDb() {
   };
 }
 
+function mockPerformanceGate(
+  mockDb: ReturnType<typeof createMockDb>,
+  row: { status: string; bookingStartsAt?: Date | null } | null,
+) {
+  const where = vi.fn().mockResolvedValue(row ? [row] : []);
+  const leftJoin = vi.fn().mockReturnValue({ where });
+  const from = vi.fn().mockReturnValue({ leftJoin, where });
+  mockDb.select.mockReturnValue({ from });
+  return { from, leftJoin, where };
+}
+
 function createMockGateway(): {
   emitAdmitted: ReturnType<typeof vi.fn>;
   emitExpired: ReturnType<typeof vi.fn>;
@@ -151,6 +162,50 @@ describe('QueueService', () => {
       `{queue:${performanceId}}:identity:user-1:family-1:family-1`,
       '{queue:admission}:existing-token-hash',
     ]);
+  });
+
+  it('blocks public queue entry before a scheduled booking start even when status is selling', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-04T09:59:00.000Z'));
+      mockPerformanceGate(mockDb, {
+        status: 'selling',
+        bookingStartsAt: new Date('2026-06-04T10:00:00.000Z'),
+      });
+
+      await expect(
+        (service as unknown as {
+          assertPerformanceBookingOpen: (
+            targetPerformanceId: string,
+            actorRole?: string,
+          ) => Promise<void>;
+        }).assertPerformanceBookingOpen(performanceId),
+      ).rejects.toThrow('예매는 추후 오픈 예정입니다');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('allows public queue entry at a scheduled booking start even when stored status is upcoming', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-04T10:00:00.000Z'));
+      mockPerformanceGate(mockDb, {
+        status: 'upcoming',
+        bookingStartsAt: new Date('2026-06-04T10:00:00.000Z'),
+      });
+
+      await expect(
+        (service as unknown as {
+          assertPerformanceBookingOpen: (
+            targetPerformanceId: string,
+            actorRole?: string,
+          ) => Promise<void>;
+        }).assertPerformanceBookingOpen(performanceId),
+      ).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('locks the queue transport contract to cookie-only admission and realtime queue events', async () => {

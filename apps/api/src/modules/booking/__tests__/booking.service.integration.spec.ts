@@ -39,15 +39,21 @@ function createBookingService(redis: IORedis, maxTicketsPerUser = 1): BookingSer
     select: (selection?: Record<string, unknown>) => ({
       from: () => ({
         where: () => queryRows(unavailableRows),
-        innerJoin: () => ({
-          where: () => queryRows(Object.prototype.hasOwnProperty.call(selection ?? {}, 'seatConfig')
+        innerJoin: () => {
+          const rows = Object.prototype.hasOwnProperty.call(selection ?? {}, 'seatConfig')
             ? [{
                 seatConfig: {
                   tiers: [{ tierName: 'VIP', seatIds: ['A-1', 'A-2', 'A-3'] }],
                 },
               }]
-            : [{ performanceStatus: 'selling' }]),
-        }),
+            : [{ performanceStatus: 'selling', bookingStartsAt: null }];
+          return {
+            where: () => queryRows(rows),
+            leftJoin: () => ({
+              where: () => queryRows(rows),
+            }),
+          };
+        },
         leftJoin: () => ({
           where: () => queryRows([{ maxTicketsPerUser, seatHoldMinutes: 10 }]),
         }),
