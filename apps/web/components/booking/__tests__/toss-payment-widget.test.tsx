@@ -304,4 +304,60 @@ describe('TossPaymentWidget', () => {
       },
     }));
   });
+
+  it('blocks overseas card direct payment when the server secret is unavailable', async () => {
+    process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = 'DEFAULT,uspay';
+    process.env.NEXT_PUBLIC_TOSS_OVERSEAS_CARD_CLIENT_KEY = 'test_ck_direct_key';
+    apiClientPostMock.mockResolvedValueOnce({
+      orderId: 'GRP-TEST-ORDER',
+      method: 'CARD',
+      provider: 'CARD',
+      currency: 'KRW',
+      successUrl: 'https://grabit.test/booking/performance-1/complete',
+      failUrl: 'https://grabit.test/booking/performance-1/confirm?error=true',
+      asyncStatus: 'sync',
+      useInternationalCardOnly: true,
+      checkoutEnabled: false,
+      disabledReason: 'OVERSEAS_CARD_SECRET_KEY_MISSING',
+    });
+    const ref = createRef<TossPaymentWidgetRef>();
+    const user = userEvent.setup();
+
+    render(<TossPaymentWidget {...defaultProps} ref={ref} />);
+
+    await waitFor(() => expect(renderAgreementMock).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole('tab', { name: '해외 결제' }));
+    await waitFor(() => expect(renderAgreementMock).toHaveBeenCalledTimes(2));
+
+    await expect(ref.current?.requestPayment({
+      reservationId: 'reservation-1',
+      orderId: 'GRP-TEST-ORDER',
+      queueAdmission: {
+        queueSessionId: 'queue-session-1',
+        admissionToken: 'admission-token-1',
+        refreshFamilyId: 'refresh-family-1',
+        deviceSlotKey: 'device-slot-1',
+        admittedAt: '2026-06-05T10:00:00.000Z',
+        activeUntilAt: '2026-06-05T10:07:00.000Z',
+        reentryGraceUntilAt: '2026-06-05T10:08:00.000Z',
+      },
+      paymentDeadlineAt: '2026-06-05T10:07:00.000Z',
+      bookingPolicy: {
+        maxTicketsPerOrder: 2,
+        cancellationChangePolicy: 'CANCEL_ONLY',
+        sameGradeChangeEnabled: false,
+      },
+      paymentMethod: {
+        method: 'CARD',
+        provider: 'CARD',
+        currency: 'KRW',
+        overseasPaymentConsent: {
+          required: true,
+          agreed: true,
+          agreementVersion: '2026-05-08',
+        },
+      },
+    })).rejects.toThrow('해외 카드 결제 설정이 완료되지 않았습니다. 관리자에게 문의해주세요.');
+    expect(directPaymentRequestMock).not.toHaveBeenCalled();
+  });
 });

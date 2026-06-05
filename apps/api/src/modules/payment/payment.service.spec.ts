@@ -93,6 +93,7 @@ describe('PaymentService', () => {
   let mockTossClient: {
     cancelPayment: ReturnType<typeof vi.fn>;
     queryPayment: ReturnType<typeof vi.fn>;
+    getOverseasCardAvailability: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(() => {
@@ -110,6 +111,7 @@ describe('PaymentService', () => {
     mockTossClient = {
       cancelPayment: vi.fn().mockResolvedValue({}),
       queryPayment: vi.fn(),
+      getOverseasCardAvailability: vi.fn().mockReturnValue({ enabled: true }),
     };
     service = new PaymentService(
       mockDb as any,
@@ -271,7 +273,39 @@ describe('PaymentService', () => {
       });
       expect(branch.pendingUrl).toBeUndefined();
       expect(branch.providerChargeQuote).toBeUndefined();
-      expect(branch.checkoutEnabled).toBeUndefined();
+      expect(branch.checkoutEnabled).toBe(true);
+      expect(mockDb.select).not.toHaveBeenCalled();
+    });
+
+    it('disables overseas card checkout when the scoped server secret is missing', async () => {
+      mockTossClient.getOverseasCardAvailability.mockReturnValueOnce({
+        enabled: false,
+        disabledReason: 'OVERSEAS_CARD_SECRET_KEY_MISSING',
+      });
+
+      const branch = await service.prepareTossPaymentBranch({
+        orderId: 'GRP-FOREIGN-CARD-NO-SECRET',
+        paymentMethod: createPaymentMethod({
+          currency: 'KRW',
+          overseasPaymentConsent: {
+            required: true,
+            agreed: true,
+            agreementVersion: '2026-05-08',
+          },
+        }),
+        successUrl: 'https://grabit.test/booking/perf-1/complete',
+        failUrl: 'https://grabit.test/booking/perf-1/confirm?error=true',
+      });
+
+      expect(branch).toMatchObject({
+        method: 'CARD',
+        provider: 'CARD',
+        currency: 'KRW',
+        useInternationalCardOnly: true,
+        checkoutEnabled: false,
+        disabledReason: 'OVERSEAS_CARD_SECRET_KEY_MISSING',
+      });
+      expect(branch.providerChargeQuote).toBeUndefined();
       expect(mockDb.select).not.toHaveBeenCalled();
     });
 

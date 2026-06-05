@@ -55,6 +55,17 @@ export class TossPaymentsClient {
       this.configService.get<string>('TOSS_FOREIGN_EASY_PAY_SECRET_KEY', '');
   }
 
+  getOverseasCardAvailability(): { enabled: boolean; disabledReason?: string } {
+    if (this.overseasCardSecretKey.trim().length > 0) {
+      return { enabled: true };
+    }
+
+    return {
+      enabled: false,
+      disabledReason: 'OVERSEAS_CARD_SECRET_KEY_MISSING',
+    };
+  }
+
   private getSecretKey(scope: TossPaymentRequestOptions['secretKeyScope']): string {
     if (scope === 'overseas-card') {
       if (!this.overseasCardSecretKey) {

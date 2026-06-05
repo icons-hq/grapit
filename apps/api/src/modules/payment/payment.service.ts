@@ -242,6 +242,11 @@ export class PaymentService {
     }
 
     if (paymentMethod.provider === 'CARD') {
+      const useInternationalCardOnly = this.isOverseasCardBranch(paymentMethod);
+      const overseasCardAvailability = useInternationalCardOnly
+        ? this.getOverseasCardAvailability()
+        : undefined;
+
       return {
         orderId,
         method: 'CARD',
@@ -250,7 +255,15 @@ export class PaymentService {
         successUrl,
         failUrl,
         asyncStatus: 'sync',
-        useInternationalCardOnly: this.isOverseasCardBranch(paymentMethod),
+        useInternationalCardOnly,
+        ...(overseasCardAvailability
+          ? {
+              checkoutEnabled: overseasCardAvailability.enabled,
+              ...(overseasCardAvailability.disabledReason
+                ? { disabledReason: overseasCardAvailability.disabledReason }
+                : {}),
+            }
+          : {}),
       };
     }
 
@@ -1819,6 +1832,20 @@ export class PaymentService {
 
     return service?.getPaypalAvailability?.()
       ?? service?.getForeignEasyPayAvailability?.();
+  }
+
+  private getOverseasCardAvailability(): { enabled: boolean; disabledReason?: string } {
+    const service = this.tossClient as
+      | {
+          getOverseasCardAvailability?: () => { enabled: boolean; disabledReason?: string };
+        }
+      | undefined;
+
+    return service?.getOverseasCardAvailability?.()
+      ?? {
+        enabled: false,
+        disabledReason: 'OVERSEAS_CARD_SECRET_KEY_MISSING',
+      };
   }
 
   private isOverseasCardBranch(paymentMethod: PaymentMethod): boolean {

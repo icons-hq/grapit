@@ -745,6 +745,13 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
           if (!branch.useInternationalCardOnly) {
             throw new Error(widgetCopy.overseasCardInvalidSetup);
           }
+          if (branch.checkoutEnabled === false) {
+            throw new Error(resolveProviderChargeDisabledMessage(
+              selection.paymentMethod.provider,
+              branch.disabledReason,
+              locale,
+            ));
+          }
           const overseasCardClientKey = resolveOverseasCardClientKey();
           if (!overseasCardClientKey) {
             throw new Error(widgetCopy.overseasCardDisabled);
