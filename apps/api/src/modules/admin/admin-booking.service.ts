@@ -27,7 +27,7 @@ import {
 } from '../../database/schema/index.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
 import { RefundService } from '../refund/refund.service.js';
-import { safeCsvRows } from './csv-export.util.js';
+import { safeCsvRows, withUtf8Bom } from './csv-export.util.js';
 import { AdminAuditService } from './admin-audit.service.js';
 import { normalizeSeatIdentity, toFloorAwareSeatSelection } from '@grabit/shared';
 import type {
@@ -1179,10 +1179,10 @@ export class AdminBookingService {
     } satisfies AdminReservationExportFilter;
 
     const rows = await this.selectReservationExportRows(filters);
-    const csv = safeCsvRows([
+    const csv = withUtf8Bom(safeCsvRows([
       RESERVATION_EXPORT_HEADERS,
       ...rows.map((row) => reservationExportRowToCsvValues(row)),
-    ]);
+    ]));
 
     await this.auditService.write({
       actorUserId: request.actorUserId,

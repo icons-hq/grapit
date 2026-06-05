@@ -1,4 +1,5 @@
 const FORMULA_PREFIX_PATTERN = /^[=+\-@\t\r]/;
+export const UTF8_BOM = '\uFEFF';
 
 export function safeCsvCell(value: unknown): string {
   const text = value == null ? '' : String(value);
@@ -12,4 +13,8 @@ export function safeCsvRow(values: readonly unknown[]): string {
 
 export function safeCsvRows(rows: readonly (readonly unknown[])[]): string {
   return rows.map((row) => safeCsvRow(row)).join('\n');
+}
+
+export function withUtf8Bom(csv: string): string {
+  return `${UTF8_BOM}${csv}`;
 }

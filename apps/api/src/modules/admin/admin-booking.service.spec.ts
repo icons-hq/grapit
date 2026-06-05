@@ -1210,6 +1210,63 @@ describe('AdminBookingService', () => {
       expect(result.csv).toContain('"79000"');
     });
 
+    it('prefixes raw reservation CSV with a UTF-8 BOM for Excel-compatible Korean names and seat labels', async () => {
+      mockDb.select.mockReturnValueOnce(
+        createChainMock([
+          {
+            reservation: {
+              id: 'reservation-raw-1',
+              reservationNumber: 'R-RAW-001',
+              status: 'CONFIRMED',
+              totalAmount: 79000,
+              createdAt: new Date('2026-07-01T03:00:00.000Z'),
+            },
+            user: {
+              name: '김예매',
+              email: 'buyer@example.com',
+              phone: '+821055501234',
+              country: 'KR',
+            },
+            showtime: {
+              dateTime: new Date('2026-07-18T10:00:00.000Z'),
+            },
+            performance: {
+              id: 'performance-1',
+              title: '걸 룰즈',
+            },
+            ticketItem: ticketItem({
+              id: 'ticket-item-a2',
+              floorLabel: '1층',
+              seatKey: '1F:가-12',
+              row: '가',
+              number: '12',
+              cancelReason: '일정 변경',
+            }),
+            payment: {
+              method: 'CARD',
+              status: 'DONE',
+              paidAt: new Date('2026-07-01T03:01:00.000Z'),
+            },
+          },
+        ]),
+      );
+
+      const result = await service.exportReservations({
+        actorUserId: 'admin-1',
+        filters: {
+          eventId: 'performance-1',
+          exportType: 'raw_pii',
+          reason: '정산 대조',
+        },
+      });
+
+      expect(result.csv.charCodeAt(0)).toBe(0xfeff);
+      expect(result.csv).toContain('"김예매"');
+      expect(result.csv).toContain('"걸 룰즈"');
+      expect(result.csv).toContain('"1F:가-12"');
+      expect(result.csv).toContain('"일정 변경"');
+    });
+
     it('rejects raw exports without a reason before querying or auditing', async () => {
       await expect(
         service.exportReservations({
