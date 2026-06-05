@@ -413,12 +413,12 @@ function activeTicketItemRevenueSql(): SQL<number> {
 }
 
 function refundAttentionConditionSql(): SQL {
-  return sql`${refunds.status} in (
+  return sql`coalesce(${refunds.status} in (
     'requested',
     'sent_to_pg',
     'processing_at_pg',
     'failed'
-  )`;
+  ), false)`;
 }
 
 function cancelProcessingReservationConditionSql(): SQL {

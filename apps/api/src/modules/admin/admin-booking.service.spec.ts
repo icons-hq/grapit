@@ -272,6 +272,31 @@ describe('AdminBookingService', () => {
       expect(result.total).toBe(4);
     });
 
+    it('treats missing refund rows as not cancellation-processing when counting sold bookings', async () => {
+      mockDb.select
+        .mockReturnValueOnce(createChainMock([{
+          totalBookings: 1,
+          completedRevenue: 79000,
+          soldCount: 1,
+          pendingPaymentCount: 0,
+          paymentProcessingCount: 0,
+          failedCount: 0,
+          cancelProcessingCount: 0,
+          cancelledCount: 0,
+          partialCancelledCount: 0,
+        }]))
+        .mockReturnValueOnce(createChainMock([{ soldCount: 1 }]))
+        .mockReturnValueOnce(createChainMock([]));
+
+      await service.getBookings({});
+
+      const allTimeSoldSelect = mockDb.select.mock.calls[1]?.[0] as Record<string, unknown>;
+      const soldCountSqlText = objectGraphText(allTimeSoldSelect.soldCount);
+
+      expect(soldCountSqlText).toContain('coalesce');
+      expect(soldCountSqlText).toContain('false');
+    });
+
     it('keeps active ticket revenue independent from cancellation-processing attention state', async () => {
       mockDb.select
         .mockReturnValueOnce(createChainMock([{
