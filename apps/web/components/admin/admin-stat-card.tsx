@@ -14,10 +14,7 @@ function formatValue(value: number, format: 'count' | 'currency' | 'percent'): s
     case 'count':
       return `${value.toLocaleString('ko-KR')}건`;
     case 'currency':
-      if (value >= 1_000_000) {
-        return `\u20A9${(value / 1_000_000).toFixed(1)}M`;
-      }
-      return `\u20A9${value.toLocaleString('ko-KR')}`;
+      return `${value.toLocaleString('ko-KR')}원`;
     case 'percent':
       return `${value.toFixed(1)}%`;
   }

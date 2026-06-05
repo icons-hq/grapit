@@ -27,35 +27,93 @@ import {
 import { useAdminManualOpenSeat } from '@/hooks/use-admin-seat-operations';
 import { useAdminBookingDetail } from '@/hooks/use-reservations';
 import { formatDateTime } from '@/lib/format-datetime';
-import type { ReservationStatus } from '@grabit/shared';
-
-const STATUS_CONFIG: Record<
+import type {
+  AdminBookingDetail,
+  AdminBookingFunnelStatus,
+  AdminTicketItem,
+  PaymentStatus,
   ReservationStatus,
+} from '@grabit/shared';
+
+const FUNNEL_STATUS_CONFIG: Record<
+  AdminBookingFunnelStatus,
   { label: string; className: string }
 > = {
-  CONFIRMED: {
-    label: '예매완료',
+  SOLD: {
+    label: '판매 완료',
     className: 'bg-[#F0FDF4] text-[#15803D] border-transparent',
   },
-  CANCELLED: {
-    label: '취소완료',
-    className: 'bg-[#FEF2F2] text-[#C62828] border-transparent',
-  },
-  PENDING_PAYMENT: {
-    label: '결제대기',
+  PAYMENT_PENDING: {
+    label: '결제 대기',
     className: 'bg-[#FFFBEB] text-[#8B6306] border-transparent',
   },
-  FAILED: {
-    label: '결제실패',
+  PAYMENT_PROCESSING: {
+    label: '결제 확인 중',
+    className: 'bg-[#EEF2FF] text-[#4338CA] border-transparent',
+  },
+  PAYMENT_FAILED: {
+    label: '결제 실패/만료',
     className: 'bg-[#FEF2F2] text-[#C62828] border-transparent',
   },
+  CANCEL_PROCESSING: {
+    label: '취소/환불 처리 중',
+    className: 'bg-[#FFF7ED] text-[#C2410C] border-transparent',
+  },
+  PARTIAL_CANCELLED: {
+    label: '부분 취소',
+    className: 'bg-[#F5F3FF] text-[#6D28D9] border-transparent',
+  },
+  CANCELLED: {
+    label: '취소 완료',
+    className: 'bg-[#F3F4F6] text-[#4B5563] border-transparent',
+  },
+};
+
+const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
+  READY: '결제 준비',
+  IN_PROGRESS: '결제 진행 중',
+  DONE: '결제 완료',
+  CANCELED: '결제 취소',
+  ABORTED: '결제 중단',
+  EXPIRED: '결제 만료',
+};
+
+const PAYMENT_METHOD_LABELS: Record<string, string> = {
+  CARD: '카드',
+  VIRTUAL_ACCOUNT: '가상계좌',
+  TRANSFER: '계좌이체',
+  MOBILE_PHONE: '휴대폰',
+  FOREIGN_EASY_PAY: '해외 간편결제',
+  SIMPLE_PAY: '국내 간편결제',
+};
+
+const TICKET_STATUS_LABELS: Record<AdminTicketItem['status'], string> = {
+  ACTIVE: '티켓 유효',
+  CANCELLATION_PENDING: '취소 확인 중',
+  CANCELLED: '취소됨',
+  EXPIRED: '만료됨',
+};
+
+const ADMISSION_STATE_LABELS: Record<
+  AdminTicketItem['admissionState'],
+  string
+> = {
+  NOT_ENTERED: '입장 전',
+  ENTERED: '입장 완료',
+};
+
+const REOPEN_STATE_LABELS: Record<AdminTicketItem['reopenState'], string> = {
+  NOT_REQUIRED: '재오픈 불필요',
+  HELD_CANCELLED: '취소 좌석 보류',
+  AVAILABLE: '판매 가능',
+  MANUAL_OPENED: '수동 개방',
 };
 
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="flex items-start justify-between py-2">
-      <span className="text-sm text-gray-600">{label}</span>
-      <span className="text-right text-sm font-semibold text-gray-900">
+    <div className="flex items-start justify-between gap-4 py-2">
+      <span className="shrink-0 text-sm text-gray-600">{label}</span>
+      <span className="min-w-0 break-words text-right text-sm font-semibold text-gray-900">
         {value}
       </span>
     </div>
@@ -64,6 +122,56 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
 
 function formatWon(amount: number): string {
   return `${amount.toLocaleString('ko-KR')}원`;
+}
+
+function fallbackFunnelStatus(status: ReservationStatus): AdminBookingFunnelStatus {
+  switch (status) {
+    case 'CONFIRMED':
+      return 'SOLD';
+    case 'PENDING_PAYMENT':
+      return 'PAYMENT_PENDING';
+    case 'CANCELLED':
+      return 'CANCELLED';
+    case 'FAILED':
+      return 'PAYMENT_FAILED';
+  }
+}
+
+function getFunnelStatusConfig(booking: AdminBookingDetail) {
+  const funnelStatus =
+    booking.funnelStatus ?? fallbackFunnelStatus(booking.status);
+  return FUNNEL_STATUS_CONFIG[funnelStatus];
+}
+
+function getPaymentStatusLabel(status: PaymentStatus | null): string {
+  if (!status) return '결제 정보 없음';
+  return PAYMENT_STATUS_LABELS[status] ?? '결제 상태 확인 필요';
+}
+
+function getPaymentMethodLabel(method: string | null): string {
+  if (!method) return '결제수단 미정';
+  if (PAYMENT_METHOD_LABELS[method]) {
+    return PAYMENT_METHOD_LABELS[method];
+  }
+  return /[가-힣]/.test(method) ? method : '기타 결제수단';
+}
+
+function formatTicketStatusCounts(
+  counts: AdminBookingDetail['ticketStatusCounts'],
+): string {
+  return [
+    `티켓 유효 ${counts.ACTIVE.toLocaleString('ko-KR')}`,
+    `취소 확인 중 ${counts.CANCELLATION_PENDING.toLocaleString('ko-KR')}`,
+    `취소됨 ${counts.CANCELLED.toLocaleString('ko-KR')}`,
+    `만료됨 ${counts.EXPIRED.toLocaleString('ko-KR')}`,
+  ].join(' / ');
+}
+
+function canManualOpenCancelledSeats(booking: AdminBookingDetail): boolean {
+  return (
+    booking.status === 'CANCELLED' &&
+    booking.ticketItems.some((item) => item.reopenState === 'HELD_CANCELLED')
+  );
 }
 
 interface AdminBookingDetailModalProps {
@@ -130,7 +238,7 @@ export function AdminBookingDetailModal({
     );
   }
 
-  const statusConfig = booking ? STATUS_CONFIG[booking.status] : null;
+  const statusConfig = booking ? getFunnelStatusConfig(booking) : null;
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -181,15 +289,31 @@ export function AdminBookingDetailModal({
               value={`${booking.totalAmount.toLocaleString('ko-KR')}원`}
             />
             <Separator />
+            <InfoRow
+              label="결제 상태"
+              value={getPaymentStatusLabel(
+                booking.paymentInfo?.status ?? booking.paymentStatus,
+              )}
+            />
+            <Separator />
+            <InfoRow
+              label="결제수단"
+              value={getPaymentMethodLabel(
+                booking.paymentInfo?.method ?? booking.paymentMethod,
+              )}
+            />
+            <Separator />
             {booking.paymentInfo && (
               <>
-                <InfoRow label="결제수단" value={booking.paymentInfo.method} />
-                <Separator />
-                <InfoRow
-                  label="결제일시"
-                  value={formatDateTime(booking.paymentInfo.paidAt)}
-                />
-                <Separator />
+                {booking.paymentInfo.paidAt && (
+                  <>
+                    <InfoRow
+                      label="결제일시"
+                      value={formatDateTime(booking.paymentInfo.paidAt)}
+                    />
+                    <Separator />
+                  </>
+                )}
               </>
             )}
             <InfoRow
@@ -200,9 +324,14 @@ export function AdminBookingDetailModal({
                     {statusConfig.label}
                   </Badge>
                 ) : (
-                  booking.status
+                  '상태 확인 필요'
                 )
               }
+            />
+            <Separator />
+            <InfoRow
+              label="티켓 상태"
+              value={formatTicketStatusCounts(booking.ticketStatusCounts)}
             />
 
             {booking.ticketItems?.length > 0 && (
@@ -232,16 +361,16 @@ export function AdminBookingDetailModal({
                               {item.tierName} {item.row}열 {item.number}번
                             </TableCell>
                             <TableCell className="whitespace-nowrap text-sm">
-                              {item.status}
+                              {TICKET_STATUS_LABELS[item.status]}
                             </TableCell>
                             <TableCell className="whitespace-nowrap text-sm">
-                              {item.admissionState}
+                              {ADMISSION_STATE_LABELS[item.admissionState]}
                             </TableCell>
                             <TableCell className="whitespace-nowrap text-right text-sm">
                               {formatWon(item.refundableAmount)}
                             </TableCell>
                             <TableCell className="whitespace-nowrap text-sm">
-                              {item.reopenState}
+                              {REOPEN_STATE_LABELS[item.reopenState]}
                             </TableCell>
                           </TableRow>
                         ))}
@@ -266,7 +395,7 @@ export function AdminBookingDetailModal({
               </Button>
             )}
 
-            {booking.status === 'CANCELLED' && (
+            {canManualOpenCancelledSeats(booking) && (
               <Button
                 variant="outline"
                 className="mt-4 h-12 w-full border-[#C62828] text-[#C62828] hover:bg-[#FEF2F2] hover:text-[#C62828]"
@@ -315,7 +444,7 @@ export function AdminBookingDetailModal({
                 <div className="mt-2 flex items-center justify-between">
                   <span className="text-sm text-gray-600">환불 수단</span>
                   <span className="text-sm text-gray-600">
-                    {booking.paymentInfo.method}으로 환불
+                    {getPaymentMethodLabel(booking.paymentInfo.method)} 결제 취소
                   </span>
                 </div>
               )}

@@ -175,6 +175,19 @@ describe('Phase 24 booking core shared contracts', () => {
       cancelledAt: null,
       cancelReason: null,
       paymentKey: 'payment-key-1',
+      paymentInfo: {
+        paymentKey: 'payment-key-1',
+        method: 'ALIPAY_PLUS',
+        amount: 150000,
+        status: 'DONE',
+        paidAt: '2026-05-08T11:46:00.000Z',
+        paymentDeadlineAt: '2026-05-08T11:52:00.000Z',
+        paymentMethod: {
+          method: 'FOREIGN_EASY_PAY',
+          provider: 'ALIPAY_PLUS',
+          currency: 'USD',
+        },
+      },
       queueAdmission: makeQueueAdmission(),
       paymentDeadlineAt: '2026-05-08T11:52:00.000Z',
       bookingPolicy: {

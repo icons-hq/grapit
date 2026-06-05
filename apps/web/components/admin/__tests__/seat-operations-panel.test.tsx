@@ -57,12 +57,18 @@ function renderWithClient(ui: ReactNode, queryClient = createQueryClient()) {
   return { queryClient };
 }
 
-function cancelledBooking() {
+function cancelledBooking({
+  reopenState = 'AVAILABLE',
+}: {
+  reopenState?: 'HELD_CANCELLED' | 'AVAILABLE';
+} = {}) {
   return {
     id: 'reservation-1',
     reservationNumber: 'R-20260514-001',
     userName: '김운영',
     userPhone: '+821012345678',
+    userEmail: 'operator-buyer@example.com',
+    userCountry: 'KR',
     performanceTitle: '걸룰스 팬미팅',
     showDateTime: '2026-07-18T10:00:00.000Z',
     seats: [
@@ -79,6 +85,15 @@ function cancelledBooking() {
     ],
     totalAmount: 120000,
     status: 'CANCELLED' as const,
+    funnelStatus: 'CANCELLED' as const,
+    paymentStatus: 'CANCELED' as const,
+    paymentMethod: 'CARD',
+    ticketStatusCounts: {
+      ACTIVE: 0,
+      CANCELLATION_PENDING: 0,
+      CANCELLED: 1,
+      EXPIRED: 0,
+    },
     createdAt: '2026-05-14T01:00:00.000Z',
     paymentInfo: {
       paymentKey: 'payment-1',
@@ -110,7 +125,7 @@ function cancelledBooking() {
         cancellationFee: 0,
         serviceFeeRefund: 2000,
         refundableAmount: 122000,
-        reopenState: 'AVAILABLE' as const,
+        reopenState,
         reopenHoldUntil: null,
       },
     ],
@@ -145,7 +160,7 @@ describe('Admin seat operations UI', () => {
   it('keeps immediate cancelled-seat open inside AdminBookingDetailModal and invalidates booking plus seat-operation queries', async () => {
     const user = userEvent.setup();
     mocks.bookingDetail.mockReturnValue({
-      data: cancelledBooking(),
+      data: cancelledBooking({ reopenState: 'HELD_CANCELLED' }),
       isLoading: false,
     });
     mocks.apiPost.mockResolvedValueOnce({ message: '좌석이 즉시 오픈되었습니다' });
@@ -221,10 +236,44 @@ describe('Admin seat operations UI', () => {
 
     const table = screen.getByRole('table', { name: 'ticket item status' });
     expect(within(table).getByText('VIP A열 10번')).toBeInTheDocument();
-    expect(within(table).getByText('CANCELLED')).toBeInTheDocument();
-    expect(within(table).getByText('NOT_ENTERED')).toBeInTheDocument();
+    expect(within(table).getByText('취소됨')).toBeInTheDocument();
+    expect(within(table).getByText('입장 전')).toBeInTheDocument();
     expect(within(table).getByText('122,000원')).toBeInTheDocument();
-    expect(within(table).getByText('AVAILABLE')).toBeInTheDocument();
+    expect(within(table).getByText('판매 가능')).toBeInTheDocument();
+    expect(within(table).queryByText('CANCELLED')).not.toBeInTheDocument();
+    expect(within(table).queryByText('NOT_ENTERED')).not.toBeInTheDocument();
+    expect(within(table).queryByText('AVAILABLE')).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: '취소 좌석 즉시 개방' }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('labels refund payment method without raw enum text', async () => {
+    const user = userEvent.setup();
+    mocks.bookingDetail.mockReturnValue({
+      data: {
+        ...cancelledBooking(),
+        status: 'CONFIRMED' as const,
+        funnelStatus: 'SOLD' as const,
+        paymentStatus: 'DONE' as const,
+      },
+      isLoading: false,
+    });
+
+    renderWithClient(
+      <AdminBookingDetailModal
+        open
+        onOpenChange={vi.fn()}
+        bookingId="reservation-1"
+        onRefund={vi.fn()}
+        isRefunding={false}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: '환불 처리' }));
+
+    expect(screen.getByText('카드 결제 취소')).toBeInTheDocument();
+    expect(screen.queryByText('CARD으로 환불')).not.toBeInTheDocument();
   });
 
   it('supports disable, reactivate, and history with reasoned confirmation in SeatOperationsPanel', async () => {

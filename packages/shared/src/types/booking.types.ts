@@ -220,6 +220,7 @@ export interface ReservationDetail extends ReservationListItem {
   cancelledAt: string | null;
   cancelReason: string | null;
   paymentKey: string | null;
+  paymentInfo: PaymentInfo | null;
   queueAdmission: QueueAdmissionContext;
   paymentDeadlineAt: string;
   bookingPolicy: BookingPolicy;
@@ -244,18 +245,47 @@ export interface BookingStats {
   totalBookings: number;
   totalRevenue: number;
   cancelRate: number;
+  soldCount: number;
+  pendingPaymentCount: number;
+  paymentProcessingCount: number;
+  failedCount: number;
+  cancelProcessingCount: number;
+  cancelledCount: number;
+  partialCancelledCount: number;
+  completedRevenue: number;
+}
+
+export type AdminBookingFunnelStatus =
+  | 'SOLD'
+  | 'PAYMENT_PENDING'
+  | 'PAYMENT_PROCESSING'
+  | 'PAYMENT_FAILED'
+  | 'CANCEL_PROCESSING'
+  | 'CANCELLED'
+  | 'PARTIAL_CANCELLED';
+
+export interface AdminTicketStatusCounts {
+  ACTIVE: number;
+  CANCELLATION_PENDING: number;
+  CANCELLED: number;
+  EXPIRED: number;
 }
 
 export interface AdminBookingListItem {
   id: string;
   reservationNumber: string;
   userName: string;
-  userPhone: string;
+  userEmail: string;
+  userCountry: string;
   performanceTitle: string;
   showDateTime: string;
   seats: FloorAwareSeatSelection[];
   totalAmount: number;
   status: ReservationStatus;
+  funnelStatus: AdminBookingFunnelStatus;
+  paymentStatus: PaymentStatus | null;
+  paymentMethod: string | null;
+  ticketStatusCounts: AdminTicketStatusCounts;
   createdAt: string;
 }
 
@@ -292,7 +322,8 @@ export interface AdminTicketItem extends FloorAwareSeatSelection {
 }
 
 export interface AdminBookingDetail extends AdminBookingListItem {
-  paymentInfo: PaymentInfo;
+  userPhone: string;
+  paymentInfo: PaymentInfo | null;
   ticketItems: AdminTicketItem[];
 }
 

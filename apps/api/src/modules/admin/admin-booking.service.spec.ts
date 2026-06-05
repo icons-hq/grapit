@@ -49,6 +49,7 @@ function ticketItem(overrides: Record<string, unknown> = {}) {
 function createMockDb() {
   return {
     select: vi.fn(),
+    execute: vi.fn(),
     insert: vi.fn(),
     update: vi.fn(),
     transaction: vi.fn(),
@@ -90,6 +91,101 @@ function createChainMock(resolvedValue: unknown) {
   };
 
   return new Proxy({}, handler);
+}
+
+function createRecordingChainMock(
+  resolvedValue: unknown,
+  calls: Array<{ method: string; args: unknown[] }>,
+) {
+  const handler: ProxyHandler<object> = {
+    get(_target, prop) {
+      if (prop === 'then') {
+        return (resolve: (value: unknown) => void) => resolve(resolvedValue);
+      }
+      return (...args: unknown[]) => {
+        calls.push({ method: String(prop), args });
+        return new Proxy({}, handler);
+      };
+    },
+  };
+
+  return new Proxy({}, handler);
+}
+
+function objectGraphContains(root: unknown, needle: unknown): boolean {
+  const seen = new Set<unknown>();
+
+  function visit(value: unknown): boolean {
+    if (value === needle) {
+      return true;
+    }
+    if (value === null || value === undefined) {
+      return false;
+    }
+    if (typeof value !== 'object') {
+      if (typeof value === 'string' && typeof needle === 'string') {
+        return value.includes(needle);
+      }
+      return value === needle;
+    }
+    if (seen.has(value)) {
+      return false;
+    }
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      return value.some(visit);
+    }
+
+    if (value instanceof Date && typeof needle === 'string') {
+      return value.toISOString().includes(needle);
+    }
+
+    return Object.values(value as Record<string, unknown>).some(visit);
+  }
+
+  return visit(root);
+}
+
+function objectGraphText(root: unknown): string {
+  const seen = new Set<unknown>();
+  const parts: string[] = [];
+
+  function visit(value: unknown): void {
+    if (value === null || value === undefined) {
+      return;
+    }
+    if (typeof value === 'string') {
+      parts.push(value);
+      return;
+    }
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      parts.push(String(value));
+      return;
+    }
+    if (value instanceof Date) {
+      parts.push(value.toISOString());
+      return;
+    }
+    if (typeof value !== 'object' || seen.has(value)) {
+      return;
+    }
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        visit(item);
+      }
+      return;
+    }
+
+    for (const entry of Object.values(value as Record<string, unknown>)) {
+      visit(entry);
+    }
+  }
+
+  visit(root);
+  return parts.join(' ');
 }
 
 function createTransactionMock() {
@@ -146,29 +242,107 @@ describe('AdminBookingService', () => {
   });
 
   describe('list', () => {
-    it('should return bookings with stats (totalBookings, totalRevenue, cancelRate)', async () => {
-      // Stats queries: totalBookings, totalRevenue, cancelledCount, then list query
+    it('should return filtered operational stats with totalRevenue equal to completedRevenue', async () => {
       mockDb.select
-        .mockReturnValueOnce(createChainMock([{ count: 10 }]))        // total bookings
-        .mockReturnValueOnce(createChainMock([{ sum: 1500000 }]))     // total revenue
-        .mockReturnValueOnce(createChainMock([{ count: 2 }]))         // cancelled count
-        .mockReturnValueOnce(createChainMock([]));                     // bookings list (empty for simplicity)
+        .mockReturnValueOnce(createChainMock([{
+          totalBookings: 4,
+          completedRevenue: 79000,
+          soldCount: 1,
+          pendingPaymentCount: 1,
+          paymentProcessingCount: 0,
+          failedCount: 1,
+          cancelProcessingCount: 0,
+          cancelledCount: 1,
+          partialCancelledCount: 0,
+        }]))
+        .mockReturnValueOnce(createChainMock([]));
 
       const result = await service.getBookings({});
-      expect(result).toHaveProperty('stats');
-      expect(result.stats).toHaveProperty('totalBookings');
-      expect(result.stats).toHaveProperty('totalRevenue');
-      expect(result.stats).toHaveProperty('cancelRate');
-      expect(result.stats.totalBookings).toBe(10);
-      expect(result.stats.totalRevenue).toBe(1500000);
-      expect(result.stats.cancelRate).toBe(20); // 2/10 * 100
+
+      expect(result.stats).toMatchObject({
+        totalBookings: 4,
+        completedRevenue: 79000,
+        totalRevenue: 79000,
+        soldCount: 1,
+        failedCount: 1,
+        cancelledCount: 1,
+      });
+      expect(result.stats.cancelRate).toBe(25);
+      expect(result.total).toBe(4);
+    });
+
+    it('keeps active ticket revenue independent from cancellation-processing attention state', async () => {
+      mockDb.select
+        .mockReturnValueOnce(createChainMock([{
+          totalBookings: 1,
+          completedRevenue: 77000,
+          soldCount: 0,
+          pendingPaymentCount: 0,
+          paymentProcessingCount: 0,
+          failedCount: 0,
+          cancelProcessingCount: 1,
+          cancelledCount: 0,
+          partialCancelledCount: 0,
+        }]))
+        .mockReturnValueOnce(createChainMock([]));
+
+      const result = await service.getBookings({});
+      const statsSelect = mockDb.select.mock.calls[0]?.[0] as Record<string, unknown>;
+      const completedRevenueSqlText = objectGraphText(statsSelect.completedRevenue);
+
+      expect(result.stats).toMatchObject({
+        completedRevenue: 77000,
+        totalRevenue: 77000,
+        cancelProcessingCount: 1,
+        partialCancelledCount: 0,
+      });
+      expect(completedRevenueSqlText).toContain('admin_revenue_ti.status = ');
+      expect(completedRevenueSqlText).not.toContain('cancellation_pending');
+      expect(completedRevenueSqlText).not.toContain('requested');
+      expect(completedRevenueSqlText).not.toContain('processing_at_pg');
+      expect(completedRevenueSqlText).not.toContain('failed');
+    });
+
+    it('excludes cancellation-processing attention states from partial cancelled stats', async () => {
+      mockDb.select
+        .mockReturnValueOnce(createChainMock([{
+          totalBookings: 1,
+          completedRevenue: 77000,
+          soldCount: 0,
+          pendingPaymentCount: 0,
+          paymentProcessingCount: 0,
+          failedCount: 0,
+          cancelProcessingCount: 1,
+          cancelledCount: 0,
+          partialCancelledCount: 0,
+        }]))
+        .mockReturnValueOnce(createChainMock([]));
+
+      const result = await service.getBookings({});
+      const statsSelect = mockDb.select.mock.calls[0]?.[0] as Record<string, unknown>;
+      const partialCancelledSqlText = objectGraphText(statsSelect.partialCancelledCount);
+
+      expect(result.stats.cancelProcessingCount).toBe(1);
+      expect(result.stats.partialCancelledCount).toBe(0);
+      expect(partialCancelledSqlText).toContain('admin_cancelled_ti.status = ');
+      expect(partialCancelledSqlText).toContain('and not');
+      expect(partialCancelledSqlText).toContain('cancellation_pending');
+      expect(partialCancelledSqlText).toContain('requested');
     });
 
     it('should return reservation seats for a pending booking without ticket items', async () => {
       mockDb.select
-        .mockReturnValueOnce(createChainMock([{ count: 1 }]))
-        .mockReturnValueOnce(createChainMock([{ sum: 0 }]))
-        .mockReturnValueOnce(createChainMock([{ count: 0 }]))
+        .mockReturnValueOnce(createChainMock([{
+          totalBookings: 1,
+          completedRevenue: 0,
+          soldCount: 0,
+          pendingPaymentCount: 1,
+          paymentProcessingCount: 0,
+          failedCount: 0,
+          cancelProcessingCount: 0,
+          cancelledCount: 0,
+          partialCancelledCount: 0,
+        }]))
         .mockReturnValueOnce(
           createChainMock([
             {
@@ -182,12 +356,21 @@ describe('AdminBookingService', () => {
               user: {
                 name: '김대기',
                 phone: '+821055501234',
+                email: 'pending@example.com',
+                country: 'TH',
               },
               showtime: {
                 dateTime: new Date('2026-07-18T10:00:00.000Z'),
               },
               performance: {
                 title: 'Girl Rules Fanmeeting',
+              },
+              payment: {
+                status: 'READY',
+                method: 'FOREIGN_EASY_PAY',
+              },
+              refund: {
+                status: null,
               },
             },
           ]),
@@ -220,6 +403,20 @@ describe('AdminBookingService', () => {
 
       expect(result.bookings).toHaveLength(1);
       expect(result.bookings[0]?.status).toBe('PENDING_PAYMENT');
+      expect(result.bookings[0]).toMatchObject({
+        userEmail: 'pending@example.com',
+        userCountry: 'TH',
+        paymentStatus: 'READY',
+        paymentMethod: 'FOREIGN_EASY_PAY',
+        funnelStatus: 'PAYMENT_PENDING',
+        ticketStatusCounts: {
+          ACTIVE: 0,
+          CANCELLATION_PENDING: 0,
+          CANCELLED: 0,
+          EXPIRED: 0,
+        },
+      });
+      expect(result.bookings[0]).not.toHaveProperty('userPhone');
       expect(result.bookings[0]?.seats).toEqual([
         {
           seatId: 'A-1',
@@ -242,6 +439,140 @@ describe('AdminBookingService', () => {
           number: '2',
         },
       ]);
+    });
+
+    it('maps payment, user, funnel, and ticket status fields for sold list rows', async () => {
+      mockDb.select
+        .mockReturnValueOnce(createChainMock([{
+          totalBookings: 1,
+          completedRevenue: 79000,
+          soldCount: 1,
+          pendingPaymentCount: 0,
+          paymentProcessingCount: 0,
+          failedCount: 0,
+          cancelProcessingCount: 0,
+          cancelledCount: 0,
+          partialCancelledCount: 0,
+        }]))
+        .mockReturnValueOnce(
+          createChainMock([
+            {
+              reservation: {
+                id: 'reservation-1',
+                reservationNumber: 'R-SOLD-001',
+                status: 'CONFIRMED',
+                totalAmount: 79000,
+                createdAt: new Date('2026-07-01T03:00:00.000Z'),
+              },
+              user: {
+                name: '김예매',
+                phone: '+821055501234',
+                email: 'buyer@example.com',
+                country: 'KR',
+              },
+              showtime: {
+                dateTime: new Date('2026-07-18T10:00:00.000Z'),
+              },
+              performance: {
+                title: 'Girl Rules Fanmeeting',
+              },
+              payment: {
+                status: 'DONE',
+                method: 'CARD',
+              },
+              refund: {
+                status: null,
+              },
+            },
+          ]),
+        )
+        .mockReturnValueOnce(createChainMock([ticketItem()]));
+
+      const result = await service.getBookings({ paymentStatus: 'DONE' as any });
+
+      expect(result.bookings).toEqual([
+        expect.objectContaining({
+          reservationNumber: 'R-SOLD-001',
+          userEmail: 'buyer@example.com',
+          userCountry: 'KR',
+          paymentStatus: 'DONE',
+          paymentMethod: 'CARD',
+          funnelStatus: 'SOLD',
+          ticketStatusCounts: {
+            ACTIVE: 1,
+            CANCELLATION_PENDING: 0,
+            CANCELLED: 0,
+            EXPIRED: 0,
+          },
+        }),
+      ]);
+    });
+
+    it('applies extended filters and returns the filtered total instead of an unfiltered count', async () => {
+      const statsCalls: Array<{ method: string; args: unknown[] }> = [];
+      const listCalls: Array<{ method: string; args: unknown[] }> = [];
+
+      mockDb.select
+        .mockReturnValueOnce(createRecordingChainMock([{
+          totalBookings: 1,
+          completedRevenue: 79000,
+          soldCount: 1,
+          pendingPaymentCount: 0,
+          paymentProcessingCount: 0,
+          failedCount: 0,
+          cancelProcessingCount: 0,
+          cancelledCount: 0,
+          partialCancelledCount: 0,
+        }], statsCalls))
+        .mockReturnValueOnce(createRecordingChainMock([], listCalls));
+
+      const result = await service.getBookings({
+        status: 'CONFIRMED',
+        funnelStatus: 'SOLD',
+        paymentStatus: 'DONE',
+        paymentMethod: 'CARD',
+        audienceRegion: 'domestic',
+        dateFrom: '2026-07-01',
+        dateTo: '2026-07-31',
+        search: 'buyer@example.com',
+        page: 2,
+      } as any);
+
+      const statsWhere = statsCalls.find((call) => call.method === 'where')?.args[0];
+      const listWhere = listCalls.find((call) => call.method === 'where')?.args[0];
+
+      expect(objectGraphContains(statsWhere, 'CONFIRMED')).toBe(true);
+      expect(objectGraphContains(statsWhere, 'SOLD')).toBe(true);
+      expect(objectGraphContains(statsWhere, 'DONE')).toBe(true);
+      expect(objectGraphContains(statsWhere, 'CARD')).toBe(true);
+      expect(objectGraphContains(statsWhere, 'KR')).toBe(true);
+      expect(objectGraphContains(statsWhere, 'buyer@example.com')).toBe(true);
+      expect(objectGraphContains(listWhere, '2026-06-30T15:00:00.000Z')).toBe(true);
+      expect(objectGraphContains(listWhere, '2026-07-31T14:59:59.999Z')).toBe(true);
+      expect(result.total).toBe(1);
+    });
+
+    it('searches ticket item seat_id as well as seat key, tier, row, and number', async () => {
+      const listCalls: Array<{ method: string; args: unknown[] }> = [];
+
+      mockDb.select
+        .mockReturnValueOnce(createRecordingChainMock([{
+          totalBookings: 0,
+          completedRevenue: 0,
+          soldCount: 0,
+          pendingPaymentCount: 0,
+          paymentProcessingCount: 0,
+          failedCount: 0,
+          cancelProcessingCount: 0,
+          cancelledCount: 0,
+          partialCancelledCount: 0,
+        }], []))
+        .mockReturnValueOnce(createRecordingChainMock([], listCalls));
+
+      await service.getBookings({ search: 'seat-legacy-id' });
+
+      const listWhere = listCalls.find((call) => call.method === 'where')?.args[0];
+      expect(objectGraphText(listWhere)).toContain('admin_search_ti.seat_id');
     });
   });
 
@@ -449,12 +780,21 @@ describe('AdminBookingService', () => {
               user: {
                 name: '김예매',
                 phone: '+821012345678',
+                email: 'buyer@example.com',
+                country: 'KR',
               },
               showtime: {
                 dateTime: new Date('2026-07-18T10:00:00.000Z'),
               },
               performance: {
                 title: 'Girl Rules Fanmeeting',
+              },
+              payment: {
+                status: 'DONE',
+                method: 'CARD',
+              },
+              refund: {
+                status: null,
               },
             },
           ]),
@@ -491,6 +831,8 @@ describe('AdminBookingService', () => {
               amount: 158000,
               status: 'DONE',
               paidAt: new Date('2026-07-01T03:01:00.000Z'),
+              provider: 'CARD',
+              currency: 'KRW',
             },
           ]),
         );
@@ -521,6 +863,31 @@ describe('AdminBookingService', () => {
           reopenState: 'AVAILABLE',
         }),
       ]);
+      expect(result).toMatchObject({
+        userEmail: 'buyer@example.com',
+        userCountry: 'KR',
+        paymentStatus: 'DONE',
+        paymentMethod: 'CARD',
+        funnelStatus: 'PARTIAL_CANCELLED',
+        ticketStatusCounts: {
+          ACTIVE: 1,
+          CANCELLATION_PENDING: 0,
+          CANCELLED: 1,
+          EXPIRED: 0,
+        },
+        paymentInfo: {
+          paymentKey: 'payment-key-1',
+          method: 'CARD',
+          amount: 158000,
+          status: 'DONE',
+          paidAt: '2026-07-01T03:01:00.000Z',
+          paymentMethod: {
+            method: 'CARD',
+            provider: 'CARD',
+            currency: 'KRW',
+          },
+        },
+      });
     });
   });
 

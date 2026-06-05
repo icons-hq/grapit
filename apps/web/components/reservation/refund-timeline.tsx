@@ -22,8 +22,8 @@ const TIMELINE_STEPS: Array<{
   },
   {
     state: 'SENT_TO_PG',
-    label: 'PG 전달됨',
-    description: '결제사에 환불 요청이 전달되었습니다.',
+    label: '환불 요청 전달됨',
+    description: '환불 요청이 결제수단으로 전달되었습니다.',
   },
   {
     state: 'PROCESSING_AT_PG',

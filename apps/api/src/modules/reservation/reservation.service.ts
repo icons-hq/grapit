@@ -73,6 +73,10 @@ import type {
   ConsentCaptureItem,
   FloorAwareSeatSelection,
   PerformanceBookingPolicy,
+  PaymentInfo,
+  PaymentMethod,
+  PaymentMethodType,
+  PaymentProvider,
   PaymentStatus,
   QrTicket,
   SeatSelection,
@@ -217,6 +221,58 @@ function assertBookingVerificationComplete(actor: BookingActor): void {
 
 function isBookingStartReached(value: Date | null | undefined, now: Date = new Date()): boolean {
   return value instanceof Date && !Number.isNaN(value.getTime()) && value.getTime() <= now.getTime();
+}
+
+function mapPaymentToReservationPaymentInfo(
+  payment: Pick<
+    typeof payments.$inferSelect,
+    'paymentKey' | 'method' | 'amount' | 'status' | 'paidAt' | 'provider' | 'currency'
+  >,
+  paymentDeadlineAt: Date | null | undefined,
+): PaymentInfo {
+  const paymentMethod = mapStoredPaymentMethod(payment);
+  return {
+    paymentKey: payment.paymentKey,
+    method: payment.method,
+    amount: payment.amount,
+    status: payment.status as PaymentStatus,
+    paidAt: payment.paidAt?.toISOString() ?? null,
+    paymentDeadlineAt: paymentDeadlineAt?.toISOString() ?? null,
+    ...(paymentMethod ? { paymentMethod } : {}),
+  };
+}
+
+function mapStoredPaymentMethod(
+  payment: Pick<typeof payments.$inferSelect, 'method' | 'provider' | 'currency'>,
+): PaymentMethod | undefined {
+  if (!isPaymentMethodType(payment.method) || !isPaymentProvider(payment.provider)) {
+    return undefined;
+  }
+
+  return {
+    method: payment.method,
+    provider: payment.provider,
+    currency: payment.currency,
+  };
+}
+
+function isPaymentMethodType(method: string): method is PaymentMethodType {
+  return method === 'CARD'
+    || method === 'VIRTUAL_ACCOUNT'
+    || method === 'TRANSFER'
+    || method === 'MOBILE_PHONE'
+    || method === 'FOREIGN_EASY_PAY'
+    || method === 'SIMPLE_PAY';
+}
+
+function isPaymentProvider(provider: string): provider is PaymentProvider {
+  return provider === 'CARD'
+    || provider === 'TOSS_PAY'
+    || provider === 'NAVER_PAY'
+    || provider === 'KAKAOPAY'
+    || provider === 'ALIPAY_PLUS'
+    || provider === 'TRUEMONEY'
+    || provider === 'PAYPAL';
 }
 
 @Injectable()
@@ -1377,6 +1433,9 @@ export class ReservationService {
       cancelledAt: row.reservation.cancelledAt?.toISOString() ?? null,
       cancelReason: row.reservation.cancelReason ?? null,
       paymentKey: payment?.paymentKey ?? null,
+      paymentInfo: payment
+        ? mapPaymentToReservationPaymentInfo(payment, row.reservation.paymentDeadlineAt)
+        : null,
       queueAdmission: {
         queueSessionId: row.reservation.queueSessionId ?? '',
         admissionToken: row.reservation.admissionToken ?? '',

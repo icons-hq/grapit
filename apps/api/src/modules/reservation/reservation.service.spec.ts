@@ -488,6 +488,7 @@ describe('ReservationService', () => {
                     status: args.status ?? 'CONFIRMED',
                     totalAmount: args.amount,
                     showtimeId: 'showtime-1',
+                    paymentDeadlineAt: new Date('2026-05-08T07:07:00.000Z'),
                     cancelDeadline: new Date(),
                     cancelledAt: null,
                     cancelReason: null,
@@ -513,8 +514,11 @@ describe('ReservationService', () => {
         paymentKey: 'pk_test_123',
         method: '카드',
         id: 'payment-1',
+        amount: args.amount,
         status: args.paymentStatus ?? 'DONE',
         paidAt: new Date(),
+        provider: 'CARD',
+        currency: 'KRW',
       }]))
       .mockReturnValueOnce(chainResult(args.ticketItems ?? ticketItemRowsForReservation({
         reservationId: args.reservationId,
@@ -4745,6 +4749,14 @@ describe('ReservationService', () => {
         .resolves
         .toMatchObject({
           id: reservationId,
+          paymentInfo: {
+            paymentKey: 'pk_test_123',
+            method: '카드',
+            amount: 150000,
+            status: 'DONE',
+            paidAt: expect.any(String),
+            paymentDeadlineAt: '2026-05-08T07:07:00.000Z',
+          },
           qrTicket: {
             token: 'signed-qr-token-a1',
             jti: 'qr-jti-a1',

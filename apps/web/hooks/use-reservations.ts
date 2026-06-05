@@ -13,9 +13,11 @@ import type {
   ReservationListItem,
   ReservationDetail,
   AdminBookingDetail,
+  AdminBookingFunnelStatus,
   AdminBookingListItem,
   AdminReservationExportFilter,
   BookingStats,
+  PaymentStatus,
   TicketEmailDelivery,
   UserProfile,
 } from '@grabit/shared';
@@ -125,6 +127,12 @@ export function useSendReservationTicketEmail() {
 
 export function useAdminBookings(params: {
   status?: string;
+  funnelStatus?: AdminBookingFunnelStatus | 'all';
+  paymentStatus?: PaymentStatus | 'all';
+  paymentMethod?: string;
+  audienceRegion?: 'domestic' | 'overseas' | 'all';
+  dateFrom?: string;
+  dateTo?: string;
   search?: string;
   page?: number;
 }) {
@@ -134,6 +142,16 @@ export function useAdminBookings(params: {
       const searchParams = new URLSearchParams();
       if (params.status && params.status !== 'all')
         searchParams.set('status', params.status);
+      if (params.funnelStatus && params.funnelStatus !== 'all')
+        searchParams.set('funnelStatus', params.funnelStatus);
+      if (params.paymentStatus && params.paymentStatus !== 'all')
+        searchParams.set('paymentStatus', params.paymentStatus);
+      if (params.paymentMethod && params.paymentMethod !== 'all')
+        searchParams.set('paymentMethod', params.paymentMethod);
+      if (params.audienceRegion && params.audienceRegion !== 'all')
+        searchParams.set('audienceRegion', params.audienceRegion);
+      if (params.dateFrom) searchParams.set('dateFrom', params.dateFrom);
+      if (params.dateTo) searchParams.set('dateTo', params.dateTo);
       if (params.search) searchParams.set('search', params.search);
       searchParams.set('page', String(params.page ?? 1));
       return apiClient.get<{
