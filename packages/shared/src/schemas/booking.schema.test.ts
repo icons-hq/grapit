@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import * as bookingContracts from './booking.schema';
 import {
   adminBookingDetailSchema,
   adminBookingFunnelStatusSchema,
@@ -721,10 +722,15 @@ describe('prepareReservationSchema booking consent contract', () => {
     const parsed = adminBookingListQuerySchema.parse({
       status: 'CONFIRMED',
       reservationStatus: 'PENDING_PAYMENT',
+      performanceId: '11111111-1111-4111-8111-000000000301',
+      showtimeId: '11111111-1111-4111-8111-000000000302',
       funnelStatus: 'PAYMENT_PENDING',
       paymentStatus: 'READY',
       paymentMethod: 'FOREIGN_EASY_PAY',
       audienceRegion: 'overseas',
+      seatTier: 'VIP',
+      floorKey: '1F',
+      seatQuery: 'A-10',
       dateFrom: '2026-07-01',
       dateTo: '2026-07-31',
       search: 'buyer@example.com',
@@ -734,10 +740,15 @@ describe('prepareReservationSchema booking consent contract', () => {
     expect(parsed).toMatchObject({
       status: 'CONFIRMED',
       reservationStatus: 'PENDING_PAYMENT',
+      performanceId: '11111111-1111-4111-8111-000000000301',
+      showtimeId: '11111111-1111-4111-8111-000000000302',
       funnelStatus: 'PAYMENT_PENDING',
       paymentStatus: 'READY',
       paymentMethod: 'FOREIGN_EASY_PAY',
       audienceRegion: 'overseas',
+      seatTier: 'VIP',
+      floorKey: '1F',
+      seatQuery: 'A-10',
       dateFrom: '2026-07-01',
       dateTo: '2026-07-31',
       search: 'buyer@example.com',
@@ -750,6 +761,11 @@ describe('prepareReservationSchema booking consent contract', () => {
     expect(() => adminBookingListQuerySchema.parse({ paymentStatus: 'UNKNOWN' })).toThrow();
     expect(() => adminBookingListQuerySchema.parse({ paymentMethod: 'UNKNOWN' })).toThrow();
     expect(() => adminBookingListQuerySchema.parse({ audienceRegion: 'global' })).toThrow();
+    expect(() => adminBookingListQuerySchema.parse({ performanceId: 'performance-1' })).toThrow();
+    expect(() => adminBookingListQuerySchema.parse({ showtimeId: 'showtime-1' })).toThrow();
+    expect(() => adminBookingListQuerySchema.parse({ seatTier: '' })).toThrow();
+    expect(() => adminBookingListQuerySchema.parse({ floorKey: '' })).toThrow();
+    expect(() => adminBookingListQuerySchema.parse({ seatQuery: '' })).toThrow();
     expect(() => adminBookingListQuerySchema.parse({ dateFrom: '2026-7-1' })).toThrow();
     expect(() => adminBookingListQuerySchema.parse({ dateFrom: '2026-02-30' })).toThrow();
     expect(() =>
@@ -760,6 +776,54 @@ describe('prepareReservationSchema booking consent contract', () => {
     ).toThrow();
     expect(() => adminBookingListQuerySchema.parse({ page: '0' })).toThrow();
     expect(() => adminBookingListQuerySchema.parse({ page: '1.5' })).toThrow();
+  });
+
+  it('validates admin booking response tier statistics', () => {
+    const responseSchema = (bookingContracts as typeof bookingContracts & {
+      adminBookingListResponseSchema?: {
+        parse: (value: unknown) => unknown;
+      };
+    }).adminBookingListResponseSchema;
+
+    expect(responseSchema).toBeDefined();
+
+    const response = responseSchema?.parse({
+      bookings: [],
+      total: 0,
+      stats: {
+        totalBookings: 0,
+        totalRevenue: 0,
+        cancelRate: 0,
+        soldCount: 0,
+        pendingPaymentCount: 0,
+        paymentProcessingCount: 0,
+        failedCount: 0,
+        cancelProcessingCount: 0,
+        cancelledCount: 0,
+        partialCancelledCount: 0,
+        completedRevenue: 0,
+      },
+      tierStats: [
+        {
+          tierName: 'VIP',
+          price: 79000,
+          soldSeats: 10,
+          activeRevenue: 790000,
+          averageTicketAmount: 79000,
+          cancelProcessingSeats: 1,
+          cancelledSeats: 2,
+          enteredSeats: 4,
+          totalSeats: 100,
+          remainingSeats: 90,
+          sellThroughRate: 10,
+        },
+      ],
+    }) as { tierStats?: Array<{ tierName: string; sellThroughRate: number }> };
+
+    expect(response?.tierStats?.[0]).toMatchObject({
+      tierName: 'VIP',
+      sellThroughRate: 10,
+    });
   });
 
   it('requires ticket email delivery state on reservation detail responses', () => {

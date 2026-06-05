@@ -255,6 +255,20 @@ export interface BookingStats {
   completedRevenue: number;
 }
 
+export interface AdminBookingTierStats {
+  tierName: string;
+  price: number;
+  soldSeats: number;
+  activeRevenue: number;
+  averageTicketAmount: number;
+  cancelProcessingSeats: number;
+  cancelledSeats: number;
+  enteredSeats: number;
+  totalSeats: number | null;
+  remainingSeats: number | null;
+  sellThroughRate: number | null;
+}
+
 export type AdminBookingFunnelStatus =
   | 'SOLD'
   | 'PAYMENT_PENDING'
@@ -288,6 +302,13 @@ export interface AdminBookingListItem {
   paymentMethod: string | null;
   ticketStatusCounts: AdminTicketStatusCounts;
   createdAt: string;
+}
+
+export interface AdminBookingListResponse {
+  bookings: AdminBookingListItem[];
+  stats: BookingStats;
+  tierStats: AdminBookingTierStats[];
+  total: number;
 }
 
 export type AdminTicketItemStatus =

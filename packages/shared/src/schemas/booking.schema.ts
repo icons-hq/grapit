@@ -357,6 +357,8 @@ export const adminBookingListQuerySchema = z.object({
   reservationStatus: z
     .enum(['PENDING_PAYMENT', 'CONFIRMED', 'CANCELLED', 'FAILED'])
     .optional(),
+  performanceId: z.string().uuid('유효한 공연 ID가 필요합니다').optional(),
+  showtimeId: z.string().uuid('유효한 회차 ID가 필요합니다').optional(),
   funnelStatus: adminBookingFunnelStatusSchema.optional(),
   paymentStatus: paymentStatusSchema.optional(),
   paymentMethod: z.enum([
@@ -368,6 +370,9 @@ export const adminBookingListQuerySchema = z.object({
     'SIMPLE_PAY',
   ]).optional(),
   audienceRegion: z.enum(['domestic', 'overseas']).optional(),
+  seatTier: z.string().trim().min(1, '좌석 등급이 필요합니다').optional(),
+  floorKey: z.string().trim().min(1, '층 키가 필요합니다').optional(),
+  seatQuery: z.string().trim().min(1, '좌석 검색어가 필요합니다').optional(),
   dateFrom: dateOnly('조회 시작일').optional(),
   dateTo: dateOnly('조회 종료일').optional(),
   search: z.string().trim().min(1).optional(),
@@ -413,6 +418,20 @@ export const bookingStatsSchema = z.object({
       path: ['totalRevenue'],
     });
   }
+});
+
+export const adminBookingTierStatsSchema = z.object({
+  tierName: z.string().min(1, '좌석 등급명이 필요합니다'),
+  price: z.number().int().min(0),
+  soldSeats: z.number().int().min(0),
+  activeRevenue: z.number().int().min(0),
+  averageTicketAmount: z.number().int().min(0),
+  cancelProcessingSeats: z.number().int().min(0),
+  cancelledSeats: z.number().int().min(0),
+  enteredSeats: z.number().int().min(0),
+  totalSeats: z.number().int().min(0).nullable(),
+  remainingSeats: z.number().int().min(0).nullable(),
+  sellThroughRate: z.number().int().min(0).max(100).nullable(),
 });
 
 export const reservationListItemSchema = z.object({
@@ -497,4 +516,11 @@ export const adminBookingDetailSchema = adminBookingListItemSchema.extend({
   userPhone: z.string().min(1, '예매자 전화번호가 필요합니다'),
   paymentInfo: paymentInfoSchema.nullable(),
   ticketItems: z.array(adminTicketItemSchema),
+});
+
+export const adminBookingListResponseSchema = z.object({
+  bookings: z.array(adminBookingListItemSchema),
+  stats: bookingStatsSchema,
+  tierStats: z.array(adminBookingTierStatsSchema),
+  total: z.number().int().min(0),
 });
