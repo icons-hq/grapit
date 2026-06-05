@@ -462,6 +462,7 @@ export const reservationDetailSchema = reservationListItemSchema.extend({
 export const adminBookingListItemSchema = z.object({
   id: z.string().uuid('유효한 reservation ID가 필요합니다'),
   reservationNumber: z.string().min(1, '예매 번호가 필요합니다'),
+  tossOrderId: z.string().min(1, 'Toss 주문 ID가 필요합니다').nullable(),
   userName: z.string().min(1, '예매자명이 필요합니다'),
   userEmail: z.string().email('예매자 이메일 형식이 올바르지 않습니다'),
   userCountry: z.string().min(1, '예매자 국가가 필요합니다'),

@@ -209,8 +209,17 @@ export function AdminBookingTable({
                   }}
                   aria-label={`${booking.userName} ${booking.performanceTitle} 예매 상세 보기`}
                 >
-                  <TableCell className="text-sm font-semibold">
-                    {booking.reservationNumber}
+                  <TableCell className="text-sm">
+                    <div className="space-y-0.5">
+                      <p className="font-semibold text-gray-900">
+                        {booking.reservationNumber}
+                      </p>
+                      {booking.tossOrderId && (
+                        <p className="max-w-[180px] truncate text-xs text-gray-500">
+                          Toss 주문번호 {booking.tossOrderId}
+                        </p>
+                      )}
+                    </div>
                   </TableCell>
                   <TableCell className="text-sm">
                     <div className="space-y-0.5">

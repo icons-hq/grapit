@@ -242,12 +242,12 @@ describe('AdminBookingService', () => {
   });
 
   describe('list', () => {
-    it('should return filtered operational stats with totalRevenue equal to completedRevenue', async () => {
+    it('should return filtered operational stats with all-time sold count and totalRevenue equal to completedRevenue', async () => {
       mockDb.select
         .mockReturnValueOnce(createChainMock([{
           totalBookings: 4,
           completedRevenue: 79000,
-          soldCount: 1,
+          soldCount: 0,
           pendingPaymentCount: 1,
           paymentProcessingCount: 0,
           failedCount: 1,
@@ -255,6 +255,7 @@ describe('AdminBookingService', () => {
           cancelledCount: 1,
           partialCancelledCount: 0,
         }]))
+        .mockReturnValueOnce(createChainMock([{ soldCount: 9 }]))
         .mockReturnValueOnce(createChainMock([]));
 
       const result = await service.getBookings({});
@@ -263,7 +264,7 @@ describe('AdminBookingService', () => {
         totalBookings: 4,
         completedRevenue: 79000,
         totalRevenue: 79000,
-        soldCount: 1,
+        soldCount: 9,
         failedCount: 1,
         cancelledCount: 1,
       });
@@ -284,6 +285,7 @@ describe('AdminBookingService', () => {
           cancelledCount: 0,
           partialCancelledCount: 0,
         }]))
+        .mockReturnValueOnce(createChainMock([{ soldCount: 3 }]))
         .mockReturnValueOnce(createChainMock([]));
 
       const result = await service.getBookings({});
@@ -316,6 +318,7 @@ describe('AdminBookingService', () => {
           cancelledCount: 0,
           partialCancelledCount: 0,
         }]))
+        .mockReturnValueOnce(createChainMock([{ soldCount: 3 }]))
         .mockReturnValueOnce(createChainMock([]));
 
       const result = await service.getBookings({});
@@ -343,12 +346,14 @@ describe('AdminBookingService', () => {
           cancelledCount: 0,
           partialCancelledCount: 0,
         }]))
+        .mockReturnValueOnce(createChainMock([{ soldCount: 3 }]))
         .mockReturnValueOnce(
           createChainMock([
             {
               reservation: {
                 id: 'reservation-pending-1',
                 reservationNumber: 'R-PENDING-001',
+                tossOrderId: 'GRP-TOSS-PENDING-001',
                 status: 'PENDING_PAYMENT',
                 totalAmount: 158000,
                 createdAt: new Date('2026-07-01T03:00:00.000Z'),
@@ -404,6 +409,7 @@ describe('AdminBookingService', () => {
       expect(result.bookings).toHaveLength(1);
       expect(result.bookings[0]?.status).toBe('PENDING_PAYMENT');
       expect(result.bookings[0]).toMatchObject({
+        tossOrderId: 'GRP-TOSS-PENDING-001',
         userEmail: 'pending@example.com',
         userCountry: 'TH',
         paymentStatus: 'READY',
@@ -454,12 +460,14 @@ describe('AdminBookingService', () => {
           cancelledCount: 0,
           partialCancelledCount: 0,
         }]))
+        .mockReturnValueOnce(createChainMock([{ soldCount: 7 }]))
         .mockReturnValueOnce(
           createChainMock([
             {
               reservation: {
                 id: 'reservation-1',
                 reservationNumber: 'R-SOLD-001',
+                tossOrderId: 'GRP-TOSS-SOLD-001',
                 status: 'CONFIRMED',
                 totalAmount: 79000,
                 createdAt: new Date('2026-07-01T03:00:00.000Z'),
@@ -493,6 +501,7 @@ describe('AdminBookingService', () => {
       expect(result.bookings).toEqual([
         expect.objectContaining({
           reservationNumber: 'R-SOLD-001',
+          tossOrderId: 'GRP-TOSS-SOLD-001',
           userEmail: 'buyer@example.com',
           userCountry: 'KR',
           paymentStatus: 'DONE',
@@ -524,6 +533,7 @@ describe('AdminBookingService', () => {
           cancelledCount: 0,
           partialCancelledCount: 0,
         }], statsCalls))
+        .mockReturnValueOnce(createRecordingChainMock([{ soldCount: 12 }], []))
         .mockReturnValueOnce(createRecordingChainMock([], listCalls));
 
       const result = await service.getBookings({
@@ -552,6 +562,7 @@ describe('AdminBookingService', () => {
       expect(objectGraphContains(statsWhere, 'buyer@example.com')).toBe(true);
       expect(objectGraphContains(listWhere, '2026-06-30T15:00:00.000Z')).toBe(true);
       expect(objectGraphContains(listWhere, '2026-07-31T14:59:59.999Z')).toBe(true);
+      expect(result.stats.soldCount).toBe(12);
       expect(result.total).toBe(1);
     });
 
@@ -570,6 +581,7 @@ describe('AdminBookingService', () => {
           cancelledCount: 0,
           partialCancelledCount: 0,
         }], []))
+        .mockReturnValueOnce(createRecordingChainMock([{ soldCount: 0 }], []))
         .mockReturnValueOnce(createRecordingChainMock([], listCalls));
 
       await service.getBookings({ search: 'seat-legacy-id' });
@@ -776,6 +788,7 @@ describe('AdminBookingService', () => {
               reservation: {
                 id: 'reservation-1',
                 reservationNumber: 'R-DETAIL-001',
+                tossOrderId: 'GRP-TOSS-DETAIL-001',
                 status: 'CONFIRMED',
                 totalAmount: 158000,
                 createdAt: new Date('2026-07-01T03:00:00.000Z'),
@@ -867,6 +880,7 @@ describe('AdminBookingService', () => {
         }),
       ]);
       expect(result).toMatchObject({
+        tossOrderId: 'GRP-TOSS-DETAIL-001',
         userEmail: 'buyer@example.com',
         userCountry: 'KR',
         paymentStatus: 'DONE',

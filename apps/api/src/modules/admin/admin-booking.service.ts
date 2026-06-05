@@ -213,6 +213,7 @@ type AdminBookingListRow = {
   reservation: {
     id: string;
     reservationNumber: string;
+    tossOrderId: string | null;
     status: string;
     totalAmount: number;
     createdAt: Date | null;
@@ -583,13 +584,28 @@ export class AdminBookingService {
       .leftJoin(refunds, eq(refunds.reservationId, reservations.id))
       .where(whereClause) as BookingStatsRow[];
 
-    const stats = mapBookingStats(statsRow);
+    const [allTimeSoldRow] = await this.db
+      .select({
+        soldCount: countWhereSql(soldReservationConditionSql()),
+      })
+      .from(reservations)
+      .innerJoin(users, eq(reservations.userId, users.id))
+      .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
+      .innerJoin(performances, eq(showtimes.performanceId, performances.id))
+      .leftJoin(payments, eq(payments.reservationId, reservations.id))
+      .leftJoin(refunds, eq(refunds.reservationId, reservations.id)) as BookingStatsRow[];
+
+    const stats = {
+      ...mapBookingStats(statsRow),
+      soldCount: toInt(allTimeSoldRow?.soldCount),
+    };
 
     const rows = await this.db
       .select({
         reservation: {
           id: reservations.id,
           reservationNumber: reservations.reservationNumber,
+          tossOrderId: reservations.tossOrderId,
           status: reservations.status,
           totalAmount: reservations.totalAmount,
           createdAt: reservations.createdAt,
@@ -663,6 +679,7 @@ export class AdminBookingService {
       return {
         id: row.reservation.id,
         reservationNumber: row.reservation.reservationNumber,
+        tossOrderId: row.reservation.tossOrderId,
         userName: row.user.name,
         userEmail: row.user.email,
         userCountry: row.user.country,
@@ -699,6 +716,7 @@ export class AdminBookingService {
         reservation: {
           id: reservations.id,
           reservationNumber: reservations.reservationNumber,
+          tossOrderId: reservations.tossOrderId,
           status: reservations.status,
           totalAmount: reservations.totalAmount,
           createdAt: reservations.createdAt,
@@ -744,6 +762,7 @@ export class AdminBookingService {
     return {
       id: row.reservation.id,
       reservationNumber: row.reservation.reservationNumber,
+      tossOrderId: row.reservation.tossOrderId,
       userName: row.user.name,
       userPhone: row.user.phone,
       userEmail: row.user.email,

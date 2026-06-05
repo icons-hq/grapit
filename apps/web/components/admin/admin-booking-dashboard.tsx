@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Banknote, Clock3, RotateCcw, TicketCheck, XCircle } from 'lucide-react';
+import { Banknote, Clock3, RotateCcw, TicketCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -134,7 +134,7 @@ export function AdminBookingDashboard() {
       <h1 className="mb-6 text-xl font-semibold text-gray-900">예매 관리</h1>
 
       {/* Stats cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <AdminStatCard
           icon={TicketCheck}
           label="판매 완료"
@@ -145,12 +145,6 @@ export function AdminBookingDashboard() {
           icon={Clock3}
           label="결제/취소 진행"
           value={processingCount}
-          format="count"
-        />
-        <AdminStatCard
-          icon={XCircle}
-          label="실패"
-          value={stats?.failedCount ?? 0}
           format="count"
         />
         <AdminStatCard
@@ -175,7 +169,7 @@ export function AdminBookingDashboard() {
       <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
         <Input
           type="search"
-          placeholder="예매번호, 주문ID, 공연명, 좌석, 회원 이름/이메일/전화/ID 검색"
+          placeholder="예매번호, Toss 주문번호, 공연명, 좌석, 회원 이름/이메일/전화/ID 검색"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="w-full lg:max-w-[460px]"
