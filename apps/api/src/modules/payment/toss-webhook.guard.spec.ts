@@ -3,9 +3,13 @@ import type { ConfigService } from '@nestjs/config';
 import { describe, expect, it, vi } from 'vitest';
 import { TossWebhookGuard } from './toss-webhook.guard.js';
 
-function createConfigService(secret?: string): ConfigService {
+function createConfigService(input?: string | Record<string, string>): ConfigService {
+  const values = typeof input === 'string'
+    ? { TOSS_WEBHOOK_SECRET: input }
+    : input ?? {};
+
   return {
-    get: vi.fn().mockReturnValue(secret ?? ''),
+    get: vi.fn((key: string, defaultValue = '') => values[key] ?? defaultValue),
   } as unknown as ConfigService;
 }
 
@@ -54,6 +58,41 @@ describe('TossWebhookGuard', () => {
         }),
       ),
     ).toBe(true);
+  });
+
+  it('allows webhook requests with the configured overseas-card security key', () => {
+    const guard = new TossWebhookGuard(createConfigService({
+      TOSS_WEBHOOK_SECRET: 'webhook-secret',
+      TOSS_OVERSEAS_CARD_WEBHOOK_SECRET: 'overseas-card-security-key',
+    }));
+    const request = {
+      headers: {
+        'x-toss-webhook-secret': 'overseas-card-security-key',
+      },
+    };
+
+    expect(
+      guard.canActivate(
+        createExecutionContext(request),
+      ),
+    ).toBe(true);
+    expect(request).toHaveProperty('tossWebhookSecretScope', 'overseas-card');
+  });
+
+  it('rejects standard Toss payment webhook headers without a configured shared secret value', () => {
+    const guard = new TossWebhookGuard(createConfigService('webhook-secret'));
+
+    expect(() =>
+      guard.canActivate(
+        createExecutionContext({
+          headers: {
+            'user-agent': 'tosspayments',
+            'tosspayments-webhook-transmission-id': 'whtrans_123',
+            'tosspayments-webhook-transmission-time': '2026-06-05T10:00:00+09:00',
+          },
+        }),
+      ),
+    ).toThrow(UnauthorizedException);
   });
 
   it('rejects webhook requests with an invalid shared secret', () => {

@@ -25,30 +25,11 @@ export function buildConfirmPaymentPayload({
   }
 
   if (provider === 'OVERSEAS_CARD') {
-    if (providerChargeAmount) {
-      return {
-        paymentKey,
-        orderId,
-        provider: 'OVERSEAS_CARD',
-        providerChargeAmount,
-      };
-    }
-
-    const numericAmount = Number(amount);
-    if (Number.isInteger(numericAmount) && numericAmount > 0) {
-      return {
-        paymentKey,
-        orderId,
-        provider: 'OVERSEAS_CARD',
-        amount: numericAmount,
-      };
-    }
-
     return {
       paymentKey,
       orderId,
       provider: 'OVERSEAS_CARD',
-      amount: numericAmount,
+      providerChargeAmount: providerChargeAmount ?? '',
     };
   }
 

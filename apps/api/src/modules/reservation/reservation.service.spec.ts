@@ -1410,7 +1410,7 @@ describe('ReservationService', () => {
       }
     });
 
-    it('prepareReservation does not create a provider charge quote for overseas card', async () => {
+    it('prepareReservation stores and returns an overseas-card provider charge quote', async () => {
       vi.useFakeTimers();
       const now = new Date('2026-05-29T10:00:00.000Z');
       vi.setSystemTime(now);
@@ -1418,8 +1418,8 @@ describe('ReservationService', () => {
       try {
         const userId = randomUUID();
         const providerChargeQuoteService = {
-          getPaypalAvailability: vi.fn().mockReturnValue({ enabled: true }),
-          createPaypalQuote: vi.fn().mockReturnValue({
+          getOverseasCardAvailability: vi.fn().mockReturnValue({ enabled: true }),
+          createOverseasCardQuote: vi.fn().mockReturnValue({
             currency: 'USD',
             amountMinor: 7490,
             amountDecimal: '74.90',
@@ -1459,7 +1459,7 @@ describe('ReservationService', () => {
           paymentMethod: {
             method: 'CARD' as const,
             provider: 'CARD' as const,
-            currency: 'KRW',
+            currency: 'USD',
             overseasPaymentConsent: {
               required: true,
               agreed: true,
@@ -1483,17 +1483,26 @@ describe('ReservationService', () => {
 
         const result = await overseasCardService.prepareReservation(dto, userId);
 
-        expect(providerChargeQuoteService.getPaypalAvailability).not.toHaveBeenCalled();
-        expect(providerChargeQuoteService.createPaypalQuote).not.toHaveBeenCalled();
-        expect(insertedValues[0]).toEqual(expect.not.objectContaining({
-          providerChargeCurrency: expect.anything(),
-          providerChargeAmountMinor: expect.anything(),
-          providerChargeRate: expect.anything(),
-          providerChargeQuotedAt: expect.anything(),
+        expect(providerChargeQuoteService.getOverseasCardAvailability).toHaveBeenCalled();
+        expect(providerChargeQuoteService.createOverseasCardQuote).toHaveBeenCalledWith({
+          reservationPayableAmount: 104000,
+          now,
+        });
+        expect(insertedValues[0]).toEqual(expect.objectContaining({
+          providerChargeCurrency: 'USD',
+          providerChargeAmountMinor: 7490,
+          providerChargeRate: '0.00072',
+          providerChargeQuotedAt: now,
         }));
-        expect(result).toEqual(expect.not.objectContaining({
-          checkoutEnabled: expect.anything(),
-          providerChargeQuote: expect.anything(),
+        expect(result).toEqual(expect.objectContaining({
+          checkoutEnabled: true,
+          providerChargeQuote: {
+            currency: 'USD',
+            amountMinor: 7490,
+            amountDecimal: '74.90',
+            rate: '0.00072',
+            quotedAt: now.toISOString(),
+          },
         }));
       } finally {
         vi.useRealTimers();

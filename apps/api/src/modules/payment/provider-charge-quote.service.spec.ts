@@ -41,6 +41,50 @@ describe('ProviderChargeQuoteService', () => {
     });
   });
 
+  it('keeps overseas-card rates separate from PayPal quotes', () => {
+    const service = new ProviderChargeQuoteService(
+      config({
+        PAYPAL_CHECKOUT_ENABLED: 'true',
+        PAYPAL_KRW_USD_RATE: '0.00068',
+        TOSS_OVERSEAS_CARD_SECRET_KEY: 'test_sk_overseas_card',
+        OVERSEAS_CARD_KRW_USD_RATE: '0.00072',
+      }),
+    );
+
+    expect(
+      service.createPaypalQuote({
+        reservationPayableAmount: 150000,
+        now: new Date('2026-05-29T00:00:00.000Z'),
+      }),
+    ).toMatchObject({
+      amountMinor: 10200,
+      amountDecimal: '102.00',
+      rate: '0.00068',
+    });
+    expect(
+      service.createOverseasCardQuote({
+        reservationPayableAmount: 150000,
+        now: new Date('2026-05-29T00:00:00.000Z'),
+      }),
+    ).toMatchObject({
+      amountMinor: 10800,
+      amountDecimal: '108.00',
+      rate: '0.00072',
+    });
+  });
+
+  it('does not use an overseas-card-only rate to enable PayPal quotes', () => {
+    expect(
+      () =>
+        new ProviderChargeQuoteService(
+          config({
+            PAYPAL_CHECKOUT_ENABLED: 'true',
+            OVERSEAS_CARD_KRW_USD_RATE: '0.00072',
+          }),
+        ),
+    ).toThrow(/PAYPAL_KRW_USD_RATE/);
+  });
+
   it('enables local test-key checkout with the default KRW/USD rate when no explicit flag is set', () => {
     const service = new ProviderChargeQuoteService(
       config({

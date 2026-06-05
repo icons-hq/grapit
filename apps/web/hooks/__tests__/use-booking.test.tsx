@@ -802,7 +802,7 @@ describe('use-booking payment mutations', () => {
       paymentMethod: {
         method: 'CARD',
         provider: 'CARD',
-        currency: 'KRW',
+        currency: 'USD',
         overseasPaymentConsent: {
           required: true,
           agreed: false,
@@ -827,7 +827,7 @@ describe('use-booking payment mutations', () => {
       paymentMethod: {
         method: 'CARD',
         provider: 'CARD',
-        currency: 'KRW',
+        currency: 'USD',
       },
     });
   });
@@ -1063,28 +1063,37 @@ describe('use-booking payment mutations', () => {
     expect(request.foreignEasyPay?.products.every((product) => product.currency === 'USD')).toBe(true);
   });
 
-  it('buildDirectCardPaymentRequest() sends overseas card through direct CARD payment with KRW amount', () => {
-    expect(buildDirectCardPaymentRequest({
+  it('buildDirectCardPaymentRequest() sends overseas card through direct CARD payment with USD amount', () => {
+    const request = buildDirectCardPaymentRequest({
       branch: {
         orderId: 'GRP-OVERSEAS-CARD',
         method: 'CARD',
         provider: 'CARD',
-        currency: 'KRW',
+        currency: 'USD',
         successUrl: 'https://grabit.test/success?provider=OVERSEAS_CARD',
         failUrl: 'https://grabit.test/fail',
         asyncStatus: 'sync',
         useInternationalCardOnly: true,
+        providerChargeQuote: {
+          currency: 'USD',
+          amountMinor: 3400,
+          amountDecimal: '34.00',
+          rate: '0.00068',
+          quotedAt: '2026-06-05T01:00:00.000Z',
+        },
       },
       amount: 50000,
       customerEmail: 'fan@example.com',
       customerName: '해외 팬',
       customerMobilePhone: '+82-10-1234-5678',
       orderName: '팬미팅 티켓 1매',
-    })).toMatchObject({
+    });
+
+    expect(request).toMatchObject({
       method: 'CARD',
       amount: {
-        currency: 'KRW',
-        value: 50000,
+        currency: 'USD',
+        value: 34,
       },
       orderId: 'GRP-OVERSEAS-CARD',
       windowTarget: 'self',
@@ -1093,6 +1102,9 @@ describe('use-booking payment mutations', () => {
       },
       customerMobilePhone: '821012345678',
     });
+    expect(request.successUrl).toBe(
+      'https://grabit.test/success?provider=OVERSEAS_CARD&providerChargeAmount=34.00',
+    );
   });
 
   it('resolveOverseasCardClientKey() requires a direct payment client key for overseas cards', () => {
@@ -1101,7 +1113,7 @@ describe('use-booking payment mutations', () => {
       delete process.env.NEXT_PUBLIC_TOSS_OVERSEAS_CARD_CLIENT_KEY;
       expect(resolveOverseasCardClientKey()).toBeUndefined();
 
-      process.env.NEXT_PUBLIC_TOSS_OVERSEAS_CARD_CLIENT_KEY = 'live_gck_widget_key';
+      process.env.NEXT_PUBLIC_TOSS_OVERSEAS_CARD_CLIENT_KEY = 'test_gck_widget_key';
       expect(resolveOverseasCardClientKey()).toBeUndefined();
 
       process.env.NEXT_PUBLIC_TOSS_OVERSEAS_CARD_CLIENT_KEY = 'test_ck_direct_key';
@@ -1126,6 +1138,13 @@ describe('use-booking payment mutations', () => {
         failUrl: 'https://grabit.test/fail',
         asyncStatus: 'sync',
         useInternationalCardOnly: true,
+        providerChargeQuote: {
+          currency: 'USD',
+          amountMinor: 3400,
+          amountDecimal: '34.00',
+          rate: '0.00068',
+          quotedAt: '2026-06-05T01:00:00.000Z',
+        },
       },
       amount: 72000,
       customerEmail: 'fan@example.com',
@@ -1157,6 +1176,13 @@ describe('use-booking payment mutations', () => {
         failUrl: 'https://grabit.test/fail',
         asyncStatus: 'sync',
         useInternationalCardOnly: true,
+        providerChargeQuote: {
+          currency: 'USD',
+          amountMinor: 3400,
+          amountDecimal: '34.00',
+          rate: '0.00068',
+          quotedAt: '2026-06-05T01:00:00.000Z',
+        },
       },
       amount: 50000,
       customerEmail: 'admin@example.com',
@@ -1275,7 +1301,7 @@ describe('use-booking payment mutations', () => {
       paymentKey: 'overseas_card_payment_key',
       orderId: 'GRP-OVERSEAS-CARD-CONFIRM',
       provider: 'OVERSEAS_CARD',
-      amount: 50000,
+      providerChargeAmount: '',
     });
     expect(buildConfirmPaymentPayload({
       paymentKey: 'overseas_card_usd_payment_key',

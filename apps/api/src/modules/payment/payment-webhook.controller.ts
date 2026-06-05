@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Headers, Post, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Headers, Post, Req, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import { Public } from '../../common/decorators/public.decorator.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
@@ -98,6 +98,9 @@ export const tossWebhookSchema = z.discriminatedUnion('eventType', [
 ]);
 
 type TossWebhookDto = z.infer<typeof tossWebhookSchema>;
+type TossWebhookRequest = {
+  tossWebhookSecretScope?: 'overseas-card';
+};
 
 @Controller('payments/toss')
 export class PaymentWebhookController {
@@ -113,6 +116,7 @@ export class PaymentWebhookController {
     @Body(new ZodValidationPipe(tossWebhookSchema))
     body: TossWebhookDto,
     @Headers('tosspayments-webhook-transmission-id') transmissionId?: string,
+    @Req() request?: TossWebhookRequest,
   ) {
     const webhook = this.withEventId(body, transmissionId);
     const ledger = await this.paymentService.recordWebhookEvent(webhook);
@@ -129,7 +133,10 @@ export class PaymentWebhookController {
       const {
         webhook: providerVerifiedWebhook,
         providerResponse,
-      } = await this.withProviderVerifiedState(webhook);
+      } = await this.withProviderVerifiedState(
+        webhook,
+        request?.tossWebhookSecretScope,
+      );
       const progress = await this.paymentService.findAsyncPaymentProgress(
         this.requireWebhookOrderId(providerVerifiedWebhook),
         this.requireWebhookPaymentKey(providerVerifiedWebhook),
@@ -266,12 +273,17 @@ export class PaymentWebhookController {
 
   private async withProviderVerifiedState(
     body: TossWebhookRequestBody,
+    webhookSecretScope?: 'overseas-card',
   ): Promise<{ webhook: TossWebhookRequestBody; providerResponse: TossPaymentResponse }> {
     const cancelPaymentSnapshot = body.eventType === 'CANCEL_STATUS_CHANGED'
       ? await this.resolveCancelPaymentSnapshot(body)
       : null;
     const queryPaymentKey = this.getProviderQueryPaymentKey(body, cancelPaymentSnapshot);
-    const queryOptions = this.getProviderQueryOptions(body, cancelPaymentSnapshot);
+    const queryOptions = this.getProviderQueryOptions(
+      body,
+      cancelPaymentSnapshot,
+      webhookSecretScope,
+    );
     const queried = queryOptions
       ? await this.tossPaymentsClient.queryPayment(queryPaymentKey, queryOptions)
       : await this.tossPaymentsClient.queryPayment(queryPaymentKey);
@@ -311,7 +323,12 @@ export class PaymentWebhookController {
   private getProviderQueryOptions(
     body: TossWebhookRequestBody,
     cancelPaymentSnapshot: Awaited<ReturnType<PaymentWebhookController['resolveCancelPaymentSnapshot']>> = null,
+    webhookSecretScope?: 'overseas-card',
   ): TossPaymentRequestOptions | undefined {
+    if (webhookSecretScope === 'overseas-card') {
+      return { secretKeyScope: 'overseas-card' };
+    }
+
     if (body.eventType === 'CANCEL_STATUS_CHANGED') {
       const payment = cancelPaymentSnapshot;
 
@@ -372,6 +389,10 @@ export class PaymentWebhookController {
     body: TossWebhookRequestBody,
     isCancelEvent: boolean,
   ): TossPaymentRequestOptions | undefined {
+    if (this.isOverseasCardWebhook(body)) {
+      return { secretKeyScope: 'overseas-card' };
+    }
+
     if (
       body.data.provider === 'ALIPAY'
       || body.data.provider === 'ALIPAY_PLUS'
@@ -385,6 +406,14 @@ export class PaymentWebhookController {
     }
 
     return undefined;
+  }
+
+  private isOverseasCardWebhook(body: TossWebhookRequestBody): boolean {
+    return (
+      body.data.provider === 'CARD'
+      && body.data.method === 'CARD'
+      && body.data.currency === 'USD'
+    );
   }
 
   private isAlipayWebhook(body: TossWebhookRequestBody): boolean {

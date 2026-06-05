@@ -341,6 +341,85 @@ describe('PaymentWebhookController', () => {
     });
   });
 
+  it('uses the overseas-card secret scope for USD card payment webhook verification', async () => {
+    const overseasCardWebhook: TossWebhookRequestBody = {
+      eventId: 'evt-overseas-card-done',
+      eventType: 'PAYMENT_STATUS_CHANGED',
+      createdAt: '2026-06-05T10:00:00.000Z',
+      data: {
+        paymentKey: 'pay_overseas_card_1',
+        orderId: 'GRP-OVERSEAS-CARD-1',
+        status: 'DONE',
+        method: 'CARD',
+        provider: 'CARD',
+        currency: 'USD',
+        totalAmount: 108,
+        approvedAt: '2026-06-05T10:00:05.000Z',
+      },
+    };
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(
+      makeLedgerResult({ eventId: overseasCardWebhook.eventId }),
+    );
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
+    tossClient.queryPayment.mockResolvedValueOnce(
+      makeQueriedPayment({
+        paymentKey: 'pay_overseas_card_1',
+        orderId: 'GRP-OVERSEAS-CARD-1',
+        status: 'DONE',
+        method: 'CARD',
+        totalAmount: 108,
+        approvedAt: '2026-06-05T10:00:05.000Z',
+      }),
+    );
+
+    await controller.handleTossWebhook(overseasCardWebhook);
+
+    expect(tossClient.queryPayment).toHaveBeenCalledWith('pay_overseas_card_1', {
+      secretKeyScope: 'overseas-card',
+    });
+  });
+
+  it('uses the overseas-card webhook secret scope even when card webhook provider fields are ambiguous', async () => {
+    const overseasCardWebhook: TossWebhookRequestBody = {
+      eventId: 'evt-overseas-card-ambiguous',
+      eventType: 'PAYMENT_STATUS_CHANGED',
+      createdAt: '2026-06-05T10:00:00.000Z',
+      data: {
+        paymentKey: 'pay_overseas_card_ambiguous',
+        orderId: 'GRP-OVERSEAS-CARD-AMBIGUOUS',
+        status: 'DONE',
+        method: '카드',
+        currency: 'USD',
+        totalAmount: 108,
+        approvedAt: '2026-06-05T10:00:05.000Z',
+      },
+    };
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(
+      makeLedgerResult({ eventId: overseasCardWebhook.eventId }),
+    );
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
+    tossClient.queryPayment.mockResolvedValueOnce(
+      makeQueriedPayment({
+        paymentKey: 'pay_overseas_card_ambiguous',
+        orderId: 'GRP-OVERSEAS-CARD-AMBIGUOUS',
+        status: 'DONE',
+        method: 'CARD',
+        totalAmount: 108,
+        approvedAt: '2026-06-05T10:00:05.000Z',
+      }),
+    );
+
+    await controller.handleTossWebhook(
+      overseasCardWebhook,
+      undefined,
+      { tossWebhookSecretScope: 'overseas-card' },
+    );
+
+    expect(tossClient.queryPayment).toHaveBeenCalledWith('pay_overseas_card_ambiguous', {
+      secretKeyScope: 'overseas-card',
+    });
+  });
+
   it('uses the foreign easy pay secret scope for live Alipay easyPay webhooks without provider', async () => {
     const liveAlipayWebhook: TossWebhookRequestBody = {
       eventId: 'evt-live-alipay-aborted',

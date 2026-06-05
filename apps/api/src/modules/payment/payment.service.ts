@@ -686,7 +686,10 @@ export class PaymentService {
     const method = this.resolveWebhookMethod(payload, provider);
     const providerChargeQuote = this.getReservationProviderChargeQuote(reservation);
     const usesProviderChargeQuote =
-      this.usesProviderChargeQuote(provider) && providerChargeQuote !== undefined;
+      (
+        this.usesProviderChargeQuote(provider)
+        || provider === 'CARD'
+      ) && providerChargeQuote !== undefined;
     const storesWebhookAmountAsKrw = this.storesWebhookAmountAsKrw(
       provider,
       providerChargeQuote,
@@ -1462,7 +1465,9 @@ export class PaymentService {
       .set({
         processedAt: new Date(),
         processingResultCode,
-        processingResultMessage: processingResultMessage ?? null,
+        processingResultMessage: this.truncateWebhookProcessingMessage(
+          processingResultMessage,
+        ),
       })
       .where(eq(paymentWebhookEvents.eventId, eventId));
   }
@@ -1476,9 +1481,19 @@ export class PaymentService {
       .update(paymentWebhookEvents)
       .set({
         processingResultCode,
-        processingResultMessage,
+        processingResultMessage: this.truncateWebhookProcessingMessage(
+          processingResultMessage,
+        ),
       })
       .where(eq(paymentWebhookEvents.eventId, eventId));
+  }
+
+  private truncateWebhookProcessingMessage(message?: string): string | null {
+    if (message === undefined || message === null) {
+      return null;
+    }
+
+    return message.length > 500 ? `${message.slice(0, 497)}...` : message;
   }
 
   private requiresAsyncWebhookBranch(paymentMethod: PaymentMethod): boolean {
@@ -1574,9 +1589,14 @@ export class PaymentService {
       | {
           getAlipayAvailability?: () => { enabled: boolean; disabledReason?: string };
           getForeignEasyPayAvailability?: () => { enabled: boolean; disabledReason?: string };
+          getOverseasCardAvailability?: () => { enabled: boolean; disabledReason?: string };
           getPaypalAvailability?: () => { enabled: boolean; disabledReason?: string };
         }
       | undefined;
+
+    if (provider === 'CARD') {
+      return service?.getOverseasCardAvailability?.();
+    }
 
     if (provider === 'ALIPAY_PLUS') {
       return service?.getAlipayAvailability?.()
@@ -1600,7 +1620,8 @@ export class PaymentService {
   }
 
   private usesProviderChargeQuoteForPaymentMethod(paymentMethod: PaymentMethod): boolean {
-    return this.usesProviderChargeQuote(paymentMethod.provider);
+    return this.usesProviderChargeQuote(paymentMethod.provider)
+      || this.isOverseasCardBranch(paymentMethod);
   }
 
   private resolveWebhookProvider(payload: TossWebhookRequestBody): PaymentProvider {
