@@ -77,6 +77,10 @@ describe('PendingPaymentExpirationWorker', () => {
     expect(ASYNC_PAYMENT_HANDOFF_STATUSES).toEqual(['IN_PROGRESS', 'DONE']);
   });
 
+  it('leaves late DONE recovery to the webhook finalizer instead of expiring protected payments', () => {
+    expect(ASYNC_PAYMENT_HANDOFF_STATUSES).toContain('DONE');
+  });
+
   it('registers and clears the periodic sweep interval', () => {
     vi.useFakeTimers();
     const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');

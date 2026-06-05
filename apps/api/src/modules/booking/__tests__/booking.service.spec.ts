@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ConflictException, ForbiddenException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import {
+  ACQUIRE_RECOVERY_SEAT_LOCKS_LUA,
   ASSERT_OWNED_SEAT_LOCKS_LUA,
   BookingService,
   BOOKING_VERIFICATION_REQUIRED_MESSAGE,
@@ -10,6 +11,7 @@ import {
   LOCK_EXPIRED_MESSAGE,
   LOCK_OTHER_OWNER_MESSAGE,
   PAYMENT_CONFIRM_LOCK_TTL,
+  RELEASE_RECOVERY_SEAT_LOCKS_LUA,
   REFRESH_PAYMENT_CONFIRM_LOCK_LUA,
   RELEASE_PAYMENT_CONFIRM_LOCK_LUA,
 } from '../booking.service.js';
@@ -822,6 +824,69 @@ describe('BookingService', () => {
       )).rejects.toThrow('운영자가 비활성화한 좌석입니다');
 
       expect(mockRedis.eval).not.toHaveBeenCalled();
+    });
+
+    it('acquireRecoverySeatLocks atomically reserves requested seats with a recovery token', async () => {
+      mockRedis.eval.mockResolvedValue([1, 'OK', '2', '']);
+
+      await expect(service.acquireRecoverySeatLocks(
+        showtimeId,
+        ['A-1', 'A-2'],
+        'recovery:reservation-1',
+      )).resolves.toEqual({ acquired: true });
+
+      const callArgs = mockRedis.eval.mock.calls[0] as unknown[];
+      const numKeys = callArgs[1] as number;
+      const flatKeys = callArgs.slice(2, 2 + numKeys) as string[];
+      const flatArgs = callArgs.slice(2 + numKeys) as string[];
+      expect(callArgs[0]).toBe(ACQUIRE_RECOVERY_SEAT_LOCKS_LUA);
+      expect(flatKeys).toEqual([
+        `{${showtimeId}}:locked-seats`,
+        `{${showtimeId}}:seat:1F%3AA-1`,
+        `{${showtimeId}}:seat:1F%3AA-2`,
+      ]);
+      expect(flatArgs).toEqual([
+        'recovery:reservation-1',
+        '60',
+        '1F%3AA-1',
+        '1F%3AA-2',
+      ]);
+    });
+
+    it('acquireRecoverySeatLocks reports active Redis ownership conflicts without throwing', async () => {
+      mockRedis.eval.mockResolvedValue([0, 'OTHER_OWNER', '1F%3AA-2', 'other-user']);
+
+      await expect(service.acquireRecoverySeatLocks(
+        showtimeId,
+        ['A-1', 'A-2'],
+        'recovery:reservation-1',
+      )).resolves.toEqual({ acquired: false });
+    });
+
+    it('releaseRecoverySeatLocks removes only recovery-owned requested locks', async () => {
+      mockRedis.eval.mockResolvedValue(1);
+
+      await expect(service.releaseRecoverySeatLocks(
+        showtimeId,
+        ['A-1', 'A-2'],
+        'recovery:reservation-1',
+      )).resolves.toBeUndefined();
+
+      const callArgs = mockRedis.eval.mock.calls[0] as unknown[];
+      const numKeys = callArgs[1] as number;
+      const flatKeys = callArgs.slice(2, 2 + numKeys) as string[];
+      const flatArgs = callArgs.slice(2 + numKeys) as string[];
+      expect(callArgs[0]).toBe(RELEASE_RECOVERY_SEAT_LOCKS_LUA);
+      expect(flatKeys).toEqual([
+        `{${showtimeId}}:locked-seats`,
+        `{${showtimeId}}:seat:1F%3AA-1`,
+        `{${showtimeId}}:seat:1F%3AA-2`,
+      ]);
+      expect(flatArgs).toEqual([
+        'recovery:reservation-1',
+        '1F%3AA-1',
+        '1F%3AA-2',
+      ]);
     });
   });
 

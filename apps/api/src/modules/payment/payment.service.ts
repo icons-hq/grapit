@@ -21,6 +21,7 @@ import {
   ticketItems,
 } from '../../database/schema/index.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
+import { BookingService } from '../booking/booking.service.js';
 import { QrTicketService } from '../ticket/qr-ticket.service.js';
 import type {
   PaymentInfo,
@@ -176,6 +177,7 @@ export class PaymentService {
     @Optional() private readonly providerChargeQuoteService?: ProviderChargeQuoteService,
     @Optional()
     private readonly paymentCancellationFinalizer?: PaymentCancellationFinalizerService,
+    @Optional() private readonly bookingService?: BookingService,
   ) {}
 
   async prepareTossPaymentBranch(input: TossPaymentBranchRequest): Promise<TossPaymentBranch> {
@@ -642,7 +644,7 @@ export class PaymentService {
     payload: TossWebhookRequestBody,
     paymentStatus: PaymentStatus,
     asyncStatus: string,
-  ): Promise<void> {
+  ): Promise<string | void> {
     const orderId = this.requireWebhookOrderId(payload);
     const paymentKey = this.requireWebhookPaymentKey(payload);
     const [reservation] = await this.db
@@ -664,14 +666,18 @@ export class PaymentService {
       throw new NotFoundException('웹훅 대상 예매를 찾을 수 없습니다');
     }
 
-    const [existingPayment] = await this.db
+    const existingPayments = await this.db
       .select({
         id: payments.id,
         reservationId: payments.reservationId,
         paymentKey: payments.paymentKey,
         tossOrderId: payments.tossOrderId,
+        method: payments.method,
+        provider: payments.provider,
+        currency: payments.currency,
         amount: payments.amount,
         status: payments.status,
+        providerMetadata: payments.providerMetadata,
         providerChargeAmountMinor: payments.providerChargeAmountMinor,
       })
       .from(payments)
@@ -681,8 +687,18 @@ export class PaymentService {
           eq(payments.paymentKey, paymentKey),
         ),
       );
+    const paymentKeyConflict = existingPayments.find((payment) =>
+      payment.paymentKey === paymentKey && payment.reservationId !== reservation.id
+    );
+    if (paymentKeyConflict) {
+      throw new ConflictException('결제 정보가 예매와 일치하지 않습니다');
+    }
 
-    const provider = this.resolveWebhookProvider(payload);
+    const existingPayment = existingPayments.find((payment) =>
+      payment.reservationId === reservation.id
+    );
+
+    const provider = this.resolveWebhookProvider(payload, existingPayment);
     const method = this.resolveWebhookMethod(payload, provider);
     const providerChargeQuote = this.getReservationProviderChargeQuote(reservation);
     const usesProviderChargeQuote =
@@ -739,7 +755,7 @@ export class PaymentService {
         throw new BadRequestException('결제 금액이 일치하지 않습니다');
       }
 
-      await this.finalizeAsyncDonePayment({
+      return await this.finalizeAsyncDonePayment({
         payload,
         reservation,
         existingPayment,
@@ -749,7 +765,6 @@ export class PaymentService {
         asyncStatus,
         providerChargeQuote,
       });
-      return;
     }
 
     const paidAt = null;
@@ -1005,7 +1020,7 @@ export class PaymentService {
     method: PaymentMethod['method'];
     asyncStatus: string;
     providerChargeQuote?: ProviderChargeQuote;
-  }): Promise<void> {
+  }): Promise<string> {
     const {
       payload,
       reservation,
@@ -1017,12 +1032,17 @@ export class PaymentService {
       providerChargeQuote,
     } = input;
 
-    if (reservation.status !== 'PENDING_PAYMENT' && reservation.status !== 'CONFIRMED') {
+    if (
+      reservation.status !== 'PENDING_PAYMENT'
+      && reservation.status !== 'CONFIRMED'
+      && !this.canRecoverLateDoneReservation(reservation, existingPayment, payload)
+    ) {
       throw new ConflictException('결제 완료 처리 대상 예매 상태가 아닙니다');
     }
 
     const orderId = this.requireWebhookOrderId(payload);
     const paymentKey = this.requireWebhookPaymentKey(payload);
+    const recoveredPaymentKey = this.hasRecoveredPaymentKey(existingPayment, payload);
     this.assertExistingPaymentMatchesWebhook({
       existingPayment,
       reservation,
@@ -1040,13 +1060,32 @@ export class PaymentService {
           paymentId: existingPayment.id,
         });
       }
-      return;
+      return 'DONE_APPLIED';
     }
 
     const paidAt = payload.data.approvedAt
       ? new Date(payload.data.approvedAt)
       : new Date();
     let committedPaymentId = existingPayment?.id ?? null;
+    const recoverySeatLock = await this.acquireLateRecoverySeatLocksIfNeeded({
+      payload,
+      reservation,
+      existingPayment,
+      pendingSeats,
+    });
+
+    if (recoverySeatLock.acquired === false) {
+      return await this.compensateAsyncDoneSeatFailure({
+        payload,
+        reservation,
+        existingPayment,
+        provider,
+        method,
+        amount: reservation.totalAmount,
+        asyncStatus,
+        providerChargeQuote,
+      });
+    }
 
     try {
       await this.db.transaction(async (tx) => {
@@ -1074,6 +1113,7 @@ export class PaymentService {
           cancelledAt: null,
           cancelReason: null,
           ...this.toPaymentProviderChargeValues(providerChargeQuote),
+          ...this.toRecoveredPaymentProviderMetadataValues(existingPayment, payload),
         };
 
         if (existingPayment) {
@@ -1161,7 +1201,7 @@ export class PaymentService {
       });
     } catch (error) {
       if (error instanceof ConflictException) {
-        await this.compensateAsyncDoneSeatFailure({
+        return await this.compensateAsyncDoneSeatFailure({
           payload,
           reservation,
           existingPayment,
@@ -1173,6 +1213,10 @@ export class PaymentService {
         });
       }
       throw error;
+    } finally {
+      if (recoverySeatLock.shouldRelease) {
+        await this.releaseLateRecoverySeatLocks(recoverySeatLock);
+      }
     }
 
     for (const seat of pendingSeats) {
@@ -1189,6 +1233,68 @@ export class PaymentService {
         reservationId: reservation.id,
         paymentId: committedPaymentId,
       });
+    }
+
+    return recoveredPaymentKey ? 'DONE_RECOVERED_PAYMENT_KEY' : 'DONE_APPLIED';
+  }
+
+  private async acquireLateRecoverySeatLocksIfNeeded(input: {
+    payload: TossWebhookRequestBody;
+    reservation: WebhookReservationSnapshot;
+    existingPayment?: WebhookPaymentSnapshot;
+    pendingSeats: WebhookSeatSelection[];
+  }): Promise<{
+    acquired: boolean;
+    shouldRelease: boolean;
+    showtimeId: string;
+    seatKeys: string[];
+    ownerToken: string;
+  }> {
+    const { payload, reservation, existingPayment, pendingSeats } = input;
+    const seatKeys = pendingSeats.map((seat) => seat.seatKey);
+    const ownerToken = `payment-recovery:${reservation.id}:${payload.eventId}`;
+
+    if (
+      !this.bookingService
+      || !this.canRecoverLateDoneReservation(reservation, existingPayment, payload)
+    ) {
+      return {
+        acquired: true,
+        shouldRelease: false,
+        showtimeId: reservation.showtimeId,
+        seatKeys,
+        ownerToken,
+      };
+    }
+
+    const result = await this.bookingService.acquireRecoverySeatLocks(
+      reservation.showtimeId,
+      seatKeys,
+      ownerToken,
+    );
+
+    return {
+      acquired: result.acquired,
+      shouldRelease: result.acquired,
+      showtimeId: reservation.showtimeId,
+      seatKeys,
+      ownerToken,
+    };
+  }
+
+  private async releaseLateRecoverySeatLocks(lock: {
+    showtimeId: string;
+    seatKeys: string[];
+    ownerToken: string;
+  }): Promise<void> {
+    try {
+      await this.bookingService?.releaseRecoverySeatLocks(
+        lock.showtimeId,
+        lock.seatKeys,
+        lock.ownerToken,
+      );
+    } catch {
+      // Recovery locks are short-lived and only protect the DB commit window.
     }
   }
 
@@ -1231,8 +1337,116 @@ export class PaymentService {
       existingPayment.paymentKey !== paymentKey
       || existingPayment.tossOrderId !== orderId
     ) {
+      if (this.canRecoverAlipayPaymentKeyMismatch({
+        existingPayment,
+        reservation,
+        payload,
+      })) {
+        return;
+      }
+
       throw new BadRequestException('결제 정보가 예매와 일치하지 않습니다');
     }
+  }
+
+  private canRecoverLateDoneReservation(
+    reservation: WebhookReservationSnapshot,
+    existingPayment: WebhookPaymentSnapshot | undefined,
+    payload: TossWebhookRequestBody,
+  ): boolean {
+    return reservation.status === 'FAILED'
+      && payload.eventType === 'PAYMENT_STATUS_CHANGED'
+      && payload.data.status === 'DONE'
+      && this.isAlipayLikePayment(payload, existingPayment);
+  }
+
+  private canRecoverAlipayPaymentKeyMismatch(input: {
+    existingPayment: WebhookPaymentSnapshot;
+    reservation: WebhookReservationSnapshot;
+    payload: TossWebhookRequestBody;
+  }): boolean {
+    const { existingPayment, payload } = input;
+    const orderId = this.requireWebhookOrderId(payload);
+    const paymentKey = this.requireWebhookPaymentKey(payload);
+
+    if (existingPayment.tossOrderId !== orderId) {
+      return false;
+    }
+
+    if (existingPayment.paymentKey === paymentKey) {
+      return true;
+    }
+
+    if (
+      payload.eventType !== 'PAYMENT_STATUS_CHANGED'
+      || payload.data.status !== 'DONE'
+      || !this.isAlipayLikePayment(payload, existingPayment)
+    ) {
+      return false;
+    }
+
+    return existingPayment.status !== 'DONE'
+      && existingPayment.status !== 'CANCELED';
+  }
+
+  private hasRecoveredPaymentKey(
+    existingPayment: WebhookPaymentSnapshot | undefined,
+    payload: TossWebhookRequestBody,
+  ): boolean {
+    return !!existingPayment
+      && existingPayment.paymentKey !== this.requireWebhookPaymentKey(payload);
+  }
+
+  private isAlipayLikePayment(
+    payload: TossWebhookRequestBody,
+    existingPayment?: Pick<WebhookPaymentSnapshot, 'provider' | 'method'>,
+  ): boolean {
+    const provider = payload.data.provider?.trim().toUpperCase();
+    const easyPay = payload.data.easyPay?.trim().toUpperCase();
+    const existingProvider = existingPayment?.provider?.trim().toUpperCase();
+
+    return provider === 'ALIPAY'
+      || provider === 'ALIPAY_PLUS'
+      || easyPay === 'ALIPAY'
+      || easyPay === '알리페이'
+      || (
+        payload.data.method === 'FOREIGN_EASY_PAY'
+        && (existingProvider === 'ALIPAY' || existingProvider === 'ALIPAY_PLUS')
+      );
+  }
+
+  private toRecoveredPaymentProviderMetadataValues(
+    existingPayment: WebhookPaymentSnapshot | undefined,
+    payload: TossWebhookRequestBody,
+  ): { providerMetadata?: Record<string, unknown> } {
+    if (!existingPayment) {
+      return {};
+    }
+
+    const paymentKey = this.requireWebhookPaymentKey(payload);
+    if (existingPayment.paymentKey === paymentKey) {
+      return {};
+    }
+
+    return {
+      providerMetadata: {
+        ...this.toProviderMetadataRecord(existingPayment.providerMetadata),
+        paymentKeyRecovery: {
+          previousPaymentKey: existingPayment.paymentKey,
+          recoveredPaymentKey: paymentKey,
+          eventId: payload.eventId,
+          recoveredAt: new Date().toISOString(),
+        },
+      },
+    };
+  }
+
+  private toProviderMetadataRecord(value: unknown): Record<string, unknown> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return {};
+    }
+
+    return value as Record<string, unknown>;
   }
 
   private async getReservationSeatSelections(
@@ -1355,7 +1569,7 @@ export class PaymentService {
     amount: number;
     asyncStatus: string;
     providerChargeQuote?: ProviderChargeQuote;
-  }): Promise<void> {
+  }): Promise<'DONE_COMPENSATED_SEAT_CONFLICT' | 'DONE_CANCEL_PENDING'> {
     const {
       payload,
       reservation,
@@ -1416,6 +1630,7 @@ export class PaymentService {
       cancelledAt: terminalCancelCompleted ? new Date() : null,
       cancelReason: ASYNC_DONE_SEAT_FAILURE_CANCEL_REASON,
       ...this.toPaymentProviderChargeValues(providerChargeQuote),
+      ...this.toRecoveredPaymentProviderMetadataValues(existingPayment, payload),
     };
 
     if (existingPayment) {
@@ -1427,7 +1642,7 @@ export class PaymentService {
       await this.db.insert(payments).values(paymentValues);
     }
 
-    if (terminalCancelCompleted && reservation.status === 'PENDING_PAYMENT') {
+    if (terminalCancelCompleted && reservation.status !== 'CONFIRMED') {
       await this.db
         .update(reservations)
         .set({
@@ -1436,6 +1651,10 @@ export class PaymentService {
         })
         .where(eq(reservations.id, reservation.id));
     }
+
+    return terminalCancelCompleted
+      ? 'DONE_COMPENSATED_SEAT_CONFLICT'
+      : 'DONE_CANCEL_PENDING';
   }
 
   private isProviderFullCancelCompleted(response: TossPaymentResponse): boolean {
@@ -1624,7 +1843,10 @@ export class PaymentService {
       || this.isOverseasCardBranch(paymentMethod);
   }
 
-  private resolveWebhookProvider(payload: TossWebhookRequestBody): PaymentProvider {
+  private resolveWebhookProvider(
+    payload: TossWebhookRequestBody,
+    existingPayment?: WebhookPaymentSnapshot,
+  ): PaymentProvider {
     if (payload.data.provider === 'ALIPAY') {
       return 'ALIPAY_PLUS';
     }
@@ -1641,11 +1863,26 @@ export class PaymentService {
       return 'PAYPAL';
     }
 
+    if (
+      payload.data.method === 'FOREIGN_EASY_PAY'
+      && this.isKnownForeignEasyPayProvider(existingPayment?.provider)
+    ) {
+      return existingPayment.provider;
+    }
+
     if (payload.data.method === 'FOREIGN_EASY_PAY') {
       return 'ALIPAY_PLUS';
     }
 
     return 'CARD';
+  }
+
+  private isKnownForeignEasyPayProvider(
+    provider: string | undefined,
+  ): provider is Extract<PaymentProvider, 'ALIPAY_PLUS' | 'TRUEMONEY' | 'PAYPAL'> {
+    return provider === 'ALIPAY_PLUS'
+      || provider === 'TRUEMONEY'
+      || provider === 'PAYPAL';
   }
 
   private resolveWebhookMethod(

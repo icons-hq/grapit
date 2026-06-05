@@ -189,6 +189,56 @@ return alive
 `;
 
 /**
+ * Atomically acquires transient recovery locks only when every requested seat
+ * has no active Redis holder.
+ *
+ * KEYS[1] = {showtimeId}:locked-seats
+ * KEYS[2..] = {showtimeId}:seat:{seatId}
+ * ARGV[1] = lock owner token
+ * ARGV[2] = ttl seconds
+ * ARGV[3..] = requested seat IDs
+ *
+ * Returns: {1, 'OK', count, ''} or {0, 'OTHER_OWNER', seatId, owner}
+ */
+export const ACQUIRE_RECOVERY_SEAT_LOCKS_LUA = `
+-- ACQUIRE_RECOVERY_SEAT_LOCKS_LUA
+local owner = ARGV[1]
+local ttl = tonumber(ARGV[2])
+for i = 2, #KEYS do
+  local currentOwner = redis.call('GET', KEYS[i])
+  if currentOwner and currentOwner ~= owner then
+    return {0, 'OTHER_OWNER', ARGV[i + 1], currentOwner}
+  end
+end
+for i = 2, #KEYS do
+  local seatId = ARGV[i + 1]
+  redis.call('SET', KEYS[i], owner, 'EX', ttl)
+  redis.call('SADD', KEYS[1], seatId)
+end
+return {1, 'OK', tostring(#KEYS - 1), ''}
+`;
+
+/**
+ * Releases transient recovery locks only when still owned by the recovery token.
+ *
+ * KEYS[1] = {showtimeId}:locked-seats
+ * KEYS[2..] = {showtimeId}:seat:{seatId}
+ * ARGV[1] = lock owner token
+ * ARGV[2..] = requested seat IDs
+ */
+export const RELEASE_RECOVERY_SEAT_LOCKS_LUA = `
+-- RELEASE_RECOVERY_SEAT_LOCKS_LUA
+local owner = ARGV[1]
+for i = 2, #KEYS do
+  if redis.call('GET', KEYS[i]) == owner then
+    redis.call('DEL', KEYS[i])
+    redis.call('SREM', KEYS[1], ARGV[i])
+  end
+end
+return 1
+`;
+
+/**
  * Lua script for asserting that all requested seats are actively locked by the user.
  *
  * KEYS[i] = {showtimeId}:seat:{seatId}
@@ -285,6 +335,7 @@ return {1, 'OK', tostring(#ARGV - 2), ''}
 `;
 
 export const PAYMENT_CONFIRM_LOCK_TTL = 60;
+export const RECOVERY_SEAT_LOCK_TTL = 60;
 
 export const RELEASE_PAYMENT_CONFIRM_LOCK_LUA = `
 -- RELEASE_PAYMENT_CONFIRM_LOCK_LUA
@@ -657,6 +708,56 @@ export class BookingService {
 
     const conflict = this.lockConflictFromResult(result);
     if (conflict) throw conflict;
+  }
+
+  async acquireRecoverySeatLocks(
+    showtimeId: string,
+    seatIds: string[],
+    ownerToken: string,
+    ttlSeconds = RECOVERY_SEAT_LOCK_TTL,
+  ): Promise<{ acquired: boolean }> {
+    if (seatIds.length === 0) {
+      return { acquired: true };
+    }
+
+    const lockedSeatsKey = `{${showtimeId}}:locked-seats`;
+    const runtimeSeatIds = seatIds.map((seatId) => parseRuntimeSeatIdentity(seatId).runtimeSeatId);
+    const seatLockKeys = runtimeSeatIds.map((runtimeSeatId) => `{${showtimeId}}:seat:${runtimeSeatId}`);
+
+    const result = (await this.redis.eval(
+      ACQUIRE_RECOVERY_SEAT_LOCKS_LUA,
+      1 + runtimeSeatIds.length,
+      lockedSeatsKey,
+      ...seatLockKeys,
+      ownerToken,
+      String(ttlSeconds),
+      ...runtimeSeatIds,
+    )) as SeatLockOwnershipResult;
+
+    return { acquired: result[0] === 1 };
+  }
+
+  async releaseRecoverySeatLocks(
+    showtimeId: string,
+    seatIds: string[],
+    ownerToken: string,
+  ): Promise<void> {
+    if (seatIds.length === 0) {
+      return;
+    }
+
+    const lockedSeatsKey = `{${showtimeId}}:locked-seats`;
+    const runtimeSeatIds = seatIds.map((seatId) => parseRuntimeSeatIdentity(seatId).runtimeSeatId);
+    const seatLockKeys = runtimeSeatIds.map((runtimeSeatId) => `{${showtimeId}}:seat:${runtimeSeatId}`);
+
+    await this.redis.eval(
+      RELEASE_RECOVERY_SEAT_LOCKS_LUA,
+      1 + runtimeSeatIds.length,
+      lockedSeatsKey,
+      ...seatLockKeys,
+      ownerToken,
+      ...runtimeSeatIds,
+    );
   }
 
   async forceReleaseSeatLock(showtimeId: string, seatId: string): Promise<void> {
