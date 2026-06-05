@@ -2,9 +2,10 @@ import { toast } from 'sonner';
 import { apiUrl } from '@/lib/api-url';
 import { useAuthStore } from '@/stores/use-auth-store';
 import {
-  STATUS_MESSAGES,
-  DEFAULT_ERROR_MESSAGE,
+  getDefaultErrorMessage,
+  getStatusMessages,
 } from './error-messages';
+import { formatCopy, getClientVisibleCopy } from './i18n/client-copy';
 
 interface ApiError {
   message: string;
@@ -109,13 +110,14 @@ async function request<T>(
       if (typeof window !== 'undefined') {
         window.location.href = '/auth';
       }
-      throw new ApiClientError('인증이 만료되었습니다. 다시 로그인해주세요.', 401);
+      throw new ApiClientError(getClientVisibleCopy().commonErrors.authExpired, 401);
     }
   }
 
   if (!res.ok) {
     const status = res.status;
-    let errorMessage = STATUS_MESSAGES[status] ?? DEFAULT_ERROR_MESSAGE;
+    const commonErrors = getClientVisibleCopy().commonErrors;
+    let errorMessage = getStatusMessages()[status] ?? getDefaultErrorMessage();
     let errorData: unknown;
     try {
       errorData = await res.json();
@@ -135,7 +137,7 @@ async function request<T>(
     // 401 is handled above (redirect). No toast needed here.
     if (status !== 401 && options.showErrorToast !== false) {
       toast.error(errorMessage, {
-        description: `오류 코드: ERR-${status}`,
+        description: formatCopy(commonErrors.errorCode, { status }),
         duration: 5000,
       });
     }

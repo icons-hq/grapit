@@ -3,50 +3,58 @@
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { Badge } from '@/components/ui/badge';
+import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
+import { getClientLocale } from '@/lib/i18n/client-copy';
+import { getVisibleCopy, type VisibleCopy } from '@/lib/i18n/visible-copy';
 import type { ReservationListItem, ReservationStatus } from '@grabit/shared';
 
 const STATUS_CONFIG: Record<
   ReservationStatus,
-  { label: string; className: string }
+  { labelKey: keyof VisibleCopy['reservation']['status']; className: string }
 > = {
   CONFIRMED: {
-    label: '예매완료',
+    labelKey: 'confirmed',
     className: 'bg-[#F0FDF4] text-[#15803D] border-transparent',
   },
   CANCELLED: {
-    label: '취소완료',
+    labelKey: 'cancelled',
     className: 'bg-[#FEF2F2] text-[#C62828] border-transparent',
   },
   PENDING_PAYMENT: {
-    label: '결제대기',
+    labelKey: 'pendingPayment',
     className: 'bg-[#FFFBEB] text-[#8B6306] border-transparent',
   },
   FAILED: {
-    label: '결제실패',
+    labelKey: 'failed',
     className: 'bg-[#FEF2F2] text-[#C62828] border-transparent',
   },
 };
 
-function formatDate(dateString: string): string {
+function formatDate(dateString: string, locale: string): string {
   const date = new Date(dateString);
-  const days = ['일', '월', '화', '수', '목', '금', '토'];
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  const day = days[date.getDay()];
-  const h = String(date.getHours()).padStart(2, '0');
-  const min = String(date.getMinutes()).padStart(2, '0');
-  return `${y}.${m}.${d} (${day}) ${h}:${min}`;
+  return new Intl.DateTimeFormat(locale, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
 }
 
 function formatSeatSummary(
   seats: ReservationListItem['seats'],
+  seatTemplate: string,
+  locale: string,
 ): string {
   if (seats.length === 0) return '';
   const first = seats[0];
-  const base = `${first.tierName} ${first.row}열 ${first.number}번`;
+  const base = seatTemplate
+    .replace('{tierName}', first.tierName)
+    .replace('{row}', first.row)
+    .replace('{number}', first.number);
   if (seats.length === 1) return base;
-  return `${base} 외 ${seats.length - 1}석`;
+  return locale === 'ko' ? `${base} 외 ${seats.length - 1}석` : `${base} + ${seats.length - 1}`;
 }
 
 interface ReservationCardProps {
@@ -55,26 +63,34 @@ interface ReservationCardProps {
 
 export function ReservationCard({ reservation }: ReservationCardProps) {
   const router = useRouter();
+  const locale = getClientLocale();
+  const copy = getVisibleCopy(locale);
   const statusConfig = STATUS_CONFIG[reservation.status];
-  const dateFormatted = formatDate(reservation.showDateTime);
-  const seatSummary = formatSeatSummary(reservation.seats);
+  const statusLabel = copy.reservation.status[statusConfig.labelKey];
+  const dateFormatted = formatDate(reservation.showDateTime, locale);
+  const seatSummary = formatSeatSummary(
+    reservation.seats,
+    copy.reservation.detail.seatLabel,
+    locale,
+  );
+  const detailHref = getLocalizedPathname(`/mypage/reservations/${reservation.id}`, locale);
 
   return (
     <div
       role="link"
       tabIndex={0}
-      aria-label={`${reservation.performanceTitle} ${dateFormatted} ${statusConfig.label} 예매 상세 보기`}
+      aria-label={`${reservation.performanceTitle} ${dateFormatted} ${statusLabel}`}
       className="relative min-h-[44px] cursor-pointer rounded-lg border bg-white p-4 transition-shadow hover:shadow-md"
-      onClick={() => router.push(`/mypage/reservations/${reservation.id}`)}
+      onClick={() => router.push(detailHref)}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
-          router.push(`/mypage/reservations/${reservation.id}`);
+          router.push(detailHref);
         }
       }}
     >
       <Badge className={`absolute right-4 top-4 ${statusConfig.className}`}>
-        {statusConfig.label}
+        {statusLabel}
       </Badge>
 
       <div className="flex gap-4">
@@ -82,7 +98,7 @@ export function ReservationCard({ reservation }: ReservationCardProps) {
           <div className="relative h-[84px] w-[60px] shrink-0 overflow-hidden rounded-md">
             <Image
               src={reservation.posterUrl}
-              alt={`${reservation.performanceTitle} 포스터`}
+              alt={`${reservation.performanceTitle} ${copy.performance.posterAltSuffix}`}
               fill
               className="object-cover"
               sizes="60px"
@@ -105,7 +121,11 @@ export function ReservationCard({ reservation }: ReservationCardProps) {
             )}
           </div>
           <p className="text-base font-semibold text-gray-900">
-            {reservation.totalAmount.toLocaleString('ko-KR')}원
+            {new Intl.NumberFormat(locale, {
+              style: 'currency',
+              currency: 'KRW',
+              maximumFractionDigits: 0,
+            }).format(reservation.totalAmount)}
           </p>
         </div>
       </div>

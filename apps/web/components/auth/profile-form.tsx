@@ -30,6 +30,8 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { PhoneVerification } from '@/components/auth/phone-verification';
+import { getVisibleCopy } from '@/lib/i18n/visible-copy';
+import { getClientLocale } from '@/lib/i18n/client-copy';
 
 const GENDER_LABELS: Record<string, string> = {
   male: '남성',
@@ -60,6 +62,8 @@ function getMarketingConsent(user: UserProfile): boolean {
 
 export function ProfileForm({ user }: ProfileFormProps) {
   const router = useRouter();
+  const locale = getClientLocale();
+  const copy = getVisibleCopy(locale).profile;
   const { setAuth, clearAuth, accessToken } = useAuthStore();
   const [name, setName] = useState(user.name);
   const [phone, setPhone] = useState(user.phone);
@@ -218,19 +222,19 @@ export function ProfileForm({ user }: ProfileFormProps) {
                   : 'text-gray-600'
               }
             >
-              휴대폰 {user.isPhoneVerified ? '인증 완료' : '미인증'}
+              {user.isPhoneVerified ? copy.phoneVerified : copy.phoneUnverified}
             </Badge>
           </div>
         </div>
       </section>
 
       <div className="space-y-2">
-        <Label>이메일</Label>
+        <Label>{copy.email}</Label>
         <p className="text-base text-gray-700">{user.email}</p>
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="profile-name">이름</Label>
+        <Label htmlFor="profile-name">{copy.name}</Label>
         <Input
           id="profile-name"
           value={name}
@@ -239,7 +243,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
       </div>
 
       <div className="space-y-2">
-        <Label>전화번호</Label>
+        <Label>{copy.phone}</Label>
         <PhoneVerification
           phone={phone}
           onPhoneChange={setPhone}
@@ -250,7 +254,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="profile-locale">선호 언어</Label>
+        <Label htmlFor="profile-locale">{copy.preferredLocale}</Label>
         <select
           id="profile-locale"
           value={preferredLocale}
@@ -273,29 +277,29 @@ export function ProfileForm({ user }: ProfileFormProps) {
             htmlFor="profile-marketing-consent"
             className="text-base font-semibold text-gray-900"
           >
-            마케팅 수신 동의
+            {copy.marketingConsent}
           </Label>
           <p className="mt-1 text-sm text-gray-600">
-            공연 소식, 할인, 예매 알림을 받을지 설정합니다.
+            {copy.marketingDescription}
           </p>
         </div>
         <Switch
           id="profile-marketing-consent"
-          aria-label="마케팅 수신 동의"
+          aria-label={copy.marketingConsent}
           checked={marketingConsent}
           onCheckedChange={setMarketingConsent}
         />
       </div>
 
       <div className="space-y-2">
-        <Label>성별</Label>
+        <Label>{copy.gender}</Label>
         <p className="text-base text-gray-700">
           {GENDER_LABELS[user.gender] ?? user.gender}
         </p>
       </div>
 
       <div className="space-y-2">
-        <Label>생년월일</Label>
+        <Label>{copy.birthDate}</Label>
         <p className="text-base text-gray-700">{formatBirthDate(user.birthDate)}</p>
       </div>
 
@@ -308,18 +312,18 @@ export function ProfileForm({ user }: ProfileFormProps) {
         {isSaving ? (
           <>
             <Loader2 className="h-5 w-5 animate-spin" />
-            저장 중...
+            {copy.saving}
           </>
         ) : (
-          '변경사항 저장'
+          copy.save
         )}
       </Button>
 
       <div className="rounded-lg border border-gray-200 bg-white p-4">
         <div className="mb-3">
-          <p className="text-base font-semibold text-gray-900">세션</p>
+          <p className="text-base font-semibold text-gray-900">{copy.session}</p>
           <p className="mt-1 text-sm text-gray-600">
-            현재 기기에서만 로그아웃합니다.
+            {copy.sessionDescription}
           </p>
         </div>
         <Button
@@ -331,7 +335,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
           {isLoggingOut ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
-            '로그아웃'
+            copy.logout
           )}
         </Button>
       </div>
@@ -340,21 +344,21 @@ export function ProfileForm({ user }: ProfileFormProps) {
         <div className="flex items-start gap-3">
           <XCircle className="mt-0.5 h-5 w-5 text-[#C62828]" aria-hidden="true" />
           <div className="min-w-0 flex-1">
-            <p className="text-base font-semibold text-gray-900">회원 탈퇴</p>
+            <p className="text-base font-semibold text-gray-900">{copy.withdrawTitle}</p>
             <p className="mt-1 text-sm text-gray-600">
-              진행 중인 예매가 있으면 먼저 취소 또는 관람 완료 후 탈퇴할 수 있습니다. 탈퇴가 완료되면 활성 세션이 종료됩니다.
+              {copy.withdrawDescription}
             </p>
           </div>
         </div>
 
         <div className="mt-4 space-y-3">
           <div className="space-y-2">
-            <Label htmlFor="profile-withdraw-reason">탈퇴 사유</Label>
+            <Label htmlFor="profile-withdraw-reason">{copy.withdrawReason}</Label>
             <Textarea
               id="profile-withdraw-reason"
               value={withdrawReason}
               onChange={(event) => setWithdrawReason(event.target.value)}
-              placeholder="선택 입력"
+              placeholder={copy.optionalPlaceholder}
               className="min-h-24"
             />
           </div>
@@ -362,10 +366,10 @@ export function ProfileForm({ user }: ProfileFormProps) {
             <Checkbox
               checked={withdrawConfirmed}
               onCheckedChange={(checked) => setWithdrawConfirmed(checked === true)}
-              aria-label="회원 탈퇴 확인"
+              aria-label={copy.withdrawConfirmAria}
             />
             <span className="font-semibold">
-              회원 탈퇴 후 현재 세션이 종료되고 다시 로그인할 수 없음을 확인했습니다.
+              {copy.withdrawConfirmText}
             </span>
           </label>
           <AlertDialog open={withdrawOpen} onOpenChange={setWithdrawOpen}>
@@ -376,22 +380,22 @@ export function ProfileForm({ user }: ProfileFormProps) {
               disabled={!withdrawConfirmed || isWithdrawing}
               onClick={() => setWithdrawOpen(true)}
             >
-              회원 탈퇴
+              {copy.withdrawCta}
             </Button>
             <AlertDialogContent>
               <AlertDialogHeader>
-                <AlertDialogTitle>회원 탈퇴를 진행하시겠습니까?</AlertDialogTitle>
+                <AlertDialogTitle>{copy.withdrawDialogTitle}</AlertDialogTitle>
                 <AlertDialogDescription>
-                  탈퇴 처리 후 활성 refresh token이 폐기되고 계정 로그인이 차단됩니다.
+                  {copy.withdrawDialogDescription}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
-                <AlertDialogCancel>취소</AlertDialogCancel>
+                <AlertDialogCancel>{copy.cancel}</AlertDialogCancel>
                 <AlertDialogAction
                   variant="destructive"
                   onClick={() => void handleWithdraw()}
                 >
-                  탈퇴 확정
+                  {copy.confirmWithdraw}
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>

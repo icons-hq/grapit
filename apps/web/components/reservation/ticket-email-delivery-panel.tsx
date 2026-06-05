@@ -11,6 +11,8 @@ import {
   useSendReservationTicketEmail,
   useVerifyAccountEmail,
 } from '@/hooks/use-reservations';
+import { getVisibleCopy } from '@/lib/i18n/visible-copy';
+import { getClientLocale } from '@/lib/i18n/client-copy';
 import { useAuthStore } from '@/stores/use-auth-store';
 
 interface TicketEmailDeliveryPanelProps {
@@ -23,14 +25,19 @@ type PanelMessage =
   | { tone: 'default'; text: string }
   | null;
 
-function formatDateTime(dateString: string): string {
+function formatTemplate(template: string, values: Record<string, string>) {
+  return template.replace(/\{(\w+)\}/g, (_, key: string) => values[key] ?? '');
+}
+
+function formatDateTime(dateString: string, locale: string): string {
   const date = new Date(dateString);
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  const h = String(date.getHours()).padStart(2, '0');
-  const min = String(date.getMinutes()).padStart(2, '0');
-  return `${y}.${m}.${d} ${h}:${min}`;
+  return new Intl.DateTimeFormat(locale, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
 }
 
 export function TicketEmailDeliveryPanel({
@@ -45,6 +52,8 @@ export function TicketEmailDeliveryPanel({
   const [code, setCode] = useState('');
   const [codeSent, setCodeSent] = useState(false);
   const [message, setMessage] = useState<PanelMessage>(null);
+  const locale = getClientLocale();
+  const copy = getVisibleCopy(locale).reservation.email;
   const accessToken = useAuthStore((state) => state.accessToken);
   const setAuth = useAuthStore((state) => state.setAuth);
   const requestVerification = useRequestAccountEmailVerification();
@@ -62,19 +71,19 @@ export function TicketEmailDeliveryPanel({
     code.length === 6 && normalizedEmail.length > 0 && !isBusy;
   const sendButtonLabel =
     currentDelivery.status === 'sent'
-      ? '티켓 이메일 다시 보내기'
-      : '티켓 이메일 보내기';
+      ? copy.resend
+      : copy.send;
 
   async function handleSendTicketEmail() {
     const result = await sendTicketEmail.mutateAsync({ reservationId });
     setSentDelivery(result.ticketEmailDelivery);
-    setMessage({ tone: 'success', text: '티켓 이메일을 발송했습니다.' });
+    setMessage({ tone: 'success', text: copy.sentSuccess });
   }
 
   async function handleRequestCode() {
     await requestVerification.mutateAsync({ email: normalizedEmail });
     setCodeSent(true);
-    setMessage({ tone: 'default', text: '인증번호를 이메일로 보냈습니다.' });
+    setMessage({ tone: 'default', text: copy.codeSent });
   }
 
   async function handleVerifyAndSend() {
@@ -90,7 +99,7 @@ export function TicketEmailDeliveryPanel({
     setSentDelivery(sendResult.ticketEmailDelivery);
     setCode('');
     setCodeSent(false);
-    setMessage({ tone: 'success', text: '인증이 완료되어 티켓 이메일을 발송했습니다.' });
+    setMessage({ tone: 'success', text: copy.verifiedSent });
   }
 
   if (currentDelivery.canSend) {
@@ -100,19 +109,23 @@ export function TicketEmailDeliveryPanel({
           <div className="flex items-start gap-3">
             <Mail className="mt-0.5 h-4 w-4 shrink-0 text-[#6C3CE0]" />
             <div className="space-y-1 text-sm">
-              <p className="font-semibold text-gray-900">티켓 이메일</p>
+              <p className="font-semibold text-gray-900">{copy.title}</p>
               <p className="break-all text-gray-700">{currentDelivery.email}</p>
               {currentDelivery.lastSentAt ? (
                 <p className="text-gray-500">
-                  마지막 발송 {formatDateTime(currentDelivery.lastSentAt)}
+                  {formatTemplate(copy.lastSent, {
+                    date: formatDateTime(currentDelivery.lastSentAt, locale),
+                  })}
                 </p>
               ) : currentDelivery.scheduledAt ? (
                 <p className="text-gray-500">
-                  예약 발송 {formatDateTime(currentDelivery.scheduledAt)}
+                  {formatTemplate(copy.scheduled, {
+                    date: formatDateTime(currentDelivery.scheduledAt, locale),
+                  })}
                 </p>
               ) : (
                 <p className="text-gray-500">
-                  QR 티켓 안내 메일은 공연 24시간 전에 다시 발송됩니다.
+                  {copy.qrNotice}
                 </p>
               )}
               {message && (
@@ -155,10 +168,10 @@ export function TicketEmailDeliveryPanel({
           <MailWarning className="mt-0.5 h-4 w-4 shrink-0 text-[#B45309]" />
           <div className="space-y-1 text-sm">
             <p className="font-semibold text-gray-900">
-              티켓 이메일 인증이 필요합니다
+              {copy.verificationRequiredTitle}
             </p>
             <p className="text-gray-700">
-              실제로 받을 수 있는 이메일을 인증하면 티켓을 이메일로 받을 수 있습니다.
+              {copy.verificationRequiredBody}
             </p>
           </div>
         </div>
@@ -166,7 +179,7 @@ export function TicketEmailDeliveryPanel({
         <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
           <div className="space-y-2">
             <Label htmlFor={`ticket-email-${reservationId}`} className="text-sm">
-              이메일
+              {copy.emailLabel}
             </Label>
             <Input
               id={`ticket-email-${reservationId}`}
@@ -194,7 +207,7 @@ export function TicketEmailDeliveryPanel({
             ) : (
               <Mail className="h-4 w-4" />
             )}
-            인증번호 받기
+            {copy.requestCode}
           </Button>
         </div>
 
@@ -205,7 +218,7 @@ export function TicketEmailDeliveryPanel({
                 htmlFor={`ticket-email-code-${reservationId}`}
                 className="text-sm"
               >
-                인증번호
+                {copy.codeLabel}
               </Label>
               <Input
                 id={`ticket-email-code-${reservationId}`}
@@ -232,7 +245,7 @@ export function TicketEmailDeliveryPanel({
               ) : (
                 <CheckCircle2 className="h-4 w-4" />
               )}
-              인증하고 티켓 받기
+              {copy.verifyAndSend}
             </Button>
           </div>
         )}

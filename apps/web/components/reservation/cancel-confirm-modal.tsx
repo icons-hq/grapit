@@ -27,18 +27,10 @@ import {
 } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { Loader2 } from 'lucide-react';
+import { getVisibleCopy } from '@/lib/i18n/visible-copy';
+import { getClientLocale } from '@/lib/i18n/client-copy';
 
-const CANCEL_REASONS = [
-  '단순 변심',
-  '일정 변경',
-  '다른 좌석으로 재예매',
-  '기타',
-] as const;
-
-const DELAYED_REOPEN_NOTICE =
-  '취소된 좌석은 즉시 재오픈되지 않을 수 있으며, 잠시 후 다시 판매될 수 있습니다';
-
-function formatDateTime(dateString?: string | null): string | null {
+function formatDateTime(dateString: string | null | undefined, locale: string): string | null {
   if (!dateString) return null;
 
   const date = new Date(dateString);
@@ -46,14 +38,14 @@ function formatDateTime(dateString?: string | null): string | null {
     return null;
   }
 
-  const days = ['일', '월', '화', '수', '목', '금', '토'];
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  const day = days[date.getDay()];
-  const h = String(date.getHours()).padStart(2, '0');
-  const min = String(date.getMinutes()).padStart(2, '0');
-  return `${y}.${m}.${d} (${day}) ${h}:${min}`;
+  return new Intl.DateTimeFormat(locale, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
 }
 
 interface CancelConfirmModalProps {
@@ -80,6 +72,8 @@ export function CancelConfirmModal({
   onConfirm,
   isLoading,
 }: CancelConfirmModalProps) {
+  const locale = getClientLocale();
+  const copy = getVisibleCopy(locale).reservation.cancel;
   const [reason, setReason] = useState('');
   const [confirmStepOpen, setConfirmStepOpen] = useState(false);
 
@@ -105,7 +99,12 @@ export function CancelConfirmModal({
     setConfirmStepOpen(true);
   }
 
-  const formattedExpectedDepositAt = formatDateTime(expectedDepositAt);
+  const formattedExpectedDepositAt = formatDateTime(expectedDepositAt, locale);
+  const formattedRefundAmount = new Intl.NumberFormat(locale, {
+    style: 'currency',
+    currency: 'KRW',
+    maximumFractionDigits: 0,
+  }).format(refundAmount);
 
   return (
     <>
@@ -113,10 +112,10 @@ export function CancelConfirmModal({
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="text-xl font-semibold">
-              환불 및 재오픈 안내
+              {copy.title}
             </DialogTitle>
             <DialogDescription className="text-sm text-gray-600">
-              예매 전체가 취소됩니다. 일부 좌석만 취소할 수 없습니다.
+              {copy.description}
             </DialogDescription>
           </DialogHeader>
 
@@ -126,14 +125,14 @@ export function CancelConfirmModal({
                 htmlFor="cancel-reason"
                 className="mb-2 block text-sm font-semibold text-gray-700"
               >
-                취소 사유
+                {copy.reasonLabel}
               </label>
               <Select value={reason} onValueChange={setReason}>
                 <SelectTrigger id="cancel-reason" className="w-full">
-                  <SelectValue placeholder="취소 사유를 선택하세요" />
+                  <SelectValue placeholder={copy.reasonPlaceholder} />
                 </SelectTrigger>
                 <SelectContent>
-                  {CANCEL_REASONS.map((r) => (
+                  {copy.reasons.map((r) => (
                     <SelectItem key={r} value={r}>
                       {r}
                     </SelectItem>
@@ -144,18 +143,20 @@ export function CancelConfirmModal({
 
             <div className="space-y-3 rounded-xl border border-gray-200 bg-gray-50 p-4">
               <div className="flex items-center justify-between gap-4">
-                <span className="text-sm text-gray-600">환불 예정 금액</span>
+                <span className="text-sm text-gray-600">{copy.refundAmount}</span>
                 <span className="text-base font-semibold text-gray-900">
-                  {refundAmount.toLocaleString('ko-KR')}원
+                  {formattedRefundAmount}
                 </span>
               </div>
               <div className="flex items-center justify-between gap-4">
-                <span className="text-sm text-gray-600">환불 수단</span>
-                <span className="text-sm text-gray-700">{paymentMethod} 결제 취소</span>
+                <span className="text-sm text-gray-600">{copy.refundMethod}</span>
+                <span className="text-sm text-gray-700">
+                  {copy.refundMethodValue.replace('{paymentMethod}', paymentMethod)}
+                </span>
               </div>
               {formattedExpectedDepositAt && (
                 <div className="flex items-center justify-between gap-4">
-                  <span className="text-sm text-gray-600">예상 입금 시점</span>
+                  <span className="text-sm text-gray-600">{copy.expectedDeposit}</span>
                   <span className="text-right text-sm font-semibold text-gray-900">
                     {formattedExpectedDepositAt}
                   </span>
@@ -165,13 +166,14 @@ export function CancelConfirmModal({
 
             <div className="space-y-2 rounded-xl border border-[#E5D9FF] bg-[#FAF7FF] p-4">
               <p className="text-sm text-gray-700">
-                환불 반영 속도는 결제수단과 카드사 처리 시간에 따라 달라질 수 있습니다.
+                {copy.refundTimingNotice}
               </p>
-              <p className="text-sm text-gray-700">{DELAYED_REOPEN_NOTICE}</p>
+              <p className="text-sm text-gray-700">{copy.delayedReopenNotice}</p>
               {releaseWindowMinutes && (
                 <p className="text-sm text-gray-700">
-                  취소 좌석은 보통 {releaseWindowMinutes.min}~{releaseWindowMinutes.max}
-                  분 사이 랜덤하게 다시 판매될 수 있습니다.
+                  {copy.releaseWindow
+                    .replace('{min}', String(releaseWindowMinutes.min))
+                    .replace('{max}', String(releaseWindowMinutes.max))}
                 </p>
               )}
             </div>
@@ -183,14 +185,14 @@ export function CancelConfirmModal({
               variant="ghost"
               onClick={() => handlePreviewOpenChange(false)}
             >
-              닫기
+              {copy.close}
             </Button>
             <Button
               type="button"
               onClick={handleMoveToConfirm}
               disabled={!reason || isLoading}
             >
-              마지막 확인
+              {copy.finalCheck}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -207,27 +209,29 @@ export function CancelConfirmModal({
         >
           <AlertDialogHeader>
             <AlertDialogTitle className="text-xl font-semibold">
-              예매를 취소하시겠습니까?
+              {copy.confirmTitle}
             </AlertDialogTitle>
             <AlertDialogDescription className="text-sm text-gray-600">
-              환불 요청 후에는 되돌릴 수 없습니다. 환불 금액과 재오픈 지연 가능성을 다시 확인해주세요.
+              {copy.confirmDescription}
             </AlertDialogDescription>
           </AlertDialogHeader>
 
           <div className="space-y-3 rounded-xl bg-gray-50 p-4">
             <div className="flex items-center justify-between gap-4">
-              <span className="text-sm text-gray-600">취소 사유</span>
+              <span className="text-sm text-gray-600">{copy.reasonLabel}</span>
               <span className="text-sm font-semibold text-gray-900">{reason}</span>
             </div>
             <div className="flex items-center justify-between gap-4">
-              <span className="text-sm text-gray-600">환불 예정 금액</span>
+              <span className="text-sm text-gray-600">{copy.refundAmount}</span>
               <span className="text-sm font-semibold text-gray-900">
-                {refundAmount.toLocaleString('ko-KR')}원
+                {formattedRefundAmount}
               </span>
             </div>
             <div className="flex items-center justify-between gap-4">
-              <span className="text-sm text-gray-600">환불 수단</span>
-              <span className="text-sm text-gray-700">{paymentMethod} 결제 취소</span>
+              <span className="text-sm text-gray-600">{copy.refundMethod}</span>
+              <span className="text-sm text-gray-700">
+                {copy.refundMethodValue.replace('{paymentMethod}', paymentMethod)}
+              </span>
             </div>
           </div>
 
@@ -236,7 +240,7 @@ export function CancelConfirmModal({
               variant="ghost"
               onClick={() => setConfirmStepOpen(false)}
             >
-              이전으로
+              {copy.previous}
             </AlertDialogCancel>
             <Button
               variant="destructive"
@@ -246,10 +250,10 @@ export function CancelConfirmModal({
               {isLoading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  취소 처리 중...
+                  {copy.processing}
                 </>
               ) : (
-                '예매 취소'
+                copy.confirmCta
               )}
             </Button>
           </AlertDialogFooter>

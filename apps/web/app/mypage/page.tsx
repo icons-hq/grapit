@@ -28,6 +28,8 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { useMyReservations } from '@/hooks/use-reservations';
+import { getVisibleCopy, type VisibleCopy } from '@/lib/i18n/visible-copy';
+import { getClientLocale } from '@/lib/i18n/client-copy';
 
 type MyPageTab = 'account' | 'wallet' | 'settings';
 type AccountHubUser = UserProfile & {
@@ -37,13 +39,6 @@ type AccountHubUser = UserProfile & {
 const COUNTRY_LABELS: ReadonlyMap<string, string> = new Map(
   COUNTRY_OPTIONS.map((country) => [country.value, country.label]),
 );
-
-const STATUS_LABELS: Record<ReservationStatus, string> = {
-  CONFIRMED: '예매완료',
-  PENDING_PAYMENT: '결제대기',
-  CANCELLED: '취소/환불',
-  FAILED: '결제실패',
-};
 
 function resolveActiveTab(value: string | null): MyPageTab {
   if (value === 'wallet' || value === 'reservations') return 'wallet';
@@ -59,10 +54,10 @@ function getMarketingConsent(user: UserProfile) {
   return (user as AccountHubUser).marketingConsent === true;
 }
 
-function formatDateTime(dateString: string) {
+function formatDateTime(dateString: string, locale: string) {
   const date = new Date(dateString);
   if (Number.isNaN(date.getTime())) return dateString;
-  return new Intl.DateTimeFormat('ko-KR', {
+  return new Intl.DateTimeFormat(locale, {
     month: 'short',
     day: 'numeric',
     weekday: 'short',
@@ -71,18 +66,23 @@ function formatDateTime(dateString: string) {
   }).format(date);
 }
 
-function getAccountAgeLabel(createdAt: string) {
+function getAccountAgeLabel(
+  createdAt: string,
+  copy: VisibleCopy['mypage'],
+) {
   const date = new Date(createdAt);
-  if (Number.isNaN(date.getTime())) return '가입일 확인 필요';
+  if (Number.isNaN(date.getTime())) return copy.accountAgeUnknown;
 
   const days = Math.max(
     1,
     Math.floor((Date.now() - date.getTime()) / 86_400_000) + 1,
   );
 
-  if (days < 30) return `${days}일째 이용 중`;
-  if (days < 365) return `${Math.floor(days / 30)}개월째 이용 중`;
-  return `${Math.floor(days / 365)}년째 이용 중`;
+  if (days < 30) return copy.accountAgeDays.replace('{count}', String(days));
+  if (days < 365) {
+    return copy.accountAgeMonths.replace('{count}', String(Math.floor(days / 30)));
+  }
+  return copy.accountAgeYears.replace('{count}', String(Math.floor(days / 365)));
 }
 
 function buildReservationSummary(reservations: ReservationListItem[]) {
@@ -117,6 +117,8 @@ function getNextReservation(reservations: ReservationListItem[]) {
 }
 
 export default function MyPage() {
+  const locale = getClientLocale();
+  const copy = getVisibleCopy(locale).mypage;
   const user = useAuthStore((s) => s.user);
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -159,22 +161,22 @@ export default function MyPage() {
           <header className="mb-5 rounded-lg border border-gray-200 bg-white p-5 md:p-6">
             <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
               <div>
-                <p className="text-sm font-semibold text-primary">MY GRABIT</p>
+                <p className="text-sm font-semibold text-primary">{copy.titlePrefix}</p>
                 <h1 className="mt-2 text-2xl font-semibold text-gray-950 md:text-3xl">
-                  {user?.name ?? '회원'}님의 계정 허브
+                  {copy.title.replace('{name}', user?.name ?? copy.fallbackName)}
                 </h1>
                 <p className="mt-2 text-sm text-gray-600 md:text-base">
-                  계정 상태, 티켓, 설정을 한 화면에서 확인하세요.
+                  {copy.description}
                 </p>
               </div>
               <div className="grid grid-cols-3 gap-2 rounded-lg bg-gray-100 p-2 text-center">
-                <SummaryNumber label="전체" value={reservationSummary.total} />
+                <SummaryNumber label={copy.summary.total} value={reservationSummary.total} />
                 <SummaryNumber
-                  label="예매완료"
+                  label={copy.summary.confirmed}
                   value={reservationSummary.CONFIRMED}
                 />
                 <SummaryNumber
-                  label="취소/환불"
+                  label={copy.summary.cancelled}
                   value={reservationSummary.CANCELLED}
                 />
               </div>
@@ -188,21 +190,21 @@ export default function MyPage() {
                 className="h-11 gap-2 rounded-md border-b-0 text-sm data-[state=active]:bg-gray-950 data-[state=active]:text-white data-[state=active]:border-b-0 data-[state=active]:-mb-0"
               >
                 <UserRound className="h-4 w-4" />
-                계정
+                {copy.tabs.account}
               </TabsTrigger>
               <TabsTrigger
                 value="wallet"
                 className="h-11 gap-2 rounded-md border-b-0 text-sm data-[state=active]:bg-gray-950 data-[state=active]:text-white data-[state=active]:border-b-0 data-[state=active]:-mb-0"
               >
                 <WalletCards className="h-4 w-4" />
-                티켓 지갑
+                {copy.tabs.wallet}
               </TabsTrigger>
               <TabsTrigger
                 value="settings"
                 className="h-11 gap-2 rounded-md border-b-0 text-sm data-[state=active]:bg-gray-950 data-[state=active]:text-white data-[state=active]:border-b-0 data-[state=active]:-mb-0"
               >
                 <Settings2 className="h-4 w-4" />
-                설정
+                {copy.tabs.settings}
               </TabsTrigger>
             </TabsList>
 
@@ -234,10 +236,10 @@ export default function MyPage() {
                 <div className="mb-6">
                   <p className="text-sm font-semibold text-primary">SETTINGS</p>
                   <h2 className="mt-2 text-xl font-semibold text-gray-950">
-                    설정 센터
+                    {locale === 'ko' ? '설정 센터' : copy.tabs.settings}
                   </h2>
                   <p className="mt-1 text-sm text-gray-600">
-                    프로필, 전화번호 인증, 언어, 수신 동의, 세션을 관리합니다.
+                    {getVisibleCopy(locale).profile.marketingDescription}
                   </p>
                 </div>
                 {user && <ProfileForm user={user} />}
@@ -272,6 +274,12 @@ function AccountHub({
   onWalletClick: () => void;
   onSettingsClick: () => void;
 }) {
+  const locale = getClientLocale();
+  const visibleCopy = getVisibleCopy(locale);
+  const copy = visibleCopy.mypage;
+  const profileCopy = visibleCopy.profile;
+  const reservationCopy = visibleCopy.reservation;
+
   return (
     <div className="grid gap-4 lg:grid-cols-[1.15fr_0.85fr]">
       <section className="rounded-lg border border-gray-200 bg-white p-5 md:p-6">
@@ -279,7 +287,7 @@ function AccountHub({
           <div>
             <p className="text-sm font-semibold text-primary">ACCOUNT</p>
             <h2 className="mt-2 text-xl font-semibold text-gray-950">
-              계정 개요
+              {locale === 'ko' ? '계정 개요' : copy.tabs.account}
             </h2>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -291,7 +299,9 @@ function AccountHub({
                   : 'text-gray-600'
               }
             >
-              이메일 {user.isEmailVerified ? '인증 완료' : '미인증'}
+              {user.isEmailVerified
+                ? profileCopy.emailVerified
+                : profileCopy.emailUnverified}
             </Badge>
             <Badge
               variant={user.isPhoneVerified ? 'default' : 'outline'}
@@ -301,34 +311,38 @@ function AccountHub({
                   : 'text-gray-600'
               }
             >
-              휴대폰 {user.isPhoneVerified ? '인증 완료' : '미인증'}
+              {user.isPhoneVerified ? profileCopy.phoneVerified : profileCopy.phoneUnverified}
             </Badge>
           </div>
         </div>
 
         <div className="mt-5 grid gap-3 sm:grid-cols-2">
-          <InfoTile label="이름" value={user.name} />
-          <InfoTile label="이메일" value={user.email} />
-          <InfoTile label="전화번호" value={user.phone} />
-          <InfoTile label="국가" value={getCountryLabel(user.country)} />
+          <InfoTile label={profileCopy.name} value={user.name} />
+          <InfoTile label={profileCopy.email} value={user.email} />
+          <InfoTile label={profileCopy.phone} value={user.phone} />
+          <InfoTile label={visibleCopy.auth.signup.countryLabel} value={getCountryLabel(user.country)} />
           <InfoTile
-            label="선호 언어"
+            label={profileCopy.preferredLocale}
             value={LOCALE_LABELS[user.preferredLocale].english}
             icon={<Languages className="h-4 w-4" />}
           />
           <InfoTile
-            label="마케팅 수신"
-            value={getMarketingConsent(user) ? '동의' : '미동의'}
+            label={profileCopy.marketingConsent}
+            value={
+              locale === 'ko'
+                ? getMarketingConsent(user) ? '동의' : '미동의'
+                : getMarketingConsent(user) ? copy.marketingOn : copy.marketingOff
+            }
             icon={<Bell className="h-4 w-4" />}
           />
           <InfoTile
-            label="계정 상태"
-            value={user.role === 'admin' ? '관리자' : '회원'}
+            label={copy.tabs.account}
+            value={user.role === 'admin' ? 'Admin' : copy.fallbackName}
             icon={<ShieldCheck className="h-4 w-4" />}
           />
           <InfoTile
-            label="가입 기간"
-            value={getAccountAgeLabel(user.createdAt)}
+            label={copy.accountAgeUnknown}
+            value={getAccountAgeLabel(user.createdAt, copy)}
             icon={<CalendarDays className="h-4 w-4" />}
           />
         </div>
@@ -337,7 +351,7 @@ function AccountHub({
           <Button type="button" className="justify-between" onClick={onWalletClick}>
             <span className="inline-flex items-center gap-2">
               <Ticket className="h-4 w-4" />
-              티켓 지갑 보기
+              {copy.viewWallet}
             </span>
             <ChevronRight className="h-4 w-4" />
           </Button>
@@ -349,7 +363,7 @@ function AccountHub({
           >
             <span className="inline-flex items-center gap-2">
               <Settings2 className="h-4 w-4" />
-              설정 변경
+              {copy.editSettings}
             </span>
             <ChevronRight className="h-4 w-4" />
           </Button>
@@ -359,24 +373,24 @@ function AccountHub({
       <section className="rounded-lg border border-gray-200 bg-white p-5 md:p-6">
         <p className="text-sm font-semibold text-primary">TICKET WALLET</p>
         <h2 className="mt-2 text-xl font-semibold text-gray-950">
-          티켓 요약
+          {locale === 'ko' ? '티켓 요약' : copy.tabs.wallet}
         </h2>
         <div className="mt-5 grid grid-cols-2 gap-3">
-          <StatusTile label="전체" value={reservationSummary.total} />
-          <StatusTile label="예매완료" value={reservationSummary.CONFIRMED} />
-          <StatusTile label="결제대기" value={reservationSummary.PENDING_PAYMENT} />
-          <StatusTile label="취소/환불" value={reservationSummary.CANCELLED} />
+          <StatusTile label={copy.summary.total} value={reservationSummary.total} />
+          <StatusTile label={reservationCopy.status.confirmed} value={reservationSummary.CONFIRMED} />
+          <StatusTile label={reservationCopy.status.pendingPayment} value={reservationSummary.PENDING_PAYMENT} />
+          <StatusTile label={copy.summary.cancelled} value={reservationSummary.CANCELLED} />
         </div>
 
         <div className="mt-5 rounded-lg bg-gray-50 p-4">
-          <p className="text-sm font-semibold text-gray-900">다음 일정</p>
+          <p className="text-sm font-semibold text-gray-900">{copy.nextReservation}</p>
           {nextReservation ? (
             <div className="mt-3">
               <p className="text-base font-semibold text-gray-950">
                 {nextReservation.performanceTitle}
               </p>
               <p className="mt-1 text-sm text-gray-600">
-                {formatDateTime(nextReservation.showDateTime)}
+                {formatDateTime(nextReservation.showDateTime, locale)}
               </p>
               <p className="mt-1 text-sm text-gray-600">
                 {nextReservation.venue}
@@ -384,7 +398,7 @@ function AccountHub({
             </div>
           ) : (
             <p className="mt-3 text-sm text-gray-600">
-              예정된 예매완료 티켓이 없습니다.
+              {copy.noUpcoming}
             </p>
           )}
         </div>
@@ -439,29 +453,34 @@ function TicketWallet({
   filter: string;
   onFilterChange: (filter: string) => void;
 }) {
+  const locale = getClientLocale();
+  const visibleCopy = getVisibleCopy(locale);
+  const mypageCopy = visibleCopy.mypage;
+  const reservationCopy = visibleCopy.reservation;
+
   return (
     <section className="rounded-lg border border-gray-200 bg-white p-5 md:p-6">
       <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
         <div>
           <p className="text-sm font-semibold text-primary">TICKET WALLET</p>
           <h2 className="mt-2 text-xl font-semibold text-gray-950">
-            티켓 지갑
+            {mypageCopy.tabs.wallet}
           </h2>
           <p className="mt-1 text-sm text-gray-600">
-            예매, 결제, 취소/환불 상태를 먼저 확인하고 상세 티켓으로 이동합니다.
+            {mypageCopy.description}
           </p>
         </div>
       </div>
 
       <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <StatusTile label="전체" value={summary.total} />
-        <StatusTile label={STATUS_LABELS.CONFIRMED} value={summary.CONFIRMED} />
+        <StatusTile label={mypageCopy.summary.total} value={summary.total} />
+        <StatusTile label={reservationCopy.status.confirmed} value={summary.CONFIRMED} />
         <StatusTile
-          label={STATUS_LABELS.PENDING_PAYMENT}
+          label={reservationCopy.status.pendingPayment}
           value={summary.PENDING_PAYMENT}
         />
-        <StatusTile label={STATUS_LABELS.CANCELLED} value={summary.CANCELLED} />
-        <StatusTile label={STATUS_LABELS.FAILED} value={summary.FAILED} />
+        <StatusTile label={reservationCopy.status.cancelled} value={summary.CANCELLED} />
+        <StatusTile label={reservationCopy.status.failed} value={summary.FAILED} />
       </div>
 
       <div className="mt-6">

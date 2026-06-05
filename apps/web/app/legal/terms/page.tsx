@@ -1,9 +1,9 @@
-import type { Metadata } from 'next';
 import { getLocale } from 'next-intl/server';
 import termsMd from '@/content/legal/terms-of-service.md?raw';
 import termsEnMd from '@/content/legal/terms-of-service.en.md?raw';
 import { LegalFallbackLabel } from '@/components/legal/legal-fallback-label';
 import { TermsMarkdown } from '@/components/legal/terms-markdown';
+import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import { getLegalRobots } from '../robots';
 
 export const dynamic = 'force-static';
@@ -15,14 +15,19 @@ export const dynamic = 'force-static';
  * GRABIT_ENV: 'production' | 'preview' | 'development' | undefined.
  * GRABIT_ENV 가 누락된 production build 는 NODE_ENV=production 을 fallback 으로 사용한다.
  */
-export const metadata: Metadata = {
-  title: '이용약관 — Grabit',
-  description: 'Grabit 서비스 이용 조건과 회원·회사의 권리·의무를 안내합니다.',
-  alternates: {
-    canonical: 'https://heygrabit.com/legal/terms',
-  },
-  robots: getLegalRobots(),
-};
+export async function generateMetadata() {
+  const locale = await getLocale();
+  const copy = getVisibleCopy(locale).metadata.legal;
+
+  return {
+    title: copy.termsTitle,
+    description: copy.termsDescription,
+    alternates: {
+      canonical: 'https://heygrabit.com/legal/terms',
+    },
+    robots: getLegalRobots(),
+  };
+}
 
 export default async function TermsPage() {
   const locale = await getLocale();
