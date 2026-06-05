@@ -17,6 +17,10 @@ import {
   performances,
   users,
   seatInventories,
+  performanceSeatAssignments,
+  performanceSeatTiers,
+  venueLayoutFloors,
+  venueLayoutSeats,
   bookingPolicies,
   bookingOperationAuditLogs,
   ticketItems,
@@ -29,6 +33,7 @@ import { normalizeSeatIdentity, toFloorAwareSeatSelection } from '@grabit/shared
 import type {
   AdminBookingFunnelStatus,
   AdminBookingListItem,
+  AdminBookingTierStats,
   AdminTicketStatusCounts,
   AdminReservationExportFilter,
   BookingStats,
@@ -136,10 +141,15 @@ type AdminBookingDetailDto = AdminBookingListItem & {
 type AdminBookingQueryParams = {
   status?: string;
   reservationStatus?: string;
+  performanceId?: string;
+  showtimeId?: string;
   funnelStatus?: string;
   paymentStatus?: string;
   paymentMethod?: string;
   audienceRegion?: string;
+  seatTier?: string;
+  floorKey?: string;
+  seatQuery?: string;
   dateFrom?: string;
   dateTo?: string;
   search?: string;
@@ -250,6 +260,23 @@ type BookingStatsRow = {
   partialCancelledCount?: number | string | null;
 };
 
+type AdminBookingTierStatsRow = {
+  tierName: string;
+  price: number | string | null;
+  soldSeats: number | string | null;
+  activeRevenue: number | string | null;
+  cancelProcessingSeats: number | string | null;
+  cancelledSeats: number | string | null;
+  enteredSeats: number | string | null;
+};
+
+type AdminBookingTierCapacityRow = {
+  tierName: string;
+  price: number | string | null;
+  totalSeats: number | string | null;
+  unavailableSeats: number | string | null;
+};
+
 function normalizeReservationSeatIdentity(seatId: string): {
   floorKey: string;
   seatId: string;
@@ -272,6 +299,12 @@ function buildAdminBookingWhereClause(filters: AdminBookingQueryParams): SQL | u
       eq(reservations.status, reservationStatus as typeof reservations.status.enumValues[number]),
     );
   }
+  if (filters.performanceId) {
+    conditions.push(eq(performances.id, filters.performanceId));
+  }
+  if (filters.showtimeId) {
+    conditions.push(eq(showtimes.id, filters.showtimeId));
+  }
   if (filters.funnelStatus) {
     conditions.push(funnelStatusEqualsSql(filters.funnelStatus));
   }
@@ -288,6 +321,10 @@ function buildAdminBookingWhereClause(filters: AdminBookingQueryParams): SQL | u
   }
   if (filters.audienceRegion === 'overseas') {
     conditions.push(ne(users.country, 'KR'));
+  }
+  const seatFilterSql = reservationSeatFilterSql(filters);
+  if (seatFilterSql) {
+    conditions.push(seatFilterSql);
   }
   if (filters.dateFrom) {
     conditions.push(gte(reservations.createdAt, dateOnlyStart(filters.dateFrom)));
@@ -319,6 +356,80 @@ function buildAdminBookingWhereClause(filters: AdminBookingQueryParams): SQL | u
   }
 
   return conditions.length > 0 ? and(...conditions) : undefined;
+}
+
+function reservationSeatFilterSql(filters: AdminBookingQueryParams): SQL | undefined {
+  const ticketItemConditions = ticketItemDirectFilterConditions(filters, 'admin_filter_ti');
+  const fallbackConditions = reservationSeatFilterConditions(filters, 'admin_filter_rs');
+
+  if (ticketItemConditions.length === 0 && fallbackConditions.length === 0) {
+    return undefined;
+  }
+
+  const ticketItemExists = sql`exists (
+    select 1
+    from ticket_items admin_filter_ti
+    where admin_filter_ti.reservation_id = ${reservations.id}
+      and ${and(...ticketItemConditions)}
+  )`;
+  const fallbackExists = sql`(
+    not ${hasAnyTicketItemsSql()}
+    and exists (
+      select 1
+      from reservation_seats admin_filter_rs
+      where admin_filter_rs.reservation_id = ${reservations.id}
+        and ${and(...fallbackConditions)}
+    )
+  )`;
+
+  return or(ticketItemExists, fallbackExists);
+}
+
+function ticketItemDirectFilterConditions(
+  filters: AdminBookingQueryParams,
+  alias: string,
+): SQL[] {
+  const conditions: SQL[] = [];
+  if (filters.seatTier) {
+    conditions.push(sql`${sql.raw(`${alias}.tier_name`)} = ${filters.seatTier}`);
+  }
+  if (filters.floorKey) {
+    conditions.push(sql`${sql.raw(`${alias}.floor_key`)} = ${filters.floorKey}`);
+  }
+  if (filters.seatQuery) {
+    const pattern = `%${filters.seatQuery}%`;
+    conditions.push(sql`(
+      ${sql.raw(`${alias}.seat_key`)} ilike ${pattern}
+      or ${sql.raw(`${alias}.seat_id`)} ilike ${pattern}
+      or ${sql.raw(`${alias}.tier_name`)} ilike ${pattern}
+      or ${sql.raw(`${alias}."row"`)} ilike ${pattern}
+      or ${sql.raw(`${alias}.number`)} ilike ${pattern}
+    )`);
+  }
+  return conditions;
+}
+
+function reservationSeatFilterConditions(
+  filters: AdminBookingQueryParams,
+  alias: string,
+): SQL[] {
+  const conditions: SQL[] = [];
+  if (filters.seatTier) {
+    conditions.push(sql`${sql.raw(`${alias}.tier_name`)} = ${filters.seatTier}`);
+  }
+  if (filters.floorKey) {
+    conditions.push(sql`${sql.raw(`${alias}.seat_id`)} ilike ${`${filters.floorKey}:%`}`);
+  }
+  if (filters.seatQuery) {
+    const pattern = `%${filters.seatQuery}%`;
+    conditions.push(sql`(
+      ${sql.raw(`${alias}.seat_id`)} ilike ${pattern}
+      or ${sql.raw(`${alias}.tier_name`)} ilike ${pattern}
+      or ${sql.raw(`${alias}."row"`)} ilike ${pattern}
+      or ${sql.raw(`${alias}.number`)} ilike ${pattern}
+    )`);
+  }
+  return conditions;
 }
 
 function paymentMethodFilterSql(paymentMethod: string): SQL {
@@ -532,6 +643,91 @@ function toInt(value: number | string | null | undefined): number {
   return 0;
 }
 
+function buildTicketItemStatsWhereClause(
+  filters: AdminBookingQueryParams,
+  reservationWhereClause: SQL | undefined,
+): SQL | undefined {
+  const conditions: SQL[] = [];
+  if (reservationWhereClause) {
+    conditions.push(reservationWhereClause);
+  }
+  if (filters.seatTier) {
+    conditions.push(eq(ticketItems.tierName, filters.seatTier));
+  }
+  if (filters.floorKey) {
+    conditions.push(eq(ticketItems.floorKey, filters.floorKey));
+  }
+  if (filters.seatQuery) {
+    const pattern = `%${filters.seatQuery}%`;
+    conditions.push(
+      or(
+        ilike(ticketItems.seatKey, pattern),
+        ilike(ticketItems.seatId, pattern),
+        ilike(ticketItems.tierName, pattern),
+        ilike(ticketItems.row, pattern),
+        ilike(ticketItems.number, pattern),
+      )!,
+    );
+  }
+
+  return conditions.length > 0 ? and(...conditions) : undefined;
+}
+
+function mergeTierStats(
+  tierRows: AdminBookingTierStatsRow[],
+  capacityRows: AdminBookingTierCapacityRow[],
+): AdminBookingTierStats[] {
+  const byTier = new Map<string, AdminBookingTierStats & { unavailableSeats: number }>();
+
+  for (const row of tierRows) {
+    const soldSeats = toInt(row.soldSeats);
+    const activeRevenue = toInt(row.activeRevenue);
+    byTier.set(row.tierName, {
+      tierName: row.tierName,
+      price: toInt(row.price),
+      soldSeats,
+      activeRevenue,
+      averageTicketAmount: soldSeats > 0 ? Math.round(activeRevenue / soldSeats) : 0,
+      cancelProcessingSeats: toInt(row.cancelProcessingSeats),
+      cancelledSeats: toInt(row.cancelledSeats),
+      enteredSeats: toInt(row.enteredSeats),
+      totalSeats: null,
+      remainingSeats: null,
+      sellThroughRate: null,
+      unavailableSeats: 0,
+    });
+  }
+
+  for (const row of capacityRows) {
+    const current = byTier.get(row.tierName) ?? {
+      tierName: row.tierName,
+      price: toInt(row.price),
+      soldSeats: 0,
+      activeRevenue: 0,
+      averageTicketAmount: 0,
+      cancelProcessingSeats: 0,
+      cancelledSeats: 0,
+      enteredSeats: 0,
+      totalSeats: null,
+      remainingSeats: null,
+      sellThroughRate: null,
+      unavailableSeats: 0,
+    };
+    const totalSeats = toInt(row.totalSeats);
+    const unavailableSeats = toInt(row.unavailableSeats);
+    current.price = current.price || toInt(row.price);
+    current.totalSeats = totalSeats;
+    current.unavailableSeats = unavailableSeats;
+    current.remainingSeats = Math.max(totalSeats - current.soldSeats - unavailableSeats, 0);
+    current.sellThroughRate = totalSeats > 0
+      ? Math.round((current.soldSeats / totalSeats) * 100)
+      : 0;
+    byTier.set(row.tierName, current);
+  }
+
+  return Array.from(byTier.values()).map(({ unavailableSeats: _unused, ...stats }) => stats);
+}
+
 @Injectable()
 export class AdminBookingService {
   private readonly logger = new Logger(AdminBookingService.name);
@@ -550,15 +746,25 @@ export class AdminBookingService {
   async getBookings(params: {
     status?: string;
     reservationStatus?: string;
+    performanceId?: string;
+    showtimeId?: string;
     funnelStatus?: string;
     paymentStatus?: string;
     paymentMethod?: string;
     audienceRegion?: string;
+    seatTier?: string;
+    floorKey?: string;
+    seatQuery?: string;
     dateFrom?: string;
     dateTo?: string;
     search?: string;
     page?: number;
-  }): Promise<{ bookings: AdminBookingListItem[]; stats: BookingStats; total: number }> {
+  }): Promise<{
+    bookings: AdminBookingListItem[];
+    stats: BookingStats;
+    tierStats: AdminBookingTierStats[];
+    total: number;
+  }> {
     const { page = 1 } = params;
     const limit = 20;
     const offset = (page - 1) * limit;
@@ -584,21 +790,7 @@ export class AdminBookingService {
       .leftJoin(refunds, eq(refunds.reservationId, reservations.id))
       .where(whereClause) as BookingStatsRow[];
 
-    const [allTimeSoldRow] = await this.db
-      .select({
-        soldCount: countWhereSql(soldReservationConditionSql()),
-      })
-      .from(reservations)
-      .innerJoin(users, eq(reservations.userId, users.id))
-      .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
-      .innerJoin(performances, eq(showtimes.performanceId, performances.id))
-      .leftJoin(payments, eq(payments.reservationId, reservations.id))
-      .leftJoin(refunds, eq(refunds.reservationId, reservations.id)) as BookingStatsRow[];
-
-    const stats = {
-      ...mapBookingStats(statsRow),
-      soldCount: toInt(allTimeSoldRow?.soldCount),
-    };
+    const stats = mapBookingStats(statsRow);
 
     const rows = await this.db
       .select({
@@ -702,12 +894,128 @@ export class AdminBookingService {
         createdAt: row.reservation.createdAt?.toISOString() ?? '',
       };
     });
+    const tierStats = await this.getTierStats(params, whereClause);
 
     return {
       bookings,
       stats,
+      tierStats,
       total: stats.totalBookings,
     };
+  }
+
+  private async getTierStats(
+    params: AdminBookingQueryParams,
+    whereClause: SQL | undefined,
+  ): Promise<AdminBookingTierStats[]> {
+    const ticketItemWhere = buildTicketItemStatsWhereClause(params, whereClause);
+    const tierRows = await this.db
+      .select({
+        tierName: ticketItems.tierName,
+        price: sql<number>`min(${ticketItems.price})::int`,
+        soldSeats: sql<number>`count(*) filter (
+          where ${ticketItems.status} = 'active'
+            and ${completedRevenueEligibleConditionSql()}
+        )::int`,
+        activeRevenue: sql<number>`coalesce(sum(
+          case
+            when ${ticketItems.status} = 'active'
+              and ${completedRevenueEligibleConditionSql()}
+            then ${ticketItems.price} + ${ticketItems.serviceFee}
+            else 0
+          end
+        ), 0)::int`,
+        cancelProcessingSeats: sql<number>`count(*) filter (
+          where ${ticketItems.status} = 'cancellation_pending'
+        )::int`,
+        cancelledSeats: sql<number>`count(*) filter (
+          where ${ticketItems.status} = 'cancelled'
+        )::int`,
+        enteredSeats: sql<number>`count(*) filter (
+          where ${ticketItems.status} = 'active'
+            and ${ticketItems.admissionState} = 'entered'
+            and ${completedRevenueEligibleConditionSql()}
+        )::int`,
+      })
+      .from(ticketItems)
+      .innerJoin(reservations, eq(ticketItems.reservationId, reservations.id))
+      .innerJoin(users, eq(reservations.userId, users.id))
+      .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
+      .innerJoin(performances, eq(showtimes.performanceId, performances.id))
+      .leftJoin(payments, eq(payments.reservationId, reservations.id))
+      .leftJoin(refunds, eq(refunds.reservationId, reservations.id))
+      .where(ticketItemWhere)
+      .groupBy(ticketItems.tierName)
+      .orderBy(ticketItems.tierName) as AdminBookingTierStatsRow[];
+
+    const capacityRows = params.showtimeId
+      ? await this.getTierCapacityRows(params)
+      : [];
+
+    return mergeTierStats(tierRows, capacityRows);
+  }
+
+  private async getTierCapacityRows(
+    params: AdminBookingQueryParams,
+  ): Promise<AdminBookingTierCapacityRow[]> {
+    if (!params.showtimeId) {
+      return [];
+    }
+
+    const conditions: SQL[] = [eq(showtimes.id, params.showtimeId)];
+    if (params.performanceId) {
+      conditions.push(eq(performanceSeatAssignments.performanceId, params.performanceId));
+    }
+    if (params.seatTier) {
+      conditions.push(eq(performanceSeatTiers.tierName, params.seatTier));
+    }
+    if (params.floorKey) {
+      conditions.push(eq(venueLayoutFloors.floorKey, params.floorKey));
+    }
+    if (params.seatQuery) {
+      const pattern = `%${params.seatQuery}%`;
+      conditions.push(
+        or(
+          ilike(venueLayoutSeats.seatKey, pattern),
+          ilike(venueLayoutSeats.sourceSeatId, pattern),
+          ilike(venueLayoutSeats.rowLabel, pattern),
+          ilike(venueLayoutSeats.seatNumber, pattern),
+        )!,
+      );
+    }
+
+    return await this.db
+      .select({
+        tierName: performanceSeatTiers.tierName,
+        price: performanceSeatTiers.price,
+        totalSeats: sql<number>`count(*) filter (
+          where ${performanceSeatAssignments.saleStatus} = 'available'
+        )::int`,
+        unavailableSeats: sql<number>`count(${seatInventories.id}) filter (
+          where ${seatInventories.status} in ('locked', 'held_cancelled', 'disabled')
+        )::int`,
+      })
+      .from(performanceSeatAssignments)
+      .innerJoin(
+        performanceSeatTiers,
+        eq(performanceSeatAssignments.tierId, performanceSeatTiers.id),
+      )
+      .innerJoin(
+        venueLayoutSeats,
+        eq(performanceSeatAssignments.layoutSeatId, venueLayoutSeats.id),
+      )
+      .innerJoin(venueLayoutFloors, eq(venueLayoutSeats.floorId, venueLayoutFloors.id))
+      .innerJoin(showtimes, eq(showtimes.performanceId, performanceSeatAssignments.performanceId))
+      .leftJoin(
+        seatInventories,
+        and(
+          eq(seatInventories.showtimeId, showtimes.id),
+          eq(seatInventories.performanceSeatAssignmentId, performanceSeatAssignments.id),
+        ),
+      )
+      .where(and(...conditions))
+      .groupBy(performanceSeatTiers.tierName, performanceSeatTiers.price, performanceSeatTiers.sortOrder)
+      .orderBy(performanceSeatTiers.sortOrder, performanceSeatTiers.tierName) as AdminBookingTierCapacityRow[];
   }
 
   async getBookingDetail(reservationId: string): Promise<AdminBookingDetailDto> {

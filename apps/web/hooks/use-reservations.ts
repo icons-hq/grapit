@@ -14,9 +14,8 @@ import type {
   ReservationDetail,
   AdminBookingDetail,
   AdminBookingFunnelStatus,
-  AdminBookingListItem,
+  AdminBookingListResponse,
   AdminReservationExportFilter,
-  BookingStats,
   PaymentStatus,
   TicketEmailDelivery,
   UserProfile,
@@ -105,10 +104,15 @@ export function useSendReservationTicketEmail() {
 
 export function useAdminBookings(params: {
   status?: string;
+  performanceId?: string;
+  showtimeId?: string;
   funnelStatus?: AdminBookingFunnelStatus | 'all';
   paymentStatus?: PaymentStatus | 'all';
   paymentMethod?: string;
   audienceRegion?: 'domestic' | 'overseas' | 'all';
+  seatTier?: string;
+  floorKey?: string;
+  seatQuery?: string;
   dateFrom?: string;
   dateTo?: string;
   search?: string;
@@ -120,6 +124,10 @@ export function useAdminBookings(params: {
       const searchParams = new URLSearchParams();
       if (params.status && params.status !== 'all')
         searchParams.set('status', params.status);
+      if (params.performanceId)
+        searchParams.set('performanceId', params.performanceId);
+      if (params.showtimeId)
+        searchParams.set('showtimeId', params.showtimeId);
       if (params.funnelStatus && params.funnelStatus !== 'all')
         searchParams.set('funnelStatus', params.funnelStatus);
       if (params.paymentStatus && params.paymentStatus !== 'all')
@@ -128,15 +136,16 @@ export function useAdminBookings(params: {
         searchParams.set('paymentMethod', params.paymentMethod);
       if (params.audienceRegion && params.audienceRegion !== 'all')
         searchParams.set('audienceRegion', params.audienceRegion);
+      if (params.seatTier) searchParams.set('seatTier', params.seatTier);
+      if (params.floorKey) searchParams.set('floorKey', params.floorKey);
+      if (params.seatQuery) searchParams.set('seatQuery', params.seatQuery);
       if (params.dateFrom) searchParams.set('dateFrom', params.dateFrom);
       if (params.dateTo) searchParams.set('dateTo', params.dateTo);
       if (params.search) searchParams.set('search', params.search);
       searchParams.set('page', String(params.page ?? 1));
-      return apiClient.get<{
-        bookings: AdminBookingListItem[];
-        stats: BookingStats;
-        total: number;
-      }>(`/api/v1/admin/bookings?${searchParams.toString()}`);
+      return apiClient.get<AdminBookingListResponse>(
+        `/api/v1/admin/bookings?${searchParams.toString()}`,
+      );
     },
     placeholderData: keepPreviousData,
   });

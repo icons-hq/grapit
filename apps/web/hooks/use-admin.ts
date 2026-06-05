@@ -153,6 +153,7 @@ export function useAdminPerformances(params: {
   status?: string;
   search?: string;
   page?: number;
+  limit?: number;
 }) {
   return useQuery({
     queryKey: ['admin', 'performances', params],
@@ -161,6 +162,7 @@ export function useAdminPerformances(params: {
       if (params.status) searchParams.set('status', params.status);
       if (params.search) searchParams.set('search', params.search);
       searchParams.set('page', String(params.page ?? 1));
+      if (params.limit) searchParams.set('limit', String(params.limit));
       return apiClient.get<PerformanceListResponse>(
         `/api/v1/admin/performances?${searchParams.toString()}`,
       );

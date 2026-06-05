@@ -12,12 +12,25 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { AdminStatCard } from '@/components/admin/admin-stat-card';
 import { AdminBookingTable } from '@/components/admin/admin-booking-table';
 import { AdminBookingDetailModal } from '@/components/admin/admin-booking-detail-modal';
 import { ReservationExportPanel } from '@/components/admin/reservation-export-panel';
 import { useAdminBookings, useAdminRefund } from '@/hooks/use-reservations';
-import type { AdminBookingFunnelStatus, PaymentStatus } from '@grabit/shared';
+import { useAdminPerformanceDetail, useAdminPerformances } from '@/hooks/use-admin';
+import type {
+  AdminBookingFunnelStatus,
+  AdminBookingTierStats,
+  PaymentStatus,
+} from '@grabit/shared';
 
 const FUNNEL_STATUS_OPTIONS = [
   { value: 'all', label: '전체 퍼널' },
@@ -64,9 +77,33 @@ const AUDIENCE_REGION_OPTIONS = [
 
 const PAGE_SIZE = 20;
 
+function formatDateTime(dateString: string): string {
+  const date = new Date(dateString);
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  const h = String(date.getHours()).padStart(2, '0');
+  const min = String(date.getMinutes()).padStart(2, '0');
+  return `${y}.${m}.${d} ${h}:${min}`;
+}
+
+function formatWon(amount: number): string {
+  return `${amount.toLocaleString('ko-KR')}원`;
+}
+
+function formatSeats(count: number): string {
+  return `${count.toLocaleString('ko-KR')}석`;
+}
+
 export function AdminBookingDashboard() {
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [seatQuery, setSeatQuery] = useState('');
+  const [debouncedSeatQuery, setDebouncedSeatQuery] = useState('');
+  const [performanceId, setPerformanceId] = useState('all');
+  const [showtimeId, setShowtimeId] = useState('all');
+  const [seatTier, setSeatTier] = useState('all');
+  const [floorKey, setFloorKey] = useState('all');
   const [funnelStatus, setFunnelStatus] =
     useState<AdminBookingFunnelStatus | 'all'>('all');
   const [paymentStatus, setPaymentStatus] = useState<PaymentStatus | 'all'>(
@@ -94,11 +131,41 @@ export function AdminBookingDashboard() {
     return () => clearTimeout(timer);
   }, [search, debouncedSearch]);
 
+  useEffect(() => {
+    if (seatQuery === debouncedSeatQuery) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setDebouncedSeatQuery(seatQuery);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [seatQuery, debouncedSeatQuery]);
+
+  const {
+    data: performanceList,
+    isLoading: isPerformanceListLoading,
+    isError: isPerformanceListError,
+  } = useAdminPerformances({ page: 1, limit: 200 });
+  const {
+    data: selectedPerformance,
+    isLoading: isPerformanceDetailLoading,
+    isError: isPerformanceDetailError,
+  } = useAdminPerformanceDetail(
+    performanceId !== 'all' ? performanceId : '',
+  );
+
   const { data, isLoading } = useAdminBookings({
+    performanceId: performanceId !== 'all' ? performanceId : undefined,
+    showtimeId: showtimeId !== 'all' ? showtimeId : undefined,
     funnelStatus,
     paymentStatus,
     paymentMethod,
     audienceRegion,
+    seatTier: seatTier !== 'all' ? seatTier : undefined,
+    floorKey: floorKey !== 'all' ? floorKey : undefined,
+    seatQuery: debouncedSeatQuery.trim() || undefined,
     search: debouncedSearch.trim() || undefined,
     page,
   });
@@ -123,6 +190,7 @@ export function AdminBookingDashboard() {
   }
 
   const stats = data?.stats;
+  const tierStats = data?.tierStats ?? [];
   const bookings = data?.bookings ?? [];
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -132,6 +200,63 @@ export function AdminBookingDashboard() {
     + (stats?.cancelProcessingCount ?? 0);
   const completedCancelCount =
     (stats?.cancelledCount ?? 0) + (stats?.partialCancelledCount ?? 0);
+  const totalSoldSeats = tierStats.reduce((sum, tier) => sum + tier.soldSeats, 0);
+  const performanceOptions = [
+    {
+      value: 'all',
+      label: isPerformanceListError
+        ? '공연 옵션 로드 실패'
+        : isPerformanceListLoading
+          ? '공연 불러오는 중'
+          : '전체 공연',
+    },
+    ...(performanceList?.data ?? []).map((performance) => ({
+      value: performance.id,
+      label: performance.title,
+    })),
+  ];
+  const showtimeOptions = [
+    {
+      value: 'all',
+      label: performanceId !== 'all' && isPerformanceDetailError
+        ? '회차 옵션 로드 실패'
+        : performanceId !== 'all' && isPerformanceDetailLoading
+          ? '회차 불러오는 중'
+          : '전체 회차',
+    },
+    ...(selectedPerformance?.showtimes ?? []).map((showtime) => ({
+      value: showtime.id,
+      label: formatDateTime(showtime.dateTime),
+    })),
+  ];
+  const seatTierOptions = [
+    {
+      value: 'all',
+      label: performanceId !== 'all' && isPerformanceDetailError
+        ? '등급 옵션 로드 실패'
+        : performanceId !== 'all' && isPerformanceDetailLoading
+          ? '등급 불러오는 중'
+          : '전체 등급',
+    },
+    ...(selectedPerformance?.priceTiers ?? []).map((tier) => ({
+      value: tier.tierName,
+      label: tier.tierName,
+    })),
+  ];
+  const floorOptions = [
+    {
+      value: 'all',
+      label: performanceId !== 'all' && isPerformanceDetailError
+        ? '층 옵션 로드 실패'
+        : performanceId !== 'all' && isPerformanceDetailLoading
+          ? '층 불러오는 중'
+          : '전체 층',
+    },
+    ...(selectedPerformance?.seatMaps ?? []).map((seatMap) => ({
+      value: seatMap.floorKey,
+      label: seatMap.floorLabel,
+    })),
+  ];
 
   return (
     <div>
@@ -141,8 +266,8 @@ export function AdminBookingDashboard() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <AdminStatCard
           icon={TicketCheck}
-          label="판매 완료"
-          value={stats?.soldCount ?? 0}
+          label="판매 좌석"
+          value={totalSoldSeats}
           format="count"
         />
         <AdminStatCard
@@ -169,8 +294,12 @@ export function AdminBookingDashboard() {
         <ReservationExportPanel />
       </div>
 
+      <div className="mt-6">
+        <TierStatsTable tierStats={tierStats} />
+      </div>
+
       {/* Search + filter */}
-      <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
+      <div className="mt-6 flex flex-col gap-3">
         <Input
           type="search"
           placeholder="예매번호, Toss 주문번호, 공연명, 좌석, 회원 이름/이메일/전화/ID 검색"
@@ -179,7 +308,54 @@ export function AdminBookingDashboard() {
           className="w-full lg:max-w-[460px]"
           aria-label="예매 검색"
         />
-        <div className="grid w-full grid-cols-2 gap-2 lg:flex lg:w-auto lg:flex-wrap">
+        <div className="grid w-full grid-cols-2 gap-2 xl:flex xl:w-auto xl:flex-wrap">
+          <SelectFilter
+            id="admin-booking-performance"
+            label="공연"
+            value={performanceId}
+            options={performanceOptions}
+            disabled={isPerformanceListLoading || isPerformanceListError}
+            onValueChange={(value) => {
+              setPerformanceId(value);
+              setShowtimeId('all');
+              setSeatTier('all');
+              setFloorKey('all');
+              setPage(1);
+            }}
+          />
+          <SelectFilter
+            id="admin-booking-showtime"
+            label="회차"
+            value={showtimeId}
+            options={showtimeOptions}
+            disabled={performanceId === 'all' || isPerformanceDetailLoading || isPerformanceDetailError}
+            onValueChange={(value) => {
+              setShowtimeId(value);
+              setPage(1);
+            }}
+          />
+          <SelectFilter
+            id="admin-booking-seat-tier"
+            label="좌석 등급"
+            value={seatTier}
+            options={seatTierOptions}
+            disabled={performanceId === 'all' || isPerformanceDetailLoading || isPerformanceDetailError}
+            onValueChange={(value) => {
+              setSeatTier(value);
+              setPage(1);
+            }}
+          />
+          <SelectFilter
+            id="admin-booking-floor"
+            label="층"
+            value={floorKey}
+            options={floorOptions}
+            disabled={performanceId === 'all' || isPerformanceDetailLoading || isPerformanceDetailError}
+            onValueChange={(value) => {
+              setFloorKey(value);
+              setPage(1);
+            }}
+          />
           <SelectFilter
             id="admin-booking-funnel-status"
             label="퍼널 상태"
@@ -221,6 +397,14 @@ export function AdminBookingDashboard() {
             }}
           />
         </div>
+        <Input
+          type="search"
+          placeholder="좌석만 검색"
+          value={seatQuery}
+          onChange={(e) => setSeatQuery(e.target.value)}
+          className="w-full lg:max-w-[240px]"
+          aria-label="좌석 검색"
+        />
       </div>
 
       {/* Booking table */}
@@ -272,11 +456,84 @@ export function AdminBookingDashboard() {
   );
 }
 
+function TierStatsTable({ tierStats }: { tierStats: AdminBookingTierStats[] }) {
+  return (
+    <div className="rounded-lg bg-white shadow-sm">
+      <div className="border-b px-4 py-3">
+        <h2 className="text-base font-semibold text-gray-900">
+          등급별 좌석 통계
+        </h2>
+      </div>
+      <Table aria-label="좌석 등급별 통계">
+        <TableHeader>
+          <TableRow className="bg-[#F5F5F7]">
+            <TableHead scope="col" className="text-sm font-semibold text-gray-600">
+              등급
+            </TableHead>
+            <TableHead scope="col" className="text-sm font-semibold text-gray-600">
+              판매
+            </TableHead>
+            <TableHead scope="col" className="text-sm font-semibold text-gray-600">
+              매출
+            </TableHead>
+            <TableHead scope="col" className="text-sm font-semibold text-gray-600">
+              평균단가
+            </TableHead>
+            <TableHead scope="col" className="text-sm font-semibold text-gray-600">
+              잔여
+            </TableHead>
+            <TableHead scope="col" className="text-sm font-semibold text-gray-600">
+              판매율
+            </TableHead>
+            <TableHead scope="col" className="text-sm font-semibold text-gray-600">
+              취소
+            </TableHead>
+            <TableHead scope="col" className="text-sm font-semibold text-gray-600">
+              입장
+            </TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {tierStats.length === 0 && (
+            <TableRow>
+              <TableCell colSpan={8} className="py-8 text-center text-sm text-gray-600">
+                등급별 좌석 통계가 없습니다
+              </TableCell>
+            </TableRow>
+          )}
+          {tierStats.map((tier) => (
+            <TableRow key={`${tier.tierName}-${tier.price}`}>
+              <TableCell className="font-semibold text-gray-900">
+                {tier.tierName}
+              </TableCell>
+              <TableCell>{formatSeats(tier.soldSeats)}</TableCell>
+              <TableCell>{formatWon(tier.activeRevenue)}</TableCell>
+              <TableCell>{formatWon(tier.averageTicketAmount)}</TableCell>
+              <TableCell>
+                {tier.remainingSeats === null ? '-' : formatSeats(tier.remainingSeats)}
+              </TableCell>
+              <TableCell>
+                {tier.sellThroughRate === null ? '-' : `${tier.sellThroughRate}%`}
+              </TableCell>
+              <TableCell>
+                처리중 {tier.cancelProcessingSeats.toLocaleString('ko-KR')} / 취소{' '}
+                {tier.cancelledSeats.toLocaleString('ko-KR')}
+              </TableCell>
+              <TableCell>{formatSeats(tier.enteredSeats)}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
 interface SelectFilterProps {
   id: string;
   label: string;
   value: string;
   options: ReadonlyArray<{ value: string; label: string }>;
+  disabled?: boolean;
   onValueChange: (value: string) => void;
 }
 
@@ -285,6 +542,7 @@ function SelectFilter({
   label,
   value,
   options,
+  disabled = false,
   onValueChange,
 }: SelectFilterProps) {
   return (
@@ -292,7 +550,7 @@ function SelectFilter({
       <label htmlFor={id} className="text-xs font-semibold text-gray-600">
         {label}
       </label>
-      <Select value={value} onValueChange={onValueChange}>
+      <Select value={value} onValueChange={onValueChange} disabled={disabled}>
         <SelectTrigger id={id} aria-label={label} className="h-10 w-full lg:w-40">
           <SelectValue />
         </SelectTrigger>

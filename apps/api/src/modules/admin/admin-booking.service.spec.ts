@@ -48,7 +48,7 @@ function ticketItem(overrides: Record<string, unknown> = {}) {
 
 function createMockDb() {
   return {
-    select: vi.fn(),
+    select: vi.fn(() => createChainMock([])),
     execute: vi.fn(),
     insert: vi.fn(),
     update: vi.fn(),
@@ -242,12 +242,12 @@ describe('AdminBookingService', () => {
   });
 
   describe('list', () => {
-    it('should return filtered operational stats with all-time sold count and totalRevenue equal to completedRevenue', async () => {
+    it('should return filtered operational stats with totalRevenue equal to completedRevenue', async () => {
       mockDb.select
         .mockReturnValueOnce(createChainMock([{
           totalBookings: 4,
           completedRevenue: 79000,
-          soldCount: 0,
+          soldCount: 2,
           pendingPaymentCount: 1,
           paymentProcessingCount: 0,
           failedCount: 1,
@@ -255,7 +255,6 @@ describe('AdminBookingService', () => {
           cancelledCount: 1,
           partialCancelledCount: 0,
         }]))
-        .mockReturnValueOnce(createChainMock([{ soldCount: 9 }]))
         .mockReturnValueOnce(createChainMock([]));
 
       const result = await service.getBookings({});
@@ -264,7 +263,7 @@ describe('AdminBookingService', () => {
         totalBookings: 4,
         completedRevenue: 79000,
         totalRevenue: 79000,
-        soldCount: 9,
+        soldCount: 2,
         failedCount: 1,
         cancelledCount: 1,
       });
@@ -285,13 +284,12 @@ describe('AdminBookingService', () => {
           cancelledCount: 0,
           partialCancelledCount: 0,
         }]))
-        .mockReturnValueOnce(createChainMock([{ soldCount: 1 }]))
         .mockReturnValueOnce(createChainMock([]));
 
       await service.getBookings({});
 
-      const allTimeSoldSelect = mockDb.select.mock.calls[1]?.[0] as Record<string, unknown>;
-      const soldCountSqlText = objectGraphText(allTimeSoldSelect.soldCount);
+      const statsSelect = mockDb.select.mock.calls[0]?.[0] as Record<string, unknown>;
+      const soldCountSqlText = objectGraphText(statsSelect.soldCount);
 
       expect(soldCountSqlText).toContain('coalesce');
       expect(soldCountSqlText).toContain('false');
@@ -310,7 +308,6 @@ describe('AdminBookingService', () => {
           cancelledCount: 0,
           partialCancelledCount: 0,
         }]))
-        .mockReturnValueOnce(createChainMock([{ soldCount: 3 }]))
         .mockReturnValueOnce(createChainMock([]));
 
       const result = await service.getBookings({});
@@ -343,7 +340,6 @@ describe('AdminBookingService', () => {
           cancelledCount: 0,
           partialCancelledCount: 0,
         }]))
-        .mockReturnValueOnce(createChainMock([{ soldCount: 3 }]))
         .mockReturnValueOnce(createChainMock([]));
 
       const result = await service.getBookings({});
@@ -371,7 +367,6 @@ describe('AdminBookingService', () => {
           cancelledCount: 0,
           partialCancelledCount: 0,
         }]))
-        .mockReturnValueOnce(createChainMock([{ soldCount: 3 }]))
         .mockReturnValueOnce(
           createChainMock([
             {
@@ -485,7 +480,6 @@ describe('AdminBookingService', () => {
           cancelledCount: 0,
           partialCancelledCount: 0,
         }]))
-        .mockReturnValueOnce(createChainMock([{ soldCount: 7 }]))
         .mockReturnValueOnce(
           createChainMock([
             {
@@ -558,15 +552,19 @@ describe('AdminBookingService', () => {
           cancelledCount: 0,
           partialCancelledCount: 0,
         }], statsCalls))
-        .mockReturnValueOnce(createRecordingChainMock([{ soldCount: 12 }], []))
         .mockReturnValueOnce(createRecordingChainMock([], listCalls));
 
       const result = await service.getBookings({
         status: 'CONFIRMED',
+        performanceId: '11111111-1111-4111-8111-000000000301',
+        showtimeId: '11111111-1111-4111-8111-000000000302',
         funnelStatus: 'SOLD',
         paymentStatus: 'DONE',
         paymentMethod: 'CARD',
         audienceRegion: 'domestic',
+        seatTier: 'VIP',
+        floorKey: '1F',
+        seatQuery: 'A-10',
         dateFrom: '2026-07-01',
         dateTo: '2026-07-31',
         search: 'buyer@example.com',
@@ -577,6 +575,8 @@ describe('AdminBookingService', () => {
       const listWhere = listCalls.find((call) => call.method === 'where')?.args[0];
 
       expect(objectGraphContains(statsWhere, 'CONFIRMED')).toBe(true);
+      expect(objectGraphContains(statsWhere, '11111111-1111-4111-8111-000000000301')).toBe(true);
+      expect(objectGraphContains(statsWhere, '11111111-1111-4111-8111-000000000302')).toBe(true);
       expect(objectGraphContains(statsWhere, 'SOLD')).toBe(true);
       expect(objectGraphContains(statsWhere, 'DONE')).toBe(true);
       expect(objectGraphContains(statsWhere, 'CARD')).toBe(true);
@@ -584,10 +584,13 @@ describe('AdminBookingService', () => {
       expect(objectGraphContains(listWhere, 'CARD')).toBe(true);
       expect(objectGraphContains(listWhere, '카드')).toBe(true);
       expect(objectGraphContains(statsWhere, 'KR')).toBe(true);
+      expect(objectGraphContains(statsWhere, 'VIP')).toBe(true);
+      expect(objectGraphContains(statsWhere, '1F')).toBe(true);
+      expect(objectGraphContains(statsWhere, 'A-10')).toBe(true);
       expect(objectGraphContains(statsWhere, 'buyer@example.com')).toBe(true);
       expect(objectGraphContains(listWhere, '2026-06-30T15:00:00.000Z')).toBe(true);
       expect(objectGraphContains(listWhere, '2026-07-31T14:59:59.999Z')).toBe(true);
-      expect(result.stats.soldCount).toBe(12);
+      expect(result.stats.soldCount).toBe(1);
       expect(result.total).toBe(1);
     });
 
@@ -606,13 +609,112 @@ describe('AdminBookingService', () => {
           cancelledCount: 0,
           partialCancelledCount: 0,
         }], []))
-        .mockReturnValueOnce(createRecordingChainMock([{ soldCount: 0 }], []))
         .mockReturnValueOnce(createRecordingChainMock([], listCalls));
 
       await service.getBookings({ search: 'seat-legacy-id' });
 
       const listWhere = listCalls.find((call) => call.method === 'where')?.args[0];
       expect(objectGraphText(listWhere)).toContain('admin_search_ti.seat_id');
+    });
+
+    it('returns tier statistics from ticket items and showtime capacity rows', async () => {
+      mockDb.select
+        .mockReturnValueOnce(createChainMock([{
+          totalBookings: 1,
+          completedRevenue: 158000,
+          soldCount: 1,
+          pendingPaymentCount: 0,
+          paymentProcessingCount: 0,
+          failedCount: 0,
+          cancelProcessingCount: 0,
+          cancelledCount: 0,
+          partialCancelledCount: 0,
+        }]))
+        .mockReturnValueOnce(
+          createChainMock([
+            {
+              reservation: {
+                id: 'reservation-1',
+                reservationNumber: 'R-SOLD-001',
+                tossOrderId: 'GRP-TOSS-SOLD-001',
+                status: 'CONFIRMED',
+                totalAmount: 158000,
+                createdAt: new Date('2026-07-01T03:00:00.000Z'),
+              },
+              user: {
+                name: '김예매',
+                email: 'buyer@example.com',
+                country: 'KR',
+              },
+              showtime: {
+                dateTime: new Date('2026-07-18T10:00:00.000Z'),
+              },
+              performance: {
+                title: 'Girl Rules Fanmeeting',
+              },
+              payment: {
+                status: 'DONE',
+                method: 'CARD',
+              },
+              refund: {
+                status: null,
+              },
+            },
+          ]),
+        )
+        .mockReturnValueOnce(createChainMock([ticketItem(), ticketItem({
+          id: 'ticket-item-a2',
+          seatId: '1F:A-2',
+          seatKey: '1F:A-2',
+          number: '2',
+          admissionState: 'entered',
+          enteredAt: new Date('2026-07-18T10:05:00.000Z'),
+        })]))
+        .mockReturnValueOnce(createChainMock([
+          {
+            tierName: 'VIP',
+            price: 79000,
+            soldSeats: 2,
+            activeRevenue: 158000,
+            cancelProcessingSeats: 1,
+            cancelledSeats: 3,
+            enteredSeats: 1,
+          },
+        ]))
+        .mockReturnValueOnce(createChainMock([
+          {
+            tierName: 'VIP',
+            price: 79000,
+            totalSeats: 100,
+            unavailableSeats: 4,
+          },
+        ]));
+
+      const result = await service.getBookings({
+        performanceId: '11111111-1111-4111-8111-000000000301',
+        showtimeId: '11111111-1111-4111-8111-000000000302',
+      } as any);
+      const tierStatsSelect = mockDb.select.mock.calls[3]?.[0] as Record<string, unknown>;
+      const enteredSeatsSqlText = objectGraphText(tierStatsSelect.enteredSeats);
+
+      expect(result.tierStats).toEqual([
+        {
+          tierName: 'VIP',
+          price: 79000,
+          soldSeats: 2,
+          activeRevenue: 158000,
+          averageTicketAmount: 79000,
+          cancelProcessingSeats: 1,
+          cancelledSeats: 3,
+          enteredSeats: 1,
+          totalSeats: 100,
+          remainingSeats: 94,
+          sellThroughRate: 2,
+        },
+      ]);
+      expect(enteredSeatsSqlText).toContain('entered');
+      expect(enteredSeatsSqlText).toContain('CONFIRMED');
+      expect(enteredSeatsSqlText).toContain('DONE');
     });
   });
 
