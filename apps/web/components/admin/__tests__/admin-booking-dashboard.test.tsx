@@ -151,7 +151,23 @@ function performanceDetailResponse() {
   };
 }
 
-function bookingsResponse(overrides: { total?: number; bookings?: ReturnType<typeof bookingItem>[] } = {}) {
+function bookingsResponse(overrides: {
+  total?: number;
+  bookings?: ReturnType<typeof bookingItem>[];
+  tierStats?: Array<{
+    tierName: string;
+    price: number;
+    soldSeats: number;
+    activeRevenue: number;
+    averageTicketAmount: number;
+    cancelProcessingSeats: number;
+    cancelledSeats: number;
+    enteredSeats: number;
+    totalSeats: number | null;
+    remainingSeats: number | null;
+    sellThroughRate: number | null;
+  }>;
+} = {}) {
   return {
     bookings: overrides.bookings ?? [],
     stats: {
@@ -167,7 +183,7 @@ function bookingsResponse(overrides: { total?: number; bookings?: ReturnType<typ
       partialCancelledCount: 1,
       completedRevenue: 1_500_000,
     },
-    tierStats: [
+    tierStats: overrides.tierStats ?? [
       {
         tierName: 'VIP',
         price: 79000,
@@ -217,10 +233,11 @@ describe('AdminBookingDashboard', () => {
     });
   });
 
-  it('shows operation funnel KPIs with exact KRW sales revenue', async () => {
+  it('shows operation funnel KPIs with sold seat count and exact KRW sales revenue', async () => {
     renderWithClient(<AdminBookingDashboard />);
 
-    expect(await screen.findByText('판매 완료')).toBeInTheDocument();
+    expect(await screen.findByText('판매 좌석')).toBeInTheDocument();
+    expect(await screen.findByText('10건')).toBeInTheDocument();
     expect(screen.getByText('결제/취소 진행')).toBeInTheDocument();
     expect(screen.queryByText('실패')).not.toBeInTheDocument();
     expect(screen.getByText('취소 완료')).toBeInTheDocument();
@@ -281,6 +298,48 @@ describe('AdminBookingDashboard', () => {
       expect(lastCall).toContain('floorKey=1F');
       expect(lastCall).toContain('seatQuery=A-10');
     });
+    expect(
+      mocks.apiGet.mock.calls.some(([url]) =>
+        String(url).includes('/api/v1/admin/performances?page=1&limit=200'),
+      ),
+    ).toBe(true);
+  });
+
+  it('removes dependent seat filters when performance is reset', async () => {
+    const user = userEvent.setup();
+    renderWithClient(<AdminBookingDashboard />);
+
+    await selectOption(user, '공연', 'Girl Rules Fanmeet');
+    await selectOption(user, '회차', '2026.07.18 19:00');
+    await selectOption(user, '좌석 등급', 'VIP');
+    await selectOption(user, '층', '1층');
+    await selectOption(user, '공연', '전체 공연');
+
+    await waitFor(() => {
+      const lastCall = String(mocks.apiGet.mock.calls.at(-1)?.[0]);
+      expect(lastCall).not.toContain('performanceId=');
+      expect(lastCall).not.toContain('showtimeId=');
+      expect(lastCall).not.toContain('seatTier=');
+      expect(lastCall).not.toContain('floorKey=');
+    });
+  });
+
+  it('omits seatQuery when the seat search field is cleared', async () => {
+    const user = userEvent.setup();
+    renderWithClient(<AdminBookingDashboard />);
+
+    const seatInput = await screen.findByPlaceholderText('좌석만 검색');
+    await user.type(seatInput, 'A-10');
+
+    await waitFor(() => {
+      expect(String(mocks.apiGet.mock.calls.at(-1)?.[0])).toContain('seatQuery=A-10');
+    });
+
+    await user.clear(seatInput);
+
+    await waitFor(() => {
+      expect(String(mocks.apiGet.mock.calls.at(-1)?.[0])).not.toContain('seatQuery=');
+    });
   });
 
   it('shows tier statistics with capacity and ticket diagnostics', async () => {
@@ -295,6 +354,38 @@ describe('AdminBookingDashboard', () => {
     expect(screen.getByRole('cell', { name: '10%' })).toBeInTheDocument();
     expect(screen.getByRole('cell', { name: '처리중 1 / 취소 2' })).toBeInTheDocument();
     expect(screen.getByRole('cell', { name: '4석' })).toBeInTheDocument();
+  });
+
+  it('shows dashes for tier capacity fields before a showtime is selected', async () => {
+    mocks.apiGet.mockImplementation(async (url: string) => {
+      const path = String(url);
+      if (path.includes('/api/v1/admin/performances?')) {
+        return performanceListResponse();
+      }
+      return bookingsResponse({
+        tierStats: [
+          {
+            tierName: 'VIP',
+            price: 79000,
+            soldSeats: 10,
+            activeRevenue: 790000,
+            averageTicketAmount: 79000,
+            cancelProcessingSeats: 1,
+            cancelledSeats: 2,
+            enteredSeats: 4,
+            totalSeats: null,
+            remainingSeats: null,
+            sellThroughRate: null,
+          },
+        ],
+      });
+    });
+
+    renderWithClient(<AdminBookingDashboard />);
+
+    const row = (await screen.findByRole('cell', { name: 'VIP' })).closest('tr');
+    expect(row).not.toBeNull();
+    expect(within(row as HTMLTableRowElement).getAllByRole('cell', { name: '-' })).toHaveLength(2);
   });
 
   it('shows Toss order id in the booking list and detail modal', async () => {

@@ -790,21 +790,7 @@ export class AdminBookingService {
       .leftJoin(refunds, eq(refunds.reservationId, reservations.id))
       .where(whereClause) as BookingStatsRow[];
 
-    const [allTimeSoldRow] = await this.db
-      .select({
-        soldCount: countWhereSql(soldReservationConditionSql()),
-      })
-      .from(reservations)
-      .innerJoin(users, eq(reservations.userId, users.id))
-      .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
-      .innerJoin(performances, eq(showtimes.performanceId, performances.id))
-      .leftJoin(payments, eq(payments.reservationId, reservations.id))
-      .leftJoin(refunds, eq(refunds.reservationId, reservations.id)) as BookingStatsRow[];
-
-    const stats = {
-      ...mapBookingStats(statsRow),
-      soldCount: toInt(allTimeSoldRow?.soldCount),
-    };
+    const stats = mapBookingStats(statsRow);
 
     const rows = await this.db
       .select({
@@ -948,6 +934,7 @@ export class AdminBookingService {
         enteredSeats: sql<number>`count(*) filter (
           where ${ticketItems.status} = 'active'
             and ${ticketItems.admissionState} = 'entered'
+            and ${completedRevenueEligibleConditionSql()}
         )::int`,
       })
       .from(ticketItems)

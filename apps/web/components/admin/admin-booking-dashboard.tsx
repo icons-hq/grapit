@@ -143,8 +143,16 @@ export function AdminBookingDashboard() {
     return () => clearTimeout(timer);
   }, [seatQuery, debouncedSeatQuery]);
 
-  const { data: performanceList } = useAdminPerformances({ page: 1 });
-  const { data: selectedPerformance } = useAdminPerformanceDetail(
+  const {
+    data: performanceList,
+    isLoading: isPerformanceListLoading,
+    isError: isPerformanceListError,
+  } = useAdminPerformances({ page: 1, limit: 200 });
+  const {
+    data: selectedPerformance,
+    isLoading: isPerformanceDetailLoading,
+    isError: isPerformanceDetailError,
+  } = useAdminPerformanceDetail(
     performanceId !== 'all' ? performanceId : '',
   );
 
@@ -192,29 +200,58 @@ export function AdminBookingDashboard() {
     + (stats?.cancelProcessingCount ?? 0);
   const completedCancelCount =
     (stats?.cancelledCount ?? 0) + (stats?.partialCancelledCount ?? 0);
+  const totalSoldSeats = tierStats.reduce((sum, tier) => sum + tier.soldSeats, 0);
   const performanceOptions = [
-    { value: 'all', label: '전체 공연' },
+    {
+      value: 'all',
+      label: isPerformanceListError
+        ? '공연 옵션 로드 실패'
+        : isPerformanceListLoading
+          ? '공연 불러오는 중'
+          : '전체 공연',
+    },
     ...(performanceList?.data ?? []).map((performance) => ({
       value: performance.id,
       label: performance.title,
     })),
   ];
   const showtimeOptions = [
-    { value: 'all', label: '전체 회차' },
+    {
+      value: 'all',
+      label: performanceId !== 'all' && isPerformanceDetailError
+        ? '회차 옵션 로드 실패'
+        : performanceId !== 'all' && isPerformanceDetailLoading
+          ? '회차 불러오는 중'
+          : '전체 회차',
+    },
     ...(selectedPerformance?.showtimes ?? []).map((showtime) => ({
       value: showtime.id,
       label: formatDateTime(showtime.dateTime),
     })),
   ];
   const seatTierOptions = [
-    { value: 'all', label: '전체 등급' },
+    {
+      value: 'all',
+      label: performanceId !== 'all' && isPerformanceDetailError
+        ? '등급 옵션 로드 실패'
+        : performanceId !== 'all' && isPerformanceDetailLoading
+          ? '등급 불러오는 중'
+          : '전체 등급',
+    },
     ...(selectedPerformance?.priceTiers ?? []).map((tier) => ({
       value: tier.tierName,
       label: tier.tierName,
     })),
   ];
   const floorOptions = [
-    { value: 'all', label: '전체 층' },
+    {
+      value: 'all',
+      label: performanceId !== 'all' && isPerformanceDetailError
+        ? '층 옵션 로드 실패'
+        : performanceId !== 'all' && isPerformanceDetailLoading
+          ? '층 불러오는 중'
+          : '전체 층',
+    },
     ...(selectedPerformance?.seatMaps ?? []).map((seatMap) => ({
       value: seatMap.floorKey,
       label: seatMap.floorLabel,
@@ -229,8 +266,8 @@ export function AdminBookingDashboard() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <AdminStatCard
           icon={TicketCheck}
-          label="판매 완료"
-          value={stats?.soldCount ?? 0}
+          label="판매 좌석"
+          value={totalSoldSeats}
           format="count"
         />
         <AdminStatCard
@@ -277,6 +314,7 @@ export function AdminBookingDashboard() {
             label="공연"
             value={performanceId}
             options={performanceOptions}
+            disabled={isPerformanceListLoading || isPerformanceListError}
             onValueChange={(value) => {
               setPerformanceId(value);
               setShowtimeId('all');
@@ -290,6 +328,7 @@ export function AdminBookingDashboard() {
             label="회차"
             value={showtimeId}
             options={showtimeOptions}
+            disabled={performanceId === 'all' || isPerformanceDetailLoading || isPerformanceDetailError}
             onValueChange={(value) => {
               setShowtimeId(value);
               setPage(1);
@@ -300,6 +339,7 @@ export function AdminBookingDashboard() {
             label="좌석 등급"
             value={seatTier}
             options={seatTierOptions}
+            disabled={performanceId === 'all' || isPerformanceDetailLoading || isPerformanceDetailError}
             onValueChange={(value) => {
               setSeatTier(value);
               setPage(1);
@@ -310,6 +350,7 @@ export function AdminBookingDashboard() {
             label="층"
             value={floorKey}
             options={floorOptions}
+            disabled={performanceId === 'all' || isPerformanceDetailLoading || isPerformanceDetailError}
             onValueChange={(value) => {
               setFloorKey(value);
               setPage(1);
@@ -492,6 +533,7 @@ interface SelectFilterProps {
   label: string;
   value: string;
   options: ReadonlyArray<{ value: string; label: string }>;
+  disabled?: boolean;
   onValueChange: (value: string) => void;
 }
 
@@ -500,6 +542,7 @@ function SelectFilter({
   label,
   value,
   options,
+  disabled = false,
   onValueChange,
 }: SelectFilterProps) {
   return (
@@ -507,7 +550,7 @@ function SelectFilter({
       <label htmlFor={id} className="text-xs font-semibold text-gray-600">
         {label}
       </label>
-      <Select value={value} onValueChange={onValueChange}>
+      <Select value={value} onValueChange={onValueChange} disabled={disabled}>
         <SelectTrigger id={id} aria-label={label} className="h-10 w-full lg:w-40">
           <SelectValue />
         </SelectTrigger>

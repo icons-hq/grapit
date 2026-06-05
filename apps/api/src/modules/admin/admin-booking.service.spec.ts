@@ -242,12 +242,12 @@ describe('AdminBookingService', () => {
   });
 
   describe('list', () => {
-    it('should return filtered operational stats with all-time sold count and totalRevenue equal to completedRevenue', async () => {
+    it('should return filtered operational stats with totalRevenue equal to completedRevenue', async () => {
       mockDb.select
         .mockReturnValueOnce(createChainMock([{
           totalBookings: 4,
           completedRevenue: 79000,
-          soldCount: 0,
+          soldCount: 2,
           pendingPaymentCount: 1,
           paymentProcessingCount: 0,
           failedCount: 1,
@@ -255,7 +255,6 @@ describe('AdminBookingService', () => {
           cancelledCount: 1,
           partialCancelledCount: 0,
         }]))
-        .mockReturnValueOnce(createChainMock([{ soldCount: 9 }]))
         .mockReturnValueOnce(createChainMock([]));
 
       const result = await service.getBookings({});
@@ -264,7 +263,7 @@ describe('AdminBookingService', () => {
         totalBookings: 4,
         completedRevenue: 79000,
         totalRevenue: 79000,
-        soldCount: 9,
+        soldCount: 2,
         failedCount: 1,
         cancelledCount: 1,
       });
@@ -285,13 +284,12 @@ describe('AdminBookingService', () => {
           cancelledCount: 0,
           partialCancelledCount: 0,
         }]))
-        .mockReturnValueOnce(createChainMock([{ soldCount: 1 }]))
         .mockReturnValueOnce(createChainMock([]));
 
       await service.getBookings({});
 
-      const allTimeSoldSelect = mockDb.select.mock.calls[1]?.[0] as Record<string, unknown>;
-      const soldCountSqlText = objectGraphText(allTimeSoldSelect.soldCount);
+      const statsSelect = mockDb.select.mock.calls[0]?.[0] as Record<string, unknown>;
+      const soldCountSqlText = objectGraphText(statsSelect.soldCount);
 
       expect(soldCountSqlText).toContain('coalesce');
       expect(soldCountSqlText).toContain('false');
@@ -310,7 +308,6 @@ describe('AdminBookingService', () => {
           cancelledCount: 0,
           partialCancelledCount: 0,
         }]))
-        .mockReturnValueOnce(createChainMock([{ soldCount: 3 }]))
         .mockReturnValueOnce(createChainMock([]));
 
       const result = await service.getBookings({});
@@ -343,7 +340,6 @@ describe('AdminBookingService', () => {
           cancelledCount: 0,
           partialCancelledCount: 0,
         }]))
-        .mockReturnValueOnce(createChainMock([{ soldCount: 3 }]))
         .mockReturnValueOnce(createChainMock([]));
 
       const result = await service.getBookings({});
@@ -371,7 +367,6 @@ describe('AdminBookingService', () => {
           cancelledCount: 0,
           partialCancelledCount: 0,
         }]))
-        .mockReturnValueOnce(createChainMock([{ soldCount: 3 }]))
         .mockReturnValueOnce(
           createChainMock([
             {
@@ -485,7 +480,6 @@ describe('AdminBookingService', () => {
           cancelledCount: 0,
           partialCancelledCount: 0,
         }]))
-        .mockReturnValueOnce(createChainMock([{ soldCount: 7 }]))
         .mockReturnValueOnce(
           createChainMock([
             {
@@ -558,7 +552,6 @@ describe('AdminBookingService', () => {
           cancelledCount: 0,
           partialCancelledCount: 0,
         }], statsCalls))
-        .mockReturnValueOnce(createRecordingChainMock([{ soldCount: 12 }], []))
         .mockReturnValueOnce(createRecordingChainMock([], listCalls));
 
       const result = await service.getBookings({
@@ -597,7 +590,7 @@ describe('AdminBookingService', () => {
       expect(objectGraphContains(statsWhere, 'buyer@example.com')).toBe(true);
       expect(objectGraphContains(listWhere, '2026-06-30T15:00:00.000Z')).toBe(true);
       expect(objectGraphContains(listWhere, '2026-07-31T14:59:59.999Z')).toBe(true);
-      expect(result.stats.soldCount).toBe(12);
+      expect(result.stats.soldCount).toBe(1);
       expect(result.total).toBe(1);
     });
 
@@ -616,7 +609,6 @@ describe('AdminBookingService', () => {
           cancelledCount: 0,
           partialCancelledCount: 0,
         }], []))
-        .mockReturnValueOnce(createRecordingChainMock([{ soldCount: 0 }], []))
         .mockReturnValueOnce(createRecordingChainMock([], listCalls));
 
       await service.getBookings({ search: 'seat-legacy-id' });
@@ -638,7 +630,6 @@ describe('AdminBookingService', () => {
           cancelledCount: 0,
           partialCancelledCount: 0,
         }]))
-        .mockReturnValueOnce(createChainMock([{ soldCount: 2 }]))
         .mockReturnValueOnce(
           createChainMock([
             {
@@ -703,6 +694,8 @@ describe('AdminBookingService', () => {
         performanceId: '11111111-1111-4111-8111-000000000301',
         showtimeId: '11111111-1111-4111-8111-000000000302',
       } as any);
+      const tierStatsSelect = mockDb.select.mock.calls[3]?.[0] as Record<string, unknown>;
+      const enteredSeatsSqlText = objectGraphText(tierStatsSelect.enteredSeats);
 
       expect(result.tierStats).toEqual([
         {
@@ -719,6 +712,9 @@ describe('AdminBookingService', () => {
           sellThroughRate: 2,
         },
       ]);
+      expect(enteredSeatsSqlText).toContain('entered');
+      expect(enteredSeatsSqlText).toContain('CONFIRMED');
+      expect(enteredSeatsSqlText).toContain('DONE');
     });
   });
 
