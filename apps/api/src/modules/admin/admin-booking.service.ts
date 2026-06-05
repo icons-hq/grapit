@@ -72,6 +72,15 @@ const RESERVATION_EXPORT_HEADERS = [
   'Reopen State',
 ] as const;
 
+const PAYMENT_METHOD_FILTER_ALIASES = {
+  CARD: ['CARD', '카드'],
+  VIRTUAL_ACCOUNT: ['VIRTUAL_ACCOUNT', '가상계좌'],
+  TRANSFER: ['TRANSFER', '계좌이체'],
+  MOBILE_PHONE: ['MOBILE_PHONE', '휴대폰'],
+  FOREIGN_EASY_PAY: ['FOREIGN_EASY_PAY', '해외간편결제'],
+  SIMPLE_PAY: ['SIMPLE_PAY', '간편결제'],
+} as const satisfies Record<PaymentMethodType, readonly string[]>;
+
 export interface ReservationExportRequest {
   actorUserId: string;
   filters: AdminReservationExportFilter;
@@ -271,7 +280,7 @@ function buildAdminBookingWhereClause(filters: AdminBookingQueryParams): SQL | u
     );
   }
   if (filters.paymentMethod) {
-    conditions.push(eq(payments.method, filters.paymentMethod));
+    conditions.push(paymentMethodFilterSql(filters.paymentMethod));
   }
   if (filters.audienceRegion === 'domestic') {
     conditions.push(eq(users.country, 'KR'));
@@ -309,6 +318,15 @@ function buildAdminBookingWhereClause(filters: AdminBookingQueryParams): SQL | u
   }
 
   return conditions.length > 0 ? and(...conditions) : undefined;
+}
+
+function paymentMethodFilterSql(paymentMethod: string): SQL {
+  return inArray(payments.method, paymentMethodFilterValues(paymentMethod));
+}
+
+function paymentMethodFilterValues(paymentMethod: string): string[] {
+  const aliases = PAYMENT_METHOD_FILTER_ALIASES[paymentMethod as PaymentMethodType];
+  return aliases ? [...aliases] : [paymentMethod];
 }
 
 function ticketItemSearchExistsSql(pattern: string): SQL {
@@ -890,7 +908,7 @@ export class AdminBookingService {
       conditions.push(ne(users.country, 'KR'));
     }
     if (filters.paymentMethod) {
-      conditions.push(eq(payments.method, filters.paymentMethod));
+      conditions.push(paymentMethodFilterSql(filters.paymentMethod));
     }
     if (filters.dateFrom) {
       conditions.push(gte(reservations.createdAt, dateOnlyStart(filters.dateFrom)));

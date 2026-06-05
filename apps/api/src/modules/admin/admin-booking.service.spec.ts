@@ -545,6 +545,9 @@ describe('AdminBookingService', () => {
       expect(objectGraphContains(statsWhere, 'SOLD')).toBe(true);
       expect(objectGraphContains(statsWhere, 'DONE')).toBe(true);
       expect(objectGraphContains(statsWhere, 'CARD')).toBe(true);
+      expect(objectGraphContains(statsWhere, '카드')).toBe(true);
+      expect(objectGraphContains(listWhere, 'CARD')).toBe(true);
+      expect(objectGraphContains(listWhere, '카드')).toBe(true);
       expect(objectGraphContains(statsWhere, 'KR')).toBe(true);
       expect(objectGraphContains(statsWhere, 'buyer@example.com')).toBe(true);
       expect(objectGraphContains(listWhere, '2026-06-30T15:00:00.000Z')).toBe(true);
@@ -893,8 +896,10 @@ describe('AdminBookingService', () => {
 
   describe('exportReservations', () => {
     it('exports raw reservation CSV with all seven filters, formula neutralization, and metadata-only audit', async () => {
+      const exportCalls: Array<{ method: string; args: unknown[] }> = [];
+
       mockDb.select.mockReturnValueOnce(
-        createChainMock([
+        createRecordingChainMock([
           {
             reservation: {
               id: 'reservation-raw-1',
@@ -936,7 +941,7 @@ describe('AdminBookingService', () => {
               paidAt: new Date('2026-07-01T03:01:00.000Z'),
             },
           },
-        ]),
+        ], exportCalls),
       );
 
       const result = await service.exportReservations({
@@ -962,6 +967,9 @@ describe('AdminBookingService', () => {
       expect(result.csv).toContain('"Reservation Number","User Name","User Email","User Phone"');
       expect(result.csv).toContain('"\'=HYPERLINK(""https://evil.example"")"');
       expect(result.csv).toContain('"\'=raw-customer@example.com"');
+      const exportWhere = exportCalls.find((call) => call.method === 'where')?.args[0];
+      expect(objectGraphContains(exportWhere, 'CARD')).toBe(true);
+      expect(objectGraphContains(exportWhere, '카드')).toBe(true);
 
       const [auditInput] = mockAdminAuditService.write.mock.calls[0]!;
       expect(auditInput).toMatchObject({
