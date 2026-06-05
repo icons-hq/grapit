@@ -264,6 +264,11 @@ export function AdminBookingDetailModal({
             <InfoRow label="예매번호" value={booking.reservationNumber} />
             <Separator />
             <InfoRow
+              label="Toss 주문번호"
+              value={booking.tossOrderId ?? '-'}
+            />
+            <Separator />
+            <InfoRow
               label="예매자"
               value={`${booking.userName} / ${booking.userPhone}`}
             />

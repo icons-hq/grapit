@@ -274,6 +274,7 @@ export interface AdminTicketStatusCounts {
 export interface AdminBookingListItem {
   id: string;
   reservationNumber: string;
+  tossOrderId: string | null;
   userName: string;
   userEmail: string;
   userCountry: string;
