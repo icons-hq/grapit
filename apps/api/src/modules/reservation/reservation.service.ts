@@ -577,11 +577,8 @@ export class ReservationService {
     }
 
     return (
-      (
-        paymentMethod.method === 'FOREIGN_EASY_PAY'
-        && this.usesProviderChargeQuote(paymentMethod.provider)
-      )
-      || this.isOverseasCardPaymentMethod(paymentMethod)
+      paymentMethod.method === 'FOREIGN_EASY_PAY'
+      && this.usesProviderChargeQuote(paymentMethod.provider)
     );
   }
 
@@ -594,14 +591,9 @@ export class ReservationService {
       | {
           getAlipayAvailability?: () => { enabled: boolean; disabledReason?: string };
           getForeignEasyPayAvailability?: () => { enabled: boolean; disabledReason?: string };
-          getOverseasCardAvailability?: () => { enabled: boolean; disabledReason?: string };
           getPaypalAvailability?: () => { enabled: boolean; disabledReason?: string };
         }
       | undefined;
-
-    if (provider === 'CARD') {
-      return service?.getOverseasCardAvailability?.();
-    }
 
     if (provider === 'ALIPAY_PLUS') {
       return service?.getAlipayAvailability?.()
@@ -622,21 +614,15 @@ export class ReservationService {
         reservationPayableAmount: number;
         now: Date;
       }) => ForeignEasyPayProviderChargeQuote;
-      createOverseasCardQuote?: (quoteInput: {
-        reservationPayableAmount: number;
-        now: Date;
-      }) => ForeignEasyPayProviderChargeQuote;
       createPaypalQuote?: (quoteInput: {
         reservationPayableAmount: number;
         now: Date;
       }) => ForeignEasyPayProviderChargeQuote;
     };
 
-    const createQuote = input.provider === 'CARD'
-      ? service.createOverseasCardQuote
-      : input.provider === 'ALIPAY_PLUS'
-        ? service.createForeignEasyPayQuote ?? service.createPaypalQuote
-        : service.createPaypalQuote ?? service.createForeignEasyPayQuote;
+    const createQuote = input.provider === 'ALIPAY_PLUS'
+      ? service.createForeignEasyPayQuote ?? service.createPaypalQuote
+      : service.createPaypalQuote ?? service.createForeignEasyPayQuote;
     if (!createQuote) {
       throw new Error('Provider charge quote service is not configured');
     }
@@ -645,16 +631,6 @@ export class ReservationService {
       reservationPayableAmount: input.reservationPayableAmount,
       now: input.now,
     });
-  }
-
-  private isOverseasCardPaymentMethod(
-    paymentMethod: PrepareReservationRequest['paymentMethod'],
-  ): boolean {
-    return (
-      paymentMethod.method === 'CARD'
-      && paymentMethod.provider === 'CARD'
-      && paymentMethod.overseasPaymentConsent?.required === true
-    );
   }
 
   private async getCanonicalSeatSelectionsFromOverlay(

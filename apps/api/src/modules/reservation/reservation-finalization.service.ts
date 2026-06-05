@@ -54,6 +54,10 @@ type ApprovedPaymentSnapshot = {
 };
 type PaypalConfirmPaymentRequest = Extract<ConfirmPaymentRequest, { provider: 'PAYPAL' }>;
 type OverseasCardConfirmPaymentRequest = Extract<ConfirmPaymentRequest, { provider: 'OVERSEAS_CARD' }>;
+type OverseasCardAmountConfirmPaymentRequest = Extract<
+  ConfirmPaymentRequest,
+  { provider: 'OVERSEAS_CARD'; amount: number }
+>;
 type PaypalResolvedProviderCharge = {
   currency: 'USD';
   amountMinor: number;
@@ -84,6 +88,14 @@ function isOverseasCardConfirmPaymentRequest(
   dto: ConfirmPaymentRequest,
 ): dto is OverseasCardConfirmPaymentRequest {
   return 'provider' in dto && dto.provider === 'OVERSEAS_CARD';
+}
+
+function isOverseasCardAmountConfirmPaymentRequest(
+  dto: ConfirmPaymentRequest,
+): dto is OverseasCardAmountConfirmPaymentRequest {
+  return isOverseasCardConfirmPaymentRequest(dto)
+    && 'amount' in dto
+    && typeof dto.amount === 'number';
 }
 
 function createOverseasCardProviderMetadata(): Record<string, unknown> {
@@ -348,6 +360,8 @@ export class ReservationFinalizationService {
     ) {
       overseasCardProviderCharge = this.resolveOverseasCardProviderCharge(dto, reservation);
       confirmAmount = Number(overseasCardProviderCharge.amountDecimal);
+    } else if (isOverseasCardAmountConfirmPaymentRequest(dto)) {
+      confirmAmount = dto.amount;
     } else if (
       isOverseasCardConfirm
       && reservation.status === 'CONFIRMED'
@@ -406,6 +420,11 @@ export class ReservationFinalizationService {
     }
 
     if (existingPayment?.status === 'DONE') {
+      this.assertExistingDonePaymentCanSatisfyOverseasCardRequest(
+        existingPayment,
+        reservation,
+        dto,
+      );
       this.assertExistingDonePaymentMatchesRequest(existingPayment, reservation, dto);
     }
 
@@ -1115,6 +1134,53 @@ export class ReservationFinalizationService {
     } catch {
       return false;
     }
+  }
+
+  private assertExistingDonePaymentCanSatisfyOverseasCardRequest(
+    existingPayment: {
+      reservationId: string;
+      paymentKey: string;
+      tossOrderId: string;
+      amount: number;
+      method?: string | null;
+      provider?: string | null;
+      providerChargeAmountMinor?: number | null;
+      providerMetadata?: unknown;
+    },
+    reservation: {
+      id: string;
+      totalAmount: number;
+      providerChargeAmountMinor?: number | null;
+    },
+    dto: ConfirmPaymentRequest,
+  ): void {
+    if (!isOverseasCardConfirmPaymentRequest(dto)) {
+      return;
+    }
+
+    if (
+      this.hasOverseasCardProviderMetadata(existingPayment.providerMetadata)
+      || this.canBackfillOverseasCardProviderMetadata(existingPayment, reservation, dto)
+    ) {
+      return;
+    }
+
+    throw new BadRequestException('해외카드 결제 정보가 일치하지 않습니다');
+  }
+
+  private hasOverseasCardProviderMetadata(value: unknown): boolean {
+    const metadata = getExistingPaymentProviderMetadata(value);
+    if (!metadata) {
+      return false;
+    }
+
+    return (
+      metadata.secretKeyScope === 'overseas-card'
+      || (
+        typeof metadata.requestedProvider === 'string'
+        && metadata.requestedProvider.toUpperCase() === 'OVERSEAS_CARD'
+      )
+    );
   }
 
   private calculatePayableTotal(seats: FloorAwareSeatSelection[]): number {

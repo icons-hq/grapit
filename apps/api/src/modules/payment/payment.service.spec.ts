@@ -93,6 +93,7 @@ describe('PaymentService', () => {
   let mockTossClient: {
     cancelPayment: ReturnType<typeof vi.fn>;
     queryPayment: ReturnType<typeof vi.fn>;
+    getOverseasCardAvailability: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(() => {
@@ -110,6 +111,7 @@ describe('PaymentService', () => {
     mockTossClient = {
       cancelPayment: vi.fn().mockResolvedValue({}),
       queryPayment: vi.fn(),
+      getOverseasCardAvailability: vi.fn().mockReturnValue({ enabled: true }),
     };
     service = new PaymentService(
       mockDb as any,
@@ -246,25 +248,11 @@ describe('PaymentService', () => {
       expect(branch.pendingUrl).toBeUndefined();
     });
 
-    it('routes overseas card through CARD with a stored USD provider charge quote', async () => {
-      (service as unknown as {
-        providerChargeQuoteService: {
-          getOverseasCardAvailability: ReturnType<typeof vi.fn>;
-        };
-      }).providerChargeQuoteService = {
-        getOverseasCardAvailability: vi.fn().mockReturnValue({ enabled: true }),
-      };
-      mockDb.select.mockReturnValue(createSelectChain([{
-        providerChargeCurrency: 'USD',
-        providerChargeAmountMinor: 10800,
-        providerChargeRate: '0.00072',
-        providerChargeQuotedAt: new Date('2026-05-29T10:00:00.000Z'),
-      }]));
-
+    it('routes overseas card through CARD in KRW without a provider charge quote', async () => {
       const branch = await service.prepareTossPaymentBranch({
         orderId: 'GRP-FOREIGN-CARD',
         paymentMethod: createPaymentMethod({
-          currency: 'USD',
+          currency: 'KRW',
           overseasPaymentConsent: {
             required: true,
             agreed: true,
@@ -279,20 +267,46 @@ describe('PaymentService', () => {
         orderId: 'GRP-FOREIGN-CARD',
         method: 'CARD',
         provider: 'CARD',
-        currency: 'USD',
+        currency: 'KRW',
         asyncStatus: 'sync',
         useInternationalCardOnly: true,
-        checkoutEnabled: true,
-        providerChargeQuote: {
-          currency: 'USD',
-          amountMinor: 10800,
-          amountDecimal: '108.00',
-          rate: '0.00072',
-          quotedAt: '2026-05-29T10:00:00.000Z',
-        },
       });
       expect(branch.pendingUrl).toBeUndefined();
-      expect(mockDb.select).toHaveBeenCalled();
+      expect(branch.providerChargeQuote).toBeUndefined();
+      expect(branch.checkoutEnabled).toBe(true);
+      expect(mockDb.select).not.toHaveBeenCalled();
+    });
+
+    it('disables overseas card checkout when the scoped server secret is missing', async () => {
+      mockTossClient.getOverseasCardAvailability.mockReturnValueOnce({
+        enabled: false,
+        disabledReason: 'OVERSEAS_CARD_SECRET_KEY_MISSING',
+      });
+
+      const branch = await service.prepareTossPaymentBranch({
+        orderId: 'GRP-FOREIGN-CARD-NO-SECRET',
+        paymentMethod: createPaymentMethod({
+          currency: 'KRW',
+          overseasPaymentConsent: {
+            required: true,
+            agreed: true,
+            agreementVersion: '2026-05-08',
+          },
+        }),
+        successUrl: 'https://grabit.test/booking/perf-1/complete',
+        failUrl: 'https://grabit.test/booking/perf-1/confirm?error=true',
+      });
+
+      expect(branch).toMatchObject({
+        method: 'CARD',
+        provider: 'CARD',
+        currency: 'KRW',
+        useInternationalCardOnly: true,
+        checkoutEnabled: false,
+        disabledReason: 'OVERSEAS_CARD_SECRET_KEY_MISSING',
+      });
+      expect(branch.providerChargeQuote).toBeUndefined();
+      expect(mockDb.select).not.toHaveBeenCalled();
     });
 
     it('routes foreign easy-pay through pendingUrl + async webhook tracking', async () => {

@@ -41,7 +41,7 @@ describe('ProviderChargeQuoteService', () => {
     });
   });
 
-  it('keeps overseas-card rates separate from PayPal quotes', () => {
+  it('ignores overseas-card quote config when creating PayPal quotes', () => {
     const service = new ProviderChargeQuoteService(
       config({
         PAYPAL_CHECKOUT_ENABLED: 'true',
@@ -61,16 +61,10 @@ describe('ProviderChargeQuoteService', () => {
       amountDecimal: '102.00',
       rate: '0.00068',
     });
-    expect(
-      service.createOverseasCardQuote({
-        reservationPayableAmount: 150000,
-        now: new Date('2026-05-29T00:00:00.000Z'),
-      }),
-    ).toMatchObject({
-      amountMinor: 10800,
-      amountDecimal: '108.00',
-      rate: '0.00072',
-    });
+    expect((service as unknown as { createOverseasCardQuote?: unknown }).createOverseasCardQuote)
+      .toBeUndefined();
+    expect((service as unknown as { getOverseasCardAvailability?: unknown }).getOverseasCardAvailability)
+      .toBeUndefined();
   });
 
   it('does not use an overseas-card-only rate to enable PayPal quotes', () => {

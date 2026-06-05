@@ -25,9 +25,7 @@ export class ProviderChargeQuoteService {
   private readonly alipayCheckoutRequested: boolean;
   private readonly alipayCheckoutEnabled: boolean;
   private readonly alipaySecretConfigured: boolean;
-  private readonly overseasCardSecretConfigured: boolean;
   private readonly paypalRate?: ParsedDecimalRate;
-  private readonly overseasCardRate?: ParsedDecimalRate;
 
   constructor(private readonly configService: ConfigService) {
     const paypalCheckoutFlag = this.configService
@@ -52,22 +50,12 @@ export class ProviderChargeQuoteService {
       (this.configService.get<string>('TOSS_FOREIGN_EASY_PAY_SECRET_KEY') ?? '').trim().length > 0;
     this.alipayCheckoutEnabled =
       this.alipayCheckoutRequested && this.alipaySecretConfigured;
-    this.overseasCardSecretConfigured =
-      (this.configService.get<string>('TOSS_OVERSEAS_CARD_SECRET_KEY') ?? '').trim().length > 0;
 
     const paypalRate =
       this.configService.get<string>('PAYPAL_KRW_USD_RATE')
       ?? (useLocalTestDefault ? DEFAULT_LOCAL_TEST_KRW_USD_RATE : undefined);
     if (this.paypalCheckoutEnabled || this.alipayCheckoutEnabled) {
       this.paypalRate = this.parseRate(paypalRate);
-    }
-
-    if (this.overseasCardSecretConfigured) {
-      const overseasCardRate =
-        this.configService.get<string>('OVERSEAS_CARD_KRW_USD_RATE')
-        ?? this.configService.get<string>('TOSS_OVERSEAS_CARD_KRW_USD_RATE')
-        ?? paypalRate;
-      this.overseasCardRate = this.parseRate(overseasCardRate);
     }
   }
 
@@ -112,24 +100,6 @@ export class ProviderChargeQuoteService {
     return this.getPaypalAvailability();
   }
 
-  getOverseasCardAvailability(): { enabled: boolean; disabledReason?: string } {
-    if (!this.overseasCardSecretConfigured) {
-      return {
-        enabled: false,
-        disabledReason: 'OVERSEAS_CARD_SECRET_KEY_MISSING',
-      };
-    }
-
-    if (!this.overseasCardRate) {
-      return {
-        enabled: false,
-        disabledReason: 'OVERSEAS_CARD_RATE_MISSING',
-      };
-    }
-
-    return { enabled: true };
-  }
-
   createPaypalQuote(input: {
     reservationPayableAmount: number;
     now: Date;
@@ -150,17 +120,6 @@ export class ProviderChargeQuoteService {
     }
 
     return this.createProviderChargeQuote(input, this.paypalRate);
-  }
-
-  createOverseasCardQuote(input: {
-    reservationPayableAmount: number;
-    now: Date;
-  }): ForeignEasyPayProviderChargeQuote {
-    if (!this.overseasCardSecretConfigured || !this.overseasCardRate) {
-      throw new Error('overseas card checkout is disabled');
-    }
-
-    return this.createProviderChargeQuote(input, this.overseasCardRate);
   }
 
   private createProviderChargeQuote(input: {

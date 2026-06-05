@@ -116,6 +116,32 @@ describe('TossPaymentsClient', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('reports overseas card checkout unavailable when its secret is missing', () => {
+    client = new TossPaymentsClient({
+      get: vi.fn((key: string, fallback?: string) => {
+        if (key === 'TOSS_SECRET_KEY') return secretKey;
+        return fallback;
+      }),
+    } as unknown as ConfigService);
+
+    expect(client.getOverseasCardAvailability()).toEqual({
+      enabled: false,
+      disabledReason: 'OVERSEAS_CARD_SECRET_KEY_MISSING',
+    });
+  });
+
+  it('reports overseas card checkout available when its secret is configured', () => {
+    client = new TossPaymentsClient({
+      get: vi.fn((key: string, fallback?: string) => {
+        if (key === 'TOSS_SECRET_KEY') return secretKey;
+        if (key === 'TOSS_OVERSEAS_CARD_SECRET_KEY') return 'test_sk_overseas_card_secret';
+        return fallback;
+      }),
+    } as unknown as ConfigService);
+
+    expect(client.getOverseasCardAvailability()).toEqual({ enabled: true });
+  });
+
   it('omits optional cancel fields for full Toss cancellation', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,

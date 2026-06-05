@@ -802,7 +802,7 @@ describe('use-booking payment mutations', () => {
       paymentMethod: {
         method: 'CARD',
         provider: 'CARD',
-        currency: 'USD',
+        currency: 'KRW',
         overseasPaymentConsent: {
           required: true,
           agreed: false,
@@ -827,7 +827,7 @@ describe('use-booking payment mutations', () => {
       paymentMethod: {
         method: 'CARD',
         provider: 'CARD',
-        currency: 'USD',
+        currency: 'KRW',
       },
     });
   });
@@ -1063,24 +1063,17 @@ describe('use-booking payment mutations', () => {
     expect(request.foreignEasyPay?.products.every((product) => product.currency === 'USD')).toBe(true);
   });
 
-  it('buildDirectCardPaymentRequest() sends overseas card through direct CARD payment with USD amount', () => {
+  it('buildDirectCardPaymentRequest() sends overseas card through direct CARD payment with KRW amount', () => {
     const request = buildDirectCardPaymentRequest({
       branch: {
         orderId: 'GRP-OVERSEAS-CARD',
         method: 'CARD',
         provider: 'CARD',
-        currency: 'USD',
-        successUrl: 'https://grabit.test/success?provider=OVERSEAS_CARD',
+        currency: 'KRW',
+        successUrl: 'https://grabit.test/success',
         failUrl: 'https://grabit.test/fail',
         asyncStatus: 'sync',
         useInternationalCardOnly: true,
-        providerChargeQuote: {
-          currency: 'USD',
-          amountMinor: 3400,
-          amountDecimal: '34.00',
-          rate: '0.00068',
-          quotedAt: '2026-06-05T01:00:00.000Z',
-        },
       },
       amount: 50000,
       customerEmail: 'fan@example.com',
@@ -1092,8 +1085,8 @@ describe('use-booking payment mutations', () => {
     expect(request).toMatchObject({
       method: 'CARD',
       amount: {
-        currency: 'USD',
-        value: 34,
+        currency: 'KRW',
+        value: 50000,
       },
       orderId: 'GRP-OVERSEAS-CARD',
       windowTarget: 'self',
@@ -1102,9 +1095,7 @@ describe('use-booking payment mutations', () => {
       },
       customerMobilePhone: '821012345678',
     });
-    expect(request.successUrl).toBe(
-      'https://grabit.test/success?provider=OVERSEAS_CARD&providerChargeAmount=34.00',
-    );
+    expect(request.successUrl).toBe('https://grabit.test/success?provider=OVERSEAS_CARD');
   });
 
   it('resolveOverseasCardClientKey() requires a direct payment client key for overseas cards', () => {
@@ -1301,7 +1292,7 @@ describe('use-booking payment mutations', () => {
       paymentKey: 'overseas_card_payment_key',
       orderId: 'GRP-OVERSEAS-CARD-CONFIRM',
       provider: 'OVERSEAS_CARD',
-      providerChargeAmount: '',
+      amount: 50000,
     });
     expect(buildConfirmPaymentPayload({
       paymentKey: 'overseas_card_usd_payment_key',

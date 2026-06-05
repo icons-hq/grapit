@@ -280,12 +280,7 @@ function usesProviderChargeQuote(provider: PaymentProvider): boolean {
 }
 
 function usesProviderChargeQuoteForPaymentMethod(paymentMethod: PaymentMethod): boolean {
-  return usesProviderChargeQuote(paymentMethod.provider)
-    || (
-      paymentMethod.method === 'CARD'
-      && paymentMethod.provider === 'CARD'
-      && paymentMethod.overseasPaymentConsent?.required === true
-    );
+  return usesProviderChargeQuote(paymentMethod.provider);
 }
 
 export function resolveProviderChargeDisabledMessage(
@@ -338,7 +333,7 @@ export function resolvePaymentMethodSelection(
       paymentMethod: {
         method: 'CARD',
         provider: 'CARD',
-        currency: 'USD',
+        currency: 'KRW',
         overseasPaymentConsent: createOverseasConsent(),
       },
     };
@@ -371,7 +366,7 @@ export function resolvePaymentMethodSelection(
       paymentMethod: {
         method: 'CARD',
         provider: 'CARD',
-        currency: 'USD',
+        currency: 'KRW',
         overseasPaymentConsent: createOverseasConsent(),
       },
     };
@@ -555,16 +550,13 @@ export function buildDirectCardPaymentRequest({
   orderName: string;
   locale?: string;
 }): DirectCardPaymentRequestPayload {
-  const copy = getVisibleCopy(locale).bookingExtra.widget;
   const providerChargeQuote = branch.providerChargeQuote;
-  if (branch.useInternationalCardOnly && !providerChargeQuote) {
-    throw new Error(copy.overseasCardAmountMissing);
-  }
   const chargeCurrency = providerChargeQuote?.currency ?? 'KRW';
   const chargeValue = providerChargeQuote
     ? providerChargeQuote.amountMinor / 100
     : amount;
   const successUrl = new URL(branch.successUrl);
+  successUrl.searchParams.set('provider', 'OVERSEAS_CARD');
   if (providerChargeQuote) {
     successUrl.searchParams.set(
       'providerChargeAmount',
@@ -753,19 +745,20 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
           if (!branch.useInternationalCardOnly) {
             throw new Error(widgetCopy.overseasCardInvalidSetup);
           }
+          if (branch.checkoutEnabled === false) {
+            throw new Error(resolveProviderChargeDisabledMessage(
+              selection.paymentMethod.provider,
+              branch.disabledReason,
+              locale,
+            ));
+          }
           const overseasCardClientKey = resolveOverseasCardClientKey();
           if (!overseasCardClientKey) {
             throw new Error(widgetCopy.overseasCardDisabled);
           }
 
-          const successUrl = new URL(branch.successUrl);
-          successUrl.searchParams.set('provider', 'OVERSEAS_CARD');
-          const directCardBranch = {
-            ...branch,
-            successUrl: successUrl.toString(),
-          };
           const directCardPayload = buildDirectCardPaymentRequest({
-            branch: directCardBranch,
+            branch,
             amount,
             customerEmail,
             customerName,
