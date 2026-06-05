@@ -105,6 +105,23 @@ describe('BookingRoute auth gating', () => {
       });
     });
   });
+
+  it('does not show the queue surface while checking immediate admission', async () => {
+    useAuthStoreMock.mockReturnValue({
+      isInitialized: true,
+      accessToken: 'access-token',
+    });
+
+    renderBookingRoute();
+
+    await waitFor(() => {
+      expect(useQueueMock).toHaveBeenCalledWith({
+        performanceId: 'performance-auth',
+        enabled: true,
+      });
+    });
+    expect(screen.queryByText('queue loading')).not.toBeInTheDocument();
+  });
 });
 
 function renderBookingRoute() {

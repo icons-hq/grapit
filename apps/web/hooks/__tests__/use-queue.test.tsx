@@ -123,6 +123,38 @@ describe('useQueue', () => {
     expect(socketMock.connect).toHaveBeenCalled();
   });
 
+  it('skips the waiting surface when the enter response is immediately admitted', async () => {
+    postMock.mockResolvedValueOnce({
+      queueSessionId: 'queue-session-immediate',
+      state: 'ADMITTED',
+      position: 0,
+      waitingCount: 0,
+      etaSeconds: 0,
+      remainingSeats: 21,
+      autoEnter: true,
+      admittedAt: '2026-05-08T09:00:00.000Z',
+      activeUntilAt: '2026-05-08T09:10:00.000Z',
+      reentryGraceUntilAt: '2026-05-08T09:13:00.000Z',
+    });
+
+    const { result } = renderHook(
+      () =>
+        useQueue({
+          performanceId: 'performance-immediate',
+        }),
+      {
+        wrapper: createWrapper(),
+      },
+    );
+
+    await flushQueueEffects();
+
+    expect(getMock).not.toHaveBeenCalled();
+    expect(result.current.status).toBe('admitted');
+    expect(result.current.isReady).toBe(true);
+    expect(result.current.remainingSeats).toBe(21);
+  });
+
   it('moves to expired state when queue:expired arrives over the socket contract', async () => {
     postMock.mockResolvedValueOnce({
       queueSessionId: 'queue-session-2',
