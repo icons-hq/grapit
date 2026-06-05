@@ -83,12 +83,16 @@ export function AdminBookingDashboard() {
 
   // Debounce search input by 300ms
   useEffect(() => {
+    if (search === debouncedSearch) {
+      return;
+    }
+
     const timer = setTimeout(() => {
       setDebouncedSearch(search);
       setPage(1);
     }, 300);
     return () => clearTimeout(timer);
-  }, [search]);
+  }, [search, debouncedSearch]);
 
   const { data, isLoading } = useAdminBookings({
     funnelStatus,
