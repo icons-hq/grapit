@@ -168,7 +168,10 @@ export function useQueue({
   }, []);
 
   const applySnapshot = useCallback(
-    (nextSnapshot: QueueSnapshot) => {
+    (
+      nextSnapshot: QueueSnapshot,
+      options: { enterImmediately?: boolean } = {},
+    ) => {
       const normalized = normalizeSnapshot(nextSnapshot);
       setSnapshot(normalized);
 
@@ -181,11 +184,15 @@ export function useQueue({
 
       if (isAdmittedState(normalized.state)) {
         setStatus('admitted');
-        setIsReady(false);
         clearAutoEnterTimer();
-        autoEnterTimerRef.current = setTimeout(() => {
+        if (options.enterImmediately && normalized.autoEnter) {
           setIsReady(true);
-        }, AUTO_ENTER_DELAY_MS);
+        } else {
+          setIsReady(false);
+          autoEnterTimerRef.current = setTimeout(() => {
+            setIsReady(true);
+          }, AUTO_ENTER_DELAY_MS);
+        }
         return;
       }
 
@@ -228,12 +235,23 @@ export function useQueue({
         return;
       }
 
-      await loadQueueSession(response.queueSessionId);
+      if (!response.state) {
+        await loadQueueSession(response.queueSessionId);
+        return;
+      }
+
+      applySnapshot(response, {
+        enterImmediately:
+          isAdmittedState(response.state) &&
+          response.autoEnter &&
+          response.position === 0 &&
+          response.waitingCount === 0,
+      });
     } catch (error) {
       setStatus(mapQueueError(error));
       setIsReady(false);
     }
-  }, [clearAutoEnterTimer, enabled, loadQueueSession, performanceId]);
+  }, [applySnapshot, clearAutoEnterTimer, enabled, loadQueueSession, performanceId]);
 
   useEffect(() => {
     if (!enabled) {
