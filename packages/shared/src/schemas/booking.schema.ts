@@ -274,16 +274,8 @@ export const confirmPaymentSchema = z.union([
   }),
   confirmPaymentBaseSchema.extend({
     provider: z.literal('OVERSEAS_CARD'),
-    amount: z.number().int().positive('결제 금액은 0보다 커야 합니다').optional(),
-    providerChargeAmount: providerDecimalStringSchema.optional(),
-  }).superRefine((value, ctx) => {
-    if ((value.amount === undefined) === (value.providerChargeAmount === undefined)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: '해외카드 결제 금액이 필요합니다',
-        path: ['amount'],
-      });
-    }
+    providerChargeAmount: providerDecimalStringSchema,
+    amount: z.never().optional(),
   }),
   confirmPaymentBaseSchema.extend({
     amount: z.number().int().positive('결제 금액은 0보다 커야 합니다'),

@@ -187,6 +187,24 @@ describe('PaymentService', () => {
     });
   });
 
+  describe('markWebhookEventFailed', () => {
+    it('truncates long processing messages to fit the webhook ledger column', async () => {
+      const mutation = createMutationChain();
+      mockDb.update.mockReturnValue(mutation);
+
+      await service.markWebhookEventFailed(
+        'whtrans-long-message',
+        'PROCESSING_FAILED',
+        'x'.repeat(600),
+      );
+
+      expect(mutation.set).toHaveBeenCalledWith({
+        processingResultCode: 'PROCESSING_FAILED',
+        processingResultMessage: `${'x'.repeat(497)}...`,
+      });
+    });
+  });
+
   describe('prepareTossPaymentBranch', () => {
     function createPaymentMethod(
       overrides: Partial<PaymentMethod> = {},
@@ -218,13 +236,13 @@ describe('PaymentService', () => {
       expect(branch.pendingUrl).toBeUndefined();
     });
 
-    it('routes overseas card through CARD with useInternationalCardOnly=true', async () => {
+    it('routes overseas card through CARD with a stored USD provider charge quote', async () => {
       (service as unknown as {
         providerChargeQuoteService: {
-          getForeignEasyPayAvailability: ReturnType<typeof vi.fn>;
+          getOverseasCardAvailability: ReturnType<typeof vi.fn>;
         };
       }).providerChargeQuoteService = {
-        getForeignEasyPayAvailability: vi.fn().mockReturnValue({ enabled: true }),
+        getOverseasCardAvailability: vi.fn().mockReturnValue({ enabled: true }),
       };
       mockDb.select.mockReturnValue(createSelectChain([{
         providerChargeCurrency: 'USD',
@@ -251,13 +269,20 @@ describe('PaymentService', () => {
         orderId: 'GRP-FOREIGN-CARD',
         method: 'CARD',
         provider: 'CARD',
-        currency: 'KRW',
+        currency: 'USD',
         asyncStatus: 'sync',
         useInternationalCardOnly: true,
+        checkoutEnabled: true,
+        providerChargeQuote: {
+          currency: 'USD',
+          amountMinor: 10800,
+          amountDecimal: '108.00',
+          rate: '0.00072',
+          quotedAt: '2026-05-29T10:00:00.000Z',
+        },
       });
       expect(branch.pendingUrl).toBeUndefined();
-      expect(branch.providerChargeQuote).toBeUndefined();
-      expect(mockDb.select).not.toHaveBeenCalled();
+      expect(mockDb.select).toHaveBeenCalled();
     });
 
     it('routes foreign easy-pay through pendingUrl + async webhook tracking', async () => {
@@ -849,6 +874,80 @@ describe('PaymentService', () => {
         reservationId,
         paymentId,
       });
+    });
+
+    it('finalizes overseas-card DONE webhook when provider totalAmount matches the stored USD quote', async () => {
+      const reservationId = randomUUID();
+      const showtimeId = randomUUID();
+      const userId = randomUUID();
+      const paymentId = randomUUID();
+      const quotedAt = new Date('2026-06-05T01:00:00.000Z');
+      const tx = {
+        update: vi.fn(),
+        insert: vi.fn(),
+      };
+      const updateReservation = createMutationChain();
+      const insertPayment = createMutationChain([{ id: paymentId }]);
+      const insertTicketItems = createMutationChain();
+      const updateSeat = createMutationChain([{ id: randomUUID() }]);
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          userId,
+          showtimeId,
+          status: 'PENDING_PAYMENT',
+          totalAmount: 150000,
+          providerChargeCurrency: 'USD',
+          providerChargeAmountMinor: 10800,
+          providerChargeRate: '0.00072',
+          providerChargeQuotedAt: quotedAt,
+        }]))
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([
+          { seatId: '1F:A-1', tierName: 'VIP', price: 148000, row: 'A', number: '1' },
+        ]));
+      mockDb.transaction.mockImplementation(async (callback: (txArg: typeof tx) => Promise<void>) => {
+        await callback(tx);
+      });
+      tx.update
+        .mockReturnValueOnce(updateReservation)
+        .mockReturnValueOnce(updateSeat);
+      tx.insert
+        .mockReturnValueOnce(insertPayment)
+        .mockReturnValueOnce(insertTicketItems);
+
+      await service.upsertAsyncPaymentProgress(
+        {
+          eventId: 'evt-overseas-card-done-provider-quote',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_overseas_card_provider_quote',
+            orderId: 'GRP-OVERSEAS-CARD-PROVIDER-QUOTE',
+            status: 'DONE',
+            method: 'CARD',
+            provider: 'CARD',
+            currency: 'USD',
+            totalAmount: 108,
+            approvedAt: '2026-06-05T01:00:05.000Z',
+          },
+        },
+        'DONE',
+        'payment_status_changed:done',
+      );
+
+      expect(insertPayment.values).toHaveBeenCalledWith(expect.objectContaining({
+        reservationId,
+        paymentKey: 'pay_overseas_card_provider_quote',
+        tossOrderId: 'GRP-OVERSEAS-CARD-PROVIDER-QUOTE',
+        method: 'CARD',
+        provider: 'CARD',
+        currency: 'KRW',
+        amount: 150000,
+        status: 'DONE',
+        providerChargeCurrency: 'USD',
+        providerChargeAmountMinor: 10800,
+      }));
     });
 
     it('reconciles Alipay pending return by querying Toss and finalizing the async payment', async () => {

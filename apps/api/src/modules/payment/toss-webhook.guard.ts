@@ -10,6 +10,7 @@ import { timingSafeEqual } from 'node:crypto';
 interface TossWebhookRequestLike {
   headers?: Record<string, string | string[] | undefined>;
   query?: Record<string, unknown>;
+  tossWebhookSecretScope?: 'overseas-card';
 }
 
 @Injectable()
@@ -17,11 +18,12 @@ export class TossWebhookGuard implements CanActivate {
   constructor(private readonly configService: ConfigService) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const configuredSecret = this.configService
-      .get<string>('TOSS_WEBHOOK_SECRET', '')
-      .trim();
+    const configuredSecrets = [
+      this.configService.get<string>('TOSS_WEBHOOK_SECRET', '').trim(),
+      this.configService.get<string>('TOSS_OVERSEAS_CARD_WEBHOOK_SECRET', '').trim(),
+    ].filter((secret) => secret.length > 0);
 
-    if (!configuredSecret) {
+    if (configuredSecrets.length === 0) {
       throw new UnauthorizedException('Toss webhook secret is not configured');
     }
 
@@ -30,10 +32,21 @@ export class TossWebhookGuard implements CanActivate {
       .getRequest<TossWebhookRequestLike>();
     const providedSecret = this.extractSecret(request);
 
+    if (!providedSecret) {
+      throw new UnauthorizedException('Invalid Toss webhook secret');
+    }
+
     if (
-      !providedSecret
-      || !this.constantTimeEquals(providedSecret, configuredSecret)
+      this.constantTimeEquals(
+        providedSecret,
+        this.configService.get<string>('TOSS_OVERSEAS_CARD_WEBHOOK_SECRET', '').trim(),
+      )
     ) {
+      request.tossWebhookSecretScope = 'overseas-card';
+      return true;
+    }
+
+    if (!configuredSecrets.some((secret) => this.constantTimeEquals(providedSecret, secret))) {
       throw new UnauthorizedException('Invalid Toss webhook secret');
     }
 

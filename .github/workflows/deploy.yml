@@ -267,6 +267,7 @@ jobs:
             TOSS_OVERSEAS_CARD_SECRET_KEY=toss-overseas-card-secret-key:latest
             TOSS_FOREIGN_EASY_PAY_SECRET_KEY=toss-foreign-easy-pay-secret-key:latest
             TOSS_WEBHOOK_SECRET=toss-webhook-secret:latest
+            TOSS_OVERSEAS_CARD_WEBHOOK_SECRET=toss-overseas-card-webhook-secret:latest
             QR_TICKET_SECRET=qr-ticket-secret:latest
             QR_TICKET_SECRET_VERSION=qr-ticket-secret-version:latest
             QR_TICKET_SECRET_KEYRING_JSON=qr-ticket-secret-keyring-json:latest

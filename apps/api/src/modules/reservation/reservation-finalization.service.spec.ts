@@ -157,6 +157,7 @@ describe('ReservationFinalizationService', () => {
       tossClient,
       bookingService,
       qrTicketService,
+      providerChargeQuoteService,
     } = createDependencies();
 
     db.select
@@ -376,6 +377,7 @@ describe('ReservationFinalizationService', () => {
       service,
       db,
       tossClient,
+      providerChargeQuoteService,
       bookingService,
       qrTicketService,
     } = createDependencies();
@@ -390,6 +392,10 @@ describe('ReservationFinalizationService', () => {
           showtimeId: 'showtime-1',
           status: 'PENDING_PAYMENT',
           totalAmount: 150000,
+          providerChargeCurrency: 'USD',
+          providerChargeAmountMinor: 10800,
+          providerChargeRate: '0.00072',
+          providerChargeQuotedAt: new Date('2026-06-02T09:59:00.000Z'),
           admissionActiveUntilAt: new Date(Date.now() + 60_000),
         },
       ]))
@@ -406,9 +412,10 @@ describe('ReservationFinalizationService', () => {
       paymentKey: 'payment-key-overseas-card',
       orderId: 'order-overseas-card-1',
       method: 'CARD',
-      totalAmount: 150000,
+      totalAmount: 108,
       approvedAt: '2026-06-02T10:01:00.000Z',
     });
+    providerChargeQuoteService.parseProviderDecimalToMinor.mockReturnValue(10800);
 
     const tx = {
       execute: vi.fn().mockResolvedValue(ticketLimitResult()),
@@ -446,16 +453,17 @@ describe('ReservationFinalizationService', () => {
           paymentKey: 'payment-key-overseas-card',
           orderId: 'order-overseas-card-1',
           provider: 'OVERSEAS_CARD',
-          amount: 150000,
+          providerChargeAmount: '108.00',
         },
         'user-1',
       ),
     ).resolves.toEqual({ reservationId: 'reservation-overseas-card-1' });
 
+    expect(providerChargeQuoteService.parseProviderDecimalToMinor).toHaveBeenCalledWith('108.00');
     expect(tossClient.confirmPayment).toHaveBeenCalledWith({
       paymentKey: 'payment-key-overseas-card',
       orderId: 'order-overseas-card-1',
-      amount: 150000,
+      amount: 108,
       secretKeyScope: 'overseas-card',
     });
     expect(insertedValues).toContainEqual({
@@ -473,6 +481,10 @@ describe('ReservationFinalizationService', () => {
         currency: 'KRW',
         asyncStatus: 'sync',
         amount: 150000,
+        providerChargeCurrency: 'USD',
+        providerChargeAmountMinor: 10800,
+        providerChargeRate: '0.00072',
+        providerChargeQuotedAt: new Date('2026-06-02T09:59:00.000Z'),
         status: 'DONE',
       }),
     });
@@ -488,7 +500,7 @@ describe('ReservationFinalizationService', () => {
     );
   });
 
-  it('confirms overseas card with the KRW reservation total even when a stale providerChargeAmount is present', async () => {
+  it('rejects overseas card provider amount mismatch before confirming with Toss', async () => {
     const {
       service,
       db,
@@ -507,6 +519,10 @@ describe('ReservationFinalizationService', () => {
           showtimeId: 'showtime-1',
           status: 'PENDING_PAYMENT',
           totalAmount: 150000,
+          providerChargeCurrency: 'USD',
+          providerChargeAmountMinor: 10800,
+          providerChargeRate: '0.00072',
+          providerChargeQuotedAt: new Date('2026-06-02T09:59:00.000Z'),
           admissionActiveUntilAt: new Date(Date.now() + 60_000),
         },
       ]))
@@ -519,6 +535,7 @@ describe('ReservationFinalizationService', () => {
           number: '1',
         },
       ]));
+    providerChargeQuoteService.parseProviderDecimalToMinor.mockReturnValue(10799);
     tossClient.confirmPayment.mockResolvedValue({
       paymentKey: 'payment-key-overseas-card-usd',
       orderId: 'order-overseas-card-usd-1',
@@ -567,43 +584,12 @@ describe('ReservationFinalizationService', () => {
         },
         'user-1',
       ),
-    ).resolves.toEqual({ reservationId: 'reservation-overseas-card-usd-1' });
+    ).rejects.toThrow(BadRequestException);
 
-    expect(providerChargeQuoteService.parseProviderDecimalToMinor).not.toHaveBeenCalled();
-    expect(tossClient.confirmPayment).toHaveBeenCalledWith({
-      paymentKey: 'payment-key-overseas-card-usd',
-      orderId: 'order-overseas-card-usd-1',
-      amount: 150000,
-      secretKeyScope: 'overseas-card',
-    });
-    expect(insertedValues).toContainEqual({
-      table: payments,
-      values: expect.objectContaining({
-        reservationId: 'reservation-overseas-card-usd-1',
-        paymentKey: 'payment-key-overseas-card-usd',
-        tossOrderId: 'order-overseas-card-usd-1',
-        method: 'CARD',
-        provider: 'CARD',
-        providerMetadata: {
-          requestedProvider: 'OVERSEAS_CARD',
-          secretKeyScope: 'overseas-card',
-        },
-        currency: 'KRW',
-        asyncStatus: 'sync',
-        amount: 150000,
-        status: 'DONE',
-      }),
-    });
-    expect(qrTicketService.ensureIssuedTicketsForReservation).toHaveBeenCalledWith({
-      reservationId: 'reservation-overseas-card-usd-1',
-      paymentId: 'payment-overseas-card-usd-1',
-    });
-    expect(bookingService.consumeOwnedSeatLocks).toHaveBeenCalledWith(
-      'user-1',
-      'showtime-1',
-      ['1F:A-1'],
-      { skipUnavailableCheck: true },
-    );
+    expect(tossClient.confirmPayment).not.toHaveBeenCalled();
+    expect(insertedValues).toEqual([]);
+    expect(qrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
+    expect(bookingService.consumeOwnedSeatLocks).not.toHaveBeenCalled();
   });
 
   it('rejects PayPal provider amount mismatch before confirming with Toss', async () => {
@@ -658,7 +644,13 @@ describe('ReservationFinalizationService', () => {
   });
 
   it('returns reservationId for already confirmed reservations without rendering detail', async () => {
-    const { service, db, tossClient, bookingService } = createDependencies();
+    const {
+      service,
+      db,
+      tossClient,
+      bookingService,
+      providerChargeQuoteService,
+    } = createDependencies();
     db.select
       .mockReturnValueOnce(chainResult([]))
       .mockReturnValueOnce(chainResult([
@@ -1061,30 +1053,22 @@ describe('ReservationFinalizationService', () => {
         },
         'user-1',
       ),
-    ).resolves.toEqual({ reservationId: 'reservation-domestic-card-recovery-1' });
+    ).rejects.toThrow('해외카드 결제 금액이 필요합니다');
 
-    const paymentUpdate = updatedValues.find((entry) => entry.table === payments);
-    expect(paymentUpdate?.values).toEqual(expect.objectContaining({
-      status: 'DONE',
-      amount: 154000,
-      asyncStatus: 'sync',
-    }));
-    expect(paymentUpdate?.values).not.toHaveProperty('providerMetadata');
+    expect(updatedValues).toHaveLength(0);
     expect(tossClient.confirmPayment).not.toHaveBeenCalled();
-    expect(qrTicketService.ensureIssuedTicketsForReservation).toHaveBeenCalledWith({
-      reservationId: 'reservation-domestic-card-recovery-1',
-      paymentId: 'payment-domestic-card-recovery-1',
-    });
-    expect(bookingService.consumeOwnedSeatLocks).toHaveBeenCalledWith(
-      'user-1',
-      'showtime-1',
-      ['1F:A-1', '1F:A-2'],
-      { skipUnavailableCheck: true },
-    );
+    expect(qrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
+    expect(bookingService.consumeOwnedSeatLocks).not.toHaveBeenCalled();
   });
 
   it('uses overseas-card secret scope when compensating an existing approved overseas-card payment', async () => {
-    const { service, db, tossClient, bookingService } = createDependencies();
+    const {
+      service,
+      db,
+      tossClient,
+      bookingService,
+      providerChargeQuoteService,
+    } = createDependencies();
     const updateValues: Record<string, unknown>[] = [];
     db.select
       .mockReturnValueOnce(chainResult([
@@ -1102,6 +1086,10 @@ describe('ReservationFinalizationService', () => {
           },
           currency: 'KRW',
           amount: 154000,
+          providerChargeCurrency: 'USD',
+          providerChargeAmountMinor: 10800,
+          providerChargeRate: '0.00072',
+          providerChargeQuotedAt: new Date('2026-06-02T09:59:00.000Z'),
           paidAt: new Date('2026-06-02T10:01:00.000Z'),
           asyncStatus: 'sync',
         },
@@ -1113,6 +1101,10 @@ describe('ReservationFinalizationService', () => {
           showtimeId: 'showtime-1',
           status: 'PENDING_PAYMENT',
           totalAmount: 154000,
+          providerChargeCurrency: 'USD',
+          providerChargeAmountMinor: 10800,
+          providerChargeRate: '0.00072',
+          providerChargeQuotedAt: new Date('2026-06-02T09:59:00.000Z'),
           admissionActiveUntilAt: new Date(Date.now() + 60_000),
         },
       ]))
@@ -1143,6 +1135,7 @@ describe('ReservationFinalizationService', () => {
     bookingService.extendOwnedSeatLocks.mockRejectedValue(
       new Error('seat lock unavailable'),
     );
+    providerChargeQuoteService.parseProviderDecimalToMinor.mockReturnValue(10800);
     tossClient.cancelPayment.mockResolvedValue({
       paymentKey: 'payment-key-overseas-card-compensation',
       orderId: 'order-overseas-card-compensation-1',
@@ -1166,7 +1159,7 @@ describe('ReservationFinalizationService', () => {
           paymentKey: 'payment-key-overseas-card-compensation',
           orderId: 'order-overseas-card-compensation-1',
           provider: 'OVERSEAS_CARD',
-          amount: 154000,
+          providerChargeAmount: '108.00',
         },
         'user-1',
       ),

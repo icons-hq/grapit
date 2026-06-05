@@ -144,7 +144,7 @@ interface WidgetPaymentRequestPayload {
 interface DirectCardPaymentRequestPayload {
   method: 'CARD';
   amount: {
-    currency: 'KRW';
+    currency: 'KRW' | 'USD';
     value: number;
   };
   orderId: string;
@@ -271,7 +271,12 @@ function usesProviderChargeQuote(provider: PaymentProvider): boolean {
 }
 
 function usesProviderChargeQuoteForPaymentMethod(paymentMethod: PaymentMethod): boolean {
-  return usesProviderChargeQuote(paymentMethod.provider);
+  return usesProviderChargeQuote(paymentMethod.provider)
+    || (
+      paymentMethod.method === 'CARD'
+      && paymentMethod.provider === 'CARD'
+      && paymentMethod.overseasPaymentConsent?.required === true
+    );
 }
 
 export function resolveProviderChargeDisabledMessage(
@@ -322,7 +327,7 @@ export function resolvePaymentMethodSelection(
       paymentMethod: {
         method: 'CARD',
         provider: 'CARD',
-        currency: 'KRW',
+        currency: 'USD',
         overseasPaymentConsent: createOverseasConsent(),
       },
     };
@@ -355,7 +360,7 @@ export function resolvePaymentMethodSelection(
       paymentMethod: {
         method: 'CARD',
         provider: 'CARD',
-        currency: 'KRW',
+        currency: 'USD',
         overseasPaymentConsent: createOverseasConsent(),
       },
     };
@@ -525,15 +530,31 @@ export function buildDirectCardPaymentRequest({
   customerMobilePhone?: string;
   orderName: string;
 }): DirectCardPaymentRequestPayload {
+  const providerChargeQuote = branch.providerChargeQuote;
+  if (branch.useInternationalCardOnly && !providerChargeQuote) {
+    throw new Error('해외카드 결제 금액이 준비되지 않았습니다.');
+  }
+  const chargeCurrency = providerChargeQuote?.currency ?? 'KRW';
+  const chargeValue = providerChargeQuote
+    ? providerChargeQuote.amountMinor / 100
+    : amount;
+  const successUrl = new URL(branch.successUrl);
+  if (providerChargeQuote) {
+    successUrl.searchParams.set(
+      'providerChargeAmount',
+      providerChargeQuote.amountDecimal,
+    );
+  }
+
   return {
     method: 'CARD',
     amount: {
-      currency: 'KRW',
-      value: amount,
+      currency: chargeCurrency,
+      value: chargeValue,
     },
     orderId: branch.orderId,
     orderName,
-    successUrl: branch.successUrl,
+    successUrl: successUrl.toString(),
     failUrl: branch.failUrl,
     windowTarget: 'self',
     customerEmail,

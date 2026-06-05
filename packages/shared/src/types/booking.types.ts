@@ -368,12 +368,6 @@ export type ConfirmPaymentRequest = {
   paymentKey: string;
   orderId: string;
   provider: 'OVERSEAS_CARD';
-  amount: number;
-  providerChargeAmount?: never;
-} | {
-  paymentKey: string;
-  orderId: string;
-  provider: 'OVERSEAS_CARD';
   providerChargeAmount: string;
   amount?: never;
 };
