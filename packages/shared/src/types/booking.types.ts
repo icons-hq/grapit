@@ -345,6 +345,8 @@ export interface AdminTicketItem extends FloorAwareSeatSelection {
 
 export interface AdminBookingDetail extends AdminBookingListItem {
   userPhone: string;
+  paymentAttemptedAt: string | null;
+  paymentCompletedAt: string | null;
   paymentInfo: PaymentInfo | null;
   ticketItems: AdminTicketItem[];
 }

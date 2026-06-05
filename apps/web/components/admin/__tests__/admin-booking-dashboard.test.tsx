@@ -78,12 +78,14 @@ function bookingDetail() {
   return {
     ...bookingItem(),
     userPhone: '+821012345678',
+    paymentAttemptedAt: '2026-05-08T11:46:00.000Z',
+    paymentCompletedAt: '2026-05-08T11:47:00.000Z',
     paymentInfo: {
       paymentKey: 'payment-key-1',
       method: 'CARD',
       amount: 50000,
       status: 'DONE',
-      paidAt: '2026-05-08T11:46:00.000Z',
+      paidAt: '2026-05-08T11:47:00.000Z',
     },
     ticketItems: [],
   };
@@ -423,6 +425,59 @@ describe('AdminBookingDashboard', () => {
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText('Toss 주문번호')).toBeInTheDocument();
     expect(within(dialog).getByText('GRP-TOSS-ORDER-24006')).toBeInTheDocument();
+  });
+
+  it('shows payment attempt and completion times in the detail modal', async () => {
+    const user = userEvent.setup();
+    mocks.apiGet.mockImplementation(async (url: string) => {
+      const path = String(url);
+      if (path.includes('/api/v1/admin/bookings/11111111-1111-4111-8111-111111111111')) {
+        return bookingDetail();
+      }
+      return bookingsResponse({ bookings: [bookingItem()], total: 1 });
+    });
+
+    renderWithClient(<AdminBookingDashboard />);
+
+    await user.click(await screen.findByRole('button', { name: /김예매 Girl Rules Fanmeet 예매 상세 보기/ }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('예매 생성일시')).toBeInTheDocument();
+    expect(within(dialog).getByText(formatExpectedDateTime(bookingItem().createdAt))).toBeInTheDocument();
+    expect(within(dialog).getByText('결제 시도일시')).toBeInTheDocument();
+    expect(within(dialog).getByText(formatExpectedDateTime(bookingDetail().paymentAttemptedAt))).toBeInTheDocument();
+    expect(within(dialog).getByText('완료처리일시')).toBeInTheDocument();
+    expect(within(dialog).getByText(formatExpectedDateTime(bookingDetail().paymentCompletedAt))).toBeInTheDocument();
+  });
+
+  it('keeps the detail modal stable after repeated close and reopen cycles', async () => {
+    const user = userEvent.setup();
+    mocks.apiGet.mockImplementation(async (url: string) => {
+      const path = String(url);
+      if (path.includes('/api/v1/admin/bookings/11111111-1111-4111-8111-111111111111')) {
+        return bookingDetail();
+      }
+      return bookingsResponse({ bookings: [bookingItem()], total: 1 });
+    });
+
+    renderWithClient(<AdminBookingDashboard />);
+
+    const detailRow = await screen.findByRole('button', {
+      name: /김예매 Girl Rules Fanmeet 예매 상세 보기/,
+    });
+
+    for (let i = 0; i < 3; i += 1) {
+      await user.click(detailRow);
+      const dialog = await screen.findByRole('dialog');
+      expect(dialog).toBeInTheDocument();
+      await user.click(within(dialog).getByRole('button', { name: 'Close' }));
+      await waitFor(() => {
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      });
+    }
+
+    await user.click(detailRow);
+    expect(await screen.findByRole('dialog')).toBeInTheDocument();
   });
 
   it('requests the next server page when pagination is available', async () => {

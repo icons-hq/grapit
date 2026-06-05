@@ -124,6 +124,10 @@ function formatWon(amount: number): string {
   return `${amount.toLocaleString('ko-KR')}원`;
 }
 
+function formatOptionalDateTime(dateString: string | null | undefined): string {
+  return dateString ? formatDateTime(dateString) : '-';
+}
+
 function fallbackFunnelStatus(status: ReservationStatus): AdminBookingFunnelStatus {
   switch (status) {
     case 'CONFIRMED':
@@ -269,6 +273,11 @@ export function AdminBookingDetailModal({
             />
             <Separator />
             <InfoRow
+              label="예매 생성일시"
+              value={formatDateTime(booking.createdAt)}
+            />
+            <Separator />
+            <InfoRow
               label="예매자"
               value={`${booking.userName} / ${booking.userPhone}`}
             />
@@ -308,19 +317,16 @@ export function AdminBookingDetailModal({
               )}
             />
             <Separator />
-            {booking.paymentInfo && (
-              <>
-                {booking.paymentInfo.paidAt && (
-                  <>
-                    <InfoRow
-                      label="결제일시"
-                      value={formatDateTime(booking.paymentInfo.paidAt)}
-                    />
-                    <Separator />
-                  </>
-                )}
-              </>
-            )}
+            <InfoRow
+              label="결제 시도일시"
+              value={formatOptionalDateTime(booking.paymentAttemptedAt)}
+            />
+            <Separator />
+            <InfoRow
+              label="완료처리일시"
+              value={formatOptionalDateTime(booking.paymentCompletedAt)}
+            />
+            <Separator />
             <InfoRow
               label="상태"
               value={
