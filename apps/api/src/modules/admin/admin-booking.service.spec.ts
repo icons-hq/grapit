@@ -1162,7 +1162,7 @@ describe('AdminBookingService', () => {
               name: '김예매',
               email: 'buyer@example.com',
               phone: '+821055501234',
-              country: 'KR',
+              country: 'TH',
             },
             showtime: {
               dateTime: new Date('2026-07-18T10:00:00.000Z'),
@@ -1200,13 +1200,17 @@ describe('AdminBookingService', () => {
       });
 
       expect(result.rowCount).toBe(1);
+      expect(result.csv).toContain('"Audience Region","User Country","Performance Title"');
+      expect(result.csv).toContain('"overseas","TH","Girl Rules Fanmeeting"');
       expect(result.csv).toContain('"Ticket Item ID"');
       expect(result.csv).toContain('"Ticket Item Status"');
       expect(result.csv).toContain('"Admission State"');
+      expect(result.csv).toContain('"Ticket Price","Service Fee","Item Gross Amount"');
       expect(result.csv).toContain('"Refundable Amount"');
       expect(result.csv).toContain('"ticket-item-a2"');
       expect(result.csv).toContain('"CANCELLED"');
       expect(result.csv).toContain('"NOT_ENTERED"');
+      expect(result.csv).toContain('"77000","2000","79000"');
       expect(result.csv).toContain('"79000"');
     });
 
