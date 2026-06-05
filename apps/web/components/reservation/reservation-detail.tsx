@@ -2,25 +2,10 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { CheckCircle2, ChevronLeft, Loader2, QrCode } from 'lucide-react';
+import { CheckCircle2, ChevronLeft, QrCode } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import {
   Tooltip,
@@ -266,12 +251,6 @@ function hasPersistedTicketItems(reservation: ReservationDetailType): boolean {
 
 const DELAYED_REOPEN_NOTICE =
   '취소된 좌석은 즉시 재오픈되지 않을 수 있으며, 잠시 후 다시 판매될 수 있습니다';
-const TICKET_CANCEL_REASONS = [
-  '단순 변심',
-  '일정 변경',
-  '다른 좌석으로 재예매',
-  '기타',
-] as const;
 const SEOUL_DAY_FORMATTER = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'Asia/Seoul',
   year: 'numeric',
@@ -484,8 +463,6 @@ interface ReservationDetailProps {
   onCancel: (reason: string) => void;
   isCancelling: boolean;
   onResumePayment?: (reservation: ReservationDetailType) => void;
-  onCancelTicketItem?: (ticketItemId: string, reason: string) => void | Promise<void>;
-  isCancellingTicketItem?: boolean;
 }
 
 export function ReservationDetailView({
@@ -493,13 +470,9 @@ export function ReservationDetailView({
   onCancel,
   isCancelling,
   onResumePayment,
-  onCancelTicketItem,
-  isCancellingTicketItem = false,
 }: ReservationDetailProps) {
   const router = useRouter();
   const [cancelModalOpen, setCancelModalOpen] = useState(false);
-  const [ticketCancelTarget, setTicketCancelTarget] = useState<BuyerQrCard | null>(null);
-  const [ticketCancelReason, setTicketCancelReason] = useState('');
   const statusConfig = STATUS_CONFIG[reservation.status];
   const paymentMethodLabel = getPaymentMethodLabel(reservation);
   const refundPaymentMethodLabel =
@@ -523,7 +496,7 @@ export function ReservationDetailView({
     hasSeatLevelTicketItems && ticketItemRefundTotal > 0
       ? ticketItemRefundTotal
       : reservation.totalAmount;
-  const showCancelButton = reservation.status === 'CONFIRMED' && !hasSeatLevelTicketItems;
+  const showCancelButton = reservation.status === 'CONFIRMED';
   const progressGuidance = getProgressGuidance(
     reservation,
     paymentDeadlineAt,
@@ -551,30 +524,6 @@ export function ReservationDetailView({
     : hasSeatLevelTicketItems
       ? '좌석별 티켓 상태를 확인할 수 있습니다. 취소된 티켓의 QR은 표시되지 않습니다.'
       : '결제는 완료되었지만 QR 티켓을 확인하는 중입니다. 잠시 후 새로고침하거나 마이페이지에서 다시 확인하세요.';
-  const canCancelTicketItems =
-    reservation.status === 'CONFIRMED' &&
-    hasSeatLevelTicketItems &&
-    isBeforeShowDateInSeoul(reservation.showDateTime) &&
-    Boolean(onCancelTicketItem);
-
-  function closeTicketCancelDialog() {
-    setTicketCancelTarget(null);
-    setTicketCancelReason('');
-  }
-
-  async function handleConfirmTicketCancel() {
-    if (!ticketCancelTarget || !ticketCancelReason || !onCancelTicketItem) {
-      return;
-    }
-
-    try {
-      await onCancelTicketItem(ticketCancelTarget.id, ticketCancelReason);
-      closeTicketCancelDialog();
-    } catch {
-      // The page-level mutation handler owns user-facing error copy.
-    }
-  }
-
   return (
     <div>
       {/* Header */}
@@ -781,21 +730,6 @@ export function ReservationDetailView({
                         label="입장 상태"
                         value={card.admissionStatusLabel}
                       />
-                      {canCancelTicketItems &&
-                        card.status === 'ACTIVE' &&
-                        card.admissionState === 'NOT_ENTERED' && (
-                          <div className="mt-4 flex justify-end">
-                            <Button
-                              type="button"
-                              variant="outline"
-                              size="sm"
-                              onClick={() => setTicketCancelTarget(card)}
-                              disabled={isCancellingTicketItem}
-                            >
-                              이 티켓 취소
-                            </Button>
-                          </div>
-                        )}
                     </div>
                   </div>
 
@@ -965,91 +899,6 @@ export function ReservationDetailView({
           )}
         </div>
       )}
-
-      <Dialog
-        open={Boolean(ticketCancelTarget)}
-        onOpenChange={(open) => {
-          if (!open) {
-            closeTicketCancelDialog();
-          }
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="text-xl font-semibold">
-              티켓을 취소하시겠습니까?
-            </DialogTitle>
-            <DialogDescription className="text-sm text-gray-600">
-              선택한 좌석 1장만 취소됩니다. 취소 수수료와 예매 수수료 환불 여부는 NOL Ticket 기준으로 티켓별 적용됩니다.
-            </DialogDescription>
-          </DialogHeader>
-
-          {ticketCancelTarget && (
-            <div className="space-y-4">
-              <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-                <InfoRow label="좌석" value={ticketCancelTarget.seatLabel} />
-                <Separator />
-                <InfoRow
-                  label="티켓 금액"
-                  value={`${ticketCancelTarget.price.toLocaleString('ko-KR')}원`}
-                />
-                <Separator />
-                <InfoRow
-                  label="예매 수수료"
-                  value={`${ticketCancelTarget.serviceFee.toLocaleString('ko-KR')}원`}
-                />
-              </div>
-
-              <div>
-                <label
-                  htmlFor="ticket-cancel-reason"
-                  className="mb-2 block text-sm font-semibold text-gray-700"
-                >
-                  취소 사유
-                </label>
-                <Select value={ticketCancelReason} onValueChange={setTicketCancelReason}>
-                  <SelectTrigger id="ticket-cancel-reason" className="w-full">
-                    <SelectValue placeholder="취소 사유를 선택하세요" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {TICKET_CANCEL_REASONS.map((reason) => (
-                      <SelectItem key={reason} value={reason}>
-                        {reason}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-          )}
-
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={closeTicketCancelDialog}
-              disabled={isCancellingTicketItem}
-            >
-              닫기
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              onClick={handleConfirmTicketCancel}
-              disabled={!ticketCancelReason || isCancellingTicketItem}
-            >
-              {isCancellingTicketItem ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  취소 처리 중...
-                </>
-              ) : (
-                '티켓 취소'
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* Cancel modal */}
       <CancelConfirmModal

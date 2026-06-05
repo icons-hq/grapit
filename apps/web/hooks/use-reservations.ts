@@ -59,29 +59,7 @@ export function useCancelReservation() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) =>
-      apiClient.put(`/api/v1/reservations/${id}/cancel`, { reason }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['reservations'] });
-    },
-  });
-}
-
-export function useCancelTicketItem() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      reservationId,
-      ticketItemId,
-      reason,
-    }: {
-      reservationId: string;
-      ticketItemId: string;
-      reason: string;
-    }) =>
-      apiClient.put<ReservationDetail>(
-        `/api/v1/reservations/${reservationId}/ticket-items/${ticketItemId}/cancel`,
-        { reason },
-      ),
+      apiClient.post(`/api/v1/reservations/${id}/refund`, { reason }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['reservations'] });
     },

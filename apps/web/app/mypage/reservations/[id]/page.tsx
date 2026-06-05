@@ -7,7 +7,6 @@ import { ReservationDetailView } from '@/components/reservation/reservation-deta
 import {
   useReservationDetail,
   useCancelReservation,
-  useCancelTicketItem,
 } from '@/hooks/use-reservations';
 import { ReservationDetailSkeleton } from '@/components/skeletons';
 import { Button } from '@/components/ui/button';
@@ -24,7 +23,6 @@ export default function ReservationDetailPage({ params }: ReservationDetailPageP
   const router = useRouter();
   const { data: reservation, isLoading, isError, refetch } = useReservationDetail(id);
   const cancelMutation = useCancelReservation();
-  const cancelTicketItemMutation = useCancelTicketItem();
 
   async function handleCancel(reason: string) {
     try {
@@ -34,16 +32,6 @@ export default function ReservationDetailPage({ params }: ReservationDetailPageP
     } catch {
       toast.error('취소 처리에 실패했습니다. 잠시 후 다시 시도해주세요.');
     }
-  }
-
-  async function handleCancelTicketItem(ticketItemId: string, reason: string) {
-    await cancelTicketItemMutation.mutateAsync({
-      reservationId: id,
-      ticketItemId,
-      reason,
-    });
-    toast.success('티켓이 취소되었습니다');
-    refetch();
   }
 
   function handleResumePayment(target: ReservationDetail) {
@@ -90,8 +78,6 @@ export default function ReservationDetailPage({ params }: ReservationDetailPageP
             onCancel={handleCancel}
             isCancelling={cancelMutation.isPending}
             onResumePayment={handleResumePayment}
-            onCancelTicketItem={handleCancelTicketItem}
-            isCancellingTicketItem={cancelTicketItemMutation.isPending}
           />
         )}
       </main>

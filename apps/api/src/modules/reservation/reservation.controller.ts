@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   ForbiddenException,
   Get,
@@ -156,11 +157,13 @@ export class ReservationController {
     @Body(new ZodValidationPipe(cancelTicketItemSchema)) body: CancelTicketItemInput,
     @Request() req: { user: { id: string } },
   ) {
-    return this.reservationService.cancelTicketItem(
-      id,
-      ticketItemId,
-      req.user.id,
-      body.reason,
+    void id;
+    void ticketItemId;
+    void body;
+    void req;
+
+    throw new BadRequestException(
+      '티켓 단위 취소는 지원하지 않습니다. 예매 전체를 취소해주세요.',
     );
   }
 

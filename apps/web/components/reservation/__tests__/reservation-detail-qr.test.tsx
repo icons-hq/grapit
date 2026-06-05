@@ -614,7 +614,7 @@ describe('ReservationDetailView QR ticket card', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('shows cancellation-pending ticket items as unavailable and keeps their cancel action disabled', () => {
+  it('shows cancellation-pending ticket items as unavailable without ticket-level cancel actions', () => {
     vi.useFakeTimers();
     setSystemTime('2026-06-01T00:00:00.000Z');
 
@@ -643,13 +643,12 @@ describe('ReservationDetailView QR ticket card', () => {
         })}
         onCancel={vi.fn()}
         isCancelling={false}
-        onCancelTicketItem={vi.fn()}
-        isCancellingTicketItem={false}
       />,
     );
 
     expect(screen.getAllByTestId('qr-ticket-image')).toHaveLength(1);
-    expect(screen.getAllByRole('button', { name: '이 티켓 취소' })).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: '이 티켓 취소' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '예매 취소' })).toBeInTheDocument();
     const pendingCard = screen.getByTestId('qr-ticket-card-00000000-0000-4000-8000-000000000102');
     expect(within(pendingCard).getAllByText('취소 확인 중').length).toBeGreaterThan(0);
     expect(within(pendingCard).getByText('취소 확인 중입니다.')).toBeInTheDocument();
@@ -659,7 +658,7 @@ describe('ReservationDetailView QR ticket card', () => {
     expect(within(pendingCard).queryByRole('button', { name: '이 티켓 취소' })).not.toBeInTheDocument();
   });
 
-  it('keeps all cancelled seat-level ticket cards visible after full per-ticket cancellation', () => {
+  it('keeps all cancelled seat-level ticket cards visible after cancellation', () => {
     const reservation = createReservation();
     render(
       <ReservationDetailView
@@ -695,18 +694,18 @@ describe('ReservationDetailView QR ticket card', () => {
     expect(screen.getByText('좌석별 티켓 상태를 확인할 수 있습니다. 취소된 티켓의 QR은 표시되지 않습니다.')).toBeInTheDocument();
   });
 
-  it('hides whole-reservation cancellation for active seat-level reservations', () => {
+  it('shows whole-reservation cancellation for active seat-level reservations', () => {
     render(
       <ReservationDetailView
         reservation={createReservation()}
         onCancel={vi.fn()}
         isCancelling={false}
-        onCancelTicketItem={vi.fn()}
-        isCancellingTicketItem={false}
       />,
     );
 
-    expect(screen.queryByRole('button', { name: '예매 취소' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '예매 취소' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '이 티켓 취소' })).not.toBeInTheDocument();
+    expect(screen.queryByText('티켓을 취소하시겠습니까?')).not.toBeInTheDocument();
   });
 
   it('shows whole-reservation cancellation for legacy reservations without ticket items', () => {
@@ -715,8 +714,6 @@ describe('ReservationDetailView QR ticket card', () => {
         reservation={createReservation({ ticketItems: [] })}
         onCancel={vi.fn()}
         isCancelling={false}
-        onCancelTicketItem={vi.fn()}
-        isCancellingTicketItem={false}
       />,
     );
 
@@ -737,8 +734,6 @@ describe('ReservationDetailView QR ticket card', () => {
         })}
         onCancel={vi.fn()}
         isCancelling={false}
-        onCancelTicketItem={vi.fn()}
-        isCancellingTicketItem={false}
       />,
     );
 
@@ -746,7 +741,7 @@ describe('ReservationDetailView QR ticket card', () => {
     expect(screen.queryByRole('button', { name: '이 티켓 취소' })).not.toBeInTheDocument();
   });
 
-  it('opens ticket-item cancellation dialog only from active not-entered ticket cards', () => {
+  it('does not expose ticket-item cancellation on active not-entered ticket cards', () => {
     const reservation = createReservation();
     render(
       <ReservationDetailView
@@ -762,22 +757,15 @@ describe('ReservationDetailView QR ticket card', () => {
         })}
         onCancel={vi.fn()}
         isCancelling={false}
-        onCancelTicketItem={vi.fn()}
-        isCancellingTicketItem={false}
       />,
     );
 
-    const cancelButtons = screen.getAllByRole('button', { name: '이 티켓 취소' });
-    expect(cancelButtons).toHaveLength(1);
-
-    fireEvent.click(cancelButtons[0]!);
-
-    expect(screen.getByText('티켓을 취소하시겠습니까?')).toBeInTheDocument();
-    expect(screen.getByText('선택한 좌석 1장만 취소됩니다. 취소 수수료와 예매 수수료 환불 여부는 NOL Ticket 기준으로 티켓별 적용됩니다.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '이 티켓 취소' })).not.toBeInTheDocument();
+    expect(screen.queryByText('티켓을 취소하시겠습니까?')).not.toBeInTheDocument();
     expect(screen.getAllByText('VIP A열 1번').length).toBeGreaterThan(0);
   });
 
-  it('keeps per-ticket cancellation available on the prior Seoul date after the legacy cancel deadline hour', () => {
+  it('keeps ticket-item cancellation hidden on the prior Seoul date after the legacy cancel deadline hour', () => {
     vi.useFakeTimers();
     setSystemTime('2026-07-03T14:30:00.000Z');
 
@@ -789,11 +777,10 @@ describe('ReservationDetailView QR ticket card', () => {
         })}
         onCancel={vi.fn()}
         isCancelling={false}
-        onCancelTicketItem={vi.fn()}
-        isCancellingTicketItem={false}
       />,
     );
 
-    expect(screen.getAllByRole('button', { name: '이 티켓 취소' })).toHaveLength(2);
+    expect(screen.queryByRole('button', { name: '이 티켓 취소' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '예매 취소' })).toBeInTheDocument();
   });
 });

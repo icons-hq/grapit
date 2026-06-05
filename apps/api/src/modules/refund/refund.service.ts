@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Inject,
   Injectable,
   Logger,
@@ -286,6 +287,10 @@ export class RefundService {
 
     if (context.reservation.status !== 'CONFIRMED') {
       throw new BadRequestException('환불 가능한 예매 상태가 아닙니다');
+    }
+
+    if (new Date(context.reservation.cancelDeadline) <= new Date()) {
+      throw new ForbiddenException('취소 마감시간이 지났습니다');
     }
 
     const requestedRefund = await this.insertRequestedRefund(context, reason, actor);
