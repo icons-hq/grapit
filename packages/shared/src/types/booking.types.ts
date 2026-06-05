@@ -393,6 +393,12 @@ export type ConfirmPaymentRequest = {
   provider: 'OVERSEAS_CARD';
   providerChargeAmount: string;
   amount?: never;
+} | {
+  paymentKey: string;
+  orderId: string;
+  provider: 'OVERSEAS_CARD';
+  amount: number;
+  providerChargeAmount?: never;
 };
 
 export interface CancelReservationRequest {

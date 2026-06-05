@@ -25,6 +25,14 @@ export function buildConfirmPaymentPayload({
   }
 
   if (provider === 'OVERSEAS_CARD') {
+    if (!providerChargeAmount?.trim()) {
+      return {
+        paymentKey,
+        orderId,
+        provider: 'OVERSEAS_CARD',
+        amount: Number(amount),
+      };
+    }
     return {
       paymentKey,
       orderId,

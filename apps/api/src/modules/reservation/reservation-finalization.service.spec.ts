@@ -372,6 +372,133 @@ describe('ReservationFinalizationService', () => {
     );
   });
 
+  it('confirms KRW overseas card direct return with the overseas-card Toss secret scope', async () => {
+    const {
+      service,
+      db,
+      tossClient,
+      bookingService,
+      qrTicketService,
+      providerChargeQuoteService,
+    } = createDependencies();
+    const insertedValues: unknown[] = [];
+
+    db.select
+      .mockReturnValueOnce(chainResult([]))
+      .mockReturnValueOnce(chainResult([
+        {
+          id: 'reservation-overseas-card-krw-1',
+          userId: 'user-1',
+          showtimeId: 'showtime-1',
+          status: 'PENDING_PAYMENT',
+          totalAmount: 150000,
+          admissionActiveUntilAt: new Date(Date.now() + 60_000),
+        },
+      ]))
+      .mockReturnValueOnce(chainResult([
+        {
+          seatId: '1F:A-1',
+          tierName: 'VIP',
+          price: 148000,
+          row: 'A',
+          number: '1',
+        },
+      ]));
+    tossClient.confirmPayment.mockResolvedValue({
+      paymentKey: 'payment-key-overseas-card-krw',
+      orderId: 'order-overseas-card-krw-1',
+      method: 'CARD',
+      totalAmount: 150000,
+      approvedAt: '2026-06-05T10:01:00.000Z',
+    });
+
+    const tx = {
+      execute: vi.fn().mockResolvedValue(ticketLimitResult()),
+      update: vi.fn().mockReturnValue({
+        set: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            returning: vi.fn().mockResolvedValue([{ id: 'seat-inventory-1' }]),
+          }),
+        }),
+      }),
+      insert: vi.fn((table: unknown) => ({
+        values: vi.fn((values: unknown) => {
+          insertedValues.push({ table, values });
+          if (table === payments) {
+            return {
+              returning: vi.fn().mockResolvedValue([{ id: 'payment-overseas-card-krw-1' }]),
+            };
+          }
+          if (table === seatInventories) {
+            return {
+              onConflictDoNothing: vi.fn().mockReturnValue({
+                returning: vi.fn().mockResolvedValue([{ id: 'seat-inventory-1' }]),
+              }),
+            };
+          }
+          return {};
+        }),
+      })),
+    };
+    db.transaction.mockImplementation(async (cb: (tx: typeof tx) => Promise<unknown>) => cb(tx));
+
+    await expect(
+      service.confirmAndCreateReservation(
+        {
+          paymentKey: 'payment-key-overseas-card-krw',
+          orderId: 'order-overseas-card-krw-1',
+          provider: 'OVERSEAS_CARD',
+          amount: 150000,
+        },
+        'user-1',
+      ),
+    ).resolves.toEqual({ reservationId: 'reservation-overseas-card-krw-1' });
+
+    expect(providerChargeQuoteService.parseProviderDecimalToMinor).not.toHaveBeenCalled();
+    expect(tossClient.confirmPayment).toHaveBeenCalledWith({
+      paymentKey: 'payment-key-overseas-card-krw',
+      orderId: 'order-overseas-card-krw-1',
+      amount: 150000,
+      secretKeyScope: 'overseas-card',
+    });
+    expect(insertedValues).toContainEqual({
+      table: payments,
+      values: expect.objectContaining({
+        reservationId: 'reservation-overseas-card-krw-1',
+        paymentKey: 'payment-key-overseas-card-krw',
+        tossOrderId: 'order-overseas-card-krw-1',
+        method: 'CARD',
+        provider: 'CARD',
+        currency: 'KRW',
+        asyncStatus: 'sync',
+        amount: 150000,
+        providerMetadata: {
+          requestedProvider: 'OVERSEAS_CARD',
+          secretKeyScope: 'overseas-card',
+        },
+        status: 'DONE',
+      }),
+    });
+    const paymentInsert = insertedValues.find((entry) =>
+      typeof entry === 'object'
+      && entry !== null
+      && 'table' in entry
+      && (entry as { table: unknown }).table === payments
+    ) as { values: Record<string, unknown> } | undefined;
+    expect(paymentInsert?.values).not.toHaveProperty('providerChargeCurrency');
+    expect(paymentInsert?.values).not.toHaveProperty('providerChargeAmountMinor');
+    expect(qrTicketService.ensureIssuedTicketsForReservation).toHaveBeenCalledWith({
+      reservationId: 'reservation-overseas-card-krw-1',
+      paymentId: 'payment-overseas-card-krw-1',
+    });
+    expect(bookingService.consumeOwnedSeatLocks).toHaveBeenCalledWith(
+      'user-1',
+      'showtime-1',
+      ['1F:A-1'],
+      { skipUnavailableCheck: true },
+    );
+  });
+
   it('confirms overseas card with the overseas-card Toss secret scope and stores KRW card totals', async () => {
     const {
       service,
@@ -1053,7 +1180,7 @@ describe('ReservationFinalizationService', () => {
         },
         'user-1',
       ),
-    ).rejects.toThrow('해외카드 결제 금액이 필요합니다');
+    ).rejects.toThrow('해외카드 결제 정보가 일치하지 않습니다');
 
     expect(updatedValues).toHaveLength(0);
     expect(tossClient.confirmPayment).not.toHaveBeenCalled();

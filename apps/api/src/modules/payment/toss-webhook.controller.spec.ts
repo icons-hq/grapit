@@ -450,6 +450,42 @@ describe('PaymentWebhookController', () => {
     });
   });
 
+  it('uses the default secret scope for KRW card payment webhook verification', async () => {
+    const krwCardWebhook: TossWebhookRequestBody = {
+      eventId: 'evt-krw-card-done',
+      eventType: 'PAYMENT_STATUS_CHANGED',
+      createdAt: '2026-06-05T10:00:00.000Z',
+      data: {
+        paymentKey: 'pay_krw_card_1',
+        orderId: 'GRP-KRW-CARD-1',
+        status: 'DONE',
+        method: 'CARD',
+        provider: 'CARD',
+        currency: 'KRW',
+        totalAmount: 150000,
+        approvedAt: '2026-06-05T10:00:05.000Z',
+      },
+    };
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(
+      makeLedgerResult({ eventId: krwCardWebhook.eventId }),
+    );
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
+    tossClient.queryPayment.mockResolvedValueOnce(
+      makeQueriedPayment({
+        paymentKey: 'pay_krw_card_1',
+        orderId: 'GRP-KRW-CARD-1',
+        status: 'DONE',
+        method: 'CARD',
+        totalAmount: 150000,
+        approvedAt: '2026-06-05T10:00:05.000Z',
+      }),
+    );
+
+    await controller.handleTossWebhook(krwCardWebhook);
+
+    expect(tossClient.queryPayment).toHaveBeenCalledWith('pay_krw_card_1');
+  });
+
   it('uses the overseas-card webhook secret scope even when card webhook provider fields are ambiguous', async () => {
     const overseasCardWebhook: TossWebhookRequestBody = {
       eventId: 'evt-overseas-card-ambiguous',

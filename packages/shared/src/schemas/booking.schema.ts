@@ -278,6 +278,11 @@ export const confirmPaymentSchema = z.union([
     amount: z.never().optional(),
   }),
   confirmPaymentBaseSchema.extend({
+    provider: z.literal('OVERSEAS_CARD'),
+    amount: z.number().int().positive('결제 금액은 0보다 커야 합니다'),
+    providerChargeAmount: z.never().optional(),
+  }),
+  confirmPaymentBaseSchema.extend({
     amount: z.number().int().positive('결제 금액은 0보다 커야 합니다'),
     provider: z.never().optional(),
     providerChargeAmount: z.never().optional(),

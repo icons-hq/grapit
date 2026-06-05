@@ -1808,14 +1808,9 @@ export class PaymentService {
       | {
           getAlipayAvailability?: () => { enabled: boolean; disabledReason?: string };
           getForeignEasyPayAvailability?: () => { enabled: boolean; disabledReason?: string };
-          getOverseasCardAvailability?: () => { enabled: boolean; disabledReason?: string };
           getPaypalAvailability?: () => { enabled: boolean; disabledReason?: string };
         }
       | undefined;
-
-    if (provider === 'CARD') {
-      return service?.getOverseasCardAvailability?.();
-    }
 
     if (provider === 'ALIPAY_PLUS') {
       return service?.getAlipayAvailability?.()
@@ -1839,8 +1834,8 @@ export class PaymentService {
   }
 
   private usesProviderChargeQuoteForPaymentMethod(paymentMethod: PaymentMethod): boolean {
-    return this.usesProviderChargeQuote(paymentMethod.provider)
-      || this.isOverseasCardBranch(paymentMethod);
+    return paymentMethod.method === 'FOREIGN_EASY_PAY'
+      && this.usesProviderChargeQuote(paymentMethod.provider);
   }
 
   private resolveWebhookProvider(

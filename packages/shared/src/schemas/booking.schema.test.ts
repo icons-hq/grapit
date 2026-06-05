@@ -153,13 +153,18 @@ describe('prepareReservationSchema booking consent contract', () => {
     expect(parsed).toMatchObject({ provider: 'PAYPAL' });
   });
 
-  it('rejects overseas-card confirm payload with only a KRW amount marker', () => {
-    expect(() => confirmPaymentSchema.parse({
+  it('accepts overseas-card confirm payload with a KRW amount marker', () => {
+    const parsed = confirmPaymentSchema.parse({
       paymentKey: 'pay_overseas_card',
       orderId: 'GRP-OVERSEAS-CARD',
       provider: 'OVERSEAS_CARD',
       amount: 150000,
-    })).toThrow();
+    });
+
+    expect(parsed).toMatchObject({
+      provider: 'OVERSEAS_CARD',
+      amount: 150000,
+    });
   });
 
   it('accepts overseas-card confirm payload with a USD provider charge amount', () => {
