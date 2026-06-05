@@ -64,7 +64,7 @@ import {
   AdminAuditService,
   type MaskedAdminAuditEvent,
 } from './admin-audit.service.js';
-import { safeCsvRows } from './csv-export.util.js';
+import { safeCsvRows, withUtf8Bom } from './csv-export.util.js';
 import { buildDailyBucketSkeleton, kstBoundaryToUtc } from './kst-boundary.js';
 
 const USER_REFRESH_FAMILY_LIMIT = 2;
@@ -207,8 +207,6 @@ const USER_EXPORT_HEADERS = [
   'created_at',
   'updated_at',
 ] as const;
-const UTF8_BOM = '\uFEFF';
-
 @Injectable()
 export class AdminUserService {
   constructor(
@@ -308,10 +306,10 @@ export class AdminUserService {
       reason: request.reason,
     });
     const rows = await this.selectUserExportRows();
-    const csv = `${UTF8_BOM}${safeCsvRows([
+    const csv = withUtf8Bom(safeCsvRows([
       USER_EXPORT_HEADERS,
       ...rows.map(userExportRowToCsvValues),
-    ])}`;
+    ]));
 
     await this.auditService.write({
       actorUserId: request.actorUserId,
