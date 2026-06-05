@@ -673,6 +673,7 @@ describe('prepareReservationSchema booking consent contract', () => {
     const listItem = adminBookingListItemSchema.parse({
       id: '11111111-1111-4111-8111-111111111111',
       reservationNumber: 'GRP-24006',
+      tossOrderId: 'GRP-ORDER-24006',
       userName: '김예매',
       userEmail: 'buyer@example.com',
       userCountry: 'KR',
@@ -694,6 +695,7 @@ describe('prepareReservationSchema booking consent contract', () => {
     });
 
     expect(listItem).not.toHaveProperty('userPhone');
+    expect(listItem.tossOrderId).toBe('GRP-ORDER-24006');
 
     const detail = adminBookingDetailSchema.parse({
       ...listItem,
@@ -711,6 +713,7 @@ describe('prepareReservationSchema booking consent contract', () => {
 
     expect(detail.funnelStatus).toBe('SOLD');
     expect(detail.userPhone).toBe('+821012345678');
+    expect(detail.tossOrderId).toBe('GRP-ORDER-24006');
     expect(detail.ticketStatusCounts.ACTIVE).toBe(1);
   });
 

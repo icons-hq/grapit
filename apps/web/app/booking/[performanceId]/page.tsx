@@ -74,6 +74,10 @@ export default function BookingRoute({
     return <BookingPage performanceId={performanceId} />;
   }
 
+  if (queue.status === 'loading') {
+    return null;
+  }
+
   return (
     <QueueWaiting
       status={queue.status}
