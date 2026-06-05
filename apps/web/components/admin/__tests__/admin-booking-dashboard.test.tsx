@@ -151,6 +151,16 @@ function performanceDetailResponse() {
   };
 }
 
+function formatExpectedDateTime(dateString: string) {
+  const date = new Date(dateString);
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  const h = String(date.getHours()).padStart(2, '0');
+  const min = String(date.getMinutes()).padStart(2, '0');
+  return `${y}.${m}.${d} ${h}:${min}`;
+}
+
 function bookingsResponse(overrides: {
   total?: number;
   bookings?: ReturnType<typeof bookingItem>[];
@@ -281,9 +291,12 @@ describe('AdminBookingDashboard', () => {
   it('sends performance, showtime, and seat filters as query params', async () => {
     const user = userEvent.setup();
     renderWithClient(<AdminBookingDashboard />);
+    const showtimeLabel = formatExpectedDateTime(
+      performanceDetailResponse().showtimes[0].dateTime,
+    );
 
     await selectOption(user, '공연', 'Girl Rules Fanmeet');
-    await selectOption(user, '회차', '2026.07.18 19:00');
+    await selectOption(user, '회차', showtimeLabel);
     await selectOption(user, '좌석 등급', 'VIP');
     await selectOption(user, '층', '1층');
 
@@ -308,9 +321,12 @@ describe('AdminBookingDashboard', () => {
   it('removes dependent seat filters when performance is reset', async () => {
     const user = userEvent.setup();
     renderWithClient(<AdminBookingDashboard />);
+    const showtimeLabel = formatExpectedDateTime(
+      performanceDetailResponse().showtimes[0].dateTime,
+    );
 
     await selectOption(user, '공연', 'Girl Rules Fanmeet');
-    await selectOption(user, '회차', '2026.07.18 19:00');
+    await selectOption(user, '회차', showtimeLabel);
     await selectOption(user, '좌석 등급', 'VIP');
     await selectOption(user, '층', '1층');
     await selectOption(user, '공연', '전체 공연');
