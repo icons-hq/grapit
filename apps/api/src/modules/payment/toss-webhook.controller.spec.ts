@@ -269,6 +269,77 @@ describe('PaymentWebhookController', () => {
     );
   });
 
+  it('applies provider-verified Alipay DONE webhook even when local reservation is failed and payment expired', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(
+      makeProgress({
+        reservationStatus: 'FAILED',
+        paymentStatus: 'EXPIRED',
+      }),
+    );
+
+    const result = await controller.handleTossWebhook(paymentStatusChangedEvent);
+
+    expect(result).toEqual({
+      acknowledged: true,
+      duplicate: false,
+      processingResultCode: 'PAYMENT_STATUS_CHANGED_DONE_APPLIED',
+    });
+    expect(paymentService.upsertAsyncPaymentProgress).toHaveBeenCalledWith(
+      paymentStatusChangedEvent,
+      'DONE',
+      'payment_status_changed:done',
+    );
+  });
+
+  it('keeps ambiguous foreign easy pay DONE webhook stale after local failure', async () => {
+    const ambiguousForeignEasyPayDone: TossWebhookRequestBody = {
+      ...paymentStatusChangedEvent,
+      data: {
+        ...paymentStatusChangedEvent.data,
+        provider: undefined,
+        easyPay: undefined,
+      },
+    };
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(
+      makeProgress({
+        reservationStatus: 'FAILED',
+        paymentStatus: 'EXPIRED',
+      }),
+    );
+
+    const result = await controller.handleTossWebhook(ambiguousForeignEasyPayDone);
+
+    expect(result).toEqual({
+      acknowledged: true,
+      duplicate: false,
+      processingResultCode: 'IGNORED_STALE_PAYMENT_EVENT',
+    });
+    expect(paymentService.upsertAsyncPaymentProgress).not.toHaveBeenCalled();
+  });
+
+  it('uses the PaymentService async DONE recovery result as the webhook processing code', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
+    paymentService.upsertAsyncPaymentProgress.mockResolvedValueOnce(
+      'DONE_RECOVERED_PAYMENT_KEY',
+    );
+
+    const result = await controller.handleTossWebhook(paymentStatusChangedEvent);
+
+    expect(result).toEqual({
+      acknowledged: true,
+      duplicate: false,
+      processingResultCode: 'DONE_RECOVERED_PAYMENT_KEY',
+    });
+    expect(paymentService.markWebhookEventProcessed).toHaveBeenCalledWith(
+      'evt-payment-done-1',
+      'DONE_RECOVERED_PAYMENT_KEY',
+      undefined,
+    );
+  });
+
   it('re-applies DONE webhook replay when payment exists but reservation is still pending', async () => {
     paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
     paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(

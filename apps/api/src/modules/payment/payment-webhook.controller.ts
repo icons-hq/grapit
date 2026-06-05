@@ -255,20 +255,22 @@ export class PaymentWebhookController {
     }
 
     const incomingStatus = this.normalizePaymentStatus(this.requirePaymentStatus(body));
-    if (this.shouldIgnorePaymentEvent(progress, incomingStatus)) {
+    if (this.shouldIgnorePaymentEvent(body, progress, incomingStatus)) {
       return {
         code: 'IGNORED_STALE_PAYMENT_EVENT',
         message: 'stale payment event after cancel/failure terminal state',
       };
     }
 
-    await this.paymentService.upsertAsyncPaymentProgress(
+    const serviceProcessingCode = await this.paymentService.upsertAsyncPaymentProgress(
       body,
       incomingStatus,
       `payment_status_changed:${incomingStatus.toLowerCase()}`,
     );
 
-    return { code: `PAYMENT_STATUS_CHANGED_${incomingStatus}_APPLIED` };
+    return {
+      code: serviceProcessingCode ?? `PAYMENT_STATUS_CHANGED_${incomingStatus}_APPLIED`,
+    };
   }
 
   private async withProviderVerifiedState(
@@ -567,6 +569,7 @@ export class PaymentWebhookController {
   }
 
   private shouldIgnorePaymentEvent(
+    body: TossWebhookRequestBody,
     progress: AsyncPaymentProgressSnapshot | null,
     incomingStatus: keyof typeof paymentStatusPriority,
   ): boolean {
@@ -574,9 +577,20 @@ export class PaymentWebhookController {
       return false;
     }
 
+    if (progress.paymentStatus === 'CANCELED') {
+      return true;
+    }
+
     if (
-      progress.paymentStatus === 'CANCELED'
-      || progress.reservationStatus === 'FAILED'
+      incomingStatus === 'DONE'
+      && progress.reservationStatus === 'FAILED'
+      && this.isAlipayDonePaymentEvent(body)
+    ) {
+      return false;
+    }
+
+    if (
+      progress.reservationStatus === 'FAILED'
       || progress.reservationStatus === 'CANCELLED'
     ) {
       return true;
@@ -611,5 +625,22 @@ export class PaymentWebhookController {
     status: string,
   ): status is keyof typeof paymentStatusPriority {
     return status in paymentStatusPriority;
+  }
+
+  private isAlipayDonePaymentEvent(body: TossWebhookRequestBody): boolean {
+    if (
+      body.eventType !== 'PAYMENT_STATUS_CHANGED'
+      || body.data.status !== 'DONE'
+    ) {
+      return false;
+    }
+
+    const provider = body.data.provider?.trim().toUpperCase();
+    const easyPay = body.data.easyPay?.trim().toUpperCase();
+
+    return provider === 'ALIPAY'
+      || provider === 'ALIPAY_PLUS'
+      || easyPay === 'ALIPAY'
+      || easyPay === '알리페이';
   }
 }
