@@ -1010,8 +1010,8 @@ describe('use-booking payment mutations', () => {
     expect(request.windowTarget).toBe('self');
     expect(products).toHaveLength(3);
     expect(products.map((product) => product.name)).toEqual([
-      'VIP A열 1번',
-      'VIP A열 2번',
+      'VIP row A seat 1',
+      'VIP row A seat 2',
       'Service fee / rounding adjustment',
     ]);
     expect(products.reduce((sum, product) => sum + product.quantity * product.unitAmount, 0)).toBeCloseTo(48.96);

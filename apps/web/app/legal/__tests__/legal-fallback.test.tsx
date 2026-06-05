@@ -41,16 +41,16 @@ describe('legal canonical locale fallback', () => {
   });
 
   it.each([
-    ['th', TermsPage, 'Terms of Service'],
-    ['zh-CN', PrivacyPage, 'Privacy Policy'],
+    ['th', TermsPage, 'Terms of Service', 'ตรวจสอบประกาศทางกฎหมายภาษาอังกฤษ'],
+    ['zh-CN', PrivacyPage, 'Privacy Policy', '查看英文法律告知'],
   ])(
     'renders %s legal pages with English canonical copy and the fallback label',
-    async (locale, Page, heading) => {
+    async (locale, Page, heading, fallbackLabel) => {
       getLocaleMock.mockResolvedValue(locale);
 
       await renderPage(Page);
 
-      expect(screen.getByText('영문 법적 고지로 확인합니다')).toBeInTheDocument();
+      expect(screen.getByText(fallbackLabel)).toBeInTheDocument();
       expect(screen.getByRole('heading', { name: heading, level: 1 })).toBeInTheDocument();
       expect(screen.queryByText(/자동 번역|machine translated|automatic translation/i)).not.toBeInTheDocument();
     },

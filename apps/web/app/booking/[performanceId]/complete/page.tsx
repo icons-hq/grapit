@@ -2,11 +2,12 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
-import { useTranslations } from 'next-intl';
+import { useLocale, useTranslations } from 'next-intl';
 import { AlertCircle, Loader2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { AuthGuard } from '@/components/auth/auth-guard';
 import { BookingComplete } from '@/components/booking/booking-complete';
+import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import {
   useBookingPaymentRecovery,
   useConfirmPayment,
@@ -15,6 +16,10 @@ import {
 } from '@/hooks/use-booking';
 import { ApiClientError } from '@/lib/api-client';
 import { buildConfirmPaymentPayload } from '@/lib/booking/payment-return';
+import {
+  getVisibleCopy,
+  resolveVisibleCopyLocale,
+} from '@/lib/i18n/visible-copy';
 import { useBookingStore } from '@/stores/use-booking-store';
 import type { ReservationDetail } from '@grabit/shared';
 
@@ -31,12 +36,12 @@ function isExpiredFailureMessage(message: string): boolean {
   return message === LOCK_FAILURE_MESSAGES[0];
 }
 
-function formatDeadline(dateStr: string | null): string | null {
+function formatDeadline(dateStr: string | null, locale: string): string | null {
   if (!dateStr) {
     return null;
   }
 
-  return new Intl.DateTimeFormat('ko-KR', {
+  return new Intl.DateTimeFormat(locale, {
     month: 'numeric',
     day: 'numeric',
     hour: '2-digit',
@@ -132,6 +137,9 @@ function RecoveryStateCard({
 
 function CompletePageContent() {
   const t = useTranslations('booking.paymentRecovery');
+  const locale = resolveVisibleCopyLocale(useLocale());
+  const visibleCopy = getVisibleCopy(locale);
+  const completeCopy = visibleCopy.bookingExtra.complete;
   const router = useRouter();
   const params = useParams<{ performanceId: string }>();
   const searchParams = useSearchParams();
@@ -231,7 +239,7 @@ function CompletePageContent() {
       clearBooking();
     } catch (err) {
       const errorMessage =
-        err instanceof Error ? err.message : '결제 확인에 실패했습니다.';
+        err instanceof Error ? err.message : completeCopy.confirmFailedTitle;
       if (
         err instanceof ApiClientError &&
         err.statusCode === 409 &&
@@ -261,6 +269,7 @@ function CompletePageContent() {
     hasValidProviderChargeAmount,
     confirmMutation,
     clearBooking,
+    completeCopy,
   ]);
 
   useEffect(() => {
@@ -289,7 +298,7 @@ function CompletePageContent() {
     }).then(() => {
       void paymentRecovery.refetch();
     }).catch((err) => {
-      toast.error(err instanceof Error ? err.message : '결제 상태 확인에 실패했습니다.');
+      toast.error(err instanceof Error ? err.message : completeCopy.statusCheckFailed);
       setConfirmFailed(true);
     });
   }, [
@@ -301,6 +310,7 @@ function CompletePageContent() {
     parsedAmount,
     paymentKey,
     paymentRecovery,
+    completeCopy,
   ]);
 
   // Focus heading on success
@@ -316,12 +326,12 @@ function CompletePageContent() {
     return (
       <div className="mx-auto flex min-h-[50vh] max-w-[720px] items-center justify-center px-6 py-12">
         <div className="text-center">
-          <p className="text-gray-500">잘못된 접근입니다.</p>
+          <p className="text-gray-500">{completeCopy.invalidAccess}</p>
           <button
-            onClick={() => router.push('/')}
+            onClick={() => router.push(getLocalizedPathname('/', locale))}
             className="mt-4 text-sm text-primary underline"
           >
-            홈으로 이동
+            {visibleCopy.commonErrors.home}
           </button>
         </div>
       </div>
@@ -337,12 +347,12 @@ function CompletePageContent() {
         primaryAction={routePerformanceId
           ? {
               label: t('reselectCta'),
-              onClick: () => router.replace(`/booking/${routePerformanceId}`),
+              onClick: () => router.replace(getLocalizedPathname(`/booking/${routePerformanceId}`, locale)),
             }
           : undefined}
         secondaryAction={{
-          label: '예매 내역 확인',
-          onClick: () => router.replace('/mypage?tab=reservations'),
+          label: completeCopy.checkReservations,
+          onClick: () => router.replace(`${getLocalizedPathname('/mypage', locale)}?tab=reservations`),
         }}
       />
     );
@@ -352,17 +362,17 @@ function CompletePageContent() {
     return (
       <RecoveryStateCard
         tone="red"
-        title="예매를 완료하지 못했습니다"
+        title={completeCopy.failedBookingTitle}
         body={confirmationError.message}
         primaryAction={routePerformanceId
           ? {
               label: t('reselectCta'),
-              onClick: () => router.replace(`/booking/${routePerformanceId}`),
+              onClick: () => router.replace(getLocalizedPathname(`/booking/${routePerformanceId}`, locale)),
             }
           : undefined}
         secondaryAction={{
-          label: '예매 내역 확인',
-          onClick: () => router.replace('/mypage?tab=reservations'),
+          label: completeCopy.checkReservations,
+          onClick: () => router.replace(`${getLocalizedPathname('/mypage', locale)}?tab=reservations`),
         }}
       />
     );
@@ -374,18 +384,21 @@ function CompletePageContent() {
         tone="red"
         title={t('expiredTitle')}
         body={t('expiredBody')}
-        deadlineLabel={formatDeadline(paymentRecovery.paymentDeadlineAt)
-          ? `결제 가능 시각이 ${formatDeadline(paymentRecovery.paymentDeadlineAt)}에 만료되었습니다.`
+        deadlineLabel={formatDeadline(paymentRecovery.paymentDeadlineAt, locale)
+          ? completeCopy.deadlineExpired.replace(
+              '{deadline}',
+              formatDeadline(paymentRecovery.paymentDeadlineAt, locale) ?? '',
+            )
           : null}
         primaryAction={routePerformanceId
           ? {
               label: t('reselectCta'),
-              onClick: () => router.replace(`/booking/${routePerformanceId}`),
+              onClick: () => router.replace(getLocalizedPathname(`/booking/${routePerformanceId}`, locale)),
             }
           : undefined}
         secondaryAction={{
-          label: '예매 내역 확인',
-          onClick: () => router.replace('/mypage?tab=reservations'),
+          label: completeCopy.checkReservations,
+          onClick: () => router.replace(`${getLocalizedPathname('/mypage', locale)}?tab=reservations`),
         }}
       />
     );
@@ -395,17 +408,17 @@ function CompletePageContent() {
     return (
       <RecoveryStateCard
         tone="red"
-        title="결제 확인에 실패했습니다"
-        body={paymentRecovery.reservation?.cancelReason || '예매 내역을 확인하거나 다시 결제를 시도해주세요.'}
+        title={completeCopy.confirmFailedTitle}
+        body={paymentRecovery.reservation?.cancelReason || completeCopy.confirmFailedBody}
         primaryAction={routePerformanceId
           ? {
               label: t('reselectCta'),
-              onClick: () => router.replace(`/booking/${routePerformanceId}`),
+              onClick: () => router.replace(getLocalizedPathname(`/booking/${routePerformanceId}`, locale)),
             }
           : undefined}
         secondaryAction={{
-          label: '예매 내역 확인',
-          onClick: () => router.replace('/mypage?tab=reservations'),
+          label: completeCopy.checkReservations,
+          onClick: () => router.replace(`${getLocalizedPathname('/mypage', locale)}?tab=reservations`),
         }}
       />
     );
@@ -417,19 +430,22 @@ function CompletePageContent() {
         tone="amber"
         title={t('pendingTitle')}
         body={t('pendingBody')}
-        deadlineLabel={formatDeadline(paymentRecovery.paymentDeadlineAt)
-          ? `현재 주문은 ${formatDeadline(paymentRecovery.paymentDeadlineAt)}까지 결제 상태를 기다립니다.`
+        deadlineLabel={formatDeadline(paymentRecovery.paymentDeadlineAt, locale)
+          ? completeCopy.pendingDeadline.replace(
+              '{deadline}',
+              formatDeadline(paymentRecovery.paymentDeadlineAt, locale) ?? '',
+            )
           : null}
         primaryAction={{
-          label: '상태 다시 확인',
+          label: completeCopy.retryStatus,
           onClick: () => {
             void paymentRecovery.refetch();
           },
           icon: 'refresh',
         }}
         secondaryAction={{
-          label: '예매 내역 확인',
-          onClick: () => router.replace('/mypage?tab=reservations'),
+          label: completeCopy.checkReservations,
+          onClick: () => router.replace(`${getLocalizedPathname('/mypage', locale)}?tab=reservations`),
         }}
       />
     );
@@ -447,18 +463,18 @@ function CompletePageContent() {
     return (
       <RecoveryStateCard
         tone="red"
-        title="결제 확인에 실패했습니다"
-        body="결제 상태를 아직 확인하지 못했습니다. 잠시 후 다시 확인하거나 예매 내역을 확인해주세요."
+        title={completeCopy.confirmFailedTitle}
+        body={completeCopy.confirmUnknownBody}
         primaryAction={{
-          label: '상태 다시 확인',
+          label: completeCopy.retryStatus,
           onClick: () => {
             void paymentRecovery.refetch();
           },
           icon: 'refresh',
         }}
         secondaryAction={{
-          label: '예매 내역 확인',
-          onClick: () => router.replace('/mypage?tab=reservations'),
+          label: completeCopy.checkReservations,
+          onClick: () => router.replace(`${getLocalizedPathname('/mypage', locale)}?tab=reservations`),
         }}
       />
     );

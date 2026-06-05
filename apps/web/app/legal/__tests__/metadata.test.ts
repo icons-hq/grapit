@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getLocale } from 'next-intl/server';
 
 type LegalPageModule = {
-  metadata: {
+  generateMetadata: () => Promise<{
     title?: string;
     description?: string;
     alternates?: {
@@ -11,15 +12,22 @@ type LegalPageModule = {
       index?: boolean;
       follow?: boolean;
     };
-  };
+  }>;
   dynamic?: string;
 };
 
 const pageModules = import.meta.glob<LegalPageModule>('../*/page.tsx');
 
+vi.mock('next-intl/server', () => ({
+  getLocale: vi.fn(),
+}));
+
+const getLocaleMock = vi.mocked(getLocale);
+
 beforeEach(() => {
   vi.resetModules();
   vi.stubEnv('GRABIT_ENV', 'production');
+  getLocaleMock.mockResolvedValue('ko');
 });
 
 afterEach(() => {
@@ -44,14 +52,16 @@ describe('Legal pages metadata (D-10, D-13)', () => {
         '../terms/page.tsx',
         "import('@/app/legal/terms/page')",
       );
-      expect(mod.metadata.title).toBe('이용약관 — Grabit');
-      expect(mod.metadata.description).toBe(
+      const metadata = await mod.generateMetadata();
+
+      expect(metadata.title).toBe('이용약관 — Grabit');
+      expect(metadata.description).toBe(
         'Grabit 서비스 이용 조건과 회원·회사의 권리·의무를 안내합니다.',
       );
-      expect(mod.metadata.alternates?.canonical).toBe(
+      expect(metadata.alternates?.canonical).toBe(
         'https://heygrabit.com/legal/terms',
       );
-      expect(mod.metadata.robots).toMatchObject({ index: true, follow: true });
+      expect(metadata.robots).toMatchObject({ index: true, follow: true });
     });
 
     it('dynamic export 가 force-static 으로 명시된다 (D-10)', async () => {
@@ -69,14 +79,16 @@ describe('Legal pages metadata (D-10, D-13)', () => {
         '../privacy/page.tsx',
         "import('@/app/legal/privacy/page')",
       );
-      expect(mod.metadata.title).toBe('개인정보처리방침 — Grabit');
-      expect(mod.metadata.description).toBe(
+      const metadata = await mod.generateMetadata();
+
+      expect(metadata.title).toBe('개인정보처리방침 — Grabit');
+      expect(metadata.description).toBe(
         'Grabit이 수집·이용하는 개인정보 항목과 처리 목적, 보유 기간 및 이용자의 권리를 안내합니다.',
       );
-      expect(mod.metadata.alternates?.canonical).toBe(
+      expect(metadata.alternates?.canonical).toBe(
         'https://heygrabit.com/legal/privacy',
       );
-      expect(mod.metadata.robots).toMatchObject({ index: true, follow: true });
+      expect(metadata.robots).toMatchObject({ index: true, follow: true });
     });
 
     it('dynamic export 가 force-static 으로 명시된다', async () => {
@@ -94,14 +106,16 @@ describe('Legal pages metadata (D-10, D-13)', () => {
         '../marketing/page.tsx',
         "import('@/app/legal/marketing/page')",
       );
-      expect(mod.metadata.title).toBe('마케팅 정보 수신 동의 — Grabit');
-      expect(mod.metadata.description).toBe(
+      const metadata = await mod.generateMetadata();
+
+      expect(metadata.title).toBe('마케팅 정보 수신 동의 — Grabit');
+      expect(metadata.description).toBe(
         'Grabit이 발송하는 마케팅 정보의 수신 항목, 전송 수단, 동의 거부 권리를 안내합니다.',
       );
-      expect(mod.metadata.alternates?.canonical).toBe(
+      expect(metadata.alternates?.canonical).toBe(
         'https://heygrabit.com/legal/marketing',
       );
-      expect(mod.metadata.robots).toMatchObject({ index: true, follow: true });
+      expect(metadata.robots).toMatchObject({ index: true, follow: true });
     });
 
     it('dynamic export 가 force-static 으로 명시된다', async () => {

@@ -6,6 +6,8 @@ import type { Socket } from 'socket.io-client';
 import { toast } from 'sonner';
 import type { SeatUpdateEvent, SeatStatusResponse } from '@grabit/shared';
 import { createBookingSocket } from '@/lib/socket-client';
+import { getVisibleCopy } from '@/lib/i18n/visible-copy';
+import { getClientLocale } from '@/lib/i18n/client-copy';
 import { useBookingStore } from '@/stores/use-booking-store';
 import { useAuthStore } from '@/stores/use-auth-store';
 
@@ -13,6 +15,8 @@ export function useBookingSocket(showtimeId: string | null): void {
   const socketRef = useRef<Socket | null>(null);
   const queryClient = useQueryClient();
   const hadPreviousConnection = useRef(false);
+  const locale = getClientLocale();
+  const copy = getVisibleCopy(locale).socket;
 
   useEffect(() => {
     if (!showtimeId) return;
@@ -26,7 +30,7 @@ export function useBookingSocket(showtimeId: string | null): void {
 
       if (hadPreviousConnection.current) {
         // Reconnect after disconnect
-        toast.success('실시간 연결이 복구되었습니다', {
+        toast.success(copy.reconnected, {
           id: 'ws-status',
           duration: 3000,
         });
@@ -40,7 +44,7 @@ export function useBookingSocket(showtimeId: string | null): void {
 
     socket.on('connect_error', () => {
       if (!hadPreviousConnection.current) {
-        toast.error('실시간 좌석 업데이트 연결에 실패했습니다', {
+        toast.error(copy.connectFailed, {
           id: 'ws-status',
           duration: 5000,
         });
@@ -50,7 +54,7 @@ export function useBookingSocket(showtimeId: string | null): void {
     socket.on('disconnect', (reason) => {
       useBookingStore.getState().setConnected(false);
       if (hadPreviousConnection.current && reason !== 'io client disconnect') {
-        toast.loading('실시간 연결이 끊어졌습니다. 재연결 중...', {
+        toast.loading(copy.reconnecting, {
           id: 'ws-status',
         });
       }
@@ -58,7 +62,7 @@ export function useBookingSocket(showtimeId: string | null): void {
 
     socket.io?.on('reconnect_failed', () => {
       toast.error(
-        '실시간 연결을 복구하지 못했습니다. 페이지를 새로고침해 주세요.',
+        copy.reconnectFailed,
         {
           id: 'ws-status',
           duration: Infinity,
@@ -89,7 +93,7 @@ export function useBookingSocket(showtimeId: string | null): void {
         );
         if (isOurSeat) {
           store.removeSeat(data.seatId);
-          toast.info('이미 다른 사용자가 선택한 좌석입니다', {
+          toast.info(copy.seatTaken, {
             style: { backgroundColor: '#F3EFFF', color: '#6C3CE0' },
           });
         }
@@ -105,5 +109,5 @@ export function useBookingSocket(showtimeId: string | null): void {
       socketRef.current = null;
       hadPreviousConnection.current = false;
     };
-  }, [showtimeId, queryClient]);
+  }, [showtimeId, queryClient, copy]);
 }

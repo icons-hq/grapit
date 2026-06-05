@@ -18,6 +18,9 @@ import { getFrontendOrigin } from '@/lib/frontend-origin';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/auth/password-input';
+import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
+import { getVisibleCopy } from '@/lib/i18n/visible-copy';
+import { getClientLocale } from '@/lib/i18n/client-copy';
 import {
   Form,
   FormField,
@@ -47,6 +50,8 @@ function ResetPasswordInner() {
 }
 
 function RequestView() {
+  const locale = getClientLocale();
+  const copy = getVisibleCopy(locale).resetPassword;
   const [isSent, setIsSent] = useState(false);
   const [sentEmail, setSentEmail] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -82,15 +87,15 @@ function RequestView() {
         <div className="w-full max-w-[400px] space-y-6">
           <div className="space-y-3">
             <h1 className="text-heading font-semibold text-gray-900">
-              비밀번호 재설정 메일 발송 완료
+              {copy.sentTitle}
             </h1>
             <p className="text-base text-gray-700">
-              {sentEmail}로 비밀번호 재설정 링크를 발송했습니다. 메일함을 확인해주세요.
+              {copy.sentBody.replace('{email}', sentEmail)}
             </p>
           </div>
 
           <Button asChild size="lg" className="w-full">
-            <Link href="/auth">로그인으로 돌아가기</Link>
+            <Link href={getLocalizedPathname('/auth', locale)}>{copy.backToLogin}</Link>
           </Button>
         </div>
       </main>
@@ -101,9 +106,9 @@ function RequestView() {
     <main className="flex flex-1 items-center justify-center px-4 py-12">
       <div className="w-full max-w-[400px] space-y-6">
         <div className="space-y-3">
-          <h1 className="text-heading font-semibold text-gray-900">비밀번호 찾기</h1>
+          <h1 className="text-heading font-semibold text-gray-900">{copy.requestTitle}</h1>
           <p className="text-base text-gray-700">
-            가입 시 사용한 이메일을 입력하세요
+            {copy.requestBody}
           </p>
         </div>
 
@@ -114,11 +119,11 @@ function RequestView() {
               name="email"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>이메일</FormLabel>
+                  <FormLabel>{copy.email}</FormLabel>
                   <FormControl>
                     <Input
                       type="email"
-                      placeholder="이메일을 입력해주세요"
+                      placeholder={copy.emailPlaceholder}
                       autoComplete="email"
                       {...field}
                     />
@@ -137,10 +142,10 @@ function RequestView() {
               {isLoading ? (
                 <>
                   <Loader2 className="h-5 w-5 animate-spin" />
-                  발송 중...
+                  {copy.sending}
                 </>
               ) : (
-                '비밀번호 재설정 링크 발송'
+                copy.requestCta
               )}
             </Button>
           </form>
@@ -148,10 +153,10 @@ function RequestView() {
 
         <div className="text-center">
           <Link
-            href="/auth"
+            href={getLocalizedPathname('/auth', locale)}
             className="text-caption text-gray-500 hover:text-primary"
           >
-            로그인으로 돌아가기
+            {copy.backToLogin}
           </Link>
         </div>
       </div>
@@ -161,6 +166,8 @@ function RequestView() {
 
 function ConfirmView({ token }: { token: string }) {
   const router = useRouter();
+  const locale = getClientLocale();
+  const copy = getVisibleCopy(locale).resetPassword;
   const [isLoading, setIsLoading] = useState(false);
   const [tokenError, setTokenError] = useState(false);
 
@@ -182,8 +189,8 @@ function ConfirmView({ token }: { token: string }) {
       });
 
       if (res.ok) {
-        toast.success('비밀번호가 변경되었습니다. 다시 로그인해주세요.');
-        router.push('/auth');
+        toast.success(copy.successToast);
+        router.push(getLocalizedPathname('/auth', locale));
         return;
       }
 
@@ -192,9 +199,9 @@ function ConfirmView({ token }: { token: string }) {
         return;
       }
 
-      let message = '오류가 발생했습니다. 다시 시도해주세요.';
+      let message = getVisibleCopy(locale).commonErrors.default;
       if (res.status === 429) {
-        message = '요청이 너무 많습니다. 잠시 후 다시 시도해주세요.';
+        message = copy.tooManyRequests;
       }
       try {
         const errorData = (await res.json()) as { message?: string };
@@ -206,7 +213,7 @@ function ConfirmView({ token }: { token: string }) {
       }
       toast.error(message);
     } catch {
-      toast.error('오류가 발생했습니다. 다시 시도해주세요.');
+      toast.error(getVisibleCopy(locale).commonErrors.default);
     } finally {
       setIsLoading(false);
     }
@@ -218,21 +225,21 @@ function ConfirmView({ token }: { token: string }) {
         <div className="w-full max-w-[400px] space-y-6">
           <div className="space-y-3">
             <h1 className="text-heading font-semibold text-gray-900">
-              유효하지 않은 링크
+              {copy.invalidTitle}
             </h1>
             <p className="text-base text-gray-700">
-              비밀번호 재설정 링크가 만료되었거나 이미 사용되었습니다. 다시 요청해주세요.
+              {copy.invalidBody}
             </p>
           </div>
           <Button asChild size="lg" className="w-full">
-            <Link href="/auth/reset-password">다시 요청하기</Link>
+            <Link href={getLocalizedPathname('/auth/reset-password', locale)}>{copy.requestAgain}</Link>
           </Button>
           <div className="text-center">
             <Link
-              href="/auth"
+              href={getLocalizedPathname('/auth', locale)}
               className="text-caption text-gray-500 hover:text-primary"
             >
-              로그인으로 돌아가기
+              {copy.backToLogin}
             </Link>
           </div>
         </div>
@@ -244,9 +251,9 @@ function ConfirmView({ token }: { token: string }) {
     <main className="flex flex-1 items-center justify-center px-4 py-12">
       <div className="w-full max-w-[400px] space-y-6">
         <div className="space-y-3">
-          <h1 className="text-heading font-semibold text-gray-900">새 비밀번호 설정</h1>
+          <h1 className="text-heading font-semibold text-gray-900">{copy.confirmTitle}</h1>
           <p className="text-base text-gray-700">
-            새 비밀번호를 입력해주세요. 비밀번호는 8자 이상, 영문 + 숫자 + 특수문자를 포함해야 합니다.
+            {copy.confirmBody}
           </p>
         </div>
 
@@ -258,16 +265,16 @@ function ConfirmView({ token }: { token: string }) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>
-                    새 비밀번호 <span className="text-error">*</span>
+                    {copy.newPassword} <span className="text-error">*</span>
                   </FormLabel>
                   <FormControl>
                     <PasswordInput
-                      placeholder="새 비밀번호를 입력해주세요"
+                      placeholder={copy.newPasswordPlaceholder}
                       autoComplete="new-password"
                       {...field}
                     />
                   </FormControl>
-                  <FormDescription>8자 이상, 영문+숫자+특수문자 포함</FormDescription>
+                  <FormDescription>{copy.passwordRule}</FormDescription>
                   <FormMessage />
                 </FormItem>
               )}
@@ -278,11 +285,11 @@ function ConfirmView({ token }: { token: string }) {
               render={({ field }) => (
                 <FormItem>
                   <FormLabel>
-                    새 비밀번호 확인 <span className="text-error">*</span>
+                    {copy.newPasswordConfirm} <span className="text-error">*</span>
                   </FormLabel>
                   <FormControl>
                     <PasswordInput
-                      placeholder="새 비밀번호를 다시 입력해주세요"
+                      placeholder={copy.newPasswordConfirmPlaceholder}
                       autoComplete="new-password"
                       {...field}
                     />
@@ -301,10 +308,10 @@ function ConfirmView({ token }: { token: string }) {
               {isLoading ? (
                 <>
                   <Loader2 className="h-5 w-5 animate-spin" />
-                  변경 중...
+                  {copy.changing}
                 </>
               ) : (
-                '비밀번호 변경'
+                copy.changeCta
               )}
             </Button>
           </form>
@@ -312,10 +319,10 @@ function ConfirmView({ token }: { token: string }) {
 
         <div className="text-center">
           <Link
-            href="/auth"
+            href={getLocalizedPathname('/auth', locale)}
             className="text-caption text-gray-500 hover:text-primary"
           >
-            로그인으로 돌아가기
+            {copy.backToLogin}
           </Link>
         </div>
       </div>

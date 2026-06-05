@@ -6,20 +6,29 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
+import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { TicketEmailDeliveryPanel } from '@/components/reservation/ticket-email-delivery-panel';
 import {
   buildQrCheckInUrl,
   QrTicketImage,
 } from '@/components/field/qr-ticket-image';
+import {
+  getVisibleCopy,
+  resolveVisibleCopyLocale,
+  type VisibleCopy,
+} from '@/lib/i18n/visible-copy';
+import { getClientLocale } from '@/lib/i18n/client-copy';
 import type { ReservationDetail, TicketItem } from '@grabit/shared';
 
 interface BookingCompleteProps {
   booking: ReservationDetail;
 }
 
-function formatDateTime(dateStr: string): string {
+type CompleteCardCopy = VisibleCopy['bookingExtra']['completeCard'];
+
+function formatDateTime(dateStr: string, locale: string): string {
   const date = new Date(dateStr);
-  return new Intl.DateTimeFormat('ko-KR', {
+  return new Intl.DateTimeFormat(locale, {
     year: 'numeric',
     month: 'long',
     day: 'numeric',
@@ -29,96 +38,117 @@ function formatDateTime(dateStr: string): string {
   }).format(date);
 }
 
-function formatPrice(amount: number): string {
-  return `${amount.toLocaleString('ko-KR')}원`;
+function formatPrice(amount: number, locale: string): string {
+  if (locale === 'ko') return `${amount.toLocaleString('ko-KR')}원`;
+
+  return new Intl.NumberFormat(locale, {
+    style: 'currency',
+    currency: 'KRW',
+    maximumFractionDigits: 0,
+  }).format(amount);
 }
 
-function formatSeats(booking: ReservationDetail): string {
+function formatTemplate(template: string, values: object) {
+  const record = values as Record<string, unknown>;
+  return template.replace(/\{(\w+)\}/g, (_, key: string) =>
+    String(record[key] ?? ''),
+  );
+}
+
+function formatSeats(booking: ReservationDetail, copy: CompleteCardCopy): string {
   return booking.seats
-    .map((seat) => `${seat.tierName} ${seat.row}열 ${seat.number}번`)
+    .map((seat) => formatTemplate(copy.seatLabel, seat))
     .join(', ');
 }
 
-function formatTicketItemSeat(ticketItem: TicketItem): string {
-  return `${ticketItem.tierName} ${ticketItem.row}열 ${ticketItem.number}번`;
+function formatTicketItemSeat(ticketItem: TicketItem, copy: CompleteCardCopy): string {
+  return formatTemplate(copy.seatLabel, ticketItem);
 }
 
-function getQrStatusLabel(status: ReservationDetail['qrTicket']['status']): string {
+function getQrStatusLabel(
+  status: ReservationDetail['qrTicket']['status'],
+  copy: CompleteCardCopy,
+): string {
   switch (status) {
     case 'ACTIVE':
-      return 'QR 활성';
+      return copy.qrActive;
     case 'USED':
-      return '사용됨';
+      return copy.used;
     case 'REVOKED':
-      return '해지됨';
+      return copy.revoked;
     case 'EXPIRED':
-      return '만료됨';
+      return copy.expired;
     default:
-      return '확인 중';
+      return copy.qrPending;
   }
 }
 
-function getTicketItemStatusLabel(status: TicketItem['status']): string {
+function getTicketItemStatusLabel(status: TicketItem['status'], copy: CompleteCardCopy): string {
   switch (status) {
     case 'ACTIVE':
-      return '티켓 유효';
+      return copy.ticketValid;
     case 'CANCELLATION_PENDING':
-      return '취소 확인 중';
+      return copy.cancellationPending;
     case 'CANCELLED':
-      return '취소됨';
+      return copy.cancelled;
     case 'EXPIRED':
-      return '만료됨';
+      return copy.expired;
     default:
-      return '확인 중';
+      return copy.qrPending;
   }
 }
 
 function getAdmissionStateLabel(
   admissionState: TicketItem['admissionState'] | ReservationDetail['qrTicket']['entryStatus'],
+  copy: CompleteCardCopy,
 ): string {
-  return admissionState === 'ENTERED' ? '입장 완료' : '입장 전';
+  return admissionState === 'ENTERED' ? copy.entered : copy.notEntered;
 }
 
-function getTicketItemQrBadgeLabel(status: TicketItem['status'], hasActiveQr: boolean): string {
+function getTicketItemQrBadgeLabel(
+  status: TicketItem['status'],
+  hasActiveQr: boolean,
+  copy: CompleteCardCopy,
+): string {
   if (hasActiveQr) {
-    return 'QR 활성';
+    return copy.qrActive;
   }
   if (status === 'CANCELLATION_PENDING') {
-    return '취소 확인 중';
+    return copy.cancellationPending;
   }
   if (status === 'CANCELLED') {
-    return '취소됨';
+    return copy.cancelled;
   }
   if (status === 'EXPIRED') {
-    return '만료됨';
+    return copy.expired;
   }
 
-  return '확인 중';
+  return copy.qrPending;
 }
 
-function getTicketItemQrUnavailableCopy(status: TicketItem['status']) {
+function getTicketItemQrUnavailableCopy(status: TicketItem['status'], copy: CompleteCardCopy) {
   if (status === 'CANCELLATION_PENDING') {
     return {
-      title: '취소 확인 중입니다.',
-      description: '부분취소 결과를 확인 중입니다. 처리 완료 전까지 QR 티켓은 사용할 수 없습니다.',
+      title: copy.unavailablePendingTitle,
+      description: copy.unavailablePendingDescription,
     };
   }
   if (status === 'CANCELLED') {
     return {
-      title: '취소된 티켓입니다.',
-      description: '이 좌석의 QR 티켓은 사용할 수 없습니다.',
+      title: copy.unavailableCancelledTitle,
+      description: copy.unavailableCancelledDescription,
     };
   }
   if (status === 'EXPIRED') {
     return {
-      title: '만료된 티켓입니다.',
-      description: '이 좌석의 QR 티켓은 사용할 수 없습니다.',
+      title: copy.unavailableExpiredTitle,
+      description: copy.unavailableExpiredDescription,
     };
   }
 
   return {
-    title: 'QR 티켓을 아직 표시할 수 없습니다.',
-    description: '잠시 후 새로고침하거나 마이페이지에서 다시 확인하세요.',
+    title: copy.unavailableDefaultTitle,
+    description: copy.unavailableDefaultDescription,
   };
 }
 
@@ -134,7 +164,7 @@ type BuyerQrCard = {
   admissionStatusLabel: string;
 };
 
-function getBuyerQrCards(booking: ReservationDetail): BuyerQrCard[] {
+function getBuyerQrCards(booking: ReservationDetail, copy: CompleteCardCopy): BuyerQrCard[] {
   const ticketItems = Array.isArray(booking.ticketItems) ? booking.ticketItems : [];
   if (ticketItems.length > 0) {
     return ticketItems.map((ticketItem) => {
@@ -142,18 +172,18 @@ function getBuyerQrCards(booking: ReservationDetail): BuyerQrCard[] {
       const qrCheckInUrl = credential?.status === 'ACTIVE' && credential.token
         ? buildQrCheckInUrl(credential.token)
         : null;
-      const unavailableCopy = getTicketItemQrUnavailableCopy(ticketItem.status);
+      const unavailableCopy = getTicketItemQrUnavailableCopy(ticketItem.status, copy);
 
       return {
         id: ticketItem.id,
-        seatLabel: formatTicketItemSeat(ticketItem),
+        seatLabel: formatTicketItemSeat(ticketItem, copy),
         floorLabel: ticketItem.floorLabel,
         qrCheckInUrl,
-        qrBadgeLabel: getTicketItemQrBadgeLabel(ticketItem.status, Boolean(qrCheckInUrl)),
+        qrBadgeLabel: getTicketItemQrBadgeLabel(ticketItem.status, Boolean(qrCheckInUrl), copy),
         qrUnavailableTitle: unavailableCopy.title,
         qrUnavailableDescription: unavailableCopy.description,
-        ticketStatusLabel: getTicketItemStatusLabel(ticketItem.status),
-        admissionStatusLabel: getAdmissionStateLabel(ticketItem.admissionState),
+        ticketStatusLabel: getTicketItemStatusLabel(ticketItem.status, copy),
+        admissionStatusLabel: getAdmissionStateLabel(ticketItem.admissionState, copy),
       };
     });
   }
@@ -162,21 +192,24 @@ function getBuyerQrCards(booking: ReservationDetail): BuyerQrCard[] {
   return [
     {
       id: 'legacy-qr-ticket',
-      seatLabel: formatSeats(booking),
+      seatLabel: formatSeats(booking, copy),
       floorLabel: '',
       qrCheckInUrl: isQrActive ? buildQrCheckInUrl(booking.qrTicket.token) : null,
-      qrBadgeLabel: isQrActive ? 'QR 활성' : '확인 중',
-      qrUnavailableTitle: 'QR 티켓을 아직 표시할 수 없습니다.',
-      qrUnavailableDescription: '잠시 후 새로고침하거나 마이페이지에서 다시 확인하세요.',
-      ticketStatusLabel: getQrStatusLabel(booking.qrTicket.status),
-      admissionStatusLabel: getAdmissionStateLabel(booking.qrTicket.entryStatus),
+      qrBadgeLabel: isQrActive ? copy.qrActive : copy.qrPending,
+      qrUnavailableTitle: copy.unavailableDefaultTitle,
+      qrUnavailableDescription: copy.unavailableDefaultDescription,
+      ticketStatusLabel: getQrStatusLabel(booking.qrTicket.status, copy),
+      admissionStatusLabel: getAdmissionStateLabel(booking.qrTicket.entryStatus, copy),
     },
   ];
 }
 
 export function BookingComplete({ booking }: BookingCompleteProps) {
   const router = useRouter();
-  const qrCards = getBuyerQrCards(booking);
+  const locale = getClientLocale();
+  const visibleCopy = getVisibleCopy(locale);
+  const copy = visibleCopy.bookingExtra.completeCard;
+  const qrCards = getBuyerQrCards(booking, copy);
   const hasActiveQr = qrCards.some((card) => card.qrCheckInUrl);
 
   return (
@@ -185,18 +218,20 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
       <div className="flex flex-col items-center gap-3 pt-4">
         <CheckCircle2 className="h-16 w-16 text-success" />
         <h1 className="text-xl font-semibold" tabIndex={-1} id="booking-complete-heading">
-          예매가 완료되었습니다
+          {copy.title}
         </h1>
       </div>
 
       {/* Reservation number */}
       <Card className="w-full">
         <CardContent className="flex flex-col items-center gap-2 py-6">
-          <span className="text-sm text-gray-500">예매번호</span>
+          <span className="text-sm text-gray-500">{copy.reservationNumber}</span>
           <span
             className="text-2xl font-semibold text-primary"
             style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
-            aria-label={`예매번호 ${booking.reservationNumber}`}
+            aria-label={formatTemplate(copy.reservationNumberAria, {
+              reservationNumber: booking.reservationNumber,
+            })}
           >
             {booking.reservationNumber}
           </span>
@@ -206,18 +241,18 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
       {/* Performance info */}
       <Card className="w-full">
         <CardContent className="space-y-3">
-          <h2 className="text-base font-semibold">공연 정보</h2>
+          <h2 className="text-base font-semibold">{copy.performanceInfo}</h2>
           <div className="space-y-2 text-sm">
             <div className="flex justify-between">
-              <span className="text-gray-500">공연명</span>
+              <span className="text-gray-500">{copy.performanceName}</span>
               <span className="text-right font-semibold text-gray-900">{booking.performanceTitle}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-500">공연일시</span>
-              <span className="text-right text-gray-900">{formatDateTime(booking.showDateTime)}</span>
+              <span className="text-gray-500">{copy.performanceDate}</span>
+              <span className="text-right text-gray-900">{formatDateTime(booking.showDateTime, locale)}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-500">장소</span>
+              <span className="text-gray-500">{copy.venue}</span>
               <span className="text-right text-gray-900">{booking.venue}</span>
             </div>
           </div>
@@ -227,14 +262,14 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
       {/* Seat info */}
       <Card className="w-full">
         <CardContent className="space-y-3">
-          <h2 className="text-base font-semibold">좌석 정보</h2>
+          <h2 className="text-base font-semibold">{copy.seatInfo}</h2>
           <ul className="space-y-2">
             {booking.seats.map((seat) => (
               <li key={seat.seatId} className="flex items-center justify-between text-sm">
                 <span className="text-gray-700">
-                  {seat.tierName} {seat.row}열 {seat.number}번
+                  {formatTemplate(copy.seatLabel, seat)}
                 </span>
-                <span className="text-gray-900">{formatPrice(seat.price)}</span>
+                <span className="text-gray-900">{formatPrice(seat.price, locale)}</span>
               </li>
             ))}
           </ul>
@@ -244,26 +279,26 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
       {/* Payment info */}
       <Card className="w-full">
         <CardContent className="space-y-3">
-          <h2 className="text-base font-semibold">결제 정보</h2>
+          <h2 className="text-base font-semibold">{copy.paymentInfo}</h2>
           <div className="space-y-2 text-sm">
             <div className="flex justify-between">
-              <span className="text-gray-500">결제금액</span>
-              <span className="font-semibold text-primary">{formatPrice(booking.totalAmount)}</span>
+              <span className="text-gray-500">{copy.totalAmount}</span>
+              <span className="font-semibold text-primary">{formatPrice(booking.totalAmount, locale)}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-gray-500">결제수단</span>
+              <span className="text-gray-500">{copy.paymentMethod}</span>
               <span className="text-gray-900">{booking.paymentMethod}</span>
             </div>
             {booking.paidAt && (
               <div className="flex justify-between">
-                <span className="text-gray-500">결제일시</span>
-                <span className="text-gray-900">{formatDateTime(booking.paidAt)}</span>
+                <span className="text-gray-500">{copy.paidAt}</span>
+                <span className="text-gray-900">{formatDateTime(booking.paidAt, locale)}</span>
               </div>
             )}
             {booking.cancelDeadline && (
               <div className="flex justify-between">
-                <span className="text-gray-500">취소마감시간</span>
-                <span className="text-gray-900">{formatDateTime(booking.cancelDeadline)}까지</span>
+                <span className="text-gray-500">{copy.cancellationDeadline}</span>
+                <span className="text-gray-900">{formatDateTime(booking.cancelDeadline, locale)}</span>
               </div>
             )}
           </div>
@@ -276,12 +311,12 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <QrCode className="h-5 w-5 text-[#6C3CE0]" />
-                <h2 className="text-base font-semibold text-gray-900">QR 티켓</h2>
+                <h2 className="text-base font-semibold text-gray-900">{copy.qrTicket}</h2>
               </div>
               <p className="text-sm text-gray-700">
                 {hasActiveQr
-                  ? 'QR 티켓이 준비되었습니다. 입장 시 현장 스태프가 QR을 확인합니다.'
-                  : '결제는 완료되었지만 QR 티켓을 확인하는 중입니다. 잠시 후 새로고침하거나 마이페이지에서 다시 확인하세요.'}
+                  ? copy.qrReady
+                  : copy.qrChecking}
               </p>
             </div>
             <Badge
@@ -291,7 +326,7 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
                   : 'bg-[#FFFBEB] text-[#8B6306] border-transparent'
               }
             >
-              {hasActiveQr ? 'QR 활성' : '확인 중'}
+              {hasActiveQr ? copy.qrActive : copy.qrPending}
             </Badge>
           </div>
 
@@ -324,7 +359,7 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
                   {card.qrCheckInUrl ? (
                     <QrTicketImage
                       value={card.qrCheckInUrl}
-                      title={`${card.seatLabel} 검표 QR`}
+                      title={`${card.seatLabel} ${copy.qrTicket}`}
                     />
                   ) : (
                     <div className="rounded-lg border border-[#F3E6A6] bg-[#FFFBEB] p-4 text-sm text-[#8B6306]">
@@ -335,37 +370,37 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
                         {card.qrUnavailableDescription}
                       </p>
                       <p className="mt-2 text-gray-700">
-                        현장 검표 결과가 최종 입장 기준입니다.
+                        {copy.fieldCheckResult}
                       </p>
                     </div>
                   )}
                   <div className="grid gap-3 text-sm sm:grid-cols-2">
                     <div>
-                      <span className="block text-gray-500">예매번호</span>
+                      <span className="block text-gray-500">{copy.reservationNumber}</span>
                       <span className="font-semibold text-gray-900">{booking.reservationNumber}</span>
                     </div>
                     <div>
-                      <span className="block text-gray-500">공연명</span>
+                      <span className="block text-gray-500">{copy.performanceName}</span>
                       <span className="font-semibold text-gray-900">{booking.performanceTitle}</span>
                     </div>
                     <div>
-                      <span className="block text-gray-500">공연일시</span>
+                      <span className="block text-gray-500">{copy.performanceDate}</span>
                       <span className="font-semibold text-gray-900">
-                        {formatDateTime(booking.showDateTime)}
+                        {formatDateTime(booking.showDateTime, locale)}
                       </span>
                     </div>
                     <div>
-                      <span className="block text-gray-500">좌석</span>
+                      <span className="block text-gray-500">{copy.seatInfo}</span>
                       <span className="font-semibold text-gray-900">{card.seatLabel}</span>
                     </div>
                     <div>
-                      <span className="block text-gray-500">티켓 상태</span>
+                      <span className="block text-gray-500">{copy.ticketValid}</span>
                       <span className="font-semibold text-gray-900">
                         {card.ticketStatusLabel}
                       </span>
                     </div>
                     <div>
-                      <span className="block text-gray-500">입장 상태</span>
+                      <span className="block text-gray-500">{visibleCopy.reservation.detail.entryStatus}</span>
                       <span className="font-semibold text-gray-900">
                         {card.admissionStatusLabel}
                       </span>
@@ -389,23 +424,25 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
       <div className="flex w-full flex-col gap-3 pb-8">
         <Button
           className="h-12 w-full"
-          onClick={() => router.push(`/mypage/reservations/${booking.id}`)}
+          onClick={() =>
+            router.push(getLocalizedPathname(`/mypage/reservations/${booking.id}`, locale))
+          }
         >
-          QR 티켓 보기
+          {copy.qrTicket}
         </Button>
         <Button
           variant="secondary"
           className="h-12 w-full"
-          onClick={() => router.push('/mypage?tab=reservations')}
+          onClick={() => router.push(`${getLocalizedPathname('/mypage', locale)}?tab=reservations`)}
         >
-          예매내역 보기
+          {copy.mypageCta}
         </Button>
         <Button
           variant="ghost"
           className="h-12 w-full"
-          onClick={() => router.push('/')}
+          onClick={() => router.push(getLocalizedPathname('/', locale))}
         >
-          홈으로
+          {copy.homeCta}
         </Button>
       </div>
     </div>

@@ -4,12 +4,15 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { ReservationListSkeleton } from '@/components/skeletons';
 import { ReservationCard } from '@/components/reservation/reservation-card';
+import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
+import { getClientLocale } from '@/lib/i18n/client-copy';
+import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import type { ReservationListItem } from '@grabit/shared';
 
 const FILTER_OPTIONS = [
-  { value: 'all', label: '전체' },
-  { value: 'CONFIRMED', label: '예매완료' },
-  { value: 'CANCELLED', label: '취소완료' },
+  { value: 'all', labelKey: 'all' },
+  { value: 'CONFIRMED', labelKey: 'confirmed' },
+  { value: 'CANCELLED', labelKey: 'cancelled' },
 ] as const;
 
 interface ReservationListProps {
@@ -27,10 +30,13 @@ export function ReservationList({
   filter,
   onFilterChange,
 }: ReservationListProps) {
+  const locale = getClientLocale();
+  const copy = getVisibleCopy(locale).reservation;
+
   return (
     <div>
       {/* Filter chips */}
-      <div className="flex gap-2" role="group" aria-label="예매 상태 필터">
+      <div className="flex gap-2" role="group" aria-label={copy.list.filterAria}>
         {FILTER_OPTIONS.map((option) => (
           <Button
             key={option.value}
@@ -44,7 +50,9 @@ export function ReservationList({
             onClick={() => onFilterChange(option.value)}
             aria-pressed={filter === option.value}
           >
-            {option.label}
+            {option.labelKey === 'all'
+              ? copy.list.all
+              : copy.status[option.labelKey]}
           </Button>
         ))}
       </div>
@@ -75,13 +83,13 @@ export function ReservationList({
       {!isLoading && reservations && reservations.length === 0 && (
         <div className="mt-12 flex flex-col items-center text-center">
           <p className="text-base font-semibold text-gray-900">
-            예매 내역이 없습니다
+            {copy.list.emptyTitle}
           </p>
           <p className="mt-2 text-sm text-gray-600">
-            원하는 공연을 찾아 예매해보세요
+            {copy.list.emptyBody}
           </p>
-          <Link href="/">
-            <Button className="mt-6">공연 둘러보기</Button>
+          <Link href={getLocalizedPathname('/', locale)}>
+            <Button className="mt-6">{copy.list.browse}</Button>
           </Link>
         </div>
       )}

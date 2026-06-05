@@ -24,7 +24,7 @@ import {
   useCancelPendingReservation,
 } from '@/hooks/use-booking';
 import { useBookingAvailability } from '@/hooks/use-booking-availability';
-import { resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
+import { getVisibleCopy, resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
 import { useBookingStore } from '@/stores/use-booking-store';
 import { useAuthStore } from '@/stores/use-auth-store';
 import {
@@ -42,7 +42,6 @@ const LOCK_FAILURE_MESSAGES = [
   '좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.',
   '이미 다른 사용자가 선택한 좌석입니다.',
 ] as const;
-const OVERSEAS_DISCLAIMER_CHECKBOX_LABEL = '해외 결제 및 환불 유의사항에 동의합니다';
 
 const BOOKING_CONSENT_VERSION = '2026-04-28';
 const BOOKING_CONSENT_KEYS = [
@@ -70,12 +69,23 @@ function isLockFailureMessage(message: string): boolean {
   return LOCK_FAILURE_MESSAGES.some((candidate) => candidate === message);
 }
 
+function getLocalizedLockFailureMessage(
+  message: string,
+  copy: ReturnType<typeof getVisibleCopy>['bookingExtra']['confirm'],
+) {
+  if (message === LOCK_FAILURE_MESSAGES[0]) return copy.lockExpired;
+  if (message === LOCK_FAILURE_MESSAGES[1]) return copy.seatTaken;
+  return message;
+}
+
 function ConfirmPageContent() {
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
   const t = useTranslations('booking');
   const locale = resolveVisibleCopyLocale(useLocale());
+  const visibleCopy = getVisibleCopy(locale);
+  const confirmCopy = visibleCopy.bookingExtra.confirm;
   const performanceId = params.performanceId as string;
 
   const { selectedSeats, performanceTitle, showDateTime, venue, posterUrl, selectedShowtimeId } =
@@ -123,8 +133,11 @@ function ConfirmPageContent() {
   const orderName = useMemo(() => {
     if (!performanceTitle) return '';
     const base = performanceTitle.length > 30 ? `${performanceTitle.slice(0, 30)}...` : performanceTitle;
-    return selectedSeats.length > 1 ? `${base} 외 ${selectedSeats.length - 1}건` : base;
-  }, [performanceTitle, selectedSeats.length]);
+    if (selectedSeats.length <= 1) return base;
+    return locale === 'ko'
+      ? `${base} 외 ${selectedSeats.length - 1}건`
+      : `${base} + ${selectedSeats.length - 1} more`;
+  }, [locale, performanceTitle, selectedSeats.length]);
 
   // Redirect if no booking data
   useEffect(() => {
@@ -147,9 +160,9 @@ function ConfirmPageContent() {
     const reservationId = reservationIdRef.current;
     const shouldRotateOrderId =
       !isResumingPendingPayment && (Boolean(reservationId) || failedOrderId === orderId);
-    const fallbackMessage = '결제에 실패했습니다. 다시 시도해주세요.';
+    const fallbackMessage = confirmCopy.paymentFailed;
     const userMessage = code === 'PAY_PROCESS_CANCELED'
-      ? '결제가 취소되었습니다.'
+      ? confirmCopy.paymentCancelled
       : message ?? fallbackMessage;
 
     paymentRequestInFlightRef.current = false;
@@ -171,11 +184,11 @@ function ConfirmPageContent() {
     }
 
     if (code === 'PAY_PROCESS_CANCELED') {
-      toast.error('결제가 취소되었습니다.');
+      toast.error(confirmCopy.paymentCancelled);
     } else if (message) {
       toast.error(message);
     } else {
-      toast.error('결제에 실패했습니다. 다시 시도해주세요.');
+      toast.error(confirmCopy.paymentFailed);
     }
 
     // Clean up URL params
@@ -187,7 +200,7 @@ function ConfirmPageContent() {
       url.searchParams.delete('orderId');
     }
     window.history.replaceState({}, '', `${url.pathname}${url.search}`);
-  }, [cancelPending, isResumingPendingPayment, orderId, searchParams]);
+  }, [cancelPending, confirmCopy, isResumingPendingPayment, orderId, searchParams]);
 
   const handlePaymentReturnRecovery = useCallback(() => {
     setPaymentReturnError(null);
@@ -203,9 +216,9 @@ function ConfirmPageContent() {
     if (reservationIdRef.current) {
       cancelPending.mutate(reservationIdRef.current);
     }
-    toast.error('좌석 점유 시간이 만료되어 좌석 선택 화면으로 이동합니다.');
+    toast.error(confirmCopy.lockExpiredRedirect);
     router.replace(`/booking/${performanceId}`);
-  }, [performanceId, router, unlockAll, cancelPending]);
+  }, [confirmCopy, performanceId, router, unlockAll, cancelPending]);
 
   const handleWidgetReady = useCallback(() => {
     setWidgetReady(true);
@@ -321,9 +334,9 @@ function ConfirmPageContent() {
         setOrderId(generateOrderId());
       }
       const errorMessage =
-        err instanceof Error ? err.message : '결제 요청에 실패했습니다.';
+        err instanceof Error ? err.message : confirmCopy.paymentRequestFailed;
       if (isLockFailureMessage(errorMessage)) {
-        setLockFailureMessage(errorMessage);
+        setLockFailureMessage(getLocalizedLockFailureMessage(errorMessage, confirmCopy));
         return;
       }
       toast.error(errorMessage);
@@ -386,13 +399,13 @@ function ConfirmPageContent() {
     : isPaymentDeadlineExpired
     ? t('paymentRecovery.expiredCta')
     : isProcessing
-    ? '결제 처리 중...'
+    ? confirmCopy.processing
     : requiresOverseasDisclaimer && !overseasDisclaimerAgreed
     ? t('paymentDisclaimer.ctaPending')
     : !agreed
-      ? '약관에 동의해주세요'
+      ? confirmCopy.agreeTerms
       : !widgetAgreementAgreed
-      ? '결제 약관에 동의해주세요'
+      ? confirmCopy.agreePaymentTerms
       : t('paymentDisclaimer.payNow');
 
   return (
@@ -460,7 +473,7 @@ function ConfirmPageContent() {
 
         {/* Payment Widget */}
         <section className="space-y-3">
-          <h2 className="text-base font-semibold">결제 수단</h2>
+          <h2 className="text-base font-semibold">{confirmCopy.paymentMethod}</h2>
           {user && bookingAvailable && (
             <TossPaymentWidget
               ref={paymentWidgetRef}
@@ -499,7 +512,7 @@ function ConfirmPageContent() {
                 type="checkbox"
                 checked={overseasDisclaimerAgreed}
                 onChange={(event) => setOverseasDisclaimerAgreed(event.target.checked)}
-                aria-label={OVERSEAS_DISCLAIMER_CHECKBOX_LABEL}
+                aria-label={confirmCopy.overseasDisclaimerAria}
                 className="mt-0.5 size-4 rounded border border-amber-400 text-primary focus:ring-primary"
               />
               <span className="text-sm font-medium text-amber-950">

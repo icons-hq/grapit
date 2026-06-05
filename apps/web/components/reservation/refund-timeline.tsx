@@ -4,43 +4,19 @@ import { AlertCircle, CheckCircle2, Circle, Clock3 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import { cn } from '@/lib/cn';
+import { getVisibleCopy, type VisibleCopy } from '@/lib/i18n/visible-copy';
+import { getClientLocale } from '@/lib/i18n/client-copy';
 import type {
   CancelledSeatHold,
   RefundTimeline as RefundTimelineData,
   RefundTimelineState,
 } from '@grabit/shared';
 
-const TIMELINE_STEPS: Array<{
+type TimelineStep = {
   state: RefundTimelineState;
   label: string;
   description: string;
-}> = [
-  {
-    state: 'REQUESTED',
-    label: '환불 요청됨',
-    description: '예매 취소 요청이 접수되었습니다.',
-  },
-  {
-    state: 'SENT_TO_PG',
-    label: '환불 요청 전달됨',
-    description: '환불 요청이 결제수단으로 전달되었습니다.',
-  },
-  {
-    state: 'PROCESSING_AT_PG',
-    label: '환불 처리 중',
-    description: '결제사 또는 카드사에서 환불을 처리하고 있습니다.',
-  },
-  {
-    state: 'COMPLETED',
-    label: '환불 완료',
-    description: '환불 반영이 완료되었습니다.',
-  },
-  {
-    state: 'FAILED',
-    label: '환불 실패',
-    description: '수동 확인이 필요한 상태입니다.',
-  },
-];
+};
 
 const STEP_ORDER: RefundTimelineState[] = [
   'REQUESTED',
@@ -49,10 +25,7 @@ const STEP_ORDER: RefundTimelineState[] = [
   'COMPLETED',
 ];
 
-const REOPEN_NOTICE =
-  '취소된 좌석은 즉시 재오픈되지 않을 수 있으며, 잠시 후 다시 판매될 수 있습니다';
-
-function formatDateTime(dateString?: string | null): string | null {
+function formatDateTime(dateString: string | null | undefined, locale: string): string | null {
   if (!dateString) return null;
 
   const date = new Date(dateString);
@@ -60,14 +33,14 @@ function formatDateTime(dateString?: string | null): string | null {
     return null;
   }
 
-  const days = ['일', '월', '화', '수', '목', '금', '토'];
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  const day = days[date.getDay()];
-  const h = String(date.getHours()).padStart(2, '0');
-  const min = String(date.getMinutes()).padStart(2, '0');
-  return `${y}.${m}.${d} (${day}) ${h}:${min}`;
+  return new Intl.DateTimeFormat(locale, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
 }
 
 function getTimestamp(
@@ -130,20 +103,35 @@ function TimelineIcon({
   return <Circle className="h-5 w-5 text-gray-300" aria-hidden="true" />;
 }
 
-function renderHoldCopy(cancelledSeatHold: CancelledSeatHold | null) {
+type RefundCopy = VisibleCopy['reservation']['refund'];
+
+function getTimelineSteps(copy: RefundCopy): TimelineStep[] {
+  return [
+    { state: 'REQUESTED', ...copy.steps.requested },
+    { state: 'SENT_TO_PG', ...copy.steps.sentToPg },
+    { state: 'PROCESSING_AT_PG', ...copy.steps.processingAtPg },
+    { state: 'COMPLETED', ...copy.steps.completed },
+    { state: 'FAILED', ...copy.steps.failed },
+  ];
+}
+
+function renderHoldCopy(
+  cancelledSeatHold: CancelledSeatHold | null,
+  copy: RefundCopy,
+) {
   if (!cancelledSeatHold) {
-    return REOPEN_NOTICE;
+    return copy.description;
   }
 
   if (cancelledSeatHold.status === 'MANUAL_OPENED') {
-    return '운영자 확인 후 좌석이 다시 판매 가능 상태로 열렸습니다.';
+    return copy.manualOpened;
   }
 
   if (cancelledSeatHold.status === 'RELEASED') {
-    return '취소 좌석의 지연 보류가 끝나 다시 판매 가능한 상태가 되었습니다.';
+    return copy.released;
   }
 
-  return REOPEN_NOTICE;
+  return copy.description;
 }
 
 export function RefundTimeline({
@@ -153,20 +141,23 @@ export function RefundTimeline({
   timeline: RefundTimelineData;
   cancelledSeatHold: CancelledSeatHold | null;
 }) {
-  const expectedDepositAt = formatDateTime(timeline.expectedDepositAt);
-  const releaseAt = formatDateTime(cancelledSeatHold?.releaseAt);
+  const locale = getClientLocale();
+  const copy = getVisibleCopy(locale).reservation.refund;
+  const timelineSteps = getTimelineSteps(copy);
+  const expectedDepositAt = formatDateTime(timeline.expectedDepositAt, locale);
+  const releaseAt = formatDateTime(cancelledSeatHold?.releaseAt, locale);
   const currentLabel =
-    TIMELINE_STEPS.find((step) => step.state === timeline.currentState)?.label ??
-    '환불 상태';
+    timelineSteps.find((step) => step.state === timeline.currentState)?.label ??
+    copy.statusFallback;
 
   return (
     <Card className="mt-4 border-[#E9DFFF] bg-[#FAF7FF] py-4">
       <CardContent className="space-y-4">
         <div className="flex items-start justify-between gap-3">
           <div className="space-y-1">
-            <h2 className="text-base font-semibold text-gray-900">환불 진행 현황</h2>
+            <h2 className="text-base font-semibold text-gray-900">{copy.title}</h2>
             <p className="text-sm text-gray-700">
-              환불 단계별 상태와 지연 시 후속 조치를 확인하세요.
+              {copy.description}
             </p>
           </div>
           <Badge
@@ -184,9 +175,9 @@ export function RefundTimeline({
         </div>
 
         <div className="space-y-3 rounded-xl border border-white/80 bg-white/90 p-4">
-          {TIMELINE_STEPS.map((step) => {
+          {timelineSteps.map((step) => {
             const visualState = getStepVisualState(timeline, step.state);
-            const timestamp = formatDateTime(getTimestamp(timeline, step.state));
+            const timestamp = formatDateTime(getTimestamp(timeline, step.state), locale);
 
             return (
               <div key={step.state} className="flex gap-3">
@@ -228,16 +219,16 @@ export function RefundTimeline({
         <div className="space-y-3 rounded-xl border border-[#E5D9FF] bg-white/85 p-4">
           {expectedDepositAt && (
             <div className="flex items-center justify-between gap-4">
-              <span className="text-sm text-gray-600">예상 입금 시점</span>
+              <span className="text-sm text-gray-600">{copy.expectedDeposit}</span>
               <span className="text-right text-sm font-semibold text-gray-900">
                 {expectedDepositAt}
               </span>
             </div>
           )}
-          <p className="text-sm text-gray-700">{renderHoldCopy(cancelledSeatHold)}</p>
+          <p className="text-sm text-gray-700">{renderHoldCopy(cancelledSeatHold, copy)}</p>
           {releaseAt && cancelledSeatHold?.status === 'HELD' && (
             <p className="text-sm text-gray-700">
-              재판매 가능 시점은 {releaseAt} 전후로 순차 반영될 수 있습니다.
+              {copy.releaseNotice.replace('{releaseAt}', releaseAt)}
             </p>
           )}
         </div>
@@ -253,8 +244,8 @@ export function RefundTimeline({
             )}
           >
             {timeline.currentState === 'FAILED'
-              ? '환불 처리가 지연되었거나 실패했습니다. 결제 수단 상태를 확인한 뒤 고객센터로 문의해주세요.'
-              : '예상 입금 시점이 지나도 환불 완료가 보이지 않으면 고객센터로 문의해주세요.'}
+              ? copy.failedBody
+              : copy.delayedBody}
           </div>
         )}
       </CardContent>
