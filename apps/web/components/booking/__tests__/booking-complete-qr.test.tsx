@@ -63,6 +63,19 @@ function createReservation(
     cancelledAt: null,
     cancelReason: null,
     paymentKey: rawPaymentKey,
+    paymentInfo: {
+      paymentKey: rawPaymentKey,
+      method: 'CARD',
+      amount: 154000,
+      status: 'DONE',
+      paidAt: '2026-05-22T06:01:00.000Z',
+      paymentDeadlineAt: '2026-05-22T06:08:00.000Z',
+      paymentMethod: {
+        method: 'CARD',
+        provider: 'CARD',
+        currency: 'KRW',
+      },
+    },
     queueAdmission: {
       queueSessionId: 'queue-booking-complete-qr',
       admissionToken: 'admission-booking-complete-qr',

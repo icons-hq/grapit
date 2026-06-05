@@ -251,6 +251,201 @@ function hasPersistedTicketItems(reservation: ReservationDetailType): boolean {
 
 const DELAYED_REOPEN_NOTICE =
   '취소된 좌석은 즉시 재오픈되지 않을 수 있으며, 잠시 후 다시 판매될 수 있습니다';
+const SEOUL_DAY_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Seoul',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+type PaymentStatus = NonNullable<ReservationDetailType['paymentInfo']>['status'];
+type ProgressGuidance = {
+  kind:
+    | 'payment-pending'
+    | 'payment-processing'
+    | 'payment-failed'
+    | 'cancel-processing'
+    | 'cancel-completed';
+  title: string;
+  badgeLabel: string;
+  cardClassName: string;
+  badgeClassName: string;
+  currentStep: string;
+  nextStep: string;
+  customerAction: string;
+  estimate: string;
+};
+
+function getSeoulDayOrdinal(date: Date): number {
+  const parts = SEOUL_DAY_FORMATTER.formatToParts(date);
+  const year = Number(parts.find((part) => part.type === 'year')?.value);
+  const month = Number(parts.find((part) => part.type === 'month')?.value);
+  const day = Number(parts.find((part) => part.type === 'day')?.value);
+
+  return Math.floor(Date.UTC(year, month - 1, day) / MS_PER_DAY);
+}
+
+function isBeforeShowDateInSeoul(showDateTime: string): boolean {
+  const showtime = new Date(showDateTime);
+  if (Number.isNaN(showtime.getTime())) {
+    return false;
+  }
+
+  return getSeoulDayOrdinal(showtime) - getSeoulDayOrdinal(new Date()) > 0;
+}
+
+function hasDatePassed(dateString: string | null | undefined): boolean {
+  if (!dateString) {
+    return false;
+  }
+
+  const date = new Date(dateString);
+  return !Number.isNaN(date.getTime()) && date < new Date();
+}
+
+function formatPaymentMethodLabel(method: string | null | undefined): string {
+  switch (method) {
+    case 'CARD':
+      return '카드';
+    case 'VIRTUAL_ACCOUNT':
+      return '가상계좌';
+    case 'TRANSFER':
+      return '계좌이체';
+    case 'MOBILE_PHONE':
+      return '휴대폰 결제';
+    case 'FOREIGN_EASY_PAY':
+      return '해외 간편결제';
+    case 'SIMPLE_PAY':
+      return '간편결제';
+    case null:
+    case undefined:
+    case '':
+      return '선택 전';
+    default:
+      return method;
+  }
+}
+
+function getPaymentMethodLabel(reservation: ReservationDetailType): string {
+  return formatPaymentMethodLabel(
+    reservation.paymentInfo?.paymentMethod?.method ??
+      reservation.paymentInfo?.method ??
+      reservation.paymentMethod,
+  );
+}
+
+function isFailedPaymentStatus(status: PaymentStatus | null | undefined): boolean {
+  return status === 'ABORTED' || status === 'EXPIRED' || status === 'CANCELED';
+}
+
+function isPaymentConfirmationStatus(status: PaymentStatus | null | undefined): boolean {
+  return status === 'IN_PROGRESS' || status === 'DONE';
+}
+
+function hasCancellationInProgress(reservation: ReservationDetailType): boolean {
+  return reservation.refundTimeline.currentState !== 'COMPLETED' ||
+    reservation.ticketItems.some((ticketItem) => ticketItem.status === 'CANCELLATION_PENDING');
+}
+
+function getProgressGuidance(
+  reservation: ReservationDetailType,
+  paymentDeadlineAt: string | null | undefined,
+  isPaymentDeadlinePassed: boolean,
+): ProgressGuidance | null {
+  if (reservation.status === 'CANCELLED') {
+    if (hasCancellationInProgress(reservation)) {
+      return {
+        kind: 'cancel-processing',
+        title: '취소 및 환불 진행 안내',
+        badgeLabel: '처리 중',
+        cardClassName: 'border-[#E9DFFF] bg-[#FAF7FF]',
+        badgeClassName: 'bg-[#F3EFFF] text-[#6C3CE0] border-transparent',
+        currentStep: '취소/환불 처리 중',
+        nextStep: '결제 수단으로 환불이 순차 반영됩니다.',
+        customerAction: '추가 요청 없이 진행 현황을 확인해주세요.',
+        estimate: reservation.refundTimeline.expectedDepositAt
+          ? `예상 입금: ${formatDateTime(reservation.refundTimeline.expectedDepositAt)}`
+          : '결제수단에 따라 3~7영업일',
+      };
+    }
+
+    return {
+      kind: 'cancel-completed',
+      title: '취소 및 환불 진행 안내',
+      badgeLabel: '완료',
+      cardClassName: 'border-[#BBF7D0] bg-[#F0FDF4]',
+      badgeClassName: 'bg-white text-[#15803D] border-transparent',
+      currentStep: '취소 완료',
+      nextStep: '환불 반영이 완료되었습니다.',
+      customerAction: '예매 상세에서 취소 정보를 확인할 수 있습니다.',
+      estimate: '완료됨',
+    };
+  }
+
+  if (reservation.ticketItems.some((ticketItem) => ticketItem.status === 'CANCELLATION_PENDING')) {
+    return {
+      kind: 'cancel-processing',
+      title: '취소 및 환불 진행 안내',
+      badgeLabel: '처리 중',
+      cardClassName: 'border-[#E9DFFF] bg-[#FAF7FF]',
+      badgeClassName: 'bg-[#F3EFFF] text-[#6C3CE0] border-transparent',
+      currentStep: '취소/환불 처리 중',
+      nextStep: '결제 수단으로 환불이 순차 반영됩니다.',
+      customerAction: '추가 요청 없이 진행 현황을 확인해주세요.',
+      estimate: reservation.refundTimeline.expectedDepositAt
+        ? `예상 입금: ${formatDateTime(reservation.refundTimeline.expectedDepositAt)}`
+        : '결제수단에 따라 3~7영업일',
+    };
+  }
+
+  const paymentStatus = reservation.paymentInfo?.status;
+  if (reservation.status === 'PENDING_PAYMENT' && isPaymentConfirmationStatus(paymentStatus)) {
+    return {
+      kind: 'payment-processing',
+      title: '결제 진행 안내',
+      badgeLabel: '확인 중',
+      cardClassName: 'border-[#E9DFFF] bg-[#FAF7FF]',
+      badgeClassName: 'bg-[#F3EFFF] text-[#6C3CE0] border-transparent',
+      currentStep: '결제 확인 중',
+      nextStep: '결제가 확인되면 예매와 QR 티켓이 자동으로 확정됩니다.',
+      customerAction: '새 결제를 다시 시도하지 말고 잠시 후 예매 내역을 확인해주세요.',
+      estimate: '보통 수 분 이내',
+    };
+  }
+
+  const isPendingPaymentFailure =
+    reservation.status === 'PENDING_PAYMENT' &&
+    (isPaymentDeadlinePassed || isFailedPaymentStatus(paymentStatus));
+  if (reservation.status === 'FAILED' || isPendingPaymentFailure) {
+    return {
+      kind: 'payment-failed',
+      title: '결제 진행 안내',
+      badgeLabel: '다시 예매 필요',
+      cardClassName: 'border-[#F6C7C7] bg-[#FEF2F2]',
+      badgeClassName: 'bg-white text-[#C62828] border-transparent',
+      currentStep: '결제를 완료할 수 없음',
+      nextStep: '좌석을 다시 선택해 새 결제를 시작해주세요.',
+      customerAction: '이전 결제 화면은 닫고 공연 페이지에서 다시 예매해주세요.',
+      estimate: '새 결제 시 다시 안내',
+    };
+  }
+
+  if (reservation.status === 'PENDING_PAYMENT') {
+    return {
+      kind: 'payment-pending',
+      title: '결제 진행 안내',
+      badgeLabel: '대기 중',
+      cardClassName: 'border-[#F3E6A6] bg-[#FFFBEB]',
+      badgeClassName: 'bg-white text-[#8B6306] border-transparent',
+      currentStep: '결제 대기 중',
+      nextStep: '결제 완료 후 예매와 QR 티켓이 확정됩니다.',
+      customerAction: '결제 계속하기를 눌러 결제를 마무리해주세요.',
+      estimate: `결제 마감: ${formatDateTime(paymentDeadlineAt, '결제 마감 전까지')}`,
+    };
+  }
+
+  return null;
+}
 
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -279,10 +474,16 @@ export function ReservationDetailView({
   const router = useRouter();
   const [cancelModalOpen, setCancelModalOpen] = useState(false);
   const statusConfig = STATUS_CONFIG[reservation.status];
-  const paymentMethodLabel = reservation.paymentMethod ?? '결제수단';
+  const paymentMethodLabel = getPaymentMethodLabel(reservation);
+  const refundPaymentMethodLabel =
+    paymentMethodLabel === '선택 전' ? '결제수단' : paymentMethodLabel;
+  const paymentAmount = reservation.paymentInfo?.amount ?? reservation.totalAmount;
+  const paymentPaidAt = reservation.paymentInfo?.paidAt ?? reservation.paidAt;
+  const paymentDeadlineAt =
+    reservation.paymentInfo?.paymentDeadlineAt ?? reservation.paymentDeadlineAt;
 
   const isDeadlinePassed = new Date(reservation.cancelDeadline) < new Date();
-  const isPaymentDeadlinePassed = new Date(reservation.paymentDeadlineAt) < new Date();
+  const isPaymentDeadlinePassed = hasDatePassed(paymentDeadlineAt);
   const canCancel = reservation.status === 'CONFIRMED' && !isDeadlinePassed;
   const hasSeatLevelTicketItems = hasPersistedTicketItems(reservation);
   const ticketItemRefundTotal = hasSeatLevelTicketItems
@@ -296,9 +497,13 @@ export function ReservationDetailView({
       ? ticketItemRefundTotal
       : reservation.totalAmount;
   const showCancelButton = reservation.status === 'CONFIRMED';
+  const progressGuidance = getProgressGuidance(
+    reservation,
+    paymentDeadlineAt,
+    isPaymentDeadlinePassed,
+  );
   const canResumePayment =
-    reservation.status === 'PENDING_PAYMENT' &&
-    !isPaymentDeadlinePassed &&
+    progressGuidance?.kind === 'payment-pending' &&
     Boolean(onResumePayment);
   const showRefundPreview =
     reservation.status === 'CONFIRMED' ||
@@ -391,31 +596,37 @@ export function ReservationDetailView({
           </h2>
           <InfoRow
             label="결제금액"
-            value={`${reservation.totalAmount.toLocaleString('ko-KR')}원`}
+            value={`${paymentAmount.toLocaleString('ko-KR')}원`}
           />
           <Separator />
-          <InfoRow label="결제수단" value={reservation.paymentMethod ?? '선택 전'} />
+          <InfoRow label="결제수단" value={paymentMethodLabel} />
           <Separator />
           <InfoRow
             label="결제일시"
-            value={formatDateTime(reservation.paidAt, '결제 전')}
+            value={formatDateTime(paymentPaidAt, '결제 전')}
           />
         </CardContent>
       </Card>
 
-      {reservation.status === 'PENDING_PAYMENT' && (
-        <Card className="mt-4 border-[#F3E6A6] bg-[#FFFBEB] py-4">
+      {progressGuidance && (
+        <Card className={`mt-4 ${progressGuidance.cardClassName} py-4`}>
           <CardContent className="space-y-4">
-            <div>
-              <h2 className="text-base font-semibold text-[#8B6306]">결제 대기 중</h2>
-              <p className="mt-1 text-sm text-gray-700">
-                결제를 완료해야 예매와 QR 티켓이 확정됩니다.
-              </p>
-              {isPaymentDeadlinePassed && (
-                <p className="mt-2 text-sm font-medium text-[#C62828]">
-                  결제 가능 시간이 만료되었습니다. 좌석을 다시 선택해주세요.
-                </p>
-              )}
+            <div className="flex items-start justify-between gap-3">
+              <h2 className="text-base font-semibold text-gray-900">
+                {progressGuidance.title}
+              </h2>
+              <Badge className={progressGuidance.badgeClassName}>
+                {progressGuidance.badgeLabel}
+              </Badge>
+            </div>
+            <div className="rounded-xl border border-white/80 bg-white/90 p-4">
+              <InfoRow label="현재 단계" value={progressGuidance.currentStep} />
+              <Separator />
+              <InfoRow label="다음 절차" value={progressGuidance.nextStep} />
+              <Separator />
+              <InfoRow label="고객이 할 일" value={progressGuidance.customerAction} />
+              <Separator />
+              <InfoRow label="예상 소요" value={progressGuidance.estimate} />
             </div>
             {canResumePayment && (
               <Button
@@ -583,7 +794,7 @@ export function ReservationDetailView({
               <Separator />
               <InfoRow
                 label="환불 수단"
-                value={`${paymentMethodLabel} 결제 취소`}
+                value={`${refundPaymentMethodLabel} 결제 취소`}
               />
               {hasExpectedDepositAt && reservation.refundTimeline.expectedDepositAt && (
                 <>

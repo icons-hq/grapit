@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  adminBookingDetailSchema,
+  adminBookingFunnelStatusSchema,
+  adminBookingListQuerySchema,
+  adminBookingListItemSchema,
+  bookingStatsSchema,
   cancelTicketItemSchema,
   confirmPaymentSchema,
   prepareReservationResponseSchema,
@@ -344,6 +349,14 @@ describe('prepareReservationSchema booking consent contract', () => {
       cancelledAt: null,
       cancelReason: null,
       paymentKey: 'payment-key-1',
+      paymentInfo: {
+        paymentKey: 'payment-key-1',
+        method: 'ALIPAY_PLUS',
+        amount: 50000,
+        status: 'DONE',
+        paidAt: '2026-05-08T11:46:00.000Z',
+        paymentDeadlineAt: '2026-05-08T11:52:00.000Z',
+      },
       queueAdmission: makeQueueAdmission(),
       paymentDeadlineAt: '2026-05-08T11:52:00.000Z',
       bookingPolicy: {
@@ -435,6 +448,14 @@ describe('prepareReservationSchema booking consent contract', () => {
       cancelledAt: null,
       cancelReason: null,
       paymentKey: 'payment-key-1',
+      paymentInfo: {
+        paymentKey: 'payment-key-1',
+        method: 'CARD',
+        amount: 50000,
+        status: 'DONE',
+        paidAt: '2026-05-08T11:46:00.000Z',
+        paymentDeadlineAt: '2026-05-08T11:52:00.000Z',
+      },
       queueAdmission: makeQueueAdmission(),
       paymentDeadlineAt: '2026-05-08T11:52:00.000Z',
       bookingPolicy: {
@@ -517,6 +538,7 @@ describe('prepareReservationSchema booking consent contract', () => {
       cancelledAt: null,
       cancelReason: null,
       paymentKey: null,
+      paymentInfo: null,
       queueAdmission: makeQueueAdmission(),
       paymentDeadlineAt: '2026-05-08T11:52:00.000Z',
       bookingPolicy: {
@@ -551,7 +573,195 @@ describe('prepareReservationSchema booking consent contract', () => {
     expect(parsed.status).toBe('PENDING_PAYMENT');
     expect(parsed.paidAt).toBeNull();
     expect(parsed.paymentKey).toBeNull();
+    expect(parsed.paymentInfo).toBeNull();
     expect(parsed.tossOrderId).toBe('GRP-20260604-7O7YM');
+  });
+
+  it('accepts reservation detail paymentInfo while keeping legacy payment fields', () => {
+    const parsed = reservationDetailSchema.parse({
+      id: '11111111-1111-4111-8111-111111111111',
+      reservationNumber: 'GRP-24005',
+      status: 'CONFIRMED',
+      performanceTitle: 'Girl Rules Fanmeet',
+      posterUrl: null,
+      showDateTime: '2026-07-18T10:00:00.000Z',
+      venue: 'Donghae Arts Center',
+      seats: [makeSeat()],
+      totalAmount: 50000,
+      createdAt: '2026-05-08T11:45:00.000Z',
+      paymentMethod: 'CARD',
+      paidAt: '2026-05-08T11:46:00.000Z',
+      cancelDeadline: '2026-07-15T14:00:00.000Z',
+      cancelledAt: null,
+      cancelReason: null,
+      paymentKey: 'payment-key-1',
+      paymentInfo: {
+        paymentKey: 'payment-key-1',
+        method: 'CARD',
+        amount: 50000,
+        status: 'DONE',
+        paidAt: '2026-05-08T11:46:00.000Z',
+        paymentDeadlineAt: '2026-05-08T11:52:00.000Z',
+        paymentMethod: {
+          method: 'CARD',
+          provider: 'CARD',
+          currency: 'KRW',
+        },
+      },
+      queueAdmission: makeQueueAdmission(),
+      paymentDeadlineAt: '2026-05-08T11:52:00.000Z',
+      bookingPolicy: {
+        maxTicketsPerOrder: 1,
+        cancellationChangePolicy: 'CANCEL_ONLY',
+        sameGradeChangeEnabled: false,
+      },
+      refundTimeline: {
+        currentState: 'COMPLETED',
+        requestedAt: '2026-05-08T12:00:00.000Z',
+        completedAt: '2026-05-08T12:01:00.000Z',
+        customerServiceCtaVisible: false,
+      },
+      cancelledSeatHold: null,
+      qrTicket: {
+        token: 'qr-token-1',
+        jti: 'qr-jti-1',
+        status: 'ACTIVE',
+        entryStatus: 'NOT_ENTERED',
+        enteredAt: null,
+        issuedAt: '2026-05-08T11:46:00.000Z',
+        emailScheduledAt: null,
+        emailedAt: null,
+      },
+      ticketEmailDelivery: makeTicketEmailDelivery(),
+      ticketItems: [],
+    });
+
+    expect(parsed.paymentMethod).toBe('CARD');
+    expect(parsed.paymentKey).toBe('payment-key-1');
+    expect(parsed.paymentInfo?.status).toBe('DONE');
+    expect(parsed.paymentInfo?.paymentMethod?.provider).toBe('CARD');
+  });
+
+  it('validates admin booking funnel stats and operational list/detail fields', () => {
+    expect(adminBookingFunnelStatusSchema.options).toEqual([
+      'SOLD',
+      'PAYMENT_PENDING',
+      'PAYMENT_PROCESSING',
+      'PAYMENT_FAILED',
+      'CANCEL_PROCESSING',
+      'CANCELLED',
+      'PARTIAL_CANCELLED',
+    ]);
+
+    const stats = bookingStatsSchema.parse({
+      totalBookings: 7,
+      totalRevenue: 150000,
+      cancelRate: 14,
+      soldCount: 2,
+      pendingPaymentCount: 1,
+      paymentProcessingCount: 1,
+      failedCount: 1,
+      cancelProcessingCount: 1,
+      cancelledCount: 1,
+      partialCancelledCount: 1,
+      completedRevenue: 150000,
+    });
+
+    expect(stats.totalRevenue).toBe(stats.completedRevenue);
+    expect(() =>
+      bookingStatsSchema.parse({
+        ...stats,
+        totalRevenue: 149000,
+      }),
+    ).toThrow(/completedRevenue/);
+
+    const listItem = adminBookingListItemSchema.parse({
+      id: '11111111-1111-4111-8111-111111111111',
+      reservationNumber: 'GRP-24006',
+      userName: '김예매',
+      userEmail: 'buyer@example.com',
+      userCountry: 'KR',
+      performanceTitle: 'Girl Rules Fanmeet',
+      showDateTime: '2026-07-18T10:00:00.000Z',
+      seats: [makeSeat()],
+      totalAmount: 50000,
+      status: 'CONFIRMED',
+      funnelStatus: 'SOLD',
+      paymentStatus: 'DONE',
+      paymentMethod: 'CARD',
+      ticketStatusCounts: {
+        ACTIVE: 1,
+        CANCELLATION_PENDING: 0,
+        CANCELLED: 0,
+        EXPIRED: 0,
+      },
+      createdAt: '2026-05-08T11:45:00.000Z',
+    });
+
+    expect(listItem).not.toHaveProperty('userPhone');
+
+    const detail = adminBookingDetailSchema.parse({
+      ...listItem,
+      userPhone: '+821012345678',
+      paymentInfo: {
+        paymentKey: 'payment-key-1',
+        method: 'CARD',
+        amount: 50000,
+        status: 'DONE',
+        paidAt: '2026-05-08T11:46:00.000Z',
+        paymentDeadlineAt: '2026-05-08T11:52:00.000Z',
+      },
+      ticketItems: [],
+    });
+
+    expect(detail.funnelStatus).toBe('SOLD');
+    expect(detail.userPhone).toBe('+821012345678');
+    expect(detail.ticketStatusCounts.ACTIVE).toBe(1);
+  });
+
+  it('validates admin booking list query params before service filtering', () => {
+    const parsed = adminBookingListQuerySchema.parse({
+      status: 'CONFIRMED',
+      reservationStatus: 'PENDING_PAYMENT',
+      funnelStatus: 'PAYMENT_PENDING',
+      paymentStatus: 'READY',
+      paymentMethod: 'FOREIGN_EASY_PAY',
+      audienceRegion: 'overseas',
+      dateFrom: '2026-07-01',
+      dateTo: '2026-07-31',
+      search: 'buyer@example.com',
+      page: '2',
+    });
+
+    expect(parsed).toMatchObject({
+      status: 'CONFIRMED',
+      reservationStatus: 'PENDING_PAYMENT',
+      funnelStatus: 'PAYMENT_PENDING',
+      paymentStatus: 'READY',
+      paymentMethod: 'FOREIGN_EASY_PAY',
+      audienceRegion: 'overseas',
+      dateFrom: '2026-07-01',
+      dateTo: '2026-07-31',
+      search: 'buyer@example.com',
+      page: 2,
+    });
+    expect(adminBookingListQuerySchema.parse({}).page).toBe(1);
+
+    expect(() => adminBookingListQuerySchema.parse({ status: 'UNKNOWN' })).toThrow();
+    expect(() => adminBookingListQuerySchema.parse({ funnelStatus: 'UNKNOWN' })).toThrow();
+    expect(() => adminBookingListQuerySchema.parse({ paymentStatus: 'UNKNOWN' })).toThrow();
+    expect(() => adminBookingListQuerySchema.parse({ paymentMethod: 'UNKNOWN' })).toThrow();
+    expect(() => adminBookingListQuerySchema.parse({ audienceRegion: 'global' })).toThrow();
+    expect(() => adminBookingListQuerySchema.parse({ dateFrom: '2026-7-1' })).toThrow();
+    expect(() => adminBookingListQuerySchema.parse({ dateFrom: '2026-02-30' })).toThrow();
+    expect(() =>
+      adminBookingListQuerySchema.parse({
+        dateFrom: '2026-07-31',
+        dateTo: '2026-07-01',
+      }),
+    ).toThrow();
+    expect(() => adminBookingListQuerySchema.parse({ page: '0' })).toThrow();
+    expect(() => adminBookingListQuerySchema.parse({ page: '1.5' })).toThrow();
   });
 
   it('requires ticket email delivery state on reservation detail responses', () => {
@@ -572,6 +782,14 @@ describe('prepareReservationSchema booking consent contract', () => {
       cancelledAt: null,
       cancelReason: null,
       paymentKey: 'payment-key-1',
+      paymentInfo: {
+        paymentKey: 'payment-key-1',
+        method: 'CARD',
+        amount: 50000,
+        status: 'DONE',
+        paidAt: '2026-05-08T11:46:00.000Z',
+        paymentDeadlineAt: '2026-05-08T11:52:00.000Z',
+      },
       queueAdmission: makeQueueAdmission(),
       paymentDeadlineAt: '2026-05-08T11:52:00.000Z',
       bookingPolicy: {

@@ -6,6 +6,28 @@ import { ticketItemSchema } from './ticket-item.schema';
 const isoDatetime = (label: string) =>
   z.string().datetime({ message: `${label}은 ISO datetime 형식이어야 합니다` });
 
+const dateOnly = (label: string) =>
+  z.string()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, `${label}은 YYYY-MM-DD 형식이어야 합니다`)
+    .refine(isValidDateOnly, `${label}이 유효하지 않습니다`);
+
+function isValidDateOnly(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) {
+    return false;
+  }
+
+  const [, yearText, monthText, dayText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  return date.getUTCFullYear() === year
+    && date.getUTCMonth() === month - 1
+    && date.getUTCDate() === day;
+}
+
 const seatSelectionBaseSchema = z.object({
   seatId: z.string().min(1, '좌석 ID가 필요합니다'),
   tierName: z.string().min(1, '등급명이 필요합니다'),
@@ -311,6 +333,96 @@ export const paymentInfoSchema = z.object({
   paymentMethod: paymentMethodSchema.optional(),
 });
 
+export const adminBookingFunnelStatusSchema = z.enum([
+  'SOLD',
+  'PAYMENT_PENDING',
+  'PAYMENT_PROCESSING',
+  'PAYMENT_FAILED',
+  'CANCEL_PROCESSING',
+  'CANCELLED',
+  'PARTIAL_CANCELLED',
+]);
+
+const paymentStatusSchema = z.enum([
+  'READY',
+  'IN_PROGRESS',
+  'DONE',
+  'CANCELED',
+  'ABORTED',
+  'EXPIRED',
+]);
+
+const adminBookingQueryPageSchema = z
+  .union([
+    z.string().regex(/^[1-9]\d*$/, 'page는 양의 정수여야 합니다'),
+    z.number().int('page는 정수여야 합니다').positive('page는 양의 정수여야 합니다'),
+  ])
+  .transform((value) => Number(value))
+  .default(1);
+
+export const adminBookingListQuerySchema = z.object({
+  status: z.enum(['PENDING_PAYMENT', 'CONFIRMED', 'CANCELLED', 'FAILED']).optional(),
+  reservationStatus: z
+    .enum(['PENDING_PAYMENT', 'CONFIRMED', 'CANCELLED', 'FAILED'])
+    .optional(),
+  funnelStatus: adminBookingFunnelStatusSchema.optional(),
+  paymentStatus: paymentStatusSchema.optional(),
+  paymentMethod: z.enum([
+    'CARD',
+    'VIRTUAL_ACCOUNT',
+    'TRANSFER',
+    'MOBILE_PHONE',
+    'FOREIGN_EASY_PAY',
+    'SIMPLE_PAY',
+  ]).optional(),
+  audienceRegion: z.enum(['domestic', 'overseas']).optional(),
+  dateFrom: dateOnly('조회 시작일').optional(),
+  dateTo: dateOnly('조회 종료일').optional(),
+  search: z.string().trim().min(1).optional(),
+  page: adminBookingQueryPageSchema,
+}).superRefine((value, ctx) => {
+  if (value.dateFrom && value.dateTo && value.dateFrom > value.dateTo) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['dateTo'],
+      message: '조회 종료일은 시작일 이후여야 합니다',
+    });
+  }
+});
+
+export type AdminBookingListQueryInput = z.infer<
+  typeof adminBookingListQuerySchema
+>;
+
+export const ticketStatusCountsSchema = z.object({
+  ACTIVE: z.number().int().min(0),
+  CANCELLATION_PENDING: z.number().int().min(0),
+  CANCELLED: z.number().int().min(0),
+  EXPIRED: z.number().int().min(0),
+});
+
+export const bookingStatsSchema = z.object({
+  totalBookings: z.number().int().min(0),
+  totalRevenue: z.number().int().min(0),
+  cancelRate: z.number().int().min(0),
+  soldCount: z.number().int().min(0),
+  pendingPaymentCount: z.number().int().min(0),
+  paymentProcessingCount: z.number().int().min(0),
+  failedCount: z.number().int().min(0),
+  cancelProcessingCount: z.number().int().min(0),
+  cancelledCount: z.number().int().min(0),
+  partialCancelledCount: z.number().int().min(0),
+  completedRevenue: z.number().int().min(0),
+}).superRefine((stats, ctx) => {
+  if (stats.totalRevenue !== stats.completedRevenue) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'totalRevenue는 completedRevenue와 같아야 합니다',
+      path: ['totalRevenue'],
+    });
+  }
+});
+
 export const reservationListItemSchema = z.object({
   id: z.string().uuid('유효한 reservation ID가 필요합니다'),
   reservationNumber: z.string().min(1, '예매 번호가 필요합니다'),
@@ -336,6 +448,7 @@ export const reservationDetailSchema = reservationListItemSchema.extend({
   cancelledAt: isoDatetime('취소 시각').nullable(),
   cancelReason: z.string().max(200).nullable(),
   paymentKey: z.string().min(1, '결제 키가 필요합니다').nullable(),
+  paymentInfo: paymentInfoSchema.nullable(),
   queueAdmission: queueAdmissionSchema,
   paymentDeadlineAt: isoDatetime('결제 마감 시각'),
   bookingPolicy: bookingPolicySchema,
@@ -344,4 +457,51 @@ export const reservationDetailSchema = reservationListItemSchema.extend({
   qrTicket: qrTicketSchema,
   ticketEmailDelivery: ticketEmailDeliverySchema,
   ticketItems: z.array(ticketItemSchema),
+});
+
+export const adminBookingListItemSchema = z.object({
+  id: z.string().uuid('유효한 reservation ID가 필요합니다'),
+  reservationNumber: z.string().min(1, '예매 번호가 필요합니다'),
+  userName: z.string().min(1, '예매자명이 필요합니다'),
+  userEmail: z.string().email('예매자 이메일 형식이 올바르지 않습니다'),
+  userCountry: z.string().min(1, '예매자 국가가 필요합니다'),
+  performanceTitle: z.string().min(1, '공연명이 필요합니다'),
+  showDateTime: isoDatetime('공연 시각'),
+  seats: z.array(floorAwareSeatSelectionSchema),
+  totalAmount: z.number().int().min(0, '총 결제 금액은 0 이상이어야 합니다'),
+  status: z.enum(['PENDING_PAYMENT', 'CONFIRMED', 'CANCELLED', 'FAILED']),
+  funnelStatus: adminBookingFunnelStatusSchema,
+  paymentStatus: paymentStatusSchema.nullable(),
+  paymentMethod: z.string().min(1, '결제 수단이 필요합니다').nullable(),
+  ticketStatusCounts: ticketStatusCountsSchema,
+  createdAt: isoDatetime('생성 시각'),
+});
+
+export const adminTicketItemSchema = floorAwareSeatSelectionSchema.extend({
+  id: z.string().uuid('유효한 ticket item ID가 필요합니다'),
+  reservationId: z.string().uuid('유효한 reservation ID가 필요합니다'),
+  paymentId: z.string().uuid('유효한 payment ID가 필요합니다'),
+  showtimeId: z.string().uuid('유효한 showtime ID가 필요합니다'),
+  serviceFee: z.number().int().min(0),
+  status: z.enum(['ACTIVE', 'CANCELLATION_PENDING', 'CANCELLED', 'EXPIRED']),
+  admissionState: z.enum(['NOT_ENTERED', 'ENTERED']),
+  enteredAt: isoDatetime('입장 처리 시각').nullable(),
+  cancelledAt: isoDatetime('취소 시각').nullable(),
+  cancelReason: z.string().max(200).nullable(),
+  cancellationFee: z.number().int().min(0),
+  serviceFeeRefund: z.number().int().min(0),
+  refundableAmount: z.number().int().min(0),
+  reopenState: z.enum([
+    'NOT_REQUIRED',
+    'HELD_CANCELLED',
+    'AVAILABLE',
+    'MANUAL_OPENED',
+  ]),
+  reopenHoldUntil: isoDatetime('좌석 재오픈 hold 만료 시각').nullable(),
+});
+
+export const adminBookingDetailSchema = adminBookingListItemSchema.extend({
+  userPhone: z.string().min(1, '예매자 전화번호가 필요합니다'),
+  paymentInfo: paymentInfoSchema.nullable(),
+  ticketItems: z.array(adminTicketItemSchema),
 });

@@ -47,6 +47,19 @@ function createReservation(
     cancelledAt: '2026-05-08T10:00:00.000Z',
     cancelReason: '일정 변경',
     paymentKey: 'payment-key-1',
+    paymentInfo: {
+      paymentKey: 'payment-key-1',
+      method: 'CARD',
+      amount: 77000,
+      status: 'DONE',
+      paidAt: '2026-05-08T09:05:00.000Z',
+      paymentDeadlineAt: '2026-05-08T09:15:00.000Z',
+      paymentMethod: {
+        method: 'CARD',
+        provider: 'CARD',
+        currency: 'KRW',
+      },
+    },
     queueAdmission: {
       queueSessionId: 'queue-session-1',
       admissionToken: 'admission-token-1',
@@ -144,7 +157,8 @@ describe('ReservationDetail refund timeline', () => {
     );
 
     expect(screen.getByText('환불 요청됨')).toBeInTheDocument();
-    expect(screen.getByText('PG 전달됨')).toBeInTheDocument();
+    expect(screen.getByText('환불 요청 전달됨')).toBeInTheDocument();
+    expect(screen.queryByText('PG 전달됨')).not.toBeInTheDocument();
     expect(screen.getAllByText('환불 처리 중').length).toBeGreaterThan(0);
     expect(screen.getByText('환불 완료')).toBeInTheDocument();
     expect(screen.getAllByText('환불 실패').length).toBeGreaterThan(0);

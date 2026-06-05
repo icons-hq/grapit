@@ -12,6 +12,7 @@ import {
   reservations,
   reservationSeats,
   payments,
+  refunds,
   showtimes,
   performances,
   users,
@@ -26,15 +27,22 @@ import { safeCsvRows } from './csv-export.util.js';
 import { AdminAuditService } from './admin-audit.service.js';
 import { normalizeSeatIdentity, toFloorAwareSeatSelection } from '@grabit/shared';
 import type {
+  AdminBookingFunnelStatus,
   AdminBookingListItem,
+  AdminTicketStatusCounts,
   AdminReservationExportFilter,
   BookingStats,
   FloorAwareSeatSelection,
+  PaymentInfo,
+  PaymentMethod,
+  PaymentMethodType,
+  PaymentProvider,
   PaymentStatus,
   ReservationStatus,
 } from '@grabit/shared';
 
 const RAW_EXPORT_TYPE = 'raw_pii';
+const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 const RESERVATION_EXPORT_HEADERS = [
   'Reservation Number',
   'User Name',
@@ -64,6 +72,15 @@ const RESERVATION_EXPORT_HEADERS = [
   'Reopen State',
 ] as const;
 
+const PAYMENT_METHOD_FILTER_ALIASES = {
+  CARD: ['CARD', '카드'],
+  VIRTUAL_ACCOUNT: ['VIRTUAL_ACCOUNT', '가상계좌'],
+  TRANSFER: ['TRANSFER', '계좌이체'],
+  MOBILE_PHONE: ['MOBILE_PHONE', '휴대폰'],
+  FOREIGN_EASY_PAY: ['FOREIGN_EASY_PAY', '해외간편결제'],
+  SIMPLE_PAY: ['SIMPLE_PAY', '간편결제'],
+} as const satisfies Record<PaymentMethodType, readonly string[]>;
+
 export interface ReservationExportRequest {
   actorUserId: string;
   filters: AdminReservationExportFilter;
@@ -92,14 +109,6 @@ type AdminTicketItemReopenState =
   | 'AVAILABLE'
   | 'MANUAL_OPENED';
 
-type AdminPaymentInfo = {
-  paymentKey: string;
-  method: string;
-  amount: number;
-  status: PaymentStatus;
-  paidAt: string | null;
-};
-
 type AdminTicketItemDto = FloorAwareSeatSelection & {
   id: string;
   reservationId: string;
@@ -119,9 +128,30 @@ type AdminTicketItemDto = FloorAwareSeatSelection & {
 };
 
 type AdminBookingDetailDto = AdminBookingListItem & {
-  paymentInfo: AdminPaymentInfo;
+  userPhone: string;
+  paymentInfo: PaymentInfo | null;
   ticketItems: AdminTicketItemDto[];
 };
+
+type AdminBookingQueryParams = {
+  status?: string;
+  reservationStatus?: string;
+  funnelStatus?: string;
+  paymentStatus?: string;
+  paymentMethod?: string;
+  audienceRegion?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  search?: string;
+  page?: number;
+};
+
+type AdminRefundStatus =
+  | 'requested'
+  | 'sent_to_pg'
+  | 'processing_at_pg'
+  | 'completed'
+  | 'failed';
 
 type AdminTicketItemRow = Pick<
   typeof ticketItems.$inferSelect,
@@ -179,6 +209,46 @@ type ReservationExportRow = {
   } | null;
 };
 
+type AdminBookingListRow = {
+  reservation: {
+    id: string;
+    reservationNumber: string;
+    status: string;
+    totalAmount: number;
+    createdAt: Date | null;
+  };
+  user: {
+    name: string;
+    email: string;
+    country: string;
+  };
+  showtime: {
+    dateTime: Date | null;
+  };
+  performance: {
+    title: string;
+  };
+  payment: {
+    status: string | null;
+    method: string | null;
+  } | null;
+  refund: {
+    status: string | null;
+  } | null;
+};
+
+type BookingStatsRow = {
+  totalBookings?: number | string | null;
+  completedRevenue?: number | string | null;
+  soldCount?: number | string | null;
+  pendingPaymentCount?: number | string | null;
+  paymentProcessingCount?: number | string | null;
+  failedCount?: number | string | null;
+  cancelProcessingCount?: number | string | null;
+  cancelledCount?: number | string | null;
+  partialCancelledCount?: number | string | null;
+};
+
 function normalizeReservationSeatIdentity(seatId: string): {
   floorKey: string;
   seatId: string;
@@ -190,6 +260,275 @@ function normalizeReservationSeatIdentity(seatId: string): {
     seatId: identity.seatId,
     seatKey: identity.seatKey,
   };
+}
+
+function buildAdminBookingWhereClause(filters: AdminBookingQueryParams): SQL | undefined {
+  const conditions: SQL[] = [];
+  const reservationStatus = filters.reservationStatus ?? filters.status;
+
+  if (reservationStatus) {
+    conditions.push(
+      eq(reservations.status, reservationStatus as typeof reservations.status.enumValues[number]),
+    );
+  }
+  if (filters.funnelStatus) {
+    conditions.push(funnelStatusEqualsSql(filters.funnelStatus));
+  }
+  if (filters.paymentStatus) {
+    conditions.push(
+      eq(payments.status, filters.paymentStatus as typeof payments.status.enumValues[number]),
+    );
+  }
+  if (filters.paymentMethod) {
+    conditions.push(paymentMethodFilterSql(filters.paymentMethod));
+  }
+  if (filters.audienceRegion === 'domestic') {
+    conditions.push(eq(users.country, 'KR'));
+  }
+  if (filters.audienceRegion === 'overseas') {
+    conditions.push(ne(users.country, 'KR'));
+  }
+  if (filters.dateFrom) {
+    conditions.push(gte(reservations.createdAt, dateOnlyStart(filters.dateFrom)));
+  }
+  if (filters.dateTo) {
+    conditions.push(lte(reservations.createdAt, dateOnlyEnd(filters.dateTo)));
+  }
+
+  const search = filters.search?.trim();
+  if (search) {
+    const pattern = `%${search}%`;
+    conditions.push(
+      or(
+        ilike(reservations.reservationNumber, pattern),
+        ilike(reservations.tossOrderId, pattern),
+        ilike(performances.title, pattern),
+        sql`${users.id}::text ilike ${pattern}`,
+        ilike(users.email, pattern),
+        ilike(users.name, pattern),
+        ilike(users.phone, pattern),
+        ilike(users.country, pattern),
+        sql`${users.preferredLocale}::text ilike ${pattern}`,
+        ilike(users.birthDate, pattern),
+        ilike(users.accountStatus, pattern),
+        ticketItemSearchExistsSql(pattern),
+        reservationSeatSearchExistsSql(pattern),
+      )!,
+    );
+  }
+
+  return conditions.length > 0 ? and(...conditions) : undefined;
+}
+
+function paymentMethodFilterSql(paymentMethod: string): SQL {
+  return inArray(payments.method, paymentMethodFilterValues(paymentMethod));
+}
+
+function paymentMethodFilterValues(paymentMethod: string): string[] {
+  const aliases = PAYMENT_METHOD_FILTER_ALIASES[paymentMethod as PaymentMethodType];
+  return aliases ? [...aliases] : [paymentMethod];
+}
+
+function ticketItemSearchExistsSql(pattern: string): SQL {
+  return sql`exists (
+    select 1
+    from ticket_items admin_search_ti
+    where admin_search_ti.reservation_id = ${reservations.id}
+      and (
+        admin_search_ti.seat_key ilike ${pattern}
+        or admin_search_ti.seat_id ilike ${pattern}
+        or admin_search_ti.tier_name ilike ${pattern}
+        or admin_search_ti.row ilike ${pattern}
+        or admin_search_ti.number ilike ${pattern}
+      )
+  )`;
+}
+
+function reservationSeatSearchExistsSql(pattern: string): SQL {
+  return sql`exists (
+    select 1
+    from reservation_seats admin_search_rs
+    where admin_search_rs.reservation_id = ${reservations.id}
+      and (
+        admin_search_rs.seat_id ilike ${pattern}
+        or admin_search_rs.tier_name ilike ${pattern}
+        or admin_search_rs.row ilike ${pattern}
+        or admin_search_rs.number ilike ${pattern}
+      )
+  )`;
+}
+
+function hasAnyTicketItemsSql(): SQL {
+  return sql`exists (
+    select 1
+    from ticket_items admin_any_ti
+    where admin_any_ti.reservation_id = ${reservations.id}
+  )`;
+}
+
+function hasActiveTicketItemsSql(): SQL {
+  return sql`exists (
+    select 1
+    from ticket_items admin_active_ti
+    where admin_active_ti.reservation_id = ${reservations.id}
+      and admin_active_ti.status = 'active'
+  )`;
+}
+
+function hasCancelledTicketItemsSql(): SQL {
+  return sql`exists (
+    select 1
+    from ticket_items admin_cancelled_ti
+    where admin_cancelled_ti.reservation_id = ${reservations.id}
+      and admin_cancelled_ti.status = 'cancelled'
+  )`;
+}
+
+function hasCancellationPendingTicketItemsSql(): SQL {
+  return sql`exists (
+    select 1
+    from ticket_items admin_pending_cancel_ti
+    where admin_pending_cancel_ti.reservation_id = ${reservations.id}
+      and admin_pending_cancel_ti.status = 'cancellation_pending'
+  )`;
+}
+
+function hasNonActiveTicketItemsSql(): SQL {
+  return sql`exists (
+    select 1
+    from ticket_items admin_non_active_ti
+    where admin_non_active_ti.reservation_id = ${reservations.id}
+      and admin_non_active_ti.status <> 'active'
+  )`;
+}
+
+function activeTicketItemRevenueSql(): SQL<number> {
+  return sql<number>`coalesce((
+    select sum(admin_revenue_ti.price + admin_revenue_ti.service_fee)::int
+    from ticket_items admin_revenue_ti
+    where admin_revenue_ti.reservation_id = ${reservations.id}
+      and admin_revenue_ti.status = 'active'
+  ), 0)`;
+}
+
+function refundAttentionConditionSql(): SQL {
+  return sql`${refunds.status} in (
+    'requested',
+    'sent_to_pg',
+    'processing_at_pg',
+    'failed'
+  )`;
+}
+
+function cancelProcessingReservationConditionSql(): SQL {
+  return sql`(
+    ${reservations.status} = 'CONFIRMED'
+    and (
+      ${hasCancellationPendingTicketItemsSql()}
+      or ${refundAttentionConditionSql()}
+    )
+  )`;
+}
+
+function partialCancelledReservationConditionSql(): SQL {
+  return sql`(
+    ${reservations.status} = 'CONFIRMED'
+    and ${hasActiveTicketItemsSql()}
+    and ${hasCancelledTicketItemsSql()}
+    and not ${cancelProcessingReservationConditionSql()}
+  )`;
+}
+
+function completedRevenueEligibleConditionSql(): SQL {
+  return sql`(
+    ${reservations.status} = 'CONFIRMED'
+    and ${payments.status} = 'DONE'
+  )`;
+}
+
+function soldReservationConditionSql(): SQL {
+  return sql`(
+    ${completedRevenueEligibleConditionSql()}
+    and not ${cancelProcessingReservationConditionSql()}
+    and (
+      not ${hasAnyTicketItemsSql()}
+      or (
+        ${hasActiveTicketItemsSql()}
+        and not ${hasNonActiveTicketItemsSql()}
+      )
+    )
+  )`;
+}
+
+function adminBookingFunnelStatusSql(): SQL<AdminBookingFunnelStatus> {
+  return sql<AdminBookingFunnelStatus>`case
+    when ${reservations.status} = 'CANCELLED' then 'CANCELLED'
+    when ${reservations.status} = 'FAILED' then 'PAYMENT_FAILED'
+    when ${reservations.status} = 'PENDING_PAYMENT'
+      and ${payments.status} in ('ABORTED', 'EXPIRED', 'CANCELED') then 'PAYMENT_FAILED'
+    when ${reservations.status} = 'PENDING_PAYMENT'
+      and ${payments.status} = 'IN_PROGRESS' then 'PAYMENT_PROCESSING'
+    when ${reservations.status} = 'PENDING_PAYMENT' then 'PAYMENT_PENDING'
+    when ${cancelProcessingReservationConditionSql()} then 'CANCEL_PROCESSING'
+    when ${partialCancelledReservationConditionSql()} then 'PARTIAL_CANCELLED'
+    when ${reservations.status} = 'CONFIRMED'
+      and ${payments.status} = 'DONE' then 'SOLD'
+    when ${payments.status} = 'IN_PROGRESS' then 'PAYMENT_PROCESSING'
+    else 'PAYMENT_PENDING'
+  end`;
+}
+
+function funnelStatusEqualsSql(status: string): SQL {
+  return sql`${adminBookingFunnelStatusSql()} = ${status}`;
+}
+
+function countWhereSql(condition: SQL): SQL<number> {
+  return sql<number>`count(*) filter (where ${condition})::int`;
+}
+
+function completedRevenueSql(): SQL<number> {
+  return sql<number>`coalesce(sum(
+    case
+      when ${completedRevenueEligibleConditionSql()} then
+        case
+          when ${hasAnyTicketItemsSql()} then ${activeTicketItemRevenueSql()}
+          else ${reservations.totalAmount}
+        end
+      else 0
+    end
+  ), 0)::int`;
+}
+
+function mapBookingStats(row: BookingStatsRow | undefined): BookingStats {
+  const totalBookings = toInt(row?.totalBookings);
+  const completedRevenue = toInt(row?.completedRevenue);
+  const cancelledCount = toInt(row?.cancelledCount);
+
+  return {
+    totalBookings,
+    totalRevenue: completedRevenue,
+    cancelRate: totalBookings > 0
+      ? Math.round((cancelledCount / totalBookings) * 100)
+      : 0,
+    soldCount: toInt(row?.soldCount),
+    pendingPaymentCount: toInt(row?.pendingPaymentCount),
+    paymentProcessingCount: toInt(row?.paymentProcessingCount),
+    failedCount: toInt(row?.failedCount),
+    cancelProcessingCount: toInt(row?.cancelProcessingCount),
+    cancelledCount,
+    partialCancelledCount: toInt(row?.partialCancelledCount),
+    completedRevenue,
+  };
+}
+
+function toInt(value: number | string | null | undefined): number {
+  if (typeof value === 'number') {
+    return value;
+  }
+  if (typeof value === 'string') {
+    return Number.parseInt(value, 10) || 0;
+  }
+  return 0;
 }
 
 @Injectable()
@@ -209,56 +548,42 @@ export class AdminBookingService {
 
   async getBookings(params: {
     status?: string;
+    reservationStatus?: string;
+    funnelStatus?: string;
+    paymentStatus?: string;
+    paymentMethod?: string;
+    audienceRegion?: string;
+    dateFrom?: string;
+    dateTo?: string;
     search?: string;
     page?: number;
   }): Promise<{ bookings: AdminBookingListItem[]; stats: BookingStats; total: number }> {
-    const { status, search, page = 1 } = params;
+    const { page = 1 } = params;
     const limit = 20;
     const offset = (page - 1) * limit;
+    const whereClause = buildAdminBookingWhereClause(params);
 
-    // Stats: total bookings
-    const [totalResult] = await this.db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(reservations);
-
-    // Stats: total revenue (CONFIRMED only)
-    const [revenueResult] = await this.db
-      .select({ sum: sql<number>`coalesce(sum(${reservations.totalAmount}), 0)::int` })
+    const [statsRow] = await this.db
+      .select({
+        totalBookings: sql<number>`count(*)::int`,
+        completedRevenue: completedRevenueSql(),
+        soldCount: countWhereSql(soldReservationConditionSql()),
+        pendingPaymentCount: countWhereSql(funnelStatusEqualsSql('PAYMENT_PENDING')),
+        paymentProcessingCount: countWhereSql(funnelStatusEqualsSql('PAYMENT_PROCESSING')),
+        failedCount: countWhereSql(funnelStatusEqualsSql('PAYMENT_FAILED')),
+        cancelProcessingCount: countWhereSql(cancelProcessingReservationConditionSql()),
+        cancelledCount: countWhereSql(funnelStatusEqualsSql('CANCELLED')),
+        partialCancelledCount: countWhereSql(partialCancelledReservationConditionSql()),
+      })
       .from(reservations)
-      .where(eq(reservations.status, 'CONFIRMED'));
+      .innerJoin(users, eq(reservations.userId, users.id))
+      .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
+      .innerJoin(performances, eq(showtimes.performanceId, performances.id))
+      .leftJoin(payments, eq(payments.reservationId, reservations.id))
+      .leftJoin(refunds, eq(refunds.reservationId, reservations.id))
+      .where(whereClause) as BookingStatsRow[];
 
-    // Stats: cancelled count
-    const [cancelledResult] = await this.db
-      .select({ count: sql<number>`count(*)::int` })
-      .from(reservations)
-      .where(eq(reservations.status, 'CANCELLED'));
-
-    const totalBookings = totalResult?.count ?? 0;
-    const totalRevenue = revenueResult?.sum ?? 0;
-    const cancelledCount = cancelledResult?.count ?? 0;
-    const cancelRate = totalBookings > 0
-      ? Math.round((cancelledCount / totalBookings) * 100)
-      : 0;
-
-    // Build filter conditions for list
-    const conditions: ReturnType<typeof eq>[] = [];
-    if (status) {
-      conditions.push(
-        eq(reservations.status, status as typeof reservations.status.enumValues[number]),
-      );
-    }
-    if (search) {
-      conditions.push(
-        or(
-          ilike(reservations.reservationNumber, `%${search}%`),
-          ilike(users.name, `%${search}%`),
-        )!,
-      );
-    }
-
-    const whereClause = conditions.length > 0
-      ? and(...conditions)
-      : undefined;
+    const stats = mapBookingStats(statsRow);
 
     const rows = await this.db
       .select({
@@ -271,7 +596,8 @@ export class AdminBookingService {
         },
         user: {
           name: users.name,
-          phone: users.phone,
+          email: users.email,
+          country: users.country,
         },
         showtime: {
           dateTime: showtimes.dateTime,
@@ -279,15 +605,24 @@ export class AdminBookingService {
         performance: {
           title: performances.title,
         },
+        payment: {
+          status: payments.status,
+          method: payments.method,
+        },
+        refund: {
+          status: refunds.status,
+        },
       })
       .from(reservations)
       .innerJoin(users, eq(reservations.userId, users.id))
       .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
       .innerJoin(performances, eq(showtimes.performanceId, performances.id))
+      .leftJoin(payments, eq(payments.reservationId, reservations.id))
+      .leftJoin(refunds, eq(refunds.reservationId, reservations.id))
       .where(whereClause)
       .orderBy(desc(reservations.createdAt))
       .limit(limit)
-      .offset(offset);
+      .offset(offset) as AdminBookingListRow[];
 
     // Batch-fetch all ticket items for all reservations (eliminates N+1)
     const reservationIds = rows.map((r) => r.reservation.id);
@@ -324,11 +659,13 @@ export class AdminBookingService {
     const bookings: AdminBookingListItem[] = rows.map((row) => {
       const reservationTicketItems = ticketItemsByReservation.get(row.reservation.id) ?? [];
       const reservationSeatsFallback = reservationSeatsByReservation.get(row.reservation.id) ?? [];
+      const ticketStatusCounts = countTicketStatuses(reservationTicketItems);
       return {
         id: row.reservation.id,
         reservationNumber: row.reservation.reservationNumber,
         userName: row.user.name,
-        userPhone: row.user.phone,
+        userEmail: row.user.email,
+        userCountry: row.user.country,
         performanceTitle: row.performance.title,
         showDateTime: row.showtime.dateTime?.toISOString() ?? '',
         seats: reservationTicketItems.length > 0
@@ -336,14 +673,23 @@ export class AdminBookingService {
           : reservationSeatsFallback.map(mapReservationSeatToSeatSelection),
         totalAmount: row.reservation.totalAmount,
         status: row.reservation.status as ReservationStatus,
+        funnelStatus: deriveAdminBookingFunnelStatus({
+          reservationStatus: row.reservation.status,
+          paymentStatus: row.payment?.status ?? null,
+          refundStatus: row.refund?.status ?? null,
+          ticketStatusCounts,
+        }),
+        paymentStatus: mapPaymentStatusOrNull(row.payment?.status),
+        paymentMethod: row.payment?.method ?? null,
+        ticketStatusCounts,
         createdAt: row.reservation.createdAt?.toISOString() ?? '',
       };
     });
 
     return {
       bookings,
-      stats: { totalBookings, totalRevenue, cancelRate },
-      total: totalBookings,
+      stats,
+      total: stats.totalBookings,
     };
   }
 
@@ -360,6 +706,8 @@ export class AdminBookingService {
         user: {
           name: users.name,
           phone: users.phone,
+          email: users.email,
+          country: users.country,
         },
         showtime: {
           dateTime: showtimes.dateTime,
@@ -367,11 +715,15 @@ export class AdminBookingService {
         performance: {
           title: performances.title,
         },
+        refund: {
+          status: refunds.status,
+        },
       })
       .from(reservations)
       .innerJoin(users, eq(reservations.userId, users.id))
       .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
       .innerJoin(performances, eq(showtimes.performanceId, performances.id))
+      .leftJoin(refunds, eq(refunds.reservationId, reservations.id))
       .where(eq(reservations.id, reservationId));
 
     if (!row) {
@@ -394,28 +746,27 @@ export class AdminBookingService {
       reservationNumber: row.reservation.reservationNumber,
       userName: row.user.name,
       userPhone: row.user.phone,
+      userEmail: row.user.email,
+      userCountry: row.user.country,
       performanceTitle: row.performance.title,
       showDateTime: row.showtime.dateTime?.toISOString() ?? '',
       seats: reservationTicketItems.map(mapTicketItemToSeatSelection),
       totalAmount: row.reservation.totalAmount,
       status: row.reservation.status as ReservationStatus,
+      funnelStatus: deriveAdminBookingFunnelStatus({
+        reservationStatus: row.reservation.status,
+        paymentStatus: payment?.status ?? null,
+        refundStatus: row.refund?.status ?? null,
+        ticketStatusCounts: countTicketStatuses(reservationTicketItems),
+      }),
+      paymentStatus: mapPaymentStatusOrNull(payment?.status),
+      paymentMethod: payment?.method ?? null,
+      ticketStatusCounts: countTicketStatuses(reservationTicketItems),
       createdAt: row.reservation.createdAt?.toISOString() ?? '',
       ticketItems: reservationTicketItems.map(mapTicketItemToAdminTicketItem),
       paymentInfo: payment
-        ? {
-            paymentKey: payment.paymentKey,
-            method: payment.method,
-            amount: payment.amount,
-            status: payment.status as PaymentStatus,
-            paidAt: payment.paidAt?.toISOString() ?? null,
-          }
-        : {
-            paymentKey: '',
-            method: '',
-            amount: 0,
-            status: 'READY' as PaymentStatus,
-            paidAt: null,
-          },
+        ? mapPaymentToPaymentInfo(payment, null)
+        : null,
     };
   }
 
@@ -557,7 +908,7 @@ export class AdminBookingService {
       conditions.push(ne(users.country, 'KR'));
     }
     if (filters.paymentMethod) {
-      conditions.push(eq(payments.method, filters.paymentMethod));
+      conditions.push(paymentMethodFilterSql(filters.paymentMethod));
     }
     if (filters.dateFrom) {
       conditions.push(gte(reservations.createdAt, dateOnlyStart(filters.dateFrom)));
@@ -815,6 +1166,146 @@ function mapReservationSeatToSeatSelection(
   });
 }
 
+function countTicketStatuses(items: AdminTicketItemRow[]): AdminTicketStatusCounts {
+  const counts: AdminTicketStatusCounts = {
+    ACTIVE: 0,
+    CANCELLATION_PENDING: 0,
+    CANCELLED: 0,
+    EXPIRED: 0,
+  };
+
+  for (const item of items) {
+    counts[mapAdminTicketItemStatus(item.status)] += 1;
+  }
+
+  return counts;
+}
+
+function deriveAdminBookingFunnelStatus(input: {
+  reservationStatus: string;
+  paymentStatus: string | null;
+  refundStatus: string | null;
+  ticketStatusCounts: AdminTicketStatusCounts;
+}): AdminBookingFunnelStatus {
+  if (input.reservationStatus === 'CANCELLED') {
+    return 'CANCELLED';
+  }
+  if (
+    input.reservationStatus === 'FAILED'
+    || (
+      input.reservationStatus === 'PENDING_PAYMENT'
+      && ['ABORTED', 'EXPIRED', 'CANCELED'].includes(input.paymentStatus ?? '')
+    )
+  ) {
+    return 'PAYMENT_FAILED';
+  }
+  if (
+    input.reservationStatus === 'PENDING_PAYMENT'
+    && input.paymentStatus === 'IN_PROGRESS'
+  ) {
+    return 'PAYMENT_PROCESSING';
+  }
+  if (input.reservationStatus === 'PENDING_PAYMENT') {
+    return 'PAYMENT_PENDING';
+  }
+  if (
+    input.reservationStatus === 'CONFIRMED'
+    && (
+      input.ticketStatusCounts.CANCELLATION_PENDING > 0
+      || isRefundAttentionStatus(input.refundStatus)
+    )
+  ) {
+    return 'CANCEL_PROCESSING';
+  }
+  if (
+    input.reservationStatus === 'CONFIRMED'
+    && input.ticketStatusCounts.ACTIVE > 0
+    && input.ticketStatusCounts.CANCELLED > 0
+  ) {
+    return 'PARTIAL_CANCELLED';
+  }
+  if (input.reservationStatus === 'CONFIRMED' && input.paymentStatus === 'DONE') {
+    return 'SOLD';
+  }
+  if (input.paymentStatus === 'IN_PROGRESS') {
+    return 'PAYMENT_PROCESSING';
+  }
+  return 'PAYMENT_PENDING';
+}
+
+function isRefundAttentionStatus(status: string | null): status is AdminRefundStatus {
+  return status === 'requested'
+    || status === 'sent_to_pg'
+    || status === 'processing_at_pg'
+    || status === 'failed';
+}
+
+function mapPaymentStatusOrNull(status: string | null | undefined): PaymentStatus | null {
+  if (
+    status === 'READY'
+    || status === 'IN_PROGRESS'
+    || status === 'DONE'
+    || status === 'CANCELED'
+    || status === 'ABORTED'
+    || status === 'EXPIRED'
+  ) {
+    return status;
+  }
+  return null;
+}
+
+function mapPaymentToPaymentInfo(
+  payment: Pick<
+    typeof payments.$inferSelect,
+    'paymentKey' | 'method' | 'amount' | 'status' | 'paidAt' | 'provider' | 'currency'
+  >,
+  paymentDeadlineAt: Date | null | undefined,
+): PaymentInfo {
+  const paymentMethod = mapStoredPaymentMethod(payment);
+  return {
+    paymentKey: payment.paymentKey,
+    method: payment.method,
+    amount: payment.amount,
+    status: payment.status as PaymentStatus,
+    paidAt: payment.paidAt?.toISOString() ?? null,
+    paymentDeadlineAt: paymentDeadlineAt?.toISOString() ?? null,
+    ...(paymentMethod ? { paymentMethod } : {}),
+  };
+}
+
+function mapStoredPaymentMethod(
+  payment: Pick<typeof payments.$inferSelect, 'method' | 'provider' | 'currency'>,
+): PaymentMethod | undefined {
+  if (!isPaymentMethodType(payment.method) || !isPaymentProvider(payment.provider)) {
+    return undefined;
+  }
+
+  return {
+    method: payment.method,
+    provider: payment.provider,
+    currency: payment.currency,
+  };
+}
+
+function isPaymentMethodType(method: string): method is PaymentMethodType {
+  return method === 'CARD'
+    || method === 'VIRTUAL_ACCOUNT'
+    || method === 'TRANSFER'
+    || method === 'MOBILE_PHONE'
+    || method === 'FOREIGN_EASY_PAY'
+    || method === 'SIMPLE_PAY';
+}
+
+function isPaymentProvider(provider: string): provider is PaymentProvider {
+  return provider === 'CARD'
+    || provider === 'TOSS_PAY'
+    || provider === 'NAVER_PAY'
+    || provider === 'KAKAOPAY'
+    || provider === 'ALIPAY_PLUS'
+    || provider === 'TRUEMONEY'
+    || provider === 'PAYPAL';
+}
+
 function mapTicketItemToAdminTicketItem(item: AdminTicketItemRow): AdminTicketItemDto {
   return {
     ...mapTicketItemToSeatSelection(item),
@@ -901,9 +1392,11 @@ function reservationExportFiltersForAudit(
 }
 
 function dateOnlyStart(date: string): Date {
-  return new Date(`${date}T00:00:00.000Z`);
+  const [year, month, day] = date.split('-').map(Number);
+  return new Date(Date.UTC(year!, month! - 1, day!) - KST_OFFSET_MS);
 }
 
 function dateOnlyEnd(date: string): Date {
-  return new Date(`${date}T23:59:59.999Z`);
+  const [year, month, day] = date.split('-').map(Number);
+  return new Date(Date.UTC(year!, month! - 1, day! + 1) - KST_OFFSET_MS - 1);
 }

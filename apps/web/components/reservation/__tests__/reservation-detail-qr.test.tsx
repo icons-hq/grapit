@@ -63,6 +63,19 @@ function createReservation(
     cancelledAt: null,
     cancelReason: null,
     paymentKey: rawPaymentKey,
+    paymentInfo: {
+      paymentKey: rawPaymentKey,
+      method: 'CARD',
+      amount: 154000,
+      status: 'DONE',
+      paidAt: '2026-05-22T06:01:00.000Z',
+      paymentDeadlineAt: '2026-05-22T06:08:00.000Z',
+      paymentMethod: {
+        method: 'CARD',
+        provider: 'CARD',
+        currency: 'KRW',
+      },
+    },
     queueAdmission: {
       queueSessionId: 'queue-reservation-detail-qr',
       admissionToken: 'admission-reservation-detail-qr',
@@ -204,6 +217,7 @@ describe('ReservationDetailView QR ticket card', () => {
     expect(screen.getAllByText('VIP A열 1번').length).toBeGreaterThan(0);
     expect(screen.getAllByText('VIP A열 2번').length).toBeGreaterThan(0);
     expect(screen.getAllByText('QR 활성').length).toBeGreaterThan(0);
+    expect(screen.queryByText('결제를 완료할 수 없음')).not.toBeInTheDocument();
 
     expect(screen.queryByText(rawQrToken, { exact: true })).not.toBeInTheDocument();
     expect(screen.queryByText(rawQrJti, { exact: true })).not.toBeInTheDocument();
@@ -228,6 +242,14 @@ describe('ReservationDetailView QR ticket card', () => {
           paidAt: null,
           paymentMethod: null,
           paymentKey: null,
+          paymentInfo: {
+            paymentKey: rawPaymentKey,
+            method: 'CARD',
+            amount: 160000,
+            status: 'READY',
+            paidAt: null,
+            paymentDeadlineAt: '2099-05-22T06:08:00.000Z',
+          },
           tossOrderId: 'GRP-20260604-7O7YM',
           performanceId: 'performance-girl-rules',
           showtimeId: 'showtime-girl-rules',
@@ -252,14 +274,274 @@ describe('ReservationDetailView QR ticket card', () => {
 
     expect(screen.getByText('결제대기')).toBeInTheDocument();
     expect(screen.getByText('결제 전')).toBeInTheDocument();
+    expect(screen.getByText('160,000원')).toBeInTheDocument();
+    expect(screen.getByText('현재 단계')).toBeInTheDocument();
+    expect(screen.getByText('결제 대기 중')).toBeInTheDocument();
+    expect(screen.getByText('다음 절차')).toBeInTheDocument();
+    expect(screen.getByText('결제 완료 후 예매와 QR 티켓이 확정됩니다.')).toBeInTheDocument();
+    expect(screen.getByText('고객이 할 일')).toBeInTheDocument();
+    expect(screen.getByText('결제 계속하기를 눌러 결제를 마무리해주세요.')).toBeInTheDocument();
+    expect(screen.getByText('예상 소요')).toBeInTheDocument();
+    expect(screen.getByText(/결제 마감:/)).toBeInTheDocument();
     expect(screen.queryByText(/NaN/)).not.toBeInTheDocument();
     expect(screen.queryByText('QR 티켓')).not.toBeInTheDocument();
+    expect(screen.queryByText(rawPaymentKey, { exact: true })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '결제 계속하기' }));
     expect(onResumePayment).toHaveBeenCalledWith(expect.objectContaining({
       reservationNumber: 'GRP-27-DETAIL-QR',
       tossOrderId: 'GRP-20260604-7O7YM',
     }));
+  });
+
+  it('shows payment confirmation progress without exposing internal payment terms', () => {
+    render(
+      <ReservationDetailView
+        reservation={createReservation({
+          status: 'PENDING_PAYMENT',
+          paidAt: null,
+          paymentMethod: null,
+          paymentKey: null,
+          paymentInfo: {
+            paymentKey: rawPaymentKey,
+            method: 'FOREIGN_EASY_PAY',
+            amount: 154000,
+            status: 'IN_PROGRESS',
+            paidAt: null,
+            paymentDeadlineAt: '2099-05-22T06:08:00.000Z',
+          },
+          paymentDeadlineAt: '2099-05-22T06:08:00.000Z',
+          ticketItems: [],
+          qrTicket: {
+            token: '',
+            jti: '',
+            status: 'REVOKED',
+            entryStatus: 'NOT_ENTERED',
+            enteredAt: null,
+            issuedAt: '2026-05-22T06:00:00.000Z',
+            emailScheduledAt: null,
+            emailedAt: null,
+          },
+        })}
+        onCancel={vi.fn()}
+        isCancelling={false}
+        onResumePayment={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('결제 확인 중')).toBeInTheDocument();
+    expect(screen.getByText('결제가 확인되면 예매와 QR 티켓이 자동으로 확정됩니다.')).toBeInTheDocument();
+    expect(screen.getByText('새 결제를 다시 시도하지 말고 잠시 후 예매 내역을 확인해주세요.')).toBeInTheDocument();
+    expect(screen.getByText('보통 수 분 이내')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '결제 계속하기' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/webhook/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/FOREIGN_EASY_PAY/)).not.toBeInTheDocument();
+    expect(screen.queryByText(rawPaymentKey, { exact: true })).not.toBeInTheDocument();
+  });
+
+  it('treats approved payment awaiting booking finalization as confirmation progress', () => {
+    const onResumePayment = vi.fn();
+
+    render(
+      <ReservationDetailView
+        reservation={createReservation({
+          status: 'PENDING_PAYMENT',
+          paidAt: null,
+          paymentMethod: null,
+          paymentKey: null,
+          paymentInfo: {
+            paymentKey: rawPaymentKey,
+            method: 'CARD',
+            amount: 154000,
+            status: 'DONE',
+            paidAt: '2026-05-22T06:01:00.000Z',
+            paymentDeadlineAt: '2099-05-22T06:08:00.000Z',
+          },
+          paymentDeadlineAt: '2099-05-22T06:08:00.000Z',
+          ticketItems: [],
+          qrTicket: {
+            token: '',
+            jti: '',
+            status: 'REVOKED',
+            entryStatus: 'NOT_ENTERED',
+            enteredAt: null,
+            issuedAt: '2026-05-22T06:00:00.000Z',
+            emailScheduledAt: null,
+            emailedAt: null,
+          },
+        })}
+        onCancel={vi.fn()}
+        isCancelling={false}
+        onResumePayment={onResumePayment}
+      />,
+    );
+
+    expect(screen.getByText('결제 확인 중')).toBeInTheDocument();
+    expect(screen.getByText('새 결제를 다시 시도하지 말고 잠시 후 예매 내역을 확인해주세요.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '결제 계속하기' })).not.toBeInTheDocument();
+    expect(onResumePayment).not.toHaveBeenCalled();
+    expect(screen.queryByText(rawPaymentKey, { exact: true })).not.toBeInTheDocument();
+  });
+
+  it('keeps approved payment in confirmation progress even after the payment deadline', () => {
+    render(
+      <ReservationDetailView
+        reservation={createReservation({
+          status: 'PENDING_PAYMENT',
+          paidAt: null,
+          paymentMethod: null,
+          paymentKey: null,
+          paymentInfo: {
+            paymentKey: rawPaymentKey,
+            method: 'CARD',
+            amount: 154000,
+            status: 'DONE',
+            paidAt: '2026-05-22T06:01:00.000Z',
+            paymentDeadlineAt: '2026-05-22T06:08:00.000Z',
+          },
+          paymentDeadlineAt: '2026-05-22T06:08:00.000Z',
+          ticketItems: [],
+          qrTicket: {
+            token: '',
+            jti: '',
+            status: 'REVOKED',
+            entryStatus: 'NOT_ENTERED',
+            enteredAt: null,
+            issuedAt: '2026-05-22T06:00:00.000Z',
+            emailScheduledAt: null,
+            emailedAt: null,
+          },
+        })}
+        onCancel={vi.fn()}
+        isCancelling={false}
+        onResumePayment={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('결제 확인 중')).toBeInTheDocument();
+    expect(screen.getByText('새 결제를 다시 시도하지 말고 잠시 후 예매 내역을 확인해주세요.')).toBeInTheDocument();
+    expect(screen.queryByText('결제를 완료할 수 없음')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '결제 계속하기' })).not.toBeInTheDocument();
+  });
+
+  it('guides failed or expired payments to restart seat selection instead of resuming payment', () => {
+    render(
+      <ReservationDetailView
+        reservation={createReservation({
+          status: 'FAILED',
+          paidAt: null,
+          paymentMethod: null,
+          paymentKey: null,
+          paymentInfo: {
+            paymentKey: rawPaymentKey,
+            method: 'CARD',
+            amount: 154000,
+            status: 'EXPIRED',
+            paidAt: null,
+            paymentDeadlineAt: '2026-05-22T06:08:00.000Z',
+          },
+          paymentDeadlineAt: '2026-05-22T06:08:00.000Z',
+          ticketItems: [],
+          qrTicket: {
+            token: '',
+            jti: '',
+            status: 'REVOKED',
+            entryStatus: 'NOT_ENTERED',
+            enteredAt: null,
+            issuedAt: '2026-05-22T06:00:00.000Z',
+            emailScheduledAt: null,
+            emailedAt: null,
+          },
+        })}
+        onCancel={vi.fn()}
+        isCancelling={false}
+        onResumePayment={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('결제를 완료할 수 없음')).toBeInTheDocument();
+    expect(screen.getByText('좌석을 다시 선택해 새 결제를 시작해주세요.')).toBeInTheDocument();
+    expect(screen.getByText('이전 결제 화면은 닫고 공연 페이지에서 다시 예매해주세요.')).toBeInTheDocument();
+    expect(screen.getByText('새 결제 시 다시 안내')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '결제 계속하기' })).not.toBeInTheDocument();
+    expect(screen.queryByText(rawPaymentKey, { exact: true })).not.toBeInTheDocument();
+  });
+
+  it('shows cancel and refund processing progress in customer language', () => {
+    render(
+      <ReservationDetailView
+        reservation={createReservation({
+          status: 'CANCELLED',
+          cancelledAt: '2026-05-23T06:00:00.000Z',
+          cancelReason: '일정 변경',
+          paymentInfo: {
+            paymentKey: rawPaymentKey,
+            method: 'CARD',
+            amount: 154000,
+            status: 'CANCELED',
+            paidAt: '2026-05-22T06:01:00.000Z',
+            paymentDeadlineAt: '2026-05-22T06:08:00.000Z',
+          },
+          refundTimeline: {
+            currentState: 'PROCESSING_AT_PG',
+            requestedAt: '2026-05-23T06:00:00.000Z',
+            sentToPgAt: '2026-05-23T06:01:00.000Z',
+            processedAtPgAt: '2026-05-23T06:02:00.000Z',
+            completedAt: null,
+            failedAt: null,
+            expectedDepositAt: '2026-05-27T06:00:00.000Z',
+            customerServiceCtaVisible: false,
+          },
+        })}
+        onCancel={vi.fn()}
+        isCancelling={false}
+      />,
+    );
+
+    expect(screen.getByText('취소/환불 처리 중')).toBeInTheDocument();
+    expect(screen.getByText('결제 수단으로 환불이 순차 반영됩니다.')).toBeInTheDocument();
+    expect(screen.getByText('추가 요청 없이 진행 현황을 확인해주세요.')).toBeInTheDocument();
+    expect(screen.getByText(/예상 입금:/)).toBeInTheDocument();
+    expect(screen.queryByText(/PG/)).not.toBeInTheDocument();
+    expect(screen.queryByText(rawPaymentKey, { exact: true })).not.toBeInTheDocument();
+  });
+
+  it('shows completed cancellation progress after refund completion', () => {
+    render(
+      <ReservationDetailView
+        reservation={createReservation({
+          status: 'CANCELLED',
+          cancelledAt: '2026-05-23T06:00:00.000Z',
+          cancelReason: '일정 변경',
+          paymentInfo: {
+            paymentKey: rawPaymentKey,
+            method: 'CARD',
+            amount: 154000,
+            status: 'CANCELED',
+            paidAt: '2026-05-22T06:01:00.000Z',
+            paymentDeadlineAt: '2026-05-22T06:08:00.000Z',
+          },
+          refundTimeline: {
+            currentState: 'COMPLETED',
+            requestedAt: '2026-05-23T06:00:00.000Z',
+            sentToPgAt: '2026-05-23T06:01:00.000Z',
+            processedAtPgAt: '2026-05-23T06:02:00.000Z',
+            completedAt: '2026-05-23T06:03:00.000Z',
+            failedAt: null,
+            expectedDepositAt: null,
+            customerServiceCtaVisible: false,
+          },
+        })}
+        onCancel={vi.fn()}
+        isCancelling={false}
+      />,
+    );
+
+    expect(screen.getByText('취소 완료')).toBeInTheDocument();
+    expect(screen.getAllByText('환불 반영이 완료되었습니다.').length).toBeGreaterThan(0);
+    expect(screen.getByText('예매 상세에서 취소 정보를 확인할 수 있습니다.')).toBeInTheDocument();
+    expect(screen.getByText('완료됨')).toBeInTheDocument();
+    expect(screen.queryByText(rawPaymentKey, { exact: true })).not.toBeInTheDocument();
   });
 
   it('keeps the QR visible and shows entry completion after check-in', () => {

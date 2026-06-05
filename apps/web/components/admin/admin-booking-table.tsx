@@ -10,28 +10,63 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import type { AdminBookingListItem, ReservationStatus } from '@grabit/shared';
-
-const STATUS_CONFIG: Record<
+import type {
+  AdminBookingFunnelStatus,
+  AdminBookingListItem,
+  PaymentStatus,
   ReservationStatus,
+} from '@grabit/shared';
+
+const FUNNEL_STATUS_CONFIG: Record<
+  AdminBookingFunnelStatus,
   { label: string; className: string }
 > = {
-  CONFIRMED: {
-    label: '예매완료',
+  SOLD: {
+    label: '판매 완료',
     className: 'bg-[#F0FDF4] text-[#15803D] border-transparent',
   },
-  CANCELLED: {
-    label: '취소완료',
-    className: 'bg-[#FEF2F2] text-[#C62828] border-transparent',
-  },
-  PENDING_PAYMENT: {
-    label: '결제대기',
+  PAYMENT_PENDING: {
+    label: '결제 대기',
     className: 'bg-[#FFFBEB] text-[#8B6306] border-transparent',
   },
-  FAILED: {
-    label: '결제실패',
+  PAYMENT_PROCESSING: {
+    label: '결제 확인 중',
+    className: 'bg-[#EEF2FF] text-[#4338CA] border-transparent',
+  },
+  PAYMENT_FAILED: {
+    label: '결제 실패/만료',
     className: 'bg-[#FEF2F2] text-[#C62828] border-transparent',
   },
+  CANCEL_PROCESSING: {
+    label: '취소/환불 처리 중',
+    className: 'bg-[#FFF7ED] text-[#C2410C] border-transparent',
+  },
+  PARTIAL_CANCELLED: {
+    label: '부분 취소',
+    className: 'bg-[#F5F3FF] text-[#6D28D9] border-transparent',
+  },
+  CANCELLED: {
+    label: '취소 완료',
+    className: 'bg-[#F3F4F6] text-[#4B5563] border-transparent',
+  },
+};
+
+const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
+  READY: '결제 준비',
+  IN_PROGRESS: '결제 진행 중',
+  DONE: '결제 완료',
+  CANCELED: '결제 취소',
+  ABORTED: '결제 중단',
+  EXPIRED: '결제 만료',
+};
+
+const PAYMENT_METHOD_LABELS: Record<string, string> = {
+  CARD: '카드',
+  VIRTUAL_ACCOUNT: '가상계좌',
+  TRANSFER: '계좌이체',
+  MOBILE_PHONE: '휴대폰',
+  FOREIGN_EASY_PAY: '해외 간편결제',
+  SIMPLE_PAY: '국내 간편결제',
 };
 
 function formatDateTime(dateString: string): string {
@@ -50,6 +85,44 @@ function formatSeatSummary(seats: AdminBookingListItem['seats']): string {
   const base = `${first.tierName} ${first.row}열${first.number}번`;
   if (seats.length === 1) return base;
   return `${base} 외 ${seats.length - 1}석`;
+}
+
+function fallbackFunnelStatus(status: ReservationStatus): AdminBookingFunnelStatus {
+  switch (status) {
+    case 'CONFIRMED':
+      return 'SOLD';
+    case 'PENDING_PAYMENT':
+      return 'PAYMENT_PENDING';
+    case 'CANCELLED':
+      return 'CANCELLED';
+    case 'FAILED':
+      return 'PAYMENT_FAILED';
+  }
+}
+
+function getFunnelStatusConfig(booking: AdminBookingListItem) {
+  const funnelStatus =
+    booking.funnelStatus ?? fallbackFunnelStatus(booking.status);
+  return FUNNEL_STATUS_CONFIG[funnelStatus];
+}
+
+function getPaymentStatusLabel(status: PaymentStatus | null): string | null {
+  if (!status) return null;
+  return PAYMENT_STATUS_LABELS[status] ?? '결제 상태 확인 필요';
+}
+
+function getPaymentMethodLabel(method: string | null): string | null {
+  if (!method) return null;
+  if (PAYMENT_METHOD_LABELS[method]) {
+    return PAYMENT_METHOD_LABELS[method];
+  }
+  return /[가-힣]/.test(method) ? method : '기타 결제수단';
+}
+
+function getPaymentSummary(booking: AdminBookingListItem): string {
+  const statusLabel = getPaymentStatusLabel(booking.paymentStatus);
+  const methodLabel = getPaymentMethodLabel(booking.paymentMethod);
+  return [statusLabel, methodLabel].filter(Boolean).join(' · ') || '결제 정보 없음';
 }
 
 interface AdminBookingTableProps {
@@ -120,12 +193,12 @@ export function AdminBookingTable({
 
           {!isLoading &&
             bookings.map((booking) => {
-              const statusConfig = STATUS_CONFIG[booking.status];
+              const statusConfig = getFunnelStatusConfig(booking);
               return (
                 <TableRow
                   key={booking.id}
                   role="button"
-                  className="cursor-pointer hover:bg-gray-50"
+                  className="cursor-pointer hover:bg-gray-50 focus-visible:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
                   onClick={() => onRowClick(booking.id)}
                   tabIndex={0}
                   onKeyDown={(e) => {
@@ -139,7 +212,16 @@ export function AdminBookingTable({
                   <TableCell className="text-sm font-semibold">
                     {booking.reservationNumber}
                   </TableCell>
-                  <TableCell className="text-sm">{booking.userName}</TableCell>
+                  <TableCell className="text-sm">
+                    <div className="space-y-0.5">
+                      <p className="font-semibold text-gray-900">
+                        {booking.userName}
+                      </p>
+                      <p className="max-w-[180px] truncate text-xs text-gray-500">
+                        {booking.userEmail} · {booking.userCountry}
+                      </p>
+                    </div>
+                  </TableCell>
                   <TableCell className="hidden max-w-[200px] truncate text-sm md:table-cell">
                     {booking.performanceTitle}
                   </TableCell>
@@ -153,9 +235,14 @@ export function AdminBookingTable({
                     {booking.totalAmount.toLocaleString('ko-KR')}원
                   </TableCell>
                   <TableCell>
-                    <Badge className={statusConfig.className}>
-                      {statusConfig.label}
-                    </Badge>
+                    <div className="space-y-1">
+                      <Badge className={statusConfig.className}>
+                        {statusConfig.label}
+                      </Badge>
+                      <p className="text-xs text-gray-500">
+                        {getPaymentSummary(booking)}
+                      </p>
+                    </div>
                   </TableCell>
                 </TableRow>
               );

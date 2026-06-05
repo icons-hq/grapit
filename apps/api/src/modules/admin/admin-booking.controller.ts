@@ -19,9 +19,11 @@ import { Roles } from '../../common/decorators/roles.decorator.js';
 import { AdminCapabilities } from '../../common/decorators/admin-capabilities.decorator.js';
 import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
 import {
+  adminBookingListQuerySchema,
   adminRefundSchema,
   adminReservationExportFilterSchema,
   adminSeatOperationRequestSchema,
+  type AdminBookingListQueryInput,
   type AdminRefundInput,
   type AdminReservationExportFilter,
   type AdminSeatOperationRequest,
@@ -46,14 +48,12 @@ export class AdminBookingController {
 
   @Get('bookings')
   async listBookings(
-    @Query('status') status?: string,
-    @Query('search') search?: string,
-    @Query('page') page?: string,
+    @Query(new ZodValidationPipe(adminBookingListQuerySchema))
+    query: AdminBookingListQueryInput,
   ) {
     return this.adminBookingService.getBookings({
-      status,
-      search,
-      page: page ? parseInt(page, 10) : 1,
+      ...query,
+      reservationStatus: query.reservationStatus ?? query.status,
     });
   }
 
