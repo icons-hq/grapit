@@ -38,6 +38,7 @@ function createContext() {
       reservationNumber: 'GRP-20260508-ABCDE',
       status: 'CONFIRMED',
       showtimeId: 'showtime-1',
+      cancelDeadline: new Date('2099-05-14T10:00:00.000Z'),
     },
     payment: {
       id: 'payment-1',
@@ -58,6 +59,19 @@ function createContext() {
       cancelledSeatHoldMaxMinutes: 10,
     },
     seats: [{ seatId: '1F:A-10' }],
+  };
+}
+
+function createSeatLevelContext() {
+  const context = createContext();
+
+  return {
+    ...context,
+    payment: {
+      ...context.payment,
+      amount: 264000,
+    },
+    seats: [{ seatId: '1F:A-10' }, { seatId: '1F:A-11' }],
   };
 }
 
@@ -192,6 +206,37 @@ describe('RefundService', () => {
     );
     expect(result.idempotent).toBe(true);
     expect(result.retryEnqueued).toBe(true);
+  });
+
+  it('rejects new user refund requests after the cancellation deadline before calling Toss', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-14T10:00:00.001Z'));
+
+    try {
+      const tossPaymentsClient = {
+        cancelPayment: vi.fn(),
+      };
+      const service = new RefundService(
+        {} as never,
+        tossPaymentsClient as never,
+        { finalizeFullPaymentCancellation: vi.fn() } as never,
+        { isAvailable: true, send: vi.fn() } as never,
+      );
+      const context = createContext();
+      context.reservation.cancelDeadline = new Date('2026-05-14T10:00:00.000Z');
+      const insertRequestedRefundSpy = vi.spyOn(service as never, 'insertRequestedRefund');
+
+      vi.spyOn(service as never, 'loadReservationContext').mockResolvedValue(context as never);
+      vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(null as never);
+
+      await expect(
+        service.requestRefund('reservation-1', 'user-1', '단순 변심'),
+      ).rejects.toThrow('취소 마감시간이 지났습니다');
+      expect(insertRequestedRefundSpy).not.toHaveBeenCalled();
+      expect(tossPaymentsClient.cancelPayment).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('persists sent_to_pg and enqueues refund-cancel-retry on transient Toss cancel failure', async () => {
@@ -393,6 +438,63 @@ describe('RefundService', () => {
       providerResponse: expect.objectContaining({ status: 'CANCELED' }),
       actor: { kind: 'user' },
     });
+    expect(result.refundTimeline?.currentState).toBe('COMPLETED');
+  });
+
+  it('finalizes a full refund cancellation for seat-level reservations', async () => {
+    const tossPaymentsClient = {
+      cancelPayment: vi.fn().mockResolvedValue({
+        paymentKey: 'pay-key-1',
+        totalAmount: 264000,
+        status: 'CANCELED',
+      }),
+    };
+    const finalizer = {
+      finalizeFullPaymentCancellation: vi.fn().mockResolvedValue({
+        releaseJobId: 'release-job-1',
+        releaseEnqueued: true,
+      }),
+    };
+    const service = new RefundService(
+      {} as never,
+      tossPaymentsClient as never,
+      finalizer as never,
+      { isAvailable: false, send: vi.fn() } as never,
+    );
+    const context = createSeatLevelContext();
+    const requestedRefund = createRefund();
+    const completedRefund = createRefund({
+      status: 'completed',
+      resultCode: 'CANCELED',
+      resultMessage: 'PG cancel completed',
+      completedAt: new Date('2026-05-08T03:10:00.000Z'),
+    });
+
+    vi.spyOn(service as never, 'loadReservationContext').mockResolvedValue(context as never);
+    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(null as never);
+    vi.spyOn(service as never, 'insertRequestedRefund').mockResolvedValue(requestedRefund as never);
+    vi.spyOn(service as never, 'loadRefundById').mockResolvedValue(completedRefund as never);
+
+    const result = await service.requestRefund('reservation-1', 'user-1', '일정 변경');
+
+    expect(tossPaymentsClient.cancelPayment).toHaveBeenCalledWith('pay-key-1', '일정 변경', {
+      idempotencyKey: 'refund-cancel:refund-1',
+      secretKeyScope: 'default',
+    });
+    expect(tossPaymentsClient.cancelPayment.mock.calls[0]?.[2]).not.toHaveProperty(
+      'cancelAmount',
+    );
+    expect(finalizer.finalizeFullPaymentCancellation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: 'refund_request',
+        refundId: 'refund-1',
+        context: expect.objectContaining({
+          seats: [{ seatId: '1F:A-10' }, { seatId: '1F:A-11' }],
+        }),
+        reason: '일정 변경',
+      }),
+    );
+    expect(result.refundableAmount).toBe(264000);
     expect(result.refundTimeline?.currentState).toBe('COMPLETED');
   });
 });

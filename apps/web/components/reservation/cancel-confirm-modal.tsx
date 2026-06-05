@@ -116,7 +116,7 @@ export function CancelConfirmModal({
               환불 및 재오픈 안내
             </DialogTitle>
             <DialogDescription className="text-sm text-gray-600">
-              환불 정보와 좌석 재판매 안내를 확인한 뒤 마지막 확인 단계로 이동하세요.
+              예매 전체가 취소됩니다. 일부 좌석만 취소할 수 없습니다.
             </DialogDescription>
           </DialogHeader>
 
