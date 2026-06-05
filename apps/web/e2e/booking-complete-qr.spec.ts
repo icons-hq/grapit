@@ -178,7 +178,7 @@ test.describe('booking complete QR visibility', () => {
       '/booking/phase24-qr-performance/complete?paymentKey=phase24-payment-key&orderId=phase24-order-id&amount=50000',
     );
 
-    await expect(page.getByRole('button', { name: 'QR 티켓 보기' })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('button', { name: 'QR 티켓', exact: true })).toBeVisible({ timeout: 10000 });
     await expect(page.getByTestId('qr-ticket-image')).toBeVisible();
     await expect(page.getByTestId('qr-ticket-image')).toHaveAttribute(
       'data-qr-url',
