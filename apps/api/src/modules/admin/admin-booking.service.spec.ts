@@ -973,6 +973,7 @@ describe('AdminBookingService', () => {
               method: 'CARD',
               amount: 158000,
               status: 'DONE',
+              createdAt: new Date('2026-07-01T03:00:30.000Z'),
               paidAt: new Date('2026-07-01T03:01:00.000Z'),
               provider: 'CARD',
               currency: 'KRW',
@@ -1012,6 +1013,8 @@ describe('AdminBookingService', () => {
         userCountry: 'KR',
         paymentStatus: 'DONE',
         paymentMethod: 'CARD',
+        paymentAttemptedAt: '2026-07-01T03:00:30.000Z',
+        paymentCompletedAt: '2026-07-01T03:01:00.000Z',
         funnelStatus: 'PARTIAL_CANCELLED',
         ticketStatusCounts: {
           ACTIVE: 1,

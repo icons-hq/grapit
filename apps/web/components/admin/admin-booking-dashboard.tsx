@@ -117,6 +117,8 @@ export function AdminBookingDashboard() {
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(
     null,
   );
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailSessionKey, setDetailSessionKey] = useState(0);
 
   // Debounce search input by 300ms
   useEffect(() => {
@@ -172,13 +174,19 @@ export function AdminBookingDashboard() {
 
   const refundMutation = useAdminRefund();
 
+  function handleBookingDetailOpen(id: string) {
+    setSelectedBookingId(id);
+    setDetailSessionKey((current) => current + 1);
+    setDetailOpen(true);
+  }
+
   function handleRefund(id: string, reason: string) {
     refundMutation.mutate(
       { id, reason },
       {
         onSuccess: () => {
           toast.success('환불이 완료되었습니다');
-          setSelectedBookingId(null);
+          setDetailOpen(false);
         },
         onError: () => {
           toast.error(
@@ -412,7 +420,7 @@ export function AdminBookingDashboard() {
         <AdminBookingTable
           bookings={bookings}
           isLoading={isLoading}
-          onRowClick={(id) => setSelectedBookingId(id)}
+          onRowClick={handleBookingDetailOpen}
         />
       </div>
 
@@ -444,9 +452,10 @@ export function AdminBookingDashboard() {
 
       {/* Detail modal */}
       <AdminBookingDetailModal
-        open={selectedBookingId !== null}
+        key={detailSessionKey}
+        open={detailOpen}
         onOpenChange={(open) => {
-          if (!open) setSelectedBookingId(null);
+          setDetailOpen(open);
         }}
         bookingId={selectedBookingId}
         onRefund={handleRefund}

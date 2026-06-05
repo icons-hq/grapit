@@ -514,6 +514,8 @@ export const adminTicketItemSchema = floorAwareSeatSelectionSchema.extend({
 
 export const adminBookingDetailSchema = adminBookingListItemSchema.extend({
   userPhone: z.string().min(1, '예매자 전화번호가 필요합니다'),
+  paymentAttemptedAt: isoDatetime('결제 시도 시각').nullable(),
+  paymentCompletedAt: isoDatetime('결제 완료 처리 시각').nullable(),
   paymentInfo: paymentInfoSchema.nullable(),
   ticketItems: z.array(adminTicketItemSchema),
 });

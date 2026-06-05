@@ -134,6 +134,8 @@ type AdminTicketItemDto = FloorAwareSeatSelection & {
 
 type AdminBookingDetailDto = AdminBookingListItem & {
   userPhone: string;
+  paymentAttemptedAt: string | null;
+  paymentCompletedAt: string | null;
   paymentInfo: PaymentInfo | null;
   ticketItems: AdminTicketItemDto[];
 };
@@ -1088,6 +1090,8 @@ export class AdminBookingService {
       }),
       paymentStatus: mapPaymentStatusOrNull(payment?.status),
       paymentMethod: payment?.method ?? null,
+      paymentAttemptedAt: payment?.createdAt?.toISOString() ?? null,
+      paymentCompletedAt: payment?.paidAt?.toISOString() ?? null,
       ticketStatusCounts: countTicketStatuses(reservationTicketItems),
       createdAt: row.reservation.createdAt?.toISOString() ?? '',
       ticketItems: reservationTicketItems.map(mapTicketItemToAdminTicketItem),

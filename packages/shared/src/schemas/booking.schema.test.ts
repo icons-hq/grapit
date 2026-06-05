@@ -701,6 +701,8 @@ describe('prepareReservationSchema booking consent contract', () => {
     const detail = adminBookingDetailSchema.parse({
       ...listItem,
       userPhone: '+821012345678',
+      paymentAttemptedAt: '2026-05-08T11:45:30.000Z',
+      paymentCompletedAt: '2026-05-08T11:46:00.000Z',
       paymentInfo: {
         paymentKey: 'payment-key-1',
         method: 'CARD',
@@ -715,6 +717,8 @@ describe('prepareReservationSchema booking consent contract', () => {
     expect(detail.funnelStatus).toBe('SOLD');
     expect(detail.userPhone).toBe('+821012345678');
     expect(detail.tossOrderId).toBe('GRP-ORDER-24006');
+    expect(detail.paymentAttemptedAt).toBe('2026-05-08T11:45:30.000Z');
+    expect(detail.paymentCompletedAt).toBe('2026-05-08T11:46:00.000Z');
     expect(detail.ticketStatusCounts.ACTIVE).toBe(1);
   });
 
