@@ -8,7 +8,7 @@ import { TossPaymentWidget, type TossPaymentWidgetRef } from '../toss-payment-wi
 const {
   apiClientPostMock,
   loadTossPaymentsMock,
-  directPaymentRequestMock,
+  widgetsRequestPaymentMock,
   widgetsFactoryMock,
   setAmountMock,
   renderPaymentMethodsMock,
@@ -21,7 +21,7 @@ const {
 } = vi.hoisted(() => ({
   apiClientPostMock: vi.fn(),
   loadTossPaymentsMock: vi.fn(),
-  directPaymentRequestMock: vi.fn(),
+  widgetsRequestPaymentMock: vi.fn(),
   widgetsFactoryMock: vi.fn(),
   setAmountMock: vi.fn(),
   renderPaymentMethodsMock: vi.fn(),
@@ -49,7 +49,6 @@ vi.mock('@tosspayments/tosspayments-sdk', () => ({
 
 const originalClientKey = process.env.NEXT_PUBLIC_TOSS_CLIENT_KEY;
 const originalForeignEasyPayClientKey = process.env.NEXT_PUBLIC_TOSS_FOREIGN_EASY_PAY_CLIENT_KEY;
-const originalOverseasCardClientKey = process.env.NEXT_PUBLIC_TOSS_OVERSEAS_CARD_CLIENT_KEY;
 const originalVariantKey = process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY;
 
 const defaultProps = {
@@ -101,21 +100,12 @@ describe('TossPaymentWidget', () => {
       setAmount: setAmountMock,
       renderPaymentMethods: renderPaymentMethodsMock,
       renderAgreement: renderAgreementMock,
+      requestPayment: widgetsRequestPaymentMock,
     });
-    loadTossPaymentsMock.mockImplementation(async (clientKey: string) => {
-      if (clientKey === 'test_ck_direct_key') {
-        return {
-          payment: vi.fn(() => ({
-            requestPayment: directPaymentRequestMock,
-          })),
-        };
-      }
-
-      return {
-        widgets: widgetsFactoryMock,
-      };
+    loadTossPaymentsMock.mockResolvedValue({
+      widgets: widgetsFactoryMock,
     });
-    directPaymentRequestMock.mockResolvedValue(undefined);
+    widgetsRequestPaymentMock.mockResolvedValue(undefined);
     apiClientPostMock.mockResolvedValue({
       orderId: 'GRP-TEST-ORDER',
       method: 'CARD',
@@ -145,12 +135,6 @@ describe('TossPaymentWidget', () => {
       delete process.env.NEXT_PUBLIC_TOSS_FOREIGN_EASY_PAY_CLIENT_KEY;
     } else {
       process.env.NEXT_PUBLIC_TOSS_FOREIGN_EASY_PAY_CLIENT_KEY = originalForeignEasyPayClientKey;
-    }
-
-    if (originalOverseasCardClientKey === undefined) {
-      delete process.env.NEXT_PUBLIC_TOSS_OVERSEAS_CARD_CLIENT_KEY;
-    } else {
-      process.env.NEXT_PUBLIC_TOSS_OVERSEAS_CARD_CLIENT_KEY = originalOverseasCardClientKey;
     }
   });
 
@@ -238,9 +222,26 @@ describe('TossPaymentWidget', () => {
     expect(screen.queryByText('결제 위젯을 불러오는데 실패했습니다.')).not.toBeInTheDocument();
   });
 
-  it('requests overseas card direct payment in KRW without provider-charge amount markers', async () => {
+  it('requests overseas card through the foreign payment widget in USD with provider-charge amount markers', async () => {
     process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = 'DEFAULT,uspay';
-    process.env.NEXT_PUBLIC_TOSS_OVERSEAS_CARD_CLIENT_KEY = 'test_ck_direct_key';
+    apiClientPostMock.mockResolvedValueOnce({
+      orderId: 'GRP-TEST-ORDER',
+      method: 'CARD',
+      provider: 'CARD',
+      currency: 'USD',
+      successUrl: 'https://grabit.test/booking/performance-1/complete',
+      failUrl: 'https://grabit.test/booking/performance-1/confirm?error=true',
+      asyncStatus: 'sync',
+      useInternationalCardOnly: true,
+      checkoutEnabled: true,
+      providerChargeQuote: {
+        currency: 'USD',
+        amountMinor: 3400,
+        amountDecimal: '34.00',
+        rate: '0.00068',
+        quotedAt: '2026-06-05T10:00:00.000Z',
+      },
+    });
     const ref = createRef<TossPaymentWidgetRef>();
     const user = userEvent.setup();
 
@@ -271,12 +272,20 @@ describe('TossPaymentWidget', () => {
       paymentMethod: {
         method: 'CARD',
         provider: 'CARD',
-        currency: 'KRW',
+        currency: 'USD',
         overseasPaymentConsent: {
           required: true,
           agreed: true,
           agreementVersion: '2026-05-08',
         },
+      },
+      checkoutEnabled: true,
+      providerChargeQuote: {
+        currency: 'USD',
+        amountMinor: 3400,
+        amountDecimal: '34.00',
+        rate: '0.00068',
+        quotedAt: '2026-06-05T10:00:00.000Z',
       },
     });
 
@@ -287,27 +296,32 @@ describe('TossPaymentWidget', () => {
         paymentMethod: expect.objectContaining({
           method: 'CARD',
           provider: 'CARD',
-          currency: 'KRW',
+          currency: 'USD',
         }),
       }),
       { showErrorToast: false },
     );
-    expect(directPaymentRequestMock).toHaveBeenCalledWith(expect.objectContaining({
+    expect(loadTossPaymentsMock).toHaveBeenLastCalledWith('test-foreign-widget-key');
+    expect(setAmountMock).toHaveBeenLastCalledWith({
+      currency: 'USD',
+      value: 34,
+    });
+    expect(widgetsRequestPaymentMock).toHaveBeenCalledWith(expect.objectContaining({
+      orderId: 'GRP-TEST-ORDER',
+      successUrl:
+        'https://grabit.test/booking/performance-1/complete?provider=OVERSEAS_CARD&providerChargeAmount=34.00',
+    }));
+    expect(widgetsRequestPaymentMock).toHaveBeenCalledWith(expect.not.objectContaining({
       method: 'CARD',
-      amount: {
-        currency: 'KRW',
-        value: 50000,
-      },
-      successUrl: 'https://grabit.test/booking/performance-1/complete?provider=OVERSEAS_CARD',
-      card: {
-        useInternationalCardOnly: true,
-      },
+      amount: expect.objectContaining({
+        currency: 'USD',
+        value: 34,
+      }),
     }));
   });
 
-  it('blocks overseas card direct payment when the server secret is unavailable', async () => {
+  it('blocks overseas card widget payment when the server widget secret is unavailable', async () => {
     process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = 'DEFAULT,uspay';
-    process.env.NEXT_PUBLIC_TOSS_OVERSEAS_CARD_CLIENT_KEY = 'test_ck_direct_key';
     apiClientPostMock.mockResolvedValueOnce({
       orderId: 'GRP-TEST-ORDER',
       method: 'CARD',
@@ -350,14 +364,22 @@ describe('TossPaymentWidget', () => {
       paymentMethod: {
         method: 'CARD',
         provider: 'CARD',
-        currency: 'KRW',
+        currency: 'USD',
         overseasPaymentConsent: {
           required: true,
           agreed: true,
           agreementVersion: '2026-05-08',
         },
       },
+      checkoutEnabled: true,
+      providerChargeQuote: {
+        currency: 'USD',
+        amountMinor: 3400,
+        amountDecimal: '34.00',
+        rate: '0.00068',
+        quotedAt: '2026-06-05T10:00:00.000Z',
+      },
     })).rejects.toThrow('해외 카드 결제 설정이 완료되지 않았습니다. 관리자에게 문의해주세요.');
-    expect(directPaymentRequestMock).not.toHaveBeenCalled();
+    expect(widgetsRequestPaymentMock).not.toHaveBeenCalled();
   });
 });

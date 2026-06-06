@@ -41,18 +41,17 @@ describe('ProviderChargeQuoteService', () => {
     });
   });
 
-  it('ignores overseas-card quote config when creating PayPal quotes', () => {
+  it('creates a USD overseas-card quote from the KRW reservation payable amount', () => {
     const service = new ProviderChargeQuoteService(
       config({
-        PAYPAL_CHECKOUT_ENABLED: 'true',
         PAYPAL_KRW_USD_RATE: '0.00068',
-        TOSS_OVERSEAS_CARD_SECRET_KEY: 'test_sk_overseas_card',
-        OVERSEAS_CARD_KRW_USD_RATE: '0.00072',
+        TOSS_OVERSEAS_CARD_SECRET_KEY: 'test_gsk_overseas_card',
       }),
     );
 
+    expect(service.getOverseasCardAvailability()).toEqual({ enabled: true });
     expect(
-      service.createPaypalQuote({
+      service.createOverseasCardQuote({
         reservationPayableAmount: 150000,
         now: new Date('2026-05-29T00:00:00.000Z'),
       }),
@@ -61,10 +60,39 @@ describe('ProviderChargeQuoteService', () => {
       amountDecimal: '102.00',
       rate: '0.00068',
     });
-    expect((service as unknown as { createOverseasCardQuote?: unknown }).createOverseasCardQuote)
-      .toBeUndefined();
-    expect((service as unknown as { getOverseasCardAvailability?: unknown }).getOverseasCardAvailability)
-      .toBeUndefined();
+  });
+
+  it('keeps overseas-card checkout unavailable when the scoped secret is an API individual key', () => {
+    const service = new ProviderChargeQuoteService(
+      config({
+        PAYPAL_KRW_USD_RATE: '0.00068',
+        TOSS_OVERSEAS_CARD_SECRET_KEY: 'test_sk_overseas_card',
+      }),
+    );
+
+    expect(service.getOverseasCardAvailability()).toEqual({
+      enabled: false,
+      disabledReason: 'OVERSEAS_CARD_WIDGET_SECRET_KEY_INVALID',
+    });
+    expect(() =>
+      service.createOverseasCardQuote({
+        reservationPayableAmount: 150000,
+        now: new Date('2026-05-29T00:00:00.000Z'),
+      }),
+    ).toThrow(/TOSS_OVERSEAS_CARD_SECRET_KEY must be a Toss payment widget secret key/);
+  });
+
+  it('keeps overseas-card checkout unavailable when the scoped secret is missing', () => {
+    const service = new ProviderChargeQuoteService(
+      config({
+        PAYPAL_KRW_USD_RATE: '0.00068',
+      }),
+    );
+
+    expect(service.getOverseasCardAvailability()).toEqual({
+      enabled: false,
+      disabledReason: 'OVERSEAS_CARD_SECRET_KEY_MISSING',
+    });
   });
 
   it('does not use an overseas-card-only rate to enable PayPal quotes', () => {

@@ -8,6 +8,24 @@ interface ConfirmPaymentReturnParams {
   providerChargeAmount: string | null;
 }
 
+export function hasValidConfirmPaymentReturn({
+  provider,
+  amount,
+  providerChargeAmount,
+}: Pick<ConfirmPaymentReturnParams, 'provider' | 'amount' | 'providerChargeAmount'>): boolean {
+  const parsedAmount = Number(amount);
+  const hasValidAmount = amount !== null && Number.isFinite(parsedAmount) && parsedAmount > 0;
+  const hasValidProviderChargeAmount = !!providerChargeAmount?.trim();
+
+  if (provider === 'PAYPAL') {
+    return hasValidProviderChargeAmount;
+  }
+  if (provider === 'OVERSEAS_CARD') {
+    return hasValidProviderChargeAmount || hasValidAmount;
+  }
+  return hasValidAmount;
+}
+
 export function buildConfirmPaymentPayload({
   paymentKey,
   orderId,

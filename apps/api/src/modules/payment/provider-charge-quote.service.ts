@@ -18,6 +18,7 @@ export type PaypalProviderChargeQuote = {
 };
 
 export type ForeignEasyPayProviderChargeQuote = PaypalProviderChargeQuote;
+export type OverseasCardProviderChargeQuote = PaypalProviderChargeQuote;
 
 @Injectable()
 export class ProviderChargeQuoteService {
@@ -25,6 +26,8 @@ export class ProviderChargeQuoteService {
   private readonly alipayCheckoutRequested: boolean;
   private readonly alipayCheckoutEnabled: boolean;
   private readonly alipaySecretConfigured: boolean;
+  private readonly overseasCardSecretConfigured: boolean;
+  private readonly overseasCardWidgetSecretConfigured: boolean;
   private readonly paypalRate?: ParsedDecimalRate;
 
   constructor(private readonly configService: ConfigService) {
@@ -50,11 +53,20 @@ export class ProviderChargeQuoteService {
       (this.configService.get<string>('TOSS_FOREIGN_EASY_PAY_SECRET_KEY') ?? '').trim().length > 0;
     this.alipayCheckoutEnabled =
       this.alipayCheckoutRequested && this.alipaySecretConfigured;
+    this.overseasCardSecretConfigured =
+      (this.configService.get<string>('TOSS_OVERSEAS_CARD_SECRET_KEY') ?? '').trim().length > 0;
+    this.overseasCardWidgetSecretConfigured = this.isWidgetSecretKey(
+      this.configService.get<string>('TOSS_OVERSEAS_CARD_SECRET_KEY') ?? '',
+    );
 
     const paypalRate =
       this.configService.get<string>('PAYPAL_KRW_USD_RATE')
       ?? (useLocalTestDefault ? DEFAULT_LOCAL_TEST_KRW_USD_RATE : undefined);
-    if (this.paypalCheckoutEnabled || this.alipayCheckoutEnabled) {
+    if (
+      this.paypalCheckoutEnabled
+      || this.alipayCheckoutEnabled
+      || this.overseasCardSecretConfigured
+    ) {
       this.paypalRate = this.parseRate(paypalRate);
     }
   }
@@ -100,6 +112,24 @@ export class ProviderChargeQuoteService {
     return this.getPaypalAvailability();
   }
 
+  getOverseasCardAvailability(): { enabled: boolean; disabledReason?: string } {
+    if (this.overseasCardWidgetSecretConfigured) {
+      return { enabled: true };
+    }
+
+    if (this.overseasCardSecretConfigured) {
+      return {
+        enabled: false,
+        disabledReason: 'OVERSEAS_CARD_WIDGET_SECRET_KEY_INVALID',
+      };
+    }
+
+    return {
+      enabled: false,
+      disabledReason: 'OVERSEAS_CARD_SECRET_KEY_MISSING',
+    };
+  }
+
   createPaypalQuote(input: {
     reservationPayableAmount: number;
     now: Date;
@@ -117,6 +147,20 @@ export class ProviderChargeQuoteService {
   }): ForeignEasyPayProviderChargeQuote {
     if ((!this.paypalCheckoutEnabled && !this.alipayCheckoutEnabled) || !this.paypalRate) {
       throw new Error('foreign easy pay checkout is disabled');
+    }
+
+    return this.createProviderChargeQuote(input, this.paypalRate);
+  }
+
+  createOverseasCardQuote(input: {
+    reservationPayableAmount: number;
+    now: Date;
+  }): OverseasCardProviderChargeQuote {
+    if (!this.overseasCardSecretConfigured) {
+      throw new Error('TOSS_OVERSEAS_CARD_SECRET_KEY is missing');
+    }
+    if (!this.overseasCardWidgetSecretConfigured) {
+      throw new Error('TOSS_OVERSEAS_CARD_SECRET_KEY must be a Toss payment widget secret key');
     }
 
     return this.createProviderChargeQuote(input, this.paypalRate);
@@ -201,6 +245,10 @@ export class ProviderChargeQuoteService {
     }
 
     return this.configService.get<string>('TOSS_SECRET_KEY')?.startsWith('test_') === true;
+  }
+
+  private isWidgetSecretKey(value: string): boolean {
+    return /^(test|live)_gsk_/.test(value.trim());
   }
 
   private normalizeDecimalString(value: string): string {

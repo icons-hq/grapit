@@ -56,8 +56,15 @@ export class TossPaymentsClient {
   }
 
   getOverseasCardAvailability(): { enabled: boolean; disabledReason?: string } {
-    if (this.overseasCardSecretKey.trim().length > 0) {
+    if (this.isWidgetSecretKey(this.overseasCardSecretKey)) {
       return { enabled: true };
+    }
+
+    if (this.overseasCardSecretKey.trim().length > 0) {
+      return {
+        enabled: false,
+        disabledReason: 'OVERSEAS_CARD_WIDGET_SECRET_KEY_INVALID',
+      };
     }
 
     return {
@@ -72,6 +79,12 @@ export class TossPaymentsClient {
         throw new TossPaymentError(
           'MISSING_OVERSEAS_CARD_SECRET_KEY',
           'TOSS_OVERSEAS_CARD_SECRET_KEY is required for overseas card payments',
+        );
+      }
+      if (!this.isWidgetSecretKey(this.overseasCardSecretKey)) {
+        throw new TossPaymentError(
+          'INVALID_OVERSEAS_CARD_SECRET_KEY',
+          'TOSS_OVERSEAS_CARD_SECRET_KEY must be a Toss payment widget secret key',
         );
       }
       return this.overseasCardSecretKey;
@@ -91,6 +104,10 @@ export class TossPaymentsClient {
 
   private getAuthHeader(scope?: TossPaymentRequestOptions['secretKeyScope']): string {
     return `Basic ${Buffer.from(this.getSecretKey(scope) + ':').toString('base64')}`;
+  }
+
+  private isWidgetSecretKey(value: string): boolean {
+    return /^(test|live)_gsk_/.test(value.trim());
   }
 
   private buildHeaders(

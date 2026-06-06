@@ -11,7 +11,6 @@ import {
 import { useLocale } from 'next-intl';
 import {
   loadTossPayments,
-  type TossPaymentsPayment,
   type TossPaymentsWidgets,
   type WidgetAgreementStatus,
 } from '@tosspayments/tosspayments-sdk';
@@ -99,7 +98,7 @@ export interface PaymentMethodSelection {
   code: string;
   paymentMethod: PaymentMethod;
   requiresOverseasDisclaimer: boolean;
-  requestFlow: 'widget' | 'direct_card';
+  requestFlow: 'widget';
 }
 
 export interface TossPaymentBranchResponse {
@@ -139,25 +138,6 @@ interface WidgetPaymentRequestPayload {
       currency: string;
       description: string;
     }>;
-  };
-}
-
-interface DirectCardPaymentRequestPayload {
-  method: 'CARD';
-  amount: {
-    currency: 'KRW' | 'USD';
-    value: number;
-  };
-  orderId: string;
-  orderName: string;
-  successUrl: string;
-  failUrl: string;
-  windowTarget: 'self';
-  customerEmail?: string;
-  customerName?: string;
-  customerMobilePhone?: string;
-  card: {
-    useInternationalCardOnly: true;
   };
 }
 
@@ -214,18 +194,9 @@ export function resolvePaymentWidgetRenderVariantKey(variantKey: string): string
 export function resolvePaymentWidgetClientKey(variantKey: string): string | undefined {
   if (isUsPayPaymentWidgetVariant(variantKey)) {
     return process.env.NEXT_PUBLIC_TOSS_FOREIGN_EASY_PAY_CLIENT_KEY
-      || process.env.NEXT_PUBLIC_TOSS_FOREIGN_PAYMENT_WIDGET_CLIENT_KEY
-      || process.env.NEXT_PUBLIC_TOSS_CLIENT_KEY;
+      || process.env.NEXT_PUBLIC_TOSS_FOREIGN_PAYMENT_WIDGET_CLIENT_KEY;
   }
   return process.env.NEXT_PUBLIC_TOSS_CLIENT_KEY;
-}
-
-export function resolveOverseasCardClientKey(): string | undefined {
-  const clientKey = process.env.NEXT_PUBLIC_TOSS_OVERSEAS_CARD_CLIENT_KEY?.trim();
-  if (!clientKey || !/^(test|live)_ck_/.test(clientKey)) {
-    return undefined;
-  }
-  return clientKey;
 }
 
 export function isUsPayPaymentWidgetVariant(variantKey: string): boolean {
@@ -280,7 +251,12 @@ function usesProviderChargeQuote(provider: PaymentProvider): boolean {
 }
 
 function usesProviderChargeQuoteForPaymentMethod(paymentMethod: PaymentMethod): boolean {
-  return usesProviderChargeQuote(paymentMethod.provider);
+  return usesProviderChargeQuote(paymentMethod.provider)
+    || (
+      paymentMethod.method === 'CARD'
+      && paymentMethod.provider === 'CARD'
+      && paymentMethod.overseasPaymentConsent?.required === true
+    );
 }
 
 export function resolveProviderChargeDisabledMessage(
@@ -328,12 +304,12 @@ export function resolvePaymentMethodSelection(
   if (normalizedCode === 'CARD' && isForeignPaymentWidgetVariant(variantKey)) {
     return {
       code,
-      requestFlow: 'direct_card',
+      requestFlow: 'widget',
       requiresOverseasDisclaimer: true,
       paymentMethod: {
         method: 'CARD',
         provider: 'CARD',
-        currency: 'KRW',
+        currency: 'USD',
         overseasPaymentConsent: createOverseasConsent(),
       },
     };
@@ -361,12 +337,12 @@ export function resolvePaymentMethodSelection(
   ) {
     return {
       code,
-      requestFlow: 'direct_card',
+      requestFlow: 'widget',
       requiresOverseasDisclaimer: true,
       paymentMethod: {
         method: 'CARD',
         provider: 'CARD',
-        currency: 'KRW',
+        currency: 'USD',
         overseasPaymentConsent: createOverseasConsent(),
       },
     };
@@ -417,6 +393,21 @@ export function resolvePaymentRequestAmount({
     currency,
     value: amount,
   };
+}
+
+function appendProviderChargeReturnParams({
+  successUrl,
+  provider,
+  providerChargeQuote,
+}: {
+  successUrl: string;
+  provider: 'PAYPAL' | 'OVERSEAS_CARD';
+  providerChargeQuote: ProviderChargeQuote;
+}): string {
+  const url = new URL(successUrl);
+  url.searchParams.set('provider', provider);
+  url.searchParams.set('providerChargeAmount', providerChargeQuote.amountDecimal);
+  return url.toString();
 }
 
 function resolveInitialPaymentMethodSelection(_variantKey: string): PaymentMethodSelection {
@@ -489,10 +480,26 @@ export function buildWidgetPaymentRequest({
   selectedSeats?: FloorAwareSeatSelection[];
 }): WidgetPaymentRequestPayload {
   const resolvedLocale = resolvePaymentWidgetLocale(locale);
+  const successUrl = branch.providerChargeQuote && branch.provider === 'PAYPAL'
+    ? appendProviderChargeReturnParams({
+        successUrl: branch.successUrl,
+        provider: 'PAYPAL',
+        providerChargeQuote: branch.providerChargeQuote,
+      })
+    : branch.providerChargeQuote
+      && branch.method === 'CARD'
+      && branch.provider === 'CARD'
+      && branch.useInternationalCardOnly
+        ? appendProviderChargeReturnParams({
+            successUrl: branch.successUrl,
+            provider: 'OVERSEAS_CARD',
+            providerChargeQuote: branch.providerChargeQuote,
+          })
+        : branch.successUrl;
   const baseRequest: WidgetPaymentRequestPayload = {
     orderId: branch.orderId,
     orderName,
-    successUrl: branch.successUrl,
+    successUrl,
     failUrl: branch.failUrl,
     windowTarget: 'self',
     customerEmail,
@@ -531,57 +538,6 @@ export function buildWidgetPaymentRequest({
   }
 
   return baseRequest;
-}
-
-export function buildDirectCardPaymentRequest({
-  branch,
-  amount,
-  customerEmail,
-  customerName,
-  customerMobilePhone,
-  orderName,
-  locale,
-}: {
-  branch: TossPaymentBranchResponse;
-  amount: number;
-  customerEmail: string;
-  customerName: string;
-  customerMobilePhone?: string;
-  orderName: string;
-  locale?: string;
-}): DirectCardPaymentRequestPayload {
-  const providerChargeQuote = branch.providerChargeQuote;
-  const chargeCurrency = providerChargeQuote?.currency ?? 'KRW';
-  const chargeValue = providerChargeQuote
-    ? providerChargeQuote.amountMinor / 100
-    : amount;
-  const successUrl = new URL(branch.successUrl);
-  successUrl.searchParams.set('provider', 'OVERSEAS_CARD');
-  if (providerChargeQuote) {
-    successUrl.searchParams.set(
-      'providerChargeAmount',
-      providerChargeQuote.amountDecimal,
-    );
-  }
-
-  return {
-    method: 'CARD',
-    amount: {
-      currency: chargeCurrency,
-      value: chargeValue,
-    },
-    orderId: branch.orderId,
-    orderName,
-    successUrl: successUrl.toString(),
-    failUrl: branch.failUrl,
-    windowTarget: 'self',
-    customerEmail,
-    customerName,
-    customerMobilePhone: sanitizePhoneNumber(customerMobilePhone),
-    card: {
-      useInternationalCardOnly: true,
-    },
-  };
 }
 
 export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWidgetProps>(
@@ -685,13 +641,11 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
         const completeUrl = `${origin}${localizedBookingPath}/complete`;
         const confirmUrl = `${origin}${localizedBookingPath}/confirm`;
         const selection = selectedPaymentMethodRef.current;
-        if (selection.requestFlow === 'widget') {
-          if (!widgets) {
-            throw new Error(widgetCopy.widgetNotReady);
-          }
-          if (isLoading) {
-            throw new Error(widgetCopy.widgetLoading);
-          }
+        if (!widgets) {
+          throw new Error(widgetCopy.widgetNotReady);
+        }
+        if (isLoading) {
+          throw new Error(widgetCopy.widgetLoading);
         }
 
         const requiresProviderChargeQuote = usesProviderChargeQuoteForPaymentMethod(
@@ -741,41 +695,12 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
           ));
         }
 
-        if (selection.requestFlow === 'direct_card') {
-          if (!branch.useInternationalCardOnly) {
-            throw new Error(widgetCopy.overseasCardInvalidSetup);
-          }
-          if (branch.checkoutEnabled === false) {
-            throw new Error(resolveProviderChargeDisabledMessage(
-              selection.paymentMethod.provider,
-              branch.disabledReason,
-              locale,
-            ));
-          }
-          const overseasCardClientKey = resolveOverseasCardClientKey();
-          if (!overseasCardClientKey) {
-            throw new Error(widgetCopy.overseasCardDisabled);
-          }
-
-          const directCardPayload = buildDirectCardPaymentRequest({
-            branch,
+        if (branch.providerChargeQuote) {
+          await widgets.setAmount(resolvePaymentRequestAmount({
             amount,
-            customerEmail,
-            customerName,
-            customerMobilePhone,
-            orderName,
-            locale,
-          });
-          const tossPayments = await loadTossPayments(overseasCardClientKey);
-          const payment = tossPayments.payment({ customerKey });
-          await payment.requestPayment(
-            directCardPayload as unknown as Parameters<TossPaymentsPayment['requestPayment']>[0],
-          );
-          return;
-        }
-
-        if (!widgets) {
-          throw new Error(widgetCopy.widgetNotReady);
+            currency: branch.currency,
+            providerChargeQuote: branch.providerChargeQuote,
+          }));
         }
 
         const requestPayload = buildWidgetPaymentRequest({
@@ -788,12 +713,6 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
           locale,
           selectedSeats,
         });
-        if (selection.paymentMethod.provider === 'PAYPAL' && branch.providerChargeQuote) {
-          const url = new URL(requestPayload.successUrl);
-          url.searchParams.set('provider', 'PAYPAL');
-          url.searchParams.set('providerChargeAmount', branch.providerChargeQuote.amountDecimal);
-          requestPayload.successUrl = url.toString();
-        }
 
         await widgets.requestPayment(
           requestPayload as Parameters<TossPaymentsWidgets['requestPayment']>[0],

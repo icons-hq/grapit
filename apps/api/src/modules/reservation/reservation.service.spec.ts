@@ -1410,7 +1410,7 @@ describe('ReservationService', () => {
       }
     });
 
-    it('prepareReservation keeps overseas card in KRW without provider charge data', async () => {
+    it('prepareReservation stores and returns an overseas-card USD provider charge quote for USD card requests', async () => {
       vi.useFakeTimers();
       const now = new Date('2026-05-29T10:00:00.000Z');
       vi.setSystemTime(now);
@@ -1459,12 +1459,7 @@ describe('ReservationService', () => {
           paymentMethod: {
             method: 'CARD' as const,
             provider: 'CARD' as const,
-            currency: 'KRW',
-            overseasPaymentConsent: {
-              required: true,
-              agreed: true,
-              agreedAt: now.toISOString(),
-            },
+            currency: 'USD',
           },
         };
         const insertedValues: unknown[] = [];
@@ -1483,14 +1478,27 @@ describe('ReservationService', () => {
 
         const result = await overseasCardService.prepareReservation(dto, userId);
 
-        expect(providerChargeQuoteService.getOverseasCardAvailability).not.toHaveBeenCalled();
-        expect(providerChargeQuoteService.createOverseasCardQuote).not.toHaveBeenCalled();
-        expect(insertedValues[0]).not.toHaveProperty('providerChargeCurrency');
-        expect(insertedValues[0]).not.toHaveProperty('providerChargeAmountMinor');
-        expect(insertedValues[0]).not.toHaveProperty('providerChargeRate');
-        expect(insertedValues[0]).not.toHaveProperty('providerChargeQuotedAt');
-        expect(result).not.toHaveProperty('checkoutEnabled');
-        expect(result).not.toHaveProperty('providerChargeQuote');
+        expect(providerChargeQuoteService.getOverseasCardAvailability).toHaveBeenCalled();
+        expect(providerChargeQuoteService.createOverseasCardQuote).toHaveBeenCalledWith({
+          reservationPayableAmount: 104000,
+          now,
+        });
+        expect(insertedValues[0]).toEqual(expect.objectContaining({
+          providerChargeCurrency: 'USD',
+          providerChargeAmountMinor: 7490,
+          providerChargeRate: '0.00072',
+          providerChargeQuotedAt: now,
+        }));
+        expect(result).toEqual(expect.objectContaining({
+          checkoutEnabled: true,
+          providerChargeQuote: {
+            currency: 'USD',
+            amountMinor: 7490,
+            amountDecimal: '74.90',
+            rate: '0.00072',
+            quotedAt: now.toISOString(),
+          },
+        }));
       } finally {
         vi.useRealTimers();
       }

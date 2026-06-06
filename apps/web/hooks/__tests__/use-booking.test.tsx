@@ -10,12 +10,13 @@ import {
   useUnlockSeat,
 } from '../use-booking';
 import { ApiClientError, apiClient } from '@/lib/api-client';
-import { buildConfirmPaymentPayload } from '@/lib/booking/payment-return';
 import {
-  buildDirectCardPaymentRequest,
+  buildConfirmPaymentPayload,
+  hasValidConfirmPaymentReturn,
+} from '@/lib/booking/payment-return';
+import {
   buildWidgetPaymentRequest,
   resolveProviderChargeDisabledMessage,
-  resolveOverseasCardClientKey,
   resolvePaymentWidgetVariantLabel,
   resolvePaymentWidgetRenderVariantKey,
   resolvePaymentWidgetClientKey,
@@ -798,11 +799,11 @@ describe('use-booking payment mutations', () => {
 
     expect(resolvePaymentMethodSelection('CARD', 'uspay')).toMatchObject({
       requiresOverseasDisclaimer: true,
-      requestFlow: 'direct_card',
+      requestFlow: 'widget',
       paymentMethod: {
         method: 'CARD',
         provider: 'CARD',
-        currency: 'KRW',
+        currency: 'USD',
         overseasPaymentConsent: {
           required: true,
           agreed: false,
@@ -823,11 +824,11 @@ describe('use-booking payment mutations', () => {
 
     expect(resolvePaymentMethodSelection('OVERSEAS_CARD', 'uspay')).toMatchObject({
       requiresOverseasDisclaimer: true,
-      requestFlow: 'direct_card',
+      requestFlow: 'widget',
       paymentMethod: {
         method: 'CARD',
         provider: 'CARD',
-        currency: 'KRW',
+        currency: 'USD',
       },
     });
   });
@@ -901,6 +902,11 @@ describe('use-booking payment mutations', () => {
       process.env.NEXT_PUBLIC_TOSS_FOREIGN_PAYMENT_WIDGET_CLIENT_KEY = 'foreign-widget-client-key';
       expect(resolvePaymentWidgetClientKey('uspay')).toBe('foreign-easy-pay-client-key');
       expect(resolvePaymentWidgetClientKey('alipay')).toBe('domestic-client-key');
+      expect(resolvePaymentWidgetClientKey('DEFAULT')).toBe('domestic-client-key');
+
+      delete process.env.NEXT_PUBLIC_TOSS_FOREIGN_EASY_PAY_CLIENT_KEY;
+      delete process.env.NEXT_PUBLIC_TOSS_FOREIGN_PAYMENT_WIDGET_CLIENT_KEY;
+      expect(resolvePaymentWidgetClientKey('uspay')).toBeUndefined();
       expect(resolvePaymentWidgetClientKey('DEFAULT')).toBe('domestic-client-key');
     } finally {
       if (originalClientKey === undefined) {
@@ -1063,68 +1069,52 @@ describe('use-booking payment mutations', () => {
     expect(request.foreignEasyPay?.products.every((product) => product.currency === 'USD')).toBe(true);
   });
 
-  it('buildDirectCardPaymentRequest() sends overseas card through direct CARD payment with KRW amount', () => {
-    const request = buildDirectCardPaymentRequest({
+  it('buildWidgetPaymentRequest() sends overseas card through the widget with provider-charge return markers', () => {
+    const request = buildWidgetPaymentRequest({
       branch: {
         orderId: 'GRP-OVERSEAS-CARD',
         method: 'CARD',
         provider: 'CARD',
-        currency: 'KRW',
+        currency: 'USD',
         successUrl: 'https://grabit.test/success',
         failUrl: 'https://grabit.test/fail',
         asyncStatus: 'sync',
         useInternationalCardOnly: true,
+        providerChargeQuote: {
+          currency: 'USD',
+          amountMinor: 3400,
+          amountDecimal: '34.00',
+          rate: '0.00068',
+          quotedAt: '2026-06-05T01:00:00.000Z',
+        },
       },
       amount: 50000,
       customerEmail: 'fan@example.com',
       customerName: '해외 팬',
       customerMobilePhone: '+82-10-1234-5678',
       orderName: '팬미팅 티켓 1매',
+      locale: 'en',
     });
 
     expect(request).toMatchObject({
-      method: 'CARD',
-      amount: {
-        currency: 'KRW',
-        value: 50000,
-      },
       orderId: 'GRP-OVERSEAS-CARD',
       windowTarget: 'self',
-      card: {
-        useInternationalCardOnly: true,
-      },
       customerMobilePhone: '821012345678',
     });
-    expect(request.successUrl).toBe('https://grabit.test/success?provider=OVERSEAS_CARD');
+    expect(request.card).toBeUndefined();
+    expect(request.foreignEasyPay).toBeUndefined();
+    expect(request.successUrl).toBe(
+      'https://grabit.test/success?provider=OVERSEAS_CARD&providerChargeAmount=34.00',
+    );
   });
 
-  it('resolveOverseasCardClientKey() requires a direct payment client key for overseas cards', () => {
-    const originalOverseasCardClientKey = process.env.NEXT_PUBLIC_TOSS_OVERSEAS_CARD_CLIENT_KEY;
-    try {
-      delete process.env.NEXT_PUBLIC_TOSS_OVERSEAS_CARD_CLIENT_KEY;
-      expect(resolveOverseasCardClientKey()).toBeUndefined();
-
-      process.env.NEXT_PUBLIC_TOSS_OVERSEAS_CARD_CLIENT_KEY = 'test_gck_widget_key';
-      expect(resolveOverseasCardClientKey()).toBeUndefined();
-
-      process.env.NEXT_PUBLIC_TOSS_OVERSEAS_CARD_CLIENT_KEY = 'test_ck_direct_key';
-      expect(resolveOverseasCardClientKey()).toBe('test_ck_direct_key');
-    } finally {
-      if (originalOverseasCardClientKey === undefined) {
-        delete process.env.NEXT_PUBLIC_TOSS_OVERSEAS_CARD_CLIENT_KEY;
-      } else {
-        process.env.NEXT_PUBLIC_TOSS_OVERSEAS_CARD_CLIENT_KEY = originalOverseasCardClientKey;
-      }
-    }
-  });
-
-  it('buildWidgetPaymentRequest() does not attach provider-charge fields to overseas card requests', () => {
+  it('buildWidgetPaymentRequest() keeps overseas card widget payload free of direct-card options', () => {
     const request = buildWidgetPaymentRequest({
       branch: {
         orderId: 'GRP-OVERSEAS-CARD-USD',
         method: 'CARD',
         provider: 'CARD',
-        currency: 'KRW',
+        currency: 'USD',
         successUrl: 'https://grabit.test/success?provider=OVERSEAS_CARD',
         failUrl: 'https://grabit.test/fail',
         asyncStatus: 'sync',
@@ -1148,7 +1138,7 @@ describe('use-booking payment mutations', () => {
 
     expect(request).toMatchObject({
       orderId: 'GRP-OVERSEAS-CARD-USD',
-      successUrl: 'https://grabit.test/success?provider=OVERSEAS_CARD',
+      successUrl: 'https://grabit.test/success?provider=OVERSEAS_CARD&providerChargeAmount=34.00',
       windowTarget: 'self',
     });
     expect(request.card).toBeUndefined();
@@ -1156,13 +1146,13 @@ describe('use-booking payment mutations', () => {
     expect(request.customerMobilePhone).toBeUndefined();
   });
 
-  it('buildDirectCardPaymentRequest() omits placeholder admin phone numbers', () => {
-    const request = buildDirectCardPaymentRequest({
+  it('buildWidgetPaymentRequest() omits placeholder admin phone numbers for overseas card widgets', () => {
+    const request = buildWidgetPaymentRequest({
       branch: {
         orderId: 'GRP-OVERSEAS-CARD',
         method: 'CARD',
         provider: 'CARD',
-        currency: 'KRW',
+        currency: 'USD',
         successUrl: 'https://grabit.test/success?provider=OVERSEAS_CARD',
         failUrl: 'https://grabit.test/fail',
         asyncStatus: 'sync',
@@ -1180,6 +1170,7 @@ describe('use-booking payment mutations', () => {
       customerName: '관리자',
       customerMobilePhone: '010-0000-0000',
       orderName: '팬미팅 티켓 1매',
+      locale: 'ko',
     });
 
     expect(request.customerMobilePhone).toBeUndefined();
@@ -1226,7 +1217,7 @@ describe('use-booking payment mutations', () => {
         orderId: 'GRP-OVERSEAS-CARD',
         method: 'CARD',
         provider: 'CARD',
-        currency: 'KRW',
+        currency: 'USD',
         successUrl: 'https://grabit.test/success',
         failUrl: 'https://grabit.test/fail',
         asyncStatus: 'sync',
@@ -1245,6 +1236,27 @@ describe('use-booking payment mutations', () => {
   });
 
   it('buildConfirmPaymentPayload() preserves PayPal providerChargeAmount as a raw decimal string', () => {
+    expect(hasValidConfirmPaymentReturn({
+      provider: 'OVERSEAS_CARD',
+      amount: null,
+      providerChargeAmount: '108.00',
+    })).toBe(true);
+    expect(hasValidConfirmPaymentReturn({
+      provider: 'OVERSEAS_CARD',
+      amount: '50000',
+      providerChargeAmount: null,
+    })).toBe(true);
+    expect(hasValidConfirmPaymentReturn({
+      provider: 'PAYPAL',
+      amount: null,
+      providerChargeAmount: '52.30',
+    })).toBe(true);
+    expect(hasValidConfirmPaymentReturn({
+      provider: null,
+      amount: '50000',
+      providerChargeAmount: null,
+    })).toBe(true);
+
     expect(buildConfirmPaymentPayload({
       paymentKey: 'paypal_payment_key',
       orderId: 'GRP-PAYPAL-CONFIRM',
