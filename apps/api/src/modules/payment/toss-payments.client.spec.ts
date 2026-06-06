@@ -62,8 +62,8 @@ describe('TossPaymentsClient', () => {
     );
   });
 
-  it('uses the overseas card secret when confirming an overseas card payment', async () => {
-    const overseasCardSecretKey = 'test_sk_overseas_card_secret';
+  it('uses the overseas card widget secret when confirming an overseas card payment', async () => {
+    const overseasCardSecretKey = 'test_gsk_overseas_card_secret';
     const overseasCardAuthHeader =
       `Basic ${Buffer.from(`${overseasCardSecretKey}:`).toString('base64')}`;
     client = new TossPaymentsClient({
@@ -93,6 +93,28 @@ describe('TossPaymentsClient', () => {
         }),
       }),
     );
+  });
+
+  it('rejects an API individual secret for overseas card payment confirms', async () => {
+    client = new TossPaymentsClient({
+      get: vi.fn((key: string, fallback?: string) => {
+        if (key === 'TOSS_SECRET_KEY') return secretKey;
+        if (key === 'TOSS_OVERSEAS_CARD_SECRET_KEY') return 'test_sk_overseas_card_secret';
+        return fallback;
+      }),
+    } as unknown as ConfigService);
+
+    await expect(
+      client.confirmPayment({
+        paymentKey: 'pay_overseas_card',
+        orderId: 'GRP-OVERSEAS-CARD',
+        amount: 150000,
+        secretKeyScope: 'overseas-card',
+      }),
+    ).rejects.toMatchObject({
+      code: 'INVALID_OVERSEAS_CARD_SECRET_KEY',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('does not fall back to the default secret for overseas card payment confirms', async () => {
@@ -130,7 +152,19 @@ describe('TossPaymentsClient', () => {
     });
   });
 
-  it('reports overseas card checkout available when its secret is configured', () => {
+  it('reports overseas card checkout available when its widget secret is configured', () => {
+    client = new TossPaymentsClient({
+      get: vi.fn((key: string, fallback?: string) => {
+        if (key === 'TOSS_SECRET_KEY') return secretKey;
+        if (key === 'TOSS_OVERSEAS_CARD_SECRET_KEY') return 'test_gsk_overseas_card_secret';
+        return fallback;
+      }),
+    } as unknown as ConfigService);
+
+    expect(client.getOverseasCardAvailability()).toEqual({ enabled: true });
+  });
+
+  it('reports overseas card checkout unavailable when its secret is an API individual key', () => {
     client = new TossPaymentsClient({
       get: vi.fn((key: string, fallback?: string) => {
         if (key === 'TOSS_SECRET_KEY') return secretKey;
@@ -139,7 +173,10 @@ describe('TossPaymentsClient', () => {
       }),
     } as unknown as ConfigService);
 
-    expect(client.getOverseasCardAvailability()).toEqual({ enabled: true });
+    expect(client.getOverseasCardAvailability()).toEqual({
+      enabled: false,
+      disabledReason: 'OVERSEAS_CARD_WIDGET_SECRET_KEY_INVALID',
+    });
   });
 
   it('omits optional cancel fields for full Toss cancellation', async () => {

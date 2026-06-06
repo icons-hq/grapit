@@ -15,7 +15,10 @@ import {
   type BookingPaymentStatus,
 } from '@/hooks/use-booking';
 import { ApiClientError } from '@/lib/api-client';
-import { buildConfirmPaymentPayload } from '@/lib/booking/payment-return';
+import {
+  buildConfirmPaymentPayload,
+  hasValidConfirmPaymentReturn,
+} from '@/lib/booking/payment-return';
 import {
   getVisibleCopy,
   resolveVisibleCopyLocale,
@@ -155,13 +158,15 @@ function CompletePageContent() {
   const providerChargeAmount = searchParams.get('providerChargeAmount');
   const parsedAmount = Number(amount);
   const hasValidAmount = amount !== null && Number.isFinite(parsedAmount) && parsedAmount > 0;
-  const hasValidProviderChargeAmount =
-    provider === 'PAYPAL'
-    && !!providerChargeAmount?.trim();
+  const hasValidConfirmReturn = hasValidConfirmPaymentReturn({
+    provider,
+    amount,
+    providerChargeAmount,
+  });
   const hasPendingReturnParams = isPendingReturn && !!orderId;
   const hasConfirmParams = !!paymentKey
     && !!orderId
-    && (provider === 'PAYPAL' ? hasValidProviderChargeAmount : hasValidAmount);
+    && hasValidConfirmReturn;
   const asyncReturnProvider =
     provider === 'ALIPAY_PLUS' || provider === 'TRUEMONEY'
       ? provider
@@ -212,7 +217,7 @@ function CompletePageContent() {
       || isPendingReturn
       || !paymentKey
       || !orderId
-      || !(provider === 'PAYPAL' ? hasValidProviderChargeAmount : hasValidAmount)
+      || !hasValidConfirmReturn
     ) {
       return;
     }
@@ -263,10 +268,9 @@ function CompletePageContent() {
     paymentKey,
     orderId,
     amount,
-    hasValidAmount,
     provider,
     providerChargeAmount,
-    hasValidProviderChargeAmount,
+    hasValidConfirmReturn,
     confirmMutation,
     clearBooking,
     completeCopy,
