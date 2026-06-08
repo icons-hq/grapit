@@ -72,17 +72,23 @@ const DEFAULT_FILTERS: ReservationExportFormState = {
   dateTo: '',
 };
 
+type ReservationExportKind = 'raw_pii' | 'failed_cancelled_contacts';
+
 export function ReservationExportPanel() {
   const exportMutation = useReservationExport();
   const [filters, setFilters] = useState<ReservationExportFormState>(DEFAULT_FILTERS);
   const [reason, setReason] = useState('');
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [exportKind, setExportKind] = useState<ReservationExportKind>('raw_pii');
 
   const payload = useMemo(
-    () => buildExportPayload(filters, reason),
-    [filters, reason],
+    () => buildExportPayload(filters, reason, exportKind),
+    [filters, reason, exportKind],
   );
-  const filterSummary = useMemo(() => buildFilterSummary(filters), [filters]);
+  const filterSummary = useMemo(
+    () => buildFilterSummary(filters, exportKind),
+    [filters, exportKind],
+  );
   const canConfirm = reason.trim().length > 0 && !exportMutation.isPending;
 
   function setFilter<K extends keyof ReservationExportFormState>(
@@ -100,6 +106,13 @@ export function ReservationExportPanel() {
     exportMutation.mutate(payload);
   }
 
+  function openConfirmDialog(kind: ReservationExportKind) {
+    setExportKind(kind);
+    setConfirmOpen(true);
+  }
+
+  const isContactExport = exportKind === 'failed_cancelled_contacts';
+
   return (
     <section className="space-y-4 rounded-lg bg-white p-4 shadow-sm" aria-labelledby="reservation-export-title">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
@@ -111,10 +124,25 @@ export function ReservationExportPanel() {
             원본 CSV는 개인정보가 포함되므로 필터와 사유를 확인한 뒤 내보내세요.
           </p>
         </div>
-        <Button type="button" className="h-12 w-full sm:w-auto" onClick={() => setConfirmOpen(true)}>
-          <Download className="h-4 w-4" />
-          예약자 원본 CSV 내보내기
-        </Button>
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+          <Button
+            type="button"
+            className="h-12 w-full sm:w-auto"
+            onClick={() => openConfirmDialog('failed_cancelled_contacts')}
+          >
+            <Download className="h-4 w-4" />
+            실패/만료/취소 고객 CSV 내보내기
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="h-12 w-full sm:w-auto"
+            onClick={() => openConfirmDialog('raw_pii')}
+          >
+            <Download className="h-4 w-4" />
+            예약자 원본 CSV 내보내기
+          </Button>
+        </div>
       </div>
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -232,16 +260,26 @@ export function ReservationExportPanel() {
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>예약자 원본 CSV를 내보내시겠습니까?</DialogTitle>
+            <DialogTitle>
+              {isContactExport
+                ? '실패/만료/취소 고객 CSV를 내보내시겠습니까?'
+                : '예약자 원본 CSV를 내보내시겠습니까?'}
+            </DialogTitle>
             <DialogDescription>
-              개인정보가 포함됩니다. 필터와 사유를 확인한 뒤 내보내세요.
+              {isContactExport
+                ? '같은 공연에 현재 유효한 티켓이 있는 고객은 제외됩니다. 필터와 사유를 확인한 뒤 내보내세요.'
+                : '개인정보가 포함됩니다. 필터와 사유를 확인한 뒤 내보내세요.'}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
             <div role="alert" className="flex gap-3 rounded-lg border border-[#F3C8C8] bg-[#FEF2F2] p-3 text-sm font-semibold text-[#C62828]">
               <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
-              <span>원본 CSV에는 예약자 이름, 이메일, 전화번호가 포함됩니다.</span>
+              <span>
+                {isContactExport
+                  ? '고객 CSV에는 이름, 이메일, 전화번호가 포함됩니다.'
+                  : '원본 CSV에는 예약자 이름, 이메일, 전화번호가 포함됩니다.'}
+              </span>
             </div>
 
             <div className="rounded-lg bg-[#F5F5F7] p-3">
@@ -289,7 +327,22 @@ export function ReservationExportPanel() {
 function buildExportPayload(
   filters: ReservationExportFormState,
   reason: string,
+  exportKind: ReservationExportKind,
 ): ReservationExportPayload {
+  if (exportKind === 'failed_cancelled_contacts') {
+    return compactPayload({
+      eventId: filters.eventId.trim(),
+      audienceRegion:
+        filters.audienceRegion === 'all' ? undefined : filters.audienceRegion,
+      paymentMethod:
+        filters.paymentMethod === 'all' ? undefined : filters.paymentMethod,
+      dateFrom: filters.dateFrom,
+      dateTo: filters.dateTo,
+      exportType: 'failed_cancelled_contacts',
+      reason: reason.trim(),
+    });
+  }
+
   return compactPayload({
     eventId: filters.eventId.trim(),
     tierName: filters.tierName.trim(),
@@ -329,12 +382,12 @@ function compactPayload(payload: ReservationExportPayload): ReservationExportPay
   ) as ReservationExportPayload;
 }
 
-function buildFilterSummary(filters: ReservationExportFormState) {
-  return [
+function buildFilterSummary(
+  filters: ReservationExportFormState,
+  exportKind: ReservationExportKind,
+) {
+  const sharedSummary = [
     { label: '이벤트', value: filters.eventId.trim() || '전체' },
-    { label: '좌석 등급', value: filters.tierName.trim() || '전체' },
-    { label: '구역/층', value: filters.zoneFloor.trim() || '전체' },
-    { label: '예매 상태', value: labelFor(RESERVATION_STATUS_OPTIONS, filters.reservationStatus ?? 'all') },
     { label: '국내/해외', value: labelFor(AUDIENCE_REGION_OPTIONS, filters.audienceRegion ?? 'all') },
     { label: '결제 수단', value: labelFor(PAYMENT_METHOD_OPTIONS, filters.paymentMethod) },
     {
@@ -344,6 +397,22 @@ function buildFilterSummary(filters: ReservationExportFormState) {
           ? `${filters.dateFrom || '처음'} ~ ${filters.dateTo || '오늘'}`
           : '전체',
     },
+  ];
+
+  if (exportKind === 'failed_cancelled_contacts') {
+    return [
+      ...sharedSummary,
+      { label: '대상 상태', value: '결제 실패/만료 + 취소 완료' },
+      { label: '성공 제외', value: '같은 공연 active 티켓 보유 고객 제외' },
+    ];
+  }
+
+  return [
+    { label: '이벤트', value: filters.eventId.trim() || '전체' },
+    { label: '좌석 등급', value: filters.tierName.trim() || '전체' },
+    { label: '구역/층', value: filters.zoneFloor.trim() || '전체' },
+    { label: '예매 상태', value: labelFor(RESERVATION_STATUS_OPTIONS, filters.reservationStatus ?? 'all') },
+    ...sharedSummary.slice(1),
   ];
 }
 

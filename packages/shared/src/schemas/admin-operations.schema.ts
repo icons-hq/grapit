@@ -232,11 +232,14 @@ export const adminReservationExportFilterSchema = z
     paymentMethod: z.string().min(1).optional(),
     dateFrom: dateOnly('조회 시작일').optional(),
     dateTo: dateOnly('조회 종료일').optional(),
-    exportType: z.enum(['masked', 'raw_pii']).default('masked'),
+    exportType: z.enum(['masked', 'raw_pii', 'failed_cancelled_contacts']).default('masked'),
     reason: z.string().min(1, '원본 CSV 내보내기 사유를 입력해주세요').optional(),
   })
   .superRefine((value, ctx) => {
-    if (value.exportType === 'raw_pii' && !value.reason?.trim()) {
+    if (
+      (value.exportType === 'raw_pii' || value.exportType === 'failed_cancelled_contacts')
+      && !value.reason?.trim()
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['reason'],

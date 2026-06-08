@@ -93,6 +93,38 @@ describe('ReservationExportPanel', () => {
     );
   });
 
+  it('exports failed/cancelled contacts through the dedicated contact export button', async () => {
+    const user = userEvent.setup();
+    renderPanel();
+
+    expect(
+      screen.getByRole('button', { name: '실패/만료/취소 고객 CSV 내보내기' }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '실패/만료/취소 고객 CSV 내보내기' }));
+
+    expect(
+      screen.getByRole('heading', { name: '실패/만료/취소 고객 CSV를 내보내시겠습니까?' }),
+    ).toBeInTheDocument();
+
+    const confirmButton = screen.getByRole('button', { name: 'CSV 내보내기' });
+    expect(confirmButton).toBeDisabled();
+
+    await user.type(screen.getByLabelText('내보내기 사유'), '실패 고객 안내');
+    await user.click(confirmButton);
+
+    expect(mocks.exportMutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        exportType: 'failed_cancelled_contacts',
+        reason: '실패 고객 안내',
+      }),
+    );
+    expect(mocks.exportMutate.mock.calls[0]?.[0]).not.toHaveProperty('reservationStatus');
+    expect(mocks.exportMutate.mock.calls[0]?.[0]).not.toHaveProperty('funnelStatus');
+    expect(mocks.exportMutate.mock.calls[0]?.[0]).not.toHaveProperty('tierName');
+    expect(mocks.exportMutate.mock.calls[0]?.[0]).not.toHaveProperty('zoneFloor');
+  });
+
   it('exports payment failed and expired rows through the admin funnel status filter', async () => {
     const user = userEvent.setup();
     renderPanel();

@@ -1327,6 +1327,156 @@ describe('AdminBookingService', () => {
       });
     });
 
+    it('exports failed, expired, and cancelled contacts as one row per customer and performance', async () => {
+      const exportCalls: Array<{ method: string; args: unknown[] }> = [];
+      mockDb.select.mockReturnValueOnce(
+        createRecordingChainMock([
+          {
+            user: {
+              id: 'user-1',
+              name: '=Failed Buyer',
+              email: '=failed@example.com',
+              phone: '+886900000000',
+              country: 'TW',
+            },
+            performance: {
+              id: 'performance-1',
+              title: 'Girl Rules Fanmeeting',
+            },
+            reservation: {
+              reservationNumber: 'R-EXPIRED-LATEST',
+              status: 'PENDING_PAYMENT',
+              createdAt: new Date('2026-06-07T12:20:00.000Z'),
+            },
+            payment: {
+              status: 'EXPIRED',
+            },
+          },
+          {
+            user: {
+              id: 'user-1',
+              name: '=Failed Buyer',
+              email: '=failed@example.com',
+              phone: '+886900000000',
+              country: 'TW',
+            },
+            performance: {
+              id: 'performance-1',
+              title: 'Girl Rules Fanmeeting',
+            },
+            reservation: {
+              reservationNumber: 'R-FAILED-OLDER',
+              status: 'FAILED',
+              createdAt: new Date('2026-06-07T12:10:00.000Z'),
+            },
+            payment: {
+              status: null,
+            },
+          },
+          {
+            user: {
+              id: 'user-2',
+              name: 'Cancelled Buyer',
+              email: 'cancelled@example.com',
+              phone: '+821055501234',
+              country: 'KR',
+            },
+            performance: {
+              id: 'performance-1',
+              title: 'Girl Rules Fanmeeting',
+            },
+            reservation: {
+              reservationNumber: 'R-CANCELLED',
+              status: 'CANCELLED',
+              createdAt: new Date('2026-06-06T09:00:00.000Z'),
+            },
+            payment: {
+              status: 'CANCELED',
+            },
+          },
+        ], exportCalls),
+      );
+
+      const result = await service.exportReservations({
+        actorUserId: 'admin-1',
+        ipAddress: '203.0.113.10',
+        userAgent: 'Vitest Admin Console',
+        filters: {
+          eventId: 'performance-1',
+          audienceRegion: 'overseas',
+          paymentMethod: 'CARD',
+          dateFrom: '2026-06-01',
+          dateTo: '2026-06-30',
+          exportType: 'failed_cancelled_contacts',
+          reason: '실패 고객 안내',
+        },
+      });
+
+      expect(result.rowCount).toBe(2);
+      expect(result.filename).toContain('reservation-export-failed-cancelled-contacts');
+      expect(result.csv).toContain('"User Name","User Email","User Phone"');
+      expect(result.csv).toContain(`"'=Failed Buyer","'=failed@example.com","'+886900000000"`);
+      expect(result.csv).toContain('"R-EXPIRED-LATEST","PENDING_PAYMENT","EXPIRED"');
+      expect(result.csv).toContain('"2","0"');
+      expect(result.csv).toContain(`"Cancelled Buyer","cancelled@example.com","'+821055501234"`);
+      expect(result.csv).toContain('"R-CANCELLED","CANCELLED","CANCELED"');
+      expect(result.csv).toContain('"0","1"');
+
+      const exportWhere = exportCalls.find((call) => call.method === 'where')?.args[0];
+      const exportWhereText = objectGraphText(exportWhere);
+      expect(exportWhereText).toContain('not exists');
+      expect(exportWhereText).toContain('active');
+      expect(exportWhereText).toContain('FAILED');
+      expect(exportWhereText).toContain('PENDING_PAYMENT');
+      expect(exportWhereText).toContain('EXPIRED');
+      expect(exportWhereText).toContain('CANCELLED');
+
+      const [auditInput] = mockAdminAuditService.write.mock.calls[0]!;
+      expect(auditInput).toMatchObject({
+        actorUserId: 'admin-1',
+        action: 'reservations.export_raw',
+        resourceType: 'reservation_export',
+        resourceId: 'failed_cancelled_contacts',
+        status: 'success',
+        reason: '실패 고객 안내',
+        after: {
+          exportType: 'failed_cancelled_contacts',
+          filters: {
+            eventId: 'performance-1',
+            audienceRegion: 'overseas',
+            paymentMethod: 'CARD',
+            dateFrom: '2026-06-01',
+            dateTo: '2026-06-30',
+          },
+          rowCount: 2,
+        },
+      });
+      expect(JSON.stringify(auditInput)).not.toContain('failed@example.com');
+      expect(JSON.stringify(auditInput)).not.toContain('+886900000000');
+      expect(JSON.stringify(auditInput)).not.toContain('R-EXPIRED-LATEST');
+    });
+
+    it('keeps active ticket exclusion scoped to the same performance for failed/cancelled contact exports', async () => {
+      const exportCalls: Array<{ method: string; args: unknown[] }> = [];
+      mockDb.select.mockReturnValueOnce(createRecordingChainMock([], exportCalls));
+
+      await service.exportReservations({
+        actorUserId: 'admin-1',
+        filters: {
+          exportType: 'failed_cancelled_contacts',
+          reason: '실패 고객 안내',
+        },
+      });
+
+      const exportWhere = exportCalls.find((call) => call.method === 'where')?.args[0];
+      const exportWhereText = objectGraphText(exportWhere);
+
+      expect(exportWhereText).toContain('active_r.user_id');
+      expect(exportWhereText).toContain('active_st.performance_id');
+      expect(exportWhereText).toContain('ticket_items');
+      expect(exportWhereText).toContain('active');
+    });
+
     it('prefixes raw reservation CSV with a UTF-8 BOM for Excel-compatible Korean names and seat labels', async () => {
       mockDb.select.mockReturnValueOnce(
         createChainMock([

@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import type { Request, Response } from 'express';
 import { describe, expect, it, vi } from 'vitest';
 
 import { adminBookingListQuerySchema } from '@grabit/shared';
@@ -74,5 +75,46 @@ describe('AdminBookingController', () => {
       search: 'buyer@example.com',
       page: 2,
     });
+  });
+
+  it('preserves the failed/cancelled contact export type when forwarding export requests', async () => {
+    const adminBookingService = {
+      exportReservations: vi.fn().mockResolvedValue({
+        filename: 'reservation-export-failed-cancelled-contacts-2026-06-08.csv',
+        contentType: 'text/csv; charset=utf-8',
+        csv: 'User Email\nfailed@example.com\n',
+        rowCount: 1,
+      }),
+    };
+    const controller = new AdminBookingController(adminBookingService as never);
+    const response = {
+      set: vi.fn(),
+    } as unknown as Response;
+    const request = {
+      get: vi.fn().mockReturnValue('Vitest Admin Console'),
+      ip: '203.0.113.10',
+      headers: {},
+    } as unknown as Request;
+
+    await controller.exportBookings(
+      'admin-1',
+      request,
+      response,
+      {
+        exportType: 'failed_cancelled_contacts',
+        reason: '실패 고객 안내',
+      },
+    );
+
+    expect(adminBookingService.exportReservations).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: 'admin-1',
+        filters: {
+          exportType: 'failed_cancelled_contacts',
+          reason: '실패 고객 안내',
+        },
+        userAgent: 'Vitest Admin Console',
+      }),
+    );
   });
 });

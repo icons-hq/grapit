@@ -302,6 +302,28 @@ describe('admin operations contract', () => {
     expect(parsed.funnelStatus).toBe('PAYMENT_FAILED');
   });
 
+  it('requires a reason for failed/cancelled contact exports because they expose PII', () => {
+    expect(() =>
+      adminReservationExportFilterSchema.parse({
+        eventId: 'event-1',
+        exportType: 'failed_cancelled_contacts',
+      }),
+    ).toThrow(/사유/);
+
+    const parsed = adminReservationExportFilterSchema.parse({
+      eventId: 'event-1',
+      audienceRegion: 'overseas',
+      paymentMethod: 'CARD',
+      dateFrom: '2026-05-01',
+      dateTo: '2026-05-31',
+      exportType: 'failed_cancelled_contacts',
+      reason: 'failed customer outreach',
+    });
+
+    expect(parsed.exportType).toBe('failed_cancelled_contacts');
+    expect(parsed.reason).toBe('failed customer outreach');
+  });
+
   it('represents MFA only as a deferred accepted risk', () => {
     const parsed = adminSecurityStatusSchema.parse({
       mfa: {
