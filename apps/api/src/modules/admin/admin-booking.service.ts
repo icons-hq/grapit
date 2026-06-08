@@ -215,7 +215,7 @@ type ReservationExportRow = {
     id: string;
     title: string;
   };
-  ticketItem: AdminTicketItemRow;
+  ticketItem: AdminTicketItemRow | null;
   payment: {
     method: string | null;
     status: string | null;
@@ -1234,6 +1234,9 @@ export class AdminBookingService {
     if (filters.reservationStatus) {
       conditions.push(eq(reservations.status, filters.reservationStatus));
     }
+    if (filters.funnelStatus) {
+      conditions.push(funnelStatusEqualsSql(filters.funnelStatus));
+    }
     if (filters.audienceRegion === 'domestic') {
       conditions.push(eq(users.country, 'KR'));
     }
@@ -1307,7 +1310,7 @@ export class AdminBookingService {
       .innerJoin(users, eq(reservations.userId, users.id))
       .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
       .innerJoin(performances, eq(showtimes.performanceId, performances.id))
-      .innerJoin(ticketItems, eq(ticketItems.reservationId, reservations.id))
+      .leftJoin(ticketItems, eq(ticketItems.reservationId, reservations.id))
       .leftJoin(payments, eq(payments.reservationId, reservations.id))
       .where(conditions.length > 0 ? and(...conditions) : undefined)
       .orderBy(desc(reservations.createdAt), asc(ticketItems.createdAt), asc(ticketItems.id));
@@ -1442,7 +1445,9 @@ export class AdminBookingService {
 
 function reservationExportRowToCsvValues(row: ReservationExportRow): readonly unknown[] {
   const audienceRegion = row.user.country === 'KR' ? 'domestic' : 'overseas';
-  const ticketItem = mapTicketItemToAdminTicketItem(row.ticketItem);
+  const ticketItem = row.ticketItem
+    ? mapTicketItemToAdminTicketItem(row.ticketItem)
+    : null;
 
   return [
     row.reservation.reservationNumber,
@@ -1453,26 +1458,26 @@ function reservationExportRowToCsvValues(row: ReservationExportRow): readonly un
     row.user.country,
     row.performance.title,
     row.showtime.dateTime?.toISOString() ?? '',
-    row.ticketItem.tierName,
-    row.ticketItem.seatKey,
+    row.ticketItem?.tierName ?? '',
+    row.ticketItem?.seatKey ?? '',
     row.payment?.method ?? '',
     row.payment?.status ?? '',
     row.reservation.totalAmount,
     row.reservation.status,
     row.reservation.createdAt?.toISOString() ?? '',
-    ticketItem.id,
-    ticketItem.status,
-    ticketItem.admissionState,
-    ticketItem.enteredAt ?? '',
-    ticketItem.cancelledAt ?? '',
-    ticketItem.cancelReason ?? '',
-    ticketItem.price,
-    ticketItem.serviceFee,
-    ticketItem.price + ticketItem.serviceFee,
-    ticketItem.cancellationFee,
-    ticketItem.serviceFeeRefund,
-    ticketItem.refundableAmount,
-    ticketItem.reopenState,
+    ticketItem?.id ?? '',
+    ticketItem?.status ?? '',
+    ticketItem?.admissionState ?? '',
+    ticketItem?.enteredAt ?? '',
+    ticketItem?.cancelledAt ?? '',
+    ticketItem?.cancelReason ?? '',
+    ticketItem?.price ?? '',
+    ticketItem?.serviceFee ?? '',
+    ticketItem ? ticketItem.price + ticketItem.serviceFee : '',
+    ticketItem?.cancellationFee ?? '',
+    ticketItem?.serviceFeeRefund ?? '',
+    ticketItem?.refundableAmount ?? '',
+    ticketItem?.reopenState ?? '',
   ];
 }
 
@@ -1712,6 +1717,7 @@ function reservationExportFiltersForAudit(
     'tierName',
     'zoneFloor',
     'reservationStatus',
+    'funnelStatus',
     'audienceRegion',
     'paymentMethod',
     'dateFrom',

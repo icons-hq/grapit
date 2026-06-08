@@ -92,4 +92,24 @@ describe('ReservationExportPanel', () => {
       }),
     );
   });
+
+  it('exports payment failed and expired rows through the admin funnel status filter', async () => {
+    const user = userEvent.setup();
+    renderPanel();
+
+    await user.click(screen.getByLabelText('예매 상태'));
+    await user.click(await screen.findByRole('option', { name: '결제 실패/만료' }));
+    await user.click(screen.getByRole('button', { name: '예약자 원본 CSV 내보내기' }));
+    await user.type(screen.getByLabelText('내보내기 사유'), '실패 고객 안내');
+    await user.click(screen.getByRole('button', { name: 'CSV 내보내기' }));
+
+    expect(mocks.exportMutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        exportType: 'raw_pii',
+        reason: '실패 고객 안내',
+        funnelStatus: 'PAYMENT_FAILED',
+      }),
+    );
+    expect(mocks.exportMutate.mock.calls[0]?.[0]).not.toHaveProperty('reservationStatus');
+  });
 });

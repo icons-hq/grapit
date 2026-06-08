@@ -1214,6 +1214,119 @@ describe('AdminBookingService', () => {
       expect(result.csv).toContain('"79000"');
     });
 
+    it('includes failed reservations without ticket items as reservation-level CSV rows', async () => {
+      mockDb.select.mockReturnValueOnce(
+        createChainMock([
+          {
+            reservation: {
+              id: 'reservation-failed-no-ticket',
+              reservationNumber: 'R-FAILED-NO-TICKET',
+              status: 'FAILED',
+              totalAmount: 724000,
+              createdAt: new Date('2026-06-07T12:14:00.000Z'),
+            },
+            user: {
+              name: 'Wu Tsai Jung',
+              email: 'failed-buyer@example.com',
+              phone: '+886952228683',
+              country: 'TW',
+            },
+            showtime: {
+              dateTime: new Date('2026-07-04T06:00:00.000Z'),
+            },
+            performance: {
+              id: 'performance-1',
+              title: 'Girl Rules Fanmeeting',
+            },
+            ticketItem: null,
+            payment: {
+              method: null,
+              status: null,
+              paidAt: null,
+            },
+          },
+        ]),
+      );
+
+      const result = await service.exportReservations({
+        actorUserId: 'admin-1',
+        filters: {
+          reservationStatus: 'FAILED',
+          exportType: 'raw_pii',
+          reason: '실패 고객 안내',
+        },
+      });
+
+      expect(result.rowCount).toBe(1);
+      expect(result.csv).toContain(`"R-FAILED-NO-TICKET","Wu Tsai Jung","failed-buyer@example.com","'+886952228683"`);
+      expect(result.csv).toContain('"overseas","TW","Girl Rules Fanmeeting"');
+      expect(result.csv).toContain('"724000","FAILED"');
+      expect(result.csv).not.toContain('undefined');
+      expect(result.csv).not.toContain('null');
+    });
+
+    it('filters exports by admin funnel status so expired pending payments appear as payment failed', async () => {
+      const exportCalls: Array<{ method: string; args: unknown[] }> = [];
+      mockDb.select.mockReturnValueOnce(
+        createRecordingChainMock([
+          {
+            reservation: {
+              id: 'reservation-expired-no-ticket',
+              reservationNumber: 'R-EXPIRED-NO-TICKET',
+              status: 'PENDING_PAYMENT',
+              totalAmount: 724000,
+              createdAt: new Date('2026-06-07T12:14:00.000Z'),
+            },
+            user: {
+              name: 'Expired Buyer',
+              email: 'expired-buyer@example.com',
+              phone: '+886900000000',
+              country: 'TW',
+            },
+            showtime: {
+              dateTime: new Date('2026-07-04T06:00:00.000Z'),
+            },
+            performance: {
+              id: 'performance-1',
+              title: 'Girl Rules Fanmeeting',
+            },
+            ticketItem: null,
+            payment: {
+              method: 'CARD',
+              status: 'EXPIRED',
+              paidAt: null,
+            },
+          },
+        ], exportCalls),
+      );
+
+      const result = await service.exportReservations({
+        actorUserId: 'admin-1',
+        filters: {
+          funnelStatus: 'PAYMENT_FAILED',
+          exportType: 'raw_pii',
+          reason: '만료 고객 안내',
+        },
+      });
+
+      expect(result.rowCount).toBe(1);
+      expect(result.csv).toContain('"R-EXPIRED-NO-TICKET"');
+      expect(result.csv).toContain('"CARD","EXPIRED","724000","PENDING_PAYMENT"');
+      const exportWhere = exportCalls.find((call) => call.method === 'where')?.args[0];
+      expect(objectGraphContains(exportWhere, 'PAYMENT_FAILED')).toBe(true);
+      expect(objectGraphContains(exportWhere, 'EXPIRED')).toBe(true);
+
+      const [auditInput] = mockAdminAuditService.write.mock.calls[0]!;
+      expect(auditInput).toMatchObject({
+        after: {
+          filters: {
+            funnelStatus: 'PAYMENT_FAILED',
+          },
+          rowCount: 1,
+        },
+      });
+    });
+
     it('prefixes raw reservation CSV with a UTF-8 BOM for Excel-compatible Korean names and seat labels', async () => {
       mockDb.select.mockReturnValueOnce(
         createChainMock([

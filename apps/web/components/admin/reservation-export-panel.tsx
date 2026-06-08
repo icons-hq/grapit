@@ -27,10 +27,10 @@ import {
 
 const RESERVATION_STATUS_OPTIONS = [
   { value: 'all', label: '전체 상태' },
-  { value: 'PENDING_PAYMENT', label: '결제 대기' },
-  { value: 'CONFIRMED', label: '예매 완료' },
-  { value: 'CANCELLED', label: '취소 완료' },
-  { value: 'FAILED', label: '실패' },
+  { value: 'reservation:PENDING_PAYMENT', label: '결제 대기' },
+  { value: 'reservation:CONFIRMED', label: '예매 완료' },
+  { value: 'funnel:CANCELLED', label: '취소 완료' },
+  { value: 'funnel:PAYMENT_FAILED', label: '결제 실패/만료' },
 ] as const;
 
 const AUDIENCE_REGION_OPTIONS = [
@@ -54,7 +54,7 @@ interface ReservationExportFormState {
   eventId: string;
   tierName: string;
   zoneFloor: string;
-  reservationStatus: SelectAllValue | ReservationExportPayload['reservationStatus'];
+  reservationStatus: SelectAllValue | (typeof RESERVATION_STATUS_OPTIONS)[number]['value'];
   audienceRegion: SelectAllValue | ReservationExportPayload['audienceRegion'];
   paymentMethod: string;
   dateFrom: string;
@@ -294,8 +294,8 @@ function buildExportPayload(
     eventId: filters.eventId.trim(),
     tierName: filters.tierName.trim(),
     zoneFloor: filters.zoneFloor.trim(),
-    reservationStatus:
-      filters.reservationStatus === 'all' ? undefined : filters.reservationStatus,
+    reservationStatus: reservationStatusPayload(filters.reservationStatus),
+    funnelStatus: funnelStatusPayload(filters.reservationStatus),
     audienceRegion:
       filters.audienceRegion === 'all' ? undefined : filters.audienceRegion,
     paymentMethod:
@@ -305,6 +305,22 @@ function buildExportPayload(
     exportType: 'raw_pii',
     reason: reason.trim(),
   });
+}
+
+function reservationStatusPayload(
+  value: ReservationExportFormState['reservationStatus'],
+): ReservationExportPayload['reservationStatus'] | undefined {
+  return value.startsWith('reservation:')
+    ? value.slice('reservation:'.length) as ReservationExportPayload['reservationStatus']
+    : undefined;
+}
+
+function funnelStatusPayload(
+  value: ReservationExportFormState['reservationStatus'],
+): ReservationExportPayload['funnelStatus'] | undefined {
+  return value.startsWith('funnel:')
+    ? value.slice('funnel:'.length) as ReservationExportPayload['funnelStatus']
+    : undefined;
 }
 
 function compactPayload(payload: ReservationExportPayload): ReservationExportPayload {
