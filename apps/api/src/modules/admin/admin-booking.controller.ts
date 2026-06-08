@@ -76,7 +76,9 @@ export class AdminBookingController {
       actorUserId: operatorUserId,
       filters: {
         ...body,
-        exportType: 'raw_pii',
+        exportType: body.exportType === 'failed_cancelled_contacts'
+          ? 'failed_cancelled_contacts'
+          : 'raw_pii',
       },
       ipAddress: resolveTrustedRequestIp(request),
       userAgent: request.get('user-agent') ?? null,

@@ -47,6 +47,7 @@ import type {
 } from '@grabit/shared';
 
 const RAW_EXPORT_TYPE = 'raw_pii';
+const FAILED_CANCELLED_CONTACTS_EXPORT_TYPE = 'failed_cancelled_contacts';
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 const RESERVATION_EXPORT_HEADERS = [
   'Reservation Number',
@@ -77,6 +78,21 @@ const RESERVATION_EXPORT_HEADERS = [
   'Service Fee Refund',
   'Refundable Amount',
   'Reopen State',
+] as const;
+const FAILED_CANCELLED_CONTACT_EXPORT_HEADERS = [
+  'User Name',
+  'User Email',
+  'User Phone',
+  'Audience Region',
+  'User Country',
+  'Performance ID',
+  'Performance Title',
+  'Last Affected Reservation Number',
+  'Last Reservation Status',
+  'Last Payment Status',
+  'Last Affected At',
+  'Payment Failed/Expired Count',
+  'Cancelled Count',
 ] as const;
 
 const PAYMENT_METHOD_FILTER_ALIASES = {
@@ -221,6 +237,39 @@ type ReservationExportRow = {
     status: string | null;
     paidAt: Date | null;
   } | null;
+};
+
+type FailedCancelledContactExportSourceRow = {
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    phone: string;
+    country: string;
+  };
+  performance: {
+    id: string;
+    title: string;
+  };
+  reservation: {
+    reservationNumber: string;
+    status: string;
+    createdAt: Date | null;
+  };
+  payment: {
+    status: string | null;
+  } | null;
+};
+
+type FailedCancelledContactExportRow = {
+  user: FailedCancelledContactExportSourceRow['user'];
+  performance: FailedCancelledContactExportSourceRow['performance'];
+  lastReservationNumber: string;
+  lastReservationStatus: string;
+  lastPaymentStatus: string | null;
+  lastAffectedAt: Date | null;
+  paymentFailedExpiredCount: number;
+  cancelledCount: number;
 };
 
 type AdminBookingListRow = {
@@ -596,6 +645,29 @@ function adminBookingFunnelStatusSql(): SQL<AdminBookingFunnelStatus> {
 
 function funnelStatusEqualsSql(status: string): SQL {
   return sql`${adminBookingFunnelStatusSql()} = ${status}`;
+}
+
+function failedCancelledContactConditionSql(): SQL {
+  return sql`(
+    ${reservations.status} = 'FAILED'
+    or ${reservations.status} = 'CANCELLED'
+    or (
+      ${reservations.status} = 'PENDING_PAYMENT'
+      and ${payments.status} in ('ABORTED', 'EXPIRED', 'CANCELED')
+    )
+  )`;
+}
+
+function noActiveTicketForSameUserPerformanceSql(): SQL {
+  return sql`not exists (
+    select 1
+    from reservations active_r
+    inner join showtimes active_st on active_st.id = active_r.showtime_id
+    inner join ticket_items active_ti on active_ti.reservation_id = active_r.id
+    where active_r.user_id = ${reservations.userId}
+      and active_st.performance_id = ${showtimes.performanceId}
+      and active_ti.status = 'active'
+  )`;
 }
 
 function countWhereSql(condition: SQL): SQL<number> {
@@ -1176,28 +1248,48 @@ export class AdminBookingService {
 
     const filters = {
       ...request.filters,
-      exportType: RAW_EXPORT_TYPE,
       reason,
     } satisfies AdminReservationExportFilter;
-
-    const rows = await this.selectReservationExportRows(filters);
+    const isContactExport = filters.exportType === FAILED_CANCELLED_CONTACTS_EXPORT_TYPE;
+    const exportType = isContactExport
+      ? FAILED_CANCELLED_CONTACTS_EXPORT_TYPE
+      : RAW_EXPORT_TYPE;
+    const rows = isContactExport
+      ? await this.selectFailedCancelledContactExportRows(filters)
+      : await this.selectReservationExportRows({
+        ...filters,
+        exportType: RAW_EXPORT_TYPE,
+      });
     const csv = withUtf8Bom(safeCsvRows([
-      RESERVATION_EXPORT_HEADERS,
-      ...rows.map((row) => reservationExportRowToCsvValues(row)),
+      ...(isContactExport
+        ? [
+          FAILED_CANCELLED_CONTACT_EXPORT_HEADERS,
+          ...(rows as FailedCancelledContactExportRow[]).map((row) =>
+            failedCancelledContactExportRowToCsvValues(row)
+          ),
+        ]
+        : [
+          RESERVATION_EXPORT_HEADERS,
+          ...(rows as ReservationExportRow[]).map((row) =>
+            reservationExportRowToCsvValues(row)
+          ),
+        ]),
     ]));
 
     await this.auditService.write({
       actorUserId: request.actorUserId,
       action: 'reservations.export_raw',
       resourceType: 'reservation_export',
-      resourceId: RAW_EXPORT_TYPE,
+      resourceId: exportType,
       status: 'success',
       reason,
       changedFields: ['exportType', 'filters', 'rowCount'],
       before: {},
       after: {
-        exportType: RAW_EXPORT_TYPE,
-        filters: reservationExportFiltersForAudit(filters),
+        exportType,
+        filters: isContactExport
+          ? failedCancelledContactExportFiltersForAudit(filters)
+          : reservationExportFiltersForAudit(filters),
         rowCount: rows.length,
       },
       ipAddress: request.ipAddress ?? null,
@@ -1205,7 +1297,9 @@ export class AdminBookingService {
     });
 
     return {
-      filename: `reservation-export-raw-${new Date().toISOString().slice(0, 10)}.csv`,
+      filename: isContactExport
+        ? `reservation-export-failed-cancelled-contacts-${new Date().toISOString().slice(0, 10)}.csv`
+        : `reservation-export-raw-${new Date().toISOString().slice(0, 10)}.csv`,
       contentType: 'text/csv; charset=utf-8',
       csv,
       rowCount: rows.length,
@@ -1314,6 +1408,66 @@ export class AdminBookingService {
       .leftJoin(payments, eq(payments.reservationId, reservations.id))
       .where(conditions.length > 0 ? and(...conditions) : undefined)
       .orderBy(desc(reservations.createdAt), asc(ticketItems.createdAt), asc(ticketItems.id));
+  }
+
+  private async selectFailedCancelledContactExportRows(
+    filters: AdminReservationExportFilter,
+  ): Promise<FailedCancelledContactExportRow[]> {
+    const conditions: SQL[] = [failedCancelledContactConditionSql()];
+
+    if (filters.eventId) {
+      conditions.push(eq(performances.id, filters.eventId));
+    }
+    if (filters.audienceRegion === 'domestic') {
+      conditions.push(eq(users.country, 'KR'));
+    }
+    if (filters.audienceRegion === 'overseas') {
+      conditions.push(ne(users.country, 'KR'));
+    }
+    if (filters.paymentMethod) {
+      conditions.push(paymentMethodFilterSql(filters.paymentMethod));
+    }
+    if (filters.dateFrom) {
+      conditions.push(gte(reservations.createdAt, dateOnlyStart(filters.dateFrom)));
+    }
+    if (filters.dateTo) {
+      conditions.push(lte(reservations.createdAt, dateOnlyEnd(filters.dateTo)));
+    }
+    conditions.push(noActiveTicketForSameUserPerformanceSql());
+
+    const sourceRows = await this.db
+      .select({
+        user: {
+          id: users.id,
+          name: users.name,
+          email: users.email,
+          phone: users.phone,
+          country: users.country,
+        },
+        performance: {
+          id: performances.id,
+          title: performances.title,
+        },
+        reservation: {
+          reservationNumber: reservations.reservationNumber,
+          status: reservations.status,
+          createdAt: reservations.createdAt,
+        },
+        payment: {
+          status: payments.status,
+        },
+      })
+      .from(reservations)
+      .innerJoin(users, eq(reservations.userId, users.id))
+      .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
+      .innerJoin(performances, eq(showtimes.performanceId, performances.id))
+      .leftJoin(payments, eq(payments.reservationId, reservations.id))
+      .where(and(...conditions))
+      .orderBy(desc(reservations.createdAt));
+
+    return groupFailedCancelledContactExportRows(
+      sourceRows as FailedCancelledContactExportSourceRow[],
+    );
   }
 
   async manualOpen(
@@ -1479,6 +1633,83 @@ function reservationExportRowToCsvValues(row: ReservationExportRow): readonly un
     ticketItem?.refundableAmount ?? '',
     ticketItem?.reopenState ?? '',
   ];
+}
+
+function failedCancelledContactExportRowToCsvValues(
+  row: FailedCancelledContactExportRow,
+): readonly unknown[] {
+  const audienceRegion = row.user.country === 'KR' ? 'domestic' : 'overseas';
+
+  return [
+    row.user.name,
+    row.user.email,
+    row.user.phone,
+    audienceRegion,
+    row.user.country,
+    row.performance.id,
+    row.performance.title,
+    row.lastReservationNumber,
+    row.lastReservationStatus,
+    row.lastPaymentStatus ?? '',
+    row.lastAffectedAt?.toISOString() ?? '',
+    row.paymentFailedExpiredCount,
+    row.cancelledCount,
+  ];
+}
+
+function groupFailedCancelledContactExportRows(
+  rows: FailedCancelledContactExportSourceRow[],
+): FailedCancelledContactExportRow[] {
+  const grouped = new Map<string, FailedCancelledContactExportRow>();
+
+  for (const row of rows) {
+    const key = `${row.user.id}:${row.performance.id}`;
+    const existing = grouped.get(key);
+    const rowAffectedAt = row.reservation.createdAt;
+    const failedCount = isFailedOrExpiredContactRow(row) ? 1 : 0;
+    const cancelledCount = row.reservation.status === 'CANCELLED' ? 1 : 0;
+
+    if (!existing) {
+      grouped.set(key, {
+        user: row.user,
+        performance: row.performance,
+        lastReservationNumber: row.reservation.reservationNumber,
+        lastReservationStatus: row.reservation.status,
+        lastPaymentStatus: row.payment?.status ?? null,
+        lastAffectedAt: rowAffectedAt,
+        paymentFailedExpiredCount: failedCount,
+        cancelledCount,
+      });
+      continue;
+    }
+
+    existing.paymentFailedExpiredCount += failedCount;
+    existing.cancelledCount += cancelledCount;
+
+    if (isNewerDate(rowAffectedAt, existing.lastAffectedAt)) {
+      existing.lastReservationNumber = row.reservation.reservationNumber;
+      existing.lastReservationStatus = row.reservation.status;
+      existing.lastPaymentStatus = row.payment?.status ?? null;
+      existing.lastAffectedAt = rowAffectedAt;
+    }
+  }
+
+  return Array.from(grouped.values());
+}
+
+function isFailedOrExpiredContactRow(row: FailedCancelledContactExportSourceRow): boolean {
+  return row.reservation.status === 'FAILED'
+    || (
+      row.reservation.status === 'PENDING_PAYMENT'
+      && ['ABORTED', 'EXPIRED', 'CANCELED'].includes(row.payment?.status ?? '')
+    );
+}
+
+function isNewerDate(candidate: Date | null, current: Date | null): boolean {
+  if (!candidate) {
+    return false;
+  }
+  return !current || candidate.getTime() > current.getTime();
 }
 
 function mapTicketItemToSeatSelection(item: AdminTicketItemRow): FloorAwareSeatSelection {
@@ -1718,6 +1949,27 @@ function reservationExportFiltersForAudit(
     'zoneFloor',
     'reservationStatus',
     'funnelStatus',
+    'audienceRegion',
+    'paymentMethod',
+    'dateFrom',
+    'dateTo',
+  ] as const) {
+    const value = filters[key];
+    if (typeof value === 'string' && value.trim().length > 0) {
+      auditFilters[key] = value;
+    }
+  }
+
+  return auditFilters;
+}
+
+function failedCancelledContactExportFiltersForAudit(
+  filters: AdminReservationExportFilter,
+): Record<string, string> {
+  const auditFilters: Record<string, string> = {};
+
+  for (const key of [
+    'eventId',
     'audienceRegion',
     'paymentMethod',
     'dateFrom',
