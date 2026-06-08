@@ -348,6 +348,66 @@ describe('TossPaymentsClient', () => {
     );
   });
 
+  it('paginates Toss settlement rows until the final partial page', async () => {
+    const firstPage = Array.from({ length: 5_000 }, (_, index) => ({
+      paymentKey: `payment-key-${index}`,
+      amount: 10_000,
+      fee: 300,
+      supplyAmount: 273,
+      vat: 27,
+      payOutAmount: 9_700,
+      soldDate: '2026-06-04',
+      paidOutDate: '2026-06-15',
+      method: '카드',
+    }));
+    const secondPage = [
+      {
+        paymentKey: 'payment-key-5000',
+        amount: 20_000,
+        fee: 600,
+        supplyAmount: 545,
+        vat: 55,
+        payOutAmount: 19_400,
+        soldDate: '2026-06-04',
+        paidOutDate: '2026-06-15',
+        method: '카드',
+      },
+    ];
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue(firstPage),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue(secondPage),
+      });
+
+    const rows = await client.querySettlements({
+      startDate: '2026-06-04',
+      endDate: '2026-06-08',
+      dateType: 'soldDate',
+    });
+
+    expect(rows).toHaveLength(5_001);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      'https://api.tosspayments.com/v1/settlements?startDate=2026-06-04&endDate=2026-06-08&dateType=soldDate&page=1&size=5000',
+      expect.objectContaining({
+        method: 'GET',
+        headers: expect.objectContaining({
+          Authorization: authHeader,
+        }),
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      'https://api.tosspayments.com/v1/settlements?startDate=2026-06-04&endDate=2026-06-08&dateType=soldDate&page=2&size=5000',
+      expect.any(Object),
+    );
+  });
+
   it('uses the foreign easy pay secret when querying foreign easy pay payment state', async () => {
     const foreignEasyPaySecretKey = 'test_sk_foreign_easy_pay_secret';
     const foreignEasyPayAuthHeader =

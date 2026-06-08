@@ -45,6 +45,8 @@ export interface TossSettlementRow {
   method?: string | null;
 }
 
+const TOSS_SETTLEMENT_PAGE_SIZE = 5_000;
+
 export interface TossPaymentCancelOptions extends TossPaymentRequestOptions {
   cancelAmount?: number;
   currency?: string;
@@ -289,25 +291,39 @@ export class TossPaymentsClient {
   async querySettlements(
     options: TossSettlementQueryOptions,
   ): Promise<TossSettlementRow[]> {
-    const params = new URLSearchParams({
-      startDate: options.startDate,
-      endDate: options.endDate,
-      dateType: options.dateType,
-    });
+    const rows: TossSettlementRow[] = [];
+    let page = 1;
 
-    const response = await fetch(`${this.baseUrl}/settlements?${params.toString()}`, {
-      method: 'GET',
-      headers: {
-        Authorization: this.getAuthHeader(options.secretKeyScope),
-      },
-    });
+    while (true) {
+      const params = new URLSearchParams({
+        startDate: options.startDate,
+        endDate: options.endDate,
+        dateType: options.dateType,
+        page: String(page),
+        size: String(TOSS_SETTLEMENT_PAGE_SIZE),
+      });
 
-    const data: unknown = await response.json();
+      const response = await fetch(`${this.baseUrl}/settlements?${params.toString()}`, {
+        method: 'GET',
+        headers: {
+          Authorization: this.getAuthHeader(options.secretKeyScope),
+        },
+      });
 
-    if (!response.ok) {
-      throw this.toPaymentError(data, '정산 내역 조회에 실패했습니다');
+      const data: unknown = await response.json();
+
+      if (!response.ok) {
+        throw this.toPaymentError(data, '정산 내역 조회에 실패했습니다');
+      }
+
+      const pageRows = Array.isArray(data) ? (data as TossSettlementRow[]) : [];
+      rows.push(...pageRows);
+
+      if (pageRows.length < TOSS_SETTLEMENT_PAGE_SIZE) {
+        return rows;
+      }
+
+      page += 1;
     }
-
-    return Array.isArray(data) ? (data as TossSettlementRow[]) : [];
   }
 }
