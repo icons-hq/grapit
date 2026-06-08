@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type {
+  AdminSettlementReconciliation,
   SettlementExportDataset,
   SettlementSummary,
 } from '@grabit/shared';
@@ -51,6 +52,23 @@ export function useAdminSettlementSummary(
   });
 }
 
+export function useAdminSettlementReconciliation(
+  filters: AdminSettlementFilters,
+  options: { enabled?: boolean } = {},
+) {
+  const enabled = options.enabled ?? true;
+
+  return useQuery({
+    queryKey: ['admin', 'settlement', 'reconciliation', filters.eventId],
+    queryFn: () =>
+      apiClient.get<AdminSettlementReconciliation>(
+        `/api/v1/admin/settlement/reconciliation?${buildReconciliationQuery(filters)}` as `/${string}`,
+        { showErrorToast: false },
+      ),
+    enabled: enabled && Boolean(filters.eventId),
+  });
+}
+
 export function useAdminSettlementExport() {
   return useMutation({
     mutationFn: async (
@@ -86,6 +104,16 @@ export function useAdminSettlementExport() {
       return { blob, filename };
     },
   });
+}
+
+function buildReconciliationQuery(filters: AdminSettlementFilters): string {
+  const params = new URLSearchParams();
+
+  if (filters.eventId && filters.eventId !== 'all') {
+    params.set('eventId', filters.eventId);
+  }
+
+  return params.toString();
 }
 
 function buildApiQuery(filters: AdminSettlementFilters): string {

@@ -22,6 +22,7 @@ import { AdminDiagnosticsController } from './admin-diagnostics.controller.js';
 import { AdminService } from './admin.service.js';
 import { AdminAuditService } from './admin-audit.service.js';
 import { AdminBookingService } from './admin-booking.service.js';
+import { AdminSettlementReconciliationService } from './admin-settlement-reconciliation.service.js';
 import { SettlementExportService } from './settlement-export.service.js';
 import { AdminOperationsService } from './admin-operations.service.js';
 import { AdminSupportContentService } from './admin-support-content.service.js';
@@ -58,6 +59,7 @@ import { PerformanceIntakeService } from './performance-intake.service.js';
     AdminAuditService,
     AdminCapabilitiesGuard,
     AdminBookingService,
+    AdminSettlementReconciliationService,
     SettlementExportService,
     AdminOperationsService,
     AdminSupportContentService,

@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import {
   resolveAdminCapabilitySnapshot,
+  type AdminSettlementReconciliation,
   type AdminCapability,
   type AdminCapabilityBundle,
   type SettlementExportDataset,
@@ -47,6 +48,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import {
   useAdminSettlementExport,
+  useAdminSettlementReconciliation,
   useAdminSettlementSummary,
   type AdminSettlementExportPayload,
   type AdminSettlementFilters,
@@ -70,6 +72,16 @@ type SettlementDashboardSummaryInput = Partial<SettlementSummary> & {
   exportReady?: boolean;
 };
 
+type SettlementDashboardReconciliationInput = Omit<
+  AdminSettlementReconciliation,
+  'foreign' | 'warnings'
+> & {
+  foreign: Omit<AdminSettlementReconciliation['foreign'], 'byProvider'> & {
+    byProvider: readonly AdminSettlementReconciliation['foreign']['byProvider'][number][];
+  };
+  warnings: readonly string[];
+};
+
 interface SettlementMaskedSample {
   reservationNumber?: string;
   buyerName?: string;
@@ -79,6 +91,7 @@ interface SettlementMaskedSample {
 
 interface SettlementDashboardData {
   summary?: SettlementDashboardSummaryInput | null;
+  reconciliation?: SettlementDashboardReconciliationInput | null;
   maskedSamples?: readonly SettlementMaskedSample[];
   rawRows?: readonly unknown[];
 }
@@ -199,8 +212,11 @@ function SettlementDashboardControlled({
     <SettlementDashboardContent
       user={user}
       summaryInput={data?.summary ?? null}
+      reconciliationInput={data?.reconciliation ?? null}
       maskedSamples={data?.maskedSamples ?? []}
       isSummaryError={false}
+      isReconciliationError={false}
+      isReconciliationLoading={false}
       isExportPending={false}
       filterControls={filterControls}
       submitExport={(payload, onSuccess) => {
@@ -220,14 +236,18 @@ function SettlementDashboardLive({
 }) {
   const filterControls = useSettlementFilterControls(requiredFilters);
   const summaryQuery = useAdminSettlementSummary(filterControls.filters);
+  const reconciliationQuery = useAdminSettlementReconciliation(filterControls.filters);
   const exportMutation = useAdminSettlementExport();
 
   return (
     <SettlementDashboardContent
       user={user}
       summaryInput={summaryQuery.data ?? null}
+      reconciliationInput={reconciliationQuery.data ?? null}
       maskedSamples={[]}
       isSummaryError={summaryQuery.isError}
+      isReconciliationError={reconciliationQuery.isError}
+      isReconciliationLoading={reconciliationQuery.isFetching}
       isExportPending={exportMutation.isPending}
       filterControls={filterControls}
       submitExport={(payload, onSuccess) => {
@@ -259,16 +279,22 @@ type SettlementFilterControls = ReturnType<typeof useSettlementFilterControls>;
 function SettlementDashboardContent({
   user,
   summaryInput,
+  reconciliationInput,
   maskedSamples,
   isSummaryError,
+  isReconciliationError,
+  isReconciliationLoading,
   isExportPending,
   filterControls,
   submitExport,
 }: {
   user: SettlementUser | null | undefined;
   summaryInput: SettlementDashboardSummaryInput | null;
+  reconciliationInput: SettlementDashboardReconciliationInput | null;
   maskedSamples: readonly SettlementMaskedSample[];
   isSummaryError: boolean;
+  isReconciliationError: boolean;
+  isReconciliationLoading: boolean;
   isExportPending: boolean;
   filterControls: SettlementFilterControls;
   submitExport: (
@@ -374,6 +400,13 @@ function SettlementDashboardContent({
         <MetricCard icon={TicketCheck} label="입장 완료" value={`${summary.enteredCount.toLocaleString('ko-KR')}건`} tone="green" />
         <MetricCard icon={UsersRound} label="노쇼" value={`${summary.noShowCount.toLocaleString('ko-KR')}건`} tone="amber" />
       </div>
+
+      <SettlementReconciliationPanel
+        filters={filters}
+        reconciliation={reconciliationInput}
+        isError={isReconciliationError}
+        isLoading={isReconciliationLoading}
+      />
 
       <Tabs defaultValue="summary" className="rounded-lg border bg-white p-4 shadow-sm">
         <TabsList>
@@ -489,6 +522,158 @@ function SettlementDashboardContent({
         </DialogContent>
       </Dialog>
     </section>
+  );
+}
+
+function SettlementReconciliationPanel({
+  filters,
+  reconciliation,
+  isError,
+  isLoading,
+}: {
+  filters: AdminSettlementFilters;
+  reconciliation: SettlementDashboardReconciliationInput | null;
+  isError: boolean;
+  isLoading: boolean;
+}) {
+  const [foreignPayoutInput, setForeignPayoutInput] = useState('');
+  const foreignPayoutAmount = parseCurrencyInput(foreignPayoutInput);
+  const hasForeignPayoutInput = foreignPayoutInput.trim().length > 0;
+  const finalDifference =
+    reconciliation && hasForeignPayoutInput
+      ? reconciliation.siteSalesGrossAmount -
+        (reconciliation.domestic.payoutAmount + foreignPayoutAmount)
+      : null;
+
+  return (
+    <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm" aria-label="정산 대사">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold leading-[1.25] text-gray-900">
+            정산 대사
+          </h2>
+          <p className="mt-1 text-sm leading-[1.45] text-gray-600">
+            판매 매출은 결제 완료 active 티켓 gross 기준이며, Toss 국내 정산금액과 운영자 입력 외화정산 금액을 대조합니다.
+          </p>
+        </div>
+        {isLoading && (
+          <Badge className="w-fit border-transparent bg-[#F5F5F7] text-gray-700">
+            갱신 중
+          </Badge>
+        )}
+      </div>
+
+      {!filters.eventId ? (
+        <div className="mt-4 rounded-lg bg-[#F5F5F7] p-4 text-sm font-semibold text-gray-600">
+          event ID를 입력하면 선택한 이벤트 기준으로 정산 대사를 확인할 수 있습니다.
+        </div>
+      ) : isError ? (
+        <div
+          role="alert"
+          className="mt-4 rounded-lg border border-[#F3C7C7] bg-[#FEF2F2] p-4 text-sm font-semibold text-[#C62828]"
+        >
+          Toss 정산 API 확인 실패
+        </div>
+      ) : reconciliation ? (
+        <div className="mt-4 space-y-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            <ReconciliationMetric
+              label="사이트 판매매출 gross"
+              value={formatWon(reconciliation.siteSalesGrossAmount)}
+            />
+            <ReconciliationMetric
+              label="Toss 국내 총매출액"
+              value={formatWon(reconciliation.domestic.tossGrossAmount)}
+            />
+            <ReconciliationMetric
+              label="Toss 국내 정산금액"
+              value={formatWon(reconciliation.domestic.payoutAmount)}
+            />
+            <ReconciliationMetric
+              label="국내 수수료/부가세 차감액"
+              value={formatWon(reconciliation.domestic.feeAmount)}
+            />
+            <ReconciliationMetric
+              label="국내 매칭 gross"
+              value={formatWon(reconciliation.domestic.matchedGrossAmount)}
+            />
+            <ReconciliationMetric
+              label="국내 미매칭 gross"
+              value={formatWon(reconciliation.domestic.unmatchedGrossAmount)}
+            />
+            <ReconciliationMetric
+              label="국내 계좌이체 정산 미완료"
+              value={`${formatWon(reconciliation.domestic.unsettledTransferAmount)} · ${reconciliation.domestic.unsettledTransferCount.toLocaleString('ko-KR')}건`}
+              detail={`국내 계좌이체 정산 미완료 ${reconciliation.domestic.unsettledTransferCount.toLocaleString('ko-KR')}건`}
+            />
+            <ReconciliationMetric
+              label="외화결제 gross"
+              value={formatWon(reconciliation.foreign.grossAmount)}
+              detail={formatForeignProviders(reconciliation.foreign.byProvider)}
+            />
+          </div>
+
+          <div className="grid gap-3 rounded-lg bg-[#F5F5F7] p-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+            <label className="space-y-1.5 text-sm font-semibold text-gray-700">
+              <span>Toss 외화정산 금액</span>
+              <Input
+                inputMode="numeric"
+                value={foreignPayoutInput}
+                onChange={(event) =>
+                  setForeignPayoutInput(formatCurrencyInput(event.target.value))
+                }
+                aria-label="Toss 외화정산 금액"
+                placeholder="예: 29,896,059"
+                className="h-11 bg-white"
+              />
+            </label>
+            <div className="rounded-lg bg-white p-4">
+              <p className="text-sm font-semibold text-gray-500">최종 차이</p>
+              <p className="mt-2 text-2xl font-semibold leading-[1.2] text-gray-900">
+                {finalDifference === null
+                  ? '외화정산 금액 입력 필요'
+                  : formatWon(finalDifference)}
+              </p>
+              <p className="mt-2 text-sm leading-[1.4] text-gray-600">
+                사이트 판매매출 - (국내 정산금액 + 입력한 외화정산금액)
+              </p>
+            </div>
+          </div>
+
+          {reconciliation.warnings.length > 0 && (
+            <ul className="space-y-1 rounded-lg border border-[#F3E2B0] bg-[#FFFBEB] p-3 text-sm font-semibold text-[#8B6306]">
+              {reconciliation.warnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ) : (
+        <div className="mt-4 rounded-lg bg-[#F5F5F7] p-4 text-sm font-semibold text-gray-600">
+          정산 대사 데이터를 불러오고 있습니다.
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ReconciliationMetric({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string;
+  detail?: string;
+}) {
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white p-4">
+      <p className="text-sm font-semibold leading-[1.35] text-gray-500">{label}</p>
+      <p className="mt-2 text-xl font-semibold leading-[1.2] text-gray-900">{value}</p>
+      {detail && (
+        <p className="mt-2 text-sm leading-[1.35] text-gray-600">{detail}</p>
+      )}
+    </div>
   );
 }
 
@@ -789,6 +974,10 @@ function formatCurrency(value: number): string {
   }).format(value);
 }
 
+function formatWon(value: number): string {
+  return `${value.toLocaleString('ko-KR')}원`;
+}
+
 function formatTimestamp(value?: string): string {
   if (!value) {
     return '-';
@@ -804,6 +993,31 @@ function formatTimestamp(value?: string): string {
     timeStyle: 'short',
     timeZone: 'Asia/Seoul',
   }).format(date);
+}
+
+function formatForeignProviders(
+  providers: readonly AdminSettlementReconciliation['foreign']['byProvider'][number][],
+): string {
+  if (providers.length === 0) {
+    return '외화 결제 없음';
+  }
+
+  return providers
+    .map(
+      (provider) =>
+        `${provider.provider} ${formatWon(provider.grossAmount)} · ${provider.reservationCount.toLocaleString('ko-KR')}건`,
+    )
+    .join(', ');
+}
+
+function formatCurrencyInput(value: string): string {
+  const parsed = parseCurrencyInput(value);
+  return parsed > 0 ? parsed.toLocaleString('ko-KR') : '';
+}
+
+function parseCurrencyInput(value: string): number {
+  const digits = value.replace(/\D/g, '');
+  return digits ? Number(digits) : 0;
 }
 
 function toNumber(value: unknown): number {

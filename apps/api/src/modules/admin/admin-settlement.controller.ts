@@ -12,6 +12,7 @@ import {
 import { Readable } from 'node:stream';
 import type { Request, Response } from 'express';
 import {
+  adminSettlementReconciliationSchema,
   settlementExportRequestSchema,
   type SettlementExportRequest,
 } from '@grabit/shared';
@@ -26,6 +27,7 @@ import { AdminCapabilitiesGuard } from '../../common/guards/admin-capabilities.g
 import { RolesGuard } from '../../common/guards/roles.guard.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import { resolveTrustedRequestIp } from '../../common/request-ip.js';
+import { AdminSettlementReconciliationService } from './admin-settlement-reconciliation.service.js';
 import { SettlementExportService } from './settlement-export.service.js';
 
 const settlementSummaryQuerySchema = settlementExportRequestSchema.omit({
@@ -37,6 +39,9 @@ type SettlementSummaryQuery = Pick<
   SettlementExportRequest,
   'eventId' | 'showtimeId' | 'dateFrom' | 'dateTo'
 >;
+const settlementReconciliationQuerySchema =
+  adminSettlementReconciliationSchema.pick({ eventId: true });
+type SettlementReconciliationQuery = { eventId: string };
 
 @Controller('admin/settlement')
 @UseGuards(RolesGuard)
@@ -44,6 +49,7 @@ type SettlementSummaryQuery = Pick<
 export class AdminSettlementController {
   constructor(
     private readonly settlementExportService: SettlementExportService,
+    private readonly reconciliationService: AdminSettlementReconciliationService,
   ) {}
 
   @Get('summary')
@@ -54,6 +60,16 @@ export class AdminSettlementController {
     query: SettlementSummaryQuery,
   ) {
     return this.settlementExportService.getSummary(query);
+  }
+
+  @Get('reconciliation')
+  @UseGuards(AdminCapabilitiesGuard)
+  @AdminCapabilities('settlement.export')
+  async getReconciliation(
+    @Query(new ZodValidationPipe(settlementReconciliationQuerySchema))
+    query: SettlementReconciliationQuery,
+  ) {
+    return this.reconciliationService.getReconciliation(query);
   }
 
   @Post('export')
