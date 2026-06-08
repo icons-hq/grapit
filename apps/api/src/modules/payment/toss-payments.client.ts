@@ -10,6 +10,9 @@ export interface TossPaymentResponse {
   balanceAmount?: number;
   status: string;
   approvedAt?: string | null;
+  card?: { settlementStatus?: string | null } | null;
+  transfer?: { settlementStatus?: string | null } | null;
+  virtualAccount?: { settlementStatus?: string | null } | null;
   cancels?: Array<{
     cancelAmount: number;
     cancelReason: string;
@@ -22,6 +25,24 @@ export interface TossPaymentResponse {
 export interface TossPaymentRequestOptions {
   idempotencyKey?: string;
   secretKeyScope?: 'default' | 'overseas-card' | 'foreign-easy-pay';
+}
+
+export interface TossSettlementQueryOptions extends TossPaymentRequestOptions {
+  startDate: string;
+  endDate: string;
+  dateType: 'soldDate' | 'paidOutDate';
+}
+
+export interface TossSettlementRow {
+  paymentKey: string;
+  amount: number;
+  fee: number;
+  supplyAmount: number;
+  vat: number;
+  payOutAmount: number;
+  soldDate: string;
+  paidOutDate: string;
+  method?: string | null;
 }
 
 export interface TossPaymentCancelOptions extends TossPaymentRequestOptions {
@@ -263,5 +284,30 @@ export class TossPaymentsClient {
 
     // TODO: zod 스키마로 런타임 검증 추가 (현재는 타입 단언만 수행)
     return data as TossPaymentResponse;
+  }
+
+  async querySettlements(
+    options: TossSettlementQueryOptions,
+  ): Promise<TossSettlementRow[]> {
+    const params = new URLSearchParams({
+      startDate: options.startDate,
+      endDate: options.endDate,
+      dateType: options.dateType,
+    });
+
+    const response = await fetch(`${this.baseUrl}/settlements?${params.toString()}`, {
+      method: 'GET',
+      headers: {
+        Authorization: this.getAuthHeader(options.secretKeyScope),
+      },
+    });
+
+    const data: unknown = await response.json();
+
+    if (!response.ok) {
+      throw this.toPaymentError(data, '정산 내역 조회에 실패했습니다');
+    }
+
+    return Array.isArray(data) ? (data as TossSettlementRow[]) : [];
   }
 }

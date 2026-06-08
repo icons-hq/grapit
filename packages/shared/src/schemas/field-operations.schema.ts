@@ -233,6 +233,40 @@ export const settlementSummarySchema = z
   })
   .strict();
 
+export const adminSettlementReconciliationProviderSchema = z
+  .object({
+    provider: z.string().min(1, '외화 결제 provider가 필요합니다'),
+    grossAmount: z.number().int().min(0),
+    reservationCount: z.number().int().min(0),
+  })
+  .strict();
+
+export const adminSettlementReconciliationSchema = z
+  .object({
+    eventId: z.string().min(1, '이벤트 ID가 필요합니다'),
+    siteSalesGrossAmount: z.number().int().min(0),
+    domestic: z
+      .object({
+        tossGrossAmount: z.number().int().min(0),
+        payoutAmount: z.number().int().min(0),
+        feeAmount: z.number().int().min(0),
+        matchedGrossAmount: z.number().int().min(0),
+        unmatchedGrossAmount: z.number().int().min(0),
+        unsettledTransferAmount: z.number().int().min(0),
+        unsettledTransferCount: z.number().int().min(0),
+      })
+      .strict(),
+    foreign: z
+      .object({
+        grossAmount: z.number().int().min(0),
+        byProvider: z.array(adminSettlementReconciliationProviderSchema),
+      })
+      .strict(),
+    generatedAt: isoDatetime('정산 대사 생성 시각'),
+    warnings: z.array(z.string().min(1)),
+  })
+  .strict();
+
 export const settlementExportRequestSchema = z
   .object({
     eventId: z.string().min(1, '이벤트 ID가 필요합니다'),
@@ -280,5 +314,8 @@ export type FieldMonitorSummary = z.infer<typeof fieldMonitorSummarySchema>;
 export type FieldMonitorLogFilter = z.infer<typeof fieldMonitorLogFilterSchema>;
 export type FieldMonitorLogRow = z.infer<typeof fieldMonitorLogRowSchema>;
 export type SettlementSummary = z.infer<typeof settlementSummarySchema>;
+export type AdminSettlementReconciliation = z.infer<
+  typeof adminSettlementReconciliationSchema
+>;
 export type SettlementExportRequest = z.infer<typeof settlementExportRequestSchema>;
 export type SettlementExportResponse = z.infer<typeof settlementExportResponseSchema>;

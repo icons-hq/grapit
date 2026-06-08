@@ -9,6 +9,7 @@ import {
   fieldMonitorSummarySchema,
   fieldOfflineSyncAttemptSchema,
   fieldOfflineSyncResponseSchema,
+  adminSettlementReconciliationSchema,
   settlementExportRequestSchema,
   settlementExportResponseSchema,
   settlementSummarySchema,
@@ -241,6 +242,42 @@ describe('field operations contract', () => {
         reason: 'operator requested export',
       }).dataset).toBe(dataset);
     }
+  });
+
+  it('defines admin settlement reconciliation without raw payment identifiers', () => {
+    const reconciliation = adminSettlementReconciliationSchema.parse({
+      eventId: VALID_EVENT_ID,
+      siteSalesGrossAmount: 193_906_000,
+      domestic: {
+        tossGrossAmount: 159_004_000,
+        payoutAmount: 153_032_725,
+        feeAmount: 5_971_275,
+        matchedGrossAmount: 158_280_000,
+        unmatchedGrossAmount: 4_156_000,
+        unsettledTransferAmount: 3_432_000,
+        unsettledTransferCount: 11,
+      },
+      foreign: {
+        grossAmount: 31_470_000,
+        byProvider: [
+          { provider: 'PAYPAL', grossAmount: 21_818_000, reservationCount: 56 },
+          { provider: 'ALIPAY_PLUS', grossAmount: 8_374_000, reservationCount: 23 },
+        ],
+      },
+      generatedAt: VALID_ISO,
+      warnings: ['외화정산 지급액은 Toss 상점관리자 값을 직접 입력하세요.'],
+    });
+
+    expect(reconciliation.domestic.payoutAmount).toBe(153_032_725);
+    expect(JSON.stringify(reconciliation)).not.toContain('paymentKey');
+    expect(JSON.stringify(reconciliation)).not.toContain('orderId');
+
+    expect(() =>
+      adminSettlementReconciliationSchema.parse({
+        ...reconciliation,
+        siteSalesGrossAmount: -1,
+      }),
+    ).toThrow();
   });
 
   it('exports field operations contracts from the shared barrel', () => {

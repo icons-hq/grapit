@@ -29,6 +29,28 @@ const dashboardData = {
     noShow: 38,
     exportReady: true,
   },
+  reconciliation: {
+    eventId: 'phase27-event',
+    siteSalesGrossAmount: 193_906_000,
+    domestic: {
+      tossGrossAmount: 159_004_000,
+      payoutAmount: 153_032_725,
+      feeAmount: 5_971_275,
+      matchedGrossAmount: 158_280_000,
+      unmatchedGrossAmount: 4_156_000,
+      unsettledTransferAmount: 3_432_000,
+      unsettledTransferCount: 11,
+    },
+    foreign: {
+      grossAmount: 31_470_000,
+      byProvider: [
+        { provider: 'PAYPAL', grossAmount: 21_818_000, reservationCount: 56 },
+        { provider: 'ALIPAY_PLUS', grossAmount: 8_374_000, reservationCount: 23 },
+      ],
+    },
+    generatedAt: '2026-06-08T07:15:00.000Z',
+    warnings: ['외화정산 지급액은 Toss 상점관리자 값을 직접 입력하세요.'],
+  },
   maskedSamples: [
     {
       reservationNumber: 'GRP-27-SET-0001',
@@ -105,6 +127,25 @@ describe('SettlementDashboard', () => {
     expect(screen.getByRole('button', { name: '노쇼 예약 CSV 내보내기' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '예매/결제/환불 CSV 내보내기' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '정산 CSV 내보내기' })).toBeInTheDocument();
+  });
+
+  it('shows settlement reconciliation and calculates final difference from operator foreign payout input', async () => {
+    const user = userEvent.setup();
+    renderDashboard();
+
+    expect(screen.getByRole('heading', { name: '정산 대사' })).toBeInTheDocument();
+    expect(screen.getByText('193,906,000원')).toBeInTheDocument();
+    expect(screen.getByText('153,032,725원')).toBeInTheDocument();
+    expect(screen.getByText('국내 계좌이체 정산 미완료 11건')).toBeInTheDocument();
+    expect(screen.getByText('외화정산 금액 입력 필요')).toBeInTheDocument();
+
+    await user.type(
+      screen.getByLabelText('Toss 외화정산 금액'),
+      '29896059',
+    );
+
+    expect(screen.getByText('최종 차이')).toBeInTheDocument();
+    expect(screen.getByText('10,977,216원')).toBeInTheDocument();
   });
 
   it('requires confirmation and reason before settlement CSV export', async () => {
