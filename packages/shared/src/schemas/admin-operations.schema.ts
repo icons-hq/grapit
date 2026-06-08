@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { adminBookingFunnelStatusSchema } from './booking.schema';
 
 export const ADMIN_CAPABILITIES = [
   'event.write',
@@ -226,6 +227,7 @@ export const adminReservationExportFilterSchema = z
     reservationStatus: z
       .enum(['PENDING_PAYMENT', 'CONFIRMED', 'CANCELLED', 'FAILED'])
       .optional(),
+    funnelStatus: adminBookingFunnelStatusSchema.optional(),
     audienceRegion: z.enum(['domestic', 'overseas']).optional(),
     paymentMethod: z.string().min(1).optional(),
     dateFrom: dateOnly('조회 시작일').optional(),

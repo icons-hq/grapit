@@ -289,7 +289,7 @@ describe('admin operations contract', () => {
       eventId: 'event-1',
       tierName: 'VIP',
       zoneFloor: '1F',
-      reservationStatus: 'CONFIRMED',
+      funnelStatus: 'PAYMENT_FAILED',
       audienceRegion: 'domestic',
       paymentMethod: 'CARD',
       dateFrom: '2026-05-01',
@@ -299,6 +299,7 @@ describe('admin operations contract', () => {
     });
 
     expect(parsed.exportType).toBe('raw_pii');
+    expect(parsed.funnelStatus).toBe('PAYMENT_FAILED');
   });
 
   it('represents MFA only as a deferred accepted risk', () => {
