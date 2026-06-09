@@ -293,13 +293,28 @@ describe('AdminDashboardService (integration)', () => {
       cancelledAt: today,
     });
 
+    const sameDayFullCancelReservationId = await seedReservation({
+      userId,
+      showtimeId,
+      status: 'CANCELLED',
+      totalAmount: 80000,
+      createdAt: today,
+    });
+    await seedPayment({
+      reservationId: sameDayFullCancelReservationId,
+      amount: 80000,
+      status: 'CANCELED',
+      paidAt: today,
+      cancelledAt: today,
+    });
+
     const result = await service.getSummary();
 
     expect(result).toEqual({
-      todayBookings: 2,
-      todayCancellationEvents: 2,
-      todayGrossRevenue: 270000,
-      todayNegativeCancellationRevenue: -115000,
+      todayBookings: 3,
+      todayCancellationEvents: 3,
+      todayGrossRevenue: 350000,
+      todayNegativeCancellationRevenue: -195000,
       todayNetRevenue: 155000,
     });
   });

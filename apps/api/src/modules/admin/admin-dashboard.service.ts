@@ -72,7 +72,6 @@ export class AdminDashboardService {
     return this.readThrough('cache:admin:dashboard:summary', async () => {
       // Node 측 boundary pre-compute → KST today boundary 유지.
       const { startUtc, endUtc } = kstTodayBoundaryUtc();
-      const bookingEventAt = sql<Date>`coalesce(${payments.paidAt}, ${reservations.createdAt})`;
       const legacyCancellationEventAt = sql<Date>`coalesce(${payments.cancelledAt}, ${reservations.cancelledAt})`;
 
       const [completedBookings, ticketItemCancellations, legacyCancellations] =
@@ -86,10 +85,9 @@ export class AdminDashboardService {
             .innerJoin(reservations, eq(payments.reservationId, reservations.id))
             .where(
               and(
-                eq(reservations.status, 'CONFIRMED'),
-                eq(payments.status, 'DONE'),
-                gte(bookingEventAt, startUtc),
-                lt(bookingEventAt, endUtc),
+                sql`${payments.status} in ('DONE', 'CANCELED')`,
+                gte(payments.paidAt, startUtc),
+                lt(payments.paidAt, endUtc),
               ),
             ),
           this.db
