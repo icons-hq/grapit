@@ -45,9 +45,10 @@ describe('AdminDashboardController (access control)', () => {
           useValue: {
             get: async () => ({
               todayBookings: 0,
-              todayRevenue: 0,
-              todayCancelled: 0,
-              activePerformances: 0,
+              todayCancellationEvents: 0,
+              todayGrossRevenue: 0,
+              todayNegativeCancellationRevenue: 0,
+              todayNetRevenue: 0,
             }),
             set: async () => undefined,
             invalidate: async () => undefined,

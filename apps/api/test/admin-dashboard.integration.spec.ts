@@ -13,6 +13,7 @@ import {
   venues,
   reservationSeats,
   payments,
+  ticketItems,
   users,
 } from '../src/database/schema/index.js';
 import { AdminDashboardService } from '../src/modules/admin/admin-dashboard.service.js';
@@ -85,6 +86,7 @@ describe('AdminDashboardService (integration)', () => {
   beforeEach(async () => {
     // Clean all tables between tests. Child → parent order respects FKs.
     await db.delete(reservationSeats);
+    await db.delete(ticketItems);
     await db.delete(payments);
     await db.delete(reservations);
     await db.delete(showtimes);
@@ -160,6 +162,147 @@ describe('AdminDashboardService (integration)', () => {
     });
     return reservationId;
   }
+
+  async function seedPayment(opts: {
+    reservationId: string;
+    amount: number;
+    status: 'READY' | 'IN_PROGRESS' | 'DONE' | 'CANCELED' | 'ABORTED' | 'EXPIRED';
+    paidAt?: Date;
+    cancelledAt?: Date;
+  }) {
+    const paymentId = randomUUID();
+    await db.insert(payments).values({
+      id: paymentId,
+      reservationId: opts.reservationId,
+      paymentKey: `pk_${paymentId}`,
+      tossOrderId: `order_${paymentId}`,
+      method: 'card',
+      provider: 'CARD',
+      amount: opts.amount,
+      status: opts.status,
+      ...(opts.paidAt ? { paidAt: opts.paidAt } : {}),
+      ...(opts.cancelledAt ? { cancelledAt: opts.cancelledAt } : {}),
+    });
+    return paymentId;
+  }
+
+  async function seedTicketItem(opts: {
+    reservationId: string;
+    paymentId: string;
+    showtimeId: string;
+    status: 'active' | 'cancellation_pending' | 'cancelled' | 'expired';
+    refundableAmount: number;
+    cancelledAt?: Date;
+    seatKey: string;
+  }) {
+    await db.insert(ticketItems).values({
+      id: randomUUID(),
+      reservationId: opts.reservationId,
+      paymentId: opts.paymentId,
+      showtimeId: opts.showtimeId,
+      seatId: opts.seatKey,
+      seatKey: opts.seatKey,
+      floorKey: '1F',
+      floorLabel: '1층',
+      tierName: 'R',
+      row: 'A',
+      number: opts.seatKey,
+      price: 50000,
+      serviceFee: 2000,
+      status: opts.status,
+      refundableAmount: opts.refundableAmount,
+      ...(opts.cancelledAt ? { cancelledAt: opts.cancelledAt } : {}),
+    });
+  }
+
+  it('summary: counts completed booking revenue and completed cancellation events only', async () => {
+    const { showtimeId } = await seedVenuePerformanceShowtime();
+    const userId = await seedUser();
+    const today = new Date();
+
+    const confirmedReservationId = await seedReservation({
+      userId,
+      showtimeId,
+      status: 'CONFIRMED',
+      totalAmount: 120000,
+      createdAt: today,
+    });
+    await seedPayment({
+      reservationId: confirmedReservationId,
+      amount: 120000,
+      status: 'DONE',
+      paidAt: today,
+    });
+
+    const pendingReservationId = await seedReservation({
+      userId,
+      showtimeId,
+      status: 'PENDING_PAYMENT',
+      totalAmount: 90000,
+      createdAt: today,
+    });
+    await seedPayment({
+      reservationId: pendingReservationId,
+      amount: 90000,
+      status: 'READY',
+    });
+
+    const partialCancelReservationId = await seedReservation({
+      userId,
+      showtimeId,
+      status: 'CONFIRMED',
+      totalAmount: 150000,
+      createdAt: today,
+    });
+    const partialCancelPaymentId = await seedPayment({
+      reservationId: partialCancelReservationId,
+      amount: 150000,
+      status: 'DONE',
+      paidAt: today,
+    });
+    await seedTicketItem({
+      reservationId: partialCancelReservationId,
+      paymentId: partialCancelPaymentId,
+      showtimeId,
+      status: 'cancelled',
+      refundableAmount: 45000,
+      cancelledAt: today,
+      seatKey: 'A-1',
+    });
+    await seedTicketItem({
+      reservationId: partialCancelReservationId,
+      paymentId: partialCancelPaymentId,
+      showtimeId,
+      status: 'cancellation_pending',
+      refundableAmount: 30000,
+      cancelledAt: today,
+      seatKey: 'A-2',
+    });
+
+    const legacyCancelReservationId = await seedReservation({
+      userId,
+      showtimeId,
+      status: 'CANCELLED',
+      totalAmount: 70000,
+      createdAt: today,
+    });
+    await seedPayment({
+      reservationId: legacyCancelReservationId,
+      amount: 70000,
+      status: 'CANCELED',
+      cancelledAt: today,
+    });
+
+    const result = await service.getSummary();
+
+    expect(result).toEqual({
+      todayBookings: 2,
+      todayCancellationEvents: 2,
+      todayGrossRevenue: 270000,
+      todayNegativeCancellationRevenue: -115000,
+      todayNetRevenue: 155000,
+    });
+  });
 
   it('revenue-daily: returns up to 30 daily buckets for 30d period', async () => {
     const { showtimeId } = await seedVenuePerformanceShowtime();

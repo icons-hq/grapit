@@ -24,11 +24,12 @@ test.describe('Admin Dashboard E2E', () => {
     // h1 copy per UI-SPEC D-01
     await expect(page.getByRole('heading', { name: '대시보드', level: 1 })).toBeVisible();
 
-    // KPI 4장 per UI-SPEC Copywriting
+    // KPI 5장 per UI-SPEC Copywriting
     await expect(page.getByText('오늘 예매수')).toBeVisible();
-    await expect(page.getByText('오늘 매출')).toBeVisible();
-    await expect(page.getByText('오늘 취소')).toBeVisible();
-    await expect(page.getByText('활성 공연')).toBeVisible();
+    await expect(page.getByText('오늘 취소 이벤트')).toBeVisible();
+    await expect(page.getByText('오늘 총매출')).toBeVisible();
+    await expect(page.getByText('오늘 취소 차감')).toBeVisible();
+    await expect(page.getByText('오늘 순매출')).toBeVisible();
 
     // 차트 섹션 3개
     await expect(page.getByRole('heading', { name: '매출 추이' })).toBeVisible();

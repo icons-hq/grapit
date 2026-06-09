@@ -1,5 +1,5 @@
 import { Injectable, Inject } from '@nestjs/common';
-import { sql, eq, inArray, and, gte, lt } from 'drizzle-orm';
+import { sql, eq, and, gte, lt } from 'drizzle-orm';
 import type {
   DashboardSummaryDto,
   DashboardRevenueDto,
@@ -14,6 +14,7 @@ import {
   payments,
   performances,
   showtimes,
+  ticketItems,
 } from '../../database/schema/index.js';
 import { CacheService } from '../performance/cache.service.js';
 import {
@@ -66,45 +67,82 @@ export class AdminDashboardService {
     return fresh;
   }
 
-  // ADM-01 — 오늘 KPI 4종.
+  // ADM-01 — 오늘 운영 요약 5종.
   async getSummary(): Promise<DashboardSummaryDto> {
     return this.readThrough('cache:admin:dashboard:summary', async () => {
-      // Node 측 boundary pre-compute → raw createdAt 비교 (index eligible).
+      // Node 측 boundary pre-compute → KST today boundary 유지.
       const { startUtc, endUtc } = kstTodayBoundaryUtc();
-      const todayCreatedAt = and(
-        gte(reservations.createdAt, startUtc),
-        lt(reservations.createdAt, endUtc),
-      );
+      const bookingEventAt = sql<Date>`coalesce(${payments.paidAt}, ${reservations.createdAt})`;
+      const legacyCancellationEventAt = sql<Date>`coalesce(${payments.cancelledAt}, ${reservations.cancelledAt})`;
 
-      // 4-way fan-out (병렬)
-      const [bookings, revenue, cancelled, active] = await Promise.all([
-        this.db
-          .select({ count: sql<number>`count(*)::int` })
-          .from(reservations)
-          .where(todayCreatedAt),
-        this.db
-          .select({
-            sum: sql<number>`coalesce(sum(${reservations.totalAmount}), 0)::int`,
-          })
-          .from(reservations)
-          // D-07: 매출은 CONFIRMED만 합산.
-          .where(and(todayCreatedAt, eq(reservations.status, 'CONFIRMED'))),
-        this.db
-          .select({ count: sql<number>`count(*)::int` })
-          .from(reservations)
-          .where(and(todayCreatedAt, eq(reservations.status, 'CANCELLED'))),
-        // "활성 공연" = status IN ('selling', 'closing_soon') (RESEARCH Pitfall 6, A2).
-        this.db
-          .select({ count: sql<number>`count(*)::int` })
-          .from(performances)
-          .where(inArray(performances.status, ['selling', 'closing_soon'])),
-      ]);
+      const [completedBookings, ticketItemCancellations, legacyCancellations] =
+        await Promise.all([
+          this.db
+            .select({
+              count: sql<number>`count(distinct ${reservations.id})::int`,
+              sum: sql<number>`coalesce(sum(${payments.amount}), 0)::int`,
+            })
+            .from(payments)
+            .innerJoin(reservations, eq(payments.reservationId, reservations.id))
+            .where(
+              and(
+                eq(reservations.status, 'CONFIRMED'),
+                eq(payments.status, 'DONE'),
+                gte(bookingEventAt, startUtc),
+                lt(bookingEventAt, endUtc),
+              ),
+            ),
+          this.db
+            .select({
+              count: sql<number>`count(*)::int`,
+              sum: sql<number>`coalesce(sum(${ticketItems.refundableAmount}), 0)::int`,
+            })
+            .from(ticketItems)
+            .where(
+              and(
+                eq(ticketItems.status, 'cancelled'),
+                gte(ticketItems.cancelledAt, startUtc),
+                lt(ticketItems.cancelledAt, endUtc),
+              ),
+            ),
+          this.db
+            .select({
+              count: sql<number>`count(distinct ${reservations.id})::int`,
+              sum: sql<number>`coalesce(sum(${payments.amount}), 0)::int`,
+            })
+            .from(reservations)
+            .innerJoin(payments, eq(payments.reservationId, reservations.id))
+            .where(
+              and(
+                eq(reservations.status, 'CANCELLED'),
+                eq(payments.status, 'CANCELED'),
+                gte(legacyCancellationEventAt, startUtc),
+                lt(legacyCancellationEventAt, endUtc),
+                sql`not exists (
+                  select 1
+                  from ticket_items
+                  where ticket_items.reservation_id = ${reservations.id}
+                )`,
+              ),
+            ),
+        ]);
+
+      const todayGrossRevenue = completedBookings[0]?.sum ?? 0;
+      const todayCancellationEvents =
+        (ticketItemCancellations[0]?.count ?? 0) +
+        (legacyCancellations[0]?.count ?? 0);
+      const todayNegativeCancellationRevenue =
+        -(
+          (ticketItemCancellations[0]?.sum ?? 0) +
+          (legacyCancellations[0]?.sum ?? 0)
+        );
 
       return {
-        todayBookings: bookings[0]?.count ?? 0,
-        todayRevenue: revenue[0]?.sum ?? 0,
-        todayCancelled: cancelled[0]?.count ?? 0,
-        activePerformances: active[0]?.count ?? 0,
+        todayBookings: completedBookings[0]?.count ?? 0,
+        todayCancellationEvents,
+        todayGrossRevenue,
+        todayNegativeCancellationRevenue,
+        todayNetRevenue: todayGrossRevenue + todayNegativeCancellationRevenue,
       };
     });
   }
