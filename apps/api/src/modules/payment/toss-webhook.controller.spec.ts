@@ -22,6 +22,7 @@ function createMockPaymentService() {
     findPaymentCancelSnapshotByCancelRequestId: vi.fn(),
     upsertAsyncPaymentProgress: vi.fn<PaymentService['upsertAsyncPaymentProgress']>(),
     finalizeConfirmedCancelWebhook: vi.fn().mockResolvedValue('finalized'),
+    finalizePaymentStatusPartialCancelWebhook: vi.fn().mockResolvedValue('finalized'),
     markWebhookEventProcessed: vi.fn<PaymentService['markWebhookEventProcessed']>(),
     markWebhookEventFailed: vi.fn<PaymentService['markWebhookEventFailed']>(),
   };
@@ -783,6 +784,140 @@ describe('PaymentWebhookController', () => {
       expect.objectContaining({ status: 'PARTIAL_CANCELED' }),
     );
     expect(paymentService.upsertAsyncPaymentProgress).not.toHaveBeenCalled();
+  });
+
+  it('finalizes provider-confirmed partial cancels from payment status webhooks before stale filtering', async () => {
+    const paymentPartialCanceledEvent: TossWebhookRequestBody = {
+      eventId: 'evt-payment-partial-cancel-1',
+      eventType: 'PAYMENT_STATUS_CHANGED',
+      createdAt: '2026-06-08T11:17:00+09:00',
+      data: {
+        paymentKey: 'pay_async_1',
+        orderId: 'GRP-ASYNC-1',
+        status: 'PARTIAL_CANCELED',
+        method: 'CARD',
+        provider: 'CARD',
+        currency: 'KRW',
+        totalAmount: 724000,
+      },
+    };
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(
+      makeLedgerResult({
+        eventId: 'evt-payment-partial-cancel-1',
+      }),
+    );
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(
+      makeProgress({
+        reservationStatus: 'CONFIRMED',
+        paymentStatus: 'DONE',
+      }),
+    );
+    tossClient.queryPayment.mockResolvedValueOnce(
+      makeQueriedPayment({
+        paymentKey: 'pay_async_1',
+        orderId: 'GRP-ASYNC-1',
+        method: 'CARD',
+        status: 'PARTIAL_CANCELED',
+        totalAmount: 724000,
+        balanceAmount: 362000,
+        cancels: [
+          {
+            cancelAmount: 362000,
+            cancelReason: '다른 좌석으로 재예매',
+            canceledAt: '2026-06-08T11:17:00+09:00',
+            cancelStatus: 'DONE',
+          },
+        ],
+      }),
+    );
+
+    const result = await controller.handleTossWebhook(paymentPartialCanceledEvent);
+
+    expect(result.processingResultCode).toBe('PAYMENT_STATUS_CHANGED_PARTIAL_CANCEL_FINALIZED');
+    expect(paymentService.finalizePaymentStatusPartialCancelWebhook).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: 'PAYMENT_STATUS_CHANGED',
+        data: expect.objectContaining({
+          status: 'PARTIAL_CANCELED',
+          paymentKey: 'pay_async_1',
+          orderId: 'GRP-ASYNC-1',
+        }),
+      }),
+      expect.objectContaining({
+        status: 'PARTIAL_CANCELED',
+        cancels: [
+          expect.objectContaining({
+            cancelAmount: 362000,
+            cancelStatus: 'DONE',
+          }),
+        ],
+      }),
+    );
+    expect(paymentService.upsertAsyncPaymentProgress).not.toHaveBeenCalled();
+    expect(paymentService.markWebhookEventProcessed).toHaveBeenCalledWith(
+      'evt-payment-partial-cancel-1',
+      'PAYMENT_STATUS_CHANGED_PARTIAL_CANCEL_FINALIZED',
+      undefined,
+    );
+  });
+
+  it('keeps provider-confirmed partial cancel payment webhooks ignored when no local ticket intent matches', async () => {
+    const paymentPartialCanceledEvent: TossWebhookRequestBody = {
+      eventId: 'evt-payment-partial-cancel-no-match-1',
+      eventType: 'PAYMENT_STATUS_CHANGED',
+      createdAt: '2026-06-08T11:17:00+09:00',
+      data: {
+        paymentKey: 'pay_async_1',
+        orderId: 'GRP-ASYNC-1',
+        status: 'PARTIAL_CANCELED',
+        method: 'CARD',
+        provider: 'CARD',
+        currency: 'KRW',
+        totalAmount: 724000,
+      },
+    };
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(
+      makeLedgerResult({
+        eventId: 'evt-payment-partial-cancel-no-match-1',
+      }),
+    );
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(
+      makeProgress({
+        reservationStatus: 'CONFIRMED',
+        paymentStatus: 'DONE',
+      }),
+    );
+    paymentService.finalizePaymentStatusPartialCancelWebhook.mockResolvedValueOnce(
+      'no_local_match',
+    );
+    tossClient.queryPayment.mockResolvedValueOnce(
+      makeQueriedPayment({
+        paymentKey: 'pay_async_1',
+        orderId: 'GRP-ASYNC-1',
+        method: 'CARD',
+        status: 'PARTIAL_CANCELED',
+        totalAmount: 724000,
+        balanceAmount: 362000,
+        cancels: [
+          {
+            cancelAmount: 362000,
+            cancelReason: '다른 좌석으로 재예매',
+            canceledAt: '2026-06-08T11:17:00+09:00',
+            cancelStatus: 'DONE',
+          },
+        ],
+      }),
+    );
+
+    const result = await controller.handleTossWebhook(paymentPartialCanceledEvent);
+
+    expect(result.processingResultCode).toBe('IGNORED_PARTIAL_CANCEL_EVENT_NO_LOCAL_MATCH');
+    expect(paymentService.upsertAsyncPaymentProgress).not.toHaveBeenCalled();
+    expect(paymentService.markWebhookEventProcessed).toHaveBeenCalledWith(
+      'evt-payment-partial-cancel-no-match-1',
+      'IGNORED_PARTIAL_CANCEL_EVENT_NO_LOCAL_MATCH',
+      'partial cancel payment event has no matching local ticket cancellation',
+    );
   });
 
   it('does not finalize a confirmed reservation for an IN_PROGRESS cancel webhook', async () => {

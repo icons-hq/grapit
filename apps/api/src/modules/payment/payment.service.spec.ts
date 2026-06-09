@@ -2163,6 +2163,673 @@ describe('PaymentService', () => {
       expect(finalizer.finalizeFullPaymentCancellation).not.toHaveBeenCalled();
     });
 
+    it('finalizes payment-status partial cancels by generated cancelRequestId', async () => {
+      const reservationId = randomUUID();
+      const paymentId = randomUUID();
+      const ticketItemId = randomUUID();
+      const finalizer = {
+        finalizeFullPaymentCancellation: vi.fn().mockResolvedValue({
+          releaseJobId: 'release-job-1',
+          releaseEnqueued: true,
+        }),
+      };
+      (service as unknown as {
+        paymentCancellationFinalizer: typeof finalizer;
+      }).paymentCancellationFinalizer = finalizer;
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          reservationNumber: 'GRP-20260608-ASYNC',
+          showtimeId: 'showtime-1',
+          status: 'CONFIRMED',
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: paymentId,
+          reservationId,
+          paymentKey: 'pay_async_partial',
+          tossOrderId: 'GRP-20260608-ASYNC',
+          method: 'FOREIGN_EASY_PAY',
+          provider: 'ALIPAY',
+          currency: 'KRW',
+          amount: 724000,
+          status: 'DONE',
+          providerMetadata: { requestedProvider: 'ALIPAY' },
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: 'showtime-1',
+          performanceId: 'performance-1',
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          cancelledSeatHoldMinMinutes: 1,
+          cancelledSeatHoldMaxMinutes: 10,
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          ticketItemId,
+          seatId: 'SVIP:다-159',
+          floorKey: 'SVIP',
+          seatKey: 'SVIP:다-159',
+          status: 'cancellation_pending',
+          cancellationFee: 0,
+          serviceFeeRefund: 2000,
+          refundableAmount: 362000,
+        }]));
+
+      const result = await service.finalizePaymentStatusPartialCancelWebhook(
+        {
+          eventId: 'evt-payment-partial-async',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_async_partial',
+            orderId: 'GRP-20260608-ASYNC',
+            status: 'PARTIAL_CANCELED',
+            method: 'FOREIGN_EASY_PAY',
+            provider: 'ALIPAY',
+            totalAmount: 724000,
+          },
+        },
+        {
+          paymentKey: 'pay_async_partial',
+          orderId: 'GRP-20260608-ASYNC',
+          method: 'FOREIGN_EASY_PAY',
+          totalAmount: 724000,
+          status: 'PARTIAL_CANCELED',
+          balanceAmount: 362000,
+          approvedAt: '2026-06-08T11:00:00+09:00',
+          cancels: [{
+            cancelAmount: 362000,
+            cancelReason: '다른 좌석으로 재예매',
+            canceledAt: '2026-06-08T11:17:00+09:00',
+            cancelStatus: 'DONE',
+            cancelRequestId: `cancel_${ticketItemId}`,
+          }],
+        },
+      );
+
+      expect(result).toBe('finalized');
+      expect(finalizer.finalizeFullPaymentCancellation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source: 'cancel_webhook',
+          ticketItemCancellation: {
+            ticketItemId,
+            seatId: 'SVIP:다-159',
+            floorKey: 'SVIP',
+            seatKey: 'SVIP:다-159',
+            cancellationFee: 0,
+            serviceFeeRefund: 2000,
+            refundableAmount: 362000,
+          },
+          context: expect.objectContaining({
+            seats: [{
+              seatId: 'SVIP:다-159',
+              floorKey: 'SVIP',
+              seatKey: 'SVIP:다-159',
+            }],
+          }),
+          providerResponse: expect.objectContaining({ status: 'PARTIAL_CANCELED' }),
+        }),
+      );
+    });
+
+    it('finalizes domestic payment-status partial cancels by a unique pending ticket item match', async () => {
+      const reservationId = randomUUID();
+      const paymentId = randomUUID();
+      const ticketItemId = randomUUID();
+      const finalizer = {
+        finalizeFullPaymentCancellation: vi.fn().mockResolvedValue({
+          releaseJobId: 'release-job-1',
+          releaseEnqueued: true,
+        }),
+      };
+      (service as unknown as {
+        paymentCancellationFinalizer: typeof finalizer;
+      }).paymentCancellationFinalizer = finalizer;
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          reservationNumber: 'GRP-20260608-DOMESTIC',
+          showtimeId: 'showtime-1',
+          status: 'CONFIRMED',
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: paymentId,
+          reservationId,
+          paymentKey: 'pay_domestic_partial',
+          tossOrderId: 'GRP-20260608-DOMESTIC',
+          method: 'CARD',
+          provider: 'CARD',
+          currency: 'KRW',
+          amount: 724000,
+          status: 'DONE',
+          providerMetadata: null,
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: 'showtime-1',
+          performanceId: 'performance-1',
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          cancelledSeatHoldMinMinutes: 1,
+          cancelledSeatHoldMaxMinutes: 10,
+        }]))
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([{
+          ticketItemId,
+          seatId: 'SVIP:다-159',
+          floorKey: 'SVIP',
+          seatKey: 'SVIP:다-159',
+          cancellationFee: 0,
+          serviceFeeRefund: 2000,
+          refundableAmount: 362000,
+        }]));
+
+      const result = await service.finalizePaymentStatusPartialCancelWebhook(
+        {
+          eventId: 'evt-payment-partial-domestic',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_domestic_partial',
+            orderId: 'GRP-20260608-DOMESTIC',
+            status: 'PARTIAL_CANCELED',
+            method: 'CARD',
+            provider: 'CARD',
+            totalAmount: 724000,
+          },
+        },
+        {
+          paymentKey: 'pay_domestic_partial',
+          orderId: 'GRP-20260608-DOMESTIC',
+          method: 'CARD',
+          totalAmount: 724000,
+          status: 'PARTIAL_CANCELED',
+          balanceAmount: 362000,
+          approvedAt: '2026-06-08T11:00:00+09:00',
+          cancels: [{
+            cancelAmount: 362000,
+            cancelReason: '다른 좌석으로 재예매',
+            canceledAt: '2026-06-08T11:17:00+09:00',
+            cancelStatus: 'DONE',
+          }],
+        },
+      );
+
+      expect(result).toBe('finalized');
+      expect(finalizer.finalizeFullPaymentCancellation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          ticketItemCancellation: expect.objectContaining({
+            ticketItemId,
+            refundableAmount: 362000,
+          }),
+          context: expect.objectContaining({
+            seats: [{
+              seatId: 'SVIP:다-159',
+              floorKey: 'SVIP',
+              seatKey: 'SVIP:다-159',
+            }],
+          }),
+        }),
+      );
+    });
+
+    it('finalizes every clear pending ticket item in a multi-cancel payment-status snapshot', async () => {
+      const reservationId = randomUUID();
+      const paymentId = randomUUID();
+      const ticketItemId1 = randomUUID();
+      const ticketItemId2 = randomUUID();
+      const finalizer = {
+        finalizeFullPaymentCancellation: vi.fn().mockResolvedValue({
+          releaseJobId: 'release-job-1',
+          releaseEnqueued: true,
+        }),
+      };
+      (service as unknown as {
+        paymentCancellationFinalizer: typeof finalizer;
+      }).paymentCancellationFinalizer = finalizer;
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          reservationNumber: 'GRP-20260608-MULTI',
+          showtimeId: 'showtime-1',
+          status: 'CONFIRMED',
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: paymentId,
+          reservationId,
+          paymentKey: 'pay_multi_partial',
+          tossOrderId: 'GRP-20260608-MULTI',
+          method: 'CARD',
+          provider: 'CARD',
+          currency: 'KRW',
+          amount: 724000,
+          status: 'DONE',
+          providerMetadata: null,
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: 'showtime-1',
+          performanceId: 'performance-1',
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          cancelledSeatHoldMinMinutes: 1,
+          cancelledSeatHoldMaxMinutes: 10,
+        }]))
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([{
+          ticketItemId: ticketItemId1,
+          seatId: 'SVIP:다-159',
+          floorKey: 'SVIP',
+          seatKey: 'SVIP:다-159',
+          cancellationFee: 0,
+          serviceFeeRefund: 2000,
+          refundableAmount: 362000,
+        }]))
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([{
+          ticketItemId: ticketItemId2,
+          seatId: 'SVIP:다-160',
+          floorKey: 'SVIP',
+          seatKey: 'SVIP:다-160',
+          cancellationFee: 0,
+          serviceFeeRefund: 2000,
+          refundableAmount: 362000,
+        }]));
+
+      const result = await service.finalizePaymentStatusPartialCancelWebhook(
+        {
+          eventId: 'evt-payment-partial-multi',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_multi_partial',
+            orderId: 'GRP-20260608-MULTI',
+            status: 'PARTIAL_CANCELED',
+            method: 'CARD',
+            provider: 'CARD',
+            totalAmount: 724000,
+          },
+        },
+        {
+          paymentKey: 'pay_multi_partial',
+          orderId: 'GRP-20260608-MULTI',
+          method: 'CARD',
+          totalAmount: 724000,
+          status: 'PARTIAL_CANCELED',
+          balanceAmount: 0,
+          approvedAt: '2026-06-08T11:00:00+09:00',
+          cancels: [
+            {
+              cancelAmount: 362000,
+              cancelReason: '단순 변심',
+              canceledAt: '2026-06-04T11:17:00+09:00',
+              cancelStatus: 'DONE',
+            },
+            {
+              cancelAmount: 362000,
+              cancelReason: '다른 좌석으로 재예매',
+              canceledAt: '2026-06-08T11:17:00+09:00',
+              cancelStatus: 'DONE',
+            },
+          ],
+        },
+      );
+
+      expect(result).toBe('finalized');
+      expect(finalizer.finalizeFullPaymentCancellation).toHaveBeenCalledTimes(2);
+      expect(finalizer.finalizeFullPaymentCancellation).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          ticketItemCancellation: expect.objectContaining({
+            ticketItemId: ticketItemId1,
+            seatKey: 'SVIP:다-159',
+          }),
+          reason: '단순 변심',
+        }),
+      );
+      expect(finalizer.finalizeFullPaymentCancellation).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          ticketItemCancellation: expect.objectContaining({
+            ticketItemId: ticketItemId2,
+            seatKey: 'SVIP:다-160',
+          }),
+          reason: '다른 좌석으로 재예매',
+        }),
+      );
+    });
+
+    it('refuses ambiguous payment-status partial cancel matches', async () => {
+      const reservationId = randomUUID();
+      const paymentId = randomUUID();
+      const finalizer = {
+        finalizeFullPaymentCancellation: vi.fn(),
+      };
+      (service as unknown as {
+        paymentCancellationFinalizer: typeof finalizer;
+      }).paymentCancellationFinalizer = finalizer;
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          reservationNumber: 'GRP-20260608-AMBIG',
+          showtimeId: 'showtime-1',
+          status: 'CONFIRMED',
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: paymentId,
+          reservationId,
+          paymentKey: 'pay_ambiguous_partial',
+          tossOrderId: 'GRP-20260608-AMBIG',
+          method: 'CARD',
+          provider: 'CARD',
+          currency: 'KRW',
+          amount: 724000,
+          status: 'DONE',
+          providerMetadata: null,
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: 'showtime-1',
+          performanceId: 'performance-1',
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          cancelledSeatHoldMinMinutes: 1,
+          cancelledSeatHoldMaxMinutes: 10,
+        }]))
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([
+          {
+            ticketItemId: randomUUID(),
+            seatId: 'SVIP:다-159',
+            floorKey: 'SVIP',
+            seatKey: 'SVIP:다-159',
+            cancellationFee: 0,
+            serviceFeeRefund: 2000,
+            refundableAmount: 362000,
+          },
+          {
+            ticketItemId: randomUUID(),
+            seatId: 'SVIP:다-160',
+            floorKey: 'SVIP',
+            seatKey: 'SVIP:다-160',
+            cancellationFee: 0,
+            serviceFeeRefund: 2000,
+            refundableAmount: 362000,
+          },
+        ]));
+
+      const result = await service.finalizePaymentStatusPartialCancelWebhook(
+        {
+          eventId: 'evt-payment-partial-ambiguous',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_ambiguous_partial',
+            orderId: 'GRP-20260608-AMBIG',
+            status: 'PARTIAL_CANCELED',
+            method: 'CARD',
+            provider: 'CARD',
+            totalAmount: 724000,
+          },
+        },
+        {
+          paymentKey: 'pay_ambiguous_partial',
+          orderId: 'GRP-20260608-AMBIG',
+          method: 'CARD',
+          totalAmount: 724000,
+          status: 'PARTIAL_CANCELED',
+          balanceAmount: 362000,
+          approvedAt: '2026-06-08T11:00:00+09:00',
+          cancels: [{
+            cancelAmount: 362000,
+            cancelReason: '다른 좌석으로 재예매',
+            canceledAt: '2026-06-08T11:17:00+09:00',
+            cancelStatus: 'DONE',
+          }],
+        },
+      );
+
+      expect(result).toBe('no_local_match');
+      expect(finalizer.finalizeFullPaymentCancellation).not.toHaveBeenCalled();
+    });
+
+    it('refuses active-only payment-status partial cancel matches without generated local intent', async () => {
+      const reservationId = randomUUID();
+      const paymentId = randomUUID();
+      const finalizer = {
+        finalizeFullPaymentCancellation: vi.fn(),
+      };
+      (service as unknown as {
+        paymentCancellationFinalizer: typeof finalizer;
+      }).paymentCancellationFinalizer = finalizer;
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          reservationNumber: 'GRP-20260608-ACTIVE',
+          showtimeId: 'showtime-1',
+          status: 'CONFIRMED',
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: paymentId,
+          reservationId,
+          paymentKey: 'pay_active_partial',
+          tossOrderId: 'GRP-20260608-ACTIVE',
+          method: 'CARD',
+          provider: 'CARD',
+          currency: 'KRW',
+          amount: 724000,
+          status: 'DONE',
+          providerMetadata: null,
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: 'showtime-1',
+          performanceId: 'performance-1',
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          cancelledSeatHoldMinMinutes: 1,
+          cancelledSeatHoldMaxMinutes: 10,
+        }]))
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([]));
+
+      const result = await service.finalizePaymentStatusPartialCancelWebhook(
+        {
+          eventId: 'evt-payment-partial-active',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_active_partial',
+            orderId: 'GRP-20260608-ACTIVE',
+            status: 'PARTIAL_CANCELED',
+            method: 'CARD',
+            provider: 'CARD',
+            totalAmount: 724000,
+          },
+        },
+        {
+          paymentKey: 'pay_active_partial',
+          orderId: 'GRP-20260608-ACTIVE',
+          method: 'CARD',
+          totalAmount: 724000,
+          status: 'PARTIAL_CANCELED',
+          balanceAmount: 362000,
+          approvedAt: '2026-06-08T11:00:00+09:00',
+          cancels: [{
+            cancelAmount: 362000,
+            cancelReason: '다른 좌석으로 재예매',
+            canceledAt: '2026-06-08T11:17:00+09:00',
+            cancelStatus: 'DONE',
+          }],
+        },
+      );
+
+      expect(result).toBe('no_local_match');
+      expect(finalizer.finalizeFullPaymentCancellation).not.toHaveBeenCalled();
+    });
+
+    it('refuses generated cancelRequestId matches when the local ticket item is still active', async () => {
+      const reservationId = randomUUID();
+      const paymentId = randomUUID();
+      const ticketItemId = randomUUID();
+      const finalizer = {
+        finalizeFullPaymentCancellation: vi.fn(),
+      };
+      (service as unknown as {
+        paymentCancellationFinalizer: typeof finalizer;
+      }).paymentCancellationFinalizer = finalizer;
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          reservationNumber: 'GRP-20260608-ACTIVE-ID',
+          showtimeId: 'showtime-1',
+          status: 'CONFIRMED',
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: paymentId,
+          reservationId,
+          paymentKey: 'pay_active_id_partial',
+          tossOrderId: 'GRP-20260608-ACTIVE-ID',
+          method: 'CARD',
+          provider: 'CARD',
+          currency: 'KRW',
+          amount: 724000,
+          status: 'DONE',
+          providerMetadata: null,
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: 'showtime-1',
+          performanceId: 'performance-1',
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          cancelledSeatHoldMinMinutes: 1,
+          cancelledSeatHoldMaxMinutes: 10,
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          ticketItemId,
+          seatId: 'SVIP:다-159',
+          floorKey: 'SVIP',
+          seatKey: 'SVIP:다-159',
+          status: 'active',
+          cancellationFee: 0,
+          serviceFeeRefund: 0,
+          refundableAmount: 0,
+        }]));
+
+      const result = await service.finalizePaymentStatusPartialCancelWebhook(
+        {
+          eventId: 'evt-payment-partial-active-id',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_active_id_partial',
+            orderId: 'GRP-20260608-ACTIVE-ID',
+            status: 'PARTIAL_CANCELED',
+            method: 'CARD',
+            provider: 'CARD',
+            totalAmount: 724000,
+          },
+        },
+        {
+          paymentKey: 'pay_active_id_partial',
+          orderId: 'GRP-20260608-ACTIVE-ID',
+          method: 'CARD',
+          totalAmount: 724000,
+          status: 'PARTIAL_CANCELED',
+          balanceAmount: 362000,
+          approvedAt: '2026-06-08T11:00:00+09:00',
+          cancels: [{
+            cancelAmount: 362000,
+            cancelReason: '다른 좌석으로 재예매',
+            canceledAt: '2026-06-08T11:17:00+09:00',
+            cancelStatus: 'DONE',
+            cancelRequestId: `cancel_${ticketItemId}`,
+          }],
+        },
+      );
+
+      expect(result).toBe('no_local_match');
+      expect(finalizer.finalizeFullPaymentCancellation).not.toHaveBeenCalled();
+    });
+
+    it('refuses domestic fallback when provider completed count is already reconciled locally', async () => {
+      const reservationId = randomUUID();
+      const paymentId = randomUUID();
+      const pendingTicketItemId = randomUUID();
+      const finalizer = {
+        finalizeFullPaymentCancellation: vi.fn(),
+      };
+      (service as unknown as {
+        paymentCancellationFinalizer: typeof finalizer;
+      }).paymentCancellationFinalizer = finalizer;
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          reservationNumber: 'GRP-20260608-REUSED',
+          showtimeId: 'showtime-1',
+          status: 'CONFIRMED',
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: paymentId,
+          reservationId,
+          paymentKey: 'pay_reused_partial',
+          tossOrderId: 'GRP-20260608-REUSED',
+          method: 'CARD',
+          provider: 'CARD',
+          currency: 'KRW',
+          amount: 724000,
+          status: 'DONE',
+          providerMetadata: null,
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: 'showtime-1',
+          performanceId: 'performance-1',
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          cancelledSeatHoldMinMinutes: 1,
+          cancelledSeatHoldMaxMinutes: 10,
+        }]))
+        .mockReturnValueOnce(createSelectChain([{ ticketItemId: randomUUID() }]))
+        .mockReturnValueOnce(createSelectChain([{
+          ticketItemId: pendingTicketItemId,
+          seatId: 'SVIP:다-160',
+          floorKey: 'SVIP',
+          seatKey: 'SVIP:다-160',
+          cancellationFee: 0,
+          serviceFeeRefund: 2000,
+          refundableAmount: 362000,
+        }]));
+
+      const result = await service.finalizePaymentStatusPartialCancelWebhook(
+        {
+          eventId: 'evt-payment-partial-reused',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_reused_partial',
+            orderId: 'GRP-20260608-REUSED',
+            status: 'PARTIAL_CANCELED',
+            method: 'CARD',
+            provider: 'CARD',
+            totalAmount: 724000,
+          },
+        },
+        {
+          paymentKey: 'pay_reused_partial',
+          orderId: 'GRP-20260608-REUSED',
+          method: 'CARD',
+          totalAmount: 724000,
+          status: 'PARTIAL_CANCELED',
+          balanceAmount: 362000,
+          approvedAt: '2026-06-08T11:00:00+09:00',
+          cancels: [{
+            cancelAmount: 362000,
+            cancelReason: '다른 좌석으로 재예매',
+            canceledAt: '2026-06-04T11:17:00+09:00',
+            cancelStatus: 'DONE',
+          }],
+        },
+      );
+
+      expect(result).toBe('no_local_match');
+      expect(finalizer.finalizeFullPaymentCancellation).not.toHaveBeenCalled();
+    });
+
     it('acks PayPal DONE webhook after sync confirm without overwriting the KRW payment row', async () => {
       const reservationId = randomUUID();
       const paymentId = randomUUID();

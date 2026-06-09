@@ -171,6 +171,18 @@ type WebhookSeatSelection = {
   price: number;
 };
 
+type PaymentStatusPartialCancelTicketItemCancellation = {
+  ticketItemId: string;
+  seatId: string;
+  floorKey: string;
+  seatKey: string;
+  status?: string;
+  cancellationFee: number;
+  serviceFeeRefund: number;
+  refundableAmount: number;
+  cancelReason?: string;
+};
+
 @Injectable()
 export class PaymentService {
   constructor(
@@ -980,6 +992,143 @@ export class PaymentService {
     return 'finalized';
   }
 
+  async finalizePaymentStatusPartialCancelWebhook(
+    payload: TossWebhookRequestBody,
+    providerResponse: TossPaymentResponse,
+  ): Promise<'finalized' | 'already_finalized' | 'no_local_match'> {
+    if (!this.paymentCancellationFinalizer) {
+      throw new InternalServerErrorException('결제 취소 최종화 서비스가 설정되지 않았습니다');
+    }
+
+    if (
+      payload.eventType !== 'PAYMENT_STATUS_CHANGED'
+      || providerResponse.status !== 'PARTIAL_CANCELED'
+    ) {
+      return 'no_local_match';
+    }
+
+    const completedCancels = this.getCompletedProviderCancels(providerResponse);
+    if (completedCancels.length === 0) {
+      return 'no_local_match';
+    }
+
+    const orderId = this.requireWebhookOrderId(payload);
+    const paymentKey = this.requireWebhookPaymentKey(payload);
+    const [reservation] = await this.db
+      .select({
+        id: reservations.id,
+        reservationNumber: reservations.reservationNumber,
+        showtimeId: reservations.showtimeId,
+        status: reservations.status,
+      })
+      .from(reservations)
+      .where(eq(reservations.tossOrderId, orderId));
+
+    if (!reservation) {
+      return 'no_local_match';
+    }
+
+    if (reservation.status === 'CANCELLED') {
+      return 'already_finalized';
+    }
+
+    if (reservation.status !== 'CONFIRMED') {
+      return 'no_local_match';
+    }
+
+    const [payment] = await this.db
+      .select({
+        id: payments.id,
+        reservationId: payments.reservationId,
+        paymentKey: payments.paymentKey,
+        tossOrderId: payments.tossOrderId,
+        method: payments.method,
+        provider: payments.provider,
+        currency: payments.currency,
+        amount: payments.amount,
+        status: payments.status,
+        providerMetadata: payments.providerMetadata,
+      })
+      .from(payments)
+      .where(
+        and(
+          eq(payments.reservationId, reservation.id),
+          eq(payments.paymentKey, paymentKey),
+          eq(payments.tossOrderId, orderId),
+        ),
+      );
+
+    if (!payment) {
+      return 'no_local_match';
+    }
+
+    const [showtime] = await this.db
+      .select({
+        id: showtimes.id,
+        performanceId: showtimes.performanceId,
+      })
+      .from(showtimes)
+      .where(eq(showtimes.id, reservation.showtimeId));
+
+    if (!showtime) {
+      return 'no_local_match';
+    }
+
+    const [bookingPolicy] = await this.db
+      .select({
+        cancelledSeatHoldMinMinutes: bookingPolicies.cancelledSeatHoldMinMinutes,
+        cancelledSeatHoldMaxMinutes: bookingPolicies.cancelledSeatHoldMaxMinutes,
+      })
+      .from(bookingPolicies)
+      .where(eq(bookingPolicies.performanceId, showtime.performanceId));
+
+    const ticketItemCancellations =
+      await this.findPaymentStatusPartialCancelTicketItemCancellations(
+        completedCancels,
+        payment.id,
+      );
+
+    if (!ticketItemCancellations?.length) {
+      return 'no_local_match';
+    }
+
+    for (const ticketItemCancellation of ticketItemCancellations) {
+      const {
+        cancelReason,
+        status: _status,
+        ...finalizerTicketItemCancellation
+      } = ticketItemCancellation;
+
+      await this.paymentCancellationFinalizer.finalizeFullPaymentCancellation({
+        source: 'cancel_webhook',
+        ticketItemCancellation: finalizerTicketItemCancellation,
+        context: {
+          reservation: {
+            id: reservation.id,
+            showtimeId: reservation.showtimeId,
+            reservationNumber: reservation.reservationNumber,
+          },
+          payment: {
+            id: payment.id,
+            paymentKey: payment.paymentKey,
+            providerMetadata: payment.providerMetadata,
+          },
+          bookingPolicy: bookingPolicy ?? null,
+          seats: [{
+            seatId: ticketItemCancellation.seatId,
+            floorKey: ticketItemCancellation.floorKey,
+            seatKey: ticketItemCancellation.seatKey,
+          }],
+        },
+        reason: cancelReason ?? 'provider cancellation',
+        providerResponse: providerResponse as unknown as Record<string, unknown>,
+        actor: { kind: 'system' },
+      });
+    }
+
+    return 'finalized';
+  }
+
   private async findCancelWebhookTicketItemCancellation(
     payload: TossWebhookRequestBody,
     paymentId: string,
@@ -1022,6 +1171,141 @@ export class PaymentService {
       );
 
     return ticketItem ?? null;
+  }
+
+  private getCompletedProviderCancels(
+    providerResponse: TossPaymentResponse,
+  ): NonNullable<TossPaymentResponse['cancels']> {
+    return providerResponse.cancels?.filter((cancel) =>
+      typeof cancel.cancelAmount === 'number'
+      && cancel.cancelAmount > 0
+      && (cancel.cancelStatus === undefined || cancel.cancelStatus === 'DONE')
+    ) ?? [];
+  }
+
+  private async findPaymentStatusPartialCancelTicketItemCancellations(
+    completedCancels: NonNullable<TossPaymentResponse['cancels']>,
+    paymentId: string,
+  ): Promise<PaymentStatusPartialCancelTicketItemCancellation[] | null> {
+    const ticketItemCancellations: PaymentStatusPartialCancelTicketItemCancellation[] = [];
+    const matchedTicketItemIds = new Set<string>();
+
+    for (const cancel of completedCancels) {
+      const ticketItemId = typeof cancel.cancelRequestId === 'string'
+        ? this.parseGeneratedCancelRequestId(cancel.cancelRequestId)
+        : null;
+
+      if (!ticketItemId) {
+        continue;
+      }
+
+      const [ticketItem] = await this.db
+        .select({
+          ticketItemId: ticketItems.id,
+          seatId: ticketItems.seatId,
+          floorKey: ticketItems.floorKey,
+          seatKey: ticketItems.seatKey,
+          status: ticketItems.status,
+          cancellationFee: ticketItems.cancellationFee,
+          serviceFeeRefund: ticketItems.serviceFeeRefund,
+          refundableAmount: ticketItems.refundableAmount,
+        })
+        .from(ticketItems)
+        .where(
+          and(
+            eq(ticketItems.id, ticketItemId),
+            eq(ticketItems.paymentId, paymentId),
+            eq(ticketItems.status, 'cancellation_pending'),
+          ),
+        );
+
+      if (ticketItem?.status === 'cancellation_pending') {
+        if (matchedTicketItemIds.has(ticketItem.ticketItemId)) {
+          continue;
+        }
+
+        ticketItemCancellations.push({
+          ...ticketItem,
+          cancelReason: cancel.cancelReason,
+        });
+        matchedTicketItemIds.add(ticketItem.ticketItemId);
+      }
+    }
+
+    for (const cancel of completedCancels) {
+      if (typeof cancel.cancelRequestId === 'string' && cancel.cancelRequestId.trim()) {
+        continue;
+      }
+
+      if (
+        typeof cancel.cancelReason !== 'string'
+        || !cancel.cancelReason.trim()
+      ) {
+        continue;
+      }
+
+      const providerCompletedMatchingCount = completedCancels.filter((candidate) =>
+        candidate.cancelAmount === cancel.cancelAmount
+        && candidate.cancelReason === cancel.cancelReason
+      ).length;
+      const localCancelledTicketItems = await this.db
+        .select({
+          ticketItemId: ticketItems.id,
+        })
+        .from(ticketItems)
+        .where(
+          and(
+            eq(ticketItems.paymentId, paymentId),
+            eq(ticketItems.status, 'cancelled'),
+            eq(ticketItems.refundableAmount, cancel.cancelAmount),
+            eq(ticketItems.cancelReason, cancel.cancelReason),
+          ),
+        );
+
+      if (localCancelledTicketItems.length >= providerCompletedMatchingCount) {
+        continue;
+      }
+
+      const matchingTicketItems = await this.db
+        .select({
+          ticketItemId: ticketItems.id,
+          seatId: ticketItems.seatId,
+          floorKey: ticketItems.floorKey,
+          seatKey: ticketItems.seatKey,
+          cancellationFee: ticketItems.cancellationFee,
+          serviceFeeRefund: ticketItems.serviceFeeRefund,
+          refundableAmount: ticketItems.refundableAmount,
+        })
+        .from(ticketItems)
+        .where(
+          and(
+            eq(ticketItems.paymentId, paymentId),
+            eq(ticketItems.status, 'cancellation_pending'),
+            eq(ticketItems.refundableAmount, cancel.cancelAmount),
+            eq(ticketItems.cancelReason, cancel.cancelReason),
+          ),
+        );
+
+      if (matchingTicketItems.length === 1) {
+        const matchingTicketItem = matchingTicketItems[0]!;
+        if (matchedTicketItemIds.has(matchingTicketItem.ticketItemId)) {
+          continue;
+        }
+
+        ticketItemCancellations.push({
+          ...matchingTicketItem,
+          cancelReason: cancel.cancelReason,
+        });
+        matchedTicketItemIds.add(matchingTicketItem.ticketItemId);
+        continue;
+      }
+
+      if (matchingTicketItems.length > 1) {
+        return null;
+      }
+    }
+
+    return ticketItemCancellations;
   }
 
   private resolveCancelWebhookReason(

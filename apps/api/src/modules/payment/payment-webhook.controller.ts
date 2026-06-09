@@ -254,6 +254,29 @@ export class PaymentWebhookController {
       return { code: 'CANCEL_STATUS_CHANGED_APPLIED' };
     }
 
+    if (this.hasCompletedPartialCancelSnapshot(body, providerResponse)) {
+      const result = await this.paymentService.finalizePaymentStatusPartialCancelWebhook(
+        body,
+        providerResponse,
+      );
+
+      if (result === 'finalized') {
+        return { code: 'PAYMENT_STATUS_CHANGED_PARTIAL_CANCEL_FINALIZED' };
+      }
+
+      if (result === 'already_finalized') {
+        return {
+          code: 'IGNORED_DUPLICATE_CANCEL_EVENT',
+          message: 'partial cancel payment event already applied',
+        };
+      }
+
+      return {
+        code: 'IGNORED_PARTIAL_CANCEL_EVENT_NO_LOCAL_MATCH',
+        message: 'partial cancel payment event has no matching local ticket cancellation',
+      };
+    }
+
     const incomingStatus = this.normalizePaymentStatus(this.requirePaymentStatus(body));
     if (this.shouldIgnorePaymentEvent(body, progress, incomingStatus)) {
       return {
@@ -527,6 +550,17 @@ export class PaymentWebhookController {
         || providerResponse.status === 'PARTIAL_CANCELED'
       )
       && this.findMatchingCancel(body, providerResponse) !== undefined;
+  }
+
+  private hasCompletedPartialCancelSnapshot(
+    body: TossWebhookRequestBody,
+    providerResponse: TossPaymentResponse,
+  ): boolean {
+    return body.eventType === 'PAYMENT_STATUS_CHANGED'
+      && providerResponse.status === 'PARTIAL_CANCELED'
+      && (providerResponse.cancels?.some((cancel) =>
+        cancel.cancelStatus === undefined || cancel.cancelStatus === 'DONE'
+      ) ?? false);
   }
 
   private requirePaymentStatus(body: TossWebhookRequestBody): string {
