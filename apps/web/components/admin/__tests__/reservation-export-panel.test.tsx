@@ -106,6 +106,11 @@ describe('ReservationExportPanel', () => {
     expect(
       screen.getByRole('heading', { name: '실패/만료/취소 고객 CSV를 내보내시겠습니까?' }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        '고객 CSV에는 이름, 이메일, 전화번호, 마케팅 동의 여부, 실패/취소 사유와 취소 매출 정보가 포함됩니다.',
+      ),
+    ).toBeInTheDocument();
 
     const confirmButton = screen.getByRole('button', { name: 'CSV 내보내기' });
     expect(confirmButton).toBeDisabled();

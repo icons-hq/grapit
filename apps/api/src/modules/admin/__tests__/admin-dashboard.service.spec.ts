@@ -59,14 +59,15 @@ describe('AdminDashboardService', () => {
       mockDb.select
         .mockReturnValueOnce(createChainMock([{ count: 10, sum: 150000 }]))
         .mockReturnValueOnce(createChainMock([{ count: 2, sum: 30000 }]))
-        .mockReturnValueOnce(createChainMock([{ count: 1, sum: 50000 }]));
+        .mockReturnValueOnce(createChainMock([{ count: 1, sum: 50000 }]))
+        .mockReturnValueOnce(createChainMock([{ count: 1, sum: 20000 }]));
       const result = await service.getSummary();
       expect(result).toEqual({
         todayBookings: 10,
-        todayCancellationEvents: 3,
+        todayCancellationEvents: 4,
         todayGrossRevenue: 150000,
-        todayNegativeCancellationRevenue: -80000,
-        todayNetRevenue: 70000,
+        todayNegativeCancellationRevenue: -100000,
+        todayNetRevenue: 50000,
       });
     });
   });
@@ -195,7 +196,8 @@ describe('AdminDashboardService', () => {
       mockDb.select
         .mockReturnValueOnce(createChainMock([{ count: 10, sum: 150000 }]))
         .mockReturnValueOnce(createChainMock([{ count: 2, sum: 30000 }]))
-        .mockReturnValueOnce(createChainMock([{ count: 1, sum: 50000 }]));
+        .mockReturnValueOnce(createChainMock([{ count: 1, sum: 50000 }]))
+        .mockReturnValueOnce(createChainMock([{ count: 1, sum: 20000 }]));
       await service.getSummary();
       expect(mockCache.set).toHaveBeenCalledWith(
         'cache:admin:dashboard:summary',
@@ -212,7 +214,8 @@ describe('AdminDashboardService', () => {
       mockDb.select
         .mockReturnValueOnce(createChainMock([{ count: 10, sum: 150000 }]))
         .mockReturnValueOnce(createChainMock([{ count: 2, sum: 30000 }]))
-        .mockReturnValueOnce(createChainMock([{ count: 1, sum: 50000 }]));
+        .mockReturnValueOnce(createChainMock([{ count: 1, sum: 50000 }]))
+        .mockReturnValueOnce(createChainMock([{ count: 1, sum: 20000 }]));
       const result = await service.getSummary();
       expect(result.todayBookings).toBe(10);
     });

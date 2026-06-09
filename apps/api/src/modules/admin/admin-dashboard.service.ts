@@ -28,6 +28,7 @@ import {
  * D-12: 대시보드 캐시 TTL은 항상 60초. cache.set 호출 시 반드시 3번째 인자로 명시.
  */
 const DASHBOARD_CACHE_TTL = 60;
+const ASYNC_DONE_SEAT_FAILURE_CANCEL_REASON = '판매 불가능 좌석으로 인한 자동 취소';
 
 /**
  * D-10: Top 10 공연은 최근 30일 고정 윈도우. 사용자 조절 없음.
@@ -74,7 +75,7 @@ export class AdminDashboardService {
       const { startUtc, endUtc } = kstTodayBoundaryUtc();
       const legacyCancellationEventAt = sql<Date>`coalesce(${payments.cancelledAt}, ${reservations.cancelledAt})`;
 
-      const [completedBookings, ticketItemCancellations, legacyCancellations] =
+      const [completedBookings, ticketItemCancellations, legacyCancellations, compensatedFailures] =
         await Promise.all([
           this.db
             .select({
@@ -123,16 +124,39 @@ export class AdminDashboardService {
                 )`,
               ),
             ),
+          this.db
+            .select({
+              count: sql<number>`count(distinct ${payments.id})::int`,
+              sum: sql<number>`coalesce(sum(${payments.amount}), 0)::int`,
+            })
+            .from(payments)
+            .innerJoin(reservations, eq(payments.reservationId, reservations.id))
+            .where(
+              and(
+                eq(reservations.status, 'FAILED'),
+                eq(payments.status, 'CANCELED'),
+                eq(payments.cancelReason, ASYNC_DONE_SEAT_FAILURE_CANCEL_REASON),
+                gte(payments.cancelledAt, startUtc),
+                lt(payments.cancelledAt, endUtc),
+                sql`not exists (
+                  select 1
+                  from ticket_items
+                  where ticket_items.reservation_id = ${reservations.id}
+                )`,
+              ),
+            ),
         ]);
 
       const todayGrossRevenue = completedBookings[0]?.sum ?? 0;
       const todayCancellationEvents =
         (ticketItemCancellations[0]?.count ?? 0) +
-        (legacyCancellations[0]?.count ?? 0);
+        (legacyCancellations[0]?.count ?? 0) +
+        (compensatedFailures[0]?.count ?? 0);
       const todayNegativeCancellationRevenue =
         -(
           (ticketItemCancellations[0]?.sum ?? 0) +
-          (legacyCancellations[0]?.sum ?? 0)
+          (legacyCancellations[0]?.sum ?? 0) +
+          (compensatedFailures[0]?.sum ?? 0)
         );
 
       return {

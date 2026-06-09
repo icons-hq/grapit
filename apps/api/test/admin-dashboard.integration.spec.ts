@@ -169,6 +169,7 @@ describe('AdminDashboardService (integration)', () => {
     status: 'READY' | 'IN_PROGRESS' | 'DONE' | 'CANCELED' | 'ABORTED' | 'EXPIRED';
     paidAt?: Date;
     cancelledAt?: Date;
+    cancelReason?: string;
   }) {
     const paymentId = randomUUID();
     await db.insert(payments).values({
@@ -182,6 +183,7 @@ describe('AdminDashboardService (integration)', () => {
       status: opts.status,
       ...(opts.paidAt ? { paidAt: opts.paidAt } : {}),
       ...(opts.cancelledAt ? { cancelledAt: opts.cancelledAt } : {}),
+      ...(opts.cancelReason ? { cancelReason: opts.cancelReason } : {}),
     });
     return paymentId;
   }
@@ -308,13 +310,29 @@ describe('AdminDashboardService (integration)', () => {
       cancelledAt: today,
     });
 
+    const compensatedFailureReservationId = await seedReservation({
+      userId,
+      showtimeId,
+      status: 'FAILED',
+      totalAmount: 60000,
+      createdAt: today,
+    });
+    await seedPayment({
+      reservationId: compensatedFailureReservationId,
+      amount: 60000,
+      status: 'CANCELED',
+      paidAt: today,
+      cancelledAt: today,
+      cancelReason: '판매 불가능 좌석으로 인한 자동 취소',
+    });
+
     const result = await service.getSummary();
 
     expect(result).toEqual({
-      todayBookings: 3,
-      todayCancellationEvents: 3,
-      todayGrossRevenue: 350000,
-      todayNegativeCancellationRevenue: -195000,
+      todayBookings: 4,
+      todayCancellationEvents: 4,
+      todayGrossRevenue: 410000,
+      todayNegativeCancellationRevenue: -255000,
       todayNetRevenue: 155000,
     });
   });

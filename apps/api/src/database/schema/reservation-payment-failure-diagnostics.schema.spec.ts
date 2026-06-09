@@ -97,6 +97,10 @@ describe('reservation_payment_failure_diagnostics schema', () => {
     expect(migration).toContain(
       'CREATE INDEX "idx_rpfd_provider_check_status"',
     );
+    expect(migration).toContain('PAYMENT_DEADLINE_EXPIRED');
+    expect(migration).toContain('payment_compensated_cancel');
+    expect(migration).toContain('ASYNC_DONE_SEAT_UNAVAILABLE_CANCELLED');
+    expect(migration).toContain('판매 불가능 좌석으로 인한 자동 취소');
   });
 
   it('does not create raw payment provider storage in the migration', () => {

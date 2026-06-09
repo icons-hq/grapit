@@ -41,22 +41,34 @@ SELECT
 		when p."status" = 'EXPIRED'
 			or (p."id" is null and r."payment_deadline_at" is not null and r."payment_deadline_at" < now())
 			then 'payment_expired'
+		when p."status" = 'CANCELED'
+			and r."status" = 'FAILED'
+			and p."cancel_reason" = '판매 불가능 좌석으로 인한 자동 취소'
+			then 'payment_compensated_cancel'
 		when p."status" = 'CANCELED' then 'payment_cancelled_before_confirm'
 		else 'payment_failed'
 	end,
 	case
-		when p."status" = 'EXPIRED'
-			or (p."id" is null and r."payment_deadline_at" is not null and r."payment_deadline_at" < now())
-			then 'PAYMENT_EXPIRED'
+		when p."status" = 'EXPIRED' then 'PAYMENT_EXPIRED'
+		when p."id" is null and r."payment_deadline_at" is not null and r."payment_deadline_at" < now()
+			then 'PAYMENT_DEADLINE_EXPIRED'
 		when p."status" = 'ABORTED' then 'PAYMENT_ABORTED'
+		when p."status" = 'CANCELED'
+			and r."status" = 'FAILED'
+			and p."cancel_reason" = '판매 불가능 좌석으로 인한 자동 취소'
+			then 'ASYNC_DONE_SEAT_UNAVAILABLE_CANCELLED'
 		when p."status" = 'CANCELED' then 'PAYMENT_CANCELED_BEFORE_CONFIRM'
 		else 'PAYMENT_FAILED'
 	end,
 	case
-		when p."status" = 'EXPIRED'
-			or (p."id" is null and r."payment_deadline_at" is not null and r."payment_deadline_at" < now())
-			then '결제 유효 시간이 만료되었습니다.'
+		when p."status" = 'EXPIRED' then '결제 유효 시간이 만료되었습니다.'
+		when p."id" is null and r."payment_deadline_at" is not null and r."payment_deadline_at" < now()
+			then '결제 제한 시간이 만료되었습니다.'
 		when p."status" = 'ABORTED' then '결제가 중단되었거나 실패했습니다.'
+		when p."status" = 'CANCELED'
+			and r."status" = 'FAILED'
+			and p."cancel_reason" = '판매 불가능 좌석으로 인한 자동 취소'
+			then '판매 불가능 좌석으로 인한 자동 취소'
 		when p."status" = 'CANCELED' then coalesce(nullif(p."cancel_reason", ''), '결제 승인 전 취소되었습니다.')
 		else '결제 실패 또는 미완료로 예매가 실패 처리되었습니다.'
 	end,
