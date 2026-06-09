@@ -43,20 +43,10 @@ export const reservationPaymentFailureDiagnostics = pgTable(
       .defaultNow(),
   },
   (table) => [
-    uniqueIndex('idx_reservation_payment_failure_diagnostics_reservation_id').on(
-      table.reservationId,
-    ),
-    index('idx_reservation_payment_failure_diagnostics_payment_id').on(
-      table.paymentId,
-    ),
-    index('idx_reservation_payment_failure_diagnostics_toss_order_id').on(
-      table.tossOrderId,
-    ),
-    index('idx_reservation_payment_failure_diagnostics_recorded_at').on(
-      table.recordedAt,
-    ),
-    index(
-      'idx_reservation_payment_failure_diagnostics_provider_check_status',
-    ).on(table.providerCheckStatus),
+    uniqueIndex('idx_rpfd_reservation_id').on(table.reservationId),
+    index('idx_rpfd_payment_id').on(table.paymentId),
+    index('idx_rpfd_toss_order_id').on(table.tossOrderId),
+    index('idx_rpfd_recorded_at').on(table.recordedAt),
+    index('idx_rpfd_provider_check_status').on(table.providerCheckStatus),
   ],
 );

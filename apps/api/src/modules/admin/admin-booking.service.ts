@@ -966,6 +966,8 @@ export class AdminBookingService {
         }),
         paymentStatus: mapPaymentStatusOrNull(row.payment?.status),
         paymentMethod: row.payment?.method ?? null,
+        paymentFailureDiagnostic: null,
+        paymentMethodAttribution: null,
         ticketStatusCounts,
         createdAt: row.reservation.createdAt?.toISOString() ?? '',
       };
@@ -1164,6 +1166,8 @@ export class AdminBookingService {
       }),
       paymentStatus: mapPaymentStatusOrNull(payment?.status),
       paymentMethod: payment?.method ?? null,
+      paymentFailureDiagnostic: null,
+      paymentMethodAttribution: null,
       paymentAttemptedAt: payment?.createdAt?.toISOString() ?? null,
       paymentCompletedAt: payment?.paidAt?.toISOString() ?? null,
       ticketStatusCounts: countTicketStatuses(reservationTicketItems),

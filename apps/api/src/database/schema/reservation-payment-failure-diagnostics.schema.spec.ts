@@ -71,20 +71,22 @@ describe('reservation_payment_failure_diagnostics schema', () => {
     expect(migration).toContain(
       'FOREIGN KEY ("payment_id") REFERENCES "public"."payments"("id") ON DELETE set null',
     );
+    expect(migration).toContain('CONSTRAINT "rpfd_reservation_id_fk"');
+    expect(migration).toContain('CONSTRAINT "rpfd_payment_id_fk"');
     expect(migration).toContain(
-      'CREATE UNIQUE INDEX "idx_reservation_payment_failure_diagnostics_reservation_id"',
+      'CREATE UNIQUE INDEX "idx_rpfd_reservation_id"',
     );
     expect(migration).toContain(
-      'CREATE INDEX "idx_reservation_payment_failure_diagnostics_payment_id"',
+      'CREATE INDEX "idx_rpfd_payment_id"',
     );
     expect(migration).toContain(
-      'CREATE INDEX "idx_reservation_payment_failure_diagnostics_toss_order_id"',
+      'CREATE INDEX "idx_rpfd_toss_order_id"',
     );
     expect(migration).toContain(
-      'CREATE INDEX "idx_reservation_payment_failure_diagnostics_recorded_at"',
+      'CREATE INDEX "idx_rpfd_recorded_at"',
     );
     expect(migration).toContain(
-      'CREATE INDEX "idx_reservation_payment_failure_diagnostics_provider_check_status"',
+      'CREATE INDEX "idx_rpfd_provider_check_status"',
     );
   });
 

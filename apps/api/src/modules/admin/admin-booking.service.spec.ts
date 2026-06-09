@@ -434,6 +434,8 @@ describe('AdminBookingService', () => {
         userCountry: 'TH',
         paymentStatus: 'READY',
         paymentMethod: 'FOREIGN_EASY_PAY',
+        paymentFailureDiagnostic: null,
+        paymentMethodAttribution: null,
         funnelStatus: 'PAYMENT_PENDING',
         ticketStatusCounts: {
           ACTIVE: 0,
@@ -525,6 +527,8 @@ describe('AdminBookingService', () => {
           userCountry: 'KR',
           paymentStatus: 'DONE',
           paymentMethod: 'CARD',
+          paymentFailureDiagnostic: null,
+          paymentMethodAttribution: null,
           funnelStatus: 'SOLD',
           ticketStatusCounts: {
             ACTIVE: 1,
@@ -987,6 +991,8 @@ describe('AdminBookingService', () => {
         expect.objectContaining({ seatKey: '1F:A-1', number: '1' }),
         expect.objectContaining({ seatKey: '1F:A-2', number: '2' }),
       ]);
+      expect(result.paymentFailureDiagnostic).toBeNull();
+      expect(result.paymentMethodAttribution).toBeNull();
       expect(result.ticketItems).toEqual([
         expect.objectContaining({
           id: 'ticket-item-a1',
