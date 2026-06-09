@@ -148,6 +148,14 @@ function createCancelledBooking() {
     funnelStatus: 'CANCELLED',
     paymentStatus: 'CANCELED',
     paymentMethod: 'CARD',
+    paymentFailureDiagnostic: null,
+    paymentMethodAttribution: {
+      label: '카드 / 카드사 / KRW',
+      method: 'CARD',
+      provider: 'CARD',
+      currency: 'KRW',
+      source: 'DB',
+    },
     ticketStatusCounts: {
       ACTIVE: 0,
       CANCELLATION_PENDING: 0,
