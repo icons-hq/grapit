@@ -37,6 +37,7 @@ interface BookingState {
   venue: string | null;
   posterUrl: string | null;
   expiresAt: number | null;
+  paymentDeadlineAt: number | null;
 
   setDate: (date: Date | null) => void;
   setShowtime: (id: string | null) => void;
@@ -44,6 +45,7 @@ interface BookingState {
   removeSeat: (seatKey: string) => void;
   clearSeats: () => void;
   setTimerExpiry: (expiresAt: number) => void;
+  applyPaymentDeadline: (paymentDeadlineAt: string) => void;
   expireTimer: () => void;
   setConnected: (connected: boolean) => void;
   setBookingData: (data: {
@@ -73,6 +75,7 @@ const initialState = {
   venue: null,
   posterUrl: null,
   expiresAt: null,
+  paymentDeadlineAt: null,
 };
 
 export const useBookingStore = create<BookingState>((set) => ({
@@ -112,6 +115,23 @@ export const useBookingStore = create<BookingState>((set) => ({
       timerExpiresAt: state.timerExpiresAt === null ? expiresAt : state.timerExpiresAt,
     })),
 
+  applyPaymentDeadline: (paymentDeadlineAt) => {
+    const parsedDeadline = Date.parse(paymentDeadlineAt);
+    if (!Number.isFinite(parsedDeadline)) {
+      return;
+    }
+
+    set((state) => ({
+      expiresAt: parsedDeadline,
+      paymentDeadlineAt: parsedDeadline,
+      isTimerExpired: false,
+      timerExpiresAt:
+        state.timerExpiresAt === null || state.timerExpiresAt < parsedDeadline
+          ? parsedDeadline
+          : state.timerExpiresAt,
+    }));
+  },
+
   expireTimer: () => set({ isTimerExpired: true }),
 
   setConnected: (connected) => set({ isConnected: connected }),
@@ -126,6 +146,7 @@ export const useBookingStore = create<BookingState>((set) => ({
       venue: data.venue,
       posterUrl: data.posterUrl,
       expiresAt: data.expiresAt,
+      paymentDeadlineAt: null,
     }),
 
   clearBooking: () => set(initialState),

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { PaymentMethod } from '@grabit/shared';
 import { ticketItems } from '../../database/schema/index.js';
@@ -90,6 +90,7 @@ describe('PaymentService', () => {
   };
   let mockBookingService: {
     acquireRecoverySeatLocks: ReturnType<typeof vi.fn>;
+    extendOwnedSeatLocks: ReturnType<typeof vi.fn>;
     releaseRecoverySeatLocks: ReturnType<typeof vi.fn>;
   };
   let mockTossClient: {
@@ -108,6 +109,7 @@ describe('PaymentService', () => {
     };
     mockBookingService = {
       acquireRecoverySeatLocks: vi.fn().mockResolvedValue({ acquired: true }),
+      extendOwnedSeatLocks: vi.fn().mockResolvedValue(undefined),
       releaseRecoverySeatLocks: vi.fn().mockResolvedValue(undefined),
     };
     mockTossClient = {
@@ -120,6 +122,7 @@ describe('PaymentService', () => {
       mockBookingGateway as any,
       mockQrTicketService as any,
     );
+    mockDb.select.mockReturnValue(createSelectChain([]));
     (service as unknown as { bookingService: typeof mockBookingService }).bookingService =
       mockBookingService;
     (service as unknown as { tossClient: typeof mockTossClient }).tossClient = mockTossClient;
@@ -248,6 +251,214 @@ describe('PaymentService', () => {
       });
       expect(branch.useInternationalCardOnly).toBe(false);
       expect(branch.pendingUrl).toBeUndefined();
+    });
+
+    it('extends pending reservation and Redis seat locks when entering Toss checkout', async () => {
+      vi.useFakeTimers();
+      const now = new Date('2026-06-09T03:25:00.000Z');
+      vi.setSystemTime(now);
+      const updateReservation = createMutationChain([{ id: 'reservation-branch-grace' }]);
+      mockDb.update.mockReturnValue(updateReservation);
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: 'reservation-branch-grace',
+          userId: 'user-branch-grace',
+          showtimeId: 'showtime-branch-grace',
+          status: 'PENDING_PAYMENT',
+          paymentDeadlineAt: new Date('2026-06-09T03:27:00.000Z'),
+          createdAt: new Date('2026-06-09T03:20:00.000Z'),
+        }]))
+        .mockReturnValueOnce(createSelectChain([
+          { seatId: '1F:A-1' },
+          { seatId: '1F:A-2' },
+        ]));
+
+      try {
+        const branch = await service.prepareTossPaymentBranch({
+          orderId: 'GRP-BRANCH-GRACE',
+          userId: 'user-branch-grace',
+          paymentMethod: createPaymentMethod(),
+          successUrl: 'https://grabit.test/booking/perf-1/complete',
+          failUrl: 'https://grabit.test/booking/perf-1/confirm?error=true',
+        });
+
+        expect(branch.paymentDeadlineAt).toBe('2026-06-09T03:33:00.000Z');
+        expect(updateReservation.set).toHaveBeenCalledWith({
+          paymentDeadlineAt: new Date('2026-06-09T03:33:00.000Z'),
+          admissionActiveUntilAt: new Date('2026-06-09T03:33:00.000Z'),
+          reentryGraceUntilAt: new Date('2026-06-09T03:33:00.000Z'),
+          updatedAt: now,
+        });
+        expect(mockBookingService.extendOwnedSeatLocks).toHaveBeenCalledWith(
+          'user-branch-grace',
+          'showtime-branch-grace',
+          ['1F:A-1', '1F:A-2'],
+          480,
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('caps payment processing grace at fifteen minutes after reservation creation', async () => {
+      vi.useFakeTimers();
+      const now = new Date('2026-06-09T03:33:00.000Z');
+      vi.setSystemTime(now);
+      const updateReservation = createMutationChain([{ id: 'reservation-branch-cap' }]);
+      mockDb.update.mockReturnValue(updateReservation);
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: 'reservation-branch-cap',
+          userId: 'user-branch-cap',
+          showtimeId: 'showtime-branch-cap',
+          status: 'PENDING_PAYMENT',
+          paymentDeadlineAt: new Date('2026-06-09T03:34:00.000Z'),
+          createdAt: new Date('2026-06-09T03:20:00.000Z'),
+        }]))
+        .mockReturnValueOnce(createSelectChain([{ seatId: '1F:A-1' }]));
+
+      try {
+        const branch = await service.prepareTossPaymentBranch({
+          orderId: 'GRP-BRANCH-GRACE-CAP',
+          userId: 'user-branch-cap',
+          paymentMethod: createPaymentMethod(),
+          successUrl: 'https://grabit.test/booking/perf-1/complete',
+          failUrl: 'https://grabit.test/booking/perf-1/confirm?error=true',
+        });
+
+        expect(branch.paymentDeadlineAt).toBe('2026-06-09T03:35:00.000Z');
+        expect(mockBookingService.extendOwnedSeatLocks).toHaveBeenCalledWith(
+          'user-branch-cap',
+          'showtime-branch-cap',
+          ['1F:A-1'],
+          120,
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('rejects checkout branch for an already expired pending reservation', async () => {
+      vi.useFakeTimers();
+      const now = new Date('2026-06-09T03:28:00.000Z');
+      vi.setSystemTime(now);
+      mockDb.select.mockReturnValueOnce(createSelectChain([{
+        id: 'reservation-branch-expired',
+        userId: 'user-branch-expired',
+        showtimeId: 'showtime-branch-expired',
+        status: 'PENDING_PAYMENT',
+        paymentDeadlineAt: new Date('2026-06-09T03:27:00.000Z'),
+        createdAt: new Date('2026-06-09T03:20:00.000Z'),
+      }]));
+
+      try {
+        await expect(service.prepareTossPaymentBranch({
+          orderId: 'GRP-BRANCH-EXPIRED',
+          userId: 'user-branch-expired',
+          paymentMethod: createPaymentMethod(),
+          successUrl: 'https://grabit.test/booking/perf-1/complete',
+          failUrl: 'https://grabit.test/booking/perf-1/confirm?error=true',
+        })).rejects.toThrow(
+          new ConflictException('결제 가능 시간이 만료되었습니다. 좌석을 다시 선택해주세요.'),
+        );
+        expect(mockBookingService.extendOwnedSeatLocks).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('rejects checkout branch when the pending reservation belongs to another user', async () => {
+      mockDb.select.mockReturnValueOnce(createSelectChain([]));
+
+      await expect(service.prepareTossPaymentBranch({
+        orderId: 'GRP-BRANCH-OTHER-USER',
+        userId: 'requesting-user',
+        paymentMethod: createPaymentMethod(),
+        successUrl: 'https://grabit.test/booking/perf-1/complete',
+        failUrl: 'https://grabit.test/booking/perf-1/confirm?error=true',
+      })).rejects.toThrow(
+        new NotFoundException('예매 정보를 찾을 수 없습니다. 다시 시도해주세요.'),
+      );
+      expect(mockBookingService.extendOwnedSeatLocks).not.toHaveBeenCalled();
+    });
+
+    it('rejects checkout branch when the pending reservation expires during grace update', async () => {
+      vi.useFakeTimers();
+      const now = new Date('2026-06-09T03:25:00.000Z');
+      vi.setSystemTime(now);
+      const updateReservation = createMutationChain([]);
+      mockDb.update.mockReturnValue(updateReservation);
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: 'reservation-branch-race',
+          userId: 'user-branch-race',
+          showtimeId: 'showtime-branch-race',
+          status: 'PENDING_PAYMENT',
+          paymentDeadlineAt: new Date('2026-06-09T03:27:00.000Z'),
+          createdAt: new Date('2026-06-09T03:20:00.000Z'),
+        }]))
+        .mockReturnValueOnce(createSelectChain([{ seatId: '1F:A-1' }]));
+
+      try {
+        await expect(service.prepareTossPaymentBranch({
+          orderId: 'GRP-BRANCH-RACE',
+          userId: 'user-branch-race',
+          paymentMethod: createPaymentMethod(),
+          successUrl: 'https://grabit.test/booking/perf-1/complete',
+          failUrl: 'https://grabit.test/booking/perf-1/confirm?error=true',
+        })).rejects.toThrow(
+          new ConflictException('결제 가능 시간이 만료되었습니다. 좌석을 다시 선택해주세요.'),
+        );
+        expect(updateReservation.where).toHaveBeenCalled();
+        expect(mockBookingService.extendOwnedSeatLocks).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('restores the reservation deadline when Redis lock extension fails after the guarded update', async () => {
+      vi.useFakeTimers();
+      const now = new Date('2026-06-09T03:25:00.000Z');
+      vi.setSystemTime(now);
+      const updateReservation = createMutationChain([{ id: 'reservation-branch-redis-fail' }]);
+      const revertReservation = createMutationChain();
+      mockDb.update
+        .mockReturnValueOnce(updateReservation)
+        .mockReturnValueOnce(revertReservation);
+      mockBookingService.extendOwnedSeatLocks.mockRejectedValueOnce(
+        new ConflictException('좌석 점유 시간이 만료되었습니다.'),
+      );
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: 'reservation-branch-redis-fail',
+          userId: 'user-branch-redis-fail',
+          showtimeId: 'showtime-branch-redis-fail',
+          status: 'PENDING_PAYMENT',
+          paymentDeadlineAt: new Date('2026-06-09T03:27:00.000Z'),
+          admissionActiveUntilAt: new Date('2026-06-09T03:27:00.000Z'),
+          reentryGraceUntilAt: new Date('2026-06-09T03:28:00.000Z'),
+          createdAt: new Date('2026-06-09T03:20:00.000Z'),
+        }]))
+        .mockReturnValueOnce(createSelectChain([{ seatId: '1F:A-1' }]));
+
+      try {
+        await expect(service.prepareTossPaymentBranch({
+          orderId: 'GRP-BRANCH-REDIS-FAIL',
+          userId: 'user-branch-redis-fail',
+          paymentMethod: createPaymentMethod(),
+          successUrl: 'https://grabit.test/booking/perf-1/complete',
+          failUrl: 'https://grabit.test/booking/perf-1/confirm?error=true',
+        })).rejects.toThrow('좌석 점유 시간이 만료되었습니다.');
+
+        expect(revertReservation.set).toHaveBeenCalledWith({
+          paymentDeadlineAt: new Date('2026-06-09T03:27:00.000Z'),
+          admissionActiveUntilAt: new Date('2026-06-09T03:27:00.000Z'),
+          reentryGraceUntilAt: new Date('2026-06-09T03:28:00.000Z'),
+          updatedAt: now,
+        });
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('routes USD card through overseas-card provider charge even when consent metadata is missing', async () => {

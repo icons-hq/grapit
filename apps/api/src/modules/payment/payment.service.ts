@@ -63,6 +63,8 @@ const PROVIDER_CHARGE_QUOTE_PROVIDERS = new Set<PaymentProvider>([
   'ALIPAY_PLUS',
   'PAYPAL',
 ]);
+const PAYMENT_PROCESSING_GRACE_MS = 8 * 60 * 1000;
+const PAYMENT_PROCESSING_TOTAL_CAP_MS = 15 * 60 * 1000;
 
 export type TossPaymentAsyncStatus = 'sync' | 'pending_webhook';
 
@@ -72,6 +74,7 @@ export interface TossPaymentBranchRequest {
   successUrl: string;
   failUrl: string;
   pendingUrl?: string;
+  userId?: string;
 }
 
 export interface TossPaymentBranch {
@@ -87,6 +90,7 @@ export interface TossPaymentBranch {
   providerChargeQuote?: ProviderChargeQuote;
   checkoutEnabled?: boolean;
   disabledReason?: string;
+  paymentDeadlineAt?: string;
 }
 
 export interface TossPaymentAsyncReturnRequest {
@@ -197,7 +201,7 @@ export class PaymentService {
   ) {}
 
   async prepareTossPaymentBranch(input: TossPaymentBranchRequest): Promise<TossPaymentBranch> {
-    const { orderId, paymentMethod, successUrl, failUrl, pendingUrl } = input;
+    const { orderId, paymentMethod, successUrl, failUrl, pendingUrl, userId } = input;
 
     if (this.usesProviderChargeQuoteForPaymentMethod(paymentMethod)) {
       if (this.requiresAsyncWebhookBranch(paymentMethod) && !pendingUrl) {
@@ -223,7 +227,7 @@ export class PaymentService {
 
       const method = paymentMethod.method === 'CARD' ? 'CARD' : 'FOREIGN_EASY_PAY';
 
-      return {
+      const branch: TossPaymentBranch = {
         orderId,
         method,
         provider: paymentMethod.provider,
@@ -237,6 +241,9 @@ export class PaymentService {
         ...(disabledReason ? { disabledReason } : {}),
         ...(providerChargeQuote ? { providerChargeQuote } : {}),
       };
+      return checkoutEnabled
+        ? await this.withPaymentProcessingGrace(branch, userId)
+        : branch;
     }
 
     if (this.requiresAsyncWebhookBranch(paymentMethod)) {
@@ -244,7 +251,7 @@ export class PaymentService {
         throw new BadRequestException('FOREIGN_EASY_PAY 결제는 pendingUrl이 필요합니다');
       }
 
-      return {
+      return await this.withPaymentProcessingGrace({
         orderId,
         method: 'FOREIGN_EASY_PAY',
         provider: paymentMethod.provider,
@@ -254,7 +261,7 @@ export class PaymentService {
         pendingUrl,
         asyncStatus: 'pending_webhook',
         useInternationalCardOnly: false,
-      };
+      }, userId);
     }
 
     if (paymentMethod.provider === 'CARD') {
@@ -263,7 +270,7 @@ export class PaymentService {
         ? this.getOverseasCardAvailability()
         : undefined;
 
-      return {
+      const branch: TossPaymentBranch = {
         orderId,
         method: 'CARD',
         provider: 'CARD',
@@ -281,9 +288,12 @@ export class PaymentService {
             }
           : {}),
       };
+      return overseasCardAvailability && !overseasCardAvailability.enabled
+        ? branch
+        : await this.withPaymentProcessingGrace(branch, userId);
     }
 
-    return {
+    return await this.withPaymentProcessingGrace({
       orderId,
       method: paymentMethod.method,
       provider: paymentMethod.provider,
@@ -292,7 +302,143 @@ export class PaymentService {
       failUrl,
       asyncStatus: 'sync',
       useInternationalCardOnly: false,
-    };
+    }, userId);
+  }
+
+  private async withPaymentProcessingGrace<T extends TossPaymentBranch>(
+    branch: T,
+    userId?: string,
+  ): Promise<T> {
+    const paymentDeadlineAt = await this.extendPendingPaymentProcessingGrace(
+      branch.orderId,
+      userId,
+    );
+    return paymentDeadlineAt ? { ...branch, paymentDeadlineAt } : branch;
+  }
+
+  private async extendPendingPaymentProcessingGrace(
+    orderId: string,
+    userId?: string,
+    now: Date = new Date(),
+  ): Promise<string | undefined> {
+    const [reservation] = await this.db
+      .select({
+        id: reservations.id,
+        userId: reservations.userId,
+        showtimeId: reservations.showtimeId,
+        status: reservations.status,
+        paymentDeadlineAt: reservations.paymentDeadlineAt,
+        admissionActiveUntilAt: reservations.admissionActiveUntilAt,
+        reentryGraceUntilAt: reservations.reentryGraceUntilAt,
+        createdAt: reservations.createdAt,
+      })
+      .from(reservations)
+      .where(
+        userId
+          ? and(
+              eq(reservations.tossOrderId, orderId),
+              eq(reservations.userId, userId),
+            )
+          : eq(reservations.tossOrderId, orderId),
+      );
+
+    if (!reservation?.id) {
+      if (userId) {
+        throw new NotFoundException('예매 정보를 찾을 수 없습니다. 다시 시도해주세요.');
+      }
+      return undefined;
+    }
+
+    if (reservation.status !== 'PENDING_PAYMENT') {
+      throw new ConflictException('이미 처리된 주문 ID입니다. 새 주문 ID로 다시 시도해주세요.');
+    }
+
+    if (!this.isValidDate(reservation.paymentDeadlineAt)) {
+      return undefined;
+    }
+
+    if (reservation.paymentDeadlineAt.getTime() < now.getTime()) {
+      throw new ConflictException('결제 가능 시간이 만료되었습니다. 좌석을 다시 선택해주세요.');
+    }
+
+    if (!this.isValidDate(reservation.createdAt)) {
+      return reservation.paymentDeadlineAt.toISOString();
+    }
+
+    const capAt = new Date(
+      reservation.createdAt.getTime() + PAYMENT_PROCESSING_TOTAL_CAP_MS,
+    );
+    const graceAt = new Date(now.getTime() + PAYMENT_PROCESSING_GRACE_MS);
+    const effectiveDeadlineAt = new Date(Math.max(
+      reservation.paymentDeadlineAt.getTime(),
+      Math.min(graceAt.getTime(), capAt.getTime()),
+    ));
+    const ttlSeconds = Math.max(
+      1,
+      Math.ceil((effectiveDeadlineAt.getTime() - now.getTime()) / 1000),
+    );
+
+    const seats = await this.db
+      .select({ seatId: reservationSeats.seatId })
+      .from(reservationSeats)
+      .where(eq(reservationSeats.reservationId, reservation.id));
+    const seatIds = seats
+      .map((seat) => seat.seatId)
+      .filter((seatId): seatId is string => typeof seatId === 'string' && seatId.length > 0);
+
+    const updatedReservations = await this.db
+      .update(reservations)
+      .set({
+        paymentDeadlineAt: effectiveDeadlineAt,
+        admissionActiveUntilAt: effectiveDeadlineAt,
+        reentryGraceUntilAt: effectiveDeadlineAt,
+        updatedAt: now,
+      })
+      .where(and(
+        eq(reservations.id, reservation.id),
+        eq(reservations.status, 'PENDING_PAYMENT'),
+        eq(reservations.paymentDeadlineAt, reservation.paymentDeadlineAt),
+      ))
+      .returning({ id: reservations.id });
+
+    if (updatedReservations.length === 0) {
+      throw new ConflictException('결제 가능 시간이 만료되었습니다. 좌석을 다시 선택해주세요.');
+    }
+
+    if (seatIds.length > 0) {
+      if (!this.bookingService) {
+        throw new InternalServerErrorException('좌석 잠금 서비스가 설정되지 않았습니다');
+      }
+      try {
+        await this.bookingService.extendOwnedSeatLocks(
+          reservation.userId,
+          reservation.showtimeId,
+          seatIds,
+          ttlSeconds,
+        );
+      } catch (error) {
+        await this.db
+          .update(reservations)
+          .set({
+            paymentDeadlineAt: reservation.paymentDeadlineAt,
+            admissionActiveUntilAt: reservation.admissionActiveUntilAt,
+            reentryGraceUntilAt: reservation.reentryGraceUntilAt,
+            updatedAt: now,
+          })
+          .where(and(
+            eq(reservations.id, reservation.id),
+            eq(reservations.status, 'PENDING_PAYMENT'),
+            eq(reservations.paymentDeadlineAt, effectiveDeadlineAt),
+          ));
+        throw error;
+      }
+    }
+
+    return effectiveDeadlineAt.toISOString();
+  }
+
+  private isValidDate(value: Date | null | undefined): value is Date {
+    return value instanceof Date && !Number.isNaN(value.getTime());
   }
 
   private async findStoredProviderChargeQuote(

@@ -763,6 +763,50 @@ describe('use-booking payment mutations', () => {
     vi.useRealTimers();
   });
 
+  it('useBookingPaymentSnapshot() preserves the server payment-processing grace deadline', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-06-09T03:25:00.000Z'));
+
+    useBookingStore.getState().setBookingData({
+      selectedSeats: [createFloorAwareSeat()],
+      showtimeId: 'showtime-payment-processing-grace',
+      performanceId: 'performance-1',
+      performanceTitle: '락 테스트 공연',
+      showDateTime: '2026-07-18T12:00:00.000Z',
+      venue: '테스트 공연장',
+      posterUrl: null,
+      expiresAt: new Date('2026-06-09T03:27:00.000Z').getTime(),
+    });
+    useBookingStore.getState().applyPaymentDeadline('2026-06-09T03:33:00.000Z');
+
+    const { Wrapper, queryClient } = createWrapper();
+    queryClient.setQueryData(
+      ['performance', 'performance-1', 'ko'],
+      createPerformanceDetail({
+        bookingPolicy: {
+          maxTicketsPerUser: 1,
+          allowedPaymentMethods: ['CARD'],
+          changePolicyEnabled: false,
+          paymentWindowMinutes: 7,
+          seatHoldMinutes: 10,
+          cancelledSeatHoldMinMinutes: 1,
+          cancelledSeatHoldMaxMinutes: 10,
+          manualOpenEnabled: true,
+        },
+      }),
+    );
+
+    const { result } = renderHook(() => useBookingPaymentSnapshot(), {
+      wrapper: Wrapper,
+    });
+
+    expect(result.current.lockExpiresAt).toBe('2026-06-09T03:33:00.000Z');
+    expect(result.current.paymentDeadlineAt).toBe('2026-06-09T03:33:00.000Z');
+    expect(result.current.isPaymentDeadlineExpired).toBe(false);
+
+    vi.useRealTimers();
+  });
+
   it('resolvePaymentMethodSelection() flags foreign easy pay for disclaimer and pendingUrl flow', () => {
     expect(resolvePaymentMethodSelection('TRUEMONEY')).toMatchObject({
       requiresOverseasDisclaimer: true,

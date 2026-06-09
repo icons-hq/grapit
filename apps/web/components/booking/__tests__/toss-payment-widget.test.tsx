@@ -222,6 +222,43 @@ describe('TossPaymentWidget', () => {
     expect(screen.queryByText('결제 위젯을 불러오는데 실패했습니다.')).not.toBeInTheDocument();
   });
 
+  it('notifies the branch payment deadline before requesting Toss payment', async () => {
+    const onPaymentDeadlineChange = vi.fn();
+    apiClientPostMock.mockResolvedValueOnce({
+      orderId: 'GRP-TEST-ORDER',
+      method: 'CARD',
+      provider: 'CARD',
+      currency: 'KRW',
+      successUrl: 'https://grabit.test/booking/performance-1/complete',
+      failUrl: 'https://grabit.test/booking/performance-1/confirm?error=true',
+      asyncStatus: 'sync',
+      useInternationalCardOnly: false,
+      paymentDeadlineAt: '2026-06-05T10:09:00.000Z',
+    });
+    const ref = createRef<TossPaymentWidgetRef>();
+
+    render(
+      <TossPaymentWidget
+        {...defaultProps}
+        ref={ref}
+        onPaymentDeadlineChange={onPaymentDeadlineChange}
+      />,
+    );
+
+    await waitFor(() => expect(renderAgreementMock).toHaveBeenCalledTimes(1));
+
+    await ref.current?.requestPayment();
+
+    expect(onPaymentDeadlineChange).toHaveBeenCalledWith('2026-06-05T10:09:00.000Z');
+    expect(onPaymentDeadlineChange.mock.invocationCallOrder[0]).toBeLessThan(
+      widgetsRequestPaymentMock.mock.invocationCallOrder[0],
+    );
+    expect(widgetsRequestPaymentMock).toHaveBeenCalledWith(expect.objectContaining({
+      failUrl:
+        'https://grabit.test/booking/performance-1/confirm?error=true&paymentDeadlineAt=2026-06-05T10%3A09%3A00.000Z',
+    }));
+  });
+
   it('requests overseas card through the foreign payment widget in USD with provider-charge amount markers', async () => {
     process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = 'DEFAULT,uspay';
     apiClientPostMock.mockResolvedValueOnce({

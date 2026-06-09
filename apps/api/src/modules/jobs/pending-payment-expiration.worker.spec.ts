@@ -73,6 +73,27 @@ describe('PendingPaymentExpirationWorker', () => {
     });
   });
 
+  it('leaves payment-processing grace rows alone until their extended deadline expires', async () => {
+    const db = createDb([]);
+    const bookingService = createBookingService();
+    const worker = new PendingPaymentExpirationWorker(
+      db as never,
+      bookingService as never,
+      createConfig(),
+    );
+
+    const result = await worker.sweepExpiredPendingPayments(
+      new Date('2026-06-09T03:28:00.000Z'),
+    );
+
+    expect(db.execute).toHaveBeenCalledTimes(1);
+    expect(bookingService.unlockAllSeats).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      expiredReservations: 0,
+      unlockedSeats: 0,
+    });
+  });
+
   it('defines async payment handoff statuses that must be excluded from expiration', () => {
     expect(ASYNC_PAYMENT_HANDOFF_STATUSES).toEqual(['IN_PROGRESS', 'DONE']);
   });
