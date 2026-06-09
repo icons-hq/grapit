@@ -1728,17 +1728,19 @@ describe('AdminBookingService', () => {
 
       expect(result.rowCount).toBe(2);
       expect(result.filename).toContain('reservation-export-failed-cancelled-contacts');
-      expect(result.csv).toContain('"User Name","User Email","User Phone","Marketing Consent"');
+      const header = result.csv.split('\n')[0] ?? '';
+      expect(header).toBe(
+        '\uFEFF"User Name","User Email","User Phone","Audience Region","User Country","Performance ID","Performance Title","Last Affected Reservation Number","Last Reservation Status","Last Payment Status","Last Affected At","Payment Failed/Expired Count","Cancelled Count","Marketing Consent","Last Failure Code","Last Failure Reason","Diagnostic Source","Last Cancellation Reason","Cancellation Revenue","Cancellation Source","Last Affected Reason"',
+      );
       expect(result.csv).toContain(`"'=Failed Buyer","'=failed@example.com","'+886900000000"`);
       expect(result.csv).toContain('"R-EXPIRED-LATEST","PENDING_PAYMENT","EXPIRED"');
+      expect(result.csv).toContain('"2","0","Y"');
       expect(result.csv).toContain('"PAY_PROCESS_CANCELED","\'=Formula reason","Webhook"');
-      expect(result.csv).toContain('"2","0"');
       expect(result.csv).toContain(`"Cancelled Buyer","cancelled@example.com","'+821055501234"`);
-      expect(result.csv).toContain('"N","domestic","KR"');
       expect(result.csv).toContain('"R-CANCELLED","CANCELLED","CANCELED"');
       expect(result.csv).toContain('"고객 요청","1000","ticket_item"');
       expect(result.csv).toContain('"고객 요청"');
-      expect(result.csv).toContain('"0","1"');
+      expect(result.csv).toContain('"0","1","N"');
 
       const exportWhere = exportCalls.find((call) => call.method === 'where')?.args[0];
       const exportWhereText = objectGraphText(exportWhere);

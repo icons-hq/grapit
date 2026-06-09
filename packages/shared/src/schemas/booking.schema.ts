@@ -510,7 +510,7 @@ export const adminBookingListItemSchema = z.object({
   paymentStatus: paymentStatusSchema.nullable(),
   paymentMethod: z.string().min(1, '결제 수단이 필요합니다').nullable(),
   paymentFailureDiagnostic: paymentFailureDiagnosticSchema.nullable(),
-  paymentMethodAttribution: paymentMethodAttributionSchema.nullable(),
+  paymentMethodAttribution: paymentMethodAttributionSchema,
   ticketStatusCounts: ticketStatusCountsSchema,
   createdAt: isoDatetime('생성 시각'),
 });

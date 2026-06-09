@@ -88,6 +88,14 @@ function cancelledBooking({
     funnelStatus: 'CANCELLED' as const,
     paymentStatus: 'CANCELED' as const,
     paymentMethod: 'CARD',
+    paymentFailureDiagnostic: null,
+    paymentMethodAttribution: {
+      label: '카드 / 카드사 / KRW',
+      method: 'CARD',
+      provider: 'CARD',
+      currency: 'KRW',
+      source: 'DB',
+    },
     ticketStatusCounts: {
       ACTIVE: 0,
       CANCELLATION_PENDING: 0,
@@ -272,7 +280,7 @@ describe('Admin seat operations UI', () => {
 
     await user.click(screen.getByRole('button', { name: '환불 처리' }));
 
-    expect(screen.getByText('카드 결제 취소')).toBeInTheDocument();
+    expect(screen.getByText('카드 / 카드사 / KRW 결제 취소')).toBeInTheDocument();
     expect(screen.queryByText('CARD으로 환불')).not.toBeInTheDocument();
   });
 

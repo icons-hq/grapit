@@ -86,7 +86,6 @@ const FAILED_CANCELLED_CONTACT_EXPORT_HEADERS = [
   'User Name',
   'User Email',
   'User Phone',
-  'Marketing Consent',
   'Audience Region',
   'User Country',
   'Performance ID',
@@ -95,6 +94,9 @@ const FAILED_CANCELLED_CONTACT_EXPORT_HEADERS = [
   'Last Reservation Status',
   'Last Payment Status',
   'Last Affected At',
+  'Payment Failed/Expired Count',
+  'Cancelled Count',
+  'Marketing Consent',
   'Last Failure Code',
   'Last Failure Reason',
   'Diagnostic Source',
@@ -102,8 +104,6 @@ const FAILED_CANCELLED_CONTACT_EXPORT_HEADERS = [
   'Cancellation Revenue',
   'Cancellation Source',
   'Last Affected Reason',
-  'Payment Failed/Expired Count',
-  'Cancelled Count',
 ] as const;
 
 const PAYMENT_METHOD_FILTER_ALIASES = {
@@ -1767,7 +1767,6 @@ function failedCancelledContactExportRowToCsvValues(
     row.user.name,
     row.user.email,
     row.user.phone,
-    row.user.marketingConsent ? 'Y' : 'N',
     audienceRegion,
     row.user.country,
     row.performance.id,
@@ -1776,6 +1775,9 @@ function failedCancelledContactExportRowToCsvValues(
     row.lastReservationStatus,
     row.lastPaymentStatus ?? '',
     row.lastAffectedAt?.toISOString() ?? '',
+    row.paymentFailedExpiredCount,
+    row.cancelledCount,
+    row.user.marketingConsent ? 'Y' : 'N',
     row.lastFailureCode ?? '',
     row.lastFailureReason ?? '',
     row.diagnosticSource ?? '',
@@ -1783,8 +1785,6 @@ function failedCancelledContactExportRowToCsvValues(
     row.cancellationRevenue,
     row.cancellationSource ?? '',
     row.lastAffectedReason ?? '',
-    row.paymentFailedExpiredCount,
-    row.cancelledCount,
   ];
 }
 

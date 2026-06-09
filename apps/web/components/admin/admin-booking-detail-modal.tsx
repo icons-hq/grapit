@@ -160,6 +160,11 @@ function getPaymentMethodLabel(method: string | null): string {
   return /[가-힣]/.test(method) ? method : '기타 결제수단';
 }
 
+function getPaymentMethodAttributionLabel(booking: AdminBookingDetail): string {
+  return booking.paymentMethodAttribution.label
+    || getPaymentMethodLabel(booking.paymentInfo?.method ?? booking.paymentMethod);
+}
+
 function formatTicketStatusCounts(
   counts: AdminBookingDetail['ticketStatusCounts'],
 ): string {
@@ -312,11 +317,41 @@ export function AdminBookingDetailModal({
             <Separator />
             <InfoRow
               label="결제수단"
-              value={getPaymentMethodLabel(
-                booking.paymentInfo?.method ?? booking.paymentMethod,
-              )}
+              value={getPaymentMethodAttributionLabel(booking)}
             />
             <Separator />
+            <InfoRow
+              label="결제수단 출처"
+              value={booking.paymentMethodAttribution.source}
+            />
+            <Separator />
+            {booking.paymentFailureDiagnostic && (
+              <>
+                <InfoRow
+                  label="실패/만료 코드"
+                  value={booking.paymentFailureDiagnostic.code}
+                />
+                <Separator />
+                <InfoRow
+                  label="실패/만료 사유"
+                  value={booking.paymentFailureDiagnostic.message}
+                />
+                <Separator />
+                <InfoRow
+                  label="진단 출처"
+                  value={booking.paymentFailureDiagnostic.source}
+                />
+                <Separator />
+                <InfoRow
+                  label="Toss 확인 상태"
+                  value={[
+                    booking.paymentFailureDiagnostic.providerCheckStatus,
+                    booking.paymentFailureDiagnostic.providerCheckMessage,
+                  ].filter(Boolean).join(' / ')}
+                />
+                <Separator />
+              </>
+            )}
             <InfoRow
               label="결제 시도일시"
               value={formatOptionalDateTime(booking.paymentAttemptedAt)}
@@ -451,14 +486,12 @@ export function AdminBookingDetailModal({
                   {booking.totalAmount.toLocaleString('ko-KR')}원
                 </span>
               </div>
-              {booking.paymentInfo && (
-                <div className="mt-2 flex items-center justify-between">
-                  <span className="text-sm text-gray-600">환불 수단</span>
-                  <span className="text-sm text-gray-600">
-                    {getPaymentMethodLabel(booking.paymentInfo.method)} 결제 취소
-                  </span>
-                </div>
-              )}
+              <div className="mt-2 flex items-center justify-between gap-3">
+                <span className="text-sm text-gray-600">환불 수단</span>
+                <span className="text-right text-sm text-gray-600">
+                  {getPaymentMethodAttributionLabel(booking)} 결제 취소
+                </span>
+              </div>
             </div>
 
             <div className="flex gap-2">

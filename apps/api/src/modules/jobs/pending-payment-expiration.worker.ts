@@ -18,6 +18,7 @@ interface ExpiredPendingReservationRow {
   id: string;
   userId: string;
   showtimeId: string;
+  tossOrderId: string | null;
 }
 
 export interface PendingPaymentExpirationSweepResult {
@@ -32,6 +33,9 @@ function mapExpiredPendingReservationRow(
     id: String(row['id']),
     userId: String(row['user_id']),
     showtimeId: String(row['showtime_id']),
+    tossOrderId: typeof row['toss_order_id'] === 'string'
+      ? row['toss_order_id']
+      : null,
   };
 }
 
@@ -92,20 +96,55 @@ export class PendingPaymentExpirationWorker implements OnModuleInit, OnModuleDes
       sql`, `,
     );
     const result = await this.db.execute(sql`
-      UPDATE reservations r
-      SET
-        status = 'FAILED',
-        updated_at = ${now}
-      WHERE r.status = 'PENDING_PAYMENT'
-        AND r.payment_deadline_at IS NOT NULL
-        AND r.payment_deadline_at < ${now}
-        AND NOT EXISTS (
-          SELECT 1
-          FROM payments p
-          WHERE p.reservation_id = r.id
-            AND p.status IN (${asyncHandoffStatuses})
+      WITH expired AS (
+        UPDATE reservations r
+        SET
+          status = 'FAILED',
+          updated_at = ${now}
+        WHERE r.status = 'PENDING_PAYMENT'
+          AND r.payment_deadline_at IS NOT NULL
+          AND r.payment_deadline_at < ${now}
+          AND NOT EXISTS (
+            SELECT 1
+            FROM payments p
+            WHERE p.reservation_id = r.id
+              AND p.status IN (${asyncHandoffStatuses})
+          )
+        RETURNING r.id, r.user_id, r.showtime_id, r.toss_order_id
+      ),
+      diagnostics AS (
+        INSERT INTO reservation_payment_failure_diagnostics (
+          reservation_id,
+          toss_order_id,
+          diagnostic_kind,
+          diagnostic_code,
+          diagnostic_message,
+          diagnostic_source,
+          recorded_at,
+          updated_at
         )
-      RETURNING r.id, r.user_id, r.showtime_id
+        SELECT
+          expired.id,
+          expired.toss_order_id,
+          'payment_expired',
+          'PAYMENT_DEADLINE_EXPIRED',
+          '결제 제한 시간이 만료되었습니다.',
+          'pending_payment_expiration_worker',
+          ${now},
+          ${now}
+        FROM expired
+        ON CONFLICT (reservation_id) DO UPDATE SET
+          toss_order_id = excluded.toss_order_id,
+          diagnostic_kind = excluded.diagnostic_kind,
+          diagnostic_code = excluded.diagnostic_code,
+          diagnostic_message = excluded.diagnostic_message,
+          diagnostic_source = excluded.diagnostic_source,
+          recorded_at = excluded.recorded_at,
+          updated_at = now()
+        RETURNING reservation_id
+      )
+      SELECT id, user_id, showtime_id, toss_order_id
+      FROM expired
     `);
     const expiredReservations = result.rows.map((row) =>
       mapExpiredPendingReservationRow(row as Record<string, unknown>)

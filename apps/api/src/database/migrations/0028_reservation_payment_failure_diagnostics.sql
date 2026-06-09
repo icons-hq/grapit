@@ -22,3 +22,69 @@ CREATE INDEX "idx_rpfd_payment_id" ON "reservation_payment_failure_diagnostics" 
 CREATE INDEX "idx_rpfd_toss_order_id" ON "reservation_payment_failure_diagnostics" USING btree ("toss_order_id");--> statement-breakpoint
 CREATE INDEX "idx_rpfd_recorded_at" ON "reservation_payment_failure_diagnostics" USING btree ("recorded_at");--> statement-breakpoint
 CREATE INDEX "idx_rpfd_provider_check_status" ON "reservation_payment_failure_diagnostics" USING btree ("provider_check_status");
+--> statement-breakpoint
+INSERT INTO "reservation_payment_failure_diagnostics" (
+	"reservation_id",
+	"payment_id",
+	"toss_order_id",
+	"diagnostic_kind",
+	"diagnostic_code",
+	"diagnostic_message",
+	"diagnostic_source",
+	"recorded_at"
+)
+SELECT
+	r."id",
+	p."id",
+	coalesce(p."toss_order_id", r."toss_order_id"),
+	case
+		when p."status" = 'EXPIRED'
+			or (p."id" is null and r."payment_deadline_at" is not null and r."payment_deadline_at" < now())
+			then 'payment_expired'
+		when p."status" = 'CANCELED' then 'payment_cancelled_before_confirm'
+		else 'payment_failed'
+	end,
+	case
+		when p."status" = 'EXPIRED'
+			or (p."id" is null and r."payment_deadline_at" is not null and r."payment_deadline_at" < now())
+			then 'PAYMENT_EXPIRED'
+		when p."status" = 'ABORTED' then 'PAYMENT_ABORTED'
+		when p."status" = 'CANCELED' then 'PAYMENT_CANCELED_BEFORE_CONFIRM'
+		else 'PAYMENT_FAILED'
+	end,
+	case
+		when p."status" = 'EXPIRED'
+			or (p."id" is null and r."payment_deadline_at" is not null and r."payment_deadline_at" < now())
+			then '결제 유효 시간이 만료되었습니다.'
+		when p."status" = 'ABORTED' then '결제가 중단되었거나 실패했습니다.'
+		when p."status" = 'CANCELED' then coalesce(nullif(p."cancel_reason", ''), '결제 승인 전 취소되었습니다.')
+		else '결제 실패 또는 미완료로 예매가 실패 처리되었습니다.'
+	end,
+	case
+		when latest_webhook."event_id" is not null then 'payment_webhook_events'
+		when p."id" is not null then 'payments'
+		else 'pending_payment_expiration_worker'
+	end,
+	coalesce(latest_webhook."received_at", p."cancelled_at", p."created_at", r."updated_at", r."payment_deadline_at", now())
+FROM "reservations" r
+LEFT JOIN LATERAL (
+	SELECT p_inner.*
+	FROM "payments" p_inner
+	WHERE p_inner."reservation_id" = r."id"
+	ORDER BY p_inner."created_at" DESC
+	LIMIT 1
+) p ON true
+LEFT JOIN LATERAL (
+	SELECT wh."event_id", wh."received_at"
+	FROM "payment_webhook_events" wh
+	WHERE wh."reservation_id" = r."id"
+		or wh."toss_order_id" = coalesce(p."toss_order_id", r."toss_order_id")
+	ORDER BY wh."received_at" DESC
+	LIMIT 1
+) latest_webhook ON true
+WHERE r."status" = 'FAILED'
+	or (
+		r."status" = 'PENDING_PAYMENT'
+		and p."status" in ('ABORTED', 'EXPIRED', 'CANCELED')
+	)
+ON CONFLICT ("reservation_id") DO NOTHING;

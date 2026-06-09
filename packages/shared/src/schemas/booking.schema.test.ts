@@ -750,7 +750,7 @@ describe('prepareReservationSchema booking consent contract', () => {
     expect(detail.ticketStatusCounts.ACTIVE).toBe(1);
   });
 
-  it('accepts nullable admin payment diagnostics and rejects unsafe attribution labels', () => {
+  it('accepts nullable admin payment diagnostics and requires payment method attribution fallback', () => {
     const diagnostic = paymentFailureDiagnosticSchema.parse({
       kind: 'provider_cancelled',
       code: 'PROVIDER_CANCELLED',
@@ -802,7 +802,13 @@ describe('prepareReservationSchema booking consent contract', () => {
       paymentStatus: null,
       paymentMethod: null,
       paymentFailureDiagnostic: null,
-      paymentMethodAttribution: null,
+      paymentMethodAttribution: {
+        label: '결제수단 확인 필요',
+        method: null,
+        provider: null,
+        currency: null,
+        source: 'Needs Review: payment row missing',
+      },
       ticketStatusCounts: {
         ACTIVE: 0,
         CANCELLATION_PENDING: 0,
@@ -813,7 +819,13 @@ describe('prepareReservationSchema booking consent contract', () => {
     });
 
     expect(listItem.paymentFailureDiagnostic).toBeNull();
-    expect(listItem.paymentMethodAttribution).toBeNull();
+    expect(listItem.paymentMethodAttribution.label).toBe('결제수단 확인 필요');
+    expect(() =>
+      adminBookingListItemSchema.parse({
+        ...listItem,
+        paymentMethodAttribution: null,
+      }),
+    ).toThrow();
   });
 
   it('validates admin booking list query params before service filtering', () => {

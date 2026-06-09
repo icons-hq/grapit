@@ -320,7 +320,7 @@ export interface AdminBookingListItem {
   paymentStatus: PaymentStatus | null;
   paymentMethod: string | null;
   paymentFailureDiagnostic: PaymentFailureDiagnostic | null;
-  paymentMethodAttribution: PaymentMethodAttribution | null;
+  paymentMethodAttribution: PaymentMethodAttribution;
   ticketStatusCounts: AdminTicketStatusCounts;
   createdAt: string;
 }

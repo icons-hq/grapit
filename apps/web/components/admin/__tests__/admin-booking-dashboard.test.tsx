@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
+import type { AdminBookingListItem } from '@grabit/shared';
 
 import { AdminBookingDashboard } from '../admin-booking-dashboard';
 import { apiClient } from '@/lib/api-client';
@@ -37,7 +38,7 @@ function renderWithClient(ui: ReactNode) {
   );
 }
 
-function bookingItem() {
+function bookingItem(): AdminBookingListItem {
   return {
     id: '11111111-1111-4111-8111-111111111111',
     reservationNumber: 'GRP-24006',
@@ -64,6 +65,14 @@ function bookingItem() {
     funnelStatus: 'SOLD',
     paymentStatus: 'DONE',
     paymentMethod: 'CARD',
+    paymentFailureDiagnostic: null,
+    paymentMethodAttribution: {
+      label: '카드 / 카드사 / KRW',
+      method: 'CARD',
+      provider: 'CARD',
+      currency: 'KRW',
+      source: 'DB',
+    },
     ticketStatusCounts: {
       ACTIVE: 1,
       CANCELLATION_PENDING: 0,
@@ -71,6 +80,37 @@ function bookingItem() {
       EXPIRED: 0,
     },
     createdAt: '2026-05-08T11:45:00.000Z',
+  };
+}
+
+function failedBookingItem(): AdminBookingListItem {
+  return {
+    ...bookingItem(),
+    id: '11111111-1111-4111-8111-222222222222',
+    reservationNumber: 'GRP-FAILED-24006',
+    userName: '실패고객',
+    userEmail: 'failed@example.com',
+    status: 'FAILED',
+    funnelStatus: 'PAYMENT_FAILED',
+    paymentStatus: 'EXPIRED',
+    paymentMethod: null,
+    paymentFailureDiagnostic: {
+      kind: 'payment_expired',
+      code: 'PAYMENT_EXPIRED',
+      message: '결제 유효 시간이 만료되었습니다.',
+      source: 'payment_webhook_events',
+      recordedAt: '2026-05-08T11:52:00.000Z',
+      providerCheckStatus: 'not_checked',
+      providerCheckedAt: null,
+      providerCheckMessage: null,
+    },
+    paymentMethodAttribution: {
+      label: '결제수단 확인 필요',
+      method: null,
+      provider: null,
+      currency: null,
+      source: 'Needs Review: payment row missing',
+    },
   };
 }
 
@@ -87,6 +127,17 @@ function bookingDetail() {
       status: 'DONE',
       paidAt: '2026-05-08T11:47:00.000Z',
     },
+    ticketItems: [],
+  };
+}
+
+function failedBookingDetail() {
+  return {
+    ...failedBookingItem(),
+    userPhone: '+821099999999',
+    paymentAttemptedAt: null,
+    paymentCompletedAt: null,
+    paymentInfo: null,
     ticketItems: [],
   };
 }
@@ -165,7 +216,7 @@ function formatExpectedDateTime(dateString: string) {
 
 function bookingsResponse(overrides: {
   total?: number;
-  bookings?: ReturnType<typeof bookingItem>[];
+  bookings?: AdminBookingListItem[];
   tierStats?: Array<{
     tierName: string;
     price: number;
@@ -448,6 +499,40 @@ describe('AdminBookingDashboard', () => {
     expect(within(dialog).getByText(formatExpectedDateTime(bookingDetail().paymentAttemptedAt))).toBeInTheDocument();
     expect(within(dialog).getByText('완료처리일시')).toBeInTheDocument();
     expect(within(dialog).getByText(formatExpectedDateTime(bookingDetail().paymentCompletedAt))).toBeInTheDocument();
+  });
+
+  it('shows payment diagnostics and fallback payment method in list, detail, and refund form', async () => {
+    const user = userEvent.setup();
+    mocks.apiGet.mockImplementation(async (url: string) => {
+      const path = String(url);
+      if (path.includes('/api/v1/admin/bookings/11111111-1111-4111-8111-222222222222')) {
+        return {
+          ...failedBookingDetail(),
+          status: 'CONFIRMED',
+          funnelStatus: 'SOLD',
+        };
+      }
+      return bookingsResponse({ bookings: [failedBookingItem()], total: 1 });
+    });
+
+    renderWithClient(<AdminBookingDashboard />);
+
+    expect(await screen.findByText(/PAYMENT_EXPIRED/)).toBeInTheDocument();
+    expect(screen.getByText(/결제수단 확인 필요/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /실패고객 Girl Rules Fanmeet 예매 상세 보기/ }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('실패/만료 코드')).toBeInTheDocument();
+    expect(within(dialog).getAllByText('PAYMENT_EXPIRED').length).toBeGreaterThan(0);
+    expect(within(dialog).getByText('실패/만료 사유')).toBeInTheDocument();
+    expect(within(dialog).getAllByText('결제 유효 시간이 만료되었습니다.').length).toBeGreaterThan(0);
+    expect(within(dialog).getByText('결제수단 출처')).toBeInTheDocument();
+    expect(within(dialog).getByText('Needs Review: payment row missing')).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole('button', { name: '환불 처리' }));
+    expect(within(dialog).getByText('환불 수단')).toBeInTheDocument();
+    expect(within(dialog).getByText('결제수단 확인 필요 결제 취소')).toBeInTheDocument();
   });
 
   it('keeps the detail modal stable after repeated close and reopen cycles', async () => {
