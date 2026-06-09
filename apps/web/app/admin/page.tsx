@@ -5,7 +5,7 @@ import {
   Ticket,
   Banknote,
   RotateCcw,
-  Theater,
+  TrendingDown,
   TrendingUp,
   PieChart as PieIcon,
   CreditCard,
@@ -18,10 +18,12 @@ import { RevenueAreaChart } from '@/components/admin/dashboard/revenue-area-char
 import { GenreDonutChart } from '@/components/admin/dashboard/genre-donut-chart';
 import { PaymentBarChart } from '@/components/admin/dashboard/payment-bar-chart';
 import { TopPerformancesTable } from '@/components/admin/dashboard/top-performances-table';
+import { AdminPatchNotesPreview } from '@/components/admin/admin-patch-notes';
 import {
   ChartPanelState,
   SectionError,
 } from '@/components/admin/dashboard/_state';
+import { adminPatchNotes } from '@/content/admin-patch-notes';
 import {
   useDashboardSummary,
   useDashboardRevenue,
@@ -83,9 +85,9 @@ export default function AdminDashboardPage() {
         <h2 id="kpi-heading" className="sr-only">
           오늘의 요약
         </h2>
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
           {summary.isLoading ? (
-            Array.from({ length: 4 }).map((_, i) => (
+            Array.from({ length: 5 }).map((_, i) => (
               <Skeleton key={i} className="h-24 w-full" />
             ))
           ) : summary.isError ? (
@@ -99,27 +101,35 @@ export default function AdminDashboardPage() {
                 format="count"
               />
               <AdminStatCard
+                icon={RotateCcw}
+                label="오늘 취소 이벤트"
+                value={summary.data?.todayCancellationEvents ?? 0}
+                format="count"
+              />
+              <AdminStatCard
                 icon={Banknote}
-                label="오늘 매출"
-                value={summary.data?.todayRevenue ?? 0}
+                label="오늘 총매출"
+                value={summary.data?.todayGrossRevenue ?? 0}
                 format="currency"
               />
               <AdminStatCard
-                icon={RotateCcw}
-                label="오늘 취소"
-                value={summary.data?.todayCancelled ?? 0}
-                format="count"
+                icon={TrendingDown}
+                label="오늘 취소 차감"
+                value={summary.data?.todayNegativeCancellationRevenue ?? 0}
+                format="currency"
               />
               <AdminStatCard
-                icon={Theater}
-                label="활성 공연"
-                value={summary.data?.activePerformances ?? 0}
-                format="count"
+                icon={Banknote}
+                label="오늘 순매출"
+                value={summary.data?.todayNetRevenue ?? 0}
+                format="currency"
               />
             </>
           )}
         </div>
       </section>
+
+      <AdminPatchNotesPreview notes={adminPatchNotes} limit={3} />
 
       {/* Revenue area (ADM-02) */}
       <section

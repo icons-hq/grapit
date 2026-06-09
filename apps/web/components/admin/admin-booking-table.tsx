@@ -121,8 +121,15 @@ function getPaymentMethodLabel(method: string | null): string | null {
 
 function getPaymentSummary(booking: AdminBookingListItem): string {
   const statusLabel = getPaymentStatusLabel(booking.paymentStatus);
-  const methodLabel = getPaymentMethodLabel(booking.paymentMethod);
+  const methodLabel = booking.paymentMethodAttribution.label
+    || getPaymentMethodLabel(booking.paymentMethod);
   return [statusLabel, methodLabel].filter(Boolean).join(' · ') || '결제 정보 없음';
+}
+
+function getPaymentDiagnosticSummary(booking: AdminBookingListItem): string | null {
+  const diagnostic = booking.paymentFailureDiagnostic;
+  if (!diagnostic) return null;
+  return [diagnostic.code, diagnostic.message].filter(Boolean).join(' · ');
 }
 
 interface AdminBookingTableProps {
@@ -194,6 +201,7 @@ export function AdminBookingTable({
           {!isLoading &&
             bookings.map((booking) => {
               const statusConfig = getFunnelStatusConfig(booking);
+              const diagnosticSummary = getPaymentDiagnosticSummary(booking);
               return (
                 <TableRow
                   key={booking.id}
@@ -251,6 +259,11 @@ export function AdminBookingTable({
                       <p className="text-xs text-gray-500">
                         {getPaymentSummary(booking)}
                       </p>
+                      {diagnosticSummary && (
+                        <p className="max-w-[220px] truncate text-xs font-medium text-[#C62828]">
+                          {diagnosticSummary}
+                        </p>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>

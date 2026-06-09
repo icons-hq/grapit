@@ -54,19 +54,20 @@ describe('AdminDashboardService', () => {
   });
 
   describe('summary', () => {
-    it('returns todayBookings, todayRevenue, todayCancelled, activePerformances', async () => {
+    it('returns the daily operations summary fields', async () => {
       mockCache.get.mockResolvedValue(null);
       mockDb.select
-        .mockReturnValueOnce(createChainMock([{ count: 10 }]))
-        .mockReturnValueOnce(createChainMock([{ sum: 150000 }]))
-        .mockReturnValueOnce(createChainMock([{ count: 1 }]))
-        .mockReturnValueOnce(createChainMock([{ count: 3 }]));
+        .mockReturnValueOnce(createChainMock([{ count: 10, sum: 150000 }]))
+        .mockReturnValueOnce(createChainMock([{ count: 2, sum: 30000 }]))
+        .mockReturnValueOnce(createChainMock([{ count: 1, sum: 50000 }]))
+        .mockReturnValueOnce(createChainMock([{ count: 1, sum: 20000 }]));
       const result = await service.getSummary();
       expect(result).toEqual({
         todayBookings: 10,
-        todayRevenue: 150000,
-        todayCancelled: 1,
-        activePerformances: 3,
+        todayCancellationEvents: 4,
+        todayGrossRevenue: 150000,
+        todayNegativeCancellationRevenue: -100000,
+        todayNetRevenue: 50000,
       });
     });
   });
@@ -75,7 +76,10 @@ describe('AdminDashboardService', () => {
     it('applies KST day boundary via where clause referencing reservations.createdAt', async () => {
       mockCache.get.mockResolvedValue(null);
       const whereSpy = vi.fn(() => createChainMock([{ count: 1 }]));
-      const fromSpy = vi.fn(() => ({ where: whereSpy }));
+      const fromSpy = vi.fn(() => ({
+        innerJoin: vi.fn(() => ({ where: whereSpy })),
+        where: whereSpy,
+      }));
       mockDb.select.mockReturnValue({ from: fromSpy });
       await service.getSummary();
       // where가 적어도 한 번은 호출되고, 인자가 존재해야 함.
@@ -175,9 +179,10 @@ describe('AdminDashboardService', () => {
     it('does not call db when cache returns value', async () => {
       mockCache.get.mockResolvedValue({
         todayBookings: 5,
-        todayRevenue: 50000,
-        todayCancelled: 0,
-        activePerformances: 2,
+        todayCancellationEvents: 1,
+        todayGrossRevenue: 50000,
+        todayNegativeCancellationRevenue: -10000,
+        todayNetRevenue: 40000,
       });
       const result = await service.getSummary();
       expect(mockDb.select).not.toHaveBeenCalled();
@@ -189,10 +194,10 @@ describe('AdminDashboardService', () => {
     it('calls cache.set with ttlSeconds = 60 exactly', async () => {
       mockCache.get.mockResolvedValue(null);
       mockDb.select
-        .mockReturnValueOnce(createChainMock([{ count: 10 }]))
-        .mockReturnValueOnce(createChainMock([{ sum: 150000 }]))
-        .mockReturnValueOnce(createChainMock([{ count: 1 }]))
-        .mockReturnValueOnce(createChainMock([{ count: 3 }]));
+        .mockReturnValueOnce(createChainMock([{ count: 10, sum: 150000 }]))
+        .mockReturnValueOnce(createChainMock([{ count: 2, sum: 30000 }]))
+        .mockReturnValueOnce(createChainMock([{ count: 1, sum: 50000 }]))
+        .mockReturnValueOnce(createChainMock([{ count: 1, sum: 20000 }]));
       await service.getSummary();
       expect(mockCache.set).toHaveBeenCalledWith(
         'cache:admin:dashboard:summary',
@@ -207,10 +212,10 @@ describe('AdminDashboardService', () => {
       mockCache.get.mockResolvedValue(null);
       mockCache.set.mockResolvedValue(undefined);
       mockDb.select
-        .mockReturnValueOnce(createChainMock([{ count: 10 }]))
-        .mockReturnValueOnce(createChainMock([{ sum: 150000 }]))
-        .mockReturnValueOnce(createChainMock([{ count: 1 }]))
-        .mockReturnValueOnce(createChainMock([{ count: 3 }]));
+        .mockReturnValueOnce(createChainMock([{ count: 10, sum: 150000 }]))
+        .mockReturnValueOnce(createChainMock([{ count: 2, sum: 30000 }]))
+        .mockReturnValueOnce(createChainMock([{ count: 1, sum: 50000 }]))
+        .mockReturnValueOnce(createChainMock([{ count: 1, sum: 20000 }]));
       const result = await service.getSummary();
       expect(result.todayBookings).toBe(10);
     });

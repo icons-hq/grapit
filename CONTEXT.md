@@ -60,6 +60,18 @@ _Avoid_: Same-reservation scan, same-buyer scan.
 The cancellation of exactly one Ticket Item within a Reservation while the remaining Ticket Items can stay valid for venue entry.
 _Avoid_: Reservation cancellation, full refund.
 
+**Operator-Assisted Ticket Item Cancellation**:
+A Ticket Item Cancellation completed through operations or finance handling rather than the current buyer-facing cancellation flow.
+_Avoid_: Customer partial cancellation, hidden buyer feature.
+
+**Full Reservation Cancellation**:
+The cancellation of all remaining valid Ticket Items in a Reservation as one buyer-facing cancellation event.
+_Avoid_: Ticket Item Cancellation, partial cancellation.
+
+**Cancellation Event Count**:
+An admin metric that counts Full Reservation Cancellation as one event and Operator-Assisted Ticket Item Cancellation as one event per cancelled Ticket Item.
+_Avoid_: Reservation status count, active ticket delta.
+
 **Partially Cancelled Reservation**:
 A Reservation that remains confirmed while one or more of its Ticket Items have been cancelled.
 _Avoid_: Cancelled Reservation, failed reservation.
@@ -95,6 +107,42 @@ _Avoid_: Reservation total, KRW ticket total, client estimate.
 **Provider Charge Quote**:
 A snapshot of the Provider Charge Amount that the Buyer is asked to pay for a Reservation. It preserves the provider currency and amount used for payment authorization and validation.
 _Avoid_: Live exchange rate, UI estimate, mutable display price.
+
+**Payment Failure Diagnostic**:
+An admin-facing explanation of why a Reservation did not complete payment, assembled from provider evidence, webhook evidence, and Grabit's own payment lifecycle state.
+_Avoid_: Raw Toss error dump, customer-facing failure copy, payment status.
+
+**Payment Failure Contact Export**:
+A contact export for buyers affected by payment failure, payment expiration, or cancellation, including safe diagnostic fields needed for operator follow-up.
+_Avoid_: Raw payment export, webhook payload export, settlement dataset.
+
+**Last Affected Reason**:
+The latest safe operator-facing reason for why a Buyer appears in a Payment Failure Contact Export, while keeping payment failure diagnostics and cancellation reasons as separate evidence fields.
+_Avoid_: Combined raw error, single source of truth for all failures, marketing copy.
+
+**Current Marketing Consent**:
+The Buyer's effective marketing contact permission at the time an operator export or follow-up decision is made.
+_Avoid_: Reservation-time consent, historical consent audit row.
+
+**Payment Method Attribution**:
+An admin-facing payment method label with its evidence source, used when normal payment method storage is incomplete or missing.
+_Avoid_: Hidden payment method, raw provider payload, unverifiable label.
+
+**Daily Revenue Movement**:
+The KST-day movement of booking revenue, separating newly completed Reservation revenue from negative cancellation revenue caused by completed refunds or provider cancellations.
+_Avoid_: Active ticket total, lifetime sales, settlement payout.
+
+**Daily Operations Summary**:
+An admin dashboard summary of today's booking count, cancellation event count, gross booking revenue, negative cancellation revenue, and net revenue.
+_Avoid_: Revenue trend chart, settlement report, lifetime performance summary.
+
+**Negative Cancellation Revenue**:
+The negative revenue movement caused by completed refunds or provider cancellations, based on the confirmed refunded amount rather than the cancelled Ticket Item's original sale amount.
+_Avoid_: Cancelled ticket list price, cancellation fee, total cancelled reservation amount.
+
+**Effective Average Ticket Amount**:
+The average amount per currently valid sold Ticket Item, based on active Ticket Item revenue rather than the seat tier's list price.
+_Avoid_: Seat tier price, face value, cancelled-seat average.
 
 **Production Payment Matrix**:
 The set of payment methods and provider paths that Buyers can actually see and use in the production checkout for a Performance. It is defined by the buyer-visible checkout UI and provider widget, while API allowed methods and provider admin settings are cross-checks rather than the primary source.

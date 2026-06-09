@@ -1,8 +1,9 @@
 export interface DashboardSummaryDto {
   todayBookings: number;
-  todayRevenue: number;
-  todayCancelled: number;
-  activePerformances: number;
+  todayCancellationEvents: number;
+  todayGrossRevenue: number;
+  todayNegativeCancellationRevenue: number;
+  todayNetRevenue: number;
 }
 
 export interface DashboardRevenueBucketDto {

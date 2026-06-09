@@ -37,6 +37,10 @@ import {
   buildFullPaymentCancelRequest,
   type PaymentCancelPaymentSnapshot,
 } from './payment-cancel-policy.js';
+import {
+  paymentTerminalFailureDiagnostic,
+  recordReservationPaymentFailureDiagnostic,
+} from './payment-failure-diagnostic.js';
 
 type TossWebhookProvider = PaymentProvider | 'ALIPAY';
 type ProviderChargeQuote = {
@@ -801,13 +805,19 @@ export class PaymentService {
       ...this.toPaymentProviderChargeValues(providerChargeQuote),
     } as const;
 
+    let storedPaymentId = existingPayment?.id ?? null;
+
     if (existingPayment) {
       await this.db
         .update(payments)
         .set(paymentValues)
         .where(eq(payments.id, existingPayment.id));
     } else {
-      await this.db.insert(payments).values(paymentValues);
+      const [insertedPayment] = await this.db
+        .insert(payments)
+        .values(paymentValues)
+        .returning({ id: payments.id });
+      storedPaymentId = insertedPayment?.id ?? null;
     }
 
     if (
@@ -823,6 +833,14 @@ export class PaymentService {
           updatedAt: new Date(),
         })
         .where(eq(reservations.id, reservation.id));
+
+      await recordReservationPaymentFailureDiagnostic(this.db, {
+        reservationId: reservation.id,
+        paymentId: storedPaymentId,
+        tossOrderId: orderId,
+        ...paymentTerminalFailureDiagnostic(paymentStatus, paymentValues.cancelReason),
+        diagnosticSource: asyncStatus,
+      });
     }
   }
 
@@ -1646,13 +1664,19 @@ export class PaymentService {
       ...this.toRecoveredPaymentProviderMetadataValues(existingPayment, payload),
     };
 
+    let storedPaymentId = existingPayment?.id ?? null;
+
     if (existingPayment) {
       await this.db
         .update(payments)
         .set(paymentValues)
         .where(eq(payments.id, existingPayment.id));
     } else {
-      await this.db.insert(payments).values(paymentValues);
+      const [insertedPayment] = await this.db
+        .insert(payments)
+        .values(paymentValues)
+        .returning({ id: payments.id });
+      storedPaymentId = insertedPayment?.id ?? null;
     }
 
     if (terminalCancelCompleted && reservation.status !== 'CONFIRMED') {
@@ -1663,6 +1687,16 @@ export class PaymentService {
           updatedAt: new Date(),
         })
         .where(eq(reservations.id, reservation.id));
+
+      await recordReservationPaymentFailureDiagnostic(this.db, {
+        reservationId: reservation.id,
+        paymentId: storedPaymentId,
+        tossOrderId: orderId,
+        diagnosticKind: 'payment_compensated_cancel',
+        diagnosticCode: 'ASYNC_DONE_SEAT_UNAVAILABLE_CANCELLED',
+        diagnosticMessage: ASYNC_DONE_SEAT_FAILURE_CANCEL_REASON,
+        diagnosticSource: asyncStatus,
+      });
     }
 
     return terminalCancelCompleted

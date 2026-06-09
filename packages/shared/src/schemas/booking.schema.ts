@@ -349,6 +349,25 @@ const paymentStatusSchema = z.enum([
   'EXPIRED',
 ]);
 
+export const paymentFailureDiagnosticSchema = z.object({
+  kind: z.string().min(1, '진단 종류가 필요합니다'),
+  code: z.string().min(1, '진단 코드가 필요합니다'),
+  message: z.string().min(1, '진단 메시지가 필요합니다'),
+  source: z.string().min(1, '진단 출처가 필요합니다'),
+  recordedAt: isoDatetime('진단 기록 시각'),
+  providerCheckStatus: z.string().min(1, 'provider 확인 상태가 필요합니다'),
+  providerCheckedAt: isoDatetime('provider 확인 시각').nullable(),
+  providerCheckMessage: z.string().min(1).nullable(),
+});
+
+export const paymentMethodAttributionSchema = z.object({
+  label: z.string().min(1, '결제 수단 라벨이 필요합니다'),
+  method: z.string().min(1).nullable(),
+  provider: z.string().min(1).nullable(),
+  currency: z.string().min(1).nullable(),
+  source: z.string().min(1, '결제 수단 출처가 필요합니다'),
+});
+
 const adminBookingQueryPageSchema = z
   .union([
     z.string().regex(/^[1-9]\d*$/, 'page는 양의 정수여야 합니다'),
@@ -490,6 +509,8 @@ export const adminBookingListItemSchema = z.object({
   funnelStatus: adminBookingFunnelStatusSchema,
   paymentStatus: paymentStatusSchema.nullable(),
   paymentMethod: z.string().min(1, '결제 수단이 필요합니다').nullable(),
+  paymentFailureDiagnostic: paymentFailureDiagnosticSchema.nullable(),
+  paymentMethodAttribution: paymentMethodAttributionSchema,
   ticketStatusCounts: ticketStatusCountsSchema,
   createdAt: isoDatetime('생성 시각'),
 });

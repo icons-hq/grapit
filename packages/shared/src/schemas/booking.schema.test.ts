@@ -9,6 +9,8 @@ import {
   bookingStatsSchema,
   cancelTicketItemSchema,
   confirmPaymentSchema,
+  paymentFailureDiagnosticSchema,
+  paymentMethodAttributionSchema,
   prepareReservationResponseSchema,
   prepareReservationSchema,
   providerChargeQuoteSchema,
@@ -691,6 +693,23 @@ describe('prepareReservationSchema booking consent contract', () => {
       funnelStatus: 'SOLD',
       paymentStatus: 'DONE',
       paymentMethod: 'CARD',
+      paymentFailureDiagnostic: {
+        kind: 'confirm_timeout',
+        code: 'PAYMENT_CONFIRM_NOT_REACHED',
+        message: '결제 승인 요청 전 만료되었습니다.',
+        source: 'booking_api',
+        recordedAt: '2026-05-08T11:52:00.000Z',
+        providerCheckStatus: 'not_checked',
+        providerCheckedAt: null,
+        providerCheckMessage: null,
+      },
+      paymentMethodAttribution: {
+        label: '해외간편결제',
+        method: null,
+        provider: 'PAYPAL',
+        currency: 'USD',
+        source: 'payment_row',
+      },
       ticketStatusCounts: {
         ACTIVE: 1,
         CANCELLATION_PENDING: 0,
@@ -702,6 +721,10 @@ describe('prepareReservationSchema booking consent contract', () => {
 
     expect(listItem).not.toHaveProperty('userPhone');
     expect(listItem.tossOrderId).toBe('GRP-ORDER-24006');
+    expect(listItem.paymentFailureDiagnostic?.providerCheckStatus).toBe(
+      'not_checked',
+    );
+    expect(listItem.paymentMethodAttribution?.label).toBe('해외간편결제');
 
     const detail = adminBookingDetailSchema.parse({
       ...listItem,
@@ -725,6 +748,84 @@ describe('prepareReservationSchema booking consent contract', () => {
     expect(detail.paymentAttemptedAt).toBe('2026-05-08T11:45:30.000Z');
     expect(detail.paymentCompletedAt).toBe('2026-05-08T11:46:00.000Z');
     expect(detail.ticketStatusCounts.ACTIVE).toBe(1);
+  });
+
+  it('accepts nullable admin payment diagnostics and requires payment method attribution fallback', () => {
+    const diagnostic = paymentFailureDiagnosticSchema.parse({
+      kind: 'provider_cancelled',
+      code: 'PROVIDER_CANCELLED',
+      message: 'Provider cancelled before completion.',
+      source: 'payment_webhook',
+      recordedAt: '2026-05-08T11:52:00.000Z',
+      providerCheckStatus: 'checked',
+      providerCheckedAt: '2026-05-08T12:00:00.000Z',
+      providerCheckMessage: 'Toss status: CANCELED',
+    });
+
+    expect(diagnostic.code).toBe('PROVIDER_CANCELLED');
+
+    const attribution = paymentMethodAttributionSchema.parse({
+      label: '카드',
+      method: '카드',
+      provider: null,
+      currency: null,
+      source: 'payment_row',
+    });
+
+    expect(attribution.label).toBe('카드');
+    expect(() =>
+      paymentMethodAttributionSchema.parse({
+        ...attribution,
+        label: '',
+      }),
+    ).toThrow();
+    expect(() =>
+      paymentMethodAttributionSchema.parse({
+        ...attribution,
+        source: '',
+      }),
+    ).toThrow();
+
+    const listItem = adminBookingListItemSchema.parse({
+      id: '11111111-1111-4111-8111-111111111111',
+      reservationNumber: 'GRP-24006',
+      tossOrderId: null,
+      userName: '김예매',
+      userEmail: 'buyer@example.com',
+      userCountry: 'KR',
+      performanceTitle: 'Girl Rules Fanmeet',
+      showDateTime: '2026-07-18T10:00:00.000Z',
+      seats: [makeSeat()],
+      totalAmount: 50000,
+      status: 'FAILED',
+      funnelStatus: 'PAYMENT_FAILED',
+      paymentStatus: null,
+      paymentMethod: null,
+      paymentFailureDiagnostic: null,
+      paymentMethodAttribution: {
+        label: '결제수단 확인 필요',
+        method: null,
+        provider: null,
+        currency: null,
+        source: 'Needs Review: payment row missing',
+      },
+      ticketStatusCounts: {
+        ACTIVE: 0,
+        CANCELLATION_PENDING: 0,
+        CANCELLED: 0,
+        EXPIRED: 0,
+      },
+      createdAt: '2026-05-08T11:45:00.000Z',
+    });
+
+    expect(listItem.paymentFailureDiagnostic).toBeNull();
+    expect(listItem.paymentMethodAttribution.label).toBe('결제수단 확인 필요');
+    expect(() =>
+      adminBookingListItemSchema.parse({
+        ...listItem,
+        paymentMethodAttribution: null,
+      }),
+    ).toThrow();
   });
 
   it('validates admin booking list query params before service filtering', () => {

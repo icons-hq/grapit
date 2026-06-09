@@ -285,6 +285,25 @@ export interface AdminTicketStatusCounts {
   EXPIRED: number;
 }
 
+export interface PaymentFailureDiagnostic {
+  kind: string;
+  code: string;
+  message: string;
+  source: string;
+  recordedAt: string;
+  providerCheckStatus: string;
+  providerCheckedAt: string | null;
+  providerCheckMessage: string | null;
+}
+
+export interface PaymentMethodAttribution {
+  label: string;
+  method: string | null;
+  provider: string | null;
+  currency: string | null;
+  source: string;
+}
+
 export interface AdminBookingListItem {
   id: string;
   reservationNumber: string;
@@ -300,6 +319,8 @@ export interface AdminBookingListItem {
   funnelStatus: AdminBookingFunnelStatus;
   paymentStatus: PaymentStatus | null;
   paymentMethod: string | null;
+  paymentFailureDiagnostic: PaymentFailureDiagnostic | null;
+  paymentMethodAttribution: PaymentMethodAttribution;
   ticketStatusCounts: AdminTicketStatusCounts;
   createdAt: string;
 }

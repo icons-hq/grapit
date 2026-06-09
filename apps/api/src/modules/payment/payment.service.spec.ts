@@ -32,12 +32,14 @@ function createMutationChain<T>(returningRows: T[] = []) {
     values: vi.fn(),
     where: vi.fn(),
     onConflictDoNothing: vi.fn(),
+    onConflictDoUpdate: vi.fn(),
     returning: vi.fn(),
   };
   chain.set.mockReturnValue(chain);
   chain.values.mockReturnValue(chain);
   chain.where.mockReturnValue(chain);
   chain.onConflictDoNothing.mockReturnValue(chain);
+  chain.onConflictDoUpdate.mockReturnValue(chain);
   chain.returning.mockResolvedValue(returningRows);
   return chain;
 }
@@ -782,7 +784,9 @@ describe('PaymentService', () => {
       const showtimeId = randomUUID();
       const userId = randomUUID();
       const providerChargeQuotedAt = new Date('2026-06-04T01:17:34.000Z');
-      const insertPayment = createMutationChain();
+      const paymentId = randomUUID();
+      const insertPayment = createMutationChain([{ id: paymentId }]);
+      const insertDiagnostic = createMutationChain();
       const updateReservation = createMutationChain();
 
       mockDb.select
@@ -798,7 +802,9 @@ describe('PaymentService', () => {
           providerChargeQuotedAt,
         }]))
         .mockReturnValueOnce(createSelectChain([]));
-      mockDb.insert.mockReturnValueOnce(insertPayment);
+      mockDb.insert
+        .mockReturnValueOnce(insertPayment)
+        .mockReturnValueOnce(insertDiagnostic);
       mockDb.update.mockReturnValueOnce(updateReservation);
 
       await service.upsertAsyncPaymentProgress(
@@ -837,6 +843,18 @@ describe('PaymentService', () => {
       expect(updateReservation.set).toHaveBeenCalledWith(
         expect.objectContaining({ status: 'FAILED' }),
       );
+      expect(insertDiagnostic.values).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reservationId,
+          paymentId,
+          tossOrderId: 'GRP-LIVE-ALIPAY',
+          diagnosticKind: 'payment_failed',
+          diagnosticCode: 'PAYMENT_ABORTED',
+          diagnosticMessage: '결제가 중단되었거나 실패했습니다.',
+          diagnosticSource: 'payment_status_changed:aborted',
+        }),
+      );
+      expect(insertDiagnostic.onConflictDoUpdate).toHaveBeenCalledOnce();
     });
 
     it('finalizes Alipay DONE webhook only when provider totalAmount matches the stored USD quote', async () => {
@@ -2307,6 +2325,7 @@ describe('PaymentService', () => {
       const insertSeat = createMutationChain([]);
       const updateCanceledPayment = createMutationChain();
       const failReservation = createMutationChain();
+      const insertDiagnostic = createMutationChain();
 
       mockDb.select
         .mockReturnValueOnce(createSelectChain([{
@@ -2344,6 +2363,7 @@ describe('PaymentService', () => {
       mockDb.update
         .mockReturnValueOnce(updateCanceledPayment)
         .mockReturnValueOnce(failReservation);
+      mockDb.insert.mockReturnValueOnce(insertDiagnostic);
       mockTossClient.cancelPayment.mockResolvedValueOnce({
         paymentKey: 'pay_recovered_sold_seat',
         orderId: 'GRP-ALIPAY-SOLD-SEAT',
@@ -2398,6 +2418,15 @@ describe('PaymentService', () => {
       expect(failReservation.set).toHaveBeenCalledWith(expect.objectContaining({
         status: 'FAILED',
       }));
+      expect(insertDiagnostic.values).toHaveBeenCalledWith(expect.objectContaining({
+        reservationId,
+        paymentId,
+        tossOrderId: 'GRP-ALIPAY-SOLD-SEAT',
+        diagnosticKind: 'payment_compensated_cancel',
+        diagnosticCode: 'ASYNC_DONE_SEAT_UNAVAILABLE_CANCELLED',
+        diagnosticMessage: '판매 불가능 좌석으로 인한 자동 취소',
+        diagnosticSource: 'payment_status_changed:done',
+      }));
       expect(mockQrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
     });
 
@@ -2408,6 +2437,7 @@ describe('PaymentService', () => {
       const paymentId = randomUUID();
       const updateCanceledPayment = createMutationChain();
       const failReservation = createMutationChain();
+      const insertDiagnostic = createMutationChain();
 
       mockDb.select
         .mockReturnValueOnce(createSelectChain([{
@@ -2436,6 +2466,7 @@ describe('PaymentService', () => {
       mockDb.update
         .mockReturnValueOnce(updateCanceledPayment)
         .mockReturnValueOnce(failReservation);
+      mockDb.insert.mockReturnValueOnce(insertDiagnostic);
       mockTossClient.cancelPayment.mockResolvedValueOnce({
         paymentKey: 'pay_recovered_redis_locked',
         orderId: 'GRP-ALIPAY-REDIS-LOCKED',
@@ -2486,6 +2517,12 @@ describe('PaymentService', () => {
       expect(updateCanceledPayment.set).toHaveBeenCalledWith(expect.objectContaining({
         paymentKey: 'pay_recovered_redis_locked',
         status: 'CANCELED',
+      }));
+      expect(insertDiagnostic.values).toHaveBeenCalledWith(expect.objectContaining({
+        reservationId,
+        paymentId,
+        tossOrderId: 'GRP-ALIPAY-REDIS-LOCKED',
+        diagnosticCode: 'ASYNC_DONE_SEAT_UNAVAILABLE_CANCELLED',
       }));
       expect(mockQrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
     });

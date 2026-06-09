@@ -277,7 +277,7 @@ export function ReservationExportPanel() {
               <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
               <span>
                 {isContactExport
-                  ? '고객 CSV에는 이름, 이메일, 전화번호가 포함됩니다.'
+                  ? '고객 CSV에는 이름, 이메일, 전화번호, 마케팅 동의 여부, 실패/취소 사유와 취소 매출 정보가 포함됩니다.'
                   : '원본 CSV에는 예약자 이름, 이메일, 전화번호가 포함됩니다.'}
               </span>
             </div>
