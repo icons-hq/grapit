@@ -88,6 +88,7 @@ interface TossPaymentWidgetProps {
   onReady: () => void;
   onPaymentMethodChange?: (selection: PaymentMethodSelection) => void;
   onWidgetAgreementChange?: (agreed: boolean) => void;
+  onPaymentDeadlineChange?: (paymentDeadlineAt: string) => void;
 }
 
 export interface TossPaymentWidgetRef {
@@ -114,6 +115,7 @@ export interface TossPaymentBranchResponse {
   providerChargeQuote?: ProviderChargeQuote;
   checkoutEnabled?: boolean;
   disabledReason?: string;
+  paymentDeadlineAt?: string;
 }
 
 interface WidgetPaymentRequestPayload {
@@ -410,6 +412,15 @@ function appendProviderChargeReturnParams({
   return url.toString();
 }
 
+function appendPaymentDeadlineReturnParam(
+  returnUrl: string,
+  paymentDeadlineAt: string,
+): string {
+  const url = new URL(returnUrl);
+  url.searchParams.set('paymentDeadlineAt', paymentDeadlineAt);
+  return url.toString();
+}
+
 function resolveInitialPaymentMethodSelection(_variantKey: string): PaymentMethodSelection {
   return resolvePaymentMethodSelection('CARD', _variantKey);
 }
@@ -556,6 +567,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
       onReady,
       onPaymentMethodChange,
       onWidgetAgreementChange,
+      onPaymentDeadlineChange,
     },
     ref,
   ) {
@@ -684,27 +696,40 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
         }, {
           showErrorToast: false,
         });
+        if (branch.paymentDeadlineAt) {
+          onPaymentDeadlineChange?.(branch.paymentDeadlineAt);
+        }
+        const branchForRequest = branch.paymentDeadlineAt
+          ? {
+              ...branch,
+              failUrl: appendPaymentDeadlineReturnParam(
+                branch.failUrl,
+                branch.paymentDeadlineAt,
+              ),
+            }
+          : branch;
+
         if (
           requiresProviderChargeQuote
-          && (branch.checkoutEnabled !== true || !branch.providerChargeQuote)
+          && (branchForRequest.checkoutEnabled !== true || !branchForRequest.providerChargeQuote)
         ) {
           throw new Error(resolveProviderChargeDisabledMessage(
             selection.paymentMethod.provider,
-            branch.disabledReason,
+            branchForRequest.disabledReason,
             locale,
           ));
         }
 
-        if (branch.providerChargeQuote) {
+        if (branchForRequest.providerChargeQuote) {
           await widgets.setAmount(resolvePaymentRequestAmount({
             amount,
-            currency: branch.currency,
-            providerChargeQuote: branch.providerChargeQuote,
+            currency: branchForRequest.currency,
+            providerChargeQuote: branchForRequest.providerChargeQuote,
           }));
         }
 
         const requestPayload = buildWidgetPaymentRequest({
-          branch,
+          branch: branchForRequest,
           amount,
           customerEmail,
           customerName,
@@ -732,6 +757,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
       selectedSeats,
       customerKey,
       resumeOrderId,
+      onPaymentDeadlineChange,
       widgetCopy,
     ]);
 

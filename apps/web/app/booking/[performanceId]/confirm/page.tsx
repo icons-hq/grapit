@@ -90,6 +90,7 @@ function ConfirmPageContent() {
 
   const { selectedSeats, performanceTitle, showDateTime, venue, posterUrl, selectedShowtimeId } =
     useBookingStore();
+  const applyPaymentDeadline = useBookingStore((s) => s.applyPaymentDeadline);
   const user = useAuthStore((s) => s.user);
   const {
     paymentDeadlineAt,
@@ -123,6 +124,7 @@ function ConfirmPageContent() {
   const isResumingPendingPayment = Boolean(resumeOrderId);
   const [orderId, setOrderId] = useState(() => resumeOrderId ?? generateOrderId());
   const hasPaymentErrorReturn = searchParams.get('error') === 'true';
+  const returnPaymentDeadlineAt = searchParams.get('paymentDeadlineAt');
 
   const totalPrice = useMemo(
     () => selectedSeats.reduce((sum, s) => sum + s.price, 0)
@@ -149,6 +151,12 @@ function ConfirmPageContent() {
   // Handle error return from Toss. Guard with useRef so React StrictMode's
   // double-effect in dev mode does not fire two toasts for the same URL.
   const errorToastKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (returnPaymentDeadlineAt) {
+      applyPaymentDeadline(returnPaymentDeadlineAt);
+    }
+  }, [applyPaymentDeadline, returnPaymentDeadlineAt]);
+
   useEffect(() => {
     const hasError = searchParams.get('error');
     const code = searchParams.get('code');
@@ -196,6 +204,7 @@ function ConfirmPageContent() {
     url.searchParams.delete('error');
     url.searchParams.delete('code');
     url.searchParams.delete('message');
+    url.searchParams.delete('paymentDeadlineAt');
     if (!isResumingPendingPayment) {
       url.searchParams.delete('orderId');
     }
@@ -236,6 +245,10 @@ function ConfirmPageContent() {
   const handleWidgetAgreementChange = useCallback((value: boolean) => {
     setWidgetAgreementAgreed(value);
   }, []);
+
+  const handlePaymentDeadlineChange = useCallback((nextPaymentDeadlineAt: string) => {
+    applyPaymentDeadline(nextPaymentDeadlineAt);
+  }, [applyPaymentDeadline]);
 
   const handleBookerUpdate = useCallback((data: { name: string; phone: string }) => {
     setBookerInfo(data);
@@ -490,6 +503,7 @@ function ConfirmPageContent() {
               onReady={handleWidgetReady}
               onPaymentMethodChange={handlePaymentMethodChange}
               onWidgetAgreementChange={handleWidgetAgreementChange}
+              onPaymentDeadlineChange={handlePaymentDeadlineChange}
             />
           )}
         </section>

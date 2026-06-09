@@ -158,12 +158,15 @@ function assertCachedPerformanceBookable(
 
 function buildBookingPaymentSnapshot(
   lockExpiresAtMs: number | null,
+  serverPaymentDeadlineAtMs: number | null,
   performancePolicy?: PerformanceBookingPolicy,
 ): BookingPaymentSnapshot {
   const paymentWindowMinutes = performancePolicy?.paymentWindowMinutes ?? DEFAULT_PAYMENT_WINDOW_MINUTES;
   const seatHoldMinutes = performancePolicy?.seatHoldMinutes ?? DEFAULT_SEAT_HOLD_MINUTES;
   const lockExpiresAt = lockExpiresAtMs ? new Date(lockExpiresAtMs).toISOString() : null;
-  const paymentDeadlineAt = lockExpiresAtMs
+  const paymentDeadlineAt = serverPaymentDeadlineAtMs
+    ? new Date(serverPaymentDeadlineAtMs).toISOString()
+    : lockExpiresAtMs
     ? new Date(
       Math.min(lockExpiresAtMs, Date.now() + paymentWindowMinutes * 60 * 1000),
     ).toISOString()
@@ -223,11 +226,16 @@ export function useBookingPaymentSnapshot(): BookingPaymentSnapshot {
   const queryClient = useQueryClient();
   const performanceId = useBookingStore((state) => state.performanceId);
   const lockExpiresAtMs = useBookingStore((state) => state.expiresAt);
+  const serverPaymentDeadlineAtMs = useBookingStore((state) => state.paymentDeadlineAt);
 
   return useMemo(() => {
     const cachedPerformance = getCachedPerformanceDetail(queryClient, performanceId);
-    return buildBookingPaymentSnapshot(lockExpiresAtMs, cachedPerformance?.bookingPolicy);
-  }, [lockExpiresAtMs, performanceId, queryClient]);
+    return buildBookingPaymentSnapshot(
+      lockExpiresAtMs,
+      serverPaymentDeadlineAtMs,
+      cachedPerformance?.bookingPolicy,
+    );
+  }, [lockExpiresAtMs, performanceId, queryClient, serverPaymentDeadlineAtMs]);
 }
 
 export function useLockSeat() {

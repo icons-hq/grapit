@@ -31,8 +31,12 @@ export class PaymentController {
   getTossPaymentBranch(
     @Body(new ZodValidationPipe(paymentBranchRequestSchema))
     body: PaymentBranchRequestDto,
+    @Request() req: { user: { id: string } },
   ) {
-    return this.paymentService.prepareTossPaymentBranch(body);
+    return this.paymentService.prepareTossPaymentBranch({
+      ...body,
+      userId: req.user.id,
+    });
   }
 
   @Post('async-return')
