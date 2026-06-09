@@ -1,4 +1,5 @@
 import {
+  foreignKey,
   index,
   pgTable,
   timestamp,
@@ -14,12 +15,8 @@ export const reservationPaymentFailureDiagnostics = pgTable(
   'reservation_payment_failure_diagnostics',
   {
     id: uuid('id').defaultRandom().primaryKey(),
-    reservationId: uuid('reservation_id')
-      .notNull()
-      .references(() => reservations.id, { onDelete: 'cascade' }),
-    paymentId: uuid('payment_id').references(() => payments.id, {
-      onDelete: 'set null',
-    }),
+    reservationId: uuid('reservation_id').notNull(),
+    paymentId: uuid('payment_id'),
     tossOrderId: varchar('toss_order_id', { length: 200 }),
     diagnosticKind: varchar('diagnostic_kind', { length: 80 }).notNull(),
     diagnosticCode: varchar('diagnostic_code', { length: 100 }).notNull(),
@@ -43,6 +40,16 @@ export const reservationPaymentFailureDiagnostics = pgTable(
       .defaultNow(),
   },
   (table) => [
+    foreignKey({
+      columns: [table.reservationId],
+      foreignColumns: [reservations.id],
+      name: 'rpfd_reservation_id_fk',
+    }).onDelete('cascade'),
+    foreignKey({
+      columns: [table.paymentId],
+      foreignColumns: [payments.id],
+      name: 'rpfd_payment_id_fk',
+    }).onDelete('set null'),
     uniqueIndex('idx_rpfd_reservation_id').on(table.reservationId),
     index('idx_rpfd_payment_id').on(table.paymentId),
     index('idx_rpfd_toss_order_id').on(table.tossOrderId),

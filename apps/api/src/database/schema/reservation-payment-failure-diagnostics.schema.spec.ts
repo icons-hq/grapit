@@ -8,6 +8,10 @@ import { reservationPaymentFailureDiagnostics } from './reservation-payment-fail
 describe('reservation_payment_failure_diagnostics schema', () => {
   it('defines one sanitized diagnostic row per reservation', () => {
     const columns = getTableColumns(reservationPaymentFailureDiagnostics);
+    const schemaSource = readFileSync(
+      resolve(__dirname, 'reservation-payment-failure-diagnostics.ts'),
+      'utf8',
+    );
 
     expect(columns.id).toBeDefined();
     expect(columns.reservationId).toBeDefined();
@@ -32,6 +36,11 @@ describe('reservation_payment_failure_diagnostics schema', () => {
     expect(columns).not.toHaveProperty('secret');
     expect(columns).not.toHaveProperty('cookie');
     expect(columns).not.toHaveProperty('authHeader');
+    expect(schemaSource).toContain('foreignKey({');
+    expect(schemaSource).toContain("name: 'rpfd_reservation_id_fk'");
+    expect(schemaSource).toContain("name: 'rpfd_payment_id_fk'");
+    expect(schemaSource).not.toContain('.references(() => reservations.id');
+    expect(schemaSource).not.toContain('.references(() => payments.id');
   });
 
   it('commits the 0028 migration journal entry without broad snapshot churn', () => {
