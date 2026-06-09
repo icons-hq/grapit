@@ -10,6 +10,7 @@ import {
 import { AdminBookingService } from './admin-booking.service.js';
 import {
   bookingOperationAuditLogs,
+  reservationPaymentFailureDiagnostics,
   seatInventories,
 } from '../../database/schema/index.js';
 import type { AdminAuditService } from './admin-audit.service.js';
@@ -435,7 +436,13 @@ describe('AdminBookingService', () => {
         paymentStatus: 'READY',
         paymentMethod: 'FOREIGN_EASY_PAY',
         paymentFailureDiagnostic: null,
-        paymentMethodAttribution: null,
+        paymentMethodAttribution: {
+          label: '해외간편결제',
+          method: 'FOREIGN_EASY_PAY',
+          provider: null,
+          currency: null,
+          source: 'DB',
+        },
         funnelStatus: 'PAYMENT_PENDING',
         ticketStatusCounts: {
           ACTIVE: 0,
@@ -528,7 +535,13 @@ describe('AdminBookingService', () => {
           paymentStatus: 'DONE',
           paymentMethod: 'CARD',
           paymentFailureDiagnostic: null,
-          paymentMethodAttribution: null,
+          paymentMethodAttribution: {
+            label: '카드',
+            method: 'CARD',
+            provider: null,
+            currency: null,
+            source: 'DB',
+          },
           funnelStatus: 'SOLD',
           ticketStatusCounts: {
             ACTIVE: 1,
@@ -538,6 +551,130 @@ describe('AdminBookingService', () => {
           },
         }),
       ]);
+    });
+
+    it('maps payment diagnostics and payment method attribution from left-joined rows', async () => {
+      const listCalls: Array<{ method: string; args: unknown[] }> = [];
+      mockDb.select
+        .mockReturnValueOnce(createChainMock([{
+          totalBookings: 2,
+          completedRevenue: 79000,
+          soldCount: 1,
+          pendingPaymentCount: 0,
+          paymentProcessingCount: 0,
+          failedCount: 1,
+          cancelProcessingCount: 0,
+          cancelledCount: 0,
+          partialCancelledCount: 0,
+        }]))
+        .mockReturnValueOnce(
+          createRecordingChainMock([
+            {
+              reservation: {
+                id: 'reservation-failed-1',
+                reservationNumber: 'R-FAILED-001',
+                tossOrderId: 'GRP-TOSS-FAILED-001',
+                status: 'FAILED',
+                totalAmount: 79000,
+                createdAt: new Date('2026-07-01T03:00:00.000Z'),
+              },
+              user: {
+                name: '김실패',
+                email: 'failed@example.com',
+                country: 'KR',
+              },
+              showtime: {
+                dateTime: new Date('2026-07-18T10:00:00.000Z'),
+              },
+              performance: {
+                title: 'Girl Rules Fanmeeting',
+              },
+              payment: {
+                status: 'ABORTED',
+                method: 'FOREIGN_EASY_PAY',
+                provider: 'PAYPAL',
+                currency: 'USD',
+              },
+              refund: {
+                status: null,
+              },
+              diagnostic: {
+                diagnosticKind: 'checkout_timeout',
+                diagnosticCode: 'PAY_PROCESS_CANCELED',
+                diagnosticMessage: '사용자가 결제를 중단했습니다',
+                diagnosticSource: 'Webhook',
+                recordedAt: new Date('2026-07-01T03:05:00.000Z'),
+                providerCheckStatus: 'not_checked',
+                providerCheckedAt: null,
+                providerCheckMessage: null,
+              },
+            },
+            {
+              reservation: {
+                id: 'reservation-missing-payment',
+                reservationNumber: 'R-MISSING-PAYMENT',
+                tossOrderId: 'GRP-TOSS-MISSING-PAYMENT',
+                status: 'FAILED',
+                totalAmount: 79000,
+                createdAt: new Date('2026-07-01T02:00:00.000Z'),
+              },
+              user: {
+                name: 'No Payment Row',
+                email: 'missing@example.com',
+                country: 'TW',
+              },
+              showtime: {
+                dateTime: new Date('2026-07-18T10:00:00.000Z'),
+              },
+              performance: {
+                title: 'Girl Rules Fanmeeting',
+              },
+              payment: null,
+              refund: null,
+              diagnostic: null,
+            },
+          ], listCalls),
+        )
+        .mockReturnValueOnce(createChainMock([]))
+        .mockReturnValueOnce(createChainMock([]));
+
+      const result = await service.getBookings({});
+
+      const leftJoinTables = listCalls
+        .filter((call) => call.method === 'leftJoin')
+        .map((call) => call.args[0]);
+      expect(leftJoinTables).toContain(reservationPaymentFailureDiagnostics);
+      expect(result.bookings[0]).toMatchObject({
+        paymentMethod: 'FOREIGN_EASY_PAY',
+        paymentFailureDiagnostic: {
+          kind: 'checkout_timeout',
+          code: 'PAY_PROCESS_CANCELED',
+          message: '사용자가 결제를 중단했습니다',
+          source: 'Webhook',
+          recordedAt: '2026-07-01T03:05:00.000Z',
+          providerCheckStatus: 'not_checked',
+          providerCheckedAt: null,
+          providerCheckMessage: null,
+        },
+        paymentMethodAttribution: {
+          label: '해외간편결제 / PayPal / USD',
+          method: 'FOREIGN_EASY_PAY',
+          provider: 'PAYPAL',
+          currency: 'USD',
+          source: 'DB',
+        },
+      });
+      expect(result.bookings[1]).toMatchObject({
+        paymentMethod: null,
+        paymentFailureDiagnostic: null,
+        paymentMethodAttribution: {
+          label: '결제수단 확인 필요',
+          method: null,
+          provider: null,
+          currency: null,
+          source: 'Needs Review: payment row missing',
+        },
+      });
     });
 
     it('applies extended filters and returns the filtered total instead of an unfiltered count', async () => {
@@ -719,6 +856,76 @@ describe('AdminBookingService', () => {
       expect(enteredSeatsSqlText).toContain('entered');
       expect(enteredSeatsSqlText).toContain('CONFIRMED');
       expect(enteredSeatsSqlText).toContain('DONE');
+    });
+
+    it('sorts tier statistics by effective average amount, sold seats, then tier name after capacity merge', async () => {
+      mockDb.select
+        .mockReturnValueOnce(createChainMock([{
+          totalBookings: 0,
+          completedRevenue: 0,
+          soldCount: 0,
+          pendingPaymentCount: 0,
+          paymentProcessingCount: 0,
+          failedCount: 0,
+          cancelProcessingCount: 0,
+          cancelledCount: 0,
+          partialCancelledCount: 0,
+        }]))
+        .mockReturnValueOnce(createChainMock([]))
+        .mockReturnValueOnce(createChainMock([
+          {
+            tierName: 'B',
+            price: 10000,
+            soldSeats: 1,
+            activeRevenue: 30000,
+            cancelProcessingSeats: 0,
+            cancelledSeats: 0,
+            enteredSeats: 0,
+          },
+          {
+            tierName: 'A',
+            price: 10000,
+            soldSeats: 2,
+            activeRevenue: 60000,
+            cancelProcessingSeats: 0,
+            cancelledSeats: 0,
+            enteredSeats: 0,
+          },
+          {
+            tierName: 'C',
+            price: 10000,
+            soldSeats: 5,
+            activeRevenue: 100000,
+            cancelProcessingSeats: 0,
+            cancelledSeats: 0,
+            enteredSeats: 0,
+          },
+        ]))
+        .mockReturnValueOnce(createChainMock([
+          {
+            tierName: 'Capacity Only',
+            price: 50000,
+            totalSeats: 10,
+            unavailableSeats: 0,
+          },
+        ]));
+
+      const result = await service.getBookings({
+        showtimeId: '11111111-1111-4111-8111-000000000302',
+      } as any);
+
+      expect(result.tierStats.map((tier) => tier.tierName)).toEqual([
+        'A',
+        'B',
+        'C',
+        'Capacity Only',
+      ]);
+      expect(result.tierStats.map((tier) => tier.averageTicketAmount)).toEqual([
+        30000,
+        30000,
+        20000,
+        0,
+      ]);
     });
   });
 
@@ -992,7 +1199,13 @@ describe('AdminBookingService', () => {
         expect.objectContaining({ seatKey: '1F:A-2', number: '2' }),
       ]);
       expect(result.paymentFailureDiagnostic).toBeNull();
-      expect(result.paymentMethodAttribution).toBeNull();
+      expect(result.paymentMethodAttribution).toEqual({
+        label: '카드 / 카드사 / KRW',
+        method: 'CARD',
+        provider: 'CARD',
+        currency: 'KRW',
+        source: 'DB',
+      });
       expect(result.ticketItems).toEqual([
         expect.objectContaining({
           id: 'ticket-item-a1',
@@ -1040,6 +1253,76 @@ describe('AdminBookingService', () => {
             currency: 'KRW',
           },
         },
+      });
+    });
+
+    it('returns booking detail diagnostic and non-null missing payment attribution', async () => {
+      const detailCalls: Array<{ method: string; args: unknown[] }> = [];
+      mockDb.select
+        .mockReturnValueOnce(
+          createRecordingChainMock([
+            {
+              reservation: {
+                id: 'reservation-1',
+                reservationNumber: 'R-DETAIL-001',
+                tossOrderId: 'GRP-TOSS-DETAIL-001',
+                status: 'FAILED',
+                totalAmount: 158000,
+                createdAt: new Date('2026-07-01T03:00:00.000Z'),
+              },
+              user: {
+                name: '김예매',
+                phone: '+821012345678',
+                email: 'buyer@example.com',
+                country: 'KR',
+              },
+              showtime: {
+                dateTime: new Date('2026-07-18T10:00:00.000Z'),
+              },
+              performance: {
+                title: 'Girl Rules Fanmeeting',
+              },
+              refund: {
+                status: null,
+              },
+              diagnostic: {
+                diagnosticKind: 'provider_status',
+                diagnosticCode: 'NOT_FOUND',
+                diagnosticMessage: 'Provider payment was not found',
+                diagnosticSource: 'DB',
+                recordedAt: new Date('2026-07-01T03:06:00.000Z'),
+                providerCheckStatus: 'not_found',
+                providerCheckedAt: new Date('2026-07-01T03:07:00.000Z'),
+                providerCheckMessage: 'Toss 결제 건 없음',
+              },
+            },
+          ], detailCalls),
+        )
+        .mockReturnValueOnce(createChainMock([]))
+        .mockReturnValueOnce(createChainMock([]));
+
+      const result = await service.getBookingDetail('reservation-1');
+
+      const leftJoinTables = detailCalls
+        .filter((call) => call.method === 'leftJoin')
+        .map((call) => call.args[0]);
+      expect(leftJoinTables).toContain(reservationPaymentFailureDiagnostics);
+      expect(result.paymentFailureDiagnostic).toEqual({
+        kind: 'provider_status',
+        code: 'NOT_FOUND',
+        message: 'Provider payment was not found',
+        source: 'DB',
+        recordedAt: '2026-07-01T03:06:00.000Z',
+        providerCheckStatus: 'not_found',
+        providerCheckedAt: '2026-07-01T03:07:00.000Z',
+        providerCheckMessage: 'Toss 결제 건 없음',
+      });
+      expect(result.paymentMethodAttribution).toEqual({
+        label: '결제수단 확인 필요',
+        method: null,
+        provider: null,
+        currency: null,
+        source: 'Needs Review: payment row missing',
       });
     });
   });
@@ -1344,6 +1627,7 @@ describe('AdminBookingService', () => {
               email: '=failed@example.com',
               phone: '+886900000000',
               country: 'TW',
+              marketingConsent: true,
             },
             performance: {
               id: 'performance-1',
@@ -1357,6 +1641,16 @@ describe('AdminBookingService', () => {
             payment: {
               status: 'EXPIRED',
             },
+            diagnostic: {
+              diagnosticCode: 'PAY_PROCESS_CANCELED',
+              diagnosticMessage: '=Formula reason',
+              diagnosticSource: 'Webhook',
+            },
+            cancellation: {
+              reason: null,
+              revenue: 0,
+              source: null,
+            },
           },
           {
             user: {
@@ -1365,6 +1659,7 @@ describe('AdminBookingService', () => {
               email: '=failed@example.com',
               phone: '+886900000000',
               country: 'TW',
+              marketingConsent: true,
             },
             performance: {
               id: 'performance-1',
@@ -1378,6 +1673,12 @@ describe('AdminBookingService', () => {
             payment: {
               status: null,
             },
+            diagnostic: null,
+            cancellation: {
+              reason: null,
+              revenue: 0,
+              source: null,
+            },
           },
           {
             user: {
@@ -1386,6 +1687,7 @@ describe('AdminBookingService', () => {
               email: 'cancelled@example.com',
               phone: '+821055501234',
               country: 'KR',
+              marketingConsent: false,
             },
             performance: {
               id: 'performance-1',
@@ -1398,6 +1700,12 @@ describe('AdminBookingService', () => {
             },
             payment: {
               status: 'CANCELED',
+            },
+            diagnostic: null,
+            cancellation: {
+              reason: '고객 요청',
+              revenue: 1000,
+              source: 'ticket_item',
             },
           },
         ], exportCalls),
@@ -1420,12 +1728,16 @@ describe('AdminBookingService', () => {
 
       expect(result.rowCount).toBe(2);
       expect(result.filename).toContain('reservation-export-failed-cancelled-contacts');
-      expect(result.csv).toContain('"User Name","User Email","User Phone"');
+      expect(result.csv).toContain('"User Name","User Email","User Phone","Marketing Consent"');
       expect(result.csv).toContain(`"'=Failed Buyer","'=failed@example.com","'+886900000000"`);
       expect(result.csv).toContain('"R-EXPIRED-LATEST","PENDING_PAYMENT","EXPIRED"');
+      expect(result.csv).toContain('"PAY_PROCESS_CANCELED","\'=Formula reason","Webhook"');
       expect(result.csv).toContain('"2","0"');
       expect(result.csv).toContain(`"Cancelled Buyer","cancelled@example.com","'+821055501234"`);
+      expect(result.csv).toContain('"N","domestic","KR"');
       expect(result.csv).toContain('"R-CANCELLED","CANCELLED","CANCELED"');
+      expect(result.csv).toContain('"고객 요청","1000","ticket_item"');
+      expect(result.csv).toContain('"고객 요청"');
       expect(result.csv).toContain('"0","1"');
 
       const exportWhere = exportCalls.find((call) => call.method === 'where')?.args[0];
@@ -1460,6 +1772,8 @@ describe('AdminBookingService', () => {
       expect(JSON.stringify(auditInput)).not.toContain('failed@example.com');
       expect(JSON.stringify(auditInput)).not.toContain('+886900000000');
       expect(JSON.stringify(auditInput)).not.toContain('R-EXPIRED-LATEST');
+      expect(JSON.stringify(auditInput)).not.toContain('PAY_PROCESS_CANCELED');
+      expect(JSON.stringify(auditInput)).not.toContain('Formula reason');
     });
 
     it('keeps active ticket exclusion scoped to the same performance for failed/cancelled contact exports', async () => {

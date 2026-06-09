@@ -24,6 +24,7 @@ import {
   bookingPolicies,
   bookingOperationAuditLogs,
   ticketItems,
+  reservationPaymentFailureDiagnostics,
 } from '../../database/schema/index.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
 import { RefundService } from '../refund/refund.service.js';
@@ -35,11 +36,13 @@ import type {
   AdminBookingListItem,
   AdminBookingTierStats,
   AdminTicketStatusCounts,
+  PaymentFailureDiagnostic,
   AdminReservationExportFilter,
   BookingStats,
   FloorAwareSeatSelection,
   PaymentInfo,
   PaymentMethod,
+  PaymentMethodAttribution,
   PaymentMethodType,
   PaymentProvider,
   PaymentStatus,
@@ -83,6 +86,7 @@ const FAILED_CANCELLED_CONTACT_EXPORT_HEADERS = [
   'User Name',
   'User Email',
   'User Phone',
+  'Marketing Consent',
   'Audience Region',
   'User Country',
   'Performance ID',
@@ -91,6 +95,13 @@ const FAILED_CANCELLED_CONTACT_EXPORT_HEADERS = [
   'Last Reservation Status',
   'Last Payment Status',
   'Last Affected At',
+  'Last Failure Code',
+  'Last Failure Reason',
+  'Diagnostic Source',
+  'Last Cancellation Reason',
+  'Cancellation Revenue',
+  'Cancellation Source',
+  'Last Affected Reason',
   'Payment Failed/Expired Count',
   'Cancelled Count',
 ] as const;
@@ -246,6 +257,7 @@ type FailedCancelledContactExportSourceRow = {
     email: string;
     phone: string;
     country: string;
+    marketingConsent: boolean;
   };
   performance: {
     id: string;
@@ -259,6 +271,16 @@ type FailedCancelledContactExportSourceRow = {
   payment: {
     status: string | null;
   } | null;
+  diagnostic: {
+    diagnosticCode: string | null;
+    diagnosticMessage: string | null;
+    diagnosticSource: string | null;
+  } | null;
+  cancellation: {
+    reason: string | null;
+    revenue: number | string | null;
+    source: string | null;
+  };
 };
 
 type FailedCancelledContactExportRow = {
@@ -268,6 +290,15 @@ type FailedCancelledContactExportRow = {
   lastReservationStatus: string;
   lastPaymentStatus: string | null;
   lastAffectedAt: Date | null;
+  lastFailureAt: Date | null;
+  lastFailureCode: string | null;
+  lastFailureReason: string | null;
+  diagnosticSource: string | null;
+  lastCancellationAt: Date | null;
+  lastCancellationReason: string | null;
+  cancellationRevenue: number;
+  cancellationSource: string | null;
+  lastAffectedReason: string | null;
   paymentFailedExpiredCount: number;
   cancelledCount: number;
 };
@@ -295,10 +326,24 @@ type AdminBookingListRow = {
   payment: {
     status: string | null;
     method: string | null;
+    provider: string | null;
+    currency: string | null;
   } | null;
+  diagnostic: AdminBookingDiagnosticRow | null;
   refund: {
     status: string | null;
   } | null;
+};
+
+type AdminBookingDiagnosticRow = {
+  diagnosticKind: string | null;
+  diagnosticCode: string | null;
+  diagnosticMessage: string | null;
+  diagnosticSource: string | null;
+  recordedAt: Date | null;
+  providerCheckStatus: string | null;
+  providerCheckedAt: Date | null;
+  providerCheckMessage: string | null;
 };
 
 type BookingStatsRow = {
@@ -801,7 +846,13 @@ function mergeTierStats(
     byTier.set(row.tierName, current);
   }
 
-  return Array.from(byTier.values()).map(({ unavailableSeats: _unused, ...stats }) => stats);
+  return Array.from(byTier.values())
+    .map(({ unavailableSeats: _unused, ...stats }) => stats)
+    .sort((left, right) =>
+      right.averageTicketAmount - left.averageTicketAmount
+      || right.soldSeats - left.soldSeats
+      || left.tierName.localeCompare(right.tierName)
+    );
 }
 
 @Injectable()
@@ -892,6 +943,18 @@ export class AdminBookingService {
         payment: {
           status: payments.status,
           method: payments.method,
+          provider: payments.provider,
+          currency: payments.currency,
+        },
+        diagnostic: {
+          diagnosticKind: reservationPaymentFailureDiagnostics.diagnosticKind,
+          diagnosticCode: reservationPaymentFailureDiagnostics.diagnosticCode,
+          diagnosticMessage: reservationPaymentFailureDiagnostics.diagnosticMessage,
+          diagnosticSource: reservationPaymentFailureDiagnostics.diagnosticSource,
+          recordedAt: reservationPaymentFailureDiagnostics.recordedAt,
+          providerCheckStatus: reservationPaymentFailureDiagnostics.providerCheckStatus,
+          providerCheckedAt: reservationPaymentFailureDiagnostics.providerCheckedAt,
+          providerCheckMessage: reservationPaymentFailureDiagnostics.providerCheckMessage,
         },
         refund: {
           status: refunds.status,
@@ -902,6 +965,10 @@ export class AdminBookingService {
       .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
       .innerJoin(performances, eq(showtimes.performanceId, performances.id))
       .leftJoin(payments, eq(payments.reservationId, reservations.id))
+      .leftJoin(
+        reservationPaymentFailureDiagnostics,
+        eq(reservationPaymentFailureDiagnostics.reservationId, reservations.id),
+      )
       .leftJoin(refunds, eq(refunds.reservationId, reservations.id))
       .where(whereClause)
       .orderBy(desc(reservations.createdAt))
@@ -966,8 +1033,8 @@ export class AdminBookingService {
         }),
         paymentStatus: mapPaymentStatusOrNull(row.payment?.status),
         paymentMethod: row.payment?.method ?? null,
-        paymentFailureDiagnostic: null,
-        paymentMethodAttribution: null,
+        paymentFailureDiagnostic: mapPaymentFailureDiagnostic(row.diagnostic),
+        paymentMethodAttribution: mapPaymentMethodAttribution(row.payment),
         ticketStatusCounts,
         createdAt: row.reservation.createdAt?.toISOString() ?? '',
       };
@@ -1122,12 +1189,26 @@ export class AdminBookingService {
         refund: {
           status: refunds.status,
         },
+        diagnostic: {
+          diagnosticKind: reservationPaymentFailureDiagnostics.diagnosticKind,
+          diagnosticCode: reservationPaymentFailureDiagnostics.diagnosticCode,
+          diagnosticMessage: reservationPaymentFailureDiagnostics.diagnosticMessage,
+          diagnosticSource: reservationPaymentFailureDiagnostics.diagnosticSource,
+          recordedAt: reservationPaymentFailureDiagnostics.recordedAt,
+          providerCheckStatus: reservationPaymentFailureDiagnostics.providerCheckStatus,
+          providerCheckedAt: reservationPaymentFailureDiagnostics.providerCheckedAt,
+          providerCheckMessage: reservationPaymentFailureDiagnostics.providerCheckMessage,
+        },
       })
       .from(reservations)
       .innerJoin(users, eq(reservations.userId, users.id))
       .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
       .innerJoin(performances, eq(showtimes.performanceId, performances.id))
       .leftJoin(refunds, eq(refunds.reservationId, reservations.id))
+      .leftJoin(
+        reservationPaymentFailureDiagnostics,
+        eq(reservationPaymentFailureDiagnostics.reservationId, reservations.id),
+      )
       .where(eq(reservations.id, reservationId));
 
     if (!row) {
@@ -1166,8 +1247,8 @@ export class AdminBookingService {
       }),
       paymentStatus: mapPaymentStatusOrNull(payment?.status),
       paymentMethod: payment?.method ?? null,
-      paymentFailureDiagnostic: null,
-      paymentMethodAttribution: null,
+      paymentFailureDiagnostic: mapPaymentFailureDiagnostic(row.diagnostic),
+      paymentMethodAttribution: mapPaymentMethodAttribution(payment ?? null),
       paymentAttemptedAt: payment?.createdAt?.toISOString() ?? null,
       paymentCompletedAt: payment?.paidAt?.toISOString() ?? null,
       ticketStatusCounts: countTicketStatuses(reservationTicketItems),
@@ -1447,6 +1528,7 @@ export class AdminBookingService {
           email: users.email,
           phone: users.phone,
           country: users.country,
+          marketingConsent: users.marketingConsent,
         },
         performance: {
           id: performances.id,
@@ -1460,12 +1542,49 @@ export class AdminBookingService {
         payment: {
           status: payments.status,
         },
+        diagnostic: {
+          diagnosticCode: reservationPaymentFailureDiagnostics.diagnosticCode,
+          diagnosticMessage: reservationPaymentFailureDiagnostics.diagnosticMessage,
+          diagnosticSource: reservationPaymentFailureDiagnostics.diagnosticSource,
+        },
+        cancellation: {
+          reason: sql<string | null>`(
+            select cancelled_ti.cancel_reason
+            from ticket_items cancelled_ti
+            where cancelled_ti.reservation_id = ${reservations.id}
+              and cancelled_ti.cancel_reason is not null
+            order by cancelled_ti.cancelled_at desc nulls last, cancelled_ti.created_at desc
+            limit 1
+          )`,
+          revenue: sql<number>`coalesce((
+            select sum(cancelled_ti.cancellation_fee)::int
+            from ticket_items cancelled_ti
+            where cancelled_ti.reservation_id = ${reservations.id}
+              and cancelled_ti.status = 'cancelled'
+          ), 0)`,
+          source: sql<string | null>`case
+            when exists (
+              select 1
+              from ticket_items cancelled_ti
+              where cancelled_ti.reservation_id = ${reservations.id}
+                and (
+                  cancelled_ti.cancel_reason is not null
+                  or cancelled_ti.cancellation_fee > 0
+                )
+            ) then 'ticket_item'
+            else null
+          end`,
+        },
       })
       .from(reservations)
       .innerJoin(users, eq(reservations.userId, users.id))
       .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
       .innerJoin(performances, eq(showtimes.performanceId, performances.id))
       .leftJoin(payments, eq(payments.reservationId, reservations.id))
+      .leftJoin(
+        reservationPaymentFailureDiagnostics,
+        eq(reservationPaymentFailureDiagnostics.reservationId, reservations.id),
+      )
       .where(and(...conditions))
       .orderBy(desc(reservations.createdAt));
 
@@ -1648,6 +1767,7 @@ function failedCancelledContactExportRowToCsvValues(
     row.user.name,
     row.user.email,
     row.user.phone,
+    row.user.marketingConsent ? 'Y' : 'N',
     audienceRegion,
     row.user.country,
     row.performance.id,
@@ -1656,6 +1776,13 @@ function failedCancelledContactExportRowToCsvValues(
     row.lastReservationStatus,
     row.lastPaymentStatus ?? '',
     row.lastAffectedAt?.toISOString() ?? '',
+    row.lastFailureCode ?? '',
+    row.lastFailureReason ?? '',
+    row.diagnosticSource ?? '',
+    row.lastCancellationReason ?? '',
+    row.cancellationRevenue,
+    row.cancellationSource ?? '',
+    row.lastAffectedReason ?? '',
     row.paymentFailedExpiredCount,
     row.cancelledCount,
   ];
@@ -1681,6 +1808,27 @@ function groupFailedCancelledContactExportRows(
         lastReservationStatus: row.reservation.status,
         lastPaymentStatus: row.payment?.status ?? null,
         lastAffectedAt: rowAffectedAt,
+        lastFailureAt: failedCount > 0 ? rowAffectedAt : null,
+        lastFailureCode: isFailedOrExpiredContactRow(row)
+          ? row.diagnostic?.diagnosticCode ?? null
+          : null,
+        lastFailureReason: isFailedOrExpiredContactRow(row)
+          ? row.diagnostic?.diagnosticMessage ?? null
+          : null,
+        diagnosticSource: isFailedOrExpiredContactRow(row)
+          ? row.diagnostic?.diagnosticSource ?? null
+          : null,
+        lastCancellationAt: cancelledCount > 0 ? rowAffectedAt : null,
+        lastCancellationReason: row.reservation.status === 'CANCELLED'
+          ? row.cancellation.reason
+          : null,
+        cancellationRevenue: row.reservation.status === 'CANCELLED'
+          ? toInt(row.cancellation.revenue)
+          : 0,
+        cancellationSource: row.reservation.status === 'CANCELLED'
+          ? row.cancellation.source
+          : null,
+        lastAffectedReason: affectedReason(row),
         paymentFailedExpiredCount: failedCount,
         cancelledCount,
       });
@@ -1690,15 +1838,39 @@ function groupFailedCancelledContactExportRows(
     existing.paymentFailedExpiredCount += failedCount;
     existing.cancelledCount += cancelledCount;
 
+    if (failedCount > 0 && isNewerDate(rowAffectedAt, existing.lastFailureAt)) {
+      existing.lastFailureAt = rowAffectedAt;
+      existing.lastFailureCode = row.diagnostic?.diagnosticCode ?? null;
+      existing.lastFailureReason = row.diagnostic?.diagnosticMessage ?? null;
+      existing.diagnosticSource = row.diagnostic?.diagnosticSource ?? null;
+    }
+    if (cancelledCount > 0 && isNewerDate(rowAffectedAt, existing.lastCancellationAt)) {
+      existing.lastCancellationAt = rowAffectedAt;
+      existing.lastCancellationReason = row.cancellation.reason;
+      existing.cancellationRevenue = toInt(row.cancellation.revenue);
+      existing.cancellationSource = row.cancellation.source;
+    }
+
     if (isNewerDate(rowAffectedAt, existing.lastAffectedAt)) {
       existing.lastReservationNumber = row.reservation.reservationNumber;
       existing.lastReservationStatus = row.reservation.status;
       existing.lastPaymentStatus = row.payment?.status ?? null;
       existing.lastAffectedAt = rowAffectedAt;
+      existing.lastAffectedReason = affectedReason(row);
     }
   }
 
   return Array.from(grouped.values());
+}
+
+function affectedReason(row: FailedCancelledContactExportSourceRow): string | null {
+  if (isFailedOrExpiredContactRow(row)) {
+    return row.diagnostic?.diagnosticMessage ?? null;
+  }
+  if (row.reservation.status === 'CANCELLED') {
+    return row.cancellation.reason;
+  }
+  return null;
 }
 
 function isFailedOrExpiredContactRow(row: FailedCancelledContactExportSourceRow): boolean {
@@ -1827,6 +1999,107 @@ function mapPaymentStatusOrNull(status: string | null | undefined): PaymentStatu
     return status;
   }
   return null;
+}
+
+function mapPaymentFailureDiagnostic(
+  diagnostic: AdminBookingDiagnosticRow | null | undefined,
+): PaymentFailureDiagnostic | null {
+  if (
+    !diagnostic?.diagnosticKind
+    || !diagnostic.diagnosticCode
+    || !diagnostic.diagnosticMessage
+    || !diagnostic.diagnosticSource
+    || !diagnostic.recordedAt
+    || !diagnostic.providerCheckStatus
+  ) {
+    return null;
+  }
+
+  return {
+    kind: diagnostic.diagnosticKind,
+    code: diagnostic.diagnosticCode,
+    message: diagnostic.diagnosticMessage,
+    source: diagnostic.diagnosticSource,
+    recordedAt: diagnostic.recordedAt.toISOString(),
+    providerCheckStatus: diagnostic.providerCheckStatus,
+    providerCheckedAt: dateToIsoOrNull(diagnostic.providerCheckedAt),
+    providerCheckMessage: diagnostic.providerCheckMessage ?? null,
+  };
+}
+
+function mapPaymentMethodAttribution(
+  payment: Pick<typeof payments.$inferSelect, 'method' | 'provider' | 'currency'> | {
+    method: string | null;
+    provider: string | null;
+    currency: string | null;
+  } | null | undefined,
+): PaymentMethodAttribution {
+  const method = payment?.method?.trim() || null;
+  if (!payment || !method) {
+    return {
+      label: '결제수단 확인 필요',
+      method: null,
+      provider: null,
+      currency: null,
+      source: payment ? 'Needs Review: payment method missing' : 'Needs Review: payment row missing',
+    };
+  }
+
+  const provider = payment.provider?.trim() || null;
+  const currency = payment.currency?.trim() || null;
+  const labelParts = [
+    paymentMethodLabel(method),
+    provider ? paymentProviderLabel(provider) : null,
+    currency,
+  ].filter((part): part is string => Boolean(part));
+
+  return {
+    label: labelParts.join(' / ') || method,
+    method,
+    provider,
+    currency,
+    source: 'DB',
+  };
+}
+
+function paymentMethodLabel(method: string): string {
+  switch (method) {
+    case 'CARD':
+      return '카드';
+    case 'VIRTUAL_ACCOUNT':
+      return '가상계좌';
+    case 'TRANSFER':
+      return '계좌이체';
+    case 'MOBILE_PHONE':
+      return '휴대폰';
+    case 'FOREIGN_EASY_PAY':
+      return '해외간편결제';
+    case 'SIMPLE_PAY':
+      return '간편결제';
+    default:
+      return method;
+  }
+}
+
+function paymentProviderLabel(provider: string): string {
+  switch (provider) {
+    case 'TOSS_PAY':
+      return 'Toss Pay';
+    case 'NAVER_PAY':
+      return 'Naver Pay';
+    case 'KAKAOPAY':
+      return 'KakaoPay';
+    case 'ALIPAY_PLUS':
+      return 'Alipay+';
+    case 'TRUEMONEY':
+      return 'TrueMoney';
+    case 'PAYPAL':
+      return 'PayPal';
+    case 'CARD':
+      return '카드사';
+    default:
+      return provider;
+  }
 }
 
 function mapPaymentToPaymentInfo(
