@@ -18,6 +18,7 @@ import {
   ScrollText,
   ShieldCheck,
   UsersRound,
+  Newspaper,
   type LucideIcon,
 } from 'lucide-react';
 import {
@@ -42,6 +43,11 @@ const NAV_GROUPS: readonly { label: string; items: readonly NavItem[] }[] = [
         label: '대시보드',
         href: '/admin',
         icon: LayoutDashboard,
+      },
+      {
+        label: '패치노트',
+        href: '/admin/patch-notes',
+        icon: Newspaper,
       },
     ],
   },

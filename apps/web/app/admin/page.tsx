@@ -18,10 +18,12 @@ import { RevenueAreaChart } from '@/components/admin/dashboard/revenue-area-char
 import { GenreDonutChart } from '@/components/admin/dashboard/genre-donut-chart';
 import { PaymentBarChart } from '@/components/admin/dashboard/payment-bar-chart';
 import { TopPerformancesTable } from '@/components/admin/dashboard/top-performances-table';
+import { AdminPatchNotesPreview } from '@/components/admin/admin-patch-notes';
 import {
   ChartPanelState,
   SectionError,
 } from '@/components/admin/dashboard/_state';
+import { adminPatchNotes } from '@/content/admin-patch-notes';
 import {
   useDashboardSummary,
   useDashboardRevenue,
@@ -126,6 +128,8 @@ export default function AdminDashboardPage() {
           )}
         </div>
       </section>
+
+      <AdminPatchNotesPreview notes={adminPatchNotes} limit={3} />
 
       {/* Revenue area (ADM-02) */}
       <section
