@@ -14,6 +14,29 @@ export interface AdminPatchNote {
 
 const notes = [
   {
+    id: 'pr-163-payment-processing-grace',
+    prNumber: 163,
+    title: '결제 처리 grace window 적용',
+    summary:
+      'Toss 결제창이나 카드사 앱 인증에 진입한 예매가 기존 7분 결제 대기시간 때문에 조기 실패 처리되지 않도록 결제 처리 grace를 적용했습니다.',
+    highlights: [
+      '초기 7분 예매 준비 window는 유지하고 결제 branch 진입 시 최대 15분 cap 안에서 deadline 연장',
+      '결제 deadline, admission active window, reentry grace, Redis seat lock TTL을 같은 기준으로 연장',
+      'branch 응답과 failUrl 복귀 흐름에 연장된 paymentDeadlineAt을 반영',
+      'Redis lock 연장 실패 시 guarded DB update를 복구해 worker/status race를 방지',
+    ],
+    category: 'patch',
+    date: '2026-06-09',
+    githubUrl: 'https://github.com/sangwopark19/grapit/pull/163',
+    evidence: [
+      'API targeted Vitest',
+      'Web targeted Vitest',
+      'API/Web typecheck',
+      'Subagent code review',
+      'git diff --check',
+    ],
+  },
+  {
     id: 'pr-161-admin-booking-payment-management',
     prNumber: 161,
     title: '관리자 예매/결제 진단 및 일일 매출 통계 개선',

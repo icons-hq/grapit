@@ -47,6 +47,33 @@ describe('adminPatchNotes', () => {
       ]),
     );
   });
+
+  it('registers the payment processing grace PR', () => {
+    const note = adminPatchNotes.find((entry) => entry.prNumber === 163);
+
+    expect(note).toEqual(
+      expect.objectContaining({
+        category: 'patch',
+        title: '결제 처리 grace window 적용',
+        githubUrl: 'https://github.com/sangwopark19/grapit/pull/163',
+      }),
+    );
+    expect(note?.summary).toContain('Toss 결제창');
+    expect(note?.summary).toContain('조기 실패 처리');
+    expect(note?.highlights).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('최대 15분 cap'),
+        expect.stringContaining('Redis seat lock TTL'),
+        expect.stringContaining('failUrl'),
+      ]),
+    );
+    expect(note?.evidence).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('API targeted Vitest'),
+        expect.stringContaining('Subagent code review'),
+      ]),
+    );
+  });
 });
 
 describe('latestAdminPatchNotes', () => {
