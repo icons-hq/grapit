@@ -14,6 +14,29 @@ export interface AdminPatchNote {
 
 const notes = [
   {
+    id: 'pr-167-booking-auth-queue-immediate',
+    prNumber: 167,
+    title: '예매 진입 로그인 및 즉시 입장 흐름 수정',
+    summary:
+      '비로그인 사용자가 예매 진입 시 대기열 화면을 보지 않고 로그인으로 이동하고, 대기 인원이 없는 예매는 admission cookie를 유지한 채 즉시 좌석 선택 화면으로 진입하도록 수정했습니다.',
+    highlights: [
+      '비로그인 예매 진입을 /auth returnTo 흐름으로 연결',
+      '즉시 ADMITTED queue snapshot은 대기 화면 없이 booking page로 진입',
+      'queue reconcile lock을 token 기반 Lua compare-delete로 즉시 해제',
+      '좌석 잠금, 예약 준비, 결제 확인 AdmissionGuard 계약은 유지',
+    ],
+    category: 'patch',
+    date: '2026-06-10',
+    githubUrl: 'https://github.com/sangwopark19/grapit/pull/167',
+    evidence: [
+      'Web targeted Vitest',
+      'API queue Vitest',
+      'API/Web typecheck',
+      'Booking queue/floor Playwright E2E',
+      'git diff --check',
+    ],
+  },
+  {
     id: 'pr-163-payment-processing-grace',
     prNumber: 163,
     title: '결제 처리 grace window 적용',

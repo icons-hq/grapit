@@ -40,6 +40,14 @@ export const ADMITTED = 'ADMITTED';
 export const PAYMENT_RECOVERY = 'PAYMENT_RECOVERY';
 export const EXPIRED = 'EXPIRED';
 
+export const RELEASE_QUEUE_RECONCILE_LOCK_LUA = `
+-- RELEASE_QUEUE_RECONCILE_LOCK_LUA
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0
+`;
+
 function isBookingStartReached(value: Date | null | undefined, now: Date = new Date()): boolean {
   return value instanceof Date && !Number.isNaN(value.getTime()) && value.getTime() <= now.getTime();
 }
@@ -477,9 +485,11 @@ export class QueueService {
   }
 
   private async reconcilePerformanceQueueIfDue(performanceId: string): Promise<void> {
+    const lockKey = this.reconcileLockKey(performanceId);
+    const lockToken = randomUUID();
     const acquired = await this.redis.set(
-      this.reconcileLockKey(performanceId),
-      '1',
+      lockKey,
+      lockToken,
       'PX',
       QUEUE_RECONCILE_LOCK_TTL_MS,
       'NX',
@@ -489,7 +499,11 @@ export class QueueService {
       return;
     }
 
-    await this.reconcilePerformanceQueue(performanceId);
+    try {
+      await this.reconcilePerformanceQueue(performanceId);
+    } finally {
+      await this.redis.eval(RELEASE_QUEUE_RECONCILE_LOCK_LUA, 1, lockKey, lockToken);
+    }
   }
 
   private async expireStaleSessions(performanceId: string): Promise<void> {

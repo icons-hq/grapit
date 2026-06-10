@@ -83,7 +83,7 @@ describe('useQueue', () => {
     vi.clearAllMocks();
   });
 
-  it('auto-enters the booking route when the queue session is admitted', async () => {
+  it('skips the waiting surface when a fetched queue session is immediately admitted', async () => {
     postMock.mockResolvedValueOnce({
       queueSessionId: 'queue-session-1',
     });
@@ -112,11 +112,6 @@ describe('useQueue', () => {
 
     await flushQueueEffects();
     expect(result.current.status).toBe('admitted');
-
-    act(() => {
-      vi.advanceTimersByTime(1200);
-    });
-
     expect(result.current.isReady).toBe(true);
     expect(result.current.remainingSeats).toBe(17);
     expect(result.current.etaSeconds).toBe(0);

@@ -105,6 +105,15 @@ function isAdmittedState(state: QueueTransportState): boolean {
   return state === 'ADMITTED' || state === 'PAYMENT_RECOVERY';
 }
 
+function isImmediateAdmission(snapshot: QueueSnapshot): boolean {
+  return (
+    isAdmittedState(snapshot.state) &&
+    snapshot.autoEnter &&
+    snapshot.position === 0 &&
+    snapshot.waitingCount === 0
+  );
+}
+
 function normalizeSnapshot(snapshot: QueueSnapshot): QueueSnapshot {
   return {
     ...snapshot,
@@ -209,7 +218,9 @@ export function useQueue({
         `/api/v1/queue/sessions/${queueSessionId}`,
         { showErrorToast: false },
       );
-      applySnapshot(response);
+      applySnapshot(response, {
+        enterImmediately: isImmediateAdmission(response),
+      });
     },
     [applySnapshot],
   );
@@ -241,11 +252,7 @@ export function useQueue({
       }
 
       applySnapshot(response, {
-        enterImmediately:
-          isAdmittedState(response.state) &&
-          response.autoEnter &&
-          response.position === 0 &&
-          response.waitingCount === 0,
+        enterImmediately: isImmediateAdmission(response),
       });
     } catch (error) {
       setStatus(mapQueueError(error));
