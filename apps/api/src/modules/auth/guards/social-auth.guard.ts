@@ -3,8 +3,9 @@ import { AuthGuard } from '@nestjs/passport';
 import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
 import {
+  buildSocialOAuthState,
   buildSocialCallbackUrl,
-  getSocialCallbackLocaleFromRequest,
+  getSocialCallbackStateFromRequest,
 } from '../social-callback-url.js';
 
 function handleSocialAuthRequest<T>(
@@ -28,11 +29,15 @@ function handleSocialAuthRequest<T>(
     const http = context.switchToHttp();
     const req = http.getRequest<Request>();
     const res = http.getResponse<Response>();
+    const callbackState = getSocialCallbackStateFromRequest(req, 'state');
+    const returnToParam: Record<string, string> = callbackState.returnTo
+      ? { returnTo: callbackState.returnTo }
+      : {};
     res.redirect(
       buildSocialCallbackUrl(
         frontendUrl,
-        getSocialCallbackLocaleFromRequest(req, 'state'),
-        { error: errorCode, provider: providerName },
+        callbackState.locale,
+        { error: errorCode, provider: providerName, ...returnToParam },
       ),
     );
     return null as T;
@@ -43,8 +48,9 @@ function handleSocialAuthRequest<T>(
 
 function getSocialAuthenticateOptions(context: ExecutionContext): { state: string } | undefined {
   const req = context.switchToHttp().getRequest<Request>();
-  const locale = getSocialCallbackLocaleFromRequest(req, 'locale');
-  return locale ? { state: locale } : undefined;
+  const query = req.query as Record<string, unknown> | undefined;
+  const state = buildSocialOAuthState(query?.['locale'], query?.['returnTo']);
+  return state ? { state } : undefined;
 }
 
 @Injectable()

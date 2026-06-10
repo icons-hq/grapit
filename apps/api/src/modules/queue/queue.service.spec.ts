@@ -1,7 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { QueueService } from './queue.service.js';
+import {
+  QueueService,
+  RELEASE_QUEUE_RECONCILE_LOCK_LUA,
+} from './queue.service.js';
 import type { QueueGateway } from './queue.gateway.js';
 
 function createMockRedis() {
@@ -18,6 +21,7 @@ function createMockRedis() {
     srem: vi.fn().mockResolvedValue(0),
     smembers: vi.fn().mockResolvedValue([]),
     scard: vi.fn().mockResolvedValue(0),
+    eval: vi.fn().mockResolvedValue(1),
   };
 }
 
@@ -281,7 +285,7 @@ describe('QueueService', () => {
     expect(mockGateway.emitPosition).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps the reconcile lock long enough for high-admission batches', async () => {
+  it('releases the owned reconcile lock after a high-admission batch finishes', async () => {
     vi.spyOn(service as never, 'reconcilePerformanceQueue').mockResolvedValue(undefined);
 
     await (
@@ -292,10 +296,37 @@ describe('QueueService', () => {
 
     expect(mockRedis.set).toHaveBeenCalledWith(
       `{queue:${performanceId}}:reconcile-lock`,
-      '1',
+      expect.any(String),
       'PX',
       30_000,
       'NX',
     );
+    expect(mockRedis.eval).toHaveBeenCalledWith(
+      RELEASE_QUEUE_RECONCILE_LOCK_LUA,
+      1,
+      `{queue:${performanceId}}:reconcile-lock`,
+      mockRedis.set.mock.calls.find(([setKey]) => setKey === `{queue:${performanceId}}:reconcile-lock`)?.[1],
+    );
+  });
+
+  it('compares the reconcile lock token before deleting', () => {
+    expect(RELEASE_QUEUE_RECONCILE_LOCK_LUA).toContain("redis.call('GET', KEYS[1]) == ARGV[1]");
+    expect(RELEASE_QUEUE_RECONCILE_LOCK_LUA).toContain("redis.call('DEL', KEYS[1])");
+  });
+
+  it('does not reconcile when the reconcile lock is already held', async () => {
+    const reconcileSpy = vi
+      .spyOn(service as never, 'reconcilePerformanceQueue')
+      .mockResolvedValue(undefined);
+    mockRedis.set.mockResolvedValueOnce(null);
+
+    await (
+      service as unknown as {
+        reconcilePerformanceQueueIfDue: (targetPerformanceId: string) => Promise<void>;
+      }
+    ).reconcilePerformanceQueueIfDue(performanceId);
+
+    expect(reconcileSpy).not.toHaveBeenCalled();
+    expect(mockRedis.eval).not.toHaveBeenCalled();
   });
 });

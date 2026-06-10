@@ -5,13 +5,27 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import BookingRoute from '../page';
 
 const {
+  routerReplaceMock,
   useQueueMock,
   useBookingAvailabilityMock,
   useAuthStoreMock,
+  useLocaleMock,
 } = vi.hoisted(() => ({
+  routerReplaceMock: vi.fn(),
   useQueueMock: vi.fn(),
   useBookingAvailabilityMock: vi.fn(),
   useAuthStoreMock: vi.fn(),
+  useLocaleMock: vi.fn(() => 'ko'),
+}));
+
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({
+    replace: routerReplaceMock,
+  }),
+}));
+
+vi.mock('next-intl', () => ({
+  useLocale: useLocaleMock,
 }));
 
 vi.mock('@/hooks/use-queue', () => ({
@@ -73,7 +87,7 @@ describe('BookingRoute auth gating', () => {
     expect(await screen.findByText('queue loading')).toBeInTheDocument();
   });
 
-  it('does not enable queue entry for signed-out visitors', async () => {
+  it('redirects signed-out visitors to auth with a booking return path instead of showing queue authRequired', async () => {
     useAuthStoreMock.mockReturnValue({
       isInitialized: true,
       accessToken: null,
@@ -87,7 +101,12 @@ describe('BookingRoute auth gating', () => {
         enabled: false,
       });
     });
-    expect(await screen.findByText('queue authRequired')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(routerReplaceMock).toHaveBeenCalledWith(
+        '/auth?returnTo=%2Fbooking%2Fperformance-auth',
+      );
+    });
+    expect(screen.queryByText('queue authRequired')).not.toBeInTheDocument();
   });
 
   it('enables queue entry after the visitor has an access token', async () => {

@@ -44,5 +44,8 @@ describe('auth page i18n visible copy', () => {
     expect(getSocialLoginPath('kakao', 'ko')).toBe(
       '/api/v1/auth/social/kakao?locale=ko',
     );
+    expect(getSocialLoginPath('naver', 'ko', '/booking/performance-auth')).toBe(
+      '/api/v1/auth/social/naver?locale=ko&returnTo=%2Fbooking%2Fperformance-auth',
+    );
   });
 });
