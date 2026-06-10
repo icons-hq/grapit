@@ -206,7 +206,7 @@ jobs:
           flags: >-
             --service-account=grapit-cloudrun@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
             --add-cloudsql-instances=${{ secrets.CLOUD_SQL_CONNECTION_NAME }}
-            --min-instances=2
+            --min-instances=1
             --max-instances=40
             --concurrency=250
             --memory=1Gi
