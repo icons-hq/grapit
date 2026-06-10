@@ -17,8 +17,61 @@ env:
   DEPLOY_SHA: ${{ github.sha }}
 
 jobs:
+  prepare-admin-patch-notes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    outputs:
+      deploy_sha: ${{ steps.deploy-sha.outputs.value }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - name: Generate admin patch note
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DEPLOYED_SHA: ${{ env.DEPLOY_SHA }}
+        run: node scripts/admin-patch-note-generator.mjs
+      - name: Detect generated changes
+        id: changes
+        run: |
+          if git diff --quiet -- apps/web/content/admin-patch-notes.generated.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: pnpm/action-setup@v5
+        if: steps.changes.outputs.changed == 'true'
+      - name: Install dependencies
+        if: steps.changes.outputs.changed == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Verify admin patch notes
+        if: steps.changes.outputs.changed == 'true'
+        run: >-
+          pnpm --filter @grabit/web exec vitest run
+          content/__tests__/admin-patch-notes.test.ts
+          content/__tests__/admin-patch-note-generator.test.mjs
+      - name: Commit generated patch note
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add apps/web/content/admin-patch-notes.generated.json
+          git commit -m "chore(web): register admin patch note"
+          git push origin HEAD:main
+      - name: Select deploy SHA
+        id: deploy-sha
+        run: echo "value=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
   migrate-production:
     runs-on: ubuntu-latest
+    needs: prepare-admin-patch-notes
+    env:
+      DEPLOY_SHA: ${{ needs.prepare-admin-patch-notes.outputs.deploy_sha }}
     permissions:
       contents: read
       id-token: write
@@ -121,6 +174,9 @@ jobs:
 
   build-api-image:
     runs-on: ubuntu-latest
+    needs: prepare-admin-patch-notes
+    env:
+      DEPLOY_SHA: ${{ needs.prepare-admin-patch-notes.outputs.deploy_sha }}
     permissions:
       contents: read
       id-token: write
@@ -149,6 +205,9 @@ jobs:
 
   build-web-image:
     runs-on: ubuntu-latest
+    needs: prepare-admin-patch-notes
+    env:
+      DEPLOY_SHA: ${{ needs.prepare-admin-patch-notes.outputs.deploy_sha }}
     permissions:
       contents: read
       id-token: write
@@ -186,9 +245,12 @@ jobs:
   deploy-api:
     runs-on: ubuntu-latest
     needs:
+      - prepare-admin-patch-notes
       - migrate-production
       - build-api-image
       - build-web-image
+    env:
+      DEPLOY_SHA: ${{ needs.prepare-admin-patch-notes.outputs.deploy_sha }}
     permissions:
       contents: read
       id-token: write
@@ -278,7 +340,11 @@ jobs:
 
   deploy-web:
     runs-on: ubuntu-latest
-    needs: deploy-api
+    needs:
+      - prepare-admin-patch-notes
+      - deploy-api
+    env:
+      DEPLOY_SHA: ${{ needs.prepare-admin-patch-notes.outputs.deploy_sha }}
     permissions:
       contents: read
       id-token: write

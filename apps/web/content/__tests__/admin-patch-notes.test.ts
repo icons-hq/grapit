@@ -47,6 +47,25 @@ describe('adminPatchNotes', () => {
       ]),
     );
   });
+
+  it('backfills the payment processing grace PR', () => {
+    const note = adminPatchNotes.find((entry) => entry.prNumber === 163);
+
+    expect(note).toEqual(
+      expect.objectContaining({
+        category: 'patch',
+        title: '결제 처리 grace window 적용',
+        githubUrl: 'https://github.com/sangwopark19/grapit/pull/163',
+      }),
+    );
+    expect(note?.summary).toContain('Toss 결제창');
+    expect(note?.highlights).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('최대 15분'),
+        expect.stringContaining('failUrl'),
+      ]),
+    );
+  });
 });
 
 describe('latestAdminPatchNotes', () => {

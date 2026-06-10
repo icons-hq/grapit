@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { describe, expect, it } from 'vitest';
 
@@ -14,8 +14,12 @@ describe('AdminPatchNotesPage', () => {
     expect(
       screen.getByText('관리자 예매/결제 진단 및 일일 매출 통계 개선'),
     ).toBeInTheDocument();
+    const currentNote = screen.getByLabelText(
+      'PR #161 관리자 예매/결제 진단 및 일일 매출 통계 개선',
+    );
+
     expect(
-      screen.getByRole('link', { name: 'GitHub PR 열기' }),
+      within(currentNote).getByRole('link', { name: 'GitHub PR 열기' }),
     ).toHaveAttribute('href', 'https://github.com/sangwopark19/grapit/pull/161');
   });
 });
