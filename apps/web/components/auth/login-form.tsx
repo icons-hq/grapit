@@ -45,8 +45,12 @@ type SocialProvider = 'kakao' | 'naver' | 'google';
 export function getSocialLoginPath(
   provider: SocialProvider,
   locale: AuthLaunchCopy['locale'],
+  returnTo?: string | null,
 ): `/${string}` {
   const params = new URLSearchParams({ locale });
+  if (returnTo) {
+    params.set('returnTo', returnTo);
+  }
   return `/api/v1/auth/social/${provider}?${params.toString()}`;
 }
 
@@ -142,7 +146,10 @@ export function LoginForm() {
 
   function handleSocialLogin(provider: SocialProvider) {
     setSocialLoading(provider);
-    window.location.href = apiUrl(getSocialLoginPath(provider, authCopy.locale));
+    const returnTo = resolveSafeReturnToFromSearch(window.location.search);
+    window.location.href = apiUrl(
+      getSocialLoginPath(provider, authCopy.locale, returnTo),
+    );
   }
 
   return (

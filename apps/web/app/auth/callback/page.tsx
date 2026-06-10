@@ -21,6 +21,7 @@ import { SignupStep3 } from '@/components/auth/signup-step3';
 import { EmailVerificationStatus } from '@/components/auth/email-verification-status';
 import { getAuthLaunchCopy } from '@/components/auth/auth-launch-copy';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
+import { resolveSafeReturnToFromSearch } from '@/lib/auth-return';
 
 const SOCIAL_ERROR_MESSAGES: Record<string, { title: string; detail: string }> = {
   oauth_denied: {
@@ -117,7 +118,10 @@ function CallbackContent() {
 
     if (user) {
       hasRedirectedRef.current = true;
-      router.push(getLocalizedPathname('/', authCopy.locale));
+      router.push(
+        resolveSafeReturnToFromSearch(searchParams.toString()) ??
+          getLocalizedPathname('/', authCopy.locale),
+      );
       return;
     }
     if (isInitialized) {
@@ -166,7 +170,10 @@ function CallbackContent() {
 
       setAuth(res.accessToken, res.user);
       toast.success(authCopy.form.signupComplete);
-      router.push(getLocalizedPathname('/', authCopy.locale));
+      router.push(
+        resolveSafeReturnToFromSearch(searchParams.toString()) ??
+          getLocalizedPathname('/', authCopy.locale),
+      );
     } catch (error) {
       const message =
         error instanceof Error

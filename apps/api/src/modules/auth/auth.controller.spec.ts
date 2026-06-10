@@ -395,6 +395,29 @@ describe('AuthController', () => {
     });
   });
 
+  describe('handleSocialCallback returnTo propagation', () => {
+    it('preserves a safe returnTo target on authenticated social callbacks', async () => {
+      mockRequest.query = {
+        state: 'locale=ko&returnTo=%2Fbooking%2Fperformance-auth',
+      };
+      mockAuthService.findOrCreateSocialUser.mockResolvedValue({
+        status: 'authenticated',
+        accessToken: 'access-token',
+        refreshToken: 'refresh-token',
+        user: { id: 'user-1', email: 'social@test.com' },
+      });
+
+      await controller.socialKakaoCallback(
+        mockRequest as Request,
+        mockResponse as unknown as Response,
+      );
+
+      const redirectUrl = mockResponse.redirect.mock.calls[0]![0] as string;
+      expect(redirectUrl).toContain('status=authenticated');
+      expect(redirectUrl).toContain('returnTo=%2Fbooking%2Fperformance-auth');
+    });
+  });
+
   describe('logout clearCookie options', () => {
     it('logout 시 clearCookie에 sameSite:none, secure:true가 포함된다', async () => {
       const mockClearCookie = vi.fn();

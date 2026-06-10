@@ -175,4 +175,37 @@ describe('AuthCallbackPage email verification pending states', () => {
     expect(mocks.setAuth).not.toHaveBeenCalled();
     expect(mocks.push).not.toHaveBeenCalledWith('/');
   });
+
+  it('routes authenticated social callbacks back to a safe booking return path', async () => {
+    mocks.searchParams = new URLSearchParams(
+      `status=authenticated&returnTo=${encodeURIComponent('/booking/performance-auth')}`,
+    );
+    mocks.user = { id: 'user-1', email: 'social@test.com' };
+    mocks.isInitialized = true;
+
+    render(<AuthCallbackPage />);
+
+    await waitFor(() => {
+      expect(mocks.push).toHaveBeenCalledWith('/booking/performance-auth');
+    });
+  });
+
+  it('routes completed social registrations back to a safe booking return path', async () => {
+    mocks.searchParams = new URLSearchParams(
+      `status=needs_registration&registrationToken=registration-token&returnTo=${encodeURIComponent('/booking/performance-auth')}`,
+    );
+    mocks.apiPost.mockResolvedValue({
+      accessToken: 'social-access-token',
+      user: { id: 'user-1', email: 'social@test.com' },
+    });
+    render(<AuthCallbackPage />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: 'complete social consent' }));
+    await user.click(screen.getByRole('button', { name: 'complete social details' }));
+
+    await waitFor(() => {
+      expect(mocks.push).toHaveBeenCalledWith('/booking/performance-auth');
+    });
+  });
 });

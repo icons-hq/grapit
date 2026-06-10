@@ -74,6 +74,59 @@ describe('SocialAuthGuards', () => {
       expect(options).toEqual({ state: 'en' });
     });
 
+    it('should include a safe returnTo target in OAuth state on provider start', async () => {
+      const { KakaoAuthGuard } = await import('./social-auth.guard.js');
+      mockContext.switchToHttp = vi.fn().mockReturnValue({
+        getRequest: vi.fn().mockReturnValue({
+          query: { locale: 'ko', returnTo: '/booking/performance-auth' },
+        }),
+        getResponse: vi.fn().mockReturnValue(mockResponse),
+      });
+
+      const guard = new KakaoAuthGuard(mockConfigService as never);
+      const options = (guard as unknown as {
+        getAuthenticateOptions(context: ExecutionContext): { state?: string };
+      }).getAuthenticateOptions(mockContext as ExecutionContext);
+
+      expect(options).toEqual({
+        state: 'locale=ko&returnTo=%2Fbooking%2Fperformance-auth',
+      });
+    });
+
+    it('should reject unsafe returnTo targets from OAuth state', async () => {
+      const { KakaoAuthGuard } = await import('./social-auth.guard.js');
+      mockContext.switchToHttp = vi.fn().mockReturnValue({
+        getRequest: vi.fn().mockReturnValue({
+          query: { locale: 'ko', returnTo: 'https://evil.test/booking' },
+        }),
+        getResponse: vi.fn().mockReturnValue(mockResponse),
+      });
+
+      const guard = new KakaoAuthGuard(mockConfigService as never);
+      const options = (guard as unknown as {
+        getAuthenticateOptions(context: ExecutionContext): { state?: string };
+      }).getAuthenticateOptions(mockContext as ExecutionContext);
+
+      expect(options).toEqual({ state: 'ko' });
+    });
+
+    it('should preserve locale and returnTo state on OAuth failure redirects', async () => {
+      const { KakaoAuthGuard } = await import('./social-auth.guard.js');
+      mockContext.switchToHttp = vi.fn().mockReturnValue({
+        getRequest: vi.fn().mockReturnValue({
+          query: { state: 'locale=ko&returnTo=%2Fbooking%2Fperformance-auth' },
+        }),
+        getResponse: vi.fn().mockReturnValue(mockResponse),
+      });
+
+      const guard = new KakaoAuthGuard(mockConfigService as never);
+      guard.handleRequest(new Error('Authentication failed'), null, undefined, mockContext as ExecutionContext);
+
+      expect(mockResponse.redirect).toHaveBeenCalledWith(
+        'http://localhost:3000/auth/callback?error=oauth_failed&provider=kakao&returnTo=%2Fbooking%2Fperformance-auth',
+      );
+    });
+
     it('should redirect with oauth_denied when user denied access', async () => {
       const { KakaoAuthGuard } = await import('./social-auth.guard.js');
 
