@@ -278,6 +278,8 @@ describe('AdminBookingService', () => {
       expect(objectGraphContains(statsSelect.expiredPaymentCount, 'PAYMENT_DEADLINE_EXPIRED')).toBe(true);
       expect(objectGraphContains(statsSelect.expiredPaymentCount, 'EXPIRED')).toBe(true);
       expect(objectGraphContains(statsSelect.abortedPaymentCount, 'ABORTED')).toBe(true);
+      expect(objectGraphContains(statsSelect.abortedPaymentCount, 'PAYMENT_CANCELED_BEFORE_CONFIRM')).toBe(true);
+      expect(objectGraphContains(statsSelect.abortedPaymentCount, 'ASYNC_DONE_SEAT_UNAVAILABLE_CANCELLED')).toBe(true);
     });
 
     it('treats missing refund rows as not cancellation-processing when counting sold bookings', async () => {

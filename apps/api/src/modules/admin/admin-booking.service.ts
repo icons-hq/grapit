@@ -710,8 +710,9 @@ function expiredPaymentFailureConditionSql(): SQL {
 function abortedPaymentFailureConditionSql(): SQL {
   return sql`(
     ${funnelStatusEqualsSql('PAYMENT_FAILED')}
+    and ${reservationPaymentFailureDiagnostics.diagnosticCode} is distinct from 'ASYNC_DONE_SEAT_UNAVAILABLE_CANCELLED'
     and (
-      ${payments.status} in ('ABORTED', 'CANCELED')
+      ${payments.status} = 'ABORTED'
       or ${reservationPaymentFailureDiagnostics.diagnosticCode} in (
         'PAYMENT_ABORTED',
         'PAYMENT_CANCELED_BEFORE_CONFIRM'
