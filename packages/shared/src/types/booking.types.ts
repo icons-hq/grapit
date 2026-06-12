@@ -249,6 +249,8 @@ export interface BookingStats {
   pendingPaymentCount: number;
   paymentProcessingCount: number;
   failedCount: number;
+  expiredPaymentCount: number;
+  abortedPaymentCount: number;
   cancelProcessingCount: number;
   cancelledCount: number;
   partialCancelledCount: number;

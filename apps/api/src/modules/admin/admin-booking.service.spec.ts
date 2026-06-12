@@ -252,6 +252,8 @@ describe('AdminBookingService', () => {
           pendingPaymentCount: 1,
           paymentProcessingCount: 0,
           failedCount: 1,
+          expiredPaymentCount: 1,
+          abortedPaymentCount: 0,
           cancelProcessingCount: 0,
           cancelledCount: 1,
           partialCancelledCount: 0,
@@ -266,10 +268,16 @@ describe('AdminBookingService', () => {
         totalRevenue: 79000,
         soldCount: 2,
         failedCount: 1,
+        expiredPaymentCount: 1,
+        abortedPaymentCount: 0,
         cancelledCount: 1,
       });
       expect(result.stats.cancelRate).toBe(25);
       expect(result.total).toBe(4);
+      const statsSelect = mockDb.select.mock.calls[0]?.[0] as Record<string, unknown>;
+      expect(objectGraphContains(statsSelect.expiredPaymentCount, 'PAYMENT_DEADLINE_EXPIRED')).toBe(true);
+      expect(objectGraphContains(statsSelect.expiredPaymentCount, 'EXPIRED')).toBe(true);
+      expect(objectGraphContains(statsSelect.abortedPaymentCount, 'ABORTED')).toBe(true);
     });
 
     it('treats missing refund rows as not cancellation-processing when counting sold bookings', async () => {

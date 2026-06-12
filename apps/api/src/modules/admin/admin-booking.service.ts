@@ -353,6 +353,8 @@ type BookingStatsRow = {
   pendingPaymentCount?: number | string | null;
   paymentProcessingCount?: number | string | null;
   failedCount?: number | string | null;
+  expiredPaymentCount?: number | string | null;
+  abortedPaymentCount?: number | string | null;
   cancelProcessingCount?: number | string | null;
   cancelledCount?: number | string | null;
   partialCancelledCount?: number | string | null;
@@ -692,6 +694,32 @@ function funnelStatusEqualsSql(status: string): SQL {
   return sql`${adminBookingFunnelStatusSql()} = ${status}`;
 }
 
+function expiredPaymentFailureConditionSql(): SQL {
+  return sql`(
+    ${funnelStatusEqualsSql('PAYMENT_FAILED')}
+    and (
+      ${payments.status} = 'EXPIRED'
+      or ${reservationPaymentFailureDiagnostics.diagnosticCode} in (
+        'PAYMENT_DEADLINE_EXPIRED',
+        'PAYMENT_EXPIRED'
+      )
+    )
+  )`;
+}
+
+function abortedPaymentFailureConditionSql(): SQL {
+  return sql`(
+    ${funnelStatusEqualsSql('PAYMENT_FAILED')}
+    and (
+      ${payments.status} in ('ABORTED', 'CANCELED')
+      or ${reservationPaymentFailureDiagnostics.diagnosticCode} in (
+        'PAYMENT_ABORTED',
+        'PAYMENT_CANCELED_BEFORE_CONFIRM'
+      )
+    )
+  )`;
+}
+
 function failedCancelledContactConditionSql(): SQL {
   return sql`(
     ${reservations.status} = 'FAILED'
@@ -747,6 +775,8 @@ function mapBookingStats(row: BookingStatsRow | undefined): BookingStats {
     pendingPaymentCount: toInt(row?.pendingPaymentCount),
     paymentProcessingCount: toInt(row?.paymentProcessingCount),
     failedCount: toInt(row?.failedCount),
+    expiredPaymentCount: toInt(row?.expiredPaymentCount),
+    abortedPaymentCount: toInt(row?.abortedPaymentCount),
     cancelProcessingCount: toInt(row?.cancelProcessingCount),
     cancelledCount,
     partialCancelledCount: toInt(row?.partialCancelledCount),
@@ -905,6 +935,8 @@ export class AdminBookingService {
         pendingPaymentCount: countWhereSql(funnelStatusEqualsSql('PAYMENT_PENDING')),
         paymentProcessingCount: countWhereSql(funnelStatusEqualsSql('PAYMENT_PROCESSING')),
         failedCount: countWhereSql(funnelStatusEqualsSql('PAYMENT_FAILED')),
+        expiredPaymentCount: countWhereSql(expiredPaymentFailureConditionSql()),
+        abortedPaymentCount: countWhereSql(abortedPaymentFailureConditionSql()),
         cancelProcessingCount: countWhereSql(cancelProcessingReservationConditionSql()),
         cancelledCount: countWhereSql(funnelStatusEqualsSql('CANCELLED')),
         partialCancelledCount: countWhereSql(partialCancelledReservationConditionSql()),
@@ -914,6 +946,10 @@ export class AdminBookingService {
       .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
       .innerJoin(performances, eq(showtimes.performanceId, performances.id))
       .leftJoin(payments, eq(payments.reservationId, reservations.id))
+      .leftJoin(
+        reservationPaymentFailureDiagnostics,
+        eq(reservationPaymentFailureDiagnostics.reservationId, reservations.id),
+      )
       .leftJoin(refunds, eq(refunds.reservationId, reservations.id))
       .where(whereClause) as BookingStatsRow[];
 
