@@ -664,6 +664,8 @@ describe('prepareReservationSchema booking consent contract', () => {
       pendingPaymentCount: 1,
       paymentProcessingCount: 1,
       failedCount: 1,
+      expiredPaymentCount: 1,
+      abortedPaymentCount: 0,
       cancelProcessingCount: 1,
       cancelledCount: 1,
       partialCancelledCount: 1,

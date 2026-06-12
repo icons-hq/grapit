@@ -7,6 +7,7 @@ interface AdminStatCardProps {
   value: number;
   icon: LucideIcon;
   format: 'count' | 'currency' | 'percent';
+  description?: string;
 }
 
 function formatValue(value: number, format: 'count' | 'currency' | 'percent'): string {
@@ -20,15 +21,24 @@ function formatValue(value: number, format: 'count' | 'currency' | 'percent'): s
   }
 }
 
-export function AdminStatCard({ label, value, icon: Icon, format }: AdminStatCardProps) {
+export function AdminStatCard({
+  label,
+  value,
+  icon: Icon,
+  format,
+  description,
+}: AdminStatCardProps) {
   return (
-    <div className="flex h-[100px] flex-col justify-between rounded-lg border bg-white p-4 shadow-sm">
+    <div className="flex min-h-[112px] flex-col justify-between rounded-lg border bg-white p-4 shadow-sm">
       <Icon className="h-6 w-6 text-gray-400" />
       <div>
         <p className="text-sm text-gray-600">{label}</p>
         <p className="text-xl font-semibold text-gray-900">
           {formatValue(value, format)}
         </p>
+        {description && (
+          <p className="mt-1 text-xs text-gray-500">{description}</p>
+        )}
       </div>
     </div>
   );

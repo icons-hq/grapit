@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Banknote, Clock3, RotateCcw, TicketCheck } from 'lucide-react';
+import { AlertTriangle, Banknote, Clock3, RotateCcw, TicketCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -208,6 +208,10 @@ export function AdminBookingDashboard() {
     + (stats?.cancelProcessingCount ?? 0);
   const completedCancelCount =
     (stats?.cancelledCount ?? 0) + (stats?.partialCancelledCount ?? 0);
+  const failedBreakdown = [
+    `만료 ${(stats?.expiredPaymentCount ?? 0).toLocaleString('ko-KR')}건`,
+    `중단/취소 ${(stats?.abortedPaymentCount ?? 0).toLocaleString('ko-KR')}건`,
+  ].join(' · ');
   const totalSoldSeats = tierStats.reduce((sum, tier) => sum + tier.soldSeats, 0);
   const performanceOptions = [
     {
@@ -271,7 +275,7 @@ export function AdminBookingDashboard() {
       <h1 className="mb-6 text-xl font-semibold text-gray-900">예매 관리</h1>
 
       {/* Stats cards */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <AdminStatCard
           icon={TicketCheck}
           label="판매 좌석"
@@ -283,6 +287,13 @@ export function AdminBookingDashboard() {
           label="결제/취소 진행"
           value={processingCount}
           format="count"
+        />
+        <AdminStatCard
+          icon={AlertTriangle}
+          label="결제 실패/만료"
+          value={stats?.failedCount ?? 0}
+          format="count"
+          description={failedBreakdown}
         />
         <AdminStatCard
           icon={RotateCcw}

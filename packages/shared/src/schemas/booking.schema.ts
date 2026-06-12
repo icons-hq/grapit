@@ -430,6 +430,8 @@ export const bookingStatsSchema = z.object({
   pendingPaymentCount: z.number().int().min(0),
   paymentProcessingCount: z.number().int().min(0),
   failedCount: z.number().int().min(0),
+  expiredPaymentCount: z.number().int().min(0).default(0),
+  abortedPaymentCount: z.number().int().min(0).default(0),
   cancelProcessingCount: z.number().int().min(0),
   cancelledCount: z.number().int().min(0),
   partialCancelledCount: z.number().int().min(0),

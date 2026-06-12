@@ -14,6 +14,30 @@ export interface AdminPatchNote {
 
 const notes = [
   {
+    id: 'pr-168-admin-payment-failure-breakdown',
+    prNumber: 168,
+    title: '관리자 결제 실패/만료 집계 분리',
+    summary:
+      '예매 관리 대시보드의 결제 실패 집계에서 결제기한 만료와 결제 중단/취소를 분리해 최근 실패 증가 원인을 더 빠르게 구분할 수 있도록 개선했습니다.',
+    highlights: [
+      '결제 실패/만료 KPI를 추가해 기존 실패 합계를 별도 카드로 표시',
+      '만료와 중단/취소 건수를 카드 하단 breakdown으로 표시',
+      'payment status와 failure diagnostic code를 함께 사용해 운영 집계 정확도 보강',
+      'shared booking stats contract에 expiredPaymentCount와 abortedPaymentCount 추가',
+    ],
+    category: 'patch',
+    date: '2026-06-12',
+    githubUrl: 'https://github.com/sangwopark19/grapit/pull/168',
+    evidence: [
+      'Shared booking schema Vitest',
+      'API admin booking Vitest',
+      'Web admin booking dashboard Vitest',
+      'API/Web typecheck',
+      'Browser admin route smoke',
+      'git diff --check',
+    ],
+  },
+  {
     id: 'pr-167-booking-auth-queue-immediate',
     prNumber: 167,
     title: '예매 진입 로그인 및 즉시 입장 흐름 수정',
