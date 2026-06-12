@@ -209,10 +209,10 @@ jobs:
             --min-instances=1
             --max-instances=40
             --concurrency=250
-            --memory=1Gi
-            --cpu=2
+            --memory=512Mi
+            --cpu=1
             --port=8080
-            --no-cpu-throttling
+            --cpu-throttling
             --session-affinity
             --allow-unauthenticated
             --network=default
