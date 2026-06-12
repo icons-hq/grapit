@@ -45,7 +45,7 @@ describe('AdminDashboardPage patch notes', () => {
       screen.getByRole('heading', { name: '최근 패치노트' }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText('관리자 예매/결제 진단 및 일일 매출 통계 개선'),
+      screen.getByText('관리자 결제 실패/만료 집계 분리'),
     ).toBeInTheDocument();
     expect(
       screen.getByRole('link', { name: '패치노트 전체 보기' }),

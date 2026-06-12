@@ -48,6 +48,27 @@ describe('adminPatchNotes', () => {
     );
   });
 
+  it('registers the payment failure breakdown PR', () => {
+    const note = adminPatchNotes.find((entry) => entry.prNumber === 168);
+
+    expect(note).toEqual(
+      expect.objectContaining({
+        category: 'patch',
+        title: '관리자 결제 실패/만료 집계 분리',
+        githubUrl: 'https://github.com/sangwopark19/grapit/pull/168',
+      }),
+    );
+    expect(note?.summary).toContain('결제기한 만료');
+    expect(note?.summary).toContain('결제 중단/취소');
+    expect(note?.highlights).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('결제 실패/만료 KPI'),
+        expect.stringContaining('failure diagnostic code'),
+        expect.stringContaining('abortedPaymentCount'),
+      ]),
+    );
+  });
+
   it('registers the payment processing grace PR', () => {
     const note = adminPatchNotes.find((entry) => entry.prNumber === 163);
 
