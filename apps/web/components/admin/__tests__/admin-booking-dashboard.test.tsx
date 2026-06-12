@@ -304,8 +304,8 @@ describe('AdminBookingDashboard', () => {
     expect(await screen.findByText('판매 좌석')).toBeInTheDocument();
     expect(await screen.findByText('10건')).toBeInTheDocument();
     expect(screen.getByText('결제/취소 진행')).toBeInTheDocument();
-    expect(screen.getByText('결제 실패/만료')).toBeInTheDocument();
-    expect(screen.getByText('만료 1건 · 중단/취소 1건')).toBeInTheDocument();
+    expect(screen.queryByText('결제 실패/만료')).not.toBeInTheDocument();
+    expect(screen.queryByText('만료 1건 · 중단/취소 1건')).not.toBeInTheDocument();
     expect(screen.getByText('취소 완료')).toBeInTheDocument();
     expect(screen.getByText('판매 매출')).toBeInTheDocument();
     expect(await screen.findByText('1,500,000원')).toBeInTheDocument();
