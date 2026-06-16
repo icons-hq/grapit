@@ -69,6 +69,27 @@ describe('adminPatchNotes', () => {
     );
   });
 
+  it('registers the customer payment failure guidance PR', () => {
+    const note = adminPatchNotes.find((entry) => entry.prNumber === 172);
+
+    expect(note).toEqual(
+      expect.objectContaining({
+        category: 'patch',
+        title: '고객 결제 실패 사유 다국어 안내',
+        githubUrl: 'https://github.com/sangwopark19/grapit/pull/172',
+      }),
+    );
+    expect(note?.summary).toContain('결제 실패 직후');
+    expect(note?.summary).toContain('현재 언어');
+    expect(note?.highlights).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('Toss failUrl'),
+        expect.stringContaining('할부 미지원'),
+        expect.stringContaining('DB 진단 메시지'),
+      ]),
+    );
+  });
+
   it('registers the payment processing grace PR', () => {
     const note = adminPatchNotes.find((entry) => entry.prNumber === 163);
 

@@ -14,6 +14,31 @@ export interface AdminPatchNote {
 
 const notes = [
   {
+    id: 'pr-172-payment-failure-guidance-i18n',
+    prNumber: 172,
+    title: '고객 결제 실패 사유 다국어 안내',
+    summary:
+      '결제 실패 직후와 마이페이지 예매 상세에서 카드 할부 미지원, 결제 시간 만료, 결제 중단/취소 사유를 현재 언어에 맞는 안내로 확인할 수 있도록 개선했습니다.',
+    highlights: [
+      'Toss failUrl의 결제 실패 코드를 고객용 다국어 안내로 매핑',
+      '마이페이지 예매 상세의 결제 실패 카드에 실패 사유 영역 추가',
+      '할부 미지원 오류는 일시불 또는 다른 카드 재시도 안내로 표시',
+      'DB 진단 메시지는 내부 문구로 취급해 고객 화면의 결제사 응답 보조문구로 노출하지 않도록 정리',
+    ],
+    category: 'patch',
+    date: '2026-06-16',
+    githubUrl: 'https://github.com/sangwopark19/grapit/pull/172',
+    evidence: [
+      'Shared booking schema Vitest',
+      'API reservation/admin booking Vitest',
+      'Web payment failure guidance Vitest',
+      'Web reservation/messages Vitest',
+      'API/Web/Shared typecheck',
+      'Subagent code review',
+      'git diff --check',
+    ],
+  },
+  {
     id: 'pr-168-admin-payment-failure-breakdown',
     prNumber: 168,
     title: '관리자 결제 실패/만료 집계 분리',

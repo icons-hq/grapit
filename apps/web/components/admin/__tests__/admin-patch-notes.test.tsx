@@ -20,15 +20,15 @@ describe('AdminPatchNotesPreview', () => {
     ).toHaveAttribute('href', '/admin/patch-notes');
 
     const article = screen.getByRole('article', {
-      name: 'PR #168 관리자 결제 실패/만료 집계 분리',
+      name: 'PR #172 고객 결제 실패 사유 다국어 안내',
     });
 
-    expect(within(article).getByText('PR #168')).toBeInTheDocument();
+    expect(within(article).getByText('PR #172')).toBeInTheDocument();
     expect(
-      within(article).getByText('관리자 결제 실패/만료 집계 분리'),
+      within(article).getByText('고객 결제 실패 사유 다국어 안내'),
     ).toBeInTheDocument();
-    expect(within(article).getByText(/결제기한 만료/)).toBeInTheDocument();
-    expect(within(article).getByText(/결제 실패\/만료 KPI/)).toBeInTheDocument();
+    expect(within(article).getByText(/결제 실패 직후/)).toBeInTheDocument();
+    expect(within(article).getByText(/Toss failUrl/)).toBeInTheDocument();
     expect(within(article).getByText(/Shared booking schema Vitest/)).toBeInTheDocument();
   });
 });
