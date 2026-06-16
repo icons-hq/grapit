@@ -28,6 +28,7 @@ import {
 } from '../../database/schema/index.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
 import { RefundService } from '../refund/refund.service.js';
+import { mapPaymentFailureDiagnostic } from '../payment/payment-failure-diagnostic.js';
 import { safeCsvRows, withUtf8Bom } from './csv-export.util.js';
 import { AdminAuditService } from './admin-audit.service.js';
 import { normalizeSeatIdentity, toFloorAwareSeatSelection } from '@grabit/shared';
@@ -36,7 +37,6 @@ import type {
   AdminBookingListItem,
   AdminBookingTierStats,
   AdminTicketStatusCounts,
-  PaymentFailureDiagnostic,
   AdminReservationExportFilter,
   BookingStats,
   FloorAwareSeatSelection,
@@ -2036,32 +2036,6 @@ function mapPaymentStatusOrNull(status: string | null | undefined): PaymentStatu
     return status;
   }
   return null;
-}
-
-function mapPaymentFailureDiagnostic(
-  diagnostic: AdminBookingDiagnosticRow | null | undefined,
-): PaymentFailureDiagnostic | null {
-  if (
-    !diagnostic?.diagnosticKind
-    || !diagnostic.diagnosticCode
-    || !diagnostic.diagnosticMessage
-    || !diagnostic.diagnosticSource
-    || !diagnostic.recordedAt
-    || !diagnostic.providerCheckStatus
-  ) {
-    return null;
-  }
-
-  return {
-    kind: diagnostic.diagnosticKind,
-    code: diagnostic.diagnosticCode,
-    message: diagnostic.diagnosticMessage,
-    source: diagnostic.diagnosticSource,
-    recordedAt: diagnostic.recordedAt.toISOString(),
-    providerCheckStatus: diagnostic.providerCheckStatus,
-    providerCheckedAt: dateToIsoOrNull(diagnostic.providerCheckedAt),
-    providerCheckMessage: diagnostic.providerCheckMessage ?? null,
-  };
 }
 
 function mapPaymentMethodAttribution(

@@ -1,4 +1,5 @@
 import { sql } from 'drizzle-orm';
+import type { PaymentFailureDiagnostic } from '@grabit/shared';
 import type { DrizzleDB } from '../../database/drizzle.provider.js';
 import { reservationPaymentFailureDiagnostics } from '../../database/schema/index.js';
 
@@ -11,6 +12,47 @@ interface RecordReservationPaymentFailureDiagnosticInput {
   diagnosticMessage: string;
   diagnosticSource: string;
   recordedAt?: Date;
+}
+
+export interface PaymentFailureDiagnosticRow {
+  diagnosticKind: string | null;
+  diagnosticCode: string | null;
+  diagnosticMessage: string | null;
+  diagnosticSource: string | null;
+  recordedAt: Date | null;
+  providerCheckStatus: string | null;
+  providerCheckedAt?: Date | null;
+  providerCheckMessage?: string | null;
+}
+
+function dateToIsoOrNull(date: Date | null | undefined): string | null {
+  return date instanceof Date ? date.toISOString() : null;
+}
+
+export function mapPaymentFailureDiagnostic(
+  diagnostic: PaymentFailureDiagnosticRow | null | undefined,
+): PaymentFailureDiagnostic | null {
+  if (
+    !diagnostic?.diagnosticKind
+    || !diagnostic.diagnosticCode
+    || !diagnostic.diagnosticMessage
+    || !diagnostic.diagnosticSource
+    || !diagnostic.recordedAt
+    || !diagnostic.providerCheckStatus
+  ) {
+    return null;
+  }
+
+  return {
+    kind: diagnostic.diagnosticKind,
+    code: diagnostic.diagnosticCode,
+    message: diagnostic.diagnosticMessage,
+    source: diagnostic.diagnosticSource,
+    recordedAt: diagnostic.recordedAt.toISOString(),
+    providerCheckStatus: diagnostic.providerCheckStatus,
+    providerCheckedAt: dateToIsoOrNull(diagnostic.providerCheckedAt),
+    providerCheckMessage: diagnostic.providerCheckMessage ?? null,
+  };
 }
 
 export async function recordReservationPaymentFailureDiagnostic(

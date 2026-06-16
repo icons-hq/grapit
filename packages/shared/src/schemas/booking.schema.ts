@@ -493,6 +493,7 @@ export const reservationDetailSchema = reservationListItemSchema.extend({
   cancelledSeatHold: cancelledSeatHoldSchema.nullable(),
   qrTicket: qrTicketSchema,
   ticketEmailDelivery: ticketEmailDeliverySchema,
+  paymentFailureDiagnostic: paymentFailureDiagnosticSchema.nullable().default(null),
   ticketItems: z.array(ticketItemSchema),
 });
 

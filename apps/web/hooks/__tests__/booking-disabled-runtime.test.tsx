@@ -847,9 +847,11 @@ describe('runtime booking disabled UI', () => {
 
     renderWithQuery(<ConfirmPage />);
 
-    expect(await screen.findByRole('heading', { name: '결제 요청에 실패했습니다' }))
+    expect(await screen.findByRole('heading', { name: '결제를 완료하지 못했습니다.' }))
       .toBeInTheDocument();
-    expect(screen.getByText('Payment has already been requested.')).toBeInTheDocument();
+    expect(screen.getByText('결제 수단 상태를 확인하거나 다른 결제 수단으로 다시 시도해주세요.'))
+      .toBeInTheDocument();
+    expect(screen.getByText('결제사 응답: Payment has already been requested.')).toBeInTheDocument();
     expect(routerReplaceMock).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole('button', { name: '좌석 다시 선택하기' }));

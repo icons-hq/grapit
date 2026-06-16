@@ -187,6 +187,29 @@
       "providerMessagePrefix": "支付服务商返回",
       "pendingTitle": "正在等待海外支付认证完成",
       "pendingBody": "钱包服务商完成认证后，您可以继续查询同一笔订单的状态。"
+    },
+    "paymentFailureGuidance": {
+      "label": "失败原因",
+      "installmentUnsupported": {
+        "title": "该银行卡或商户不支持分期付款。",
+        "body": "请改为一次性付款，或使用其他银行卡。"
+      },
+      "expired": {
+        "title": "支付时间已到期。",
+        "body": "请重新选择座位后再发起新的支付。"
+      },
+      "aborted": {
+        "title": "支付已中断或未获批准。",
+        "body": "请检查支付方式，或改用其他支付方式。"
+      },
+      "cancelled": {
+        "title": "支付已取消。",
+        "body": "如需重新支付，请从预订页面发起新的支付。"
+      },
+      "unknown": {
+        "title": "支付未能完成。",
+        "body": "请检查支付方式，或改用其他支付方式。"
+      }
     }
   },
   "locale": {

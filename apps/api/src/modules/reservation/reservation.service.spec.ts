@@ -472,6 +472,16 @@ describe('ReservationService', () => {
     ticketItems?: Array<Record<string, unknown>>;
     userEmail?: string;
     isEmailVerified?: boolean;
+    diagnostic?: {
+      diagnosticKind: string;
+      diagnosticCode: string;
+      diagnosticMessage: string;
+      diagnosticSource: string;
+      recordedAt: Date;
+      providerCheckStatus: string;
+      providerCheckedAt?: Date | null;
+      providerCheckMessage?: string | null;
+    } | null;
   }) {
     const seats = args.seats ?? ['A-1', 'A-2'];
     mockDb.select
@@ -480,24 +490,27 @@ describe('ReservationService', () => {
           innerJoin: vi.fn().mockReturnValue({
             innerJoin: vi.fn().mockReturnValue({
               leftJoin: vi.fn().mockReturnValue({
-                where: vi.fn().mockResolvedValue([{
-                  reservation: {
-                    id: args.reservationId,
-                    userId: args.userId,
-                    reservationNumber: 'GRP-20260429-LOCKS',
-                    status: args.status ?? 'CONFIRMED',
-                    totalAmount: args.amount,
-                    showtimeId: 'showtime-1',
-                    paymentDeadlineAt: new Date('2026-05-08T07:07:00.000Z'),
-                    cancelDeadline: new Date(),
-                    cancelledAt: null,
-                    cancelReason: null,
-                    createdAt: new Date(),
-                  },
-                  showtime: { dateTime: new Date() },
-                  performance: { title: '락 테스트 공연', posterUrl: null },
-                  venue: { name: '락 테스트 극장' },
-                }]),
+                leftJoin: vi.fn().mockReturnValue({
+                  where: vi.fn().mockResolvedValue([{
+                    reservation: {
+                      id: args.reservationId,
+                      userId: args.userId,
+                      reservationNumber: 'GRP-20260429-LOCKS',
+                      status: args.status ?? 'CONFIRMED',
+                      totalAmount: args.amount,
+                      showtimeId: 'showtime-1',
+                      paymentDeadlineAt: new Date('2026-05-08T07:07:00.000Z'),
+                      cancelDeadline: new Date(),
+                      cancelledAt: null,
+                      cancelReason: null,
+                      createdAt: new Date(),
+                    },
+                    showtime: { dateTime: new Date() },
+                    performance: { title: '락 테스트 공연', posterUrl: null },
+                    venue: { name: '락 테스트 극장' },
+                    diagnostic: args.diagnostic ?? null,
+                  }]),
+                }),
               }),
             }),
           }),
@@ -3831,22 +3844,25 @@ describe('ReservationService', () => {
           innerJoin: vi.fn().mockReturnValue({
             innerJoin: vi.fn().mockReturnValue({
               leftJoin: vi.fn().mockReturnValue({
-                where: vi.fn().mockResolvedValue([{
-                  reservation: {
-                    id: reservationId,
-                    userId,
-                    reservationNumber: 'GRP-20260407-ABCDE',
-                    status: 'CONFIRMED',
-                    totalAmount: 150000,
-                    cancelDeadline: new Date(),
-                    cancelledAt: null,
-                    cancelReason: null,
-                    createdAt: new Date(),
-                  },
-                  showtime: { dateTime: new Date() },
-                  performance: { title: '테스트 공연', posterUrl: null },
-                  venue: { name: '테스트 극장' },
-                }]),
+                leftJoin: vi.fn().mockReturnValue({
+                  where: vi.fn().mockResolvedValue([{
+                    reservation: {
+                      id: reservationId,
+                      userId,
+                      reservationNumber: 'GRP-20260407-ABCDE',
+                      status: 'CONFIRMED',
+                      totalAmount: 150000,
+                      cancelDeadline: new Date(),
+                      cancelledAt: null,
+                      cancelReason: null,
+                      createdAt: new Date(),
+                    },
+                    showtime: { dateTime: new Date() },
+                    performance: { title: '테스트 공연', posterUrl: null },
+                    venue: { name: '테스트 극장' },
+                    diagnostic: null,
+                  }]),
+                }),
               }),
             }),
           }),
@@ -4838,6 +4854,39 @@ describe('ReservationService', () => {
       });
     });
 
+    it('includes payment failure diagnostics in customer reservation detail', async () => {
+      setupReservationDetailMocks({
+        reservationId,
+        userId,
+        amount: 150000,
+        status: 'FAILED',
+        paymentStatus: 'ABORTED',
+        diagnostic: {
+          diagnosticKind: 'payment_failed',
+          diagnosticCode: 'NOT_SUPPORTED_INSTALLMENT_PLAN_CARD_OR_MERCHANT',
+          diagnosticMessage: '할부가 지원되지 않는 카드 또는 가맹점 입니다.',
+          diagnosticSource: 'payment_webhook_events',
+          recordedAt: new Date('2026-06-15T02:05:00.000Z'),
+          providerCheckStatus: 'confirmed',
+          providerCheckedAt: new Date('2026-06-15T02:06:00.000Z'),
+          providerCheckMessage: 'ABORTED',
+        },
+      });
+
+      const detail = await service.getReservationDetail(reservationId, userId);
+
+      expect(detail.paymentFailureDiagnostic).toEqual({
+        kind: 'payment_failed',
+        code: 'NOT_SUPPORTED_INSTALLMENT_PLAN_CARD_OR_MERCHANT',
+        message: '할부가 지원되지 않는 카드 또는 가맹점 입니다.',
+        source: 'payment_webhook_events',
+        recordedAt: '2026-06-15T02:05:00.000Z',
+        providerCheckStatus: 'confirmed',
+        providerCheckedAt: '2026-06-15T02:06:00.000Z',
+        providerCheckMessage: 'ABORTED',
+      });
+    });
+
     it('maps cancellation-pending ticket items without issuing or exposing QR credentials', async () => {
       const qrTicketService = {
         ensureIssuedTicketsForReservation: vi.fn(),
@@ -4966,6 +5015,7 @@ describe('ReservationService', () => {
         jti: '',
         status: 'REVOKED',
       });
+      expect(detail.paymentFailureDiagnostic).toBeNull();
     });
   });
 

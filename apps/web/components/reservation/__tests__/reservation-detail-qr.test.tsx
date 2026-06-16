@@ -116,6 +116,7 @@ function createReservation(
       scheduledAt: '2026-07-03T10:00:00.000Z',
       lastSentAt: null,
     },
+    paymentFailureDiagnostic: null,
     ticketItems: [
       {
         id: '00000000-0000-4000-8000-000000000101',
@@ -465,6 +466,54 @@ describe('ReservationDetailView QR ticket card', () => {
     expect(screen.getByText('새 결제 시 다시 안내')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '결제 계속하기' })).not.toBeInTheDocument();
     expect(screen.queryByText(rawPaymentKey, { exact: true })).not.toBeInTheDocument();
+  });
+
+  it('shows localized payment failure diagnostic guidance for failed reservations', () => {
+    render(
+      <ReservationDetailView
+        reservation={createReservation({
+          status: 'FAILED',
+          paymentInfo: {
+            paymentKey: rawPaymentKey,
+            method: 'CARD',
+            amount: 154000,
+            status: 'ABORTED',
+            paidAt: null,
+            paymentDeadlineAt: '2026-05-22T06:08:00.000Z',
+          },
+          paymentDeadlineAt: '2026-05-22T06:08:00.000Z',
+          ticketItems: [],
+          qrTicket: {
+            token: '',
+            jti: '',
+            status: 'REVOKED',
+            entryStatus: 'NOT_ENTERED',
+            enteredAt: null,
+            issuedAt: '2026-05-22T06:00:00.000Z',
+            emailScheduledAt: null,
+            emailedAt: null,
+          },
+          paymentFailureDiagnostic: {
+            kind: 'payment_failed',
+            code: 'NOT_SUPPORTED_INSTALLMENT_PLAN_CARD_OR_MERCHANT',
+            message: '할부가 지원되지 않는 카드 또는 가맹점 입니다.',
+            source: 'payment_webhook_events',
+            recordedAt: '2026-05-22T06:09:00.000Z',
+            providerCheckStatus: 'confirmed',
+            providerCheckedAt: '2026-05-22T06:10:00.000Z',
+            providerCheckMessage: 'ABORTED',
+          },
+        })}
+        onCancel={vi.fn()}
+        isCancelling={false}
+      />,
+    );
+
+    expect(screen.getByText('실패 사유')).toBeInTheDocument();
+    expect(screen.getByText('할부 결제를 사용할 수 없는 카드이거나 가맹점입니다.')).toBeInTheDocument();
+    expect(screen.getByText('일시불로 다시 시도하거나 다른 카드로 결제해주세요.')).toBeInTheDocument();
+    expect(screen.queryByText('결제사 응답: 할부가 지원되지 않는 카드 또는 가맹점 입니다.'))
+      .not.toBeInTheDocument();
   });
 
   it('shows cancel and refund processing progress in customer language', () => {

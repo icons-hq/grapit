@@ -397,6 +397,16 @@ describe('prepareReservationSchema booking consent contract', () => {
         emailScheduledAt: '2026-07-17T10:00:00.000Z',
       },
       ticketEmailDelivery: makeTicketEmailDelivery(),
+      paymentFailureDiagnostic: {
+        kind: 'payment_failed',
+        code: 'NOT_SUPPORTED_INSTALLMENT_PLAN_CARD_OR_MERCHANT',
+        message: '할부가 지원되지 않는 카드 또는 가맹점 입니다.',
+        source: 'payment_webhook_events',
+        recordedAt: '2026-05-08T11:47:00.000Z',
+        providerCheckStatus: 'confirmed',
+        providerCheckedAt: '2026-05-08T11:48:00.000Z',
+        providerCheckMessage: 'ABORTED',
+      },
       ticketItems: [
         makeTicketItem(),
         makeTicketItem({
@@ -425,6 +435,9 @@ describe('prepareReservationSchema booking consent contract', () => {
     expect(detail.qrTicket.jti).toBe('qr-jti-1');
     expect(detail.qrTicket.entryStatus).toBe('ENTERED');
     expect(detail.ticketEmailDelivery.canSend).toBe(true);
+    expect(detail.paymentFailureDiagnostic?.code).toBe(
+      'NOT_SUPPORTED_INSTALLMENT_PLAN_CARD_OR_MERCHANT',
+    );
     expect(detail.ticketItems).toHaveLength(2);
     expect(detail.ticketItems.map((item) => item.qrCredential?.jti)).toEqual([
       'qr-jti-seat-a1',
@@ -1004,5 +1017,6 @@ describe('prepareReservationSchema booking consent contract', () => {
       scheduledAt: '2026-07-17T10:00:00.000Z',
       lastSentAt: '2026-07-17T10:01:00.000Z',
     });
+    expect(parsed.paymentFailureDiagnostic).toBeNull();
   });
 });
