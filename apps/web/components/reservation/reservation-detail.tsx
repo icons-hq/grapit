@@ -20,6 +20,7 @@ import {
   buildQrCheckInUrl,
   QrTicketImage,
 } from '@/components/field/qr-ticket-image';
+import { getDiagnosticPaymentFailureGuidance } from '@/lib/booking/payment-failure-guidance';
 import { getVisibleCopy, type VisibleCopy } from '@/lib/i18n/visible-copy';
 import { getClientLocale } from '@/lib/i18n/client-copy';
 import type {
@@ -576,6 +577,13 @@ export function ReservationDetailView({
     detailCopy,
     locale,
   );
+  const paymentFailureGuidance = progressGuidance?.kind === 'payment-failed'
+    ? getDiagnosticPaymentFailureGuidance({
+        diagnostic: reservation.paymentFailureDiagnostic,
+        copy: visibleCopy.booking.paymentFailureGuidance,
+        providerMessagePrefix: visibleCopy.booking.paymentRecovery.providerMessagePrefix,
+      })
+    : null;
   const canResumePayment =
     progressGuidance?.kind === 'payment-pending' &&
     Boolean(onResumePayment);
@@ -702,6 +710,24 @@ export function ReservationDetailView({
               <Separator />
               <InfoRow label={detailCopy.progressEstimate} value={progressGuidance.estimate} />
             </div>
+            {paymentFailureGuidance && (
+              <div className="rounded-xl border border-white/80 bg-white/90 p-4">
+                <p className="text-sm font-semibold text-gray-900">
+                  {paymentFailureGuidance.label}
+                </p>
+                <p className="mt-2 text-sm font-medium text-gray-900">
+                  {paymentFailureGuidance.title}
+                </p>
+                <p className="mt-1 text-sm text-gray-700">
+                  {paymentFailureGuidance.body}
+                </p>
+                {paymentFailureGuidance.providerMessage && (
+                  <p className="mt-2 text-xs text-gray-600">
+                    {paymentFailureGuidance.providerMessage}
+                  </p>
+                )}
+              </div>
+            )}
             {canResumePayment && (
               <Button
                 type="button"

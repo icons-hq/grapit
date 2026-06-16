@@ -228,6 +228,7 @@ export interface ReservationDetail extends ReservationListItem {
   cancelledSeatHold: CancelledSeatHold | null;
   qrTicket: QrTicket;
   ticketEmailDelivery: TicketEmailDelivery;
+  paymentFailureDiagnostic: PaymentFailureDiagnostic | null;
   ticketItems: TicketItem[];
 }
 

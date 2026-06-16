@@ -112,6 +112,7 @@ function createReservation(
       scheduledAt: '2026-07-17T10:00:00.000Z',
       lastSentAt: null,
     },
+    paymentFailureDiagnostic: null,
     ticketItems: [
       {
         id: '00000000-0000-4000-8000-000000000101',

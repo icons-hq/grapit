@@ -29,6 +29,7 @@ import {
   ticketItems,
   tickets,
   users,
+  reservationPaymentFailureDiagnostics,
 } from '../../database/schema/index.js';
 import {
   TossPaymentError,
@@ -39,6 +40,7 @@ import {
   ProviderChargeQuoteService,
   type ForeignEasyPayProviderChargeQuote,
 } from '../payment/provider-charge-quote.service.js';
+import { mapPaymentFailureDiagnostic } from '../payment/payment-failure-diagnostic.js';
 import {
   buildTicketItemPaymentCancelRequest,
   type PaymentCancelRequest,
@@ -1366,11 +1368,25 @@ export class ReservationService {
         venue: {
           name: venues.name,
         },
+        diagnostic: {
+          diagnosticKind: reservationPaymentFailureDiagnostics.diagnosticKind,
+          diagnosticCode: reservationPaymentFailureDiagnostics.diagnosticCode,
+          diagnosticMessage: reservationPaymentFailureDiagnostics.diagnosticMessage,
+          diagnosticSource: reservationPaymentFailureDiagnostics.diagnosticSource,
+          recordedAt: reservationPaymentFailureDiagnostics.recordedAt,
+          providerCheckStatus: reservationPaymentFailureDiagnostics.providerCheckStatus,
+          providerCheckedAt: reservationPaymentFailureDiagnostics.providerCheckedAt,
+          providerCheckMessage: reservationPaymentFailureDiagnostics.providerCheckMessage,
+        },
       })
       .from(reservations)
       .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
       .innerJoin(performances, eq(showtimes.performanceId, performances.id))
       .leftJoin(venues, eq(performances.venueId, venues.id))
+      .leftJoin(
+        reservationPaymentFailureDiagnostics,
+        eq(reservationPaymentFailureDiagnostics.reservationId, reservations.id),
+      )
       .where(and(eq(reservations.id, reservationId), eq(reservations.userId, userId)));
 
     if (!row) {
@@ -1488,6 +1504,7 @@ export class ReservationService {
         scheduledAt,
         lastSentAt,
       }),
+      paymentFailureDiagnostic: mapPaymentFailureDiagnostic(row.diagnostic),
       ticketItems: ticketItemDtos,
     };
   }

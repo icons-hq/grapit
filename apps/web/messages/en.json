@@ -187,6 +187,29 @@
       "providerMessagePrefix": "Payment provider response",
       "pendingTitle": "Waiting for overseas payment authorization",
       "pendingBody": "Once the wallet provider finishes authorization, you can resume the same order status check."
+    },
+    "paymentFailureGuidance": {
+      "label": "Failure reason",
+      "installmentUnsupported": {
+        "title": "This card or merchant does not support installment payments.",
+        "body": "Try again as a one-time payment or use another card."
+      },
+      "expired": {
+        "title": "The payment time has expired.",
+        "body": "Choose your seats again and start a new payment attempt."
+      },
+      "aborted": {
+        "title": "The payment was interrupted or not approved.",
+        "body": "Check your payment method or try another one."
+      },
+      "cancelled": {
+        "title": "The payment was canceled.",
+        "body": "To pay again, start a new payment from the booking page."
+      },
+      "unknown": {
+        "title": "The payment could not be completed.",
+        "body": "Check your payment method or try another one."
+      }
     }
   },
   "locale": {

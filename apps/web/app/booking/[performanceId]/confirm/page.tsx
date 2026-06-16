@@ -24,6 +24,10 @@ import {
   useCancelPendingReservation,
 } from '@/hooks/use-booking';
 import { useBookingAvailability } from '@/hooks/use-booking-availability';
+import {
+  getPaymentFailureGuidance,
+  type PaymentFailureGuidance,
+} from '@/lib/booking/payment-failure-guidance';
 import { getVisibleCopy, resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
 import { useBookingStore } from '@/stores/use-booking-store';
 import { useAuthStore } from '@/stores/use-auth-store';
@@ -53,11 +57,6 @@ const BOOKING_CONSENT_KEYS = [
 const LEGACY_FLOOR_KEY = 'default';
 const LEGACY_FLOOR_LABEL = '기본';
 
-interface PaymentReturnError {
-  message: string;
-  providerMessage: string | null;
-}
-
 function toFloorAwareSeatSelection(seat: SeatSelection): FloorAwareSeatSelection {
   return toSharedFloorAwareSeatSelection(seat, {
     defaultFloorKey: LEGACY_FLOOR_KEY,
@@ -86,6 +85,8 @@ function ConfirmPageContent() {
   const locale = resolveVisibleCopyLocale(useLocale());
   const visibleCopy = getVisibleCopy(locale);
   const confirmCopy = visibleCopy.bookingExtra.confirm;
+  const paymentFailureGuidanceCopy = visibleCopy.booking.paymentFailureGuidance;
+  const paymentProviderMessagePrefix = visibleCopy.booking.paymentRecovery.providerMessagePrefix;
   const performanceId = params.performanceId as string;
 
   const { selectedSeats, performanceTitle, showDateTime, venue, posterUrl, selectedShowtimeId } =
@@ -105,7 +106,7 @@ function ConfirmPageContent() {
   const [widgetReady, setWidgetReady] = useState(false);
   const [widgetAgreementAgreed, setWidgetAgreementAgreed] = useState(false);
   const [lockFailureMessage, setLockFailureMessage] = useState<string | null>(null);
-  const [paymentReturnError, setPaymentReturnError] = useState<PaymentReturnError | null>(null);
+  const [paymentReturnError, setPaymentReturnError] = useState<PaymentFailureGuidance | null>(null);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<PaymentMethodSelection | null>(null);
   const [bookerInfo, setBookerInfo] = useState<{ name: string; phone: string }>({
     name: user?.name ?? '',
@@ -168,18 +169,17 @@ function ConfirmPageContent() {
     const reservationId = reservationIdRef.current;
     const shouldRotateOrderId =
       !isResumingPendingPayment && (Boolean(reservationId) || failedOrderId === orderId);
-    const fallbackMessage = confirmCopy.paymentFailed;
-    const userMessage = code === 'PAY_PROCESS_CANCELED'
-      ? confirmCopy.paymentCancelled
-      : message ?? fallbackMessage;
+    const failureGuidance = getPaymentFailureGuidance({
+      code,
+      providerMessage: message,
+      copy: paymentFailureGuidanceCopy,
+      providerMessagePrefix: paymentProviderMessagePrefix,
+    });
 
     paymentRequestInFlightRef.current = false;
     queueMicrotask(() => {
       setIsProcessing(false);
-      setPaymentReturnError({
-        message: userMessage,
-        providerMessage: message && message !== userMessage ? message : null,
-      });
+      setPaymentReturnError(failureGuidance);
 
       if (shouldRotateOrderId) {
         setOrderId(generateOrderId());
@@ -191,13 +191,9 @@ function ConfirmPageContent() {
       cancelPending.mutate(reservationId);
     }
 
-    if (code === 'PAY_PROCESS_CANCELED') {
-      toast.error(confirmCopy.paymentCancelled);
-    } else if (message) {
-      toast.error(message);
-    } else {
-      toast.error(confirmCopy.paymentFailed);
-    }
+    toast.error(failureGuidance.title, {
+      description: failureGuidance.body,
+    });
 
     // Clean up URL params
     const url = new URL(window.location.href);
@@ -209,7 +205,14 @@ function ConfirmPageContent() {
       url.searchParams.delete('orderId');
     }
     window.history.replaceState({}, '', `${url.pathname}${url.search}`);
-  }, [cancelPending, confirmCopy, isResumingPendingPayment, orderId, searchParams]);
+  }, [
+    cancelPending,
+    isResumingPendingPayment,
+    orderId,
+    paymentFailureGuidanceCopy,
+    paymentProviderMessagePrefix,
+    searchParams,
+  ]);
 
   const handlePaymentReturnRecovery = useCallback(() => {
     setPaymentReturnError(null);
@@ -365,17 +368,14 @@ function ConfirmPageContent() {
             className="w-full max-w-[420px] rounded-lg border border-red-200 bg-red-50 p-5 text-center"
           >
             <h1 className="text-base font-semibold text-red-800">
-              {t('paymentRecovery.failedTitle')}
+              {paymentReturnError.title}
             </h1>
             <p className="mt-2 text-sm text-red-700">
-              {t('paymentRecovery.failedBody')}
-            </p>
-            <p className="mt-3 text-sm font-medium text-red-800">
-              {paymentReturnError.message}
+              {paymentReturnError.body}
             </p>
             {paymentReturnError.providerMessage && (
-              <p className="mt-1 text-xs text-red-700">
-                {t('paymentRecovery.providerMessagePrefix')}: {paymentReturnError.providerMessage}
+              <p className="mt-3 text-xs text-red-700">
+                {paymentReturnError.providerMessage}
               </p>
             )}
             <Button
