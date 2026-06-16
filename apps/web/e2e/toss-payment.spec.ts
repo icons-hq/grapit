@@ -223,7 +223,12 @@ test.describe('Toss Payments E2E', () => {
     await page.goto(
       `/booking/e2e-test-performance/confirm?error=true&code=INVALID_CARD&message=${encodeURIComponent(declineMessage)}`,
     );
-    await expect(page.getByText(/카드 승인 거절|결제에 실패/)).toBeVisible({ timeout: 5000 });
+    const main = page.getByRole('main');
+    await expect(main.getByText('결제를 완료하지 못했습니다.')).toBeVisible({ timeout: 5000 });
+    await expect(
+      main.getByText('결제 수단 상태를 확인하거나 다른 결제 수단으로 다시 시도해주세요.'),
+    ).toBeVisible();
+    await expect(main.getByText('결제사 응답: 카드 승인 거절')).toBeVisible();
   });
 
   test('UI regression: unsupported installment error URL shows localized retry guidance', async ({
@@ -243,12 +248,13 @@ test.describe('Toss Payments E2E', () => {
       `/booking/e2e-test-performance/confirm?error=true&code=NOT_SUPPORTED_INSTALLMENT_PLAN_CARD_OR_MERCHANT&message=${encodeURIComponent('할부가 지원되지 않는 카드 또는 가맹점 입니다.')}`,
     );
 
-    await expect(page.getByText('할부 결제를 사용할 수 없는 카드이거나 가맹점입니다.')).toBeVisible({
+    const main = page.getByRole('main');
+    await expect(main.getByText('할부 결제를 사용할 수 없는 카드이거나 가맹점입니다.')).toBeVisible({
       timeout: 5000,
     });
-    await expect(page.getByText('일시불로 다시 시도하거나 다른 카드로 결제해주세요.')).toBeVisible();
+    await expect(main.getByText('일시불로 다시 시도하거나 다른 카드로 결제해주세요.')).toBeVisible();
     await expect(
-      page.getByText('결제사 응답: 할부가 지원되지 않는 카드 또는 가맹점 입니다.'),
+      main.getByText('결제사 응답: 할부가 지원되지 않는 카드 또는 가맹점 입니다.'),
     ).toBeVisible();
   });
 

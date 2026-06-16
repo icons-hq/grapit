@@ -306,6 +306,7 @@ function ConfirmPageContent() {
 
     paymentRequestInFlightRef.current = true;
     errorToastKeyRef.current = null;
+    setPaymentReturnError(null);
     setIsProcessing(true);
     let preparedReservationId: string | null = null;
     try {
@@ -450,6 +451,22 @@ function ConfirmPageContent() {
 
         {/* Terms Agreement */}
         <TermsAgreement agreed={agreed} onAgreementChange={handleAgreementChange} />
+
+        {paymentReturnError && (
+          <section role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4">
+            <p className="text-sm font-semibold text-red-800">
+              {paymentReturnError.title}
+            </p>
+            <p className="mt-1 text-sm text-red-700">
+              {paymentReturnError.body}
+            </p>
+            {paymentReturnError.providerMessage && (
+              <p className="mt-2 text-xs text-red-700">
+                {paymentReturnError.providerMessage}
+              </p>
+            )}
+          </section>
+        )}
 
         {lockFailureMessage && (
           <section role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4">
