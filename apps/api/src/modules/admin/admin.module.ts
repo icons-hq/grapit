@@ -12,6 +12,7 @@ import { AdminSettlementController } from './admin-settlement.controller.js';
 import { AdminOperationsController } from './admin-operations.controller.js';
 import { AdminSupportContentController } from './admin-support-content.controller.js';
 import { AdminSeatOperationsController } from './admin-seat-operations.controller.js';
+import { AdminBenefitsController } from './admin-benefits.controller.js';
 import { AdminAuditController } from './admin-audit.controller.js';
 import { AdminCutoverController } from './admin-cutover.controller.js';
 import { AdminSecurityController } from './admin-security.controller.js';
@@ -28,6 +29,7 @@ import { AdminOperationsService } from './admin-operations.service.js';
 import { AdminSupportContentService } from './admin-support-content.service.js';
 import { PublicSupportContentController } from './public-support-content.controller.js';
 import { AdminSeatOperationsService } from './admin-seat-operations.service.js';
+import { AdminBenefitsService } from './admin-benefits.service.js';
 import { AdminCutoverService } from './admin-cutover.service.js';
 import { AdminSecurityService } from './admin-security.service.js';
 import { AdminUserService } from './admin-user.service.js';
@@ -46,6 +48,7 @@ import { PerformanceIntakeService } from './performance-intake.service.js';
     AdminSupportContentController,
     PublicSupportContentController,
     AdminSeatOperationsController,
+    AdminBenefitsController,
     AdminAuditController,
     AdminCutoverController,
     AdminSecurityController,
@@ -64,6 +67,7 @@ import { PerformanceIntakeService } from './performance-intake.service.js';
     AdminOperationsService,
     AdminSupportContentService,
     AdminSeatOperationsService,
+    AdminBenefitsService,
     AdminCutoverService,
     AdminUserService,
     {
