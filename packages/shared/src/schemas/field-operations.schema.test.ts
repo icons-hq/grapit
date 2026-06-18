@@ -174,6 +174,71 @@ describe('field operations contract', () => {
     });
   });
 
+  it('rejects nullable run ids for run-backed field entitlements', () => {
+    const responseWithBenefit = (benefitEntitlement: Record<string, unknown>) => ({
+      outcome: 'processable',
+      processable: true,
+      ticket: {
+        reservationNumber: 'GRP-24001',
+        performanceTitle: 'Girl Rules Fanmeet',
+        showtimeId: VALID_SHOWTIME_ID,
+        showtimeLabel: '2026-07-04 18:00',
+        seatLabels: ['VIP A-1'],
+        ticketStatus: 'ACTIVE',
+        redactedTokenRef: 'tok_abc...xyz',
+        benefitEntitlements: [benefitEntitlement],
+      },
+      verifiedAt: VALID_ISO,
+    });
+
+    const commonBenefit = {
+      id: VALID_BENEFIT_ENTITLEMENT_ID,
+      benefitIdentity: 'benefit_6_to_1',
+      kind: 'included',
+      displayCopy: BENEFIT_DISPLAY_COPY,
+      state: 'active',
+      redeemedAt: null,
+    };
+
+    expect(() =>
+      fieldCheckInVerifyResponseSchema.parse(responseWithBenefit({
+        ...commonBenefit,
+        runId: null,
+        source: 'live_run',
+        runMode: 'live',
+        attachedToTicket: true,
+      })),
+    ).toThrow();
+
+    expect(() =>
+      fieldCheckInVerifyResponseSchema.parse(responseWithBenefit({
+        ...commonBenefit,
+        runId: null,
+        source: 'test_run',
+        runMode: 'test',
+        attachedToTicket: false,
+      })),
+    ).toThrow();
+
+    expect(() =>
+      fieldCheckInVerifyResponseSchema.parse(responseWithBenefit({
+        ...commonBenefit,
+        runId: null,
+        source: 'rollback',
+        attachedToTicket: true,
+      })),
+    ).toThrow();
+
+    expect(
+      fieldCheckInVerifyResponseSchema.parse(responseWithBenefit({
+        ...commonBenefit,
+        runId: null,
+        source: 'configuration',
+        attachedToTicket: true,
+      })).ticket?.benefitEntitlements[0]?.runId,
+    ).toBeNull();
+  });
+
   it('models server-authoritative field outcomes and offline sync states', () => {
     expect(FIELD_CHECK_IN_OUTCOMES).toEqual([
       'processable',

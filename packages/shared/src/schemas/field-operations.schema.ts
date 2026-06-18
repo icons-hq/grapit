@@ -9,6 +9,7 @@ const dateOnly = (label: string) =>
   z.string().regex(/^\d{4}-\d{2}-\d{2}$/, `${label}은 YYYY-MM-DD 형식이어야 합니다`);
 
 const showtimeIdSchema = z.string().uuid('유효한 회차 ID가 필요합니다');
+const benefitRunIdSchema = z.string().uuid('유효한 benefit run ID가 필요합니다');
 
 export const FIELD_CHECK_IN_OUTCOMES = [
   'processable',
@@ -65,6 +66,7 @@ export const fieldBenefitEntitlementSchema = z.discriminatedUnion('source', [
   fieldBenefitEntitlementBaseSchema
     .extend({
       source: z.literal('live_run'),
+      runId: benefitRunIdSchema,
       runMode: z.literal('live'),
       attachedToTicket: z.literal(true),
     })
@@ -72,6 +74,7 @@ export const fieldBenefitEntitlementSchema = z.discriminatedUnion('source', [
   fieldBenefitEntitlementBaseSchema
     .extend({
       source: z.literal('test_run'),
+      runId: benefitRunIdSchema,
       runMode: z.literal('test'),
       attachedToTicket: z.literal(false),
     })
@@ -79,6 +82,7 @@ export const fieldBenefitEntitlementSchema = z.discriminatedUnion('source', [
   fieldBenefitEntitlementBaseSchema
     .extend({
       source: z.literal('rollback'),
+      runId: benefitRunIdSchema,
       attachedToTicket: z.literal(true),
       runMode: z.literal('live').optional(),
     })

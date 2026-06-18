@@ -10,6 +10,7 @@ import {
   ticketBenefitConfigurations,
   ticketBenefitEntitlements,
   ticketBenefits,
+  ticketItems,
 } from '../../database/schema/index.js';
 import type { AdminAuditService } from './admin-audit.service.js';
 import { AdminBenefitsController } from './admin-benefits.controller.js';
@@ -84,11 +85,33 @@ function configurationRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function chainResult<T>(rows: T[]) {
+type QueryCall = {
+  selection?: unknown;
+  table?: unknown;
+  where?: unknown;
+};
+
+function chainResult<T>(rows: T[], call?: QueryCall) {
   const handler: ProxyHandler<object> = {
     get(_target, prop) {
       if (prop === 'then') {
         return (resolve: (value: T[]) => void) => resolve(rows);
+      }
+      if (prop === 'from') {
+        return (table: unknown) => {
+          if (call) {
+            call.table = table;
+          }
+          return new Proxy({}, handler);
+        };
+      }
+      if (prop === 'where') {
+        return (where: unknown) => {
+          if (call) {
+            call.where = where;
+          }
+          return new Proxy({}, handler);
+        };
       }
 
       return () => new Proxy({}, handler);
@@ -114,20 +137,38 @@ function createMockDb(
       [{ id: 'change-1' }],
     ],
   ]),
+  insertConflictReturningRows?: Map<unknown, unknown[]>,
 ) {
+  const selectCalls: QueryCall[] = [];
   const insertCalls: Array<{ table: unknown; values: unknown }> = [];
   const insertConflictDoNothingCalls: Array<{ table: unknown; values: unknown }> = [];
   const updateCalls: Array<{ table: unknown; values: Record<string, unknown> }> = [];
+  const conflictReturningRows = (table: unknown, values: unknown) => {
+    if (insertConflictReturningRows?.has(table)) {
+      return insertConflictReturningRows.get(table) ?? [];
+    }
+    if (table === ticketBenefitEntitlements && Array.isArray(values)) {
+      return values.map((_, index) => ({ id: `entitlement-created-${index + 1}` }));
+    }
+    return [];
+  };
 
   const tx = {
     execute: vi.fn(() => chainResult([{ id: SHOWTIME_ID }])),
-    select: vi.fn(() => chainResult(selectRows.shift() ?? [])),
+    select: vi.fn((selection?: unknown) => {
+      const call: QueryCall = { selection };
+      selectCalls.push(call);
+      return chainResult(selectRows.shift() ?? [], call);
+    }),
     insert: vi.fn((table: unknown) => ({
       values: vi.fn((values: unknown) => {
         insertCalls.push({ table, values });
         const onConflictDoNothing = vi.fn(() => {
           insertConflictDoNothingCalls.push({ table, values });
-          return chainResult([]);
+          return {
+            returning: vi.fn(() => chainResult(conflictReturningRows(table, values))),
+            then: (resolve: (value: unknown[]) => void) => resolve([]),
+          };
         });
         return {
           returning: vi.fn(() => chainResult(insertReturningRows.get(table) ?? [])),
@@ -152,20 +193,35 @@ function createMockDb(
     ),
   };
 
-  return { db, tx, insertCalls, insertConflictDoNothingCalls, updateCalls };
+  return {
+    db,
+    tx,
+    selectCalls,
+    insertCalls,
+    insertConflictDoNothingCalls,
+    updateCalls,
+  };
 }
 
 function createDependencies(
   selectRows: unknown[][] = [],
   insertReturningRows?: Map<unknown, unknown[]>,
+  insertConflictReturningRows?: Map<unknown, unknown[]>,
 ) {
-  const db = createMockDb(selectRows, insertReturningRows);
+  const db = createMockDb(selectRows, insertReturningRows, insertConflictReturningRows);
   const adminAuditService = {
     write: vi.fn().mockResolvedValue({ id: 'audit-1' }),
   } as unknown as AdminAuditService & { write: Mock };
   const service = new AdminBenefitsService(db.db as never, adminAuditService);
 
   return { service, adminAuditService, ...db };
+}
+
+function expectPredicateToContain(predicate: unknown, fragments: string[]) {
+  const predicateText = inspect(predicate, { depth: 30 });
+  for (const fragment of fragments) {
+    expect(predicateText).toContain(fragment);
+  }
 }
 
 describe('AdminBenefitsService', () => {
@@ -370,7 +426,12 @@ describe('AdminBenefitsService', () => {
   });
 
   it('syncs included benefits to existing active ticket items immediately', async () => {
-    const { service, insertCalls, insertConflictDoNothingCalls } = createDependencies([
+    const {
+      service,
+      selectCalls,
+      insertCalls,
+      insertConflictDoNothingCalls,
+    } = createDependencies([
       [],
       [],
       [
@@ -419,6 +480,23 @@ describe('AdminBenefitsService', () => {
       expect.objectContaining({
         table: ticketBenefitEntitlements,
       }),
+    ]);
+
+    const ticketItemQuery = selectCalls.find((call) => call.table === ticketItems);
+    expect(ticketItemQuery?.where).toBeDefined();
+    expectPredicateToContain(ticketItemQuery?.where, ['status', 'active']);
+
+    const entitlementQuery = selectCalls.find(
+      (call) => call.table === ticketBenefitEntitlements,
+    );
+    expect(entitlementQuery?.where).toBeDefined();
+    expectPredicateToContain(entitlementQuery?.where, [
+      'source',
+      'configuration',
+      'benefitKind',
+      'included',
+      'state',
+      'active',
     ]);
   });
 
@@ -530,7 +608,7 @@ describe('AdminBenefitsService', () => {
       [],
     ]);
 
-    await service.syncIncludedEntitlementsForShowtime(SHOWTIME_ID, {
+    await expect(service.syncIncludedEntitlementsForShowtime(SHOWTIME_ID, {
       db: tx as never,
       benefits: [includedBenefit({
         identity: 'vip-drink',
@@ -538,6 +616,9 @@ describe('AdminBenefitsService', () => {
         eligibleTierNames: ['VIP'],
       })],
       now: NOW,
+    })).resolves.toEqual({
+      createdCount: 1,
+      inactivatedCount: 0,
     });
 
     expect(insertConflictDoNothingCalls).toEqual([
@@ -553,6 +634,29 @@ describe('AdminBenefitsService', () => {
         ],
       }),
     ]);
+  });
+
+  it('does not count conflict-skipped included entitlement inserts as created', async () => {
+    const insertConflictReturningRows = new Map<unknown, unknown[]>([
+      [ticketBenefitEntitlements, []],
+    ]);
+    const { service, tx } = createDependencies([
+      [{ id: 'ticket-vip-1', tierName: 'VIP' }],
+      [],
+    ], undefined, insertConflictReturningRows);
+
+    await expect(service.syncIncludedEntitlementsForShowtime(SHOWTIME_ID, {
+      db: tx as never,
+      benefits: [includedBenefit({
+        identity: 'vip-drink',
+        displayCopy: copy('VIP 음료'),
+        eligibleTierNames: ['VIP'],
+      })],
+      now: NOW,
+    })).resolves.toEqual({
+      createdCount: 0,
+      inactivatedCount: 0,
+    });
   });
 
   it('keeps unsaved test snapshots side-effect-free and does not update active configuration', async () => {

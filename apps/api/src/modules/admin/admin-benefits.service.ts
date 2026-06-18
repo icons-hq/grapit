@@ -323,11 +323,14 @@ export class AdminBenefitsService {
         createdAt: now,
         updatedAt: now,
       }));
+    let createdCount = 0;
     if (toInsert.length > 0) {
-      await db
+      const insertedEntitlements = await db
         .insert(ticketBenefitEntitlements)
         .values(toInsert)
-        .onConflictDoNothing();
+        .onConflictDoNothing()
+        .returning({ id: ticketBenefitEntitlements.id });
+      createdCount = insertedEntitlements.length;
     }
 
     for (const [key, desiredEntitlement] of desired.entries()) {
@@ -377,7 +380,7 @@ export class AdminBenefitsService {
     }
 
     return {
-      createdCount: toInsert.length,
+      createdCount,
       inactivatedCount: duplicateIds.length + configurationChangedIds.length,
     };
   }
