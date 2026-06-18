@@ -41,7 +41,7 @@ export const ticketBenefitRunStatusEnum = pgEnum(
 
 export const ticketBenefitEntitlementSourceEnum = pgEnum(
   'ticket_benefit_entitlement_source',
-  ['configuration', 'live_run', 'rollback'],
+  ['configuration', 'live_run', 'test_run', 'rollback'],
 );
 
 export const ticketBenefitEntitlementStateEnum = pgEnum(
@@ -238,6 +238,9 @@ export const ticketBenefitEntitlements = pgTable(
     uniqueIndex('idx_ticket_benefit_entitlements_active_limited_ticket_item')
       .on(table.ticketItemId)
       .where(sql`${table.benefitKind} = 'limited' AND ${table.state} = 'active'`),
+    uniqueIndex('idx_tbe_active_config_included_item_identity')
+      .on(table.ticketItemId, table.benefitIdentity)
+      .where(sql`${table.source} = 'configuration' AND ${table.benefitKind} = 'included' AND ${table.state} = 'active'`),
   ],
 );
 

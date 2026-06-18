@@ -9,6 +9,7 @@ import {
   ticketBenefitConfigurationChanges,
   ticketBenefitConfigurations,
   ticketBenefitEntitlements,
+  ticketBenefitEntitlementSourceEnum,
   ticketBenefitRedemptionRecords,
   ticketBenefitRuns,
   ticketBenefits,
@@ -117,6 +118,12 @@ describe('ticket benefit schema contracts', () => {
 
     expect(ticketBenefitKindEnum.enumValues).toEqual(['included', 'limited']);
     expect(ticketBenefitRunModeEnum.enumValues).toEqual(['live', 'test']);
+    expect(ticketBenefitEntitlementSourceEnum.enumValues).toEqual([
+      'configuration',
+      'live_run',
+      'test_run',
+      'rollback',
+    ]);
   });
 
   it('defines the required ticket benefit columns in Drizzle schema', () => {
@@ -249,6 +256,24 @@ describe('ticket benefit schema contracts', () => {
     );
     expect(migration).toContain(
       'CREATE UNIQUE INDEX "idx_ticket_benefit_entitlements_active_limited_ticket_item" ON "ticket_benefit_entitlements" USING btree ("ticket_item_id") WHERE "ticket_benefit_entitlements"."benefit_kind" = \'limited\' AND "ticket_benefit_entitlements"."state" = \'active\';',
+    );
+  });
+
+  it('enforces one active included configuration entitlement per ticket item and benefit identity', () => {
+    const migration = readMigration();
+    const schemaSource = readSchemaSource();
+    const indexName = 'idx_tbe_active_config_included_item_identity';
+
+    expect(indexName.length).toBeLessThanOrEqual(63);
+    expect(schemaSource).toContain(`uniqueIndex('${indexName}')`);
+    expect(schemaSource).toContain(
+      '.on(table.ticketItemId, table.benefitIdentity)',
+    );
+    expect(schemaSource).toContain(
+      "where(sql`${table.source} = 'configuration' AND ${table.benefitKind} = 'included' AND ${table.state} = 'active'`)",
+    );
+    expect(migration).toContain(
+      `CREATE UNIQUE INDEX "${indexName}" ON "ticket_benefit_entitlements" USING btree ("ticket_item_id","benefit_identity") WHERE "ticket_benefit_entitlements"."source" = 'configuration' AND "ticket_benefit_entitlements"."benefit_kind" = 'included' AND "ticket_benefit_entitlements"."state" = 'active';`,
     );
   });
 

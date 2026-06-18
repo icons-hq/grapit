@@ -1,5 +1,6 @@
 import { ConflictException } from '@nestjs/common';
 import { PATH_METADATA } from '@nestjs/common/constants';
+import { inspect } from 'node:util';
 import { describe, expect, it, vi, type Mock } from 'vitest';
 
 import type { BenefitDefinition } from '@grabit/shared';
@@ -115,15 +116,22 @@ function createMockDb(
   ]),
 ) {
   const insertCalls: Array<{ table: unknown; values: unknown }> = [];
+  const insertConflictDoNothingCalls: Array<{ table: unknown; values: unknown }> = [];
   const updateCalls: Array<{ table: unknown; values: Record<string, unknown> }> = [];
 
   const tx = {
+    execute: vi.fn(() => chainResult([{ id: SHOWTIME_ID }])),
     select: vi.fn(() => chainResult(selectRows.shift() ?? [])),
     insert: vi.fn((table: unknown) => ({
       values: vi.fn((values: unknown) => {
         insertCalls.push({ table, values });
+        const onConflictDoNothing = vi.fn(() => {
+          insertConflictDoNothingCalls.push({ table, values });
+          return chainResult([]);
+        });
         return {
           returning: vi.fn(() => chainResult(insertReturningRows.get(table) ?? [])),
+          onConflictDoNothing,
           then: (resolve: (value: unknown[]) => void) => resolve([]),
         };
       }),
@@ -144,11 +152,14 @@ function createMockDb(
     ),
   };
 
-  return { db, tx, insertCalls, updateCalls };
+  return { db, tx, insertCalls, insertConflictDoNothingCalls, updateCalls };
 }
 
-function createDependencies(selectRows: unknown[][] = []) {
-  const db = createMockDb(selectRows);
+function createDependencies(
+  selectRows: unknown[][] = [],
+  insertReturningRows?: Map<unknown, unknown[]>,
+) {
+  const db = createMockDb(selectRows, insertReturningRows);
   const adminAuditService = {
     write: vi.fn().mockResolvedValue({ id: 'audit-1' }),
   } as unknown as AdminAuditService & { write: Mock };
@@ -158,6 +169,29 @@ function createDependencies(selectRows: unknown[][] = []) {
 }
 
 describe('AdminBenefitsService', () => {
+  it('locks the showtime row before configuration writes, audit, and included sync', async () => {
+    const { service, tx, adminAuditService } = createDependencies([
+      [],
+      [],
+      [],
+      [],
+    ]);
+
+    await service.saveConfiguration(
+      SHOWTIME_ID,
+      ACTOR_ID,
+      { benefits: [includedBenefit()], reason: 'serialized mutation' },
+      { now: NOW },
+    );
+
+    expect(tx.execute).toHaveBeenCalledTimes(1);
+    expect(inspect(tx.execute.mock.calls[0]?.[0], { depth: 10 })).toContain('FOR UPDATE');
+    expect(tx.execute.mock.invocationCallOrder[0])
+      .toBeLessThan(tx.insert.mock.invocationCallOrder[0]!);
+    expect(tx.execute.mock.invocationCallOrder[0])
+      .toBeLessThan(adminAuditService.write.mock.invocationCallOrder[0]!);
+  });
+
   it('creates or updates the active configuration for a showtime', async () => {
     const created = createDependencies([
       [],
@@ -246,6 +280,28 @@ describe('AdminBenefitsService', () => {
     expect(adminAuditService.write).not.toHaveBeenCalled();
   });
 
+  it('throws when configuration insert does not return a row', async () => {
+    const insertReturningRows = new Map<unknown, unknown[]>([
+      [ticketBenefitConfigurations, []],
+      [ticketBenefitConfigurationChanges, [{ id: 'change-1' }]],
+    ]);
+    const { service } = createDependencies([
+      [],
+      [],
+      [],
+      [],
+    ], insertReturningRows);
+
+    await expect(
+      service.saveConfiguration(
+        SHOWTIME_ID,
+        ACTOR_ID,
+        { benefits: [includedBenefit()], reason: 'missing returning row' },
+        { now: NOW },
+      ),
+    ).rejects.toThrow('혜택 설정 저장 결과를 확인할 수 없습니다');
+  });
+
   it('writes a Benefit Configuration Change Record and admin audit event when saved', async () => {
     const beforeBenefit = includedBenefit();
     const afterBenefit = includedBenefit({
@@ -314,7 +370,7 @@ describe('AdminBenefitsService', () => {
   });
 
   it('syncs included benefits to existing active ticket items immediately', async () => {
-    const { service, insertCalls } = createDependencies([
+    const { service, insertCalls, insertConflictDoNothingCalls } = createDependencies([
       [],
       [],
       [
@@ -359,6 +415,58 @@ describe('AdminBenefitsService', () => {
         displayCopySnapshot: copy('VIP 음료'),
       }),
     ]);
+    expect(insertConflictDoNothingCalls).toEqual([
+      expect.objectContaining({
+        table: ticketBenefitEntitlements,
+      }),
+    ]);
+  });
+
+  it('keeps one duplicate active configuration included entitlement and inactivates the rest', async () => {
+    const { service, tx, updateCalls, insertCalls } = createDependencies([
+      [{ id: 'ticket-vip-1', tierName: 'VIP' }],
+      [
+        {
+          id: 'entitlement-keep',
+          ticketItemId: 'ticket-vip-1',
+          benefitIdentity: 'vip-drink',
+        },
+        {
+          id: 'entitlement-duplicate',
+          ticketItemId: 'ticket-vip-1',
+          benefitIdentity: 'vip-drink',
+        },
+      ],
+    ]);
+
+    await expect(
+      service.syncIncludedEntitlementsForShowtime(SHOWTIME_ID, {
+        db: tx as never,
+        benefits: [includedBenefit({
+          identity: 'vip-drink',
+          displayCopy: copy('VIP 음료'),
+          eligibleTierNames: ['VIP'],
+        })],
+        now: NOW,
+      }),
+    ).resolves.toEqual({
+      createdCount: 0,
+      inactivatedCount: 1,
+    });
+
+    expect(insertCalls.some((call) => call.table === ticketBenefitEntitlements))
+      .toBe(false);
+    expect(updateCalls).toEqual(
+      expect.arrayContaining([
+        {
+          table: ticketBenefitEntitlements,
+          values: expect.objectContaining({
+            state: 'inactive',
+            inactiveReason: 'duplicate_configuration_entitlement',
+          }),
+        },
+      ]),
+    );
   });
 
   it('inactivates included entitlements when ticket items are no longer eligible before lock', async () => {
@@ -414,6 +522,37 @@ describe('AdminBenefitsService', () => {
           state: 'active',
         }),
       ]);
+  });
+
+  it('uses conflict-safe inserts when included entitlements are missing', async () => {
+    const { service, tx, insertConflictDoNothingCalls } = createDependencies([
+      [{ id: 'ticket-vip-1', tierName: 'VIP' }],
+      [],
+    ]);
+
+    await service.syncIncludedEntitlementsForShowtime(SHOWTIME_ID, {
+      db: tx as never,
+      benefits: [includedBenefit({
+        identity: 'vip-drink',
+        displayCopy: copy('VIP 음료'),
+        eligibleTierNames: ['VIP'],
+      })],
+      now: NOW,
+    });
+
+    expect(insertConflictDoNothingCalls).toEqual([
+      expect.objectContaining({
+        table: ticketBenefitEntitlements,
+        values: [
+          expect.objectContaining({
+            ticketItemId: 'ticket-vip-1',
+            benefitIdentity: 'vip-drink',
+            source: 'configuration',
+            runId: null,
+          }),
+        ],
+      }),
+    ]);
   });
 
   it('keeps unsaved test snapshots side-effect-free and does not update active configuration', async () => {

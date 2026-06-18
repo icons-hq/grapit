@@ -65,6 +65,7 @@ function benefitEntitlement(overrides: Record<string, unknown> = {}) {
     ticketItemId,
     showtimeId,
     runId,
+    source: 'live_run',
     benefitIdentity,
     kind: 'included',
     displayCopy: benefitDisplayCopy,
@@ -75,6 +76,17 @@ function benefitEntitlement(overrides: Record<string, unknown> = {}) {
     redeemedAt: null,
     ...overrides,
   };
+}
+
+function configurationBenefitEntitlement(overrides: Record<string, unknown> = {}) {
+  const { runMode: _runMode, ...entitlement } = benefitEntitlement({
+    runId: null,
+    source: 'configuration',
+    kind: 'included',
+    attachedToTicket: true,
+    ...overrides,
+  });
+  return entitlement;
 }
 
 function ticketItem(overrides: Record<string, unknown> = {}) {
@@ -247,6 +259,7 @@ describe('ticket benefit shared contracts', () => {
       ticketItemId,
       showtimeId,
       runId,
+      source: 'test_run',
       runMode: 'test',
       attachedToTicket: false,
       benefitIdentity,
@@ -261,7 +274,52 @@ describe('ticket benefit shared contracts', () => {
     expect(parsed.attachedToTicket).toBe(false);
   });
 
-  it('requires entitlement attachment state to match run mode', () => {
+  it('allows configuration-source included entitlements with nullable run ids attached to tickets', () => {
+    const parsed = benefitEntitlementSchema.parse(configurationBenefitEntitlement());
+
+    expect(parsed.source).toBe('configuration');
+    expect(parsed.runId).toBeNull();
+    expect(parsed.attachedToTicket).toBe(true);
+    expect(parsed.kind).toBe('included');
+    expect(parsed).not.toHaveProperty('runMode');
+
+    expect(() =>
+      benefitEntitlementSchema.parse(configurationBenefitEntitlement({
+        kind: 'limited',
+      })),
+    ).toThrow();
+    expect(() =>
+      benefitEntitlementSchema.parse(configurationBenefitEntitlement({
+        attachedToTicket: false,
+      })),
+    ).toThrow();
+    expect(() =>
+      benefitEntitlementSchema.parse(configurationBenefitEntitlement({
+        runId,
+      })),
+    ).toThrow();
+
+    const exportRow = benefitEntitlementExportRowSchema.parse({
+      benefitEntitlementId: entitlementId,
+      ticketItemId,
+      showtimeId,
+      runId: null,
+      source: 'configuration',
+      attachedToTicket: true,
+      benefitIdentity,
+      benefitKind: 'included',
+      benefitNameKo: '6:1',
+      state: 'active',
+      assignedAt: validIso,
+      redeemedAt: null,
+    });
+
+    expect(exportRow.runId).toBeNull();
+    expect(exportRow.attachedToTicket).toBe(true);
+    expect(exportRow).not.toHaveProperty('runMode');
+  });
+
+  it('requires entitlement attachment state to match run source', () => {
     const liveEntitlement = benefitEntitlement();
 
     expect(benefitEntitlementSchema.parse(liveEntitlement).attachedToTicket).toBe(true);
@@ -275,6 +333,7 @@ describe('ticket benefit shared contracts', () => {
     expect(
       benefitEntitlementSchema.parse({
         ...liveEntitlement,
+        source: 'test_run',
         runMode: 'test',
         attachedToTicket: false,
       }).attachedToTicket,
@@ -282,6 +341,7 @@ describe('ticket benefit shared contracts', () => {
     expect(() =>
       benefitEntitlementSchema.parse({
         ...liveEntitlement,
+        source: 'test_run',
         runMode: 'test',
         attachedToTicket: true,
       }),
@@ -292,6 +352,7 @@ describe('ticket benefit shared contracts', () => {
       ticketItemId,
       showtimeId,
       runId,
+      source: 'live_run',
       runMode: 'live',
       attachedToTicket: true,
       benefitIdentity,
@@ -312,6 +373,7 @@ describe('ticket benefit shared contracts', () => {
     expect(
       benefitEntitlementExportRowSchema.parse({
         ...liveExportRow,
+        source: 'test_run',
         runMode: 'test',
         attachedToTicket: false,
       }).attachedToTicket,
@@ -319,6 +381,7 @@ describe('ticket benefit shared contracts', () => {
     expect(() =>
       benefitEntitlementExportRowSchema.parse({
         ...liveExportRow,
+        source: 'test_run',
         runMode: 'test',
         attachedToTicket: true,
       }),

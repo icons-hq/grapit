@@ -48,20 +48,39 @@ const fieldBenefitEntitlementBaseSchema = benefitEntitlementBaseSchema.pick({
   displayCopy: true,
   state: true,
   runId: true,
+  source: true,
   redeemedAt: true,
 });
 
-export const fieldBenefitEntitlementSchema = z.discriminatedUnion('runMode', [
+export const fieldBenefitEntitlementSchema = z.discriminatedUnion('source', [
   fieldBenefitEntitlementBaseSchema
     .extend({
+      source: z.literal('configuration'),
+      runId: z.null(),
+      kind: z.literal('included'),
+      attachedToTicket: z.literal(true),
+      runMode: z.never().optional(),
+    })
+    .strict(),
+  fieldBenefitEntitlementBaseSchema
+    .extend({
+      source: z.literal('live_run'),
       runMode: z.literal('live'),
       attachedToTicket: z.literal(true),
     })
     .strict(),
   fieldBenefitEntitlementBaseSchema
     .extend({
+      source: z.literal('test_run'),
       runMode: z.literal('test'),
       attachedToTicket: z.literal(false),
+    })
+    .strict(),
+  fieldBenefitEntitlementBaseSchema
+    .extend({
+      source: z.literal('rollback'),
+      attachedToTicket: z.literal(true),
+      runMode: z.literal('live').optional(),
     })
     .strict(),
 ]);

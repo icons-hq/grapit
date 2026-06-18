@@ -84,6 +84,7 @@ function makeBenefitEntitlement(overrides: Record<string, unknown> = {}) {
     ticketItemId: '11111111-1111-4111-8111-000000000101',
     showtimeId: '11111111-1111-4111-8111-333333333333',
     runId: '33333333-3333-4333-8333-333333333333',
+    source: 'live_run',
     benefitIdentity: 'benefit_6_to_1',
     kind: 'included',
     displayCopy: {

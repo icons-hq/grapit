@@ -15,6 +15,12 @@ const benefitConfigurationIdSchema = z
 
 export const BENEFIT_KINDS = ['included', 'limited'] as const;
 export const BENEFIT_RUN_MODES = ['live', 'test'] as const;
+export const BENEFIT_ENTITLEMENT_SOURCES = [
+  'configuration',
+  'live_run',
+  'test_run',
+  'rollback',
+] as const;
 export const BENEFIT_ENTITLEMENT_STATES = ['active', 'inactive', 'redeemed'] as const;
 export const BENEFIT_REDEMPTION_OUTCOMES = [
   'redeemed',
@@ -34,6 +40,7 @@ const BENEFIT_REDEMPTION_REJECTION_OUTCOMES = [
 
 export const ticketBenefitKindSchema = z.enum(BENEFIT_KINDS);
 export const benefitRunModeSchema = z.enum(BENEFIT_RUN_MODES);
+export const benefitEntitlementSourceSchema = z.enum(BENEFIT_ENTITLEMENT_SOURCES);
 export const benefitEntitlementStateSchema = z.enum(BENEFIT_ENTITLEMENT_STATES);
 export const benefitRedemptionOutcomeSchema = z.enum(BENEFIT_REDEMPTION_OUTCOMES);
 
@@ -119,7 +126,8 @@ export const benefitEntitlementBaseSchema = z
     id: benefitEntitlementIdSchema,
     ticketItemId: ticketItemIdSchema,
     showtimeId: showtimeIdSchema,
-    runId: benefitRunIdSchema,
+    runId: benefitRunIdSchema.nullable(),
+    source: benefitEntitlementSourceSchema,
     benefitIdentity: benefitIdentitySchema,
     kind: ticketBenefitKindSchema,
     displayCopy: ticketBenefitDisplayCopySchema,
@@ -129,23 +137,47 @@ export const benefitEntitlementBaseSchema = z
   })
   .strict();
 
-const liveBenefitEntitlementSchema = benefitEntitlementBaseSchema
+const configurationBenefitEntitlementSchema = benefitEntitlementBaseSchema
   .extend({
+    source: z.literal('configuration'),
+    runId: z.null(),
+    kind: z.literal('included'),
+    attachedToTicket: z.literal(true),
+    runMode: z.never().optional(),
+  })
+  .strict();
+
+const liveRunBenefitEntitlementSchema = benefitEntitlementBaseSchema
+  .extend({
+    source: z.literal('live_run'),
+    runId: benefitRunIdSchema,
     runMode: z.literal('live'),
     attachedToTicket: z.literal(true),
   })
   .strict();
 
-const testBenefitEntitlementSchema = benefitEntitlementBaseSchema
+const testRunBenefitEntitlementSchema = benefitEntitlementBaseSchema
   .extend({
+    source: z.literal('test_run'),
+    runId: benefitRunIdSchema,
     runMode: z.literal('test'),
     attachedToTicket: z.literal(false),
   })
   .strict();
 
-export const benefitEntitlementSchema = z.discriminatedUnion('runMode', [
-  liveBenefitEntitlementSchema,
-  testBenefitEntitlementSchema,
+const rollbackBenefitEntitlementSchema = benefitEntitlementBaseSchema
+  .extend({
+    source: z.literal('rollback'),
+    attachedToTicket: z.literal(true),
+    runMode: z.literal('live').optional(),
+  })
+  .strict();
+
+export const benefitEntitlementSchema = z.discriminatedUnion('source', [
+  configurationBenefitEntitlementSchema,
+  liveRunBenefitEntitlementSchema,
+  testRunBenefitEntitlementSchema,
+  rollbackBenefitEntitlementSchema,
 ]);
 
 const benefitConfigurationSnapshotSchema = z
@@ -248,7 +280,8 @@ const benefitEntitlementExportRowBaseSchema = z
     benefitEntitlementId: benefitEntitlementIdSchema,
     ticketItemId: ticketItemIdSchema,
     showtimeId: showtimeIdSchema,
-    runId: benefitRunIdSchema,
+    runId: benefitRunIdSchema.nullable(),
+    source: benefitEntitlementSourceSchema,
     benefitIdentity: benefitIdentitySchema,
     benefitKind: ticketBenefitKindSchema,
     benefitNameKo: z.string().trim().min(1, '한국어 혜택 이름이 필요합니다'),
@@ -258,17 +291,37 @@ const benefitEntitlementExportRowBaseSchema = z
   })
   .strict();
 
-export const benefitEntitlementExportRowSchema = z.discriminatedUnion('runMode', [
+export const benefitEntitlementExportRowSchema = z.discriminatedUnion('source', [
   benefitEntitlementExportRowBaseSchema
     .extend({
+      source: z.literal('configuration'),
+      runId: z.null(),
+      benefitKind: z.literal('included'),
+      attachedToTicket: z.literal(true),
+      runMode: z.never().optional(),
+    })
+    .strict(),
+  benefitEntitlementExportRowBaseSchema
+    .extend({
+      source: z.literal('live_run'),
+      runId: benefitRunIdSchema,
       runMode: z.literal('live'),
       attachedToTicket: z.literal(true),
     })
     .strict(),
   benefitEntitlementExportRowBaseSchema
     .extend({
+      source: z.literal('test_run'),
+      runId: benefitRunIdSchema,
       runMode: z.literal('test'),
       attachedToTicket: z.literal(false),
+    })
+    .strict(),
+  benefitEntitlementExportRowBaseSchema
+    .extend({
+      source: z.literal('rollback'),
+      attachedToTicket: z.literal(true),
+      runMode: z.literal('live').optional(),
     })
     .strict(),
 ]);
@@ -371,6 +424,7 @@ export type BenefitConfigurationChangeRecord = z.infer<
   typeof benefitConfigurationChangeRecordSchema
 >;
 export type BenefitEntitlement = z.infer<typeof benefitEntitlementSchema>;
+export type BenefitEntitlementSource = z.infer<typeof benefitEntitlementSourceSchema>;
 export type BenefitEntitlementState = z.infer<typeof benefitEntitlementStateSchema>;
 export type BenefitRunMode = z.infer<typeof benefitRunModeSchema>;
 export type BenefitRunRecord = z.infer<typeof benefitRunRecordSchema>;

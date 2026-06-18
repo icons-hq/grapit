@@ -2,9 +2,10 @@ import {
   ConflictException,
   Inject,
   Injectable,
+  InternalServerErrorException,
   NotFoundException,
 } from '@nestjs/common';
-import { and, asc, desc, eq, inArray } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import {
@@ -47,6 +48,7 @@ type ActiveIncludedEntitlement = Pick<
   typeof ticketBenefitEntitlements.$inferSelect,
   'id' | 'ticketItemId' | 'benefitIdentity'
 >;
+type BenefitMutationDb = DrizzleDB & Pick<DrizzleDB, 'execute'>;
 
 export interface AdminBenefitOperationContext {
   now?: Date;
@@ -99,6 +101,7 @@ export class AdminBenefitsService {
     const reason = parsed.reason?.trim() ?? null;
 
     return this.db.transaction(async (tx) => {
+      await this.lockShowtimeForBenefitMutation(tx as BenefitMutationDb, showtimeId);
       await this.assertBenefitResultUnlocked(tx as DrizzleDB, showtimeId);
 
       const before = await this.loadActiveConfiguration(tx as DrizzleDB, showtimeId);
@@ -118,9 +121,15 @@ export class AdminBenefitsService {
           createdAt: ticketBenefitConfigurations.createdAt,
           updatedAt: ticketBenefitConfigurations.updatedAt,
         });
-      const configurationId = configuration?.id ?? '';
-      const createdAt = configuration?.createdAt ?? now;
-      const updatedAt = configuration?.updatedAt ?? now;
+      if (!configuration) {
+        throw new InternalServerErrorException(
+          '혜택 설정 저장 결과를 확인할 수 없습니다',
+        );
+      }
+
+      const configurationId = configuration.id;
+      const createdAt = configuration.createdAt;
+      const updatedAt = configuration.updatedAt;
 
       await tx
         .insert(ticketBenefits)
@@ -278,12 +287,7 @@ export class AdminBenefitsService {
       ));
     const activeEntitlements = entitlementRows as ActiveIncludedEntitlement[];
 
-    const existingByKey = new Map(
-      activeEntitlements.map((entitlement) => [
-        entitlementKey(entitlement.ticketItemId, entitlement.benefitIdentity),
-        entitlement,
-      ]),
-    );
+    const existingByKey = groupEntitlementsByKey(activeEntitlements);
     const desired = new Map<string, {
       ticketItemId: string;
       benefit: Extract<BenefitDefinition, { kind: 'included' }>;
@@ -320,11 +324,14 @@ export class AdminBenefitsService {
         updatedAt: now,
       }));
     if (toInsert.length > 0) {
-      await db.insert(ticketBenefitEntitlements).values(toInsert);
+      await db
+        .insert(ticketBenefitEntitlements)
+        .values(toInsert)
+        .onConflictDoNothing();
     }
 
     for (const [key, desiredEntitlement] of desired.entries()) {
-      const existing = existingByKey.get(key);
+      const [existing] = existingByKey.get(key) ?? [];
       if (!existing) {
         continue;
       }
@@ -338,12 +345,27 @@ export class AdminBenefitsService {
         .where(eq(ticketBenefitEntitlements.id, existing.id));
     }
 
-    const inactiveIds = activeEntitlements
-      .filter((entitlement) =>
-        !desired.has(entitlementKey(entitlement.ticketItemId, entitlement.benefitIdentity)),
-      )
-      .map((entitlement) => entitlement.id);
-    if (inactiveIds.length > 0) {
+    const duplicateIds: string[] = [];
+    const configurationChangedIds: string[] = [];
+    for (const [key, entitlements] of existingByKey.entries()) {
+      if (desired.has(key)) {
+        duplicateIds.push(...entitlements.slice(1).map((entitlement) => entitlement.id));
+      } else {
+        configurationChangedIds.push(...entitlements.map((entitlement) => entitlement.id));
+      }
+    }
+
+    if (duplicateIds.length > 0) {
+      await db
+        .update(ticketBenefitEntitlements)
+        .set({
+          state: 'inactive',
+          inactiveReason: 'duplicate_configuration_entitlement',
+          updatedAt: now,
+        })
+        .where(inArray(ticketBenefitEntitlements.id, duplicateIds));
+    }
+    if (configurationChangedIds.length > 0) {
       await db
         .update(ticketBenefitEntitlements)
         .set({
@@ -351,12 +373,12 @@ export class AdminBenefitsService {
           inactiveReason: 'configuration_changed',
           updatedAt: now,
         })
-        .where(inArray(ticketBenefitEntitlements.id, inactiveIds));
+        .where(inArray(ticketBenefitEntitlements.id, configurationChangedIds));
     }
 
     return {
       createdCount: toInsert.length,
-      inactivatedCount: inactiveIds.length,
+      inactivatedCount: duplicateIds.length + configurationChangedIds.length,
     };
   }
 
@@ -438,6 +460,26 @@ export class AdminBenefitsService {
 
     if (redemption) {
       throw new ConflictException('Benefit Result Lock 이후에는 혜택 설정을 변경할 수 없습니다');
+    }
+  }
+
+  async lockShowtimeForBenefitMutation(
+    db: BenefitMutationDb,
+    showtimeId: string,
+  ): Promise<void> {
+    const result = await db.execute(sql`
+      SELECT id
+      FROM showtimes
+      WHERE id = ${showtimeId}
+      FOR UPDATE
+    `);
+
+    if (Array.isArray(result) && result.length === 0) {
+      throw new NotFoundException('회차를 찾을 수 없습니다');
+    }
+
+    if ('rows' in result && Array.isArray(result.rows) && result.rows.length === 0) {
+      throw new NotFoundException('회차를 찾을 수 없습니다');
     }
   }
 
@@ -601,6 +643,21 @@ function benefitConfigurationFilename(showtimeId: string, generatedAt: string): 
 
 function parseMutualExclusionGroup(group: string | null): string[] {
   return group?.split(',').map((value) => value.trim()).filter(Boolean) ?? [];
+}
+
+function groupEntitlementsByKey(
+  entitlements: ActiveIncludedEntitlement[],
+): Map<string, ActiveIncludedEntitlement[]> {
+  const byKey = new Map<string, ActiveIncludedEntitlement[]>();
+
+  for (const entitlement of entitlements) {
+    const key = entitlementKey(entitlement.ticketItemId, entitlement.benefitIdentity);
+    const group = byKey.get(key) ?? [];
+    group.push(entitlement);
+    byKey.set(key, group);
+  }
+
+  return byKey;
 }
 
 function entitlementKey(ticketItemId: string, benefitIdentity: string): string {

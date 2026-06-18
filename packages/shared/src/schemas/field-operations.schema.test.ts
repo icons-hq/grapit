@@ -118,6 +118,7 @@ describe('field operations contract', () => {
           {
             id: VALID_BENEFIT_ENTITLEMENT_ID,
             runId: VALID_BENEFIT_RUN_ID,
+            source: 'live_run',
             benefitIdentity: 'benefit_6_to_1',
             kind: 'included',
             displayCopy: BENEFIT_DISPLAY_COPY,
@@ -135,6 +136,42 @@ describe('field operations contract', () => {
     expect(parsed.ticket?.benefitEntitlements[0]?.benefitIdentity).toBe(
       'benefit_6_to_1',
     );
+  });
+
+  it('includes configuration-source included benefits with nullable run ids in field context', () => {
+    const parsed = fieldCheckInVerifyResponseSchema.parse({
+      outcome: 'processable',
+      processable: true,
+      ticket: {
+        reservationNumber: 'GRP-24001',
+        performanceTitle: 'Girl Rules Fanmeet',
+        showtimeId: VALID_SHOWTIME_ID,
+        showtimeLabel: '2026-07-04 18:00',
+        seatLabels: ['VIP A-1'],
+        ticketStatus: 'ACTIVE',
+        redactedTokenRef: 'tok_abc...xyz',
+        benefitEntitlements: [
+          {
+            id: VALID_BENEFIT_ENTITLEMENT_ID,
+            runId: null,
+            source: 'configuration',
+            benefitIdentity: 'benefit_6_to_1',
+            kind: 'included',
+            displayCopy: BENEFIT_DISPLAY_COPY,
+            state: 'active',
+            attachedToTicket: true,
+            redeemedAt: null,
+          },
+        ],
+      },
+      verifiedAt: VALID_ISO,
+    });
+
+    expect(parsed.ticket?.benefitEntitlements[0]).toMatchObject({
+      source: 'configuration',
+      runId: null,
+      attachedToTicket: true,
+    });
   });
 
   it('models server-authoritative field outcomes and offline sync states', () => {

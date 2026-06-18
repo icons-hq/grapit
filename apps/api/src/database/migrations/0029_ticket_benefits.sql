@@ -2,7 +2,7 @@ CREATE TYPE "public"."ticket_benefit_kind" AS ENUM('included', 'limited');--> st
 CREATE TYPE "public"."ticket_benefit_configuration_change_action" AS ENUM('created', 'updated', 'activated', 'deactivated', 'rolled_back');--> statement-breakpoint
 CREATE TYPE "public"."ticket_benefit_run_mode" AS ENUM('live', 'test');--> statement-breakpoint
 CREATE TYPE "public"."ticket_benefit_run_status" AS ENUM('running', 'completed', 'failed');--> statement-breakpoint
-CREATE TYPE "public"."ticket_benefit_entitlement_source" AS ENUM('configuration', 'live_run', 'rollback');--> statement-breakpoint
+CREATE TYPE "public"."ticket_benefit_entitlement_source" AS ENUM('configuration', 'live_run', 'test_run', 'rollback');--> statement-breakpoint
 CREATE TYPE "public"."ticket_benefit_entitlement_state" AS ENUM('active', 'inactive', 'redeemed');--> statement-breakpoint
 CREATE TYPE "public"."ticket_benefit_redemption_result" AS ENUM('redeemed', 'duplicate', 'not_eligible', 'inactive', 'tampered', 'wrong_showtime');--> statement-breakpoint
 ALTER TYPE "public"."admin_audit_action" ADD VALUE IF NOT EXISTS 'benefits.configuration.update';--> statement-breakpoint
@@ -115,6 +115,7 @@ CREATE UNIQUE INDEX "idx_ticket_benefits_configuration_identity_unique" ON "tick
 CREATE INDEX "idx_ticket_benefit_runs_showtime_created" ON "ticket_benefit_runs" USING btree ("showtime_id","created_at" DESC);--> statement-breakpoint
 CREATE INDEX "idx_ticket_benefit_entitlements_showtime_ticket_item" ON "ticket_benefit_entitlements" USING btree ("showtime_id","ticket_item_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "idx_ticket_benefit_entitlements_active_limited_ticket_item" ON "ticket_benefit_entitlements" USING btree ("ticket_item_id") WHERE "ticket_benefit_entitlements"."benefit_kind" = 'limited' AND "ticket_benefit_entitlements"."state" = 'active';--> statement-breakpoint
+CREATE UNIQUE INDEX "idx_tbe_active_config_included_item_identity" ON "ticket_benefit_entitlements" USING btree ("ticket_item_id","benefit_identity") WHERE "ticket_benefit_entitlements"."source" = 'configuration' AND "ticket_benefit_entitlements"."benefit_kind" = 'included' AND "ticket_benefit_entitlements"."state" = 'active';--> statement-breakpoint
 CREATE INDEX "idx_tbrr_showtime_entitlement_created" ON "ticket_benefit_redemption_records" USING btree ("showtime_id","benefit_entitlement_id","created_at" DESC);--> statement-breakpoint
 CREATE UNIQUE INDEX "idx_ticket_benefit_redemption_records_device_attempt_unique" ON "ticket_benefit_redemption_records" USING btree ("device_attempt_id");--> statement-breakpoint
 COMMENT ON COLUMN "ticket_benefit_runs"."random_seed_internal" IS 'Internal run seed material. API responses and CSV exports must use seed_ref instead.';--> statement-breakpoint
