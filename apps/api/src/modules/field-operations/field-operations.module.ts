@@ -3,6 +3,8 @@ import { Module } from '@nestjs/common';
 import { AdminCapabilitiesGuard } from '../../common/guards/admin-capabilities.guard.js';
 import { AdminAuditService } from '../admin/admin-audit.service.js';
 import { TicketModule } from '../ticket/ticket.module.js';
+import { BenefitRedemptionController } from './benefit-redemption.controller.js';
+import { BenefitRedemptionService } from './benefit-redemption.service.js';
 import { FieldCheckInController } from './field-check-in.controller.js';
 import { FieldCheckInService } from './field-check-in.service.js';
 import { FieldMonitorController } from './field-monitor.controller.js';
@@ -14,16 +16,23 @@ import { OfflineSyncService } from './offline-sync.service.js';
   imports: [TicketModule],
   controllers: [
     FieldCheckInController,
+    BenefitRedemptionController,
     OfflineSyncController,
     FieldMonitorController,
   ],
   providers: [
     FieldCheckInService,
+    BenefitRedemptionService,
     OfflineSyncService,
     FieldMonitorService,
     AdminAuditService,
     AdminCapabilitiesGuard,
   ],
-  exports: [FieldCheckInService, OfflineSyncService, FieldMonitorService],
+  exports: [
+    FieldCheckInService,
+    BenefitRedemptionService,
+    OfflineSyncService,
+    FieldMonitorService,
+  ],
 })
 export class FieldOperationsModule {}

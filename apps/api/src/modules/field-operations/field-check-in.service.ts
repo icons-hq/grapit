@@ -1,8 +1,10 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, InternalServerErrorException } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull } from 'drizzle-orm';
 import {
   parseFieldCheckInToken,
+  ticketBenefitDisplayCopySchema,
+  type FieldBenefitEntitlement,
   type FieldCheckInConsumeRequest,
   type FieldCheckInConsumeResponse,
   type FieldCheckInOutcome,
@@ -12,6 +14,7 @@ import {
 
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
+  ticketBenefitEntitlements,
   ticketItems,
   ticketScanEvents,
   tickets,
@@ -39,6 +42,7 @@ export interface FieldScannerContext {
 
 type PriorScanContext = NonNullable<FieldCheckInConsumeResponse['priorScan']>;
 type FieldCheckInTicketContext = NonNullable<FieldCheckInVerifyResponse['ticket']>;
+type FieldBenefitEntitlementRow = typeof ticketBenefitEntitlements.$inferSelect;
 type ScanEventDb = Pick<DrizzleDB, 'insert' | 'select' | 'update'>;
 type AuditDb = Pick<DrizzleDB, 'insert' | 'select'>;
 
@@ -68,10 +72,11 @@ export class FieldCheckInService {
       const contract = await this.qrTicketService.verifyTicketForScannerContract(token);
       const outcome = classifyScannerContract(contract, input.showtimeId);
       const processable = outcome === 'processable';
+      const benefitEntitlements = await this.loadBenefitEntitlements(contract);
       const response: FieldCheckInVerifyResponse = {
         outcome,
         processable,
-        ticket: toTicketContext(contract, token),
+        ticket: toTicketContext(contract, token, benefitEntitlements),
         rejectionReason: processable ? null : rejectionReasonFor(outcome),
         verifiedAt,
       };
@@ -400,6 +405,41 @@ export class FieldCheckInService {
     };
   }
 
+  private async loadBenefitEntitlements(
+    contract: QrTicketScannerContract,
+    db: ScanEventDb = this.db,
+  ): Promise<FieldBenefitEntitlement[]> {
+    const selectBuilder = db.select?.({
+      id: ticketBenefitEntitlements.id,
+      runId: ticketBenefitEntitlements.runId,
+      source: ticketBenefitEntitlements.source,
+      benefitIdentity: ticketBenefitEntitlements.benefitIdentity,
+      benefitKind: ticketBenefitEntitlements.benefitKind,
+      displayCopySnapshot: ticketBenefitEntitlements.displayCopySnapshot,
+      state: ticketBenefitEntitlements.state,
+      redeemedAt: ticketBenefitEntitlements.redeemedAt,
+      createdAt: ticketBenefitEntitlements.createdAt,
+    });
+
+    if (!selectBuilder || typeof selectBuilder.from !== 'function') {
+      return [];
+    }
+
+    const rows = await selectBuilder
+      .from(ticketBenefitEntitlements)
+      .where(and(
+        eq(ticketBenefitEntitlements.showtimeId, contract.showtimeId),
+        eq(ticketBenefitEntitlements.ticketItemId, contract.ticketItemId),
+      ))
+      .orderBy(
+        asc(ticketBenefitEntitlements.createdAt),
+        asc(ticketBenefitEntitlements.id),
+      )
+      .limit(50);
+
+    return (rows as FieldBenefitEntitlementRow[]).map(toFieldBenefitEntitlement);
+  }
+
   private async recordScanEvent(
     db: ScanEventDb,
     input: {
@@ -496,6 +536,7 @@ function classifyScannerContract(
 function toTicketContext(
   contract: QrTicketScannerContract,
   token: string,
+  benefitEntitlements: FieldBenefitEntitlement[] = [],
 ): FieldCheckInTicketContext {
   return {
     reservationNumber: contract.reservationNumber ?? contract.reservationId,
@@ -506,8 +547,67 @@ function toTicketContext(
     ticketStatus: contract.ticketStatus,
     redactedTokenRef: redactedTokenRef(token),
     maskedJti: contract.maskedJti,
-    benefitEntitlements: [],
+    benefitEntitlements,
   };
+}
+
+function toFieldBenefitEntitlement(
+  row: FieldBenefitEntitlementRow,
+): FieldBenefitEntitlement {
+  const displayCopy = ticketBenefitDisplayCopySchema.parse(row.displayCopySnapshot);
+  const base = {
+    id: row.id,
+    runId: row.runId,
+    benefitIdentity: row.benefitIdentity,
+    kind: row.benefitKind,
+    displayCopy,
+    state: row.state,
+    redeemedAt: row.redeemedAt?.toISOString() ?? null,
+  };
+
+  switch (row.source) {
+    case 'configuration':
+      return {
+        ...base,
+        source: 'configuration',
+        runId: null,
+        kind: 'included',
+        attachedToTicket: true,
+      };
+    case 'live_run':
+      if (!row.runId) {
+        throw new InternalServerErrorException('live_run benefit entitlement is missing runId');
+      }
+      return {
+        ...base,
+        source: 'live_run',
+        runId: row.runId,
+        runMode: 'live',
+        attachedToTicket: true,
+      };
+    case 'test_run':
+      if (!row.runId) {
+        throw new InternalServerErrorException('test_run benefit entitlement is missing runId');
+      }
+      return {
+        ...base,
+        source: 'test_run',
+        runId: row.runId,
+        runMode: 'test',
+        attachedToTicket: false,
+      };
+    case 'rollback':
+      if (!row.runId) {
+        throw new InternalServerErrorException('rollback benefit entitlement is missing runId');
+      }
+      return {
+        ...base,
+        source: 'rollback',
+        runId: row.runId,
+        attachedToTicket: true,
+        runMode: 'live',
+      };
+  }
 }
 
 function ticketResourceId(contract: QrTicketScannerContract): string {

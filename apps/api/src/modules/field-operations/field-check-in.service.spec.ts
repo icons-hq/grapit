@@ -4,7 +4,13 @@ import type {
   FieldCheckInVerifyResponse,
 } from '@grabit/shared';
 
-import { ticketItems, ticketScanEvents, tickets } from '../../database/schema/index.js';
+import {
+  ticketBenefitEntitlements,
+  ticketBenefitRedemptionRecords,
+  ticketItems,
+  ticketScanEvents,
+  tickets,
+} from '../../database/schema/index.js';
 import type { QrTicketScannerContract } from '../ticket/qr-ticket.service.js';
 import { FieldCheckInService } from './field-check-in.service.js';
 
@@ -127,12 +133,43 @@ function createDependencies() {
 
 const RAW_QR_TOKEN = 'ey.raw.qr-ticket-token-with-sensitive-jti';
 const FULL_RAW_JTI = 'qr-jti-full-raw-phase27-sensitive-1234567890';
+const BENEFIT_ENTITLEMENT_ID = '00000000-0000-4000-8000-0000000000b1';
+const BENEFIT_RUN_ID = '00000000-0000-4000-8000-0000000000d1';
 const SCANNER_CONTEXT = {
   scannerUserId: 'scanner-user-1',
   deviceAttemptId: 'device-attempt-1',
   ipAddress: '203.0.113.44',
   userAgent: 'Field Scanner Mobile Browser',
 };
+
+function benefitDisplayCopy(name = '6:1') {
+  return {
+    ko: { name, description: `${name} 이벤트 참여 혜택` },
+    en: { name, description: `${name} event benefit` },
+    'zh-CN': { name, description: `${name} 活动福利` },
+    th: { name, description: `สิทธิประโยชน์กิจกรรม ${name}` },
+  };
+}
+
+function benefitEntitlementRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: BENEFIT_ENTITLEMENT_ID,
+    showtimeId: '00000000-0000-4000-8000-000000000001',
+    ticketItemId: 'ticket-item-1',
+    benefitIdentity: 'benefit_6_to_1',
+    benefitKind: 'limited',
+    displayCopySnapshot: benefitDisplayCopy(),
+    source: 'live_run',
+    runId: BENEFIT_RUN_ID,
+    state: 'active',
+    inactiveReason: null,
+    redeemedAt: null,
+    redeemedByUserId: null,
+    createdAt: new Date('2026-07-04T08:00:00.000Z'),
+    updatedAt: new Date('2026-07-04T08:00:00.000Z'),
+    ...overrides,
+  };
+}
 
 function expectNoSensitiveLookupLeak(result: unknown) {
   const serialized = JSON.stringify(result);
@@ -168,7 +205,7 @@ describe('FieldCheckInService RED contract', () => {
     qrTicketService.verifyTicketForScannerContract.mockResolvedValue(
       scannerContract({ maskedJti: 'qr-jti...7890' }),
     );
-    db.select.mockReturnValueOnce(priorScanLookup);
+    db.select.mockReturnValue(priorScanLookup);
     db.update
       .mockReturnValueOnce(updateTicket)
       .mockReturnValueOnce(updateTicketItem);
@@ -207,6 +244,7 @@ describe('FieldCheckInService RED contract', () => {
     expect(db.update).toHaveBeenCalledTimes(2);
     expect(db.update).toHaveBeenCalledWith(tickets);
     expect(db.update).toHaveBeenCalledWith(ticketItems);
+    expect(db.update).not.toHaveBeenCalledWith(ticketBenefitEntitlements);
     expect(updateTicket.set).toHaveBeenCalledWith({
       usedAt: new Date('2026-07-04T09:00:00.000Z'),
       updatedAt: new Date('2026-07-04T09:00:00.000Z'),
@@ -227,6 +265,7 @@ describe('FieldCheckInService RED contract', () => {
       'ticket-item-1',
     )).toBe(true);
     expect(db.insert).toHaveBeenCalledWith(ticketScanEvents);
+    expect(db.insert).not.toHaveBeenCalledWith(ticketBenefitRedemptionRecords);
     expect(insertScanEvent.values).toHaveBeenCalledWith(
       expect.objectContaining({
         ticketId: 'ticket-1',
@@ -252,6 +291,64 @@ describe('FieldCheckInService RED contract', () => {
     );
     expectNoSensitiveLookupLeak(verifyResult);
     expectNoSensitiveLookupLeak(consumeResult);
+  });
+
+  it('verify response includes benefit entitlements for the scanned ticket item', async () => {
+    const { service, qrTicketService, db } = createDependencies();
+    const entitlementLookup = createSelectResult([
+      benefitEntitlementRow(),
+      benefitEntitlementRow({
+        id: '00000000-0000-4000-8000-0000000000b2',
+        source: 'configuration',
+        runId: null,
+        benefitKind: 'included',
+        benefitIdentity: 'vip_drink',
+        displayCopySnapshot: benefitDisplayCopy('무료 음료'),
+      }),
+    ]);
+    qrTicketService.verifyTicketForScannerContract.mockResolvedValue(
+      scannerContract({ maskedJti: 'qr-jti...7890' }),
+    );
+    db.select.mockReturnValueOnce(entitlementLookup);
+
+    const verifyResult = await service.verify({
+      token: RAW_QR_TOKEN,
+      showtimeId: '00000000-0000-4000-8000-000000000001',
+    });
+
+    expect(verifyResult).toMatchObject({
+      outcome: 'processable',
+      ticket: {
+        benefitEntitlements: [
+          expect.objectContaining({
+            id: BENEFIT_ENTITLEMENT_ID,
+            benefitIdentity: 'benefit_6_to_1',
+            kind: 'limited',
+            state: 'active',
+            source: 'live_run',
+            runMode: 'live',
+            attachedToTicket: true,
+          }),
+          expect.objectContaining({
+            benefitIdentity: 'vip_drink',
+            kind: 'included',
+            source: 'configuration',
+            runId: null,
+            attachedToTicket: true,
+          }),
+        ],
+      },
+    });
+    expect(db.select).toHaveBeenCalledWith(expect.objectContaining({
+      id: ticketBenefitEntitlements.id,
+      benefitIdentity: ticketBenefitEntitlements.benefitIdentity,
+    }));
+    expect(entitlementLookup.from).toHaveBeenCalledWith(ticketBenefitEntitlements);
+    expect(sqlPredicateHasParamValue(
+      entitlementLookup.where.mock.calls[0]?.[0],
+      'ticket-item-1',
+    )).toBe(true);
+    expectNoSensitiveLookupLeak(verifyResult);
   });
 
   it('does not consume a ticket item that becomes cancellation_pending after QR verification', async () => {
