@@ -130,6 +130,8 @@ const CAPABILITY_LABELS: Record<AdminCapability, string> = {
   'field.scan.consume': '입장 처리',
   'field.scan.sync': '보류 스캔 동기화',
   'settlement.export': '정산 내보내기',
+  'benefits.manage': '혜택 관리',
+  'benefits.export': '혜택 내보내기',
 };
 
 const RESERVATION_STATUS_LABELS: Record<AdminUserReservationStatus, string> = {

@@ -315,6 +315,13 @@ describe('ReservationDetailView QR ticket card', () => {
                   displayCopy: benefitDisplayCopy('취소 좌석 포함 혜택'),
                   state: 'active',
                 }),
+                limitedBenefit({
+                  id: '00000000-0000-4000-8000-000000000804',
+                  ticketItemId: secondTicketItemId,
+                  displayCopy: benefitDisplayCopy('취소 전 사용 혜택'),
+                  state: 'redeemed',
+                  redeemedAt: '2026-07-04T08:45:00.000Z',
+                }),
               ],
               cancellation: {
                 cancelledAt: '2026-05-23T06:00:00.000Z',
@@ -351,6 +358,9 @@ describe('ReservationDetailView QR ticket card', () => {
     const cancelledBenefits = within(cancelledCard).getByTestId(`ticket-benefits-${secondTicketItemId}`);
     expect(within(cancelledBenefits).getByText('취소 좌석 포함 혜택')).toBeInTheDocument();
     expect(within(cancelledBenefits).getByText('비활성')).toBeInTheDocument();
+    expect(within(cancelledBenefits).getByText('취소 전 사용 혜택')).toBeInTheDocument();
+    expect(within(cancelledBenefits).getByText('사용됨')).toBeInTheDocument();
+    expect(within(cancelledBenefits).getByText(/^사용 일시:/)).toBeInTheDocument();
     expect(within(cancelledBenefits).queryByText('사용 가능')).not.toBeInTheDocument();
     expect(within(cancelledBenefits).queryAllByRole('button')).toHaveLength(0);
   });

@@ -235,11 +235,11 @@ function getBenefitStateKey(
   entitlement: BenefitEntitlement,
   ticketStatus: TicketItem['status'],
 ): 'available' | 'used' | 'inactive' {
-  if (ticketStatus !== 'ACTIVE' || entitlement.state === 'inactive') {
-    return 'inactive';
-  }
   if (entitlement.state === 'redeemed') {
     return 'used';
+  }
+  if (ticketStatus !== 'ACTIVE' || entitlement.state === 'inactive') {
+    return 'inactive';
   }
 
   return 'available';
