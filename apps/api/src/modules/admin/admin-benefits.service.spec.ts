@@ -751,6 +751,20 @@ describe('AdminBenefitsController route contract', () => {
       .toBe('showtimes/:showtimeId/configuration/changes');
     expect(Reflect.getMetadata(PATH_METADATA, prototype.exportConfiguration))
       .toBe('showtimes/:showtimeId/configuration/export');
+    expect(Reflect.getMetadata(PATH_METADATA, prototype.runTest))
+      .toBe('showtimes/:showtimeId/test-runs');
+    expect(Reflect.getMetadata(PATH_METADATA, prototype.runLive))
+      .toBe('showtimes/:showtimeId/live-runs');
+    expect(Reflect.getMetadata(PATH_METADATA, prototype.listRuns))
+      .toBe('showtimes/:showtimeId/runs');
+    expect(Reflect.getMetadata(PATH_METADATA, prototype.getRun))
+      .toBe('runs/:runId');
+    expect(Reflect.getMetadata(PATH_METADATA, prototype.exportRun))
+      .toBe('runs/:runId/export');
+    expect(Reflect.getMetadata(PATH_METADATA, prototype.rollback))
+      .toBe('showtimes/:showtimeId/rollback');
+    expect(Reflect.getMetadata(PATH_METADATA, prototype.exportEntitlements))
+      .toBe('showtimes/:showtimeId/entitlements/export');
     expect(
       Reflect.getMetadata(
         ADMIN_CAPABILITIES_KEY,
@@ -761,6 +775,36 @@ describe('AdminBenefitsController route contract', () => {
       Reflect.getMetadata(
         ADMIN_CAPABILITIES_KEY,
         prototype.exportConfiguration,
+      ),
+    ).toEqual(['benefits.export']);
+    expect(
+      Reflect.getMetadata(
+        ADMIN_CAPABILITIES_KEY,
+        prototype.runTest,
+      ),
+    ).toEqual(['benefits.manage']);
+    expect(
+      Reflect.getMetadata(
+        ADMIN_CAPABILITIES_KEY,
+        prototype.runLive,
+      ),
+    ).toEqual(['benefits.manage']);
+    expect(
+      Reflect.getMetadata(
+        ADMIN_CAPABILITIES_KEY,
+        prototype.rollback,
+      ),
+    ).toEqual(['benefits.manage']);
+    expect(
+      Reflect.getMetadata(
+        ADMIN_CAPABILITIES_KEY,
+        prototype.exportRun,
+      ),
+    ).toEqual(['benefits.export']);
+    expect(
+      Reflect.getMetadata(
+        ADMIN_CAPABILITIES_KEY,
+        prototype.exportEntitlements,
       ),
     ).toEqual(['benefits.export']);
   });

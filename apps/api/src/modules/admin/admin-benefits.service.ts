@@ -466,6 +466,13 @@ export class AdminBenefitsService {
     }
   }
 
+  async assertBenefitResultUnlockedForMutation(
+    db: DrizzleDB,
+    showtimeId: string,
+  ): Promise<void> {
+    await this.assertBenefitResultUnlocked(db, showtimeId);
+  }
+
   async lockShowtimeForBenefitMutation(
     db: BenefitMutationDb,
     showtimeId: string,

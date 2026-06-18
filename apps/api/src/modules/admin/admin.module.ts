@@ -30,6 +30,7 @@ import { AdminSupportContentService } from './admin-support-content.service.js';
 import { PublicSupportContentController } from './public-support-content.controller.js';
 import { AdminSeatOperationsService } from './admin-seat-operations.service.js';
 import { AdminBenefitsService } from './admin-benefits.service.js';
+import { BenefitRunnerService } from './benefit-runner.service.js';
 import { AdminCutoverService } from './admin-cutover.service.js';
 import { AdminSecurityService } from './admin-security.service.js';
 import { AdminUserService } from './admin-user.service.js';
@@ -68,6 +69,7 @@ import { PerformanceIntakeService } from './performance-intake.service.js';
     AdminSupportContentService,
     AdminSeatOperationsService,
     AdminBenefitsService,
+    BenefitRunnerService,
     AdminCutoverService,
     AdminUserService,
     {
