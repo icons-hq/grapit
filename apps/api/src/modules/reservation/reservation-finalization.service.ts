@@ -9,7 +9,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { and, eq, isNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, isNull, or, sql } from 'drizzle-orm';
 import {
   DEFAULT_PERFORMANCE_BOOKING_POLICY,
   toFloorAwareSeatSelection,
@@ -23,6 +23,9 @@ import {
   reservationSeats,
   reservations,
   seatInventories,
+  ticketBenefitConfigurations,
+  ticketBenefitEntitlements,
+  ticketBenefits,
   ticketItems,
 } from '../../database/schema/index.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
@@ -71,6 +74,10 @@ type TicketLimitSnapshot = {
   activeTicketCount: number;
 };
 type TicketLimitExecutor = Pick<DrizzleDB, 'execute'>;
+type TicketItemBenefitCandidate = {
+  id: string;
+  tierName: string;
+};
 
 const TICKET_SERVICE_FEE_KRW = 2000;
 const OVERSEAS_CARD_PROVIDER_METADATA = {
@@ -668,7 +675,7 @@ export class ReservationFinalizationService {
           }
           const ticketItemPaymentId = committedPaymentId;
 
-          await tx.insert(ticketItems).values(
+          const insertedTicketItems = await tx.insert(ticketItems).values(
             pendingSeats.map((seat) => ({
               reservationId: reservation.id,
               paymentId: ticketItemPaymentId,
@@ -685,6 +692,16 @@ export class ReservationFinalizationService {
               status: 'active' as const,
               admissionState: 'not_entered' as const,
             })),
+          ).returning({
+            id: ticketItems.id,
+            tierName: ticketItems.tierName,
+          });
+
+          await this.syncIncludedBenefitEntitlementsForTicketItems(
+            tx,
+            reservation.showtimeId,
+            insertedTicketItems,
+            new Date(),
           );
 
           for (const seat of pendingSeats) {
@@ -1181,6 +1198,73 @@ export class ReservationFinalizationService {
         && metadata.requestedProvider.toUpperCase() === 'OVERSEAS_CARD'
       )
     );
+  }
+
+  private async syncIncludedBenefitEntitlementsForTicketItems(
+    db: DrizzleDB,
+    showtimeId: string,
+    ticketItemRows: TicketItemBenefitCandidate[],
+    now: Date,
+  ): Promise<void> {
+    if (ticketItemRows.length === 0) {
+      return;
+    }
+
+    const [configuration] = await db
+      .select({ id: ticketBenefitConfigurations.id })
+      .from(ticketBenefitConfigurations)
+      .where(eq(ticketBenefitConfigurations.showtimeId, showtimeId))
+      .orderBy(desc(ticketBenefitConfigurations.version))
+      .limit(1);
+
+    if (!configuration) {
+      return;
+    }
+
+    const includedBenefits = await db
+      .select({
+        identity: ticketBenefits.identity,
+        kind: ticketBenefits.kind,
+        displayCopy: ticketBenefits.displayCopy,
+        eligibleTierNames: ticketBenefits.eligibleTierNames,
+      })
+      .from(ticketBenefits)
+      .where(and(
+        eq(ticketBenefits.configurationId, configuration.id),
+        eq(ticketBenefits.kind, 'included'),
+      ));
+
+    const entitlementsToInsert = includedBenefits
+      .filter((benefit) => benefit.kind === 'included')
+      .flatMap((benefit) => {
+        const eligibleTierNames = new Set(benefit.eligibleTierNames);
+        return ticketItemRows
+          .filter((ticketItem) => eligibleTierNames.has(ticketItem.tierName))
+          .map((ticketItem) => ({
+            showtimeId,
+            ticketItemId: ticketItem.id,
+            benefitIdentity: benefit.identity,
+            benefitKind: 'included' as const,
+            displayCopySnapshot: benefit.displayCopy,
+            source: 'configuration' as const,
+            runId: null,
+            state: 'active' as const,
+            inactiveReason: null,
+            redeemedAt: null,
+            redeemedByUserId: null,
+            createdAt: now,
+            updatedAt: now,
+          }));
+      });
+
+    if (entitlementsToInsert.length === 0) {
+      return;
+    }
+
+    await db
+      .insert(ticketBenefitEntitlements)
+      .values(entitlementsToInsert)
+      .onConflictDoNothing();
   }
 
   private calculatePayableTotal(seats: FloorAwareSeatSelection[]): number {

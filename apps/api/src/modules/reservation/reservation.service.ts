@@ -28,6 +28,7 @@ import {
   bookingPolicies,
   ticketItems,
   tickets,
+  ticketBenefitEntitlements,
   users,
   reservationPaymentFailureDiagnostics,
 } from '../../database/schema/index.js';
@@ -68,6 +69,7 @@ import {
   DEFAULT_SEAT_FLOOR_KEY,
   DEFAULT_SEAT_FLOOR_LABEL,
   normalizeSeatIdentity,
+  ticketBenefitDisplayCopySchema,
   toFloorAwareSeatSelection,
 } from '@grabit/shared';
 import type {
@@ -83,6 +85,7 @@ import type {
   QrTicket,
   SeatSelection,
   TicketItem,
+  BenefitEntitlement,
   ReservationStatus,
   ReservationListItem,
   ReservationDetail,
@@ -117,6 +120,7 @@ type ShowtimeBookingContext = {
 };
 type ReservationSeatRow = typeof reservationSeats.$inferSelect;
 type TicketItemRow = typeof ticketItems.$inferSelect;
+type TicketBenefitEntitlementRow = typeof ticketBenefitEntitlements.$inferSelect;
 type TicketItemCancellationContext = {
   reservationId: string;
   userId: string;
@@ -1408,6 +1412,11 @@ export class ReservationService {
       .from(ticketItems)
       .where(eq(ticketItems.reservationId, reservationId))
       .orderBy(asc(ticketItems.createdAt), asc(ticketItems.id));
+    const benefitEntitlementsByTicketItemId = ticketItemRows.length > 0
+      ? await this.loadBenefitEntitlementsForTicketItems(
+          ticketItemRows.map((ticketItem) => ticketItem.id),
+        )
+      : new Map<string, BenefitEntitlement[]>();
 
     let qrTickets: QrTicket[] = [];
     if (
@@ -1423,7 +1432,7 @@ export class ReservationService {
       });
     }
     const ticketItemDtos = ticketItemRows.length > 0
-      ? this.mapTicketItems(ticketItemRows, qrTickets)
+      ? this.mapTicketItems(ticketItemRows, qrTickets, benefitEntitlementsByTicketItemId)
       : this.mapReservationSeatsToTicketItems({
           seats,
           reservationId,
@@ -1509,14 +1518,96 @@ export class ReservationService {
     };
   }
 
-  private mapTicketItems(rows: TicketItemRow[], qrTickets: QrTicket[]): TicketItem[] {
+  private async loadBenefitEntitlementsForTicketItems(
+    ticketItemIds: string[],
+  ): Promise<Map<string, BenefitEntitlement[]>> {
+    if (ticketItemIds.length === 0) {
+      return new Map();
+    }
+
+    const entitlementRows = await this.db
+      .select()
+      .from(ticketBenefitEntitlements)
+      .where(inArray(ticketBenefitEntitlements.ticketItemId, ticketItemIds))
+      .orderBy(asc(ticketBenefitEntitlements.createdAt), asc(ticketBenefitEntitlements.id));
+    const result = new Map<string, BenefitEntitlement[]>();
+
+    for (const row of entitlementRows) {
+      const entitlement = this.mapBenefitEntitlement(row);
+      const entitlements = result.get(row.ticketItemId) ?? [];
+      entitlements.push(entitlement);
+      result.set(row.ticketItemId, entitlements);
+    }
+
+    return result;
+  }
+
+  private mapBenefitEntitlement(row: TicketBenefitEntitlementRow): BenefitEntitlement {
+    const displayCopy = ticketBenefitDisplayCopySchema.parse(row.displayCopySnapshot);
+    const base = {
+      id: row.id,
+      ticketItemId: row.ticketItemId,
+      showtimeId: row.showtimeId,
+      runId: row.runId,
+      benefitIdentity: row.benefitIdentity,
+      kind: row.benefitKind,
+      displayCopy,
+      state: row.state,
+      assignedAt: row.createdAt.toISOString(),
+      redeemedAt: row.redeemedAt?.toISOString() ?? null,
+    };
+
+    switch (row.source) {
+      case 'configuration':
+        return {
+          ...base,
+          source: 'configuration',
+          runId: null,
+          kind: 'included',
+          attachedToTicket: true,
+        };
+      case 'live_run':
+        return {
+          ...base,
+          source: 'live_run',
+          runId: row.runId as string,
+          runMode: 'live',
+          attachedToTicket: true,
+        };
+      case 'test_run':
+        return {
+          ...base,
+          source: 'test_run',
+          runId: row.runId as string,
+          runMode: 'test',
+          attachedToTicket: false,
+        };
+      case 'rollback':
+        return {
+          ...base,
+          source: 'rollback',
+          attachedToTicket: true,
+          ...(row.runId ? { runMode: 'live' as const } : {}),
+        };
+    }
+  }
+
+  private mapTicketItems(
+    rows: TicketItemRow[],
+    qrTickets: QrTicket[],
+    benefitEntitlementsByTicketItemId: Map<string, BenefitEntitlement[]>,
+  ): TicketItem[] {
     const activeQrByTicketItemId = new Map(
       qrTickets
         .filter((ticket) => ticket.ticketItemId)
         .map((ticket) => [ticket.ticketItemId, ticket]),
     );
 
-    return rows.map((row) => this.mapTicketItem(row, activeQrByTicketItemId.get(row.id)));
+    return rows.map((row) => this.mapTicketItem(
+      row,
+      activeQrByTicketItemId.get(row.id),
+      benefitEntitlementsByTicketItemId.get(row.id) ?? [],
+    ));
   }
 
   private mapReservationSeatsToTicketItems(input: {
@@ -1559,7 +1650,11 @@ export class ReservationService {
     });
   }
 
-  private mapTicketItem(row: TicketItemRow, qrTicket?: QrTicket): TicketItem {
+  private mapTicketItem(
+    row: TicketItemRow,
+    qrTicket: QrTicket | undefined,
+    benefitEntitlements: BenefitEntitlement[],
+  ): TicketItem {
     return {
       id: row.id,
       reservationId: row.reservationId,
@@ -1578,7 +1673,7 @@ export class ReservationService {
       admissionState: this.mapTicketItemAdmissionState(row.admissionState),
       enteredAt: row.enteredAt?.toISOString() ?? null,
       qrCredential: this.mapTicketItemQrCredential(qrTicket),
-      benefitEntitlements: [],
+      benefitEntitlements,
       cancellation: this.mapTicketItemCancellation(row),
     };
   }
@@ -2097,6 +2192,28 @@ export class ReservationService {
     return candidate.name === 'TossPaymentError' && typeof candidate.code === 'string';
   }
 
+  private async inactivateBenefitEntitlementsForTicketItems(
+    db: DrizzleDB,
+    ticketItemIds: string[],
+    now: Date,
+  ): Promise<void> {
+    if (ticketItemIds.length === 0) {
+      return;
+    }
+
+    await db
+      .update(ticketBenefitEntitlements)
+      .set({
+        state: 'inactive',
+        inactiveReason: 'ticket_item_cancelled',
+        updatedAt: now,
+      })
+      .where(and(
+        inArray(ticketBenefitEntitlements.ticketItemId, ticketItemIds),
+        ne(ticketBenefitEntitlements.state, 'redeemed'),
+      ));
+  }
+
   async cancelTicketItem(
     reservationId: string,
     ticketItemId: string,
@@ -2355,6 +2472,12 @@ export class ReservationService {
               eq(ticketItems.status, 'cancellation_pending'),
             ),
           );
+
+        await this.inactivateBenefitEntitlementsForTicketItems(
+          tx,
+          [ticketItemId],
+          committedCancellation.now,
+        );
 
         const unresolvedSiblings = await tx
           .select({ id: ticketItems.id })

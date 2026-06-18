@@ -4,6 +4,9 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   payments,
   seatInventories,
+  ticketBenefitConfigurations,
+  ticketBenefitEntitlements,
+  ticketBenefits,
   ticketItems,
 } from '../../database/schema/index.js';
 import { ReservationFinalizationService } from './reservation-finalization.service.js';
@@ -37,6 +40,28 @@ function ticketLimitResult({
       active_ticket_count: activeTicketCount,
     }],
   };
+}
+
+function emptyBenefitConfigurationSelect() {
+  return vi.fn(() => ({
+    from: vi.fn((table: unknown) => {
+      if (table === ticketBenefitConfigurations) {
+        return {
+          where: vi.fn().mockReturnValue({
+            orderBy: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue([]),
+            }),
+          }),
+        };
+      }
+      if (table === ticketBenefits) {
+        return {
+          where: vi.fn().mockResolvedValue([]),
+        };
+      }
+      return chainResult([]);
+    }),
+  }));
 }
 
 function createDependencies() {
@@ -311,6 +336,19 @@ describe('ReservationFinalizationService', () => {
               returning: vi.fn().mockResolvedValue([{ id: 'payment-paypal-1' }]),
             };
           }
+          if (table === ticketItems) {
+            return {
+              returning: vi.fn().mockResolvedValue([
+                { id: 'ticket-item-1', tierName: 'VIP' },
+                { id: 'ticket-item-2', tierName: 'R' },
+              ]),
+            };
+          }
+          if (table === ticketBenefitEntitlements) {
+            return {
+              onConflictDoNothing: vi.fn().mockResolvedValue(undefined),
+            };
+          }
           if (table === seatInventories) {
             return {
               onConflictDoNothing: vi.fn().mockReturnValue({
@@ -321,6 +359,7 @@ describe('ReservationFinalizationService', () => {
           return {};
         }),
       })),
+      select: emptyBenefitConfigurationSelect(),
     };
     db.transaction.mockImplementation(async (cb: (tx: typeof tx) => Promise<unknown>) => cb(tx));
 
@@ -429,6 +468,18 @@ describe('ReservationFinalizationService', () => {
               returning: vi.fn().mockResolvedValue([{ id: 'payment-overseas-card-krw-1' }]),
             };
           }
+          if (table === ticketItems) {
+            return {
+              returning: vi.fn().mockResolvedValue([
+                { id: 'ticket-item-1', tierName: 'VIP' },
+              ]),
+            };
+          }
+          if (table === ticketBenefitEntitlements) {
+            return {
+              onConflictDoNothing: vi.fn().mockResolvedValue(undefined),
+            };
+          }
           if (table === seatInventories) {
             return {
               onConflictDoNothing: vi.fn().mockReturnValue({
@@ -439,6 +490,7 @@ describe('ReservationFinalizationService', () => {
           return {};
         }),
       })),
+      select: emptyBenefitConfigurationSelect(),
     };
     db.transaction.mockImplementation(async (cb: (tx: typeof tx) => Promise<unknown>) => cb(tx));
 
@@ -561,6 +613,18 @@ describe('ReservationFinalizationService', () => {
               returning: vi.fn().mockResolvedValue([{ id: 'payment-overseas-card-1' }]),
             };
           }
+          if (table === ticketItems) {
+            return {
+              returning: vi.fn().mockResolvedValue([
+                { id: 'ticket-item-1', tierName: 'VIP' },
+              ]),
+            };
+          }
+          if (table === ticketBenefitEntitlements) {
+            return {
+              onConflictDoNothing: vi.fn().mockResolvedValue(undefined),
+            };
+          }
           if (table === seatInventories) {
             return {
               onConflictDoNothing: vi.fn().mockReturnValue({
@@ -571,6 +635,7 @@ describe('ReservationFinalizationService', () => {
           return {};
         }),
       })),
+      select: emptyBenefitConfigurationSelect(),
     };
     db.transaction.mockImplementation(async (cb: (tx: typeof tx) => Promise<unknown>) => cb(tx));
 
@@ -1465,6 +1530,24 @@ describe('ReservationFinalizationService', () => {
               returning: vi.fn().mockResolvedValue([{ id: 'payment-1' }]),
             };
           }
+          if (table === ticketItems) {
+            return {
+              returning: vi.fn().mockResolvedValue([
+                { id: 'ticket-item-1', tierName: 'VIP' },
+                { id: 'ticket-item-2', tierName: 'VIP' },
+              ]),
+            };
+          }
+          if (table === ticketBenefitEntitlements) {
+            return {
+              onConflictDoNothing: vi.fn().mockReturnValue({
+                returning: vi.fn().mockResolvedValue([
+                  { id: 'included-entitlement-1' },
+                  { id: 'included-entitlement-2' },
+                ]),
+              }),
+            };
+          }
           if (table === seatInventories) {
             return {
               onConflictDoNothing: vi.fn().mockReturnValue({
@@ -1473,6 +1556,48 @@ describe('ReservationFinalizationService', () => {
             };
           }
           return {};
+        }),
+      })),
+      select: vi.fn((selection?: unknown) => ({
+        from: vi.fn((table: unknown) => {
+          if (table === ticketBenefitConfigurations) {
+            return {
+              where: vi.fn().mockReturnValue({
+                orderBy: vi.fn().mockReturnValue({
+                  limit: vi.fn().mockResolvedValue([{ id: 'configuration-1' }]),
+                }),
+              }),
+            };
+          }
+          if (table === ticketBenefits) {
+            return {
+              where: vi.fn().mockResolvedValue([
+                {
+                  identity: 'vip-drink',
+                  kind: 'included',
+                  displayCopy: {
+                    ko: { name: 'VIP 음료', description: 'VIP 음료 제공' },
+                    en: { name: 'VIP drink', description: 'VIP drink' },
+                    'zh-CN': { name: 'VIP 饮料', description: 'VIP 饮料' },
+                    th: { name: 'เครื่องดื่ม VIP', description: 'เครื่องดื่ม VIP' },
+                  },
+                  eligibleTierNames: ['VIP'],
+                },
+                {
+                  identity: 'meet-and-greet',
+                  kind: 'limited',
+                  displayCopy: {
+                    ko: { name: '밋앤그릿', description: '한정 혜택' },
+                    en: { name: 'Meet and greet', description: 'Limited benefit' },
+                    'zh-CN': { name: '见面会', description: '限量福利' },
+                    th: { name: 'พบศิลปิน', description: 'สิทธิประโยชน์จำกัด' },
+                  },
+                  eligibleTierNames: ['VIP'],
+                },
+              ]),
+            };
+          }
+          return chainResult([]);
         }),
       })),
     };
@@ -1520,6 +1645,37 @@ describe('ReservationFinalizationService', () => {
         }),
       ],
     });
+    expect(insertedValues).toContainEqual({
+      table: ticketBenefitEntitlements,
+      values: [
+        expect.objectContaining({
+          showtimeId: 'showtime-1',
+          ticketItemId: 'ticket-item-1',
+          benefitIdentity: 'vip-drink',
+          benefitKind: 'included',
+          source: 'configuration',
+          runId: null,
+          state: 'active',
+        }),
+        expect.objectContaining({
+          showtimeId: 'showtime-1',
+          ticketItemId: 'ticket-item-2',
+          benefitIdentity: 'vip-drink',
+          benefitKind: 'included',
+          source: 'configuration',
+          runId: null,
+          state: 'active',
+        }),
+      ],
+    });
+    const entitlementInsert = insertedValues.find((entry) =>
+      typeof entry === 'object'
+      && entry !== null
+      && 'table' in entry
+      && (entry as { table: unknown }).table === ticketBenefitEntitlements
+    ) as { values: Array<{ benefitKind: string }> } | undefined;
+    expect(entitlementInsert?.values.every((value) => value.benefitKind === 'included'))
+      .toBe(true);
     expect(qrTicketService.ensureIssuedTicketsForReservation).toHaveBeenCalledWith({
       reservationId: 'reservation-1',
       paymentId: 'payment-1',
