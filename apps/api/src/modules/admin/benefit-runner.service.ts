@@ -26,6 +26,7 @@ import {
   ticketBenefits,
   ticketItems,
 } from '../../database/schema/index.js';
+import { AdminAuditService } from './admin-audit.service.js';
 import { AdminBenefitsService } from './admin-benefits.service.js';
 import { safeCsvRows, withUtf8Bom } from './csv-export.util.js';
 
@@ -97,6 +98,9 @@ export interface BenefitRunOperationContext {
 export interface BenefitRunExportActor {
   actorUserId: string;
   now?: Date;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  requestId?: string | null;
 }
 
 export interface BenefitCsvExportResult {
@@ -143,6 +147,7 @@ export class BenefitRunnerService {
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
     private readonly adminBenefitsService: AdminBenefitsService,
+    private readonly adminAuditService: AdminAuditService,
   ) {}
 
   async runTest(
@@ -291,22 +296,22 @@ export class BenefitRunnerService {
         throw new InternalServerErrorException('혜택 라이브 실행 결과를 확인할 수 없습니다');
       }
 
-      const summaryWithRunId = attachRunIdToExportRows(summary, run.id);
-      await this.replaceRunSummary(tx as DrizzleDB, run.id, summaryWithRunId, now);
       await inactivateActiveLimitedEntitlements(
         tx as DrizzleDB,
         input.showtimeId,
         'replaced_by_live_run',
         now,
       );
-      await insertAssignmentsAsEntitlements({
+      const insertedEntitlementIds = await insertAssignmentsAsEntitlements({
         db: tx as DrizzleDB,
         showtimeId: input.showtimeId,
         runId: run.id,
         source: 'live_run',
-        assignments: summaryWithRunId.assignments,
+        assignments: summary.assignments,
         now,
       });
+      const finalSummary = attachRunEvidence(summary, run.id, insertedEntitlementIds);
+      await this.replaceRunSummary(tx as DrizzleDB, run.id, finalSummary, now);
 
       return buildRunRecord({
         id: run.id,
@@ -317,7 +322,7 @@ export class BenefitRunnerService {
         actorUserId: input.actorUserId,
         createdAt: run.createdAt,
         updatedAt: run.updatedAt,
-        resultSummary: summaryWithRunId,
+        resultSummary: finalSummary,
       });
     });
   }
@@ -351,8 +356,11 @@ export class BenefitRunnerService {
       if (sourceRun.mode !== 'live') {
         throw new BadRequestException('live run만 rollback source로 사용할 수 있습니다');
       }
+      if (sourceRun.status !== 'completed') {
+        throw new BadRequestException('완료된 live run만 rollback source로 사용할 수 있습니다');
+      }
 
-      const sourceSummary = normalizeResultSummary(sourceRun.resultSummary);
+      const sourceSummary = parseCompletedRunSummary(sourceRun.resultSummary);
       const activeCandidates = await this.loadActiveTicketItemCandidates(
         tx as DrizzleDB,
         input.showtimeId,
@@ -398,22 +406,26 @@ export class BenefitRunnerService {
         throw new InternalServerErrorException('혜택 rollback 실행 결과를 확인할 수 없습니다');
       }
 
-      const summaryWithRunId = attachRunIdToExportRows(restoredSummary, run.id);
-      await this.replaceRunSummary(tx as DrizzleDB, run.id, summaryWithRunId, now);
       await inactivateActiveLimitedEntitlements(
         tx as DrizzleDB,
         input.showtimeId,
         'rollback_to_previous_run',
         now,
       );
-      await insertAssignmentsAsEntitlements({
+      const insertedEntitlementIds = await insertAssignmentsAsEntitlements({
         db: tx as DrizzleDB,
         showtimeId: input.showtimeId,
         runId: run.id,
         source: 'rollback',
-        assignments: summaryWithRunId.assignments,
+        assignments: restoredSummary.assignments,
         now,
       });
+      const finalSummary = attachRunEvidence(
+        restoredSummary,
+        run.id,
+        insertedEntitlementIds,
+      );
+      await this.replaceRunSummary(tx as DrizzleDB, run.id, finalSummary, now);
 
       return buildRunRecord({
         id: run.id,
@@ -424,12 +436,18 @@ export class BenefitRunnerService {
         actorUserId: input.actorUserId,
         createdAt: run.createdAt,
         updatedAt: run.updatedAt,
-        resultSummary: summaryWithRunId,
+        resultSummary: finalSummary,
       });
     });
   }
 
-  async listRuns(showtimeId: string, limit = 50): Promise<BenefitRunRecordWithSummary[]> {
+  async listRuns(
+    showtimeId: string,
+    limit = 50,
+  ): Promise<{
+    runs: BenefitRunRecordWithSummary[];
+    nextCursor: null;
+  }> {
     const rows = await this.db
       .select()
       .from(ticketBenefitRuns)
@@ -437,7 +455,10 @@ export class BenefitRunnerService {
       .orderBy(desc(ticketBenefitRuns.createdAt))
       .limit(Math.min(Math.max(limit, 1), 200));
 
-    return (rows as BenefitRunRow[]).map(rowToRunRecord);
+    return {
+      runs: (rows as BenefitRunRow[]).map(rowToRunRecord),
+      nextCursor: null,
+    };
   }
 
   async getRun(runId: string): Promise<BenefitRunRecordWithSummary> {
@@ -457,6 +478,25 @@ export class BenefitRunnerService {
       entitlementExportHeader(),
       ...rows.map(entitlementExportRowToCsvValues),
     ]));
+    await this.adminAuditService.write({
+      actorUserId: actor.actorUserId,
+      action: 'benefits.run.export',
+      resourceType: 'benefit_run',
+      resourceId: runId,
+      status: 'success',
+      reason: null,
+      changedFields: ['runId', 'showtimeId', 'rowCount', 'generatedAt'],
+      before: {},
+      after: {
+        runId,
+        showtimeId: row.showtimeId,
+        rowCount: rows.length,
+        generatedAt,
+      },
+      ipAddress: actor.ipAddress ?? null,
+      userAgent: actor.userAgent ?? null,
+      requestId: actor.requestId ?? null,
+    }, this.db);
 
     return {
       filename: `benefit-run-${runId}-${generatedAt.slice(0, 10)}.csv`,
@@ -494,6 +534,24 @@ export class BenefitRunnerService {
       entitlementExportHeader(),
       ...exportRows.map(entitlementExportRowToCsvValues),
     ]));
+    await this.adminAuditService.write({
+      actorUserId: actor.actorUserId,
+      action: 'benefits.entitlements.export',
+      resourceType: 'benefit_entitlements',
+      resourceId: showtimeId,
+      status: 'success',
+      reason: null,
+      changedFields: ['showtimeId', 'rowCount', 'generatedAt'],
+      before: {},
+      after: {
+        showtimeId,
+        rowCount: exportRows.length,
+        generatedAt,
+      },
+      ipAddress: actor.ipAddress ?? null,
+      userAgent: actor.userAgent ?? null,
+      requestId: actor.requestId ?? null,
+    }, this.db);
 
     return {
       filename: `benefit-entitlements-${showtimeId}-${generatedAt.slice(0, 10)}.csv`,
@@ -771,6 +829,34 @@ function attachRunIdToExportRows(
   };
 }
 
+function attachRunEvidence(
+  summary: BenefitRunResultSummary,
+  runId: string,
+  entitlementIds: string[],
+): BenefitRunResultSummary {
+  if (entitlementIds.length !== summary.assignments.length) {
+    throw new InternalServerErrorException('혜택 entitlement 저장 결과 수가 일치하지 않습니다');
+  }
+
+  return {
+    ...summary,
+    exportRows: summary.exportRows.map((row, index) => ({
+      ...row,
+      benefitEntitlementId: entitlementIds[index]!,
+      runId,
+    }) as BenefitEntitlementExportRow),
+  };
+}
+
+function parseCompletedRunSummary(value: unknown): BenefitRunResultSummary {
+  const summary = value as Partial<BenefitRunResultSummary> | null;
+  if (!summary || !Array.isArray(summary.assignments) || !Array.isArray(summary.benefits)) {
+    throw new BadRequestException('rollback source run의 결과 summary가 유효하지 않습니다');
+  }
+
+  return normalizeResultSummary(summary);
+}
+
 function assignmentToExportRow(input: {
   assignment: BenefitAssignment;
   showtimeId: string;
@@ -882,12 +968,12 @@ async function insertAssignmentsAsEntitlements(input: {
   source: 'live_run' | 'rollback';
   assignments: BenefitAssignment[];
   now: Date;
-}): Promise<void> {
+}): Promise<string[]> {
   if (input.assignments.length === 0) {
-    return;
+    return [];
   }
 
-  await input.db
+  const inserted = await input.db
     .insert(ticketBenefitEntitlements)
     .values(input.assignments.map((assignment) => ({
       showtimeId: input.showtimeId,
@@ -905,6 +991,8 @@ async function insertAssignmentsAsEntitlements(input: {
       updatedAt: input.now,
     })))
     .returning({ id: ticketBenefitEntitlements.id });
+
+  return inserted.map((row) => row.id);
 }
 
 function configurationFromRows(

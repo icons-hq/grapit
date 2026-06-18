@@ -195,6 +195,8 @@ export class AdminBenefitsController {
   }
 
   @Get('showtimes/:showtimeId/runs')
+  @UseGuards(AdminCapabilitiesGuard)
+  @AdminCapabilities('benefits.manage')
   async listRuns(
     @Param('showtimeId', new ZodValidationPipe(showtimeIdSchema))
     showtimeId: string,
@@ -203,6 +205,8 @@ export class AdminBenefitsController {
   }
 
   @Get('runs/:runId')
+  @UseGuards(AdminCapabilitiesGuard)
+  @AdminCapabilities('benefits.manage')
   async getRun(
     @Param('runId', new ZodValidationPipe(runIdSchema))
     runId: string,
@@ -217,10 +221,12 @@ export class AdminBenefitsController {
     @CurrentUser('id') actorUserId: string,
     @Param('runId', new ZodValidationPipe(runIdSchema))
     runId: string,
+    @Req() request: Request,
     @Res({ passthrough: true }) response: Response,
   ) {
     const result = await this.benefitRunnerService.exportRun(runId, {
       actorUserId,
+      ...requestContext(request),
     });
 
     response.set({
@@ -256,10 +262,12 @@ export class AdminBenefitsController {
     @CurrentUser('id') actorUserId: string,
     @Param('showtimeId', new ZodValidationPipe(showtimeIdSchema))
     showtimeId: string,
+    @Req() request: Request,
     @Res({ passthrough: true }) response: Response,
   ) {
     const result = await this.benefitRunnerService.exportEntitlements(showtimeId, {
       actorUserId,
+      ...requestContext(request),
     });
 
     response.set({

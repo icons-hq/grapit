@@ -792,6 +792,18 @@ describe('AdminBenefitsController route contract', () => {
     expect(
       Reflect.getMetadata(
         ADMIN_CAPABILITIES_KEY,
+        prototype.listRuns,
+      ),
+    ).toEqual(['benefits.manage']);
+    expect(
+      Reflect.getMetadata(
+        ADMIN_CAPABILITIES_KEY,
+        prototype.getRun,
+      ),
+    ).toEqual(['benefits.manage']);
+    expect(
+      Reflect.getMetadata(
+        ADMIN_CAPABILITIES_KEY,
         prototype.rollback,
       ),
     ).toEqual(['benefits.manage']);

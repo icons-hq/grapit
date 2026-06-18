@@ -46,6 +46,8 @@ describe('AdminAuditService', () => {
       expect.arrayContaining([
         'benefits.configuration.update',
         'benefits.configuration.export',
+        'benefits.run.export',
+        'benefits.entitlements.export',
       ]),
     );
   });
@@ -78,6 +80,8 @@ describe('AdminAuditService', () => {
       'settlement.export',
       'benefits.configuration.update',
       'benefits.configuration.export',
+      'benefits.run.export',
+      'benefits.entitlements.export',
       'security.allowlist.update',
       'security.permission.update',
       'user.export_raw',

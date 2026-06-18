@@ -21,9 +21,17 @@ const migrationPath = resolve(
   __dirname,
   '../migrations/0029_ticket_benefits.sql',
 );
+const benefitExportAuditMigrationPath = resolve(
+  __dirname,
+  '../migrations/0030_benefit_export_audit_actions.sql',
+);
 
 function readMigration() {
   return readFileSync(migrationPath, 'utf8');
+}
+
+function readBenefitAuditMigration() {
+  return `${readMigration()}\n${readFileSync(benefitExportAuditMigrationPath, 'utf8')}`;
 }
 
 function readSchemaSource() {
@@ -82,7 +90,16 @@ describe('ticket benefit schema contracts', () => {
         tag: '0029_ticket_benefits',
       }),
     );
+    expect(journal.entries).toContainEqual(
+      expect.objectContaining({
+        idx: 31,
+        tag: '0030_benefit_export_audit_actions',
+      }),
+    );
     expect(existsSync(resolve(migrationsDir, 'meta/0029_snapshot.json'))).toBe(
+      false,
+    );
+    expect(existsSync(resolve(migrationsDir, 'meta/0030_snapshot.json'))).toBe(
       false,
     );
   });
@@ -309,10 +326,12 @@ describe('ticket benefit schema contracts', () => {
   });
 
   it('extends admin audit action enum for benefit configuration writes and exports', () => {
-    const migration = readMigration();
+    const migration = readBenefitAuditMigration();
     const benefitAuditActions = [
       'benefits.configuration.update',
       'benefits.configuration.export',
+      'benefits.run.export',
+      'benefits.entitlements.export',
     ];
 
     expect(adminAuditActionEnum.enumValues).toEqual(

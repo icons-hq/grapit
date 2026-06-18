@@ -128,6 +128,22 @@ describe('admin operations contract', () => {
         resourceType: 'ticket_benefit_configuration_export',
       }).action,
     ).toBe('benefits.configuration.export');
+    expect(
+      adminAuditEventSchema.parse({
+        ...parsed,
+        id: 'audit-benefit-run-export-1',
+        action: 'benefits.run.export',
+        resourceType: 'benefit_run',
+      }).action,
+    ).toBe('benefits.run.export');
+    expect(
+      adminAuditEventSchema.parse({
+        ...parsed,
+        id: 'audit-benefit-entitlements-export-1',
+        action: 'benefits.entitlements.export',
+        resourceType: 'benefit_entitlements',
+      }).action,
+    ).toBe('benefits.entitlements.export');
   });
 
   it('validates raw user export audit actions and reasoned export requests', () => {

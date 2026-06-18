@@ -41,6 +41,8 @@ describe('Phase 25 admin operations security schema contracts', () => {
       'settlement.export',
       'benefits.configuration.update',
       'benefits.configuration.export',
+      'benefits.run.export',
+      'benefits.entitlements.export',
       'security.allowlist.update',
       'security.permission.update',
       'user.withdraw',

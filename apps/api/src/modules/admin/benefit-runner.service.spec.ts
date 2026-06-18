@@ -14,6 +14,7 @@ import {
   ticketBenefits,
   ticketItems,
 } from '../../database/schema/index.js';
+import type { AdminAuditService } from './admin-audit.service.js';
 import type { AdminBenefitsService } from './admin-benefits.service.js';
 import * as csvExport from './csv-export.util.js';
 import { BenefitRunnerService } from './benefit-runner.service.js';
@@ -23,6 +24,8 @@ const ACTOR_ID = '00000000-0000-4000-8000-0000000000a1';
 const CONFIG_ID = '00000000-0000-4000-8000-00000000c001';
 const RUN_ID = '00000000-0000-4000-8000-00000000f001';
 const ROLLBACK_RUN_ID = '00000000-0000-4000-8000-00000000f002';
+const ENTITLEMENT_ID_1 = '00000000-0000-4000-8000-00000000e001';
+const ENTITLEMENT_ID_2 = '00000000-0000-4000-8000-00000000e002';
 const NOW = new Date('2026-06-18T01:23:45.000Z');
 const ticketIdByLabel = new Map<string, string>();
 
@@ -258,7 +261,7 @@ function createMockDb(
             }
             if (table === ticketBenefitEntitlements && Array.isArray(values)) {
               return chainResult(values.map((_, index) => ({
-                id: `entitlement-${index + 1}`,
+                id: index === 0 ? ENTITLEMENT_ID_1 : ENTITLEMENT_ID_2,
               })));
             }
             return chainResult([]);
@@ -317,14 +320,19 @@ function createService(
   const db = createMockDb(selectRows, { runIds: options.runIds });
   const adminBenefitsService =
     options.adminBenefitsService ?? createAdminBenefitsService();
+  const adminAuditService = {
+    write: vi.fn().mockResolvedValue({ id: 'audit-1' }),
+  } as unknown as AdminAuditService & { write: Mock };
   const service = new BenefitRunnerService(
     db.db as never,
     adminBenefitsService as never,
+    adminAuditService as never,
   );
 
   return {
     service,
     adminBenefitsService,
+    adminAuditService,
     ...db,
   };
 }
@@ -359,6 +367,15 @@ function assignmentIdentities(result: {
 
 function entitlementInsertValues(insertCalls: Array<{ table: unknown; values: unknown }>) {
   return insertCalls.find((call) => call.table === ticketBenefitEntitlements)?.values;
+}
+
+function lastRunSummaryUpdate(updateCalls: Array<{
+  table: unknown;
+  values: Record<string, unknown>;
+}>) {
+  return updateCalls
+    .filter((call) => call.table === ticketBenefitRuns)
+    .at(-1)?.values.resultSummary;
 }
 
 describe('BenefitRunnerService', () => {
@@ -654,6 +671,21 @@ describe('BenefitRunnerService', () => {
         state: 'active',
       }),
     ]);
+    expect(result.resultSummary.exportRows).toEqual([
+      expect.objectContaining({
+        benefitEntitlementId: ENTITLEMENT_ID_1,
+        ticketItemId: ticketId('ticket-001'),
+      }),
+    ]);
+    expect(lastRunSummaryUpdate(updateCalls)).toEqual(
+      expect.objectContaining({
+        exportRows: [
+          expect.objectContaining({
+            benefitEntitlementId: ENTITLEMENT_ID_1,
+          }),
+        ],
+      }),
+    );
     expect(result.mode).toBe('live');
     expect(JSON.stringify(result)).not.toContain('internal-live-seed');
   });
@@ -712,6 +744,21 @@ describe('BenefitRunnerService', () => {
         state: 'active',
       }),
     ]);
+    expect(result.resultSummary.exportRows).toEqual([
+      expect.objectContaining({
+        benefitEntitlementId: ENTITLEMENT_ID_1,
+        ticketItemId: ticketId('ticket-active'),
+      }),
+    ]);
+    expect(lastRunSummaryUpdate(updateCalls)).toEqual(
+      expect.objectContaining({
+        exportRows: [
+          expect.objectContaining({
+            benefitEntitlementId: ENTITLEMENT_ID_1,
+          }),
+        ],
+      }),
+    );
     expect(result.resultSummary).toMatchObject({
       sourceRunId: RUN_ID,
       totalAssignedCount: 1,
@@ -734,6 +781,47 @@ describe('BenefitRunnerService', () => {
       reason: 'restore previous draw',
       confirmed: true,
     }, { now: NOW })).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it.each(['running', 'failed'] as const)(
+    'rejects rollback when the source live run status is %s before mutating entitlements',
+    async (status) => {
+      const { service, insertCalls, updateCalls } = createService([
+        [runRow({ status })],
+      ]);
+
+      await expect(service.rollback({
+        showtimeId: SHOWTIME_ID,
+        actorUserId: ACTOR_ID,
+        sourceRunId: RUN_ID,
+        sourceRunMode: 'live',
+        reason: 'restore previous draw',
+        confirmed: true,
+      }, { now: NOW })).rejects.toBeInstanceOf(BadRequestException);
+
+      expect(insertCalls).toEqual([]);
+      expect(updateCalls.filter((call) => call.table === ticketBenefitEntitlements))
+        .toEqual([]);
+    },
+  );
+
+  it('rejects rollback when the source run summary is malformed before mutating entitlements', async () => {
+    const { service, insertCalls, updateCalls } = createService([
+      [runRow({ resultSummary: {} })],
+    ]);
+
+    await expect(service.rollback({
+      showtimeId: SHOWTIME_ID,
+      actorUserId: ACTOR_ID,
+      sourceRunId: RUN_ID,
+      sourceRunMode: 'live',
+      reason: 'restore previous draw',
+      confirmed: true,
+    }, { now: NOW })).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(insertCalls).toEqual([]);
+    expect(updateCalls.filter((call) => call.table === ticketBenefitEntitlements))
+      .toEqual([]);
   });
 
   it('blocks rollback after Benefit Result Lock', async () => {
@@ -771,7 +859,7 @@ describe('BenefitRunnerService', () => {
     const candidates = [
       candidate('ticket-001', 'buyer-a'),
     ];
-    const { service, insertCalls } = createService([
+    const { service, insertCalls, adminAuditService } = createService([
       ...testRows(benefits, candidates),
       [runRow({
         mode: 'test',
@@ -840,6 +928,85 @@ describe('BenefitRunnerService', () => {
     expect(JSON.stringify(exportResult)).not.toContain('export-seed');
     expect(safeCsvRowsSpy).toHaveBeenCalled();
     expect(withUtf8BomSpy).toHaveBeenCalled();
+    expect(adminAuditService.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'benefits.run.export',
+        resourceType: 'benefit_run',
+        resourceId: RUN_ID,
+        status: 'success',
+        changedFields: ['runId', 'showtimeId', 'rowCount', 'generatedAt'],
+        after: {
+          runId: RUN_ID,
+          showtimeId: SHOWTIME_ID,
+          rowCount: 1,
+          generatedAt: NOW.toISOString(),
+        },
+      }),
+      expect.anything(),
+    );
+  });
+
+  it('audits entitlement exports with metadata only', async () => {
+    const { service, adminAuditService } = createService([
+      [
+        {
+          id: ENTITLEMENT_ID_1,
+          ticketItemId: ticketId('ticket-001'),
+          showtimeId: SHOWTIME_ID,
+          runId: RUN_ID,
+          source: 'live_run',
+          benefitIdentity: 'six-to-one',
+          benefitKind: 'limited',
+          displayCopySnapshot: copy('=6:1', 'raw seed must not be exported'),
+          state: 'active',
+          redeemedAt: null,
+          createdAt: NOW,
+        },
+      ],
+    ]);
+
+    const result = await service.exportEntitlements(SHOWTIME_ID, {
+      actorUserId: ACTOR_ID,
+      now: NOW,
+    });
+
+    expect(result.csv).toContain(ENTITLEMENT_ID_1);
+    expect(result.csv).toContain("'=6:1");
+    expect(adminAuditService.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'benefits.entitlements.export',
+        resourceType: 'benefit_entitlements',
+        resourceId: SHOWTIME_ID,
+        status: 'success',
+        changedFields: ['showtimeId', 'rowCount', 'generatedAt'],
+        after: {
+          showtimeId: SHOWTIME_ID,
+          rowCount: 1,
+          generatedAt: NOW.toISOString(),
+        },
+      }),
+      expect.anything(),
+    );
+    expect(JSON.stringify(adminAuditService.write.mock.calls[0]?.[0]))
+      .not.toContain('raw seed');
+    expect(JSON.stringify(adminAuditService.write.mock.calls[0]?.[0]))
+      .not.toContain('=6:1');
+  });
+
+  it('returns run lists in the shared response shape', async () => {
+    const { service } = createService([
+      [runRow()],
+    ]);
+
+    await expect(service.listRuns(SHOWTIME_ID)).resolves.toEqual({
+      runs: [
+        expect.objectContaining({
+          id: RUN_ID,
+          showtimeId: SHOWTIME_ID,
+        }),
+      ],
+      nextCursor: null,
+    });
   });
 
   it('loads run records without exposing raw seed values', async () => {
