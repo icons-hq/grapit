@@ -82,7 +82,13 @@ export const ticketBenefitConfigurations = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (table) => [index('idx_ticket_benefit_configurations_showtime_id').on(table.showtimeId)],
+  (table) => [
+    index('idx_ticket_benefit_configurations_showtime_id').on(table.showtimeId),
+    uniqueIndex('idx_ticket_benefit_configurations_showtime_version_unique').on(
+      table.showtimeId,
+      table.version,
+    ),
+  ],
 );
 
 export const ticketBenefitConfigurationChanges = pgTable(
@@ -140,7 +146,13 @@ export const ticketBenefits = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (table) => [index('idx_ticket_benefits_configuration_id').on(table.configurationId)],
+  (table) => [
+    index('idx_ticket_benefits_configuration_id').on(table.configurationId),
+    uniqueIndex('idx_ticket_benefits_configuration_identity_unique').on(
+      table.configurationId,
+      table.identity,
+    ),
+  ],
 );
 
 export const ticketBenefitRuns = pgTable(
@@ -259,10 +271,13 @@ export const ticketBenefitRedemptionRecords = pgTable(
       .defaultNow(),
   },
   (table) => [
-    index('idx_ticket_benefit_redemption_records_showtime_entitlement_created').on(
+    index('idx_tbrr_showtime_entitlement_created').on(
       table.showtimeId,
       table.benefitEntitlementId,
       desc(table.createdAt),
+    ),
+    uniqueIndex('idx_ticket_benefit_redemption_records_device_attempt_unique').on(
+      table.deviceAttemptId,
     ),
   ],
 );

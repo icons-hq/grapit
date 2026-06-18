@@ -43,6 +43,13 @@ function createTableBlock(migration: string, tableName: string) {
   return match?.[0] ?? '';
 }
 
+function createdIndexNames(migration: string) {
+  return Array.from(
+    migration.matchAll(/CREATE (?:UNIQUE )?INDEX "([^"]+)"/g),
+    (match) => match[1] ?? '',
+  );
+}
+
 describe('ticket benefit schema contracts', () => {
   it('commits migration 0029 and creates all benefit tables', () => {
     expect(existsSync(migrationPath)).toBe(true);
@@ -159,6 +166,24 @@ describe('ticket benefit schema contracts', () => {
     );
   });
 
+  it('prevents duplicate configuration versions and duplicate benefit identities', () => {
+    const migration = readMigration();
+    const schemaSource = readSchemaSource();
+
+    expect(schemaSource).toContain(
+      "uniqueIndex('idx_ticket_benefit_configurations_showtime_version_unique')",
+    );
+    expect(schemaSource).toContain(
+      "uniqueIndex('idx_ticket_benefits_configuration_identity_unique')",
+    );
+    expect(migration).toContain(
+      'CREATE UNIQUE INDEX "idx_ticket_benefit_configurations_showtime_version_unique" ON "ticket_benefit_configurations" USING btree ("showtime_id","version");',
+    );
+    expect(migration).toContain(
+      'CREATE UNIQUE INDEX "idx_ticket_benefits_configuration_identity_unique" ON "ticket_benefits" USING btree ("configuration_id","identity");',
+    );
+  });
+
   it('references ticket_items from ticket benefit entitlements', () => {
     const migration = readMigration();
     const columns = getTableColumns(ticketBenefitEntitlements);
@@ -233,9 +258,29 @@ describe('ticket benefit schema contracts', () => {
 
     expectColumnName(columns.showtimeId, 'showtime_id');
     expect(migration).toContain(
-      'CREATE INDEX "idx_ticket_benefit_redemption_records_showtime_entitlement_created" ON "ticket_benefit_redemption_records" USING btree ("showtime_id","benefit_entitlement_id","created_at" DESC);',
+      'CREATE INDEX "idx_tbrr_showtime_entitlement_created" ON "ticket_benefit_redemption_records" USING btree ("showtime_id","benefit_entitlement_id","created_at" DESC);',
     );
     expect(migration).not.toContain('ticket_benefit_result_locks');
+  });
+
+  it('deduplicates benefit redemption retries by device attempt id', () => {
+    const migration = readMigration();
+    const schemaSource = readSchemaSource();
+
+    expect(schemaSource).toContain(
+      "uniqueIndex('idx_ticket_benefit_redemption_records_device_attempt_unique')",
+    );
+    expect(migration).toContain(
+      'CREATE UNIQUE INDEX "idx_ticket_benefit_redemption_records_device_attempt_unique" ON "ticket_benefit_redemption_records" USING btree ("device_attempt_id");',
+    );
+  });
+
+  it('keeps explicit ticket benefit index names within the PostgreSQL identifier limit', () => {
+    const migration = readMigration();
+
+    expect(
+      createdIndexNames(migration).filter((name) => name.length > 63),
+    ).toEqual([]);
   });
 
   it('extends admin audit action enum for benefit configuration writes and exports', () => {

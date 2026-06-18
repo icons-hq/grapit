@@ -109,10 +109,13 @@ ALTER TABLE "ticket_benefit_redemption_records" ADD CONSTRAINT "tbrr_ticket_item
 ALTER TABLE "ticket_benefit_redemption_records" ADD CONSTRAINT "tbrr_benefit_entitlement_id_fk" FOREIGN KEY ("benefit_entitlement_id") REFERENCES "public"."ticket_benefit_entitlements"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "ticket_benefit_redemption_records" ADD CONSTRAINT "tbrr_scanner_user_id_fk" FOREIGN KEY ("scanner_user_id") REFERENCES "public"."users"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "idx_ticket_benefit_configurations_showtime_id" ON "ticket_benefit_configurations" USING btree ("showtime_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "idx_ticket_benefit_configurations_showtime_version_unique" ON "ticket_benefit_configurations" USING btree ("showtime_id","version");--> statement-breakpoint
 CREATE INDEX "idx_ticket_benefits_configuration_id" ON "ticket_benefits" USING btree ("configuration_id");--> statement-breakpoint
+CREATE UNIQUE INDEX "idx_ticket_benefits_configuration_identity_unique" ON "ticket_benefits" USING btree ("configuration_id","identity");--> statement-breakpoint
 CREATE INDEX "idx_ticket_benefit_runs_showtime_created" ON "ticket_benefit_runs" USING btree ("showtime_id","created_at" DESC);--> statement-breakpoint
 CREATE INDEX "idx_ticket_benefit_entitlements_showtime_ticket_item" ON "ticket_benefit_entitlements" USING btree ("showtime_id","ticket_item_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "idx_ticket_benefit_entitlements_active_limited_ticket_item" ON "ticket_benefit_entitlements" USING btree ("ticket_item_id") WHERE "ticket_benefit_entitlements"."benefit_kind" = 'limited' AND "ticket_benefit_entitlements"."state" = 'active';--> statement-breakpoint
-CREATE INDEX "idx_ticket_benefit_redemption_records_showtime_entitlement_created" ON "ticket_benefit_redemption_records" USING btree ("showtime_id","benefit_entitlement_id","created_at" DESC);--> statement-breakpoint
+CREATE INDEX "idx_tbrr_showtime_entitlement_created" ON "ticket_benefit_redemption_records" USING btree ("showtime_id","benefit_entitlement_id","created_at" DESC);--> statement-breakpoint
+CREATE UNIQUE INDEX "idx_ticket_benefit_redemption_records_device_attempt_unique" ON "ticket_benefit_redemption_records" USING btree ("device_attempt_id");--> statement-breakpoint
 COMMENT ON COLUMN "ticket_benefit_runs"."random_seed_internal" IS 'Internal run seed material. API responses and CSV exports must use seed_ref instead.';--> statement-breakpoint
 COMMENT ON COLUMN "ticket_benefit_redemption_records"."redacted_token_ref" IS 'Stores only a redacted QR reference. Raw QR tokens, QR URLs, payloads, cookies, auth headers, and secrets are intentionally excluded.';
