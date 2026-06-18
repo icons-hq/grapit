@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { benefitEntitlementSchema } from './benefit.schema';
+import { benefitEntitlementBaseSchema } from './benefit.schema';
 
 const isoDatetime = (label: string) =>
   z.string().datetime({ message: `${label}은 ISO datetime 형식이어야 합니다` });
@@ -41,17 +41,30 @@ export const fieldCheckInOutcomeSchema = z.enum(FIELD_CHECK_IN_OUTCOMES);
 export const fieldOfflineSyncStateSchema = z.enum(FIELD_OFFLINE_SYNC_STATES);
 export const settlementExportDatasetSchema = z.enum(SETTLEMENT_EXPORT_DATASETS);
 
-export const fieldBenefitEntitlementSchema = benefitEntitlementSchema.pick({
+const fieldBenefitEntitlementBaseSchema = benefitEntitlementBaseSchema.pick({
   id: true,
   benefitIdentity: true,
   kind: true,
   displayCopy: true,
   state: true,
   runId: true,
-  runMode: true,
-  attachedToTicket: true,
   redeemedAt: true,
 });
+
+export const fieldBenefitEntitlementSchema = z.discriminatedUnion('runMode', [
+  fieldBenefitEntitlementBaseSchema
+    .extend({
+      runMode: z.literal('live'),
+      attachedToTicket: z.literal(true),
+    })
+    .strict(),
+  fieldBenefitEntitlementBaseSchema
+    .extend({
+      runMode: z.literal('test'),
+      attachedToTicket: z.literal(false),
+    })
+    .strict(),
+]);
 
 export const fieldCheckInVerifyRequestSchema = z
   .object({

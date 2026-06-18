@@ -78,6 +78,29 @@ function makeTicketItem(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function makeBenefitEntitlement(overrides: Record<string, unknown> = {}) {
+  return {
+    id: '55555555-5555-4555-8555-555555555555',
+    ticketItemId: '11111111-1111-4111-8111-000000000101',
+    showtimeId: '11111111-1111-4111-8111-333333333333',
+    runId: '33333333-3333-4333-8333-333333333333',
+    benefitIdentity: 'benefit_6_to_1',
+    kind: 'included',
+    displayCopy: {
+      ko: { name: '6:1', description: '6:1 이벤트 참여 혜택' },
+      en: { name: '6:1', description: '6:1 event benefit' },
+      'zh-CN': { name: '6:1', description: '6:1 活动福利' },
+      th: { name: '6:1', description: 'สิทธิประโยชน์กิจกรรม 6:1' },
+    },
+    state: 'active',
+    runMode: 'live',
+    attachedToTicket: true,
+    assignedAt: '2026-07-04T09:00:00.000Z',
+    redeemedAt: null,
+    ...overrides,
+  };
+}
+
 function makeTicketEmailDelivery(overrides: Record<string, unknown> = {}) {
   return {
     email: 'buyer@example.com',
@@ -763,6 +786,69 @@ describe('prepareReservationSchema booking consent contract', () => {
     expect(detail.paymentAttemptedAt).toBe('2026-05-08T11:45:30.000Z');
     expect(detail.paymentCompletedAt).toBe('2026-05-08T11:46:00.000Z');
     expect(detail.ticketStatusCounts.ACTIVE).toBe(1);
+  });
+
+  it('accepts benefit entitlements in admin booking detail ticket items', () => {
+    const detail = adminBookingDetailSchema.parse({
+      id: '11111111-1111-4111-8111-111111111111',
+      reservationNumber: 'GRP-24007',
+      tossOrderId: 'GRP-ORDER-24007',
+      userName: '김예매',
+      userEmail: 'buyer@example.com',
+      userCountry: 'KR',
+      performanceTitle: 'Girl Rules Fanmeet',
+      showDateTime: '2026-07-18T10:00:00.000Z',
+      seats: [makeSeat()],
+      totalAmount: 50000,
+      status: 'CONFIRMED',
+      funnelStatus: 'SOLD',
+      paymentStatus: 'DONE',
+      paymentMethod: 'CARD',
+      paymentFailureDiagnostic: null,
+      paymentMethodAttribution: {
+        label: '카드',
+        method: '카드',
+        provider: 'CARD',
+        currency: 'KRW',
+        source: 'payment_row',
+      },
+      ticketStatusCounts: {
+        ACTIVE: 1,
+        CANCELLATION_PENDING: 0,
+        CANCELLED: 0,
+        EXPIRED: 0,
+      },
+      createdAt: '2026-05-08T11:45:00.000Z',
+      userPhone: '+821012345678',
+      paymentAttemptedAt: '2026-05-08T11:45:30.000Z',
+      paymentCompletedAt: '2026-05-08T11:46:00.000Z',
+      paymentInfo: {
+        paymentKey: 'payment-key-1',
+        method: 'CARD',
+        amount: 50000,
+        status: 'DONE',
+        paidAt: '2026-05-08T11:46:00.000Z',
+      },
+      ticketItems: [
+        {
+          ...makeTicketItem({
+            benefitEntitlements: [makeBenefitEntitlement()],
+          }),
+          cancelledAt: null,
+          cancelReason: null,
+          cancellationFee: 0,
+          serviceFeeRefund: 0,
+          refundableAmount: 0,
+          reopenState: 'NOT_REQUIRED',
+          reopenHoldUntil: null,
+        },
+      ],
+    });
+
+    expect(detail.ticketItems[0]?.benefitEntitlements).toHaveLength(1);
+    expect(detail.ticketItems[0]?.benefitEntitlements[0]?.benefitIdentity).toBe(
+      'benefit_6_to_1',
+    );
   });
 
   it('accepts nullable admin payment diagnostics and requires payment method attribution fallback', () => {

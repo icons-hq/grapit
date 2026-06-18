@@ -4,6 +4,7 @@ import {
   FIELD_CHECK_IN_OUTCOMES,
   FIELD_OFFLINE_SYNC_STATES,
   fieldCheckInConsumeRequestSchema,
+  fieldCheckInVerifyResponseSchema,
   fieldCheckInVerifyRequestSchema,
   fieldMonitorLogFilterSchema,
   fieldMonitorSummarySchema,
@@ -19,6 +20,14 @@ import { fieldCheckInVerifyRequestSchema as exportedVerifyRequestSchema } from '
 const VALID_SHOWTIME_ID = '00000000-0000-4000-8000-000000000001';
 const VALID_EVENT_ID = 'event-girl-rules-20260704';
 const VALID_ISO = '2026-07-04T09:00:00.000Z';
+const VALID_BENEFIT_RUN_ID = '33333333-3333-4333-8333-333333333333';
+const VALID_BENEFIT_ENTITLEMENT_ID = '55555555-5555-4555-8555-555555555555';
+const BENEFIT_DISPLAY_COPY = {
+  ko: { name: '6:1', description: '6:1 이벤트 참여 혜택' },
+  en: { name: '6:1', description: '6:1 event benefit' },
+  'zh-CN': { name: '6:1', description: '6:1 活动福利' },
+  th: { name: '6:1', description: 'สิทธิประโยชน์กิจกรรม 6:1' },
+};
 
 const FORBIDDEN_VISIBLE_FIELDS = [
   'email',
@@ -90,6 +99,42 @@ describe('field operations contract', () => {
         confirmed: true,
       }),
     ).toThrow(/attempt/);
+  });
+
+  it('includes benefit entitlements in field verify ticket context', () => {
+    const parsed = fieldCheckInVerifyResponseSchema.parse({
+      outcome: 'processable',
+      processable: true,
+      ticket: {
+        reservationNumber: 'GRP-24001',
+        performanceTitle: 'Girl Rules Fanmeet',
+        showtimeId: VALID_SHOWTIME_ID,
+        showtimeLabel: '2026-07-04 18:00',
+        seatLabels: ['VIP A-1'],
+        ticketStatus: 'ACTIVE',
+        redactedTokenRef: 'tok_abc...xyz',
+        maskedJti: 'jti_***_a1',
+        benefitEntitlements: [
+          {
+            id: VALID_BENEFIT_ENTITLEMENT_ID,
+            runId: VALID_BENEFIT_RUN_ID,
+            benefitIdentity: 'benefit_6_to_1',
+            kind: 'included',
+            displayCopy: BENEFIT_DISPLAY_COPY,
+            state: 'active',
+            runMode: 'live',
+            attachedToTicket: true,
+            redeemedAt: null,
+          },
+        ],
+      },
+      verifiedAt: VALID_ISO,
+    });
+
+    expect(parsed.ticket?.benefitEntitlements).toHaveLength(1);
+    expect(parsed.ticket?.benefitEntitlements[0]?.benefitIdentity).toBe(
+      'benefit_6_to_1',
+    );
   });
 
   it('models server-authoritative field outcomes and offline sync states', () => {

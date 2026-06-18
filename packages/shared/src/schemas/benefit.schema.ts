@@ -114,7 +114,7 @@ export const benefitConfigurationChangeRecordSchema = z
   })
   .strict();
 
-export const benefitEntitlementSchema = z
+export const benefitEntitlementBaseSchema = z
   .object({
     id: benefitEntitlementIdSchema,
     ticketItemId: ticketItemIdSchema,
@@ -124,12 +124,29 @@ export const benefitEntitlementSchema = z
     kind: ticketBenefitKindSchema,
     displayCopy: ticketBenefitDisplayCopySchema,
     state: benefitEntitlementStateSchema,
-    runMode: benefitRunModeSchema,
-    attachedToTicket: z.boolean(),
     assignedAt: isoDatetime('혜택 배정 시각'),
     redeemedAt: isoDatetime('혜택 사용 시각').nullable().optional(),
   })
   .strict();
+
+const liveBenefitEntitlementSchema = benefitEntitlementBaseSchema
+  .extend({
+    runMode: z.literal('live'),
+    attachedToTicket: z.literal(true),
+  })
+  .strict();
+
+const testBenefitEntitlementSchema = benefitEntitlementBaseSchema
+  .extend({
+    runMode: z.literal('test'),
+    attachedToTicket: z.literal(false),
+  })
+  .strict();
+
+export const benefitEntitlementSchema = z.discriminatedUnion('runMode', [
+  liveBenefitEntitlementSchema,
+  testBenefitEntitlementSchema,
+]);
 
 const benefitConfigurationSnapshotSchema = z
   .object({
@@ -226,14 +243,12 @@ export const benefitRollbackRequestSchema = z
   })
   .strict();
 
-export const benefitEntitlementExportRowSchema = z
+const benefitEntitlementExportRowBaseSchema = z
   .object({
     benefitEntitlementId: benefitEntitlementIdSchema,
     ticketItemId: ticketItemIdSchema,
     showtimeId: showtimeIdSchema,
     runId: benefitRunIdSchema,
-    runMode: benefitRunModeSchema,
-    attachedToTicket: z.boolean(),
     benefitIdentity: benefitIdentitySchema,
     benefitKind: ticketBenefitKindSchema,
     benefitNameKo: z.string().trim().min(1, '한국어 혜택 이름이 필요합니다'),
@@ -243,22 +258,51 @@ export const benefitEntitlementExportRowSchema = z
   })
   .strict();
 
-export const benefitConfigurationExportRowSchema = z
+export const benefitEntitlementExportRowSchema = z.discriminatedUnion('runMode', [
+  benefitEntitlementExportRowBaseSchema
+    .extend({
+      runMode: z.literal('live'),
+      attachedToTicket: z.literal(true),
+    })
+    .strict(),
+  benefitEntitlementExportRowBaseSchema
+    .extend({
+      runMode: z.literal('test'),
+      attachedToTicket: z.literal(false),
+    })
+    .strict(),
+]);
+
+const benefitConfigurationExportRowBaseSchema = z
   .object({
     configurationId: benefitConfigurationIdSchema,
     showtimeId: showtimeIdSchema,
     active: z.boolean(),
     version: z.number().int().positive('혜택 설정 버전은 1 이상이어야 합니다'),
     benefitIdentity: benefitIdentitySchema,
-    benefitKind: ticketBenefitKindSchema,
     benefitNameKo: z.string().trim().min(1, '한국어 혜택 이름이 필요합니다'),
     eligibleTierNames: eligibleTierNamesSchema,
-    quantity: z.number().int().positive().nullable().optional(),
-    selectionPriority: z.number().int().positive().nullable().optional(),
     mutuallyExclusiveWith: z.array(benefitIdentitySchema).default([]),
     exportedAt: isoDatetime('혜택 설정 내보내기 시각'),
   })
   .strict();
+
+export const benefitConfigurationExportRowSchema = z.discriminatedUnion('benefitKind', [
+  benefitConfigurationExportRowBaseSchema
+    .extend({
+      benefitKind: z.literal('included'),
+      quantity: z.never().optional(),
+      selectionPriority: z.never().optional(),
+    })
+    .strict(),
+  benefitConfigurationExportRowBaseSchema
+    .extend({
+      benefitKind: z.literal('limited'),
+      quantity: z.number().int().positive('한정 혜택 수량은 1 이상이어야 합니다'),
+      selectionPriority: z.number().int().positive('한정 혜택 우선순위는 1 이상이어야 합니다'),
+    })
+    .strict(),
+]);
 
 export const benefitRedemptionRequestSchema = z
   .object({
@@ -327,6 +371,7 @@ export type BenefitConfigurationChangeRecord = z.infer<
   typeof benefitConfigurationChangeRecordSchema
 >;
 export type BenefitEntitlement = z.infer<typeof benefitEntitlementSchema>;
+export type BenefitEntitlementState = z.infer<typeof benefitEntitlementStateSchema>;
 export type BenefitRunMode = z.infer<typeof benefitRunModeSchema>;
 export type BenefitRunRecord = z.infer<typeof benefitRunRecordSchema>;
 export type BenefitRunRecordListResponse = z.infer<
@@ -341,4 +386,5 @@ export type BenefitConfigurationExportRow = z.infer<
   typeof benefitConfigurationExportRowSchema
 >;
 export type BenefitRedemptionRequest = z.infer<typeof benefitRedemptionRequestSchema>;
+export type BenefitRedemptionOutcome = z.infer<typeof benefitRedemptionOutcomeSchema>;
 export type BenefitRedemptionResponse = z.infer<typeof benefitRedemptionResponseSchema>;

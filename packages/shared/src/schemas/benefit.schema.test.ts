@@ -1,12 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 
 import {
+  benefitConfigurationExportRowSchema,
   benefitConfigurationSchema,
+  benefitEntitlementSchema,
   benefitEntitlementExportRowSchema,
   benefitRedemptionRequestSchema,
   benefitRedemptionResponseSchema,
   benefitRunRecordSchema,
   benefitRunRequestSchema,
+} from './benefit.schema';
+import type {
+  BenefitEntitlementState,
+  BenefitRedemptionOutcome,
 } from './benefit.schema';
 import { ticketItemSchema } from './ticket-item.schema';
 
@@ -255,6 +261,136 @@ describe('ticket benefit shared contracts', () => {
     expect(parsed.attachedToTicket).toBe(false);
   });
 
+  it('requires entitlement attachment state to match run mode', () => {
+    const liveEntitlement = benefitEntitlement();
+
+    expect(benefitEntitlementSchema.parse(liveEntitlement).attachedToTicket).toBe(true);
+    expect(() =>
+      benefitEntitlementSchema.parse({
+        ...liveEntitlement,
+        attachedToTicket: false,
+      }),
+    ).toThrow();
+
+    expect(
+      benefitEntitlementSchema.parse({
+        ...liveEntitlement,
+        runMode: 'test',
+        attachedToTicket: false,
+      }).attachedToTicket,
+    ).toBe(false);
+    expect(() =>
+      benefitEntitlementSchema.parse({
+        ...liveEntitlement,
+        runMode: 'test',
+        attachedToTicket: true,
+      }),
+    ).toThrow();
+
+    const liveExportRow = {
+      benefitEntitlementId: entitlementId,
+      ticketItemId,
+      showtimeId,
+      runId,
+      runMode: 'live',
+      attachedToTicket: true,
+      benefitIdentity,
+      benefitKind: 'included',
+      benefitNameKo: '6:1',
+      state: 'active',
+      assignedAt: validIso,
+      redeemedAt: null,
+    };
+
+    expect(benefitEntitlementExportRowSchema.parse(liveExportRow).attachedToTicket).toBe(true);
+    expect(() =>
+      benefitEntitlementExportRowSchema.parse({
+        ...liveExportRow,
+        attachedToTicket: false,
+      }),
+    ).toThrow();
+    expect(
+      benefitEntitlementExportRowSchema.parse({
+        ...liveExportRow,
+        runMode: 'test',
+        attachedToTicket: false,
+      }).attachedToTicket,
+    ).toBe(false);
+    expect(() =>
+      benefitEntitlementExportRowSchema.parse({
+        ...liveExportRow,
+        runMode: 'test',
+        attachedToTicket: true,
+      }),
+    ).toThrow();
+  });
+
+  it('enforces kind-specific configuration export fields', () => {
+    const includedRow = {
+      configurationId,
+      showtimeId,
+      active: true,
+      version: 1,
+      benefitIdentity,
+      benefitKind: 'included',
+      benefitNameKo: '6:1',
+      eligibleTierNames: ['VIP'],
+      mutuallyExclusiveWith: [],
+      exportedAt: validIso,
+    };
+
+    expect(benefitConfigurationExportRowSchema.parse(includedRow).benefitKind).toBe(
+      'included',
+    );
+    expect(() =>
+      benefitConfigurationExportRowSchema.parse({
+        ...includedRow,
+        quantity: 1,
+      }),
+    ).toThrow();
+    expect(() =>
+      benefitConfigurationExportRowSchema.parse({
+        ...includedRow,
+        selectionPriority: 1,
+      }),
+    ).toThrow();
+
+    const limitedRow = {
+      ...includedRow,
+      benefitIdentity: 'benefit_polaroid',
+      benefitKind: 'limited',
+      benefitNameKo: '폴라로이드',
+      quantity: 30,
+      selectionPriority: 1,
+    };
+
+    expect(benefitConfigurationExportRowSchema.parse(limitedRow)).toMatchObject({
+      benefitKind: 'limited',
+      quantity: 30,
+      selectionPriority: 1,
+    });
+    expect(() =>
+      benefitConfigurationExportRowSchema.parse({
+        ...limitedRow,
+        quantity: 0,
+      }),
+    ).toThrow();
+    expect(() =>
+      benefitConfigurationExportRowSchema.parse({
+        ...limitedRow,
+        selectionPriority: 0,
+      }),
+    ).toThrow();
+
+    const missingQuantity: Record<string, unknown> = { ...limitedRow };
+    delete missingQuantity.quantity;
+    expect(() => benefitConfigurationExportRowSchema.parse(missingQuantity)).toThrow();
+
+    const missingPriority: Record<string, unknown> = { ...limitedRow };
+    delete missingPriority.selectionPriority;
+    expect(() => benefitConfigurationExportRowSchema.parse(missingPriority)).toThrow();
+  });
+
   it('requires confirmed redemption requests with QR token, showtime, entitlement, and device attempt identifiers', () => {
     const request = {
       token: 'opaque-qr-token',
@@ -322,5 +458,19 @@ describe('ticket benefit shared contracts', () => {
 
     expect(parsed.benefitEntitlements).toHaveLength(1);
     expect(parsed.benefitEntitlements[0]?.benefitIdentity).toBe(benefitIdentity);
+  });
+
+  it('exports benefit state and redemption outcome inferred types', () => {
+    expectTypeOf<BenefitEntitlementState>().toEqualTypeOf<
+      'active' | 'inactive' | 'redeemed'
+    >();
+    expectTypeOf<BenefitRedemptionOutcome>().toEqualTypeOf<
+      | 'redeemed'
+      | 'duplicate'
+      | 'not_eligible'
+      | 'inactive'
+      | 'tampered'
+      | 'wrong_showtime'
+    >();
   });
 });
