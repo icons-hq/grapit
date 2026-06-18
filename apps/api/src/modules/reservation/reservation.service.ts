@@ -1414,6 +1414,7 @@ export class ReservationService {
       .orderBy(asc(ticketItems.createdAt), asc(ticketItems.id));
     const benefitEntitlementsByTicketItemId = ticketItemRows.length > 0
       ? await this.loadBenefitEntitlementsForTicketItems(
+          row.reservation.showtimeId,
           ticketItemRows.map((ticketItem) => ticketItem.id),
         )
       : new Map<string, BenefitEntitlement[]>();
@@ -1519,6 +1520,7 @@ export class ReservationService {
   }
 
   private async loadBenefitEntitlementsForTicketItems(
+    showtimeId: string,
     ticketItemIds: string[],
   ): Promise<Map<string, BenefitEntitlement[]>> {
     if (ticketItemIds.length === 0) {
@@ -1528,7 +1530,10 @@ export class ReservationService {
     const entitlementRows = await this.db
       .select()
       .from(ticketBenefitEntitlements)
-      .where(inArray(ticketBenefitEntitlements.ticketItemId, ticketItemIds))
+      .where(and(
+        eq(ticketBenefitEntitlements.showtimeId, showtimeId),
+        inArray(ticketBenefitEntitlements.ticketItemId, ticketItemIds),
+      ))
       .orderBy(asc(ticketBenefitEntitlements.createdAt), asc(ticketBenefitEntitlements.id));
     const result = new Map<string, BenefitEntitlement[]>();
 
@@ -1567,18 +1572,24 @@ export class ReservationService {
           attachedToTicket: true,
         };
       case 'live_run':
+        if (!row.runId) {
+          throw new InternalServerErrorException('live_run benefit entitlement is missing runId');
+        }
         return {
           ...base,
           source: 'live_run',
-          runId: row.runId as string,
+          runId: row.runId,
           runMode: 'live',
           attachedToTicket: true,
         };
       case 'test_run':
+        if (!row.runId) {
+          throw new InternalServerErrorException('test_run benefit entitlement is missing runId');
+        }
         return {
           ...base,
           source: 'test_run',
-          runId: row.runId as string,
+          runId: row.runId,
           runMode: 'test',
           attachedToTicket: false,
         };

@@ -579,6 +579,7 @@ describe('ReservationService', () => {
     ticketItems: Array<Record<string, unknown>>;
     benefitEntitlements: Array<Record<string, unknown>>;
   }) {
+    const benefitWhereCalls: unknown[] = [];
     mockDb.select.mockImplementation(() => ({
       from: vi.fn((table: unknown) => {
         if (table === reservations) {
@@ -635,7 +636,12 @@ describe('ReservationService', () => {
           return chainResult(args.ticketItems);
         }
         if (table === ticketBenefitEntitlements) {
-          return chainResult(args.benefitEntitlements);
+          return {
+            where: vi.fn((predicate: unknown) => {
+              benefitWhereCalls.push(predicate);
+              return chainResult(args.benefitEntitlements);
+            }),
+          };
         }
         if (table === users) {
           return chainResult([{
@@ -647,6 +653,8 @@ describe('ReservationService', () => {
         return chainResult([]);
       }),
     }));
+
+    return { benefitWhereCalls };
   }
 
   function setupTicketItemCancelTransaction(args: {
@@ -4897,7 +4905,7 @@ describe('ReservationService', () => {
         amount: 150000,
       });
 
-      setupReservationDetailBenefitMocks({
+      const { benefitWhereCalls } = setupReservationDetailBenefitMocks({
         reservationId,
         userId,
         amount: 150000,
@@ -4947,6 +4955,16 @@ describe('ReservationService', () => {
 
       const detail = await service.getReservationDetail(reservationId, userId);
 
+      expect(benefitWhereCalls).toHaveLength(1);
+      expect(sqlPredicateHasParamValue(benefitWhereCalls[0], showtimeId)).toBe(true);
+      expect(sqlPredicateHasParamValue(
+        benefitWhereCalls[0],
+        '00000000-0000-4000-8000-000000000101',
+      )).toBe(true);
+      expect(sqlPredicateHasParamValue(
+        benefitWhereCalls[0],
+        '00000000-0000-4000-8000-000000000102',
+      )).toBe(true);
       expect(detail.ticketItems[0]?.benefitEntitlements).toEqual([
         expect.objectContaining({
           id: '33333333-3333-4333-8333-333333333331',
@@ -4986,6 +5004,53 @@ describe('ReservationService', () => {
           attachedToTicket: true,
         }),
       ]);
+    });
+
+    it.each([
+      ['live_run', 'live'],
+      ['test_run', 'test'],
+    ] as const)('rejects %s benefit entitlements without runId', async (source) => {
+      const showtimeId = '11111111-1111-4111-8111-111111111111';
+      const displayCopy = {
+        ko: { name: '6:1', description: '6:1 이벤트 참여 혜택' },
+        en: { name: '6:1', description: '6:1 event benefit' },
+        'zh-CN': { name: '6:1', description: '6:1 活动福利' },
+        th: { name: '6:1', description: 'สิทธิประโยชน์กิจกรรม 6:1' },
+      };
+
+      setupReservationDetailBenefitMocks({
+        reservationId,
+        userId,
+        amount: 150000,
+        ticketItems: ticketItemRowsForReservation({
+          reservationId,
+          showtimeId,
+          seats: ['A-1'],
+          amount: 150000,
+        }),
+        benefitEntitlements: [
+          {
+            id: '33333333-3333-4333-8333-333333333334',
+            ticketItemId: '00000000-0000-4000-8000-000000000101',
+            showtimeId,
+            runId: null,
+            source,
+            benefitIdentity: 'benefit_6_to_1',
+            benefitKind: 'limited',
+            displayCopySnapshot: displayCopy,
+            state: 'active',
+            redeemedAt: null,
+            createdAt: new Date('2026-05-01T01:03:00.000Z'),
+          },
+        ],
+      });
+
+      await expect(service.getReservationDetail(reservationId, userId))
+        .rejects
+        .toThrow(InternalServerErrorException);
+      await expect(service.getReservationDetail(reservationId, userId))
+        .rejects
+        .toThrow(`${source} benefit entitlement is missing runId`);
     });
 
     it('self-heals a confirmed DONE payment by issuing active QR tickets for every ticket item on the read path', async () => {

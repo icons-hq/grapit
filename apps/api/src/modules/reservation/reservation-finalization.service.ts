@@ -1210,6 +1210,8 @@ export class ReservationFinalizationService {
       return;
     }
 
+    await this.lockShowtimeForBenefitMutation(db, showtimeId);
+
     const [configuration] = await db
       .select({ id: ticketBenefitConfigurations.id })
       .from(ticketBenefitConfigurations)
@@ -1265,6 +1267,26 @@ export class ReservationFinalizationService {
       .insert(ticketBenefitEntitlements)
       .values(entitlementsToInsert)
       .onConflictDoNothing();
+  }
+
+  private async lockShowtimeForBenefitMutation(
+    db: Pick<DrizzleDB, 'execute'>,
+    showtimeId: string,
+  ): Promise<void> {
+    const result = await db.execute(sql`
+      SELECT id
+      FROM showtimes
+      WHERE id = ${showtimeId}
+      FOR UPDATE
+    `);
+
+    if (Array.isArray(result) && result.length === 0) {
+      throw new NotFoundException('회차를 찾을 수 없습니다');
+    }
+
+    if ('rows' in result && Array.isArray(result.rows) && result.rows.length === 0) {
+      throw new NotFoundException('회차를 찾을 수 없습니다');
+    }
   }
 
   private calculatePayableTotal(seats: FloorAwareSeatSelection[]): number {
