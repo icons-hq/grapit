@@ -68,35 +68,9 @@ export class FieldCheckInService {
     const token = extractToken(input);
     const verifiedAt = new Date().toISOString();
 
+    let contract: QrTicketScannerContract;
     try {
-      const contract = await this.qrTicketService.verifyTicketForScannerContract(token);
-      const outcome = classifyScannerContract(contract, input.showtimeId);
-      const processable = outcome === 'processable';
-      const benefitEntitlements = await this.loadBenefitEntitlements(contract);
-      const response: FieldCheckInVerifyResponse = {
-        outcome,
-        processable,
-        ticket: toTicketContext(contract, token, benefitEntitlements),
-        rejectionReason: processable ? null : rejectionReasonFor(outcome),
-        verifiedAt,
-      };
-
-      if (!processable) {
-        await this.writeAudit({
-          action: 'field.scan.verify',
-          status: 'denied',
-          resourceId: ticketResourceId(contract),
-          context,
-        after: {
-          outcome,
-          caseName: caseNameForOutcome(outcome),
-          redactedTokenRef: redactedTokenRef(token),
-          maskedJti: contract.maskedJti,
-        },
-        });
-      }
-
-      return response;
+      contract = await this.qrTicketService.verifyTicketForScannerContract(token);
     } catch {
       const response: FieldCheckInVerifyResponse = {
         outcome: 'tampered',
@@ -120,6 +94,34 @@ export class FieldCheckInService {
 
       return response;
     }
+
+    const outcome = classifyScannerContract(contract, input.showtimeId);
+    const processable = outcome === 'processable';
+    const benefitEntitlements = await this.loadBenefitEntitlementsSafely(contract);
+    const response: FieldCheckInVerifyResponse = {
+      outcome,
+      processable,
+      ticket: toTicketContext(contract, token, benefitEntitlements),
+      rejectionReason: processable ? null : rejectionReasonFor(outcome),
+      verifiedAt,
+    };
+
+    if (!processable) {
+      await this.writeAudit({
+        action: 'field.scan.verify',
+        status: 'denied',
+        resourceId: ticketResourceId(contract),
+        context,
+        after: {
+          outcome,
+          caseName: caseNameForOutcome(outcome),
+          redactedTokenRef: redactedTokenRef(token),
+          maskedJti: contract.maskedJti,
+        },
+      });
+    }
+
+    return response;
   }
 
   async consume(
@@ -438,6 +440,16 @@ export class FieldCheckInService {
       .limit(50);
 
     return (rows as FieldBenefitEntitlementRow[]).map(toFieldBenefitEntitlement);
+  }
+
+  private async loadBenefitEntitlementsSafely(
+    contract: QrTicketScannerContract,
+  ): Promise<FieldBenefitEntitlement[]> {
+    try {
+      return await this.loadBenefitEntitlements(contract);
+    } catch {
+      return [];
+    }
   }
 
   private async recordScanEvent(

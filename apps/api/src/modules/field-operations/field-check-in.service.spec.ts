@@ -351,6 +351,36 @@ describe('FieldCheckInService RED contract', () => {
     expectNoSensitiveLookupLeak(verifyResult);
   });
 
+  it('keeps valid QR verification outcome when benefit entitlement lookup fails', async () => {
+    const { service, qrTicketService, db, adminAuditService } = createDependencies();
+    const failingEntitlementLookup = {
+      from: vi.fn(() => {
+        throw new Error('benefit entitlement read failed');
+      }),
+    };
+    qrTicketService.verifyTicketForScannerContract.mockResolvedValue(
+      scannerContract({ maskedJti: 'qr-jti...7890' }),
+    );
+    db.select.mockReturnValueOnce(failingEntitlementLookup);
+
+    const verifyResult = await service.verify({
+      token: RAW_QR_TOKEN,
+      showtimeId: '00000000-0000-4000-8000-000000000001',
+    });
+
+    expect(verifyResult).toMatchObject({
+      outcome: 'processable',
+      processable: true,
+      ticket: expect.objectContaining({
+        ticketStatus: 'ACTIVE',
+        benefitEntitlements: [],
+      }),
+      rejectionReason: null,
+    });
+    expect(adminAuditService.write).not.toHaveBeenCalled();
+    expectNoSensitiveLookupLeak(verifyResult);
+  });
+
   it('does not consume a ticket item that becomes cancellation_pending after QR verification', async () => {
     const { service, qrTicketService, db, adminAuditService } = createDependencies();
     const priorScanLookup = createSelectResult([]);

@@ -107,6 +107,23 @@ function entitlementRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function redemptionRecord(overrides: Record<string, unknown> = {}) {
+  return {
+    id: REDEMPTION_ID,
+    showtimeId: SHOWTIME_ID,
+    ticketItemId: TICKET_ITEM_ID,
+    benefitEntitlementId: ENTITLEMENT_ID,
+    scannerUserId: SCANNER_USER_ID,
+    deviceAttemptId: DEVICE_ATTEMPT_ID,
+    redactedTokenRef: 'qr:redacted1234567',
+    result: 'redeemed',
+    rejectionReason: null,
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...overrides,
+  };
+}
+
 function scannerContract(
   overrides: Partial<QrTicketScannerContract> = {},
 ): QrTicketScannerContract {
@@ -180,6 +197,7 @@ describe('BenefitRedemptionService RED contract', () => {
     vi.setSystemTime(NOW);
     const { service, qrTicketService, db } = createDependencies();
     const entitlementLookup = createSelectResult([entitlementRow()]);
+    const existingAttemptLookup = createSelectResult([]);
     const priorLookup = createSelectResult([]);
     const updateEntitlement = createUpdateResult([
       entitlementRow({
@@ -193,6 +211,7 @@ describe('BenefitRedemptionService RED contract', () => {
     qrTicketService.verifyTicketForScannerContract.mockResolvedValue(scannerContract());
     db.select
       .mockReturnValueOnce(entitlementLookup)
+      .mockReturnValueOnce(existingAttemptLookup)
       .mockReturnValueOnce(priorLookup);
     db.update.mockReturnValueOnce(updateEntitlement);
     db.insert.mockReturnValueOnce(insertRedemption);
@@ -227,6 +246,9 @@ describe('BenefitRedemptionService RED contract', () => {
       updateEntitlement.set.mock.results[0]?.value.where.mock.calls[0]?.[0],
       ENTITLEMENT_ID,
     )).toBe(true);
+    expect(priorLookup.where).toHaveBeenCalledWith(expect.anything());
+    expect(sqlPredicateHasParamValue(priorLookup.where.mock.calls[0]?.[0], SHOWTIME_ID))
+      .toBe(true);
     expect(db.insert).toHaveBeenCalledWith(ticketBenefitRedemptionRecords);
     expect(insertRedemption.values).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -249,6 +271,7 @@ describe('BenefitRedemptionService RED contract', () => {
     const entitlementLookup = createSelectResult([
       entitlementRow({ state: 'redeemed', redeemedAt: priorRedemptionAt }),
     ]);
+    const existingAttemptLookup = createSelectResult([]);
     const priorLookup = createSelectResult([
       {
         id: REDEMPTION_ID,
@@ -261,6 +284,7 @@ describe('BenefitRedemptionService RED contract', () => {
     qrTicketService.verifyTicketForScannerContract.mockResolvedValue(scannerContract());
     db.select
       .mockReturnValueOnce(entitlementLookup)
+      .mockReturnValueOnce(existingAttemptLookup)
       .mockReturnValueOnce(priorLookup);
     db.insert.mockReturnValueOnce(insertDuplicate);
 
@@ -294,14 +318,85 @@ describe('BenefitRedemptionService RED contract', () => {
     expectNoRawQrLeak(result);
   });
 
+  it('replays the same deviceAttemptId after a successful redemption without inserting again', async () => {
+    const { service, qrTicketService, db } = createDependencies();
+    const priorRedeemedAt = new Date('2026-07-04T09:00:00.000Z');
+    const entitlementLookup = createSelectResult([
+      entitlementRow({ state: 'redeemed', redeemedAt: priorRedeemedAt }),
+    ]);
+    const existingAttemptLookup = createSelectResult([
+      redemptionRecord({ createdAt: priorRedeemedAt }),
+    ]);
+    qrTicketService.verifyTicketForScannerContract.mockResolvedValue(scannerContract());
+    db.select
+      .mockReturnValueOnce(entitlementLookup)
+      .mockReturnValueOnce(existingAttemptLookup);
+
+    const result = await service.redeem(redemptionRequest(), {
+      scannerUserId: SCANNER_USER_ID,
+    });
+
+    expect(result).toMatchObject({
+      outcome: 'duplicate',
+      benefitEntitlement: expect.objectContaining({
+        id: ENTITLEMENT_ID,
+        state: 'redeemed',
+        redeemedAt: priorRedeemedAt.toISOString(),
+      }),
+      priorRedemption: {
+        redeemedAt: priorRedeemedAt.toISOString(),
+        redemptionEventId: REDEMPTION_ID,
+      },
+    });
+    expect(qrTicketService.verifyTicketForScannerContract).not.toHaveBeenCalled();
+    expect(db.update).not.toHaveBeenCalled();
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  it('replays the same deviceAttemptId after a rejected attempt without inserting again', async () => {
+    const { service, qrTicketService, db } = createDependencies();
+    const entitlementLookup = createSelectResult([entitlementRow()]);
+    const existingAttemptLookup = createSelectResult([
+      redemptionRecord({
+        result: 'wrong_showtime',
+        rejectionReason: '요청한 회차와 일치하지 않는 티켓입니다',
+      }),
+    ]);
+    qrTicketService.verifyTicketForScannerContract.mockResolvedValue(
+      scannerContract({ showtimeId: OTHER_SHOWTIME_ID }),
+    );
+    db.select
+      .mockReturnValueOnce(entitlementLookup)
+      .mockReturnValueOnce(existingAttemptLookup);
+
+    const result = await service.redeem(redemptionRequest(), {
+      scannerUserId: SCANNER_USER_ID,
+    });
+
+    expect(result).toMatchObject({
+      outcome: 'wrong_showtime',
+      benefitEntitlement: expect.objectContaining({
+        id: ENTITLEMENT_ID,
+        state: 'active',
+      }),
+      rejectionReason: '요청한 회차와 일치하지 않는 티켓입니다',
+    });
+    expect(qrTicketService.verifyTicketForScannerContract).not.toHaveBeenCalled();
+    expect(db.update).not.toHaveBeenCalled();
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
   it('rejects wrong showtime without updating the entitlement', async () => {
     const { service, qrTicketService, db } = createDependencies();
     const entitlementLookup = createSelectResult([entitlementRow()]);
+    const existingAttemptLookup = createSelectResult([]);
     const insertWrongShowtime = createInsertResult([{ id: REDEMPTION_ID }]);
     qrTicketService.verifyTicketForScannerContract.mockResolvedValue(
       scannerContract({ showtimeId: OTHER_SHOWTIME_ID }),
     );
-    db.select.mockReturnValueOnce(entitlementLookup);
+    db.select
+      .mockReturnValueOnce(entitlementLookup)
+      .mockReturnValueOnce(existingAttemptLookup);
     db.insert.mockReturnValueOnce(insertWrongShowtime);
 
     const result = await service.redeem(redemptionRequest(), {
@@ -328,9 +423,12 @@ describe('BenefitRedemptionService RED contract', () => {
     const entitlementLookup = createSelectResult([
       entitlementRow({ state: 'inactive', inactiveReason: 'ticket_cancelled' }),
     ]);
+    const existingAttemptLookup = createSelectResult([]);
     const insertInactive = createInsertResult([{ id: REDEMPTION_ID }]);
     qrTicketService.verifyTicketForScannerContract.mockResolvedValue(scannerContract());
-    db.select.mockReturnValueOnce(entitlementLookup);
+    db.select
+      .mockReturnValueOnce(entitlementLookup)
+      .mockReturnValueOnce(existingAttemptLookup);
     db.insert.mockReturnValueOnce(insertInactive);
 
     const result = await service.redeem(redemptionRequest(), {
@@ -354,11 +452,14 @@ describe('BenefitRedemptionService RED contract', () => {
   it('rejects tampered QR token and never persists the raw token', async () => {
     const { service, qrTicketService, db } = createDependencies();
     const entitlementLookup = createSelectResult([entitlementRow()]);
+    const existingAttemptLookup = createSelectResult([]);
     const insertTampered = createInsertResult([{ id: REDEMPTION_ID }]);
     qrTicketService.verifyTicketForScannerContract.mockRejectedValue(
       new Error('signature mismatch'),
     );
-    db.select.mockReturnValueOnce(entitlementLookup);
+    db.select
+      .mockReturnValueOnce(entitlementLookup)
+      .mockReturnValueOnce(existingAttemptLookup);
     db.insert.mockReturnValueOnce(insertTampered);
 
     const result = await service.redeem(redemptionRequest(), {
@@ -385,9 +486,12 @@ describe('BenefitRedemptionService RED contract', () => {
     const entitlementLookup = createSelectResult([
       entitlementRow({ ticketItemId: OTHER_TICKET_ITEM_ID }),
     ]);
+    const existingAttemptLookup = createSelectResult([]);
     const insertNotEligible = createInsertResult([{ id: REDEMPTION_ID }]);
     qrTicketService.verifyTicketForScannerContract.mockResolvedValue(scannerContract());
-    db.select.mockReturnValueOnce(entitlementLookup);
+    db.select
+      .mockReturnValueOnce(entitlementLookup)
+      .mockReturnValueOnce(existingAttemptLookup);
     db.insert.mockReturnValueOnce(insertNotEligible);
 
     const result = await service.redeem(redemptionRequest(), {
@@ -403,6 +507,59 @@ describe('BenefitRedemptionService RED contract', () => {
       expect.objectContaining({
         ticketItemId: OTHER_TICKET_ITEM_ID,
         result: 'not_eligible',
+      }),
+    );
+  });
+
+  it('returns redeemed entitlement state when a concurrent redemption wins before update', async () => {
+    const { service, qrTicketService, db } = createDependencies();
+    const priorRedemptionAt = new Date('2026-07-04T09:00:00.000Z');
+    const entitlementLookup = createSelectResult([entitlementRow()]);
+    const existingAttemptLookup = createSelectResult([]);
+    const initialPriorLookup = createSelectResult([]);
+    const updateEntitlement = createUpdateResult([]);
+    const concurrentPriorLookup = createSelectResult([
+      redemptionRecord({
+        createdAt: priorRedemptionAt,
+        deviceAttemptId: 'benefit-attempt-concurrent-winner',
+      }),
+    ]);
+    const reloadedEntitlementLookup = createSelectResult([
+      entitlementRow({ state: 'redeemed', redeemedAt: priorRedemptionAt }),
+    ]);
+    const insertDuplicate = createInsertResult([{ id: '00000000-0000-4000-8000-0000000000c2' }]);
+    qrTicketService.verifyTicketForScannerContract.mockResolvedValue(scannerContract());
+    db.select
+      .mockReturnValueOnce(entitlementLookup)
+      .mockReturnValueOnce(existingAttemptLookup)
+      .mockReturnValueOnce(initialPriorLookup)
+      .mockReturnValueOnce(concurrentPriorLookup)
+      .mockReturnValueOnce(reloadedEntitlementLookup);
+    db.update.mockReturnValueOnce(updateEntitlement);
+    db.insert.mockReturnValueOnce(insertDuplicate);
+
+    const result = await service.redeem(redemptionRequest({
+      deviceAttemptId: 'benefit-attempt-race-loser',
+    }), {
+      scannerUserId: SCANNER_USER_ID,
+    });
+
+    expect(result).toMatchObject({
+      outcome: 'duplicate',
+      benefitEntitlement: expect.objectContaining({
+        id: ENTITLEMENT_ID,
+        state: 'redeemed',
+        redeemedAt: priorRedemptionAt.toISOString(),
+      }),
+      priorRedemption: {
+        redeemedAt: priorRedemptionAt.toISOString(),
+        deviceAttemptId: expect.stringMatching(/^benefit-attempt/),
+      },
+    });
+    expect(insertDuplicate.values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: 'duplicate',
+        deviceAttemptId: 'benefit-attempt-race-loser',
       }),
     );
   });

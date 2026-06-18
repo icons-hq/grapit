@@ -31,6 +31,13 @@ type PriorRedemptionRow = {
   scannerUserId: string;
   deviceAttemptId: string;
 };
+type ExistingRedemptionRow = PriorRedemptionRow & {
+  showtimeId: string;
+  ticketItemId: string;
+  benefitEntitlementId: string;
+  result: BenefitRedemptionOutcome;
+  rejectionReason: string | null;
+};
 
 @Injectable()
 export class BenefitRedemptionService {
@@ -52,6 +59,14 @@ export class BenefitRedemptionService {
         benefitEntitlement: null,
         rejectionReason: rejectionReasonFor('not_eligible'),
       };
+    }
+
+    const existingAttempt = await this.findExistingAttemptByDeviceId(
+      this.db,
+      input.deviceAttemptId,
+    );
+    if (existingAttempt) {
+      return responseForExistingAttempt(existingAttempt, entitlement);
     }
 
     let contractShowtimeId: string;
@@ -114,7 +129,11 @@ export class BenefitRedemptionService {
       return this.rejected('inactive', entitlement);
     }
 
-    const priorRedemption = await this.findPriorRedeemed(this.db, entitlement.id);
+    const priorRedemption = await this.findPriorRedeemed(
+      this.db,
+      entitlement.showtimeId,
+      entitlement.id,
+    );
     if (entitlement.state === 'redeemed' || priorRedemption) {
       await this.recordRedemption(this.db, {
         input,
@@ -145,17 +164,24 @@ export class BenefitRedemptionService {
         .returning();
 
       if (!updated) {
-        const concurrentPrior = await this.findPriorRedeemed(tx, entitlement.id);
+        const concurrentPrior = await this.findPriorRedeemed(
+          tx,
+          entitlement.showtimeId,
+          entitlement.id,
+        );
         if (concurrentPrior) {
+          const reloadedEntitlement = await this.findEntitlement(entitlement.id, tx);
+          const duplicateEntitlement = reloadedEntitlement
+            ?? markEntitlementRedeemed(entitlement, concurrentPrior);
           await this.recordRedemption(tx, {
             input,
             context,
-            entitlement,
+            entitlement: duplicateEntitlement,
             result: 'duplicate',
             token: input.token,
             rejectionReason: rejectionReasonFor('duplicate'),
           });
-          return duplicateResponse(entitlement, concurrentPrior);
+          return duplicateResponse(duplicateEntitlement, concurrentPrior);
         }
 
         await this.recordRedemption(tx, {
@@ -202,6 +228,7 @@ export class BenefitRedemptionService {
 
   private async findPriorRedeemed(
     db: RedemptionDb,
+    showtimeId: string,
     benefitEntitlementId: string,
   ): Promise<PriorRedemptionRow | null> {
     const rows = await db
@@ -213,10 +240,34 @@ export class BenefitRedemptionService {
       })
       .from(ticketBenefitRedemptionRecords)
       .where(and(
+        eq(ticketBenefitRedemptionRecords.showtimeId, showtimeId),
         eq(ticketBenefitRedemptionRecords.benefitEntitlementId, benefitEntitlementId),
         eq(ticketBenefitRedemptionRecords.result, 'redeemed'),
       ))
       .orderBy(desc(ticketBenefitRedemptionRecords.createdAt))
+      .limit(1);
+
+    return rows[0] ?? null;
+  }
+
+  private async findExistingAttemptByDeviceId(
+    db: RedemptionDb,
+    deviceAttemptId: string,
+  ): Promise<ExistingRedemptionRow | null> {
+    const rows = await db
+      .select({
+        id: ticketBenefitRedemptionRecords.id,
+        showtimeId: ticketBenefitRedemptionRecords.showtimeId,
+        ticketItemId: ticketBenefitRedemptionRecords.ticketItemId,
+        benefitEntitlementId: ticketBenefitRedemptionRecords.benefitEntitlementId,
+        scannerUserId: ticketBenefitRedemptionRecords.scannerUserId,
+        deviceAttemptId: ticketBenefitRedemptionRecords.deviceAttemptId,
+        result: ticketBenefitRedemptionRecords.result,
+        rejectionReason: ticketBenefitRedemptionRecords.rejectionReason,
+        createdAt: ticketBenefitRedemptionRecords.createdAt,
+      })
+      .from(ticketBenefitRedemptionRecords)
+      .where(eq(ticketBenefitRedemptionRecords.deviceAttemptId, deviceAttemptId))
       .limit(1);
 
     return rows[0] ?? null;
@@ -299,6 +350,41 @@ function duplicateResponse(
         : undefined,
       redemptionEventId: priorRedemption?.id,
     },
+  };
+}
+
+function responseForExistingAttempt(
+  existingAttempt: ExistingRedemptionRow,
+  entitlement: BenefitEntitlementRow,
+): BenefitRedemptionResponse {
+  if (existingAttempt.result === 'redeemed' || existingAttempt.result === 'duplicate') {
+    return duplicateResponse(
+      entitlement.state === 'redeemed'
+        ? entitlement
+        : markEntitlementRedeemed(entitlement, existingAttempt),
+      existingAttempt,
+    );
+  }
+
+  return {
+    outcome: existingAttempt.result,
+    benefitEntitlement: toBenefitEntitlement(entitlement),
+    rejectionReason: existingAttempt.rejectionReason
+      ?? rejectionReasonFor(existingAttempt.result),
+  };
+}
+
+function markEntitlementRedeemed(
+  entitlement: BenefitEntitlementRow,
+  priorRedemption: PriorRedemptionRow,
+): BenefitEntitlementRow {
+  const redeemedAt = toDate(priorRedemption.createdAt);
+  return {
+    ...entitlement,
+    state: 'redeemed',
+    redeemedAt,
+    redeemedByUserId: priorRedemption.scannerUserId,
+    updatedAt: redeemedAt,
   };
 }
 
@@ -392,4 +478,8 @@ function maskContextValue(value: string): string {
 
 function toIso(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+}
+
+function toDate(value: Date | string): Date {
+  return value instanceof Date ? value : new Date(value);
 }
