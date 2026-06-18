@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import * as schemaBarrel from './index.js';
+import { adminAuditActionEnum } from './admin-audit-logs';
 import {
   ticketBenefitConfigurationChanges,
   ticketBenefitConfigurations,
@@ -59,6 +60,23 @@ describe('ticket benefit schema contracts', () => {
     for (const tableName of tableNames) {
       expect(migration).toContain(`CREATE TABLE "${tableName}"`);
     }
+  });
+
+  it('commits the 0029 migration journal entry without broad snapshot churn', () => {
+    const migrationsDir = resolve(__dirname, '../migrations');
+    const journal = JSON.parse(
+      readFileSync(resolve(migrationsDir, 'meta/_journal.json'), 'utf8'),
+    ) as { entries: Array<{ idx: number; tag: string }> };
+
+    expect(journal.entries).toContainEqual(
+      expect.objectContaining({
+        idx: 30,
+        tag: '0029_ticket_benefits',
+      }),
+    );
+    expect(existsSync(resolve(migrationsDir, 'meta/0029_snapshot.json'))).toBe(
+      false,
+    );
   });
 
   it('keeps migration 0029 free of destructive DML', () => {
@@ -218,5 +236,22 @@ describe('ticket benefit schema contracts', () => {
       'CREATE INDEX "idx_ticket_benefit_redemption_records_showtime_entitlement_created" ON "ticket_benefit_redemption_records" USING btree ("showtime_id","benefit_entitlement_id","created_at" DESC);',
     );
     expect(migration).not.toContain('ticket_benefit_result_locks');
+  });
+
+  it('extends admin audit action enum for benefit configuration writes and exports', () => {
+    const migration = readMigration();
+    const benefitAuditActions = [
+      'benefits.configuration.update',
+      'benefits.configuration.export',
+    ];
+
+    expect(adminAuditActionEnum.enumValues).toEqual(
+      expect.arrayContaining(benefitAuditActions),
+    );
+    for (const action of benefitAuditActions) {
+      expect(migration).toContain(
+        `ALTER TYPE "public"."admin_audit_action" ADD VALUE IF NOT EXISTS '${action}';`,
+      );
+    }
   });
 });

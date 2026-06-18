@@ -102,6 +102,34 @@ describe('admin operations contract', () => {
     expect(parsed.diff.after).toEqual({ status: 'published' });
   });
 
+  it('validates benefit configuration audit actions', () => {
+    const parsed = adminAuditEventSchema.parse({
+      id: 'audit-benefit-1',
+      actorUserId: 'admin-1',
+      action: 'benefits.configuration.update',
+      resourceType: 'ticket_benefit_configuration',
+      resourceId: 'showtime-1',
+      status: 'success',
+      reason: 'benefit configuration saved',
+      changedFields: ['benefits'],
+      diff: {
+        before: { version: 1 },
+        after: { version: 2 },
+      },
+      createdAt: '2026-06-18T00:00:00.000Z',
+    });
+
+    expect(parsed.action).toBe('benefits.configuration.update');
+    expect(
+      adminAuditEventSchema.parse({
+        ...parsed,
+        id: 'audit-benefit-export-1',
+        action: 'benefits.configuration.export',
+        resourceType: 'ticket_benefit_configuration_export',
+      }).action,
+    ).toBe('benefits.configuration.export');
+  });
+
   it('validates raw user export audit actions and reasoned export requests', () => {
     const audit = adminAuditEventSchema.parse({
       id: 'audit-user-export-1',

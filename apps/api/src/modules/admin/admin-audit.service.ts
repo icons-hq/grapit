@@ -18,6 +18,8 @@ export const ADMIN_AUDIT_ACTIONS = [
   'field.scan.consume',
   'field.scan.offline_sync',
   'settlement.export',
+  'benefits.configuration.update',
+  'benefits.configuration.export',
   'security.allowlist.update',
   'security.permission.update',
   'user.export_raw',

@@ -187,6 +187,8 @@ export const adminAuditActionSchema = z.enum([
   'allowlist.update',
   'security.allowlist.update',
   'security.permission.update',
+  'benefits.configuration.update',
+  'benefits.configuration.export',
   'user.export_raw',
   'user.withdraw',
   'user.hard_delete',

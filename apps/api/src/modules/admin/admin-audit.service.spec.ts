@@ -6,6 +6,7 @@ import {
   type AdminAuditAction,
   type AdminAuditStatus,
 } from './admin-audit.service.js';
+import { adminAuditActionEnum } from '../../database/schema/admin-audit-logs.js';
 
 function createMockDb() {
   const returning = vi.fn().mockResolvedValue([{ id: 'audit-1' }]);
@@ -40,6 +41,15 @@ function writeInput(overrides: {
 }
 
 describe('AdminAuditService', () => {
+  it('keeps database enum truth ready for benefit configuration audit actions', () => {
+    expect(adminAuditActionEnum.enumValues).toEqual(
+      expect.arrayContaining([
+        'benefits.configuration.update',
+        'benefits.configuration.export',
+      ]),
+    );
+  });
+
   it('supports every D-10 sensitive admin action and status', async () => {
     const db = createMockDb();
     const service = new AdminAuditService(db as never);
@@ -66,6 +76,8 @@ describe('AdminAuditService', () => {
       'field.scan.consume',
       'field.scan.offline_sync',
       'settlement.export',
+      'benefits.configuration.update',
+      'benefits.configuration.export',
       'security.allowlist.update',
       'security.permission.update',
       'user.export_raw',

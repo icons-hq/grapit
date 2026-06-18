@@ -506,6 +506,7 @@ function toTicketContext(
     ticketStatus: contract.ticketStatus,
     redactedTokenRef: redactedTokenRef(token),
     maskedJti: contract.maskedJti,
+    benefitEntitlements: [],
   };
 }
 

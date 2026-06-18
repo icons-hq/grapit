@@ -1552,6 +1552,7 @@ export class ReservationService {
         admissionState: 'NOT_ENTERED',
         enteredAt: null,
         qrCredential: null,
+        benefitEntitlements: [],
         cancellation: null,
         isLegacyFallback: true,
       };
@@ -1577,6 +1578,7 @@ export class ReservationService {
       admissionState: this.mapTicketItemAdmissionState(row.admissionState),
       enteredAt: row.enteredAt?.toISOString() ?? null,
       qrCredential: this.mapTicketItemQrCredential(qrTicket),
+      benefitEntitlements: [],
       cancellation: this.mapTicketItemCancellation(row),
     };
   }

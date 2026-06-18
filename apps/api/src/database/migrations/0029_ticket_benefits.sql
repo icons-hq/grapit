@@ -5,6 +5,8 @@ CREATE TYPE "public"."ticket_benefit_run_status" AS ENUM('running', 'completed',
 CREATE TYPE "public"."ticket_benefit_entitlement_source" AS ENUM('configuration', 'live_run', 'rollback');--> statement-breakpoint
 CREATE TYPE "public"."ticket_benefit_entitlement_state" AS ENUM('active', 'inactive', 'redeemed');--> statement-breakpoint
 CREATE TYPE "public"."ticket_benefit_redemption_result" AS ENUM('redeemed', 'duplicate', 'not_eligible', 'inactive', 'tampered', 'wrong_showtime');--> statement-breakpoint
+ALTER TYPE "public"."admin_audit_action" ADD VALUE IF NOT EXISTS 'benefits.configuration.update';--> statement-breakpoint
+ALTER TYPE "public"."admin_audit_action" ADD VALUE IF NOT EXISTS 'benefits.configuration.export';--> statement-breakpoint
 CREATE TABLE "ticket_benefit_configurations" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"showtime_id" uuid NOT NULL,

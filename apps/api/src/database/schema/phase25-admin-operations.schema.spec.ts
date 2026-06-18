@@ -39,6 +39,8 @@ describe('Phase 25 admin operations security schema contracts', () => {
       'field.scan.consume',
       'field.scan.offline_sync',
       'settlement.export',
+      'benefits.configuration.update',
+      'benefits.configuration.export',
       'security.allowlist.update',
       'security.permission.update',
       'user.withdraw',

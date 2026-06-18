@@ -25,6 +25,8 @@ export const adminAuditActionEnum = pgEnum('admin_audit_action', [
   'field.scan.consume',
   'field.scan.offline_sync',
   'settlement.export',
+  'benefits.configuration.update',
+  'benefits.configuration.export',
   'security.allowlist.update',
   'security.permission.update',
   'user.withdraw',
