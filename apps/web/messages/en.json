@@ -507,7 +507,17 @@
       "cancellationDeadline": "Cancellation deadline",
       "qrReady": "Your QR ticket is ready. Venue staff will scan it at entry.",
       "qrChecking": "Payment is complete, but the QR ticket is still being prepared. Refresh shortly or check again from My page.",
-      "fieldCheckResult": "The venue scan result is the final entry record."
+      "fieldCheckResult": "The venue scan result is the final entry record.",
+      "benefits": {
+        "title": "Benefits",
+        "included": "Included",
+        "limited": "Limited",
+        "available": "Available",
+        "used": "Used",
+        "inactive": "Inactive",
+        "empty": "No benefits included",
+        "redeemedAt": "Redeemed at: {date}"
+      }
     }
   },
   "reservation": {

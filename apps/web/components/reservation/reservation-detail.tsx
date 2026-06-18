@@ -21,9 +21,14 @@ import {
   QrTicketImage,
 } from '@/components/field/qr-ticket-image';
 import { getDiagnosticPaymentFailureGuidance } from '@/lib/booking/payment-failure-guidance';
-import { getVisibleCopy, type VisibleCopy } from '@/lib/i18n/visible-copy';
+import {
+  getVisibleCopy,
+  resolveVisibleCopyLocale,
+  type VisibleCopy,
+} from '@/lib/i18n/visible-copy';
 import { getClientLocale } from '@/lib/i18n/client-copy';
 import type {
+  BenefitEntitlement,
   ReservationDetail as ReservationDetailType,
   ReservationStatus,
   TicketItem,
@@ -103,6 +108,8 @@ function formatPrice(amount: number, locale: string) {
 }
 
 type ReservationDetailCopy = VisibleCopy['reservation']['detail'];
+type BenefitCopy = VisibleCopy['bookingExtra']['completeCard']['benefits'];
+type BenefitLocale = keyof BenefitEntitlement['displayCopy'];
 
 function formatSeats(
   reservation: ReservationDetailType,
@@ -220,8 +227,59 @@ function getTicketItemQrUnavailableCopy(
   };
 }
 
+function getBenefitKindLabel(kind: BenefitEntitlement['kind'], copy: BenefitCopy): string {
+  return kind === 'included' ? copy.included : copy.limited;
+}
+
+function getBenefitStateKey(
+  entitlement: BenefitEntitlement,
+  ticketStatus: TicketItem['status'],
+): 'available' | 'used' | 'inactive' {
+  if (ticketStatus !== 'ACTIVE' || entitlement.state === 'inactive') {
+    return 'inactive';
+  }
+  if (entitlement.state === 'redeemed') {
+    return 'used';
+  }
+
+  return 'available';
+}
+
+function getBenefitStateLabel(
+  stateKey: 'available' | 'used' | 'inactive',
+  copy: BenefitCopy,
+): string {
+  switch (stateKey) {
+    case 'used':
+      return copy.used;
+    case 'inactive':
+      return copy.inactive;
+    default:
+      return copy.available;
+  }
+}
+
+function getBenefitStateClassName(stateKey: 'available' | 'used' | 'inactive'): string {
+  switch (stateKey) {
+    case 'used':
+      return 'bg-[#F3EFFF] text-[#6C3CE0]';
+    case 'inactive':
+      return 'bg-[#F3F4F6] text-gray-600';
+    default:
+      return 'bg-[#F0FDF4] text-[#15803D]';
+  }
+}
+
+function getBenefitName(
+  entitlement: BenefitEntitlement,
+  locale: BenefitLocale,
+): string {
+  return entitlement.displayCopy[locale]?.name ?? entitlement.displayCopy.ko.name;
+}
+
 type BuyerQrCard = {
   id: string;
+  isTicketItem: boolean;
   seatLabel: string;
   floorLabel: string;
   qrCheckInUrl: string | null;
@@ -235,6 +293,7 @@ type BuyerQrCard = {
   status: TicketItem['status'];
   price: number;
   serviceFee: number;
+  benefitEntitlements: BenefitEntitlement[];
 };
 
 function getBuyerQrCards(
@@ -252,6 +311,7 @@ function getBuyerQrCards(
 
       return {
         id: ticketItem.id,
+        isTicketItem: true,
         seatLabel: formatTicketItemSeat(ticketItem, copy.seatLabel),
         floorLabel: ticketItem.floorLabel,
         qrCheckInUrl,
@@ -265,6 +325,9 @@ function getBuyerQrCards(
         status: ticketItem.status,
         price: ticketItem.price,
         serviceFee: ticketItem.serviceFee,
+        benefitEntitlements: Array.isArray(ticketItem.benefitEntitlements)
+          ? ticketItem.benefitEntitlements
+          : [],
       };
     });
   }
@@ -277,6 +340,7 @@ function getBuyerQrCards(
   return [
     {
       id: 'legacy-qr-ticket',
+      isTicketItem: false,
       seatLabel: formatSeats(reservation, copy.seatLabel),
       floorLabel: '',
       qrCheckInUrl: isQrActive ? buildQrCheckInUrl(reservation.qrTicket.token) : null,
@@ -290,8 +354,70 @@ function getBuyerQrCards(
       status: reservation.qrTicket.status === 'EXPIRED' ? 'EXPIRED' : 'ACTIVE',
       price: reservation.totalAmount,
       serviceFee: 0,
+      benefitEntitlements: [],
     },
   ];
+}
+
+function TicketBenefitList({
+  ticketItemId,
+  benefits,
+  ticketStatus,
+  copy,
+  locale,
+}: {
+  ticketItemId: string;
+  benefits: BenefitEntitlement[];
+  ticketStatus: TicketItem['status'];
+  copy: BenefitCopy;
+  locale: BenefitLocale;
+}) {
+  return (
+    <div
+      data-testid={`ticket-benefits-${ticketItemId}`}
+      className="mt-4 border-t border-gray-100 pt-4"
+    >
+      <h4 className="text-sm font-semibold text-gray-900">{copy.title}</h4>
+      {benefits.length === 0 ? (
+        <p className="mt-2 text-sm text-gray-500">{copy.empty}</p>
+      ) : (
+        <ul className="mt-2 space-y-2">
+          {benefits.map((benefit) => {
+            const stateKey = getBenefitStateKey(benefit, ticketStatus);
+            return (
+              <li
+                key={benefit.id}
+                className="rounded-lg border border-gray-100 bg-gray-50/80 px-3 py-2"
+              >
+                <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
+                  <p className="min-w-0 flex-1 break-words text-sm font-semibold text-gray-900">
+                    {getBenefitName(benefit, locale)}
+                  </p>
+                  <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                    <span className="rounded-full bg-white px-2 py-0.5 text-xs font-medium text-gray-600">
+                      {getBenefitKindLabel(benefit.kind, copy)}
+                    </span>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${getBenefitStateClassName(stateKey)}`}
+                    >
+                      {getBenefitStateLabel(stateKey, copy)}
+                    </span>
+                  </div>
+                </div>
+                {stateKey === 'used' && benefit.redeemedAt && (
+                  <p className="mt-1 break-words text-xs text-gray-500">
+                    {formatTemplate(copy.redeemedAt, {
+                      date: formatDateTime(benefit.redeemedAt, '-', locale),
+                    })}
+                  </p>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 function hasPersistedTicketItems(reservation: ReservationDetailType): boolean {
@@ -538,6 +664,7 @@ export function ReservationDetailView({
 }: ReservationDetailProps) {
   const router = useRouter();
   const locale = getClientLocale();
+  const benefitLocale = resolveVisibleCopyLocale(locale);
   const visibleCopy = getVisibleCopy(locale);
   const copy = visibleCopy.reservation;
   const detailCopy = copy.detail;
@@ -850,6 +977,16 @@ export function ReservationDetailView({
                         </p>
                       </div>
                     </div>
+                  )}
+
+                  {card.isTicketItem && (
+                    <TicketBenefitList
+                      ticketItemId={card.id}
+                      benefits={card.benefitEntitlements}
+                      ticketStatus={card.status}
+                      copy={completeCopy.benefits}
+                      locale={benefitLocale}
+                    />
                   )}
                 </div>
               ))}
