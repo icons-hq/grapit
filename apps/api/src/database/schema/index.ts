@@ -50,6 +50,21 @@ export {
   ticketItemAdmissionStateEnum,
   ticketItemReopenStateEnum,
 } from './ticket-items.js';
+export {
+  ticketBenefitConfigurationChangeActionEnum,
+  ticketBenefitConfigurationChanges,
+  ticketBenefitConfigurations,
+  ticketBenefitEntitlementSourceEnum,
+  ticketBenefitEntitlementStateEnum,
+  ticketBenefitEntitlements,
+  ticketBenefitKindEnum,
+  ticketBenefitRedemptionRecords,
+  ticketBenefitRedemptionResultEnum,
+  ticketBenefitRunModeEnum,
+  ticketBenefitRuns,
+  ticketBenefitRunStatusEnum,
+  ticketBenefits,
+} from './ticket-benefits.js';
 export { tickets, ticketStatusEnum } from './tickets.js';
 export {
   ticketScanEvents,
