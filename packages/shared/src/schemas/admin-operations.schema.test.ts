@@ -37,10 +37,14 @@ describe('admin operations contract', () => {
       'field.scan.consume',
       'field.scan.sync',
       'settlement.export',
+      'benefits.manage',
+      'benefits.export',
     ];
 
     expect(ADMIN_CAPABILITIES).toEqual(requiredCapabilities);
     expect(adminCapabilitySchema.parse('field.scan.verify')).toBe('field.scan.verify');
+    expect(adminCapabilitySchema.parse('benefits.manage')).toBe('benefits.manage');
+    expect(adminCapabilitySchema.parse('benefits.export')).toBe('benefits.export');
     expect(ADMIN_CAPABILITY_BUNDLE_CAPABILITIES.admin).toEqual(requiredCapabilities);
     expect(ADMIN_CAPABILITY_BUNDLE_CAPABILITIES.operator).toContain('support.manage');
     expect(ADMIN_CAPABILITY_BUNDLE_CAPABILITIES.operator).not.toContain(

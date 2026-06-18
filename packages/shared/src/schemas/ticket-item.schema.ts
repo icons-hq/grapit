@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { benefitEntitlementSchema } from './benefit.schema';
+
 const isoDatetime = (label: string) =>
   z.string().datetime({ message: `${label}은 ISO datetime 형식이어야 합니다` });
 
@@ -58,6 +60,7 @@ export const ticketItemSchema = z.object({
   enteredAt: isoDatetime('입장 처리 시각').nullable(),
   qrCredential: ticketItemQrCredentialSchema.nullable(),
   cancellation: ticketItemCancellationSchema.nullable(),
+  benefitEntitlements: z.array(benefitEntitlementSchema).default([]),
   isLegacyFallback: z.boolean().optional(),
 });
 

@@ -17,6 +17,8 @@ export const ADMIN_CAPABILITIES = [
   'field.scan.consume',
   'field.scan.sync',
   'settlement.export',
+  'benefits.manage',
+  'benefits.export',
 ] as const;
 
 export const ADMIN_CAPABILITY_BUNDLES = [

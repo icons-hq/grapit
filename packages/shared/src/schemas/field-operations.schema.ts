@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { benefitEntitlementSchema } from './benefit.schema';
+
 const isoDatetime = (label: string) =>
   z.string().datetime({ message: `${label}은 ISO datetime 형식이어야 합니다` });
 
@@ -39,6 +41,18 @@ export const fieldCheckInOutcomeSchema = z.enum(FIELD_CHECK_IN_OUTCOMES);
 export const fieldOfflineSyncStateSchema = z.enum(FIELD_OFFLINE_SYNC_STATES);
 export const settlementExportDatasetSchema = z.enum(SETTLEMENT_EXPORT_DATASETS);
 
+export const fieldBenefitEntitlementSchema = benefitEntitlementSchema.pick({
+  id: true,
+  benefitIdentity: true,
+  kind: true,
+  displayCopy: true,
+  state: true,
+  runId: true,
+  runMode: true,
+  attachedToTicket: true,
+  redeemedAt: true,
+});
+
 export const fieldCheckInVerifyRequestSchema = z
   .object({
     token: z.string().trim().min(1, 'QR token이 필요합니다').optional(),
@@ -66,6 +80,7 @@ export const fieldCheckInTicketContextSchema = z
     ticketStatus: z.enum(['ACTIVE', 'REVOKED', 'USED', 'EXPIRED']),
     redactedTokenRef: z.string().min(1, 'redacted token reference가 필요합니다'),
     maskedJti: z.string().min(1, 'masked JTI가 필요합니다').optional(),
+    benefitEntitlements: z.array(fieldBenefitEntitlementSchema).default([]),
   })
   .strict();
 
@@ -293,6 +308,7 @@ export const settlementExportResponseSchema = z
 export type FieldCheckInOutcome = z.infer<typeof fieldCheckInOutcomeSchema>;
 export type FieldOfflineSyncState = z.infer<typeof fieldOfflineSyncStateSchema>;
 export type SettlementExportDataset = z.infer<typeof settlementExportDatasetSchema>;
+export type FieldBenefitEntitlement = z.infer<typeof fieldBenefitEntitlementSchema>;
 export type FieldCheckInVerifyRequest = z.infer<
   typeof fieldCheckInVerifyRequestSchema
 >;

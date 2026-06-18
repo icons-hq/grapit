@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { benefitEntitlementSchema } from './benefit.schema';
 import { consentCaptureItemSchema } from './consent.schema';
 import { ticketItemSchema } from './ticket-item.schema';
 
@@ -539,6 +540,7 @@ export const adminTicketItemSchema = floorAwareSeatSelectionSchema.extend({
     'MANUAL_OPENED',
   ]),
   reopenHoldUntil: isoDatetime('좌석 재오픈 hold 만료 시각').nullable(),
+  benefitEntitlements: z.array(benefitEntitlementSchema).default([]),
 });
 
 export const adminBookingDetailSchema = adminBookingListItemSchema.extend({
