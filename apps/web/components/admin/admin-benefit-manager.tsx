@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Download,
   FlaskConical,
@@ -79,192 +79,39 @@ export function AdminBenefitManager({
   const configurationQuery = useAdminBenefitConfiguration(normalizedShowtimeId);
   const changesQuery = useAdminBenefitConfigurationChanges(normalizedShowtimeId);
   const runsQuery = useAdminBenefitRuns(normalizedShowtimeId);
-  const saveConfiguration = useSaveAdminBenefitConfiguration();
-  const runTest = useRunAdminBenefitTest();
-  const runLive = useRunAdminBenefitLive();
   const rollbackRun = useRollbackAdminBenefitRun();
   const exportMutation = useAdminBenefitExport();
 
-  const [draftSourceKey, setDraftSourceKey] = useState('');
-  const [drafts, setDrafts] = useState<BenefitDraft[]>(() => [
-    createBenefitDraft('included'),
-    createBenefitDraft('limited'),
-  ]);
-  const [saveReason, setSaveReason] = useState('');
-  const [testSeedRef, setTestSeedRef] = useState('');
-  const [liveReason, setLiveReason] = useState('');
   const [rollbackTarget, setRollbackTarget] = useState<BenefitRunRecord | null>(null);
   const [rollbackReason, setRollbackReason] = useState('');
 
-  const configuration = configurationQuery.data ?? null;
-  const runs = runsQuery.data?.runs ?? [];
-  const changes = changesQuery.data ?? [];
-  const limitedDrafts = drafts.filter((draft) => draft.kind === 'limited');
-  const includedDrafts = drafts.filter((draft) => draft.kind === 'included');
-  const isMutating =
-    saveConfiguration.isPending ||
-    runTest.isPending ||
-    runLive.isPending ||
-    rollbackRun.isPending ||
-    exportMutation.isPending;
   const canUseShowtime = normalizedShowtimeId.length > 0;
-  const canRunLive =
-    canUseShowtime &&
-    Boolean(configuration?.id) &&
-    liveReason.trim().length > 0 &&
-    !isMutating;
-
-  useEffect(() => {
-    setDraftSourceKey('');
-  }, [normalizedShowtimeId]);
-
-  useEffect(() => {
-    if (!normalizedShowtimeId || !configurationQuery.isSuccess) {
-      return;
-    }
-
-    const nextSourceKey = configuration
-      ? configuration.id
-      : `empty:${normalizedShowtimeId}`;
-    if (draftSourceKey === nextSourceKey) {
-      return;
-    }
-
-    setDrafts(
-      configuration
-        ? draftsFromConfiguration(configuration)
-        : [createBenefitDraft('included'), createBenefitDraft('limited')],
-    );
-    setDraftSourceKey(nextSourceKey);
-  }, [
-    configuration,
-    configurationQuery.isSuccess,
-    draftSourceKey,
-    normalizedShowtimeId,
-  ]);
+  const configuration =
+    configurationQuery.data?.showtimeId === normalizedShowtimeId
+      ? configurationQuery.data
+      : null;
+  const runs = useMemo(() => runsQuery.data?.runs ?? [], [runsQuery.data?.runs]);
+  const changes = useMemo(() => changesQuery.data ?? [], [changesQuery.data]);
+  const draftSeedKey = !canUseShowtime
+    ? 'empty-showtime'
+    : configurationQuery.isSuccess
+      ? configuration
+        ? `${configuration.id}:${configuration.updatedAt}`
+        : `empty:${normalizedShowtimeId}`
+      : `loading:${normalizedShowtimeId}`;
 
   const summary = useMemo(
-    () => ({
-      included: includedDrafts.length,
-      limited: limitedDrafts.length,
-      liveRuns: runs.filter((run) => run.mode === 'live').length,
-      testRuns: runs.filter((run) => run.mode === 'test').length,
-    }),
-    [includedDrafts.length, limitedDrafts.length, runs],
+    () => {
+      const benefits = configuration?.benefits ?? [];
+      return {
+        included: benefits.filter((benefit) => benefit.kind === 'included').length,
+        limited: benefits.filter((benefit) => benefit.kind === 'limited').length,
+        liveRuns: runs.filter((run) => run.mode === 'live').length,
+        testRuns: runs.filter((run) => run.mode === 'test').length,
+      };
+    },
+    [configuration?.benefits, runs],
   );
-
-  function updateDraft(localId: string, patch: Partial<BenefitDraft>) {
-    setDrafts((current) =>
-      current.map((draft) =>
-        draft.localId === localId ? { ...draft, ...patch } : draft,
-      ),
-    );
-  }
-
-  function addDraft(kind: BenefitDraftKind) {
-    setDrafts((current) => [...current, createBenefitDraft(kind)]);
-  }
-
-  function removeDraft(localId: string) {
-    setDrafts((current) => {
-      if (current.length === 1) {
-        return current;
-      }
-      return current.filter((draft) => draft.localId !== localId);
-    });
-  }
-
-  function buildDefinitionsOrNotify(): BenefitDefinition[] | null {
-    const result = buildBenefitDefinitions(drafts);
-    if (result.ok) {
-      return result.benefits;
-    }
-    toast.error(result.message);
-    return null;
-  }
-
-  function handleSave() {
-    if (!canUseShowtime) {
-      toast.error('회차 ID를 입력하세요.');
-      return;
-    }
-
-    const benefits = buildDefinitionsOrNotify();
-    if (!benefits) {
-      return;
-    }
-
-    void saveConfiguration
-      .mutateAsync({
-        showtimeId: normalizedShowtimeId,
-        benefits,
-        reason: saveReason,
-      })
-      .then(() => {
-        toast.success('혜택 설정을 저장했습니다.');
-        setSaveReason('');
-      })
-      .catch((error: unknown) => {
-        toast.error(error instanceof Error ? error.message : '혜택 설정 저장에 실패했습니다.');
-      });
-  }
-
-  function handleRunTest() {
-    if (!canUseShowtime) {
-      toast.error('회차 ID를 입력하세요.');
-      return;
-    }
-
-    const benefits = buildDefinitionsOrNotify();
-    if (!benefits) {
-      return;
-    }
-
-    void runTest
-      .mutateAsync({
-        showtimeId: normalizedShowtimeId,
-        configurationId: configuration?.id ?? null,
-        operatorProvidedSeedRef: testSeedRef,
-        configurationSnapshot: {
-          active: false,
-          sourceConfigurationId: configuration?.id ?? null,
-          capturedAt: new Date().toISOString(),
-          benefits,
-        },
-      })
-      .then(() => {
-        toast.success('테스트 혜택 실행 결과를 기록했습니다.');
-        setTestSeedRef('');
-      })
-      .catch((error: unknown) => {
-        toast.error(error instanceof Error ? error.message : '테스트 실행에 실패했습니다.');
-      });
-  }
-
-  function handleRunLive() {
-    if (!configuration?.id) {
-      toast.error('라이브 실행 전 혜택 설정을 저장하세요.');
-      return;
-    }
-    if (liveReason.trim().length === 0) {
-      toast.error('라이브 실행 사유를 입력하세요.');
-      return;
-    }
-
-    void runLive
-      .mutateAsync({
-        showtimeId: normalizedShowtimeId,
-        configurationId: configuration.id,
-        reason: liveReason,
-      })
-      .then(() => {
-        toast.success('라이브 혜택을 티켓에 적용했습니다.');
-        setLiveReason('');
-      })
-      .catch((error: unknown) => {
-        toast.error(error instanceof Error ? error.message : '라이브 실행에 실패했습니다.');
-      });
-  }
 
   function handleRollback() {
     if (!rollbackTarget || rollbackReason.trim().length === 0) {
@@ -363,150 +210,12 @@ export function AdminBenefitManager({
         </div>
       </section>
 
-      <section className="rounded-lg bg-white p-4 shadow-sm">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <h2 className="text-xl font-semibold leading-tight text-gray-900">
-              혜택 설정
-            </h2>
-            <p className="mt-1 text-sm text-gray-600">
-              ALL 혜택은 모든 대상 티켓에 적용되고, 한정 혜택은 실행 기록 기준으로 부여됩니다.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="outline" onClick={() => addDraft('included')}>
-              <Plus className="h-4 w-4" />
-              ALL 추가
-            </Button>
-            <Button type="button" variant="outline" onClick={() => addDraft('limited')}>
-              <Plus className="h-4 w-4" />
-              한정 추가
-            </Button>
-          </div>
-        </div>
-
-        {configurationQuery.isLoading && canUseShowtime ? (
-          <div className="mt-4 space-y-3">
-            <Skeleton className="h-32 w-full" />
-            <Skeleton className="h-32 w-full" />
-          </div>
-        ) : (
-          <div className="mt-4 space-y-3">
-            {drafts.map((draft, index) => (
-              <BenefitDraftEditor
-                key={draft.localId}
-                draft={draft}
-                index={index}
-                canRemove={drafts.length > 1}
-                onChange={(patch) => updateDraft(draft.localId, patch)}
-                onRemove={() => removeDraft(draft.localId)}
-              />
-            ))}
-          </div>
-        )}
-
-        <div className="mt-4 grid gap-3 lg:grid-cols-2">
-          <label className="space-y-1.5 text-sm font-semibold text-gray-700">
-            <span>설정 저장 사유</span>
-            <Textarea
-              value={saveReason}
-              onChange={(event) => setSaveReason(event.target.value)}
-              placeholder="예: VIP/R/S 혜택 운영안 확정"
-            />
-          </label>
-          <div className="flex items-end">
-            <Button
-              type="button"
-              className="h-12 w-full"
-              disabled={!canUseShowtime || saveConfiguration.isPending}
-              onClick={handleSave}
-            >
-              {saveConfiguration.isPending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Save className="h-4 w-4" />
-              )}
-              설정 저장
-            </Button>
-          </div>
-        </div>
-      </section>
-
-      <section className="grid gap-4 lg:grid-cols-2">
-        <div className="rounded-lg bg-white p-4 shadow-sm">
-          <div className="flex items-start gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#F3EFFF] text-[#6C3CE0]">
-              <FlaskConical className="h-5 w-5" />
-            </div>
-            <div>
-              <h2 className="text-xl font-semibold leading-tight text-gray-900">
-                테스트 실행
-              </h2>
-              <p className="mt-1 text-sm text-gray-600">
-                현재 입력값으로 결과를 기록하고 실제 티켓에는 붙이지 않습니다.
-              </p>
-            </div>
-          </div>
-          <label className="mt-4 block space-y-1.5 text-sm font-semibold text-gray-700">
-            <span>테스트 seed 참조값</span>
-            <Input
-              value={testSeedRef}
-              onChange={(event) => setTestSeedRef(event.target.value)}
-              placeholder="선택 입력"
-            />
-          </label>
-          <Button
-            type="button"
-            className="mt-4 h-12 w-full"
-            disabled={!canUseShowtime || runTest.isPending}
-            onClick={handleRunTest}
-          >
-            {runTest.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <FlaskConical className="h-4 w-4" />
-            )}
-            테스트 실행
-          </Button>
-        </div>
-
-        <div className="rounded-lg bg-white p-4 shadow-sm">
-          <div className="flex items-start gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#F0FDF4] text-[#15803D]">
-              <Play className="h-5 w-5" />
-            </div>
-            <div>
-              <h2 className="text-xl font-semibold leading-tight text-gray-900">
-                라이브 적용
-              </h2>
-              <p className="mt-1 text-sm text-gray-600">
-                저장된 설정으로 한정 혜택을 티켓에 확정 적용합니다.
-              </p>
-            </div>
-          </div>
-          <label className="mt-4 block space-y-1.5 text-sm font-semibold text-gray-700">
-            <span>라이브 적용 사유</span>
-            <Textarea
-              value={liveReason}
-              onChange={(event) => setLiveReason(event.target.value)}
-              placeholder="예: 판매 종료 전 1차 혜택 확정"
-            />
-          </label>
-          <Button
-            type="button"
-            className="mt-4 h-12 w-full bg-[#15803D] hover:bg-[#166534]"
-            disabled={!canRunLive}
-            onClick={handleRunLive}
-          >
-            {runLive.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Play className="h-4 w-4" />
-            )}
-            라이브 적용
-          </Button>
-        </div>
-      </section>
+      <BenefitConfigurationWorkspace
+        key={draftSeedKey}
+        normalizedShowtimeId={normalizedShowtimeId}
+        configuration={configuration}
+        isConfigurationLoading={configurationQuery.isLoading && canUseShowtime}
+      />
 
       <section className="rounded-lg bg-white p-4 shadow-sm">
         <div className="flex items-center gap-2">
@@ -706,6 +415,301 @@ export function AdminBenefitManager({
         </DialogContent>
       </Dialog>
     </section>
+  );
+}
+
+function BenefitConfigurationWorkspace({
+  normalizedShowtimeId,
+  configuration,
+  isConfigurationLoading,
+}: {
+  normalizedShowtimeId: string;
+  configuration: BenefitConfiguration | null;
+  isConfigurationLoading: boolean;
+}) {
+  const saveConfiguration = useSaveAdminBenefitConfiguration();
+  const runTest = useRunAdminBenefitTest();
+  const runLive = useRunAdminBenefitLive();
+  const [drafts, setDrafts] = useState<BenefitDraft[]>(() =>
+    configuration
+      ? draftsFromConfiguration(configuration)
+      : [createBenefitDraft('included'), createBenefitDraft('limited')],
+  );
+  const [saveReason, setSaveReason] = useState('');
+  const [testSeedRef, setTestSeedRef] = useState('');
+  const [liveReason, setLiveReason] = useState('');
+
+  const canUseShowtime = normalizedShowtimeId.length > 0;
+  const isMutating =
+    saveConfiguration.isPending ||
+    runTest.isPending ||
+    runLive.isPending;
+  const canRunLive =
+    canUseShowtime &&
+    Boolean(configuration?.id) &&
+    liveReason.trim().length > 0 &&
+    !isMutating;
+
+  function updateDraft(localId: string, patch: Partial<BenefitDraft>) {
+    setDrafts((current) =>
+      current.map((draft) =>
+        draft.localId === localId ? { ...draft, ...patch } : draft,
+      ),
+    );
+  }
+
+  function addDraft(kind: BenefitDraftKind) {
+    setDrafts((current) => [...current, createBenefitDraft(kind)]);
+  }
+
+  function removeDraft(localId: string) {
+    setDrafts((current) => {
+      if (current.length === 1) {
+        return current;
+      }
+      return current.filter((draft) => draft.localId !== localId);
+    });
+  }
+
+  function buildDefinitionsOrNotify(): BenefitDefinition[] | null {
+    const result = buildBenefitDefinitions(drafts);
+    if (result.ok) {
+      return result.benefits;
+    }
+    toast.error(result.message);
+    return null;
+  }
+
+  function handleSave() {
+    if (!canUseShowtime) {
+      toast.error('회차 ID를 입력하세요.');
+      return;
+    }
+
+    const benefits = buildDefinitionsOrNotify();
+    if (!benefits) {
+      return;
+    }
+
+    void saveConfiguration
+      .mutateAsync({
+        showtimeId: normalizedShowtimeId,
+        benefits,
+        reason: saveReason,
+      })
+      .then(() => {
+        toast.success('혜택 설정을 저장했습니다.');
+        setSaveReason('');
+      })
+      .catch((error: unknown) => {
+        toast.error(error instanceof Error ? error.message : '혜택 설정 저장에 실패했습니다.');
+      });
+  }
+
+  function handleRunTest() {
+    if (!canUseShowtime) {
+      toast.error('회차 ID를 입력하세요.');
+      return;
+    }
+
+    const benefits = buildDefinitionsOrNotify();
+    if (!benefits) {
+      return;
+    }
+
+    void runTest
+      .mutateAsync({
+        showtimeId: normalizedShowtimeId,
+        configurationId: configuration?.id ?? null,
+        operatorProvidedSeedRef: testSeedRef,
+        configurationSnapshot: {
+          active: false,
+          sourceConfigurationId: configuration?.id ?? null,
+          capturedAt: new Date().toISOString(),
+          benefits,
+        },
+      })
+      .then(() => {
+        toast.success('테스트 혜택 실행 결과를 기록했습니다.');
+        setTestSeedRef('');
+      })
+      .catch((error: unknown) => {
+        toast.error(error instanceof Error ? error.message : '테스트 실행에 실패했습니다.');
+      });
+  }
+
+  function handleRunLive() {
+    if (!configuration?.id) {
+      toast.error('라이브 실행 전 혜택 설정을 저장하세요.');
+      return;
+    }
+    if (liveReason.trim().length === 0) {
+      toast.error('라이브 실행 사유를 입력하세요.');
+      return;
+    }
+
+    void runLive
+      .mutateAsync({
+        showtimeId: normalizedShowtimeId,
+        configurationId: configuration.id,
+        reason: liveReason,
+      })
+      .then(() => {
+        toast.success('라이브 혜택을 티켓에 적용했습니다.');
+        setLiveReason('');
+      })
+      .catch((error: unknown) => {
+        toast.error(error instanceof Error ? error.message : '라이브 실행에 실패했습니다.');
+      });
+  }
+
+  return (
+    <>
+      <section className="rounded-lg bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <h2 className="text-xl font-semibold leading-tight text-gray-900">
+              혜택 설정
+            </h2>
+            <p className="mt-1 text-sm text-gray-600">
+              ALL 혜택은 모든 대상 티켓에 적용되고, 한정 혜택은 실행 기록 기준으로 부여됩니다.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" onClick={() => addDraft('included')}>
+              <Plus className="h-4 w-4" />
+              ALL 추가
+            </Button>
+            <Button type="button" variant="outline" onClick={() => addDraft('limited')}>
+              <Plus className="h-4 w-4" />
+              한정 추가
+            </Button>
+          </div>
+        </div>
+
+        {isConfigurationLoading ? (
+          <div className="mt-4 space-y-3">
+            <Skeleton className="h-32 w-full" />
+            <Skeleton className="h-32 w-full" />
+          </div>
+        ) : (
+          <div className="mt-4 space-y-3">
+            {drafts.map((draft, index) => (
+              <BenefitDraftEditor
+                key={draft.localId}
+                draft={draft}
+                index={index}
+                canRemove={drafts.length > 1}
+                onChange={(patch) => updateDraft(draft.localId, patch)}
+                onRemove={() => removeDraft(draft.localId)}
+              />
+            ))}
+          </div>
+        )}
+
+        <div className="mt-4 grid gap-3 lg:grid-cols-2">
+          <label className="space-y-1.5 text-sm font-semibold text-gray-700">
+            <span>설정 저장 사유</span>
+            <Textarea
+              value={saveReason}
+              onChange={(event) => setSaveReason(event.target.value)}
+              placeholder="예: VIP/R/S 혜택 운영안 확정"
+            />
+          </label>
+          <div className="flex items-end">
+            <Button
+              type="button"
+              className="h-12 w-full"
+              disabled={!canUseShowtime || saveConfiguration.isPending}
+              onClick={handleSave}
+            >
+              {saveConfiguration.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4" />
+              )}
+              설정 저장
+            </Button>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-2">
+        <div className="rounded-lg bg-white p-4 shadow-sm">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#F3EFFF] text-[#6C3CE0]">
+              <FlaskConical className="h-5 w-5" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold leading-tight text-gray-900">
+                테스트 실행
+              </h2>
+              <p className="mt-1 text-sm text-gray-600">
+                현재 입력값으로 결과를 기록하고 실제 티켓에는 붙이지 않습니다.
+              </p>
+            </div>
+          </div>
+          <label className="mt-4 block space-y-1.5 text-sm font-semibold text-gray-700">
+            <span>테스트 seed 참조값</span>
+            <Input
+              value={testSeedRef}
+              onChange={(event) => setTestSeedRef(event.target.value)}
+              placeholder="선택 입력"
+            />
+          </label>
+          <Button
+            type="button"
+            className="mt-4 h-12 w-full"
+            disabled={!canUseShowtime || runTest.isPending}
+            onClick={handleRunTest}
+          >
+            {runTest.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <FlaskConical className="h-4 w-4" />
+            )}
+            테스트 실행
+          </Button>
+        </div>
+
+        <div className="rounded-lg bg-white p-4 shadow-sm">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#F0FDF4] text-[#15803D]">
+              <Play className="h-5 w-5" />
+            </div>
+            <div>
+              <h2 className="text-xl font-semibold leading-tight text-gray-900">
+                라이브 적용
+              </h2>
+              <p className="mt-1 text-sm text-gray-600">
+                저장된 설정으로 한정 혜택을 티켓에 확정 적용합니다.
+              </p>
+            </div>
+          </div>
+          <label className="mt-4 block space-y-1.5 text-sm font-semibold text-gray-700">
+            <span>라이브 적용 사유</span>
+            <Textarea
+              value={liveReason}
+              onChange={(event) => setLiveReason(event.target.value)}
+              placeholder="예: 판매 종료 전 1차 혜택 확정"
+            />
+          </label>
+          <Button
+            type="button"
+            className="mt-4 h-12 w-full bg-[#15803D] hover:bg-[#166534]"
+            disabled={!canRunLive}
+            onClick={handleRunLive}
+          >
+            {runLive.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Play className="h-4 w-4" />
+            )}
+            라이브 적용
+          </Button>
+        </div>
+      </section>
+    </>
   );
 }
 
