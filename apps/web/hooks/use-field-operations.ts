@@ -2,7 +2,13 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  benefitRedemptionResponseSchema,
+  fieldBenefitEntitlementSchema,
   normalizeFieldCheckInOutcome,
+  type BenefitRedemptionOutcome,
+  type BenefitRedemptionRequest,
+  type BenefitRedemptionResponse,
+  type FieldBenefitEntitlement,
   type FieldCheckInConsumeRequest,
   type FieldCheckInConsumeResponse,
   type FieldCheckInVerifyRequest,
@@ -63,6 +69,7 @@ export interface ScannerCheckInVerification {
   rejectionReason?: string | null;
   priorScanContext?: ScannerPriorScanContext | null;
   offlineQueue: readonly ScannerOfflineQueueItem[];
+  benefitEntitlements: readonly FieldBenefitEntitlement[];
   verifiedAt?: string;
 }
 
@@ -72,6 +79,19 @@ export interface ScannerCheckInConsumeResult {
   consumedAt?: string | null;
   rejectionReason?: string | null;
   priorScanContext?: ScannerPriorScanContext | null;
+}
+
+export interface ScannerBenefitRedemptionResult {
+  outcome: BenefitRedemptionOutcome;
+  outcomeLabel: string;
+  redeemedAt?: string | null;
+  rejectionReason?: string | null;
+  priorRedemption?: {
+    redeemedAt: string;
+    scannerUserId?: string;
+    deviceAttemptId?: string;
+    redemptionEventId?: string;
+  } | null;
 }
 
 interface UseFieldCheckInVerifyInput extends FieldCheckInVerifyRequest {
@@ -110,6 +130,24 @@ export function useFieldCheckInConsume() {
         { showErrorToast: false },
       );
       return normalizeConsumeResponse(response);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['field', 'check-in'] });
+    },
+  });
+}
+
+export function useFieldBenefitRedeem() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (input: BenefitRedemptionRequest) => {
+      const response = await apiClient.post<BenefitRedemptionResponse>(
+        '/api/v1/field/benefits/redeem',
+        input,
+        { showErrorToast: false },
+      );
+      return normalizeBenefitRedemptionResponse(response);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['field', 'check-in'] });
@@ -166,6 +204,9 @@ export function normalizeVerifyResponse(
       record['priorScanContext'] ?? record['priorScan'],
     ),
     offlineQueue: normalizeOfflineQueue(record['offlineQueue']),
+    benefitEntitlements: normalizeFieldBenefitEntitlements(
+      record['benefitEntitlements'] ?? ticket?.['benefitEntitlements'],
+    ),
     verifiedAt: stringValue(record['verifiedAt']),
   };
 }
@@ -185,6 +226,27 @@ export function normalizeConsumeResponse(
     priorScanContext: normalizePriorScan(
       record['priorScanContext'] ?? record['priorScan'],
     ),
+  };
+}
+
+export function normalizeBenefitRedemptionResponse(
+  response: BenefitRedemptionResponse | Record<string, unknown>,
+): ScannerBenefitRedemptionResult {
+  const parsed = benefitRedemptionResponseSchema.safeParse(response);
+  const record = (
+    parsed.success ? parsed.data : (asRecord(response) ?? {})
+  ) as Record<string, unknown>;
+  const rawOutcome = stringValue(record['outcome']);
+  const outcome = normalizeBenefitRedemptionOutcome(rawOutcome);
+  const priorRedemption = normalizeBenefitPriorRedemption(record['priorRedemption']);
+
+  return {
+    outcome,
+    outcomeLabel: labelForBenefitRedemptionOutcome(outcome),
+    redeemedAt:
+      stringValue(record['redeemedAt']) ?? priorRedemption?.redeemedAt ?? null,
+    rejectionReason: stringValue(record['rejectionReason']),
+    priorRedemption,
   };
 }
 
@@ -225,6 +287,25 @@ export function normalizeOfflineSyncResponse(
     .filter((item): item is ScannerOfflineSyncResult => item !== null);
 }
 
+export function labelForBenefitRedemptionOutcome(
+  outcome: BenefitRedemptionOutcome,
+): string {
+  switch (outcome) {
+    case 'redeemed':
+      return '혜택 사용 처리 완료';
+    case 'duplicate':
+      return '이미 사용된 혜택입니다';
+    case 'inactive':
+      return '사용할 수 없는 혜택입니다';
+    case 'wrong_showtime':
+      return '현재 회차 혜택이 아닙니다';
+    case 'not_eligible':
+      return '이 티켓에 부여된 혜택이 아닙니다';
+    case 'tampered':
+      return 'QR 티켓을 확인할 수 없습니다';
+  }
+}
+
 export function labelForResult(result: ScannerCheckInResult): string {
   switch (result) {
     case 'processable':
@@ -246,6 +327,52 @@ export function labelForResult(result: ScannerCheckInResult): string {
     case 'rejected':
       return '확인할 수 없는 QR입니다';
   }
+}
+
+function normalizeFieldBenefitEntitlements(value: unknown): FieldBenefitEntitlement[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item): FieldBenefitEntitlement | null => {
+      const parsed = fieldBenefitEntitlementSchema.safeParse(item);
+      return parsed.success ? parsed.data : null;
+    })
+    .filter((item): item is FieldBenefitEntitlement => item !== null);
+}
+
+function normalizeBenefitRedemptionOutcome(
+  value: string | null | undefined,
+): BenefitRedemptionOutcome {
+  switch (value) {
+    case 'redeemed':
+    case 'duplicate':
+    case 'inactive':
+    case 'tampered':
+    case 'wrong_showtime':
+    case 'not_eligible':
+      return value;
+    default:
+      return 'tampered';
+  }
+}
+
+function normalizeBenefitPriorRedemption(
+  value: unknown,
+): ScannerBenefitRedemptionResult['priorRedemption'] {
+  const record = asRecord(value);
+  const redeemedAt = stringValue(record?.['redeemedAt']);
+  if (!record || !redeemedAt) {
+    return null;
+  }
+
+  return {
+    redeemedAt,
+    scannerUserId: stringValue(record['scannerUserId']),
+    deviceAttemptId: stringValue(record['deviceAttemptId']),
+    redemptionEventId: stringValue(record['redemptionEventId']),
+  };
 }
 
 function normalizeResult(

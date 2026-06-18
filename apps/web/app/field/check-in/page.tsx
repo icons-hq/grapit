@@ -6,9 +6,11 @@ import { hasAdminCapability } from '@grabit/shared';
 import { AlertTriangle, Loader2, ScanLine } from 'lucide-react';
 import { ScannerCheckIn } from '@/components/field/scanner-check-in';
 import {
+  useFieldBenefitRedeem,
   useFieldCheckInConsume,
   useFieldCheckInVerify,
   useFieldOfflineSync,
+  type ScannerBenefitRedemptionResult,
   type ScannerCheckInConsumeResult,
   type ScannerCheckInVerification,
   type ScannerOfflineQueueItem,
@@ -39,6 +41,10 @@ export default function FieldCheckInPage() {
   const [offlineQueue, setOfflineQueue] = useState<ScannerOfflineQueueItem[]>([]);
   const [offlineConsumeResult, setOfflineConsumeResult] =
     useState<ScannerCheckInConsumeResult | null>(null);
+  const [benefitRedemptionResults, setBenefitRedemptionResults] = useState<
+    Record<string, ScannerBenefitRedemptionResult>
+  >({});
+  const [redeemingBenefitId, setRedeemingBenefitId] = useState<string | null>(null);
   const returnTarget = useMemo(() => {
     const query = searchParams.toString();
     return `${pathname}${query ? `?${query}` : ''}`;
@@ -46,6 +52,7 @@ export default function FieldCheckInPage() {
   const hasScannerAccess =
     hasAdminCapability(user, 'field.scan.verify') ||
     hasAdminCapability(user, 'field.scan.consume');
+  const canConsumeFieldScan = hasAdminCapability(user, 'field.scan.consume');
   const deviceAttemptId = useMemo(() => createDeviceAttemptId(), []);
 
   useEffect(() => {
@@ -61,6 +68,7 @@ export default function FieldCheckInPage() {
     enabled: isInitialized && Boolean(accessToken) && hasScannerAccess && ticketToken.length > 0,
   });
   const consumeMutation = useFieldCheckInConsume();
+  const benefitRedeemMutation = useFieldBenefitRedeem();
   const offlineSyncMutation = useFieldOfflineSync();
   const effectiveShowtimeId =
     verifyQuery.data?.showtimeId ?? showtimeId ?? FALLBACK_SHOWTIME_ID;
@@ -76,6 +84,11 @@ export default function FieldCheckInPage() {
     const records = await listPendingScanAttempts();
     setOfflineQueue(records.map(pendingRecordToQueueItem));
   }, []);
+
+  useEffect(() => {
+    setBenefitRedemptionResults({});
+    setRedeemingBenefitId(null);
+  }, [ticketToken]);
 
   useEffect(() => {
     if (!isInitialized || !accessToken || !hasScannerAccess) {
@@ -162,95 +175,125 @@ export default function FieldCheckInPage() {
   }
 
   return (
-      <ScannerCheckIn
-        user={user}
-        verification={mergedVerification}
-        consumeResult={consumeMutation.data ?? offlineConsumeResult}
-        isConsuming={consumeMutation.isPending}
-        isSyncingOffline={offlineSyncMutation.isPending}
-        onProcessEntry={() => {
-          void (async () => {
-            if (!verifyQuery.data) {
-              return;
-            }
+    <ScannerCheckIn
+      user={user}
+      verification={mergedVerification}
+      consumeResult={consumeMutation.data ?? offlineConsumeResult}
+      benefitRedemptionResults={benefitRedemptionResults}
+      isConsuming={consumeMutation.isPending}
+      redeemingBenefitId={redeemingBenefitId}
+      isSyncingOffline={offlineSyncMutation.isPending}
+      onProcessEntry={() => {
+        void (async () => {
+          if (!verifyQuery.data) {
+            return;
+          }
 
-            if (isBrowserOffline() && accessToken && user?.id) {
-              await addPendingScanAttempt(
-                createPendingAttempt({
-                  deviceAttemptId,
-                  scannerUserId: user.id,
-                  eventId,
-                  showtimeId: effectiveShowtimeId,
-                  token: ticketToken,
-                  attemptedAt: new Date().toISOString(),
-                }),
-              );
-              setOfflineConsumeResult({
-                result: 'offline-pending',
-                resultLabel:
-                  '네트워크 문제로 보류 스캔에 저장했습니다. 연결이 복구되면 서버와 동기화하세요.',
-              });
-              await refreshOfflineQueue();
-              return;
-            }
-
-            try {
-              setOfflineConsumeResult(null);
-              await consumeMutation.mutateAsync({
-                token: ticketToken,
-                showtimeId: effectiveShowtimeId,
+          if (isBrowserOffline() && accessToken && user?.id) {
+            await addPendingScanAttempt(
+              createPendingAttempt({
                 deviceAttemptId,
-                confirmed: true,
-              });
-            } catch (error) {
-              if (!isNetworkFailure(error) || !accessToken || !user?.id) {
-                return;
-              }
-
-              await addPendingScanAttempt(
-                createPendingAttempt({
-                  deviceAttemptId,
-                  scannerUserId: user.id,
-                  eventId,
-                  showtimeId: effectiveShowtimeId,
-                  token: ticketToken,
-                  attemptedAt: new Date().toISOString(),
-                }),
-              );
-              setOfflineConsumeResult({
-                result: 'offline-pending',
-                resultLabel:
-                  '네트워크 문제로 보류 스캔에 저장했습니다. 연결이 복구되면 서버와 동기화하세요.',
-              });
-              await refreshOfflineQueue();
-            }
-          })();
-        }}
-        onSyncOffline={() => {
-          void (async () => {
-            const pendingAttempts = await listPendingScanAttempts({
-              syncState: 'pending',
+                scannerUserId: user.id,
+                eventId,
+                showtimeId: effectiveShowtimeId,
+                token: ticketToken,
+                attemptedAt: new Date().toISOString(),
+              }),
+            );
+            setOfflineConsumeResult({
+              result: 'offline-pending',
+              resultLabel:
+                '네트워크 문제로 보류 스캔에 저장했습니다. 연결이 복구되면 서버와 동기화하세요.',
             });
-            if (pendingAttempts.length === 0) {
+            await refreshOfflineQueue();
+            return;
+          }
+
+          try {
+            setOfflineConsumeResult(null);
+            await consumeMutation.mutateAsync({
+              token: ticketToken,
+              showtimeId: effectiveShowtimeId,
+              deviceAttemptId,
+              confirmed: true,
+            });
+          } catch (error) {
+            if (!isNetworkFailure(error) || !accessToken || !user?.id) {
               return;
             }
 
-            const results = await offlineSyncMutation.mutateAsync({
-              attempts: pendingAttempts.map(pendingRecordToSyncAttempt),
+            await addPendingScanAttempt(
+              createPendingAttempt({
+                deviceAttemptId,
+                scannerUserId: user.id,
+                eventId,
+                showtimeId: effectiveShowtimeId,
+                token: ticketToken,
+                attemptedAt: new Date().toISOString(),
+              }),
+            );
+            setOfflineConsumeResult({
+              result: 'offline-pending',
+              resultLabel:
+                '네트워크 문제로 보류 스캔에 저장했습니다. 연결이 복구되면 서버와 동기화하세요.',
             });
-            await persistSyncResults({
-              results,
-              pendingAttempts,
-              eventId,
-              showtimeId: effectiveShowtimeId,
-              token: ticketToken,
-              scannerUserId: user?.id ?? 'scanner-session',
-            });
-            setOfflineConsumeResult(null);
             await refreshOfflineQueue();
-          })();
-        }}
-      />
+          }
+        })();
+      }}
+      onRedeemBenefit={
+        canConsumeFieldScan
+          ? (benefitEntitlementId) => {
+              void (async () => {
+                if (!verifyQuery.data || redeemingBenefitId) {
+                  return;
+                }
+
+                setRedeemingBenefitId(benefitEntitlementId);
+                try {
+                  const result = await benefitRedeemMutation.mutateAsync({
+                    token: ticketToken,
+                    showtimeId: effectiveShowtimeId,
+                    benefitEntitlementId,
+                    deviceAttemptId: createDeviceAttemptId(),
+                    confirmed: true,
+                  });
+                  setBenefitRedemptionResults((current) => ({
+                    ...current,
+                    [benefitEntitlementId]: result,
+                  }));
+                } finally {
+                  setRedeemingBenefitId(null);
+                }
+              })();
+            }
+          : undefined
+      }
+      onSyncOffline={() => {
+        void (async () => {
+          const pendingAttempts = await listPendingScanAttempts({
+            syncState: 'pending',
+          });
+          if (pendingAttempts.length === 0) {
+            return;
+          }
+
+          const results = await offlineSyncMutation.mutateAsync({
+            attempts: pendingAttempts.map(pendingRecordToSyncAttempt),
+          });
+          await persistSyncResults({
+            results,
+            pendingAttempts,
+            eventId,
+            showtimeId: effectiveShowtimeId,
+            token: ticketToken,
+            scannerUserId: user?.id ?? 'scanner-session',
+          });
+          setOfflineConsumeResult(null);
+          await refreshOfflineQueue();
+        })();
+      }}
+    />
   );
 }
 

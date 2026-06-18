@@ -2,6 +2,7 @@ import { render, screen, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { FieldBenefitEntitlement } from '@grabit/shared';
 import {
   addPendingScanAttempt,
   clearPendingScanAttempts,
@@ -28,6 +29,55 @@ const regularUser = {
   adminCapabilities: [],
 } as const;
 
+const includedBenefitId = '00000000-0000-4000-8000-000000000801';
+const limitedBenefitId = '00000000-0000-4000-8000-000000000802';
+const inactiveBenefitId = '00000000-0000-4000-8000-000000000803';
+const benefitRunId = '00000000-0000-4000-8000-000000000701';
+
+function benefitDisplayCopy(name: string) {
+  return {
+    ko: { name, description: `${name} 설명` },
+    en: { name, description: `${name} description` },
+    'zh-CN': { name, description: `${name} 说明` },
+    th: { name, description: `${name} description` },
+  };
+}
+
+function includedBenefit(
+  overrides: Partial<FieldBenefitEntitlement> = {},
+): FieldBenefitEntitlement {
+  return {
+    id: includedBenefitId,
+    runId: null,
+    source: 'configuration',
+    benefitIdentity: 'benefit_official_poster',
+    kind: 'included',
+    displayCopy: benefitDisplayCopy('공식 포스터'),
+    state: 'active',
+    redeemedAt: null,
+    attachedToTicket: true,
+    ...overrides,
+  } as FieldBenefitEntitlement;
+}
+
+function limitedBenefit(
+  overrides: Partial<FieldBenefitEntitlement> = {},
+): FieldBenefitEntitlement {
+  return {
+    id: limitedBenefitId,
+    runId: benefitRunId,
+    source: 'live_run',
+    runMode: 'live',
+    benefitIdentity: 'benefit_6_to_1',
+    kind: 'limited',
+    displayCopy: benefitDisplayCopy('6:1 이벤트 참여권'),
+    state: 'redeemed',
+    redeemedAt: '2026-07-04T08:30:00.000Z',
+    attachedToTicket: true,
+    ...overrides,
+  } as FieldBenefitEntitlement;
+}
+
 const baseVerification = {
   result: 'processable',
   resultLabel: '입장 가능 티켓입니다',
@@ -39,10 +89,12 @@ const baseVerification = {
   seats: ['VIP A열 1번'],
   ticketStatus: 'ACTIVE',
   offlineQueue: [],
+  benefitEntitlements: [],
 } as const;
 
 const onProcessEntry = vi.fn();
 const onSyncOffline = vi.fn();
+const onRedeemBenefit = vi.fn();
 
 function renderScanner(
   overrides: Partial<React.ComponentProps<typeof ScannerCheckIn>> = {},
@@ -52,6 +104,7 @@ function renderScanner(
       user={scannerUser}
       verification={baseVerification}
       onProcessEntry={onProcessEntry}
+      onRedeemBenefit={onRedeemBenefit}
       onSyncOffline={onSyncOffline}
       {...overrides}
     />,
@@ -62,6 +115,7 @@ describe('ScannerCheckIn', () => {
   beforeEach(() => {
     onProcessEntry.mockReset();
     onSyncOffline.mockReset();
+    onRedeemBenefit.mockReset();
   });
 
   it('shows verify-first UI and a sticky full-width mobile 입장 처리 action only for processable tickets', async () => {
@@ -185,6 +239,78 @@ describe('ScannerCheckIn', () => {
     expect(screen.getByText('거절 1')).toBeInTheDocument();
     expect(screen.getByText('보류 스캔 동기화 완료')).toBeInTheDocument();
     expect(screen.getByText('이미 입장 처리된 티켓입니다')).toBeInTheDocument();
+  });
+
+  it('shows ALL and limited benefits to scanners and redeems only active benefits', async () => {
+    const user = userEvent.setup();
+    renderScanner({
+      verification: {
+        ...baseVerification,
+        benefitEntitlements: [
+          includedBenefit(),
+          limitedBenefit(),
+          includedBenefit({
+            id: inactiveBenefitId,
+            displayCopy: benefitDisplayCopy('취소 좌석 혜택'),
+            state: 'inactive',
+          }),
+        ],
+      },
+    });
+
+    const panel = screen.getByTestId('scanner-benefit-panel');
+    expect(within(panel).getByText('티켓 혜택')).toBeInTheDocument();
+    expect(within(panel).getAllByText('ALL')).toHaveLength(2);
+    expect(within(panel).getByText('한정')).toBeInTheDocument();
+    expect(within(panel).getByText('공식 포스터')).toBeInTheDocument();
+    expect(within(panel).getByText('공식 포스터 설명')).toBeInTheDocument();
+    expect(within(panel).getByText('6:1 이벤트 참여권')).toBeInTheDocument();
+    expect(within(panel).getByText('사용됨')).toBeInTheDocument();
+    expect(within(panel).getByText(/^사용 일시:/)).toBeInTheDocument();
+    expect(within(panel).getByText('취소 좌석 혜택')).toBeInTheDocument();
+    expect(within(panel).getByText('비활성')).toBeInTheDocument();
+
+    const activeBenefit = within(panel).getByTestId(`scanner-benefit-${includedBenefitId}`);
+    const redeemButton = within(activeBenefit).getByRole('button', { name: '사용 처리' });
+    await user.click(redeemButton);
+
+    expect(onRedeemBenefit).toHaveBeenCalledWith(includedBenefitId);
+    expect(within(panel).getAllByRole('button', { name: '사용 처리' })).toHaveLength(1);
+  });
+
+  it('shows redemption results immediately and disables repeated benefit use', () => {
+    renderScanner({
+      verification: {
+        ...baseVerification,
+        benefitEntitlements: [includedBenefit()],
+      },
+      benefitRedemptionResults: {
+        [includedBenefitId]: {
+          outcome: 'redeemed',
+          outcomeLabel: '혜택 사용 처리 완료',
+          redeemedAt: '2026-07-04T08:45:00.000Z',
+        },
+      },
+    });
+
+    const benefit = screen.getByTestId(`scanner-benefit-${includedBenefitId}`);
+    expect(within(benefit).getByText('혜택 사용 처리 완료')).toBeInTheDocument();
+    expect(within(benefit).getByText(/^사용 일시:/)).toBeInTheDocument();
+    expect(within(benefit).queryByRole('button', { name: '사용 처리' })).not.toBeInTheDocument();
+  });
+
+  it('shows benefits without redemption actions when consume permission is not wired', () => {
+    renderScanner({
+      verification: {
+        ...baseVerification,
+        benefitEntitlements: [includedBenefit()],
+      },
+      onRedeemBenefit: undefined,
+    });
+
+    const panel = screen.getByTestId('scanner-benefit-panel');
+    expect(within(panel).getByText('공식 포스터')).toBeInTheDocument();
+    expect(within(panel).queryByRole('button', { name: '사용 처리' })).not.toBeInTheDocument();
   });
 
   it('denies regular members and keeps scanner-only users out of the full admin sidebar', () => {
