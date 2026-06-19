@@ -198,7 +198,9 @@ test.describe('Toss Payments E2E', () => {
     await page.goto(
       '/booking/e2e-test-performance/confirm?error=true&code=PAY_PROCESS_CANCELED',
     );
-    await expect(page.getByText('결제가 취소되었습니다.')).toBeVisible({ timeout: 5000 });
+    await expect(
+      page.getByRole('main').getByText('결제가 취소되었습니다.'),
+    ).toBeVisible({ timeout: 5000 });
   });
 
   // ============================================================================
