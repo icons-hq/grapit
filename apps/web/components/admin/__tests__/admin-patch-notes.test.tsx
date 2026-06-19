@@ -20,16 +20,16 @@ describe('AdminPatchNotesPreview', () => {
     ).toHaveAttribute('href', '/admin/patch-notes');
 
     const article = screen.getByRole('article', {
-      name: 'PR #172 고객 결제 실패 사유 다국어 안내',
+      name: 'PR #173 티켓 베네핏 운영 기능 추가',
     });
 
-    expect(within(article).getByText('PR #172')).toBeInTheDocument();
+    expect(within(article).getByText('PR #173')).toBeInTheDocument();
     expect(
-      within(article).getByText('고객 결제 실패 사유 다국어 안내'),
+      within(article).getByText('티켓 베네핏 운영 기능 추가'),
     ).toBeInTheDocument();
-    expect(within(article).getByText(/결제 실패 직후/)).toBeInTheDocument();
-    expect(within(article).getByText(/Toss failUrl/)).toBeInTheDocument();
-    expect(within(article).getByText(/Shared booking schema Vitest/)).toBeInTheDocument();
+    expect(within(article).getByText(/회차별 ALL\/한정 혜택/)).toBeInTheDocument();
+    expect(within(article).getByText(/test\/live run/)).toBeInTheDocument();
+    expect(within(article).getByText(/Shared benefit schema Vitest/)).toBeInTheDocument();
   });
 });
 

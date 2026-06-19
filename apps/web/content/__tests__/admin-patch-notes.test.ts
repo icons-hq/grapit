@@ -48,6 +48,27 @@ describe('adminPatchNotes', () => {
     );
   });
 
+  it('registers the ticket benefit operations PR', () => {
+    const note = adminPatchNotes.find((entry) => entry.prNumber === 173);
+
+    expect(note).toEqual(
+      expect.objectContaining({
+        category: 'feature',
+        title: '티켓 베네핏 운영 기능 추가',
+        githubUrl: 'https://github.com/sangwopark19/grapit/pull/173',
+      }),
+    );
+    expect(note?.summary).toContain('ALL/한정 혜택');
+    expect(note?.summary).toContain('rollback');
+    expect(note?.highlights).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('test/live run'),
+        expect.stringContaining('ticket item'),
+        expect.stringContaining('6:1과 polaroid'),
+      ]),
+    );
+  });
+
   it('registers the payment failure breakdown PR', () => {
     const note = adminPatchNotes.find((entry) => entry.prNumber === 168);
 

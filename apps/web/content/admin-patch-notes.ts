@@ -14,6 +14,30 @@ export interface AdminPatchNote {
 
 const notes = [
   {
+    id: 'pr-173-ticket-benefit-operations',
+    prNumber: 173,
+    title: '티켓 베네핏 운영 기능 추가',
+    summary:
+      '회차별 ALL/한정 혜택을 설정하고 test/live 실행, CSV export, rollback, 현장 사용 처리를 관리할 수 있도록 티켓 베네핏 운영 흐름을 추가했습니다.',
+    highlights: [
+      'ALL 혜택과 한정 혜택 설정을 분리하고 관리자 test/live run 이력을 기록',
+      'live run은 한정 혜택을 ticket item 단위로 재적용하고, ALL 혜택은 신규 예매 티켓에도 자동 적용',
+      '6:1과 polaroid는 구매자 단위로 동시 당첨되지 않도록 상호 배제',
+      '구매자 QR/예매 상세와 현장 스캐너에서 베네핏 표시 및 사용 처리 지원',
+    ],
+    category: 'feature',
+    date: '2026-06-19',
+    githubUrl: 'https://github.com/sangwopark19/grapit/pull/173',
+    evidence: [
+      'Shared benefit schema Vitest',
+      'API benefit runner/admin/field Vitest',
+      'Web buyer/scanner/admin benefit Vitest',
+      'API/Web/Shared typecheck',
+      'pnpm lint',
+      'git diff --check',
+    ],
+  },
+  {
     id: 'pr-172-payment-failure-guidance-i18n',
     prNumber: 172,
     title: '고객 결제 실패 사유 다국어 안내',
