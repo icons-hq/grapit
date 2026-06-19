@@ -211,6 +211,19 @@ export function normalizeVerifyResponse(
   };
 }
 
+export function canRedeemBenefitsForVerification(
+  verification: ScannerCheckInVerification | null | undefined,
+): boolean {
+  if (!verification) {
+    return false;
+  }
+
+  const hasActiveBenefit = verification.benefitEntitlements.some(
+    (benefit) => benefit.state === 'active',
+  );
+  return hasActiveBenefit && (verification.processable || verification.ticketStatus === 'USED');
+}
+
 export function normalizeConsumeResponse(
   response: FieldCheckInConsumeResponse | Record<string, unknown>,
 ): ScannerCheckInConsumeResult {

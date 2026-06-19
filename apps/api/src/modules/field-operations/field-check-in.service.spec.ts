@@ -415,6 +415,43 @@ describe('FieldCheckInService RED contract', () => {
     expectNoSensitiveLookupLeak(verifyResult);
   });
 
+  it('verify response includes benefit entitlements for already-used tickets', async () => {
+    const { service, qrTicketService, db } = createDependencies();
+    const entitlementLookup = createSelectResult([
+      benefitEntitlementRow(),
+    ]);
+    qrTicketService.verifyTicketForScannerContract.mockResolvedValue(
+      scannerContract({
+        ticketStatus: 'USED',
+        maskedJti: 'qr-jti...7890',
+      }),
+    );
+    db.select.mockReturnValueOnce(entitlementLookup);
+
+    const verifyResult = await service.verify({
+      token: RAW_QR_TOKEN,
+      showtimeId: '00000000-0000-4000-8000-000000000001',
+    });
+
+    expect(verifyResult satisfies FieldCheckInVerifyResponse).toMatchObject({
+      outcome: 'already_used',
+      processable: false,
+      ticket: {
+        ticketStatus: 'USED',
+        benefitEntitlements: [
+          expect.objectContaining({
+            id: BENEFIT_ENTITLEMENT_ID,
+            state: 'active',
+            source: 'live_run',
+          }),
+        ],
+      },
+      rejectionReason: '이미 사용된 티켓입니다',
+    });
+    expect(entitlementLookup.from).toHaveBeenCalledWith(ticketBenefitEntitlements);
+    expectNoSensitiveLookupLeak(verifyResult);
+  });
+
   it('keeps valid QR verification outcome when benefit entitlement lookup fails', async () => {
     const { service, qrTicketService, db, adminAuditService } = createDependencies();
     const failingEntitlementLookup = {

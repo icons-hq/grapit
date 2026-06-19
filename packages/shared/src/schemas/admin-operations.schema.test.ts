@@ -131,6 +131,22 @@ describe('admin operations contract', () => {
     expect(
       adminAuditEventSchema.parse({
         ...parsed,
+        id: 'audit-benefit-run-live-1',
+        action: 'benefits.run.live',
+        resourceType: 'benefit_run',
+      }).action,
+    ).toBe('benefits.run.live');
+    expect(
+      adminAuditEventSchema.parse({
+        ...parsed,
+        id: 'audit-benefit-run-rollback-1',
+        action: 'benefits.run.rollback',
+        resourceType: 'benefit_run',
+      }).action,
+    ).toBe('benefits.run.rollback');
+    expect(
+      adminAuditEventSchema.parse({
+        ...parsed,
         id: 'audit-benefit-run-export-1',
         action: 'benefits.run.export',
         resourceType: 'benefit_run',

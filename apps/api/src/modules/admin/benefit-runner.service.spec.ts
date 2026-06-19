@@ -233,15 +233,23 @@ function createMockDb(
   selectRows: unknown[][],
   options: {
     runIds?: string[];
+    lockedTicketItemIds?: string[];
   } = {},
 ) {
   const selectCalls: QueryCall[] = [];
   const insertCalls: Array<{ table: unknown; values: unknown }> = [];
   const updateCalls: Array<{ table: unknown; values: Record<string, unknown> }> = [];
   const runIds = [...(options.runIds ?? [RUN_ID, ROLLBACK_RUN_ID])];
+  const defaultLockedTicketItemIds = selectRows
+    .flat()
+    .map((row) => row as { ticketItemId?: unknown; id?: unknown; status?: unknown })
+    .filter((row) => row.status === 'active')
+    .map((row) => String(row.ticketItemId ?? row.id))
+    .filter(Boolean);
+  const lockedTicketItemIds = options.lockedTicketItemIds ?? defaultLockedTicketItemIds;
 
   const tx = {
-    execute: vi.fn(() => chainResult([{ id: SHOWTIME_ID }])),
+    execute: vi.fn(() => chainResult(lockedTicketItemIds.map((id) => ({ id })))),
     select: vi.fn((selection?: unknown) => {
       const call: QueryCall = { selection, joins: [] };
       selectCalls.push(call);
@@ -315,9 +323,13 @@ function createService(
   options: {
     adminBenefitsService?: ReturnType<typeof createAdminBenefitsService>;
     runIds?: string[];
+    lockedTicketItemIds?: string[];
   } = {},
 ) {
-  const db = createMockDb(selectRows, { runIds: options.runIds });
+  const db = createMockDb(selectRows, {
+    runIds: options.runIds,
+    lockedTicketItemIds: options.lockedTicketItemIds,
+  });
   const adminBenefitsService =
     options.adminBenefitsService ?? createAdminBenefitsService();
   const adminAuditService = {
@@ -630,7 +642,7 @@ describe('BenefitRunnerService', () => {
   });
 
   it('replaces previous active limited assignments on live run', async () => {
-    const { service, insertCalls, updateCalls, adminBenefitsService } =
+    const { service, insertCalls, updateCalls, adminBenefitsService, adminAuditService, tx } =
       createService(liveRows([
         limitedBenefit({
           identity: 'six-to-one',
@@ -650,6 +662,11 @@ describe('BenefitRunnerService', () => {
     expect(adminBenefitsService.lockShowtimeForBenefitMutation).toHaveBeenCalled();
     expect(adminBenefitsService.assertBenefitResultUnlockedForMutation)
       .toHaveBeenCalled();
+    expect(tx.execute).toHaveBeenCalledTimes(1);
+    expect(inspect(tx.execute.mock.calls[0]?.[0], { depth: 20 })).toContain('FOR UPDATE');
+    expect(inspect(tx.execute.mock.calls[0]?.[0], { depth: 20 })).toContain('ticket_items');
+    expect(tx.execute.mock.invocationCallOrder[0])
+      .toBeLessThan(tx.insert.mock.invocationCallOrder[0]!);
     expect(updateCalls.filter((call) => call.table === ticketBenefitEntitlements))
       .toEqual([
       {
@@ -688,6 +705,60 @@ describe('BenefitRunnerService', () => {
     );
     expect(result.mode).toBe('live');
     expect(JSON.stringify(result)).not.toContain('internal-live-seed');
+    expect(adminAuditService.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'benefits.run.live',
+        resourceType: 'benefit_run',
+        resourceId: RUN_ID,
+        status: 'success',
+        reason: null,
+        changedFields: [
+          'showtimeId',
+          'configurationId',
+          'runId',
+          'assignedCount',
+          'shortfallCount',
+        ],
+        after: expect.objectContaining({
+          showtimeId: SHOWTIME_ID,
+          configurationId: CONFIG_ID,
+          runId: RUN_ID,
+          assignedCount: 1,
+          shortfallCount: 0,
+        }),
+      }),
+      expect.anything(),
+    );
+  });
+
+  it('filters live assignments to active rows returned by the ticket item lock', async () => {
+    const { service, insertCalls } = createService(liveRows([
+      limitedBenefit({
+        identity: 'six-to-one',
+        displayCopy: copy('6:1'),
+        quantity: 2,
+      }),
+    ], [
+      candidate('ticket-001', 'buyer-a'),
+      candidate('ticket-002', 'buyer-b'),
+    ]), {
+      lockedTicketItemIds: [ticketId('ticket-001')],
+    });
+
+    const result = await service.runLive({
+      showtimeId: SHOWTIME_ID,
+      actorUserId: ACTOR_ID,
+      configurationId: CONFIG_ID,
+      confirmed: true,
+    }, { now: NOW, randomSeed: 'internal-live-seed' });
+
+    expect(result.resultSummary.assignments).toEqual([
+      expect.objectContaining({ ticketItemId: ticketId('ticket-001') }),
+    ]);
+    expect(entitlementInsertValues(insertCalls)).toEqual([
+      expect.objectContaining({ ticketItemId: ticketId('ticket-001') }),
+    ]);
+    expect(JSON.stringify(result)).not.toContain(ticketId('ticket-002'));
   });
 
   it('blocks live runs after Benefit Result Lock', async () => {
@@ -711,7 +782,7 @@ describe('BenefitRunnerService', () => {
   });
 
   it('rolls back to a previous live run and skips inactive Ticket Items', async () => {
-    const { service, insertCalls, updateCalls } = createService([
+    const { service, insertCalls, updateCalls, adminAuditService, tx } = createService([
       [runRow()],
       [candidate('ticket-active', 'buyer-a')],
     ], { runIds: [ROLLBACK_RUN_ID] });
@@ -723,8 +794,16 @@ describe('BenefitRunnerService', () => {
       sourceRunMode: 'live',
       reason: 'restore previous draw',
       confirmed: true,
-    }, { now: NOW, randomSeed: 'rollback-internal-seed' });
+    }, {
+      now: NOW,
+      randomSeed: 'rollback-internal-seed',
+      ipAddress: '203.0.113.10',
+      userAgent: 'Vitest Admin Console',
+      requestId: 'req-benefit-rollback',
+    });
 
+    expect(tx.execute).toHaveBeenCalledTimes(1);
+    expect(inspect(tx.execute.mock.calls[0]?.[0], { depth: 20 })).toContain('FOR UPDATE');
     expect(updateCalls.filter((call) => call.table === ticketBenefitEntitlements))
       .toEqual([
       {
@@ -766,6 +845,65 @@ describe('BenefitRunnerService', () => {
     });
     expect(JSON.stringify(result)).not.toContain('rollback-internal-seed');
     expect(JSON.stringify(result)).not.toContain('raw-source-seed');
+    expect(adminAuditService.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'benefits.run.rollback',
+        resourceType: 'benefit_run',
+        resourceId: ROLLBACK_RUN_ID,
+        status: 'success',
+        reason: 'restore previous draw',
+        changedFields: [
+          'showtimeId',
+          'sourceRunId',
+          'runId',
+          'assignedCount',
+          'shortfallCount',
+          'skippedInactiveTicketItemCount',
+        ],
+        after: expect.objectContaining({
+          showtimeId: SHOWTIME_ID,
+          sourceRunId: RUN_ID,
+          runId: ROLLBACK_RUN_ID,
+          assignedCount: 1,
+          skippedInactiveTicketItemCount: 1,
+        }),
+        ipAddress: '203.0.113.10',
+        userAgent: 'Vitest Admin Console',
+        requestId: 'req-benefit-rollback',
+      }),
+      expect.anything(),
+    );
+  });
+
+  it('filters rollback assignments to active rows returned by the ticket item lock', async () => {
+    const { service, insertCalls } = createService([
+      [runRow()],
+      [
+        candidate('ticket-active', 'buyer-a'),
+        candidate('ticket-now-inactive', 'buyer-b'),
+      ],
+    ], {
+      runIds: [ROLLBACK_RUN_ID],
+      lockedTicketItemIds: [ticketId('ticket-active')],
+    });
+
+    const result = await service.rollback({
+      showtimeId: SHOWTIME_ID,
+      actorUserId: ACTOR_ID,
+      sourceRunId: RUN_ID,
+      sourceRunMode: 'live',
+      reason: 'restore previous draw',
+      confirmed: true,
+    }, { now: NOW, randomSeed: 'rollback-internal-seed' });
+
+    expect(result.resultSummary.assignments).toEqual([
+      expect.objectContaining({ ticketItemId: ticketId('ticket-active') }),
+    ]);
+    expect(entitlementInsertValues(insertCalls)).toEqual([
+      expect.objectContaining({ ticketItemId: ticketId('ticket-active') }),
+    ]);
+    expect(result.resultSummary.skippedInactiveTicketItemCount).toBe(1);
+    expect(JSON.stringify(result)).not.toContain(ticketId('ticket-now-inactive'));
   });
 
   it('rejects rollback when the source run is not live', async () => {
@@ -991,6 +1129,37 @@ describe('BenefitRunnerService', () => {
       .not.toContain('raw seed');
     expect(JSON.stringify(adminAuditService.write.mock.calls[0]?.[0]))
       .not.toContain('=6:1');
+  });
+
+  it('exports configuration-source included entitlements without a run mode', async () => {
+    const { service } = createService([
+      [
+        {
+          id: ENTITLEMENT_ID_1,
+          ticketItemId: ticketId('ticket-configuration'),
+          showtimeId: SHOWTIME_ID,
+          runId: null,
+          source: 'configuration',
+          benefitIdentity: 'included-poster',
+          benefitKind: 'included',
+          displayCopySnapshot: copy('공식 포스터'),
+          state: 'active',
+          redeemedAt: null,
+          createdAt: NOW,
+        },
+      ],
+    ]);
+
+    const result = await service.exportEntitlements(SHOWTIME_ID, {
+      actorUserId: ACTOR_ID,
+      now: NOW,
+    });
+
+    expect(result.rowCount).toBe(1);
+    expect(result.csv).toContain(ENTITLEMENT_ID_1);
+    expect(result.csv).toContain('configuration');
+    expect(result.csv).toContain('included-poster');
+    expect(result.csv).not.toContain('live,included-poster');
   });
 
   it('returns run lists in the shared response shape', async () => {

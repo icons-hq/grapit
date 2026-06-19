@@ -315,6 +315,30 @@ describe('ScannerCheckIn', () => {
     expect(within(panel).queryByRole('button', { name: '사용 처리' })).not.toBeInTheDocument();
   });
 
+  it('keeps entry disabled but allows active benefit redemption for already-used tickets', async () => {
+    const user = userEvent.setup();
+    renderScanner({
+      verification: {
+        ...baseVerification,
+        result: 'duplicate',
+        resultLabel: '이미 입장 처리된 티켓입니다',
+        processable: false,
+        ticketStatus: 'USED',
+        benefitEntitlements: [includedBenefit()],
+      },
+    });
+
+    expect(screen.queryByRole('button', { name: '입장 처리' })).not.toBeInTheDocument();
+    expect(screen.getByText('이 검표 결과에서는 입장 처리를 진행할 수 없습니다.'))
+      .toBeInTheDocument();
+
+    const benefit = screen.getByTestId(`scanner-benefit-${includedBenefitId}`);
+    const redeemButton = within(benefit).getByRole('button', { name: '사용 처리' });
+    await user.click(redeemButton);
+
+    expect(onRedeemBenefit).toHaveBeenCalledWith(includedBenefitId);
+  });
+
   it('shows benefits without redemption actions when consume permission is not wired', () => {
     renderScanner({
       verification: {

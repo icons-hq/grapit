@@ -317,6 +317,27 @@ describe('AdminBenefitsService', () => {
       });
   });
 
+  it('rejects duplicate benefit identities before opening a transaction', async () => {
+    const { service, db } = createDependencies();
+
+    await expect(
+      service.saveConfiguration(
+        SHOWTIME_ID,
+        ACTOR_ID,
+        {
+          benefits: [
+            includedBenefit({ identity: 'same-benefit' }),
+            limitedBenefit({ identity: 'same-benefit' }),
+          ],
+          reason: '중복 identity 검증',
+        },
+        { now: NOW },
+      ),
+    ).rejects.toThrow();
+
+    expect(db.transaction).not.toHaveBeenCalled();
+  });
+
   it('blocks saving after Benefit Result Lock', async () => {
     const { service, db, insertCalls, adminAuditService } = createDependencies([
       [{ id: 'redemption-1' }],

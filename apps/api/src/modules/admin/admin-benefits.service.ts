@@ -11,7 +11,7 @@ import { z } from 'zod';
 import {
   benefitConfigurationChangeRecordSchema,
   benefitConfigurationExportRowSchema,
-  benefitDefinitionSchema,
+  benefitDefinitionListSchema,
   type BenefitConfiguration,
   type BenefitConfigurationChangeRecord,
   type BenefitConfigurationExportRow,
@@ -32,7 +32,7 @@ import { safeCsvRows, withUtf8Bom } from './csv-export.util.js';
 const CONTENT_TYPE = 'text/csv; charset=utf-8' as const;
 const benefitSaveInputSchema = z
   .object({
-    benefits: z.array(benefitDefinitionSchema).min(1),
+    benefits: benefitDefinitionListSchema,
     reason: z.string().trim().min(1).max(500).optional(),
   })
   .strict();

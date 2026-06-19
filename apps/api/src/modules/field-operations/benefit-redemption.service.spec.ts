@@ -265,6 +265,52 @@ describe('BenefitRedemptionService RED contract', () => {
     expectNoRawQrLeak(result);
   });
 
+  it('redeems an active entitlement when the scanned ticket is already used for entry', async () => {
+    vi.setSystemTime(NOW);
+    const { service, qrTicketService, db } = createDependencies();
+    const entitlementLookup = createSelectResult([entitlementRow()]);
+    const existingAttemptLookup = createSelectResult([]);
+    const priorLookup = createSelectResult([]);
+    const updateEntitlement = createUpdateResult([
+      entitlementRow({
+        state: 'redeemed',
+        redeemedAt: NOW,
+        redeemedByUserId: SCANNER_USER_ID,
+        updatedAt: NOW,
+      }),
+    ]);
+    const insertRedemption = createInsertResult([{ id: REDEMPTION_ID }]);
+    qrTicketService.verifyTicketForScannerContract.mockResolvedValue(
+      scannerContract({ ticketStatus: 'USED' }),
+    );
+    db.select
+      .mockReturnValueOnce(entitlementLookup)
+      .mockReturnValueOnce(existingAttemptLookup)
+      .mockReturnValueOnce(priorLookup);
+    db.update.mockReturnValueOnce(updateEntitlement);
+    db.insert.mockReturnValueOnce(insertRedemption);
+
+    const result = await service.redeem(redemptionRequest(), {
+      scannerUserId: SCANNER_USER_ID,
+    });
+
+    expect(result).toMatchObject({
+      outcome: 'redeemed',
+      redemptionEventId: REDEMPTION_ID,
+      benefitEntitlement: expect.objectContaining({
+        id: ENTITLEMENT_ID,
+        state: 'redeemed',
+      }),
+    });
+    expect(insertRedemption.values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        result: 'redeemed',
+        ticketItemId: TICKET_ITEM_ID,
+      }),
+    );
+    expectNoRawQrLeak(result);
+  });
+
   it('rejects duplicate benefit redemption with prior redemption context without marking venue duplicate scan', async () => {
     const { service, qrTicketService, db } = createDependencies();
     const priorRedemptionAt = new Date('2026-07-04T09:00:00.000Z');

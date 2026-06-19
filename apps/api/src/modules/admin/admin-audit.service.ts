@@ -20,6 +20,8 @@ export const ADMIN_AUDIT_ACTIONS = [
   'settlement.export',
   'benefits.configuration.update',
   'benefits.configuration.export',
+  'benefits.run.live',
+  'benefits.run.rollback',
   'benefits.run.export',
   'benefits.entitlements.export',
   'security.allowlist.update',

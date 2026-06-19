@@ -60,7 +60,14 @@ export const ticketBenefitDisplayCopySchema = z
   })
   .strict();
 
-const benefitIdentitySchema = z.string().trim().min(1, 'benefit identity가 필요합니다');
+const benefitIdentitySchema = z
+  .string()
+  .trim()
+  .min(1, 'benefit identity가 필요합니다')
+  .max(120, 'benefit identity는 120자 이하여야 합니다')
+  .refine((value) => !value.includes(','), {
+    message: 'benefit identity에는 comma를 사용할 수 없습니다',
+  });
 const eligibleTierNamesSchema = z
   .array(z.string().trim().min(1, '혜택 적용 등급명이 필요합니다'))
   .min(1, '혜택 적용 등급이 필요합니다');
@@ -94,13 +101,53 @@ export const benefitDefinitionSchema = z.discriminatedUnion('kind', [
   limitedBenefitDefinitionSchema,
 ]);
 
+export const benefitDefinitionListSchema = z
+  .array(benefitDefinitionSchema)
+  .min(1, '혜택 설정이 필요합니다')
+  .superRefine((benefits, ctx) => {
+    const identityCounts = new Map<string, number>();
+    for (const benefit of benefits) {
+      identityCounts.set(benefit.identity, (identityCounts.get(benefit.identity) ?? 0) + 1);
+    }
+
+    const identities = new Set(identityCounts.keys());
+    benefits.forEach((benefit, benefitIndex) => {
+      if ((identityCounts.get(benefit.identity) ?? 0) > 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [benefitIndex, 'identity'],
+          message: 'benefit identity가 중복되었습니다',
+        });
+      }
+
+      benefit.mutuallyExclusiveWith.forEach((identity, referenceIndex) => {
+        if (identity === benefit.identity) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [benefitIndex, 'mutuallyExclusiveWith', referenceIndex],
+            message: '혜택은 자기 자신과 상호 배타로 설정할 수 없습니다',
+          });
+          return;
+        }
+
+        if (!identities.has(identity)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [benefitIndex, 'mutuallyExclusiveWith', referenceIndex],
+            message: '상호 배타 혜택 identity가 현재 설정에 없습니다',
+          });
+        }
+      });
+    });
+  });
+
 export const benefitConfigurationSchema = z
   .object({
     id: benefitConfigurationIdSchema,
     showtimeId: showtimeIdSchema,
     active: z.literal(true),
     version: z.number().int().positive('혜택 설정 버전은 1 이상이어야 합니다'),
-    benefits: z.array(benefitDefinitionSchema).min(1, '혜택 설정이 필요합니다'),
+    benefits: benefitDefinitionListSchema,
     createdAt: isoDatetime('혜택 설정 생성 시각'),
     updatedAt: isoDatetime('혜택 설정 수정 시각'),
     activatedAt: isoDatetime('혜택 설정 활성화 시각'),
@@ -183,7 +230,7 @@ export const benefitEntitlementSchema = z.discriminatedUnion('source', [
 const benefitConfigurationSnapshotSchema = z
   .object({
     active: z.literal(false),
-    benefits: z.array(benefitDefinitionSchema).min(1, '혜택 설정 snapshot이 필요합니다'),
+    benefits: benefitDefinitionListSchema,
     capturedAt: isoDatetime('혜택 설정 snapshot 생성 시각').optional(),
     sourceConfigurationId: benefitConfigurationIdSchema.nullable().optional(),
   })

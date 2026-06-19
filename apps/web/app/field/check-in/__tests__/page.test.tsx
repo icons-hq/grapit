@@ -162,4 +162,30 @@ describe('FieldCheckInPage benefit redemption showtime contract', () => {
     });
     expect(mocks.benefitRedeemMutateAsync).not.toHaveBeenCalled();
   });
+
+  it('redeems active benefits for already-used tickets after entry processing', async () => {
+    const user = userEvent.setup();
+    mocks.verifyData = verification({
+      result: 'duplicate',
+      resultLabel: '이미 입장 처리된 티켓입니다',
+      processable: false,
+      ticketStatus: 'USED',
+    });
+
+    render(<FieldCheckInPage />);
+
+    await user.click(await screen.findByRole('button', { name: '사용 처리' }));
+
+    await waitFor(() => {
+      expect(mocks.benefitRedeemMutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          token: RAW_TICKET_TOKEN,
+          showtimeId: REQUESTED_SHOWTIME_ID,
+          benefitEntitlementId: BENEFIT_ENTITLEMENT_ID,
+          confirmed: true,
+        }),
+      );
+    });
+    expect(mocks.consumeMutateAsync).not.toHaveBeenCalled();
+  });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { FieldCheckInVerifyResponse } from '@grabit/shared';
 import {
+  canRedeemBenefitsForVerification,
   normalizeBenefitRedemptionResponse,
   normalizeVerifyResponse,
 } from '@/hooks/use-field-operations';
@@ -55,6 +56,75 @@ describe('field operations normalizers', () => {
       kind: 'limited',
       state: 'active',
     });
+  });
+
+  it('allows benefit redemption after entry when an already-used ticket has active benefits', () => {
+    const normalized = normalizeVerifyResponse({
+      outcome: 'already_used',
+      processable: false,
+      ticket: {
+        reservationNumber: 'GRP-BENEFIT-SCAN',
+        performanceTitle: 'Benefit Scanner Performance',
+        showtimeId: '00000000-0000-4000-8000-000000000301',
+        showtimeLabel: '2026-07-04T10:00:00.000Z',
+        seatLabels: ['VIP A열 1번'],
+        ticketStatus: 'USED',
+        redactedTokenRef: 'tok_redacted',
+        benefitEntitlements: [
+          {
+            id: benefitEntitlementId,
+            runId: benefitRunId,
+            source: 'live_run',
+            runMode: 'live',
+            benefitIdentity: 'benefit_6_to_1',
+            kind: 'limited',
+            displayCopy,
+            state: 'active',
+            redeemedAt: null,
+            attachedToTicket: true,
+          },
+        ],
+      },
+      rejectionReason: '이미 사용된 티켓입니다',
+      verifiedAt: '2026-07-04T08:00:00.000Z',
+    } satisfies FieldCheckInVerifyResponse);
+
+    expect(normalized.result).toBe('duplicate');
+    expect(canRedeemBenefitsForVerification(normalized)).toBe(true);
+  });
+
+  it('does not allow benefit redemption for wrong-showtime scans with active benefits', () => {
+    const normalized = normalizeVerifyResponse({
+      outcome: 'wrong_showtime',
+      processable: false,
+      ticket: {
+        reservationNumber: 'GRP-BENEFIT-SCAN',
+        performanceTitle: 'Benefit Scanner Performance',
+        showtimeId: '00000000-0000-4000-8000-000000000302',
+        showtimeLabel: '2026-07-04T10:00:00.000Z',
+        seatLabels: ['VIP A열 1번'],
+        ticketStatus: 'ACTIVE',
+        redactedTokenRef: 'tok_redacted',
+        benefitEntitlements: [
+          {
+            id: benefitEntitlementId,
+            runId: benefitRunId,
+            source: 'live_run',
+            runMode: 'live',
+            benefitIdentity: 'benefit_6_to_1',
+            kind: 'limited',
+            displayCopy,
+            state: 'active',
+            redeemedAt: null,
+            attachedToTicket: true,
+          },
+        ],
+      },
+      rejectionReason: '현재 회차의 티켓이 아닙니다',
+      verifiedAt: '2026-07-04T08:00:00.000Z',
+    } satisfies FieldCheckInVerifyResponse);
+
+    expect(canRedeemBenefitsForVerification(normalized)).toBe(false);
   });
 
   it('labels duplicate benefit redemption with prior redemption timestamp', () => {

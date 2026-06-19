@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { OfflineSyncStatus } from '@/components/field/offline-sync-status';
 import {
+  canRedeemBenefitsForVerification,
   labelForResult,
   type ScannerBenefitRedemptionResult,
   type ScannerCheckInConsumeResult,
@@ -132,8 +133,7 @@ export function ScannerCheckIn({
     !consumeResult &&
     (verification.processable || verification.result === 'processable');
   const canRedeemBenefits =
-    Boolean(onRedeemBenefit) &&
-    (verification.processable || verification.result === 'processable');
+    Boolean(onRedeemBenefit) && canRedeemBenefitsForVerification(verification);
   const showOfflineQueue =
     verification.result === 'offline-pending' || verification.offlineQueue.length > 0;
 

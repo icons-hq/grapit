@@ -330,6 +330,8 @@ describe('ticket benefit schema contracts', () => {
     const benefitAuditActions = [
       'benefits.configuration.update',
       'benefits.configuration.export',
+      'benefits.run.live',
+      'benefits.run.rollback',
       'benefits.run.export',
       'benefits.entitlements.export',
     ];

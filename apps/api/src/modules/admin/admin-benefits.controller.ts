@@ -15,7 +15,7 @@ import { Readable } from 'node:stream';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 
-import { benefitDefinitionSchema } from '@grabit/shared';
+import { benefitDefinitionListSchema } from '@grabit/shared';
 import { AdminCapabilities } from '../../common/decorators/admin-capabilities.decorator.js';
 import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
 import { Roles } from '../../common/decorators/roles.decorator.js';
@@ -30,7 +30,7 @@ const showtimeIdSchema = z.string().uuid('유효한 회차 ID가 필요합니다
 const runIdSchema = z.string().uuid('유효한 benefit run ID가 필요합니다');
 const saveConfigurationBodySchema = z
   .object({
-    benefits: z.array(benefitDefinitionSchema).min(1),
+    benefits: benefitDefinitionListSchema,
     reason: z.string().trim().min(1).max(500).optional(),
   })
   .strict();
@@ -43,7 +43,7 @@ const testRunBodySchema = z
         active: z.literal(false),
         sourceConfigurationId: z.string().uuid().nullable().optional(),
         capturedAt: z.string().datetime().optional(),
-        benefits: z.array(benefitDefinitionSchema).min(1),
+        benefits: benefitDefinitionListSchema,
       })
       .strict()
       .optional(),
@@ -186,12 +186,16 @@ export class AdminBenefitsController {
     showtimeId: string,
     @Body(new ZodValidationPipe(liveRunBodySchema))
     body: LiveRunBody,
+    @Req() request: Request,
   ) {
-    return this.benefitRunnerService.runLive({
-      showtimeId,
-      actorUserId,
-      ...body,
-    });
+    return this.benefitRunnerService.runLive(
+      {
+        showtimeId,
+        actorUserId,
+        ...body,
+      },
+      requestContext(request),
+    );
   }
 
   @Get('showtimes/:showtimeId/runs')
@@ -247,12 +251,16 @@ export class AdminBenefitsController {
     showtimeId: string,
     @Body(new ZodValidationPipe(rollbackBodySchema))
     body: RollbackBody,
+    @Req() request: Request,
   ) {
-    return this.benefitRunnerService.rollback({
-      showtimeId,
-      actorUserId,
-      ...body,
-    });
+    return this.benefitRunnerService.rollback(
+      {
+        showtimeId,
+        actorUserId,
+        ...body,
+      },
+      requestContext(request),
+    );
   }
 
   @Get('showtimes/:showtimeId/entitlements/export')

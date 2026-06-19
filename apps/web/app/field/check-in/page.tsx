@@ -6,6 +6,7 @@ import { hasAdminCapability } from '@grabit/shared';
 import { AlertTriangle, Loader2, ScanLine } from 'lucide-react';
 import { ScannerCheckIn } from '@/components/field/scanner-check-in';
 import {
+  canRedeemBenefitsForVerification,
   useFieldBenefitRedeem,
   useFieldCheckInConsume,
   useFieldCheckInVerify,
@@ -245,7 +246,10 @@ export default function FieldCheckInPage() {
         canConsumeFieldScan
           ? (benefitEntitlementId) => {
               void (async () => {
-                if (!verifyQuery.data?.processable || redeemingBenefitId) {
+                if (
+                  !canRedeemBenefitsForVerification(verifyQuery.data)
+                  || redeemingBenefitId
+                ) {
                   return;
                 }
 

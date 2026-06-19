@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, sql } from 'drizzle-orm';
 
 import {
   benefitEntitlementExportRowSchema,
@@ -93,6 +93,9 @@ export type BenefitRunRecordWithSummary = BenefitRunRecord & {
 export interface BenefitRunOperationContext {
   now?: Date;
   randomSeed?: string;
+  ipAddress?: string | null;
+  userAgent?: string | null;
+  requestId?: string | null;
 }
 
 export interface BenefitRunExportActor {
@@ -257,9 +260,13 @@ export class BenefitRunnerService {
         throw new BadRequestException('요청한 혜택 설정이 현재 회차 설정과 일치하지 않습니다');
       }
 
-      const candidates = await this.loadActiveTicketItemCandidates(
-        tx as DrizzleDB,
+      const candidates = await this.lockActiveTicketItemCandidates(
+        tx as BenefitMutationDb,
         input.showtimeId,
+        await this.loadActiveTicketItemCandidates(
+          tx as DrizzleDB,
+          input.showtimeId,
+        ),
       );
       const summary = selectLimitedBenefits({
         configuration,
@@ -312,6 +319,32 @@ export class BenefitRunnerService {
       });
       const finalSummary = attachRunEvidence(summary, run.id, insertedEntitlementIds);
       await this.replaceRunSummary(tx as DrizzleDB, run.id, finalSummary, now);
+      await this.adminAuditService.write({
+        actorUserId: input.actorUserId,
+        action: 'benefits.run.live',
+        resourceType: 'benefit_run',
+        resourceId: run.id,
+        status: 'success',
+        reason: normalizeOptionalReason(input.reason),
+        changedFields: [
+          'showtimeId',
+          'configurationId',
+          'runId',
+          'assignedCount',
+          'shortfallCount',
+        ],
+        before: {},
+        after: {
+          showtimeId: input.showtimeId,
+          configurationId: input.configurationId,
+          runId: run.id,
+          assignedCount: finalSummary.totalAssignedCount,
+          shortfallCount: finalSummary.totalShortfallCount,
+        },
+        ipAddress: context.ipAddress ?? null,
+        userAgent: context.userAgent ?? null,
+        requestId: context.requestId ?? null,
+      }, tx as DrizzleDB);
 
       return buildRunRecord({
         id: run.id,
@@ -361,9 +394,13 @@ export class BenefitRunnerService {
       }
 
       const sourceSummary = parseCompletedRunSummary(sourceRun.resultSummary);
-      const activeCandidates = await this.loadActiveTicketItemCandidates(
-        tx as DrizzleDB,
+      const activeCandidates = await this.lockActiveTicketItemCandidates(
+        tx as BenefitMutationDb,
         input.showtimeId,
+        await this.loadActiveTicketItemCandidates(
+          tx as DrizzleDB,
+          input.showtimeId,
+        ),
       );
       const activeTicketItemIds = new Set(
         activeCandidates.map((candidate) => candidate.ticketItemId),
@@ -426,6 +463,34 @@ export class BenefitRunnerService {
         insertedEntitlementIds,
       );
       await this.replaceRunSummary(tx as DrizzleDB, run.id, finalSummary, now);
+      await this.adminAuditService.write({
+        actorUserId: input.actorUserId,
+        action: 'benefits.run.rollback',
+        resourceType: 'benefit_run',
+        resourceId: run.id,
+        status: 'success',
+        reason: input.reason.trim(),
+        changedFields: [
+          'showtimeId',
+          'sourceRunId',
+          'runId',
+          'assignedCount',
+          'shortfallCount',
+          'skippedInactiveTicketItemCount',
+        ],
+        before: {},
+        after: {
+          showtimeId: input.showtimeId,
+          sourceRunId: input.sourceRunId,
+          runId: run.id,
+          assignedCount: finalSummary.totalAssignedCount,
+          shortfallCount: finalSummary.totalShortfallCount,
+          skippedInactiveTicketItemCount: finalSummary.skippedInactiveTicketItemCount ?? 0,
+        },
+        ipAddress: context.ipAddress ?? null,
+        userAgent: context.userAgent ?? null,
+        requestId: context.requestId ?? null,
+      }, tx as DrizzleDB);
 
       return buildRunRecord({
         id: run.id,
@@ -653,6 +718,31 @@ export class BenefitRunnerService {
         admissionState: row.admissionState,
       }))
       .sort((left, right) => left.ticketItemId.localeCompare(right.ticketItemId));
+  }
+
+  private async lockActiveTicketItemCandidates(
+    db: BenefitMutationDb,
+    showtimeId: string,
+    candidates: TicketItemCandidate[],
+  ): Promise<TicketItemCandidate[]> {
+    if (candidates.length === 0) {
+      return [];
+    }
+
+    const ticketItemIds = candidates.map((candidate) => candidate.ticketItemId);
+    const locked = await db.execute(sql`
+      SELECT ti.id
+      FROM ticket_items ti
+      WHERE ti.showtime_id = ${showtimeId}
+        AND ti.status = 'active'
+        AND ti.id IN (${sql.join(ticketItemIds.map((id) => sql`${id}`), sql`, `)})
+      FOR UPDATE OF ti
+    `);
+    const lockedIds = new Set(
+      executeRows<{ id: string }>(locked).map((row) => String(row.id)),
+    );
+
+    return candidates.filter((candidate) => lockedIds.has(candidate.ticketItemId));
   }
 
   private async replaceRunSummary(
@@ -1148,21 +1238,48 @@ function normalizeResultSummary(value: unknown): BenefitRunResultSummary {
   };
 }
 
+function executeRows<T extends Record<string, unknown>>(value: unknown): T[] {
+  if (Array.isArray(value)) {
+    return value as T[];
+  }
+
+  const rows = (value as { rows?: unknown[] } | null)?.rows;
+  return Array.isArray(rows) ? (rows as T[]) : [];
+}
+
+function normalizeOptionalReason(reason: string | undefined): string | null {
+  const trimmed = reason?.trim();
+  return trimmed ? trimmed : null;
+}
+
 function entitlementRowToExportRow(row: BenefitEntitlementRow): BenefitEntitlementExportRow {
-  return benefitEntitlementExportRowSchema.parse({
+  const base = {
     benefitEntitlementId: row.id,
     ticketItemId: row.ticketItemId,
     showtimeId: row.showtimeId,
     runId: row.runId,
     source: row.source,
-    runMode: row.source === 'test_run' ? 'test' : 'live',
-    attachedToTicket: row.source !== 'test_run',
     benefitIdentity: row.benefitIdentity,
     benefitKind: row.benefitKind,
     benefitNameKo: row.displayCopySnapshot.ko.name,
     state: row.state,
     assignedAt: row.createdAt.toISOString(),
     redeemedAt: row.redeemedAt?.toISOString() ?? null,
+  };
+
+  if (row.source === 'configuration') {
+    return benefitEntitlementExportRowSchema.parse({
+      ...base,
+      runId: null,
+      benefitKind: 'included',
+      attachedToTicket: true,
+    });
+  }
+
+  return benefitEntitlementExportRowSchema.parse({
+    ...base,
+    runMode: row.source === 'test_run' ? 'test' : 'live',
+    attachedToTicket: row.source !== 'test_run',
   });
 }
 

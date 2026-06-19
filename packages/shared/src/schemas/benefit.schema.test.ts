@@ -165,6 +165,89 @@ describe('ticket benefit shared contracts', () => {
     ).toThrow();
   });
 
+  it('rejects benefit identities that cannot round-trip through storage', () => {
+    expect(() =>
+      benefitConfigurationSchema.parse({
+        id: configurationId,
+        showtimeId,
+        active: true,
+        version: 1,
+        benefits: [
+          includedBenefit({
+            identity: 'x'.repeat(121),
+          }),
+        ],
+        createdAt: validIso,
+        updatedAt: validIso,
+        activatedAt: validIso,
+      }),
+    ).toThrow();
+
+    expect(() =>
+      benefitConfigurationSchema.parse({
+        id: configurationId,
+        showtimeId,
+        active: true,
+        version: 1,
+        benefits: [
+          includedBenefit({
+            identity: 'benefit,with-comma',
+          }),
+        ],
+        createdAt: validIso,
+        updatedAt: validIso,
+        activatedAt: validIso,
+      }),
+    ).toThrow();
+  });
+
+  it('rejects duplicate benefit identities and invalid mutual exclusion references', () => {
+    const baseConfiguration = {
+      id: configurationId,
+      showtimeId,
+      active: true,
+      version: 1,
+      createdAt: validIso,
+      updatedAt: validIso,
+      activatedAt: validIso,
+    };
+
+    expect(() =>
+      benefitConfigurationSchema.parse({
+        ...baseConfiguration,
+        benefits: [
+          includedBenefit({ identity: 'same-benefit' }),
+          limitedBenefit({ identity: 'same-benefit' }),
+        ],
+      }),
+    ).toThrow();
+
+    expect(() =>
+      benefitConfigurationSchema.parse({
+        ...baseConfiguration,
+        benefits: [
+          includedBenefit({
+            identity: 'benefit-a',
+            mutuallyExclusiveWith: ['benefit-missing'],
+          }),
+          limitedBenefit({ identity: 'benefit-b' }),
+        ],
+      }),
+    ).toThrow();
+
+    expect(() =>
+      benefitConfigurationSchema.parse({
+        ...baseConfiguration,
+        benefits: [
+          limitedBenefit({
+            identity: 'benefit-self',
+            mutuallyExclusiveWith: ['benefit-self'],
+          }),
+        ],
+      }),
+    ).toThrow();
+  });
+
   it('parses unsaved test-run configuration snapshots without making them active configuration', () => {
     const parsed = benefitRunRequestSchema.parse({
       mode: 'test',
