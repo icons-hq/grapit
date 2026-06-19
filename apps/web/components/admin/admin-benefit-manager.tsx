@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Download,
   FlaskConical,
@@ -79,6 +79,8 @@ interface BenefitDraft {
 }
 
 export function AdminBenefitManager({ className }: { className?: string }) {
+  const [performanceSearch, setPerformanceSearch] = useState('');
+  const [debouncedPerformanceSearch, setDebouncedPerformanceSearch] = useState('');
   const [performanceId, setPerformanceId] = useState('');
   const [showtimeId, setShowtimeId] = useState('');
   const normalizedShowtimeId = showtimeId;
@@ -86,7 +88,11 @@ export function AdminBenefitManager({ className }: { className?: string }) {
     data: performanceList,
     isLoading: isPerformanceListLoading,
     isError: isPerformanceListError,
-  } = useAdminPerformances({ page: 1, limit: 200 });
+  } = useAdminPerformances({
+    page: 1,
+    limit: 200,
+    search: debouncedPerformanceSearch || undefined,
+  });
   const {
     data: selectedPerformance,
     isLoading: isPerformanceDetailLoading,
@@ -100,6 +106,17 @@ export function AdminBenefitManager({ className }: { className?: string }) {
 
   const [rollbackTarget, setRollbackTarget] = useState<BenefitRunRecord | null>(null);
   const [rollbackReason, setRollbackReason] = useState('');
+
+  useEffect(() => {
+    if (performanceSearch === debouncedPerformanceSearch) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setDebouncedPerformanceSearch(performanceSearch);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [performanceSearch, debouncedPerformanceSearch]);
 
   const canUseShowtime = normalizedShowtimeId.length > 0;
   const configuration =
@@ -128,6 +145,7 @@ export function AdminBenefitManager({ className }: { className?: string }) {
     },
     [configuration?.benefits, runs],
   );
+  const performanceItems = performanceList?.data ?? [];
   const performanceOptions = [
     {
       value: UNSELECTED_SELECT_VALUE,
@@ -135,9 +153,11 @@ export function AdminBenefitManager({ className }: { className?: string }) {
         ? '공연 옵션 로드 실패'
         : isPerformanceListLoading
           ? '공연 불러오는 중'
-          : '공연 선택',
+          : performanceItems.length === 0 && debouncedPerformanceSearch
+            ? '검색 결과 없음'
+            : '공연 선택',
     },
-    ...(performanceList?.data ?? []).map((performance) => ({
+    ...performanceItems.map((performance) => ({
       value: performance.id,
       label: performance.title,
     })),
@@ -213,7 +233,20 @@ export function AdminBenefitManager({ className }: { className?: string }) {
       </div>
 
       <section className="rounded-lg bg-white p-4 shadow-sm">
-        <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] lg:items-end">
+        <div className="grid gap-3 xl:grid-cols-[minmax(180px,0.8fr)_minmax(0,1fr)_minmax(0,1fr)_auto] xl:items-end">
+          <label className="space-y-1.5 text-sm font-semibold text-gray-700">
+            <span>공연 검색</span>
+            <Input
+              type="search"
+              value={performanceSearch}
+              onChange={(event) => {
+                setPerformanceSearch(event.target.value);
+                setPerformanceId('');
+                setShowtimeId('');
+              }}
+              placeholder="공연명 검색"
+            />
+          </label>
           <SelectField
             id="admin-benefits-performance"
             label="공연"
@@ -1069,9 +1102,20 @@ function formatDateTime(value?: string | null): string {
     return value;
   }
 
-  return new Intl.DateTimeFormat('ko-KR', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
+  const parts = new Intl.DateTimeFormat('en-US', {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hourCycle: 'h23',
     timeZone: 'Asia/Seoul',
-  }).format(date);
+  }).formatToParts(date);
+  const getPart = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value;
+  const hour = Number(getPart('hour') ?? '0');
+  const displayHour = hour % 12 || 12;
+  const period = hour < 12 ? '오전' : '오후';
+
+  return `${getPart('year')}. ${getPart('month')}. ${getPart('day')}. ${period} ${displayHour}:${getPart('minute')}`;
 }

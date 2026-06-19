@@ -20,14 +20,18 @@ const mocks = vi.hoisted(() => ({
   exportMutate: vi.fn(),
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
+  performanceListParams: [] as Array<{ page?: number; limit?: number; search?: string }>,
 }));
 
 vi.mock('@/hooks/use-admin', () => ({
-  useAdminPerformances: () => ({
-    data: performanceListResponse(),
-    isLoading: false,
-    isError: false,
-  }),
+  useAdminPerformances: (params: { page?: number; limit?: number; search?: string }) => {
+    mocks.performanceListParams.push(params);
+    return {
+      data: performanceListResponse(),
+      isLoading: false,
+      isError: false,
+    };
+  },
   useAdminPerformanceDetail: (performanceId: string) => ({
     data: performanceId === performanceFixture.id
       ? performanceDetailResponse()
@@ -260,6 +264,7 @@ describe('AdminBenefitManager', () => {
     mocks.exportMutate.mockReset();
     mocks.toastSuccess.mockReset();
     mocks.toastError.mockReset();
+    mocks.performanceListParams = [];
     mocks.saveMutate.mockResolvedValue(fixtureConfiguration);
     mocks.testMutate.mockResolvedValue(fixtureRuns[1]);
     mocks.liveMutate.mockResolvedValue(fixtureRuns[0]);
@@ -374,6 +379,25 @@ describe('AdminBenefitManager', () => {
     expect(screen.getByRole('button', { name: /^테스트 실행$/ })).toBeDisabled();
     expect(screen.getByText('공연과 회차를 선택하면 실행 기록을 조회합니다.')).toBeInTheDocument();
     expect(screen.getByText('공연과 회차를 선택하면 변경 기록을 조회합니다.')).toBeInTheDocument();
+  });
+
+  it('filters performance options by title search', async () => {
+    const user = userEvent.setup();
+    render(<AdminBenefitManager />);
+
+    await user.type(screen.getByLabelText('공연 검색'), 'Girl');
+
+    await waitFor(() =>
+      expect(mocks.performanceListParams).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            page: 1,
+            limit: 200,
+            search: 'Girl',
+          }),
+        ]),
+      ),
+    );
   });
 });
 
