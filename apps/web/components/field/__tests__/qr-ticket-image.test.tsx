@@ -129,6 +129,27 @@ describe('QrTicketImage', () => {
     expect(screen.getByTestId('qr-ticket-image')).toHaveAttribute('data-qr-url', qrUrl);
   });
 
+  it('uses the current local browser HTTP origin when a local build runs with production NODE_ENV', async () => {
+    vi.resetModules();
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubGlobal('window', {
+      location: {
+        origin: 'http://127.0.0.1:3000',
+      },
+    });
+
+    const { buildQrCheckInUrl, QrTicketImage: LocalProductionQrTicketImage } = await import(
+      '../qr-ticket-image'
+    );
+    const qrUrl = buildQrCheckInUrl('token');
+
+    expect(qrUrl).toBe('http://127.0.0.1:3000/field/check-in?ticket=token');
+
+    render(<LocalProductionQrTicketImage value={qrUrl} />);
+
+    expect(screen.getByTestId('qr-ticket-image')).toHaveAttribute('data-qr-url', qrUrl);
+  });
+
   it('uses documented localhost rehearsal origin in non-production without browser origin', async () => {
     vi.resetModules();
     vi.stubEnv('NODE_ENV', 'development');

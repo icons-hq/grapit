@@ -47,13 +47,17 @@ function isPrivateIpv4(hostname: string): boolean {
   );
 }
 
-function isAllowedHttpRehearsalOrigin(url: URL): boolean {
-  if (isProduction() || url.protocol !== 'http:') {
+function isLocalOrPrivateHttpOrigin(url: URL): boolean {
+  if (url.protocol !== 'http:') {
     return false;
   }
 
   const hostname = url.hostname.toLowerCase();
   return hostname === 'localhost' || hostname === '127.0.0.1' || isPrivateIpv4(hostname);
+}
+
+function isAllowedConfiguredHttpRehearsalOrigin(url: URL): boolean {
+  return !isProduction() && isLocalOrPrivateHttpOrigin(url);
 }
 
 function getConfiguredPublicWebOrigin(): string | null {
@@ -67,7 +71,7 @@ function getConfiguredPublicWebOrigin(): string | null {
     if (!hasOriginOnly(url)) {
       return null;
     }
-    if (url.protocol === 'https:' || isAllowedHttpRehearsalOrigin(url)) {
+    if (url.protocol === 'https:' || isAllowedConfiguredHttpRehearsalOrigin(url)) {
       return url.origin;
     }
   } catch {
@@ -86,7 +90,7 @@ function getBrowserPublicWebOrigin(): string | null {
     const currentOrigin = new URL(window.location.origin);
     if (
       currentOrigin.protocol === 'https:' ||
-      isAllowedHttpRehearsalOrigin(currentOrigin)
+      isLocalOrPrivateHttpOrigin(currentOrigin)
     ) {
       return currentOrigin.origin;
     }
@@ -119,9 +123,8 @@ function isAllowedQrValue(value: string): boolean {
     }
 
     return (
-      !isProduction() &&
       url.origin === getPublicWebOrigin() &&
-      isAllowedHttpRehearsalOrigin(url)
+      isLocalOrPrivateHttpOrigin(url)
     );
   } catch {
     return false;

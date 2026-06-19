@@ -1,7 +1,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AdminBenefitManager } from '../admin-benefit-manager';
 import type {
   BenefitConfiguration,
@@ -20,6 +20,25 @@ const mocks = vi.hoisted(() => ({
   exportMutate: vi.fn(),
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
+  performanceListParams: [] as Array<{ page?: number; limit?: number; search?: string }>,
+}));
+
+vi.mock('@/hooks/use-admin', () => ({
+  useAdminPerformances: (params: { page?: number; limit?: number; search?: string }) => {
+    mocks.performanceListParams.push(params);
+    return {
+      data: performanceListResponse(),
+      isLoading: false,
+      isError: false,
+    };
+  },
+  useAdminPerformanceDetail: (performanceId: string) => ({
+    data: performanceId === performanceFixture.id
+      ? performanceDetailResponse()
+      : undefined,
+    isLoading: false,
+    isError: false,
+  }),
 }));
 
 vi.mock('@/hooks/use-admin-benefits', () => ({
@@ -69,6 +88,18 @@ const showtimeId = '00000000-0000-4000-8000-000000000301';
 const configurationId = '00000000-0000-4000-8000-000000000401';
 const liveRunId = '00000000-0000-4000-8000-000000000501';
 const testRunId = '00000000-0000-4000-8000-000000000502';
+const performanceId = '00000000-0000-4000-8000-000000000201';
+
+const performanceFixture = {
+  id: performanceId,
+  title: 'Girl Rules Fanmeet',
+  genre: 'artist_celebrity',
+  posterUrl: null,
+  status: 'upcoming',
+  startDate: '2026-07-18T00:00:00.000Z',
+  endDate: '2026-07-18T00:00:00.000Z',
+  venueName: 'Donghae Arts Center',
+} as const;
 
 const fixtureConfiguration: BenefitConfiguration = {
   id: configurationId,
@@ -147,7 +178,81 @@ const fixtureChanges: BenefitConfigurationChangeRecord[] = [
   },
 ];
 
+function performanceListResponse() {
+  return {
+    data: [performanceFixture],
+    total: 1,
+    page: 1,
+    limit: 200,
+    totalPages: 1,
+  };
+}
+
+function performanceDetailResponse() {
+  return {
+    ...performanceFixture,
+    subcategory: null,
+    venueId: null,
+    description: null,
+    descriptionVisible: true,
+    runtime: null,
+    ageRating: '전체 관람가',
+    salesInfo: null,
+    salesInfoVisible: true,
+    detailImages: [],
+    viewCount: 0,
+    createdAt: '2026-07-01T00:00:00.000Z',
+    updatedAt: '2026-07-01T00:00:00.000Z',
+    venue: null,
+    priceTiers: [],
+    showtimes: [
+      {
+        id: showtimeId,
+        performanceId,
+        dateTime: '2026-07-18T10:00:00.000Z',
+      },
+    ],
+    castings: [],
+    seatMaps: [],
+    bookingPolicy: {
+      maxTicketsPerUser: 1,
+      allowedPaymentMethods: ['CARD'],
+      changePolicyEnabled: false,
+      paymentWindowMinutes: 7,
+      seatHoldMinutes: 10,
+      cancelledSeatHoldMinMinutes: 1,
+      cancelledSeatHoldMaxMinutes: 10,
+      manualOpenEnabled: true,
+      bookingStartsAt: null,
+    },
+    seatMap: null,
+  };
+}
+
+async function selectBenefitShowtime(user: ReturnType<typeof userEvent.setup>) {
+  render(<AdminBenefitManager />);
+
+  await selectOption(user, '공연', performanceFixture.title);
+  await selectOption(user, '회차', '2026. 7. 18. 오후 7:00');
+}
+
 describe('AdminBenefitManager', () => {
+  beforeAll(() => {
+    Object.defineProperty(HTMLElement.prototype, 'hasPointerCapture', {
+      value: () => false,
+      configurable: true,
+    });
+    Object.defineProperty(HTMLElement.prototype, 'setPointerCapture', {
+      value: () => {},
+      configurable: true,
+    });
+    Object.defineProperty(HTMLElement.prototype, 'releasePointerCapture', {
+      value: () => {},
+      configurable: true,
+    });
+    Element.prototype.scrollIntoView = function scrollIntoView() {};
+  });
+
   beforeEach(() => {
     mocks.configuration = fixtureConfiguration;
     mocks.changes = fixtureChanges;
@@ -159,6 +264,7 @@ describe('AdminBenefitManager', () => {
     mocks.exportMutate.mockReset();
     mocks.toastSuccess.mockReset();
     mocks.toastError.mockReset();
+    mocks.performanceListParams = [];
     mocks.saveMutate.mockResolvedValue(fixtureConfiguration);
     mocks.testMutate.mockResolvedValue(fixtureRuns[1]);
     mocks.liveMutate.mockResolvedValue(fixtureRuns[0]);
@@ -171,7 +277,7 @@ describe('AdminBenefitManager', () => {
 
   it('saves current ALL and limited benefit settings with an audit reason', async () => {
     const user = userEvent.setup();
-    render(<AdminBenefitManager initialShowtimeId={showtimeId} />);
+    await selectBenefitShowtime(user);
 
     await screen.findByDisplayValue('benefit_official_poster');
     await user.clear(screen.getByLabelText('설정 저장 사유'));
@@ -203,7 +309,7 @@ describe('AdminBenefitManager', () => {
 
   it('runs a test from the current draft without attaching benefits to tickets', async () => {
     const user = userEvent.setup();
-    render(<AdminBenefitManager initialShowtimeId={showtimeId} />);
+    await selectBenefitShowtime(user);
 
     await screen.findByDisplayValue('benefit_6_to_1');
     await user.type(screen.getByLabelText('테스트 seed 참조값'), 'operator-seed');
@@ -228,7 +334,7 @@ describe('AdminBenefitManager', () => {
 
   it('runs live, exports run CSV, and opens rollback from run history', async () => {
     const user = userEvent.setup();
-    render(<AdminBenefitManager initialShowtimeId={showtimeId} />);
+    await selectBenefitShowtime(user);
 
     await screen.findByText(liveRunId);
     await user.type(screen.getByLabelText('라이브 적용 사유'), '판매 종료 전 확정');
@@ -262,4 +368,44 @@ describe('AdminBenefitManager', () => {
       reason: '직전 실행으로 복구',
     });
   });
+
+  it('keeps benefit actions disabled until a performance and showtime are selected', () => {
+    render(<AdminBenefitManager />);
+
+    expect(screen.queryByLabelText('회차 ID')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '설정 CSV' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '부여 CSV' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /설정 저장/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^테스트 실행$/ })).toBeDisabled();
+    expect(screen.getByText('공연과 회차를 선택하면 실행 기록을 조회합니다.')).toBeInTheDocument();
+    expect(screen.getByText('공연과 회차를 선택하면 변경 기록을 조회합니다.')).toBeInTheDocument();
+  });
+
+  it('filters performance options by title search', async () => {
+    const user = userEvent.setup();
+    render(<AdminBenefitManager />);
+
+    await user.type(screen.getByLabelText('공연 검색'), 'Girl');
+
+    await waitFor(() =>
+      expect(mocks.performanceListParams).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            page: 1,
+            limit: 200,
+            search: 'Girl',
+          }),
+        ]),
+      ),
+    );
+  });
 });
+
+async function selectOption(
+  user: ReturnType<typeof userEvent.setup>,
+  label: string,
+  option: string,
+) {
+  await user.click(screen.getByLabelText(label));
+  await user.click(within(document.body).getByRole('option', { name: option }));
+}

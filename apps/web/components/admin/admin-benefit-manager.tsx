@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Download,
   FlaskConical,
@@ -29,6 +29,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Table,
@@ -49,7 +56,13 @@ import {
   useRunAdminBenefitTest,
   useSaveAdminBenefitConfiguration,
 } from '@/hooks/use-admin-benefits';
+import {
+  useAdminPerformanceDetail,
+  useAdminPerformances,
+} from '@/hooks/use-admin';
 import { cn } from '@/lib/cn';
+
+const UNSELECTED_SELECT_VALUE = '__unselected__';
 
 type BenefitDraftKind = 'included' | 'limited';
 
@@ -65,17 +78,26 @@ interface BenefitDraft {
   mutuallyExclusiveWith: string;
 }
 
-interface AdminBenefitManagerProps {
-  initialShowtimeId?: string;
-  className?: string;
-}
-
-export function AdminBenefitManager({
-  initialShowtimeId = '',
-  className,
-}: AdminBenefitManagerProps) {
-  const [showtimeId, setShowtimeId] = useState(initialShowtimeId);
-  const normalizedShowtimeId = showtimeId.trim();
+export function AdminBenefitManager({ className }: { className?: string }) {
+  const [performanceSearch, setPerformanceSearch] = useState('');
+  const [debouncedPerformanceSearch, setDebouncedPerformanceSearch] = useState('');
+  const [performanceId, setPerformanceId] = useState('');
+  const [showtimeId, setShowtimeId] = useState('');
+  const normalizedShowtimeId = showtimeId;
+  const {
+    data: performanceList,
+    isLoading: isPerformanceListLoading,
+    isError: isPerformanceListError,
+  } = useAdminPerformances({
+    page: 1,
+    limit: 200,
+    search: debouncedPerformanceSearch || undefined,
+  });
+  const {
+    data: selectedPerformance,
+    isLoading: isPerformanceDetailLoading,
+    isError: isPerformanceDetailError,
+  } = useAdminPerformanceDetail(performanceId);
   const configurationQuery = useAdminBenefitConfiguration(normalizedShowtimeId);
   const changesQuery = useAdminBenefitConfigurationChanges(normalizedShowtimeId);
   const runsQuery = useAdminBenefitRuns(normalizedShowtimeId);
@@ -84,6 +106,17 @@ export function AdminBenefitManager({
 
   const [rollbackTarget, setRollbackTarget] = useState<BenefitRunRecord | null>(null);
   const [rollbackReason, setRollbackReason] = useState('');
+
+  useEffect(() => {
+    if (performanceSearch === debouncedPerformanceSearch) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      setDebouncedPerformanceSearch(performanceSearch);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [performanceSearch, debouncedPerformanceSearch]);
 
   const canUseShowtime = normalizedShowtimeId.length > 0;
   const configuration =
@@ -112,6 +145,46 @@ export function AdminBenefitManager({
     },
     [configuration?.benefits, runs],
   );
+  const performanceItems = performanceList?.data ?? [];
+  const performanceOptions = [
+    {
+      value: UNSELECTED_SELECT_VALUE,
+      label: isPerformanceListError
+        ? '공연 옵션 로드 실패'
+        : isPerformanceListLoading
+          ? '공연 불러오는 중'
+          : performanceItems.length === 0 && debouncedPerformanceSearch
+            ? '검색 결과 없음'
+            : '공연 선택',
+    },
+    ...performanceItems.map((performance) => ({
+      value: performance.id,
+      label: performance.title,
+    })),
+  ];
+  const showtimeOptions = [
+    {
+      value: UNSELECTED_SELECT_VALUE,
+      label: performanceId
+        ? isPerformanceDetailError
+          ? '회차 옵션 로드 실패'
+          : isPerformanceDetailLoading
+            ? '회차 불러오는 중'
+            : selectedPerformance?.showtimes.length === 0
+              ? '등록된 회차 없음'
+              : '회차 선택'
+        : '공연을 먼저 선택',
+    },
+    ...(selectedPerformance?.showtimes ?? []).map((showtime) => ({
+      value: showtime.id,
+      label: formatDateTime(showtime.dateTime),
+    })),
+  ];
+  const isShowtimeSelectDisabled =
+    !performanceId ||
+    isPerformanceDetailLoading ||
+    isPerformanceDetailError ||
+    (selectedPerformance?.showtimes.length ?? 0) === 0;
 
   function handleRollback() {
     if (!rollbackTarget || rollbackReason.trim().length === 0) {
@@ -160,16 +233,41 @@ export function AdminBenefitManager({
       </div>
 
       <section className="rounded-lg bg-white p-4 shadow-sm">
-        <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
+        <div className="grid gap-3 xl:grid-cols-[minmax(180px,0.8fr)_minmax(0,1fr)_minmax(0,1fr)_auto] xl:items-end">
           <label className="space-y-1.5 text-sm font-semibold text-gray-700">
-            <span>회차 ID</span>
+            <span>공연 검색</span>
             <Input
-              value={showtimeId}
-              onChange={(event) => setShowtimeId(event.target.value)}
-              placeholder="showtime id"
-              aria-label="회차 ID"
+              type="search"
+              value={performanceSearch}
+              onChange={(event) => {
+                setPerformanceSearch(event.target.value);
+                setPerformanceId('');
+                setShowtimeId('');
+              }}
+              placeholder="공연명 검색"
             />
           </label>
+          <SelectField
+            id="admin-benefits-performance"
+            label="공연"
+            value={performanceId || UNSELECTED_SELECT_VALUE}
+            options={performanceOptions}
+            disabled={isPerformanceListLoading || isPerformanceListError}
+            onValueChange={(value) => {
+              setPerformanceId(value === UNSELECTED_SELECT_VALUE ? '' : value);
+              setShowtimeId('');
+            }}
+          />
+          <SelectField
+            id="admin-benefits-showtime"
+            label="회차"
+            value={showtimeId || UNSELECTED_SELECT_VALUE}
+            options={showtimeOptions}
+            disabled={isShowtimeSelectDisabled}
+            onValueChange={(value) => {
+              setShowtimeId(value === UNSELECTED_SELECT_VALUE ? '' : value);
+            }}
+          />
           <div className="flex flex-wrap gap-2">
             <Button
               type="button"
@@ -247,7 +345,7 @@ export function AdminBenefitManager({
                   </TableRow>
                 ))}
               {!runsQuery.isLoading && !canUseShowtime && (
-                <EmptyRow colSpan={5} message="회차 ID를 입력하면 실행 기록을 조회합니다." />
+                <EmptyRow colSpan={5} message="공연과 회차를 선택하면 실행 기록을 조회합니다." />
               )}
               {!runsQuery.isLoading && canUseShowtime && runs.length === 0 && (
                 <EmptyRow colSpan={5} message="기록된 혜택 실행이 없습니다." />
@@ -333,7 +431,7 @@ export function AdminBenefitManager({
                   </TableRow>
                 ))}
               {!changesQuery.isLoading && !canUseShowtime && (
-                <EmptyRow colSpan={4} message="회차 ID를 입력하면 변경 기록을 조회합니다." />
+                <EmptyRow colSpan={4} message="공연과 회차를 선택하면 변경 기록을 조회합니다." />
               )}
               {!changesQuery.isLoading && canUseShowtime && changes.length === 0 && (
                 <EmptyRow colSpan={4} message="기록된 설정 변경이 없습니다." />
@@ -482,7 +580,7 @@ function BenefitConfigurationWorkspace({
 
   function handleSave() {
     if (!canUseShowtime) {
-      toast.error('회차 ID를 입력하세요.');
+      toast.error('공연과 회차를 선택하세요.');
       return;
     }
 
@@ -508,7 +606,7 @@ function BenefitConfigurationWorkspace({
 
   function handleRunTest() {
     if (!canUseShowtime) {
-      toast.error('회차 ID를 입력하세요.');
+      toast.error('공연과 회차를 선택하세요.');
       return;
     }
 
@@ -848,6 +946,42 @@ function SummaryPill({ label, value }: { label: string; value: string | number }
   );
 }
 
+function SelectField({
+  id,
+  label,
+  value,
+  options,
+  disabled = false,
+  onValueChange,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  options: ReadonlyArray<{ value: string; label: string }>;
+  disabled?: boolean;
+  onValueChange: (value: string) => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <label htmlFor={id} className="text-sm font-semibold text-gray-700">
+        {label}
+      </label>
+      <Select value={value} onValueChange={onValueChange} disabled={disabled}>
+        <SelectTrigger id={id} aria-label={label} className="h-11 w-full">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {options.map((option) => (
+            <SelectItem key={option.value} value={option.value}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
 function EmptyRow({ colSpan, message }: { colSpan: number; message: string }) {
   return (
     <TableRow>
@@ -968,9 +1102,20 @@ function formatDateTime(value?: string | null): string {
     return value;
   }
 
-  return new Intl.DateTimeFormat('ko-KR', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
+  const parts = new Intl.DateTimeFormat('en-US', {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hourCycle: 'h23',
     timeZone: 'Asia/Seoul',
-  }).format(date);
+  }).formatToParts(date);
+  const getPart = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value;
+  const hour = Number(getPart('hour') ?? '0');
+  const displayHour = hour % 12 || 12;
+  const period = hour < 12 ? '오전' : '오후';
+
+  return `${getPart('year')}. ${getPart('month')}. ${getPart('day')}. ${period} ${displayHour}:${getPart('minute')}`;
 }
