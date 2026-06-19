@@ -7,7 +7,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { and, eq, inArray, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, ne, or, sql } from 'drizzle-orm';
 import { normalizeSeatIdentity } from '@grabit/shared';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
@@ -16,6 +16,7 @@ import {
   refunds,
   reservations,
   seatInventories,
+  ticketBenefitEntitlements,
   ticketItems,
   tickets,
 } from '../../database/schema/index.js';
@@ -340,6 +341,12 @@ export class PaymentCancellationFinalizerService {
           (ticketItem) => ticketItem.id,
         );
 
+        await this.inactivateBenefitEntitlementsForTicketItems(
+          tx,
+          targetTicketItemIds,
+          now,
+        );
+
         const updatedTickets = await tx
           .update(tickets)
           .set({
@@ -604,5 +611,27 @@ export class PaymentCancellationFinalizerService {
       );
       return false;
     }
+  }
+
+  private async inactivateBenefitEntitlementsForTicketItems(
+    db: DrizzleDB,
+    ticketItemIds: string[],
+    now: Date,
+  ): Promise<void> {
+    if (ticketItemIds.length === 0) {
+      return;
+    }
+
+    await db
+      .update(ticketBenefitEntitlements)
+      .set({
+        state: 'inactive',
+        inactiveReason: 'ticket_item_cancelled',
+        updatedAt: now,
+      })
+      .where(and(
+        inArray(ticketBenefitEntitlements.ticketItemId, ticketItemIds),
+        ne(ticketBenefitEntitlements.state, 'redeemed'),
+      ));
   }
 }

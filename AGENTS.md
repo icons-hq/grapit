@@ -131,6 +131,7 @@ DOTENV_CONFIG_PATH=../../.env pnpm --filter @grabit/api exec drizzle-kit generat
 - 작업 전 `git status --short --branch`로 dirty state와 branch divergence를 확인한다.
 - unrelated dirty file은 건드리지 않는다.
 - destructive git command(`reset --hard`, `checkout --`, 강제 push 등)는 명시 요청 없이 사용하지 않는다.
+- PR은 사용자가 명시적으로 draft를 요청한 경우를 제외하고 항상 ready-for-review 상태로 생성한다. 실수로 draft/리뷰 준비중 상태가 되면 즉시 `gh pr ready`로 전환한다.
 - production ship은 기본적으로 branch -> PR -> CI green -> merge -> deploy -> live smoke 흐름을 따른다.
 - direct push to `main`이나 direct production mutation은 사용자가 명확히 요구한 경우에만 고려한다.
 

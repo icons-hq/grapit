@@ -507,7 +507,17 @@
       "cancellationDeadline": "取消截止时间",
       "qrReady": "QR 票已准备好。入场时工作人员会扫描 QR。",
       "qrChecking": "付款已完成，但 QR 票仍在准备中。请稍后刷新或在我的页面查看。",
-      "fieldCheckResult": "现场验票结果为最终入场记录。"
+      "fieldCheckResult": "现场验票结果为最终入场记录。",
+      "benefits": {
+        "title": "权益",
+        "included": "包含",
+        "limited": "限定",
+        "available": "可使用",
+        "used": "已使用",
+        "inactive": "不可用",
+        "empty": "无包含权益",
+        "redeemedAt": "使用时间：{date}"
+      }
     }
   },
   "reservation": {

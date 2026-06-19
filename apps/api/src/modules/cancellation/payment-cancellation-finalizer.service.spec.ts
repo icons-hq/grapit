@@ -6,6 +6,7 @@ import {
   refunds,
   reservations,
   seatInventories,
+  ticketBenefitEntitlements,
   ticketItems,
   tickets,
 } from '../../database/schema/index.js';
@@ -357,6 +358,32 @@ describe('PaymentCancellationFinalizerService', () => {
       });
     }
     expect(transaction.postCommitUpdateCalls).toHaveLength(0);
+  });
+
+  it('inactivates non-redeemed benefit entitlements for cancelled ticket items without reassigning limited benefits', async () => {
+    const { service, transaction } = createService({
+      isAvailable: false,
+      send: vi.fn(),
+    });
+
+    await service.finalizeFullPaymentCancellation(baseInput());
+
+    const benefitUpdate = transaction.updateCalls.find((call) =>
+      call.table === ticketBenefitEntitlements
+    );
+    expect(benefitUpdate?.values).toMatchObject({
+      state: 'inactive',
+      inactiveReason: 'ticket_item_cancelled',
+      updatedAt: NOW,
+    });
+    expect(objectGraphContains(benefitUpdate?.whereArgs[0], 'ticket-item-1'))
+      .toBe(true);
+    expect(objectGraphContains(benefitUpdate?.whereArgs[0], 'ticket-item-2'))
+      .toBe(true);
+    expect(objectGraphContains(benefitUpdate?.whereArgs[0], 'redeemed'))
+      .toBe(true);
+    expect(transaction.insertCalls.some((call) => call.table === ticketBenefitEntitlements))
+      .toBe(false);
   });
 
   it('preserves ticket-item cancellation economics when finalizing a ticket-item full cancel', async () => {

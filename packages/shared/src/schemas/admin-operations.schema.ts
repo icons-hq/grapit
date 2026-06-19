@@ -17,6 +17,8 @@ export const ADMIN_CAPABILITIES = [
   'field.scan.consume',
   'field.scan.sync',
   'settlement.export',
+  'benefits.manage',
+  'benefits.export',
 ] as const;
 
 export const ADMIN_CAPABILITY_BUNDLES = [
@@ -185,6 +187,12 @@ export const adminAuditActionSchema = z.enum([
   'allowlist.update',
   'security.allowlist.update',
   'security.permission.update',
+  'benefits.configuration.update',
+  'benefits.configuration.export',
+  'benefits.run.live',
+  'benefits.run.rollback',
+  'benefits.run.export',
+  'benefits.entitlements.export',
   'user.export_raw',
   'user.withdraw',
   'user.hard_delete',

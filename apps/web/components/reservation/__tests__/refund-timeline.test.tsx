@@ -140,6 +140,7 @@ function createReservation(
           rotatedAt: null,
           revokedAt: null,
         },
+        benefitEntitlements: [],
         cancellation: null,
       },
     ],

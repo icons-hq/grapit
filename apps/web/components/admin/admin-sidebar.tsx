@@ -14,6 +14,7 @@ import {
   Inbox,
   FileQuestion,
   FileSpreadsheet,
+  Gift,
   Armchair,
   ScrollText,
   ShieldCheck,
@@ -104,6 +105,12 @@ const NAV_GROUPS: readonly { label: string; items: readonly NavItem[] }[] = [
         label: '예매 관리',
         href: '/admin/bookings',
         icon: Ticket,
+      },
+      {
+        label: '혜택 관리',
+        href: '/admin/benefits',
+        icon: Gift,
+        requiredCapability: 'benefits.manage',
       },
       {
         label: '회원 관리',

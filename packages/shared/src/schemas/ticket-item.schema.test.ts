@@ -164,4 +164,51 @@ describe('ticket item shared contracts', () => {
       }),
     ).toThrow();
   });
+
+  it('allows configuration-source included benefits with nullable run ids', () => {
+    const parsed = ticketItemSchema.parse({
+      id: '00000000-0000-4000-8000-000000000104',
+      reservationId: '00000000-0000-4000-8000-000000000001',
+      paymentId: '00000000-0000-4000-8000-000000000002',
+      showtimeId: '00000000-0000-4000-8000-000000000003',
+      seatId: 'A-1',
+      seatKey: '1F:A-1',
+      floorKey: '1F',
+      floorLabel: '1층',
+      row: 'A',
+      number: '1',
+      tierName: 'VIP',
+      price: 100000,
+      serviceFee: 2000,
+      status: 'ACTIVE',
+      admissionState: 'NOT_ENTERED',
+      enteredAt: null,
+      qrCredential: null,
+      cancellation: null,
+      benefitEntitlements: [
+        {
+          id: '00000000-0000-4000-8000-000000000301',
+          ticketItemId: '00000000-0000-4000-8000-000000000104',
+          showtimeId: '00000000-0000-4000-8000-000000000003',
+          runId: null,
+          source: 'configuration',
+          benefitIdentity: 'drink-voucher',
+          kind: 'included',
+          displayCopy: {
+            ko: { name: '음료', description: '무료 음료 혜택' },
+            en: { name: 'Drink', description: 'Free drink benefit' },
+            'zh-CN': { name: '饮料', description: '免费饮料福利' },
+            th: { name: 'เครื่องดื่ม', description: 'สิทธิประโยชน์เครื่องดื่มฟรี' },
+          },
+          state: 'active',
+          attachedToTicket: true,
+          assignedAt: '2026-07-01T00:00:00.000Z',
+          redeemedAt: null,
+        },
+      ],
+    });
+
+    expect(parsed.benefitEntitlements[0]?.source).toBe('configuration');
+    expect(parsed.benefitEntitlements[0]?.runId).toBeNull();
+  });
 });

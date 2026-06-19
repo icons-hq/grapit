@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { benefitEntitlementBaseSchema } from './benefit.schema';
+
 const isoDatetime = (label: string) =>
   z.string().datetime({ message: `${label}은 ISO datetime 형식이어야 합니다` });
 
@@ -7,6 +9,7 @@ const dateOnly = (label: string) =>
   z.string().regex(/^\d{4}-\d{2}-\d{2}$/, `${label}은 YYYY-MM-DD 형식이어야 합니다`);
 
 const showtimeIdSchema = z.string().uuid('유효한 회차 ID가 필요합니다');
+const benefitRunIdSchema = z.string().uuid('유효한 benefit run ID가 필요합니다');
 
 export const FIELD_CHECK_IN_OUTCOMES = [
   'processable',
@@ -39,6 +42,53 @@ export const fieldCheckInOutcomeSchema = z.enum(FIELD_CHECK_IN_OUTCOMES);
 export const fieldOfflineSyncStateSchema = z.enum(FIELD_OFFLINE_SYNC_STATES);
 export const settlementExportDatasetSchema = z.enum(SETTLEMENT_EXPORT_DATASETS);
 
+const fieldBenefitEntitlementBaseSchema = benefitEntitlementBaseSchema.pick({
+  id: true,
+  benefitIdentity: true,
+  kind: true,
+  displayCopy: true,
+  state: true,
+  runId: true,
+  source: true,
+  redeemedAt: true,
+});
+
+export const fieldBenefitEntitlementSchema = z.discriminatedUnion('source', [
+  fieldBenefitEntitlementBaseSchema
+    .extend({
+      source: z.literal('configuration'),
+      runId: z.null(),
+      kind: z.literal('included'),
+      attachedToTicket: z.literal(true),
+      runMode: z.never().optional(),
+    })
+    .strict(),
+  fieldBenefitEntitlementBaseSchema
+    .extend({
+      source: z.literal('live_run'),
+      runId: benefitRunIdSchema,
+      runMode: z.literal('live'),
+      attachedToTicket: z.literal(true),
+    })
+    .strict(),
+  fieldBenefitEntitlementBaseSchema
+    .extend({
+      source: z.literal('test_run'),
+      runId: benefitRunIdSchema,
+      runMode: z.literal('test'),
+      attachedToTicket: z.literal(false),
+    })
+    .strict(),
+  fieldBenefitEntitlementBaseSchema
+    .extend({
+      source: z.literal('rollback'),
+      runId: benefitRunIdSchema,
+      attachedToTicket: z.literal(true),
+      runMode: z.literal('live').optional(),
+    })
+    .strict(),
+]);
+
 export const fieldCheckInVerifyRequestSchema = z
   .object({
     token: z.string().trim().min(1, 'QR token이 필요합니다').optional(),
@@ -66,6 +116,7 @@ export const fieldCheckInTicketContextSchema = z
     ticketStatus: z.enum(['ACTIVE', 'REVOKED', 'USED', 'EXPIRED']),
     redactedTokenRef: z.string().min(1, 'redacted token reference가 필요합니다'),
     maskedJti: z.string().min(1, 'masked JTI가 필요합니다').optional(),
+    benefitEntitlements: z.array(fieldBenefitEntitlementSchema).default([]),
   })
   .strict();
 
@@ -293,6 +344,7 @@ export const settlementExportResponseSchema = z
 export type FieldCheckInOutcome = z.infer<typeof fieldCheckInOutcomeSchema>;
 export type FieldOfflineSyncState = z.infer<typeof fieldOfflineSyncStateSchema>;
 export type SettlementExportDataset = z.infer<typeof settlementExportDatasetSchema>;
+export type FieldBenefitEntitlement = z.infer<typeof fieldBenefitEntitlementSchema>;
 export type FieldCheckInVerifyRequest = z.infer<
   typeof fieldCheckInVerifyRequestSchema
 >;

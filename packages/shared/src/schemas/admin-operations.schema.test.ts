@@ -37,10 +37,14 @@ describe('admin operations contract', () => {
       'field.scan.consume',
       'field.scan.sync',
       'settlement.export',
+      'benefits.manage',
+      'benefits.export',
     ];
 
     expect(ADMIN_CAPABILITIES).toEqual(requiredCapabilities);
     expect(adminCapabilitySchema.parse('field.scan.verify')).toBe('field.scan.verify');
+    expect(adminCapabilitySchema.parse('benefits.manage')).toBe('benefits.manage');
+    expect(adminCapabilitySchema.parse('benefits.export')).toBe('benefits.export');
     expect(ADMIN_CAPABILITY_BUNDLE_CAPABILITIES.admin).toEqual(requiredCapabilities);
     expect(ADMIN_CAPABILITY_BUNDLE_CAPABILITIES.operator).toContain('support.manage');
     expect(ADMIN_CAPABILITY_BUNDLE_CAPABILITIES.operator).not.toContain(
@@ -96,6 +100,66 @@ describe('admin operations contract', () => {
 
     expect(parsed.action).toBe('event.publish');
     expect(parsed.diff.after).toEqual({ status: 'published' });
+  });
+
+  it('validates benefit configuration audit actions', () => {
+    const parsed = adminAuditEventSchema.parse({
+      id: 'audit-benefit-1',
+      actorUserId: 'admin-1',
+      action: 'benefits.configuration.update',
+      resourceType: 'ticket_benefit_configuration',
+      resourceId: 'showtime-1',
+      status: 'success',
+      reason: 'benefit configuration saved',
+      changedFields: ['benefits'],
+      diff: {
+        before: { version: 1 },
+        after: { version: 2 },
+      },
+      createdAt: '2026-06-18T00:00:00.000Z',
+    });
+
+    expect(parsed.action).toBe('benefits.configuration.update');
+    expect(
+      adminAuditEventSchema.parse({
+        ...parsed,
+        id: 'audit-benefit-export-1',
+        action: 'benefits.configuration.export',
+        resourceType: 'ticket_benefit_configuration_export',
+      }).action,
+    ).toBe('benefits.configuration.export');
+    expect(
+      adminAuditEventSchema.parse({
+        ...parsed,
+        id: 'audit-benefit-run-live-1',
+        action: 'benefits.run.live',
+        resourceType: 'benefit_run',
+      }).action,
+    ).toBe('benefits.run.live');
+    expect(
+      adminAuditEventSchema.parse({
+        ...parsed,
+        id: 'audit-benefit-run-rollback-1',
+        action: 'benefits.run.rollback',
+        resourceType: 'benefit_run',
+      }).action,
+    ).toBe('benefits.run.rollback');
+    expect(
+      adminAuditEventSchema.parse({
+        ...parsed,
+        id: 'audit-benefit-run-export-1',
+        action: 'benefits.run.export',
+        resourceType: 'benefit_run',
+      }).action,
+    ).toBe('benefits.run.export');
+    expect(
+      adminAuditEventSchema.parse({
+        ...parsed,
+        id: 'audit-benefit-entitlements-export-1',
+        action: 'benefits.entitlements.export',
+        resourceType: 'benefit_entitlements',
+      }).action,
+    ).toBe('benefits.entitlements.export');
   });
 
   it('validates raw user export audit actions and reasoned export requests', () => {

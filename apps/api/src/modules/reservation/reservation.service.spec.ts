@@ -20,9 +20,13 @@ import type { PaymentCancellationFinalizerService } from '../cancellation/paymen
 import {
   payments,
   reservations,
+  reservationSeats,
   seatInventories,
+  ticketBenefitConfigurations,
+  ticketBenefitEntitlements,
   ticketItems,
   tickets,
+  users,
 } from '../../database/schema/index.js';
 
 function ticketLimitResult({
@@ -272,6 +276,23 @@ describe('ReservationService', () => {
     return new Proxy({}, handler);
   }
 
+  function emptyBenefitConfigurationSelect() {
+    return vi.fn(() => ({
+      from: vi.fn((table: unknown) => {
+        if (table === ticketBenefitConfigurations) {
+          return {
+            where: vi.fn().mockReturnValue({
+              orderBy: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue([]),
+              }),
+            }),
+          };
+        }
+        return chainResult([]);
+      }),
+    }));
+  }
+
   function reservationSeatRowsForAmount(seats: string[], payableAmount: number) {
     const seatTotal = payableAmount - seats.length * TICKET_SERVICE_FEE_KRW;
     const basePrice = Math.floor(seatTotal / seats.length);
@@ -470,6 +491,7 @@ describe('ReservationService', () => {
     paymentStatus?: string;
     seats?: string[];
     ticketItems?: Array<Record<string, unknown>>;
+    benefitEntitlements?: Array<Record<string, unknown>>;
     userEmail?: string;
     isEmailVerified?: boolean;
     diagnostic?: {
@@ -484,6 +506,11 @@ describe('ReservationService', () => {
     } | null;
   }) {
     const seats = args.seats ?? ['A-1', 'A-2'];
+    const ticketItemRows = args.ticketItems ?? ticketItemRowsForReservation({
+      reservationId: args.reservationId,
+      seats,
+      amount: args.amount,
+    });
     mockDb.select
       .mockReturnValueOnce({
         from: vi.fn().mockReturnValue({
@@ -533,15 +560,101 @@ describe('ReservationService', () => {
         provider: 'CARD',
         currency: 'KRW',
       }]))
-      .mockReturnValueOnce(chainResult(args.ticketItems ?? ticketItemRowsForReservation({
-        reservationId: args.reservationId,
-        seats,
-        amount: args.amount,
-      })))
-      .mockReturnValueOnce(chainResult([{
-        email: args.userEmail ?? 'buyer@example.com',
-        isEmailVerified: args.isEmailVerified ?? true,
-      }]));
+      .mockReturnValueOnce(chainResult(ticketItemRows));
+
+    if (ticketItemRows.length > 0) {
+      mockDb.select.mockReturnValueOnce(chainResult(args.benefitEntitlements ?? []));
+    }
+
+    mockDb.select.mockReturnValueOnce(chainResult([{
+      email: args.userEmail ?? 'buyer@example.com',
+      isEmailVerified: args.isEmailVerified ?? true,
+    }]));
+  }
+
+  function setupReservationDetailBenefitMocks(args: {
+    reservationId: string;
+    userId: string;
+    amount: number;
+    ticketItems: Array<Record<string, unknown>>;
+    benefitEntitlements: Array<Record<string, unknown>>;
+  }) {
+    const benefitWhereCalls: unknown[] = [];
+    mockDb.select.mockImplementation(() => ({
+      from: vi.fn((table: unknown) => {
+        if (table === reservations) {
+          return {
+            innerJoin: vi.fn().mockReturnValue({
+              innerJoin: vi.fn().mockReturnValue({
+                leftJoin: vi.fn().mockReturnValue({
+                  leftJoin: vi.fn().mockReturnValue({
+                    where: vi.fn().mockResolvedValue([{
+                      reservation: {
+                        id: args.reservationId,
+                        userId: args.userId,
+                        reservationNumber: 'GRP-20260429-BENEFIT',
+                        status: 'CONFIRMED',
+                        totalAmount: args.amount,
+                        showtimeId: '11111111-1111-4111-8111-111111111111',
+                        paymentDeadlineAt: new Date('2026-05-08T07:07:00.000Z'),
+                        cancelDeadline: new Date(),
+                        cancelledAt: null,
+                        cancelReason: null,
+                        createdAt: new Date('2026-05-01T01:00:00.000Z'),
+                      },
+                      showtime: { dateTime: new Date('2026-07-10T09:00:00.000Z') },
+                      performance: {
+                        id: 'performance-1',
+                        title: '혜택 테스트 공연',
+                        posterUrl: null,
+                      },
+                      venue: { name: '혜택 테스트 극장' },
+                      diagnostic: null,
+                    }]),
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        if (table === reservationSeats) {
+          return chainResult(reservationSeatRowsForAmount(['A-1', 'A-2'], args.amount));
+        }
+        if (table === payments) {
+          return chainResult([{
+            id: 'payment-1',
+            paymentKey: 'pk_test_123',
+            method: '카드',
+            amount: args.amount,
+            status: 'DONE',
+            paidAt: new Date('2026-05-01T01:01:00.000Z'),
+            provider: 'CARD',
+            currency: 'KRW',
+          }]);
+        }
+        if (table === ticketItems) {
+          return chainResult(args.ticketItems);
+        }
+        if (table === ticketBenefitEntitlements) {
+          return {
+            where: vi.fn((predicate: unknown) => {
+              benefitWhereCalls.push(predicate);
+              return chainResult(args.benefitEntitlements);
+            }),
+          };
+        }
+        if (table === users) {
+          return chainResult([{
+            email: 'buyer@example.com',
+            isEmailVerified: true,
+          }]);
+        }
+
+        return chainResult([]);
+      }),
+    }));
+
+    return { benefitWhereCalls };
   }
 
   function setupTicketItemCancelTransaction(args: {
@@ -2391,6 +2504,17 @@ describe('ReservationService', () => {
           reopenHoldUntil: null,
           reopenJobId: null,
         });
+        const benefitUpdate = updateCalls.find((call) =>
+          call.table === ticketBenefitEntitlements
+        );
+        expect(benefitUpdate?.values).toMatchObject({
+          state: 'inactive',
+          inactiveReason: 'ticket_item_cancelled',
+        });
+        expect(sqlPredicateHasParamValue(benefitUpdate?.predicate, ticketItemId))
+          .toBe(true);
+        expect(sqlPredicateHasParamValue(benefitUpdate?.predicate, 'redeemed'))
+          .toBe(true);
         expect(updateCalls.find((call) => call.table === tickets)?.values).toMatchObject({
           status: 'revoked',
         });
@@ -3815,22 +3939,24 @@ describe('ReservationService', () => {
         }),
         insert: vi.fn().mockImplementation((...args: unknown[]) => {
           txOps.push({ operation: 'insert', args });
+          const [table] = args;
           return {
             values: vi.fn().mockReturnValue({
-              returning: vi.fn().mockResolvedValue([{ id: randomUUID() }]),
+              returning: vi.fn().mockResolvedValue(
+                table === ticketItems
+                  ? [
+                      { id: 'ticket-item-1', tierName: 'VIP' },
+                      { id: 'ticket-item-2', tierName: 'VIP' },
+                    ]
+                  : [{ id: randomUUID() }],
+              ),
               onConflictDoNothing: vi.fn().mockReturnValue({
                 returning: vi.fn().mockResolvedValue([{ id: randomUUID() }]),
               }),
             }),
           };
         }),
-        select: vi.fn().mockImplementation(() => {
-          return {
-            from: vi.fn().mockReturnValue({
-              where: vi.fn().mockResolvedValue(reservationSeatRowsForAmount(['A-1', 'A-2'], 150000)),
-            }),
-          };
-        }),
+        select: emptyBenefitConfigurationSelect(),
       };
 
       mockDb.transaction.mockImplementation(async (cb: (tx: typeof mockTx) => Promise<unknown>) => {
@@ -4408,13 +4534,22 @@ describe('ReservationService', () => {
               }),
             }),
           }),
-        insert: vi.fn().mockReturnValue({
+        insert: vi.fn((table: unknown) => ({
           values: vi.fn().mockReturnValue({
+            returning: vi.fn().mockResolvedValue(
+              table === ticketItems
+                ? [
+                    { id: 'ticket-item-1', tierName: 'VIP' },
+                    { id: 'ticket-item-2', tierName: 'VIP' },
+                  ]
+                : [{ id: randomUUID() }],
+            ),
             onConflictDoNothing: vi.fn().mockReturnValue({
               returning: vi.fn().mockResolvedValue([]),
             }),
           }),
-        }),
+        })),
+        select: emptyBenefitConfigurationSelect(),
       };
       mockDb.transaction.mockImplementation(async (cb: (tx: typeof mockTx) => Promise<unknown>) => cb(mockTx));
       const rootUpdate = mockRootUpdateChain();
@@ -4523,14 +4658,22 @@ describe('ReservationService', () => {
             }),
           }),
         }),
-        insert: vi.fn().mockReturnValue({
+        insert: vi.fn((table: unknown) => ({
           values: vi.fn().mockReturnValue({
             onConflictDoNothing: vi.fn().mockReturnValue({
               returning: vi.fn().mockResolvedValue([]),
             }),
-            returning: vi.fn().mockResolvedValue([{ id: randomUUID() }]),
+            returning: vi.fn().mockResolvedValue(
+              table === ticketItems
+                ? [
+                    { id: 'ticket-item-1', tierName: 'VIP' },
+                    { id: 'ticket-item-2', tierName: 'VIP' },
+                  ]
+                : [{ id: randomUUID() }],
+            ),
           }),
-        }),
+        })),
+        select: emptyBenefitConfigurationSelect(),
       };
       mockDb.transaction.mockImplementation(async (cb: (tx: typeof mockTx) => Promise<unknown>) => cb(mockTx));
       mockDb.select.mockReturnValueOnce(chainResult([]));
@@ -4703,14 +4846,22 @@ describe('ReservationService', () => {
               }),
             }),
           })),
-          insert: vi.fn().mockImplementation(() => ({
+          insert: vi.fn().mockImplementation((table: unknown) => ({
             values: vi.fn().mockReturnValue({
-              returning: vi.fn().mockResolvedValue([{ id: randomUUID() }]),
+              returning: vi.fn().mockResolvedValue(
+                table === ticketItems
+                  ? [
+                      { id: 'ticket-item-1', tierName: 'VIP' },
+                      { id: 'ticket-item-2', tierName: 'VIP' },
+                    ]
+                  : [{ id: randomUUID() }],
+              ),
               onConflictDoNothing: vi.fn().mockReturnValue({
                 returning: vi.fn().mockResolvedValue([{ id: randomUUID() }]),
               }),
             }),
           })),
+          select: emptyBenefitConfigurationSelect(),
         };
         mockDb.transaction.mockImplementation(async (cb: (tx: typeof mockTx) => Promise<unknown>) => cb(mockTx));
         setupReservationDetailMocks({ reservationId, userId, amount: 150000 });
@@ -4732,6 +4883,175 @@ describe('ReservationService', () => {
   describe('getReservationDetail - QR cutover contract', () => {
     const userId = randomUUID();
     const reservationId = randomUUID();
+
+    it('returns included, limited, inactive, and redeemed benefit entitlements per ticket item', async () => {
+      const showtimeId = '11111111-1111-4111-8111-111111111111';
+      const includedCopy = {
+        ko: { name: 'VIP 음료', description: 'VIP 음료 제공' },
+        en: { name: 'VIP drink', description: 'VIP drink' },
+        'zh-CN': { name: 'VIP 饮料', description: 'VIP 饮料' },
+        th: { name: 'เครื่องดื่ม VIP', description: 'เครื่องดื่ม VIP' },
+      };
+      const limitedCopy = {
+        ko: { name: '6:1', description: '6:1 이벤트 참여 혜택' },
+        en: { name: '6:1', description: '6:1 event benefit' },
+        'zh-CN': { name: '6:1', description: '6:1 活动福利' },
+        th: { name: '6:1', description: 'สิทธิประโยชน์กิจกรรม 6:1' },
+      };
+      const ticketItemRows = ticketItemRowsForReservation({
+        reservationId,
+        showtimeId,
+        seats: ['A-1', 'A-2'],
+        amount: 150000,
+      });
+
+      const { benefitWhereCalls } = setupReservationDetailBenefitMocks({
+        reservationId,
+        userId,
+        amount: 150000,
+        ticketItems: ticketItemRows,
+        benefitEntitlements: [
+          {
+            id: '33333333-3333-4333-8333-333333333331',
+            ticketItemId: '00000000-0000-4000-8000-000000000101',
+            showtimeId,
+            runId: null,
+            source: 'configuration',
+            benefitIdentity: 'vip-drink',
+            benefitKind: 'included',
+            displayCopySnapshot: includedCopy,
+            state: 'active',
+            redeemedAt: null,
+            createdAt: new Date('2026-05-01T01:02:00.000Z'),
+          },
+          {
+            id: '33333333-3333-4333-8333-333333333332',
+            ticketItemId: '00000000-0000-4000-8000-000000000101',
+            showtimeId,
+            runId: '44444444-4444-4444-8444-444444444444',
+            source: 'live_run',
+            benefitIdentity: 'benefit_6_to_1',
+            benefitKind: 'limited',
+            displayCopySnapshot: limitedCopy,
+            state: 'inactive',
+            redeemedAt: null,
+            createdAt: new Date('2026-05-01T01:03:00.000Z'),
+          },
+          {
+            id: '33333333-3333-4333-8333-333333333333',
+            ticketItemId: '00000000-0000-4000-8000-000000000102',
+            showtimeId,
+            runId: null,
+            source: 'configuration',
+            benefitIdentity: 'vip-drink',
+            benefitKind: 'included',
+            displayCopySnapshot: includedCopy,
+            state: 'redeemed',
+            redeemedAt: new Date('2026-05-01T02:00:00.000Z'),
+            createdAt: new Date('2026-05-01T01:04:00.000Z'),
+          },
+        ],
+      });
+
+      const detail = await service.getReservationDetail(reservationId, userId);
+
+      expect(benefitWhereCalls).toHaveLength(1);
+      expect(sqlPredicateHasParamValue(benefitWhereCalls[0], showtimeId)).toBe(true);
+      expect(sqlPredicateHasParamValue(
+        benefitWhereCalls[0],
+        '00000000-0000-4000-8000-000000000101',
+      )).toBe(true);
+      expect(sqlPredicateHasParamValue(
+        benefitWhereCalls[0],
+        '00000000-0000-4000-8000-000000000102',
+      )).toBe(true);
+      expect(detail.ticketItems[0]?.benefitEntitlements).toEqual([
+        expect.objectContaining({
+          id: '33333333-3333-4333-8333-333333333331',
+          ticketItemId: '00000000-0000-4000-8000-000000000101',
+          showtimeId,
+          runId: null,
+          source: 'configuration',
+          benefitIdentity: 'vip-drink',
+          kind: 'included',
+          displayCopy: includedCopy,
+          state: 'active',
+          assignedAt: '2026-05-01T01:02:00.000Z',
+          attachedToTicket: true,
+        }),
+        expect.objectContaining({
+          id: '33333333-3333-4333-8333-333333333332',
+          ticketItemId: '00000000-0000-4000-8000-000000000101',
+          showtimeId,
+          runId: '44444444-4444-4444-8444-444444444444',
+          source: 'live_run',
+          benefitIdentity: 'benefit_6_to_1',
+          kind: 'limited',
+          displayCopy: limitedCopy,
+          state: 'inactive',
+          assignedAt: '2026-05-01T01:03:00.000Z',
+          runMode: 'live',
+          attachedToTicket: true,
+        }),
+      ]);
+      expect(detail.ticketItems[1]?.benefitEntitlements).toEqual([
+        expect.objectContaining({
+          id: '33333333-3333-4333-8333-333333333333',
+          source: 'configuration',
+          kind: 'included',
+          state: 'redeemed',
+          redeemedAt: '2026-05-01T02:00:00.000Z',
+          attachedToTicket: true,
+        }),
+      ]);
+    });
+
+    it.each([
+      ['live_run', 'live'],
+      ['test_run', 'test'],
+    ] as const)('rejects %s benefit entitlements without runId', async (source) => {
+      const showtimeId = '11111111-1111-4111-8111-111111111111';
+      const displayCopy = {
+        ko: { name: '6:1', description: '6:1 이벤트 참여 혜택' },
+        en: { name: '6:1', description: '6:1 event benefit' },
+        'zh-CN': { name: '6:1', description: '6:1 活动福利' },
+        th: { name: '6:1', description: 'สิทธิประโยชน์กิจกรรม 6:1' },
+      };
+
+      setupReservationDetailBenefitMocks({
+        reservationId,
+        userId,
+        amount: 150000,
+        ticketItems: ticketItemRowsForReservation({
+          reservationId,
+          showtimeId,
+          seats: ['A-1'],
+          amount: 150000,
+        }),
+        benefitEntitlements: [
+          {
+            id: '33333333-3333-4333-8333-333333333334',
+            ticketItemId: '00000000-0000-4000-8000-000000000101',
+            showtimeId,
+            runId: null,
+            source,
+            benefitIdentity: 'benefit_6_to_1',
+            benefitKind: 'limited',
+            displayCopySnapshot: displayCopy,
+            state: 'active',
+            redeemedAt: null,
+            createdAt: new Date('2026-05-01T01:03:00.000Z'),
+          },
+        ],
+      });
+
+      await expect(service.getReservationDetail(reservationId, userId))
+        .rejects
+        .toThrow(InternalServerErrorException);
+      await expect(service.getReservationDetail(reservationId, userId))
+        .rejects
+        .toThrow(`${source} benefit entitlement is missing runId`);
+    });
 
     it('self-heals a confirmed DONE payment by issuing active QR tickets for every ticket item on the read path', async () => {
       const qrTicketService = {

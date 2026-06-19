@@ -16,6 +16,118 @@ _Avoid_: Order, purchase, ticket when referring to the booking record.
 A seat-level entitlement within a Reservation. A Reservation can contain one or more Ticket Items, and each Ticket Item has its own QR Credential and admission progress.
 _Avoid_: Reservation, seat label, QR credential.
 
+**Ticket Benefit**:
+A show-specific privilege or goods item that can be made available to Ticket Items.
+_Avoid_: Reservation benefit, buyer benefit, ticket-level metadata.
+
+**Ticket Benefit Identity**:
+The stable system-generated identity used to track a Ticket Benefit across configuration changes, run records, exports, and rollback.
+_Avoid_: Display name, operator-entered label.
+
+**Ticket Benefit Display Copy**:
+The localized name and short description used to show a Ticket Benefit to Buyers, Field Scanner Staff, and operators.
+_Avoid_: Internal benefit code, CSV-only label.
+
+**Benefit Configuration**:
+The saved operator-defined benefit setup for one showtime, including Included Ticket Benefits, Limited Ticket Benefits, Ticket Benefit Display Copy, eligibility, quantities, selection priority, and mutual exclusion rules. Saving it makes it active immediately; Included Ticket Benefits apply immediately from the active Benefit Configuration until Benefit Result Lock, while Limited Ticket Benefits require a Benefit Run to create Benefit Assignments.
+_Avoid_: Hardcoded benefit table, image-only benefit guide, ticket tier metadata.
+
+**Benefit Configuration Change Record**:
+The durable record of an operator change to Benefit Configuration, including what changed, who changed it, when it changed, and whether it affected Buyer-visible Included Ticket Benefits.
+_Avoid_: Unsaved draft, informal admin note.
+
+**Benefit Entitlement**:
+A Ticket Item's usable right to one Ticket Benefit. Field Scanner Staff can verify and mark a Benefit Entitlement as used so the same Ticket Item cannot use that benefit again.
+_Avoid_: Admission State, QR Credential, Benefit Assignment.
+
+**Benefit Redemption**:
+The online, QR-based field operation of marking one Benefit Entitlement as used for a Ticket Item. It is processed one Benefit Entitlement at a time, separate from Venue Entry, and does not change Admission State.
+_Avoid_: Venue Entry, manual lookup, admission processing.
+
+**Benefit Redemption Record**:
+The durable record of a Benefit Redemption attempt, including the Benefit Entitlement, Ticket Item, scanner, timing, device attempt, redacted QR reference, and result.
+_Avoid_: Raw QR token, informal staff note.
+
+**Duplicate Benefit Redemption**:
+A Benefit Redemption attempt for a Benefit Entitlement that has already been used.
+_Avoid_: Duplicate Scan, Venue Entry duplicate.
+
+**Benefit Result Lock**:
+The point after any Benefit Redemption for a showtime when Benefit Configuration can no longer be changed and active Benefit Entitlements can no longer be changed by Included Ticket Benefit configuration edits, a new Live Benefit Run, or Benefit Rollback.
+_Avoid_: Sale close, admission close, publish lock.
+
+**Included Ticket Benefit**:
+A Ticket Benefit that every eligible Ticket Item receives as a Benefit Entitlement through the active Benefit Configuration without individual random selection, including Ticket Items sold after a Live Benefit Run.
+_Avoid_: Benefit Assignment, random benefit, winner benefit.
+
+**Limited Ticket Benefit**:
+A Ticket Benefit with a limited quantity that is assigned to selected Ticket Items. A Ticket Item can have at most one Limited Ticket Benefit in the active benefit result.
+_Avoid_: Included Ticket Benefit, all-benefit, guaranteed benefit.
+
+**Benefit Eligibility**:
+The active Ticket Items in configured ticket tiers for a showtime that can receive a Ticket Benefit.
+_Avoid_: Admission State, floor section, buyer segment, payment method.
+
+**Benefit Quantity**:
+The maximum number of Ticket Item-level Benefit Assignments a Limited Ticket Benefit can produce for eligible Ticket Items in a Benefit Run.
+_Avoid_: Seat count, winner ratio, remaining inventory.
+
+**Benefit Quantity Shortfall**:
+The difference between a Limited Ticket Benefit's Benefit Quantity and the number of Benefit Entitlements actually produced when eligible Ticket Items are insufficient.
+_Avoid_: Failed run, inventory error.
+
+**Benefit Selection Priority**:
+The operator-defined order for assigning Limited Ticket Benefits when the same Ticket Item is eligible for multiple limited benefits.
+_Avoid_: Display order, benefit importance label.
+
+**Benefit Assignment**:
+A Benefit Entitlement that grants one Limited Ticket Benefit to a selected Ticket Item.
+_Avoid_: Winner, draw result, seat status.
+
+**Benefit Run**:
+An operator-triggered process that evaluates eligible Ticket Items against a Benefit Configuration and produces Limited Ticket Benefit results for one showtime.
+_Avoid_: Background lottery, automatic campaign.
+
+**Live Benefit Run**:
+A Benefit Run whose results replace the showtime's current Benefit Assignments, become attached to Ticket Items, and are visible to Buyers without a separate publish step.
+_Avoid_: Test run, preview run.
+
+**Live Benefit Run Confirmation**:
+The operator confirmation step before a Live Benefit Run replaces the active Benefit Assignments for a showtime.
+_Avoid_: Test run preview, passive save.
+
+**Test Benefit Run**:
+A Benefit Run that uses the same eligibility and selection rules as a Live Benefit Run but does not attach Benefit Assignments to Ticket Items. It can use the active Benefit Configuration or an unsaved configuration snapshot.
+_Avoid_: Mock data, unrecorded preview.
+
+**Benefit Run Record**:
+The durable record of a Benefit Run's configuration snapshot, inputs, generated results, operator, timing, and whether the run was live or test. For a Test Benefit Run, the configuration snapshot can be unsaved.
+_Avoid_: Temporary preview, audit note only.
+
+**Benefit Run Evidence**:
+The preserved information needed to explain and verify how a Benefit Run produced its results, including the Benefit Configuration as it existed when the run executed.
+_Avoid_: Informal note, screenshot proof.
+
+**Benefit Entitlement Export**:
+A CSV export where each row represents one live or test Benefit Entitlement result and its Ticket Item, Buyer, run mode, attachment state, and redemption state.
+_Avoid_: Buyer summary, reservation summary, benefit-only count.
+
+**Benefit Configuration Export**:
+A CSV export of Benefit Configuration and Benefit Configuration Change Records for operator review.
+_Avoid_: Benefit Entitlement Export, run result export.
+
+**Benefit Rollback**:
+An operator action that restores Benefit Entitlements from a previous Live Benefit Run Record for the same showtime, excluding Ticket Items that are no longer active.
+_Avoid_: Test run restore, re-run, manual edit.
+
+**Benefit Rollback Confirmation**:
+The operator confirmation step before Benefit Rollback replaces the active Benefit Assignments for a showtime with a previous live result.
+_Avoid_: Test run review, passive restore.
+
+**Mutually Exclusive Ticket Benefits**:
+Ticket Benefits that cannot both be assigned as Benefit Assignments to the same Buyer across that Buyer's Ticket Items in the active result for a showtime. Once a Buyer receives one of the mutually exclusive benefits, that Buyer's other Ticket Items are excluded from the conflicting benefit.
+_Avoid_: Duplicate benefit, same-seat exclusion.
+
 **Ticket Item Status**:
 The validity state of a Ticket Item, such as active, cancelled, or expired. It is separate from whether venue entry has been processed.
 _Avoid_: Admission State, QR Credential status.
@@ -193,11 +305,11 @@ The period before the show date when a buyer can cancel a Reservation or Ticket 
 _Avoid_: Entry window, refund processing period.
 
 **Field Scanner Staff**:
-A staff member authorized to verify QR credentials and process venue entry at the event site.
+A staff member authorized to verify QR credentials, process venue entry, and redeem Benefit Entitlements at the event site.
 _Avoid_: Admin, operator, buyer.
 
 **Scanner Capability**:
-A limited authority granted to Field Scanner Staff for venue-entry work only. It is separate from finance, security, event-management, and broad admin authority.
+A limited authority granted to Field Scanner Staff for field QR operations, including Venue Entry and Benefit Redemption. It is separate from finance, security, event-management, and broad admin authority.
 _Avoid_: Admin access, full operator access.
 
 **Field Check-In**:
@@ -257,6 +369,186 @@ Domain expert: "No. The buyer can see all QR Credentials in their reservation de
 Dev: "If a Reservation has four Ticket Items, who receives the QR Credentials?"
 
 Domain expert: "Send and show all four QR Credentials to the Reservation Owner."
+
+Dev: "Where should showtime-specific benefit rules come from?"
+
+Domain expert: "Use Benefit Configuration so operators can define Included Ticket Benefits, Limited Ticket Benefits, Ticket Benefit Display Copy, eligibility, quantities, priority, and mutual exclusion without hardcoding a benefit table."
+
+Dev: "If an operator edits Benefit Configuration, should Buyer-visible benefits change immediately?"
+
+Domain expert: "Included Ticket Benefits follow the active Benefit Configuration immediately until Benefit Result Lock. Limited Ticket Benefits only change through a Live Benefit Run or Benefit Rollback."
+
+Dev: "Should Benefit Configuration edits be reviewable later?"
+
+Domain expert: "Yes. Keep Benefit Configuration Change Records and provide Benefit Configuration Export so operators can review who changed the setup and what changed."
+
+Dev: "Does Benefit Configuration need a separate publish step after saving?"
+
+Domain expert: "No. Saving Benefit Configuration makes it active immediately, and the change is captured as a Benefit Configuration Change Record."
+
+Dev: "Can operators test an unsaved Benefit Configuration?"
+
+Domain expert: "Yes. A Test Benefit Run can use an unsaved configuration snapshot without changing active Benefit Configuration or Buyer-visible Included Ticket Benefits."
+
+Dev: "Can a Test Benefit Run be promoted into active Benefit Configuration?"
+
+Domain expert: "No. Test Benefit Runs are review records only; operators save Benefit Configuration through the configuration flow."
+
+Dev: "Should Ticket Benefit names be hardcoded in one language?"
+
+Domain expert: "No. Use Ticket Benefit Display Copy so benefit names and short descriptions can be localized for Buyers, Field Scanner Staff, and operators."
+
+Dev: "Can operators change the internal identity of a Ticket Benefit?"
+
+Domain expert: "No. Ticket Benefit Identity is system-generated and stable; operators edit Ticket Benefit Display Copy."
+
+Dev: "If a Buyer books two seats, how many entries are eligible for random Ticket Benefits?"
+
+Domain expert: "Two. Ticket Benefits are assigned to Ticket Items, so each booked seat-level entitlement is evaluated separately."
+
+Dev: "Should a benefit that every VIP Ticket Item receives be stored as an individual Benefit Assignment?"
+
+Domain expert: "No. Treat it as an Included Ticket Benefit. It still becomes a Benefit Entitlement for each eligible Ticket Item, but it is not a random Benefit Assignment."
+
+Dev: "Can one Ticket Item have every Included Ticket Benefit and also one Limited Ticket Benefit?"
+
+Domain expert: "Yes. Included Ticket Benefits all become Benefit Entitlements for eligible Ticket Items; the one-benefit limit applies only to Limited Ticket Benefits."
+
+Dev: "Can a Limited Ticket Benefit apply to multiple ticket tiers with one shared quantity?"
+
+Domain expert: "Yes. Benefit Eligibility defines the target ticket tiers, and Benefit Quantity defines the maximum assignments across those eligible Ticket Items."
+
+Dev: "Can Benefit Eligibility target a seat floor or section?"
+
+Domain expert: "No. Benefit Eligibility is ticket-tier based for now."
+
+Dev: "Does Venue Entry remove a Ticket Item from Benefit Eligibility?"
+
+Domain expert: "No. Benefit Eligibility is based on active Ticket Items in configured ticket tiers, not Admission State."
+
+Dev: "Does Benefit Quantity count Buyers or Ticket Items?"
+
+Domain expert: "Benefit Quantity counts Ticket Item-level Benefit Assignments, not distinct Buyers."
+
+Dev: "If there are fewer eligible Ticket Items than the Benefit Quantity, should the run fail?"
+
+Domain expert: "No. Assign all eligible Ticket Items and record the remaining count as a Benefit Quantity Shortfall."
+
+Dev: "If one Ticket Item is eligible for multiple Limited Ticket Benefits, how is the one-benefit limit enforced?"
+
+Domain expert: "Apply Benefit Selection Priority. Once a Ticket Item receives one Limited Ticket Benefit, it is removed from later limited-benefit selection in that active result."
+
+Dev: "Can Field Scanner Staff check and mark an Included Ticket Benefit as used?"
+
+Domain expert: "Yes. Included Ticket Benefits are Benefit Entitlements, so they must be visible and usable only once per Ticket Item."
+
+Dev: "Does Venue Entry automatically mark Ticket Benefits as used?"
+
+Domain expert: "No. Benefit Redemption is separate from Venue Entry, and Field Scanner Staff must mark each Benefit Entitlement as used explicitly."
+
+Dev: "If a Ticket Item has several Benefit Entitlements, should staff redeem them all at once?"
+
+Domain expert: "No. Benefit Redemption is handled one Benefit Entitlement at a time so each benefit has its own usage state."
+
+Dev: "What evidence should Benefit Redemption keep?"
+
+Domain expert: "Keep a Benefit Redemption Record for each attempt, but never store or export the raw QR token."
+
+Dev: "If staff try to redeem the same Benefit Entitlement twice, is that a Duplicate Scan?"
+
+Domain expert: "No. It is a Duplicate Benefit Redemption, and staff should see the previous redemption context."
+
+Dev: "Does Benefit Redemption require a separate staff authority from Scanner Capability?"
+
+Domain expert: "No. Field Scanner Staff use the same Scanner Capability for Venue Entry and Benefit Redemption."
+
+Dev: "Can Field Scanner Staff redeem a benefit by searching a buyer name instead of scanning QR?"
+
+Domain expert: "No. Benefit Redemption is QR-based; manual lookup redemption is a separate exception workflow."
+
+Dev: "Can Benefit Redemption be queued offline like Offline Pending Scan?"
+
+Domain expert: "No. Benefit Redemption requires online confirmation to prevent duplicate benefit use."
+
+Dev: "Should a redeemed Benefit Entitlement disappear from the Buyer's ticket detail?"
+
+Domain expert: "No. Keep it visible with its redemption state so Buyers and Field Scanner Staff can understand what happened."
+
+Dev: "Should Buyers see their Benefit Entitlements before staff scan?"
+
+Domain expert: "Yes. Buyer ticket detail shows Benefit Entitlements and redemption state; Field Scanner Staff see the same entitlement state with redemption actions."
+
+Dev: "Should Benefit Assignments or Benefit Redemptions send outbound Buyer notifications?"
+
+Domain expert: "No. Buyers can see Benefit Entitlements in ticket detail, but outbound notifications are a separate product decision."
+
+Dev: "What is the row unit for a benefit CSV export?"
+
+Domain expert: "Use Benefit Entitlement Export: one row per Benefit Entitlement, including included and limited benefits."
+
+Dev: "Should Test Benefit Run exports use a different CSV structure from Live Benefit Run exports?"
+
+Domain expert: "No. Use the same Benefit Entitlement Export row structure and distinguish test results by run mode and attachment state."
+
+Dev: "Can operators replace or roll back benefit results after any benefit has been redeemed for that showtime?"
+
+Domain expert: "No. Once Benefit Redemption starts for a showtime, Benefit Result Lock prevents Included Ticket Benefit configuration changes, new Live Benefit Runs, and Benefit Rollback from changing active Benefit Entitlements."
+
+Dev: "Can operators save Benefit Configuration changes after Benefit Result Lock?"
+
+Domain expert: "No. After Benefit Result Lock, operators can review and export benefit records, but cannot save Benefit Configuration changes for that showtime, including Ticket Benefit Display Copy edits."
+
+Dev: "If a Ticket Item is sold after a Live Benefit Run, does it automatically receive a Limited Ticket Benefit?"
+
+Domain expert: "No. It automatically receives eligible Included Ticket Benefits from the active Benefit Configuration, but Limited Ticket Benefits require a later Live Benefit Run before Benefit Result Lock."
+
+Dev: "If a Ticket Item is cancelled, should its Benefit Entitlements disappear from history?"
+
+Domain expert: "No. They stop being usable, but remain visible in operator records and exports as inactive Benefit Entitlements."
+
+Dev: "If a cancelled Ticket Item had a Limited Ticket Benefit, should that benefit be automatically reassigned?"
+
+Domain expert: "No. Keep the cancelled assignment inactive in records; operators can run a new Live Benefit Run before Benefit Result Lock if they want a new active result."
+
+Dev: "Should operators be able to preview a random benefit result without changing buyer Ticket Items?"
+
+Domain expert: "Yes. Use a Test Benefit Run, which records the same kind of result as a Live Benefit Run but does not create Benefit Assignments."
+
+Dev: "Should a Benefit Run be explainable after it completes?"
+
+Domain expert: "Yes. Keep Benefit Run Evidence so operators can verify the inputs and random selection used for that run. Live runs use a system-generated random seed, while test runs may use an operator-provided seed for repeatable preview."
+
+Dev: "After a Live Benefit Run completes, should Buyers wait for a separate benefit publish step?"
+
+Domain expert: "No. Live Benefit Run results become Benefit Assignments attached to Ticket Items and are Buyer-visible immediately."
+
+Dev: "Should a Live Benefit Run require confirmation before it replaces current limited benefit results?"
+
+Domain expert: "Yes. Use Live Benefit Run Confirmation because the new result immediately replaces Buyer-visible Benefit Assignments."
+
+Dev: "Should random Ticket Benefits be run across a whole multi-show Performance?"
+
+Domain expert: "No. Run them per showtime so each audience group is evaluated against its own Ticket Items."
+
+Dev: "If more Ticket Items are sold after a Live Benefit Run and the operator runs benefits again, should earlier assignments be preserved?"
+
+Domain expert: "No. A new Live Benefit Run replaces the active Benefit Assignments for that showtime while preserving the earlier run as a Benefit Run Record."
+
+Dev: "Can an operator restore a previous live benefit result?"
+
+Domain expert: "Yes. Use Benefit Rollback to restore Benefit Entitlements from a previous Live Benefit Run Record for the same showtime, but do not restore entitlements to Ticket Items that are no longer active."
+
+Dev: "Should Benefit Rollback require confirmation?"
+
+Domain expert: "Yes. Use Benefit Rollback Confirmation because rollback replaces the current Buyer-visible Benefit Assignments."
+
+Dev: "Can a Test Benefit Run be used as a rollback source?"
+
+Domain expert: "No. Test Benefit Run Records can be reviewed and exported, but only Live Benefit Run Records can be restored through Benefit Rollback."
+
+Dev: "If one of a Buyer's Ticket Items receives a mutually exclusive Ticket Benefit, can another Ticket Item owned by the same Buyer receive the excluded benefit?"
+
+Domain expert: "No. Mutual exclusion is scoped to the Buyer across that Buyer's Ticket Items in the active result for that showtime, regardless of which Ticket Item received the first mutually exclusive benefit."
 
 Dev: "Can Offline Pending Scans count as final admitted attendees?"
 

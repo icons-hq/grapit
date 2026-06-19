@@ -4,19 +4,22 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock3,
+  Gift,
   ShieldAlert,
   TicketCheck,
   UserCheck,
   WifiOff,
 } from 'lucide-react';
-import type { AdminCapabilityUser } from '@grabit/shared';
+import type { AdminCapabilityUser, FieldBenefitEntitlement } from '@grabit/shared';
 import { hasAdminCapability } from '@grabit/shared';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { OfflineSyncStatus } from '@/components/field/offline-sync-status';
 import {
+  canRedeemBenefitsForVerification,
   labelForResult,
+  type ScannerBenefitRedemptionResult,
   type ScannerCheckInConsumeResult,
   type ScannerCheckInResult,
   type ScannerCheckInVerification,
@@ -27,9 +30,12 @@ interface ScannerCheckInProps {
   user: AdminCapabilityUser | null;
   verification?: ScannerCheckInVerification | null;
   consumeResult?: ScannerCheckInConsumeResult | null;
+  benefitRedemptionResults?: Record<string, ScannerBenefitRedemptionResult>;
   isConsuming?: boolean;
+  redeemingBenefitId?: string | null;
   isSyncingOffline?: boolean;
   onProcessEntry: () => void;
+  onRedeemBenefit?: (benefitEntitlementId: string) => void;
   onSyncOffline: () => void;
 }
 
@@ -93,9 +99,12 @@ export function ScannerCheckIn({
   user,
   verification,
   consumeResult,
+  benefitRedemptionResults = {},
   isConsuming = false,
+  redeemingBenefitId = null,
   isSyncingOffline = false,
   onProcessEntry,
+  onRedeemBenefit,
   onSyncOffline,
 }: ScannerCheckInProps) {
   if (!hasScannerAccess(user)) {
@@ -123,6 +132,8 @@ export function ScannerCheckIn({
   const canProcess =
     !consumeResult &&
     (verification.processable || verification.result === 'processable');
+  const canRedeemBenefits =
+    Boolean(onRedeemBenefit) && canRedeemBenefitsForVerification(verification);
   const showOfflineQueue =
     verification.result === 'offline-pending' || verification.offlineQueue.length > 0;
 
@@ -147,6 +158,13 @@ export function ScannerCheckIn({
         )}
 
         <TicketIdentity verification={verification} result={activeResult} />
+
+        <BenefitRedemptionPanel
+          benefits={verification.benefitEntitlements}
+          redemptionResults={benefitRedemptionResults}
+          redeemingBenefitId={redeemingBenefitId}
+          onRedeemBenefit={canRedeemBenefits ? onRedeemBenefit : undefined}
+        />
       </main>
 
       <div
@@ -176,6 +194,180 @@ export function ScannerCheckIn({
       </div>
     </div>
   );
+}
+
+type BenefitUiState = 'available' | 'used' | 'inactive' | 'rejected';
+
+function BenefitRedemptionPanel({
+  benefits,
+  redemptionResults,
+  redeemingBenefitId,
+  onRedeemBenefit,
+}: {
+  benefits: readonly FieldBenefitEntitlement[];
+  redemptionResults: Record<string, ScannerBenefitRedemptionResult>;
+  redeemingBenefitId: string | null;
+  onRedeemBenefit?: (benefitEntitlementId: string) => void;
+}) {
+  if (benefits.length === 0) {
+    return null;
+  }
+
+  return (
+    <Card
+      data-testid="scanner-benefit-panel"
+      className="border-gray-200 bg-white shadow-sm"
+    >
+      <CardContent className="space-y-4 p-5">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#F3EFFF] text-[#6C3CE0]">
+            <Gift className="h-5 w-5" />
+          </div>
+          <div className="min-w-0">
+            <h2 className="text-heading font-semibold text-gray-900">티켓 혜택</h2>
+            <p className="mt-1 text-sm leading-[1.45] text-gray-600">
+              사용 처리된 혜택은 다시 사용할 수 없습니다.
+            </p>
+          </div>
+        </div>
+
+        <ul className="space-y-3">
+          {benefits.map((benefit) => (
+            <BenefitRedemptionItem
+              key={benefit.id}
+              benefit={benefit}
+              redemptionResult={redemptionResults[benefit.id]}
+              isRedeeming={redeemingBenefitId === benefit.id}
+              onRedeemBenefit={onRedeemBenefit}
+            />
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
+  );
+}
+
+function BenefitRedemptionItem({
+  benefit,
+  redemptionResult,
+  isRedeeming,
+  onRedeemBenefit,
+}: {
+  benefit: FieldBenefitEntitlement;
+  redemptionResult?: ScannerBenefitRedemptionResult;
+  isRedeeming: boolean;
+  onRedeemBenefit?: (benefitEntitlementId: string) => void;
+}) {
+  const uiState = getBenefitUiState(benefit, redemptionResult);
+  const redeemedAt =
+    redemptionResult?.redeemedAt ??
+    redemptionResult?.priorRedemption?.redeemedAt ??
+    benefit.redeemedAt ??
+    null;
+  const canRedeem = uiState === 'available' && Boolean(onRedeemBenefit);
+
+  return (
+    <li
+      data-testid={`scanner-benefit-${benefit.id}`}
+      className="rounded-lg border border-gray-100 bg-gray-50/80 p-3"
+    >
+      <div className="flex min-w-0 flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <p className="min-w-0 break-words text-base font-semibold leading-[1.35] text-gray-900">
+              {benefit.displayCopy.ko.name}
+            </p>
+            <Badge className="shrink-0 border-transparent bg-white text-gray-700">
+              {getBenefitKindLabel(benefit.kind)}
+            </Badge>
+            <Badge className={getBenefitStateBadgeClassName(uiState)}>
+              {getBenefitStateLabel(uiState, redemptionResult)}
+            </Badge>
+          </div>
+          <p className="mt-1 break-words text-sm leading-[1.45] text-gray-600">
+            {benefit.displayCopy.ko.description}
+          </p>
+          {redeemedAt && uiState === 'used' && (
+            <p className="mt-2 text-sm font-semibold text-gray-700">
+              사용 일시: {formatTimestamp(redeemedAt)}
+            </p>
+          )}
+          {redemptionResult?.rejectionReason && uiState === 'rejected' && (
+            <p className="mt-2 break-words text-sm font-semibold text-[#C62828]">
+              {redemptionResult.rejectionReason}
+            </p>
+          )}
+        </div>
+
+        {canRedeem ? (
+          <Button
+            type="button"
+            size="sm"
+            className="shrink-0 bg-[#6C3CE0] hover:bg-[#5730B8]"
+            disabled={isRedeeming}
+            onClick={() => onRedeemBenefit?.(benefit.id)}
+          >
+            {isRedeeming ? '처리 중' : '사용 처리'}
+          </Button>
+        ) : null}
+      </div>
+    </li>
+  );
+}
+
+function getBenefitUiState(
+  benefit: FieldBenefitEntitlement,
+  redemptionResult?: ScannerBenefitRedemptionResult,
+): BenefitUiState {
+  if (redemptionResult) {
+    return redemptionResult.outcome === 'redeemed' || redemptionResult.outcome === 'duplicate'
+      ? 'used'
+      : 'rejected';
+  }
+  if (benefit.state === 'redeemed') {
+    return 'used';
+  }
+  if (benefit.state === 'inactive') {
+    return 'inactive';
+  }
+
+  return 'available';
+}
+
+function getBenefitKindLabel(kind: FieldBenefitEntitlement['kind']): string {
+  return kind === 'included' ? 'ALL' : '한정';
+}
+
+function getBenefitStateLabel(
+  state: BenefitUiState,
+  redemptionResult?: ScannerBenefitRedemptionResult,
+): string {
+  if (redemptionResult) {
+    return redemptionResult.outcomeLabel;
+  }
+  switch (state) {
+    case 'used':
+      return '사용됨';
+    case 'inactive':
+      return '비활성';
+    case 'rejected':
+      return '사용 불가';
+    default:
+      return '사용 가능';
+  }
+}
+
+function getBenefitStateBadgeClassName(state: BenefitUiState): string {
+  switch (state) {
+    case 'used':
+      return 'border-transparent bg-[#F3EFFF] text-[#6C3CE0]';
+    case 'inactive':
+      return 'border-transparent bg-[#F3F4F6] text-gray-600';
+    case 'rejected':
+      return 'border-transparent bg-[#FEF2F2] text-[#C62828]';
+    default:
+      return 'border-transparent bg-[#F0FDF4] text-[#15803D]';
+  }
 }
 
 function ScannerAccessDenied() {

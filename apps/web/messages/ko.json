@@ -507,7 +507,17 @@
       "cancellationDeadline": "취소마감시간",
       "qrReady": "QR 티켓이 준비되었습니다. 입장 시 현장 스태프가 QR을 확인합니다.",
       "qrChecking": "결제는 완료되었지만 QR 티켓을 확인하는 중입니다. 잠시 후 새로고침하거나 마이페이지에서 다시 확인하세요.",
-      "fieldCheckResult": "현장 검표 결과가 최종 입장 기준입니다."
+      "fieldCheckResult": "현장 검표 결과가 최종 입장 기준입니다.",
+      "benefits": {
+        "title": "혜택",
+        "included": "포함",
+        "limited": "한정",
+        "available": "사용 가능",
+        "used": "사용됨",
+        "inactive": "비활성",
+        "empty": "제공된 혜택 없음",
+        "redeemedAt": "사용 일시: {date}"
+      }
     }
   },
   "reservation": {
