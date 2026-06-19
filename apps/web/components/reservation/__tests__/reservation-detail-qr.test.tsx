@@ -277,6 +277,17 @@ describe('ReservationDetailView QR ticket card', () => {
     expect(screen.getAllByText('VIP A열 2번').length).toBeGreaterThan(0);
     expect(screen.getAllByText('QR 활성').length).toBeGreaterThan(0);
     expect(screen.queryByText('결제를 완료할 수 없음')).not.toBeInTheDocument();
+    const firstQrCard = screen.getByTestId(`qr-ticket-card-${firstTicketItemId}`);
+    expect(within(firstQrCard).getByTestId(`qr-ticket-seat-label-${firstTicketItemId}`)).toHaveClass(
+      'break-words',
+      'text-2xl',
+      'font-bold',
+    );
+    expect(within(firstQrCard).getByText('좌석 정보').nextElementSibling).toHaveClass(
+      'text-lg',
+      'font-bold',
+    );
+    expect(within(firstQrCard).getByText('QR 활성')).toHaveClass('px-3', 'py-1', 'text-sm');
 
     expect(screen.queryByText(rawQrToken, { exact: true })).not.toBeInTheDocument();
     expect(screen.queryByText(rawQrJti, { exact: true })).not.toBeInTheDocument();

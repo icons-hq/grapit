@@ -462,18 +462,23 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
                 data-testid={`qr-ticket-card-${card.id}`}
                 className="rounded-xl border border-white/80 bg-white/90 p-4"
               >
-                <div className="mb-4 flex items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-sm font-semibold text-gray-900">{card.seatLabel}</h3>
+                <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1 basis-full sm:basis-auto">
+                    <h3
+                      data-testid={`qr-ticket-seat-label-${card.id}`}
+                      className="break-words text-2xl font-bold leading-tight text-gray-950"
+                    >
+                      {card.seatLabel}
+                    </h3>
                     {card.floorLabel && (
-                      <p className="mt-1 text-xs text-gray-500">{card.floorLabel}</p>
+                      <p className="mt-1 text-sm font-medium text-gray-500">{card.floorLabel}</p>
                     )}
                   </div>
                   <Badge
                     className={
                       card.qrCheckInUrl
-                        ? 'bg-[#F0FDF4] text-[#15803D] border-transparent'
-                        : 'bg-[#FFFBEB] text-[#8B6306] border-transparent'
+                        ? 'bg-[#F0FDF4] px-3 py-1 text-sm font-semibold text-[#15803D] border-transparent'
+                        : 'bg-[#FFFBEB] px-3 py-1 text-sm font-semibold text-[#8B6306] border-transparent'
                     }
                   >
                     {card.qrBadgeLabel}
@@ -516,7 +521,12 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
                     </div>
                     <div>
                       <span className="block text-gray-500">{copy.seatInfo}</span>
-                      <span className="font-semibold text-gray-900">{card.seatLabel}</span>
+                      <span
+                        data-testid={`qr-ticket-seat-detail-${card.id}`}
+                        className="block break-words text-lg font-bold leading-snug text-gray-950"
+                      >
+                        {card.seatLabel}
+                      </span>
                     </div>
                     <div>
                       <span className="block text-gray-500">{copy.ticketValid}</span>

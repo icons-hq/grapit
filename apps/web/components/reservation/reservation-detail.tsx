@@ -638,11 +638,19 @@ function getProgressGuidance(
   return null;
 }
 
-function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
+function InfoRow({
+  label,
+  value,
+  valueClassName = 'text-sm font-semibold text-gray-900',
+}: {
+  label: string;
+  value: React.ReactNode;
+  valueClassName?: string;
+}) {
   return (
     <div className="flex items-start justify-between py-2">
       <span className="text-sm text-gray-600">{label}</span>
-      <span className="text-right text-sm font-semibold text-gray-900">
+      <span className={`text-right ${valueClassName}`}>
         {value}
       </span>
     </div>
@@ -899,18 +907,23 @@ export function ReservationDetailView({
                   data-testid={`qr-ticket-card-${card.id}`}
                   className="rounded-xl border border-white/80 bg-white/90 p-4"
                 >
-                  <div className="mb-4 flex items-start justify-between gap-3">
-                    <div>
-                      <h3 className="text-sm font-semibold text-gray-900">{card.seatLabel}</h3>
+                  <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1 basis-full sm:basis-auto">
+                      <h3
+                        data-testid={`qr-ticket-seat-label-${card.id}`}
+                        className="break-words text-2xl font-bold leading-tight text-gray-950"
+                      >
+                        {card.seatLabel}
+                      </h3>
                       {card.floorLabel && (
-                        <p className="mt-1 text-xs text-gray-500">{card.floorLabel}</p>
+                        <p className="mt-1 text-sm font-medium text-gray-500">{card.floorLabel}</p>
                       )}
                     </div>
                     <Badge
                       className={
                         card.qrCheckInUrl
-                          ? 'bg-[#F0FDF4] text-[#15803D] border-transparent'
-                          : 'bg-[#FFFBEB] text-[#8B6306] border-transparent'
+                          ? 'bg-[#F0FDF4] px-3 py-1 text-sm font-semibold text-[#15803D] border-transparent'
+                          : 'bg-[#FFFBEB] px-3 py-1 text-sm font-semibold text-[#8B6306] border-transparent'
                       }
                     >
                       {card.qrBadgeLabel}
@@ -946,7 +959,11 @@ export function ReservationDetailView({
                         value={formatDateTime(reservation.showDateTime, undefined, locale)}
                       />
                       <Separator />
-                      <InfoRow label={copy.detail.seatInfo} value={card.seatLabel} />
+                      <InfoRow
+                        label={copy.detail.seatInfo}
+                        value={card.seatLabel}
+                        valueClassName="break-words text-lg font-bold leading-snug text-gray-950"
+                      />
                       <Separator />
                       <InfoRow
                         label={completeCopy.ticketValid}

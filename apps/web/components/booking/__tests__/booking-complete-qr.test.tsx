@@ -260,6 +260,17 @@ describe('BookingComplete QR ticket card', () => {
     expect(screen.getAllByText('VIP A열 1번').length).toBeGreaterThan(0);
     expect(screen.getAllByText('VIP A열 2번').length).toBeGreaterThan(0);
     expect(screen.getAllByText('QR 활성').length).toBeGreaterThan(0);
+    const firstQrCard = screen.getByTestId(`qr-ticket-card-${firstTicketItemId}`);
+    expect(within(firstQrCard).getByTestId(`qr-ticket-seat-label-${firstTicketItemId}`)).toHaveClass(
+      'break-words',
+      'text-2xl',
+      'font-bold',
+    );
+    expect(within(firstQrCard).getByTestId(`qr-ticket-seat-detail-${firstTicketItemId}`)).toHaveClass(
+      'text-lg',
+      'font-bold',
+    );
+    expect(within(firstQrCard).getByText('QR 활성')).toHaveClass('px-3', 'py-1', 'text-sm');
 
     expect(screen.queryByText(rawQrToken, { exact: true })).not.toBeInTheDocument();
     expect(screen.queryByText(rawQrJti, { exact: true })).not.toBeInTheDocument();
