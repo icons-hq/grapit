@@ -299,6 +299,22 @@ describe('ScannerCheckIn', () => {
     expect(within(benefit).queryByRole('button', { name: '사용 처리' })).not.toBeInTheDocument();
   });
 
+  it('does not render benefit redemption actions for wrong-showtime scans', () => {
+    renderScanner({
+      verification: {
+        ...baseVerification,
+        result: 'wrong-showtime',
+        resultLabel: '현재 회차의 티켓이 아닙니다',
+        processable: false,
+        benefitEntitlements: [includedBenefit()],
+      },
+    });
+
+    const panel = screen.getByTestId('scanner-benefit-panel');
+    expect(within(panel).getByText('공식 포스터')).toBeInTheDocument();
+    expect(within(panel).queryByRole('button', { name: '사용 처리' })).not.toBeInTheDocument();
+  });
+
   it('shows benefits without redemption actions when consume permission is not wired', () => {
     renderScanner({
       verification: {

@@ -131,6 +131,9 @@ export function ScannerCheckIn({
   const canProcess =
     !consumeResult &&
     (verification.processable || verification.result === 'processable');
+  const canRedeemBenefits =
+    Boolean(onRedeemBenefit) &&
+    (verification.processable || verification.result === 'processable');
   const showOfflineQueue =
     verification.result === 'offline-pending' || verification.offlineQueue.length > 0;
 
@@ -160,7 +163,7 @@ export function ScannerCheckIn({
           benefits={verification.benefitEntitlements}
           redemptionResults={benefitRedemptionResults}
           redeemingBenefitId={redeemingBenefitId}
-          onRedeemBenefit={onRedeemBenefit}
+          onRedeemBenefit={canRedeemBenefits ? onRedeemBenefit : undefined}
         />
       </main>
 

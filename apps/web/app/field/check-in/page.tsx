@@ -70,8 +70,8 @@ export default function FieldCheckInPage() {
   const consumeMutation = useFieldCheckInConsume();
   const benefitRedeemMutation = useFieldBenefitRedeem();
   const offlineSyncMutation = useFieldOfflineSync();
-  const effectiveShowtimeId =
-    verifyQuery.data?.showtimeId ?? showtimeId ?? FALLBACK_SHOWTIME_ID;
+  const scannerShowtimeId =
+    showtimeId ?? verifyQuery.data?.showtimeId ?? FALLBACK_SHOWTIME_ID;
   const mergedVerification = useMemo(
     () =>
       verifyQuery.data
@@ -116,7 +116,7 @@ export default function FieldCheckInPage() {
           deviceAttemptId: 'device-attempt-phase27-rejected',
           scannerUserId: user?.id ?? 'scanner-session',
           eventId,
-          showtimeId: effectiveShowtimeId,
+          showtimeId: scannerShowtimeId,
           token: ticketToken,
           attemptedAt: new Date().toISOString(),
         }),
@@ -125,11 +125,11 @@ export default function FieldCheckInPage() {
     })();
   }, [
     accessToken,
-    effectiveShowtimeId,
     eventId,
     hasScannerAccess,
     isInitialized,
     refreshOfflineQueue,
+    scannerShowtimeId,
     shouldSeedOfflineAttempt,
     ticketToken,
     user?.id,
@@ -195,7 +195,7 @@ export default function FieldCheckInPage() {
                 deviceAttemptId,
                 scannerUserId: user.id,
                 eventId,
-                showtimeId: effectiveShowtimeId,
+                showtimeId: scannerShowtimeId,
                 token: ticketToken,
                 attemptedAt: new Date().toISOString(),
               }),
@@ -213,7 +213,7 @@ export default function FieldCheckInPage() {
             setOfflineConsumeResult(null);
             await consumeMutation.mutateAsync({
               token: ticketToken,
-              showtimeId: effectiveShowtimeId,
+              showtimeId: scannerShowtimeId,
               deviceAttemptId,
               confirmed: true,
             });
@@ -227,7 +227,7 @@ export default function FieldCheckInPage() {
                 deviceAttemptId,
                 scannerUserId: user.id,
                 eventId,
-                showtimeId: effectiveShowtimeId,
+                showtimeId: scannerShowtimeId,
                 token: ticketToken,
                 attemptedAt: new Date().toISOString(),
               }),
@@ -245,7 +245,7 @@ export default function FieldCheckInPage() {
         canConsumeFieldScan
           ? (benefitEntitlementId) => {
               void (async () => {
-                if (!verifyQuery.data || redeemingBenefitId) {
+                if (!verifyQuery.data?.processable || redeemingBenefitId) {
                   return;
                 }
 
@@ -253,7 +253,7 @@ export default function FieldCheckInPage() {
                 try {
                   const result = await benefitRedeemMutation.mutateAsync({
                     token: ticketToken,
-                    showtimeId: effectiveShowtimeId,
+                    showtimeId: scannerShowtimeId,
                     benefitEntitlementId,
                     deviceAttemptId: createDeviceAttemptId(),
                     confirmed: true,
@@ -285,7 +285,7 @@ export default function FieldCheckInPage() {
             results,
             pendingAttempts,
             eventId,
-            showtimeId: effectiveShowtimeId,
+            showtimeId: scannerShowtimeId,
             token: ticketToken,
             scannerUserId: user?.id ?? 'scanner-session',
           });

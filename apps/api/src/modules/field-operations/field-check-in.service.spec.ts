@@ -293,6 +293,70 @@ describe('FieldCheckInService RED contract', () => {
     expectNoSensitiveLookupLeak(consumeResult);
   });
 
+  it.each([
+    ['before showtime', '2026-07-04T08:30:00.000Z'],
+    ['after showtime', '2026-07-04T11:30:00.000Z'],
+  ])('keeps active QR tickets processable and consumable %s', async (_label, nowIso) => {
+    vi.setSystemTime(new Date(nowIso));
+    const { service, qrTicketService, db } = createDependencies();
+    const entitlementLookup = createSelectResult([]);
+    const priorScanLookup = createSelectResult([]);
+    const updateTicket = createUpdateResult([
+      {
+        ticketId: 'ticket-1',
+        usedAt: new Date(nowIso),
+      },
+    ]);
+    const updateTicketItem = createUpdateResult([{ ticketItemId: 'ticket-item-1' }]);
+    const insertScanEvent = createInsertResult([{ id: 'scan-event-1' }]);
+    qrTicketService.verifyTicketForScannerContract.mockResolvedValue(
+      scannerContract({
+        ticketId: 'ticket-1',
+        showtimeAt: '2026-07-04T10:00:00.000Z',
+      }),
+    );
+    db.select
+      .mockReturnValueOnce(entitlementLookup)
+      .mockReturnValueOnce(priorScanLookup);
+    db.update
+      .mockReturnValueOnce(updateTicket)
+      .mockReturnValueOnce(updateTicketItem);
+    db.insert.mockReturnValueOnce(insertScanEvent);
+
+    const verifyResult = await service.verify({
+      token: RAW_QR_TOKEN,
+      showtimeId: '00000000-0000-4000-8000-000000000001',
+    });
+    const consumeResult = await service.consume({
+      token: RAW_QR_TOKEN,
+      showtimeId: '00000000-0000-4000-8000-000000000001',
+      deviceAttemptId: SCANNER_CONTEXT.deviceAttemptId,
+      confirmed: true,
+    }, SCANNER_CONTEXT);
+
+    expect(verifyResult).toMatchObject({
+      outcome: 'processable',
+      processable: true,
+      ticket: expect.objectContaining({
+        showtimeLabel: '2026-07-04T10:00:00.000Z',
+        ticketStatus: 'ACTIVE',
+      }),
+      rejectionReason: null,
+    });
+    expect(consumeResult).toMatchObject({
+      outcome: 'entered',
+      consumedAt: nowIso,
+    });
+    expect(db.update).toHaveBeenCalledWith(tickets);
+    expect(db.update).toHaveBeenCalledWith(ticketItems);
+    expect(insertScanEvent.values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ticketItemId: 'ticket-item-1',
+        result: 'success',
+      }),
+    );
+  });
+
   it('verify response includes benefit entitlements for the scanned ticket item', async () => {
     const { service, qrTicketService, db } = createDependencies();
     const entitlementLookup = createSelectResult([
