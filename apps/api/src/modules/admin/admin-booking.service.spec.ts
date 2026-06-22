@@ -10,7 +10,9 @@ import {
 import { AdminBookingService } from './admin-booking.service.js';
 import {
   bookingOperationAuditLogs,
+  payments,
   reservationPaymentFailureDiagnostics,
+  reservationSeats,
   seatInventories,
 } from '../../database/schema/index.js';
 import type { AdminAuditService } from './admin-audit.service.js';
@@ -1299,9 +1301,10 @@ describe('AdminBookingService', () => {
 
   describe('detail', () => {
     it('returns admin booking detail with ticket item status, admission, and refund fields', async () => {
+      const detailCalls: Array<{ method: string; args: unknown[] }> = [];
       mockDb.select
         .mockReturnValueOnce(
-          createChainMock([
+          createRecordingChainMock([
             {
               reservation: {
                 id: 'reservation-1',
@@ -1324,14 +1327,22 @@ describe('AdminBookingService', () => {
                 title: 'Girl Rules Fanmeeting',
               },
               payment: {
-                status: 'DONE',
+                id: 'payment-1',
+                paymentKey: 'payment-key-1',
+                tossOrderId: 'GRP-TOSS-DETAIL-001',
                 method: 'CARD',
+                provider: 'CARD',
+                currency: 'KRW',
+                amount: 158000,
+                status: 'DONE',
+                createdAt: new Date('2026-07-01T03:00:30.000Z'),
+                paidAt: new Date('2026-07-01T03:01:00.000Z'),
               },
               refund: {
                 status: null,
               },
             },
-          ]),
+          ], detailCalls),
         )
         .mockReturnValueOnce(
           createChainMock([
@@ -1356,24 +1367,15 @@ describe('AdminBookingService', () => {
               reopenState: 'available',
             }),
           ]),
-        )
-        .mockReturnValueOnce(
-          createChainMock([
-            {
-              paymentKey: 'payment-key-1',
-              method: 'CARD',
-              amount: 158000,
-              status: 'DONE',
-              createdAt: new Date('2026-07-01T03:00:30.000Z'),
-              paidAt: new Date('2026-07-01T03:01:00.000Z'),
-              provider: 'CARD',
-              currency: 'KRW',
-            },
-          ]),
         );
 
       const result = await service.getBookingDetail('reservation-1');
 
+      expect(mockDb.select).toHaveBeenCalledTimes(2);
+      const leftJoinTables = detailCalls
+        .filter((call) => call.method === 'leftJoin')
+        .map((call) => call.args[0]);
+      expect(leftJoinTables).toContain(payments);
       expect(result.seats).toEqual([
         expect.objectContaining({ seatKey: '1F:A-1', number: '1' }),
         expect.objectContaining({ seatKey: '1F:A-2', number: '2' }),
@@ -1462,6 +1464,7 @@ describe('AdminBookingService', () => {
               performance: {
                 title: 'Girl Rules Fanmeeting',
               },
+              payment: null,
               refund: {
                 status: null,
               },
@@ -1486,6 +1489,7 @@ describe('AdminBookingService', () => {
       const leftJoinTables = detailCalls
         .filter((call) => call.method === 'leftJoin')
         .map((call) => call.args[0]);
+      expect(leftJoinTables).toContain(payments);
       expect(leftJoinTables).toContain(reservationPaymentFailureDiagnostics);
       expect(result.paymentFailureDiagnostic).toEqual({
         kind: 'provider_status',
@@ -1503,6 +1507,121 @@ describe('AdminBookingService', () => {
         provider: null,
         currency: null,
         source: 'Needs Review: payment row missing',
+      });
+      expect(result.paymentStatus).toBeNull();
+      expect(result.paymentMethod).toBeNull();
+      expect(result.paymentAttemptedAt).toBeNull();
+      expect(result.paymentCompletedAt).toBeNull();
+      expect(result.paymentInfo).toBeNull();
+    });
+
+    it('returns reservation seat fallback in admin detail when ticket items are not issued yet', async () => {
+      const fallbackCalls: Array<{ method: string; args: unknown[] }> = [];
+      mockDb.select
+        .mockReturnValueOnce(
+          createChainMock([
+            {
+              reservation: {
+                id: 'reservation-pending-1',
+                reservationNumber: 'R-PENDING-DETAIL-001',
+                tossOrderId: 'GRP-TOSS-PENDING-DETAIL-001',
+                status: 'PENDING_PAYMENT',
+                totalAmount: 158000,
+                createdAt: new Date('2026-07-01T03:00:00.000Z'),
+              },
+              user: {
+                name: '김대기',
+                phone: '+821055501234',
+                email: 'pending@example.com',
+                country: 'TH',
+              },
+              showtime: {
+                dateTime: new Date('2026-07-18T10:00:00.000Z'),
+              },
+              performance: {
+                title: 'Girl Rules Fanmeeting',
+              },
+              payment: {
+                id: 'payment-pending-1',
+                paymentKey: 'payment-key-pending-1',
+                tossOrderId: 'GRP-TOSS-PENDING-DETAIL-001',
+                method: 'FOREIGN_EASY_PAY',
+                provider: 'PAYPAL',
+                currency: 'USD',
+                amount: 158000,
+                status: 'READY',
+                createdAt: new Date('2026-07-01T03:00:30.000Z'),
+                paidAt: null,
+              },
+              refund: {
+                status: null,
+              },
+              diagnostic: null,
+              providerExpiryWebhookReceived: false,
+            },
+          ]),
+        )
+        .mockReturnValueOnce(createChainMock([]))
+        .mockReturnValueOnce(
+          createRecordingChainMock([
+            {
+              id: 'reservation-seat-a1',
+              reservationId: 'reservation-pending-1',
+              seatId: '1F:A-1',
+              tierName: 'VIP',
+              price: 79000,
+              row: 'A',
+              number: '1',
+            },
+            {
+              id: 'reservation-seat-a2',
+              reservationId: 'reservation-pending-1',
+              seatId: '1F:A-2',
+              tierName: 'VIP',
+              price: 79000,
+              row: 'A',
+              number: '2',
+            },
+          ], fallbackCalls),
+        );
+
+      const result = await service.getBookingDetail('reservation-pending-1');
+
+      expect(mockDb.select).toHaveBeenCalledTimes(3);
+      const fallbackFromTables = fallbackCalls
+        .filter((call) => call.method === 'from')
+        .map((call) => call.args[0]);
+      expect(fallbackFromTables).toContain(reservationSeats);
+      expect(result.seats).toEqual([
+        {
+          seatId: 'A-1',
+          floorKey: '1F',
+          floorLabel: '1층',
+          seatKey: '1F:A-1',
+          tierName: 'VIP',
+          price: 79000,
+          row: 'A',
+          number: '1',
+        },
+        {
+          seatId: 'A-2',
+          floorKey: '1F',
+          floorLabel: '1층',
+          seatKey: '1F:A-2',
+          tierName: 'VIP',
+          price: 79000,
+          row: 'A',
+          number: '2',
+        },
+      ]);
+      expect(result.ticketItems).toEqual([]);
+      expect(result.paymentStatus).toBe('READY');
+      expect(result.paymentMethodAttribution).toEqual({
+        label: '해외간편결제 / PayPal / USD',
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'PAYPAL',
+        currency: 'USD',
+        source: 'DB',
       });
     });
   });
