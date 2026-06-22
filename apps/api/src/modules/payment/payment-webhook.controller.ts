@@ -434,6 +434,10 @@ export class PaymentWebhookController {
   }
 
   private isOverseasCardWebhook(body: TossWebhookRequestBody): boolean {
+    if (body.data.currency === 'MUSD') {
+      return true;
+    }
+
     return (
       body.data.provider === 'CARD'
       && body.data.method === 'CARD'
@@ -472,6 +476,7 @@ export class PaymentWebhookController {
     if (
       typeof body.data.totalAmount === 'number'
       && queried.totalAmount !== body.data.totalAmount
+      && body.eventType !== 'PAYMENT_STATUS_CHANGED'
     ) {
       mismatches.push('totalAmount');
     }
@@ -619,6 +624,22 @@ export class PaymentWebhookController {
       incomingStatus === 'DONE'
       && progress.reservationStatus === 'FAILED'
       && this.isAlipayDonePaymentEvent(body)
+    ) {
+      return false;
+    }
+
+    if (
+      progress.reservationStatus === 'FAILED'
+      && (
+        incomingStatus === 'ABORTED'
+        || incomingStatus === 'EXPIRED'
+        || incomingStatus === 'CANCELED'
+      )
+      && (
+        !progress.paymentStatus
+        || progress.paymentStatus === 'READY'
+        || progress.paymentStatus === 'IN_PROGRESS'
+      )
     ) {
       return false;
     }

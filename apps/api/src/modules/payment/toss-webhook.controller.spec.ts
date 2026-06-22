@@ -320,6 +320,159 @@ describe('PaymentWebhookController', () => {
     expect(paymentService.upsertAsyncPaymentProgress).not.toHaveBeenCalled();
   });
 
+  it('ignores lower-priority terminal failure webhook after local failure already has provider expiry', async () => {
+    const abortedAfterExpiredEvent: TossWebhookRequestBody = {
+      eventId: 'evt-aborted-after-expired-1',
+      eventType: 'PAYMENT_STATUS_CHANGED',
+      createdAt: '2026-06-21T10:02:00.000Z',
+      data: {
+        paymentKey: 'pay_after_expired_1',
+        orderId: 'GRP-AFTER-EXPIRED-1',
+        status: 'ABORTED',
+        method: 'CARD',
+        provider: 'CARD',
+        currency: 'KRW',
+        totalAmount: 82000,
+      },
+    };
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(
+      makeLedgerResult({ eventId: abortedAfterExpiredEvent.eventId }),
+    );
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(
+      makeProgress({
+        reservationStatus: 'FAILED',
+        paymentStatus: 'EXPIRED',
+      }),
+    );
+    tossClient.queryPayment.mockResolvedValueOnce(
+      makeQueriedPayment({
+        paymentKey: 'pay_after_expired_1',
+        orderId: 'GRP-AFTER-EXPIRED-1',
+        status: 'ABORTED',
+        method: 'CARD',
+        totalAmount: 82000,
+        approvedAt: null,
+      }),
+    );
+
+    const result = await controller.handleTossWebhook(abortedAfterExpiredEvent);
+
+    expect(result).toEqual({
+      acknowledged: true,
+      duplicate: false,
+      processingResultCode: 'IGNORED_STALE_PAYMENT_EVENT',
+    });
+    expect(paymentService.upsertAsyncPaymentProgress).not.toHaveBeenCalled();
+    expect(paymentService.markWebhookEventProcessed).toHaveBeenCalledWith(
+      'evt-aborted-after-expired-1',
+      'IGNORED_STALE_PAYMENT_EVENT',
+      'stale payment event after cancel/failure terminal state',
+    );
+  });
+
+  it('ignores terminal cancel payment status after a failed reservation already has a recovered DONE payment', async () => {
+    const canceledAfterRecoveredDoneEvent: TossWebhookRequestBody = {
+      eventId: 'evt-canceled-after-done-1',
+      eventType: 'PAYMENT_STATUS_CHANGED',
+      createdAt: '2026-06-21T10:03:00.000Z',
+      data: {
+        paymentKey: 'pay_recovered_done_1',
+        orderId: 'GRP-RECOVERED-DONE-1',
+        status: 'CANCELED',
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'ALIPAY_PLUS',
+        currency: 'USD',
+        totalAmount: 102000,
+      },
+    };
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(
+      makeLedgerResult({ eventId: canceledAfterRecoveredDoneEvent.eventId }),
+    );
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(
+      makeProgress({
+        reservationStatus: 'FAILED',
+        paymentStatus: 'DONE',
+      }),
+    );
+    tossClient.queryPayment.mockResolvedValueOnce(
+      makeQueriedPayment({
+        paymentKey: 'pay_recovered_done_1',
+        orderId: 'GRP-RECOVERED-DONE-1',
+        status: 'CANCELED',
+        method: 'FOREIGN_EASY_PAY',
+        totalAmount: 102000,
+        approvedAt: '2026-06-21T10:00:00.000Z',
+      }),
+    );
+
+    const result = await controller.handleTossWebhook(canceledAfterRecoveredDoneEvent);
+
+    expect(result).toEqual({
+      acknowledged: true,
+      duplicate: false,
+      processingResultCode: 'IGNORED_STALE_PAYMENT_EVENT',
+    });
+    expect(paymentService.upsertAsyncPaymentProgress).not.toHaveBeenCalled();
+  });
+
+  it('applies terminal EXPIRED webhook after local failure even when MUSD webhook amount differs from provider query amount', async () => {
+    const musdExpiredEvent: TossWebhookRequestBody = {
+      eventId: 'evt-musd-expired-1',
+      eventType: 'PAYMENT_STATUS_CHANGED',
+      createdAt: '2026-06-21T10:00:00.000Z',
+      data: {
+        paymentKey: 'pay_musd_expired_1',
+        orderId: 'GRP-MUSD-EXPIRED-1',
+        status: 'EXPIRED',
+        currency: 'MUSD',
+        totalAmount: 55760000,
+      },
+    };
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(
+      makeLedgerResult({ eventId: musdExpiredEvent.eventId }),
+    );
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(
+      makeProgress({
+        reservationStatus: 'FAILED',
+        paymentStatus: null,
+      }),
+    );
+    tossClient.queryPayment.mockResolvedValueOnce(
+      makeQueriedPayment({
+        paymentKey: 'pay_musd_expired_1',
+        orderId: 'GRP-MUSD-EXPIRED-1',
+        status: 'EXPIRED',
+        method: 'CARD',
+        totalAmount: 55.76,
+        approvedAt: null,
+      }),
+    );
+
+    const result = await controller.handleTossWebhook(musdExpiredEvent);
+
+    expect(tossClient.queryPayment).toHaveBeenCalledWith('pay_musd_expired_1', {
+      secretKeyScope: 'overseas-card',
+    });
+    expect(result).toEqual({
+      acknowledged: true,
+      duplicate: false,
+      processingResultCode: 'PAYMENT_STATUS_CHANGED_EXPIRED_APPLIED',
+    });
+    expect(paymentService.upsertAsyncPaymentProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          paymentKey: 'pay_musd_expired_1',
+          orderId: 'GRP-MUSD-EXPIRED-1',
+          status: 'EXPIRED',
+          totalAmount: 55.76,
+        }),
+      }),
+      'EXPIRED',
+      'payment_status_changed:expired',
+    );
+    expect(paymentService.markWebhookEventFailed).not.toHaveBeenCalled();
+  });
+
   it('uses the PaymentService async DONE recovery result as the webhook processing code', async () => {
     paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
     paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());

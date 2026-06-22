@@ -341,6 +341,16 @@ export const adminBookingFunnelStatusSchema = z.enum([
   'PARTIAL_CANCELLED',
 ]);
 
+export const paymentFailureBucketSchema = z.enum([
+  'local_deadline_expired',
+  'provider_expired',
+  'provider_aborted',
+  'buyer_cancelled_before_confirm',
+  'unreconciled_provider_expired',
+  'compensated_cancel',
+  'other',
+]);
+
 const paymentStatusSchema = z.enum([
   'READY',
   'IN_PROGRESS',
@@ -431,8 +441,15 @@ export const bookingStatsSchema = z.object({
   pendingPaymentCount: z.number().int().min(0),
   paymentProcessingCount: z.number().int().min(0),
   failedCount: z.number().int().min(0),
-  expiredPaymentCount: z.number().int().min(0).default(0),
-  abortedPaymentCount: z.number().int().min(0).default(0),
+  expiredPaymentCount: z.number().int().min(0),
+  abortedPaymentCount: z.number().int().min(0),
+  localDeadlineExpiredCount: z.number().int().min(0),
+  providerExpiredCount: z.number().int().min(0),
+  providerAbortedCount: z.number().int().min(0),
+  buyerCancelledBeforeConfirmCount: z.number().int().min(0),
+  unreconciledProviderExpiredCount: z.number().int().min(0),
+  compensatedCancelCount: z.number().int().min(0),
+  otherPaymentFailureCount: z.number().int().min(0),
   cancelProcessingCount: z.number().int().min(0),
   cancelledCount: z.number().int().min(0),
   partialCancelledCount: z.number().int().min(0),
@@ -513,6 +530,7 @@ export const adminBookingListItemSchema = z.object({
   funnelStatus: adminBookingFunnelStatusSchema,
   paymentStatus: paymentStatusSchema.nullable(),
   paymentMethod: z.string().min(1, '결제 수단이 필요합니다').nullable(),
+  paymentFailureBucket: paymentFailureBucketSchema.nullable(),
   paymentFailureDiagnostic: paymentFailureDiagnosticSchema.nullable(),
   paymentMethodAttribution: paymentMethodAttributionSchema,
   ticketStatusCounts: ticketStatusCountsSchema,

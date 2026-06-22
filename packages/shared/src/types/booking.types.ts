@@ -252,6 +252,13 @@ export interface BookingStats {
   failedCount: number;
   expiredPaymentCount: number;
   abortedPaymentCount: number;
+  localDeadlineExpiredCount: number;
+  providerExpiredCount: number;
+  providerAbortedCount: number;
+  buyerCancelledBeforeConfirmCount: number;
+  unreconciledProviderExpiredCount: number;
+  compensatedCancelCount: number;
+  otherPaymentFailureCount: number;
   cancelProcessingCount: number;
   cancelledCount: number;
   partialCancelledCount: number;
@@ -307,6 +314,15 @@ export interface PaymentMethodAttribution {
   source: string;
 }
 
+export type PaymentFailureBucket =
+  | 'local_deadline_expired'
+  | 'provider_expired'
+  | 'provider_aborted'
+  | 'buyer_cancelled_before_confirm'
+  | 'unreconciled_provider_expired'
+  | 'compensated_cancel'
+  | 'other';
+
 export interface AdminBookingListItem {
   id: string;
   reservationNumber: string;
@@ -322,6 +338,7 @@ export interface AdminBookingListItem {
   funnelStatus: AdminBookingFunnelStatus;
   paymentStatus: PaymentStatus | null;
   paymentMethod: string | null;
+  paymentFailureBucket: PaymentFailureBucket | null;
   paymentFailureDiagnostic: PaymentFailureDiagnostic | null;
   paymentMethodAttribution: PaymentMethodAttribution;
   ticketStatusCounts: AdminTicketStatusCounts;

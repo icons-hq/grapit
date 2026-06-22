@@ -27,6 +27,7 @@ import {
 import { useAdminManualOpenSeat } from '@/hooks/use-admin-seat-operations';
 import { useAdminBookingDetail } from '@/hooks/use-reservations';
 import { formatDateTime } from '@/lib/format-datetime';
+import { getPaymentFailureBucketLabel } from './payment-failure-buckets';
 import type {
   AdminBookingDetail,
   AdminBookingFunnelStatus,
@@ -248,6 +249,9 @@ export function AdminBookingDetailModal({
   }
 
   const statusConfig = booking ? getFunnelStatusConfig(booking) : null;
+  const paymentFailureBucketLabel = booking
+    ? getPaymentFailureBucketLabel(booking.paymentFailureBucket)
+    : null;
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -325,6 +329,15 @@ export function AdminBookingDetailModal({
               value={booking.paymentMethodAttribution.source}
             />
             <Separator />
+            {paymentFailureBucketLabel && (
+              <>
+                <InfoRow
+                  label="실패/만료 분류"
+                  value={paymentFailureBucketLabel}
+                />
+                <Separator />
+              </>
+            )}
             {booking.paymentFailureDiagnostic && (
               <>
                 <InfoRow

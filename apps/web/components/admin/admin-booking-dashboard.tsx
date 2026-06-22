@@ -29,6 +29,7 @@ import { useAdminPerformanceDetail, useAdminPerformances } from '@/hooks/use-adm
 import type {
   AdminBookingFunnelStatus,
   AdminBookingTierStats,
+  BookingStats,
   PaymentStatus,
 } from '@grabit/shared';
 
@@ -77,6 +78,16 @@ const AUDIENCE_REGION_OPTIONS = [
 
 const PAGE_SIZE = 20;
 
+const PAYMENT_FAILURE_BREAKDOWN_ITEMS = [
+  ['localDeadlineExpiredCount', '내부 시간 만료'],
+  ['providerExpiredCount', 'Toss 만료'],
+  ['providerAbortedCount', 'Toss 실패/중단'],
+  ['buyerCancelledBeforeConfirmCount', '승인 전 취소'],
+  ['unreconciledProviderExpiredCount', 'Toss 만료 수신/미반영'],
+  ['compensatedCancelCount', '자동 취소 보상'],
+  ['otherPaymentFailureCount', '원인 확인 필요'],
+] as const satisfies ReadonlyArray<readonly [keyof BookingStats, string]>;
+
 function formatDateTime(dateString: string): string {
   const date = new Date(dateString);
   const y = date.getFullYear();
@@ -85,6 +96,35 @@ function formatDateTime(dateString: string): string {
   const h = String(date.getHours()).padStart(2, '0');
   const min = String(date.getMinutes()).padStart(2, '0');
   return `${y}.${m}.${d} ${h}:${min}`;
+}
+
+function PaymentFailureBreakdown({ stats }: { stats?: BookingStats }) {
+  const items = PAYMENT_FAILURE_BREAKDOWN_ITEMS
+    .map(([key, label]) => ({
+      label,
+      value: Number(stats?.[key] ?? 0),
+    }))
+    .filter((item) => item.value > 0);
+
+  if (items.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-4 rounded-lg border border-[#E5E7EB] bg-white px-4 py-3 shadow-sm">
+      <p className="text-sm font-semibold text-gray-900">실패/만료 분석</p>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {items.map((item) => (
+          <span
+            key={item.label}
+            className="inline-flex items-center rounded border border-[#E5E7EB] bg-[#F8FAFC] px-2.5 py-1 text-xs font-medium text-[#334155]"
+          >
+            {item.label} {item.value.toLocaleString('ko-KR')}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function formatWon(amount: number): string {
@@ -297,6 +337,7 @@ export function AdminBookingDashboard() {
           format="currency"
         />
       </div>
+      <PaymentFailureBreakdown stats={stats} />
 
       <div className="mt-6">
         <ReservationExportPanel />
