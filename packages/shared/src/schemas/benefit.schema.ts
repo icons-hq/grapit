@@ -335,6 +335,10 @@ const benefitEntitlementExportRowBaseSchema = z
     state: benefitEntitlementStateSchema,
     assignedAt: isoDatetime('혜택 배정 시각'),
     redeemedAt: isoDatetime('혜택 사용 시각').nullable().optional(),
+    ticketSeatNumber: z.string().trim().min(1).optional(),
+    customerPhone: z.string().trim().min(1).optional(),
+    customerName: z.string().trim().min(1).optional(),
+    customerEmail: z.string().trim().email().optional(),
   })
   .strict();
 

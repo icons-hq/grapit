@@ -351,10 +351,18 @@ describe('ticket benefit shared contracts', () => {
       state: 'active',
       assignedAt: validIso,
       redeemedAt: null,
+      ticketSeatNumber: '1층 VIP A열 1번',
+      customerPhone: '+821012345678',
+      customerName: '김예매',
+      customerEmail: 'buyer@example.com',
     });
 
     expect(parsed.runMode).toBe('test');
     expect(parsed.attachedToTicket).toBe(false);
+    expect(parsed.ticketSeatNumber).toBe('1층 VIP A열 1번');
+    expect(parsed.customerPhone).toBe('+821012345678');
+    expect(parsed.customerName).toBe('김예매');
+    expect(parsed.customerEmail).toBe('buyer@example.com');
   });
 
   it('allows configuration-source included entitlements with nullable run ids attached to tickets', () => {

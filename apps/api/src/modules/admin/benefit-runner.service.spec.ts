@@ -13,6 +13,7 @@ import {
   ticketBenefitRuns,
   ticketBenefits,
   ticketItems,
+  users,
 } from '../../database/schema/index.js';
 import type { AdminAuditService } from './admin-audit.service.js';
 import type { AdminBenefitsService } from './admin-benefits.service.js';
@@ -132,6 +133,23 @@ function candidate(
     tierName,
     status,
     admissionState,
+  };
+}
+
+function ticketCustomerMetadata(
+  id: string,
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    ticketItemId: ticketId(id),
+    floorLabel: '1층',
+    tierName: 'VIP',
+    row: 'A',
+    number: '1',
+    customerPhone: '+821012345678',
+    customerName: '김예매',
+    customerEmail: 'buyer@example.com',
+    ...overrides,
   };
 }
 
@@ -1030,6 +1048,7 @@ describe('BenefitRunnerService', () => {
           ],
         },
       })],
+      [ticketCustomerMetadata('ticket-001')],
     ]);
 
     const result = await service.runTest({
@@ -1062,8 +1081,22 @@ describe('BenefitRunnerService', () => {
     expect(insertCalls.some((call) => call.table === ticketBenefitEntitlements))
       .toBe(false);
     expect(exportResult.csv.charCodeAt(0)).toBe(0xfeff);
+    expect(exportResult.csv).toContain('Ticket Seat Number');
+    expect(exportResult.csv).toContain('Customer Phone');
+    expect(exportResult.csv).toContain('Customer Name');
+    expect(exportResult.csv).toContain('Customer Email');
+    expect(exportResult.csv).toContain('1층 VIP A열 1번');
+    expect(exportResult.csv).toContain('+821012345678');
+    expect(exportResult.csv).toContain('김예매');
+    expect(exportResult.csv).toContain('buyer@example.com');
     expect(exportResult.csv).toContain("'=6:1");
     expect(JSON.stringify(exportResult)).not.toContain('export-seed');
+    expect(JSON.stringify(insertCalls.find((call) => call.table === ticketBenefitRuns)?.values))
+      .not.toContain('+821012345678');
+    expect(JSON.stringify(insertCalls.find((call) => call.table === ticketBenefitRuns)?.values))
+      .not.toContain('buyer@example.com');
+    expect(JSON.stringify(insertCalls.find((call) => call.table === ticketBenefitRuns)?.values))
+      .not.toContain('김예매');
     expect(safeCsvRowsSpy).toHaveBeenCalled();
     expect(withUtf8BomSpy).toHaveBeenCalled();
     expect(adminAuditService.write).toHaveBeenCalledWith(
@@ -1085,7 +1118,7 @@ describe('BenefitRunnerService', () => {
   });
 
   it('audits entitlement exports with metadata only', async () => {
-    const { service, adminAuditService } = createService([
+    const { service, adminAuditService, selectCalls } = createService([
       [
         {
           id: ENTITLEMENT_ID_1,
@@ -1101,6 +1134,7 @@ describe('BenefitRunnerService', () => {
           createdAt: NOW,
         },
       ],
+      [ticketCustomerMetadata('ticket-001')],
     ]);
 
     const result = await service.exportEntitlements(SHOWTIME_ID, {
@@ -1109,6 +1143,14 @@ describe('BenefitRunnerService', () => {
     });
 
     expect(result.csv).toContain(ENTITLEMENT_ID_1);
+    expect(result.csv).toContain('Ticket Seat Number');
+    expect(result.csv).toContain('Customer Phone');
+    expect(result.csv).toContain('Customer Name');
+    expect(result.csv).toContain('Customer Email');
+    expect(result.csv).toContain('1층 VIP A열 1번');
+    expect(result.csv).toContain('+821012345678');
+    expect(result.csv).toContain('김예매');
+    expect(result.csv).toContain('buyer@example.com');
     expect(result.csv).toContain("'=6:1");
     expect(adminAuditService.write).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1129,6 +1171,13 @@ describe('BenefitRunnerService', () => {
       .not.toContain('raw seed');
     expect(JSON.stringify(adminAuditService.write.mock.calls[0]?.[0]))
       .not.toContain('=6:1');
+    expect(JSON.stringify(adminAuditService.write.mock.calls[0]?.[0]))
+      .not.toContain('+821012345678');
+    expect(JSON.stringify(adminAuditService.write.mock.calls[0]?.[0]))
+      .not.toContain('buyer@example.com');
+    expect(JSON.stringify(adminAuditService.write.mock.calls[0]?.[0]))
+      .not.toContain('김예매');
+    expect(selectCalls.some((call) => call.joins.includes(users))).toBe(true);
   });
 
   it('exports configuration-source included entitlements without a run mode', async () => {

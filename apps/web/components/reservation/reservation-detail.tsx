@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/tooltip';
 import { CancelConfirmModal } from '@/components/reservation/cancel-confirm-modal';
 import { RefundTimeline } from '@/components/reservation/refund-timeline';
+import { SeatHighlightLabel } from '@/components/reservation/seat-highlight-label';
 import { TicketEmailDeliveryPanel } from '@/components/reservation/ticket-email-delivery-panel';
 import {
   buildQrCheckInUrl,
@@ -281,6 +282,7 @@ type BuyerQrCard = {
   id: string;
   isTicketItem: boolean;
   seatLabel: string;
+  tierColor?: string;
   floorLabel: string;
   qrCheckInUrl: string | null;
   qrBadgeLabel: string;
@@ -313,6 +315,7 @@ function getBuyerQrCards(
         id: ticketItem.id,
         isTicketItem: true,
         seatLabel: formatTicketItemSeat(ticketItem, copy.seatLabel),
+        tierColor: ticketItem.tierColor,
         floorLabel: ticketItem.floorLabel,
         qrCheckInUrl,
         qrBadgeLabel: getTicketItemQrBadgeLabel(ticketItem.status, Boolean(qrCheckInUrl), copy),
@@ -342,6 +345,7 @@ function getBuyerQrCards(
       id: 'legacy-qr-ticket',
       isTicketItem: false,
       seatLabel: formatSeats(reservation, copy.seatLabel),
+      tierColor: reservation.seats.length === 1 ? reservation.seats[0]?.tierColor : undefined,
       floorLabel: '',
       qrCheckInUrl: isQrActive ? buildQrCheckInUrl(reservation.qrTicket.token) : null,
       qrBadgeLabel: isQrActive ? copy.qrStatus.active : copy.qrStatus.checking,
@@ -913,7 +917,12 @@ export function ReservationDetailView({
                         data-testid={`qr-ticket-seat-label-${card.id}`}
                         className="break-words text-2xl font-bold leading-tight text-gray-950"
                       >
-                        {card.seatLabel}
+                        <SeatHighlightLabel
+                          tierColor={card.tierColor}
+                          testId={`qr-ticket-seat-label-highlight-${card.id}`}
+                        >
+                          {card.seatLabel}
+                        </SeatHighlightLabel>
                       </h3>
                       {card.floorLabel && (
                         <p className="mt-1 text-sm font-medium text-gray-500">{card.floorLabel}</p>
@@ -961,7 +970,14 @@ export function ReservationDetailView({
                       <Separator />
                       <InfoRow
                         label={copy.detail.seatInfo}
-                        value={card.seatLabel}
+                        value={(
+                          <SeatHighlightLabel
+                            tierColor={card.tierColor}
+                            testId={`qr-ticket-seat-detail-highlight-${card.id}`}
+                          >
+                            {card.seatLabel}
+                          </SeatHighlightLabel>
+                        )}
                         valueClassName="break-words text-lg font-bold leading-snug text-gray-950"
                       />
                       <Separator />

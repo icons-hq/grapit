@@ -1418,6 +1418,7 @@ export class ReservationService {
           ticketItemRows.map((ticketItem) => ticketItem.id),
         )
       : new Map<string, BenefitEntitlement[]>();
+    const tierColorByName = await this.loadTierColorByName(row.performance.id);
 
     let qrTickets: QrTicket[] = [];
     if (
@@ -1433,12 +1434,18 @@ export class ReservationService {
       });
     }
     const ticketItemDtos = ticketItemRows.length > 0
-      ? this.mapTicketItems(ticketItemRows, qrTickets, benefitEntitlementsByTicketItemId)
+      ? this.mapTicketItems(
+          ticketItemRows,
+          qrTickets,
+          benefitEntitlementsByTicketItemId,
+          tierColorByName,
+        )
       : this.mapReservationSeatsToTicketItems({
           seats,
           reservationId,
           paymentId: payment?.id ?? PLACEHOLDER_UUID,
           showtimeId: row.reservation.showtimeId,
+          tierColorByName,
         });
     const qrTicket = qrTickets.find((ticket) => ticket.status === 'ACTIVE' && ticket.token)
       ?? this.createBlockingQrTicket(row.reservation.createdAt);
@@ -1474,6 +1481,7 @@ export class ReservationService {
       seats: seats.map((s) => toFloorAwareSeatSelection({
         seatId: s.seatId,
         tierName: s.tierName,
+        tierColor: tierColorByName.get(s.tierName),
         price: s.price,
         row: s.row,
         number: s.number,
@@ -1547,6 +1555,18 @@ export class ReservationService {
     return result;
   }
 
+  private async loadTierColorByName(performanceId: string): Promise<Map<string, string>> {
+    const rows = await this.db
+      .select({
+        tierName: performanceSeatTiers.tierName,
+        color: performanceSeatTiers.color,
+      })
+      .from(performanceSeatTiers)
+      .where(eq(performanceSeatTiers.performanceId, performanceId));
+
+    return new Map(rows.map((row) => [row.tierName, row.color]));
+  }
+
   private mapBenefitEntitlement(row: TicketBenefitEntitlementRow): BenefitEntitlement {
     const displayCopy = ticketBenefitDisplayCopySchema.parse(row.displayCopySnapshot);
     const base = {
@@ -1607,6 +1627,7 @@ export class ReservationService {
     rows: TicketItemRow[],
     qrTickets: QrTicket[],
     benefitEntitlementsByTicketItemId: Map<string, BenefitEntitlement[]>,
+    tierColorByName: Map<string, string>,
   ): TicketItem[] {
     const activeQrByTicketItemId = new Map(
       qrTickets
@@ -1618,6 +1639,7 @@ export class ReservationService {
       row,
       activeQrByTicketItemId.get(row.id),
       benefitEntitlementsByTicketItemId.get(row.id) ?? [],
+      tierColorByName,
     ));
   }
 
@@ -1626,11 +1648,13 @@ export class ReservationService {
     reservationId: string;
     paymentId: string;
     showtimeId: string;
+    tierColorByName: Map<string, string>;
   }): TicketItem[] {
     return input.seats.map((seat, index) => {
       const floorSeat = toFloorAwareSeatSelection({
         seatId: seat.seatId,
         tierName: seat.tierName,
+        tierColor: input.tierColorByName.get(seat.tierName),
         price: seat.price,
         row: seat.row,
         number: seat.number,
@@ -1648,6 +1672,7 @@ export class ReservationService {
         row: floorSeat.row,
         number: floorSeat.number,
         tierName: floorSeat.tierName,
+        tierColor: floorSeat.tierColor,
         price: floorSeat.price,
         serviceFee: TICKET_SERVICE_FEE_KRW,
         status: 'ACTIVE',
@@ -1665,6 +1690,7 @@ export class ReservationService {
     row: TicketItemRow,
     qrTicket: QrTicket | undefined,
     benefitEntitlements: BenefitEntitlement[],
+    tierColorByName: Map<string, string>,
   ): TicketItem {
     return {
       id: row.id,
@@ -1678,6 +1704,7 @@ export class ReservationService {
       row: row.row,
       number: row.number,
       tierName: row.tierName,
+      tierColor: tierColorByName.get(row.tierName),
       price: row.price,
       serviceFee: row.serviceFee === 0 ? 0 : TICKET_SERVICE_FEE_KRW,
       status: this.mapTicketItemStatus(row.status),
