@@ -978,19 +978,27 @@ export class PaymentService {
       storedPaymentId = insertedPayment?.id ?? null;
     }
 
+    const isTerminalFailureStatus =
+      paymentStatus === 'CANCELED'
+      || paymentStatus === 'ABORTED'
+      || paymentStatus === 'EXPIRED';
+
     if (
-      (paymentStatus === 'CANCELED'
-        || paymentStatus === 'ABORTED'
-        || paymentStatus === 'EXPIRED')
-      && reservation.status === 'PENDING_PAYMENT'
+      isTerminalFailureStatus
+      && (
+        reservation.status === 'PENDING_PAYMENT'
+        || reservation.status === 'FAILED'
+      )
     ) {
-      await this.db
-        .update(reservations)
-        .set({
-          status: 'FAILED',
-          updatedAt: new Date(),
-        })
-        .where(eq(reservations.id, reservation.id));
+      if (reservation.status === 'PENDING_PAYMENT') {
+        await this.db
+          .update(reservations)
+          .set({
+            status: 'FAILED',
+            updatedAt: new Date(),
+          })
+          .where(eq(reservations.id, reservation.id));
+      }
 
       await recordReservationPaymentFailureDiagnostic(this.db, {
         reservationId: reservation.id,

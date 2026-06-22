@@ -1068,6 +1068,80 @@ describe('PaymentService', () => {
       expect(insertDiagnostic.onConflictDoUpdate).toHaveBeenCalledOnce();
     });
 
+    it('records terminal provider failure diagnostics even after the reservation already failed locally', async () => {
+      const reservationId = randomUUID();
+      const showtimeId = randomUUID();
+      const userId = randomUUID();
+      const paymentId = randomUUID();
+      const providerChargeQuotedAt = new Date('2026-06-21T01:00:00.000Z');
+      const insertPayment = createMutationChain([{ id: paymentId }]);
+      const insertDiagnostic = createMutationChain();
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          userId,
+          showtimeId,
+          status: 'FAILED',
+          totalAmount: 82000,
+          providerChargeCurrency: 'USD',
+          providerChargeAmountMinor: 5576,
+          providerChargeRate: '0.00068',
+          providerChargeQuotedAt,
+        }]))
+        .mockReturnValueOnce(createSelectChain([]));
+      mockDb.insert
+        .mockReturnValueOnce(insertPayment)
+        .mockReturnValueOnce(insertDiagnostic);
+
+      await service.upsertAsyncPaymentProgress(
+        {
+          eventId: 'evt-musd-expired',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_musd_expired',
+            orderId: 'GRP-MUSD-EXPIRED',
+            status: 'EXPIRED',
+            method: 'CARD',
+            provider: 'CARD',
+            currency: 'MUSD',
+            totalAmount: 55.76,
+          },
+        },
+        'EXPIRED',
+        'payment_status_changed:expired',
+      );
+
+      expect(insertPayment.values).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reservationId,
+          paymentKey: 'pay_musd_expired',
+          tossOrderId: 'GRP-MUSD-EXPIRED',
+          method: 'CARD',
+          provider: 'CARD',
+          currency: 'KRW',
+          amount: 82000,
+          status: 'EXPIRED',
+          asyncStatus: 'payment_status_changed:expired',
+          providerChargeCurrency: 'USD',
+          providerChargeAmountMinor: 5576,
+        }),
+      );
+      expect(mockDb.update).not.toHaveBeenCalled();
+      expect(insertDiagnostic.values).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reservationId,
+          paymentId,
+          tossOrderId: 'GRP-MUSD-EXPIRED',
+          diagnosticKind: 'payment_expired',
+          diagnosticCode: 'PAYMENT_EXPIRED',
+          diagnosticMessage: '결제 유효 시간이 만료되었습니다.',
+          diagnosticSource: 'payment_status_changed:expired',
+        }),
+      );
+      expect(insertDiagnostic.onConflictDoUpdate).toHaveBeenCalledOnce();
+    });
+
     it('finalizes Alipay DONE webhook only when provider totalAmount matches the stored USD quote', async () => {
       const reservationId = randomUUID();
       const showtimeId = randomUUID();
