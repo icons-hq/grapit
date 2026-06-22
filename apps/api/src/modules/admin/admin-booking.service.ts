@@ -1309,6 +1309,18 @@ export class AdminBookingService {
         performance: {
           title: performances.title,
         },
+        payment: {
+          id: payments.id,
+          paymentKey: payments.paymentKey,
+          tossOrderId: payments.tossOrderId,
+          method: payments.method,
+          provider: payments.provider,
+          currency: payments.currency,
+          amount: payments.amount,
+          status: payments.status,
+          createdAt: payments.createdAt,
+          paidAt: payments.paidAt,
+        },
         refund: {
           status: refunds.status,
         },
@@ -1328,6 +1340,7 @@ export class AdminBookingService {
       .innerJoin(users, eq(reservations.userId, users.id))
       .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
       .innerJoin(performances, eq(showtimes.performanceId, performances.id))
+      .leftJoin(payments, eq(payments.reservationId, reservations.id))
       .leftJoin(refunds, eq(refunds.reservationId, reservations.id))
       .leftJoin(
         reservationPaymentFailureDiagnostics,
@@ -1345,10 +1358,14 @@ export class AdminBookingService {
       .where(eq(ticketItems.reservationId, reservationId))
       .orderBy(asc(ticketItems.createdAt), asc(ticketItems.id));
 
-    const [payment] = await this.db
-      .select()
-      .from(payments)
-      .where(eq(payments.reservationId, reservationId));
+    const reservationSeatsFallback = reservationTicketItems.length === 0
+      ? await this.db
+          .select()
+          .from(reservationSeats)
+          .where(eq(reservationSeats.reservationId, reservationId))
+          .orderBy(asc(reservationSeats.id))
+      : [];
+    const payment = row.payment;
 
     const ticketStatusCounts = countTicketStatuses(reservationTicketItems);
     const funnelStatus = deriveAdminBookingFunnelStatus({
@@ -1368,7 +1385,9 @@ export class AdminBookingService {
       userCountry: row.user.country,
       performanceTitle: row.performance.title,
       showDateTime: row.showtime.dateTime?.toISOString() ?? '',
-      seats: reservationTicketItems.map(mapTicketItemToSeatSelection),
+      seats: reservationTicketItems.length > 0
+        ? reservationTicketItems.map(mapTicketItemToSeatSelection)
+        : reservationSeatsFallback.map(mapReservationSeatToSeatSelection),
       totalAmount: row.reservation.totalAmount,
       status: row.reservation.status as ReservationStatus,
       funnelStatus,
