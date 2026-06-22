@@ -383,6 +383,73 @@ describe('AdminBookingService', () => {
       });
     });
 
+    it('keeps webhook-sourced local deadline failures local without a terminal provider expiry signal', async () => {
+      mockDb.select
+        .mockReturnValueOnce(createChainMock([{
+          totalBookings: 1,
+          completedRevenue: 0,
+          soldCount: 0,
+          pendingPaymentCount: 0,
+          paymentProcessingCount: 0,
+          failedCount: 1,
+          expiredPaymentCount: 1,
+          abortedPaymentCount: 0,
+          localDeadlineExpiredCount: 1,
+          providerExpiredCount: 0,
+          providerAbortedCount: 0,
+          buyerCancelledBeforeConfirmCount: 0,
+          unreconciledProviderExpiredCount: 0,
+          compensatedCancelCount: 0,
+          otherPaymentFailureCount: 0,
+          cancelProcessingCount: 0,
+          cancelledCount: 0,
+          partialCancelledCount: 0,
+        }]))
+        .mockReturnValueOnce(createChainMock([
+          {
+            reservation: {
+              id: 'reservation-local-webhook-source',
+              reservationNumber: 'R-LOCAL-WEBHOOK-SOURCE',
+              tossOrderId: 'GRP-LOCAL-WEBHOOK-SOURCE',
+              status: 'FAILED',
+              totalAmount: 79000,
+              createdAt: new Date('2026-07-01T03:00:00.000Z'),
+            },
+            user: {
+              name: 'Webhook Source',
+              email: 'webhook-source@example.com',
+              country: 'KR',
+            },
+            showtime: {
+              dateTime: new Date('2026-07-18T10:00:00.000Z'),
+            },
+            performance: {
+              title: 'Girl Rules Fanmeeting',
+            },
+            payment: null,
+            refund: null,
+            diagnostic: {
+              diagnosticKind: 'payment_expired',
+              diagnosticCode: 'PAYMENT_DEADLINE_EXPIRED',
+              diagnosticMessage: '결제 제한 시간이 만료되었습니다.',
+              diagnosticSource: 'payment_webhook_events',
+              recordedAt: new Date('2026-07-01T03:05:00.000Z'),
+              providerCheckStatus: 'not_checked',
+              providerCheckedAt: null,
+              providerCheckMessage: null,
+            },
+          },
+        ]))
+        .mockReturnValueOnce(createChainMock([]))
+        .mockReturnValueOnce(createChainMock([]));
+
+      const result = await service.getBookings({});
+
+      expect(result.bookings[0]).toMatchObject({
+        paymentFailureBucket: 'local_deadline_expired',
+      });
+    });
+
     it('treats missing refund rows as not cancellation-processing when counting sold bookings', async () => {
       mockDb.select
         .mockReturnValueOnce(createChainMock([{

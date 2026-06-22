@@ -25,6 +25,7 @@ import {
   bookingOperationAuditLogs,
   ticketItems,
   reservationPaymentFailureDiagnostics,
+  paymentWebhookEvents,
 } from '../../database/schema/index.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
 import { RefundService } from '../refund/refund.service.js';
@@ -331,6 +332,7 @@ type AdminBookingListRow = {
     provider: string | null;
     currency: string | null;
   } | null;
+  providerExpiryWebhookReceived?: boolean | null;
   diagnostic: AdminBookingDiagnosticRow | null;
   refund: {
     status: string | null;
@@ -730,6 +732,25 @@ function abortedPaymentFailureConditionSql(): SQL {
   )`;
 }
 
+function providerExpiryWebhookReceivedSql(): SQL<boolean> {
+  return sql<boolean>`exists (
+    select 1
+    from ${paymentWebhookEvents}
+    where (
+      ${paymentWebhookEvents.reservationId} = ${reservations.id}
+      or (
+        ${paymentWebhookEvents.tossOrderId} is not null
+        and ${paymentWebhookEvents.tossOrderId} = coalesce(
+          ${payments.tossOrderId},
+          ${reservations.tossOrderId}
+        )
+      )
+    )
+      and ${paymentWebhookEvents.eventType} = 'PAYMENT_STATUS_CHANGED'
+      and ${paymentWebhookEvents.payload}->'data'->>'status' = 'EXPIRED'
+  )`;
+}
+
 function paymentFailureBucketSql(): SQL<PaymentFailureBucket | null> {
   return sql<PaymentFailureBucket | null>`case
     when not (${funnelStatusEqualsSql('PAYMENT_FAILED')}) then null
@@ -738,6 +759,7 @@ function paymentFailureBucketSql(): SQL<PaymentFailureBucket | null> {
     when ${payments.id} is null
       and ${reservationPaymentFailureDiagnostics.diagnosticCode} = 'PAYMENT_DEADLINE_EXPIRED'
       and ${reservationPaymentFailureDiagnostics.diagnosticSource} = 'payment_webhook_events'
+      and ${providerExpiryWebhookReceivedSql()}
       then 'unreconciled_provider_expired'
     when ${payments.status} = 'EXPIRED'
       or ${reservationPaymentFailureDiagnostics.diagnosticCode} = 'PAYMENT_EXPIRED'
@@ -1036,6 +1058,7 @@ export class AdminBookingService {
           provider: payments.provider,
           currency: payments.currency,
         },
+        providerExpiryWebhookReceived: providerExpiryWebhookReceivedSql(),
         diagnostic: {
           diagnosticKind: reservationPaymentFailureDiagnostics.diagnosticKind,
           diagnosticCode: reservationPaymentFailureDiagnostics.diagnosticCode,
@@ -1130,6 +1153,7 @@ export class AdminBookingService {
           paymentIdPresent: row.payment?.id !== null && row.payment?.id !== undefined,
           diagnosticCode: row.diagnostic?.diagnosticCode ?? null,
           diagnosticSource: row.diagnostic?.diagnosticSource ?? null,
+          providerExpiryWebhookReceived: row.providerExpiryWebhookReceived === true,
           funnelStatus,
         }),
         paymentFailureDiagnostic: mapPaymentFailureDiagnostic(row.diagnostic),
@@ -1298,6 +1322,7 @@ export class AdminBookingService {
           providerCheckedAt: reservationPaymentFailureDiagnostics.providerCheckedAt,
           providerCheckMessage: reservationPaymentFailureDiagnostics.providerCheckMessage,
         },
+        providerExpiryWebhookReceived: providerExpiryWebhookReceivedSql(),
       })
       .from(reservations)
       .innerJoin(users, eq(reservations.userId, users.id))
@@ -1355,6 +1380,7 @@ export class AdminBookingService {
         paymentIdPresent: payment !== null && payment !== undefined,
         diagnosticCode: row.diagnostic?.diagnosticCode ?? null,
         diagnosticSource: row.diagnostic?.diagnosticSource ?? null,
+        providerExpiryWebhookReceived: row.providerExpiryWebhookReceived === true,
         funnelStatus,
       }),
       paymentFailureDiagnostic: mapPaymentFailureDiagnostic(row.diagnostic),
@@ -2096,6 +2122,7 @@ function derivePaymentFailureBucket(input: {
   paymentIdPresent: boolean;
   diagnosticCode: string | null;
   diagnosticSource: string | null;
+  providerExpiryWebhookReceived: boolean;
   funnelStatus: AdminBookingFunnelStatus;
 }): PaymentFailureBucket | null {
   if (input.funnelStatus !== 'PAYMENT_FAILED') {
@@ -2110,6 +2137,7 @@ function derivePaymentFailureBucket(input: {
     !input.paymentIdPresent
     && input.diagnosticCode === 'PAYMENT_DEADLINE_EXPIRED'
     && input.diagnosticSource === 'payment_webhook_events'
+    && input.providerExpiryWebhookReceived
   ) {
     return 'unreconciled_provider_expired';
   }
