@@ -7,6 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
+import { SeatHighlightLabel } from '@/components/reservation/seat-highlight-label';
 import { TicketEmailDeliveryPanel } from '@/components/reservation/ticket-email-delivery-panel';
 import {
   buildQrCheckInUrl,
@@ -208,6 +209,7 @@ type BuyerQrCard = {
   id: string;
   isTicketItem: boolean;
   seatLabel: string;
+  tierColor?: string;
   floorLabel: string;
   qrCheckInUrl: string | null;
   qrBadgeLabel: string;
@@ -233,6 +235,7 @@ function getBuyerQrCards(booking: ReservationDetail, copy: CompleteCardCopy): Bu
         id: ticketItem.id,
         isTicketItem: true,
         seatLabel: formatTicketItemSeat(ticketItem, copy),
+        tierColor: ticketItem.tierColor,
         floorLabel: ticketItem.floorLabel,
         qrCheckInUrl,
         qrBadgeLabel: getTicketItemQrBadgeLabel(ticketItem.status, Boolean(qrCheckInUrl), copy),
@@ -254,6 +257,7 @@ function getBuyerQrCards(booking: ReservationDetail, copy: CompleteCardCopy): Bu
       id: 'legacy-qr-ticket',
       isTicketItem: false,
       seatLabel: formatSeats(booking, copy),
+      tierColor: booking.seats.length === 1 ? booking.seats[0]?.tierColor : undefined,
       floorLabel: '',
       qrCheckInUrl: isQrActive ? buildQrCheckInUrl(booking.qrTicket.token) : null,
       qrBadgeLabel: isQrActive ? copy.qrActive : copy.qrPending,
@@ -468,7 +472,12 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
                       data-testid={`qr-ticket-seat-label-${card.id}`}
                       className="break-words text-2xl font-bold leading-tight text-gray-950"
                     >
-                      {card.seatLabel}
+                      <SeatHighlightLabel
+                        tierColor={card.tierColor}
+                        testId={`qr-ticket-seat-label-highlight-${card.id}`}
+                      >
+                        {card.seatLabel}
+                      </SeatHighlightLabel>
                     </h3>
                     {card.floorLabel && (
                       <p className="mt-1 text-sm font-medium text-gray-500">{card.floorLabel}</p>
@@ -525,7 +534,12 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
                         data-testid={`qr-ticket-seat-detail-${card.id}`}
                         className="block break-words text-lg font-bold leading-snug text-gray-950"
                       >
-                        {card.seatLabel}
+                        <SeatHighlightLabel
+                          tierColor={card.tierColor}
+                          testId={`qr-ticket-seat-detail-highlight-${card.id}`}
+                        >
+                          {card.seatLabel}
+                        </SeatHighlightLabel>
                       </span>
                     </div>
                     <div>

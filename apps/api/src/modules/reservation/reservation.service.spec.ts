@@ -21,6 +21,7 @@ import {
   payments,
   reservations,
   reservationSeats,
+  performanceSeatTiers,
   seatInventories,
   ticketBenefitConfigurations,
   ticketBenefitEntitlements,
@@ -545,7 +546,11 @@ describe('ReservationService', () => {
                       createdAt: new Date(),
                     },
                     showtime: { dateTime: new Date() },
-                    performance: { title: '락 테스트 공연', posterUrl: null },
+                    performance: {
+                      id: 'performance-1',
+                      title: '락 테스트 공연',
+                      posterUrl: null,
+                    },
                     venue: { name: '락 테스트 극장' },
                     diagnostic: args.diagnostic ?? null,
                   }]),
@@ -577,6 +582,8 @@ describe('ReservationService', () => {
     if (ticketItemRows.length > 0) {
       mockDb.select.mockReturnValueOnce(chainResult(args.benefitEntitlements ?? []));
     }
+
+    mockDb.select.mockReturnValueOnce(chainResult([{ tierName: 'VIP', color: '#6C3CE0' }]));
 
     mockDb.select.mockReturnValueOnce(chainResult([{
       email: args.userEmail ?? 'buyer@example.com',
@@ -646,6 +653,9 @@ describe('ReservationService', () => {
         }
         if (table === ticketItems) {
           return chainResult(args.ticketItems);
+        }
+        if (table === performanceSeatTiers) {
+          return chainResult([{ tierName: 'VIP', color: '#6C3CE0' }]);
         }
         if (table === ticketBenefitEntitlements) {
           return {
@@ -4004,7 +4014,7 @@ describe('ReservationService', () => {
                       createdAt: new Date(),
                     },
                     showtime: { dateTime: new Date() },
-                    performance: { title: '테스트 공연', posterUrl: null },
+                    performance: { id: 'performance-1', title: '테스트 공연', posterUrl: null },
                     venue: { name: '테스트 극장' },
                     diagnostic: null,
                   }]),
@@ -4035,6 +4045,9 @@ describe('ReservationService', () => {
 
       // select ticket items for reservation detail
       mockDb.select.mockReturnValueOnce(chainResult([]));
+
+      // select performance seat tier colors
+      mockDb.select.mockReturnValueOnce(chainResult([{ tierName: 'VIP', color: '#6C3CE0' }]));
 
       // select user email delivery context
       mockDb.select.mockReturnValueOnce(chainResult([{
@@ -5024,6 +5037,26 @@ describe('ReservationService', () => {
           attachedToTicket: true,
         }),
       ]);
+    });
+
+    it('includes seat tier colors on reservation seats and ticket items', async () => {
+      setupReservationDetailBenefitMocks({
+        reservationId,
+        userId,
+        amount: 150000,
+        ticketItems: ticketItemRowsForReservation({
+          reservationId,
+          showtimeId: '11111111-1111-4111-8111-111111111111',
+          seats: ['A-1'],
+          amount: 150000,
+        }),
+        benefitEntitlements: [],
+      });
+
+      const detail = await service.getReservationDetail(reservationId, userId);
+
+      expect(detail.seats[0]?.tierColor).toBe('#6C3CE0');
+      expect(detail.ticketItems[0]?.tierColor).toBe('#6C3CE0');
     });
 
     it.each([

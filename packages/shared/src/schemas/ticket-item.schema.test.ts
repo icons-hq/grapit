@@ -25,6 +25,7 @@ describe('ticket item shared contracts', () => {
       row: 'A',
       number: '1',
       tierName: 'VIP',
+      tierColor: '#6C3CE0',
       price: 100000,
       serviceFee: 2000,
       status: 'ACTIVE',
@@ -43,6 +44,7 @@ describe('ticket item shared contracts', () => {
     });
 
     expect(parsed.seatKey).toBe('1F:A-1');
+    expect(parsed.tierColor).toBe('#6C3CE0');
     expect(parsed.qrCredential?.jti).toBe('qr-jti-seat-a1');
   });
 

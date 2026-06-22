@@ -53,6 +53,7 @@ export const ticketItemSchema = z.object({
   row: z.string().min(1),
   number: z.string().min(1),
   tierName: z.string().min(1),
+  tierColor: z.string().min(1).optional(),
   price: z.number().int().min(0),
   serviceFee: ticketItemServiceFeeSchema,
   status: ticketItemStatusSchema,

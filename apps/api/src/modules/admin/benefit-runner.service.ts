@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
-import { and, asc, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 
 import {
   benefitEntitlementExportRowSchema,
@@ -25,6 +25,7 @@ import {
   ticketBenefitRuns,
   ticketBenefits,
   ticketItems,
+  users,
 } from '../../database/schema/index.js';
 import { AdminAuditService } from './admin-audit.service.js';
 import { AdminBenefitsService } from './admin-benefits.service.js';
@@ -40,6 +41,14 @@ type TicketBenefitRow = typeof ticketBenefits.$inferSelect;
 type BenefitRunRow = typeof ticketBenefitRuns.$inferSelect;
 type BenefitEntitlementRow = typeof ticketBenefitEntitlements.$inferSelect;
 type BenefitMutationDb = DrizzleDB & Pick<DrizzleDB, 'execute'>;
+
+type TicketCustomerExportMetadata = {
+  ticketItemId: string;
+  ticketSeatNumber: string;
+  customerPhone: string;
+  customerName: string;
+  customerEmail: string;
+};
 
 interface TicketItemCandidate {
   ticketItemId: string;
@@ -538,7 +547,7 @@ export class BenefitRunnerService {
     const row = await this.loadRunRow(this.db, runId);
     const summary = normalizeResultSummary(row.resultSummary);
     const generatedAt = (actor.now ?? new Date()).toISOString();
-    const rows = summary.exportRows;
+    const rows = await this.hydrateExportRowsWithTicketMetadata(summary.exportRows);
     const csv = withUtf8Bom(safeCsvRows([
       entitlementExportHeader(),
       ...rows.map(entitlementExportRowToCsvValues),
@@ -594,7 +603,9 @@ export class BenefitRunnerService {
       .where(eq(ticketBenefitEntitlements.showtimeId, showtimeId))
       .orderBy(asc(ticketBenefitEntitlements.createdAt));
     const generatedAt = (actor.now ?? new Date()).toISOString();
-    const exportRows = (rows as BenefitEntitlementRow[]).map(entitlementRowToExportRow);
+    const exportRows = await this.hydrateExportRowsWithTicketMetadata(
+      (rows as BenefitEntitlementRow[]).map(entitlementRowToExportRow),
+    );
     const csv = withUtf8Bom(safeCsvRows([
       entitlementExportHeader(),
       ...exportRows.map(entitlementExportRowToCsvValues),
@@ -625,6 +636,59 @@ export class BenefitRunnerService {
       rowCount: exportRows.length,
       generatedAt,
     };
+  }
+
+  private async hydrateExportRowsWithTicketMetadata(
+    rows: BenefitEntitlementExportRow[],
+  ): Promise<BenefitEntitlementExportRow[]> {
+    const ticketItemIds = Array.from(new Set(rows.map((row) => row.ticketItemId)));
+    if (ticketItemIds.length === 0) {
+      return rows;
+    }
+
+    const metadataRows = await this.db
+      .select({
+        ticketItemId: ticketItems.id,
+        floorLabel: ticketItems.floorLabel,
+        tierName: ticketItems.tierName,
+        row: ticketItems.row,
+        number: ticketItems.number,
+        customerPhone: users.phone,
+        customerName: users.name,
+        customerEmail: users.email,
+      })
+      .from(ticketItems)
+      .innerJoin(reservations, eq(ticketItems.reservationId, reservations.id))
+      .innerJoin(users, eq(reservations.userId, users.id))
+      .where(inArray(ticketItems.id, ticketItemIds));
+
+    const metadataByTicketItemId = new Map(
+      metadataRows.map((metadata) => [
+        metadata.ticketItemId,
+        {
+          ticketItemId: metadata.ticketItemId,
+          ticketSeatNumber: formatTicketSeatNumber(metadata),
+          customerPhone: metadata.customerPhone,
+          customerName: metadata.customerName,
+          customerEmail: metadata.customerEmail,
+        } satisfies TicketCustomerExportMetadata,
+      ]),
+    );
+
+    return rows.map((row) => {
+      const metadata = metadataByTicketItemId.get(row.ticketItemId);
+      if (!metadata) {
+        return row;
+      }
+
+      return {
+        ...row,
+        ticketSeatNumber: metadata.ticketSeatNumber,
+        customerPhone: metadata.customerPhone,
+        customerName: metadata.customerName,
+        customerEmail: metadata.customerEmail,
+      } as BenefitEntitlementExportRow;
+    });
   }
 
   private async loadRunRow(db: DrizzleDB, runId: string): Promise<BenefitRunRow> {
@@ -1298,6 +1362,10 @@ function entitlementExportHeader(): string[] {
     'State',
     'Assigned At',
     'Redeemed At',
+    'Ticket Seat Number',
+    'Customer Phone',
+    'Customer Name',
+    'Customer Email',
   ];
 }
 
@@ -1320,7 +1388,25 @@ function entitlementExportRowToCsvValues(row: BenefitEntitlementExportRow): unkn
     row.state,
     row.assignedAt,
     row.redeemedAt ?? '',
+    row.ticketSeatNumber ?? '',
+    row.customerPhone ?? '',
+    row.customerName ?? '',
+    row.customerEmail ?? '',
   ];
+}
+
+function formatTicketSeatNumber(input: {
+  floorLabel: string;
+  tierName: string;
+  row: string;
+  number: string;
+}): string {
+  return [
+    input.floorLabel,
+    input.tierName,
+    `${input.row}열`,
+    `${input.number}번`,
+  ].filter(Boolean).join(' ');
 }
 
 function parseMutualExclusionGroup(group: string | null): string[] {

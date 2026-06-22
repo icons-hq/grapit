@@ -42,6 +42,7 @@ function makeSeat() {
     floorLabel: '1층',
     seatKey: '1F:A-1',
     tierName: 'VIP',
+    tierColor: '#6C3CE0',
     price: 50000,
     row: 'A',
     number: '1',
@@ -59,6 +60,7 @@ function makeTicketItem(overrides: Record<string, unknown> = {}) {
     floorLabel: '1층',
     seatKey: '1F:A-1',
     tierName: 'VIP',
+    tierColor: '#6C3CE0',
     price: 50000,
     serviceFee: 2000,
     row: 'A',
@@ -1029,6 +1031,7 @@ describe('prepareReservationSchema booking consent contract', () => {
     expect(detail.ticketItems[0]?.benefitEntitlements[0]?.benefitIdentity).toBe(
       'benefit_6_to_1',
     );
+    expect(detail.ticketItems[0]?.tierColor).toBe('#6C3CE0');
   });
 
   it('accepts nullable admin payment diagnostics and requires payment method attribution fallback', () => {

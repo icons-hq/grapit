@@ -96,6 +96,7 @@ function createReservation(
         floorKey: '1F',
         floorLabel: '1층',
         tierName: 'VIP',
+        tierColor: '#6C3CE0',
         row: 'A',
         number: '1',
         price: 77000,
@@ -106,6 +107,7 @@ function createReservation(
         floorKey: '1F',
         floorLabel: '1층',
         tierName: 'VIP',
+        tierColor: '#6C3CE0',
         row: 'A',
         number: '2',
         price: 77000,
@@ -184,6 +186,7 @@ function createReservation(
         floorKey: '1F',
         floorLabel: '1층',
         tierName: 'VIP',
+        tierColor: '#6C3CE0',
         row: 'A',
         number: '1',
         price: 77000,
@@ -213,6 +216,7 @@ function createReservation(
         floorKey: '1F',
         floorLabel: '1층',
         tierName: 'VIP',
+        tierColor: '#6C3CE0',
         row: 'A',
         number: '2',
         price: 77000,
@@ -283,10 +287,14 @@ describe('ReservationDetailView QR ticket card', () => {
       'text-2xl',
       'font-bold',
     );
+    expect(within(firstQrCard).getByTestId(`qr-ticket-seat-label-highlight-${firstTicketItemId}`))
+      .toHaveStyle({ backgroundColor: '#6C3CE0' });
     expect(within(firstQrCard).getByText('좌석 정보').nextElementSibling).toHaveClass(
       'text-lg',
       'font-bold',
     );
+    expect(within(firstQrCard).getByTestId(`qr-ticket-seat-detail-highlight-${firstTicketItemId}`))
+      .toHaveStyle({ backgroundColor: '#6C3CE0' });
     expect(within(firstQrCard).getByText('QR 활성')).toHaveClass('px-3', 'py-1', 'text-sm');
 
     expect(screen.queryByText(rawQrToken, { exact: true })).not.toBeInTheDocument();
