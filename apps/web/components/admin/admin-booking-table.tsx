@@ -16,6 +16,7 @@ import type {
   PaymentStatus,
   ReservationStatus,
 } from '@grabit/shared';
+import { getPaymentFailureBucketLabel } from './payment-failure-buckets';
 
 const FUNNEL_STATUS_CONFIG: Record<
   AdminBookingFunnelStatus,
@@ -202,6 +203,9 @@ export function AdminBookingTable({
             bookings.map((booking) => {
               const statusConfig = getFunnelStatusConfig(booking);
               const diagnosticSummary = getPaymentDiagnosticSummary(booking);
+              const failureBucketLabel = getPaymentFailureBucketLabel(
+                booking.paymentFailureBucket,
+              );
               return (
                 <TableRow
                   key={booking.id}
@@ -256,6 +260,11 @@ export function AdminBookingTable({
                       <Badge className={statusConfig.className}>
                         {statusConfig.label}
                       </Badge>
+                      {failureBucketLabel && (
+                        <Badge className="border-transparent bg-[#F8FAFC] text-[#334155]">
+                          {failureBucketLabel}
+                        </Badge>
+                      )}
                       <p className="text-xs text-gray-500">
                         {getPaymentSummary(booking)}
                       </p>

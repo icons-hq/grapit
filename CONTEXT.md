@@ -224,6 +224,14 @@ _Avoid_: Live exchange rate, UI estimate, mutable display price.
 An admin-facing explanation of why a Reservation did not complete payment, assembled from provider evidence, webhook evidence, and Grabit's own payment lifecycle state.
 _Avoid_: Raw Toss error dump, customer-facing failure copy, payment status.
 
+**Payment Failure Bucket**:
+A normalized admin analytics bucket that groups a failed or expired Reservation by operator actionability, such as local deadline expiry, provider expiry, provider abort, buyer pre-confirm cancellation, compensated cancel, or unreconciled provider expiry.
+_Avoid_: Payment status, raw diagnostic code, customer-facing message.
+
+**Unreconciled Provider Expiry**:
+A Payment Failure Bucket for a Reservation that failed locally before a provider `EXPIRED` webhook could be fully reconciled into a normal payment row, most often because the provider webhook arrived late or required provider-state normalization.
+_Avoid_: Local-only timeout, successful payment, refund-needed state.
+
 **Payment Failure Contact Export**:
 A contact export for buyers affected by payment failure, payment expiration, or cancellation, including safe diagnostic fields needed for operator follow-up.
 _Avoid_: Raw payment export, webhook payload export, settlement dataset.

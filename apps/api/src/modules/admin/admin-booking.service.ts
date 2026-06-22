@@ -41,6 +41,7 @@ import type {
   BookingStats,
   FloorAwareSeatSelection,
   PaymentInfo,
+  PaymentFailureBucket,
   PaymentMethod,
   PaymentMethodAttribution,
   PaymentMethodType,
@@ -324,6 +325,7 @@ type AdminBookingListRow = {
     title: string;
   };
   payment: {
+    id: string | null;
     status: string | null;
     method: string | null;
     provider: string | null;
@@ -355,6 +357,13 @@ type BookingStatsRow = {
   failedCount?: number | string | null;
   expiredPaymentCount?: number | string | null;
   abortedPaymentCount?: number | string | null;
+  localDeadlineExpiredCount?: number | string | null;
+  providerExpiredCount?: number | string | null;
+  providerAbortedCount?: number | string | null;
+  buyerCancelledBeforeConfirmCount?: number | string | null;
+  unreconciledProviderExpiredCount?: number | string | null;
+  compensatedCancelCount?: number | string | null;
+  otherPaymentFailureCount?: number | string | null;
   cancelProcessingCount?: number | string | null;
   cancelledCount?: number | string | null;
   partialCancelledCount?: number | string | null;
@@ -721,6 +730,35 @@ function abortedPaymentFailureConditionSql(): SQL {
   )`;
 }
 
+function paymentFailureBucketSql(): SQL<PaymentFailureBucket | null> {
+  return sql<PaymentFailureBucket | null>`case
+    when not (${funnelStatusEqualsSql('PAYMENT_FAILED')}) then null
+    when ${reservationPaymentFailureDiagnostics.diagnosticCode} = 'ASYNC_DONE_SEAT_UNAVAILABLE_CANCELLED'
+      then 'compensated_cancel'
+    when ${payments.id} is null
+      and ${reservationPaymentFailureDiagnostics.diagnosticCode} = 'PAYMENT_DEADLINE_EXPIRED'
+      and ${reservationPaymentFailureDiagnostics.diagnosticSource} = 'payment_webhook_events'
+      then 'unreconciled_provider_expired'
+    when ${payments.status} = 'EXPIRED'
+      or ${reservationPaymentFailureDiagnostics.diagnosticCode} = 'PAYMENT_EXPIRED'
+      then 'provider_expired'
+    when ${payments.status} = 'ABORTED'
+      or ${reservationPaymentFailureDiagnostics.diagnosticCode} = 'PAYMENT_ABORTED'
+      then 'provider_aborted'
+    when ${payments.status} = 'CANCELED'
+      or ${reservationPaymentFailureDiagnostics.diagnosticCode} = 'PAYMENT_CANCELED_BEFORE_CONFIRM'
+      then 'buyer_cancelled_before_confirm'
+    when ${reservationPaymentFailureDiagnostics.diagnosticCode} = 'PAYMENT_DEADLINE_EXPIRED'
+      or (${payments.id} is null and ${reservations.status} = 'FAILED')
+      then 'local_deadline_expired'
+    else 'other'
+  end`;
+}
+
+function paymentFailureBucketEqualsSql(bucket: PaymentFailureBucket): SQL {
+  return sql`${paymentFailureBucketSql()} = ${bucket}`;
+}
+
 function failedCancelledContactConditionSql(): SQL {
   return sql`(
     ${reservations.status} = 'FAILED'
@@ -744,8 +782,8 @@ function noActiveTicketForSameUserPerformanceSql(): SQL {
   )`;
 }
 
-function countWhereSql(condition: SQL): SQL<number> {
-  return sql<number>`count(*) filter (where ${condition})::int`;
+function countDistinctReservationsWhereSql(condition: SQL): SQL<number> {
+  return sql<number>`count(distinct ${reservations.id}) filter (where ${condition})::int`;
 }
 
 function completedRevenueSql(): SQL<number> {
@@ -778,6 +816,13 @@ function mapBookingStats(row: BookingStatsRow | undefined): BookingStats {
     failedCount: toInt(row?.failedCount),
     expiredPaymentCount: toInt(row?.expiredPaymentCount),
     abortedPaymentCount: toInt(row?.abortedPaymentCount),
+    localDeadlineExpiredCount: toInt(row?.localDeadlineExpiredCount),
+    providerExpiredCount: toInt(row?.providerExpiredCount),
+    providerAbortedCount: toInt(row?.providerAbortedCount),
+    buyerCancelledBeforeConfirmCount: toInt(row?.buyerCancelledBeforeConfirmCount),
+    unreconciledProviderExpiredCount: toInt(row?.unreconciledProviderExpiredCount),
+    compensatedCancelCount: toInt(row?.compensatedCancelCount),
+    otherPaymentFailureCount: toInt(row?.otherPaymentFailureCount),
     cancelProcessingCount: toInt(row?.cancelProcessingCount),
     cancelledCount,
     partialCancelledCount: toInt(row?.partialCancelledCount),
@@ -930,17 +975,24 @@ export class AdminBookingService {
 
     const [statsRow] = await this.db
       .select({
-        totalBookings: sql<number>`count(*)::int`,
+        totalBookings: sql<number>`count(distinct ${reservations.id})::int`,
         completedRevenue: completedRevenueSql(),
-        soldCount: countWhereSql(soldReservationConditionSql()),
-        pendingPaymentCount: countWhereSql(funnelStatusEqualsSql('PAYMENT_PENDING')),
-        paymentProcessingCount: countWhereSql(funnelStatusEqualsSql('PAYMENT_PROCESSING')),
-        failedCount: countWhereSql(funnelStatusEqualsSql('PAYMENT_FAILED')),
-        expiredPaymentCount: countWhereSql(expiredPaymentFailureConditionSql()),
-        abortedPaymentCount: countWhereSql(abortedPaymentFailureConditionSql()),
-        cancelProcessingCount: countWhereSql(cancelProcessingReservationConditionSql()),
-        cancelledCount: countWhereSql(funnelStatusEqualsSql('CANCELLED')),
-        partialCancelledCount: countWhereSql(partialCancelledReservationConditionSql()),
+        soldCount: countDistinctReservationsWhereSql(soldReservationConditionSql()),
+        pendingPaymentCount: countDistinctReservationsWhereSql(funnelStatusEqualsSql('PAYMENT_PENDING')),
+        paymentProcessingCount: countDistinctReservationsWhereSql(funnelStatusEqualsSql('PAYMENT_PROCESSING')),
+        failedCount: countDistinctReservationsWhereSql(funnelStatusEqualsSql('PAYMENT_FAILED')),
+        expiredPaymentCount: countDistinctReservationsWhereSql(expiredPaymentFailureConditionSql()),
+        abortedPaymentCount: countDistinctReservationsWhereSql(abortedPaymentFailureConditionSql()),
+        localDeadlineExpiredCount: countDistinctReservationsWhereSql(paymentFailureBucketEqualsSql('local_deadline_expired')),
+        providerExpiredCount: countDistinctReservationsWhereSql(paymentFailureBucketEqualsSql('provider_expired')),
+        providerAbortedCount: countDistinctReservationsWhereSql(paymentFailureBucketEqualsSql('provider_aborted')),
+        buyerCancelledBeforeConfirmCount: countDistinctReservationsWhereSql(paymentFailureBucketEqualsSql('buyer_cancelled_before_confirm')),
+        unreconciledProviderExpiredCount: countDistinctReservationsWhereSql(paymentFailureBucketEqualsSql('unreconciled_provider_expired')),
+        compensatedCancelCount: countDistinctReservationsWhereSql(paymentFailureBucketEqualsSql('compensated_cancel')),
+        otherPaymentFailureCount: countDistinctReservationsWhereSql(paymentFailureBucketEqualsSql('other')),
+        cancelProcessingCount: countDistinctReservationsWhereSql(cancelProcessingReservationConditionSql()),
+        cancelledCount: countDistinctReservationsWhereSql(funnelStatusEqualsSql('CANCELLED')),
+        partialCancelledCount: countDistinctReservationsWhereSql(partialCancelledReservationConditionSql()),
       })
       .from(reservations)
       .innerJoin(users, eq(reservations.userId, users.id))
@@ -978,6 +1030,7 @@ export class AdminBookingService {
           title: performances.title,
         },
         payment: {
+          id: payments.id,
           status: payments.status,
           method: payments.method,
           provider: payments.provider,
@@ -1008,7 +1061,7 @@ export class AdminBookingService {
       )
       .leftJoin(refunds, eq(refunds.reservationId, reservations.id))
       .where(whereClause)
-      .orderBy(desc(reservations.createdAt))
+      .orderBy(desc(reservations.createdAt), desc(reservations.id))
       .limit(limit)
       .offset(offset) as AdminBookingListRow[];
 
@@ -1048,6 +1101,12 @@ export class AdminBookingService {
       const reservationTicketItems = ticketItemsByReservation.get(row.reservation.id) ?? [];
       const reservationSeatsFallback = reservationSeatsByReservation.get(row.reservation.id) ?? [];
       const ticketStatusCounts = countTicketStatuses(reservationTicketItems);
+      const funnelStatus = deriveAdminBookingFunnelStatus({
+        reservationStatus: row.reservation.status,
+        paymentStatus: row.payment?.status ?? null,
+        refundStatus: row.refund?.status ?? null,
+        ticketStatusCounts,
+      });
       return {
         id: row.reservation.id,
         reservationNumber: row.reservation.reservationNumber,
@@ -1062,14 +1121,17 @@ export class AdminBookingService {
           : reservationSeatsFallback.map(mapReservationSeatToSeatSelection),
         totalAmount: row.reservation.totalAmount,
         status: row.reservation.status as ReservationStatus,
-        funnelStatus: deriveAdminBookingFunnelStatus({
-          reservationStatus: row.reservation.status,
-          paymentStatus: row.payment?.status ?? null,
-          refundStatus: row.refund?.status ?? null,
-          ticketStatusCounts,
-        }),
+        funnelStatus,
         paymentStatus: mapPaymentStatusOrNull(row.payment?.status),
         paymentMethod: row.payment?.method ?? null,
+        paymentFailureBucket: derivePaymentFailureBucket({
+          reservationStatus: row.reservation.status,
+          paymentStatus: row.payment?.status ?? null,
+          paymentIdPresent: row.payment?.id !== null && row.payment?.id !== undefined,
+          diagnosticCode: row.diagnostic?.diagnosticCode ?? null,
+          diagnosticSource: row.diagnostic?.diagnosticSource ?? null,
+          funnelStatus,
+        }),
         paymentFailureDiagnostic: mapPaymentFailureDiagnostic(row.diagnostic),
         paymentMethodAttribution: mapPaymentMethodAttribution(row.payment),
         ticketStatusCounts,
@@ -1263,6 +1325,14 @@ export class AdminBookingService {
       .from(payments)
       .where(eq(payments.reservationId, reservationId));
 
+    const ticketStatusCounts = countTicketStatuses(reservationTicketItems);
+    const funnelStatus = deriveAdminBookingFunnelStatus({
+      reservationStatus: row.reservation.status,
+      paymentStatus: payment?.status ?? null,
+      refundStatus: row.refund?.status ?? null,
+      ticketStatusCounts,
+    });
+
     return {
       id: row.reservation.id,
       reservationNumber: row.reservation.reservationNumber,
@@ -1276,19 +1346,22 @@ export class AdminBookingService {
       seats: reservationTicketItems.map(mapTicketItemToSeatSelection),
       totalAmount: row.reservation.totalAmount,
       status: row.reservation.status as ReservationStatus,
-      funnelStatus: deriveAdminBookingFunnelStatus({
-        reservationStatus: row.reservation.status,
-        paymentStatus: payment?.status ?? null,
-        refundStatus: row.refund?.status ?? null,
-        ticketStatusCounts: countTicketStatuses(reservationTicketItems),
-      }),
+      funnelStatus,
       paymentStatus: mapPaymentStatusOrNull(payment?.status),
       paymentMethod: payment?.method ?? null,
+      paymentFailureBucket: derivePaymentFailureBucket({
+        reservationStatus: row.reservation.status,
+        paymentStatus: payment?.status ?? null,
+        paymentIdPresent: payment !== null && payment !== undefined,
+        diagnosticCode: row.diagnostic?.diagnosticCode ?? null,
+        diagnosticSource: row.diagnostic?.diagnosticSource ?? null,
+        funnelStatus,
+      }),
       paymentFailureDiagnostic: mapPaymentFailureDiagnostic(row.diagnostic),
       paymentMethodAttribution: mapPaymentMethodAttribution(payment ?? null),
       paymentAttemptedAt: payment?.createdAt?.toISOString() ?? null,
       paymentCompletedAt: payment?.paidAt?.toISOString() ?? null,
-      ticketStatusCounts: countTicketStatuses(reservationTicketItems),
+      ticketStatusCounts,
       createdAt: row.reservation.createdAt?.toISOString() ?? '',
       ticketItems: reservationTicketItems.map(mapTicketItemToAdminTicketItem),
       paymentInfo: payment
@@ -2015,6 +2088,61 @@ function deriveAdminBookingFunnelStatus(input: {
     return 'PAYMENT_PROCESSING';
   }
   return 'PAYMENT_PENDING';
+}
+
+function derivePaymentFailureBucket(input: {
+  reservationStatus: string;
+  paymentStatus: string | null;
+  paymentIdPresent: boolean;
+  diagnosticCode: string | null;
+  diagnosticSource: string | null;
+  funnelStatus: AdminBookingFunnelStatus;
+}): PaymentFailureBucket | null {
+  if (input.funnelStatus !== 'PAYMENT_FAILED') {
+    return null;
+  }
+
+  if (input.diagnosticCode === 'ASYNC_DONE_SEAT_UNAVAILABLE_CANCELLED') {
+    return 'compensated_cancel';
+  }
+
+  if (
+    !input.paymentIdPresent
+    && input.diagnosticCode === 'PAYMENT_DEADLINE_EXPIRED'
+    && input.diagnosticSource === 'payment_webhook_events'
+  ) {
+    return 'unreconciled_provider_expired';
+  }
+
+  if (
+    input.paymentStatus === 'EXPIRED'
+    || input.diagnosticCode === 'PAYMENT_EXPIRED'
+  ) {
+    return 'provider_expired';
+  }
+
+  if (
+    input.paymentStatus === 'ABORTED'
+    || input.diagnosticCode === 'PAYMENT_ABORTED'
+  ) {
+    return 'provider_aborted';
+  }
+
+  if (
+    input.paymentStatus === 'CANCELED'
+    || input.diagnosticCode === 'PAYMENT_CANCELED_BEFORE_CONFIRM'
+  ) {
+    return 'buyer_cancelled_before_confirm';
+  }
+
+  if (
+    input.diagnosticCode === 'PAYMENT_DEADLINE_EXPIRED'
+    || (!input.paymentIdPresent && input.reservationStatus === 'FAILED')
+  ) {
+    return 'local_deadline_expired';
+  }
+
+  return 'other';
 }
 
 function isRefundAttentionStatus(status: string | null): status is AdminRefundStatus {

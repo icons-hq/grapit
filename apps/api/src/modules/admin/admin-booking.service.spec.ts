@@ -254,6 +254,13 @@ describe('AdminBookingService', () => {
           failedCount: 1,
           expiredPaymentCount: 1,
           abortedPaymentCount: 0,
+          localDeadlineExpiredCount: 1,
+          providerExpiredCount: 0,
+          providerAbortedCount: 0,
+          buyerCancelledBeforeConfirmCount: 0,
+          unreconciledProviderExpiredCount: 0,
+          compensatedCancelCount: 0,
+          otherPaymentFailureCount: 0,
           cancelProcessingCount: 0,
           cancelledCount: 1,
           partialCancelledCount: 0,
@@ -270,6 +277,13 @@ describe('AdminBookingService', () => {
         failedCount: 1,
         expiredPaymentCount: 1,
         abortedPaymentCount: 0,
+        localDeadlineExpiredCount: 1,
+        providerExpiredCount: 0,
+        providerAbortedCount: 0,
+        buyerCancelledBeforeConfirmCount: 0,
+        unreconciledProviderExpiredCount: 0,
+        compensatedCancelCount: 0,
+        otherPaymentFailureCount: 0,
         cancelledCount: 1,
       });
       expect(result.stats.cancelRate).toBe(25);
@@ -280,6 +294,93 @@ describe('AdminBookingService', () => {
       expect(objectGraphContains(statsSelect.abortedPaymentCount, 'ABORTED')).toBe(true);
       expect(objectGraphContains(statsSelect.abortedPaymentCount, 'PAYMENT_CANCELED_BEFORE_CONFIRM')).toBe(true);
       expect(objectGraphContains(statsSelect.abortedPaymentCount, 'ASYNC_DONE_SEAT_UNAVAILABLE_CANCELLED')).toBe(true);
+      expect(objectGraphText(statsSelect.totalBookings)).toContain('distinct');
+      expect(objectGraphContains(statsSelect.unreconciledProviderExpiredCount, 'PAYMENT_DEADLINE_EXPIRED')).toBe(true);
+      expect(objectGraphContains(statsSelect.unreconciledProviderExpiredCount, 'payment_webhook_events')).toBe(true);
+    });
+
+    it('uses deterministic pagination order', async () => {
+      const listCalls: Array<{ method: string; args: unknown[] }> = [];
+      const bookingRow = {
+        reservation: {
+          id: 'reservation-expired-1',
+          reservationNumber: 'R-EXP-001',
+          tossOrderId: 'GRP-TOSS-EXP-001',
+          status: 'FAILED',
+          totalAmount: 79000,
+          createdAt: new Date('2026-07-01T03:00:00.000Z'),
+        },
+        user: {
+          name: '김중복',
+          email: 'duplicate@example.com',
+          country: 'KR',
+        },
+        showtime: {
+          dateTime: new Date('2026-07-18T10:00:00.000Z'),
+        },
+        performance: {
+          title: 'Girl Rules Fanmeeting',
+        },
+        payment: {
+          id: 'payment-expired-1',
+          status: 'EXPIRED',
+          method: 'CARD',
+          provider: 'CARD',
+          currency: 'KRW',
+        },
+        refund: {
+          status: null,
+        },
+        diagnostic: {
+          diagnosticKind: 'payment_expired',
+          diagnosticCode: 'PAYMENT_EXPIRED',
+          diagnosticMessage: '결제 유효 시간이 만료되었습니다.',
+          diagnosticSource: 'payment_webhook_events',
+          recordedAt: new Date('2026-07-01T03:05:00.000Z'),
+          providerCheckStatus: 'not_checked',
+          providerCheckedAt: null,
+          providerCheckMessage: null,
+        },
+      };
+
+      mockDb.select
+        .mockReturnValueOnce(createChainMock([{
+          totalBookings: 1,
+          completedRevenue: 0,
+          soldCount: 0,
+          pendingPaymentCount: 0,
+          paymentProcessingCount: 0,
+          failedCount: 1,
+          expiredPaymentCount: 1,
+          abortedPaymentCount: 0,
+          localDeadlineExpiredCount: 0,
+          providerExpiredCount: 1,
+          providerAbortedCount: 0,
+          buyerCancelledBeforeConfirmCount: 0,
+          unreconciledProviderExpiredCount: 0,
+          compensatedCancelCount: 0,
+          otherPaymentFailureCount: 0,
+          cancelProcessingCount: 0,
+          cancelledCount: 0,
+          partialCancelledCount: 0,
+        }]))
+        .mockReturnValueOnce(
+          createRecordingChainMock([
+            bookingRow,
+          ], listCalls),
+        )
+        .mockReturnValueOnce(createChainMock([]))
+        .mockReturnValueOnce(createChainMock([]));
+
+      const result = await service.getBookings({});
+
+      const orderByCall = listCalls.find((call) => call.method === 'orderBy');
+      expect(orderByCall?.args.length).toBeGreaterThanOrEqual(2);
+      expect(result.bookings).toHaveLength(1);
+      expect(result.bookings[0]).toMatchObject({
+        id: 'reservation-expired-1',
+        paymentFailureBucket: 'provider_expired',
+      });
     });
 
     it('treats missing refund rows as not cancellation-processing when counting sold bookings', async () => {
@@ -656,6 +757,7 @@ describe('AdminBookingService', () => {
       expect(leftJoinTables).toContain(reservationPaymentFailureDiagnostics);
       expect(result.bookings[0]).toMatchObject({
         paymentMethod: 'FOREIGN_EASY_PAY',
+        paymentFailureBucket: 'provider_aborted',
         paymentFailureDiagnostic: {
           kind: 'checkout_timeout',
           code: 'PAY_PROCESS_CANCELED',
@@ -676,6 +778,7 @@ describe('AdminBookingService', () => {
       });
       expect(result.bookings[1]).toMatchObject({
         paymentMethod: null,
+        paymentFailureBucket: 'local_deadline_expired',
         paymentFailureDiagnostic: null,
         paymentMethodAttribution: {
           label: '결제수단 확인 필요',

@@ -3,12 +3,14 @@ import { describe, expect, it } from 'vitest';
 import * as bookingContracts from './booking.schema';
 import {
   adminBookingDetailSchema,
+  adminBookingListResponseSchema,
   adminBookingFunnelStatusSchema,
   adminBookingListQuerySchema,
   adminBookingListItemSchema,
   bookingStatsSchema,
   cancelTicketItemSchema,
   confirmPaymentSchema,
+  paymentFailureBucketSchema,
   paymentFailureDiagnosticSchema,
   paymentMethodAttributionSchema,
   prepareReservationResponseSchema,
@@ -470,6 +472,174 @@ describe('prepareReservationSchema booking consent contract', () => {
     expect(detail.ticketItems[1]?.admissionState).toBe('ENTERED');
   });
 
+  it('accepts admin booking payment failure buckets and bucket stats', () => {
+    const bucketValues = paymentFailureBucketSchema.options;
+    const response = adminBookingListResponseSchema.parse({
+      bookings: [
+        {
+          id: '11111111-1111-4111-8111-111111111111',
+          reservationNumber: 'GRP-ADMIN-001',
+          tossOrderId: 'GRP-TOSS-ADMIN-001',
+          userName: 'Admin Buyer',
+          userEmail: 'buyer@example.com',
+          userCountry: 'US',
+          performanceTitle: 'Girl Rules Fanmeet',
+          showDateTime: '2026-07-18T10:00:00.000Z',
+          seats: [makeSeat()],
+          totalAmount: 50000,
+          status: 'FAILED',
+          funnelStatus: 'PAYMENT_FAILED',
+          paymentStatus: null,
+          paymentMethod: null,
+          paymentFailureBucket: 'unreconciled_provider_expired',
+          paymentFailureDiagnostic: {
+            kind: 'payment_expired',
+            code: 'PAYMENT_DEADLINE_EXPIRED',
+            message: '결제 제한 시간이 만료되었습니다.',
+            source: 'payment_webhook_events',
+            recordedAt: '2026-05-08T11:47:00.000Z',
+            providerCheckStatus: 'not_checked',
+            providerCheckedAt: null,
+            providerCheckMessage: null,
+          },
+          paymentMethodAttribution: {
+            label: '카드 / 카드사 / USD',
+            method: 'CARD',
+            provider: 'CARD',
+            currency: 'USD',
+            source: 'DB',
+          },
+          ticketStatusCounts: {
+            ACTIVE: 0,
+            CANCELLATION_PENDING: 0,
+            CANCELLED: 0,
+            EXPIRED: 0,
+          },
+          createdAt: '2026-05-08T11:45:00.000Z',
+        },
+      ],
+      stats: {
+        totalBookings: 1,
+        totalRevenue: 0,
+        cancelRate: 0,
+        soldCount: 0,
+        pendingPaymentCount: 0,
+        paymentProcessingCount: 0,
+        failedCount: 1,
+        expiredPaymentCount: 1,
+        abortedPaymentCount: 0,
+        localDeadlineExpiredCount: 0,
+        providerExpiredCount: 0,
+        providerAbortedCount: 0,
+        buyerCancelledBeforeConfirmCount: 0,
+        unreconciledProviderExpiredCount: 1,
+        compensatedCancelCount: 0,
+        otherPaymentFailureCount: 0,
+        cancelProcessingCount: 0,
+        cancelledCount: 0,
+        partialCancelledCount: 0,
+        completedRevenue: 0,
+      },
+      tierStats: [],
+      total: 1,
+    });
+
+    expect(response.bookings[0]?.paymentFailureBucket).toBe(
+      'unreconciled_provider_expired',
+    );
+    expect(response.stats.unreconciledProviderExpiredCount).toBe(1);
+    expect(bucketValues).toEqual([
+      'local_deadline_expired',
+      'provider_expired',
+      'provider_aborted',
+      'buyer_cancelled_before_confirm',
+      'unreconciled_provider_expired',
+      'compensated_cancel',
+      'other',
+    ]);
+    for (const bucket of bucketValues) {
+      expect(adminBookingListItemSchema.parse({
+        ...response.bookings[0],
+        paymentFailureBucket: bucket,
+      }).paymentFailureBucket).toBe(bucket);
+    }
+  });
+
+  it('requires admin booking payment failure bucket and bucket stats from the API', () => {
+    const baseBooking = {
+      id: '11111111-1111-4111-8111-111111111111',
+      reservationNumber: 'GRP-ADMIN-001',
+      tossOrderId: 'GRP-TOSS-ADMIN-001',
+      userName: 'Admin Buyer',
+      userEmail: 'buyer@example.com',
+      userCountry: 'US',
+      performanceTitle: 'Girl Rules Fanmeet',
+      showDateTime: '2026-07-18T10:00:00.000Z',
+      seats: [makeSeat()],
+      totalAmount: 50000,
+      status: 'FAILED',
+      funnelStatus: 'PAYMENT_FAILED',
+      paymentStatus: 'EXPIRED',
+      paymentMethod: 'CARD',
+      paymentFailureDiagnostic: null,
+      paymentMethodAttribution: {
+        label: '카드 / 카드사 / USD',
+        method: 'CARD',
+        provider: 'CARD',
+        currency: 'USD',
+        source: 'DB',
+      },
+      ticketStatusCounts: {
+        ACTIVE: 0,
+        CANCELLATION_PENDING: 0,
+        CANCELLED: 0,
+        EXPIRED: 0,
+      },
+      createdAt: '2026-05-08T11:45:00.000Z',
+    };
+    const baseStats = {
+      totalBookings: 1,
+      totalRevenue: 0,
+      cancelRate: 0,
+      soldCount: 0,
+      pendingPaymentCount: 0,
+      paymentProcessingCount: 0,
+      failedCount: 1,
+      cancelProcessingCount: 0,
+      cancelledCount: 0,
+      partialCancelledCount: 0,
+      completedRevenue: 0,
+    };
+
+    expect(() =>
+      adminBookingListResponseSchema.parse({
+        bookings: [baseBooking],
+        stats: {
+          ...baseStats,
+          expiredPaymentCount: 1,
+          abortedPaymentCount: 0,
+          localDeadlineExpiredCount: 0,
+          providerExpiredCount: 1,
+          providerAbortedCount: 0,
+          buyerCancelledBeforeConfirmCount: 0,
+          unreconciledProviderExpiredCount: 0,
+          compensatedCancelCount: 0,
+          otherPaymentFailureCount: 0,
+        },
+        tierStats: [],
+        total: 1,
+      })
+    ).toThrow();
+    expect(() =>
+      adminBookingListResponseSchema.parse({
+        bookings: [{ ...baseBooking, paymentFailureBucket: 'provider_expired' }],
+        stats: baseStats,
+        tierStats: [],
+        total: 1,
+      })
+    ).toThrow();
+  });
+
   it('accepts pending ticket-item details with a blocking inactive QR shell', () => {
     const parsed = reservationDetailSchema.parse({
       id: '11111111-1111-4111-8111-111111111111',
@@ -703,6 +873,13 @@ describe('prepareReservationSchema booking consent contract', () => {
       failedCount: 1,
       expiredPaymentCount: 1,
       abortedPaymentCount: 0,
+      localDeadlineExpiredCount: 0,
+      providerExpiredCount: 0,
+      providerAbortedCount: 0,
+      buyerCancelledBeforeConfirmCount: 0,
+      unreconciledProviderExpiredCount: 0,
+      compensatedCancelCount: 0,
+      otherPaymentFailureCount: 0,
       cancelProcessingCount: 1,
       cancelledCount: 1,
       partialCancelledCount: 1,
@@ -732,6 +909,7 @@ describe('prepareReservationSchema booking consent contract', () => {
       funnelStatus: 'SOLD',
       paymentStatus: 'DONE',
       paymentMethod: 'CARD',
+      paymentFailureBucket: 'local_deadline_expired',
       paymentFailureDiagnostic: {
         kind: 'confirm_timeout',
         code: 'PAYMENT_CONFIRM_NOT_REACHED',
@@ -805,6 +983,7 @@ describe('prepareReservationSchema booking consent contract', () => {
       funnelStatus: 'SOLD',
       paymentStatus: 'DONE',
       paymentMethod: 'CARD',
+      paymentFailureBucket: null,
       paymentFailureDiagnostic: null,
       paymentMethodAttribution: {
         label: '카드',
@@ -903,6 +1082,7 @@ describe('prepareReservationSchema booking consent contract', () => {
       funnelStatus: 'PAYMENT_FAILED',
       paymentStatus: null,
       paymentMethod: null,
+      paymentFailureBucket: null,
       paymentFailureDiagnostic: null,
       paymentMethodAttribution: {
         label: '결제수단 확인 필요',
@@ -1010,6 +1190,15 @@ describe('prepareReservationSchema booking consent contract', () => {
         pendingPaymentCount: 0,
         paymentProcessingCount: 0,
         failedCount: 0,
+        expiredPaymentCount: 0,
+        abortedPaymentCount: 0,
+        localDeadlineExpiredCount: 0,
+        providerExpiredCount: 0,
+        providerAbortedCount: 0,
+        buyerCancelledBeforeConfirmCount: 0,
+        unreconciledProviderExpiredCount: 0,
+        compensatedCancelCount: 0,
+        otherPaymentFailureCount: 0,
         cancelProcessingCount: 0,
         cancelledCount: 0,
         partialCancelledCount: 0,

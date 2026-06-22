@@ -65,6 +65,7 @@ function bookingItem(): AdminBookingListItem {
     funnelStatus: 'SOLD',
     paymentStatus: 'DONE',
     paymentMethod: 'CARD',
+    paymentFailureBucket: null,
     paymentFailureDiagnostic: null,
     paymentMethodAttribution: {
       label: '카드 / 카드사 / KRW',
@@ -92,12 +93,13 @@ function failedBookingItem(): AdminBookingListItem {
     userEmail: 'failed@example.com',
     status: 'FAILED',
     funnelStatus: 'PAYMENT_FAILED',
-    paymentStatus: 'EXPIRED',
+    paymentStatus: null,
     paymentMethod: null,
+    paymentFailureBucket: 'unreconciled_provider_expired',
     paymentFailureDiagnostic: {
       kind: 'payment_expired',
-      code: 'PAYMENT_EXPIRED',
-      message: '결제 유효 시간이 만료되었습니다.',
+      code: 'PAYMENT_DEADLINE_EXPIRED',
+      message: '결제 제한 시간이 만료되었습니다.',
       source: 'payment_webhook_events',
       recordedAt: '2026-05-08T11:52:00.000Z',
       providerCheckStatus: 'not_checked',
@@ -243,6 +245,13 @@ function bookingsResponse(overrides: {
       failedCount: 2,
       expiredPaymentCount: 1,
       abortedPaymentCount: 1,
+      localDeadlineExpiredCount: 1,
+      providerExpiredCount: 0,
+      providerAbortedCount: 1,
+      buyerCancelledBeforeConfirmCount: 0,
+      unreconciledProviderExpiredCount: 1,
+      compensatedCancelCount: 0,
+      otherPaymentFailureCount: 0,
       cancelProcessingCount: 1,
       cancelledCount: 1,
       partialCancelledCount: 1,
@@ -308,6 +317,10 @@ describe('AdminBookingDashboard', () => {
     expect(screen.queryByText('만료 1건 · 중단/취소 1건')).not.toBeInTheDocument();
     expect(screen.getByText('취소 완료')).toBeInTheDocument();
     expect(screen.getByText('판매 매출')).toBeInTheDocument();
+    expect(screen.getByText('실패/만료 분석')).toBeInTheDocument();
+    expect(screen.getByText('내부 시간 만료 1')).toBeInTheDocument();
+    expect(screen.getByText('Toss 실패/중단 1')).toBeInTheDocument();
+    expect(screen.getByText('Toss 만료 수신/미반영 1')).toBeInTheDocument();
     expect(await screen.findByText('1,500,000원')).toBeInTheDocument();
     expect(screen.queryByText('총 예매수')).not.toBeInTheDocument();
     expect(document.body).not.toHaveTextContent('₩1.5M');
@@ -520,16 +533,19 @@ describe('AdminBookingDashboard', () => {
 
     renderWithClient(<AdminBookingDashboard />);
 
-    expect(await screen.findByText(/PAYMENT_EXPIRED/)).toBeInTheDocument();
+    expect(await screen.findByText(/PAYMENT_DEADLINE_EXPIRED/)).toBeInTheDocument();
+    expect(screen.getByText('Toss 만료 수신/미반영')).toBeInTheDocument();
     expect(screen.getByText(/결제수단 확인 필요/)).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /실패고객 Girl Rules Fanmeet 예매 상세 보기/ }));
 
     const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('실패/만료 분류')).toBeInTheDocument();
+    expect(within(dialog).getByText('Toss 만료 수신/미반영')).toBeInTheDocument();
     expect(within(dialog).getByText('실패/만료 코드')).toBeInTheDocument();
-    expect(within(dialog).getAllByText('PAYMENT_EXPIRED').length).toBeGreaterThan(0);
+    expect(within(dialog).getAllByText('PAYMENT_DEADLINE_EXPIRED').length).toBeGreaterThan(0);
     expect(within(dialog).getByText('실패/만료 사유')).toBeInTheDocument();
-    expect(within(dialog).getAllByText('결제 유효 시간이 만료되었습니다.').length).toBeGreaterThan(0);
+    expect(within(dialog).getAllByText('결제 제한 시간이 만료되었습니다.').length).toBeGreaterThan(0);
     expect(within(dialog).getByText('결제수단 출처')).toBeInTheDocument();
     expect(within(dialog).getByText('Needs Review: payment row missing')).toBeInTheDocument();
 
