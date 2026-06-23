@@ -69,6 +69,53 @@ describe('adminPatchNotes', () => {
     );
   });
 
+  it('registers the recent backfilled PR patch notes', () => {
+    const notesByPr = new Map(
+      adminPatchNotes.map((entry) => [entry.prNumber, entry]),
+    );
+
+    expect([...notesByPr.keys()]).toEqual(
+      expect.arrayContaining([174, 175, 176, 177]),
+    );
+    expect(notesByPr.get(177)).toEqual(
+      expect.objectContaining({
+        category: 'feature',
+        title: '혜택 CSV와 QR 좌석 강조 확장',
+        githubUrl: 'https://github.com/sangwopark19/grapit/pull/177',
+      }),
+    );
+    expect(notesByPr.get(177)?.summary).toContain('QR 티켓 좌석 텍스트');
+    expect(notesByPr.get(177)?.highlights).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('좌석번호'),
+        expect.stringContaining('tierColor'),
+        expect.stringContaining('PII'),
+      ]),
+    );
+
+    expect(notesByPr.get(176)).toEqual(
+      expect.objectContaining({
+        category: 'patch',
+        title: '관리자 예매 상세 500 오류 수정',
+        githubUrl: 'https://github.com/sangwopark19/grapit/pull/176',
+      }),
+    );
+    expect(notesByPr.get(175)).toEqual(
+      expect.objectContaining({
+        category: 'feature',
+        title: '관리자 결제 실패 분류 표시',
+        githubUrl: 'https://github.com/sangwopark19/grapit/pull/175',
+      }),
+    );
+    expect(notesByPr.get(174)).toEqual(
+      expect.objectContaining({
+        category: 'feature',
+        title: '혜택 관리 회차 선택 UI 추가',
+        githubUrl: 'https://github.com/sangwopark19/grapit/pull/174',
+      }),
+    );
+  });
+
   it('registers the payment failure breakdown PR', () => {
     const note = adminPatchNotes.find((entry) => entry.prNumber === 168);
 

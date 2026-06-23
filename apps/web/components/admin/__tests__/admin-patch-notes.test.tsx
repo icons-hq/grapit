@@ -20,16 +20,22 @@ describe('AdminPatchNotesPreview', () => {
     ).toHaveAttribute('href', '/admin/patch-notes');
 
     const article = screen.getByRole('article', {
-      name: 'PR #173 티켓 베네핏 운영 기능 추가',
+      name: 'PR #177 혜택 CSV와 QR 좌석 강조 확장',
     });
 
-    expect(within(article).getByText('PR #173')).toBeInTheDocument();
+    expect(within(article).getByText('PR #177')).toBeInTheDocument();
     expect(
-      within(article).getByText('티켓 베네핏 운영 기능 추가'),
+      within(article).getByText('혜택 CSV와 QR 좌석 강조 확장'),
     ).toBeInTheDocument();
-    expect(within(article).getByText(/회차별 ALL\/한정 혜택/)).toBeInTheDocument();
-    expect(within(article).getByText(/test\/live run/)).toBeInTheDocument();
-    expect(within(article).getByText(/Shared benefit schema Vitest/)).toBeInTheDocument();
+    expect(
+      within(article).getByText(/티켓 좌석번호/),
+    ).toBeInTheDocument();
+    expect(
+      within(article).getByText(/고객 연락처\/이름\/이메일 컬럼 추가/),
+    ).toBeInTheDocument();
+    expect(
+      within(article).getByText(/Shared benefit\/ticket\/booking schema tests/),
+    ).toBeInTheDocument();
   });
 });
 
