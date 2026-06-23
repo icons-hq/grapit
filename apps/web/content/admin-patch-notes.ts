@@ -14,6 +14,100 @@ export interface AdminPatchNote {
 
 const notes = [
   {
+    id: 'pr-177-benefit-export-qr-seat-highlight',
+    prNumber: 177,
+    title: '혜택 CSV와 QR 좌석 강조 확장',
+    summary:
+      '혜택 run/entitlement CSV에 티켓 좌석번호와 고객 연락처/이름/이메일을 추가하고, 예매 상세와 QR 티켓 좌석 텍스트에 좌석 등급색 강조를 적용했습니다.',
+    highlights: [
+      '혜택 run/entitlement CSV에 좌석번호와 고객 연락처/이름/이메일 컬럼 추가',
+      '예매 상세 API와 shared ticket contract에 좌석 등급색 tierColor 추가',
+      '구매 완료와 예매 상세 QR 좌석 텍스트에 등급색 배경 강조 적용',
+      'CSV 생성 시점에만 고객 정보를 hydrate하고 run summary/audit metadata에는 PII를 저장하지 않도록 유지',
+    ],
+    category: 'feature',
+    date: '2026-06-22',
+    githubUrl: 'https://github.com/sangwopark19/grapit/pull/177',
+    evidence: [
+      'Shared benefit/ticket/booking schema tests',
+      'API benefit runner/reservation tests',
+      'Web booking/reservation QR tests',
+      'Shared build/typecheck',
+      'API/Web typecheck',
+      'Web lint',
+      'git diff --check',
+    ],
+  },
+  {
+    id: 'pr-176-admin-booking-detail-payment-join',
+    prNumber: 176,
+    title: '관리자 예매 상세 500 오류 수정',
+    summary:
+      'provider expiry 여부를 계산하는 관리자 예매 상세 쿼리에 payments join을 추가하고, ticket item이 아직 없는 예매는 reservation_seats를 seats 응답에만 fallback으로 내려주도록 수정했습니다.',
+    highlights: [
+      'payments.tossOrderId 참조 경로에 맞춰 상세 쿼리 left join과 payment select mapping 추가',
+      'ticket_items 미생성 예매의 좌석 fallback source를 seats 응답으로 제한',
+      'stale mock 제거와 join/query count, fallback source, null payment regression 검증 추가',
+    ],
+    category: 'patch',
+    date: '2026-06-22',
+    githubUrl: 'https://github.com/sangwopark19/grapit/pull/176',
+    evidence: [
+      'API admin booking service Vitest',
+      'API typecheck',
+      'API test suite',
+      'API lint',
+      'Subagent code review',
+      'git diff --check',
+    ],
+  },
+  {
+    id: 'pr-175-admin-payment-failure-buckets',
+    prNumber: 175,
+    title: '관리자 결제 실패 분류 표시',
+    summary:
+      'local 결제기한 만료, provider 만료, 결제 중단, 승인 전 취소, 보상 취소를 Payment Failure Bucket으로 정규화해 관리자 대시보드, 목록, 상세에서 구분하도록 개선했습니다.',
+    highlights: [
+      'shared contract/API 응답에 paymentFailureBucket과 bucket별 count 추가',
+      '관리자 예매 대시보드, 목록, 상세 모달에 실패/만료 분류 라벨과 통계 표시',
+      'local 실패 이후 도착한 terminal provider webhook을 diagnostic/payment progress로 기록',
+      'unreconciled_provider_expired는 실제 terminal EXPIRED webhook이 확인된 경우에만 분류',
+    ],
+    category: 'feature',
+    date: '2026-06-22',
+    githubUrl: 'https://github.com/sangwopark19/grapit/pull/175',
+    evidence: [
+      'Shared booking schema Vitest',
+      'API admin/payment/webhook Vitest',
+      'Web admin booking dashboard Vitest',
+      'API/Web/Shared typecheck',
+      'API lint/test',
+      'pnpm test',
+      'git diff --check',
+    ],
+  },
+  {
+    id: 'pr-174-admin-benefit-showtime-select',
+    prNumber: 174,
+    title: '혜택 관리 회차 선택 UI 추가',
+    summary:
+      '혜택 관리 화면에서 회차 ID 직접 입력을 제거하고, 공연 선택 후 해당 공연의 회차를 선택해 기존 혜택 설정/실행/export API를 사용할 수 있도록 개선했습니다.',
+    highlights: [
+      '공연 목록/상세 조회 흐름을 재사용해 공연과 회차 선택 UI 제공',
+      '선택한 showtimeId로 기존 혜택 설정, test/live 실행, export API 호출 유지',
+      '회차 ID 수동 입력으로 인한 운영 실수를 줄이도록 admin benefit manager 테스트 보강',
+    ],
+    category: 'feature',
+    date: '2026-06-19',
+    githubUrl: 'https://github.com/sangwopark19/grapit/pull/174',
+    evidence: [
+      'Web admin benefit manager Vitest',
+      'Web admin booking dashboard Vitest',
+      'Web typecheck',
+      'git diff --check',
+    ],
+  },
+  {
     id: 'pr-173-ticket-benefit-operations',
     prNumber: 173,
     title: '티켓 베네핏 운영 기능 추가',

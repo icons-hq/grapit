@@ -45,7 +45,7 @@ describe('AdminDashboardPage patch notes', () => {
       screen.getByRole('heading', { name: '최근 패치노트' }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText('티켓 베네핏 운영 기능 추가'),
+      screen.getByText('혜택 CSV와 QR 좌석 강조 확장'),
     ).toBeInTheDocument();
     expect(
       screen.getByRole('link', { name: '패치노트 전체 보기' }),
