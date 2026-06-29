@@ -12,7 +12,7 @@
 - **1인 개발**: 모든 영역(프론트/백/인프라)을 혼자 담당 — 복잡도를 최소화하고 모놀리스 우선
 - **Tech Stack**: docs/03-ARCHITECTURE.md에 정의된 스택을 그대로 따름
 - **결제**: Toss Payments SDK 연동 (PG사 계약 및 사업자등록 필요)
-- **인프라**: GCP 서울 리전 (asia-northeast3) 기반, 초기 min-instances=0으로 비용 최소화
+- **인프라**: GCP 서울 리전 (asia-northeast3) 기반, 사용자 체감 cold start를 줄이는 warm instance와 비용 절감을 함께 조정
 - **SVG 좌석맵**: MVP부터 SVG 기반 좌석 선택 구현 (외부 제작 SVG 업로드 방식)
 <!-- GSD:project-end -->
 
@@ -73,12 +73,12 @@
 ### Database
 | Technology | Version | Purpose | Why | Confidence |
 |------------|---------|---------|-----|------------|
-| Cloud SQL PostgreSQL | 16 | Primary database | Seoul region (asia-northeast3), automatic backup (7-day PITR), 99.95% SLA. PostgreSQL 16 for tsvector FTS, pg_trgm, SKIP LOCKED. | HIGH |
+| Cloud SQL PostgreSQL | 16 | Primary database | Seoul region (asia-northeast3), automatic backup (7-day PITR), ZONAL availability for cost control until a launch or venue-entry window requires HA. PostgreSQL 16 for tsvector FTS, pg_trgm, SKIP LOCKED. | HIGH |
 | Upstash Redis | Serverless | Cache + real-time | Seat locking (SET NX + TTL), queue position (Sorted Set), ranking cache, real-time pub/sub. Serverless = no idle cost. Seoul edge node for low latency. | HIGH |
 ### Infrastructure
 | Technology | Version | Purpose | Why | Confidence |
 |------------|---------|---------|-----|------------|
-| Google Cloud Run | N/A | Container hosting | Seoul region, auto-scale to zero (min-instances=0 for cost), WebSocket/SSE native support. Separate services: `web` (Next.js) + `api` (NestJS). | HIGH |
+| Google Cloud Run | N/A | Container hosting | Seoul region, horizontal autoscaling, warm instances where cold start affects buyer experience, WebSocket/SSE native support. Separate services: `web` (Next.js) + `api` (NestJS). | HIGH |
 | Cloudflare R2 | N/A | Object storage | S3-compatible, zero egress fees. Posters, SVG seat maps, static assets. | HIGH |
 | Cloudflare CDN/WAF | Free plan | CDN + security | Static asset caching, DDoS protection, rate limiting. | HIGH |
 | GitHub Actions | N/A | CI/CD | Workload Identity Federation (OIDC) for GCP auth. Build -> Artifact Registry -> Cloud Run deploy. | HIGH |
