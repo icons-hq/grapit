@@ -1,5 +1,5 @@
 import { Injectable, Inject } from '@nestjs/common';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import * as schema from '../../database/schema/index.js';
 import type { UserProfile } from '@grabit/shared/types/user.types.js';
@@ -35,6 +35,24 @@ export class UserRepository {
       .from(schema.users)
       .where(eq(schema.users.id, id));
     return results[0] ?? null;
+  }
+
+  async findActiveByVerifiedIdentity(
+    phone: string,
+    birthDate: string,
+    db: Pick<DrizzleDB, 'select'> = this.db,
+  ) {
+    return db
+      .select()
+      .from(schema.users)
+      .where(
+        and(
+          eq(schema.users.phone, phone),
+          eq(schema.users.birthDate, birthDate),
+          eq(schema.users.isPhoneVerified, true),
+          eq(schema.users.accountStatus, 'active'),
+        ),
+      );
   }
 
   async create(data: NewUser, db: Pick<DrizzleDB, 'insert'> = this.db) {

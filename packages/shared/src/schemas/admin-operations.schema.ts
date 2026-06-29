@@ -79,6 +79,7 @@ const dateOnly = (label: string) =>
 
 export const adminCapabilitySchema = z.enum(ADMIN_CAPABILITIES);
 export const adminCapabilityBundleSchema = z.enum(ADMIN_CAPABILITY_BUNDLES);
+const accountStatusSchema = z.enum(['active', 'withdrawn', 'merged']);
 export const adminUserRoleSchema = z.enum(['user', 'admin']);
 export const adminSeatOperationShowtimeIdSchema = z
   .string()
@@ -196,6 +197,7 @@ export const adminAuditActionSchema = z.enum([
   'user.export_raw',
   'user.withdraw',
   'user.hard_delete',
+  'user.merge',
 ]);
 
 export const adminAuditEventSchema = z.object({
@@ -343,7 +345,7 @@ export const adminUserListItemSchema = z.object({
   marketingConsent: z.boolean(),
   adminCapabilityBundle: adminCapabilityBundleSchema.nullable(),
   adminCapabilities: z.array(adminCapabilitySchema),
-  accountStatus: z.enum(['active', 'withdrawn']).default('active'),
+  accountStatus: accountStatusSchema.default('active'),
   withdrawnAt: isoDatetime('탈퇴 처리 시각').nullable().optional(),
   withdrawalReason: z.string().nullable().optional(),
   withdrawalSource: z.enum(['self', 'admin']).nullable().optional(),
@@ -411,6 +413,7 @@ export const adminUserStatsResponseSchema = z.object({
   total: z.number().int().min(0),
   active: z.number().int().min(0),
   withdrawn: z.number().int().min(0),
+  merged: z.number().int().min(0),
   verification: z.object({
     emailVerified: z.number().int().min(0),
     phoneVerified: z.number().int().min(0),

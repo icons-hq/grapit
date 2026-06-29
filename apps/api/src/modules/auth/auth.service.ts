@@ -213,7 +213,7 @@ export class AuthService {
   async validateUser(email: string, password: string): Promise<ValidatedUser> {
     const user = await this.userRepository.findByEmail(email);
 
-    if (!user || !user.passwordHash || user.accountStatus === 'withdrawn') {
+    if (!user || !user.passwordHash || this.isInactiveAccount(user)) {
       throw new UnauthorizedException('이메일 또는 비밀번호가 일치하지 않습니다');
     }
 
@@ -272,7 +272,7 @@ export class AuthService {
     if (!user) {
       throw new UnauthorizedException('사용자를 찾을 수 없습니다');
     }
-    if (user.accountStatus === 'withdrawn') {
+    if (this.isInactiveAccount(user)) {
       await this.revokeRefreshTokenFamily(tokenRecord.family);
       throw new UnauthorizedException('탈퇴 처리된 계정입니다');
     }
@@ -341,7 +341,7 @@ export class AuthService {
     //   의도치 않게 전환되고, 첫 회전 entropy 가 빈 문자열이 되어 one-time 토큰 보장이 약화된다.
     // - 미발송 시: enumeration 방지를 위해 에러를 노출하지 않고 silent return.
     // 유저에게 "소셜로 로그인하세요" UX는 프론트엔드 레벨에서 별도로 제공되어야 한다.
-    if (!user || !user.passwordHash) {
+    if (!user || !user.passwordHash || this.isInactiveAccount(user)) {
       return;
     }
 
@@ -388,7 +388,7 @@ export class AuthService {
     }
 
     const currentUser = await this.userRepository.findById(userId);
-    if (!currentUser || currentUser.accountStatus === 'withdrawn') {
+    if (!currentUser || this.isInactiveAccount(currentUser)) {
       throw new UnauthorizedException('사용자 인증이 필요합니다');
     }
 
@@ -411,6 +411,11 @@ export class AuthService {
     code: string,
   ): Promise<{ verified: true; user: UserProfile }> {
     const normalizedEmail = email.trim().toLowerCase();
+    const currentUser = await this.userRepository.findById(userId);
+    if (!currentUser || this.isInactiveAccount(currentUser)) {
+      throw new UnauthorizedException('사용자 인증이 필요합니다');
+    }
+
     const latestRows = await this.db
       .select()
       .from(schema.emailVerificationTokens)
@@ -662,7 +667,7 @@ export class AuthService {
 
     // 2. sub가 UUID로 확정된 뒤에만 DB lookup 수행.
     const user = await this.userRepository.findById(preliminarySub);
-    if (!user) {
+    if (!user || this.isInactiveAccount(user)) {
       throw new UnauthorizedException('유효하지 않은 재설정 토큰입니다');
     }
 
@@ -724,7 +729,7 @@ export class AuthService {
     if (socialAccount) {
       this.logger.log(`Social user found: userId=${socialAccount.userId}`);
       const user = await this.userRepository.findById(socialAccount.userId);
-      if (!user || user.accountStatus === 'withdrawn') {
+      if (!user || this.isInactiveAccount(user)) {
         throw new UnauthorizedException('연결된 사용자 계정을 찾을 수 없습니다');
       }
 
@@ -810,8 +815,79 @@ export class AuthService {
     this.consentService.assertAgeAllowed(dto.birthDate);
     await this.consentService.assertRequiredConsents({ items: dto.consentItems });
 
-    // 2. Check if user with that email already exists (account linking)
+    const identityMatches = await this.userRepository.findActiveByVerifiedIdentity(
+      dto.phone,
+      dto.birthDate,
+    );
+
     const email = payload.email ?? `${payload.provider}_${payload.providerId}@social.grabit.com`;
+
+    if (identityMatches.length === 1) {
+      const targetUser = identityMatches[0]!;
+      const linkedUser = await this.db.transaction(async (tx) => {
+        const updatedAt = new Date();
+        const guardedUsers = await tx
+          .update(schema.users)
+          .set({ marketingConsent: dto.marketingConsent, updatedAt })
+          .where(
+            and(
+              eq(schema.users.id, targetUser.id),
+              eq(schema.users.phone, dto.phone),
+              eq(schema.users.birthDate, dto.birthDate),
+              eq(schema.users.isPhoneVerified, true),
+              eq(schema.users.accountStatus, 'active'),
+            ),
+          )
+          .returning();
+        const guardedUser = guardedUsers[0];
+        if (!guardedUser) {
+          throw new UnauthorizedException('활성 계정이 아니어서 소셜 계정을 연결할 수 없습니다');
+        }
+
+        await tx.insert(schema.socialAccounts).values({
+          userId: guardedUser.id,
+          provider: payload.provider,
+          providerId: payload.providerId,
+          providerEmail: payload.email,
+        });
+
+        await tx.insert(schema.termsAgreements).values({
+          userId: guardedUser.id,
+          termsOfService: dto.termsOfService,
+          privacyPolicy: dto.privacyPolicy,
+          marketingConsent: dto.marketingConsent,
+        });
+
+        await this.consentService.captureConsent(
+          guardedUser.id,
+          {
+            birthDate: dto.birthDate,
+            items: dto.consentItems,
+            sourceFlow: 'social_completion',
+          },
+          requestMeta,
+          tx,
+        );
+
+        return guardedUser;
+      });
+
+      this.logger.log(`completeSocialRegistration: linked for userId=${linkedUser.id}`);
+      const tokens = await this.generateTokenPair(
+        linkedUser.id,
+        linkedUser.email,
+        linkedUser.role,
+        normalizeAdminCapabilityBundle(linkedUser.adminCapabilityBundle),
+        linkedUser.adminCapabilities,
+      );
+
+      return {
+        ...tokens,
+        user: this.mapToProfile(linkedUser),
+      };
+    }
+
+    // 2. Check if user with that email already exists (account linking)
     const existingUser = await this.userRepository.findByEmail(email);
 
     if (existingUser) {
@@ -1018,6 +1094,12 @@ export class AuthService {
     }
   }
 
+  private isInactiveAccount(
+    user: { accountStatus?: string | null } | null | undefined,
+  ): boolean {
+    return user?.accountStatus === 'withdrawn' || user?.accountStatus === 'merged';
+  }
+
   private async generateTokenPair(
     userId: string,
     email: string,
@@ -1092,11 +1174,19 @@ export class AuthService {
       role: user.role as 'user' | 'admin',
       adminCapabilityBundle: normalizeAdminCapabilityBundle(user.adminCapabilityBundle),
       adminCapabilities: normalizeAdminCapabilities(user.adminCapabilities),
-      accountStatus: user.accountStatus === 'withdrawn' ? 'withdrawn' : 'active',
+      accountStatus: normalizeAccountStatus(user.accountStatus),
       withdrawnAt: user.withdrawnAt?.toISOString() ?? null,
       createdAt: user.createdAt.toISOString(),
     };
   }
+}
+
+function normalizeAccountStatus(
+  status: string | null | undefined,
+): UserProfile['accountStatus'] {
+  if (status === 'withdrawn') return status;
+  if (status === 'merged') return status as UserProfile['accountStatus'];
+  return 'active';
 }
 
 function normalizeStoredPreferredLocale(locale: string | null): UserProfile['preferredLocale'] {

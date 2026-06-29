@@ -68,6 +68,7 @@ describe('AdminUserController', () => {
         total: 0,
         active: 0,
         withdrawn: 0,
+        merged: 0,
         verification: {
           emailVerified: 0,
           phoneVerified: 0,

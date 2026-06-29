@@ -120,6 +120,7 @@ const userStats = {
   total: 50,
   active: 48,
   withdrawn: 2,
+  merged: 0,
   verification: {
     emailVerified: 40,
     phoneVerified: 35,
@@ -166,7 +167,7 @@ type MockAdminDetailUser = Omit<
   typeof detailUser,
   'accountStatus' | 'withdrawnAt' | 'withdrawalReason' | 'withdrawalSource'
 > & {
-  accountStatus: 'active' | 'withdrawn';
+  accountStatus: 'active' | 'withdrawn' | 'merged';
   withdrawnAt: string | null;
   withdrawalReason: string | null;
   withdrawalSource: 'self' | 'admin' | null;

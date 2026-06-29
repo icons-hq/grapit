@@ -83,6 +83,8 @@ export interface AdminUserAuditSummary {
   lastAction?: string | null;
 }
 
+export type AdminUserAccountStatus = 'active' | 'withdrawn' | 'merged';
+
 export interface AdminUserListItem {
   id: string;
   name: string;
@@ -94,7 +96,7 @@ export interface AdminUserListItem {
   marketingConsent: boolean;
   adminCapabilityBundle: AdminCapabilityBundle | null;
   adminCapabilities: AdminCapability[];
-  accountStatus: 'active' | 'withdrawn';
+  accountStatus: AdminUserAccountStatus;
   withdrawnAt?: string | null;
   withdrawalReason?: string | null;
   withdrawalSource?: 'self' | 'admin' | null;
@@ -401,7 +403,7 @@ function mapDetail(response: ApiAdminUserDetail | AdminUserDetail): AdminUserDet
   if (isUiDetail(response)) {
     return {
       ...response,
-      accountStatus: response.accountStatus ?? 'active',
+      accountStatus: normalizeAdminUserAccountStatus(response.accountStatus),
       withdrawnAt: response.withdrawnAt ?? null,
       withdrawalReason: response.withdrawalReason ?? null,
       withdrawalSource: response.withdrawalSource ?? null,
@@ -423,10 +425,6 @@ function mapDetail(response: ApiAdminUserDetail | AdminUserDetail): AdminUserDet
     ...mapListItem(response),
     gender: response.account.gender,
     birthDate: response.account.birthDate,
-    accountStatus: 'active',
-    withdrawnAt: null,
-    withdrawalReason: null,
-    withdrawalSource: null,
     lastLoginAt: null,
     recentReservations: response.recentReservations.map(mapApiReservation),
     support,
@@ -449,7 +447,7 @@ function mapListItem(
   if (isUiListItem(item)) {
     return {
       ...item,
-      accountStatus: item.accountStatus ?? 'active',
+      accountStatus: normalizeAdminUserAccountStatus(item.accountStatus),
       withdrawnAt: item.withdrawnAt ?? null,
       withdrawalReason: item.withdrawalReason ?? null,
       withdrawalSource: item.withdrawalSource ?? null,
@@ -476,7 +474,7 @@ function mapListItem(
       item.adminCapabilityBundle,
       item.adminCapabilities,
     ),
-    accountStatus: item.accountStatus ?? 'active',
+    accountStatus: normalizeAdminUserAccountStatus(item.accountStatus),
     withdrawnAt: item.withdrawnAt ?? null,
     withdrawalReason: item.withdrawalReason ?? null,
     withdrawalSource: item.withdrawalSource ?? null,
@@ -508,6 +506,13 @@ function isUiDetail(
   item: ApiAdminUserDetail | AdminUserDetail,
 ): item is AdminUserDetail {
   return 'verification' in item && Array.isArray(item.supportThreads);
+}
+
+function normalizeAdminUserAccountStatus(
+  status: string | null | undefined,
+): AdminUserAccountStatus {
+  if (status === 'withdrawn' || status === 'merged') return status;
+  return 'active';
 }
 
 function resolveEffectiveCapabilities(

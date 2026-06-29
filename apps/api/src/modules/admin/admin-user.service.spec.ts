@@ -15,6 +15,7 @@ function userRow(overrides: Partial<{
   role: string;
   adminCapabilityBundle: string | null;
   adminCapabilities: string[];
+  accountStatus: string;
 }> = {}) {
   return {
     id: overrides.id ?? 'user-1',
@@ -31,7 +32,7 @@ function userRow(overrides: Partial<{
     role: overrides.role ?? 'admin',
     adminCapabilityBundle: overrides.adminCapabilityBundle ?? 'admin',
     adminCapabilities: overrides.adminCapabilities ?? [],
-    accountStatus: 'active',
+    accountStatus: overrides.accountStatus ?? 'active',
     withdrawnAt: null,
     withdrawalReason: null,
     withdrawnByUserId: null,
@@ -252,6 +253,37 @@ describe('AdminUserService permission updates', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it('rejects merged target permission updates without writing permissions or audit logs', async () => {
+    const actor = userRow({ id: 'actor-admin', adminCapabilityBundle: 'admin' });
+    const target = userRow({
+      id: 'merged-user',
+      accountStatus: 'merged',
+      role: 'user',
+      adminCapabilityBundle: null,
+      adminCapabilities: [],
+    });
+    const mockDb = createMockDb([actor]);
+    const auditService = createAuditService();
+    const service = new AdminUserService(mockDb.db as never, auditService);
+
+    vi.spyOn(service as never, 'findUserById').mockImplementation((id: string) =>
+      Promise.resolve(id === 'actor-admin' ? actor : target),
+    );
+
+    await expect(
+      service.updatePermissions('actor-admin', 'merged-user', {
+        role: 'admin',
+        adminCapabilityBundle: 'operator',
+        adminCapabilities: ['support.manage'],
+        reason: 'reactivate merged duplicate',
+        confirmed: true,
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    expect(mockDb.updateSet).not.toHaveBeenCalled();
+    expect(auditService.write).not.toHaveBeenCalled();
+  });
+
   it('reapplies the user refresh-token family limit when an admin is downgraded to user', async () => {
     const actor = userRow({ id: 'actor-admin', adminCapabilityBundle: 'admin' });
     const target = userRow({ id: 'target-user', adminCapabilityBundle: 'operator' });
@@ -318,9 +350,87 @@ describe('AdminUserService withdrawals', () => {
       mockDb.tx,
     );
   });
+
+  it('treats merged account admin withdrawal as inactive without overwriting status', async () => {
+    const actor = userRow({
+      id: 'actor-admin',
+      email: 'admin@example.com',
+      adminCapabilityBundle: 'admin',
+    });
+    const target = userRow({
+      id: 'merged-user',
+      email: 'merged@example.com',
+      accountStatus: 'merged',
+    });
+    const mockDb = createMockDb([actor]);
+    const auditService = createAuditService();
+    const service = new AdminUserService(mockDb.db as never, auditService);
+
+    vi.spyOn(service as never, 'findUserById').mockImplementation((id: string) =>
+      Promise.resolve(id === 'actor-admin' ? actor : target),
+    );
+    vi.spyOn(service, 'getUserDetail').mockResolvedValue({
+      ...detailStub('merged-user'),
+      accountStatus: 'merged',
+    });
+
+    await expect(
+      service.withdrawUser('actor-admin', 'merged-user', {
+        reason: 'duplicate account merged',
+        confirmed: true,
+      }),
+    ).resolves.toMatchObject({
+      accountStatus: 'merged',
+    });
+
+    expect(mockDb.updateSet).not.toHaveBeenCalled();
+    expect(mockDb.deleteFn).not.toHaveBeenCalled();
+    expect(auditService.write).not.toHaveBeenCalled();
+  });
 });
 
 describe('AdminUserService raw user export and statistics', () => {
+  it('preserves merged account status in detail responses', async () => {
+    const mergedUser = userRow({
+      id: 'merged-user',
+      email: 'merged@example.com',
+      accountStatus: 'merged',
+    });
+    const auditService = createAuditService();
+    const service = new AdminUserService({} as never, auditService);
+
+    vi.spyOn(service as never, 'findUserById').mockResolvedValue(mergedUser);
+    vi.spyOn(service as never, 'fetchReservationSummaries').mockResolvedValue(
+      new Map([
+        [
+          'merged-user',
+          {
+            total: 0,
+            statuses: {
+              pendingPayment: 0,
+              confirmed: 0,
+              cancelled: 0,
+              failed: 0,
+            },
+            lastReservationAt: null,
+          },
+        ],
+      ]),
+    );
+    vi.spyOn(service as never, 'fetchRecentReservations').mockResolvedValue([]);
+    vi.spyOn(service as never, 'fetchSupportThreadSummary').mockResolvedValue({
+      total: 0,
+      open: 0,
+      escalated: 0,
+      recentThreads: [],
+    });
+
+    await expect(service.getUserDetail('merged-user')).resolves.toMatchObject({
+      id: 'merged-user',
+      accountStatus: 'merged',
+    });
+  });
+
   it('builds raw users CSV without secret columns and writes non-PII audit metadata', async () => {
     const auditService = createAuditService();
     const service = new AdminUserService({} as never, auditService);
@@ -398,8 +508,9 @@ describe('AdminUserService raw user export and statistics', () => {
     const service = new AdminUserService({} as never, createAuditService());
     vi.spyOn(service as never, 'selectUserStatsSummary').mockResolvedValue({
       total: 10,
-      active: 8,
+      active: 7,
       withdrawn: 2,
+      merged: 1,
       emailVerified: 7,
       phoneVerified: 6,
       fullyVerified: 5,
@@ -423,8 +534,9 @@ describe('AdminUserService raw user export and statistics', () => {
     vi.useRealTimers();
 
     expect(stats.total).toBe(10);
-    expect(stats.active).toBe(8);
+    expect(stats.active).toBe(7);
     expect(stats.withdrawn).toBe(2);
+    expect(stats.merged).toBe(1);
     expect(stats.marketing).toEqual({ consented: 4, notConsented: 6 });
     expect(stats.countries).toEqual([
       { value: 'KR', count: 6, ratio: 0.6 },
