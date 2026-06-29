@@ -14,8 +14,8 @@ export interface AdminPatchNote {
 
 const notes = [
   {
-    id: 'pr-000-ledgered-social-account-merge',
-    prNumber: 0,
+    id: 'pr-180-ledgered-social-account-merge',
+    prNumber: 180,
     title: '소셜 계정 병합 운영 도구 추가',
     summary:
       '휴대폰 인증과 생년월일이 일치하는 소셜 로그인은 기존 계정에 연결하고, 기존 중복 계정은 복구 원장과 보호된 리포트를 남기며 병합할 수 있도록 운영 명령을 추가했습니다.',
@@ -27,7 +27,7 @@ const notes = [
     ],
     category: 'ops',
     date: '2026-06-29',
-    githubUrl: 'https://github.com/sangwopark19/grapit/pull/0',
+    githubUrl: 'https://github.com/sangwopark19/grapit/pull/180',
     evidence: [
       'Shared admin schema Vitest',
       'API auth/account-merge Vitest',
