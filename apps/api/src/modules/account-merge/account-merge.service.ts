@@ -24,6 +24,7 @@ import {
 import {
   buildMergeGroupKey,
   classifyDuplicateGroup,
+  hashAccountMergeDryRun,
   hashJson,
   type MergeCandidateUser,
   type MergeClassification,
@@ -53,6 +54,8 @@ export interface AccountMergeApplyOptions {
 
 export interface AccountMergeVerifyResult {
   batchId: string;
+  ok: boolean;
+  failedChecks: string[];
   sourceUsersWithoutReservations: string[];
   sourceUsersWithoutSocialLinks: string[];
   sourceUsersWithoutTermsAgreements: string[];
@@ -78,6 +81,16 @@ export interface AccountMergeApplyResult {
   batchId: string;
   mergedGroups: number;
   mergedSourceUsers: number;
+  rowChanges: AccountMergeReportRowChange[];
+}
+
+export interface AccountMergeReportRowChange {
+  tableName: string;
+  rowId: string;
+  sourceUserId: string;
+  targetUserId: string;
+  beforeSnapshot: Record<string, unknown>;
+  afterSnapshot: Record<string, unknown>;
 }
 
 type Row = Record<string, unknown>;
@@ -112,6 +125,7 @@ type CandidateRow = {
   accountStatus: string;
   totalReservations: number;
   confirmedReservations: number;
+  pendingPaymentReservations: number;
 };
 
 type MergeGroup = {
@@ -128,6 +142,10 @@ type LedgerChangeRow = {
   targetUserId: string;
   afterSnapshot: Record<string, unknown>;
 };
+
+interface AccountMergeVerifyOptions {
+  persist?: boolean;
+}
 
 type TableMoveOperation = {
   table: unknown;
@@ -156,6 +174,7 @@ export class AccountMergeService {
             birth_date,
             lower(regexp_replace(trim(name), '[[:space:]]+', '', 'g')) as normalized_name
           from users
+          where account_status = 'active'
           group by 1, 2, 3
           having count(*) > 1
         )
@@ -168,16 +187,19 @@ export class AccountMergeService {
           users.is_phone_verified as "isPhoneVerified",
           users.account_status as "accountStatus",
           coalesce(reservation_counts.total, 0)::int as "totalReservations",
-          coalesce(reservation_counts.confirmed, 0)::int as "confirmedReservations"
+          coalesce(reservation_counts.confirmed, 0)::int as "confirmedReservations",
+          coalesce(reservation_counts.pending_payment, 0)::int as "pendingPaymentReservations"
         from duplicate_identities identity
         join users
           on regexp_replace(users.phone, '[^0-9]', '', 'g') = identity.normalized_phone
           and users.birth_date = identity.birth_date
           and lower(regexp_replace(trim(users.name), '[[:space:]]+', '', 'g')) = identity.normalized_name
+          and users.account_status = 'active'
         left join lateral (
           select
             count(*)::int as total,
-            count(*) filter (where status = 'CONFIRMED')::int as confirmed
+            count(*) filter (where status = 'CONFIRMED')::int as confirmed,
+            count(*) filter (where status = 'PENDING_PAYMENT')::int as pending_payment
           from reservations
           where reservations.user_id = users.id
         ) reservation_counts on true
@@ -186,7 +208,7 @@ export class AccountMergeService {
     ).map(normalizeCandidateRow);
 
     const groups = new Map<string, CandidateRow[]>();
-    for (const row of rows) {
+    for (const row of rows.filter((row) => row.accountStatus === 'active')) {
       groups.set(row.groupKey, [...(groups.get(row.groupKey) ?? []), row]);
     }
 
@@ -195,11 +217,15 @@ export class AccountMergeService {
       [];
 
     for (const [groupKey, groupRows] of groups) {
+      if (groupRows.length < 2) {
+        continue;
+      }
       const reservationCounts: Record<string, ReservationCounts> = {};
       const usersInGroup: MergeCandidateUser[] = groupRows.map((row) => {
         reservationCounts[row.id] = {
           total: row.totalReservations,
           confirmed: row.confirmedReservations,
+          pendingPayment: row.pendingPaymentReservations,
         };
         return {
           id: row.id,
@@ -280,20 +306,27 @@ export class AccountMergeService {
         })
         .returning();
       const batchId = String(batch.id);
+      const rowChanges: AccountMergeReportRowChange[] = [];
 
       for (const group of groups) {
-        await this.applyGroup(tx, batchId, group, now, options.operatorUserId);
+        rowChanges.push(
+          ...(await this.applyGroup(tx, batchId, group, now, options.operatorUserId)),
+        );
       }
 
       return {
         batchId,
         mergedGroups: groups.length,
         mergedSourceUsers,
+        rowChanges,
       };
     });
   }
 
-  async verify(batchId: string): Promise<AccountMergeVerifyResult> {
+  async verify(
+    batchId: string,
+    options: AccountMergeVerifyOptions = {},
+  ): Promise<AccountMergeVerifyResult> {
     const batchRows = normalizeRows<{ status: string }>(
       await this.db.execute(sql`
         select status
@@ -304,7 +337,7 @@ export class AccountMergeService {
     if (batchRows.length === 0) {
       throw new Error('ACCOUNT_MERGE_VERIFY_BATCH_NOT_FOUND');
     }
-    if (batchRows[0].status !== 'applied') {
+    if (!['applied', 'verified', 'failed'].includes(batchRows[0].status)) {
       throw new Error('ACCOUNT_MERGE_VERIFY_BATCH_NOT_APPLIED');
     }
 
@@ -357,7 +390,7 @@ export class AccountMergeService {
       where user_id in (${uuidSqlList(sourceUserIds)})
     `);
 
-    return {
+    const resultWithoutSummary = {
       batchId,
       sourceUsersWithoutReservations: differenceSorted(
         sourceUserIds,
@@ -404,6 +437,20 @@ export class AccountMergeService {
       `),
       ledgerMismatches: await this.findLedgerMismatches(ledgerRows),
     };
+    const failedChecks = verificationFailedChecks(
+      resultWithoutSummary,
+      sourceUserIds,
+      targetUserIds,
+    );
+    const result = {
+      ok: failedChecks.length === 0,
+      failedChecks,
+      ...resultWithoutSummary,
+    };
+    if (options.persist) {
+      await this.persistVerificationSummary(batchId, result);
+    }
+    return result;
   }
 
   private async applyGroup(
@@ -412,19 +459,23 @@ export class AccountMergeService {
     group: MergeGroup,
     now: Date,
     operatorUserId: string | null,
-  ): Promise<void> {
+  ): Promise<AccountMergeReportRowChange[]> {
     await this.revalidateAndLockGroup(tx, group);
 
+    const rowChanges: AccountMergeReportRowChange[] = [];
     for (const operation of moveOperations) {
-      await this.applyOperation(
-        tx,
-        batchId,
-        group,
-        operation,
-        now,
-        operatorUserId,
+      rowChanges.push(
+        ...(await this.applyOperation(
+          tx,
+          batchId,
+          group,
+          operation,
+          now,
+          operatorUserId,
+        )),
       );
     }
+    return rowChanges;
   }
 
   private async revalidateAndLockGroup(
@@ -469,11 +520,13 @@ export class AccountMergeService {
       userId: string;
       totalReservations: number;
       confirmedReservations: number;
+      pendingPaymentReservations: number;
     }>(await tx.execute(sql`
       select
         user_id as "userId",
         count(*)::int as "totalReservations",
-        count(*) filter (where status = 'CONFIRMED')::int as "confirmedReservations"
+        count(*) filter (where status = 'CONFIRMED')::int as "confirmedReservations",
+        count(*) filter (where status = 'PENDING_PAYMENT')::int as "pendingPaymentReservations"
       from reservations
       where user_id in (${uuidSqlList(userIds)})
       group by user_id
@@ -483,6 +536,7 @@ export class AccountMergeService {
       reservationCounts[row.userId] = {
         total: Number(row.totalReservations),
         confirmed: Number(row.confirmedReservations),
+        pendingPayment: Number(row.pendingPaymentReservations),
       };
     }
 
@@ -537,13 +591,13 @@ export class AccountMergeService {
     operation: TableMoveOperation,
     now: Date,
     operatorUserId: string | null,
-  ): Promise<void> {
+  ): Promise<AccountMergeReportRowChange[]> {
     const condition =
       operation.condition?.(group.sourceUserIds) ??
       inArray(operation.userIdColumn as never, group.sourceUserIds);
     const beforeRows = await tx.select().from(operation.table).where(condition);
     if (beforeRows.length === 0) {
-      return;
+      return [];
     }
 
     const changes = operation.changes(group.targetUserId, now, operatorUserId);
@@ -563,6 +617,11 @@ export class AccountMergeService {
     );
     const rowChanges = beforeRows.map((row, index) => {
       const updatedRow = updatedRowsById.get(String(row.id ?? index)) ?? updatedRows[index];
+      const beforeSnapshot = recoverySnapshot(operation.tableName, row);
+      const afterSnapshot = recoverySnapshot(
+        operation.tableName,
+        updatedRow ?? { ...row, ...changes },
+      );
       return {
         batchId,
         mergeGroupKey: group.groupKey,
@@ -570,13 +629,30 @@ export class AccountMergeService {
         rowId: String(row.id),
         sourceUserId: sourceUserIdFor(row),
         targetUserId: group.targetUserId,
-        beforeSnapshot: row,
-        afterSnapshot: updatedRow ?? { ...row, ...changes },
+        beforeSnapshot,
+        afterSnapshot,
         expectedRowCount: 1,
         actualRowCount: 1,
       };
     });
     await tx.insert(accountMergeRowChanges).values(rowChanges).returning();
+    return rowChanges.map(
+      ({
+        tableName,
+        rowId,
+        sourceUserId,
+        targetUserId,
+        beforeSnapshot,
+        afterSnapshot,
+      }) => ({
+        tableName,
+        rowId,
+        sourceUserId,
+        targetUserId,
+        beforeSnapshot,
+        afterSnapshot,
+      }),
+    );
   }
 
   private async userIdsFromQuery(query: SQLWrapper): Promise<string[]> {
@@ -595,6 +671,28 @@ export class AccountMergeService {
       }
     }
     return mismatches.sort();
+  }
+
+  private async persistVerificationSummary(
+    batchId: string,
+    verification: AccountMergeVerifyResult,
+  ): Promise<void> {
+    await this.db.execute(sql`
+      update account_merge_batches
+      set
+        status = ${verification.ok ? 'verified' : 'failed'}::account_merge_batch_status,
+        verification_summary = ${JSON.stringify({
+          ok: verification.ok,
+          failedChecks: verification.failedChecks,
+          ledgerMismatches: verification.ledgerMismatches.length,
+          sourceUsersWithActiveRefreshTokens:
+            verification.sourceUsersWithActiveRefreshTokens.length,
+          sourceUsersWithPendingEmailVerificationTokens:
+            verification.sourceUsersWithPendingEmailVerificationTokens.length,
+        })}::jsonb,
+        verified_at = now()
+      where id = ${batchId}::uuid
+    `);
   }
 }
 
@@ -726,7 +824,7 @@ function assertApplyHashes(
   dryRun: AccountMergeDryRunResult,
   options: AccountMergeApplyOptions,
 ): void {
-  if (options.dryRunHash !== hashJson(dryRun)) {
+  if (options.dryRunHash !== hashAccountMergeDryRun(dryRun)) {
     throw new Error('ACCOUNT_MERGE_DRY_RUN_HASH_MISMATCH');
   }
 
@@ -750,7 +848,83 @@ function normalizeCandidateRow(row: CandidateRow): CandidateRow {
     accountStatus: String(row.accountStatus),
     totalReservations: Number(row.totalReservations),
     confirmedReservations: Number(row.confirmedReservations),
+    pendingPaymentReservations: Number(row.pendingPaymentReservations ?? 0),
   };
+}
+
+function recoverySnapshot(tableName: string, row: Row): Record<string, unknown> {
+  if (movedOwnershipTables.includes(tableName)) {
+    return {
+      id: row.id ?? null,
+      userId: row.userId ?? null,
+    };
+  }
+  if (tableName === getTableName(refreshTokens)) {
+    return {
+      id: row.id ?? null,
+      userId: row.userId ?? null,
+      revokedAt: row.revokedAt ?? null,
+    };
+  }
+  if (tableName === getTableName(emailVerificationTokens)) {
+    return {
+      id: row.id ?? null,
+      userId: row.userId ?? null,
+      consumedAt: row.consumedAt ?? null,
+    };
+  }
+  if (tableName === getTableName(users)) {
+    return {
+      id: row.id ?? null,
+      accountStatus: row.accountStatus ?? null,
+      marketingConsent: row.marketingConsent ?? null,
+      withdrawalReason: row.withdrawalReason ?? null,
+      withdrawalSource: row.withdrawalSource ?? null,
+      withdrawnByUserId: row.withdrawnByUserId ?? null,
+    };
+  }
+  return {
+    id: row.id ?? null,
+  };
+}
+
+function verificationFailedChecks(
+  verification: Omit<AccountMergeVerifyResult, 'ok' | 'failedChecks'>,
+  sourceUserIds: string[],
+  targetUserIds: string[],
+): string[] {
+  const failedChecks: string[] = [];
+  if (!sameStringSet(verification.sourceUsersWithoutReservations, sourceUserIds)) {
+    failedChecks.push('source_reservations_remaining');
+  }
+  if (!sameStringSet(verification.sourceUsersWithoutSocialLinks, sourceUserIds)) {
+    failedChecks.push('source_social_links_remaining');
+  }
+  if (!sameStringSet(verification.sourceUsersWithoutTermsAgreements, sourceUserIds)) {
+    failedChecks.push('source_terms_agreements_remaining');
+  }
+  if (!sameStringSet(verification.sourceUsersWithoutConsentAuditLogs, sourceUserIds)) {
+    failedChecks.push('source_consent_audit_logs_remaining');
+  }
+  if (!sameStringSet(verification.sourceUsersWithoutSupportThreads, sourceUserIds)) {
+    failedChecks.push('source_support_threads_remaining');
+  }
+  if (verification.sourceUsersWithPendingEmailVerificationTokens.length > 0) {
+    failedChecks.push('source_pending_email_verification_tokens');
+  }
+  if (verification.sourceUsersWithActiveRefreshTokens.length > 0) {
+    failedChecks.push('source_active_refresh_tokens');
+  }
+  if (!sameStringSet(verification.sourceUsersMarkedMerged, sourceUserIds)) {
+    failedChecks.push('source_users_not_marked_merged');
+  }
+  if (!targetUserIds.every((userId) => verification.targetUsersWithReservations.includes(userId))) {
+    failedChecks.push('target_reservations_missing');
+  }
+  if (verification.ledgerMismatches.length > 0) {
+    failedChecks.push('ledger_mismatches');
+  }
+  return failedChecks.sort();
 }
 
 function sourceUserIdFor(row: Row): string {

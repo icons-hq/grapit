@@ -1443,7 +1443,7 @@ describe('AuthService', () => {
         ...createMockUser(),
         id: randomUUID(),
         email: 'buyer@example.com',
-        name: 'Existing Buyer',
+        name: 'Social Name',
         phone: '010-2222-3333',
         birthDate: '1992-02-02',
         gender: 'female' as const,
@@ -1534,6 +1534,7 @@ describe('AuthService', () => {
       expect(containsPrimitiveValue(updateWhereCalls, targetUser.id)).toBe(true);
       expect(containsPrimitiveValue(updateWhereCalls, targetUser.phone)).toBe(true);
       expect(containsPrimitiveValue(updateWhereCalls, targetUser.birthDate)).toBe(true);
+      expect(containsPrimitiveValue(updateWhereCalls, targetUser.name)).toBe(true);
       expect(containsPrimitiveValue(updateWhereCalls, true)).toBe(true);
       expect(containsPrimitiveValue(updateWhereCalls, 'active')).toBe(true);
       expect(mockConsentService.captureConsent).toHaveBeenCalledWith(
@@ -1547,12 +1548,74 @@ describe('AuthService', () => {
       );
     });
 
+    it('falls through to create-new behavior when the single phone and birth-date match has a different normalized name', async () => {
+      const newUserId = randomUUID();
+      const targetUser = {
+        ...createMockUser(),
+        id: randomUUID(),
+        email: 'buyer@example.com',
+        name: 'Existing Buyer',
+        phone: '010-2222-3333',
+        birthDate: '1992-02-02',
+        isPhoneVerified: true,
+        isEmailVerified: true,
+        accountStatus: 'active',
+      };
+
+      mockJwtService.verifyAsync.mockResolvedValue({
+        provider: 'kakao',
+        providerId: 'kakao-new-456',
+        email: 'social-new@example.com',
+        name: 'Social Name',
+        purpose: 'social-registration',
+      });
+      mockUserRepo.findActiveByVerifiedIdentity.mockResolvedValue([targetUser]);
+      mockUserRepo.findByEmail.mockResolvedValue(null);
+      mockUserRepo.create.mockResolvedValue({
+        ...createMockUser(),
+        id: newUserId,
+        email: 'social-new@example.com',
+        name: 'Social Name',
+        passwordHash: null,
+        isPhoneVerified: true,
+        isEmailVerified: true,
+      });
+
+      const result = await authService.completeSocialRegistration(
+        'valid-registration-token',
+        {
+          name: 'Social Name',
+          gender: 'male',
+          country: 'US',
+          birthDate: targetUser.birthDate,
+          phone: targetUser.phone,
+          phoneVerificationToken: 'signed-social-phone-token',
+          termsOfService: true,
+          privacyPolicy: true,
+          marketingConsent: false,
+          consentItems: makeSocialConsentItems(),
+        },
+      );
+
+      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith('social-new@example.com');
+      expect(mockUserRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          email: 'social-new@example.com',
+          name: 'Social Name',
+          phone: targetUser.phone,
+          birthDate: targetUser.birthDate,
+        }),
+        expect.anything(),
+      );
+      expect(result.user.id).toBe(newUserId);
+    });
+
     it('aborts exact identity social link before insert and token issue when the target becomes inactive inside the transaction', async () => {
       const staleTargetUser = {
         ...createMockUser(),
         id: randomUUID(),
         email: 'buyer@example.com',
-        name: 'Existing Buyer',
+        name: 'Social Name',
         phone: '010-2222-3333',
         birthDate: '1992-02-02',
         marketingConsent: false,
@@ -1611,6 +1674,7 @@ describe('AuthService', () => {
         ...createMockUser(),
         id: randomUUID(),
         email: 'buyer@example.com',
+        name: 'Google User',
         phone: '010-2222-3333',
         birthDate: '1992-02-02',
         isPhoneVerified: true,
@@ -1660,6 +1724,66 @@ describe('AuthService', () => {
 
       expect(mockUserRepo.findByEmail).not.toHaveBeenCalled();
       expect(mockUserRepo.create).not.toHaveBeenCalled();
+    });
+
+    it('links the only normalized-name match when multiple accounts share phone and birth date', async () => {
+      const matchingCandidate = {
+        ...createMockUser(),
+        id: randomUUID(),
+        email: 'buyer@example.com',
+        name: 'Naver User',
+        phone: '010-4444-5555',
+        birthDate: '1990-03-03',
+        isPhoneVerified: true,
+        accountStatus: 'active',
+      };
+      const otherCandidate = {
+        ...createMockUser(),
+        id: randomUUID(),
+        email: 'other@example.com',
+        name: 'Other Buyer',
+        phone: matchingCandidate.phone,
+        birthDate: matchingCandidate.birthDate,
+        isPhoneVerified: true,
+        accountStatus: 'active',
+      };
+
+      mockJwtService.verifyAsync.mockResolvedValue({
+        provider: 'naver',
+        providerId: 'naver-link-456',
+        email: 'naver-link@example.com',
+        name: 'Naver User',
+        purpose: 'social-registration',
+      });
+      mockUserRepo.findActiveByVerifiedIdentity.mockResolvedValue([
+        matchingCandidate,
+        otherCandidate,
+      ]);
+      mockDb.update.mockImplementation(() =>
+        makeMockUpdateChain([
+          { ...matchingCandidate, marketingConsent: true, updatedAt: new Date() },
+        ]),
+      );
+
+      const result = await authService.completeSocialRegistration(
+        'valid-registration-token',
+        {
+          name: ' Naver   User ',
+          gender: 'male',
+          country: 'KR',
+          birthDate: matchingCandidate.birthDate,
+          phone: matchingCandidate.phone,
+          phoneVerificationToken: 'signed-social-phone-token',
+          termsOfService: true,
+          privacyPolicy: true,
+          marketingConsent: true,
+          consentItems: makeSocialConsentItems(),
+        },
+      );
+
+      expect(mockUserRepo.findByEmail).not.toHaveBeenCalled();
+      expect(mockUserRepo.create).not.toHaveBeenCalled();
+      expect(result.user.id).toBe(matchingCandidate.id);
     });
 
     it('falls through to create-new behavior when multiple active verified identity matches exist', async () => {

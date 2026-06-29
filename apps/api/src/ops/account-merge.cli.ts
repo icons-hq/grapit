@@ -7,9 +7,15 @@ import {
 import { NestFactory } from '@nestjs/core';
 
 import { AccountMergeModule } from '../modules/account-merge/account-merge.module.js';
-import { hashJson } from '../modules/account-merge/account-merge-policy.js';
+import {
+  hashAccountMergeDryRun,
+  hashJson,
+} from '../modules/account-merge/account-merge-policy.js';
 import {
   AccountMergeService,
+  type AccountMergeApplyResult,
+  type AccountMergeDryRunResult,
+  type AccountMergeVerifyResult,
   type ManualMergeAllowlistEntry,
 } from '../modules/account-merge/account-merge.service.js';
 
@@ -107,6 +113,36 @@ export function writeProtectedReport(path: string, payload: unknown): void {
   chmodSync(path, 0o600);
 }
 
+export function buildApplyReport({
+  dryRun,
+  allowlistHash,
+  result,
+  verification,
+}: {
+  dryRun: AccountMergeDryRunResult;
+  allowlistHash: string;
+  result: AccountMergeApplyResult;
+  verification: AccountMergeVerifyResult;
+}) {
+  return {
+    dryRun,
+    allowlistHash,
+    result: {
+      batchId: result.batchId,
+      mergedGroups: result.mergedGroups,
+      mergedSourceUsers: result.mergedSourceUsers,
+    },
+    rowChanges: result.rowChanges,
+    verification,
+  };
+}
+
+export function hasVerificationFailures(
+  verification: Pick<AccountMergeVerifyResult, 'ok' | 'failedChecks'>,
+): boolean {
+  return !verification.ok || verification.failedChecks.length > 0;
+}
+
 function readManualAllowlist(path: string): ManualMergeAllowlistEntry[] {
   const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
   if (!Array.isArray(parsed)) {
@@ -149,7 +185,7 @@ async function main(): Promise<void> {
         JSON.stringify({
           mode: 'dry-run',
           reportPath: args.reportPath,
-          dryRunHash: hashJson(dryRun),
+          dryRunHash: hashAccountMergeDryRun(dryRun),
         }),
       );
       return;
@@ -159,29 +195,39 @@ async function main(): Promise<void> {
       requireApplySafetyInputs(args);
 
       const manualAllowlist = readManualAllowlist(args.allowlistPath!);
-      const dryRun = await service.dryRun({
-        includeManualAllowlist: manualAllowlist,
-      });
-      const currentDryRunHash = hashJson(dryRun);
+      const dryRun = await service.dryRun();
+      const currentDryRunHash = hashAccountMergeDryRun(dryRun);
       if (args.dryRunHash !== currentDryRunHash) {
         throw new Error('ACCOUNT_MERGE_DRY_RUN_HASH_MISMATCH');
       }
 
+      const allowlistHash = hashJson(manualAllowlist);
       const result = await service.apply({
         operatorUserId: args.operatorUserId,
         reason: args.reason!,
         backupReference: args.backupReference!,
         reportPath: args.reportPath!,
         dryRunHash: args.dryRunHash,
-        allowlistHash: hashJson(manualAllowlist),
+        allowlistHash,
         manualAllowlist,
       });
+      const verification = await service.verify(result.batchId);
 
-      writeProtectedReport(args.reportPath!, {
+      writeProtectedReport(args.reportPath!, buildApplyReport({
         dryRun,
+        allowlistHash,
         result,
-      });
-      console.log(JSON.stringify({ mode: 'apply', ...result }));
+        verification,
+      }));
+      console.log(
+        JSON.stringify({
+          mode: 'apply',
+          batchId: result.batchId,
+          mergedGroups: result.mergedGroups,
+          mergedSourceUsers: result.mergedSourceUsers,
+          verificationOk: verification.ok,
+        }),
+      );
       return;
     }
 
@@ -189,11 +235,14 @@ async function main(): Promise<void> {
       throw new Error('ACCOUNT_MERGE_BATCH_ID_REQUIRED');
     }
 
-    const verification = await service.verify(args.batchId);
+    const verification = await service.verify(args.batchId, { persist: true });
     if (args.reportPath) {
       writeProtectedReport(args.reportPath, verification);
     }
     console.log(JSON.stringify({ mode: 'verify', verification }));
+    if (hasVerificationFailures(verification)) {
+      process.exitCode = 1;
+    }
   } finally {
     await app.close();
   }

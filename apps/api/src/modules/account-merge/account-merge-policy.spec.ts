@@ -66,6 +66,27 @@ describe('account merge policy', () => {
     });
   });
 
+  it('requires manual review when a source account has an in-flight payment reservation', () => {
+    const result = classifyDuplicateGroup({
+      groupKey: 'group-pending-source',
+      users: [
+        { ...baseUser, id: 'confirmed-target' },
+        { ...baseUser, id: 'pending-source' },
+      ],
+      reservationCounts: {
+        'confirmed-target': { total: 1, confirmed: 1, pendingPayment: 0 },
+        'pending-source': { total: 1, confirmed: 0, pendingPayment: 1 },
+      },
+    });
+
+    expect(result).toEqual({
+      kind: 'manual_review',
+      groupKey: 'group-pending-source',
+      reason: 'source_pending_payment_reservation',
+      userIds: ['confirmed-target', 'pending-source'],
+    });
+  });
+
   it('requires manual review when identity evidence is incomplete', () => {
     const result = classifyDuplicateGroup({
       groupKey: 'group-3',

@@ -17,7 +17,7 @@ import {
   AccountMergeService,
   type ManualMergeAllowlistEntry,
 } from './account-merge.service.js';
-import { hashJson } from './account-merge-policy.js';
+import { hashAccountMergeDryRun, hashJson } from './account-merge-policy.js';
 
 type Row = Record<string, unknown>;
 
@@ -120,6 +120,7 @@ function candidateRows() {
       accountStatus: 'active',
       totalReservations: 0,
       confirmedReservations: 0,
+      pendingPaymentReservations: 0,
     },
     {
       groupKey: '821012345678|1995-05-15|hong',
@@ -131,6 +132,7 @@ function candidateRows() {
       accountStatus: 'active',
       totalReservations: 2,
       confirmedReservations: 1,
+      pendingPaymentReservations: 0,
     },
     {
       groupKey: '821055556666|1991-02-03|kim',
@@ -142,6 +144,7 @@ function candidateRows() {
       accountStatus: 'active',
       totalReservations: 1,
       confirmedReservations: 1,
+      pendingPaymentReservations: 0,
     },
     {
       groupKey: '821055556666|1991-02-03|kim',
@@ -153,8 +156,9 @@ function candidateRows() {
       accountStatus: 'active',
       totalReservations: 1,
       confirmedReservations: 1,
+      pendingPaymentReservations: 0,
     },
-	  ];
+  ];
 }
 
 function incompleteIdentityRows() {
@@ -169,6 +173,7 @@ function incompleteIdentityRows() {
       accountStatus: 'merged',
       totalReservations: 1,
       confirmedReservations: 0,
+      pendingPaymentReservations: 0,
     },
     {
       groupKey: '821099998888|1993-04-05|lee',
@@ -180,6 +185,7 @@ function incompleteIdentityRows() {
       accountStatus: 'active',
       totalReservations: 0,
       confirmedReservations: 0,
+      pendingPaymentReservations: 0,
     },
   ];
 }
@@ -211,11 +217,13 @@ function safeReservationCountRows() {
       userId: 'source-safe',
       totalReservations: 0,
       confirmedReservations: 0,
+      pendingPaymentReservations: 0,
     },
     {
       userId: 'target-safe',
       totalReservations: 2,
       confirmedReservations: 1,
+      pendingPaymentReservations: 0,
     },
   ];
 }
@@ -251,17 +259,19 @@ function manualReservationCountRows() {
       userId: 'manual-b',
       totalReservations: 1,
       confirmedReservations: 1,
+      pendingPaymentReservations: 0,
     },
     {
       userId: 'manual-a',
       totalReservations: 1,
       confirmedReservations: 1,
+      pendingPaymentReservations: 0,
     },
   ];
 }
 
 function safeDryRunHash(manualAllowlist: ManualMergeAllowlistEntry[] = []) {
-  return hashJson({
+  return hashAccountMergeDryRun({
     generatedAt: new Date(0),
     safeGroups: [
       {
@@ -284,7 +294,7 @@ function safeDryRunHash(manualAllowlist: ManualMergeAllowlistEntry[] = []) {
 }
 
 function manualDryRunHash(manualAllowlist: ManualMergeAllowlistEntry[] = []) {
-  return hashJson({
+  return hashAccountMergeDryRun({
     generatedAt: new Date(0),
     safeGroups: [],
     manualReviewGroups: [
@@ -322,10 +332,22 @@ function rowsForSource(sourceUserId = 'source-safe') {
     [tableName(consentAuditLogs)]: [{ id: 'consent-1', userId: sourceUserId }],
     [tableName(supportThreads)]: [{ id: 'support-1', userId: sourceUserId }],
     [tableName(refreshTokens)]: [
-      { id: 'refresh-1', userId: sourceUserId, revokedAt: null },
+      {
+        id: 'refresh-1',
+        userId: sourceUserId,
+        tokenHash: 'refresh-token-hash',
+        family: 'refresh-family',
+        revokedAt: null,
+      },
     ],
     [tableName(emailVerificationTokens)]: [
-      { id: 'email-token-1', userId: sourceUserId, consumedAt: null },
+      {
+        id: 'email-token-1',
+        userId: sourceUserId,
+        email: 'buyer@example.com',
+        tokenHash: 'email-token-hash',
+        consumedAt: null,
+      },
     ],
     [tableName(users)]: [
       {
@@ -365,21 +387,14 @@ describe('AccountMergeService', () => {
     expect(result.manualAllowlist).toEqual([]);
   });
 
-  it('dry-run reports incomplete identity duplicate groups for manual review', async () => {
+  it('dry-run ignores already merged placeholder users instead of reopening old duplicate groups', async () => {
     const { db } = createRecordingDb({ executeRows: [incompleteIdentityRows()] });
     const service = new AccountMergeService(db as never);
 
     const result = await service.dryRun({});
 
     expect(result.safeGroups).toEqual([]);
-    expect(result.manualReviewGroups).toEqual([
-      {
-        kind: 'manual_review',
-        groupKey: '821099998888|1993-04-05|lee',
-        reason: 'identity_evidence_incomplete',
-        userIds: ['active-1', 'inactive-1'],
-      },
-    ]);
+    expect(result.manualReviewGroups).toEqual([]);
   });
 
   it('dry-run returns included manual allowlist entries for operator reports', async () => {
@@ -397,6 +412,31 @@ describe('AccountMergeService', () => {
     const result = await service.dryRun({ includeManualAllowlist: manualAllowlist });
 
     expect(result.manualAllowlist).toEqual(manualAllowlist);
+  });
+
+  it('uses the same reviewed dry-run hash when only generatedAt or manual allowlist entries differ', async () => {
+    const manualAllowlist: ManualMergeAllowlistEntry[] = [
+      {
+        groupKey: '821055556666|1991-02-03|kim',
+        targetUserId: 'manual-a',
+        sourceUserIds: ['manual-b'],
+        reason: 'operator reviewed duplicate social signup',
+      },
+    ];
+    const { db } = createRecordingDb({
+      executeRows: [candidateRows(), candidateRows()],
+    });
+    const service = new AccountMergeService(db as never);
+
+    const firstDryRun = await service.dryRun({});
+    const secondDryRun = await service.dryRun({
+      includeManualAllowlist: manualAllowlist,
+    });
+
+    expect(firstDryRun.generatedAt).not.toBe(secondDryRun.generatedAt);
+    expect(hashAccountMergeDryRun(firstDryRun)).toBe(
+      hashAccountMergeDryRun(secondDryRun),
+    );
   });
 
   it('applies a safe merge by moving buyer-owned rows and revoking source sessions in the expected order', async () => {
@@ -454,7 +494,7 @@ describe('AccountMergeService', () => {
     await expect(
       service.apply(
         applyOptions({
-          dryRunHash: hashJson(emptyDryRun),
+          dryRunHash: hashAccountMergeDryRun(emptyDryRun),
         }),
       ),
     ).rejects.toThrow('ACCOUNT_MERGE_NO_GROUPS_TO_APPLY');
@@ -485,7 +525,7 @@ describe('AccountMergeService', () => {
 
     const result = await service.apply(
       applyOptions({
-        dryRunHash: manualDryRunHash(manualAllowlist),
+        dryRunHash: manualDryRunHash(),
         allowlistHash,
         manualAllowlist,
       }),
@@ -623,25 +663,49 @@ describe('AccountMergeService', () => {
           rowId: 'reservation-1',
           sourceUserId: 'source-safe',
           targetUserId: 'target-safe',
-          beforeSnapshot: expect.objectContaining({ userId: 'source-safe' }),
-          afterSnapshot: expect.objectContaining({
-            returnedMarker: 'reservations-returned',
-            userId: 'target-safe',
-          }),
+          beforeSnapshot: { id: 'reservation-1', userId: 'source-safe' },
+          afterSnapshot: { id: 'reservation-1', userId: 'target-safe' },
           expectedRowCount: 1,
           actualRowCount: 1,
         }),
         expect.objectContaining({
+          tableName: 'refresh_tokens',
+          rowId: 'refresh-1',
+          beforeSnapshot: {
+            id: 'refresh-1',
+            userId: 'source-safe',
+            revokedAt: null,
+          },
+          afterSnapshot: {
+            id: 'refresh-1',
+            userId: 'source-safe',
+            revokedAt: expect.any(Date),
+          },
+        }),
+        expect.objectContaining({
           tableName: 'users',
           rowId: 'source-safe',
-          beforeSnapshot: expect.objectContaining({ accountStatus: 'active' }),
-          afterSnapshot: expect.objectContaining({
+          beforeSnapshot: {
+            id: 'source-safe',
+            accountStatus: 'active',
+            marketingConsent: true,
+            withdrawalReason: null,
+            withdrawalSource: null,
+            withdrawnByUserId: null,
+          },
+          afterSnapshot: {
+            id: 'source-safe',
             accountStatus: 'merged',
             marketingConsent: false,
-          }),
+            withdrawalReason: 'merged into target-safe',
+            withdrawalSource: 'admin',
+            withdrawnByUserId: 'operator-1',
+          },
         }),
       ]),
     );
+    expect(JSON.stringify(tx.insertedRowChanges)).not.toContain('token-hash');
+    expect(JSON.stringify(tx.insertedRowChanges)).not.toContain('buyer@example.com');
   });
 
   it('rolls back and throws when update row count differs from expected', async () => {
@@ -684,6 +748,38 @@ describe('AccountMergeService', () => {
       'ACCOUNT_MERGE_GROUP_REVALIDATION_FAILED:classification_changed',
     );
     expect(tx.updateCalls).toEqual([]);
+  });
+
+  it('aborts before row moves when a source account owns a pending payment reservation', async () => {
+    const { db, tx } = createRecordingDb({
+      executeRows: [
+        candidateRows(),
+        safeRevalidationRows(),
+        [],
+        [
+          {
+            userId: 'source-safe',
+            totalReservations: 1,
+            confirmedReservations: 0,
+            pendingPaymentReservations: 1,
+          },
+          {
+            userId: 'target-safe',
+            totalReservations: 2,
+            confirmedReservations: 1,
+            pendingPaymentReservations: 0,
+          },
+        ],
+      ],
+      tableRows: rowsForSource(),
+    });
+    const service = new AccountMergeService(db as never);
+
+    await expect(service.apply(applyOptions())).rejects.toThrow(
+      'ACCOUNT_MERGE_GROUP_REVALIDATION_FAILED:classification_changed',
+    );
+    expect(tx.updateCalls).toEqual([]);
+    expect(tx.insertedRowChanges).toEqual([]);
   });
 
   it('rejects verify when the batch does not exist', async () => {
@@ -737,6 +833,11 @@ describe('AccountMergeService', () => {
 
     expect(result).toEqual({
       batchId: 'batch-1',
+      ok: false,
+      failedChecks: [
+        'source_active_refresh_tokens',
+        'source_pending_email_verification_tokens',
+      ],
       sourceUsersWithoutReservations: ['source-safe'],
       sourceUsersWithoutSocialLinks: ['source-safe'],
       sourceUsersWithoutTermsAgreements: ['source-safe'],
@@ -778,6 +879,8 @@ describe('AccountMergeService', () => {
     const service = new AccountMergeService(db as never);
 
     await expect(service.verify('batch-1')).resolves.toMatchObject({
+      ok: false,
+      failedChecks: ['ledger_mismatches'],
       ledgerMismatches: ['reservations:reservation-1'],
     });
   });
