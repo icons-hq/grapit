@@ -94,7 +94,7 @@ function makeMockUpdateChain(returningRows: Array<{ id: string }> = [{ id: rando
   return { set, where, returning };
 }
 
-function containsPrimitiveValue(value: unknown, needle: string, seen = new Set<object>()): boolean {
+function containsPrimitiveValue(value: unknown, needle: unknown, seen = new Set<object>()): boolean {
   if (value === needle) return true;
   if (value === null || typeof value !== 'object') return false;
   if (seen.has(value)) return false;
@@ -113,6 +113,7 @@ describe('AuthService', () => {
   let mockUserRepo: {
     findByEmail: ReturnType<typeof vi.fn>;
     findById: ReturnType<typeof vi.fn>;
+    findActiveByVerifiedIdentity: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
     updatePassword: ReturnType<typeof vi.fn>;
   };
@@ -161,6 +162,7 @@ describe('AuthService', () => {
     mockUserRepo = {
       findByEmail: vi.fn(),
       findById: vi.fn(),
+      findActiveByVerifiedIdentity: vi.fn().mockResolvedValue([]),
       create: vi.fn(),
       updatePassword: vi.fn(),
     };
@@ -427,6 +429,17 @@ describe('AuthService', () => {
         authService.validateUser('nouser@test.com', 'Test1234!'),
       ).rejects.toThrow(UnauthorizedException);
     });
+
+    it('rejects merged accounts with the same public auth failure as withdrawn accounts', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue({
+        ...mockUser,
+        accountStatus: 'merged',
+      });
+
+      await expect(
+        authService.validateUser('test@test.com', 'Test1234!'),
+      ).rejects.toThrow(UnauthorizedException);
+    });
   });
 
   describe('login', () => {
@@ -450,6 +463,26 @@ describe('AuthService', () => {
       expect(result).toHaveProperty('refreshToken');
       expect(result).toHaveProperty('user');
       expect(result.user.email).toBe(mockUser.email);
+    });
+
+    it('preserves merged accountStatus when mapping a profile directly', async () => {
+      const result = await authService.login({
+        id: mockUser.id,
+        email: mockUser.email,
+        role: mockUser.role,
+        name: mockUser.name,
+        phone: mockUser.phone,
+        gender: mockUser.gender,
+        country: mockUser.country,
+        birthDate: mockUser.birthDate,
+        isEmailVerified: mockUser.isEmailVerified,
+        isPhoneVerified: mockUser.isPhoneVerified,
+        marketingConsent: mockUser.marketingConsent,
+        accountStatus: 'merged',
+        createdAt: mockUser.createdAt,
+      });
+
+      expect(result.user.accountStatus).toBe('merged');
     });
   });
 
@@ -617,6 +650,41 @@ describe('AuthService', () => {
         UnauthorizedException,
       );
     });
+
+    it('revokes the token family and rejects refresh for merged accounts', async () => {
+      const rawToken = 'merged-user-refresh-token';
+      const tokenHash = createHash('sha256').update(rawToken).digest('hex');
+      const family = randomUUID();
+      const familyWhere = vi.fn().mockResolvedValue([]);
+      const familySet = vi.fn().mockReturnValue({ where: familyWhere });
+
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([
+            {
+              id: randomUUID(),
+              userId: mockUser.id,
+              tokenHash,
+              family,
+              expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+              createdAt: new Date(),
+              revokedAt: null,
+            },
+          ]),
+        }),
+      });
+      mockUserRepo.findById.mockResolvedValue({
+        ...mockUser,
+        accountStatus: 'merged',
+      });
+      mockDb.update.mockReturnValue({ set: familySet });
+
+      await expect(authService.refreshTokens(rawToken)).rejects.toThrow(
+        UnauthorizedException,
+      );
+
+      expect(containsPrimitiveValue(familyWhere.mock.calls, family)).toBe(true);
+    });
   });
 
   describe('refresh token family limit', () => {
@@ -783,6 +851,20 @@ describe('AuthService', () => {
         'http://localhost:3001/auth/reset-password?token=reset-token',
       );
     });
+
+    it('does not send reset email for merged accounts and preserves enumeration prevention', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue({
+        ...mockUser,
+        accountStatus: 'merged',
+      });
+
+      await expect(
+        authService.requestPasswordReset('merged@test.com'),
+      ).resolves.toBeUndefined();
+
+      expect(mockJwtService.signAsync).not.toHaveBeenCalled();
+      expect(mockEmailService.sendPasswordResetEmail).not.toHaveBeenCalled();
+    });
   });
 
   describe('email verification', () => {
@@ -891,6 +973,24 @@ describe('AuthService', () => {
       expect(mockDb.insert).not.toHaveBeenCalled();
     });
 
+    it('rejects account email verification requests for merged accounts', async () => {
+      mockUserRepo.findById.mockResolvedValue({
+        ...mockUser,
+        accountStatus: 'merged',
+      });
+
+      await expect(
+        authEmailVerificationApi().requestAccountEmailVerification(
+          mockUser.id,
+          'buyer@example.com',
+          'ko',
+        ),
+      ).rejects.toThrow(UnauthorizedException);
+
+      expect(mockEmailService.sendEmailVerificationEmail).not.toHaveBeenCalled();
+      expect(mockDb.insert).not.toHaveBeenCalled();
+    });
+
     it('verifies account email change and marks the new address verified', async () => {
       const email = 'buyer@example.com';
       const code = '123456';
@@ -909,6 +1009,7 @@ describe('AuthService', () => {
         email,
         isEmailVerified: true,
       };
+      mockUserRepo.findById.mockResolvedValue(mockUser);
       mockUserRepo.findByEmail.mockResolvedValue(null);
       mockDb.select.mockReturnValue({
         from: vi.fn().mockReturnValue({ where: vi.fn().mockResolvedValue([tokenRecord]) }),
@@ -940,6 +1041,24 @@ describe('AuthService', () => {
       });
 
       expect(mockDb.update).toHaveBeenCalledTimes(2);
+    });
+
+    it('rejects account email verification code confirmation for merged accounts', async () => {
+      mockUserRepo.findById.mockResolvedValue({
+        ...mockUser,
+        accountStatus: 'merged',
+      });
+
+      await expect(
+        authEmailVerificationApi().verifyAccountEmailVerificationCode(
+          mockUser.id,
+          'buyer@example.com',
+          '123456',
+        ),
+      ).rejects.toThrow(UnauthorizedException);
+
+      expect(mockDb.select).not.toHaveBeenCalled();
+      expect(mockDb.update).not.toHaveBeenCalled();
     });
 
     it('verifies the latest 6-digit email code and marks the user verified', async () => {
@@ -1076,6 +1195,26 @@ describe('AuthService', () => {
       const isValid = await argon2.verify(newHash!, 'NewPass123!');
       expect(isValid).toBe(true);
     }, 15000);
+
+    it('rejects merged accounts before changing password or revoking sessions', async () => {
+      const userId = mockUser.id;
+      mockJwtService.decode.mockReturnValue({
+        sub: userId,
+        purpose: 'password-reset',
+      });
+      mockUserRepo.findById.mockResolvedValue({
+        ...mockUser,
+        accountStatus: 'merged',
+      });
+
+      await expect(
+        authService.resetPassword('header.payload.signature', 'NewPass123!'),
+      ).rejects.toThrow(UnauthorizedException);
+
+      expect(mockJwtService.verifyAsync).not.toHaveBeenCalled();
+      expect(mockUserRepo.updatePassword).not.toHaveBeenCalled();
+      expect(mockDb.update).not.toHaveBeenCalled();
+    });
   });
 
   describe('findOrCreateSocialUser', () => {
@@ -1185,6 +1324,40 @@ describe('AuthService', () => {
       expect(mockDb.update).toHaveBeenCalled();
       expect(mockEmailService.sendEmailVerificationEmail).not.toHaveBeenCalled();
     });
+
+    it('rejects merged users for an existing social account link', async () => {
+      const existingUser = {
+        ...createMockUser(),
+        accountStatus: 'merged',
+      };
+
+      mockDb.select.mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([
+            {
+              id: randomUUID(),
+              userId: existingUser.id,
+              provider: 'kakao',
+              providerId: '12345',
+              providerEmail: 'kakao@test.com',
+              createdAt: new Date(),
+            },
+          ]),
+        }),
+      });
+      mockUserRepo.findById.mockResolvedValue(existingUser);
+
+      await expect(
+        authService.findOrCreateSocialUser({
+          provider: 'kakao',
+          providerId: '12345',
+          email: 'kakao@test.com',
+          name: 'Kakao User',
+        }),
+      ).rejects.toThrow(UnauthorizedException);
+
+      expect(mockDb.insert).not.toHaveBeenCalled();
+    });
   });
 
   describe('completeSocialRegistration', () => {
@@ -1263,6 +1436,303 @@ describe('AuthService', () => {
         { ipAddress: '203.0.113.20', userAgent: 'Vitest Social' },
         expect.anything(),
       );
+    });
+
+    it('links an exact single active verified identity match without creating a new user or overwriting profile fields', async () => {
+      const targetUser = {
+        ...createMockUser(),
+        id: randomUUID(),
+        email: 'buyer@example.com',
+        name: 'Existing Buyer',
+        phone: '010-2222-3333',
+        birthDate: '1992-02-02',
+        gender: 'female' as const,
+        country: 'KR',
+        marketingConsent: false,
+        isPhoneVerified: true,
+        isEmailVerified: true,
+        accountStatus: 'active',
+      };
+
+      mockJwtService.verifyAsync.mockResolvedValue({
+        provider: 'kakao',
+        providerId: 'kakao-link-123',
+        email: 'social@example.com',
+        name: 'Social Name',
+        purpose: 'social-registration',
+      });
+      mockUserRepo.findActiveByVerifiedIdentity.mockResolvedValue([targetUser]);
+      mockUserRepo.findByEmail.mockResolvedValue(null);
+      mockDb.update.mockImplementation(() =>
+        makeMockUpdateChain([
+          { ...targetUser, marketingConsent: true, updatedAt: new Date() },
+        ]),
+      );
+
+      const result = await authService.completeSocialRegistration(
+        'valid-registration-token',
+        {
+          name: 'Social Name',
+          gender: 'male',
+          country: 'US',
+          birthDate: targetUser.birthDate,
+          phone: targetUser.phone,
+          phoneVerificationToken: 'signed-social-phone-token',
+          termsOfService: true,
+          privacyPolicy: true,
+          marketingConsent: true,
+          consentItems: makeSocialConsentItems(),
+        },
+        { ipAddress: '203.0.113.40', userAgent: 'Vitest Link' },
+      );
+
+      expect(mockUserRepo.findActiveByVerifiedIdentity).toHaveBeenCalledWith(
+        targetUser.phone,
+        targetUser.birthDate,
+      );
+      expect(mockUserRepo.create).not.toHaveBeenCalled();
+      expect(mockUserRepo.findByEmail).not.toHaveBeenCalled();
+      expect(result.user).toMatchObject({
+        id: targetUser.id,
+        email: targetUser.email,
+        name: targetUser.name,
+        phone: targetUser.phone,
+        birthDate: targetUser.birthDate,
+        gender: targetUser.gender,
+        country: targetUser.country,
+        marketingConsent: true,
+      });
+
+      const insertedValues = mockDb.insert.mock.results.map(
+        (result) => result.value.values.mock.calls[0]?.[0],
+      );
+      expect(insertedValues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            userId: targetUser.id,
+            provider: 'kakao',
+            providerId: 'kakao-link-123',
+            providerEmail: 'social@example.com',
+          }),
+          expect.objectContaining({
+            userId: targetUser.id,
+            termsOfService: true,
+            privacyPolicy: true,
+            marketingConsent: true,
+          }),
+        ]),
+      );
+      const updateSet = mockDb.update.mock.results[0]?.value.set.mock.calls[0]?.[0] as
+        | Record<string, unknown>
+        | undefined;
+      expect(Object.keys(updateSet ?? {}).sort()).toEqual(['marketingConsent', 'updatedAt']);
+      expect(updateSet).toEqual({
+        marketingConsent: true,
+        updatedAt: expect.any(Date),
+      });
+      const updateWhereCalls = mockDb.update.mock.results[0]?.value.where.mock.calls;
+      expect(containsPrimitiveValue(updateWhereCalls, targetUser.id)).toBe(true);
+      expect(containsPrimitiveValue(updateWhereCalls, targetUser.phone)).toBe(true);
+      expect(containsPrimitiveValue(updateWhereCalls, targetUser.birthDate)).toBe(true);
+      expect(containsPrimitiveValue(updateWhereCalls, true)).toBe(true);
+      expect(containsPrimitiveValue(updateWhereCalls, 'active')).toBe(true);
+      expect(mockConsentService.captureConsent).toHaveBeenCalledWith(
+        targetUser.id,
+        expect.objectContaining({
+          sourceFlow: 'social_completion',
+          birthDate: targetUser.birthDate,
+        }),
+        { ipAddress: '203.0.113.40', userAgent: 'Vitest Link' },
+        expect.anything(),
+      );
+    });
+
+    it('aborts exact identity social link before insert and token issue when the target becomes inactive inside the transaction', async () => {
+      const staleTargetUser = {
+        ...createMockUser(),
+        id: randomUUID(),
+        email: 'buyer@example.com',
+        name: 'Existing Buyer',
+        phone: '010-2222-3333',
+        birthDate: '1992-02-02',
+        marketingConsent: false,
+        isPhoneVerified: true,
+        isEmailVerified: true,
+        accountStatus: 'active',
+      };
+
+      mockJwtService.verifyAsync.mockResolvedValue({
+        provider: 'kakao',
+        providerId: 'kakao-link-123',
+        email: 'social@example.com',
+        name: 'Social Name',
+        purpose: 'social-registration',
+      });
+      mockUserRepo.findActiveByVerifiedIdentity.mockResolvedValue([staleTargetUser]);
+      mockDb.update.mockImplementation(() => makeMockUpdateChain([]));
+
+      await expect(
+        authService.completeSocialRegistration(
+          'valid-registration-token',
+          {
+            name: 'Social Name',
+            gender: 'male',
+            country: 'US',
+            birthDate: staleTargetUser.birthDate,
+            phone: staleTargetUser.phone,
+            phoneVerificationToken: 'signed-social-phone-token',
+            termsOfService: true,
+            privacyPolicy: true,
+            marketingConsent: true,
+            consentItems: makeSocialConsentItems(),
+          },
+          { ipAddress: '203.0.113.41', userAgent: 'Vitest Link Race' },
+        ),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+
+      const insertedValues = mockDb.insert.mock.results.map(
+        (result) => result.value.values.mock.calls[0]?.[0],
+      );
+      expect(insertedValues).not.toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            userId: staleTargetUser.id,
+            provider: 'kakao',
+            providerId: 'kakao-link-123',
+          }),
+        ]),
+      );
+      expect(mockConsentService.captureConsent).not.toHaveBeenCalled();
+      expect(mockJwtService.signAsync).not.toHaveBeenCalled();
+    });
+
+    it('does not let provider email conflict block an exact single verified identity link', async () => {
+      const targetUser = {
+        ...createMockUser(),
+        id: randomUUID(),
+        email: 'buyer@example.com',
+        phone: '010-2222-3333',
+        birthDate: '1992-02-02',
+        isPhoneVerified: true,
+        isEmailVerified: true,
+        accountStatus: 'active',
+      };
+      const otherEmailOwner = {
+        ...createMockUser(),
+        id: randomUUID(),
+        email: 'social@example.com',
+      };
+
+      mockJwtService.verifyAsync.mockResolvedValue({
+        provider: 'google',
+        providerId: 'google-link-123',
+        email: otherEmailOwner.email,
+        name: 'Google User',
+        purpose: 'social-registration',
+      });
+      mockUserRepo.findActiveByVerifiedIdentity.mockResolvedValue([targetUser]);
+      mockUserRepo.findByEmail.mockResolvedValue(otherEmailOwner);
+      mockDb.update.mockImplementation(() =>
+        makeMockUpdateChain([
+          { ...targetUser, marketingConsent: false, updatedAt: new Date() },
+        ]),
+      );
+
+      await expect(
+        authService.completeSocialRegistration('valid-registration-token', {
+          name: 'Google User',
+          gender: 'female',
+          country: 'KR',
+          birthDate: targetUser.birthDate,
+          phone: targetUser.phone,
+          phoneVerificationToken: 'signed-social-phone-token',
+          termsOfService: true,
+          privacyPolicy: true,
+          marketingConsent: false,
+          consentItems: makeSocialConsentItems(),
+        }),
+      ).resolves.toMatchObject({
+        user: expect.objectContaining({
+          id: targetUser.id,
+          email: targetUser.email,
+        }),
+      });
+
+      expect(mockUserRepo.findByEmail).not.toHaveBeenCalled();
+      expect(mockUserRepo.create).not.toHaveBeenCalled();
+    });
+
+    it('falls through to create-new behavior when multiple active verified identity matches exist', async () => {
+      const newUserId = randomUUID();
+      const firstCandidate = {
+        ...createMockUser(),
+        id: randomUUID(),
+        phone: '010-4444-5555',
+        birthDate: '1990-03-03',
+        isPhoneVerified: true,
+        accountStatus: 'active',
+      };
+      const secondCandidate = {
+        ...createMockUser(),
+        id: randomUUID(),
+        phone: firstCandidate.phone,
+        birthDate: firstCandidate.birthDate,
+        isPhoneVerified: true,
+        accountStatus: 'active',
+      };
+
+      mockJwtService.verifyAsync.mockResolvedValue({
+        provider: 'naver',
+        providerId: 'naver-new-123',
+        email: 'naver-new@example.com',
+        name: 'Naver User',
+        purpose: 'social-registration',
+      });
+      mockUserRepo.findActiveByVerifiedIdentity.mockResolvedValue([
+        firstCandidate,
+        secondCandidate,
+      ]);
+      mockUserRepo.findByEmail.mockResolvedValue(null);
+      mockUserRepo.create.mockResolvedValue({
+        ...createMockUser(),
+        id: newUserId,
+        email: 'naver-new@example.com',
+        name: 'Naver User',
+        passwordHash: null,
+        isPhoneVerified: true,
+        isEmailVerified: true,
+      });
+
+      const result = await authService.completeSocialRegistration(
+        'valid-registration-token',
+        {
+          name: 'Naver User',
+          gender: 'male',
+          country: 'KR',
+          birthDate: firstCandidate.birthDate,
+          phone: firstCandidate.phone,
+          phoneVerificationToken: 'signed-social-phone-token',
+          termsOfService: true,
+          privacyPolicy: true,
+          marketingConsent: false,
+          consentItems: makeSocialConsentItems(),
+        },
+      );
+
+      expect(mockUserRepo.findActiveByVerifiedIdentity).toHaveBeenCalledWith(
+        firstCandidate.phone,
+        firstCandidate.birthDate,
+      );
+      expect(mockUserRepo.findByEmail).toHaveBeenCalledWith('naver-new@example.com');
+      expect(mockUserRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          email: 'naver-new@example.com',
+          phone: firstCandidate.phone,
+          birthDate: firstCandidate.birthDate,
+        }),
+        expect.anything(),
+      );
+      expect(result.user.id).toBe(newUserId);
     });
 
     it('should throw UnauthorizedException for expired registrationToken', async () => {

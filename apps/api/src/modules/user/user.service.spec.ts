@@ -87,6 +87,17 @@ describe('UserService preferred locale persistence', () => {
     });
   });
 
+  it('preserves merged account status when reading the logged-in user profile', async () => {
+    vi.mocked(repository.findById).mockResolvedValue({
+      ...baseUser,
+      accountStatus: 'merged',
+    } as never);
+
+    await expect(service.getUserProfile('user-1')).resolves.toMatchObject({
+      accountStatus: 'merged',
+    });
+  });
+
   it('persists supported preferredLocale updates for logged-in users', async () => {
     vi.mocked(repository.updateProfile).mockResolvedValue({
       ...baseUser,
@@ -114,6 +125,21 @@ describe('UserService preferred locale persistence', () => {
       marketingConsent: true,
     });
   });
+
+  it.each(['withdrawn', 'merged'] as const)(
+    'rejects %s account profile updates before repository writes',
+    async (accountStatus) => {
+      vi.mocked(repository.findById).mockResolvedValue({
+        ...baseUser,
+        accountStatus,
+      } as never);
+
+      await expect(
+        service.updateProfile('user-1', { marketingConsent: true }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(repository.updateProfile).not.toHaveBeenCalled();
+    },
+  );
 
   it('requires a purpose-bound verification token when phone changes', async () => {
     vi.mocked(repository.updateProfile).mockResolvedValue({
@@ -184,5 +210,24 @@ describe('UserService preferred locale persistence', () => {
       }),
       expect.anything(),
     );
+  });
+
+  it('treats merged account self withdrawal as idempotent without overwriting status', async () => {
+    vi.mocked(repository.findById).mockResolvedValue({
+      ...baseUser,
+      accountStatus: 'merged',
+    } as never);
+
+    await expect(
+      service.withdrawSelf('user-1', {
+        reason: '서비스 이용 종료',
+        confirmed: true,
+      }),
+    ).resolves.toMatchObject({
+      accountStatus: 'merged',
+    });
+
+    expect(db.transaction).not.toHaveBeenCalled();
+    expect(auditService.write).not.toHaveBeenCalled();
   });
 });

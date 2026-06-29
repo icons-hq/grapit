@@ -54,7 +54,10 @@ export class UserService {
     if (!currentUser) {
       throw new NotFoundException('사용자를 찾을 수 없습니다');
     }
-    if (currentUser.accountStatus === 'withdrawn') {
+    if (
+      currentUser.accountStatus === 'withdrawn' ||
+      currentUser.accountStatus === 'merged'
+    ) {
       return this.mapToUserProfile(currentUser);
     }
 
@@ -194,6 +197,12 @@ export class UserService {
     if (!currentUser) {
       throw new NotFoundException('사용자를 찾을 수 없습니다');
     }
+    if (
+      currentUser.accountStatus === 'withdrawn' ||
+      currentUser.accountStatus === 'merged'
+    ) {
+      throw new BadRequestException('비활성 계정은 프로필을 수정할 수 없습니다');
+    }
 
     const updateData: Partial<
       Pick<
@@ -261,7 +270,7 @@ export class UserService {
       role: user.role as 'user' | 'admin',
       adminCapabilityBundle: normalizeAdminCapabilityBundle(user.adminCapabilityBundle),
       adminCapabilities: normalizeAdminCapabilities(user.adminCapabilities),
-      accountStatus: user.accountStatus === 'withdrawn' ? 'withdrawn' : 'active',
+      accountStatus: normalizeAccountStatus(user.accountStatus),
       withdrawnAt: user.withdrawnAt?.toISOString() ?? null,
       createdAt: user.createdAt.toISOString(),
     };
@@ -279,6 +288,13 @@ function normalizeStoredPreferredLocale(locale: string | null): UserProfile['pre
   if (isSupportedLocale(locale)) return locale;
   if (locale.toLowerCase() === 'zh-tw') return 'zh-CN';
   return DEFAULT_LOCALE;
+}
+
+function normalizeAccountStatus(
+  status: string | null | undefined,
+): UserProfile['accountStatus'] {
+  if (status === 'withdrawn' || status === 'merged') return status;
+  return 'active';
 }
 
 function normalizeAdminCapabilities(

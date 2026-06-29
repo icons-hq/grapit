@@ -74,6 +74,11 @@ export {
 } from './ticket-scan-events.js';
 export { paymentWebhookEvents } from './payment-webhook-events.js';
 export {
+  accountMergeBatches,
+  accountMergeBatchStatusEnum,
+  accountMergeRowChanges,
+} from './account-merge.js';
+export {
   bookingOperationActionEnum,
   bookingOperationAuditLogs,
 } from './booking-operation-audit-logs.js';

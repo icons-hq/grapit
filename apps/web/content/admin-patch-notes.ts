@@ -14,6 +14,30 @@ export interface AdminPatchNote {
 
 const notes = [
   {
+    id: 'pr-000-ledgered-social-account-merge',
+    prNumber: 0,
+    title: '소셜 계정 병합 운영 도구 추가',
+    summary:
+      '휴대폰 인증과 생년월일이 일치하는 소셜 로그인은 기존 계정에 연결하고, 기존 중복 계정은 복구 원장과 보호된 리포트를 남기며 병합할 수 있도록 운영 명령을 추가했습니다.',
+    highlights: [
+      '새 소셜 로그인은 정확히 하나의 활성 계정과 일치할 때 기존 계정에 연결',
+      'safe group 자동 병합과 수동 allowlist 병합을 분리',
+      'source 계정은 merged 상태로 보존하고 refresh token은 폐기',
+      '병합 batch와 row 변경 내역을 DB ledger와 protected JSON report에 기록',
+    ],
+    category: 'ops',
+    date: '2026-06-29',
+    githubUrl: 'https://github.com/sangwopark19/grapit/pull/0',
+    evidence: [
+      'Shared admin schema Vitest',
+      'API auth/account-merge Vitest',
+      'API schema contract Vitest',
+      'API build/typecheck',
+      'Web admin user management Vitest',
+      'git diff --check',
+    ],
+  },
+  {
     id: 'pr-177-benefit-export-qr-seat-highlight',
     prNumber: 177,
     title: '혜택 CSV와 QR 좌석 강조 확장',

@@ -8,6 +8,42 @@ Grabit is a live-entertainment ticketing and event-operations platform. This glo
 A person who discovers a performance, books seats, pays, and owns the resulting reservation and QR credential.
 _Avoid_: Customer, fan, user when referring to the booking actor.
 
+**Buyer Account**:
+The Grabit account that represents a Buyer inside the service and can own Reservations, QR Credentials, consents, and login links.
+_Avoid_: Real-world person, social provider account, email address.
+
+**Verified Buyer Identity**:
+The buyer identity evidence Grabit uses when deciding whether a new login link belongs to an existing Buyer Account. Future social-login linking can use a newly verified phone number plus birth date when exactly one active Buyer Account matches; historical cleanup uses stricter evidence.
+_Avoid_: Phone-only match, provider email match, automatic global merge.
+
+**Social Login Link**:
+The connection between one external social provider account and one Buyer Account. It proves a login route for the Buyer Account, not a replacement for the account's profile details; the provider email is only supporting evidence.
+_Avoid_: Buyer Account, Reservation Owner, provider email.
+
+**Identity Conflict**:
+A state where identity evidence matches more than one active Buyer Account, so Grabit must not automatically link or merge accounts. It does not have to block the buyer's current login flow.
+_Avoid_: Safe match, automatic merge candidate, login failure.
+
+**Historical Account Merge**:
+An operator-controlled repair that moves existing ownership records from a duplicate Buyer Account into the intended Buyer Account after explicit review and approval. It must preserve recovery evidence for the ownership records it changes.
+_Avoid_: Future social-login linking, automatic signup, global deduplication.
+
+**Safe Merge Group**:
+A group of duplicate Buyer Accounts whose verified identity evidence matches and whose target Buyer Account is unambiguous enough for an operator-approved batch merge.
+_Avoid_: Every duplicate group, identity conflict, best-effort merge.
+
+**Manual Merge Allowlist**:
+An operator-approved list of duplicate Buyer Accounts that may be merged even when they are not eligible for automatic safe-group merging.
+_Avoid_: Automatic merge rule, broad production filter, informal approval.
+
+**Merge Target Buyer Account**:
+The Buyer Account that remains active after a Historical Account Merge and receives the merged ownership records and Social Login Links.
+_Avoid_: New account, source account, arbitrary oldest account.
+
+**Merge Recovery Record**:
+The durable evidence of a Historical Account Merge, including which Buyer Accounts were merged and enough before-and-after ownership detail to support investigation or rollback.
+_Avoid_: Informal backup note, application log, dry-run report.
+
 **Reservation**:
 A buyer's confirmed claim to attend a specific showtime with one or more selected seats.
 _Avoid_: Order, purchase, ticket when referring to the booking record.

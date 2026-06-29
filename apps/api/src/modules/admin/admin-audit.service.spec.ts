@@ -90,6 +90,7 @@ describe('AdminAuditService', () => {
       'security.permission.update',
       'user.export_raw',
       'user.withdraw',
+      'user.merge',
       'user.hard_delete',
     ]);
     expect(db._values).toHaveBeenCalledTimes(ADMIN_AUDIT_ACTIONS.length);

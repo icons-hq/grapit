@@ -152,6 +152,7 @@ const userStats = {
   total: 50,
   active: 48,
   withdrawn: 2,
+  merged: 0,
   verification: {
     emailVerified: 40,
     phoneVerified: 35,
@@ -319,6 +320,37 @@ describe('AdminUserManagement', () => {
     );
   });
 
+  it('renders merged user stats as a separate inactive account bucket', async () => {
+    mocks.apiGet.mockImplementation((path: string) => {
+      if (path === '/api/v1/admin/users/stats') {
+        return Promise.resolve({
+          ...userStats,
+          active: 45,
+          withdrawn: 2,
+          merged: 3,
+        });
+      }
+      if (path.startsWith('/api/v1/admin/users?')) {
+        return Promise.resolve({
+          items: [listUser],
+          total: 50,
+          page: 1,
+          limit: 25,
+          totalPages: 2,
+        });
+      }
+      if (path === '/api/v1/admin/users/user-fan-1') {
+        return Promise.resolve(detailUser);
+      }
+      return Promise.reject(new Error(`Unhandled GET ${path}`));
+    });
+
+    renderWithClient(<AdminUserManagement />);
+
+    expect(await screen.findByText('병합 계정')).toBeInTheDocument();
+    expect(screen.getByText('3 / 50명')).toBeInTheDocument();
+  });
+
   it('renders search, verification filters, user detail, reservation, CS, and masked audit context', async () => {
     const user = userEvent.setup();
     renderWithClient(<AdminUserManagement />);
@@ -344,6 +376,179 @@ describe('AdminUserManagement', () => {
     expect(screen.getByText('Masked audit 컨텍스트')).toBeInTheDocument();
     expect(screen.getByText(/masked IP 203\.0\.113\.0/)).toBeInTheDocument();
     expect(screen.queryByText('203.0.113.123')).not.toBeInTheDocument();
+  });
+
+  it('renders merged account status from API detail responses', async () => {
+    mocks.apiGet.mockImplementation((path: string) => {
+      if (path === '/api/v1/admin/users/stats') {
+        return Promise.resolve(userStats);
+      }
+      if (path.startsWith('/api/v1/admin/users?')) {
+        return Promise.resolve({
+          items: [
+            {
+              id: 'user-merged-1',
+              maskedEmail: 'm***@example.com',
+              name: 'Merged User',
+              maskedPhone: '+82******5678',
+              role: 'user',
+              country: 'KR',
+              preferredLocale: 'ko',
+              marketingConsent: false,
+              adminCapabilityBundle: null,
+              adminCapabilities: [],
+              accountStatus: 'merged',
+              withdrawnAt: null,
+              withdrawalReason: 'merged into user-target-1',
+              withdrawalSource: 'admin',
+              verificationState: {
+                emailVerified: true,
+                phoneVerified: true,
+              },
+              reservationSummary: {
+                total: 0,
+                statuses: {
+                  pendingPayment: 0,
+                  confirmed: 0,
+                  cancelled: 0,
+                  failed: 0,
+                },
+                lastReservationAt: null,
+              },
+              lastActivityAt: null,
+              createdAt: '2026-06-29T00:00:00.000Z',
+            },
+          ],
+          total: 1,
+          page: 1,
+          limit: 25,
+          totalPages: 1,
+        });
+      }
+      if (path === '/api/v1/admin/users/user-merged-1') {
+        return Promise.resolve({
+          id: 'user-merged-1',
+          maskedEmail: 'm***@example.com',
+          name: 'Merged User',
+          maskedPhone: '+82******5678',
+          role: 'user',
+          country: 'KR',
+          preferredLocale: 'ko',
+          marketingConsent: false,
+          adminCapabilityBundle: null,
+          adminCapabilities: [],
+          accountStatus: 'merged',
+          withdrawnAt: null,
+          withdrawalReason: 'merged into user-target-1',
+          withdrawalSource: 'admin',
+          verificationState: {
+            emailVerified: true,
+            phoneVerified: true,
+          },
+          reservationSummary: {
+            total: 0,
+            statuses: {
+              pendingPayment: 0,
+              confirmed: 0,
+              cancelled: 0,
+              failed: 0,
+            },
+            lastReservationAt: null,
+          },
+          lastActivityAt: null,
+          createdAt: '2026-06-29T00:00:00.000Z',
+          account: {
+            birthDate: '1995-01-01',
+            gender: 'unspecified',
+            updatedAt: null,
+          },
+          recentReservations: [],
+          supportThreads: {
+            total: 0,
+            open: 0,
+            escalated: 0,
+            recentThreads: [],
+          },
+          recentAuditEvents: [],
+        });
+      }
+      return Promise.reject(new Error(`Unhandled GET ${path}`));
+    });
+
+    renderWithClient(<AdminUserManagement />);
+
+    expect(await screen.findByText('Merged User')).toBeInTheDocument();
+    const mergedRow = await screen.findByRole('button', {
+      name: 'Merged User 회원 상세 보기',
+    });
+    expect(within(mergedRow).getByText('병합됨')).toBeInTheDocument();
+    expect(await screen.findAllByText('병합됨')).toHaveLength(3);
+  });
+
+  it('disables permission and withdrawal controls for merged accounts', async () => {
+    mocks.apiGet.mockImplementation((path: string) => {
+      if (path === '/api/v1/admin/users/stats') {
+        return Promise.resolve(userStats);
+      }
+      if (path.startsWith('/api/v1/admin/users?')) {
+        return Promise.resolve({
+          items: [
+            {
+              ...listUser,
+              id: 'user-merged-1',
+              name: 'Merged User',
+              role: 'user',
+              adminCapabilityBundle: null,
+              adminCapabilities: [],
+              accountStatus: 'merged',
+              withdrawnAt: null,
+              withdrawalReason: 'merged into user-target-1',
+              withdrawalSource: 'admin',
+            },
+          ],
+          total: 1,
+          page: 1,
+          limit: 25,
+          totalPages: 1,
+        });
+      }
+      if (path === '/api/v1/admin/users/user-merged-1') {
+        return Promise.resolve({
+          ...detailUser,
+          id: 'user-merged-1',
+          name: 'Merged User',
+          role: 'user',
+          adminCapabilityBundle: null,
+          adminCapabilities: [],
+          accountStatus: 'merged',
+          withdrawnAt: null,
+          withdrawalReason: 'merged into user-target-1',
+          withdrawalSource: 'admin',
+        });
+      }
+      return Promise.reject(new Error(`Unhandled GET ${path}`));
+    });
+
+    renderWithClient(<AdminUserManagement />);
+
+    expect(await screen.findByText('Merged User')).toBeInTheDocument();
+    expect(await screen.findByText('Role / capability 편집')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Role' })).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: 'Capability bundle' })).toBeDisabled();
+    const capabilityFieldset = screen.getByText('개별 capability').closest('fieldset');
+    expect(capabilityFieldset).not.toBeNull();
+    for (const checkbox of within(capabilityFieldset as HTMLElement).getAllByRole('checkbox')) {
+      expect(checkbox).toBeDisabled();
+    }
+    expect(screen.getByRole('checkbox', { name: '권한 변경 영향 확인' })).toBeDisabled();
+    expect(screen.getByLabelText('권한 변경 사유')).toBeDisabled();
+    expect(screen.getByRole('button', { name: '권한 변경 검토' })).toBeDisabled();
+
+    expect(screen.getByLabelText('탈퇴 처리 사유')).toBeDisabled();
+    expect(screen.getByRole('checkbox', { name: '회원 탈퇴 처리 확인' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '탈퇴 처리' })).toBeDisabled();
+    expect(mocks.apiPatch).not.toHaveBeenCalled();
+    expect(mocks.apiPost).not.toHaveBeenCalled();
   });
 
   it('pages through multi-page user lists and replaces stale detail context', async () => {
@@ -565,6 +770,58 @@ describe('AdminUserManagement', () => {
         queryKey: ['admin', 'audit'],
       });
     });
+  });
+
+  it('disables the open withdrawal confirmation when the selected user becomes inactive after refetch', async () => {
+    const user = userEvent.setup();
+    let detailResponse: AdminUserDetail = detailUser;
+    mocks.apiGet.mockImplementation((path: string) => {
+      if (path === '/api/v1/admin/users/stats') {
+        return Promise.resolve(userStats);
+      }
+      if (path.startsWith('/api/v1/admin/users?')) {
+        return Promise.resolve({
+          items: [listUser],
+          total: 1,
+          page: 1,
+          limit: 25,
+          totalPages: 1,
+        });
+      }
+      if (path === '/api/v1/admin/users/user-fan-1') {
+        return Promise.resolve(detailResponse);
+      }
+      return Promise.reject(new Error(`Unhandled GET ${path}`));
+    });
+    const queryClient = createQueryClient();
+
+    renderWithClient(<AdminUserManagement />, queryClient);
+
+    expect(await screen.findByText('계정 생명주기')).toBeInTheDocument();
+    await user.type(screen.getByLabelText('탈퇴 처리 사유'), '사용자 요청');
+    await user.click(screen.getByRole('checkbox', { name: '회원 탈퇴 처리 확인' }));
+    await user.click(screen.getByRole('button', { name: '탈퇴 처리' }));
+
+    const confirmButton = await screen.findByRole('button', { name: '탈퇴 처리 확정' });
+    expect(confirmButton).toBeEnabled();
+
+    detailResponse = {
+      ...detailUser,
+      accountStatus: 'merged',
+      withdrawalReason: 'merged into user-target-1',
+      withdrawalSource: 'admin',
+    };
+    await queryClient.invalidateQueries({
+      queryKey: ['admin', 'users', 'detail', 'user-fan-1'],
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByText('병합됨').length).toBeGreaterThan(0);
+    });
+    expect(confirmButton).toBeDisabled();
+
+    await user.click(confirmButton);
+    expect(apiClient.post).not.toHaveBeenCalled();
   });
 
   it('shows hard-delete blocker categories returned by the API', async () => {

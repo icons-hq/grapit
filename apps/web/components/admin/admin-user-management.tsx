@@ -378,6 +378,9 @@ function UserInsightsPanel() {
 
           <div className="grid gap-3 md:grid-cols-3">
             <CompactStatus label="탈퇴 계정" value={stats.withdrawn} total={stats.total} />
+            {typeof stats.merged === 'number' && (
+              <CompactStatus label="병합 계정" value={stats.merged} total={stats.total} />
+            )}
             <CompactStatus
               label="이메일 인증"
               value={stats.verification.emailVerified}
@@ -655,9 +658,16 @@ function UserList({
                       {user.maskedEmail}
                     </p>
                   </div>
-                  <Badge className={roleBadgeClass(user.role)}>
-                    {ROLE_LABELS[user.role]}
-                  </Badge>
+                  <div className="flex shrink-0 flex-col items-end gap-2">
+                    <Badge className={roleBadgeClass(user.role)}>
+                      {ROLE_LABELS[user.role]}
+                    </Badge>
+                    {user.accountStatus !== 'active' && (
+                      <Badge className={accountStatusBadgeClass(user.accountStatus)}>
+                        {accountStatusLabel(user.accountStatus)}
+                      </Badge>
+                    )}
+                  </div>
                 </div>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <VerificationBadge
@@ -778,7 +788,7 @@ function AccountOverview({ user }: { user: AdminUserDetail }) {
               {ROLE_LABELS[user.role]}
             </Badge>
             <Badge className={accountStatusBadgeClass(user.accountStatus)}>
-              {user.accountStatus === 'withdrawn' ? '탈퇴 처리' : '활성'}
+              {accountStatusLabel(user.accountStatus)}
             </Badge>
             {user.adminCapabilityBundle && (
               <Badge className="border-transparent bg-[#EFF6FF] text-[#1D4ED8]">
@@ -815,7 +825,7 @@ function AccountOverview({ user }: { user: AdminUserDetail }) {
 
       <div className="mt-4 grid gap-3 sm:grid-cols-3">
         <MetricCard label="마케팅 동의" value={user.marketingConsent ? '동의' : '미동의'} />
-        <MetricCard label="계정 상태" value={user.accountStatus === 'withdrawn' ? '탈퇴 처리' : '활성'} />
+        <MetricCard label="계정 상태" value={accountStatusLabel(user.accountStatus)} />
         <MetricCard label="최근 로그인" value={formatDate(user.lastLoginAt)} />
       </div>
       {user.accountStatus === 'withdrawn' && (
@@ -963,6 +973,7 @@ function AuditContext({ user }: { user: AdminUserDetail }) {
 
 function PermissionEditor({ user }: { user: AdminUserDetail }) {
   const mutation = useUpdateAdminUserPermissions();
+  const isInactiveAccount = user.accountStatus === 'withdrawn' || user.accountStatus === 'merged';
   const detailCapabilitiesKey = user.adminCapabilities.join('|');
   const [role, setRole] = useState<AdminUserRole>(user.role);
   const [bundle, setBundle] = useState<BundleSelectValue>(
@@ -998,6 +1009,7 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
   }, [bundle, capabilities, role, user.adminCapabilities, user.adminCapabilityBundle, user.role]);
 
   const canSubmit =
+    !isInactiveAccount &&
     reason.trim().length > 0 &&
     impactConfirmed &&
     changedFields.length > 0 &&
@@ -1023,6 +1035,8 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
   }
 
   async function handleConfirm() {
+    if (isInactiveAccount) return;
+
     const nextBundle = bundle === 'none' ? null : bundle;
     try {
       await mutation.mutateAsync({
@@ -1057,7 +1071,11 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
       <div className="mt-4 space-y-4">
         <div className="space-y-2">
           <Label htmlFor="admin-user-role">Role</Label>
-          <Select value={role} onValueChange={(value) => setRole(value as AdminUserRole)}>
+          <Select
+            value={role}
+            onValueChange={(value) => setRole(value as AdminUserRole)}
+            disabled={isInactiveAccount}
+          >
             <SelectTrigger id="admin-user-role" aria-label="Role" className="h-11 w-full bg-white">
               <SelectValue />
             </SelectTrigger>
@@ -1070,7 +1088,11 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
 
         <div className="space-y-2">
           <Label htmlFor="admin-user-bundle">Capability bundle</Label>
-          <Select value={bundle} onValueChange={(value) => handleBundleChange(value as BundleSelectValue)}>
+          <Select
+            value={bundle}
+            onValueChange={(value) => handleBundleChange(value as BundleSelectValue)}
+            disabled={isInactiveAccount}
+          >
             <SelectTrigger id="admin-user-bundle" aria-label="Capability bundle" className="h-11 w-full bg-white">
               <SelectValue />
             </SelectTrigger>
@@ -1101,6 +1123,7 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
                     handleCapabilityChange(capability, checked)
                   }
                   aria-label={CAPABILITY_LABELS[capability]}
+                  disabled={isInactiveAccount}
                 />
                 <span>
                   <span className="block font-semibold text-gray-900">
@@ -1124,6 +1147,7 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
             placeholder="권한 변경 사유를 입력하세요"
             aria-label="권한 변경 사유"
             className="min-h-28"
+            disabled={isInactiveAccount}
           />
         </div>
 
@@ -1132,6 +1156,7 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
             checked={impactConfirmed}
             onCheckedChange={(checked) => setImpactConfirmed(checked === true)}
             aria-label="권한 변경 영향 확인"
+            disabled={isInactiveAccount}
           />
           <span className="font-semibold">
             권한 변경이 관리자 접근과 감사 책임에 영향을 준다는 점을 확인했습니다.
@@ -1201,6 +1226,12 @@ function AccountLifecyclePanel({
   const [withdrawOpen, setWithdrawOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteBlockers, setDeleteBlockers] = useState<string[]>([]);
+  const isInactiveAccount = user.accountStatus === 'withdrawn' || user.accountStatus === 'merged';
+  const canWithdraw =
+    !isInactiveAccount &&
+    withdrawReason.trim().length > 0 &&
+    withdrawConfirmed &&
+    !withdrawMutation.isPending;
 
   useEffect(() => {
     setWithdrawReason('');
@@ -1213,6 +1244,10 @@ function AccountLifecyclePanel({
   }, [user.id]);
 
   async function handleWithdraw() {
+    if (isInactiveAccount) {
+      return;
+    }
+
     try {
       await withdrawMutation.mutateAsync({
         userId: user.id,
@@ -1263,12 +1298,14 @@ function AccountLifecyclePanel({
             onChange={(event) => setWithdrawReason(event.target.value)}
             placeholder="탈퇴 처리 사유를 입력하세요"
             className="min-h-24"
+            disabled={isInactiveAccount}
           />
           <label className="flex min-h-11 items-start gap-3 rounded-lg bg-[#FFFBEB] p-3 text-sm text-[#8B6306]">
             <Checkbox
               checked={withdrawConfirmed}
               onCheckedChange={(checked) => setWithdrawConfirmed(checked === true)}
               aria-label="회원 탈퇴 처리 확인"
+              disabled={isInactiveAccount}
             />
             <span className="font-semibold">해당 회원의 로그인과 활성 세션이 종료됨을 확인했습니다.</span>
           </label>
@@ -1277,12 +1314,7 @@ function AccountLifecyclePanel({
               type="button"
               variant="destructive"
               className="h-11 w-full"
-              disabled={
-                user.accountStatus === 'withdrawn' ||
-                withdrawReason.trim().length === 0 ||
-                !withdrawConfirmed ||
-                withdrawMutation.isPending
-              }
+              disabled={!canWithdraw}
               onClick={() => setWithdrawOpen(true)}
             >
               탈퇴 처리
@@ -1298,6 +1330,7 @@ function AccountLifecyclePanel({
                 <AlertDialogCancel>취소</AlertDialogCancel>
                 <AlertDialogAction
                   variant="destructive"
+                  disabled={!canWithdraw}
                   onClick={() => void handleWithdraw()}
                 >
                   탈퇴 처리 확정
@@ -1452,12 +1485,19 @@ function roleBadgeClass(role: AdminUserRole) {
 }
 
 function accountStatusBadgeClass(status: AdminUserDetail['accountStatus']) {
-  return cn(
-    'border-transparent',
-    status === 'withdrawn'
-      ? 'bg-[#FEF2F2] text-[#C62828]'
-      : 'bg-[#F0FDF4] text-[#15803D]',
-  );
+  if (status === 'withdrawn') {
+    return 'border-red-200 bg-red-50 text-red-700';
+  }
+  if (status === 'merged') {
+    return 'border-amber-200 bg-amber-50 text-amber-800';
+  }
+  return 'border-emerald-200 bg-emerald-50 text-emerald-700';
+}
+
+function accountStatusLabel(status: AdminUserDetail['accountStatus']) {
+  if (status === 'withdrawn') return '탈퇴 처리';
+  if (status === 'merged') return '병합됨';
+  return '활성';
 }
 
 function auditStatusClass(status: 'success' | 'denied' | 'failed') {

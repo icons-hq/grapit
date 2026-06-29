@@ -48,6 +48,7 @@ describe('Phase 25 admin operations security schema contracts', () => {
       'security.allowlist.update',
       'security.permission.update',
       'user.withdraw',
+      'user.merge',
       'user.hard_delete',
       'user.export_raw',
     ]);

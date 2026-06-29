@@ -190,6 +190,28 @@ describe('admin operations contract', () => {
     ).toBe('membership operations reconciliation');
   });
 
+  it('validates account merge audit actions', () => {
+    const audit = adminAuditEventSchema.parse({
+      id: 'audit-user-merge-1',
+      actorUserId: 'admin-1',
+      action: 'user.merge',
+      resourceType: 'account_merge_batch',
+      resourceId: 'batch-1',
+      status: 'success',
+      reason: 'duplicate social buyer account merge',
+      changedFields: ['sourceUserIds', 'targetUserId'],
+      diff: {
+        after: {
+          sourceUserIds: ['source-1'],
+          targetUserId: 'target-1',
+        },
+      },
+      createdAt: '2026-06-29T00:00:00.000Z',
+    });
+
+    expect(audit.action).toBe('user.merge');
+  });
+
   it('validates admin user list rows with masked contact fields and capability truth', () => {
     const parsed = adminUserListItemSchema.parse({
       id: 'user-1',
@@ -229,6 +251,7 @@ describe('admin operations contract', () => {
       total: 10,
       active: 8,
       withdrawn: 2,
+      merged: 0,
       verification: {
         emailVerified: 7,
         phoneVerified: 6,
@@ -255,6 +278,65 @@ describe('admin operations contract', () => {
 
     expect(parsed.countries[0]?.ratio).toBe(0.6);
     expect(parsed.signupTrend[1]?.count).toBe(2);
+  });
+
+  it('accepts merged account status in admin user rows and stats', () => {
+    const row = adminUserListItemSchema.parse({
+      id: 'user-merged-1',
+      maskedEmail: 'm***@example.com',
+      name: 'Merged User',
+      maskedPhone: '+82******5678',
+      role: 'user',
+      country: 'KR',
+      preferredLocale: 'ko',
+      marketingConsent: false,
+      adminCapabilityBundle: null,
+      adminCapabilities: [],
+      accountStatus: 'merged',
+      withdrawnAt: null,
+      withdrawalReason: 'merged into user-target-1',
+      withdrawalSource: 'admin',
+      verificationState: {
+        emailVerified: true,
+        phoneVerified: true,
+      },
+      reservationSummary: {
+        total: 0,
+        statuses: {
+          pendingPayment: 0,
+          confirmed: 0,
+          cancelled: 0,
+          failed: 0,
+        },
+        lastReservationAt: null,
+      },
+      lastActivityAt: null,
+      createdAt: '2026-06-29T00:00:00.000Z',
+    });
+
+    expect(row.accountStatus).toBe('merged');
+
+    const stats = adminUserStatsResponseSchema.parse({
+      total: 3,
+      active: 1,
+      withdrawn: 1,
+      merged: 1,
+      verification: {
+        emailVerified: 1,
+        phoneVerified: 1,
+        fullyVerified: 1,
+      },
+      marketing: {
+        consented: 0,
+        notConsented: 3,
+      },
+      countries: [],
+      locales: [],
+      signupTrend: [],
+      generatedAt: '2026-06-29T00:00:00.000Z',
+    });
+
+    expect(stats.merged).toBe(1);
   });
 
   it('requires reason and explicit confirmation for admin permission updates', () => {

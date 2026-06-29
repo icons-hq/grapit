@@ -123,6 +123,7 @@ interface UserStatsSummaryRow {
   total: number;
   active: number;
   withdrawn: number;
+  merged: number;
   emailVerified: number;
   phoneVerified: number;
   fullyVerified: number;
@@ -283,6 +284,7 @@ export class AdminUserService {
       total: summary.total,
       active: summary.active,
       withdrawn: summary.withdrawn,
+      merged: summary.merged,
       verification: {
         emailVerified: summary.emailVerified,
         phoneVerified: summary.phoneVerified,
@@ -354,6 +356,9 @@ export class AdminUserService {
 
       if (!hasSecurityManage(actor)) {
         throw new ForbiddenException('security.manage 권한이 필요합니다');
+      }
+      if (normalizeAdminAccountStatus(target.accountStatus) !== 'active') {
+        throw new BadRequestException('비활성 회원 권한은 변경할 수 없습니다');
       }
 
       const beforeSnapshot = permissionSnapshot(target);
@@ -500,7 +505,7 @@ export class AdminUserService {
       if (actorUserId === targetUserId) {
         throw new BadRequestException('관리자는 자기 계정을 관리자 화면에서 탈퇴 처리할 수 없습니다');
       }
-      if (target.accountStatus === 'withdrawn') {
+      if (target.accountStatus === 'withdrawn' || target.accountStatus === 'merged') {
         return;
       }
 
@@ -672,8 +677,9 @@ export class AdminUserService {
     const [row] = await this.db
       .select({
         total: sql<number>`count(*)::int`,
-        active: sql<number>`count(*) filter (where ${users.accountStatus} <> 'withdrawn')::int`,
+        active: sql<number>`count(*) filter (where coalesce(${users.accountStatus}, 'active') <> 'withdrawn' and coalesce(${users.accountStatus}, 'active') <> 'merged')::int`,
         withdrawn: sql<number>`count(*) filter (where ${users.accountStatus} = 'withdrawn')::int`,
+        merged: sql<number>`count(*) filter (where ${users.accountStatus} = 'merged')::int`,
         emailVerified: sql<number>`count(*) filter (where ${users.isEmailVerified} = true)::int`,
         phoneVerified: sql<number>`count(*) filter (where ${users.isPhoneVerified} = true)::int`,
         fullyVerified: sql<number>`count(*) filter (where ${users.isEmailVerified} = true and ${users.isPhoneVerified} = true)::int`,
@@ -685,6 +691,7 @@ export class AdminUserService {
       total: 0,
       active: 0,
       withdrawn: 0,
+      merged: 0,
       emailVerified: 0,
       phoneVerified: 0,
       fullyVerified: 0,
@@ -1051,7 +1058,7 @@ function toListItem(
     marketingConsent: user.marketingConsent,
     adminCapabilityBundle: normalizeBundle(user.adminCapabilityBundle),
     adminCapabilities: normalizeCapabilities(user.adminCapabilities),
-    accountStatus: user.accountStatus === 'withdrawn' ? 'withdrawn' : 'active',
+    accountStatus: normalizeAdminAccountStatus(user.accountStatus),
     withdrawnAt: user.withdrawnAt?.toISOString() ?? null,
     withdrawalReason: user.withdrawalReason ?? null,
     withdrawalSource: user.withdrawalSource === 'admin' ? 'admin' : user.withdrawalSource === 'self' ? 'self' : null,
@@ -1133,6 +1140,13 @@ function hasSecurityManage(
 
 function normalizeRole(role: string): 'user' | 'admin' {
   return role === 'admin' ? 'admin' : 'user';
+}
+
+function normalizeAdminAccountStatus(
+  status: string | null | undefined,
+): 'active' | 'withdrawn' | 'merged' {
+  if (status === 'withdrawn' || status === 'merged') return status;
+  return 'active';
 }
 
 function normalizeBundle(
