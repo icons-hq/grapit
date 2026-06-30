@@ -1006,6 +1006,41 @@ describe('AccountMergeService', () => {
     });
   });
 
+  it('does not require target reservations when a manual merge moved no reservation rows', async () => {
+    const { db } = createRecordingDb({
+      executeRows: [
+        [{ status: 'applied' }],
+        [
+          {
+            tableName: 'social_accounts',
+            rowId: 'social-1',
+            sourceUserId: 'manual-b',
+            targetUserId: 'manual-a',
+            afterSnapshot: { userId: 'manual-a' },
+          },
+        ],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [],
+        [{ userId: 'manual-b' }],
+        [],
+        [{ id: 'social-1', userId: 'manual-a' }],
+      ],
+    });
+    const service = new AccountMergeService(db as never);
+
+    await expect(service.verify('batch-1')).resolves.toMatchObject({
+      ok: true,
+      failedChecks: [],
+      targetUsersWithReservations: [],
+      ledgerMismatches: [],
+    });
+  });
+
   it('accepts equivalent postgres and ISO timestamp strings in token recovery snapshots', async () => {
     const { db } = createRecordingDb({
       executeRows: [

@@ -363,6 +363,11 @@ export class AccountMergeService {
     const targetUserIds = uniqueSorted(
       ledgerRows.map((row) => row.targetUserId),
     );
+    const targetUserIdsWithMovedReservations = uniqueSorted(
+      ledgerRows
+        .filter((row) => row.tableName === getTableName(reservations))
+        .map((row) => row.targetUserId),
+    );
 
     const sourceUsersWithReservations = await this.userIdsFromQuery(sql`
       select distinct user_id as "userId"
@@ -440,7 +445,7 @@ export class AccountMergeService {
     const failedChecks = verificationFailedChecks(
       resultWithoutSummary,
       sourceUserIds,
-      targetUserIds,
+      targetUserIdsWithMovedReservations,
     );
     const result = {
       ok: failedChecks.length === 0,
@@ -891,7 +896,7 @@ function recoverySnapshot(tableName: string, row: Row): Record<string, unknown> 
 function verificationFailedChecks(
   verification: Omit<AccountMergeVerifyResult, 'ok' | 'failedChecks'>,
   sourceUserIds: string[],
-  targetUserIds: string[],
+  targetUserIdsWithMovedReservations: string[],
 ): string[] {
   const failedChecks: string[] = [];
   if (!sameStringSet(verification.sourceUsersWithoutReservations, sourceUserIds)) {
@@ -918,7 +923,11 @@ function verificationFailedChecks(
   if (!sameStringSet(verification.sourceUsersMarkedMerged, sourceUserIds)) {
     failedChecks.push('source_users_not_marked_merged');
   }
-  if (!targetUserIds.every((userId) => verification.targetUsersWithReservations.includes(userId))) {
+  if (
+    !targetUserIdsWithMovedReservations.every((userId) =>
+      verification.targetUsersWithReservations.includes(userId),
+    )
+  ) {
     failedChecks.push('target_reservations_missing');
   }
   if (verification.ledgerMismatches.length > 0) {
