@@ -20,7 +20,20 @@ vi.mock('@/lib/api-client', () => ({
 }));
 
 vi.mock('@/components/admin/reservation-export-panel', () => ({
-  ReservationExportPanel: () => <div data-testid="reservation-export-panel" />,
+  ReservationExportPanel: (props: {
+    activeManifestContext?: {
+      performanceLabel: string;
+      showtimeId: string;
+      showtimeLabel: string;
+    };
+  }) => (
+    <div
+      data-testid="reservation-export-panel"
+      data-performance-label={props.activeManifestContext?.performanceLabel ?? ''}
+      data-showtime-id={props.activeManifestContext?.showtimeId ?? ''}
+      data-showtime-label={props.activeManifestContext?.showtimeLabel ?? ''}
+    />
+  ),
 }));
 
 function createQueryClient() {
@@ -385,6 +398,37 @@ describe('AdminBookingDashboard', () => {
         String(url).includes('/api/v1/admin/performances?page=1&limit=200'),
       ),
     ).toBe(true);
+  });
+
+  it('passes selected performance and showtime context to the reservation export panel', async () => {
+    const user = userEvent.setup();
+    renderWithClient(<AdminBookingDashboard />);
+    const showtimeLabel = formatExpectedDateTime(
+      performanceDetailResponse().showtimes[0].dateTime,
+    );
+
+    expect(screen.getByTestId('reservation-export-panel')).toHaveAttribute(
+      'data-showtime-id',
+      '',
+    );
+
+    await selectOption(user, '공연', 'Girl Rules Fanmeet');
+    await selectOption(user, '회차', showtimeLabel);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('reservation-export-panel')).toHaveAttribute(
+        'data-performance-label',
+        'Girl Rules Fanmeet',
+      );
+      expect(screen.getByTestId('reservation-export-panel')).toHaveAttribute(
+        'data-showtime-id',
+        '11111111-1111-4111-8111-000000000302',
+      );
+      expect(screen.getByTestId('reservation-export-panel')).toHaveAttribute(
+        'data-showtime-label',
+        showtimeLabel,
+      );
+    });
   });
 
   it('removes dependent seat filters when performance is reset', async () => {

@@ -15,8 +15,14 @@ vi.mock('@/hooks/use-reservations', () => ({
   }),
 }));
 
-function renderPanel() {
-  render(<ReservationExportPanel />);
+type ActiveManifestContext = {
+  performanceLabel: string;
+  showtimeId: string;
+  showtimeLabel: string;
+};
+
+function renderPanel(activeManifestContext?: ActiveManifestContext) {
+  render(<ReservationExportPanel activeManifestContext={activeManifestContext} />);
 }
 
 describe('ReservationExportPanel', () => {
@@ -148,5 +154,42 @@ describe('ReservationExportPanel', () => {
       }),
     );
     expect(mocks.exportMutate.mock.calls[0]?.[0]).not.toHaveProperty('reservationStatus');
+  });
+
+  it('keeps active ticket manifest export disabled until a showtime is selected', () => {
+    renderPanel();
+
+    const button = screen.getByRole('button', { name: '회차 구매자 명단 CSV' });
+
+    expect(button).toBeDisabled();
+  });
+
+  it('exports active ticket manifest with the selected showtime context after confirmation', async () => {
+    const user = userEvent.setup();
+    renderPanel({
+      performanceLabel: 'Girl Rules Fanmeet',
+      showtimeId: '11111111-1111-4111-8111-000000000302',
+      showtimeLabel: '2026.07.18 19:00',
+    });
+
+    await user.click(screen.getByRole('button', { name: '회차 구매자 명단 CSV' }));
+
+    expect(
+      screen.getByRole('heading', { name: '회차 구매자 명단 CSV를 내보내시겠습니까?' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Girl Rules Fanmeet')).toBeInTheDocument();
+    expect(screen.getByText('2026.07.18 19:00')).toBeInTheDocument();
+    expect(screen.getByText('유효 티켓만 포함')).toBeInTheDocument();
+
+    await user.type(screen.getByLabelText('내보내기 사유'), '현장 운영 명단');
+    await user.click(screen.getByRole('button', { name: 'CSV 내보내기' }));
+
+    expect(mocks.exportMutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        exportType: 'active_ticket_manifest',
+        showtimeId: '11111111-1111-4111-8111-000000000302',
+        reason: '현장 운영 명단',
+      }),
+    );
   });
 });

@@ -470,6 +470,32 @@ describe('admin operations contract', () => {
     expect(parsed.reason).toBe('failed customer outreach');
   });
 
+  it('requires a reason and showtime for active ticket manifest exports', () => {
+    expect(() =>
+      adminReservationExportFilterSchema.parse({
+        exportType: 'active_ticket_manifest',
+        showtimeId: 'showtime-1',
+      }),
+    ).toThrow(/사유/);
+
+    expect(() =>
+      adminReservationExportFilterSchema.parse({
+        exportType: 'active_ticket_manifest',
+        reason: 'venue manifest',
+      }),
+    ).toThrow(/회차/);
+
+    const parsed = adminReservationExportFilterSchema.parse({
+      exportType: 'active_ticket_manifest',
+      showtimeId: 'showtime-1',
+      reason: 'venue manifest',
+    });
+
+    expect(parsed.exportType).toBe('active_ticket_manifest');
+    expect(parsed.showtimeId).toBe('showtime-1');
+    expect(parsed.reason).toBe('venue manifest');
+  });
+
   it('represents MFA only as a deferred accepted risk', () => {
     const parsed = adminSecurityStatusSchema.parse({
       mfa: {

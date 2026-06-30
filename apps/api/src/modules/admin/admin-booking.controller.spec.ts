@@ -117,4 +117,47 @@ describe('AdminBookingController', () => {
       }),
     );
   });
+
+  it('preserves the active ticket manifest export type when forwarding export requests', async () => {
+    const adminBookingService = {
+      exportReservations: vi.fn().mockResolvedValue({
+        filename: 'reservation-export-active-ticket-manifest-2026-06-30.csv',
+        contentType: 'text/csv; charset=utf-8',
+        csv: 'Tier,Seat\nVIP,1F:A-1\n',
+        rowCount: 1,
+      }),
+    };
+    const controller = new AdminBookingController(adminBookingService as never);
+    const response = {
+      set: vi.fn(),
+    } as unknown as Response;
+    const request = {
+      get: vi.fn().mockReturnValue('Vitest Admin Console'),
+      ip: '203.0.113.10',
+      headers: {},
+    } as unknown as Request;
+
+    await controller.exportBookings(
+      'admin-1',
+      request,
+      response,
+      {
+        exportType: 'active_ticket_manifest',
+        showtimeId: 'showtime-1',
+        reason: '현장 운영 명단',
+      },
+    );
+
+    expect(adminBookingService.exportReservations).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorUserId: 'admin-1',
+        filters: {
+          exportType: 'active_ticket_manifest',
+          showtimeId: 'showtime-1',
+          reason: '현장 운영 명단',
+        },
+        userAgent: 'Vitest Admin Console',
+      }),
+    );
+  });
 });
