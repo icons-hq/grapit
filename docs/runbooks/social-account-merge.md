@@ -12,6 +12,7 @@ Use this runbook to dry-run, apply, and verify duplicate Buyer Account merges af
 - Do not paste raw report contents into chat, GitHub comments, public logs, or customer-facing surfaces.
 - Apply mode is limited to Safe Merge Groups plus Manual Merge Allowlist entries.
 - Apply mode requires the reviewed `dryRunHash` from the immediately preceding dry-run.
+- The reviewed `dryRunHash` covers the duplicate classification only. Manual allowlist contents are checked separately during apply.
 
 ## Dry Run
 
@@ -20,7 +21,7 @@ corepack pnpm@10.28.1 --filter @grabit/api build
 corepack pnpm@10.28.1 --filter @grabit/api account-merge -- dry-run --report /secure/account-merge-dry-run.json
 ```
 
-Record the printed `dryRunHash`. Do not continue to apply if the dry-run report was not reviewed.
+Record the printed `dryRunHash`. It is stable across report generation time and allowlist file changes, but it changes when the current duplicate classification changes. Do not continue to apply if the dry-run report was not reviewed.
 
 ## Manual Allowlist
 
@@ -55,7 +56,7 @@ corepack pnpm@10.28.1 --filter @grabit/api account-merge -- apply \
   --dry-run-hash <reviewed-dry-run-hash>
 ```
 
-If the current database state no longer matches the reviewed dry-run hash, apply fails. Run a new dry-run and review again before retrying.
+If the current database state no longer matches the reviewed dry-run hash, apply fails. Run a new dry-run and review again before retrying. The protected apply report contains the reviewed dry-run, allowlist hash, apply result, minimized row-change snapshots, and verification summary.
 
 ## Verify
 
@@ -65,13 +66,17 @@ corepack pnpm@10.28.1 --filter @grabit/api account-merge -- verify \
   --report /secure/account-merge-verify.json
 ```
 
+Verify writes the verification summary back to the ledger batch. If any check fails, the command still writes the protected report but exits non-zero.
+
 ## Success Criteria
 
 - Source accounts own no reservations.
 - Source accounts own no social login links.
 - Source accounts have no active refresh tokens.
+- Source accounts have no pending email verification tokens.
 - Target accounts own the moved reservations.
 - Kakao, Naver, Google, or other moved provider links resolve to the target account.
 - Source accounts are marked `merged`, not `withdrawn` and not deleted.
 - DB ledger contains the batch and row changes.
+- DB ledger row snapshots contain only fields needed for verification, not raw token hashes or unneeded contact/provider values.
 - Protected JSON reports are preserved in the operator evidence location.

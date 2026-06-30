@@ -728,7 +728,7 @@ describe('ReservationService', () => {
       reservation_number: args.reservationNumber ?? 'GRP-20260508-ITEMS',
       reservation_status: args.reservationStatus ?? 'CONFIRMED',
       reservation_created_at: args.reservationCreatedAt ?? new Date('2026-05-08T01:00:00.000Z'),
-      showtime_at: args.showtimeAt ?? new Date('2026-06-30T10:00:00.000Z'),
+      showtime_at: args.showtimeAt ?? new Date('2099-06-30T10:00:00.000Z'),
       payment_id: args.paymentId ?? 'payment-1',
       payment_key: args.paymentKey ?? 'pk_ticket_item_cancel',
       payment_method: args.paymentMethod ?? 'CARD',

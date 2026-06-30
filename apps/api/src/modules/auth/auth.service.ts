@@ -39,6 +39,7 @@ import {
   REFRESH_TOKEN_EXPIRY_DAYS,
   isSupportedLocale,
 } from '@grabit/shared/constants/index.js';
+import { normalizeMergeName } from '../account-merge/account-merge-policy.js';
 
 // UUID v4 형식 검증용 regex. resetPassword 경로에서 DB lookup 전
 // sub 클레임이 실제 UUID임을 보장하여 payload-amplification DoS와
@@ -819,11 +820,15 @@ export class AuthService {
       dto.phone,
       dto.birthDate,
     );
+    const normalizedSubmittedName = normalizeMergeName(dto.name);
+    const nameMatchedIdentityMatches = identityMatches.filter(
+      (user) => normalizeMergeName(user.name) === normalizedSubmittedName,
+    );
 
     const email = payload.email ?? `${payload.provider}_${payload.providerId}@social.grabit.com`;
 
-    if (identityMatches.length === 1) {
-      const targetUser = identityMatches[0]!;
+    if (nameMatchedIdentityMatches.length === 1) {
+      const targetUser = nameMatchedIdentityMatches[0]!;
       const linkedUser = await this.db.transaction(async (tx) => {
         const updatedAt = new Date();
         const guardedUsers = await tx
@@ -832,6 +837,7 @@ export class AuthService {
           .where(
             and(
               eq(schema.users.id, targetUser.id),
+              eq(schema.users.name, targetUser.name),
               eq(schema.users.phone, dto.phone),
               eq(schema.users.birthDate, dto.birthDate),
               eq(schema.users.isPhoneVerified, true),

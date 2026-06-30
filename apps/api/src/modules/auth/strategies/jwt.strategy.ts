@@ -30,6 +30,9 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     if (!user) {
       throw new UnauthorizedException('사용자를 찾을 수 없습니다');
     }
+    if (user.accountStatus === 'withdrawn' || user.accountStatus === 'merged') {
+      throw new UnauthorizedException('사용자를 찾을 수 없습니다');
+    }
 
     return {
       id: user.id,

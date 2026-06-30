@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildApplyReport,
+  hasVerificationFailures,
   parseAccountMergeArgs,
   requireApplySafetyInputs,
   writeProtectedReport,
@@ -96,5 +98,75 @@ describe('account merge CLI helpers', () => {
 
     expect(JSON.parse(readFileSync(reportPath, 'utf8'))).toEqual({ ok: true });
     expect((statSync(reportPath).mode & 0o777).toString(8)).toBe('600');
+  });
+
+  it('builds apply reports with allowlist hash, row changes, and verification summary', () => {
+    const report = buildApplyReport({
+      dryRun: {
+        generatedAt: new Date('2026-06-29T00:00:00.000Z'),
+        safeGroups: [],
+        manualReviewGroups: [],
+        manualAllowlist: [],
+      },
+      allowlistHash: 'allowlist-hash',
+      result: {
+        batchId: 'batch-1',
+        mergedGroups: 1,
+        mergedSourceUsers: 1,
+        rowChanges: [
+          {
+            tableName: 'reservations',
+            rowId: 'reservation-1',
+            sourceUserId: 'source-1',
+            targetUserId: 'target-1',
+            beforeSnapshot: { id: 'reservation-1', userId: 'source-1' },
+            afterSnapshot: { id: 'reservation-1', userId: 'target-1' },
+          },
+        ],
+      },
+      verification: {
+        batchId: 'batch-1',
+        ok: true,
+        failedChecks: [],
+        sourceUsersWithoutReservations: ['source-1'],
+        sourceUsersWithoutSocialLinks: ['source-1'],
+        sourceUsersWithoutTermsAgreements: ['source-1'],
+        sourceUsersWithoutConsentAuditLogs: ['source-1'],
+        sourceUsersWithoutSupportThreads: ['source-1'],
+        sourceUsersWithPendingEmailVerificationTokens: [],
+        sourceUsersWithActiveRefreshTokens: [],
+        sourceUsersMarkedMerged: ['source-1'],
+        targetUsersWithReservations: ['target-1'],
+        ledgerMismatches: [],
+      },
+    });
+
+    expect(report).toEqual({
+      dryRun: expect.objectContaining({ safeGroups: [] }),
+      allowlistHash: 'allowlist-hash',
+      result: {
+        batchId: 'batch-1',
+        mergedGroups: 1,
+        mergedSourceUsers: 1,
+      },
+      rowChanges: [
+        expect.objectContaining({
+          tableName: 'reservations',
+          beforeSnapshot: { id: 'reservation-1', userId: 'source-1' },
+          afterSnapshot: { id: 'reservation-1', userId: 'target-1' },
+        }),
+      ],
+      verification: expect.objectContaining({ ok: true, failedChecks: [] }),
+    });
+  });
+
+  it('treats verification summaries with failed checks as CLI failures', () => {
+    expect(
+      hasVerificationFailures({
+        ok: false,
+        failedChecks: ['ledger_mismatches'],
+      }),
+    ).toBe(true);
+    expect(hasVerificationFailures({ ok: true, failedChecks: [] })).toBe(false);
   });
 });

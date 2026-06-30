@@ -12,6 +12,7 @@ export interface MergeCandidateUser {
 export interface ReservationCounts {
   total: number;
   confirmed: number;
+  pendingPayment?: number;
 }
 
 export interface DuplicateGroupInput {
@@ -24,7 +25,8 @@ export type ManualReviewReason =
   | 'identity_evidence_incomplete'
   | 'multiple_confirmed_owners'
   | 'multiple_reservation_owners'
-  | 'no_reservation_owner';
+  | 'no_reservation_owner'
+  | 'source_pending_payment_reservation';
 
 export type MergeClassification =
   | {
@@ -39,6 +41,11 @@ export type MergeClassification =
       reason: ManualReviewReason;
       userIds: string[];
     };
+
+interface DuplicateDryRunHashInput {
+  safeGroups: unknown[];
+  manualReviewGroups: unknown[];
+}
 
 export function normalizeMergePhone(phone: string): string {
   return phone.replace(/\D/g, '');
@@ -73,7 +80,11 @@ export function classifyDuplicateGroup(
     return manualReview(input, 'multiple_confirmed_owners');
   }
   if (confirmedOwners.length === 1) {
-    return safeMerge(input.groupKey, eligibleUsers, confirmedOwners[0].id);
+    return safeMergeOrPendingManualReview(
+      input,
+      eligibleUsers,
+      confirmedOwners[0].id,
+    );
   }
 
   const reservationOwners = eligibleUsers.filter(
@@ -83,7 +94,11 @@ export function classifyDuplicateGroup(
     return manualReview(input, 'multiple_reservation_owners');
   }
   if (reservationOwners.length === 1) {
-    return safeMerge(input.groupKey, eligibleUsers, reservationOwners[0].id);
+    return safeMergeOrPendingManualReview(
+      input,
+      eligibleUsers,
+      reservationOwners[0].id,
+    );
   }
 
   return manualReview(input, 'no_reservation_owner');
@@ -104,6 +119,15 @@ export function hashJson(value: unknown): string {
   return createHash('sha256').update(stableStringify(value)).digest('hex');
 }
 
+export function hashAccountMergeDryRun(
+  dryRun: Pick<DuplicateDryRunHashInput, 'safeGroups' | 'manualReviewGroups'>,
+): string {
+  return hashJson({
+    safeGroups: dryRun.safeGroups,
+    manualReviewGroups: dryRun.manualReviewGroups,
+  });
+}
+
 function isEligibleForAutoMerge(user: MergeCandidateUser): boolean {
   return user.accountStatus === 'active' && user.isPhoneVerified;
 }
@@ -122,6 +146,23 @@ function safeMerge(
       .filter((userId) => userId !== targetUserId)
       .sort(),
   };
+}
+
+function safeMergeOrPendingManualReview(
+  input: DuplicateGroupInput,
+  users: MergeCandidateUser[],
+  targetUserId: string,
+): MergeClassification {
+  const sourceUserIds = users
+    .map((user) => user.id)
+    .filter((userId) => userId !== targetUserId);
+  const hasPendingPaymentSource = sourceUserIds.some(
+    (userId) => (input.reservationCounts[userId]?.pendingPayment ?? 0) > 0,
+  );
+  if (hasPendingPaymentSource) {
+    return manualReview(input, 'source_pending_payment_reservation');
+  }
+  return safeMerge(input.groupKey, users, targetUserId);
 }
 
 function manualReview(

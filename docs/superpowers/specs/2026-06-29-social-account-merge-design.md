@@ -14,7 +14,7 @@ The design has two goals:
 - A Buyer Account is not the same thing as a social provider account.
 - A Social Login Link proves a login route for a Buyer Account; it is not a profile replacement mechanism.
 - Provider email is supporting evidence only. It is not the automatic identity match rule.
-- Future social-login linking uses newly verified phone number plus birth date when exactly one active Buyer Account matches.
+- Future social-login linking uses newly verified phone number, birth date, and normalized submitted name when exactly one active Buyer Account matches.
 - Historical merge uses stricter evidence: verified phone number, birth date, and normalized name.
 - Identity conflicts must not force a buyer-facing login failure at a venue. If multiple active Buyer Accounts match during future login, Grabit creates a new account instead of blocking the flow or guessing a target.
 - Historical merges keep source accounts as `merged` placeholders, not as `withdrawn` accounts and not as deleted rows.
@@ -25,10 +25,10 @@ The design has two goals:
 When `completeSocialRegistration()` receives a valid social registration token and a purpose-bound verified phone token:
 
 1. Validate the registration token, age rule, and required consents.
-2. Search active Buyer Accounts by the newly verified phone number and submitted birth date.
-3. If exactly one active Buyer Account matches, attach the new social provider account to that Buyer Account.
+2. Search active Buyer Accounts by the newly verified phone number and submitted birth date, then filter those candidates by normalized submitted name.
+3. If exactly one active Buyer Account matches all three pieces of evidence, attach the new social provider account to that Buyer Account.
 4. If zero active Buyer Accounts match, keep the current create-new-user behavior.
-5. If multiple active Buyer Accounts match, do not link automatically. Continue with create-new-user behavior so the buyer is not blocked from logging in.
+5. If multiple active Buyer Accounts still match after name filtering, do not link automatically. Continue with create-new-user behavior so the buyer is not blocked from logging in.
 
 When linking to an existing Buyer Account:
 
@@ -51,11 +51,13 @@ Automatic Safe Merge Group eligibility:
 - Exactly one account owns confirmed reservations, or if no confirmed reservations exist, exactly one account owns any reservation.
 - Groups where no account owns reservations are not automatically merged because they do not address the ticket visibility incident.
 - Groups where multiple accounts own reservations are not automatically merged.
+- Groups where a would-be source account owns a `PENDING_PAYMENT` reservation are not automatically merged because payment confirmation still depends on `orderId + userId`.
 
 Manual review groups:
 
 - Multiple accounts own reservations.
 - Multiple accounts own confirmed reservations.
+- A would-be source account owns an in-flight `PENDING_PAYMENT` reservation.
 - Identity evidence is incomplete or inconsistent.
 - The target account cannot be determined by the automatic rule.
 
@@ -126,6 +128,7 @@ Apply mode requirements:
 - Require an explicit production DB backup or snapshot reference.
 - Require an allowlist file for manual groups.
 - Require an operator reason.
+- Require the reviewed dry-run hash for the current automatic classification. The hash excludes `generatedAt` and manual allowlist contents; manual allowlist contents are verified by a separate allowlist hash.
 - Print masked summaries by default.
 - Avoid raw PII in normal logs.
 - Write a protected JSON report containing internal IDs and row-level details for operator storage.
@@ -142,7 +145,7 @@ The merge stores recovery evidence in both database ledger tables and a protecte
 Database ledger:
 
 - `account_merge_batches`: batch id, operator, reason, executed at, dry-run hash, backup reference, allowlist reference, status, aggregate counts, verification summary.
-- `account_merge_row_changes`: batch id, merge group id, table name, row id, source user id, target user id, before snapshot, after snapshot, row count assertion metadata.
+- `account_merge_row_changes`: batch id, merge group id, table name, row id, source user id, target user id, minimized before/after snapshots needed for verification, row count assertion metadata.
 
 Protected JSON report:
 
@@ -153,24 +156,29 @@ Protected JSON report:
 - Masked buyer-facing identity summary.
 - File permissions or storage location appropriate for sensitive operational evidence.
 
+Row snapshots must not duplicate raw token hashes, provider credential-adjacent values, or unmasked contact fields that are not needed for verification.
+
 This design is intended to support both investigation and targeted logical rollback. It does not replace a Cloud SQL backup, which remains the last-resort recovery mechanism.
 
 ## Verification
 
 Automated tests should cover:
 
-- Social registration links to exactly one existing active account by verified phone plus birth date.
+- Social registration links to exactly one existing active account by verified phone, birth date, and normalized submitted name.
 - Social registration creates a new account when there is no match.
-- Social registration creates a new account when there are multiple matches.
+- Social registration creates a new account when there are multiple matches after name filtering.
 - Provider email conflict does not block a verified single-account match.
 - Existing account profile fields are not overwritten during linking.
 - Marketing consent is updated during linking.
 - Dry-run classifies safe groups and manual review groups correctly.
+- Dry-run excludes already `merged` placeholders from future duplicate scans.
 - Apply moves allowed ownership rows to the target account.
+- Apply refuses groups where a source account still owns a `PENDING_PAYMENT` reservation.
 - Apply revokes source refresh tokens.
 - Apply marks source accounts as `merged`.
-- Apply writes DB ledger rows and JSON report output.
+- Apply writes DB ledger rows and JSON report output with minimized snapshots.
 - Apply rolls back on row count mismatch.
+- Verify reports failed checks and exits non-zero through the CLI when any source cleanup, target visibility, token revocation, or ledger check fails.
 - Verification proves target My Page can see moved reservations.
 - Verification proves multiple Social Login Links authenticate into the same target account.
 
