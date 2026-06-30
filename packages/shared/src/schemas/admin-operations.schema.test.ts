@@ -471,10 +471,12 @@ describe('admin operations contract', () => {
   });
 
   it('requires a reason and showtime for active ticket manifest exports', () => {
+    const validShowtimeId = '11111111-1111-4111-8111-000000000302';
+
     expect(() =>
       adminReservationExportFilterSchema.parse({
         exportType: 'active_ticket_manifest',
-        showtimeId: 'showtime-1',
+        showtimeId: validShowtimeId,
       }),
     ).toThrow(/사유/);
 
@@ -485,14 +487,44 @@ describe('admin operations contract', () => {
       }),
     ).toThrow(/회차/);
 
+    expect(() =>
+      adminReservationExportFilterSchema.parse({
+        exportType: 'active_ticket_manifest',
+        showtimeId: 'showtime-1',
+        reason: 'venue manifest',
+      }),
+    ).toThrow(/회차/);
+
+    expect(() =>
+      adminReservationExportFilterSchema.parse({
+        showtimeId: validShowtimeId,
+      }),
+    ).toThrow(/회차/);
+
+    expect(() =>
+      adminReservationExportFilterSchema.parse({
+        exportType: 'raw_pii',
+        showtimeId: validShowtimeId,
+        reason: 'settlement reconciliation',
+      }),
+    ).toThrow(/회차/);
+
+    expect(() =>
+      adminReservationExportFilterSchema.parse({
+        exportType: 'failed_cancelled_contacts',
+        showtimeId: validShowtimeId,
+        reason: 'failed customer outreach',
+      }),
+    ).toThrow(/회차/);
+
     const parsed = adminReservationExportFilterSchema.parse({
       exportType: 'active_ticket_manifest',
-      showtimeId: 'showtime-1',
+      showtimeId: validShowtimeId,
       reason: 'venue manifest',
     });
 
     expect(parsed.exportType).toBe('active_ticket_manifest');
-    expect(parsed.showtimeId).toBe('showtime-1');
+    expect(parsed.showtimeId).toBe(validShowtimeId);
     expect(parsed.reason).toBe('venue manifest');
   });
 

@@ -232,7 +232,7 @@ export const adminAllowlistRecordSchema = z.object({
 export const adminReservationExportFilterSchema = z
   .object({
     eventId: z.string().min(1).optional(),
-    showtimeId: z.string().min(1).optional(),
+    showtimeId: adminSeatOperationShowtimeIdSchema.optional(),
     tierName: z.string().min(1).optional(),
     zoneFloor: z.string().min(1).optional(),
     reservationStatus: z
@@ -268,6 +268,13 @@ export const adminReservationExportFilterSchema = z
         code: z.ZodIssueCode.custom,
         path: ['showtimeId'],
         message: '회차를 선택해주세요',
+      });
+    }
+    if (value.exportType !== 'active_ticket_manifest' && value.showtimeId?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['showtimeId'],
+        message: '회차는 구매자 명단 CSV에서만 사용할 수 있습니다',
       });
     }
   });

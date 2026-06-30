@@ -2155,7 +2155,8 @@ describe('AdminBookingService', () => {
       expect(result.csv).toContain('"일정 변경"');
     });
 
-    it('exports an active ticket manifest for one showtime with tier and seat ordering metadata', async () => {
+    it('exports an active ticket manifest for one showtime with paid active tickets and layout seat ordering before A-1/A-2/A-10 fallback fields', async () => {
+      const showtimeId = '11111111-1111-4111-8111-000000000302';
       const exportCalls: Array<{ method: string; args: unknown[] }> = [];
       mockDb.select.mockReturnValueOnce(
         createRecordingChainMock([
@@ -2178,7 +2179,7 @@ describe('AdminBookingService', () => {
             },
             ticketItem: ticketItem({
               id: 'ticket-item-manifest-1',
-              showtimeId: 'showtime-1',
+              showtimeId,
               floorLabel: '1층',
               seatKey: '1F:A-1',
               tierName: 'VIP',
@@ -2197,7 +2198,7 @@ describe('AdminBookingService', () => {
         userAgent: 'Vitest Admin Console',
         filters: {
           exportType: 'active_ticket_manifest',
-          showtimeId: 'showtime-1',
+          showtimeId,
           reason: '현장 운영 명단',
         },
       });
@@ -2213,9 +2214,19 @@ describe('AdminBookingService', () => {
       );
 
       const exportWhere = exportCalls.find((call) => call.method === 'where')?.args[0];
-      expect(objectGraphContains(exportWhere, 'showtime-1')).toBe(true);
+      expect(objectGraphContains(exportWhere, showtimeId)).toBe(true);
       expect(objectGraphContains(exportWhere, 'CONFIRMED')).toBe(true);
       expect(objectGraphContains(exportWhere, 'active')).toBe(true);
+      expect(objectGraphContains(exportWhere, 'DONE')).toBe(true);
+
+      const exportJoinText = objectGraphText(
+        exportCalls
+          .filter((call) => call.method === 'innerJoin' || call.method === 'leftJoin')
+          .map((call) => call.args),
+      );
+      expect(exportJoinText).toContain('payment_id');
+      expect(exportJoinText).toContain('layout_seat_id');
+      expect(exportJoinText).toContain('floor_id');
 
       const exportOrderByText = objectGraphText(
         exportCalls.find((call) => call.method === 'orderBy')?.args,
@@ -2223,6 +2234,9 @@ describe('AdminBookingService', () => {
       expect(exportOrderByText).toContain('sort_order');
       expect(exportOrderByText).toContain('tier_name');
       expect(exportOrderByText).toContain('seat_key');
+      expect(exportOrderByText).toContain('number');
+      const layoutSortSuffix = exportOrderByText.slice(exportOrderByText.indexOf('is null'));
+      expect(layoutSortSuffix).toMatch(/is null[\s\S]*number[\s\S]*seat_key/);
 
       const [auditInput] = mockAdminAuditService.write.mock.calls[0]!;
       expect(auditInput).toMatchObject({
@@ -2235,7 +2249,7 @@ describe('AdminBookingService', () => {
         after: {
           exportType: 'active_ticket_manifest',
           filters: {
-            showtimeId: 'showtime-1',
+            showtimeId,
           },
           rowCount: 1,
         },

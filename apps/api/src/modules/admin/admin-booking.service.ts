@@ -1762,9 +1762,27 @@ export class AdminBookingService {
       })
       .from(ticketItems)
       .innerJoin(reservations, eq(ticketItems.reservationId, reservations.id))
+      .innerJoin(payments, eq(ticketItems.paymentId, payments.id))
       .innerJoin(users, eq(reservations.userId, users.id))
       .innerJoin(showtimes, eq(ticketItems.showtimeId, showtimes.id))
       .innerJoin(performances, eq(showtimes.performanceId, performances.id))
+      .leftJoin(
+        seatInventories,
+        and(
+          eq(seatInventories.showtimeId, ticketItems.showtimeId),
+          eq(seatInventories.floorKey, ticketItems.floorKey),
+          eq(seatInventories.seatKey, ticketItems.seatKey),
+        ),
+      )
+      .leftJoin(
+        performanceSeatAssignments,
+        eq(seatInventories.performanceSeatAssignmentId, performanceSeatAssignments.id),
+      )
+      .leftJoin(
+        venueLayoutSeats,
+        eq(performanceSeatAssignments.layoutSeatId, venueLayoutSeats.id),
+      )
+      .leftJoin(venueLayoutFloors, eq(venueLayoutSeats.floorId, venueLayoutFloors.id))
       .leftJoin(
         performanceSeatTiers,
         and(
@@ -1775,11 +1793,16 @@ export class AdminBookingService {
       .where(and(
         eq(ticketItems.showtimeId, showtimeId),
         eq(reservations.status, 'CONFIRMED'),
+        eq(payments.status, 'DONE'),
         eq(ticketItems.status, 'active'),
       ))
       .orderBy(
         asc(performanceSeatTiers.sortOrder),
         asc(ticketItems.tierName),
+        sql`${venueLayoutFloors.sortOrder} is null`,
+        asc(venueLayoutFloors.sortOrder),
+        sql`${venueLayoutSeats.sortOrder} is null`,
+        asc(venueLayoutSeats.sortOrder),
         asc(ticketItems.floorKey),
         asc(ticketItems.row),
         asc(ticketItems.number),

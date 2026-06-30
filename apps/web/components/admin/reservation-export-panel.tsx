@@ -143,34 +143,42 @@ export function ReservationExportPanel({
             원본 CSV는 개인정보가 포함되므로 필터와 사유를 확인한 뒤 내보내세요.
           </p>
         </div>
-        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
-          <Button
-            type="button"
-            variant="outline"
-            className="h-12 w-full sm:w-auto"
-            disabled={!activeManifestAvailable}
-            onClick={() => openConfirmDialog('active_ticket_manifest')}
-          >
-            <Download className="h-4 w-4" />
-            회차 구매자 명단 CSV
-          </Button>
-          <Button
-            type="button"
-            className="h-12 w-full sm:w-auto"
-            onClick={() => openConfirmDialog('failed_cancelled_contacts')}
-          >
-            <Download className="h-4 w-4" />
-            실패/만료/취소 고객 CSV 내보내기
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-12 w-full sm:w-auto"
-            onClick={() => openConfirmDialog('raw_pii')}
-          >
-            <Download className="h-4 w-4" />
-            예약자 원본 CSV 내보내기
-          </Button>
+        <div className="flex w-full flex-col gap-1 sm:w-auto sm:items-end">
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-12 w-full sm:w-auto"
+              disabled={!activeManifestAvailable}
+              aria-describedby={!activeManifestAvailable ? 'active-manifest-export-help' : undefined}
+              onClick={() => openConfirmDialog('active_ticket_manifest')}
+            >
+              <Download className="h-4 w-4" />
+              회차 구매자 명단 CSV
+            </Button>
+            <Button
+              type="button"
+              className="h-12 w-full sm:w-auto"
+              onClick={() => openConfirmDialog('failed_cancelled_contacts')}
+            >
+              <Download className="h-4 w-4" />
+              실패/만료/취소 고객 CSV 내보내기
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-12 w-full sm:w-auto"
+              onClick={() => openConfirmDialog('raw_pii')}
+            >
+              <Download className="h-4 w-4" />
+              예약자 원본 CSV 내보내기
+            </Button>
+          </div>
+          {!activeManifestAvailable ? (
+            <p id="active-manifest-export-help" className="text-xs font-medium text-gray-500">
+              상단 공연과 회차 필터를 선택하면 활성화됩니다.
+            </p>
+          ) : null}
         </div>
       </div>
 

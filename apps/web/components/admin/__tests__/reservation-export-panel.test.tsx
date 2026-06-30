@@ -162,6 +162,9 @@ describe('ReservationExportPanel', () => {
     const button = screen.getByRole('button', { name: '회차 구매자 명단 CSV' });
 
     expect(button).toBeDisabled();
+    expect(
+      screen.getByText('상단 공연과 회차 필터를 선택하면 활성화됩니다.'),
+    ).toBeInTheDocument();
   });
 
   it('exports active ticket manifest with the selected showtime context after confirmation', async () => {
