@@ -14,6 +14,30 @@ export interface AdminPatchNote {
 
 const notes = [
   {
+    id: 'pr-182-active-ticket-manifest-export',
+    prNumber: 182,
+    title: '회차 구매자 명단 CSV 추가',
+    summary:
+      '예매 관리 화면에서 선택한 공연/회차의 유효 티켓 구매자 명단을 좌석 등급과 좌석 순서로 내려받을 수 있도록 CSV 내보내기를 추가했습니다.',
+    highlights: [
+      '회차를 선택한 경우에만 회차 구매자 명단 CSV 버튼 활성화',
+      'CONFIRMED 예약과 active ticket item만 포함하도록 서버에서 조건 강제',
+      'Tier, Seat, Floor, Row, Number와 구매자 연락처, 입장 상태를 단일 CSV에 포함',
+      'CSV 사유 입력, audit 기록, UTF-8 BOM, formula neutralization은 기존 예약자 export 흐름 재사용',
+    ],
+    category: 'feature',
+    date: '2026-06-30',
+    githubUrl: 'https://github.com/sangwopark19/grapit/pull/182',
+    evidence: [
+      'Shared admin operations schema Vitest',
+      'API admin booking service/controller Vitest',
+      'Web reservation export panel/dashboard Vitest',
+      'Shared build/typecheck',
+      'API/Web/Shared typecheck',
+      'git diff --check',
+    ],
+  },
+  {
     id: 'pr-180-ledgered-social-account-merge',
     prNumber: 180,
     title: '소셜 계정 병합 운영 도구 추가',

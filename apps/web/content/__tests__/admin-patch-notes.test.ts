@@ -48,6 +48,26 @@ describe('adminPatchNotes', () => {
     );
   });
 
+  it('registers the active ticket manifest export PR', () => {
+    const note = adminPatchNotes.find((entry) => entry.prNumber === 182);
+
+    expect(note).toEqual(
+      expect.objectContaining({
+        category: 'feature',
+        title: '회차 구매자 명단 CSV 추가',
+        githubUrl: 'https://github.com/sangwopark19/grapit/pull/182',
+      }),
+    );
+    expect(note?.summary).toContain('유효 티켓 구매자 명단');
+    expect(note?.highlights).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('회차 구매자 명단 CSV 버튼'),
+        expect.stringContaining('active ticket item'),
+        expect.stringContaining('formula neutralization'),
+      ]),
+    );
+  });
+
   it('registers the ticket benefit operations PR', () => {
     const note = adminPatchNotes.find((entry) => entry.prNumber === 173);
 
