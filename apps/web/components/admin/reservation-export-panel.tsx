@@ -72,9 +72,21 @@ const DEFAULT_FILTERS: ReservationExportFormState = {
   dateTo: '',
 };
 
-type ReservationExportKind = 'raw_pii' | 'failed_cancelled_contacts';
+type ReservationExportKind = 'raw_pii' | 'failed_cancelled_contacts' | 'active_ticket_manifest';
 
-export function ReservationExportPanel() {
+export interface ActiveManifestContext {
+  performanceLabel: string;
+  showtimeId: string;
+  showtimeLabel: string;
+}
+
+interface ReservationExportPanelProps {
+  activeManifestContext?: ActiveManifestContext;
+}
+
+export function ReservationExportPanel({
+  activeManifestContext,
+}: ReservationExportPanelProps) {
   const exportMutation = useReservationExport();
   const [filters, setFilters] = useState<ReservationExportFormState>(DEFAULT_FILTERS);
   const [reason, setReason] = useState('');
@@ -82,14 +94,17 @@ export function ReservationExportPanel() {
   const [exportKind, setExportKind] = useState<ReservationExportKind>('raw_pii');
 
   const payload = useMemo(
-    () => buildExportPayload(filters, reason, exportKind),
-    [filters, reason, exportKind],
+    () => buildExportPayload(filters, reason, exportKind, activeManifestContext),
+    [filters, reason, exportKind, activeManifestContext],
   );
   const filterSummary = useMemo(
-    () => buildFilterSummary(filters, exportKind),
-    [filters, exportKind],
+    () => buildFilterSummary(filters, exportKind, activeManifestContext),
+    [filters, exportKind, activeManifestContext],
   );
-  const canConfirm = reason.trim().length > 0 && !exportMutation.isPending;
+  const isActiveManifestExport = exportKind === 'active_ticket_manifest';
+  const canConfirm = reason.trim().length > 0
+    && !exportMutation.isPending
+    && (!isActiveManifestExport || Boolean(activeManifestContext?.showtimeId));
 
   function setFilter<K extends keyof ReservationExportFormState>(
     key: K,
@@ -107,11 +122,15 @@ export function ReservationExportPanel() {
   }
 
   function openConfirmDialog(kind: ReservationExportKind) {
+    if (kind === 'active_ticket_manifest' && !activeManifestContext?.showtimeId) {
+      return;
+    }
     setExportKind(kind);
     setConfirmOpen(true);
   }
 
   const isContactExport = exportKind === 'failed_cancelled_contacts';
+  const activeManifestAvailable = Boolean(activeManifestContext?.showtimeId);
 
   return (
     <section className="space-y-4 rounded-lg bg-white p-4 shadow-sm" aria-labelledby="reservation-export-title">
@@ -124,24 +143,42 @@ export function ReservationExportPanel() {
             원본 CSV는 개인정보가 포함되므로 필터와 사유를 확인한 뒤 내보내세요.
           </p>
         </div>
-        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
-          <Button
-            type="button"
-            className="h-12 w-full sm:w-auto"
-            onClick={() => openConfirmDialog('failed_cancelled_contacts')}
-          >
-            <Download className="h-4 w-4" />
-            실패/만료/취소 고객 CSV 내보내기
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-12 w-full sm:w-auto"
-            onClick={() => openConfirmDialog('raw_pii')}
-          >
-            <Download className="h-4 w-4" />
-            예약자 원본 CSV 내보내기
-          </Button>
+        <div className="flex w-full flex-col gap-1 sm:w-auto sm:items-end">
+          <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+            <Button
+              type="button"
+              variant="outline"
+              className="h-12 w-full sm:w-auto"
+              disabled={!activeManifestAvailable}
+              aria-describedby={!activeManifestAvailable ? 'active-manifest-export-help' : undefined}
+              onClick={() => openConfirmDialog('active_ticket_manifest')}
+            >
+              <Download className="h-4 w-4" />
+              회차 구매자 명단 CSV
+            </Button>
+            <Button
+              type="button"
+              className="h-12 w-full sm:w-auto"
+              onClick={() => openConfirmDialog('failed_cancelled_contacts')}
+            >
+              <Download className="h-4 w-4" />
+              실패/만료/취소 고객 CSV 내보내기
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-12 w-full sm:w-auto"
+              onClick={() => openConfirmDialog('raw_pii')}
+            >
+              <Download className="h-4 w-4" />
+              예약자 원본 CSV 내보내기
+            </Button>
+          </div>
+          {!activeManifestAvailable ? (
+            <p id="active-manifest-export-help" className="text-xs font-medium text-gray-500">
+              상단 공연과 회차 필터를 선택하면 활성화됩니다.
+            </p>
+          ) : null}
         </div>
       </div>
 
@@ -261,14 +298,18 @@ export function ReservationExportPanel() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {isContactExport
-                ? '실패/만료/취소 고객 CSV를 내보내시겠습니까?'
-                : '예약자 원본 CSV를 내보내시겠습니까?'}
+              {isActiveManifestExport
+                ? '회차 구매자 명단 CSV를 내보내시겠습니까?'
+                : isContactExport
+                  ? '실패/만료/취소 고객 CSV를 내보내시겠습니까?'
+                  : '예약자 원본 CSV를 내보내시겠습니까?'}
             </DialogTitle>
             <DialogDescription>
-              {isContactExport
-                ? '같은 공연에 현재 유효한 티켓이 있는 고객은 제외됩니다. 필터와 사유를 확인한 뒤 내보내세요.'
-                : '개인정보가 포함됩니다. 필터와 사유를 확인한 뒤 내보내세요.'}
+              {isActiveManifestExport
+                ? '선택한 회차의 유효 티켓 구매자 명단입니다. 공연과 회차, 사유를 확인한 뒤 내보내세요.'
+                : isContactExport
+                  ? '같은 공연에 현재 유효한 티켓이 있는 고객은 제외됩니다. 필터와 사유를 확인한 뒤 내보내세요.'
+                  : '개인정보가 포함됩니다. 필터와 사유를 확인한 뒤 내보내세요.'}
             </DialogDescription>
           </DialogHeader>
 
@@ -276,9 +317,11 @@ export function ReservationExportPanel() {
             <div role="alert" className="flex gap-3 rounded-lg border border-[#F3C8C8] bg-[#FEF2F2] p-3 text-sm font-semibold text-[#C62828]">
               <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
               <span>
-                {isContactExport
-                  ? '고객 CSV에는 이름, 이메일, 전화번호, 마케팅 동의 여부, 실패/취소 사유와 취소 매출 정보가 포함됩니다.'
-                  : '원본 CSV에는 예약자 이름, 이메일, 전화번호가 포함됩니다.'}
+                {isActiveManifestExport
+                  ? '구매자 명단 CSV에는 유효 티켓 구매자의 이름, 전화번호, 이메일과 좌석 정보가 포함됩니다.'
+                  : isContactExport
+                    ? '고객 CSV에는 이름, 이메일, 전화번호, 마케팅 동의 여부, 실패/취소 사유와 취소 매출 정보가 포함됩니다.'
+                    : '원본 CSV에는 예약자 이름, 이메일, 전화번호가 포함됩니다.'}
               </span>
             </div>
 
@@ -328,7 +371,16 @@ function buildExportPayload(
   filters: ReservationExportFormState,
   reason: string,
   exportKind: ReservationExportKind,
+  activeManifestContext?: ActiveManifestContext,
 ): ReservationExportPayload {
+  if (exportKind === 'active_ticket_manifest') {
+    return compactPayload({
+      showtimeId: activeManifestContext?.showtimeId,
+      exportType: 'active_ticket_manifest',
+      reason: reason.trim(),
+    });
+  }
+
   if (exportKind === 'failed_cancelled_contacts') {
     return compactPayload({
       eventId: filters.eventId.trim(),
@@ -385,6 +437,7 @@ function compactPayload(payload: ReservationExportPayload): ReservationExportPay
 function buildFilterSummary(
   filters: ReservationExportFormState,
   exportKind: ReservationExportKind,
+  activeManifestContext?: ActiveManifestContext,
 ) {
   const sharedSummary = [
     { label: '이벤트', value: filters.eventId.trim() || '전체' },
@@ -404,6 +457,15 @@ function buildFilterSummary(
       ...sharedSummary,
       { label: '대상 상태', value: '결제 실패/만료 + 취소 완료' },
       { label: '성공 제외', value: '같은 공연 active 티켓 보유 고객 제외' },
+    ];
+  }
+
+  if (exportKind === 'active_ticket_manifest') {
+    return [
+      { label: '공연', value: activeManifestContext?.performanceLabel ?? '미선택' },
+      { label: '회차', value: activeManifestContext?.showtimeLabel ?? '미선택' },
+      { label: '대상', value: '유효 티켓만 포함' },
+      { label: '파일 형식', value: '단일 CSV' },
     ];
   }
 

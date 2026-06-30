@@ -53,6 +53,7 @@ import type {
 
 const RAW_EXPORT_TYPE = 'raw_pii';
 const FAILED_CANCELLED_CONTACTS_EXPORT_TYPE = 'failed_cancelled_contacts';
+const ACTIVE_TICKET_MANIFEST_EXPORT_TYPE = 'active_ticket_manifest';
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 const RESERVATION_EXPORT_HEADERS = [
   'Reservation Number',
@@ -106,6 +107,24 @@ const FAILED_CANCELLED_CONTACT_EXPORT_HEADERS = [
   'Cancellation Revenue',
   'Cancellation Source',
   'Last Affected Reason',
+] as const;
+const ACTIVE_TICKET_MANIFEST_EXPORT_HEADERS = [
+  'Tier',
+  'Seat',
+  'Floor',
+  'Row',
+  'Number',
+  'Reservation Number',
+  'Buyer Name',
+  'Buyer Phone',
+  'Buyer Email',
+  'Audience Region',
+  'Country',
+  'Performance Title',
+  'Show DateTime',
+  'Ticket Item ID',
+  'Admission State',
+  'Entered At',
 ] as const;
 
 const PAYMENT_METHOD_FILTER_ALIASES = {
@@ -250,6 +269,37 @@ type ReservationExportRow = {
     status: string | null;
     paidAt: Date | null;
   } | null;
+};
+
+type ActiveTicketManifestExportRow = {
+  reservation: {
+    reservationNumber: string;
+  };
+  user: {
+    name: string;
+    email: string;
+    phone: string;
+    country: string;
+  };
+  showtime: {
+    dateTime: Date | null;
+  };
+  performance: {
+    title: string;
+  };
+  ticketItem: Pick<
+    AdminTicketItemRow,
+    | 'id'
+    | 'showtimeId'
+    | 'seatKey'
+    | 'floorKey'
+    | 'floorLabel'
+    | 'tierName'
+    | 'row'
+    | 'number'
+    | 'admissionState'
+    | 'enteredAt'
+  >;
 };
 
 type FailedCancelledContactExportSourceRow = {
@@ -1491,29 +1541,47 @@ export class AdminBookingService {
       reason,
     } satisfies AdminReservationExportFilter;
     const isContactExport = filters.exportType === FAILED_CANCELLED_CONTACTS_EXPORT_TYPE;
-    const exportType = isContactExport
-      ? FAILED_CANCELLED_CONTACTS_EXPORT_TYPE
-      : RAW_EXPORT_TYPE;
-    const rows = isContactExport
-      ? await this.selectFailedCancelledContactExportRows(filters)
-      : await this.selectReservationExportRows({
+    const isActiveTicketManifestExport =
+      filters.exportType === ACTIVE_TICKET_MANIFEST_EXPORT_TYPE;
+    let exportType = RAW_EXPORT_TYPE;
+    if (isContactExport) {
+      exportType = FAILED_CANCELLED_CONTACTS_EXPORT_TYPE;
+    } else if (isActiveTicketManifestExport) {
+      exportType = ACTIVE_TICKET_MANIFEST_EXPORT_TYPE;
+    }
+    const rows = await (async () => {
+      if (isContactExport) {
+        return this.selectFailedCancelledContactExportRows(filters);
+      }
+      if (isActiveTicketManifestExport) {
+        return this.selectActiveTicketManifestRows(filters);
+      }
+      return this.selectReservationExportRows({
         ...filters,
         exportType: RAW_EXPORT_TYPE,
       });
+    })();
     const csv = withUtf8Bom(safeCsvRows([
       ...(isContactExport
         ? [
-          FAILED_CANCELLED_CONTACT_EXPORT_HEADERS,
-          ...(rows as FailedCancelledContactExportRow[]).map((row) =>
-            failedCancelledContactExportRowToCsvValues(row)
-          ),
-        ]
-        : [
-          RESERVATION_EXPORT_HEADERS,
-          ...(rows as ReservationExportRow[]).map((row) =>
-            reservationExportRowToCsvValues(row)
-          ),
-        ]),
+            FAILED_CANCELLED_CONTACT_EXPORT_HEADERS,
+            ...(rows as FailedCancelledContactExportRow[]).map((row) =>
+              failedCancelledContactExportRowToCsvValues(row)
+            ),
+          ]
+        : isActiveTicketManifestExport
+          ? [
+              ACTIVE_TICKET_MANIFEST_EXPORT_HEADERS,
+              ...(rows as ActiveTicketManifestExportRow[]).map((row) =>
+                activeTicketManifestExportRowToCsvValues(row)
+              ),
+            ]
+          : [
+              RESERVATION_EXPORT_HEADERS,
+              ...(rows as ReservationExportRow[]).map((row) =>
+                reservationExportRowToCsvValues(row)
+              ),
+            ]),
     ]));
 
     await this.auditService.write({
@@ -1529,6 +1597,8 @@ export class AdminBookingService {
         exportType,
         filters: isContactExport
           ? failedCancelledContactExportFiltersForAudit(filters)
+          : isActiveTicketManifestExport
+            ? activeTicketManifestExportFiltersForAudit(filters)
           : reservationExportFiltersForAudit(filters),
         rowCount: rows.length,
       },
@@ -1539,6 +1609,8 @@ export class AdminBookingService {
     return {
       filename: isContactExport
         ? `reservation-export-failed-cancelled-contacts-${new Date().toISOString().slice(0, 10)}.csv`
+        : isActiveTicketManifestExport
+          ? `reservation-export-active-ticket-manifest-${new Date().toISOString().slice(0, 10)}.csv`
         : `reservation-export-raw-${new Date().toISOString().slice(0, 10)}.csv`,
       contentType: 'text/csv; charset=utf-8',
       csv,
@@ -1648,6 +1720,94 @@ export class AdminBookingService {
       .leftJoin(payments, eq(payments.reservationId, reservations.id))
       .where(conditions.length > 0 ? and(...conditions) : undefined)
       .orderBy(desc(reservations.createdAt), asc(ticketItems.createdAt), asc(ticketItems.id));
+  }
+
+  private async selectActiveTicketManifestRows(
+    filters: AdminReservationExportFilter,
+  ): Promise<ActiveTicketManifestExportRow[]> {
+    const showtimeId = filters.showtimeId?.trim();
+    if (!showtimeId) {
+      throw new BadRequestException('회차를 선택해주세요');
+    }
+
+    return this.db
+      .select({
+        reservation: {
+          reservationNumber: reservations.reservationNumber,
+        },
+        user: {
+          name: users.name,
+          email: users.email,
+          phone: users.phone,
+          country: users.country,
+        },
+        showtime: {
+          dateTime: showtimes.dateTime,
+        },
+        performance: {
+          title: performances.title,
+        },
+        ticketItem: {
+          id: ticketItems.id,
+          showtimeId: ticketItems.showtimeId,
+          seatKey: ticketItems.seatKey,
+          floorKey: ticketItems.floorKey,
+          floorLabel: ticketItems.floorLabel,
+          tierName: ticketItems.tierName,
+          row: ticketItems.row,
+          number: ticketItems.number,
+          admissionState: ticketItems.admissionState,
+          enteredAt: ticketItems.enteredAt,
+        },
+      })
+      .from(ticketItems)
+      .innerJoin(reservations, eq(ticketItems.reservationId, reservations.id))
+      .innerJoin(payments, eq(ticketItems.paymentId, payments.id))
+      .innerJoin(users, eq(reservations.userId, users.id))
+      .innerJoin(showtimes, eq(ticketItems.showtimeId, showtimes.id))
+      .innerJoin(performances, eq(showtimes.performanceId, performances.id))
+      .leftJoin(
+        seatInventories,
+        and(
+          eq(seatInventories.showtimeId, ticketItems.showtimeId),
+          eq(seatInventories.floorKey, ticketItems.floorKey),
+          eq(seatInventories.seatKey, ticketItems.seatKey),
+        ),
+      )
+      .leftJoin(
+        performanceSeatAssignments,
+        eq(seatInventories.performanceSeatAssignmentId, performanceSeatAssignments.id),
+      )
+      .leftJoin(
+        venueLayoutSeats,
+        eq(performanceSeatAssignments.layoutSeatId, venueLayoutSeats.id),
+      )
+      .leftJoin(venueLayoutFloors, eq(venueLayoutSeats.floorId, venueLayoutFloors.id))
+      .leftJoin(
+        performanceSeatTiers,
+        and(
+          eq(performanceSeatTiers.performanceId, performances.id),
+          eq(performanceSeatTiers.tierName, ticketItems.tierName),
+        ),
+      )
+      .where(and(
+        eq(ticketItems.showtimeId, showtimeId),
+        eq(reservations.status, 'CONFIRMED'),
+        eq(payments.status, 'DONE'),
+        eq(ticketItems.status, 'active'),
+      ))
+      .orderBy(
+        asc(performanceSeatTiers.sortOrder),
+        asc(ticketItems.tierName),
+        sql`${venueLayoutFloors.sortOrder} is null`,
+        asc(venueLayoutFloors.sortOrder),
+        sql`${venueLayoutSeats.sortOrder} is null`,
+        asc(venueLayoutSeats.sortOrder),
+        asc(ticketItems.floorKey),
+        asc(ticketItems.row),
+        asc(ticketItems.number),
+        asc(ticketItems.seatKey),
+      );
   }
 
   private async selectFailedCancelledContactExportRows(
@@ -1940,6 +2100,31 @@ function failedCancelledContactExportRowToCsvValues(
     row.cancellationRevenue,
     row.cancellationSource ?? '',
     row.lastAffectedReason ?? '',
+  ];
+}
+
+function activeTicketManifestExportRowToCsvValues(
+  row: ActiveTicketManifestExportRow,
+): readonly unknown[] {
+  const audienceRegion = row.user.country === 'KR' ? 'domestic' : 'overseas';
+
+  return [
+    row.ticketItem.tierName,
+    row.ticketItem.seatKey,
+    row.ticketItem.floorLabel,
+    row.ticketItem.row,
+    row.ticketItem.number,
+    row.reservation.reservationNumber,
+    row.user.name,
+    row.user.phone,
+    row.user.email,
+    audienceRegion,
+    row.user.country,
+    row.performance.title,
+    row.showtime.dateTime?.toISOString() ?? '',
+    row.ticketItem.id,
+    mapAdminTicketItemAdmissionState(row.ticketItem.admissionState),
+    dateToIsoOrNull(row.ticketItem.enteredAt) ?? '',
   ];
 }
 
@@ -2444,6 +2629,17 @@ function failedCancelledContactExportFiltersForAudit(
     }
   }
 
+  return auditFilters;
+}
+
+function activeTicketManifestExportFiltersForAudit(
+  filters: AdminReservationExportFilter,
+): Record<string, string> {
+  const auditFilters: Record<string, string> = {};
+  const showtimeId = filters.showtimeId?.trim();
+  if (showtimeId) {
+    auditFilters.showtimeId = showtimeId;
+  }
   return auditFilters;
 }
 

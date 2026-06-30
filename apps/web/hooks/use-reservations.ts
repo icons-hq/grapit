@@ -22,7 +22,7 @@ import type {
 } from '@grabit/shared';
 
 export type ReservationExportPayload = AdminReservationExportFilter & {
-  exportType: 'raw_pii' | 'failed_cancelled_contacts';
+  exportType: 'raw_pii' | 'failed_cancelled_contacts' | 'active_ticket_manifest';
   reason: string;
 };
 

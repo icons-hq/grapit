@@ -2155,6 +2155,110 @@ describe('AdminBookingService', () => {
       expect(result.csv).toContain('"일정 변경"');
     });
 
+    it('exports an active ticket manifest for one showtime with paid active tickets and layout seat ordering before A-1/A-2/A-10 fallback fields', async () => {
+      const showtimeId = '11111111-1111-4111-8111-000000000302';
+      const exportCalls: Array<{ method: string; args: unknown[] }> = [];
+      mockDb.select.mockReturnValueOnce(
+        createRecordingChainMock([
+          {
+            reservation: {
+              reservationNumber: 'R-MANIFEST-001',
+              status: 'CONFIRMED',
+            },
+            user: {
+              name: '=Buyer',
+              email: '=buyer@example.com',
+              phone: '+821055501234',
+              country: 'KR',
+            },
+            showtime: {
+              dateTime: new Date('2026-07-18T10:00:00.000Z'),
+            },
+            performance: {
+              title: 'Girl Rules Fanmeeting',
+            },
+            ticketItem: ticketItem({
+              id: 'ticket-item-manifest-1',
+              showtimeId,
+              floorLabel: '1층',
+              seatKey: '1F:A-1',
+              tierName: 'VIP',
+              row: 'A',
+              number: '1',
+              admissionState: 'entered',
+              enteredAt: new Date('2026-07-18T11:00:00.000Z'),
+            }),
+          },
+        ], exportCalls),
+      );
+
+      const result = await service.exportReservations({
+        actorUserId: 'admin-1',
+        ipAddress: '203.0.113.10',
+        userAgent: 'Vitest Admin Console',
+        filters: {
+          exportType: 'active_ticket_manifest',
+          showtimeId,
+          reason: '현장 운영 명단',
+        },
+      });
+
+      expect(result.rowCount).toBe(1);
+      expect(result.filename).toContain('reservation-export-active-ticket-manifest');
+      expect(result.csv.charCodeAt(0)).toBe(0xfeff);
+      expect(result.csv.split('\n')[0]).toBe(
+        '\uFEFF"Tier","Seat","Floor","Row","Number","Reservation Number","Buyer Name","Buyer Phone","Buyer Email","Audience Region","Country","Performance Title","Show DateTime","Ticket Item ID","Admission State","Entered At"',
+      );
+      expect(result.csv).toContain(
+        `"VIP","1F:A-1","1층","A","1","R-MANIFEST-001","'=Buyer","'+821055501234","'=buyer@example.com","domestic","KR","Girl Rules Fanmeeting","2026-07-18T10:00:00.000Z","ticket-item-manifest-1","ENTERED","2026-07-18T11:00:00.000Z"`,
+      );
+
+      const exportWhere = exportCalls.find((call) => call.method === 'where')?.args[0];
+      expect(objectGraphContains(exportWhere, showtimeId)).toBe(true);
+      expect(objectGraphContains(exportWhere, 'CONFIRMED')).toBe(true);
+      expect(objectGraphContains(exportWhere, 'active')).toBe(true);
+      expect(objectGraphContains(exportWhere, 'DONE')).toBe(true);
+
+      const exportJoinText = objectGraphText(
+        exportCalls
+          .filter((call) => call.method === 'innerJoin' || call.method === 'leftJoin')
+          .map((call) => call.args),
+      );
+      expect(exportJoinText).toContain('payment_id');
+      expect(exportJoinText).toContain('layout_seat_id');
+      expect(exportJoinText).toContain('floor_id');
+
+      const exportOrderByText = objectGraphText(
+        exportCalls.find((call) => call.method === 'orderBy')?.args,
+      );
+      expect(exportOrderByText).toContain('sort_order');
+      expect(exportOrderByText).toContain('tier_name');
+      expect(exportOrderByText).toContain('seat_key');
+      expect(exportOrderByText).toContain('number');
+      const layoutSortSuffix = exportOrderByText.slice(exportOrderByText.indexOf('is null'));
+      expect(layoutSortSuffix).toMatch(/is null[\s\S]*number[\s\S]*seat_key/);
+
+      const [auditInput] = mockAdminAuditService.write.mock.calls[0]!;
+      expect(auditInput).toMatchObject({
+        actorUserId: 'admin-1',
+        action: 'reservations.export_raw',
+        resourceType: 'reservation_export',
+        resourceId: 'active_ticket_manifest',
+        status: 'success',
+        reason: '현장 운영 명단',
+        after: {
+          exportType: 'active_ticket_manifest',
+          filters: {
+            showtimeId,
+          },
+          rowCount: 1,
+        },
+      });
+      expect(JSON.stringify(auditInput)).not.toContain('buyer@example.com');
+      expect(JSON.stringify(auditInput)).not.toContain('+821055501234');
+      expect(JSON.stringify(auditInput)).not.toContain('R-MANIFEST-001');
+    });
+
     it('rejects raw exports without a reason before querying or auditing', async () => {
       await expect(
         service.exportReservations({

@@ -232,6 +232,7 @@ export const adminAllowlistRecordSchema = z.object({
 export const adminReservationExportFilterSchema = z
   .object({
     eventId: z.string().min(1).optional(),
+    showtimeId: adminSeatOperationShowtimeIdSchema.optional(),
     tierName: z.string().min(1).optional(),
     zoneFloor: z.string().min(1).optional(),
     reservationStatus: z
@@ -242,18 +243,38 @@ export const adminReservationExportFilterSchema = z
     paymentMethod: z.string().min(1).optional(),
     dateFrom: dateOnly('조회 시작일').optional(),
     dateTo: dateOnly('조회 종료일').optional(),
-    exportType: z.enum(['masked', 'raw_pii', 'failed_cancelled_contacts']).default('masked'),
+    exportType: z
+      .enum(['masked', 'raw_pii', 'failed_cancelled_contacts', 'active_ticket_manifest'])
+      .default('masked'),
     reason: z.string().min(1, '원본 CSV 내보내기 사유를 입력해주세요').optional(),
   })
   .superRefine((value, ctx) => {
     if (
-      (value.exportType === 'raw_pii' || value.exportType === 'failed_cancelled_contacts')
+      (
+        value.exportType === 'raw_pii'
+        || value.exportType === 'failed_cancelled_contacts'
+        || value.exportType === 'active_ticket_manifest'
+      )
       && !value.reason?.trim()
     ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['reason'],
         message: '원본 CSV 내보내기 사유를 입력해주세요',
+      });
+    }
+    if (value.exportType === 'active_ticket_manifest' && !value.showtimeId?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['showtimeId'],
+        message: '회차를 선택해주세요',
+      });
+    }
+    if (value.exportType !== 'active_ticket_manifest' && value.showtimeId?.trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['showtimeId'],
+        message: '회차는 구매자 명단 CSV에서만 사용할 수 있습니다',
       });
     }
   });

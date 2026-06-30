@@ -305,6 +305,17 @@ export function AdminBookingDashboard() {
       label: seatMap.floorLabel,
     })),
   ];
+  const activeManifestContext = performanceId !== 'all' && showtimeId !== 'all'
+    ? {
+        performanceLabel:
+          performanceOptions.find((option) => option.value === performanceId)?.label
+          ?? performanceId,
+        showtimeId,
+        showtimeLabel:
+          showtimeOptions.find((option) => option.value === showtimeId)?.label
+          ?? showtimeId,
+      }
+    : undefined;
 
   return (
     <div>
@@ -338,10 +349,6 @@ export function AdminBookingDashboard() {
         />
       </div>
       <PaymentFailureBreakdown stats={stats} />
-
-      <div className="mt-6">
-        <ReservationExportPanel />
-      </div>
 
       <div className="mt-6">
         <TierStatsTable tierStats={tierStats} />
@@ -457,6 +464,10 @@ export function AdminBookingDashboard() {
       </div>
 
       {/* Booking table */}
+      <div className="mt-4">
+        <ReservationExportPanel activeManifestContext={activeManifestContext} />
+      </div>
+
       <div className="mt-4">
         <AdminBookingTable
           bookings={bookings}
