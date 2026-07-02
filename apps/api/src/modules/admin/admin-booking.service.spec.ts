@@ -2183,10 +2183,10 @@ describe('AdminBookingService', () => {
               id: 'ticket-item-manifest-1',
               showtimeId,
               floorLabel: '1층',
-              seatKey: '1F:A-1',
-              tierName: 'VIP',
-              row: 'A',
-              number: '1',
+              seatKey: '1F:가-2',
+              tierName: 'SVIP',
+              row: '가',
+              number: '2',
               admissionState: 'entered',
               enteredAt: new Date('2026-07-18T11:00:00.000Z'),
             }),
@@ -2209,10 +2209,10 @@ describe('AdminBookingService', () => {
       expect(result.filename).toContain('reservation-export-active-ticket-manifest');
       expect(result.csv.charCodeAt(0)).toBe(0xfeff);
       expect(result.csv.split('\n')[0]).toBe(
-        '\uFEFF"Tier","Seat","Floor","Row","Number","Reservation Number","Buyer Name","Buyer Phone","Buyer Email","Audience Region","Country","Performance Title","Show DateTime","Ticket Item ID","Admission State","Entered At"',
+        '\uFEFF"Tier","Seat","Ticket Seat Number","Floor","Row","Number","Reservation Number","Buyer Name","Buyer Phone","Buyer Email","Audience Region","Country","Performance Title","Show DateTime","Ticket Item ID","Admission State","Entered At"',
       );
       expect(result.csv).toContain(
-        `"VIP","1F:A-1","1층","A","1","R-MANIFEST-001","'=Buyer","'+821055501234","'=buyer@example.com","domestic","KR","Girl Rules Fanmeeting","2026-07-18T10:00:00.000Z","ticket-item-manifest-1","ENTERED","2026-07-18T11:00:00.000Z"`,
+        `"SVIP","1F:가-2","1층 SVIP 가열 2번","1층","가","2","R-MANIFEST-001","'=Buyer","'+821055501234","'=buyer@example.com","domestic","KR","Girl Rules Fanmeeting","2026-07-18T10:00:00.000Z","ticket-item-manifest-1","ENTERED","2026-07-18T11:00:00.000Z"`,
       );
 
       const exportWhere = exportCalls.find((call) => call.method === 'where')?.args[0];

@@ -63,6 +63,7 @@ describe('adminPatchNotes', () => {
       expect.arrayContaining([
         expect.stringContaining('회차 구매자 명단 CSV 버튼'),
         expect.stringContaining('active ticket item'),
+        expect.stringContaining('Ticket Seat Number'),
         expect.stringContaining('formula neutralization'),
       ]),
     );

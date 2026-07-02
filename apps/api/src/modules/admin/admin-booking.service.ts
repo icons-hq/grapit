@@ -35,6 +35,7 @@ import {
 import { mapPaymentFailureDiagnostic } from '../payment/payment-failure-diagnostic.js';
 import { safeCsvRows, withUtf8Bom } from './csv-export.util.js';
 import { AdminAuditService } from './admin-audit.service.js';
+import { formatTicketSeatNumber } from './ticket-seat-number.util.js';
 import { normalizeSeatIdentity, toFloorAwareSeatSelection } from '@grabit/shared';
 import type {
   AdminBookingFunnelStatus,
@@ -114,6 +115,7 @@ const FAILED_CANCELLED_CONTACT_EXPORT_HEADERS = [
 const ACTIVE_TICKET_MANIFEST_EXPORT_HEADERS = [
   'Tier',
   'Seat',
+  'Ticket Seat Number',
   'Floor',
   'Row',
   'Number',
@@ -2124,6 +2126,7 @@ function activeTicketManifestExportRowToCsvValues(
   return [
     row.ticketItem.tierName,
     row.ticketItem.seatKey,
+    formatTicketSeatNumber(row.ticketItem),
     row.ticketItem.floorLabel,
     row.ticketItem.row,
     row.ticketItem.number,
