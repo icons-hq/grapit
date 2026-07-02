@@ -14,30 +14,6 @@ export interface AdminPatchNote {
 
 const notes = [
   {
-    id: 'pr-183-full-reservation-cancellation-fees',
-    prNumber: 183,
-    title: '전체예매 취소 수수료 정책 적용',
-    summary:
-      '구매자와 관리자 전체예매 취소에 티켓별 취소 수수료 견적을 적용하고, Toss 부분취소 완료 판정과 관리자 환불 권한을 production 적용 전 강화했습니다.',
-    highlights: [
-      '티켓별 취소 수수료와 서비스 수수료 환불 여부를 quote로 저장해 retry와 webhook에서 재사용',
-      'cancelRequestId 없는 provider 부분취소는 요청 시점 이후 완료 거래만 매칭하도록 강화',
-      'cancellation_pending 티켓이 남은 예약은 전체예매 취소 전에 수동 reconciliation 대상으로 차단',
-      '관리자 환불 preview와 실행을 refund.admin_refund capability로 제한하고 refetch 중 확인 버튼 비활성화',
-    ],
-    category: 'feature',
-    date: '2026-07-02',
-    githubUrl: 'https://github.com/sangwopark19/grapit/pull/183',
-    evidence: [
-      'API refund/payment/webhook/retry/finalizer/admin Vitest',
-      'Shared admin and booking schema Vitest',
-      'Web admin booking and patch-note Vitest',
-      'API/Web/Shared typecheck',
-      'pnpm lint',
-      'git diff --check',
-    ],
-  },
-  {
     id: 'pr-182-active-ticket-manifest-export',
     prNumber: 182,
     title: '회차 구매자 명단 CSV 추가',
