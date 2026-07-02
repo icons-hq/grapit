@@ -202,6 +202,26 @@ describe('PaymentWebhookController', () => {
     expect(parsed.data.approvedAt).toBeUndefined();
   });
 
+  it('accepts official Toss cancel-status webhook payloads without payment or provider fields', () => {
+    const parsed = tossWebhookSchema.parse({
+      eventType: 'CANCEL_STATUS_CHANGED',
+      createdAt: '2026-06-04T10:17:34.772742',
+      data: {
+        cancelStatus: 'DONE',
+        cancelRequestId: 'cancel_refund-1',
+        cancelAmount: 107800,
+        cancelReason: 'buyer changed mind',
+        canceledAt: '2026-06-04T10:17:35.000000',
+      },
+    });
+
+    expect(parsed.data.provider).toBeUndefined();
+    expect(parsed.data.paymentKey).toBeUndefined();
+    expect(parsed.data.orderId).toBeUndefined();
+    expect(parsed.data.cancelRequestId).toBe('cancel_refund-1');
+    expect(parsed.data.cancelAmount).toBe(107800);
+  });
+
   it('uses Toss transmission header when the payment webhook body has no eventId', async () => {
     paymentService.recordWebhookEvent.mockResolvedValueOnce(
       makeLedgerResult({
@@ -830,6 +850,9 @@ describe('PaymentWebhookController', () => {
       'CANCEL_STATUS_CHANGED_APPLIED',
       undefined,
     );
+    expect(tossClient.queryPayment).toHaveBeenCalledWith('pay_async_1', {
+      secretKeyScope: 'foreign-easy-pay',
+    });
   });
 
   it('finalizes confirmed reservation cancellation through PaymentService instead of payment-only progress', async () => {
@@ -1247,6 +1270,32 @@ describe('PaymentWebhookController', () => {
     expect(tossClient.queryPayment).toHaveBeenCalledWith('pay_overseas_card_1', {
       secretKeyScope: 'overseas-card',
     });
+  });
+
+  it('fails closed when providerless cancel webhooks have no local payment snapshot', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(
+      makeLedgerResult({
+        eventId: 'evt-providerless-cancel-no-snapshot',
+      }),
+    );
+    paymentService.findPaymentCancelSnapshotByCancelRequestId.mockResolvedValueOnce(null);
+    paymentService.findPaymentCancelSnapshot.mockResolvedValueOnce(null);
+
+    await expect(controller.handleTossWebhook({
+      eventId: 'evt-providerless-cancel-no-snapshot',
+      eventType: 'CANCEL_STATUS_CHANGED',
+      data: {
+        cancelStatus: 'DONE',
+        cancelRequestId: 'cancel_missing-local-snapshot',
+      },
+    })).rejects.toThrow('cancel webhook local payment lookup failed');
+
+    expect(tossClient.queryPayment).not.toHaveBeenCalled();
+    expect(paymentService.markWebhookEventFailed).toHaveBeenCalledWith(
+      'evt-providerless-cancel-no-snapshot',
+      'PROCESSING_FAILED',
+      'cancel webhook local payment lookup failed',
+    );
   });
 
   it('keeps pending-payment cancel webhook behavior on the payment progress path', async () => {

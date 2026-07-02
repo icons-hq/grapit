@@ -213,8 +213,8 @@ A Ticket Item Cancellation completed through operations or finance handling rath
 _Avoid_: Customer partial cancellation, hidden buyer feature.
 
 **Full Reservation Cancellation**:
-The cancellation of all remaining valid Ticket Items in a Reservation as one buyer-facing cancellation event.
-_Avoid_: Ticket Item Cancellation, partial cancellation.
+The cancellation of all remaining valid Ticket Items in a Reservation as one buyer-facing cancellation event. Cancellation fees are calculated per Ticket Item even when the Buyer cancels the whole Reservation.
+_Avoid_: Ticket Item Cancellation, partial cancellation, full refund.
 
 **Cancellation Event Count**:
 An admin metric that counts Full Reservation Cancellation as one event and Operator-Assisted Ticket Item Cancellation as one event per cancelled Ticket Item.
@@ -236,6 +236,22 @@ _Avoid_: Remaining ticket amount, active ticket total.
 The per-Ticket Item record of cancellation amount, cancellation fee, refunded Ticket Service Fee, and refund result for a Reservation.
 _Avoid_: Adjusted payment amount, overwritten total.
 
+**Cancellation Quote**:
+The Buyer-visible summary shown before cancellation confirmation, including the original payment amount, Ticket Item cancellation fees, Ticket Service Fee refundability, and final refundable amount.
+_Avoid_: Provider receipt, settlement report, cancellation history.
+
+**Cancellation Fee Revenue**:
+The cancellation-fee amount retained by Grabit when a Reservation or Ticket Item is cancelled under the Cancellation Fee Schedule. It must remain explainable per Ticket Item for settlement and customer support.
+_Avoid_: Unrefunded balance, payment processor fee, Ticket Service Fee.
+
+**Administrative Full Refund Override**:
+An operator-authorized refund decision that bypasses the Cancellation Fee Schedule and refunds the full original payment amount, including Ticket Service Fees. It is separate from the default buyer and admin cancellation policy.
+_Avoid_: Default refund policy, buyer self-service option, partial cancellation.
+
+**Administrative Entered Ticket Cancellation Override**:
+An operator-authorized cancellation path for Ticket Items whose Venue Entry has already been processed, used for controlled test cleanup or exceptional operations cases. It is never a buyer self-service cancellation path.
+_Avoid_: Normal buyer cancellation, field scanner reversal, automatic refund rule.
+
 **Cancelled Ticket Item Reopen**:
 The controlled release of a cancelled Ticket Item's Seat Identity back into sellable inventory while other Ticket Items in the Reservation remain sold.
 _Avoid_: Immediate resale, full reservation reopen, all-seat release.
@@ -255,6 +271,10 @@ _Avoid_: Reservation total, KRW ticket total, client estimate.
 **Provider Charge Quote**:
 A snapshot of the Provider Charge Amount that the Buyer is asked to pay for a Reservation. It preserves the provider currency and amount used for payment authorization and validation.
 _Avoid_: Live exchange rate, UI estimate, mutable display price.
+
+**Provider Partial Cancellation**:
+A payment-provider cancellation result where only the refundable amount is cancelled and a policy-retained balance remains captured on the original payment. The retained balance can include Cancellation Fee Revenue or a non-refundable Ticket Service Fee. It can happen during Full Reservation Cancellation without implying buyer-facing partial cancellation.
+_Avoid_: Full payment cancellation, Ticket Item Cancellation, partial seat cancellation.
 
 **Payment Failure Diagnostic**:
 An admin-facing explanation of why a Reservation did not complete payment, assembled from provider evidence, webhook evidence, and Grabit's own payment lifecycle state.
@@ -345,7 +365,7 @@ A NOL Ticket-style per-Ticket Item fee schedule that determines cancellation fee
 _Avoid_: Flat refund penalty, Reservation-level cancellation fee.
 
 **Cancellation Window**:
-The period before the show date when a buyer can cancel a Reservation or Ticket Item under the event's policy. It does not include the show date, and scanned QR Credentials are outside buyer cancellation eligibility.
+The period before the show date when a Buyer can cancel a Reservation or Ticket Item under the event's policy. It ends at 23:59 KST on the day before the show date; scanned QR Credentials are outside buyer cancellation eligibility.
 _Avoid_: Entry window, refund processing period.
 
 **Field Scanner Staff**:

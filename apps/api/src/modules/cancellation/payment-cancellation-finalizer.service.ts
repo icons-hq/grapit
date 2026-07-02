@@ -7,8 +7,9 @@ import {
   Optional,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { and, eq, inArray, ne, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import { normalizeSeatIdentity } from '@grabit/shared';
+import type { CancellationQuote } from '@grabit/shared';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
   bookingOperationAuditLogs,
@@ -71,6 +72,7 @@ export interface FinalizeFullPaymentCancellationInput {
     serviceFeeRefund: number;
     refundableAmount: number;
   };
+  fullReservationCancellationQuote?: CancellationQuote;
   reason: string;
   providerResponse?: PaymentCancellationProviderResponse;
   actor?: PaymentCancellationActor;
@@ -79,6 +81,7 @@ export interface FinalizeFullPaymentCancellationInput {
 
 export type PaymentCancellationProviderResponse = {
   status?: string;
+  balanceAmount?: number;
 } & Record<string, unknown>;
 
 export interface FinalizeFullPaymentCancellationResult {
@@ -111,6 +114,27 @@ function toRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function resolveLocalPaymentStatus(
+  providerResponse: PaymentCancellationProviderResponse | undefined,
+  cancellationQuote: CancellationQuote | undefined,
+): 'CANCELED' | 'PARTIAL_CANCELED' {
+  if (providerResponse?.status === 'CANCELED' || providerResponse?.balanceAmount === 0) {
+    return 'CANCELED';
+  }
+
+  if (
+    providerResponse?.status === 'PARTIAL_CANCELED'
+    && typeof providerResponse.balanceAmount === 'number'
+    && providerResponse.balanceAmount > 0
+    && cancellationQuote
+    && cancellationQuote.refundableAmount < cancellationQuote.originalPaymentAmount
+  ) {
+    return 'PARTIAL_CANCELED';
+  }
+
+  return 'CANCELED';
 }
 
 function sanitizeProviderMetadata(value: unknown, key?: string): unknown {
@@ -195,7 +219,7 @@ export class PaymentCancellationFinalizerService {
       holdWindow.max,
     );
     const releaseAt = new Date(now.getTime() + delaySeconds * 1000);
-    const seatIdentities = uniqueSeatIdentities(input.context.seats);
+    let seatIdentities = uniqueSeatIdentities(input.context.seats);
     const preallocatedReleaseJobId = randomUUID();
     const providerCancellation = sanitizeProviderCancellationPayload(
       input.providerResponse,
@@ -203,6 +227,11 @@ export class PaymentCancellationFinalizerService {
     const isPartialTicketItemCancellation =
       input.ticketItemCancellation !== undefined
       && input.providerResponse?.status === 'PARTIAL_CANCELED';
+    const fullReservationCancellationQuote = input.fullReservationCancellationQuote;
+    const localPaymentStatus = resolveLocalPaymentStatus(
+      input.providerResponse,
+      fullReservationCancellationQuote,
+    );
     const seatReleaseStates: SeatReleaseState[] = [];
 
     await this.db.transaction(async (tx) => {
@@ -223,6 +252,9 @@ export class PaymentCancellationFinalizerService {
               cancelReason: input.reason,
               paymentStatus: input.providerResponse?.status ?? 'CANCELED',
               source: input.source,
+              ...(fullReservationCancellationQuote
+                ? { cancellationQuote: fullReservationCancellationQuote }
+                : {}),
               ...(providerCancellation ? { providerCancellation } : {}),
             },
           })
@@ -265,13 +297,16 @@ export class PaymentCancellationFinalizerService {
         const updatedPayments = await tx
           .update(payments)
           .set({
-            status: 'CANCELED',
+            status: localPaymentStatus,
             cancelledAt: now,
             cancelReason: input.reason,
             providerMetadata: {
               ...toRecord(input.context.payment.providerMetadata),
               refundCompletedAt: now.toISOString(),
               cancellationSource: input.source,
+              ...(fullReservationCancellationQuote
+                ? { cancellationQuote: fullReservationCancellationQuote }
+                : {}),
               ...(providerCancellation ? { providerCancellation } : {}),
             },
           })
@@ -288,58 +323,107 @@ export class PaymentCancellationFinalizerService {
 
       if (seatIdentities.length > 0) {
         const ticketItemCancellation = input.ticketItemCancellation;
-        const ticketItemUpdateValues = ticketItemCancellation
-          ? {
-              status: 'cancelled' as const,
-              cancelledAt: now,
-              cancelReason: input.reason,
-              cancellationFee: ticketItemCancellation.cancellationFee,
-              serviceFeeRefund: ticketItemCancellation.serviceFeeRefund,
-              refundableAmount: ticketItemCancellation.refundableAmount,
-              reopenState: 'not_required' as const,
-              reopenHoldUntil: null,
-              reopenJobId: null,
-              updatedAt: now,
+        const targetTicketItemIds: string[] = [];
+        const quoteSeatIdentities: SeatReleaseState['seatIdentity'][] = [];
+
+        if (fullReservationCancellationQuote) {
+          for (const item of fullReservationCancellationQuote.items) {
+            const updatedTicketItems = await tx
+              .update(ticketItems)
+              .set({
+                status: 'cancelled' as const,
+                cancelledAt: now,
+                cancelReason: input.reason,
+                cancellationFee: item.cancellationFee,
+                serviceFeeRefund: item.serviceFeeRefund,
+                refundableAmount: item.refundableAmount,
+                reopenState: 'not_required' as const,
+                reopenHoldUntil: null,
+                reopenJobId: null,
+                updatedAt: now,
+              })
+              .where(
+                and(
+                  eq(ticketItems.reservationId, input.context.reservation.id),
+                  eq(ticketItems.paymentId, input.context.payment.id),
+                  eq(ticketItems.showtimeId, input.context.reservation.showtimeId),
+                  eq(ticketItems.id, item.ticketItemId),
+                  inArray(ticketItems.status, ['active', 'cancellation_pending', 'cancelled']),
+                ),
+              )
+              .returning({
+                id: ticketItems.id,
+                seatId: ticketItems.seatId,
+                floorKey: ticketItems.floorKey,
+                seatKey: ticketItems.seatKey,
+              });
+
+            if (updatedTicketItems.length !== 1) {
+              throw new BadRequestException('취소할 티켓 항목 수가 일치하지 않습니다');
             }
-          : {
-              status: 'cancelled' as const,
-              cancelledAt: now,
-              cancelReason: input.reason,
-              cancellationFee: 0,
-              serviceFeeRefund: sql`${ticketItems.serviceFee}`,
-              refundableAmount: sql`${ticketItems.price} + ${ticketItems.serviceFee}`,
-              reopenState: 'not_required' as const,
-              reopenHoldUntil: null,
-              reopenJobId: null,
-              updatedAt: now,
-            };
-        const ticketItemScope = ticketItemCancellation
-          ? eq(ticketItems.id, ticketItemCancellation.ticketItemId)
-          : inArray(
-              ticketItems.seatKey,
-              seatIdentities.map((seatIdentity) => seatIdentity.seatKey),
-            );
-        const updatedTicketItems = await tx
-          .update(ticketItems)
-          .set(ticketItemUpdateValues)
-          .where(
-            and(
-              eq(ticketItems.reservationId, input.context.reservation.id),
-              eq(ticketItems.paymentId, input.context.payment.id),
-              eq(ticketItems.showtimeId, input.context.reservation.showtimeId),
-              ticketItemScope,
-              inArray(ticketItems.status, ['active', 'cancellation_pending', 'cancelled']),
-            ),
-          )
-          .returning({ id: ticketItems.id });
+            const updatedTicketItem = updatedTicketItems[0]!;
+            targetTicketItemIds.push(updatedTicketItem.id);
+            if (updatedTicketItem.seatId) {
+              quoteSeatIdentities.push(normalizeReservationSeatIdentity(updatedTicketItem));
+            }
+          }
+          if (quoteSeatIdentities.length > 0) {
+            seatIdentities = uniqueSeatIdentities(quoteSeatIdentities);
+          }
+        } else {
+          const ticketItemUpdateValues = ticketItemCancellation
+            ? {
+                status: 'cancelled' as const,
+                cancelledAt: now,
+                cancelReason: input.reason,
+                cancellationFee: ticketItemCancellation.cancellationFee,
+                serviceFeeRefund: ticketItemCancellation.serviceFeeRefund,
+                refundableAmount: ticketItemCancellation.refundableAmount,
+                reopenState: 'not_required' as const,
+                reopenHoldUntil: null,
+                reopenJobId: null,
+                updatedAt: now,
+              }
+            : {
+                status: 'cancelled' as const,
+                cancelledAt: now,
+                cancelReason: input.reason,
+                cancellationFee: 0,
+                serviceFeeRefund: sql`${ticketItems.serviceFee}`,
+                refundableAmount: sql`${ticketItems.price} + ${ticketItems.serviceFee}`,
+                reopenState: 'not_required' as const,
+                reopenHoldUntil: null,
+                reopenJobId: null,
+                updatedAt: now,
+              };
+          const ticketItemScope = ticketItemCancellation
+            ? eq(ticketItems.id, ticketItemCancellation.ticketItemId)
+            : inArray(
+                ticketItems.seatKey,
+                seatIdentities.map((seatIdentity) => seatIdentity.seatKey),
+              );
+          const updatedTicketItems = await tx
+            .update(ticketItems)
+            .set(ticketItemUpdateValues)
+            .where(
+              and(
+                eq(ticketItems.reservationId, input.context.reservation.id),
+                eq(ticketItems.paymentId, input.context.payment.id),
+                eq(ticketItems.showtimeId, input.context.reservation.showtimeId),
+                ticketItemScope,
+                inArray(ticketItems.status, ['active', 'cancellation_pending', 'cancelled']),
+              ),
+            )
+            .returning({ id: ticketItems.id });
 
-        if (updatedTicketItems.length < seatIdentities.length) {
-          throw new BadRequestException('취소할 티켓 항목 수가 일치하지 않습니다');
+          if (updatedTicketItems.length < seatIdentities.length) {
+            throw new BadRequestException('취소할 티켓 항목 수가 일치하지 않습니다');
+          }
+
+          targetTicketItemIds.push(...updatedTicketItems.map(
+            (ticketItem) => ticketItem.id,
+          ));
         }
-
-        const targetTicketItemIds = updatedTicketItems.map(
-          (ticketItem) => ticketItem.id,
-        );
 
         await this.inactivateBenefitEntitlementsForTicketItems(
           tx,
@@ -359,13 +443,36 @@ export class PaymentCancellationFinalizerService {
               eq(tickets.reservationId, input.context.reservation.id),
               eq(tickets.paymentId, input.context.payment.id),
               eq(tickets.showtimeId, input.context.reservation.showtimeId),
-              inArray(tickets.ticketItemId, targetTicketItemIds),
-              inArray(tickets.status, ['active', 'revoked']),
+              fullReservationCancellationQuote
+                ? or(
+                    inArray(tickets.ticketItemId, targetTicketItemIds),
+                    isNull(tickets.ticketItemId),
+                  )
+                : inArray(tickets.ticketItemId, targetTicketItemIds),
+              inArray(
+                tickets.status,
+                fullReservationCancellationQuote
+                  ? ['active', 'revoked', 'used']
+                  : ['active', 'revoked'],
+              ),
             ),
           )
-          .returning({ id: tickets.id });
+          .returning({ id: tickets.id, ticketItemId: tickets.ticketItemId });
 
-        if (updatedTickets.length !== targetTicketItemIds.length) {
+        const hasLegacyReservationLevelTicket = updatedTickets.some(
+          (ticket) => ticket.ticketItemId === null,
+        );
+        const updatedLinkedTicketItemIds = new Set(
+          updatedTickets
+            .map((ticket) => ticket.ticketItemId)
+            .filter((ticketItemId): ticketItemId is string => ticketItemId !== null),
+        );
+
+        if (
+          updatedTickets.length === 0
+          || (!hasLegacyReservationLevelTicket
+            && updatedLinkedTicketItemIds.size !== targetTicketItemIds.length)
+        ) {
           throw new BadRequestException('취소할 티켓 수가 일치하지 않습니다');
         }
       }

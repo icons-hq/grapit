@@ -2,7 +2,7 @@ import { pgTable, uuid, varchar, integer, timestamp, pgEnum, jsonb } from 'drizz
 import { reservations } from './reservations.js';
 
 export const paymentStatusEnum = pgEnum('payment_status', [
-  'READY', 'IN_PROGRESS', 'DONE', 'CANCELED', 'ABORTED', 'EXPIRED',
+  'READY', 'IN_PROGRESS', 'DONE', 'PARTIAL_CANCELED', 'CANCELED', 'ABORTED', 'EXPIRED',
 ]);
 
 export const payments = pgTable('payments', {

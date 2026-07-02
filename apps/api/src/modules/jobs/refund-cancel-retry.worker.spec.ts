@@ -12,6 +12,9 @@ function createRetryContext() {
       retryCount: 0,
       status: 'sent_to_pg',
       providerMetadata: { cancelReason: '단순 변심' },
+      requestedAt: new Date('2026-05-08T03:00:00.000Z'),
+      sentToPgAt: new Date('2026-05-08T03:00:00.000Z'),
+      processingAtPgAt: null,
     },
     reservation: {
       id: 'reservation-1',
@@ -234,6 +237,7 @@ describe('RefundCancelRetryWorker', () => {
       expect.any(TossPaymentError),
       '단순 변심',
       REFUND_CANCEL_MAX_RETRIES,
+      null,
     );
     expect(scheduleRetrySpy).not.toHaveBeenCalled();
     expect(exhaustedSpy).toHaveBeenCalledWith('refund-1', '단순 변심');
@@ -295,6 +299,148 @@ describe('RefundCancelRetryWorker', () => {
     expect(result.status).toBe('completed');
   });
 
+  it('reuses the stored cancellation quote when retrying fee-bearing full-reservation cancels', async () => {
+    const cancellationQuote = {
+      originalPaymentAmount: 102000,
+      ticketSubtotal: 100000,
+      ticketServiceFeeTotal: 2000,
+      cancellationFeeTotal: 30000,
+      serviceFeeRefundTotal: 0,
+      refundableAmount: 70000,
+      policyCodes: ['SHOW_DAY_2_TO_1'] as const,
+      items: [
+        {
+          ticketItemId: 'ticket-item-1',
+          ticketPrice: 100000,
+          serviceFee: 2000,
+          cancellationFee: 30000,
+          serviceFeeRefund: 0,
+          refundableAmount: 70000,
+          policyCode: 'SHOW_DAY_2_TO_1' as const,
+        },
+      ],
+    };
+    const tossPaymentsClient = {
+      queryPayment: vi.fn().mockResolvedValue({
+        paymentKey: 'pay-key-1',
+        status: 'DONE',
+        cancels: [],
+      }),
+      cancelPayment: vi.fn().mockResolvedValue({
+        paymentKey: 'pay-key-1',
+        totalAmount: 102000,
+        status: 'PARTIAL_CANCELED',
+        cancels: [
+          {
+            cancelAmount: 70000,
+            cancelReason: '단순 변심',
+            canceledAt: '2026-05-08T03:05:00.000Z',
+            cancelStatus: 'DONE',
+          },
+        ],
+      }),
+    };
+    const finalizer = {
+      finalizeFullPaymentCancellation: vi.fn().mockResolvedValue({
+        releaseJobId: 'release-job-1',
+        releaseEnqueued: true,
+      }),
+    };
+    const worker = new RefundCancelRetryWorker(
+      {} as never,
+      tossPaymentsClient as never,
+      finalizer as never,
+      { isAvailable: true, work: vi.fn(), send: vi.fn(), stop: vi.fn() } as never,
+    );
+    const context = createRetryContext();
+    context.refund.providerMetadata = {
+      cancelReason: '단순 변심',
+      cancellationQuote,
+    };
+    context.payment.amount = 102000;
+
+    vi.spyOn(worker as never, 'loadRetryContext').mockResolvedValue(context as never);
+
+    const result = await worker.handleJob({ refundId: 'refund-1', attempt: 1 });
+
+    expect(tossPaymentsClient.cancelPayment).toHaveBeenCalledWith('pay-key-1', '단순 변심', {
+      cancelAmount: 70000,
+      idempotencyKey: 'refund-cancel:refund-1',
+      secretKeyScope: 'default',
+    });
+    expect(finalizer.finalizeFullPaymentCancellation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fullReservationCancellationQuote: cancellationQuote,
+        providerResponse: expect.objectContaining({ status: 'PARTIAL_CANCELED' }),
+      }),
+    );
+    expect(result.status).toBe('completed');
+  });
+
+  it('finalizes KRW partial cancels from retry pre-query status without cancelRequestId', async () => {
+    const cancellationQuote = {
+      originalPaymentAmount: 102000,
+      ticketSubtotal: 100000,
+      ticketServiceFeeTotal: 2000,
+      cancellationFeeTotal: 30000,
+      serviceFeeRefundTotal: 0,
+      refundableAmount: 70000,
+      policyCodes: ['SHOW_DAY_2_TO_1'] as const,
+      items: [
+        {
+          ticketItemId: 'ticket-item-1',
+          ticketPrice: 100000,
+          serviceFee: 2000,
+          cancellationFee: 30000,
+          serviceFeeRefund: 0,
+          refundableAmount: 70000,
+          policyCode: 'SHOW_DAY_2_TO_1' as const,
+        },
+      ],
+    };
+    const tossPaymentsClient = {
+      queryPayment: vi.fn().mockResolvedValue({
+        paymentKey: 'pay-key-1',
+        status: 'PARTIAL_CANCELED',
+        cancels: [
+          {
+            cancelAmount: 70000,
+            cancelReason: '단순 변심',
+            canceledAt: '2026-05-08T03:05:00.000Z',
+            cancelStatus: 'DONE',
+          },
+        ],
+      }),
+      cancelPayment: vi.fn(),
+    };
+    const finalizer = {
+      finalizeFullPaymentCancellation: vi.fn().mockResolvedValue({
+        releaseJobId: 'release-job-1',
+        releaseEnqueued: true,
+      }),
+    };
+    const worker = new RefundCancelRetryWorker(
+      {} as never,
+      tossPaymentsClient as never,
+      finalizer as never,
+      { isAvailable: true, work: vi.fn(), send: vi.fn(), stop: vi.fn() } as never,
+    );
+    const context = createRetryContext();
+    context.refund.providerMetadata = {
+      cancelReason: '단순 변심',
+      cancellationQuote,
+    };
+    context.payment.amount = 102000;
+
+    vi.spyOn(worker as never, 'loadRetryContext').mockResolvedValue(context as never);
+
+    const result = await worker.handleJob({ refundId: 'refund-1', attempt: 1 });
+
+    expect(tossPaymentsClient.cancelPayment).not.toHaveBeenCalled();
+    expect(finalizer.finalizeFullPaymentCancellation).toHaveBeenCalledOnce();
+    expect(result.status).toBe('completed');
+  });
+
   it('reschedules without duplicate cancel when query shows matching async cancel in progress', async () => {
     const tossPaymentsClient = {
       queryPayment: vi.fn().mockResolvedValue({
@@ -349,6 +495,7 @@ describe('RefundCancelRetryWorker', () => {
       expect.objectContaining({ status: 'DONE' }),
       '단순 변심',
       1,
+      null,
     );
     expect(scheduleRetrySpy).toHaveBeenCalledWith('refund-1', 1);
     expect(recordScheduleSpy).toHaveBeenCalledWith(
@@ -421,6 +568,7 @@ describe('RefundCancelRetryWorker', () => {
       expect.objectContaining({ status: 'DONE' }),
       '단순 변심',
       REFUND_CANCEL_MAX_RETRIES,
+      null,
     );
     expect(scheduleRetrySpy).toHaveBeenCalledWith(
       'refund-1',

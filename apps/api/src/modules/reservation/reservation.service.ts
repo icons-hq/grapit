@@ -828,7 +828,16 @@ export class ReservationService {
   }
 
   calculateCancelDeadline(showDateTime: Date): Date {
-    return new Date(showDateTime.getTime() - 24 * 60 * 60 * 1000);
+    const { year, month, day } = this.getSeoulDateParts(showDateTime);
+    return new Date(Date.UTC(year, month - 1, day, -9) - 1);
+  }
+
+  private getSeoulDateParts(date: Date): { year: number; month: number; day: number } {
+    const parts = seoulDateFormatter.formatToParts(date);
+    const year = Number(parts.find((part) => part.type === 'year')?.value);
+    const month = Number(parts.find((part) => part.type === 'month')?.value);
+    const day = Number(parts.find((part) => part.type === 'day')?.value);
+    return { year, month, day };
   }
 
   private toDate(value: Date | string | null | undefined, fieldName: string): Date {
@@ -841,10 +850,7 @@ export class ReservationService {
   }
 
   private getSeoulDayOrdinal(date: Date): number {
-    const parts = seoulDateFormatter.formatToParts(date);
-    const year = Number(parts.find((part) => part.type === 'year')?.value);
-    const month = Number(parts.find((part) => part.type === 'month')?.value);
-    const day = Number(parts.find((part) => part.type === 'day')?.value);
+    const { year, month, day } = this.getSeoulDateParts(date);
 
     return Math.floor(Date.UTC(year, month - 1, day) / MS_PER_DAY);
   }

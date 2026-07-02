@@ -17,6 +17,7 @@ import { CancelConfirmModal } from '@/components/reservation/cancel-confirm-moda
 import { RefundTimeline } from '@/components/reservation/refund-timeline';
 import { SeatHighlightLabel } from '@/components/reservation/seat-highlight-label';
 import { TicketEmailDeliveryPanel } from '@/components/reservation/ticket-email-delivery-panel';
+import { useRefundPreview } from '@/hooks/use-reservations';
 import {
   buildQrCheckInUrl,
   QrTicketImage,
@@ -697,6 +698,10 @@ export function ReservationDetailView({
   const isDeadlinePassed = new Date(reservation.cancelDeadline) < new Date();
   const isPaymentDeadlinePassed = hasDatePassed(paymentDeadlineAt);
   const canCancel = reservation.status === 'CONFIRMED' && !isDeadlinePassed;
+  const refundPreviewQuery = useRefundPreview(
+    reservation.id,
+    canCancel && cancelModalOpen,
+  );
   const hasSeatLevelTicketItems = hasPersistedTicketItems(reservation);
   const ticketItemRefundTotal = hasSeatLevelTicketItems
     ? reservation.ticketItems.reduce(
@@ -704,10 +709,33 @@ export function ReservationDetailView({
         0,
       )
     : 0;
-  const displayedRefundAmount =
-    hasSeatLevelTicketItems && ticketItemRefundTotal > 0
-      ? ticketItemRefundTotal
-      : reservation.totalAmount;
+  let displayedRefundAmount: number | null;
+  if (reservation.status === 'CONFIRMED') {
+    displayedRefundAmount =
+      refundPreviewQuery.data?.cancellationQuote?.refundableAmount ?? null;
+  } else if (hasSeatLevelTicketItems && ticketItemRefundTotal > 0) {
+    displayedRefundAmount = ticketItemRefundTotal;
+  } else {
+    displayedRefundAmount = reservation.totalAmount;
+  }
+  const showRefundQuoteIntentCopy =
+    reservation.status === 'CONFIRMED' && !cancelModalOpen;
+  const displayedRefundValue =
+    displayedRefundAmount !== null
+      ? formatPrice(displayedRefundAmount, locale)
+      : showRefundQuoteIntentCopy
+        ? copy.cancel.quoteAvailableInModal
+        : refundPreviewQuery.isLoading
+          ? copy.cancel.quoteLoading
+          : refundPreviewQuery.isError
+            ? copy.cancel.quoteError
+            : copy.cancel.quoteUnavailable;
+  const displayedRefundValueClassName =
+    displayedRefundAmount !== null
+      ? undefined
+      : 'text-sm font-medium text-gray-600';
+  const cancelModalRefundAmount =
+    refundPreviewQuery.data?.cancellationQuote?.refundableAmount ?? 0;
   const showCancelButton = reservation.status === 'CONFIRMED';
   const progressGuidance = getProgressGuidance(
     reservation,
@@ -1059,7 +1087,8 @@ export function ReservationDetailView({
             <div className="rounded-xl border border-white/80 bg-white/90 p-4">
               <InfoRow
                 label={copy.cancel.refundAmount}
-                value={formatPrice(displayedRefundAmount, locale)}
+                value={displayedRefundValue}
+                valueClassName={displayedRefundValueClassName}
               />
               <Separator />
               <InfoRow
@@ -1174,10 +1203,13 @@ export function ReservationDetailView({
       <CancelConfirmModal
         open={cancelModalOpen}
         onOpenChange={setCancelModalOpen}
-        refundAmount={displayedRefundAmount}
+        refundAmount={cancelModalRefundAmount}
+        cancellationQuote={refundPreviewQuery.data?.cancellationQuote ?? null}
         paymentMethod={paymentMethodLabel}
         expectedDepositAt={reservation.refundTimeline.expectedDepositAt ?? null}
         releaseWindowMinutes={reservation.cancelledSeatHold?.releaseWindowMinutes ?? null}
+        isPreviewLoading={refundPreviewQuery.isLoading}
+        isPreviewError={refundPreviewQuery.isError}
         onConfirm={onCancel}
         isLoading={isCancelling}
       />

@@ -120,6 +120,7 @@ const CAPABILITY_LABELS: Record<AdminCapability, string> = {
   'support.manage': 'CS 처리',
   'support.escalate': 'CS 에스컬레이션',
   'reservations.export_raw': '예매 원본 내보내기',
+  'refund.admin_refund': '관리자 환불 처리',
   'seat.disable': '좌석 비활성화',
   'seat.reactivate': '좌석 재활성화',
   'seat.manual_open': '취소 좌석 즉시 개방',

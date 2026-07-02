@@ -19,6 +19,7 @@ Use this only for reservations that entered ticket-item partial cancellation bef
 
 ## Resolution Rules
 
+- If any Ticket Item remains `cancellation_pending`, do not start Full Reservation Cancellation for that reservation until the pending item is manually reconciled.
 - If Toss has no successful cancellation and Grabit is pending, restore the ticket item to active only after confirming the customer should keep the ticket.
 - If Toss has a successful partial cancellation and Grabit is pending, finalize only the matching ticket item.
 - If Toss has full payment cancellation, finalize full reservation cancellation.

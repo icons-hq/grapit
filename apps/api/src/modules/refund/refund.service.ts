@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -7,9 +8,14 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import { and, eq } from 'drizzle-orm';
-import { normalizeSeatIdentity } from '@grabit/shared';
-import type { RefundTimeline } from '@grabit/shared';
+import { createHash } from 'node:crypto';
+import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { normalizeSeatIdentity, TICKET_SERVICE_FEE_KRW } from '@grabit/shared';
+import type {
+  CancellationQuote,
+  RefundTimeline,
+  TicketItemCancellationPolicyCode,
+} from '@grabit/shared';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
   bookingPolicies,
@@ -18,6 +24,9 @@ import {
   reservationSeats,
   reservations,
   showtimes,
+  ticketScanEvents,
+  ticketItems,
+  tickets,
 } from '../../database/schema/index.js';
 import {
   PG_BOSS,
@@ -27,7 +36,11 @@ import {
 } from '../jobs/pgboss.provider.js';
 import { TossPaymentError, TossPaymentsClient, type TossPaymentResponse } from '../payment/toss-payments.client.js';
 import { PaymentCancellationFinalizerService } from '../cancellation/payment-cancellation-finalizer.service.js';
-import { buildFullPaymentCancelRequest } from '../payment/payment-cancel-policy.js';
+import {
+  buildFullReservationPaymentCancelRequest,
+  canBuildFullReservationPaymentCancelRequest,
+} from '../payment/payment-cancel-policy.js';
+import { isTossPaymentCancelCompleted } from '../payment/toss-cancel-matcher.js';
 
 type RefundRecord = typeof refunds.$inferSelect;
 type ReservationRecord = typeof reservations.$inferSelect;
@@ -35,6 +48,7 @@ type PaymentRecord = typeof payments.$inferSelect;
 type ReservationSeatRecord = typeof reservationSeats.$inferSelect;
 type ShowtimeRecord = typeof showtimes.$inferSelect;
 type BookingPolicyRecord = typeof bookingPolicies.$inferSelect;
+type TicketItemRecord = typeof ticketItems.$inferSelect;
 
 type RefundStateMachineStatus =
   | 'requested'
@@ -49,11 +63,19 @@ type ReservationRefundContext = {
   showtime: ShowtimeRecord;
   bookingPolicy: BookingPolicyRecord | null;
   seats: ReservationSeatRecord[];
+  ticketItems: TicketItemRecord[];
 };
+
+type FullReservationCancellationQuote = CancellationQuote;
 
 type RefundRequestActor =
   | { kind: 'user' }
   | { kind: 'admin'; operatorUserId: string };
+
+export type AdminRefundRequestOptions = {
+  fullRefundOverride?: boolean;
+  enteredTicketOverride?: boolean;
+};
 
 export interface RefundPreviewResponse {
   reservationId: string;
@@ -66,6 +88,7 @@ export interface RefundPreviewResponse {
     max: number;
   };
   refundTimeline: RefundTimeline | null;
+  cancellationQuote: FullReservationCancellationQuote | null;
 }
 
 export interface RefundRequestResponse extends RefundPreviewResponse {
@@ -104,6 +127,14 @@ const TRANSIENT_TOSS_CANCEL_CODES = new Set([
   'TIMEOUT',
   'NETWORK_ERROR',
 ]);
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const seoulDateFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'Asia/Seoul',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+});
 
 export function normalizeReservationSeatIdentity(seatId: string): SeatIdentityPayload {
   const identity = normalizeSeatIdentity({ seatId });
@@ -164,19 +195,20 @@ export function getRefundErrorMessage(error: unknown): string {
 
 export function isTossCancelCompleted(
   response: TossPaymentResponse,
-  cancelRequestId?: string,
+  cancelRequestId?: string | null,
+  options: {
+    allowPartialStatus?: boolean;
+    expectedCancelAmount?: number;
+    allowUnidentifiedPartialCancel?: boolean;
+    requestedAt?: Date | string | null;
+  } = {},
 ): boolean {
-  if (cancelRequestId) {
-    if (response.status !== 'CANCELED') {
-      return false;
-    }
-
-    return response.cancels?.some((cancel) =>
-      cancel.cancelRequestId === cancelRequestId && cancel.cancelStatus === 'DONE'
-    ) ?? false;
-  }
-
-  return response.status === 'CANCELED';
+  return isTossPaymentCancelCompleted(response, cancelRequestId, {
+    allowPartialStatus: options.allowPartialStatus,
+    expectedCancelAmount: options.expectedCancelAmount,
+    allowUnidentifiedPartialCancel: options.allowUnidentifiedPartialCancel,
+    requestedAt: options.requestedAt,
+  });
 }
 
 const REFUND_CANCEL_RETRY_METADATA_KEY = 'refundCancelRetry';
@@ -185,6 +217,31 @@ function getRefundProviderMetadata(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? { ...(value as Record<string, unknown>) }
     : {};
+}
+
+function getStoredCancellationQuote(
+  refund: Pick<RefundRecord, 'providerMetadata'> | null,
+): FullReservationCancellationQuote | null {
+  if (!refund) {
+    return null;
+  }
+
+  const metadata = getRefundProviderMetadata(refund.providerMetadata);
+  const quote = metadata.cancellationQuote;
+  if (!quote || typeof quote !== 'object' || Array.isArray(quote)) {
+    return null;
+  }
+
+  const candidate = quote as Partial<FullReservationCancellationQuote>;
+  if (
+    typeof candidate.originalPaymentAmount !== 'number'
+    || typeof candidate.refundableAmount !== 'number'
+    || !Array.isArray(candidate.items)
+  ) {
+    return null;
+  }
+
+  return candidate as FullReservationCancellationQuote;
 }
 
 function getRefundCancelRetryJobId(refund: Pick<RefundRecord, 'providerMetadata'>): string | null {
@@ -237,7 +294,9 @@ export class RefundService {
     reservationId: string,
     userId: string,
   ): Promise<RefundPreviewResponse> {
-    const context = await this.loadReservationContext(reservationId, userId);
+    const context = await this.preparePreviewContextForQuote(
+      await this.loadReservationContext(reservationId, userId),
+    );
     const existingRefund = await this.findExistingRefund(reservationId);
 
     return this.buildPreview(context, existingRefund);
@@ -248,7 +307,9 @@ export class RefundService {
     userId: string,
     reason: string,
   ): Promise<RefundRequestResponse> {
-    const context = await this.loadReservationContext(reservationId, userId);
+    const context = await this.ensureTicketItemsAvailableForQuote(
+      await this.loadReservationContext(reservationId, userId),
+    );
     const existingRefund = await this.findExistingRefund(reservationId);
 
     return this.requestRefundWithContext(context, existingRefund, reason, { kind: 'user' });
@@ -258,14 +319,29 @@ export class RefundService {
     reservationId: string,
     operatorUserId: string,
     reason: string,
+    options: AdminRefundRequestOptions = {},
   ): Promise<RefundRequestResponse> {
-    const context = await this.loadReservationContextByReservationId(reservationId);
+    const context = await this.ensureTicketItemsAvailableForQuote(
+      await this.loadReservationContextByReservationId(reservationId),
+    );
     const existingRefund = await this.findExistingRefund(reservationId);
 
     return this.requestRefundWithContext(context, existingRefund, reason, {
       kind: 'admin',
       operatorUserId,
-    });
+    }, options);
+  }
+
+  async getAdminRefundPreview(
+    reservationId: string,
+    options: AdminRefundRequestOptions = {},
+  ): Promise<RefundPreviewResponse> {
+    const context = await this.preparePreviewContextForQuote(
+      await this.loadReservationContextByReservationId(reservationId),
+    );
+    const existingRefund = await this.findExistingRefund(reservationId);
+
+    return this.buildPreview(context, existingRefund, options);
   }
 
   protected async requestRefundWithContext(
@@ -273,6 +349,7 @@ export class RefundService {
     existingRefund: RefundRecord | null,
     reason: string,
     actor: RefundRequestActor,
+    options: AdminRefundRequestOptions = {},
   ): Promise<RefundRequestResponse> {
     if (existingRefund) {
       const refund = await this.ensureRefundCancelRetryScheduled(existingRefund);
@@ -293,13 +370,32 @@ export class RefundService {
       throw new ForbiddenException('취소 마감시간이 지났습니다');
     }
 
-    const requestedRefund = await this.insertRequestedRefund(context, reason, actor);
-    const command = buildFullPaymentCancelRequest({
+    const cancellationQuote = this.buildFullReservationCancellationQuote(context, options);
+    if (!canBuildFullReservationPaymentCancelRequest({
       payment: context.payment,
+      cancellationQuote,
+      reason,
+    })) {
+      throw new BadRequestException(
+        '이 결제수단은 수수료가 있는 자동 부분취소를 지원하지 않습니다. 고객센터로 문의해주세요.',
+      );
+    }
+
+    const requestedRefund = await this.insertRequestedRefund(
+      context,
+      reason,
+      actor,
+      cancellationQuote,
+      options,
+    );
+    const command = buildFullReservationPaymentCancelRequest({
+      payment: context.payment,
+      cancellationQuote,
       reason,
       idempotencyKey: this.buildRefundCancelIdempotencyKey(requestedRefund.id),
       cancelRequestIdSeed: requestedRefund.id,
     });
+    const allowPartialStatus = cancellationQuote.refundableAmount < context.payment.amount;
 
     try {
       const cancelResult = await this.tossPaymentsClient.cancelPayment(
@@ -308,11 +404,19 @@ export class RefundService {
         command.options,
       );
 
-      if (isTossCancelCompleted(cancelResult, command.options.cancelRequestId)) {
+      if (
+        isTossCancelCompleted(cancelResult, command.options.cancelRequestId, {
+          allowPartialStatus,
+          expectedCancelAmount: command.options.cancelAmount,
+          allowUnidentifiedPartialCancel: true,
+          requestedAt: requestedRefund.requestedAt,
+        })
+      ) {
         await this.paymentCancellationFinalizer.finalizeFullPaymentCancellation({
           source: 'refund_request',
           refundId: requestedRefund.id,
           context: this.toFullPaymentCancellationContext(context),
+          fullReservationCancellationQuote: cancellationQuote,
           reason,
           providerResponse: cancelResult as unknown as Record<string, unknown>,
           actor,
@@ -330,6 +434,7 @@ export class RefundService {
         cancelResult,
         reason,
         requestedRefund.retryCount,
+        cancellationQuote,
       );
       const jobId = await this.scheduleRefundCancelRetry(
         processingRefund.id,
@@ -351,6 +456,7 @@ export class RefundService {
           error,
           reason,
           requestedRefund.retryCount,
+          cancellationQuote,
         );
         const jobId = await this.scheduleRefundCancelRetry(
           retryableRefund.id,
@@ -378,17 +484,22 @@ export class RefundService {
   protected buildPreview(
     context: ReservationRefundContext,
     refund: RefundRecord | null,
+    options: AdminRefundRequestOptions = {},
   ): RefundPreviewResponse {
     const holdWindow = this.resolveHoldWindowMinutes(context.bookingPolicy);
+    const cancellationQuote = refund
+      ? getStoredCancellationQuote(refund)
+      : this.buildFullReservationCancellationQuote(context, options);
 
     return {
       reservationId: context.reservation.id,
       reservationNumber: context.reservation.reservationNumber,
       paymentKey: context.payment.paymentKey,
-      refundableAmount: context.payment.amount,
+      refundableAmount: cancellationQuote?.refundableAmount ?? context.payment.amount,
       canRequestRefund: context.reservation.status === 'CONFIRMED' && refund === null,
       cancelledSeatHoldWindowMinutes: holdWindow,
       refundTimeline: refund ? toTimeline(refund) : null,
+      cancellationQuote,
     };
   }
 
@@ -413,6 +524,408 @@ export class RefundService {
         bookingPolicy?.cancelledSeatHoldMaxMinutes ??
         DEFAULT_CANCELLED_SEAT_HOLD_MAX_MINUTES,
     };
+  }
+
+  protected buildFullReservationCancellationQuote(
+    context: ReservationRefundContext,
+    options: AdminRefundRequestOptions = {},
+  ): FullReservationCancellationQuote {
+    if (context.ticketItems.some((ticketItem) => ticketItem.status === 'cancellation_pending')) {
+      throw new ConflictException(
+        '이미 취소 처리 중인 티켓이 있어 전체 예매 취소 전에 수동 확인이 필요합니다',
+      );
+    }
+
+    const activeTicketItems = context.ticketItems.filter(
+      (ticketItem) => ticketItem.status === 'active',
+    );
+
+    if (activeTicketItems.length === 0) {
+      throw new BadRequestException('취소 수수료 계산에 필요한 티켓 정보를 찾을 수 없습니다');
+    }
+
+    if (
+      !options.enteredTicketOverride
+      && activeTicketItems.some((ticketItem) => ticketItem.admissionState === 'entered')
+    ) {
+      throw new ForbiddenException('입장 처리된 티켓은 관리자 강제 취소로만 취소할 수 있습니다');
+    }
+
+    const items = activeTicketItems.map((ticketItem) => {
+      const serviceFee = this.normalizeTicketItemServiceFee(ticketItem.serviceFee);
+      if (options.fullRefundOverride) {
+        return {
+          ticketItemId: ticketItem.id,
+          ticketPrice: ticketItem.price,
+          serviceFee,
+          cancellationFee: 0,
+          serviceFeeRefund: serviceFee,
+          refundableAmount: ticketItem.price + serviceFee,
+          policyCode: 'ADMIN_FULL_REFUND_OVERRIDE' as const,
+        };
+      }
+
+      const quote = this.calculateTicketItemCancellationQuote({
+        price: ticketItem.price,
+        serviceFee,
+        reservationCreatedAt: context.reservation.createdAt,
+        showtimeAt: context.showtime.dateTime,
+      });
+
+      return {
+        ticketItemId: ticketItem.id,
+        ticketPrice: ticketItem.price,
+        serviceFee,
+        cancellationFee: quote.cancellationFee,
+        serviceFeeRefund: quote.serviceFeeRefund,
+        refundableAmount: quote.refundableAmount,
+        policyCode: quote.policyCode,
+      };
+    });
+    const policyCodes = [...new Set(items.map((item) => item.policyCode))];
+
+    return {
+      originalPaymentAmount: context.payment.amount,
+      ticketSubtotal: items.reduce((total, item) => total + item.ticketPrice, 0),
+      ticketServiceFeeTotal: items.reduce((total, item) => total + item.serviceFee, 0),
+      cancellationFeeTotal: items.reduce((total, item) => total + item.cancellationFee, 0),
+      serviceFeeRefundTotal: items.reduce((total, item) => total + item.serviceFeeRefund, 0),
+      refundableAmount: items.reduce((total, item) => total + item.refundableAmount, 0),
+      policyCodes,
+      items,
+    };
+  }
+
+  private normalizeTicketItemServiceFee(value: number): 0 | 2000 {
+    return value === TICKET_SERVICE_FEE_KRW ? TICKET_SERVICE_FEE_KRW : 0;
+  }
+
+  protected calculateTicketItemCancellationQuote(input: {
+    price: number;
+    serviceFee: number;
+    reservationCreatedAt: Date;
+    showtimeAt: Date;
+    now?: Date;
+  }): {
+    cancellationFee: number;
+    serviceFeeRefund: number;
+    refundableAmount: number;
+    policyCode: TicketItemCancellationPolicyCode;
+  } {
+    const now = input.now ?? new Date();
+    const today = this.getSeoulDayOrdinal(now);
+    const bookingDay = this.getSeoulDayOrdinal(input.reservationCreatedAt);
+    const showDay = this.getSeoulDayOrdinal(input.showtimeAt);
+    const daysBeforeShow = showDay - today;
+
+    if (daysBeforeShow <= 0) {
+      throw new ForbiddenException('관람일 당일에는 취소할 수 없습니다');
+    }
+
+    if (today === bookingDay) {
+      return {
+        cancellationFee: 0,
+        serviceFeeRefund: input.serviceFee,
+        refundableAmount: input.price + input.serviceFee,
+        policyCode: 'SAME_DAY_BEFORE_MIDNIGHT',
+      };
+    }
+
+    if (daysBeforeShow <= 2) {
+      const cancellationFee = Math.floor(input.price * 0.3);
+      return {
+        cancellationFee,
+        serviceFeeRefund: 0,
+        refundableAmount: Math.max(0, input.price - cancellationFee),
+        policyCode: 'SHOW_DAY_2_TO_1',
+      };
+    }
+
+    if (daysBeforeShow <= 6) {
+      const cancellationFee = Math.floor(input.price * 0.2);
+      return {
+        cancellationFee,
+        serviceFeeRefund: 0,
+        refundableAmount: Math.max(0, input.price - cancellationFee),
+        policyCode: 'SHOW_DAY_6_TO_3',
+      };
+    }
+
+    if (daysBeforeShow <= 9) {
+      const cancellationFee = Math.floor(input.price * 0.1);
+      return {
+        cancellationFee,
+        serviceFeeRefund: 0,
+        refundableAmount: Math.max(0, input.price - cancellationFee),
+        policyCode: 'SHOW_DAY_9_TO_7',
+      };
+    }
+
+    const daysAfterBooking = Math.max(0, today - bookingDay);
+    const cancellationFee =
+      daysAfterBooking <= 7
+        ? 0
+        : Math.min(4000, Math.floor(input.price * 0.1));
+
+    return {
+      cancellationFee,
+      serviceFeeRefund: 0,
+      refundableAmount: Math.max(0, input.price - cancellationFee),
+      policyCode:
+        daysAfterBooking <= 7
+          ? 'WITHIN_7_DAYS_AFTER_BOOKING'
+          : 'BOOKING_DAY_8_TO_SHOW_DAY_10',
+    };
+  }
+
+  private getSeoulDayOrdinal(date: Date): number {
+    const parts = seoulDateFormatter.formatToParts(date);
+    const year = Number(parts.find((part) => part.type === 'year')?.value);
+    const month = Number(parts.find((part) => part.type === 'month')?.value);
+    const day = Number(parts.find((part) => part.type === 'day')?.value);
+
+    return Math.floor(Date.UTC(year, month - 1, day) / MS_PER_DAY);
+  }
+
+  protected async ensureTicketItemsAvailableForQuote(
+    context: ReservationRefundContext,
+  ): Promise<ReservationRefundContext> {
+    if (
+      context.reservation.status !== 'CONFIRMED'
+      || context.seats.length === 0
+    ) {
+      return context;
+    }
+
+    const missingSeats = this.findMissingSeatsForQuote(context);
+    if (missingSeats.length === 0) {
+      return context;
+    }
+
+    await this.backfillMissingTicketItems(context, missingSeats);
+    const ticketItemsForReservation = await this.loadTicketItemsForReservation(
+      context.reservation.id,
+    );
+    const refreshedContext = {
+      ...context,
+      ticketItems: ticketItemsForReservation,
+    };
+    const stillMissingSeats = this.findMissingSeatsForQuote(refreshedContext);
+
+    if (stillMissingSeats.length > 0) {
+      throw new BadRequestException('취소 수수료 계산에 필요한 티켓 정보가 모든 좌석을 포함하지 않습니다');
+    }
+
+    return refreshedContext;
+  }
+
+  protected async preparePreviewContextForQuote(
+    context: ReservationRefundContext,
+  ): Promise<ReservationRefundContext> {
+    if (
+      context.reservation.status !== 'CONFIRMED'
+      || context.seats.length === 0
+    ) {
+      return context;
+    }
+
+    const missingSeats = this.findMissingSeatsForQuote(context);
+    if (missingSeats.length === 0) {
+      return context;
+    }
+
+    const previewContext = {
+      ...context,
+      ticketItems: [
+        ...context.ticketItems,
+        ...await this.buildVirtualTicketItemsForQuote(context, missingSeats),
+      ],
+    };
+    const stillMissingSeats = this.findMissingSeatsForQuote(previewContext);
+
+    if (stillMissingSeats.length > 0) {
+      throw new BadRequestException('취소 수수료 계산에 필요한 티켓 정보가 모든 좌석을 포함하지 않습니다');
+    }
+
+    return previewContext;
+  }
+
+  private findMissingSeatsForQuote(
+    context: ReservationRefundContext,
+  ): ReservationSeatRecord[] {
+    const coveredSeatKeys = new Set(
+      context.ticketItems
+        .map((ticketItem) => this.normalizeTicketItemSeatKey(ticketItem))
+        .filter((seatKey): seatKey is string => Boolean(seatKey)),
+    );
+
+    return context.seats.filter((seat) => {
+      const identity = normalizeSeatIdentity({ seatId: seat.seatId });
+      return !coveredSeatKeys.has(identity.seatKey);
+    });
+  }
+
+  private normalizeTicketItemSeatKey(ticketItem: TicketItemRecord): string | null {
+    if (ticketItem.seatKey) {
+      return ticketItem.seatKey;
+    }
+    if (ticketItem.seatId) {
+      return normalizeSeatIdentity({ seatId: ticketItem.seatId }).seatKey;
+    }
+    return null;
+  }
+
+  private async buildVirtualTicketItemsForQuote(
+    context: ReservationRefundContext,
+    seats: ReservationSeatRecord[],
+  ): Promise<TicketItemRecord[]> {
+    const now = new Date();
+    const seatTotal = context.seats.reduce((total, seat) => total + seat.price, 0);
+    const serviceFeePerTicket =
+      context.reservation.totalAmount ===
+        seatTotal + context.seats.length * TICKET_SERVICE_FEE_KRW
+      && context.payment.amount ===
+        seatTotal + context.seats.length * TICKET_SERVICE_FEE_KRW
+        ? TICKET_SERVICE_FEE_KRW
+        : 0;
+    const admissionState: 'entered' | 'not_entered' = await this.hasLegacyEntryEvidence(context)
+      ? 'entered'
+      : 'not_entered';
+
+    return seats.map((seat) => {
+      const identity = normalizeSeatIdentity({ seatId: seat.seatId });
+
+      return {
+        id: this.buildVirtualTicketItemId(context.reservation.id, identity.seatKey),
+        reservationId: context.reservation.id,
+        paymentId: context.payment.id,
+        showtimeId: context.reservation.showtimeId,
+        seatId: identity.seatId,
+        seatKey: identity.seatKey,
+        floorKey: identity.floorKey,
+        floorLabel: identity.floorLabel,
+        tierName: seat.tierName,
+        row: seat.row,
+        number: seat.number,
+        price: seat.price,
+        serviceFee: serviceFeePerTicket,
+        status: 'active' as const,
+        admissionState,
+        enteredAt: admissionState === 'entered' ? now : null,
+        cancelledAt: null,
+        cancelReason: null,
+        cancellationFee: 0,
+        serviceFeeRefund: 0,
+        refundableAmount: 0,
+        reopenState: 'not_required' as const,
+        reopenHoldUntil: null,
+        reopenJobId: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+    });
+  }
+
+  private buildVirtualTicketItemId(reservationId: string, seatKey: string): string {
+    const hash = createHash('sha256')
+      .update(`${reservationId}:${seatKey}`)
+      .digest('hex');
+
+    return [
+      hash.slice(0, 8),
+      hash.slice(8, 12),
+      `4${hash.slice(13, 16)}`,
+      `8${hash.slice(17, 20)}`,
+      hash.slice(20, 32),
+    ].join('-');
+  }
+
+  protected async backfillMissingTicketItems(
+    context: ReservationRefundContext,
+    seats: ReservationSeatRecord[] = context.seats,
+  ): Promise<void> {
+    const now = new Date();
+    const seatTotal = context.seats.reduce((total, seat) => total + seat.price, 0);
+    const serviceFeePerTicket =
+      context.reservation.totalAmount ===
+        seatTotal + context.seats.length * TICKET_SERVICE_FEE_KRW
+      && context.payment.amount ===
+        seatTotal + context.seats.length * TICKET_SERVICE_FEE_KRW
+        ? TICKET_SERVICE_FEE_KRW
+        : 0;
+    const admissionState: 'entered' | 'not_entered' = await this.hasLegacyEntryEvidence(context)
+      ? 'entered'
+      : 'not_entered';
+
+    await this.db
+      .insert(ticketItems)
+      .values(seats.map((seat) => {
+        const identity = normalizeSeatIdentity({ seatId: seat.seatId });
+
+        return {
+          reservationId: context.reservation.id,
+          paymentId: context.payment.id,
+          showtimeId: context.reservation.showtimeId,
+          seatId: identity.seatId,
+          seatKey: identity.seatKey,
+          floorKey: identity.floorKey,
+          floorLabel: identity.floorLabel,
+          tierName: seat.tierName,
+          row: seat.row,
+          number: seat.number,
+          price: seat.price,
+          serviceFee: serviceFeePerTicket,
+          status: 'active' as const,
+          admissionState,
+          enteredAt: admissionState === 'entered' ? now : null,
+          createdAt: now,
+          updatedAt: now,
+        };
+      }))
+      .onConflictDoNothing({ target: [ticketItems.reservationId, ticketItems.seatKey] });
+  }
+
+  protected async hasLegacyEntryEvidence(
+    context: ReservationRefundContext,
+  ): Promise<boolean> {
+    const legacyTickets = await this.db
+      .select({ id: tickets.id })
+      .from(tickets)
+      .where(
+        and(
+          eq(tickets.reservationId, context.reservation.id),
+          eq(tickets.paymentId, context.payment.id),
+          eq(tickets.showtimeId, context.reservation.showtimeId),
+          isNull(tickets.ticketItemId),
+          or(eq(tickets.status, 'used'), sql`${tickets.usedAt} IS NOT NULL`),
+        ),
+      );
+
+    if (legacyTickets.length > 0) {
+      return true;
+    }
+
+    const scanEvents = await this.db
+      .select({ id: ticketScanEvents.id })
+      .from(ticketScanEvents)
+      .where(
+        and(
+          eq(ticketScanEvents.reservationId, context.reservation.id),
+          eq(ticketScanEvents.showtimeId, context.reservation.showtimeId),
+          inArray(ticketScanEvents.result, ['success', 'offline_synced', 'already_used']),
+        ),
+      );
+
+    return scanEvents.length > 0;
+  }
+
+  protected async loadTicketItemsForReservation(
+    reservationId: string,
+  ): Promise<TicketItemRecord[]> {
+    return this.db
+      .select()
+      .from(ticketItems)
+      .where(eq(ticketItems.reservationId, reservationId));
   }
 
   protected async loadReservationContext(
@@ -455,6 +968,7 @@ export class RefundService {
       .select()
       .from(reservationSeats)
       .where(eq(reservationSeats.reservationId, reservation.id));
+    const reservationTicketItems = await this.loadTicketItemsForReservation(reservation.id);
 
     return {
       reservation,
@@ -462,6 +976,7 @@ export class RefundService {
       showtime,
       bookingPolicy: bookingPolicy ?? null,
       seats,
+      ticketItems: reservationTicketItems,
     };
   }
 
@@ -504,6 +1019,7 @@ export class RefundService {
       .select()
       .from(reservationSeats)
       .where(eq(reservationSeats.reservationId, reservation.id));
+    const reservationTicketItems = await this.loadTicketItemsForReservation(reservation.id);
 
     return {
       reservation,
@@ -511,6 +1027,7 @@ export class RefundService {
       showtime,
       bookingPolicy: bookingPolicy ?? null,
       seats,
+      ticketItems: reservationTicketItems,
     };
   }
 
@@ -563,6 +1080,8 @@ export class RefundService {
     context: ReservationRefundContext,
     reason: string,
     actor: RefundRequestActor = { kind: 'user' },
+    cancellationQuote?: FullReservationCancellationQuote,
+    options: AdminRefundRequestOptions = {},
   ): Promise<RefundRecord> {
     const now = new Date();
     const [created] = await this.db
@@ -580,6 +1099,8 @@ export class RefundService {
           reservationNumber: context.reservation.reservationNumber,
           paymentKey: context.payment.paymentKey,
           requestedBy: actor.kind,
+          overrideOptions: options,
+          ...(cancellationQuote ? { cancellationQuote } : {}),
           ...(actor.kind === 'admin' ? { operatorUserId: actor.operatorUserId } : {}),
         },
         requestedAt: now,
@@ -607,6 +1128,7 @@ export class RefundService {
     error: unknown,
     reason: string,
     retryCount: number,
+    cancellationQuote?: FullReservationCancellationQuote,
   ): Promise<RefundRecord> {
     const now = new Date();
     return this.updateRefund(refundId, {
@@ -619,6 +1141,7 @@ export class RefundService {
       expectedDepositAt: calculateExpectedRefundDepositAt(now),
       providerMetadata: {
         cancelReason: reason,
+        ...(cancellationQuote ? { cancellationQuote } : {}),
         lastTransientError: getRefundErrorMessage(error),
       },
       updatedAt: now,
@@ -630,6 +1153,7 @@ export class RefundService {
     response: TossPaymentResponse,
     reason: string,
     retryCount: number,
+    cancellationQuote?: FullReservationCancellationQuote,
   ): Promise<RefundRecord> {
     const now = new Date();
     return this.updateRefund(refundId, {
@@ -642,6 +1166,7 @@ export class RefundService {
       expectedDepositAt: calculateExpectedRefundDepositAt(now),
       providerMetadata: {
         cancelReason: reason,
+        ...(cancellationQuote ? { cancellationQuote } : {}),
         paymentStatus: response.status,
       },
       updatedAt: now,

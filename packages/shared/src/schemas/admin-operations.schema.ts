@@ -7,6 +7,7 @@ export const ADMIN_CAPABILITIES = [
   'support.manage',
   'support.escalate',
   'reservations.export_raw',
+  'refund.admin_refund',
   'seat.disable',
   'seat.reactivate',
   'seat.manual_open',

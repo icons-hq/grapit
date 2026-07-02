@@ -33,6 +33,14 @@ interface BuildFullPaymentCancelRequestInput {
   cancelRequestIdSeed?: string;
 }
 
+interface BuildFullReservationPaymentCancelRequestInput
+  extends BuildFullPaymentCancelRequestInput {
+  cancellationQuote: {
+    refundableAmount: number;
+    originalPaymentAmount: number;
+  };
+}
+
 interface BuildTicketItemPaymentCancelRequestInput {
   payment: PaymentCancelPaymentSnapshot;
   ticketItem: PaymentCancelTicketItemSnapshot;
@@ -83,6 +91,55 @@ export function buildFullPaymentCancelRequest(
     reason: input.reason,
     options,
   };
+}
+
+export function buildFullReservationPaymentCancelRequest(
+  input: BuildFullReservationPaymentCancelRequestInput,
+): PaymentCancelRequest {
+  if (input.cancellationQuote.refundableAmount >= input.payment.amount) {
+    return buildFullPaymentCancelRequest(input);
+  }
+
+  const options: TossPaymentCancelOptions = {
+    secretKeyScope: resolvePaymentCancelSecretScope(input.payment),
+  };
+
+  if (input.idempotencyKey !== undefined) {
+    options.idempotencyKey = input.idempotencyKey;
+  }
+  const providerCurrencyCancel = buildProviderCurrencyCancelAmount(input.payment, {
+    id: input.cancelRequestIdSeed ?? input.payment.id ?? input.payment.paymentKey,
+    refundableAmount: input.cancellationQuote.refundableAmount,
+  });
+
+  if (providerCurrencyCancel) {
+    options.cancelAmount = providerCurrencyCancel.cancelAmount;
+    options.currency = providerCurrencyCancel.currency;
+  } else {
+    options.cancelAmount = input.cancellationQuote.refundableAmount;
+  }
+
+  if (requiresCancelRequestId(input.payment)) {
+    options.cancelRequestId = buildPaymentCancelRequestId(
+      selectFullCancelRequestIdSeed(input),
+    );
+  }
+
+  return {
+    paymentKey: input.payment.paymentKey,
+    reason: input.reason,
+    options,
+  };
+}
+
+export function canBuildFullReservationPaymentCancelRequest(
+  input: BuildFullReservationPaymentCancelRequestInput,
+): boolean {
+  if (input.cancellationQuote.refundableAmount >= input.payment.amount) {
+    return true;
+  }
+
+  return canBuildProviderCurrencyPartialCancel(input.payment);
 }
 
 export function buildTicketItemPaymentCancelRequest(
@@ -140,6 +197,22 @@ function requiresProviderCurrencyPartialCancel(
   const provider = payment.provider.toUpperCase();
 
   return provider === 'PAYPAL' || FOREIGN_EASY_PAY_PROVIDERS.has(provider);
+}
+
+function canBuildProviderCurrencyPartialCancel(
+  payment: PaymentCancelPaymentSnapshot,
+): boolean {
+  if (!requiresProviderCurrencyPartialCancel(payment)) {
+    return true;
+  }
+
+  const providerChargeCurrency = payment.providerChargeCurrency?.trim().toUpperCase();
+
+  return Boolean(
+    providerChargeCurrency
+    && providerChargeCurrency !== 'KRW'
+    && typeof payment.providerChargeAmountMinor === 'number',
+  );
 }
 
 function isOverseasCardPayment(payment: PaymentCancelPaymentSnapshot): boolean {
@@ -207,7 +280,7 @@ function buildProviderCurrencyCancelAmount(
     || providerChargeCurrency === 'KRW'
     || typeof payment.providerChargeAmountMinor !== 'number'
   ) {
-    if (requiresProviderCurrencyPartialCancel(payment)) {
+    if (!canBuildProviderCurrencyPartialCancel(payment)) {
       throw new Error(
         'Provider-currency partial cancellation requires provider charge data',
       );

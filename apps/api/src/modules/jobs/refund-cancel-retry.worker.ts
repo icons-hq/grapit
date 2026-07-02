@@ -6,6 +6,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { eq } from 'drizzle-orm';
+import type { CancellationQuote } from '@grabit/shared';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
   bookingPolicies,
@@ -25,7 +26,10 @@ import {
 } from '../refund/refund.service.js';
 import { TossPaymentsClient, type TossPaymentResponse } from '../payment/toss-payments.client.js';
 import { PaymentCancellationFinalizerService } from '../cancellation/payment-cancellation-finalizer.service.js';
-import { buildFullPaymentCancelRequest } from '../payment/payment-cancel-policy.js';
+import {
+  buildFullPaymentCancelRequest,
+  buildFullReservationPaymentCancelRequest,
+} from '../payment/payment-cancel-policy.js';
 import {
   PG_BOSS,
   PG_BOSS_JOB_NAMES,
@@ -55,6 +59,29 @@ function getRefundProviderMetadata(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? { ...(value as Record<string, unknown>) }
     : {};
+}
+
+function getStoredCancellationQuote(refund: RefundRecord): CancellationQuote | null {
+  const metadata = getRefundProviderMetadata(refund.providerMetadata);
+  const quote = metadata.cancellationQuote;
+  if (!quote || typeof quote !== 'object' || Array.isArray(quote)) {
+    return null;
+  }
+
+  const candidate = quote as Partial<CancellationQuote>;
+  if (
+    typeof candidate.originalPaymentAmount !== 'number'
+    || typeof candidate.refundableAmount !== 'number'
+    || !Array.isArray(candidate.items)
+  ) {
+    return null;
+  }
+
+  return candidate as CancellationQuote;
+}
+
+function getRefundCancelRequestAnchor(refund: RefundRecord): Date | null {
+  return refund.processingAtPgAt ?? refund.sentToPgAt ?? refund.requestedAt ?? null;
 }
 
 @Injectable()
@@ -106,24 +133,41 @@ export class RefundCancelRetryWorker implements OnModuleInit {
     }
 
     const reason = this.resolveCancelReason(context.refund);
+    const cancellationQuote = getStoredCancellationQuote(context.refund);
     const retryPolicyExhausted = context.refund.retryCount >= REFUND_CANCEL_MAX_RETRIES;
     const nextRetryCount = Math.min(
       context.refund.retryCount + 1,
       REFUND_CANCEL_MAX_RETRIES,
     );
-    const command = buildFullPaymentCancelRequest({
+    const baseCommandInput = {
       payment: context.payment,
       reason,
       idempotencyKey: this.buildRefundCancelIdempotencyKey(context.refund.id),
       cancelRequestIdSeed: context.refund.id,
-    });
+    };
+    const command = cancellationQuote
+      ? buildFullReservationPaymentCancelRequest({
+          ...baseCommandInput,
+          cancellationQuote,
+        })
+      : buildFullPaymentCancelRequest(baseCommandInput);
+    const allowPartialStatus =
+      cancellationQuote !== null
+      && cancellationQuote.refundableAmount < context.payment.amount;
 
     try {
       const queried = await this.tossPaymentsClient.queryPayment(command.paymentKey, {
         secretKeyScope: command.options.secretKeyScope,
       });
 
-      if (isTossCancelCompleted(queried, command.options.cancelRequestId)) {
+      if (
+        isTossCancelCompleted(queried, command.options.cancelRequestId, {
+          allowPartialStatus,
+          expectedCancelAmount: command.options.cancelAmount,
+          allowUnidentifiedPartialCancel: true,
+          requestedAt: getRefundCancelRequestAnchor(context.refund),
+        })
+      ) {
         await this.finalizeFullPaymentCancellation(context, queried, reason);
         return { status: 'completed' };
       }
@@ -136,6 +180,7 @@ export class RefundCancelRetryWorker implements OnModuleInit {
           nextRetryCount,
           command.options.cancelRequestId,
           retryPolicyExhausted,
+          cancellationQuote,
         );
       }
 
@@ -150,7 +195,14 @@ export class RefundCancelRetryWorker implements OnModuleInit {
         command.options,
       );
 
-      if (isTossCancelCompleted(response, command.options.cancelRequestId)) {
+      if (
+        isTossCancelCompleted(response, command.options.cancelRequestId, {
+          allowPartialStatus,
+          expectedCancelAmount: command.options.cancelAmount,
+          allowUnidentifiedPartialCancel: true,
+          requestedAt: getRefundCancelRequestAnchor(context.refund),
+        })
+      ) {
         await this.finalizeFullPaymentCancellation(context, response, reason);
         return { status: 'completed' };
       }
@@ -163,16 +215,24 @@ export class RefundCancelRetryWorker implements OnModuleInit {
           nextRetryCount,
           command.options.cancelRequestId,
           nextRetryCount >= REFUND_CANCEL_MAX_RETRIES,
+          cancellationQuote,
         );
       }
 
-      await this.markRefundProcessing(context.refund.id, response, reason, nextRetryCount);
+      await this.markRefundProcessing(
+        context.refund.id,
+        response,
+        reason,
+        nextRetryCount,
+        cancellationQuote,
+      );
       const jobId = await this.scheduleRetry(context.refund.id, nextRetryCount);
       await this.recordRetryScheduleState(
         context.refund.id,
         {
           cancelReason: reason,
           paymentStatus: response.status,
+          ...(cancellationQuote ? { cancellationQuote } : {}),
         },
         nextRetryCount,
         jobId,
@@ -185,6 +245,7 @@ export class RefundCancelRetryWorker implements OnModuleInit {
           error,
           reason,
           nextRetryCount,
+          cancellationQuote,
         );
         if (nextRetryCount >= REFUND_CANCEL_MAX_RETRIES) {
           await this.markRetryExhausted(context.refund.id, reason);
@@ -197,6 +258,7 @@ export class RefundCancelRetryWorker implements OnModuleInit {
           {
             cancelReason: reason,
             lastTransientError: getRefundErrorMessage(error),
+            ...(cancellationQuote ? { cancellationQuote } : {}),
           },
           nextRetryCount,
           jobId,
@@ -245,12 +307,14 @@ export class RefundCancelRetryWorker implements OnModuleInit {
     retryCount: number,
     cancelRequestId: string | undefined,
     retryPolicyExhausted: boolean,
+    cancellationQuote: CancellationQuote | null,
   ): Promise<{ status: 'processing' | 'retry_schedule_failed' | 'status_wait' }> {
     await this.markRefundProcessing(
       context.refund.id,
       response,
       reason,
       retryCount,
+      cancellationQuote,
     );
 
     const jobId = await this.scheduleRetry(context.refund.id, retryCount);
@@ -260,6 +324,7 @@ export class RefundCancelRetryWorker implements OnModuleInit {
         cancelReason: reason,
         paymentStatus: response.status,
         cancelRequestId,
+        ...(cancellationQuote ? { cancellationQuote } : {}),
         ...(retryPolicyExhausted && !jobId ? { manualReviewRequired: true } : {}),
       },
       retryCount,
@@ -298,6 +363,9 @@ export class RefundCancelRetryWorker implements OnModuleInit {
       reason,
       providerResponse: response as unknown as Record<string, unknown>,
       actor: { kind: 'system' },
+      ...(getStoredCancellationQuote(context.refund)
+        ? { fullReservationCancellationQuote: getStoredCancellationQuote(context.refund)! }
+        : {}),
     });
   }
 
@@ -357,6 +425,7 @@ export class RefundCancelRetryWorker implements OnModuleInit {
     error: unknown,
     reason: string,
     retryCount: number,
+    cancellationQuote: CancellationQuote | null = null,
   ): Promise<void> {
     await this.db
       .update(refunds)
@@ -369,6 +438,7 @@ export class RefundCancelRetryWorker implements OnModuleInit {
         failureReason: getRefundErrorMessage(error),
         providerMetadata: {
           cancelReason: reason,
+          ...(cancellationQuote ? { cancellationQuote } : {}),
           lastTransientError: getRefundErrorMessage(error),
         },
         expectedDepositAt: calculateExpectedRefundDepositAt(),
@@ -382,6 +452,7 @@ export class RefundCancelRetryWorker implements OnModuleInit {
     response: TossPaymentResponse,
     reason: string,
     retryCount: number,
+    cancellationQuote: CancellationQuote | null = null,
   ): Promise<void> {
     await this.db
       .update(refunds)
@@ -395,6 +466,7 @@ export class RefundCancelRetryWorker implements OnModuleInit {
         providerMetadata: {
           cancelReason: reason,
           paymentStatus: response.status,
+          ...(cancellationQuote ? { cancellationQuote } : {}),
         },
         expectedDepositAt: calculateExpectedRefundDepositAt(),
         updatedAt: new Date(),

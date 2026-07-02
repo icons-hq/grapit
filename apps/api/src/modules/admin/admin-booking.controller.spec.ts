@@ -1,8 +1,10 @@
 import { BadRequestException } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import type { Request, Response } from 'express';
 import { describe, expect, it, vi } from 'vitest';
 
 import { adminBookingListQuerySchema } from '@grabit/shared';
+import { ADMIN_CAPABILITIES_KEY } from '../../common/decorators/admin-capabilities.decorator.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import { AdminBookingController } from './admin-booking.controller.js';
 
@@ -159,5 +161,22 @@ describe('AdminBookingController', () => {
         userAgent: 'Vitest Admin Console',
       }),
     );
+  });
+
+  it('requires refund.admin_refund capability for admin refund preview and execution endpoints', () => {
+    const reflector = new Reflector();
+
+    expect(
+      reflector.get<string[]>(
+        ADMIN_CAPABILITIES_KEY,
+        AdminBookingController.prototype.getRefundPreview,
+      ),
+    ).toEqual(['refund.admin_refund']);
+    expect(
+      reflector.get<string[]>(
+        ADMIN_CAPABILITIES_KEY,
+        AdminBookingController.prototype.refundBooking,
+      ),
+    ).toEqual(['refund.admin_refund']);
   });
 });

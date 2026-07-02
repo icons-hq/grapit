@@ -29,6 +29,7 @@ import { Button } from '@/components/ui/button';
 import { Loader2 } from 'lucide-react';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import { getClientLocale } from '@/lib/i18n/client-copy';
+import type { CancellationQuote } from '@grabit/shared';
 
 function formatDateTime(dateString: string | null | undefined, locale: string): string | null {
   if (!dateString) return null;
@@ -52,12 +53,15 @@ interface CancelConfirmModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   refundAmount: number;
+  cancellationQuote?: CancellationQuote | null;
   paymentMethod: string;
   expectedDepositAt?: string | null;
   releaseWindowMinutes?: {
     min: number;
     max: number;
   } | null;
+  isPreviewLoading?: boolean;
+  isPreviewError?: boolean;
   onConfirm: (reason: string) => void;
   isLoading: boolean;
 }
@@ -66,9 +70,12 @@ export function CancelConfirmModal({
   open,
   onOpenChange,
   refundAmount,
+  cancellationQuote,
   paymentMethod,
   expectedDepositAt,
   releaseWindowMinutes,
+  isPreviewLoading = false,
+  isPreviewError = false,
   onConfirm,
   isLoading,
 }: CancelConfirmModalProps) {
@@ -78,7 +85,7 @@ export function CancelConfirmModal({
   const [confirmStepOpen, setConfirmStepOpen] = useState(false);
 
   function handleConfirm() {
-    if (!reason) return;
+    if (!reason || !cancellationQuote) return;
     onConfirm(reason);
   }
 
@@ -95,7 +102,7 @@ export function CancelConfirmModal({
   }
 
   function handleMoveToConfirm() {
-    if (!reason) return;
+    if (!reason || !cancellationQuote || isPreviewLoading || isPreviewError) return;
     setConfirmStepOpen(true);
   }
 
@@ -105,6 +112,15 @@ export function CancelConfirmModal({
     currency: 'KRW',
     maximumFractionDigits: 0,
   }).format(refundAmount);
+  const formatCurrency = (amount: number) =>
+    new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency: 'KRW',
+      maximumFractionDigits: 0,
+    }).format(amount);
+  const quoteUnavailable = !isPreviewLoading && !isPreviewError && !cancellationQuote;
+  const confirmDisabled =
+    !reason || isLoading || isPreviewLoading || isPreviewError || !cancellationQuote;
 
   return (
     <>
@@ -145,9 +161,54 @@ export function CancelConfirmModal({
               <div className="flex items-center justify-between gap-4">
                 <span className="text-sm text-gray-600">{copy.refundAmount}</span>
                 <span className="text-base font-semibold text-gray-900">
-                  {formattedRefundAmount}
+                  {cancellationQuote ? formattedRefundAmount : '-'}
                 </span>
               </div>
+              {isPreviewLoading && (
+                <div className="flex items-center gap-2 border-t border-gray-200 pt-3 text-sm text-gray-700">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>{copy.quoteLoading}</span>
+                </div>
+              )}
+              {isPreviewError && (
+                <p className="border-t border-gray-200 pt-3 text-sm font-semibold text-[#C62828]">
+                  {copy.quoteError}
+                </p>
+              )}
+              {quoteUnavailable && (
+                <p className="border-t border-gray-200 pt-3 text-sm font-semibold text-[#C62828]">
+                  {copy.quoteUnavailable}
+                </p>
+              )}
+              {cancellationQuote && (
+                <div className="space-y-2 border-t border-gray-200 pt-3">
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-sm text-gray-600">{copy.originalPaymentAmount}</span>
+                    <span className="text-sm font-medium text-gray-900">
+                      {formatCurrency(cancellationQuote.originalPaymentAmount)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-sm text-gray-600">{copy.ticketSubtotal}</span>
+                    <span className="text-sm font-medium text-gray-900">
+                      {formatCurrency(cancellationQuote.ticketSubtotal)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-sm text-gray-600">{copy.cancellationFee}</span>
+                    <span className="text-sm font-semibold text-[#C62828]">
+                      {cancellationQuote.cancellationFeeTotal > 0 ? '-' : ''}
+                      {formatCurrency(cancellationQuote.cancellationFeeTotal)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-sm text-gray-600">{copy.serviceFeeRefund}</span>
+                    <span className="text-sm font-medium text-gray-900">
+                      {formatCurrency(cancellationQuote.serviceFeeRefundTotal)}
+                    </span>
+                  </div>
+                </div>
+              )}
               <div className="flex items-center justify-between gap-4">
                 <span className="text-sm text-gray-600">{copy.refundMethod}</span>
                 <span className="text-sm text-gray-700">
@@ -190,7 +251,7 @@ export function CancelConfirmModal({
             <Button
               type="button"
               onClick={handleMoveToConfirm}
-              disabled={!reason || isLoading}
+              disabled={confirmDisabled}
             >
               {copy.finalCheck}
             </Button>
@@ -245,7 +306,7 @@ export function CancelConfirmModal({
             <Button
               variant="destructive"
               onClick={handleConfirm}
-              disabled={!reason || isLoading}
+              disabled={confirmDisabled}
             >
               {isLoading ? (
                 <>

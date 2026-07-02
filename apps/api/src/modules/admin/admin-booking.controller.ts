@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { Readable } from 'node:stream';
 import type { Request, Response } from 'express';
+import { z } from 'zod';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import { RolesGuard } from '../../common/guards/roles.guard.js';
 import { AdminCapabilitiesGuard } from '../../common/guards/admin-capabilities.guard.js';
@@ -38,6 +39,19 @@ const manualOpenSchema = adminSeatOperationRequestSchema.pick({
 
 type ManualOpenInput = Pick<AdminSeatOperationRequest, 'reason' | 'confirmed'>;
 
+const adminRefundPreviewQuerySchema = z.object({
+  fullRefundOverride: z.preprocess(
+    (value) => value === true || value === 'true',
+    z.boolean().default(false),
+  ),
+  enteredTicketOverride: z.preprocess(
+    (value) => value === true || value === 'true',
+    z.boolean().default(false),
+  ),
+});
+
+type AdminRefundPreviewQuery = z.infer<typeof adminRefundPreviewQuerySchema>;
+
 @Controller('admin')
 @UseGuards(RolesGuard)
 @Roles('admin')
@@ -60,6 +74,20 @@ export class AdminBookingController {
   @Get('bookings/:id')
   async getBookingDetail(@Param('id') id: string) {
     return this.adminBookingService.getBookingDetail(id);
+  }
+
+  @Get('bookings/:id/refund-preview')
+  @UseGuards(AdminCapabilitiesGuard)
+  @AdminCapabilities('refund.admin_refund')
+  async getRefundPreview(
+    @Param('id') id: string,
+    @Query(new ZodValidationPipe(adminRefundPreviewQuerySchema))
+    query: AdminRefundPreviewQuery,
+  ) {
+    return this.adminBookingService.getRefundPreview(id, {
+      fullRefundOverride: query.fullRefundOverride,
+      enteredTicketOverride: query.enteredTicketOverride,
+    });
   }
 
   @Post('bookings/export')
@@ -96,12 +124,17 @@ export class AdminBookingController {
   }
 
   @Post('bookings/:id/refund')
+  @UseGuards(AdminCapabilitiesGuard)
+  @AdminCapabilities('refund.admin_refund')
   async refundBooking(
     @Param('id') id: string,
     @CurrentUser('id') operatorUserId: string,
     @Body(new ZodValidationPipe(adminRefundSchema)) body: AdminRefundInput,
   ) {
-    await this.adminBookingService.refundBooking(id, operatorUserId, body.reason);
+    await this.adminBookingService.refundBooking(id, operatorUserId, body.reason, {
+      fullRefundOverride: body.fullRefundOverride,
+      enteredTicketOverride: body.enteredTicketOverride,
+    });
     return { message: '환불이 처리되었습니다' };
   }
 

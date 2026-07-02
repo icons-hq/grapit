@@ -1,7 +1,10 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import type { ReactNode } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { fireEvent, render as rtlRender, screen, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ReservationDetailView } from '@/components/reservation/reservation-detail';
+import { apiClient } from '@/lib/api-client';
 import type { BenefitEntitlement, ReservationDetail } from '@grabit/shared';
 
 vi.mock('next/navigation', () => ({
@@ -14,6 +17,16 @@ vi.mock('@/components/reservation/ticket-email-delivery-panel', () => ({
   TicketEmailDeliveryPanel: () => (
     <div>QR 티켓 안내 메일은 공연 24시간 전에 다시 발송됩니다.</div>
   ),
+}));
+
+vi.mock('@/lib/api-client', () => ({
+  apiClient: {
+    get: vi.fn(),
+    post: vi.fn(),
+    put: vi.fn(),
+    patch: vi.fn(),
+    delete: vi.fn(),
+  },
 }));
 
 const rawQrToken = 'raw-token-reservation-detail-should-not-render';
@@ -55,6 +68,23 @@ function includedBenefit(
     attachedToTicket: true,
     ...overrides,
   } as BenefitEntitlement;
+}
+
+function createQueryClient() {
+  return new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+}
+
+function render(ui: ReactNode) {
+  return rtlRender(
+    <QueryClientProvider client={createQueryClient()}>
+      {ui}
+    </QueryClientProvider>,
+  );
 }
 
 function limitedBenefit(
@@ -241,6 +271,48 @@ function createReservation(
   };
 }
 
+function createRefundPreviewResponse(overrides: Record<string, unknown> = {}) {
+  return {
+    reservationId: 'reservation-detail-qr',
+    reservationNumber: 'GRP-27-DETAIL-QR',
+    paymentKey: rawPaymentKey,
+    refundableAmount: 154000,
+    canRequestRefund: true,
+    cancelledSeatHoldWindowMinutes: { min: 1, max: 10 },
+    refundTimeline: null,
+    cancellationQuote: {
+      originalPaymentAmount: 154000,
+      ticketSubtotal: 154000,
+      ticketServiceFeeTotal: 0,
+      cancellationFeeTotal: 0,
+      serviceFeeRefundTotal: 0,
+      refundableAmount: 154000,
+      policyCodes: ['WITHIN_7_DAYS_AFTER_BOOKING'],
+      items: [
+        {
+          ticketItemId: firstTicketItemId,
+          ticketPrice: 77000,
+          serviceFee: 0,
+          cancellationFee: 0,
+          serviceFeeRefund: 0,
+          refundableAmount: 77000,
+          policyCode: 'WITHIN_7_DAYS_AFTER_BOOKING',
+        },
+        {
+          ticketItemId: secondTicketItemId,
+          ticketPrice: 77000,
+          serviceFee: 0,
+          cancellationFee: 0,
+          serviceFeeRefund: 0,
+          refundableAmount: 77000,
+          policyCode: 'WITHIN_7_DAYS_AFTER_BOOKING',
+        },
+      ],
+    },
+    ...overrides,
+  };
+}
+
 describe('ReservationDetailView QR ticket card', () => {
   const realDate = Date;
 
@@ -248,8 +320,15 @@ describe('ReservationDetailView QR ticket card', () => {
     vi.setSystemTime(new realDate(iso));
   }
 
+  beforeEach(() => {
+    (apiClient.get as ReturnType<typeof vi.fn>).mockResolvedValue(
+      createRefundPreviewResponse(),
+    );
+  });
+
   afterEach(() => {
     vi.useRealTimers();
+    vi.clearAllMocks();
   });
 
   it('renders one QR image per active ticket item without visible raw secrets', () => {
@@ -906,6 +985,81 @@ describe('ReservationDetailView QR ticket card', () => {
     expect(screen.getByRole('button', { name: '예매 취소' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '이 티켓 취소' })).not.toBeInTheDocument();
     expect(screen.queryByText('티켓을 취소하시겠습니까?')).not.toBeInTheDocument();
+  });
+
+  it('does not fetch the cancellation quote before opening the cancel modal', () => {
+    render(
+      <ReservationDetailView
+        reservation={createReservation({ totalAmount: 158000 })}
+        onCancel={vi.fn()}
+        isCancelling={false}
+      />,
+    );
+
+    expect(apiClient.get).not.toHaveBeenCalled();
+    expect(screen.getByText('취소 진행 시 계산')).toBeInTheDocument();
+    expect(screen.queryByText('취소수수료')).not.toBeInTheDocument();
+  });
+
+  it('shows the per-ticket cancellation quote in the whole-reservation cancel modal', async () => {
+    (apiClient.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      reservationId: 'reservation-detail-qr',
+      reservationNumber: 'GRP-27-DETAIL-QR',
+      paymentKey: rawPaymentKey,
+      refundableAmount: 107800,
+      canRequestRefund: true,
+      cancelledSeatHoldWindowMinutes: { min: 1, max: 10 },
+      refundTimeline: null,
+      cancellationQuote: {
+        originalPaymentAmount: 158000,
+        ticketSubtotal: 154000,
+        ticketServiceFeeTotal: 4000,
+        cancellationFeeTotal: 46200,
+        serviceFeeRefundTotal: 0,
+        refundableAmount: 107800,
+        policyCodes: ['SHOW_DAY_2_TO_1'],
+        items: [
+          {
+            ticketItemId: firstTicketItemId,
+            ticketPrice: 77000,
+            serviceFee: 2000,
+            cancellationFee: 23100,
+            serviceFeeRefund: 0,
+            refundableAmount: 53900,
+            policyCode: 'SHOW_DAY_2_TO_1',
+          },
+          {
+            ticketItemId: secondTicketItemId,
+            ticketPrice: 77000,
+            serviceFee: 2000,
+            cancellationFee: 23100,
+            serviceFeeRefund: 0,
+            refundableAmount: 53900,
+            policyCode: 'SHOW_DAY_2_TO_1',
+          },
+        ],
+      },
+    });
+
+    render(
+      <ReservationDetailView
+        reservation={createReservation({ totalAmount: 158000 })}
+        onCancel={vi.fn()}
+        isCancelling={false}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: '예매 취소' }));
+
+    expect(await screen.findByText('취소수수료')).toBeInTheDocument();
+    expect(screen.getAllByText('환불 예정 금액').length).toBeGreaterThan(0);
+    expect(screen.getByText('₩107,800')).toBeInTheDocument();
+    expect(screen.getByText('총 결제금액')).toBeInTheDocument();
+    expect(screen.getByText('₩158,000')).toBeInTheDocument();
+    expect(screen.getByText('티켓 금액')).toBeInTheDocument();
+    expect(screen.getByText('₩154,000')).toBeInTheDocument();
+    expect(screen.getByText('-₩46,200')).toBeInTheDocument();
+    expect(screen.getByText('서비스수수료 환불')).toBeInTheDocument();
   });
 
   it('shows whole-reservation cancellation for legacy reservations without ticket items', () => {

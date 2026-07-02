@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -25,9 +26,14 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { useAdminManualOpenSeat } from '@/hooks/use-admin-seat-operations';
-import { useAdminBookingDetail } from '@/hooks/use-reservations';
+import {
+  useAdminBookingDetail,
+  useAdminRefundPreview,
+} from '@/hooks/use-reservations';
 import { formatDateTime } from '@/lib/format-datetime';
 import { getPaymentFailureBucketLabel } from './payment-failure-buckets';
+import { useAuthStore } from '@/stores/use-auth-store';
+import { hasAdminCapability } from '@grabit/shared';
 import type {
   AdminBookingDetail,
   AdminBookingFunnelStatus,
@@ -74,6 +80,7 @@ const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
   READY: '결제 준비',
   IN_PROGRESS: '결제 진행 중',
   DONE: '결제 완료',
+  PARTIAL_CANCELED: '부분 환불 완료',
   CANCELED: '결제 취소',
   ABORTED: '결제 중단',
   EXPIRED: '결제 만료',
@@ -188,7 +195,14 @@ interface AdminBookingDetailModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   bookingId: string | null;
-  onRefund: (id: string, reason: string) => void;
+  onRefund: (
+    id: string,
+    reason: string,
+    options: {
+      fullRefundOverride: boolean;
+      enteredTicketOverride: boolean;
+    },
+  ) => void;
   isRefunding: boolean;
 }
 
@@ -202,8 +216,29 @@ export function AdminBookingDetailModal({
   const { data: booking, isLoading } = useAdminBookingDetail(
     open ? bookingId : null,
   );
+  const authUser = useAuthStore((state) => state.user);
+  const canAdminRefund = hasAdminCapability(authUser, 'refund.admin_refund');
   const [showRefundForm, setShowRefundForm] = useState(false);
   const [refundReason, setRefundReason] = useState('');
+  const [fullRefundOverride, setFullRefundOverride] = useState(false);
+  const [
+    enteredTicketOverride,
+    setEnteredTicketOverride,
+  ] = useState(false);
+  const refundPreviewQuery = useAdminRefundPreview(
+    open && showRefundForm ? bookingId : null,
+    { fullRefundOverride, enteredTicketOverride },
+    open && showRefundForm && Boolean(bookingId) && canAdminRefund,
+  );
+  const refundQuote = refundPreviewQuery.data?.cancellationQuote ?? null;
+  const refundPreviewCalculating =
+    refundPreviewQuery.isLoading || refundPreviewQuery.isFetching;
+  const refundConfirmDisabled =
+    !refundReason.trim()
+    || isRefunding
+    || refundPreviewCalculating
+    || refundPreviewQuery.isError
+    || refundQuote === null;
   const [showManualOpenForm, setShowManualOpenForm] = useState(false);
   const [manualOpenReason, setManualOpenReason] = useState('');
   const manualOpenMutation = useAdminManualOpenSeat();
@@ -212,6 +247,8 @@ export function AdminBookingDetailModal({
     if (!value) {
       setShowRefundForm(false);
       setRefundReason('');
+      setFullRefundOverride(false);
+      setEnteredTicketOverride(false);
       setShowManualOpenForm(false);
       setManualOpenReason('');
     }
@@ -220,7 +257,10 @@ export function AdminBookingDetailModal({
 
   function handleRefundConfirm() {
     if (!bookingId || !refundReason.trim()) return;
-    onRefund(bookingId, refundReason.trim());
+    onRefund(bookingId, refundReason.trim(), {
+      fullRefundOverride,
+      enteredTicketOverride,
+    });
   }
 
   function handleManualOpenConfirm() {
@@ -440,7 +480,7 @@ export function AdminBookingDetailModal({
               </>
             )}
 
-            {booking.status === 'CONFIRMED' && (
+            {booking.status === 'CONFIRMED' && canAdminRefund && (
               <Button
                 variant="destructive"
                 className="mt-4 w-full"
@@ -470,7 +510,7 @@ export function AdminBookingDetailModal({
           </div>
         )}
 
-        {booking && showRefundForm && (
+        {booking && showRefundForm && canAdminRefund && (
           <div className="space-y-4">
             <h3 className="text-base font-semibold text-gray-900">
               환불을 진행하시겠습니까?
@@ -496,15 +536,64 @@ export function AdminBookingDetailModal({
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-600">환불 금액</span>
                 <span className="text-base font-semibold text-gray-900">
-                  {booking.totalAmount.toLocaleString('ko-KR')}원
+                  {refundPreviewCalculating
+                    ? '계산 중...'
+                    : refundQuote
+                      ? formatWon(refundQuote.refundableAmount)
+                      : '계산 불가'}
                 </span>
               </div>
+              {refundPreviewQuery.isError && (
+                <p className="mt-2 text-xs font-semibold text-[#C62828]">
+                  환불 금액을 계산하지 못했습니다. 잠시 후 다시 시도하세요.
+                </p>
+              )}
+              {!refundPreviewCalculating && !refundPreviewQuery.isError && refundQuote === null && (
+                <p className="mt-2 text-xs font-semibold text-[#C62828]">
+                  서버 환불 견적이 없어 환불을 진행할 수 없습니다.
+                </p>
+              )}
               <div className="mt-2 flex items-center justify-between gap-3">
                 <span className="text-sm text-gray-600">환불 수단</span>
                 <span className="text-right text-sm text-gray-600">
                   {getPaymentMethodAttributionLabel(booking)} 결제 취소
                 </span>
               </div>
+            </div>
+
+            <div className="space-y-3 rounded-lg border border-gray-200 p-4">
+              <label className="flex items-start gap-3">
+                <Checkbox
+                  checked={fullRefundOverride}
+                  onCheckedChange={(checked) => setFullRefundOverride(checked === true)}
+                  aria-label="수수료 없이 전액 환불"
+                />
+                <span className="space-y-1">
+                  <span className="block text-sm font-semibold text-gray-900">
+                    수수료 없이 전액 환불
+                  </span>
+                  <span className="block text-xs text-gray-600">
+                    공연사 귀책, 운영상 예외, 테스트 정리에만 사용합니다.
+                  </span>
+                </span>
+              </label>
+              <label className="flex items-start gap-3">
+                <Checkbox
+                  checked={enteredTicketOverride}
+                  onCheckedChange={(checked) =>
+                    setEnteredTicketOverride(checked === true)
+                  }
+                  aria-label="입장 처리 티켓 강제 취소"
+                />
+                <span className="space-y-1">
+                  <span className="block text-sm font-semibold text-gray-900">
+                    입장 처리 티켓 강제 취소
+                  </span>
+                  <span className="block text-xs text-gray-600">
+                    테스트 입장 처리 후 취소가 필요한 경우에만 사용합니다.
+                  </span>
+                </span>
+              </label>
             </div>
 
             <div className="flex gap-2">
@@ -514,6 +603,8 @@ export function AdminBookingDetailModal({
                 onClick={() => {
                   setShowRefundForm(false);
                   setRefundReason('');
+                  setFullRefundOverride(false);
+                  setEnteredTicketOverride(false);
                 }}
               >
                 취소
@@ -521,7 +612,7 @@ export function AdminBookingDetailModal({
               <Button
                 variant="destructive"
                 className="flex-1"
-                disabled={!refundReason.trim() || isRefunding}
+                disabled={refundConfirmDisabled}
                 onClick={handleRefundConfirm}
               >
                 {isRefunding ? (

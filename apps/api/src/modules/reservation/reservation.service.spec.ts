@@ -228,6 +228,20 @@ describe('ReservationService', () => {
     }
   }
 
+  describe('calculateCancelDeadline', () => {
+    it('uses the previous KST calendar day end for evening showtimes', () => {
+      expect(
+        service.calculateCancelDeadline(new Date('2026-07-04T10:00:00.000Z')).toISOString(),
+      ).toBe('2026-07-03T14:59:59.999Z');
+    });
+
+    it('uses the previous KST calendar day end for early-morning KST showtimes', () => {
+      expect(
+        service.calculateCancelDeadline(new Date('2026-07-03T16:00:00.000Z')).toISOString(),
+      ).toBe('2026-07-03T14:59:59.999Z');
+    });
+  });
+
   function seatSelection(seatId: string): SeatSelection {
     const [, number = '1'] = seatId.split('-');
     return { seatId, tierName: 'VIP', price: 50000, row: 'A', number };

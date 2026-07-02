@@ -27,6 +27,7 @@ describe('admin operations contract', () => {
       'support.manage',
       'support.escalate',
       'reservations.export_raw',
+      'refund.admin_refund',
       'seat.disable',
       'seat.reactivate',
       'seat.manual_open',
@@ -43,6 +44,7 @@ describe('admin operations contract', () => {
 
     expect(ADMIN_CAPABILITIES).toEqual(requiredCapabilities);
     expect(adminCapabilitySchema.parse('field.scan.verify')).toBe('field.scan.verify');
+    expect(adminCapabilitySchema.parse('refund.admin_refund')).toBe('refund.admin_refund');
     expect(adminCapabilitySchema.parse('benefits.manage')).toBe('benefits.manage');
     expect(adminCapabilitySchema.parse('benefits.export')).toBe('benefits.export');
     expect(ADMIN_CAPABILITY_BUNDLE_CAPABILITIES.admin).toEqual(requiredCapabilities);

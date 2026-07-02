@@ -232,6 +232,13 @@
       "when": 1782708178646,
       "tag": "0031_account_merge_ledger",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1782894990432,
+      "tag": "0032_full_reservation_cancellation_fees",
+      "breakpoints": true
     }
   ]
 }

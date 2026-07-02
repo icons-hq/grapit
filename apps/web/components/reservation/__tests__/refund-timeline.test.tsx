@@ -1,5 +1,7 @@
+import type { ReactNode } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render as rtlRender, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { ReservationDetailView } from '@/components/reservation/reservation-detail';
 import type { ReservationDetail } from '@grabit/shared';
@@ -15,6 +17,23 @@ vi.mock('@/components/reservation/ticket-email-delivery-panel', () => ({
     <div>QR 티켓 안내 메일은 공연 24시간 전에 다시 발송됩니다.</div>
   ),
 }));
+
+function createQueryClient() {
+  return new QueryClient({
+    defaultOptions: {
+      queries: { retry: false },
+      mutations: { retry: false },
+    },
+  });
+}
+
+function render(ui: ReactNode) {
+  return rtlRender(
+    <QueryClientProvider client={createQueryClient()}>
+      {ui}
+    </QueryClientProvider>,
+  );
+}
 
 function createReservation(
   overrides: Partial<ReservationDetail> = {},

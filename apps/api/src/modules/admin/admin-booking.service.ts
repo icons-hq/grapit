@@ -28,7 +28,10 @@ import {
   paymentWebhookEvents,
 } from '../../database/schema/index.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
-import { RefundService } from '../refund/refund.service.js';
+import {
+  RefundService,
+  type AdminRefundRequestOptions,
+} from '../refund/refund.service.js';
 import { mapPaymentFailureDiagnostic } from '../payment/payment-failure-diagnostic.js';
 import { safeCsvRows, withUtf8Bom } from './csv-export.util.js';
 import { AdminAuditService } from './admin-audit.service.js';
@@ -1469,12 +1472,14 @@ export class AdminBookingService {
     reservationId: string,
     operatorUserId: string,
     reason: string,
+    options: AdminRefundRequestOptions = {},
   ): Promise<void> {
     try {
       const refundResult = await this.refundService.requestAdminRefund(
         reservationId,
         operatorUserId,
         reason,
+        options,
       );
 
       await this.auditService.write({
@@ -1491,6 +1496,7 @@ export class AdminBookingService {
             idempotent: refundResult.idempotent,
             retryEnqueued: refundResult.retryEnqueued,
             currentState: refundResult.refundTimeline?.currentState ?? null,
+            overrideOptions: options,
           },
         },
       });
@@ -1518,6 +1524,13 @@ export class AdminBookingService {
       });
       throw error;
     }
+  }
+
+  async getRefundPreview(
+    reservationId: string,
+    options: AdminRefundRequestOptions = {},
+  ) {
+    return this.refundService.getAdminRefundPreview(reservationId, options);
   }
 
   async exportReservations(
@@ -2389,6 +2402,7 @@ function mapPaymentStatusOrNull(status: string | null | undefined): PaymentStatu
     status === 'READY'
     || status === 'IN_PROGRESS'
     || status === 'DONE'
+    || status === 'PARTIAL_CANCELED'
     || status === 'CANCELED'
     || status === 'ABORTED'
     || status === 'EXPIRED'
