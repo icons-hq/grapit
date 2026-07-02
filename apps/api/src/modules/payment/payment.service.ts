@@ -40,6 +40,12 @@ import {
   type PaymentCancelPaymentSnapshot,
 } from './payment-cancel-policy.js';
 import {
+  buildCompletedCancelExpectation,
+  getCompletedProviderCancels,
+  hasMatchingCompletedProviderCancel,
+  type TossPaymentCancelRecord,
+} from './toss-cancel-matcher.js';
+import {
   paymentTerminalFailureDiagnostic,
   recordReservationPaymentFailureDiagnostic,
 } from './payment-failure-diagnostic.js';
@@ -186,29 +192,12 @@ function readCancellationQuoteFromMetadata(value: unknown): CancellationQuote | 
   return candidate as CancellationQuote;
 }
 
-function hasMatchingCompletedProviderCancel(
-  completedCancels: NonNullable<TossPaymentResponse['cancels']>,
-  expected: {
-    cancelAmount?: number;
-    currency?: string;
-    cancelRequestId?: string;
-  },
-): boolean {
-  return completedCancels.some((cancel) => {
-    if (
-      expected.cancelRequestId !== undefined
-      && cancel.cancelRequestId !== expected.cancelRequestId
-    ) {
-      return false;
-    }
-    if (
-      expected.cancelAmount !== undefined
-      && cancel.cancelAmount !== expected.cancelAmount
-    ) {
-      return false;
-    }
-    return true;
-  });
+function getRefundCancelRequestAnchor(refund: {
+  requestedAt?: Date | null;
+  sentToPgAt?: Date | null;
+  processingAtPgAt?: Date | null;
+}): Date | null {
+  return refund.processingAtPgAt ?? refund.sentToPgAt ?? refund.requestedAt ?? null;
 }
 
 type WebhookSeatSelection = {
@@ -1121,6 +1110,9 @@ export class PaymentService {
       .select({
         id: refunds.id,
         providerMetadata: refunds.providerMetadata,
+        requestedAt: refunds.requestedAt,
+        sentToPgAt: refunds.sentToPgAt,
+        processingAtPgAt: refunds.processingAtPgAt,
       })
       .from(refunds)
       .where(
@@ -1186,7 +1178,10 @@ export class PaymentService {
       if (
         !hasMatchingCompletedProviderCancel(
           completedCancels,
-          expectedCancelRequest.options,
+          buildCompletedCancelExpectation(
+            expectedCancelRequest.options,
+            getRefundCancelRequestAnchor(matchingRefund),
+          ),
         )
       ) {
         return 'no_local_match';
@@ -1332,6 +1327,9 @@ export class PaymentService {
         .select({
           id: refunds.id,
           providerMetadata: refunds.providerMetadata,
+          requestedAt: refunds.requestedAt,
+          sentToPgAt: refunds.sentToPgAt,
+          processingAtPgAt: refunds.processingAtPgAt,
         })
         .from(refunds)
         .where(
@@ -1357,7 +1355,10 @@ export class PaymentService {
         if (
           !hasMatchingCompletedProviderCancel(
             completedCancels,
-            expectedCancelRequest.options,
+            buildCompletedCancelExpectation(
+              expectedCancelRequest.options,
+              getRefundCancelRequestAnchor(matchingRefund),
+            ),
           )
         ) {
           return 'no_local_match';
@@ -1483,16 +1484,12 @@ export class PaymentService {
 
   private getCompletedProviderCancels(
     providerResponse: TossPaymentResponse,
-  ): NonNullable<TossPaymentResponse['cancels']> {
-    return providerResponse.cancels?.filter((cancel) =>
-      typeof cancel.cancelAmount === 'number'
-      && cancel.cancelAmount > 0
-      && (cancel.cancelStatus === undefined || cancel.cancelStatus === 'DONE')
-    ) ?? [];
+  ): TossPaymentCancelRecord[] {
+    return getCompletedProviderCancels(providerResponse);
   }
 
   private async findPaymentStatusPartialCancelTicketItemCancellations(
-    completedCancels: NonNullable<TossPaymentResponse['cancels']>,
+    completedCancels: readonly TossPaymentCancelRecord[],
     paymentId: string,
   ): Promise<PaymentStatusPartialCancelTicketItemCancellation[] | null> {
     const ticketItemCancellations: PaymentStatusPartialCancelTicketItemCancellation[] = [];

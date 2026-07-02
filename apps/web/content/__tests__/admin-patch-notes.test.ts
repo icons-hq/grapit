@@ -68,6 +68,27 @@ describe('adminPatchNotes', () => {
     );
   });
 
+  it('registers the full-reservation cancellation fee policy PR', () => {
+    const note = adminPatchNotes.find((entry) => entry.prNumber === 183);
+
+    expect(note).toEqual(
+      expect.objectContaining({
+        category: 'feature',
+        title: '전체예매 취소 수수료 정책 적용',
+        githubUrl: 'https://github.com/sangwopark19/grapit/pull/183',
+      }),
+    );
+    expect(note?.summary).toContain('티켓별 취소 수수료 견적');
+    expect(note?.summary).toContain('관리자 환불 권한');
+    expect(note?.highlights).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('cancelRequestId 없는 provider 부분취소'),
+        expect.stringContaining('cancellation_pending'),
+        expect.stringContaining('refund.admin_refund'),
+      ]),
+    );
+  });
+
   it('registers the ticket benefit operations PR', () => {
     const note = adminPatchNotes.find((entry) => entry.prNumber === 173);
 

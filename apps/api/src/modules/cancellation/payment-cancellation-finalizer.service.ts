@@ -81,6 +81,7 @@ export interface FinalizeFullPaymentCancellationInput {
 
 export type PaymentCancellationProviderResponse = {
   status?: string;
+  balanceAmount?: number;
 } & Record<string, unknown>;
 
 export interface FinalizeFullPaymentCancellationResult {
@@ -113,6 +114,27 @@ function toRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function resolveLocalPaymentStatus(
+  providerResponse: PaymentCancellationProviderResponse | undefined,
+  cancellationQuote: CancellationQuote | undefined,
+): 'CANCELED' | 'PARTIAL_CANCELED' {
+  if (providerResponse?.status === 'CANCELED' || providerResponse?.balanceAmount === 0) {
+    return 'CANCELED';
+  }
+
+  if (
+    providerResponse?.status === 'PARTIAL_CANCELED'
+    && typeof providerResponse.balanceAmount === 'number'
+    && providerResponse.balanceAmount > 0
+    && cancellationQuote
+    && cancellationQuote.refundableAmount < cancellationQuote.originalPaymentAmount
+  ) {
+    return 'PARTIAL_CANCELED';
+  }
+
+  return 'CANCELED';
 }
 
 function sanitizeProviderMetadata(value: unknown, key?: string): unknown {
@@ -206,12 +228,10 @@ export class PaymentCancellationFinalizerService {
       input.ticketItemCancellation !== undefined
       && input.providerResponse?.status === 'PARTIAL_CANCELED';
     const fullReservationCancellationQuote = input.fullReservationCancellationQuote;
-    const localPaymentStatus =
-      fullReservationCancellationQuote
-      && fullReservationCancellationQuote.refundableAmount
-        < fullReservationCancellationQuote.originalPaymentAmount
-        ? 'PARTIAL_CANCELED'
-        : 'CANCELED';
+    const localPaymentStatus = resolveLocalPaymentStatus(
+      input.providerResponse,
+      fullReservationCancellationQuote,
+    );
     const seatReleaseStates: SeatReleaseState[] = [];
 
     await this.db.transaction(async (tx) => {

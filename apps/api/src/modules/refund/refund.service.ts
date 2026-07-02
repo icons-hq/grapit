@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -39,6 +40,7 @@ import {
   buildFullReservationPaymentCancelRequest,
   canBuildFullReservationPaymentCancelRequest,
 } from '../payment/payment-cancel-policy.js';
+import { isTossPaymentCancelCompleted } from '../payment/toss-cancel-matcher.js';
 
 type RefundRecord = typeof refunds.$inferSelect;
 type ReservationRecord = typeof reservations.$inferSelect;
@@ -193,68 +195,21 @@ export function getRefundErrorMessage(error: unknown): string {
 
 export function isTossCancelCompleted(
   response: TossPaymentResponse,
-  cancelRequestId?: string,
+  cancelRequestId?: string | null,
   options: {
     allowPartialStatus?: boolean;
     expectedCancelAmount?: number;
     expectedCurrency?: string;
     allowUnidentifiedPartialCancel?: boolean;
+    requestedAt?: Date | string | null;
   } = {},
 ): boolean {
-  const completedPaymentStatuses = options.allowPartialStatus
-    ? new Set(['CANCELED', 'PARTIAL_CANCELED'])
-    : new Set(['CANCELED']);
-
-  if (cancelRequestId) {
-    if (!completedPaymentStatuses.has(response.status)) {
-      return false;
-    }
-
-    return hasMatchingCompletedCancel(response, {
-      cancelRequestId,
-      expectedCancelAmount: options.expectedCancelAmount,
-      expectedCurrency: options.expectedCurrency,
-    });
-  }
-
-  if (response.status === 'PARTIAL_CANCELED') {
-    return options.allowUnidentifiedPartialCancel === true
-      && typeof options.expectedCancelAmount === 'number'
-      && hasMatchingCompletedCancel(response, {
-        expectedCancelAmount: options.expectedCancelAmount,
-        expectedCurrency: options.expectedCurrency,
-      });
-  }
-
-  return completedPaymentStatuses.has(response.status);
-}
-
-function hasMatchingCompletedCancel(
-  response: TossPaymentResponse,
-  expected: {
-    cancelRequestId?: string;
-    expectedCancelAmount?: number;
-    expectedCurrency?: string;
-  },
-): boolean {
-  return response.cancels?.some((cancel) => {
-    if (cancel.cancelStatus !== 'DONE') {
-      return false;
-    }
-    if (
-      expected.cancelRequestId !== undefined
-      && cancel.cancelRequestId !== expected.cancelRequestId
-    ) {
-      return false;
-    }
-    if (
-      expected.expectedCancelAmount !== undefined
-      && cancel.cancelAmount !== expected.expectedCancelAmount
-    ) {
-      return false;
-    }
-    return true;
-  }) ?? false;
+  return isTossPaymentCancelCompleted(response, cancelRequestId, {
+    allowPartialStatus: options.allowPartialStatus,
+    expectedCancelAmount: options.expectedCancelAmount,
+    allowUnidentifiedPartialCancel: options.allowUnidentifiedPartialCancel,
+    requestedAt: options.requestedAt,
+  });
 }
 
 const REFUND_CANCEL_RETRY_METADATA_KEY = 'refundCancelRetry';
@@ -456,6 +411,7 @@ export class RefundService {
           expectedCancelAmount: command.options.cancelAmount,
           expectedCurrency: command.options.currency,
           allowUnidentifiedPartialCancel: true,
+          requestedAt: requestedRefund.requestedAt,
         })
       ) {
         await this.paymentCancellationFinalizer.finalizeFullPaymentCancellation({
@@ -576,6 +532,12 @@ export class RefundService {
     context: ReservationRefundContext,
     options: AdminRefundRequestOptions = {},
   ): FullReservationCancellationQuote {
+    if (context.ticketItems.some((ticketItem) => ticketItem.status === 'cancellation_pending')) {
+      throw new ConflictException(
+        '이미 취소 처리 중인 티켓이 있어 전체 예매 취소 전에 수동 확인이 필요합니다',
+      );
+    }
+
     const activeTicketItems = context.ticketItems.filter(
       (ticketItem) => ticketItem.status === 'active',
     );

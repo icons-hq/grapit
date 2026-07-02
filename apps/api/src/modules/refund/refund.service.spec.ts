@@ -1,4 +1,4 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TossPaymentError } from '../payment/toss-payments.client.js';
 import {
@@ -228,7 +228,35 @@ describe('RefundService', () => {
       allowPartialStatus: true,
       expectedCancelAmount: 70000,
       allowUnidentifiedPartialCancel: true,
+    })).toBe(false);
+    expect(isTossCancelCompleted({
+      status: 'PARTIAL_CANCELED',
+      cancels: [{
+        cancelAmount: 70000,
+        cancelReason: '단순 변심',
+        canceledAt: '2026-05-08T03:05:00.000Z',
+        cancelStatus: 'DONE',
+      }],
+    } as never, undefined, {
+      allowPartialStatus: true,
+      expectedCancelAmount: 70000,
+      allowUnidentifiedPartialCancel: true,
+      requestedAt: '2026-05-08T03:00:00.000Z',
     })).toBe(true);
+    expect(isTossCancelCompleted({
+      status: 'PARTIAL_CANCELED',
+      cancels: [{
+        cancelAmount: 70000,
+        cancelReason: '단순 변심',
+        canceledAt: '2026-05-08T02:59:59.000Z',
+        cancelStatus: 'DONE',
+      }],
+    } as never, undefined, {
+      allowPartialStatus: true,
+      expectedCancelAmount: 70000,
+      allowUnidentifiedPartialCancel: true,
+      requestedAt: '2026-05-08T03:00:00.000Z',
+    })).toBe(false);
   });
 
   it('matches provider-currency partial cancels without requiring per-cancel currency', () => {
@@ -245,6 +273,7 @@ describe('RefundService', () => {
       expectedCancelAmount: 99.05,
       expectedCurrency: 'USD',
       allowUnidentifiedPartialCancel: true,
+      requestedAt: '2026-05-08T03:00:00.000Z',
     })).toBe(true);
   });
 
@@ -426,6 +455,23 @@ describe('RefundService', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('blocks full-reservation cancellation quotes while any ticket item is already cancellation-pending', async () => {
+    const service = new RefundService(
+      {} as never,
+      { cancelPayment: vi.fn() } as never,
+      { finalizeFullPaymentCancellation: vi.fn() } as never,
+      { isAvailable: false, send: vi.fn() } as never,
+    );
+    const context = createSeatLevelContext();
+    context.ticketItems[0]!.status = 'cancellation_pending';
+
+    vi.spyOn(service as never, 'loadReservationContext').mockResolvedValue(context as never);
+    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(null as never);
+
+    await expect(service.getRefundPreview('reservation-1', 'user-1'))
+      .rejects.toBeInstanceOf(ConflictException);
   });
 
   it('previews legacy missing ticket items without backfilling them', async () => {

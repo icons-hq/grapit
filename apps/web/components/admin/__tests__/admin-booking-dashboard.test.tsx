@@ -8,6 +8,7 @@ import type { AdminBookingListItem } from '@grabit/shared';
 
 import { AdminBookingDashboard } from '../admin-booking-dashboard';
 import { apiClient } from '@/lib/api-client';
+import { useAuthStore } from '@/stores/use-auth-store';
 
 const mocks = vi.hoisted(() => ({
   apiGet: vi.fn(),
@@ -307,6 +308,28 @@ describe('AdminBookingDashboard', () => {
   });
 
   beforeEach(() => {
+    useAuthStore.setState({
+      accessToken: 'admin-token',
+      user: {
+        id: 'admin-1',
+        email: 'admin@grapit.test',
+        name: '관리자',
+        phone: '+821012345678',
+        gender: 'unspecified',
+        country: 'KR',
+        birthDate: '1990-01-01',
+        preferredLocale: 'ko',
+        isEmailVerified: true,
+        isPhoneVerified: true,
+        marketingConsent: false,
+        role: 'admin',
+        adminCapabilityBundle: null,
+        adminCapabilities: ['refund.admin_refund'],
+        accountStatus: 'active',
+        createdAt: '2026-05-01T00:00:00.000Z',
+      },
+      isInitialized: true,
+    });
     mocks.apiGet.mockReset();
     mocks.apiGet.mockImplementation(async (url: string) => {
       const path = String(url);
@@ -318,6 +341,30 @@ describe('AdminBookingDashboard', () => {
       }
       return bookingsResponse();
     });
+  });
+
+  it('hides admin refund action when the signed-in admin lacks refund.admin_refund', async () => {
+    const user = userEvent.setup();
+    useAuthStore.setState({
+      user: {
+        ...useAuthStore.getState().user!,
+        adminCapabilities: ['support.manage'],
+      },
+    });
+    mocks.apiGet.mockImplementation(async (url: string) => {
+      const path = String(url);
+      if (path.includes('/api/v1/admin/bookings/11111111-1111-4111-8111-111111111111')) {
+        return bookingDetail();
+      }
+      return bookingsResponse({ bookings: [bookingItem()], total: 1 });
+    });
+
+    renderWithClient(<AdminBookingDashboard />);
+
+    await user.click(await screen.findByRole('button', { name: /김예매 Girl Rules Fanmeet 예매 상세 보기/ }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).queryByRole('button', { name: '환불 처리' })).not.toBeInTheDocument();
   });
 
   it('shows operation funnel KPIs with sold seat count and exact KRW sales revenue', async () => {

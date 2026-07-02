@@ -3134,6 +3134,9 @@ describe('PaymentService', () => {
         .mockReturnValueOnce(createSelectChain([{
           id: refundId,
           providerMetadata: { cancellationQuote },
+          requestedAt: new Date('2026-06-08T02:00:00.000Z'),
+          sentToPgAt: new Date('2026-06-08T02:00:00.000Z'),
+          processingAtPgAt: new Date('2026-06-08T02:00:00.000Z'),
         }]))
         .mockReturnValueOnce(createSelectChain([
           { seatId: 'SVIP:다-159' },

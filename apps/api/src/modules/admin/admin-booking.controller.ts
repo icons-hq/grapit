@@ -77,6 +77,8 @@ export class AdminBookingController {
   }
 
   @Get('bookings/:id/refund-preview')
+  @UseGuards(AdminCapabilitiesGuard)
+  @AdminCapabilities('refund.admin_refund')
   async getRefundPreview(
     @Param('id') id: string,
     @Query(new ZodValidationPipe(adminRefundPreviewQuerySchema))
@@ -122,6 +124,8 @@ export class AdminBookingController {
   }
 
   @Post('bookings/:id/refund')
+  @UseGuards(AdminCapabilitiesGuard)
+  @AdminCapabilities('refund.admin_refund')
   async refundBooking(
     @Param('id') id: string,
     @CurrentUser('id') operatorUserId: string,

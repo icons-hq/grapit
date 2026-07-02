@@ -80,6 +80,10 @@ function getStoredCancellationQuote(refund: RefundRecord): CancellationQuote | n
   return candidate as CancellationQuote;
 }
 
+function getRefundCancelRequestAnchor(refund: RefundRecord): Date | null {
+  return refund.processingAtPgAt ?? refund.sentToPgAt ?? refund.requestedAt ?? null;
+}
+
 @Injectable()
 export class RefundCancelRetryWorker implements OnModuleInit {
   private readonly logger = new Logger(RefundCancelRetryWorker.name);
@@ -162,6 +166,7 @@ export class RefundCancelRetryWorker implements OnModuleInit {
           expectedCancelAmount: command.options.cancelAmount,
           expectedCurrency: command.options.currency,
           allowUnidentifiedPartialCancel: true,
+          requestedAt: getRefundCancelRequestAnchor(context.refund),
         })
       ) {
         await this.finalizeFullPaymentCancellation(context, queried, reason);
@@ -197,6 +202,7 @@ export class RefundCancelRetryWorker implements OnModuleInit {
           expectedCancelAmount: command.options.cancelAmount,
           expectedCurrency: command.options.currency,
           allowUnidentifiedPartialCancel: true,
+          requestedAt: getRefundCancelRequestAnchor(context.refund),
         })
       ) {
         await this.finalizeFullPaymentCancellation(context, response, reason);

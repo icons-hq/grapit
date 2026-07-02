@@ -23,12 +23,13 @@ Grabit applies a NOL Ticket-style cancellation policy per Ticket Item. Each Tick
 - Per-Ticket Item quote amounts are stored on the Ticket Item cancellation fields, while Reservation-level quote summary is stored with the Refund request metadata so retries and webhook reconciliation have a stable anchor.
 - Cancellation preview is advisory. Cancellation confirmation recalculates the authoritative request-time quote and stores that quote before provider cancellation.
 - Cancellation Quote values are fixed at request time. Provider retries, asynchronous completion, and webhook reconciliation must reuse the stored quote instead of recalculating against a later date.
-- When Full Reservation Cancellation leaves any policy-retained captured balance, the Reservation and target Ticket Items become cancelled while the payment record preserves Provider Partial Cancellation semantics instead of being treated as a full payment cancellation.
-- Local payment status must represent `PARTIAL_CANCELED` when the provider leaves any captured balance after Full Reservation Cancellation. Full-refund cancellations keep the normal `CANCELED` payment status.
+- When Full Reservation Cancellation leaves any policy-retained captured balance, the Reservation and target Ticket Items become cancelled while the payment record preserves provider partial-cancellation semantics instead of being treated as a full payment cancellation.
+- Local payment status follows provider truth after cancellation finalization. Provider `CANCELED` or zero remaining provider balance is stored locally as `CANCELED`; local `PARTIAL_CANCELED` is only used when the provider reports `PARTIAL_CANCELED` with a remaining positive balance.
 - Admin cancellation defaults to the same per-Ticket Item fee policy as buyer cancellation.
 - The same-day booking cancellation exception applies to default admin cancellation as well as buyer cancellation.
 - Admins can use a separate Administrative Full Refund Override for cases such as company fault or show cancellation; this must be explicit rather than the default admin refund behavior.
 - Administrative Full Refund Override changes refund economics only; cancelled seats still follow the normal delayed reopen policy.
+- Admin refund preview and execution require the `refund.admin_refund` capability. Override flags do not bypass this capability check.
 - Buyer cancellation and default admin cancellation do not apply to Ticket Items whose Venue Entry has already been processed.
 - Admins can use a separate Administrative Entered Ticket Cancellation Override for controlled test cleanup or exceptional operations cases; this must be explicit and never buyer-facing.
 - Administrative Entered Ticket Cancellation Override bypasses entered-ticket eligibility only. It does not imply Administrative Full Refund Override, and both overrides must be selected explicitly when both are needed.

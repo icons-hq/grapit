@@ -32,6 +32,8 @@ import {
 } from '@/hooks/use-reservations';
 import { formatDateTime } from '@/lib/format-datetime';
 import { getPaymentFailureBucketLabel } from './payment-failure-buckets';
+import { useAuthStore } from '@/stores/use-auth-store';
+import { hasAdminCapability } from '@grabit/shared';
 import type {
   AdminBookingDetail,
   AdminBookingFunnelStatus,
@@ -214,6 +216,8 @@ export function AdminBookingDetailModal({
   const { data: booking, isLoading } = useAdminBookingDetail(
     open ? bookingId : null,
   );
+  const authUser = useAuthStore((state) => state.user);
+  const canAdminRefund = hasAdminCapability(authUser, 'refund.admin_refund');
   const [showRefundForm, setShowRefundForm] = useState(false);
   const [refundReason, setRefundReason] = useState('');
   const [fullRefundOverride, setFullRefundOverride] = useState(false);
@@ -224,13 +228,15 @@ export function AdminBookingDetailModal({
   const refundPreviewQuery = useAdminRefundPreview(
     open && showRefundForm ? bookingId : null,
     { fullRefundOverride, enteredTicketOverride },
-    open && showRefundForm && Boolean(bookingId),
+    open && showRefundForm && Boolean(bookingId) && canAdminRefund,
   );
   const refundQuote = refundPreviewQuery.data?.cancellationQuote ?? null;
+  const refundPreviewCalculating =
+    refundPreviewQuery.isLoading || refundPreviewQuery.isFetching;
   const refundConfirmDisabled =
     !refundReason.trim()
     || isRefunding
-    || refundPreviewQuery.isLoading
+    || refundPreviewCalculating
     || refundPreviewQuery.isError
     || refundQuote === null;
   const [showManualOpenForm, setShowManualOpenForm] = useState(false);
@@ -474,7 +480,7 @@ export function AdminBookingDetailModal({
               </>
             )}
 
-            {booking.status === 'CONFIRMED' && (
+            {booking.status === 'CONFIRMED' && canAdminRefund && (
               <Button
                 variant="destructive"
                 className="mt-4 w-full"
@@ -504,7 +510,7 @@ export function AdminBookingDetailModal({
           </div>
         )}
 
-        {booking && showRefundForm && (
+        {booking && showRefundForm && canAdminRefund && (
           <div className="space-y-4">
             <h3 className="text-base font-semibold text-gray-900">
               환불을 진행하시겠습니까?
@@ -530,11 +536,11 @@ export function AdminBookingDetailModal({
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-600">환불 금액</span>
                 <span className="text-base font-semibold text-gray-900">
-	                  {refundPreviewQuery.isLoading
-	                    ? '계산 중...'
-	                    : refundQuote
-	                      ? formatWon(refundQuote.refundableAmount)
-	                      : '계산 불가'}
+                  {refundPreviewCalculating
+                    ? '계산 중...'
+                    : refundQuote
+                      ? formatWon(refundQuote.refundableAmount)
+                      : '계산 불가'}
                 </span>
               </div>
               {refundPreviewQuery.isError && (
@@ -542,7 +548,7 @@ export function AdminBookingDetailModal({
                   환불 금액을 계산하지 못했습니다. 잠시 후 다시 시도하세요.
                 </p>
               )}
-              {!refundPreviewQuery.isLoading && !refundPreviewQuery.isError && refundQuote === null && (
+              {!refundPreviewCalculating && !refundPreviewQuery.isError && refundQuote === null && (
                 <p className="mt-2 text-xs font-semibold text-[#C62828]">
                   서버 환불 견적이 없어 환불을 진행할 수 없습니다.
                 </p>

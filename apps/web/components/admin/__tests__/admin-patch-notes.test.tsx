@@ -20,21 +20,21 @@ describe('AdminPatchNotesPreview', () => {
     ).toHaveAttribute('href', '/admin/patch-notes');
 
     const article = screen.getByRole('article', {
-      name: 'PR #177 혜택 CSV와 QR 좌석 강조 확장',
+      name: 'PR #183 전체예매 취소 수수료 정책 적용',
     });
 
-    expect(within(article).getByText('PR #177')).toBeInTheDocument();
+    expect(within(article).getByText('PR #183')).toBeInTheDocument();
     expect(
-      within(article).getByText('혜택 CSV와 QR 좌석 강조 확장'),
+      within(article).getByText('전체예매 취소 수수료 정책 적용'),
     ).toBeInTheDocument();
     expect(
-      within(article).getByText(/티켓 좌석번호/),
+      within(article).getByText(/Toss 부분취소 완료 판정/),
     ).toBeInTheDocument();
     expect(
-      within(article).getByText(/고객 연락처\/이름\/이메일 컬럼 추가/),
+      within(article).getByText(/cancelRequestId 없는 provider 부분취소/),
     ).toBeInTheDocument();
     expect(
-      within(article).getByText(/Shared benefit\/ticket\/booking schema tests/),
+      within(article).getByText(/API refund\/payment\/webhook\/retry\/finalizer\/admin Vitest/),
     ).toBeInTheDocument();
   });
 });

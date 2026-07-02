@@ -444,6 +444,7 @@ describe('PaymentCancellationFinalizerService', () => {
       baseInput({
         providerResponse: {
           status: 'PARTIAL_CANCELED',
+          balanceAmount: 32000,
           cancels: [{
             cancelAmount: 70000,
             cancelReason: '일정 변경',
@@ -519,6 +520,7 @@ describe('PaymentCancellationFinalizerService', () => {
       baseInput({
         providerResponse: {
           status: 'PARTIAL_CANCELED',
+          balanceAmount: 2000,
           cancels: [{
             cancelAmount: 100000,
             cancelReason: '일정 변경',
@@ -576,6 +578,62 @@ describe('PaymentCancellationFinalizerService', () => {
           status: 'CANCELED',
           cancels: [{
             cancelAmount: 102000,
+            cancelReason: '일정 변경',
+            cancelStatus: 'DONE',
+          }],
+        },
+        reason: '일정 변경',
+        context: createContext({
+          seats: [{ seatId: '1F:A-10' }],
+        }),
+        fullReservationCancellationQuote: cancellationQuote,
+      }),
+    );
+
+    expect(transaction.updateCalls.find((call) => call.table === payments)?.values)
+      .toMatchObject({ status: 'CANCELED' });
+  });
+
+  it('stores provider-zero-balance partial responses as local canceled payments', async () => {
+    const { service, transaction } = createService(
+      {
+        isAvailable: false,
+        send: vi.fn(),
+      },
+      {
+        ticketItemReturning: [{ id: 'ticket-item-1' }],
+        ticketReturning: [{ id: 'ticket-1', ticketItemId: 'ticket-item-1' }],
+        seatInventoryReturning: [[{ id: 'seat-inventory-1' }]],
+      },
+    );
+    const cancellationQuote = {
+      originalPaymentAmount: 102000,
+      ticketSubtotal: 100000,
+      ticketServiceFeeTotal: 2000,
+      cancellationFeeTotal: 30000,
+      serviceFeeRefundTotal: 0,
+      refundableAmount: 70000,
+      policyCodes: ['SHOW_DAY_2_TO_1'] as const,
+      items: [
+        {
+          ticketItemId: 'ticket-item-1',
+          ticketPrice: 100000,
+          serviceFee: 2000,
+          cancellationFee: 30000,
+          serviceFeeRefund: 0,
+          refundableAmount: 70000,
+          policyCode: 'SHOW_DAY_2_TO_1' as const,
+        },
+      ],
+    };
+
+    await service.finalizeFullPaymentCancellation(
+      baseInput({
+        providerResponse: {
+          status: 'PARTIAL_CANCELED',
+          balanceAmount: 0,
+          cancels: [{
+            cancelAmount: 70000,
             cancelReason: '일정 변경',
             cancelStatus: 'DONE',
           }],

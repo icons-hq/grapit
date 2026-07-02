@@ -18,7 +18,8 @@ export interface TossPaymentResponse {
     cancelReason: string;
     canceledAt: string;
     cancelStatus?: string;
-    cancelRequestId?: string;
+    transactionKey?: string;
+    cancelRequestId?: string | null;
   }>;
 }
 

@@ -12,6 +12,9 @@ function createRetryContext() {
       retryCount: 0,
       status: 'sent_to_pg',
       providerMetadata: { cancelReason: '단순 변심' },
+      requestedAt: new Date('2026-05-08T03:00:00.000Z'),
+      sentToPgAt: new Date('2026-05-08T03:00:00.000Z'),
+      processingAtPgAt: null,
     },
     reservation: {
       id: 'reservation-1',
@@ -331,6 +334,7 @@ describe('RefundCancelRetryWorker', () => {
           {
             cancelAmount: 70000,
             cancelReason: '단순 변심',
+            canceledAt: '2026-05-08T03:05:00.000Z',
             cancelStatus: 'DONE',
           },
         ],
@@ -402,6 +406,7 @@ describe('RefundCancelRetryWorker', () => {
           {
             cancelAmount: 70000,
             cancelReason: '단순 변심',
+            canceledAt: '2026-05-08T03:05:00.000Z',
             cancelStatus: 'DONE',
           },
         ],
