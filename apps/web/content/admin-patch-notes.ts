@@ -22,7 +22,7 @@ const notes = [
     highlights: [
       '회차를 선택한 경우에만 회차 구매자 명단 CSV 버튼 활성화',
       'CONFIRMED 예약과 active ticket item만 포함하도록 서버에서 조건 강제',
-      'Tier, Seat, Floor, Row, Number와 구매자 연락처, 입장 상태를 단일 CSV에 포함',
+      'Tier, Seat, Ticket Seat Number, Floor, Row, Number와 구매자 연락처, 입장 상태를 단일 CSV에 포함',
       'CSV 사유 입력, audit 기록, UTF-8 BOM, formula neutralization은 기존 예약자 export 흐름 재사용',
     ],
     category: 'feature',

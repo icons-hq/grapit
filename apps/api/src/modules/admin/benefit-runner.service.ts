@@ -30,6 +30,7 @@ import {
 import { AdminAuditService } from './admin-audit.service.js';
 import { AdminBenefitsService } from './admin-benefits.service.js';
 import { safeCsvRows, withUtf8Bom } from './csv-export.util.js';
+import { formatTicketSeatNumber } from './ticket-seat-number.util.js';
 
 const CONTENT_TYPE = 'text/csv; charset=utf-8' as const;
 const RESULT_SUMMARY_VERSION = 1 as const;
@@ -1395,19 +1396,6 @@ function entitlementExportRowToCsvValues(row: BenefitEntitlementExportRow): unkn
   ];
 }
 
-function formatTicketSeatNumber(input: {
-  floorLabel: string;
-  tierName: string;
-  row: string;
-  number: string;
-}): string {
-  return [
-    input.floorLabel,
-    input.tierName,
-    `${input.row}열`,
-    `${input.number}번`,
-  ].filter(Boolean).join(' ');
-}
 
 function parseMutualExclusionGroup(group: string | null): string[] {
   return group?.split(',').map((value) => value.trim()).filter(Boolean) ?? [];
