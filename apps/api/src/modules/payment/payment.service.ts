@@ -122,6 +122,7 @@ export interface TossWebhookRequestBody {
     approvedAt?: string;
     canceledAt?: string;
     cancelReason?: string;
+    cancelAmount?: number;
     cancelStatus?: string;
     cancelRequestId?: string;
     easyPay?: string;

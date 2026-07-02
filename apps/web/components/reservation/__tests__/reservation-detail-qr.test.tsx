@@ -987,46 +987,7 @@ describe('ReservationDetailView QR ticket card', () => {
     expect(screen.queryByText('티켓을 취소하시겠습니까?')).not.toBeInTheDocument();
   });
 
-  it('shows the per-ticket cancellation quote before opening the cancel modal', async () => {
-    (apiClient.get as ReturnType<typeof vi.fn>).mockResolvedValue({
-      reservationId: 'reservation-detail-qr',
-      reservationNumber: 'GRP-27-DETAIL-QR',
-      paymentKey: rawPaymentKey,
-      refundableAmount: 107800,
-      canRequestRefund: true,
-      cancelledSeatHoldWindowMinutes: { min: 1, max: 10 },
-      refundTimeline: null,
-      cancellationQuote: {
-        originalPaymentAmount: 158000,
-        ticketSubtotal: 154000,
-        ticketServiceFeeTotal: 4000,
-        cancellationFeeTotal: 46200,
-        serviceFeeRefundTotal: 0,
-        refundableAmount: 107800,
-        policyCodes: ['SHOW_DAY_2_TO_1'],
-        items: [
-          {
-            ticketItemId: firstTicketItemId,
-            ticketPrice: 77000,
-            serviceFee: 2000,
-            cancellationFee: 23100,
-            serviceFeeRefund: 0,
-            refundableAmount: 53900,
-            policyCode: 'SHOW_DAY_2_TO_1',
-          },
-          {
-            ticketItemId: secondTicketItemId,
-            ticketPrice: 77000,
-            serviceFee: 2000,
-            cancellationFee: 23100,
-            serviceFeeRefund: 0,
-            refundableAmount: 53900,
-            policyCode: 'SHOW_DAY_2_TO_1',
-          },
-        ],
-      },
-    });
-
+  it('does not fetch the cancellation quote before opening the cancel modal', () => {
     render(
       <ReservationDetailView
         reservation={createReservation({ totalAmount: 158000 })}
@@ -1035,7 +996,8 @@ describe('ReservationDetailView QR ticket card', () => {
       />,
     );
 
-    expect(await screen.findByText('107,800원')).toBeInTheDocument();
+    expect(apiClient.get).not.toHaveBeenCalled();
+    expect(screen.getByText('취소 진행 시 계산')).toBeInTheDocument();
     expect(screen.queryByText('취소수수료')).not.toBeInTheDocument();
   });
 

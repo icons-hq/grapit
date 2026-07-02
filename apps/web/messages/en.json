@@ -649,6 +649,7 @@
       "refundMethod": "Refund method",
       "refundMethodValue": "{paymentMethod} payment cancellation",
       "expectedDeposit": "Expected deposit time",
+      "quoteAvailableInModal": "Calculated when cancellation starts",
       "quoteLoading": "Calculating the refund amount.",
       "quoteError": "Could not calculate the refund amount. Try again shortly.",
       "quoteUnavailable": "A server refund quote is unavailable, so cancellation cannot continue.",

@@ -683,10 +683,6 @@ export function ReservationDetailView({
   const detailCopy = copy.detail;
   const completeCopy = visibleCopy.bookingExtra.completeCard;
   const [cancelModalOpen, setCancelModalOpen] = useState(false);
-  const refundPreviewQuery = useRefundPreview(
-    reservation.id,
-    reservation.status === 'CONFIRMED',
-  );
   const statusConfig = STATUS_CONFIG[reservation.status];
   const statusLabel = copy.status[statusConfig.labelKey];
   const paymentMethodLabel = getPaymentMethodLabel(reservation, detailCopy);
@@ -702,6 +698,10 @@ export function ReservationDetailView({
   const isDeadlinePassed = new Date(reservation.cancelDeadline) < new Date();
   const isPaymentDeadlinePassed = hasDatePassed(paymentDeadlineAt);
   const canCancel = reservation.status === 'CONFIRMED' && !isDeadlinePassed;
+  const refundPreviewQuery = useRefundPreview(
+    reservation.id,
+    canCancel && cancelModalOpen,
+  );
   const hasSeatLevelTicketItems = hasPersistedTicketItems(reservation);
   const ticketItemRefundTotal = hasSeatLevelTicketItems
     ? reservation.ticketItems.reduce(
@@ -718,14 +718,18 @@ export function ReservationDetailView({
   } else {
     displayedRefundAmount = reservation.totalAmount;
   }
+  const showRefundQuoteIntentCopy =
+    reservation.status === 'CONFIRMED' && !cancelModalOpen;
   const displayedRefundValue =
     displayedRefundAmount !== null
       ? formatPrice(displayedRefundAmount, locale)
-      : refundPreviewQuery.isLoading
-        ? copy.cancel.quoteLoading
-        : refundPreviewQuery.isError
-          ? copy.cancel.quoteError
-          : copy.cancel.quoteUnavailable;
+      : showRefundQuoteIntentCopy
+        ? copy.cancel.quoteAvailableInModal
+        : refundPreviewQuery.isLoading
+          ? copy.cancel.quoteLoading
+          : refundPreviewQuery.isError
+            ? copy.cancel.quoteError
+            : copy.cancel.quoteUnavailable;
   const displayedRefundValueClassName =
     displayedRefundAmount !== null
       ? undefined

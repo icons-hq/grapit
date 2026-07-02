@@ -649,6 +649,7 @@
       "refundMethod": "退款方式",
       "refundMethodValue": "通过 {paymentMethod} 取消付款",
       "expectedDeposit": "预计到账时间",
+      "quoteAvailableInModal": "开始取消时计算",
       "quoteLoading": "正在计算退款金额。",
       "quoteError": "无法计算退款金额。请稍后重试。",
       "quoteUnavailable": "服务器退款报价不可用，无法继续取消。",

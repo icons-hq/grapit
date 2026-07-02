@@ -7,6 +7,7 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { normalizeSeatIdentity, TICKET_SERVICE_FEE_KRW } from '@grabit/shared';
 import type {
@@ -339,7 +340,7 @@ export class RefundService {
     reservationId: string,
     userId: string,
   ): Promise<RefundPreviewResponse> {
-    const context = await this.ensureTicketItemsAvailableForQuote(
+    const context = await this.preparePreviewContextForQuote(
       await this.loadReservationContext(reservationId, userId),
     );
     const existingRefund = await this.findExistingRefund(reservationId);
@@ -381,7 +382,7 @@ export class RefundService {
     reservationId: string,
     options: AdminRefundRequestOptions = {},
   ): Promise<RefundPreviewResponse> {
-    const context = await this.ensureTicketItemsAvailableForQuote(
+    const context = await this.preparePreviewContextForQuote(
       await this.loadReservationContextByReservationId(reservationId),
     );
     const existingRefund = await this.findExistingRefund(reservationId);
@@ -758,6 +759,37 @@ export class RefundService {
     return refreshedContext;
   }
 
+  protected async preparePreviewContextForQuote(
+    context: ReservationRefundContext,
+  ): Promise<ReservationRefundContext> {
+    if (
+      context.reservation.status !== 'CONFIRMED'
+      || context.seats.length === 0
+    ) {
+      return context;
+    }
+
+    const missingSeats = this.findMissingSeatsForQuote(context);
+    if (missingSeats.length === 0) {
+      return context;
+    }
+
+    const previewContext = {
+      ...context,
+      ticketItems: [
+        ...context.ticketItems,
+        ...await this.buildVirtualTicketItemsForQuote(context, missingSeats),
+      ],
+    };
+    const stillMissingSeats = this.findMissingSeatsForQuote(previewContext);
+
+    if (stillMissingSeats.length > 0) {
+      throw new BadRequestException('취소 수수료 계산에 필요한 티켓 정보가 모든 좌석을 포함하지 않습니다');
+    }
+
+    return previewContext;
+  }
+
   private findMissingSeatsForQuote(
     context: ReservationRefundContext,
   ): ReservationSeatRecord[] {
@@ -781,6 +813,71 @@ export class RefundService {
       return normalizeSeatIdentity({ seatId: ticketItem.seatId }).seatKey;
     }
     return null;
+  }
+
+  private async buildVirtualTicketItemsForQuote(
+    context: ReservationRefundContext,
+    seats: ReservationSeatRecord[],
+  ): Promise<TicketItemRecord[]> {
+    const now = new Date();
+    const seatTotal = context.seats.reduce((total, seat) => total + seat.price, 0);
+    const serviceFeePerTicket =
+      context.reservation.totalAmount ===
+        seatTotal + context.seats.length * TICKET_SERVICE_FEE_KRW
+      && context.payment.amount ===
+        seatTotal + context.seats.length * TICKET_SERVICE_FEE_KRW
+        ? TICKET_SERVICE_FEE_KRW
+        : 0;
+    const admissionState: 'entered' | 'not_entered' = await this.hasLegacyEntryEvidence(context)
+      ? 'entered'
+      : 'not_entered';
+
+    return seats.map((seat) => {
+      const identity = normalizeSeatIdentity({ seatId: seat.seatId });
+
+      return {
+        id: this.buildVirtualTicketItemId(context.reservation.id, identity.seatKey),
+        reservationId: context.reservation.id,
+        paymentId: context.payment.id,
+        showtimeId: context.reservation.showtimeId,
+        seatId: identity.seatId,
+        seatKey: identity.seatKey,
+        floorKey: identity.floorKey,
+        floorLabel: identity.floorLabel,
+        tierName: seat.tierName,
+        row: seat.row,
+        number: seat.number,
+        price: seat.price,
+        serviceFee: serviceFeePerTicket,
+        status: 'active' as const,
+        admissionState,
+        enteredAt: admissionState === 'entered' ? now : null,
+        cancelledAt: null,
+        cancelReason: null,
+        cancellationFee: 0,
+        serviceFeeRefund: 0,
+        refundableAmount: 0,
+        reopenState: 'not_required' as const,
+        reopenHoldUntil: null,
+        reopenJobId: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+    });
+  }
+
+  private buildVirtualTicketItemId(reservationId: string, seatKey: string): string {
+    const hash = createHash('sha256')
+      .update(`${reservationId}:${seatKey}`)
+      .digest('hex');
+
+    return [
+      hash.slice(0, 8),
+      hash.slice(8, 12),
+      `4${hash.slice(13, 16)}`,
+      `8${hash.slice(17, 20)}`,
+      hash.slice(20, 32),
+    ].join('-');
   }
 
   protected async backfillMissingTicketItems(

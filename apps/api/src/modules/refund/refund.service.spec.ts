@@ -63,7 +63,17 @@ function createContext() {
       cancelledSeatHoldMinMinutes: 1,
       cancelledSeatHoldMaxMinutes: 10,
     },
-    seats: [{ seatId: '1F:A-10' }],
+    seats: [
+      {
+        id: 'reservation-seat-1',
+        reservationId: 'reservation-1',
+        seatId: '1F:A-10',
+        tierName: 'VIP',
+        price: 130000,
+        row: 'A',
+        number: '10',
+      },
+    ],
     ticketItems: [
       {
         id: 'ticket-item-1',
@@ -96,7 +106,26 @@ function createSeatLevelContext() {
       ...context.showtime,
       dateTime: new Date('2026-07-18T10:00:00.000Z'),
     },
-    seats: [{ seatId: '1F:A-10' }, { seatId: '1F:A-11' }],
+    seats: [
+      {
+        id: 'reservation-seat-1',
+        reservationId: 'reservation-1',
+        seatId: '1F:A-10',
+        tierName: 'VIP',
+        price: 100000,
+        row: 'A',
+        number: '10',
+      },
+      {
+        id: 'reservation-seat-2',
+        reservationId: 'reservation-1',
+        seatId: '1F:A-11',
+        tierName: 'VIP',
+        price: 100000,
+        row: 'A',
+        number: '11',
+      },
+    ],
     ticketItems: [
       {
         id: 'ticket-item-1',
@@ -399,7 +428,83 @@ describe('RefundService', () => {
     }
   });
 
-	  it('backfills missing ticket items before quote calculation for confirmed reservations', async () => {
+  it('previews legacy missing ticket items without backfilling them', async () => {
+    vi.setSystemTime(new Date('2026-07-16T00:10:00.000+09:00'));
+
+    const service = new RefundService(
+      {} as never,
+      { cancelPayment: vi.fn() } as never,
+      { finalizeFullPaymentCancellation: vi.fn() } as never,
+      { isAvailable: false, send: vi.fn() } as never,
+    );
+    const context = createSeatLevelContext();
+    const legacyContext = {
+      ...context,
+      ticketItems: [],
+    };
+    const backfillSpy = vi
+      .spyOn(service as never, 'backfillMissingTicketItems')
+      .mockResolvedValue(undefined as never);
+
+    vi.spyOn(service as never, 'loadReservationContext').mockResolvedValue(legacyContext as never);
+    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(null as never);
+    vi.spyOn(service as never, 'hasLegacyEntryEvidence').mockResolvedValue(false as never);
+
+    const result = await service.getRefundPreview('reservation-1', 'user-1');
+
+    expect(backfillSpy).not.toHaveBeenCalled();
+    expect(result.cancellationQuote).toMatchObject({
+      ticketSubtotal: 200000,
+      ticketServiceFeeTotal: 4000,
+      cancellationFeeTotal: 60000,
+      refundableAmount: 140000,
+    });
+    expect(result.cancellationQuote?.items).toEqual([
+      expect.objectContaining({
+        ticketItemId: expect.stringMatching(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$/,
+        ),
+        ticketPrice: 100000,
+        serviceFee: 2000,
+      }),
+      expect.objectContaining({
+        ticketItemId: expect.stringMatching(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$/,
+        ),
+        ticketPrice: 100000,
+        serviceFee: 2000,
+      }),
+    ]);
+  });
+
+  it('keeps admin refund preview read-only for legacy missing ticket items', async () => {
+    const service = new RefundService(
+      {} as never,
+      { cancelPayment: vi.fn() } as never,
+      { finalizeFullPaymentCancellation: vi.fn() } as never,
+      { isAvailable: false, send: vi.fn() } as never,
+    );
+    const context = createSeatLevelContext();
+    const legacyContext = {
+      ...context,
+      ticketItems: [],
+    };
+    const backfillSpy = vi
+      .spyOn(service as never, 'backfillMissingTicketItems')
+      .mockResolvedValue(undefined as never);
+
+    vi.spyOn(service as never, 'loadReservationContextByReservationId')
+      .mockResolvedValue(legacyContext as never);
+    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(null as never);
+    vi.spyOn(service as never, 'hasLegacyEntryEvidence').mockResolvedValue(false as never);
+
+    const result = await service.getAdminRefundPreview('reservation-1');
+
+    expect(backfillSpy).not.toHaveBeenCalled();
+    expect(result.cancellationQuote?.items).toHaveLength(2);
+  });
+
+  it('backfills missing ticket items before user refund requests', async () => {
     const service = new RefundService(
       {} as never,
       { cancelPayment: vi.fn() } as never,
@@ -417,12 +522,12 @@ describe('RefundService', () => {
       ensureTicketItemsAvailableForQuote: backfillSpy,
     });
     vi.spyOn(service as never, 'loadReservationContext').mockResolvedValue(legacyContext as never);
-    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(null as never);
+    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(createRefund() as never);
 
-    await service.getRefundPreview('reservation-1', 'user-1');
+    await service.requestRefund('reservation-1', 'user-1', '단순 변심');
 
-	    expect(backfillSpy).toHaveBeenCalledWith(legacyContext);
-	  });
+    expect(backfillSpy).toHaveBeenCalledWith(legacyContext);
+  });
 
   it('backfills only uncovered reservation seats before quote calculation', async () => {
     const service = new RefundService(
