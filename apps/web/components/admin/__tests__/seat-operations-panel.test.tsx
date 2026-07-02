@@ -7,6 +7,7 @@ import userEvent from '@testing-library/user-event';
 
 import { AdminBookingDetailModal } from '../admin-booking-detail-modal';
 import { apiClient } from '@/lib/api-client';
+import { useAuthStore } from '@/stores/use-auth-store';
 
 const mocks = vi.hoisted(() => ({
   apiGet: vi.fn(),
@@ -258,6 +259,28 @@ describe('Admin seat operations UI', () => {
 
   it('labels refund payment method without raw enum text', async () => {
     const user = userEvent.setup();
+    useAuthStore.setState({
+      accessToken: 'admin-token',
+      user: {
+        id: 'admin-1',
+        email: 'admin@grapit.test',
+        name: '관리자',
+        phone: '+821012345678',
+        gender: 'unspecified',
+        country: 'KR',
+        birthDate: '1990-01-01',
+        preferredLocale: 'ko',
+        isEmailVerified: true,
+        isPhoneVerified: true,
+        marketingConsent: false,
+        role: 'admin',
+        adminCapabilityBundle: null,
+        adminCapabilities: ['refund.admin_refund'],
+        accountStatus: 'active',
+        createdAt: '2026-05-01T00:00:00.000Z',
+      },
+      isInitialized: true,
+    });
     mocks.bookingDetail.mockReturnValue({
       data: {
         ...cancelledBooking(),
