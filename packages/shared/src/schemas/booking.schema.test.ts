@@ -7,15 +7,18 @@ import {
   adminBookingFunnelStatusSchema,
   adminBookingListQuerySchema,
   adminBookingListItemSchema,
+  adminRefundSchema,
   bookingStatsSchema,
   cancelTicketItemSchema,
   confirmPaymentSchema,
+  paymentInfoSchema,
   paymentFailureBucketSchema,
   paymentFailureDiagnosticSchema,
   paymentMethodAttributionSchema,
   prepareReservationResponseSchema,
   prepareReservationSchema,
   providerChargeQuoteSchema,
+  refundPreviewResponseSchema,
   reservationDetailSchema,
 } from './booking.schema';
 import {
@@ -299,6 +302,100 @@ describe('prepareReservationSchema booking consent contract', () => {
     expect(parsed.reason).toBe('단순 변심');
     expect(() => cancelTicketItemSchema.parse({ reason: '' })).toThrow(/취소 사유/);
     expect(() => cancelTicketItemSchema.parse({ reason: 'x'.repeat(201) })).toThrow(/200자/);
+  });
+
+  it('accepts local partial-canceled payment status for fee-bearing cancellations', () => {
+    const parsed = paymentInfoSchema.parse({
+      paymentKey: 'pk_live',
+      method: 'CARD',
+      amount: 100000,
+      status: 'PARTIAL_CANCELED',
+      paidAt: '2026-07-01T10:00:00.000Z',
+    });
+
+    expect(parsed).toMatchObject({ status: 'PARTIAL_CANCELED' });
+  });
+
+  it('accepts full-reservation refund previews with an itemized cancellation quote', () => {
+    const parsed = refundPreviewResponseSchema.parse({
+      reservationId: '00000000-0000-4000-8000-000000000001',
+      reservationNumber: 'GRP-20260701-ABCDE',
+      paymentKey: 'pk_live',
+      refundableAmount: 70000,
+      canRequestRefund: true,
+      cancelledSeatHoldWindowMinutes: { min: 1, max: 10 },
+      refundTimeline: null,
+      cancellationQuote: {
+        originalPaymentAmount: 100000,
+        ticketSubtotal: 98000,
+        ticketServiceFeeTotal: 2000,
+        cancellationFeeTotal: 30000,
+        serviceFeeRefundTotal: 0,
+        refundableAmount: 70000,
+        policyCodes: ['SHOW_DAY_2_TO_1'],
+        items: [
+          {
+            ticketItemId: '00000000-0000-4000-8000-000000000101',
+            ticketPrice: 100000,
+            serviceFee: 2000,
+            cancellationFee: 30000,
+            serviceFeeRefund: 0,
+            refundableAmount: 70000,
+            policyCode: 'SHOW_DAY_2_TO_1',
+          },
+        ],
+      },
+    });
+
+    expect(parsed.refundableAmount).toBe(70000);
+    if (parsed.cancellationQuote === null) {
+      throw new Error('expected cancellationQuote');
+    }
+    expect(parsed.cancellationQuote.items[0]?.policyCode).toBe('SHOW_DAY_2_TO_1');
+  });
+
+  it('requires an explicit nullable cancellation quote on refund previews', () => {
+    const basePreview = {
+      reservationId: '00000000-0000-4000-8000-000000000001',
+      reservationNumber: 'GRP-20260701-ABCDE',
+      paymentKey: 'pk_live',
+      refundableAmount: 70000,
+      canRequestRefund: false,
+      cancelledSeatHoldWindowMinutes: { min: 1, max: 10 },
+      refundTimeline: {
+        currentState: 'FAILED',
+        requestedAt: '2026-07-01T10:00:00.000Z',
+        customerServiceCtaVisible: true,
+      },
+    };
+
+    expect(() => refundPreviewResponseSchema.parse(basePreview)).toThrow();
+    expect(refundPreviewResponseSchema.parse({
+      ...basePreview,
+      cancellationQuote: null,
+    }).cancellationQuote).toBeNull();
+    expect(() => refundPreviewResponseSchema.parse({
+      ...basePreview,
+      canRequestRefund: true,
+      cancellationQuote: null,
+    })).toThrow();
+  });
+
+  it('accepts explicit admin refund override flags', () => {
+    const parsed = adminRefundSchema.parse({
+      reason: '공연사 귀책 전액 환불',
+      fullRefundOverride: true,
+      enteredTicketOverride: true,
+    });
+
+    expect(parsed).toMatchObject({
+      fullRefundOverride: true,
+      enteredTicketOverride: true,
+    });
+    expect(adminRefundSchema.parse({ reason: '일반 관리자 취소' })).toMatchObject({
+      fullRefundOverride: false,
+      enteredTicketOverride: false,
+    });
   });
 
   it('requires itemized booking consent rows before reservation prepare', () => {

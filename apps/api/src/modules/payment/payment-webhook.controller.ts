@@ -22,6 +22,7 @@ const paymentStatusPriority = {
   ABORTED: 3,
   EXPIRED: 3,
   CANCELED: 4,
+  PARTIAL_CANCELED: 4,
 } as const;
 
 const tossWebhookDatetimeSchema = z.string().min(1);
@@ -598,6 +599,8 @@ export class PaymentWebhookController {
         return 'DONE' as const;
       case 'CANCELED':
         return 'CANCELED' as const;
+      case 'PARTIAL_CANCELED':
+        return 'PARTIAL_CANCELED' as const;
       case 'ABORTED':
         return 'ABORTED' as const;
       case 'EXPIRED':
@@ -616,7 +619,10 @@ export class PaymentWebhookController {
       return false;
     }
 
-    if (progress.paymentStatus === 'CANCELED') {
+    if (
+      progress.paymentStatus === 'CANCELED'
+      || progress.paymentStatus === 'PARTIAL_CANCELED'
+    ) {
       return true;
     }
 

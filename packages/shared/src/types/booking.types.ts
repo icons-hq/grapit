@@ -1,5 +1,9 @@
 import type { ConsentCaptureItem } from '../schemas/consent.schema';
-import type { TicketItem } from '../schemas/ticket-item.schema';
+import type {
+  TicketItem,
+  TicketItemCancellationPolicyCode,
+  TicketItemCancellationPreview,
+} from '../schemas/ticket-item.schema';
 
 export type SeatState = 'available' | 'locked' | 'sold' | 'held' | 'disabled';
 
@@ -135,6 +139,7 @@ export type PaymentStatus =
   | 'READY'
   | 'IN_PROGRESS'
   | 'DONE'
+  | 'PARTIAL_CANCELED'
   | 'CANCELED'
   | 'ABORTED'
   | 'EXPIRED';
@@ -155,6 +160,33 @@ export interface RefundTimeline {
   failedAt?: string | null;
   expectedDepositAt?: string | null;
   customerServiceCtaVisible: boolean;
+}
+
+export type CancellationQuoteItem = TicketItemCancellationPreview;
+
+export interface CancellationQuote {
+  originalPaymentAmount: number;
+  ticketSubtotal: number;
+  ticketServiceFeeTotal: number;
+  cancellationFeeTotal: number;
+  serviceFeeRefundTotal: number;
+  refundableAmount: number;
+  policyCodes: TicketItemCancellationPolicyCode[];
+  items: CancellationQuoteItem[];
+}
+
+export interface RefundPreviewResponse {
+  reservationId: string;
+  reservationNumber: string;
+  paymentKey: string;
+  refundableAmount: number;
+  canRequestRefund: boolean;
+  cancelledSeatHoldWindowMinutes: {
+    min: number;
+    max: number;
+  };
+  refundTimeline: RefundTimeline | null;
+  cancellationQuote: CancellationQuote | null;
 }
 
 export type CancelledSeatHoldStatus = 'HELD' | 'RELEASED' | 'MANUAL_OPENED';
@@ -452,4 +484,6 @@ export interface CancelTicketItemRequest {
 
 export interface AdminRefundRequest {
   reason: string;
+  fullRefundOverride?: boolean;
+  enteredTicketOverride?: boolean;
 }

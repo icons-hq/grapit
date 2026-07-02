@@ -2535,15 +2535,12 @@ describe('PaymentService', () => {
       expect(finalizer.finalizeFullPaymentCancellation).toHaveBeenCalledWith(
         expect.objectContaining({
           source: 'cancel_webhook',
-          ticketItemCancellation: {
+          ticketItemCancellation: expect.objectContaining({
             ticketItemId,
-            seatId: 'SVIP:다-159',
-            floorKey: 'SVIP',
-            seatKey: 'SVIP:다-159',
             cancellationFee: 0,
             serviceFeeRefund: 2000,
             refundableAmount: 362000,
-          },
+          }),
           context: expect.objectContaining({
             seats: [{
               seatId: 'SVIP:다-159',
@@ -2764,7 +2761,9 @@ describe('PaymentService', () => {
         expect.objectContaining({
           ticketItemCancellation: expect.objectContaining({
             ticketItemId: ticketItemId1,
-            seatKey: 'SVIP:다-159',
+          }),
+          context: expect.objectContaining({
+            seats: [expect.objectContaining({ seatKey: 'SVIP:다-159' })],
           }),
           reason: '단순 변심',
         }),
@@ -2774,7 +2773,9 @@ describe('PaymentService', () => {
         expect.objectContaining({
           ticketItemCancellation: expect.objectContaining({
             ticketItemId: ticketItemId2,
-            seatKey: 'SVIP:다-160',
+          }),
+          context: expect.objectContaining({
+            seats: [expect.objectContaining({ seatKey: 'SVIP:다-160' })],
           }),
           reason: '다른 좌석으로 재예매',
         }),
@@ -2938,6 +2939,114 @@ describe('PaymentService', () => {
           cancels: [{
             cancelAmount: 362000,
             cancelReason: '다른 좌석으로 재예매',
+            canceledAt: '2026-06-08T11:17:00+09:00',
+            cancelStatus: 'DONE',
+          }],
+        },
+      );
+
+      expect(result).toBe('no_local_match');
+      expect(finalizer.finalizeFullPaymentCancellation).not.toHaveBeenCalled();
+    });
+
+    it('does not finalize stored full-reservation refund quotes when provider partial amount mismatches', async () => {
+      const reservationId = randomUUID();
+      const paymentId = randomUUID();
+      const refundId = randomUUID();
+      const cancellationQuote = {
+        originalPaymentAmount: 724000,
+        ticketSubtotal: 720000,
+        ticketServiceFeeTotal: 4000,
+        cancellationFeeTotal: 60000,
+        serviceFeeRefundTotal: 0,
+        refundableAmount: 664000,
+        policyCodes: ['SHOW_DAY_2_TO_1'],
+        items: [
+          {
+            ticketItemId: randomUUID(),
+            ticketPrice: 360000,
+            serviceFee: 2000,
+            cancellationFee: 30000,
+            serviceFeeRefund: 0,
+            refundableAmount: 332000,
+            policyCode: 'SHOW_DAY_2_TO_1',
+          },
+          {
+            ticketItemId: randomUUID(),
+            ticketPrice: 360000,
+            serviceFee: 2000,
+            cancellationFee: 30000,
+            serviceFeeRefund: 0,
+            refundableAmount: 332000,
+            policyCode: 'SHOW_DAY_2_TO_1',
+          },
+        ],
+      };
+      const finalizer = {
+        finalizeFullPaymentCancellation: vi.fn(),
+      };
+      (service as unknown as {
+        paymentCancellationFinalizer: typeof finalizer;
+      }).paymentCancellationFinalizer = finalizer;
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          reservationNumber: 'GRP-20260608-FULL-MISMATCH',
+          showtimeId: 'showtime-1',
+          status: 'CONFIRMED',
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: paymentId,
+          reservationId,
+          paymentKey: 'pay_full_quote_mismatch',
+          tossOrderId: 'GRP-20260608-FULL-MISMATCH',
+          method: 'CARD',
+          provider: 'CARD',
+          currency: 'KRW',
+          amount: 724000,
+          status: 'DONE',
+          providerMetadata: null,
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: 'showtime-1',
+          performanceId: 'performance-1',
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          cancelledSeatHoldMinMinutes: 1,
+          cancelledSeatHoldMaxMinutes: 10,
+        }]))
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: refundId,
+          providerMetadata: { cancellationQuote },
+        }]));
+
+      const result = await service.finalizePaymentStatusPartialCancelWebhook(
+        {
+          eventId: 'evt-payment-partial-full-mismatch',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_full_quote_mismatch',
+            orderId: 'GRP-20260608-FULL-MISMATCH',
+            status: 'PARTIAL_CANCELED',
+            method: 'CARD',
+            provider: 'CARD',
+            totalAmount: 724000,
+          },
+        },
+        {
+          paymentKey: 'pay_full_quote_mismatch',
+          orderId: 'GRP-20260608-FULL-MISMATCH',
+          method: 'CARD',
+          totalAmount: 724000,
+          status: 'PARTIAL_CANCELED',
+          balanceAmount: 60000,
+          approvedAt: '2026-06-08T11:00:00+09:00',
+          cancels: [{
+            cancelAmount: 362000,
+            cancelReason: '단순 변심',
             canceledAt: '2026-06-08T11:17:00+09:00',
             cancelStatus: 'DONE',
           }],

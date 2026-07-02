@@ -17,6 +17,7 @@ import type {
   AdminBookingListResponse,
   AdminReservationExportFilter,
   PaymentStatus,
+  RefundPreviewResponse,
   TicketEmailDelivery,
   UserProfile,
 } from '@grabit/shared';
@@ -64,6 +65,22 @@ export function useCancelReservation() {
     },
   });
 }
+
+export function useRefundPreview(id: string | null, enabled = true) {
+  return useQuery({
+    queryKey: ['reservations', id, 'refund-preview'],
+    queryFn: () =>
+      apiClient.get<RefundPreviewResponse>(
+        `/api/v1/reservations/${id}/refund-preview`,
+      ),
+    enabled: Boolean(id) && enabled,
+  });
+}
+
+export type AdminRefundPreviewOptions = {
+  fullRefundOverride?: boolean;
+  enteredTicketOverride?: boolean;
+};
 
 export function useRequestAccountEmailVerification() {
   return useMutation({
@@ -162,11 +179,45 @@ export function useAdminBookingDetail(id: string | null) {
   });
 }
 
+export function useAdminRefundPreview(
+  id: string | null,
+  options: AdminRefundPreviewOptions,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: ['admin', 'bookings', id, 'refund-preview', options],
+    queryFn: () => {
+      const searchParams = new URLSearchParams({
+        fullRefundOverride: String(options.fullRefundOverride ?? false),
+        enteredTicketOverride: String(options.enteredTicketOverride ?? false),
+      });
+      return apiClient.get<RefundPreviewResponse>(
+        `/api/v1/admin/bookings/${id}/refund-preview?${searchParams.toString()}`,
+      );
+    },
+    enabled: Boolean(id) && enabled,
+  });
+}
+
 export function useAdminRefund() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
-      apiClient.post(`/api/v1/admin/bookings/${id}/refund`, { reason }),
+    mutationFn: ({
+      id,
+      reason,
+      fullRefundOverride,
+      enteredTicketOverride,
+    }: {
+      id: string;
+      reason: string;
+      fullRefundOverride?: boolean;
+      enteredTicketOverride?: boolean;
+    }) =>
+      apiClient.post(`/api/v1/admin/bookings/${id}/refund`, {
+        reason,
+        fullRefundOverride,
+        enteredTicketOverride,
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'bookings'] });
     },

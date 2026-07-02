@@ -2,7 +2,11 @@ import { z } from 'zod';
 
 import { benefitEntitlementSchema } from './benefit.schema';
 import { consentCaptureItemSchema } from './consent.schema';
-import { ticketItemSchema } from './ticket-item.schema';
+import {
+  ticketItemCancellationPolicyCodeSchema,
+  ticketItemCancellationPreviewSchema,
+  ticketItemSchema,
+} from './ticket-item.schema';
 
 const isoDatetime = (label: string) =>
   z.string().datetime({ message: `${label}은 ISO datetime 형식이어야 합니다` });
@@ -150,6 +154,39 @@ export const refundTimelineSchema = z.object({
   failedAt: isoDatetime('환불 실패 시각').nullable().optional(),
   expectedDepositAt: isoDatetime('환불 예정 입금 시각').nullable().optional(),
   customerServiceCtaVisible: z.boolean(),
+});
+
+export const cancellationQuoteSchema = z.object({
+  originalPaymentAmount: z.number().int().min(0),
+  ticketSubtotal: z.number().int().min(0),
+  ticketServiceFeeTotal: z.number().int().min(0),
+  cancellationFeeTotal: z.number().int().min(0),
+  serviceFeeRefundTotal: z.number().int().min(0),
+  refundableAmount: z.number().int().min(0),
+  policyCodes: z.array(ticketItemCancellationPolicyCodeSchema),
+  items: z.array(ticketItemCancellationPreviewSchema).min(1),
+});
+
+export const refundPreviewResponseSchema = z.object({
+  reservationId: z.string().uuid('유효한 reservation ID가 필요합니다'),
+  reservationNumber: z.string().min(1, '예매 번호가 필요합니다'),
+  paymentKey: z.string().min(1, '결제 키가 필요합니다'),
+  refundableAmount: z.number().int().min(0),
+  canRequestRefund: z.boolean(),
+  cancelledSeatHoldWindowMinutes: z.object({
+    min: z.number().int().positive(),
+    max: z.number().int().positive(),
+  }),
+  refundTimeline: refundTimelineSchema.nullable(),
+  cancellationQuote: cancellationQuoteSchema.nullable(),
+}).superRefine((preview, ctx) => {
+  if (preview.canRequestRefund && preview.cancellationQuote === null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: '취소 가능한 환불 미리보기에는 cancellationQuote가 필요합니다',
+      path: ['cancellationQuote'],
+    });
+  }
 });
 
 export const cancelledSeatHoldSchema = z.object({
@@ -310,6 +347,8 @@ export const adminRefundSchema = z.object({
     .string()
     .min(1, '환불 사유를 입력해주세요')
     .max(200, '환불 사유는 200자 이내로 입력해주세요'),
+  fullRefundOverride: z.boolean().default(false),
+  enteredTicketOverride: z.boolean().default(false),
 });
 
 export type AdminRefundInput = z.infer<typeof adminRefundSchema>;
@@ -322,6 +361,7 @@ export const paymentInfoSchema = z.object({
     'READY',
     'IN_PROGRESS',
     'DONE',
+    'PARTIAL_CANCELED',
     'CANCELED',
     'ABORTED',
     'EXPIRED',
@@ -355,6 +395,7 @@ const paymentStatusSchema = z.enum([
   'READY',
   'IN_PROGRESS',
   'DONE',
+  'PARTIAL_CANCELED',
   'CANCELED',
   'ABORTED',
   'EXPIRED',

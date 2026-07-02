@@ -53,6 +53,7 @@ const PAYMENT_STATUS_OPTIONS = [
   { value: 'IN_PROGRESS', label: '결제 진행 중' },
   { value: 'DONE', label: '결제 완료' },
   { value: 'CANCELED', label: '결제 취소' },
+  { value: 'PARTIAL_CANCELED', label: '부분 환불 완료' },
   { value: 'ABORTED', label: '결제 중단' },
   { value: 'EXPIRED', label: '결제 만료' },
 ] as const satisfies ReadonlyArray<{
@@ -220,9 +221,16 @@ export function AdminBookingDashboard() {
     setDetailOpen(true);
   }
 
-  function handleRefund(id: string, reason: string) {
+  function handleRefund(
+    id: string,
+    reason: string,
+    options: {
+      fullRefundOverride: boolean;
+      enteredTicketOverride: boolean;
+    },
+  ) {
     refundMutation.mutate(
-      { id, reason },
+      { id, reason, ...options },
       {
         onSuccess: () => {
           toast.success('환불이 완료되었습니다');

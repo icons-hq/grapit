@@ -29,12 +29,14 @@ import type {
   PaymentProvider,
   ReservationStatus,
   PaymentStatus,
+  CancellationQuote,
 } from '@grabit/shared';
 import { TossPaymentsClient, type TossPaymentResponse } from './toss-payments.client.js';
 import { ProviderChargeQuoteService } from './provider-charge-quote.service.js';
 import { PaymentCancellationFinalizerService } from '../cancellation/payment-cancellation-finalizer.service.js';
 import {
   buildFullPaymentCancelRequest,
+  buildFullReservationPaymentCancelRequest,
   type PaymentCancelPaymentSnapshot,
 } from './payment-cancel-policy.js';
 import {
@@ -163,6 +165,56 @@ type WebhookPaymentSnapshot = {
   providerMetadata?: unknown;
   providerChargeAmountMinor?: number | null;
 };
+
+function readCancellationQuoteFromMetadata(value: unknown): CancellationQuote | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const quote = (value as { cancellationQuote?: unknown }).cancellationQuote;
+  if (!quote || typeof quote !== 'object' || Array.isArray(quote)) {
+    return null;
+  }
+  const candidate = quote as Partial<CancellationQuote>;
+  if (
+    typeof candidate.originalPaymentAmount !== 'number'
+    || typeof candidate.refundableAmount !== 'number'
+    || !Array.isArray(candidate.items)
+  ) {
+    return null;
+  }
+  return candidate as CancellationQuote;
+}
+
+function hasMatchingCompletedProviderCancel(
+  completedCancels: NonNullable<TossPaymentResponse['cancels']>,
+  expected: {
+    cancelAmount?: number;
+    currency?: string;
+    cancelRequestId?: string;
+  },
+): boolean {
+  return completedCancels.some((cancel) => {
+    if (
+      expected.cancelRequestId !== undefined
+      && cancel.cancelRequestId !== expected.cancelRequestId
+    ) {
+      return false;
+    }
+    if (
+      expected.cancelAmount !== undefined
+      && cancel.cancelAmount !== expected.cancelAmount
+    ) {
+      return false;
+    }
+    if (expected.currency !== undefined) {
+      const cancelCurrency = (cancel as { currency?: unknown }).currency;
+      if (cancelCurrency !== expected.currency) {
+        return false;
+      }
+    }
+    return true;
+  });
+}
 
 type WebhookSeatSelection = {
   seatId: string;
@@ -1046,6 +1098,8 @@ export class PaymentService {
         amount: payments.amount,
         status: payments.status,
         providerMetadata: payments.providerMetadata,
+        providerChargeCurrency: payments.providerChargeCurrency,
+        providerChargeAmountMinor: payments.providerChargeAmountMinor,
       })
       .from(payments)
       .where(
@@ -1071,6 +1125,7 @@ export class PaymentService {
     const [matchingRefund] = await this.db
       .select({
         id: refunds.id,
+        providerMetadata: refunds.providerMetadata,
       })
       .from(refunds)
       .where(
@@ -1109,8 +1164,38 @@ export class PaymentService {
       .where(eq(reservationSeats.reservationId, reservation.id));
     const ticketItemCancellation =
       await this.findCancelWebhookTicketItemCancellation(payload, payment.id);
-    if (providerResponse.status === 'PARTIAL_CANCELED' && !ticketItemCancellation) {
+    const fullReservationCancellationQuote = matchingRefund
+      ? readCancellationQuoteFromMetadata(matchingRefund.providerMetadata)
+      : null;
+    const completedCancels = this.getCompletedProviderCancels(providerResponse);
+    if (
+      providerResponse.status === 'PARTIAL_CANCELED'
+      && !ticketItemCancellation
+      && !fullReservationCancellationQuote
+    ) {
       return 'no_local_match';
+    }
+    const reason = this.resolveCancelWebhookReason(payload, providerResponse);
+    if (
+      providerResponse.status === 'PARTIAL_CANCELED'
+      && matchingRefund
+      && fullReservationCancellationQuote
+    ) {
+      const expectedCancelRequest = buildFullReservationPaymentCancelRequest({
+        payment,
+        cancellationQuote: fullReservationCancellationQuote,
+        reason,
+        idempotencyKey: `refund-cancel:${matchingRefund.id}`,
+        cancelRequestIdSeed: matchingRefund.id,
+      });
+      if (
+        !hasMatchingCompletedProviderCancel(
+          completedCancels,
+          expectedCancelRequest.options,
+        )
+      ) {
+        return 'no_local_match';
+      }
     }
     const seats = ticketItemCancellation
       ? [{
@@ -1124,6 +1209,9 @@ export class PaymentService {
       source: 'cancel_webhook',
       ...(matchingRefund ? { refundId: matchingRefund.id } : {}),
       ...(ticketItemCancellation ? { ticketItemCancellation } : {}),
+      ...(fullReservationCancellationQuote
+        ? { fullReservationCancellationQuote }
+        : {}),
       context: {
         reservation: {
           id: reservation.id,
@@ -1138,7 +1226,7 @@ export class PaymentService {
         bookingPolicy: bookingPolicy ?? null,
         seats,
       },
-      reason: this.resolveCancelWebhookReason(payload, providerResponse),
+      reason,
       providerResponse: providerResponse as unknown as Record<string, unknown>,
       actor: { kind: 'system' },
     });
@@ -1243,15 +1331,84 @@ export class PaymentService {
       );
 
     if (!ticketItemCancellations?.length) {
+      const [matchingRefund] = await this.db
+        .select({
+          id: refunds.id,
+          providerMetadata: refunds.providerMetadata,
+        })
+        .from(refunds)
+        .where(
+          and(
+            eq(refunds.reservationId, reservation.id),
+            eq(refunds.paymentId, payment.id),
+            inArray(refunds.status, ['sent_to_pg', 'processing_at_pg', 'failed']),
+          ),
+        );
+      const fullReservationCancellationQuote = matchingRefund
+        ? readCancellationQuoteFromMetadata(matchingRefund.providerMetadata)
+        : null;
+
+      if (fullReservationCancellationQuote) {
+        const reason = this.resolveCancelWebhookReason(payload, providerResponse);
+        const expectedCancelRequest = buildFullReservationPaymentCancelRequest({
+          payment,
+          cancellationQuote: fullReservationCancellationQuote,
+          reason,
+          idempotencyKey: `refund-cancel:${matchingRefund.id}`,
+          cancelRequestIdSeed: matchingRefund.id,
+        });
+        if (
+          !hasMatchingCompletedProviderCancel(
+            completedCancels,
+            expectedCancelRequest.options,
+          )
+        ) {
+          return 'no_local_match';
+        }
+
+        const reservationSeatSelections = await this.db
+          .select({
+            seatId: reservationSeats.seatId,
+          })
+          .from(reservationSeats)
+          .where(eq(reservationSeats.reservationId, reservation.id));
+
+        await this.paymentCancellationFinalizer.finalizeFullPaymentCancellation({
+          source: 'cancel_webhook',
+          refundId: matchingRefund.id,
+          fullReservationCancellationQuote,
+          context: {
+            reservation: {
+              id: reservation.id,
+              showtimeId: reservation.showtimeId,
+              reservationNumber: reservation.reservationNumber,
+            },
+            payment: {
+              id: payment.id,
+              paymentKey: payment.paymentKey,
+              providerMetadata: payment.providerMetadata,
+            },
+            bookingPolicy: bookingPolicy ?? null,
+            seats: reservationSeatSelections,
+          },
+          reason,
+          providerResponse: providerResponse as unknown as Record<string, unknown>,
+          actor: { kind: 'system' },
+        });
+
+        return 'finalized';
+      }
       return 'no_local_match';
     }
 
     for (const ticketItemCancellation of ticketItemCancellations) {
-      const {
-        cancelReason,
-        status: _status,
-        ...finalizerTicketItemCancellation
-      } = ticketItemCancellation;
+      const cancelReason = ticketItemCancellation.cancelReason;
+      const finalizerTicketItemCancellation = {
+        ticketItemId: ticketItemCancellation.ticketItemId,
+        cancellationFee: ticketItemCancellation.cancellationFee,
+        serviceFeeRefund: ticketItemCancellation.serviceFeeRefund,
+        refundableAmount: ticketItemCancellation.refundableAmount,
+      };
 
       await this.paymentCancellationFinalizer.finalizeFullPaymentCancellation({
         source: 'cancel_webhook',
@@ -2254,6 +2411,8 @@ export class PaymentService {
         return 'DONE';
       case 'CANCELED':
         return 'CANCELED';
+      case 'PARTIAL_CANCELED':
+        return 'PARTIAL_CANCELED';
       case 'ABORTED':
         return 'ABORTED';
       case 'EXPIRED':

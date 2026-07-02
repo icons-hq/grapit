@@ -72,6 +72,7 @@ export const ticketItemCancellationPolicyCodeSchema = z.enum([
   'SHOW_DAY_9_TO_7',
   'SHOW_DAY_6_TO_3',
   'SHOW_DAY_2_TO_1',
+  'ADMIN_FULL_REFUND_OVERRIDE',
 ]);
 
 export const ticketItemCancellationPreviewSchema = z.object({

@@ -370,6 +370,18 @@ describe('AdminBookingDashboard', () => {
     expect(lastCall).not.toContain('status=');
   });
 
+  it('sends partial-canceled payment status as a query param', async () => {
+    const user = userEvent.setup();
+    renderWithClient(<AdminBookingDashboard />);
+
+    await selectOption(user, '결제 상태', '부분 환불 완료');
+
+    await waitFor(() => {
+      const lastCall = String(mocks.apiGet.mock.calls.at(-1)?.[0]);
+      expect(lastCall).toContain('paymentStatus=PARTIAL_CANCELED');
+    });
+  });
+
   it('sends performance, showtime, and seat filters as query params', async () => {
     const user = userEvent.setup();
     renderWithClient(<AdminBookingDashboard />);

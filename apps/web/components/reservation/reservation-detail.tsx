@@ -17,6 +17,7 @@ import { CancelConfirmModal } from '@/components/reservation/cancel-confirm-moda
 import { RefundTimeline } from '@/components/reservation/refund-timeline';
 import { SeatHighlightLabel } from '@/components/reservation/seat-highlight-label';
 import { TicketEmailDeliveryPanel } from '@/components/reservation/ticket-email-delivery-panel';
+import { useRefundPreview } from '@/hooks/use-reservations';
 import {
   buildQrCheckInUrl,
   QrTicketImage,
@@ -682,6 +683,10 @@ export function ReservationDetailView({
   const detailCopy = copy.detail;
   const completeCopy = visibleCopy.bookingExtra.completeCard;
   const [cancelModalOpen, setCancelModalOpen] = useState(false);
+  const refundPreviewQuery = useRefundPreview(
+    reservation.id,
+    cancelModalOpen && reservation.status === 'CONFIRMED',
+  );
   const statusConfig = STATUS_CONFIG[reservation.status];
   const statusLabel = copy.status[statusConfig.labelKey];
   const paymentMethodLabel = getPaymentMethodLabel(reservation, detailCopy);
@@ -705,9 +710,12 @@ export function ReservationDetailView({
       )
     : 0;
   const displayedRefundAmount =
-    hasSeatLevelTicketItems && ticketItemRefundTotal > 0
+    refundPreviewQuery.data?.cancellationQuote?.refundableAmount
+      ?? (hasSeatLevelTicketItems && ticketItemRefundTotal > 0
       ? ticketItemRefundTotal
-      : reservation.totalAmount;
+      : reservation.totalAmount);
+  const cancelModalRefundAmount =
+    refundPreviewQuery.data?.cancellationQuote?.refundableAmount ?? 0;
   const showCancelButton = reservation.status === 'CONFIRMED';
   const progressGuidance = getProgressGuidance(
     reservation,
@@ -1172,15 +1180,18 @@ export function ReservationDetailView({
 
       {/* Cancel modal */}
       <CancelConfirmModal
-        open={cancelModalOpen}
-        onOpenChange={setCancelModalOpen}
-        refundAmount={displayedRefundAmount}
-        paymentMethod={paymentMethodLabel}
-        expectedDepositAt={reservation.refundTimeline.expectedDepositAt ?? null}
-        releaseWindowMinutes={reservation.cancelledSeatHold?.releaseWindowMinutes ?? null}
-        onConfirm={onCancel}
-        isLoading={isCancelling}
-      />
+	        open={cancelModalOpen}
+	        onOpenChange={setCancelModalOpen}
+	        refundAmount={cancelModalRefundAmount}
+	        cancellationQuote={refundPreviewQuery.data?.cancellationQuote ?? null}
+	        paymentMethod={paymentMethodLabel}
+	        expectedDepositAt={reservation.refundTimeline.expectedDepositAt ?? null}
+	        releaseWindowMinutes={reservation.cancelledSeatHold?.releaseWindowMinutes ?? null}
+	        isPreviewLoading={refundPreviewQuery.isLoading}
+	        isPreviewError={refundPreviewQuery.isError}
+	        onConfirm={onCancel}
+	        isLoading={isCancelling}
+	      />
     </div>
   );
 }

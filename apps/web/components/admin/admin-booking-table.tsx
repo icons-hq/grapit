@@ -56,6 +56,7 @@ const PAYMENT_STATUS_LABELS: Record<PaymentStatus, string> = {
   READY: '결제 준비',
   IN_PROGRESS: '결제 진행 중',
   DONE: '결제 완료',
+  PARTIAL_CANCELED: '부분 환불 완료',
   CANCELED: '결제 취소',
   ABORTED: '결제 중단',
   EXPIRED: '결제 만료',

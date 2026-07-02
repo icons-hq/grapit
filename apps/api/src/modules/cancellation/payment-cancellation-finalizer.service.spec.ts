@@ -92,8 +92,13 @@ function createTransactionMock(options: {
   refundReturning?: Array<{ id: string }>;
   reservationReturning?: Array<{ id: string }>;
   paymentReturning?: Array<{ id: string }>;
-  ticketReturning?: Array<{ id: string }>;
-  ticketItemReturning?: Array<{ id: string }>;
+  ticketReturning?: Array<{ id: string; ticketItemId: string | null }>;
+  ticketItemReturning?: Array<{
+    id: string;
+    seatId?: string;
+    floorKey?: string | null;
+    seatKey?: string | null;
+  }>;
   seatInventoryReturning?: Array<Array<SeatInventoryReturningRow>>;
   postCommitSeatInventoryReturning?: Array<Array<{ id: string }>>;
 } = {}) {
@@ -104,8 +109,8 @@ function createTransactionMock(options: {
   const reservationReturning = options.reservationReturning ?? [{ id: 'reservation-1' }];
   const paymentReturning = options.paymentReturning ?? [{ id: 'payment-1' }];
   const ticketReturning = options.ticketReturning ?? [
-    { id: 'ticket-1' },
-    { id: 'ticket-2' },
+    { id: 'ticket-1', ticketItemId: 'ticket-item-1' },
+    { id: 'ticket-2', ticketItemId: 'ticket-item-2' },
   ];
   const ticketItemReturning = options.ticketItemReturning ?? [
     { id: 'ticket-item-1' },
@@ -360,6 +365,212 @@ describe('PaymentCancellationFinalizerService', () => {
     expect(transaction.postCommitUpdateCalls).toHaveLength(0);
   });
 
+  it('stores fee-bearing full-reservation cancellations as local partial-canceled payments', async () => {
+    const { service, transaction } = createService(
+      {
+        isAvailable: false,
+        send: vi.fn(),
+      },
+      {
+        ticketItemReturning: [{ id: 'ticket-item-1' }],
+        ticketReturning: [{ id: 'ticket-1', ticketItemId: 'ticket-item-1' }],
+        seatInventoryReturning: [[{ id: 'seat-inventory-1' }]],
+      },
+    );
+    const cancellationQuote = {
+      originalPaymentAmount: 102000,
+      ticketSubtotal: 100000,
+      ticketServiceFeeTotal: 2000,
+      cancellationFeeTotal: 30000,
+      serviceFeeRefundTotal: 0,
+      refundableAmount: 70000,
+      policyCodes: ['SHOW_DAY_2_TO_1'] as const,
+      items: [
+        {
+          ticketItemId: 'ticket-item-1',
+          ticketPrice: 100000,
+          serviceFee: 2000,
+          cancellationFee: 30000,
+          serviceFeeRefund: 0,
+          refundableAmount: 70000,
+          policyCode: 'SHOW_DAY_2_TO_1' as const,
+        },
+      ],
+    };
+
+    await service.finalizeFullPaymentCancellation(
+      baseInput({
+        providerResponse: {
+          status: 'PARTIAL_CANCELED',
+          cancels: [{
+            cancelAmount: 70000,
+            cancelReason: '일정 변경',
+            cancelStatus: 'DONE',
+          }],
+        },
+        reason: '일정 변경',
+        context: createContext({
+          seats: [{ seatId: '1F:A-10' }],
+        }),
+        fullReservationCancellationQuote: cancellationQuote,
+      }),
+    );
+
+    expect(transaction.updateCalls.find((call) => call.table === reservations)?.values)
+      .toMatchObject({ status: 'CANCELLED' });
+    expect(transaction.updateCalls.find((call) => call.table === payments)?.values)
+      .toMatchObject({
+        status: 'PARTIAL_CANCELED',
+        providerMetadata: expect.objectContaining({
+          cancellationQuote,
+        }),
+      });
+    expect(transaction.updateCalls.find((call) => call.table === refunds)?.values)
+      .toMatchObject({
+        resultCode: 'PARTIAL_CANCELED',
+        providerMetadata: expect.objectContaining({
+          cancellationQuote,
+        }),
+      });
+    expect(transaction.updateCalls.find((call) => call.table === ticketItems)?.values)
+      .toMatchObject({
+        cancellationFee: 30000,
+        serviceFeeRefund: 0,
+        refundableAmount: 70000,
+      });
+  });
+
+  it('stores service-fee-retaining full-reservation cancellations as local partial-canceled payments', async () => {
+    const { service, transaction } = createService(
+      {
+        isAvailable: false,
+        send: vi.fn(),
+      },
+      {
+        ticketItemReturning: [{ id: 'ticket-item-1' }],
+        ticketReturning: [{ id: 'ticket-1', ticketItemId: 'ticket-item-1' }],
+        seatInventoryReturning: [[{ id: 'seat-inventory-1' }]],
+      },
+    );
+    const cancellationQuote = {
+      originalPaymentAmount: 102000,
+      ticketSubtotal: 100000,
+      ticketServiceFeeTotal: 2000,
+      cancellationFeeTotal: 0,
+      serviceFeeRefundTotal: 0,
+      refundableAmount: 100000,
+      policyCodes: ['SHOW_DAY_2_TO_1'] as const,
+      items: [
+        {
+          ticketItemId: 'ticket-item-1',
+          ticketPrice: 100000,
+          serviceFee: 2000,
+          cancellationFee: 0,
+          serviceFeeRefund: 0,
+          refundableAmount: 100000,
+          policyCode: 'SHOW_DAY_2_TO_1' as const,
+        },
+      ],
+    };
+
+    await service.finalizeFullPaymentCancellation(
+      baseInput({
+        providerResponse: {
+          status: 'PARTIAL_CANCELED',
+          cancels: [{
+            cancelAmount: 100000,
+            cancelReason: '일정 변경',
+            cancelStatus: 'DONE',
+          }],
+        },
+        reason: '일정 변경',
+        context: createContext({
+          seats: [{ seatId: '1F:A-10' }],
+        }),
+        fullReservationCancellationQuote: cancellationQuote,
+      }),
+    );
+
+    expect(transaction.updateCalls.find((call) => call.table === payments)?.values)
+      .toMatchObject({ status: 'PARTIAL_CANCELED' });
+  });
+
+  it('keeps full-reservation cancellations as canceled payments when the full original payment is refunded', async () => {
+    const { service, transaction } = createService(
+      {
+        isAvailable: false,
+        send: vi.fn(),
+      },
+      {
+        ticketItemReturning: [{ id: 'ticket-item-1' }],
+        ticketReturning: [{ id: 'ticket-1', ticketItemId: 'ticket-item-1' }],
+        seatInventoryReturning: [[{ id: 'seat-inventory-1' }]],
+      },
+    );
+    const cancellationQuote = {
+      originalPaymentAmount: 102000,
+      ticketSubtotal: 100000,
+      ticketServiceFeeTotal: 2000,
+      cancellationFeeTotal: 0,
+      serviceFeeRefundTotal: 2000,
+      refundableAmount: 102000,
+      policyCodes: ['SAME_DAY_BEFORE_MIDNIGHT'] as const,
+      items: [
+        {
+          ticketItemId: 'ticket-item-1',
+          ticketPrice: 100000,
+          serviceFee: 2000,
+          cancellationFee: 0,
+          serviceFeeRefund: 2000,
+          refundableAmount: 102000,
+          policyCode: 'SAME_DAY_BEFORE_MIDNIGHT' as const,
+        },
+      ],
+    };
+
+    await service.finalizeFullPaymentCancellation(
+      baseInput({
+        providerResponse: {
+          status: 'CANCELED',
+          cancels: [{
+            cancelAmount: 102000,
+            cancelReason: '일정 변경',
+            cancelStatus: 'DONE',
+          }],
+        },
+        reason: '일정 변경',
+        context: createContext({
+          seats: [{ seatId: '1F:A-10' }],
+        }),
+        fullReservationCancellationQuote: cancellationQuote,
+      }),
+    );
+
+    expect(transaction.updateCalls.find((call) => call.table === payments)?.values)
+      .toMatchObject({ status: 'CANCELED' });
+  });
+
+  it('revokes a legacy reservation-level QR ticket for full-reservation cancellation', async () => {
+    const { service, transaction } = createService(
+      {
+        isAvailable: false,
+        send: vi.fn(),
+      },
+      {
+        ticketReturning: [{ id: 'legacy-ticket-1', ticketItemId: null }],
+      },
+    );
+
+    await service.finalizeFullPaymentCancellation(baseInput());
+
+    const ticketUpdate = transaction.updateCalls.find((call) => call.table === tickets);
+    expect(ticketUpdate?.values).toMatchObject({ status: 'revoked' });
+    expect(ticketUpdate?.returningSelection).toEqual({
+      id: tickets.id,
+      ticketItemId: tickets.ticketItemId,
+    });
+  });
+
   it('inactivates non-redeemed benefit entitlements for cancelled ticket items without reassigning limited benefits', async () => {
     const { service, transaction } = createService({
       isAvailable: false,
@@ -394,7 +605,7 @@ describe('PaymentCancellationFinalizerService', () => {
       },
       {
         ticketItemReturning: [{ id: 'ticket-item-1' }],
-        ticketReturning: [{ id: 'ticket-1' }],
+        ticketReturning: [{ id: 'ticket-1', ticketItemId: 'ticket-item-1' }],
         seatInventoryReturning: [[{ id: 'seat-inventory-1' }]],
       },
     );
@@ -440,7 +651,7 @@ describe('PaymentCancellationFinalizerService', () => {
       },
       {
         ticketItemReturning: [{ id: 'ticket-item-1' }],
-        ticketReturning: [{ id: 'ticket-1' }],
+        ticketReturning: [{ id: 'ticket-1', ticketItemId: 'ticket-item-1' }],
         seatInventoryReturning: [[{ id: 'seat-inventory-1' }]],
       },
     );
@@ -861,13 +1072,13 @@ describe('PaymentCancellationFinalizerService', () => {
       ),
     };
     const { service, transaction, transactionCommitted } = createService(pgBoss, {
-      ticketReturning: [{ id: 'ticket-1' }],
+      ticketReturning: [{ id: 'ticket-1', ticketItemId: 'ticket-item-1' }],
     });
 
     await expect(service.finalizeFullPaymentCancellation(baseInput())).rejects.toThrow();
 
     expect(transaction.updateCalls.find((call) => call.table === tickets)
-      ?.returningSelection).toEqual({ id: tickets.id });
+      ?.returningSelection).toEqual({ id: tickets.id, ticketItemId: tickets.ticketItemId });
     expect(transaction.updateCalls.find((call) => call.table === ticketItems)
       ?.returningSelection).toEqual({ id: ticketItems.id });
     expect(transaction.updateCalls.some((call) => call.table === seatInventories)).toBe(false);
@@ -901,7 +1112,65 @@ describe('PaymentCancellationFinalizerService', () => {
     expect(objectGraphContains(where, '1F:already-cancelled-sibling')).toBe(false);
   });
 
-  it('scopes ticket revocation to target ticket item ids and not broad reservation tickets', async () => {
+  it('scopes full-reservation quote seat release to quoted ticket item seats only', async () => {
+    const { service, transaction } = createService({
+      isAvailable: false,
+      send: vi.fn(),
+    }, {
+      ticketItemReturning: [{
+        id: 'ticket-item-1',
+        seatId: 'A-10',
+        floorKey: '1F',
+        seatKey: '1F:A-10',
+      }],
+      ticketReturning: [{ id: 'ticket-1', ticketItemId: 'ticket-item-1' }],
+      seatInventoryReturning: [[{ id: 'seat-inventory-1' }], [{ id: 'seat-inventory-2' }]],
+    });
+    const cancellationQuote = {
+      originalPaymentAmount: 204000,
+      ticketSubtotal: 100000,
+      ticketServiceFeeTotal: 2000,
+      cancellationFeeTotal: 30000,
+      serviceFeeRefundTotal: 0,
+      refundableAmount: 70000,
+      policyCodes: ['SHOW_DAY_2_TO_1'] as const,
+      items: [
+        {
+          ticketItemId: 'ticket-item-1',
+          ticketPrice: 100000,
+          serviceFee: 2000,
+          cancellationFee: 30000,
+          serviceFeeRefund: 0,
+          refundableAmount: 70000,
+          policyCode: 'SHOW_DAY_2_TO_1' as const,
+        },
+      ],
+    };
+
+    await service.finalizeFullPaymentCancellation(
+      baseInput({
+        context: createContext({
+          seats: [
+            { seatId: '1F:A-10' },
+            { seatId: '1F:already-cancelled-sibling' },
+          ],
+        }),
+        fullReservationCancellationQuote: cancellationQuote,
+      }),
+    );
+
+    const seatUpdates = transaction.updateCalls.filter(
+      (call) => call.table === seatInventories,
+    );
+    expect(seatUpdates).toHaveLength(1);
+    expect(objectGraphContains(seatUpdates[0]?.whereArgs[0], '1F:A-10')).toBe(true);
+    expect(objectGraphContains(
+      seatUpdates[0]?.whereArgs[0],
+      '1F:already-cancelled-sibling',
+    )).toBe(false);
+  });
+
+  it('scopes ticket revocation to target ticket item ids plus legacy reservation tickets', async () => {
     const { service, transaction } = createService({
       isAvailable: false,
       send: vi.fn(),
@@ -921,7 +1190,10 @@ describe('PaymentCancellationFinalizerService', () => {
 
     const ticketUpdate = transaction.updateCalls[ticketUpdateIndex]!;
     const where = ticketUpdate.whereArgs[0];
-    expect(ticketUpdate.returningSelection).toEqual({ id: tickets.id });
+    expect(ticketUpdate.returningSelection).toEqual({
+      id: tickets.id,
+      ticketItemId: tickets.ticketItemId,
+    });
     expect(objectGraphContains(where, tickets.reservationId)).toBe(true);
     expect(objectGraphContains(where, tickets.paymentId)).toBe(true);
     expect(objectGraphContains(where, tickets.showtimeId)).toBe(true);
@@ -943,9 +1215,9 @@ describe('PaymentCancellationFinalizerService', () => {
     };
     const { service, transaction, transactionCommitted } = createService(pgBoss, {
       ticketReturning: [
-        { id: 'ticket-1' },
-        { id: 'ticket-2' },
-        { id: 'ticket-extra-sibling' },
+        { id: 'ticket-1', ticketItemId: 'ticket-item-1' },
+        { id: 'ticket-2', ticketItemId: 'ticket-item-2' },
+        { id: 'ticket-extra-sibling', ticketItemId: 'ticket-item-extra-sibling' },
       ],
     });
 
@@ -954,7 +1226,7 @@ describe('PaymentCancellationFinalizerService', () => {
     expect(transaction.updateCalls.find((call) => call.table === ticketItems)
       ?.returningSelection).toEqual({ id: ticketItems.id });
     expect(transaction.updateCalls.find((call) => call.table === tickets)
-      ?.returningSelection).toEqual({ id: tickets.id });
+      ?.returningSelection).toEqual({ id: tickets.id, ticketItemId: tickets.ticketItemId });
     expect(transaction.updateCalls.some((call) => call.table === seatInventories)).toBe(false);
     expect(transactionCommitted).not.toHaveBeenCalled();
     expect(pgBoss.send).not.toHaveBeenCalled();

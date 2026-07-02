@@ -1275,6 +1275,7 @@ describe('AdminBookingService', () => {
         'reservation-1',
         'admin-1',
         '관리자 환불',
+        {},
       );
       expect(mockAdminAuditService.write).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -1290,6 +1291,7 @@ describe('AdminBookingService', () => {
               idempotent: false,
               retryEnqueued: false,
               currentState: 'COMPLETED',
+              overrideOptions: {},
             }),
           }),
         }),

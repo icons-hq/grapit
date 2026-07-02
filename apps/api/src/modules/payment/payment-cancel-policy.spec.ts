@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildFullPaymentCancelRequest,
+  buildFullReservationPaymentCancelRequest,
   buildTicketItemPaymentCancelRequest,
   resolvePaymentCancelSecretScope,
   type PaymentCancelPaymentSnapshot,
@@ -171,6 +172,72 @@ describe('payment cancel policy', () => {
       idempotencyKey: 'ticket-item-cancel:ticket-item-domestic-1',
       secretKeyScope: 'default',
       cancelAmount: 50_000,
+    });
+  });
+
+  it('builds fee-bearing full-reservation cancel as a domestic partial cancel', () => {
+    const request = buildFullReservationPaymentCancelRequest({
+      payment: basePayment({ amount: 102_000 }),
+      cancellationQuote: {
+        originalPaymentAmount: 102_000,
+        refundableAmount: 70_000,
+      },
+      reason: 'reservation cancel with fee',
+      idempotencyKey: 'refund-cancel:refund-1',
+      cancelRequestIdSeed: 'refund-1',
+    });
+
+    expect(request.options).toEqual({
+      idempotencyKey: 'refund-cancel:refund-1',
+      secretKeyScope: 'default',
+      cancelAmount: 70_000,
+    });
+  });
+
+  it('keeps no-fee full-reservation cancel as a provider full cancel', () => {
+    const request = buildFullReservationPaymentCancelRequest({
+      payment: basePayment({ amount: 102_000 }),
+      cancellationQuote: {
+        originalPaymentAmount: 102_000,
+        refundableAmount: 102_000,
+      },
+      reason: 'same-day full refund',
+      idempotencyKey: 'refund-cancel:refund-1',
+      cancelRequestIdSeed: 'refund-1',
+    });
+
+    expect(request.options).toEqual({
+      idempotencyKey: 'refund-cancel:refund-1',
+      secretKeyScope: 'default',
+    });
+    expect(request.options).not.toHaveProperty('cancelAmount');
+  });
+
+  it('allocates provider currency for fee-bearing full-reservation cancels', () => {
+    const request = buildFullReservationPaymentCancelRequest({
+      payment: basePayment({
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'ALIPAY_PLUS',
+        currency: 'USD',
+        amount: 150_000,
+        providerChargeCurrency: 'USD',
+        providerChargeAmountMinor: 10_800,
+      }),
+      cancellationQuote: {
+        originalPaymentAmount: 150_000,
+        refundableAmount: 50_000,
+      },
+      reason: 'reservation cancel with fee',
+      idempotencyKey: 'refund-cancel:refund-1',
+      cancelRequestIdSeed: 'refund-1',
+    });
+
+    expect(request.options).toEqual({
+      idempotencyKey: 'refund-cancel:refund-1',
+      secretKeyScope: 'foreign-easy-pay',
+      cancelAmount: 36,
+      currency: 'USD',
+      cancelRequestId: 'cancel_refund-1',
     });
   });
 
