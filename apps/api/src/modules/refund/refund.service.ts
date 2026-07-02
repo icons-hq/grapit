@@ -34,7 +34,10 @@ import {
 } from '../jobs/pgboss.provider.js';
 import { TossPaymentError, TossPaymentsClient, type TossPaymentResponse } from '../payment/toss-payments.client.js';
 import { PaymentCancellationFinalizerService } from '../cancellation/payment-cancellation-finalizer.service.js';
-import { buildFullReservationPaymentCancelRequest } from '../payment/payment-cancel-policy.js';
+import {
+  buildFullReservationPaymentCancelRequest,
+  canBuildFullReservationPaymentCancelRequest,
+} from '../payment/payment-cancel-policy.js';
 
 type RefundRecord = typeof refunds.$inferSelect;
 type ReservationRecord = typeof reservations.$inferSelect;
@@ -413,6 +416,16 @@ export class RefundService {
     }
 
     const cancellationQuote = this.buildFullReservationCancellationQuote(context, options);
+    if (!canBuildFullReservationPaymentCancelRequest({
+      payment: context.payment,
+      cancellationQuote,
+      reason,
+    })) {
+      throw new BadRequestException(
+        '이 결제수단은 수수료가 있는 자동 부분취소를 지원하지 않습니다. 고객센터로 문의해주세요.',
+      );
+    }
+
     const requestedRefund = await this.insertRequestedRefund(
       context,
       reason,

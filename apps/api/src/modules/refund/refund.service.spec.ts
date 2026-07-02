@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TossPaymentError } from '../payment/toss-payments.client.js';
 import {
@@ -1026,6 +1027,35 @@ describe('RefundService', () => {
       }),
     );
     expect(result.refundTimeline?.currentState).toBe('COMPLETED');
+  });
+
+  it('rejects unsupported TRUEMONEY fee-bearing full-reservation cancels before creating a refund row', async () => {
+    const tossPaymentsClient = {
+      cancelPayment: vi.fn(),
+    };
+    const service = new RefundService(
+      {} as never,
+      tossPaymentsClient as never,
+      { finalizeFullPaymentCancellation: vi.fn() } as never,
+      { isAvailable: false, send: vi.fn() } as never,
+    );
+    const context = createSeatLevelContext();
+    context.payment.method = 'FOREIGN_EASY_PAY';
+    context.payment.provider = 'TRUEMONEY';
+    context.payment.currency = 'THB';
+    context.payment.providerChargeCurrency = null;
+    context.payment.providerChargeAmountMinor = null;
+    context.reservation.createdAt = new Date('2026-06-20T03:00:00.000Z');
+    context.showtime.dateTime = new Date('2026-07-03T10:00:00.000Z');
+    const insertRequestedRefundSpy = vi.spyOn(service as never, 'insertRequestedRefund');
+
+    vi.spyOn(service as never, 'loadReservationContext').mockResolvedValue(context as never);
+    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(null as never);
+
+    await expect(service.requestRefund('reservation-1', 'user-1', '단순 변심'))
+      .rejects.toBeInstanceOf(BadRequestException);
+    expect(insertRequestedRefundSpy).not.toHaveBeenCalled();
+    expect(tossPaymentsClient.cancelPayment).not.toHaveBeenCalled();
   });
 
   it('finalizes a full refund cancellation for seat-level reservations', async () => {

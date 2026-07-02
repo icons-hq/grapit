@@ -685,7 +685,7 @@ export function ReservationDetailView({
   const [cancelModalOpen, setCancelModalOpen] = useState(false);
   const refundPreviewQuery = useRefundPreview(
     reservation.id,
-    cancelModalOpen && reservation.status === 'CONFIRMED',
+    reservation.status === 'CONFIRMED',
   );
   const statusConfig = STATUS_CONFIG[reservation.status];
   const statusLabel = copy.status[statusConfig.labelKey];
@@ -709,11 +709,27 @@ export function ReservationDetailView({
         0,
       )
     : 0;
-  const displayedRefundAmount =
-    refundPreviewQuery.data?.cancellationQuote?.refundableAmount
-      ?? (hasSeatLevelTicketItems && ticketItemRefundTotal > 0
-      ? ticketItemRefundTotal
-      : reservation.totalAmount);
+  let displayedRefundAmount: number | null;
+  if (reservation.status === 'CONFIRMED') {
+    displayedRefundAmount =
+      refundPreviewQuery.data?.cancellationQuote?.refundableAmount ?? null;
+  } else if (hasSeatLevelTicketItems && ticketItemRefundTotal > 0) {
+    displayedRefundAmount = ticketItemRefundTotal;
+  } else {
+    displayedRefundAmount = reservation.totalAmount;
+  }
+  const displayedRefundValue =
+    displayedRefundAmount !== null
+      ? formatPrice(displayedRefundAmount, locale)
+      : refundPreviewQuery.isLoading
+        ? copy.cancel.quoteLoading
+        : refundPreviewQuery.isError
+          ? copy.cancel.quoteError
+          : copy.cancel.quoteUnavailable;
+  const displayedRefundValueClassName =
+    displayedRefundAmount !== null
+      ? undefined
+      : 'text-sm font-medium text-gray-600';
   const cancelModalRefundAmount =
     refundPreviewQuery.data?.cancellationQuote?.refundableAmount ?? 0;
   const showCancelButton = reservation.status === 'CONFIRMED';
@@ -1067,7 +1083,8 @@ export function ReservationDetailView({
             <div className="rounded-xl border border-white/80 bg-white/90 p-4">
               <InfoRow
                 label={copy.cancel.refundAmount}
-                value={formatPrice(displayedRefundAmount, locale)}
+                value={displayedRefundValue}
+                valueClassName={displayedRefundValueClassName}
               />
               <Separator />
               <InfoRow

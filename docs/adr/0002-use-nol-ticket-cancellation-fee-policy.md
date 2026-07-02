@@ -36,7 +36,7 @@ Grabit applies a NOL Ticket-style cancellation policy per Ticket Item. Each Tick
 - Same-day booking cancellation before 24:00 KST is the only case currently defined to refund the Ticket Service Fee.
 - Buyer cancellation is not allowed on the show date; the Cancellation Window ends no later than 23:59 KST on the day before the show date.
 - Reservation `cancel_deadline` remains the stored API/UI contract, but new and corrected confirmed Reservations must store the Cancellation Window end instead of a rolling `showtime - 24h` deadline.
-- A migration should correct existing `CONFIRMED` Reservation cancellation deadlines to the Cancellation Window end; historical `CANCELLED` and `FAILED` Reservations are not corrected by this policy migration.
+- A migration should correct existing `CONFIRMED` and still-in-payment `PENDING_PAYMENT` Reservation cancellation deadlines to the Cancellation Window end; historical `CANCELLED` and `FAILED` Reservations are not corrected by this policy migration.
 - When a booking-date rule and a show-date rule both match, the show-date rule applies.
 - Cancellation fee percentages and caps apply only to Ticket Item price, not to the Ticket Service Fee.
 - Percentage cancellation fees are floored to integer KRW.

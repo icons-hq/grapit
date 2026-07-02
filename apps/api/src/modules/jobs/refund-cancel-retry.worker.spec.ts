@@ -373,7 +373,7 @@ describe('RefundCancelRetryWorker', () => {
     expect(result.status).toBe('completed');
   });
 
-  it('does not finalize KRW partial cancels from retry pre-query status alone without cancelRequestId', async () => {
+  it('finalizes KRW partial cancels from retry pre-query status without cancelRequestId', async () => {
     const cancellationQuote = {
       originalPaymentAmount: 102000,
       ticketSubtotal: 100000,
@@ -406,18 +406,7 @@ describe('RefundCancelRetryWorker', () => {
           },
         ],
       }),
-      cancelPayment: vi.fn().mockResolvedValue({
-        paymentKey: 'pay-key-1',
-        totalAmount: 102000,
-        status: 'PARTIAL_CANCELED',
-        cancels: [
-          {
-            cancelAmount: 70000,
-            cancelReason: '단순 변심',
-            cancelStatus: 'DONE',
-          },
-        ],
-      }),
+      cancelPayment: vi.fn(),
     };
     const finalizer = {
       finalizeFullPaymentCancellation: vi.fn().mockResolvedValue({
@@ -442,11 +431,7 @@ describe('RefundCancelRetryWorker', () => {
 
     const result = await worker.handleJob({ refundId: 'refund-1', attempt: 1 });
 
-    expect(tossPaymentsClient.cancelPayment).toHaveBeenCalledWith('pay-key-1', '단순 변심', {
-      cancelAmount: 70000,
-      idempotencyKey: 'refund-cancel:refund-1',
-      secretKeyScope: 'default',
-    });
+    expect(tossPaymentsClient.cancelPayment).not.toHaveBeenCalled();
     expect(finalizer.finalizeFullPaymentCancellation).toHaveBeenCalledOnce();
     expect(result.status).toBe('completed');
   });

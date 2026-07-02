@@ -161,7 +161,7 @@ export class RefundCancelRetryWorker implements OnModuleInit {
           allowPartialStatus,
           expectedCancelAmount: command.options.cancelAmount,
           expectedCurrency: command.options.currency,
-          allowUnidentifiedPartialCancel: false,
+          allowUnidentifiedPartialCancel: true,
         })
       ) {
         await this.finalizeFullPaymentCancellation(context, queried, reason);

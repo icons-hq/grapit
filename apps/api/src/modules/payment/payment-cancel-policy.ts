@@ -132,6 +132,16 @@ export function buildFullReservationPaymentCancelRequest(
   };
 }
 
+export function canBuildFullReservationPaymentCancelRequest(
+  input: BuildFullReservationPaymentCancelRequestInput,
+): boolean {
+  if (input.cancellationQuote.refundableAmount >= input.payment.amount) {
+    return true;
+  }
+
+  return canBuildProviderCurrencyPartialCancel(input.payment);
+}
+
 export function buildTicketItemPaymentCancelRequest(
   input: BuildTicketItemPaymentCancelRequestInput,
 ): PaymentCancelRequest {
@@ -187,6 +197,22 @@ function requiresProviderCurrencyPartialCancel(
   const provider = payment.provider.toUpperCase();
 
   return provider === 'PAYPAL' || FOREIGN_EASY_PAY_PROVIDERS.has(provider);
+}
+
+function canBuildProviderCurrencyPartialCancel(
+  payment: PaymentCancelPaymentSnapshot,
+): boolean {
+  if (!requiresProviderCurrencyPartialCancel(payment)) {
+    return true;
+  }
+
+  const providerChargeCurrency = payment.providerChargeCurrency?.trim().toUpperCase();
+
+  return Boolean(
+    providerChargeCurrency
+    && providerChargeCurrency !== 'KRW'
+    && typeof payment.providerChargeAmountMinor === 'number',
+  );
 }
 
 function isOverseasCardPayment(payment: PaymentCancelPaymentSnapshot): boolean {
@@ -254,7 +280,7 @@ function buildProviderCurrencyCancelAmount(
     || providerChargeCurrency === 'KRW'
     || typeof payment.providerChargeAmountMinor !== 'number'
   ) {
-    if (requiresProviderCurrencyPartialCancel(payment)) {
+    if (!canBuildProviderCurrencyPartialCancel(payment)) {
       throw new Error(
         'Provider-currency partial cancellation requires provider charge data',
       );

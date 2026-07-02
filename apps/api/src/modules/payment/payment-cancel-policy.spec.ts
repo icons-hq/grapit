@@ -3,6 +3,7 @@ import {
   buildFullPaymentCancelRequest,
   buildFullReservationPaymentCancelRequest,
   buildTicketItemPaymentCancelRequest,
+  canBuildFullReservationPaymentCancelRequest,
   resolvePaymentCancelSecretScope,
   type PaymentCancelPaymentSnapshot,
   type PaymentCancelTicketItemSnapshot,
@@ -211,6 +212,40 @@ describe('payment cancel policy', () => {
       secretKeyScope: 'default',
     });
     expect(request.options).not.toHaveProperty('cancelAmount');
+  });
+
+  it('detects unsupported provider-currency partial full-reservation cancels before building the command', () => {
+    expect(canBuildFullReservationPaymentCancelRequest({
+      payment: basePayment({
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'TRUEMONEY',
+        currency: 'THB',
+        amount: 102_000,
+      }),
+      cancellationQuote: {
+        originalPaymentAmount: 102_000,
+        refundableAmount: 70_000,
+      },
+      reason: 'truemoney reservation cancel with fee',
+      idempotencyKey: 'refund-cancel:refund-1',
+      cancelRequestIdSeed: 'refund-1',
+    })).toBe(false);
+
+    expect(canBuildFullReservationPaymentCancelRequest({
+      payment: basePayment({
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'TRUEMONEY',
+        currency: 'THB',
+        amount: 102_000,
+      }),
+      cancellationQuote: {
+        originalPaymentAmount: 102_000,
+        refundableAmount: 102_000,
+      },
+      reason: 'truemoney no-fee full cancel',
+      idempotencyKey: 'refund-cancel:refund-1',
+      cancelRequestIdSeed: 'refund-1',
+    })).toBe(true);
   });
 
   it('allocates provider currency for fee-bearing full-reservation cancels', () => {
