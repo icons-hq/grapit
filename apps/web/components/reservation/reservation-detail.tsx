@@ -1201,18 +1201,18 @@ export function ReservationDetailView({
 
       {/* Cancel modal */}
       <CancelConfirmModal
-	        open={cancelModalOpen}
-	        onOpenChange={setCancelModalOpen}
-	        refundAmount={cancelModalRefundAmount}
-	        cancellationQuote={refundPreviewQuery.data?.cancellationQuote ?? null}
-	        paymentMethod={paymentMethodLabel}
-	        expectedDepositAt={reservation.refundTimeline.expectedDepositAt ?? null}
-	        releaseWindowMinutes={reservation.cancelledSeatHold?.releaseWindowMinutes ?? null}
-	        isPreviewLoading={refundPreviewQuery.isLoading}
-	        isPreviewError={refundPreviewQuery.isError}
-	        onConfirm={onCancel}
-	        isLoading={isCancelling}
-	      />
+        open={cancelModalOpen}
+        onOpenChange={setCancelModalOpen}
+        refundAmount={cancelModalRefundAmount}
+        cancellationQuote={refundPreviewQuery.data?.cancellationQuote ?? null}
+        paymentMethod={paymentMethodLabel}
+        expectedDepositAt={reservation.refundTimeline.expectedDepositAt ?? null}
+        releaseWindowMinutes={reservation.cancelledSeatHold?.releaseWindowMinutes ?? null}
+        isPreviewLoading={refundPreviewQuery.isLoading}
+        isPreviewError={refundPreviewQuery.isError}
+        onConfirm={onCancel}
+        isLoading={isCancelling}
+      />
     </div>
   );
 }

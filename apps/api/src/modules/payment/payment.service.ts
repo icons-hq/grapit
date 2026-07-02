@@ -31,6 +31,7 @@ import type {
   PaymentStatus,
   CancellationQuote,
 } from '@grabit/shared';
+import { TICKET_SERVICE_FEE_KRW } from '@grabit/shared';
 import { TossPaymentsClient, type TossPaymentResponse } from './toss-payments.client.js';
 import { ProviderChargeQuoteService } from './provider-charge-quote.service.js';
 import { PaymentCancellationFinalizerService } from '../cancellation/payment-cancellation-finalizer.service.js';
@@ -60,7 +61,6 @@ type ProviderChargeQuote = {
 };
 
 const ASYNC_DONE_SEAT_FAILURE_CANCEL_REASON = '판매 불가능 좌석으로 인한 자동 취소';
-const TICKET_SERVICE_FEE_KRW = 2000;
 
 const ASYNC_FOREIGN_EASY_PAY_PROVIDERS = new Set<PaymentProvider>([
   'ALIPAY_PLUS',

@@ -271,7 +271,6 @@ describe('RefundService', () => {
     } as never, undefined, {
       allowPartialStatus: true,
       expectedCancelAmount: 99.05,
-      expectedCurrency: 'USD',
       allowUnidentifiedPartialCancel: true,
       requestedAt: '2026-05-08T03:00:00.000Z',
     })).toBe(true);

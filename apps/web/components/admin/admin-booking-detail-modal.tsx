@@ -601,10 +601,10 @@ export function AdminBookingDetailModal({
                 variant="ghost"
                 className="flex-1"
                 onClick={() => {
-	                  setShowRefundForm(false);
-	                  setRefundReason('');
-	                  setFullRefundOverride(false);
-	                  setEnteredTicketOverride(false);
+                  setShowRefundForm(false);
+                  setRefundReason('');
+                  setFullRefundOverride(false);
+                  setEnteredTicketOverride(false);
                 }}
               >
                 취소
@@ -612,7 +612,7 @@ export function AdminBookingDetailModal({
               <Button
                 variant="destructive"
                 className="flex-1"
-	                disabled={refundConfirmDisabled}
+                disabled={refundConfirmDisabled}
                 onClick={handleRefundConfirm}
               >
                 {isRefunding ? (

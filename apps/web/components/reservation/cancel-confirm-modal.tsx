@@ -117,7 +117,7 @@ export function CancelConfirmModal({
       style: 'currency',
       currency: 'KRW',
       maximumFractionDigits: 0,
-	    }).format(amount);
+    }).format(amount);
   const quoteUnavailable = !isPreviewLoading && !isPreviewError && !cancellationQuote;
   const confirmDisabled =
     !reason || isLoading || isPreviewLoading || isPreviewError || !cancellationQuote;
@@ -249,10 +249,10 @@ export function CancelConfirmModal({
               {copy.close}
             </Button>
             <Button
-	              type="button"
-	              onClick={handleMoveToConfirm}
-	              disabled={confirmDisabled}
-	            >
+              type="button"
+              onClick={handleMoveToConfirm}
+              disabled={confirmDisabled}
+            >
               {copy.finalCheck}
             </Button>
           </DialogFooter>
@@ -305,9 +305,9 @@ export function CancelConfirmModal({
             </AlertDialogCancel>
             <Button
               variant="destructive"
-	              onClick={handleConfirm}
-	              disabled={confirmDisabled}
-	            >
+              onClick={handleConfirm}
+              disabled={confirmDisabled}
+            >
               {isLoading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />

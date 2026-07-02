@@ -199,7 +199,6 @@ export function isTossCancelCompleted(
   options: {
     allowPartialStatus?: boolean;
     expectedCancelAmount?: number;
-    expectedCurrency?: string;
     allowUnidentifiedPartialCancel?: boolean;
     requestedAt?: Date | string | null;
   } = {},
@@ -409,7 +408,6 @@ export class RefundService {
         isTossCancelCompleted(cancelResult, command.options.cancelRequestId, {
           allowPartialStatus,
           expectedCancelAmount: command.options.cancelAmount,
-          expectedCurrency: command.options.currency,
           allowUnidentifiedPartialCancel: true,
           requestedAt: requestedRefund.requestedAt,
         })

@@ -164,7 +164,6 @@ export class RefundCancelRetryWorker implements OnModuleInit {
         isTossCancelCompleted(queried, command.options.cancelRequestId, {
           allowPartialStatus,
           expectedCancelAmount: command.options.cancelAmount,
-          expectedCurrency: command.options.currency,
           allowUnidentifiedPartialCancel: true,
           requestedAt: getRefundCancelRequestAnchor(context.refund),
         })
@@ -200,7 +199,6 @@ export class RefundCancelRetryWorker implements OnModuleInit {
         isTossCancelCompleted(response, command.options.cancelRequestId, {
           allowPartialStatus,
           expectedCancelAmount: command.options.cancelAmount,
-          expectedCurrency: command.options.currency,
           allowUnidentifiedPartialCancel: true,
           requestedAt: getRefundCancelRequestAnchor(context.refund),
         })
