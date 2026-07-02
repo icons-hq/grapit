@@ -201,6 +201,23 @@ describe('RefundService', () => {
     })).toBe(true);
   });
 
+  it('matches provider-currency partial cancels without requiring per-cancel currency', () => {
+    expect(isTossCancelCompleted({
+      status: 'PARTIAL_CANCELED',
+      cancels: [{
+        cancelAmount: 99.05,
+        cancelReason: '단순 변심',
+        canceledAt: '2026-05-08T03:05:00.000Z',
+        cancelStatus: 'DONE',
+      }],
+    } as never, undefined, {
+      allowPartialStatus: true,
+      expectedCancelAmount: 99.05,
+      expectedCurrency: 'USD',
+      allowUnidentifiedPartialCancel: true,
+    })).toBe(true);
+  });
+
   it('returns existing refund state for duplicate requests without calling Toss again', async () => {
     const tossPaymentsClient = {
       cancelPayment: vi.fn(),

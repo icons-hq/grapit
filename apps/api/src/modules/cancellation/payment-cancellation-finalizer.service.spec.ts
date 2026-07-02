@@ -88,6 +88,48 @@ function objectGraphContains(root: unknown, needle: unknown): boolean {
   return visit(root);
 }
 
+function objectGraphContainsParamValues(root: unknown, values: unknown[]): boolean {
+  const seen = new Set<unknown>();
+  const foundValues = new Set<unknown>();
+
+  function visit(value: unknown): void {
+    if (value === null || value === undefined) {
+      return;
+    }
+    if (typeof value !== 'object') {
+      return;
+    }
+    if (seen.has(value)) {
+      return;
+    }
+    seen.add(value);
+
+    const candidate = value as {
+      constructor?: { name?: string };
+      value?: unknown;
+    };
+    if (candidate.constructor?.name === 'Param') {
+      if (Array.isArray(candidate.value)) {
+        for (const item of candidate.value) {
+          foundValues.add(item);
+        }
+      } else {
+        foundValues.add(candidate.value);
+      }
+    }
+
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+
+    Object.values(value as Record<string, unknown>).forEach(visit);
+  }
+
+  visit(root);
+  return values.every((expected) => foundValues.has(expected));
+}
+
 function createTransactionMock(options: {
   refundReturning?: Array<{ id: string }>;
   reservationReturning?: Array<{ id: string }>;
@@ -569,6 +611,55 @@ describe('PaymentCancellationFinalizerService', () => {
       id: tickets.id,
       ticketItemId: tickets.ticketItemId,
     });
+  });
+
+  it('allows used legacy reservation-level tickets to be revoked during full-reservation cancellation', async () => {
+    const { service, transaction } = createService(
+      {
+        isAvailable: false,
+        send: vi.fn(),
+      },
+      {
+        ticketItemReturning: [{ id: 'ticket-item-1' }],
+        ticketReturning: [{ id: 'legacy-ticket-1', ticketItemId: null }],
+        seatInventoryReturning: [[{ id: 'seat-inventory-1' }]],
+      },
+    );
+    const cancellationQuote = {
+      originalPaymentAmount: 102000,
+      ticketSubtotal: 100000,
+      ticketServiceFeeTotal: 2000,
+      cancellationFeeTotal: 0,
+      serviceFeeRefundTotal: 2000,
+      refundableAmount: 102000,
+      policyCodes: ['ADMIN_FULL_REFUND_OVERRIDE'] as const,
+      items: [
+        {
+          ticketItemId: 'ticket-item-1',
+          ticketPrice: 100000,
+          serviceFee: 2000,
+          cancellationFee: 0,
+          serviceFeeRefund: 2000,
+          refundableAmount: 102000,
+          policyCode: 'ADMIN_FULL_REFUND_OVERRIDE' as const,
+        },
+      ],
+    };
+
+    await service.finalizeFullPaymentCancellation(
+      baseInput({
+        fullReservationCancellationQuote: cancellationQuote,
+        context: createContext({
+          seats: [{ seatId: '1F:A-10' }],
+        }),
+      }),
+    );
+
+    const ticketUpdate = transaction.updateCalls.find((call) => call.table === tickets);
+    expect(objectGraphContainsParamValues(
+      ticketUpdate?.whereArgs[0],
+      ['active', 'revoked', 'used'],
+    )).toBe(true);
   });
 
   it('inactivates non-redeemed benefit entitlements for cancelled ticket items without reassigning limited benefits', async () => {

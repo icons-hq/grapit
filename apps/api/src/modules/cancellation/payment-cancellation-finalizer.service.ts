@@ -429,7 +429,12 @@ export class PaymentCancellationFinalizerService {
                     isNull(tickets.ticketItemId),
                   )
                 : inArray(tickets.ticketItemId, targetTicketItemIds),
-              inArray(tickets.status, ['active', 'revoked']),
+              inArray(
+                tickets.status,
+                fullReservationCancellationQuote
+                  ? ['active', 'revoked', 'used']
+                  : ['active', 'revoked'],
+              ),
             ),
           )
           .returning({ id: tickets.id, ticketItemId: tickets.ticketItemId });

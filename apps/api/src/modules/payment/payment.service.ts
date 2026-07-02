@@ -206,12 +206,6 @@ function hasMatchingCompletedProviderCancel(
     ) {
       return false;
     }
-    if (expected.currency !== undefined) {
-      const cancelCurrency = (cancel as { currency?: unknown }).currency;
-      if (cancelCurrency !== expected.currency) {
-        return false;
-      }
-    }
     return true;
   });
 }
@@ -1290,6 +1284,8 @@ export class PaymentService {
         amount: payments.amount,
         status: payments.status,
         providerMetadata: payments.providerMetadata,
+        providerChargeCurrency: payments.providerChargeCurrency,
+        providerChargeAmountMinor: payments.providerChargeAmountMinor,
       })
       .from(payments)
       .where(

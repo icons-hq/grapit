@@ -249,12 +249,6 @@ function hasMatchingCompletedCancel(
     ) {
       return false;
     }
-    if (expected.expectedCurrency !== undefined) {
-      const cancelCurrency = (cancel as { currency?: unknown }).currency;
-      if (cancelCurrency !== expected.expectedCurrency) {
-        return false;
-      }
-    }
     return true;
   }) ?? false;
 }
