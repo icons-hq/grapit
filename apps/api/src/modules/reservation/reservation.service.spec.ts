@@ -8,6 +8,8 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
+import { PgDialect } from 'drizzle-orm/pg-core';
+import type { SQL } from 'drizzle-orm';
 import { ReservationService } from './reservation.service.js';
 import { TossPaymentsClient } from '../payment/toss-payments.client.js';
 import { BOOKING_VERIFICATION_REQUIRED_MESSAGE } from '../booking/booking.service.js';
@@ -734,6 +736,7 @@ describe('ReservationService', () => {
       seatKey?: string;
     }>;
     reservationSeatRows?: Array<{ seat_id: string }>;
+    seatInventoryReturning?: Array<{ id: string }>;
   }) {
     const row = {
       reservation_id: args.reservationId,
@@ -847,7 +850,14 @@ describe('ReservationService', () => {
           return {
             where: vi.fn((predicate: unknown) => {
               call.predicate = predicate;
-              return Promise.resolve([]);
+              const returningRows =
+                table === seatInventories
+                  ? (args.seatInventoryReturning ?? [{ id: 'seat-inventory-1' }])
+                  : [];
+              return {
+                then: (resolve: (value: unknown[]) => void) => resolve([]),
+                returning: vi.fn().mockResolvedValue(returningRows),
+              };
             }),
           };
         }),
@@ -2574,6 +2584,51 @@ describe('ReservationService', () => {
           '1F:A-1',
           'available',
         );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('does not broadcast available when the seat is still owned by an active ticket item', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-05-08T14:50:00.000Z'));
+
+      try {
+        const reservationId = randomUUID();
+        const userId = randomUUID();
+        const ticketItemId = randomUUID();
+        const showtimeId = randomUUID();
+        vi.spyOn(service, 'getReservationDetail').mockResolvedValue({
+          id: reservationId,
+          ticketItems: [],
+        } as never);
+        const { updateCalls } = setupTicketItemCancelTransaction({
+          reservationId,
+          userId,
+          ticketItemId,
+          showtimeId,
+          reservationCreatedAt: new Date('2026-05-08T01:00:00.000Z'),
+          showtimeAt: new Date('2026-06-01T10:00:00.000Z'),
+          seatKey: '1F:A-1',
+          price: 77000,
+          serviceFee: TICKET_SERVICE_FEE_KRW,
+          activeRemainingRows: [{ id: randomUUID() }],
+          seatInventoryReturning: [],
+        });
+
+        await expect(service.cancelTicketItem(
+          reservationId,
+          ticketItemId,
+          userId,
+          '단순 변심',
+        )).resolves.toMatchObject({ id: reservationId });
+
+        expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+        const seatInventoryUpdate = updateCalls.find((call) => call.table === seatInventories);
+        const renderedWhere = new PgDialect().sqlToQuery(
+          seatInventoryUpdate?.predicate as SQL,
+        ).sql;
+        expect(renderedWhere).toContain('not exists');
       } finally {
         vi.useRealTimers();
       }

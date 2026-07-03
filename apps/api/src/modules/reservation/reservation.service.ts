@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { eq, and, or, sql, desc, inArray, asc, ne } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
+import { noActiveTicketItemOnSeat } from '../../database/seat-ownership.js';
 import {
   reservations,
   reservationSeats,
@@ -2264,7 +2265,7 @@ export class ReservationService {
     userId: string,
     reason: string,
   ): Promise<ReservationDetail> {
-    let seatToBroadcast: { showtimeId: string; seatKey: string } | undefined;
+    let seatToBroadcast: { showtimeId: string; seatKey: string } | null | undefined;
     let preparedCancellation: PreparedTicketItemCancellation | undefined;
     let tossCancelAttempted = false;
     let tossCancelSucceeded = false;
@@ -2534,7 +2535,7 @@ export class ReservationService {
             ),
           );
 
-        await tx
+        const freedSeatInventories = await tx
           .update(seatInventories)
           .set({
             status: 'available',
@@ -2556,8 +2557,17 @@ export class ReservationService {
                   eq(seatInventories.seatId, committedCancellation.context.seatId),
                 ),
               ),
+              inArray(seatInventories.status, ['sold', 'held_cancelled']),
+              noActiveTicketItemOnSeat(),
             ),
+          )
+          .returning({ id: seatInventories.id });
+
+        if (freedSeatInventories.length === 0) {
+          this.logger.warn(
+            `Seat inventory not reopened on ticket-item cancel (ownership guard). ticketItemId=${ticketItemId}, seatKey=${committedCancellation.context.seatKey}`,
           );
+        }
 
         if (unresolvedSiblings.length === 0) {
           await tx
@@ -2571,10 +2581,12 @@ export class ReservationService {
             .where(eq(reservations.id, reservationId));
         }
 
-        return {
-          showtimeId: committedCancellation.context.showtimeId,
-          seatKey: committedCancellation.context.seatKey,
-        };
+        return freedSeatInventories.length > 0
+          ? {
+              showtimeId: committedCancellation.context.showtimeId,
+              seatKey: committedCancellation.context.seatKey,
+            }
+          : null;
       });
     } catch (error) {
       if (
