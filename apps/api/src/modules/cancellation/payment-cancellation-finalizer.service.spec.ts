@@ -233,7 +233,7 @@ function createTransactionMock(options: {
         },
       };
     },
-    select(selection: unknown) {
+    select(_selection: unknown) {
       return {
         from(table: unknown) {
           return {

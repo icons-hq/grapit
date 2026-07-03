@@ -2565,7 +2565,7 @@ export class ReservationService {
 
         if (freedSeatInventories.length === 0) {
           this.logger.warn(
-            `Seat inventory not reopened on ticket-item cancel (ownership guard). ticketItemId=${ticketItemId}, seatKey=${committedCancellation.context.seatKey}`,
+            `Seat inventory not reopened on ticket-item cancel (active ticket item or state changed). ticketItemId=${ticketItemId}, seatKey=${committedCancellation.context.seatKey}`,
           );
         }
 
@@ -2800,7 +2800,7 @@ export class ReservationService {
             freedSeatIds.push(seat.seatId);
           } else {
             this.logger.warn(
-              `Legacy cancel: seat inventory not reopened (ownership guard). reservationId=${reservationId}, seatKey=${seatIdentity.seatKey}`,
+              `Legacy cancel: seat inventory not reopened (active ticket item or state changed). reservationId=${reservationId}, seatKey=${seatIdentity.seatKey}`,
             );
           }
         }
