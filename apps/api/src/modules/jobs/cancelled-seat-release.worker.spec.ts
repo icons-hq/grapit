@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { PgDialect } from 'drizzle-orm/pg-core';
+import type { SQL } from 'drizzle-orm';
 import { seatInventories } from '../../database/schema/index.js';
 import {
   CancelledSeatReleaseWorker,
@@ -165,5 +167,37 @@ describe('CancelledSeatReleaseWorker', () => {
     }, 'stale-release-job');
 
     expect(bookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+  });
+
+  it('does not release a seat and includes the active-ticket guard in the where clause', async () => {
+    const whereArgs: unknown[] = [];
+    const db = {
+      update: vi.fn(() => ({
+        set: vi.fn(() => ({
+          where: vi.fn((condition: unknown) => {
+            whereArgs.push(condition);
+            return { returning: vi.fn().mockResolvedValue([]) };
+          }),
+        })),
+      })),
+    };
+    const worker = new CancelledSeatReleaseWorker(db as never);
+
+    const released = await (worker as unknown as {
+      releaseHeldSeats: (
+        showtimeId: string,
+        seatIdentities: Array<{ floorKey: string; seatId: string; seatKey: string }>,
+        releaseJobId: string,
+      ) => Promise<unknown[]>;
+    }).releaseHeldSeats(
+      'showtime-1',
+      [{ floorKey: '1F', seatId: 'A-10', seatKey: '1F:A-10' }],
+      'release-job-1',
+    );
+
+    expect(released).toEqual([]);
+    const renderedWhere = new PgDialect().sqlToQuery(whereArgs[0] as SQL).sql;
+    expect(renderedWhere).toContain('not exists');
+    expect(renderedWhere).toContain('"ticket_items"');
   });
 });

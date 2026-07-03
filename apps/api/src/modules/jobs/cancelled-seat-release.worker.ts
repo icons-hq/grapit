@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { and, eq } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
+import { noActiveTicketItemOnSeat } from '../../database/seat-ownership.js';
 import { seatInventories, showtimes } from '../../database/schema/index.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
 import {
@@ -164,12 +165,17 @@ export class CancelledSeatReleaseWorker implements OnModuleInit {
             eq(seatInventories.seatKey, seatIdentity.seatKey),
             eq(seatInventories.status, 'held_cancelled'),
             eq(seatInventories.reopenJobId, releaseJobId),
+            noActiveTicketItemOnSeat(),
           ),
         )
         .returning({ id: seatInventories.id });
 
       if (released.length > 0) {
         releasedSeats.push(seatIdentity);
+      } else {
+        this.logger.warn(
+          `Skipped cancelled-seat release: seat is not releasable (active ticket item or state changed). showtimeId=${showtimeId}, seatKey=${seatIdentity.seatKey}, releaseJobId=${releaseJobId}`,
+        );
       }
     }
 
