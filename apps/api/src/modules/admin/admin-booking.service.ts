@@ -33,6 +33,7 @@ import {
   type AdminRefundRequestOptions,
 } from '../refund/refund.service.js';
 import { mapPaymentFailureDiagnostic } from '../payment/payment-failure-diagnostic.js';
+import { noActiveTicketItemOnSeat } from '../../database/seat-ownership.js';
 import { safeCsvRows, withUtf8Bom } from './csv-export.util.js';
 import { AdminAuditService } from './admin-audit.service.js';
 import { formatTicketSeatNumber } from './ticket-seat-number.util.js';
@@ -1983,6 +1984,8 @@ export class AdminBookingService {
       status: 'available',
     }));
 
+    const releasedSeatIds: string[] = [];
+
     await this.db.transaction(async (tx) => {
       await tx.insert(bookingOperationAuditLogs).values(
         seatIdentities.map((seatIdentity) => ({
@@ -2013,8 +2016,8 @@ export class AdminBookingService {
         tx,
       );
 
-      for (const seatIdentity of seatIdentities) {
-        await tx
+      for (const [index, seatIdentity] of seatIdentities.entries()) {
+        const released = await tx
           .update(seatInventories)
           .set({
             status: 'available',
@@ -2031,15 +2034,25 @@ export class AdminBookingService {
               eq(seatInventories.floorKey, seatIdentity.floorKey),
               eq(seatInventories.seatKey, seatIdentity.seatKey),
               eq(seatInventories.status, 'held_cancelled'),
+              noActiveTicketItemOnSeat(),
             ),
+          )
+          .returning({ id: seatInventories.id });
+
+        if (released.length > 0) {
+          releasedSeatIds.push(seats[index]!.seatId);
+        } else {
+          this.logger.warn(
+            `Manual open skipped (ownership guard or state changed). reservationId=${reservationId}, seatKey=${seatIdentity.seatKey}`,
           );
+        }
       }
     });
 
-    for (const seat of seats) {
+    for (const seatId of releasedSeatIds) {
       this.bookingGateway.broadcastSeatUpdate(
         context.reservation.showtimeId,
-        seat.seatId,
+        seatId,
         'available',
       );
     }

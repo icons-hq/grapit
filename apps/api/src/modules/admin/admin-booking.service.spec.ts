@@ -7,6 +7,8 @@ import {
   afterEach,
   type Mock,
 } from 'vitest';
+import { PgDialect } from 'drizzle-orm/pg-core';
+import type { SQL } from 'drizzle-orm';
 import { AdminBookingService } from './admin-booking.service.js';
 import {
   bookingOperationAuditLogs,
@@ -201,7 +203,10 @@ function createTransactionMock() {
         set(values: Record<string, unknown>) {
           updateCalls.push({ table, values });
           return {
-            where: vi.fn().mockResolvedValue(undefined),
+            where: vi.fn().mockReturnValue({
+              returning: vi.fn().mockResolvedValue([{ id: 'seat-inventory-1' }]),
+              then: (resolve: (value: unknown) => void) => resolve(undefined),
+            }),
           };
         },
       };
@@ -1229,6 +1234,83 @@ describe('AdminBookingService', () => {
         transaction.tx,
       );
       expect(mockRefundService.requestAdminRefund).not.toHaveBeenCalled();
+    });
+
+    it('manual open skips seats occupied by an active ticket item and broadcasts only released seats', async () => {
+      const operatorUserId = 'admin-1';
+      const reservationId = 'reservation-1';
+      const showtimeId = 'showtime-1';
+      const reason = '좌석 재오픈 요청 확인';
+
+      const seatInventoryUpdateCalls: Array<{ whereArgs: unknown[] }> = [];
+      const insertCalls: Array<{ table: unknown; values: unknown }> = [];
+
+      const tx = {
+        update(table: unknown) {
+          return {
+            set(_values: Record<string, unknown>) {
+              return {
+                where(...whereArgs: unknown[]) {
+                  if (table === seatInventories) {
+                    seatInventoryUpdateCalls.push({ whereArgs });
+                    return { returning: vi.fn().mockResolvedValue([]) };
+                  }
+                  return Promise.resolve(undefined);
+                },
+              };
+            },
+          };
+        },
+        insert(table: unknown) {
+          return {
+            values(values: unknown) {
+              insertCalls.push({ table, values });
+              return Promise.resolve(values);
+            },
+          };
+        },
+      };
+
+      mockDb.select
+        .mockReturnValueOnce(
+          createChainMock([
+            {
+              reservation: {
+                id: reservationId,
+                showtimeId,
+                status: 'CANCELLED',
+              },
+              bookingPolicy: {
+                manualOpenEnabled: true,
+              },
+            },
+          ]),
+        )
+        .mockReturnValueOnce(
+          createChainMock([
+            {
+              seatId: '2F:A-1',
+              tierName: 'VIP',
+              price: 150000,
+              row: 'A',
+              number: '1',
+            },
+          ]),
+        );
+      mockDb.transaction.mockImplementation(async (callback: (tx: unknown) => Promise<unknown>) =>
+        callback(tx),
+      );
+
+      await (service as any).manualOpen(reservationId, operatorUserId, reason);
+
+      expect(insertCalls).toHaveLength(1);
+      expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+
+      expect(seatInventoryUpdateCalls).toHaveLength(1);
+      const renderedWhere = new PgDialect().sqlToQuery(
+        seatInventoryUpdateCalls[0]!.whereArgs[0] as SQL,
+      ).sql;
+      expect(renderedWhere).toContain('not exists');
     });
 
     it('should reject manual open without a reason before querying or auditing', async () => {
