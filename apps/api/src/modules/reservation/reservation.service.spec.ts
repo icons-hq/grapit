@@ -5479,11 +5479,17 @@ describe('ReservationService', () => {
             cancel_deadline: futureDeadline,
           }],
         }),
-        update: vi.fn().mockReturnValue({
+        update: vi.fn((table: unknown) => ({
           set: vi.fn().mockReturnValue({
-            where: vi.fn().mockResolvedValue([]),
+            where: vi.fn().mockReturnValue({
+              returning:
+                table === seatInventories
+                  ? vi.fn().mockResolvedValue([{ id: 'seat-inventory-1' }])
+                  : undefined,
+              then: (resolve: (value: unknown[]) => void) => resolve([]),
+            }),
           }),
-        }),
+        })),
         select: vi.fn().mockReturnValueOnce(chainResult([])).mockReturnValueOnce({
           from: vi.fn().mockReturnValue({
             where: vi.fn().mockResolvedValue([{
@@ -5503,16 +5509,6 @@ describe('ReservationService', () => {
 
       mockDb.transaction.mockImplementation(async (cb: (tx: typeof mockTx) => Promise<unknown>) => {
         return cb(mockTx);
-      });
-
-      // After-transaction select for WS broadcast
-      mockDb.select.mockReturnValueOnce({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([
-            { seatId: 'A-1' },
-            { seatId: 'A-2' },
-          ]),
-        }),
       });
 
       await service.cancelReservation(reservationId, userId, '단순 변심');
@@ -5539,11 +5535,17 @@ describe('ReservationService', () => {
             cancel_deadline: futureDeadline,
           }],
         }),
-        update: vi.fn().mockReturnValue({
+        update: vi.fn((table: unknown) => ({
           set: vi.fn().mockReturnValue({
-            where: vi.fn().mockResolvedValue([]),
+            where: vi.fn().mockReturnValue({
+              returning:
+                table === seatInventories
+                  ? vi.fn().mockResolvedValue([{ id: 'seat-inventory-1' }])
+                  : undefined,
+              then: (resolve: (value: unknown[]) => void) => resolve([]),
+            }),
           }),
-        }),
+        })),
         select: vi.fn().mockReturnValueOnce(chainResult([])).mockReturnValueOnce({
           from: vi.fn().mockReturnValue({
             where: vi.fn().mockResolvedValue([{
@@ -5565,20 +5567,71 @@ describe('ReservationService', () => {
         return cb(mockTx);
       });
 
-      // After-transaction select for WS broadcast
-      mockDb.select.mockReturnValueOnce({
-        from: vi.fn().mockReturnValue({
-          where: vi.fn().mockResolvedValue([
-            { seatId: 'B-1' },
-            { seatId: 'B-2' },
-          ]),
-        }),
-      });
-
       await service.cancelReservation(reservationId, userId, '단순 변심');
 
       expect(mockBookingGateway.broadcastSeatUpdate).toHaveBeenCalledWith(showtimeId, 'B-1', 'available');
       expect(mockBookingGateway.broadcastSeatUpdate).toHaveBeenCalledWith(showtimeId, 'B-2', 'available');
+    });
+
+    it('legacy full-reservation cancel does not reopen seats owned by active ticket items', async () => {
+      const reservationId = randomUUID();
+      const userId = randomUUID();
+      const showtimeId = randomUUID();
+      const futureDeadline = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+      const seatInventoryUpdateCalls: Array<{ predicate: unknown }> = [];
+
+      const mockTx = {
+        execute: vi.fn().mockResolvedValue({
+          rows: [{
+            id: reservationId,
+            user_id: userId,
+            showtime_id: showtimeId,
+            status: 'CONFIRMED',
+            cancel_deadline: futureDeadline,
+          }],
+        }),
+        update: vi.fn((table: unknown) => ({
+          set: vi.fn().mockReturnValue({
+            where: vi.fn((predicate: unknown) => {
+              if (table === seatInventories) {
+                seatInventoryUpdateCalls.push({ predicate });
+                return {
+                  returning: vi.fn().mockResolvedValue([]),
+                };
+              }
+              return Promise.resolve([]);
+            }),
+          }),
+        })),
+        select: vi.fn().mockReturnValueOnce(chainResult([])).mockReturnValueOnce({
+          from: vi.fn().mockReturnValue({
+            where: vi.fn().mockResolvedValue([{
+              id: randomUUID(),
+              paymentKey: 'pk_test_123',
+            }]),
+          }),
+        }).mockReturnValue({
+          from: vi.fn().mockReturnValue({
+            where: vi.fn().mockResolvedValue([
+              { seatId: 'C-1' },
+            ]),
+          }),
+        }),
+      };
+
+      mockDb.transaction.mockImplementation(async (cb: (tx: typeof mockTx) => Promise<unknown>) => {
+        return cb(mockTx);
+      });
+
+      await service.cancelReservation(reservationId, userId, '단순 변심');
+
+      expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+      expect(seatInventoryUpdateCalls.length).toBe(1);
+      const renderedWhere = new PgDialect().sqlToQuery(
+        seatInventoryUpdateCalls[0]!.predicate as SQL,
+      ).sql;
+      expect(renderedWhere).toContain('not exists');
     });
   });
 });

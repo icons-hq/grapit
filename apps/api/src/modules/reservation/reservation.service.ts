@@ -2697,6 +2697,7 @@ export class ReservationService {
   async cancelReservation(reservationId: string, userId: string, reason: string): Promise<void> {
     let showtimeId: string | undefined;
     let tossCancelCompleted = false;
+    const freedSeatIds: string[] = [];
 
     try {
       await this.db.transaction(async (tx) => {
@@ -2775,7 +2776,7 @@ export class ReservationService {
 
         for (const seat of cancelledSeats) {
           const seatIdentity = normalizeSeatIdentity({ seatId: seat.seatId });
-          await tx
+          const freed = await tx
             .update(seatInventories)
             .set({ status: 'available', soldAt: null, lockedBy: null, lockedUntil: null })
             .where(
@@ -2789,8 +2790,19 @@ export class ReservationService {
                     eq(seatInventories.seatId, seatIdentity.seatId),
                   ),
                 ),
+                inArray(seatInventories.status, ['sold', 'held_cancelled']),
+                noActiveTicketItemOnSeat(),
               ),
+            )
+            .returning({ id: seatInventories.id });
+
+          if (freed.length > 0) {
+            freedSeatIds.push(seat.seatId);
+          } else {
+            this.logger.warn(
+              `Legacy cancel: seat inventory not reopened (ownership guard). reservationId=${reservationId}, seatKey=${seatIdentity.seatKey}`,
             );
+          }
         }
       });
     } catch (error) {
@@ -2820,13 +2832,8 @@ export class ReservationService {
 
     // Broadcast available status via WebSocket for each cancelled seat
     if (showtimeId) {
-      const freedSeats = await this.db
-        .select({ seatId: reservationSeats.seatId })
-        .from(reservationSeats)
-        .where(eq(reservationSeats.reservationId, reservationId));
-
-      for (const seat of freedSeats) {
-        this.bookingGateway.broadcastSeatUpdate(showtimeId, seat.seatId, 'available');
+      for (const seatId of freedSeatIds) {
+        this.bookingGateway.broadcastSeatUpdate(showtimeId, seatId, 'available');
       }
     }
   }
