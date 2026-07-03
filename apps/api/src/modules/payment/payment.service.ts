@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
+import { isActiveSeatUniqueViolation } from '../../database/seat-ownership.js';
 import {
   bookingPolicies,
   paymentWebhookEvents,
@@ -1755,24 +1756,31 @@ export class PaymentService {
         }
         const ticketItemPaymentId = committedPaymentId;
 
-        await tx.insert(ticketItems).values(
-          pendingSeats.map((seat) => ({
-            reservationId: reservation.id,
-            paymentId: ticketItemPaymentId,
-            showtimeId: reservation.showtimeId,
-            seatId: seat.seatId,
-            seatKey: seat.seatKey,
-            floorKey: seat.floorKey,
-            floorLabel: seat.floorLabel,
-            tierName: seat.tierName,
-            row: seat.row,
-            number: seat.number,
-            price: seat.price,
-            serviceFee: TICKET_SERVICE_FEE_KRW,
-            status: 'active' as const,
-            admissionState: 'not_entered' as const,
-          })),
-        );
+        try {
+          await tx.insert(ticketItems).values(
+            pendingSeats.map((seat) => ({
+              reservationId: reservation.id,
+              paymentId: ticketItemPaymentId,
+              showtimeId: reservation.showtimeId,
+              seatId: seat.seatId,
+              seatKey: seat.seatKey,
+              floorKey: seat.floorKey,
+              floorLabel: seat.floorLabel,
+              tierName: seat.tierName,
+              row: seat.row,
+              number: seat.number,
+              price: seat.price,
+              serviceFee: TICKET_SERVICE_FEE_KRW,
+              status: 'active' as const,
+              admissionState: 'not_entered' as const,
+            })),
+          );
+        } catch (error) {
+          if (isActiveSeatUniqueViolation(error)) {
+            throw new ConflictException('판매 불가능한 좌석입니다');
+          }
+          throw error;
+        }
 
         for (const seat of pendingSeats) {
           const updated = await tx

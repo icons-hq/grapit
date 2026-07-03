@@ -18,6 +18,7 @@ import {
 } from '@grabit/shared';
 
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
+import { isActiveSeatUniqueViolation } from '../../database/seat-ownership.js';
 import {
   payments,
   reservationSeats,
@@ -675,27 +676,35 @@ export class ReservationFinalizationService {
           }
           const ticketItemPaymentId = committedPaymentId;
 
-          const insertedTicketItems = await tx.insert(ticketItems).values(
-            pendingSeats.map((seat) => ({
-              reservationId: reservation.id,
-              paymentId: ticketItemPaymentId,
-              showtimeId: reservation.showtimeId,
-              seatId: seat.seatId,
-              seatKey: seat.seatKey,
-              floorKey: seat.floorKey,
-              floorLabel: seat.floorLabel,
-              tierName: seat.tierName,
-              row: seat.row,
-              number: seat.number,
-              price: seat.price,
-              serviceFee: TICKET_SERVICE_FEE_KRW,
-              status: 'active' as const,
-              admissionState: 'not_entered' as const,
-            })),
-          ).returning({
-            id: ticketItems.id,
-            tierName: ticketItems.tierName,
-          });
+          let insertedTicketItems: Array<{ id: string; tierName: string }>;
+          try {
+            insertedTicketItems = await tx.insert(ticketItems).values(
+              pendingSeats.map((seat) => ({
+                reservationId: reservation.id,
+                paymentId: ticketItemPaymentId,
+                showtimeId: reservation.showtimeId,
+                seatId: seat.seatId,
+                seatKey: seat.seatKey,
+                floorKey: seat.floorKey,
+                floorLabel: seat.floorLabel,
+                tierName: seat.tierName,
+                row: seat.row,
+                number: seat.number,
+                price: seat.price,
+                serviceFee: TICKET_SERVICE_FEE_KRW,
+                status: 'active' as const,
+                admissionState: 'not_entered' as const,
+              })),
+            ).returning({
+              id: ticketItems.id,
+              tierName: ticketItems.tierName,
+            });
+          } catch (error) {
+            if (isActiveSeatUniqueViolation(error)) {
+              throw new ConflictException('판매 불가능한 좌석입니다');
+            }
+            throw error;
+          }
 
           await this.syncIncludedBenefitEntitlementsForTicketItems(
             tx,
