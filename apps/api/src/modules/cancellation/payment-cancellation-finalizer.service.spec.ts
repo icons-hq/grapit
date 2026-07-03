@@ -1,5 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import {
   bookingOperationAuditLogs,
   payments,
@@ -130,6 +132,11 @@ function objectGraphContainsParamValues(root: unknown, values: unknown[]): boole
   return values.every((expected) => foundValues.has(expected));
 }
 
+type SelectCall = {
+  table: unknown;
+  whereArgs: unknown[];
+};
+
 function createTransactionMock(options: {
   refundReturning?: Array<{ id: string }>;
   reservationReturning?: Array<{ id: string }>;
@@ -143,10 +150,13 @@ function createTransactionMock(options: {
   }>;
   seatInventoryReturning?: Array<Array<SeatInventoryReturningRow>>;
   postCommitSeatInventoryReturning?: Array<Array<{ id: string }>>;
+  activeSeatOwnerReturning?: Array<Array<{ reservationId: string }>>;
 } = {}) {
   const updateCalls: UpdateCall[] = [];
   const postCommitUpdateCalls: UpdateCall[] = [];
   const insertCalls: Array<{ table: unknown; values: unknown }> = [];
+  const selectCalls: SelectCall[] = [];
+  const activeSeatOwnerReturning = [...(options.activeSeatOwnerReturning ?? [])];
   const refundReturning = options.refundReturning ?? [{ id: 'refund-1' }];
   const reservationReturning = options.reservationReturning ?? [{ id: 'reservation-1' }];
   const paymentReturning = options.paymentReturning ?? [{ id: 'payment-1' }];
@@ -223,6 +233,23 @@ function createTransactionMock(options: {
         },
       };
     },
+    select(selection: unknown) {
+      return {
+        from(table: unknown) {
+          return {
+            where: vi.fn((...whereArgs: unknown[]) => {
+              const call: SelectCall = { table, whereArgs };
+              selectCalls.push(call);
+              return {
+                limit: vi.fn(() =>
+                  Promise.resolve(activeSeatOwnerReturning.shift() ?? []),
+                ),
+              };
+            }),
+          };
+        },
+      };
+    },
   };
   const postCommitTx = {
     update(table: unknown) {
@@ -235,6 +262,7 @@ function createTransactionMock(options: {
     postCommitTx,
     updateCalls,
     postCommitUpdateCalls,
+    selectCalls,
     insertCalls,
     update: (table: unknown) => update(table, postCommitUpdateCalls, true),
   };
@@ -1488,5 +1516,75 @@ describe('PaymentCancellationFinalizerService', () => {
     expect(transaction.updateCalls.some((call) => call.table === ticketItems)).toBe(true);
     expect(transaction.updateCalls.filter((call) => call.table === seatInventories))
       .toHaveLength(2);
+  });
+
+  it('skips seat release without throwing when another reservation actively owns the seat', async () => {
+    const pgBoss = {
+      isAvailable: true,
+      send: vi.fn((_name: unknown, _payload: unknown, options: { id: string }) =>
+        Promise.resolve(options.id),
+      ),
+    };
+    const { service, transaction } = createService(pgBoss, {
+      ticketItemReturning: [{ id: 'ticket-item-1' }],
+      ticketReturning: [{ id: 'ticket-1', ticketItemId: 'ticket-item-1' }],
+      seatInventoryReturning: [[], []],
+      activeSeatOwnerReturning: [[{ reservationId: 'other-reservation' }]],
+    });
+
+    const result = await service.finalizeFullPaymentCancellation(
+      baseInput({
+        context: createContext({ seats: [{ seatId: '1F:A-10' }] }),
+      }),
+    );
+
+    expect(result).toEqual({
+      releaseJobId: JOB_ENQUEUE_FAILED,
+      releaseEnqueued: false,
+    });
+    expect(pgBoss.send).not.toHaveBeenCalled();
+
+    const seatUpdates = transaction.updateCalls.filter(
+      (call) => call.table === seatInventories,
+    );
+    expect(seatUpdates).toHaveLength(2);
+    for (const update of seatUpdates) {
+      const renderedWhere = new PgDialect().sqlToQuery(update.whereArgs[0] as SQL).sql;
+      expect(renderedWhere).toContain('not exists');
+    }
+
+    expect(transaction.selectCalls).toHaveLength(1);
+    expect(transaction.selectCalls[0]?.table).toBe(ticketItems);
+    const ownerWhere = transaction.selectCalls[0]?.whereArgs[0];
+    expect(objectGraphContains(ownerWhere, 'other-reservation')).toBe(false);
+    expect(objectGraphContains(ownerWhere, 'active')).toBe(true);
+    expect(objectGraphContains(ownerWhere, 'cancellation_pending')).toBe(true);
+  });
+
+  it('still throws when seat inventory rows are missing and no active owner exists', async () => {
+    const pgBoss = {
+      isAvailable: true,
+      send: vi.fn((_name: unknown, _payload: unknown, options: { id: string }) =>
+        Promise.resolve(options.id),
+      ),
+    };
+    const { service, transaction, transactionCommitted } = createService(pgBoss, {
+      ticketItemReturning: [{ id: 'ticket-item-1' }],
+      ticketReturning: [{ id: 'ticket-1', ticketItemId: 'ticket-item-1' }],
+      seatInventoryReturning: [[], []],
+      activeSeatOwnerReturning: [[]],
+    });
+
+    await expect(
+      service.finalizeFullPaymentCancellation(
+        baseInput({
+          context: createContext({ seats: [{ seatId: '1F:A-10' }] }),
+        }),
+      ),
+    ).rejects.toThrow('취소할 좌석 재고 상태가 유효하지 않습니다');
+
+    expect(pgBoss.send).not.toHaveBeenCalled();
+    expect(transactionCommitted).not.toHaveBeenCalled();
+    expect(transaction.selectCalls).toHaveLength(1);
   });
 });
