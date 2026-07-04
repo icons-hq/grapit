@@ -127,6 +127,7 @@ export interface QrTicketTokenPayload {
 export interface QrTicketScannerContract {
   ticketId?: string;
   ticketItemId: string;
+  userId: string;
   tokenVersion: string;
   ticketStatus: QrTicketStatus;
   reservationNumber?: string;
@@ -422,6 +423,7 @@ export class QrTicketService implements OnModuleInit {
         revokedAt: tickets.revokedAt,
         reservationNumber: reservations.reservationNumber,
         reservationId: reservations.id,
+        userId: reservations.userId,
         paymentId: payments.id,
         showtimeId: showtimes.id,
         performanceId: performances.id,
@@ -469,6 +471,7 @@ export class QrTicketService implements OnModuleInit {
       tokenVersion: payload.secretVersion,
       ticketId: row.ticketId,
       ticketItemId: row.ticketItemId,
+      userId: row.userId,
       ticketStatus: row.ticketItemAdmissionState === 'entered'
         ? 'USED'
         : this.mapScannerStatus(row),

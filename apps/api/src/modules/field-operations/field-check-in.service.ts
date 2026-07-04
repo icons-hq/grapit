@@ -1,6 +1,6 @@
 import { Inject, Injectable, InternalServerErrorException } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
-import { and, asc, desc, eq, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
 import {
   parseFieldCheckInToken,
   ticketBenefitDisplayCopySchema,
@@ -14,6 +14,7 @@ import {
 
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
+  reservations,
   ticketBenefitEntitlements,
   ticketItems,
   ticketScanEvents,
@@ -43,6 +44,11 @@ export interface FieldScannerContext {
 type PriorScanContext = NonNullable<FieldCheckInConsumeResponse['priorScan']>;
 type FieldCheckInTicketContext = NonNullable<FieldCheckInVerifyResponse['ticket']>;
 type FieldBenefitEntitlementRow = typeof ticketBenefitEntitlements.$inferSelect;
+type AccountConsumableTicketRow = {
+  ticketId: string;
+  ticketItemId: string | null;
+  usedAt: Date | null;
+};
 type ScanEventDb = Pick<DrizzleDB, 'insert' | 'select' | 'update'>;
 type AuditDb = Pick<DrizzleDB, 'insert' | 'select'>;
 
@@ -218,7 +224,47 @@ export class FieldCheckInService {
           };
         }
 
-        const [updated] = await tx
+        const accountTickets = await this.loadConsumableAccountTickets(tx, contract);
+        const accountTicketIds = accountTickets.map((ticket) => ticket.ticketId);
+        const accountTicketItemIds = accountTickets
+          .map((ticket) => ticket.ticketItemId)
+          .filter((ticketItemId): ticketItemId is string => Boolean(ticketItemId));
+
+        if (
+          accountTicketIds.length === 0
+          || !accountTicketItemIds.includes(contract.ticketItemId)
+        ) {
+          const laterPriorScan = await this.findPriorSuccessfulScan(tx, contract);
+          const scanEventId = await this.recordScanEvent(tx, {
+            contract,
+            context,
+            outcome: 'already_used',
+            deviceAttemptId: input.deviceAttemptId,
+            token,
+            rejectionReason: rejectionReasonFor('already_used'),
+          });
+          await this.writeAudit({
+            action: 'field.scan.consume',
+            status: 'denied',
+            resourceId: ticketResourceId(contract),
+            context,
+            after: {
+              outcome: 'already_used',
+              redactedTokenRef: redactedTokenRef(token),
+              scanEventId,
+            },
+          }, tx);
+
+          return {
+            outcome: 'already_used',
+            ticket: ticketContext,
+            scanEventId,
+            rejectionReason: rejectionReasonFor('already_used'),
+            priorScan: laterPriorScan,
+          };
+        }
+
+        const updatedTickets = await tx
           .update(tickets)
           .set({
             usedAt: consumedAt,
@@ -226,19 +272,21 @@ export class FieldCheckInService {
           })
           .where(
             and(
-              eq(tickets.reservationId, contract.reservationId),
-              eq(tickets.paymentId, contract.paymentId),
               eq(tickets.showtimeId, contract.showtimeId),
-              eq(tickets.ticketItemId, contract.ticketItemId),
-              ...(contract.ticketId ? [eq(tickets.id, contract.ticketId)] : []),
+              inArray(tickets.id, accountTicketIds),
               eq(tickets.status, 'active'),
               isNull(tickets.usedAt),
             ),
           )
           .returning({
             ticketId: tickets.id,
+            ticketItemId: tickets.ticketItemId,
             usedAt: tickets.usedAt,
           });
+        const updated = updatedTickets.find((ticket) =>
+          ticket.ticketItemId === contract.ticketItemId
+          || ticket.ticketId === contract.ticketId,
+        );
 
         if (!updated) {
           const laterPriorScan = await this.findPriorSuccessfulScan(tx, contract);
@@ -271,7 +319,7 @@ export class FieldCheckInService {
           };
         }
 
-        const [updatedTicketItem] = await tx
+        const updatedTicketItems = await tx
           .update(ticketItems)
           .set({
             admissionState: 'entered',
@@ -280,14 +328,19 @@ export class FieldCheckInService {
           })
           .where(
             and(
-              eq(ticketItems.id, contract.ticketItemId),
+              inArray(ticketItems.id, accountTicketItemIds),
               eq(ticketItems.status, 'active'),
               eq(ticketItems.admissionState, 'not_entered'),
             ),
           )
           .returning({ ticketItemId: ticketItems.id });
 
-        if (!updatedTicketItem) {
+        if (
+          updatedTicketItems.length !== accountTicketItemIds.length
+          || !updatedTicketItems.some((ticketItem) =>
+            ticketItem.ticketItemId === contract.ticketItemId,
+          )
+        ) {
           throw new TicketItemNotConsumableDuringScanError();
         }
 
@@ -310,6 +363,7 @@ export class FieldCheckInService {
             outcome: 'entered',
             redactedTokenRef: redactedTokenRef(token),
             scanEventId,
+            consumedTicketItemCount: updatedTicketItems.length,
           },
         }, tx);
 
@@ -405,6 +459,37 @@ export class FieldCheckInService {
         ? maskContextValue(prior.deviceAttemptId)
         : undefined,
     };
+  }
+
+  private async loadConsumableAccountTickets(
+    db: ScanEventDb,
+    contract: QrTicketScannerContract,
+  ): Promise<AccountConsumableTicketRow[]> {
+    const rows = await db
+      .select({
+        ticketId: tickets.id,
+        ticketItemId: tickets.ticketItemId,
+        usedAt: tickets.usedAt,
+      })
+      .from(tickets)
+      .innerJoin(ticketItems, eq(tickets.ticketItemId, ticketItems.id))
+      .innerJoin(reservations, eq(tickets.reservationId, reservations.id))
+      .where(
+        and(
+          eq(reservations.userId, contract.userId),
+          eq(reservations.showtimeId, contract.showtimeId),
+          eq(reservations.status, 'CONFIRMED'),
+          eq(tickets.showtimeId, contract.showtimeId),
+          eq(tickets.status, 'active'),
+          isNull(tickets.usedAt),
+          eq(ticketItems.showtimeId, contract.showtimeId),
+          eq(ticketItems.status, 'active'),
+          eq(ticketItems.admissionState, 'not_entered'),
+        ),
+      )
+      .orderBy(asc(ticketItems.createdAt), asc(ticketItems.id));
+
+    return rows;
   }
 
   private async loadBenefitEntitlements(

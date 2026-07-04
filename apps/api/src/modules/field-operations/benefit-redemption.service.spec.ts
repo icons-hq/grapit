@@ -131,6 +131,7 @@ function scannerContract(
     tokenVersion: '2026-07',
     ticketStatus: 'ACTIVE',
     ticketItemId: TICKET_ITEM_ID,
+    userId: '00000000-0000-4000-8000-000000000003',
     reservationId: '00000000-0000-4000-8000-000000000004',
     paymentId: '00000000-0000-4000-8000-000000000005',
     showtimeId: SHOWTIME_ID,
