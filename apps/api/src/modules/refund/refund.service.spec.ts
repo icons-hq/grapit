@@ -403,6 +403,32 @@ describe('RefundService', () => {
     }
   });
 
+  it('rejects new user refund requests at or after showtime start before calling Toss', async () => {
+    vi.setSystemTime(new Date('2026-07-04T06:00:00.000Z'));
+    const tossPaymentsClient = {
+      cancelPayment: vi.fn(),
+    };
+    const service = new RefundService(
+      {} as never,
+      tossPaymentsClient as never,
+      { finalizeFullPaymentCancellation: vi.fn() } as never,
+      { isAvailable: true, send: vi.fn() } as never,
+    );
+    const context = createContext();
+    context.reservation.cancelDeadline = new Date('2099-05-14T10:00:00.000Z');
+    context.showtime.dateTime = new Date('2026-07-04T06:00:00.000Z');
+    const insertRequestedRefundSpy = vi.spyOn(service as never, 'insertRequestedRefund');
+
+    vi.spyOn(service as never, 'loadReservationContext').mockResolvedValue(context as never);
+    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(null as never);
+
+    await expect(
+      service.requestRefund('reservation-1', 'user-1', '단순 변심'),
+    ).rejects.toThrow('공연 시작 후에는 환불할 수 없습니다');
+    expect(insertRequestedRefundSpy).not.toHaveBeenCalled();
+    expect(tossPaymentsClient.cancelPayment).not.toHaveBeenCalled();
+  });
+
   it('previews full-reservation cancellation with per-ticket D-2 fees', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-16T00:10:00.000+09:00'));

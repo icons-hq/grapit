@@ -370,6 +370,13 @@ export class RefundService {
       throw new ForbiddenException('취소 마감시간이 지났습니다');
     }
 
+    if (
+      actor.kind === 'user'
+      && context.showtime.dateTime.getTime() <= Date.now()
+    ) {
+      throw new ForbiddenException('공연 시작 후에는 환불할 수 없습니다');
+    }
+
     const cancellationQuote = this.buildFullReservationCancellationQuote(context, options);
     if (!canBuildFullReservationPaymentCancelRequest({
       payment: context.payment,

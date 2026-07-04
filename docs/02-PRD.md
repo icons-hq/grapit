@@ -91,6 +91,7 @@ Buyers can review and manage reservations.
 - My Page lists reservations and reservation details.
 - Reservation detail shows payment, refund, cancellation deadline, seats, QR ticket, and entry status.
 - Buyer cancellation updates reservation and seat inventory when allowed.
+- Buyer refund requests are blocked once the showtime start time has passed.
 - Refund preview and refund request APIs expose refund timeline and expected customer-service state.
 - Admin refund can hold cancelled seats for controlled reopening and records operational audit evidence.
 
@@ -103,6 +104,7 @@ Field operations are web-first and scanner-account based.
 - Scanner staff must be logged in with field scan capabilities.
 - Normal user accounts are denied on scanner-only surfaces.
 - Staff manually confirms entry after seeing ticket context.
+- Consuming one QR processes all active, not-entered tickets owned by the same buyer account for the same showtime.
 - Duplicate, tampered, refunded/cancelled, expired, wrong-showtime, and already-used outcomes are recorded as distinct scan results.
 - Offline handling is a local pending queue with server-authoritative sync; local pending state is not final admission evidence.
 - Field monitor focuses first on entered count, not-entered count, entry rate, duplicates, rejections, and offline backlog.

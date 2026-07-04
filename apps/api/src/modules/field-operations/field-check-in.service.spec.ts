@@ -41,11 +41,14 @@ function createUpdateResult<T>(rows: T[] = []) {
 function createSelectResult<T>(rows: T[] = []) {
   const chain = {
     from: vi.fn(),
+    innerJoin: vi.fn(),
     where: vi.fn(),
     orderBy: vi.fn(),
     limit: vi.fn(),
+    then: (resolve: (value: T[]) => void) => resolve(rows),
   };
   chain.from.mockReturnValue(chain);
+  chain.innerJoin.mockReturnValue(chain);
   chain.where.mockReturnValue(chain);
   chain.orderBy.mockReturnValue(chain);
   chain.limit.mockResolvedValue(rows);
@@ -61,6 +64,10 @@ function createInsertResult<T>(rows: T[] = [{ id: 'scan-event-1' } as T]) {
 }
 
 function sqlPredicateHasParamValue(predicate: unknown, value: string): boolean {
+  if (Array.isArray(predicate)) {
+    return predicate.some((item) => sqlPredicateHasParamValue(item, value));
+  }
+
   const candidate = predicate as {
     constructor?: { name?: string };
     queryChunks?: unknown[];
@@ -84,7 +91,9 @@ function scannerContract(
   return {
     tokenVersion: '2026-07',
     ticketStatus: 'ACTIVE',
+    ticketId: 'ticket-1',
     ticketItemId: 'ticket-item-1',
+    userId: 'buyer-user-1',
     reservationId: 'reservation-1',
     paymentId: 'payment-1',
     showtimeId: '00000000-0000-4000-8000-000000000001',
@@ -193,10 +202,19 @@ describe('FieldCheckInService RED contract', () => {
 
   it('normal active ticket verifies as processable without mutating tickets.usedAt, then consumes once as entered', async () => {
     const { service, qrTicketService, db, adminAuditService } = createDependencies();
+    const entitlementLookup = createSelectResult([]);
     const priorScanLookup = createSelectResult([]);
+    const accountTicketsLookup = createSelectResult([
+      {
+        ticketId: 'ticket-1',
+        ticketItemId: 'ticket-item-1',
+        usedAt: null,
+      },
+    ]);
     const updateTicket = createUpdateResult([
       {
         ticketId: 'ticket-1',
+        ticketItemId: 'ticket-item-1',
         usedAt: new Date('2026-07-04T09:01:00.000Z'),
       },
     ]);
@@ -205,7 +223,10 @@ describe('FieldCheckInService RED contract', () => {
     qrTicketService.verifyTicketForScannerContract.mockResolvedValue(
       scannerContract({ maskedJti: 'qr-jti...7890' }),
     );
-    db.select.mockReturnValue(priorScanLookup);
+    db.select
+      .mockReturnValueOnce(entitlementLookup)
+      .mockReturnValueOnce(priorScanLookup)
+      .mockReturnValueOnce(accountTicketsLookup);
     db.update
       .mockReturnValueOnce(updateTicket)
       .mockReturnValueOnce(updateTicketItem);
@@ -258,7 +279,7 @@ describe('FieldCheckInService RED contract', () => {
       .toBe(true);
     expect(sqlPredicateHasParamValue(
       updateTicket.set.mock.results[0]?.value.where.mock.calls[0]?.[0],
-      'ticket-item-1',
+      'ticket-1',
     )).toBe(true);
     expect(sqlPredicateHasParamValue(
       updateTicketItem.set.mock.results[0]?.value.where.mock.calls[0]?.[0],
@@ -293,6 +314,118 @@ describe('FieldCheckInService RED contract', () => {
     expectNoSensitiveLookupLeak(consumeResult);
   });
 
+  it('consumes every active ticket for the same account and showtime even across separate payments', async () => {
+    const { service, qrTicketService, db, adminAuditService } = createDependencies();
+    const priorScanLookup = createSelectResult([]);
+    const accountTicketsLookup = createSelectResult([
+      {
+        ticketId: 'ticket-1',
+        ticketItemId: 'ticket-item-1',
+        reservationId: 'reservation-1',
+        paymentId: 'payment-1',
+        usedAt: null,
+      },
+      {
+        ticketId: 'ticket-2',
+        ticketItemId: 'ticket-item-2',
+        reservationId: 'reservation-2',
+        paymentId: 'payment-2',
+        usedAt: null,
+      },
+    ]);
+    const updateTickets = createUpdateResult([
+      {
+        ticketId: 'ticket-1',
+        ticketItemId: 'ticket-item-1',
+        usedAt: new Date('2026-07-04T09:00:00.000Z'),
+      },
+      {
+        ticketId: 'ticket-2',
+        ticketItemId: 'ticket-item-2',
+        usedAt: new Date('2026-07-04T09:00:00.000Z'),
+      },
+    ]);
+    const updateTicketItems = createUpdateResult([
+      { ticketItemId: 'ticket-item-1' },
+      { ticketItemId: 'ticket-item-2' },
+    ]);
+    const insertScanEvent = createInsertResult([{ id: 'scan-event-1' }]);
+    qrTicketService.verifyTicketForScannerContract.mockResolvedValue(
+      scannerContract({
+        ticketId: 'ticket-1',
+        ticketItemId: 'ticket-item-1',
+        userId: 'buyer-user-1',
+      }),
+    );
+    db.select
+      .mockReturnValueOnce(priorScanLookup)
+      .mockReturnValueOnce(accountTicketsLookup);
+    db.update
+      .mockReturnValueOnce(updateTickets)
+      .mockReturnValueOnce(updateTicketItems);
+    db.insert.mockReturnValueOnce(insertScanEvent);
+
+    const consumeResult = await service.consume({
+      token: RAW_QR_TOKEN,
+      showtimeId: '00000000-0000-4000-8000-000000000001',
+      deviceAttemptId: SCANNER_CONTEXT.deviceAttemptId,
+      confirmed: true,
+    }, SCANNER_CONTEXT);
+
+    expect(consumeResult).toMatchObject({
+      outcome: 'entered',
+      scanEventId: 'scan-event-1',
+      consumedAt: '2026-07-04T09:00:00.000Z',
+    });
+    expect(accountTicketsLookup.from).toHaveBeenCalledWith(tickets);
+    expect(sqlPredicateHasParamValue(
+      accountTicketsLookup.where.mock.calls[0]?.[0],
+      'buyer-user-1',
+    )).toBe(true);
+    expect(sqlPredicateHasParamValue(
+      updateTickets.set.mock.results[0]?.value.where.mock.calls[0]?.[0],
+      'ticket-1',
+    )).toBe(true);
+    expect(sqlPredicateHasParamValue(
+      updateTickets.set.mock.results[0]?.value.where.mock.calls[0]?.[0],
+      'ticket-2',
+    )).toBe(true);
+    expect(sqlPredicateHasParamValue(
+      updateTickets.set.mock.results[0]?.value.where.mock.calls[0]?.[0],
+      'reservation-1',
+    )).toBe(false);
+    expect(sqlPredicateHasParamValue(
+      updateTickets.set.mock.results[0]?.value.where.mock.calls[0]?.[0],
+      'payment-1',
+    )).toBe(false);
+    expect(sqlPredicateHasParamValue(
+      updateTicketItems.set.mock.results[0]?.value.where.mock.calls[0]?.[0],
+      'ticket-item-1',
+    )).toBe(true);
+    expect(sqlPredicateHasParamValue(
+      updateTicketItems.set.mock.results[0]?.value.where.mock.calls[0]?.[0],
+      'ticket-item-2',
+    )).toBe(true);
+    expect(insertScanEvent.values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ticketId: 'ticket-1',
+        ticketItemId: 'ticket-item-1',
+        result: 'success',
+      }),
+    );
+    expect(adminAuditService.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: 'field.scan.consume',
+        resourceId: 'ticket-item-1',
+        status: 'success',
+        after: expect.objectContaining({
+          consumedTicketItemCount: 2,
+        }),
+      }),
+      expect.anything(),
+    );
+  });
+
   it.each([
     ['before showtime', '2026-07-04T08:30:00.000Z'],
     ['after showtime', '2026-07-04T11:30:00.000Z'],
@@ -301,9 +434,17 @@ describe('FieldCheckInService RED contract', () => {
     const { service, qrTicketService, db } = createDependencies();
     const entitlementLookup = createSelectResult([]);
     const priorScanLookup = createSelectResult([]);
+    const accountTicketsLookup = createSelectResult([
+      {
+        ticketId: 'ticket-1',
+        ticketItemId: 'ticket-item-1',
+        usedAt: null,
+      },
+    ]);
     const updateTicket = createUpdateResult([
       {
         ticketId: 'ticket-1',
+        ticketItemId: 'ticket-item-1',
         usedAt: new Date(nowIso),
       },
     ]);
@@ -317,7 +458,8 @@ describe('FieldCheckInService RED contract', () => {
     );
     db.select
       .mockReturnValueOnce(entitlementLookup)
-      .mockReturnValueOnce(priorScanLookup);
+      .mockReturnValueOnce(priorScanLookup)
+      .mockReturnValueOnce(accountTicketsLookup);
     db.update
       .mockReturnValueOnce(updateTicket)
       .mockReturnValueOnce(updateTicketItem);
@@ -485,9 +627,17 @@ describe('FieldCheckInService RED contract', () => {
   it('does not consume a ticket item that becomes cancellation_pending after QR verification', async () => {
     const { service, qrTicketService, db, adminAuditService } = createDependencies();
     const priorScanLookup = createSelectResult([]);
+    const accountTicketsLookup = createSelectResult([
+      {
+        ticketId: 'ticket-1',
+        ticketItemId: 'ticket-item-1',
+        usedAt: null,
+      },
+    ]);
     const updateTicket = createUpdateResult([
       {
         ticketId: 'ticket-1',
+        ticketItemId: 'ticket-item-1',
         usedAt: new Date('2026-07-04T09:01:00.000Z'),
       },
     ]);
@@ -496,7 +646,9 @@ describe('FieldCheckInService RED contract', () => {
     qrTicketService.verifyTicketForScannerContract.mockResolvedValue(
       scannerContract({ ticketId: 'ticket-1', ticketItemId: 'ticket-item-1' }),
     );
-    db.select.mockReturnValueOnce(priorScanLookup);
+    db.select
+      .mockReturnValueOnce(priorScanLookup)
+      .mockReturnValueOnce(accountTicketsLookup);
     db.update
       .mockReturnValueOnce(updateTicket)
       .mockReturnValueOnce(updateTicketItem);
@@ -666,9 +818,17 @@ describe('FieldCheckInService RED contract', () => {
   it('does not treat another seat item prior success as duplicate for the current ticket item', async () => {
     const { service, qrTicketService, db } = createDependencies();
     const priorScanLookup = createSelectResult([]);
+    const accountTicketsLookup = createSelectResult([
+      {
+        ticketId: 'ticket-a2',
+        ticketItemId: 'ticket-item-a2',
+        usedAt: null,
+      },
+    ]);
     const updateTicket = createUpdateResult([
       {
         ticketId: 'ticket-a2',
+        ticketItemId: 'ticket-item-a2',
         usedAt: new Date('2026-07-04T09:01:00.000Z'),
       },
     ]);
@@ -690,7 +850,9 @@ describe('FieldCheckInService RED contract', () => {
         seatLabels: ['VIP A열 2번'],
       }),
     );
-    db.select.mockReturnValueOnce(priorScanLookup);
+    db.select
+      .mockReturnValueOnce(priorScanLookup)
+      .mockReturnValueOnce(accountTicketsLookup);
     db.update
       .mockReturnValueOnce(updateTicket)
       .mockReturnValueOnce(updateTicketItem);
@@ -723,6 +885,13 @@ describe('FieldCheckInService RED contract', () => {
   it('records already_used attempts against the scanned ticket item after a failed update', async () => {
     const { service, qrTicketService, db, adminAuditService } = createDependencies();
     const initialPriorScanLookup = createSelectResult([]);
+    const accountTicketsLookup = createSelectResult([
+      {
+        ticketId: 'ticket-1',
+        ticketItemId: 'ticket-item-1',
+        usedAt: null,
+      },
+    ]);
     const updateTicket = createUpdateResult([]);
     const laterPriorScanLookup = createSelectResult([
       {
@@ -738,6 +907,7 @@ describe('FieldCheckInService RED contract', () => {
     );
     db.select
       .mockReturnValueOnce(initialPriorScanLookup)
+      .mockReturnValueOnce(accountTicketsLookup)
       .mockReturnValueOnce(laterPriorScanLookup);
     db.update.mockReturnValueOnce(updateTicket);
     db.insert.mockReturnValueOnce(insertScanEvent);

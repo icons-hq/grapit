@@ -263,7 +263,7 @@ Toss webhook processing records provider events, handles replay/idempotency, and
 
 ### 6.5 Refund And Cancelled Seat Reopen
 
-`RefundModule` owns refund preview/request/admin refund. Refund state can be terminal or provider-processing. pg-boss schedules:
+`RefundModule` owns refund preview/request/admin refund. Buyer refund requests are blocked after showtime start; admin refund remains an operational override path. Refund state can be terminal or provider-processing. pg-boss schedules:
 
 - refund cancel retry,
 - delayed cancelled-seat release.
@@ -292,7 +292,7 @@ Credential validity and venue entry state are separate:
 `FieldOperationsModule` provides:
 
 - verify: parse token or QR URL, load ticket context, return processable outcome,
-- consume: manually process entry when staff confirms,
+- consume: manually process entry when staff confirms, marking all active not-entered tickets for the same buyer account and showtime as entered,
 - offline sync: server-reverify pending attempts and return synced/rejected state,
 - monitor: KPI summary and scan logs.
 
