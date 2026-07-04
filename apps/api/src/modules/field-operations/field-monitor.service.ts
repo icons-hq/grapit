@@ -14,6 +14,7 @@ import {
   performances,
   reservations,
   showtimes,
+  ticketItems,
   ticketScanEvents,
   tickets,
 } from '../../database/schema/index.js';
@@ -90,9 +91,9 @@ export class FieldMonitorService {
   }): Promise<FieldMonitorSummaryResponse> {
     const [kpiRow] = await this.loadKpis(input, this.db);
     const alertRows = await this.loadAlertSignals(input, this.db);
-    const totalReservations = toCount(kpiRow?.totalReservations);
+    const totalTicketItems = toCount(kpiRow?.totalReservations);
     const enteredCount = toCount(kpiRow?.enteredCount);
-    const notEnteredCount = Math.max(totalReservations - enteredCount, 0);
+    const notEnteredCount = Math.max(totalTicketItems - enteredCount, 0);
     const updatedAt = new Date().toISOString();
     const alerts = buildAlerts(alertRows, updatedAt);
 
@@ -101,7 +102,7 @@ export class FieldMonitorService {
       showtimeId: input.showtimeId,
       enteredCount,
       notEnteredCount,
-      entryRate: totalReservations > 0 ? roundRate(enteredCount / totalReservations) : 0,
+      entryRate: totalTicketItems > 0 ? roundRate(enteredCount / totalTicketItems) : 0,
       duplicateScanCount: toCount(kpiRow?.duplicateScanCount),
       rejectedScanCount: toCount(kpiRow?.rejectedScanCount),
       offlinePendingCount: toCount(kpiRow?.offlinePendingCount),
@@ -124,18 +125,31 @@ export class FieldMonitorService {
   ): Promise<KpiRow[]> {
     return db
       .select({
-        totalReservations: sql<number>`count(distinct ${reservations.id})::int`,
-        enteredCount: sql<number>`count(distinct case when ${tickets.status} = 'used' or ${ticketScanEvents.result} = 'success' then ${reservations.id} end)::int`,
-        duplicateScanCount: sql<number>`coalesce(sum(case when ${ticketScanEvents.result} in ('duplicate', 'already_used') then 1 else 0 end), 0)::int`,
-        rejectedScanCount: sql<number>`coalesce(sum(case when ${ticketScanEvents.result} in ('tampered', 'refunded_cancelled', 'expired', 'wrong_showtime', 'offline_rejected', 'sync_failure') then 1 else 0 end), 0)::int`,
-        offlinePendingCount: sql<number>`coalesce(sum(case when ${ticketScanEvents.result} = 'offline_pending' or ${ticketScanEvents.syncState} = 'pending' then 1 else 0 end), 0)::int`,
-        offlineSyncedCount: sql<number>`coalesce(sum(case when ${ticketScanEvents.result} = 'offline_synced' or ${ticketScanEvents.syncState} = 'synced' then 1 else 0 end), 0)::int`,
+        totalReservations: sql<number>`count(distinct ${ticketItems.id})::int`,
+        enteredCount: sql<number>`count(distinct case when ${ticketItems.admissionState} = 'entered' or ${tickets.usedAt} is not null then ${ticketItems.id} end)::int`,
+        duplicateScanCount: sql<number>`count(distinct case when ${ticketScanEvents.result} in ('duplicate', 'already_used') then ${ticketScanEvents.id} end)::int`,
+        rejectedScanCount: sql<number>`count(distinct case when ${ticketScanEvents.result} in ('tampered', 'refunded_cancelled', 'expired', 'wrong_showtime', 'offline_rejected', 'sync_failure') then ${ticketScanEvents.id} end)::int`,
+        offlinePendingCount: sql<number>`count(distinct case when ${ticketScanEvents.result} = 'offline_pending' or ${ticketScanEvents.syncState} = 'pending' then ${ticketScanEvents.id} end)::int`,
+        offlineSyncedCount: sql<number>`count(distinct case when ${ticketScanEvents.result} = 'offline_synced' or ${ticketScanEvents.syncState} = 'synced' then ${ticketScanEvents.id} end)::int`,
       })
       .from(reservations)
       .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
       .innerJoin(performances, eq(showtimes.performanceId, performances.id))
       .innerJoin(payments, eq(payments.reservationId, reservations.id))
-      .innerJoin(tickets, eq(tickets.reservationId, reservations.id))
+      .innerJoin(
+        ticketItems,
+        and(
+          eq(ticketItems.reservationId, reservations.id),
+          eq(ticketItems.showtimeId, showtimes.id),
+        ),
+      )
+      .innerJoin(
+        tickets,
+        and(
+          eq(tickets.ticketItemId, ticketItems.id),
+          eq(tickets.showtimeId, showtimes.id),
+        ),
+      )
       .leftJoin(ticketScanEvents, eq(ticketScanEvents.reservationId, reservations.id))
       .where(
         and(
@@ -143,6 +157,8 @@ export class FieldMonitorService {
           eq(showtimes.id, input.showtimeId),
           eq(reservations.status, 'CONFIRMED'),
           eq(payments.status, 'DONE'),
+          eq(ticketItems.status, 'active'),
+          eq(tickets.status, 'active'),
         ),
       );
   }

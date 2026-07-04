@@ -46,6 +46,44 @@ function expectNoRawMonitorLeak(result: unknown) {
   expect(serialized).not.toContain('buyer@example.com');
 }
 
+function objectGraphText(root: unknown): string {
+  const seen = new WeakSet<object>();
+  const values: string[] = [];
+
+  function visit(value: unknown) {
+    if (value == null) {
+      return;
+    }
+
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      values.push(String(value));
+      return;
+    }
+
+    if (typeof value !== 'object') {
+      return;
+    }
+
+    if (seen.has(value)) {
+      return;
+    }
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+      return;
+    }
+
+    Object.entries(value).forEach(([key, nested]) => {
+      values.push(key);
+      visit(nested);
+    });
+  }
+
+  visit(root);
+  return values.join(' ');
+}
+
 describe('FieldMonitorService RED contract', () => {
   it('returns KPI-first summary before scan log rows: entered, not-entered, entry rate, duplicate scans, rejected scans, offline pending, offline synced, and abnormal alerts', async () => {
     const { service, db } = createDependencies();
@@ -104,6 +142,40 @@ describe('FieldMonitorService RED contract', () => {
       'offlinePendingCount',
     ]);
     expectNoRawMonitorLeak(summary);
+  });
+
+  it('counts entered KPI from active ticket items instead of one success scan per reservation', async () => {
+    const { service, db } = createDependencies();
+    db.select
+      .mockReturnValueOnce(chainResult([
+        {
+          totalReservations: 708,
+          enteredCount: 128,
+          duplicateScanCount: 0,
+          rejectedScanCount: 0,
+          offlinePendingCount: 0,
+          offlineSyncedCount: 0,
+        },
+      ]))
+      .mockReturnValueOnce(chainResult([]));
+
+    await service.getSummary({
+      eventId: 'event-girl-rules-20260704',
+      showtimeId: VALID_SHOWTIME_ID,
+    });
+
+    const statsSelect = db.select.mock.calls[0]?.[0] as Record<string, unknown>;
+    const totalReservationsSql = objectGraphText(statsSelect.totalReservations);
+    const enteredCountSql = objectGraphText(statsSelect.enteredCount);
+
+    expect(totalReservationsSql).toContain('ticket_items');
+    expect(totalReservationsSql).toContain('active');
+    expect(enteredCountSql).toContain('ticket_items');
+    expect(enteredCountSql).toContain('admission_state');
+    expect(enteredCountSql).toContain('entered');
+    expect(enteredCountSql).toContain('used_at');
+    expect(enteredCountSql).not.toContain('tickets.status');
+    expect(enteredCountSql).not.toContain('ticket_scan_events.result');
   });
 
   it('raises abnormal alerts for duplicate spikes, rejected/tampered attempts, refunded/cancelled attempts, offline backlog, and sync failures', async () => {
