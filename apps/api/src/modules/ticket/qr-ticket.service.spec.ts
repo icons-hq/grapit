@@ -468,6 +468,27 @@ describe('QrTicketService', () => {
     expect(handleReminderSpy).toHaveBeenCalledWith(payload);
   });
 
+  it('does not register the QR email worker in producer-only mode', async () => {
+    const pgBoss = {
+      isAvailable: true,
+      processesJobs: false,
+      send: vi.fn(),
+      work: vi.fn(),
+      stop: vi.fn(),
+    };
+    const service = new QrTicketService(
+      {} as never,
+      { get: vi.fn() } as never,
+      new JwtService(),
+      {} as never,
+      pgBoss as never,
+    );
+
+    await service.onModuleInit();
+
+    expect(pgBoss.work).not.toHaveBeenCalled();
+  });
+
   it('rejects manual ticket email sends for social placeholder emails', async () => {
     const emailService = { sendQrTicketReminderEmail: vi.fn() };
     const service = new QrTicketService(

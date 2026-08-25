@@ -118,6 +118,7 @@ export function buildBackgroundWorkerJob(env) {
               plainEnv('DB_POOL_MAX', dbPoolMax),
               plainEnv('DB_POOL_IDLE_TIMEOUT_MS', '30000'),
               plainEnv('DB_POOL_CONNECTION_TIMEOUT_MS', '5000'),
+              plainEnv('BACKGROUND_PROCESSING_ENABLED', 'true'),
               plainEnv('PENDING_PAYMENT_EXPIRATION_SWEEP_INTERVAL_MS', '0'),
               plainEnv('BACKGROUND_WORKER_WINDOW_MS', '30000'),
               ...SECRET_BINDINGS.map(([envName, secret]) => secretEnv(envName, secret)),

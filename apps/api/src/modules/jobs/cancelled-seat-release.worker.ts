@@ -48,7 +48,7 @@ export class CancelledSeatReleaseWorker implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    if (!this.pgBoss?.isAvailable) {
+    if (!this.pgBoss?.isAvailable || this.pgBoss.processesJobs === false) {
       return;
     }
 

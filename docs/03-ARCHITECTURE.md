@@ -334,7 +334,7 @@ Production deploy uses two Cloud Run services and one bounded Cloud Run Job:
 
 Both images are built from the monorepo root so `packages/shared` can be built before app packages.
 
-During the no-sale managed-demo posture, Web and API use minimum instances `0`, request-based CPU, and maximum instances `4`. Cloud Scheduler executes the bounded worker every five minutes so refund retries, QR reminders, cancelled-seat releases, and pending-payment expiration do not depend on an always-warm API instance. Ticket-opening capacity restoration is governed by ADR 0009 and `docs/runbooks/managed-demo-cost-floor.md`.
+During the no-sale managed-demo posture, Web and API use minimum instances `0`, request-based CPU, and maximum instances `4`. The API sets `BACKGROUND_PROCESSING_ENABLED=false`: pg-boss remains available for durable job enqueueing, while its scheduler, supervisor, queue workers, and the pending-payment interval do not run inside a CPU-throttled request service. Cloud Scheduler executes the bounded worker every five minutes with background processing explicitly enabled, so refund retries, QR reminders, cancelled-seat releases, and pending-payment expiration remain real without depending on an always-warm API instance. Ticket-opening capacity restoration is governed by ADR 0009 and `docs/runbooks/managed-demo-cost-floor.md`.
 
 `apps/edge-proxy` maps only `heygrabit.com`, `www.heygrabit.com`, and `api.heygrabit.com` to stable Cloud Run service origins. It streams requests/responses, preserves WebSocket upgrades, overwrites forwarded-host metadata, and rejects unknown hosts. Production Worker Routes are a separate, explicitly authenticated cutover and are not deployed by the GCP workflow.
 
@@ -384,6 +384,7 @@ Important non-sensitive production invariants:
 - API uses Cloud SQL attachment
 - API requires Redis/Valkey runtime wiring
 - managed-demo Web/API minimum instances are `0`, with a maximum of `4`; repository variables select this posture while workflow defaults preserve the warm ticket-opening posture
+- managed-demo API background processing is producer-only; the bounded Job always enables processing, and the warm ticket-opening default restores continuous API workers
 - worker interval is disabled inside the Job and replaced by one immediate sweep plus a 30-second bounded processing window
 - web build receives public API/WS/R2/Sentry/Toss public values at image build time
 

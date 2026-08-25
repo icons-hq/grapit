@@ -25,6 +25,14 @@ function createConfig(intervalMs = '60000') {
   } as unknown as ConfigService;
 }
 
+function createProducerOnlyConfig() {
+  return {
+    get: vi.fn((key: string) =>
+      key === 'BACKGROUND_PROCESSING_ENABLED' ? 'false' : undefined
+    ),
+  } as unknown as ConfigService;
+}
+
 describe('PendingPaymentExpirationWorker', () => {
   it('marks expired pending reservations failed and releases their Redis seat locks', async () => {
     const db = createDb([
@@ -118,6 +126,21 @@ describe('PendingPaymentExpirationWorker', () => {
     expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 15000);
     expect(clearIntervalSpy).toHaveBeenCalledTimes(1);
 
+    vi.useRealTimers();
+  });
+
+  it('does not register the periodic sweep in producer-only mode', () => {
+    vi.useFakeTimers();
+    const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
+    const worker = new PendingPaymentExpirationWorker(
+      createDb([]) as never,
+      createBookingService() as never,
+      createProducerOnlyConfig(),
+    );
+
+    worker.onModuleInit();
+
+    expect(setIntervalSpy).not.toHaveBeenCalled();
     vi.useRealTimers();
   });
 });

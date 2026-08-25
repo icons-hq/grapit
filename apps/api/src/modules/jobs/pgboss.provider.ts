@@ -50,6 +50,7 @@ export type PgBossWorkHandler<TData = unknown> = (
 
 export interface PgBossContract {
   isAvailable: boolean;
+  processesJobs?: boolean;
   createQueue(name: string, options?: Record<string, unknown>): Promise<void>;
   send<TData = unknown>(
     name: string,
@@ -89,6 +90,10 @@ function createUnavailableBoss(reason: string): PgBossContract {
 
 type PgBossConstructor = new (options: {
   connectionString: string;
+  schedule?: boolean;
+  supervise?: boolean;
+  migrate?: boolean;
+  queueCacheIntervalSeconds?: number;
 }) => PgBossContract & {
   start(): Promise<void>;
   on?(event: 'error' | 'warning', handler: (event: unknown) => void): unknown;
@@ -117,8 +122,35 @@ export function loadPgBossConstructor(): PgBossConstructor {
 
 export function markBossAvailable(
   boss: PgBossContract & { start(): Promise<void> },
+  processesJobs = true,
 ): PgBossContract {
-  return Object.assign(boss, { isAvailable: true });
+  return Object.assign(boss, { isAvailable: true, processesJobs });
+}
+
+export function isBackgroundProcessingEnabled(
+  configService: Pick<ConfigService, 'get'>,
+): boolean {
+  return configService
+    .get<string>('BACKGROUND_PROCESSING_ENABLED')
+    ?.trim()
+    .toLowerCase() !== 'false';
+}
+
+export function buildPgBossOptions(
+  connectionString: string,
+  processesJobs: boolean,
+): ConstructorParameters<PgBossConstructor>[0] {
+  if (processesJobs) {
+    return { connectionString };
+  }
+
+  return {
+    connectionString,
+    schedule: false,
+    supervise: false,
+    migrate: false,
+    queueCacheIntervalSeconds: 86_400,
+  };
 }
 
 export async function bootstrapPgBossQueues(
@@ -155,12 +187,13 @@ export const pgbossProvider = {
 
     try {
       const PgBoss = loadPgBossConstructor();
-      const boss = new PgBoss({ connectionString });
+      const processesJobs = isBackgroundProcessingEnabled(configService);
+      const boss = new PgBoss(buildPgBossOptions(connectionString, processesJobs));
       attachPgBossListeners(boss);
       await boss.start();
       await bootstrapPgBossQueues(boss);
 
-      return markBossAvailable(boss);
+      return markBossAvailable(boss, processesJobs);
     } catch (error) {
       logger.error(
         'Failed to initialize pg-boss. Background refund/cancel jobs are unavailable until dependency/runtime is fixed.',

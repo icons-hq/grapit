@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildPgBossOptions,
   bootstrapPgBossQueues,
+  isBackgroundProcessingEnabled,
   loadPgBossConstructor,
   markBossAvailable,
   PG_BOSS_QUEUE_NAMES,
@@ -51,9 +53,26 @@ describe('pgbossProvider helpers', () => {
     const availableBoss = markBossAvailable(boss);
 
     expect(availableBoss.isAvailable).toBe(true);
+    expect(availableBoss.processesJobs).toBe(true);
     expect(availableBoss.send).toBe(FakeBoss.prototype.send);
     expect(availableBoss.work).toBe(FakeBoss.prototype.work);
     expect(availableBoss.stop).toBe(FakeBoss.prototype.stop);
+  });
+
+  it('disables pg-boss timers while retaining producer access in managed-demo mode', () => {
+    expect(buildPgBossOptions('postgresql://example', false)).toEqual({
+      connectionString: 'postgresql://example',
+      schedule: false,
+      supervise: false,
+      migrate: false,
+      queueCacheIntervalSeconds: 86_400,
+    });
+    expect(
+      isBackgroundProcessingEnabled({ get: () => 'false' }),
+    ).toBe(false);
+    expect(
+      isBackgroundProcessingEnabled({ get: () => undefined }),
+    ).toBe(true);
   });
 
   it('bootstraps every exported application queue before workers use pg-boss', async () => {

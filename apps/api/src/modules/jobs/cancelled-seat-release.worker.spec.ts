@@ -65,6 +65,21 @@ describe('CancelledSeatReleaseWorker', () => {
     );
   });
 
+  it('does not register the worker in producer-only mode', async () => {
+    const boss = {
+      isAvailable: true,
+      processesJobs: false,
+      work: vi.fn(),
+      send: vi.fn(),
+      stop: vi.fn(),
+    };
+    const worker = new CancelledSeatReleaseWorker({} as never, boss as never);
+
+    await worker.onModuleInit();
+
+    expect(boss.work).not.toHaveBeenCalled();
+  });
+
   it('consumes pg-boss batch payloads when the registered worker runs', async () => {
     const boss = {
       isAvailable: true,

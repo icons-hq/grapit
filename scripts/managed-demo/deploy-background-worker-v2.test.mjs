@@ -47,6 +47,10 @@ test('renders one bounded v2 Job with secret references and managed-demo setting
   });
   assert.equal(container.env.find(({ name }) => name === 'VALKEY_MODE').value, 'standalone');
   assert.equal(container.env.find(({ name }) => name === 'DB_POOL_MAX').value, '2');
+  assert.equal(
+    container.env.find(({ name }) => name === 'BACKGROUND_PROCESSING_ENABLED').value,
+    'true',
+  );
 });
 
 test('rejects drift-prone or unsafe deployment inputs', () => {
