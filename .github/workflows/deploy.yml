@@ -224,7 +224,7 @@ jobs:
           image: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.API_SERVICE }}:${{ env.DEPLOY_SHA }}
           flags: >-
             --service-account=grapit-cloudrun@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
-            --add-cloudsql-instances=${{ secrets.CLOUD_SQL_CONNECTION_NAME }}
+            --set-cloudsql-instances=${{ secrets.CLOUD_SQL_CONNECTION_NAME }}
             --min-instances=${{ env.API_MIN_INSTANCES }}
             --max-instances=${{ env.API_MAX_INSTANCES }}
             --concurrency=250
