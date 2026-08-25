@@ -58,9 +58,10 @@ PROJECT_ID=grapit-491806
 REGION=asia-northeast3
 ZONE=asia-northeast3-a
 SOURCE_SQL=grapit-db
-TARGET_SQL=grapit-db-managed-demo
+TARGET_SQL=grabit-db-managed-demo
 CUTOVER_ID=20260825-managed-demo
 ROLLBACK_BUCKET=grapit-db-rollback-20260825
+ROLLBACK_SECONDARY_BUCKET=grapit-db-rollback-secondary-20260825
 
 gcloud storage buckets create "gs://${ROLLBACK_BUCKET}" \
   --project="${PROJECT_ID}" \
@@ -78,12 +79,20 @@ gcloud storage buckets add-iam-policy-binding "gs://${ROLLBACK_BUCKET}" \
 gcloud sql export sql "${SOURCE_SQL}" \
   "gs://${ROLLBACK_BUCKET}/${CUTOVER_ID}/full.sql.gz" \
   --project="${PROJECT_ID}" \
-  --database=grabit \
-  --offload
+  --database=grabit
 
 gcloud storage objects describe \
   "gs://${ROLLBACK_BUCKET}/${CUTOVER_ID}/full.sql.gz" \
   --format='yaml(name,generation,size,crc32c,md5Hash,createTime)'
+
+gcloud storage buckets create "gs://${ROLLBACK_SECONDARY_BUCKET}" \
+  --project="${PROJECT_ID}" \
+  --location=asia-northeast1 \
+  --uniform-bucket-level-access
+
+gcloud storage cp \
+  "gs://${ROLLBACK_BUCKET}/${CUTOVER_ID}/full.sql.gz" \
+  "gs://${ROLLBACK_SECONDARY_BUCKET}/${CUTOVER_ID}/full.sql.gz"
 ```
 
 Create the target only after the export-size gate passes:
@@ -92,6 +101,7 @@ Create the target only after the export-size gate passes:
 gcloud sql instances create "${TARGET_SQL}" \
   --project="${PROJECT_ID}" \
   --database-version=POSTGRES_16 \
+  --edition=enterprise \
   --zone="${ZONE}" \
   --tier=db-f1-micro \
   --availability-type=zonal \
@@ -117,7 +127,7 @@ Before cutover, compare at minimum:
 
 ## Phase 2 — managed Valkey replacement
 
-Create a differently named Cluster Mode Disabled instance. `custom-pico` is selected because it is the smallest current managed node type with SLA support; `shared-core-nano` is cheaper but has no SLA and is not the chosen posture.
+Create a differently named Cluster Mode Disabled instance. `custom-pico` is selected because it is the smallest current managed custom node type with SLA-capable hardware and is slightly cheaper than `shared-core-nano` at current list price. This one-node, zero-replica managed-demo posture itself has no availability SLA; restoring a ticket-opening posture requires replicas and load evidence.
 
 ```bash
 gcloud memorystore instances create grabit-valkey-managed-demo \
@@ -128,11 +138,13 @@ gcloud memorystore instances create grabit-valkey-managed-demo \
   --mode=cluster-disabled \
   --shard-count=1 \
   --replica-count=0 \
-  --psc-auto-connections='network=projects/grapit-491806/global/networks/default,projectId=grapit-491806' \
+  --endpoints='[{"connections":[{"pscAutoConnection":{"network":"projects/grapit-491806/global/networks/default","projectId":"grapit-491806"}}]}]' \
+  --zone-distribution-config-mode=single-zone \
+  --zone-distribution-config=asia-northeast3-a \
   --deletion-protection-enabled
 ```
 
-If the installed gcloud surface rejects `custom-pico` while the regional API supports it, update gcloud and re-check `gcloud memorystore instances create --help`; do not silently substitute `shared-core-nano` or `standard-small`.
+Some gcloud help output omits `custom-pico` even though the regional API accepts it. Submit the create request and verify the resulting instance reports `CUSTOM_PICO`; do not silently substitute `shared-core-nano` or `standard-small`.
 
 After the new endpoint is active:
 
@@ -175,6 +187,22 @@ gcloud run jobs executions list \
 ```
 
 The accepted managed-demo delay is at most roughly five minutes for asynchronous retry, reminder, and expiration work. A failed scheduled execution, oldest pg-boss job age above ten minutes, or two consecutive missed schedules is an operational alert.
+
+## Artifact Registry and billing guard
+
+Before cleanup, add a dated `rollback-*` tag to the exact API and Web digests serving production. Apply the repository policy only after both tags resolve to those digests:
+
+```bash
+gcloud artifacts repositories set-cleanup-policies grabit \
+  --project=grapit-491806 \
+  --location=asia-northeast3 \
+  --policy=scripts/managed-demo/artifact-registry-cleanup-policy.json \
+  --no-dry-run
+```
+
+The policy deletes only untagged artifacts older than 14 days, keeps ten recent versions per package, and preserves `rollback-*` tags. Artifact Registry does not delete a Docker image still referenced by a parent manifest. Record repository size before and after the periodic policy run.
+
+The billing account is denominated in KRW. Convert the USD 45/55 guardrails when the budget is changed, record the rate/date in the cutover log, and keep current-spend alerts near USD 45 and USD 55 plus a forecasted-spend alert near USD 55. A budget is a notification mechanism, not a hard spending cap.
 
 ## Phase 4 — Cloudflare edge proxy and load-balancer retirement
 

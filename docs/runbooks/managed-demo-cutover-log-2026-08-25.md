@@ -2,40 +2,60 @@
 
 This log records external state changes and failed gates for the managed-demo migration. It contains no credential values or private endpoints.
 
-## Completed preparation
+## Completed preparation and access
 
 - Captured the pre-change Cloud Run, Cloud SQL, Valkey, load-balancer, scheduler, Artifact Registry, and relevant Secret Manager version baseline.
-- Created branch `ps/chore/managed-demo-cost-floor`.
-- Added the bounded background worker, Cloudflare edge proxy, deployment configuration, ADR, and restoration runbooks locally.
-- Created private bucket `gs://grapit-db-rollback-20260825` in `asia-northeast3` with uniform bucket-level access and public-access prevention.
-- Granted the source Cloud SQL service account `roles/storage.objectAdmin` on that rollback bucket so an authorized Cloud SQL export can write the object.
+- Created branch `ps/chore/managed-demo-cost-floor` and PR 188.
+- Added the bounded background worker, Cloudflare edge proxy, deployment configuration, ADR, and restoration runbooks.
+- Granted the active operator the scoped Cloud SQL, Valkey, Scheduler, Cloud Run, Secret Manager, service-account-use, load-balancer, network, and Artifact Registry roles needed for this migration. The identity already held project Owner; the redundant bindings added for this cutover must be removed after the migration closes.
 
-## Blocked gate
+## Database backup and verified restore
 
-The attempted serverless export to:
+- Created private, uniform-access, public-access-prevented bucket `gs://grapit-db-rollback-20260825` in `asia-northeast3`.
+- The offloaded export operation `5348e059-ad10-48af-922a-2eca00000042` failed only inside its temporary offload clone because that clone reported `database "grabit" does not exist`; it created no object.
+- A normal Cloud SQL export then completed successfully as operation `c53dc8ac-c604-4ce6-adb9-1c1c00000042`.
+- Primary object: `gs://grapit-db-rollback-20260825/20260825-managed-demo-r3/full.sql.gz`.
+- Primary metadata: generation `1787640415506275`, size `10,781,900` bytes, CRC32C `FGM5sg==`, MD5 `jQfSzOWWQMCvsXObyqHEQQ==`, SHA-256 `b00138bd0680eded93ddfffaf7786659c229bd8aedc2f2654214a71f88c58ca5`; local `gzip -t` passed.
+- Created independent private bucket `gs://grapit-db-rollback-secondary-20260825` in `asia-northeast1` and copied the object to the same relative path. Secondary generation is `1787640489074461`; size, CRC32C, and MD5 match the primary.
+- Created `grabit-db-managed-demo` with operation `5f5ef866-26a5-4e1f-bb27-da0f00000042`: PostgreSQL 16 Enterprise, `db-f1-micro`, zonal `asia-northeast3-a`, 10GB SSD with auto-resize, public IPv4, seven retained backups, PITR, and deletion protection. The first create request made no resource because the edition was not explicit; `--edition=enterprise` is now recorded in the runbook.
+- Created database `grapit` and application user, then imported the backup with operation `5a8085cb-4b71-4c59-8fc7-037b00000042` without exposing credentials.
+- Source and target matched for all 50 public table row counts. A disposable independent restore matched all 59 non-system tables across `public`, `drizzle`, and `pgboss`, then the disposable database was deleted.
+- Drizzle migration state matched: 33 rows, max id 36, max created value `1782894990432`, digest `85c79f3e9368696989d9c015d3fe800b`. Payment/refund/ticket/admission counts and monetary sums also matched exactly.
+- A Cloud Run execution using the production service account and target Cloud SQL attachment confirmed database `grapit`, 50 public tables, and 1,762 users.
 
-`gs://grapit-db-rollback-20260825/20260825-managed-demo/grapit-full.sql.gz`
+## Valkey audit and replacement
 
-was rejected before an export operation started:
+- The original `grapit-valkey` audit found seven index keys: zero seat-owner/session keys, four stale locked-seat members, 9,971 stale waiting members, and 26 stale active members. The preceding 15-minute production log window contained no queue or seat-lock request.
+- All members lacked their corresponding live owner/session keys and were old load-test artifacts. Cleanup execution `grabit-valkey-audit-20260825-ztb86` removed only those stale members.
+- Final original-instance audit execution `grabit-valkey-audit-20260825-9hc6w` reported zero total keys and zero seat-lock, waiting, active, and queue-session members.
+- Created `grabit-valkey-managed-demo` with operation `operation-1787642395353-659d9edf5e1e0-348e3c72-c6a4ea36`: `CUSTOM_PICO`, Valkey 8.0, Cluster Mode Disabled, one shard, zero replicas, single zone `asia-northeast3-a`, PSC on the default network, and deletion protection. It is `ACTIVE`.
+- Cloud Run execution `grabit-valkey-audit-20260825-fn24d` connected through the production VPC path and reported zero keys. The temporary audit Job was deleted after the SQL and Valkey tests; execution logs remain.
 
-```text
-PERMISSION_DENIED: The caller does not have permission.
-```
+## Cost controls and rollback artifacts
 
-The active gcloud identity can create the bucket but does not have the Cloud SQL export permission. The target object does not exist, so no checksum or size gate is available yet.
+- Updated the project-scoped monthly Billing budget to KRW 76,000, approximately USD 55 at the 2026-08-25 observed rate. Alerts trigger at 82% current spend (approximately USD 45), 100% current spend, and 100% forecasted spend through the existing notification channel. Budget alerts notify; they do not cap spending.
+- Tagged the current API and Web image commit `ad514b7fe661f94e7c1d779ab5807ac22055845e` as `rollback-20260825` in Artifact Registry.
+- Applied `scripts/managed-demo/artifact-registry-cleanup-policy.json`: delete only untagged artifacts older than 14 days, keep ten recent versions per package, and keep `rollback-*` tags. The policy is active, not dry-run; parent-manifest-referenced Docker images are protected by Artifact Registry behavior.
+- Created staging secrets `database-url-managed-demo-20260825:1` and `redis-url-managed-demo-20260825:1`. They contain the verified target connections and allow a coordinated production cutover without changing the baseline secrets early.
 
-The active identity also cannot impersonate `github-actions-deployer@grapit-491806.iam.gserviceaccount.com`; `iam.serviceAccounts.getAccessToken` is denied. There is therefore no safe local service-account fallback for the export.
+## Repository-public and CI security gate
 
-PR 188 was opened for the repository changes. Its CI job did not start any steps because the GitHub account reported failed recent payments or an insufficient spending limit. This is an account billing gate, not a test failure; the PR remains unmerged.
+- PR 188 is ready and mergeable. Its prior Actions run did not execute steps because GitHub reported a payment/spending-limit gate; this was not a test failure.
+- Full-history Gitleaks scanning produced generic findings that collapsed to two account-specific Toss test-key values. Full-history TruffleHog reported zero verified secrets; its two unknown PostgreSQL findings were documentation placeholders.
+- The historical Toss test secret is not the live production secret, but a read-only Toss API call proved the old test secret is still accepted. The repository therefore remains private until that test secret is reissued and the old value is rejected.
+- Toss developer center is open at the exact test-key reissue control. Reissuing invalidates only the old test secret, but the browser safety gate requires explicit action-time confirmation before the button is pressed.
 
-## Confirmed not changed
+## Production state deliberately not cut over yet
 
-- No Cloud SQL instance was created, resized, stopped, or deleted.
-- No Valkey instance was created, updated, or deleted.
-- `database-url` and `redis-url` received no new versions.
-- No Cloud Run service, Job, Scheduler job, Cloudflare Worker/Route, DNS record, or GCP load-balancer resource was changed.
-- Production remained on the baseline revisions and original data services.
+- Baseline `database-url:2` and `redis-url:1` remain unchanged and are still the production values.
+- The original `grapit-db` remains runnable; `grapit-valkey` remains active. Neither has been resized, stopped, or deleted.
+- Cloud Run API/Web remain on revisions `grabit-api-00242-2vn` and `grabit-web-00191-zw8`; no permanent background Job or Scheduler job exists yet.
+- No Cloudflare Worker/Route, DNS record, GCP load-balancer resource, payment/refund, or production business record has been changed by the cutover work.
 
-## Next authorized execution point
+## Next execution point
 
-Resume only with an identity that has the required Cloud SQL export permission. The next command is the export command in `managed-demo-cost-floor.md`; do not create the small Cloud SQL target until the export object exists and the size/checksum gate passes.
+1. Reissue the old Toss test key after explicit confirmation, verify the old value is rejected, make the repository public, and rerun PR 188 CI.
+2. Merge the green PR and deploy once with warm defaults to create and smoke the bounded Cloud Run Job.
+3. Create the five-minute Scheduler job, promote the two staged target connections into new versions of `database-url` and `redis-url`, set the managed-demo repository variables, and deploy the scale-to-zero revision.
+4. Complete HTTP, auth, queue/seat-lock, WebSocket, payment-webhook, refund, QR/check-in, email/SMS, and admin-write-safe smoke tests. No real financial charge or refund is part of an infrastructure smoke without separate transaction approval.
+5. Keep the original Valkey for at least 24 hours and the original SQL stopped for seven days after clean smoke evidence. Load-balancer retirement also waits for at least 24 hours of clean Cloudflare canary evidence.
