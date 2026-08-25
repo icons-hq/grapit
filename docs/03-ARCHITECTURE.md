@@ -347,15 +347,16 @@ During the no-sale managed-demo posture, Web and API use minimum instances `0`, 
 3. lint,
 4. typecheck,
 5. unit tests,
-6. API integration tests with testcontainers,
-7. Drizzle migrations against a Postgres service container,
-8. seed test data,
-9. verify Toss test credentials are configured for non-fork events,
-10. install Playwright Chromium,
-11. build API,
-12. run API server,
-13. login smoke,
-14. web E2E tests.
+6. Cloud Run v2 background-worker deployment payload tests,
+7. API integration tests with testcontainers,
+8. Drizzle migrations against a Postgres service container,
+9. seed test data,
+10. verify Toss test credentials are configured for non-fork events,
+11. install Playwright Chromium,
+12. build API,
+13. run API server,
+14. login smoke,
+15. web E2E tests.
 
 ### 8.3 Deploy
 
@@ -368,7 +369,7 @@ During the no-sale managed-demo posture, Web and API use minimum instances `0`, 
 5. run Drizzle migrations,
 6. build and push API image,
 7. build and push web image,
-8. deploy and smoke the bounded background worker Job from the API image,
+8. validate and patch the bounded background worker Job through the Cloud Run v2 API, then smoke it from the API image,
 9. when scale-to-zero is selected, verify the separately provisioned five-minute schedule is enabled, then deploy API,
 10. deploy web after API deploy.
 
