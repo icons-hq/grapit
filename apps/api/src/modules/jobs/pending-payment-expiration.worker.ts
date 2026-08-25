@@ -10,6 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { sql } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import { BookingService } from '../booking/booking.service.js';
+import { isBackgroundProcessingEnabled } from './pgboss.provider.js';
 
 export const PENDING_PAYMENT_EXPIRATION_SWEEP_INTERVAL_MS = 60_000;
 export const ASYNC_PAYMENT_HANDOFF_STATUSES = ['IN_PROGRESS', 'DONE'] as const;
@@ -63,6 +64,13 @@ export class PendingPaymentExpirationWorker implements OnModuleInit, OnModuleDes
   ) {}
 
   onModuleInit(): void {
+    if (
+      this.configService
+      && !isBackgroundProcessingEnabled(this.configService)
+    ) {
+      return;
+    }
+
     const intervalMs = resolveSweepIntervalMs(this.configService);
     if (intervalMs <= 0) {
       return;

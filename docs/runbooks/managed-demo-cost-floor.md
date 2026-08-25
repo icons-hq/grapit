@@ -168,9 +168,10 @@ Set these GitHub Actions repository variables immediately before the managed-dem
 - `WEB_MIN_INSTANCES=0`, `WEB_MAX_INSTANCES=4`;
 - `API_CPU_ALLOCATION_FLAG=--cpu-throttling`;
 - `DB_POOL_MAX=2`;
+- `BACKGROUND_PROCESSING_ENABLED=false`;
 - `VALKEY_MODE=standalone` after the Valkey secret cutover.
 
-Without those variables, workflow defaults preserve the warm ticket-opening posture (`1/40` API, `1/50` Web, instance-based API CPU, pool size `4`, cluster Valkey). The workflow deploys and synchronously smokes `grabit-background-worker` from the same immutable API image. If `API_MIN_INSTANCES=0`, deployment refuses to change the API unless `grabit-background-worker-every-5m` already exists in `ENABLED` state.
+Without those variables, workflow defaults preserve the warm ticket-opening posture (`1/40` API, `1/50` Web, instance-based API CPU, pool size `4`, continuous background processing, cluster Valkey). In managed-demo mode the API remains a pg-boss producer but does not run scheduler, supervisor, queue-worker, or pending-payment timers while its CPU is throttled. The workflow deploys and synchronously smokes `grabit-background-worker` from the same immutable API image with background processing explicitly enabled. If `API_MIN_INSTANCES=0`, deployment refuses to change the API unless `grabit-background-worker-every-5m` already exists in `ENABLED` state.
 
 The workflow renders the complete Job definition with `scripts/managed-demo/deploy-background-worker-v2.mjs`, validates it with the Cloud Run v2 `jobs.patch` `validateOnly` path, applies it through the same v2 API, and reads the image back before executing the smoke run. This preserves one deterministic Job configuration and avoids the legacy v1 deploy path that returned a false service-account `actAs` denial even after direct IAM and Policy Troubleshooter checks succeeded. The pure payload contract is covered by `deploy-background-worker-v2.test.mjs` in CI.
 
@@ -256,8 +257,8 @@ Use this path during the retention window:
 1. start `grapit-db` if it was stopped;
 2. add a new `database-url` version containing the same value as preserved version `2`, or explicitly bind version `2` during an emergency deploy;
 3. add a new `redis-url` version containing the same value as preserved version `1`, and set `VALKEY_MODE=cluster`;
-4. deploy the preserved image SHA or route Cloud Run traffic to `grabit-api-00242-2vn` and `grabit-web-00191-zw8`;
-5. disable `grabit-background-worker-every-5m` only after an API instance is kept warm with continuous workers;
+4. set `BACKGROUND_PROCESSING_ENABLED=true`, then deploy the preserved image SHA or route Cloud Run traffic to `grabit-api-00242-2vn` and `grabit-web-00191-zw8`;
+5. disable `grabit-background-worker-every-5m` only after an API instance is kept warm and its continuous workers are verified;
 6. rollback/remove the Worker Route so traffic returns to the still-retained GCP load balancer;
 7. run the full smoke checklist and reconcile any writes made after the cutover. Database rollback is not a blind pointer flip if both databases accepted writes; choose a source of truth and reconcile first.
 
@@ -268,7 +269,7 @@ Begin this process at least 14 days before sales open. The old baseline is a res
 1. Set `BOOKING_ENABLED=false` while capacity changes and verification are in progress.
 2. Resize or replace Cloud SQL to at least the prior `db-custom-2-12288` capacity, then load-test. Reconsider REGIONAL availability before public sale or venue-entry windows.
 3. Create a new Cluster Mode Enabled Valkey instance sized from load evidence, with replicas where availability requires them. Set `VALKEY_MODE=cluster`.
-4. Restore Web/API minimum instances `1`; restore API instance-based CPU and the tested maximums (`40` API / `50` Web were the prior ceilings).
+4. Restore Web/API minimum instances `1`; restore API instance-based CPU, set `BACKGROUND_PROCESSING_ENABLED=true`, and restore the tested maximums (`40` API / `50` Web were the prior ceilings).
 5. Pause the five-minute Job only after continuous pg-boss workers are verified on the warm API revision.
 6. Choose a ticket-opening edge: a tested Cloudflare Worker plan with adequate limits, or a rebuilt GCP load balancer whose new certificates are `ACTIVE`.
 7. Pass load/concurrency, DB backup restore, signup/login, SMS/email, payment/webhook/refund, queue/seat-lock, QR/check-in/offline sync, admin write, logs/alerts, and rollback rehearsals.
