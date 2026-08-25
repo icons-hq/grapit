@@ -211,8 +211,11 @@ async function waitForOperation(operation, token, projectId) {
 }
 
 async function patchJob(job, token, projectId, validateOnly) {
-  const query = validateOnly ? '?validateOnly=true' : '';
-  const operation = await requestJson(`https://run.googleapis.com/v2/${job.name}${query}`, {
+  const query = new URLSearchParams({ allowMissing: 'true' });
+  if (validateOnly) {
+    query.set('validateOnly', 'true');
+  }
+  const operation = await requestJson(`https://run.googleapis.com/v2/${job.name}?${query}`, {
     method: 'PATCH',
     headers: requestHeaders(token, projectId),
     body: JSON.stringify(job),

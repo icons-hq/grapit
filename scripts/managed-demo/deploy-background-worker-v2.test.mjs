@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildBackgroundWorkerJob } from './deploy-background-worker-v2.mjs';
+import {
+  buildBackgroundWorkerJob,
+  deployBackgroundWorkerJob,
+} from './deploy-background-worker-v2.mjs';
 
 const validEnv = {
   GCP_PROJECT_ID: 'grapit-491806',
@@ -59,4 +62,44 @@ test('rejects drift-prone or unsafe deployment inputs', () => {
     () => buildBackgroundWorkerJob({ ...validEnv, CLOUD_SQL_CONNECTION_NAME: 'other:region:db' }),
     /CLOUD_SQL_CONNECTION_NAME must match/,
   );
+});
+
+test('allows validate and apply patches to recreate a missing Job', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  const expectedImage = buildBackgroundWorkerJob(validEnv).template.template.containers[0].image;
+
+  globalThis.fetch = async (url, options = {}) => {
+    requests.push({ url: String(url), method: options.method ?? 'GET' });
+    const body = options.method === 'PATCH'
+      ? { name: 'operations/test', done: true }
+      : {
+          template: {
+            template: {
+              containers: [{ image: expectedImage }],
+            },
+          },
+        };
+    return new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+
+  try {
+    await deployBackgroundWorkerJob({
+      ...validEnv,
+      GOOGLE_OAUTH_ACCESS_TOKEN: 'test-token',
+    });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+
+  const patchRequests = requests.filter(({ method }) => method === 'PATCH');
+  assert.equal(patchRequests.length, 2);
+  for (const { url } of patchRequests) {
+    assert.equal(new URL(url).searchParams.get('allowMissing'), 'true');
+  }
+  assert.equal(new URL(patchRequests[0].url).searchParams.get('validateOnly'), 'true');
+  assert.equal(new URL(patchRequests[1].url).searchParams.has('validateOnly'), false);
 });
