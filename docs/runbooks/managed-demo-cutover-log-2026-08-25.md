@@ -41,22 +41,31 @@ This log records external state changes and failed gates for the managed-demo mi
 
 ## Repository-public and CI state
 
-- PR 188 is ready and mergeable. Its prior Actions run did not execute steps because GitHub reported a payment/spending-limit gate; this was not a test failure.
+- PR 188 merged as `4945905bcabe883e5623ca16a971d8dfe7688086` after CI run `32827811140` passed. Its earlier Actions run did not execute steps because GitHub reported a payment/spending-limit gate; this was not a test failure.
 - Full-history Gitleaks scanning produced generic findings that collapsed to two account-specific Toss test-key values. Full-history TruffleHog reported zero verified secrets; its two unknown PostgreSQL findings were documentation placeholders.
 - The historical Toss test secret is not the live production secret, but a read-only Toss API call proved the old test secret is still accepted. The operator explicitly instructed that it must not be reissued or changed and accepted proceeding with the existing value.
 - Repository `icons-hq/grapit` was changed from private to public. CI run `32822184959` then executed normally and passed lint, typecheck, unit tests, Valkey Cluster integration, migrations, seed verification, login smoke, and Toss E2E in 6m43s.
 - Pre-merge inline review found four valid issues. The follow-up fixes make background-context WebSocket broadcasts no-op without an initialized server, inject `PAYPAL_KRW_USD_RATE` into the bounded Job, allow path-routed workers.dev/local staging only outside production, and replace the compressed-dump capacity assumption with measured `pg_database_size` evidence.
 
+## Warm deployment blockers and remediation
+
+- Updated Workload Identity Federation from the former personal repository subject to `icons-hq/grapit` on `refs/heads/main`, and replaced the deployer service account principal-set binding accordingly.
+- Granted the GitHub deployer direct `roles/iam.serviceAccountUser` on `grapit-cloudrun@grapit-491806.iam.gserviceaccount.com`. Policy Troubleshooter returned `GRANTED`; the Cloud Run service agent also retained `roles/run.serviceAgent`.
+- The legacy Cloud Run v1 Job deploy path still returned a false service-account `actAs` denial for both the deployer and project Owner. Cloud Run v2 `validateOnly` and create succeeded with the same IAM state, isolating the failure to the legacy deploy path rather than missing authority.
+- Created permanent Job `grabit-background-worker` through Cloud Run v2. Its first execution `grabit-background-worker-ctnc6` reached the application but failed because `AdmissionGuard` could not resolve `QueueService` in the worker module graph.
+- PR 189 adds the explicit queue dependency, a module-graph regression test, and one shared Redis provider owner so the bounded Job closes its only Redis client. Local compiled worker boot succeeded and the API suite passed 1,291 tests.
+- Replaced the workflow's legacy Job deploy command with `scripts/managed-demo/deploy-background-worker-v2.mjs`. Its payload tests pass, the live `validateOnly` call passed, and a same-image/config v2 update completed with an exact image read-back without starting a new execution.
+
 ## Production state deliberately not cut over yet
 
 - Baseline `database-url:2` and `redis-url:1` remain unchanged and are still the production values.
 - The original `grapit-db` remains runnable; `grapit-valkey` remains active. Neither has been resized, stopped, or deleted.
-- Cloud Run API/Web remain on revisions `grabit-api-00242-2vn` and `grabit-web-00191-zw8`; no permanent background Job or Scheduler job exists yet.
+- Cloud Run API/Web remain on revisions `grabit-api-00242-2vn` and `grabit-web-00191-zw8`. The permanent background Job exists and is Ready, but its latest execution is the pre-hotfix failed run; no Scheduler job exists yet.
 - No Cloudflare Worker/Route, DNS record, GCP load-balancer resource, payment/refund, or production business record has been changed by the cutover work.
 
 ## Next execution point
 
-1. Pass CI on the review-fix commit, merge PR 188, and deploy once with warm defaults to create and smoke the bounded Cloud Run Job.
+1. Pass CI on PR 189, merge it, and deploy once with warm defaults to update and smoke the bounded Cloud Run Job.
 2. Create the five-minute Scheduler job, promote the two staged target connections into new versions of `database-url` and `redis-url`, set the managed-demo repository variables, and deploy the scale-to-zero revision.
 3. Complete HTTP, auth, queue/seat-lock, WebSocket, payment-webhook, refund, QR/check-in, email/SMS, and admin-write-safe smoke tests. No real financial charge or refund is part of an infrastructure smoke without separate transaction approval.
 4. Keep the original Valkey for at least 24 hours and the original SQL stopped for seven days after clean smoke evidence. Load-balancer retirement also waits for at least 24 hours of clean Cloudflare canary evidence.

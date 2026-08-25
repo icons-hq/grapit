@@ -312,27 +312,11 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v3
-      - name: Deploy bounded background worker job
+      - name: Deploy bounded background worker job through Cloud Run v2
         run: |
-          gcloud run jobs deploy "${BACKGROUND_WORKER_JOB}" \
-            --project="${GCP_PROJECT_ID}" \
-            --region="${GCP_REGION}" \
-            --image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${AR_REPO}/${API_SERVICE}:${DEPLOY_SHA}" \
-            --command=node \
-            --args=dist/worker-main.js \
-            --service-account="grabit-cloudrun@${GCP_PROJECT_ID}.iam.gserviceaccount.com" \
-            --set-cloudsql-instances="${CLOUD_SQL_CONNECTION_NAME}" \
-            --tasks=1 \
-            --max-retries=1 \
-            --task-timeout=120s \
-            --cpu=1 \
-            --memory=512Mi \
-            --network=default \
-            --subnet=default \
-            --vpc-egress=private-ranges-only \
-            --set-env-vars="NODE_ENV=production,VALKEY_MODE=${VALKEY_MODE},FRONTEND_URL=${CLOUD_RUN_WEB_URL},BOOKING_ENABLED=true,PAYPAL_KRW_USD_RATE=${PAYPAL_KRW_USD_RATE},DB_POOL_MAX=${DB_POOL_MAX},DB_POOL_IDLE_TIMEOUT_MS=30000,DB_POOL_CONNECTION_TIMEOUT_MS=5000,PENDING_PAYMENT_EXPIRATION_SWEEP_INTERVAL_MS=0,BACKGROUND_WORKER_WINDOW_MS=30000" \
-            --set-secrets="DATABASE_URL=database-url:latest,REDIS_URL=redis-url:latest,RESEND_API_KEY=resend-api-key:latest,RESEND_FROM_EMAIL=resend-from-email:latest,SENTRY_DSN=sentry-dsn:latest,TOSS_SECRET_KEY=toss-secret-key:latest,TOSS_OVERSEAS_CARD_SECRET_KEY=toss-overseas-card-secret-key:latest,TOSS_FOREIGN_EASY_PAY_SECRET_KEY=toss-foreign-easy-pay-secret-key:latest,QR_TICKET_SECRET=qr-ticket-secret:latest,QR_TICKET_SECRET_VERSION=qr-ticket-secret-version:latest,QR_TICKET_SECRET_KEYRING_JSON=qr-ticket-secret-keyring-json:latest" \
-            --quiet
+          GOOGLE_OAUTH_ACCESS_TOKEN="$(gcloud auth print-access-token)"
+          export GOOGLE_OAUTH_ACCESS_TOKEN
+          node scripts/managed-demo/deploy-background-worker-v2.mjs
         env:
           CLOUD_SQL_CONNECTION_NAME: ${{ secrets.CLOUD_SQL_CONNECTION_NAME }}
           CLOUD_RUN_WEB_URL: ${{ vars.CLOUD_RUN_WEB_URL }}

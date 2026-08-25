@@ -46,6 +46,8 @@ jobs:
       - run: pnpm lint
       - run: pnpm typecheck
       - run: pnpm test
+      - name: Test Cloud Run v2 background worker deployment payload
+        run: node --test scripts/managed-demo/deploy-background-worker-v2.test.mjs
 
       # [Phase 14 / SC-2 / REVIEWS.md HIGH#1] Integration tests — testcontainers-based
       # Valkey Cluster + Postgres smokes. Docker daemon on ubuntu-latest is sufficient
