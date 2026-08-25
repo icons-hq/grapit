@@ -1,0 +1,52 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "grabit-origin-proxy-staging",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-25",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": true,
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true
+    }
+  },
+  "vars": {
+    "WEB_ORIGIN": "https://grabit-web-d3c6wrfdbq-du.a.run.app",
+    "API_ORIGIN": "https://grabit-api-d3c6wrfdbq-du.a.run.app"
+  },
+  "env": {
+    "production": {
+      "name": "grabit-origin-proxy",
+      "workers_dev": false,
+      "preview_urls": false,
+      "routes": [
+        {
+          "pattern": "heygrabit.com/*",
+          "zone_name": "heygrabit.com"
+        },
+        {
+          "pattern": "www.heygrabit.com/*",
+          "zone_name": "heygrabit.com"
+        },
+        {
+          "pattern": "api.heygrabit.com/*",
+          "zone_name": "heygrabit.com"
+        }
+      ],
+      "observability": {
+        "enabled": true,
+        "logs": {
+          "enabled": true,
+          "invocation_logs": true
+        }
+      },
+      "vars": {
+        "WEB_ORIGIN": "https://grabit-web-d3c6wrfdbq-du.a.run.app",
+        "API_ORIGIN": "https://grabit-api-d3c6wrfdbq-du.a.run.app"
+      }
+    }
+  }
+}

@@ -14,6 +14,14 @@ env:
   AR_REPO: grabit
   WEB_SERVICE: grabit-web
   API_SERVICE: grabit-api
+  BACKGROUND_WORKER_JOB: grabit-background-worker
+  VALKEY_MODE: ${{ vars.VALKEY_MODE || 'cluster' }}
+  DB_POOL_MAX: ${{ vars.DB_POOL_MAX || '4' }}
+  API_MIN_INSTANCES: ${{ vars.API_MIN_INSTANCES || '1' }}
+  API_MAX_INSTANCES: ${{ vars.API_MAX_INSTANCES || '40' }}
+  WEB_MIN_INSTANCES: ${{ vars.WEB_MIN_INSTANCES || '1' }}
+  WEB_MAX_INSTANCES: ${{ vars.WEB_MAX_INSTANCES || '50' }}
+  API_CPU_ALLOCATION_FLAG: ${{ vars.API_CPU_ALLOCATION_FLAG || '--no-cpu-throttling' }}
   DEPLOY_SHA: ${{ github.sha }}
 
 jobs:
@@ -189,6 +197,7 @@ jobs:
       - migrate-production
       - build-api-image
       - build-web-image
+      - deploy-background-worker
     permissions:
       contents: read
       id-token: write
@@ -198,6 +207,15 @@ jobs:
         with:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Require active worker schedule before scale-to-zero
+        if: env.API_MIN_INSTANCES == '0'
+        run: |
+          SCHEDULER_STATE=$(gcloud scheduler jobs describe grabit-background-worker-every-5m \
+            --project="${GCP_PROJECT_ID}" \
+            --location="${GCP_REGION}" \
+            --format='value(state)')
+          test "${SCHEDULER_STATE}" = 'ENABLED'
       - uses: google-github-actions/deploy-cloudrun@v3
         with:
           service: ${{ env.API_SERVICE }}
@@ -206,13 +224,13 @@ jobs:
           flags: >-
             --service-account=grapit-cloudrun@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
             --add-cloudsql-instances=${{ secrets.CLOUD_SQL_CONNECTION_NAME }}
-            --min-instances=1
-            --max-instances=40
+            --min-instances=${{ env.API_MIN_INSTANCES }}
+            --max-instances=${{ env.API_MAX_INSTANCES }}
             --concurrency=250
             --memory=512Mi
             --cpu=1
             --port=8080
-            --no-cpu-throttling
+            ${{ env.API_CPU_ALLOCATION_FLAG }}
             --session-affinity
             --allow-unauthenticated
             --network=default
@@ -220,14 +238,14 @@ jobs:
             --vpc-egress=private-ranges-only
           env_vars: |
             NODE_ENV=production
-            VALKEY_MODE=cluster
+            VALKEY_MODE=${{ env.VALKEY_MODE }}
             FRONTEND_URL=${{ vars.CLOUD_RUN_WEB_URL }}
             KAKAO_CALLBACK_URL=${{ vars.CLOUD_RUN_API_URL }}/api/v1/auth/social/kakao/callback
             NAVER_CALLBACK_URL=${{ vars.CLOUD_RUN_API_URL }}/api/v1/auth/social/naver/callback
             GOOGLE_CALLBACK_URL=${{ vars.CLOUD_RUN_API_URL }}/api/v1/auth/social/google/callback
             PREWARM_ALLOWED_SERVICE_NAME=${{ env.API_SERVICE }}
             PREWARM_MAX_MIN_INSTANCES=80
-            DB_POOL_MAX=4
+            DB_POOL_MAX=${{ env.DB_POOL_MAX }}
             DB_POOL_IDLE_TIMEOUT_MS=30000
             DB_POOL_CONNECTION_TIMEOUT_MS=5000
             CUTOVER_GATE_LEDGER_PATH=/app/phase26/26-GATE-LEDGER.json
@@ -276,6 +294,55 @@ jobs:
             PREWARM_ALLOWED_SCHEDULER_EMAIL=prewarm-allowed-scheduler-email:latest
             PREWARM_ALLOWED_AUDIENCE=prewarm-allowed-audience:latest
 
+  deploy-background-worker:
+    runs-on: ubuntu-latest
+    needs:
+      - migrate-production
+      - build-api-image
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+      - id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Deploy bounded background worker job
+        run: |
+          gcloud run jobs deploy "${BACKGROUND_WORKER_JOB}" \
+            --project="${GCP_PROJECT_ID}" \
+            --region="${GCP_REGION}" \
+            --image="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${AR_REPO}/${API_SERVICE}:${DEPLOY_SHA}" \
+            --command=node \
+            --args=dist/worker-main.js \
+            --service-account="grabit-cloudrun@${GCP_PROJECT_ID}.iam.gserviceaccount.com" \
+            --set-cloudsql-instances="${CLOUD_SQL_CONNECTION_NAME}" \
+            --tasks=1 \
+            --max-retries=1 \
+            --task-timeout=120s \
+            --cpu=1 \
+            --memory=512Mi \
+            --network=default \
+            --subnet=default \
+            --vpc-egress=private-ranges-only \
+            --set-env-vars="NODE_ENV=production,VALKEY_MODE=${VALKEY_MODE},FRONTEND_URL=${CLOUD_RUN_WEB_URL},BOOKING_ENABLED=true,DB_POOL_MAX=${DB_POOL_MAX},DB_POOL_IDLE_TIMEOUT_MS=30000,DB_POOL_CONNECTION_TIMEOUT_MS=5000,PENDING_PAYMENT_EXPIRATION_SWEEP_INTERVAL_MS=0,BACKGROUND_WORKER_WINDOW_MS=30000" \
+            --set-secrets="DATABASE_URL=database-url:latest,REDIS_URL=redis-url:latest,RESEND_API_KEY=resend-api-key:latest,RESEND_FROM_EMAIL=resend-from-email:latest,SENTRY_DSN=sentry-dsn:latest,TOSS_SECRET_KEY=toss-secret-key:latest,TOSS_OVERSEAS_CARD_SECRET_KEY=toss-overseas-card-secret-key:latest,TOSS_FOREIGN_EASY_PAY_SECRET_KEY=toss-foreign-easy-pay-secret-key:latest,QR_TICKET_SECRET=qr-ticket-secret:latest,QR_TICKET_SECRET_VERSION=qr-ticket-secret-version:latest,QR_TICKET_SECRET_KEYRING_JSON=qr-ticket-secret-keyring-json:latest" \
+            --quiet
+        env:
+          CLOUD_SQL_CONNECTION_NAME: ${{ secrets.CLOUD_SQL_CONNECTION_NAME }}
+          CLOUD_RUN_WEB_URL: ${{ vars.CLOUD_RUN_WEB_URL }}
+      - name: Smoke bounded background worker job
+        run: |
+          gcloud run jobs execute "${BACKGROUND_WORKER_JOB}" \
+            --project="${GCP_PROJECT_ID}" \
+            --region="${GCP_REGION}" \
+            --wait
+
   deploy-web:
     runs-on: ubuntu-latest
     needs: deploy-api
@@ -295,8 +362,8 @@ jobs:
           image: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.AR_REPO }}/${{ env.WEB_SERVICE }}:${{ env.DEPLOY_SHA }}
           flags: >-
             --service-account=grapit-cloudrun@${{ env.GCP_PROJECT_ID }}.iam.gserviceaccount.com
-            --min-instances=1
-            --max-instances=50
+            --min-instances=${{ env.WEB_MIN_INSTANCES }}
+            --max-instances=${{ env.WEB_MAX_INSTANCES }}
             --concurrency=250
             --memory=1Gi
             --cpu=1

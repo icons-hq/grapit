@@ -2,10 +2,11 @@
 
 ## 1. Architecture Summary
 
-Grabit is a pnpm monorepo with three runtime packages:
+Grabit is a pnpm monorepo with four runtime packages:
 
 - `apps/web`: Next.js 16 App Router web application
 - `apps/api`: NestJS 11 modular monolith API
+- `apps/edge-proxy`: Cloudflare Worker Route proxy for the public Web/API hosts
 - `packages/shared`: shared Zod schemas, TypeScript types, constants, i18n keys, and runtime flag helpers
 
 The production architecture is intentionally simple:
@@ -13,8 +14,11 @@ The production architecture is intentionally simple:
 ```mermaid
 flowchart TB
   Browser["Browser / mobile browser"]
+  Edge["Cloudflare Worker Route\npublic host proxy"]
   Web["Cloud Run: grabit-web\nNext.js 16 standalone"]
   API["Cloud Run: grabit-api\nNestJS 11 modular monolith"]
+  Worker["Cloud Run Job\nbounded background worker"]
+  Scheduler["Cloud Scheduler\nevery 5 minutes"]
   PG["Cloud SQL PostgreSQL 16\nsource of truth"]
   Valkey["Valkey / Redis via ioredis\nlocks, queue, cache, pub/sub"]
   R2["Cloudflare R2\nposters, SVG seat maps, public assets"]
@@ -23,8 +27,13 @@ flowchart TB
   Msg["Resend + Twilio/Infobip"]
   Obs["Sentry + Cloud Logging/Monitoring"]
 
-  Browser --> Web
+  Browser --> Edge
+  Edge --> Web
+  Edge --> API
   Web --> API
+  Scheduler --> Worker
+  Worker --> PG
+  Worker --> Valkey
   API --> PG
   API --> Valkey
   API --> R2
@@ -51,7 +60,7 @@ Core principles:
 | Web | Next.js 16, React 19, TypeScript 5.9, Tailwind CSS v4, next-intl, TanStack Query, Zustand, React Hook Form, Toss web SDK |
 | API | NestJS 11, Drizzle ORM, PostgreSQL driver, ioredis, Socket.IO, pg-boss, Sentry, Passport strategies |
 | Shared | Zod schemas/types/constants exported from `packages/shared/src/index.ts` |
-| Deployment | Docker images built by GitHub Actions and deployed to Cloud Run |
+| Deployment | Docker images built by GitHub Actions and deployed to Cloud Run; Cloudflare Worker deployed separately with Wrangler |
 | Storage | Cloud SQL PostgreSQL, Redis/Valkey, Cloudflare R2 |
 
 Installed versions are governed by `package.json` and `pnpm-lock.yaml`; documentation must not override manifest truth.
@@ -315,14 +324,19 @@ External finance-system integration is outside the current code path.
 
 ### 8.1 Cloud Run Services
 
-Production deploy uses two Cloud Run services:
+Production deploy uses two Cloud Run services and one bounded Cloud Run Job:
 
 | Service | Image | Port | Notes |
 | --- | --- | --- | --- |
 | `grabit-api` | `apps/api/Dockerfile` | `8080` | NestJS built output, Cloud SQL attached, Redis/Valkey required in production |
 | `grabit-web` | `apps/web/Dockerfile` | `3000` | Next.js standalone output |
+| `grabit-background-worker` | `apps/api/Dockerfile` | N/A | runs `dist/worker-main.js` for a bounded pg-boss/expiration processing window |
 
 Both images are built from the monorepo root so `packages/shared` can be built before app packages.
+
+During the no-sale managed-demo posture, Web and API use minimum instances `0`, request-based CPU, and maximum instances `4`. Cloud Scheduler executes the bounded worker every five minutes so refund retries, QR reminders, cancelled-seat releases, and pending-payment expiration do not depend on an always-warm API instance. Ticket-opening capacity restoration is governed by ADR 0009 and `docs/runbooks/managed-demo-cost-floor.md`.
+
+`apps/edge-proxy` maps only `heygrabit.com`, `www.heygrabit.com`, and `api.heygrabit.com` to stable Cloud Run service origins. It streams requests/responses, preserves WebSocket upgrades, overwrites forwarded-host metadata, and rejects unknown hosts. Production Worker Routes are a separate, explicitly authenticated cutover and are not deployed by the GCP workflow.
 
 ### 8.2 CI
 
@@ -354,8 +368,9 @@ Both images are built from the monorepo root so `packages/shared` can be built b
 5. run Drizzle migrations,
 6. build and push API image,
 7. build and push web image,
-8. deploy API to Cloud Run,
-9. deploy web after API deploy.
+8. deploy and smoke the bounded background worker Job from the API image,
+9. when scale-to-zero is selected, verify the separately provisioned five-minute schedule is enabled, then deploy API,
+10. deploy web after API deploy.
 
 API deploy injects runtime values through Cloud Run environment variables and Secret Manager bindings. Documentation must name required settings without printing raw values.
 
@@ -364,9 +379,11 @@ Important non-sensitive production invariants:
 - region: `asia-northeast3`
 - services: `grabit-api`, `grabit-web`
 - API `NODE_ENV=production`
-- API `VALKEY_MODE=cluster`
+- API/worker `VALKEY_MODE` comes from a repository variable and defaults to `cluster` until the managed Valkey cutover
 - API uses Cloud SQL attachment
 - API requires Redis/Valkey runtime wiring
+- managed-demo Web/API minimum instances are `0`, with a maximum of `4`; repository variables select this posture while workflow defaults preserve the warm ticket-opening posture
+- worker interval is disabled inside the Job and replaced by one immediate sweep plus a 30-second bounded processing window
 - web build receives public API/WS/R2/Sentry/Toss public values at image build time
 
 ### 8.4 Runtime Configuration
