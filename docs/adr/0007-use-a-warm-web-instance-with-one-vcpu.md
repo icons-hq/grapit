@@ -1,5 +1,7 @@
 # Use a warm web instance with one vCPU
 
+**Status:** Superseded for the no-sale managed-demo period by ADR 0009. Restore this decision before a ticketing opening when cold-start tolerance is removed.
+
 Grabit keeps one warm Cloud Run instance for the production Web service while reducing each Web instance from two vCPUs to one vCPU. This accepts a small fixed Web hosting cost to avoid buyer-facing cold starts, while relying on Cloud Run horizontal autoscaling for later traffic growth instead of paying for larger idle instances.
 
 **Consequences**

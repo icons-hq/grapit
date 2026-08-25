@@ -37,7 +37,7 @@ export class BookingGateway implements OnGatewayConnection, OnGatewayDisconnect 
   private readonly logger = new Logger(BookingGateway.name);
 
   @WebSocketServer()
-  server!: Server;
+  server?: Server;
 
   handleConnection(client: Socket): void {
     this.logger.log(`Client connected: ${client.id}`);
@@ -76,8 +76,14 @@ export class BookingGateway implements OnGatewayConnection, OnGatewayDisconnect 
 
   /**
    * Broadcasts a seat status update to all clients in the showtime room.
+   * A standalone Nest application context, such as the bounded background
+   * worker, does not initialize a Socket.IO server.
    */
   broadcastSeatUpdate(showtimeId: string, seatId: string, status: SeatState, userId?: string): void {
+    if (!this.server) {
+      return;
+    }
+
     this.server.to(`showtime:${showtimeId}`).emit('seat-update', {
       seatId,
       status,
