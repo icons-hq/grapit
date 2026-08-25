@@ -1,13 +1,36 @@
 const WEB_HOSTS = new Set(['heygrabit.com', 'www.heygrabit.com']);
 const API_HOST = 'api.heygrabit.com';
+const LOCAL_STAGING_HOSTS = new Set(['localhost', '127.0.0.1']);
 
-export function resolveOrigin(hostname: string, env: Env): string | null {
+function isApiPath(pathname: string): boolean {
+  return (
+    pathname === '/api' ||
+    pathname.startsWith('/api/') ||
+    pathname === '/socket.io' ||
+    pathname.startsWith('/socket.io/')
+  );
+}
+
+export function resolveOrigin(
+  hostname: string,
+  pathname: string,
+  env: Env,
+): string | null {
   const normalizedHostname = hostname.toLowerCase();
   if (WEB_HOSTS.has(normalizedHostname)) {
     return env.WEB_ORIGIN;
   }
   if (normalizedHostname === API_HOST) {
     return env.API_ORIGIN;
+  }
+  if (
+    env.ALLOW_STAGING_HOSTS === 'true' &&
+    (
+      LOCAL_STAGING_HOSTS.has(normalizedHostname) ||
+      normalizedHostname.endsWith('.workers.dev')
+    )
+  ) {
+    return isApiPath(pathname) ? env.API_ORIGIN : env.WEB_ORIGIN;
   }
   return null;
 }
@@ -57,7 +80,7 @@ export function rewriteOriginRedirect(
 
 async function proxy(request: Request, env: Env): Promise<Response> {
   const incomingUrl = new URL(request.url);
-  const origin = resolveOrigin(incomingUrl.hostname, env);
+  const origin = resolveOrigin(incomingUrl.hostname, incomingUrl.pathname, env);
   if (!origin) {
     return new Response('Unsupported host', {
       status: 421,

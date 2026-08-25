@@ -15,7 +15,8 @@
   },
   "vars": {
     "WEB_ORIGIN": "https://grabit-web-d3c6wrfdbq-du.a.run.app",
-    "API_ORIGIN": "https://grabit-api-d3c6wrfdbq-du.a.run.app"
+    "API_ORIGIN": "https://grabit-api-d3c6wrfdbq-du.a.run.app",
+    "ALLOW_STAGING_HOSTS": "true"
   },
   "env": {
     "production": {
@@ -45,7 +46,8 @@
       },
       "vars": {
         "WEB_ORIGIN": "https://grabit-web-d3c6wrfdbq-du.a.run.app",
-        "API_ORIGIN": "https://grabit-api-d3c6wrfdbq-du.a.run.app"
+        "API_ORIGIN": "https://grabit-api-d3c6wrfdbq-du.a.run.app",
+        "ALLOW_STAGING_HOSTS": "false"
       }
     }
   }

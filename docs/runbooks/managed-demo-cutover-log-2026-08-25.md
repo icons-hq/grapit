@@ -20,6 +20,7 @@ This log records external state changes and failed gates for the managed-demo mi
 - Created `grabit-db-managed-demo` with operation `5f5ef866-26a5-4e1f-bb27-da0f00000042`: PostgreSQL 16 Enterprise, `db-f1-micro`, zonal `asia-northeast3-a`, 10GB SSD with auto-resize, public IPv4, seven retained backups, PITR, and deletion protection. The first create request made no resource because the edition was not explicit; `--edition=enterprise` is now recorded in the runbook.
 - Created database `grapit` and application user, then imported the backup with operation `5a8085cb-4b71-4c59-8fc7-037b00000042` without exposing credentials.
 - Source and target matched for all 50 public table row counts. A disposable independent restore matched all 59 non-system tables across `public`, `drizzle`, and `pgboss`, then the disposable database was deleted.
+- `pg_database_size('grapit')` measured 91,773,975 bytes on the source and 68,631,575 bytes after restore on the managed-demo target. Both are far below the 10GiB target with the required 25% headroom; the compressed dump size was not used as the capacity proof.
 - Drizzle migration state matched: 33 rows, max id 36, max created value `1782894990432`, digest `85c79f3e9368696989d9c015d3fe800b`. Payment/refund/ticket/admission counts and monetary sums also matched exactly.
 - A Cloud Run execution using the production service account and target Cloud SQL attachment confirmed database `grapit`, 50 public tables, and 1,762 users.
 
@@ -38,12 +39,13 @@ This log records external state changes and failed gates for the managed-demo mi
 - Applied `scripts/managed-demo/artifact-registry-cleanup-policy.json`: delete only untagged artifacts older than 14 days, keep ten recent versions per package, and keep `rollback-*` tags. The policy is active, not dry-run; parent-manifest-referenced Docker images are protected by Artifact Registry behavior.
 - Created staging secrets `database-url-managed-demo-20260825:1` and `redis-url-managed-demo-20260825:1`. They contain the verified target connections and allow a coordinated production cutover without changing the baseline secrets early.
 
-## Repository-public and CI security gate
+## Repository-public and CI state
 
 - PR 188 is ready and mergeable. Its prior Actions run did not execute steps because GitHub reported a payment/spending-limit gate; this was not a test failure.
 - Full-history Gitleaks scanning produced generic findings that collapsed to two account-specific Toss test-key values. Full-history TruffleHog reported zero verified secrets; its two unknown PostgreSQL findings were documentation placeholders.
-- The historical Toss test secret is not the live production secret, but a read-only Toss API call proved the old test secret is still accepted. The repository therefore remains private until that test secret is reissued and the old value is rejected.
-- Toss developer center is open at the exact test-key reissue control. Reissuing invalidates only the old test secret, but the browser safety gate requires explicit action-time confirmation before the button is pressed.
+- The historical Toss test secret is not the live production secret, but a read-only Toss API call proved the old test secret is still accepted. The operator explicitly instructed that it must not be reissued or changed and accepted proceeding with the existing value.
+- Repository `icons-hq/grapit` was changed from private to public. CI run `32822184959` then executed normally and passed lint, typecheck, unit tests, Valkey Cluster integration, migrations, seed verification, login smoke, and Toss E2E in 6m43s.
+- Pre-merge inline review found four valid issues. The follow-up fixes make background-context WebSocket broadcasts no-op without an initialized server, inject `PAYPAL_KRW_USD_RATE` into the bounded Job, allow path-routed workers.dev/local staging only outside production, and replace the compressed-dump capacity assumption with measured `pg_database_size` evidence.
 
 ## Production state deliberately not cut over yet
 
@@ -54,8 +56,7 @@ This log records external state changes and failed gates for the managed-demo mi
 
 ## Next execution point
 
-1. Reissue the old Toss test key after explicit confirmation, verify the old value is rejected, make the repository public, and rerun PR 188 CI.
-2. Merge the green PR and deploy once with warm defaults to create and smoke the bounded Cloud Run Job.
-3. Create the five-minute Scheduler job, promote the two staged target connections into new versions of `database-url` and `redis-url`, set the managed-demo repository variables, and deploy the scale-to-zero revision.
-4. Complete HTTP, auth, queue/seat-lock, WebSocket, payment-webhook, refund, QR/check-in, email/SMS, and admin-write-safe smoke tests. No real financial charge or refund is part of an infrastructure smoke without separate transaction approval.
-5. Keep the original Valkey for at least 24 hours and the original SQL stopped for seven days after clean smoke evidence. Load-balancer retirement also waits for at least 24 hours of clean Cloudflare canary evidence.
+1. Pass CI on the review-fix commit, merge PR 188, and deploy once with warm defaults to create and smoke the bounded Cloud Run Job.
+2. Create the five-minute Scheduler job, promote the two staged target connections into new versions of `database-url` and `redis-url`, set the managed-demo repository variables, and deploy the scale-to-zero revision.
+3. Complete HTTP, auth, queue/seat-lock, WebSocket, payment-webhook, refund, QR/check-in, email/SMS, and admin-write-safe smoke tests. No real financial charge or refund is part of an infrastructure smoke without separate transaction approval.
+4. Keep the original Valkey for at least 24 hours and the original SQL stopped for seven days after clean smoke evidence. Load-balancer retirement also waits for at least 24 hours of clean Cloudflare canary evidence.

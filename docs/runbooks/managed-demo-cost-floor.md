@@ -40,7 +40,7 @@ The Job boots only the modules needed for pg-boss, payment/refund retry, QR emai
 1. Keep `docs/runbooks/managed-demo-baseline-2026-08-25.md` unchanged as the restoration ledger.
 2. Create a new rollback export bucket; never overwrite an earlier export.
 3. Export the full original database, record object generation, size, CRC32C, and MD5, and download or copy it to a second location.
-4. Abort the `10GB` target if the compressed/export object is `8GB` or larger.
+4. Record `pg_database_size('grapit')` from the source and require at least 25% free headroom inside the `10GB` target. The compressed dump size is an integrity and transfer signal only; it is not a storage-capacity gate.
 5. Import into a differently named Cloud SQL instance and reconcile schema migration state plus critical table counts before changing secrets.
 6. Cut Valkey only when active seat-lock and admission-queue keys are zero. Valkey is transient and is not treated as a durable backup.
 7. Add new Secret Manager versions; never destroy versions `database-url:2` or `redis-url:1` during the rollback window.
@@ -95,7 +95,13 @@ gcloud storage cp \
   "gs://${ROLLBACK_SECONDARY_BUCKET}/${CUTOVER_ID}/full.sql.gz"
 ```
 
-Create the target only after the export-size gate passes:
+Through an authenticated source connection, record the uncompressed database size:
+
+```sql
+SELECT pg_database_size('grapit') AS database_bytes;
+```
+
+For a 10GiB target, abort if `database_bytes * 1.25 >= 10 * 1024^3`. Also measure `pg_database_size('grapit')` after the disposable restore because restored heap/index layout can differ from the source. Create the target only after the source-size and backup-integrity gates pass:
 
 ```bash
 gcloud sql instances create "${TARGET_SQL}" \

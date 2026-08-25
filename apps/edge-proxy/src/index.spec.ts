@@ -8,6 +8,7 @@ import worker, {
 const env = {
   WEB_ORIGIN: 'https://grabit-web-d3c6wrfdbq-du.a.run.app',
   API_ORIGIN: 'https://grabit-api-d3c6wrfdbq-du.a.run.app',
+  ALLOW_STAGING_HOSTS: 'true',
 } satisfies Env;
 
 afterEach(() => {
@@ -16,10 +17,35 @@ afterEach(() => {
 
 describe('origin routing', () => {
   it('maps only the three public Grabit hosts', () => {
-    expect(resolveOrigin('heygrabit.com', env)).toBe(env.WEB_ORIGIN);
-    expect(resolveOrigin('WWW.HEYGRABIT.COM', env)).toBe(env.WEB_ORIGIN);
-    expect(resolveOrigin('api.heygrabit.com', env)).toBe(env.API_ORIGIN);
-    expect(resolveOrigin('attacker.example', env)).toBeNull();
+    expect(resolveOrigin('heygrabit.com', '/', env)).toBe(env.WEB_ORIGIN);
+    expect(resolveOrigin('WWW.HEYGRABIT.COM', '/', env)).toBe(env.WEB_ORIGIN);
+    expect(resolveOrigin('api.heygrabit.com', '/api/v1/health', env)).toBe(
+      env.API_ORIGIN,
+    );
+    expect(resolveOrigin('attacker.example', '/', env)).toBeNull();
+  });
+
+  it('routes workers.dev and local staging requests by path', () => {
+    expect(
+      resolveOrigin('grabit-origin-proxy-staging.workers.dev', '/', env),
+    ).toBe(env.WEB_ORIGIN);
+    expect(
+      resolveOrigin(
+        'grabit-origin-proxy-staging.workers.dev',
+        '/api/v1/health',
+        env,
+      ),
+    ).toBe(env.API_ORIGIN);
+    expect(resolveOrigin('127.0.0.1', '/socket.io/', env)).toBe(env.API_ORIGIN);
+
+    const productionEnv = { ...env, ALLOW_STAGING_HOSTS: 'false' } as const;
+    expect(
+      resolveOrigin(
+        'grabit-origin-proxy-staging.workers.dev',
+        '/',
+        productionEnv,
+      ),
+    ).toBeNull();
   });
 
   it('preserves method, path, query, body, and overwrites forwarded host metadata', async () => {
