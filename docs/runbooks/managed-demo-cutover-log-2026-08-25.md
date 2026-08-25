@@ -24,6 +24,10 @@ PERMISSION_DENIED: The caller does not have permission.
 
 The active gcloud identity can create the bucket but does not have the Cloud SQL export permission. The target object does not exist, so no checksum or size gate is available yet.
 
+The active identity also cannot impersonate `github-actions-deployer@grapit-491806.iam.gserviceaccount.com`; `iam.serviceAccounts.getAccessToken` is denied. There is therefore no safe local service-account fallback for the export.
+
+PR 188 was opened for the repository changes. Its CI job did not start any steps because the GitHub account reported failed recent payments or an insufficient spending limit. This is an account billing gate, not a test failure; the PR remains unmerged.
+
 ## Confirmed not changed
 
 - No Cloud SQL instance was created, resized, stopped, or deleted.

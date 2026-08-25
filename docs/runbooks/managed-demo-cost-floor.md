@@ -51,6 +51,8 @@ The Job boots only the modules needed for pg-boss, payment/refund retry, QR emai
 
 Use unique values for `CUTOVER_ID` and the bucket name. Commands below are intentionally explicit about project and region.
 
+The initiating identity needs Cloud SQL Editor or a custom role containing `cloudsql.instances.get` and `cloudsql.instances.export`. Import requires Cloud SQL Admin or a custom role containing `cloudsql.instances.get` and `cloudsql.instances.import`. The source/target Cloud SQL service account separately needs the documented Cloud Storage object permissions.
+
 ```bash
 PROJECT_ID=grapit-491806
 REGION=asia-northeast3
