@@ -412,6 +412,78 @@ describe('ReservationFinalizationService', () => {
     );
   });
 
+  it('cancels the approved payment when ticket item insert hits the active-seat unique index', async () => {
+    const { service, db, tossClient } = createDependencies();
+
+    db.select
+      .mockReturnValueOnce(chainResult([]))
+      .mockReturnValueOnce(chainResult([
+        {
+          id: 'reservation-dup-1',
+          userId: 'user-1',
+          showtimeId: 'showtime-1',
+          status: 'PENDING_PAYMENT',
+          totalAmount: 52000,
+          admissionActiveUntilAt: new Date(Date.now() + 60_000),
+        },
+      ]))
+      .mockReturnValueOnce(chainResult([
+        { seatId: '1F:A-1', tierName: 'VIP', price: 50000, row: 'A', number: '1' },
+      ]));
+    tossClient.confirmPayment.mockResolvedValue({
+      paymentKey: 'payment-key-dup',
+      orderId: 'order-dup-1',
+      method: '카드',
+      totalAmount: 52000,
+      approvedAt: '2026-07-03T00:00:00.000Z',
+    });
+    tossClient.cancelPayment.mockResolvedValue({
+      paymentKey: 'payment-key-dup',
+      orderId: 'order-dup-1',
+      status: 'CANCELED',
+      cancels: [{ cancelStatus: 'DONE' }],
+    });
+
+    const uniqueViolation = Object.assign(
+      new Error('duplicate key value violates unique constraint "uq_ticket_items_active_seat"'),
+      { code: '23505', constraint: 'uq_ticket_items_active_seat' },
+    );
+    const tx = {
+      execute: vi.fn().mockResolvedValue(ticketLimitResult()),
+      update: vi.fn().mockReturnValue({
+        set: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue(
+            Object.assign(Promise.resolve([]), {
+              returning: vi.fn().mockResolvedValue([{ id: 'seat-inventory-1' }]),
+            }),
+          ),
+        }),
+      }),
+      insert: vi.fn((table: unknown) => ({
+        values: vi.fn(() => {
+          if (table === payments) {
+            return { returning: vi.fn().mockResolvedValue([{ id: 'payment-dup-1' }]) };
+          }
+          if (table === ticketItems) {
+            return { returning: vi.fn().mockRejectedValue(uniqueViolation) };
+          }
+          return {};
+        }),
+      })),
+      select: emptyBenefitConfigurationSelect(),
+    };
+    db.transaction.mockImplementation(async (cb: (tx: typeof tx) => Promise<unknown>) => cb(tx));
+
+    await expect(
+      service.confirmAndCreateReservation(
+        { paymentKey: 'payment-key-dup', orderId: 'order-dup-1', amount: 52000 },
+        'user-1',
+      ),
+    ).rejects.toThrow('판매 불가능한 좌석입니다');
+
+    expect(tossClient.cancelPayment).toHaveBeenCalled();
+  });
+
   it('confirms KRW overseas card direct return with the overseas-card Toss secret scope', async () => {
     const {
       service,

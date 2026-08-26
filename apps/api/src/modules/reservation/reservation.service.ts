@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { eq, and, or, sql, desc, inArray, asc, ne } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
+import { noActiveTicketItemOnSeat } from '../../database/seat-ownership.js';
 import {
   reservations,
   reservationSeats,
@@ -2264,7 +2265,7 @@ export class ReservationService {
     userId: string,
     reason: string,
   ): Promise<ReservationDetail> {
-    let seatToBroadcast: { showtimeId: string; seatKey: string } | undefined;
+    let seatToBroadcast: { showtimeId: string; seatKey: string } | null | undefined;
     let preparedCancellation: PreparedTicketItemCancellation | undefined;
     let tossCancelAttempted = false;
     let tossCancelSucceeded = false;
@@ -2534,7 +2535,7 @@ export class ReservationService {
             ),
           );
 
-        await tx
+        const freedSeatInventories = await tx
           .update(seatInventories)
           .set({
             status: 'available',
@@ -2556,8 +2557,17 @@ export class ReservationService {
                   eq(seatInventories.seatId, committedCancellation.context.seatId),
                 ),
               ),
+              inArray(seatInventories.status, ['sold', 'held_cancelled']),
+              noActiveTicketItemOnSeat(),
             ),
+          )
+          .returning({ id: seatInventories.id });
+
+        if (freedSeatInventories.length === 0) {
+          this.logger.warn(
+            `Seat inventory not reopened on ticket-item cancel (active ticket item or state changed). ticketItemId=${ticketItemId}, seatKey=${committedCancellation.context.seatKey}`,
           );
+        }
 
         if (unresolvedSiblings.length === 0) {
           await tx
@@ -2571,10 +2581,12 @@ export class ReservationService {
             .where(eq(reservations.id, reservationId));
         }
 
-        return {
-          showtimeId: committedCancellation.context.showtimeId,
-          seatKey: committedCancellation.context.seatKey,
-        };
+        return freedSeatInventories.length > 0
+          ? {
+              showtimeId: committedCancellation.context.showtimeId,
+              seatKey: committedCancellation.context.seatKey,
+            }
+          : null;
       });
     } catch (error) {
       if (
@@ -2685,6 +2697,7 @@ export class ReservationService {
   async cancelReservation(reservationId: string, userId: string, reason: string): Promise<void> {
     let showtimeId: string | undefined;
     let tossCancelCompleted = false;
+    const freedSeatIds: string[] = [];
 
     try {
       await this.db.transaction(async (tx) => {
@@ -2763,7 +2776,7 @@ export class ReservationService {
 
         for (const seat of cancelledSeats) {
           const seatIdentity = normalizeSeatIdentity({ seatId: seat.seatId });
-          await tx
+          const freed = await tx
             .update(seatInventories)
             .set({ status: 'available', soldAt: null, lockedBy: null, lockedUntil: null })
             .where(
@@ -2777,8 +2790,19 @@ export class ReservationService {
                     eq(seatInventories.seatId, seatIdentity.seatId),
                   ),
                 ),
+                inArray(seatInventories.status, ['sold', 'held_cancelled']),
+                noActiveTicketItemOnSeat(),
               ),
+            )
+            .returning({ id: seatInventories.id });
+
+          if (freed.length > 0) {
+            freedSeatIds.push(seat.seatId);
+          } else {
+            this.logger.warn(
+              `Legacy cancel: seat inventory not reopened (active ticket item or state changed). reservationId=${reservationId}, seatKey=${seatIdentity.seatKey}`,
             );
+          }
         }
       });
     } catch (error) {
@@ -2808,13 +2832,8 @@ export class ReservationService {
 
     // Broadcast available status via WebSocket for each cancelled seat
     if (showtimeId) {
-      const freedSeats = await this.db
-        .select({ seatId: reservationSeats.seatId })
-        .from(reservationSeats)
-        .where(eq(reservationSeats.reservationId, reservationId));
-
-      for (const seat of freedSeats) {
-        this.bookingGateway.broadcastSeatUpdate(showtimeId, seat.seatId, 'available');
+      for (const seatId of freedSeatIds) {
+        this.bookingGateway.broadcastSeatUpdate(showtimeId, seatId, 'available');
       }
     }
   }
