@@ -243,6 +243,8 @@ Only after at least 24 hours of clean canary evidence may the forwarding rule, H
 
 Worker rollback:
 
+If a previously verified production Worker version exists, use a version rollback:
+
 ```bash
 cd apps/edge-proxy
 ../../node_modules/.bin/wrangler versions list --env production
@@ -251,6 +253,18 @@ cd apps/edge-proxy
   --message='managed-demo rollback' \
   --yes
 ```
+
+The first production deployment has no previous Worker version. During that
+initial canary, remove only these three Worker Routes in the Cloudflare
+dashboard, then verify the unchanged proxied DNS records fall through to the
+retained GCP load balancer:
+
+- `heygrabit.com/*`;
+- `www.heygrabit.com/*`;
+- `api.heygrabit.com/*`.
+
+Preserve the Worker script and deployed version as evidence. Do not delete DNS
+records, and do not use `wrangler delete` as the first rollback action.
 
 ## Immediate infrastructure rollback
 
