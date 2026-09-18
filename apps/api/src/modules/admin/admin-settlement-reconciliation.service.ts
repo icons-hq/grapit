@@ -56,6 +56,13 @@ export class AdminSettlementReconciliationService {
     if (domestic.unmatchedGrossAmount > 0) {
       warnings.push('Toss 국내 정산에 아직 매칭되지 않은 국내 결제가 있습니다.');
     }
+    const matchedGrossDifference = domestic.tossGrossAmount - domestic.matchedGrossAmount;
+    if (matchedGrossDifference !== 0) {
+      warnings.push(
+        `국내 매칭 매출 차이 (Toss 정산 매출 - 유효 티켓 매출): ${matchedGrossDifference.toLocaleString('ko-KR')}원. `
+        + 'PG·티켓 상태, 취소 정산 반영 시점과 별도 송금 환불 기록을 대조하세요. 이 차액을 추가 수수료로 확정하지 마세요.',
+      );
+    }
     if (foreign.grossAmount > 0) {
       warnings.push('외화정산 지급액은 Toss 상점관리자 값을 직접 입력하세요.');
     }

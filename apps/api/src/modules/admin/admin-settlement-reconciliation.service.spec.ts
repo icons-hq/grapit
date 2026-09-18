@@ -119,4 +119,30 @@ describe('AdminSettlementReconciliationService', () => {
 
     expect(JSON.stringify(result)).not.toContain('payment-key');
   });
+
+  it.each([362000, -362000, 0])('explains a matched settlement gross difference of %i without changing totals', async (difference) => {
+    const { service, tossClient } = createService([{
+      eventId: 'event-1', paymentKey: 'payment-key-domestic-card', provider: 'CARD',
+      method: '카드', providerChargeCurrency: 'KRW', activeGrossAmount: 362000,
+      paidAt: new Date('2026-06-04T10:00:00.000Z'),
+    }]);
+    tossClient.querySettlements.mockResolvedValueOnce([{
+      paymentKey: 'payment-key-domestic-card', amount: 362000 + difference,
+      fee: 1000, supplyAmount: 900, vat: 100, payOutAmount: 361000 + difference,
+      soldDate: '2026-08-13', paidOutDate: '2026-08-19', method: '계좌이체',
+    }]);
+    const result = await service.getReconciliation({ eventId: 'event-1' });
+    expect(result.domestic.unmatchedGrossAmount).toBe(0);
+    expect(result.siteSalesGrossAmount).toBe(362000);
+    expect(result.domestic.tossGrossAmount).toBe(362000 + difference);
+    const warning = result.warnings.find((message) => message.includes('매칭 매출 차이'));
+    if (difference === 0) {
+      expect(warning).toBeUndefined();
+    } else {
+      expect(warning).toContain(`${difference.toLocaleString('ko-KR')}원`);
+      expect(warning).toContain('별도 송금');
+      expect(warning).toContain('추가 수수료');
+    }
+  });
+
 });
