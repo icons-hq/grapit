@@ -21,7 +21,7 @@
 
 | ID | 구현/회귀 범위 | 남은 외부 인수 |
 | --- | --- | --- |
-| A01 | edge proxy redirect·canonical origin 테스트 | 배포 후 HTTP/www/deep link 재확인 |
+| A01 | edge proxy 회귀 및 운영 HTTP/www→canonical 301, HTTPS·callback 200 확인 | 실제 외부 공유 링크의 단말별 확인 |
 | A02 | auth 초기화·마이페이지·QR 조회 회귀 | 당시 해외 인앱 브라우저/OS 재현 |
 | A03 | SMS 국가코드·send/verify 오류·throttle 테스트 | 태국 실제 번호 수신·공급자 전달 결과 |
 | A04 | 발송 실패와 인증 불일치 UI/오류 매핑 회귀 | 실제 발송 오류 표시 확인 |
@@ -33,7 +33,7 @@
 | B03 | floor-aware 좌석 identity·SVG 검증 회귀 | 새 업로드 SVG와 실제 좌석 배치 대조 |
 | B04 | 본인 선택 해제 원자화·매수 제한 통일 | 새 정책으로 다중 탭/재진입 확인 |
 | B05 | queue admission·runtime capacity 회귀 | 판매 운영 모드 및 부하 리허설 |
-| B06 | 소유권 guard + DB 부분 unique + 충돌 보상 | migration 적용 및 live invariant 재조회 |
+| B06 | 소유권 guard·충돌 보상, 운영 migration 0033 적용 및 전체 중복/재고 불일치 0 확인 | 새 판매 동시 부하는 별도 |
 | B07 | 만료 worker의 사용자 전체 잠금 해제 제거 | 배포 후 sweep/TTL 확인 |
 | C01 | provider 원본 오류·금액·key scope 회귀 | 운영 key/MID 연결 실결제 |
 | C02 | USD quote·해외카드 provider 분기·취소 회귀 | 실제 계약/카드사 승인 거절과 구현 오류 구분 |
@@ -43,7 +43,7 @@
 | C06 | 결제 return/대기/실패 안내 회귀 | Twitter/Kakao/Samsung 실제 브라우저 왕복 |
 | C07 | 서버 정책 기반 deadline·TTL 정렬 | 결제 앱 체류/복귀 실측 |
 | C08 | TRANSFER/계좌이체 전체 취소 정책 회귀 | BankPay 실결제 취소 대조 |
-| C09 | 부분 취소·잔액0·full finalizer 및 권리 회수 회귀 | PG 원장 전체 대조는 별도 수행 |
+| C09 | PG 원거래 1,190건 대조, 금액 차이 0. 과거 상태 불일치 8결제·4예매 복구 및 PG 재조회 통과 | 새 결제수단별 실제 승인·취소 왕복은 별도 |
 | C10 | 오래된 취소가 새 소유자 재고를 열지 못함 | 수동 복구 시 아래 소유권 절차 필수 |
 | C11 | 전체 취소 수수료·시작 후 차단 회귀 | 새 공연 약관/정책 검수 |
 | C12 | 원통화 환불 계산·provider 취소 회귀 | 카드 명세서·환율·금융기관 반영은 별도 |
@@ -57,10 +57,10 @@
 | D06 | 동시 검표 후 티켓 단위 monitor 집계 검증 | 실제 방문 인원과 일괄 처리 수를 혼동하지 않음 |
 | D07 | 동시 스캔·중복 차단·offline sync 회귀 | 카메라/QR 표시/통신 현장 테스트 |
 | D08 | verify→consume→재조회 경로 실DB 확인 | 현장 단말과 운영 인프라 p50/p95, 목표 합의 |
-| D09 | sync/async 동일 기본 권리 생성 + hash 기반 복구 CLI | 승인 후 3티켓·13권리 복구와 read-back |
+| D09 | sync/async 동일 기본 권리 생성, 운영 3티켓·13권리 복구, 누락 0·기존 권리 hash 보존 확인 | 없음(다음 공연 신규 구매는 운영 UAT에 포함) |
 | D10 | 중복 권리 방지·배정/CSV/수령 기록 회귀 | 발표표·추가 보상·당일표 버전 대조 |
-| D11 | 입장과 수령 분리·동시 중복 수령 차단 검증 | 실물 입고/지급/반품/잔량 원장 및 담당자 인수 |
-| D12 | 기존 비용 절감/판매 모드 runbook과 배포 workflow 유지 | 판매 용량 복구·worker/queue 부하·롤백 리허설 |
+| D11 | 입장과 수령 분리·동시 중복 수령 차단 검증, 실물 인수/지급/마감 양식 추가 | 과거 실물 기록 없음(운영자 확인). 다음 현장의 실제 수량 대조·담당자 인수 필요 |
+| D12 | 기존 비용 절감/판매 모드 runbook과 배포 workflow 유지. 현재 예정 회차 0건 확인 | 다음 오픈 일정·목표 부하에 맞춘 판매 용량 복구·worker/queue·롤백 리허설 |
 
 ## migration 사전검사와 배포
 
@@ -81,7 +81,7 @@ ROLLBACK;
 
 두 결과 모두 0행이어야 한다. migration 자체도 쓰기 잠금을 잡고 재검사하며 중복 발견/잠금 10초 초과 시 실패한다. 기존 티켓이나 수령 기록을 자동 삭제하지 않는다. PostgreSQL의 [부분 유니크 인덱스](https://www.postgresql.org/docs/16/indexes-partial.html)와 [행 잠금 호환성](https://www.postgresql.org/docs/16/explicit-locking.html)을 기준으로 했다.
 
-승인된 배포는 작업 브랜치 → ready PR → CI → merge → 기존 Deploy workflow migration/API/Web → live smoke 순서다. 기존 PR #185의 guard를 현재 main에 통합한 변경이므로 두 PR을 중복 적용하지 않는다. 이 작업에서 직접 main push, PR merge, production migration은 수행하지 않았다.
+승인된 배포는 작업 브랜치 → ready PR → CI → merge → 기존 Deploy workflow migration/API/Web → live smoke 순서다. 기존 PR #185의 guard를 현재 main에 통합한 변경이므로 두 PR을 중복 적용하지 않는다. 2026-09-18 사용자 운영 변경 승인 후 PR #193을 CI green 상태에서 병합했고 기존 Deploy workflow를 실행했다. main 직접 push는 사용하지 않았다. #185는 통합 완료로 닫았다.
 
 코드 rollback 시에도 소유권 보호 인덱스를 임의 제거하지 않는다. 0033 이전 앱과 혼재하는 롤링 구간에는 충돌 오류가 발생할 수 있으므로 한산한 시간에 수행하고 예약/웹훅 실패율을 관찰한다. 인덱스 사전검사 실패는 데이터 검토로 돌아가며, 자동 삭제로 우회하지 않는다.
 
@@ -128,6 +128,8 @@ AND NOT EXISTS (
 
 베네핏은 입장 시 자동 수령되지 않는다. 현장 직원이 해당 QR의 권리별 수령 동작을 해야 기록이 남는다. 수령은 온라인 서버 확정이 필요하다. 오프라인 입장 대기는 sync 전까지 확정 인원으로 세지 않는다. 지류를 쓰는 경우에도 권리 id/티켓 id별 체크표와 재접속 후 중복 대조 담당자를 정한다. 수령 기록 없는 과거 포스터 부족의 원인을 임의 확정하지 않는다.
 
+[현장 실물 인수·지급·마감 양식](benefit-physical-handoff.md)을 사용한다. 2026-09-18 운영자 확인으로 과거 포스터의 실물 기록은 없으며, 태국·중국 SMS와 해외카드 실결제 검증 담당자도 미배정이다. 이는 승인 대기가 아니라 확인 자료·실제 수행자 부재다.
+
 새 공연마다 품목/회차별 `기초 재고 + 입고 + 반환 - 실제 지급 - 손실 = 마감 잔량`을 대조한다. 권리수, 발표표, 추가 보상표, 지급 원장, 실물 잔량은 각각의 기준시각과 버전을 적는다. 기술 테스트는 이 원장 작성과 운영자 인수를 대체하지 않는다.
 
 ## 새 공연 오픈의 남은 gate
@@ -152,8 +154,23 @@ AND NOT EXISTS (
 
 실제 복구 dry-run hash: `2d2b742e127379fc4be975cde9252975cdb1e50644ae9a145ac2ddeecfbe94d3`. 적용 직전 재조회가 바뀌면 이 값은 사용할 수 없다.
 
-최종 리뷰: Standards 미해결 0건, Spec 미해결 0건. 소셜 계정 충돌의 후속 행동 안내 누락도 수정 후 재검토했다. 운영 승인/실사용자/실물 gate는 이 판정과 별도다.
+최종 리뷰: Standards 미해결 0건, Spec 미해결 0건. 소셜 계정 충돌의 후속 행동 안내, TTL 단축, 없는 회차의 복구 거부, 고정 7분 안내를 수정 후 재검토했다. 실사용자/실물 gate는 이 판정과 별도다.
 
 검토 시 출처: `implement`의 검증·리뷰·작업 브랜치 커밋 절차를 적용했다. `code-review`의 Standards/Spec 검토에서 발견된 잠금·이벤트·보상 취소·매수 제한·감사 이력 문제를 수정하고 관련 재현을 추가했다. 브라우저는 Browser 스킬 미제공으로 저장소 Playwright 사용. render 증거와 읽기 전용 집계는 로컬 artifacts `grapit-relaunch-2026-09-18`에 별도 보관한다.
 
-실제 PG 승인/취소, 카드사 반영, 중국/태국 전화 수신, 현장 카메라/네트워크, 실물 지급 원장, 판매 운영 부하, PR/CI/배포 및 운영 권리 INSERT는 실행하지 않았다. 공급자/실사용자/실물 검증과 명시적인 운영 변경 승인이 필요한 잔여 인수다. 로컬 테스트 수치나 기존 운영의 정상 데이터로 이 gate를 pass 처리하지 않는다.
+새 실제 PG 승인/취소, 카드사 반영, 중국/태국 전화 수신, 현장 카메라/네트워크, 실물 지급 원장과 판매 운영 부하는 미검증이다. 사용자는 운영 변경을 모두 승인했으나 해외 SMS·카드 실검증 담당자는 아직 미배정이며 과거 포스터 실물 기록은 없다고 확인했다. 재승인 문제가 아닌 실제 수행자·검증 환경·원장 부재다. 로컬 테스트나 정상 과거 거래 대조로 이 gate를 pass 처리하지 않는다.
+
+
+## 운영 반영 증거 (2026-09-18)
+
+- PR [#193](https://github.com/icons-hq/grapit/pull/193), 병합 SHA `c44b08241d6f6deb0fdb8d14f022cb538bd4b640`. [CI](https://github.com/icons-hq/grapit/actions/runs/35296899283)에서 단위·통합 검증과 브라우저 67개 통과.
+- 적용 전 Cloud SQL `grabit-db-managed-demo` 백업 `1789695332431`이 `SUCCESSFUL`임을 확인했다.
+- 과거 결제 1,190건의 PG 조회는 모두 성공, 원거래 금액 차이 0건이었다. 상태명 차이 55건 중 47건은 여러 번의 부분취소로 잔액이 0이 된 전액취소와 내부 `CANCELED`의 표현 차이였다.
+- 나머지 8건은 6월 4일 취소된 티켓의 상위 상태가 남은 경우였다. PG identity·원통화·취소액·잔액과 취소된 티켓의 환불액을 다시 대조해 4결제를 `PARTIAL_CANCELED`, 나머지 4결제/4예매를 전액취소 상태로 복구했다. 실제 PG 취소 시각을 보존하고 추가 환불을 실행하지 않았다.
+- 복구 전후 티켓·QR·좌석·특전·수령·환불 테이블의 대상 회차 hash가 동일했다. 복구 8건의 새 PG 조회에서도 금액·상태 불일치 0건을 확인했다.
+- 보호된 실행 증거: 로컬 artifacts `grapit-relaunch-2026-09-18`의 `payment-reconciliation.json`, `legacy-state-dry-run.json`, `legacy-state-apply.json`, `payment-reconciliation-after-repair.json`. 고객 식별자와 PG key는 문서에 포함하지 않는다.
+- [Deploy](https://github.com/icons-hq/grapit/actions/runs/35297396598)의 migration·API/Web build·background worker smoke·API/Web 배포가 모두 성공했다. API `grabit-api-00248-fnq`, Web `grabit-web-00197-6dr`가 위 병합 SHA 이미지로 각각 트래픽 100%를 처리했다.
+- 운영 Drizzle migration 34행과 `uq_ticket_items_active_seat`, `idx_tbe_active_config_included_item_identity`의 active/redeemed 조건을 확인했다. 전체 활성 좌석 중복·기본 권리 중복·재고 소유권 불일치는 0건이었다.
+- 11:03 KST 기본 특전 13개를 INSERT했다. 다시 dry-run하여 누락 티켓 0·권리 0을 확인했고 기존 예약·결제·환불·티켓·QR·좌석·수령·기존 권리 hash는 보존됐다. 전체 불변 조건과 활성 티켓의 QR/입장 기록도 이상 0건이었다. 증거는 `benefit-repair-apply.json`, `postrepair-audit.json`에 있다.
+- API health 200/Redis up, HTTP와 www의 canonical 301, 공개 홈·callback 200을 확인했다. 새 API/Web revision의 배포 이후 ERROR 로그는 확인 시점에 0건이었다.
+- Chrome 운영 관리자 패치노트 #193과 영어 데스크톱 callback, 태국어·중국어 390×844 callback을 실제 렌더링으로 검수했다. 계정 충돌은 기존 계정 로그인 안내를 포함했다. 태국어 재시도는 로그인된 관리자 세션에서 `/th`로 복귀해 언어를 유지했다. 실제 해외 OAuth 승인 왕복이나 카드 인증을 대신하는 검증은 아니다.
