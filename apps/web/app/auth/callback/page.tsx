@@ -19,31 +19,16 @@ import { SignupStep2 } from '@/components/auth/signup-step2';
 import type { SignupStep2SubmitData } from '@/components/auth/signup-step2';
 import { SignupStep3 } from '@/components/auth/signup-step3';
 import { EmailVerificationStatus } from '@/components/auth/email-verification-status';
-import { getAuthLaunchCopy } from '@/components/auth/auth-launch-copy';
+import { getAuthLaunchCopy, type AuthLaunchCopy } from '@/components/auth/auth-launch-copy';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { resolveSafeReturnToFromSearch } from '@/lib/auth-return';
 
-const SOCIAL_ERROR_MESSAGES: Record<string, { title: string; detail: string }> = {
-  oauth_denied: {
-    title: '로그인이 취소되었습니다.',
-    detail: '다시 로그인해주세요.',
-  },
-  oauth_failed: {
-    title: '소셜 로그인에 실패했습니다.',
-    detail: '잠시 후 다시 시도해주세요.',
-  },
-  token_expired: {
-    title: '로그인 세션이 만료되었습니다.',
-    detail: '다시 로그인해주세요.',
-  },
-  server_error: {
-    title: '일시적인 오류가 발생했습니다.',
-    detail: '잠시 후 다시 시도해주세요.',
-  },
-  account_conflict: {
-    title: '이미 다른 계정에 연결된 소셜 계정입니다.',
-    detail: '기존 계정으로 로그인해주세요.',
-  },
+const SOCIAL_ERROR_MESSAGE_KEYS: Record<string, keyof AuthLaunchCopy['socialErrors']> = {
+  oauth_denied: 'oauthDenied',
+  oauth_failed: 'oauthFailed',
+  token_expired: 'tokenExpired',
+  server_error: 'serverError',
+  account_conflict: 'accountConflict',
 };
 
 function CallbackContent() {
@@ -103,11 +88,11 @@ function CallbackContent() {
     if (status !== 'authenticated') {
       // Invalid callback
       hasRedirectedRef.current = true;
-      toast.error('잘못된 접근입니다.');
+      toast.error(authCopy.callback.invalidAccess);
       router.push(getLocalizedPathname('/auth', authCopy.locale));
     }
     // status === 'authenticated' 분기는 아래 watch effect 에서 처리.
-  }, [searchParams, router, authCopy.locale]);
+  }, [searchParams, router, authCopy.locale, authCopy.callback.invalidAccess]);
 
   // status=authenticated 흐름: AuthInitializer 가 store 를 채울 때까지 대기 후 라우팅.
   useEffect(() => {
@@ -127,10 +112,10 @@ function CallbackContent() {
     if (isInitialized) {
       // AuthInitializer 가 끝났는데도 user 가 없다면 refresh 실패.
       hasRedirectedRef.current = true;
-      toast.error('로그인에 실패했습니다.');
+      toast.error(authCopy.socialErrors.oauthFailed);
       router.push(getLocalizedPathname('/auth', authCopy.locale));
     }
-  }, [user, isInitialized, searchParams, router, authCopy.locale]);
+  }, [user, isInitialized, searchParams, router, authCopy.locale, authCopy.socialErrors.oauthFailed]);
 
   function handleStep2Complete(data: SignupStep2SubmitData) {
     setStep2Data(data);
@@ -186,17 +171,14 @@ function CallbackContent() {
   }
 
   if (errorInfo) {
-    const messages = SOCIAL_ERROR_MESSAGES[errorInfo.code] ?? SOCIAL_ERROR_MESSAGES['server_error']!;
+    const message = authCopy.socialErrors[SOCIAL_ERROR_MESSAGE_KEYS[errorInfo.code] ?? 'serverError'];
     return (
       <main className="flex flex-1 items-center justify-center">
         <div className="flex max-w-[400px] flex-col items-center gap-4 px-4">
           <AlertCircle className="h-8 w-8 text-error" />
           <div className="text-center">
             <p className="text-base font-semibold text-gray-900">
-              {messages.title}
-            </p>
-            <p className="mt-2 text-caption text-gray-600">
-              {messages.detail}
+              {message}
             </p>
           </div>
           <Button
@@ -206,7 +188,7 @@ function CallbackContent() {
               router.push(getLocalizedPathname('/auth', authCopy.locale))
             }
           >
-            다시 로그인하기
+            {authCopy.callback.retryButton}
           </Button>
         </div>
       </main>
@@ -274,7 +256,7 @@ function CallbackContent() {
     <main className="flex flex-1 items-center justify-center">
       <div className="flex flex-col items-center gap-4">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        <p className="text-base text-gray-500">로그인 처리 중...</p>
+        <p className="text-base text-gray-500">{authCopy.callback.processing}</p>
       </div>
     </main>
   );

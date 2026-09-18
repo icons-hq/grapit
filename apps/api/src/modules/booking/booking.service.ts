@@ -303,7 +303,8 @@ return {1, 'OK', tostring(#ARGV - 1), ''}
  * KEYS[2..] = {showtimeId}:seat:{seatId}
  * ARGV[1] = userId
  * ARGV[2] = ttl seconds
- * ARGV[3..] = requested seat IDs
+ * ARGV[3] = 'extend' or 'exact'
+ * ARGV[4..] = requested seat IDs
  *
  * Returns: {1, 'OK', count, ''} or {0, 'MISSING'|'OTHER_OWNER', seatId, owner}
  */
@@ -311,9 +312,10 @@ export const EXTEND_OWNED_SEAT_LOCKS_LUA = `
 -- EXTEND_OWNED_SEAT_LOCKS_LUA
 local userId = ARGV[1]
 local ttl = tonumber(ARGV[2])
+local mode = ARGV[3]
 for i = 2, #KEYS do
   local owner = redis.call('GET', KEYS[i])
-  local seatId = ARGV[i + 1]
+  local seatId = ARGV[i + 2]
   if not owner then
     return {0, 'MISSING', seatId, ''}
   end
@@ -323,7 +325,7 @@ for i = 2, #KEYS do
 end
 for i = 2, #KEYS do
   local currentTtl = redis.call('TTL', KEYS[i])
-  if currentTtl < ttl then
+  if mode == 'exact' or currentTtl < ttl then
     redis.call('EXPIRE', KEYS[i], ttl)
   end
 end
@@ -331,7 +333,7 @@ local userSeatsTtl = redis.call('TTL', KEYS[1])
 if userSeatsTtl < ttl then
   redis.call('EXPIRE', KEYS[1], ttl)
 end
-return {1, 'OK', tostring(#ARGV - 2), ''}
+return {1, 'OK', tostring(#ARGV - 3), ''}
 `;
 
 export const PAYMENT_CONFIRM_LOCK_TTL = 60;
@@ -601,40 +603,17 @@ export class BookingService {
     return true;
   }
 
-  /**
-   * Unlocks ALL seats for a user in a showtime.
-   * Used by timer reset to release all locks at once.
-   * Not Lua-based because: called once per reset (no concurrency),
-   * and we need per-seat broadcast calls in Node.
-   */
+  /** Releases the current selection using the same atomic owner check as a single unlock. */
   async unlockAllSeats(userId: string, showtimeId: string): Promise<UnlockAllResponse> {
-    const userSeatsKey = `{${showtimeId}}:user-seats:${userId}`;
-    const lockedSeatsKey = `{${showtimeId}}:locked-seats`;
-
-    const members = await this.redis.smembers(userSeatsKey);
-
-    if (members.length === 0) {
-      return { unlockedSeats: [] };
-    }
-
+    const members = await this.redis.smembers(`{${showtimeId}}:user-seats:${userId}`);
     const unlockedSeats: string[] = [];
-
     for (const runtimeSeatId of members) {
-      const lockKey = `{${showtimeId}}:seat:${runtimeSeatId}`;
-      const owner = await this.redis.get(lockKey);
-
-      if (owner === userId) {
-        await this.redis.del(lockKey);
-        await this.redis.srem(lockedSeatsKey, runtimeSeatId);
-        const rawSeatId = decodeRuntimeSeatId(runtimeSeatId);
-        this.gateway.broadcastSeatUpdate(showtimeId, rawSeatId, 'available', userId);
-        unlockedSeats.push(rawSeatId);
+      const seatId = decodeRuntimeSeatId(runtimeSeatId);
+      if (await this.unlockSeat(userId, showtimeId, seatId)) {
+        unlockedSeats.push(seatId);
       }
     }
-
-    // Delete the user-seats key entirely
-    await this.redis.del(userSeatsKey);
-
+    // Do not delete the whole user set: a new selection may have been added.
     return { unlockedSeats };
   }
 
@@ -691,6 +670,26 @@ export class BookingService {
     seatIds: string[],
     ttlSeconds: number,
   ): Promise<void> {
+    await this.updateOwnedSeatLockTtl(userId, showtimeId, seatIds, ttlSeconds, 'extend');
+  }
+
+  /** Set the selected seats to the server payment window, including shortening. */
+  async setOwnedSeatLockTtl(
+    userId: string,
+    showtimeId: string,
+    seatIds: string[],
+    ttlSeconds: number,
+  ): Promise<void> {
+    await this.updateOwnedSeatLockTtl(userId, showtimeId, seatIds, ttlSeconds, 'exact');
+  }
+
+  private async updateOwnedSeatLockTtl(
+    userId: string,
+    showtimeId: string,
+    seatIds: string[],
+    ttlSeconds: number,
+    mode: 'extend' | 'exact',
+  ): Promise<void> {
     await this.assertNoUnavailableSeatRecords(showtimeId, seatIds);
 
     const userSeatsKey = `{${showtimeId}}:user-seats:${userId}`;
@@ -703,6 +702,7 @@ export class BookingService {
       ...seatLockKeys,
       userId,
       String(ttlSeconds),
+      mode,
       ...runtimeSeatIds,
     )) as SeatLockOwnershipResult;
 

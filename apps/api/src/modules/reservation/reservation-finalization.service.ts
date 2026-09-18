@@ -1,3 +1,5 @@
+import { getTicketLimitSnapshot, lockTicketLimitScope } from '../../database/ticket-limit.js';
+import { syncIncludedBenefitEntitlementsForTicketItems } from '../../database/included-benefit-entitlements.js';
 import {
   BadRequestException,
   ConflictException,
@@ -9,23 +11,20 @@ import {
   Optional,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { and, desc, eq, isNull, or, sql } from 'drizzle-orm';
+import { and, eq, isNull, or, sql } from 'drizzle-orm';
 import {
-  DEFAULT_PERFORMANCE_BOOKING_POLICY,
   toFloorAwareSeatSelection,
   type ConfirmPaymentRequest,
   type FloorAwareSeatSelection,
 } from '@grabit/shared';
 
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
+import { isActiveSeatUniqueViolation } from '../../database/seat-ownership.js';
 import {
   payments,
   reservationSeats,
   reservations,
   seatInventories,
-  ticketBenefitConfigurations,
-  ticketBenefitEntitlements,
-  ticketBenefits,
   ticketItems,
 } from '../../database/schema/index.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
@@ -67,16 +66,6 @@ type PaypalResolvedProviderCharge = {
   amountDecimal: string;
   rate: string;
   quotedAt: Date;
-};
-type TicketLimitSnapshot = {
-  performanceId: string;
-  maxTicketsPerUser: number;
-  activeTicketCount: number;
-};
-type TicketLimitExecutor = Pick<DrizzleDB, 'execute'>;
-type TicketItemBenefitCandidate = {
-  id: string;
-  tierName: string;
 };
 
 const TICKET_SERVICE_FEE_KRW = 2000;
@@ -347,6 +336,10 @@ export class ReservationFinalizationService {
       throw new NotFoundException('예매 정보를 찾을 수 없습니다. 다시 시도해주세요.');
     }
 
+    if (existingPayment?.asyncStatus === 'cancel_pending') {
+      throw new ConflictException('결제 취소가 처리 중입니다. 예매 내역에서 상태를 확인해주세요.');
+    }
+
     if (reservation.status !== 'CONFIRMED' && reservation.status !== 'PENDING_PAYMENT') {
       throw new ConflictException('좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.');
     }
@@ -435,8 +428,8 @@ export class ReservationFinalizationService {
       this.assertExistingDonePaymentMatchesRequest(existingPayment, reservation, dto);
     }
 
-    const ticketLimit = await this.getTicketLimitSnapshot(
-      userId,
+    const ticketLimit = await getTicketLimitSnapshot(
+      this.db, userId,
       reservation.id,
       reservation.showtimeId,
     );
@@ -607,12 +600,11 @@ export class ReservationFinalizationService {
       let committedPaymentId: string | null = null;
       try {
         await this.db.transaction(async (tx) => {
-          await this.lockTicketLimitScope(tx, userId, ticketLimit.performanceId);
-          const lockedTicketLimit = await this.getTicketLimitSnapshot(
-            userId,
+          await lockTicketLimitScope(tx, userId, ticketLimit.performanceId);
+          const lockedTicketLimit = await getTicketLimitSnapshot(
+            tx, userId,
             reservation.id,
             reservation.showtimeId,
-            tx,
           );
           if (
             lockedTicketLimit.activeTicketCount + pendingSeats.length
@@ -675,29 +667,37 @@ export class ReservationFinalizationService {
           }
           const ticketItemPaymentId = committedPaymentId;
 
-          const insertedTicketItems = await tx.insert(ticketItems).values(
-            pendingSeats.map((seat) => ({
-              reservationId: reservation.id,
-              paymentId: ticketItemPaymentId,
-              showtimeId: reservation.showtimeId,
-              seatId: seat.seatId,
-              seatKey: seat.seatKey,
-              floorKey: seat.floorKey,
-              floorLabel: seat.floorLabel,
-              tierName: seat.tierName,
-              row: seat.row,
-              number: seat.number,
-              price: seat.price,
-              serviceFee: TICKET_SERVICE_FEE_KRW,
-              status: 'active' as const,
-              admissionState: 'not_entered' as const,
-            })),
-          ).returning({
-            id: ticketItems.id,
-            tierName: ticketItems.tierName,
-          });
+          let insertedTicketItems: Array<{ id: string; tierName: string }>;
+          try {
+            insertedTicketItems = await tx.insert(ticketItems).values(
+              pendingSeats.map((seat) => ({
+                reservationId: reservation.id,
+                paymentId: ticketItemPaymentId,
+                showtimeId: reservation.showtimeId,
+                seatId: seat.seatId,
+                seatKey: seat.seatKey,
+                floorKey: seat.floorKey,
+                floorLabel: seat.floorLabel,
+                tierName: seat.tierName,
+                row: seat.row,
+                number: seat.number,
+                price: seat.price,
+                serviceFee: TICKET_SERVICE_FEE_KRW,
+                status: 'active' as const,
+                admissionState: 'not_entered' as const,
+              })),
+            ).returning({
+              id: ticketItems.id,
+              tierName: ticketItems.tierName,
+            });
+          } catch (error) {
+            if (isActiveSeatUniqueViolation(error)) {
+              throw new ConflictException('판매 불가능한 좌석입니다');
+            }
+            throw error;
+          }
 
-          await this.syncIncludedBenefitEntitlementsForTicketItems(
+          await syncIncludedBenefitEntitlementsForTicketItems(
             tx,
             reservation.showtimeId,
             insertedTicketItems,
@@ -865,73 +865,10 @@ export class ReservationFinalizationService {
     return rows.map((seat) => toFloorAwareSeatSelection(seat));
   }
 
-  private async getTicketLimitSnapshot(
-    userId: string,
-    reservationId: string,
-    showtimeId: string,
-    executor: TicketLimitExecutor = this.db,
-  ): Promise<TicketLimitSnapshot> {
-    const result = await executor.execute(sql`
-      SELECT
-        s.performance_id,
-        coalesce(
-          bp.max_tickets_per_user,
-          ${DEFAULT_PERFORMANCE_BOOKING_POLICY.maxTicketsPerUser}
-        )::int AS max_tickets_per_user,
-        (
-          SELECT count(*)::int
-          FROM ticket_items ti
-          INNER JOIN reservations r ON r.id = ti.reservation_id
-          INNER JOIN showtimes ticket_showtimes ON ticket_showtimes.id = ti.showtime_id
-          WHERE r.user_id = ${userId}
-            AND r.id <> ${reservationId}
-            AND ticket_showtimes.performance_id = s.performance_id
-            AND r.status = 'CONFIRMED'
-            AND ti.status IN ('active', 'cancellation_pending')
-        ) AS active_ticket_count
-      FROM showtimes s
-      LEFT JOIN booking_policies bp ON bp.performance_id = s.performance_id
-      WHERE s.id = ${showtimeId}
-    `);
-    const row = result.rows[0] as
-      | {
-        performance_id?: unknown;
-        max_tickets_per_user?: unknown;
-        active_ticket_count?: unknown;
-      }
-      | undefined;
-
-    if (!row) {
-      throw new NotFoundException('회차를 찾을 수 없습니다');
-    }
-
-    return {
-      performanceId: String(row.performance_id),
-      maxTicketsPerUser: this.toInteger(row.max_tickets_per_user),
-      activeTicketCount: this.toInteger(row.active_ticket_count),
-    };
-  }
-
-  private async lockTicketLimitScope(
-    executor: TicketLimitExecutor,
-    userId: string,
-    performanceId: string,
-  ): Promise<void> {
-    await executor.execute(sql`
-      SELECT pg_advisory_xact_lock(
-        hashtextextended(${`ticket-limit:${userId}:${performanceId}`}, 0)
-      )
-    `);
-  }
-
   private resolvePostApprovalConflictCancelReason(error: ConflictException): string {
     return error.message.includes('1인 최대')
       ? '예매 매수 제한 초과로 인한 자동 취소'
       : '판매 불가능 좌석으로 인한 자동 취소';
-  }
-
-  private toInteger(value: unknown): number {
-    return typeof value === 'number' ? value : Number(value ?? 0);
   }
 
   private resolvePaypalProviderCharge(
@@ -1200,95 +1137,6 @@ export class ReservationFinalizationService {
     );
   }
 
-  private async syncIncludedBenefitEntitlementsForTicketItems(
-    db: DrizzleDB,
-    showtimeId: string,
-    ticketItemRows: TicketItemBenefitCandidate[],
-    now: Date,
-  ): Promise<void> {
-    if (ticketItemRows.length === 0) {
-      return;
-    }
-
-    await this.lockShowtimeForBenefitMutation(db, showtimeId);
-
-    const [configuration] = await db
-      .select({ id: ticketBenefitConfigurations.id })
-      .from(ticketBenefitConfigurations)
-      .where(eq(ticketBenefitConfigurations.showtimeId, showtimeId))
-      .orderBy(desc(ticketBenefitConfigurations.version))
-      .limit(1);
-
-    if (!configuration) {
-      return;
-    }
-
-    const includedBenefits = await db
-      .select({
-        identity: ticketBenefits.identity,
-        kind: ticketBenefits.kind,
-        displayCopy: ticketBenefits.displayCopy,
-        eligibleTierNames: ticketBenefits.eligibleTierNames,
-      })
-      .from(ticketBenefits)
-      .where(and(
-        eq(ticketBenefits.configurationId, configuration.id),
-        eq(ticketBenefits.kind, 'included'),
-      ));
-
-    const entitlementsToInsert = includedBenefits
-      .filter((benefit) => benefit.kind === 'included')
-      .flatMap((benefit) => {
-        const eligibleTierNames = new Set(benefit.eligibleTierNames);
-        return ticketItemRows
-          .filter((ticketItem) => eligibleTierNames.has(ticketItem.tierName))
-          .map((ticketItem) => ({
-            showtimeId,
-            ticketItemId: ticketItem.id,
-            benefitIdentity: benefit.identity,
-            benefitKind: 'included' as const,
-            displayCopySnapshot: benefit.displayCopy,
-            source: 'configuration' as const,
-            runId: null,
-            state: 'active' as const,
-            inactiveReason: null,
-            redeemedAt: null,
-            redeemedByUserId: null,
-            createdAt: now,
-            updatedAt: now,
-          }));
-      });
-
-    if (entitlementsToInsert.length === 0) {
-      return;
-    }
-
-    await db
-      .insert(ticketBenefitEntitlements)
-      .values(entitlementsToInsert)
-      .onConflictDoNothing();
-  }
-
-  private async lockShowtimeForBenefitMutation(
-    db: Pick<DrizzleDB, 'execute'>,
-    showtimeId: string,
-  ): Promise<void> {
-    const result = await db.execute(sql`
-      SELECT id
-      FROM showtimes
-      WHERE id = ${showtimeId}
-      FOR UPDATE
-    `);
-
-    if (Array.isArray(result) && result.length === 0) {
-      throw new NotFoundException('회차를 찾을 수 없습니다');
-    }
-
-    if ('rows' in result && Array.isArray(result.rows) && result.rows.length === 0) {
-      throw new NotFoundException('회차를 찾을 수 없습니다');
-    }
-  }
-
   private calculatePayableTotal(seats: FloorAwareSeatSelection[]): number {
     const seatTotal = seats.reduce((total, seat) => total + seat.price, 0);
     return seatTotal + seats.length * TICKET_SERVICE_FEE_KRW;
@@ -1301,7 +1149,7 @@ export class ReservationFinalizationService {
         status: 'FAILED',
         updatedAt: new Date(),
       })
-      .where(eq(reservations.id, reservationId));
+      .where(and(eq(reservations.id, reservationId), eq(reservations.status, 'PENDING_PAYMENT')));
   }
 
   private isPastWindow(

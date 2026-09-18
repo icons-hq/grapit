@@ -21,6 +21,10 @@ import {
   ticketItems,
   tickets,
 } from '../../database/schema/index.js';
+import {
+  ACTIVE_TICKET_ITEM_STATUSES,
+  noActiveTicketItemOnSeat,
+} from '../../database/seat-ownership.js';
 import { pickCancelledSeatReleaseDelaySeconds } from '../jobs/cancelled-seat-release.worker.js';
 import {
   PG_BOSS,
@@ -106,9 +110,6 @@ const REDACTED_PROVIDER_METADATA_VALUE = '[REDACTED]';
 const SENSITIVE_PROVIDER_METADATA_KEY =
   /(secret|password|authorization|credential|access[-_]?token|refresh[-_]?token|id[-_]?token|api[-_]?key)/i;
 
-function addDays(date: Date, days: number): Date {
-  return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
-}
 
 function toRecord(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -246,7 +247,7 @@ export class PaymentCancellationFinalizerService {
             resultCode: input.providerResponse?.status ?? 'CANCELED',
             resultMessage: RESULT_MESSAGE_BY_SOURCE[input.source],
             failureReason: null,
-            expectedDepositAt: addDays(now, 3),
+            expectedDepositAt: null,
             customerServiceCtaVisible: false,
             providerMetadata: {
               cancelReason: input.reason,
@@ -495,6 +496,7 @@ export class PaymentCancellationFinalizerService {
               eq(seatInventories.floorKey, seatIdentity.floorKey),
               eq(seatInventories.seatKey, seatIdentity.seatKey),
               eq(seatInventories.status, 'sold'),
+              noActiveTicketItemOnSeat(),
             ),
           )
           .returning({ id: seatInventories.id });
@@ -528,6 +530,7 @@ export class PaymentCancellationFinalizerService {
               eq(seatInventories.floorKey, seatIdentity.floorKey),
               eq(seatInventories.seatKey, seatIdentity.seatKey),
               eq(seatInventories.status, 'held_cancelled'),
+              noActiveTicketItemOnSeat(),
             ),
           )
           .returning({
@@ -535,14 +538,37 @@ export class PaymentCancellationFinalizerService {
             reopenJobId: seatInventories.reopenJobId,
           });
 
-        if (updatedHeldCancelledSeatInventory.length !== 1) {
-          throw new BadRequestException('취소할 좌석 재고 상태가 유효하지 않습니다');
+        if (updatedHeldCancelledSeatInventory.length === 1) {
+          seatReleaseStates.push({
+            seatIdentity,
+            reopenJobId: updatedHeldCancelledSeatInventory[0]?.reopenJobId ?? JOB_ENQUEUE_FAILED,
+          });
+          continue;
         }
 
-        seatReleaseStates.push({
-          seatIdentity,
-          reopenJobId: updatedHeldCancelledSeatInventory[0]?.reopenJobId ?? JOB_ENQUEUE_FAILED,
-        });
+        // 같은 좌석이 이미 다른 예매의 유효 티켓 소유라면 좌석 해제만 건너뛰고
+        // 환불/취소 확정은 계속 진행한다 (중복 발권 방지의 핵심 가드).
+        const [activeOwner] = await tx
+          .select({ reservationId: ticketItems.reservationId })
+          .from(ticketItems)
+          .where(
+            and(
+              eq(ticketItems.showtimeId, input.context.reservation.showtimeId),
+              eq(ticketItems.floorKey, seatIdentity.floorKey),
+              eq(ticketItems.seatKey, seatIdentity.seatKey),
+              inArray(ticketItems.status, [...ACTIVE_TICKET_ITEM_STATUSES]),
+            ),
+          )
+          .limit(1);
+
+        if (activeOwner) {
+          this.logger.warn(
+            `Seat release skipped: seat is owned by an active ticket item of another reservation. showtimeId=${input.context.reservation.showtimeId}, seatKey=${seatIdentity.seatKey}, cancelledReservationId=${input.context.reservation.id}, ownerReservationId=${activeOwner.reservationId}`,
+          );
+          continue;
+        }
+
+        throw new BadRequestException('취소할 좌석 재고 상태가 유효하지 않습니다');
       }
 
       if (input.actor?.kind === 'admin' && seatIdentities.length > 0) {

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TossPaymentError } from '../payment/toss-payments.client.js';
 import {
   isTossCancelCompleted,
+  toRefundTimeline,
   RefundService,
 } from './refund.service.js';
 
@@ -158,6 +159,13 @@ describe('RefundService', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  it('does not expose a legacy synthetic deposit date as a bank/card refund promise', () => {
+    const timeline = toRefundTimeline(createRefund({ status: 'completed' }) as never);
+    expect(timeline.expectedDepositAt).toBeNull();
+    expect(timeline.currentState).toBe('COMPLETED');
+    expect(timeline.customerServiceCtaVisible).toBe(false);
   });
 
   it('treats only CANCELED Toss responses as completed refund cancels', () => {

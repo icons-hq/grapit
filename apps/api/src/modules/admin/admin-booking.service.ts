@@ -2,6 +2,7 @@ import {
   Injectable,
   Inject,
   BadRequestException,
+  ConflictException,
   Logger,
   NotFoundException,
   Optional,
@@ -33,6 +34,7 @@ import {
   type AdminRefundRequestOptions,
 } from '../refund/refund.service.js';
 import { mapPaymentFailureDiagnostic } from '../payment/payment-failure-diagnostic.js';
+import { noActiveTicketItemOnSeat } from '../../database/seat-ownership.js';
 import { safeCsvRows, withUtf8Bom } from './csv-export.util.js';
 import { AdminAuditService } from './admin-audit.service.js';
 import { formatTicketSeatNumber } from './ticket-seat-number.util.js';
@@ -1974,18 +1976,48 @@ export class AdminBookingService {
     const seatIdentities = seats.map((seat) =>
       normalizeReservationSeatIdentity(seat.seatId),
     );
-    const beforeSeatStatus = seatIdentities.map((seatIdentity) => ({
-      seatKey: seatIdentity.seatKey,
-      status: 'held_cancelled',
-    }));
-    const afterSeatStatus = seatIdentities.map((seatIdentity) => ({
-      seatKey: seatIdentity.seatKey,
-      status: 'available',
-    }));
+    const releasedSeatIds: string[] = [];
+    const releasedSeatIdentities: typeof seatIdentities = [];
 
     await this.db.transaction(async (tx) => {
+      for (const [index, seatIdentity] of seatIdentities.entries()) {
+        const released = await tx
+          .update(seatInventories)
+          .set({
+            status: 'available',
+            lockedBy: null,
+            lockedUntil: null,
+            soldAt: null,
+            heldCancelledAt: null,
+            reopenHoldUntil: null,
+            reopenJobId: null,
+          })
+          .where(
+            and(
+              eq(seatInventories.showtimeId, context.reservation.showtimeId),
+              eq(seatInventories.floorKey, seatIdentity.floorKey),
+              eq(seatInventories.seatKey, seatIdentity.seatKey),
+              eq(seatInventories.status, 'held_cancelled'),
+              noActiveTicketItemOnSeat(),
+            ),
+          )
+          .returning({ id: seatInventories.id });
+
+        if (released.length > 0) {
+          releasedSeatIds.push(seats[index]!.seatId);
+          releasedSeatIdentities.push(seatIdentity);
+        } else {
+          this.logger.warn(
+            `Manual open skipped (ownership guard or state changed). reservationId=${reservationId}, seatKey=${seatIdentity.seatKey}`,
+          );
+        }
+      }
+      if (releasedSeatIds.length === 0) {
+        throw new ConflictException('현재 다시 판매할 수 있는 취소 좌석이 없습니다.');
+      }
+
       await tx.insert(bookingOperationAuditLogs).values(
-        seatIdentities.map((seatIdentity) => ({
+        releasedSeatIdentities.map((seatIdentity) => ({
           operatorUserId,
           action: 'manual_open' as const,
           seatKey: seatIdentity.seatKey,
@@ -2004,48 +2036,27 @@ export class AdminBookingService {
           reason: auditReason,
           changedFields: ['seatStatus'],
           before: {
-            seatStatus: beforeSeatStatus,
+            seatStatus: releasedSeatIdentities.map((seat) => ({ seatKey: seat.seatKey, status: 'held_cancelled' })),
           },
           after: {
-            seatStatus: afterSeatStatus,
+            seatStatus: releasedSeatIdentities.map((seat) => ({ seatKey: seat.seatKey, status: 'available' })),
           },
         },
         tx,
       );
 
-      for (const seatIdentity of seatIdentities) {
-        await tx
-          .update(seatInventories)
-          .set({
-            status: 'available',
-            lockedBy: null,
-            lockedUntil: null,
-            soldAt: null,
-            heldCancelledAt: null,
-            reopenHoldUntil: null,
-            reopenJobId: null,
-          })
-          .where(
-            and(
-              eq(seatInventories.showtimeId, context.reservation.showtimeId),
-              eq(seatInventories.floorKey, seatIdentity.floorKey),
-              eq(seatInventories.seatKey, seatIdentity.seatKey),
-              eq(seatInventories.status, 'held_cancelled'),
-            ),
-          );
-      }
     });
 
-    for (const seat of seats) {
+    for (const seatId of releasedSeatIds) {
       this.bookingGateway.broadcastSeatUpdate(
         context.reservation.showtimeId,
-        seat.seatId,
+        seatId,
         'available',
       );
     }
 
     this.logger.log(
-      `Manual open completed for reservationId=${reservationId}, operatorUserId=${operatorUserId}, seats=${seatIdentities.length}`,
+      `Manual open completed for reservationId=${reservationId}, operatorUserId=${operatorUserId}, seats=${releasedSeatIds.length}`,
     );
   }
 }

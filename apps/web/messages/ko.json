@@ -161,7 +161,7 @@
     },
     "paymentDeadline": {
       "badge": "결제 가능 시간",
-      "title": "지금부터 7분 안에 결제를 완료해주세요",
+      "title": "남은 시간 안에 결제를 완료해주세요",
       "helper": "{threshold} 이하가 되면 결제 마감 상태로 전환됩니다.",
       "criticalHelper": "{threshold} 이하로 남았습니다. 카드 인증과 해외 결제 인증을 바로 완료해주세요.",
       "seatHoldHelper": "좌석 점유 만료 {time}"
@@ -265,7 +265,7 @@
       "oauthFailed": "소셜 로그인에 실패했습니다. 다시 시도해주세요.",
       "tokenExpired": "로그인 세션이 만료되었습니다. 다시 시도해주세요.",
       "serverError": "일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
-      "accountConflict": "이미 다른 계정에 연결된 소셜 계정입니다."
+      "accountConflict": "이미 다른 계정에 연결된 소셜 계정입니다. 기존 계정으로 로그인해주세요."
     },
     "signup": {
       "progressAriaLabel": "회원가입 진행 상태",
@@ -380,6 +380,11 @@
       "verificationRequired": "인증을 완료해주세요",
       "providerUnavailable": "소셜 로그인 제공자를 사용할 수 없습니다",
       "deviceLimitNotice": "다른 기기에서 로그인되어 가장 오래된 세션이 종료되었습니다."
+    },
+    "callback": {
+      "retryButton": "다시 로그인하기",
+      "processing": "로그인 처리 중...",
+      "invalidAccess": "잘못된 접근입니다."
     }
   },
   "metadata": {
@@ -613,9 +618,9 @@
         "refundSequential": "결제 수단으로 환불이 순차 반영됩니다.",
         "waitForProgress": "추가 요청 없이 진행 현황을 확인해주세요.",
         "expectedDeposit": "예상 입금: {date}",
-        "refundBusinessDays": "결제수단에 따라 3~7영업일",
+        "refundBusinessDays": "반영 시점은 결제수단·금융기관에 따라 다름",
         "cancelCompletedStep": "취소 완료",
-        "refundCompleted": "환불 반영이 완료되었습니다.",
+        "refundCompleted": "결제사에서 취소가 완료되었습니다. 카드 명세서 반영이나 계좌 환불 시점은 결제수단·금융기관에 따라 다릅니다.",
         "checkCancelledDetail": "예매 상세에서 취소 정보를 확인할 수 있습니다.",
         "completed": "완료됨",
         "paymentCheckingStep": "결제 확인 중",
@@ -675,7 +680,7 @@
       "statusFallback": "환불 상태",
       "expectedDeposit": "예상 입금 시점",
       "releaseNotice": "재판매 가능 시점은 {releaseAt} 전후로 순차 반영될 수 있습니다.",
-      "delayedBody": "예상 입금 시점이 지나도 환불 완료가 보이지 않으면 고객센터로 문의해주세요.",
+      "delayedBody": "처리 상태가 오래 바뀌지 않으면 고객센터로 문의해주세요.",
       "failedBody": "환불 처리가 지연되었거나 실패했습니다. 결제 수단 상태를 확인한 뒤 고객센터로 문의해주세요.",
       "manualOpened": "운영자 확인 후 좌석이 다시 판매 가능 상태로 열렸습니다.",
       "released": "취소 좌석의 지연 보류가 끝나 다시 판매 가능한 상태가 되었습니다.",
@@ -693,8 +698,8 @@
           "description": "결제사 또는 카드사에서 환불을 처리하고 있습니다."
         },
         "completed": {
-          "label": "환불 완료",
-          "description": "환불 반영이 완료되었습니다."
+          "label": "결제사 취소 완료",
+          "description": "결제사에서 취소가 완료되었습니다. 카드 명세서 반영이나 계좌 환불 시점은 결제수단·금융기관에 따라 다릅니다."
         },
         "failed": {
           "label": "환불 실패",

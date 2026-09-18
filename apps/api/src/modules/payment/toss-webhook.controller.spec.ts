@@ -855,7 +855,7 @@ describe('PaymentWebhookController', () => {
     });
   });
 
-  it('finalizes confirmed reservation cancellation through PaymentService instead of payment-only progress', async () => {
+  it.each(['CANCEL_STATUS_CHANGED', 'PAYMENT_STATUS_CHANGED'] as const)('finalizes confirmed reservation cancellation from %s through the full finalizer', async (eventType) => {
     paymentService.recordWebhookEvent.mockResolvedValueOnce(
       makeLedgerResult({
         eventId: 'evt-cancel-1',
@@ -882,18 +882,15 @@ describe('PaymentWebhookController', () => {
       }),
     );
 
-    const result = await controller.handleTossWebhook(cancelStatusChangedEvent);
+    const result = await controller.handleTossWebhook(eventType === 'CANCEL_STATUS_CHANGED' ? cancelStatusChangedEvent : { eventId: 'evt-cancel-1', eventType, data: { paymentKey: 'pay_async_1', orderId: 'GRP-ASYNC-1', status: 'CANCELED' } });
 
     expect(result.processingResultCode).toBe('CANCEL_STATUS_CHANGED_FINALIZED');
     expect(paymentService.finalizeConfirmedCancelWebhook).toHaveBeenCalledWith(
       expect.objectContaining({
-        eventType: 'CANCEL_STATUS_CHANGED',
+        eventType,
         data: expect.objectContaining({
           status: 'CANCELED',
-          cancelStatus: 'DONE',
-          cancelRequestId: 'cancel_refund-1',
-          canceledAt: '2026-05-08T07:02:05.000Z',
-          cancelReason: 'buyer changed mind',
+
         }),
       }),
       expect.objectContaining({ status: 'CANCELED' }),

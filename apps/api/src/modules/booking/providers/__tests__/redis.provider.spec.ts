@@ -520,6 +520,7 @@ describe('redisProvider factory', () => {
           seatA2Key,
           userId,
           '60',
+          'extend',
           'A-1',
           'A-2',
         )).resolves.toEqual([1, 'OK', '2', '']);
@@ -544,6 +545,7 @@ describe('redisProvider factory', () => {
           seatA1Key,
           userId,
           '60',
+          'extend',
           'A-1',
         )).resolves.toEqual([1, 'OK', '1', '']);
 

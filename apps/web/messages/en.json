@@ -161,7 +161,7 @@
     },
     "paymentDeadline": {
       "badge": "Payment deadline",
-      "title": "Complete payment within 7 minutes",
+      "title": "Please complete payment before the countdown ends",
       "helper": "{threshold} or less switches the payment state to critical.",
       "criticalHelper": "{threshold} or less remaining. Finish card or overseas wallet verification now.",
       "seatHoldHelper": "Seat hold expires in {time}"
@@ -265,7 +265,7 @@
       "oauthFailed": "Social login failed. Please try again.",
       "tokenExpired": "Your login session expired. Please try again.",
       "serverError": "A temporary error occurred. Please try again shortly.",
-      "accountConflict": "This social account is already connected to another account."
+      "accountConflict": "This social account is already connected to another account. Log in using the existing account."
     },
     "signup": {
       "progressAriaLabel": "Sign-up progress",
@@ -380,6 +380,11 @@
       "verificationRequired": "Please complete verification",
       "providerUnavailable": "This social login provider is unavailable",
       "deviceLimitNotice": "Your oldest session was signed out because another device signed in."
+    },
+    "callback": {
+      "retryButton": "Try logging in again",
+      "processing": "Completing login...",
+      "invalidAccess": "This login link is invalid."
     }
   },
   "metadata": {
@@ -613,9 +618,9 @@
         "refundSequential": "The refund will be applied to your payment method in order.",
         "waitForProgress": "No extra request is needed. Please check the progress here.",
         "expectedDeposit": "Expected deposit: {date}",
-        "refundBusinessDays": "3 to 7 business days depending on payment method",
+        "refundBusinessDays": "Timing depends on your payment method and financial institution",
         "cancelCompletedStep": "Cancellation complete",
-        "refundCompleted": "The refund has been applied.",
+        "refundCompleted": "The payment provider has completed the cancellation. Card statement updates and account refunds depend on your payment method and financial institution.",
         "checkCancelledDetail": "You can check cancellation details here.",
         "completed": "Completed",
         "paymentCheckingStep": "Checking payment",
@@ -675,7 +680,7 @@
       "statusFallback": "Refund status",
       "expectedDeposit": "Expected deposit",
       "releaseNotice": "Seats may return to sale around {releaseAt}.",
-      "delayedBody": "If the refund is not complete after the expected deposit time, contact support.",
+      "delayedBody": "Contact support if the processing status remains unchanged for an extended period.",
       "failedBody": "The refund is delayed or failed. Check your payment method and contact support.",
       "manualOpened": "The operator confirmed the seats and reopened them for sale.",
       "released": "The delayed hold ended and the cancelled seats are available again.",
@@ -693,8 +698,8 @@
           "description": "The payment provider or card issuer is processing the refund."
         },
         "completed": {
-          "label": "Refund complete",
-          "description": "The refund has been posted."
+          "label": "Payment cancellation completed",
+          "description": "The payment provider has completed the cancellation. Card statement updates and account refunds depend on your payment method and financial institution."
         },
         "failed": {
           "label": "Refund failed",

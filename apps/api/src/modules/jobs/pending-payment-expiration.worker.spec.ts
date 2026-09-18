@@ -34,7 +34,7 @@ function createProducerOnlyConfig() {
 }
 
 describe('PendingPaymentExpirationWorker', () => {
-  it('marks expired pending reservations failed and releases their Redis seat locks', async () => {
+  it('expires an old reservation without unlocking seats reacquired by the same user', async () => {
     const db = createDb([
       {
         id: 'reservation-1',
@@ -54,10 +54,10 @@ describe('PendingPaymentExpirationWorker', () => {
     );
 
     expect(db.execute).toHaveBeenCalledTimes(1);
-    expect(bookingService.unlockAllSeats).toHaveBeenCalledWith('user-1', 'showtime-1');
+    expect(bookingService.unlockAllSeats).not.toHaveBeenCalled();
     expect(result).toEqual({
       expiredReservations: 1,
-      unlockedSeats: 2,
+      unlockedSeats: 0,
     });
   });
 

@@ -653,9 +653,9 @@ function InfoRow({
   valueClassName?: string;
 }) {
   return (
-    <div className="flex items-start justify-between py-2">
-      <span className="text-sm text-gray-600">{label}</span>
-      <span className={`text-right ${valueClassName}`}>
+    <div className="flex items-start justify-between gap-3 py-2">
+      <span className="w-24 max-w-[40%] shrink-0 text-sm text-gray-600">{label}</span>
+      <span className={`min-w-0 flex-1 break-words text-right ${valueClassName}`}>
         {value}
       </span>
     </div>

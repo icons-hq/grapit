@@ -1,3 +1,6 @@
+import { getTicketLimitSnapshot, lockTicketLimitScope } from '../../database/ticket-limit.js';
+import { randomUUID } from 'node:crypto';
+import { syncIncludedBenefitEntitlementsForTicketItems } from '../../database/included-benefit-entitlements.js';
 import {
   BadRequestException,
   ConflictException,
@@ -6,9 +9,11 @@ import {
   InternalServerErrorException,
   NotFoundException,
   Optional,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { and, eq, inArray, or, sql } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
+import { isActiveSeatUniqueViolation } from '../../database/seat-ownership.js';
 import {
   bookingPolicies,
   paymentWebhookEvents,
@@ -21,7 +26,7 @@ import {
   ticketItems,
 } from '../../database/schema/index.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
-import { BookingService } from '../booking/booking.service.js';
+import { BookingService, PAYMENT_CONFIRM_LOCK_TTL, buildMaxTicketsPerUserExceededMessage } from '../booking/booking.service.js';
 import { QrTicketService } from '../ticket/qr-ticket.service.js';
 import type {
   PaymentInfo,
@@ -169,6 +174,9 @@ type WebhookPaymentSnapshot = {
   currency?: string;
   amount: number;
   status: PaymentStatus;
+  asyncStatus?: string | null;
+  paidAt?: Date | null;
+  cancelReason?: string | null;
   providerMetadata?: unknown;
   providerChargeAmountMinor?: number | null;
 };
@@ -856,6 +864,42 @@ export class PaymentService {
     paymentStatus: PaymentStatus,
     asyncStatus: string,
   ): Promise<string | void> {
+    if (!this.bookingService) {
+      throw new ServiceUnavailableException('결제 확인 서비스를 사용할 수 없습니다.');
+    }
+    const orderId = this.requireWebhookOrderId(payload);
+    const token = randomUUID();
+    // Same order lock as synchronous confirm, acquired before reading snapshots
+    // or taking late-recovery seat locks. Contention asks the provider to retry.
+    if (!await this.bookingService.acquirePaymentConfirmLock(orderId, token)) {
+      throw new ServiceUnavailableException('결제 확인이 이미 진행 중입니다.');
+    }
+    let leaseHealthy = true;
+    const assertLease = async () => {
+      if (!leaseHealthy || !await this.bookingService!.refreshPaymentConfirmLock(orderId, token)) {
+        throw new ServiceUnavailableException('결제 확인 잠금을 다시 확보해야 합니다.');
+      }
+    };
+    const timer = setInterval(() => {
+      void assertLease().catch(() => { leaseHealthy = false; });
+    }, PAYMENT_CONFIRM_LOCK_TTL * 500);
+    timer.unref?.();
+    try {
+      await assertLease();
+      return await this.upsertAsyncPaymentProgressLocked(payload, paymentStatus, asyncStatus, assertLease);
+    } finally {
+      clearInterval(timer);
+      // A failed cleanup must not undo the committed result; the owner lease expires.
+      await this.bookingService.releasePaymentConfirmLock(orderId, token).catch(() => {});
+    }
+  }
+
+  private async upsertAsyncPaymentProgressLocked(
+    payload: TossWebhookRequestBody,
+    paymentStatus: PaymentStatus,
+    asyncStatus: string,
+    assertLease?: () => Promise<void>,
+  ): Promise<string | void> {
     const orderId = this.requireWebhookOrderId(payload);
     const paymentKey = this.requireWebhookPaymentKey(payload);
     const [reservation] = await this.db
@@ -888,6 +932,9 @@ export class PaymentService {
         currency: payments.currency,
         amount: payments.amount,
         status: payments.status,
+        asyncStatus: payments.asyncStatus,
+        paidAt: payments.paidAt,
+        cancelReason: payments.cancelReason,
         providerMetadata: payments.providerMetadata,
         providerChargeAmountMinor: payments.providerChargeAmountMinor,
       })
@@ -908,6 +955,17 @@ export class PaymentService {
     const existingPayment = existingPayments.find((payment) =>
       payment.reservationId === reservation.id
     );
+
+    if (paymentStatus === 'DONE' && (reservation.status === 'CANCELLED'
+      || existingPayment?.status === 'CANCELED' || existingPayment?.status === 'PARTIAL_CANCELED')) {
+      return 'STALE_PROGRESS_IGNORED';
+    }
+    const compensationPending = existingPayment?.asyncStatus === 'cancel_pending';
+    if (compensationPending && paymentStatus !== 'CANCELED') {
+      return 'DONE_CANCEL_PENDING';
+    }
+    const completesUnissuedCompensation = compensationPending && paymentStatus === 'CANCELED'
+      && reservation.status !== 'CONFIRMED';
 
     const provider = this.resolveWebhookProvider(payload, existingPayment);
     const method = this.resolveWebhookMethod(payload, provider);
@@ -967,6 +1025,7 @@ export class PaymentService {
       }
 
       return await this.finalizeAsyncDonePayment({
+        assertLease,
         payload,
         reservation,
         existingPayment,
@@ -978,7 +1037,29 @@ export class PaymentService {
       });
     }
 
-    const paidAt = null;
+    if (reservation.status === 'CONFIRMED' && ['CANCELED', 'PARTIAL_CANCELED'].includes(paymentStatus)) {
+      // The controller may have read PENDING_PAYMENT before DONE committed.
+      // Retry so it reloads the confirmed state and uses the full finalizer;
+      // acknowledging here would leave a cancelled payment's tickets usable.
+      throw new ServiceUnavailableException('발권된 결제 취소를 다시 대조해야 합니다.');
+    }
+    // All progress events re-read under the same order lease as confirm/DONE.
+    // Cancellation of an issued payment belongs to the cancellation finalizer,
+    // never this pre-issuance progress path.
+    if (reservation.status === 'CONFIRMED' || reservation.status === 'CANCELLED'
+      || (existingPayment && ['DONE', 'PARTIAL_CANCELED', 'CANCELED'].includes(existingPayment.status)
+        && !completesUnissuedCompensation)
+      || (existingPayment && ['ABORTED', 'EXPIRED'].includes(existingPayment.status)
+        && ['READY', 'IN_PROGRESS'].includes(paymentStatus))
+      || (existingPayment?.status === 'IN_PROGRESS' && paymentStatus === 'READY')) {
+      return 'STALE_PROGRESS_IGNORED';
+    }
+    if (existingPayment && existingPayment.paymentKey !== paymentKey) {
+      return 'STALE_PAYMENT_KEY_IGNORED';
+    }
+    await assertLease?.();
+
+    const paidAt = completesUnissuedCompensation ? existingPayment?.paidAt ?? null : null;
     const cancelledAt = paymentStatus === 'CANCELED' && payload.data.canceledAt
       ? new Date(payload.data.canceledAt)
       : null;
@@ -990,12 +1071,12 @@ export class PaymentService {
       method,
       provider,
       currency,
-      asyncStatus,
+      asyncStatus: completesUnissuedCompensation ? 'compensation_cancelled' : asyncStatus,
       amount,
       status: paymentStatus,
       paidAt,
       cancelledAt,
-      cancelReason: payload.data.cancelReason ?? null,
+      cancelReason: payload.data.cancelReason ?? (completesUnissuedCompensation ? existingPayment?.cancelReason : null) ?? null,
       ...this.toPaymentProviderChargeValues(providerChargeQuote),
     } as const;
 
@@ -1005,7 +1086,7 @@ export class PaymentService {
       await this.db
         .update(payments)
         .set(paymentValues)
-        .where(eq(payments.id, existingPayment.id));
+        .where(and(eq(payments.id, existingPayment.id), eq(payments.status, existingPayment.status)));
     } else {
       const [insertedPayment] = await this.db
         .insert(payments)
@@ -1033,7 +1114,7 @@ export class PaymentService {
             status: 'FAILED',
             updatedAt: new Date(),
           })
-          .where(eq(reservations.id, reservation.id));
+          .where(and(eq(reservations.id, reservation.id), eq(reservations.status, 'PENDING_PAYMENT')));
       }
 
       await recordReservationPaymentFailureDiagnostic(this.db, {
@@ -1632,6 +1713,7 @@ export class PaymentService {
   }
 
   private async finalizeAsyncDonePayment(input: {
+    assertLease?: () => Promise<void>;
     payload: TossWebhookRequestBody;
     reservation: WebhookReservationSnapshot;
     existingPayment?: WebhookPaymentSnapshot;
@@ -1687,6 +1769,7 @@ export class PaymentService {
       ? new Date(payload.data.approvedAt)
       : new Date();
     let committedPaymentId = existingPayment?.id ?? null;
+    await input.assertLease?.();
     const recoverySeatLock = await this.acquireLateRecoverySeatLocksIfNeeded({
       payload,
       reservation,
@@ -1695,7 +1778,8 @@ export class PaymentService {
     });
 
     if (recoverySeatLock.acquired === false) {
-      return await this.compensateAsyncDoneSeatFailure({
+      await input.assertLease?.();
+      return await this.compensateAsyncDoneFinalizationFailure({
         payload,
         reservation,
         existingPayment,
@@ -1709,6 +1793,13 @@ export class PaymentService {
 
     try {
       await this.db.transaction(async (tx) => {
+        const limit = await getTicketLimitSnapshot(tx, reservation.userId, reservation.id, reservation.showtimeId);
+        await lockTicketLimitScope(tx, reservation.userId, limit.performanceId);
+        const lockedLimit = await getTicketLimitSnapshot(tx, reservation.userId, reservation.id, reservation.showtimeId);
+        if (lockedLimit.activeTicketCount + pendingSeats.length > lockedLimit.maxTicketsPerUser) {
+          throw new ConflictException(buildMaxTicketsPerUserExceededMessage(lockedLimit.maxTicketsPerUser));
+        }
+
         await tx
           .update(reservations)
           .set({
@@ -1755,24 +1846,34 @@ export class PaymentService {
         }
         const ticketItemPaymentId = committedPaymentId;
 
-        await tx.insert(ticketItems).values(
-          pendingSeats.map((seat) => ({
-            reservationId: reservation.id,
-            paymentId: ticketItemPaymentId,
-            showtimeId: reservation.showtimeId,
-            seatId: seat.seatId,
-            seatKey: seat.seatKey,
-            floorKey: seat.floorKey,
-            floorLabel: seat.floorLabel,
-            tierName: seat.tierName,
-            row: seat.row,
-            number: seat.number,
-            price: seat.price,
-            serviceFee: TICKET_SERVICE_FEE_KRW,
-            status: 'active' as const,
-            admissionState: 'not_entered' as const,
-          })),
-        );
+        try {
+          const insertedTicketItems = await tx.insert(ticketItems).values(
+            pendingSeats.map((seat) => ({
+              reservationId: reservation.id,
+              paymentId: ticketItemPaymentId,
+              showtimeId: reservation.showtimeId,
+              seatId: seat.seatId,
+              seatKey: seat.seatKey,
+              floorKey: seat.floorKey,
+              floorLabel: seat.floorLabel,
+              tierName: seat.tierName,
+              row: seat.row,
+              number: seat.number,
+              price: seat.price,
+              serviceFee: TICKET_SERVICE_FEE_KRW,
+              status: 'active' as const,
+              admissionState: 'not_entered' as const,
+            })),
+          ).returning({ id: ticketItems.id, tierName: ticketItems.tierName });
+          await syncIncludedBenefitEntitlementsForTicketItems(
+            tx, reservation.showtimeId, insertedTicketItems, new Date(),
+          );
+        } catch (error) {
+          if (isActiveSeatUniqueViolation(error)) {
+            throw new ConflictException('판매 불가능한 좌석입니다');
+          }
+          throw error;
+        }
 
         for (const seat of pendingSeats) {
           const updated = await tx
@@ -1818,10 +1919,13 @@ export class PaymentService {
             throw new ConflictException('판매 불가능한 좌석입니다');
           }
         }
+        await input.assertLease?.();
       });
     } catch (error) {
       if (error instanceof ConflictException) {
-        return await this.compensateAsyncDoneSeatFailure({
+        await input.assertLease?.();
+        return await this.compensateAsyncDoneFinalizationFailure({
+          failure: error.message.includes('1인 최대') ? 'ticket_limit' : 'seat_conflict',
           payload,
           reservation,
           existingPayment,
@@ -2148,6 +2252,11 @@ export class PaymentService {
       asyncStatus,
       providerChargeQuote,
     } = input;
+    // Invalid callback data must not rewrite a previously accepted payment.
+    if (reservation.status === 'CONFIRMED' || reservation.status === 'CANCELLED'
+      || (existingPayment && ['DONE', 'PARTIAL_CANCELED', 'CANCELED'].includes(existingPayment.status))) {
+      return;
+    }
     const orderId = this.requireWebhookOrderId(payload);
     const paymentKey = this.requireWebhookPaymentKey(payload);
 
@@ -2180,7 +2289,8 @@ export class PaymentService {
     await this.db.insert(payments).values(paymentValues);
   }
 
-  private async compensateAsyncDoneSeatFailure(input: {
+  private async compensateAsyncDoneFinalizationFailure(input: {
+    failure?: 'seat_conflict' | 'ticket_limit';
     payload: TossWebhookRequestBody;
     reservation: WebhookReservationSnapshot;
     existingPayment?: WebhookPaymentSnapshot;
@@ -2189,7 +2299,7 @@ export class PaymentService {
     amount: number;
     asyncStatus: string;
     providerChargeQuote?: ProviderChargeQuote;
-  }): Promise<'DONE_COMPENSATED_SEAT_CONFLICT' | 'DONE_CANCEL_PENDING'> {
+  }): Promise<'DONE_COMPENSATED_SEAT_CONFLICT' | 'DONE_COMPENSATED_TICKET_LIMIT' | 'DONE_CANCEL_PENDING'> {
     const {
       payload,
       reservation,
@@ -2201,6 +2311,9 @@ export class PaymentService {
       providerChargeQuote,
     } = input;
 
+    const reason = input.failure === 'ticket_limit'
+      ? '예매 매수 제한 초과로 인한 자동 취소'
+      : ASYNC_DONE_SEAT_FAILURE_CANCEL_REASON;
     if (!this.tossClient) {
       throw new ConflictException('판매 불가능한 좌석입니다');
     }
@@ -2220,10 +2333,10 @@ export class PaymentService {
         providerChargeCurrency: providerChargeQuote?.currency,
         providerChargeAmountMinor: providerChargeQuote?.amountMinor,
       },
-      reason: ASYNC_DONE_SEAT_FAILURE_CANCEL_REASON,
+      reason,
       idempotencyKey: this.buildWebhookCancelIdempotencyKey(
         payload,
-        'seat-failure-cancel',
+        input.failure === 'ticket_limit' ? 'ticket-limit-cancel' : 'seat-failure-cancel',
       ),
       cancelRequestIdSeed: reservation.id,
     });
@@ -2248,7 +2361,7 @@ export class PaymentService {
       status: terminalCancelCompleted ? 'CANCELED' as const : 'DONE' as const,
       paidAt: payload.data.approvedAt ? new Date(payload.data.approvedAt) : new Date(),
       cancelledAt: terminalCancelCompleted ? new Date() : null,
-      cancelReason: ASYNC_DONE_SEAT_FAILURE_CANCEL_REASON,
+      cancelReason: reason,
       ...this.toPaymentProviderChargeValues(providerChargeQuote),
       ...this.toRecoveredPaymentProviderMetadataValues(existingPayment, payload),
     };
@@ -2282,14 +2395,14 @@ export class PaymentService {
         paymentId: storedPaymentId,
         tossOrderId: orderId,
         diagnosticKind: 'payment_compensated_cancel',
-        diagnosticCode: 'ASYNC_DONE_SEAT_UNAVAILABLE_CANCELLED',
-        diagnosticMessage: ASYNC_DONE_SEAT_FAILURE_CANCEL_REASON,
+        diagnosticCode: input.failure === 'ticket_limit' ? 'ASYNC_DONE_TICKET_LIMIT_CANCELLED' : 'ASYNC_DONE_SEAT_UNAVAILABLE_CANCELLED',
+        diagnosticMessage: reason,
         diagnosticSource: asyncStatus,
       });
     }
 
     return terminalCancelCompleted
-      ? 'DONE_COMPENSATED_SEAT_CONFLICT'
+      ? input.failure === 'ticket_limit' ? 'DONE_COMPENSATED_TICKET_LIMIT' : 'DONE_COMPENSATED_SEAT_CONFLICT'
       : 'DONE_CANCEL_PENDING';
   }
 

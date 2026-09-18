@@ -18,7 +18,7 @@ describe('adminPatchNotes', () => {
       expect(note.highlights.length).toBeGreaterThan(0);
       expect(note.evidence.length).toBeGreaterThan(0);
       expect(note.githubUrl).toMatch(
-        /^https:\/\/github\.com\/sangwopark19\/grapit\/pull\/\d+$/,
+        /^https:\/\/github\.com\/(?:sangwopark19|icons-hq)\/grapit\/pull\/\d+$/,
       );
     }
 

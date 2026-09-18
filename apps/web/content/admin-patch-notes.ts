@@ -14,6 +14,28 @@ export interface AdminPatchNote {
 
 const notes = [
   {
+    id: 'pr-193-show-relaunch-reliability',
+    prNumber: 193,
+    title: '공연 예매·결제·특전 안정성 개선',
+    summary:
+      '중복 승인과 늦은 취소로 인한 좌석·발권 오류를 방지하고, 기본 특전 생성과 결제 기한을 일관되게 처리하도록 개선했습니다.',
+    highlights: [
+      '현재 유효한 티켓이 있는 좌석은 과거 예약 취소나 관리자 오픈으로 다시 판매되지 않도록 보호',
+      '중복·역순 결제 알림과 보상 취소 중 재발권을 방지하고 공연별 매수 제한을 일관되게 적용',
+      '기본 특전 누락·중복을 방지하고 검토한 누락 대상만 복구할 수 있는 운영 절차 추가',
+      '환불 안내에서 결제사 취소 완료와 금융기관 반영을 구분하고 소셜 로그인 복귀 안내를 네 언어로 제공',
+    ],
+    category: 'patch',
+    date: '2026-09-18',
+    githubUrl: 'https://github.com/icons-hq/grapit/pull/193',
+    evidence: [
+      'API/Web/Shared/edge unit tests',
+      'PostgreSQL/Valkey integration tests',
+      'Desktop/mobile render and browser E2E',
+      'Typecheck, API build and code review',
+    ],
+  },
+  {
     id: 'pr-182-active-ticket-manifest-export',
     prNumber: 182,
     title: '회차 구매자 명단 CSV 추가',

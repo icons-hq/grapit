@@ -17,7 +17,6 @@ import {
   showtimes,
 } from '../../database/schema/index.js';
 import {
-  calculateExpectedRefundDepositAt,
   getRefundErrorCode,
   getRefundErrorMessage,
   isTossCancelCompleted,
@@ -441,7 +440,7 @@ export class RefundCancelRetryWorker implements OnModuleInit {
           ...(cancellationQuote ? { cancellationQuote } : {}),
           lastTransientError: getRefundErrorMessage(error),
         },
-        expectedDepositAt: calculateExpectedRefundDepositAt(),
+        expectedDepositAt: null,
         updatedAt: new Date(),
       })
       .where(eq(refunds.id, refundId));
@@ -468,7 +467,7 @@ export class RefundCancelRetryWorker implements OnModuleInit {
           paymentStatus: response.status,
           ...(cancellationQuote ? { cancellationQuote } : {}),
         },
-        expectedDepositAt: calculateExpectedRefundDepositAt(),
+        expectedDepositAt: null,
         updatedAt: new Date(),
       })
       .where(eq(refunds.id, refundId));

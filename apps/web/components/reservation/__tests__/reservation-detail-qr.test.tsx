@@ -817,7 +817,7 @@ describe('ReservationDetailView QR ticket card', () => {
     );
 
     expect(screen.getByText('취소 완료')).toBeInTheDocument();
-    expect(screen.getAllByText('환불 반영이 완료되었습니다.').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('결제사에서 취소가 완료되었습니다. 카드 명세서 반영이나 계좌 환불 시점은 결제수단·금융기관에 따라 다릅니다.').length).toBeGreaterThan(0);
     expect(screen.getByText('예매 상세에서 취소 정보를 확인할 수 있습니다.')).toBeInTheDocument();
     expect(screen.getByText('완료됨')).toBeInTheDocument();
     expect(screen.queryByText(rawPaymentKey, { exact: true })).not.toBeInTheDocument();

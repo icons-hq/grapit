@@ -1,5 +1,7 @@
+import { PaymentService } from '../../payment/payment.service.js';
+import { PendingPaymentExpirationWorker } from '../../jobs/pending-payment-expiration.worker.js';
 import { readFileSync } from 'node:fs';
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import IORedis from 'ioredis';
 import { GenericContainer, type StartedTestContainer } from 'testcontainers';
 import {
@@ -118,6 +120,58 @@ describe('BookingService Lua scripts — real Valkey 8 integration', () => {
     );
   });
 
+  it('async confirmation shares the synchronous confirmation lease and retries without reading or cancelling', async () => {
+    const booking = createBookingService(redis, 3);
+    await booking.acquirePaymentConfirmLock('shared-order', 'sync-confirm-owner');
+    const select = vi.fn();
+    const cancelPayment = vi.fn();
+    const payment = new PaymentService({ select } as never);
+    Object.assign(payment, { bookingService: booking, tossClient: { cancelPayment } });
+    await expect(payment.upsertAsyncPaymentProgress({ eventId: 'retry-event', eventType: 'PAYMENT_STATUS_CHANGED',
+      data: { orderId: 'shared-order', paymentKey: 'fixture-payment', status: 'DONE' },
+    }, 'DONE', 'test')).rejects.toThrow('결제 확인이 이미 진행 중입니다.');
+    expect(select).not.toHaveBeenCalled();
+    expect(cancelPayment).not.toHaveBeenCalled();
+    expect(await booking.refreshPaymentConfirmLock('shared-order', 'sync-confirm-owner')).toBe(true);
+  });
+
+  it('old reservation expiration preserves a fresh lock on the same seat and other newly selected seats', async () => {
+    const service = createBookingService(redis, 3);
+    await service.lockSeat(userId, showtimeId, seatKey);
+    await service.unlockSeat(userId, showtimeId, seatKey);
+    await service.lockSeat(userId, showtimeId, seatKey);
+    await service.lockSeat(userId, showtimeId, otherSeatKey);
+    const worker = new PendingPaymentExpirationWorker({
+      execute: async () => ({ rows: [{ id: 'old', user_id: userId, showtime_id: showtimeId }] }),
+    } as never, service);
+    await worker.sweepExpiredPendingPayments();
+    expect(await redis.get(lockKey)).toBe(userId);
+    expect(await redis.get(`{${showtimeId}}:seat:${toRuntimeSeatId(otherSeatKey)}`)).toBe(userId);
+  });
+
+  it('unlock-all uses atomic ownership checks if the lock changes after its read', async () => {
+    const service = createBookingService(redis, 3);
+    await service.lockSeat(userId, showtimeId, seatKey);
+    const racingRedis = new Proxy(redis, {
+      get(target, property) {
+        if (property === 'get') return async (key: string) => {
+          const observed = await target.get(key);
+          await target.set(lockKey, 'new-owner', 'EX', 600);
+          return observed;
+        };
+        if (property === 'eval') return async (...args: unknown[]) => {
+          await target.set(lockKey, 'new-owner', 'EX', 600);
+          return target.eval(...args as Parameters<IORedis['eval']>);
+        };
+        const value = Reflect.get(target, property);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const racingService = createBookingService(racingRedis, 3);
+    expect(await racingService.unlockAllSeats(userId, showtimeId)).toEqual({ unlockedSeats: [] });
+    expect(await redis.get(lockKey)).toBe('new-owner');
+  });
+
   it('locks a seat through BookingService.lockSeat on real Valkey', async () => {
     const service = createBookingService(redis);
 
@@ -223,6 +277,27 @@ describe('BookingService Lua scripts — real Valkey 8 integration', () => {
 
     beforeEach(async () => {
       await redis.flushdb();
+    });
+
+    it('aligns owned seat TTL to a shorter payment window while preserving unrelated selections and extension semantics', async () => {
+      const service = createBookingService(redis);
+      const a = `{${ownershipShowtimeId}}:seat:${ownershipRuntimeSeatIdA}`;
+      const b = `{${ownershipShowtimeId}}:seat:${ownershipRuntimeSeatIdB}`;
+      await redis.set(a, ownershipUserId, 'EX', 600);
+      await redis.set(b, ownershipUserId, 'EX', 600);
+      await redis.sadd(ownershipUserSeatsKey, ownershipRuntimeSeatIdA, ownershipRuntimeSeatIdB);
+      await redis.expire(ownershipUserSeatsKey, 600);
+      await service.setOwnedSeatLockTtl(ownershipUserId, ownershipShowtimeId, [ownershipSeatKeyA], 420);
+      expect(await redis.ttl(a)).toBeGreaterThanOrEqual(419);
+      expect(await redis.ttl(a)).toBeLessThanOrEqual(420);
+      expect(await redis.ttl(b)).toBeGreaterThanOrEqual(599);
+      expect(await redis.ttl(ownershipUserSeatsKey)).toBeGreaterThanOrEqual(599);
+      await service.extendOwnedSeatLocks(ownershipUserId, ownershipShowtimeId, [ownershipSeatKeyA], 60);
+      expect(await redis.ttl(a)).toBeGreaterThanOrEqual(419);
+      await redis.set(b, otherUserId, 'EX', 600);
+      await expect(service.setOwnedSeatLockTtl(ownershipUserId, ownershipShowtimeId, [ownershipSeatKeyA, ownershipSeatKeyB], 60))
+        .rejects.toThrow(LOCK_OTHER_OWNER_MESSAGE);
+      expect(await redis.ttl(a)).toBeGreaterThanOrEqual(419);
     });
 
     it('assertOwnedSeatLocks passes all-owned locks on real Valkey', async () => {

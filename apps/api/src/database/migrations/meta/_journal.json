@@ -239,6 +239,13 @@
       "when": 1782894990432,
       "tag": "0032_full_reservation_cancellation_fees",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1789689600000,
+      "tag": "0033_active_seat_and_benefit_uniqueness",
+      "breakpoints": true
     }
   ]
 }

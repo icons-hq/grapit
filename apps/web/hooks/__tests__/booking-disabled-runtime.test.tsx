@@ -45,7 +45,7 @@ const {
   useTranslationsMock: vi.fn(() => (key: string, values?: Record<string, string>) => {
     const messages: Record<string, string> = {
       'paymentDeadline.badge': '결제 가능 시간',
-      'paymentDeadline.title': '지금부터 7분 안에 결제를 완료해주세요',
+      'paymentDeadline.title': '남은 시간 안에 결제를 완료해주세요',
       'paymentDeadline.helper': '{threshold} 이하가 되면 마감 상태로 전환됩니다.',
       'paymentDeadline.criticalHelper': '{threshold} 이하로 남았습니다. 결제를 서둘러주세요.',
       'paymentDeadline.seatHoldHelper': '좌석 점유 만료 {time}',

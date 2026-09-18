@@ -20,21 +20,21 @@ describe('AdminPatchNotesPreview', () => {
     ).toHaveAttribute('href', '/admin/patch-notes');
 
     const article = screen.getByRole('article', {
-      name: 'PR #177 혜택 CSV와 QR 좌석 강조 확장',
+      name: 'PR #193 공연 예매·결제·특전 안정성 개선',
     });
 
-    expect(within(article).getByText('PR #177')).toBeInTheDocument();
+    expect(within(article).getByText('PR #193')).toBeInTheDocument();
     expect(
-      within(article).getByText('혜택 CSV와 QR 좌석 강조 확장'),
+      within(article).getByText('공연 예매·결제·특전 안정성 개선'),
     ).toBeInTheDocument();
     expect(
-      within(article).getByText(/티켓 좌석번호/),
+      within(article).getByText(/중복 승인과 늦은 취소/),
     ).toBeInTheDocument();
     expect(
-      within(article).getByText(/고객 연락처\/이름\/이메일 컬럼 추가/),
+      within(article).getByText(/현재 유효한 티켓이 있는 좌석/),
     ).toBeInTheDocument();
     expect(
-      within(article).getByText(/Shared benefit\/ticket\/booking schema tests/),
+      within(article).getByText(/API\/Web\/Shared\/edge unit tests/),
     ).toBeInTheDocument();
   });
 });
