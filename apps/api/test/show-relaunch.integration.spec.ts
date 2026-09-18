@@ -1,3 +1,6 @@
+import { AdminBookingService } from '../src/modules/admin/admin-booking.service.js';
+import { AdminSettlementReconciliationService } from '../src/modules/admin/admin-settlement-reconciliation.service.js';
+import { PaymentCancellationFinalizerService } from '../src/modules/cancellation/payment-cancellation-finalizer.service.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 import { ReservationFinalizationService } from '../src/modules/reservation/reservation-finalization.service.js';
 import { FieldCheckInService } from '../src/modules/field-operations/field-check-in.service.js';
@@ -293,6 +296,54 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     await service.upsertAsyncPaymentProgress({ ...payload, eventId: randomUUID() }, 'DONE', 'payment_status_changed:done');
     expect(await db.select().from(ticketItems).where(eq(ticketItems.reservationId, r.id))).toHaveLength(0);
     expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('ticket-item partial cancellation preserves local DONE and the remaining QR, manifest and revenue', async () => {
+    const f = await fixture();
+    const [cancelledItem] = await ticket(f);
+    const [activeItem] = await db.insert(ticketItems).values({
+      reservationId: cancelledItem!.reservationId, paymentId: cancelledItem!.paymentId,
+      showtimeId: f.showtimeId, seatId: '1F:A-2', seatKey: '1F:A-2', floorKey: '1F',
+      floorLabel: '1층', tierName: 'VIP', row: 'A', number: '2', price: 50000,
+      serviceFee: 2000, status: 'active',
+    }).returning();
+    await db.update(ticketItems).set({ serviceFee: 2000 }).where(eq(ticketItems.id, cancelledItem!.id));
+    const [reservation] = await db.update(reservations).set({ status: 'CONFIRMED', totalAmount: 104000 })
+      .where(eq(reservations.id, cancelledItem!.reservationId)).returning();
+    const [payment] = await db.update(payments).set({ amount: 104000, paidAt: new Date() })
+      .where(eq(payments.id, cancelledItem!.paymentId)).returning();
+    await db.insert(seatInventories).values([cancelledItem!, activeItem!].map((item) => ({
+      showtimeId: f.showtimeId, seatId: item.seatId!, seatKey: item.seatKey,
+      floorKey: item.floorKey, status: 'sold' as const,
+    })));
+    await db.transaction((tx) => syncIncludedBenefitEntitlementsForTicketItems(tx, f.showtimeId, [cancelledItem!, activeItem!], new Date()));
+    await qr.ensureIssuedTicketsForReservation({ reservationId: reservation!.id, paymentId: payment!.id });
+
+    const finalizer = new PaymentCancellationFinalizerService(db, { isAvailable: false } as never);
+    await finalizer.finalizeFullPaymentCancellation({
+      context: { reservation: reservation!, payment: payment!, bookingPolicy: null,
+        seats: [{ seatId: cancelledItem!.seatId!, floorKey: cancelledItem!.floorKey, seatKey: cancelledItem!.seatKey }] },
+      source: 'ticket_item', reason: 'One seat cancelled',
+      providerResponse: { status: 'PARTIAL_CANCELED', balanceAmount: 52000,
+        cancels: [{ cancelAmount: 52000, cancelStatus: 'DONE' }] },
+      ticketItemCancellation: { ticketItemId: cancelledItem!.id, cancellationFee: 0,
+        serviceFeeRefund: 2000, refundableAmount: 52000 },
+    });
+
+    expect((await db.select().from(payments).where(eq(payments.id, payment!.id)))[0]!.status).toBe('DONE');
+    expect((await db.select().from(reservations).where(eq(reservations.id, reservation!.id)))[0]!.status).toBe('CONFIRMED');
+    expect(await qr.getOwnedTicketsForReservation(reservation!.id, f.userId)).toHaveLength(1);
+    expect((await db.select().from(tickets).where(eq(tickets.ticketItemId, cancelledItem!.id)))[0]!.status).toBe('revoked');
+    const admin = new AdminBookingService(db, {} as never, {} as never, { write: vi.fn() } as never);
+    const result = await admin.getBookings({ performanceId: f.performanceId, showtimeId: f.showtimeId });
+    expect(result.stats.totalRevenue).toBe(52000);
+    expect(result.bookings[0]!.funnelStatus).toBe('PARTIAL_CANCELLED');
+    expect(result.tierStats[0]!.soldSeats).toBe(1);
+    const manifest = await admin.exportReservations({ actorUserId: f.userId,
+      filters: { showtimeId: f.showtimeId, exportType: 'active_ticket_manifest', reason: 'Contract regression' } });
+    expect(manifest.rowCount).toBe(1);
+    const settlement = new AdminSettlementReconciliationService(db, { querySettlements: vi.fn().mockResolvedValue([]) } as never);
+    expect((await settlement.getReconciliation({ eventId: f.performanceId })).siteSalesGrossAmount).toBe(52000);
   });
 
   it('concurrent scanners enter the account once, count tickets, keep buyer QR readable and redeem a benefit once', async () => {
