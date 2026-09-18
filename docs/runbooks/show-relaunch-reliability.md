@@ -184,7 +184,7 @@ AND NOT EXISTS (
 - Uniform bucket-level access 활성화, public access prevention `enforced`, 공개 IAM principal 없음. 기존 프로젝트의 권한을 가진 운영자가 로그인해야 하며 공개 URL이나 만료되는 signed URL을 사용하지 않는다.
 - `manifest.json` generation: `1789698461466161`; SHA-256: `83fa1d2e7c5d69c804fb2f2ec26de0813f3421adbdff03262c60e81a798443b4`. Manifest에 개별 파일의 SHA-256과 크기가 있다.
 - 고객 연락처, 원본 payment key, QR token, 인증정보를 제거했다. Legacy 대상 reference는 `SHA256(payment UUID UTF-8)`의 첫 16 hex 문자다. 승인된 DB에서 같은 변환으로 대상 8건을 재식별할 수 있다.
-- `legacy-state-apply.json`은 allowlist reference·검토 hash·대상별 전후 상태·변경 수·보호 테이블 hash를, `payment-reconciliation-after-repair.json`은 새 PG 대조 결과를 담는다.
+- `payment-reconciliation-details.json`은 복구 전 내부 상태를, `legacy-state-apply.json`은 allowlist reference·검토 hash·대상별 변경 목표 상태·적용 결과·변경 수·보호 테이블 hash를 담는다. `payment-reconciliation-after-repair.json`은 새 PG 대조 결과다.
 
 ```bash
 gcloud storage cat 'gs://grapit-ops-evidence-491806/2026-09-18-show-relaunch-c44b0824/manifest.json#1789698461466161'
