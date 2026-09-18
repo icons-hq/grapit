@@ -121,15 +121,12 @@ export const useBookingStore = create<BookingState>((set) => ({
       return;
     }
 
-    set((state) => ({
+    set({
       expiresAt: parsedDeadline,
       paymentDeadlineAt: parsedDeadline,
       isTimerExpired: false,
-      timerExpiresAt:
-        state.timerExpiresAt === null || state.timerExpiresAt < parsedDeadline
-          ? parsedDeadline
-          : state.timerExpiresAt,
-    }));
+      timerExpiresAt: parsedDeadline,
+    });
   },
 
   expireTimer: () => set({ isTimerExpired: true }),

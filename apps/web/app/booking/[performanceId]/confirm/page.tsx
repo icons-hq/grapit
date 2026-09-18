@@ -116,10 +116,16 @@ function ConfirmPageContent() {
   const paymentWidgetRef = useRef<TossPaymentWidgetRef>(null);
   const reservationIdRef = useRef<string | null>(null);
   const paymentRequestInFlightRef = useRef(false);
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   const { bookingAvailable, bookingDisabledMessage } = useBookingAvailability();
   const prepareMutation = usePrepareReservation();
   const unlockAll = useUnlockAllSeats();
   const cancelPending = useCancelPendingReservation();
+  const cancelAbandonedPending = useCancelPendingReservation({ showErrorToast: false });
 
   const resumeOrderId = searchParams.get('resumeOrderId');
   const isResumingPendingPayment = Boolean(resumeOrderId);
@@ -308,6 +314,14 @@ function ConfirmPageContent() {
     errorToastKeyRef.current = null;
     setPaymentReturnError(null);
     setIsProcessing(true);
+    const requestedBooking = useBookingStore.getState();
+    const isCurrentBookingRequest = () => {
+      const current = useBookingStore.getState();
+      return mountedRef.current
+        && current.performanceId === requestedBooking.performanceId
+        && current.selectedShowtimeId === requestedBooking.selectedShowtimeId
+        && current.selectedSeats === requestedBooking.selectedSeats;
+    };
     let preparedReservationId: string | null = null;
     try {
       // 1. Create pending reservation on server before payment
@@ -338,18 +352,35 @@ function ConfirmPageContent() {
         paymentMethod,
       });
       preparedReservationId = result.reservationId;
+      // A late prepare response belongs only to the selection that requested it.
+      if (!isCurrentBookingRequest()) {
+        if (!isResumingPendingPayment) {
+          await cancelAbandonedPending.mutateAsync(result.reservationId).catch(() => {});
+        }
+        paymentRequestInFlightRef.current = false;
+        if (mountedRef.current) {
+          setIsProcessing(false);
+          if (!isResumingPendingPayment) setOrderId(generateOrderId());
+        }
+        return;
+      }
       reservationIdRef.current = result.reservationId;
+      if (result.paymentDeadlineAt) {
+        applyPaymentDeadline(result.paymentDeadlineAt);
+      }
 
       // 2. Initiate Toss payment — SDK redirects the browser
       await paymentWidgetRef.current.requestPayment(result);
     } catch (err) {
       paymentRequestInFlightRef.current = false;
-      setIsProcessing(false);
+      if (mountedRef.current) setIsProcessing(false);
       if (preparedReservationId && !isResumingPendingPayment) {
         reservationIdRef.current = null;
-        await cancelPending.mutateAsync(preparedReservationId).catch(() => {});
-        setOrderId(generateOrderId());
+        const cleanup = isCurrentBookingRequest() ? cancelPending : cancelAbandonedPending;
+        await cleanup.mutateAsync(preparedReservationId).catch(() => {});
+        if (mountedRef.current) setOrderId(generateOrderId());
       }
+      if (!isCurrentBookingRequest()) return;
       const errorMessage =
         err instanceof Error ? err.message : confirmCopy.paymentRequestFailed;
       if (isLockFailureMessage(errorMessage)) {

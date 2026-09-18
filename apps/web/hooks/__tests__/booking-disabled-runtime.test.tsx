@@ -22,6 +22,7 @@ const {
   requestPaymentMock,
   cancelPendingReservationMock,
   cancelPendingReservationAsyncMock,
+  cancelAbandonedPendingAsyncMock,
   routerPushMock,
   routerReplaceMock,
   usePerformanceDetailMock,
@@ -35,6 +36,7 @@ const {
   requestPaymentMock: vi.fn(),
   cancelPendingReservationMock: vi.fn(),
   cancelPendingReservationAsyncMock: vi.fn(),
+  cancelAbandonedPendingAsyncMock: vi.fn(),
   routerPushMock: vi.fn(),
   routerReplaceMock: vi.fn(),
   usePerformanceDetailMock: vi.fn(),
@@ -131,9 +133,10 @@ vi.mock('@/hooks/use-booking', () => ({
   useLockSeat: () => ({ mutate: lockSeatMutateMock, isPending: false }),
   useUnlockSeat: () => ({ mutate: vi.fn(), isPending: false }),
   useUnlockAllSeats: () => ({ mutate: vi.fn(), isPending: false }),
-  useCancelPendingReservation: () => ({
+  useCancelPendingReservation: (options?: { showErrorToast?: boolean }) => ({
     mutate: cancelPendingReservationMock,
-    mutateAsync: cancelPendingReservationAsyncMock,
+    mutateAsync: options?.showErrorToast === false
+      ? cancelAbandonedPendingAsyncMock : cancelPendingReservationAsyncMock,
   }),
   usePrepareReservation: () => ({ mutateAsync: prepareReservationMock }),
 }));
@@ -330,6 +333,8 @@ describe('runtime booking disabled UI', () => {
     cancelPendingReservationMock.mockReset();
     cancelPendingReservationAsyncMock.mockReset();
     cancelPendingReservationAsyncMock.mockResolvedValue(undefined);
+    cancelAbandonedPendingAsyncMock.mockReset();
+    cancelAbandonedPendingAsyncMock.mockRejectedValue(new Error('cleanup failed'));
     routerPushMock.mockReset();
     routerReplaceMock.mockReset();
     searchParamsRef.current = new URLSearchParams();
@@ -613,6 +618,72 @@ describe('runtime booking disabled UI', () => {
     });
     expect(requestPaymentMock).toHaveBeenCalledTimes(1);
   });
+
+  it('applies the prepared server deadline before opening the payment widget', async () => {
+    const user = userEvent.setup();
+    setCurrentUserRole('admin');
+    const deadline = new Date(Date.now() + 60_000).toISOString();
+    let timerAtPaymentRequest: number | null | undefined;
+    prepareReservationMock.mockResolvedValueOnce({
+      reservationId: 'prepared-deadline-reservation', orderId: 'prepared-deadline-order',
+      paymentDeadlineAt: deadline,
+    });
+    requestPaymentMock.mockImplementationOnce(async () => {
+      timerAtPaymentRequest = useBookingStore.getState().timerExpiresAt;
+    });
+
+    renderWithQuery(<ConfirmPage />);
+    await user.click(await screen.findByLabelText('전체 동의'));
+    await user.click(screen.getAllByRole('button', { name: '결제하기' })[0]);
+    await waitFor(() => expect(requestPaymentMock).toHaveBeenCalledTimes(1));
+
+    expect(timerAtPaymentRequest).toBe(Date.parse(deadline));
+    expect(useBookingStore.getState().paymentDeadlineAt).toBe(Date.parse(deadline));
+  });
+
+  it.each(['unmount', 'showtime', 'seat', 'performance'] as const)(
+    'discards a delayed prepare response after the booking %s changes',
+    async (change) => {
+      const user = userEvent.setup();
+      setCurrentUserRole('admin');
+      let resolvePrepare!: (value: {
+        reservationId: string; orderId: string; paymentDeadlineAt: string;
+      }) => void;
+      prepareReservationMock.mockImplementationOnce(() => new Promise((resolve) => {
+        resolvePrepare = resolve;
+      }));
+      const view = renderWithQuery(<ConfirmPage />);
+      await user.click(await screen.findByLabelText('전체 동의'));
+      await user.click(screen.getAllByRole('button', { name: '결제하기' })[0]);
+      expect(prepareReservationMock).toHaveBeenCalledTimes(1);
+
+      if (change === 'unmount') view.unmount();
+      act(() => {
+        const current = useBookingStore.getState();
+        if (change === 'showtime') current.setShowtime('new-showtime');
+        if (change === 'seat') current.removeSeat(current.selectedSeats[0]!.seatKey);
+        if (change === 'performance') useBookingStore.setState({ performanceId: 'new-performance' });
+        current.applyPaymentDeadline(new Date(Date.now() + 600_000).toISOString());
+      });
+      const nextBooking = useBookingStore.getState();
+
+      await act(async () => {
+        resolvePrepare({
+          reservationId: 'abandoned-reservation', orderId: 'abandoned-order',
+          paymentDeadlineAt: new Date(Date.now() + 60_000).toISOString(),
+        });
+      });
+
+      expect(requestPaymentMock).not.toHaveBeenCalled();
+      expect(cancelAbandonedPendingAsyncMock).toHaveBeenCalledWith('abandoned-reservation');
+      expect(cancelPendingReservationAsyncMock).not.toHaveBeenCalled();
+      expect(useBookingStore.getState()).toMatchObject({
+        expiresAt: nextBooking.expiresAt,
+        timerExpiresAt: nextBooking.timerExpiresAt,
+        paymentDeadlineAt: nextBooking.paymentDeadlineAt,
+      });
+    },
+  );
 
   it('prevents duplicate payment preparation when the confirm CTA is clicked twice before React state settles', async () => {
     const user = userEvent.setup();
