@@ -126,7 +126,7 @@ AND NOT EXISTS (
 
 현재 구현은 QR 한 장의 수동 입장 확인으로 같은 계정·회차의 유효 티켓 전체를 입장 처리한다. 초기 seat-level ADR의 개별 입장 예시와 다르며 7월 4일 요청으로 변경된 현재 코드가 기준이다. 이번 작업에서는 이 정책을 되돌리지 않았다. 일괄 입장 수는 실제 방문자 수와 동일하다고 해석하지 않는다.
 
-베네핏은 입장 시 자동 수령되지 않는다. 현장 직원이 해당 QR의 권리별 수령 동작을 해야 기록이 남는다. 수령은 온라인 서버 확정이 필요하다. 오프라인 입장 대기는 sync 전까지 확정 인원으로 세지 않는다. 지류를 쓰는 경우에도 권리 id/티켓 id별 체크표와 재접속 후 중복 대조 담당자를 정한다. 수령 기록 없는 과거 포스터 부족의 원인을 임의 확정하지 않는다.
+베네핏은 입장 시 자동 수령되지 않는다. 현장 직원이 해당 QR의 권리별 수령 동작을 해야 기록이 남는다. 수령은 온라인 서버 확정이 필요하다. 오프라인 입장 대기는 sync 전까지 확정 인원으로 세지 않는다. 통신 장애 때 지류는 대기 접수에만 쓰며 실물 지급은 보류한다. 원본 QR token이 필요한 현재 특전 API에는 입장용 offline sync를 사용할 수 없다. 복구 후 구매자의 QR을 다시 확인하고 서버 수령 성공 뒤 지급한다. 수령 기록 없는 과거 포스터 부족의 원인을 임의 확정하지 않는다.
 
 [현장 실물 인수·지급·마감 양식](benefit-physical-handoff.md)을 사용한다. 2026-09-18 운영자 확인으로 과거 포스터의 실물 기록은 없으며, 태국·중국 SMS와 해외카드 실결제 검증 담당자도 미배정이다. 이는 승인 대기가 아니라 확인 자료·실제 수행자 부재다.
 
@@ -168,10 +168,26 @@ AND NOT EXISTS (
 - 과거 결제 1,190건의 PG 조회는 모두 성공, 원거래 금액 차이 0건이었다. 상태명 차이 55건 중 47건은 여러 번의 부분취소로 잔액이 0이 된 전액취소와 내부 `CANCELED`의 표현 차이였다.
 - 나머지 8건은 6월 4일 취소된 티켓의 상위 상태가 남은 경우였다. PG identity·원통화·취소액·잔액과 취소된 티켓의 환불액을 다시 대조해 4결제를 `PARTIAL_CANCELED`, 나머지 4결제/4예매를 전액취소 상태로 복구했다. 실제 PG 취소 시각을 보존하고 추가 환불을 실행하지 않았다.
 - 복구 전후 티켓·QR·좌석·특전·수령·환불 테이블의 대상 회차 hash가 동일했다. 복구 8건의 새 PG 조회에서도 금액·상태 불일치 0건을 확인했다.
-- 보호된 실행 증거: 로컬 artifacts `grapit-relaunch-2026-09-18`의 `payment-reconciliation.json`, `legacy-state-dry-run.json`, `legacy-state-apply.json`, `payment-reconciliation-after-repair.json`. 고객 식별자와 PG key는 문서에 포함하지 않는다.
+- 보호된 실행 증거: 아래 비공개 운영 증거 보관소의 `payment-reconciliation.json`, `legacy-state-dry-run.json`, `legacy-state-apply.json`, `payment-reconciliation-after-repair.json`. 고객 식별자와 PG key는 문서에 포함하지 않는다.
 - [Deploy](https://github.com/icons-hq/grapit/actions/runs/35297396598)의 migration·API/Web build·background worker smoke·API/Web 배포가 모두 성공했다. API `grabit-api-00248-fnq`, Web `grabit-web-00197-6dr`가 위 병합 SHA 이미지로 각각 트래픽 100%를 처리했다.
 - 운영 Drizzle migration 34행과 `uq_ticket_items_active_seat`, `idx_tbe_active_config_included_item_identity`의 active/redeemed 조건을 확인했다. 전체 활성 좌석 중복·기본 권리 중복·재고 소유권 불일치는 0건이었다.
 - 11:03 KST 기본 특전 13개를 INSERT했다. 다시 dry-run하여 누락 티켓 0·권리 0을 확인했고 기존 예약·결제·환불·티켓·QR·좌석·수령·기존 권리 hash는 보존됐다. 전체 불변 조건과 활성 티켓의 QR/입장 기록도 이상 0건이었다. 증거는 `benefit-repair-apply.json`, `postrepair-audit.json`에 있다.
 - API health 200/Redis up, HTTP와 www의 canonical 301, 공개 홈·callback 200을 확인했다. 새 API/Web revision의 배포 이후 ERROR 로그는 확인 시점에 0건이었다.
 - Chrome 운영 관리자 패치노트 #193과 영어 데스크톱 callback, 태국어·중국어 390×844 callback을 실제 렌더링으로 검수했다. 계정 충돌은 기존 계정 로그인 안내를 포함했다. 태국어 재시도는 로그인된 관리자 세션에서 `/th`로 복귀해 언어를 유지했다. 실제 해외 OAuth 승인 왕복이나 카드 인증을 대신하는 검증은 아니다.
 - 후속 증거 PR의 CI에서 62개 assertion 통과 후 PostgreSQL 종료 예외(`57P01`)가 발생했다. 테스트 pool의 실제 client `end` 이벤트까지 기다린 후 컨테이너를 중지하도록 보완했다. SMS throttle의 반복 HTTP 요청도 하나의 테스트 서버 수명 안에서 수행한다. 수정 후 전체 통합 62개가 unhandled error 없이 통과했다. 운영 앱의 동작이나 DB 계약은 바꾸지 않았다.
+
+### 영구 운영 증거 보관소
+
+[프로젝트 운영 증거 보관소](https://console.cloud.google.com/storage/browser/grapit-ops-evidence-491806/2026-09-18-show-relaunch-c44b0824?project=grapit-491806)에 JSON·실행 스크립트·manifest 15개를 업로드하고 원본과 GCS 객체의 checksum 일치를 확인했다. 실행 환경은 `grapit-491806` / `asia-northeast3`, production `grabit-db-managed-demo`(Cloud SQL Auth Proxy), Cloud Run API/Web, Toss live 조회 API다.
+
+- Bucket: `grapit-ops-evidence-491806`, prefix `2026-09-18-show-relaunch-c44b0824/`.
+- Uniform bucket-level access 활성화, public access prevention `enforced`, 공개 IAM principal 없음. 기존 프로젝트의 권한을 가진 운영자가 로그인해야 하며 공개 URL이나 만료되는 signed URL을 사용하지 않는다.
+- `manifest.json` generation: `1789698461466161`; SHA-256: `83fa1d2e7c5d69c804fb2f2ec26de0813f3421adbdff03262c60e81a798443b4`. Manifest에 개별 파일의 SHA-256과 크기가 있다.
+- 고객 연락처, 원본 payment key, QR token, 인증정보를 제거했다. Legacy 대상 reference는 `SHA256(payment UUID UTF-8)`의 첫 16 hex 문자다. 승인된 DB에서 같은 변환으로 대상 8건을 재식별할 수 있다.
+- `legacy-state-apply.json`은 allowlist reference·검토 hash·대상별 전후 상태·변경 수·보호 테이블 hash를, `payment-reconciliation-after-repair.json`은 새 PG 대조 결과를 담는다.
+
+```bash
+gcloud storage cat 'gs://grapit-ops-evidence-491806/2026-09-18-show-relaunch-c44b0824/manifest.json#1789698461466161'
+```
+
+위 운영 증거는 당시 실행 이력이다. 보관된 apply 스크립트나 해시를 다른 회차·다른 대상에 그대로 실행하지 않는다.
