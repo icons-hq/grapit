@@ -339,6 +339,9 @@ function ConfirmPageContent() {
       });
       preparedReservationId = result.reservationId;
       reservationIdRef.current = result.reservationId;
+      if (result.paymentDeadlineAt) {
+        applyPaymentDeadline(result.paymentDeadlineAt);
+      }
 
       // 2. Initiate Toss payment — SDK redirects the browser
       await paymentWidgetRef.current.requestPayment(result);

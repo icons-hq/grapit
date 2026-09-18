@@ -614,6 +614,28 @@ describe('runtime booking disabled UI', () => {
     expect(requestPaymentMock).toHaveBeenCalledTimes(1);
   });
 
+  it('applies the prepared server deadline before opening the payment widget', async () => {
+    const user = userEvent.setup();
+    setCurrentUserRole('admin');
+    const deadline = new Date(Date.now() + 60_000).toISOString();
+    let timerAtPaymentRequest: number | null | undefined;
+    prepareReservationMock.mockResolvedValueOnce({
+      reservationId: 'prepared-deadline-reservation', orderId: 'prepared-deadline-order',
+      paymentDeadlineAt: deadline,
+    });
+    requestPaymentMock.mockImplementationOnce(async () => {
+      timerAtPaymentRequest = useBookingStore.getState().timerExpiresAt;
+    });
+
+    renderWithQuery(<ConfirmPage />);
+    await user.click(await screen.findByLabelText('전체 동의'));
+    await user.click(screen.getAllByRole('button', { name: '결제하기' })[0]);
+    await waitFor(() => expect(requestPaymentMock).toHaveBeenCalledTimes(1));
+
+    expect(timerAtPaymentRequest).toBe(Date.parse(deadline));
+    expect(useBookingStore.getState().paymentDeadlineAt).toBe(Date.parse(deadline));
+  });
+
   it('prevents duplicate payment preparation when the confirm CTA is clicked twice before React state settles', async () => {
     const user = userEvent.setup();
     let resolvePrepare: (value: { reservationId: string; orderId: string }) => void = () => {};

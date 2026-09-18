@@ -763,6 +763,15 @@ describe('use-booking payment mutations', () => {
     vi.useRealTimers();
   });
 
+  it('updates the seat-selection timer when the server payment deadline is shorter than the selection hold', () => {
+    useBookingStore.getState().setTimerExpiry(Date.parse('2099-05-08T10:10:00.000Z'));
+    useBookingStore.getState().applyPaymentDeadline('2099-05-08T10:07:00.000Z');
+
+    expect(useBookingStore.getState().timerExpiresAt).toBe(Date.parse('2099-05-08T10:07:00.000Z'));
+    expect(useBookingStore.getState().expiresAt).toBe(Date.parse('2099-05-08T10:07:00.000Z'));
+    expect(useBookingStore.getState().paymentDeadlineAt).toBe(Date.parse('2099-05-08T10:07:00.000Z'));
+  });
+
   it('useBookingPaymentSnapshot() preserves the server payment-processing grace deadline', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-09T03:25:00.000Z'));
