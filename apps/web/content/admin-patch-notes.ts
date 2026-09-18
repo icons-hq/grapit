@@ -14,6 +14,24 @@ export interface AdminPatchNote {
 
 const notes = [
   {
+    id: 'pr-195-server-payment-deadline-display',
+    prNumber: 195,
+    title: '결제 기한과 좌석 타이머 표시 일치',
+    summary:
+      '서버가 확정한 결제 가능 시간을 결제창을 열기 전부터 적용하고, 좌석 선택으로 돌아가도 동일한 남은 시간을 표시하도록 수정했습니다.',
+    highlights: [
+      '서버 기한이 기존 좌석 선택 시간보다 짧을 때도 모든 화면 타이머에 반영',
+      '예매 준비 응답 직후 결제 기한을 갱신하고 결제 처리 중 연장된 시간도 유지',
+    ],
+    category: 'patch',
+    date: '2026-09-18',
+    githubUrl: 'https://github.com/icons-hq/grapit/pull/195',
+    evidence: [
+      'Shorter deadline and pre-widget timing regression tests',
+      'Web typecheck and unit tests',
+    ],
+  },
+  {
     id: 'pr-193-show-relaunch-reliability',
     prNumber: 193,
     title: '공연 예매·결제·특전 안정성 개선',
