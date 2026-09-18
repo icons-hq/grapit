@@ -14,6 +14,27 @@ export interface AdminPatchNote {
 
 const notes = [
   {
+    id: 'pr-196-partial-cancellation-reconciliation',
+    prNumber: 196,
+    title: '부분취소 예매 조회 복원과 대조 기준 정정',
+    summary:
+      '과거 일부 티켓 취소 4건의 결제 상태를 기존 계약으로 복원하고, 남은 티켓의 QR·명단·매출이 유지되는지 함께 검증했습니다.',
+    highlights: [
+      'PG 상태명을 그대로 적용했던 4건을 정정하고 남은 7개 티켓의 조회 조건 복원',
+      '부분 티켓 취소와 전체 예매 취소의 대조 기준을 구분하고 실제 DB 회귀 추가',
+      'PG 정산 매출과 유효 티켓 매출 차액을 표시해 취소·별도 송금 기록 확인 안내',
+      '전액취소 4건 및 기본 특전 13개 복구 유지, 기존 실행 증거와 정정 이력 보관',
+    ],
+    category: 'ops',
+    date: '2026-09-18',
+    githubUrl: 'https://github.com/icons-hq/grapit/pull/196',
+    evidence: [
+      'PostgreSQL partial cancellation / QR / manifest / revenue regression',
+      'Scoped state restoration and protected row hashes',
+      'Read-only provider verification and production admin totals',
+    ],
+  },
+  {
     id: 'pr-195-server-payment-deadline-display',
     prNumber: 195,
     title: '결제 기한과 좌석 타이머 표시 일치',

@@ -39,16 +39,16 @@
 | C02 | USD quote·해외카드 provider 분기·취소 회귀 | 실제 계약/카드사 승인 거절과 구현 오류 구분 |
 | C03 | Alipay lifecycle·복귀·재시도 UI 회귀 | 실제 앱 전환/취소/뒤로가기 |
 | C04 | 늦은 DONE·주문 공통 잠금·역순 이벤트·중복 발급 방지 | PG 재전송 live 관측 |
-| C05 | 만료/중단/승인 실패 진단 분리 회귀 | 관리자 원인별 집계 확인 |
+| C05 | 만료/중단/승인 실패 진단 분리 회귀, 운영 관리자에서 원인별 집계 표시 확인 | 없음(실제 PG 거절 재현은 결제수단 UAT에 포함) |
 | C06 | 결제 return/대기/실패 안내 회귀 | Twitter/Kakao/Samsung 실제 브라우저 왕복 |
 | C07 | 서버 정책 기반 deadline·TTL 정렬 | 결제 앱 체류/복귀 실측 |
 | C08 | TRANSFER/계좌이체 전체 취소 정책 회귀 | BankPay 실결제 취소 대조 |
-| C09 | PG 원거래 1,190건 대조, 금액 차이 0. 과거 상태 불일치 8결제·4예매 복구 및 PG 재조회 통과 | 새 결제수단별 실제 승인·취소 왕복은 별도 |
+| C09 | PG 원거래 1,190건 대조, 금액 차이 0. 실제 전액취소 미수렴 4결제·4예매 복구. 잘못 정규화한 부분취소 4결제는 기존 DONE 계약으로 복원 | 새 결제수단별 실제 승인·취소 왕복은 별도 |
 | C10 | 오래된 취소가 새 소유자 재고를 열지 못함 | 수동 복구 시 아래 소유권 절차 필수 |
 | C11 | 전체 취소 수수료·시작 후 차단 회귀 | 새 공연 약관/정책 검수 |
 | C12 | 원통화 환불 계산·provider 취소 회귀 | 카드 명세서·환율·금융기관 반영은 별도 |
 | C13 | 인위적 입금 예정일 제거·4개 언어 문구 수정 | 금융기관 반영일을 보장하지 않음 |
-| C14 | 매출/부분취소/정산 통화/CSV 회귀 | 실제 정산 명세서와 gross/fee/net 대조 |
+| C14 | 매출/부분취소/정산 통화/CSV 회귀. 국내 PG gross/fee/net 실대조 및 매칭 매출 차액 경고 | 과거 별도 송금 환불 362,000원의 완료 증빙, 외화 지급 명세 대조 |
 | D01 | 목록/상세/필터/티켓별 집계 회귀 | 운영자 메뉴 인수 |
 | D02 | BOM·실패 예약·국가코드·좌석명 export 회귀 | 사용하는 Excel/현장 출력물 확인 |
 | D03 | 결제/취소/환불·소셜 로그인 복귀 안내 다국어 회귀, 계정 충돌 후 기존 계정 로그인 안내 유지 | 언어·결제수단별 실왕복 |
@@ -143,8 +143,8 @@ AND NOT EXISTS (
 
 | 검증 | 결과/범위 |
 | --- | --- |
-| 단위 테스트 | API 1,309 / Web 686 / shared 130 / edge 6, 합계 2,131 통과 |
-| API 전체 integration | 6파일·62테스트 통과. testcontainers PostgreSQL 16/Valkey 8, 운영 DB 미사용 |
+| 단위 테스트 | API 1,312 / Web 686 / shared 130 / edge 6, 합계 2,134 통과 |
+| API 전체 integration | 6파일·63테스트 통과. testcontainers PostgreSQL 16/Valkey 8, 운영 DB 미사용 |
 | 핵심 재현 | 기존 상태의 중복 좌석, 7분 deadline, 베네핏 누락, 잠금 탈취, 이미 수령한 권리 재생성, 동시 late DONE 보상 취소, showtime deadlock, 역순 상태 퇴행, 매수 초과, 보상 취소 중 재발권을 red 확인 후 green |
 | 브라우저 E2E | 8파일·34테스트 통과: 소셜 오류/다국어/재시도, 결제 pending/failed/expired, floor/queue, QR 검표/권한/중복, offline 재연결, CSV/수동 오픈. 결제/사용자 API는 fixture |
 | 가입 SMS E2E | 별도 PostgreSQL/Valkey 컨테이너에 migration/seed 후 실제 API 기동, 발송 cooldown·000000 인증·오입력 3테스트 통과. 공급자 자격증명 없이 SMS mock 사용; 실제 SMS 미발송 |
@@ -166,8 +166,8 @@ AND NOT EXISTS (
 - PR [#193](https://github.com/icons-hq/grapit/pull/193), 병합 SHA `c44b08241d6f6deb0fdb8d14f022cb538bd4b640`. [CI](https://github.com/icons-hq/grapit/actions/runs/35296899283)에서 단위·통합 검증과 브라우저 67개 통과.
 - 적용 전 Cloud SQL `grabit-db-managed-demo` 백업 `1789695332431`이 `SUCCESSFUL`임을 확인했다.
 - 과거 결제 1,190건의 PG 조회는 모두 성공, 원거래 금액 차이 0건이었다. 상태명 차이 55건 중 47건은 여러 번의 부분취소로 잔액이 0이 된 전액취소와 내부 `CANCELED`의 표현 차이였다.
-- 나머지 8건은 6월 4일 취소된 티켓의 상위 상태가 남은 경우였다. PG identity·원통화·취소액·잔액과 취소된 티켓의 환불액을 다시 대조해 4결제를 `PARTIAL_CANCELED`, 나머지 4결제/4예매를 전액취소 상태로 복구했다. 실제 PG 취소 시각을 보존하고 추가 환불을 실행하지 않았다.
-- 복구 전후 티켓·QR·좌석·특전·수령·환불 테이블의 대상 회차 hash가 동일했다. 복구 8건의 새 PG 조회에서도 금액·상태 불일치 0건을 확인했다.
+- 최초에는 나머지 8건을 모두 불일치로 분류해 4결제를 `PARTIAL_CANCELED`, 나머지 4결제/4예매를 전액취소 상태로 변경했다. 이후 일부 티켓 취소는 부모 `CONFIRMED`/`DONE`을 유지하는 현재 계약을 확인했고, 활성 7티켓이 남은 4결제의 상태 정규화가 잘못됐음을 발견했다. 12:22 KST 해당 4행의 status만 `DONE`으로 복원했다. **최종 순변경은 전액취소 4결제·4예매**이며 실제 PG 취소 시각과 특전 13개 복구는 유지한다.
+- 원본 행 hash와 PG status 문자열 일치는 남은 티켓의 조회 가능성을 증명하지 못했다. 정정 시 새 PG 조회와 취소 범위·잔액·활성 티켓을 대조하고 예약 전체 및 대상 status 외 필드를 보호했다. 복원 후 `CONFIRMED`/`DONE` 활성 티켓은 711개, 활성 매출은 199,462,000원이다. 자세한 최초 오판과 정정은 [취소 대조 runbook](ticket-cancellation-reconciliation.md#historical-state-repair-and-correction-2026-09-18)에 기록했다.
 - 보호된 실행 증거: 아래 비공개 운영 증거 보관소의 `payment-reconciliation.json`, `legacy-state-dry-run.json`, `legacy-state-apply.json`, `payment-reconciliation-after-repair.json`. 고객 식별자와 PG key는 문서에 포함하지 않는다.
 - [Deploy](https://github.com/icons-hq/grapit/actions/runs/35297396598)의 migration·API/Web build·background worker smoke·API/Web 배포가 모두 성공했다. API `grabit-api-00248-fnq`, Web `grabit-web-00197-6dr`가 위 병합 SHA 이미지로 각각 트래픽 100%를 처리했다.
 - 운영 Drizzle migration 34행과 `uq_ticket_items_active_seat`, `idx_tbe_active_config_included_item_identity`의 active/redeemed 조건을 확인했다. 전체 활성 좌석 중복·기본 권리 중복·재고 소유권 불일치는 0건이었다.
@@ -191,3 +191,17 @@ gcloud storage cat 'gs://grapit-ops-evidence-491806/2026-09-18-show-relaunch-c44
 ```
 
 위 운영 증거는 당시 실행 이력이다. 보관된 apply 스크립트나 해시를 다른 회차·다른 대상에 그대로 실행하지 않는다.
+
+### 부분 티켓 취소 상태 계약 정정
+
+PG `PARTIAL_CANCELED`와 내부 `DONE`은 활성 티켓이 남은 기존 Ticket Item Partial Cancellation에서 정상적인 조합이다. 전체 예매 취소 후 수수료만 남는 경우의 내부 `PARTIAL_CANCELED`와 구분한다. 회귀 테스트는 같은 예매의 두 티켓 중 하나를 실제 finalizer로 취소한 뒤, 부모 상태 유지·취소 QR 회수·남은 QR 조회·구매자 명단 1행·관리자 및 정산 매출 52,000원을 함께 확인한다. 상태명을 일괄 복사하는 보정은 하지 않는다.
+
+정정 전후 조회·4행 복원·새 PG 대조·보호 hash·실행 스크립트는 [별도 정정 증거 보관소](https://console.cloud.google.com/storage/browser/grapit-ops-evidence-491806/2026-09-18-partial-cancellation-correction?project=grapit-491806)에 보관했다. Manifest SHA-256은 `7f41f0a97bf7758f14d86c275f369efcb798dfb0e65454ce9ce31cf976439c18`이다. 기존 두 증거 prefix는 최초 실행 사실을 보존하며, status가 같으므로 정상이라는 당시 해석은 이 정정으로 대체한다.
+
+### 국내 정산 대조와 별도 송금 확인
+
+2026-09-18 운영 정산 API/화면과 PG 원거래 대조: 국내 매칭 결제 474건의 유효 티켓 매출 159,694,000원, PG 정산 매출 160,056,000원, 수수료/부가세 5,889,610원, 지급액 154,166,390원이다. `160,056,000 - 5,889,610 = 154,166,390`은 일치한다. 매칭 누락과 계좌이체 정산 미완료는 0건이다.
+
+유효 티켓 매출과의 362,000원 차이는 과거 별도 송금 환불로 처리하기로 한 계좌이체 1건이다. 이전 작업의 사용자 지시에 따라 좌석 1장만 DB 취소됐고, PG는 724,000원 전체 승인/정산 및 취소 0건을 유지한다. 별도 송금 합의는 송금 완료 증빙이 아니다. 실제 송금 여부가 확인되기 전 중복 PG 환불이나 잔액 맞추기용 DB 수정을 하지 않는다.
+
+정산 화면은 국내 매칭 매출 차액이 0이 아니면 부호를 포함한 금액과 PG·티켓 상태, 취소 정산 시점, 별도 송금 원장 확인 안내를 표시한다. 금액을 자동 보정하거나 차이를 추가 수수료로 분류하지 않는다. 외화결제 gross 39,768,000원은 국내 지급액과 직접 합산해 입금액으로 해석하지 않으며, 실제 외화 지급 명세가 필요하다.
