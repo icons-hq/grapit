@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook } from '@testing-library/react';
 import {
   useBookingPaymentSnapshot,
+  useCancelPendingReservation,
   useConfirmPayment,
   useLockSeat,
   usePrepareReservation,
@@ -35,7 +36,7 @@ import type {
   PrepareReservationRequest,
 } from '@grabit/shared';
 
-const { postMock, deleteMock, runtimeFlagsMock, ApiClientErrorMock } = vi.hoisted(() => {
+const { postMock, putMock, deleteMock, runtimeFlagsMock, ApiClientErrorMock } = vi.hoisted(() => {
   class ApiClientError extends Error {
     statusCode: number;
 
@@ -48,6 +49,7 @@ const { postMock, deleteMock, runtimeFlagsMock, ApiClientErrorMock } = vi.hoiste
 
   return {
     postMock: vi.fn(),
+    putMock: vi.fn(),
     deleteMock: vi.fn(),
     runtimeFlagsMock: vi.fn(() => ({
       bookingEnabled: true,
@@ -61,6 +63,7 @@ const { postMock, deleteMock, runtimeFlagsMock, ApiClientErrorMock } = vi.hoiste
 vi.mock('@/lib/api-client', () => ({
   apiClient: {
     post: postMock,
+    put: putMock,
     delete: deleteMock,
   },
   ApiClientError: ApiClientErrorMock,
@@ -1371,5 +1374,19 @@ describe('use-booking payment mutations', () => {
       provider: 'OVERSEAS_CARD',
       providerChargeAmount: '108.00',
     });
+  });
+});
+
+
+describe('pending reservation cleanup errors', () => {
+  it.each([undefined, { showErrorToast: false }])('preserves the caller error display option %j', async (options) => {
+    putMock.mockReset();
+    putMock.mockRejectedValueOnce(new Error('cleanup failed'));
+    const { Wrapper } = createWrapper();
+    const { result } = renderHook(() => useCancelPendingReservation(options), { wrapper: Wrapper });
+    await expect(result.current.mutateAsync('old-reservation')).rejects.toThrow('cleanup failed');
+    expect(putMock).toHaveBeenCalledWith(
+      '/api/v1/reservations/old-reservation/cancel-pending', undefined, options,
+    );
   });
 });

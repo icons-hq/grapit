@@ -22,6 +22,7 @@ const {
   requestPaymentMock,
   cancelPendingReservationMock,
   cancelPendingReservationAsyncMock,
+  cancelAbandonedPendingAsyncMock,
   routerPushMock,
   routerReplaceMock,
   usePerformanceDetailMock,
@@ -35,6 +36,7 @@ const {
   requestPaymentMock: vi.fn(),
   cancelPendingReservationMock: vi.fn(),
   cancelPendingReservationAsyncMock: vi.fn(),
+  cancelAbandonedPendingAsyncMock: vi.fn(),
   routerPushMock: vi.fn(),
   routerReplaceMock: vi.fn(),
   usePerformanceDetailMock: vi.fn(),
@@ -131,9 +133,10 @@ vi.mock('@/hooks/use-booking', () => ({
   useLockSeat: () => ({ mutate: lockSeatMutateMock, isPending: false }),
   useUnlockSeat: () => ({ mutate: vi.fn(), isPending: false }),
   useUnlockAllSeats: () => ({ mutate: vi.fn(), isPending: false }),
-  useCancelPendingReservation: () => ({
+  useCancelPendingReservation: (options?: { showErrorToast?: boolean }) => ({
     mutate: cancelPendingReservationMock,
-    mutateAsync: cancelPendingReservationAsyncMock,
+    mutateAsync: options?.showErrorToast === false
+      ? cancelAbandonedPendingAsyncMock : cancelPendingReservationAsyncMock,
   }),
   usePrepareReservation: () => ({ mutateAsync: prepareReservationMock }),
 }));
@@ -330,6 +333,8 @@ describe('runtime booking disabled UI', () => {
     cancelPendingReservationMock.mockReset();
     cancelPendingReservationAsyncMock.mockReset();
     cancelPendingReservationAsyncMock.mockResolvedValue(undefined);
+    cancelAbandonedPendingAsyncMock.mockReset();
+    cancelAbandonedPendingAsyncMock.mockRejectedValue(new Error('cleanup failed'));
     routerPushMock.mockReset();
     routerReplaceMock.mockReset();
     searchParamsRef.current = new URLSearchParams();
@@ -670,7 +675,8 @@ describe('runtime booking disabled UI', () => {
       });
 
       expect(requestPaymentMock).not.toHaveBeenCalled();
-      expect(cancelPendingReservationAsyncMock).toHaveBeenCalledWith('abandoned-reservation');
+      expect(cancelAbandonedPendingAsyncMock).toHaveBeenCalledWith('abandoned-reservation');
+      expect(cancelPendingReservationAsyncMock).not.toHaveBeenCalled();
       expect(useBookingStore.getState()).toMatchObject({
         expiresAt: nextBooking.expiresAt,
         timerExpiresAt: nextBooking.timerExpiresAt,

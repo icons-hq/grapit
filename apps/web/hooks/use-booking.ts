@@ -466,9 +466,9 @@ export function useBookingPaymentRecovery(
   };
 }
 
-export function useCancelPendingReservation() {
+export function useCancelPendingReservation(options?: { showErrorToast?: boolean }) {
   return useMutation({
     mutationFn: (reservationId: string) =>
-      apiClient.put<void>(`/api/v1/reservations/${reservationId}/cancel-pending`),
+      apiClient.put<void>(`/api/v1/reservations/${reservationId}/cancel-pending`, undefined, options),
   });
 }

@@ -125,6 +125,7 @@ function ConfirmPageContent() {
   const prepareMutation = usePrepareReservation();
   const unlockAll = useUnlockAllSeats();
   const cancelPending = useCancelPendingReservation();
+  const cancelAbandonedPending = useCancelPendingReservation({ showErrorToast: false });
 
   const resumeOrderId = searchParams.get('resumeOrderId');
   const isResumingPendingPayment = Boolean(resumeOrderId);
@@ -354,7 +355,7 @@ function ConfirmPageContent() {
       // A late prepare response belongs only to the selection that requested it.
       if (!isCurrentBookingRequest()) {
         if (!isResumingPendingPayment) {
-          await cancelPending.mutateAsync(result.reservationId).catch(() => {});
+          await cancelAbandonedPending.mutateAsync(result.reservationId).catch(() => {});
         }
         paymentRequestInFlightRef.current = false;
         if (mountedRef.current) {
@@ -375,7 +376,8 @@ function ConfirmPageContent() {
       if (mountedRef.current) setIsProcessing(false);
       if (preparedReservationId && !isResumingPendingPayment) {
         reservationIdRef.current = null;
-        await cancelPending.mutateAsync(preparedReservationId).catch(() => {});
+        const cleanup = isCurrentBookingRequest() ? cancelPending : cancelAbandonedPending;
+        await cleanup.mutateAsync(preparedReservationId).catch(() => {});
         if (mountedRef.current) setOrderId(generateOrderId());
       }
       if (!isCurrentBookingRequest()) return;

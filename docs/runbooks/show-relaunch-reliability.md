@@ -143,7 +143,7 @@ AND NOT EXISTS (
 
 | 검증 | 결과/범위 |
 | --- | --- |
-| 단위 테스트 | API 1,309 / Web 684 / shared 130 / edge 6, 합계 2,129 통과 |
+| 단위 테스트 | API 1,309 / Web 686 / shared 130 / edge 6, 합계 2,131 통과 |
 | API 전체 integration | 6파일·62테스트 통과. testcontainers PostgreSQL 16/Valkey 8, 운영 DB 미사용 |
 | 핵심 재현 | 기존 상태의 중복 좌석, 7분 deadline, 베네핏 누락, 잠금 탈취, 이미 수령한 권리 재생성, 동시 late DONE 보상 취소, showtime deadlock, 역순 상태 퇴행, 매수 초과, 보상 취소 중 재발권을 red 확인 후 green |
 | 브라우저 E2E | 8파일·34테스트 통과: 소셜 오류/다국어/재시도, 결제 pending/failed/expired, floor/queue, QR 검표/권한/중복, offline 재연결, CSV/수동 오픈. 결제/사용자 API는 fixture |
