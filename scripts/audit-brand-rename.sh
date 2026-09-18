@@ -23,7 +23,7 @@ if [ "$CHANGED" -gt 0 ]; then echo "FAIL: completed phases touched"; exit 1; fi
 echo "=== SC-1: grapit residue (D-10 line-level allowlist: 4 entries) ==="
 # D-10 allowlist (line-level regex):
 #   1. grapit_dev         (D-01: docker-compose.yml password)
-#   2. /grapit/\.env      (D-03: CLAUDE.md local filesystem path)
+#   2. /grapit/\.env      (D-03: legacy local filesystem path)
 #   3. grapit-cloudrun@   (D-05: SA in deploy.yml + provision-valkey.sh)
 #   4. @social\.grabit\.com (D-07 exception — already grabit, but audit ensures NOT heygrabit)
 ALLOWLIST='grapit_dev|/grapit/\.env|grapit-cloudrun@|@social\.grabit\.com'
@@ -52,7 +52,9 @@ SA_DEPLOY=$(grep -c 'grapit-cloudrun@' .github/workflows/deploy.yml 2>/dev/null 
 [ "$SA_DEPLOY" -ge 2 ] || { echo "FAIL: D-05 SA not retained in deploy.yml: $SA_DEPLOY"; exit 1; }
 SA_VALKEY=$(grep -c 'grapit-cloudrun@' scripts/provision-valkey.sh 2>/dev/null || echo 0)
 [ "$SA_VALKEY" -ge 2 ] || { echo "FAIL: D-05 SA not retained in provision-valkey.sh: $SA_VALKEY"; exit 1; }
-grep -q '/grapit/\.env' CLAUDE.md || { echo "FAIL: D-03 /grapit/.env path removed"; exit 1; }
+grep -Fxq '@AGENTS.md' CLAUDE.md || { echo "FAIL: D-03 CLAUDE.md AGENTS pointer missing"; exit 1; }
+grep -Fq '(docs/03-ARCHITECTURE.md)' AGENTS.md || { echo "FAIL: D-03 architecture reference missing"; exit 1; }
+grep -Fq 'root `.env` is the local environment file.' docs/03-ARCHITECTURE.md || { echo "FAIL: D-03 root .env guidance missing"; exit 1; }
 grep -q '@social\.grabit\.com' apps/api/src/modules/auth/auth.service.ts || { echo "FAIL: D-07 exception @social.grabit.com missing"; exit 1; }
 
 echo "=== ALL CHECKS PASSED ==="
