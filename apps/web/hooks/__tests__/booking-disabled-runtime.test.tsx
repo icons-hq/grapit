@@ -636,6 +636,49 @@ describe('runtime booking disabled UI', () => {
     expect(useBookingStore.getState().paymentDeadlineAt).toBe(Date.parse(deadline));
   });
 
+  it.each(['unmount', 'showtime', 'seat', 'performance'] as const)(
+    'discards a delayed prepare response after the booking %s changes',
+    async (change) => {
+      const user = userEvent.setup();
+      setCurrentUserRole('admin');
+      let resolvePrepare!: (value: {
+        reservationId: string; orderId: string; paymentDeadlineAt: string;
+      }) => void;
+      prepareReservationMock.mockImplementationOnce(() => new Promise((resolve) => {
+        resolvePrepare = resolve;
+      }));
+      const view = renderWithQuery(<ConfirmPage />);
+      await user.click(await screen.findByLabelText('전체 동의'));
+      await user.click(screen.getAllByRole('button', { name: '결제하기' })[0]);
+      expect(prepareReservationMock).toHaveBeenCalledTimes(1);
+
+      if (change === 'unmount') view.unmount();
+      act(() => {
+        const current = useBookingStore.getState();
+        if (change === 'showtime') current.setShowtime('new-showtime');
+        if (change === 'seat') current.removeSeat(current.selectedSeats[0]!.seatKey);
+        if (change === 'performance') useBookingStore.setState({ performanceId: 'new-performance' });
+        current.applyPaymentDeadline(new Date(Date.now() + 600_000).toISOString());
+      });
+      const nextBooking = useBookingStore.getState();
+
+      await act(async () => {
+        resolvePrepare({
+          reservationId: 'abandoned-reservation', orderId: 'abandoned-order',
+          paymentDeadlineAt: new Date(Date.now() + 60_000).toISOString(),
+        });
+      });
+
+      expect(requestPaymentMock).not.toHaveBeenCalled();
+      expect(cancelPendingReservationAsyncMock).toHaveBeenCalledWith('abandoned-reservation');
+      expect(useBookingStore.getState()).toMatchObject({
+        expiresAt: nextBooking.expiresAt,
+        timerExpiresAt: nextBooking.timerExpiresAt,
+        paymentDeadlineAt: nextBooking.paymentDeadlineAt,
+      });
+    },
+  );
+
   it('prevents duplicate payment preparation when the confirm CTA is clicked twice before React state settles', async () => {
     const user = userEvent.setup();
     let resolvePrepare: (value: { reservationId: string; orderId: string }) => void = () => {};
