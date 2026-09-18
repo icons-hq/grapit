@@ -96,7 +96,8 @@ describe('SMS Throttle Integration (testcontainers + Valkey)', () => {
     }).compile();
 
     app = moduleRef.createNestApplication();
-    await app.init();
+    // Keep one server open across requests; per-request listen/close races with keep-alive.
+    await app.listen(0, '127.0.0.1');
   }, 120_000);
 
   afterAll(async () => {

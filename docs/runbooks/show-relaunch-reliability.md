@@ -174,3 +174,4 @@ AND NOT EXISTS (
 - 11:03 KST 기본 특전 13개를 INSERT했다. 다시 dry-run하여 누락 티켓 0·권리 0을 확인했고 기존 예약·결제·환불·티켓·QR·좌석·수령·기존 권리 hash는 보존됐다. 전체 불변 조건과 활성 티켓의 QR/입장 기록도 이상 0건이었다. 증거는 `benefit-repair-apply.json`, `postrepair-audit.json`에 있다.
 - API health 200/Redis up, HTTP와 www의 canonical 301, 공개 홈·callback 200을 확인했다. 새 API/Web revision의 배포 이후 ERROR 로그는 확인 시점에 0건이었다.
 - Chrome 운영 관리자 패치노트 #193과 영어 데스크톱 callback, 태국어·중국어 390×844 callback을 실제 렌더링으로 검수했다. 계정 충돌은 기존 계정 로그인 안내를 포함했다. 태국어 재시도는 로그인된 관리자 세션에서 `/th`로 복귀해 언어를 유지했다. 실제 해외 OAuth 승인 왕복이나 카드 인증을 대신하는 검증은 아니다.
+- 후속 증거 PR의 CI에서 62개 assertion 통과 후 PostgreSQL 종료 예외(`57P01`)가 발생했다. 테스트 pool의 실제 client `end` 이벤트까지 기다린 후 컨테이너를 중지하도록 보완했다. SMS throttle의 반복 HTTP 요청도 하나의 테스트 서버 수명 안에서 수행한다. 수정 후 전체 통합 62개가 unhandled error 없이 통과했다. 운영 앱의 동작이나 DB 계약은 바꾸지 않았다.
