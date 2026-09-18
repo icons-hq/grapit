@@ -1,3 +1,4 @@
+import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { GenericContainer, type StartedTestContainer } from 'testcontainers';
 import IORedis from 'ioredis';
@@ -35,6 +36,7 @@ describe('AdminDashboardService (integration)', () => {
   let pgContainer: StartedTestContainer;
   let redisContainer: StartedTestContainer;
   let pool: Pool;
+  let closePool: (() => Promise<void>) | undefined;
   let db: NodePgDatabase<typeof schema>;
   let redis: IORedis;
   let service: AdminDashboardService;
@@ -60,6 +62,7 @@ describe('AdminDashboardService (integration)', () => {
       password: 'test',
       database: 'grabit_test',
     });
+    closePool = createPostgresPoolCleanup(pool);
     db = drizzle(pool, { schema });
 
     // Apply real Drizzle migrations so schema matches production exactly.
@@ -77,7 +80,7 @@ describe('AdminDashboardService (integration)', () => {
   }, 180_000);
 
   afterAll(async () => {
-    await pool?.end();
+    await closePool?.();
     await redis?.quit();
     await pgContainer?.stop();
     await redisContainer?.stop();

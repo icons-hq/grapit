@@ -1,3 +1,4 @@
+import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 import { ReservationFinalizationService } from '../src/modules/reservation/reservation-finalization.service.js';
 import { FieldCheckInService } from '../src/modules/field-operations/field-check-in.service.js';
 import { BenefitRedemptionService } from '../src/modules/field-operations/benefit-redemption.service.js';
@@ -28,6 +29,7 @@ const { users, venues, performances, showtimes, reservations, reservationSeats, 
 describe('Show relaunch — PostgreSQL transaction regressions', () => {
   let container: StartedTestContainer;
   let pool: Pool;
+  let closePool: (() => Promise<void>) | undefined;
   let db: DrizzleDB;
   let qr: QrTicketService;
 
@@ -37,6 +39,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
       .withExposedPorts(5432).start();
     pool = new Pool({ host: container.getHost(), port: container.getMappedPort(5432),
       user: 'postgres', password: 'test', database: 'relaunch_test', max: 8 });
+    closePool = createPostgresPoolCleanup(pool);
     db = drizzle(pool, { schema });
     await migrate(db, { migrationsFolder: 'src/database/migrations' });
     qr = new QrTicketService(db, new ConfigService({
@@ -45,7 +48,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     }), new JwtService(), { sendTicketEmail: vi.fn() } as never, { isAvailable: false } as never);
   }, 120000);
 
-  afterAll(async () => { await pool?.end(); await container?.stop(); });
+  afterAll(async () => { await closePool?.(); await container?.stop(); });
 
   async function fixture() {
     const id = randomUUID();
