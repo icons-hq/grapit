@@ -25,7 +25,7 @@
 | A02 | auth 초기화·마이페이지·QR 조회 회귀 | 당시 해외 인앱 브라우저/OS 재현 |
 | A03 | SMS 국가코드·send/verify 오류·throttle 테스트. 운영 Twilio 계정·서비스 일치 및 태국 Geo Permissions 감시 발송 허용 확인 | 태국 실제 번호 수신·공급자 전달 결과 |
 | A04 | 발송 실패와 인증 불일치 UI/오류 매핑 회귀 | 실제 발송 오류 표시 확인 |
-| A05 | 인증/대체 진입 코드 유지. 운영 Twilio 중국 Geo Permissions 감시 발송 허용 확인 | 중국 사용 목적 심사 승인 근거 및 실제 번호 수신·인증 |
+| A05 | 인증/대체 진입 코드 유지. 운영 Twilio 중국 감시 발송 허용 및 기존 지원 티켓의 발송 활성화·당시 실제 수신 성공 확인 | 다음 판매 전 중국 실제 번호 수신·인증 재검증 |
 | A06 | 소셜 callback 언어별 오류·재시도, refresh 1회 및 실패 후 로딩 종료, 추가정보·공유 IP throttle 회귀 | Naver 운영 앱 승인 및 실제 계정 왕복 |
 | A07 | 계정 연결/병합 테스트·구매내역 조회 회귀 | 당사자 계정으로 실제 티켓 확인; 임의 병합 금지 |
 | B01 | 공연 편집·회차 FK 보존 회귀 | 새 공연 실제 설정 저장 확인 |
@@ -231,6 +231,8 @@ PG `PARTIAL_CANCELED`와 내부 `DONE`은 활성 티켓이 남은 기존 Ticket 
 
 로그인한 Twilio 계정은 운영 Secret Manager의 계정과 일치했다. Verify Geo Permissions에서 태국(+66)·중국(+86) SMS는 모두 `Monitor all traffic for blocking fraud`로 발송 허용이며, 1개 중 1개 서비스가 Fraud Guard 보호를 사용한다. 차단을 풀거나 사기 방지 설정을 낮추지 않았다.
 
-Template management에는 `No custom template`이 표시됐다. 이는 중국 사용 목적 심사 미승인을 뜻하지 않으며 해당 화면에서 승인 근거를 확인하지 못했다. [Twilio 중국 Verify 심사 안내](https://help.twilio.com/articles/17024185400859)와 [Geo Permissions 안내](https://www.twilio.com/docs/verify/preventing-toll-fraud/verify-geo-permissions)를 별도로 적용한다. 최근 29일 태국·중국 SMS 시도는 각각 0건이다. 계정 연결·국가 허용 확인을 실제 SMS 수신 성공으로 대신하지 않는다.
+Template management에는 `No custom template`이 표시됐다. 이어서 같은 운영 계정의 지원 티켓 `26994983`을 확인했다. 2026-05-14 개설된 중국 번호 인증 문의에서 사업자명과 사용 목적을 제출하고 공급자의 기본 서명 템플릿을 선택했다. Twilio 지원팀의 중국 발송 활성화 답변, 일시적인 60220 재발 문의, 지원팀의 delivered 확인, 운영자의 중국 테스트 번호 수신 성공 답변이 순서대로 남아 있고 티켓은 Closed다(마지막 갱신 2026-06-01). 따라서 커스텀 템플릿이 없다는 이유로 중국 심사를 미승인으로 분류하지 않는다.
+
+[Twilio 중국 Verify 심사 안내](https://help.twilio.com/articles/17024185400859)와 [Geo Permissions 안내](https://www.twilio.com/docs/verify/preventing-toll-fraud/verify-geo-permissions)를 별도로 적용한다. 위 지원 이력은 당시 활성화·실수신 근거이며 현재 배포의 새 수신 검증은 아니다. 최근 29일 태국·중국 SMS 시도는 각각 0건으로, 다음 판매 전 통제 가능한 실제 단말의 수신·인증을 재검증한다. 연락처와 계정·서비스·메시지 SID는 문서에 기록하지 않는다.
 
 이번 후속 확인은 앱 코드·DB·PG 거래·SMS 설정을 변경하지 않았다. 운영자 송금 확인, 익명화한 외화 명세 대조와 콘솔 확인 결과는 [공급자 후속 증거](https://console.cloud.google.com/storage/browser/grapit-ops-evidence-491806/2026-09-18-provider-reconciliation?project=grapit-491806)에 보관한다. 원본 XLSX에는 거래 식별자가 있어 공개 문서나 증거 보관소에 재업로드하지 않고 로컬 원본 SHA-256으로 연결한다.
