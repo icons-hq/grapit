@@ -59,7 +59,7 @@ export class PendingPaymentExpirationWorker implements OnModuleInit, OnModuleDes
 
   constructor(
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
-    private readonly bookingService: BookingService,
+    _bookingService: BookingService,
     @Optional() private readonly configService?: ConfigService,
   ) {}
 
@@ -157,15 +157,11 @@ export class PendingPaymentExpirationWorker implements OnModuleInit, OnModuleDes
     const expiredReservations = result.rows.map((row) =>
       mapExpiredPendingReservationRow(row as Record<string, unknown>)
     );
-    let unlockedSeats = 0;
+    const unlockedSeats = 0;
 
-    for (const reservation of expiredReservations) {
-      const unlockResult = await this.bookingService.unlockAllSeats(
-        reservation.userId,
-        reservation.showtimeId,
-      );
-      unlockedSeats += unlockResult.unlockedSeats.length;
-    }
+    // Redis TTL owns lock expiration. A delayed sweep cannot distinguish this
+    // reservation's locks from a newer attempt by the same user, even on the
+    // same seat. Never unlock user-scoped locks from historical reservations.
 
     if (expiredReservations.length > 0) {
       this.logger.log(

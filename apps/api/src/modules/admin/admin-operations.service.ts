@@ -719,7 +719,7 @@ function resolveRefundDispute(
     status: row.refund?.status ?? null,
     retainedForAudit: true,
     requestedAt: row.refund?.requestedAt?.toISOString() ?? null,
-    expectedDepositAt: row.refund?.expectedDepositAt?.toISOString() ?? null,
+    expectedDepositAt: null,
   };
 }
 

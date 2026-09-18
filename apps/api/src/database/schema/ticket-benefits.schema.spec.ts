@@ -287,7 +287,7 @@ describe('ticket benefit schema contracts', () => {
       '.on(table.ticketItemId, table.benefitIdentity)',
     );
     expect(schemaSource).toContain(
-      "where(sql`${table.source} = 'configuration' AND ${table.benefitKind} = 'included' AND ${table.state} = 'active'`)",
+      "where(sql`${table.source} = 'configuration' AND ${table.benefitKind} = 'included' AND ${table.state} IN ('active', 'redeemed')`)",
     );
     expect(migration).toContain(
       `CREATE UNIQUE INDEX "${indexName}" ON "ticket_benefit_entitlements" USING btree ("ticket_item_id","benefit_identity") WHERE "ticket_benefit_entitlements"."source" = 'configuration' AND "ticket_benefit_entitlements"."benefit_kind" = 'included' AND "ticket_benefit_entitlements"."state" = 'active';`,

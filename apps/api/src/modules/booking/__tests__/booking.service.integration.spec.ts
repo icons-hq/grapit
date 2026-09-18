@@ -1,5 +1,7 @@
+import { PaymentService } from '../../payment/payment.service.js';
+import { PendingPaymentExpirationWorker } from '../../jobs/pending-payment-expiration.worker.js';
 import { readFileSync } from 'node:fs';
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import IORedis from 'ioredis';
 import { GenericContainer, type StartedTestContainer } from 'testcontainers';
 import {
@@ -116,6 +118,58 @@ describe('BookingService Lua scripts — real Valkey 8 integration', () => {
     expect(source).not.toMatch(
       /^const\s+(LOCK_SEAT_LUA|UNLOCK_SEAT_LUA|GET_VALID_LOCKED_SEATS_LUA)\s*=/m,
     );
+  });
+
+  it('async confirmation shares the synchronous confirmation lease and retries without reading or cancelling', async () => {
+    const booking = createBookingService(redis, 3);
+    await booking.acquirePaymentConfirmLock('shared-order', 'sync-confirm-owner');
+    const select = vi.fn();
+    const cancelPayment = vi.fn();
+    const payment = new PaymentService({ select } as never);
+    Object.assign(payment, { bookingService: booking, tossClient: { cancelPayment } });
+    await expect(payment.upsertAsyncPaymentProgress({ eventId: 'retry-event', eventType: 'PAYMENT_STATUS_CHANGED',
+      data: { orderId: 'shared-order', paymentKey: 'fixture-payment', status: 'DONE' },
+    }, 'DONE', 'test')).rejects.toThrow('결제 확인이 이미 진행 중입니다.');
+    expect(select).not.toHaveBeenCalled();
+    expect(cancelPayment).not.toHaveBeenCalled();
+    expect(await booking.refreshPaymentConfirmLock('shared-order', 'sync-confirm-owner')).toBe(true);
+  });
+
+  it('old reservation expiration preserves a fresh lock on the same seat and other newly selected seats', async () => {
+    const service = createBookingService(redis, 3);
+    await service.lockSeat(userId, showtimeId, seatKey);
+    await service.unlockSeat(userId, showtimeId, seatKey);
+    await service.lockSeat(userId, showtimeId, seatKey);
+    await service.lockSeat(userId, showtimeId, otherSeatKey);
+    const worker = new PendingPaymentExpirationWorker({
+      execute: async () => ({ rows: [{ id: 'old', user_id: userId, showtime_id: showtimeId }] }),
+    } as never, service);
+    await worker.sweepExpiredPendingPayments();
+    expect(await redis.get(lockKey)).toBe(userId);
+    expect(await redis.get(`{${showtimeId}}:seat:${toRuntimeSeatId(otherSeatKey)}`)).toBe(userId);
+  });
+
+  it('unlock-all uses atomic ownership checks if the lock changes after its read', async () => {
+    const service = createBookingService(redis, 3);
+    await service.lockSeat(userId, showtimeId, seatKey);
+    const racingRedis = new Proxy(redis, {
+      get(target, property) {
+        if (property === 'get') return async (key: string) => {
+          const observed = await target.get(key);
+          await target.set(lockKey, 'new-owner', 'EX', 600);
+          return observed;
+        };
+        if (property === 'eval') return async (...args: unknown[]) => {
+          await target.set(lockKey, 'new-owner', 'EX', 600);
+          return target.eval(...args as Parameters<IORedis['eval']>);
+        };
+        const value = Reflect.get(target, property);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    const racingService = createBookingService(racingRedis, 3);
+    expect(await racingService.unlockAllSeats(userId, showtimeId)).toEqual({ unlockedSeats: [] });
+    expect(await redis.get(lockKey)).toBe('new-owner');
   });
 
   it('locks a seat through BookingService.lockSeat on real Valkey', async () => {

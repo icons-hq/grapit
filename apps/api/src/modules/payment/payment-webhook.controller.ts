@@ -196,10 +196,9 @@ export class PaymentWebhookController {
     progress: AsyncPaymentProgressSnapshot | null,
     providerResponse: TossPaymentResponse,
   ): Promise<{ code: string; message?: string }> {
-    if (body.eventType === 'CANCEL_STATUS_CHANGED') {
+    if (body.eventType === 'CANCEL_STATUS_CHANGED' || this.hasTerminalFullCancel(body, providerResponse)) {
       if (
-        progress?.reservationStatus === 'FAILED'
-        || progress?.reservationStatus === 'CANCELLED'
+        progress?.reservationStatus === 'CANCELLED'
         || (
           progress?.paymentStatus === 'CANCELED'
           && progress.reservationStatus !== 'CONFIRMED'
@@ -539,6 +538,10 @@ export class PaymentWebhookController {
     body: TossWebhookRequestBody,
     providerResponse: TossPaymentResponse,
   ): boolean {
+    if (body.eventType === 'PAYMENT_STATUS_CHANGED') {
+      return providerResponse.status === 'CANCELED'
+        && (providerResponse.cancels?.some((cancel) => cancel.cancelStatus === undefined || cancel.cancelStatus === 'DONE') ?? false);
+    }
     return body.eventType === 'CANCEL_STATUS_CHANGED'
       && body.data.cancelStatus === 'DONE'
       && providerResponse.status === 'CANCELED'
@@ -549,6 +552,7 @@ export class PaymentWebhookController {
     body: TossWebhookRequestBody,
     providerResponse: TossPaymentResponse,
   ): boolean {
+    if (body.eventType === 'PAYMENT_STATUS_CHANGED') return this.hasTerminalFullCancel(body, providerResponse);
     return body.eventType === 'CANCEL_STATUS_CHANGED'
       && body.data.cancelStatus === 'DONE'
       && (

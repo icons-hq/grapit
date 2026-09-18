@@ -240,7 +240,7 @@ export const ticketBenefitEntitlements = pgTable(
       .where(sql`${table.benefitKind} = 'limited' AND ${table.state} = 'active'`),
     uniqueIndex('idx_tbe_active_config_included_item_identity')
       .on(table.ticketItemId, table.benefitIdentity)
-      .where(sql`${table.source} = 'configuration' AND ${table.benefitKind} = 'included' AND ${table.state} = 'active'`),
+      .where(sql`${table.source} = 'configuration' AND ${table.benefitKind} = 'included' AND ${table.state} IN ('active', 'redeemed')`),
   ],
 );
 

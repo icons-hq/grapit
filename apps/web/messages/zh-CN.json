@@ -265,7 +265,7 @@
       "oauthFailed": "社交登录失败。请重试。",
       "tokenExpired": "登录会话已过期。请重试。",
       "serverError": "暂时发生错误。请稍后再试。",
-      "accountConflict": "该社交账号已连接到其他账户。"
+      "accountConflict": "该社交账号已连接到其他账户。请使用原有账户登录。"
     },
     "signup": {
       "progressAriaLabel": "注册进度",
@@ -380,6 +380,11 @@
       "verificationRequired": "请完成验证",
       "providerUnavailable": "该社交登录服务暂不可用",
       "deviceLimitNotice": "由于另一台设备登录，最早的会话已被退出。"
+    },
+    "callback": {
+      "retryButton": "重新登录",
+      "processing": "正在完成登录...",
+      "invalidAccess": "此登录链接无效。"
     }
   },
   "metadata": {
@@ -613,9 +618,9 @@
         "refundSequential": "退款将按顺序退回到你的付款方式。",
         "waitForProgress": "无需额外申请，请在此查看进度。",
         "expectedDeposit": "预计到账：{date}",
-        "refundBusinessDays": "根据付款方式约 3 至 7 个工作日",
+        "refundBusinessDays": "到账或账单更新时间取决于支付方式和金融机构",
         "cancelCompletedStep": "取消完成",
-        "refundCompleted": "退款已完成。",
+        "refundCompleted": "支付机构已完成取消。信用卡账单更新或账户退款时间取决于支付方式和金融机构。",
         "checkCancelledDetail": "你可以在此查看取消详情。",
         "completed": "已完成",
         "paymentCheckingStep": "正在确认付款",
@@ -675,7 +680,7 @@
       "statusFallback": "退款状态",
       "expectedDeposit": "预计到账",
       "releaseNotice": "座位可能在 {releaseAt} 前后重新开放销售。",
-      "delayedBody": "如果预计到账时间后仍未完成退款，请联系客服。",
+      "delayedBody": "如果处理状态长时间未更新，请联系客服。",
       "failedBody": "退款延迟或失败。请检查付款方式并联系客服。",
       "manualOpened": "运营人员已确认并重新开放座位销售。",
       "released": "延迟保留已结束，已取消座位重新可售。",
@@ -693,8 +698,8 @@
           "description": "支付机构或发卡机构正在处理退款。"
         },
         "completed": {
-          "label": "退款完成",
-          "description": "退款已到账。"
+          "label": "支付机构已完成取消",
+          "description": "支付机构已完成取消。信用卡账单更新或账户退款时间取决于支付方式和金融机构。"
         },
         "failed": {
           "label": "退款失败",

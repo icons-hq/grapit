@@ -31,3 +31,10 @@ Use this only for reservations that entered ticket-item partial cancellation bef
 - Never trust reservation number as Toss order id.
 - Never expose payment key, secret key, cookies, or authorization headers in support replies.
 - Capture before and after state for each reservation.
+
+## Seat ownership and refund timing (2026-09 relaunch)
+
+- Finalize only the reviewed reservation/payment. A historical reservation's seat list does not prove ownership of shared `seat_inventories` rows.
+- Every reopen must preserve other `active` / `cancellation_pending` Ticket Items on the same showtime and seat key, including manual recovery SQL. Use the [relaunch ownership and preflight procedure](show-relaunch-reliability.md#수동-취소재고-복구-보호).
+- Cancellation confirmation means the PG accepted/completed the cancellation. It does not prove a bank deposit or card-statement adjustment. Historical locally generated `expected_deposit_at` values are not issuer promises; the API now omits them.
+- A late cancellation event racing with issuance must retry through the full cancellation finalizer; updating payment status alone is insufficient to revoke tickets, QR credentials and benefits.

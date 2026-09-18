@@ -2,8 +2,13 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { PaymentMethod } from '@grabit/shared';
-import { ticketItems } from '../../database/schema/index.js';
+import { ticketItems, ticketBenefitEntitlements, payments } from '../../database/schema/index.js';
 import { PaymentService } from './payment.service.js';
+
+vi.mock('../../database/ticket-limit.js', () => ({
+  getTicketLimitSnapshot: vi.fn().mockResolvedValue({ performanceId: 'performance-1', maxTicketsPerUser: 4, activeTicketCount: 0 }),
+  lockTicketLimitScope: vi.fn().mockResolvedValue(undefined),
+}));
 
 function createMockDb() {
   return {
@@ -89,6 +94,9 @@ describe('PaymentService', () => {
     ensureIssuedTicketsForReservation: ReturnType<typeof vi.fn>;
   };
   let mockBookingService: {
+    acquirePaymentConfirmLock: ReturnType<typeof vi.fn>;
+    refreshPaymentConfirmLock: ReturnType<typeof vi.fn>;
+    releasePaymentConfirmLock: ReturnType<typeof vi.fn>;
     acquireRecoverySeatLocks: ReturnType<typeof vi.fn>;
     extendOwnedSeatLocks: ReturnType<typeof vi.fn>;
     releaseRecoverySeatLocks: ReturnType<typeof vi.fn>;
@@ -108,6 +116,9 @@ describe('PaymentService', () => {
       ensureIssuedTicketsForReservation: vi.fn().mockResolvedValue([]),
     };
     mockBookingService = {
+      acquirePaymentConfirmLock: vi.fn().mockResolvedValue(true),
+      refreshPaymentConfirmLock: vi.fn().mockResolvedValue(true),
+      releasePaymentConfirmLock: vi.fn().mockResolvedValue(undefined),
       acquireRecoverySeatLocks: vi.fn().mockResolvedValue({ acquired: true }),
       extendOwnedSeatLocks: vi.fn().mockResolvedValue(undefined),
       releaseRecoverySeatLocks: vi.fn().mockResolvedValue(undefined),
@@ -864,10 +875,17 @@ describe('PaymentService', () => {
       const tx = {
         update: vi.fn(),
         insert: vi.fn(),
+        execute: vi.fn().mockResolvedValue({ rows: [{ id: showtimeId }] }),
+        select: vi.fn()
+          .mockReturnValueOnce({ from: () => ({ where: () => ({ orderBy: () => ({ limit: async () => [{ id: 'config' }] }) }) }) })
+          .mockReturnValueOnce(createSelectChain([{
+            identity: 'included-poster', kind: 'included', displayCopy: {}, eligibleTierNames: ['VIP'],
+          }])),
       };
       const updateReservation = createMutationChain();
       const insertPayment = createMutationChain([{ id: paymentId }]);
-      const insertTicketItems = createMutationChain();
+      const insertTicketItems = createMutationChain([{ id: 'vip-item', tierName: 'VIP' }, { id: 'r-item', tierName: 'R' }]);
+      const insertEntitlements = createMutationChain();
       const updateFirstSeat = createMutationChain([]);
       const insertFirstSeat = createMutationChain([{ id: randomUUID() }]);
       const updateSecondSeat = createMutationChain([{ id: randomUUID() }]);
@@ -892,10 +910,12 @@ describe('PaymentService', () => {
         .mockReturnValueOnce(updateReservation)
         .mockReturnValueOnce(updateFirstSeat)
         .mockReturnValueOnce(updateSecondSeat);
-      tx.insert
-        .mockReturnValueOnce(insertPayment)
-        .mockReturnValueOnce(insertTicketItems)
-        .mockReturnValueOnce(insertFirstSeat);
+      tx.insert.mockImplementation((table) => {
+        if (table === payments) return insertPayment;
+        if (table === ticketItems) return insertTicketItems;
+        if (table === ticketBenefitEntitlements) return insertEntitlements;
+        return insertFirstSeat;
+      });
 
       await service.upsertAsyncPaymentProgress(
         {
@@ -938,6 +958,10 @@ describe('PaymentService', () => {
         args.some((arg) => sqlPredicateHasParamValue(arg, 'available')),
       )).toBe(true);
       expect(tx.insert).toHaveBeenCalledWith(ticketItems);
+      expect(tx.insert).toHaveBeenCalledWith(ticketBenefitEntitlements);
+      expect(insertEntitlements.values).toHaveBeenCalledWith([
+        expect.objectContaining({ ticketItemId: 'vip-item', benefitIdentity: 'included-poster', state: 'active' }),
+      ]);
       expect(insertTicketItems.values).toHaveBeenCalledWith([
         expect.objectContaining({
           reservationId,
@@ -1904,7 +1928,7 @@ describe('PaymentService', () => {
       expect(mockQrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
     });
 
-    it('applies PayPal cancel webhook without overwriting the stored KRW payment amount', async () => {
+    it('retries a cancellation whose pre-issuance snapshot lost to confirm, preserving amounts until the full finalizer', async () => {
       const reservationId = randomUUID();
       const paymentId = randomUUID();
       const updatePayment = createMutationChain();
@@ -1927,7 +1951,7 @@ describe('PaymentService', () => {
         }]));
       mockDb.update.mockReturnValueOnce(updatePayment);
 
-      await service.upsertAsyncPaymentProgress(
+      await expect(service.upsertAsyncPaymentProgress(
         {
           eventId: 'evt-paypal-cancelled',
           eventType: 'CANCEL_STATUS_CHANGED',
@@ -1945,20 +1969,11 @@ describe('PaymentService', () => {
         },
         'CANCELED',
         'cancelled_webhook',
-      );
+      )).rejects.toThrow('발권된 결제 취소를 다시 대조해야 합니다.');
 
-      expect(updatePayment.set).toHaveBeenCalledWith(expect.objectContaining({
-        method: 'FOREIGN_EASY_PAY',
-        provider: 'PAYPAL',
-        currency: 'KRW',
-        amount: 150000,
-        status: 'CANCELED',
-        asyncStatus: 'cancelled_webhook',
-        cancelReason: 'provider cancellation',
-      }));
       expect(mockDb.transaction).not.toHaveBeenCalled();
       expect(mockDb.insert).not.toHaveBeenCalled();
-      expect(mockDb.update).toHaveBeenCalledTimes(1);
+      expect(mockDb.update).not.toHaveBeenCalled();
     });
 
     it('finalizes a confirmed cancel webhook with the shared cancellation finalizer', async () => {
@@ -3913,11 +3928,7 @@ describe('PaymentService', () => {
         'payment_status_changed:done',
       )).rejects.toThrow('금액이 일치하지 않습니다');
 
-      expect(updateRejectedPayment.set).toHaveBeenCalledWith(expect.objectContaining({
-        amount: 200000,
-        status: 'ABORTED',
-        asyncStatus: 'payment_amount_mismatch',
-      }));
+      expect(updateRejectedPayment.set).not.toHaveBeenCalled();
       expect(mockDb.transaction).not.toHaveBeenCalled();
       expect(mockQrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
       expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();

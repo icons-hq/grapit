@@ -1,3 +1,4 @@
+import { sql } from 'drizzle-orm';
 import {
   index,
   integer,
@@ -81,6 +82,9 @@ export const ticketItems = pgTable(
       table.reservationId,
       table.seatKey,
     ),
+    uniqueIndex('uq_ticket_items_active_seat')
+      .on(table.showtimeId, table.seatKey)
+      .where(sql`${table.status} IN ('active', 'cancellation_pending')`),
     index('idx_ticket_items_reservation_id').on(table.reservationId),
     index('idx_ticket_items_payment_id').on(table.paymentId),
     index('idx_ticket_items_showtime_id').on(table.showtimeId),

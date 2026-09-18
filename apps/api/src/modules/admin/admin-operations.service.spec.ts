@@ -230,7 +230,7 @@ describe('AdminOperationsService', () => {
       status: 'processing_at_pg',
       retainedForAudit: true,
       requestedAt: '2026-05-13T12:00:00.000Z',
-      expectedDepositAt: '2026-05-20T12:00:00.000Z',
+      expectedDepositAt: null,
     });
   });
 

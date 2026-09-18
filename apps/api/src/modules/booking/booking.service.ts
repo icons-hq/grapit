@@ -601,40 +601,17 @@ export class BookingService {
     return true;
   }
 
-  /**
-   * Unlocks ALL seats for a user in a showtime.
-   * Used by timer reset to release all locks at once.
-   * Not Lua-based because: called once per reset (no concurrency),
-   * and we need per-seat broadcast calls in Node.
-   */
+  /** Releases the current selection using the same atomic owner check as a single unlock. */
   async unlockAllSeats(userId: string, showtimeId: string): Promise<UnlockAllResponse> {
-    const userSeatsKey = `{${showtimeId}}:user-seats:${userId}`;
-    const lockedSeatsKey = `{${showtimeId}}:locked-seats`;
-
-    const members = await this.redis.smembers(userSeatsKey);
-
-    if (members.length === 0) {
-      return { unlockedSeats: [] };
-    }
-
+    const members = await this.redis.smembers(`{${showtimeId}}:user-seats:${userId}`);
     const unlockedSeats: string[] = [];
-
     for (const runtimeSeatId of members) {
-      const lockKey = `{${showtimeId}}:seat:${runtimeSeatId}`;
-      const owner = await this.redis.get(lockKey);
-
-      if (owner === userId) {
-        await this.redis.del(lockKey);
-        await this.redis.srem(lockedSeatsKey, runtimeSeatId);
-        const rawSeatId = decodeRuntimeSeatId(runtimeSeatId);
-        this.gateway.broadcastSeatUpdate(showtimeId, rawSeatId, 'available', userId);
-        unlockedSeats.push(rawSeatId);
+      const seatId = decodeRuntimeSeatId(runtimeSeatId);
+      if (await this.unlockSeat(userId, showtimeId, seatId)) {
+        unlockedSeats.push(seatId);
       }
     }
-
-    // Delete the user-seats key entirely
-    await this.redis.del(userSeatsKey);
-
+    // Do not delete the whole user set: a new selection may have been added.
     return { unlockedSeats };
   }
 

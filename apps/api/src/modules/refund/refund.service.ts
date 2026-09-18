@@ -145,10 +145,6 @@ export function normalizeReservationSeatIdentity(seatId: string): SeatIdentityPa
   };
 }
 
-export function calculateExpectedRefundDepositAt(now: Date = new Date()): Date {
-  return new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
-}
-
 export function isTransientRefundCancelFailure(error: unknown): boolean {
   if (error instanceof TossPaymentError) {
     return TRANSIENT_TOSS_CANCEL_CODES.has(error.code);
@@ -259,13 +255,11 @@ function getRefundCancelRetryJobId(refund: Pick<RefundRecord, 'providerMetadata'
   return null;
 }
 
-function toTimeline(refund: RefundRecord, now: Date = new Date()): RefundTimeline {
-  const expectedDepositAt =
-    refund.expectedDepositAt instanceof Date ? refund.expectedDepositAt : null;
-  const isDelayed =
-    expectedDepositAt instanceof Date &&
-    refund.status !== 'completed' &&
-    expectedDepositAt.getTime() < now.getTime();
+export function toRefundTimeline(refund: RefundRecord, now: Date = new Date()): RefundTimeline {
+  // Historical expected_deposit_at values were created locally as +3 days.
+  // Keep the processing follow-up threshold separate from issuer settlement.
+  const isDelayed = refund.status !== 'completed'
+    && refund.requestedAt.getTime() + 3 * MS_PER_DAY < now.getTime();
 
   return {
     currentState: REFUND_TIMELINE_STATE_MAP[refund.status],
@@ -274,7 +268,7 @@ function toTimeline(refund: RefundRecord, now: Date = new Date()): RefundTimelin
     processedAtPgAt: refund.processingAtPgAt?.toISOString() ?? null,
     completedAt: refund.completedAt?.toISOString() ?? null,
     failedAt: refund.failedAt?.toISOString() ?? null,
-    expectedDepositAt: expectedDepositAt?.toISOString() ?? null,
+    expectedDepositAt: null,
     customerServiceCtaVisible: refund.customerServiceCtaVisible || isDelayed,
   };
 }
@@ -505,7 +499,7 @@ export class RefundService {
       refundableAmount: cancellationQuote?.refundableAmount ?? context.payment.amount,
       canRequestRefund: context.reservation.status === 'CONFIRMED' && refund === null,
       cancelledSeatHoldWindowMinutes: holdWindow,
-      refundTimeline: refund ? toTimeline(refund) : null,
+      refundTimeline: refund ? toRefundTimeline(refund) : null,
       cancellationQuote,
     };
   }
@@ -1111,7 +1105,7 @@ export class RefundService {
           ...(actor.kind === 'admin' ? { operatorUserId: actor.operatorUserId } : {}),
         },
         requestedAt: now,
-        expectedDepositAt: calculateExpectedRefundDepositAt(now),
+        expectedDepositAt: null,
         createdAt: now,
         updatedAt: now,
       })
@@ -1145,7 +1139,7 @@ export class RefundService {
       resultMessage: getRefundErrorMessage(error),
       failureReason: getRefundErrorMessage(error),
       retryCount,
-      expectedDepositAt: calculateExpectedRefundDepositAt(now),
+      expectedDepositAt: null,
       providerMetadata: {
         cancelReason: reason,
         ...(cancellationQuote ? { cancellationQuote } : {}),
@@ -1170,7 +1164,7 @@ export class RefundService {
       resultCode: response.status,
       resultMessage: 'PG cancel accepted and is processing',
       retryCount,
-      expectedDepositAt: calculateExpectedRefundDepositAt(now),
+      expectedDepositAt: null,
       providerMetadata: {
         cancelReason: reason,
         ...(cancellationQuote ? { cancellationQuote } : {}),

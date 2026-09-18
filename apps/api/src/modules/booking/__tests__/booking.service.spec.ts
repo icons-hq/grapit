@@ -605,65 +605,26 @@ describe('BookingService', () => {
   });
 
   describe('unlockAllSeats', () => {
-    it('unlocks all owned seats and returns seatIds', async () => {
+    it('unlocks owned seats atomically without deleting a newer user selection', async () => {
       mockRedis.smembers.mockResolvedValue(['A-1', 'A-2']);
-      mockRedis.get
-        .mockResolvedValueOnce(userId)   // A-1 owned
-        .mockResolvedValueOnce(userId);  // A-2 owned
-      mockRedis.del.mockResolvedValue(1);
-      mockRedis.srem.mockResolvedValue(1);
-
-      const result = await service.unlockAllSeats(userId, showtimeId);
-
-      expect(result.unlockedSeats).toEqual(['A-1', 'A-2']);
-
-      // Verify del called for each seat lock key
-      expect(mockRedis.del).toHaveBeenCalledWith(`{${showtimeId}}:seat:A-1`);
-      expect(mockRedis.del).toHaveBeenCalledWith(`{${showtimeId}}:seat:A-2`);
-
-      // Verify srem called for locked-seats for each seat
-      const lockedSeatsCalls = mockRedis.srem.mock.calls.filter(
-        (call: unknown[]) => typeof call[0] === 'string' && (call[0] as string).includes(':locked-seats'),
-      );
-      expect(lockedSeatsCalls).toHaveLength(2);
-
-      // Verify broadcast called for each unlocked seat
+      mockRedis.eval.mockResolvedValue(1);
+      expect(await service.unlockAllSeats(userId, showtimeId)).toEqual({ unlockedSeats: ['A-1', 'A-2'] });
+      expect(mockRedis.eval).toHaveBeenCalledTimes(2);
+      expect(mockRedis.get).not.toHaveBeenCalled();
+      expect(mockRedis.del).not.toHaveBeenCalled();
       expect(mockGateway.broadcastSeatUpdate).toHaveBeenCalledTimes(2);
-      expect(mockGateway.broadcastSeatUpdate).toHaveBeenCalledWith(showtimeId, 'A-1', 'available', userId);
-      expect(mockGateway.broadcastSeatUpdate).toHaveBeenCalledWith(showtimeId, 'A-2', 'available', userId);
-
-      // Verify user-seats key deleted entirely at the end
-      expect(mockRedis.del).toHaveBeenCalledWith(`{${showtimeId}}:user-seats:${userId}`);
     });
-
-    it('skips seats not owned by user', async () => {
+    it('broadcasts only seats whose atomic owner check released a lock', async () => {
       mockRedis.smembers.mockResolvedValue(['A-1', 'A-2']);
-      mockRedis.get
-        .mockResolvedValueOnce(userId)        // A-1 owned
-        .mockResolvedValueOnce('other-user');  // A-2 NOT owned
-      mockRedis.del.mockResolvedValue(1);
-      mockRedis.srem.mockResolvedValue(1);
-
-      const result = await service.unlockAllSeats(userId, showtimeId);
-
-      // Only A-1 unlocked
-      expect(result.unlockedSeats).toEqual(['A-1']);
-
-      // Verify del called only for A-1
-      expect(mockRedis.del).toHaveBeenCalledWith(`{${showtimeId}}:seat:A-1`);
-
-      // Verify broadcast only for A-1
+      mockRedis.eval.mockResolvedValueOnce(1).mockResolvedValueOnce(0);
+      expect(await service.unlockAllSeats(userId, showtimeId)).toEqual({ unlockedSeats: ['A-1'] });
       expect(mockGateway.broadcastSeatUpdate).toHaveBeenCalledTimes(1);
       expect(mockGateway.broadcastSeatUpdate).toHaveBeenCalledWith(showtimeId, 'A-1', 'available', userId);
     });
-
-    it('returns empty array when no seats locked', async () => {
+    it('does nothing for an empty selection', async () => {
       mockRedis.smembers.mockResolvedValue([]);
-
-      const result = await service.unlockAllSeats(userId, showtimeId);
-
-      expect(result.unlockedSeats).toEqual([]);
-      expect(mockGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+      expect(await service.unlockAllSeats(userId, showtimeId)).toEqual({ unlockedSeats: [] });
+      expect(mockRedis.eval).not.toHaveBeenCalled();
     });
   });
 
