@@ -161,7 +161,7 @@
     },
     "paymentDeadline": {
       "badge": "결제 가능 시간",
-      "title": "지금부터 7분 안에 결제를 완료해주세요",
+      "title": "남은 시간 안에 결제를 완료해주세요",
       "helper": "{threshold} 이하가 되면 결제 마감 상태로 전환됩니다.",
       "criticalHelper": "{threshold} 이하로 남았습니다. 카드 인증과 해외 결제 인증을 바로 완료해주세요.",
       "seatHoldHelper": "좌석 점유 만료 {time}"

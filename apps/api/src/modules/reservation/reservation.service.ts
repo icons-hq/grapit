@@ -1161,7 +1161,7 @@ export class ReservationService {
       preparedAt, showtime.bookingPolicy.paymentWindowMinutes
         ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.paymentWindowMinutes,
     );
-    await this.bookingService.extendOwnedSeatLocks(
+    await this.bookingService.setOwnedSeatLockTtl(
       userId, dto.showtimeId, canonicalSeats.map((seat) => seat.seatKey),
       Math.max(1, Math.ceil((paymentDeadlineAt.getTime() - Date.now()) / 1000)),
     );

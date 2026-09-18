@@ -154,6 +154,11 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     expect(entitlements[0]!.state).toBe('redeemed');
   });
 
+  it.each(['dry-run', 'apply'] as const)('benefit repair %s rejects a nonexistent showtime instead of reporting zero missing rights', async (mode) => {
+    await expect(repairIncludedBenefits(db, randomUUID(), mode === 'apply' ? 'a'.repeat(64) : undefined))
+      .rejects.toThrow('BENEFIT_REPAIR_SHOWTIME_NOT_FOUND');
+  });
+
   it('benefit repair is read-only by default, rejects drift, and applies only the reviewed missing rights', async () => {
     const f = await fixture();
     const items = await ticket(f);

@@ -446,7 +446,7 @@ class InMemoryRedis {
 
   private async evalExtendOwnedSeatLocks(keys: string[], args: string[]): Promise<[number, string, string, string]> {
     const [userSeatsKey, ...seatLockKeys] = keys;
-    const [userId, ttlSeconds, ...seatIds] = args;
+    const [userId, ttlSeconds, mode, ...seatIds] = args;
 
     for (let i = 0; i < seatLockKeys.length; i++) {
       const lockKey = seatLockKeys[i]!;
@@ -463,7 +463,7 @@ class InMemoryRedis {
 
     const ttl = Number(ttlSeconds);
     for (const lockKey of seatLockKeys) {
-      if (await this.ttl(lockKey) < ttl) {
+      if (mode === 'exact' || await this.ttl(lockKey) < ttl) {
         await this.expire(lockKey, ttl);
       }
     }

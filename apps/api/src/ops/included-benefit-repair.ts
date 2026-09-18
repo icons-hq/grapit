@@ -10,9 +10,11 @@ type MissingBenefit = { ticket_item_id: string; tier_name: string; benefit_ident
 /** Dry-run is read-only. Apply requires the exact hash of the reviewed candidate set. */
 export async function repairIncludedBenefits(db: DrizzleDB, showtimeId: string, expectedHash?: string) {
   return db.transaction(async (tx) => {
+    // Apply serializes with configuration changes; dry-run remains read-only.
+    const showtime = await tx.execute(sql`SELECT id FROM showtimes WHERE id = ${showtimeId}
+      ${expectedHash ? sql`FOR NO KEY UPDATE` : sql``}`);
+    if (showtime.rows.length === 0) throw new Error('BENEFIT_REPAIR_SHOWTIME_NOT_FOUND');
     if (expectedHash) {
-      // Serialize with cancellation and benefit configuration changes before re-reading candidates.
-      await tx.execute(sql`SELECT id FROM showtimes WHERE id = ${showtimeId} FOR NO KEY UPDATE`);
       await tx.execute(sql`SELECT id FROM ticket_items WHERE showtime_id = ${showtimeId} ORDER BY id FOR UPDATE`);
     }
     const missing = await tx.execute<MissingBenefit>(sql`

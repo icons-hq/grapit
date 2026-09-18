@@ -161,7 +161,7 @@
     },
     "paymentDeadline": {
       "badge": "Payment deadline",
-      "title": "Complete payment within 7 minutes",
+      "title": "Please complete payment before the countdown ends",
       "helper": "{threshold} or less switches the payment state to critical.",
       "criticalHelper": "{threshold} or less remaining. Finish card or overseas wallet verification now.",
       "seatHoldHelper": "Seat hold expires in {time}"

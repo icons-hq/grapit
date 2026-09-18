@@ -279,6 +279,27 @@ describe('BookingService Lua scripts — real Valkey 8 integration', () => {
       await redis.flushdb();
     });
 
+    it('aligns owned seat TTL to a shorter payment window while preserving unrelated selections and extension semantics', async () => {
+      const service = createBookingService(redis);
+      const a = `{${ownershipShowtimeId}}:seat:${ownershipRuntimeSeatIdA}`;
+      const b = `{${ownershipShowtimeId}}:seat:${ownershipRuntimeSeatIdB}`;
+      await redis.set(a, ownershipUserId, 'EX', 600);
+      await redis.set(b, ownershipUserId, 'EX', 600);
+      await redis.sadd(ownershipUserSeatsKey, ownershipRuntimeSeatIdA, ownershipRuntimeSeatIdB);
+      await redis.expire(ownershipUserSeatsKey, 600);
+      await service.setOwnedSeatLockTtl(ownershipUserId, ownershipShowtimeId, [ownershipSeatKeyA], 420);
+      expect(await redis.ttl(a)).toBeGreaterThanOrEqual(419);
+      expect(await redis.ttl(a)).toBeLessThanOrEqual(420);
+      expect(await redis.ttl(b)).toBeGreaterThanOrEqual(599);
+      expect(await redis.ttl(ownershipUserSeatsKey)).toBeGreaterThanOrEqual(599);
+      await service.extendOwnedSeatLocks(ownershipUserId, ownershipShowtimeId, [ownershipSeatKeyA], 60);
+      expect(await redis.ttl(a)).toBeGreaterThanOrEqual(419);
+      await redis.set(b, otherUserId, 'EX', 600);
+      await expect(service.setOwnedSeatLockTtl(ownershipUserId, ownershipShowtimeId, [ownershipSeatKeyA, ownershipSeatKeyB], 60))
+        .rejects.toThrow(LOCK_OTHER_OWNER_MESSAGE);
+      expect(await redis.ttl(a)).toBeGreaterThanOrEqual(419);
+    });
+
     it('assertOwnedSeatLocks passes all-owned locks on real Valkey', async () => {
       const service = createBookingService(redis);
       await redis.set(`{${ownershipShowtimeId}}:seat:${ownershipRuntimeSeatIdA}`, ownershipUserId, 'EX', LOCK_TTL);

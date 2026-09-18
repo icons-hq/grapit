@@ -107,6 +107,7 @@ function createMockBookingService() {
     assertOwnedSeatLocks: vi.fn().mockResolvedValue(undefined),
     consumeOwnedSeatLocks: vi.fn().mockResolvedValue({ consumedSeatIds: [] }),
     extendOwnedSeatLocks: vi.fn().mockResolvedValue(undefined),
+    setOwnedSeatLockTtl: vi.fn().mockResolvedValue(undefined),
     acquirePaymentConfirmLock: vi.fn().mockResolvedValue(true),
     refreshPaymentConfirmLock: vi.fn().mockResolvedValue(true),
     releasePaymentConfirmLock: vi.fn().mockResolvedValue(undefined),
@@ -1475,7 +1476,7 @@ describe('ReservationService', () => {
         const expectedDeadlineAt = new Date(now.getTime() + 10 * 60 * 1000).toISOString();
 
         expect(result.paymentDeadlineAt).toBe(expectedDeadlineAt);
-        expect(mockBookingService.extendOwnedSeatLocks).toHaveBeenCalledWith(
+        expect(mockBookingService.setOwnedSeatLockTtl).toHaveBeenCalledWith(
           userId, dto.showtimeId, ['1F:A-1'], 600,
         );
         expect(insertedValues[0]).toEqual(expect.objectContaining({

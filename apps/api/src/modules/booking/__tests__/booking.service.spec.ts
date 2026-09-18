@@ -759,7 +759,7 @@ describe('BookingService', () => {
         `{${showtimeId}}:seat:1F%3AA-1`,
         `{${showtimeId}}:seat:1F%3AA-2`,
       ]);
-      expect(flatArgs).toEqual([userId, String(PAYMENT_CONFIRM_LOCK_TTL), '1F%3AA-1', '1F%3AA-2']);
+      expect(flatArgs).toEqual([userId, String(PAYMENT_CONFIRM_LOCK_TTL), 'extend', '1F%3AA-1', '1F%3AA-2']);
     });
 
     it('extendOwnedSeatLocks rejects missing locks with lock-expired message', async () => {

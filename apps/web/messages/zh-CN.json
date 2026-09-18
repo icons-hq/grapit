@@ -161,7 +161,7 @@
     },
     "paymentDeadline": {
       "badge": "支付时限",
-      "title": "请在 7 分钟内完成支付",
+      "title": "请在倒计时结束前完成支付",
       "helper": "剩余时间少于或等于 {threshold} 时，将进入紧急状态。",
       "criticalHelper": "剩余时间少于或等于 {threshold}。请立即完成银行卡或海外钱包认证。",
       "seatHoldHelper": "座位锁定将在 {time} 后到期"
