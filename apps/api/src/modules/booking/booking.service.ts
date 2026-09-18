@@ -196,8 +196,7 @@ return alive
  * KEYS[2..] = {showtimeId}:seat:{seatId}
  * ARGV[1] = lock owner token
  * ARGV[2] = ttl seconds
- * ARGV[3] = 'extend' or 'exact'
- * ARGV[4..] = requested seat IDs
+ * ARGV[3..] = requested seat IDs
  *
  * Returns: {1, 'OK', count, ''} or {0, 'OTHER_OWNER', seatId, owner}
  */
