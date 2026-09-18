@@ -46,6 +46,7 @@ uploads/
 image/
 
 # Local debug artifacts
+/output/
 /foreign-payment-ui.png
 apps/web/public/dev/
 
