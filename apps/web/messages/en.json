@@ -698,7 +698,7 @@
         "Other"
       ],
       "title": "Refund and seat reopening notice",
-      "description": "The entire booking will be cancelled. Individual seats cannot be cancelled here.",
+      "description": "Cancel individual seats from their ticket cards, or cancel the whole booking. Review the refund and remaining tickets before confirming.",
       "reasonLabel": "Cancellation reason",
       "reasonPlaceholder": "Select a cancellation reason",
       "refundAmount": "Expected refund",

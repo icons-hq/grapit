@@ -30,6 +30,31 @@ const ticketItem = (
 });
 
 describe('payment cancel policy', () => {
+  it('allocates cumulative foreign minor units without losing or over-refunding a cent', () => {
+    const payment = basePayment({ amount: 300, provider: 'PAYPAL', currency: 'USD',
+      providerChargeCurrency: 'USD', providerChargeAmountMinor: 100 });
+    const request = buildTicketItemPaymentCancelRequest({
+      payment: { ...payment, refundedAmount: 100, providerRefundedAmountMinor: 33 },
+      ticketItem: ticketItem({ id: 'second', refundableAmount: 100 }),
+      activeTicketItems: [ticketItem({ id: 'second' }), ticketItem({ id: 'last' })],
+      reason: 'Second of three equal tickets',
+    });
+    expect(request.options.cancelAmount).toBe(0.34);
+  });
+
+  it('rejects refunds beyond the remaining ledger balance and unknown overseas charge units', () => {
+    for (const payment of [
+      basePayment({ amount: 100, refundedAmount: 60 }),
+      basePayment({ providerMetadata: { secretKeyScope: 'overseas-card' }, currency: 'USD' }),
+      basePayment({ provider: 'PAYPAL', currency: 'USD', providerChargeCurrency: 'USD', providerChargeAmountMinor: NaN }),
+    ]) {
+      expect(() => buildTicketItemPaymentCancelRequest({ payment,
+        ticketItem: ticketItem({ refundableAmount: 50 }), activeTicketItems: [ticketItem(), ticketItem({ id: 'other' })],
+        reason: 'Invalid refund',
+      })).toThrow();
+    }
+  });
+
   it('builds domestic card full cancel with default secret scope and no optional cancel body fields', () => {
     const request = buildFullPaymentCancelRequest({
       payment: basePayment(),
@@ -368,7 +393,7 @@ describe('payment cancel policy', () => {
     })).toThrow('payment.amount must be a positive integer');
   });
 
-  it('treats last active ticket-item cancel as full cancel even when refundable amount exists', () => {
+  it('retains fees when the last active ticket item has only a partial refund', () => {
     const request = buildTicketItemPaymentCancelRequest({
       payment: basePayment(),
       ticketItem: ticketItem({
@@ -387,8 +412,8 @@ describe('payment cancel policy', () => {
     expect(request.options).toEqual({
       idempotencyKey: 'ticket-item-cancel:ticket-item-last-active-1',
       secretKeyScope: 'default',
+      cancelAmount: 50_000,
     });
-    expect(request.options).not.toHaveProperty('cancelAmount');
     expect(request.options).not.toHaveProperty('currency');
   });
 });

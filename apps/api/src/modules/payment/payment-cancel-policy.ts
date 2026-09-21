@@ -1,4 +1,4 @@
-import type { TossPaymentCancelOptions } from './toss-payments.client.js';
+import type { TossPaymentCancelOptions, TossPaymentResponse } from './toss-payments.client.js';
 
 type PaymentCancelSecretScope =
   NonNullable<TossPaymentCancelOptions['secretKeyScope']>;
@@ -10,6 +10,9 @@ export interface PaymentCancelPaymentSnapshot {
   provider: string;
   currency: string;
   amount: number;
+  /** Completed cancellations only, in the original KRW ledger and provider minor units. */
+  refundedAmount?: number;
+  providerRefundedAmountMinor?: number;
   providerMetadata?: unknown;
   providerChargeCurrency?: string | null;
   providerChargeAmountMinor?: number | null;
@@ -24,6 +27,60 @@ export interface PaymentCancelRequest {
   paymentKey: string;
   reason: string;
   options: TossPaymentCancelOptions;
+}
+
+export function describePaymentCancellation(payment: PaymentCancelPaymentSnapshot, command: PaymentCancelRequest) {
+  const currency = payment.providerChargeCurrency === 'USD' ? 'USD' as const : 'KRW' as const;
+  if (requiresProviderCurrencyPartialCancel(payment) && !canBuildProviderCurrencyPartialCancel(payment)) {
+    throw new Error('Provider-currency cancellation requires provider charge data');
+  }
+  const originalAmountMinor = payment.providerChargeAmountMinor ?? payment.amount;
+  const balanceBeforeMinor = originalAmountMinor - (payment.providerRefundedAmountMinor ?? 0);
+  const amountMinor = command.options.cancelAmount === undefined ? balanceBeforeMinor
+    : Math.round(command.options.cancelAmount * (currency === 'USD' ? 100 : 1));
+  return { currency, amountMinor, amountDecimal: (amountMinor / (currency === 'USD' ? 100 : 1)).toFixed(currency === 'USD' ? 2 : 0),
+    originalAmountMinor, balanceBeforeMinor };
+}
+
+export function withCompletedRefunds(payment: PaymentCancelPaymentSnapshot, items: Array<{
+  status: string; refundableAmount: number; cancellationCommand?: { amountMinor: number } | null;
+}>): PaymentCancelPaymentSnapshot {
+  const completed = items.filter((item) => item.status === 'cancelled');
+  const foreign = requiresProviderCurrencyPartialCancel(payment);
+  if (foreign && completed.some((item) => !item.cancellationCommand)) {
+    throw new Error('Previous foreign refunds require ledger reconciliation');
+  }
+  return { ...payment,
+    refundedAmount: completed.reduce((total, item) => total + item.refundableAmount, 0),
+    providerRefundedAmountMinor: completed.reduce((total, item) => total + (item.cancellationCommand?.amountMinor ?? item.refundableAmount), 0),
+  };
+}
+
+export function readStoredPaymentCancelRequest(metadata: unknown): PaymentCancelRequest | null {
+  if (!isRecord(metadata) || !isRecord(metadata.cancelRequest)) return null;
+  const value = metadata.cancelRequest;
+  if (typeof value.paymentKey !== 'string' || typeof value.reason !== 'string' || !isRecord(value.options)) return null;
+  if (typeof value.options.idempotencyKey !== 'string') return null;
+  return value as unknown as PaymentCancelRequest;
+}
+
+export function readStoredPaymentCancelReceipt(metadata: unknown): { expectedCancelReason?: string; expectedCancelAmount?: number } {
+  const command = readStoredPaymentCancelRequest(metadata);
+  if (!command || !isRecord(metadata)) return {};
+  const amount = metadata.providerRefund;
+  return { expectedCancelReason: command.reason,
+    expectedCancelAmount: isRecord(amount) && typeof amount.amountMinor === 'number'
+      ? amount.amountMinor / (amount.currency === 'USD' ? 100 : 1) : command.options.cancelAmount };
+}
+
+/** A frozen amount is the evidence required before sending or restoring a cancellation. */
+export function hasUnchangedCancellationBalance(response: TossPaymentResponse, snapshot: unknown): boolean {
+  if (!isRecord(snapshot) || !['KRW', 'USD'].includes(String(snapshot.currency))
+    || !Number.isSafeInteger(snapshot.originalAmountMinor) || !Number.isSafeInteger(snapshot.balanceBeforeMinor)) return false;
+  const scale = snapshot.currency === 'USD' ? 100 : 1;
+  return (response.currency === undefined || response.currency === snapshot.currency)
+    && Math.round(response.totalAmount * scale) === snapshot.originalAmountMinor
+    && Math.round((response.balanceAmount ?? -1) * scale) === snapshot.balanceBeforeMinor;
 }
 
 interface BuildFullPaymentCancelRequestInput {
@@ -96,7 +153,8 @@ export function buildFullPaymentCancelRequest(
 export function buildFullReservationPaymentCancelRequest(
   input: BuildFullReservationPaymentCancelRequestInput,
 ): PaymentCancelRequest {
-  if (input.cancellationQuote.refundableAmount >= input.payment.amount) {
+  assertRefundFitsBalance(input.payment, input.cancellationQuote.refundableAmount);
+  if (input.cancellationQuote.refundableAmount + (input.payment.refundedAmount ?? 0) === input.payment.amount) {
     return buildFullPaymentCancelRequest(input);
   }
 
@@ -135,19 +193,24 @@ export function buildFullReservationPaymentCancelRequest(
 export function canBuildFullReservationPaymentCancelRequest(
   input: BuildFullReservationPaymentCancelRequestInput,
 ): boolean {
-  if (input.cancellationQuote.refundableAmount >= input.payment.amount) {
+  try {
+    buildFullReservationPaymentCancelRequest(input);
     return true;
+  } catch {
+    return false;
   }
-
-  return canBuildProviderCurrencyPartialCancel(input.payment);
 }
 
 export function buildTicketItemPaymentCancelRequest(
   input: BuildTicketItemPaymentCancelRequestInput,
 ): PaymentCancelRequest {
+  assertRefundFitsBalance(input.payment, input.ticketItem.refundableAmount);
   const idempotencyKey = `ticket-item-cancel:${input.ticketItem.id}`;
 
-  if (isLastActiveTicketItem(input.ticketItem, input.activeTicketItems)) {
+  if (
+    isLastActiveTicketItem(input.ticketItem, input.activeTicketItems)
+    && input.ticketItem.refundableAmount + (input.payment.refundedAmount ?? 0) === input.payment.amount
+  ) {
     return buildFullPaymentCancelRequest({
       payment: input.payment,
       reason: input.reason,
@@ -196,7 +259,8 @@ function requiresProviderCurrencyPartialCancel(
 ): boolean {
   const provider = payment.provider.toUpperCase();
 
-  return provider === 'PAYPAL' || FOREIGN_EASY_PAY_PROVIDERS.has(provider);
+  return provider === 'PAYPAL' || FOREIGN_EASY_PAY_PROVIDERS.has(provider)
+    || isOverseasCardPayment(payment) || payment.currency.toUpperCase() !== 'KRW';
 }
 
 function canBuildProviderCurrencyPartialCancel(
@@ -210,8 +274,9 @@ function canBuildProviderCurrencyPartialCancel(
 
   return Boolean(
     providerChargeCurrency
-    && providerChargeCurrency !== 'KRW'
-    && typeof payment.providerChargeAmountMinor === 'number',
+    && providerChargeCurrency === 'USD'
+    && Number.isSafeInteger(payment.providerChargeAmountMinor)
+    && (payment.providerChargeAmountMinor ?? 0) > 0,
   );
 }
 
@@ -295,14 +360,23 @@ function buildProviderCurrencyCancelAmount(
     payment.providerChargeAmountMinor,
   );
   assertPositiveInteger('ticketItem.refundableAmount', ticketItem.refundableAmount);
+  if (providerChargeCurrency !== 'USD') {
+    throw new Error('Unsupported provider charge currency');
+  }
+  const alreadyRefundedMinor = payment.providerRefundedAmountMinor ?? 0;
+  if (!Number.isSafeInteger(alreadyRefundedMinor) || alreadyRefundedMinor < 0
+    || alreadyRefundedMinor > payment.providerChargeAmountMinor) {
+    throw new Error('Invalid provider refund balance');
+  }
 
-  const allocatedMinor = Math.round(
-    payment.providerChargeAmountMinor
-    * ticketItem.refundableAmount
-    / payment.amount,
-  );
+  const cumulativeRefund = (payment.refundedAmount ?? 0) + ticketItem.refundableAmount;
+  const denominator = BigInt(payment.amount);
+  const cumulativeMinor = Number((
+    BigInt(payment.providerChargeAmountMinor) * BigInt(cumulativeRefund) * 2n + denominator
+  ) / (denominator * 2n));
+  const allocatedMinor = cumulativeMinor - alreadyRefundedMinor;
 
-  if (allocatedMinor <= 0) {
+  if (allocatedMinor <= 0 || allocatedMinor > payment.providerChargeAmountMinor - alreadyRefundedMinor) {
     throw new Error(
       'Provider-currency partial cancellation amount must be greater than zero',
     );
@@ -315,8 +389,17 @@ function buildProviderCurrencyCancelAmount(
 }
 
 function assertPositiveInteger(label: string, value: number): void {
-  if (!Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
+  if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`${label} must be a positive integer`);
+  }
+}
+
+function assertRefundFitsBalance(payment: PaymentCancelPaymentSnapshot, amount: number): void {
+  assertPositiveInteger('payment.amount', payment.amount);
+  assertPositiveInteger('refund amount', amount);
+  const refunded = payment.refundedAmount ?? 0;
+  if (!Number.isSafeInteger(refunded) || refunded < 0 || amount > payment.amount - refunded) {
+    throw new Error('Refund exceeds the remaining payment balance');
   }
 }
 

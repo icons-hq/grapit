@@ -698,7 +698,7 @@
         "其他"
       ],
       "title": "退款和座位重新开放说明",
-      "description": "整个预订将被取消。此处不能只取消部分座位。",
+      "description": "可在各座位票券中取消单个座位，也可取消整个预订。确认前请核对退款金额及保留的票券。",
       "reasonLabel": "取消原因",
       "reasonPlaceholder": "请选择取消原因",
       "refundAmount": "预计退款金额",

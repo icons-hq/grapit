@@ -7,6 +7,7 @@ export interface TossPaymentResponse {
   method?: string | null;
   isPartialCancelable?: boolean;
   totalAmount: number;
+  currency?: string;
   balanceAmount?: number;
   status: string;
   approvedAt?: string | null;

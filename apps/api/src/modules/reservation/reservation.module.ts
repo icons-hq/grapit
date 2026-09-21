@@ -8,6 +8,7 @@ import { FeatureFlagsModule } from '../feature-flags/feature-flags.module.js';
 import { ConsentModule } from '../consent/consent.module.js';
 import { TicketModule } from '../ticket/ticket.module.js';
 import { CancellationModule } from '../cancellation/cancellation.module.js';
+import { RefundModule } from '../refund/refund.module.js';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { CancellationModule } from '../cancellation/cancellation.module.js';
     ConsentModule,
     TicketModule,
     CancellationModule,
+    RefundModule,
   ],
   controllers: [ReservationController],
   providers: [ReservationService, ReservationFinalizationService],

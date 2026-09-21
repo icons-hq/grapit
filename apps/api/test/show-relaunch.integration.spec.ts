@@ -1,5 +1,7 @@
 import { AdminBookingService } from '../src/modules/admin/admin-booking.service.js';
 import { AdminSettlementReconciliationService } from '../src/modules/admin/admin-settlement-reconciliation.service.js';
+import { TossPaymentError } from '../src/modules/payment/toss-payments.client.js';
+import { RefundService } from '../src/modules/refund/refund.service.js';
 import { PaymentCancellationFinalizerService } from '../src/modules/cancellation/payment-cancellation-finalizer.service.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 import { ReservationFinalizationService } from '../src/modules/reservation/reservation-finalization.service.js';
@@ -25,6 +27,8 @@ import { syncIncludedBenefitEntitlementsForTicketItems } from '../src/database/i
 import { PaymentService } from '../src/modules/payment/payment.service.js';
 import { QrTicketService } from '../src/modules/ticket/qr-ticket.service.js';
 import { PendingPaymentExpirationWorker } from '../src/modules/jobs/pending-payment-expiration.worker.js';
+import { CancelledSeatReleaseWorker } from '../src/modules/jobs/cancelled-seat-release.worker.js';
+import { RefundCancelRetryWorker } from '../src/modules/jobs/refund-cancel-retry.worker.js';
 import { PerformanceService } from '../src/modules/performance/performance.service.js';
 import { SearchService } from '../src/modules/search/search.service.js';
 import type { PrepareReservationRequest } from '@grabit/shared';
@@ -132,6 +136,489 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
       seatId: seatKey, seatKey, floorKey: seatKey.split(':')[0]!, floorLabel: '층', tierName: 'VIP',
       row: 'A', number: '1', price: 50000, status }).returning();
   }
+
+  async function cancellationPurchase() {
+    const f = await fixture();
+    const [first] = await ticket(f);
+    const [second] = await db.insert(ticketItems).values({ reservationId: first!.reservationId,
+      paymentId: first!.paymentId, showtimeId: f.showtimeId, seatId: '1F:A-2', seatKey: '1F:A-2',
+      floorKey: '1F', floorLabel: '1층', tierName: 'VIP', row: 'A', number: '2', price: 50000, serviceFee: 2000 }).returning();
+    await db.update(reservations).set({ status: 'CONFIRMED', totalAmount: 104000 }).where(eq(reservations.id, first!.reservationId));
+    await db.update(payments).set({ amount: 104000 }).where(eq(payments.id, first!.paymentId));
+    await qr.ensureIssuedTicketsForReservation({ reservationId: first!.reservationId, paymentId: first!.paymentId });
+    return { ...f, first: first!, second: second! };
+  }
+
+  function buyerCancellations(provider: unknown) {
+    return new ReservationService(db, provider as never, {} as never, {} as never, {} as never, {} as never,
+      qr, undefined, undefined, new PaymentCancellationFinalizerService(db, { isAvailable: false } as never));
+  }
+
+  it('restores the selected QR and benefits when the provider does not support a partial cancellation', async () => {
+    const f = await cancellationPurchase();
+    await db.transaction((tx) => syncIncludedBenefitEntitlementsForTicketItems(tx, f.showtimeId, [f.first, f.second], new Date()));
+    const cancel = vi.fn();
+    const service = buyerCancellations({ cancelPayment: cancel, queryPayment: vi.fn().mockResolvedValue({
+      status: 'DONE', totalAmount: 104000, balanceAmount: 104000, isPartialCancelable: false }) });
+    await expect(service.cancelTicketItem(f.first.reservationId, f.first.id, f.userId, 'Cancel one'))
+      .rejects.toThrow('부분취소를 지원하지 않습니다');
+    const detail = await service.getReservationDetail(f.first.reservationId, f.userId);
+    expect(detail.ticketItems.every((item) => item.status === 'ACTIVE' && item.cancellation === null)).toBe(true);
+    expect(detail.ticketItems.flatMap((item) => item.benefitEntitlements).every((benefit) => benefit.state === 'active')).toBe(true);
+    expect(await qr.getOwnedTicketsForReservation(f.first.reservationId, f.userId)).toHaveLength(2);
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
+  it.each(['other_owner', 'entered', 'redeemed', 'expired', 'deadline', 'cancelled_payment'] as const)(
+    'rejects a seat cancellation with %s before any provider action', async (caseName) => {
+      const f = await cancellationPurchase();
+      if (caseName === 'entered') await db.update(ticketItems).set({ admissionState: 'entered' }).where(eq(ticketItems.id, f.first.id));
+      if (caseName === 'expired') await db.update(ticketItems).set({ status: 'expired' }).where(eq(ticketItems.id, f.first.id));
+      if (caseName === 'deadline') await db.update(reservations).set({ cancelDeadline: new Date(Date.now() - 1000) }).where(eq(reservations.id, f.first.reservationId));
+      if (caseName === 'cancelled_payment') await db.update(payments).set({ status: 'CANCELED' }).where(eq(payments.id, f.first.paymentId));
+      if (caseName === 'redeemed') {
+        await db.transaction((tx) => syncIncludedBenefitEntitlementsForTicketItems(tx, f.showtimeId, [f.first], new Date()));
+        await db.update(ticketBenefitEntitlements).set({ state: 'redeemed' }).where(eq(ticketBenefitEntitlements.ticketItemId, f.first.id));
+      }
+      const provider = { queryPayment: vi.fn(), cancelPayment: vi.fn() };
+      await expect(buyerCancellations(provider).cancelTicketItem(f.first.reservationId, f.first.id,
+        caseName === 'other_owner' ? randomUUID() : f.userId, 'Cancellation')).rejects.toThrow();
+      expect(provider.queryPayment).not.toHaveBeenCalled();
+      expect(provider.cancelPayment).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['TRANSFER', 'ALIPAY_PLUS'] as const)('keeps %s refunds pending, then reconciles the same command without sending again', async (method) => {
+    const f = await cancellationPurchase();
+    const foreign = method === 'ALIPAY_PLUS';
+    await db.update(payments).set({ method: foreign ? 'FOREIGN_EASY_PAY' : 'TRANSFER', provider: foreign ? 'ALIPAY_PLUS' : 'CARD',
+      currency: foreign ? 'USD' : 'KRW', providerChargeCurrency: foreign ? 'USD' : null,
+      providerChargeAmountMinor: foreign ? 7072 : null }).where(eq(payments.id, f.first.paymentId));
+    await db.insert(seatInventories).values({ showtimeId: f.showtimeId, seatId: f.first.seatId,
+      seatKey: f.first.seatKey, floorKey: f.first.floorKey, status: 'sold' });
+    const providerState = { status: 'DONE', totalAmount: foreign ? 70.72 : 104000, balanceAmount: foreign ? 70.72 : 104000,
+      isPartialCancelable: true, cancels: [] as Array<{ cancelAmount: number; cancelReason: string; cancelStatus: string; cancelRequestId?: string }> };
+    const cancel = vi.fn().mockImplementation(async (_key, reason, options) => {
+      providerState.cancels.push({ cancelAmount: options.cancelAmount, cancelReason: reason,
+        cancelStatus: 'IN_PROGRESS', cancelRequestId: options.cancelRequestId });
+      return structuredClone(providerState);
+    });
+    const service = buyerCancellations({ cancelPayment: cancel, queryPayment: vi.fn().mockImplementation(async () => structuredClone(providerState)) });
+    const pending = await service.cancelTicketItem(f.first.reservationId, f.first.id, f.userId, 'Original');
+    expect(pending.refundTimeline?.currentState).toBe('PROCESSING_AT_PG');
+    expect(pending.cancellationRecovery).toEqual({ kind: 'ticket', ticketItemId: f.first.id });
+    await service.cancelTicketItem(f.first.reservationId, f.first.id, f.userId, 'Retry');
+    expect(cancel).toHaveBeenCalledTimes(1);
+    providerState.cancels[0]!.cancelStatus = 'DONE';
+    providerState.status = 'PARTIAL_CANCELED'; providerState.balanceAmount = foreign ? 35.36 : 52000;
+    const complete = await service.cancelTicketItem(f.first.reservationId, f.first.id, f.userId, 'Retry again');
+    expect(complete.ticketItems.find((item) => item.id === f.first.id)?.cancellation?.refundStatus).toBe('COMPLETED');
+    expect(complete.ticketItems.find((item) => item.id === f.second.id)?.status).toBe('ACTIVE');
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['PAYPAL', 'OVERSEAS_CARD', 'ALIPAY_PLUS'] as const)('recovers a frozen %s seat refund through the payment-status webhook', async (route) => {
+    const f = await cancellationPurchase();
+    await db.update(payments).set({ method: route === 'OVERSEAS_CARD' ? 'CARD' : 'FOREIGN_EASY_PAY',
+      provider: route === 'OVERSEAS_CARD' ? 'CARD' : route, currency: 'USD', providerChargeCurrency: 'USD',
+      providerChargeAmountMinor: 7072, providerMetadata: { secretKeyScope: route === 'OVERSEAS_CARD' ? 'overseas-card' : route === 'ALIPAY_PLUS' ? 'foreign-easy-pay' : 'default' } })
+      .where(eq(payments.id, f.first.paymentId));
+    await db.insert(seatInventories).values({ showtimeId: f.showtimeId, seatId: f.first.seatId,
+      seatKey: f.first.seatKey, floorKey: f.first.floorKey, status: 'sold' });
+    const [payment] = await db.select().from(payments).where(eq(payments.id, f.first.paymentId));
+    const snapshot = { paymentKey: payment!.paymentKey, orderId: payment!.tossOrderId, status: 'DONE',
+      totalAmount: 70.72, balanceAmount: 70.72, isPartialCancelable: true,
+      cancels: [] as Array<{ cancelAmount: number; cancelReason: string; cancelStatus: string; cancelRequestId?: string; canceledAt: string; transactionKey: string }> };
+    const cancel = vi.fn().mockImplementation(async (_key, reason, options) => {
+      snapshot.cancels.push({ cancelAmount: options.cancelAmount, cancelReason: reason, cancelStatus: 'IN_PROGRESS',
+        cancelRequestId: options.cancelRequestId, canceledAt: new Date().toISOString(), transactionKey: randomUUID() });
+      return structuredClone(snapshot);
+    });
+    const provider = { queryPayment: vi.fn().mockImplementation(async () => structuredClone(snapshot)), cancelPayment: cancel };
+    await buyerCancellations(provider).cancelTicketItem(f.first.reservationId, f.first.id, f.userId, 'Cancel selected seat');
+    expect(cancel.mock.calls[0]?.[2]).toMatchObject({ cancelAmount: 35.36, currency: 'USD',
+      secretKeyScope: route === 'OVERSEAS_CARD' ? 'overseas-card' : route === 'ALIPAY_PLUS' ? 'foreign-easy-pay' : 'default' });
+    snapshot.cancels[0]!.cancelStatus = 'DONE'; snapshot.status = 'PARTIAL_CANCELED'; snapshot.balanceAmount = 35.36;
+    const paymentService = new PaymentService(db, undefined, qr, provider as never, undefined,
+      new PaymentCancellationFinalizerService(db, { isAvailable: false } as never));
+    expect(await paymentService.finalizePaymentStatusPartialCancelWebhook({ eventId: randomUUID(),
+      eventType: 'PAYMENT_STATUS_CHANGED', data: { paymentKey: snapshot.paymentKey, orderId: snapshot.orderId,
+        status: 'PARTIAL_CANCELED', totalAmount: 70.72 } }, snapshot)).toBe('finalized');
+    const detail = await buyerCancellations(provider).getReservationDetail(f.first.reservationId, f.userId);
+    expect(detail.ticketItems.find((item) => item.id === f.first.id)?.cancellation).toMatchObject({
+      refundStatus: 'COMPLETED', providerRefund: { currency: 'USD', amountMinor: 3536 } });
+    expect(await qr.getOwnedTicketsForReservation(f.first.reservationId, f.userId)).toHaveLength(1);
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['accepted then response lost', 'rejected without a balance change'] as const)('reconciles domestic cancellation when %s without confusing an older equal refund', async (mode) => {
+    const f = await cancellationPurchase();
+    await db.insert(seatInventories).values({ showtimeId: f.showtimeId, seatId: f.first.seatId,
+      seatKey: f.first.seatKey, floorKey: f.first.floorKey, status: 'sold' });
+    const snapshot = { status: 'DONE', totalAmount: 104000, balanceAmount: 104000, isPartialCancelable: true,
+      cancels: [{ cancelAmount: 52000, cancelReason: 'Cancellation', cancelStatus: 'DONE' }] };
+    const cancel = vi.fn().mockImplementation(async (_key, reason, options) => {
+      if (mode === 'accepted then response lost') {
+        snapshot.status = 'PARTIAL_CANCELED'; snapshot.balanceAmount = 52000;
+        snapshot.cancels.push({ cancelAmount: options.cancelAmount, cancelReason: reason, cancelStatus: 'DONE' });
+        throw new TossPaymentError('NETWORK_ERROR', 'Response lost');
+      }
+      throw new TossPaymentError('INVALID_REQUEST', 'Rejected');
+    });
+    const provider = { queryPayment: vi.fn().mockImplementation(async () => structuredClone(snapshot)), cancelPayment: cancel };
+    const service = buyerCancellations(provider);
+    if (mode === 'accepted then response lost') {
+      const detail = await service.cancelTicketItem(f.first.reservationId, f.first.id, f.userId, 'Cancellation');
+      expect(detail.ticketItems.find((item) => item.id === f.first.id)?.status).toBe('CANCELLED');
+      await service.cancelTicketItem(f.first.reservationId, f.first.id, f.userId, 'Replay');
+    } else {
+      await expect(service.cancelTicketItem(f.first.reservationId, f.first.id, f.userId, 'Cancellation')).rejects.toThrow();
+      expect((await service.getReservationDetail(f.first.reservationId, f.userId)).ticketItems.every((item) => item.status === 'ACTIVE')).toBe(true);
+    }
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('recovers a provider-completed cancellation after database failure without sending another refund', async () => {
+    const f = await cancellationPurchase();
+    const provider = { status: 'DONE', totalAmount: 104000, balanceAmount: 104000, isPartialCancelable: true,
+      cancels: [] as Array<{ cancelAmount: number; cancelReason: string; cancelStatus: string; transactionKey: string }> };
+    const cancel = vi.fn().mockImplementation(async (_key, reason, options) => {
+      provider.status = 'PARTIAL_CANCELED'; provider.balanceAmount = 52000;
+      provider.cancels.push({ cancelAmount: options.cancelAmount, cancelReason: reason,
+        cancelStatus: 'DONE', transactionKey: randomUUID() });
+      return structuredClone(provider);
+    });
+    const service = new ReservationService(db, { queryPayment: vi.fn().mockImplementation(async () => structuredClone(provider)),
+      cancelPayment: cancel } as never, {} as never, {} as never, {} as never, {} as never,
+      qr, undefined, undefined, new PaymentCancellationFinalizerService(db, { isAvailable: false } as never));
+    // A missing inventory fixture deliberately makes the DB finalizer roll back after the PG succeeds.
+    await expect(service.cancelTicketItem(f.first.reservationId, f.first.id, f.userId, 'Original reason')).rejects.toThrow();
+    expect((await service.getReservationDetail(f.first.reservationId, f.userId)).ticketItems
+      .find((item) => item.id === f.first.id)?.status).toBe('CANCELLATION_PENDING');
+    await db.insert(seatInventories).values({ showtimeId: f.showtimeId, seatId: f.first.seatId,
+      floorKey: f.first.floorKey, seatKey: f.first.seatKey, status: 'sold' });
+    await db.update(reservations).set({ createdAt: new Date(Date.now() - 10 * 86400000) }).where(eq(reservations.id, f.first.reservationId));
+    const recovered = await service.cancelTicketItem(f.first.reservationId, f.first.id, f.userId, 'Different retry reason');
+    expect(recovered.ticketItems.find((item) => item.id === f.first.id)?.cancellation)
+      .toMatchObject({ cancelReason: 'Original reason', refundableAmount: 52000, refundStatus: 'COMPLETED' });
+    expect(recovered.ticketItems.find((item) => item.id === f.second.id)?.status).toBe('ACTIVE');
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(await qr.getOwnedTicketsForReservation(f.first.reservationId, f.userId)).toHaveLength(1);
+  });
+
+  it('does not send a cancellation when the provider balance cannot be verified', async () => {
+    const f = await cancellationPurchase();
+    const cancel = vi.fn().mockRejectedValue(new Error('Should not be sent'));
+    const service = new ReservationService(db, { queryPayment: vi.fn().mockRejectedValue(new Error('Provider offline')),
+      cancelPayment: cancel } as never, {} as never, {} as never, {} as never, {} as never,
+      qr, undefined, undefined, new PaymentCancellationFinalizerService(db, { isAvailable: false } as never));
+    await expect(service.cancelTicketItem(f.first.reservationId, f.first.id, f.userId, 'Cancellation')).rejects.toThrow();
+    expect(cancel).not.toHaveBeenCalled();
+    const detail = await service.getReservationDetail(f.first.reservationId, f.userId);
+    expect(detail.ticketItems.find((item) => item.id === f.first.id)?.status).toBe('CANCELLATION_PENDING');
+    expect(detail.ticketItems.find((item) => item.id === f.second.id)?.status).toBe('ACTIVE');
+  });
+
+  it('refuses whole-reservation refunds when a selected ticket benefit has already been redeemed', async () => {
+    const f = await cancellationPurchase();
+    await db.transaction((tx) => syncIncludedBenefitEntitlementsForTicketItems(tx, f.showtimeId, [f.first, f.second], new Date()));
+    await db.update(ticketBenefitEntitlements).set({ state: 'redeemed', redeemedAt: new Date(), redeemedByUserId: f.userId })
+      .where(eq(ticketBenefitEntitlements.ticketItemId, f.first.id));
+    const cancel = vi.fn().mockResolvedValue({ status: 'CANCELED', totalAmount: 104000, balanceAmount: 0 });
+    const service = new RefundService(db, { cancelPayment: cancel } as never,
+      new PaymentCancellationFinalizerService(db, { isAvailable: false } as never));
+    await expect(service.requestRefund(f.first.reservationId, f.userId, 'Whole booking cancellation'))
+      .rejects.toThrow('특전을 수령한 티켓');
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
+  it('previews one selected seat with its KRW policy amount, provider currency and remaining ticket', async () => {
+    const f = await cancellationPurchase();
+    await db.update(payments).set({ currency: 'USD', providerChargeCurrency: 'USD', providerChargeAmountMinor: 7071,
+      providerMetadata: { secretKeyScope: 'overseas-card' } }).where(eq(payments.id, f.first.paymentId));
+    const service = new ReservationService(db, { queryPayment: vi.fn().mockResolvedValue({ status: 'DONE',
+      totalAmount: 70.71, balanceAmount: 70.71, isPartialCancelable: true }) } as never,
+      {} as never, {} as never, {} as never, {} as never, qr);
+    const preview = await service.getTicketItemCancellationPreview(f.first.reservationId, f.first.id, f.userId);
+    expect(preview).toMatchObject({ canRequestRefund: true, refundableAmount: 52000,
+      selectedTicketItemId: f.first.id, remainingTicketItemIds: [f.second.id],
+      providerRefund: { currency: 'USD', amountMinor: 3536, amountDecimal: '35.36' } });
+    expect(preview.cancellationQuote?.items).toMatchObject([{ ticketItemId: f.first.id, cancellationFee: 0, serviceFeeRefund: 2000 }]);
+    await expect(service.getTicketItemCancellationPreview(f.first.reservationId, f.first.id, randomUUID())).rejects.toThrow();
+  });
+
+  it('requires the buyer to review a changed refund amount before contacting the payment provider', async () => {
+    const f = await cancellationPurchase();
+    const cancel = vi.fn().mockResolvedValue({ status: 'CANCELED', totalAmount: 104000, balanceAmount: 0 });
+    const provider = { cancelPayment: cancel, queryPayment: vi.fn().mockResolvedValue({ status: 'DONE',
+      totalAmount: 104000, balanceAmount: 104000, isPartialCancelable: true }) };
+    const finalizer = new PaymentCancellationFinalizerService(db, { isAvailable: false } as never);
+    const service = new ReservationService(db, provider as never, {} as never, {} as never, {} as never, {} as never,
+      qr, undefined, undefined, finalizer);
+    await expect(service.cancelTicketItem(f.first.reservationId, f.first.id, f.userId, 'Cancellation',
+      { expectedRefundableAmount: 40000, expectedProviderRefundAmountMinor: 40000 })).rejects.toThrow('환불 금액이 변경');
+    await expect(new RefundService(db, provider as never, finalizer).requestRefund(f.first.reservationId, f.userId,
+      'Whole cancellation', { expectedRefundableAmount: 80000 })).rejects.toThrow('환불 금액이 변경');
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
+  it('persists and completes one full-refund command while preserving the original transaction amount', async () => {
+    const f = await cancellationPurchase();
+    await db.insert(seatInventories).values([f.first, f.second].map((item) => ({ showtimeId: f.showtimeId,
+      seatId: item.seatId, seatKey: item.seatKey, floorKey: item.floorKey, status: 'sold' as const })));
+    const cancel = vi.fn().mockImplementation(async (_key, reason) => ({ status: 'CANCELED', totalAmount: 104000,
+      balanceAmount: 0, cancels: [{ cancelReason: reason, cancelAmount: 104000, cancelStatus: 'DONE', transactionKey: randomUUID() }] }));
+    const service = new RefundService(db, { cancelPayment: cancel, queryPayment: vi.fn().mockResolvedValue({ status: 'DONE',
+      totalAmount: 104000, balanceAmount: 104000, isPartialCancelable: true }) } as never,
+      new PaymentCancellationFinalizerService(db, { isAvailable: false } as never));
+    const result = await service.requestRefund(f.first.reservationId, f.userId, 'Whole cancellation',
+      { expectedRefundableAmount: 104000, expectedProviderRefundAmountMinor: 104000 });
+    expect(result.refundTimeline?.currentState).toBe('COMPLETED');
+    expect(result.providerRefund).toMatchObject({ currency: 'KRW', amountMinor: 104000 });
+    expect(result.cancellationQuote?.originalPaymentAmount).toBe(104000);
+    const retry = await service.requestRefund(f.first.reservationId, f.userId, 'Retry');
+    expect(retry.idempotent).toBe(true);
+    expect(retry.refundTimeline?.currentState).toBe('COMPLETED');
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('restores all rights after a definite full-refund rejection and permits a fresh reviewed attempt', async () => {
+    const f = await cancellationPurchase();
+    await db.update(reservations).set({ createdAt: new Date(Date.now() - 2 * 86400000) }).where(eq(reservations.id, f.first.reservationId));
+    await db.transaction((tx) => syncIncludedBenefitEntitlementsForTicketItems(tx, f.showtimeId, [f.first, f.second], new Date()));
+    await db.insert(seatInventories).values([f.first, f.second].map((item) => ({ showtimeId: f.showtimeId,
+      seatId: item.seatId, seatKey: item.seatKey, floorKey: item.floorKey, status: 'sold' as const })));
+    let partialAllowed = false;
+    const cancel = vi.fn().mockImplementation(async (_key, reason, options) => ({ status: 'PARTIAL_CANCELED', totalAmount: 104000,
+      balanceAmount: 4000, cancels: [{ cancelReason: reason, cancelAmount: options.cancelAmount,
+        cancelStatus: 'DONE', canceledAt: new Date().toISOString(), transactionKey: randomUUID() }] }));
+    const provider = { cancelPayment: cancel, queryPayment: vi.fn().mockImplementation(async () => ({ status: 'DONE',
+      totalAmount: 104000, balanceAmount: 104000, isPartialCancelable: partialAllowed })) };
+    const service = new RefundService(db, provider as never, new PaymentCancellationFinalizerService(db, { isAvailable: false } as never));
+    const rejected = await service.requestRefund(f.first.reservationId, f.userId, 'Cancellation');
+    expect(rejected.refundTimeline?.currentState).toBe('FAILED');
+    const restored = await buyerCancellations(provider).getReservationDetail(f.first.reservationId, f.userId);
+    expect(restored.refundTimeline).toBeNull();
+    expect(restored.ticketItems.every((item) => item.status === 'ACTIVE' && item.cancellation === null)).toBe(true);
+    expect(restored.ticketItems.flatMap((item) => item.benefitEntitlements).every((item) => item.state === 'active')).toBe(true);
+    expect(await qr.getOwnedTicketsForReservation(f.first.reservationId, f.userId)).toHaveLength(2);
+    expect(cancel).not.toHaveBeenCalled();
+    partialAllowed = true;
+    const retried = await service.requestRefund(f.first.reservationId, f.userId, 'Reviewed retry', { expectedRefundableAmount: 100000 });
+    expect(retried.refundTimeline?.currentState).toBe('COMPLETED');
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['worker', 'webhook'] as const)('recovers a fee-retaining full refund through %s after PG completion precedes the DB failure timestamp', async (mode) => {
+    const f = await cancellationPurchase();
+    const now = new Date();
+    await db.update(reservations).set({ createdAt: new Date(now.getTime() - 2 * 86400000) }).where(eq(reservations.id, f.first.reservationId));
+    const original = await buyerCancellations({}).getReservationDetail(f.first.reservationId, f.userId);
+    vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(now);
+    try {
+      const snapshot = { paymentKey: original.paymentKey!, orderId: original.tossOrderId!, status: 'DONE',
+        totalAmount: 104000, balanceAmount: 104000, isPartialCancelable: true,
+        cancels: [] as Array<{ cancelAmount: number; cancelReason: string; cancelStatus: string; canceledAt: string; transactionKey: string }> };
+      const cancel = vi.fn().mockImplementation(async (_key, reason, options) => {
+        snapshot.status = 'PARTIAL_CANCELED'; snapshot.balanceAmount = 4000;
+        snapshot.cancels.push({ cancelAmount: options.cancelAmount, cancelReason: reason, cancelStatus: 'DONE',
+          canceledAt: new Date(now.getTime() + 1000).toISOString(), transactionKey: randomUUID() });
+        vi.setSystemTime(new Date(now.getTime() + 2000));
+        return structuredClone(snapshot);
+      });
+      const provider = { cancelPayment: cancel, queryPayment: vi.fn().mockImplementation(async () => structuredClone(snapshot)) };
+      const finalizer = new PaymentCancellationFinalizerService(db, { isAvailable: false } as never);
+      const send = vi.fn(async (_name: string, _payload: { refundId: string }) => randomUUID());
+      const service = new RefundService(db, provider as never, finalizer, { isAvailable: true, send } as never);
+      const pending = await service.requestRefund(f.first.reservationId, f.userId, 'Fee-retaining cancellation');
+      expect(pending.refundTimeline?.currentState).toBe('SENT_TO_PG');
+      await db.insert(seatInventories).values([f.first, f.second].map((item) => ({ showtimeId: f.showtimeId,
+        seatId: item.seatId, seatKey: item.seatKey, floorKey: item.floorKey, status: 'sold' as const })));
+      if (mode === 'worker') {
+        const job = send.mock.calls[0]![1];
+        expect(await new RefundCancelRetryWorker(db, provider as never, finalizer).handleJob(job)).toMatchObject({ status: 'completed' });
+      } else {
+        const paymentService = new PaymentService(db, undefined, qr, provider as never, undefined, finalizer);
+        expect(await paymentService.finalizePaymentStatusPartialCancelWebhook({ eventId: randomUUID(), eventType: 'PAYMENT_STATUS_CHANGED',
+          createdAt: new Date().toISOString(), data: { paymentKey: snapshot.paymentKey, orderId: snapshot.orderId,
+            status: 'PARTIAL_CANCELED', totalAmount: 104000 } }, snapshot)).toBe('finalized');
+      }
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect((await service.getRefundPreview(f.first.reservationId, f.userId)).refundTimeline?.currentState).toBe('COMPLETED');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('keeps a frozen full refund with an in-progress receipt pending without another POST or retry exhaustion', async () => {
+    const f = await cancellationPurchase();
+    await db.update(reservations).set({ createdAt: new Date(Date.now() - 2 * 86400000) }).where(eq(reservations.id, f.first.reservationId));
+    const snapshot = { status: 'DONE', totalAmount: 104000, balanceAmount: 104000, isPartialCancelable: true,
+      cancels: [] as Array<{ cancelAmount: number; cancelReason: string; cancelStatus: string }> };
+    const cancel = vi.fn().mockImplementation(async (_key, reason, options) => {
+      snapshot.cancels.push({ cancelAmount: options.cancelAmount, cancelReason: reason, cancelStatus: 'IN_PROGRESS' });
+      return structuredClone(snapshot);
+    });
+    const provider = { cancelPayment: cancel, queryPayment: vi.fn().mockImplementation(async () => structuredClone(snapshot)) };
+    const finalizer = new PaymentCancellationFinalizerService(db, { isAvailable: false } as never);
+    await new RefundService(db, provider as never, finalizer).requestRefund(f.first.reservationId, f.userId, 'Cancellation');
+    const pending = await buyerCancellations(provider).getReservationDetail(f.first.reservationId, f.userId);
+    expect(pending.cancellationRecovery).toEqual({ kind: 'reservation' });
+    expect(pending.ticketItems.every((item) => item.cancellation?.refundStatus === 'PROCESSING_AT_PG')).toBe(true);
+    const [refund] = await db.select().from(schema.refunds).where(eq(schema.refunds.reservationId, f.first.reservationId));
+    const worker = new RefundCancelRetryWorker(db, provider as never, finalizer);
+    await worker.handleJob({ refundId: refund!.id, attempt: 1 });
+    expect(cancel).toHaveBeenCalledTimes(1);
+    await db.update(schema.refunds).set({ retryCount: 3 }).where(eq(schema.refunds.id, refund!.id));
+    await worker.handleJob({ refundId: refund!.id, attempt: 4 });
+    expect((await db.select().from(schema.refunds).where(eq(schema.refunds.id, refund!.id)))[0]?.status).toBe('processing_at_pg');
+  });
+
+  it.each(['one seat', 'last seat'] as const)('keeps a rejected full refund separate from a later %s cancellation webhook', async (selection) => {
+    const f = await cancellationPurchase();
+    await db.update(payments).set({ method: 'FOREIGN_EASY_PAY', provider: 'ALIPAY_PLUS', currency: 'USD',
+      providerChargeCurrency: 'USD', providerChargeAmountMinor: 7072 }).where(eq(payments.id, f.first.paymentId));
+    await db.insert(seatInventories).values([f.first, f.second].map((item) => ({ showtimeId: f.showtimeId,
+      seatId: item.seatId, seatKey: item.seatKey, floorKey: item.floorKey, status: 'sold' as const })));
+    const [payment] = await db.select().from(payments).where(eq(payments.id, f.first.paymentId));
+    const snapshot = { paymentKey: payment!.paymentKey, orderId: payment!.tossOrderId, currency: 'USD', status: 'DONE',
+      totalAmount: 70.72, balanceAmount: 70.72, isPartialCancelable: true,
+      cancels: [] as Array<{ cancelAmount: number; cancelReason: string; cancelStatus: string; cancelRequestId: string; canceledAt: string }> };
+    let behavior: 'reject' | 'complete' | 'pending' = 'reject';
+    const provider = { queryPayment: vi.fn().mockImplementation(async () => structuredClone(snapshot)),
+      cancelPayment: vi.fn().mockImplementation(async (_key, reason, options) => {
+        if (behavior === 'reject') throw new TossPaymentError('INVALID_REQUEST', 'Rejected');
+        const amount = options.cancelAmount ?? snapshot.balanceAmount;
+        snapshot.cancels.push({ cancelAmount: amount, cancelReason: reason, cancelStatus: behavior === 'complete' ? 'DONE' : 'IN_PROGRESS',
+          cancelRequestId: options.cancelRequestId, canceledAt: new Date().toISOString() });
+        if (behavior === 'complete') { snapshot.balanceAmount = Math.round((snapshot.balanceAmount - amount) * 100) / 100;
+          snapshot.status = snapshot.balanceAmount === 0 ? 'CANCELED' : 'PARTIAL_CANCELED'; }
+        return structuredClone(snapshot);
+      }) };
+    const finalizer = new PaymentCancellationFinalizerService(db, { isAvailable: false } as never);
+    await new RefundService(db, provider as never, finalizer).requestRefund(f.first.reservationId, f.userId, 'Rejected full request');
+    const service = buyerCancellations(provider);
+    if (selection === 'last seat') { behavior = 'complete'; await service.cancelTicketItem(f.first.reservationId, f.first.id, f.userId, 'First seat'); }
+    behavior = 'pending';
+    const target = selection === 'one seat' ? f.first : f.second;
+    try { await service.cancelTicketItem(target.reservationId, target.id, f.userId, 'New seat request'); } catch {
+      expect(selection).toBe('last seat');
+    }
+    const receipt = snapshot.cancels.at(-1)!; receipt.cancelStatus = 'DONE';
+    snapshot.balanceAmount = Math.round((snapshot.balanceAmount - receipt.cancelAmount) * 100) / 100;
+    snapshot.status = snapshot.balanceAmount === 0 ? 'CANCELED' : 'PARTIAL_CANCELED';
+    const paymentsService = new PaymentService(db, undefined, qr, provider as never, undefined, finalizer);
+    expect(await paymentsService.finalizeConfirmedCancelWebhook({ eventId: randomUUID(), eventType: 'CANCEL_STATUS_CHANGED',
+      data: { paymentKey: snapshot.paymentKey, orderId: snapshot.orderId, totalAmount: 70.72,
+        status: 'DONE', cancelRequestId: receipt.cancelRequestId } }, snapshot)).toBe('finalized');
+    expect((await db.select().from(schema.refunds).where(eq(schema.refunds.reservationId, f.first.reservationId)))[0]?.status).toBe('failed');
+    const detail = await service.getReservationDetail(f.first.reservationId, f.userId);
+    expect(detail.ticketItems.find((item) => item.id === target.id)?.status).toBe('CANCELLED');
+    expect(detail.refundProviderAmount?.amountMinor).toBe(selection === 'one seat' ? 3536 : 7072);
+  });
+
+  it.each(['network error', 'in-progress response'] as const)('keeps webhook completion after a late %s from the original full cancellation', async (lateResponse) => {
+    const f = await cancellationPurchase();
+    await db.update(reservations).set({ createdAt: new Date(Date.now() - 2 * 86400000) }).where(eq(reservations.id, f.first.reservationId));
+    await db.insert(seatInventories).values([f.first, f.second].map((item) => ({ showtimeId: f.showtimeId,
+      seatId: item.seatId, seatKey: item.seatKey, floorKey: item.floorKey, status: 'sold' as const })));
+    const [payment] = await db.select().from(payments).where(eq(payments.id, f.first.paymentId));
+    const finalizer = new PaymentCancellationFinalizerService(db, { isAvailable: false } as never);
+    const paymentService = new PaymentService(db, undefined, qr, {} as never, undefined, finalizer);
+    const provider = {
+      queryPayment: vi.fn().mockResolvedValue({ status: 'DONE', totalAmount: 104000, balanceAmount: 104000, isPartialCancelable: true }),
+      cancelPayment: vi.fn().mockImplementation(async (_key, reason, options) => {
+        const snapshot = { paymentKey: payment!.paymentKey, orderId: payment!.tossOrderId, totalAmount: 104000,
+          balanceAmount: 4000, status: 'PARTIAL_CANCELED', cancels: [{ cancelAmount: options.cancelAmount,
+            cancelReason: reason, cancelStatus: 'DONE', canceledAt: new Date().toISOString(), transactionKey: randomUUID() }] };
+        expect(await paymentService.finalizePaymentStatusPartialCancelWebhook({ eventId: randomUUID(), eventType: 'PAYMENT_STATUS_CHANGED',
+          data: { paymentKey: payment!.paymentKey, orderId: payment!.tossOrderId, totalAmount: 104000, status: 'PARTIAL_CANCELED' } }, snapshot)).toBe('finalized');
+        if (lateResponse === 'network error') throw new TossPaymentError('NETWORK_ERROR', 'Late response lost');
+        return { ...snapshot, status: 'DONE', balanceAmount: 104000, cancels: snapshot.cancels.map((cancel) => ({ ...cancel, cancelStatus: 'IN_PROGRESS' })) };
+      }),
+    };
+    const result = await new RefundService(db, provider as never, finalizer).requestRefund(f.first.reservationId, f.userId, 'Cancellation');
+    expect(result.refundTimeline?.currentState).toBe('COMPLETED');
+    expect((await db.select().from(schema.refunds).where(eq(schema.refunds.reservationId, f.first.reservationId)))[0]?.status).toBe('completed');
+  });
+
+  it.each(['expired command', 'changed balance'] as const)('does not repeat a full refund with %s', async (mode) => {
+    const f = await cancellationPurchase();
+    const cancel = vi.fn().mockRejectedValue(new Error('Must not send without verified balance'));
+    const provider = { cancelPayment: cancel, queryPayment: vi.fn().mockRejectedValue(new Error('Provider offline')) };
+    const finalizer = new PaymentCancellationFinalizerService(db, { isAvailable: false } as never);
+    const send = vi.fn(async () => randomUUID());
+    const service = new RefundService(db, provider as never, finalizer, { isAvailable: true, send } as never);
+    await service.requestRefund(f.first.reservationId, f.userId, 'Cancellation');
+    const pendingDetail = await buyerCancellations(provider).getReservationDetail(f.first.reservationId, f.userId);
+    expect(pendingDetail.ticketItems.every((item) => item.cancellation?.reopenState === 'NOT_REQUIRED')).toBe(true);
+    const [refund] = await db.select().from(schema.refunds).where(eq(schema.refunds.reservationId, f.first.reservationId));
+    if (mode === 'expired command') await db.update(schema.refunds).set({ requestedAt: new Date(Date.now() - 16 * 86400000) })
+      .where(eq(schema.refunds.id, refund!.id));
+    provider.queryPayment.mockResolvedValue({ status: 'DONE', totalAmount: 104000,
+      balanceAmount: mode === 'changed balance' ? 100000 : 104000, isPartialCancelable: true } as never);
+    await new RefundCancelRetryWorker(db, provider as never, finalizer).handleJob({ refundId: refund!.id, attempt: 1 });
+    expect(cancel).not.toHaveBeenCalled();
+    expect((await db.select().from(schema.refunds).where(eq(schema.refunds.id, refund!.id)))[0])
+      .toMatchObject({ status: 'failed', customerServiceCtaVisible: true });
+    const detail = await buyerCancellations(provider).getReservationDetail(f.first.reservationId, f.userId);
+    expect(detail.ticketItems.every((item) => item.status === 'CANCELLATION_PENDING')).toBe(true);
+  });
+
+  it('restores buyer rights after the retry worker proves a rejected refund changed no provider balance', async () => {
+    const f = await cancellationPurchase();
+    await db.transaction((tx) => syncIncludedBenefitEntitlementsForTicketItems(tx, f.showtimeId, [f.first, f.second], new Date()));
+    const cancel = vi.fn().mockRejectedValue(new TossPaymentError('INVALID_REQUEST', 'Rejected'));
+    const provider = { cancelPayment: cancel, queryPayment: vi.fn().mockRejectedValue(new Error('Provider offline')) };
+    const finalizer = new PaymentCancellationFinalizerService(db, { isAvailable: false } as never);
+    const service = new RefundService(db, provider as never, finalizer);
+    await service.requestRefund(f.first.reservationId, f.userId, 'Cancellation');
+    const [refund] = await db.select().from(schema.refunds).where(eq(schema.refunds.reservationId, f.first.reservationId));
+    provider.queryPayment.mockResolvedValue({ status: 'DONE', totalAmount: 104000, balanceAmount: 104000,
+      isPartialCancelable: true, cancels: [] } as never);
+    await new RefundCancelRetryWorker(db, provider as never, finalizer).handleJob({ refundId: refund!.id, attempt: 1 });
+    const detail = await buyerCancellations(provider).getReservationDetail(f.first.reservationId, f.userId);
+    expect(detail.ticketItems.every((item) => item.status === 'ACTIVE')).toBe(true);
+    expect(detail.ticketItems.flatMap((item) => item.benefitEntitlements).every((item) => item.state === 'active')).toBe(true);
+    expect(await qr.getOwnedTicketsForReservation(f.first.reservationId, f.userId)).toHaveLength(2);
+  });
+
+  it('keeps a rejected partial refund pending when the follow-up provider query is unavailable', async () => {
+    const f = await cancellationPurchase();
+    const provider = { cancelPayment: vi.fn().mockRejectedValue(new TossPaymentError('INVALID_REQUEST', 'Rejected')),
+      queryPayment: vi.fn().mockResolvedValueOnce({ status: 'DONE', totalAmount: 104000, balanceAmount: 104000,
+        isPartialCancelable: true }).mockRejectedValue(new Error('Provider offline')) };
+    await expect(buyerCancellations(provider).cancelTicketItem(f.first.reservationId, f.first.id, f.userId, 'Cancellation')).rejects.toThrow();
+    const detail = await buyerCancellations(provider).getReservationDetail(f.first.reservationId, f.userId);
+    expect(detail.ticketItems.find((item) => item.id === f.first.id)?.status).toBe('CANCELLATION_PENDING');
+    expect(await qr.getOwnedTicketsForReservation(f.first.reservationId, f.userId)).toHaveLength(1);
+  });
+
+  it('serializes two seat cancellations while allowing the remaining ticket to stay valid', async () => {
+    const f = await cancellationPurchase();
+    await db.insert(seatInventories).values({ showtimeId: f.showtimeId, seatId: f.first.seatId,
+      seatKey: f.first.seatKey, floorKey: f.first.floorKey, status: 'sold' });
+    let started!: () => void;
+    let finish!: () => void;
+    const providerStarted = new Promise<void>((resolve) => { started = resolve; });
+    const providerContinue = new Promise<void>((resolve) => { finish = resolve; });
+    const cancel = vi.fn().mockImplementation(async (_key, reason) => {
+      started(); await providerContinue;
+      return { status: 'PARTIAL_CANCELED', totalAmount: 104000, balanceAmount: 52000,
+        cancels: [{ cancelReason: reason, cancelAmount: 52000, cancelStatus: 'DONE' }] };
+    });
+    const service = new ReservationService(db, { cancelPayment: cancel, queryPayment: vi.fn().mockResolvedValue({ status: 'DONE',
+      totalAmount: 104000, balanceAmount: 104000, isPartialCancelable: true }) } as never,
+      {} as never, {} as never, {} as never, {} as never, qr, undefined, undefined,
+      new PaymentCancellationFinalizerService(db, { isAvailable: false } as never));
+    const first = service.cancelTicketItem(f.first.reservationId, f.first.id, f.userId, 'First');
+    await providerStarted;
+    try {
+      await expect(service.cancelTicketItem(f.second.reservationId, f.second.id, f.userId, 'Second'))
+        .rejects.toThrow('다른 좌석의 취소가 처리 중');
+    } finally { finish(); }
+    const result = await first;
+    expect(result.ticketItems.find((item) => item.id === f.second.id)?.status).toBe('ACTIVE');
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
 
   it('recovers a buyer-owned prepared order before a Payment exists, without exposing it to another buyer', async () => {
     const f = await fixture();
@@ -582,6 +1069,92 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     expect(manifest.rowCount).toBe(1);
     const settlement = new AdminSettlementReconciliationService(db, { querySettlements: vi.fn().mockResolvedValue([]) } as never);
     expect((await settlement.getReconciliation({ eventId: f.performanceId })).siteSalesGrossAmount).toBe(52000);
+  });
+
+  it('cancels the last ticket while retaining the cancellation and booking fees at the provider', async () => {
+    const f = await fixture();
+    const [item] = await ticket(f);
+    await db.update(reservations).set({ status: 'CONFIRMED',
+      createdAt: new Date(Date.now() - 10 * 86400000) })
+      .where(eq(reservations.id, item!.reservationId));
+    await db.insert(seatInventories).values({ showtimeId: f.showtimeId,
+      seatId: item!.seatId, seatKey: item!.seatKey, floorKey: item!.floorKey, status: 'sold' });
+    await qr.ensureIssuedTicketsForReservation({ reservationId: item!.reservationId, paymentId: item!.paymentId });
+    const cancel = vi.fn().mockImplementation(async (_key, reason, options) => {
+      expect(options.cancelAmount).toBe(46000);
+      return { status: 'PARTIAL_CANCELED', totalAmount: 52000, balanceAmount: 6000,
+        cancels: [{ cancelAmount: 46000, cancelReason: reason, cancelStatus: 'DONE' }] };
+    });
+    const finalizer = new PaymentCancellationFinalizerService(db, { isAvailable: false } as never);
+    const service = new ReservationService(db, {
+      queryPayment: vi.fn().mockResolvedValue({ status: 'DONE', totalAmount: 52000,
+        balanceAmount: 52000, isPartialCancelable: true, cancels: [] }), cancelPayment: cancel,
+    } as never, {} as never, { broadcastSeatUpdate: vi.fn() } as never,
+    {} as never, {} as never, qr, undefined, undefined, finalizer);
+    const detail = await service.cancelTicketItem(item!.reservationId, item!.id, f.userId, 'One ticket cancellation');
+    expect(detail.status).toBe('CANCELLED');
+    expect(detail.paymentInfo?.status).toBe('PARTIAL_CANCELED');
+    expect(detail.refundProviderAmount).toEqual({ currency: 'KRW', amountMinor: 46000, amountDecimal: '46000' });
+    expect(detail.refundTimeline?.currentState).toBe('COMPLETED');
+    expect(detail.ticketItems?.[0]?.cancellation).toMatchObject({ refundStatus: 'COMPLETED', reopenState: 'HELD_CANCELLED' });
+    expect(detail.ticketEmailDelivery.canSend).toBe(false);
+    expect(detail.totalAmount).toBe(52000);
+    expect(detail.qrTicket).toMatchObject({ status: 'REVOKED', token: '' });
+    await expect(qr.getOwnedTicketsForReservation(item!.reservationId, f.userId))
+      .rejects.toThrow('QR 티켓을 찾을 수 없습니다');
+    await new CancelledSeatReleaseWorker(db).handleJob({ reservationId: item!.reservationId,
+      showtimeId: f.showtimeId, releaseAt: new Date().toISOString(),
+      seatIdentities: [{ seatId: item!.seatId, floorKey: item!.floorKey, seatKey: item!.seatKey }],
+    }, 'JOB_ENQUEUE_FAILED');
+    expect((await service.getReservationDetail(item!.reservationId, f.userId)).ticketItems[0]?.cancellation?.reopenState).toBe('AVAILABLE');
+  });
+
+  it('successive foreign ticket cancellations retain frozen minor amounts and refund exactly the original charge', async () => {
+    const f = await fixture();
+    const [first] = await ticket(f);
+    await db.update(reservations).set({ status: 'CONFIRMED', totalAmount: 9000 })
+      .where(eq(reservations.id, first!.reservationId));
+    await db.update(payments).set({ amount: 9000, currency: 'USD',
+      providerMetadata: { secretKeyScope: 'overseas-card' },
+      providerChargeCurrency: 'USD', providerChargeAmountMinor: 100 })
+      .where(eq(payments.id, first!.paymentId));
+    await db.update(ticketItems).set({ price: 1000, serviceFee: 2000 }).where(eq(ticketItems.id, first!.id));
+    const rest = await db.insert(ticketItems).values([2, 3].map((number) => ({
+      reservationId: first!.reservationId, paymentId: first!.paymentId, showtimeId: f.showtimeId,
+      seatId: `1F:A-${number}`, seatKey: `1F:A-${number}`, floorKey: '1F', floorLabel: '1층',
+      tierName: 'VIP', row: 'A', number: String(number), price: 1000, serviceFee: 2000,
+    }))).returning();
+    const items = [first!, ...rest];
+    await db.insert(seatInventories).values(items.map((item) => ({ showtimeId: f.showtimeId,
+      seatId: item.seatId, seatKey: item.seatKey, floorKey: item.floorKey, status: 'sold' as const })));
+    await qr.ensureIssuedTicketsForReservation({ reservationId: first!.reservationId, paymentId: first!.paymentId });
+    const provider = { status: 'DONE', totalAmount: 1, balanceAmount: 1, isPartialCancelable: true,
+      cancels: [] as Array<{ cancelAmount: number; cancelReason: string; cancelStatus: string; transactionKey: string }> };
+    const cancel = vi.fn().mockImplementation(async (_key, reason, options) => {
+      const amount = options.cancelAmount ?? provider.balanceAmount;
+      provider.balanceAmount = Math.round((provider.balanceAmount - amount) * 100) / 100;
+      provider.status = provider.balanceAmount === 0 ? 'CANCELED' : 'PARTIAL_CANCELED';
+      provider.cancels.push({ cancelAmount: amount, cancelReason: reason, cancelStatus: 'DONE', transactionKey: randomUUID() });
+      return structuredClone(provider);
+    });
+    const queuedKeys = new Set<string>();
+    const finalizer = new PaymentCancellationFinalizerService(db, { isAvailable: true,
+      send: vi.fn(async (_name, _payload, options) => {
+        if (queuedKeys.has(options.singletonKey)) return null;
+        queuedKeys.add(options.singletonKey); return options.id;
+      }),
+    } as never);
+    const service = new ReservationService(db, { queryPayment: vi.fn().mockImplementation(async () => structuredClone(provider)),
+      cancelPayment: cancel } as never, {} as never, {} as never, {} as never, {} as never,
+      qr, undefined, undefined, finalizer);
+    for (const item of items) await service.cancelTicketItem(item.reservationId, item.id, f.userId, 'Cancel one seat');
+    expect(provider.cancels.map((cancel) => cancel.cancelAmount)).toEqual([0.33, 0.34, 0.33]);
+    expect(provider.balanceAmount).toBe(0);
+    expect(queuedKeys.size).toBe(3);
+    const detail = await service.getReservationDetail(first!.reservationId, f.userId);
+    expect(detail.status).toBe('CANCELLED');
+    expect(detail.paymentInfo?.status).toBe('CANCELED');
+    expect(detail.refundProviderAmount).toEqual({ currency: 'USD', amountMinor: 100, amountDecimal: '1.00' });
   });
 
   it('concurrent scanners enter the account once, count tickets, keep buyer QR readable and redeem a benefit once', async () => {

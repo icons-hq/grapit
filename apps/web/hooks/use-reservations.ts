@@ -19,6 +19,8 @@ import type {
   AdminReservationExportFilter,
   PaymentStatus,
   RefundPreviewResponse,
+  TicketItemRefundPreviewResponse,
+  CancellationExpectation,
   TicketEmailDelivery,
   UserProfile,
 } from '@grabit/shared';
@@ -62,23 +64,33 @@ export function useReservationDetail(id: string) {
 export function useCancelReservation() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
-      apiClient.post(`/api/v1/reservations/${id}/refund`, { reason }),
+    mutationFn: ({ id, reason, expected }: { id: string; reason: string; expected?: CancellationExpectation }) =>
+      apiClient.post<RefundPreviewResponse>(`/api/v1/reservations/${id}/refund`, { reason, ...expected }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['reservations'] });
     },
   });
 }
 
-export function useRefundPreview(id: string | null, enabled = true) {
+export function useRefundPreview(id: string | null, enabled = true, ticketItemId?: string | null) {
   const userId = useAuthStore((state) => state.user?.id);
   return useQuery({
-    queryKey: ['reservations', id, 'refund-preview', userId],
+    queryKey: ['reservations', id, 'refund-preview', userId, ticketItemId ?? null],
     queryFn: () =>
-      apiClient.get<RefundPreviewResponse>(
-        `/api/v1/reservations/${id}/refund-preview`,
+      apiClient.get<RefundPreviewResponse | TicketItemRefundPreviewResponse>(
+        ticketItemId ? `/api/v1/reservations/${id}/ticket-items/${ticketItemId}/refund-preview`
+          : `/api/v1/reservations/${id}/refund-preview`,
       ),
     enabled: Boolean(id) && enabled,
+  });
+}
+
+export function useCancelTicketItem() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ticketItemId, reason, expected }: { id: string; ticketItemId: string; reason: string; expected?: CancellationExpectation }) =>
+      apiClient.put<ReservationDetail>(`/api/v1/reservations/${id}/ticket-items/${ticketItemId}/cancel`, { reason, ...expected }),
+    onSettled: () => { queryClient.invalidateQueries({ queryKey: ['reservations'] }); },
   });
 }
 

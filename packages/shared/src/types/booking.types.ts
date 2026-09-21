@@ -187,6 +187,18 @@ export interface RefundPreviewResponse {
   };
   refundTimeline: RefundTimeline | null;
   cancellationQuote: CancellationQuote | null;
+  providerRefund?: { currency: 'KRW' | 'USD'; amountMinor: number; amountDecimal: string } | null;
+  blockedReason?: string | null;
+}
+
+export interface TicketItemRefundPreviewResponse extends RefundPreviewResponse {
+  selectedTicketItemId: string;
+  remainingTicketItemIds: string[];
+}
+
+export interface CancellationExpectation {
+  expectedRefundableAmount: number;
+  expectedProviderRefundAmountMinor?: number;
 }
 
 export type CancelledSeatHoldStatus = 'HELD' | 'RELEASED' | 'MANUAL_OPENED';
@@ -259,8 +271,10 @@ export interface ReservationDetail extends ReservationListItem {
   queueAdmission: QueueAdmissionContext;
   paymentDeadlineAt: string;
   bookingPolicy: BookingPolicy;
-  refundTimeline: RefundTimeline;
+  refundTimeline: RefundTimeline | null;
   cancelledSeatHold: CancelledSeatHold | null;
+  refundProviderAmount?: RefundPreviewResponse['providerRefund'];
+  cancellationRecovery?: { kind: 'reservation' } | { kind: 'ticket'; ticketItemId: string } | null;
   qrTicket: QrTicket;
   ticketEmailDelivery: TicketEmailDelivery;
   paymentFailureDiagnostic: PaymentFailureDiagnostic | null;

@@ -1,10 +1,12 @@
 import type { TossPaymentCancelOptions, TossPaymentResponse } from './toss-payments.client.js';
+import { readStoredPaymentCancelReceipt } from './payment-cancel-policy.js';
 
 export type TossPaymentCancelRecord = NonNullable<TossPaymentResponse['cancels']>[number];
 
 export type TossCompletedCancelExpectation = {
   cancelAmount?: number;
   cancelRequestId?: string | null;
+  cancelReason?: string;
   requestedAt?: Date | string | null;
 };
 
@@ -33,6 +35,7 @@ export function isTossPaymentCancelCompleted(
   options: {
     allowPartialStatus?: boolean;
     expectedCancelAmount?: number;
+    expectedCancelReason?: string;
     allowUnidentifiedPartialCancel?: boolean;
     requestedAt?: Date | string | null;
   } = {},
@@ -41,6 +44,14 @@ export function isTossPaymentCancelCompleted(
     ? new Set(['CANCELED', 'PARTIAL_CANCELED'])
     : new Set(['CANCELED']);
   const normalizedCancelRequestId = normalizeCancelRequestId(cancelRequestId);
+
+  if (options.expectedCancelReason !== undefined) {
+    return completedPaymentStatuses.has(response.status)
+      && hasMatchingCompletedProviderCancel(getCompletedProviderCancels(response), {
+        cancelReason: options.expectedCancelReason, cancelAmount: options.expectedCancelAmount,
+        cancelRequestId: normalizedCancelRequestId, requestedAt: options.requestedAt,
+      });
+  }
 
   if (normalizedCancelRequestId) {
     if (!completedPaymentStatuses.has(response.status)) {
@@ -68,9 +79,12 @@ export function isTossPaymentCancelCompleted(
 export function buildCompletedCancelExpectation(
   options: TossPaymentCancelOptions,
   requestedAt?: Date | string | null,
+  frozenMetadata?: unknown,
 ): TossCompletedCancelExpectation {
+  const receipt = readStoredPaymentCancelReceipt(frozenMetadata);
   return {
-    cancelAmount: options.cancelAmount,
+    cancelAmount: receipt.expectedCancelAmount ?? options.cancelAmount,
+    cancelReason: receipt.expectedCancelReason,
     cancelRequestId: options.cancelRequestId,
     requestedAt,
   };
@@ -81,11 +95,12 @@ function isMatchingCompletedProviderCancel(
   expected: TossCompletedCancelExpectation,
 ): boolean {
   const expectedCancelRequestId = normalizeCancelRequestId(expected.cancelRequestId);
+  if (expected.cancelReason !== undefined && cancel.cancelReason !== expected.cancelReason) return false;
   if (expectedCancelRequestId) {
     if (cancel.cancelRequestId !== expectedCancelRequestId) {
       return false;
     }
-  } else if (!isCancelAtOrAfterRequest(cancel, expected.requestedAt)) {
+  } else if (expected.cancelReason === undefined && !isCancelAtOrAfterRequest(cancel, expected.requestedAt)) {
     return false;
   }
 

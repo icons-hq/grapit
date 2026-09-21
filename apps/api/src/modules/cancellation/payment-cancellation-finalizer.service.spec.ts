@@ -182,7 +182,13 @@ function createTransactionMock(options: {
   function update(table: unknown, calls: UpdateCall[], postCommit = false) {
     return {
       set(values: Record<string, unknown>) {
-        const call: UpdateCall = { table, values, whereArgs: [] };
+        const capturedValues = { ...values };
+        if (table === refunds && values.providerMetadata && typeof values.providerMetadata === 'object'
+          && 'queryChunks' in values.providerMetadata) {
+          const patch = new PgDialect().sqlToQuery(values.providerMetadata as SQL).params[0];
+          capturedValues.providerMetadata = JSON.parse(patch as string);
+        }
+        const call: UpdateCall = { table, values: capturedValues, whereArgs: [] };
         calls.push(call);
         return {
           where: vi.fn((...whereArgs: unknown[]) => {
@@ -221,6 +227,7 @@ function createTransactionMock(options: {
   }
 
   const tx = {
+    execute: vi.fn().mockResolvedValue({ rows: [] }),
     update(table: unknown) {
       return update(table, updateCalls);
     },
@@ -829,6 +836,7 @@ describe('PaymentCancellationFinalizerService', () => {
         ticketItemReturning: [{ id: 'ticket-item-1' }],
         ticketReturning: [{ id: 'ticket-1', ticketItemId: 'ticket-item-1' }],
         seatInventoryReturning: [[{ id: 'seat-inventory-1' }]],
+        activeSeatOwnerReturning: [[{ reservationId: 'reservation-1' }]],
       },
     );
 
@@ -996,7 +1004,7 @@ describe('PaymentCancellationFinalizerService', () => {
       expect.objectContaining({
         id: releaseJobId,
         startAfter: RELEASE_AT,
-        singletonKey: 'reservation-1',
+        singletonKey: expect.stringMatching(/^reservation-1:[a-f0-9]{64}$/),
         retryLimit: 3,
         retryBackoff: true,
         retryDelay: 30,

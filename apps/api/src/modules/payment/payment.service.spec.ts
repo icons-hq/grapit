@@ -2509,6 +2509,7 @@ describe('PaymentService', () => {
           cancelledSeatHoldMinMinutes: 1,
           cancelledSeatHoldMaxMinutes: 10,
         }]))
+        .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([{
           ticketItemId,
           seatId: 'SVIP:다-159',
@@ -2615,6 +2616,7 @@ describe('PaymentService', () => {
           cancelledSeatHoldMaxMinutes: 10,
         }]))
         .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([{
           ticketItemId,
           seatId: 'SVIP:다-159',
@@ -2715,6 +2717,7 @@ describe('PaymentService', () => {
           cancelledSeatHoldMinMinutes: 1,
           cancelledSeatHoldMaxMinutes: 10,
         }]))
+        .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([{
           ticketItemId: ticketItemId1,
@@ -2840,6 +2843,7 @@ describe('PaymentService', () => {
           cancelledSeatHoldMaxMinutes: 10,
         }]))
         .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([
           {
             ticketItemId: randomUUID(),
@@ -2932,6 +2936,7 @@ describe('PaymentService', () => {
           cancelledSeatHoldMinMinutes: 1,
           cancelledSeatHoldMaxMinutes: 10,
         }]))
+        .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([]));
 
@@ -3036,6 +3041,7 @@ describe('PaymentService', () => {
           cancelledSeatHoldMinMinutes: 1,
           cancelledSeatHoldMaxMinutes: 10,
         }]))
+        .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([{
@@ -3150,7 +3156,6 @@ describe('PaymentService', () => {
           cancelledSeatHoldMaxMinutes: 10,
         }]))
         .mockReturnValueOnce(createSelectChain([]))
-        .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([{
           id: refundId,
           providerMetadata: { cancellationQuote },
@@ -3246,6 +3251,7 @@ describe('PaymentService', () => {
           cancelledSeatHoldMinMinutes: 1,
           cancelledSeatHoldMaxMinutes: 10,
         }]))
+        .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([{
           ticketItemId,
           seatId: 'SVIP:다-159',
@@ -3330,6 +3336,7 @@ describe('PaymentService', () => {
           cancelledSeatHoldMinMinutes: 1,
           cancelledSeatHoldMaxMinutes: 10,
         }]))
+        .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([{ ticketItemId: randomUUID() }]))
         .mockReturnValueOnce(createSelectChain([{
           ticketItemId: pendingTicketItemId,

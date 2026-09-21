@@ -2,6 +2,8 @@
 
 import type { CSSProperties } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
+import { getClientLocale } from '@/lib/i18n/client-copy';
+import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import { buildFieldCheckInUrl } from '@grabit/shared';
 
 interface QrTicketImageProps {
@@ -158,10 +160,10 @@ export function QrTicketImage({
     <div className="space-y-3">
       <div>
         <p className="text-sm font-semibold text-gray-900">
-          QR 티켓이 준비되었습니다. 입장 시 현장 스태프가 QR을 확인합니다.
+          {getVisibleCopy(getClientLocale()).bookingExtra.completeCard.qrReady}
         </p>
         <p className="mt-1 text-sm text-gray-600">
-          현장 검표 결과가 최종 입장 기준입니다.
+          {getVisibleCopy(getClientLocale()).bookingExtra.completeCard.fieldCheckResult}
         </p>
       </div>
       <div

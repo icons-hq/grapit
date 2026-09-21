@@ -1,6 +1,7 @@
 'use client';
 
 import { getCheckoutState } from '@/lib/booking/checkout-state';
+import { getCancellationCopy } from '@/lib/i18n/cancellation-copy';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { CheckCircle2, ChevronLeft, QrCode } from 'lucide-react';
@@ -302,6 +303,7 @@ type BuyerQrCard = {
   price: number;
   serviceFee: number;
   benefitEntitlements: BenefitEntitlement[];
+  cancellation?: TicketItem['cancellation'];
 };
 
 function getBuyerQrCards(
@@ -319,7 +321,7 @@ function getBuyerQrCards(
 
       return {
         id: ticketItem.id,
-        isTicketItem: true,
+        isTicketItem: ticketItem.isLegacyFallback !== true,
         seatLabel: formatTicketItemSeat(ticketItem, copy.seatLabel),
         tierColor: ticketItem.tierColor,
         floorLabel: ticketItem.floorLabel,
@@ -334,6 +336,7 @@ function getBuyerQrCards(
         status: ticketItem.status,
         price: ticketItem.price,
         serviceFee: ticketItem.serviceFee,
+        cancellation: ticketItem.cancellation,
         benefitEntitlements: Array.isArray(ticketItem.benefitEntitlements)
           ? ticketItem.benefitEntitlements
           : [],
@@ -367,6 +370,24 @@ function getBuyerQrCards(
       benefitEntitlements: [],
     },
   ];
+}
+
+function TicketCancellationSummary({ cancellation, locale }: { cancellation: NonNullable<TicketItem['cancellation']>; locale: string }) {
+  const copy = getVisibleCopy(locale).reservation;
+  const cancellationCopy = getCancellationCopy(locale);
+  const step = { REQUESTED: 'requested', SENT_TO_PG: 'sentToPg', PROCESSING_AT_PG: 'processingAtPg',
+    COMPLETED: 'completed', FAILED: 'failed' } as const;
+  return <div className="mt-4 space-y-2 rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm">
+    <p className="font-semibold">{copy.refund.steps[step[cancellation.refundStatus]].label}</p>
+    <InfoRow label={copy.cancel.refundAmount} value={formatPrice(cancellation.refundableAmount, locale)} />
+    <InfoRow label={copy.cancel.cancellationFee} value={formatPrice(cancellation.cancellationFee, locale)} />
+    {cancellation.providerRefund && <InfoRow label={cancellationCopy.providerRefund}
+      value={`${cancellation.providerRefund.currency} ${cancellation.providerRefund.amountDecimal}`} />}
+    <p className="text-gray-600">{cancellation.reopenState === 'NOT_REQUIRED' ? cancellationCopy.resalePending
+      : cancellation.reopenState === 'HELD_CANCELLED' ? cancellationCopy.held : cancellationCopy.released}
+      {cancellation.reopenAt ? ` · ${formatDateTime(cancellation.reopenAt, '-', locale)}` : ''}</p>
+    <p className="text-gray-600">{copy.cancel.refundTimingNotice}</p>
+  </div>;
 }
 
 function TicketBenefitList({
@@ -517,7 +538,7 @@ function getPaymentMethodLabel(
 }
 
 function hasCancellationInProgress(reservation: ReservationDetailType): boolean {
-  return reservation.refundTimeline.currentState !== 'COMPLETED' ||
+  return Boolean(reservation.refundTimeline && reservation.refundTimeline.currentState !== 'COMPLETED') ||
     reservation.ticketItems.some((ticketItem) => ticketItem.status === 'CANCELLATION_PENDING');
 }
 
@@ -531,6 +552,7 @@ function getProgressGuidance(
   const progress = copy.progress;
 
   if (reservation.status === 'CANCELLED') {
+    if (!reservation.refundTimeline && !reservation.paidAt && !reservation.paymentInfo?.paidAt) return null;
     if (hasCancellationInProgress(reservation)) {
       return {
         kind: 'cancel-processing',
@@ -541,9 +563,9 @@ function getProgressGuidance(
         currentStep: progress.cancelProcessingStep,
         nextStep: progress.refundSequential,
         customerAction: progress.waitForProgress,
-        estimate: reservation.refundTimeline.expectedDepositAt
+        estimate: reservation.refundTimeline?.expectedDepositAt
           ? formatTemplate(progress.expectedDeposit, {
-              date: formatDateTime(reservation.refundTimeline.expectedDepositAt, undefined, locale),
+              date: formatDateTime(reservation.refundTimeline?.expectedDepositAt, undefined, locale),
             })
           : progress.refundBusinessDays,
       };
@@ -572,9 +594,9 @@ function getProgressGuidance(
       currentStep: progress.cancelProcessingStep,
       nextStep: progress.refundSequential,
       customerAction: progress.waitForProgress,
-      estimate: reservation.refundTimeline.expectedDepositAt
+      estimate: reservation.refundTimeline?.expectedDepositAt
         ? formatTemplate(progress.expectedDeposit, {
-            date: formatDateTime(reservation.refundTimeline.expectedDepositAt, undefined, locale),
+            date: formatDateTime(reservation.refundTimeline?.expectedDepositAt, undefined, locale),
           })
         : progress.refundBusinessDays,
     };
@@ -652,7 +674,7 @@ function InfoRow({
 
 interface ReservationDetailProps {
   reservation: ReservationDetailType;
-  onCancel: (reason: string) => void;
+  onCancel: (reason: string, ticketItemId?: string, expected?: import('@grabit/shared').CancellationExpectation) => Promise<void> | void;
   isCancelling: boolean;
   onResumePayment?: (reservation: ReservationDetailType) => void;
 }
@@ -670,7 +692,9 @@ export function ReservationDetailView({
   const copy = visibleCopy.reservation;
   const detailCopy = copy.detail;
   const completeCopy = visibleCopy.bookingExtra.completeCard;
+  const cancellationCopy = getCancellationCopy(locale);
   const [cancelModalOpen, setCancelModalOpen] = useState(false);
+  const [cancelTicketItemId, setCancelTicketItemId] = useState<string | null>(null);
   const statusConfig = STATUS_CONFIG[reservation.status];
   const statusLabel = copy.status[statusConfig.labelKey];
   const savedPaymentMethod = reservation.paymentInfo?.paymentMethod ?? reservation.checkoutPaymentMethod;
@@ -689,19 +713,27 @@ export function ReservationDetailView({
   const isDeadlinePassed = new Date(reservation.cancelDeadline) < new Date();
   const nowMs = new Date().getTime();
   const canCancel = reservation.status === 'CONFIRMED' && !isDeadlinePassed;
+  const canCancelSeat = canCancel && !hasCancellationInProgress(reservation);
   const refundPreviewQuery = useRefundPreview(
     reservation.id,
     canCancel && cancelModalOpen,
+    cancelTicketItemId,
   );
   const hasSeatLevelTicketItems = hasPersistedTicketItems(reservation);
   const ticketItemRefundTotal = hasSeatLevelTicketItems
-    ? reservation.ticketItems.reduce(
+    ? reservation.ticketItems.filter((item) => item.status === 'CANCELLED').reduce(
         (total, ticketItem) => total + (ticketItem.cancellation?.refundableAmount ?? 0),
         0,
       )
     : 0;
   let displayedRefundAmount: number | null;
-  if (reservation.status === 'CONFIRMED') {
+  const hasCompletedCancellation = reservation.ticketItems.some((item) => item.status === 'CANCELLED' && item.cancellation);
+  if (hasCompletedCancellation) {
+    displayedRefundAmount = ticketItemRefundTotal;
+  } else if (reservation.ticketItems.some((item) => item.status === 'CANCELLATION_PENDING')) {
+    displayedRefundAmount = reservation.ticketItems.filter((item) => item.status === 'CANCELLATION_PENDING')
+      .reduce((sum, item) => sum + (item.cancellation?.refundableAmount ?? 0), 0);
+  } else if (reservation.status === 'CONFIRMED') {
     displayedRefundAmount =
       refundPreviewQuery.data?.cancellationQuote?.refundableAmount ?? null;
   } else if (hasSeatLevelTicketItems && ticketItemRefundTotal > 0) {
@@ -710,7 +742,7 @@ export function ReservationDetailView({
     displayedRefundAmount = reservation.totalAmount;
   }
   const showRefundQuoteIntentCopy =
-    reservation.status === 'CONFIRMED' && !cancelModalOpen;
+    reservation.status === 'CONFIRMED' && !hasCompletedCancellation && !cancelModalOpen;
   const displayedRefundValue =
     displayedRefundAmount !== null
       ? formatPrice(displayedRefundAmount, locale)
@@ -727,7 +759,7 @@ export function ReservationDetailView({
       : 'text-sm font-medium text-gray-600';
   const cancelModalRefundAmount =
     refundPreviewQuery.data?.cancellationQuote?.refundableAmount ?? 0;
-  const showCancelButton = reservation.status === 'CONFIRMED';
+  const showCancelButton = reservation.status === 'CONFIRMED' && !hasCancellationInProgress(reservation);
   const progressGuidance = getProgressGuidance(
     reservation,
     paymentDeadlineAt,
@@ -747,13 +779,10 @@ export function ReservationDetailView({
     Boolean(onResumePayment);
   const showRefundPreview =
     reservation.status === 'CONFIRMED' ||
-    reservation.status === 'CANCELLED';
-  const showRefundTimeline =
-    reservation.status === 'CANCELLED' ||
-    reservation.cancelledAt !== null ||
-    reservation.refundTimeline.currentState !== 'COMPLETED';
+    Boolean(reservation.refundTimeline);
+  const showRefundTimeline = Boolean(reservation.refundTimeline);
   const hasExpectedDepositAt =
-    Boolean(reservation.refundTimeline.expectedDepositAt) && showRefundTimeline;
+    Boolean(reservation.refundTimeline?.expectedDepositAt) && showRefundTimeline;
   const qrCards = getBuyerQrCards(reservation, detailCopy);
   const hasActiveQr = qrCards.some((card) => card.qrCheckInUrl);
   const shouldShowQrTicket =
@@ -869,6 +898,13 @@ export function ReservationDetailView({
               <Separator />
               <InfoRow label={detailCopy.progressEstimate} value={progressGuidance.estimate} />
             </div>
+            {reservation.cancellationRecovery && (
+              <Button variant="outline" disabled={isCancelling} onClick={() => {
+                const recovery = reservation.cancellationRecovery!;
+                void Promise.resolve(onCancel(cancellationCopy.checkCancellation,
+                  recovery.kind === 'ticket' ? recovery.ticketItemId : undefined)).catch(() => undefined);
+              }}>{cancellationCopy.checkCancellation}</Button>
+            )}
             {paymentFailureGuidance && (
               <div className="rounded-xl border border-white/80 bg-white/90 p-4">
                 <p className="text-sm font-semibold text-gray-900">
@@ -920,7 +956,7 @@ export function ReservationDetailView({
                     : 'bg-[#FFFBEB] text-[#8B6306] border-transparent'
                 }
               >
-                {hasActiveQr ? completeCopy.qrActive : completeCopy.qrPending}
+                {hasActiveQr ? completeCopy.qrActive : reservation.status === 'CANCELLED' ? detailCopy.ticketStatus.cancelled : completeCopy.qrPending}
               </Badge>
             </div>
 
@@ -1041,14 +1077,22 @@ export function ReservationDetailView({
                       locale={benefitLocale}
                     />
                   )}
+                  {card.cancellation && <TicketCancellationSummary cancellation={card.cancellation} locale={locale} />}
+                  {card.isTicketItem && card.status === 'ACTIVE' && card.admissionState !== 'ENTERED'
+                    && !card.benefitEntitlements.some((benefit) => benefit.state === 'redeemed') && canCancelSeat && (
+                    <Button variant="outline" className="mt-4" disabled={isCancelling} onClick={() => {
+                      setCancelTicketItemId(card.id); setCancelModalOpen(true);
+                    }}>{cancellationCopy.cancelOne}</Button>
+                  )}
+
                 </div>
               ))}
             </div>
 
-            <TicketEmailDeliveryPanel
+            {reservation.ticketItems.some((item) => item.status === 'ACTIVE') && <TicketEmailDeliveryPanel
               reservationId={reservation.id}
               delivery={reservation.ticketEmailDelivery}
-            />
+            />}
           </CardContent>
         </Card>
       )}
@@ -1082,17 +1126,19 @@ export function ReservationDetailView({
                 value={displayedRefundValue}
                 valueClassName={displayedRefundValueClassName}
               />
+              {reservation.refundProviderAmount && <InfoRow label={cancellationCopy.completedTotal}
+                value={`${reservation.refundProviderAmount.currency} ${reservation.refundProviderAmount.amountDecimal}`} />}
               <Separator />
               <InfoRow
                 label={copy.cancel.refundMethod}
                 value={copy.cancel.refundMethodValue.replace('{paymentMethod}', refundPaymentMethodLabel)}
               />
-              {hasExpectedDepositAt && reservation.refundTimeline.expectedDepositAt && (
+              {hasExpectedDepositAt && reservation.refundTimeline?.expectedDepositAt && (
                 <>
                   <Separator />
                   <InfoRow
                     label={copy.cancel.expectedDeposit}
-                    value={formatDateTime(reservation.refundTimeline.expectedDepositAt, undefined, locale)}
+                    value={formatDateTime(reservation.refundTimeline?.expectedDepositAt, undefined, locale)}
                   />
                 </>
               )}
@@ -1108,7 +1154,7 @@ export function ReservationDetailView({
         </Card>
       )}
 
-      {showRefundTimeline && (
+      {showRefundTimeline && reservation.refundTimeline && (
         <RefundTimeline
           timeline={reservation.refundTimeline}
           cancelledSeatHold={reservation.cancelledSeatHold}
@@ -1163,7 +1209,7 @@ export function ReservationDetailView({
             <Button
               variant="destructive"
               className="h-12 w-full"
-              onClick={() => setCancelModalOpen(true)}
+              onClick={() => { setCancelTicketItemId(null); setCancelModalOpen(true); }}
             >
               {copy.detail.cancelReservation}
             </Button>
@@ -1193,16 +1239,26 @@ export function ReservationDetailView({
 
       {/* Cancel modal */}
       <CancelConfirmModal
+        key={cancelTicketItemId ?? 'all-active-tickets'}
         open={cancelModalOpen}
         onOpenChange={setCancelModalOpen}
         refundAmount={cancelModalRefundAmount}
         cancellationQuote={refundPreviewQuery.data?.cancellationQuote ?? null}
         paymentMethod={paymentMethodLabel}
-        expectedDepositAt={reservation.refundTimeline.expectedDepositAt ?? null}
-        releaseWindowMinutes={reservation.cancelledSeatHold?.releaseWindowMinutes ?? null}
+        expectedDepositAt={reservation.refundTimeline?.expectedDepositAt ?? null}
+        releaseWindowMinutes={refundPreviewQuery.data?.cancelledSeatHoldWindowMinutes ?? null}
         isPreviewLoading={refundPreviewQuery.isLoading}
         isPreviewError={refundPreviewQuery.isError}
-        onConfirm={onCancel}
+        selectedSeats={qrCards.filter((card) => card.status === 'ACTIVE' && (!cancelTicketItemId || card.id === cancelTicketItemId)).map((card) => card.seatLabel)}
+        remainingSeats={qrCards.filter((card) => card.status === 'ACTIVE' && cancelTicketItemId && card.id !== cancelTicketItemId).map((card) => card.seatLabel)}
+        providerRefund={refundPreviewQuery.data?.providerRefund}
+        blockedReason={refundPreviewQuery.data?.blockedReason}
+        canConfirm={refundPreviewQuery.data?.canRequestRefund === true}
+        onRetryPreview={() => { void refundPreviewQuery.refetch(); }}
+        onConfirm={(reason) => onCancel(reason, cancelTicketItemId ?? undefined, {
+          expectedRefundableAmount: refundPreviewQuery.data!.refundableAmount,
+          expectedProviderRefundAmountMinor: refundPreviewQuery.data?.providerRefund?.amountMinor,
+        })}
         isLoading={isCancelling}
       />
     </div>

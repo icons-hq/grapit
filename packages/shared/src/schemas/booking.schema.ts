@@ -330,6 +330,8 @@ export const confirmPaymentSchema = z.union([
 export type ConfirmPaymentInput = z.infer<typeof confirmPaymentSchema>;
 
 export const cancelReservationSchema = z.object({
+  expectedRefundableAmount: z.number().int().nonnegative().optional(),
+  expectedProviderRefundAmountMinor: z.number().int().nonnegative().optional(),
   reason: z
     .string()
     .min(1, '취소 사유를 입력해주세요')
@@ -552,8 +554,12 @@ export const reservationDetailSchema = reservationListItemSchema.extend({
   queueAdmission: queueAdmissionSchema,
   paymentDeadlineAt: isoDatetime('결제 마감 시각'),
   bookingPolicy: bookingPolicySchema,
-  refundTimeline: refundTimelineSchema,
+  refundTimeline: refundTimelineSchema.nullable(),
   cancelledSeatHold: cancelledSeatHoldSchema.nullable(),
+  cancellationRecovery: z.discriminatedUnion('kind', [z.object({ kind: z.literal('reservation') }),
+    z.object({ kind: z.literal('ticket'), ticketItemId: z.string().uuid() })]).nullable().optional(),
+  refundProviderAmount: z.object({ currency: z.enum(['KRW', 'USD']), amountMinor: z.number().int().nonnegative(),
+    amountDecimal: z.string() }).nullable().optional(),
   qrTicket: qrTicketSchema,
   ticketEmailDelivery: ticketEmailDeliverySchema,
   paymentFailureDiagnostic: paymentFailureDiagnosticSchema.nullable().default(null),

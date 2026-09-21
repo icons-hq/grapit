@@ -9,12 +9,14 @@ import { ReservationDetailView } from '@/components/reservation/reservation-deta
 import {
   useReservationDetail,
   useCancelReservation,
+  useCancelTicketItem,
 } from '@/hooks/use-reservations';
 import { ReservationDetailSkeleton } from '@/components/skeletons';
 import { Button } from '@/components/ui/button';
 import { useBookingStore } from '@/stores/use-booking-store';
-import type { ReservationDetail } from '@grabit/shared';
+import type { ReservationDetail, CancellationExpectation } from '@grabit/shared';
 import { toast } from 'sonner';
+import { getCancellationCopy } from '@/lib/i18n/cancellation-copy';
 
 interface ReservationDetailPageProps {
   params: Promise<{ id: string }>;
@@ -26,14 +28,22 @@ export default function ReservationDetailPage({ params }: ReservationDetailPageP
   const locale = getClientLocale();
   const { data: reservation, isLoading, isError, refetch } = useReservationDetail(id);
   const cancelMutation = useCancelReservation();
+  const cancelTicketMutation = useCancelTicketItem();
+  const cancellationCopy = getCancellationCopy(locale);
 
-  async function handleCancel(reason: string) {
+  async function handleCancel(reason: string, ticketItemId?: string, expected?: CancellationExpectation) {
     try {
-      await cancelMutation.mutateAsync({ id, reason });
-      toast.success('예매가 취소되었습니다');
-      refetch();
-    } catch {
-      toast.error('취소 처리에 실패했습니다. 잠시 후 다시 시도해주세요.');
+      if (ticketItemId) await cancelTicketMutation.mutateAsync({ id, ticketItemId, reason, expected });
+      else {
+        const result = await cancelMutation.mutateAsync({ id, reason, expected });
+        if (result.refundTimeline?.currentState === 'FAILED') throw new Error(cancellationCopy.unknown);
+      }
+      toast.success(cancellationCopy.requested);
+      await refetch();
+    } catch (error) {
+      toast.error(cancellationCopy.unknown);
+      await refetch();
+      throw error;
     }
   }
 
@@ -79,7 +89,7 @@ export default function ReservationDetailPage({ params }: ReservationDetailPageP
           <ReservationDetailView
             reservation={reservation}
             onCancel={handleCancel}
-            isCancelling={cancelMutation.isPending}
+            isCancelling={cancelMutation.isPending || cancelTicketMutation.isPending}
             onResumePayment={handleResumePayment}
           />
         )}

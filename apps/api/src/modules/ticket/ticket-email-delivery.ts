@@ -8,9 +8,10 @@ export function resolveTicketEmailDelivery(input: {
   isEmailVerified: boolean;
   scheduledAt: string | null;
   lastSentAt: string | null;
+  hasActiveTickets?: boolean;
 }): TicketEmailDelivery {
   const isPlaceholderEmail = isSocialPlaceholderEmail(input.email);
-  const canSend = input.isEmailVerified && !isPlaceholderEmail;
+  const canSend = input.isEmailVerified && !isPlaceholderEmail && input.hasActiveTickets !== false;
 
   return {
     email: input.email,

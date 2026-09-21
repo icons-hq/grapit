@@ -21,6 +21,6 @@ export class RefundController {
     @Body(new ZodValidationPipe(cancelReservationSchema)) body: CancelReservationInput,
     @Request() req: { user: { id: string } },
   ) {
-    return this.refundService.requestRefund(reservationId, req.user.id, body.reason);
+    return this.refundService.requestRefund(reservationId, req.user.id, body.reason, body);
   }
 }

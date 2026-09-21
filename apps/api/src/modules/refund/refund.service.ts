@@ -8,13 +8,17 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import { createHash } from 'node:crypto';
-import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { createHash, randomUUID } from 'node:crypto';
+import { restoreRejectedRefundRights } from '../cancellation/refund-rights-restoration.js';
+import { toRefundTimeline, hasRestoredRefundRights } from '../cancellation/refund-timeline.js';
+export { toRefundTimeline } from '../cancellation/refund-timeline.js';
+import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import { normalizeSeatIdentity, TICKET_SERVICE_FEE_KRW } from '@grabit/shared';
 import type {
   CancellationQuote,
   RefundTimeline,
   TicketItemCancellationPolicyCode,
+  CancellationExpectation,
 } from '@grabit/shared';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
@@ -27,6 +31,7 @@ import {
   ticketScanEvents,
   ticketItems,
   tickets,
+  ticketBenefitEntitlements,
 } from '../../database/schema/index.js';
 import {
   PG_BOSS,
@@ -39,6 +44,10 @@ import { PaymentCancellationFinalizerService } from '../cancellation/payment-can
 import {
   buildFullReservationPaymentCancelRequest,
   canBuildFullReservationPaymentCancelRequest,
+  readStoredPaymentCancelRequest,
+  readStoredPaymentCancelReceipt,
+  withCompletedRefunds,
+  describePaymentCancellation,
 } from '../payment/payment-cancel-policy.js';
 import { isTossPaymentCancelCompleted } from '../payment/toss-cancel-matcher.js';
 
@@ -72,7 +81,7 @@ type RefundRequestActor =
   | { kind: 'user' }
   | { kind: 'admin'; operatorUserId: string };
 
-export type AdminRefundRequestOptions = {
+export type AdminRefundRequestOptions = Partial<CancellationExpectation> & {
   fullRefundOverride?: boolean;
   enteredTicketOverride?: boolean;
 };
@@ -89,6 +98,8 @@ export interface RefundPreviewResponse {
   };
   refundTimeline: RefundTimeline | null;
   cancellationQuote: FullReservationCancellationQuote | null;
+  providerRefund?: { currency: 'KRW' | 'USD'; amountMinor: number; amountDecimal: string } | null;
+  blockedReason?: string | null;
 }
 
 export interface RefundRequestResponse extends RefundPreviewResponse {
@@ -109,16 +120,6 @@ export const DEFAULT_CANCELLED_SEAT_HOLD_MAX_MINUTES = 10;
 export const REFUND_CANCEL_MAX_RETRIES = 3;
 export const SEAT_RELEASE_ENQUEUE_FAILED_JOB_ID = 'JOB_ENQUEUE_FAILED';
 
-const REFUND_TIMELINE_STATE_MAP: Record<
-  RefundStateMachineStatus,
-  RefundTimeline['currentState']
-> = {
-  requested: 'REQUESTED',
-  sent_to_pg: 'SENT_TO_PG',
-  processing_at_pg: 'PROCESSING_AT_PG',
-  completed: 'COMPLETED',
-  failed: 'FAILED',
-};
 
 const TRANSIENT_TOSS_CANCEL_CODES = new Set([
   'INTERNAL_SERVER_ERROR',
@@ -195,6 +196,7 @@ export function isTossCancelCompleted(
   options: {
     allowPartialStatus?: boolean;
     expectedCancelAmount?: number;
+    expectedCancelReason?: string;
     allowUnidentifiedPartialCancel?: boolean;
     requestedAt?: Date | string | null;
   } = {},
@@ -202,6 +204,7 @@ export function isTossCancelCompleted(
   return isTossPaymentCancelCompleted(response, cancelRequestId, {
     allowPartialStatus: options.allowPartialStatus,
     expectedCancelAmount: options.expectedCancelAmount,
+    expectedCancelReason: options.expectedCancelReason,
     allowUnidentifiedPartialCancel: options.allowUnidentifiedPartialCancel,
     requestedAt: options.requestedAt,
   });
@@ -255,23 +258,6 @@ function getRefundCancelRetryJobId(refund: Pick<RefundRecord, 'providerMetadata'
   return null;
 }
 
-export function toRefundTimeline(refund: RefundRecord, now: Date = new Date()): RefundTimeline {
-  // Historical expected_deposit_at values were created locally as +3 days.
-  // Keep the processing follow-up threshold separate from issuer settlement.
-  const isDelayed = refund.status !== 'completed'
-    && refund.requestedAt.getTime() + 3 * MS_PER_DAY < now.getTime();
-
-  return {
-    currentState: REFUND_TIMELINE_STATE_MAP[refund.status],
-    requestedAt: refund.requestedAt.toISOString(),
-    sentToPgAt: refund.sentToPgAt?.toISOString() ?? null,
-    processedAtPgAt: refund.processingAtPgAt?.toISOString() ?? null,
-    completedAt: refund.completedAt?.toISOString() ?? null,
-    failedAt: refund.failedAt?.toISOString() ?? null,
-    expectedDepositAt: null,
-    customerServiceCtaVisible: refund.customerServiceCtaVisible || isDelayed,
-  };
-}
 
 @Injectable()
 export class RefundService {
@@ -293,20 +279,37 @@ export class RefundService {
     );
     const existingRefund = await this.findExistingRefund(reservationId);
 
-    return this.buildPreview(context, existingRefund);
+    const preview = this.buildPreview(context, existingRefund);
+    if (!preview.canRequestRefund || !preview.cancellationQuote) return preview;
+    const snapshot = withCompletedRefunds(context.payment, context.ticketItems);
+    const command = buildFullReservationPaymentCancelRequest({ payment: snapshot,
+      cancellationQuote: preview.cancellationQuote, reason: 'Refund preview', cancelRequestIdSeed: context.payment.id });
+    const providerRefund = describePaymentCancellation(snapshot, command);
+    const provider = await this.tossPaymentsClient.queryPayment(context.payment.paymentKey,
+      { secretKeyScope: command.options.secretKeyScope });
+    const scale = providerRefund.currency === 'USD' ? 100 : 1;
+    let blockedReason: string | null = null;
+    if (command.options.cancelAmount !== undefined && provider.isPartialCancelable !== true) {
+      blockedReason = '이 결제수단은 자동 부분취소를 지원하지 않습니다. 고객센터로 문의해주세요.';
+    } else if (Math.round((provider.balanceAmount ?? -1) * scale) !== providerRefund.balanceBeforeMinor
+      || Math.round(provider.totalAmount * scale) !== providerRefund.originalAmountMinor) {
+      blockedReason = '결제사 환불 잔액을 확인해야 합니다. 고객센터로 문의해주세요.';
+    }
+    return { ...preview, providerRefund, blockedReason, canRequestRefund: !blockedReason };
   }
 
   async requestRefund(
     reservationId: string,
     userId: string,
     reason: string,
+    expected?: Partial<CancellationExpectation>,
   ): Promise<RefundRequestResponse> {
     const context = await this.ensureTicketItemsAvailableForQuote(
       await this.loadReservationContext(reservationId, userId),
     );
     const existingRefund = await this.findExistingRefund(reservationId);
 
-    return this.requestRefundWithContext(context, existingRefund, reason, { kind: 'user' });
+    return this.requestRefundWithContext(context, existingRefund, reason, { kind: 'user' }, expected);
   }
 
   async requestAdminRefund(
@@ -345,13 +348,13 @@ export class RefundService {
     actor: RefundRequestActor,
     options: AdminRefundRequestOptions = {},
   ): Promise<RefundRequestResponse> {
-    if (existingRefund) {
+    if (existingRefund && !hasRestoredRefundRights(existingRefund)) {
       const refund = await this.ensureRefundCancelRetryScheduled(existingRefund);
 
       return this.buildRequestResponse(context, refund, {
         idempotent: true,
         retryEnqueued:
-          (refund.status === 'sent_to_pg' || refund.status === 'processing_at_pg')
+          (refund.status === 'requested' || refund.status === 'sent_to_pg' || refund.status === 'processing_at_pg')
           && Boolean(getRefundCancelRetryJobId(refund)),
       });
     }
@@ -371,7 +374,7 @@ export class RefundService {
       throw new ForbiddenException('공연 시작 후에는 환불할 수 없습니다');
     }
 
-    const cancellationQuote = this.buildFullReservationCancellationQuote(context, options);
+    let cancellationQuote = this.buildFullReservationCancellationQuote(context, options);
     if (!canBuildFullReservationPaymentCancelRequest({
       payment: context.payment,
       cancellationQuote,
@@ -389,8 +392,11 @@ export class RefundService {
       cancellationQuote,
       options,
     );
-    const command = buildFullReservationPaymentCancelRequest({
-      payment: context.payment,
+    cancellationQuote = getStoredCancellationQuote(requestedRefund) ?? cancellationQuote;
+    const storedReason = getRefundProviderMetadata(requestedRefund.providerMetadata).cancelReason;
+    if (typeof storedReason === 'string') reason = storedReason;
+    const command = readStoredPaymentCancelRequest(requestedRefund.providerMetadata) ?? buildFullReservationPaymentCancelRequest({
+      payment: withCompletedRefunds(context.payment, context.ticketItems),
       cancellationQuote,
       reason,
       idempotencyKey: this.buildRefundCancelIdempotencyKey(requestedRefund.id),
@@ -398,17 +404,47 @@ export class RefundService {
     });
     const allowPartialStatus = cancellationQuote.refundableAmount < context.payment.amount;
 
+    let providerAccepted = false;
+    let cancelAttempted = false;
+    let definitePreflightRejection = false;
     try {
-      const cancelResult = await this.tossPaymentsClient.cancelPayment(
+      const amountSnapshot = getRefundProviderMetadata(requestedRefund.providerMetadata).providerRefund as
+        { currency: string; originalAmountMinor: number; balanceBeforeMinor: number; amountMinor: number } | undefined;
+      let cancelResult: TossPaymentResponse | undefined;
+      if (amountSnapshot) {
+        let current: TossPaymentResponse;
+        try {
+          current = await this.tossPaymentsClient.queryPayment(command.paymentKey, { secretKeyScope: command.options.secretKeyScope });
+        } catch {
+          throw new TossPaymentError('NETWORK_ERROR', '결제사 환불 잔액을 확인하지 못했습니다');
+        }
+        const scale = amountSnapshot.currency === 'USD' ? 100 : 1;
+        const completed = current.cancels?.some((cancel) => cancel.cancelStatus === 'DONE'
+          && cancel.cancelReason === command.reason && Math.round(cancel.cancelAmount * scale) === amountSnapshot.amountMinor);
+        if (completed) cancelResult = current;
+        else if (Math.round(current.totalAmount * scale) !== amountSnapshot.originalAmountMinor
+          || Math.round((current.balanceAmount ?? -1) * scale) !== amountSnapshot.balanceBeforeMinor) {
+          throw new TossPaymentError('BALANCE_RECONCILIATION_REQUIRED', '결제사 환불 잔액을 대조해야 합니다');
+        } else if (command.options.cancelAmount !== undefined && current.isPartialCancelable !== true) {
+          definitePreflightRejection = current.isPartialCancelable === false;
+          throw new TossPaymentError('NOT_PARTIAL_CANCELABLE', '결제사에서 부분취소를 허용하지 않습니다');
+        }
+      }
+      if (!cancelResult) {
+        cancelAttempted = true;
+        cancelResult = await this.tossPaymentsClient.cancelPayment(
         command.paymentKey,
         command.reason,
         command.options,
       );
+      }
+      providerAccepted = true;
 
       if (
         isTossCancelCompleted(cancelResult, command.options.cancelRequestId, {
           allowPartialStatus,
           expectedCancelAmount: command.options.cancelAmount,
+          ...readStoredPaymentCancelReceipt(requestedRefund.providerMetadata),
           allowUnidentifiedPartialCancel: true,
           requestedAt: requestedRefund.requestedAt,
         })
@@ -436,7 +472,9 @@ export class RefundService {
         reason,
         requestedRefund.retryCount,
         cancellationQuote,
+        readStoredPaymentCancelRequest(requestedRefund.providerMetadata)?.options.idempotencyKey,
       );
+      if (processingRefund.status === 'completed') return this.buildRequestResponse(context, processingRefund, { idempotent: true, retryEnqueued: false });
       const jobId = await this.scheduleRefundCancelRetry(
         processingRefund.id,
         processingRefund.retryCount,
@@ -451,14 +489,16 @@ export class RefundService {
         retryEnqueued: Boolean(jobId),
       });
     } catch (error) {
-      if (isTransientRefundCancelFailure(error)) {
+      if (providerAccepted || isTransientRefundCancelFailure(error)) {
         const retryableRefund = await this.markRefundSentToPg(
           requestedRefund.id,
           error,
           reason,
           requestedRefund.retryCount,
           cancellationQuote,
+          readStoredPaymentCancelRequest(requestedRefund.providerMetadata)?.options.idempotencyKey,
         );
+        if (retryableRefund.status === 'completed') return this.buildRequestResponse(context, retryableRefund, { idempotent: true, retryEnqueued: false });
         const jobId = await this.scheduleRefundCancelRetry(
           retryableRefund.id,
           retryableRefund.retryCount,
@@ -474,7 +514,22 @@ export class RefundService {
         });
       }
 
-      const failedRefund = await this.markRefundFailed(requestedRefund.id, error);
+      let canRestore = definitePreflightRejection;
+      if (cancelAttempted && error instanceof TossPaymentError
+        && ['INVALID_REQUEST', 'NOT_CANCELABLE_PAYMENT', 'NOT_ENOUGH_CANCELABLE_AMOUNT', 'NOT_CANCELABLE_AMOUNT'].includes(error.code)) {
+        try {
+          const current = await this.tossPaymentsClient.queryPayment(command.paymentKey, { secretKeyScope: command.options.secretKeyScope });
+          const snapshot = getRefundProviderMetadata(requestedRefund.providerMetadata).providerRefund as
+            { currency: string; balanceBeforeMinor: number; originalAmountMinor: number } | undefined;
+          const scale = snapshot?.currency === 'USD' ? 100 : 1;
+          canRestore = Boolean(snapshot && Math.round(current.totalAmount * scale) === snapshot.originalAmountMinor
+            && Math.round((current.balanceAmount ?? -1) * scale) === snapshot.balanceBeforeMinor
+            && !current.cancels?.some((cancel) => cancel.cancelReason === command.reason));
+        } catch { canRestore = false; }
+      }
+      const failedRefund = canRestore
+        ? await restoreRejectedRefundRights(this.db, requestedRefund, { code: getRefundErrorCode(error), message: getRefundErrorMessage(error) })
+        : await this.markRefundFailed(requestedRefund.id, error, readStoredPaymentCancelRequest(requestedRefund.providerMetadata)?.options.idempotencyKey);
       return this.buildRequestResponse(context, failedRefund, {
         idempotent: false,
         retryEnqueued: false,
@@ -488,7 +543,7 @@ export class RefundService {
     options: AdminRefundRequestOptions = {},
   ): RefundPreviewResponse {
     const holdWindow = this.resolveHoldWindowMinutes(context.bookingPolicy);
-    const cancellationQuote = refund
+    const cancellationQuote = refund && !hasRestoredRefundRights(refund)
       ? getStoredCancellationQuote(refund)
       : this.buildFullReservationCancellationQuote(context, options);
 
@@ -497,10 +552,11 @@ export class RefundService {
       reservationNumber: context.reservation.reservationNumber,
       paymentKey: context.payment.paymentKey,
       refundableAmount: cancellationQuote?.refundableAmount ?? context.payment.amount,
-      canRequestRefund: context.reservation.status === 'CONFIRMED' && refund === null,
+      canRequestRefund: context.reservation.status === 'CONFIRMED' && (!refund || hasRestoredRefundRights(refund)),
       cancelledSeatHoldWindowMinutes: holdWindow,
       refundTimeline: refund ? toRefundTimeline(refund) : null,
       cancellationQuote,
+      providerRefund: refund ? getRefundProviderMetadata(refund.providerMetadata).providerRefund as RefundPreviewResponse['providerRefund'] : null,
     };
   }
 
@@ -818,6 +874,7 @@ export class RefundService {
         cancellationFee: 0,
         serviceFeeRefund: 0,
         refundableAmount: 0,
+        cancellationCommand: null,
         reopenState: 'not_required' as const,
         reopenHoldUntil: null,
         reopenJobId: null,
@@ -1085,9 +1142,47 @@ export class RefundService {
     options: AdminRefundRequestOptions = {},
   ): Promise<RefundRecord> {
     const now = new Date();
-    const [created] = await this.db
-      .insert(refunds)
-      .values({
+    return this.db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT r.id FROM reservations r JOIN payments p ON p.reservation_id = r.id
+      WHERE r.id = ${context.reservation.id} FOR UPDATE OF r, p`);
+    const [existing] = await tx.select().from(refunds).where(eq(refunds.reservationId, context.reservation.id));
+    if (existing && !hasRestoredRefundRights(existing)) return existing;
+    const [currentReservation] = await tx.select().from(reservations).where(eq(reservations.id, context.reservation.id));
+    const currentItems = await tx.select().from(ticketItems).where(eq(ticketItems.reservationId, context.reservation.id)).for('update');
+    if (!currentReservation || currentReservation.status !== 'CONFIRMED'
+      || currentReservation.cancelDeadline <= now
+      || currentItems.some((item) => item.status === 'cancellation_pending')) {
+      throw new ConflictException('예매 상태가 변경되었습니다. 환불 내용을 다시 확인해주세요.');
+    }
+    const currentQuote = this.buildFullReservationCancellationQuote({ ...context,
+      reservation: currentReservation, ticketItems: currentItems }, options);
+    const quoteIds = (cancellationQuote?.items ?? []).map((item) => item.ticketItemId).sort().join(',');
+    if (cancellationQuote && (quoteIds !== currentQuote.items.map((item) => item.ticketItemId).sort().join(',')
+      || cancellationQuote.refundableAmount !== currentQuote.refundableAmount)) {
+      throw new ConflictException('환불 견적이 변경되었습니다. 다시 확인해주세요.');
+    }
+    cancellationQuote = currentQuote;
+    const selectedIds = currentQuote.items.map((item) => item.ticketItemId);
+    const benefits = await tx.select().from(ticketBenefitEntitlements)
+      .where(inArray(ticketBenefitEntitlements.ticketItemId, selectedIds)).for('update');
+    if (benefits.some((benefit) => benefit.state === 'redeemed')) throw new ForbiddenException('특전을 수령한 티켓은 취소할 수 없습니다');
+    const refundId = existing?.id ?? randomUUID();
+    const attemptId = existing ? randomUUID() : refundId;
+    const credentialStates = await tx.select({ id: tickets.id, status: tickets.status }).from(tickets)
+      .where(and(eq(tickets.reservationId, context.reservation.id), inArray(tickets.status, ['active', 'used']))).for('update');
+    const cancelRequest = buildFullReservationPaymentCancelRequest({
+      payment: withCompletedRefunds(context.payment, currentItems), cancellationQuote: currentQuote,
+      reason: `${Array.from(reason).slice(0, 150).join('')} [${attemptId}]`,
+      idempotencyKey: existing ? `refund-cancel:${refundId}:${attemptId}` : this.buildRefundCancelIdempotencyKey(refundId), cancelRequestIdSeed: attemptId,
+    });
+    const providerRefund = describePaymentCancellation(withCompletedRefunds(context.payment, currentItems), cancelRequest);
+    if ((options.expectedRefundableAmount !== undefined && options.expectedRefundableAmount !== currentQuote.refundableAmount)
+      || (options.expectedProviderRefundAmountMinor !== undefined && options.expectedProviderRefundAmountMinor !== providerRefund.amountMinor)) {
+      throw new ConflictException('환불 금액이 변경되었습니다. 견적을 다시 확인해주세요.');
+    }
+    const priorMetadata = getRefundProviderMetadata(existing?.providerMetadata);
+    const values: typeof refunds.$inferInsert = {
+        id: refundId,
         reservationId: context.reservation.id,
         paymentId: context.payment.id,
         status: 'requested',
@@ -1101,18 +1196,39 @@ export class RefundService {
           paymentKey: context.payment.paymentKey,
           requestedBy: actor.kind,
           overrideOptions: options,
+          cancelRequest,
+          providerRefund,
+          credentialStates,
+          ...(existing ? { previousAttempts: [
+            ...(Array.isArray(priorMetadata.previousAttempts) ? priorMetadata.previousAttempts : []),
+            { requestedAt: existing.requestedAt.toISOString(), failedAt: existing.failedAt?.toISOString(), resultCode: existing.resultCode,
+              cancelRequest: priorMetadata.cancelRequest, cancellationQuote: priorMetadata.cancellationQuote,
+              rightsRestoredAt: priorMetadata.rightsRestoredAt },
+          ] } : {}),
           ...(cancellationQuote ? { cancellationQuote } : {}),
           ...(actor.kind === 'admin' ? { operatorUserId: actor.operatorUserId } : {}),
         },
         requestedAt: now,
         expectedDepositAt: null,
-        createdAt: now,
+        createdAt: existing?.createdAt ?? now,
         updatedAt: now,
-      })
-      .onConflictDoNothing({ target: refunds.reservationId })
-      .returning();
+        retryCount: 0, sentToPgAt: null, processingAtPgAt: null, completedAt: null, failedAt: null,
+        failureReason: null, customerServiceCtaVisible: false,
+      };
+    const [created] = existing
+      ? await tx.update(refunds).set(values).where(eq(refunds.id, existing.id)).returning()
+      : await tx.insert(refunds).values(values).onConflictDoNothing({ target: refunds.reservationId }).returning();
 
     if (created) {
+      for (const item of currentQuote.items) {
+        await tx.update(ticketItems).set({ status: 'cancellation_pending', cancelledAt: now,
+          cancelReason: reason, cancellationFee: item.cancellationFee, serviceFeeRefund: item.serviceFeeRefund,
+          refundableAmount: item.refundableAmount, updatedAt: now }).where(eq(ticketItems.id, item.ticketItemId));
+      }
+      await tx.update(tickets).set({ status: 'revoked', revokedAt: now, updatedAt: now })
+        .where(and(eq(tickets.reservationId, context.reservation.id), inArray(tickets.status, ['active', 'used'])));
+      await tx.update(ticketBenefitEntitlements).set({ state: 'inactive', inactiveReason: 'cancellation_pending', updatedAt: now })
+        .where(and(inArray(ticketBenefitEntitlements.ticketItemId, selectedIds), eq(ticketBenefitEntitlements.state, 'active')));
       return created;
     }
 
@@ -1122,6 +1238,7 @@ export class RefundService {
     }
 
     throw new BadRequestException('환불 상태를 초기화하지 못했습니다');
+    });
   }
 
   protected async markRefundSentToPg(
@@ -1130,6 +1247,7 @@ export class RefundService {
     reason: string,
     retryCount: number,
     cancellationQuote?: FullReservationCancellationQuote,
+    expectedIdempotencyKey?: string,
   ): Promise<RefundRecord> {
     const now = new Date();
     return this.updateRefund(refundId, {
@@ -1146,7 +1264,7 @@ export class RefundService {
         lastTransientError: getRefundErrorMessage(error),
       },
       updatedAt: now,
-    });
+    }, expectedIdempotencyKey);
   }
 
   protected async markRefundProcessing(
@@ -1155,6 +1273,7 @@ export class RefundService {
     reason: string,
     retryCount: number,
     cancellationQuote?: FullReservationCancellationQuote,
+    expectedIdempotencyKey?: string,
   ): Promise<RefundRecord> {
     const now = new Date();
     return this.updateRefund(refundId, {
@@ -1171,12 +1290,13 @@ export class RefundService {
         paymentStatus: response.status,
       },
       updatedAt: now,
-    });
+    }, expectedIdempotencyKey);
   }
 
   protected async markRefundFailed(
     refundId: string,
     error: unknown,
+    expectedIdempotencyKey?: string,
   ): Promise<RefundRecord> {
     const now = new Date();
     return this.updateRefund(refundId, {
@@ -1187,21 +1307,26 @@ export class RefundService {
       failureReason: getRefundErrorMessage(error),
       customerServiceCtaVisible: true,
       updatedAt: now,
-    });
+    }, expectedIdempotencyKey);
   }
 
   protected async updateRefund(
     refundId: string,
     values: Partial<typeof refunds.$inferInsert>,
+    expectedIdempotencyKey?: string,
   ): Promise<RefundRecord> {
     const [updated] = await this.db
       .update(refunds)
-      .set(values)
-      .where(eq(refunds.id, refundId))
+      .set({ ...values, ...(values.providerMetadata ? {
+        providerMetadata: sql`coalesce(${refunds.providerMetadata}, '{}'::jsonb) || ${JSON.stringify(values.providerMetadata)}::jsonb`,
+      } : {}) })
+      .where(and(eq(refunds.id, refundId), ne(refunds.status, 'completed'),
+        sql`${refunds.providerMetadata}->>'rightsRestoredAt' IS NULL`,
+        expectedIdempotencyKey ? sql`${refunds.providerMetadata}->'cancelRequest'->'options'->>'idempotencyKey' = ${expectedIdempotencyKey}` : undefined))
       .returning();
 
     if (!updated) {
-      throw new NotFoundException('환불 상태를 찾을 수 없습니다');
+      return this.loadRefundById(refundId);
     }
 
     return updated;
@@ -1211,7 +1336,7 @@ export class RefundService {
     refund: RefundRecord,
   ): Promise<RefundRecord> {
     if (
-      (refund.status !== 'sent_to_pg' && refund.status !== 'processing_at_pg')
+      (refund.status !== 'requested' && refund.status !== 'sent_to_pg' && refund.status !== 'processing_at_pg')
       || refund.retryCount >= REFUND_CANCEL_MAX_RETRIES
       || getRefundCancelRetryJobId(refund)
     ) {
@@ -1226,6 +1351,7 @@ export class RefundService {
     refund: RefundRecord,
     jobId: string | null,
   ): Promise<RefundRecord> {
+    if (refund.status === 'completed' || hasRestoredRefundRights(refund)) return refund;
     const now = new Date();
     const providerMetadata = getRefundProviderMetadata(refund.providerMetadata);
 
@@ -1242,7 +1368,7 @@ export class RefundService {
       },
       customerServiceCtaVisible: !jobId,
       updatedAt: now,
-    });
+    }, readStoredPaymentCancelRequest(refund.providerMetadata)?.options.idempotencyKey);
   }
 
   protected async scheduleRefundCancelRetry(

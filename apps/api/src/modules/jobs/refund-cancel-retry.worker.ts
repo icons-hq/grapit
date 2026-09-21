@@ -5,7 +5,7 @@ import {
   OnModuleInit,
   Optional,
 } from '@nestjs/common';
-import { eq } from 'drizzle-orm';
+import { and, eq, ne, sql } from 'drizzle-orm';
 import type { CancellationQuote } from '@grabit/shared';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
@@ -23,11 +23,15 @@ import {
   isTransientRefundCancelFailure,
   REFUND_CANCEL_MAX_RETRIES,
 } from '../refund/refund.service.js';
-import { TossPaymentsClient, type TossPaymentResponse } from '../payment/toss-payments.client.js';
+import { restoreRejectedRefundRights } from '../cancellation/refund-rights-restoration.js';
+import { TossPaymentError, TossPaymentsClient, type TossPaymentResponse } from '../payment/toss-payments.client.js';
 import { PaymentCancellationFinalizerService } from '../cancellation/payment-cancellation-finalizer.service.js';
 import {
   buildFullPaymentCancelRequest,
   buildFullReservationPaymentCancelRequest,
+  readStoredPaymentCancelRequest,
+  hasUnchangedCancellationBalance,
+  readStoredPaymentCancelReceipt,
 } from '../payment/payment-cancel-policy.js';
 import {
   PG_BOSS,
@@ -80,7 +84,7 @@ function getStoredCancellationQuote(refund: RefundRecord): CancellationQuote | n
 }
 
 function getRefundCancelRequestAnchor(refund: RefundRecord): Date | null {
-  return refund.processingAtPgAt ?? refund.sentToPgAt ?? refund.requestedAt ?? null;
+  return refund.requestedAt ?? refund.sentToPgAt ?? refund.processingAtPgAt ?? null;
 }
 
 @Injectable()
@@ -144,34 +148,45 @@ export class RefundCancelRetryWorker implements OnModuleInit {
       idempotencyKey: this.buildRefundCancelIdempotencyKey(context.refund.id),
       cancelRequestIdSeed: context.refund.id,
     };
-    const command = cancellationQuote
+    const command = readStoredPaymentCancelRequest(context.refund.providerMetadata) ?? (cancellationQuote
       ? buildFullReservationPaymentCancelRequest({
           ...baseCommandInput,
           cancellationQuote,
         })
-      : buildFullPaymentCancelRequest(baseCommandInput);
+      : buildFullPaymentCancelRequest(baseCommandInput));
     const allowPartialStatus =
       cancellationQuote !== null
       && cancellationQuote.refundableAmount < context.payment.amount;
 
+    let cancelAttempted = false;
+    let providerAccepted = false;
+    let definitePreflightRejection = false;
+    const amountSnapshot = getRefundProviderMetadata(context.refund.providerMetadata).providerRefund;
     try {
-      const queried = await this.tossPaymentsClient.queryPayment(command.paymentKey, {
-        secretKeyScope: command.options.secretKeyScope,
-      });
+      let queried: TossPaymentResponse;
+      try {
+        queried = await this.tossPaymentsClient.queryPayment(command.paymentKey, {
+          secretKeyScope: command.options.secretKeyScope,
+        });
+      } catch {
+        throw new TossPaymentError('NETWORK_ERROR', '결제사 환불 잔액을 확인하지 못했습니다');
+      }
 
       if (
         isTossCancelCompleted(queried, command.options.cancelRequestId, {
           allowPartialStatus,
           expectedCancelAmount: command.options.cancelAmount,
+          ...readStoredPaymentCancelReceipt(context.refund.providerMetadata),
           allowUnidentifiedPartialCancel: true,
           requestedAt: getRefundCancelRequestAnchor(context.refund),
         })
       ) {
+        providerAccepted = true;
         await this.finalizeFullPaymentCancellation(context, queried, reason);
         return { status: 'completed' };
       }
 
-      if (this.hasMatchingInProgressCancel(queried, command.options.cancelRequestId)) {
+      if (this.hasMatchingInProgressCancel(queried, command.options.cancelRequestId, readStoredPaymentCancelReceipt(context.refund.providerMetadata))) {
         return await this.keepWaitingForMatchingAsyncCancel(
           context,
           queried,
@@ -188,16 +203,29 @@ export class RefundCancelRetryWorker implements OnModuleInit {
         return { status: 'failed' };
       }
 
+      // A receipt can be recovered at any age, but a POST must stay within the provider's
+      // idempotency window and must use the exact balance frozen before the first attempt.
+      if (Date.now() - context.refund.requestedAt.getTime() >= 15 * 86400000
+        || (amountSnapshot && !hasUnchangedCancellationBalance(queried, amountSnapshot))) {
+        throw new TossPaymentError('BALANCE_RECONCILIATION_REQUIRED', '취소 요청과 결제사 잔액을 대조해야 합니다');
+      }
+      if (command.options.cancelAmount !== undefined && queried.isPartialCancelable !== true) {
+        definitePreflightRejection = queried.isPartialCancelable === false && Boolean(amountSnapshot && hasUnchangedCancellationBalance(queried, amountSnapshot));
+        throw new TossPaymentError('NOT_PARTIAL_CANCELABLE', '결제사에서 부분취소를 허용하지 않습니다');
+      }
+      cancelAttempted = true;
       const response = await this.tossPaymentsClient.cancelPayment(
         command.paymentKey,
         command.reason,
         command.options,
       );
 
+      providerAccepted = true;
       if (
         isTossCancelCompleted(response, command.options.cancelRequestId, {
           allowPartialStatus,
           expectedCancelAmount: command.options.cancelAmount,
+          ...readStoredPaymentCancelReceipt(context.refund.providerMetadata),
           allowUnidentifiedPartialCancel: true,
           requestedAt: getRefundCancelRequestAnchor(context.refund),
         })
@@ -206,7 +234,7 @@ export class RefundCancelRetryWorker implements OnModuleInit {
         return { status: 'completed' };
       }
 
-      if (this.hasMatchingInProgressCancel(response, command.options.cancelRequestId)) {
+      if (this.hasMatchingInProgressCancel(response, command.options.cancelRequestId, readStoredPaymentCancelReceipt(context.refund.providerMetadata))) {
         return await this.keepWaitingForMatchingAsyncCancel(
           context,
           response,
@@ -238,7 +266,7 @@ export class RefundCancelRetryWorker implements OnModuleInit {
       );
       return { status: jobId ? 'processing' : 'retry_schedule_failed' };
     } catch (error) {
-      if (isTransientRefundCancelFailure(error)) {
+      if (providerAccepted || isTransientRefundCancelFailure(error)) {
         await this.recordTransientRetryFailure(
           context.refund.id,
           error,
@@ -265,7 +293,18 @@ export class RefundCancelRetryWorker implements OnModuleInit {
         return { status: jobId ? 'rescheduled' : 'retry_schedule_failed' };
       }
 
-      await this.markFinalFailure(context.refund.id, error);
+      let canRestore = definitePreflightRejection;
+      if (cancelAttempted && error instanceof TossPaymentError
+        && ['INVALID_REQUEST', 'NOT_CANCELABLE_PAYMENT', 'NOT_ENOUGH_CANCELABLE_AMOUNT', 'NOT_CANCELABLE_AMOUNT'].includes(error.code)) {
+        try {
+          const current = await this.tossPaymentsClient.queryPayment(command.paymentKey, { secretKeyScope: command.options.secretKeyScope });
+          canRestore = hasUnchangedCancellationBalance(current, amountSnapshot)
+            && !current.cancels?.some((cancel) => cancel.cancelReason === command.reason);
+        } catch { canRestore = false; }
+      }
+      if (canRestore) await restoreRejectedRefundRights(this.db, context.refund,
+        { code: getRefundErrorCode(error), message: getRefundErrorMessage(error) });
+      else await this.markFinalFailure(context.refund.id, error);
       return { status: 'failed' };
     }
   }
@@ -289,13 +328,17 @@ export class RefundCancelRetryWorker implements OnModuleInit {
   protected hasMatchingInProgressCancel(
     response: TossPaymentResponse,
     cancelRequestId: string | undefined,
+    receipt: ReturnType<typeof readStoredPaymentCancelReceipt> = {},
   ): boolean {
-    if (!cancelRequestId) {
+    if (!cancelRequestId && !receipt.expectedCancelReason) {
       return false;
     }
 
     return response.cancels?.some((cancel) =>
-      cancel.cancelRequestId === cancelRequestId && cancel.cancelStatus === 'IN_PROGRESS'
+      cancel.cancelStatus === 'IN_PROGRESS'
+      && (!cancelRequestId || cancel.cancelRequestId === cancelRequestId)
+      && (!receipt.expectedCancelReason || cancel.cancelReason === receipt.expectedCancelReason)
+      && (receipt.expectedCancelAmount === undefined || cancel.cancelAmount === receipt.expectedCancelAmount)
     ) ?? false;
   }
 
@@ -435,15 +478,15 @@ export class RefundCancelRetryWorker implements OnModuleInit {
         resultCode: getRefundErrorCode(error),
         resultMessage: getRefundErrorMessage(error),
         failureReason: getRefundErrorMessage(error),
-        providerMetadata: {
+        providerMetadata: sql`coalesce(${refunds.providerMetadata}, '{}'::jsonb) || ${JSON.stringify({
           cancelReason: reason,
           ...(cancellationQuote ? { cancellationQuote } : {}),
           lastTransientError: getRefundErrorMessage(error),
-        },
+        })}::jsonb`,
         expectedDepositAt: null,
         updatedAt: new Date(),
       })
-      .where(eq(refunds.id, refundId));
+      .where(and(eq(refunds.id, refundId), ne(refunds.status, 'completed')));
   }
 
   protected async markRefundProcessing(
@@ -462,15 +505,15 @@ export class RefundCancelRetryWorker implements OnModuleInit {
         retryCount,
         resultCode: response.status,
         resultMessage: 'PG cancel accepted and is processing',
-        providerMetadata: {
+        providerMetadata: sql`coalesce(${refunds.providerMetadata}, '{}'::jsonb) || ${JSON.stringify({
           cancelReason: reason,
           paymentStatus: response.status,
           ...(cancellationQuote ? { cancellationQuote } : {}),
-        },
+        })}::jsonb`,
         expectedDepositAt: null,
         updatedAt: new Date(),
       })
-      .where(eq(refunds.id, refundId));
+      .where(and(eq(refunds.id, refundId), ne(refunds.status, 'completed')));
   }
 
   protected async recordRetryScheduleState(
@@ -483,7 +526,7 @@ export class RefundCancelRetryWorker implements OnModuleInit {
     await this.db
       .update(refunds)
       .set({
-        providerMetadata: {
+        providerMetadata: sql`coalesce(${refunds.providerMetadata}, '{}'::jsonb) || ${JSON.stringify({
           ...getRefundProviderMetadata(baseMetadata),
           [REFUND_CANCEL_RETRY_METADATA_KEY]: {
             status: jobId ? 'scheduled' : 'schedule_failed',
@@ -492,11 +535,11 @@ export class RefundCancelRetryWorker implements OnModuleInit {
             scheduledAt: jobId ? now.toISOString() : null,
             failedAt: jobId ? null : now.toISOString(),
           },
-        },
+        })}::jsonb`,
         customerServiceCtaVisible: !jobId,
         updatedAt: now,
       })
-      .where(eq(refunds.id, refundId));
+      .where(and(eq(refunds.id, refundId), ne(refunds.status, 'completed')));
   }
 
   protected async markRetryExhausted(refundId: string, reason: string): Promise<void> {
@@ -512,7 +555,7 @@ export class RefundCancelRetryWorker implements OnModuleInit {
         customerServiceCtaVisible: true,
         updatedAt: new Date(),
       })
-      .where(eq(refunds.id, refundId));
+      .where(and(eq(refunds.id, refundId), ne(refunds.status, 'completed')));
   }
 
   protected async markFinalFailure(refundId: string, error: unknown): Promise<void> {
@@ -527,7 +570,7 @@ export class RefundCancelRetryWorker implements OnModuleInit {
         customerServiceCtaVisible: true,
         updatedAt: new Date(),
       })
-      .where(eq(refunds.id, refundId));
+      .where(and(eq(refunds.id, refundId), ne(refunds.status, 'completed')));
   }
 
   protected async scheduleRetry(refundId: string, retryCount: number): Promise<string | null> {

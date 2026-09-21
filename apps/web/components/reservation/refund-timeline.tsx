@@ -143,7 +143,7 @@ export function RefundTimeline({
 }) {
   const locale = getClientLocale();
   const copy = getVisibleCopy(locale).reservation.refund;
-  const timelineSteps = getTimelineSteps(copy);
+  const timelineSteps = getTimelineSteps(copy).filter((step) => step.state !== 'FAILED' || timeline.currentState === 'FAILED');
   const expectedDepositAt = formatDateTime(timeline.expectedDepositAt, locale);
   const releaseAt = formatDateTime(cancelledSeatHold?.releaseAt, locale);
   const currentLabel =
