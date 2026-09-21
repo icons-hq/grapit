@@ -41,7 +41,7 @@ test.describe('admin event publish review', () => {
     await expect(page.getByText('동해문화예술관 대극장')).toBeVisible();
     await expect(page.getByText('6호선 고려대역 하차 후 도보 10분')).toBeVisible();
 
-    await page.getByRole('button', { name: '이벤트 게시하기' }).click();
+    await page.getByRole('button', { name: '공개 승인', exact: true }).click();
 
     await expect(
       page.getByRole('heading', { name: '이 이벤트를 게시하시겠습니까?' }),
