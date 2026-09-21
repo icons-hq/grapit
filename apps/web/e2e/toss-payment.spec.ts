@@ -228,7 +228,7 @@ test.describe('Toss Payments E2E', () => {
     const main = page.getByRole('main');
     await expect(main.getByText('결제를 완료하지 못했습니다.')).toBeVisible({ timeout: 5000 });
     await expect(
-      main.getByText('결제 수단 상태를 확인하거나 다른 결제 수단으로 다시 시도해주세요.'),
+      main.getByText('기존 예매 상태를 확인한 후 같은 결제수단으로 다시 시도해 주세요.'),
     ).toBeVisible();
     await expect(main.getByText('결제사 응답: 카드 승인 거절')).toBeVisible();
   });
