@@ -38,6 +38,7 @@ describe('admin operations contract', () => {
       'field.scan.verify',
       'field.scan.consume',
       'field.scan.sync',
+      'field.benefits.redeem',
       'settlement.export',
       'benefits.manage',
       'benefits.export',
@@ -62,6 +63,7 @@ describe('admin operations contract', () => {
       'field.scan.verify',
       'field.scan.consume',
       'field.scan.sync',
+      'field.benefits.redeem',
     ]);
 
     const scannerCapabilities = ADMIN_CAPABILITY_BUNDLE_CAPABILITIES.scanner;
@@ -405,6 +407,7 @@ describe('admin operations contract', () => {
       'field.scan.verify',
       'field.scan.consume',
       'field.scan.sync',
+      'field.benefits.redeem',
     ]);
     expect(scanner.capabilities).not.toContain('settlement.export');
     expect(scanner.capabilities).not.toContain('reservations.export_raw');

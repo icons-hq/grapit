@@ -385,7 +385,7 @@ A staff member authorized to verify QR credentials, process venue entry, and red
 _Avoid_: Admin, operator, buyer.
 
 **Scanner Capability**:
-A limited authority granted to Field Scanner Staff for field QR operations, including Venue Entry and Benefit Redemption. It is separate from finance, security, event-management, and broad admin authority.
+A limited authority granted to Field Scanner Staff for field QR operations, including Venue Entry and Benefit Redemption. It is separate from finance, security, event-management, and broad admin authority. The scanner bundle grants entry and benefit redemption together, but the API enforces separate `field.scan.consume` and `field.benefits.redeem` capabilities (ADR 0011).
 _Avoid_: Admin access, full operator access.
 
 **Field Check-In**:
@@ -536,7 +536,7 @@ Domain expert: "No. It is a Duplicate Benefit Redemption, and staff should see t
 
 Dev: "Does Benefit Redemption require a separate staff authority from Scanner Capability?"
 
-Domain expert: "No. Field Scanner Staff use the same Scanner Capability for Venue Entry and Benefit Redemption."
+Revamp decision (2026-09-22, ADR 0011): The same scanner bundle can grant both duties, but Venue Entry and Benefit Redemption require separate API capabilities. An explicit entry-only capability list does not grant physical benefit redemption.
 
 Dev: "Can Field Scanner Staff redeem a benefit by searching a buyer name instead of scanning QR?"
 

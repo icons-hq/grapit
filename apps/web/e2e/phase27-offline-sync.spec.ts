@@ -1,11 +1,15 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
 
+const fieldShowtimeId = '00000000-0000-4000-8000-000000000027';
 const rawQrToken = 'raw-token-phase27-offline-should-not-render';
 const rawQrJTI = 'raw-JTI-phase27-offline-should-not-render';
 const rawPaymentKey = 'raw-payment-key-offline-should-not-render';
 const rawBuyerEmail = 'offline-buyer-phase27@example.com';
 
 async function mockScannerSession(page: Page) {
+  await page.route('**/api/v1/field/check-in/showtimes', async (route) => {
+    await route.fulfill({ json: [{ id: fieldShowtimeId, eventId: 'field-event', title: 'Phase 27 Offline Sync Performance', dateTime: '2026-07-04T10:00:00Z', venueName: 'Hall' }] });
+  });
   await page.route('**/api/v1/auth/refresh', async (route: Route) => {
     await route.fulfill({
       status: 200,
@@ -62,23 +66,23 @@ test.describe('phase27 offline sync browser contracts', () => {
     await mockScannerSession(page);
     await mockVerify(page);
 
-    await page.goto(`/field/check-in?ticket=${encodeURIComponent(rawQrToken)}`);
+    await page.goto(`/field/check-in?ticket=${encodeURIComponent(rawQrToken)}&showtimeId=${fieldShowtimeId}`);
     await expect(
       page.getByRole('status', { name: '입장 가능 티켓입니다' }),
     ).toBeVisible({ timeout: 10000 });
 
     await page.context().setOffline(true);
-    await page.getByRole('button', { name: '입장 처리' }).click();
+    await page.getByRole('button', { name: '이 좌석 입장 처리' }).click();
 
     await expect(
       page.getByRole('status', {
-        name: '네트워크 문제로 보류 스캔에 저장했습니다. 연결이 복구되면 서버와 동기화하세요.',
+        name: '입장 동기화 대기',
       }),
     ).toBeVisible();
     await expect(page.getByTestId('offline-sync-status')).toContainText(
       '보류 상태는 최종 입장 증거가 아닙니다',
     );
-    await expect(page.getByTestId('offline-sync-status')).toContainText('pending');
+    await expect(page.getByTestId('offline-sync-status')).toContainText('동기화 대기');
     await expect(page.getByText('입장 처리가 완료되었습니다')).toHaveCount(0);
 
     await page.context().setOffline(false);
@@ -89,7 +93,8 @@ test.describe('phase27 offline sync browser contracts', () => {
         body: JSON.stringify({
           results: [
             {
-              deviceAttemptId: 'device-attempt-phase27-1',
+              deviceAttemptId: route.request().postDataJSON().attempts[0].deviceAttemptId,
+              outcome: 'entered',
               syncState: 'synced',
               resultLabel: '보류 스캔 동기화 완료',
             },
@@ -103,7 +108,7 @@ test.describe('phase27 offline sync browser contracts', () => {
     await expect(page.getByTestId('offline-sync-status')).toContainText(
       '보류 스캔 동기화 완료',
     );
-    await expect(page.getByTestId('offline-sync-status')).toContainText('synced');
+    await expect(page.getByTestId('offline-sync-status')).toContainText('서버 확정');
     await expectNoRawSecrets(page);
   });
 
@@ -118,7 +123,7 @@ test.describe('phase27 offline sync browser contracts', () => {
         body: JSON.stringify({
           results: [
             {
-              deviceAttemptId: 'device-attempt-phase27-rejected',
+              deviceAttemptId: route.request().postDataJSON().attempts[0].deviceAttemptId,
               syncState: 'rejected',
               result: 'duplicate',
               resultLabel: '이미 입장 처리된 티켓입니다',
@@ -128,14 +133,18 @@ test.describe('phase27 offline sync browser contracts', () => {
       });
     });
 
-    await page.goto(`/field/check-in?ticket=${encodeURIComponent(rawQrToken)}&offlineAttempt=1`);
+    await page.goto(`/field/check-in?ticket=${encodeURIComponent(rawQrToken)}&showtimeId=${fieldShowtimeId}`);
     await expect(
       page.getByRole('status', { name: '입장 가능 티켓입니다' }),
     ).toBeVisible({ timeout: 10000 });
 
+    await page.context().setOffline(true);
+    await page.getByRole('button', { name: '이 좌석 입장 처리' }).click();
+    await expect(page.getByTestId('offline-sync-status')).toContainText('동기화 대기');
+    await page.context().setOffline(false);
     await page.getByRole('button', { name: '보류 스캔 동기화' }).click();
 
-    await expect(page.getByTestId('offline-sync-status')).toContainText('rejected');
+    await expect(page.getByTestId('offline-sync-status')).toContainText('충돌 확인 필요');
     await expect(page.getByTestId('offline-sync-status')).toContainText(
       '이미 입장 처리된 티켓입니다',
     );

@@ -39,7 +39,7 @@ export interface ScannerOfflineQueueItem {
 
 export interface ScannerOfflineSyncResult {
   deviceAttemptId: string;
-  state: 'synced' | 'rejected';
+  state: 'pending' | 'synced' | 'rejected';
   result: ScannerCheckInResult;
   resultLabel: string;
   resolvedAt?: string;
@@ -71,6 +71,7 @@ export interface ScannerCheckInVerification {
   offlineQueue: readonly ScannerOfflineQueueItem[];
   benefitEntitlements: readonly FieldBenefitEntitlement[];
   verifiedAt?: string;
+  benefitsAvailable?: boolean;
 }
 
 export interface ScannerCheckInConsumeResult {
@@ -96,6 +97,19 @@ export interface ScannerBenefitRedemptionResult {
 
 interface UseFieldCheckInVerifyInput extends FieldCheckInVerifyRequest {
   enabled?: boolean;
+}
+
+export interface FieldShowtimeOption {
+  id: string;
+  eventId: string;
+  title: string;
+  dateTime: string;
+  venueName: string | null;
+}
+
+export function useFieldShowtimes(enabled: boolean) {
+  return useQuery({ queryKey: ['field', 'showtimes'], enabled,
+    queryFn: () => apiClient.get<FieldShowtimeOption[]>('/api/v1/field/check-in/showtimes'), retry: false });
 }
 
 export function useFieldCheckInVerify({
@@ -192,7 +206,7 @@ export function normalizeVerifyResponse(
     performanceTitle:
       stringValue(record['performanceTitle']) ??
       stringValue(ticket?.['performanceTitle']),
-    venueName: stringValue(record['venueName']),
+    venueName: stringValue(record['venueName']) ?? stringValue(ticket?.['venueName']),
     showtimeAt:
       stringValue(record['showtimeAt']) ?? stringValue(ticket?.['showtimeLabel']),
     showtimeId: stringValue(record['showtimeId']) ?? stringValue(ticket?.['showtimeId']),
@@ -208,6 +222,7 @@ export function normalizeVerifyResponse(
       record['benefitEntitlements'] ?? ticket?.['benefitEntitlements'],
     ),
     verifiedAt: stringValue(record['verifiedAt']),
+    benefitsAvailable: ticket?.['benefitsAvailable'] !== false,
   };
 }
 
@@ -221,7 +236,9 @@ export function canRedeemBenefitsForVerification(
   const hasActiveBenefit = verification.benefitEntitlements.some(
     (benefit) => benefit.state === 'active',
   );
-  return hasActiveBenefit && (verification.processable || verification.ticketStatus === 'USED');
+  return hasActiveBenefit && verification.benefitsAvailable !== false
+    && ['processable', 'processed', 'synced', 'duplicate'].includes(verification.result)
+    && (verification.processable || verification.ticketStatus === 'USED');
 }
 
 export function normalizeConsumeResponse(
@@ -274,7 +291,7 @@ export function normalizeOfflineSyncResponse(
       const row = asRecord(item);
       const deviceAttemptId = stringValue(row?.['deviceAttemptId']);
       const rawState = stringValue(row?.['syncState']) ?? stringValue(row?.['state']);
-      if (!deviceAttemptId || (rawState !== 'synced' && rawState !== 'rejected')) {
+      if (!deviceAttemptId || (rawState !== 'pending' && rawState !== 'synced' && rawState !== 'rejected')) {
         return null;
       }
 
@@ -335,7 +352,7 @@ export function labelForResult(result: ScannerCheckInResult): string {
     case 'wrong-showtime':
       return '현재 회차의 티켓이 아닙니다';
     case 'offline-pending':
-      return '네트워크 문제로 보류 스캔에 저장했습니다. 연결이 복구되면 서버와 동기화하세요.';
+      return '입장 동기화 대기';
     case 'expired':
     case 'rejected':
       return '확인할 수 없는 QR입니다';

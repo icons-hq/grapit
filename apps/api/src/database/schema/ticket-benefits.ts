@@ -251,6 +251,7 @@ export const ticketBenefitRedemptionRecords = pgTable(
     showtimeId: uuid('showtime_id')
       .notNull()
       .references(() => showtimes.id, { onDelete: 'restrict' }),
+    requestedShowtimeId: uuid('requested_showtime_id'),
     ticketItemId: uuid('ticket_item_id')
       .notNull()
       .references(() => ticketItems.id, { onDelete: 'restrict' }),

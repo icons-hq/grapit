@@ -18,7 +18,7 @@ const scannerUser = {
   name: '현장 스태프',
   role: 'admin',
   adminCapabilityBundle: 'scanner',
-  adminCapabilities: ['field.scan.verify', 'field.scan.consume', 'field.scan.sync'],
+  adminCapabilities: ['field.scan.verify', 'field.scan.consume', 'field.scan.sync', 'field.benefits.redeem'],
 } as const;
 
 const regularUser = {
@@ -128,7 +128,7 @@ describe('ScannerCheckIn', () => {
     expect(screen.getByText('Phase 27 Field Operations')).toBeInTheDocument();
 
     const actionArea = screen.getByTestId('scanner-sticky-action');
-    const processButton = within(actionArea).getByRole('button', { name: '입장 처리' });
+    const processButton = within(actionArea).getByRole('button', { name: '이 좌석 입장 처리' });
 
     expect(actionArea).toHaveClass('sticky', 'bottom-0');
     expect(processButton).toHaveClass('w-full');
@@ -176,7 +176,7 @@ describe('ScannerCheckIn', () => {
     });
 
     expect(screen.getByText(resultLabel)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '입장 처리' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '이 좌석 입장 처리' })).not.toBeInTheDocument();
   });
 
   it('shows offline pending as non-final evidence until server sync succeeds', () => {
@@ -328,7 +328,7 @@ describe('ScannerCheckIn', () => {
       },
     });
 
-    expect(screen.queryByRole('button', { name: '입장 처리' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '이 좌석 입장 처리' })).not.toBeInTheDocument();
     expect(screen.getByText('이 검표 결과에서는 입장 처리를 진행할 수 없습니다.'))
       .toBeInTheDocument();
 
@@ -392,6 +392,7 @@ describe('offline pending scan store', () => {
     await expect(listPendingScanAttempts()).resolves.toEqual([
       {
         ...pending,
+        token: '',
         syncState: 'synced',
         lastSyncAttemptAt: '2026-07-04T10:03:00.000Z',
       },
@@ -435,4 +436,14 @@ describe('offline pending scan store', () => {
     expect(stored).not.toHaveProperty('cookie');
     expect(stored).not.toHaveProperty('ipAddress');
   });
+  it('never turns a terminal sync receipt back into pending when another tab responds late', async () => {
+    await addPendingScanAttempt({ deviceAttemptId: 'late-tab-attempt', scannerUserId: 'scanner-1', eventId: 'event-1', showtimeId: 'showtime-1',
+      token: 'pending-token', redactedTokenRef: 'redacted', attemptedAt: new Date().toISOString(), syncState: 'pending' });
+    await updatePendingScanAttempt('late-tab-attempt', { syncState: 'synced', result: 'processed', scanEventId: 'server-receipt' });
+    await updatePendingScanAttempt('late-tab-attempt', { syncState: 'pending', result: 'offline-pending', scanEventId: null });
+    expect(await listPendingScanAttempts({ scannerUserId: 'scanner-1' })).toEqual([expect.objectContaining({
+      syncState: 'synced', token: '', result: 'processed', scanEventId: 'server-receipt',
+    })]);
+  });
+
 });

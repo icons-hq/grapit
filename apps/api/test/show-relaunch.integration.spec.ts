@@ -1167,7 +1167,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     expect(detail.refundProviderAmount).toEqual({ currency: 'USD', amountMinor: 100, amountDecimal: '1.00' });
   });
 
-  it('concurrent scanners enter the account once, count tickets, keep buyer QR readable and redeem a benefit once', async () => {
+  it('concurrent scanners admit different seats independently, keep buyer QR readable and redeem a benefit once', async () => {
     const f = await fixture();
     const items = (await Promise.all([ticket(f, '1F:A-1'), ticket(f, '1F:A-2')])).flat();
     for (const item of items) {
@@ -1184,7 +1184,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     const results = await Promise.all(credentials.map((credential) => field.consume({
       token: credential.token, showtimeId: f.showtimeId, deviceAttemptId: randomUUID(), confirmed: true,
     }, context)));
-    expect(results.filter((r) => r.outcome === 'entered')).toHaveLength(1);
+    expect(results.filter((r) => r.outcome === 'entered')).toHaveLength(2);
     const summary = await new FieldMonitorService(db).getSummary({ eventId: f.performanceId, showtimeId: f.showtimeId });
     expect(summary.enteredCount).toBe(2);
     expect(summary.notEnteredCount).toBe(0);
@@ -1198,7 +1198,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
       deviceAttemptId: randomUUID(),
     }, context)));
     expect(redemptions.map((r) => r.outcome).sort()).toEqual(['duplicate', 'redeemed']);
-    console.info(`Local PostgreSQL verify + concurrent account entry + read-back + concurrent redemption: ${Math.round(performance.now() - start)}ms (not production capacity evidence)`);
+    console.info(`Local PostgreSQL verify + concurrent seat entry + read-back + concurrent redemption: ${Math.round(performance.now() - start)}ms (not production capacity evidence)`);
   });
 
   it('expiration leaves provider IN_PROGRESS and DONE handoffs untouched', async () => {

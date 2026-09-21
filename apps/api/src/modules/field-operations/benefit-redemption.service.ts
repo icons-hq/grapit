@@ -1,6 +1,6 @@
-import { Inject, Injectable, InternalServerErrorException } from '@nestjs/common';
+import { ConflictException, Inject, Injectable, InternalServerErrorException, UnauthorizedException } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import {
   ticketBenefitDisplayCopySchema,
   type BenefitEntitlement,
@@ -33,10 +33,12 @@ type PriorRedemptionRow = {
 };
 type ExistingRedemptionRow = PriorRedemptionRow & {
   showtimeId: string;
+  requestedShowtimeId: string | null;
   ticketItemId: string;
   benefitEntitlementId: string;
   result: BenefitRedemptionOutcome;
   rejectionReason: string | null;
+  redactedTokenRef: string;
 };
 
 @Injectable()
@@ -50,8 +52,29 @@ export class BenefitRedemptionService {
     input: BenefitRedemptionRequest,
     context: BenefitRedemptionContext,
   ): Promise<BenefitRedemptionResponse> {
+    return this.db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`benefit:${input.deviceAttemptId}`}, 0))`);
+      const entitlement = await this.findEntitlement(input.benefitEntitlementId, tx);
+      if (entitlement) {
+        // Configuration/live allocation uses the same showtime lock. Record the
+        // first redemption attempt before a competing result mutation can proceed.
+        await tx.execute(sql`SELECT id FROM showtimes WHERE id = ${entitlement.showtimeId} FOR NO KEY UPDATE`);
+        await tx.execute(sql`SELECT r.id FROM reservations r
+          INNER JOIN payments p ON p.reservation_id = r.id
+          INNER JOIN ticket_items ti ON ti.reservation_id = r.id AND ti.payment_id = p.id
+          WHERE ti.id = ${entitlement.ticketItemId} FOR UPDATE OF r, p, ti`);
+      }
+      return this.redeemLocked(input, context, tx);
+    });
+  }
+
+  private async redeemLocked(
+    input: BenefitRedemptionRequest,
+    context: BenefitRedemptionContext,
+    db: RedemptionDb,
+  ): Promise<BenefitRedemptionResponse> {
     const redeemedAt = new Date();
-    const entitlement = await this.findEntitlement(input.benefitEntitlementId);
+    const entitlement = await this.findEntitlement(input.benefitEntitlementId, db);
 
     if (!entitlement) {
       return {
@@ -62,10 +85,16 @@ export class BenefitRedemptionService {
     }
 
     const existingAttempt = await this.findExistingAttemptByDeviceId(
-      this.db,
+      db,
       input.deviceAttemptId,
     );
     if (existingAttempt) {
+      if (existingAttempt.benefitEntitlementId !== entitlement.id || existingAttempt.ticketItemId !== entitlement.ticketItemId
+        || existingAttempt.showtimeId !== entitlement.showtimeId || existingAttempt.scannerUserId !== context.scannerUserId
+        || existingAttempt.redactedTokenRef !== redactedTokenRef(input.token)
+        || (existingAttempt.requestedShowtimeId ?? existingAttempt.showtimeId) !== input.showtimeId) {
+        throw new ConflictException('다른 특전 지급에 사용된 요청입니다. 다시 확인해주세요.');
+      }
       return responseForExistingAttempt(existingAttempt, entitlement);
     }
 
@@ -73,12 +102,13 @@ export class BenefitRedemptionService {
     let contractTicketItemId: string;
     let contractTicketStatus: string;
     try {
-      const contract = await this.qrTicketService.verifyTicketForScannerContract(input.token);
+      const contract = await this.qrTicketService.verifyTicketForScannerContract(input.token, db);
       contractShowtimeId = contract.showtimeId;
       contractTicketItemId = contract.ticketItemId;
       contractTicketStatus = contract.ticketStatus;
-    } catch {
-      await this.recordRedemption(this.db, {
+    } catch (error) {
+      if (!(error instanceof UnauthorizedException)) throw error;
+      await this.recordRedemption(db, {
         input,
         context,
         entitlement,
@@ -90,7 +120,7 @@ export class BenefitRedemptionService {
     }
 
     if (contractShowtimeId !== input.showtimeId || entitlement.showtimeId !== input.showtimeId) {
-      await this.recordRedemption(this.db, {
+      await this.recordRedemption(db, {
         input,
         context,
         entitlement,
@@ -102,7 +132,7 @@ export class BenefitRedemptionService {
     }
 
     if (entitlement.ticketItemId !== contractTicketItemId) {
-      await this.recordRedemption(this.db, {
+      await this.recordRedemption(db, {
         input,
         context,
         entitlement,
@@ -118,7 +148,7 @@ export class BenefitRedemptionService {
       || contractTicketStatus === 'REVOKED'
       || contractTicketStatus === 'EXPIRED'
     ) {
-      await this.recordRedemption(this.db, {
+      await this.recordRedemption(db, {
         input,
         context,
         entitlement,
@@ -130,12 +160,12 @@ export class BenefitRedemptionService {
     }
 
     const priorRedemption = await this.findPriorRedeemed(
-      this.db,
+      db,
       entitlement.showtimeId,
       entitlement.id,
     );
     if (entitlement.state === 'redeemed' || priorRedemption) {
-      await this.recordRedemption(this.db, {
+      await this.recordRedemption(db, {
         input,
         context,
         entitlement,
@@ -146,7 +176,8 @@ export class BenefitRedemptionService {
       return duplicateResponse(entitlement, priorRedemption);
     }
 
-    return this.runInTransaction(async (tx) => {
+    const tx = db;
+    {
       const [updated] = await tx
         .update(ticketBenefitEntitlements)
         .set({
@@ -210,7 +241,7 @@ export class BenefitRedemptionService {
         redemptionEventId,
         redeemedAt: toIso(updated.redeemedAt ?? redeemedAt),
       };
-    });
+    }
   }
 
   private async findEntitlement(
@@ -258,11 +289,13 @@ export class BenefitRedemptionService {
       .select({
         id: ticketBenefitRedemptionRecords.id,
         showtimeId: ticketBenefitRedemptionRecords.showtimeId,
+        requestedShowtimeId: ticketBenefitRedemptionRecords.requestedShowtimeId,
         ticketItemId: ticketBenefitRedemptionRecords.ticketItemId,
         benefitEntitlementId: ticketBenefitRedemptionRecords.benefitEntitlementId,
         scannerUserId: ticketBenefitRedemptionRecords.scannerUserId,
         deviceAttemptId: ticketBenefitRedemptionRecords.deviceAttemptId,
         result: ticketBenefitRedemptionRecords.result,
+        redactedTokenRef: ticketBenefitRedemptionRecords.redactedTokenRef,
         rejectionReason: ticketBenefitRedemptionRecords.rejectionReason,
         createdAt: ticketBenefitRedemptionRecords.createdAt,
       })
@@ -289,6 +322,7 @@ export class BenefitRedemptionService {
       .insert(ticketBenefitRedemptionRecords)
       .values({
         showtimeId: input.entitlement.showtimeId,
+        requestedShowtimeId: input.input.showtimeId,
         ticketItemId: input.entitlement.ticketItemId,
         benefitEntitlementId: input.entitlement.id,
         scannerUserId: input.context.scannerUserId,
@@ -301,20 +335,6 @@ export class BenefitRedemptionService {
       .returning({ id: ticketBenefitRedemptionRecords.id });
 
     return row?.id ?? fallbackId;
-  }
-
-  private async runInTransaction<T>(
-    operation: (db: RedemptionDb) => Promise<T>,
-  ): Promise<T> {
-    const transactionResult = this.db.transaction?.((tx) =>
-      operation(tx as RedemptionDb),
-    );
-
-    if (transactionResult && typeof transactionResult.then === 'function') {
-      return transactionResult;
-    }
-
-    return operation(this.db);
   }
 
   private rejected(
@@ -357,7 +377,11 @@ function responseForExistingAttempt(
   existingAttempt: ExistingRedemptionRow,
   entitlement: BenefitEntitlementRow,
 ): BenefitRedemptionResponse {
-  if (existingAttempt.result === 'redeemed' || existingAttempt.result === 'duplicate') {
+  if (existingAttempt.result === 'redeemed') {
+    return { outcome: 'redeemed', benefitEntitlement: toBenefitEntitlement(entitlement),
+      redemptionEventId: existingAttempt.id, redeemedAt: toIso(existingAttempt.createdAt) };
+  }
+  if (existingAttempt.result === 'duplicate') {
     return duplicateResponse(
       entitlement.state === 'redeemed'
         ? entitlement

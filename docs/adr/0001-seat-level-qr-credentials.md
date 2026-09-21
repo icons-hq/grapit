@@ -22,3 +22,5 @@ Grabit issues QR Credentials per Ticket Item, not per Reservation, because a buy
 - Partial cancellation keeps the Reservation confirmed and changes only the affected Ticket Item state.
 - When the last valid Ticket Item in a Reservation is cancelled, the Reservation becomes cancelled.
 - Cancelled Ticket Item Reopen releases only that Ticket Item's Seat Identity back into sellable inventory after a controlled hold period, not immediately at cancellation time.
+
+The July account/showtime batch-entry implementation temporarily differed from this admission unit. [ADR 0011](0011-consume-one-ticket-item-per-field-scan.md) restores single-item consumption for new scans in the full-service revamp and preserves every historical batch result.

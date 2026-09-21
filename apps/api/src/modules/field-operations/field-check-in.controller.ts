@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Get,
   Post,
   Req,
   UseGuards,
@@ -27,6 +28,13 @@ import { FieldCheckInService } from './field-check-in.service.js';
 @Roles('admin')
 export class FieldCheckInController {
   constructor(private readonly fieldCheckInService: FieldCheckInService) {}
+
+  @Get('showtimes')
+  @UseGuards(AdminCapabilitiesGuard)
+  @AdminCapabilities('field.scan.verify')
+  listShowtimes() {
+    return this.fieldCheckInService.listShowtimes();
+  }
 
   @Post('verify')
   @UseGuards(AdminCapabilitiesGuard)

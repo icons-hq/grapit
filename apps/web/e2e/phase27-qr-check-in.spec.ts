@@ -4,6 +4,7 @@ import {
   getQrCheckInUrlsForVisibleTextGuard,
 } from './helpers/qr-origin';
 
+const fieldShowtimeId = '00000000-0000-4000-8000-000000000027';
 const rawQrToken = 'raw-token-phase27-check-in-should-not-render';
 const rawQrJTI = 'raw-JTI-phase27-check-in-should-not-render';
 const rawPaymentKey = 'raw-payment-key-phase27-should-not-render';
@@ -86,6 +87,9 @@ async function mockAuthenticatedSession(
     adminCapabilities?: string[];
   },
 ) {
+  await page.route('**/api/v1/field/check-in/showtimes', async (route) => {
+    await route.fulfill({ json: [{ id: fieldShowtimeId, eventId: 'field-event', title: 'Phase 27 QR Check-in Performance', dateTime: '2026-07-04T10:00:00Z', venueName: 'Hall' }] });
+  });
   await page.route('**/api/v1/auth/refresh', async (route: Route) => {
     await route.fulfill({
       status: 200,
@@ -240,7 +244,7 @@ test.describe('phase27 QR check-in browser contracts', () => {
       });
     });
 
-    await page.goto(`/field/check-in?ticket=${encodeURIComponent(rawQrToken)}`);
+    await page.goto(`/field/check-in?ticket=${encodeURIComponent(rawQrToken)}&showtimeId=${fieldShowtimeId}`);
 
     await expect(
       page.getByRole('status', { name: '입장 가능 티켓입니다' }),
@@ -254,19 +258,19 @@ test.describe('phase27 QR check-in browser contracts', () => {
     await expect(page.getByText('입장 처리가 완료되었습니다')).toHaveCount(0);
     expect(consumeCalls).toBe(0);
 
-    await page.getByRole('button', { name: '입장 처리' }).click();
+    await page.getByRole('button', { name: '이 좌석 입장 처리' }).click();
 
     await expect(
       page.getByRole('status', { name: '입장 처리가 완료되었습니다' }),
     ).toBeVisible();
     expect(consumeCalls).toBe(1);
 
-    await page.goto(`/field/check-in?ticket=${encodeURIComponent(rawQrToken)}&duplicate=1`);
+    await page.goto(`/field/check-in?ticket=${encodeURIComponent(rawQrToken)}&showtimeId=${fieldShowtimeId}&duplicate=1`);
 
     await expect(
       page.getByRole('status', { name: '이미 입장 처리된 티켓입니다' }),
     ).toBeVisible({ timeout: 10000 });
-    await expect(page.getByRole('button', { name: '입장 처리' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '이 좌석 입장 처리' })).toHaveCount(0);
     expect(consumeCalls).toBe(1);
     await expectNoRawSecrets(page);
   });

@@ -504,7 +504,7 @@ export class AdminBenefitsService {
       SELECT id
       FROM showtimes
       WHERE id = ${showtimeId}
-      FOR UPDATE
+      FOR NO KEY UPDATE
     `);
 
     if (Array.isArray(result) && result.length === 0) {

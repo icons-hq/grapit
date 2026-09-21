@@ -29,7 +29,7 @@ export class BenefitRedemptionController {
 
   @Post('redeem')
   @UseGuards(AdminCapabilitiesGuard)
-  @AdminCapabilities('field.scan.consume')
+  @AdminCapabilities('field.benefits.redeem')
   async redeem(
     @CurrentUser('id') scannerUserId: string,
     @Req() request: Request,

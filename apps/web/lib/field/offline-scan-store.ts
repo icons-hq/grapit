@@ -38,6 +38,7 @@ interface PendingScanDbSchema {
 type PendingScanDb = IDBPDatabase<PendingScanDbSchema>;
 
 interface PendingScanListFilter {
+  scannerUserId?: string;
   showtimeId?: string;
   syncState?: FieldOfflineSyncState;
 }
@@ -76,7 +77,7 @@ export async function listPendingScanAttempts(
       SYNC_STATE_INDEX,
       filter.syncState,
     );
-    return sortAttempts(filterByShowtime(records, filter.showtimeId));
+    return sortAttempts(filterByScanner(filterByShowtime(records, filter.showtimeId), filter.scannerUserId));
   }
 
   if (filter.showtimeId) {
@@ -85,10 +86,10 @@ export async function listPendingScanAttempts(
       SHOWTIME_INDEX,
       filter.showtimeId,
     );
-    return sortAttempts(records);
+    return sortAttempts(filterByScanner(records, filter.scannerUserId));
   }
 
-  return sortAttempts(await db.getAll(STORE_NAME));
+  return sortAttempts(filterByScanner(await db.getAll(STORE_NAME), filter.scannerUserId));
 }
 
 export async function updatePendingScanAttempt(
@@ -113,7 +114,7 @@ export async function updatePendingScanAttempt(
     if (!existing) {
       return null;
     }
-    const updated = sanitizePendingAttempt({ ...existing, ...patch });
+    const updated = mergePendingAttempt(existing, patch);
     memoryRecords.set(deviceAttemptId, updated);
     return updated;
   }
@@ -125,7 +126,7 @@ export async function updatePendingScanAttempt(
     return null;
   }
 
-  const updated = sanitizePendingAttempt({ ...existing, ...patch });
+  const updated = mergePendingAttempt(existing, patch);
   await Promise.all([tx.store.put(updated), tx.done]);
   return updated;
 }
@@ -189,7 +190,7 @@ function sanitizePendingAttempt(
     scannerUserId: attempt.scannerUserId,
     eventId: attempt.eventId,
     showtimeId: attempt.showtimeId,
-    token: attempt.token,
+    token: attempt.syncState === 'pending' ? attempt.token : '',
     redactedTokenRef: attempt.redactedTokenRef,
     attemptedAt: attempt.attemptedAt,
     syncState: attempt.syncState,
@@ -214,7 +215,7 @@ function filterMemoryRecords(
   filter: PendingScanListFilter,
 ): PendingScanAttemptRecord[] {
   return filterByShowtime(
-    Array.from(memoryRecords.values()).filter((record) =>
+    filterByScanner(Array.from(memoryRecords.values()), filter.scannerUserId).filter((record) =>
       filter.syncState ? record.syncState === filter.syncState : true,
     ),
     filter.showtimeId,
@@ -235,4 +236,15 @@ function sortAttempts(
   records: PendingScanAttemptRecord[],
 ): PendingScanAttemptRecord[] {
   return [...records].sort((a, b) => a.attemptedAt.localeCompare(b.attemptedAt));
+}
+
+function filterByScanner(records: PendingScanAttemptRecord[], scannerUserId?: string): PendingScanAttemptRecord[] {
+  return scannerUserId ? records.filter((record) => record.scannerUserId === scannerUserId) : records;
+}
+
+function mergePendingAttempt(existing: PendingScanAttemptRecord, patch: Partial<PendingScanAttemptRecord>): PendingScanAttemptRecord {
+  // Multiple tabs share IndexedDB. A delayed retry result must not erase a
+  // terminal receipt after its credential has already been removed.
+  if (existing.syncState !== 'pending' && patch.syncState && patch.syncState !== existing.syncState) return existing;
+  return sanitizePendingAttempt({ ...existing, ...patch });
 }

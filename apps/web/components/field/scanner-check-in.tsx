@@ -32,6 +32,8 @@ interface ScannerCheckInProps {
   consumeResult?: ScannerCheckInConsumeResult | null;
   benefitRedemptionResults?: Record<string, ScannerBenefitRedemptionResult>;
   isConsuming?: boolean;
+  isOnline?: boolean;
+  actionError?: string | null;
   redeemingBenefitId?: string | null;
   isSyncingOffline?: boolean;
   onProcessEntry: () => void;
@@ -101,6 +103,8 @@ export function ScannerCheckIn({
   consumeResult,
   benefitRedemptionResults = {},
   isConsuming = false,
+  isOnline = true,
+  actionError = null,
   redeemingBenefitId = null,
   isSyncingOffline = false,
   onProcessEntry,
@@ -130,22 +134,26 @@ export function ScannerCheckIn({
   const activeLabel =
     consumeResult?.resultLabel ?? verification.resultLabel ?? labelForResult(activeResult);
   const canProcess =
-    !consumeResult &&
+    hasAdminCapability(user, 'field.scan.consume') && !consumeResult &&
     (verification.processable || verification.result === 'processable');
   const canRedeemBenefits =
-    Boolean(onRedeemBenefit) && canRedeemBenefitsForVerification(verification);
+    isOnline && hasAdminCapability(user, 'field.benefits.redeem') && Boolean(onRedeemBenefit)
+    && (!consumeResult || ['processed', 'synced', 'duplicate'].includes(consumeResult.result))
+    && canRedeemBenefitsForVerification(verification);
   const showOfflineQueue =
     verification.result === 'offline-pending' || verification.offlineQueue.length > 0;
 
   return (
     <div className="mx-auto flex min-h-dvh w-full max-w-xl flex-col bg-[#F5F5F7]">
       <main className="flex-1 space-y-4 p-4 pb-6">
+        {actionError && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">{actionError}</p>}
+        {!isOnline && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">연결이 끊겼습니다. 입장 요청은 동기화 대기로 저장되며, 특전 지급은 연결 복구 후 가능합니다.</p>}
         <ResultBand
           result={activeResult}
           label={activeLabel}
-          rejectionReason={consumeResult?.rejectionReason ?? verification.rejectionReason}
+          rejectionReason={consumeResult ? consumeResult.rejectionReason : verification.rejectionReason}
           priorScanContext={
-            consumeResult?.priorScanContext ?? verification.priorScanContext
+            consumeResult ? consumeResult.priorScanContext : verification.priorScanContext
           }
         />
 
@@ -159,6 +167,7 @@ export function ScannerCheckIn({
 
         <TicketIdentity verification={verification} result={activeResult} />
 
+        {verification.benefitsAvailable === false && <p role="alert" className="text-sm text-red-700">특전 내역을 불러오지 못했습니다. 지급 전에 다시 확인해주세요.</p>}
         <BenefitRedemptionPanel
           benefits={verification.benefitEntitlements}
           redemptionResults={benefitRedemptionResults}
@@ -179,7 +188,7 @@ export function ScannerCheckIn({
             onClick={onProcessEntry}
           >
             <UserCheck className="h-5 w-5" />
-            {isConsuming ? '처리 중' : '입장 처리'}
+            {isConsuming ? '처리 중' : '이 좌석 입장 처리'}
           </Button>
         ) : activeResult === 'processed' || activeResult === 'synced' ? (
           <Button type="button" className="h-14 w-full" disabled>
@@ -459,13 +468,14 @@ function TicketIdentity({
           <div>
             <p className="text-sm font-semibold text-gray-500">티켓 정보</p>
             <h2 className="mt-1 text-heading font-semibold text-gray-900">
-              {verification.reservationNumber ?? '예매 번호 확인 중'}
+              {verification.seats.length > 0 ? verification.seats.join(', ') : '좌석 확인 중'}
             </h2>
           </div>
-          <Badge className={style.badge}>{verification.ticketStatus ?? '검표 확인'}</Badge>
+          <Badge className={style.badge}>{({ ACTIVE: '유효', USED: '입장 완료', REVOKED: '사용 불가', EXPIRED: '만료' } as Record<string, string>)[verification.ticketStatus ?? ''] ?? '검표 확인'}</Badge>
         </div>
 
         <dl className="space-y-3 text-base leading-[1.5]">
+          <MetadataRow label="예매 번호" value={verification.reservationNumber} />
           <MetadataRow label="공연" value={verification.performanceTitle} />
           <MetadataRow label="회차" value={formatTimestamp(verification.showtimeAt)} />
           <MetadataRow label="장소" value={verification.venueName} />

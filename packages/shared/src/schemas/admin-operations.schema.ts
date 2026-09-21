@@ -18,6 +18,7 @@ export const ADMIN_CAPABILITIES = [
   'field.scan.verify',
   'field.scan.consume',
   'field.scan.sync',
+  'field.benefits.redeem',
   'settlement.export',
   'benefits.manage',
   'benefits.export',
@@ -70,6 +71,7 @@ export const ADMIN_CAPABILITY_BUNDLE_CAPABILITIES = {
     'field.scan.verify',
     'field.scan.consume',
     'field.scan.sync',
+    'field.benefits.redeem',
   ],
   admin: ADMIN_CAPABILITIES,
 } as const satisfies Record<

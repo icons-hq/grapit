@@ -973,6 +973,7 @@ describe('QrTicketService', () => {
               ticketId: 'ticket-1',
               ticketItemId: 'ticket-item-1',
               ticketItemStatus: 'active',
+              reservationStatus: 'CONFIRMED', paymentStatus: 'DONE',
               ticketItemAdmissionState: 'not_entered',
               reservationNumber: 'GRP-27-SCAN-0001',
               reservationId: 'reservation-1',
@@ -1006,7 +1007,7 @@ describe('QrTicketService', () => {
       ticketStatus: 'ACTIVE',
       ticketItemId: 'ticket-item-1',
       seatIdentity: createSeatIdentity(),
-      seatLabels: ['VIP A열 1번'],
+      seatLabels: ['1층 · VIP A열 1번'],
       reservationId: 'reservation-1',
       paymentId: 'payment-1',
       showtimeId: 'showtime-1',
@@ -1055,6 +1056,7 @@ describe('QrTicketService', () => {
               ticketId: 'ticket-1',
               ticketItemId: 'ticket-item-1',
               ticketItemStatus: 'active',
+              reservationStatus: 'CONFIRMED', paymentStatus: 'DONE',
               ticketItemAdmissionState: 'entered',
               reservationNumber: 'GRP-27-SCAN-0001',
               reservationId: 'reservation-1',
@@ -1087,7 +1089,7 @@ describe('QrTicketService', () => {
     });
   });
 
-  it('rejects scanner verification for a cancelled ticket item even when the ticket row is active', async () => {
+  it('classifies a signed cancelled ticket as revoked even when its credential row is active', async () => {
     const configService = {
       get: vi.fn((key: string) => {
         if (key === 'QR_TICKET_SECRET') return 'current-secret';
@@ -1146,9 +1148,7 @@ describe('QrTicketService', () => {
       } as never,
     );
 
-    await expect(service.verifyTicketForScannerContract(token)).rejects.toThrow(
-      '사용할 수 없는 QR 티켓입니다',
-    );
+    await expect(service.verifyTicketForScannerContract(token)).resolves.toMatchObject({ ticketStatus: 'REVOKED' });
   });
 
   it('reports used scanner contract state for a valid consumed QR token', async () => {
@@ -1186,6 +1186,7 @@ describe('QrTicketService', () => {
             ticketId: 'ticket-1',
             ticketItemId: 'ticket-item-1',
             ticketItemStatus: 'active',
+            reservationStatus: 'CONFIRMED', paymentStatus: 'DONE',
             reservationNumber: 'GRP-27-SCAN-0001',
             reservationId: 'reservation-1',
             paymentId: 'payment-1',

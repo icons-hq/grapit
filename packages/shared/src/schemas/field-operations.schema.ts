@@ -110,6 +110,7 @@ export const fieldCheckInTicketContextSchema = z
   .object({
     reservationNumber: z.string().min(1, '예매 번호가 필요합니다'),
     performanceTitle: z.string().min(1, '공연명이 필요합니다'),
+    venueName: z.string().optional(),
     showtimeId: showtimeIdSchema,
     showtimeLabel: z.string().min(1, '회차 표시 정보가 필요합니다'),
     seatLabels: z.array(z.string().min(1)).default([]),
@@ -117,6 +118,7 @@ export const fieldCheckInTicketContextSchema = z
     redactedTokenRef: z.string().min(1, 'redacted token reference가 필요합니다'),
     maskedJti: z.string().min(1, 'masked JTI가 필요합니다').optional(),
     benefitEntitlements: z.array(fieldBenefitEntitlementSchema).default([]),
+    benefitsAvailable: z.boolean().optional(),
   })
   .strict();
 
@@ -188,14 +190,14 @@ export const fieldOfflineSyncAttemptSchema = z
 
 export const fieldOfflineSyncRequestSchema = z
   .object({
-    attempts: z.array(fieldOfflineSyncAttemptSchema).min(1, '동기화할 시도가 필요합니다'),
+    attempts: z.array(fieldOfflineSyncAttemptSchema).min(1, '동기화할 시도가 필요합니다').max(100),
   })
   .strict();
 
 export const fieldOfflineSyncResultSchema = z
   .object({
     deviceAttemptId: z.string().min(1),
-    syncState: z.enum(['synced', 'rejected']),
+    syncState: fieldOfflineSyncStateSchema,
     outcome: fieldCheckInOutcomeSchema,
     resolvedAt: isoDatetime('동기화 해결 시각'),
     scanEventId: z.string().min(1).nullable().optional(),
