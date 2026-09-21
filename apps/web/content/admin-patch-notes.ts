@@ -14,6 +14,27 @@ export interface AdminPatchNote {
 
 const notes = [
   {
+    id: 'pr-228-seat-level-field-operations',
+    prNumber: 228,
+    title: '좌석별 입장과 현장 특전 지급 개선',
+    summary:
+      '회차와 좌석을 확인해 한 좌석씩 입장 처리하고, 연결이 끊겼을 때의 대기 기록과 재접속 결과를 구분합니다.',
+    highlights: [
+      '한 예매의 다른 좌석과 구매자의 QR 조회를 유지하는 좌석별 입장 처리',
+      '중복·동시 입장 요청과 오프라인 재전송의 결과 일치 및 충돌 안내',
+      '입장과 특전 지급 권한 분리, 중복 지급 방지와 지급 후 설정 보호',
+      '위조·만료·취소 QR과 일시적인 서버 오류를 구분한 현장 안내',
+    ],
+    category: 'feature',
+    date: '2026-09-22',
+    githubUrl: 'https://github.com/icons-hq/grapit/pull/228',
+    evidence: [
+      '24 PostgreSQL HTTP regressions including concurrent admission and benefit redemption',
+      'Mobile browser offline/reconnect conflicts and buyer QR retention readback',
+      'Shared/Web/API validation, production build and Standards/Spec review',
+    ],
+  },
+  {
     id: 'pr-227-performance-preparation-and-support',
     prNumber: 227,
     title: '공연 준비·판매·고객 대응 흐름 통합',
