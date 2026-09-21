@@ -55,7 +55,7 @@
 
 ## 현재 검증
 
-- 현장 HTTP/PostgreSQL 26/26, 관련 UI 5/5 및 기존 monitor service 4/4 통과. 새 로그 응답에 예매번호·좌석·담당자 이름·온라인/오프라인 출처를 제공해 빈 예매번호/원시 담당자 ID/미확인 온라인 표기를 보완했다. 추가 상태·언어·접근성 검증과 최종 리뷰는 진행 중이다.
+- 현장 HTTP/PostgreSQL 26/26, 관련 UI 5/5 및 기존 monitor service 4/4 통과. 새 로그 응답에 예매번호·좌석·담당자 이름·온라인/오프라인 출처를 제공해 빈 예매번호/원시 담당자 ID/미확인 온라인 표기를 보완했다. 추가 상태·언어·접근성 검증과 최종 리뷰도 아래 증거로 완료했다.
 - 격리 migration 리허설 1/1 통과: 개편 전 `0033`까지 적용한 빈 PostgreSQL에 계정/소셜연결/선택동의/부분취소 원금/입장한 활성 QR/취소 QR/활성·지급 특전/과거 지급·입장 기록을 준비하고 `0034`–`0037` 적용. 13개 테이블의 모든 기존 열·행·식별자가 동일했으며 KRW 104,000원/USD 8,000 minor units, 활성 QR 1장, 지급 특전 1개를 보존했다. 재실행도 원장을 바꾸지 않았다. 운영 DB 복제나 운영 migration은 아니다.
 - API unit 1,259 / Web unit 773 / shared unit 148, PostgreSQL 거래 회귀 65, 현장 HTTP 회귀 26, migration 보존 리허설 1을 통과했다. 최종 작은 문구/접근성 변경의 관련 UI 12개도 통과했다. API/Web/shared typecheck와 Web production build 성공. 변경 파일 lint 오류 0개이며 기존 React 경고 6개와 integration 파일 lint 제외 3개는 남아 있다.
 - 원 증거는 로컬 `grapit-revamp-autonomy-2026-09-21/browser/77`–`110`, `tests/`, `integrated-buyer-final.json`이다. 고객/인증/QR 원문은 공개 산출물에 포함하지 않는다.
@@ -84,3 +84,5 @@
 고정 구현 snapshot `fe5ab738882a4ffdd8a038030bb336d54b75de1f`의 Standards/Spec 병렬 검토는 각각 0건이다. 이후에는 실행한 근거와 운영 문서를 갱신했다. PR CI의 최종 commit을 출시 후보 증거로 고정한다. 실기기·실물·실입금·오픈 결정은 #214/#223의 별도 gate다.
 
 첫 PR CI에서 기존 E2E의 고정 URL stub이 새 `locale` query를 받지 못하고, 좌석도의 잘못된 grid role을 가정하던 locator가 실패했다. query를 포함한 동일 예매 경로를 fixture로 받도록 하고 실제 canvas 식별자로 click geometry 검증을 유지했다. 한국어 결제 실패의 기존 상세 사유도 유지하며, 취소 상태 안내는 분리했다. 수정 commit의 CI로 최종 판정한다.
+
+PR #230의 `47933a36c2a01b43d26b621f861f5e997a2d8765`에서 [CI 35643873121](https://github.com/icons-hq/grapit/actions/runs/35643873121) 전체가 통과했다. 중간 실행의 기존 배너 폼 5초 타임아웃은 URL 붙여넣기·native 날짜 선택 완료를 모델링해 불필요한 글자별 이벤트를 줄였고, 제출 payload 검증과 제한 시간은 유지했다. 최종 기술 배포와 외부 인수 상태는 [전환 준비 기록](release-readiness.md)을 따른다.
