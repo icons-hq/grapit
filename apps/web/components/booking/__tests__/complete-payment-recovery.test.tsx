@@ -48,6 +48,16 @@ describe('Provider return recovery actions', () => {
     expect(screen.queryByRole('button', { name: 'reselectCta' })).not.toBeInTheDocument();
   });
 
+  it('identifies an already cancelled booking instead of calling the original payment a failure', async () => {
+    boundary.get.mockResolvedValue({ tossOrderId: 'GRP-pending', status: 'CANCELLED',
+      paymentInfo: { status: 'CANCELED' }, paidAt: '2026-09-01T00:00:00Z',
+      paymentDeadlineAt: '2020-01-01T00:07:00.000Z' });
+    mountPage();
+    expect(await screen.findByRole('heading', { name: 'Cancellation and refund status' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Payment confirmation failed' })).not.toBeInTheDocument();
+    expect(boundary.post).not.toHaveBeenCalled();
+  });
+
   it('reads authoritative payment state after confirm fails, including a seat-lock conflict', async () => {
     boundary.search = new URLSearchParams('orderId=GRP-pending&paymentKey=test-return&amount=52000');
     boundary.post.mockRejectedValue(Object.assign(new Error('좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.'), { statusCode: 409 }));

@@ -34,6 +34,14 @@ afterEach(() => {
 });
 
 describe('api-client error interceptor', () => {
+  it('shows a localized error in a foreign-language flow while retaining the server detail for diagnostics', async () => {
+    window.history.replaceState(null, '', '/zh-CN/mypage');
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 403,
+      json: async () => ({ message: '접근 권한이 없습니다.', statusCode: 403 }) });
+    const { apiClient } = await import('@/lib/api-client');
+    await expect(apiClient.get('/test')).rejects.toMatchObject({ data: { message: '접근 권한이 없습니다.' } });
+    expect(toast.error).toHaveBeenCalledWith('您没有访问权限。', expect.any(Object));
+  });
   it('Test 1: 400 에러 시 toast.error가 기본 메시지와 ERR-400 코드로 호출된다', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: false,

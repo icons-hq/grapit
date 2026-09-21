@@ -690,7 +690,7 @@ describe('AdminBookingDashboard', () => {
       await user.click(detailRow);
       const dialog = await screen.findByRole('dialog');
       expect(dialog).toBeInTheDocument();
-      await user.click(within(dialog).getByRole('button', { name: 'Close' }));
+      await user.click(within(dialog).getByRole('button', { name: '닫기' }));
       await waitFor(() => {
         expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
       });

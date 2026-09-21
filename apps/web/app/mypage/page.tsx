@@ -67,8 +67,7 @@ function formatDateTime(dateString: string, locale: string) {
     hour: '2-digit',
     minute: '2-digit',
     timeZone: 'Asia/Seoul',
-    timeZoneName: 'short',
-  }).format(date);
+  }).format(date) + ' KST';
 }
 
 function getAccountAgeLabel(

@@ -38,7 +38,8 @@ function formatDateTime(dateString: string, locale: string): string {
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
-  }).format(date);
+    timeZone: 'Asia/Seoul',
+  }).format(date) + ' KST';
 }
 
 export function TicketEmailDeliveryPanel({

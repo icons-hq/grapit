@@ -1,6 +1,8 @@
 'use client';
 
 import { getClientLocale } from '@/lib/i18n/client-copy';
+import { getVisibleCopy } from '@/lib/i18n/visible-copy';
+import { getCheckoutCopy } from '@/lib/booking/checkout-copy';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { use } from 'react';
 import { useRouter } from 'next/navigation';
@@ -49,7 +51,7 @@ export default function ReservationDetailPage({ params }: ReservationDetailPageP
 
   function handleResumePayment(target: ReservationDetail) {
     if (!target.performanceId || !target.showtimeId || !target.tossOrderId) {
-      toast.error('결제 정보를 복원하지 못했습니다. 좌석을 다시 선택해주세요.');
+      toast.error(getCheckoutCopy(locale).unavailableBody);
       return;
     }
     const paymentDeadlineMs = Date.parse(target.paymentDeadlineAt);
@@ -77,10 +79,10 @@ export default function ReservationDetailPage({ params }: ReservationDetailPageP
         {isError && (
           <div className="flex flex-col items-center py-16 text-center">
             <p className="text-base font-semibold text-gray-900">
-              예매 정보를 불러오지 못했습니다.
+              {getVisibleCopy(locale).mypage.loadError}
             </p>
             <Button className="mt-4" onClick={() => refetch()}>
-              다시 시도
+              {getVisibleCopy(locale).commonErrors.retry}
             </Button>
           </div>
         )}

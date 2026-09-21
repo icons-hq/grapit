@@ -42,7 +42,7 @@ describe('ShowtimeChips', () => {
       />,
     );
 
-    expect(screen.getByRole('button', { name: '19:00' })).toBeDefined();
+    expect(screen.getByRole('button', { name: '19:00 KST' })).toBeDefined();
     expect(screen.queryByRole('button', { name: '10:00' })).toBeNull();
   });
 

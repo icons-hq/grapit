@@ -1,5 +1,7 @@
 'use client';
 
+import { getSeatSelectionCopy } from '@/lib/booking/seat-selection-copy';
+
 import { Clock } from 'lucide-react';
 import {
   AlertDialog,
@@ -15,17 +17,17 @@ interface TimerExpiredModalProps {
 }
 
 export function TimerExpiredModal({ open, onReset }: TimerExpiredModalProps) {
+  const seatCopy = getSeatSelectionCopy();
   return (
     <AlertDialog open={open}>
       <AlertDialogContent>
         <div className="flex flex-col items-center gap-4 text-center">
           <Clock className="size-12 text-gray-400" />
           <AlertDialogTitle className="text-xl font-semibold text-gray-900">
-            시간이 만료되었습니다
+            {seatCopy.expired}
           </AlertDialogTitle>
           <AlertDialogDescription className="text-sm text-gray-600">
-            선택하신 좌석의 점유 시간이 만료되었습니다. 처음부터 다시 좌석을
-            선택해주세요.
+            {seatCopy.expiredBody}
           </AlertDialogDescription>
         </div>
         <AlertDialogAction
@@ -33,7 +35,7 @@ export function TimerExpiredModal({ open, onReset }: TimerExpiredModalProps) {
           size="lg"
           className="w-full"
         >
-          처음으로
+          {seatCopy.restart}
         </AlertDialogAction>
       </AlertDialogContent>
     </AlertDialog>

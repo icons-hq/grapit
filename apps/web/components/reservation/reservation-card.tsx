@@ -39,7 +39,8 @@ function formatDate(dateString: string, locale: string): string {
     weekday: 'short',
     hour: '2-digit',
     minute: '2-digit',
-  }).format(date);
+    timeZone: 'Asia/Seoul',
+  }).format(date) + ' KST';
 }
 
 function formatSeatSummary(

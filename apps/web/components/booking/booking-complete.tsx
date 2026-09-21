@@ -539,7 +539,7 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
                       </span>
                     </div>
                     <div>
-                      <span className="block text-gray-500">{copy.ticketValid}</span>
+                      <span className="block text-gray-500">{copy.ticketStatusLabel}</span>
                       <span className="font-semibold text-gray-900">
                         {card.ticketStatusLabel}
                       </span>

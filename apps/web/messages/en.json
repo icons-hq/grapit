@@ -152,7 +152,7 @@
         },
         "expired": {
           "badge": "Entry expired",
-          "title": "Your entry window expired. Returning you to the queue",
+          "title": "Your entry window expired. Please rejoin the queue.",
           "description": "Rejoin the queue to receive a fresh admission window.",
           "helper": "After rejoining, you can still see position, ETA, and remaining seats."
         },
@@ -190,7 +190,7 @@
       },
       "infoLabel": "Queue details",
       "autoEnterInfo": "Once admission is granted, the route opens the seat selection screen automatically.",
-      "safetyInfo": "Only position, ETA, and remaining seats are shown here. Internal admission tokens stay hidden.",
+      "safetyInfo": "Queue admission does not reserve a seat. A seat is held only after you select it and the hold is confirmed.",
       "retryAction": "Try again",
       "enterNowAction": "Enter now"
     },
@@ -245,6 +245,62 @@
         "title": "The payment could not be completed.",
         "body": "Check the existing booking, then retry with the same payment method."
       }
+    },
+    "seatSelection": {
+      "back": "Back",
+      "chooseDate": "Choose a date",
+      "chooseShowtime": "Choose a showtime",
+      "dateShowtime": "Choose date / showtime",
+      "showtimeSelected": "Showtime selected",
+      "noShowtimes": "No showtimes on this date",
+      "selectedSeats": "Selected seats",
+      "selectionSummary": "Seat selection summary",
+      "emptySelection": "No seats selected. Choose a seat to see it here.",
+      "seatCount": "Seats: {count}",
+      "seatLabel": "{floor} row {row}, seat {number}",
+      "removeSeat": "Remove {seat}",
+      "orderTotal": "Order total",
+      "clearAll": "Clear all",
+      "processing": "Processing…",
+      "chooseSeat": "Choose a seat",
+      "next": "Next",
+      "limit": "Up to {count} tickets per person for this event",
+      "changePolicy": "Seats cannot be changed after payment. Cancel and book again to choose different seats.",
+      "seatTaken": "This seat is already taken",
+      "releaseFirst": "Remove another seat first.",
+      "bookingInfo": "Booking information",
+      "backToEvent": "Back to event",
+      "noFloorSeats": "No seats available on this floor. Check another floor.",
+      "chooseFloor": "Choose a floor",
+      "floorKeep": "Selected seats stay selected when you change floors",
+      "busy": "Unavailable",
+      "legend": "Seat categories",
+      "excluded": "Excluded / invitation seats",
+      "notSelectable": "Not selectable",
+      "soldOrHeld": "Sold / held",
+      "unavailable": "Unavailable",
+      "mapControls": "Seat map controls",
+      "zoomIn": "Zoom in",
+      "zoomOut": "Zoom out",
+      "fitMap": "Show entire map",
+      "map": "Seat map",
+      "miniMap": "Seat map overview",
+      "mapError": "Could not load the seat map. Refresh and try again.",
+      "mapPending": "The seat map is not ready. Please try again shortly.",
+      "refresh": "Refresh",
+      "stage": "Stage position: {position}",
+      "remaining": "Time left",
+      "remainingAria": "{minutes} minutes {seconds} seconds remaining",
+      "timerWarning": "Less than 3 minutes remaining",
+      "expired": "Your seat hold expired",
+      "expiredBody": "Your selected seats are no longer held. Please choose seats again.",
+      "restart": "Start again",
+      "listSummary": "Choose seats from a list",
+      "listLabel": "Seat list",
+      "selectSeat": "Select seat",
+      "deselectSeat": "Remove seat",
+      "totalSeatCount": "Total seats: {count}",
+      "selectionConflict": "Check seat availability and the per-person ticket limit, then try again."
     }
   },
   "locale": {
@@ -573,7 +629,8 @@
         "inactive": "Inactive",
         "empty": "No benefits included",
         "redeemedAt": "Redeemed at: {date}"
-      }
+      },
+      "ticketStatusLabel": "Ticket status"
     }
   },
   "reservation": {

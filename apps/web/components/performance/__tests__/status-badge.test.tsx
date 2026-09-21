@@ -32,7 +32,7 @@ describe('StatusBadge', () => {
     render(<StatusBadge status="selling" locale="zh-CN" />);
 
     expect(screen.getByText('销售中')).toBeDefined();
-    expect(screen.getByLabelText('Status: 销售中')).toBeDefined();
+    expect(screen.getByLabelText('状态: 销售中')).toBeDefined();
   });
 
   it('displays selling as upcoming while the booking gate is closed', () => {

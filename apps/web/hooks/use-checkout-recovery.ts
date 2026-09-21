@@ -7,14 +7,16 @@ import { apiClient } from '@/lib/api-client';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { useBookingStore } from '@/stores/use-booking-store';
 import { getCheckoutState } from '@/lib/booking/checkout-state';
+import { getClientLocale } from '@/lib/i18n/client-copy';
 
 export function useCheckoutRecovery(orderId: string | null, performanceId: string, paused = false) {
   const [nowMs, setNowMs] = useState(Date.now);
   const userId = useAuthStore((store) => store.user?.id);
+  const locale = getClientLocale();
   const query = useQuery({
-    queryKey: ['checkout-recovery', userId, orderId],
+    queryKey: ['checkout-recovery', userId, orderId, locale],
     queryFn: () => apiClient.get<ReservationDetail | null>(
-      `/api/v1/reservations?orderId=${encodeURIComponent(orderId!)}`,
+      `/api/v1/reservations?orderId=${encodeURIComponent(orderId!)}&locale=${locale}`,
       { showErrorToast: false },
     ),
     enabled: Boolean(orderId && userId && !paused),
@@ -42,6 +44,7 @@ export function useCheckoutRecovery(orderId: string | null, performanceId: strin
     const store = useBookingStore.getState();
     const sameSelection = store.performanceId === performanceId
       && store.selectedShowtimeId === reservation.showtimeId
+      && store.performanceTitle === reservation.performanceTitle
       && JSON.stringify(store.selectedSeats) === JSON.stringify(reservation.seats);
     if (!sameSelection) {
       store.setBookingData({

@@ -154,6 +154,36 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
       qr, undefined, undefined, new PaymentCancellationFinalizerService(db, { isAvailable: false } as never));
   }
 
+  it('uses only current published titles in the buyer wallet and detail without changing ownership', async () => {
+    const f = await cancellationPurchase();
+    const service = buyerCancellations({});
+    const [source] = await db.insert(schema.translationSources).values({ entityType: 'performance',
+      entityId: f.performanceId, field: 'title', sourceText: 'Fixture', contentHash: 'current-title' }).returning();
+    await db.insert(schema.translationDrafts).values([
+      { sourceId: source!.id, targetLocale: 'zh-CN', status: 'published', translatedText: '秋日相聚', sourceContentHash: 'current-title' },
+      { sourceId: source!.id, targetLocale: 'th', status: 'review', translatedText: 'ยังไม่ได้ตรวจสอบ', sourceContentHash: 'current-title' },
+    ]);
+    expect((await service.getMyReservations(f.userId, undefined, 'zh-CN'))[0]?.performanceTitle).toBe('秋日相聚');
+    const detail = await service.getReservationDetail(f.first.reservationId, f.userId, 'zh-CN');
+    expect(detail).toMatchObject({ performanceTitle: '秋日相聚', totalAmount: 104000 });
+    expect(detail.ticketItems).toHaveLength(2);
+    expect((await service.getReservationDetail(f.first.reservationId, f.userId, 'th')).performanceTitle).toBe('Fixture');
+    await expect(service.getReservationDetail(f.first.reservationId, randomUUID(), 'zh-CN')).rejects.toThrow();
+    await db.update(performances).set({ title: 'New source' }).where(eq(performances.id, f.performanceId));
+    expect((await service.getMyReservations(f.userId, undefined, 'zh-CN'))[0]?.performanceTitle).toBe('New source');
+  });
+
+  it('keeps the original KRW amount but identifies a card charged in USD as foreign', async () => {
+    const f = await cancellationPurchase();
+    await db.update(payments).set({ method: 'CARD', provider: 'CARD', currency: 'KRW',
+      providerChargeCurrency: 'USD', providerChargeAmountMinor: 8000,
+      providerChargeRate: '1300', providerChargeQuotedAt: new Date() }).where(eq(payments.id, f.first.paymentId));
+    const detail = await buyerCancellations({}).getReservationDetail(f.first.reservationId, f.userId);
+    expect(detail.paymentInfo).toMatchObject({ amount: 104000,
+      paymentMethod: { method: 'CARD', provider: 'CARD', currency: 'USD' },
+      providerChargeQuote: { currency: 'USD', amountMinor: 8000 } });
+  });
+
   it('restores the selected QR and benefits when the provider does not support a partial cancellation', async () => {
     const f = await cancellationPurchase();
     await db.transaction((tx) => syncIncludedBenefitEntitlementsForTicketItems(tx, f.showtimeId, [f.first, f.second], new Date()));

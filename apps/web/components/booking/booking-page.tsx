@@ -1,5 +1,8 @@
 'use client';
 
+import { getSeatSelectionCopy, formatSeatSelectionPrice } from '@/lib/booking/seat-selection-copy';
+import { formatCopy } from '@/lib/i18n/client-copy';
+
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useLocale } from 'next-intl';
@@ -72,7 +75,7 @@ function isUnavailableSeatState(state: RuntimeSeatState | undefined) {
 }
 
 function formatSeatLabel(seat: FloorAwareSeatSelection) {
-  return `${seat.floorLabel} ${seat.row}열 ${seat.number}번`;
+  return formatCopy(getSeatSelectionCopy().seatLabel, { floor: seat.floorLabel, row: seat.row, number: seat.number });
 }
 
 function SelectionTags({
@@ -82,10 +85,11 @@ function SelectionTags({
   seats: FloorAwareSeatSelection[];
   onRemove: (seatKey: string) => void;
 }) {
+  const seatCopy = getSeatSelectionCopy();
   if (seats.length === 0) {
     return (
       <p className="text-sm text-gray-500">
-        선택한 좌석이 없습니다. 좌석을 클릭하면 이곳에 표시됩니다.
+        {seatCopy.emptySelection}
       </p>
     );
   }
@@ -97,7 +101,7 @@ function SelectionTags({
           key={seat.seatKey}
           type="button"
           onClick={() => onRemove(seat.seatKey)}
-          aria-label={`${formatSeatLabel(seat)} 선택 해제`}
+          aria-label={formatCopy(seatCopy.removeSeat, { seat: formatSeatLabel(seat) })}
           className="inline-flex min-h-8 items-center gap-2 rounded-md px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition-transform hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
           style={{ backgroundColor: seat.tierColor ?? '#6C3CE0' }}
         >
@@ -129,10 +133,11 @@ function BookingSelectionBar({
   isLoading: boolean;
   disabledReason: string | null;
 }) {
+  const seatCopy = getSeatSelectionCopy();
   return (
     <aside
       role="complementary"
-      aria-label="선택 좌석 요약"
+      aria-label={seatCopy.selectionSummary}
       className="fixed inset-x-0 bottom-0 z-40 border-t-2 border-border bg-white/95 px-4 pb-[calc(env(safe-area-inset-bottom)+14px)] pt-3 shadow-[0_-12px_32px_rgba(0,0,0,0.08)] backdrop-blur"
     >
       <div className="mx-auto grid w-full max-w-[1280px] gap-3 lg:grid-cols-[1fr_auto] lg:items-center">
@@ -149,16 +154,16 @@ function BookingSelectionBar({
                     style={{ backgroundColor: summary.color }}
                   />
                   <strong>{summary.tierName}</strong>
-                  <span>{summary.count}석</span>
+                  <span>{formatCopy(seatCopy.seatCount, { count: summary.count })}</span>
                 </span>
               ))
             ) : (
               <span className="inline-flex min-h-8 items-center rounded-lg bg-[#F5F5F7] px-3 text-gray-500">
-                선택 좌석 0석
+                {seatCopy.selectedSeats} · {formatCopy(seatCopy.seatCount, { count: 0 })}
               </span>
             )}
             <span className="inline-flex min-h-8 items-center rounded-lg bg-[#F5F5F7] px-3 font-semibold text-gray-800">
-              총 {selectedSeatCount}석
+              {formatCopy(seatCopy.totalSeatCount, { count: selectedSeatCount })}
             </span>
           </div>
           {disabledReason ? (
@@ -171,9 +176,9 @@ function BookingSelectionBar({
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
           <p className="text-right text-2xl font-extrabold text-gray-950">
             <small className="mr-2 text-sm font-medium text-gray-500">
-              총 결제 금액
+              {seatCopy.orderTotal}
             </small>
-            {totalPrice.toLocaleString()}원
+            {formatSeatSelectionPrice(totalPrice)}
           </p>
           <div className="grid grid-cols-[auto_1fr] gap-2 sm:flex">
             <Button
@@ -183,7 +188,7 @@ function BookingSelectionBar({
               disabled={!canClear || isLoading}
               onClick={onClear}
             >
-              전체 해제
+              {seatCopy.clearAll}
             </Button>
             <Button
               className="h-11 min-w-28 px-5 text-base"
@@ -193,9 +198,9 @@ function BookingSelectionBar({
               {isLoading ? (
                 <>
                   <Loader2 className="mr-2 size-4 animate-spin" />
-                  처리 중...
+                  {seatCopy.processing}
                 </>
-              ) : selectedSeatCount === 0 ? '좌석을 선택해주세요' : '다음'}
+              ) : selectedSeatCount === 0 ? seatCopy.chooseSeat : seatCopy.next}
             </Button>
           </div>
         </div>
@@ -208,6 +213,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
   const router = useRouter();
   const activeLocale = resolveVisibleCopyLocale(useLocale());
   const copy = getVisibleCopy(activeLocale);
+  const seatCopy = copy.booking.seatSelection;
   const { data: performance, isLoading: performanceLoading } =
     usePerformanceDetail(performanceId);
 
@@ -399,8 +405,8 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
   }, [seatConfig, performance?.priceTiers]);
 
   const maxTicketsPerUser = performance?.bookingPolicy?.maxTicketsPerUser ?? 1;
-  const ticketLimitCopy = `이 공연은 1인 ${maxTicketsPerUser}매까지 예매할 수 있습니다`;
-  const seatChangePolicyCopy = '결제 완료 후 좌석 변경은 지원되지 않으며, 취소/환불 후 다시 예매해야 합니다.';
+  const ticketLimitCopy = formatCopy(seatCopy.limit, { count: maxTicketsPerUser });
+  const seatChangePolicyCopy = seatCopy.changePolicy;
 
   const floorOrderMap = useMemo(
     () => new Map(availableSeatMaps.map((seatMap) => [seatMap.floorKey, seatMap.sortOrder])),
@@ -543,7 +549,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
       );
       const isMyLockedSeat = seatState === 'locked' && myLockedSeatIds.has(seatIdentity.seatId);
       if (isUnavailableSeatState(seatState) && !isSelected && !isMyLockedSeat) {
-        toast.info('이미 다른 사용자가 선택한 좌석입니다');
+        toast.info(seatCopy.seatTaken);
         return;
       }
 
@@ -564,7 +570,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
 
       if (selectedSeats.length >= maxTicketsPerUser) {
         toast.error(
-          `${ticketLimitCopy}. 다른 좌석을 먼저 해제해주세요.`,
+          `${ticketLimitCopy}. ${seatCopy.releaseFirst}`,
         );
         return;
       }
@@ -608,17 +614,20 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
           onError: (error: unknown) => {
             removeSeat(seatSelection.seatKey);
             if (error instanceof ApiClientError && error.statusCode === 409) {
-              toast.info(error.message.trim() || '이미 다른 사용자가 선택한 좌석입니다');
+              toast.info(activeLocale === 'ko' ? error.message.trim() || seatCopy.selectionConflict : seatCopy.selectionConflict);
               return;
             }
 
-            toast.error('일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요.');
+            toast.error(copy.commonErrors.server);
           },
         },
       );
     },
     [
       addSeat,
+      activeLocale,
+      copy.commonErrors.server,
+      seatCopy,
       availableSeatMaps,
       bookingDisabledMessage,
       bookingAvailable,
@@ -729,8 +738,8 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
   );
 
   if (bookingDisabledReason) {
-    const disabledTitle = performance?.title ?? '예매 안내';
-    const backLabel = performance?.title ?? '공연 상세로 돌아가기';
+    const disabledTitle = performance?.title ?? seatCopy.bookingInfo;
+    const backLabel = performance?.title ?? seatCopy.backToEvent;
 
     return (
       <div className="flex flex-1 flex-col">
@@ -820,8 +829,8 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
               >
                 <span className="text-sm font-semibold text-gray-900">
                   {selectedDate
-                    ? `${selectedDate.getMonth() + 1}/${selectedDate.getDate()}${selectedShowtimeId ? ' - 회차 선택완료' : ''}`
-                    : '날짜 / 회차 선택'}
+                    ? `${selectedDate.getMonth() + 1}/${selectedDate.getDate()}${selectedShowtimeId ? ` - ${seatCopy.showtimeSelected}` : ''}`
+                    : seatCopy.dateShowtime}
                 </span>
                 <ChevronDown
                   className={`h-5 w-5 text-gray-500 transition-transform ${isDatePickerOpen ? 'rotate-180' : ''}`}
@@ -831,7 +840,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
               <div className={`${isDatePickerOpen ? 'block' : 'hidden'} lg:block`}>
                 <div className="mt-3 lg:mt-0">
                   <h2 className="mb-2 text-sm font-normal text-gray-700">
-                    날짜 선택
+                    {seatCopy.chooseDate}
                   </h2>
                   <DatePicker
                     availableDates={availableDates}
@@ -843,7 +852,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
                 {selectedDate ? (
                   <div className="mt-4 lg:mt-6">
                     <h2 className="mb-2 text-sm font-normal text-gray-700">
-                      회차 선택
+                      {seatCopy.chooseShowtime}
                     </h2>
                     <ShowtimeChips
                       showtimes={filteredShowtimes}
@@ -877,7 +886,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
                   </p>
                   {currentFloorOption?.isSoldOut ? (
                     <p className="mt-2 text-sm font-semibold text-amber-800">
-                      현재 층은 선택 가능한 좌석이 없습니다. 다른 층을 확인해주세요.
+                      {seatCopy.noFloorSeats}
                     </p>
                   ) : null}
                 </section>
@@ -887,10 +896,10 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
                 <section className="rounded-xl border border-border bg-white px-4 py-4 shadow-sm">
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <h2 className="text-sm font-semibold text-gray-900">
-                      선택 좌석
+                      {seatCopy.selectedSeats}
                     </h2>
                     <span className="text-sm font-semibold text-primary">
-                      {selectedSeats.length}석
+                      {formatCopy(seatCopy.seatCount, { count: selectedSeats.length })}
                     </span>
                   </div>
                   <SelectionTags

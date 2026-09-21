@@ -347,8 +347,10 @@ function CompletePageContent() {
     return (
       <RecoveryStateCard
         tone="red"
-        title={completeCopy.confirmFailedTitle}
-        body={paymentRecovery.reservation?.cancelReason || completeCopy.confirmFailedBody}
+        title={paymentRecovery.reservation?.status === 'CANCELLED'
+          ? visibleCopy.reservation.detail.cancelledNoticeTitle : completeCopy.confirmFailedTitle}
+        body={paymentRecovery.reservation?.status === 'CANCELLED'
+          ? visibleCopy.reservation.detail.qrCheckingSeatItems : completeCopy.confirmFailedBody}
         primaryAction={routePerformanceId
           ? {
               label: t('reselectCta'),

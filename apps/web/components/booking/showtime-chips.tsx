@@ -1,5 +1,7 @@
 'use client';
 
+import { getSeatSelectionCopy } from '@/lib/booking/seat-selection-copy';
+
 import type { Showtime } from '@grabit/shared';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib';
@@ -18,6 +20,7 @@ export function ShowtimeChips({
   onSelect,
   isLoading,
 }: ShowtimeChipsProps) {
+  const seatCopy = getSeatSelectionCopy();
   if (isLoading) {
     return (
       <div className="flex gap-2">
@@ -31,7 +34,7 @@ export function ShowtimeChips({
   if (showtimes.length === 0) {
     return (
       <p className="text-sm text-gray-500">
-        선택한 날짜에 예정된 회차가 없습니다
+        {seatCopy.noShowtimes}
       </p>
     );
   }
@@ -52,7 +55,7 @@ export function ShowtimeChips({
                 : 'bg-gray-100 text-gray-900 hover:bg-gray-200',
             )}
           >
-            {formatKstTimeLabel(showtime.dateTime)}
+            {formatKstTimeLabel(showtime.dateTime)} KST
           </button>
         );
       })}

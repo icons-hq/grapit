@@ -1,3 +1,4 @@
+import { getClientLocale } from '@/lib/i18n/client-copy';
 import { useEffect, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api-client';
@@ -374,20 +375,22 @@ export function useReconcileAsyncPaymentReturn() {
 
 export function useBookingDetail(reservationId: string) {
   const userId = useAuthStore((store) => store.user?.id);
+  const locale = getClientLocale();
   return useQuery({
-    queryKey: ['reservations', reservationId, userId],
+    queryKey: ['reservations', reservationId, userId, locale],
     queryFn: () =>
-      apiClient.get<ReservationDetail>(`/api/v1/reservations/${reservationId}`),
+      apiClient.get<ReservationDetail>(`/api/v1/reservations/${reservationId}?locale=${locale}`),
     enabled: !!reservationId && !!userId,
   });
 }
 
 export function useReservationByOrderId(orderId: string | null) {
   const userId = useAuthStore((store) => store.user?.id);
+  const locale = getClientLocale();
   return useQuery({
-    queryKey: ['reservations', 'orderId', userId, orderId],
+    queryKey: ['reservations', 'orderId', userId, orderId, locale],
     queryFn: () =>
-      apiClient.get<ReservationDetail>(`/api/v1/reservations?orderId=${encodeURIComponent(orderId!)}`),
+      apiClient.get<ReservationDetail>(`/api/v1/reservations?orderId=${encodeURIComponent(orderId!)}&locale=${locale}`),
     enabled: !!orderId && !!userId,
   });
 }
@@ -404,10 +407,11 @@ export function useBookingPaymentRecovery(
 ) {
   const { enabled = !!orderId, pollIntervalMs = 2500 } = options;
   const userId = useAuthStore((store) => store.user?.id);
+  const locale = getClientLocale();
   const reservationQuery = useQuery({
-    queryKey: ['reservations', 'orderId', userId, orderId],
+    queryKey: ['reservations', 'orderId', userId, orderId, locale],
     queryFn: () =>
-      apiClient.get<ReservationDetail | null>(`/api/v1/reservations?orderId=${encodeURIComponent(orderId!)}`, { showErrorToast: false }),
+      apiClient.get<ReservationDetail | null>(`/api/v1/reservations?orderId=${encodeURIComponent(orderId!)}&locale=${locale}`, { showErrorToast: false }),
     enabled: enabled && !!orderId && !!userId,
     retry: false,
   });

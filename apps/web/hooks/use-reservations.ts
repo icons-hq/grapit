@@ -9,6 +9,7 @@ import {
 import { apiClient } from '@/lib/api-client';
 import { apiUrl } from '@/lib/api-url';
 import { useAuthStore } from '@/stores/use-auth-store';
+import { getClientLocale } from '@/lib/i18n/client-copy';
 import type {
   EmailVerificationRequestResponse,
   ReservationListItem,
@@ -37,26 +38,29 @@ export interface ReservationExportDownload {
 
 export function useMyReservations(status?: string) {
   const userId = useAuthStore((state) => state.user?.id);
+  const locale = getClientLocale();
   return useQuery({
-    queryKey: ['reservations', 'me', userId, status ?? 'all'],
+    queryKey: ['reservations', 'me', userId, status ?? 'all', locale],
     queryFn: () => {
       const params = new URLSearchParams();
+      params.set('locale', locale);
       if (status && status !== 'all') params.set('status', status);
       return apiClient.get<ReservationListItem[]>(
         `/api/v1/users/me/reservations${params.toString() ? `?${params.toString()}` : ''}`,
       );
     },
     enabled: Boolean(userId),
-    placeholderData: (previousData, previousQuery) => previousQuery?.queryKey[2] === userId ? previousData : undefined,
+    placeholderData: (previousData, previousQuery) => previousQuery?.queryKey[2] === userId && previousQuery?.queryKey[4] === locale ? previousData : undefined,
   });
 }
 
 export function useReservationDetail(id: string) {
   const userId = useAuthStore((state) => state.user?.id);
+  const locale = getClientLocale();
   return useQuery({
-    queryKey: ['reservations', id, userId],
+    queryKey: ['reservations', id, userId, locale],
     queryFn: () =>
-      apiClient.get<ReservationDetail>(`/api/v1/reservations/${id}`),
+      apiClient.get<ReservationDetail>(`/api/v1/reservations/${id}?locale=${locale}`),
     enabled: !!id && !!userId,
   });
 }
@@ -67,7 +71,7 @@ export function useCancelReservation() {
     mutationFn: ({ id, reason, expected }: { id: string; reason: string; expected?: CancellationExpectation }) =>
       apiClient.post<RefundPreviewResponse>(`/api/v1/reservations/${id}/refund`, { reason, ...expected }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['reservations'] });
+      invalidateAfterCancellation(queryClient);
     },
   });
 }
@@ -80,6 +84,7 @@ export function useRefundPreview(id: string | null, enabled = true, ticketItemId
       apiClient.get<RefundPreviewResponse | TicketItemRefundPreviewResponse>(
         ticketItemId ? `/api/v1/reservations/${id}/ticket-items/${ticketItemId}/refund-preview`
           : `/api/v1/reservations/${id}/refund-preview`,
+        { showErrorToast: false },
       ),
     enabled: Boolean(id) && enabled,
   });
@@ -90,8 +95,17 @@ export function useCancelTicketItem() {
   return useMutation({
     mutationFn: ({ id, ticketItemId, reason, expected }: { id: string; ticketItemId: string; reason: string; expected?: CancellationExpectation }) =>
       apiClient.put<ReservationDetail>(`/api/v1/reservations/${id}/ticket-items/${ticketItemId}/cancel`, { reason, ...expected }),
-    onSettled: () => { queryClient.invalidateQueries({ queryKey: ['reservations'] }); },
+    onSettled: () => { invalidateAfterCancellation(queryClient); },
   });
+}
+
+function invalidateAfterCancellation(queryClient: ReturnType<typeof useQueryClient>) {
+  // A successful cancellation makes its open quote ineligible. Refresh the
+  // ledger, and mark quotes stale for the next opening without querying them.
+  void queryClient.invalidateQueries({ queryKey: ['reservations'],
+    predicate: ({ queryKey }) => queryKey[2] !== 'refund-preview' });
+  void queryClient.invalidateQueries({ queryKey: ['reservations'],
+    predicate: ({ queryKey }) => queryKey[2] === 'refund-preview', refetchType: 'none' });
 }
 
 export type AdminRefundPreviewOptions = {

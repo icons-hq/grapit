@@ -47,7 +47,8 @@ function formatDateTime(dateString: string | null | undefined, locale: string): 
     weekday: 'short',
     hour: '2-digit',
     minute: '2-digit',
-  }).format(date);
+    timeZone: 'Asia/Seoul',
+  }).format(date) + ' KST';
 }
 
 interface CancelConfirmModalProps {

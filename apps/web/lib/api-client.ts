@@ -141,7 +141,7 @@ async function request<T>(
 
     // 401 is handled above (redirect). No toast needed here.
     if (status !== 401 && options.showErrorToast !== false) {
-      toast.error(errorMessage, {
+      toast.error(getClientLocale() === 'ko' ? errorMessage : getStatusMessages()[status] ?? getDefaultErrorMessage(), {
         description: formatCopy(commonErrors.errorCode, { status }),
         duration: 5000,
       });

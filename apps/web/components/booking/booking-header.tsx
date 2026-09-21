@@ -1,5 +1,7 @@
 'use client';
 
+import { getSeatSelectionCopy } from '@/lib/booking/seat-selection-copy';
+
 import { ChevronLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { CountdownTimer } from './countdown-timer';
@@ -17,13 +19,14 @@ export function BookingHeader({
   onBack,
   onExpire,
 }: BookingHeaderProps) {
+  const seatCopy = getSeatSelectionCopy();
   return (
     <header className="sticky top-0 z-50 flex h-12 items-center justify-between border-b bg-white px-4 shadow-sm lg:h-14 lg:px-6">
       <Button
         variant="ghost"
         size="icon"
         onClick={onBack}
-        aria-label="뒤로가기"
+        aria-label={seatCopy.back}
       >
         <ChevronLeft className="size-5" />
       </Button>

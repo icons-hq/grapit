@@ -29,6 +29,7 @@ import { OfflineSyncService } from '../src/modules/field-operations/offline-sync
 import { OfflineSyncController } from '../src/modules/field-operations/offline-sync.controller.js';
 import { AdminBenefitsService } from '../src/modules/admin/admin-benefits.service.js';
 import { FieldMonitorService } from '../src/modules/field-operations/field-monitor.service.js';
+import { FieldMonitorController } from '../src/modules/field-operations/field-monitor.controller.js';
 
 // Disposable database only. Real signatures, HTTP pipes, capability guards and ledgers.
 describe('Seat-level field admission — HTTP and PostgreSQL', () => {
@@ -56,12 +57,14 @@ describe('Seat-level field admission — HTTP and PostgreSQL', () => {
     Reflect.defineMetadata('design:paramtypes', [FieldCheckInService], FieldCheckInController);
     Reflect.defineMetadata('design:paramtypes', [BenefitRedemptionService], BenefitRedemptionController);
     Reflect.defineMetadata('design:paramtypes', [OfflineSyncService], OfflineSyncController);
+    Reflect.defineMetadata('design:paramtypes', [FieldMonitorService], FieldMonitorController);
     const module = await Test.createTestingModule({
-      controllers: [FieldCheckInController, BenefitRedemptionController, OfflineSyncController],
+      controllers: [FieldCheckInController, BenefitRedemptionController, OfflineSyncController, FieldMonitorController],
       providers: [
         { provide: FieldCheckInService, useValue: field },
         { provide: BenefitRedemptionService, useValue: new BenefitRedemptionService(db, qr) },
         { provide: OfflineSyncService, useValue: new OfflineSyncService(db, field, audit) },
+        { provide: FieldMonitorService, useValue: new FieldMonitorService(db) },
       ],
     }).overrideGuard(RolesGuard).useValue(new RolesGuard(new Reflector()))
       .overrideGuard(AdminCapabilitiesGuard).useValue(new AdminCapabilitiesGuard(new Reflector())).compile();
@@ -114,6 +117,33 @@ describe('Seat-level field admission — HTTP and PostgreSQL', () => {
     expect(monitor).toMatchObject({ enteredCount: 1, notEnteredCount: 1 });
     expect(await qr.getOwnedTicketsForReservation(f.order.id, f.buyer.id)).toHaveLength(2);
     expect((await consume(f, 1)).body.outcome).toBe('entered');
+  });
+
+  it('allows field staff to read redacted monitor logs without granting general audit access', async () => {
+    const f = await fixture();
+    await consume(f);
+    const query = { eventId: f.event.id, showtimeId: f.show.id };
+    const response = await request(app.getHttpServer()).get('/field/monitor/logs')
+      .set('x-test-capabilities', 'field.scan.verify').query(query);
+    expect(response.status).toBe(200);
+    expect(response.body).toHaveLength(1);
+    expect(response.body[0]).toMatchObject({ reservationNumber: f.order.reservationNumber,
+      scannerName: 'Scanner', seatLabel: '1층 · VIP · A-1', source: 'online' });
+    expect(JSON.stringify(response.body)).not.toContain(f.credentials[0]!.token);
+    expect(JSON.stringify(response.body)).not.toContain(f.buyer.email);
+    expect((await request(app.getHttpServer()).get('/field/monitor/logs').set('x-test-bundle', 'finance').query(query)).status).toBe(403);
+  });
+
+  it('filters field logs by the displayed KST calendar day', async () => {
+    const f = await fixture();
+    await db.insert(schema.ticketScanEvents).values([
+      '2026-09-01T14:59:59Z', '2026-09-01T15:00:00Z', '2026-09-02T14:59:59Z', '2026-09-02T15:00:00Z',
+    ].map((at) => ({ ticketId: f.credentials[0]!.id, ticketItemId: f.items[0]!.id, reservationId: f.order.id,
+      showtimeId: f.show.id, scannerUserId: actorId, result: 'success' as const, scannedAt: new Date(at) })));
+    const response = await request(app.getHttpServer()).get('/field/monitor/logs')
+      .query({ eventId: f.event.id, showtimeId: f.show.id, dateFrom: '2026-09-02', dateTo: '2026-09-02' });
+    expect(response.status).toBe(200);
+    expect(response.body.map((entry: { scannedAt: string }) => entry.scannedAt)).toEqual(['2026-09-02T14:59:59.000Z', '2026-09-01T15:00:00.000Z']);
   });
 
   it('admits concurrent different seats independently and consumes one seat once under concurrent duplicate requests', async () => {

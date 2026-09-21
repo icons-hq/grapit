@@ -82,8 +82,7 @@ function formatDateTime(
     hour: '2-digit',
     minute: '2-digit',
     timeZone: 'Asia/Seoul',
-    timeZoneName: 'short',
-  }).format(date);
+  }).format(date) + ' KST';
 }
 
 function formatDeadline(
@@ -91,10 +90,7 @@ function formatDeadline(
   locale: string,
   deadlineTemplate: string,
 ): string {
-  const date = new Date(dateString);
-  const value = locale === 'ko'
-    ? `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, '0')}.${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
-    : formatDateTime(dateString, '-', locale);
+  const value = formatDateTime(dateString, '-', locale);
   return formatTemplate(deadlineTemplate, { value });
 }
 
@@ -716,7 +712,8 @@ export function ReservationDetailView({
   const canCancelSeat = canCancel && !hasCancellationInProgress(reservation);
   const refundPreviewQuery = useRefundPreview(
     reservation.id,
-    canCancel && cancelModalOpen,
+    canCancel && cancelModalOpen && !isCancelling &&
+      (!cancelTicketItemId || reservation.ticketItems.some((item) => item.id === cancelTicketItemId && item.status === 'ACTIVE')),
     cancelTicketItemId,
   );
   const hasSeatLevelTicketItems = hasPersistedTicketItems(reservation);
@@ -1038,7 +1035,7 @@ export function ReservationDetailView({
                       />
                       <Separator />
                       <InfoRow
-                        label={completeCopy.ticketValid}
+                        label={completeCopy.ticketStatusLabel}
                         value={card.ticketStatusLabel}
                       />
                       <Separator />

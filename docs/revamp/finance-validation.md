@@ -19,7 +19,7 @@
 - API 전체 1,259/1,259, Web 전체 765/765, shared 148/148 통과 후 offline 회귀를 추가해 관련 UI 11/11 통과.
 - shared/API/Web typecheck, API SWC build 통과. 변경 API/Web lint 오류 0건. API test 파일은 기존 eslint 설정상 대상 밖이며 integration/typecheck로 검증했다.
 - Standards 최종 0건, Spec 최종 0건: 고정 `1f594dd05a3b15f20237ee1518267b933b089a7f`. 최초 지적을 RED로 재현해 해결했다. 레거시 2석 매출 관련 최초 지적 1건은 rowKey 오독으로 검토자가 철회했고, 처리 중 환불 집계의 실제 모순은 제거했다.
-- Web production build 통과(`finance-web-production-build`). PR CI는 최종 commit 기준으로 후속 기록에 연결한다.
+- Web production build 통과(`finance-web-production-build`). [PR #229 CI](https://github.com/icons-hq/grapit/actions/runs/35632742927)는 `4881d50c3bd3625e61c3bccb588eb8c78a08be46`에서 전체 lint/typecheck/unit/실제 DB·Valkey/migration/build/browser E2E를 통과했다.
 
 ## 실제 브라우저·CSV
 

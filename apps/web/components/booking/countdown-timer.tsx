@@ -1,5 +1,8 @@
 'use client';
 
+import { getSeatSelectionCopy } from '@/lib/booking/seat-selection-copy';
+import { formatCopy } from '@/lib/i18n/client-copy';
+
 import { useRef, useEffect, useState } from 'react';
 import { Clock, AlertTriangle } from 'lucide-react';
 import { useCountdown } from '@/hooks/use-countdown';
@@ -10,6 +13,7 @@ interface CountdownTimerProps {
 }
 
 export function CountdownTimer({ expiresAt, onExpire }: CountdownTimerProps) {
+  const seatCopy = getSeatSelectionCopy();
   const { minutes, seconds, isWarning, isActive } = useCountdown(
     expiresAt,
     onExpire,
@@ -45,7 +49,7 @@ export function CountdownTimer({ expiresAt, onExpire }: CountdownTimerProps) {
           isWarning ? 'bg-destructive text-white' : 'bg-primary text-white'
         }`}
         aria-live="polite"
-        aria-label={`남은 시간 ${minutes}분 ${seconds}초`}
+        aria-label={formatCopy(seatCopy.remainingAria, { minutes, seconds })}
       >
         {isWarning ? (
           <AlertTriangle className="size-4" />
@@ -53,7 +57,7 @@ export function CountdownTimer({ expiresAt, onExpire }: CountdownTimerProps) {
           <Clock className="size-4" />
         )}
         <span className="whitespace-nowrap text-sm">
-          <span className="text-xs">남은시간</span>{' '}
+          <span className="text-xs">{seatCopy.remaining}</span>{' '}
           <span className="font-mono text-base font-semibold">
             {formattedTime}
           </span>
@@ -63,7 +67,7 @@ export function CountdownTimer({ expiresAt, onExpire }: CountdownTimerProps) {
       {/* Screen reader announcement for 3-minute warning */}
       {wasWarningAnnounced && (
         <span className="sr-only" aria-live="assertive">
-          남은 시간이 3분 미만입니다
+          {seatCopy.timerWarning}
         </span>
       )}
     </>

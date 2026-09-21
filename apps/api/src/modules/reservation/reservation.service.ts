@@ -12,6 +12,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { eq, and, or, sql, desc, inArray, asc, ne, isNull } from 'drizzle-orm';
 import { isSameCheckoutPaymentMethod } from '@grabit/shared';
+import { fetchReviewedPerformanceTranslations } from '../translation/performance-translation-overlay.js';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import { noActiveTicketItemOnSeat } from '../../database/seat-ownership.js';
 import {
@@ -286,7 +287,9 @@ function mapStoredChargeQuote(snapshot: {
 }
 
 function mapStoredPaymentMethod(
-  payment: Pick<typeof payments.$inferSelect, 'method' | 'provider' | 'currency'>,
+  payment: Pick<typeof payments.$inferSelect, 'method' | 'provider' | 'currency'> & {
+    providerChargeCurrency?: string | null;
+  },
 ): PaymentMethod | undefined {
   if (!isPaymentMethodType(payment.method) || !isPaymentProvider(payment.provider)) {
     return undefined;
@@ -295,7 +298,7 @@ function mapStoredPaymentMethod(
   return {
     method: payment.method,
     provider: payment.provider,
-    currency: payment.currency,
+    currency: payment.providerChargeCurrency === 'USD' ? 'USD' : payment.currency,
   };
 }
 
@@ -1375,7 +1378,7 @@ export class ReservationService {
     return this.getReservationDetail(result.reservationId, userId);
   }
 
-  async getMyReservations(userId: string, status?: ReservationStatus): Promise<ReservationListItem[]> {
+  async getMyReservations(userId: string, status?: ReservationStatus, locale?: string): Promise<ReservationListItem[]> {
     const conditions = [eq(reservations.userId, userId)];
     if (status) {
       conditions.push(
@@ -1396,6 +1399,7 @@ export class ReservationService {
           dateTime: showtimes.dateTime,
         },
         performance: {
+          id: performances.id,
           title: performances.title,
           posterUrl: performances.posterUrl,
         },
@@ -1425,13 +1429,15 @@ export class ReservationService {
       seatsByReservation.set(seat.reservationId, existing);
     }
 
+    const titles = await fetchReviewedPerformanceTranslations(this.db,
+      [...new Set(rows.map((row) => row.performance.id))], locale, ['title']);
     const result: ReservationListItem[] = rows.map((row) => {
       const seats = seatsByReservation.get(row.reservation.id) ?? [];
       return {
         id: row.reservation.id,
         reservationNumber: row.reservation.reservationNumber,
         status: row.reservation.status as ReservationStatus,
-        performanceTitle: row.performance.title,
+        performanceTitle: titles.get(row.performance.id)?.title ?? row.performance.title,
         posterUrl: row.performance.posterUrl,
         showDateTime: row.showtime.dateTime?.toISOString() ?? '',
         venue: row.venue?.name ?? '',
@@ -1450,7 +1456,7 @@ export class ReservationService {
     return result;
   }
 
-  async getReservationDetail(reservationId: string, userId: string): Promise<ReservationDetail> {
+  async getReservationDetail(reservationId: string, userId: string, locale?: string): Promise<ReservationDetail> {
     const [row] = await this.db
       .select({
         reservation: {
@@ -1595,6 +1601,8 @@ export class ReservationService {
       .filter((value): value is string => typeof value === 'string' && value.length > 0)
       .sort();
     const lastSentAt = sentAtValues.at(-1) ?? null;
+    const title = (await fetchReviewedPerformanceTranslations(this.db,
+      [row.performance.id], locale, ['title'])).get(row.performance.id)?.title;
 
     return {
       id: row.reservation.id,
@@ -1606,7 +1614,7 @@ export class ReservationService {
       checkoutPaymentMethod: row.reservation.checkoutPaymentMethod ?? null,
       checkoutStartedAt: row.reservation.checkoutStartedAt?.toISOString() ?? null,
       providerChargeQuote: mapStoredChargeQuote(row.reservation),
-      performanceTitle: row.performance.title,
+      performanceTitle: title ?? row.performance.title,
       posterUrl: row.performance.posterUrl,
       showDateTime: row.showtime.dateTime?.toISOString() ?? '',
       venue: row.venue?.name ?? '',
@@ -1949,7 +1957,7 @@ export class ReservationService {
     };
   }
 
-  async getReservationByOrderId(orderId: string, userId: string): Promise<ReservationDetail | null> {
+  async getReservationByOrderId(orderId: string, userId: string, locale?: string): Promise<ReservationDetail | null> {
     const [reservation] = await this.db
       .select({ id: reservations.id })
       .from(reservations)
@@ -1962,7 +1970,7 @@ export class ReservationService {
       return null;
     }
 
-    return this.getReservationDetail(reservation.id, userId);
+    return this.getReservationDetail(reservation.id, userId, locale);
   }
 
   private mapTicketItemCancellationContext(

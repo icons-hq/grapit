@@ -116,23 +116,23 @@ describe('FieldMonitor', () => {
   it('renders 4-8 KPI cards before any raw scan log table', () => {
     render(<FieldMonitor summary={monitorSummary} scanLogs={scanLogs} />);
 
-    expect(screen.getByText('입장 흐름이 정상입니다')).toBeInTheDocument();
+    expect(screen.queryByText('입장 흐름이 정상입니다')).not.toBeInTheDocument();
 
     const kpiGrid = screen.getByTestId('field-monitor-kpi-grid');
     const kpiCards = within(kpiGrid).getAllByTestId(/^field-monitor-kpi-/);
 
     expect(kpiCards.length).toBeGreaterThanOrEqual(4);
     expect(kpiCards.length).toBeLessThanOrEqual(8);
-    expect(within(kpiGrid).getByText('entered')).toBeInTheDocument();
-    expect(within(kpiGrid).getByText('not-entered')).toBeInTheDocument();
-    expect(within(kpiGrid).getByText('entry rate')).toBeInTheDocument();
-    expect(within(kpiGrid).getByText('duplicate scans')).toBeInTheDocument();
-    expect(within(kpiGrid).getByText('rejected scans')).toBeInTheDocument();
-    expect(within(kpiGrid).getByText('offline pending')).toBeInTheDocument();
+    expect(within(kpiGrid).getByText('입장 완료')).toBeInTheDocument();
+    expect(within(kpiGrid).getByText('미입장')).toBeInTheDocument();
+    expect(within(kpiGrid).getByText('입장률')).toBeInTheDocument();
+    expect(within(kpiGrid).getByText('중복 스캔')).toBeInTheDocument();
+    expect(within(kpiGrid).getByText('거절 스캔')).toBeInTheDocument();
+    expect(within(kpiGrid).getByText('동기화 대기')).toBeInTheDocument();
     expect(within(kpiGrid).getByText('2')).toBeInTheDocument();
-    expect(within(kpiGrid).getByText('offline synced')).toBeInTheDocument();
+    expect(within(kpiGrid).getByText('동기화 완료')).toBeInTheDocument();
     expect(within(kpiGrid).getByText('12')).toBeInTheDocument();
-    expect(within(kpiGrid).getByText('latest abnormal')).toBeInTheDocument();
+    expect(within(kpiGrid).getByText('최근 이상 알림')).toBeInTheDocument();
 
     const logTable = screen.getByRole('table', { name: '스캔 로그' });
     expect(
@@ -180,6 +180,8 @@ describe('FieldMonitor', () => {
 
     expect(screen.getByRole('button', { name: '새로고침' })).toBeDisabled();
     expect(refetchMock).not.toHaveBeenCalled();
+    expect(screen.queryAllByText('입장 흐름이 정상입니다')).toHaveLength(0);
+    expect(screen.getByText('공연과 회차를 선택하면 현장 현황을 조회합니다.')).toBeInTheDocument();
   });
 
   it('configures the monitor summary hook for visible 10 second polling and manual refresh', async () => {

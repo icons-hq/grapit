@@ -1,5 +1,8 @@
 'use client';
 
+import { getSeatSelectionCopy } from '@/lib/booking/seat-selection-copy';
+import { formatCopy } from '@/lib/i18n/client-copy';
+
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 
 interface FloorOption {
@@ -21,6 +24,7 @@ export function FloorSelector({
   selectedFloorKey,
   onChange,
 }: FloorSelectorProps) {
+  const seatCopy = getSeatSelectionCopy();
   if (floors.length === 0) {
     return null;
   }
@@ -28,8 +32,8 @@ export function FloorSelector({
   return (
     <div className="sticky top-12 z-30 -mx-4 border-y border-border bg-white/95 px-4 py-3 backdrop-blur lg:top-14 lg:-mx-0 lg:rounded-xl lg:border lg:px-4">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm font-semibold text-gray-900">층 선택</p>
-        <p className="text-xs text-gray-500">선택한 좌석은 층을 바꿔도 유지됩니다</p>
+        <p className="text-sm font-semibold text-gray-900">{seatCopy.chooseFloor}</p>
+        <p className="text-xs text-gray-500">{seatCopy.floorKeep}</p>
       </div>
       <div className="mt-3 overflow-x-auto pb-1">
         <ToggleGroup
@@ -43,7 +47,7 @@ export function FloorSelector({
           variant="outline"
           spacing={1}
           className="grid min-w-max grid-flow-col auto-cols-[minmax(160px,1fr)] gap-2 lg:flex lg:w-full"
-          aria-label="층 선택"
+          aria-label={seatCopy.chooseFloor}
         >
           {floors.map((floor) => (
             <ToggleGroupItem
@@ -56,7 +60,7 @@ export function FloorSelector({
                 {floor.floorLabel}
                 {typeof floor.totalSeats === 'number' ? (
                   <span className="ml-1 text-xs opacity-80">
-                    ({floor.totalSeats.toLocaleString()}석)
+                    ({formatCopy(seatCopy.seatCount, { count: floor.totalSeats })})
                   </span>
                 ) : null}
               </span>
@@ -66,7 +70,7 @@ export function FloorSelector({
                 </span>
               ) : floor.isSoldOut ? (
                 <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
-                  혼잡
+                  {seatCopy.busy}
                 </span>
               ) : null}
             </ToggleGroupItem>

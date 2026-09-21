@@ -2,7 +2,8 @@
 
 import { useMemo } from 'react';
 import { DayPicker } from 'react-day-picker';
-import { ko } from 'react-day-picker/locale';
+import { ko, enUS, th, zhCN } from 'react-day-picker/locale';
+import { getClientLocale } from '@/lib/i18n/client-copy';
 
 interface DatePickerProps {
   availableDates: Date[];
@@ -40,7 +41,7 @@ export function DatePicker({
     <div className="rounded-lg bg-gray-50 p-4">
       <DayPicker
         mode="single"
-        locale={ko}
+        locale={{ ko, en: enUS, th, 'zh-CN': zhCN }[getClientLocale()]}
         selected={selected ?? undefined}
         onSelect={(day) => {
           if (day) onSelect(day);

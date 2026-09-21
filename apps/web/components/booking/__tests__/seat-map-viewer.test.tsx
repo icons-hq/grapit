@@ -99,6 +99,7 @@ const mockSeatConfig: SeatMapConfig = {
 
 describe('SeatMapViewer', () => {
   beforeEach(() => {
+    window.history.replaceState({}, '', '/');
     transformWrapperSpy.mockClear();
     transformComponentSpy.mockClear();
     mockUseIsMobile.mockReset();
@@ -108,6 +109,20 @@ describe('SeatMapViewer', () => {
       ok: true,
       text: () => Promise.resolve(SVG_CONTENT),
     });
+  });
+
+  it('offers a keyboard seat list that keeps sold seats unavailable and calls the same selection boundary', async () => {
+    window.history.replaceState({}, '', '/en/booking/test');
+    const onSeatClick = vi.fn();
+    render(<SeatMapViewer svgUrl="https://example.com/seats.svg" floorKey="1F" floorLabel="1F"
+      seatConfig={mockSeatConfig} seatStates={new Map([['A-2', 'sold']])}
+      selectedSeatIds={new Set()} onSeatClick={onSeatClick} maxSelect={1} />);
+    fireEvent.click(await screen.findByText('Choose seats from a list'));
+    const select = screen.getByRole('combobox', { name: 'Seat list' });
+    expect((screen.getByRole('option', { name: /A.*2/ }) as HTMLOptionElement).disabled).toBe(true);
+    fireEvent.change(select, { target: { value: '1F:A-1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Select seat' }));
+    expect(onSeatClick).toHaveBeenCalledWith('1F:A-1');
   });
 
   it('renders available seats with tier color fill', async () => {

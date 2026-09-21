@@ -118,10 +118,12 @@ export class ReservationController {
   async getMyReservations(
     @Request() req: { user: { id: string } },
     @Query('status') status?: string,
+    @Query('locale') locale?: string,
   ) {
     return this.reservationService.getMyReservations(
       req.user.id,
       status as ReservationStatus | undefined,
+      locale,
     );
   }
 
@@ -129,16 +131,18 @@ export class ReservationController {
   async getReservationByOrderId(
     @Request() req: { user: { id: string } },
     @Query('orderId') orderId: string,
+    @Query('locale') locale?: string,
   ) {
-    return this.reservationService.getReservationByOrderId(orderId, req.user.id);
+    return this.reservationService.getReservationByOrderId(orderId, req.user.id, locale);
   }
 
   @Get('reservations/:id')
   async getReservationDetail(
     @Param('id') id: string,
     @Request() req: { user: { id: string } },
+    @Query('locale') locale?: string,
   ) {
-    return this.reservationService.getReservationDetail(id, req.user.id);
+    return this.reservationService.getReservationDetail(id, req.user.id, locale);
   }
 
   @Put('reservations/:id/cancel')

@@ -178,6 +178,8 @@ export function GNB() {
             <div ref={profileRef} className="relative hidden md:block">
               <button
                 onClick={() => setIsProfileOpen(!isProfileOpen)}
+                aria-label={copy.nav.mypage}
+                aria-expanded={isProfileOpen}
                 className="flex items-center gap-2"
               >
                 <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-normal text-white">
