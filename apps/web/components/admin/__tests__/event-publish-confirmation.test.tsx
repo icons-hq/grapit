@@ -160,6 +160,7 @@ describe('usePublishPerformance', () => {
     );
 
     await publishMutation.result.current.mutateAsync({
+      expectedUpdatedAt: '2026-09-21T00:00:00.000Z',
       reason: '운영 기준 확인 완료',
       confirmed: true,
       confirmedChangedFields: ['title', 'venueName'],
@@ -170,6 +171,7 @@ describe('usePublishPerformance', () => {
       expect(apiClient.post).toHaveBeenCalledWith(
         '/api/v1/admin/performances/perf-1/publish',
         {
+          expectedUpdatedAt: '2026-09-21T00:00:00.000Z',
           reason: '운영 기준 확인 완료',
           confirmed: true,
           confirmedChangedFields: ['title', 'venueName'],

@@ -122,6 +122,7 @@ type ShowtimeBookingContext = {
   id: string;
   performanceId: string;
   performanceStatus: string;
+  performancePublishState: string;
   bookingStartsAt: Date | null;
   dateTime: Date;
   maxTicketsPerUser: number;
@@ -1003,6 +1004,7 @@ export class ReservationService {
         id: showtimes.id,
         performanceId: showtimes.performanceId,
         performanceStatus: performances.status,
+        performancePublishState: performances.publishState,
         bookingStartsAt: bookingPolicies.bookingStartsAt,
         dateTime: showtimes.dateTime,
         maxTicketsPerUser: bookingPolicies.maxTicketsPerUser,
@@ -1023,6 +1025,7 @@ export class ReservationService {
       id: showtime.id,
       performanceId: showtime.performanceId,
       performanceStatus: showtime.performanceStatus,
+      performancePublishState: showtime.performancePublishState,
       bookingStartsAt: showtime.bookingStartsAt ?? null,
       dateTime: showtime.dateTime,
       maxTicketsPerUser:
@@ -1040,12 +1043,16 @@ export class ReservationService {
     performanceStatus: string,
     bookingStartsAt: Date | null,
     actor: BookingActor,
+    performancePublishState: string,
   ): void {
     if (performanceStatus === 'ended') {
       throw new ForbiddenException(BOOKING_ENDED_MESSAGE);
     }
     if (actor.role === 'admin') {
       return;
+    }
+    if (performancePublishState !== 'published') {
+      throw new ForbiddenException(BOOKING_NOT_OPEN_MESSAGE);
     }
     if (bookingStartsAt && !isBookingStartReached(bookingStartsAt)) {
       throw new ForbiddenException(BOOKING_NOT_OPEN_MESSAGE);
@@ -1127,6 +1134,7 @@ export class ReservationService {
         existingShowtime.performanceStatus,
         existingShowtime.bookingStartsAt,
         actor,
+        existingShowtime.performancePublishState,
       );
 
       const canonicalSeats = await this.getCanonicalSeatSelections(
@@ -1221,6 +1229,7 @@ export class ReservationService {
       showtime.performanceStatus,
       showtime.bookingStartsAt,
       actor,
+      showtime.performancePublishState,
     );
 
     // 3. Calculate expected amount from DB and canonical seat map metadata

@@ -42,6 +42,7 @@ vi.mock('@/hooks/use-admin', () => ({
 }));
 
 vi.mock('@/hooks/use-admin-benefits', () => ({
+  useAdminBenefitOperationState: () => ({ isSuccess: true, isPending: false, isError: false, data: { resultLockedAt: null, redeemedCount: 0, history: [] } }),
   useAdminBenefitConfiguration: () => ({
     data: mocks.configuration,
     isLoading: false,
@@ -279,7 +280,7 @@ describe('AdminBenefitManager', () => {
     const user = userEvent.setup();
     await selectBenefitShowtime(user);
 
-    await screen.findByDisplayValue('benefit_official_poster');
+    await screen.findByDisplayValue('공식 포스터');
     await user.clear(screen.getByLabelText('설정 저장 사유'));
     await user.type(screen.getByLabelText('설정 저장 사유'), '혜택 운영안 확정');
     await user.click(screen.getByRole('button', { name: /설정 저장/ }));
@@ -311,7 +312,7 @@ describe('AdminBenefitManager', () => {
     const user = userEvent.setup();
     await selectBenefitShowtime(user);
 
-    await screen.findByDisplayValue('benefit_6_to_1');
+    await screen.findByDisplayValue('6:1 이벤트 참여권');
     await user.type(screen.getByLabelText('테스트 seed 참조값'), 'operator-seed');
     await user.click(screen.getByRole('button', { name: /^테스트 실행$/ }));
 

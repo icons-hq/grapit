@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, renderHook, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,6 +9,7 @@ import type { PerformanceWithDetails } from '@grabit/shared';
 import { apiClient } from '@/lib/api-client';
 import { useAdminPerformanceDetail } from '@/hooks/use-admin';
 import { PerformanceForm } from '../performance-form';
+import { useAuthStore } from '@/stores/use-auth-store';
 
 const mocks = vi.hoisted(() => ({
   routerPush: vi.fn(),
@@ -47,10 +48,6 @@ vi.mock('@/components/admin/floor-seat-map-editor', () => ({
 
 vi.mock('@/components/admin/svg-preview', () => ({
   SvgPreview: () => <div data-testid="svg-preview" />,
-}));
-
-vi.mock('@/components/admin/showtime-manager', () => ({
-  ShowtimeManager: () => <div data-testid="showtime-manager" />,
 }));
 
 vi.mock('@/components/admin/casting-manager', () => ({
@@ -147,6 +144,11 @@ const fixturePerformance: PerformanceWithDetails = {
 describe('PerformanceForm copy visibility controls', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useAuthStore.setState({ user: { id: '11111111-1111-4111-8111-111111111111', role: 'admin', adminCapabilityBundle: 'operator' } as never });
+    vi.mocked(apiClient.get).mockResolvedValue({ locales: [], checks: [], canPublish: false });
+    vi.mocked(apiClient.post).mockImplementation(async (path, data) => path.endsWith('/apply')
+      ? { id: 'draft-1', revision: 1, performanceId: fixturePerformance.id, appliedAt: '2026-09-21T00:00:00.000Z' }
+      : { id: 'draft-1', revision: 1, performanceId: fixturePerformance.id, data: (data as { data: unknown }).data, updatedAt: '2026-09-21T00:00:00.000Z' });
     (apiClient.put as ReturnType<typeof vi.fn>).mockResolvedValue({
       ...fixturePerformance,
     });
@@ -156,6 +158,7 @@ describe('PerformanceForm copy visibility controls', () => {
     renderWithClient(
       <PerformanceForm
         mode="edit"
+        initialStep="content"
         initialData={fixturePerformance}
         performanceId={fixturePerformance.id}
       />,
@@ -171,12 +174,22 @@ describe('PerformanceForm copy visibility controls', () => {
     expect(screen.getAllByText('사용자 상세 페이지에 표시')).toHaveLength(2);
   });
 
+  it.each([null, undefined])('allows publication of an unchanged ready performance with %s optional fields', async (empty) => {
+    useAuthStore.setState({ user: { id: '11111111-1111-4111-8111-111111111111', role: 'admin', adminCapabilityBundle: 'approver' } as never });
+    vi.mocked(apiClient.get).mockResolvedValue({ locales: [{ locale: 'en', title: true, description: true }], checks: [], canPublish: true });
+    renderWithClient(<PerformanceForm mode="edit" initialStep="review" initialData={{ ...fixturePerformance, posterUrl: null,
+      venue: { ...fixturePerformance.venue!, address: null, accessNotes: empty, transportSummary: empty },
+    }} performanceId={fixturePerformance.id} />);
+    await waitFor(() => expect(screen.getByRole('button', { name: '공개 승인' })).toBeEnabled());
+  });
+
   it('submits hidden flags while preserving textarea content', async () => {
     const user = userEvent.setup();
 
     renderWithClient(
       <PerformanceForm
         mode="edit"
+        initialStep="content"
         initialData={fixturePerformance}
         performanceId={fixturePerformance.id}
       />,
@@ -188,22 +201,57 @@ describe('PerformanceForm copy visibility controls', () => {
     await user.click(
       screen.getByRole('switch', { name: '판매정보 공개 상태' }),
     );
-    await user.click(screen.getByRole('button', { name: '저장' }));
+    await user.click(screen.getByRole('button', { name: /4\s*검수·공개/ }));
+    await user.click(screen.getByRole('button', { name: '공연 정보에 반영' }));
 
     await waitFor(() => {
-      expect(apiClient.put).toHaveBeenCalled();
+      expect(apiClient.post).toHaveBeenCalledWith('/api/v1/admin/performance-drafts/draft-1/apply', { expectedRevision: 1 }, { showErrorToast: false });
     });
 
-    expect(apiClient.put).toHaveBeenCalledWith(
-      `/api/v1/admin/performances/${fixturePerformance.id}`,
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/api/v1/admin/performance-drafts',
       expect.objectContaining({
+        data: expect.objectContaining({
         description: '운영자가 오래 편집한 상세정보',
         descriptionVisible: false,
         salesInfo: '운영자가 오래 편집한 판매정보',
         salesInfoVisible: false,
+        }),
       }),
       { showErrorToast: false },
     );
+  });
+
+  it('lets an operator review the final step before applying anything', async () => {
+    const user = userEvent.setup();
+    renderWithClient(<PerformanceForm mode="edit" initialStep="content" initialData={fixturePerformance} performanceId={fixturePerformance.id} />);
+    await user.click(screen.getByRole('button', { name: '다음 단계' }));
+    expect(screen.getByRole('heading', { name: '반영할 내용 확인' })).toBeVisible();
+    expect(apiClient.post).not.toHaveBeenCalled();
+  });
+
+  it('retains a KST sale opening time when a datetime input includes seconds', async () => {
+    const user = userEvent.setup();
+    renderWithClient(<PerformanceForm mode="edit" initialStep="seats" initialData={fixturePerformance} performanceId={fixturePerformance.id} />);
+    fireEvent.change(screen.getByLabelText('판매 시작 일시'), { target: { value: '2099-11-01T12:00:30' } });
+    await user.click(screen.getByRole('button', { name: /4\s*검수·공개/ }));
+    await user.click(screen.getByRole('button', { name: '공연 정보에 반영' }));
+    await waitFor(() => expect(apiClient.post).toHaveBeenCalledWith('/api/v1/admin/performance-drafts', expect.objectContaining({
+      data: expect.objectContaining({ bookingPolicy: expect.objectContaining({ bookingStartsAt: '2099-11-01T03:00:30.000Z' }) }),
+    }), { showErrorToast: false }));
+  });
+
+  it('creates a new showtime from the visible date and time without an empty persisted identity', async () => {
+    const user = userEvent.setup();
+    renderWithClient(<PerformanceForm mode="edit" initialStep="seats" initialData={fixturePerformance} performanceId={fixturePerformance.id} />);
+    await user.click(screen.getByRole('button', { name: '회차 추가' }));
+    fireEvent.change(screen.getByLabelText('회차 1 날짜'), { target: { value: '2099-11-20' } });
+    fireEvent.change(screen.getByLabelText('회차 1 시간'), { target: { value: '18:30' } });
+    await user.click(screen.getByRole('button', { name: /4\s*검수·공개/ }));
+    await user.click(screen.getByRole('button', { name: '공연 정보에 반영' }));
+    await waitFor(() => expect(apiClient.post).toHaveBeenCalledWith('/api/v1/admin/performance-drafts', expect.objectContaining({
+      data: expect.objectContaining({ showtimes: [{ dateTime: '2099-11-20T18:30:00' }] }),
+    }), { showErrorToast: false }));
   });
 });
 

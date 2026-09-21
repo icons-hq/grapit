@@ -68,7 +68,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
       isPhoneVerified: true, isEmailVerified: true }).returning();
     const [venue] = await db.insert(venues).values({ name: `Fixture-${id}` }).returning();
     const [performance] = await db.insert(performances).values({ title: 'Fixture', genre: 'artist_celebrity',
-      venueId: venue!.id, ageRating: '전체관람가', status: 'selling',
+      venueId: venue!.id, ageRating: '전체관람가', status: 'selling', publishState: 'published',
       startDate: new Date('2099-01-01'), endDate: new Date('2099-01-02') }).returning();
     await db.insert(schema.bookingPolicies).values({ performanceId: performance!.id, maxTicketsPerUser: 4 });
     const [showtime] = await db.insert(showtimes).values({ performanceId: performance!.id,

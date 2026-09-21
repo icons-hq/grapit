@@ -33,6 +33,7 @@ export type TranslationQueueFilterStatus = Exclude<
 >;
 
 export interface TranslationQueueFilters {
+  entityId?: string;
   contentType?: string;
   locale?: TranslationTargetLocale | '';
   status?: TranslationQueueFilterStatus | '';
@@ -82,6 +83,7 @@ export interface ReviewTranslationDraftInput {
 }
 
 export interface PublishPerformanceInput {
+  expectedUpdatedAt: string;
   reason: string;
   confirmed: true;
   confirmedChangedFields: string[];
@@ -121,6 +123,7 @@ function buildConsentAuditSearchParams(filters: ConsentAuditFilters) {
 
 function buildTranslationQueueSearchParams(filters: TranslationQueueFilters) {
   const params = new URLSearchParams();
+  if (filters.entityId) params.set('entityId', filters.entityId);
 
   if (filters.contentType) params.set('contentType', filters.contentType);
   if (filters.locale) params.set('locale', filters.locale);
@@ -238,6 +241,7 @@ export function usePublishTranslationDraft() {
       ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin', 'translations'] });
+      queryClient.invalidateQueries({ queryKey: ['admin', 'preparation'] });
     },
   });
 }
@@ -314,6 +318,7 @@ export function usePublishPerformance(id: string) {
         { showErrorToast: false },
       ),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin', 'preparation', id] });
       queryClient.invalidateQueries({ queryKey: ['admin', 'performances'] });
       queryClient.invalidateQueries({
         queryKey: ['admin', 'performance', id],

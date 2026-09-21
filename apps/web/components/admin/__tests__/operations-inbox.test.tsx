@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, within, act } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom/vitest';
 
 import {
@@ -64,6 +65,26 @@ function renderInbox(rows: OperationsInboxRow[] = []) {
 }
 
 describe('OperationsInbox', () => {
+  it('retains a failed reply and prevents duplicate submission while it is pending', async () => {
+    const user = userEvent.setup();
+    let rejectReply!: (reason: Error) => void;
+    const answer = vi.fn(() => new Promise((_resolve, reject) => { rejectReply = reject; }));
+    render(<OperationsInbox rows={[baseRow]} isLoading={false} isError={false} onFilterChange={vi.fn()} onEscalate={vi.fn()} onAnswer={answer} onReassign={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: '좌석 위치 문의 운영 항목 상세 보기' }));
+    await user.type(screen.getByLabelText('답변'), '좌석 안내 답변');
+    await user.click(screen.getByRole('button', { name: '답변 저장' }));
+    expect(screen.getByRole('button', { name: '답변 저장' })).toBeDisabled();
+    await user.click(screen.getByRole('button', { name: '답변 저장' }));
+    expect(answer).toHaveBeenCalledTimes(1);
+    await act(async () => rejectReply(new Error('연결 오류')));
+    expect(screen.getByLabelText('답변')).toHaveValue('좌석 안내 답변');
+    expect(screen.getByRole('alert')).toHaveTextContent('저장하지 못했습니다');
+  });
+
+  it('does not report an empty queue when loading failed', () => {
+    render(<OperationsInbox rows={[]} isLoading={false} isError={true} onFilterChange={vi.fn()} onEscalate={vi.fn()} onAnswer={vi.fn()} onReassign={vi.fn()} />);
+    expect(screen.queryByText('처리할 운영 항목이 없습니다')).not.toBeInTheDocument();
+  });
   it('renders the UI-SPEC empty state copy', () => {
     renderInbox([]);
 

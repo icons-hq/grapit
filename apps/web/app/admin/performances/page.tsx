@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { PerformanceDraftList } from '@/components/admin/performance-draft-list';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { Archive, Plus, Trash2 } from 'lucide-react';
 import {
   useAdminPerformances,
@@ -45,7 +45,6 @@ import type { Genre, PerformanceStatus } from '@grabit/shared';
 import { toast } from 'sonner';
 
 export default function AdminPerformancesPage() {
-  const router = useRouter();
   const [status, setStatus] = useState('');
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
@@ -121,6 +120,7 @@ export default function AdminPerformancesPage() {
         </Link>
       </div>
 
+      <PerformanceDraftList />
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
         <StatusFilter value={status} onChange={(v) => { setStatus(v); setPage(1); }} />
         <Input
@@ -186,9 +186,7 @@ export default function AdminPerformancesPage() {
             {data?.data.map((perf) => (
               <TableRow
                 key={perf.id}
-                className="h-[52px] cursor-pointer hover:bg-gray-50"
-                onClick={() => router.push(`/admin/performances/${perf.id}/edit`)}
-                aria-label={`${perf.title} 수정 페이지로 이동`}
+                className="h-[52px] hover:bg-gray-50"
               >
                 <TableCell>
                   {perf.posterUrl ? (
@@ -203,7 +201,7 @@ export default function AdminPerformancesPage() {
                     </div>
                   )}
                 </TableCell>
-                <TableCell className="font-semibold">{perf.title}</TableCell>
+                <TableCell className="font-semibold"><Link className="text-violet-700 underline-offset-4 hover:underline" href={`/admin/performances/${perf.id}`}>{perf.title}<span className="sr-only"> 준비 화면</span></Link></TableCell>
                 <TableCell className="hidden md:table-cell">
                   {GENRE_LABELS[perf.genre as Genre]}
                 </TableCell>

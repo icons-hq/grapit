@@ -28,6 +28,7 @@ import {
 } from '@grabit/shared';
 import { cn } from '@/lib/cn';
 import { useAuthStore } from '@/stores/use-auth-store';
+import { useAdminEventContext } from './admin-event-context';
 
 interface NavItem {
   label: string;
@@ -58,21 +59,25 @@ const NAV_GROUPS: readonly { label: string; items: readonly NavItem[] }[] = [
       {
         label: '공연 관리',
         href: '/admin/performances',
+        requiredCapability: 'event.write',
         icon: Theater,
       },
       {
         label: '배너 관리',
         href: '/admin/banners',
+        requiredCapability: 'banner.manage',
         icon: ImageIcon,
       },
       {
         label: 'FAQ/공지',
         href: '/admin/support-content',
+        requiredCapability: 'support.manage',
         icon: FileQuestion,
       },
       {
         label: '번역 검수',
         href: '/admin/translations',
+        requiredCapability: 'event.write',
         icon: Languages,
       },
     ],
@@ -83,16 +88,19 @@ const NAV_GROUPS: readonly { label: string; items: readonly NavItem[] }[] = [
       {
         label: '운영 인박스',
         href: '/admin/operations',
+        requiredCapability: 'support.manage',
         icon: Inbox,
       },
       {
         label: '컷오버 게이트',
         href: '/admin/cutover',
+        requiredCapability: 'audit.read',
         icon: FileCheck2,
       },
       {
         label: '현장 모니터',
         href: '/admin/field-monitor',
+        requiredCapability: 'field.scan.verify',
         icon: Activity,
       },
       {
@@ -104,6 +112,7 @@ const NAV_GROUPS: readonly { label: string; items: readonly NavItem[] }[] = [
       {
         label: '예매 관리',
         href: '/admin/bookings',
+        requiredCapability: 'reservations.read',
         icon: Ticket,
       },
       {
@@ -115,11 +124,13 @@ const NAV_GROUPS: readonly { label: string; items: readonly NavItem[] }[] = [
       {
         label: '회원 관리',
         href: '/admin/users',
+        requiredCapability: 'security.manage',
         icon: UsersRound,
       },
       {
         label: '좌석 운영',
         href: '/admin/seat-operations',
+        requiredCapability: 'seat.disable',
         icon: Armchair,
       },
     ],
@@ -130,16 +141,19 @@ const NAV_GROUPS: readonly { label: string; items: readonly NavItem[] }[] = [
       {
         label: '동의 감사',
         href: '/admin/consent-audit',
+        requiredCapability: 'audit.read',
         icon: ClipboardList,
       },
       {
         label: '감사 로그',
         href: '/admin/audit',
+        requiredCapability: 'audit.read',
         icon: ScrollText,
       },
       {
         label: '보안 설정',
         href: '/admin/security',
+        requiredCapability: 'security.manage',
         icon: ShieldCheck,
       },
     ],
@@ -148,12 +162,14 @@ const NAV_GROUPS: readonly { label: string; items: readonly NavItem[] }[] = [
 
 interface AdminSidebarProps {
   variant?: 'desktop' | 'drawer';
+  onNavigate?: () => void;
 }
 
-export function AdminSidebar({ variant = 'desktop' }: AdminSidebarProps) {
+export function AdminSidebar({ variant = 'desktop', onNavigate }: AdminSidebarProps) {
   const pathname = usePathname();
   const user = useAuthStore((state) => state.user);
   const capabilitySnapshot = resolveAdminCapabilitySnapshot(user);
+  const context = useAdminEventContext();
 
   if (isScannerOnlySnapshot(capabilitySnapshot)) {
     return null;
@@ -162,13 +178,13 @@ export function AdminSidebar({ variant = 'desktop' }: AdminSidebarProps) {
   return (
     <aside
       className={cn(
-        'w-[240px] shrink-0 border-r bg-white',
+        'w-[224px] shrink-0 border-r border-gray-200 bg-slate-50',
         variant === 'desktop' && 'hidden lg:block',
       )}
     >
       <div className="flex h-16 items-center border-b px-6">
-        <Link href="/admin" className="text-sm font-semibold">
-          Grabit Admin
+        <Link href="/admin" onClick={onNavigate} className="text-2xl font-bold tracking-tight text-violet-700">
+          Grabit
         </Link>
       </div>
       <nav className="flex flex-col gap-5 p-4" aria-label="관리자 네비게이션">
@@ -196,7 +212,8 @@ export function AdminSidebar({ variant = 'desktop' }: AdminSidebarProps) {
                 return (
                   <Link
                     key={item.href}
-                    href={item.href}
+                    onClick={onNavigate}
+                    href={context?.href(item.href) ?? item.href}
                     className={cn(
                       'flex min-h-11 items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors',
                       isActive

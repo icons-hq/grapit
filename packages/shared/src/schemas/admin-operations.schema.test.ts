@@ -27,6 +27,7 @@ describe('admin operations contract', () => {
       'support.manage',
       'support.escalate',
       'reservations.export_raw',
+      'reservations.read',
       'refund.admin_refund',
       'seat.disable',
       'seat.reactivate',

@@ -79,7 +79,7 @@ function createBookingService(redis: Cluster, maxTicketsPerUser = 1): BookingSer
                   tiers: [{ tierName: 'VIP', seatIds: ['A-1', 'A-2', 'A-3'] }],
                 },
               }]
-            : [{ performanceStatus: 'selling', bookingStartsAt: null }];
+            : [{ performancePublishState: 'published', performanceStatus: 'selling', bookingStartsAt: null }];
           return {
             where: () => queryRows(rows),
             leftJoin: () => ({

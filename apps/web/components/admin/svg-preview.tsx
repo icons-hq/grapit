@@ -253,14 +253,13 @@ export function SvgPreview({
       {svgUrl ? (
         <div className="space-y-3">
           <div className="overflow-hidden rounded-lg border bg-white p-4">
-            <object
-              data={svgUrl}
-              type="image/svg+xml"
-              className="mx-auto max-h-[400px] w-full"
-              aria-label="좌석맵 미리보기"
-            >
-              SVG를 표시할 수 없습니다.
-            </object>
+            {/* SVG stays in an image context; it never runs as an embedded document. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={svgUrl}
+              alt="좌석맵 미리보기"
+              className="mx-auto max-h-[400px] w-full object-contain"
+            />
           </div>
           <Button
             type="button"

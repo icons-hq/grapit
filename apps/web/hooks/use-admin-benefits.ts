@@ -12,10 +12,16 @@ import type {
   BenefitDefinition,
   BenefitRunRecord,
   BenefitRunRecordListResponse,
+  BenefitOperationState,
 } from '@grabit/shared';
 import { apiClient } from '@/lib/api-client';
 import { apiUrl } from '@/lib/api-url';
 import { useAuthStore } from '@/stores/use-auth-store';
+
+export function useAdminBenefitOperationState(showtimeId: string) {
+  return useQuery({ queryKey: ['admin', 'benefits', 'operation-state', showtimeId], enabled: Boolean(showtimeId),
+    queryFn: () => apiClient.get<BenefitOperationState>(`/api/v1/admin/benefits/showtimes/${showtimeId}/operation-state`) });
+}
 
 export interface SaveBenefitConfigurationPayload {
   showtimeId: string;

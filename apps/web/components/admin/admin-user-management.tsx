@@ -115,6 +115,7 @@ const BUNDLE_LABELS: Record<AdminCapabilityBundle, string> = {
 };
 
 const CAPABILITY_LABELS: Record<AdminCapability, string> = {
+  'reservations.read': '예매·결제 조회',
   'event.write': '공연 편집',
   'event.publish': '공연 게시',
   'support.manage': 'CS 처리',

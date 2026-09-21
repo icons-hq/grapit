@@ -42,7 +42,7 @@ type FindPerformanceByIdOptions = {
 };
 
 const PERFORMANCE_TAXONOMY_CACHE_VERSION = 'event-catalog-v4-opening-boundary';
-const PERFORMANCE_DETAIL_CACHE_VERSION = 'public-published-v2-booking-start';
+const PERFORMANCE_DETAIL_CACHE_VERSION = 'public-published-v3-venue-access';
 const DEFAULT_CACHE_TTL_SECONDS = 300;
 const DEFAULT_FLOOR_KEY = '1F';
 const DEFAULT_FLOOR_LABEL = '1층';
@@ -378,7 +378,7 @@ export class PerformanceService {
           createdAt: perf.createdAt?.toISOString() ?? '',
           updatedAt: perf.updatedAt?.toISOString() ?? '',
           venue: venue
-            ? { id: venue.id, name: venue.name, address: venue.address }
+            ? { id: venue.id, name: venue.name, address: venue.address, accessNotes: venue.accessNotes, transportSummary: venue.transportSummary }
             : null,
           priceTiers: priceTierRows.map((pt) => ({
             id: pt.id,

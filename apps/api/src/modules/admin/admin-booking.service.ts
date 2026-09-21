@@ -37,6 +37,7 @@ import { mapPaymentFailureDiagnostic } from '../payment/payment-failure-diagnost
 import { noActiveTicketItemOnSeat } from '../../database/seat-ownership.js';
 import { safeCsvRows, withUtf8Bom } from './csv-export.util.js';
 import { AdminAuditService } from './admin-audit.service.js';
+import { readBookingSupportEvidence } from './booking-support-evidence.js';
 import { formatTicketSeatNumber } from './ticket-seat-number.util.js';
 import { normalizeSeatIdentity, toFloorAwareSeatSelection } from '@grabit/shared';
 import type {
@@ -1470,6 +1471,10 @@ export class AdminBookingService {
         ? mapPaymentToPaymentInfo(payment, null)
         : null,
     };
+  }
+
+  async getBookingSupportEvidence(reservationId: string) {
+    return readBookingSupportEvidence(this.db, reservationId);
   }
 
   async refundBooking(

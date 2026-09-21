@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useForm, useFieldArray, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -26,15 +27,21 @@ import {
   type PerformanceWithDetails,
   GENRES,
   GENRE_LABELS,
+  STATUS_LABELS,
   type EventCategory,
   type PerformanceStatus,
+  type PerformanceDraft,
+  type PerformancePreparation,
+  type PerformancePreparationStep,
+  resolveAdminCapabilitySnapshot,
 } from '@grabit/shared';
 import {
-  useCreatePerformance,
   usePublishPerformance,
-  useUpdatePerformance,
   usePresignedUpload,
 } from '@/hooks/use-admin';
+import { useApplyPerformanceDraft, usePerformancePreparation, useSavePerformanceDraft } from '@/hooks/use-performance-preparation';
+import { useAuthStore } from '@/stores/use-auth-store';
+import { useAdminEventContext } from './admin-event-context';
 import { uploadPresignedAsset } from '@/lib/admin-upload';
 import {
   EventPublishConfirmationDialog,
@@ -150,8 +157,7 @@ function getChangedFieldNames(dirtyFields: unknown, prefix = ''): string[] {
 
   if (
     typeof dirtyFields !== 'object' ||
-    dirtyFields === null ||
-    Array.isArray(dirtyFields)
+    dirtyFields === null
   ) {
     return [];
   }
@@ -168,6 +174,7 @@ function hasText(value: unknown): boolean {
 function buildPublishReviewSummary(
   values: CreatePerformanceFormInput,
   dirtyFields: unknown,
+  preparation?: PerformancePreparation,
 ): EventPublishReviewSummary {
   const contentChecklist = {
     ko: {
@@ -175,8 +182,8 @@ function buildPublishReviewSummary(
       description: hasText(values.description),
     },
     en: {
-      title: hasText(values.title),
-      description: hasText(values.description),
+      title: preparation?.locales.find((locale) => locale.locale === 'en')?.title ?? false,
+      description: preparation?.locales.find((locale) => locale.locale === 'en')?.description ?? false,
     },
   };
   const seatMaps = normalizeSeatMapsForEditor(values.seatMaps);
@@ -184,6 +191,9 @@ function buildPublishReviewSummary(
 
   return {
     title: values.title || '제목 미입력',
+    showtimes: (values.showtimes ?? []).map((showtime) => `${formatAdminKstDateTime(showtime.dateTime).replace('T', ' ')} KST`),
+    bookingStartsAt: values.bookingPolicy?.bookingStartsAt ? `${formatAdminKstDateTime(values.bookingPolicy.bookingStartsAt).replace('T', ' ')} KST` : null,
+    saleStatus: STATUS_LABELS[values.status ?? 'upcoming'],
     changedFields: changedFields.length > 0 ? changedFields : ['publishState'],
     localeStates: ADMIN_EVENT_LOCALE_ORDER.map((locale) => {
       const required = locale === 'ko' || locale === 'en';
@@ -192,7 +202,7 @@ function buildPublishReviewSummary(
           ? contentChecklist.ko.title && contentChecklist.ko.description
           : locale === 'en'
             ? contentChecklist.en.title && contentChecklist.en.description
-            : false;
+            : (preparation?.locales.some((state) => state.locale === locale && state.title && state.description) ?? false);
 
       return {
         locale,
@@ -209,7 +219,7 @@ function buildPublishReviewSummary(
     transportSummary: values.transportSummary ?? null,
     saleSummary: {
       salesInfo: values.salesInfo ?? null,
-      paymentMethods: values.bookingPolicy?.allowedPaymentMethods ?? [],
+      paymentMethods: (values.bookingPolicy?.allowedPaymentMethods ?? []).map((method) => PAYMENT_METHOD_LABELS[method]),
       maxTicketsPerUser: values.bookingPolicy?.maxTicketsPerUser ?? 1,
       seatMapCount: seatMaps.length,
       totalSeats: seatMaps.reduce((sum, seatMap) => sum + seatMap.totalSeats, 0),
@@ -268,9 +278,9 @@ function mapToFormValues(
     genre: isEventCategory(data.genre) ? data.genre : 'artist_celebrity',
     subcategory: data.subcategory,
     venueName: data.venue?.name ?? '',
-    venueAddress: data.venue?.address,
-    venueAccessNotes: data.venue?.accessNotes,
-    transportSummary: data.venue?.transportSummary,
+    venueAddress: data.venue?.address ?? '',
+    venueAccessNotes: data.venue?.accessNotes ?? '',
+    transportSummary: data.venue?.transportSummary ?? '',
     posterUrl: data.posterUrl,
     description: data.description,
     descriptionVisible: data.descriptionVisible !== false,
@@ -306,26 +316,64 @@ interface PerformanceFormProps {
   mode: 'create' | 'edit';
   initialData?: PerformanceWithDetails;
   performanceId?: string;
+  initialDraft?: PerformanceDraft;
+  initialStep?: PerformancePreparationStep;
+}
+
+const PREPARATION_STEPS = [
+  { id: 'basic', label: '기본 정보' }, { id: 'seats', label: '회차·좌석·가격' },
+  { id: 'content', label: '언어·특전' }, { id: 'review', label: '검수·공개' },
+] as const;
+function fieldStep(field: string): PerformancePreparationStep {
+  if (['priceTiers', 'showtimes', 'seatMaps', 'bookingPolicy'].includes(field)) return 'seats';
+  if (['description', 'salesInfo'].includes(field)) return 'content';
+  return 'basic';
+}
+function validationMessages(errors: unknown): string[] {
+  if (!errors || typeof errors !== 'object') return [];
+  const fields = errors as Record<string, unknown>;
+  if (typeof fields.message === 'string') return [fields.message];
+  return Object.entries(fields).flatMap(([key, value]) => key === 'ref' ? [] : validationMessages(value));
+}
+function editableDraftData(values: CreatePerformanceFormInput) {
+  const data = { ...values } as Record<string, unknown>;
+  for (const field of ['publishState', 'publishedAt', 'publishedByUserId', 'publishReadyAt', 'publishReviewRequestedAt']) delete data[field];
+  return data;
 }
 
 export function PerformanceForm({
   mode,
   initialData,
   performanceId,
+  initialDraft,
+  initialStep,
 }: PerformanceFormProps) {
   const router = useRouter();
+  const context = useAdminEventContext();
+  const user = useAuthStore((state) => state.user);
+  const capabilities = resolveAdminCapabilitySnapshot(user);
+  const canWrite = capabilities.superuser || capabilities.capabilities.includes('event.write');
+  const [step, setStep] = useState<PerformancePreparationStep>(initialStep ?? initialDraft?.step ?? 'basic');
+  const [savedDraft, setSavedDraft] = useState(initialDraft);
+  const draftRef = useRef(initialDraft);
+  const [formBaseUpdatedAt] = useState(initialDraft?.baseUpdatedAt ?? initialData?.updatedAt ?? null);
+  const savePromise = useRef<Promise<PerformanceDraft> | null>(null);
+  const saveDraft = useSavePerformanceDraft();
+  const applyDraft = useApplyPerformanceDraft();
+  const preparation = usePerformancePreparation(performanceId ?? '', canWrite);
   const [posterPreview, setPosterPreview] = useState<string | null>(
-    initialData?.posterUrl ?? null,
+    typeof initialDraft?.data.posterUrl === 'string' ? initialDraft.data.posterUrl : initialData?.posterUrl ?? null,
   );
   const [seatMapDuplicateError, setSeatMapDuplicateError] = useState<string | null>(
     null,
   );
   const [publishDialogOpen, setPublishDialogOpen] = useState(false);
+  const [serverSaveError, setServerSaveError] = useState<string | null>(null);
 
   const form = useForm<CreatePerformanceFormInput, unknown, CreatePerformanceInput>({
     resolver: zodResolver(createPerformanceSchema),
     mode: 'onBlur',
-    defaultValues: initialData
+    defaultValues: initialDraft ? initialDraft.data as CreatePerformanceFormInput : initialData
       ? mapToFormValues(initialData)
       : {
           title: '',
@@ -370,8 +418,6 @@ export function PerformanceForm({
     name: 'castings',
   });
 
-  const createMutation = useCreatePerformance();
-  const updateMutation = useUpdatePerformance(performanceId ?? '');
   const publishMutation = usePublishPerformance(performanceId ?? '');
   const presignedUpload = usePresignedUpload();
   const seatMaps = normalizeSeatMapsForEditor(form.watch('seatMaps'));
@@ -380,6 +426,7 @@ export function PerformanceForm({
   const publishReviewSummary = buildPublishReviewSummary(
     watchedValues,
     form.formState.dirtyFields,
+    preparation.data,
   );
 
   const handlePosterUpload = useCallback(
@@ -533,6 +580,7 @@ export function PerformanceForm({
   }
 
   async function onSubmit(data: CreatePerformanceInput) {
+    setServerSaveError(null);
     const payload: CreatePerformanceInput = {
       ...data,
       detailImages: normalizeDetailImagesForSave(data.detailImages),
@@ -541,6 +589,7 @@ export function PerformanceForm({
     const duplicateFloorKeys = findDuplicateFloorKeys(data.seatMaps ?? []);
 
     if (duplicateFloorKeys.length > 0) {
+      setStep('seats');
       const correctionMessage = `중복된 floorKey가 있습니다: ${duplicateFloorKeys.join(', ')}. 각 층 키를 고유하게 수정한 뒤 다시 저장해주세요.`;
 
       setSeatMapDuplicateError(correctionMessage);
@@ -549,25 +598,22 @@ export function PerformanceForm({
     }
 
     try {
-      if (mode === 'create') {
-        await createMutation.mutateAsync(payload);
-      } else if (performanceId) {
-        await updateMutation.mutateAsync(payload);
-      }
-
-      toast.success('공연이 저장되었습니다');
-      router.push('/admin/performances');
+      const draft = await persistDraft(payload);
+      const applied = await applyDraft.mutateAsync({ id: draft.id, revision: draft.revision });
+      toast.success('공연 준비 정보에 반영했습니다. 공개 승인은 별도 단계입니다.');
+      router.push(context?.href(`/admin/performances/${applied.performanceId}?performanceId=${applied.performanceId}`)
+        ?? `/admin/performances/${applied.performanceId}`);
     } catch (error) {
       if (
         error instanceof ApiClientError &&
         error.statusCode === 422 &&
         error.message.includes('Validation failed')
       ) {
-        const correctionMessage =
-          '서버에서 중복된 floorKey를 확인했습니다. 각 층 키를 고유하게 수정한 뒤 다시 저장해주세요.';
-
-        setSeatMapDuplicateError(correctionMessage);
-        toast.error('중복된 floorKey를 수정한 뒤 다시 저장해주세요.');
+        const fields = (error.data as { errors?: Record<string, string[]> } | undefined)?.errors ?? {};
+        const message = Object.values(fields).flat().join(' ') || '입력 항목을 확인해주세요. 기존 예매·좌석과 연결된 정보는 변경이 제한됩니다.';
+        setStep(fieldStep(Object.keys(fields)[0]?.split('.')[0] ?? 'seatMaps'));
+        setServerSaveError(message);
+        toast.error(message);
         return;
       }
 
@@ -577,14 +623,36 @@ export function PerformanceForm({
     }
   }
 
+  async function persistDraft(values: CreatePerformanceFormInput): Promise<PerformanceDraft> {
+    if (savePromise.current) return savePromise.current;
+    const promise = saveDraft.mutateAsync({ id: draftRef.current?.id, revision: draftRef.current?.revision,
+      performanceId: performanceId ?? null, baseUpdatedAt: formBaseUpdatedAt,
+      data: editableDraftData(values), step,
+    }).then((draft) => { draftRef.current = draft; setSavedDraft(draft); return draft; });
+    savePromise.current = promise;
+    try { return await promise; } finally { savePromise.current = null; }
+  }
+
+  async function saveIncompleteDraft() {
+    setServerSaveError(null);
+    try {
+      const values = form.getValues();
+      const draft = await persistDraft(values);
+      form.reset(values);
+      const path = performanceId ? `/admin/performances/${performanceId}/edit` : '/admin/performances/new';
+      router.replace(`${path}?draftId=${draft.id}${context?.showtimeId ? `&showtimeId=${context.showtimeId}` : ''}`, { scroll: false });
+      toast.success('초안을 저장했습니다. 공연 정보에는 아직 반영하지 않았습니다.');
+    } catch (error) { toast.error(error instanceof Error ? error.message : '초안을 저장하지 못했습니다. 입력 내용은 유지됩니다.'); }
+  }
+
   async function handlePublishConfirm(input: EventPublishConfirmInput) {
-    if (!performanceId) return;
+    if (!performanceId || !formBaseUpdatedAt) return;
 
     try {
-      await publishMutation.mutateAsync(input);
+      await publishMutation.mutateAsync({ ...input, expectedUpdatedAt: formBaseUpdatedAt });
       toast.success('이벤트가 게시되었습니다');
       setPublishDialogOpen(false);
-      router.push('/admin/performances');
+      router.push(context?.href(`/admin/performances/${performanceId}`) ?? `/admin/performances/${performanceId}`);
     } catch (error) {
       toast.error(
         error instanceof Error ? error.message : '이벤트 게시에 실패했습니다.',
@@ -594,15 +662,34 @@ export function PerformanceForm({
 
   const isSubmitting =
     form.formState.isSubmitting ||
-    createMutation.isPending ||
-    updateMutation.isPending;
-  const canPublish = mode === 'edit' && Boolean(performanceId);
+    saveDraft.isPending || applyDraft.isPending;
+  const canPublish = mode === 'edit' && Boolean(performanceId)
+    && (capabilities.superuser || capabilities.capabilities.includes('event.publish'));
+  const stepIndex = PREPARATION_STEPS.findIndex((item) => item.id === step);
+  if (!canWrite) return <p role="alert">공연을 편집할 권한이 없습니다.</p>;
 
   return (
     <>
-      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8 pb-24">
+      <form noValidate onSubmit={form.handleSubmit(onSubmit, (errors) => {
+        const field = Object.keys(errors)[0];
+        if (field) setStep(fieldStep(field));
+        toast.error('필수 정보를 확인해주세요. 입력 내용은 그대로 유지됩니다.');
+      })} className="space-y-6 pb-28">
+      <nav aria-label="공연 준비 단계" className="grid gap-2 sm:grid-cols-4">
+        {PREPARATION_STEPS.map((item, index) => <button key={item.id} type="button" onClick={() => setStep(item.id)}
+          aria-current={step === item.id ? 'step' : undefined} className={`rounded-lg border px-3 py-3 text-left text-sm font-semibold ${step === item.id ? 'border-violet-500 bg-violet-50 text-violet-800' : 'border-gray-200 text-gray-600'}`}>
+          <span className="mr-2 text-xs">{index + 1}</span>{item.label}</button>)}
+      </nav>
+      <p className="text-sm text-gray-500" role="status">{savedDraft ? `마지막 초안 저장: ${formatAdminKstDateTime(savedDraft.updatedAt).replace('T', ' ')} KST` : '아직 저장하지 않은 새 작업입니다.'} · 단계 이동만으로는 저장되지 않습니다.</p>
+      {serverSaveError && <p role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">{serverSaveError} 입력 내용과 초안은 유지됩니다.</p>}
+      {preparation.data?.structureProtected && <p className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-950">판매·예매 이력 보호 중 · 예매 {preparation.data.reservationCount}건. 좌석·가격·공연장·기존 회차는 유지하며 안내 정보를 수정할 수 있습니다.</p>}
+      {Object.keys(form.formState.errors).length > 0 && <div role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm">
+        입력이 필요한 단계: {[...new Set(Object.keys(form.formState.errors).map(fieldStep))].map((id) => <button key={id} type="button" onClick={() => setStep(id)} className="ml-3 font-semibold underline">{PREPARATION_STEPS.find((item) => item.id === id)?.label}</button>)}
+        <ul className="mt-2 list-disc space-y-1 pl-5">{[...new Set(validationMessages(form.formState.errors))].map((message) => <li key={message}>{message}</li>)}</ul>
+      </div>}
+      <fieldset disabled={isSubmitting} className="contents">
       {/* Section: 기본 정보 */}
-      <section className="rounded-lg bg-white p-6 shadow-sm">
+      <section hidden={step !== 'basic'} className="rounded-lg border border-gray-200 bg-white p-5 sm:p-6">
         <h2 className="mb-4 text-xl font-semibold">기본 정보</h2>
         <div className="grid gap-4">
           <div>
@@ -634,7 +721,7 @@ export function PerformanceForm({
                     value={field.value ?? ''}
                     onValueChange={field.onChange}
                   >
-                    <SelectTrigger>
+                    <SelectTrigger id="genre" aria-label="장르" ref={field.ref}>
                       <SelectValue placeholder="장르를 선택해주세요" />
                     </SelectTrigger>
                     <SelectContent>
@@ -666,7 +753,7 @@ export function PerformanceForm({
                     value={field.value ?? 'upcoming'}
                     onValueChange={field.onChange}
                   >
-                    <SelectTrigger>
+                    <SelectTrigger id="status" aria-label="오픈 상태" ref={field.ref}>
                       <SelectValue placeholder="오픈 상태를 선택해주세요" />
                     </SelectTrigger>
                     <SelectContent>
@@ -698,7 +785,7 @@ export function PerformanceForm({
                     value={field.value ?? ''}
                     onValueChange={field.onChange}
                   >
-                    <SelectTrigger>
+                    <SelectTrigger id="ageRating" aria-label="관람연령" ref={field.ref}>
                       <SelectValue placeholder="관람연령을 선택해주세요" />
                     </SelectTrigger>
                     <SelectContent>
@@ -824,7 +911,7 @@ export function PerformanceForm({
       </section>
 
       {/* Section: 미디어 (포스터) */}
-      <section className="rounded-lg bg-white p-6 shadow-sm">
+      <section hidden={step !== 'basic'} className="rounded-lg border border-gray-200 bg-white p-5 sm:p-6">
         <h2 className="mb-4 text-xl font-semibold">미디어</h2>
         {posterPreview ? (
           <div className="relative inline-block">
@@ -867,7 +954,7 @@ export function PerformanceForm({
         />
       </section>
 
-      <section className="rounded-lg bg-white p-6 shadow-sm">
+      <section hidden={step !== 'basic'} className="rounded-lg border border-gray-200 bg-white p-5 sm:p-6">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h2 className="text-xl font-semibold">상세페이지 이미지</h2>
@@ -1004,19 +1091,26 @@ export function PerformanceForm({
       </section>
 
       {/* Section: 가격 등급 */}
-      <section className="rounded-lg bg-white p-6 shadow-sm">
+      <section hidden={step !== 'seats'} className="rounded-lg border border-gray-200 bg-white p-5 sm:p-6">
         <h2 className="mb-4 text-xl font-semibold">가격 등급</h2>
+        <Controller control={form.control} name="bookingPolicy.bookingStartsAt" render={({ field }) => <label className="mb-6 block space-y-2 text-sm font-semibold">
+          <span>판매 시작 일시 · 한국 시간 (KST)</span>
+          <Input type="datetime-local" step="1" aria-label="판매 시작 일시" value={field.value ? formatAdminKstDateTime(field.value) : ''}
+            onChange={(event) => field.onChange(event.target.value ? new Date(`${event.target.value}+09:00`).toISOString() : null)} />
+          <span className="block text-xs font-normal text-gray-500">비워두면 공연이 공개되고 오픈 상태이며 예매가 허용된 때 즉시 판매합니다.</span>
+        </label>} />
         <div className="space-y-3">
           {priceTiersField.fields.map((field, index) => (
             <div key={field.id} className="flex items-center gap-3">
               <Input
                 {...form.register(`priceTiers.${index}.tierName`)}
-                placeholder="등급명, e.g. VIP"
+                placeholder="예: VIP" aria-label={`가격 등급명 ${index + 1}`}
                 className="flex-1"
               />
               <Input
                 type="number"
-                {...form.register(`priceTiers.${index}.price`, {
+                aria-label={`가격 금액 ${index + 1}`}
+                    {...form.register(`priceTiers.${index}.price`, {
                   valueAsNumber: true,
                 })}
                 placeholder="가격"
@@ -1059,18 +1153,18 @@ export function PerformanceForm({
       </section>
 
       {/* Section: 회차 관리 */}
-      <section className="rounded-lg bg-white p-6 shadow-sm">
+      <section hidden={step !== 'seats'} className="rounded-lg border border-gray-200 bg-white p-5 sm:p-6">
         <h2 className="mb-4 text-xl font-semibold">회차 관리</h2>
         <ShowtimeManager
           fields={showtimesField.fields}
           append={showtimesField.append}
           remove={showtimesField.remove}
-          register={form.register}
+          control={form.control}
         />
       </section>
 
       {/* Section: 캐스팅 */}
-      <section className="rounded-lg bg-white p-6 shadow-sm">
+      <section hidden={step !== 'basic'} className="rounded-lg border border-gray-200 bg-white p-5 sm:p-6">
         <h2 className="mb-4 text-xl font-semibold">캐스팅</h2>
         <CastingManager
           fields={castingsField.fields}
@@ -1083,7 +1177,7 @@ export function PerformanceForm({
       </section>
 
       {/* Section: 좌석맵 및 예매 정책 */}
-      <section className="rounded-lg bg-white p-6 shadow-sm">
+      <section hidden={step !== 'seats'} className="rounded-lg border border-gray-200 bg-white p-5 sm:p-6">
         <div className="space-y-6">
           <div>
             <h2 className="mb-2 text-xl font-semibold">좌석맵 및 예매 정책</h2>
@@ -1310,7 +1404,13 @@ export function PerformanceForm({
       </section>
 
       {/* Section: 판매/상세 정보 */}
-      <section className="rounded-lg bg-white p-6 shadow-sm">
+      <section hidden={step !== 'content'} className="rounded-lg border border-gray-200 bg-white p-5 sm:p-6">
+        <h2 className="mb-3 text-xl font-semibold">언어·특전</h2>
+        <p className="mb-4 text-sm leading-6 text-gray-600">한국어 원문을 작성한 뒤 공연 정보에 반영하세요. 번역과 회차별 특전은 저장된 공연을 기준으로 검수합니다.</p>
+        {performanceId ? <div className="mb-6 flex flex-wrap gap-4 text-sm font-semibold text-violet-700">
+          <Link href={context?.href(`/admin/translations?entityId=${performanceId}`) ?? `/admin/translations?entityId=${performanceId}`}>저장된 원문 번역 검수 ›</Link>
+          {(capabilities.superuser || capabilities.capabilities.includes('benefits.manage')) && <Link href={context?.href('/admin/benefits') ?? `/admin/benefits?performanceId=${performanceId}`}>회차별 특전 설정 ›</Link>}
+        </div> : <p className="mb-6 rounded-lg bg-slate-50 p-3 text-sm">신규 공연은 마지막 단계에서 준비 정보를 반영하면 번역과 특전을 연결할 수 있습니다.</p>}
         <div className="space-y-6">
           <div className="space-y-3">
             <Controller
@@ -1401,7 +1501,13 @@ export function PerformanceForm({
         </div>
       </section>
 
-      <section className="rounded-lg bg-white p-6 shadow-sm">
+      <section hidden={step !== 'review'} className="rounded-lg border border-gray-200 bg-white p-5 sm:p-6">
+        <h2 className="mb-3 text-xl font-semibold">반영할 내용 확인</h2>
+        <p className="mb-4 text-sm text-gray-600">{performanceId ? `${form.getValues('title')}의 준비 정보와 공개 안내를 수정합니다.` : '새 공연을 비공개 상태로 등록합니다.'} {savedDraft ? '초안에 저장한 내용이 반영됩니다.' : '현재 입력한 내용을 저장하고 반영합니다.'}</p>
+        <p className="mb-5 rounded-lg bg-slate-50 p-4 text-sm leading-6">초안 저장은 공개된 공연에 영향을 주지 않습니다. ‘공연 정보에 반영’은 운영 정보에 적용되며, 이미 공개된 공연의 안내도 변경됩니다. 새 공연의 공개는 승인 권한으로 별도 진행합니다.</p>
+        {canPublish && (form.formState.isDirty || Boolean(savedDraft && !savedDraft.appliedAt)) && <p className="mb-4 text-sm text-amber-800">아직 반영하지 않은 변경이 있습니다. 공연 정보에 반영한 뒤 최신 내용으로 공개를 승인해주세요.</p>}
+        {performanceId && (preparation.isError ? <p role="alert" className="mb-4 text-sm text-red-700">서버의 준비 상태를 조회하지 못했습니다. <button type="button" className="underline" onClick={() => void preparation.refetch()}>다시 불러오기</button></p>
+          : preparation.isPending ? <p role="status">준비 상태를 확인하고 있습니다.</p> : <ul className="mb-5 space-y-2 text-sm">{preparation.data?.checks.filter((check) => !check.ready).map((check) => <li key={check.key}><button type="button" className="text-amber-800 underline" onClick={() => setStep(check.step)}>{check.label} 확인하기</button></li>)}</ul>)}
         <div className="space-y-5">
           <div>
             <h2 className="mb-2 text-xl font-semibold">게시 검토</h2>
@@ -1462,32 +1568,35 @@ export function PerformanceForm({
         </div>
       </section>
 
-      {/* Sticky bottom bar */}
-      <div className="sticky bottom-0 flex justify-end gap-3 border-t bg-white px-8 py-4">
+      </fieldset>
+      {/* Save is independent from step navigation and applying to the performance. */}
+      <div className="fixed inset-x-0 bottom-0 z-30 flex flex-wrap justify-end gap-3 border-t border-gray-200 bg-white px-4 py-3 shadow-sm lg:left-[224px]">
         <Button
           type="button"
           variant="outline"
-          onClick={() => router.push('/admin/performances')}
+          onClick={() => router.push(performanceId ? `/admin/performances/${performanceId}` : '/admin/performances')}
         >
-          취소
+          준비 목록
         </Button>
-        <Button type="submit" disabled={isSubmitting}>
+        {stepIndex > 0 && <Button type="button" variant="outline" onClick={() => setStep(PREPARATION_STEPS[stepIndex - 1]!.id)}>이전 단계</Button>}
+        <Button type="button" variant="outline" onClick={saveIncompleteDraft} disabled={isSubmitting}>초안 저장</Button>
+        {step !== 'review' ? <Button key="next-step" type="button" onClick={(event) => { event.preventDefault(); setStep(PREPARATION_STEPS[stepIndex + 1]!.id); }}>다음 단계</Button> : <Button key="apply" type="submit" disabled={isSubmitting}>
           {isSubmitting ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               저장 중...
             </>
           ) : (
-            '저장'
+            '공연 정보에 반영'
           )}
-        </Button>
-        {canPublish && (
+        </Button>}
+        {canPublish && step === 'review' && (
           <Button
             type="button"
-            disabled={isSubmitting || publishMutation.isPending}
+            disabled={isSubmitting || publishMutation.isPending || form.formState.isDirty || Boolean(savedDraft && !savedDraft.appliedAt) || !preparation.data?.canPublish}
             onClick={() => setPublishDialogOpen(true)}
           >
-            이벤트 게시하기
+            공개 승인
           </Button>
         )}
       </div>

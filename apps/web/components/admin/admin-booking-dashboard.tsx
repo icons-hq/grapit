@@ -3,6 +3,9 @@
 import { useState, useEffect } from 'react';
 import { Banknote, Clock3, RotateCcw, TicketCheck } from 'lucide-react';
 import { toast } from 'sonner';
+import { useAdminEventContext } from './admin-event-context';
+import { useAuthStore } from '@/stores/use-auth-store';
+import { resolveAdminCapabilitySnapshot } from '@grabit/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -137,12 +140,20 @@ function formatSeats(count: number): string {
 }
 
 export function AdminBookingDashboard() {
+  const authUser = useAuthStore((state) => state.user);
+  const permissions = resolveAdminCapabilitySnapshot(authUser);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [seatQuery, setSeatQuery] = useState('');
   const [debouncedSeatQuery, setDebouncedSeatQuery] = useState('');
-  const [performanceId, setPerformanceId] = useState('all');
-  const [showtimeId, setShowtimeId] = useState('all');
+  const context = useAdminEventContext();
+  const [localPerformanceId, setLocalPerformanceId] = useState('all');
+  const [localShowtimeId, setLocalShowtimeId] = useState('all');
+  const performanceId = context ? context.performanceId || 'all' : localPerformanceId;
+  const showtimeId = context ? context.showtimeId || 'all' : localShowtimeId;
+  const setPerformanceId = (id: string) => context ? context.selectPerformance(id === 'all' ? '' : id) : setLocalPerformanceId(id);
+  const setShowtimeId = (id: string) => context ? context.selectShowtime(id === 'all' ? '' : id) : setLocalShowtimeId(id);
+  const bookingId = context?.bookingId ?? null;
   const [seatTier, setSeatTier] = useState('all');
   const [floorKey, setFloorKey] = useState('all');
   const [funnelStatus, setFunnelStatus] =
@@ -156,10 +167,13 @@ export function AdminBookingDashboard() {
   >('all');
   const [page, setPage] = useState(1);
   const [selectedBookingId, setSelectedBookingId] = useState<string | null>(
-    null,
+    bookingId,
   );
-  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailOpen, setDetailOpen] = useState(Boolean(bookingId));
   const [detailSessionKey, setDetailSessionKey] = useState(0);
+  useEffect(() => {
+    if (bookingId) { setSelectedBookingId(bookingId); setDetailOpen(true); }
+  }, [bookingId]);
 
   // Debounce search input by 300ms
   useEffect(() => {
@@ -199,7 +213,7 @@ export function AdminBookingDashboard() {
     performanceId !== 'all' ? performanceId : '',
   );
 
-  const { data, isLoading } = useAdminBookings({
+  const { data, isLoading, isError, refetch } = useAdminBookings({
     performanceId: performanceId !== 'all' ? performanceId : undefined,
     showtimeId: showtimeId !== 'all' ? showtimeId : undefined,
     funnelStatus,
@@ -325,11 +339,14 @@ export function AdminBookingDashboard() {
       }
     : undefined;
 
+  if (isError) return <section role="alert" className="space-y-4"><h1 className="text-xl font-semibold">예매 관리</h1><p>예매를 조회하지 못했습니다. 현재 건수와 금액은 확인되지 않았습니다.</p><Button onClick={() => void refetch()}>다시 조회</Button></section>;
+
   return (
     <div>
       <h1 className="mb-6 text-xl font-semibold text-gray-900">예매 관리</h1>
 
       {/* Stats cards */}
+      {isLoading && !data ? <p role="status">선택한 범위의 예매를 조회하고 있습니다.</p> : <>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <AdminStatCard
           icon={TicketCheck}
@@ -361,6 +378,7 @@ export function AdminBookingDashboard() {
       <div className="mt-6">
         <TierStatsTable tierStats={tierStats} />
       </div>
+      </>}
 
       {/* Search + filter */}
       <div className="mt-6 flex flex-col gap-3">
@@ -381,7 +399,7 @@ export function AdminBookingDashboard() {
             disabled={isPerformanceListLoading || isPerformanceListError}
             onValueChange={(value) => {
               setPerformanceId(value);
-              setShowtimeId('all');
+              if (!context) setShowtimeId('all');
               setSeatTier('all');
               setFloorKey('all');
               setPage(1);
@@ -473,7 +491,7 @@ export function AdminBookingDashboard() {
 
       {/* Booking table */}
       <div className="mt-4">
-        <ReservationExportPanel activeManifestContext={activeManifestContext} />
+        {(permissions.superuser || permissions.capabilities.includes('reservations.export_raw')) && <ReservationExportPanel activeManifestContext={activeManifestContext} />}
       </div>
 
       <div className="mt-4">

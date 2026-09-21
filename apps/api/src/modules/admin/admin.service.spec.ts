@@ -62,11 +62,14 @@ function createMockCatalogFreshnessService(): CatalogFreshnessService {
  */
 
 function createMockTx() {
+  const seatMapRows: unknown[] = [];
   const txChain: Record<string, ReturnType<typeof vi.fn>> = {};
   const methods = ['select', 'from', 'where', 'orderBy', 'limit', 'returning'];
   for (const method of methods) {
     txChain[method] = vi.fn().mockReturnValue(txChain);
   }
+  txChain.from = vi.fn((table: unknown) => table === seatMaps ? createSelectResultChain(seatMapRows)
+    : table === performances ? createSelectResultChain([{ venueId: 'venue-id-1' }]) : txChain);
   const updates: Array<{ table: unknown; values: Record<string, unknown> }> = [];
   (txChain as { then?: unknown }).then = vi.fn((resolve: (v: unknown[]) => void) =>
     resolve([
@@ -129,12 +132,15 @@ function createMockTx() {
 
   return {
     _updates: updates,
+    _seatMapRows: seatMapRows,
+    execute: vi.fn().mockResolvedValue({ rows: [{ id: 'perf-id-123', protected: false }] }),
     insert: vi.fn((table: unknown) => ({
       values: vi.fn((values: Record<string, unknown> | Record<string, unknown>[]) => {
         const row = buildInsertReturningRow(table, values);
 
         return {
           returning: vi.fn().mockResolvedValue([row]),
+          onConflictDoNothing: vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue([row]) }),
           onConflictDoUpdate: vi.fn().mockReturnValue({
             returning: vi.fn().mockResolvedValue([row]),
           }),
@@ -170,7 +176,7 @@ function createMockTx() {
               salesInfoVisible: values['salesInfoVisible'] ?? true,
               viewCount: 0,
               createdAt: new Date('2026-01-01T00:00:00.000Z'),
-              updatedAt: values['updatedAt'] ?? new Date('2026-01-02T00:00:00.000Z'),
+              updatedAt: values['updatedAt'] instanceof Date ? values['updatedAt'] : new Date('2026-01-02T00:00:00.000Z'),
             }]),
           }),
         };
@@ -312,10 +318,7 @@ const bannerMutationContext = {
   requestId: 'req-25-13',
 };
 
-const publishReadyContentChecklist = {
-  ko: { title: true, description: true },
-  en: { title: true, description: true },
-};
+
 
 const sampleCreateInput: CreatePerformanceInput = {
   title: 'Hamlet',
@@ -614,6 +617,8 @@ describe('AdminService', () => {
     });
 
     it('persists deleting all seatMaps and invalidates locale-scoped detail caches', async () => {
+      mockDb._tx._seatMapRows.push({ floorKey: '1F', floorLabel: '1층', sortOrder: 0,
+        svgUrl: 'https://example.test/old.svg', seatConfig: null, totalSeats: 0 });
       const result = await service.updatePerformance('perf-id-123', {
         seatMaps: [],
       });
@@ -696,92 +701,8 @@ describe('AdminService', () => {
     });
   });
 
-  describe('publishPerformance', () => {
-    it('publishes an event through the admin-led flow and writes event.publish audit', async () => {
-      await service.publishPerformance(
-        'perf-id-123',
-        {
-          reason: '광고 오픈 전 게시 승인',
-          confirmed: true,
-          confirmedChangedFields: [
-            'title',
-            'venueName',
-            'transportSummary',
-            'salesInfo',
-          ],
-          contentChecklist: publishReadyContentChecklist,
-        },
-        adminMutationContext,
-      );
-
-      const publishUpdate = mockDb._tx._updates.find(
-        (entry) => entry.table === performances,
-      );
-
-      expect(publishUpdate?.values).toEqual(
-        expect.objectContaining({
-          publishState: 'published',
-          publishedByUserId: adminMutationContext.actorUserId,
-        }),
-      );
-      expect(publishUpdate?.values).not.toHaveProperty('status');
-      expect(mockAudit.write).toHaveBeenCalledWith(
-        expect.objectContaining({
-          actorUserId: adminMutationContext.actorUserId,
-          action: 'event.publish',
-          resourceType: 'performance',
-          resourceId: 'perf-id-123',
-          status: 'success',
-          reason: '광고 오픈 전 게시 승인',
-          changedFields: [
-            'title',
-            'venueName',
-            'transportSummary',
-            'salesInfo',
-          ],
-          after: expect.objectContaining({
-            publishState: 'published',
-            publishedByUserId: adminMutationContext.actorUserId,
-          }),
-        }),
-        mockDb._tx,
-      );
-    });
-
-    it('blocks publish without public status mutation when Korean or English content is missing', async () => {
-      await expect(
-        service.publishPerformance(
-          'perf-id-123',
-          {
-            reason: '영문 설명 누락 검수',
-            confirmed: true,
-            confirmedChangedFields: ['description'],
-            contentChecklist: {
-              ko: { title: true, description: true },
-              en: { title: true, description: false },
-            },
-          },
-          adminMutationContext,
-        ),
-      ).rejects.toThrow(BadRequestException);
-
-      expect(mockDb._tx.update).not.toHaveBeenCalled();
-      expect(mockAudit.write).toHaveBeenCalledWith(
-        expect.objectContaining({
-          action: 'event.publish',
-          resourceType: 'performance',
-          resourceId: 'perf-id-123',
-          status: 'failed',
-          reason: '영문 설명 누락 검수',
-          changedFields: ['description'],
-          after: expect.objectContaining({
-            missingRequiredContent: ['en.description'],
-          }),
-        }),
-        mockDb._tx,
-      );
-    });
-  });
+  // Publication authority, stored readiness and durable audit are covered by
+  // test/admin-preparation.integration.spec.ts with real HTTP and PostgreSQL.
 
   describe('deletePerformance', () => {
     it('should delete performance by id (cascade handles children)', async () => {
@@ -1202,7 +1123,8 @@ describe('AdminService', () => {
         }),
       ).rejects.toThrow(UnprocessableEntityException);
 
-      expect(mockDb.transaction).not.toHaveBeenCalled();
+      expect(mockDb._tx.delete).not.toHaveBeenCalled();
+      expect(mockDb._tx.insert).not.toHaveBeenCalled();
     });
 
     it('rejects seat tiers that are not registered as price tiers', async () => {
@@ -1222,7 +1144,8 @@ describe('AdminService', () => {
         }),
       ).rejects.toThrow(UnprocessableEntityException);
 
-      expect(mockDb.transaction).not.toHaveBeenCalled();
+      expect(mockDb._tx.delete).not.toHaveBeenCalled();
+      expect(mockDb._tx.insert).not.toHaveBeenCalled();
     });
 
     it('rejects detected SVG seats that are not assigned to any tier', async () => {
@@ -1238,7 +1161,8 @@ describe('AdminService', () => {
         }),
       ).rejects.toThrow(UnprocessableEntityException);
 
-      expect(mockDb.transaction).not.toHaveBeenCalled();
+      expect(mockDb._tx.delete).not.toHaveBeenCalled();
+      expect(mockDb._tx.insert).not.toHaveBeenCalled();
     });
 
     it('keeps legacy single-seat-map saves compatible with default 1F floor data', async () => {

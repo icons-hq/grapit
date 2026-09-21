@@ -1,5 +1,7 @@
 'use client';
 
+import { useAdminEventContext } from './admin-event-context';
+
 import { useMemo, useState } from 'react';
 import { Download, ShieldAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -88,7 +90,10 @@ export function ReservationExportPanel({
   activeManifestContext,
 }: ReservationExportPanelProps) {
   const exportMutation = useReservationExport();
-  const [filters, setFilters] = useState<ReservationExportFormState>(DEFAULT_FILTERS);
+  const context = useAdminEventContext();
+  const [localFilters, setFilters] = useState<ReservationExportFormState>(DEFAULT_FILTERS);
+  const filters = useMemo(() => context ? { ...localFilters, eventId: context.performanceId } : localFilters, [localFilters, context]);
+  const performanceLabel = context?.performanceId ? context.performanceTitle ?? '선택한 공연 · 이름 조회 중' : '전체 공연';
   const [reason, setReason] = useState('');
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [exportKind, setExportKind] = useState<ReservationExportKind>('raw_pii');
@@ -98,8 +103,8 @@ export function ReservationExportPanel({
     [filters, reason, exportKind, activeManifestContext],
   );
   const filterSummary = useMemo(
-    () => buildFilterSummary(filters, exportKind, activeManifestContext),
-    [filters, exportKind, activeManifestContext],
+    () => buildFilterSummary(filters, exportKind, activeManifestContext).map((item) => context && item.label === '이벤트' ? { label: '공연', value: performanceLabel } : item),
+    [filters, exportKind, activeManifestContext, context, performanceLabel],
   );
   const isActiveManifestExport = exportKind === 'active_ticket_manifest';
   const canConfirm = reason.trim().length > 0
@@ -183,7 +188,7 @@ export function ReservationExportPanel({
       </div>
 
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <label className="space-y-1.5 text-sm font-semibold text-gray-700">
+        {context ? <p className="text-sm text-gray-700">{performanceLabel}<br /><span className="text-xs text-gray-500">일반 CSV는 선택 범위의 전체 회차를 포함합니다. 특정 회차의 활성 티켓은 회차 구매자 명단을 사용하세요.</span></p> : <label className="space-y-1.5 text-sm font-semibold text-gray-700">
           <span>이벤트</span>
           <Input
             value={filters.eventId}
@@ -191,7 +196,7 @@ export function ReservationExportPanel({
             placeholder="performance id"
             aria-label="이벤트"
           />
-        </label>
+        </label>}
         <label className="space-y-1.5 text-sm font-semibold text-gray-700">
           <span>좌석 등급</span>
           <Input

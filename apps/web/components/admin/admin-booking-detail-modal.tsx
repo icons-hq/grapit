@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { BookingSupportEvidencePanel } from './booking-support-evidence-panel';
 import { Loader2, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -314,6 +315,7 @@ export function AdminBookingDetailModal({
 
         {booking && !showRefundForm && !showManualOpenForm && (
           <div className="space-y-1">
+            <BookingSupportEvidencePanel bookingId={booking.id} />
             <InfoRow label="예매번호" value={booking.reservationNumber} />
             <Separator />
             <InfoRow

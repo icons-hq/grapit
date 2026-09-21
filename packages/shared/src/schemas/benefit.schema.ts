@@ -14,6 +14,12 @@ const benefitConfigurationIdSchema = z
   .uuid('유효한 benefit configuration ID가 필요합니다');
 
 export const BENEFIT_KINDS = ['included', 'limited'] as const;
+export interface BenefitOperationState {
+  showtimeId: string;
+  resultLockedAt: string | null;
+  redeemedCount: number;
+  history: Array<{ id: string; seatKey: string; benefitName: string; result: string; createdAt: string }>;
+}
 export const BENEFIT_RUN_MODES = ['live', 'test'] as const;
 export const BENEFIT_ENTITLEMENT_SOURCES = [
   'configuration',

@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import AdminPerformancesPage from '../page';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const mocks = vi.hoisted(() => ({
   routerPush: vi.fn(),
@@ -72,7 +73,7 @@ describe('AdminPerformancesPage archive action', () => {
   it('archives a selling performance through status=ended instead of hard delete', async () => {
     const user = userEvent.setup();
 
-    render(<AdminPerformancesPage />);
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><AdminPerformancesPage /></QueryClientProvider>);
 
     await user.click(
       screen.getByRole('button', {

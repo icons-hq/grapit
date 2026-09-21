@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useAdminEventContext } from '@/components/admin/admin-event-context';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -205,7 +206,8 @@ export function FieldMonitor({
   scanLogs: controlledLogs,
   initialFilters,
 }: FieldMonitorProps) {
-  const [filters, setFilters] = useState<FieldMonitorLogFilter>({
+  const context = useAdminEventContext();
+  const [localFilters, setFilters] = useState<FieldMonitorLogFilter>({
     eventId: initialFilters?.eventId ?? controlledSummary?.eventId ?? '',
     showtimeId: initialFilters?.showtimeId ?? controlledSummary?.showtimeId ?? undefined,
     outcome: initialFilters?.outcome,
@@ -214,6 +216,8 @@ export function FieldMonitor({
     dateFrom: initialFilters?.dateFrom,
     dateTo: initialFilters?.dateTo,
   });
+
+  const filters = context ? { ...localFilters, eventId: context.performanceId, showtimeId: context.showtimeId || undefined } : localFilters;
 
   const summaryQuery = useFieldMonitorSummary({
     eventId: filters.eventId,
@@ -321,10 +325,11 @@ function MonitorFilters({
     value: FieldMonitorLogFilter[K] | 'all' | '',
   ) => void;
 }) {
+  const context = useAdminEventContext();
   return (
     <Card className="border-gray-200 bg-white shadow-sm">
       <CardContent className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-6">
-        <Input
+        {!context && <><Input
           className="h-11"
           placeholder="event ID"
           value={filters.eventId ?? ''}
@@ -337,7 +342,7 @@ function MonitorFilters({
           value={filters.showtimeId ?? ''}
           aria-label="회차 필터"
           onChange={(event) => updateFilter('showtimeId', event.target.value)}
-        />
+        /></>}
         <Select
           value={filters.outcome ?? 'all'}
           onValueChange={(value) =>

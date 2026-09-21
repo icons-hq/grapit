@@ -8,6 +8,7 @@ import {
   usePublishTranslationDraft,
   useReviewTranslationDraft,
   useTranslationQueue,
+  useAdminPerformanceDetail,
   type TranslationQueueFilters,
   type TranslationQueueFilterStatus,
   type TranslationTargetLocale,
@@ -21,11 +22,14 @@ import {
   type TranslationQueueRow,
 } from '@/components/admin/translation-review-table';
 import { TranslationSourceForm } from '@/components/admin/translation-source-form';
+import { useAdminEventContext } from '@/components/admin/admin-event-context';
+import { resolveAdminCapabilitySnapshot } from '@grabit/shared';
+import { useAuthStore } from '@/stores/use-auth-store';
 
 const STATUS_OPTIONS: Array<{ value: TranslationQueueFilterStatus | ''; label: string }> = [
   { value: '', label: '전체 상태' },
   { value: 'draft', label: '초안' },
-  { value: 'review', label: '검수 필요' },
+  { value: 'review', label: '게시 승인 대기' },
   { value: 'published', label: '게시됨' },
   { value: 'stale', label: '원문 변경됨' },
 ];
@@ -39,11 +43,15 @@ const LOCALE_OPTIONS: Array<{ value: TranslationTargetLocale | ''; label: string
 
 export default function AdminTranslationsPage() {
   const [filters, setFilters] = useState<TranslationQueueFilters>({});
-  const [selectedDraft, setSelectedDraft] = useState<TranslationQueueRow | null>(
+  const context = useAdminEventContext();
+  const performance = useAdminPerformanceDetail(context?.performanceId ?? '');
+  const user = useAuthStore((state) => state.user);
+  const capabilities = resolveAdminCapabilitySnapshot(user);
+  const [selectedDraftId, setSelectedDraftId] = useState<string | null>(
     null,
   );
 
-  const queue = useTranslationQueue(filters);
+  const queue = useTranslationQueue({ ...filters, ...(context?.performanceId ? { contentType: 'performance', entityId: context.performanceId } : {}) });
   const createSource = useCreateTranslationSource();
   const generateDrafts = useGenerateTranslationDrafts();
   const reviewDraft = useReviewTranslationDraft();
@@ -57,6 +65,7 @@ export default function AdminTranslationsPage() {
       })),
     [queue.data],
   );
+  const selectedDraft = rows.find((row) => row.id === selectedDraftId) ?? null;
 
   return (
     <div className="space-y-6">
@@ -67,7 +76,9 @@ export default function AdminTranslationsPage() {
         </p>
       </div>
 
-      <TranslationSourceForm
+      {context?.performanceId && (performance.isLoading || performance.isError) ? <p role={performance.isError ? 'alert' : 'status'}>{performance.isError ? '공연 원문을 조회하지 못했습니다.' : '공연 원문을 불러오고 있습니다.'}</p> : <TranslationSourceForm
+        key={context?.performanceId ?? 'general'}
+        performance={performance.data}
         onCreateSource={(input) =>
           createSource.mutateAsync(input, {
             onSuccess: () => toast.success('원문이 저장되었습니다.'),
@@ -82,7 +93,7 @@ export default function AdminTranslationsPage() {
         }
         isCreating={createSource.isPending}
         isGenerating={generateDrafts.isPending}
-      />
+      />}
 
       <section className="space-y-3">
         <div className="grid gap-3 rounded-lg bg-white p-4 shadow-sm md:grid-cols-5">
@@ -91,6 +102,7 @@ export default function AdminTranslationsPage() {
             <Input
               id="translation-filter-type"
               value={filters.contentType ?? ''}
+              disabled={Boolean(context?.performanceId)}
               placeholder="performance"
               onChange={(event) =>
                 setFilters((current) => ({
@@ -180,7 +192,7 @@ export default function AdminTranslationsPage() {
             rows={rows}
             isLoading={queue.isLoading}
             selectedDraftId={selectedDraft?.id ?? null}
-            onSelectRow={setSelectedDraft}
+            onSelectRow={(row) => setSelectedDraftId(row.id)}
           />
           <TranslationReviewDetailPanel
             draft={selectedDraft}
@@ -198,6 +210,7 @@ export default function AdminTranslationsPage() {
             }
             isReviewing={reviewDraft.isPending}
             isPublishing={publishDraft.isPending}
+            canPublish={capabilities.superuser || capabilities.capabilities.includes('event.publish')}
           />
         </div>
       </section>

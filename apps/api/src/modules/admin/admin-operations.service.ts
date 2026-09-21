@@ -88,6 +88,8 @@ export interface AdminOperationsThreadRow {
 }
 
 export interface AdminOperationsInboxFilters {
+  performanceId?: string;
+  showtimeId?: string;
   source?: SupportThreadSource;
   category?: SupportThreadCategory;
   status?: SupportThreadStatus;
@@ -486,6 +488,15 @@ export class AdminOperationsService {
   ): Promise<AdminOperationsThreadRow[]> {
     const predicates: SQL[] = [];
     const limit = Math.min(Math.max(filters.limit ?? 100, 1), 200);
+    if (filters.performanceId || filters.showtimeId) {
+      predicates.push(sql`exists (
+        select 1 from reservations as context_reservation
+        join showtimes as context_showtime on context_showtime.id = context_reservation.showtime_id
+        where context_reservation.id = coalesce(${supportThreads.reservationId}, ${refunds.reservationId})
+          ${filters.performanceId ? sql`and context_showtime.performance_id = ${filters.performanceId}::uuid` : sql``}
+          ${filters.showtimeId ? sql`and context_showtime.id = ${filters.showtimeId}::uuid` : sql``}
+      )`);
+    }
 
     if (!filters.includeResolved) {
       predicates.push(notInArray(supportThreads.status, ['resolved', 'closed']));

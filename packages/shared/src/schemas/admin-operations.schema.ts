@@ -7,6 +7,7 @@ export const ADMIN_CAPABILITIES = [
   'support.manage',
   'support.escalate',
   'reservations.export_raw',
+  'reservations.read',
   'refund.admin_refund',
   'seat.disable',
   'seat.reactivate',
@@ -36,6 +37,7 @@ type AdminCapabilityBundleValue = (typeof ADMIN_CAPABILITY_BUNDLES)[number];
 
 export const ADMIN_CAPABILITY_BUNDLE_CAPABILITIES = {
   operator: [
+    'reservations.read',
     'event.write',
     'support.manage',
     'support.escalate',
@@ -45,18 +47,21 @@ export const ADMIN_CAPABILITY_BUNDLE_CAPABILITIES = {
     'banner.manage',
   ],
   reviewer: [
+    'reservations.read',
     'event.write',
     'support.manage',
     'support.escalate',
     'audit.read',
   ],
   approver: [
+    'reservations.read',
     'event.write',
     'event.publish',
     'banner.manage',
     'audit.read',
   ],
   finance: [
+    'reservations.read',
     'reservations.export_raw',
     'settlement.export',
     'audit.read',

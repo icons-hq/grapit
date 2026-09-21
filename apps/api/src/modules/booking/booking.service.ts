@@ -554,6 +554,7 @@ export class BookingService {
     const [row] = await this.db
       .select({
         performanceStatus: performances.status,
+        performancePublishState: performances.publishState,
         bookingStartsAt: bookingPolicies.bookingStartsAt,
       })
       .from(showtimes)
@@ -566,6 +567,9 @@ export class BookingService {
     }
     if (actor.role === 'admin') {
       return;
+    }
+    if (row?.performancePublishState !== 'published') {
+      throw new ForbiddenException(BOOKING_NOT_OPEN_MESSAGE);
     }
     if (row?.bookingStartsAt && !isBookingStartReached(row.bookingStartsAt)) {
       throw new ForbiddenException(BOOKING_NOT_OPEN_MESSAGE);

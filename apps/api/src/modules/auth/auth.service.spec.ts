@@ -462,6 +462,10 @@ describe('AuthService', () => {
   });
 
   describe('login', () => {
+    it('retains the scanner capability bundle in the login profile', async () => {
+      const result = await authService.login({ ...mockUser, role: 'admin', adminCapabilityBundle: 'scanner', adminCapabilities: [] });
+      expect(result.user.adminCapabilityBundle).toBe('scanner');
+    });
     it('should return AuthResponse with accessToken and refreshToken', async () => {
       const result = await authService.login({
         id: mockUser.id,

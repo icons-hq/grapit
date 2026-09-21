@@ -16,6 +16,7 @@ import {
   type BenefitConfigurationChangeRecord,
   type BenefitConfigurationExportRow,
   type BenefitDefinition,
+  type BenefitOperationState,
 } from '@grabit/shared';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
@@ -25,6 +26,7 @@ import {
   ticketBenefitRedemptionRecords,
   ticketBenefits,
   ticketItems,
+  showtimes,
 } from '../../database/schema/index.js';
 import { AdminAuditService } from './admin-audit.service.js';
 import { safeCsvRows, withUtf8Bom } from './csv-export.util.js';
@@ -88,6 +90,27 @@ export class AdminBenefitsService {
 
   async getConfiguration(showtimeId: string): Promise<BenefitConfiguration | null> {
     return this.loadActiveConfiguration(this.db, showtimeId);
+  }
+
+  async getOperationState(showtimeId: string): Promise<BenefitOperationState> {
+    const [showtime] = await this.db.select({ id: showtimes.id }).from(showtimes).where(eq(showtimes.id, showtimeId));
+    if (!showtime) throw new NotFoundException('회차를 찾을 수 없습니다.');
+    const [[summary], history] = await Promise.all([
+      this.db.select({ lockedAt: sql<string | null>`min(${ticketBenefitRedemptionRecords.createdAt})::text`,
+        redeemedCount: sql<number>`count(*) filter (where ${ticketBenefitRedemptionRecords.result} = 'redeemed')::int` })
+        .from(ticketBenefitRedemptionRecords).where(eq(ticketBenefitRedemptionRecords.showtimeId, showtimeId)),
+      this.db.select({ id: ticketBenefitRedemptionRecords.id, seatKey: ticketItems.seatKey,
+        copy: ticketBenefitEntitlements.displayCopySnapshot, result: ticketBenefitRedemptionRecords.result,
+        createdAt: ticketBenefitRedemptionRecords.createdAt })
+        .from(ticketBenefitRedemptionRecords)
+        .innerJoin(ticketItems, eq(ticketItems.id, ticketBenefitRedemptionRecords.ticketItemId))
+        .innerJoin(ticketBenefitEntitlements, eq(ticketBenefitEntitlements.id, ticketBenefitRedemptionRecords.benefitEntitlementId))
+        .where(eq(ticketBenefitRedemptionRecords.showtimeId, showtimeId)).orderBy(desc(ticketBenefitRedemptionRecords.createdAt)).limit(20),
+    ]);
+    return { showtimeId, resultLockedAt: summary?.lockedAt ? new Date(summary.lockedAt).toISOString() : null,
+      redeemedCount: summary?.redeemedCount ?? 0,
+      history: history.map((entry) => ({ id: entry.id, seatKey: entry.seatKey, benefitName: entry.copy.ko.name,
+        result: entry.result, createdAt: entry.createdAt.toISOString() })) };
   }
 
   async saveConfiguration(

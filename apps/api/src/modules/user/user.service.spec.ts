@@ -87,6 +87,11 @@ describe('UserService preferred locale persistence', () => {
     });
   });
 
+  it('preserves scanner authority when refreshing the signed-in profile', async () => {
+    vi.mocked(repository.findById).mockResolvedValue({ ...baseUser, role: 'admin', adminCapabilityBundle: 'scanner', adminCapabilities: [] } as never);
+    await expect(service.getUserProfile('user-1')).resolves.toMatchObject({ adminCapabilityBundle: 'scanner' });
+  });
+
   it('preserves merged account status when reading the logged-in user profile', async () => {
     vi.mocked(repository.findById).mockResolvedValue({
       ...baseUser,

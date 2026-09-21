@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { useAdminEventContext } from './admin-event-context';
 import {
   Banknote,
   Download,
@@ -260,7 +261,8 @@ function SettlementDashboardLive({
 function useSettlementFilterControls(
   requiredFilters?: Partial<AdminSettlementFilters>,
 ) {
-  const [filters, setFilters] = useState<AdminSettlementFilters>({
+  const context = useAdminEventContext();
+  const [localFilters, setFilters] = useState<AdminSettlementFilters>({
     eventId: requiredFilters?.eventId ?? '',
     showtimeId: requiredFilters?.showtimeId ?? '',
     dateFrom: requiredFilters?.dateFrom ?? '',
@@ -271,6 +273,7 @@ function useSettlementFilterControls(
     refundStatus: requiredFilters?.refundStatus ?? 'all',
   });
 
+  const filters = context ? { ...localFilters, eventId: context.performanceId, showtimeId: context.showtimeId } : localFilters;
   return { filters, setFilters };
 }
 
@@ -687,10 +690,11 @@ function SettlementFilters({
     value: AdminSettlementFilters[K],
   ) => void;
 }) {
+  const context = useAdminEventContext();
   return (
     <Card className="border-gray-200 bg-white py-0 shadow-sm">
       <CardContent className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-4">
-        <Input
+        {!context && <><Input
           className="h-11"
           placeholder="event ID"
           value={filters.eventId ?? ''}
@@ -704,6 +708,7 @@ function SettlementFilters({
           aria-label="회차"
           onChange={(event) => updateFilter('showtimeId', event.target.value)}
         />
+        </>}
         <div className="grid grid-cols-2 gap-2">
           <Input
             type="date"

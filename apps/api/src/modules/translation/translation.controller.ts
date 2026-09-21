@@ -3,6 +3,8 @@ import { z } from 'zod';
 import type { Request } from 'express';
 import { Roles } from '../../common/decorators/roles.decorator.js';
 import { RolesGuard } from '../../common/guards/roles.guard.js';
+import { AdminCapabilitiesGuard } from '../../common/guards/admin-capabilities.guard.js';
+import { AdminCapabilities } from '../../common/decorators/admin-capabilities.decorator.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import {
   TRANSLATION_TARGET_LOCALES,
@@ -25,6 +27,7 @@ const editSourceSchema = z.object({
 });
 
 const queueFiltersSchema = z.object({
+  entityId: z.string().uuid().optional(),
   contentType: z.string().min(1).optional(),
   locale: z.enum(TRANSLATION_TARGET_LOCALES).optional(),
   status: z.enum(['draft', 'review', 'published', 'stale']).optional(),
@@ -38,8 +41,9 @@ type EditSourceInput = z.infer<typeof editSourceSchema>;
 type QueueFiltersInput = z.infer<typeof queueFiltersSchema>;
 
 @Controller('admin/translations')
-@UseGuards(RolesGuard)
+@UseGuards(RolesGuard, AdminCapabilitiesGuard)
 @Roles('admin')
+@AdminCapabilities('event.write')
 export class TranslationController {
   constructor(private readonly translationService: TranslationService) {}
 
@@ -90,6 +94,7 @@ export class TranslationController {
   }
 
   @Post('drafts/:draftId/publish')
+  @AdminCapabilities('event.publish')
   async publishDraft(@Param('draftId') draftId: string) {
     return this.translationService.publishDraft(draftId);
   }

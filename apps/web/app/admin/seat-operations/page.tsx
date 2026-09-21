@@ -1,6 +1,10 @@
+'use client';
+
 import { SeatOperationsPanel } from '@/components/admin/seat-operations-panel';
+import { useAdminEventContext } from '@/components/admin/admin-event-context';
 
 export default function AdminSeatOperationsPage() {
+  const context = useAdminEventContext();
   return (
     <div className="space-y-6">
       <div>
@@ -10,7 +14,7 @@ export default function AdminSeatOperationsPage() {
         </p>
       </div>
 
-      <SeatOperationsPanel />
+      <SeatOperationsPanel key={`${context?.performanceId ?? ''}:${context?.showtimeId ?? ''}`} />
     </div>
   );
 }

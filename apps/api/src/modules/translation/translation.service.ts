@@ -6,7 +6,7 @@ import {
   Optional,
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { and, desc, eq, gte, inArray, lte, ne, type SQL } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, lte, ne, sql, type SQL } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import { translationDrafts } from '../../database/schema/translation-drafts.js';
 import { translationSources } from '../../database/schema/translation-sources.js';
@@ -53,6 +53,7 @@ export interface TranslationDraftResult {
 }
 
 export interface TranslationQueueFilters {
+  entityId?: string;
   contentType?: string;
   locale?: TranslationTargetLocale;
   status?: TranslationStatus;
@@ -90,6 +91,10 @@ const LEGAL_BLOCKED_CONTENT_TYPES = new Set<string>([
 
 function isMemoryStore(db: DrizzleDB | MemoryTranslationStore): db is MemoryTranslationStore {
   return typeof (db as MemoryTranslationStore).createSource === 'function';
+}
+
+function currentSourceHash(sourceId: string, hash: string): SQL {
+  return sql`exists (select 1 from ${translationSources} where ${translationSources.id} = ${sourceId} and ${translationSources.contentHash} = ${hash})`;
 }
 
 @Injectable()
@@ -158,6 +163,7 @@ export class TranslationService {
     }
 
     const predicates: SQL[] = [];
+    if (filters.entityId) predicates.push(eq(translationSources.entityId, filters.entityId));
     if (filters.contentType) {
       predicates.push(eq(translationSources.entityType, filters.contentType));
     }
@@ -201,7 +207,7 @@ export class TranslationService {
     const draft = await this.findDraft(draftId);
     const source = await this.findSource(draft.sourceId);
 
-    if (draft.status === 'stale') {
+    if (draft.status === 'stale' || draft.sourceContentHash !== source.contentHash) {
       throw new BadRequestException('원문이 변경된 번역 초안은 다시 생성해야 합니다');
     }
     if (draft.status === 'published') {
@@ -226,17 +232,18 @@ export class TranslationService {
         reviewedBy: reviewerId,
         updatedAt: new Date(),
       })
-      .where(eq(translationDrafts.id, draftId))
+      .where(and(eq(translationDrafts.id, draftId), eq(translationDrafts.status, draft.status),
+        eq(translationDrafts.sourceContentHash, source.contentHash), currentSourceHash(source.id, source.contentHash)))
       .returning();
-
-    return this.mapDraft(updated!, source);
+    if (!updated) throw new BadRequestException('검수 중 원문 또는 번역 상태가 변경되었습니다. 최신 항목을 확인해주세요.');
+    return this.mapDraft(updated, source);
   }
 
   async publishDraft(draftId: string): Promise<TranslationDraftResult> {
     const draft = await this.findDraft(draftId);
     const source = await this.findSource(draft.sourceId);
 
-    if (draft.status !== 'review') {
+    if (draft.status !== 'review' || draft.sourceContentHash !== source.contentHash) {
       throw new BadRequestException('검수 완료된 번역만 게시할 수 있습니다');
     }
 
@@ -271,11 +278,15 @@ export class TranslationService {
           ),
         );
 
-      return tx
+      const rows = await tx
         .update(translationDrafts)
         .set({ status: 'published', publishedAt: new Date(), updatedAt: new Date() })
-        .where(eq(translationDrafts.id, draftId))
+        .where(and(eq(translationDrafts.id, draftId), eq(translationDrafts.status, 'review'),
+          eq(translationDrafts.translatedText, draft.translatedText),
+          eq(translationDrafts.sourceContentHash, source.contentHash), currentSourceHash(source.id, source.contentHash)))
         .returning();
+      if (!rows.length) throw new BadRequestException('게시 중 원문 또는 번역 상태가 변경되었습니다. 최신 검수본을 확인해주세요.');
+      return rows;
     });
 
     return this.mapDraft(published!, source);
@@ -455,6 +466,7 @@ export class TranslationService {
       return false;
     }
     if (filters.contentType && source.entityType !== filters.contentType) return false;
+    if (filters.entityId && source.entityId !== filters.entityId) return false;
     if (filters.locale && draft.targetLocale !== filters.locale) return false;
     if (filters.status && draft.status !== filters.status) return false;
     if (filters.updatedFrom && draft.updatedAt < new Date(filters.updatedFrom)) return false;

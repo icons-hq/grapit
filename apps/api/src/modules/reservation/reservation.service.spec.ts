@@ -415,7 +415,7 @@ describe('ReservationService', () => {
       .mockReturnValueOnce(chainResult([{
         id: dto.showtimeId,
         performanceId: 'performance-1',
-        performanceStatus: dto.performanceStatus ?? 'selling',
+        performancePublishState: 'published', performanceStatus: dto.performanceStatus ?? 'selling',
         bookingStartsAt: dto.bookingStartsAt ?? null,
         dateTime: new Date(),
         maxTicketsPerUser: 4,
@@ -458,7 +458,7 @@ describe('ReservationService', () => {
       .mockReturnValueOnce(chainResult([{
         id: dto.showtimeId,
         performanceId: 'performance-1',
-        performanceStatus: 'selling',
+        performancePublishState: 'published', performanceStatus: 'selling',
         dateTime: new Date(),
         maxTicketsPerUser: 4,
         changePolicyEnabled: false,
@@ -1033,7 +1033,7 @@ describe('ReservationService', () => {
         seats: [seatSelection('A-1')],
         amount: 50000,
         consentItems: makeConsentItems(),
-        performanceStatus: 'upcoming',
+        performancePublishState: 'published', performanceStatus: 'upcoming',
       };
       setupPrepareBase(dto);
 
@@ -1057,7 +1057,7 @@ describe('ReservationService', () => {
           seats: [seatSelection('A-1')],
           amount: 52000,
           consentItems: makeConsentItems(),
-          performanceStatus: 'selling',
+          performancePublishState: 'published', performanceStatus: 'selling',
           bookingStartsAt: new Date('2026-06-04T10:00:00.000Z'),
         };
         setupPrepareBase(dto);
@@ -1084,7 +1084,7 @@ describe('ReservationService', () => {
           seats: [seatSelection('A-1')],
           amount: 52000,
           consentItems: makeConsentItems(),
-          performanceStatus: 'upcoming',
+          performancePublishState: 'published', performanceStatus: 'upcoming',
           bookingStartsAt: new Date('2026-06-04T10:00:00.000Z'),
         };
         setupPrepareBase(dto);
@@ -1111,7 +1111,7 @@ describe('ReservationService', () => {
         seats: [seatSelection('A-1')],
         amount: 50000,
         consentItems: makeConsentItems(),
-        performanceStatus: 'ended',
+        performancePublishState: 'published', performanceStatus: 'ended',
       };
       setupPrepareBase(dto);
 
@@ -1166,7 +1166,7 @@ describe('ReservationService', () => {
         .mockReturnValueOnce(chainResult([{
           id: dto.showtimeId,
           performanceId: 'performance-1',
-          performanceStatus: 'selling',
+          performancePublishState: 'published', performanceStatus: 'selling',
           dateTime: new Date(),
           maxTicketsPerUser: 4,
           changePolicyEnabled: false,
@@ -1207,7 +1207,7 @@ describe('ReservationService', () => {
         .mockReturnValueOnce(chainResult([{
           id: dto.showtimeId,
           performanceId: 'performance-1',
-          performanceStatus: 'selling',
+          performancePublishState: 'published', performanceStatus: 'selling',
           dateTime: new Date(),
           maxTicketsPerUser: 4,
           changePolicyEnabled: false,
@@ -1718,7 +1718,7 @@ describe('ReservationService', () => {
 
       mockDb.select
         .mockReturnValueOnce(chainResult([]))
-        .mockReturnValueOnce(chainResult([{ id: dto.showtimeId, performanceId: 'performance-1', dateTime: new Date() }]))
+        .mockReturnValueOnce(chainResult([{ id: dto.showtimeId, performanceId: 'performance-1', performancePublishState: 'published', dateTime: new Date() }]))
         .mockReturnValueOnce(chainResult([
           { tierName: 'VIP', price: 100000 },
           { tierName: 'R', price: 80000 },
@@ -1781,6 +1781,7 @@ describe('ReservationService', () => {
         .mockReturnValueOnce(chainResult([{
           id: dto.showtimeId,
           performanceId: 'performance-1',
+          performancePublishState: 'published',
           dateTime: new Date(),
           maxTicketsPerUser: 2,
           changePolicyEnabled: false,
@@ -1851,6 +1852,7 @@ describe('ReservationService', () => {
         .mockReturnValueOnce(chainResult([{
           id: dto.showtimeId,
           performanceId: 'performance-1',
+          performancePublishState: 'published',
           dateTime: new Date(),
           maxTicketsPerUser: 1,
           changePolicyEnabled: false,

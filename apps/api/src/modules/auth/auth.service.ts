@@ -29,7 +29,7 @@ import type {
   AdminCapability,
   AdminCapabilityBundle,
 } from '@grabit/shared/types/admin-operations.types.js';
-import { ADMIN_CAPABILITIES } from '@grabit/shared/schemas/admin-operations.schema.js';
+import { ADMIN_CAPABILITIES, adminCapabilityBundleSchema } from '@grabit/shared/schemas/admin-operations.schema.js';
 import type {
   EmailAvailabilityResponse,
   SocialAuthResult,
@@ -1235,14 +1235,6 @@ function normalizeAdminCapabilities(
 function normalizeAdminCapabilityBundle(
   bundle: string | null | undefined,
 ): AdminCapabilityBundle | null {
-  if (
-    bundle === 'operator' ||
-    bundle === 'reviewer' ||
-    bundle === 'approver' ||
-    bundle === 'finance' ||
-    bundle === 'admin'
-  ) {
-    return bundle;
-  }
-  return null;
+  const parsed = adminCapabilityBundleSchema.safeParse(bundle);
+  return parsed.success ? parsed.data : null;
 }

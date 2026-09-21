@@ -1,6 +1,11 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
+import { Suspense, useState } from 'react';
+import { apiClient } from '@/lib/api-client';
+import { useQueryClient } from '@tanstack/react-query';
+import { AdminEventContextBar, AdminEventContextProvider } from '@/components/admin/admin-event-context';
+import { AdminRouteBoundary } from '@/components/admin/admin-route-boundary';
 import Link from 'next/link';
 import { Menu, LogOut, ShieldAlert } from 'lucide-react';
 import { useAuthStore } from '@/stores/use-auth-store';
@@ -22,6 +27,8 @@ export default function AdminLayout({
   const user = useAuthStore((s) => s.user);
   const isInitialized = useAuthStore((s) => s.isInitialized);
   const clearAuth = useAuthStore((s) => s.clearAuth);
+  const queryClient = useQueryClient();
+  const [menuOpen, setMenuOpen] = useState(false);
 
   if (!isInitialized) {
     return (
@@ -53,8 +60,7 @@ export default function AdminLayout({
                 관리자 접근 권한이 없습니다
               </h1>
               <p className="mt-3 text-base leading-[1.5] text-gray-700">
-                이 화면은 관리자 권한이 있는 계정만 사용할 수 있습니다. 백엔드
-                권한 검사는 계속 API guard에서 처리됩니다.
+                이 화면은 운영 권한이 있는 계정만 사용할 수 있습니다.
               </p>
               <div className="mt-6 flex flex-col gap-2 sm:flex-row">
                 <Button asChild className="h-11">
@@ -71,18 +77,22 @@ export default function AdminLayout({
     );
   }
 
-  function handleLogout() {
+  async function handleLogout() {
+    try { await apiClient.post('/api/v1/auth/logout'); } catch { /* Clear this device's session even when offline. */ }
     clearAuth();
+    queryClient.clear();
     router.replace('/auth');
   }
 
   return (
+    <Suspense fallback={<p className="p-8">운영 화면을 불러오고 있습니다.</p>}>
+    <AdminEventContextProvider>
     <div className="flex min-h-screen overflow-x-hidden">
       <AdminSidebar />
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-40 flex h-16 min-w-0 items-center border-b bg-white px-4 sm:px-6">
           <div className="flex items-center gap-3 lg:hidden">
-            <Sheet>
+            <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
               <SheetTrigger asChild>
                 <Button variant="ghost" size="icon" aria-label="메뉴 열기">
                   <Menu className="h-5 w-5" />
@@ -90,7 +100,7 @@ export default function AdminLayout({
               </SheetTrigger>
               <SheetContent side="left" className="w-[240px] p-0">
                 <SheetTitle className="sr-only">관리자 메뉴</SheetTitle>
-                <AdminSidebar variant="drawer" />
+                <AdminSidebar variant="drawer" onNavigate={() => setMenuOpen(false)} />
               </SheetContent>
             </Sheet>
           </div>
@@ -107,8 +117,10 @@ export default function AdminLayout({
             </Button>
           </div>
         </header>
-        <main className="min-w-0 flex-1 overflow-x-hidden bg-[#F5F5F7] p-4 sm:p-8">{children}</main>
+        <main className="min-w-0 flex-1 overflow-x-hidden bg-white p-4 sm:p-8"><AdminRouteBoundary><AdminEventContextBar />{children}</AdminRouteBoundary></main>
       </div>
     </div>
+    </AdminEventContextProvider>
+    </Suspense>
   );
 }

@@ -37,11 +37,14 @@ import { AdminUserService } from './admin-user.service.js';
 import { UploadService } from './upload.service.js';
 import { AdminDashboardService } from './admin-dashboard.service.js';
 import { PerformanceIntakeService } from './performance-intake.service.js';
+import { PerformanceDraftController } from './performance-draft.controller.js';
+import { PerformanceDraftService } from './performance-draft.service.js';
 
 @Module({
   imports: [PerformanceModule, PaymentModule, BookingModule, RefundModule],
   controllers: [
     AdminPerformanceController,
+    PerformanceDraftController,
     AdminBannerController,
     AdminBookingController,
     AdminSettlementController,
@@ -60,6 +63,7 @@ import { PerformanceIntakeService } from './performance-intake.service.js';
   ],
   providers: [
     AdminService,
+    PerformanceDraftService,
     AdminAuditService,
     AdminCapabilitiesGuard,
     AdminBookingService,

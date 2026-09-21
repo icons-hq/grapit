@@ -284,8 +284,8 @@ async function seed() {
     const perfIds = [];
     for (const p of perfData) {
       const res = await client.query(`
-        INSERT INTO performances (id, title, genre, subcategory, venue_id, poster_url, description, start_date, end_date, runtime, age_rating, status, sales_info, view_count)
-        VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        INSERT INTO performances (id, title, genre, subcategory, venue_id, poster_url, description, start_date, end_date, runtime, age_rating, status, sales_info, view_count, publish_state)
+        VALUES (COALESCE($1::uuid, gen_random_uuid()), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, 'published')
         RETURNING id
       `, [p.id ?? null, p.title, p.genre, p.subcategory, venues[p.venue], p.poster, p.description, p.startDate, p.endDate, p.runtime, p.ageRating, p.status, p.salesInfo ?? null, p.viewCount]);
       perfIds.push({ id: res.rows[0].id, title: p.title });

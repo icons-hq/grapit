@@ -442,6 +442,35 @@ export interface AdminBookingDetail extends AdminBookingListItem {
   ticketItems: AdminTicketItem[];
 }
 
+export interface AdminBookingSupportEvidence {
+  generatedAt: string;
+  originalOrderAmount: number;
+  provider: {
+    currency: string;
+    originalAmountMinor: number | null;
+    storedStatus: string;
+    approvedAt: string | null;
+    checkedAt: string | null;
+    checkStatus: string | null;
+  } | null;
+  refundTimeline: RefundTimeline | null;
+  refundProviderAmount: RefundPreviewResponse['providerRefund'];
+  rights: {
+    seatStatesKnown: boolean;
+    activeSeats: number;
+    cancelledSeats: number;
+    pendingSeats: number;
+    enteredSeats: number;
+    benefits: Array<{ id: string; seat: string; name: string; state: string; redeemedAt: string | null }>;
+  };
+  delivery: {
+    scheduledAt: string | null;
+    lastSentAt: string | null;
+    inboxReceipt: 'unverified';
+    history: Array<{ id: string; seat: string; credentialStatus: string; scheduledAt: string | null; sentAt: string | null }>;
+  };
+}
+
 export interface PrepareReservationRequest {
   orderId: string;
   showtimeId: string;
