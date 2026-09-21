@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
+  fireEvent,
   render,
   renderHook,
   screen,
@@ -216,14 +217,17 @@ describe('BannerForm', () => {
       );
     });
 
-    await user.type(
-      screen.getByLabelText('링크 URL (선택)'),
-      'https://www.heygrabit.com/performances/uploaded',
-    );
+    await user.click(screen.getByLabelText('링크 URL (선택)'));
+    await user.paste('https://www.heygrabit.com/performances/uploaded');
     await chooseSelectOption(user, '배너 위치', '홈 보조');
     await chooseSelectOption(user, '기기 대상', '모바일');
-    await user.type(screen.getByLabelText('배너 시작 시각'), '2026-05-15T09:00');
-    await user.type(screen.getByLabelText('배너 종료 시각'), '2026-05-31T23:59');
+    // Model the native date picker's committed values, not every keystroke.
+    fireEvent.change(screen.getByLabelText('배너 시작 시각'), {
+      target: { value: '2026-05-15T09:00' },
+    });
+    fireEvent.change(screen.getByLabelText('배너 종료 시각'), {
+      target: { value: '2026-05-31T23:59' },
+    });
     await chooseSelectOption(user, '배너 상태', '예약됨');
     await user.clear(screen.getByLabelText('순서'));
     await user.type(screen.getByLabelText('순서'), '3');
