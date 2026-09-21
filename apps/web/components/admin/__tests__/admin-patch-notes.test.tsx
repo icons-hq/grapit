@@ -19,23 +19,12 @@ describe('AdminPatchNotesPreview', () => {
       screen.getByRole('link', { name: '패치노트 전체 보기' }),
     ).toHaveAttribute('href', '/admin/patch-notes');
 
-    const article = screen.getByRole('article', {
-      name: 'PR #226 좌석별 취소와 환불 상태·금액 안내',
-    });
-
-    expect(within(article).getByText('PR #226')).toBeInTheDocument();
-    expect(
-      within(article).getByText('좌석별 취소와 환불 상태·금액 안내'),
-    ).toBeInTheDocument();
-    expect(
-      within(article).getByText(/선택한 좌석의 환불액과 남을 티켓/),
-    ).toBeInTheDocument();
-    expect(
-      within(article).getByText(/환불 처리 단계와 좌석 재판매 대기/),
-    ).toBeInTheDocument();
-    expect(
-      within(article).getByText(/API\/Web\/shared unit tests/),
-    ).toBeInTheDocument();
+    const latest = adminPatchNotes[0]!;
+    const article = screen.getByRole('article', { name: `PR #${latest.prNumber} ${latest.title}` });
+    expect(screen.getAllByRole('article')).toHaveLength(3);
+    expect(within(article).getByText(latest.summary)).toBeInTheDocument();
+    expect(within(article).getByText(latest.highlights[0]!)).toBeInTheDocument();
+    expect(within(article).getByText(latest.evidence[0]!)).toBeInTheDocument();
   });
 });
 

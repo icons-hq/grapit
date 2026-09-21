@@ -14,6 +14,27 @@ export interface AdminPatchNote {
 
 const notes = [
   {
+    id: 'pr-229-finance-evidence-ledger',
+    prNumber: 229,
+    title: '원금·환불·통화·조회 기준을 구분한 정산 원장',
+    summary:
+      '공연·회차와 기간·기준 시각을 선택해 원 주문, 확정·처리 중 환불, 남은 티켓과 PG 정산 자료를 대조합니다.',
+    highlights: [
+      'KRW와 USD 청구·취소 기록 및 정산 지급일을 별도로 표시',
+      '조회 전·연결 대기·실패·0건·증거 누락을 구분하고 과거 취소 견적 보존',
+      '결제·좌석·PG 거래 단위 CSV에 같은 기준과 통화·시각을 기록',
+      '개인 연락처 없는 재무 export와 감사 기록, 은행 입금·마감 미확인 안내',
+    ],
+    category: 'feature',
+    date: '2026-09-22',
+    githubUrl: 'https://github.com/icons-hq/grapit/pull/229',
+    evidence: [
+      '22 PostgreSQL HTTP finance regressions and 11 UI query-state checks',
+      'Actual desktop/mobile CSV download, independent money reconciliation and export audit readback',
+      'API/Web/shared tests, production build and Standards/Spec review',
+    ],
+  },
+  {
     id: 'pr-228-seat-level-field-operations',
     prNumber: 228,
     title: '좌석별 입장과 현장 특전 지급 개선',

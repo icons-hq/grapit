@@ -3,6 +3,7 @@ import '@testing-library/jest-dom/vitest';
 import { describe, expect, it, vi } from 'vitest';
 
 import AdminDashboardPage from '../page';
+import { adminPatchNotes } from '@/content/admin-patch-notes';
 
 vi.mock('@/hooks/use-admin-dashboard', () => ({
   useDashboardSummary: () => ({
@@ -45,7 +46,7 @@ describe('AdminDashboardPage patch notes', () => {
       screen.getByRole('heading', { name: '최근 패치노트' }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText('좌석별 취소와 환불 상태·금액 안내'),
+      screen.getByText(adminPatchNotes[0]!.title),
     ).toBeInTheDocument();
     expect(
       screen.getByRole('link', { name: '패치노트 전체 보기' }),
