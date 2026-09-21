@@ -13,6 +13,8 @@ import { resolveLocaleFromPathname } from '@/i18n/routing';
 import { apiClient } from '@/lib/api-client';
 import { cn } from '@/lib/cn';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
+import { getLocalizedNavigationPath } from '@/lib/i18n/locale-path';
+export { getLocalizedPathname, appendSearchParams } from '@/lib/i18n/locale-path';
 import { navigateToLocalizedPath } from '@/lib/i18n/locale-navigation';
 import { useAuthStore } from '@/stores/use-auth-store';
 import {
@@ -187,10 +189,7 @@ function useLocaleSelection({
 
     onLocaleChange?.();
     navigateToLocalizedPath(
-      appendSearchParams(
-        getLocalizedPathname(pathname, locale),
-        searchParams.toString(),
-      ),
+      getLocalizedNavigationPath(pathname, searchParams.toString(), locale),
     );
   }
 
@@ -202,20 +201,6 @@ function getLocaleControlLabel(
   copy: ReturnType<typeof getVisibleCopy>,
 ) {
   return activeLocale === DEFAULT_LOCALE ? '언어 선택' : copy.nav.language;
-}
-
-export function getLocalizedPathname(
-  pathname: string,
-  locale: SupportedLocale,
-) {
-  const { pathnameWithoutLocale } = resolveLocaleFromPathname(pathname);
-  if (locale === DEFAULT_LOCALE) return pathnameWithoutLocale;
-  if (pathnameWithoutLocale === '/') return `/${locale}`;
-  return `/${locale}${pathnameWithoutLocale}`;
-}
-
-export function appendSearchParams(pathname: string, query: string) {
-  return query ? `${pathname}?${query}` : pathname;
 }
 
 export function setLocalePreferenceCookie(locale: SupportedLocale) {

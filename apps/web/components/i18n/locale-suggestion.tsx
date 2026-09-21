@@ -9,11 +9,10 @@ import {
   isPublicSupportedLocale,
   resolveLocaleFromPathname,
 } from '@/i18n/routing';
+import { getLocalizedNavigationPath } from '@/lib/i18n/locale-path';
 import { cn } from '@/lib/cn';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import {
-  appendSearchParams,
-  getLocalizedPathname,
   setLocalePreferenceCookie,
 } from './locale-switcher';
 
@@ -56,10 +55,7 @@ export function LocaleSuggestion({ className }: { className?: string }) {
     setLocalePreferenceCookie(locale);
     dismiss();
     router.push(
-      appendSearchParams(
-        getLocalizedPathname(pathname, locale),
-        searchParams.toString(),
-      ),
+      getLocalizedNavigationPath(pathname, searchParams.toString(), locale),
     );
   }
 

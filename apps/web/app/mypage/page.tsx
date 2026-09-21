@@ -151,13 +151,11 @@ export default function MyPage() {
   );
 
   function handleTabChange(value: string) {
-    if (value === 'wallet') {
-      router.replace(`${getLocalizedPathname('/mypage', locale)}?tab=wallet`);
-    } else if (value === 'settings') {
-      router.replace(`${getLocalizedPathname('/mypage', locale)}?tab=settings`);
-    } else {
-      router.replace(getLocalizedPathname('/mypage', locale));
-    }
+    const query = new URLSearchParams();
+    if (value === 'wallet' || value === 'settings') query.set('tab', value);
+    const returnTo = resolveSafeReturnToFromSearch(searchParams.toString());
+    if (returnTo) query.set('returnTo', returnTo);
+    router.replace(`${getLocalizedPathname('/mypage', locale)}${query.size ? `?${query}` : ''}`);
   }
 
   return (

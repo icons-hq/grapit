@@ -41,7 +41,7 @@ type FindPerformanceByIdOptions = {
   includeHiddenCopy?: boolean;
 };
 
-const PERFORMANCE_TAXONOMY_CACHE_VERSION = 'event-catalog-v3-status-price';
+const PERFORMANCE_TAXONOMY_CACHE_VERSION = 'event-catalog-v4-opening-boundary';
 const PERFORMANCE_DETAIL_CACHE_VERSION = 'public-published-v2-booking-start';
 const DEFAULT_CACHE_TTL_SECONDS = 300;
 const DEFAULT_FLOOR_KEY = '1F';
@@ -215,7 +215,8 @@ export class PerformanceService {
       conditions.push(eq(performances.subcategory, sub));
     }
 
-    const statusCondition = publicCatalogStatusCondition(status);
+    const queryTime = new Date();
+    const statusCondition = publicCatalogStatusCondition(status, queryTime);
     if (statusCondition) conditions.push(statusCondition);
     else if (!ended) conditions.push(ne(performances.status, 'ended'));
 
@@ -236,7 +237,20 @@ export class PerformanceService {
         .limit(limit)
         .offset(offset),
       this.db
-        .select({ count: sql<number>`count(*)::int` })
+        .select({
+          count: sql<number>`count(*)::int`,
+          // This scalar query sees future openings excluded by status or page.
+          nextBookingStartsAt: sql<Date | string | null>`(
+            select min(next_policy.booking_starts_at)
+            from performances next_performance
+            join booking_policies next_policy on next_policy.performance_id = next_performance.id
+            where next_performance.publish_state = 'published'
+              and next_performance.genre = ${genre}
+              and next_performance.status = 'upcoming'
+              and next_policy.booking_starts_at > ${queryTime}
+              ${sub ? sql`and next_performance.subcategory = ${sub}` : sql``}
+          )`,
+        })
         .from(performances)
         .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, performances.id))
         .where(whereClause),
@@ -254,11 +268,11 @@ export class PerformanceService {
       totalPages: Math.ceil(total / limit),
     };
 
-    await this.cacheService.set(
-      cacheKey,
-      result,
-      cacheTtlUntilNextBookingStart(data.map((row) => row.bookingStartsAt)),
-    );
+    const nextBookingStartsAt = countResult[0]?.nextBookingStartsAt;
+    const cacheTtl = nextBookingStartsAt && new Date(nextBookingStartsAt).getTime() <= Date.now()
+      ? 1
+      : cacheTtlUntilNextBookingStart([nextBookingStartsAt, ...data.map((row) => row.bookingStartsAt)]);
+    await this.cacheService.set(cacheKey, result, cacheTtl);
     return result;
   }
 

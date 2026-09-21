@@ -1,4 +1,7 @@
 import { toast } from 'sonner';
+import { buildAuthRoute, resolveSafeReturnTo, resolveSafeReturnToFromSearch } from './auth-return';
+import { getClientLocale } from './i18n/client-copy';
+import { navigateToLocalizedPath } from './i18n/locale-navigation';
 import { apiUrl } from '@/lib/api-url';
 import { useAuthStore } from '@/stores/use-auth-store';
 import {
@@ -108,7 +111,9 @@ async function request<T>(
       // Refresh failed -- clear auth and redirect
       useAuthStore.getState().clearAuth();
       if (typeof window !== 'undefined') {
-        window.location.href = '/auth';
+        const returnTo = resolveSafeReturnTo(`${window.location.pathname}${window.location.search}${window.location.hash}`)
+          ?? resolveSafeReturnToFromSearch(window.location.search);
+        navigateToLocalizedPath(buildAuthRoute('/auth', getClientLocale(), { returnTo }));
       }
       throw new ApiClientError(getClientVisibleCopy().commonErrors.authExpired, 401);
     }

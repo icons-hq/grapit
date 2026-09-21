@@ -236,6 +236,17 @@ describe('PerformanceService', () => {
   });
 
   describe('findByGenre', () => {
+    it('expires an empty selling page at the next opening outside its filtered rows', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-09-21T10:00:00Z'));
+      try {
+        mockDb.select.mockReturnValueOnce(createChainableResult([]))
+          .mockReturnValueOnce(createChainableResult([{ count: 0, nextBookingStartsAt: new Date('2026-09-21T10:00:20Z') }]));
+        await service.findByGenre('artist_celebrity', { status: 'selling', page: 1, limit: 12, sort: 'latest', ended: true });
+        expect(mockCache.set).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ total: 0 }), 20);
+      } finally { vi.useRealTimers(); }
+    });
+
     it('should return paginated performances filtered by genre', async () => {
       const result: PerformanceListResponse = await service.findByGenre('artist_celebrity', {
         page: 1,

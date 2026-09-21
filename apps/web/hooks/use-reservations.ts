@@ -10,6 +10,7 @@ import { apiClient } from '@/lib/api-client';
 import { apiUrl } from '@/lib/api-url';
 import { useAuthStore } from '@/stores/use-auth-store';
 import type {
+  EmailVerificationRequestResponse,
   ReservationListItem,
   ReservationDetail,
   AdminBookingDetail,
@@ -89,7 +90,7 @@ export type AdminRefundPreviewOptions = {
 export function useRequestAccountEmailVerification() {
   return useMutation({
     mutationFn: ({ email, locale = 'ko' }: { email: string; locale?: string }) =>
-      apiClient.post<{ message: string; expiresAt: string }>(
+      apiClient.post<EmailVerificationRequestResponse>(
         '/api/v1/auth/email-verification/account-email/request',
         { email, locale },
       ),

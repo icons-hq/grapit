@@ -93,6 +93,16 @@ describe('TicketEmailDeliveryPanel', () => {
     ).toBeInTheDocument();
   });
 
+  it('does not show a sent code when the provider rejects account-email delivery', async () => {
+    const user = userEvent.setup();
+    postMock.mockResolvedValue({ emailDeliveryFailed: true });
+    render(<TicketEmailDeliveryPanel reservationId="reservation-1" delivery={createDelivery({ isPlaceholderEmail: true, canSend: false, status: 'verification_required' })} />, { wrapper: createWrapper() });
+    await user.type(screen.getByLabelText('이메일'), 'recipient@example.test');
+    await user.click(screen.getByRole('button', { name: '인증번호 받기' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('인증 메일을 보내지 못했으니');
+    expect(screen.queryByLabelText('인증번호')).not.toBeInTheDocument();
+  });
+
   it('verifies a real email and sends the ticket email for placeholder accounts', async () => {
     const user = userEvent.setup();
     useAuthStore.getState().setAuth('access-token', createUser());

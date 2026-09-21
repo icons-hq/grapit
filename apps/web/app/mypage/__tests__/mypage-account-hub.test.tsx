@@ -141,6 +141,16 @@ describe('MyPage account hub', () => {
     vi.clearAllMocks();
   });
 
+  it('retains the safe booking return path when switching account tabs', async () => {
+    const user = userEvent.setup();
+    mocks.search = 'tab=settings&returnTo=%2Fbooking%2Fselected';
+    render(<MyPage />);
+    await user.click(screen.getByRole('tab', { name: '계정' }));
+    expect(mocks.routerReplace).toHaveBeenCalledWith('/mypage?returnTo=%2Fbooking%2Fselected');
+    await user.click(screen.getByRole('tab', { name: '티켓 지갑' }));
+    expect(mocks.routerReplace).toHaveBeenCalledWith('/mypage?tab=wallet&returnTo=%2Fbooking%2Fselected');
+  });
+
   it('preserves the active language when changing settings tabs', async () => {
     window.history.replaceState(null, '', '/en/mypage');
     render(<MyPage />);

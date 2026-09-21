@@ -48,3 +48,9 @@ export type SocialAuthResult =
       verificationExpiresAt: Date;
       user: UserProfile;
     };
+
+export interface EmailVerificationRequestResponse {
+  message: string;
+  expiresAt: string;
+  emailDeliveryFailed?: boolean;
+}

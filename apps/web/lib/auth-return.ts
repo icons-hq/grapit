@@ -1,5 +1,5 @@
 import { resolveAuthReturnTo, type SupportedLocale } from '@grabit/shared';
-import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
+import { getLocalizedPathname } from '@/lib/i18n/locale-path';
 
 export const resolveSafeReturnTo = resolveAuthReturnTo;
 

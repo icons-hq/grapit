@@ -18,12 +18,15 @@ vi.mock('@/stores/use-auth-store', () => ({
   },
 }));
 
+const navigation = vi.hoisted(() => ({ navigate: vi.fn() }));
+vi.mock('@/lib/i18n/locale-navigation', () => ({ navigateToLocalizedPath: navigation.navigate }));
 const mockFetch = vi.fn();
 const originalFetch = globalThis.fetch;
 
 beforeEach(() => {
   globalThis.fetch = mockFetch;
   vi.clearAllMocks();
+  window.history.replaceState(null, '', '/');
 });
 
 afterEach(() => {
@@ -126,6 +129,14 @@ describe('api-client error interceptor', () => {
     await expect(apiClient.get('/test')).rejects.toThrow();
 
     expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it('returns an expired session to the same localized pending booking', async () => {
+    window.history.replaceState(null, '', '/th/booking/show/confirm?resumeOrderId=kept');
+    mockFetch.mockResolvedValue({ ok: false, status: 401, json: async () => ({}) });
+    const { apiClient } = await import('@/lib/api-client');
+    await expect(apiClient.get('/api/v1/reservations')).rejects.toThrow();
+    expect(navigation.navigate).toHaveBeenCalledWith('/th/auth?returnTo=%2Fth%2Fbooking%2Fshow%2Fconfirm%3FresumeOrderId%3Dkept');
   });
 
   it('Test 6: 서버가 커스텀 message를 반환하면 기본 메시지 대신 서버 메시지 사용', async () => {

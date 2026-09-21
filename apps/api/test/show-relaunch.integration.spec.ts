@@ -93,7 +93,8 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
         { performanceId: event!.id, tierName: 'R', price: 85000 },
       ]);
     }
-    const catalog = new PerformanceService(db, { get: vi.fn().mockResolvedValue(null), set: vi.fn() } as never);
+    const catalogCache = { get: vi.fn().mockResolvedValue(null), set: vi.fn() };
+    const catalog = new PerformanceService(db, catalogCache as never);
     const selling = await catalog.findByGenre('artist_celebrity', { page: 1, limit: 1, sort: 'latest', ended: true, sub: category, status: 'selling' });
     expect(selling.total).toBe(1);
     expect(selling.data).toMatchObject([{ id: ids[0], status: 'selling', minPrice: 85000, bookingStartsAt: '2020-01-01T00:00:00.000Z' }]);
@@ -106,6 +107,11 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     const found = await new SearchService(db).search({ q: category, page: 1, limit: 20, ended: true });
     expect(found.total).toBe(3);
     expect(found.data.find((event) => event.id === ids[0])).toMatchObject({ status: 'selling', minPrice: 85000 });
+    await db.update(schema.bookingPolicies).set({ bookingStartsAt: new Date(Date.now() + 20000) }).where(eq(schema.bookingPolicies.performanceId, ids[1]!));
+    await catalog.findByGenre('artist_celebrity', { page: 1, limit: 1, sort: 'latest', ended: true, sub: category, status: 'selling' });
+    const ttl = catalogCache.set.mock.calls.at(-1)?.[2] as number;
+    expect(ttl).toBeGreaterThan(0);
+    expect(ttl).toBeLessThanOrEqual(20);
   });
 
   async function order(f: Awaited<ReturnType<typeof fixture>>, seatKey = '1F:A-1', status: 'PENDING_PAYMENT' | 'FAILED' = 'PENDING_PAYMENT') {
