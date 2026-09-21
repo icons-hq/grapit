@@ -775,6 +775,7 @@ export function SeatMapViewer({
         >
           <div
             ref={containerRef}
+            data-testid="seat-map-canvas"
             className="mx-auto w-full max-w-full"
             role="img"
             aria-label={floorLabel ? `${floorLabel} ${seatCopy.map}` : seatCopy.map}

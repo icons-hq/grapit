@@ -82,3 +82,5 @@
 ## 리뷰와 출시 후보
 
 고정 구현 snapshot `fe5ab738882a4ffdd8a038030bb336d54b75de1f`의 Standards/Spec 병렬 검토는 각각 0건이다. 이후에는 실행한 근거와 운영 문서를 갱신했다. PR CI의 최종 commit을 출시 후보 증거로 고정한다. 실기기·실물·실입금·오픈 결정은 #214/#223의 별도 gate다.
+
+첫 PR CI에서 기존 E2E의 고정 URL stub이 새 `locale` query를 받지 못하고, 좌석도의 잘못된 grid role을 가정하던 locator가 실패했다. query를 포함한 동일 예매 경로를 fixture로 받도록 하고 실제 canvas 식별자로 click geometry 검증을 유지했다. 한국어 결제 실패의 기존 상세 사유도 유지하며, 취소 상태 안내는 분리했다. 수정 commit의 CI로 최종 판정한다.

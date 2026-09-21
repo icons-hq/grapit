@@ -350,7 +350,8 @@ function CompletePageContent() {
         title={paymentRecovery.reservation?.status === 'CANCELLED'
           ? visibleCopy.reservation.detail.cancelledNoticeTitle : completeCopy.confirmFailedTitle}
         body={paymentRecovery.reservation?.status === 'CANCELLED'
-          ? visibleCopy.reservation.detail.qrCheckingSeatItems : completeCopy.confirmFailedBody}
+          ? visibleCopy.reservation.detail.qrCheckingSeatItems
+          : locale === 'ko' ? paymentRecovery.reservation?.cancelReason || completeCopy.confirmFailedBody : completeCopy.confirmFailedBody}
         primaryAction={routePerformanceId
           ? {
               label: t('reselectCta'),
