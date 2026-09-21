@@ -14,6 +14,27 @@ export interface AdminPatchNote {
 
 const notes = [
   {
+    id: 'pr-230-integrated-journey-validation',
+    prNumber: 230,
+    title: '다국어 예매·키보드 좌석 선택과 현장 조회 보완',
+    summary:
+      '고객의 언어와 한국 기준 시각을 좌석 선택부터 티켓·취소까지 유지하고, 현장 담당자의 실제 조회 결과를 명확히 표시합니다.',
+    highlights: [
+      '네 언어 달력·좌석·티켓 안내와 키보드로 조작하는 좌석 목록',
+      '예매 번역 제목, 원화 원금과 해외 카드 청구 통화 구분',
+      '취소 성공 뒤 불필요한 오류 알림과 과거 결제 복귀 화면 정정',
+      '현장 로그 권한·예매번호·좌석·담당자·KST 날짜 조회 개선',
+    ],
+    category: 'patch',
+    date: '2026-09-22',
+    githubUrl: 'https://github.com/icons-hq/grapit/pull/230',
+    evidence: [
+      'API 1,259 / Web 773 / shared 148 테스트, PostgreSQL 거래 65·현장 26 회귀',
+      '38개 경로·4언어·키보드·모바일·확대의 실제 API 브라우저 검증',
+      '13개 테이블 원장 보존 migration 리허설, production build, 두 관점 코드 검토',
+    ],
+  },
+  {
     id: 'pr-229-finance-evidence-ledger',
     prNumber: 229,
     title: '원금·환불·통화·조회 기준을 구분한 정산 원장',
