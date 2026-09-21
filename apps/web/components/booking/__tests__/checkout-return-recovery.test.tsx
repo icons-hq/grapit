@@ -138,6 +138,23 @@ describe('Checkout document return recovery', () => {
     expect(boundary.prepare).toHaveBeenCalledTimes(1);
   });
 
+  it('clears an uncreated order address after a definitive pre-commit seat rejection', async () => {
+    const user = userEvent.setup();
+    boundary.prepare.mockRejectedValue(Object.assign(
+      new Error('좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.'), { statusCode: 409 },
+    ));
+    useBookingStore.getState().setBookingData({ ...savedBooking, selectedSeats: savedSeats, expiresAt: Date.parse(savedBooking.paymentDeadlineAt) });
+    const view = mountPage();
+    await user.click(screen.getByRole('checkbox', { name: '전체 동의' }));
+    await user.click(screen.getAllByRole('button', { name: 'paymentDisclaimer.payNow' })[0]!);
+    await waitFor(() => expect(boundary.prepare).toHaveBeenCalledTimes(1));
+    expect(new URL(window.location.href).searchParams.get('resumeOrderId')).toBeNull();
+    boundary.search = new URLSearchParams(window.location.search);
+    view.rerender(<QueryClientProvider client={new QueryClient()}><ConfirmPage /></QueryClientProvider>);
+    expect(screen.getByRole('button', { name: 'paymentRecovery.reselectCta' })).toBeInTheDocument();
+    expect(boundary.requestPayment).not.toHaveBeenCalled();
+  });
+
   it('waits for old seat locks to release before allowing another selection', async () => {
     let releaseSeats!: () => void;
     boundary.unlock.mockImplementationOnce(() => new Promise<void>((resolve) => { releaseSeats = resolve; }));

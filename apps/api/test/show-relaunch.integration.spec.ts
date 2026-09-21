@@ -194,7 +194,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     expect(await f.service.getReservationByOrderId(first.orderId, f.userId)).toMatchObject({ checkoutPaymentMethod: method });
   });
 
-  it('locks the payment method on provider handoff while keeping same-method retries idempotent', async () => {
+  it('locks the method and refuses a second provider handoff while its result is unknown', async () => {
     const f = await checkoutFixture();
     const prepared = await f.service.prepareReservation(f.input, f.userId);
     const branchInput = {
@@ -207,8 +207,25 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
       overseasPaymentConsent: { required: true, agreed: true, agreementVersion: 'test' },
     } }, f.userId)).rejects.toThrow('결제수단이 고정된 예매');
     expect(await f.service.prepareReservation(f.input, f.userId)).toMatchObject({ reservationId: prepared.reservationId });
-    await expect(f.providerService.prepareTossPaymentBranch(branchInput)).resolves.toMatchObject({ orderId: prepared.orderId });
+    await expect(f.providerService.prepareTossPaymentBranch(branchInput)).rejects.toThrow('결제 상태');
     expect(await f.service.getReservationByOrderId(prepared.orderId, f.userId)).toMatchObject({ checkoutStartedAt: expect.any(String) });
+  });
+
+  it('allows only one of two tabs to hand the same order to the provider', async () => {
+    const f = await checkoutFixture();
+    const prepared = await f.service.prepareReservation(f.input, f.userId);
+    const branchInput = {
+      orderId: prepared.orderId, paymentMethod: f.input.paymentMethod, userId: f.userId,
+      successUrl: 'https://example.test/complete', failUrl: 'https://example.test/confirm',
+    };
+    const results = await Promise.allSettled([
+      f.providerService.prepareTossPaymentBranch(branchInput),
+      f.providerService.prepareTossPaymentBranch(branchInput),
+    ]);
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    expect(await f.service.getReservationByOrderId(prepared.orderId, f.userId)).toMatchObject({
+      status: 'PENDING_PAYMENT', checkoutStartedAt: expect.any(String),
+    });
   });
 
   it('cannot switch the method concurrently with handing the order to another provider route', async () => {

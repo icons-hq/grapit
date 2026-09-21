@@ -337,6 +337,7 @@ function ConfirmPageContent() {
     errorToastKeyRef.current = null;
     setPaymentReturnError(null);
     setIsProcessing(true);
+    let prepareSucceeded = false;
     const requestedBooking = useBookingStore.getState();
     const isCurrentBookingRequest = () => {
       const current = useBookingStore.getState();
@@ -379,6 +380,7 @@ function ConfirmPageContent() {
         bookingPolicy,
         paymentMethod,
       });
+      prepareSucceeded = true;
       // A late prepare response belongs only to the selection that requested it.
       if (!isCurrentBookingRequest()) {
         if (!isResumingPendingPayment) {
@@ -418,6 +420,16 @@ function ConfirmPageContent() {
       const errorMessage =
         err instanceof Error ? err.message : confirmCopy.paymentRequestFailed;
       if (isLockFailureMessage(errorMessage)) {
+        if (!prepareSucceeded && !isResumingPendingPayment && err instanceof Error
+          && 'statusCode' in err && err.statusCode === 409) {
+          // This specific prepare precondition failed before an order was
+          // created. A timeout/5xx or an error after prepare keeps its identity.
+          const rejectedUrl = new URL(window.location.href);
+          if (rejectedUrl.searchParams.get('resumeOrderId') === orderId) {
+            rejectedUrl.searchParams.delete('resumeOrderId');
+            window.history.replaceState(null, '', `${rejectedUrl.pathname}${rejectedUrl.search}`);
+          }
+        }
         setLockFailureMessage(getLocalizedLockFailureMessage(errorMessage, confirmCopy));
         return;
       }

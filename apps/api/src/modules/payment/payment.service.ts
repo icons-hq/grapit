@@ -381,6 +381,7 @@ export class PaymentService {
         reentryGraceUntilAt: reservations.reentryGraceUntilAt,
         createdAt: reservations.createdAt,
         checkoutPaymentMethod: reservations.checkoutPaymentMethod,
+        checkoutStartedAt: reservations.checkoutStartedAt,
       })
       .from(reservations)
       .where(
@@ -401,6 +402,10 @@ export class PaymentService {
 
     if (reservation.status !== 'PENDING_PAYMENT') {
       throw new ConflictException('이미 처리된 주문 ID입니다. 새 주문 ID로 다시 시도해주세요.');
+    }
+
+    if (paymentMethod && reservation.checkoutStartedAt) {
+      throw new ConflictException('결제 상태를 확인 중입니다. 기존 예매를 다시 확인해주세요.');
     }
 
     if (paymentMethod && (
@@ -455,6 +460,7 @@ export class PaymentService {
         eq(reservations.id, reservation.id),
         eq(reservations.status, 'PENDING_PAYMENT'),
         eq(reservations.paymentDeadlineAt, reservation.paymentDeadlineAt),
+        ...(paymentMethod ? [sql`${reservations.checkoutStartedAt} is null`] : []),
         ...(paymentMethod ? [sql`${reservations.checkoutPaymentMethod} = ${JSON.stringify(reservation.checkoutPaymentMethod)}::jsonb`] : []),
       ))
       .returning({ id: reservations.id });
@@ -496,12 +502,13 @@ export class PaymentService {
 
     if (paymentMethod) {
       const [started] = await this.db.update(reservations).set({
-        checkoutStartedAt: sql`coalesce(${reservations.checkoutStartedAt}, ${now})`,
+        checkoutStartedAt: now,
         updatedAt: now,
       }).where(and(
         eq(reservations.id, reservation.id),
         eq(reservations.status, 'PENDING_PAYMENT'),
         eq(reservations.paymentDeadlineAt, effectiveDeadlineAt),
+        sql`${reservations.checkoutStartedAt} is null`,
         sql`${reservations.checkoutPaymentMethod} = ${JSON.stringify(reservation.checkoutPaymentMethod)}::jsonb`,
       )).returning({ id: reservations.id });
       if (!started) {
