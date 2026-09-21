@@ -450,6 +450,8 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
 
   it('keeps a frozen full refund with an in-progress receipt pending without another POST or retry exhaustion', async () => {
     const f = await cancellationPurchase();
+    await db.insert(seatInventories).values([f.first, f.second].map((item) => ({ showtimeId: f.showtimeId,
+      seatId: item.seatId, seatKey: item.seatKey, floorKey: item.floorKey, status: 'sold' as const })));
     await db.update(reservations).set({ createdAt: new Date(Date.now() - 2 * 86400000) }).where(eq(reservations.id, f.first.reservationId));
     const snapshot = { status: 'DONE', totalAmount: 104000, balanceAmount: 104000, isPartialCancelable: true,
       cancels: [] as Array<{ cancelAmount: number; cancelReason: string; cancelStatus: string }> };
@@ -466,10 +468,18 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     const [refund] = await db.select().from(schema.refunds).where(eq(schema.refunds.reservationId, f.first.reservationId));
     const worker = new RefundCancelRetryWorker(db, provider as never, finalizer);
     await worker.handleJob({ refundId: refund!.id, attempt: 1 });
+    const [rechecked] = await db.select().from(schema.refunds).where(eq(schema.refunds.id, refund!.id));
+    expect(rechecked?.sentToPgAt).toEqual(refund!.sentToPgAt);
+    expect(rechecked?.processingAtPgAt).toEqual(refund!.processingAtPgAt);
     expect(cancel).toHaveBeenCalledTimes(1);
     await db.update(schema.refunds).set({ retryCount: 3 }).where(eq(schema.refunds.id, refund!.id));
     await worker.handleJob({ refundId: refund!.id, attempt: 4 });
     expect((await db.select().from(schema.refunds).where(eq(schema.refunds.id, refund!.id)))[0]?.status).toBe('processing_at_pg');
+    snapshot.cancels[0]!.cancelStatus = 'DONE'; snapshot.status = 'PARTIAL_CANCELED'; snapshot.balanceAmount = 4000;
+    expect(await worker.handleJob({ refundId: refund!.id, attempt: 5 })).toMatchObject({ status: 'completed' });
+    const [completed] = await db.select().from(schema.refunds).where(eq(schema.refunds.id, refund!.id));
+    expect(completed?.sentToPgAt).toEqual(refund!.sentToPgAt);
+    expect(completed?.processingAtPgAt).toEqual(refund!.processingAtPgAt);
   });
 
   it.each(['one seat', 'last seat'] as const)('keeps a rejected full refund separate from a later %s cancellation webhook', async (selection) => {

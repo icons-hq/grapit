@@ -20,21 +20,21 @@ describe('AdminPatchNotesPreview', () => {
     ).toHaveAttribute('href', '/admin/patch-notes');
 
     const article = screen.getByRole('article', {
-      name: 'PR #193 공연 예매·결제·특전 안정성 개선',
+      name: 'PR #226 좌석별 취소와 환불 상태·금액 안내',
     });
 
-    expect(within(article).getByText('PR #193')).toBeInTheDocument();
+    expect(within(article).getByText('PR #226')).toBeInTheDocument();
     expect(
-      within(article).getByText('공연 예매·결제·특전 안정성 개선'),
+      within(article).getByText('좌석별 취소와 환불 상태·금액 안내'),
     ).toBeInTheDocument();
     expect(
-      within(article).getByText(/중복 승인과 늦은 취소/),
+      within(article).getByText(/선택한 좌석의 환불액과 남을 티켓/),
     ).toBeInTheDocument();
     expect(
-      within(article).getByText(/현재 유효한 티켓이 있는 좌석/),
+      within(article).getByText(/환불 처리 단계와 좌석 재판매 대기/),
     ).toBeInTheDocument();
     expect(
-      within(article).getByText(/API\/Web\/Shared\/edge unit tests/),
+      within(article).getByText(/API\/Web\/shared unit tests/),
     ).toBeInTheDocument();
   });
 });

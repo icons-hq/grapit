@@ -261,7 +261,7 @@ export class PaymentCancellationFinalizerService {
           .update(refunds)
           .set({
             status: 'completed',
-            sentToPgAt: now,
+            sentToPgAt: sql`coalesce(${refunds.sentToPgAt}, ${now.toISOString()}::timestamptz)`,
             completedAt: now,
             updatedAt: now,
             resultCode: input.providerResponse?.status ?? 'CANCELED',

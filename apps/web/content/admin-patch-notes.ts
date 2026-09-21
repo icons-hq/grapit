@@ -14,6 +14,27 @@ export interface AdminPatchNote {
 
 const notes = [
   {
+    id: 'pr-226-seat-cancellation-and-refunds',
+    prNumber: 226,
+    title: '좌석별 취소와 환불 상태·금액 안내',
+    summary:
+      '고객이 선택한 좌석의 환불액과 남을 티켓을 확인해 취소하고, 남은 QR과 원거래 금액을 유지하도록 개선했습니다.',
+    highlights: [
+      '취소할 좌석·수수료·원화와 결제 통화 환불액·남는 티켓을 함께 확인',
+      '거절·응답 유실·지연 알림에서도 같은 취소 요청의 결과와 권리를 보존',
+      '환불 처리 단계와 좌석 재판매 대기를 구분하고 마지막 좌석의 수수료 유지',
+      '활성 티켓이 없는 예매의 이메일 재발송 숨김과 모바일 취소 확인 개선',
+    ],
+    category: 'feature',
+    date: '2026-09-21',
+    githubUrl: 'https://github.com/icons-hq/grapit/pull/226',
+    evidence: [
+      'API/Web/shared unit tests and PostgreSQL transaction regressions',
+      'Desktop/mobile browser QA with isolated provider simulator',
+      'Standards and Spec review; API/Web build',
+    ],
+  },
+  {
     id: 'pr-196-partial-cancellation-reconciliation',
     prNumber: 196,
     title: '부분취소 예매 조회 복원과 대조 기준 정정',

@@ -473,7 +473,7 @@ export class RefundCancelRetryWorker implements OnModuleInit {
       .update(refunds)
       .set({
         status: 'sent_to_pg',
-        sentToPgAt: new Date(),
+        sentToPgAt: sql`coalesce(${refunds.sentToPgAt}, ${new Date().toISOString()}::timestamptz)`,
         retryCount,
         resultCode: getRefundErrorCode(error),
         resultMessage: getRefundErrorMessage(error),
@@ -500,8 +500,8 @@ export class RefundCancelRetryWorker implements OnModuleInit {
       .update(refunds)
       .set({
         status: 'processing_at_pg',
-        sentToPgAt: new Date(),
-        processingAtPgAt: new Date(),
+        sentToPgAt: sql`coalesce(${refunds.sentToPgAt}, ${new Date().toISOString()}::timestamptz)`,
+        processingAtPgAt: sql`coalesce(${refunds.processingAtPgAt}, ${new Date().toISOString()}::timestamptz)`,
         retryCount,
         resultCode: response.status,
         resultMessage: 'PG cancel accepted and is processing',

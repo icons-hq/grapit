@@ -1,6 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SQL } from 'drizzle-orm';
+import { SQL } from 'drizzle-orm';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import {
   bookingOperationAuditLogs,
@@ -364,7 +364,7 @@ describe('PaymentCancellationFinalizerService', () => {
     expect(transaction.updateCalls.find((call) => call.table === refunds)?.values)
       .toMatchObject({
         status: 'completed',
-        sentToPgAt: NOW,
+        sentToPgAt: expect.any(SQL),
         completedAt: NOW,
         updatedAt: NOW,
         resultCode: 'CANCELED',

@@ -1317,7 +1317,10 @@ export class RefundService {
   ): Promise<RefundRecord> {
     const [updated] = await this.db
       .update(refunds)
-      .set({ ...values, ...(values.providerMetadata ? {
+      .set({ ...values,
+        ...(values.sentToPgAt ? { sentToPgAt: sql`coalesce(${refunds.sentToPgAt}, ${values.sentToPgAt.toISOString()}::timestamptz)` } : {}),
+        ...(values.processingAtPgAt ? { processingAtPgAt: sql`coalesce(${refunds.processingAtPgAt}, ${values.processingAtPgAt.toISOString()}::timestamptz)` } : {}),
+        ...(values.providerMetadata ? {
         providerMetadata: sql`coalesce(${refunds.providerMetadata}, '{}'::jsonb) || ${JSON.stringify(values.providerMetadata)}::jsonb`,
       } : {}) })
       .where(and(eq(refunds.id, refundId), ne(refunds.status, 'completed'),
