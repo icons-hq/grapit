@@ -23,6 +23,7 @@ export * from './types/admin-operations.types';
 export * from './seat-identity';
 export * from './field-check-in-ingress';
 export * from './catalog-freshness';
+export * from './checkout-payment-method';
 
 // Constants
 export * from './constants/index';

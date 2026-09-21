@@ -18,7 +18,8 @@ import { Loader2 } from 'lucide-react';
 import { apiClient } from '@/lib/api-client';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { getVisibleCopy, resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
-import { TICKET_SERVICE_FEE_KRW } from '@grabit/shared';
+import { COUNTRY_OPTIONS, TICKET_SERVICE_FEE_KRW, isForeignCheckout, isSameCheckoutPaymentMethod } from '@grabit/shared';
+import { getCheckoutCopy } from '@/lib/booking/checkout-copy';
 import type {
   FloorAwareSeatSelection,
   PaymentMethod,
@@ -27,7 +28,7 @@ import type {
   ProviderChargeQuote,
 } from '@grabit/shared';
 
-const OVERSEAS_PAYMENT_CONSENT_VERSION = '2026-05-08';
+const OVERSEAS_PAYMENT_CONSENT_VERSION = '2026-09-21';
 const USPAY_VARIANT_KEY = 'uspay';
 const PAYPAL_WIDGET_USD_ESTIMATE_RATE = 0.00068;
 const FOREIGN_WALLET_CODES = new Set(['ALIPAY', 'ALIPAY_PLUS', 'TRUEMONEY', 'PAYPAL', '페이팔']);
@@ -57,13 +58,6 @@ const FOREIGN_PROVIDER_BY_CODE = {
   페이팔: 'PAYPAL',
 } as const satisfies Record<string, PaymentProvider>;
 
-const LOCALE_TO_COUNTRY = {
-  ko: 'KR',
-  en: 'US',
-  th: 'TH',
-  'zh-CN': 'CN',
-} as const;
-type PaymentWidgetLocale = keyof typeof LOCALE_TO_COUNTRY;
 
 type PaymentMethodWidget = Awaited<ReturnType<TossPaymentsWidgets['renderPaymentMethods']>>;
 type AgreementWidget = Awaited<ReturnType<TossPaymentsWidgets['renderAgreement']>>;
@@ -83,8 +77,9 @@ interface TossPaymentWidgetProps {
   customerName: string;
   customerEmail: string;
   customerMobilePhone?: string;
+  customerCountry?: string;
   selectedSeats: FloorAwareSeatSelection[];
-  resumeOrderId?: string;
+  initialPaymentMethod?: PaymentMethod;
   onReady: () => void;
   onPaymentMethodChange?: (selection: PaymentMethodSelection) => void;
   onWidgetAgreementChange?: (agreed: boolean) => void;
@@ -164,12 +159,6 @@ function createOverseasConsent(): PaymentMethod['overseasPaymentConsent'] {
   };
 }
 
-function resolvePaymentWidgetLocale(locale: string | undefined): PaymentWidgetLocale {
-  const visibleCopyLocale = resolveVisibleCopyLocale(locale);
-  return visibleCopyLocale in LOCALE_TO_COUNTRY
-    ? (visibleCopyLocale as PaymentWidgetLocale)
-    : 'ko';
-}
 
 export function resolvePaymentWidgetVariantKey(): string {
   return resolvePaymentWidgetVariantKeys()[0] ?? 'DEFAULT';
@@ -350,6 +339,13 @@ export function resolvePaymentMethodSelection(
     };
   }
 
+  if (normalizedCode === 'TRANSFER') {
+    return {
+      code, requestFlow: 'widget', requiresOverseasDisclaimer: false,
+      paymentMethod: { method: 'TRANSFER', provider: 'CARD', currency: 'KRW' },
+    };
+  }
+
   if (code in SIMPLE_PAY_PROVIDER_BY_CODE) {
     return {
       code,
@@ -477,6 +473,7 @@ export function buildWidgetPaymentRequest({
   customerEmail,
   customerName,
   customerMobilePhone,
+  customerCountry,
   orderName,
   locale,
   selectedSeats = [],
@@ -486,11 +483,11 @@ export function buildWidgetPaymentRequest({
   customerEmail: string;
   customerName: string;
   customerMobilePhone?: string;
+  customerCountry?: string;
   orderName: string;
   locale: string;
   selectedSeats?: FloorAwareSeatSelection[];
 }): WidgetPaymentRequestPayload {
-  const resolvedLocale = resolvePaymentWidgetLocale(locale);
   const successUrl = branch.providerChargeQuote && branch.provider === 'PAYPAL'
     ? appendProviderChargeReturnParams({
         successUrl: branch.successUrl,
@@ -523,6 +520,9 @@ export function buildWidgetPaymentRequest({
   }
 
   if (branch.method === 'FOREIGN_EASY_PAY') {
+    if (!COUNTRY_OPTIONS.some(({ value }) => value === customerCountry)) {
+      throw new Error(getCheckoutCopy(resolveVisibleCopyLocale(locale)).countryRequired);
+    }
     const products = branch.providerChargeQuote
       ? buildProviderChargeProducts({
           selectedSeats,
@@ -542,7 +542,7 @@ export function buildWidgetPaymentRequest({
     return {
       ...baseRequest,
       foreignEasyPay: {
-        country: LOCALE_TO_COUNTRY[resolvedLocale],
+        country: customerCountry!,
         products,
       },
     };
@@ -562,8 +562,9 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
       customerName,
       customerEmail,
       customerMobilePhone,
+      customerCountry,
       selectedSeats,
-      resumeOrderId,
+      initialPaymentMethod,
       onReady,
       onPaymentMethodChange,
       onWidgetAgreementChange,
@@ -571,11 +572,14 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
     },
     ref,
   ) {
-    const locale = resolvePaymentWidgetLocale(useLocale());
+    const locale = resolveVisibleCopyLocale(useLocale());
     const widgetCopy = getVisibleCopy(locale).bookingExtra.widget;
+    const checkoutCopy = getCheckoutCopy(locale);
     const paymentWidgetVariantKeys = resolvePaymentWidgetVariantKeys();
     const [paymentWidgetVariantKey, setPaymentWidgetVariantKey] = useState(
-      paymentWidgetVariantKeys[0] ?? 'DEFAULT',
+      () => initialPaymentMethod && isForeignCheckout(initialPaymentMethod)
+        ? paymentWidgetVariantKeys.find(isForeignPaymentWidgetVariant) ?? USPAY_VARIANT_KEY
+        : paymentWidgetVariantKeys[0] ?? 'DEFAULT',
     );
     const [widgetState, setWidgetState] = useState<PaymentWidgetState | null>(null);
     const [isLoading, setIsLoading] = useState(true);
@@ -660,6 +664,15 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
           throw new Error(widgetCopy.widgetLoading);
         }
 
+        if (prepareResult && (prepareResult.orderId !== orderId
+          || !isSameCheckoutPaymentMethod(prepareResult.paymentMethod, selection.paymentMethod))) {
+          throw new Error(checkoutCopy.methodChanged);
+        }
+        if (selection.paymentMethod.method === 'FOREIGN_EASY_PAY'
+          && !COUNTRY_OPTIONS.some(({ value }) => value === customerCountry)) {
+          throw new Error(checkoutCopy.countryRequired);
+        }
+
         const requiresProviderChargeQuote = usesProviderChargeQuoteForPaymentMethod(
           selection.paymentMethod,
         );
@@ -683,9 +696,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
 
         const failUrl = new URL(confirmUrl);
         failUrl.searchParams.set('error', 'true');
-        if (resumeOrderId) {
-          failUrl.searchParams.set('resumeOrderId', resumeOrderId);
-        }
+        failUrl.searchParams.set('resumeOrderId', orderId);
         const branchPaymentMethod = prepareResult?.paymentMethod ?? selection.paymentMethod;
         const branch = await apiClient.post<TossPaymentBranchResponse>('/api/v1/payments/branch', {
           orderId,
@@ -734,11 +745,17 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
           customerEmail,
           customerName,
           customerMobilePhone,
+          customerCountry,
           orderName,
           locale,
           selectedSeats,
         });
 
+        // The buyer can change an iframe selection while the branch request is in flight.
+        // Never send its amount/return contract to a different provider selection.
+        if (!isSameCheckoutPaymentMethod(selection.paymentMethod, selectedPaymentMethodRef.current.paymentMethod)) {
+          throw new Error(checkoutCopy.methodChanged);
+        }
         await widgets.requestPayment(
           requestPayload as Parameters<TossPaymentsWidgets['requestPayment']>[0],
         );
@@ -751,14 +768,14 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
       customerEmail,
       customerName,
       customerMobilePhone,
+      customerCountry,
       orderName,
       locale,
       isLoading,
       selectedSeats,
-      customerKey,
-      resumeOrderId,
       onPaymentDeadlineChange,
       widgetCopy,
+      checkoutCopy,
     ]);
 
     useEffect(() => {
@@ -930,7 +947,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
                   aria-selected={selected}
                   className={`h-10 rounded-md px-3 text-sm font-semibold transition ${
                     selected
-                      ? 'bg-white text-gray-950 shadow-sm'
+                      ? 'bg-background text-primary ring-1 ring-primary/30'
                       : 'text-gray-600 hover:text-gray-950'
                   }`}
                   onClick={() => changePaymentWidgetVariant(variantKey)}

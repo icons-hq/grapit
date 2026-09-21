@@ -162,7 +162,7 @@
     "paymentDeadline": {
       "badge": "Payment deadline",
       "title": "Please complete payment before the countdown ends",
-      "helper": "{threshold} or less switches the payment state to critical.",
+      "helper": "Complete payment and card or wallet authentication before the time runs out.",
       "criticalHelper": "{threshold} or less remaining. Finish card or overseas wallet verification now.",
       "seatHoldHelper": "Seat hold expires in {time}"
     },
@@ -178,12 +178,12 @@
     },
     "paymentRecovery": {
       "expiredTitle": "The payment time has expired",
-      "expiredBody": "Choose your seats again and start a new payment attempt.",
+      "expiredBody": "Check this booking in My tickets first. Choose seats again only after the unpaid booking has ended.",
       "expiredCta": "Payment time expired",
       "reselectCta": "Choose seats again",
       "reselectPrompt": "Please choose your seats again",
       "failedTitle": "Payment request failed",
-      "failedBody": "The payment was not completed. Your seat selection may have expired, so choose your seats again before retrying payment.",
+      "failedBody": "Check the existing booking, then retry with the same payment method.",
       "providerMessagePrefix": "Payment provider response",
       "pendingTitle": "Waiting for overseas payment authorization",
       "pendingBody": "Once the wallet provider finishes authorization, you can resume the same order status check."
@@ -196,19 +196,19 @@
       },
       "expired": {
         "title": "The payment time has expired.",
-        "body": "Choose your seats again and start a new payment attempt."
+        "body": "Check this booking in My tickets first. Choose seats again only after the unpaid booking has ended."
       },
       "aborted": {
         "title": "The payment was interrupted or not approved.",
-        "body": "Check your payment method or try another one."
+        "body": "Check the existing booking, then retry with the same payment method."
       },
       "cancelled": {
         "title": "The payment was canceled.",
-        "body": "To pay again, start a new payment from the booking page."
+        "body": "If the existing booking is unpaid, you can retry the same order on this page."
       },
       "unknown": {
         "title": "The payment could not be completed.",
-        "body": "Check your payment method or try another one."
+        "body": "Check the existing booking, then retry with the same payment method."
       }
     }
   },

@@ -18,6 +18,7 @@ import { useBookingStore } from '@/stores/use-booking-store';
 
 const {
   lockSeatMutateMock,
+  readOrderMock,
   prepareReservationMock,
   requestPaymentMock,
   cancelPendingReservationMock,
@@ -32,6 +33,7 @@ const {
   searchParamsRef,
 } = vi.hoisted(() => ({
   lockSeatMutateMock: vi.fn(),
+  readOrderMock: vi.fn(),
   prepareReservationMock: vi.fn(),
   requestPaymentMock: vi.fn(),
   cancelPendingReservationMock: vi.fn(),
@@ -100,6 +102,8 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => searchParamsRef.current,
 }));
 
+vi.mock('@/lib/api-client', () => ({ apiClient: { get: readOrderMock } }));
+
 vi.mock('@/hooks/use-runtime-flags', () => ({
   useRuntimeFlags: useRuntimeFlagsMock,
 }));
@@ -132,7 +136,7 @@ vi.mock('@/hooks/use-booking', () => ({
   }),
   useLockSeat: () => ({ mutate: lockSeatMutateMock, isPending: false }),
   useUnlockSeat: () => ({ mutate: vi.fn(), isPending: false }),
-  useUnlockAllSeats: () => ({ mutate: vi.fn(), isPending: false }),
+  useUnlockAllSeats: () => ({ mutate: vi.fn(), mutateAsync: vi.fn().mockResolvedValue(undefined), isPending: false }),
   useCancelPendingReservation: (options?: { showErrorToast?: boolean }) => ({
     mutate: cancelPendingReservationMock,
     mutateAsync: options?.showErrorToast === false
@@ -327,6 +331,19 @@ function seedBookingFlow() {
 
 describe('runtime booking disabled UI', () => {
   beforeEach(() => {
+    readOrderMock.mockImplementation(async (path: string) => {
+      const orderId = new URL(path, 'https://example.test').searchParams.get('orderId');
+      const store = useBookingStore.getState();
+      if (!store.selectedSeats.length) return null;
+      return {
+        id: 'reservation-1', tossOrderId: orderId, status: 'PENDING_PAYMENT',
+        performanceId: store.performanceId, showtimeId: store.selectedShowtimeId,
+        seats: store.selectedSeats, performanceTitle: store.performanceTitle,
+        showDateTime: store.showDateTime, venue: store.venue, posterUrl: store.posterUrl,
+        paymentDeadlineAt: new Date(Date.now() + 7 * 60 * 1000).toISOString(),
+        paymentInfo: null,
+      };
+    });
     lockSeatMutateMock.mockReset();
     prepareReservationMock.mockReset();
     requestPaymentMock.mockReset();
@@ -726,7 +743,7 @@ describe('runtime booking disabled UI', () => {
     });
   });
 
-  it('cancels the prepared reservation and rotates orderId after Toss requestPayment rejects', async () => {
+  it('keeps the prepared order after an ambiguous SDK rejection so retry cannot duplicate it', async () => {
     const user = userEvent.setup();
     const preparedOrderIds: string[] = [];
     useRuntimeFlagsMock.mockReturnValue({
@@ -756,8 +773,10 @@ describe('runtime booking disabled UI', () => {
     await user.click(firstPaymentButton);
 
     await waitFor(() => {
-      expect(cancelPendingReservationAsyncMock).toHaveBeenCalledWith('reservation-1');
+      expect(requestPaymentMock).toHaveBeenCalledTimes(1);
+      expect(screen.getAllByRole('button', { name: '결제하기' })[0]).toBeEnabled();
     });
+    expect(cancelPendingReservationAsyncMock).not.toHaveBeenCalled();
 
     await user.click(screen.getAllByRole('button', { name: '결제하기' })[0]!);
 
@@ -766,7 +785,7 @@ describe('runtime booking disabled UI', () => {
     });
     expect(requestPaymentMock).toHaveBeenCalledTimes(2);
     expect(preparedOrderIds).toHaveLength(2);
-    expect(preparedOrderIds[1]).not.toBe(preparedOrderIds[0]);
+    expect(preparedOrderIds[1]).toBe(preparedOrderIds[0]);
   });
 
   it('keeps a resumed pending reservation when Toss requestPayment rejects', async () => {
@@ -846,7 +865,7 @@ describe('runtime booking disabled UI', () => {
     expect(cancelPendingReservationMock).not.toHaveBeenCalled();
   });
 
-  it('resets processing and rotates orderId when Toss returns to failUrl after request handoff', async () => {
+  it('resets processing and retains the order when Toss returns to failUrl after request handoff', async () => {
     const user = userEvent.setup();
     const preparedOrderIds: string[] = [];
     useRuntimeFlagsMock.mockReturnValue({
@@ -888,7 +907,7 @@ describe('runtime booking disabled UI', () => {
     await waitFor(() => {
       expect(screen.getAllByRole('button', { name: '결제하기' })[0]).toBeEnabled();
     });
-    expect(cancelPendingReservationMock).toHaveBeenCalledWith('reservation-1');
+    expect(cancelPendingReservationMock).not.toHaveBeenCalled();
     searchParamsRef.current = new URLSearchParams();
     view.rerender(<ConfirmPage />);
 
@@ -897,40 +916,25 @@ describe('runtime booking disabled UI', () => {
     await waitFor(() => {
       expect(prepareReservationMock).toHaveBeenCalledTimes(2);
     });
-    expect(preparedOrderIds[1]).not.toBe(preparedOrderIds[0]);
+    expect(preparedOrderIds[1]).toBe(preparedOrderIds[0]);
   });
 
-  it('shows payment failure recovery instead of an indefinite loader when Toss failUrl returns without booking state', async () => {
+  it('shows a recoverable lookup state when a return order cannot be found instead of creating another order', async () => {
     const user = userEvent.setup();
-    useRuntimeFlagsMock.mockReturnValue({
-      bookingEnabled: true,
-      isLoading: false,
-      bookingDisabledMessage: '예매는 추후 오픈 예정입니다',
-    });
+    useRuntimeFlagsMock.mockReturnValue({ bookingEnabled: true, isLoading: false, bookingDisabledMessage: '' });
     useBookingStore.getState().resetBooking();
     setCurrentUserRole('user');
-    searchParamsRef.current = new URLSearchParams({
-      error: 'true',
-      code: 'INVALID_PAYMENT_METHOD',
-      message: 'Payment has already been requested.',
-      orderId: 'GRP-1780542343036-SL6OU',
-    });
-
+    searchParamsRef.current = new URLSearchParams({ error: 'true', code: 'INVALID_PAYMENT_METHOD', orderId: 'GRP-missing' });
     renderWithQuery(<ConfirmPage />);
-
-    expect(await screen.findByRole('heading', { name: '결제를 완료하지 못했습니다.' }))
-      .toBeInTheDocument();
-    expect(screen.getByText('결제 수단 상태를 확인하거나 다른 결제 수단으로 다시 시도해주세요.'))
-      .toBeInTheDocument();
-    expect(screen.getByText('결제사 응답: Payment has already been requested.')).toBeInTheDocument();
-    expect(routerReplaceMock).not.toHaveBeenCalled();
-
-    await user.click(screen.getByRole('button', { name: '좌석 다시 선택하기' }));
-
-    expect(routerReplaceMock).toHaveBeenCalledWith('/booking/performance-disabled');
+    expect(await screen.findByRole('heading', { name: '예매 상태를 확인하지 못했어요' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '상태 다시 확인' })).toBeEnabled();
+    expect(prepareReservationMock).not.toHaveBeenCalled();
+    expect(cancelPendingReservationMock).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: '내 티켓' }));
+    expect(routerReplaceMock).toHaveBeenCalledWith('/mypage?tab=reservations');
   });
 
-  it('handles repeated Toss cancel returns with the same error key after a new payment request', async () => {
+  it('handles repeated Toss cancel returns while retaining the same prepared order', async () => {
     const user = userEvent.setup();
     const preparedOrderIds: string[] = [];
     useRuntimeFlagsMock.mockReturnValue({
@@ -969,7 +973,7 @@ describe('runtime booking disabled UI', () => {
     await waitFor(() => {
       expect(screen.getAllByRole('button', { name: '결제하기' })[0]).toBeEnabled();
     });
-    expect(cancelPendingReservationMock).toHaveBeenCalledWith('reservation-1');
+    expect(cancelPendingReservationMock).not.toHaveBeenCalled();
     searchParamsRef.current = new URLSearchParams();
     view.rerender(<ConfirmPage />);
 
@@ -977,7 +981,7 @@ describe('runtime booking disabled UI', () => {
     await waitFor(() => {
       expect(prepareReservationMock).toHaveBeenCalledTimes(2);
     });
-    expect(preparedOrderIds[1]).not.toBe(preparedOrderIds[0]);
+    expect(preparedOrderIds[1]).toBe(preparedOrderIds[0]);
 
     searchParamsRef.current = new URLSearchParams({
       error: 'true',
@@ -989,7 +993,7 @@ describe('runtime booking disabled UI', () => {
     await waitFor(() => {
       expect(screen.getAllByRole('button', { name: '결제하기' })[0]).toBeEnabled();
     });
-    expect(cancelPendingReservationMock).toHaveBeenCalledWith('reservation-2');
+    expect(cancelPendingReservationMock).not.toHaveBeenCalled();
   });
 
   it('switches the confirm CTA to 결제하기 after required agreements when booking is enabled', async () => {

@@ -9,7 +9,8 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { eq, and, or, sql, desc, inArray, asc, ne } from 'drizzle-orm';
+import { eq, and, or, sql, desc, inArray, asc, ne, isNull } from 'drizzle-orm';
+import { isSameCheckoutPaymentMethod } from '@grabit/shared';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import { noActiveTicketItemOnSeat } from '../../database/seat-ownership.js';
 import {
@@ -233,6 +234,7 @@ function mapPaymentToReservationPaymentInfo(
   payment: Pick<
     typeof payments.$inferSelect,
     'paymentKey' | 'method' | 'amount' | 'status' | 'paidAt' | 'provider' | 'currency'
+    | 'providerChargeCurrency' | 'providerChargeAmountMinor' | 'providerChargeRate' | 'providerChargeQuotedAt'
   >,
   paymentDeadlineAt: Date | null | undefined,
 ): PaymentInfo {
@@ -245,6 +247,27 @@ function mapPaymentToReservationPaymentInfo(
     paidAt: payment.paidAt?.toISOString() ?? null,
     paymentDeadlineAt: paymentDeadlineAt?.toISOString() ?? null,
     ...(paymentMethod ? { paymentMethod } : {}),
+    providerChargeQuote: mapStoredChargeQuote(payment),
+  };
+}
+
+function mapStoredChargeQuote(snapshot: {
+  providerChargeCurrency?: string | null;
+  providerChargeAmountMinor?: number | null;
+  providerChargeRate?: string | null;
+  providerChargeQuotedAt?: Date | null;
+}): ProviderChargeQuote | undefined {
+  if (
+    snapshot.providerChargeCurrency !== 'USD'
+    || !Number.isSafeInteger(snapshot.providerChargeAmountMinor)
+    || (snapshot.providerChargeAmountMinor ?? 0) <= 0
+    || !snapshot.providerChargeRate
+    || !snapshot.providerChargeQuotedAt
+  ) return undefined;
+  const amountMinor = snapshot.providerChargeAmountMinor!;
+  return {
+    currency: 'USD', amountMinor, amountDecimal: (amountMinor / 100).toFixed(2),
+    rate: snapshot.providerChargeRate, quotedAt: snapshot.providerChargeQuotedAt.toISOString(),
   };
 }
 
@@ -1039,6 +1062,8 @@ export class ReservationService {
         tossOrderId: reservations.tossOrderId,
         totalAmount: reservations.totalAmount,
         paymentDeadlineAt: reservations.paymentDeadlineAt,
+        checkoutPaymentMethod: reservations.checkoutPaymentMethod,
+        checkoutStartedAt: reservations.checkoutStartedAt,
         providerChargeCurrency: reservations.providerChargeCurrency,
         providerChargeAmountMinor: reservations.providerChargeAmountMinor,
         providerChargeRate: reservations.providerChargeRate,
@@ -1104,6 +1129,48 @@ export class ReservationService {
 
       const existingSeatIds = existingSeats.map((seat) => seat.seatKey);
       await this.bookingService.assertOwnedSeatLocks(userId, existing.showtimeId, existingSeatIds);
+      const methodChanged = existing.checkoutPaymentMethod
+        && !isSameCheckoutPaymentMethod(existing.checkoutPaymentMethod, dto.paymentMethod);
+      const needsQuote = Boolean(existing.checkoutPaymentMethod)
+        && this.usesProviderChargeQuoteForPaymentMethod(dto.paymentMethod)
+        && !mapStoredChargeQuote(existing);
+      if (methodChanged || needsQuote) {
+        if (existing.checkoutStartedAt) {
+          throw new ConflictException('결제수단이 고정된 예매입니다. 기존 결제수단으로 상태를 확인해주세요.');
+        }
+        const nextCharge = this.buildForeignProviderChargePrepare({
+          paymentMethod: dto.paymentMethod, reservationPayableAmount: expectedAmount, now: new Date(),
+        });
+        const [updated] = await this.db.update(reservations).set({
+          checkoutPaymentMethod: dto.paymentMethod,
+          providerChargeCurrency: null,
+          providerChargeAmountMinor: null,
+          providerChargeRate: null,
+          providerChargeQuotedAt: null,
+          ...(nextCharge?.reservationQuoteValues ?? {}),
+          updatedAt: new Date(),
+        }).where(and(
+          eq(reservations.id, existing.id),
+          eq(reservations.status, 'PENDING_PAYMENT'),
+          isNull(reservations.checkoutStartedAt),
+          existing.checkoutPaymentMethod
+            ? sql`${reservations.checkoutPaymentMethod} = ${JSON.stringify(existing.checkoutPaymentMethod)}::jsonb`
+            : isNull(reservations.checkoutPaymentMethod),
+        )).returning({ id: reservations.id });
+        if (!updated) {
+          throw new ConflictException('예매 상태가 변경되었습니다. 기존 예매를 다시 확인해주세요.');
+        }
+        return {
+          reservationId: existing.id, orderId: dto.orderId, queueAdmission: dto.queueAdmission,
+          paymentDeadlineAt: existing.paymentDeadlineAt?.toISOString() ?? dto.paymentDeadlineAt,
+          bookingPolicy: existingShowtime.bookingPolicy, paymentMethod: dto.paymentMethod,
+          ...(nextCharge ? {
+            checkoutEnabled: nextCharge.checkoutEnabled,
+            disabledReason: nextCharge.disabledReason,
+            providerChargeQuote: nextCharge.providerChargeQuote,
+          } : {}),
+        };
+      }
       const existingForeignEasyPayCharge = this.buildStoredForeignProviderCharge({
         paymentMethod: dto.paymentMethod,
         providerChargeCurrency: existing.providerChargeCurrency,
@@ -1183,6 +1250,7 @@ export class ReservationService {
           reservationNumber,
           status: 'PENDING_PAYMENT',
           totalAmount: expectedAmount,
+          checkoutPaymentMethod: dto.paymentMethod,
           queueSessionId: dto.queueAdmission?.queueSessionId,
           admissionToken: dto.queueAdmission?.admissionToken,
           refreshFamilyId: dto.queueAdmission?.refreshFamilyId,
@@ -1369,6 +1437,12 @@ export class ReservationService {
           reentryGraceUntilAt: reservations.reentryGraceUntilAt,
           paymentDeadlineAt: reservations.paymentDeadlineAt,
           tossOrderId: reservations.tossOrderId,
+          checkoutPaymentMethod: reservations.checkoutPaymentMethod,
+          checkoutStartedAt: reservations.checkoutStartedAt,
+          providerChargeCurrency: reservations.providerChargeCurrency,
+          providerChargeAmountMinor: reservations.providerChargeAmountMinor,
+          providerChargeRate: reservations.providerChargeRate,
+          providerChargeQuotedAt: reservations.providerChargeQuotedAt,
           cancelDeadline: reservations.cancelDeadline,
           cancelledAt: reservations.cancelledAt,
           cancelReason: reservations.cancelReason,
@@ -1385,6 +1459,12 @@ export class ReservationService {
         venue: {
           name: venues.name,
         },
+        policy: {
+          maxTicketsPerUser: bookingPolicies.maxTicketsPerUser,
+          changePolicyEnabled: bookingPolicies.changePolicyEnabled,
+          paymentWindowMinutes: bookingPolicies.paymentWindowMinutes,
+          seatHoldMinutes: bookingPolicies.seatHoldMinutes,
+        },
         diagnostic: {
           diagnosticKind: reservationPaymentFailureDiagnostics.diagnosticKind,
           diagnosticCode: reservationPaymentFailureDiagnostics.diagnosticCode,
@@ -1400,6 +1480,7 @@ export class ReservationService {
       .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
       .innerJoin(performances, eq(showtimes.performanceId, performances.id))
       .leftJoin(venues, eq(performances.venueId, venues.id))
+      .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, performances.id))
       .leftJoin(
         reservationPaymentFailureDiagnostics,
         eq(reservationPaymentFailureDiagnostics.reservationId, reservations.id),
@@ -1487,6 +1568,9 @@ export class ReservationService {
       performanceId: row.performance.id,
       showtimeId: row.reservation.showtimeId,
       tossOrderId: row.reservation.tossOrderId ?? null,
+      checkoutPaymentMethod: row.reservation.checkoutPaymentMethod ?? null,
+      checkoutStartedAt: row.reservation.checkoutStartedAt?.toISOString() ?? null,
+      providerChargeQuote: mapStoredChargeQuote(row.reservation),
       performanceTitle: row.performance.title,
       posterUrl: row.performance.posterUrl,
       showDateTime: row.showtime.dateTime?.toISOString() ?? '',
@@ -1520,7 +1604,12 @@ export class ReservationService {
         reentryGraceUntilAt: row.reservation.reentryGraceUntilAt?.toISOString() ?? new Date(0).toISOString(),
       },
       paymentDeadlineAt: row.reservation.paymentDeadlineAt?.toISOString() ?? new Date(0).toISOString(),
-      bookingPolicy: mapPerformanceBookingPolicy(undefined, { forceCancelOnly: true }),
+      bookingPolicy: mapPerformanceBookingPolicy({
+        maxTicketsPerUser: row.policy?.maxTicketsPerUser ?? undefined,
+        changePolicyEnabled: row.policy?.changePolicyEnabled ?? undefined,
+        paymentWindowMinutes: row.policy?.paymentWindowMinutes ?? undefined,
+        seatHoldMinutes: row.policy?.seatHoldMinutes ?? undefined,
+      }, { forceCancelOnly: true }),
       refundTimeline: {
         currentState: row.reservation.status === 'CANCELLED' ? 'REQUESTED' : 'COMPLETED',
         requestedAt: row.reservation.cancelledAt?.toISOString() ?? row.reservation.createdAt?.toISOString() ?? new Date(0).toISOString(),
@@ -1819,26 +1908,19 @@ export class ReservationService {
   }
 
   async getReservationByOrderId(orderId: string, userId: string): Promise<ReservationDetail | null> {
-    const [payment] = await this.db
-      .select()
-      .from(payments)
-      .where(eq(payments.tossOrderId, orderId));
-
-    if (!payment) {
-      return null;
-    }
-
-    // Verify ownership
     const [reservation] = await this.db
-      .select()
+      .select({ id: reservations.id })
       .from(reservations)
-      .where(and(eq(reservations.id, payment.reservationId), eq(reservations.userId, userId)));
+      .where(and(
+        eq(reservations.tossOrderId, orderId),
+        eq(reservations.userId, userId),
+      ));
 
     if (!reservation) {
       return null;
     }
 
-    return this.getReservationDetail(payment.reservationId, userId);
+    return this.getReservationDetail(reservation.id, userId);
   }
 
   private mapTicketItemCancellationContext(
@@ -2852,34 +2934,51 @@ export class ReservationService {
         and(
           eq(reservations.id, reservationId),
           eq(reservations.userId, userId),
-          eq(reservations.status, 'PENDING_PAYMENT'),
         ),
       );
 
     if (!reservation) {
-      // Already cancelled or doesn't exist — idempotent
       return;
     }
+    if (reservation.status === 'CONFIRMED') {
+      throw new ConflictException('결제 상태가 변경되었습니다. 내 티켓에서 예매를 확인해주세요.');
+    }
+    if (reservation.status !== 'PENDING_PAYMENT') return;
+    const now = new Date();
 
     const [cancelled] = await this.db
       .update(reservations)
       .set({
         status: 'CANCELLED',
-        cancelledAt: new Date(),
-        cancelReason: '좌석 점유 만료',
-        updatedAt: new Date(),
+        cancelledAt: now,
+        cancelReason: '구매자 요청에 따른 결제 전 예매 종료',
+        updatedAt: now,
       })
       .where(
         and(
           eq(reservations.id, reservation.id),
           eq(reservations.userId, userId),
           eq(reservations.status, 'PENDING_PAYMENT'),
+          sql`not exists (
+            select 1 from ${payments}
+            where ${payments.reservationId} = ${reservations.id}
+              and ${payments.status} in ('IN_PROGRESS', 'DONE', 'PARTIAL_CANCELED')
+          )`,
+          sql`(
+            ${reservations.checkoutStartedAt} is null
+            or ${reservations.paymentDeadlineAt} <= ${now}
+            or exists (
+              select 1 from ${payments}
+              where ${payments.reservationId} = ${reservations.id}
+                and ${payments.status} in ('ABORTED', 'EXPIRED', 'CANCELED')
+            )
+          )`,
         ),
       )
       .returning({ id: reservations.id });
 
     if (!cancelled) {
-      return;
+      throw new ConflictException('결제 상태를 확인 중입니다. 기존 예매를 다시 확인해주세요.');
     }
   }
 }

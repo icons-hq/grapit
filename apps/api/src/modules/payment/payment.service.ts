@@ -1,3 +1,4 @@
+import { isSameCheckoutPaymentMethod } from '@grabit/shared';
 import { getTicketLimitSnapshot, lockTicketLimitScope } from '../../database/ticket-limit.js';
 import { randomUUID } from 'node:crypto';
 import { syncIncludedBenefitEntitlementsForTicketItems } from '../../database/included-benefit-entitlements.js';
@@ -286,7 +287,7 @@ export class PaymentService {
         ...(providerChargeQuote ? { providerChargeQuote } : {}),
       };
       return checkoutEnabled
-        ? await this.withPaymentProcessingGrace(branch, userId)
+        ? await this.withPaymentProcessingGrace(branch, userId, paymentMethod)
         : branch;
     }
 
@@ -305,7 +306,7 @@ export class PaymentService {
         pendingUrl,
         asyncStatus: 'pending_webhook',
         useInternationalCardOnly: false,
-      }, userId);
+      }, userId, paymentMethod);
     }
 
     if (paymentMethod.provider === 'CARD') {
@@ -334,7 +335,7 @@ export class PaymentService {
       };
       return overseasCardAvailability && !overseasCardAvailability.enabled
         ? branch
-        : await this.withPaymentProcessingGrace(branch, userId);
+        : await this.withPaymentProcessingGrace(branch, userId, paymentMethod);
     }
 
     return await this.withPaymentProcessingGrace({
@@ -346,16 +347,19 @@ export class PaymentService {
       failUrl,
       asyncStatus: 'sync',
       useInternationalCardOnly: false,
-    }, userId);
+    }, userId, paymentMethod);
   }
 
   private async withPaymentProcessingGrace<T extends TossPaymentBranch>(
     branch: T,
-    userId?: string,
+    userId: string | undefined,
+    paymentMethod: PaymentMethod,
   ): Promise<T> {
     const paymentDeadlineAt = await this.extendPendingPaymentProcessingGrace(
       branch.orderId,
       userId,
+      new Date(),
+      paymentMethod,
     );
     return paymentDeadlineAt ? { ...branch, paymentDeadlineAt } : branch;
   }
@@ -364,6 +368,7 @@ export class PaymentService {
     orderId: string,
     userId?: string,
     now: Date = new Date(),
+    paymentMethod?: PaymentMethod,
   ): Promise<string | undefined> {
     const [reservation] = await this.db
       .select({
@@ -375,6 +380,7 @@ export class PaymentService {
         admissionActiveUntilAt: reservations.admissionActiveUntilAt,
         reentryGraceUntilAt: reservations.reentryGraceUntilAt,
         createdAt: reservations.createdAt,
+        checkoutPaymentMethod: reservations.checkoutPaymentMethod,
       })
       .from(reservations)
       .where(
@@ -395,6 +401,13 @@ export class PaymentService {
 
     if (reservation.status !== 'PENDING_PAYMENT') {
       throw new ConflictException('이미 처리된 주문 ID입니다. 새 주문 ID로 다시 시도해주세요.');
+    }
+
+    if (paymentMethod && (
+      !reservation.checkoutPaymentMethod
+      || !isSameCheckoutPaymentMethod(reservation.checkoutPaymentMethod, paymentMethod)
+    )) {
+      throw new ConflictException('예매에 저장된 결제수단과 일치하지 않습니다. 기존 예매를 다시 확인해주세요.');
     }
 
     if (!this.isValidDate(reservation.paymentDeadlineAt)) {
@@ -442,6 +455,7 @@ export class PaymentService {
         eq(reservations.id, reservation.id),
         eq(reservations.status, 'PENDING_PAYMENT'),
         eq(reservations.paymentDeadlineAt, reservation.paymentDeadlineAt),
+        ...(paymentMethod ? [sql`${reservations.checkoutPaymentMethod} = ${JSON.stringify(reservation.checkoutPaymentMethod)}::jsonb`] : []),
       ))
       .returning({ id: reservations.id });
 
@@ -473,11 +487,27 @@ export class PaymentService {
             eq(reservations.id, reservation.id),
             eq(reservations.status, 'PENDING_PAYMENT'),
             eq(reservations.paymentDeadlineAt, effectiveDeadlineAt),
+            sql`${reservations.checkoutStartedAt} is null`,
+            ...(paymentMethod ? [sql`${reservations.checkoutPaymentMethod} = ${JSON.stringify(reservation.checkoutPaymentMethod)}::jsonb`] : []),
           ));
         throw error;
       }
     }
 
+    if (paymentMethod) {
+      const [started] = await this.db.update(reservations).set({
+        checkoutStartedAt: sql`coalesce(${reservations.checkoutStartedAt}, ${now})`,
+        updatedAt: now,
+      }).where(and(
+        eq(reservations.id, reservation.id),
+        eq(reservations.status, 'PENDING_PAYMENT'),
+        eq(reservations.paymentDeadlineAt, effectiveDeadlineAt),
+        sql`${reservations.checkoutPaymentMethod} = ${JSON.stringify(reservation.checkoutPaymentMethod)}::jsonb`,
+      )).returning({ id: reservations.id });
+      if (!started) {
+        throw new ConflictException('예매 상태가 변경되었습니다. 기존 예매를 다시 확인해주세요.');
+      }
+    }
     return effectiveDeadlineAt.toISOString();
   }
 

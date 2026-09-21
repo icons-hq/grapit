@@ -14,6 +14,8 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { CancelConfirmModal } from '@/components/reservation/cancel-confirm-modal';
+import { getCheckoutCopy, getCheckoutMethodLabel } from '@/lib/booking/checkout-copy';
+import { ProviderChargeAmount } from '@/components/booking/provider-charge-amount';
 import { RefundTimeline } from '@/components/reservation/refund-timeline';
 import { SeatHighlightLabel } from '@/components/reservation/seat-highlight-label';
 import { TicketEmailDeliveryPanel } from '@/components/reservation/ticket-email-delivery-panel';
@@ -685,7 +687,10 @@ export function ReservationDetailView({
   const [cancelModalOpen, setCancelModalOpen] = useState(false);
   const statusConfig = STATUS_CONFIG[reservation.status];
   const statusLabel = copy.status[statusConfig.labelKey];
-  const paymentMethodLabel = getPaymentMethodLabel(reservation, detailCopy);
+  const savedPaymentMethod = reservation.paymentInfo?.paymentMethod ?? reservation.checkoutPaymentMethod;
+  const paymentMethodLabel = savedPaymentMethod
+    ? getCheckoutMethodLabel(savedPaymentMethod, locale)
+    : getPaymentMethodLabel(reservation, detailCopy);
   const refundPaymentMethodLabel =
     paymentMethodLabel === detailCopy.paymentMethods.unselected
       ? detailCopy.paymentMethods.fallback
@@ -844,10 +849,11 @@ export function ReservationDetailView({
             {copy.detail.paymentInfo}
           </h2>
           <InfoRow
-            label={copy.detail.totalAmount}
+            label={getCheckoutCopy(locale).orderTotal}
             value={formatPrice(paymentAmount, locale)}
           />
           <Separator />
+          <ProviderChargeAmount quote={reservation.paymentInfo?.providerChargeQuote ?? reservation.providerChargeQuote} locale={locale} />
           <InfoRow label={copy.detail.paymentMethod} value={paymentMethodLabel} />
           <Separator />
           <InfoRow

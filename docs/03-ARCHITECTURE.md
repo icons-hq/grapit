@@ -255,7 +255,13 @@ Admin bypass exists for controlled tests and operational flows, not for normal b
 - canonical seat/tier/price,
 - queue admission.
 
-The pending reservation stores server-side payment deadline and queue recovery timestamps.
+The pending reservation stores server-side payment deadline, queue recovery timestamps,
+Checkout Payment Method and Provider Charge Quote. Authenticated order lookup reads the
+Reservation even before a Payment exists, so full-document returns can recover the same
+order, seats and deadline. Provider handoff freezes its method and quote after validating
+owned seat locks; an unknown in-flight checkout cannot be abandoned during its active
+window. A fail URL alone never cancels or replaces an order. See
+[the prepared checkout ADR](adr/0010-preserve-prepared-checkout-across-provider-returns.md).
 
 ### 6.4 Payment Confirm
 
@@ -268,7 +274,7 @@ The pending reservation stores server-side payment deadline and queue recovery t
 - compensation cancellation if provider confirmation succeeds but finalization fails,
 - QR ticket issuance after confirmed payment.
 
-Toss webhook processing records provider events, handles replay/idempotency, and verifies provider state before applying final mutations.
+Toss webhook processing records provider events, handles replay/idempotency, and verifies provider state before applying final mutations. Successful and duplicate deliveries return HTTP 200; validation and processing failures retain non-200 responses.
 
 ### 6.5 Refund And Cancelled Seat Reopen
 

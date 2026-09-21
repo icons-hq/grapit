@@ -1,97 +1,83 @@
 'use client';
 
 import Image from 'next/image';
-import { Card, CardContent } from '@/components/ui/card';
+import { useLocale } from 'next-intl';
+import { Ticket } from 'lucide-react';
+import { formatEventTimeWithKstAnchor } from '@/lib/i18n/format';
+import { resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
+import { getCheckoutCopy } from '@/lib/booking/checkout-copy';
 import { Separator } from '@/components/ui/separator';
-import { TICKET_SERVICE_FEE_KRW, type SeatSelection } from '@grabit/shared';
+import { TICKET_SERVICE_FEE_KRW, type ProviderChargeQuote, type SeatSelection } from '@grabit/shared';
 
-interface OrderSummaryProps {
+type CheckoutSeat = SeatSelection & { seatKey?: string; floorKey?: string; floorLabel?: string };
+
+function formatKrw(amount: number) {
+  return `KRW ${amount.toLocaleString('en-US')}`;
+}
+
+export function OrderSummary({ performanceTitle, posterUrl, showDateTime, venue, seats }: {
   performanceTitle: string;
   posterUrl: string | null;
   showDateTime: string;
   venue: string;
-  seats: SeatSelection[];
-  totalPrice: number;
-}
-
-export function OrderSummary({
-  performanceTitle,
-  posterUrl,
-  showDateTime,
-  venue,
-  seats,
-  totalPrice,
-}: OrderSummaryProps) {
-  const serviceFeeTotal = seats.length * TICKET_SERVICE_FEE_KRW;
+  seats: CheckoutSeat[];
+}) {
+  const locale = resolveVisibleCopyLocale(useLocale());
+  const copy = getCheckoutCopy(locale);
+  const eventTime = formatEventTimeWithKstAnchor(showDateTime, locale, { includeLocalTime: false });
 
   return (
-    <Card>
-      <CardContent className="space-y-4">
-        <h2 className="text-base font-semibold">공연 정보</h2>
-
-        <div className="flex gap-4">
-          {posterUrl ? (
-            <div className="relative h-[112px] w-[80px] shrink-0 overflow-hidden rounded-md">
-              <Image
-                src={posterUrl}
-                alt={performanceTitle}
-                fill
-                className="object-cover"
-                sizes="80px"
-              />
-            </div>
-          ) : (
-            <div className="flex h-[112px] w-[80px] shrink-0 items-center justify-center rounded-md bg-gray-100">
-              <span className="text-xs text-gray-400">No Image</span>
-            </div>
-          )}
-          <div className="flex flex-col justify-center gap-1">
-            <p className="text-base font-semibold text-gray-900">{performanceTitle}</p>
-            <p className="text-sm text-gray-600">{showDateTime}</p>
-            <p className="text-sm text-gray-600">{venue}</p>
+    <section aria-label={copy.performance} className="space-y-7">
+      <div className="flex items-start gap-5 md:gap-7">
+        <div className="relative aspect-[3/4] w-24 shrink-0 overflow-hidden rounded-lg bg-muted md:w-36">
+          {posterUrl ? <Image src={posterUrl} alt={performanceTitle} fill className="object-cover" sizes="(min-width: 768px) 144px, 96px" />
+            : <div className="flex size-full items-center justify-center"><Ticket aria-label={copy.noPoster} className="size-8 text-muted-foreground" /></div>}
+        </div>
+        <div className="min-w-0 space-y-3 py-1 md:py-3">
+          <h2 className="text-xl font-semibold leading-snug tracking-tight md:text-2xl">{performanceTitle}</h2>
+          <div className="space-y-1 text-sm text-muted-foreground md:text-base">
+            <time dateTime={showDateTime}>{eventTime.kst}</time>
+            <p>{venue}</p>
           </div>
         </div>
-
-        <Separator />
-
-        <h2 className="text-base font-semibold">선택 좌석</h2>
-
-        <ul className="space-y-2">
+      </div>
+      <Separator />
+      <div className="space-y-4">
+        <h2 className="text-base font-semibold">{copy.seats}</h2>
+        <ul className="space-y-3">
           {seats.map((seat) => (
-            <li key={seat.seatId} className="flex items-center justify-between text-sm">
-              <span className="text-gray-700">
-                {seat.tierName} {seat.row}열 {seat.number}번
-              </span>
-              <span className="text-gray-900">
-                {seat.price.toLocaleString('ko-KR')}원
-              </span>
+            <li key={seat.seatKey ?? `${seat.floorKey ?? 'default'}:${seat.seatId}`} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-sm md:text-base">
+              <span>{copy.seat.replace(/\{(\w+)\}/g, (_, key: string) => String(seat[key as keyof CheckoutSeat] ?? ''))}</span>
+              <span className="tabular-nums">{formatKrw(seat.price)}</span>
             </li>
           ))}
         </ul>
+      </div>
+    </section>
+  );
+}
 
-        <Separator />
-
-        <div className="space-y-2 text-sm">
-          <div className="flex items-center justify-between">
-            <span className="text-gray-600">예매 수수료</span>
-            <span className="text-gray-900">
-              {serviceFeeTotal.toLocaleString('ko-KR')}원
-            </span>
-          </div>
-        </div>
-
-        <Separator />
-
-        <div className="flex items-center justify-between">
-          <span className="text-sm text-gray-600">총 {seats.length}매</span>
-          <div className="text-right">
-            <p className="text-xs text-gray-500">총 결제금액</p>
-            <p className="text-xl font-semibold text-primary">
-              {totalPrice.toLocaleString('ko-KR')}원
-            </p>
-          </div>
-        </div>
-      </CardContent>
-    </Card>
+export function CheckoutAmountSummary({ seats, totalPrice, quote }: {
+  seats: CheckoutSeat[];
+  totalPrice: number;
+  quote?: ProviderChargeQuote;
+}) {
+  const copy = getCheckoutCopy(resolveVisibleCopyLocale(useLocale()));
+  return (
+    <section aria-label={copy.paymentTitle} className="space-y-4">
+      <h2 className="text-xl font-semibold">{copy.paymentTitle}</h2>
+      <dl className="space-y-3 text-sm md:text-base">
+        <div className="flex justify-between gap-4"><dt className="text-muted-foreground">{copy.ticketAmount}</dt><dd className="tabular-nums">{formatKrw(seats.reduce((sum, seat) => sum + seat.price, 0))}</dd></div>
+        <div className="flex justify-between gap-4"><dt className="text-muted-foreground">{copy.serviceFee}</dt><dd className="tabular-nums">{formatKrw(seats.length * TICKET_SERVICE_FEE_KRW)}</dd></div>
+        <div className="flex justify-between gap-4 border-t border-border pt-4 font-semibold"><dt>{copy.orderTotal}</dt><dd className="tabular-nums">{formatKrw(totalPrice)}</dd></div>
+      </dl>
+      {quote && (
+        <section aria-label={copy.charge} className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-primary/5 p-4 text-primary">
+          <h3 className="text-sm font-semibold">{copy.charge}</h3>
+          <p className="text-2xl font-bold tabular-nums">{quote.currency} {quote.amountDecimal}</p>
+          <p className="w-full text-xs text-muted-foreground">{copy.quoteReady}</p>
+        </section>
+      )}
+    </section>
   );
 }

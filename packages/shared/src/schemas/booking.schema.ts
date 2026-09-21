@@ -369,6 +369,7 @@ export const paymentInfoSchema = z.object({
   paidAt: isoDatetime('결제 완료 시각').nullable(),
   paymentDeadlineAt: isoDatetime('결제 마감 시각').nullable().optional(),
   paymentMethod: paymentMethodSchema.optional(),
+  providerChargeQuote: providerChargeQuoteSchema.optional(),
 });
 
 export const adminBookingFunnelStatusSchema = z.enum([
@@ -538,6 +539,9 @@ export const reservationDetailSchema = reservationListItemSchema.extend({
   performanceId: z.string().uuid('유효한 performance ID가 필요합니다').optional(),
   showtimeId: z.string().uuid('유효한 showtime ID가 필요합니다').optional(),
   tossOrderId: z.string().min(1, 'Toss 주문 ID가 필요합니다').nullable().optional(),
+  checkoutPaymentMethod: paymentMethodSchema.nullable().optional(),
+  checkoutStartedAt: isoDatetime('결제 요청 시작 시각').nullable().optional(),
+  providerChargeQuote: providerChargeQuoteSchema.optional(),
   paymentMethod: z.string().min(1, '결제 수단 라벨이 필요합니다').nullable(),
   paidAt: isoDatetime('결제 완료 시각').nullable(),
   cancelDeadline: isoDatetime('취소 마감 시각'),

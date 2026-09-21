@@ -246,6 +246,9 @@ export interface ReservationDetail extends ReservationListItem {
   performanceId?: string;
   showtimeId?: string;
   tossOrderId?: string | null;
+  checkoutPaymentMethod?: PaymentMethod | null;
+  checkoutStartedAt?: string | null;
+  providerChargeQuote?: ProviderChargeQuote;
   paymentMethod: string | null;
   paidAt: string | null;
   cancelDeadline: string;
@@ -272,6 +275,7 @@ export interface PaymentInfo {
   paidAt: string | null;
   paymentDeadlineAt?: string | null;
   paymentMethod?: PaymentMethod;
+  providerChargeQuote?: ProviderChargeQuote;
 }
 
 export interface BookingStats {

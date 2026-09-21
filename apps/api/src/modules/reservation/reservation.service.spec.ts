@@ -549,6 +549,7 @@ describe('ReservationService', () => {
             innerJoin: vi.fn().mockReturnValue({
               leftJoin: vi.fn().mockReturnValue({
                 leftJoin: vi.fn().mockReturnValue({
+                  leftJoin: vi.fn().mockReturnValue({
                   where: vi.fn().mockResolvedValue([{
                     reservation: {
                       id: args.reservationId,
@@ -572,6 +573,7 @@ describe('ReservationService', () => {
                     venue: { name: '락 테스트 극장' },
                     diagnostic: args.diagnostic ?? null,
                   }]),
+                  }),
                 }),
               }),
             }),
@@ -625,6 +627,7 @@ describe('ReservationService', () => {
               innerJoin: vi.fn().mockReturnValue({
                 leftJoin: vi.fn().mockReturnValue({
                   leftJoin: vi.fn().mockReturnValue({
+                    leftJoin: vi.fn().mockReturnValue({
                     where: vi.fn().mockResolvedValue([{
                       reservation: {
                         id: args.reservationId,
@@ -648,6 +651,7 @@ describe('ReservationService', () => {
                       venue: { name: '혜택 테스트 극장' },
                       diagnostic: null,
                     }]),
+                    }),
                   }),
                 }),
               }),
@@ -4075,6 +4079,7 @@ describe('ReservationService', () => {
             innerJoin: vi.fn().mockReturnValue({
               leftJoin: vi.fn().mockReturnValue({
                 leftJoin: vi.fn().mockReturnValue({
+                  leftJoin: vi.fn().mockReturnValue({
                   where: vi.fn().mockResolvedValue([{
                     reservation: {
                       id: reservationId,
@@ -4092,6 +4097,7 @@ describe('ReservationService', () => {
                     venue: { name: '테스트 극장' },
                     diagnostic: null,
                   }]),
+                  }),
                 }),
               }),
             }),

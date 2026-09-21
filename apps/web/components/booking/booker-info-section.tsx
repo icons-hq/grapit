@@ -1,118 +1,70 @@
 'use client';
 
 import { useState } from 'react';
+import { useLocale } from 'next-intl';
 import { useForm } from 'react-hook-form';
-import { Card, CardContent } from '@/components/ui/card';
+import { parsePhoneNumberFromString } from 'libphonenumber-js/min';
+import { CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { getCheckoutCopy } from '@/lib/booking/checkout-copy';
+import { resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
 
-interface BookerFormData {
-  name: string;
-  phone: string;
-}
+interface BookerFormData { name: string; phone: string }
 
-interface BookerInfoSectionProps {
+export function BookerInfoSection({ userName, userPhone, userEmail, emailVerified, onUpdate }: {
   userName: string;
   userPhone: string;
-  onUpdate: (data: { name: string; phone: string }) => void;
-}
-
-export function BookerInfoSection({ userName, userPhone, onUpdate }: BookerInfoSectionProps) {
+  userEmail?: string;
+  emailVerified?: boolean;
+  onUpdate: (data: BookerFormData) => void;
+}) {
   const [isEditing, setIsEditing] = useState(false);
-  const [displayName, setDisplayName] = useState(userName);
-  const [displayPhone, setDisplayPhone] = useState(userPhone);
-
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-    reset,
-  } = useForm<BookerFormData>({
-    defaultValues: {
-      name: displayName,
-      phone: displayPhone,
-    },
+  const copy = getCheckoutCopy(resolveVisibleCopyLocale(useLocale()));
+  const { register, handleSubmit, formState: { errors }, reset } = useForm<BookerFormData>({
+    defaultValues: { name: userName, phone: userPhone },
   });
 
-  function handleEdit() {
-    reset({ name: displayName, phone: displayPhone });
-    setIsEditing(true);
-  }
-
-  function handleCancel() {
-    setIsEditing(false);
-    reset({ name: displayName, phone: displayPhone });
-  }
-
   function onSubmit(data: BookerFormData) {
-    setDisplayName(data.name);
-    setDisplayPhone(data.phone);
-    onUpdate(data);
+    onUpdate({ name: data.name.trim(), phone: data.phone.trim() });
     setIsEditing(false);
   }
 
   return (
-    <Card>
-      <CardContent className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-base font-semibold">예매자 정보</h2>
-          {!isEditing && (
-            <Button variant="ghost" size="sm" className="text-xs" onClick={handleEdit}>
-              수정
-            </Button>
-          )}
-        </div>
-
-        {isEditing ? (
-          <form onSubmit={handleSubmit(onSubmit)} className="space-y-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="booker-name">이름</Label>
-              <Input
-                id="booker-name"
-                {...register('name', {
-                  required: '이름을 입력해주세요',
-                  minLength: { value: 2, message: '이름은 2자 이상이어야 합니다' },
-                })}
-                placeholder="이름"
-              />
-              {errors.name && (
-                <p className="text-xs text-red-500">{errors.name.message}</p>
-              )}
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="booker-phone">연락처</Label>
-              <Input
-                id="booker-phone"
-                {...register('phone', {
-                  required: '연락처를 입력해주세요',
-                  pattern: {
-                    value: /^010-?\d{4}-?\d{4}$/,
-                    message: '올바른 전화번호 형식이 아닙니다 (01012345678 또는 010-1234-5678)',
-                  },
-                })}
-                placeholder="010-0000-0000"
-              />
-              {errors.phone && (
-                <p className="text-xs text-red-500">{errors.phone.message}</p>
-              )}
-            </div>
-
-            <div className="flex gap-2">
-              <Button type="submit" size="sm">저장</Button>
-              <Button type="button" variant="outline" size="sm" onClick={handleCancel}>
-                취소
-              </Button>
-            </div>
-          </form>
-        ) : (
-          <div className="space-y-1 text-sm text-gray-700">
-            <p>{displayName}</p>
-            <p>{displayPhone}</p>
+    <section aria-label={copy.booker} className="space-y-4">
+      <div className="flex items-center justify-between gap-4">
+        <h2 className="text-base font-semibold">{copy.booker}</h2>
+        {!isEditing && <Button variant="outline" size="sm" onClick={() => {
+          reset({ name: userName, phone: userPhone });
+          setIsEditing(true);
+        }}>{copy.edit}</Button>}
+      </div>
+      {isEditing ? (
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="booker-name">{copy.name}</Label>
+            <Input id="booker-name" autoComplete="name" aria-invalid={Boolean(errors.name)} {...register('name', {
+              validate: (value) => value.trim().length > 0 || copy.nameRequired,
+            })} />
+            {errors.name && <p role="alert" className="text-sm text-destructive">{errors.name.message}</p>}
           </div>
-        )}
-      </CardContent>
-    </Card>
+          <div className="space-y-2">
+            <Label htmlFor="booker-phone">{copy.phone}</Label>
+            <Input id="booker-phone" type="tel" autoComplete="tel" placeholder="+82 10 1234 5678" aria-invalid={Boolean(errors.phone)} {...register('phone', {
+              validate: (value) => Boolean(parsePhoneNumberFromString(value, 'KR')?.isValid()) || copy.phoneInvalid,
+            })} />
+            {errors.phone && <p role="alert" className="text-sm text-destructive">{errors.phone.message}</p>}
+          </div>
+          <div className="flex gap-2"><Button type="submit" size="sm">{copy.save}</Button><Button type="button" variant="ghost" size="sm" onClick={() => setIsEditing(false)}>{copy.cancel}</Button></div>
+        </form>
+      ) : (
+        <div className="space-y-2 text-sm text-muted-foreground md:text-base">
+          <p className="font-medium text-foreground">{userName}</p><p>{userPhone}</p>
+          {userEmail && <p className="break-all">{userEmail}</p>}
+          {emailVerified && <p className="flex items-center gap-2 text-sm"><CheckCircle2 className="size-4 text-primary" />{copy.emailVerified}</p>}
+        </div>
+      )}
+    </section>
   );
 }

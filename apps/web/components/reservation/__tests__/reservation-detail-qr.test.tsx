@@ -1138,3 +1138,16 @@ describe('ReservationDetailView QR ticket card', () => {
     expect(screen.getByRole('button', { name: '예매 취소' })).toBeInTheDocument();
   });
 });
+
+it('shows the original KRW order and the stored USD charge without recalculating FX', () => {
+  const original = createReservation();
+  const reservation = createReservation({
+    paymentInfo: { ...original.paymentInfo!, providerChargeQuote: {
+      currency: 'USD', amountMinor: 10472, amountDecimal: '104.72',
+      rate: '0.00068', quotedAt: '2026-05-22T06:00:00.000Z',
+    } },
+  });
+  render(<ReservationDetailView reservation={reservation} onCancel={vi.fn()} isCancelling={false} />);
+  expect(screen.getByText('USD 104.72')).toBeInTheDocument();
+  expect(screen.getByText('실제 청구 금액')).toBeInTheDocument();
+});

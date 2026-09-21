@@ -3,6 +3,7 @@ import { AdminSettlementReconciliationService } from '../src/modules/admin/admin
 import { PaymentCancellationFinalizerService } from '../src/modules/cancellation/payment-cancellation-finalizer.service.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 import { ReservationFinalizationService } from '../src/modules/reservation/reservation-finalization.service.js';
+import { ReservationService } from '../src/modules/reservation/reservation.service.js';
 import { FieldCheckInService } from '../src/modules/field-operations/field-check-in.service.js';
 import { BenefitRedemptionService } from '../src/modules/field-operations/benefit-redemption.service.js';
 import { FieldMonitorService } from '../src/modules/field-operations/field-monitor.service.js';
@@ -24,6 +25,7 @@ import { syncIncludedBenefitEntitlementsForTicketItems } from '../src/database/i
 import { PaymentService } from '../src/modules/payment/payment.service.js';
 import { QrTicketService } from '../src/modules/ticket/qr-ticket.service.js';
 import { PendingPaymentExpirationWorker } from '../src/modules/jobs/pending-payment-expiration.worker.js';
+import type { PrepareReservationRequest } from '@grabit/shared';
 
 const { users, venues, performances, showtimes, reservations, reservationSeats, payments,
   ticketItems, seatInventories, ticketBenefitConfigurations, ticketBenefits, ticketBenefitEntitlements, tickets } = schema;
@@ -89,6 +91,166 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
       seatId: seatKey, seatKey, floorKey: seatKey.split(':')[0]!, floorLabel: '층', tierName: 'VIP',
       row: 'A', number: '1', price: 50000, status }).returning();
   }
+
+  it('recovers a buyer-owned prepared order before a Payment exists, without exposing it to another buyer', async () => {
+    const f = await fixture();
+    const reservation = await order(f, '2F:A-1');
+    const service = new ReservationService(
+      db, {} as never, {} as never, {} as never, {} as never, {} as never, qr,
+    );
+
+    const recovered = await service.getReservationByOrderId(reservation.tossOrderId!, f.userId);
+    expect(recovered).toMatchObject({
+      id: reservation.id,
+      tossOrderId: reservation.tossOrderId,
+      performanceId: f.performanceId,
+      showtimeId: f.showtimeId,
+      status: 'PENDING_PAYMENT',
+      totalAmount: 52000,
+      bookingPolicy: expect.objectContaining({ maxTicketsPerOrder: 4 }),
+      paymentInfo: null,
+      paymentDeadlineAt: reservation.paymentDeadlineAt!.toISOString(),
+      seats: [expect.objectContaining({ seatKey: '2F:A-1', floorKey: '2F', price: 50000 })],
+    });
+    expect(await service.getReservationByOrderId(reservation.tossOrderId!, randomUUID())).toBeNull();
+    expect(await service.getReservationByOrderId('nonexistent-order', f.userId)).toBeNull();
+  });
+
+  it('returns the prepared payment method and fixed foreign quote when restoring checkout', async () => {
+    const f = await fixture();
+    const reservation = await order(f);
+    const method = {
+      method: 'CARD' as const, provider: 'CARD' as const, currency: 'USD',
+      overseasPaymentConsent: { required: true, agreed: true, agreementVersion: 'test', agreedAt: '2026-09-21T06:00:00.000Z' },
+    };
+    await db.update(reservations).set({
+      checkoutPaymentMethod: method,
+      providerChargeCurrency: 'USD', providerChargeAmountMinor: 3536,
+      providerChargeRate: '0.00068', providerChargeQuotedAt: new Date('2026-09-21T06:00:00.000Z'),
+    }).where(eq(reservations.id, reservation.id));
+    const service = new ReservationService(
+      db, {} as never, {} as never, {} as never, {} as never, {} as never, qr,
+    );
+    expect(await service.getReservationByOrderId(reservation.tossOrderId!, f.userId)).toMatchObject({
+      checkoutPaymentMethod: method,
+      providerChargeQuote: { currency: 'USD', amountMinor: 3536, amountDecimal: '35.36', rate: '0.00068', quotedAt: '2026-09-21T06:00:00.000Z' },
+    });
+  });
+
+  async function checkoutFixture() {
+    const f = await fixture();
+    await db.insert(schema.priceTiers).values({ performanceId: f.performanceId, tierName: 'VIP', price: 50000 });
+    await db.insert(schema.seatMaps).values({
+      performanceId: f.performanceId, svgUrl: 'https://example.test/map.svg', floorKey: '1F', floorLabel: '1층',
+      seatConfig: { tiers: [{ tierName: 'VIP', color: '#6d28d9', seatIds: ['A-1'] }] }, totalSeats: 1,
+    });
+    const locks = {
+      assertOwnedSeatLocks: vi.fn().mockResolvedValue(undefined),
+      setOwnedSeatLockTtl: vi.fn().mockResolvedValue(undefined),
+      extendOwnedSeatLocks: vi.fn().mockResolvedValue(undefined),
+    };
+    const quote = { currency: 'USD' as const, amountMinor: 3536, amountDecimal: '35.36', rate: '0.00068', quotedAt: new Date().toISOString() };
+    const quoteProvider = {
+      getOverseasCardAvailability: () => ({ enabled: true }),
+      createOverseasCardQuote: () => quote,
+    };
+    const service = new ReservationService(
+      db, {} as never, locks as never, {} as never,
+      { assertBookingEnabled: vi.fn() } as never,
+      { assertRequiredConsents: vi.fn().mockResolvedValue(undefined), captureConsent: vi.fn().mockResolvedValue(undefined) } as never,
+      qr, undefined, quoteProvider as never,
+    );
+    const providerService = new PaymentService(db, undefined, qr, undefined, quoteProvider as never, undefined, locks as never);
+    const now = new Date().toISOString();
+    const input: PrepareReservationRequest = {
+      orderId: `GRP-${randomUUID()}`, showtimeId: f.showtimeId,
+      seats: [{ seatId: 'A-1', seatKey: '1F:A-1', floorKey: '1F', floorLabel: '1층', tierName: 'VIP', row: 'A', number: '1', price: 50000 }],
+      amount: 52000, paymentMethod: { method: 'CARD', provider: 'CARD', currency: 'KRW' },
+      consentItems: [{ key: 'terms', accepted: true, version: 'test', language: 'ko', sourceFlow: 'booking' }],
+      queueAdmission: { queueSessionId: 'test', admissionToken: 'test', refreshFamilyId: 'test', deviceSlotKey: 'test', admittedAt: now, activeUntilAt: now, reentryGraceUntilAt: now },
+      paymentDeadlineAt: now,
+      bookingPolicy: { maxTicketsPerOrder: 4, cancellationChangePolicy: 'CANCEL_ONLY', sameGradeChangeEnabled: false, paymentWindowMinutes: 7, seatHoldMinutes: 10 },
+    };
+    return { ...f, service, providerService, input, quote, locks };
+  }
+
+  it('persists the selected payment method when preparing a new checkout', async () => {
+    const f = await checkoutFixture();
+    const prepared = await f.service.prepareReservation(f.input, f.userId);
+    expect(await f.service.getReservationByOrderId(prepared.orderId, f.userId)).toMatchObject({
+      id: prepared.reservationId, checkoutPaymentMethod: f.input.paymentMethod,
+    });
+  });
+
+  it('can review a different payment method on the same order before opening the provider', async () => {
+    const f = await checkoutFixture();
+    const first = await f.service.prepareReservation(f.input, f.userId);
+    const method = {
+      method: 'CARD' as const, provider: 'CARD' as const, currency: 'USD',
+      overseasPaymentConsent: { required: true, agreed: true, agreementVersion: 'test' },
+    };
+    const changed = await f.service.prepareReservation({ ...f.input, paymentMethod: method }, f.userId);
+    expect(changed).toMatchObject({ reservationId: first.reservationId, checkoutEnabled: true, providerChargeQuote: f.quote });
+    expect(await f.service.getReservationByOrderId(first.orderId, f.userId)).toMatchObject({ checkoutPaymentMethod: method });
+  });
+
+  it('locks the payment method on provider handoff while keeping same-method retries idempotent', async () => {
+    const f = await checkoutFixture();
+    const prepared = await f.service.prepareReservation(f.input, f.userId);
+    const branchInput = {
+      orderId: prepared.orderId, paymentMethod: f.input.paymentMethod, userId: f.userId,
+      successUrl: 'https://example.test/complete', failUrl: 'https://example.test/confirm',
+    };
+    await f.providerService.prepareTossPaymentBranch(branchInput);
+    await expect(f.service.prepareReservation({ ...f.input, paymentMethod: {
+      method: 'CARD', provider: 'CARD', currency: 'USD',
+      overseasPaymentConsent: { required: true, agreed: true, agreementVersion: 'test' },
+    } }, f.userId)).rejects.toThrow('결제수단이 고정된 예매');
+    expect(await f.service.prepareReservation(f.input, f.userId)).toMatchObject({ reservationId: prepared.reservationId });
+    await expect(f.providerService.prepareTossPaymentBranch(branchInput)).resolves.toMatchObject({ orderId: prepared.orderId });
+    expect(await f.service.getReservationByOrderId(prepared.orderId, f.userId)).toMatchObject({ checkoutStartedAt: expect.any(String) });
+  });
+
+  it('cannot switch the method concurrently with handing the order to another provider route', async () => {
+    const f = await checkoutFixture();
+    await f.service.prepareReservation(f.input, f.userId);
+    const results = await Promise.allSettled([
+      f.providerService.prepareTossPaymentBranch({
+        orderId: f.input.orderId, paymentMethod: f.input.paymentMethod, userId: f.userId,
+        successUrl: 'https://example.test/complete', failUrl: 'https://example.test/confirm',
+      }),
+      f.service.prepareReservation({ ...f.input, paymentMethod: {
+        method: 'CARD', provider: 'CARD', currency: 'USD',
+        overseasPaymentConsent: { required: true, agreed: true, agreementVersion: 'test' },
+      } }, f.userId),
+    ]);
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    const restored = await f.service.getReservationByOrderId(f.input.orderId, f.userId);
+    expect(restored?.checkoutPaymentMethod?.currency).toBe(results[0]!.status === 'fulfilled' ? 'KRW' : 'USD');
+  });
+
+  it('does not abandon a handed-off order whose provider result is still unknown', async () => {
+    const f = await checkoutFixture();
+    const prepared = await f.service.prepareReservation(f.input, f.userId);
+    await f.providerService.prepareTossPaymentBranch({
+      orderId: prepared.orderId, paymentMethod: f.input.paymentMethod, userId: f.userId,
+      successUrl: 'https://example.test/complete', failUrl: 'https://example.test/confirm',
+    });
+    await expect(f.service.cancelPendingReservation(prepared.reservationId, f.userId))
+      .rejects.toThrow('결제 상태');
+    expect(await f.service.getReservationByOrderId(prepared.orderId, f.userId)).toMatchObject({ status: 'PENDING_PAYMENT' });
+  });
+
+  it('keeps method changes available if seat-lock validation fails before provider handoff', async () => {
+    const f = await checkoutFixture();
+    const prepared = await f.service.prepareReservation(f.input, f.userId);
+    f.locks.extendOwnedSeatLocks.mockRejectedValueOnce(new Error('Lock service unavailable'));
+    await expect(f.providerService.prepareTossPaymentBranch({
+      orderId: prepared.orderId, paymentMethod: f.input.paymentMethod, userId: f.userId,
+      successUrl: 'https://example.test/complete', failUrl: 'https://example.test/confirm',
+    })).rejects.toThrow('Lock service unavailable');
+    expect(await f.service.getReservationByOrderId(prepared.orderId, f.userId)).toMatchObject({ checkoutStartedAt: null });
+  });
 
   it('allows only one active owner during simultaneous sales of the same seat', async () => {
     const f = await fixture();

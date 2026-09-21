@@ -272,6 +272,18 @@ _Avoid_: Reservation total, KRW ticket total, client estimate.
 A snapshot of the Provider Charge Amount that the Buyer is asked to pay for a Reservation. It preserves the provider currency and amount used for payment authorization and validation.
 _Avoid_: Live exchange rate, UI estimate, mutable display price.
 
+**Prepared Checkout**:
+The Buyer-owned Reservation state used to start or resume payment, including the order ID, canonical seats, payment deadline, Checkout Payment Method and Provider Charge Quote. It exists before a Payment has been recorded and is recovered from the server after document navigation.
+_Avoid_: Browser-only cart, confirmed booking, provider approval.
+
+**Checkout Payment Method**:
+The server-stored method, provider route and charge currency selected for a Prepared Checkout. It can change before Provider Handoff but remains fixed across retries after handoff.
+_Avoid_: UI language, card issuer choice, actual provider payment result.
+
+**Provider Handoff**:
+The server boundary at which the selected Checkout Payment Method and seat locks have been validated and opening the provider checkout is authorized. The timestamp is not evidence that the browser opened, the provider approved, or money was captured.
+_Avoid_: Payment success, browser redirect, confirmed Reservation.
+
 **Provider Partial Cancellation**:
 A payment-provider cancellation result where only the refundable amount is cancelled and a policy-retained balance remains captured on the original payment. The retained balance can include Cancellation Fee Revenue or a non-refundable Ticket Service Fee. It can happen during Full Reservation Cancellation without implying buyer-facing partial cancellation.
 _Avoid_: Full payment cancellation, Ticket Item Cancellation, partial seat cancellation.

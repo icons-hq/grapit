@@ -1,4 +1,5 @@
-import { pgTable, uuid, varchar, integer, timestamp, pgEnum, index } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, integer, timestamp, pgEnum, index, jsonb } from 'drizzle-orm/pg-core';
+import type { PaymentMethod } from '@grabit/shared';
 import { users } from './users.js';
 import { showtimes } from './showtimes.js';
 
@@ -22,6 +23,8 @@ export const reservations = pgTable('reservations', {
   paymentDeadlineAt: timestamp('payment_deadline_at', { withTimezone: true }),
   status: reservationStatusEnum('status').notNull().default('PENDING_PAYMENT'),
   totalAmount: integer('total_amount').notNull(),
+  checkoutPaymentMethod: jsonb('checkout_payment_method').$type<PaymentMethod>(),
+  checkoutStartedAt: timestamp('checkout_started_at', { withTimezone: true }),
   providerChargeCurrency: varchar('provider_charge_currency', { length: 10 }),
   providerChargeAmountMinor: integer('provider_charge_amount_minor'),
   providerChargeRate: varchar('provider_charge_rate', { length: 50 }),

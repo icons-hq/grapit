@@ -53,37 +53,18 @@ export function PaymentDeadlineBanner({
   const lockRemainingLabel = formatRemainingTime(lockExpiresAt, nowMs);
 
   return (
-    <section
-      role="status"
-      aria-live="polite"
-      className={`rounded-2xl border px-5 py-4 ${
-        isCritical
-          ? 'border-red-200 bg-red-50 text-red-700'
-          : 'border-slate-200 bg-slate-50 text-slate-900'
-      }`}
-    >
-      <div className="flex items-start justify-between gap-4">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em]">
-            {isCritical ? <AlertTriangle className="size-4" /> : <Clock3 className="size-4" />}
-            <span>{t('paymentDeadline.badge')}</span>
-          </div>
-          <h2 className="text-base font-semibold">{t('paymentDeadline.title')}</h2>
-          <p className="text-sm opacity-80">
-            {isCritical
-              ? t('paymentDeadline.criticalHelper', { threshold: CRITICAL_REMAINING_LABEL })
-              : t('paymentDeadline.helper', { threshold: CRITICAL_REMAINING_LABEL })}
-          </p>
-        </div>
-        <div className="text-right">
-          <p className="text-[2rem] font-semibold tabular-nums leading-none">
-            {paymentRemainingLabel}
-          </p>
-          <p className="mt-2 text-xs opacity-70">
-            {t('paymentDeadline.seatHoldHelper', { time: lockRemainingLabel })}
-          </p>
-        </div>
+    <section aria-label={t('paymentDeadline.badge')} className={`space-y-2 border-b border-border pb-5 ${isCritical ? 'text-destructive' : 'text-muted-foreground'}`}>
+      <div className="flex items-center justify-between gap-4">
+        <h2 className="flex items-center gap-2 text-sm font-medium">
+          {isCritical ? <AlertTriangle className="size-4" /> : <Clock3 className="size-4" />}
+          {t('paymentDeadline.badge')}
+        </h2>
+        <p role="timer" aria-live="off" className="text-xl font-semibold tabular-nums text-primary">{paymentRemainingLabel}</p>
       </div>
+      <p role="status" className="text-xs leading-relaxed">{isCritical
+        ? t('paymentDeadline.criticalHelper', { threshold: CRITICAL_REMAINING_LABEL })
+        : t('paymentDeadline.helper', { threshold: CRITICAL_REMAINING_LABEL })}</p>
+      <p className="sr-only">{t('paymentDeadline.seatHoldHelper', { time: lockRemainingLabel })}</p>
     </section>
   );
 }
