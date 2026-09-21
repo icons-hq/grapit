@@ -14,6 +14,28 @@ export interface AdminPatchNote {
 
 const notes = [
   {
+    id: 'pr-227-performance-preparation-and-support',
+    prNumber: 227,
+    title: '공연 준비·판매·고객 대응 흐름 통합',
+    summary:
+      '공연과 회차를 선택해 초안 작성부터 검수·공개, 예매 확인·문의 처리·특전 운영까지 이어서 진행할 수 있습니다.',
+    highlights: [
+      '단계별 작성과 초안 저장·재개, 누락 항목 안내 및 최신 상태에 대한 공개 승인',
+      '판매된 좌석·가격·공연장 보호와 오래된 편집·번역 승인 충돌 방지',
+      '고객 문의에서 원 결제 통화·환불·좌석·특전·이메일 기록을 함께 확인',
+      '특전 테스트와 실제 반영 구분, 이름 수정 후 기존 권리·외국어 안내 유지',
+      '운영·승인·재무·현장 역할별 메뉴와 API 권한 일치',
+    ],
+    category: 'feature',
+    date: '2026-09-22',
+    githubUrl: 'https://github.com/icons-hq/grapit/pull/227',
+    evidence: [
+      'API 1300 / Web 756 / shared 148 tests; PostgreSQL HTTP regressions',
+      'Role-based desktop/mobile browser QA and entitlement readback',
+      'API/Web production build and Standards/Spec review',
+    ],
+  },
+  {
     id: 'pr-226-seat-cancellation-and-refunds',
     prNumber: 226,
     title: '좌석별 취소와 환불 상태·금액 안내',
