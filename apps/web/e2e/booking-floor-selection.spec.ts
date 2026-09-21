@@ -310,7 +310,7 @@ async function selectDateAndShowtime(page: Page) {
 async function clickSeatLabelCenter(page: Page) {
   const seatMapGrid = page.getByTestId('seat-map-canvas');
   const seatLabel = page
-    .getByRole('grid', { name: '좌석 배치도' })
+    .getByTestId('seat-map-canvas')
     .locator('text.seat-number')
     .filter({ hasText: /^1$/ })
     .first();
@@ -336,7 +336,7 @@ async function clickSeatLabelCenter(page: Page) {
 async function tapSeatLabelCenter(page: Page) {
   const seatMapGrid = page.getByTestId('seat-map-canvas');
   const seatLabel = page
-    .getByRole('grid', { name: '좌석 배치도' })
+    .getByTestId('seat-map-canvas')
     .locator('text.seat-number')
     .filter({ hasText: /^1$/ })
     .first();
