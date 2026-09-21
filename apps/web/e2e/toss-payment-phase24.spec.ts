@@ -166,7 +166,7 @@ test.describe('toss-payment phase24 recovery states', () => {
 
     await expect(page.getByRole('heading', { name: '예매 상태를 확인하지 못했어요' })).toBeVisible({ timeout: 10000 });
     await expect(page.getByRole('button', { name: '좌석 다시 선택하기' })).not.toBeVisible();
-    await expect(page.getByRole('link', { name: '고객센터' })).toBeVisible();
+    await expect(page.getByRole('main').getByRole('link', { name: '고객센터', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: '상태 다시 확인' })).toBeVisible();
     await expect(page.getByText(/예매가 완료|완료되었습니다/)).not.toBeVisible();
     await expect.poll(() => confirmIntercepted).toBe(false);
@@ -248,7 +248,7 @@ test.describe('toss-payment phase24 recovery states', () => {
     );
 
     await expect(page.getByText('결제 가능 시간이 만료되었습니다')).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText('좌석을 다시 선택한 뒤 새 결제를 시작해주세요.')).toBeVisible({
+    await expect(page.getByText('내 티켓에서 기존 예매의 결제 상태를 먼저 확인해 주세요. 미결제로 종료된 예매만 다시 선택할 수 있습니다.')).toBeVisible({
       timeout: 10000,
     });
     await expect(page.getByRole('button', { name: '좌석 다시 선택하기' })).toBeVisible();
