@@ -405,8 +405,12 @@ An operator-facing view of Ticket Items inside a Reservation, including seat ide
 _Avoid_: Reservation-only booking detail.
 
 **Settlement Dataset**:
-A finance-facing export or summary used after booking and entry operations to reconcile Ticket Items, payments, refunds, entry state, and no-shows for an event, with optional showtime or date-range drilldown. Summary views can group by Reservation, but export rows use Ticket Item as the atomic unit.
+A finance-facing export or summary for an event and optional showtime, with an explicit KST date basis and an evidence cutoff. Payment exports use one Payment per row, Ticket Item exports use one Ticket Item per row, and provider exports use one provider settlement transaction per row. Original order amounts must not repeat as additive values on Ticket Item rows. Missing financial evidence is unknown, never zero. See ADR 0012.
 _Avoid_: Dashboard, analytics, showtime-only report.
+
+**Finance Evidence Cutoff**:
+The time up to which stored approvals and cancellation requests/completions are considered. A failed full-refund attempt uses its saved quote and restoration history, not the ticket's current reset amounts. PG settlement data has its own observation time and sold-date/payout-date basis; a current PG response is not a historical snapshot or proof of bank deposit.
+_Avoid_: Report download time, accounting close, provider payout confirmation.
 
 ## Example Dialogue
 

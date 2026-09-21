@@ -408,6 +408,12 @@ describe('TossPaymentsClient', () => {
     );
   });
 
+  it('does not convert an invalid successful settlement response into an empty result', async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ error: 'unexpected response' }) });
+    await expect(client.querySettlements({ startDate: '2026-09-01', endDate: '2026-09-02', dateType: 'paidOutDate' }))
+      .rejects.toThrow('정산 응답');
+  });
+
   it('uses the foreign easy pay secret when querying foreign easy pay payment state', async () => {
     const foreignEasyPaySecretKey = 'test_sk_foreign_easy_pay_secret';
     const foreignEasyPayAuthHeader =

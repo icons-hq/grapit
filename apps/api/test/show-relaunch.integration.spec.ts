@@ -1,5 +1,5 @@
 import { AdminBookingService } from '../src/modules/admin/admin-booking.service.js';
-import { AdminSettlementReconciliationService } from '../src/modules/admin/admin-settlement-reconciliation.service.js';
+import { FinanceLedgerService } from '../src/modules/admin/finance-ledger.service.js';
 import { TossPaymentError } from '../src/modules/payment/toss-payments.client.js';
 import { RefundService } from '../src/modules/refund/refund.service.js';
 import { PaymentCancellationFinalizerService } from '../src/modules/cancellation/payment-cancellation-finalizer.service.js';
@@ -1077,8 +1077,10 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     const manifest = await admin.exportReservations({ actorUserId: f.userId,
       filters: { showtimeId: f.showtimeId, exportType: 'active_ticket_manifest', reason: 'Contract regression' } });
     expect(manifest.rowCount).toBe(1);
-    const settlement = new AdminSettlementReconciliationService(db, { querySettlements: vi.fn().mockResolvedValue([]) } as never);
-    expect((await settlement.getReconciliation({ eventId: f.performanceId })).siteSalesGrossAmount).toBe(52000);
+    const settlement = new FinanceLedgerService(db, {} as never, new AdminAuditService(db));
+    const todayKst = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
+    expect((await settlement.getLedger({ eventId: f.performanceId, showtimeId: f.showtimeId, dateFrom: todayKst,
+      dateTo: todayKst, dateBasis: 'paid_at', asOf: new Date().toISOString(), includeProvider: 'false', providerDateBasis: 'paidOutDate' })).summary.remainingTicketKrw).toBe(52000);
   });
 
   it('cancels the last ticket while retaining the cancellation and booking fees at the provider', async () => {

@@ -23,8 +23,7 @@ import { AdminDiagnosticsController } from './admin-diagnostics.controller.js';
 import { AdminService } from './admin.service.js';
 import { AdminAuditService } from './admin-audit.service.js';
 import { AdminBookingService } from './admin-booking.service.js';
-import { AdminSettlementReconciliationService } from './admin-settlement-reconciliation.service.js';
-import { SettlementExportService } from './settlement-export.service.js';
+import { FinanceLedgerService } from './finance-ledger.service.js';
 import { AdminOperationsService } from './admin-operations.service.js';
 import { AdminSupportContentService } from './admin-support-content.service.js';
 import { PublicSupportContentController } from './public-support-content.controller.js';
@@ -67,8 +66,7 @@ import { PerformanceDraftService } from './performance-draft.service.js';
     AdminAuditService,
     AdminCapabilitiesGuard,
     AdminBookingService,
-    AdminSettlementReconciliationService,
-    SettlementExportService,
+    FinanceLedgerService,
     AdminOperationsService,
     AdminSupportContentService,
     AdminSeatOperationsService,

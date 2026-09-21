@@ -307,24 +307,23 @@ Credential validity and venue entry state are separate:
 `FieldOperationsModule` provides:
 
 - verify: parse token or QR URL, load ticket context, return processable outcome,
-- consume: manually process entry when staff confirms, marking all active not-entered tickets for the same buyer account and showtime as entered,
-- offline sync: server-reverify pending attempts and return synced/rejected state,
+- consume: manually process only the scanned Ticket Item after staff confirms, preserving companion seats and the buyer's QR access (ADR 0011),
+- offline sync: server-reverify pending attempts and return pending/synced/rejected state; transient failures remain pending,
 - monitor: KPI summary and scan logs.
 
 Scanner-only access is represented through admin capability bundles, not a separate auth stack.
 
 ### 7.3 Settlement
 
-Admin settlement supports:
+Admin settlement uses `FinanceLedgerService` through `GET /admin/settlement/ledger` and `POST /admin/settlement/ledger/export`:
 
-- gross sales amount,
-- paid reservation count,
-- refunded amount/count,
-- entered/no-show counts,
-- entry rate,
-- export datasets for entry status, no-show reservations, reservation/payment/refund summary, and accounting input.
+- explicit event/showtime, KST approval or cancellation date range, and evidence cutoff;
+- original order, stored approved payment, completed/pending refunds, remaining tickets and retained fees;
+- saved provider charge/cancellation amounts in separate KRW and USD integer minor units;
+- optional current PG settlement reads by sold date or payout date, including cancelled payments and signed cancellation rows;
+- payment, ticket and provider CSVs from the same reader, with scope/time/currency, no buyer contact fields, reason and export audit.
 
-External finance-system integration is outside the current code path.
+Unknown amounts are nullable. Missing/failed PG evidence cannot become a successful zero result or a bank-deposit/closing confirmation. Legacy summary/reconciliation/export endpoints return authenticated HTTP 410 with migration guidance; their ambiguous monetary implementation is removed. Browser URLs are retained. See [ADR 0012](adr/0012-finance-evidence-ledger.md) and the [finance runbook](runbooks/finance-ledger-reconciliation.md). External bank evidence and finance-system integration remain separate.
 
 ## 8. Infrastructure And Deployment
 

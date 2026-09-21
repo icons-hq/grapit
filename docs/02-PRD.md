@@ -158,7 +158,7 @@ Admin is an operational console, not a marketing CMS.
 | ADM-03 | Manage reservations | Operator can inspect bookings, export masked/raw data when permitted, refund, and manually open seats. |
 | ADM-04 | Manage support content | Operator can manage inbox, FAQ, notices, escalation, and review state. |
 | ADM-05 | Manage security | Admin can inspect audit/security state, allowlist entries, and user permission bundles. |
-| ADM-06 | Manage settlement | Finance-capable admin can view settlement summary and export approved datasets with reason capture. |
+| ADM-06 | Manage settlement | Finance-capable admin explicitly selects event/showtime, KST date basis and evidence cutoff; compares original order/payment, completed/pending cancellation, remaining tickets and separate provider currencies; exports payment/ticket/provider records with scope and reason. Unqueried/failed/empty evidence remains distinct, and bank deposits/closing remain unverified without external evidence (ADR 0012). |
 | ADM-07 | Manage translations | Admin can create translation sources, review drafts, and publish reviewed localized content. |
 
 ### 4.4 Platform Requirements

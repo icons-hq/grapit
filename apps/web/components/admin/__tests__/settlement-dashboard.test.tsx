@@ -1,204 +1,108 @@
 import { render, screen, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { QueryClient, QueryClientProvider, onlineManager } from '@tanstack/react-query';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { FinanceLedger } from '@grabit/shared';
 import { SettlementDashboard } from '../settlement-dashboard';
+import { apiClient } from '@/lib/api-client';
 
-const exportMutate = vi.fn();
-
-const financeUser = {
-  id: 'finance-admin-1',
-  role: 'admin',
-  adminCapabilityBundle: 'finance',
-  adminCapabilities: ['settlement.export', 'reservations.export_raw', 'audit.read'],
-} as const;
-
-const scannerOnlyUser = {
-  id: 'scanner-only-1',
-  role: 'admin',
-  adminCapabilityBundle: 'scanner',
-  adminCapabilities: ['field.scan.verify', 'field.scan.consume', 'field.scan.sync'],
-} as const;
-
-const dashboardData = {
-  summary: {
-    salesAmount: 12800000,
-    paidReservations: 180,
-    refundedAmount: 320000,
-    entered: 142,
-    noShow: 38,
-    exportReady: true,
-  },
-  reconciliation: {
-    eventId: 'phase27-event',
-    siteSalesGrossAmount: 193_906_000,
-    domestic: {
-      tossGrossAmount: 159_004_000,
-      payoutAmount: 153_032_725,
-      feeAmount: 5_971_275,
-      matchedGrossAmount: 158_280_000,
-      unmatchedGrossAmount: 4_156_000,
-      unsettledTransferAmount: 3_432_000,
-      unsettledTransferCount: 11,
-    },
-    foreign: {
-      grossAmount: 31_470_000,
-      byProvider: [
-        { provider: 'PAYPAL', grossAmount: 21_818_000, reservationCount: 56 },
-        { provider: 'ALIPAY_PLUS', grossAmount: 8_374_000, reservationCount: 23 },
-      ],
-    },
-    generatedAt: '2026-06-08T07:15:00.000Z',
-    warnings: ['외화정산 지급액은 Toss 상점관리자 값을 직접 입력하세요.'],
-  },
-  maskedSamples: [
-    {
-      reservationNumber: 'GRP-27-SET-0001',
-      buyerName: '김**',
-      buyerEmail: 'masked@example.invalid',
-      entryStatus: 'entered',
-    },
-  ],
-  rawRows: [
-    {
-      buyerEmail: 'raw-buyer@example.com',
-      buyerPhone: '010-7777-2727',
-      paymentKey: 'raw-payment-key-phase27',
-    },
-  ],
-} as const;
-
-function renderDashboard(
-  overrides: Partial<React.ComponentProps<typeof SettlementDashboard>> = {},
-) {
-  render(
-    <SettlementDashboard
-      user={financeUser}
-      data={dashboardData}
-      requiredFilters={{
-        eventId: 'phase27-event',
-        showtimeId: 'phase27-showtime',
-        dateFrom: '2026-07-04',
-        dateTo: '2026-07-04',
-      }}
-      onExport={exportMutate}
-      {...overrides}
-    />,
-  );
+const finance = { id: 'finance', role: 'admin', adminCapabilityBundle: 'finance' } as const;
+const query: FinanceLedger['query'] = { eventId: '12345678-1234-4000-8000-123456789012', showtimeId: '12345678-1234-4000-8000-123456789013',
+  dateFrom: '2026-09-01', dateTo: '2026-09-01', dateBasis: 'paid_at', asOf: '2026-09-04T00:00:00Z', providerDateBasis: 'paidOutDate', includeProvider: 'false' };
+const summary = { paymentCount: 1, unknownPaymentCount: 0, originalOrderKrw: 104000, confirmedPaymentKrw: 104000, confirmedRefundKrw: 45000, pendingRefundKrw: 0,
+  remainingTicketKrw: 52000, retainedCancellationFeeKrw: 5000, retainedServiceFeeKrw: 2000, periodApprovedKrw: 104000, periodRefundKrw: 0 };
+const ledger: FinanceLedger = { query, generatedAt: '2026-09-04T00:00:01Z', performanceTitle: '정산 검증 공연', timezone: 'Asia/Seoul',
+  summary, currencies: [{ currency: 'USD', exponent: 2, chargeMinor: 8000, confirmedCancelMinor: 3461, pendingCancelMinor: 0, balanceMinor: 4539, unknownPaymentCount: 0 }],
+  rows: [], provider: { status: 'not_queried', observedAt: null, dateBasis: 'paidOutDate', rows: [], scopes: [] }, bankEvidence: 'unverified', closingStatus: 'not_closed', warnings: [] };
+function setup(props: Partial<React.ComponentProps<typeof SettlementDashboard>> = {}) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={client}><SettlementDashboard user={finance} data={ledger} {...props} /></QueryClientProvider>);
 }
 
-describe('SettlementDashboard', () => {
-  beforeAll(() => {
-    Object.defineProperty(HTMLElement.prototype, 'hasPointerCapture', {
-      value: () => false,
-      configurable: true,
-    });
-    Object.defineProperty(HTMLElement.prototype, 'setPointerCapture', {
-      value: () => {},
-      configurable: true,
-    });
-    Object.defineProperty(HTMLElement.prototype, 'releasePointerCapture', {
-      value: () => {},
-      configurable: true,
-    });
-    Element.prototype.scrollIntoView = function scrollIntoView() {};
+describe('Finance ledger dashboard', () => {
+  beforeEach(() => vi.restoreAllMocks());
+  it('keeps KRW orders and USD charge/cancellation minor units separate', () => {
+    setup();
+    const totals = within(screen.getByRole('region', { name: '통화별 PG 청구와 취소' }));
+    expect(totals.getByText('USD 80.00')).toBeInTheDocument();
+    expect(totals.getByText('USD 34.61')).toBeInTheDocument();
+    expect(totals.getByText('USD 45.39')).toBeInTheDocument();
+    expect(totals.getByText('3461 minor units')).toBeInTheDocument();
+    expect(screen.getByText('KRW 52,000')).toBeInTheDocument();
+    expect(screen.getByText('은행 실입금 미확인 · 마감 미완료')).toBeInTheDocument();
+    expect(screen.queryByText('최종 차이')).not.toBeInTheDocument();
   });
-
-  beforeEach(() => {
-    exportMutate.mockReset();
+  it('distinguishes an unqueried provider from failed and successful empty responses', () => {
+    const view = setup();
+    expect(screen.getByText(/PG 자료 미조회/)).toBeInTheDocument();
+    view.unmount();
+    const empty = setup({ data: { ...ledger, provider: { ...ledger.provider, status: 'empty', observedAt: ledger.generatedAt } } });
+    expect(screen.getByText(/조회 완료 · 이 범위에 해당하는 PG 정산 자료 0건/)).toBeInTheDocument();
+    empty.unmount();
+    setup({ data: { ...ledger, provider: { ...ledger.provider, status: 'failed', observedAt: ledger.generatedAt } } });
+    expect(screen.getByText(/PG 자료 조회 실패 · 지급액은 미확인/)).toBeInTheDocument();
   });
-
-  it('renders dashboard summary, all settlement tabs, and all required dataset export actions', () => {
-    renderDashboard();
-
-    expect(screen.getByRole('heading', { name: '정산·내보내기' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: '요약' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: '입장/노쇼' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: '결제/환불' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: '내보내기' })).toBeInTheDocument();
-    expect(screen.getByText('정산 입력 자료')).toBeInTheDocument();
-
-    const summary = screen.getByTestId('settlement-summary');
-    const exportPanel = screen.getByTestId('settlement-export-panel');
-    expect(
-      summary.compareDocumentPosition(exportPanel) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(screen.getByRole('button', { name: '입장 상태 CSV 내보내기' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '노쇼 예약 CSV 내보내기' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '예매/결제/환불 CSV 내보내기' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '정산 CSV 내보내기' })).toBeInTheDocument();
+  it('does not query automatically before the finance operator applies a scope', () => {
+    const api = vi.spyOn(apiClient, 'get');
+    setup({ data: undefined, requiredFilters: query });
+    expect(api).not.toHaveBeenCalled();
+    expect(screen.getByText(/공연과 조회 조건을 선택/)).toBeInTheDocument();
+    expect(screen.queryByText('KRW 0')).not.toBeInTheDocument();
   });
-
-  it('shows settlement reconciliation and calculates final difference from operator foreign payout input', async () => {
-    const user = userEvent.setup();
-    renderDashboard();
-
-    expect(screen.getByRole('heading', { name: '정산 대사' })).toBeInTheDocument();
-    expect(screen.getByText('193,906,000원')).toBeInTheDocument();
-    expect(screen.getByText('153,032,725원')).toBeInTheDocument();
-    expect(screen.getByText('국내 계좌이체 정산 미완료 11건')).toBeInTheDocument();
-    expect(screen.getByText('외화정산 금액 입력 필요')).toBeInTheDocument();
-
-    await user.type(
-      screen.getByLabelText('Toss 외화정산 금액'),
-      '29896059',
-    );
-
-    expect(screen.getByText('최종 차이')).toBeInTheDocument();
-    expect(screen.getByText('10,977,216원')).toBeInTheDocument();
+  it('sends showtime, period, KST cutoff and provider date basis to the API on an explicit query', async () => {
+    const api = vi.spyOn(apiClient, 'get').mockResolvedValue(ledger);
+    setup({ data: undefined, requiredFilters: query });
+    await userEvent.click(screen.getByRole('button', { name: 'PG 자료까지 조회' }));
+    await screen.findByText('KRW 52,000');
+    const url = new URL(api.mock.calls[0]![0], 'https://example.test');
+    expect(Object.fromEntries(url.searchParams)).toMatchObject({ eventId: query.eventId, showtimeId: query.showtimeId, dateFrom: '2026-09-01', dateTo: '2026-09-01', dateBasis: 'paid_at', asOf: '2026-09-04T09:00:00+09:00', providerDateBasis: 'paidOutDate', includeProvider: 'true' });
   });
-
-  it('requires confirmation and reason before settlement CSV export', async () => {
-    const user = userEvent.setup();
-    renderDashboard();
-
-    await user.click(screen.getByRole('button', { name: '정산 CSV 내보내기' }));
-
-    expect(
-      screen.getByRole('heading', { name: '정산 데이터를 내보내시겠습니까?' }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText('개인정보와 결제/환불 정보가 포함될 수 있습니다. 필터, 권한, 사유를 확인한 뒤 내보내세요.'),
-    ).toBeInTheDocument();
-
-    const dialog = screen.getByRole('dialog');
-    expect(within(dialog).getByText('필터 요약')).toBeInTheDocument();
-    expect(within(dialog).getByText('phase27-event')).toBeInTheDocument();
-    expect(within(dialog).getByText('phase27-showtime')).toBeInTheDocument();
-    expect(within(dialog).getByText('2026-07-04 ~ 2026-07-04')).toBeInTheDocument();
-    expect(within(dialog).getByText('작업자')).toBeInTheDocument();
-    expect(within(dialog).getByText('finance-admin-1')).toBeInTheDocument();
-    expect(within(dialog).getByText('감사 로그에 내보내기 사유와 필터가 기록됩니다.')).toBeInTheDocument();
-
-    const confirm = within(dialog).getByRole('button', { name: 'CSV 내보내기' });
-    expect(confirm).toBeDisabled();
-
-    await user.type(within(dialog).getByLabelText('내보내기 사유'), '행사 종료 정산 대조');
-    expect(confirm).toBeEnabled();
-
-    await user.click(confirm);
-
-    expect(exportMutate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        reason: '행사 종료 정산 대조',
-        dataset: 'settlement_accounting_input',
-      }),
-    );
+  it('shows no invented zero on API failure and lets the same query recover', async () => {
+    vi.spyOn(apiClient, 'get').mockRejectedValueOnce(new Error('Unavailable')).mockResolvedValue(ledger);
+    setup({ data: undefined, requiredFilters: query });
+    await userEvent.click(screen.getByRole('button', { name: '원장 조회' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('금액은 확인되지 않았습니다');
+    expect(screen.queryByText('KRW 0')).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: '원장 조회' }));
+    expect(await screen.findByText('KRW 52,000')).toBeInTheDocument();
   });
-
-  it('does not preview raw PII or payment rows in the browser before export', () => {
-    renderDashboard();
-
-    expect(screen.queryByText('raw-buyer@example.com')).not.toBeInTheDocument();
-    expect(screen.queryByText('010-7777-2727')).not.toBeInTheDocument();
-    expect(screen.queryByText('raw-payment-key-phase27')).not.toBeInTheDocument();
+  it('requires a reason and sends the exact displayed scope when exporting', async () => {
+    const exportFile = vi.fn();
+    setup({ onExport: exportFile });
+    const button = screen.getByRole('button', { name: '결제·환불 원장 CSV' });
+    expect(button).toBeDisabled();
+    await userEvent.type(screen.getByRole('textbox', { name: '내보내기 사유' }), '9월 원장 대조');
+    await userEvent.click(button);
+    expect(exportFile).toHaveBeenCalledWith({ query, dataset: 'payments', reason: '9월 원장 대조' });
   });
-
-  it('denies scanner-only users from settlement and export surfaces', () => {
-    renderDashboard({ user: scannerOnlyUser });
-
-    expect(screen.getByText('정산 데이터를 내보낼 권한이 없습니다')).toBeInTheDocument();
-    expect(screen.getByText('scanner-only accounts cannot access settlement export')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '정산 CSV 내보내기' })).not.toBeInTheDocument();
+  it('hides stale totals and their export after a period is edited', async () => {
+    setup();
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: '거래 선택 기준' }), 'cancelled_at');
+    expect(screen.getByText(/조회 조건이 변경되었습니다/)).toBeInTheDocument();
+    expect(screen.queryByText('KRW 52,000')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '결제·환불 원장 CSV' })).not.toBeInTheDocument();
+  });
+  it('blocks provider export while any merchant query is unavailable', async () => {
+    setup({ data: { ...ledger, provider: { ...ledger.provider, status: 'partial' } } });
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: '자료 종류' }), 'provider');
+    await userEvent.type(screen.getByRole('textbox', { name: '내보내기 사유' }), 'PG 대조');
+    expect(screen.getByRole('button', { name: 'PG 정산 자료 CSV' })).toBeDisabled();
+  });
+  it('keeps scanner accounts outside the finance flow', () => {
+    setup({ user: { id: 'scanner', role: 'admin', adminCapabilityBundle: 'scanner' } });
+    expect(screen.getByRole('alert')).toHaveTextContent('정산을 조회할 권한이 없습니다');
+    expect(screen.queryByRole('button', { name: '원장 조회' })).not.toBeInTheDocument();
+  });
+  it('marks an offline request as waiting and does not enable exports or show stale amounts', async () => {
+    vi.spyOn(apiClient, 'get').mockResolvedValue(ledger);
+    const view = setup({ data: undefined, requiredFilters: query });
+    onlineManager.setOnline(false);
+    try {
+      await userEvent.click(screen.getByRole('button', { name: '원장 조회' }));
+      expect(screen.getByText(/연결 복구를 기다리고 있습니다/)).toBeInTheDocument();
+      expect(screen.queryByTestId('settlement-summary')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: '결제·환불 원장 CSV' })).not.toBeInTheDocument();
+    } finally { view.unmount(); onlineManager.setOnline(true); }
   });
 });

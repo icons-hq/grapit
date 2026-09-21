@@ -11,6 +11,7 @@ export * from './schemas/benefit.schema';
 export * from './schemas/admin-operations.schema';
 export * from './schemas/field-operations.schema';
 export * from './schemas/ticket-item.schema';
+export * from './schemas/finance-ledger.schema';
 
 // Types
 export * from './types/auth.types';
