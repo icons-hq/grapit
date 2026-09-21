@@ -63,6 +63,15 @@ let pausedContainer;
 const agents = [];
 const samples = new Map();
 const delay = (ms) => new Promise((done) => setTimeout(done, ms));
+const interruption = new AbortController();
+const interrupt = (signal) => {
+  interruption.abort(new Error(`Experiment interrupted by ${signal}`));
+  child?.kill('SIGTERM');
+};
+const onSigint = () => interrupt('SIGINT');
+const onSigterm = () => interrupt('SIGTERM');
+process.once('SIGINT', onSigint); process.once('SIGTERM', onSigterm);
+function checkInterrupted() { if (interruption.signal.aborted) throw interruption.signal.reason; }
 
 async function freePort() {
   const server = createServer();
@@ -79,12 +88,13 @@ function record(name, elapsed, status, outcome) {
 }
 
 async function request(actor, path, { method = 'GET', body, metric, timeout = 30000 } = {}) {
+  checkInterrupted();
   assert(path.startsWith('/api/v1/'), 'Only this API path is supported');
   const started = performance.now();
   try {
     const encoded = body ? JSON.stringify(body) : undefined;
     const result = await new Promise((done, reject) => {
-      const req = httpRequest(base + path, { method, agent: actor?.agent, signal: AbortSignal.timeout(timeout),
+      const req = httpRequest(base + path, { method, agent: actor?.agent, signal: AbortSignal.any([AbortSignal.timeout(timeout), interruption.signal]),
         headers: { 'Content-Type': 'application/json', ...(encoded ? { 'Content-Length': Buffer.byteLength(encoded) } : {}), ...(actor ? {
         Authorization: `Bearer ${actor.token}`, Cookie: [...actor.cookies].map(([key, value]) => `${key}=${value}`).join('; '),
         } : {}) } }, (response) => {
@@ -224,8 +234,8 @@ async function exercise(count, buyers, scanners) {
     fieldEntriesSucceeded: field.filter((r) => r.data?.outcome === 'entered').length,
     fieldContentionWinners: entryWinners, enteredReadback: readback.rows[0].entered, metrics: metrics() };
   data.invariantsPassed = lockWinners === 1 && entryWinners === 1 && data.enteredReadback === data.fieldEntriesSucceeded + 1;
-  data.latencyTargetsPassed = (data.metrics['seat.lock']?.p95Ms ?? Infinity) <= 1000
-    && data.metrics['buyer.wallet'].p95Ms <= 2000 && data.metrics['field.consume'].p95Ms <= 1000;
+  data.latencyTargetsPassed = Object.entries(data.metrics).every(([name, value]) => value.p95Ms <= (
+    name.startsWith('field.') || ['seat.lock', 'seat.contention'].includes(name) ? 1000 : 2000));
   data.sloPassed = data.invariantsPassed && data.latencyTargetsPassed && data.admitted === count
     && data.locksSucceeded === count && data.fieldEntriesSucceeded === count
     && Object.values(data.metrics).every((value) => value.errorRate < .01);
@@ -240,6 +250,7 @@ async function exercise(count, buyers, scanners) {
 }
 
 async function fault(container, actor, path, options) {
+  checkInterrupted();
   pausedContainer = container.getId();
   execFileSync('docker', ['pause', pausedContainer], { stdio: 'ignore' });
   let interrupted;
@@ -261,10 +272,13 @@ try {
   await mkdir(join(work, 'apps/api'), { recursive: true });
   await writeFile(join(work, '.env'), '', { mode: 0o600 });
   pgContainer = await new GenericContainer('postgres:16-alpine').withEnvironment({ POSTGRES_PASSWORD: password, POSTGRES_DB: 'grabit_disposable_capacity' }).withExposedPorts(5432).start();
+  checkInterrupted();
   redisContainer = await new GenericContainer('valkey/valkey:8-alpine').withExposedPorts(6379).start();
+  checkInterrupted();
   const databaseUrl = `postgresql://postgres:${password}@${pgContainer.getHost()}:${pgContainer.getMappedPort(5432)}/grabit_disposable_capacity`;
   pool = new Pool({ connectionString: databaseUrl, max: 2 }); db = drizzle(pool, { schema });
   await migrate(db, { migrationsFolder: join(root, 'apps/api/src/database/migrations') });
+  checkInterrupted();
   // Production deploys the worker (and its job schema) before the API. Mirror
   // that schema prerequisite without running workers or external side effects.
   const { PgBoss } = await import(require.resolve('pg-boss'));
@@ -272,6 +286,7 @@ try {
   await installer.start(); await installer.stop();
   const count = Math.max(...waves);
   const buyers = await actors(count, 'buyer'); const scanners = await actors(count, 'scanner');
+  checkInterrupted();
   const port = await freePort(); base = `http://127.0.0.1:${port}`;
   childLog = await open(`${output}.api.log`, 'w', 0o600);
   // Positive allowlist: future provider credentials cannot silently reach the API.
@@ -286,6 +301,7 @@ try {
     } });
   let ready = false;
   for (let attempt = 0; attempt < 100; attempt++) {
+    checkInterrupted();
     if (child.exitCode !== null) throw new Error('Disposable API exited; inspect the private API log');
     const response = await request(null, '/api/v1/health', { timeout: 500 });
     if (response.status === 200) { ready = true; break; }
@@ -303,6 +319,7 @@ try {
     summary.faults.push({ component: 'postgres', ...await fault(pgContainer, last.actor, '/api/v1/users/me/reservations?locale=en', {}) });
   }
   summary.completedAt = new Date().toISOString();
+  checkInterrupted();
   summary.highestPassingSessions = Math.max(0, ...summary.waves.filter((wave) => wave.sloPassed).map((wave) => wave.sessions));
   summary.status = summary.waves.every((wave) => wave.sloPassed) ? 'measured_targets_passed' : 'capacity_limited';
   summary.faultRecoveryPassed = summary.faults.every((item) => item.duringPause === 'transport_error'
@@ -318,17 +335,29 @@ try {
   console.error(JSON.stringify({ error: summary.error, result: output }));
   process.exitCode = 1;
 } finally {
-  if (pausedContainer) execFileSync('docker', ['unpause', pausedContainer], { stdio: 'ignore' });
-  if (child && child.exitCode === null) {
-    child.kill('SIGTERM');
-    await Promise.race([new Promise((done) => child.once('exit', done)), delay(5000)]);
-    if (child.exitCode === null) child.kill('SIGKILL');
-  }
-  await childLog?.close();
+  const cleanupFailures = [];
+  const cleanup = async (resource, action) => {
+    try { await action(); } catch { cleanupFailures.push(resource); }
+  };
+  await cleanup('paused-container', async () => { if (pausedContainer) execFileSync('docker', ['unpause', pausedContainer], { stdio: 'ignore' }); });
+  await cleanup('api-process', async () => {
+    if (child && child.exitCode === null && child.signalCode === null) {
+      child.kill('SIGTERM');
+      const exited = new Promise((done) => child.once('exit', done));
+      await Promise.race([exited, delay(5000)]);
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill('SIGKILL'); await exited;
+      }
+    }
+  });
+  await cleanup('api-log', async () => { await childLog?.close(); });
   for (const agent of agents) agent.destroy();
-  await pool?.end();
-  await redisContainer?.stop(); await pgContainer?.stop();
-  await rm(work, { recursive: true, force: true });
-  summary.disposableResourcesRemoved = true;
+  await cleanup('database-pool', async () => { await pool?.end(); });
+  await Promise.all([cleanup('valkey', async () => { await redisContainer?.stop(); }), cleanup('postgres', async () => { await pgContainer?.stop(); })]);
+  await cleanup('temporary-files', () => rm(work, { recursive: true, force: true }));
+  summary.cleanupFailures = cleanupFailures;
+  summary.disposableResourcesRemoved = cleanupFailures.length === 0;
+  if (cleanupFailures.length) { summary.status = 'cleanup_failed'; process.exitCode = 1; }
   await writeFile(output, JSON.stringify(summary, null, 2), { mode: 0o600 });
+  process.removeListener('SIGINT', onSigint); process.removeListener('SIGTERM', onSigterm);
 }

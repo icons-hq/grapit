@@ -55,6 +55,10 @@ describe('Revamp read-only release evidence', () => {
       VALUES ($1,$2,'private-provider-key','preflight-order','CARD','CARD','KRW',104000,'DONE')`, [payment, reservation]);
     await pool.query(`INSERT INTO consent_items (id,key,version,locale,title,body,is_required)
       VALUES ($1,'preflight-consent','v1','en','Original consent','Original wording',false)`, [removable]);
+    await pool.query(`INSERT INTO refunds (reservation_id,payment_id,provider,status,provider_metadata,completed_at)
+      VALUES ($1,$2,'CARD','completed','{"cancelAmount":52000}',now())`, [reservation, payment]);
+    await pool.query(`INSERT INTO admin_audit_logs (actor_user_id,action,resource_type,resource_id,status,reason)
+      VALUES ($1,'refund.admin_refund','reservation',$2,'success','Original audited reason')`, [buyer, reservation]);
 
     const before = await capture('before');
     expect(before.exitCode).toBe(0);
@@ -71,12 +75,23 @@ describe('Revamp read-only release evidence', () => {
     expect(changed.data.comparison.users.originalChanged).toBe(1);
     expect(changed.data.comparison.consent_items.added).toBe(1);
 
+    await pool.query(`UPDATE refunds SET provider_metadata='{"cancelAmount":1}' WHERE payment_id=$1`, [payment]);
+    await pool.query(`UPDATE admin_audit_logs SET reason='Changed audited reason' WHERE actor_user_id=$1`, [buyer]);
+    const tampered = await capture('tampered', before.output);
+    expect(tampered.exitCode).toBe(2);
+    expect(tampered.data.comparison.refunds.immutableChanged).toBe(1);
+    expect(tampered.data.comparison.admin_audit_logs.immutableChanged).toBe(1);
+
     await pool.query('UPDATE payments SET amount=103999 WHERE id=$1', [payment]);
     await pool.query('DELETE FROM consent_items WHERE id=$1', [removable]);
+    await pool.query('DELETE FROM refunds WHERE payment_id=$1', [payment]);
+    await pool.query('DELETE FROM admin_audit_logs WHERE actor_user_id=$1', [buyer]);
     const broken = await capture('broken', before.output);
     expect(broken.exitCode).toBe(2);
     expect(broken.data.preservationPassed).toBe(false);
     expect(broken.data.comparison.payments.immutableChanged).toBe(1);
     expect(broken.data.comparison.consent_items.missing).toBe(1);
+    expect(broken.data.comparison.refunds.missing).toBe(1);
+    expect(broken.data.comparison.admin_audit_logs.missing).toBe(1);
   }, 30000);
 });

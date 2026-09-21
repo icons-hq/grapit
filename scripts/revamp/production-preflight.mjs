@@ -36,7 +36,9 @@ const client = new Client({ connectionString: connection.toString(), ssl: false,
   connectionTimeoutMillis: 10000, options: '-c default_transaction_read_only=on -c statement_timeout=15000' });
 const tables = ['users', 'social_accounts', 'consent_items', 'consent_audit_logs', 'performances', 'showtimes',
   'reservations', 'payments', 'ticket_items', 'tickets', 'ticket_benefit_entitlements',
-  'ticket_benefit_redemption_records', 'ticket_scan_events'];
+  'ticket_benefit_redemption_records', 'ticket_scan_events', 'refunds',
+  'admin_audit_logs', 'booking_operation_audit_logs', 'payment_webhook_events'];
+const immutableEventTables = new Set(['consent_audit_logs', 'admin_audit_logs', 'booking_operation_audit_logs']);
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 const identifier = (name) => { assert(/^[a-z_][a-z0-9_]*$/.test(name)); return `"${name}"`; };
 const immutableColumns = {
@@ -59,7 +61,9 @@ try {
     const rows = (await client.query(`SELECT ${selected.map(identifier).join(',')} FROM ${identifier(table)} ORDER BY id`)).rows;
     records[table] = { columns: selected, rows: Object.fromEntries(rows.map((row) => [hash(String(row.id)), {
       original: hash(JSON.stringify(row)),
-      ...(immutableColumns[table] ? { immutable: hash(JSON.stringify(immutableColumns[table].map((name) => row[name]))) } : {}),
+      ...(immutableColumns[table] ? { immutable: hash(JSON.stringify(immutableColumns[table].map((name) => row[name]))) }
+        : immutableEventTables.has(table) || (table === 'refunds' && row.status === 'completed')
+          ? { immutable: hash(JSON.stringify(row)) } : {}),
     }])) };
   }
   const inFlight = (await client.query(`SELECT count(*) FILTER (WHERE status::text='PENDING_PAYMENT')::int AS all_pending,
@@ -76,7 +80,7 @@ try {
     return [table, { before: Object.keys(before).length, after: Object.keys(after).length,
       missing: Object.keys(before).filter((key) => !after[key]).length,
       originalChanged: Object.keys(before).filter((key) => after[key] && before[key].original !== after[key].original).length,
-      immutableChanged: Object.keys(before).filter((key) => after[key] && before[key].immutable !== after[key].immutable).length,
+      immutableChanged: Object.keys(before).filter((key) => after[key] && before[key].immutable !== undefined && before[key].immutable !== after[key].immutable).length,
       added: Object.keys(after).filter((key) => !before[key]).length }];
   })) : null;
   const preservationPassed = comparison ? Object.values(comparison).every((row) => row.missing === 0 && row.immutableChanged === 0) : null;

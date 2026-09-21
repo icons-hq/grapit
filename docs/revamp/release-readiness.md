@@ -18,7 +18,7 @@ API 1개, DB pool 2개, Valkey standalone인 로컬 Mac 환경에서 측정했�
 
 첫 cold-connection 실험에서는 500/1,000 요청에서 `ECONNRESET`이 발생했다. Mac의 TCP accept backlog 설정은 128이고 수락된 요청 수가 128씩 늘어나는 패턴을 확인했다. 연결을 준비한 비교 실험에서 전송 오류가 없어졌지만, **새 연결 폭주 조건도 별도 용량 검증 대상**으로 남긴다. 그 결과를 삭제하거나 실제 고객 오류율 0으로 일반화하지 않는다.
 
-최종 스크립트는 실행 직전 shared/API를 다시 빌드하고 commit·tracked diff hash·harness hash·Node/OS를 기록한다. 외부 공급자 환경변수는 자식 API에 넘기지 않는다. 기존 결과 파일은 덮어쓰지 않으며 권한 0600으로 쓴다. 목표 미달은 `capacity_limited` 및 exit 2, 실험 실패는 exit 1이다. 최종 버전의 100 세션 확인은 좌석 123ms/입장 212ms, 오류 0, 장애 복구·정리까지 통과했다. 위 500/1,000 수치는 측정 로직이 같은 이전 버전의 보존된 실행 결과다.
+최종 스크립트는 실행 직전 shared/API를 다시 빌드하고 commit·tracked diff hash·harness hash·Node/OS를 기록한다. 외부 공급자 환경변수는 자식 API에 넘기지 않는다. 기존 결과 파일은 덮어쓰지 않으며 권한 0600으로 쓴다. SIGINT/SIGTERM은 요청을 중단하고 공통 정리 경로를 거친다. 정리 실패 하나가 다른 자원 정리를 막지 않고 실패 자원 종류를 기록한다. API 준비 직후 실제 SIGTERM 중단으로 실패 exit 1과 모든 자원 제거를 확인했다. 강제 SIGKILL이나 호스트 종료는 이 정상 정리 보장 범위 밖이다. 목표 미달은 `capacity_limited` 및 exit 2, 실험 실패는 exit 1이다. 검토 후 최종 버전의 100 세션 확인은 좌석 122ms/입장 213ms, 오류 0, 장애 복구·정리까지 통과했다. 위 500/1,000 수치는 측정 로직이 같은 이전 버전의 보존된 실행 결과다.
 
 ```bash
 # 저장소 루트, 의존성 설치 및 Docker 실행 필요. 같은 dist의 dev/build와 병행하지 않는다.
@@ -47,9 +47,9 @@ node scripts/revamp/isolated-capacity.mjs --run --sessions=100,500,1000 \
 
 이 값은 배포 직전 다시 읽는다. 이미 판매가 활성화돼 있으므로 배포를 이유로 예매 flag를 임의로 끄지 않는다. 승인 API도 해당 flag를 검사하므로 준비 중 결제가 있을 때 단순 차단은 결제 복귀를 방해할 수 있다. 운영 SQL 변경은 `.github/workflows/deploy.yml`의 migration job만 사용한다.
 
-`scripts/revamp/production-preflight.mjs`는 정확한 Cloud SQL secret 대상과 DB 이름을 검사하고, `default_transaction_read_only=on` 및 repeatable-read READ ONLY transaction으로 13개 테이블을 조회한다. 출력에는 원본 행·연락처·인증값·QR을 넣지 않고 SHA-256 지문만 남긴다. `--baseline`으로 이전 열만 대조하므로 추가된 nullable 열은 데이터 변경으로 오인하지 않는다. 새 행은 별도로 세며, 기존 식별자 누락 또는 주문/결제 소유권·원금·원청구액 변경은 exit 2다. 다른 기존 열의 변경도 별도로 보고해 정상적인 로그인/거래와 대조한다. `preservationPassed`만으로 동의·권리 상태 변경까지 자동 합격시키지 않는다.
+`scripts/revamp/production-preflight.mjs`는 정확한 Cloud SQL secret 대상과 DB 이름을 검사하고, `default_transaction_read_only=on` 및 repeatable-read READ ONLY transaction으로 환불·관리자/예매 감사·webhook ledger까지 17개 테이블을 조회한다. 출력에는 원본 행·연락처·인증값·QR을 넣지 않고 SHA-256 지문만 남긴다. `--baseline`으로 이전 열만 대조하므로 추가된 nullable 열은 데이터 변경으로 오인하지 않는다. 새 행은 별도로 세며, 기존 식별자 누락, 주문/결제 소유권·원금·원청구액 변경, 완료 환불 또는 append-only 동의/운영 감사의 변경은 exit 2다. 다른 기존 열의 변경도 별도로 보고해 정상적인 로그인/거래와 대조한다. `preservationPassed`만으로 동의·권리 상태 변경까지 자동 합격시키지 않는다.
 
-실행자는 해당 instance에 연결한 로컬 Cloud SQL Auth Proxy만 사용한다. `database-url` secret은 CLI 인자·파일·출력에 쓰지 않고 프로세스 환경에만 전달한다. 전후 출력은 서로 다른 절대 경로로 보관한다. 격리 통합 테스트는 실제 PostgreSQL에서 정상 추가/설정 변경과 원금 변조/식별자 삭제를 구분하며 원문 민감값 비노출을 검증한다.
+실행자는 해당 instance에 연결한 로컬 Cloud SQL Auth Proxy만 사용한다. `database-url` secret은 CLI 인자·파일·출력에 쓰지 않고 프로세스 환경에만 전달한다. 전후 출력은 서로 다른 절대 경로로 보관한다. 격리 통합 테스트는 실제 PostgreSQL에서 정상 추가/설정 변경과 원금 변조/식별자 삭제/완료 환불 및 감사 변조·삭제를 구분하며 원문 민감값 비노출을 검증한다.
 
 ## 한 번의 통합 배포와 복귀 절차
 
