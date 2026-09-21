@@ -63,3 +63,5 @@
 - 계정 탭 왕복 시 안전한 returnTo를 유지한다. 언어 전환은 복귀 경로와 중첩된 설정→예매 경로의 언어까지 변경한다.
 - API 401 뒤 세션 복구에 실패해도 현재 언어와 업무 경로로 로그인에 복귀한다. 인증 화면 자체로 순환하지 않는다. 이 세 경로와 메일 소비자에 대한 실패 회귀 4개를 재현한 뒤 수정했다.
 - CI에서 새 홈 구조와 달라진 기존 지역화 E2E의 heading을 갱신하고 실제 법적 URL 네 언어를 확인하도록 확장했다.
+
+최종 코드 `80836c926fea16aa6ec375d5460f8f135e94dc0d`에서 Standards/Spec 교차 검토의 남은 지적은 각각 0개다. [CI 실행](https://github.com/icons-hq/grapit/actions/runs/35590308728)은 전체 검사와 Toss E2E 68개를 통과했다. 브라우저에서도 중국어 로그인 화면의 언어 변경이 영어 설정 복귀 URL까지 갱신되는 것, 격리 개발 서버에서 같은 설정으로 복귀하는 것과 production 렌더의 중국어 약관 안내/영문 원문을 확인했다(`28-legal-zh-reviewed.txt`, `29-account-return-reviewed.txt`). 로컬 production 모드의 API는 기존 localhost 금지 검증이 있으므로 실제 계정 조작은 development 모드에서 진행했다.
