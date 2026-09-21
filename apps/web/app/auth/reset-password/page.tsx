@@ -2,7 +2,7 @@
 
 import { Suspense, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
+import { authFormResolver } from '@/lib/auth-validation';
 import { Loader2 } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -13,12 +13,12 @@ import {
   type ResetPasswordRequestInput,
   type ResetPasswordInput,
 } from '@grabit/shared';
+import { buildAuthRoute, resolveSafeReturnToFromSearch } from '@/lib/auth-return';
 import { apiUrl } from '@/lib/api-url';
 import { getFrontendOrigin } from '@/lib/frontend-origin';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/auth/password-input';
-import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import { getClientLocale } from '@/lib/i18n/client-copy';
 import {
@@ -42,14 +42,15 @@ export default function ResetPasswordPage() {
 function ResetPasswordInner() {
   const searchParams = useSearchParams();
   const token = searchParams.get('token') ?? '';
+  const returnTo = resolveSafeReturnToFromSearch(searchParams.toString());
 
   if (token !== '') {
-    return <ConfirmView key={token} token={token} />;
+    return <ConfirmView key={token} token={token} returnTo={returnTo} />;
   }
-  return <RequestView />;
+  return <RequestView returnTo={returnTo} />;
 }
 
-function RequestView() {
+function RequestView({ returnTo }: { returnTo: string | null }) {
   const locale = getClientLocale();
   const copy = getVisibleCopy(locale).resetPassword;
   const [isSent, setIsSent] = useState(false);
@@ -57,7 +58,7 @@ function RequestView() {
   const [isLoading, setIsLoading] = useState(false);
 
   const form = useForm<ResetPasswordRequestInput>({
-    resolver: zodResolver(resetPasswordRequestSchema),
+    resolver: authFormResolver(resetPasswordRequestSchema, locale),
     defaultValues: { email: '' },
     mode: 'onBlur',
     reValidateMode: 'onChange',
@@ -70,7 +71,7 @@ function RequestView() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify({ ...data, frontendOrigin: getFrontendOrigin() }),
+        body: JSON.stringify({ ...data, frontendOrigin: getFrontendOrigin(), locale, ...(returnTo ? { returnTo } : {}) }),
       });
     } catch {
       // Always show success to prevent email enumeration
@@ -95,7 +96,7 @@ function RequestView() {
           </div>
 
           <Button asChild size="lg" className="w-full">
-            <Link href={getLocalizedPathname('/auth', locale)}>{copy.backToLogin}</Link>
+            <Link href={buildAuthRoute('/auth', locale, { returnTo })}>{copy.backToLogin}</Link>
           </Button>
         </div>
       </main>
@@ -153,7 +154,7 @@ function RequestView() {
 
         <div className="text-center">
           <Link
-            href={getLocalizedPathname('/auth', locale)}
+            href={buildAuthRoute('/auth', locale, { returnTo })}
             className="text-caption text-gray-500 hover:text-primary"
           >
             {copy.backToLogin}
@@ -164,7 +165,7 @@ function RequestView() {
   );
 }
 
-function ConfirmView({ token }: { token: string }) {
+function ConfirmView({ token, returnTo }: { token: string; returnTo: string | null }) {
   const router = useRouter();
   const locale = getClientLocale();
   const copy = getVisibleCopy(locale).resetPassword;
@@ -172,7 +173,7 @@ function ConfirmView({ token }: { token: string }) {
   const [tokenError, setTokenError] = useState(false);
 
   const form = useForm<ResetPasswordInput>({
-    resolver: zodResolver(resetPasswordSchema),
+    resolver: authFormResolver(resetPasswordSchema, locale),
     defaultValues: { token, newPassword: '', newPasswordConfirm: '' },
     mode: 'onBlur',
     reValidateMode: 'onChange',
@@ -190,7 +191,7 @@ function ConfirmView({ token }: { token: string }) {
 
       if (res.ok) {
         toast.success(copy.successToast);
-        router.push(getLocalizedPathname('/auth', locale));
+        router.push(buildAuthRoute('/auth', locale, { returnTo }));
         return;
       }
 
@@ -232,11 +233,11 @@ function ConfirmView({ token }: { token: string }) {
             </p>
           </div>
           <Button asChild size="lg" className="w-full">
-            <Link href={getLocalizedPathname('/auth/reset-password', locale)}>{copy.requestAgain}</Link>
+            <Link href={buildAuthRoute('/auth/reset-password', locale, { returnTo })}>{copy.requestAgain}</Link>
           </Button>
           <div className="text-center">
             <Link
-              href={getLocalizedPathname('/auth', locale)}
+              href={buildAuthRoute('/auth', locale, { returnTo })}
               className="text-caption text-gray-500 hover:text-primary"
             >
               {copy.backToLogin}
@@ -268,7 +269,7 @@ function ConfirmView({ token }: { token: string }) {
                     {copy.newPassword} <span className="text-error">*</span>
                   </FormLabel>
                   <FormControl>
-                    <PasswordInput
+                    <PasswordInput showLabel={getVisibleCopy(locale).auth.navigation.showPassword} hideLabel={getVisibleCopy(locale).auth.navigation.hidePassword}
                       placeholder={copy.newPasswordPlaceholder}
                       autoComplete="new-password"
                       {...field}
@@ -288,7 +289,7 @@ function ConfirmView({ token }: { token: string }) {
                     {copy.newPasswordConfirm} <span className="text-error">*</span>
                   </FormLabel>
                   <FormControl>
-                    <PasswordInput
+                    <PasswordInput showLabel={getVisibleCopy(locale).auth.navigation.showPassword} hideLabel={getVisibleCopy(locale).auth.navigation.hidePassword}
                       placeholder={copy.newPasswordConfirmPlaceholder}
                       autoComplete="new-password"
                       {...field}
@@ -319,7 +320,7 @@ function ConfirmView({ token }: { token: string }) {
 
         <div className="text-center">
           <Link
-            href={getLocalizedPathname('/auth', locale)}
+            href={buildAuthRoute('/auth', locale, { returnTo })}
             className="text-caption text-gray-500 hover:text-primary"
           >
             {copy.backToLogin}

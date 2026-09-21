@@ -116,6 +116,7 @@ const expectedKeys = {
     'verified',
     'throttled',
     'systemError',
+  'deliveryFailed',
   ],
   'auth.otp': [
     'sent',
@@ -251,11 +252,11 @@ describe('EmailVerificationStatus', () => {
       expect(screen.getByRole('status')).toHaveTextContent(
         '이메일 인증이 완료되었습니다.',
       );
-      expect(mocks.routerReplace).toHaveBeenCalledWith('/');
+      expect(mocks.routerReplace).toHaveBeenCalledWith('/auth?verified=1');
     });
   });
 
-  it('redirects token-backed successful verification to home', async () => {
+  it('redirects a verified unauthenticated buyer to login', async () => {
     const { apiClient } = await import('@/lib/api-client');
     (apiClient.post as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       verified: true,
@@ -269,7 +270,7 @@ describe('EmailVerificationStatus', () => {
         { token: 'opaque-token-1234567890' },
         { showErrorToast: false },
       );
-      expect(mocks.routerReplace).toHaveBeenCalledWith('/');
+      expect(mocks.routerReplace).toHaveBeenCalledWith('/auth?verified=1');
     });
   });
 

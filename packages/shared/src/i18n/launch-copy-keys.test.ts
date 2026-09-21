@@ -193,6 +193,7 @@ describe('launch copy key manifest', () => {
       'verified',
       'throttled',
       'systemError',
+  'deliveryFailed',
     ]);
     expect(LAUNCH_COPY_KEYS['auth.otp'].ko).toEqual([
       'sent',

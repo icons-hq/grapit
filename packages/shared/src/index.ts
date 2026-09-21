@@ -24,6 +24,7 @@ export * from './seat-identity';
 export * from './field-check-in-ingress';
 export * from './catalog-freshness';
 export * from './checkout-payment-method';
+export * from './auth-return';
 
 // Constants
 export * from './constants/index';

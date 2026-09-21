@@ -35,15 +35,15 @@ vi.mock('@/lib/api-client', () => ({
   },
 }));
 
-vi.mock('@/content/legal/terms-of-service.md', () => ({
+vi.mock('@/content/legal/terms-of-service.md?raw', () => ({
   default: '# 이용약관\n\n약관 본문',
 }));
 
-vi.mock('@/content/legal/privacy-policy.md', () => ({
+vi.mock('@/content/legal/privacy-policy.md?raw', () => ({
   default: '# 개인정보처리방침\n\n개인정보 본문',
 }));
 
-vi.mock('@/content/legal/marketing-consent.md', () => ({
+vi.mock('@/content/legal/marketing-consent.md?raw', () => ({
   default: '# 마케팅 수신 동의\n\n마케팅 본문',
 }));
 
@@ -160,6 +160,20 @@ describe('SignupStep2 itemized launch consent', () => {
       'pipa_required',
       'marketing',
     ]);
+  });
+
+  it('shows the canonical English legal text and records that document language for Thai consent', async () => {
+    navigationMocks.activeLocale = 'th';
+    const onComplete = vi.fn();
+    const user = userEvent.setup();
+    render(<SignupStep2 onComplete={onComplete} onBack={vi.fn()} defaultValues={null} />);
+    await user.click(screen.getAllByRole('button', { name: 'ดู' })[0]!);
+    expect(await screen.findByRole('dialog')).toHaveTextContent('These Terms of Service set out');
+    expect(screen.getByText('ตรวจสอบประกาศทางกฎหมายภาษาอังกฤษ')).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await user.click(screen.getByLabelText('ยอมรับทั้งหมด'));
+    await user.click(screen.getByRole('button', { name: 'ถัดไป' }));
+    expect(onComplete.mock.calls[0]?.[0].consentItems.every((item: { language: string }) => item.language === 'en')).toBe(true);
   });
 
   it('shows the final under-14 block copy without a guardian consent flow', () => {

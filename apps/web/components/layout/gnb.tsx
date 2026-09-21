@@ -20,7 +20,6 @@ import {
   MobileLocaleSwitcher,
 } from '@/components/i18n/locale-switcher';
 import { resolveLocaleFromPathname } from '@/i18n/routing';
-import { PUBLIC_GENRES } from '@/lib/performance/public-genres';
 
 export function GNB() {
   const router = useRouter();
@@ -89,10 +88,12 @@ export function GNB() {
     }
   }
 
-  function isActiveGenre(slug: string): boolean {
-    const { pathnameWithoutLocale } = resolveLocaleFromPathname(pathname);
-    return pathnameWithoutLocale.startsWith(`/genre/${slug}`);
-  }
+  const { pathnameWithoutLocale } = resolveLocaleFromPathname(pathname);
+  const links = [
+    { href: '/', label: copy.home.findShows, active: pathnameWithoutLocale === '/' || pathnameWithoutLocale.startsWith('/genre') },
+    { href: '/mypage?tab=wallet', label: copy.home.myTickets, active: pathnameWithoutLocale.startsWith('/mypage') },
+    { href: '/support', label: copy.home.guide, active: pathnameWithoutLocale.startsWith('/support') },
+  ];
 
   return (
     <>
@@ -108,18 +109,18 @@ export function GNB() {
 
           {/* Genre tabs - hidden on mobile */}
           <div className="hidden items-center gap-1 md:flex">
-            {PUBLIC_GENRES.map((genre) => (
+            {links.map((link) => (
               <Link
-                key={genre}
-                href={getLocalizedPathname(`/genre/${genre}`, activeLocale)}
+                key={link.href}
+                href={getLocalizedPathname(link.href, activeLocale)}
                 className={cn(
                   'px-3 py-2 text-base transition-colors',
-                  isActiveGenre(genre)
+                  link.active
                     ? 'border-b-2 border-primary font-semibold text-primary'
                     : 'text-gray-900 hover:text-primary',
                 )}
               >
-                {copy.genres[genre]}
+                {link.label}
               </Link>
             ))}
           </div>
@@ -132,7 +133,7 @@ export function GNB() {
           </div>
 
           {/* Search bar - hidden on mobile */}
-          <div className="mr-4 hidden lg:block">
+          <div className={cn("mr-4 hidden lg:block", pathnameWithoutLocale === "/" && "lg:hidden")}>
             <div
               className={cn(
                 'relative transition-transform',

@@ -60,3 +60,7 @@
 - 전환 전, 기존 `checkout_payment_method`가 없는 미결제 주문을 종료·대조해야 한다. 기존 결제/회원/티켓 기록은 변경하지 않는다.
 
 원 증거는 로컬 `.codex/artifacts/grapit-revamp-autonomy-2026-09-21/`의 `tests/`, `browser/`, `migration-evidence.json`, `checkout-payment-done.json`, `checkout-payment-cancelled.json`에 있다. 공개 문서에는 결제 키·고객 인증 정보·QR 원문을 포함하지 않는다.
+
+## CI 회귀 확인
+
+PR #224의 `e3a8aff6`에서 CI 전체 검사와 Toss E2E 68개가 통과했다. 기존 E2E fixture에 소유 주문 식별자를 보완했고, 조회 실패/승인 충돌은 결제 미확인으로 남기며 상태 확인을 제공하는 새 계약에 맞춰 검증했다. 로컬 기한이 지났어도 공급자가 처리 중인 경우 추가 confirm과 재결제 동작이 없어야 한다는 브라우저 회귀를 추가했다.

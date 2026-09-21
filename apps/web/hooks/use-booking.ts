@@ -373,11 +373,12 @@ export function useReconcileAsyncPaymentReturn() {
 }
 
 export function useBookingDetail(reservationId: string) {
+  const userId = useAuthStore((store) => store.user?.id);
   return useQuery({
-    queryKey: ['reservations', reservationId],
+    queryKey: ['reservations', reservationId, userId],
     queryFn: () =>
       apiClient.get<ReservationDetail>(`/api/v1/reservations/${reservationId}`),
-    enabled: !!reservationId,
+    enabled: !!reservationId && !!userId,
   });
 }
 

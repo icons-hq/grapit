@@ -217,7 +217,7 @@ export class UserService {
     if (data.marketingConsent !== undefined) {
       updateData.marketingConsent = data.marketingConsent;
     }
-    if (data.phone !== undefined && data.phone !== currentUser.phone) {
+    if (data.phone !== undefined && (data.phone !== currentUser.phone || !currentUser.isPhoneVerified)) {
       if (!data.phoneVerificationToken) {
         throw new BadRequestException('전화번호 인증이 필요합니다');
       }

@@ -11,14 +11,45 @@
     "home": "首页",
     "search": "搜索",
     "category": "分类",
-    "logoutSuccess": "已退出登录"
+    "logoutSuccess": "已退出登录",
+    "close": "关闭",
+    "languageDescription": "请选择当前页面的显示语言。"
   },
   "home": {
     "hot": "热门演出",
     "newOpen": "新开售",
     "genreShortcuts": "按活动分类浏览",
     "more": "更多",
-    "empty": "搜索粉丝见面会和快闪活动，或按分类浏览。"
+    "empty": "搜索粉丝见面会和快闪活动，或按分类浏览。",
+    "intro": "寻找下一次现场相聚",
+    "browse": "浏览演出",
+    "all": "全部",
+    "selling": "销售中",
+    "upcoming": "即将开售",
+    "ended": "往期演出",
+    "myTickets": "我的票券",
+    "guide": "使用帮助",
+    "findShows": "查找演出",
+    "priceFrom": "{price}起",
+    "priceUnknown": "价格请见演出详情",
+    "feeSeparate": "另收预订手续费",
+    "bookingOpens": "{date} 开始预订",
+    "dateUnknown": "演出时间待公布",
+    "loadError": "无法加载演出，请重试。",
+    "emptyFiltered": "暂无符合条件的演出。",
+    "searchLabel": "搜索演出或艺人",
+    "promotionAlt": "演出资讯",
+    "previousBanner": "上一条资讯",
+    "nextBanner": "下一条资讯",
+    "bannerPosition": "资讯 {current} / {total}",
+    "statusHelp": {
+      "selling": "查看座位及预订状态。",
+      "closing_soon": "预订即将截止。",
+      "upcoming": "敬请关注开售公告。",
+      "ended": "本场演出已结束。"
+    },
+    "loading": "正在加载演出",
+    "bookingPaused": "预订暂时暂停。您仍可浏览演出信息。"
   },
   "search": {
     "promptTitle": "搜索演出",
@@ -78,7 +109,8 @@
     "priceLabel": "价格",
     "upcomingDateLabel": "即将开售",
     "detailImagesTitle": "详情图片",
-    "detailImageAlt": "{title} 详情图片 {index}"
+    "detailImageAlt": "{title} 详情图片 {index}",
+    "verifyCta": "验证后购票"
   },
   "support": {
     "title": "客户支持",
@@ -91,7 +123,10 @@
     "fallbackPaymentQuestion": "付款与 QR 入场",
     "fallbackPaymentAnswer": "付款完成后，可在我的页面查看预订记录和 QR 门票。入场时请准备好 QR 画面。",
     "fallbackRefundQuestion": "退款或账号支持",
-    "fallbackRefundAnswer": "请将预订编号、账号邮箱和咨询内容发送至客户支持邮箱。我们会审核后按顺序回复。"
+    "fallbackRefundAnswer": "请将预订编号、账号邮箱和咨询内容发送至客户支持邮箱。我们会审核后按顺序回复。",
+    "loading": "正在加载最新帮助信息。",
+    "loadError": "无法加载最新帮助信息。请重试或通过下方邮箱联系我们。",
+    "legalLinks": "条款与隐私信息"
   },
   "booking": {
     "disabled": "门票预订将于稍后开放",
@@ -346,7 +381,8 @@
       "invalidCode": "验证码不正确",
       "verified": "邮箱验证已完成。",
       "throttled": "请稍后再试。",
-      "systemError": "暂时发生错误。请重试。"
+      "systemError": "暂时发生错误。请重试。",
+      "deliveryFailed": "您的账户已保存，但验证邮件发送失败。请重新获取验证码或联系客服。"
     },
     "otp": {
       "sent": "验证码已发送",
@@ -385,6 +421,21 @@
       "retryButton": "重新登录",
       "processing": "正在完成登录...",
       "invalidAccess": "此登录链接无效。"
+    },
+    "navigation": {
+      "verifyTitle": "验证邮箱",
+      "verificationLogin": "邮箱已验证。登录后可继续预订。",
+      "continue": "继续",
+      "showPassword": "显示密码",
+      "hidePassword": "隐藏密码"
+    },
+    "validation": {
+      "email": "请输入有效的邮箱地址",
+      "password": "请输入密码",
+      "confirm": "请确认密码",
+      "mismatch": "两次密码不一致",
+      "rules": "密码至少8位，包含字母、数字和符号",
+      "link": "需要有效的验证链接"
     }
   },
   "metadata": {
@@ -749,7 +800,10 @@
     "viewWallet": "查看票夹",
     "editSettings": "编辑设置",
     "marketingOn": "已订阅",
-    "marketingOff": "未订阅"
+    "marketingOff": "未订阅",
+    "membership": "注册时长",
+    "checking": "正在查询预订",
+    "loadError": "无法加载预订，请重试。"
   },
   "profile": {
     "email": "电子邮件",
@@ -779,7 +833,18 @@
     "cancel": "取消",
     "confirmWithdraw": "确认删除",
     "emailVerified": "邮箱已验证",
-    "emailUnverified": "邮箱未验证"
+    "emailUnverified": "邮箱未验证",
+    "accountStatus": "账户状态",
+    "adminAccount": "管理员",
+    "buyerAccount": "会员",
+    "saved": "个人资料已更新",
+    "loggedOut": "已退出登录",
+    "withdrawn": "账户已关闭",
+    "withdrawBlocked": "请先处理有效预订，再关闭账户。",
+    "verifyEmail": "验证邮箱",
+    "returnToBooking": "返回预订",
+    "changePhone": "更改手机号",
+    "cancelPhoneChange": "取消更改手机号"
   },
   "resetPassword": {
     "sentTitle": "密码重置邮件已发送",

@@ -64,12 +64,12 @@ describe('Legal pages metadata (D-10, D-13)', () => {
       expect(metadata.robots).toMatchObject({ index: true, follow: true });
     });
 
-    it('dynamic export 가 force-static 으로 명시된다 (D-10)', async () => {
+    it('dynamic export 가 force-dynamic 으로 명시된다 (D-10)', async () => {
       const mod = await loadLegalPage(
         '../terms/page.tsx',
         "import('@/app/legal/terms/page')",
       );
-      expect(mod.dynamic).toBe('force-static');
+      expect(mod.dynamic).toBe('force-dynamic');
     });
   });
 
@@ -91,12 +91,12 @@ describe('Legal pages metadata (D-10, D-13)', () => {
       expect(metadata.robots).toMatchObject({ index: true, follow: true });
     });
 
-    it('dynamic export 가 force-static 으로 명시된다', async () => {
+    it('dynamic export 가 force-dynamic 으로 명시된다', async () => {
       const mod = await loadLegalPage(
         '../privacy/page.tsx',
         "import('@/app/legal/privacy/page')",
       );
-      expect(mod.dynamic).toBe('force-static');
+      expect(mod.dynamic).toBe('force-dynamic');
     });
   });
 
@@ -118,12 +118,12 @@ describe('Legal pages metadata (D-10, D-13)', () => {
       expect(metadata.robots).toMatchObject({ index: true, follow: true });
     });
 
-    it('dynamic export 가 force-static 으로 명시된다', async () => {
+    it('dynamic export 가 force-dynamic 으로 명시된다', async () => {
       const mod = await loadLegalPage(
         '../marketing/page.tsx',
         "import('@/app/legal/marketing/page')",
       );
-      expect(mod.dynamic).toBe('force-static');
+      expect(mod.dynamic).toBe('force-dynamic');
     });
   });
 });

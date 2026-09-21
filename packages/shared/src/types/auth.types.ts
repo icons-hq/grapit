@@ -8,6 +8,7 @@ export interface AuthResponse {
 
 export interface RegistrationPendingResponse {
   emailVerificationRequired: true;
+  emailDeliveryFailed?: boolean;
   email: string;
   verificationExpiresAt: string;
   user: UserProfile;

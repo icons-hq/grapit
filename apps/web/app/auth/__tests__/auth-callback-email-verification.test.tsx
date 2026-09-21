@@ -10,6 +10,7 @@ import AuthCallbackPage from '../callback/page';
 const mocks = vi.hoisted(() => ({
   apiPost: vi.fn(),
   push: vi.fn(),
+  replace: vi.fn(),
   searchParams: new URLSearchParams(),
   setAuth: vi.fn(),
   user: null as null | { id: string; email: string },
@@ -19,7 +20,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: mocks.push }),
+  useRouter: () => ({ push: mocks.push, replace: mocks.replace }),
   useSearchParams: () => mocks.searchParams,
 }));
 
@@ -139,7 +140,7 @@ describe('AuthCallbackPage email verification pending states', () => {
 
   it('renders EmailVerificationStatus after social completion pending response without setting auth or routing home', async () => {
     mocks.searchParams = new URLSearchParams(
-      'status=needs_registration&registrationToken=registration-token',
+      'status=needs_registration&registrationToken=registration-token&returnTo=%2Fen%2Fbooking%2Fshow',
     );
     render(<AuthCallbackPage />);
     const user = userEvent.setup();
@@ -158,6 +159,7 @@ describe('AuthCallbackPage email verification pending states', () => {
         frontendOrigin: 'http://localhost:3001',
       }),
     );
+    expect(mocks.replace).toHaveBeenCalledWith('/auth/verify-email?email=social%40test.com&returnTo=%2Fen%2Fbooking%2Fshow');
     expect(mocks.setAuth).not.toHaveBeenCalled();
     expect(mocks.push).not.toHaveBeenCalledWith('/');
   });

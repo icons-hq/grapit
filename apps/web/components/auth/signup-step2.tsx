@@ -18,9 +18,13 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import termsOfServiceMd from '@/content/legal/terms-of-service.md';
-import privacyPolicyMd from '@/content/legal/privacy-policy.md';
-import marketingConsentMd from '@/content/legal/marketing-consent.md';
+import termsOfServiceMd from '@/content/legal/terms-of-service.md?raw';
+import privacyPolicyMd from '@/content/legal/privacy-policy.md?raw';
+import marketingConsentMd from '@/content/legal/marketing-consent.md?raw';
+import termsOfServiceEnMd from '@/content/legal/terms-of-service.en.md?raw';
+import privacyPolicyEnMd from '@/content/legal/privacy-policy.en.md?raw';
+import marketingConsentEnMd from '@/content/legal/marketing-consent.en.md?raw';
+import { LegalFallbackLabel } from '@/components/legal/legal-fallback-label';
 import { TermsMarkdown } from '@/components/legal/terms-markdown';
 import { getAuthLaunchCopy } from '@/components/auth/auth-launch-copy';
 
@@ -35,11 +39,11 @@ interface SignupStep2Props {
 //        LegalKey 외 임의 string 이 dialogKey 로 전달되는 경로를 차단하여
 //        LEGAL_CONTENT[dialogKey] 의 `?.` 없이 안전한 인덱싱을 가능케 한다.
 const LEGAL_CONTENT = {
-  termsOfService: { content: termsOfServiceMd },
-  privacyPolicy: { content: privacyPolicyMd },
-  pipaRequired: { content: privacyPolicyMd },
-  marketingConsent: { content: marketingConsentMd },
-} as const satisfies Record<string, { content: string }>;
+  termsOfService: { ko: termsOfServiceMd, en: termsOfServiceEnMd },
+  privacyPolicy: { ko: privacyPolicyMd, en: privacyPolicyEnMd },
+  pipaRequired: { ko: privacyPolicyMd, en: privacyPolicyEnMd },
+  marketingConsent: { ko: marketingConsentMd, en: marketingConsentEnMd },
+} as const satisfies Record<string, { ko: string; en: string }>;
 
 type LegalKey = keyof typeof LEGAL_CONTENT;
 type SignupStep2SourceFlow = Extract<
@@ -80,7 +84,7 @@ const CONSENT_ROWS: ConsentRowConfig[] = [
   },
 ];
 
-function initialChecked(defaultValues: SignupStep2SubmitData | null) {
+function initialChecked(defaultValues: SignupStep2SubmitData | null, documentLocale: 'ko' | 'en') {
   return Object.fromEntries(
     CONSENT_ROWS.map((row) => {
       const defaultItem = defaultValues?.consentItems.find(
@@ -88,7 +92,7 @@ function initialChecked(defaultValues: SignupStep2SubmitData | null) {
       );
 
       if (defaultItem) {
-        return [row.key, defaultItem.accepted];
+        return [row.key, defaultItem.version === CONSENT_VERSION && defaultItem.language === documentLocale && defaultItem.accepted];
       }
 
       if (row.key === 'terms') {
@@ -116,7 +120,8 @@ export function SignupStep2({
 }: SignupStep2Props) {
   const authCopy = getAuthLaunchCopy(useLocale());
   const consentCopy = authCopy.consent;
-  const [checkedItems, setCheckedItems] = useState(() => initialChecked(defaultValues));
+  const documentLocale: 'ko' | 'en' = authCopy.locale === 'ko' ? 'ko' : 'en';
+  const [checkedItems, setCheckedItems] = useState(() => initialChecked(defaultValues, documentLocale));
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogKey, setDialogKey] = useState<LegalKey>('termsOfService');
 
@@ -151,7 +156,7 @@ export function SignupStep2({
     const consentItems = CONSENT_ROWS.map((row) => ({
       key: row.key,
       version: CONSENT_VERSION,
-      language: authCopy.locale,
+      language: documentLocale,
       accepted: checkedItems[row.key],
       required: row.required,
       sourceFlow,
@@ -225,7 +230,7 @@ export function SignupStep2({
                       {row.required ? consentCopy.required : consentCopy.optional}
                     </span>
                     <span>v{CONSENT_VERSION}</span>
-                    <span>{authCopy.locale}</span>
+                    <span>{documentLocale}</span>
                   </div>
                 </div>
               </div>
@@ -272,7 +277,8 @@ export function SignupStep2({
               {`${consentCopy.items[dialogKey].title} ${consentCopy.dialogDescriptionSuffix}`}
             </DialogDescription>
           </DialogHeader>
-          <TermsMarkdown>{LEGAL_CONTENT[dialogKey].content}</TermsMarkdown>
+          {(authCopy.locale === 'th' || authCopy.locale === 'zh-CN') && <LegalFallbackLabel locale={authCopy.locale} />}
+          <TermsMarkdown>{LEGAL_CONTENT[dialogKey][documentLocale]}</TermsMarkdown>
         </DialogContent>
       </Dialog>
     </div>

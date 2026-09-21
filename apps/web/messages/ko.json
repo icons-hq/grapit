@@ -11,14 +11,45 @@
     "home": "홈",
     "search": "검색",
     "category": "분류",
-    "logoutSuccess": "로그아웃되었습니다"
+    "logoutSuccess": "로그아웃되었습니다",
+    "close": "닫기",
+    "languageDescription": "현재 페이지에서 사용할 언어를 선택해 주세요."
   },
   "home": {
     "hot": "HOT 이벤트",
     "newOpen": "신규 오픈",
     "genreShortcuts": "이벤트 분류",
     "more": "더보기",
-    "empty": "팬미팅과 팝업 이벤트를 검색하거나 분류별로 탐색해보세요."
+    "empty": "팬미팅과 팝업 이벤트를 검색하거나 분류별로 탐색해보세요.",
+    "intro": "다음 만남을 찾아보세요",
+    "browse": "공연 둘러보기",
+    "all": "전체",
+    "selling": "판매 중",
+    "upcoming": "오픈 예정",
+    "ended": "지난 공연",
+    "myTickets": "내 티켓",
+    "guide": "이용 안내",
+    "findShows": "공연 찾기",
+    "priceFrom": "{price}부터",
+    "priceUnknown": "가격은 상세에서 확인",
+    "feeSeparate": "예매 수수료 별도",
+    "bookingOpens": "{date} 오픈 예정",
+    "dateUnknown": "공연 일정 안내 예정",
+    "loadError": "공연을 불러오지 못했어요. 다시 시도해 주세요.",
+    "emptyFiltered": "이 조건에 맞는 공연이 없습니다.",
+    "searchLabel": "공연명 또는 아티스트 검색",
+    "promotionAlt": "공연 소식",
+    "previousBanner": "이전 소식",
+    "nextBanner": "다음 소식",
+    "bannerPosition": "소식 {current} / {total}",
+    "statusHelp": {
+      "selling": "좌석과 예매 가능 여부를 확인하세요.",
+      "closing_soon": "예매 마감이 가까워지고 있습니다.",
+      "upcoming": "오픈 안내를 기다려 주세요.",
+      "ended": "공연이 종료되었습니다."
+    },
+    "loading": "공연을 불러오는 중",
+    "bookingPaused": "현재 예매가 잠시 중단되어 있습니다. 공연 정보는 계속 확인할 수 있어요."
   },
   "search": {
     "promptTitle": "공연을 검색하세요",
@@ -78,7 +109,8 @@
     "priceLabel": "가격",
     "upcomingDateLabel": "오픈예정",
     "detailImagesTitle": "상세 이미지",
-    "detailImageAlt": "{title} 상세 이미지 {index}"
+    "detailImageAlt": "{title} 상세 이미지 {index}",
+    "verifyCta": "인증 후 예매하기"
   },
   "support": {
     "title": "고객센터",
@@ -91,7 +123,10 @@
     "fallbackPaymentQuestion": "결제와 QR 입장은 어떻게 진행되나요?",
     "fallbackPaymentAnswer": "결제가 완료되면 마이페이지에서 예매 내역과 QR 티켓을 확인할 수 있습니다. 현장 입장 시 QR 화면을 준비해주세요.",
     "fallbackRefundQuestion": "환불이나 계정 문의는 어디로 보내나요?",
-    "fallbackRefundAnswer": "예매 번호, 가입 이메일, 문의 내용을 정리해 고객센터 이메일로 보내주세요. 확인 후 순서대로 답변합니다."
+    "fallbackRefundAnswer": "예매 번호, 가입 이메일, 문의 내용을 정리해 고객센터 이메일로 보내주세요. 확인 후 순서대로 답변합니다.",
+    "loading": "안내를 불러오고 있어요.",
+    "loadError": "최신 안내를 불러오지 못했어요. 다시 시도하거나 아래 이메일로 문의해 주세요.",
+    "legalLinks": "이용약관 및 개인정보 안내"
   },
   "booking": {
     "disabled": "예매는 추후 오픈 예정입니다",
@@ -346,7 +381,8 @@
       "invalidCode": "인증번호가 일치하지 않습니다",
       "verified": "이메일 인증이 완료되었습니다.",
       "throttled": "잠시 후 다시 시도해주세요.",
-      "systemError": "일시적인 오류가 발생했습니다. 다시 시도해주세요."
+      "systemError": "일시적인 오류가 발생했습니다. 다시 시도해주세요.",
+      "deliveryFailed": "계정은 유지되어 있어요. 인증 메일을 보내지 못했으니 다시 요청하거나 고객센터에 문의해 주세요."
     },
     "otp": {
       "sent": "인증번호가 발송되었습니다",
@@ -385,6 +421,21 @@
       "retryButton": "다시 로그인하기",
       "processing": "로그인 처리 중...",
       "invalidAccess": "잘못된 접근입니다."
+    },
+    "navigation": {
+      "verifyTitle": "이메일 인증",
+      "verificationLogin": "이메일 인증이 완료되었습니다. 로그인하면 하던 예매를 이어갈 수 있습니다.",
+      "continue": "계속하기",
+      "showPassword": "비밀번호 보기",
+      "hidePassword": "비밀번호 숨기기"
+    },
+    "validation": {
+      "email": "올바른 이메일 주소를 입력해주세요",
+      "password": "비밀번호를 입력해주세요",
+      "confirm": "비밀번호 확인을 입력해주세요",
+      "mismatch": "비밀번호가 일치하지 않습니다",
+      "rules": "비밀번호는 영문·숫자·특수문자를 포함해 8자 이상이어야 합니다",
+      "link": "유효한 인증 링크가 필요합니다"
     }
   },
   "metadata": {
@@ -749,7 +800,10 @@
     "viewWallet": "티켓 지갑 보기",
     "editSettings": "설정 변경",
     "marketingOn": "수신 동의",
-    "marketingOff": "수신 거부"
+    "marketingOff": "수신 거부",
+    "membership": "가입 기간",
+    "checking": "예매 정보를 확인하고 있어요",
+    "loadError": "예매 정보를 불러오지 못했어요. 잠시 후 다시 확인해 주세요."
   },
   "profile": {
     "email": "이메일",
@@ -779,7 +833,18 @@
     "cancel": "취소",
     "confirmWithdraw": "탈퇴 확정",
     "emailVerified": "이메일 인증 완료",
-    "emailUnverified": "이메일 미인증"
+    "emailUnverified": "이메일 미인증",
+    "accountStatus": "계정 상태",
+    "adminAccount": "관리자 계정",
+    "buyerAccount": "일반 회원",
+    "saved": "프로필이 수정되었습니다",
+    "loggedOut": "로그아웃되었습니다",
+    "withdrawn": "회원 탈퇴가 처리되었습니다",
+    "withdrawBlocked": "진행 중인 예매가 있으면 탈퇴할 수 없습니다.",
+    "verifyEmail": "이메일 인증하기",
+    "returnToBooking": "예매로 돌아가기",
+    "changePhone": "전화번호 변경",
+    "cancelPhoneChange": "전화번호 변경 취소"
   },
   "resetPassword": {
     "sentTitle": "비밀번호 재설정 메일 발송 완료",

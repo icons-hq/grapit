@@ -33,8 +33,9 @@ export interface ReservationExportDownload {
 }
 
 export function useMyReservations(status?: string) {
+  const userId = useAuthStore((state) => state.user?.id);
   return useQuery({
-    queryKey: ['reservations', 'me', status ?? 'all'],
+    queryKey: ['reservations', 'me', userId, status ?? 'all'],
     queryFn: () => {
       const params = new URLSearchParams();
       if (status && status !== 'all') params.set('status', status);
@@ -42,16 +43,18 @@ export function useMyReservations(status?: string) {
         `/api/v1/users/me/reservations${params.toString() ? `?${params.toString()}` : ''}`,
       );
     },
-    placeholderData: keepPreviousData,
+    enabled: Boolean(userId),
+    placeholderData: (previousData, previousQuery) => previousQuery?.queryKey[2] === userId ? previousData : undefined,
   });
 }
 
 export function useReservationDetail(id: string) {
+  const userId = useAuthStore((state) => state.user?.id);
   return useQuery({
-    queryKey: ['reservations', id],
+    queryKey: ['reservations', id, userId],
     queryFn: () =>
       apiClient.get<ReservationDetail>(`/api/v1/reservations/${id}`),
-    enabled: !!id,
+    enabled: !!id && !!userId,
   });
 }
 
@@ -67,8 +70,9 @@ export function useCancelReservation() {
 }
 
 export function useRefundPreview(id: string | null, enabled = true) {
+  const userId = useAuthStore((state) => state.user?.id);
   return useQuery({
-    queryKey: ['reservations', id, 'refund-preview'],
+    queryKey: ['reservations', id, 'refund-preview', userId],
     queryFn: () =>
       apiClient.get<RefundPreviewResponse>(
         `/api/v1/reservations/${id}/refund-preview`,

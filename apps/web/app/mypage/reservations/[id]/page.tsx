@@ -1,5 +1,7 @@
 'use client';
 
+import { getClientLocale } from '@/lib/i18n/client-copy';
+import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { use } from 'react';
 import { useRouter } from 'next/navigation';
 import { AuthGuard } from '@/components/auth/auth-guard';
@@ -21,6 +23,7 @@ interface ReservationDetailPageProps {
 export default function ReservationDetailPage({ params }: ReservationDetailPageProps) {
   const { id } = use(params);
   const router = useRouter();
+  const locale = getClientLocale();
   const { data: reservation, isLoading, isError, refetch } = useReservationDetail(id);
   const cancelMutation = useCancelReservation();
 
@@ -52,7 +55,7 @@ export default function ReservationDetailPage({ params }: ReservationDetailPageP
       expiresAt: Number.isFinite(paymentDeadlineMs) ? paymentDeadlineMs : Date.now(),
     });
     router.push(
-      `/booking/${target.performanceId}/confirm?resumeOrderId=${encodeURIComponent(target.tossOrderId)}`,
+      `${getLocalizedPathname(`/booking/${target.performanceId}/confirm`, locale)}?resumeOrderId=${encodeURIComponent(target.tossOrderId)}`,
     );
   }
 

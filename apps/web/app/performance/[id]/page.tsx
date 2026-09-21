@@ -67,10 +67,13 @@ export default function PerformanceDetailPage({
   const { data: performance, isLoading, isError } = usePerformanceDetail(id);
   const {
     bookingAvailable,
+    bookingOpen,
+    verificationRequiredForBooking,
     bookingDisabledMessage,
     bookingEnabled,
   } = useBookingAvailability({
     performanceStatus: performance?.status,
+    bookingStartsAt: performance?.bookingPolicy?.bookingStartsAt,
   });
   const showAutomaticTranslationLabel =
     hasAutomaticTranslationMetadata(performance);
@@ -223,7 +226,7 @@ export default function PerformanceDetailPage({
                 </div>
               )}
 
-              {bookingAvailable ? (
+              {bookingAvailable || (bookingOpen && verificationRequiredForBooking) ? (
                 <Link
                   href={getLocalizedPathname(
                     `/booking/${performance.id}`,
@@ -231,7 +234,7 @@ export default function PerformanceDetailPage({
                   )}
                   className="mt-7 hidden w-full max-w-[360px] rounded-lg bg-primary py-3 text-center text-base font-semibold text-white transition-colors hover:bg-primary/90 lg:block"
                 >
-                  {copy.performance.bookCta}
+                  {verificationRequiredForBooking ? copy.performance.verifyCta : copy.performance.bookCta}
                 </Link>
               ) : (
                 <div
@@ -362,7 +365,7 @@ export default function PerformanceDetailPage({
 
       {/* Mobile CTA fixed bottom bar — offset by MobileTabBar height (h-14=56px) */}
       <div className="fixed bottom-[56px] left-0 right-0 z-40 flex h-16 items-center border-t bg-white px-6 shadow-[0_-4px_6px_rgba(0,0,0,0.05)] lg:hidden">
-        {bookingAvailable ? (
+        {bookingAvailable || (bookingOpen && verificationRequiredForBooking) ? (
           <Link
             href={getLocalizedPathname(
               `/booking/${performance.id}`,
@@ -370,7 +373,7 @@ export default function PerformanceDetailPage({
             )}
             className="w-full rounded-lg bg-primary py-3 text-center text-base font-semibold text-white hover:bg-primary/90 transition-colors"
           >
-            {copy.performance.bookCta}
+            {verificationRequiredForBooking ? copy.performance.verifyCta : copy.performance.bookCta}
           </Link>
         ) : (
           <button

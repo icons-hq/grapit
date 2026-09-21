@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { socialCompletionConsentRowsSchema } from '@grabit/shared';
+import { SUPPORTED_LOCALES, socialCompletionConsentRowsSchema } from '@grabit/shared';
 
 export const socialRegisterBodySchema = z.object({
   name: z
@@ -23,6 +23,7 @@ export const socialRegisterBodySchema = z.object({
   }),
   marketingConsent: z.boolean(),
   consentItems: socialCompletionConsentRowsSchema,
+  locale: z.enum(SUPPORTED_LOCALES).optional(),
   frontendOrigin: z.string().url().max(200).optional(),
 });
 

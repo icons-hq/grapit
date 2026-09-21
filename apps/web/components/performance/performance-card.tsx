@@ -4,6 +4,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { useLocale } from 'next-intl';
 import { Ticket } from 'lucide-react';
+import { formatCatalogDateRange } from '@/lib/performance/catalog-format';
 import { cn } from '@/lib/cn';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import {
@@ -13,25 +14,6 @@ import {
 import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
 import { getDisplayPerformanceStatus, StatusBadge } from './status-badge';
 import type { PerformanceCardData } from '@grabit/shared';
-
-function formatDate(iso: string): string {
-  const d = new Date(iso);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}.${m}.${day}`;
-}
-
-function formatPerformanceDateRange(
-  performance: PerformanceCardData,
-  upcomingDateLabel: string,
-): string {
-  if (performance.status === 'upcoming') {
-    return upcomingDateLabel;
-  }
-
-  return `${formatDate(performance.startDate)} ~ ${formatDate(performance.endDate)}`;
-}
 
 interface PerformanceCardProps {
   performance: PerformanceCardData;
@@ -96,11 +78,9 @@ export function PerformanceCard({
           </p>
         )}
         <p className="mt-1 line-clamp-1 text-xs text-gray-500 md:text-sm">
-          {formatPerformanceDateRange(
-            performance,
-            copy.performance.upcomingDateLabel,
-          )}
+          {performance.status === 'upcoming' ? copy.performance.upcomingDateLabel : formatCatalogDateRange(performance.startDate, performance.endDate, activeLocale) ?? copy.home.dateUnknown}
         </p>
+        {performance.minPrice != null && <p className="mt-2 text-sm font-semibold text-foreground">{copy.home.priceFrom.replace('{price}', `KRW ${new Intl.NumberFormat(activeLocale).format(performance.minPrice)}`)}<span className="ml-1 text-xs font-normal text-muted-foreground">{copy.home.feeSeparate}</span></p>}
       </div>
     </Link>
   );

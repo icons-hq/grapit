@@ -11,14 +11,45 @@
     "home": "Home",
     "search": "Search",
     "category": "Category",
-    "logoutSuccess": "You have been signed out"
+    "logoutSuccess": "You have been signed out",
+    "close": "Close",
+    "languageDescription": "Select a language for the current page."
   },
   "home": {
     "hot": "HOT",
     "newOpen": "Newly opened",
     "genreShortcuts": "Browse by category",
     "more": "More",
-    "empty": "Search fanmeet and popup events or browse by category."
+    "empty": "Search fanmeet and popup events or browse by category.",
+    "intro": "Find your next live experience",
+    "browse": "Browse events",
+    "all": "All",
+    "selling": "On sale",
+    "upcoming": "Coming soon",
+    "ended": "Past events",
+    "myTickets": "My tickets",
+    "guide": "Help & information",
+    "findShows": "Find events",
+    "priceFrom": "From {price}",
+    "priceUnknown": "See event details for prices",
+    "feeSeparate": "Booking fee extra",
+    "bookingOpens": "Booking opens {date}",
+    "dateUnknown": "Event date to be announced",
+    "loadError": "We could not load events. Please try again.",
+    "emptyFiltered": "No events match this filter.",
+    "searchLabel": "Search events or artists",
+    "promotionAlt": "Event news",
+    "previousBanner": "Previous announcement",
+    "nextBanner": "Next announcement",
+    "bannerPosition": "Announcement {current} of {total}",
+    "statusHelp": {
+      "selling": "Check seats and booking availability.",
+      "closing_soon": "Booking closes soon.",
+      "upcoming": "Check back for booking details.",
+      "ended": "This event has ended."
+    },
+    "loading": "Loading events",
+    "bookingPaused": "Booking is temporarily paused. You can still browse event information."
   },
   "search": {
     "promptTitle": "Search for shows",
@@ -78,7 +109,8 @@
     "priceLabel": "Price",
     "upcomingDateLabel": "Coming soon",
     "detailImagesTitle": "Detail images",
-    "detailImageAlt": "{title} detail image {index}"
+    "detailImageAlt": "{title} detail image {index}",
+    "verifyCta": "Verify to book"
   },
   "support": {
     "title": "Support",
@@ -91,7 +123,10 @@
     "fallbackPaymentQuestion": "Payment and QR entry",
     "fallbackPaymentAnswer": "After payment is complete, your booking and QR ticket are available on My page. Please prepare the QR screen for venue entry.",
     "fallbackRefundQuestion": "Refund or account support",
-    "fallbackRefundAnswer": "Send your booking number, account email, and request details to the support email. We respond in order after review."
+    "fallbackRefundAnswer": "Send your booking number, account email, and request details to the support email. We respond in order after review.",
+    "loading": "Loading the latest help content.",
+    "loadError": "We could not load the latest help content. Try again or contact us by email below.",
+    "legalLinks": "Terms and privacy information"
   },
   "booking": {
     "disabled": "Ticket booking will open later",
@@ -346,7 +381,8 @@
       "invalidCode": "The verification code does not match",
       "verified": "Your email has been verified.",
       "throttled": "Please try again shortly.",
-      "systemError": "Something went wrong. Please try again."
+      "systemError": "Something went wrong. Please try again.",
+      "deliveryFailed": "Your account is saved. We could not send the verification email. Request a new code or contact support."
     },
     "otp": {
       "sent": "Verification code sent",
@@ -385,6 +421,21 @@
       "retryButton": "Try logging in again",
       "processing": "Completing login...",
       "invalidAccess": "This login link is invalid."
+    },
+    "navigation": {
+      "verifyTitle": "Verify your email",
+      "verificationLogin": "Your email is verified. Log in to continue your booking.",
+      "continue": "Continue",
+      "showPassword": "Show password",
+      "hidePassword": "Hide password"
+    },
+    "validation": {
+      "email": "Enter a valid email address",
+      "password": "Enter your password",
+      "confirm": "Confirm your password",
+      "mismatch": "Passwords do not match",
+      "rules": "Use at least 8 characters with letters, numbers, and a symbol",
+      "link": "A valid verification link is required"
     }
   },
   "metadata": {
@@ -749,7 +800,10 @@
     "viewWallet": "View ticket wallet",
     "editSettings": "Edit settings",
     "marketingOn": "Subscribed",
-    "marketingOff": "Not subscribed"
+    "marketingOff": "Not subscribed",
+    "membership": "Account age",
+    "checking": "Checking your bookings",
+    "loadError": "We could not load your bookings. Please try again."
   },
   "profile": {
     "email": "Email",
@@ -779,7 +833,18 @@
     "cancel": "Cancel",
     "confirmWithdraw": "Confirm deletion",
     "emailVerified": "Email verified",
-    "emailUnverified": "Email not verified"
+    "emailUnverified": "Email not verified",
+    "accountStatus": "Account status",
+    "adminAccount": "Administrator",
+    "buyerAccount": "Member",
+    "saved": "Your profile has been updated",
+    "loggedOut": "You have been logged out",
+    "withdrawn": "Your account has been closed",
+    "withdrawBlocked": "Resolve active bookings before closing your account.",
+    "verifyEmail": "Verify email",
+    "returnToBooking": "Return to booking",
+    "changePhone": "Change phone number",
+    "cancelPhoneChange": "Cancel phone change"
   },
   "resetPassword": {
     "sentTitle": "Password reset email sent",

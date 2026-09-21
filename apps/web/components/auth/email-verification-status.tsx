@@ -6,6 +6,7 @@ import { useLocale } from 'next-intl';
 import { useRouter } from 'next/navigation';
 import type { UserProfile } from '@grabit/shared';
 import { apiClient, ApiClientError } from '@/lib/api-client';
+import { buildAuthRoute, resolveSafeReturnTo, resolveSafeReturnToFromSearch } from '@/lib/auth-return';
 import { getFrontendOrigin } from '@/lib/frontend-origin';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -21,7 +22,8 @@ type EmailVerificationState =
   | 'invalidCode'
   | 'verified'
   | 'throttled'
-  | 'systemError';
+  | 'systemError'
+  | 'deliveryFailed';
 
 interface EmailVerificationStatusProps {
   email: string;
@@ -29,6 +31,7 @@ interface EmailVerificationStatusProps {
   initialState?: Exclude<EmailVerificationState, 'loading' | 'resendSuccess'>;
   requestOnMount?: boolean;
   locale?: string;
+  returnTo?: string | null;
 }
 
 function mapEmailVerificationError(error: unknown): EmailVerificationState {
@@ -41,19 +44,24 @@ function mapEmailVerificationError(error: unknown): EmailVerificationState {
 }
 
 export function EmailVerificationStatus({
-  email,
+  email: initialEmail,
   token,
   initialState = 'sent',
   requestOnMount = false,
   locale,
+  returnTo: providedReturnTo,
 }: EmailVerificationStatusProps) {
   const contextLocale = useLocale();
   const activeLocale = resolveAuthLocale(locale ?? contextLocale);
-  const copy = getAuthLaunchCopy(activeLocale).emailVerification;
+  const authCopy = getAuthLaunchCopy(activeLocale);
+  const copy = authCopy.emailVerification;
+  const returnTo = resolveSafeReturnTo(providedReturnTo)
+    ?? (typeof window === 'undefined' ? null : resolveSafeReturnToFromSearch(window.location.search));
   const router = useRouter();
+  const [email, setEmail] = useState(initialEmail);
   const accessToken = useAuthStore((state) => state.accessToken);
   const setAuth = useAuthStore((state) => state.setAuth);
-  const hasRequestedRef = useRef(false);
+  const mountRequestRef = useRef<{ key: string; promise: Promise<{ verified?: boolean; emailDeliveryFailed?: boolean }> } | null>(null);
   const [code, setCode] = useState('');
   const [isVerifying, setIsVerifying] = useState(false);
   const [state, setState] = useState<EmailVerificationState>(
@@ -61,80 +69,52 @@ export function EmailVerificationStatus({
   );
 
   const refreshCurrentUser = useCallback(async () => {
-    if (!accessToken) return;
+    if (!accessToken) return false;
 
     try {
       const user = await apiClient.get<UserProfile>('/api/v1/users/me', {
         showErrorToast: false,
       });
       setAuth(accessToken, user);
+      return user.isEmailVerified;
     } catch {
-      // Verification already succeeded; navigation should not be blocked by profile refresh.
+      return false;
     }
   }, [accessToken, setAuth]);
 
   const completeVerification = useCallback(async () => {
     setState('verified');
-    await refreshCurrentUser();
-    router.replace(getLocalizedPathname('/', activeLocale));
-  }, [activeLocale, refreshCurrentUser, router]);
+    if (!accessToken) {
+      router.replace(buildAuthRoute('/auth', activeLocale, { verified: true, returnTo }));
+    } else if (await refreshCurrentUser()) {
+      router.replace(returnTo ?? getLocalizedPathname('/', activeLocale));
+    }
+  }, [accessToken, activeLocale, refreshCurrentUser, returnTo, router]);
 
   useEffect(() => {
-    if (hasRequestedRef.current) return;
-    hasRequestedRef.current = true;
+    if (!token && !(requestOnMount && email)) return;
     let cancelled = false;
-
-    if (token) {
-      void (async () => {
-        try {
-          const result = await apiClient.post<{ verified: boolean }>(
-            '/api/v1/auth/email-verification/verify',
-            { token },
-            { showErrorToast: false },
-          );
-          if (!cancelled) {
-            if (result.verified) {
-              await completeVerification();
-            } else {
-              setState('systemError');
-            }
-          }
-        } catch (error) {
-          if (!cancelled) {
-            setState(mapEmailVerificationError(error));
-          }
-        }
-      })();
-
-      return () => {
-        cancelled = true;
+    const key = token ? `token:${token}` : `request:${email}:${activeLocale}`;
+    if (mountRequestRef.current?.key !== key) {
+      mountRequestRef.current = {
+        key,
+        promise: token
+          ? apiClient.post<{ verified: boolean }>('/api/v1/auth/email-verification/verify', { token }, { showErrorToast: false })
+          : apiClient.post<{ verified?: boolean; emailDeliveryFailed?: boolean }>('/api/v1/auth/email-verification/request',
+              { email, locale: activeLocale, frontendOrigin: getFrontendOrigin() }, { showErrorToast: false }),
       };
     }
-
-    if (requestOnMount) {
-      void (async () => {
-        if (!email) return;
-
-        try {
-          await apiClient.post(
-            '/api/v1/auth/email-verification/request',
-            { email, locale: activeLocale, frontendOrigin: getFrontendOrigin() },
-            { showErrorToast: false },
-          );
-          if (!cancelled) {
-            setState('sent');
-          }
-        } catch (error) {
-          if (!cancelled) {
-            setState(mapEmailVerificationError(error));
-          }
-        }
-      })();
-    }
-
-    return () => {
-      cancelled = true;
-    };
+    // StrictMode may replay the effect. Subscribe to the same request instead
+    // of issuing twice or ignoring its result after the first cleanup.
+    void mountRequestRef.current.promise.then(async (result) => {
+      if (cancelled) return;
+      if (!token) setState(result.emailDeliveryFailed ? 'deliveryFailed' : 'sent');
+      else if (result.verified) await completeVerification();
+      else setState('systemError');
+    }).catch((error) => {
+      if (!cancelled) setState(mapEmailVerificationError(error));
+    });
+    return () => { cancelled = true; };
   }, [activeLocale, completeVerification, email, requestOnMount, token]);
 
   async function handleVerifyCode() {
@@ -164,19 +144,22 @@ export function EmailVerificationStatus({
 
     setState('loading');
     try {
-      await apiClient.post(
+      const result = await apiClient.post<{ emailDeliveryFailed?: boolean }>(
         '/api/v1/auth/email-verification/resend',
         { email, locale: activeLocale, frontendOrigin: getFrontendOrigin() },
         { showErrorToast: false },
       );
-      setState('resendSuccess');
+      setState(result?.emailDeliveryFailed ? 'deliveryFailed' : 'resendSuccess');
+      if (!initialEmail) {
+        window.history.replaceState(null, '', buildAuthRoute('/auth/verify-email', activeLocale, { email, returnTo }));
+      }
     } catch (error) {
       setState(mapEmailVerificationError(error));
     }
   }
 
   const isAlert =
-    state === 'expired' ||
+    state === 'deliveryFailed' || state === 'expired' ||
     state === 'invalidCode' ||
     state === 'throttled' ||
     state === 'systemError';
@@ -212,6 +195,17 @@ export function EmailVerificationStatus({
         </p>
       </div>
 
+      {!initialEmail && state !== 'loading' && state !== 'verified' && (
+        <label className="block space-y-2 text-sm font-medium">
+          <span>{authCopy.form.email}</span>
+          <Input type="email" autoComplete="email" value={email}
+            onChange={(event) => setEmail(event.target.value.trim())}
+            aria-label={authCopy.form.email} placeholder={authCopy.form.emailPlaceholder} />
+        </label>
+      )}
+      {state === 'verified' && accessToken && (
+        <Button className="w-full" onClick={() => void completeVerification()}>{authCopy.navigation.continue}</Button>
+      )}
       {state !== 'verified' && email && (
         <div className="space-y-3">
           <div className="flex items-center gap-2">

@@ -112,12 +112,13 @@ export function MobileLocaleSwitcher({ className }: { className?: string }) {
       </SheetTrigger>
       <SheetContent
         side="bottom"
+        closeLabel={copy.nav.close}
         className="rounded-t-lg px-0 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] pt-1 md:hidden"
       >
         <SheetHeader className="border-b border-gray-200 px-5 pb-4 pt-5 text-left">
           <SheetTitle className="text-base">{controlLabel}</SheetTitle>
           <SheetDescription className="sr-only">
-            Select a language for the current page.
+            {copy.nav.languageDescription}
           </SheetDescription>
         </SheetHeader>
         <div className="px-3">

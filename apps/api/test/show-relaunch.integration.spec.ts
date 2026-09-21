@@ -25,6 +25,8 @@ import { syncIncludedBenefitEntitlementsForTicketItems } from '../src/database/i
 import { PaymentService } from '../src/modules/payment/payment.service.js';
 import { QrTicketService } from '../src/modules/ticket/qr-ticket.service.js';
 import { PendingPaymentExpirationWorker } from '../src/modules/jobs/pending-payment-expiration.worker.js';
+import { PerformanceService } from '../src/modules/performance/performance.service.js';
+import { SearchService } from '../src/modules/search/search.service.js';
 import type { PrepareReservationRequest } from '@grabit/shared';
 
 const { users, venues, performances, showtimes, reservations, reservationSeats, payments,
@@ -72,6 +74,39 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
       displayCopy: { ko: { name: '포스터', description: '기본 지급' }, en: { name: 'Poster', description: 'Included' }, th: { name: 'Poster', description: 'Included' }, 'zh-CN': { name: 'Poster', description: 'Included' } }, eligibleTierNames: ['VIP'] });
     return { userId: user!.id, showtimeId: showtime!.id, performanceId: performance!.id };
   }
+
+  it('filters the public catalog before pagination and returns real ticket prices and booking dates', async () => {
+    const category = `catalog-${randomUUID()}`;
+    const ids: string[] = [];
+    for (const [status, startsAt, publishState] of [
+      ['upcoming', '2020-01-01', 'published'],
+      ['upcoming', '2099-01-01', 'published'],
+      ['ended', null, 'published'],
+      ['selling', null, 'draft'],
+    ] as const) {
+      const [event] = await db.insert(performances).values({ title: category, genre: 'artist_celebrity',
+        subcategory: category, status, publishState, ageRating: 'All ages', startDate: new Date('2099-02-01'), endDate: new Date('2099-02-01') }).returning();
+      ids.push(event!.id);
+      await db.insert(schema.bookingPolicies).values({ performanceId: event!.id, bookingStartsAt: startsAt ? new Date(startsAt) : null });
+      await db.insert(schema.priceTiers).values([
+        { performanceId: event!.id, tierName: 'VIP', price: 120000 },
+        { performanceId: event!.id, tierName: 'R', price: 85000 },
+      ]);
+    }
+    const catalog = new PerformanceService(db, { get: vi.fn().mockResolvedValue(null), set: vi.fn() } as never);
+    const selling = await catalog.findByGenre('artist_celebrity', { page: 1, limit: 1, sort: 'latest', ended: true, sub: category, status: 'selling' });
+    expect(selling.total).toBe(1);
+    expect(selling.data).toMatchObject([{ id: ids[0], status: 'selling', minPrice: 85000, bookingStartsAt: '2020-01-01T00:00:00.000Z' }]);
+    const upcoming = await catalog.findByGenre('artist_celebrity', { page: 1, limit: 1, sort: 'latest', ended: true, sub: category, status: 'upcoming' });
+    expect(upcoming.total).toBe(1);
+    expect(upcoming.data[0]?.id).toBe(ids[1]);
+    const ended = await catalog.findByGenre('artist_celebrity', { page: 1, limit: 1, sort: 'latest', ended: true, sub: category, status: 'ended' });
+    expect(ended.total).toBe(1);
+    expect(ended.data[0]?.id).toBe(ids[2]);
+    const found = await new SearchService(db).search({ q: category, page: 1, limit: 20, ended: true });
+    expect(found.total).toBe(3);
+    expect(found.data.find((event) => event.id === ids[0])).toMatchObject({ status: 'selling', minPrice: 85000 });
+  });
 
   async function order(f: Awaited<ReturnType<typeof fixture>>, seatKey = '1F:A-1', status: 'PENDING_PAYMENT' | 'FAILED' = 'PENDING_PAYMENT') {
     const id = randomUUID();

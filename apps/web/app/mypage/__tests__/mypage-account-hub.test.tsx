@@ -12,6 +12,8 @@ type AccountHubUser = UserProfile & {
 
 const mocks = vi.hoisted(() => ({
   search: '',
+  lookupFailed: false,
+  refetch: vi.fn(),
   routerReplace: vi.fn(),
   routerPush: vi.fn(),
   user: {
@@ -122,6 +124,8 @@ vi.mock('@/hooks/use-reservations', () => ({
     data: mocks.reservations,
     isLoading: false,
     isFetching: false,
+    isError: mocks.lookupFailed,
+    refetch: mocks.refetch,
   }),
 }));
 
@@ -132,7 +136,26 @@ vi.mock('@/components/auth/profile-form', () => ({
 describe('MyPage account hub', () => {
   beforeEach(() => {
     mocks.search = '';
+    mocks.lookupFailed = false;
+    window.history.replaceState(null, '', '/mypage');
     vi.clearAllMocks();
+  });
+
+  it('preserves the active language when changing settings tabs', async () => {
+    window.history.replaceState(null, '', '/en/mypage');
+    render(<MyPage />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: /Settings/ }));
+    expect(mocks.routerReplace).toHaveBeenCalledWith('/en/mypage?tab=settings');
+  });
+
+  it('does not claim a failed booking lookup contains zero tickets', () => {
+    mocks.lookupFailed = true;
+    render(<MyPage />);
+    expect(screen.getByRole('alert')).toHaveTextContent('예매 정보를 불러오지 못했어요');
+    expect(screen.queryByText('다가오는 예매가 없습니다.')).not.toBeInTheDocument();
+    expect(screen.getAllByText('—').length).toBeGreaterThan(0);
+    expect(screen.getByText('가입 기간')).toBeInTheDocument();
   });
 
   it('renders account, ticket wallet, and settings as first-class mobile tabs', () => {
@@ -143,7 +166,7 @@ describe('MyPage account hub', () => {
     expect(screen.getByRole('tab', { name: /설정/ })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '계정 개요' })).toBeInTheDocument();
     expect(screen.getByText('fan@example.com')).toBeInTheDocument();
-    expect(screen.getByText('South Korea')).toBeInTheDocument();
+    expect(screen.getByText('대한민국')).toBeInTheDocument();
     expect(screen.getByText('English')).toBeInTheDocument();
     expect(screen.getByText('동의')).toBeInTheDocument();
   });

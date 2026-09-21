@@ -1,89 +1,64 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ReactNode } from 'react';
 import { render, screen } from '@testing-library/react';
-
-const runtimeFlagsMock = vi.hoisted(() => ({
-  bookingEnabled: true,
-}));
-
-vi.mock('next-intl', () => ({
-  useLocale: () => 'en',
-}));
-
-vi.mock('swiper/react', () => ({
-  Swiper: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  SwiperSlide: ({ children }: { children: ReactNode }) => (
-    <div>{children}</div>
-  ),
-}));
-
-vi.mock('swiper/modules', () => ({
-  FreeMode: {},
-}));
-
-vi.mock('@/hooks/use-performances', () => ({
-  useHomeBanners: () => ({ data: [], isLoading: false }),
-  useHotPerformances: () => ({
-    data: [createPerformance('hot-performance')],
-    isLoading: false,
-  }),
-  useNewPerformances: () => ({
-    data: [createPerformance('new-performance')],
-    isLoading: false,
-  }),
-}));
-
-vi.mock('@/hooks/use-runtime-flags', () => ({
-  useRuntimeFlags: () => ({
-    bookingEnabled: runtimeFlagsMock.bookingEnabled,
-  }),
-}));
-
+import userEvent from '@testing-library/user-event';
+import '@testing-library/jest-dom/vitest';
 import HomePage from '../page';
 
-function createPerformance(id: string) {
-  return {
-    id,
-    title: 'Girl Rules Fanmeet',
-    status: 'selling',
-    posterUrl: null,
-    venueName: 'Donghae Arts Center',
-    startDate: '2026-07-04T09:00:00.000Z',
-    endDate: '2026-07-04T11:00:00.000Z',
-  };
-}
+const mocks = vi.hoisted(() => ({
+  bookingEnabled: true, failed: false, loading: false,
+  search: '', push: vi.fn(), replace: vi.fn(), refetch: vi.fn(),
+}));
+vi.mock('next-intl', () => ({ useLocale: () => 'en' }));
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: mocks.push, replace: mocks.replace }),
+  useSearchParams: () => new URLSearchParams(mocks.search),
+}));
+vi.mock('@/hooks/use-performances', () => ({
+  useHomeBanners: () => ({ data: [], isLoading: false }),
+  useBrowsePerformances: () => ({
+    data: { data: [{ id: 'performance', title: 'Girl Rules Fanmeet', status: 'selling', posterUrl: null,
+      venueName: 'Donghae Arts Center', startDate: '2026-11-20T00:00:00Z', endDate: '2026-11-20T00:00:00Z', minPrice: 50000 }], total: 1, page: 1, totalPages: 1 },
+    isLoading: mocks.loading, isError: mocks.failed, refetch: mocks.refetch,
+  }),
+}));
+vi.mock('@/hooks/use-runtime-flags', () => ({ useRuntimeFlags: () => ({ bookingEnabled: mocks.bookingEnabled }) }));
 
-describe('home i18n visible copy', () => {
-  beforeEach(() => {
-    runtimeFlagsMock.bookingEnabled = true;
+describe('Buyer event discovery', () => {
+  beforeEach(() => { vi.clearAllMocks(); mocks.bookingEnabled = true; mocks.failed = false; mocks.loading = false; mocks.search = ''; });
+
+  it('shows the real event, date, price and a direct path to the ticket wallet', async () => {
+    render(<HomePage />);
+    expect(screen.getByRole('heading', { name: 'Find your next live experience' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Browse events' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Girl Rules Fanmeet' })).toBeInTheDocument();
+    expect(screen.getByText('From KRW 50,000')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'My tickets' })).toHaveAttribute('href', '/en/mypage?tab=wallet');
+    const user = userEvent.setup();
+    await user.type(screen.getByRole('searchbox', { name: 'Search events or artists' }), 'Girl Rules{Enter}');
+    expect(mocks.push).toHaveBeenCalledWith('/en/search?q=Girl%20Rules');
   });
 
-  it('renders canary-visible home copy from the active locale', () => {
+  it('keeps locale and resets pagination when selecting an event status', async () => {
+    mocks.search = 'page=3';
     render(<HomePage />);
-
-    expect(
-      screen.getByRole('link', { name: 'Search shows' }).getAttribute('href'),
-    ).toBe('/en/search');
-    expect(screen.getByText('Search shows or artists')).toBeDefined();
-    expect(
-      screen
-        .getByRole('link', { name: 'Browse by category' })
-        .getAttribute('href'),
-    ).toBe('/en/genre/artist_celebrity');
-    expect(screen.getByText('Search fanmeet and popup events or browse by category.')).toBeDefined();
-    expect(screen.getByRole('heading', { name: 'HOT' })).toBeDefined();
-    expect(screen.getByRole('heading', { name: 'Newly opened' })).toBeDefined();
-    expect(screen.getByRole('heading', { name: 'Browse by category' })).toBeDefined();
-    expect(screen.getByRole('link', { name: 'Artist' })).toBeDefined();
-    expect(screen.queryByRole('link', { name: 'IP Popup' })).toBeNull();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Past events' }));
+    expect(mocks.replace).toHaveBeenCalledWith('/en?status=ended', { scroll: false });
   });
 
-  it('does not render on-sale badges while booking is disabled', () => {
-    runtimeFlagsMock.bookingEnabled = false;
-
+  it('distinguishes a loading error from an empty catalog and allows retry', async () => {
+    mocks.failed = true;
     render(<HomePage />);
+    expect(screen.getByRole('alert')).toHaveTextContent('We could not load events');
+    expect(screen.queryByText('No events match this filter.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Girl Rules Fanmeet' })).not.toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Try again' }));
+    expect(mocks.refetch).toHaveBeenCalledTimes(1);
+  });
 
-    expect(screen.queryByText('On sale')).toBeNull();
-    expect(screen.getAllByText('Coming soon')).toHaveLength(2);
+  it('does not claim bookings are open while the service has disabled booking', () => {
+    mocks.bookingEnabled = false;
+    render(<HomePage />);
+    expect(screen.queryByLabelText('Status: On sale')).not.toBeInTheDocument();
+    expect(screen.getAllByLabelText('Status: Coming soon')).not.toHaveLength(0);
   });
 });

@@ -1,5 +1,7 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
+import { buildAuthRoute, resolveSafeReturnToFromSearch } from '@/lib/auth-return';
 import { useState } from 'react';
 import { useLocale } from 'next-intl';
 import { toast } from 'sonner';
@@ -20,12 +22,14 @@ import { EmailVerificationStatus } from '@/components/auth/email-verification-st
 import { getAuthLaunchCopy } from '@/components/auth/auth-launch-copy';
 
 export function SignupForm() {
+  const router = useRouter();
   const authCopy = getAuthLaunchCopy(useLocale());
   const setAuth = useAuthStore((s) => s.setAuth);
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
   const [step1Data, setStep1Data] = useState<RegisterStep1Input | null>(null);
   const [step2Data, setStep2Data] = useState<SignupStep2SubmitData | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [step3Draft, setStep3Draft] = useState<Partial<RegisterStep3Input>>();
   const [emailVerificationEmail, setEmailVerificationEmail] = useState<
     string | null
   >(null);
@@ -77,7 +81,11 @@ export function SignupForm() {
         setAuth(res.accessToken, res.user);
       }
       setEmailVerificationEmail(step1Data.email);
-      toast.success(authCopy.form.signupComplete);
+      router.replace(buildAuthRoute('/auth/verify-email', authCopy.locale, {
+        email: step1Data.email, emailDeliveryFailed: 'emailDeliveryFailed' in res && res.emailDeliveryFailed, returnTo: resolveSafeReturnToFromSearch(window.location.search),
+      }));
+      if ('emailDeliveryFailed' in res && res.emailDeliveryFailed) toast.error(authCopy.emailVerification.deliveryFailed);
+      else toast.success(authCopy.form.signupComplete);
     } catch (error) {
       const message =
         error instanceof Error
@@ -125,7 +133,8 @@ export function SignupForm() {
             {currentStep === 3 && (
               <SignupStep3
                 onComplete={handleStep3Complete}
-                onBack={() => setCurrentStep(2)}
+                defaultValues={step3Draft}
+                onBack={(draft) => { setStep3Draft(draft); setCurrentStep(2); }}
                 isSubmitting={isSubmitting}
               />
             )}

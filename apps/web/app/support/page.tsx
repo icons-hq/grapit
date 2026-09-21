@@ -1,5 +1,8 @@
 'use client';
 
+import Link from 'next/link';
+import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
+import { Button } from '@/components/ui/button';
 import { useLocale } from 'next-intl';
 
 import { useSupportContent } from '@/hooks/use-support-content';
@@ -12,7 +15,8 @@ const SUPPORT_EMAIL = 'wecordofficial_cs@mariannekate.com';
 
 export default function SupportPage() {
   const activeLocale = resolveVisibleCopyLocale(useLocale());
-  const copy = getVisibleCopy(activeLocale).support;
+  const messages = getVisibleCopy(activeLocale);
+  const copy = messages.support;
   const supportContent = useSupportContent(activeLocale);
   const notices = supportContent.isError
     ? []
@@ -46,8 +50,13 @@ export default function SupportPage() {
             {SUPPORT_EMAIL}
           </a>
         </p>
+        <nav aria-label={copy.legalLinks} className="mt-4 flex flex-wrap gap-x-5 gap-y-2 text-sm">
+          <Link className="inline-flex min-h-11 items-center underline underline-offset-4" href={getLocalizedPathname('/legal/terms', activeLocale)}>{messages.footer.terms}</Link>
+          <Link className="inline-flex min-h-11 items-center underline underline-offset-4" href={getLocalizedPathname('/legal/privacy', activeLocale)}>{messages.footer.privacy}</Link>
+        </nav>
       </header>
 
+      {supportContent.isError && <div role="alert" className="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><p>{copy.loadError}</p><Button variant="outline" className="mt-3" onClick={() => void supportContent.refetch()}>{messages.commonErrors.retry}</Button></div>}
       <section className="py-6" aria-labelledby="support-notices-heading">
         <h2
           id="support-notices-heading"
@@ -56,7 +65,7 @@ export default function SupportPage() {
           {copy.noticeHeading}
         </h2>
         <div className="mt-4 space-y-3">
-          {notices.length > 0 ? (
+          {supportContent.isLoading ? <p role="status">{copy.loading}</p> : supportContent.isError ? null : notices.length > 0 ? (
             notices.map((notice) => (
               <article
                 key={notice.id}

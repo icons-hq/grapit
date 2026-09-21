@@ -24,8 +24,8 @@ import type {
   Banner,
   PerformanceQuery,
   SeatMap,
-  PerformanceStatus,
 } from '@grabit/shared';
+import { publicCatalogCardSelection, mapPublicCatalogCard, publicCatalogStatusCondition, resolveEffectivePerformanceStatus } from './catalog-card.js';
 import { CacheService } from './cache.service.js';
 import {
   overlayReviewedCardTranslations,
@@ -41,7 +41,7 @@ type FindPerformanceByIdOptions = {
   includeHiddenCopy?: boolean;
 };
 
-const PERFORMANCE_TAXONOMY_CACHE_VERSION = 'event-category-v2-booking-start';
+const PERFORMANCE_TAXONOMY_CACHE_VERSION = 'event-catalog-v3-status-price';
 const PERFORMANCE_DETAIL_CACHE_VERSION = 'public-published-v2-booking-start';
 const DEFAULT_CACHE_TTL_SECONDS = 300;
 const DEFAULT_FLOOR_KEY = '1F';
@@ -145,26 +145,6 @@ function mapBookingPolicyRow(
   };
 }
 
-function resolveEffectivePerformanceStatus(
-  status: PerformanceStatus,
-  bookingStartsAt: Date | string | null | undefined,
-  now: Date = new Date(),
-): PerformanceStatus {
-  if (status !== 'upcoming' || !bookingStartsAt) {
-    return status;
-  }
-
-  const startsAtMs =
-    bookingStartsAt instanceof Date
-      ? bookingStartsAt.getTime()
-      : Date.parse(bookingStartsAt);
-  if (!Number.isFinite(startsAtMs)) {
-    return status;
-  }
-
-  return startsAtMs <= now.getTime() ? 'selling' : status;
-}
-
 function cacheTtlUntilNextBookingStart(
   startsAtValues: Array<Date | string | null | undefined>,
   now: Date = new Date(),
@@ -214,10 +194,10 @@ export class PerformanceService {
     genre: string,
     query: PerformanceQuery,
   ): Promise<PerformanceListResponse> {
-    const { page = 1, limit = 20, sort = 'latest', ended = false, sub } = query;
+    const { page = 1, limit = 20, sort = 'latest', ended = false, sub, status } = query;
     const locale = resolvePerformanceTranslationLocale(query.locale);
 
-    const cacheKey = `cache:performances:list:${PERFORMANCE_TAXONOMY_CACHE_VERSION}:${genre}:${locale}:${page}:${limit}:${sort}:${ended}:${sub ?? 'none'}`;
+    const cacheKey = `cache:performances:list:${PERFORMANCE_TAXONOMY_CACHE_VERSION}:${genre}:${locale}:${page}:${limit}:${sort}:${ended}:${sub ?? 'none'}:${status ?? 'all'}`;
     const cached = await this.cacheService.get<PerformanceListResponse>(cacheKey);
     if (cached) return cached;
 
@@ -235,9 +215,9 @@ export class PerformanceService {
       conditions.push(eq(performances.subcategory, sub));
     }
 
-    if (!ended) {
-      conditions.push(ne(performances.status, 'ended'));
-    }
+    const statusCondition = publicCatalogStatusCondition(status);
+    if (statusCondition) conditions.push(statusCondition);
+    else if (!ended) conditions.push(ne(performances.status, 'ended'));
 
     const whereClause = and(...conditions);
 
@@ -247,17 +227,7 @@ export class PerformanceService {
 
     const [data, countResult] = await Promise.all([
       this.db
-        .select({
-          id: performances.id,
-          title: performances.title,
-          genre: performances.genre,
-          posterUrl: performances.posterUrl,
-          status: performances.status,
-          bookingStartsAt: bookingPolicies.bookingStartsAt,
-          startDate: performances.startDate,
-          endDate: performances.endDate,
-          venueName: venues.name,
-        })
+        .select(publicCatalogCardSelection)
         .from(performances)
         .leftJoin(venues, eq(performances.venueId, venues.id))
         .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, performances.id))
@@ -268,24 +238,13 @@ export class PerformanceService {
       this.db
         .select({ count: sql<number>`count(*)::int` })
         .from(performances)
+        .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, performances.id))
         .where(whereClause),
     ]);
 
     const total = countResult[0]?.count ?? 0;
 
-    const cards: PerformanceCardData[] = data.map((row) => ({
-      id: row.id,
-      title: row.title,
-      genre: row.genre,
-      posterUrl: row.posterUrl,
-      status: resolveEffectivePerformanceStatus(
-        row.status,
-        row.bookingStartsAt,
-      ),
-      startDate: row.startDate?.toISOString() ?? '',
-      endDate: row.endDate?.toISOString() ?? '',
-      venueName: row.venueName ?? null,
-    }));
+    const cards: PerformanceCardData[] = data.map(mapPublicCatalogCard);
 
     const result: PerformanceListResponse = {
       data: await overlayReviewedCardTranslations(this.db, cards, locale),
@@ -485,17 +444,7 @@ export class PerformanceService {
     if (cached) return cached;
 
     const rows = await this.db
-      .select({
-        id: performances.id,
-        title: performances.title,
-        genre: performances.genre,
-          posterUrl: performances.posterUrl,
-          status: performances.status,
-          bookingStartsAt: bookingPolicies.bookingStartsAt,
-          startDate: performances.startDate,
-          endDate: performances.endDate,
-          venueName: venues.name,
-        })
+      .select(publicCatalogCardSelection)
         .from(performances)
         .leftJoin(venues, eq(performances.venueId, venues.id))
         .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, performances.id))
@@ -514,19 +463,7 @@ export class PerformanceService {
       .orderBy(desc(performances.viewCount))
       .limit(4);
 
-    const cards: PerformanceCardData[] = rows.map((row) => ({
-      id: row.id,
-      title: row.title,
-      genre: row.genre,
-      posterUrl: row.posterUrl,
-      status: resolveEffectivePerformanceStatus(
-        row.status,
-        row.bookingStartsAt,
-      ),
-      startDate: row.startDate?.toISOString() ?? '',
-      endDate: row.endDate?.toISOString() ?? '',
-      venueName: row.venueName ?? null,
-    }));
+    const cards: PerformanceCardData[] = rows.map(mapPublicCatalogCard);
     const result = await overlayReviewedCardTranslations(
       this.db,
       cards,
@@ -550,17 +487,7 @@ export class PerformanceService {
     if (cached) return cached;
 
     const rows = await this.db
-      .select({
-        id: performances.id,
-        title: performances.title,
-        genre: performances.genre,
-          posterUrl: performances.posterUrl,
-          status: performances.status,
-          bookingStartsAt: bookingPolicies.bookingStartsAt,
-          startDate: performances.startDate,
-          endDate: performances.endDate,
-          venueName: venues.name,
-        })
+      .select(publicCatalogCardSelection)
         .from(performances)
         .leftJoin(venues, eq(performances.venueId, venues.id))
         .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, performances.id))
@@ -573,19 +500,7 @@ export class PerformanceService {
       .orderBy(desc(performances.createdAt))
       .limit(4);
 
-    const cards: PerformanceCardData[] = rows.map((row) => ({
-      id: row.id,
-      title: row.title,
-      genre: row.genre,
-      posterUrl: row.posterUrl,
-      status: resolveEffectivePerformanceStatus(
-        row.status,
-        row.bookingStartsAt,
-      ),
-      startDate: row.startDate?.toISOString() ?? '',
-      endDate: row.endDate?.toISOString() ?? '',
-      venueName: row.venueName ?? null,
-    }));
+    const cards: PerformanceCardData[] = rows.map(mapPublicCatalogCard);
     const result = await overlayReviewedCardTranslations(
       this.db,
       cards,

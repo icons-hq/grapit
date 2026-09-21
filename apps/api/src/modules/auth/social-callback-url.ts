@@ -5,6 +5,7 @@ import {
   isSupportedLocale,
 } from '@grabit/shared/constants/index.js';
 import type { SupportedLocale } from '@grabit/shared/types/i18n.types.js';
+import { resolveAuthReturnTo } from '@grabit/shared';
 
 type SocialLocaleQueryKey = 'locale' | 'state';
 type SocialCallbackStateQueryKey = 'state';
@@ -13,8 +14,6 @@ type SocialCallbackState = {
   locale: SupportedLocale | null;
   returnTo: string | null;
 };
-
-const LOCAL_RETURN_ORIGIN = 'https://heygrabit.local';
 
 export function resolveSocialCallbackLocale(value: unknown): SupportedLocale | null {
   const rawValue = Array.isArray(value) ? value[0] : value;
@@ -35,20 +34,7 @@ export function resolveSafeSocialReturnTo(value: unknown): string | null {
     return null;
   }
 
-  const trimmed = rawValue.trim();
-  if (!trimmed.startsWith('/') || trimmed.startsWith('//') || trimmed.includes('\0')) {
-    return null;
-  }
-
-  try {
-    const parsed = new URL(trimmed, LOCAL_RETURN_ORIGIN);
-    if (parsed.origin !== LOCAL_RETURN_ORIGIN) {
-      return null;
-    }
-    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
-  } catch {
-    return null;
-  }
+  return resolveAuthReturnTo(rawValue);
 }
 
 export function resolveSocialCallbackState(value: unknown): SocialCallbackState {

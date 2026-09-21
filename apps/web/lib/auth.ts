@@ -2,7 +2,16 @@ import { apiUrl } from '@/lib/api-url';
 import { useAuthStore } from '@/stores/use-auth-store';
 import type { UserProfile } from '@grabit/shared';
 
-export async function initializeAuth(): Promise<void> {
+let initialization: Promise<void> | null = null;
+
+export function initializeAuth(): Promise<void> {
+  if (useAuthStore.getState().isInitialized) return Promise.resolve();
+  // StrictMode and concurrent mount callers must share one refresh rotation.
+  initialization ??= restoreSession().finally(() => { initialization = null; });
+  return initialization;
+}
+
+async function restoreSession(): Promise<void> {
   try {
     const res = await fetch(apiUrl('/api/v1/auth/refresh'), {
       method: 'POST',

@@ -9,6 +9,7 @@ import { useQueue } from '@/hooks/use-queue';
 import { useBookingAvailability } from '@/hooks/use-booking-availability';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
+import { buildAuthRoute } from '@/lib/auth-return';
 import { resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
 
 export default function BookingRoute({
@@ -24,10 +25,11 @@ export default function BookingRoute({
 
   const {
     bookingAvailable,
+    verificationRequiredForBooking,
     isAdminBookingBypassActive,
     isResolved: runtimeFlagsResolved,
   } = useBookingAvailability();
-  const { isInitialized: authInitialized, accessToken } = useAuthStore();
+  const { isInitialized: authInitialized, accessToken, user } = useAuthStore();
   const queue = useQueue({
     performanceId,
     enabled:
@@ -37,6 +39,16 @@ export default function BookingRoute({
       bookingAvailable &&
       !isAdminBookingBypassActive,
   });
+
+  const verificationPath = user && verificationRequiredForBooking
+    ? !user.isEmailVerified
+      ? buildAuthRoute('/auth/verify-email', locale, { email: user.email, returnTo: bookingPath })
+      : `${getLocalizedPathname('/mypage', locale)}?tab=settings&returnTo=${encodeURIComponent(bookingPath)}`
+    : null;
+
+  useEffect(() => {
+    if (authInitialized && verificationPath) router.replace(verificationPath);
+  }, [authInitialized, router, verificationPath]);
 
   useEffect(() => {
     if (
@@ -69,6 +81,8 @@ export default function BookingRoute({
       />
     );
   }
+
+  if (authInitialized && verificationPath) return null;
 
   if (!bookingAvailable || isAdminBookingBypassActive) {
     return <BookingPage performanceId={performanceId} />;

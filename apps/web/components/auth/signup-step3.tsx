@@ -23,7 +23,8 @@ import { getAuthLaunchCopy, type AuthLaunchCopy } from './auth-launch-copy';
 
 interface SignupStep3Props {
   onComplete: (data: RegisterStep3Input) => void;
-  onBack: () => void;
+  onBack: (draft: RegisterStep3Input) => void;
+  defaultValues?: Partial<RegisterStep3Input>;
   isSubmitting: boolean;
   phoneVerificationPurpose?: 'signup' | 'social_registration';
 }
@@ -60,6 +61,7 @@ export function SignupStep3({
   onComplete,
   onBack,
   isSubmitting,
+  defaultValues,
   phoneVerificationPurpose = 'signup',
 }: SignupStep3Props) {
   const authCopy = getAuthLaunchCopy(useLocale());
@@ -68,7 +70,7 @@ export function SignupStep3({
     () => createRegisterStep3Schema(signupCopy),
     [signupCopy],
   );
-  const [isPhoneVerified, setIsPhoneVerified] = useState(false);
+  const [isPhoneVerified, setIsPhoneVerified] = useState(Boolean(defaultValues?.phoneVerificationToken));
 
   const form = useForm<RegisterStep3Input>({
     resolver: zodResolver(schema),
@@ -81,6 +83,7 @@ export function SignupStep3({
       birthDay: '',
       phone: '',
       phoneVerificationToken: '',
+      ...defaultValues,
     },
     mode: 'onBlur',
     reValidateMode: 'onChange',
@@ -290,7 +293,7 @@ export function SignupStep3({
             variant="outline"
             size="lg"
             className="flex-1"
-            onClick={onBack}
+            onClick={() => onBack(form.getValues())}
           >
             {signupCopy.previousButton}
           </Button>

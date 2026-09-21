@@ -22,6 +22,8 @@ vi.mock('sonner', () => ({
   },
 }));
 
+vi.mock('next/navigation', () => ({ useRouter: () => ({ replace: vi.fn() }) }));
+
 vi.mock('next-intl', () => ({
   useLocale: () => 'ko',
 }));
