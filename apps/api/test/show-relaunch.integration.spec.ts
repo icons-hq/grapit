@@ -241,6 +241,24 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     expect(await f.service.getReservationByOrderId(prepared.orderId, f.userId)).toMatchObject({ status: 'PENDING_PAYMENT' });
   });
 
+  it('does not treat an expired local deadline as proof that an unknown handoff was unpaid', async () => {
+    const f = await checkoutFixture();
+    const prepared = await f.service.prepareReservation(f.input, f.userId);
+    await f.providerService.prepareTossPaymentBranch({
+      orderId: prepared.orderId, paymentMethod: f.input.paymentMethod, userId: f.userId,
+      successUrl: 'https://example.test/complete', failUrl: 'https://example.test/confirm',
+    });
+    await db.update(reservations).set({ paymentDeadlineAt: new Date('2020-01-01') })
+      .where(eq(reservations.id, prepared.reservationId));
+    await expect(f.service.cancelPendingReservation(prepared.reservationId, f.userId))
+      .rejects.toThrow('결제 상태');
+    const worker = new PendingPaymentExpirationWorker(db, { unlockAllSeats: vi.fn() } as never);
+    await worker.sweepExpiredPendingPayments();
+    expect(await f.service.getReservationByOrderId(prepared.orderId, f.userId)).toMatchObject({ status: 'PENDING_PAYMENT' });
+    await expect(f.service.prepareReservation(f.input, f.userId)).rejects.toThrow('결제 상태');
+    expect(await f.service.getReservationByOrderId(prepared.orderId, f.userId)).toMatchObject({ status: 'PENDING_PAYMENT' });
+  });
+
   it('keeps method changes available if seat-lock validation fails before provider handoff', async () => {
     const f = await checkoutFixture();
     const prepared = await f.service.prepareReservation(f.input, f.userId);

@@ -358,7 +358,7 @@ export class ReservationService {
   }
 
   private hasAsyncPaymentHandoff(status?: PaymentStatus | null): boolean {
-    return status === 'IN_PROGRESS' || status === 'DONE';
+    return status === 'IN_PROGRESS' || status === 'DONE' || status === 'PARTIAL_CANCELED';
   }
 
   private async expirePendingReservation(reservationId: string): Promise<void> {
@@ -1093,6 +1093,9 @@ export class ReservationService {
           .from(payments)
           .where(eq(payments.tossOrderId, dto.orderId));
 
+        if (existing.checkoutStartedAt && (!existingPayment || existingPayment.status === 'READY')) {
+          throw new ConflictException('결제 상태를 확인 중입니다. 기존 예매를 다시 확인해주세요.');
+        }
         if (!this.hasAsyncPaymentHandoff(existingPayment?.status as PaymentStatus | undefined)) {
           await this.expirePendingReservation(existing.id);
           throw new ConflictException('결제 가능 시간이 만료되었습니다. 좌석을 다시 선택해주세요.');
@@ -2966,7 +2969,6 @@ export class ReservationService {
           )`,
           sql`(
             ${reservations.checkoutStartedAt} is null
-            or ${reservations.paymentDeadlineAt} <= ${now}
             or exists (
               select 1 from ${payments}
               where ${payments.reservationId} = ${reservations.id}

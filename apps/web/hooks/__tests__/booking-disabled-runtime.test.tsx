@@ -865,7 +865,7 @@ describe('runtime booking disabled UI', () => {
     expect(cancelPendingReservationMock).not.toHaveBeenCalled();
   });
 
-  it('resets processing and retains the order when Toss returns to failUrl after request handoff', async () => {
+  it('checks the existing order instead of restarting an unknown provider handoff after failUrl', async () => {
     const user = userEvent.setup();
     const preparedOrderIds: string[] = [];
     useRuntimeFlagsMock.mockReturnValue({
@@ -896,6 +896,12 @@ describe('runtime booking disabled UI', () => {
     });
     expect(preparedOrderIds).toHaveLength(1);
 
+    readOrderMock.mockResolvedValue({
+      id: 'reservation-1', tossOrderId: preparedOrderIds[0], status: 'PENDING_PAYMENT',
+      performanceId: 'performance-disabled', showtimeId: 'showtime-disabled',
+      checkoutStartedAt: new Date().toISOString(), paymentDeadlineAt: '2099-01-01T00:00:00.000Z',
+      paymentInfo: null,
+    });
     searchParamsRef.current = new URLSearchParams({
       error: 'true',
       code: 'INVALID_PAYMENT_METHOD',
@@ -904,19 +910,12 @@ describe('runtime booking disabled UI', () => {
     });
     view.rerender(<ConfirmPage />);
 
-    await waitFor(() => {
-      expect(screen.getAllByRole('button', { name: '결제하기' })[0]).toBeEnabled();
-    });
+    await waitFor(() => expect(routerReplaceMock).toHaveBeenCalledWith(
+      `/booking/performance-disabled/complete?pending=true&orderId=${preparedOrderIds[0]}`,
+    ));
+    expect(prepareReservationMock).toHaveBeenCalledTimes(1);
     expect(cancelPendingReservationMock).not.toHaveBeenCalled();
-    searchParamsRef.current = new URLSearchParams();
-    view.rerender(<ConfirmPage />);
-
-    await user.click(screen.getAllByRole('button', { name: '결제하기' })[0]!);
-
-    await waitFor(() => {
-      expect(prepareReservationMock).toHaveBeenCalledTimes(2);
-    });
-    expect(preparedOrderIds[1]).toBe(preparedOrderIds[0]);
+    expect(screen.queryByRole('button', { name: '결제하기' })).not.toBeInTheDocument();
   });
 
   it('shows a recoverable lookup state when a return order cannot be found instead of creating another order', async () => {

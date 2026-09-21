@@ -99,6 +99,45 @@ describe('Checkout document return recovery', () => {
     boundary.requestPayment.mockImplementation(() => new Promise(() => {}));
   });
 
+  it('checks status instead of reopening a provider after handoff without a known result', async () => {
+    boundary.search = new URLSearchParams('resumeOrderId=GRP-unknown');
+    boundary.read.mockResolvedValue({
+      ...savedBooking, tossOrderId: 'GRP-unknown', checkoutStartedAt: '2026-09-21T01:00:00.000Z',
+    });
+    mountPage();
+    await waitFor(() => expect(boundary.replace).toHaveBeenCalledWith(
+      '/booking/performance-return/complete?pending=true&orderId=GRP-unknown',
+    ));
+    expect(screen.queryByText('Provider widget')).not.toBeInTheDocument();
+    expect(boundary.requestPayment).not.toHaveBeenCalled();
+  });
+
+  it('keeps the order address when the prepare commit succeeds but its response is lost', async () => {
+    const user = userEvent.setup();
+    let rejectReply!: (reason: Error) => void;
+    let committedOrder = '';
+    boundary.prepare.mockImplementation(({ orderId }: { orderId: string }) => {
+      committedOrder = orderId;
+      return new Promise((_, reject) => { rejectReply = reject; });
+    });
+    useBookingStore.getState().setBookingData({ ...savedBooking, selectedSeats: savedSeats, expiresAt: Date.parse(savedBooking.paymentDeadlineAt) });
+    const view = mountPage();
+    await user.click(screen.getByRole('checkbox', { name: '전체 동의' }));
+    await user.click(screen.getAllByRole('button', { name: 'paymentDisclaimer.payNow' })[0]!);
+    await waitFor(() => expect(boundary.prepare).toHaveBeenCalledTimes(1));
+    const addressDuringRequest = new URL(window.location.href);
+    await act(async () => { rejectReply(new Error('Connection lost after commit')); });
+    expect(addressDuringRequest.searchParams.get('resumeOrderId')).toBe(committedOrder);
+    view.unmount();
+    useBookingStore.getState().resetBooking();
+    boundary.search = new URLSearchParams(addressDuringRequest.search);
+    boundary.read.mockResolvedValue({ ...savedBooking, tossOrderId: committedOrder });
+    mountPage();
+    await screen.findByText('Return Test');
+    expect(useBookingStore.getState().selectedSeats[0]?.seatKey).toBe('2F:A-1');
+    expect(boundary.prepare).toHaveBeenCalledTimes(1);
+  });
+
   it('waits for old seat locks to release before allowing another selection', async () => {
     let releaseSeats!: () => void;
     boundary.unlock.mockImplementationOnce(() => new Promise<void>((resolve) => { releaseSeats = resolve; }));

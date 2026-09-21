@@ -6,8 +6,9 @@ import type { ReservationDetail } from '@grabit/shared';
 import { apiClient } from '@/lib/api-client';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { useBookingStore } from '@/stores/use-booking-store';
+import { getCheckoutState } from '@/lib/booking/checkout-state';
 
-export function useCheckoutRecovery(orderId: string | null, performanceId: string) {
+export function useCheckoutRecovery(orderId: string | null, performanceId: string, paused = false) {
   const [nowMs, setNowMs] = useState(Date.now);
   const userId = useAuthStore((store) => store.user?.id);
   const query = useQuery({
@@ -16,13 +17,12 @@ export function useCheckoutRecovery(orderId: string | null, performanceId: strin
       `/api/v1/reservations?orderId=${encodeURIComponent(orderId!)}`,
       { showErrorToast: false },
     ),
-    enabled: Boolean(orderId && userId),
+    enabled: Boolean(orderId && userId && !paused),
     retry: false,
   });
   const reservation = query.data;
   const matchesOrder = reservation?.tossOrderId === orderId
     && reservation?.performanceId === performanceId;
-  const paymentStatus = reservation?.paymentInfo?.status;
   const deadline = reservation?.paymentDeadlineAt;
   useEffect(() => {
     if (!deadline || !Number.isFinite(Date.parse(deadline))) return;
@@ -30,17 +30,12 @@ export function useCheckoutRecovery(orderId: string | null, performanceId: strin
     const timer = window.setTimeout(() => setNowMs(Date.now()), delay);
     return () => window.clearTimeout(timer);
   }, [deadline]);
+  const checkoutState = reservation ? getCheckoutState(reservation, nowMs) : 'unavailable';
   const state = !orderId ? 'none'
     : query.isPending ? 'loading'
     : query.isError || !reservation || !matchesOrder ? 'unavailable'
-    : reservation.status === 'CONFIRMED' ? 'confirmed'
-    : paymentStatus === 'IN_PROGRESS' || paymentStatus === 'DONE' ? 'processing'
-    : reservation.status !== 'PENDING_PAYMENT'
-      || (paymentStatus && paymentStatus !== 'READY')
-      || !Number.isFinite(Date.parse(reservation.paymentDeadlineAt))
-      || Date.parse(reservation.paymentDeadlineAt) <= nowMs ? 'ended'
-    : reservation.checkoutPaymentMethod === null ? 'unavailable'
-    : 'ready';
+    : checkoutState === 'failed' || checkoutState === 'expired' ? 'ended'
+    : checkoutState;
 
   useEffect(() => {
     if (state !== 'ready' || !reservation?.showtimeId) return;

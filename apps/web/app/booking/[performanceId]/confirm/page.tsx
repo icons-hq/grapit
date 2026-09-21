@@ -144,7 +144,7 @@ function ConfirmPageContent() {
   const isResumingPendingPayment = Boolean(returnOrderId);
   const [newOrderId, setOrderId] = useState(generateOrderId);
   const orderId = returnOrderId ?? newOrderId;
-  const recovery = useCheckoutRecovery(returnOrderId, performanceId);
+  const recovery = useCheckoutRecovery(returnOrderId, performanceId, isProcessing);
   const { refetch: refetchRecovery } = recovery;
   const bookingPath = getLocalizedPathname(`/booking/${performanceId}`, locale);
   const ticketsPath = `${getLocalizedPathname('/mypage', locale)}?tab=reservations`;
@@ -346,6 +346,12 @@ function ConfirmPageContent() {
         && JSON.stringify(current.selectedSeats) === JSON.stringify(requestedBooking.selectedSeats);
     };
     try {
+      // Persist the identity before the request: the server may commit even if
+      // this document disappears or the response never reaches the browser.
+      const returnUrl = new URL(window.location.href);
+      returnUrl.searchParams.set('resumeOrderId', orderId);
+      window.history.replaceState(null, '', `${returnUrl.pathname}${returnUrl.search}`);
+
       // 1. Create pending reservation on server before payment
       const now = new Date();
       const result = await prepareMutation.mutateAsync({
@@ -390,10 +396,6 @@ function ConfirmPageContent() {
         applyPaymentDeadline(result.paymentDeadlineAt);
       }
 
-      const returnUrl = new URL(window.location.href);
-      returnUrl.searchParams.set('resumeOrderId', orderId);
-      window.history.replaceState(null, '', `${returnUrl.pathname}${returnUrl.search}`);
-
       if (
         result.providerChargeQuote
         && JSON.stringify(result.providerChargeQuote) !== JSON.stringify(visibleQuote)
@@ -437,6 +439,7 @@ function ConfirmPageContent() {
         <Button onClick={() => void refetchRecovery()} disabled={recovery.isFetching}>{checkoutCopy.retry}</Button>
         {ended && <Button variant="outline" onClick={handlePaymentReturnRecovery} disabled={isReselecting}>{checkoutCopy.reselect}</Button>}
         <Button variant="ghost" onClick={() => router.replace(ticketsPath)}>{checkoutCopy.tickets}</Button>
+        <Link className="text-center text-sm text-primary underline" href={getLocalizedPathname('/support', locale)}>{checkoutCopy.support}</Link>
       </main>
     );
   }

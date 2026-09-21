@@ -1,5 +1,6 @@
 'use client';
 
+import { getCheckoutState } from '@/lib/booking/checkout-state';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { CheckCircle2, ChevronLeft, QrCode } from 'lucide-react';
@@ -79,6 +80,8 @@ function formatDateTime(
     weekday: 'short',
     hour: '2-digit',
     minute: '2-digit',
+    timeZone: 'Asia/Seoul',
+    timeZoneName: 'short',
   }).format(date);
 }
 
@@ -475,15 +478,6 @@ function isBeforeShowDateInSeoul(showDateTime: string): boolean {
   return getSeoulDayOrdinal(showtime) - getSeoulDayOrdinal(new Date()) > 0;
 }
 
-function hasDatePassed(dateString: string | null | undefined): boolean {
-  if (!dateString) {
-    return false;
-  }
-
-  const date = new Date(dateString);
-  return !Number.isNaN(date.getTime()) && date < new Date();
-}
-
 function formatPaymentMethodLabel(
   method: string | null | undefined,
   copy: ReservationDetailCopy,
@@ -522,14 +516,6 @@ function getPaymentMethodLabel(
   );
 }
 
-function isFailedPaymentStatus(status: PaymentStatus | null | undefined): boolean {
-  return status === 'ABORTED' || status === 'EXPIRED' || status === 'CANCELED';
-}
-
-function isPaymentConfirmationStatus(status: PaymentStatus | null | undefined): boolean {
-  return status === 'IN_PROGRESS' || status === 'DONE';
-}
-
 function hasCancellationInProgress(reservation: ReservationDetailType): boolean {
   return reservation.refundTimeline.currentState !== 'COMPLETED' ||
     reservation.ticketItems.some((ticketItem) => ticketItem.status === 'CANCELLATION_PENDING');
@@ -538,7 +524,7 @@ function hasCancellationInProgress(reservation: ReservationDetailType): boolean 
 function getProgressGuidance(
   reservation: ReservationDetailType,
   paymentDeadlineAt: string | null | undefined,
-  isPaymentDeadlinePassed: boolean,
+  nowMs: number,
   copy: ReservationDetailCopy,
   locale: string,
 ): ProgressGuidance | null {
@@ -594,8 +580,8 @@ function getProgressGuidance(
     };
   }
 
-  const paymentStatus = reservation.paymentInfo?.status;
-  if (reservation.status === 'PENDING_PAYMENT' && isPaymentConfirmationStatus(paymentStatus)) {
+  const checkoutState = getCheckoutState(reservation, nowMs);
+  if (reservation.status === 'PENDING_PAYMENT' && (checkoutState === 'processing' || checkoutState === 'unavailable')) {
     return {
       kind: 'payment-processing',
       title: progress.paymentTitle,
@@ -611,7 +597,7 @@ function getProgressGuidance(
 
   const isPendingPaymentFailure =
     reservation.status === 'PENDING_PAYMENT' &&
-    (isPaymentDeadlinePassed || isFailedPaymentStatus(paymentStatus));
+    (checkoutState === 'expired' || checkoutState === 'failed');
   if (reservation.status === 'FAILED' || isPendingPaymentFailure) {
     return {
       kind: 'payment-failed',
@@ -701,7 +687,7 @@ export function ReservationDetailView({
     reservation.paymentInfo?.paymentDeadlineAt ?? reservation.paymentDeadlineAt;
 
   const isDeadlinePassed = new Date(reservation.cancelDeadline) < new Date();
-  const isPaymentDeadlinePassed = hasDatePassed(paymentDeadlineAt);
+  const nowMs = new Date().getTime();
   const canCancel = reservation.status === 'CONFIRMED' && !isDeadlinePassed;
   const refundPreviewQuery = useRefundPreview(
     reservation.id,
@@ -745,7 +731,7 @@ export function ReservationDetailView({
   const progressGuidance = getProgressGuidance(
     reservation,
     paymentDeadlineAt,
-    isPaymentDeadlinePassed,
+    nowMs,
     detailCopy,
     locale,
   );

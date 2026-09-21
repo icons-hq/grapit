@@ -103,7 +103,7 @@ describe('PendingPaymentExpirationWorker', () => {
   });
 
   it('defines async payment handoff statuses that must be excluded from expiration', () => {
-    expect(ASYNC_PAYMENT_HANDOFF_STATUSES).toEqual(['IN_PROGRESS', 'DONE']);
+    expect(ASYNC_PAYMENT_HANDOFF_STATUSES).toEqual(['IN_PROGRESS', 'DONE', 'PARTIAL_CANCELED']);
   });
 
   it('leaves late DONE recovery to the webhook finalizer instead of expiring protected payments', () => {

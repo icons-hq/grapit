@@ -4,6 +4,8 @@ import { apiClient } from '@/lib/api-client';
 import { BookingDisabledError } from '@/lib/runtime-flags';
 import { useBookingAvailability } from '@/hooks/use-booking-availability';
 import { useBookingStore } from '@/stores/use-booking-store';
+import { useAuthStore } from '@/stores/use-auth-store';
+import { getCheckoutState } from '@/lib/booking/checkout-state';
 import {
   normalizeSeatIdentity,
   toFloorAwareSeatSelection as toSharedFloorAwareSeatSelection,
@@ -54,6 +56,7 @@ export type BookingPaymentStatus =
   | 'idle'
   | 'confirmed'
   | 'pending'
+  | 'unavailable'
   | 'failed'
   | 'expired';
 
@@ -189,14 +192,6 @@ function buildBookingPaymentSnapshot(
       ? new Date(paymentDeadlineAt).getTime() <= Date.now()
       : false,
   };
-}
-
-function isPastIsoDate(value: string | null | undefined, now = Date.now()): boolean {
-  if (!value) {
-    return false;
-  }
-
-  return new Date(value).getTime() <= now;
 }
 
 export function useSeatStatus(showtimeId: string | null) {
@@ -387,11 +382,12 @@ export function useBookingDetail(reservationId: string) {
 }
 
 export function useReservationByOrderId(orderId: string | null) {
+  const userId = useAuthStore((store) => store.user?.id);
   return useQuery({
-    queryKey: ['reservations', 'orderId', orderId],
+    queryKey: ['reservations', 'orderId', userId, orderId],
     queryFn: () =>
-      apiClient.get<ReservationDetail>(`/api/v1/reservations?orderId=${orderId}`),
-    enabled: !!orderId,
+      apiClient.get<ReservationDetail>(`/api/v1/reservations?orderId=${encodeURIComponent(orderId!)}`),
+    enabled: !!orderId && !!userId,
   });
 }
 
@@ -405,46 +401,33 @@ export function useBookingPaymentRecovery(
   orderId: string | null,
   options: UseBookingPaymentRecoveryOptions = {},
 ) {
-  const { enabled = !!orderId, pendingReturn = false, pollIntervalMs = 2500 } = options;
-  const fallbackSnapshot = useBookingPaymentSnapshot();
+  const { enabled = !!orderId, pollIntervalMs = 2500 } = options;
+  const userId = useAuthStore((store) => store.user?.id);
   const reservationQuery = useQuery({
-    queryKey: ['reservations', 'orderId', orderId],
+    queryKey: ['reservations', 'orderId', userId, orderId],
     queryFn: () =>
-      apiClient.get<ReservationDetail>(`/api/v1/reservations?orderId=${orderId}`),
-    enabled: enabled && !!orderId,
+      apiClient.get<ReservationDetail | null>(`/api/v1/reservations?orderId=${encodeURIComponent(orderId!)}`, { showErrorToast: false }),
+    enabled: enabled && !!orderId && !!userId,
+    retry: false,
   });
 
-  const paymentDeadlineAt = reservationQuery.data?.paymentDeadlineAt ?? fallbackSnapshot.paymentDeadlineAt;
+  const paymentDeadlineAt = reservationQuery.data?.paymentDeadlineAt ?? null;
   const paymentStatus = useMemo<BookingPaymentStatus>(() => {
-    if (reservationQuery.data?.status === 'CONFIRMED') {
-      return 'confirmed';
-    }
+    if (!enabled || !orderId || reservationQuery.isPending) return 'idle';
+    const reservation = reservationQuery.data;
+    if (reservationQuery.isError || !reservation || reservation.tossOrderId !== orderId) return 'unavailable';
+    const state = getCheckoutState(reservation, reservationQuery.dataUpdatedAt);
+    return state === 'ready' || state === 'processing' ? 'pending' : state;
+  }, [enabled, orderId, reservationQuery.data, reservationQuery.dataUpdatedAt, reservationQuery.isError, reservationQuery.isPending]);
 
-    if (
-      reservationQuery.data?.status === 'FAILED'
-      || reservationQuery.data?.status === 'CANCELLED'
-    ) {
-      return 'failed';
-    }
-
-    if (reservationQuery.data?.status === 'PENDING_PAYMENT') {
-      return isPastIsoDate(reservationQuery.data.paymentDeadlineAt) ? 'expired' : 'pending';
-    }
-
-    if (pendingReturn) {
-      return isPastIsoDate(paymentDeadlineAt) ? 'expired' : 'pending';
-    }
-
-    return 'idle';
-  }, [paymentDeadlineAt, pendingReturn, reservationQuery.data]);
-
+  const { refetch: refetchReservation } = reservationQuery;
   useEffect(() => {
     if (!enabled || !orderId || paymentStatus !== 'pending') {
       return undefined;
     }
 
     const intervalId = window.setInterval(() => {
-      void reservationQuery.refetch();
+      void refetchReservation();
     }, pollIntervalMs);
 
     return () => {
@@ -455,7 +438,7 @@ export function useBookingPaymentRecovery(
     orderId,
     paymentStatus,
     pollIntervalMs,
-    reservationQuery.refetch,
+    refetchReservation,
   ]);
 
   return {

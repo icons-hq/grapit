@@ -525,6 +525,16 @@ describe('ReservationDetailView QR ticket card', () => {
     }));
   });
 
+  it('keeps a handed-off payment without a callback in status review after its local deadline', () => {
+    render(<ReservationDetailView reservation={createReservation({
+      status: 'PENDING_PAYMENT', paymentInfo: null, paidAt: null,
+      checkoutStartedAt: '2020-01-01T00:00:00.000Z', paymentDeadlineAt: '2020-01-01T00:07:00.000Z',
+      ticketItems: [],
+    })} onCancel={vi.fn()} isCancelling={false} onResumePayment={vi.fn()} />);
+    expect(screen.getByText('결제 확인 중')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '결제 계속하기' })).not.toBeInTheDocument();
+  });
+
   it('shows payment confirmation progress without exposing internal payment terms', () => {
     render(
       <ReservationDetailView

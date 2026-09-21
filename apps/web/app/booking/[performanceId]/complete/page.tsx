@@ -7,14 +7,14 @@ import { AlertCircle, Loader2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import { AuthGuard } from '@/components/auth/auth-guard';
 import { BookingComplete } from '@/components/booking/booking-complete';
+import Link from 'next/link';
+import { getCheckoutCopy } from '@/lib/booking/checkout-copy';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import {
   useBookingPaymentRecovery,
   useConfirmPayment,
   useReconcileAsyncPaymentReturn,
-  type BookingPaymentStatus,
 } from '@/hooks/use-booking';
-import { ApiClientError } from '@/lib/api-client';
 import {
   buildConfirmPaymentPayload,
   hasValidConfirmPaymentReturn,
@@ -26,19 +26,6 @@ import {
 import { useBookingStore } from '@/stores/use-booking-store';
 import type { ReservationDetail } from '@grabit/shared';
 
-const LOCK_FAILURE_MESSAGES = [
-  '좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.',
-  '이미 다른 사용자가 선택한 좌석입니다.',
-] as const;
-
-function isLockFailureMessage(message: string): boolean {
-  return LOCK_FAILURE_MESSAGES.some((candidate) => candidate === message);
-}
-
-function isExpiredFailureMessage(message: string): boolean {
-  return message === LOCK_FAILURE_MESSAGES[0];
-}
-
 function formatDeadline(dateStr: string | null, locale: string): string | null {
   if (!dateStr) {
     return null;
@@ -49,6 +36,8 @@ function formatDeadline(dateStr: string | null, locale: string): string | null {
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+    timeZone: 'Asia/Seoul',
+    timeZoneName: 'short',
   }).format(new Date(dateStr));
 }
 
@@ -77,6 +66,7 @@ interface RecoveryStateCardProps {
     onClick: () => void;
     icon?: 'refresh';
   };
+  supportAction?: { label: string; href: string };
   secondaryAction?: {
     label: string;
     onClick: () => void;
@@ -90,6 +80,7 @@ function RecoveryStateCard({
   deadlineLabel,
   primaryAction,
   secondaryAction,
+  supportAction,
 }: RecoveryStateCardProps) {
   const toneClasses = tone === 'amber'
     ? 'border-amber-200 bg-amber-50 text-amber-900'
@@ -131,6 +122,7 @@ function RecoveryStateCard({
                 </button>
               )}
             </div>
+            {supportAction && <Link className="mt-4 inline-block text-sm underline" href={supportAction.href}>{supportAction.label}</Link>}
           </div>
         </div>
       </section>
@@ -143,6 +135,7 @@ function CompletePageContent() {
   const locale = resolveVisibleCopyLocale(useLocale());
   const visibleCopy = getVisibleCopy(locale);
   const completeCopy = visibleCopy.bookingExtra.complete;
+  const checkoutCopy = getCheckoutCopy(locale);
   const router = useRouter();
   const params = useParams<{ performanceId: string }>();
   const searchParams = useSearchParams();
@@ -178,10 +171,6 @@ function CompletePageContent() {
   const asyncReturnMutation = useReconcileAsyncPaymentReturn();
   const [bookingData, setBookingData] = useState<ReservationDetail | null>(null);
   const [isConfirming, setIsConfirming] = useState(false);
-  const [confirmationError, setConfirmationError] = useState<{
-    message: string;
-    paymentStatus: Extract<BookingPaymentStatus, 'failed' | 'expired'>;
-  } | null>(null);
   const hasConfirmedRef = useRef(false);
   const hasReconciledAsyncReturnRef = useRef(false);
 
@@ -207,7 +196,6 @@ function CompletePageContent() {
     setBookingData(recoveredBooking);
     clearBooking();
     setConfirmFailed(false);
-    setConfirmationError(null);
   }, [clearBooking, recoveredBooking]);
 
   // Confirm payment on mount — only needs URL params (server has pending order)
@@ -224,7 +212,6 @@ function CompletePageContent() {
 
     hasConfirmedRef.current = true;
     setIsConfirming(true);
-    setConfirmationError(null);
 
     try {
       const result = await confirmMutation.mutateAsync(buildConfirmPaymentPayload({
@@ -245,18 +232,6 @@ function CompletePageContent() {
     } catch (err) {
       const errorMessage =
         err instanceof Error ? err.message : completeCopy.confirmFailedTitle;
-      if (
-        err instanceof ApiClientError &&
-        err.statusCode === 409 &&
-        isLockFailureMessage(errorMessage)
-      ) {
-        setConfirmationError({
-          message: errorMessage,
-          paymentStatus: isExpiredFailureMessage(errorMessage) ? 'expired' : 'failed',
-        });
-        setConfirmFailed(false);
-        return;
-      }
       toast.error(errorMessage);
       // Try recovery — maybe already confirmed on a previous attempt
       setConfirmFailed(true);
@@ -342,46 +317,6 @@ function CompletePageContent() {
     );
   }
 
-  if (confirmationError?.paymentStatus === 'expired') {
-    return (
-      <RecoveryStateCard
-        tone="red"
-        title={t('expiredTitle')}
-        body={confirmationError.message || t('expiredBody')}
-        primaryAction={routePerformanceId
-          ? {
-              label: t('reselectCta'),
-              onClick: () => router.replace(getLocalizedPathname(`/booking/${routePerformanceId}`, locale)),
-            }
-          : undefined}
-        secondaryAction={{
-          label: completeCopy.checkReservations,
-          onClick: () => router.replace(`${getLocalizedPathname('/mypage', locale)}?tab=reservations`),
-        }}
-      />
-    );
-  }
-
-  if (confirmationError?.paymentStatus === 'failed') {
-    return (
-      <RecoveryStateCard
-        tone="red"
-        title={completeCopy.failedBookingTitle}
-        body={confirmationError.message}
-        primaryAction={routePerformanceId
-          ? {
-              label: t('reselectCta'),
-              onClick: () => router.replace(getLocalizedPathname(`/booking/${routePerformanceId}`, locale)),
-            }
-          : undefined}
-        secondaryAction={{
-          label: completeCopy.checkReservations,
-          onClick: () => router.replace(`${getLocalizedPathname('/mypage', locale)}?tab=reservations`),
-        }}
-      />
-    );
-  }
-
   if (paymentRecovery.paymentStatus === 'expired') {
     return (
       <RecoveryStateCard
@@ -432,14 +367,9 @@ function CompletePageContent() {
     return (
       <RecoveryStateCard
         tone="amber"
-        title={t('pendingTitle')}
-        body={t('pendingBody')}
-        deadlineLabel={formatDeadline(paymentRecovery.paymentDeadlineAt, locale)
-          ? completeCopy.pendingDeadline.replace(
-              '{deadline}',
-              formatDeadline(paymentRecovery.paymentDeadlineAt, locale) ?? '',
-            )
-          : null}
+        title={checkoutCopy.checking}
+        body={checkoutCopy.checkingBody}
+        supportAction={{ label: checkoutCopy.support, href: getLocalizedPathname('/support', locale) }}
         primaryAction={{
           label: completeCopy.retryStatus,
           onClick: () => {
@@ -463,12 +393,13 @@ function CompletePageContent() {
     return <CompleteSkeleton />;
   }
 
-  if (confirmFailed && paymentRecovery.paymentStatus === 'idle') {
+  if (paymentRecovery.paymentStatus === 'unavailable' || (confirmFailed && paymentRecovery.paymentStatus === 'idle')) {
     return (
       <RecoveryStateCard
         tone="red"
-        title={completeCopy.confirmFailedTitle}
+        title={checkoutCopy.unavailable}
         body={completeCopy.confirmUnknownBody}
+        supportAction={{ label: checkoutCopy.support, href: getLocalizedPathname('/support', locale) }}
         primaryAction={{
           label: completeCopy.retryStatus,
           onClick: () => {
