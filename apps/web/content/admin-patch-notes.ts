@@ -14,6 +14,26 @@ export interface AdminPatchNote {
 
 const notes = [
   {
+    id: 'pr-234-admin-workflow-redesign',
+    prNumber: 234,
+    title: '티켓 운영 중심으로 관리자 화면과 메뉴 개선',
+    summary: '공연 준비, 예매 검색, 고객 대응과 현장 입장 업무를 쉽게 찾도록 관리자 화면을 정리했습니다.',
+    highlights: [
+      '쉬운 메뉴 이름과 검색, 관련 화면 사이의 공연·회차 선택 유지',
+      '예매·회원 검색을 먼저 표시하고 상세 통계는 펼쳐 확인',
+      '모바일 표·날짜 입력·예매 상세창의 가독성 개선',
+      '작동하지 않는 판매 활성화 버튼 제거, 과거 점검 기록과 실제 판매 상태 구분',
+    ],
+    category: 'feature',
+    date: '2026-09-22',
+    githubUrl: 'https://github.com/icons-hq/grapit/pull/234',
+    evidence: [
+      '전체 17개 메뉴 및 1440px·390px·320px 실제 화면 검증',
+      '메뉴 권한·공연 선택·번역 원문 변경 회귀와 Web 812개 테스트',
+      'TypeScript·production build 통과, 결제·환불·권한 정책 보존',
+    ],
+  },
+  {
     id: 'pr-233-legacy-payment-time',
     prNumber: 233,
     title: '과거 결제 시각과 공연 배너 언어 유지 보완',

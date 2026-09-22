@@ -3,6 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { adminPatchNotes, latestAdminPatchNotes } from '../admin-patch-notes';
 
 describe('adminPatchNotes', () => {
+  it('links the admin redesign release as the latest note', () => {
+    expect(adminPatchNotes[0]).toEqual(expect.objectContaining({
+      prNumber: 234,
+      githubUrl: 'https://github.com/icons-hq/grapit/pull/234',
+      title: '티켓 운영 중심으로 관리자 화면과 메뉴 개선',
+    }));
+  });
+
   it('keeps curated PR patch notes valid and newest first', () => {
     expect(adminPatchNotes.length).toBeGreaterThan(0);
 
