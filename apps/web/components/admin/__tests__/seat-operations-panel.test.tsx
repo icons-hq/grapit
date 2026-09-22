@@ -232,6 +232,14 @@ describe('Admin seat operations UI', () => {
     });
   });
 
+  it('does not offer manual reopening to a reservation viewer without the mutation capability', () => {
+    useAuthStore.setState({ user: { ...useAuthStore.getState().user!, adminCapabilityBundle: null, adminCapabilities: ['reservations.read'] } });
+    mocks.bookingDetail.mockReturnValue({ data: cancelledBooking({ reopenState: 'HELD_CANCELLED' }), isLoading: false });
+    renderWithClient(<AdminBookingDetailModal open onOpenChange={vi.fn()} bookingId="reservation-1" onRefund={vi.fn()} isRefunding={false} />);
+    expect(screen.queryByRole('button', { name: '취소 좌석 즉시 개방' })).not.toBeInTheDocument();
+    expect(apiClient.post).not.toHaveBeenCalled();
+  });
+
   it('shows ticket item status, admission, refund, and reopen fields in admin booking detail', () => {
     mocks.bookingDetail.mockReturnValue({
       data: cancelledBooking(),

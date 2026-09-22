@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import { AlertTriangle, History, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
@@ -190,6 +191,17 @@ export function SeatOperationsPanel({
           </Button>}
         </div>
       </div>
+
+      {(capability.superuser || capability.capabilities.includes('seat.manual_open')) && (
+        <div className="rounded-lg bg-gray-50 p-3 text-sm text-gray-700">
+          <p>취소 좌석 즉시 개방은 예매 상세에서 대상과 취소 상태를 확인한 뒤 진행합니다.</p>
+          {capability.superuser || capability.capabilities.includes('reservations.read') ? (
+            <Link href={context?.href('/admin/bookings') ?? '/admin/bookings'} className="mt-1 inline-block font-semibold text-[#6C3CE0] underline">
+              예매에서 취소 좌석 확인
+            </Link>
+          ) : <p className="mt-1">즉시 개방에는 예매 조회 권한도 필요합니다. 관리자에게 예매 조회 권한을 요청하세요.</p>}
+        </div>
+      )}
 
       <div className="grid gap-3 md:grid-cols-2">
         {!context && <label className="space-y-1.5 text-sm font-semibold text-gray-700">

@@ -4,15 +4,16 @@ import type { Reflector } from '@nestjs/core';
 import type { AdminCapability, AdminCapabilityUser } from '@grabit/shared';
 
 import { createAdminFixtureUser } from '../../modules/admin/admin-fixtures.js';
-import { ADMIN_CAPABILITIES_KEY } from '../decorators/admin-capabilities.decorator.js';
+import { ADMIN_CAPABILITIES_KEY, ADMIN_ANY_CAPABILITIES_KEY } from '../decorators/admin-capabilities.decorator.js';
 import { AdminCapabilitiesGuard } from './admin-capabilities.guard.js';
 
-function createMockReflector(capabilities?: AdminCapability[]): Reflector {
+function createMockReflector(capabilities?: AdminCapability[], anyCapabilities?: AdminCapability[]): Reflector {
   return {
     getAllAndOverride: vi.fn().mockImplementation((key: string) => {
       if (key === ADMIN_CAPABILITIES_KEY) {
         return capabilities;
       }
+      if (key === ADMIN_ANY_CAPABILITIES_KEY) return anyCapabilities;
       return undefined;
     }),
   } as unknown as Reflector;
@@ -38,6 +39,21 @@ function createMockExecutionContext(
 }
 
 describe('AdminCapabilitiesGuard', () => {
+  it('keeps all-capability requirements conjunctive even with an any-capability requirement', () => {
+    const guard = new AdminCapabilitiesGuard(createMockReflector(
+      ['seat.disable', 'seat.reactivate'], ['seat.manual_open', 'seat.reactivate'],
+    ));
+    expect(guard.canActivate(createMockExecutionContext({ role: 'admin', adminCapabilities: ['seat.reactivate'] }))).toBe(false);
+    expect(guard.canActivate(createMockExecutionContext({ role: 'admin', adminCapabilities: ['seat.disable', 'seat.reactivate'] }))).toBe(true);
+  });
+
+  it('requires authentication and one matching capability for any-capability routes', () => {
+    const guard = new AdminCapabilitiesGuard(createMockReflector(undefined, ['seat.disable', 'seat.reactivate']));
+    expect(guard.canActivate(createMockExecutionContext())).toBe(false);
+    expect(guard.canActivate(createMockExecutionContext({ role: 'admin', adminCapabilities: ['reservations.read'] }))).toBe(false);
+    expect(guard.canActivate(createMockExecutionContext({ role: 'admin', adminCapabilities: ['seat.reactivate'] }))).toBe(true);
+  });
+
   it('allows existing admin role users to satisfy every capability', () => {
     const guard = new AdminCapabilitiesGuard(
       createMockReflector(['security.manage', 'reservations.export_raw']),

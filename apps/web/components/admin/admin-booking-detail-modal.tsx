@@ -219,6 +219,7 @@ export function AdminBookingDetailModal({
   );
   const authUser = useAuthStore((state) => state.user);
   const canAdminRefund = hasAdminCapability(authUser, 'refund.admin_refund');
+  const canManualOpen = hasAdminCapability(authUser, 'seat.manual_open');
   const [showRefundForm, setShowRefundForm] = useState(false);
   const [refundReason, setRefundReason] = useState('');
   const [fullRefundOverride, setFullRefundOverride] = useState(false);
@@ -265,7 +266,7 @@ export function AdminBookingDetailModal({
   }
 
   function handleManualOpenConfirm() {
-    if (!bookingId || !manualOpenReason.trim()) return;
+    if (!canManualOpen || !bookingId || !booking || !canManualOpenCancelledSeats(booking) || !manualOpenReason.trim()) return;
 
     manualOpenMutation.mutate(
       {
@@ -496,7 +497,7 @@ export function AdminBookingDetailModal({
               </Button>
             )}
 
-            {canManualOpenCancelledSeats(booking) && (
+            {canManualOpen && canManualOpenCancelledSeats(booking) && (
               <Button
                 variant="outline"
                 className="mt-4 h-12 w-full border-[#C62828] text-[#C62828] hover:bg-[#FEF2F2] hover:text-[#C62828]"
@@ -630,7 +631,7 @@ export function AdminBookingDetailModal({
           </div>
         )}
 
-        {booking && showManualOpenForm && (
+        {booking && showManualOpenForm && canManualOpen && (
           <div className="space-y-4">
             <DialogHeader>
               <DialogTitle>

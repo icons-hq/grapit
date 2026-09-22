@@ -38,4 +38,15 @@ describe('Seat operation custom capabilities', () => {
     render(<AdminEventContextProvider><AdminEventContextBar /></AdminEventContextProvider>);
     expect(screen.getByRole('link', { name: '좌석' })).toBeInTheDocument();
   });
+  it('explains the reservation-read prerequisite without granting access to manual-open-only users', () => {
+    setCapabilities(['seat.manual_open']);
+    render(<SeatOperationsPanel />);
+    expect(screen.getByText(/즉시 개방에는 예매 조회 권한도 필요합니다/)).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '예매에서 취소 좌석 확인' })).not.toBeInTheDocument();
+  });
+  it('links to booking detail workflow when both permissions are present', () => {
+    setCapabilities(['seat.manual_open', 'reservations.read']);
+    render(<SeatOperationsPanel />);
+    expect(screen.getByRole('link', { name: '예매에서 취소 좌석 확인' })).toHaveAttribute('href', '/admin/bookings');
+  });
 });
