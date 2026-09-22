@@ -703,6 +703,11 @@ export function ReservationDetailView({
       : paymentMethodLabel;
   const paymentAmount = reservation.paymentInfo?.amount ?? reservation.totalAmount;
   const paymentPaidAt = reservation.paymentInfo?.paidAt ?? reservation.paidAt;
+  const hasCompletedPayment = reservation.status === 'CONFIRMED'
+    || ['DONE', 'PARTIAL_CANCELED', 'CANCELED'].includes(reservation.paymentInfo?.status ?? '');
+  const missingPaymentTimeLabel = hasCompletedPayment
+    ? detailCopy.paymentTimeUnavailable
+    : detailCopy.beforePayment;
   const paymentDeadlineAt =
     reservation.paymentInfo?.paymentDeadlineAt ?? reservation.paymentDeadlineAt;
 
@@ -870,7 +875,7 @@ export function ReservationDetailView({
           <Separator />
           <InfoRow
             label={completeCopy.paidAt}
-            value={formatDateTime(paymentPaidAt, detailCopy.beforePayment, locale)}
+            value={formatDateTime(paymentPaidAt, missingPaymentTimeLabel, locale)}
           />
         </CardContent>
       </Card>

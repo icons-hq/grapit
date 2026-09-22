@@ -667,6 +667,7 @@
       "seatLabel": "{tierName} แถว {row} ที่นั่ง {number}",
       "deadlineSuffix": "ถึง {value}",
       "beforePayment": "ก่อนชำระเงิน",
+      "paymentTimeUnavailable": "ไม่มีข้อมูลเวลาชำระเงิน",
       "deadlinePassed": "เลยกำหนดยกเลิกแล้ว",
       "cancelledAt": "เวลาที่ยกเลิก",
       "qrCheckingSeatItems": "คุณสามารถตรวจสอบสถานะบัตรของแต่ละที่นั่งได้ QR ของบัตรที่ยกเลิกจะไม่แสดง",

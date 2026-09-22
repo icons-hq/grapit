@@ -667,6 +667,7 @@
       "seatLabel": "{tierName} {row}열 {number}번",
       "deadlineSuffix": "{value}까지",
       "beforePayment": "결제 전",
+      "paymentTimeUnavailable": "결제일시 기록 없음",
       "deadlinePassed": "취소 마감시간이 지났습니다",
       "cancelledAt": "취소일시",
       "qrCheckingSeatItems": "좌석별 티켓 상태를 확인할 수 있습니다. 취소된 티켓의 QR은 표시되지 않습니다.",

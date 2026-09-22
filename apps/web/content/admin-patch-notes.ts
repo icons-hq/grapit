@@ -14,6 +14,22 @@ export interface AdminPatchNote {
 
 const notes = [
   {
+    id: 'pr-233-legacy-payment-time',
+    prNumber: 233,
+    title: '과거 결제 시각과 공연 배너 언어 유지 보완',
+    summary: '운영 검증에서 확인한 과거 결제의 시각 누락 안내와 배너에서 언어가 바뀌는 문제를 수정했습니다.',
+    highlights: [
+      '완료·부분취소·전체취소 결제는 시각 누락과 결제 상태를 구분',
+      '한국어·영어·태국어·중국어의 동일한 시각 누락 안내',
+      '기존 원금·결제 상태·원본 시각은 그대로 보존',
+      '기존 절대주소 배너도 현재 언어로 공연 상세에 연결하고 외부 링크는 유지',
+    ],
+    category: 'patch',
+    date: '2026-09-22',
+    githubUrl: 'https://github.com/icons-hq/grapit/pull/233',
+    evidence: ['운영 과거 취소 예매와 영문 배너에서 재현 후 상태·다국어·내부/외부 링크 회귀 검증'],
+  },
+  {
     id: 'pr-232-integrated-release-safeguards',
     prNumber: 232,
     title: '통합 개편의 결제 복구·권한·정산 조회 보완',
