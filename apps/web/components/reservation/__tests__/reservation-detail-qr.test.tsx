@@ -324,8 +324,36 @@ describe('ReservationDetailView QR ticket card', () => {
   });
 
   afterEach(() => {
+    window.history.replaceState({}, '', '/');
     vi.useRealTimers();
     vi.clearAllMocks();
+  });
+
+  it.each(['DONE', 'PARTIAL_CANCELED', 'CANCELED'] as const)('does not describe a %s payment with no stored timestamp as unpaid', (status) => {
+    const reservation = createReservation({ status: status === 'CANCELED' ? 'CANCELLED' : 'CONFIRMED', paidAt: null });
+    reservation.paymentInfo = { ...reservation.paymentInfo!, status, paidAt: null };
+    render(<ReservationDetailView reservation={reservation} onCancel={vi.fn()} isCancelling={false} />);
+    expect(screen.getByText('결제일시 기록 없음')).toBeInTheDocument();
+    expect(screen.queryByText('결제 전')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ['en', 'Payment time unavailable'],
+    ['th', 'ไม่มีข้อมูลเวลาชำระเงิน'],
+    ['zh-CN', '暂无付款时间记录'],
+  ])('localizes the unavailable completed-payment timestamp in %s', (locale, label) => {
+    window.history.replaceState({}, '', `/${locale}/mypage`);
+    const reservation = createReservation({ status: 'CANCELLED', paidAt: null });
+    reservation.paymentInfo = { ...reservation.paymentInfo!, status: 'CANCELED', paidAt: null };
+    render(<ReservationDetailView reservation={reservation} onCancel={vi.fn()} isCancelling={false} />);
+    expect(screen.getByText(label)).toBeInTheDocument();
+    expect(screen.queryByText(getVisibleCopy(locale).reservation.detail.beforePayment)).not.toBeInTheDocument();
+  });
+
+  it('keeps an unpaid order with no payment timestamp explicitly unpaid', () => {
+    const reservation = createReservation({ status: 'PENDING_PAYMENT', paidAt: null, paymentInfo: null, ticketItems: [] });
+    render(<ReservationDetailView reservation={reservation} onCancel={vi.fn()} isCancelling={false} />);
+    expect(screen.getByText('결제 전')).toBeInTheDocument();
   });
 
   it('renders one QR image per active ticket item without visible raw secrets', () => {

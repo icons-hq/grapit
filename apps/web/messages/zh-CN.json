@@ -667,6 +667,7 @@
       "seatLabel": "{tierName} 第 {row} 排 {number} 号",
       "deadlineSuffix": "截至 {value}",
       "beforePayment": "付款前",
+      "paymentTimeUnavailable": "暂无付款时间记录",
       "deadlinePassed": "已超过取消截止时间",
       "cancelledAt": "取消时间",
       "qrCheckingSeatItems": "你可以查看每个座位票券的状态。已取消票券的二维码不会显示。",

@@ -667,6 +667,7 @@
       "seatLabel": "{tierName} row {row} seat {number}",
       "deadlineSuffix": "Until {value}",
       "beforePayment": "Before payment",
+      "paymentTimeUnavailable": "Payment time unavailable",
       "deadlinePassed": "The cancellation deadline has passed",
       "cancelledAt": "Cancelled at",
       "qrCheckingSeatItems": "You can check the status of each seat ticket. QR codes for cancelled tickets are not shown.",
