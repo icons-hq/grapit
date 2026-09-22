@@ -67,6 +67,14 @@ describe('Finance ledger dashboard', () => {
     await userEvent.click(screen.getByRole('button', { name: '원장 조회' }));
     expect(await screen.findByText('KRW 52,000')).toBeInTheDocument();
   });
+
+  it('explains the provider date limit before making an oversized request', async () => {
+    const api = vi.spyOn(apiClient, 'get');
+    setup({ data: undefined, requiredFilters: { ...query, dateFrom: '2026-08-01', dateTo: '2026-09-01' } });
+    await userEvent.click(screen.getByRole('button', { name: 'PG 자료까지 조회' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('31일');
+    expect(api).not.toHaveBeenCalled();
+  });
   it('requires a reason and sends the exact displayed scope when exporting', async () => {
     const exportFile = vi.fn();
     setup({ onExport: exportFile });

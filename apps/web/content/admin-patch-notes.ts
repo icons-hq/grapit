@@ -14,6 +14,26 @@ export interface AdminPatchNote {
 
 const notes = [
   {
+    id: 'pr-232-integrated-release-safeguards',
+    prNumber: 232,
+    title: '통합 개편의 결제 복구·권한·정산 조회 보완',
+    summary: '구매·운영·현장 개편을 통합하고, 최종 검토에서 재현한 결제 준비 거절과 운영 예외 흐름을 보완했습니다.',
+    highlights: [
+      '서버가 미생성을 확인한 결제 준비 거절에서 좌석 재선택 제공',
+      '좌석 작업 권한별 메뉴·공연 업무 링크와 실행 버튼 일치',
+      'PG 정산 자료는 한 번에 최대 31일로 조회하고 긴 기간은 나누어 안내',
+      '예매·입장 등 운영 이력이 없는 공연 삭제 시 연결 초안도 함께 정리',
+    ],
+    category: 'patch',
+    date: '2026-09-22',
+    githubUrl: 'https://github.com/icons-hq/grapit/pull/232',
+    evidence: [
+      '확정 거절·기존 주문·조회 실패·응답 유실의 고객 복구 회귀',
+      '권한 조합별 내비게이션과 좌석 작업 UI 회귀',
+      '실제 PostgreSQL 삭제·원장 보존 및 HTTP PG 기간 제한 회귀',
+    ],
+  },
+  {
     id: 'pr-230-integrated-journey-validation',
     prNumber: 230,
     title: '다국어 예매·키보드 좌석 선택과 현장 조회 보완',

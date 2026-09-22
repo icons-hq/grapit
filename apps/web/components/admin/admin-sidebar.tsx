@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import {
   resolveAdminCapabilitySnapshot,
+  SEAT_OPERATION_CAPABILITIES,
   type AdminCapability,
 } from '@grabit/shared';
 import { cn } from '@/lib/cn';
@@ -35,6 +36,7 @@ interface NavItem {
   href: string;
   icon: LucideIcon;
   requiredCapability?: AdminCapability;
+  requiredAnyCapabilities?: readonly AdminCapability[];
 }
 
 const NAV_GROUPS: readonly { label: string; items: readonly NavItem[] }[] = [
@@ -130,7 +132,7 @@ const NAV_GROUPS: readonly { label: string; items: readonly NavItem[] }[] = [
       {
         label: '좌석 운영',
         href: '/admin/seat-operations',
-        requiredCapability: 'seat.disable',
+        requiredAnyCapabilities: SEAT_OPERATION_CAPABILITIES,
         icon: Armchair,
       },
     ],
@@ -239,11 +241,8 @@ function canSeeNavItem(
   item: NavItem,
   snapshot: ReturnType<typeof resolveAdminCapabilitySnapshot>,
 ): boolean {
-  if (!item.requiredCapability) {
-    return true;
-  }
-
-  return snapshot.superuser || snapshot.capabilities.includes(item.requiredCapability);
+  const required = item.requiredAnyCapabilities ?? (item.requiredCapability ? [item.requiredCapability] : []);
+  return required.length === 0 || snapshot.superuser || required.some((capability) => snapshot.capabilities.includes(capability));
 }
 
 function isScannerOnlySnapshot(

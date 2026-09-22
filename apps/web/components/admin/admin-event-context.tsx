@@ -3,7 +3,7 @@
 import { createContext, useContext, type ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { resolveAdminCapabilitySnapshot, type AdminCapability } from '@grabit/shared';
+import { resolveAdminCapabilitySnapshot, SEAT_OPERATION_CAPABILITIES, type AdminCapability } from '@grabit/shared';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { useAdminPerformanceDetail, useAdminPerformances } from '@/hooks/use-admin';
 import { formatAdminKstDateTime } from '@/lib/admin-datetime';
@@ -73,11 +73,11 @@ export function AdminEventContextBar() {
     || pathname.endsWith('/new')) return null;
   const options: Array<{ id: string; title: string }> = [...(list.data?.data ?? [])];
   if (detail.data && !options.some((item) => item.id === detail.data.id)) options.push(detail.data);
-  const tabs: Array<{ label: string; path: string; cap: AdminCapability }> = [
+  const tabs: Array<{ label: string; path: string; cap: AdminCapability | readonly AdminCapability[] }> = [
     { label: '준비', path: context.performanceId ? `/admin/performances/${context.performanceId}` : '/admin/performances', cap: 'event.write' },
     { label: '판매·예매', path: '/admin/bookings', cap: 'reservations.read' },
     { label: '고객 대응', path: '/admin/operations', cap: 'support.manage' },
-    { label: '좌석', path: '/admin/seat-operations', cap: 'seat.disable' },
+    { label: '좌석', path: '/admin/seat-operations', cap: SEAT_OPERATION_CAPABILITIES },
     { label: '특전', path: '/admin/benefits', cap: 'benefits.manage' },
     { label: '현장', path: '/admin/field-monitor', cap: 'field.scan.verify' },
     { label: '정산', path: '/admin/settlement', cap: 'settlement.export' },
@@ -102,7 +102,7 @@ export function AdminEventContextBar() {
     {(list.isError || detail.isError) && <button className="text-sm underline" onClick={() => { void list.refetch(); if (context.performanceId) void detail.refetch(); }}>선택 목록 다시 불러오기</button>}
     {context.invalidShowtime && <p role="alert" className="text-sm text-amber-800">이 공연에 속하지 않는 회차입니다. 위에서 회차를 다시 선택해주세요.</p>}
     <nav aria-label="공연 업무" className="flex flex-wrap gap-x-5 gap-y-2">
-      {tabs.filter((tab) => can(tab.cap)).map((tab) => <Link key={tab.label} href={context.href(tab.path)}
+      {tabs.filter((tab) => typeof tab.cap === 'string' ? can(tab.cap) : tab.cap.some(can)).map((tab) => <Link key={tab.label} href={context.href(tab.path)}
         className={cn('border-b-2 pb-2 text-sm font-semibold', pathname === tab.path || (tab.label === '준비' && pathname.startsWith('/admin/performances'))
           ? 'border-violet-600 text-violet-700' : 'border-transparent text-gray-500 hover:text-gray-900')}>{tab.label}</Link>)}
     </nav>

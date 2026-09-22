@@ -11,6 +11,7 @@ import { and, eq, ne, sql, ilike, inArray } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
   performances,
+  performanceDrafts,
   venues,
   priceTiers,
   showtimes,
@@ -1399,7 +1400,12 @@ export class AdminService {
       });
     }
 
-    await this.db.delete(performances).where(eq(performances.id, id));
+    await this.db.transaction(async (tx) => {
+      // Drafts belong to the intentionally deleted, unused performance. Keep
+      // their cleanup atomic so another FK rejection cannot erase saved work.
+      await tx.delete(performanceDrafts).where(eq(performanceDrafts.performanceId, id));
+      await tx.delete(performances).where(eq(performances.id, id));
+    });
     await this.invalidateCatalogCache(id);
   }
 

@@ -36,6 +36,8 @@ export const ADMIN_CAPABILITY_BUNDLES = [
 type AdminCapabilityValue = (typeof ADMIN_CAPABILITIES)[number];
 type AdminCapabilityBundleValue = (typeof ADMIN_CAPABILITY_BUNDLES)[number];
 
+export const SEAT_OPERATION_CAPABILITIES = ['seat.disable', 'seat.reactivate', 'seat.manual_open'] as const satisfies readonly AdminCapabilityValue[];
+
 export const ADMIN_CAPABILITY_BUNDLE_CAPABILITIES = {
   operator: [
     'reservations.read',

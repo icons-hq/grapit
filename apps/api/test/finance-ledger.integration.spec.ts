@@ -92,6 +92,23 @@ describe('Finance ledger — authenticated HTTP and PostgreSQL', () => {
     expect(response.body.closingStatus).toBe('not_closed');
   });
 
+  it('rejects provider ranges longer than 31 inclusive days before any external request while keeping internal ledger access', async () => {
+    const fixture = await sample();
+    provider.querySettlements.mockClear();
+    const query = { eventId: fixture.eventId, dateFrom: '2026-08-01', dateTo: '2026-09-01',
+      dateBasis: 'paid_at', asOf: '2026-09-04T00:00:00Z', includeProvider: 'true' };
+    expect((await request(app.getHttpServer()).get('/admin/settlement/ledger').query(query)).status).toBe(400);
+    expect((await request(app.getHttpServer()).post('/admin/settlement/ledger/export')
+      .send({ query, dataset: 'provider', reason: 'Range boundary test' })).status).toBe(400);
+    expect(provider.querySettlements).not.toHaveBeenCalled();
+    expect((await request(app.getHttpServer()).get('/admin/settlement/ledger')
+      .query({ ...query, includeProvider: 'false' })).status).toBe(200);
+    provider.querySettlements.mockResolvedValue([]);
+    expect((await request(app.getHttpServer()).get('/admin/settlement/ledger')
+      .query({ ...query, dateTo: '2026-08-31' })).status).toBe(200);
+    expect(provider.querySettlements).toHaveBeenCalledTimes(2);
+  });
+
   it('combines an earlier seat cancellation with a later remaining-order refund without losing its USD receipt or counting it twice', async () => {
     const fixture = await sample();
     const items = await db.select().from(schema.ticketItems).where(eq(schema.ticketItems.paymentId, fixture.paymentId));

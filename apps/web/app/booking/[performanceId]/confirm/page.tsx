@@ -37,6 +37,7 @@ import {
 import { getVisibleCopy, resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
 import { useBookingStore } from '@/stores/use-booking-store';
 import { useAuthStore } from '@/stores/use-auth-store';
+import { apiClient } from '@/lib/api-client';
 import {
   TICKET_SERVICE_FEE_KRW,
   isSameCheckoutPaymentMethod,
@@ -415,22 +416,38 @@ function ConfirmPageContent() {
       if (returnOrderId) await refetchRecovery();
     } catch (err) {
       paymentRequestInFlightRef.current = false;
-      if (mountedRef.current) setIsProcessing(false);
-      if (!isCurrentBookingRequest()) return;
+      if (!isCurrentBookingRequest()) {
+        if (mountedRef.current) setIsProcessing(false);
+        return;
+      }
       const errorMessage =
         err instanceof Error ? err.message : confirmCopy.paymentRequestFailed;
-      if (isLockFailureMessage(errorMessage)) {
-        if (!prepareSucceeded && !isResumingPendingPayment && err instanceof Error
-          && 'statusCode' in err && err.statusCode === 409) {
-          // This specific prepare precondition failed before an order was
-          // created. A timeout/5xx or an error after prepare keeps its identity.
+      let uncreatedOrder = false;
+      if (!prepareSucceeded && !isResumingPendingPayment && err instanceof Error
+        && 'statusCode' in err && [400, 403, 409, 422].includes(Number(err.statusCode))) {
+        try {
+          // A rejection alone may describe an existing order. Only a successful
+          // owner lookup returning null proves this new attempt has no order.
+          uncreatedOrder = await apiClient.get(
+            `/api/v1/reservations?orderId=${encodeURIComponent(orderId)}&locale=${locale}`,
+            { showErrorToast: false },
+          ) === null;
+        } catch { /* Lookup failure never authorizes another order. */ }
+        if (!isCurrentBookingRequest()) {
+          if (mountedRef.current) setIsProcessing(false);
+          return;
+        }
+        if (uncreatedOrder) {
           const rejectedUrl = new URL(window.location.href);
           if (rejectedUrl.searchParams.get('resumeOrderId') === orderId) {
             rejectedUrl.searchParams.delete('resumeOrderId');
             window.history.replaceState(null, '', `${rejectedUrl.pathname}${rejectedUrl.search}`);
           }
         }
-        setLockFailureMessage(getLocalizedLockFailureMessage(errorMessage, confirmCopy));
+      }
+      if (mountedRef.current) setIsProcessing(false);
+      if (uncreatedOrder || isLockFailureMessage(errorMessage)) {
+        setLockFailureMessage(locale === 'ko' ? getLocalizedLockFailureMessage(errorMessage, confirmCopy) : confirmCopy.paymentRequestFailed);
         return;
       }
       toast.error(errorMessage);

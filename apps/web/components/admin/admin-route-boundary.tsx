@@ -2,13 +2,13 @@
 import type { ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
-import { resolveAdminCapabilitySnapshot, type AdminCapability } from '@grabit/shared';
+import { resolveAdminCapabilitySnapshot, SEAT_OPERATION_CAPABILITIES, type AdminCapability } from '@grabit/shared';
 import { useAuthStore } from '@/stores/use-auth-store';
 
 const ROUTE_CAPABILITIES: Record<string, readonly AdminCapability[]> = {
   performances: ['event.write'], translations: ['event.write'], bookings: ['reservations.read'],
   operations: ['support.manage'], 'support-content': ['support.manage'], benefits: ['benefits.manage'],
-  settlement: ['settlement.export'], 'seat-operations': ['seat.disable', 'seat.reactivate', 'seat.manual_open'],
+  settlement: ['settlement.export'], 'seat-operations': SEAT_OPERATION_CAPABILITIES,
   'field-monitor': ['field.scan.verify'], users: ['security.manage'], banners: ['banner.manage'],
   audit: ['audit.read'], 'consent-audit': ['audit.read'], security: ['security.manage'], cutover: ['audit.read'],
 };

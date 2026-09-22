@@ -57,7 +57,10 @@ export function SettlementDashboard({ user: suppliedUser, data: suppliedData, re
     const parsed = financeLedgerQuerySchema.safeParse({ eventId: current.eventId, ...(current.showtimeId ? { showtimeId: current.showtimeId } : {}),
       dateFrom: current.dateFrom, dateTo: current.dateTo, dateBasis: current.dateBasis,
       asOf: `${current.asOfLocal}+09:00`, providerDateBasis: current.providerDateBasis, includeProvider: includeProvider ? 'true' : 'false' });
-    if (!parsed.success || context?.invalidShowtime) { setValidation('공연·기간·기준 시각을 확인해주세요. 시작일은 종료일보다 늦을 수 없습니다.'); return; }
+    if (!parsed.success || context?.invalidShowtime) {
+      setValidation(!parsed.success ? parsed.error.issues.find((issue) => issue.code === 'custom')?.message
+        ?? '공연·기간·기준 시각을 확인해주세요.' : '선택한 공연에 속하는 회차를 확인해주세요.'); return;
+    }
     if (new Date(parsed.data.asOf).getTime() > Date.now()) { setValidation('기준 시각은 현재보다 늦을 수 없습니다.'); return; }
     setValidation(''); setExportNotice('');
     if (JSON.stringify(applied) === JSON.stringify(parsed.data)) void query.refetch();
@@ -91,7 +94,7 @@ export function SettlementDashboard({ user: suppliedUser, data: suppliedData, re
           <option value="paidOutDate">정산 지급일</option><option value="soldDate">정산 매출일</option></select></label>
       </div>
       <div className="flex flex-wrap items-center gap-3"><Button type="submit" disabled={loading || !current.eventId}>원장 조회</Button>
-        <Button type="button" variant="outline" disabled={loading || !current.eventId} onClick={() => read(true)}>PG 자료까지 조회</Button><span className="text-sm text-gray-500">모든 날짜는 한국 시간(KST)입니다.</span></div>
+        <Button type="button" variant="outline" disabled={loading || !current.eventId} onClick={() => read(true)}>PG 자료까지 조회</Button><span className="text-sm text-gray-500">모든 날짜는 한국 시간(KST)입니다. PG 자료는 한 번에 최대 31일까지 조회합니다.</span></div>
       {validation && <p role="alert" className="text-sm text-red-700">{validation}</p>}
     </form>
     {!applied || !unchanged ? <StateMessage>{applied ? '조회 조건이 변경되었습니다. 다시 조회하면 새 조건의 금액을 확인할 수 있습니다.' : '공연과 조회 조건을 선택한 뒤 원장을 조회해주세요.'}</StateMessage>

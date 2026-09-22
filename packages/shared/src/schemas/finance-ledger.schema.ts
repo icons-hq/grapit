@@ -14,7 +14,10 @@ export const financeLedgerQuerySchema = z.object({
   asOf: z.string().datetime({ offset: true }),
   providerDateBasis: z.enum(['soldDate', 'paidOutDate']).default('paidOutDate'),
   includeProvider: z.enum(['true', 'false']).default('false'),
-}).strict().refine((query) => query.dateFrom <= query.dateTo, '조회 시작일은 종료일보다 늦을 수 없습니다');
+}).strict().refine((query) => query.dateFrom <= query.dateTo, '조회 시작일은 종료일보다 늦을 수 없습니다')
+  .refine((query) => query.includeProvider !== 'true'
+    || Date.parse(`${query.dateTo}T00:00:00Z`) - Date.parse(`${query.dateFrom}T00:00:00Z`) <= 30 * 86400000,
+  { message: 'PG 정산 자료는 한 번에 최대 31일까지만 조회할 수 있습니다. 기간을 나누어 조회해주세요.', path: ['dateTo'] });
 
 export const financeLedgerExportSchema = z.object({
   query: financeLedgerQuerySchema,

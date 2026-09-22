@@ -143,6 +143,7 @@ describe('Checkout document return recovery', () => {
     boundary.prepare.mockRejectedValue(Object.assign(
       new Error('좌석 점유 시간이 만료되었습니다. 좌석을 다시 선택해주세요.'), { statusCode: 409 },
     ));
+    boundary.read.mockResolvedValue(null);
     useBookingStore.getState().setBookingData({ ...savedBooking, selectedSeats: savedSeats, expiresAt: Date.parse(savedBooking.paymentDeadlineAt) });
     const view = mountPage();
     await user.click(screen.getByRole('checkbox', { name: '전체 동의' }));
@@ -152,6 +153,38 @@ describe('Checkout document return recovery', () => {
     boundary.search = new URLSearchParams(window.location.search);
     view.rerender(<QueryClientProvider client={new QueryClient()}><ConfirmPage /></QueryClientProvider>);
     expect(screen.getByRole('button', { name: 'paymentRecovery.reselectCta' })).toBeInTheDocument();
+    expect(boundary.requestPayment).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [400, '금액이 일치하지 않습니다'], [403, '본인 인증이 필요합니다'], [409, '매수 제한을 초과했습니다'],
+  ])('allows safe reselection after prepare rejects with %s and the server confirms no order exists', async (statusCode, message) => {
+    const user = userEvent.setup();
+    boundary.prepare.mockRejectedValue(Object.assign(new Error(message), { statusCode }));
+    boundary.read.mockResolvedValue(null);
+    useBookingStore.getState().setBookingData({ ...savedBooking, selectedSeats: savedSeats, expiresAt: Date.parse(savedBooking.paymentDeadlineAt) });
+    mountPage();
+    await user.click(screen.getByRole('checkbox', { name: '전체 동의' }));
+    await user.click(screen.getAllByRole('button', { name: 'paymentDisclaimer.payNow' })[0]!);
+    await waitFor(() => expect(new URL(window.location.href).searchParams.get('resumeOrderId')).toBeNull());
+    await user.click(screen.getByRole('button', { name: 'paymentRecovery.reselectCta' }));
+    await waitFor(() => expect(boundary.replace).toHaveBeenCalledWith('/booking/performance-return'));
+    expect(boundary.cancel).not.toHaveBeenCalled();
+    expect(boundary.requestPayment).not.toHaveBeenCalled();
+  });
+
+  it.each(['existing', 'unavailable'])('keeps the order identity after a rejected prepare when lookup is %s', async (lookup) => {
+    const user = userEvent.setup();
+    boundary.prepare.mockRejectedValue(Object.assign(new Error('예매 요청이 거절되었습니다'), { statusCode: 409 }));
+    if (lookup === 'existing') boundary.read.mockResolvedValue(savedBooking);
+    else boundary.read.mockRejectedValue(new Error('Lookup unavailable'));
+    useBookingStore.getState().setBookingData({ ...savedBooking, selectedSeats: savedSeats, expiresAt: Date.parse(savedBooking.paymentDeadlineAt) });
+    mountPage();
+    await user.click(screen.getByRole('checkbox', { name: '전체 동의' }));
+    await user.click(screen.getAllByRole('button', { name: 'paymentDisclaimer.payNow' })[0]!);
+    await waitFor(() => expect(boundary.read).toHaveBeenCalled());
+    expect(new URL(window.location.href).searchParams.get('resumeOrderId')).toBeTruthy();
+    expect(boundary.cancel).not.toHaveBeenCalled();
     expect(boundary.requestPayment).not.toHaveBeenCalled();
   });
 

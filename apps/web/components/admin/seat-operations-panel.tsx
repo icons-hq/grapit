@@ -32,7 +32,8 @@ import {
   type AdminSeatOperationPayload,
 } from '@/hooks/use-admin-seat-operations';
 import type { AdminSeatOperationHistory } from '@grabit/shared';
-import { normalizeSeatIdentity } from '@grabit/shared';
+import { normalizeSeatIdentity, resolveAdminCapabilitySnapshot } from '@grabit/shared';
+import { useAuthStore } from '@/stores/use-auth-store';
 import { useAdminEventContext } from './admin-event-context';
 import { useAdminPerformanceDetail } from '@/hooks/use-admin';
 import { formatAdminKstDateTime } from '@/lib/admin-datetime';
@@ -81,6 +82,9 @@ export function SeatOperationsPanel({
   initialSeatKey = '',
   className,
 }: SeatOperationsPanelProps) {
+  const user = useAuthStore((state) => state.user);
+  const capability = resolveAdminCapabilitySnapshot(user);
+  const canPerform = (operation: SeatPanelAction) => capability.superuser || capability.capabilities.includes(`seat.${operation}`);
   const context = useAdminEventContext();
   const selected = useAdminPerformanceDetail(context?.performanceId ?? '');
   const [localShowtimeId, setShowtimeId] = useState(initialShowtimeId);
@@ -104,11 +108,12 @@ export function SeatOperationsPanel({
   const selectedConfig = action ? ACTION_CONFIG[action] : null;
   const isMutating = disableSeat.isPending || reactivateSeat.isPending;
   const canOperate = showtimeId.trim().length > 0 && seatKey.trim().length > 0;
-  const canConfirm = canOperate && reason.trim().length > 0 && !isMutating;
+  const canConfirm = canOperate && action !== null && canPerform(action) && reason.trim().length > 0 && !isMutating;
   const historyRows = historyQuery.data?.rows ?? [];
   const showtime = selected.data?.showtimes.find((item) => item.id === showtimeId);
 
   function openConfirmation(nextAction: SeatPanelAction) {
+    if (!canPerform(nextAction)) return;
     setAction(nextAction);
     setReason('');
   }
@@ -166,15 +171,15 @@ export function SeatOperationsPanel({
           </p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
-          <Button
+          {canPerform('disable') && <Button
             type="button"
             className="h-12 bg-[#C62828] hover:bg-[#A81F1F]"
             disabled={!canOperate || isMutating}
             onClick={() => openConfirmation('disable')}
           >
             좌석 비활성화
-          </Button>
-          <Button
+          </Button>}
+          {canPerform('reactivate') && <Button
             type="button"
             variant="outline"
             className="h-12"
@@ -182,7 +187,7 @@ export function SeatOperationsPanel({
             onClick={() => openConfirmation('reactivate')}
           >
             좌석 재활성화
-          </Button>
+          </Button>}
         </div>
       </div>
 

@@ -710,7 +710,7 @@ describe('AdminService', () => {
 
       // When GREEN, should verify DELETE FROM performances WHERE id = 'perf-id-123'
       // Cascade will handle child tables (priceTiers, showtimes, castings, seatMaps)
-      expect(mockDb.delete).toHaveBeenCalled();
+      expect(mockDb._tx.delete).toHaveBeenCalledWith(performances);
     });
 
     it('blocks delete when booking or field operation history is linked', async () => {

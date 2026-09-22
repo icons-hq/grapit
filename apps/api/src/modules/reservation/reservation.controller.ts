@@ -9,10 +9,11 @@ import {
   Query,
   Request,
   Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
 import { z } from 'zod';
-import type { Request as ExpressRequest } from 'express';
+import type { Request as ExpressRequest, Response as ExpressResponse } from 'express';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import {
   prepareReservationSchema,
@@ -131,9 +132,13 @@ export class ReservationController {
   async getReservationByOrderId(
     @Request() req: { user: { id: string } },
     @Query('orderId') orderId: string,
+    @Res() response: ExpressResponse,
     @Query('locale') locale?: string,
   ) {
-    return this.reservationService.getReservationByOrderId(orderId, req.user.id, locale);
+    const reservation = await this.reservationService.getReservationByOrderId(orderId, req.user.id, locale);
+    // Nest sends an empty body for a null return. The lookup contract needs
+    // literal JSON null so customers can distinguish absence from a read error.
+    response.json(reservation);
   }
 
   @Get('reservations/:id')

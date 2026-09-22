@@ -198,6 +198,35 @@ describe('Performance preparation — real HTTP and PostgreSQL', () => {
     expect(audit[0]?.status).toBe('failed');
   });
 
+  it('deletes an unused performance created from a draft and removes its applied draft atomically', async () => {
+    const draft = await request(app.getHttpServer()).post('/admin/performance-drafts')
+      .send({ data: input(), step: 'review' });
+    const applied = await request(app.getHttpServer()).post(`/admin/performance-drafts/${draft.body.id}/apply`)
+      .send({ expectedRevision: 1 });
+    expect(applied.status).toBe(201);
+    const id = applied.body.performanceId;
+    const response = await request(app.getHttpServer()).delete(`/admin/performances/${id}`);
+    expect(response.status).toBe(200);
+    expect((await pool.query('SELECT id FROM performances WHERE id=$1', [id])).rows).toHaveLength(0);
+    expect((await request(app.getHttpServer()).get(`/admin/performance-drafts/${draft.body.id}`)).status).toBe(404);
+    const audit = await new AdminAuditService(db).query({ resourceType: 'performance', resourceId: id });
+    expect(audit).toHaveLength(1);
+  });
+
+  it('retains the applied draft and original performance when bookings block deletion', async () => {
+    const draft = await request(app.getHttpServer()).post('/admin/performance-drafts')
+      .send({ data: { ...input(), showtimes: [{ dateTime: '2099-01-01T18:00' }] }, step: 'review' });
+    const applied = await request(app.getHttpServer()).post(`/admin/performance-drafts/${draft.body.id}/apply`)
+      .send({ expectedRevision: 1 });
+    const id = applied.body.performanceId;
+    const event = await request(app.getHttpServer()).get(`/admin/performances/${id}`);
+    await db.insert(schema.reservations).values({ userId: actorId, showtimeId: event.body.showtimes[0].id,
+      reservationNumber: randomUUID().slice(0, 24), totalAmount: 50000, status: 'CONFIRMED', cancelDeadline: new Date('2098-12-31') });
+    expect((await request(app.getHttpServer()).delete(`/admin/performances/${id}`)).status).toBe(409);
+    expect((await request(app.getHttpServer()).get(`/admin/performance-drafts/${draft.body.id}`)).body.performanceId).toBe(id);
+    expect((await request(app.getHttpServer()).get(`/admin/performances/${id}`)).status).toBe(200);
+  });
+
   it('publishes reviewed stored content with approver authority while retaining the independent sale status', async () => {
     const payload = { ...input(), description: '공연 상세 안내', showtimes: [{ dateTime: '2099-01-01T18:00' }],
       seatMaps: [{ floorKey: '1F', floorLabel: '1층', svgUrl: 'https://example.test/seats.svg', totalSeats: 1,

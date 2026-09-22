@@ -159,6 +159,11 @@ describe('Admin seat operations UI', () => {
   });
 
   beforeEach(() => {
+    useAuthStore.getState().setAuth('test-only', {
+      id: 'operator', email: 'operator@example.test', name: 'Operator', phone: '+82100000000', gender: 'unspecified',
+      country: 'KR', birthDate: '1990-01-01', preferredLocale: 'ko', isEmailVerified: true, isPhoneVerified: true,
+      marketingConsent: false, role: 'admin', adminCapabilityBundle: 'operator', createdAt: '2026-01-01T00:00:00Z',
+    });
     mocks.apiGet.mockReset();
     mocks.apiPost.mockReset();
     mocks.bookingDetail.mockReset();
