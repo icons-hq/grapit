@@ -286,7 +286,7 @@ test.describe('Admin user management', () => {
       confirmed: true,
     });
     await expect(
-      page.getByText('삭제 차단: 예매 이력 2건, 관리자 관리자 활동 기록 1건'),
+      page.getByText('삭제 차단: 예매 이력 2건, 관리자 감사 로그 1건'),
     ).toBeVisible();
   });
 
@@ -462,7 +462,7 @@ async function handleAdminUsersRoute(
         message: '연결된 데이터가 있어 회원을 DB에서 삭제할 수 없습니다',
         blockers: [
           { key: 'reservations', label: '예매 이력', count: 2 },
-          { key: 'admin_audit_logs', label: '관리자 관리자 활동 기록', count: 1 },
+          { key: 'admin_audit_logs', label: '관리자 감사 로그', count: 1 },
         ],
       },
       409,
