@@ -14,6 +14,21 @@ export interface AdminPatchNote {
 
 const notes = [
   {
+    id: 'pr-233-legacy-payment-time',
+    prNumber: 233,
+    title: '과거 결제의 시각 누락 안내 수정',
+    summary: '결제 시각이 비어 있는 완료·취소 예매를 미결제로 표시하지 않도록 수정했습니다.',
+    highlights: [
+      '완료·부분취소·전체취소 결제는 시각 누락과 결제 상태를 구분',
+      '한국어·영어·태국어·중국어의 동일한 시각 누락 안내',
+      '기존 원금·결제 상태·원본 시각은 그대로 보존',
+    ],
+    category: 'patch',
+    date: '2026-09-22',
+    githubUrl: 'https://github.com/icons-hq/grapit/pull/233',
+    evidence: ['운영 과거 취소 예매에서 재현 후 완료·취소·미결제 및 다국어 회귀 검증'],
+  },
+  {
     id: 'pr-232-integrated-release-safeguards',
     prNumber: 232,
     title: '통합 개편의 결제 복구·권한·정산 조회 보완',
