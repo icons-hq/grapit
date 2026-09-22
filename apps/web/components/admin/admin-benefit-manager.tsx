@@ -209,7 +209,7 @@ export function AdminBenefitManager({ className }: { className?: string }) {
         reason: rollbackReason,
       })
       .then(() => {
-        toast.success('선택한 라이브 실행 기록으로 혜택을 되돌렸습니다.');
+        toast.success('선택한 실제 실행 기록으로 혜택을 되돌렸습니다.');
         setRollbackTarget(null);
         setRollbackReason('');
       })
@@ -229,6 +229,8 @@ export function AdminBenefitManager({ className }: { className?: string }) {
       });
   }
 
+  if (context && !normalizedShowtimeId) return <section className="flex flex-col gap-4"><h1>특전 관리</h1><p className="text-sm text-gray-600">기본 포함 특전과 한정 특전을 설정하고, 배정 결과와 현장 지급 내역을 확인합니다.</p><div className="admin-panel"><h2 className="font-semibold">먼저 공연과 회차를 선택하세요</h2><p className="mt-2 text-sm text-gray-600">특전은 회차별로 관리합니다. 상단에서 회차를 선택하면 설정과 실행 기록이 나타납니다.</p></div></section>;
+
   return (
     <section className={cn('space-y-6', className)} aria-labelledby="admin-benefits-title">
       <div>
@@ -236,16 +238,16 @@ export function AdminBenefitManager({ className }: { className?: string }) {
           id="admin-benefits-title"
           className="text-display font-semibold leading-[1.2]"
         >
-          혜택 관리
+          특전 관리
         </h1>
         <p className="mt-2 text-sm text-gray-600">
-          회차별 ALL 혜택과 한정 혜택을 설정하고 테스트/라이브 실행 이력을 관리합니다.
+          회차별 기본 포함 특전과 한정 특전을 설정합니다. 모의 배정으로 확인한 뒤 실제 티켓에 반영하세요.
         </p>
       </div>
 
       <section className="rounded-lg bg-white p-4 shadow-sm">
-        <div className="grid gap-3 xl:grid-cols-[minmax(180px,0.8fr)_minmax(0,1fr)_minmax(0,1fr)_auto] xl:items-end">
-          <label className="space-y-1.5 text-sm font-semibold text-gray-700">
+        <div className={cn("grid gap-3", !context && "xl:grid-cols-[minmax(180px,0.8fr)_minmax(0,1fr)_minmax(0,1fr)_auto] xl:items-end")}>
+          {!context && <><label className="space-y-1.5 text-sm font-semibold text-gray-700">
             <span>공연 검색</span>
             <Input
               type="search"
@@ -279,7 +281,7 @@ export function AdminBenefitManager({ className }: { className?: string }) {
               setShowtimeId(value === UNSELECTED_SELECT_VALUE ? '' : value);
             }}
           />
-          <div className="flex flex-wrap gap-2">
+          </>}<div className="flex flex-wrap gap-2">
             <Button
               type="button"
               variant="outline"
@@ -292,7 +294,7 @@ export function AdminBenefitManager({ className }: { className?: string }) {
               }
             >
               <Download className="h-4 w-4" />
-              설정 CSV
+              특전 설정 내려받기
             </Button>
             <Button
               type="button"
@@ -306,7 +308,7 @@ export function AdminBenefitManager({ className }: { className?: string }) {
               }
             >
               <Download className="h-4 w-4" />
-              부여 CSV
+              지급 대상 내려받기
             </Button>
           </div>
         </div>
@@ -350,7 +352,7 @@ export function AdminBenefitManager({ className }: { className?: string }) {
                 <TableHead>모드</TableHead>
                 <TableHead>부여 수</TableHead>
                 <TableHead>시각</TableHead>
-                <TableHead>run ID</TableHead>
+                <TableHead>실행 번호</TableHead>
                 <TableHead>작업</TableHead>
               </TableRow>
             </TableHeader>
@@ -661,11 +663,11 @@ function BenefitConfigurationWorkspace({
 
   function handleRunLive() {
     if (!configuration?.id) {
-      toast.error('라이브 실행 전 혜택 설정을 저장하세요.');
+      toast.error('실제 실행 전 혜택 설정을 저장하세요.');
       return;
     }
     if (liveReason.trim().length === 0) {
-      toast.error('라이브 실행 사유를 입력하세요.');
+      toast.error('실제 실행 사유를 입력하세요.');
       return;
     }
 
@@ -676,11 +678,11 @@ function BenefitConfigurationWorkspace({
         reason: liveReason,
       })
       .then(() => {
-        toast.success('라이브 혜택을 티켓에 적용했습니다.');
+        toast.success('실제 혜택을 티켓에 적용했습니다.');
         setLiveReason('');
       })
       .catch((error: unknown) => {
-        toast.error(error instanceof Error ? error.message : '라이브 실행에 실패했습니다.');
+        toast.error(error instanceof Error ? error.message : '실제 실행에 실패했습니다.');
       });
   }
 
@@ -693,13 +695,13 @@ function BenefitConfigurationWorkspace({
               혜택 설정
             </h2>
             <p className="mt-1 text-sm text-gray-600">
-              ALL 혜택은 모든 대상 티켓에 적용되고, 한정 혜택은 실행 기록 기준으로 부여됩니다.
+              기본 포함 특전은 모든 대상 티켓에 적용되고, 한정 혜택은 실행 기록 기준으로 부여됩니다.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button type="button" variant="outline" onClick={() => addDraft('included')}>
               <Plus className="h-4 w-4" />
-              ALL 추가
+              기본 포함 특전 추가
             </Button>
             <Button type="button" variant="outline" onClick={() => addDraft('limited')}>
               <Plus className="h-4 w-4" />
@@ -772,7 +774,7 @@ function BenefitConfigurationWorkspace({
             </div>
           </div>
           <label className="mt-4 block space-y-1.5 text-sm font-semibold text-gray-700">
-            <span>테스트 seed 참조값</span>
+            <span>반복 테스트 번호 (선택)</span>
             <Input
               value={testSeedRef}
               onChange={(event) => setTestSeedRef(event.target.value)}
@@ -801,7 +803,7 @@ function BenefitConfigurationWorkspace({
             </div>
             <div>
               <h2 className="text-xl font-semibold leading-tight text-gray-900">
-                라이브 적용
+                실제 적용
               </h2>
               <p className="mt-1 text-sm text-gray-600">
                 저장된 설정으로 한정 혜택을 티켓에 확정 적용합니다.
@@ -809,7 +811,7 @@ function BenefitConfigurationWorkspace({
             </div>
           </div>
           <label className="mt-4 block space-y-1.5 text-sm font-semibold text-gray-700">
-            <span>라이브 적용 사유</span>
+            <span>실제 적용 사유</span>
             <Textarea
               value={liveReason}
               onChange={(event) => setLiveReason(event.target.value)}
@@ -827,7 +829,7 @@ function BenefitConfigurationWorkspace({
             ) : (
               <Play className="h-4 w-4" />
             )}
-            라이브 적용
+            실제 적용
           </Button>
         </div>
       </section>
@@ -861,7 +863,7 @@ function BenefitDraftEditor({
             ? 'border-transparent bg-[#F3EFFF] text-[#6C3CE0]'
             : 'border-transparent bg-[#F0FDF4] text-[#15803D]'}
           >
-            {draft.kind === 'included' ? 'ALL' : '한정'}
+            {draft.kind === 'included' ? '기본 포함' : '한정'}
           </Badge>
           <select
             aria-label={`혜택 종류 ${index + 1}`}
@@ -879,7 +881,7 @@ function BenefitDraftEditor({
               })
             }
           >
-            <option value="included">ALL</option>
+            <option value="included">기본 포함</option>
             <option value="limited">한정</option>
           </select>
         </div>

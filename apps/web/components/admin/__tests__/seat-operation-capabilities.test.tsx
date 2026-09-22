@@ -7,7 +7,7 @@ import { AdminSidebar } from '../admin-sidebar';
 import { SeatOperationsPanel } from '../seat-operations-panel';
 import { AdminEventContextBar, AdminEventContextProvider } from '../admin-event-context';
 
-vi.mock('next/navigation', () => ({ usePathname: () => '/admin/seat-operations', useSearchParams: () => new URLSearchParams(), useRouter: () => ({ replace: vi.fn() }) }));
+vi.mock('next/navigation', () => ({ usePathname: () => '/admin/seat-operations', useSearchParams: () => new URLSearchParams('performanceId=00000000-0000-4000-8000-000000000023'), useRouter: () => ({ replace: vi.fn() }) }));
 vi.mock('@/hooks/use-admin', () => ({ useAdminPerformanceDetail: () => ({ data: null }), useAdminPerformances: () => ({ data: { data: [] } }) }));
 vi.mock('@/hooks/use-admin-seat-operations', () => ({
   useAdminSeatOperationHistory: () => ({ data: { rows: [] } }),
@@ -25,7 +25,7 @@ describe('Seat operation custom capabilities', () => {
   it.each<AdminCapability>(['seat.disable', 'seat.reactivate', 'seat.manual_open'])('shows the seat menu for %s', (capability) => {
     setCapabilities([capability]);
     render(<AdminSidebar />);
-    expect(screen.getByRole('link', { name: '좌석 운영' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: '좌석 관리' })).toBeInTheDocument();
   });
   it.each<AdminCapability>(['seat.disable', 'seat.reactivate', 'seat.manual_open'])('offers only permitted actions for %s', (capability) => {
     setCapabilities([capability]);

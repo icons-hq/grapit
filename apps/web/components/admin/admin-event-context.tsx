@@ -50,6 +50,7 @@ export function AdminEventContextProvider({ children }: { children: ReactNode })
   }
   function href(path: string) {
     const [base, supplied] = path.split('?');
+    if (!/^\/admin\/(performances\/[^/]+|bookings|benefits|operations|seat-operations|field-monitor|settlement|translations)(\/|$)/.test(base)) return path;
     const query = new URLSearchParams(supplied);
     if (performanceId && !query.has('performanceId')) query.set('performanceId', performanceId);
     if (showtimeId && !query.has('showtimeId')) query.set('showtimeId', showtimeId);
@@ -62,6 +63,13 @@ export function AdminEventContextProvider({ children }: { children: ReactNode })
 }
 
 export function AdminEventContextBar() {
+  const pathname = usePathname();
+  if (!/^\/admin\/(performances\/[^/]+|bookings|benefits|operations|seat-operations|field-monitor|settlement|translations)(\/|$)/.test(pathname)
+    || pathname.endsWith('/new')) return null;
+  return <EventContextControls />;
+}
+
+function EventContextControls() {
   const context = useAdminEventContext();
   const pathname = usePathname();
   const user = useAuthStore((state) => state.user);
@@ -75,19 +83,19 @@ export function AdminEventContextBar() {
   if (detail.data && !options.some((item) => item.id === detail.data.id)) options.push(detail.data);
   const tabs: Array<{ label: string; path: string; cap: AdminCapability | readonly AdminCapability[] }> = [
     { label: '준비', path: context.performanceId ? `/admin/performances/${context.performanceId}` : '/admin/performances', cap: 'event.write' },
-    { label: '판매·예매', path: '/admin/bookings', cap: 'reservations.read' },
-    { label: '고객 대응', path: '/admin/operations', cap: 'support.manage' },
+    { label: '예매·취소', path: '/admin/bookings', cap: 'reservations.read' },
+    { label: '고객 문의', path: '/admin/operations', cap: 'support.manage' },
     { label: '좌석', path: '/admin/seat-operations', cap: SEAT_OPERATION_CAPABILITIES },
     { label: '특전', path: '/admin/benefits', cap: 'benefits.manage' },
-    { label: '현장', path: '/admin/field-monitor', cap: 'field.scan.verify' },
+    { label: '입장 현황', path: '/admin/field-monitor', cap: 'field.scan.verify' },
     { label: '정산', path: '/admin/settlement', cap: 'settlement.export' },
   ];
-  return <section aria-label="선택한 공연과 회차" className="mb-7 space-y-4 border-b border-gray-200 pb-4">
+  return <section aria-label="선택한 공연과 회차" className="admin-panel mb-6 flex flex-col gap-4">
     <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(200px,0.65fr)]">
       <label className="space-y-1 text-sm font-medium text-gray-600">공연
         <select aria-label="업무 공연 선택" value={context.performanceId} onChange={(event) => context.selectPerformance(event.target.value)}
           className="h-11 w-full rounded-lg border border-gray-200 bg-white px-3 text-gray-950" disabled={list.isLoading || list.isError}>
-          <option value="">{list.isError ? '공연 목록 조회 실패' : list.isLoading ? '공연 불러오는 중' : '공연을 선택하세요'}</option>
+          <option value="">{list.isError ? '공연 목록 조회 실패' : list.isLoading ? '공연 불러오는 중' : '전체 공연'}</option>
           {options.map((event) => <option key={event.id} value={event.id}>{event.title}</option>)}
         </select>
       </label>
@@ -95,16 +103,16 @@ export function AdminEventContextBar() {
         <select aria-label="업무 회차 선택" value={context.showtimeId} onChange={(event) => context.selectShowtime(event.target.value)}
           className="h-11 w-full rounded-lg border border-gray-200 bg-white px-3 text-gray-950" disabled={!context.performanceId || detail.isLoading || detail.isError}>
           <option value="">{detail.isError ? '회차 조회 실패' : !context.performanceId ? '공연을 먼저 선택하세요' : detail.isLoading ? '회차 불러오는 중' : '전체 회차'}</option>
-          {(detail.data?.showtimes ?? []).map((showtime) => <option key={showtime.id} value={showtime.id}>{formatAdminKstDateTime(showtime.dateTime).replace('T', ' ')} KST</option>)}
+          {(detail.data?.showtimes ?? []).map((showtime) => <option key={showtime.id} value={showtime.id}>{formatAdminKstDateTime(showtime.dateTime).replace('T', ' ')} (한국 시간)</option>)}
         </select>
       </label>
     </div>
     {(list.isError || detail.isError) && <button className="text-sm underline" onClick={() => { void list.refetch(); if (context.performanceId) void detail.refetch(); }}>선택 목록 다시 불러오기</button>}
     {context.invalidShowtime && <p role="alert" className="text-sm text-amber-800">이 공연에 속하지 않는 회차입니다. 위에서 회차를 다시 선택해주세요.</p>}
-    <nav aria-label="공연 업무" className="flex flex-wrap gap-x-5 gap-y-2">
+    {context.performanceId && <nav aria-label="공연 업무" className="flex flex-wrap gap-x-5 gap-y-2">
       {tabs.filter((tab) => typeof tab.cap === 'string' ? can(tab.cap) : tab.cap.some(can)).map((tab) => <Link key={tab.label} href={context.href(tab.path)}
         className={cn('border-b-2 pb-2 text-sm font-semibold', pathname === tab.path || (tab.label === '준비' && pathname.startsWith('/admin/performances'))
           ? 'border-violet-600 text-violet-700' : 'border-transparent text-gray-500 hover:text-gray-900')}>{tab.label}</Link>)}
-    </nav>
+    </nav>}
   </section>;
 }

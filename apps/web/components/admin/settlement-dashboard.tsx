@@ -78,7 +78,7 @@ export function SettlementDashboard({ user: suppliedUser, data: suppliedData, re
 
   if (!allowed) return <section role="alert" className="rounded-xl border bg-white p-6"><h1 className="text-xl font-semibold">정산을 조회할 권한이 없습니다</h1><p className="mt-2 text-gray-600">재무 권한이 있는 계정으로 확인해주세요.</p></section>;
   return <section className="space-y-6" aria-label="정산·내보내기">
-    <header><p className="text-sm font-semibold text-violet-700">재무 대조</p><h1 className="mt-1 text-2xl font-semibold text-gray-950">정산·내보내기</h1>
+    <header><p className="text-sm font-semibold text-violet-700">재무 대조</p><h1 className="mt-1 text-2xl font-semibold text-gray-950">정산 자료</h1>
       <p className="mt-2 max-w-3xl text-sm leading-6 text-gray-600">원 주문과 환불, 남은 티켓을 확인하고 PG 정산 자료를 대조합니다. 금액은 통화별로 확인하며 은행 실입금과 마감은 증빙을 따로 확인해야 합니다.</p></header>
     <form onSubmit={(event) => { event.preventDefault(); read(); }} className="space-y-4 rounded-xl border border-gray-200 bg-white p-4">
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">

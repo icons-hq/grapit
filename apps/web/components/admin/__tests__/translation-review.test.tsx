@@ -142,12 +142,12 @@ describe('admin translation review workflow', () => {
       />,
     );
 
-    await user.type(screen.getByLabelText('콘텐츠 ID'), 'perf-1');
+    await user.type(screen.getByLabelText('콘텐츠 관리 번호'), 'perf-1');
     await user.type(screen.getByLabelText('원문 제목'), '걸스 룰즈 팬미팅');
     await user.type(screen.getByLabelText('한국어 원문'), '한국어 원문입니다.');
     await user.click(screen.getByRole('button', { name: '원문 저장' }));
     await user.click(
-      screen.getByRole('button', { name: 'en/th/zh-CN 초안 생성' }),
+      screen.getByRole('button', { name: '영어·태국어·중국어 초안 생성' }),
     );
 
     expect(onCreateSource).toHaveBeenCalledWith({
@@ -176,23 +176,38 @@ describe('admin translation review workflow', () => {
       />,
     );
 
-    await user.type(screen.getByLabelText('콘텐츠 ID'), 'perf-1');
+    await user.type(screen.getByLabelText('콘텐츠 관리 번호'), 'perf-1');
     await user.type(screen.getByLabelText('원문 제목'), '걸스 룰즈 팬미팅');
     await user.type(screen.getByLabelText('한국어 원문'), '한국어 원문입니다.');
 
     await user.click(screen.getByRole('button', { name: '원문 저장' }));
     expect(
-      screen.getByRole('button', { name: 'en/th/zh-CN 초안 생성' }),
+      screen.getByRole('button', { name: '영어·태국어·중국어 초안 생성' }),
     ).toBeDisabled();
 
     await user.click(screen.getByRole('button', { name: '원문 저장' }));
     await user.click(
-      screen.getByRole('button', { name: 'en/th/zh-CN 초안 생성' }),
+      screen.getByRole('button', { name: '영어·태국어·중국어 초안 생성' }),
     );
 
     await waitFor(() => {
       expect(onGenerateDrafts).toHaveBeenCalledWith('source-1');
     });
+  });
+
+  it('does not generate translations from a saved source after its text changes', async () => {
+    const user = userEvent.setup();
+    const onCreateSource = vi.fn().mockResolvedValue({ id: 'saved-source' });
+    const onGenerateDrafts = vi.fn();
+    render(<TranslationSourceForm onCreateSource={onCreateSource} onGenerateDrafts={onGenerateDrafts} isCreating={false} isGenerating={false} />);
+    await user.type(screen.getByLabelText('콘텐츠 관리 번호'), 'performance-1');
+    await user.type(screen.getByLabelText('원문 제목'), '공연 안내');
+    await user.type(screen.getByLabelText('한국어 원문'), '이전 원문');
+    await user.click(screen.getByRole('button', { name: '원문 저장' }));
+    expect(screen.getByRole('button', { name: '영어·태국어·중국어 초안 생성' })).toBeEnabled();
+    await user.type(screen.getByLabelText('한국어 원문'), ' 수정');
+    expect(screen.getByRole('button', { name: '영어·태국어·중국어 초안 생성' })).toBeDisabled();
+    expect(onGenerateDrafts).not.toHaveBeenCalled();
   });
 
   it('covers loading, empty, status, legal-blocked, and keyboard row activation states', async () => {

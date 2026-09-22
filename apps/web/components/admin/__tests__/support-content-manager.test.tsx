@@ -136,8 +136,8 @@ describe('SupportContentManager', () => {
     expect(screen.getByRole('tab', { name: '공지' })).toBeInTheDocument();
     expect(screen.getByText('예매는 어떻게 하나요?')).toBeInTheDocument();
     expect(screen.getByText('자동 번역 검수본')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: '운영 인박스에서 보기' }))
-      .toHaveAttribute('href', '/admin/operations?source=notice_followup');
+    expect(screen.getByRole('link', { name: '고객 문의에서 보기' }))
+      .toHaveAttribute('href', '/admin/operations');
 
     await userEvent.click(screen.getByRole('tab', { name: '공지' }));
     expect(screen.getByText('Entry notice')).toBeInTheDocument();
@@ -167,7 +167,7 @@ describe('SupportContentManager', () => {
     await screen.findByText('예매는 어떻게 하나요?');
     await user.click(screen.getByRole('button', { name: 'FAQ 등록' }));
     await user.selectOptions(screen.getByLabelText('언어'), 'ko');
-    await user.selectOptions(screen.getByLabelText('카테고리'), 'booking');
+    await user.selectOptions(screen.getByLabelText('분류'), 'booking');
     await user.type(screen.getByLabelText('제목'), '환불은 어디서 하나요?');
     await user.type(screen.getByLabelText('내용'), '예매 내역에서 환불을 요청합니다.');
     await user.click(screen.getByRole('button', { name: '저장' }));

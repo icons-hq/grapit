@@ -377,15 +377,15 @@ export function FloorSeatMapEditor({
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor={`seat-map-floor-svg-url-${index}`}>SVG URL</Label>
+                <details className="admin-disclosure"><summary>좌석도 파일 정보</summary><div className="admin-disclosure-body">
+                  <Label htmlFor={`seat-map-floor-svg-url-${index}`}>업로드한 좌석도 주소</Label>
                   <Input
                     id={`seat-map-floor-svg-url-${index}`}
                     value={floor.svgUrl}
                     readOnly
                     placeholder="SVG 업로드 후 자동으로 채워집니다"
                   />
-                </div>
+                </div></details>
 
                 {renderPreview?.({
                   floor,

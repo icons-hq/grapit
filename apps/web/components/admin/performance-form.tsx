@@ -1,4 +1,5 @@
 'use client';
+import { ADMIN_PERFORMANCE_STATUS_LABELS as STATUS_LABELS } from '@/lib/admin-vocabulary';
 
 import { useState, useCallback, useRef } from 'react';
 import Link from 'next/link';
@@ -27,7 +28,6 @@ import {
   type PerformanceWithDetails,
   GENRES,
   GENRE_LABELS,
-  STATUS_LABELS,
   type EventCategory,
   type PerformanceStatus,
   type PerformanceDraft,
@@ -104,8 +104,8 @@ const PERFORMANCE_OPEN_STATUS_OPTIONS: Array<{
   value: Extract<PerformanceStatus, 'upcoming' | 'selling'>;
   label: string;
 }> = [
-  { value: 'upcoming', label: '오픈예정' },
-  { value: 'selling', label: '오픈' },
+  { value: 'upcoming', label: '판매 예정' },
+  { value: 'selling', label: '판매 중' },
 ];
 
 function isEventCategory(genre: string): genre is EventCategory {
@@ -743,7 +743,7 @@ export function PerformanceForm({
 
             <div>
               <label className="mb-1 block text-sm font-semibold">
-                오픈 상태 <span className="text-red-500">*</span>
+                판매 상태 <span className="text-red-500">*</span>
               </label>
               <Controller
                 control={form.control}
@@ -753,8 +753,8 @@ export function PerformanceForm({
                     value={field.value ?? 'upcoming'}
                     onValueChange={field.onChange}
                   >
-                    <SelectTrigger id="status" aria-label="오픈 상태" ref={field.ref}>
-                      <SelectValue placeholder="오픈 상태를 선택해주세요" />
+                    <SelectTrigger id="status" aria-label="판매 상태" ref={field.ref}>
+                      <SelectValue placeholder="판매 상태를 선택해주세요" />
                     </SelectTrigger>
                     <SelectContent>
                       {PERFORMANCE_OPEN_STATUS_OPTIONS.map((status) => (
@@ -1097,7 +1097,7 @@ export function PerformanceForm({
           <span>판매 시작 일시 · 한국 시간 (KST)</span>
           <Input type="datetime-local" step="1" aria-label="판매 시작 일시" value={field.value ? formatAdminKstDateTime(field.value) : ''}
             onChange={(event) => field.onChange(event.target.value ? new Date(`${event.target.value}+09:00`).toISOString() : null)} />
-          <span className="block text-xs font-normal text-gray-500">비워두면 공연이 공개되고 오픈 상태이며 예매가 허용된 때 즉시 판매합니다.</span>
+          <span className="block text-xs font-normal text-gray-500">비워두면 공연이 공개되고 판매 중 상태이며 예매가 허용된 때 즉시 판매합니다.</span>
         </label>} />
         <div className="space-y-3">
           {priceTiersField.fields.map((field, index) => (
@@ -1576,7 +1576,7 @@ export function PerformanceForm({
           variant="outline"
           onClick={() => router.push(performanceId ? `/admin/performances/${performanceId}` : '/admin/performances')}
         >
-          준비 목록
+          공연 목록
         </Button>
         {stepIndex > 0 && <Button type="button" variant="outline" onClick={() => setStep(PREPARATION_STEPS[stepIndex - 1]!.id)}>이전 단계</Button>}
         <Button type="button" variant="outline" onClick={saveIncompleteDraft} disabled={isSubmitting}>초안 저장</Button>

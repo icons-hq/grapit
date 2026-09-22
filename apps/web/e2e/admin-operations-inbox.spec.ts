@@ -67,10 +67,10 @@ test.describe('Admin Operations Inbox E2E', () => {
     await page.goto('/admin/operations');
 
     await expect(
-      page.getByRole('heading', { name: '운영 인박스', level: 1 }),
+      page.getByRole('heading', { name: '고객 문의', level: 1 }),
     ).toBeVisible();
-    await expect(page.getByRole('combobox', { name: '카테고리' })).toBeVisible();
-    await expect(page.getByRole('columnheader', { name: 'SLA' })).toBeVisible();
+    await expect(page.getByRole('combobox', { name: '문의 유형' })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: '답변 기한' })).toBeVisible();
     const row = page
       .getByTestId('operations-inbox-row')
       .filter({ hasText: '환불 분쟁 확인 요청' });

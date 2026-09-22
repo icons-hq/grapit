@@ -124,17 +124,18 @@ test.describe('Admin Cutover Gate Ledger E2E', () => {
   }) => {
     await page.goto('/admin/operations');
 
-    const cutoverLink = page.getByRole('link', { name: '컷오버 게이트' });
+    await page.getByRole('button', { name: '설정·기록', exact: true }).click();
+    const cutoverLink = page.getByRole('link', { name: '판매 시작 점검' });
     await expect(cutoverLink).toHaveAttribute('href', '/admin/cutover');
     await cutoverLink.click();
 
     await expect(page).toHaveURL(/\/admin\/cutover$/);
     await expect(
-      page.getByRole('heading', { name: '컷오버 게이트', level: 1 }),
+      page.getByRole('heading', { name: '판매 시작 점검', level: 1 }),
     ).toBeVisible();
-    await expect(page.getByText('아직 라이브 예매를 열 수 없습니다')).toBeVisible();
+    await expect(page.getByText('기록상 미완료 점검이 있습니다')).toBeVisible();
     await expect(
-      page.getByRole('heading', { name: 'TOSS_LIVE_KEY_SMOKE' }),
+      page.getByRole('heading', { name: '실제 결제 확인' }),
     ).toBeVisible();
     await expect(
       page
@@ -142,25 +143,18 @@ test.describe('Admin Cutover Gate Ledger E2E', () => {
         .first(),
     ).toBeVisible();
 
-    await expect(page.getByText('CONFIG_READY_NOT_DRILLED').first()).toBeVisible();
+    await expect(page.getByText('설정만 확인').first()).toBeVisible();
     await expect(
-      page.getByText('설정 증거는 있지만 실제 drill PASS는 아닙니다'),
+      page.getByText('설정 확인만으로 실제 운영 테스트가 완료되지는 않습니다'),
     ).toBeVisible();
-    await expect(page.getByText('ACCEPTED_RISK').first()).toBeVisible();
+    await expect(page.getByText('예외 승인').first()).toBeVisible();
     await expect(
       page.getByText(
-        'PASS가 아닌 상태로 진행하려면 실패 게이트, 보완 모니터링, rollback trigger를 기록해야 합니다',
+        '미완료 항목이 있다면 승인 사유, 추가 확인 방법과 판매 중단·복구 기준을 기록해야 합니다',
       ).first(),
     ).toBeVisible();
 
-    const enableButton = page.getByRole('button', {
-      name: 'BOOKING_ENABLED=true 활성화',
-    });
-    await expect(enableButton).toBeDisabled();
-    await expect(
-      page.getByText(
-        'BOOKING_ENABLED=true는 TOSS_LIVE_KEY_SMOKE 때문에 비활성화되어 있습니다.',
-      ),
-    ).toBeVisible();
+    await expect(page.getByRole('button', { name: 'BOOKING_ENABLED=true 활성화' })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: '판매 시작은 별도로 진행합니다' })).toBeVisible();
   });
 });

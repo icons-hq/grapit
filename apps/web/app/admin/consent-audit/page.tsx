@@ -16,9 +16,9 @@ export default function AdminConsentAuditPage() {
   return (
     <div>
       <div className="mb-6">
-        <h1 className="text-xl font-semibold text-gray-900">동의 감사</h1>
+        <h1 className="text-xl font-semibold text-gray-900">개인정보 동의 기록</h1>
         <p className="mt-1 text-sm text-gray-600">
-          동의 항목, 버전, 언어, 사용자, 시각, IP 기준으로 masked 감사 증거를 조회합니다.
+          회원이 언제 어떤 안내에 동의했는지 확인합니다. 개인정보는 일부 가려서 표시합니다.
         </p>
       </div>
 

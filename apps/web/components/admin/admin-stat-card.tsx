@@ -6,12 +6,14 @@ interface AdminStatCardProps {
   label: string;
   value: number;
   icon: LucideIcon;
-  format: 'count' | 'currency' | 'percent';
+  format: 'count' | 'currency' | 'percent' | 'seats';
   description?: string;
 }
 
-function formatValue(value: number, format: 'count' | 'currency' | 'percent'): string {
+function formatValue(value: number, format: 'count' | 'currency' | 'percent' | 'seats'): string {
   switch (format) {
+    case 'seats':
+      return `${value.toLocaleString('ko-KR')}석`;
     case 'count':
       return `${value.toLocaleString('ko-KR')}건`;
     case 'currency':
@@ -29,11 +31,11 @@ export function AdminStatCard({
   description,
 }: AdminStatCardProps) {
   return (
-    <div className="flex min-h-[112px] flex-col justify-between rounded-lg border bg-white p-4 shadow-sm">
-      <Icon className="h-6 w-6 text-gray-400" />
+    <div role="group" aria-label={label} className="admin-stat-card flex min-h-[124px] flex-col gap-3 rounded-sm border border-border bg-white p-4">
+      <div className="flex items-center justify-between gap-2"><p className="text-xs text-gray-600">{label}</p><Icon className="size-4 shrink-0 text-gray-400" aria-hidden="true" /></div>
       <div>
-        <p className="text-sm text-gray-600">{label}</p>
-        <p className="text-xl font-semibold text-gray-900">
+
+        <p className="text-xl font-semibold tabular-nums text-gray-900">
           {formatValue(value, format)}
         </p>
         {description && (

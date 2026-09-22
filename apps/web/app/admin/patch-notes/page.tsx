@@ -5,9 +5,9 @@ export default function AdminPatchNotesPage() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="mb-2 text-xl font-semibold text-gray-900">패치노트</h1>
+        <h1 className="mb-2 text-xl font-semibold text-gray-900">업데이트 내역</h1>
         <p className="text-xs text-gray-600">
-          PR 단위로 정리된 관리자 기능 개선과 검증 내역을 확인하세요
+          새 기능과 개선 사항을 확인하세요. 개발·검증 기록은 각 항목에 함께 남겼습니다.
         </p>
       </header>
 

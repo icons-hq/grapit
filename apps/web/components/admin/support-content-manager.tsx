@@ -241,17 +241,17 @@ export function SupportContentManager() {
       <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div>
           <h1 className="text-display font-semibold leading-[1.2]">
-            고객지원 콘텐츠
+            공지·자주 묻는 질문
           </h1>
           <p className="mt-2 text-sm text-gray-600">
-            FAQ와 공지를 작성하고 검수 상태에 맞춰 게시합니다.
+            고객에게 보여줄 공지와 자주 묻는 질문을 작성하고 게시합니다.
           </p>
         </div>
         <a
-          href="/admin/operations?source=notice_followup"
+          href="/admin/operations"
           className="inline-flex h-10 items-center justify-center rounded-md border border-input px-3 text-sm font-semibold text-gray-900 hover:bg-gray-50"
         >
-          운영 인박스에서 보기
+          고객 문의에서 보기
         </a>
       </div>
 
@@ -313,17 +313,17 @@ export function SupportContentManager() {
           role="alert"
           className="rounded-lg bg-[#FEF2F2] p-4 text-sm font-semibold text-[#C62828]"
         >
-          고객지원 콘텐츠를 불러오지 못했습니다.
+          공지·자주 묻는 질문를 불러오지 못했습니다.
         </div>
       )}
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+      <div className={cn("grid gap-4", (selectedItem || isCreating || isEditing) && "xl:grid-cols-[minmax(0,1fr)_420px]")}>
         <section className="overflow-hidden rounded-lg bg-white shadow-sm">
-          <div className="grid grid-cols-[minmax(0,1fr)_120px_130px_110px] gap-3 bg-[#F5F5F7] px-4 py-3 text-sm font-semibold text-gray-700">
+          <div className="grid grid-cols-[minmax(0,1fr)_72px_64px] sm:grid-cols-[minmax(0,1fr)_90px_100px_90px] gap-3 bg-[#F5F5F7] px-4 py-3 text-sm font-semibold text-gray-700">
             <span>콘텐츠</span>
-            <span>언어</span>
+            <span className="hidden sm:block">언어</span>
             <span>상태</span>
-            <span>액션</span>
+            <span>관리</span>
           </div>
           {supportContent.isLoading && (
             <p className="px-4 py-8 text-sm text-gray-600">불러오는 중</p>
@@ -338,7 +338,7 @@ export function SupportContentManager() {
               <div
                 key={item.id}
                 className={cn(
-                  'grid grid-cols-[minmax(0,1fr)_120px_130px_110px] gap-3 border-t px-4 py-3 text-sm',
+                  'grid grid-cols-[minmax(0,1fr)_72px_64px] sm:grid-cols-[minmax(0,1fr)_90px_100px_90px] gap-3 border-t px-4 py-3 text-sm',
                   selectedItem?.id === item.id && 'bg-[#F3EFFF]',
                 )}
               >
@@ -361,7 +361,7 @@ export function SupportContentManager() {
                     </span>
                   )}
                 </button>
-                <span>{localeLabel(item.locale)}</span>
+                <span className="hidden sm:block">{localeLabel(item.locale)}</span>
                 <span>
                   <ReviewStateBadge state={item.reviewState} />
                 </span>
@@ -413,7 +413,7 @@ export function SupportContentManager() {
                     </select>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="support-content-category">카테고리</Label>
+                    <Label htmlFor="support-content-category">분류</Label>
                     <select
                       id="support-content-category"
                       value={form.category}

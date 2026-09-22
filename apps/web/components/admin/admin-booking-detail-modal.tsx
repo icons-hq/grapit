@@ -297,7 +297,7 @@ export function AdminBookingDetailModal({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="max-h-[80vh] w-full max-w-[480px] overflow-y-auto">
+      <DialogContent className="grabit-admin admin-booking-dialog overflow-y-auto">
         <DialogHeader>
           <DialogTitle>예매 상세</DialogTitle>
           <DialogDescription>
@@ -444,7 +444,7 @@ export function AdminBookingDetailModal({
                     티켓별 상태
                   </p>
                   <div className="overflow-x-auto rounded-md border">
-                    <Table aria-label="ticket item status">
+                    <Table aria-label="좌석별 티켓 상태">
                       <TableHeader>
                         <TableRow>
                           <TableHead className="whitespace-nowrap">좌석</TableHead>

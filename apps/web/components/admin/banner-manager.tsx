@@ -40,7 +40,7 @@ interface BannerFormProps {
 }
 
 const PLACEMENT_OPTIONS: Array<{ value: BannerPlacement; label: string }> = [
-  { value: 'home_hero', label: '홈 히어로' },
+  { value: 'home_hero', label: '홈 상단' },
   { value: 'home_secondary', label: '홈 보조' },
   { value: 'performance_detail', label: '공연 상세' },
   { value: 'operations_notice', label: '운영 공지' },

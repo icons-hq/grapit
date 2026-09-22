@@ -1,4 +1,5 @@
 'use client';
+import { ADMIN_CONTENT_LABELS, ADMIN_LOCALE_LABELS } from '@/lib/admin-vocabulary';
 
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -13,7 +14,6 @@ import {
 import type {
   TranslationDraft,
   TranslationQueueStatus,
-  TranslationTargetLocale,
 } from '@/hooks/use-admin';
 import { cn } from '@/lib/cn';
 
@@ -49,12 +49,6 @@ const STATUS_CONFIG: Record<
   },
 };
 
-const LOCALE_LABELS: Record<TranslationTargetLocale, string> = {
-  en: 'English',
-  th: 'ไทย',
-  'zh-CN': '简体中文',
-};
-
 function formatDateTime(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
@@ -64,6 +58,7 @@ function formatDateTime(value: string): string {
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    timeZone: 'Asia/Seoul',
   }).format(date);
 }
 
@@ -95,7 +90,7 @@ export function TranslationReviewTable({
             <TableHead scope="col" className="hidden md:table-cell">
               검수자
             </TableHead>
-            <TableHead scope="col">액션</TableHead>
+            <TableHead scope="col">검토</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -162,16 +157,16 @@ export function TranslationReviewTable({
                       onSelectRow(row);
                     }
                   }}
-                  aria-label={`${title} ${row.locale} 번역 검수`}
+                  aria-label={`${title} ${ADMIN_LOCALE_LABELS[row.locale] ?? row.locale} 번역 검수`}
                 >
                   <TableCell className="max-w-[220px] font-semibold">
                     <span className="line-clamp-2">{title}</span>
                   </TableCell>
                   <TableCell className="text-sm text-gray-600">
-                    {row.contentType}
+                    {ADMIN_CONTENT_LABELS[row.contentType] ?? row.contentType}
                   </TableCell>
                   <TableCell className="text-sm">
-                    {LOCALE_LABELS[row.locale] ?? row.locale}
+                    {ADMIN_LOCALE_LABELS[row.locale] ?? row.locale}
                   </TableCell>
                   <TableCell>
                     <Badge className={status.className}>{status.label}</Badge>

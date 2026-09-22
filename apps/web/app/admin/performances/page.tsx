@@ -10,7 +10,7 @@ import {
   useDeletePerformance,
 } from '@/hooks/use-admin';
 import { StatusFilter } from '@/components/admin/status-filter';
-import { StatusBadge } from '@/components/performance/status-badge';
+import { Badge } from '@/components/ui/badge';
 import { PaginationNav } from '@/components/performance/pagination-nav';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -43,6 +43,8 @@ import {
 import { GENRE_LABELS } from '@grabit/shared';
 import type { Genre, PerformanceStatus } from '@grabit/shared';
 import { toast } from 'sonner';
+import { ADMIN_PERFORMANCE_STATUS_LABELS } from '@/lib/admin-vocabulary';
+import { AdminPageHeader } from '@/components/admin/admin-page-header';
 
 export default function AdminPerformancesPage() {
   const [status, setStatus] = useState('');
@@ -100,7 +102,7 @@ export default function AdminPerformancesPage() {
     performanceStatus: PerformanceStatus,
   ): string {
     if (performanceStatus === 'upcoming') {
-      return '오픈예정';
+      return '판매 예정';
     }
 
     const startDate = new Date(start).toLocaleDateString('ko-KR');
@@ -110,18 +112,11 @@ export default function AdminPerformancesPage() {
 
   return (
     <div>
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-display font-semibold leading-[1.2]">공연 관리</h1>
-        <Link href="/admin/performances/new">
-          <Button>
-            <Plus className="mr-2 h-4 w-4" />
-            공연 등록
-          </Button>
-        </Link>
-      </div>
+      <AdminPageHeader title="공연 관리" description="공연 정보와 판매 상태를 확인하세요. 공연명을 누르면 판매 준비와 운영을 이어갈 수 있습니다."
+        actions={<Button asChild><Link href="/admin/performances/new"><Plus className="size-4" />공연 등록</Link></Button>} />
 
       <PerformanceDraftList />
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+      <div className="admin-panel mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
         <StatusFilter value={status} onChange={(v) => { setStatus(v); setPage(1); }} />
         <Input
           type="search"
@@ -133,7 +128,8 @@ export default function AdminPerformancesPage() {
         />
       </div>
 
-      <div className="rounded-lg bg-white shadow-sm">
+      <p className="mb-3 text-sm text-gray-600" aria-live="polite">{data && !isLoading && !isError ? `검색 결과 ${data.total.toLocaleString('ko-KR')}개` : '공연 목록'}</p>
+      <div className="rounded-lg bg-white">
         <Table>
           <TableHeader>
             <TableRow>
@@ -142,7 +138,7 @@ export default function AdminPerformancesPage() {
               <TableHead scope="col" className="hidden md:table-cell">장르</TableHead>
               <TableHead scope="col" className="hidden lg:table-cell">기간</TableHead>
               <TableHead scope="col">상태</TableHead>
-              <TableHead scope="col" className="w-24">액션</TableHead>
+              <TableHead scope="col" className="w-24">관리</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -178,7 +174,8 @@ export default function AdminPerformancesPage() {
             {!isLoading && !isError && data?.data.length === 0 && (
               <TableRow>
                 <TableCell colSpan={6} className="py-12 text-center text-gray-500">
-                  등록된 공연이 없습니다. 첫 공연을 등록해보세요.
+                  {search || status ? '검색 조건에 맞는 공연이 없습니다.' : '등록된 공연이 없습니다. 공연을 등록해보세요.'}
+                  {(search || status) && <button className="mt-3 block w-full text-sm underline" onClick={() => { setSearch(''); setDebouncedSearch(''); setStatus(''); setPage(1); }}>검색 조건 초기화</button>}
                 </TableCell>
               </TableRow>
             )}
@@ -197,11 +194,11 @@ export default function AdminPerformancesPage() {
                     />
                   ) : (
                     <div className="flex h-12 w-12 items-center justify-center rounded bg-gray-200 text-xs text-gray-400">
-                      N/A
+                      이미지 없음
                     </div>
                   )}
                 </TableCell>
-                <TableCell className="font-semibold"><Link className="text-violet-700 underline-offset-4 hover:underline" href={`/admin/performances/${perf.id}`}>{perf.title}<span className="sr-only"> 준비 화면</span></Link></TableCell>
+                <TableCell className="max-w-[280px] whitespace-normal font-semibold"><Link className="text-violet-700 underline-offset-4 hover:underline" href={`/admin/performances/${perf.id}`}>{perf.title}<span className="sr-only"> 준비 화면</span></Link></TableCell>
                 <TableCell className="hidden md:table-cell">
                   {GENRE_LABELS[perf.genre as Genre]}
                 </TableCell>
@@ -209,7 +206,9 @@ export default function AdminPerformancesPage() {
                   {formatDateRange(perf.startDate, perf.endDate, perf.status)}
                 </TableCell>
                 <TableCell>
-                  <StatusBadge status={perf.status} />
+                  <Badge variant="secondary" className={perf.status === 'ended' ? 'text-gray-600' : perf.status === 'selling' ? 'bg-success-surface text-success' : ''}>
+                    {ADMIN_PERFORMANCE_STATUS_LABELS[perf.status] ?? perf.status}
+                  </Badge>
                 </TableCell>
                 <TableCell>
                   <div className="flex items-center justify-end gap-1">

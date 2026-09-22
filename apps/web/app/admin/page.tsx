@@ -1,252 +1,82 @@
 'use client';
 
 import { useState } from 'react';
-import {
-  Ticket,
-  Banknote,
-  RotateCcw,
-  TrendingDown,
-  TrendingUp,
-  PieChart as PieIcon,
-  CreditCard,
-  Trophy,
-} from 'lucide-react';
+import Link from 'next/link';
+import dynamic from 'next/dynamic';
+import { ArrowRight, Banknote, RotateCcw, Ticket, TrendingDown, RefreshCw } from 'lucide-react';
+import { resolveAdminCapabilitySnapshot, type DashboardPeriod } from '@grabit/shared';
+import { AdminPageHeader } from '@/components/admin/admin-page-header';
 import { AdminStatCard } from '@/components/admin/admin-stat-card';
-import { Skeleton } from '@/components/ui/skeleton';
 import { PeriodFilter } from '@/components/admin/dashboard/period-filter';
 import { RevenueAreaChart } from '@/components/admin/dashboard/revenue-area-chart';
-import { GenreDonutChart } from '@/components/admin/dashboard/genre-donut-chart';
-import { PaymentBarChart } from '@/components/admin/dashboard/payment-bar-chart';
-import { TopPerformancesTable } from '@/components/admin/dashboard/top-performances-table';
-import { AdminPatchNotesPreview } from '@/components/admin/admin-patch-notes';
-import {
-  ChartPanelState,
-  SectionError,
-} from '@/components/admin/dashboard/_state';
-import { adminPatchNotes } from '@/content/admin-patch-notes';
-import {
-  useDashboardSummary,
-  useDashboardRevenue,
-  useDashboardGenre,
-  useDashboardPayment,
-  useDashboardTop10,
-} from '@/hooks/use-admin-dashboard';
-import type { DashboardPeriod } from '@grabit/shared';
+import { ChartPanelState, SectionError } from '@/components/admin/dashboard/_state';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Button } from '@/components/ui/button';
+import { useDashboardSummary, useDashboardRevenue } from '@/hooks/use-admin-dashboard';
+import { useAdminOperationsInbox } from '@/hooks/use-admin-operations';
+import { useAuthStore } from '@/stores/use-auth-store';
+import { ADMIN_NAVIGATION, canAccessAdminItem } from '@/lib/admin-navigation';
 
-const PERIOD_LABEL: Record<DashboardPeriod, string> = {
-  '7d': '7일',
-  '30d': '30일',
-  '90d': '90일',
-};
+const SecondaryAnalytics = dynamic(() => import('@/components/admin/dashboard/secondary-analytics'), {
+  loading: () => <p role="status" className="p-5 text-sm text-muted-foreground">상세 통계를 불러오고 있습니다.</p>,
+});
+const SHORTCUT_PATHS = ['/admin/performances', '/admin/bookings', '/admin/operations', '/admin/field-monitor'];
 
-type PanelMode = 'loading' | 'empty' | 'error' | 'data';
-
-function pickMode<T>(
-  q: { isLoading: boolean; isError: boolean; data: T | undefined },
-  isEmpty: (d: T) => boolean,
-): PanelMode {
-  if (q.isLoading) return 'loading';
-  if (q.isError) return 'error';
-  if (!q.data || isEmpty(q.data)) return 'empty';
-  return 'data';
+function PendingInquiries() {
+  const inbox = useAdminOperationsInbox();
+  if (inbox.isLoading) return <p role="status" className="mt-4 text-sm text-muted-foreground">처리 대기 문의를 확인하고 있습니다.</p>;
+  if (inbox.isError || !inbox.data) return <p className="mt-4 text-sm text-muted-foreground">문의 현황을 확인하지 못했습니다. <button className="underline" onClick={() => void inbox.refetch()}>다시 확인</button></p>;
+  return <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4 text-sm">
+    <p>처리 대기 문의 <strong>{inbox.data.totals.all.toLocaleString('ko-KR')}건</strong>
+      {inbox.data.totals.overdue > 0 && <span className="ml-3 text-destructive">답변 기한 초과 {inbox.data.totals.overdue}건</span>}</p>
+    <Link className="inline-flex items-center gap-2 font-medium" href="/admin/operations">문의 확인<ArrowRight size={14} aria-hidden="true" /></Link>
+  </div>;
 }
 
 export default function AdminDashboardPage() {
   const [period, setPeriod] = useState<DashboardPeriod>('30d');
-
+  const [analyticsOpen, setAnalyticsOpen] = useState(false);
+  const user = useAuthStore((state) => state.user);
+  const capabilities = resolveAdminCapabilitySnapshot(user);
   const summary = useDashboardSummary();
   const revenue = useDashboardRevenue(period);
-  const genre = useDashboardGenre(period);
-  const payment = useDashboardPayment(period);
-  const top10 = useDashboardTop10();
+  const shortcuts = SHORTCUT_PATHS.flatMap((href) => ADMIN_NAVIGATION.flatMap((group) => group.items).filter((item) => item.href === href && canAccessAdminItem(item, capabilities)));
+  const canReadInquiries = capabilities.superuser || capabilities.capabilities.includes('support.manage');
+  const revenueMode = revenue.isLoading ? 'loading' : revenue.isError ? 'error' : !revenue.data?.some((bucket) => bucket.revenue !== 0) ? 'empty' : 'data';
 
-  // WR-01: revenue service always pads the response with a full bucket
-  // skeleton, so `d.length === 0` never fires. Detect empty via the numeric
-  // signal (all-zero revenue) so the UI-SPEC D-01 empty copy ("해당 기간 동안
-  // 예매 내역이 없습니다") is actually reachable for the revenue panel.
-  const revenueMode = pickMode(
-    revenue,
-    (d) => d.length === 0 || d.every((b) => b.revenue === 0),
-  );
-  const genreMode = pickMode(genre, (d) => d.length === 0);
-  const paymentMode = pickMode(payment, (d) => d.length === 0);
-
-  return (
-    <div className="space-y-8">
-      <header>
-        <h1 className="mb-2 text-xl font-semibold text-gray-900">대시보드</h1>
-        <p className="text-xs text-gray-600">
-          오늘의 예매·매출 현황과 최근 추이를 확인하세요
-        </p>
-      </header>
-
-      {/* KPI row (ADM-01) */}
-      <section aria-labelledby="kpi-heading">
-        <h2 id="kpi-heading" className="sr-only">
-          오늘의 요약
-        </h2>
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-5">
-          {summary.isLoading ? (
-            Array.from({ length: 5 }).map((_, i) => (
-              <Skeleton key={i} className="h-24 w-full" />
-            ))
-          ) : summary.isError ? (
-            <SectionError onRetry={() => summary.refetch()} />
-          ) : (
-            <>
-              <AdminStatCard
-                icon={Ticket}
-                label="오늘 예매수"
-                value={summary.data?.todayBookings ?? 0}
-                format="count"
-              />
-              <AdminStatCard
-                icon={RotateCcw}
-                label="오늘 취소 이벤트"
-                value={summary.data?.todayCancellationEvents ?? 0}
-                format="count"
-              />
-              <AdminStatCard
-                icon={Banknote}
-                label="오늘 총매출"
-                value={summary.data?.todayGrossRevenue ?? 0}
-                format="currency"
-              />
-              <AdminStatCard
-                icon={TrendingDown}
-                label="오늘 취소 차감"
-                value={summary.data?.todayNegativeCancellationRevenue ?? 0}
-                format="currency"
-              />
-              <AdminStatCard
-                icon={Banknote}
-                label="오늘 순매출"
-                value={summary.data?.todayNetRevenue ?? 0}
-                format="currency"
-              />
-            </>
-          )}
-        </div>
-      </section>
-
-      <AdminPatchNotesPreview notes={adminPatchNotes} limit={3} />
-
-      {/* Revenue area (ADM-02) */}
-      <section
-        aria-labelledby="revenue-heading"
-        className="rounded-lg bg-white p-6 shadow-sm"
-      >
-        <div className="mb-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <TrendingUp
-              className="h-5 w-5 text-gray-600"
-              aria-hidden="true"
-            />
-            <h2
-              id="revenue-heading"
-              className="text-sm font-semibold text-gray-900"
-            >
-              매출 추이
-            </h2>
-          </div>
-          <PeriodFilter value={period} onChange={setPeriod} />
-        </div>
-        <p className="mb-4 text-xs text-gray-600">{`최근 ${PERIOD_LABEL[period]} 기준`}</p>
-        {revenueMode === 'data' && revenue.data ? (
-          <RevenueAreaChart data={revenue.data} />
-        ) : (
-          <ChartPanelState
-            mode={revenueMode === 'data' ? 'empty' : revenueMode}
-            onRetry={
-              revenueMode === 'error' ? () => revenue.refetch() : undefined
-            }
-            emptyBody="해당 기간 동안 예매 내역이 없습니다"
-          />
-        )}
-      </section>
-
-      {/* Category + Payment row (ADM-03 + ADM-05) */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <section
-          aria-labelledby="genre-heading"
-          className="rounded-lg bg-white p-6 shadow-sm"
-        >
-          <div className="mb-4 flex items-center gap-2">
-            <PieIcon className="h-5 w-5 text-gray-600" aria-hidden="true" />
-            <h2
-              id="genre-heading"
-              className="text-sm font-semibold text-gray-900"
-            >
-              분류별 예매 분포
-            </h2>
-          </div>
-          {genreMode === 'data' && genre.data ? (
-            <GenreDonutChart data={genre.data} />
-          ) : (
-            <ChartPanelState
-              mode={genreMode === 'data' ? 'empty' : genreMode}
-              onRetry={
-                genreMode === 'error' ? () => genre.refetch() : undefined
-              }
-              emptyBody="해당 기간 동안 예매 내역이 없습니다"
-            />
-          )}
-        </section>
-
-        <section
-          aria-labelledby="payment-heading"
-          className="rounded-lg bg-white p-6 shadow-sm"
-        >
-          <div className="mb-4 flex items-center gap-2">
-            <CreditCard
-              className="h-5 w-5 text-gray-600"
-              aria-hidden="true"
-            />
-            <h2
-              id="payment-heading"
-              className="text-sm font-semibold text-gray-900"
-            >
-              결제수단 분포
-            </h2>
-          </div>
-          {paymentMode === 'data' && payment.data ? (
-            <PaymentBarChart data={payment.data} />
-          ) : (
-            <ChartPanelState
-              mode={paymentMode === 'data' ? 'empty' : paymentMode}
-              onRetry={
-                paymentMode === 'error' ? () => payment.refetch() : undefined
-              }
-              emptyBody="해당 기간 동안 결제 내역이 없습니다"
-            />
-          )}
-        </section>
+  return <div className="admin-overview flex flex-col gap-6">
+    <AdminPageHeader title="운영 현황" description="오늘의 예매를 확인하고 필요한 업무를 시작하세요. 모든 날짜는 한국 시간 기준입니다."
+      actions={<Button variant="outline" disabled={summary.isFetching || revenue.isFetching} onClick={() => { void summary.refetch(); void revenue.refetch(); }}><RefreshCw size={15} />새로고침</Button>} />
+    <section className="admin-panel" aria-labelledby="work-heading">
+      <h2 id="work-heading" className="admin-panel-title">자주 하는 업무</h2>
+      <p className="admin-panel-description">공연 준비부터 고객 응대와 현장 입장까지</p>
+      <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {shortcuts.map((item) => <Link key={item.href} href={item.href} className="admin-task-link"><strong>{item.label}<ArrowRight size={15} aria-hidden="true" /></strong><span>{item.description}</span></Link>)}
       </div>
-
-      {/* Top 10 (ADM-04) */}
-      <section
-        aria-labelledby="top10-heading"
-        className="rounded-lg bg-white p-6 shadow-sm"
-      >
-        <div className="mb-2 flex items-center gap-2">
-          <Trophy className="h-5 w-5 text-gray-600" aria-hidden="true" />
-          <h2
-            id="top10-heading"
-            className="text-sm font-semibold text-gray-900"
-          >
-            인기 공연 Top 10
-          </h2>
-        </div>
-        <p className="mb-4 text-xs text-gray-600">
-          최근 30일 예매 건수 기준
-        </p>
-        <TopPerformancesTable
-          data={top10.data}
-          isLoading={top10.isLoading}
-          isError={top10.isError}
-          onRetry={() => top10.refetch()}
-        />
-      </section>
-    </div>
-  );
+      {canReadInquiries && <PendingInquiries />}
+    </section>
+    <section aria-labelledby="today-heading">
+      <div className="mb-4"><h2 id="today-heading" className="admin-panel-title">오늘의 예매·매출</h2><p className="admin-panel-description">전체 공연 · 결제 승인과 취소 처리 시각 기준</p></div>
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
+        {summary.isLoading ? Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-28 w-full" />)
+          : summary.isError || !summary.data ? <SectionError onRetry={() => void summary.refetch()} /> : <>
+            <AdminStatCard icon={Ticket} label="오늘 예매" value={summary.data.todayBookings} format="count" description="오늘 결제한 예매" />
+            <AdminStatCard icon={RotateCcw} label="오늘 취소 처리" value={summary.data.todayCancellationEvents} format="count" description="좌석 취소와 과거 예매 취소" />
+            <AdminStatCard icon={Banknote} label="오늘 결제 금액" value={summary.data.todayGrossRevenue} format="currency" description="오늘 승인된 결제" />
+            <AdminStatCard icon={TrendingDown} label="오늘 취소 차감액" value={summary.data.todayNegativeCancellationRevenue} format="currency" description="오늘 처리한 취소 금액" />
+            <AdminStatCard icon={Banknote} label="오늘 순매출" value={summary.data.todayNetRevenue} format="currency" description="결제 금액 + 취소 차감액" />
+          </>}
+      </div>
+      <p className="mt-3 text-xs leading-6 text-muted-foreground">취소 처리 수는 좌석별 취소와 과거 예매·자동 복구 취소 건을 합산합니다. 실제 정산 입금액은 정산 자료에서 확인하세요.</p>
+    </section>
+    <section className="admin-panel" aria-labelledby="revenue-heading">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-4"><div><h2 id="revenue-heading" className="admin-panel-title">매출 추이</h2><p className="admin-panel-description">최근 {period.replace('d', '일')} · 전체 공연</p></div><PeriodFilter value={period} onChange={setPeriod} /></div>
+      {revenueMode === 'data' && revenue.data ? <RevenueAreaChart data={revenue.data} /> : <ChartPanelState mode={revenueMode === 'data' ? 'empty' : revenueMode} onRetry={revenueMode === 'error' ? () => void revenue.refetch() : undefined} emptyBody="이 기간에는 매출이 없습니다. 기간을 바꾸거나 예매 목록을 확인해주세요." />}
+    </section>
+    <details className="admin-disclosure" open={analyticsOpen} onToggle={(event) => setAnalyticsOpen(event.currentTarget.open)}>
+      <summary>상세 통계 · 장르, 결제수단, 공연별 실적</summary>
+      {analyticsOpen && <div className="admin-disclosure-body"><SecondaryAnalytics period={period} /></div>}
+    </details>
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4 text-xs text-muted-foreground"><p>화면의 금액과 실제 정산 입금액은 다를 수 있습니다.</p><Link href="/admin/patch-notes" className="inline-flex items-center gap-2">업데이트 내역<ArrowRight size={14} aria-hidden="true" /></Link></div>
+  </div>;
 }

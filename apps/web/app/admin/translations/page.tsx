@@ -36,9 +36,9 @@ const STATUS_OPTIONS: Array<{ value: TranslationQueueFilterStatus | ''; label: s
 
 const LOCALE_OPTIONS: Array<{ value: TranslationTargetLocale | ''; label: string }> = [
   { value: '', label: '전체 언어' },
-  { value: 'en', label: 'English' },
-  { value: 'th', label: 'ไทย' },
-  { value: 'zh-CN', label: '简体中文' },
+  { value: 'en', label: '영어' },
+  { value: 'th', label: '태국어' },
+  { value: 'zh-CN', label: '중국어' },
 ];
 
 export default function AdminTranslationsPage() {
@@ -76,6 +76,8 @@ export default function AdminTranslationsPage() {
         </p>
       </div>
 
+      {!context?.performanceId && <p className="rounded-sm border border-border bg-white p-4 text-sm text-muted-foreground">상단에서 공연을 선택하면 저장된 한국어 안내를 불러와 번역할 수 있습니다.</p>}
+      <details className="admin-disclosure" key={context?.performanceId ?? 'general-source'} open={Boolean(context?.performanceId)}><summary>{context?.performanceId ? '선택한 공연의 번역 초안 만들기' : '기타 콘텐츠 원문 직접 등록'}</summary><div className="admin-disclosure-body">
       {context?.performanceId && (performance.isLoading || performance.isError) ? <p role={performance.isError ? 'alert' : 'status'}>{performance.isError ? '공연 원문을 조회하지 못했습니다.' : '공연 원문을 불러오고 있습니다.'}</p> : <TranslationSourceForm
         key={context?.performanceId ?? 'general'}
         performance={performance.data}
@@ -94,23 +96,16 @@ export default function AdminTranslationsPage() {
         isCreating={createSource.isPending}
         isGenerating={generateDrafts.isPending}
       />}
+      </div></details>
 
       <section className="space-y-3">
         <div className="grid gap-3 rounded-lg bg-white p-4 shadow-sm md:grid-cols-5">
           <div className="space-y-2">
             <Label htmlFor="translation-filter-type">콘텐츠 유형</Label>
-            <Input
-              id="translation-filter-type"
-              value={filters.contentType ?? ''}
-              disabled={Boolean(context?.performanceId)}
-              placeholder="performance"
-              onChange={(event) =>
-                setFilters((current) => ({
-                  ...current,
-                  contentType: event.target.value || undefined,
-                }))
-              }
-            />
+            <select id="translation-filter-type" value={context?.performanceId ? 'performance' : filters.contentType ?? ''} disabled={Boolean(context?.performanceId)} className="h-11 w-full rounded-sm border border-input bg-white px-3 text-sm"
+              onChange={(event) => setFilters((current) => ({ ...current, contentType: event.target.value || undefined }))}>
+              <option value="">전체 콘텐츠</option><option value="performance">공연</option><option value="banner">배너</option><option value="notice">공지</option><option value="legal">약관·정책</option>
+            </select>
           </div>
           <div className="space-y-2">
             <Label htmlFor="translation-filter-locale">언어</Label>
@@ -187,7 +182,7 @@ export default function AdminTranslationsPage() {
           </div>
         )}
 
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_460px]">
+        <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_460px]">
           <TranslationReviewTable
             rows={rows}
             isLoading={queue.isLoading}

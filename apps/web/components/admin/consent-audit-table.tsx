@@ -1,4 +1,6 @@
 'use client';
+import { CONSENT_ITEM_LABELS, CONSENT_FLOW_LABELS, ADMIN_LOCALE_LABELS } from '@/lib/admin-vocabulary';
+import { formatAdminKstDateTime } from '@/lib/admin-datetime';
 
 import { useState, type FormEvent } from 'react';
 import { Search } from 'lucide-react';
@@ -74,12 +76,7 @@ function formatDateTime(timestamp: string): string {
   const date = new Date(timestamp);
   if (Number.isNaN(date.getTime())) return timestamp;
 
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  const h = String(date.getHours()).padStart(2, '0');
-  const min = String(date.getMinutes()).padStart(2, '0');
-  return `${y}.${m}.${d} ${h}:${min}`;
+  return formatAdminKstDateTime(timestamp).replace('T', ' ');
 }
 
 export function ConsentAuditTable({
@@ -129,12 +126,9 @@ export function ConsentAuditTable({
         </label>
         <label className="space-y-1.5 text-sm font-semibold text-gray-700">
           <span>동의 항목</span>
-          <Input
-            value={item}
-            onChange={(event) => setItem(event.target.value)}
-            placeholder="cross_border_transfer"
-            aria-label="동의 항목"
-          />
+          <select value={item} onChange={(event) => setItem(event.target.value)} aria-label="동의 항목" className="h-11 w-full rounded-sm border border-input bg-white px-3">
+            <option value="">전체 동의 항목</option>{Object.entries(CONSENT_ITEM_LABELS).map(([key,label]) => <option key={key} value={key}>{label}</option>)}
+          </select>
         </label>
         <label className="space-y-1.5 text-sm font-semibold text-gray-700">
           <span>버전</span>
@@ -269,9 +263,9 @@ export function ConsentAuditTable({
                     }
                   }}
                 >
-                  <TableCell className="text-sm font-semibold">{row.itemKey}</TableCell>
+                  <TableCell className="text-sm font-semibold">{CONSENT_ITEM_LABELS[row.itemKey] ?? row.itemKey}</TableCell>
                   <TableCell className="text-sm text-gray-700">{row.version}</TableCell>
-                  <TableCell className="text-sm text-gray-700">{row.language}</TableCell>
+                  <TableCell className="text-sm text-gray-700">{ADMIN_LOCALE_LABELS[row.language] ?? row.language}</TableCell>
                   <TableCell className="text-sm text-gray-700">
                     <div className="flex flex-col gap-0.5">
                       <span>{row.maskedUser.email}</span>
@@ -280,7 +274,7 @@ export function ConsentAuditTable({
                   </TableCell>
                   <TableCell className="text-sm text-gray-700">{row.maskedIp}</TableCell>
                   <TableCell className="text-sm text-gray-700">{formatDateTime(row.timestamp)}</TableCell>
-                  <TableCell className="text-sm text-gray-700">{row.sourceFlow}</TableCell>
+                  <TableCell className="text-sm text-gray-700">{CONSENT_FLOW_LABELS[row.sourceFlow] ?? row.sourceFlow}</TableCell>
                 </TableRow>
               ))}
           </TableBody>

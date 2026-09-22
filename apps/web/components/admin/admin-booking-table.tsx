@@ -1,5 +1,6 @@
 'use client';
 
+import { formatAdminKstDateTime } from '@/lib/admin-datetime';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -72,13 +73,7 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
 };
 
 function formatDateTime(dateString: string): string {
-  const date = new Date(dateString);
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  const h = String(date.getHours()).padStart(2, '0');
-  const min = String(date.getMinutes()).padStart(2, '0');
-  return `${y}.${m}.${d} ${h}:${min}`;
+  return formatAdminKstDateTime(dateString).replace('T', ' ');
 }
 
 function formatSeatSummary(seats: AdminBookingListItem['seats']): string {
@@ -128,12 +123,6 @@ function getPaymentSummary(booking: AdminBookingListItem): string {
   return [statusLabel, methodLabel].filter(Boolean).join(' · ') || '결제 정보 없음';
 }
 
-function getPaymentDiagnosticSummary(booking: AdminBookingListItem): string | null {
-  const diagnostic = booking.paymentFailureDiagnostic;
-  if (!diagnostic) return null;
-  return [diagnostic.code, diagnostic.message].filter(Boolean).join(' · ');
-}
-
 interface AdminBookingTableProps {
   bookings: AdminBookingListItem[];
   isLoading: boolean;
@@ -145,142 +134,41 @@ export function AdminBookingTable({
   isLoading,
   onRowClick,
 }: AdminBookingTableProps) {
-  return (
-    <div className="rounded-lg bg-white shadow-sm">
-      <Table>
-        <TableHeader>
-          <TableRow className="bg-[#F5F5F7]">
-            <TableHead scope="col" className="text-sm font-semibold text-gray-600">
-              예매번호
-            </TableHead>
-            <TableHead scope="col" className="text-sm font-semibold text-gray-600">
-              예매자
-            </TableHead>
-            <TableHead scope="col" className="hidden text-sm font-semibold text-gray-600 md:table-cell">
-              공연명
-            </TableHead>
-            <TableHead scope="col" className="hidden text-sm font-semibold text-gray-600 lg:table-cell">
-              공연일시
-            </TableHead>
-            <TableHead scope="col" className="hidden text-sm font-semibold text-gray-600 lg:table-cell">
-              좌석
-            </TableHead>
-            <TableHead scope="col" className="text-sm font-semibold text-gray-600">
-              결제금액
-            </TableHead>
-            <TableHead scope="col" className="text-sm font-semibold text-gray-600">
-              상태
-            </TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {isLoading &&
-            Array.from({ length: 5 }).map((_, i) => (
-              <TableRow key={`skeleton-${i}`}>
-                <TableCell><Skeleton className="h-4 w-20" /></TableCell>
-                <TableCell><Skeleton className="h-4 w-16" /></TableCell>
-                <TableCell className="hidden md:table-cell"><Skeleton className="h-4 w-32" /></TableCell>
-                <TableCell className="hidden lg:table-cell"><Skeleton className="h-4 w-28" /></TableCell>
-                <TableCell className="hidden lg:table-cell"><Skeleton className="h-4 w-24" /></TableCell>
-                <TableCell><Skeleton className="h-4 w-20" /></TableCell>
-                <TableCell><Skeleton className="h-5 w-16" /></TableCell>
-              </TableRow>
-            ))}
-
-          {!isLoading && bookings.length === 0 && (
-            <TableRow>
-              <TableCell colSpan={7} className="py-12 text-center">
-                <p className="text-base font-semibold text-gray-900">
-                  예매 내역이 없습니다
-                </p>
-                <p className="mt-1 text-sm text-gray-600">
-                  아직 예매가 접수되지 않았습니다
-                </p>
-              </TableCell>
-            </TableRow>
-          )}
-
-          {!isLoading &&
-            bookings.map((booking) => {
-              const statusConfig = getFunnelStatusConfig(booking);
-              const diagnosticSummary = getPaymentDiagnosticSummary(booking);
-              const failureBucketLabel = getPaymentFailureBucketLabel(
-                booking.paymentFailureBucket,
-              );
-              return (
-                <TableRow
-                  key={booking.id}
-                  role="button"
-                  className="cursor-pointer hover:bg-gray-50 focus-visible:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
-                  onClick={() => onRowClick(booking.id)}
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      onRowClick(booking.id);
-                    }
-                  }}
-                  aria-label={`${booking.userName} ${booking.performanceTitle} 예매 상세 보기`}
-                >
-                  <TableCell className="text-sm">
-                    <div className="space-y-0.5">
-                      <p className="font-semibold text-gray-900">
-                        {booking.reservationNumber}
-                      </p>
-                      {booking.tossOrderId && (
-                        <p className="max-w-[180px] truncate text-xs text-gray-500">
-                          Toss 주문번호 {booking.tossOrderId}
-                        </p>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-sm">
-                    <div className="space-y-0.5">
-                      <p className="font-semibold text-gray-900">
-                        {booking.userName}
-                      </p>
-                      <p className="max-w-[180px] truncate text-xs text-gray-500">
-                        {booking.userEmail} · {booking.userCountry}
-                      </p>
-                    </div>
-                  </TableCell>
-                  <TableCell className="hidden max-w-[200px] truncate text-sm md:table-cell">
-                    {booking.performanceTitle}
-                  </TableCell>
-                  <TableCell className="hidden text-sm text-gray-600 lg:table-cell">
-                    {formatDateTime(booking.showDateTime)}
-                  </TableCell>
-                  <TableCell className="hidden text-sm text-gray-600 lg:table-cell">
-                    {formatSeatSummary(booking.seats)}
-                  </TableCell>
-                  <TableCell className="text-sm font-semibold">
-                    {booking.totalAmount.toLocaleString('ko-KR')}원
-                  </TableCell>
-                  <TableCell>
-                    <div className="space-y-1">
-                      <Badge className={statusConfig.className}>
-                        {statusConfig.label}
-                      </Badge>
-                      {failureBucketLabel && (
-                        <Badge className="border-transparent bg-[#F8FAFC] text-[#334155]">
-                          {failureBucketLabel}
-                        </Badge>
-                      )}
-                      <p className="text-xs text-gray-500">
-                        {getPaymentSummary(booking)}
-                      </p>
-                      {diagnosticSummary && (
-                        <p className="max-w-[220px] truncate text-xs font-medium text-[#C62828]">
-                          {diagnosticSummary}
-                        </p>
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-        </TableBody>
-      </Table>
-    </div>
-  );
+  return <div>
+    <Table className="admin-booking-table table-fixed">
+      <TableHeader><TableRow>
+        <TableHead className="w-[46%] md:w-[28%]">예매·공연</TableHead>
+        <TableHead className="hidden w-[20%] md:table-cell">예매자</TableHead>
+        <TableHead className="hidden w-[20%] xl:table-cell">일시·좌석</TableHead>
+        <TableHead className="w-[25%] md:w-[16%]">결제금액</TableHead>
+        <TableHead className="w-[29%] md:w-[22%] xl:w-[16%]">상태</TableHead>
+      </TableRow></TableHeader>
+      <TableBody>
+        {isLoading && Array.from({ length: 5 }, (_, index) => <TableRow key={index}><TableCell colSpan={5}><Skeleton className="h-12 w-full" /></TableCell></TableRow>)}
+        {!isLoading && bookings.length === 0 && <TableRow><TableCell colSpan={5} className="py-12 text-center"><p className="font-semibold">예매 내역이 없습니다</p><p className="mt-2 text-sm text-gray-500">검색 조건을 바꾸거나 전체 예매를 확인해주세요.</p></TableCell></TableRow>}
+        {!isLoading && bookings.map((booking) => {
+          const statusConfig = getFunnelStatusConfig(booking);
+          const failureBucketLabel = getPaymentFailureBucketLabel(booking.paymentFailureBucket);
+          return <TableRow key={booking.id} role="button" tabIndex={0} aria-label={`${booking.userName} ${booking.performanceTitle} 예매 상세 보기`}
+            className="cursor-pointer focus-visible:bg-accent" onClick={() => onRowClick(booking.id)}
+            onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onRowClick(booking.id); } }}>
+            <TableCell className="whitespace-normal">
+              <p className="break-all text-xs font-semibold text-gray-900">{booking.reservationNumber}</p>
+              <p className="mt-1 line-clamp-2 text-xs text-gray-600" title={booking.performanceTitle}>{booking.performanceTitle}</p>
+              <p className="mt-1 text-xs text-gray-600 md:hidden">{booking.userName}</p>
+              <p className="mt-1 text-xs text-gray-500 xl:hidden">{formatDateTime(booking.showDateTime)} · {formatSeatSummary(booking.seats)}</p>
+            </TableCell>
+            <TableCell className="hidden whitespace-normal md:table-cell"><p className="font-medium">{booking.userName}</p><p className="mt-1 truncate text-xs text-gray-500" title={booking.userEmail}>{booking.userEmail}</p><p className="text-xs text-gray-500">{booking.userCountry}</p></TableCell>
+            <TableCell className="hidden whitespace-normal text-xs text-gray-600 xl:table-cell"><p>{formatDateTime(booking.showDateTime)}</p><p className="mt-1">{formatSeatSummary(booking.seats)}</p></TableCell>
+            <TableCell className="whitespace-normal break-words text-xs font-semibold tabular-nums sm:text-sm">{booking.totalAmount.toLocaleString('ko-KR')}원</TableCell>
+            <TableCell className="whitespace-normal"><div className="flex flex-col items-start gap-1">
+              <Badge className={`${statusConfig.className} whitespace-normal text-left`}>{statusConfig.label}</Badge>
+              {failureBucketLabel && <span className="text-xs text-gray-600">{failureBucketLabel}</span>}
+              <p className="hidden text-xs leading-5 text-gray-500 sm:block">{getPaymentSummary(booking)}</p>
+            </div></TableCell>
+          </TableRow>;
+        })}
+      </TableBody>
+    </Table>
+  </div>;
 }

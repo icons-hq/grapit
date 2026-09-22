@@ -15,7 +15,7 @@ import {
 } from '@/hooks/use-admin-security';
 
 const MFA_DEFERRED_COPY =
-  'MFA는 아직 적용되지 않았습니다. 현재는 IP allowlist와 audit monitoring으로 운영합니다.';
+  '추가 본인 인증은 아직 적용되지 않았습니다. 허용된 접속 주소와 관리자 활동 기록으로 접근을 확인합니다.';
 
 export default function AdminSecurityPage() {
   const securityStatus = useAdminSecurityStatus();
@@ -40,7 +40,7 @@ export default function AdminSecurityPage() {
       },
       {
         onSuccess: () => {
-          toast.success('IP allowlist 변경이 감사 로그와 함께 저장되었습니다.');
+          toast.success('접속 허용 주소 변경이 감사 로그와 함께 저장되었습니다.');
           setCidr('');
           setLabel('');
           setSource('db_managed');
@@ -48,7 +48,7 @@ export default function AdminSecurityPage() {
           setReason('');
         },
         onError: () => {
-          toast.error('IP allowlist 변경에 실패했습니다.');
+          toast.error('접속 허용 주소 변경에 실패했습니다.');
         },
       },
     );
@@ -57,7 +57,7 @@ export default function AdminSecurityPage() {
   return (
     <div className="space-y-6" data-required-capability={ADMIN_SECURITY_REQUIRED_CAPABILITY}>
       <div>
-        <h1 className="text-display font-semibold leading-[1.2]">보안 운영</h1>
+        <h1 className="text-display font-semibold leading-[1.2]">접근 보안</h1>
         <p className="mt-2 text-sm text-gray-600">{MFA_DEFERRED_COPY}</p>
       </div>
 
@@ -87,7 +87,7 @@ export default function AdminSecurityPage() {
             id="security-label"
             value={label}
             onChange={(event) => setLabel(event.target.value)}
-            placeholder="Ops VPN"
+            placeholder="예: 사무실 네트워크"
             aria-label="라벨"
           />
         </div>
@@ -101,8 +101,8 @@ export default function AdminSecurityPage() {
             }
             className="flex h-11 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
           >
-            <option value="db_managed">DB managed</option>
-            <option value="temporary_exception">Temporary exception</option>
+            <option value="db_managed">등록된 허용 주소</option>
+            <option value="temporary_exception">임시 허용</option>
           </select>
         </div>
         <div className="space-y-2">
@@ -138,7 +138,7 @@ export default function AdminSecurityPage() {
             }
           >
             <Plus className="h-4 w-4" />
-            allowlist 저장
+            접속 허용 주소 저장
           </Button>
         </div>
       </form>

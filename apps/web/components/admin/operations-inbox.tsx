@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useAdminEventContext } from './admin-event-context';
+import { useAuthStore } from '@/stores/use-auth-store';
 import { AlertTriangle, MessageSquareReply, Search, UserRoundPlus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -44,7 +45,7 @@ interface OperationsInboxProps {
 }
 
 const PRIORITY_OPTIONS: Array<{ value: OperationsInboxPriority | ''; label: string }> = [
-  { value: '', label: '전체 심각도' },
+  { value: '', label: '전체 우선순위' },
   { value: 'escalated', label: '즉시 확인' },
   { value: 'overdue', label: '기한 초과' },
   { value: 'due_soon', label: '마감 임박' },
@@ -52,7 +53,7 @@ const PRIORITY_OPTIONS: Array<{ value: OperationsInboxPriority | ''; label: stri
 ];
 
 const CATEGORY_OPTIONS = [
-  { value: '', label: '전체 카테고리' },
+  { value: '', label: '전체 문의 유형' },
   { value: 'payment_error', label: '결제 오류' },
   { value: 'refund_unprocessed', label: '환불 미처리' },
   { value: 'refund_dispute', label: '환불 분쟁' },
@@ -85,6 +86,7 @@ function formatDateTime(value: string | null): string {
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    timeZone: 'Asia/Seoul',
   }).format(date);
 }
 
@@ -113,6 +115,8 @@ export function OperationsInbox({
   onReassign,
 }: OperationsInboxProps) {
   const context = useAdminEventContext();
+  const currentUser = useAuthStore((state) => state.user);
+  const [includeResolved, setIncludeResolved] = useState(filters?.includeResolved ?? false);
   const [priority, setPriority] = useState<OperationsInboxPriority | ''>(
     filters?.priority ?? '',
   );
@@ -135,6 +139,11 @@ export function OperationsInbox({
     setReason('');
     setAssigneeUserId('');
     setSaveError(null);
+    if (window.innerWidth < 1536) requestAnimationFrame(() => {
+      const detail = document.getElementById('admin-inquiry-detail');
+      detail?.focus({ preventScroll: true });
+      detail?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+    });
   }
 
   async function saveAction(action: () => Promise<unknown> | void, onSuccess: () => void) {
@@ -152,6 +161,7 @@ export function OperationsInbox({
     onFilterChange({
       ...filters,
       priority,
+      includeResolved,
       category: category.trim() || undefined,
     });
   }
@@ -186,7 +196,7 @@ export function OperationsInbox({
         className="grid gap-3 rounded-lg bg-white p-4 shadow-sm md:grid-cols-3"
       >
         <div className="space-y-2">
-          <Label htmlFor="operations-priority-filter">심각도</Label>
+          <Label htmlFor="operations-priority-filter">우선순위</Label>
           <select
             id="operations-priority-filter"
             value={priority}
@@ -203,7 +213,7 @@ export function OperationsInbox({
           </select>
         </div>
         <div className="space-y-2">
-          <Label htmlFor="operations-category-filter">카테고리</Label>
+          <Label htmlFor="operations-category-filter">문의 유형</Label>
           <select
             id="operations-category-filter"
             value={category}
@@ -223,26 +233,27 @@ export function OperationsInbox({
             조회
           </Button>
         </div>
+        <label className="flex items-center gap-2 text-sm text-muted-foreground md:col-span-3"><input type="checkbox" checked={includeResolved} onChange={(event) => setIncludeResolved(event.target.checked)} />완료·보관한 문의 포함</label>
       </form>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
+      <div className={cn("grid min-w-0 gap-4", selectedRow && "2xl:grid-cols-[minmax(0,1fr)_380px]")}>
         <div className="overflow-hidden rounded-lg bg-white shadow-sm">
           {isError && (
             <div
               role="alert"
               className="border-b bg-[#FEF2F2] px-4 py-3 text-sm font-semibold text-[#C62828]"
             >
-              운영 데이터를 불러오지 못했습니다. 새로고침 후 다시 시도하고, 반복되면 접근 권한 또는 API 상태를 확인하세요.
+              문의 목록을 불러오지 못했습니다. 다시 조회해주세요.
             </div>
           )}
           <Table>
             <TableHeader>
               <TableRow className="bg-[#F5F5F7]">
                 <TableHead scope="col">항목</TableHead>
-                <TableHead scope="col">카테고리</TableHead>
+                <TableHead scope="col">문의 유형</TableHead>
                 <TableHead scope="col">요청자</TableHead>
-                <TableHead scope="col">큐/담당</TableHead>
-                <TableHead scope="col">SLA</TableHead>
+                <TableHead scope="col">담당자</TableHead>
+                <TableHead scope="col">답변 기한</TableHead>
                 <TableHead scope="col">상태</TableHead>
               </TableRow>
             </TableHeader>
@@ -263,10 +274,10 @@ export function OperationsInbox({
                 <TableRow>
                   <TableCell colSpan={6} className="py-12 text-center">
                     <p className="text-base font-semibold text-gray-900">
-                      처리할 운영 항목이 없습니다
+                      처리할 문의가 없습니다
                     </p>
                     <p className="mx-auto mt-2 max-w-[520px] text-sm text-gray-600">
-                      미답변 문의, 검토 요청, 환불 분쟁이 생기면 여기에 표시됩니다. 필터를 조정하거나 새 공지 또는 FAQ를 등록하세요.
+                      접수된 문의가 없거나 검색 조건에 맞는 문의가 없습니다. 조회 조건을 바꿔 확인할 수 있습니다.
                     </p>
                   </TableCell>
                 </TableRow>
@@ -279,7 +290,7 @@ export function OperationsInbox({
                     data-testid="operations-inbox-row"
                     role="button"
                     tabIndex={0}
-                    aria-label={`${row.subject} 운영 항목 상세 보기`}
+                    aria-label={`${row.subject} 문의 상세 보기`}
                     className={cn(
                       'min-h-11 cursor-pointer hover:bg-gray-50',
                       selectedRow?.id === row.id && 'bg-[#F3EFFF]',
@@ -293,7 +304,7 @@ export function OperationsInbox({
                       }
                     }}
                   >
-                    <TableCell className="max-w-[240px]">
+                    <TableCell className="max-w-[320px] whitespace-normal">
                       <div className="flex flex-col gap-1">
                         <span className="font-semibold text-gray-900">{row.subject}</span>
                         <span className="text-sm text-gray-600">{row.sourceLabel} · {row.locale}</span>
@@ -312,7 +323,7 @@ export function OperationsInbox({
                     </TableCell>
                     <TableCell className="text-sm text-gray-700">
                       <div className="flex flex-col gap-0.5">
-                        <span>{row.queue}</span>
+
                         <span>{row.assignee.name}</span>
                       </div>
                     </TableCell>
@@ -339,7 +350,8 @@ export function OperationsInbox({
           </Table>
         </div>
 
-        <aside className="rounded-lg bg-white p-4 shadow-sm" aria-label="운영 항목 상세">
+        <aside hidden={!selectedRow} className="rounded-lg bg-white p-5 shadow-sm" aria-label="문의 상세" id="admin-inquiry-detail" tabIndex={-1} style={{ scrollMarginTop: 90 }}>
+          <div className="mb-4 flex justify-end"><Button variant="ghost" size="sm" disabled={isSaving} onClick={() => setSelectedId(null)}>상세 닫기</Button></div>
           {selectedRow ? (
             <div className="space-y-4">
               {saveError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{saveError}</p>}
@@ -352,6 +364,7 @@ export function OperationsInbox({
                 {selectedRow.reservationId && <Link className="mt-3 inline-block text-sm font-semibold text-violet-700 underline"
                   href={context?.href(`/admin/bookings?bookingId=${selectedRow.reservationId}`) ?? `/admin/bookings?bookingId=${selectedRow.reservationId}`}>연결된 예매·결제·티켓 확인 ›</Link>}
               </div>
+              {currentUser && <Button variant="outline" size="sm" disabled={isSaving || selectedRow.assignee.id === currentUser.id} onClick={() => void saveAction(() => onReassign({ id: selectedRow.id, assigneeUserId: currentUser.id, reason: '현재 관리자가 직접 담당' }), () => setAssigneeUserId(''))}>내가 담당하기</Button>}
               <dl className="grid gap-3 text-sm">
                 <div>
                   <dt className="font-semibold text-gray-600">마지막 업데이트</dt>
@@ -401,7 +414,7 @@ export function OperationsInbox({
                   disabled={isSaving}
                   value={reason}
                   onChange={(event) => setReason(event.target.value)}
-                  placeholder="에스컬레이션 또는 담당자 변경 사유"
+                  placeholder="관리자 검토 요청 또는 담당자 변경 사유"
                 />
                 <Input
                   disabled={isSaving}
@@ -427,14 +440,14 @@ export function OperationsInbox({
                     disabled={isSaving || !reason.trim()}
                   >
                     <AlertTriangle className="h-4 w-4" />
-                    에스컬레이션
+                    관리자 검토 요청
                   </Button>
                 </div>
               </div>
             </div>
           ) : (
             <div className="py-10 text-center text-sm text-gray-600">
-              항목을 선택하면 답변, 에스컬레이션, 담당자 변경을 처리할 수 있습니다.
+              항목을 선택하면 답변, 관리자 검토 요청, 담당자 변경을 처리할 수 있습니다.
             </div>
           )}
         </aside>

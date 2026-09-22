@@ -188,15 +188,16 @@ test.describe('Admin user management', () => {
       '/admin/users',
     );
     await expect(page.getByRole('button', { name: '박팬 회원 상세 보기' })).toBeVisible();
+    await page.getByText('회원 통계·전체 명단 내려받기', { exact: true }).click();
     await expect(page.getByText('회원 데이터 통계')).toBeVisible();
     await expect(page.getByText('총 가입자')).toBeVisible();
     await expect(page.getByText('50명', { exact: true })).toBeVisible();
     await expect(page.getByText('parkfan@example.com')).toBeVisible();
-    await expect(page.getByText('예매 컨텍스트')).toBeVisible();
+    await expect(page.getByText('예매 내역')).toBeVisible();
     await expect(page.getByText('걸룰스 팬미팅')).toBeVisible();
-    await expect(page.getByText('CS 컨텍스트')).toBeVisible();
+    await expect(page.getByText('고객 문의 내역')).toBeVisible();
     await expect(page.getByText('좌석 위치 문의')).toBeVisible();
-    await expect(page.getByText('Masked audit 컨텍스트')).toBeVisible();
+    await expect(page.getByText('활동 기록 (개인정보 보호)')).toBeVisible();
     await expect(page.getByText(/masked IP 203\.0\.113\.0/)).toBeVisible();
 
     const searchRequest = page.waitForRequest((request) => {
@@ -236,6 +237,7 @@ test.describe('Admin user management', () => {
 
     await page.goto('/admin/users');
 
+    await page.getByText('회원 통계·전체 명단 내려받기', { exact: true }).click();
     await page.getByRole('button', { name: '회원 원본 CSV 다운로드' }).click();
     await page.getByLabel('회원 CSV 다운로드 사유').fill('회원 운영 데이터 대조');
     await page.getByRole('button', { name: 'CSV 다운로드 확정' }).click();
@@ -254,7 +256,7 @@ test.describe('Admin user management', () => {
 
     await page.goto('/admin/users');
 
-    await expect(page.getByText('계정 생명주기')).toBeVisible();
+    await expect(page.getByText('계정 상태 관리')).toBeVisible();
     const withdrawButton = page.getByRole('button', { name: '탈퇴 처리' });
     await expect(withdrawButton).toBeDisabled();
 
@@ -284,7 +286,7 @@ test.describe('Admin user management', () => {
       confirmed: true,
     });
     await expect(
-      page.getByText('삭제 차단: 예매 이력 2건, 관리자 감사 로그 1건'),
+      page.getByText('삭제 차단: 예매 이력 2건, 관리자 관리자 활동 기록 1건'),
     ).toBeVisible();
   });
 
@@ -460,7 +462,7 @@ async function handleAdminUsersRoute(
         message: '연결된 데이터가 있어 회원을 DB에서 삭제할 수 없습니다',
         blockers: [
           { key: 'reservations', label: '예매 이력', count: 2 },
-          { key: 'admin_audit_logs', label: '관리자 감사 로그', count: 1 },
+          { key: 'admin_audit_logs', label: '관리자 관리자 활동 기록', count: 1 },
         ],
       },
       409,
