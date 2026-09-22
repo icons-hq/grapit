@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
+import { useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, Banknote, RotateCcw, Ticket, TrendingDown, RefreshCw } from 'lucide-react';
 import { resolveAdminCapabilitySnapshot, type DashboardPeriod } from '@grabit/shared';
 import { AdminPageHeader } from '@/components/admin/admin-page-header';
@@ -34,6 +35,8 @@ function PendingInquiries() {
 }
 
 export default function AdminDashboardPage() {
+  const queryClient = useQueryClient();
+  const [refreshing, setRefreshing] = useState(false);
   const [period, setPeriod] = useState<DashboardPeriod>('30d');
   const [analyticsOpen, setAnalyticsOpen] = useState(false);
   const user = useAuthStore((state) => state.user);
@@ -43,10 +46,21 @@ export default function AdminDashboardPage() {
   const shortcuts = SHORTCUT_PATHS.flatMap((href) => ADMIN_NAVIGATION.flatMap((group) => group.items).filter((item) => item.href === href && canAccessAdminItem(item, capabilities)));
   const canReadInquiries = capabilities.superuser || capabilities.capabilities.includes('support.manage');
   const revenueMode = revenue.isLoading ? 'loading' : revenue.isError ? 'error' : !revenue.data?.some((bucket) => bucket.revenue !== 0) ? 'empty' : 'data';
+  async function refreshOverview() {
+    setRefreshing(true);
+    try {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['admin', 'dashboard'] }),
+        ...(canReadInquiries ? [queryClient.invalidateQueries({ queryKey: ['admin', 'operations'] })] : []),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   return <div className="admin-overview flex flex-col gap-6">
     <AdminPageHeader title="운영 현황" description="오늘의 예매를 확인하고 필요한 업무를 시작하세요. 모든 날짜는 한국 시간 기준입니다."
-      actions={<Button variant="outline" disabled={summary.isFetching || revenue.isFetching} onClick={() => { void summary.refetch(); void revenue.refetch(); }}><RefreshCw size={15} />새로고침</Button>} />
+      actions={<Button variant="outline" disabled={refreshing || summary.isFetching || revenue.isFetching} onClick={() => void refreshOverview()}><RefreshCw size={15} />새로고침</Button>} />
     <section className="admin-panel" aria-labelledby="work-heading">
       <h2 id="work-heading" className="admin-panel-title">자주 하는 업무</h2>
       <p className="admin-panel-description">공연 준비부터 고객 응대와 현장 입장까지</p>

@@ -6,7 +6,7 @@ import type { AdminCapability } from '@grabit/shared';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { AdminSidebar } from '../admin-sidebar';
 import { AdminEventContextBar, AdminEventContextProvider, useAdminEventContext } from '../admin-event-context';
-const route = vi.hoisted(() => ({ path: '/admin', query: '', replace: vi.fn(), list: vi.fn(() => ({ data: { data: [] } })), detail: vi.fn(() => ({ data: { title: '공연', showtimes: [{ id: 'showtime-1', dateTime: '2026-09-22T10:00:00Z' }] } })) }));
+const route = vi.hoisted(() => ({ path: '/admin', query: '', replace: vi.fn(), list: vi.fn(() => ({ data: { data: [], total: 401, totalPages: 3 } })), detail: vi.fn(() => ({ data: { id: '00000000-0000-4000-8000-000000000023', title: '공연', showtimes: [{ id: 'showtime-1', dateTime: '2026-09-22T10:00:00Z' }] } })) }));
 vi.mock('next/navigation', () => ({ usePathname: () => route.path, useSearchParams: () => new URLSearchParams(route.query), useRouter: () => ({ replace: route.replace }) }));
 vi.mock('@/hooks/use-admin', () => ({ useAdminPerformances: route.list, useAdminPerformanceDetail: route.detail }));
 function setCapabilities(capabilities: AdminCapability[]) {
@@ -38,5 +38,18 @@ describe('관리자 메뉴와 공연 범위', () => {
     expect(screen.getByRole('link', { name: '예매로' })).toHaveAttribute('href', '/admin/bookings?performanceId=00000000-0000-4000-8000-000000000023&showtimeId=showtime-1');
     await userEvent.setup().selectOptions(screen.getByLabelText('업무 회차 선택'), '');
     expect(route.replace).toHaveBeenCalledWith('/admin/bookings?performanceId=00000000-0000-4000-8000-000000000023', { scroll: false });
+  });
+  it('searches all performances and resets pagination without losing the selected event', async () => {
+    route.path = '/admin/benefits'; route.query = 'performanceId=00000000-0000-4000-8000-000000000023';
+    render(<AdminEventContextProvider><AdminEventContextBar /></AdminEventContextProvider>);
+    const user = userEvent.setup();
+    await user.click(screen.getByText('공연 찾기 · 전체 401개'));
+    await user.click(screen.getByRole('button', { name: '공연 목록 다음 페이지' }));
+    expect(route.list).toHaveBeenLastCalledWith({ page: 2, limit: 200 });
+    await user.type(screen.getByRole('searchbox', { name: '전체 공연 이름 검색' }), '이전 공연');
+    await user.click(screen.getByRole('button', { name: '검색' }));
+    expect(route.list).toHaveBeenLastCalledWith({ page: 1, limit: 200, search: '이전 공연' });
+    expect(screen.getByLabelText('업무 공연 선택')).toHaveValue('00000000-0000-4000-8000-000000000023');
+    expect(route.replace).not.toHaveBeenCalled();
   });
 });

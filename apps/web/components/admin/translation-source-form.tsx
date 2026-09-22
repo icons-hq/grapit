@@ -88,8 +88,6 @@ export function TranslationSourceForm({
           >
             <option value="performance">공연</option>
             <option value="banner">배너</option>
-            <option value="notice">공지</option>
-            <option value="legal">약관·정책</option>
           </select>
         </div>
         <div className="space-y-2">
@@ -117,6 +115,7 @@ export function TranslationSourceForm({
         </div>
       </div>
 
+      {!performance && <p className="text-xs text-muted-foreground">공지·약관·환불 정책·예매 안내는 자동 번역 대상이 아닙니다. 검수된 번역문을 사용해야 합니다.</p>}
       {!performance && <div className="space-y-2">
         <Label htmlFor="translation-source-title">원문 제목</Label>
         <Input

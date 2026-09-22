@@ -172,6 +172,18 @@ export function AdminBookingDashboard() {
   );
   const [detailOpen, setDetailOpen] = useState(Boolean(bookingId));
   const [detailSessionKey, setDetailSessionKey] = useState(0);
+  const eventScope = `${performanceId}:${showtimeId}`;
+  const [filterScope, setFilterScope] = useState(eventScope);
+  if (filterScope !== eventScope) {
+    setFilterScope(eventScope);
+    setSeatTier('all');
+    setFloorKey('all');
+    setSeatQuery('');
+    setDebouncedSeatQuery('');
+    setPage(1);
+    setSelectedBookingId(bookingId);
+    setDetailOpen(Boolean(bookingId));
+  }
   useEffect(() => {
     if (bookingId) { setSelectedBookingId(bookingId); setDetailOpen(true); }
   }, [bookingId]);

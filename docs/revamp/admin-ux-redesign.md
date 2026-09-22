@@ -61,3 +61,9 @@
 4. [고객 문의](../../output/admin-redesign-20260922/15-grabit-after-inquiries-desktop.png): 상황에 맞는 빈 화면과 쉬운 용어.
 5. [판매 시작 점검](../../output/admin-redesign-20260922/14-grabit-after-readiness-desktop.png): 점검 기록과 실제 판매 상태의 차이 명시.
 6. [모바일 예매](../../output/admin-redesign-20260922/20-grabit-after-bookings-mobile.png) · [모바일 메뉴](../../output/admin-redesign-20260922/21-grabit-after-mobile-menu.png): 작은 화면과 과거 용어 검색 검증.
+
+## 배포 전 리뷰 보완
+
+PR #234 검토에서 확인한 항목을 추가 반영했다. 공연·회차를 바꾸면 좌석 등급·층·좌석 검색·페이지를 초기화한다. 홈의 새로고침은 열린 통계와 문의 현황을 함께 갱신하며, 닫힌 통계는 조회하지 않는다. 공통 공연 선택기에 서버 이름 검색과 페이지 이동을 추가해 200개 이후의 공연도 선택할 수 있다. 자동 번역이 금지된 공지·약관은 원문 유형에서 제외하고, 접속 주소는 일부 가린 값임을 명시했다.
+
+보완 후 로컬 Web 118파일/816개 테스트, TypeScript, production build를 통과했다. 차트 E2E는 오래된 예매 데이터나 장식 아이콘에 의존하지 않도록 데이터가 있는 차트와 빈 안내를 별도로 검증한다. 배포·CI의 최종 상태는 PR #234와 해당 Actions 실행에서 확인한다.

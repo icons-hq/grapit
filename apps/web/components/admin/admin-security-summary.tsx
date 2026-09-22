@@ -119,7 +119,7 @@ export function AdminSecuritySummary({
         </div>
         <dl className="mt-4 grid gap-3 text-sm">
           <div className="flex items-center justify-between gap-4">
-            <dt className="text-gray-600">현재 접속 주소</dt>
+            <dt className="text-gray-600">접속 주소 (일부 가림)</dt>
             <dd className="font-semibold text-gray-900">{status.currentRequest.maskedIpAddress}</dd>
           </div>
           <div className="flex items-center justify-between gap-4">

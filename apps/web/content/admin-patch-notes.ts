@@ -29,7 +29,7 @@ const notes = [
     githubUrl: 'https://github.com/icons-hq/grapit/pull/234',
     evidence: [
       '전체 17개 메뉴 및 1440px·390px·320px 실제 화면 검증',
-      '메뉴 권한·공연 선택·번역 원문 변경 회귀와 Web 812개 테스트',
+      '메뉴 권한·공연 선택·새로고침·번역 원문 변경 회귀와 Web 816개 테스트',
       'TypeScript·production build 통과, 결제·환불·권한 정책 보존',
     ],
   },

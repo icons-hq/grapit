@@ -12,7 +12,9 @@ import { useAuthStore } from '@/stores/use-auth-store';
 
 const mocks = vi.hoisted(() => ({
   apiGet: vi.fn(),
+  context: null as null | { performanceId: string; showtimeId: string; bookingId: null; selectPerformance: ReturnType<typeof vi.fn>; selectShowtime: ReturnType<typeof vi.fn> },
 }));
+vi.mock('../admin-event-context', () => ({ useAdminEventContext: () => mocks.context }));
 
 vi.mock('@/lib/api-client', () => ({
   apiClient: {
@@ -47,7 +49,7 @@ function createQueryClient() {
 }
 
 function renderWithClient(ui: ReactNode) {
-  render(
+  return render(
     <QueryClientProvider client={createQueryClient()}>{ui}</QueryClientProvider>,
   );
 }
@@ -308,6 +310,7 @@ describe('AdminBookingDashboard', () => {
   });
 
   beforeEach(() => {
+    mocks.context = null;
     useAuthStore.setState({
       accessToken: 'admin-token',
       user: {
@@ -459,6 +462,35 @@ describe('AdminBookingDashboard', () => {
         String(url).includes('/api/v1/admin/performances?page=1&limit=200'),
       ),
     ).toBe(true);
+  });
+
+  it('clears event-dependent filters and pagination when the shared event selection changes', async () => {
+    mocks.context = { performanceId: '11111111-1111-4111-8111-000000000301', showtimeId: '', bookingId: null, selectPerformance: vi.fn(), selectShowtime: vi.fn() };
+    const get = mocks.apiGet.getMockImplementation()!;
+    mocks.apiGet.mockImplementation((url: string) => url.includes('/admin/bookings?') ? Promise.resolve(bookingsResponse({ total: 41 })) : get(url));
+    const client = createQueryClient();
+    const { rerender } = render(<QueryClientProvider client={client}><AdminBookingDashboard /></QueryClientProvider>);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByLabelText('좌석 등급')).not.toBeDisabled());
+    await selectOption(user, '좌석 등급', 'VIP');
+    await selectOption(user, '층', '1층');
+    await user.type(screen.getByPlaceholderText('좌석만 검색'), 'A-10');
+    await waitFor(() => expect(String(mocks.apiGet.mock.calls.at(-1)?.[0])).toContain('seatQuery=A-10'));
+    await user.click(screen.getByRole('button', { name: '다음' }));
+    await waitFor(() => expect(String(mocks.apiGet.mock.calls.at(-1)?.[0])).toContain('page=2'));
+    mocks.apiGet.mockClear();
+    mocks.context = { ...mocks.context, showtimeId: '11111111-1111-4111-8111-000000000302' };
+    rerender(<QueryClientProvider client={client}><AdminBookingDashboard /></QueryClientProvider>);
+    await waitFor(() => {
+      const requests = mocks.apiGet.mock.calls.map(([url]) => String(url)).filter((url) => url.includes('/admin/bookings?'));
+      expect(requests.length).toBeGreaterThan(0);
+      for (const url of requests) {
+        expect(url).toContain('showtimeId=11111111-1111-4111-8111-000000000302');
+        expect(url).toContain('page=1');
+        expect(url).not.toMatch(/seatTier=|floorKey=|seatQuery=/);
+      }
+    });
+    expect(screen.getByPlaceholderText('좌석만 검색')).toHaveValue('');
   });
 
   it('passes selected performance and showtime context to the reservation export panel', async () => {

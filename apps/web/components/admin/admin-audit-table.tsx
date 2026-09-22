@@ -194,7 +194,7 @@ export function AdminAuditTable({
               <TableHead className="text-sm font-semibold text-gray-600">대상</TableHead>
               <TableHead className="text-sm font-semibold text-gray-600">처리 결과</TableHead>
               <TableHead className="text-sm font-semibold text-gray-600">작업 시각</TableHead>
-              <TableHead className="text-sm font-semibold text-gray-600">현재 접속 주소</TableHead>
+              <TableHead className="text-sm font-semibold text-gray-600">접속 주소 (일부 가림)</TableHead>
               <TableHead className="text-sm font-semibold text-gray-600">사유</TableHead>
               <TableHead className="text-sm font-semibold text-gray-600">변경 내역</TableHead>
             </TableRow>

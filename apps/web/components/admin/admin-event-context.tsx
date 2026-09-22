@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, type ReactNode } from 'react';
+import { createContext, useContext, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { resolveAdminCapabilitySnapshot, SEAT_OPERATION_CAPABILITIES, type AdminCapability } from '@grabit/shared';
@@ -75,7 +75,10 @@ function EventContextControls() {
   const user = useAuthStore((state) => state.user);
   const snapshot = resolveAdminCapabilitySnapshot(user);
   const can = (capability: AdminCapability) => snapshot.superuser || snapshot.capabilities.includes(capability);
-  const list = useAdminPerformances({ page: 1, limit: 200 });
+  const [searchInput, setSearchInput] = useState('');
+  const [search, setSearch] = useState('');
+  const [page, setPage] = useState(1);
+  const list = useAdminPerformances({ page, limit: 200, ...(search ? { search } : {}) });
   const detail = useAdminPerformanceDetail(context?.performanceId ?? '');
   if (!context || !/^\/admin\/(performances|bookings|benefits|operations|seat-operations|field-monitor|settlement|translations)(\/|$)/.test(pathname)
     || pathname.endsWith('/new')) return null;
@@ -107,6 +110,20 @@ function EventContextControls() {
         </select>
       </label>
     </div>
+    <details className="text-sm">
+      <summary className="cursor-pointer text-muted-foreground">공연 찾기{list.data?.total ? ` · 전체 ${list.data.total.toLocaleString('ko-KR')}개` : ''}</summary>
+      <form className="mt-3 flex flex-wrap items-center gap-2" onSubmit={(event) => { event.preventDefault(); setSearch(searchInput.trim()); setPage(1); }}>
+        <input type="search" aria-label="전체 공연 이름 검색" placeholder="공연 이름으로 검색" value={searchInput} onChange={(event) => setSearchInput(event.target.value)} className="h-10 min-w-0 flex-1 rounded-md border border-input bg-white px-3" />
+        <button type="submit" className="h-10 rounded-md border border-input px-3">검색</button>
+        {search && <button type="button" className="h-10 px-2 underline" onClick={() => { setSearchInput(''); setSearch(''); setPage(1); }}>검색 초기화</button>}
+      </form>
+      {!list.isLoading && !list.isError && list.data?.total === 0 && <p role="status" className="mt-2 text-muted-foreground">검색한 공연이 없습니다. 다른 이름으로 검색해주세요.</p>}
+      {(list.data?.totalPages ?? 1) > 1 && <div className="mt-3 flex items-center gap-3">
+        <button type="button" aria-label="공연 목록 이전 페이지" disabled={page <= 1 || list.isFetching} onClick={() => setPage((current) => current - 1)} className="disabled:opacity-40">이전</button>
+        <span>{page} / {list.data?.totalPages}</span>
+        <button type="button" aria-label="공연 목록 다음 페이지" disabled={page >= (list.data?.totalPages ?? 1) || list.isFetching} onClick={() => setPage((current) => current + 1)} className="disabled:opacity-40">다음</button>
+      </div>}
+    </details>
     {(list.isError || detail.isError) && <button className="text-sm underline" onClick={() => { void list.refetch(); if (context.performanceId) void detail.refetch(); }}>선택 목록 다시 불러오기</button>}
     {context.invalidShowtime && <p role="alert" className="text-sm text-amber-800">이 공연에 속하지 않는 회차입니다. 위에서 회차를 다시 선택해주세요.</p>}
     {context.performanceId && <nav aria-label="공연 업무" className="flex flex-wrap gap-x-5 gap-y-2">

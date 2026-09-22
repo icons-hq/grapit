@@ -143,6 +143,9 @@ describe('admin translation review workflow', () => {
     );
 
     await user.type(screen.getByLabelText('콘텐츠 관리 번호'), 'perf-1');
+    expect(screen.queryByRole('option', { name: '공지' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: '약관·정책' })).not.toBeInTheDocument();
+    expect(screen.getByText(/검수된 번역문을 사용해야 합니다/)).toBeInTheDocument();
     await user.type(screen.getByLabelText('원문 제목'), '걸스 룰즈 팬미팅');
     await user.type(screen.getByLabelText('한국어 원문'), '한국어 원문입니다.');
     await user.click(screen.getByRole('button', { name: '원문 저장' }));
