@@ -10,6 +10,20 @@ import type { Banner, SupportedLocale } from '@grabit/shared';
 
 interface BannerCarouselProps { banners: Banner[]; isLoading?: boolean; locale?: SupportedLocale }
 
+function localizedBannerHref(link: string | null, locale: SupportedLocale) {
+  if (!link) return link;
+  try {
+    const url = new URL(link, 'https://heygrabit.com');
+    const isSitePath = link.startsWith('/') && !link.startsWith('//');
+    const isCanonicalUrl = /^https:\/\//i.test(link)
+      && ['https://heygrabit.com', 'https://www.heygrabit.com'].includes(url.origin);
+    if (!isSitePath && !isCanonicalUrl) return link;
+    return `${getLocalizedPathname(url.pathname, locale)}${url.search}${url.hash}`;
+  } catch {
+    return link;
+  }
+}
+
 export function BannerCarousel({ banners, isLoading = false, locale = 'ko' }: BannerCarouselProps) {
   const [activeIndex, setActiveIndex] = useState(0);
   const copy = getVisibleCopy(locale).home;
@@ -17,8 +31,7 @@ export function BannerCarousel({ banners, isLoading = false, locale = 'ko' }: Ba
   if (!banners.length) return null;
   const index = activeIndex % banners.length;
   const banner = banners[index]!;
-  const href = banner.linkUrl?.startsWith('/') && !banner.linkUrl.startsWith('//')
-    ? getLocalizedPathname(banner.linkUrl, locale) : banner.linkUrl;
+  const href = localizedBannerHref(banner.linkUrl, locale);
   const artwork = <Image src={banner.imageUrl} alt={copy.promotionAlt} fill className="object-contain" sizes="(min-width:1280px) 1200px, 100vw" priority={index === 0} />;
 
   return <section className="relative overflow-hidden rounded-xl bg-muted" aria-label={copy.promotionAlt}>
