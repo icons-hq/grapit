@@ -1,13 +1,12 @@
 'use client';
 
-import type {
-  FieldArrayWithId,
-  UseFormRegister,
-  UseFieldArrayAppend,
-  UseFieldArrayRemove,
+import { useState } from 'react';
+import { useController, type Control, type FieldArrayWithId,
+  type UseFieldArrayAppend,
+  type UseFieldArrayRemove,
 } from 'react-hook-form';
 import { Plus, Trash2 } from 'lucide-react';
-import type { CreatePerformanceFormInput } from '@grabit/shared';
+import type { CreatePerformanceFormInput, CreatePerformanceInput } from '@grabit/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { formatAdminKstDateTime } from '@/lib/admin-datetime';
@@ -35,7 +34,7 @@ interface ShowtimeManagerProps {
   fields: FieldArrayWithId<CreatePerformanceFormInput, 'showtimes', 'id'>[];
   append: UseFieldArrayAppend<CreatePerformanceFormInput, 'showtimes'>;
   remove: UseFieldArrayRemove;
-  register: UseFormRegister<CreatePerformanceFormInput>;
+  control: Control<CreatePerformanceFormInput, unknown, CreatePerformanceInput>;
 }
 
 function parseDatePart(dateTime: string): string {
@@ -52,7 +51,7 @@ export function ShowtimeManager({
   fields,
   append,
   remove,
-  register,
+  control,
 }: ShowtimeManagerProps) {
   return (
     <div>
@@ -76,8 +75,7 @@ export function ShowtimeManager({
               <ShowtimeRow
                 key={field.id}
                 index={index}
-                dateTime={field.dateTime}
-                register={register}
+                control={control}
                 onRemove={() => remove(index)}
               />
             ))}
@@ -99,77 +97,49 @@ export function ShowtimeManager({
 
 function ShowtimeRow({
   index,
-  dateTime,
-  register,
+  control,
   onRemove,
 }: {
   index: number;
-  dateTime: string;
-  register: UseFormRegister<CreatePerformanceFormInput>;
+  control: Control<CreatePerformanceFormInput, unknown, CreatePerformanceInput>;
   onRemove: () => void;
 }) {
-  // Hidden input holds the actual dateTime value for react-hook-form
-  const showtimeIdField = register(`showtimes.${index}.showtimeId`);
-  const { onChange: rhfOnChange, ...rest } = register(
-    `showtimes.${index}.dateTime`,
-  );
-
-  function handleDateChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const date = e.target.value;
-    const timeEl = document.getElementById(
-      `showtime-time-${index}`,
-    ) as HTMLInputElement | null;
-    const time = timeEl?.value || '19:00';
-    rhfOnChange({
-      target: {
-        name: `showtimes.${index}.dateTime`,
-        value: date ? `${date}T${time}:00` : '',
-      },
-      type: 'change',
-    });
-  }
-
-  function handleTimeChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const time = e.target.value;
-    const dateEl = document.getElementById(
-      `showtime-date-${index}`,
-    ) as HTMLInputElement | null;
-    const date = dateEl?.value || '';
-    if (date) {
-      rhfOnChange({
-        target: {
-          name: `showtimes.${index}.dateTime`,
-          value: `${date}T${time}:00`,
-        },
-        type: 'change',
-      });
-    }
-  }
+  const { field } = useController({ control, name: `showtimes.${index}.dateTime` });
+  const [pendingTime, setPendingTime] = useState('19:00');
+  const date = parseDatePart(field.value ?? '');
+  const time = field.value ? parseTimePart(field.value) : pendingTime;
 
   return (
     <TableRow>
       <TableCell>
         <Input
           id={`showtime-date-${index}`}
+          aria-label={`회차 ${index + 1} 날짜`}
           type="date"
-          defaultValue={parseDatePart(dateTime)}
-          onChange={handleDateChange}
+          value={date}
+          ref={field.ref}
+          onBlur={field.onBlur}
+          onChange={(event) => field.onChange(event.target.value ? `${event.target.value}T${time}:00` : '')}
         />
       </TableCell>
       <TableCell>
         <Input
           id={`showtime-time-${index}`}
+          aria-label={`회차 ${index + 1} 시간`}
           type="time"
-          defaultValue={parseTimePart(dateTime)}
-          onChange={handleTimeChange}
+          value={time}
+          onBlur={field.onBlur}
+          onChange={(event) => {
+            setPendingTime(event.target.value);
+            if (date) field.onChange(event.target.value ? `${date}T${event.target.value}:00` : '');
+          }}
         />
       </TableCell>
       <TableCell>
-        <input type="hidden" {...showtimeIdField} />
-        <input type="hidden" {...rest} onChange={rhfOnChange} />
         <AlertDialog>
           <AlertDialogTrigger asChild>
             <Button
+              type="button"
               variant="ghost"
               size="icon"
               className="text-gray-400 hover:text-red-600"

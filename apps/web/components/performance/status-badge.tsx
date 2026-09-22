@@ -71,7 +71,7 @@ export function StatusBadge({
         STATUS_STYLES[status],
         className,
       )}
-      aria-label={`${locale === 'ko' ? '상태' : 'Status'}: ${label}`}
+      aria-label={`${{ ko: '상태', en: 'Status', th: 'สถานะ', 'zh-CN': '状态' }[locale]}: ${label}`}
     >
       {label}
     </Badge>

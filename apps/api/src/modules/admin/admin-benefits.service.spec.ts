@@ -241,7 +241,7 @@ describe('AdminBenefitsService', () => {
     );
 
     expect(tx.execute).toHaveBeenCalledTimes(1);
-    expect(inspect(tx.execute.mock.calls[0]?.[0], { depth: 10 })).toContain('FOR UPDATE');
+    expect(inspect(tx.execute.mock.calls[0]?.[0], { depth: 10 })).toContain('FOR NO KEY UPDATE');
     expect(tx.execute.mock.invocationCallOrder[0])
       .toBeLessThan(tx.insert.mock.invocationCallOrder[0]!);
     expect(tx.execute.mock.invocationCallOrder[0])

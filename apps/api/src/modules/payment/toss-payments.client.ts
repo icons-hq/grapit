@@ -7,6 +7,7 @@ export interface TossPaymentResponse {
   method?: string | null;
   isPartialCancelable?: boolean;
   totalAmount: number;
+  currency?: string;
   balanceAmount?: number;
   status: string;
   approvedAt?: string | null;
@@ -36,6 +37,8 @@ export interface TossSettlementQueryOptions extends TossPaymentRequestOptions {
 
 export interface TossSettlementRow {
   paymentKey: string;
+  transactionKey?: string;
+  currency?: string;
   amount: number;
   fee: number;
   supplyAmount: number;
@@ -306,6 +309,7 @@ export class TossPaymentsClient {
 
       const response = await fetch(`${this.baseUrl}/settlements?${params.toString()}`, {
         method: 'GET',
+        signal: AbortSignal.timeout(65_000),
         headers: {
           Authorization: this.getAuthHeader(options.secretKeyScope),
         },
@@ -317,7 +321,8 @@ export class TossPaymentsClient {
         throw this.toPaymentError(data, '정산 내역 조회에 실패했습니다');
       }
 
-      const pageRows = Array.isArray(data) ? (data as TossSettlementRow[]) : [];
+      if (!Array.isArray(data)) throw new TossPaymentError('INVALID_SETTLEMENT_RESPONSE', '정산 응답 형식을 확인할 수 없습니다');
+      const pageRows = data as TossSettlementRow[];
       rows.push(...pageRows);
 
       if (pageRows.length < TOSS_SETTLEMENT_PAGE_SIZE) {

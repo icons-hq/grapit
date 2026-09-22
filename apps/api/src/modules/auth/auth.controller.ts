@@ -171,7 +171,9 @@ export class AuthController {
     @Body(new ZodValidationPipe(resetPasswordRequestBodySchema))
     dto: ResetPasswordRequestBody,
   ) {
-    await this.authService.requestPasswordReset(dto.email, dto.frontendOrigin);
+    await this.authService.requestPasswordReset(dto.email, dto.frontendOrigin, {
+      locale: dto.locale, returnTo: dto.returnTo,
+    });
     return { message: '비밀번호 재설정 링크를 발송했습니다' };
   }
 
@@ -204,7 +206,8 @@ export class AuthController {
       dto.frontendOrigin,
     );
     return {
-      message: '인증번호를 이메일로 발송했습니다',
+      message: result.emailDeliveryFailed ? '인증 메일 발송에 실패했습니다. 다시 요청해주세요.' : '인증번호를 이메일로 발송했습니다',
+      ...(result.emailDeliveryFailed ? { emailDeliveryFailed: true } : {}),
       expiresAt: result.expiresAt,
     };
   }
@@ -225,7 +228,8 @@ export class AuthController {
       dto.frontendOrigin,
     );
     return {
-      message: '인증번호를 다시 보냈습니다',
+      message: result.emailDeliveryFailed ? '인증 메일 발송에 실패했습니다. 다시 요청해주세요.' : '인증번호를 다시 보냈습니다',
+      ...(result.emailDeliveryFailed ? { emailDeliveryFailed: true } : {}),
       expiresAt: result.expiresAt,
     };
   }
@@ -260,7 +264,8 @@ export class AuthController {
       dto.locale,
     );
     return {
-      message: '인증번호를 이메일로 발송했습니다',
+      message: result.emailDeliveryFailed ? '인증 메일 발송에 실패했습니다. 다시 요청해주세요.' : '인증번호를 이메일로 발송했습니다',
+      ...(result.emailDeliveryFailed ? { emailDeliveryFailed: true } : {}),
       expiresAt: result.expiresAt,
     };
   }

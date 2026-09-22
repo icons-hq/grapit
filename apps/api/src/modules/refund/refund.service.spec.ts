@@ -444,7 +444,7 @@ describe('RefundService', () => {
     try {
       const service = new RefundService(
         {} as never,
-        { cancelPayment: vi.fn() } as never,
+        { cancelPayment: vi.fn(), queryPayment: vi.fn().mockResolvedValue({ totalAmount: 204000, balanceAmount: 204000, isPartialCancelable: true }) } as never,
         { finalizeFullPaymentCancellation: vi.fn() } as never,
         { isAvailable: false, send: vi.fn() } as never,
       );
@@ -512,7 +512,7 @@ describe('RefundService', () => {
 
     const service = new RefundService(
       {} as never,
-      { cancelPayment: vi.fn() } as never,
+      { cancelPayment: vi.fn(), queryPayment: vi.fn().mockResolvedValue({ totalAmount: 204000, balanceAmount: 204000, isPartialCancelable: true }) } as never,
       { finalizeFullPaymentCancellation: vi.fn() } as never,
       { isAvailable: false, send: vi.fn() } as never,
     );
@@ -601,7 +601,7 @@ describe('RefundService', () => {
       ensureTicketItemsAvailableForQuote: backfillSpy,
     });
     vi.spyOn(service as never, 'loadReservationContext').mockResolvedValue(legacyContext as never);
-    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(createRefund() as never);
+    vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(createRefund({ status: 'completed' }) as never);
 
     await service.requestRefund('reservation-1', 'user-1', '단순 변심');
 
@@ -670,7 +670,7 @@ describe('RefundService', () => {
 
     const service = new RefundService(
       {} as never,
-      { cancelPayment: vi.fn() } as never,
+      { cancelPayment: vi.fn(), queryPayment: vi.fn().mockResolvedValue({ totalAmount: 204000, balanceAmount: 134000, isPartialCancelable: true }) } as never,
       { finalizeFullPaymentCancellation: vi.fn() } as never,
       { isAvailable: false, send: vi.fn() } as never,
     );
@@ -681,7 +681,7 @@ describe('RefundService', () => {
         context.ticketItems[0]!,
         {
           ...context.ticketItems[1]!,
-          status: 'cancelled',
+          status: 'cancelled', refundableAmount: 70000,
         },
       ],
     };

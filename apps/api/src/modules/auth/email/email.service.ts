@@ -2,7 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Resend } from 'resend';
 import * as Sentry from '@sentry/nestjs';
-import { PasswordResetEmail } from './templates/password-reset.js';
+import { PasswordResetEmail, getPasswordResetCopy } from './templates/password-reset.js';
+import type { SupportedLocale } from '@grabit/shared';
 import { EmailVerificationEmail } from './templates/email-verification.js';
 import { emailVerificationCopy, type EmailVerificationLocale } from './templates/email-verification.copy.js';
 
@@ -84,7 +85,7 @@ export class EmailService {
     }
   }
 
-  async sendPasswordResetEmail(to: string, resetLink: string): Promise<SendEmailResult> {
+  async sendPasswordResetEmail(to: string, resetLink: string, locale: SupportedLocale = 'ko'): Promise<SendEmailResult> {
     if (this.resend === null) {
       this.logger.log(`DEV EMAIL: password reset link for ${to}: ${resetLink}`);
       return { success: true };
@@ -98,8 +99,8 @@ export class EmailService {
       const { data, error } = await this.resend.emails.send({
         from: this.from,
         to,
-        subject: '[Grabit] 비밀번호 재설정',
-        react: PasswordResetEmail({ resetLink }),
+        subject: getPasswordResetCopy(locale).subject,
+        react: PasswordResetEmail({ resetLink, locale }),
       });
 
       if (!error) {

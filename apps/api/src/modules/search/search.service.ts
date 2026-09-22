@@ -7,7 +7,8 @@ import {
   type SearchQuery,
 } from '@grabit/shared';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
-import { performances, venues } from '../../database/schema/index.js';
+import { publicCatalogCardSelection, mapPublicCatalogCard } from '../performance/catalog-card.js';
+import { performances, venues, bookingPolicies } from '../../database/schema/index.js';
 import {
   overlayReviewedCardTranslations,
   resolvePerformanceTranslationLocale,
@@ -70,18 +71,10 @@ export class SearchService {
 
     const [data, countResult] = await Promise.all([
       this.db
-        .select({
-          id: performances.id,
-          title: performances.title,
-          genre: performances.genre,
-          posterUrl: performances.posterUrl,
-          status: performances.status,
-          startDate: performances.startDate,
-          endDate: performances.endDate,
-          venueName: venues.name,
-        })
+        .select(publicCatalogCardSelection)
         .from(performances)
         .leftJoin(venues, eq(performances.venueId, venues.id))
+        .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, performances.id))
         .where(whereClause)
         .orderBy(
           desc(sql`ts_rank(search_vector, plainto_tsquery('simple', ${q}))`),
@@ -96,16 +89,7 @@ export class SearchService {
 
     const total = countResult[0]?.count ?? 0;
 
-    const cards: PerformanceCardData[] = data.map((row) => ({
-      id: row.id,
-      title: row.title,
-      genre: row.genre,
-      posterUrl: row.posterUrl,
-      status: row.status,
-      startDate: row.startDate?.toISOString() ?? '',
-      endDate: row.endDate?.toISOString() ?? '',
-      venueName: row.venueName ?? null,
-    }));
+    const cards: PerformanceCardData[] = data.map(mapPublicCatalogCard);
 
     return {
       data: await overlayReviewedCardTranslations(this.db, cards, locale),

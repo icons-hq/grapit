@@ -3,7 +3,7 @@
 import { useRef } from 'react';
 import { useForm } from 'react-hook-form';
 import { useLocale } from 'next-intl';
-import { zodResolver } from '@hookform/resolvers/zod';
+import { authFormResolver } from '@/lib/auth-validation';
 import {
   registerStep1Schema,
   type EmailAvailabilityResponse,
@@ -36,7 +36,7 @@ export function SignupStep1({ onComplete, defaultValues }: SignupStep1Props) {
     available: boolean;
   } | null>(null);
   const form = useForm<RegisterStep1Input>({
-    resolver: zodResolver(registerStep1Schema),
+    resolver: authFormResolver(registerStep1Schema, authCopy.locale),
     defaultValues: defaultValues ?? {
       email: '',
       password: '',
@@ -151,7 +151,7 @@ export function SignupStep1({ onComplete, defaultValues }: SignupStep1Props) {
                 {authCopy.form.password} <span className="text-error">*</span>
               </FormLabel>
               <FormControl>
-                <PasswordInput
+                <PasswordInput showLabel={authCopy.navigation.showPassword} hideLabel={authCopy.navigation.hidePassword}
                   placeholder={authCopy.form.passwordPlaceholder}
                   autoComplete="new-password"
                   {...field}
@@ -172,7 +172,7 @@ export function SignupStep1({ onComplete, defaultValues }: SignupStep1Props) {
                 {authCopy.form.passwordConfirm} <span className="text-error">*</span>
               </FormLabel>
               <FormControl>
-                <PasswordInput
+                <PasswordInput showLabel={authCopy.navigation.showPassword} hideLabel={authCopy.navigation.hidePassword}
                   placeholder={authCopy.form.passwordConfirmPlaceholder}
                   autoComplete="new-password"
                   {...field}

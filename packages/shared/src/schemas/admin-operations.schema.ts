@@ -7,6 +7,7 @@ export const ADMIN_CAPABILITIES = [
   'support.manage',
   'support.escalate',
   'reservations.export_raw',
+  'reservations.read',
   'refund.admin_refund',
   'seat.disable',
   'seat.reactivate',
@@ -17,6 +18,7 @@ export const ADMIN_CAPABILITIES = [
   'field.scan.verify',
   'field.scan.consume',
   'field.scan.sync',
+  'field.benefits.redeem',
   'settlement.export',
   'benefits.manage',
   'benefits.export',
@@ -34,8 +36,11 @@ export const ADMIN_CAPABILITY_BUNDLES = [
 type AdminCapabilityValue = (typeof ADMIN_CAPABILITIES)[number];
 type AdminCapabilityBundleValue = (typeof ADMIN_CAPABILITY_BUNDLES)[number];
 
+export const SEAT_OPERATION_CAPABILITIES = ['seat.disable', 'seat.reactivate', 'seat.manual_open'] as const satisfies readonly AdminCapabilityValue[];
+
 export const ADMIN_CAPABILITY_BUNDLE_CAPABILITIES = {
   operator: [
+    'reservations.read',
     'event.write',
     'support.manage',
     'support.escalate',
@@ -45,18 +50,21 @@ export const ADMIN_CAPABILITY_BUNDLE_CAPABILITIES = {
     'banner.manage',
   ],
   reviewer: [
+    'reservations.read',
     'event.write',
     'support.manage',
     'support.escalate',
     'audit.read',
   ],
   approver: [
+    'reservations.read',
     'event.write',
     'event.publish',
     'banner.manage',
     'audit.read',
   ],
   finance: [
+    'reservations.read',
     'reservations.export_raw',
     'settlement.export',
     'audit.read',
@@ -65,6 +73,7 @@ export const ADMIN_CAPABILITY_BUNDLE_CAPABILITIES = {
     'field.scan.verify',
     'field.scan.consume',
     'field.scan.sync',
+    'field.benefits.redeem',
   ],
   admin: ADMIN_CAPABILITIES,
 } as const satisfies Record<

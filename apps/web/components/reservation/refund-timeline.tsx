@@ -40,7 +40,8 @@ function formatDateTime(dateString: string | null | undefined, locale: string): 
     weekday: 'short',
     hour: '2-digit',
     minute: '2-digit',
-  }).format(date);
+    timeZone: 'Asia/Seoul',
+  }).format(date) + ' KST';
 }
 
 function getTimestamp(
@@ -143,7 +144,7 @@ export function RefundTimeline({
 }) {
   const locale = getClientLocale();
   const copy = getVisibleCopy(locale).reservation.refund;
-  const timelineSteps = getTimelineSteps(copy);
+  const timelineSteps = getTimelineSteps(copy).filter((step) => step.state !== 'FAILED' || timeline.currentState === 'FAILED');
   const expectedDepositAt = formatDateTime(timeline.expectedDepositAt, locale);
   const releaseAt = formatDateTime(cancelledSeatHold?.releaseAt, locale);
   const currentLabel =

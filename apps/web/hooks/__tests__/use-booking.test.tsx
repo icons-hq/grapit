@@ -1058,6 +1058,7 @@ describe('use-booking payment mutations', () => {
       amount: 72000,
       customerEmail: 'fan@example.com',
       customerName: '해외 팬',
+      customerCountry: 'SG',
       customerMobilePhone: '821012345678',
       orderName: '팬미팅 티켓 2매',
       locale: 'en',
@@ -1070,6 +1071,7 @@ describe('use-booking payment mutations', () => {
     const products = request.foreignEasyPay?.products ?? [];
 
     expect(request.windowTarget).toBe('self');
+    expect(request.foreignEasyPay?.country).toBe('SG');
     expect(products).toHaveLength(3);
     expect(products.map((product) => product.name)).toEqual([
       'VIP row A seat 1',
@@ -1108,6 +1110,7 @@ describe('use-booking payment mutations', () => {
       amount: 72000,
       customerEmail: 'fan@example.com',
       customerName: '해외 팬',
+      customerCountry: 'SG',
       orderName: '팬미팅 티켓 2매',
       locale: 'en',
       selectedSeats: [
@@ -1147,6 +1150,7 @@ describe('use-booking payment mutations', () => {
       amount: 50000,
       customerEmail: 'fan@example.com',
       customerName: '해외 팬',
+      customerCountry: 'SG',
       customerMobilePhone: '+82-10-1234-5678',
       orderName: '팬미팅 티켓 1매',
       locale: 'en',
@@ -1186,6 +1190,7 @@ describe('use-booking payment mutations', () => {
       amount: 72000,
       customerEmail: 'fan@example.com',
       customerName: '해외 팬',
+      customerCountry: 'SG',
       customerMobilePhone: '010-0000-0000',
       orderName: '팬미팅 티켓 1매',
       locale: 'en',
@@ -1255,6 +1260,7 @@ describe('use-booking payment mutations', () => {
       amount: 50000,
       customerEmail: 'fan@example.com',
       customerName: '해외 팬',
+      customerCountry: 'SG',
       customerMobilePhone: '821012345678',
       orderName: '팬미팅 티켓 1매',
       locale: 'th',
@@ -1264,7 +1270,7 @@ describe('use-booking payment mutations', () => {
       pendingUrl: 'https://grabit.test/pending',
       windowTarget: 'self',
       foreignEasyPay: {
-        country: 'TH',
+        country: 'SG',
       },
     });
 
@@ -1282,6 +1288,7 @@ describe('use-booking payment mutations', () => {
       amount: 50000,
       customerEmail: 'fan@example.com',
       customerName: '해외 팬',
+      customerCountry: 'SG',
       customerMobilePhone: '821012345678',
       orderName: '팬미팅 티켓 1매',
       locale: 'en',
@@ -1388,5 +1395,12 @@ describe('pending reservation cleanup errors', () => {
     expect(putMock).toHaveBeenCalledWith(
       '/api/v1/reservations/old-reservation/cancel-pending', undefined, options,
     );
+  });
+});
+
+it('keeps a bank-transfer widget selection distinct from a card checkout', () => {
+  expect(resolvePaymentMethodSelection('TRANSFER')).toMatchObject({
+    paymentMethod: { method: 'TRANSFER', provider: 'CARD', currency: 'KRW' },
+    requiresOverseasDisclaimer: false,
   });
 });

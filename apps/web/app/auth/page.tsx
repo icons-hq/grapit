@@ -9,7 +9,7 @@ import { LoginForm } from '@/components/auth/login-form';
 import { SignupForm } from '@/components/auth/signup-form';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { getAuthLaunchCopy } from '@/components/auth/auth-launch-copy';
-import { resolveSafeReturnToFromSearch } from '@/lib/auth-return';
+import { buildAuthRoute, resolveSafeReturnToFromSearch } from '@/lib/auth-return';
 
 export default function AuthPage() {
   const router = useRouter();
@@ -20,16 +20,12 @@ export default function AuthPage() {
   // Redirect if already authenticated
   useEffect(() => {
     if (isInitialized && accessToken) {
+      const returnTo = typeof window === 'undefined' ? null : resolveSafeReturnToFromSearch(window.location.search);
       if (user?.isEmailVerified === false) {
-        const pathname = getLocalizedPathname('/auth/verify-email', authCopy.locale);
-        router.push(`${pathname}?email=${encodeURIComponent(user.email)}`);
+        router.push(buildAuthRoute('/auth/verify-email', authCopy.locale, { email: user.email, returnTo }));
         return;
       }
 
-      const returnTo =
-        typeof window === 'undefined'
-          ? null
-          : resolveSafeReturnToFromSearch(window.location.search);
       router.push(returnTo ?? getLocalizedPathname('/', authCopy.locale));
     }
   }, [isInitialized, accessToken, user, router, authCopy.locale]);

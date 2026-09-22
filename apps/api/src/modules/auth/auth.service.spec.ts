@@ -293,6 +293,25 @@ describe('AuthService', () => {
       expect(isArgon2).toBe(true);
     }, 15000);
 
+    it('saves the signup language independently of the account country', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue(null);
+      mockUserRepo.create.mockResolvedValue({ ...mockUser, email: mockRegisterDto.email });
+      await authService.register({ ...mockRegisterDto, locale: 'th', country: 'KR' });
+      expect(mockUserRepo.create).toHaveBeenCalledWith(expect.objectContaining({ country: 'KR', preferredLocale: 'th' }), mockDb);
+    });
+
+    it.each(['rejected', 'thrown'])('keeps a created account recoverable when verification delivery is %s', async (failure) => {
+      mockUserRepo.findByEmail.mockResolvedValue(null);
+      mockUserRepo.create.mockResolvedValue({ ...mockUser, email: mockRegisterDto.email });
+      if (failure === 'rejected') mockEmailService.sendEmailVerificationEmail.mockResolvedValue({ success: false, error: 'provider unavailable' });
+      else mockEmailService.sendEmailVerificationEmail.mockRejectedValue(new Error('network unavailable'));
+      const result = await authService.register(mockRegisterDto);
+      expect(result).toMatchObject({ emailVerificationRequired: true, emailDeliveryFailed: true, email: mockRegisterDto.email });
+      expect(result).not.toHaveProperty('accessToken');
+      expect(mockUserRepo.create).toHaveBeenCalledTimes(1);
+      expect(mockConsentService.captureConsent).toHaveBeenCalledTimes(1);
+    });
+
     it('should throw ConflictException (409) if email already exists', async () => {
       mockUserRepo.findByEmail.mockResolvedValue(mockUser);
 
@@ -443,6 +462,10 @@ describe('AuthService', () => {
   });
 
   describe('login', () => {
+    it('retains the scanner capability bundle in the login profile', async () => {
+      const result = await authService.login({ ...mockUser, role: 'admin', adminCapabilityBundle: 'scanner', adminCapabilities: [] });
+      expect(result.user.adminCapabilityBundle).toBe('scanner');
+    });
     it('should return AuthResponse with accessToken and refreshToken', async () => {
       const result = await authService.login({
         id: mockUser.id,
@@ -822,6 +845,30 @@ describe('AuthService', () => {
   });
 
   describe('requestPasswordReset', () => {
+    it('preserves the language and safe booking return in the reset email link', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue(mockUser);
+      mockJwtService.signAsync.mockResolvedValue('synthetic-reset-token');
+      await authService.requestPasswordReset('test@test.com', 'http://localhost:3001', {
+        locale: 'en', returnTo: '/en/booking/event/confirm?resumeOrderId=GRP-test',
+      });
+      const [, link, locale] = mockEmailService.sendPasswordResetEmail.mock.calls[0]!;
+      const url = new URL(link);
+      expect(url.pathname).toBe('/en/auth/reset-password');
+      expect(url.searchParams.get('returnTo')).toBe('/en/booking/event/confirm?resumeOrderId=GRP-test');
+      expect(locale).toBe('en');
+    });
+
+    it('does not put a recursive authentication target in the reset email', async () => {
+      mockUserRepo.findByEmail.mockResolvedValue(mockUser);
+      mockJwtService.signAsync.mockResolvedValue('synthetic-reset-token');
+      await authService.requestPasswordReset('test@test.com', 'http://localhost:3001', {
+        locale: 'th', returnTo: '/auth?token=secret',
+      });
+      const url = new URL(mockEmailService.sendPasswordResetEmail.mock.calls[0]![1]);
+      expect(url.pathname).toBe('/th/auth/reset-password');
+      expect(url.searchParams.has('returnTo')).toBe(false);
+    });
+
     it('should not reveal whether email exists (always returns silently)', async () => {
       mockUserRepo.findByEmail.mockResolvedValue(null);
 
@@ -849,6 +896,7 @@ describe('AuthService', () => {
       expect(mockEmailService.sendPasswordResetEmail).toHaveBeenCalledWith(
         'reset@test.com',
         'http://localhost:3001/auth/reset-password?token=reset-token',
+        'ko',
       );
     });
 

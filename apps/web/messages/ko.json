@@ -11,14 +11,45 @@
     "home": "홈",
     "search": "검색",
     "category": "분류",
-    "logoutSuccess": "로그아웃되었습니다"
+    "logoutSuccess": "로그아웃되었습니다",
+    "close": "닫기",
+    "languageDescription": "현재 페이지에서 사용할 언어를 선택해 주세요."
   },
   "home": {
     "hot": "HOT 이벤트",
     "newOpen": "신규 오픈",
     "genreShortcuts": "이벤트 분류",
     "more": "더보기",
-    "empty": "팬미팅과 팝업 이벤트를 검색하거나 분류별로 탐색해보세요."
+    "empty": "팬미팅과 팝업 이벤트를 검색하거나 분류별로 탐색해보세요.",
+    "intro": "다음 만남을 찾아보세요",
+    "browse": "공연 둘러보기",
+    "all": "전체",
+    "selling": "판매 중",
+    "upcoming": "오픈 예정",
+    "ended": "지난 공연",
+    "myTickets": "내 티켓",
+    "guide": "이용 안내",
+    "findShows": "공연 찾기",
+    "priceFrom": "{price}부터",
+    "priceUnknown": "가격은 상세에서 확인",
+    "feeSeparate": "예매 수수료 별도",
+    "bookingOpens": "{date} 오픈 예정",
+    "dateUnknown": "공연 일정 안내 예정",
+    "loadError": "공연을 불러오지 못했어요. 다시 시도해 주세요.",
+    "emptyFiltered": "이 조건에 맞는 공연이 없습니다.",
+    "searchLabel": "공연명 또는 아티스트 검색",
+    "promotionAlt": "공연 소식",
+    "previousBanner": "이전 소식",
+    "nextBanner": "다음 소식",
+    "bannerPosition": "소식 {current} / {total}",
+    "statusHelp": {
+      "selling": "좌석과 예매 가능 여부를 확인하세요.",
+      "closing_soon": "예매 마감이 가까워지고 있습니다.",
+      "upcoming": "오픈 안내를 기다려 주세요.",
+      "ended": "공연이 종료되었습니다."
+    },
+    "loading": "공연을 불러오는 중",
+    "bookingPaused": "현재 예매가 잠시 중단되어 있습니다. 공연 정보는 계속 확인할 수 있어요."
   },
   "search": {
     "promptTitle": "공연을 검색하세요",
@@ -78,7 +109,8 @@
     "priceLabel": "가격",
     "upcomingDateLabel": "오픈예정",
     "detailImagesTitle": "상세 이미지",
-    "detailImageAlt": "{title} 상세 이미지 {index}"
+    "detailImageAlt": "{title} 상세 이미지 {index}",
+    "verifyCta": "인증 후 예매하기"
   },
   "support": {
     "title": "고객센터",
@@ -91,7 +123,10 @@
     "fallbackPaymentQuestion": "결제와 QR 입장은 어떻게 진행되나요?",
     "fallbackPaymentAnswer": "결제가 완료되면 마이페이지에서 예매 내역과 QR 티켓을 확인할 수 있습니다. 현장 입장 시 QR 화면을 준비해주세요.",
     "fallbackRefundQuestion": "환불이나 계정 문의는 어디로 보내나요?",
-    "fallbackRefundAnswer": "예매 번호, 가입 이메일, 문의 내용을 정리해 고객센터 이메일로 보내주세요. 확인 후 순서대로 답변합니다."
+    "fallbackRefundAnswer": "예매 번호, 가입 이메일, 문의 내용을 정리해 고객센터 이메일로 보내주세요. 확인 후 순서대로 답변합니다.",
+    "loading": "안내를 불러오고 있어요.",
+    "loadError": "최신 안내를 불러오지 못했어요. 다시 시도하거나 아래 이메일로 문의해 주세요.",
+    "legalLinks": "이용약관 및 개인정보 안내"
   },
   "booking": {
     "disabled": "예매는 추후 오픈 예정입니다",
@@ -117,7 +152,7 @@
         },
         "expired": {
           "badge": "입장 만료",
-          "title": "입장 시간이 만료되었습니다. 대기열로 다시 이동합니다",
+          "title": "대기열 입장 시간이 만료되었습니다. 다시 입장해 주세요.",
           "description": "새로운 순번을 받아 다시 예매 대기열에 입장해주세요.",
           "helper": "재입장 후에도 남은 좌석 수와 예상 대기 시간은 계속 확인할 수 있습니다."
         },
@@ -155,14 +190,14 @@
       },
       "infoLabel": "안내",
       "autoEnterInfo": "입장이 승인되면 자동으로 좌석 선택 화면으로 이어집니다.",
-      "safetyInfo": "대기열 순번, 예상 시간, 남은 좌석 수만 노출되며 내부 인증 정보는 표시되지 않습니다.",
+      "safetyInfo": "대기열 입장은 좌석 확보를 보장하지 않습니다. 좌석을 선택하고 점유가 확인되면 해당 좌석이 잠시 확보됩니다.",
       "retryAction": "다시 시도",
       "enterNowAction": "지금 입장하기"
     },
     "paymentDeadline": {
       "badge": "결제 가능 시간",
       "title": "남은 시간 안에 결제를 완료해주세요",
-      "helper": "{threshold} 이하가 되면 결제 마감 상태로 전환됩니다.",
+      "helper": "남은 시간 안에 결제와 카드·지갑 인증을 완료해 주세요.",
       "criticalHelper": "{threshold} 이하로 남았습니다. 카드 인증과 해외 결제 인증을 바로 완료해주세요.",
       "seatHoldHelper": "좌석 점유 만료 {time}"
     },
@@ -178,12 +213,12 @@
     },
     "paymentRecovery": {
       "expiredTitle": "결제 가능 시간이 만료되었습니다",
-      "expiredBody": "좌석을 다시 선택한 뒤 새 결제를 시작해주세요.",
+      "expiredBody": "내 티켓에서 기존 예매의 결제 상태를 먼저 확인해 주세요. 미결제로 종료된 예매만 다시 선택할 수 있습니다.",
       "expiredCta": "결제 시간이 만료되었습니다",
       "reselectCta": "좌석 다시 선택하기",
       "reselectPrompt": "좌석을 다시 선택해주세요",
       "failedTitle": "결제 요청에 실패했습니다",
-      "failedBody": "결제가 완료되지 않았습니다. 좌석 선택 정보가 만료되었을 수 있으니 다시 선택한 뒤 결제를 진행해주세요.",
+      "failedBody": "기존 예매 상태를 확인한 후 같은 결제수단으로 다시 시도해 주세요.",
       "providerMessagePrefix": "결제사 응답",
       "pendingTitle": "해외 결제 인증을 기다리고 있습니다",
       "pendingBody": "지갑사 인증이 끝나면 같은 주문으로 예매 상태를 다시 확인할 수 있습니다."
@@ -196,20 +231,76 @@
       },
       "expired": {
         "title": "결제 가능 시간이 만료되었습니다.",
-        "body": "좌석을 다시 선택한 뒤 새 결제를 시작해주세요."
+        "body": "내 티켓에서 기존 예매의 결제 상태를 먼저 확인해 주세요. 미결제로 종료된 예매만 다시 선택할 수 있습니다."
       },
       "aborted": {
         "title": "결제가 중단되었거나 승인되지 않았습니다.",
-        "body": "결제 수단 상태를 확인하거나 다른 결제 수단으로 다시 시도해주세요."
+        "body": "기존 예매 상태를 확인한 후 같은 결제수단으로 다시 시도해 주세요."
       },
       "cancelled": {
         "title": "결제가 취소되었습니다.",
-        "body": "다시 결제하려면 결제하기를 눌러 새 결제를 시작해주세요."
+        "body": "기존 예매가 미결제 상태라면 이 화면에서 같은 주문으로 다시 시도할 수 있습니다."
       },
       "unknown": {
         "title": "결제를 완료하지 못했습니다.",
-        "body": "결제 수단 상태를 확인하거나 다른 결제 수단으로 다시 시도해주세요."
+        "body": "기존 예매 상태를 확인한 후 같은 결제수단으로 다시 시도해 주세요."
       }
+    },
+    "seatSelection": {
+      "back": "뒤로가기",
+      "chooseDate": "날짜 선택",
+      "chooseShowtime": "회차 선택",
+      "dateShowtime": "날짜 / 회차 선택",
+      "showtimeSelected": "회차 선택완료",
+      "noShowtimes": "선택한 날짜에 예정된 회차가 없습니다",
+      "selectedSeats": "선택 좌석",
+      "selectionSummary": "선택 좌석 요약",
+      "emptySelection": "선택한 좌석이 없습니다. 좌석을 클릭하면 이곳에 표시됩니다.",
+      "seatCount": "{count}석",
+      "seatLabel": "{floor} {row}열 {number}번",
+      "removeSeat": "{seat} 선택 해제",
+      "orderTotal": "총 결제 금액",
+      "clearAll": "전체 해제",
+      "processing": "처리 중...",
+      "chooseSeat": "좌석을 선택해주세요",
+      "next": "다음",
+      "limit": "이 공연은 1인 {count}매까지 예매할 수 있습니다",
+      "changePolicy": "결제 완료 후 좌석 변경은 지원되지 않으며, 취소/환불 후 다시 예매해야 합니다.",
+      "seatTaken": "이미 다른 사용자가 선택한 좌석입니다",
+      "releaseFirst": "다른 좌석을 먼저 해제해주세요.",
+      "bookingInfo": "예매 안내",
+      "backToEvent": "공연 상세로 돌아가기",
+      "noFloorSeats": "현재 층은 선택 가능한 좌석이 없습니다. 다른 층을 확인해주세요.",
+      "chooseFloor": "층 선택",
+      "floorKeep": "선택한 좌석은 층을 바꿔도 유지됩니다",
+      "busy": "혼잡",
+      "legend": "등급별 좌석 안내",
+      "excluded": "사석 / 초대석",
+      "notSelectable": "선택 제외",
+      "soldOrHeld": "판매완료 / 선택중",
+      "unavailable": "선택 불가",
+      "mapControls": "좌석맵 보기 조절",
+      "zoomIn": "확대",
+      "zoomOut": "축소",
+      "fitMap": "전체 보기",
+      "map": "좌석 배치도",
+      "miniMap": "좌석 미니맵",
+      "mapError": "좌석 배치도를 불러오지 못했습니다. 새로고침해주세요.",
+      "mapPending": "좌석 배치도가 준비되지 않았습니다. 잠시 후 다시 시도해주세요.",
+      "refresh": "새로고침",
+      "stage": "무대 위치: {position}",
+      "remaining": "남은시간",
+      "remainingAria": "남은 시간 {minutes}분 {seconds}초",
+      "timerWarning": "남은 시간이 3분 미만입니다",
+      "expired": "시간이 만료되었습니다",
+      "expiredBody": "선택하신 좌석의 점유 시간이 만료되었습니다. 처음부터 다시 좌석을 선택해주세요.",
+      "restart": "처음으로",
+      "listSummary": "목록에서 좌석 선택",
+      "listLabel": "좌석 목록",
+      "selectSeat": "좌석 선택",
+      "deselectSeat": "좌석 해제",
+      "totalSeatCount": "총 {count}석",
+      "selectionConflict": "좌석 상태와 1인 예매 한도를 확인한 뒤 다시 시도해 주세요."
     }
   },
   "locale": {
@@ -346,7 +437,8 @@
       "invalidCode": "인증번호가 일치하지 않습니다",
       "verified": "이메일 인증이 완료되었습니다.",
       "throttled": "잠시 후 다시 시도해주세요.",
-      "systemError": "일시적인 오류가 발생했습니다. 다시 시도해주세요."
+      "systemError": "일시적인 오류가 발생했습니다. 다시 시도해주세요.",
+      "deliveryFailed": "계정은 유지되어 있어요. 인증 메일을 보내지 못했으니 다시 요청하거나 고객센터에 문의해 주세요."
     },
     "otp": {
       "sent": "인증번호가 발송되었습니다",
@@ -385,6 +477,21 @@
       "retryButton": "다시 로그인하기",
       "processing": "로그인 처리 중...",
       "invalidAccess": "잘못된 접근입니다."
+    },
+    "navigation": {
+      "verifyTitle": "이메일 인증",
+      "verificationLogin": "이메일 인증이 완료되었습니다. 로그인하면 하던 예매를 이어갈 수 있습니다.",
+      "continue": "계속하기",
+      "showPassword": "비밀번호 보기",
+      "hidePassword": "비밀번호 숨기기"
+    },
+    "validation": {
+      "email": "올바른 이메일 주소를 입력해주세요",
+      "password": "비밀번호를 입력해주세요",
+      "confirm": "비밀번호 확인을 입력해주세요",
+      "mismatch": "비밀번호가 일치하지 않습니다",
+      "rules": "비밀번호는 영문·숫자·특수문자를 포함해 8자 이상이어야 합니다",
+      "link": "유효한 인증 링크가 필요합니다"
     }
   },
   "metadata": {
@@ -522,7 +629,8 @@
         "inactive": "비활성",
         "empty": "제공된 혜택 없음",
         "redeemedAt": "사용 일시: {date}"
-      }
+      },
+      "ticketStatusLabel": "티켓 상태"
     }
   },
   "reservation": {
@@ -647,7 +755,7 @@
         "기타"
       ],
       "title": "환불 및 재오픈 안내",
-      "description": "예매 전체가 취소됩니다. 일부 좌석만 취소할 수 없습니다.",
+      "description": "좌석별 티켓에서 일부 좌석을 취소하거나 예매 전체를 취소할 수 있습니다. 취소 전에 환불 금액과 남는 티켓을 확인해주세요.",
       "reasonLabel": "취소 사유",
       "reasonPlaceholder": "취소 사유를 선택하세요",
       "refundAmount": "환불 예정 금액",
@@ -749,7 +857,10 @@
     "viewWallet": "티켓 지갑 보기",
     "editSettings": "설정 변경",
     "marketingOn": "수신 동의",
-    "marketingOff": "수신 거부"
+    "marketingOff": "수신 거부",
+    "membership": "가입 기간",
+    "checking": "예매 정보를 확인하고 있어요",
+    "loadError": "예매 정보를 불러오지 못했어요. 잠시 후 다시 확인해 주세요."
   },
   "profile": {
     "email": "이메일",
@@ -779,7 +890,18 @@
     "cancel": "취소",
     "confirmWithdraw": "탈퇴 확정",
     "emailVerified": "이메일 인증 완료",
-    "emailUnverified": "이메일 미인증"
+    "emailUnverified": "이메일 미인증",
+    "accountStatus": "계정 상태",
+    "adminAccount": "관리자 계정",
+    "buyerAccount": "일반 회원",
+    "saved": "프로필이 수정되었습니다",
+    "loggedOut": "로그아웃되었습니다",
+    "withdrawn": "회원 탈퇴가 처리되었습니다",
+    "withdrawBlocked": "진행 중인 예매가 있으면 탈퇴할 수 없습니다.",
+    "verifyEmail": "이메일 인증하기",
+    "returnToBooking": "예매로 돌아가기",
+    "changePhone": "전화번호 변경",
+    "cancelPhoneChange": "전화번호 변경 취소"
   },
   "resetPassword": {
     "sentTitle": "비밀번호 재설정 메일 발송 완료",

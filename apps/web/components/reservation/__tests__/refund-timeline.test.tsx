@@ -182,7 +182,7 @@ describe('ReservationDetail refund timeline', () => {
     expect(screen.queryByText('PG 전달됨')).not.toBeInTheDocument();
     expect(screen.getAllByText('환불 처리 중').length).toBeGreaterThan(0);
     expect(screen.getByText('결제사 취소 완료')).toBeInTheDocument();
-    expect(screen.getAllByText('환불 실패').length).toBeGreaterThan(0);
+    expect(screen.queryByText('환불 실패')).not.toBeInTheDocument();
     expect(
       screen.getAllByText(
         '취소된 좌석은 즉시 재오픈되지 않을 수 있으며, 잠시 후 다시 판매될 수 있습니다',

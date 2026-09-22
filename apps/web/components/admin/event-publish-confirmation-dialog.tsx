@@ -17,6 +17,13 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 
+const FIELD_LABELS: Record<string, string> = {
+  publishState: '공개 상태', title: '공연명', genre: '공연 종류', venueName: '장소', venueAddress: '주소',
+  venueAccessNotes: '입장 안내', transportSummary: '교통 안내', description: '상세 안내', salesInfo: '판매 안내',
+  startDate: '시작일', endDate: '종료일', showtimes: '회차', seatMaps: '좌석맵', priceTiers: '가격',
+  bookingPolicy: '예매 정책', posterUrl: '포스터', detailImages: '상세 이미지', runtime: '공연 시간', ageRating: '관람 연령', status: '판매 상태',
+};
+
 export interface EventPublishLocaleState {
   locale: 'ko' | 'en' | 'th' | 'zh-CN';
   label: string;
@@ -26,6 +33,9 @@ export interface EventPublishLocaleState {
 
 export interface EventPublishReviewSummary {
   title: string;
+  showtimes?: string[];
+  bookingStartsAt?: string | null;
+  saleStatus?: string;
   changedFields: string[];
   localeStates: EventPublishLocaleState[];
   venue: {
@@ -127,7 +137,7 @@ export function EventPublishConfirmationDialog({
                   key={field}
                   className="border-transparent bg-[#F3EFFF] text-[#6C3CE0]"
                 >
-                  {field}
+                  {FIELD_LABELS[field.split('.')[0]!] ?? '공연 정보'}
                 </Badge>
               ))}
             </div>
@@ -155,6 +165,9 @@ export function EventPublishConfirmationDialog({
           <Separator />
 
           <dl className="space-y-3">
+            {summary.showtimes && <SummaryRow label="공연 회차 · 한국 시간" value={summary.showtimes.join(' / ') || '미입력'} />}
+            {summary.saleStatus && <SummaryRow label="판매 상태" value={summary.saleStatus} />}
+            {summary.showtimes && <SummaryRow label="판매 시작 · 한국 시간" value={summary.bookingStartsAt || '시각 미지정 · 공개 및 판매 설정 충족 시 시작'} />}
             <SummaryRow label="장소" value={summary.venue.name || '미입력'} />
             <SummaryRow
               label="주소"

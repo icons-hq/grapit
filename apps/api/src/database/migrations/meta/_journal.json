@@ -246,6 +246,34 @@
       "when": 1789689600000,
       "tag": "0033_active_seat_and_benefit_uniqueness",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1789948800000,
+      "tag": "0034_prepared_checkout_snapshot",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1789984800000,
+      "tag": "0035_ticket_cancellation_commands",
+      "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1790000000000,
+      "tag": "0036_performance_preparation_drafts",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1790035200000,
+      "tag": "0037_field_attempt_context",
+      "breakpoints": true
     }
   ]
 }

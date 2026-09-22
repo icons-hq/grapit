@@ -1,1034 +1,168 @@
 'use client';
 
-import { useMemo, useState } from 'react';
-import {
-  Banknote,
-  Download,
-  FileSpreadsheet,
-  ShieldAlert,
-  TicketCheck,
-  UsersRound,
-} from 'lucide-react';
-import {
-  resolveAdminCapabilitySnapshot,
-  type AdminSettlementReconciliation,
-  type AdminCapability,
-  type AdminCapabilityBundle,
-  type SettlementExportDataset,
-  type SettlementSummary,
-} from '@grabit/shared';
-import { Badge } from '@/components/ui/badge';
+import { useState } from 'react';
+import { financeLedgerQuerySchema, resolveAdminCapabilitySnapshot, type FinanceLedger, type FinanceLedgerExportRequest,
+  type FinanceLedgerQuery, type FinancePaymentRow } from '@grabit/shared';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  useAdminSettlementExport,
-  useAdminSettlementReconciliation,
-  useAdminSettlementSummary,
-  type AdminSettlementExportPayload,
-  type AdminSettlementFilters,
-} from '@/hooks/use-admin-settlement';
+import { useAdminFinanceExport, useAdminFinanceLedger } from '@/hooks/use-admin-settlement';
 import { useAuthStore } from '@/stores/use-auth-store';
-import { cn } from '@/lib/cn';
+import { useAdminEventContext } from './admin-event-context';
+import { formatAdminKstDate, formatAdminKstDateTime } from '@/lib/admin-datetime';
 
-type SettlementUser = {
-  id: string;
-  role?: string | null;
-  adminCapabilityBundle?: AdminCapabilityBundle | null;
-  adminCapabilities?: readonly AdminCapability[];
-};
-
-type SettlementDashboardSummaryInput = Partial<SettlementSummary> & {
-  salesAmount?: number;
-  paidReservations?: number;
-  refundedAmount?: number;
-  entered?: number;
-  noShow?: number;
-  exportReady?: boolean;
-};
-
-type SettlementDashboardReconciliationInput = Omit<
-  AdminSettlementReconciliation,
-  'foreign' | 'warnings'
-> & {
-  foreign: Omit<AdminSettlementReconciliation['foreign'], 'byProvider'> & {
-    byProvider: readonly AdminSettlementReconciliation['foreign']['byProvider'][number][];
-  };
-  warnings: readonly string[];
-};
-
-interface SettlementMaskedSample {
-  reservationNumber?: string;
-  buyerName?: string;
-  buyerEmail?: string;
-  entryStatus?: string;
+interface Props {
+  user?: Parameters<typeof resolveAdminCapabilitySnapshot>[0];
+  data?: FinanceLedger | null;
+  requiredFilters?: Partial<FinanceLedgerQuery>;
+  onExport?: (payload: FinanceLedgerExportRequest) => void;
 }
+const datasetLabels = { payments: '결제·환불 원장 CSV', tickets: '좌석·입장 원장 CSV', provider: 'PG 정산 자료 CSV' } as const;
+const inputStyle = 'h-11 w-full min-w-0 rounded-lg border border-gray-200 bg-white px-3 text-sm';
 
-interface SettlementDashboardData {
-  summary?: SettlementDashboardSummaryInput | null;
-  reconciliation?: SettlementDashboardReconciliationInput | null;
-  maskedSamples?: readonly SettlementMaskedSample[];
-  rawRows?: readonly unknown[];
-}
-
-interface SettlementDashboardProps {
-  user?: SettlementUser | null;
-  data?: SettlementDashboardData | null;
-  requiredFilters?: Partial<AdminSettlementFilters>;
-  onExport?: (payload: AdminSettlementExportPayload) => void;
-}
-
-const DATASET_ACTIONS = [
-  {
-    dataset: 'entry_status',
-    label: '입장 상태 CSV 내보내기',
-    shortLabel: '입장 상태',
-    description: '입장 처리, 중복, 거절, 오프라인 동기화 상태를 대조합니다.',
-  },
-  {
-    dataset: 'no_show_reservations',
-    label: '노쇼 예약 CSV 내보내기',
-    shortLabel: '노쇼 예약',
-    description: '결제 완료 후 입장하지 않은 예매를 확인합니다.',
-  },
-  {
-    dataset: 'reservation_payment_refund_summary',
-    label: '예매/결제/환불 CSV 내보내기',
-    shortLabel: '예매/결제/환불',
-    description: '예매 상태, 결제 수단, 환불 상태를 정산 전 대조합니다.',
-  },
-  {
-    dataset: 'settlement_accounting_input',
-    label: '정산 CSV 내보내기',
-    shortLabel: '정산 입력',
-    description: '외부 회계 연동 전 정산 입력용 CSV를 생성합니다.',
-  },
-] as const satisfies readonly {
-  dataset: SettlementExportDataset;
-  label: string;
-  shortLabel: string;
-  description: string;
-}[];
-
-const PAYMENT_METHOD_OPTIONS = [
-  { value: 'all', label: '전체 결제수단' },
-  { value: 'CARD', label: '카드' },
-  { value: 'TRANSFER', label: '계좌이체' },
-  { value: 'VIRTUAL_ACCOUNT', label: '가상계좌' },
-  { value: 'MOBILE_PHONE', label: '휴대폰' },
-  { value: 'EASY_PAY', label: '간편결제' },
-] as const;
-
-const RESERVATION_STATUS_OPTIONS = [
-  { value: 'all', label: '전체 예매' },
-  { value: 'PENDING_PAYMENT', label: '결제 대기' },
-  { value: 'CONFIRMED', label: '예매 완료' },
-  { value: 'CANCELLED', label: '취소 완료' },
-  { value: 'FAILED', label: '실패' },
-] as const;
-
-const ENTRY_STATUS_OPTIONS = [
-  { value: 'all', label: '전체 입장' },
-  { value: 'entered', label: '입장 완료' },
-  { value: 'not_entered', label: '미입장' },
-  { value: 'duplicate', label: '중복' },
-  { value: 'rejected', label: '거절' },
-] as const;
-
-const REFUND_STATUS_OPTIONS = [
-  { value: 'all', label: '전체 환불' },
-  { value: 'none', label: '환불 없음' },
-  { value: 'requested', label: '환불 요청' },
-  { value: 'completed', label: '환불 완료' },
-] as const;
-
-export function SettlementDashboard({
-  user: controlledUser,
-  data: controlledData,
-  requiredFilters,
-  onExport,
-}: SettlementDashboardProps) {
+export function SettlementDashboard({ user: suppliedUser, data: suppliedData, requiredFilters, onExport }: Props) {
   const authUser = useAuthStore((state) => state.user);
-  const user = controlledUser ?? authUser;
-
-  if (controlledData || onExport) {
-    return (
-      <SettlementDashboardControlled
-        user={user}
-        data={controlledData}
-        requiredFilters={requiredFilters}
-        onExport={onExport}
-      />
-    );
-  }
-
-  return (
-    <SettlementDashboardLive
-      user={user}
-      requiredFilters={requiredFilters}
-    />
-  );
-}
-
-function SettlementDashboardControlled({
-  user,
-  data,
-  requiredFilters,
-  onExport,
-}: {
-  user: SettlementUser | null | undefined;
-  data?: SettlementDashboardData | null;
-  requiredFilters?: Partial<AdminSettlementFilters>;
-  onExport?: (payload: AdminSettlementExportPayload) => void;
-}) {
-  const filterControls = useSettlementFilterControls(requiredFilters);
-
-  return (
-    <SettlementDashboardContent
-      user={user}
-      summaryInput={data?.summary ?? null}
-      reconciliationInput={data?.reconciliation ?? null}
-      maskedSamples={data?.maskedSamples ?? []}
-      isSummaryError={false}
-      isReconciliationError={false}
-      isReconciliationLoading={false}
-      isExportPending={false}
-      filterControls={filterControls}
-      submitExport={(payload, onSuccess) => {
-        onExport?.(payload);
-        onSuccess();
-      }}
-    />
-  );
-}
-
-function SettlementDashboardLive({
-  user,
-  requiredFilters,
-}: {
-  user: SettlementUser | null | undefined;
-  requiredFilters?: Partial<AdminSettlementFilters>;
-}) {
-  const filterControls = useSettlementFilterControls(requiredFilters);
-  const summaryQuery = useAdminSettlementSummary(filterControls.filters);
-  const reconciliationQuery = useAdminSettlementReconciliation(filterControls.filters);
-  const exportMutation = useAdminSettlementExport();
-
-  return (
-    <SettlementDashboardContent
-      user={user}
-      summaryInput={summaryQuery.data ?? null}
-      reconciliationInput={reconciliationQuery.data ?? null}
-      maskedSamples={[]}
-      isSummaryError={summaryQuery.isError}
-      isReconciliationError={reconciliationQuery.isError}
-      isReconciliationLoading={reconciliationQuery.isFetching}
-      isExportPending={exportMutation.isPending}
-      filterControls={filterControls}
-      submitExport={(payload, onSuccess) => {
-        exportMutation.mutate(payload, { onSuccess });
-      }}
-    />
-  );
-}
-
-function useSettlementFilterControls(
-  requiredFilters?: Partial<AdminSettlementFilters>,
-) {
-  const [filters, setFilters] = useState<AdminSettlementFilters>({
-    eventId: requiredFilters?.eventId ?? '',
-    showtimeId: requiredFilters?.showtimeId ?? '',
-    dateFrom: requiredFilters?.dateFrom ?? '',
-    dateTo: requiredFilters?.dateTo ?? '',
-    paymentMethod: requiredFilters?.paymentMethod ?? 'all',
-    reservationStatus: requiredFilters?.reservationStatus ?? 'all',
-    entryStatus: requiredFilters?.entryStatus ?? 'all',
-    refundStatus: requiredFilters?.refundStatus ?? 'all',
+  const capability = resolveAdminCapabilitySnapshot(suppliedUser ?? authUser);
+  const allowed = capability.superuser || capability.capabilities.includes('settlement.export');
+  const context = useAdminEventContext();
+  const [form, setForm] = useState(() => {
+    const now = new Date().toISOString();
+    return { eventId: requiredFilters?.eventId ?? suppliedData?.query.eventId ?? '', showtimeId: requiredFilters?.showtimeId ?? suppliedData?.query.showtimeId ?? '',
+      dateFrom: requiredFilters?.dateFrom ?? suppliedData?.query.dateFrom ?? `${formatAdminKstDate(now).slice(0, 7)}-01`,
+      dateTo: requiredFilters?.dateTo ?? suppliedData?.query.dateTo ?? formatAdminKstDate(now),
+      dateBasis: requiredFilters?.dateBasis ?? suppliedData?.query.dateBasis ?? 'paid_at',
+      asOfLocal: formatAdminKstDateTime(requiredFilters?.asOf ?? suppliedData?.query.asOf ?? now),
+      providerDateBasis: requiredFilters?.providerDateBasis ?? suppliedData?.query.providerDateBasis ?? 'paidOutDate' };
   });
-
-  return { filters, setFilters };
-}
-
-type SettlementFilterControls = ReturnType<typeof useSettlementFilterControls>;
-
-function SettlementDashboardContent({
-  user,
-  summaryInput,
-  reconciliationInput,
-  maskedSamples,
-  isSummaryError,
-  isReconciliationError,
-  isReconciliationLoading,
-  isExportPending,
-  filterControls,
-  submitExport,
-}: {
-  user: SettlementUser | null | undefined;
-  summaryInput: SettlementDashboardSummaryInput | null;
-  reconciliationInput: SettlementDashboardReconciliationInput | null;
-  maskedSamples: readonly SettlementMaskedSample[];
-  isSummaryError: boolean;
-  isReconciliationError: boolean;
-  isReconciliationLoading: boolean;
-  isExportPending: boolean;
-  filterControls: SettlementFilterControls;
-  submitExport: (
-    payload: AdminSettlementExportPayload,
-    onSuccess: () => void,
-  ) => void;
-}) {
-  const { filters, setFilters } = filterControls;
+  const current = { ...form, ...(context ? { eventId: context.performanceId, showtimeId: context.showtimeId } : {}) };
+  const [applied, setApplied] = useState<FinanceLedgerQuery | null>(suppliedData?.query ?? null);
+  const [validation, setValidation] = useState('');
   const [reason, setReason] = useState('');
-  const [pendingDataset, setPendingDataset] = useState<SettlementExportDataset | null>(null);
+  const [dataset, setDataset] = useState<FinanceLedgerExportRequest['dataset']>('payments');
+  const [exportNotice, setExportNotice] = useState('');
+  const query = useAdminFinanceLedger(applied, allowed && suppliedData === undefined);
+  const exportMutation = useAdminFinanceExport();
+  const unchanged = applied && applied.eventId === current.eventId && (applied.showtimeId ?? '') === current.showtimeId
+    && applied.dateFrom === current.dateFrom && applied.dateTo === current.dateTo && applied.dateBasis === current.dateBasis
+    && formatAdminKstDateTime(applied.asOf) === current.asOfLocal && applied.providerDateBasis === current.providerDateBasis;
+  const ledger = unchanged ? suppliedData ?? query.data : null;
+  const paused = suppliedData === undefined && query.fetchStatus === 'paused';
+  const loading = suppliedData === undefined && (query.isFetching || paused);
+  const failed = suppliedData === undefined && query.isError;
+  const hasData = Boolean(ledger && !failed && !loading);
+  const canExport = hasData && Boolean(reason.trim()) && !exportMutation.isPending
+    && (dataset !== 'provider' || ['ready', 'empty'].includes(ledger!.provider.status));
 
-  const allowed = canAccessSettlement(user);
-  const summary = normalizeSummary(summaryInput, filters);
-  const selectedDataset = DATASET_ACTIONS.find(
-    (action) => action.dataset === pendingDataset,
-  );
-  const requiredFiltersReady = Boolean(
-    filters.eventId && filters.showtimeId && filters.dateFrom && filters.dateTo,
-  );
-  const canConfirmExport =
-    allowed && requiredFiltersReady && reason.trim().length > 0 && !isExportPending;
-  const filterSummary = useMemo(
-    () => buildFilterSummary(filters, user?.id ?? 'unknown'),
-    [filters, user?.id],
-  );
-
-  function updateFilter<K extends keyof AdminSettlementFilters>(
-    key: K,
-    value: AdminSettlementFilters[K],
-  ) {
-    setFilters((current) => ({ ...current, [key]: value }));
-  }
-
-  function handleConfirmExport() {
-    if (!pendingDataset || !canConfirmExport || !filters.eventId) {
-      return;
+  function read(includeProvider = false) {
+    const parsed = financeLedgerQuerySchema.safeParse({ eventId: current.eventId, ...(current.showtimeId ? { showtimeId: current.showtimeId } : {}),
+      dateFrom: current.dateFrom, dateTo: current.dateTo, dateBasis: current.dateBasis,
+      asOf: `${current.asOfLocal}+09:00`, providerDateBasis: current.providerDateBasis, includeProvider: includeProvider ? 'true' : 'false' });
+    if (!parsed.success || context?.invalidShowtime) {
+      setValidation(!parsed.success ? parsed.error.issues.find((issue) => issue.code === 'custom')?.message
+        ?? '공연·기간·기준 시각을 확인해주세요.' : '선택한 공연에 속하는 회차를 확인해주세요.'); return;
     }
-
-    const payload: AdminSettlementExportPayload = compactPayload({
-      eventId: filters.eventId,
-      showtimeId: filters.showtimeId,
-      dateFrom: filters.dateFrom,
-      dateTo: filters.dateTo,
-      dataset: pendingDataset,
-      reason: reason.trim(),
-    });
-
-    submitExport(payload, () => {
-        setReason('');
-        setPendingDataset(null);
-    });
+    if (new Date(parsed.data.asOf).getTime() > Date.now()) { setValidation('기준 시각은 현재보다 늦을 수 없습니다.'); return; }
+    setValidation(''); setExportNotice('');
+    if (JSON.stringify(applied) === JSON.stringify(parsed.data)) void query.refetch();
+    else setApplied(parsed.data);
   }
 
-  if (!allowed) {
-    return (
-      <section className="rounded-lg border border-[#F3C7C7] bg-white p-6 shadow-sm">
-        <div className="flex items-start gap-3 text-[#C62828]">
-          <ShieldAlert className="mt-1 h-5 w-5" aria-hidden="true" />
-          <div>
-            <h1 className="text-xl font-semibold text-gray-900">
-              정산 데이터를 내보낼 권한이 없습니다
-            </h1>
-            <p className="mt-2 text-sm font-semibold text-[#C62828]">
-              scanner-only accounts cannot access settlement export
-            </p>
-          </div>
-        </div>
-      </section>
-    );
+  function exportCsv() {
+    if (!ledger || !canExport) return;
+    const payload = { query: ledger.query, dataset, reason: reason.trim() };
+    if (onExport) { onExport(payload); return; }
+    setExportNotice('');
+    exportMutation.mutate(payload, { onSuccess: () => { setExportNotice('CSV를 내려받았습니다. 필터와 사유를 감사 로그에 기록했습니다.'); },
+      onError: (error) => setExportNotice(error.message) });
   }
 
-  return (
-    <section className="space-y-5" aria-label="정산·내보내기">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h1 className="text-xl font-semibold leading-[1.2] text-gray-900">
-            정산·내보내기
-          </h1>
-          <p className="mt-2 text-base leading-[1.5] text-gray-600">
-            행사 종료 후 매출, 결제, 환불, 입장, 노쇼 데이터를 검토하고 필요한 CSV만 내보냅니다.
-          </p>
-        </div>
-        <Badge className="w-fit border-transparent bg-[#F3EFFF] text-[#6C3CE0]">
-          정산 입력 자료
-        </Badge>
+  if (!allowed) return <section role="alert" className="rounded-xl border bg-white p-6"><h1 className="text-xl font-semibold">정산을 조회할 권한이 없습니다</h1><p className="mt-2 text-gray-600">재무 권한이 있는 계정으로 확인해주세요.</p></section>;
+  return <section className="space-y-6" aria-label="정산·내보내기">
+    <header><p className="text-sm font-semibold text-violet-700">재무 대조</p><h1 className="mt-1 text-2xl font-semibold text-gray-950">정산·내보내기</h1>
+      <p className="mt-2 max-w-3xl text-sm leading-6 text-gray-600">원 주문과 환불, 남은 티켓을 확인하고 PG 정산 자료를 대조합니다. 금액은 통화별로 확인하며 은행 실입금과 마감은 증빙을 따로 확인해야 합니다.</p></header>
+    <form onSubmit={(event) => { event.preventDefault(); read(); }} className="space-y-4 rounded-xl border border-gray-200 bg-white p-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {!context && <label className="space-y-1 text-sm">공연 ID<Input aria-label="공연 ID" value={form.eventId} onChange={(event) => setForm({ ...form, eventId: event.target.value })} /></label>}
+        <label className="space-y-1 text-sm">거래 선택 기준<select aria-label="거래 선택 기준" className={inputStyle} value={form.dateBasis} onChange={(event) => setForm({ ...form, dateBasis: event.target.value as FinanceLedgerQuery['dateBasis'] })}>
+          <option value="paid_at">결제 승인일</option><option value="cancelled_at">취소 완료일 · 처리 중은 요청일</option></select></label>
+        <label className="space-y-1 text-sm">조회 시작일 · KST<Input type="date" aria-label="조회 시작일" value={form.dateFrom} onChange={(event) => setForm({ ...form, dateFrom: event.target.value })} /></label>
+        <label className="space-y-1 text-sm">조회 종료일 · KST<Input type="date" aria-label="조회 종료일" value={form.dateTo} onChange={(event) => setForm({ ...form, dateTo: event.target.value })} /></label>
+        <label className="space-y-1 text-sm sm:col-span-2 xl:col-span-2">원장 기준 시각 · KST
+          <div className="flex flex-wrap gap-2"><Input type="datetime-local" step="1" aria-label="원장 기준 시각" className="min-w-0 flex-1" value={form.asOfLocal} onChange={(event) => setForm({ ...form, asOfLocal: event.target.value.length === 16 ? `${event.target.value}:00` : event.target.value })} />
+            <Button type="button" variant="outline" onClick={() => setForm({ ...form, asOfLocal: formatAdminKstDateTime(new Date().toISOString()) })}>현재 시각</Button></div></label>
+        <label className="space-y-1 text-sm">PG 자료의 기간 기준<select aria-label="PG 기간 기준" className={inputStyle} value={form.providerDateBasis} onChange={(event) => setForm({ ...form, providerDateBasis: event.target.value as FinanceLedgerQuery['providerDateBasis'] })}>
+          <option value="paidOutDate">정산 지급일</option><option value="soldDate">정산 매출일</option></select></label>
       </div>
-
-      <SettlementFilters filters={filters} updateFilter={updateFilter} />
-
-      {isSummaryError && (
-        <div
-          role="alert"
-          className="rounded-lg border border-[#F3C7C7] bg-white p-4 text-sm font-semibold text-[#C62828]"
-        >
-          정산 데이터를 불러오지 못했습니다. 필터, 권한, API 상태를 확인하세요.
+      <div className="flex flex-wrap items-center gap-3"><Button type="submit" disabled={loading || !current.eventId}>원장 조회</Button>
+        <Button type="button" variant="outline" disabled={loading || !current.eventId} onClick={() => read(true)}>PG 자료까지 조회</Button><span className="text-sm text-gray-500">모든 날짜는 한국 시간(KST)입니다. PG 자료는 한 번에 최대 31일까지 조회합니다.</span></div>
+      {validation && <p role="alert" className="text-sm text-red-700">{validation}</p>}
+    </form>
+    {!applied || !unchanged ? <StateMessage>{applied ? '조회 조건이 변경되었습니다. 다시 조회하면 새 조건의 금액을 확인할 수 있습니다.' : '공연과 조회 조건을 선택한 뒤 원장을 조회해주세요.'}</StateMessage>
+      : loading ? <StateMessage>{paused ? '연결 복구를 기다리고 있습니다. 연결되면 원장을 다시 조회합니다.' : '원장과 요청한 PG 자료를 조회하고 있습니다.'}</StateMessage>
+      : failed ? <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">원장 조회에 실패했습니다. 원장 조회 버튼으로 다시 시도해주세요. 금액은 확인되지 않았습니다.</div>
+      : ledger && <>
+        <div className="space-y-1 text-sm text-gray-600"><p className="font-medium text-gray-950">{ledger.performanceTitle} · {ledger.summary.paymentCount.toLocaleString('ko-KR')}개 결제</p>
+          <p>{ledger.query.dateFrom} ~ {ledger.query.dateTo} · {ledger.query.dateBasis === 'paid_at' ? '승인일' : '취소 완료일/요청일'}로 거래 선택</p>
+          <p>누적 금액 기준 {dateTime(ledger.query.asOf)} · 조회 {dateTime(ledger.generatedAt)}</p></div>
+        {ledger.rows.length === 0 && <StateMessage>조회가 완료되었습니다. 선택한 기간에 해당하는 승인·취소 거래가 없습니다. PG 정산 자료는 별도 기간 기준으로 표시됩니다.</StateMessage>}
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" data-testid="settlement-summary">
+          <Amount label="선택 거래 원 주문액" value={ledger.summary.originalOrderKrw} /><Amount label="저장된 확정 결제액" value={ledger.summary.confirmedPaymentKrw} /><Amount label="확정 환불 누계" value={ledger.summary.confirmedRefundKrw} />
+          <Amount label="처리 중 환불 요청액" value={ledger.summary.pendingRefundKrw} /><Amount label="남은 유효 티켓 금액" value={ledger.summary.remainingTicketKrw} />
+          <Amount label="유지된 취소 수수료" value={ledger.summary.retainedCancellationFeeKrw} /><Amount label="취소 좌석의 유지 서비스 수수료" value={ledger.summary.retainedServiceFeeKrw} />
+          <Amount label="선택 거래의 기간 내 승인액" value={ledger.summary.periodApprovedKrw} /><Amount label="선택 거래의 기간 내 환불액" value={ledger.summary.periodRefundKrw} />
         </div>
-      )}
-
-      <div data-testid="settlement-summary" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        <MetricCard icon={Banknote} label="총 매출" value={formatCurrency(summary.grossSalesAmount)} tone="green" />
-        <MetricCard icon={UsersRound} label="결제 완료" value={`${summary.paidReservationCount.toLocaleString('ko-KR')}건`} tone="neutral" />
-        <MetricCard icon={Banknote} label="환불 금액" value={formatCurrency(summary.refundedAmount)} tone="red" />
-        <MetricCard icon={TicketCheck} label="입장 완료" value={`${summary.enteredCount.toLocaleString('ko-KR')}건`} tone="green" />
-        <MetricCard icon={UsersRound} label="노쇼" value={`${summary.noShowCount.toLocaleString('ko-KR')}건`} tone="amber" />
-      </div>
-
-      <SettlementReconciliationPanel
-        filters={filters}
-        reconciliation={reconciliationInput}
-        isError={isReconciliationError}
-        isLoading={isReconciliationLoading}
-      />
-
-      <Tabs defaultValue="summary" className="rounded-lg border bg-white p-4 shadow-sm">
-        <TabsList>
-          <TabsTrigger value="summary">요약</TabsTrigger>
-          <TabsTrigger value="entry">입장/노쇼</TabsTrigger>
-          <TabsTrigger value="payments">결제/환불</TabsTrigger>
-          <TabsTrigger value="exports">내보내기</TabsTrigger>
-        </TabsList>
-        <TabsContent value="summary" className="mt-4 bg-[#F5F5F7] p-4">
-          <div className="grid gap-3 md:grid-cols-3">
-            <SummaryTile label="입장률" value={`${Math.round(summary.entryRate * 100)}%`} />
-            <SummaryTile label="환불 건수" value={`${summary.refundCount.toLocaleString('ko-KR')}건`} />
-            <SummaryTile label="생성 시각" value={formatTimestamp(summary.generatedAt)} />
-          </div>
-        </TabsContent>
-        <TabsContent value="entry" className="mt-4 bg-[#F5F5F7] p-4">
-          <div className="grid gap-3 md:grid-cols-2">
-            <SummaryTile label="입장 완료" value={`${summary.enteredCount.toLocaleString('ko-KR')}건`} />
-            <SummaryTile label="노쇼 예약" value={`${summary.noShowCount.toLocaleString('ko-KR')}건`} />
-          </div>
-          <MaskedSampleTable samples={maskedSamples} />
-        </TabsContent>
-        <TabsContent value="payments" className="mt-4 bg-[#F5F5F7] p-4">
-          <div className="grid gap-3 md:grid-cols-3">
-            <SummaryTile label="결제 완료" value={`${summary.paidReservationCount.toLocaleString('ko-KR')}건`} />
-            <SummaryTile label="총 매출" value={formatCurrency(summary.grossSalesAmount)} />
-            <SummaryTile label="환불 금액" value={formatCurrency(summary.refundedAmount)} />
-          </div>
-        </TabsContent>
-        <TabsContent value="exports" className="mt-4 bg-[#F5F5F7] p-4">
-          <ExportActions
-            requiredFiltersReady={requiredFiltersReady}
-            onSelectDataset={setPendingDataset}
-          />
-        </TabsContent>
-      </Tabs>
-
-      <div data-testid="settlement-export-panel">
-        <ExportActions
-          requiredFiltersReady={requiredFiltersReady}
-          onSelectDataset={setPendingDataset}
-        />
-      </div>
-
-      <Dialog open={pendingDataset !== null} onOpenChange={(open) => !open && setPendingDataset(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>정산 데이터를 내보내시겠습니까?</DialogTitle>
-            <DialogDescription>
-              개인정보와 결제/환불 정보가 포함될 수 있습니다. 필터, 권한, 사유를 확인한 뒤 내보내세요.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            <div role="alert" className="flex gap-3 rounded-lg border border-[#F3C7C7] bg-[#FEF2F2] p-3 text-sm font-semibold text-[#C62828]">
-              <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-              <span>원본 CSV에는 개인정보와 결제/환불 정보가 포함될 수 있습니다.</span>
-            </div>
-
-            <div className="rounded-lg bg-[#F5F5F7] p-3">
-              <p className="text-sm font-semibold text-gray-700">필터 요약</p>
-              <dl className="mt-2 grid gap-2 text-sm text-gray-700 sm:grid-cols-2">
-                {filterSummary.map((item) => (
-                  <div key={item.label} className="flex justify-between gap-3 rounded-md bg-white px-3 py-2">
-                    <dt className="font-semibold">{item.label}</dt>
-                    <dd className="text-right">{item.value}</dd>
-                  </div>
-                ))}
-              </dl>
-            </div>
-
-            {selectedDataset && (
-              <div className="rounded-lg border p-3 text-sm text-gray-700">
-                <p className="font-semibold text-gray-900">{selectedDataset.shortLabel}</p>
-                <p className="mt-1">{selectedDataset.description}</p>
-              </div>
-            )}
-
-            <p className="text-sm font-semibold text-[#8B6306]">
-              감사 로그에 내보내기 사유와 필터가 기록됩니다.
-            </p>
-
-            {!requiredFiltersReady && (
-              <p role="alert" className="text-sm font-semibold text-[#C62828]">
-                이벤트, 회차, 조회 시작일, 조회 종료일을 모두 입력해야 합니다.
-              </p>
-            )}
-
-            <label className="space-y-1.5 text-sm font-semibold text-gray-700">
-              <span>내보내기 사유</span>
-              <Textarea
-                value={reason}
-                onChange={(event) => setReason(event.target.value)}
-                aria-label="내보내기 사유"
-                placeholder="예: 행사 종료 정산 대조"
-              />
-            </label>
-          </div>
-
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setPendingDataset(null)}>
-              취소
-            </Button>
-            <Button
-              type="button"
-              disabled={!canConfirmExport}
-              onClick={handleConfirmExport}
-              className="bg-[#C62828] hover:bg-[#A81F1F]"
-            >
-              CSV 내보내기
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </section>
-  );
+        <p className="text-sm leading-6 text-gray-600">위 금액은 원화 주문 기준입니다. 환불 누계는 기준 시각까지 완료된 금액이며, 처리 중 요청액은 포함하지 않습니다. 결제별 누적액을 월별로 중복 합산하지 마세요.</p>
+        {ledger.warnings.length > 0 && <div role="alert" className="space-y-1 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{ledger.warnings.map((warning) => <p key={warning}>{warning}</p>)}</div>}
+        <section aria-label="통화별 PG 청구와 취소" className="space-y-3"><h2 className="text-lg font-semibold">통화별 PG 청구·취소 기록</h2>
+          <p className="text-sm text-gray-600">저장된 승인·취소 기록 기준입니다. 아래 잔액은 PG 정산 지급액과 다릅니다.</p>
+          <div className="grid gap-3 lg:grid-cols-2">{ledger.currencies.map((total) => <div key={total.currency} className="space-y-2 rounded-xl border bg-white p-4">
+            <h3 className="font-semibold">{total.currency}</h3>{total.unknownPaymentCount > 0 && <p className="text-sm text-amber-800">{total.unknownPaymentCount}개 거래의 금액 증거 누락 · 관련 합계는 미확인으로 표시</p>}
+            <dl className="grid grid-cols-2 gap-3 text-sm">{[['원 청구', total.chargeMinor], ['확정 취소', total.confirmedCancelMinor], ['취소 처리 중', total.pendingCancelMinor], ['계산 잔액', total.balanceMinor]].map(([label, amount]) => <div key={String(label)}><dt className="text-gray-500">{label}</dt><dd className="mt-1 font-semibold">{money(amount as number | null, total.currency)}</dd><dd className="text-xs text-gray-500">{amount === null ? '금액 증거 미확인' : `${amount} minor units`}</dd></div>)}</dl></div>)}</div>
+        </section>
+        <ProviderEvidence ledger={ledger} />
+        <section className="space-y-3" aria-label="결제별 대조"><h2 className="text-lg font-semibold">결제별 대조</h2>
+          {ledger.rows.map((row) => <PaymentDetails key={row.paymentId} row={row} />)}</section>
+        <section className="space-y-4 rounded-xl border bg-white p-4" aria-label="정산 CSV 내보내기"><h2 className="text-lg font-semibold">같은 기준으로 내보내기</h2>
+          <p className="text-sm leading-6 text-gray-600">이름·연락처·결제 키는 포함하지 않습니다. 조회 조건, 통화, 원본 거래 식별자와 사유를 기록합니다. CSV 생성 시 같은 기준 시각으로 다시 조회하며 PG 자료에는 별도 조회 시각이 남습니다.</p>
+          <label className="block space-y-1 text-sm">자료 종류<select aria-label="자료 종류" className={inputStyle} value={dataset} onChange={(event) => setDataset(event.target.value as typeof dataset)}>{Object.entries(datasetLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
+          <label className="block space-y-1 text-sm">내보내기 사유<Textarea aria-label="내보내기 사유" value={reason} onChange={(event) => setReason(event.target.value)} maxLength={500} placeholder="예: 9월 승인·취소와 정산 지급 자료 대조" /></label>
+          <Button disabled={!canExport} onClick={exportCsv}>{exportMutation.isPending ? 'CSV 생성 중' : datasetLabels[dataset]}</Button>
+          {dataset === 'provider' && !['ready', 'empty'].includes(ledger.provider.status) && <p className="text-sm text-amber-800">PG 자료를 모두 조회한 뒤 내보낼 수 있습니다.</p>}
+          {exportNotice && <p role="status" className="text-sm">{exportNotice}</p>}
+        </section>
+      </>}
+    <aside className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm leading-6 text-amber-950"><strong>은행 실입금 미확인 · 마감 미완료</strong><p>PG 정산 지급일과 지급액만으로 은행 입금을 확정하지 않습니다. 은행 거래 내역, 차이 원인과 담당자의 마감 기록을 별도 대조 문서에 남겨주세요.</p></aside>
+  </section>;
 }
 
-function SettlementReconciliationPanel({
-  filters,
-  reconciliation,
-  isError,
-  isLoading,
-}: {
-  filters: AdminSettlementFilters;
-  reconciliation: SettlementDashboardReconciliationInput | null;
-  isError: boolean;
-  isLoading: boolean;
-}) {
-  const [foreignPayoutInput, setForeignPayoutInput] = useState('');
-  const foreignPayoutAmount = parseCurrencyInput(foreignPayoutInput);
-  const hasForeignPayoutInput = foreignPayoutInput.trim().length > 0;
-  const finalDifference =
-    reconciliation && hasForeignPayoutInput
-      ? reconciliation.siteSalesGrossAmount -
-        (reconciliation.domestic.payoutAmount + foreignPayoutAmount)
-      : null;
-
-  return (
-    <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm" aria-label="정산 대사">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h2 className="text-lg font-semibold leading-[1.25] text-gray-900">
-            정산 대사
-          </h2>
-          <p className="mt-1 text-sm leading-[1.45] text-gray-600">
-            판매 매출은 결제 완료 active 티켓 gross 기준이며, Toss 국내 정산금액과 운영자 입력 외화정산 금액을 대조합니다.
-          </p>
-        </div>
-        {isLoading && (
-          <Badge className="w-fit border-transparent bg-[#F5F5F7] text-gray-700">
-            갱신 중
-          </Badge>
-        )}
-      </div>
-
-      {!filters.eventId ? (
-        <div className="mt-4 rounded-lg bg-[#F5F5F7] p-4 text-sm font-semibold text-gray-600">
-          event ID를 입력하면 선택한 이벤트 기준으로 정산 대사를 확인할 수 있습니다.
-        </div>
-      ) : isError ? (
-        <div
-          role="alert"
-          className="mt-4 rounded-lg border border-[#F3C7C7] bg-[#FEF2F2] p-4 text-sm font-semibold text-[#C62828]"
-        >
-          Toss 정산 API 확인 실패
-        </div>
-      ) : reconciliation ? (
-        <div className="mt-4 space-y-4">
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            <ReconciliationMetric
-              label="사이트 판매매출 gross"
-              value={formatWon(reconciliation.siteSalesGrossAmount)}
-            />
-            <ReconciliationMetric
-              label="Toss 국내 총매출액"
-              value={formatWon(reconciliation.domestic.tossGrossAmount)}
-            />
-            <ReconciliationMetric
-              label="Toss 국내 정산금액"
-              value={formatWon(reconciliation.domestic.payoutAmount)}
-            />
-            <ReconciliationMetric
-              label="국내 수수료/부가세 차감액"
-              value={formatWon(reconciliation.domestic.feeAmount)}
-            />
-            <ReconciliationMetric
-              label="국내 매칭 gross"
-              value={formatWon(reconciliation.domestic.matchedGrossAmount)}
-            />
-            <ReconciliationMetric
-              label="국내 미매칭 gross"
-              value={formatWon(reconciliation.domestic.unmatchedGrossAmount)}
-            />
-            <ReconciliationMetric
-              label="국내 계좌이체 정산 미완료"
-              value={`${formatWon(reconciliation.domestic.unsettledTransferAmount)} · ${reconciliation.domestic.unsettledTransferCount.toLocaleString('ko-KR')}건`}
-              detail={`국내 계좌이체 정산 미완료 ${reconciliation.domestic.unsettledTransferCount.toLocaleString('ko-KR')}건`}
-            />
-            <ReconciliationMetric
-              label="외화결제 gross"
-              value={formatWon(reconciliation.foreign.grossAmount)}
-              detail={formatForeignProviders(reconciliation.foreign.byProvider)}
-            />
-          </div>
-
-          <div className="grid gap-3 rounded-lg bg-[#F5F5F7] p-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-            <label className="space-y-1.5 text-sm font-semibold text-gray-700">
-              <span>Toss 외화정산 금액</span>
-              <Input
-                inputMode="numeric"
-                value={foreignPayoutInput}
-                onChange={(event) =>
-                  setForeignPayoutInput(formatCurrencyInput(event.target.value))
-                }
-                aria-label="Toss 외화정산 금액"
-                placeholder="예: 29,896,059"
-                className="h-11 bg-white"
-              />
-            </label>
-            <div className="rounded-lg bg-white p-4">
-              <p className="text-sm font-semibold text-gray-500">최종 차이</p>
-              <p className="mt-2 text-2xl font-semibold leading-[1.2] text-gray-900">
-                {finalDifference === null
-                  ? '외화정산 금액 입력 필요'
-                  : formatWon(finalDifference)}
-              </p>
-              <p className="mt-2 text-sm leading-[1.4] text-gray-600">
-                사이트 판매매출 - (국내 정산금액 + 입력한 외화정산금액)
-              </p>
-            </div>
-          </div>
-
-          {reconciliation.warnings.length > 0 && (
-            <ul className="space-y-1 rounded-lg border border-[#F3E2B0] bg-[#FFFBEB] p-3 text-sm font-semibold text-[#8B6306]">
-              {reconciliation.warnings.map((warning) => (
-                <li key={warning}>{warning}</li>
-              ))}
-            </ul>
-          )}
-        </div>
-      ) : (
-        <div className="mt-4 rounded-lg bg-[#F5F5F7] p-4 text-sm font-semibold text-gray-600">
-          정산 대사 데이터를 불러오고 있습니다.
-        </div>
-      )}
-    </section>
-  );
-}
-
-function ReconciliationMetric({
-  label,
-  value,
-  detail,
-}: {
-  label: string;
-  value: string;
-  detail?: string;
-}) {
-  return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4">
-      <p className="text-sm font-semibold leading-[1.35] text-gray-500">{label}</p>
-      <p className="mt-2 text-xl font-semibold leading-[1.2] text-gray-900">{value}</p>
-      {detail && (
-        <p className="mt-2 text-sm leading-[1.35] text-gray-600">{detail}</p>
-      )}
-    </div>
-  );
-}
-
-function SettlementFilters({
-  filters,
-  updateFilter,
-}: {
-  filters: AdminSettlementFilters;
-  updateFilter: <K extends keyof AdminSettlementFilters>(
-    key: K,
-    value: AdminSettlementFilters[K],
-  ) => void;
-}) {
-  return (
-    <Card className="border-gray-200 bg-white py-0 shadow-sm">
-      <CardContent className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-4">
-        <Input
-          className="h-11"
-          placeholder="event ID"
-          value={filters.eventId ?? ''}
-          aria-label="이벤트"
-          onChange={(event) => updateFilter('eventId', event.target.value)}
-        />
-        <Input
-          className="h-11"
-          placeholder="showtime ID"
-          value={filters.showtimeId ?? ''}
-          aria-label="회차"
-          onChange={(event) => updateFilter('showtimeId', event.target.value)}
-        />
-        <div className="grid grid-cols-2 gap-2">
-          <Input
-            type="date"
-            className="h-11"
-            value={filters.dateFrom ?? ''}
-            aria-label="조회 시작일"
-            onChange={(event) => updateFilter('dateFrom', event.target.value)}
-          />
-          <Input
-            type="date"
-            className="h-11"
-            value={filters.dateTo ?? ''}
-            aria-label="조회 종료일"
-            onChange={(event) => updateFilter('dateTo', event.target.value)}
-          />
-        </div>
-        <Select
-          value={filters.paymentMethod ?? 'all'}
-          onValueChange={(value) => updateFilter('paymentMethod', value)}
-        >
-          <SelectTrigger className="h-11" aria-label="결제 수단">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {PAYMENT_METHOD_OPTIONS.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select
-          value={filters.reservationStatus ?? 'all'}
-          onValueChange={(value) => updateFilter('reservationStatus', value)}
-        >
-          <SelectTrigger className="h-11" aria-label="예매 상태">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {RESERVATION_STATUS_OPTIONS.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select
-          value={filters.entryStatus ?? 'all'}
-          onValueChange={(value) => updateFilter('entryStatus', value)}
-        >
-          <SelectTrigger className="h-11" aria-label="입장 상태">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {ENTRY_STATUS_OPTIONS.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select
-          value={filters.refundStatus ?? 'all'}
-          onValueChange={(value) => updateFilter('refundStatus', value)}
-        >
-          <SelectTrigger className="h-11" aria-label="환불 상태">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {REFUND_STATUS_OPTIONS.map((option) => (
-              <SelectItem key={option.value} value={option.value}>
-                {option.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </CardContent>
-    </Card>
-  );
-}
-
-function ExportActions({
-  requiredFiltersReady,
-  onSelectDataset,
-}: {
-  requiredFiltersReady: boolean;
-  onSelectDataset: (dataset: SettlementExportDataset) => void;
-}) {
-  return (
-    <section className="grid gap-3 md:grid-cols-2" aria-label="정산 CSV 내보내기">
-      {DATASET_ACTIONS.map((action) => (
-        <Card key={action.dataset} className="border-gray-200 bg-white py-0 shadow-sm">
-          <CardContent className="flex h-full flex-col justify-between gap-4 p-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <FileSpreadsheet className="h-5 w-5 text-gray-500" aria-hidden="true" />
-                <h3 className="text-base font-semibold text-gray-900">{action.shortLabel}</h3>
-              </div>
-              <p className="mt-2 text-sm leading-[1.4] text-gray-600">
-                {action.description}
-              </p>
-            </div>
-            <Button
-              type="button"
-              className="h-11 w-full"
-              disabled={!requiredFiltersReady}
-              onClick={() => onSelectDataset(action.dataset)}
-            >
-              <Download className="h-4 w-4" aria-hidden="true" />
-              {action.label}
-            </Button>
-          </CardContent>
-        </Card>
-      ))}
-    </section>
-  );
-}
-
-function MetricCard({
-  icon: Icon,
-  label,
-  value,
-  tone,
-}: {
-  icon: typeof Banknote;
-  label: string;
-  value: string;
-  tone: 'green' | 'amber' | 'red' | 'neutral';
-}) {
-  return (
-    <Card className="border-gray-200 bg-white py-0 shadow-sm">
-      <CardContent className="flex min-h-[116px] items-start justify-between gap-3 p-4">
-        <div>
-          <p className="text-sm font-semibold leading-[1.4] text-gray-500">{label}</p>
-          <p className="mt-3 text-[28px] font-semibold leading-[1.2] text-gray-900">{value}</p>
-        </div>
-        <div className={cn('flex h-11 w-11 shrink-0 items-center justify-center rounded-lg', toneClass(tone))}>
-          <Icon className="h-5 w-5" aria-hidden="true" />
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function SummaryTile({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg bg-white p-4">
-      <p className="text-sm font-semibold text-gray-500">{label}</p>
-      <p className="mt-2 text-base font-semibold text-gray-900">{value}</p>
-    </div>
-  );
-}
-
-function MaskedSampleTable({ samples }: { samples: readonly SettlementMaskedSample[] }) {
-  return (
-    <div className="mt-4 overflow-x-auto rounded-lg border bg-white">
-      <Table aria-label="masked settlement sample">
-        <TableHeader>
-          <TableRow>
-            <TableHead>예매번호</TableHead>
-            <TableHead>마스킹 이름</TableHead>
-            <TableHead>마스킹 이메일</TableHead>
-            <TableHead>입장 상태</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {samples.length === 0 ? (
-            <TableRow>
-              <TableCell colSpan={4} className="h-24 text-center text-gray-600">
-                개인정보 원본 row는 브라우저에서 미리보기하지 않습니다.
-              </TableCell>
-            </TableRow>
-          ) : (
-            samples.map((sample, index) => (
-              <TableRow key={`${sample.reservationNumber ?? 'sample'}-${index}`}>
-                <TableCell className="font-semibold">{sample.reservationNumber ?? '-'}</TableCell>
-                <TableCell>{sample.buyerName ?? '-'}</TableCell>
-                <TableCell>{sample.buyerEmail ?? '-'}</TableCell>
-                <TableCell>{sample.entryStatus ?? '-'}</TableCell>
-              </TableRow>
-            ))
-          )}
-        </TableBody>
-      </Table>
-    </div>
-  );
-}
-
-function canAccessSettlement(user: SettlementUser | null | undefined): boolean {
-  const snapshot = resolveAdminCapabilitySnapshot({
-    id: user?.id ?? 'anonymous',
-    role: user?.role ?? null,
-    adminCapabilityBundle: user?.adminCapabilityBundle ?? null,
-    adminCapabilities: user?.adminCapabilities ?? [],
-  });
-
-  return snapshot.superuser || snapshot.capabilities.includes('settlement.export');
-}
-
-function normalizeSummary(
-  summary: SettlementDashboardSummaryInput | null,
-  filters: AdminSettlementFilters,
-) {
-  return {
-    eventId: summary?.eventId ?? filters.eventId ?? '',
-    showtimeId: summary?.showtimeId ?? filters.showtimeId,
-    currency: summary?.currency ?? 'KRW',
-    grossSalesAmount: toNumber(summary?.grossSalesAmount ?? summary?.salesAmount),
-    paidReservationCount: toNumber(summary?.paidReservationCount ?? summary?.paidReservations),
-    refundedAmount: toNumber(summary?.refundedAmount),
-    refundCount: toNumber(summary?.refundCount),
-    enteredCount: toNumber(summary?.enteredCount ?? summary?.entered),
-    noShowCount: toNumber(summary?.noShowCount ?? summary?.noShow),
-    entryRate: toNumber(summary?.entryRate),
-    generatedAt: summary?.generatedAt ?? new Date(0).toISOString(),
-  };
-}
-
-function buildFilterSummary(filters: AdminSettlementFilters, actorId: string) {
-  return [
-    { label: '이벤트', value: filters.eventId || '필수' },
-    { label: '회차', value: filters.showtimeId || '필수' },
-    {
-      label: '기간',
-      value: `${filters.dateFrom || '필수'} ~ ${filters.dateTo || '필수'}`,
-    },
-    { label: '결제 수단', value: labelFor(PAYMENT_METHOD_OPTIONS, filters.paymentMethod ?? 'all') },
-    { label: '예매 상태', value: labelFor(RESERVATION_STATUS_OPTIONS, filters.reservationStatus ?? 'all') },
-    { label: '입장 상태', value: labelFor(ENTRY_STATUS_OPTIONS, filters.entryStatus ?? 'all') },
-    { label: '환불 상태', value: labelFor(REFUND_STATUS_OPTIONS, filters.refundStatus ?? 'all') },
-    { label: '작업자', value: actorId },
-  ];
-}
-
-function compactPayload(
-  payload: AdminSettlementExportPayload,
-): AdminSettlementExportPayload {
-  return Object.fromEntries(
-    Object.entries(payload).filter(([, value]) => value !== undefined && value !== ''),
-  ) as AdminSettlementExportPayload;
-}
-
-function labelFor<T extends readonly { value: string; label: string }[]>(
-  options: T,
-  value: string,
-): string {
-  return options.find((option) => option.value === value)?.label ?? value;
-}
-
-function toneClass(tone: 'green' | 'amber' | 'red' | 'neutral'): string {
-  switch (tone) {
-    case 'green':
-      return 'bg-[#F0FDF4] text-[#15803D]';
-    case 'amber':
-      return 'bg-[#FFFBEB] text-[#8B6306]';
-    case 'red':
-      return 'bg-[#FEF2F2] text-[#C62828]';
-    case 'neutral':
-      return 'bg-[#F5F5F7] text-[#6B6B7B]';
+function ProviderEvidence({ ledger }: { ledger: FinanceLedger }) {
+  const totals = new Map<string, { amount: number; fee: number; payout: number }>();
+  for (const row of ledger.provider.rows) {
+    const sum = totals.get(row.currency) ?? { amount: 0, fee: 0, payout: 0 };
+    sum.amount += row.amountMinor; sum.fee += row.feeMinor; sum.payout += row.payoutMinor; totals.set(row.currency, sum);
   }
+  return <section className="space-y-3 rounded-xl border bg-white p-4" aria-label="PG 정산 자료"><h2 className="text-lg font-semibold">PG 정산 자료</h2>
+    <p className="text-sm leading-6 text-gray-600">선택한 공연·회차 전체에서 {ledger.query.dateFrom} ~ {ledger.query.dateTo}의 {ledger.provider.dateBasis === 'paidOutDate' ? '정산 지급일' : '정산 매출일'} 자료입니다. 위 승인·취소 거래 선택과 기간 기준이 다릅니다. PG가 현재 반환한 자료이며 과거 조회 결과를 복원한 자료가 아닙니다.</p>
+    {ledger.provider.status === 'not_queried' ? <p className="text-sm text-gray-600">PG 자료 미조회 · 위의 PG 자료까지 조회 버튼을 눌러주세요.</p>
+      : ledger.provider.status === 'failed' ? <p role="alert" className="text-sm text-red-800">PG 자료 조회 실패 · 지급액은 미확인입니다.</p>
+      : ledger.provider.status === 'empty' ? <p className="text-sm text-gray-600">조회 완료 · 이 범위에 해당하는 PG 정산 자료 0건</p> : <>
+        {ledger.provider.status === 'partial' && <p role="alert" className="text-sm text-amber-800">일부 PG 조회 실패 · 아래 금액은 조회된 자료만 포함합니다.</p>}
+        <div className="grid gap-3 sm:grid-cols-2">{[...totals].map(([currency, total]) => <dl key={currency} className="space-y-1 rounded-lg bg-gray-50 p-3 text-sm"><dt className="font-semibold">{currency} 정산 자료</dt><dd>거래 순액 {money(total.amount, currency)}</dd><dd>차감액 {money(total.fee, currency)}</dd><dd className="font-semibold">PG 지급액 {money(total.payout, currency)}</dd></dl>)}</div>
+        <details className="text-sm"><summary className="cursor-pointer py-2 font-medium">정산 거래 {ledger.provider.rows.length}건 보기</summary><ul className="space-y-3">{ledger.provider.rows.map((row) => <li key={row.transactionKey} className="rounded-lg border p-3"><p>{row.reservationNumber} · {money(row.amountMinor, row.currency)} → 지급 {money(row.payoutMinor, row.currency)}</p><p className="text-gray-600">매출일 {row.soldDate} / 지급일 {row.paidOutDate} KST</p><p className="break-all text-xs text-gray-500">거래 {row.transactionKey}</p></li>)}</ul></details>
+      </>}
+    {ledger.provider.scopes.filter((scope) => scope.status === 'failed').map((scope) => <p key={scope.scope} className="text-sm text-red-800">{scope.scope}: {scope.message}</p>)}
+    {ledger.provider.observedAt && <p className="text-xs text-gray-500">PG 조회 {dateTime(ledger.provider.observedAt)}</p>}
+  </section>;
 }
 
-function formatCurrency(value: number): string {
-  return new Intl.NumberFormat('ko-KR', {
-    style: 'currency',
-    currency: 'KRW',
-    maximumFractionDigits: 0,
-  }).format(value);
+function PaymentDetails({ row }: { row: FinancePaymentRow }) {
+  const states = { active: '유효', cancellation_pending: '취소 처리 중', cancelled: '취소 완료', expired: '만료', unknown: '상태 증거 부족' };
+  return <details className="rounded-xl border bg-white p-4"><summary className="cursor-pointer text-sm font-semibold"><span>{row.reservationNumber} · 원 주문 {money(row.originalOrderKrw, 'KRW')}</span><span className="ml-2 font-normal text-gray-600">환불 {money(row.confirmedRefundKrw, 'KRW')} / 남은 티켓 {money(row.remainingTicketKrw, 'KRW')}</span></summary>
+    <div className="mt-4 space-y-3 text-sm"><p>승인 {dateTime(row.paidAt)} · {row.provider}</p><p className="break-all text-xs text-gray-500">주문 {row.orderId} / 결제 기록 {row.paymentId}</p><p>PG 청구 {money(row.chargeMinor, row.chargeCurrency)} / 취소 {money(row.confirmedCancelMinor, row.chargeCurrency)} / 잔액 {money(row.balanceMinor, row.chargeCurrency)}</p>
+      <ul className="space-y-2">{row.tickets.map((item) => <li key={item.id} className="space-y-1 rounded-lg bg-gray-50 p-3"><p className="font-semibold">{item.seat} · {states[item.state]}</p><p>티켓 {money(item.priceKrw, 'KRW')} + 서비스 수수료 {money(item.serviceFeeKrw, 'KRW')} · 환불 {money(item.refundKrw, 'KRW')}</p>{item.requestedAt && <p className="text-gray-600">취소 요청 {dateTime(item.requestedAt)}{item.completedAt ? ` / 완료 ${dateTime(item.completedAt)}` : ' / 완료 대기'}</p>}<p className="text-gray-600">{item.enteredAt ? `입장 ${dateTime(item.enteredAt)}` : '입장 기록 없음'}</p></li>)}</ul>
+    </div></details>;
 }
-
-function formatWon(value: number): string {
-  return `${value.toLocaleString('ko-KR')}원`;
-}
-
-function formatTimestamp(value?: string): string {
-  if (!value) {
-    return '-';
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime()) || date.getTime() === 0) {
-    return '-';
-  }
-
-  return new Intl.DateTimeFormat('ko-KR', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-    timeZone: 'Asia/Seoul',
-  }).format(date);
-}
-
-function formatForeignProviders(
-  providers: readonly AdminSettlementReconciliation['foreign']['byProvider'][number][],
-): string {
-  if (providers.length === 0) {
-    return '외화 결제 없음';
-  }
-
-  return providers
-    .map(
-      (provider) =>
-        `${provider.provider} ${formatWon(provider.grossAmount)} · ${provider.reservationCount.toLocaleString('ko-KR')}건`,
-    )
-    .join(', ');
-}
-
-function formatCurrencyInput(value: string): string {
-  const parsed = parseCurrencyInput(value);
-  return parsed > 0 ? parsed.toLocaleString('ko-KR') : '';
-}
-
-function parseCurrencyInput(value: string): number {
-  const digits = value.replace(/\D/g, '');
-  return digits ? Number(digits) : 0;
-}
-
-function toNumber(value: unknown): number {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value;
-  }
-
-  if (typeof value === 'string') {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-
-  return 0;
-}
+function StateMessage({ children }: { children: React.ReactNode }) { return <p role="status" className="rounded-xl border bg-white p-5 text-sm leading-6 text-gray-600">{children}</p>; }
+function Amount({ label, value }: { label: string; value: number | null }) { return <div className="rounded-xl border bg-white p-4"><p className="text-sm text-gray-500">{label}</p><p className="mt-2 text-xl font-semibold text-gray-950">{money(value, 'KRW')}</p></div>; }
+function money(minor: number | null, currency: string | null) { if (typeof minor !== 'number' || !Number.isSafeInteger(minor) || !currency) return '미확인'; return `${currency} ${(minor / (currency === 'USD' ? 100 : 1)).toLocaleString('ko-KR', { minimumFractionDigits: currency === 'USD' ? 2 : 0, maximumFractionDigits: currency === 'USD' ? 2 : 0 })}`; }
+function dateTime(value: string) { return `${formatAdminKstDateTime(value).replace('T', ' ')} KST`; }

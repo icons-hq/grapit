@@ -6,17 +6,23 @@ test.describe('admin event publish review', () => {
     await mockAdminAuth(page);
 
     const performance = createPerformanceFixture();
-    await page.route('**/api/v1/performances/perf-25-08', async (route) => {
+    await page.route('**/api/v1/admin/performances/00000000-0000-4000-8000-000000002508/preparation', async (route) => {
+      await fulfillJson(route, { performanceId: performance.id, title: performance.title, updatedAt: performance.updatedAt,
+        publishState: 'publish_ready', status: 'upcoming', bookingStartsAt: null, canPublish: true,
+        structureProtected: false, reservationCount: 0, checks: [], history: [],
+        locales: ['ko', 'en'].map((locale) => ({ locale, title: true, description: true })) });
+    });
+    await page.route('**/api/v1/performances/00000000-0000-4000-8000-000000002508', async (route) => {
       await fulfillJson(route, performance);
     });
     await page.route(
-      '**/api/v1/admin/performances/perf-25-08',
+      '**/api/v1/admin/performances/00000000-0000-4000-8000-000000002508',
       async (route) => {
         await fulfillJson(route, performance);
       },
     );
     await page.route(
-      '**/api/v1/admin/performances/perf-25-08/publish',
+      '**/api/v1/admin/performances/00000000-0000-4000-8000-000000002508/publish',
       async (route) => {
         await fulfillJson(route, {
           ...performance,
@@ -30,12 +36,12 @@ test.describe('admin event publish review', () => {
   test('shows venue, transport, sale summary, and reason-gated publish confirmation', async ({
     page,
   }) => {
-    await page.goto('/admin/performances/perf-25-08/edit');
+    await page.goto('/admin/performances/00000000-0000-4000-8000-000000002508/edit?step=review');
 
     await expect(page.getByText('동해문화예술관 대극장')).toBeVisible();
     await expect(page.getByText('6호선 고려대역 하차 후 도보 10분')).toBeVisible();
 
-    await page.getByRole('button', { name: '이벤트 게시하기' }).click();
+    await page.getByRole('button', { name: '공개 승인', exact: true }).click();
 
     await expect(
       page.getByRole('heading', { name: '이 이벤트를 게시하시겠습니까?' }),
@@ -63,7 +69,7 @@ test.describe('admin event publish review', () => {
 
 function createPerformanceFixture() {
   return {
-    id: 'perf-25-08',
+    id: '00000000-0000-4000-8000-000000002508',
     title: 'Grabit Fanmeet 2026',
     genre: 'artist_celebrity',
     subcategory: null,
@@ -94,7 +100,7 @@ function createPerformanceFixture() {
     priceTiers: [
       {
         id: 'tier-vip',
-        performanceId: 'perf-25-08',
+        performanceId: '00000000-0000-4000-8000-000000002508',
         tierName: 'VIP',
         price: 110000,
         sortOrder: 0,
@@ -103,7 +109,7 @@ function createPerformanceFixture() {
     showtimes: [
       {
         id: 'showtime-25',
-        performanceId: 'perf-25-08',
+        performanceId: '00000000-0000-4000-8000-000000002508',
         dateTime: '2026-07-04T09:00:00.000Z',
       },
     ],

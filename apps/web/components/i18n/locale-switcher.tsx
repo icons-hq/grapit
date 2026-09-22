@@ -13,6 +13,8 @@ import { resolveLocaleFromPathname } from '@/i18n/routing';
 import { apiClient } from '@/lib/api-client';
 import { cn } from '@/lib/cn';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
+import { getLocalizedNavigationPath } from '@/lib/i18n/locale-path';
+export { getLocalizedPathname, appendSearchParams } from '@/lib/i18n/locale-path';
 import { navigateToLocalizedPath } from '@/lib/i18n/locale-navigation';
 import { useAuthStore } from '@/stores/use-auth-store';
 import {
@@ -112,12 +114,13 @@ export function MobileLocaleSwitcher({ className }: { className?: string }) {
       </SheetTrigger>
       <SheetContent
         side="bottom"
+        closeLabel={copy.nav.close}
         className="rounded-t-lg px-0 pb-[calc(0.75rem+env(safe-area-inset-bottom,0px))] pt-1 md:hidden"
       >
         <SheetHeader className="border-b border-gray-200 px-5 pb-4 pt-5 text-left">
           <SheetTitle className="text-base">{controlLabel}</SheetTitle>
           <SheetDescription className="sr-only">
-            Select a language for the current page.
+            {copy.nav.languageDescription}
           </SheetDescription>
         </SheetHeader>
         <div className="px-3">
@@ -186,10 +189,7 @@ function useLocaleSelection({
 
     onLocaleChange?.();
     navigateToLocalizedPath(
-      appendSearchParams(
-        getLocalizedPathname(pathname, locale),
-        searchParams.toString(),
-      ),
+      getLocalizedNavigationPath(pathname, searchParams.toString(), locale),
     );
   }
 
@@ -201,20 +201,6 @@ function getLocaleControlLabel(
   copy: ReturnType<typeof getVisibleCopy>,
 ) {
   return activeLocale === DEFAULT_LOCALE ? '언어 선택' : copy.nav.language;
-}
-
-export function getLocalizedPathname(
-  pathname: string,
-  locale: SupportedLocale,
-) {
-  const { pathnameWithoutLocale } = resolveLocaleFromPathname(pathname);
-  if (locale === DEFAULT_LOCALE) return pathnameWithoutLocale;
-  if (pathnameWithoutLocale === '/') return `/${locale}`;
-  return `/${locale}${pathnameWithoutLocale}`;
-}
-
-export function appendSearchParams(pathname: string, query: string) {
-  return query ? `${pathname}?${query}` : pathname;
 }
 
 export function setLocalePreferenceCookie(locale: SupportedLocale) {

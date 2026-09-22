@@ -246,4 +246,21 @@ describe('OfflineSyncService RED contract', () => {
     ]);
     expectNoRawOfflineLeak(result);
   });
+  it('retains pending attempts after transient server failure and never labels them as forged or final rejection', async () => {
+    const { service, fieldCheckInService } = createDependencies();
+    fieldCheckInService.consume.mockRejectedValue(new Error('database unavailable'));
+    const response = await service.syncPendingAttempts({ attempts: [pendingAttempt()] }, {
+      scannerUserId: 'scanner-user-1', recoveredAt: '2026-07-04T09:20:00.000Z',
+    });
+    expect(response.results[0]).toMatchObject({ syncState: 'pending', outcome: 'offline_pending', scanEventId: null });
+  });
+  it('does not consume another staff account local queue', async () => {
+    const { service, fieldCheckInService } = createDependencies();
+    const response = await service.syncPendingAttempts({ attempts: [pendingAttempt({ scannerUserId: 'someone-else' })] }, {
+      scannerUserId: 'scanner-user-1', recoveredAt: '2026-07-04T09:20:00.000Z',
+    });
+    expect(response.results[0]).toMatchObject({ syncState: 'rejected', outcome: 'rejected' });
+    expect(fieldCheckInService.consume).not.toHaveBeenCalled();
+  });
+
 });

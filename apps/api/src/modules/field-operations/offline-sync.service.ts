@@ -1,8 +1,6 @@
-import { Inject, Injectable } from '@nestjs/common';
-import { and, eq } from 'drizzle-orm';
+import { HttpException, Inject, Injectable } from '@nestjs/common';
 import type {
   FieldCheckInConsumeResponse,
-  FieldCheckInOutcome,
   FieldOfflineSyncAttempt,
   FieldOfflineSyncRequest,
   FieldOfflineSyncResponse,
@@ -10,7 +8,6 @@ import type {
 } from '@grabit/shared';
 
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
-import { ticketScanEvents } from '../../database/schema/index.js';
 import { AdminAuditService } from '../admin/admin-audit.service.js';
 import { FieldCheckInService } from './field-check-in.service.js';
 
@@ -21,15 +18,6 @@ export interface OfflineSyncContext {
   userAgent?: string | null;
   requestId?: string | null;
 }
-
-type OfflineSyncDb = Pick<DrizzleDB, 'select' | 'insert' | 'update'>;
-type ExistingOfflineResult = {
-  id: string;
-  result: string;
-  syncState: string;
-  rejectionReason: string | null;
-  scannedAt: Date | string;
-};
 
 @Injectable()
 export class OfflineSyncService {
@@ -47,15 +35,6 @@ export class OfflineSyncService {
     const results: FieldOfflineSyncResult[] = [];
 
     for (const attempt of attempts) {
-      const existingResult = await this.findExistingOfflineResult(attempt.deviceAttemptId);
-      if (existingResult) {
-        results.push(existingOfflineResultToSyncResult(
-          attempt.deviceAttemptId,
-          existingResult,
-        ));
-        continue;
-      }
-
       results.push(await this.resolveAttempt(attempt, context));
     }
 
@@ -88,6 +67,10 @@ export class OfflineSyncService {
     attempt: FieldOfflineSyncAttempt,
     context: OfflineSyncContext,
   ): Promise<FieldOfflineSyncResult> {
+    if (attempt.scannerUserId !== context.scannerUserId) {
+      return { deviceAttemptId: attempt.deviceAttemptId, syncState: 'rejected', outcome: 'rejected',
+        resolvedAt: context.recoveredAt, scanEventId: null, reason: '이 기록을 저장한 현장 계정으로 로그인해주세요.' };
+    }
     try {
       const consumed = await this.fieldCheckInService.consume(
         {
@@ -111,46 +94,19 @@ export class OfflineSyncService {
         consumed,
         context.recoveredAt,
       );
-    } catch {
+    } catch (error) {
+      const denied = error instanceof HttpException && error.getStatus() < 500;
       return {
         deviceAttemptId: attempt.deviceAttemptId,
-        syncState: 'rejected',
-        outcome: 'tampered',
+        syncState: denied ? 'rejected' : 'pending',
+        outcome: denied ? 'rejected' : 'offline_pending',
         resolvedAt: context.recoveredAt,
         scanEventId: null,
-        reason: 'server re-verification rejected recovered offline attempt',
+        reason: denied ? '요청을 확인할 수 없습니다. 현장 책임자에게 확인해주세요.' : '서버 확인이 끝나지 않았습니다. 연결을 확인하고 다시 동기화해주세요.',
       };
     }
   }
 
-  private async findExistingOfflineResult(
-    deviceAttemptId: string,
-    db: OfflineSyncDb = this.db,
-  ): Promise<ExistingOfflineResult | null> {
-    const selectBuilder = db.select?.({
-      id: ticketScanEvents.id,
-      result: ticketScanEvents.result,
-      syncState: ticketScanEvents.syncState,
-      rejectionReason: ticketScanEvents.rejectionReason,
-      scannedAt: ticketScanEvents.scannedAt,
-    });
-
-    if (!selectBuilder || typeof selectBuilder.from !== 'function') {
-      return null;
-    }
-
-    const rows = await selectBuilder
-      .from(ticketScanEvents)
-      .where(
-        and(
-          eq(ticketScanEvents.deviceAttemptId, deviceAttemptId),
-          eq(ticketScanEvents.source, 'offline_sync'),
-        ),
-      )
-      .limit(1);
-
-    return rows[0] ?? null;
-  }
 }
 
 function dedupePendingAttempts(
@@ -190,43 +146,6 @@ function consumeResponseToSyncResult(
   };
 }
 
-function existingOfflineResultToSyncResult(
-  deviceAttemptId: string,
-  row: ExistingOfflineResult,
-): FieldOfflineSyncResult {
-  const syncState = row.syncState === 'synced' || row.result === 'success'
-    ? 'synced'
-    : 'rejected';
-
-  return {
-    deviceAttemptId,
-    syncState,
-    outcome: scanResultToOutcome(row.result),
-    resolvedAt: toIso(row.scannedAt),
-    scanEventId: row.id,
-    reason: syncState === 'rejected' ? sanitizeReason(row.rejectionReason) : null,
-  };
-}
-
-function scanResultToOutcome(result: string): FieldCheckInOutcome {
-  switch (result) {
-    case 'success':
-    case 'offline_synced':
-      return 'entered';
-    case 'duplicate':
-    case 'tampered':
-    case 'refunded_cancelled':
-    case 'expired':
-    case 'wrong_showtime':
-    case 'already_used':
-      return result;
-    case 'offline_pending':
-      return 'offline_pending';
-    default:
-      return 'rejected';
-  }
-}
-
 function sanitizeReason(reason: string | null | undefined): string {
   if (!reason?.trim()) {
     return 'server re-verification rejected recovered offline attempt';
@@ -238,8 +157,4 @@ function sanitizeReason(reason: string | null | undefined): string {
     .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[redacted-email]')
     .replace(/\+?\d[\d -]{8,}\d/g, '[redacted-phone]')
     .slice(0, 500);
-}
-
-function toIso(value: Date | string): string {
-  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }

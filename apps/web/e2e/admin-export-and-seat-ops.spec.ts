@@ -4,6 +4,11 @@ import { fulfillJson, mockAdminAuth } from './helpers/mock-admin';
 test.describe('Admin export and seat operations', () => {
   test.beforeEach(async ({ page }) => {
     await mockAdminAuth(page);
+    const performance = { id: '00000000-0000-4000-8000-000000000101', title: 'Grabit Fanmeet',
+      showtimes: [{ id: '00000000-0000-4000-8000-000000000001', dateTime: '2026-07-04T09:00:00.000Z' }],
+      seatMaps: [{ floorKey: '1F', floorLabel: '1층', seatConfig: { tiers: [{ tierName: 'VIP', seatIds: ['A-10'] }] } }] };
+    await page.route('**/api/v1/admin/performances?**', (route) => fulfillJson(route, { data: [performance], total: 1 }));
+    await page.route('**/api/v1/admin/performances/00000000-0000-4000-8000-000000000101', (route) => fulfillJson(route, performance));
     await page.route('**/api/v1/admin/bookings?**', async (route) => {
       await fulfillJson(route, {
         bookings: [createCancelledBooking()],
@@ -80,7 +85,8 @@ test.describe('Admin export and seat operations', () => {
     await page.goto('/admin/bookings');
 
     await expect(page.getByRole('heading', { name: '예매 관리' })).toBeVisible();
-    await expect(page.getByLabel('이벤트')).toBeVisible();
+    await expect(page.getByLabel('업무 공연 선택')).toBeVisible();
+    await expect(page.getByText('일반 CSV는 선택 범위의 전체 회차를 포함합니다.', { exact: false })).toBeVisible();
     await page.getByRole('button', { name: '예약자 원본 CSV 내보내기' }).click();
     await expect(
       page.getByRole('heading', { name: '예약자 원본 CSV를 내보내시겠습니까?' }),
@@ -113,8 +119,9 @@ test.describe('Admin export and seat operations', () => {
     await expect(
       page.getByRole('heading', { name: '좌석 운영', level: 1 }),
     ).toBeVisible();
-    await page.getByLabel('회차 ID').fill('00000000-0000-4000-8000-000000000001');
-    await page.getByLabel('좌석 키').fill('1F:A-10');
+    await page.getByLabel('업무 공연 선택').selectOption('00000000-0000-4000-8000-000000000101');
+    await page.getByLabel('업무 회차 선택').selectOption('00000000-0000-4000-8000-000000000001');
+    await page.getByLabel('좌석 선택', { exact: true }).selectOption('1F:A-10');
     await page.getByRole('button', { name: '좌석 비활성화' }).click();
     await expect(
       page.getByRole('button', { name: '비활성화 확인' }),

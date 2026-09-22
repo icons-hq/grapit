@@ -1,5 +1,8 @@
 'use client';
 
+import { getAuthLaunchCopy } from '@/components/auth/auth-launch-copy';
+import { useLocale } from 'next-intl';
+import { resolveSafeReturnToFromSearch } from '@/lib/auth-return';
 import { Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Loader2 } from 'lucide-react';
@@ -7,6 +10,8 @@ import { EmailVerificationStatus } from '@/components/auth/email-verification-st
 
 function VerifyEmailContent() {
   const searchParams = useSearchParams();
+  const copy = getAuthLaunchCopy(useLocale());
+  const returnTo = resolveSafeReturnToFromSearch(searchParams.toString());
   const token = searchParams.get('token');
   const email = searchParams.get('email')?.trim() ?? '';
 
@@ -14,14 +19,14 @@ function VerifyEmailContent() {
     <main className="flex flex-1 items-center justify-center px-4 py-12">
       <div className="w-full max-w-[420px] space-y-6">
         <h1 className="text-center text-heading font-semibold text-gray-900">
-          이메일 인증
+          {copy.navigation.verifyTitle}
         </h1>
         {token ? (
-          <EmailVerificationStatus email="" token={token} />
+          <EmailVerificationStatus returnTo={returnTo} email="" token={token} />
         ) : email ? (
-          <EmailVerificationStatus email={email} />
+          <EmailVerificationStatus returnTo={returnTo} email={email} initialState={searchParams.get('delivery') === 'failed' ? 'deliveryFailed' : 'sent'} />
         ) : (
-          <EmailVerificationStatus email="" initialState="systemError" />
+          <EmailVerificationStatus returnTo={returnTo} email="" initialState="systemError" />
         )}
       </div>
     </main>

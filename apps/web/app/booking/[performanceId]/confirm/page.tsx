@@ -7,7 +7,7 @@ import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { AuthGuard } from '@/components/auth/auth-guard';
 import { ConfirmHeader } from '@/components/booking/confirm-header';
-import { OrderSummary } from '@/components/booking/order-summary';
+import { OrderSummary, CheckoutAmountSummary } from '@/components/booking/order-summary';
 import { BookerInfoSection } from '@/components/booking/booker-info-section';
 import { PaymentDeadlineBanner } from '@/components/booking/payment-deadline-banner';
 import { TermsAgreement } from '@/components/booking/terms-agreement';
@@ -17,6 +17,9 @@ import {
   type TossPaymentWidgetRef,
 } from '@/components/booking/toss-payment-widget';
 import { Button } from '@/components/ui/button';
+import { Card, CardHeader, CardContent, CardFooter } from '@/components/ui/card';
+import { Separator } from '@/components/ui/separator';
+import Link from 'next/link';
 import {
   useBookingPaymentSnapshot,
   usePrepareReservation,
@@ -24,6 +27,9 @@ import {
   useCancelPendingReservation,
 } from '@/hooks/use-booking';
 import { useBookingAvailability } from '@/hooks/use-booking-availability';
+import { useCheckoutRecovery } from '@/hooks/use-checkout-recovery';
+import { getCheckoutCopy, getCheckoutMethodLabel } from '@/lib/booking/checkout-copy';
+import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import {
   getPaymentFailureGuidance,
   type PaymentFailureGuidance,
@@ -31,11 +37,13 @@ import {
 import { getVisibleCopy, resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
 import { useBookingStore } from '@/stores/use-booking-store';
 import { useAuthStore } from '@/stores/use-auth-store';
+import { apiClient } from '@/lib/api-client';
 import {
   TICKET_SERVICE_FEE_KRW,
+  isSameCheckoutPaymentMethod,
   toFloorAwareSeatSelection as toSharedFloorAwareSeatSelection,
 } from '@grabit/shared';
-import type { FloorAwareSeatSelection, SeatSelection } from '@grabit/shared';
+import type { FloorAwareSeatSelection, PrepareReservationResponse, SeatSelection } from '@grabit/shared';
 
 function generateOrderId(): string {
   const random = Math.random().toString(36).slice(2, 7).toUpperCase();
@@ -85,6 +93,7 @@ function ConfirmPageContent() {
   const locale = resolveVisibleCopyLocale(useLocale());
   const visibleCopy = getVisibleCopy(locale);
   const confirmCopy = visibleCopy.bookingExtra.confirm;
+  const checkoutCopy = getCheckoutCopy(locale);
   const paymentFailureGuidanceCopy = visibleCopy.booking.paymentFailureGuidance;
   const paymentProviderMessagePrefix = visibleCopy.booking.paymentRecovery.providerMessagePrefix;
   const performanceId = params.performanceId as string;
@@ -103,11 +112,14 @@ function ConfirmPageContent() {
   const [agreed, setAgreed] = useState(false);
   const [overseasDisclaimerAgreed, setOverseasDisclaimerAgreed] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isReselecting, setIsReselecting] = useState(false);
+  const reselectingRef = useRef(false);
   const [widgetReady, setWidgetReady] = useState(false);
   const [widgetAgreementAgreed, setWidgetAgreementAgreed] = useState(false);
   const [lockFailureMessage, setLockFailureMessage] = useState<string | null>(null);
   const [paymentReturnError, setPaymentReturnError] = useState<PaymentFailureGuidance | null>(null);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<PaymentMethodSelection | null>(null);
+  const [preparedReview, setPreparedReview] = useState<PrepareReservationResponse | null>(null);
   const [bookerInfo, setBookerInfo] = useState<{ name: string; phone: string }>({
     name: user?.name ?? '',
     phone: user?.phone ?? '',
@@ -128,10 +140,25 @@ function ConfirmPageContent() {
   const cancelAbandonedPending = useCancelPendingReservation({ showErrorToast: false });
 
   const resumeOrderId = searchParams.get('resumeOrderId');
-  const isResumingPendingPayment = Boolean(resumeOrderId);
-  const [orderId, setOrderId] = useState(() => resumeOrderId ?? generateOrderId());
   const hasPaymentErrorReturn = searchParams.get('error') === 'true';
-  const returnPaymentDeadlineAt = searchParams.get('paymentDeadlineAt');
+  const returnOrderId = resumeOrderId ?? (hasPaymentErrorReturn ? searchParams.get('orderId') : null);
+  const isResumingPendingPayment = Boolean(returnOrderId);
+  const [newOrderId, setOrderId] = useState(generateOrderId);
+  const orderId = returnOrderId ?? newOrderId;
+  const recovery = useCheckoutRecovery(returnOrderId, performanceId, isProcessing);
+  const { refetch: refetchRecovery } = recovery;
+  const bookingPath = getLocalizedPathname(`/booking/${performanceId}`, locale);
+  const ticketsPath = `${getLocalizedPathname('/mypage', locale)}?tab=reservations`;
+
+  useEffect(() => {
+    if (recovery.reservation) reservationIdRef.current = recovery.reservation.id;
+    if (
+      !paymentRequestInFlightRef.current
+      && (recovery.state === 'confirmed' || recovery.state === 'processing')
+    ) {
+      router.replace(`${bookingPath}/complete?pending=true&orderId=${encodeURIComponent(orderId)}`);
+    }
+  }, [bookingPath, orderId, recovery.reservation, recovery.state, router]);
 
   const totalPrice = useMemo(
     () => selectedSeats.reduce((sum, s) => sum + s.price, 0)
@@ -150,20 +177,14 @@ function ConfirmPageContent() {
 
   // Redirect if no booking data
   useEffect(() => {
-    if (selectedSeats.length === 0 && !hasPaymentErrorReturn && !paymentReturnError) {
-      router.replace(`/booking/${performanceId}`);
+    if (selectedSeats.length === 0 && !returnOrderId && !hasPaymentErrorReturn && !paymentReturnError) {
+      router.replace(bookingPath);
     }
-  }, [hasPaymentErrorReturn, paymentReturnError, selectedSeats.length, performanceId, router]);
+  }, [bookingPath, hasPaymentErrorReturn, paymentReturnError, returnOrderId, selectedSeats.length, router]);
 
   // Handle error return from Toss. Guard with useRef so React StrictMode's
   // double-effect in dev mode does not fire two toasts for the same URL.
   const errorToastKeyRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (returnPaymentDeadlineAt) {
-      applyPaymentDeadline(returnPaymentDeadlineAt);
-    }
-  }, [applyPaymentDeadline, returnPaymentDeadlineAt]);
-
   useEffect(() => {
     const hasError = searchParams.get('error');
     const code = searchParams.get('code');
@@ -172,9 +193,6 @@ function ConfirmPageContent() {
     const errorToastKey = `${code ?? ''}:${message ?? ''}:${failedOrderId ?? ''}`;
     if (hasError !== 'true' || errorToastKeyRef.current === errorToastKey) return;
     errorToastKeyRef.current = errorToastKey;
-    const reservationId = reservationIdRef.current;
-    const shouldRotateOrderId =
-      !isResumingPendingPayment && (Boolean(reservationId) || failedOrderId === orderId);
     const failureGuidance = getPaymentFailureGuidance({
       code,
       providerMessage: message,
@@ -187,15 +205,7 @@ function ConfirmPageContent() {
       setIsProcessing(false);
       setPaymentReturnError(failureGuidance);
 
-      if (shouldRotateOrderId) {
-        setOrderId(generateOrderId());
-      }
     });
-
-    if (reservationId && !isResumingPendingPayment) {
-      reservationIdRef.current = null;
-      cancelPending.mutate(reservationId);
-    }
 
     toast.error(failureGuidance.title, {
       description: failureGuidance.body,
@@ -207,53 +217,61 @@ function ConfirmPageContent() {
     url.searchParams.delete('code');
     url.searchParams.delete('message');
     url.searchParams.delete('paymentDeadlineAt');
-    if (!isResumingPendingPayment) {
-      url.searchParams.delete('orderId');
-    }
-    window.history.replaceState({}, '', `${url.pathname}${url.search}`);
+    if (returnOrderId) url.searchParams.set('resumeOrderId', returnOrderId);
+    url.searchParams.delete('orderId');
+    // Next.js copies its internal history state for external calls. Passing it
+    // back would bypass useSearchParams updates and let a render erase this URL.
+    window.history.replaceState(null, '', `${url.pathname}${url.search}`);
   }, [
-    cancelPending,
-    isResumingPendingPayment,
-    orderId,
+    returnOrderId,
     paymentFailureGuidanceCopy,
     paymentProviderMessagePrefix,
     searchParams,
   ]);
 
-  const handlePaymentReturnRecovery = useCallback(() => {
-    setPaymentReturnError(null);
-    useBookingStore.getState().clearBooking();
-    router.replace(`/booking/${performanceId}`);
-  }, [performanceId, router]);
+  const handlePaymentReturnRecovery = useCallback(async () => {
+    if (reselectingRef.current) return;
+    reselectingRef.current = true;
+    setIsReselecting(true);
+    try {
+      if (reservationIdRef.current) await cancelPending.mutateAsync(reservationIdRef.current);
+      const showtimeId = useBookingStore.getState().selectedShowtimeId;
+      // A delayed unlock-all must never erase seats chosen on the next screen.
+      if (showtimeId) await unlockAll.mutateAsync({ showtimeId });
+      setPaymentReturnError(null);
+      useBookingStore.getState().clearBooking();
+      router.replace(bookingPath);
+    } catch {
+      if (returnOrderId) await refetchRecovery();
+    } finally {
+      reselectingRef.current = false;
+      if (mountedRef.current) setIsReselecting(false);
+    }
+  }, [bookingPath, cancelPending, refetchRecovery, returnOrderId, router, unlockAll]);
 
   const handleExpire = useCallback(() => {
-    const { selectedShowtimeId } = useBookingStore.getState();
-    if (selectedShowtimeId) {
-      unlockAll.mutate({ showtimeId: selectedShowtimeId });
-    }
-    if (reservationIdRef.current) {
-      cancelPending.mutate(reservationIdRef.current);
-    }
     toast.error(confirmCopy.lockExpiredRedirect);
-    router.replace(`/booking/${performanceId}`);
-  }, [confirmCopy, performanceId, router, unlockAll, cancelPending]);
+    if (returnOrderId) void refetchRecovery();
+  }, [confirmCopy, refetchRecovery, returnOrderId]);
 
   const handleWidgetReady = useCallback(() => {
     setWidgetReady(true);
-  }, []);
+  }, [setWidgetReady]);
 
   const handleAgreementChange = useCallback((value: boolean) => {
     setAgreed(value);
-  }, []);
+  }, [setAgreed]);
 
   const handlePaymentMethodChange = useCallback((selection: PaymentMethodSelection) => {
     setSelectedPaymentMethod(selection);
     setOverseasDisclaimerAgreed(false);
-  }, []);
+    setPreparedReview((current) => current?.paymentMethod
+      && isSameCheckoutPaymentMethod(current.paymentMethod, selection.paymentMethod) ? current : null);
+  }, [setSelectedPaymentMethod, setOverseasDisclaimerAgreed, setPreparedReview]);
 
   const handleWidgetAgreementChange = useCallback((value: boolean) => {
     setWidgetAgreementAgreed(value);
-  }, []);
+  }, [setWidgetAgreementAgreed]);
 
   const handlePaymentDeadlineChange = useCallback((nextPaymentDeadlineAt: string) => {
     applyPaymentDeadline(nextPaymentDeadlineAt);
@@ -261,12 +279,9 @@ function ConfirmPageContent() {
 
   const handleBookerUpdate = useCallback((data: { name: string; phone: string }) => {
     setBookerInfo(data);
-  }, []);
+  }, [setBookerInfo]);
 
-  const handleLockFailureRecovery = useCallback(() => {
-    useBookingStore.getState().clearSeats();
-    router.replace(`/booking/${performanceId}`);
-  }, [performanceId, router]);
+  const handleLockFailureRecovery = handlePaymentReturnRecovery;
 
   const requiresOverseasDisclaimer = selectedPaymentMethod?.requiresOverseasDisclaimer ?? false;
   const paymentMethod = useMemo(() => {
@@ -288,19 +303,28 @@ function ConfirmPageContent() {
       ...selectedPaymentMethod.paymentMethod,
       overseasPaymentConsent: {
         required: consent?.required ?? true,
-        agreementVersion: consent?.agreementVersion ?? '2026-05-08',
+        agreementVersion: consent?.agreementVersion ?? '2026-09-21',
         agreed: overseasDisclaimerAgreed,
         agreedAt: overseasDisclaimerAgreed ? new Date().toISOString() : null,
-        fxRateDisclaimer: t('paymentDisclaimer.fxHelper'),
+        fxRateDisclaimer: checkoutCopy.chargeNotice,
         refundDelayNotice: t('paymentDisclaimer.refundDelay'),
       },
     };
-  }, [overseasDisclaimerAgreed, requiresOverseasDisclaimer, selectedPaymentMethod, t]);
+  }, [checkoutCopy.chargeNotice, overseasDisclaimerAgreed, requiresOverseasDisclaimer, selectedPaymentMethod, t]);
+
+  const restoredMethod = recovery.reservation?.checkoutPaymentMethod;
+  const methodMatchesRestoredOrder = !restoredMethod || !selectedPaymentMethod
+    || isSameCheckoutPaymentMethod(restoredMethod, paymentMethod);
+  const lockedMethodMismatch = Boolean(recovery.reservation?.checkoutStartedAt) && !methodMatchesRestoredOrder;
+  const visibleQuote = preparedReview?.providerChargeQuote
+    ?? (methodMatchesRestoredOrder ? recovery.reservation?.providerChargeQuote : undefined);
 
   async function handlePayment() {
     if (!bookingAvailable) return;
     if (lockFailureMessage) return;
     if (isPaymentDeadlineExpired) return;
+    if (returnOrderId && recovery.state !== 'ready') return;
+    if (lockedMethodMismatch) return;
     if (
       !paymentWidgetRef.current
       || !agreed
@@ -314,16 +338,22 @@ function ConfirmPageContent() {
     errorToastKeyRef.current = null;
     setPaymentReturnError(null);
     setIsProcessing(true);
+    let prepareSucceeded = false;
     const requestedBooking = useBookingStore.getState();
     const isCurrentBookingRequest = () => {
       const current = useBookingStore.getState();
       return mountedRef.current
         && current.performanceId === requestedBooking.performanceId
         && current.selectedShowtimeId === requestedBooking.selectedShowtimeId
-        && current.selectedSeats === requestedBooking.selectedSeats;
+        && JSON.stringify(current.selectedSeats) === JSON.stringify(requestedBooking.selectedSeats);
     };
-    let preparedReservationId: string | null = null;
     try {
+      // Persist the identity before the request: the server may commit even if
+      // this document disappears or the response never reaches the browser.
+      const returnUrl = new URL(window.location.href);
+      returnUrl.searchParams.set('resumeOrderId', orderId);
+      window.history.replaceState(null, '', `${returnUrl.pathname}${returnUrl.search}`);
+
       // 1. Create pending reservation on server before payment
       const now = new Date();
       const result = await prepareMutation.mutateAsync({
@@ -351,7 +381,7 @@ function ConfirmPageContent() {
         bookingPolicy,
         paymentMethod,
       });
-      preparedReservationId = result.reservationId;
+      prepareSucceeded = true;
       // A late prepare response belongs only to the selection that requested it.
       if (!isCurrentBookingRequest()) {
         if (!isResumingPendingPayment) {
@@ -369,26 +399,78 @@ function ConfirmPageContent() {
         applyPaymentDeadline(result.paymentDeadlineAt);
       }
 
+      if (
+        result.providerChargeQuote
+        && JSON.stringify(result.providerChargeQuote) !== JSON.stringify(visibleQuote)
+      ) {
+        setPreparedReview(result);
+        paymentRequestInFlightRef.current = false;
+        setIsProcessing(false);
+        return;
+      }
+
       // 2. Initiate Toss payment — SDK redirects the browser
       await paymentWidgetRef.current.requestPayment(result);
-    } catch (err) {
       paymentRequestInFlightRef.current = false;
       if (mountedRef.current) setIsProcessing(false);
-      if (preparedReservationId && !isResumingPendingPayment) {
-        reservationIdRef.current = null;
-        const cleanup = isCurrentBookingRequest() ? cancelPending : cancelAbandonedPending;
-        await cleanup.mutateAsync(preparedReservationId).catch(() => {});
-        if (mountedRef.current) setOrderId(generateOrderId());
+      if (returnOrderId) await refetchRecovery();
+    } catch (err) {
+      paymentRequestInFlightRef.current = false;
+      if (!isCurrentBookingRequest()) {
+        if (mountedRef.current) setIsProcessing(false);
+        return;
       }
-      if (!isCurrentBookingRequest()) return;
       const errorMessage =
         err instanceof Error ? err.message : confirmCopy.paymentRequestFailed;
-      if (isLockFailureMessage(errorMessage)) {
-        setLockFailureMessage(getLocalizedLockFailureMessage(errorMessage, confirmCopy));
+      let uncreatedOrder = false;
+      if (!prepareSucceeded && !isResumingPendingPayment && err instanceof Error
+        && 'statusCode' in err && [400, 403, 409, 422].includes(Number(err.statusCode))) {
+        try {
+          // A rejection alone may describe an existing order. Only a successful
+          // owner lookup returning null proves this new attempt has no order.
+          uncreatedOrder = await apiClient.get(
+            `/api/v1/reservations?orderId=${encodeURIComponent(orderId)}&locale=${locale}`,
+            { showErrorToast: false },
+          ) === null;
+        } catch { /* Lookup failure never authorizes another order. */ }
+        if (!isCurrentBookingRequest()) {
+          if (mountedRef.current) setIsProcessing(false);
+          return;
+        }
+        if (uncreatedOrder) {
+          const rejectedUrl = new URL(window.location.href);
+          if (rejectedUrl.searchParams.get('resumeOrderId') === orderId) {
+            rejectedUrl.searchParams.delete('resumeOrderId');
+            window.history.replaceState(null, '', `${rejectedUrl.pathname}${rejectedUrl.search}`);
+          }
+        }
+      }
+      if (mountedRef.current) setIsProcessing(false);
+      if (uncreatedOrder || isLockFailureMessage(errorMessage)) {
+        setLockFailureMessage(locale === 'ko' ? getLocalizedLockFailureMessage(errorMessage, confirmCopy) : confirmCopy.paymentRequestFailed);
         return;
       }
       toast.error(errorMessage);
+      if (returnOrderId) void refetchRecovery();
     }
+  }
+
+  const awaitingPreparedSnapshot = recovery.state === 'loading' && preparedReview?.orderId === returnOrderId;
+  if (returnOrderId && !isProcessing && !awaitingPreparedSnapshot && recovery.state !== 'ready') {
+    const ended = recovery.state === 'ended';
+    const checking = recovery.state === 'loading' || recovery.state === 'confirmed' || recovery.state === 'processing';
+    return (
+      <main className="mx-auto flex min-h-[60vh] w-full max-w-xl flex-col justify-center gap-5 px-6 py-12">
+        <section role="status" className="flex flex-col gap-3">
+          <h1 className="text-2xl font-bold">{checking ? checkoutCopy.checking : ended ? checkoutCopy.ended : checkoutCopy.unavailable}</h1>
+          <p className="text-muted-foreground">{checking ? checkoutCopy.checkingBody : ended ? checkoutCopy.endedBody : checkoutCopy.unavailableBody}</p>
+        </section>
+        <Button onClick={() => void refetchRecovery()} disabled={recovery.isFetching}>{checkoutCopy.retry}</Button>
+        {ended && <Button variant="outline" onClick={handlePaymentReturnRecovery} disabled={isReselecting}>{checkoutCopy.reselect}</Button>}
+        <Button variant="ghost" onClick={() => router.replace(ticketsPath)}>{checkoutCopy.tickets}</Button>
+        <Link className="text-center text-sm text-primary underline" href={getLocalizedPathname('/support', locale)}>{checkoutCopy.support}</Link>
+      </main>
+    );
   }
 
   if (selectedSeats.length === 0) {
@@ -429,7 +511,9 @@ function ConfirmPageContent() {
     );
   }
 
-  const ctaDisabled = !bookingAvailable
+  const ctaDisabled = isReselecting || !bookingAvailable
+    || lockedMethodMismatch
+    || (Boolean(returnOrderId) && recovery.state !== 'ready')
     || !!lockFailureMessage
     || !agreed
     || !widgetAgreementAgreed
@@ -451,38 +535,32 @@ function ConfirmPageContent() {
       ? confirmCopy.agreeTerms
       : !widgetAgreementAgreed
       ? confirmCopy.agreePaymentTerms
+      : visibleQuote
+      ? `${visibleQuote.currency} ${visibleQuote.amountDecimal} ${checkoutCopy.pay}`
+      : requiresOverseasDisclaimer
+      ? checkoutCopy.reviewCharge
       : t('paymentDisclaimer.payNow');
 
   return (
-    <div className="flex min-h-dvh flex-col">
-      <ConfirmHeader onExpire={handleExpire} />
-
-      <main className="mx-auto w-full max-w-[720px] flex-1 space-y-6 px-4 py-6 md:px-6 md:py-8">
-        <PaymentDeadlineBanner
-          paymentDeadlineAt={paymentDeadlineAt}
-          lockExpiresAt={lockExpiresAt}
-        />
-
-        {/* Order Summary */}
-        <OrderSummary
-          performanceTitle={performanceTitle ?? ''}
-          posterUrl={posterUrl}
-          showDateTime={showDateTime ?? ''}
-          venue={venue ?? ''}
-          seats={selectedSeats}
-          totalPrice={totalPrice}
-        />
-
-        {/* Booker Info */}
-        <BookerInfoSection
-          userName={bookerInfo.name}
-          userPhone={bookerInfo.phone}
-          onUpdate={handleBookerUpdate}
-        />
-
-        {/* Terms Agreement */}
-        <TermsAgreement agreed={agreed} onAgreementChange={handleAgreementChange} />
-
+    <div className="flex min-h-dvh flex-col bg-background">
+      <ConfirmHeader onExpire={handleExpire} onBack={handlePaymentReturnRecovery} disabled={isProcessing || isReselecting} />
+      <main className="mx-auto grid w-full max-w-7xl flex-1 items-start gap-8 px-4 py-8 md:px-8 md:py-12 lg:grid-cols-[minmax(0,1fr)_minmax(360px,440px)] lg:gap-12">
+        <div className="space-y-7 md:space-y-9">
+          <h1 className="text-2xl font-bold tracking-tight md:text-3xl">{checkoutCopy.title}</h1>
+          <OrderSummary performanceTitle={performanceTitle ?? ''} posterUrl={posterUrl}
+            showDateTime={showDateTime ?? ''} venue={venue ?? ''} seats={selectedSeats} />
+          <Separator />
+          <BookerInfoSection userName={bookerInfo.name} userPhone={bookerInfo.phone}
+            userEmail={user?.email} emailVerified={user?.isEmailVerified} onUpdate={handleBookerUpdate} />
+          <Separator />
+          <TermsAgreement performanceId={performanceId} onAgreementChange={handleAgreementChange} />
+        </div>
+        <Card className="gap-5 border-border bg-muted/20 shadow-none">
+          <CardHeader className="gap-5 px-4 sm:px-6">
+            <PaymentDeadlineBanner paymentDeadlineAt={paymentDeadlineAt} lockExpiresAt={lockExpiresAt} />
+            <CheckoutAmountSummary seats={selectedSeats} totalPrice={totalPrice} quote={visibleQuote ?? undefined} />
+          </CardHeader>
+          <CardContent className="space-y-5 px-4 sm:px-6">
         {paymentReturnError && (
           <section role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4">
             <p className="text-sm font-semibold text-red-800">
@@ -533,7 +611,13 @@ function ConfirmPageContent() {
         )}
 
         {/* Payment Widget */}
-        <section className="space-y-3">
+        {restoredMethod && (
+          <section role="status" className="flex flex-col gap-2 border-t border-border pt-4">
+            <p className="text-sm">{checkoutCopy.savedMethod}: <strong>{getCheckoutMethodLabel(restoredMethod, locale)}</strong></p>
+            {lockedMethodMismatch && <p className="text-sm text-muted-foreground">{checkoutCopy.methodLocked}</p>}
+          </section>
+        )}
+        <section className="space-y-3" inert={isProcessing}>
           <h2 className="text-base font-semibold">{confirmCopy.paymentMethod}</h2>
           {user && bookingAvailable && (
             <TossPaymentWidget
@@ -546,8 +630,9 @@ function ConfirmPageContent() {
               customerName={bookerInfo.name}
               customerEmail={user.email}
               customerMobilePhone={bookerInfo.phone}
+              customerCountry={user.country}
               selectedSeats={selectedSeats.map(toFloorAwareSeatSelection)}
-              resumeOrderId={resumeOrderId ?? undefined}
+              initialPaymentMethod={recovery.reservation?.checkoutPaymentMethod ?? undefined}
               onReady={handleWidgetReady}
               onPaymentMethodChange={handlePaymentMethodChange}
               onWidgetAgreementChange={handleWidgetAgreementChange}
@@ -557,16 +642,15 @@ function ConfirmPageContent() {
         </section>
 
         {requiresOverseasDisclaimer && (
-          <section className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4">
-            <p className="text-sm font-semibold text-amber-900">
+          <section className="space-y-2 border-t border-border pt-5">
+            <p className="text-sm font-semibold text-foreground">
               {t('paymentDisclaimer.title')}
             </p>
-            <p className="mt-1 text-sm text-amber-800">
+            <p className="mt-1 text-sm text-muted-foreground">
               {t('paymentDisclaimer.description')}
             </p>
-            <div className="mt-3 space-y-2 text-sm text-amber-900">
-              <p>{t('paymentDisclaimer.krwPrimary')}</p>
-              <p>{t('paymentDisclaimer.fxHelper')}</p>
+            <div className="mt-3 space-y-2 text-sm text-foreground">
+              <p>{checkoutCopy.chargeNotice}</p>
               <p>{t('paymentDisclaimer.refundDelay')}</p>
             </div>
             <label className="mt-4 flex items-start gap-3">
@@ -575,37 +659,30 @@ function ConfirmPageContent() {
                 checked={overseasDisclaimerAgreed}
                 onChange={(event) => setOverseasDisclaimerAgreed(event.target.checked)}
                 aria-label={confirmCopy.overseasDisclaimerAria}
-                className="mt-0.5 size-4 rounded border border-amber-400 text-primary focus:ring-primary"
+                className="mt-0.5 size-4 rounded border border-input text-primary focus:ring-primary"
               />
-              <span className="text-sm font-medium text-amber-950">
+              <span className="text-sm font-medium text-foreground">
                 {t('paymentDisclaimer.checkboxLabel')}
               </span>
             </label>
           </section>
         )}
 
-        {/* Desktop CTA */}
-        <div className="hidden pb-8 md:block">
-          <Button
-            className="h-12 w-full text-base"
-            disabled={ctaDisabled}
-            onClick={handlePayment}
-          >
-            {isProcessing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {ctaText}
-          </Button>
-        </div>
+          </CardContent>
+          <CardFooter className="flex-col gap-5 px-4 sm:px-6">
+            <Button className="hidden min-h-12 w-full whitespace-normal text-base lg:inline-flex" disabled={ctaDisabled} onClick={handlePayment}>
+              {isProcessing && <Loader2 className="size-4 animate-spin" />}{ctaText}
+            </Button>
+            <p className="w-full border-t border-border pt-5 text-center text-sm text-muted-foreground">
+              {checkoutCopy.help}{' '}<Link className="text-primary underline underline-offset-4" href={getLocalizedPathname('/support', locale)}>{checkoutCopy.support}</Link>
+            </p>
+          </CardFooter>
+        </Card>
       </main>
-
-      {/* Mobile Sticky CTA */}
-      <div className="sticky bottom-0 border-t bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] md:hidden">
-        <Button
-          className="h-12 w-full text-base"
-          disabled={ctaDisabled}
-          onClick={handlePayment}
-        >
-          {isProcessing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-          {ctaText}
+      <div className="sticky bottom-0 z-30 space-y-2 border-t border-border bg-background/95 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] backdrop-blur lg:hidden">
+        <p className="flex justify-between gap-3 text-sm"><span className="text-muted-foreground">{visibleQuote ? checkoutCopy.charge : checkoutCopy.orderTotal}</span><strong className="tabular-nums">{visibleQuote ? `${visibleQuote.currency} ${visibleQuote.amountDecimal}` : `KRW ${totalPrice.toLocaleString('en-US')}`}</strong></p>
+        <Button className="min-h-12 w-full whitespace-normal text-base" disabled={ctaDisabled} onClick={handlePayment}>
+          {isProcessing && <Loader2 className="size-4 animate-spin" />}{ctaText}
         </Button>
       </div>
     </div>

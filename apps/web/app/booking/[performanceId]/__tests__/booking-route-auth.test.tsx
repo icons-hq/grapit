@@ -53,6 +53,7 @@ vi.mock('@/components/booking/queue-waiting', () => ({
 describe('BookingRoute auth gating', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useLocaleMock.mockReturnValue('ko');
     useBookingAvailabilityMock.mockReturnValue({
       bookingAvailable: true,
       isAdminBookingBypassActive: false,
@@ -107,6 +108,18 @@ describe('BookingRoute auth gating', () => {
       );
     });
     expect(screen.queryByText('queue authRequired')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [false, '/en/auth/verify-email?email=buyer%40example.test&returnTo=%2Fen%2Fbooking%2Fperformance-auth'],
+    [true, '/en/mypage?tab=settings&returnTo=%2Fen%2Fbooking%2Fperformance-auth'],
+  ])('keeps the booking and language through required verification (email verified: %s)', async (emailVerified, destination) => {
+    useLocaleMock.mockReturnValue('en');
+    useBookingAvailabilityMock.mockReturnValue({ bookingAvailable: false, verificationRequiredForBooking: true, isResolved: true });
+    useAuthStoreMock.mockReturnValue({ isInitialized: true, accessToken: 'session', user: { email: 'buyer@example.test', isEmailVerified: emailVerified, isPhoneVerified: false } });
+    renderBookingRoute();
+    await waitFor(() => expect(routerReplaceMock).toHaveBeenCalledWith(destination));
+    expect(useQueueMock).toHaveBeenCalledWith({ performanceId: 'performance-auth', enabled: false });
   });
 
   it('enables queue entry after the visitor has an access token', async () => {

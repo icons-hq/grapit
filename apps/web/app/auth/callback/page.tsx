@@ -21,7 +21,7 @@ import { SignupStep3 } from '@/components/auth/signup-step3';
 import { EmailVerificationStatus } from '@/components/auth/email-verification-status';
 import { getAuthLaunchCopy, type AuthLaunchCopy } from '@/components/auth/auth-launch-copy';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
-import { resolveSafeReturnToFromSearch } from '@/lib/auth-return';
+import { buildAuthRoute, resolveSafeReturnToFromSearch } from '@/lib/auth-return';
 
 const SOCIAL_ERROR_MESSAGE_KEYS: Record<string, keyof AuthLaunchCopy['socialErrors']> = {
   oauth_denied: 'oauthDenied',
@@ -35,6 +35,8 @@ function CallbackContent() {
   const router = useRouter();
   const authCopy = getAuthLaunchCopy(useLocale());
   const searchParams = useSearchParams();
+  const returnTo = resolveSafeReturnToFromSearch(searchParams.toString());
+  const loginPath = buildAuthRoute('/auth', authCopy.locale, { returnTo });
   const setAuth = useAuthStore((s) => s.setAuth);
   // status=authenticated 흐름에서는 root layout 의 AuthInitializer 가
   // POST /api/v1/auth/refresh + GET /api/v1/users/me 를 수행하고 store 를 채운다.
@@ -49,6 +51,7 @@ function CallbackContent() {
   const [currentStep, setCurrentStep] = useState<2 | 3>(2);
   const [step2Data, setStep2Data] = useState<SignupStep2SubmitData | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [step3Draft, setStep3Draft] = useState<Partial<RegisterStep3Input>>();
   const [errorInfo, setErrorInfo] = useState<{ code: string; provider?: string } | null>(null);
   const [emailVerificationEmail, setEmailVerificationEmail] = useState<string | null>(null);
 
@@ -75,6 +78,7 @@ function CallbackContent() {
 
     if (status === 'email_verification_required' && pendingEmail) {
       setEmailVerificationEmail(pendingEmail);
+      router.replace(buildAuthRoute('/auth/verify-email', authCopy.locale, { email: pendingEmail, returnTo }));
       return;
     }
 
@@ -89,10 +93,10 @@ function CallbackContent() {
       // Invalid callback
       hasRedirectedRef.current = true;
       toast.error(authCopy.callback.invalidAccess);
-      router.push(getLocalizedPathname('/auth', authCopy.locale));
+      router.push(loginPath);
     }
     // status === 'authenticated' 분기는 아래 watch effect 에서 처리.
-  }, [searchParams, router, authCopy.locale, authCopy.callback.invalidAccess]);
+  }, [searchParams, router, authCopy.locale, authCopy.callback.invalidAccess, loginPath, returnTo]);
 
   // status=authenticated 흐름: AuthInitializer 가 store 를 채울 때까지 대기 후 라우팅.
   useEffect(() => {
@@ -113,9 +117,9 @@ function CallbackContent() {
       // AuthInitializer 가 끝났는데도 user 가 없다면 refresh 실패.
       hasRedirectedRef.current = true;
       toast.error(authCopy.socialErrors.oauthFailed);
-      router.push(getLocalizedPathname('/auth', authCopy.locale));
+      router.push(loginPath);
     }
-  }, [user, isInitialized, searchParams, router, authCopy.locale, authCopy.socialErrors.oauthFailed]);
+  }, [user, isInitialized, searchParams, router, authCopy.locale, authCopy.socialErrors.oauthFailed, loginPath]);
 
   function handleStep2Complete(data: SignupStep2SubmitData) {
     setStep2Data(data);
@@ -140,6 +144,7 @@ function CallbackContent() {
         phone: data.phone,
         phoneVerificationToken: data.phoneVerificationToken,
         frontendOrigin: getFrontendOrigin(),
+        locale: authCopy.locale,
       };
 
       const res = await apiClient.post<AuthResponse | RegistrationPendingResponse>(
@@ -149,7 +154,9 @@ function CallbackContent() {
 
       if ('emailVerificationRequired' in res) {
         setEmailVerificationEmail(res.email);
-        toast.success(authCopy.form.signupComplete);
+        router.replace(buildAuthRoute('/auth/verify-email', authCopy.locale, { email: res.email, emailDeliveryFailed: res.emailDeliveryFailed, returnTo }));
+        if (res.emailDeliveryFailed) toast.error(authCopy.emailVerification.deliveryFailed);
+        else toast.success(authCopy.form.signupComplete);
         return;
       }
 
@@ -185,7 +192,7 @@ function CallbackContent() {
             size="lg"
             className="mt-2 w-full max-w-[280px]"
             onClick={() =>
-              router.push(getLocalizedPathname('/auth', authCopy.locale))
+              router.push(loginPath)
             }
           >
             {authCopy.callback.retryButton}
@@ -199,7 +206,7 @@ function CallbackContent() {
     return (
       <main className="flex flex-1 items-center justify-center px-4 py-12">
         <div className="w-full max-w-[400px]">
-          <EmailVerificationStatus email={emailVerificationEmail} />
+          <EmailVerificationStatus returnTo={returnTo} email={emailVerificationEmail} />
         </div>
       </main>
     );
@@ -232,7 +239,7 @@ function CallbackContent() {
                 sourceFlow="social_completion"
                 onComplete={handleStep2Complete}
                 onBack={() =>
-                  router.push(getLocalizedPathname('/auth', authCopy.locale))
+                  router.push(loginPath)
                 }
                 defaultValues={step2Data}
               />
@@ -240,7 +247,8 @@ function CallbackContent() {
             {currentStep === 3 && (
               <SignupStep3
                 onComplete={handleStep3Complete}
-                onBack={() => setCurrentStep(2)}
+                defaultValues={step3Draft}
+                onBack={(draft) => { setStep3Draft(draft); setCurrentStep(2); }}
                 isSubmitting={isSubmitting}
                 phoneVerificationPurpose="social_registration"
               />

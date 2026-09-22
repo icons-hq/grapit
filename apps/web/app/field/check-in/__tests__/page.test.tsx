@@ -1,10 +1,11 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { FieldBenefitEntitlement } from '@grabit/shared';
 
 import FieldCheckInPage from '../page';
+import { clearPendingScanAttempts, listPendingScanAttempts } from '@/lib/field/offline-scan-store';
 
 const REQUESTED_SHOWTIME_ID = '00000000-0000-4000-8000-000000000301';
 const TICKET_SHOWTIME_ID = '00000000-0000-4000-8000-000000000302';
@@ -37,7 +38,7 @@ vi.mock('@/stores/use-auth-store', () => ({
       name: '현장 스태프',
       role: 'admin',
       adminCapabilityBundle: 'scanner',
-      adminCapabilities: ['field.scan.verify', 'field.scan.consume', 'field.scan.sync'],
+      adminCapabilities: ['field.scan.verify', 'field.scan.consume', 'field.scan.sync', 'field.benefits.redeem'],
     },
   }),
 }));
@@ -49,6 +50,7 @@ vi.mock('@/hooks/use-field-operations', async () => {
 
   return {
     ...actual,
+    useFieldShowtimes: () => ({ data: [{ id: REQUESTED_SHOWTIME_ID, eventId: 'field-event', title: '현장 검증', dateTime: '2099-01-01T10:00:00Z', venueName: 'Hall' }], isError: false }),
     useFieldCheckInVerify: () => ({
       data: mocks.verifyData,
       isLoading: false,
@@ -108,7 +110,9 @@ function verification(overrides: Record<string, unknown> = {}) {
 }
 
 describe('FieldCheckInPage benefit redemption showtime contract', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await clearPendingScanAttempts(); sessionStorage.clear();
+    Object.defineProperty(navigator, 'onLine', { configurable: true, value: true });
     mocks.routerReplace.mockReset();
     mocks.consumeMutateAsync.mockReset();
     mocks.benefitRedeemMutateAsync.mockReset().mockResolvedValue({
@@ -188,4 +192,35 @@ describe('FieldCheckInPage benefit redemption showtime contract', () => {
     });
     expect(mocks.consumeMutateAsync).not.toHaveBeenCalled();
   });
+  it('accepts manual QR content after choosing the real showtime and requires a separate entry action', async () => {
+    mocks.searchParams = new URLSearchParams(); const user = userEvent.setup();
+    render(<FieldCheckInPage />);
+    await user.selectOptions(screen.getByRole('combobox', { name: '검표할 공연·회차' }), REQUESTED_SHOWTIME_ID);
+    await user.type(screen.getByLabelText('QR 링크 또는 내용'), RAW_TICKET_TOKEN);
+    await user.click(screen.getByRole('button', { name: '티켓 확인' }));
+    expect(await screen.findByRole('button', { name: '이 좌석 입장 처리' })).toBeEnabled();
+    expect(mocks.consumeMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('stores an offline entry as pending and disables benefit redemption', async () => {
+    const user = userEvent.setup(); render(<FieldCheckInPage />);
+    Object.defineProperty(navigator, 'onLine', { configurable: true, value: false }); fireEvent(window, new Event('offline'));
+    expect(screen.queryByRole('button', { name: '사용 처리' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '이 좌석 입장 처리' }));
+    await waitFor(async () => expect(await listPendingScanAttempts({ scannerUserId: 'scanner-user-1' })).toHaveLength(1));
+    expect(mocks.consumeMutateAsync).not.toHaveBeenCalled(); expect(mocks.benefitRedeemMutateAsync).not.toHaveBeenCalled();
+    expect(screen.queryByText('입장 처리 완료')).not.toBeInTheDocument();
+    expect(await screen.findByText('보류 상태는 최종 입장 증거가 아닙니다')).toBeInTheDocument();
+  });
+
+  it('shows failed online actions and preserves the same redemption attempt on retry', async () => {
+    const user = userEvent.setup(); mocks.benefitRedeemMutateAsync.mockRejectedValue(new TypeError('Failed to fetch'));
+    render(<FieldCheckInPage />);
+    await user.click(screen.getByRole('button', { name: '사용 처리' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('실물을 다시 지급하지 말고');
+    await user.click(screen.getByRole('button', { name: '사용 처리' }));
+    expect(mocks.benefitRedeemMutateAsync.mock.calls[0]?.[0].deviceAttemptId).toBe(mocks.benefitRedeemMutateAsync.mock.calls[1]?.[0].deviceAttemptId);
+    expect(await listPendingScanAttempts()).toHaveLength(0);
+  });
+
 });

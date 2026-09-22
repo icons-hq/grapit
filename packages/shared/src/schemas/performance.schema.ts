@@ -38,6 +38,7 @@ export const performanceQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
   sort: z.enum(['latest', 'popular']).default('latest'),
   ended: booleanQueryParam,
+  status: z.enum(['all', 'selling', 'upcoming', 'ended']).optional(),
 });
 export type PerformanceQuery = z.infer<typeof performanceQuerySchema>;
 

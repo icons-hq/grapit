@@ -17,6 +17,7 @@ import {
   ticketItems,
   ticketScanEvents,
   tickets,
+  users,
 } from '../../database/schema/index.js';
 
 type FieldMonitorDb = Pick<DrizzleDB, 'select'>;
@@ -62,6 +63,10 @@ type ScanLogDbRow = {
   result?: string | null;
   syncState?: string | null;
   scannerUserId?: string | null;
+  scannerName?: string | null;
+  reservationNumber?: string | null;
+  seatLabel?: string | null;
+  source?: 'online' | 'offline_sync';
   deviceAttemptId?: string | null;
   redactedTokenRef?: string | null;
   metadata?: Record<string, unknown> | null;
@@ -208,10 +213,10 @@ export class FieldMonitorService {
       conditions.push(eq(ticketScanEvents.scannerUserId, filter.scannerUserId));
     }
     if (filter.dateFrom) {
-      conditions.push(gte(ticketScanEvents.scannedAt, new Date(`${filter.dateFrom}T00:00:00.000Z`)));
+      conditions.push(gte(ticketScanEvents.scannedAt, new Date(`${filter.dateFrom}T00:00:00.000+09:00`)));
     }
     if (filter.dateTo) {
-      conditions.push(lte(ticketScanEvents.scannedAt, new Date(`${filter.dateTo}T23:59:59.999Z`)));
+      conditions.push(lte(ticketScanEvents.scannedAt, new Date(`${filter.dateTo}T23:59:59.999+09:00`)));
     }
 
     return db
@@ -222,6 +227,10 @@ export class FieldMonitorService {
         result: ticketScanEvents.result,
         syncState: ticketScanEvents.syncState,
         scannerUserId: ticketScanEvents.scannerUserId,
+        scannerName: users.name,
+        reservationNumber: reservations.reservationNumber,
+        seatLabel: sql<string | null>`case when ${ticketItems.id} is null then null else concat(${ticketItems.floorLabel}, ' · ', ${ticketItems.tierName}, ' · ', ${ticketItems.row}, '-', ${ticketItems.number}) end`,
+        source: ticketScanEvents.source,
         deviceAttemptId: ticketScanEvents.deviceAttemptId,
         metadata: ticketScanEvents.metadata,
         scannedAt: ticketScanEvents.scannedAt,
@@ -230,6 +239,9 @@ export class FieldMonitorService {
       .from(ticketScanEvents)
       .innerJoin(showtimes, eq(ticketScanEvents.showtimeId, showtimes.id))
       .innerJoin(performances, eq(showtimes.performanceId, performances.id))
+      .innerJoin(reservations, eq(ticketScanEvents.reservationId, reservations.id))
+      .innerJoin(users, eq(ticketScanEvents.scannerUserId, users.id))
+      .leftJoin(ticketItems, eq(ticketScanEvents.ticketItemId, ticketItems.id))
       .where(conditions.length > 0 ? and(...conditions) : undefined)
       .orderBy(desc(ticketScanEvents.scannedAt), desc(ticketScanEvents.id))
       .limit(100);
@@ -377,6 +389,10 @@ function toMonitorLogRow(
     outcome: outcomeForResult(row.outcome ?? row.result),
     syncState: syncStateForLog(row.syncState),
     scannerUserId: row.scannerUserId ?? 'unknown-scanner',
+    scannerName: row.scannerName ?? null,
+    reservationNumber: row.reservationNumber ?? null,
+    seatLabel: row.seatLabel ?? null,
+    ...(row.source ? { source: row.source } : {}),
     deviceAttemptId: row.deviceAttemptId ?? null,
     redactedTokenRef,
     scannedAt: toIso(row.scannedAt ?? new Date()),

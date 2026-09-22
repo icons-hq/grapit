@@ -303,14 +303,14 @@ async function selectDateAndShowtime(page: Page) {
   await page.getByRole('button', { name: '19:00' }).click();
   await expect(page.getByRole('radio', { name: '1층' })).toBeVisible();
   await expect(
-    page.getByRole('grid', { name: '좌석 배치도' }).getByText('1층 맵'),
+    page.getByTestId('seat-map-canvas').getByText('1층 맵'),
   ).toBeVisible();
 }
 
 async function clickSeatLabelCenter(page: Page) {
-  const seatMapGrid = page.getByRole('grid', { name: '좌석 배치도' });
+  const seatMapGrid = page.getByTestId('seat-map-canvas');
   const seatLabel = page
-    .getByRole('grid', { name: '좌석 배치도' })
+    .getByTestId('seat-map-canvas')
     .locator('text.seat-number')
     .filter({ hasText: /^1$/ })
     .first();
@@ -334,9 +334,9 @@ async function clickSeatLabelCenter(page: Page) {
 }
 
 async function tapSeatLabelCenter(page: Page) {
-  const seatMapGrid = page.getByRole('grid', { name: '좌석 배치도' });
+  const seatMapGrid = page.getByTestId('seat-map-canvas');
   const seatLabel = page
-    .getByRole('grid', { name: '좌석 배치도' })
+    .getByTestId('seat-map-canvas')
     .locator('text.seat-number')
     .filter({ hasText: /^1$/ })
     .first();
@@ -396,7 +396,7 @@ async function assertMobilePostSelectionState(page: Page) {
 }
 
 async function clickExcludedSeat(page: Page, seatId: string) {
-  const seatMapGrid = page.getByRole('grid', { name: '좌석 배치도' });
+  const seatMapGrid = page.getByTestId('seat-map-canvas');
   const excludedSeat = seatMapGrid.locator(`[data-seat-id="${seatId}"]`);
   await expect(excludedSeat).toBeVisible();
   const box = await excludedSeat.boundingBox();
@@ -447,13 +447,13 @@ test.describe('booking floor-browser seat selection', () => {
 
     await page.getByRole('radio', { name: '2층' }).click();
     await expect(
-      page.getByRole('grid', { name: '좌석 배치도' }).getByText('2층 맵'),
+      page.getByTestId('seat-map-canvas').getByText('2층 맵'),
     ).toBeVisible();
     await expect(page.getByRole('button', { name: '1층 A열 1번 선택 해제' })).toBeVisible();
 
     await page.getByRole('radio', { name: '1층' }).click();
     await expect(
-      page.getByRole('grid', { name: '좌석 배치도' }).getByText('1층 맵'),
+      page.getByTestId('seat-map-canvas').getByText('1층 맵'),
     ).toBeVisible();
     await expect(page.getByRole('button', { name: '1층 A열 1번 선택 해제' })).toBeVisible();
     await expect(getNextButton(page)).toBeEnabled();

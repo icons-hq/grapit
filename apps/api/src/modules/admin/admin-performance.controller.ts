@@ -9,6 +9,7 @@ import {
   Query,
   UseGuards,
   Req,
+  ForbiddenException,
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { z } from 'zod';
@@ -25,6 +26,8 @@ import {
   type CreatePerformanceInput,
   type UpdatePerformanceInput,
   type SaveSeatMapPayloadInput,
+  type AdminCapabilityUser,
+  resolveAdminCapabilitySnapshot,
 } from '@grabit/shared';
 import { AdminService } from './admin.service.js';
 import { UploadService } from './upload.service.js';
@@ -43,6 +46,7 @@ const publishContentChecklistSchema = z.object({
 });
 
 const publishPerformanceSchema = z.object({
+  expectedUpdatedAt: z.string().datetime(),
   reason: z.string().trim().min(1, '게시 사유를 입력해주세요').max(500),
   confirmed: z.literal(true, {
     errorMap: () => ({ message: '게시 전 확인이 필요합니다' }),
@@ -64,10 +68,7 @@ const presignedUploadRequestSchema = z.object({
 type PublishPerformanceBody = z.infer<typeof publishPerformanceSchema>;
 type PresignedUploadRequest = z.infer<typeof presignedUploadRequestSchema>;
 type AdminRequest = Request & {
-  user?: {
-    id?: string;
-    role?: string | null;
-  };
+  user?: AdminCapabilityUser;
 };
 
 @Controller('admin')
@@ -103,10 +104,18 @@ export class AdminPerformanceController {
   }
 
   @Post('performances')
+  @AdminCapabilities('event.write')
   async createPerformance(
     @Body(new ZodValidationPipe(createPerformanceSchema)) body: CreatePerformanceInput,
+    @Req() req: AdminRequest,
   ) {
-    return this.adminService.createPerformance(body);
+    return this.adminService.createPerformance(body, this.resolveMutationContext(req));
+  }
+
+  @Get('performances/:id/preparation')
+  @AdminCapabilities('event.write')
+  preparation(@Param('id') id: string) {
+    return this.adminService.getPerformancePreparation(id);
   }
 
   @Put('performances/:id')
@@ -138,25 +147,34 @@ export class AdminPerformanceController {
   }
 
   @Delete('performances/:id')
+  @AdminCapabilities('event.write')
   async deletePerformance(@Param('id') id: string) {
     await this.adminService.deletePerformance(id);
     return { message: '공연이 삭제되었습니다' };
   }
 
   @Post('performances/:id/seat-map')
+  @AdminCapabilities('event.write')
   async saveSeatMap(
     @Param('id') id: string,
     @Body(new ZodValidationPipe(saveSeatMapPayloadSchema))
     body: SaveSeatMapPayloadInput,
+    @Req() req: AdminRequest,
   ) {
-    return this.adminService.saveSeatMap(id, body);
+    return this.adminService.saveSeatMap(id, body, { ...this.resolveMutationContext(req), reason: '좌석맵 저장' });
   }
 
   @Post('upload/presigned')
   async getPresignedUrl(
     @Body(new ZodValidationPipe(presignedUploadRequestSchema))
     body: PresignedUploadRequest,
+    @Req() req: AdminRequest,
   ) {
+    const snapshot = resolveAdminCapabilitySnapshot(req.user);
+    const capability = body.folder === 'banners' ? 'banner.manage' : 'event.write';
+    if (!snapshot.superuser && !snapshot.capabilities.includes(capability)) {
+      throw new ForbiddenException('해당 이미지의 업로드 권한이 없습니다.');
+    }
     return this.uploadService.generatePresignedUrl(
       body.folder,
       body.contentType,

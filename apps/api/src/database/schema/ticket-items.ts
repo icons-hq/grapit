@@ -2,6 +2,7 @@ import { sql } from 'drizzle-orm';
 import {
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   timestamp,
@@ -13,6 +14,28 @@ import {
 import { payments } from './payments.js';
 import { reservations } from './reservations.js';
 import { showtimes } from './showtimes.js';
+
+export interface TicketItemCancellationCommand {
+  version: 1;
+  id: string;
+  requestedAt: string;
+  reason: string;
+  options: {
+    idempotencyKey: string;
+    secretKeyScope: 'default' | 'overseas-card' | 'foreign-easy-pay';
+    cancelAmount?: number;
+    currency?: string;
+    cancelRequestId?: string;
+  };
+  currency: 'KRW' | 'USD';
+  amountMinor: number;
+  originalAmountMinor: number;
+  balanceBeforeMinor: number;
+  sentToPgAt?: string;
+  processingAtPgAt?: string;
+  completedAt?: string;
+  transactionKey?: string;
+}
 
 export const ticketItemStatusEnum = pgEnum('ticket_item_status', [
   'active',
@@ -65,6 +88,7 @@ export const ticketItems = pgTable(
     cancellationFee: integer('cancellation_fee').notNull().default(0),
     serviceFeeRefund: integer('service_fee_refund').notNull().default(0),
     refundableAmount: integer('refundable_amount').notNull().default(0),
+    cancellationCommand: jsonb('cancellation_command').$type<TicketItemCancellationCommand>(),
     reopenState: ticketItemReopenStateEnum('reopen_state')
       .notNull()
       .default('not_required'),

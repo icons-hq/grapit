@@ -109,7 +109,7 @@ describe('BookingService', () => {
     if (includePerformanceStatus) {
       mockDb.select.mockReturnValueOnce(
         chainResult([{
-          performanceStatus: options.performanceStatus ?? 'selling',
+          performancePublishState: 'published', performanceStatus: options.performanceStatus ?? 'selling',
           bookingStartsAt: options.bookingStartsAt ?? null,
         }]),
       );
@@ -189,7 +189,7 @@ describe('BookingService', () => {
 
     it('rejects public users for upcoming performances before Redis lock mutation', async () => {
       mockDb.select.mockReturnValueOnce(
-        chainResult([{ performanceStatus: 'upcoming', bookingStartsAt: null }]),
+        chainResult([{ performancePublishState: 'published', performanceStatus: 'upcoming', bookingStartsAt: null }]),
       );
 
       const promise = service.lockSeat(userId, showtimeId, seatId);
@@ -207,7 +207,7 @@ describe('BookingService', () => {
       try {
         mockDb.select.mockReturnValueOnce(
           chainResult([{
-            performanceStatus: 'selling',
+            performancePublishState: 'published', performanceStatus: 'selling',
             bookingStartsAt: new Date('2026-06-04T10:00:00.000Z'),
           }]),
         );
@@ -229,7 +229,7 @@ describe('BookingService', () => {
       vi.setSystemTime(new Date('2026-06-04T10:00:00.000Z'));
       try {
         mockNoSoldRecord(4, {
-          performanceStatus: 'upcoming',
+          performancePublishState: 'published', performanceStatus: 'upcoming',
           bookingStartsAt: new Date('2026-06-04T10:00:00.000Z'),
         });
         mockRedis.eval.mockResolvedValue([1, `{${showtimeId}}:seat:${seatId}`, seatId]);
@@ -252,7 +252,7 @@ describe('BookingService', () => {
 
     it('rejects public users for ended performances before Redis lock mutation', async () => {
       mockDb.select.mockReturnValueOnce(
-        chainResult([{ performanceStatus: 'ended', bookingStartsAt: null }]),
+        chainResult([{ performancePublishState: 'published', performanceStatus: 'ended', bookingStartsAt: null }]),
       );
 
       const promise = service.lockSeat(userId, showtimeId, seatId);
@@ -266,7 +266,7 @@ describe('BookingService', () => {
 
     it('rejects seats that are not part of the showtime seat map before Redis lock mutation', async () => {
       mockDb.select
-        .mockReturnValueOnce(chainResult([{ performanceStatus: 'selling' }]))
+        .mockReturnValueOnce(chainResult([{ performancePublishState: 'published', performanceStatus: 'selling' }]))
         .mockReturnValueOnce(chainResult([]))
         .mockReturnValueOnce(chainResult([{ maxTicketsPerUser: 4 }]));
       mockRedis.eval.mockResolvedValue([1, `{${showtimeId}}:seat:1F%3AZ-999`, '1F%3AZ-999']);
@@ -339,7 +339,7 @@ describe('BookingService', () => {
 
     it('limits additional locks by existing active tickets for the performance', async () => {
       mockDb.select
-        .mockReturnValueOnce(chainResult([{ performanceStatus: 'selling' }]))
+        .mockReturnValueOnce(chainResult([{ performancePublishState: 'published', performanceStatus: 'selling' }]))
         .mockReturnValueOnce(chainResult([{
           seatConfig: { tiers: [{ tierName: 'VIP', seatIds: ['A-1'] }] },
         }]))
@@ -362,7 +362,7 @@ describe('BookingService', () => {
 
     it('rejects a new lock when existing active tickets already reach the performance limit', async () => {
       mockDb.select
-        .mockReturnValueOnce(chainResult([{ performanceStatus: 'selling' }]))
+        .mockReturnValueOnce(chainResult([{ performancePublishState: 'published', performanceStatus: 'selling' }]))
         .mockReturnValueOnce(chainResult([{
           seatConfig: { tiers: [{ tierName: 'VIP', seatIds: ['A-1'] }] },
         }]))
@@ -384,7 +384,7 @@ describe('BookingService', () => {
 
     it('uses event-configured seatHoldMinutes as the Redis lock TTL', async () => {
       mockDb.select
-        .mockReturnValueOnce(chainResult([{ performanceStatus: 'selling' }]))
+        .mockReturnValueOnce(chainResult([{ performancePublishState: 'published', performanceStatus: 'selling' }]))
         .mockReturnValueOnce(chainResult([{
           seatConfig: { tiers: [{ tierName: 'VIP', seatIds: ['A-1'] }] },
         }]))
@@ -406,7 +406,7 @@ describe('BookingService', () => {
 
     it('returns the effective Lua TTL when adding a seat to an existing cart hold', async () => {
       mockDb.select
-        .mockReturnValueOnce(chainResult([{ performanceStatus: 'selling' }]))
+        .mockReturnValueOnce(chainResult([{ performancePublishState: 'published', performanceStatus: 'selling' }]))
         .mockReturnValueOnce(chainResult([{
           seatConfig: { tiers: [{ tierName: 'VIP', seatIds: ['A-2'] }] },
         }]))
@@ -462,7 +462,7 @@ describe('BookingService', () => {
     describe('unavailable seat defense', () => {
       it('should throw ConflictException when seat_inventories has status=sold', async () => {
         mockDb.select
-          .mockReturnValueOnce(chainResult([{ performanceStatus: 'selling' }]))
+          .mockReturnValueOnce(chainResult([{ performancePublishState: 'published', performanceStatus: 'selling' }]))
           .mockReturnValueOnce(chainResult([{
             seatConfig: { tiers: [{ tierName: 'VIP', seatIds: ['A-1'] }] },
           }]))
@@ -482,7 +482,7 @@ describe('BookingService', () => {
 
       it('should throw ConflictException when seat_inventories has status=held_cancelled', async () => {
         mockDb.select
-          .mockReturnValueOnce(chainResult([{ performanceStatus: 'selling' }]))
+          .mockReturnValueOnce(chainResult([{ performancePublishState: 'published', performanceStatus: 'selling' }]))
           .mockReturnValueOnce(chainResult([{
             seatConfig: { tiers: [{ tierName: 'VIP', seatIds: ['A-1'] }] },
           }]))
@@ -502,7 +502,7 @@ describe('BookingService', () => {
 
       it('should throw ConflictException when seat_inventories has status=disabled', async () => {
         mockDb.select
-          .mockReturnValueOnce(chainResult([{ performanceStatus: 'selling' }]))
+          .mockReturnValueOnce(chainResult([{ performancePublishState: 'published', performanceStatus: 'selling' }]))
           .mockReturnValueOnce(chainResult([{
             seatConfig: { tiers: [{ tierName: 'VIP', seatIds: ['A-1'] }] },
           }]))

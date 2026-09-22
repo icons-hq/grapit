@@ -10,6 +10,8 @@ import { SeatMapControls } from './seat-map-controls';
 import { useIsMobile } from '@/hooks/use-is-mobile';
 import { prefixSvgDefsIds } from './__utils__/prefix-svg-defs-ids';
 import { sanitizeParsedSvg } from '@/lib/svg/safety';
+import { getSeatSelectionCopy } from '@/lib/booking/seat-selection-copy';
+import { formatCopy } from '@/lib/i18n/client-copy';
 
 type RuntimeSeatState = SeatState | 'disabled';
 
@@ -164,12 +166,14 @@ export function SeatMapViewer({
   onSeatClick,
   maxSelect,
 }: SeatMapViewerProps) {
+  const seatCopy = getSeatSelectionCopy();
   const isMobile = useIsMobile();
   const containerRef = useRef<HTMLDivElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const [rawSvg, setRawSvg] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [listSeatId, setListSeatId] = useState('');
 
   // reviews revision HIGH #1: per-seat timeout Map — rapid reselect race guard
   const prevSelectedRef = useRef<Set<string>>(new Set());
@@ -267,7 +271,7 @@ export function SeatMapViewer({
         setIsLoading(false);
       })
       .catch(() => {
-        setError('좌석 배치도를 불러오지 못했습니다. 새로고침해주세요.');
+        setError('load_failed');
         setIsLoading(false);
       });
   }, [svgUrl]);
@@ -386,12 +390,12 @@ export function SeatMapViewer({
       svgEl.setAttribute('viewBox', `0 0 ${w} ${h}`);
     }
     if (floorLabel) {
-      svgEl.setAttribute('aria-label', `${floorLabel} 좌석맵`);
+      svgEl.setAttribute('aria-label', `${floorLabel} ${seatCopy.map}`);
       const directTitle = Array.from(svgEl.children).find(
         (child) => child.tagName.toLowerCase() === 'title',
       );
       if (directTitle) {
-        directTitle.textContent = `${floorLabel} 좌석맵`;
+        directTitle.textContent = `${floorLabel} ${seatCopy.map}`;
       }
     }
 
@@ -424,7 +428,7 @@ export function SeatMapViewer({
       const vbH = viewBoxValues[3] ?? 600;
       const svgNs = 'http://www.w3.org/2000/svg';
       const overlayG = doc.createElementNS(svgNs, 'g');
-      overlayG.setAttribute('aria-label', `무대 위치: ${dataStage}`);
+      overlayG.setAttribute('aria-label', formatCopy(seatCopy.stage, { position: dataStage }));
       const badgeRect = doc.createElementNS(svgNs, 'rect');
       const badgeText = doc.createElementNS(svgNs, 'text');
       const badgeWidth = 120;
@@ -479,7 +483,31 @@ export function SeatMapViewer({
     svgEl.setAttribute('style', 'width:100%;height:auto;display:block;');
 
     return doc.documentElement.outerHTML;
-  }, [rawSvg, seatStates, selectedSeatIds, myLockedSeatIds, tierColorMap, pendingRemovals, floorKey, floorLabel]);
+  }, [rawSvg, seatStates, selectedSeatIds, myLockedSeatIds, tierColorMap, pendingRemovals, floorKey, floorLabel, seatCopy]);
+
+  const listSeats = useMemo(() => {
+    if (!rawSvg) return [];
+    const doc = new DOMParser().parseFromString(rawSvg, 'image/svg+xml');
+    const seats = new Map<string, { id: string; localId: string; label: string }>();
+    doc.querySelectorAll(`[${SEAT_KEY_ATTR}],[${SEAT_ID_ATTR}]`).forEach((element) => {
+      const identity = getSeatIdentity(element, floorKey);
+      if (!identity) return;
+      const tier = tierColorMap.get(identity.seatId) ?? tierColorMap.get(identity.runtimeSeatId);
+      if (!tier || isExcludedSeatElement(element, true)) return;
+      const [row, number = ''] = identity.seatId.split('-');
+      seats.set(identity.runtimeSeatId, { id: identity.runtimeSeatId, localId: identity.seatId,
+        label: `${tier.tierName} ${formatCopy(seatCopy.seatLabel, { floor: floorLabel ?? '', row, number })}` });
+    });
+    return [...seats.values()];
+  }, [rawSvg, floorKey, floorLabel, tierColorMap, seatCopy]);
+  const listOptions = listSeats.map((seat) => {
+    const selected = selectedSeatIds.has(seat.id) || selectedSeatIds.has(seat.localId);
+    const ownedLock = myLockedSeatIds.has(seat.id) || myLockedSeatIds.has(seat.localId);
+    const state = getSeatState(seatStates, seat.id, seat.localId);
+    return { ...seat, selected: selected || ownedLock,
+      disabled: !selected && !ownedLock && (isUnavailableSeatState(state) || selectedSeatIds.size >= maxSelect) };
+  });
+  const listSelection = listOptions.find((seat) => seat.id === listSeatId);
 
   // B-2-RESIDUAL-V2 Option C (reviews revision MED #4 D-13 BROADCAST PRIORITY):
   // dangerouslySetInnerHTML이 SVG를 재마운트한 *직후* 동일 element의 fill을 변경.
@@ -611,7 +639,7 @@ export function SeatMapViewer({
       if (containerRect && tooltipRef.current) {
         const x = rect.left - containerRect.left + rect.width / 2;
         const y = rect.top - containerRect.top - 8;
-        tooltipRef.current.textContent = `${tierInfo.tierName} ${row}${number ? `열 ${number}번` : ''}`;
+        tooltipRef.current.textContent = `${tierInfo.tierName} ${formatCopy(seatCopy.seatLabel, { floor: floorLabel ?? '', row, number })}`;
         tooltipRef.current.style.left = `${x}px`;
         tooltipRef.current.style.top = `${y}px`;
         tooltipRef.current.style.display = 'block';
@@ -623,7 +651,7 @@ export function SeatMapViewer({
         }
       }
     },
-    [seatStates, selectedSeatIds, tierColorMap, floorKey],
+    [seatStates, selectedSeatIds, tierColorMap, floorKey, floorLabel, seatCopy],
   );
 
   const handleMouseOut = useCallback(
@@ -664,7 +692,7 @@ export function SeatMapViewer({
   if (error) {
     return (
       <div className="flex min-h-[300px] flex-col items-center justify-center rounded-lg bg-gray-50 p-8 lg:min-h-[500px]">
-        <p className="text-sm text-gray-600">{error}</p>
+        <p className="text-sm text-gray-600">{seatCopy.mapError}</p>
         <Button
           variant="outline"
           size="sm"
@@ -672,7 +700,7 @@ export function SeatMapViewer({
           onClick={() => window.location.reload()}
         >
           <RefreshCw className="mr-2 size-4" />
-          새로고침
+          {seatCopy.refresh}
         </Button>
       </div>
     );
@@ -691,7 +719,7 @@ export function SeatMapViewer({
     return (
       <div className="flex min-h-[300px] items-center justify-center rounded-lg bg-gray-50 lg:min-h-[500px]">
         <p className="text-sm text-gray-500">
-          좌석 배치도가 준비되지 않았습니다. 잠시 후 다시 시도해주세요.
+          {seatCopy.mapPending}
         </p>
       </div>
     );
@@ -699,6 +727,24 @@ export function SeatMapViewer({
 
   return (
     <div className="relative overflow-hidden rounded-lg bg-gray-50">
+      <details className="border-b border-gray-200 bg-white p-4">
+        <summary className="cursor-pointer py-2 text-sm font-semibold focus-visible:outline focus-visible:outline-primary">
+          {seatCopy.listSummary}
+        </summary>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <select aria-label={seatCopy.listLabel} value={listSelection ? listSeatId : ''}
+            onChange={(event) => setListSeatId(event.target.value)}
+            className="min-h-11 min-w-0 flex-1 rounded-md border border-gray-300 bg-white px-3 text-sm">
+            <option value="">{seatCopy.chooseSeat}</option>
+            {listOptions.map((seat) => <option key={seat.id} value={seat.id} disabled={seat.disabled}>
+              {seat.label}{seat.selected ? ` · ${seatCopy.selectedSeats}` : seat.disabled ? ` · ${seatCopy.unavailable}` : ''}
+            </option>)}
+          </select>
+          <Button disabled={!listSelection || listSelection.disabled} onClick={() => {
+            if (listSelection && !listSelection.disabled) onSeatClick(listSelection.id);
+          }}>{listSelection?.selected ? seatCopy.deselectSeat : seatCopy.selectSeat}</Button>
+        </div>
+      </details>
       <TransformWrapper
         key={isMobile ? 'mobile' : 'desktop'}
         initialScale={isMobile ? 1.4 : 1}
@@ -717,7 +763,7 @@ export function SeatMapViewer({
           >
             <div
               dangerouslySetInnerHTML={{ __html: prefixSvgDefsIds(processedSvg, 'mini-') }}
-              aria-label="좌석 미니맵"
+              aria-label={seatCopy.miniMap}
             />
           </MiniMap>
         )}
@@ -729,9 +775,10 @@ export function SeatMapViewer({
         >
           <div
             ref={containerRef}
+            data-testid="seat-map-canvas"
             className="mx-auto w-full max-w-full"
-            role="grid"
-            aria-label={floorLabel ? `${floorLabel} 좌석 배치도` : '좌석 배치도'}
+            role="img"
+            aria-label={floorLabel ? `${floorLabel} ${seatCopy.map}` : seatCopy.map}
             onClick={handleClick}
             onMouseOver={handleMouseOver}
             onMouseOut={handleMouseOut}

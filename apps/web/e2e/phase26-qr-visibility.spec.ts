@@ -199,7 +199,7 @@ test.describe('phase26 QR visibility', () => {
     await enableBooking(page);
     await mockAuthenticatedSession(page);
 
-    await page.route('**/api/v1/reservations/phase26-qr-reservation', async (route: Route) => {
+    await page.route(/\/api\/v1\/reservations\/phase26-qr-reservation(?:\?.*)?$/, async (route: Route) => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',

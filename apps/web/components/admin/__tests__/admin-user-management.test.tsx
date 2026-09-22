@@ -665,6 +665,7 @@ describe('AdminUserManagement', () => {
         'field.scan.verify',
         'field.scan.consume',
         'field.scan.sync',
+        'field.benefits.redeem',
       ],
     });
 
@@ -697,6 +698,7 @@ describe('AdminUserManagement', () => {
             'field.scan.verify',
             'field.scan.consume',
             'field.scan.sync',
+        'field.benefits.redeem',
           ],
           confirmed: true,
         }),

@@ -28,6 +28,14 @@ vi.mock('@/components/layout/mobile-tab-bar', () => ({
 import { LayoutShell } from '@/app/layout-shell';
 
 describe('locale suggestion shell wiring', () => {
+  it.each(['', '/en', '/th', '/zh-CN'])('does not cover checkout actions with navigation on %s routes', (prefix) => {
+    mockPathname.mockReturnValue(`${prefix}/booking/perf-1/confirm`);
+    render(<LayoutShell><main>checkout action</main></LayoutShell>);
+    expect(screen.queryByText('desktop nav')).toBeNull();
+    expect(screen.queryByText('mobile tabs')).toBeNull();
+    expect(screen.getByText('checkout action')).toBeDefined();
+  });
+
   beforeEach(() => {
     mockPathname.mockReturnValue('/');
     window.sessionStorage.clear();

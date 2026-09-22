@@ -69,7 +69,7 @@ test.describe('Admin RBAC and security route wiring', () => {
     });
     await expect(accessDenied).toBeVisible();
     await expect(accessDenied).toContainText(
-      '백엔드 권한 검사는 계속 API guard에서 처리됩니다.',
+      '이 화면은 운영 권한이 있는 계정만 사용할 수 있습니다.',
     );
   });
 

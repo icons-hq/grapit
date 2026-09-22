@@ -332,6 +332,7 @@ describe('AdminBookingDashboard', () => {
     });
     mocks.apiGet.mockReset();
     mocks.apiGet.mockImplementation(async (url: string) => {
+      if (url.endsWith('/support-evidence')) return { generatedAt: '2026-09-21T00:00:00.000Z', originalOrderAmount: 50000, provider: null, refundTimeline: null, refundProviderAmount: null, rights: { seatStatesKnown: true, activeSeats: 1, cancelledSeats: 0, pendingSeats: 0, enteredSeats: 0, benefits: [] }, delivery: { lastSentAt: null, scheduledAt: null, inboxReceipt: 'unverified', history: [] } };
       const path = String(url);
       if (path.includes('/api/v1/admin/performances/11111111-1111-4111-8111-000000000301')) {
         return performanceDetailResponse();
@@ -352,6 +353,7 @@ describe('AdminBookingDashboard', () => {
       },
     });
     mocks.apiGet.mockImplementation(async (url: string) => {
+      if (url.endsWith('/support-evidence')) return { generatedAt: '2026-09-21T00:00:00.000Z', originalOrderAmount: 50000, provider: null, refundTimeline: null, refundProviderAmount: null, rights: { seatStatesKnown: true, activeSeats: 1, cancelledSeats: 0, pendingSeats: 0, enteredSeats: 0, benefits: [] }, delivery: { lastSentAt: null, scheduledAt: null, inboxReceipt: 'unverified', history: [] } };
       const path = String(url);
       if (path.includes('/api/v1/admin/bookings/11111111-1111-4111-8111-111111111111')) {
         return bookingDetail();
@@ -461,6 +463,7 @@ describe('AdminBookingDashboard', () => {
 
   it('passes selected performance and showtime context to the reservation export panel', async () => {
     const user = userEvent.setup();
+    useAuthStore.setState({ user: { ...useAuthStore.getState().user!, adminCapabilities: ['reservations.read', 'reservations.export_raw'] } });
     renderWithClient(<AdminBookingDashboard />);
     const showtimeLabel = formatExpectedDateTime(
       performanceDetailResponse().showtimes[0].dateTime,
@@ -488,6 +491,11 @@ describe('AdminBookingDashboard', () => {
         showtimeLabel,
       );
     });
+  });
+
+  it('hides raw customer exports without reservations.export_raw', () => {
+    renderWithClient(<AdminBookingDashboard />);
+    expect(screen.queryByTestId('reservation-export-panel')).not.toBeInTheDocument();
   });
 
   it('removes dependent seat filters when performance is reset', async () => {
@@ -546,6 +554,7 @@ describe('AdminBookingDashboard', () => {
 
   it('shows dashes for tier capacity fields before a showtime is selected', async () => {
     mocks.apiGet.mockImplementation(async (url: string) => {
+      if (url.endsWith('/support-evidence')) return { generatedAt: '2026-09-21T00:00:00.000Z', originalOrderAmount: 50000, provider: null, refundTimeline: null, refundProviderAmount: null, rights: { seatStatesKnown: true, activeSeats: 1, cancelledSeats: 0, pendingSeats: 0, enteredSeats: 0, benefits: [] }, delivery: { lastSentAt: null, scheduledAt: null, inboxReceipt: 'unverified', history: [] } };
       const path = String(url);
       if (path.includes('/api/v1/admin/performances?')) {
         return performanceListResponse();
@@ -579,6 +588,7 @@ describe('AdminBookingDashboard', () => {
   it('shows Toss order id in the booking list and detail modal', async () => {
     const user = userEvent.setup();
     mocks.apiGet.mockImplementation(async (url: string) => {
+      if (url.endsWith('/support-evidence')) return { generatedAt: '2026-09-21T00:00:00.000Z', originalOrderAmount: 50000, provider: null, refundTimeline: null, refundProviderAmount: null, rights: { seatStatesKnown: true, activeSeats: 1, cancelledSeats: 0, pendingSeats: 0, enteredSeats: 0, benefits: [] }, delivery: { lastSentAt: null, scheduledAt: null, inboxReceipt: 'unverified', history: [] } };
       const path = String(url);
       if (path.includes('/api/v1/admin/bookings/11111111-1111-4111-8111-111111111111')) {
         return bookingDetail();
@@ -600,6 +610,7 @@ describe('AdminBookingDashboard', () => {
   it('shows payment attempt and completion times in the detail modal', async () => {
     const user = userEvent.setup();
     mocks.apiGet.mockImplementation(async (url: string) => {
+      if (url.endsWith('/support-evidence')) return { generatedAt: '2026-09-21T00:00:00.000Z', originalOrderAmount: 50000, provider: null, refundTimeline: null, refundProviderAmount: null, rights: { seatStatesKnown: true, activeSeats: 1, cancelledSeats: 0, pendingSeats: 0, enteredSeats: 0, benefits: [] }, delivery: { lastSentAt: null, scheduledAt: null, inboxReceipt: 'unverified', history: [] } };
       const path = String(url);
       if (path.includes('/api/v1/admin/bookings/11111111-1111-4111-8111-111111111111')) {
         return bookingDetail();
@@ -623,6 +634,7 @@ describe('AdminBookingDashboard', () => {
   it('shows payment diagnostics and fallback payment method in list, detail, and refund form', async () => {
     const user = userEvent.setup();
     mocks.apiGet.mockImplementation(async (url: string) => {
+      if (url.endsWith('/support-evidence')) return { generatedAt: '2026-09-21T00:00:00.000Z', originalOrderAmount: 50000, provider: null, refundTimeline: null, refundProviderAmount: null, rights: { seatStatesKnown: true, activeSeats: 1, cancelledSeats: 0, pendingSeats: 0, enteredSeats: 0, benefits: [] }, delivery: { lastSentAt: null, scheduledAt: null, inboxReceipt: 'unverified', history: [] } };
       const path = String(url);
       if (path.includes('/api/v1/admin/bookings/11111111-1111-4111-8111-222222222222')) {
         return {
@@ -660,6 +672,7 @@ describe('AdminBookingDashboard', () => {
   it('keeps the detail modal stable after repeated close and reopen cycles', async () => {
     const user = userEvent.setup();
     mocks.apiGet.mockImplementation(async (url: string) => {
+      if (url.endsWith('/support-evidence')) return { generatedAt: '2026-09-21T00:00:00.000Z', originalOrderAmount: 50000, provider: null, refundTimeline: null, refundProviderAmount: null, rights: { seatStatesKnown: true, activeSeats: 1, cancelledSeats: 0, pendingSeats: 0, enteredSeats: 0, benefits: [] }, delivery: { lastSentAt: null, scheduledAt: null, inboxReceipt: 'unverified', history: [] } };
       const path = String(url);
       if (path.includes('/api/v1/admin/bookings/11111111-1111-4111-8111-111111111111')) {
         return bookingDetail();
@@ -677,7 +690,7 @@ describe('AdminBookingDashboard', () => {
       await user.click(detailRow);
       const dialog = await screen.findByRole('dialog');
       expect(dialog).toBeInTheDocument();
-      await user.click(within(dialog).getByRole('button', { name: 'Close' }));
+      await user.click(within(dialog).getByRole('button', { name: '닫기' }));
       await waitFor(() => {
         expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
       });

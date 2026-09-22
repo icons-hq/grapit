@@ -1,26 +1,22 @@
-const LOCAL_RETURN_ORIGIN = 'https://heygrabit.local';
+import { resolveAuthReturnTo, type SupportedLocale } from '@grabit/shared';
+import { getLocalizedPathname } from '@/lib/i18n/locale-path';
 
-export function resolveSafeReturnTo(value: string | null | undefined): string | null {
-  if (!value) {
-    return null;
-  }
-
-  const trimmed = value.trim();
-  if (!trimmed.startsWith('/') || trimmed.startsWith('//') || trimmed.includes('\0')) {
-    return null;
-  }
-
-  try {
-    const parsed = new URL(trimmed, LOCAL_RETURN_ORIGIN);
-    if (parsed.origin !== LOCAL_RETURN_ORIGIN) {
-      return null;
-    }
-    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
-  } catch {
-    return null;
-  }
-}
+export const resolveSafeReturnTo = resolveAuthReturnTo;
 
 export function resolveSafeReturnToFromSearch(search: string): string | null {
   return resolveSafeReturnTo(new URLSearchParams(search).get('returnTo'));
+}
+
+export function buildAuthRoute(
+  route: '/auth' | '/auth/verify-email' | '/auth/reset-password',
+  locale: SupportedLocale,
+  options: { email?: string; verified?: boolean; emailDeliveryFailed?: boolean; returnTo?: string | null } = {},
+): string {
+  const params = new URLSearchParams();
+  if (options.email) params.set('email', options.email);
+  if (options.emailDeliveryFailed) params.set('delivery', 'failed');
+  if (options.verified) params.set('verified', '1');
+  const returnTo = resolveSafeReturnTo(options.returnTo);
+  if (returnTo) params.set('returnTo', returnTo);
+  return `${getLocalizedPathname(route, locale)}${params.size ? `?${params}` : ''}`;
 }

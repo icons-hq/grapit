@@ -32,10 +32,11 @@ export function useBookingAvailability(options: {
   const verificationRequired =
     Boolean(user) &&
     (user?.isEmailVerified !== true || user?.isPhoneVerified !== true);
-  const bookingAvailable =
-    !verificationRequired &&
+  const bookingOpen =
     !isEndedPerformance &&
     ((runtimeFlags.bookingEnabled && !isUpcomingPerformance && !isBeforeScheduledBookingStart) || isAdmin);
+
+  const bookingAvailable = bookingOpen && !verificationRequired;
 
   useEffect(() => {
     if (!hasValidBookingStart || bookingStartsAtMs <= Date.now()) {
@@ -59,6 +60,7 @@ export function useBookingAvailability(options: {
     bookingEndedMessage,
     isAdmin,
     bookingAvailable,
+    bookingOpen,
     verificationRequiredForBooking: verificationRequired,
     isAdminBookingBypassActive:
       !verificationRequired &&

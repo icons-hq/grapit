@@ -159,6 +159,11 @@ describe('Admin seat operations UI', () => {
   });
 
   beforeEach(() => {
+    useAuthStore.getState().setAuth('test-only', {
+      id: 'operator', email: 'operator@example.test', name: 'Operator', phone: '+82100000000', gender: 'unspecified',
+      country: 'KR', birthDate: '1990-01-01', preferredLocale: 'ko', isEmailVerified: true, isPhoneVerified: true,
+      marketingConsent: false, role: 'admin', adminCapabilityBundle: 'operator', createdAt: '2026-01-01T00:00:00Z',
+    });
     mocks.apiGet.mockReset();
     mocks.apiPost.mockReset();
     mocks.bookingDetail.mockReset();
@@ -225,6 +230,14 @@ describe('Admin seat operations UI', () => {
         queryKey: ['admin', 'seat-operations'],
       });
     });
+  });
+
+  it('does not offer manual reopening to a reservation viewer without the mutation capability', () => {
+    useAuthStore.setState({ user: { ...useAuthStore.getState().user!, adminCapabilityBundle: null, adminCapabilities: ['reservations.read'] } });
+    mocks.bookingDetail.mockReturnValue({ data: cancelledBooking({ reopenState: 'HELD_CANCELLED' }), isLoading: false });
+    renderWithClient(<AdminBookingDetailModal open onOpenChange={vi.fn()} bookingId="reservation-1" onRefund={vi.fn()} isRefunding={false} />);
+    expect(screen.queryByRole('button', { name: '취소 좌석 즉시 개방' })).not.toBeInTheDocument();
+    expect(apiClient.post).not.toHaveBeenCalled();
   });
 
   it('shows ticket item status, admission, refund, and reopen fields in admin booking detail', () => {

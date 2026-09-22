@@ -59,6 +59,6 @@ describe('BannerCarousel', () => {
     const carousel = container.querySelector('.aspect-\\[1290\\/600\\]');
     expect(carousel?.className).toContain('aspect-[1290/600]');
     expect(carousel?.className).toContain('md:h-[400px]');
-    expect(screen.getByRole('img', { name: '프로모션 배너' })).toBeDefined();
+    expect(screen.getByRole('img', { name: '공연 소식' })).toBeDefined();
   });
 });

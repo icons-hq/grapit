@@ -32,7 +32,7 @@ const STATUS_CONFIG: Record<
     className: 'bg-[#F5F5F7] text-gray-700 border-transparent',
   },
   review: {
-    label: '검수 필요',
+    label: '게시 승인 대기',
     className: 'bg-[#FFFBEB] text-[#8B6306] border-transparent',
   },
   published: {

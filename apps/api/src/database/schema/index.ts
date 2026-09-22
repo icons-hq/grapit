@@ -112,6 +112,7 @@ export {
   supportMessageVisibilityEnum,
 } from './support-messages.js';
 export { supportFaqs } from './support-faqs.js';
+export { performanceDrafts } from './performance-drafts.js';
 export {
   supportNoticeCategoryEnum,
   supportNotices,

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useAdminEventContext } from '@/components/admin/admin-event-context';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -42,6 +43,7 @@ import {
   useFieldMonitorSummary,
 } from '@/hooks/use-field-monitor';
 import { cn } from '@/lib/cn';
+import { useAuthStore } from '@/stores/use-auth-store';
 
 type AlertInput = Omit<Partial<FieldMonitorAlert>, 'severity' | 'type'> & {
   id?: string;
@@ -67,7 +69,7 @@ type SummaryInput = Omit<
 };
 
 type LogInput = Omit<Partial<FieldMonitorLogRow>, 'outcome' | 'syncState'> & {
-  reservationNumber?: string;
+  reservationNumber?: string | null;
   outcome?: string | null;
   result?: string | null;
   syncState?: string | null;
@@ -87,56 +89,56 @@ interface FieldMonitorProps {
 const KPI_DEFINITIONS = [
   {
     key: 'entered',
-    label: 'entered',
+    label: '입장 완료',
     icon: TicketCheck,
     tone: 'green',
     value: (summary: NormalizedSummary) => summary.enteredCount,
   },
   {
     key: 'not-entered',
-    label: 'not-entered',
+    label: '미입장',
     icon: Clock3,
     tone: 'neutral',
     value: (summary: NormalizedSummary) => summary.notEnteredCount,
   },
   {
     key: 'entry-rate',
-    label: 'entry rate',
+    label: '입장률',
     icon: CheckCircle2,
     tone: 'green',
     value: (summary: NormalizedSummary) => `${summary.entryRatePercent}%`,
   },
   {
     key: 'duplicate-scans',
-    label: 'duplicate scans',
+    label: '중복 스캔',
     icon: AlertTriangle,
     tone: 'red',
     value: (summary: NormalizedSummary) => summary.duplicateScanCount,
   },
   {
     key: 'rejected-scans',
-    label: 'rejected scans',
+    label: '거절 스캔',
     icon: ShieldAlert,
     tone: 'red',
     value: (summary: NormalizedSummary) => summary.rejectedScanCount,
   },
   {
     key: 'offline-pending',
-    label: 'offline pending',
+    label: '동기화 대기',
     icon: WifiOff,
     tone: 'amber',
     value: (summary: NormalizedSummary) => summary.offlinePendingCount,
   },
   {
     key: 'offline-synced',
-    label: 'offline synced',
+    label: '동기화 완료',
     icon: CheckCircle2,
     tone: 'green',
     value: (summary: NormalizedSummary) => summary.offlineSyncedCount,
   },
   {
     key: 'latest-abnormal',
-    label: 'latest abnormal',
+    label: '최근 이상 알림',
     icon: AlertTriangle,
     tone: 'amber',
     value: (summary: NormalizedSummary) => summary.alerts.length,
@@ -154,9 +156,9 @@ const OUTCOME_OPTIONS = [
 
 const OFFLINE_STATE_OPTIONS = [
   { value: 'all', label: '전체 동기화' },
-  { value: 'pending', label: 'pending' },
-  { value: 'synced', label: 'synced' },
-  { value: 'rejected', label: 'rejected' },
+  { value: 'pending', label: '대기' },
+  { value: 'synced', label: '동기화 완료' },
+  { value: 'rejected', label: '충돌/거절' },
 ] as const;
 
 const ALERT_FALLBACKS: Record<string, string> = {
@@ -196,6 +198,9 @@ interface NormalizedLog {
   outcome: string;
   syncState: string;
   scannerUserId: string;
+  scannerName: string;
+  seatLabel: string;
+  source?: 'online' | 'offline_sync';
   ticketRef: string;
   scannedAt?: string;
 }
@@ -205,7 +210,9 @@ export function FieldMonitor({
   scanLogs: controlledLogs,
   initialFilters,
 }: FieldMonitorProps) {
-  const [filters, setFilters] = useState<FieldMonitorLogFilter>({
+  const context = useAdminEventContext();
+  const user = useAuthStore((state) => state.user);
+  const [localFilters, setFilters] = useState<FieldMonitorLogFilter>({
     eventId: initialFilters?.eventId ?? controlledSummary?.eventId ?? '',
     showtimeId: initialFilters?.showtimeId ?? controlledSummary?.showtimeId ?? undefined,
     outcome: initialFilters?.outcome,
@@ -214,6 +221,8 @@ export function FieldMonitor({
     dateFrom: initialFilters?.dateFrom,
     dateTo: initialFilters?.dateTo,
   });
+
+  const filters = context ? { ...localFilters, eventId: context.performanceId, showtimeId: context.showtimeId || undefined } : localFilters;
 
   const summaryQuery = useFieldMonitorSummary({
     eventId: filters.eventId,
@@ -227,9 +236,19 @@ export function FieldMonitor({
 
   const summary = normalizeSummary(controlledSummary ?? summaryQuery.summary);
   const logs = normalizeLogs(controlledLogs ?? logsQuery.logs);
+  const scanners = [...new Map([
+    ...(user ? [[user.id, { id: user.id, name: `${user.name} (내 기록)` }] as const] : []),
+    ...logs.map((log) => [log.scannerUserId, { id: log.scannerUserId, name: log.scannerName }] as const),
+  ]).values()];
+  const paused = summaryQuery.fetchStatus === 'paused' || logsQuery.fetchStatus === 'paused';
   const isLoading = summaryQuery.isLoading || logsQuery.isLoading;
   const isError = summaryQuery.isError || logsQuery.isError;
   const canRefresh = Boolean(filters.eventId && filters.showtimeId);
+  const summaryReady = canRefresh && !paused && !isError && summary?.eventId === filters.eventId && summary?.showtimeId === filters.showtimeId;
+  const logsReady = canRefresh && !paused && !isError && (controlledLogs !== undefined || logsQuery.data !== undefined);
+  const stateMessage = !canRefresh ? '공연과 회차를 선택하면 현장 현황을 조회합니다.'
+    : paused ? '연결 복구를 기다리고 있습니다. 연결되면 현장 현황을 다시 조회합니다.'
+      : isError ? null : !summaryReady || !logsReady ? '선택한 회차의 현장 현황을 조회하고 있습니다.' : null;
 
   function updateFilter<K extends keyof FieldMonitorLogFilter>(
     key: K,
@@ -256,7 +275,7 @@ export function FieldMonitor({
         <div>
           <h1 className="text-xl font-semibold text-gray-900">현장 모니터</h1>
           <p className="mt-2 text-base leading-[1.5] text-gray-600">
-            입장 흐름이 정상입니다
+            회차별 입장·중복·동기화 현황을 확인합니다.
           </p>
         </div>
         <Button
@@ -273,7 +292,10 @@ export function FieldMonitor({
         </Button>
       </div>
 
-      <MonitorFilters filters={filters} updateFilter={updateFilter} />
+      <MonitorFilters filters={filters} updateFilter={updateFilter} scanners={scanners} />
+      <p className="text-sm text-gray-600">요약은 선택한 회차 전체 기준입니다. 결과·동기화·스캐너·기간 필터는 아래 스캔 로그에만 적용됩니다. 조회 날짜와 표시 시각은 한국 시간(KST)입니다.</p>
+      {stateMessage && <p role="status" className="rounded-lg border border-gray-200 bg-white p-5 text-gray-600">{stateMessage}</p>}
+      {summaryReady && summary?.updatedAt && <p className="text-sm text-gray-500">최근 조회 {formatTimestamp(summary.updatedAt)} KST{summaryQuery.isFetching || logsQuery.isFetching ? ' · 갱신 중' : ''}</p>}
 
       {isError && (
         <section
@@ -296,7 +318,7 @@ export function FieldMonitor({
             key={definition.key}
             id={definition.key}
             label={definition.label}
-            value={summary ? definition.value(summary) : '-'}
+            value={summaryReady && summary ? definition.value(summary) : '-'}
             icon={definition.icon}
             tone={definition.tone}
             isLoading={isLoading && !summary}
@@ -304,9 +326,9 @@ export function FieldMonitor({
         ))}
       </div>
 
-      <AlertPanel alerts={summary?.alerts ?? []} />
+      {summaryReady && logsReady && <AlertPanel alerts={summary?.alerts ?? []} />}
 
-      <ScanLogTable logs={logs} />
+      {logsReady && <ScanLogTable logs={logs} />}
     </section>
   );
 }
@@ -314,17 +336,20 @@ export function FieldMonitor({
 function MonitorFilters({
   filters,
   updateFilter,
+  scanners,
 }: {
   filters: FieldMonitorLogFilter;
+  scanners: Array<{ id: string; name: string }>;
   updateFilter: <K extends keyof FieldMonitorLogFilter>(
     key: K,
     value: FieldMonitorLogFilter[K] | 'all' | '',
   ) => void;
 }) {
+  const context = useAdminEventContext();
   return (
     <Card className="border-gray-200 bg-white shadow-sm">
       <CardContent className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-6">
-        <Input
+        {!context && <><Input
           className="h-11"
           placeholder="event ID"
           value={filters.eventId ?? ''}
@@ -337,7 +362,7 @@ function MonitorFilters({
           value={filters.showtimeId ?? ''}
           aria-label="회차 필터"
           onChange={(event) => updateFilter('showtimeId', event.target.value)}
-        />
+        /></>}
         <Select
           value={filters.outcome ?? 'all'}
           onValueChange={(value) =>
@@ -372,13 +397,14 @@ function MonitorFilters({
             ))}
           </SelectContent>
         </Select>
-        <Input
-          className="h-11"
-          placeholder="scanner account"
-          value={filters.scannerUserId ?? ''}
-          aria-label="스캐너 계정 필터"
-          onChange={(event) => updateFilter('scannerUserId', event.target.value)}
-        />
+        <select className="h-11 min-w-0 rounded-md border border-gray-200 bg-white px-3 text-sm"
+          value={filters.scannerUserId ?? 'all'} aria-label="스캐너 계정 필터"
+          onChange={(event) => updateFilter('scannerUserId', event.target.value)}>
+          <option value="all">전체 담당자</option>
+          {filters.scannerUserId && !scanners.some((scanner) => scanner.id === filters.scannerUserId)
+            && <option value={filters.scannerUserId}>선택한 담당자</option>}
+          {scanners.map((scanner) => <option key={scanner.id} value={scanner.id}>{scanner.name}</option>)}
+        </select>
         <div className="grid grid-cols-2 gap-2">
           <Input
             type="date"
@@ -450,13 +476,13 @@ function AlertPanel({ alerts }: { alerts: readonly NormalizedAlert[] }) {
     >
       <CardHeader className="p-4 pb-2">
         <CardTitle className="text-heading font-semibold text-gray-900">
-          {alerts.length > 0 ? '이상 징후를 확인하세요' : '입장 흐름이 정상입니다'}
+          {alerts.length > 0 ? '이상 징후를 확인하세요' : '조회된 경고 없음'}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2 p-4 pt-2">
         {alerts.length === 0 ? (
           <p className="text-base leading-[1.5] text-gray-600">
-            아직 경고 기준을 넘은 이상 징후가 없습니다.
+            이번 조회 범위에서 경고 기준을 넘은 기록이 없습니다. 기기별 미전송 기록은 현장 단말에서 확인해주세요.
           </p>
         ) : (
           alerts.map((alert) => (
@@ -502,13 +528,14 @@ function ScanLogTable({ logs }: { logs: readonly NormalizedLog[] }) {
     <Card className="border-gray-200 bg-white shadow-sm">
       <CardHeader className="p-4 pb-2">
         <CardTitle className="text-heading font-semibold text-gray-900">
-          스캔 로그
+          스캔 로그 · 최근 100개
         </CardTitle>
       </CardHeader>
       <CardContent className="overflow-x-auto p-4 pt-2">
         <Table aria-label="스캔 로그">
           <TableHeader>
             <TableRow>
+              <TableHead>좌석</TableHead>
               <TableHead>예매번호</TableHead>
               <TableHead>결과</TableHead>
               <TableHead>오프라인</TableHead>
@@ -520,19 +547,20 @@ function ScanLogTable({ logs }: { logs: readonly NormalizedLog[] }) {
           <TableBody>
             {logs.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="h-24 text-center text-gray-600">
-                  아직 스캔 기록이 없습니다
+                <TableCell colSpan={7} className="h-24 text-center text-gray-600">
+                  선택한 조건에 해당하는 스캔 기록이 없습니다
                 </TableCell>
               </TableRow>
             ) : (
               logs.map((log) => (
                 <TableRow key={log.id}>
+                  <TableCell className="font-semibold">{log.seatLabel}</TableCell>
                   <TableCell className="font-semibold">
                     {log.reservationNumber}
                   </TableCell>
                   <TableCell>{labelOutcome(log.outcome)}</TableCell>
-                  <TableCell>{log.syncState}</TableCell>
-                  <TableCell>{log.scannerUserId}</TableCell>
+                  <TableCell>{log.source === 'online' ? '온라인' : ({ pending: '대기', synced: '동기화 완료', rejected: '충돌/거절' } as Record<string, string>)[log.syncState] ?? '미확인'}</TableCell>
+                  <TableCell title={log.scannerUserId}>{log.scannerName}</TableCell>
                   <TableCell>{log.ticketRef}</TableCell>
                   <TableCell>{formatTimestamp(log.scannedAt)}</TableCell>
                 </TableRow>
@@ -586,9 +614,9 @@ function normalizeAlert(alert: AlertInput, index: number): NormalizedAlert {
     type,
     severity: normalizeSeverity(alert.severity),
     message:
+      ALERT_FALLBACKS[type] ??
       alert.message ??
       alert.title ??
-      ALERT_FALLBACKS[type] ??
       '이상 징후를 확인하세요',
     count: typeof alert.count === 'number' ? alert.count : undefined,
     detectedAt: alert.detectedAt,
@@ -610,6 +638,9 @@ function normalizeLogs(logs: readonly LogInput[] | undefined): NormalizedLog[] {
     outcome: String(log.outcome ?? log.result ?? 'rejected'),
     syncState: String(log.syncState ?? '-'),
     scannerUserId: String(log.scannerUserId ?? '-'),
+    scannerName: log.scannerName ?? '담당자 이름 미확인',
+    seatLabel: log.seatLabel ?? '좌석 정보 미확인',
+    source: log.source,
     ticketRef: String(log.redactedTokenRef ?? log.maskedTicketRef ?? 'redacted'),
     scannedAt: log.scannedAt,
   }));

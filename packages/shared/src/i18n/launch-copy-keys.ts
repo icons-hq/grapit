@@ -159,6 +159,7 @@ const authEmailVerificationKeys = [
   'verified',
   'throttled',
   'systemError',
+  'deliveryFailed',
 ] as const;
 
 const authOtpKeys = [

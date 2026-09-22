@@ -22,6 +22,7 @@ import {
 } from '@grabit/shared';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { AuthGuard } from '@/components/auth/auth-guard';
+import { resolveSafeReturnToFromSearch } from '@/lib/auth-return';
 import { ProfileForm } from '@/components/auth/profile-form';
 import { ReservationList } from '@/components/reservation/reservation-list';
 import { Badge } from '@/components/ui/badge';
@@ -29,6 +30,7 @@ import { Button } from '@/components/ui/button';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { useMyReservations } from '@/hooks/use-reservations';
 import { getVisibleCopy, type VisibleCopy } from '@/lib/i18n/visible-copy';
+import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { getClientLocale } from '@/lib/i18n/client-copy';
 
 type MyPageTab = 'account' | 'wallet' | 'settings';
@@ -46,8 +48,9 @@ function resolveActiveTab(value: string | null): MyPageTab {
   return 'account';
 }
 
-function getCountryLabel(countryCode: string) {
-  return COUNTRY_LABELS.get(countryCode) ?? countryCode;
+function getCountryLabel(countryCode: string, locale: string) {
+  if (!/^[A-Z]{2}$/.test(countryCode)) return getVisibleCopy(locale).auth.signup.countryOTHER;
+  return new Intl.DisplayNames([locale], { type: 'region' }).of(countryCode) ?? COUNTRY_LABELS.get(countryCode) ?? countryCode;
 }
 
 function getMarketingConsent(user: UserProfile) {
@@ -63,7 +66,8 @@ function formatDateTime(dateString: string, locale: string) {
     weekday: 'short',
     hour: '2-digit',
     minute: '2-digit',
-  }).format(date);
+    timeZone: 'Asia/Seoul',
+  }).format(date) + ' KST';
 }
 
 function getAccountAgeLabel(
@@ -125,7 +129,8 @@ export default function MyPage() {
   const activeTab = resolveActiveTab(searchParams.get('tab'));
 
   const [filter, setFilter] = useState('all');
-  const { data: reservations, isLoading, isFetching } = useMyReservations();
+  const { data: reservations, isLoading, isFetching, isError, refetch } = useMyReservations();
+  const hasReservationSnapshot = reservations !== undefined && !isError;
 
   const allReservations = useMemo(() => reservations ?? [], [reservations]);
   const reservationSummary = useMemo(
@@ -145,13 +150,11 @@ export default function MyPage() {
   );
 
   function handleTabChange(value: string) {
-    if (value === 'wallet') {
-      router.replace('/mypage?tab=wallet');
-    } else if (value === 'settings') {
-      router.replace('/mypage?tab=settings');
-    } else {
-      router.replace('/mypage');
-    }
+    const query = new URLSearchParams();
+    if (value === 'wallet' || value === 'settings') query.set('tab', value);
+    const returnTo = resolveSafeReturnToFromSearch(searchParams.toString());
+    if (returnTo) query.set('returnTo', returnTo);
+    router.replace(`${getLocalizedPathname('/mypage', locale)}${query.size ? `?${query}` : ''}`);
   }
 
   return (
@@ -170,19 +173,20 @@ export default function MyPage() {
                 </p>
               </div>
               <div className="grid grid-cols-3 gap-2 rounded-lg bg-gray-100 p-2 text-center">
-                <SummaryNumber label={copy.summary.total} value={reservationSummary.total} />
+                <SummaryNumber label={copy.summary.total} value={hasReservationSnapshot ? reservationSummary.total : '—'} />
                 <SummaryNumber
                   label={copy.summary.confirmed}
-                  value={reservationSummary.CONFIRMED}
+                  value={hasReservationSnapshot ? reservationSummary.CONFIRMED : '—'}
                 />
                 <SummaryNumber
                   label={copy.summary.cancelled}
-                  value={reservationSummary.CANCELLED}
+                  value={hasReservationSnapshot ? reservationSummary.CANCELLED : '—'}
                 />
               </div>
             </div>
           </header>
 
+          {isError && <section role="alert" className="mb-5 rounded-lg border border-destructive/20 p-4"><p>{copy.loadError}</p><Button variant="outline" className="mt-3" onClick={() => void refetch()}>{getVisibleCopy(locale).commonErrors.retry}</Button></section>}
           <Tabs value={activeTab} onValueChange={handleTabChange}>
             <TabsList className="sticky top-0 z-10 h-auto rounded-lg border border-gray-200 bg-white p-1 shadow-sm">
               <TabsTrigger
@@ -212,7 +216,7 @@ export default function MyPage() {
               {user && (
                 <AccountHub
                   user={user}
-                  reservationSummary={reservationSummary}
+                  reservationSummary={hasReservationSnapshot ? reservationSummary : null}
                   nextReservation={nextReservation}
                   onWalletClick={() => handleTabChange('wallet')}
                   onSettingsClick={() => handleTabChange('settings')}
@@ -221,14 +225,14 @@ export default function MyPage() {
             </TabsContent>
 
             <TabsContent value="wallet" className="mt-5 min-h-0 rounded-none bg-transparent p-0">
-              <TicketWallet
+              {hasReservationSnapshot ? <TicketWallet
                 summary={reservationSummary}
                 reservations={filteredReservations}
                 isLoading={isLoading}
                 isFetching={isFetching}
                 filter={filter}
                 onFilterChange={setFilter}
-              />
+              /> : !isError ? <p role="status" className="p-6">{copy.checking}</p> : null}
             </TabsContent>
 
             <TabsContent value="settings" className="mt-5 min-h-0 rounded-none bg-transparent p-0">
@@ -242,7 +246,7 @@ export default function MyPage() {
                     {getVisibleCopy(locale).profile.marketingDescription}
                   </p>
                 </div>
-                {user && <ProfileForm user={user} />}
+                {user && <ProfileForm key={user.id} user={user} returnTo={resolveSafeReturnToFromSearch(searchParams.toString())} />}
               </section>
             </TabsContent>
           </Tabs>
@@ -252,7 +256,7 @@ export default function MyPage() {
   );
 }
 
-function SummaryNumber({ label, value }: { label: string; value: number }) {
+function SummaryNumber({ label, value }: { label: string; value: number | string }) {
   return (
     <div className="min-w-[72px]">
       <p className="text-lg font-semibold text-gray-950">{value}</p>
@@ -269,7 +273,7 @@ function AccountHub({
   onSettingsClick,
 }: {
   user: UserProfile;
-  reservationSummary: Record<ReservationStatus | 'total', number>;
+  reservationSummary: Record<ReservationStatus | 'total', number> | null;
   nextReservation: ReservationListItem | undefined;
   onWalletClick: () => void;
   onSettingsClick: () => void;
@@ -320,7 +324,7 @@ function AccountHub({
           <InfoTile label={profileCopy.name} value={user.name} />
           <InfoTile label={profileCopy.email} value={user.email} />
           <InfoTile label={profileCopy.phone} value={user.phone} />
-          <InfoTile label={visibleCopy.auth.signup.countryLabel} value={getCountryLabel(user.country)} />
+          <InfoTile label={visibleCopy.auth.signup.countryLabel} value={getCountryLabel(user.country, locale)} />
           <InfoTile
             label={profileCopy.preferredLocale}
             value={LOCALE_LABELS[user.preferredLocale].english}
@@ -341,7 +345,7 @@ function AccountHub({
             icon={<ShieldCheck className="h-4 w-4" />}
           />
           <InfoTile
-            label={copy.accountAgeUnknown}
+            label={copy.membership}
             value={getAccountAgeLabel(user.createdAt, copy)}
             icon={<CalendarDays className="h-4 w-4" />}
           />
@@ -376,15 +380,15 @@ function AccountHub({
           {locale === 'ko' ? '티켓 요약' : copy.tabs.wallet}
         </h2>
         <div className="mt-5 grid grid-cols-2 gap-3">
-          <StatusTile label={copy.summary.total} value={reservationSummary.total} />
-          <StatusTile label={reservationCopy.status.confirmed} value={reservationSummary.CONFIRMED} />
-          <StatusTile label={reservationCopy.status.pendingPayment} value={reservationSummary.PENDING_PAYMENT} />
-          <StatusTile label={copy.summary.cancelled} value={reservationSummary.CANCELLED} />
+          <StatusTile label={copy.summary.total} value={reservationSummary?.total ?? '—'} />
+          <StatusTile label={reservationCopy.status.confirmed} value={reservationSummary?.CONFIRMED ?? '—'} />
+          <StatusTile label={reservationCopy.status.pendingPayment} value={reservationSummary?.PENDING_PAYMENT ?? '—'} />
+          <StatusTile label={copy.summary.cancelled} value={reservationSummary?.CANCELLED ?? '—'} />
         </div>
 
         <div className="mt-5 rounded-lg bg-gray-50 p-4">
           <p className="text-sm font-semibold text-gray-900">{copy.nextReservation}</p>
-          {nextReservation ? (
+          {!reservationSummary ? <p className="mt-3 text-sm text-muted-foreground">{copy.checking}</p> : nextReservation ? (
             <div className="mt-3">
               <p className="text-base font-semibold text-gray-950">
                 {nextReservation.performanceTitle}
@@ -429,7 +433,7 @@ function InfoTile({
   );
 }
 
-function StatusTile({ label, value }: { label: string; value: number }) {
+function StatusTile({ label, value }: { label: string; value: number | string }) {
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4">
       <p className="text-2xl font-semibold text-gray-950">{value}</p>

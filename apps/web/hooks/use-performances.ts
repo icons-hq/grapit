@@ -9,7 +9,18 @@ import type {
   PerformanceWithDetails,
   PerformanceCardData,
   Banner,
+  PerformanceQuery,
 } from '@grabit/shared';
+
+export function useBrowsePerformances(status: NonNullable<PerformanceQuery['status']>, page: number) {
+  const locale = resolveVisibleCopyLocale(useLocale());
+  return useQuery({
+    queryKey: ['performances', 'browse', status, page, locale],
+    queryFn: () => apiClient.get<PerformanceListResponse>(`/api/v1/performances?${new URLSearchParams({
+      genre: 'artist_celebrity', status, page: String(page), limit: '12', ended: 'true', locale,
+    })}`),
+  });
+}
 
 type HomeBannerDeviceTarget = 'mobile' | 'desktop';
 

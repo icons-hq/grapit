@@ -1,4 +1,4 @@
-import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'next/navigation';
 import { useLocale } from 'next-intl';
 import { apiClient } from '@/lib/api-client';
@@ -24,6 +24,5 @@ export function useSearch() {
       );
     },
     enabled: q.length > 0,
-    placeholderData: keepPreviousData,
   });
 }

@@ -14,9 +14,10 @@ import { z } from 'zod';
 import {
   adminSeatOperationRequestSchema,
   adminSeatOperationShowtimeIdSchema,
+  SEAT_OPERATION_CAPABILITIES,
   type AdminSeatOperationRequest,
 } from '@grabit/shared';
-import { AdminCapabilities } from '../../common/decorators/admin-capabilities.decorator.js';
+import { AdminAnyCapabilities, AdminCapabilities } from '../../common/decorators/admin-capabilities.decorator.js';
 import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
 import { Roles } from '../../common/decorators/roles.decorator.js';
 import { AdminCapabilitiesGuard } from '../../common/guards/admin-capabilities.guard.js';
@@ -91,7 +92,7 @@ export class AdminSeatOperationsController {
   }
 
   @Get('history')
-  @AdminCapabilities('seat.disable', 'seat.reactivate')
+  @AdminAnyCapabilities(...SEAT_OPERATION_CAPABILITIES)
   async listHistory(
     @Query(new ZodValidationPipe(seatOperationHistoryQuerySchema))
     query: SeatOperationHistoryQuery,

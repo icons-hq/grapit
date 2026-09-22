@@ -14,6 +14,132 @@ export interface AdminPatchNote {
 
 const notes = [
   {
+    id: 'pr-232-integrated-release-safeguards',
+    prNumber: 232,
+    title: '통합 개편의 결제 복구·권한·정산 조회 보완',
+    summary: '구매·운영·현장 개편을 통합하고, 최종 검토에서 재현한 결제 준비 거절과 운영 예외 흐름을 보완했습니다.',
+    highlights: [
+      '서버가 미생성을 확인한 결제 준비 거절에서 좌석 재선택 제공',
+      '좌석 작업 권한별 메뉴·공연 업무 링크와 실행 버튼 일치',
+      'PG 정산 자료는 한 번에 최대 31일로 조회하고 긴 기간은 나누어 안내',
+      '예매·입장 등 운영 이력이 없는 공연 삭제 시 연결 초안도 함께 정리',
+    ],
+    category: 'patch',
+    date: '2026-09-22',
+    githubUrl: 'https://github.com/icons-hq/grapit/pull/232',
+    evidence: [
+      '확정 거절·기존 주문·조회 실패·응답 유실의 고객 복구 회귀',
+      '권한 조합별 내비게이션과 좌석 작업 UI 회귀',
+      '실제 PostgreSQL 삭제·원장 보존 및 HTTP PG 기간 제한 회귀',
+    ],
+  },
+  {
+    id: 'pr-230-integrated-journey-validation',
+    prNumber: 230,
+    title: '다국어 예매·키보드 좌석 선택과 현장 조회 보완',
+    summary:
+      '고객의 언어와 한국 기준 시각을 좌석 선택부터 티켓·취소까지 유지하고, 현장 담당자의 실제 조회 결과를 명확히 표시합니다.',
+    highlights: [
+      '네 언어 달력·좌석·티켓 안내와 키보드로 조작하는 좌석 목록',
+      '예매 번역 제목, 원화 원금과 해외 카드 청구 통화 구분',
+      '취소 성공 뒤 불필요한 오류 알림과 과거 결제 복귀 화면 정정',
+      '현장 로그 권한·예매번호·좌석·담당자·KST 날짜 조회 개선',
+    ],
+    category: 'patch',
+    date: '2026-09-22',
+    githubUrl: 'https://github.com/icons-hq/grapit/pull/230',
+    evidence: [
+      'API 1,259 / Web 773 / shared 148 테스트, PostgreSQL 거래 65·현장 26 회귀',
+      '38개 경로·4언어·키보드·모바일·확대의 실제 API 브라우저 검증',
+      '13개 테이블 원장 보존 migration 리허설, production build, 두 관점 코드 검토',
+    ],
+  },
+  {
+    id: 'pr-229-finance-evidence-ledger',
+    prNumber: 229,
+    title: '원금·환불·통화·조회 기준을 구분한 정산 원장',
+    summary:
+      '공연·회차와 기간·기준 시각을 선택해 원 주문, 확정·처리 중 환불, 남은 티켓과 PG 정산 자료를 대조합니다.',
+    highlights: [
+      'KRW와 USD 청구·취소 기록 및 정산 지급일을 별도로 표시',
+      '조회 전·연결 대기·실패·0건·증거 누락을 구분하고 과거 취소 견적 보존',
+      '결제·좌석·PG 거래 단위 CSV에 같은 기준과 통화·시각을 기록',
+      '개인 연락처 없는 재무 export와 감사 기록, 은행 입금·마감 미확인 안내',
+    ],
+    category: 'feature',
+    date: '2026-09-22',
+    githubUrl: 'https://github.com/icons-hq/grapit/pull/229',
+    evidence: [
+      '22 PostgreSQL HTTP finance regressions and 11 UI query-state checks',
+      'Actual desktop/mobile CSV download, independent money reconciliation and export audit readback',
+      'API/Web/shared tests, production build and Standards/Spec review',
+    ],
+  },
+  {
+    id: 'pr-228-seat-level-field-operations',
+    prNumber: 228,
+    title: '좌석별 입장과 현장 특전 지급 개선',
+    summary:
+      '회차와 좌석을 확인해 한 좌석씩 입장 처리하고, 연결이 끊겼을 때의 대기 기록과 재접속 결과를 구분합니다.',
+    highlights: [
+      '한 예매의 다른 좌석과 구매자의 QR 조회를 유지하는 좌석별 입장 처리',
+      '중복·동시 입장 요청과 오프라인 재전송의 결과 일치 및 충돌 안내',
+      '입장과 특전 지급 권한 분리, 중복 지급 방지와 지급 후 설정 보호',
+      '위조·만료·취소 QR과 일시적인 서버 오류를 구분한 현장 안내',
+    ],
+    category: 'feature',
+    date: '2026-09-22',
+    githubUrl: 'https://github.com/icons-hq/grapit/pull/228',
+    evidence: [
+      '24 PostgreSQL HTTP regressions including concurrent admission and benefit redemption',
+      'Mobile browser offline/reconnect conflicts and buyer QR retention readback',
+      'Shared/Web/API validation, production build and Standards/Spec review',
+    ],
+  },
+  {
+    id: 'pr-227-performance-preparation-and-support',
+    prNumber: 227,
+    title: '공연 준비·판매·고객 대응 흐름 통합',
+    summary:
+      '공연과 회차를 선택해 초안 작성부터 검수·공개, 예매 확인·문의 처리·특전 운영까지 이어서 진행할 수 있습니다.',
+    highlights: [
+      '단계별 작성과 초안 저장·재개, 누락 항목 안내 및 최신 상태에 대한 공개 승인',
+      '판매된 좌석·가격·공연장 보호와 오래된 편집·번역 승인 충돌 방지',
+      '고객 문의에서 원 결제 통화·환불·좌석·특전·이메일 기록을 함께 확인',
+      '특전 테스트와 실제 반영 구분, 이름 수정 후 기존 권리·외국어 안내 유지',
+      '운영·승인·재무·현장 역할별 메뉴와 API 권한 일치',
+    ],
+    category: 'feature',
+    date: '2026-09-22',
+    githubUrl: 'https://github.com/icons-hq/grapit/pull/227',
+    evidence: [
+      'API 1300 / Web 756 / shared 148 tests; PostgreSQL HTTP regressions',
+      'Role-based desktop/mobile browser QA and entitlement readback',
+      'API/Web production build and Standards/Spec review',
+    ],
+  },
+  {
+    id: 'pr-226-seat-cancellation-and-refunds',
+    prNumber: 226,
+    title: '좌석별 취소와 환불 상태·금액 안내',
+    summary:
+      '고객이 선택한 좌석의 환불액과 남을 티켓을 확인해 취소하고, 남은 QR과 원거래 금액을 유지하도록 개선했습니다.',
+    highlights: [
+      '취소할 좌석·수수료·원화와 결제 통화 환불액·남는 티켓을 함께 확인',
+      '거절·응답 유실·지연 알림에서도 같은 취소 요청의 결과와 권리를 보존',
+      '환불 처리 단계와 좌석 재판매 대기를 구분하고 마지막 좌석의 수수료 유지',
+      '활성 티켓이 없는 예매의 이메일 재발송 숨김과 모바일 취소 확인 개선',
+    ],
+    category: 'feature',
+    date: '2026-09-21',
+    githubUrl: 'https://github.com/icons-hq/grapit/pull/226',
+    evidence: [
+      'API/Web/shared unit tests and PostgreSQL transaction regressions',
+      'Desktop/mobile browser QA with isolated provider simulator',
+      'Standards and Spec review; API/Web build',
+    ],
+  },
+  {
     id: 'pr-196-partial-cancellation-reconciliation',
     prNumber: 196,
     title: '부분취소 예매 조회 복원과 대조 기준 정정',

@@ -127,6 +127,27 @@ describe('ProfileForm settings center', () => {
     expect(mocks.setAuth).toHaveBeenCalledWith('access-token', updatedUser);
   });
 
+  it('verifies the existing phone then returns to the selected booking', async () => {
+    const viewer = userEvent.setup();
+    mocks.apiPatch.mockResolvedValueOnce(baseUser);
+    render(<ProfileForm user={{ ...baseUser, isPhoneVerified: false }} returnTo="/en/booking/show" />);
+    expect(screen.getByText('unverified')).toBeInTheDocument();
+    await viewer.click(screen.getByRole('button', { name: 'phone verify' }));
+    await viewer.click(screen.getByRole('button', { name: '변경사항 저장' }));
+    await waitFor(() => expect(mocks.apiPatch).toHaveBeenCalledWith('/api/v1/users/me', { phone: baseUser.phone, phoneVerificationToken: 'phone-token' }));
+    expect(mocks.routerPush).toHaveBeenCalledWith('/en/booking/show');
+  });
+
+  it('lets a verified customer start and cancel a phone change without saving it', async () => {
+    const viewer = userEvent.setup();
+    render(<ProfileForm user={baseUser} />);
+    await viewer.click(screen.getByRole('button', { name: '전화번호 변경' }));
+    expect(screen.getByText('unverified')).toBeInTheDocument();
+    await viewer.click(screen.getByRole('button', { name: '전화번호 변경 취소' }));
+    expect(screen.getByText('verified')).toBeInTheDocument();
+    expect(mocks.apiPatch).not.toHaveBeenCalled();
+  });
+
   it('withdraws the account only after explicit confirmation', async () => {
     mocks.apiPost.mockResolvedValueOnce({
       ...baseUser,

@@ -4,13 +4,13 @@ import { useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useLocale } from 'next-intl';
 import { useForm } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
+import { authFormResolver } from '@/lib/auth-validation';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { loginSchema, type LoginInput, type AuthResponse } from '@grabit/shared';
 import { apiClient, ApiClientError } from '@/lib/api-client';
 import { apiUrl } from '@/lib/api-url';
-import { resolveSafeReturnToFromSearch } from '@/lib/auth-return';
+import { buildAuthRoute, resolveSafeReturnToFromSearch } from '@/lib/auth-return';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -63,8 +63,7 @@ function getPostLoginDestination(
     return returnTo ?? getLocalizedPathname('/', locale);
   }
 
-  const pathname = getLocalizedPathname('/auth/verify-email', locale);
-  return `${pathname}?email=${encodeURIComponent(res.user.email)}`;
+  return buildAuthRoute('/auth/verify-email', locale, { email: res.user.email, returnTo });
 }
 
 function SocialErrorMessage() {
@@ -80,7 +79,9 @@ function SocialErrorMessage() {
       : null;
 
   if (!errorKey) {
-    return null;
+    return searchParams.get('verified') === '1'
+      ? <p role="status" className="text-sm text-success">{authCopy.navigation.verificationLogin}</p>
+      : null;
   }
 
   return (
@@ -92,6 +93,8 @@ function SocialErrorMessage() {
 
 export function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const returnTo = resolveSafeReturnToFromSearch(searchParams.toString());
   const locale = useLocale();
   const authCopy = getAuthLaunchCopy(locale);
   const setAuth = useAuthStore((s) => s.setAuth);
@@ -101,7 +104,7 @@ export function LoginForm() {
   const [socialLoading, setSocialLoading] = useState<string | null>(null);
 
   const form = useForm<LoginInput>({
-    resolver: zodResolver(loginSchema),
+    resolver: authFormResolver(loginSchema, authCopy.locale),
     defaultValues: {
       email: '',
       password: '',
@@ -186,7 +189,7 @@ export function LoginForm() {
                   {authCopy.form.password} <span className="text-error">*</span>
                 </FormLabel>
                 <FormControl>
-                  <PasswordInput
+                  <PasswordInput showLabel={authCopy.navigation.showPassword} hideLabel={authCopy.navigation.hidePassword}
                     placeholder={authCopy.form.passwordPlaceholder}
                     autoComplete="current-password"
                     {...field}
@@ -238,7 +241,7 @@ export function LoginForm() {
 
       <div className="flex justify-end">
         <Link
-          href={getLocalizedPathname('/auth/reset-password', authCopy.locale)}
+          href={buildAuthRoute('/auth/reset-password', authCopy.locale, { returnTo })}
           className="text-caption text-gray-500 hover:text-primary"
         >
           {authCopy.form.forgotPassword}

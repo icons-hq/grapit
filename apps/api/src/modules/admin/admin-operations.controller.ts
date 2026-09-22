@@ -74,6 +74,8 @@ export class AdminOperationsController {
     @Query('status') status?: AdminOperationsInboxFilters['status'],
     @Query('priority') priority?: AdminOperationsInboxFilters['priority'],
     @Query('includeResolved') includeResolved?: string,
+    @Query('performanceId', new ZodValidationPipe(z.string().uuid().optional())) performanceId?: string,
+    @Query('showtimeId', new ZodValidationPipe(z.string().uuid().optional())) showtimeId?: string,
   ) {
     return this.adminOperationsService.listInbox({
       source,
@@ -81,6 +83,8 @@ export class AdminOperationsController {
       status,
       priority,
       includeResolved: includeResolved === 'true',
+      performanceId,
+      showtimeId,
     });
   }
 

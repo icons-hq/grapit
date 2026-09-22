@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { DatePicker } from '../date-picker';
@@ -8,11 +8,20 @@ function makeDate(year: number, month: number, day: number): Date {
 }
 
 describe('DatePicker', () => {
+  beforeEach(() => window.history.replaceState({}, '', '/'));
   const availableDates = [
     makeDate(2026, 5, 10),
     makeDate(2026, 5, 15),
     makeDate(2026, 5, 20),
   ];
+
+  it('uses the selected English calendar language without changing the available date', async () => {
+    window.history.replaceState({}, '', '/en/booking/test');
+    const onSelect = vi.fn();
+    render(<DatePicker availableDates={availableDates} selected={null} onSelect={onSelect} />);
+    await userEvent.setup().click(screen.getByRole('button', { name: /Sunday, May 10th, 2026/ }));
+    expect(onSelect.mock.calls[0]?.[0]).toEqual(makeDate(2026, 5, 10));
+  });
 
   it('renders the calendar component', () => {
     render(

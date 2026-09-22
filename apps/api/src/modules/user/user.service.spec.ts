@@ -87,6 +87,11 @@ describe('UserService preferred locale persistence', () => {
     });
   });
 
+  it('preserves scanner authority when refreshing the signed-in profile', async () => {
+    vi.mocked(repository.findById).mockResolvedValue({ ...baseUser, role: 'admin', adminCapabilityBundle: 'scanner', adminCapabilities: [] } as never);
+    await expect(service.getUserProfile('user-1')).resolves.toMatchObject({ adminCapabilityBundle: 'scanner' });
+  });
+
   it('preserves merged account status when reading the logged-in user profile', async () => {
     vi.mocked(repository.findById).mockResolvedValue({
       ...baseUser,
@@ -166,6 +171,21 @@ describe('UserService preferred locale persistence', () => {
       phone: '+821099998888',
       isPhoneVerified: true,
     });
+  });
+
+  it('verifies an existing unverified phone with the same purpose-bound proof', async () => {
+    vi.mocked(repository.findById).mockResolvedValue({ ...baseUser, isPhoneVerified: false } as never);
+    await service.updateProfile('user-1', { phone: baseUser.phone, phoneVerificationToken: 'current-phone-proof' });
+    expect(smsService.verifyPhoneVerificationToken).toHaveBeenCalledWith('current-phone-proof', {
+      phone: baseUser.phone, purpose: 'profile_phone_change',
+    });
+    expect(repository.updateProfile).toHaveBeenCalledWith('user-1', { phone: baseUser.phone, isPhoneVerified: true });
+  });
+
+  it('does not verify the existing phone without proof', async () => {
+    vi.mocked(repository.findById).mockResolvedValue({ ...baseUser, isPhoneVerified: false } as never);
+    await expect(service.updateProfile('user-1', { phone: baseUser.phone })).rejects.toThrow('전화번호 인증이 필요합니다');
+    expect(repository.updateProfile).not.toHaveBeenCalled();
   });
 
   it('rejects phone changes without verification token before repository writes', async () => {

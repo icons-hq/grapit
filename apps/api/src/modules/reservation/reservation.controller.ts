@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Controller,
   ForbiddenException,
   Get,
@@ -10,10 +9,11 @@ import {
   Query,
   Request,
   Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
 import { z } from 'zod';
-import type { Request as ExpressRequest } from 'express';
+import type { Request as ExpressRequest, Response as ExpressResponse } from 'express';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import {
   prepareReservationSchema,
@@ -32,6 +32,7 @@ import { resolveTrustedRequestIp } from '../../common/request-ip.js';
 import type { ConsentRequestMeta } from '../consent/consent.service.js';
 import { AdmissionGuard } from '../queue/guards/admission.guard.js';
 import { ReservationService } from './reservation.service.js';
+import { RefundService } from '../refund/refund.service.js';
 
 const prepareReservationTransportSchema = prepareReservationSchema
   .omit({ queueAdmission: true })
@@ -64,6 +65,7 @@ type AuthenticatedReservationUser = {
 export class ReservationController {
   constructor(
     private readonly reservationService: ReservationService,
+    private readonly refundService: RefundService,
   ) {}
 
   @UseGuards(AdmissionGuard)
@@ -117,10 +119,12 @@ export class ReservationController {
   async getMyReservations(
     @Request() req: { user: { id: string } },
     @Query('status') status?: string,
+    @Query('locale') locale?: string,
   ) {
     return this.reservationService.getMyReservations(
       req.user.id,
       status as ReservationStatus | undefined,
+      locale,
     );
   }
 
@@ -128,16 +132,22 @@ export class ReservationController {
   async getReservationByOrderId(
     @Request() req: { user: { id: string } },
     @Query('orderId') orderId: string,
+    @Res() response: ExpressResponse,
+    @Query('locale') locale?: string,
   ) {
-    return this.reservationService.getReservationByOrderId(orderId, req.user.id);
+    const reservation = await this.reservationService.getReservationByOrderId(orderId, req.user.id, locale);
+    // Nest sends an empty body for a null return. The lookup contract needs
+    // literal JSON null so customers can distinguish absence from a read error.
+    response.json(reservation);
   }
 
   @Get('reservations/:id')
   async getReservationDetail(
     @Param('id') id: string,
     @Request() req: { user: { id: string } },
+    @Query('locale') locale?: string,
   ) {
-    return this.reservationService.getReservationDetail(id, req.user.id);
+    return this.reservationService.getReservationDetail(id, req.user.id, locale);
   }
 
   @Put('reservations/:id/cancel')
@@ -146,8 +156,7 @@ export class ReservationController {
     @Body(new ZodValidationPipe(cancelReservationSchema)) body: CancelReservationInput,
     @Request() req: { user: { id: string } },
   ) {
-    await this.reservationService.cancelReservation(id, req.user.id, body.reason);
-    return { message: '예매가 취소되었습니다' };
+    return this.refundService.requestRefund(id, req.user.id, body.reason, body);
   }
 
   @Put('reservations/:id/ticket-items/:ticketItemId/cancel')
@@ -157,14 +166,13 @@ export class ReservationController {
     @Body(new ZodValidationPipe(cancelTicketItemSchema)) body: CancelTicketItemInput,
     @Request() req: { user: { id: string } },
   ) {
-    void id;
-    void ticketItemId;
-    void body;
-    void req;
+    return this.reservationService.cancelTicketItem(id, ticketItemId, req.user.id, body.reason, body);
+  }
 
-    throw new BadRequestException(
-      '티켓 단위 취소는 지원하지 않습니다. 예매 전체를 취소해주세요.',
-    );
+  @Get('reservations/:id/ticket-items/:ticketItemId/refund-preview')
+  async getTicketItemRefundPreview(@Param('id') id: string, @Param('ticketItemId') ticketItemId: string,
+    @Request() req: { user: { id: string } }) {
+    return this.reservationService.getTicketItemCancellationPreview(id, ticketItemId, req.user.id);
   }
 
   @Put('reservations/:id/cancel-pending')

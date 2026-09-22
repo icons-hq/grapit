@@ -11,14 +11,45 @@
     "home": "Home",
     "search": "Search",
     "category": "Category",
-    "logoutSuccess": "You have been signed out"
+    "logoutSuccess": "You have been signed out",
+    "close": "Close",
+    "languageDescription": "Select a language for the current page."
   },
   "home": {
     "hot": "HOT",
     "newOpen": "Newly opened",
     "genreShortcuts": "Browse by category",
     "more": "More",
-    "empty": "Search fanmeet and popup events or browse by category."
+    "empty": "Search fanmeet and popup events or browse by category.",
+    "intro": "Find your next live experience",
+    "browse": "Browse events",
+    "all": "All",
+    "selling": "On sale",
+    "upcoming": "Coming soon",
+    "ended": "Past events",
+    "myTickets": "My tickets",
+    "guide": "Help & information",
+    "findShows": "Find events",
+    "priceFrom": "From {price}",
+    "priceUnknown": "See event details for prices",
+    "feeSeparate": "Booking fee extra",
+    "bookingOpens": "Booking opens {date}",
+    "dateUnknown": "Event date to be announced",
+    "loadError": "We could not load events. Please try again.",
+    "emptyFiltered": "No events match this filter.",
+    "searchLabel": "Search events or artists",
+    "promotionAlt": "Event news",
+    "previousBanner": "Previous announcement",
+    "nextBanner": "Next announcement",
+    "bannerPosition": "Announcement {current} of {total}",
+    "statusHelp": {
+      "selling": "Check seats and booking availability.",
+      "closing_soon": "Booking closes soon.",
+      "upcoming": "Check back for booking details.",
+      "ended": "This event has ended."
+    },
+    "loading": "Loading events",
+    "bookingPaused": "Booking is temporarily paused. You can still browse event information."
   },
   "search": {
     "promptTitle": "Search for shows",
@@ -78,7 +109,8 @@
     "priceLabel": "Price",
     "upcomingDateLabel": "Coming soon",
     "detailImagesTitle": "Detail images",
-    "detailImageAlt": "{title} detail image {index}"
+    "detailImageAlt": "{title} detail image {index}",
+    "verifyCta": "Verify to book"
   },
   "support": {
     "title": "Support",
@@ -91,7 +123,10 @@
     "fallbackPaymentQuestion": "Payment and QR entry",
     "fallbackPaymentAnswer": "After payment is complete, your booking and QR ticket are available on My page. Please prepare the QR screen for venue entry.",
     "fallbackRefundQuestion": "Refund or account support",
-    "fallbackRefundAnswer": "Send your booking number, account email, and request details to the support email. We respond in order after review."
+    "fallbackRefundAnswer": "Send your booking number, account email, and request details to the support email. We respond in order after review.",
+    "loading": "Loading the latest help content.",
+    "loadError": "We could not load the latest help content. Try again or contact us by email below.",
+    "legalLinks": "Terms and privacy information"
   },
   "booking": {
     "disabled": "Ticket booking will open later",
@@ -117,7 +152,7 @@
         },
         "expired": {
           "badge": "Entry expired",
-          "title": "Your entry window expired. Returning you to the queue",
+          "title": "Your entry window expired. Please rejoin the queue.",
           "description": "Rejoin the queue to receive a fresh admission window.",
           "helper": "After rejoining, you can still see position, ETA, and remaining seats."
         },
@@ -155,14 +190,14 @@
       },
       "infoLabel": "Queue details",
       "autoEnterInfo": "Once admission is granted, the route opens the seat selection screen automatically.",
-      "safetyInfo": "Only position, ETA, and remaining seats are shown here. Internal admission tokens stay hidden.",
+      "safetyInfo": "Queue admission does not reserve a seat. A seat is held only after you select it and the hold is confirmed.",
       "retryAction": "Try again",
       "enterNowAction": "Enter now"
     },
     "paymentDeadline": {
       "badge": "Payment deadline",
       "title": "Please complete payment before the countdown ends",
-      "helper": "{threshold} or less switches the payment state to critical.",
+      "helper": "Complete payment and card or wallet authentication before the time runs out.",
       "criticalHelper": "{threshold} or less remaining. Finish card or overseas wallet verification now.",
       "seatHoldHelper": "Seat hold expires in {time}"
     },
@@ -178,12 +213,12 @@
     },
     "paymentRecovery": {
       "expiredTitle": "The payment time has expired",
-      "expiredBody": "Choose your seats again and start a new payment attempt.",
+      "expiredBody": "Check this booking in My tickets first. Choose seats again only after the unpaid booking has ended.",
       "expiredCta": "Payment time expired",
       "reselectCta": "Choose seats again",
       "reselectPrompt": "Please choose your seats again",
       "failedTitle": "Payment request failed",
-      "failedBody": "The payment was not completed. Your seat selection may have expired, so choose your seats again before retrying payment.",
+      "failedBody": "Check the existing booking, then retry with the same payment method.",
       "providerMessagePrefix": "Payment provider response",
       "pendingTitle": "Waiting for overseas payment authorization",
       "pendingBody": "Once the wallet provider finishes authorization, you can resume the same order status check."
@@ -196,20 +231,76 @@
       },
       "expired": {
         "title": "The payment time has expired.",
-        "body": "Choose your seats again and start a new payment attempt."
+        "body": "Check this booking in My tickets first. Choose seats again only after the unpaid booking has ended."
       },
       "aborted": {
         "title": "The payment was interrupted or not approved.",
-        "body": "Check your payment method or try another one."
+        "body": "Check the existing booking, then retry with the same payment method."
       },
       "cancelled": {
         "title": "The payment was canceled.",
-        "body": "To pay again, start a new payment from the booking page."
+        "body": "If the existing booking is unpaid, you can retry the same order on this page."
       },
       "unknown": {
         "title": "The payment could not be completed.",
-        "body": "Check your payment method or try another one."
+        "body": "Check the existing booking, then retry with the same payment method."
       }
+    },
+    "seatSelection": {
+      "back": "Back",
+      "chooseDate": "Choose a date",
+      "chooseShowtime": "Choose a showtime",
+      "dateShowtime": "Choose date / showtime",
+      "showtimeSelected": "Showtime selected",
+      "noShowtimes": "No showtimes on this date",
+      "selectedSeats": "Selected seats",
+      "selectionSummary": "Seat selection summary",
+      "emptySelection": "No seats selected. Choose a seat to see it here.",
+      "seatCount": "Seats: {count}",
+      "seatLabel": "{floor} row {row}, seat {number}",
+      "removeSeat": "Remove {seat}",
+      "orderTotal": "Order total",
+      "clearAll": "Clear all",
+      "processing": "Processing…",
+      "chooseSeat": "Choose a seat",
+      "next": "Next",
+      "limit": "Up to {count} tickets per person for this event",
+      "changePolicy": "Seats cannot be changed after payment. Cancel and book again to choose different seats.",
+      "seatTaken": "This seat is already taken",
+      "releaseFirst": "Remove another seat first.",
+      "bookingInfo": "Booking information",
+      "backToEvent": "Back to event",
+      "noFloorSeats": "No seats available on this floor. Check another floor.",
+      "chooseFloor": "Choose a floor",
+      "floorKeep": "Selected seats stay selected when you change floors",
+      "busy": "Unavailable",
+      "legend": "Seat categories",
+      "excluded": "Excluded / invitation seats",
+      "notSelectable": "Not selectable",
+      "soldOrHeld": "Sold / held",
+      "unavailable": "Unavailable",
+      "mapControls": "Seat map controls",
+      "zoomIn": "Zoom in",
+      "zoomOut": "Zoom out",
+      "fitMap": "Show entire map",
+      "map": "Seat map",
+      "miniMap": "Seat map overview",
+      "mapError": "Could not load the seat map. Refresh and try again.",
+      "mapPending": "The seat map is not ready. Please try again shortly.",
+      "refresh": "Refresh",
+      "stage": "Stage position: {position}",
+      "remaining": "Time left",
+      "remainingAria": "{minutes} minutes {seconds} seconds remaining",
+      "timerWarning": "Less than 3 minutes remaining",
+      "expired": "Your seat hold expired",
+      "expiredBody": "Your selected seats are no longer held. Please choose seats again.",
+      "restart": "Start again",
+      "listSummary": "Choose seats from a list",
+      "listLabel": "Seat list",
+      "selectSeat": "Select seat",
+      "deselectSeat": "Remove seat",
+      "totalSeatCount": "Total seats: {count}",
+      "selectionConflict": "Check seat availability and the per-person ticket limit, then try again."
     }
   },
   "locale": {
@@ -346,7 +437,8 @@
       "invalidCode": "The verification code does not match",
       "verified": "Your email has been verified.",
       "throttled": "Please try again shortly.",
-      "systemError": "Something went wrong. Please try again."
+      "systemError": "Something went wrong. Please try again.",
+      "deliveryFailed": "Your account is saved. We could not send the verification email. Request a new code or contact support."
     },
     "otp": {
       "sent": "Verification code sent",
@@ -385,6 +477,21 @@
       "retryButton": "Try logging in again",
       "processing": "Completing login...",
       "invalidAccess": "This login link is invalid."
+    },
+    "navigation": {
+      "verifyTitle": "Verify your email",
+      "verificationLogin": "Your email is verified. Log in to continue your booking.",
+      "continue": "Continue",
+      "showPassword": "Show password",
+      "hidePassword": "Hide password"
+    },
+    "validation": {
+      "email": "Enter a valid email address",
+      "password": "Enter your password",
+      "confirm": "Confirm your password",
+      "mismatch": "Passwords do not match",
+      "rules": "Use at least 8 characters with letters, numbers, and a symbol",
+      "link": "A valid verification link is required"
     }
   },
   "metadata": {
@@ -522,7 +629,8 @@
         "inactive": "Inactive",
         "empty": "No benefits included",
         "redeemedAt": "Redeemed at: {date}"
-      }
+      },
+      "ticketStatusLabel": "Ticket status"
     }
   },
   "reservation": {
@@ -647,7 +755,7 @@
         "Other"
       ],
       "title": "Refund and seat reopening notice",
-      "description": "The entire booking will be cancelled. Individual seats cannot be cancelled here.",
+      "description": "Cancel individual seats from their ticket cards, or cancel the whole booking. Review the refund and remaining tickets before confirming.",
       "reasonLabel": "Cancellation reason",
       "reasonPlaceholder": "Select a cancellation reason",
       "refundAmount": "Expected refund",
@@ -749,7 +857,10 @@
     "viewWallet": "View ticket wallet",
     "editSettings": "Edit settings",
     "marketingOn": "Subscribed",
-    "marketingOff": "Not subscribed"
+    "marketingOff": "Not subscribed",
+    "membership": "Account age",
+    "checking": "Checking your bookings",
+    "loadError": "We could not load your bookings. Please try again."
   },
   "profile": {
     "email": "Email",
@@ -779,7 +890,18 @@
     "cancel": "Cancel",
     "confirmWithdraw": "Confirm deletion",
     "emailVerified": "Email verified",
-    "emailUnverified": "Email not verified"
+    "emailUnverified": "Email not verified",
+    "accountStatus": "Account status",
+    "adminAccount": "Administrator",
+    "buyerAccount": "Member",
+    "saved": "Your profile has been updated",
+    "loggedOut": "You have been logged out",
+    "withdrawn": "Your account has been closed",
+    "withdrawBlocked": "Resolve active bookings before closing your account.",
+    "verifyEmail": "Verify email",
+    "returnToBooking": "Return to booking",
+    "changePhone": "Change phone number",
+    "cancelPhoneChange": "Cancel phone change"
   },
   "resetPassword": {
     "sentTitle": "Password reset email sent",

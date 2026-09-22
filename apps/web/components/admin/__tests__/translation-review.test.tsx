@@ -249,7 +249,7 @@ describe('admin translation review workflow', () => {
     );
 
     expect(screen.getByText('초안')).toBeInTheDocument();
-    expect(screen.getByText('검수 필요')).toBeInTheDocument();
+    expect(screen.getByText('게시 승인 대기')).toBeInTheDocument();
     expect(screen.getByText('게시됨')).toBeInTheDocument();
     expect(screen.getByText('원문 변경됨')).toBeInTheDocument();
     expect(screen.getByText('자동 번역 불가')).toBeInTheDocument();
@@ -277,7 +277,7 @@ describe('admin translation review workflow', () => {
     );
 
     expect(screen.getByText('한국어 원문입니다.')).toBeInTheDocument();
-    expect(screen.getByText('자동 번역 검수본')).toBeInTheDocument();
+    expect(screen.getByText('번역문 확인 필요')).toBeInTheDocument();
 
     await user.clear(screen.getByLabelText('번역 검수문'));
     await user.type(screen.getByLabelText('번역 검수문'), 'Reviewed final text');
@@ -306,7 +306,7 @@ describe('admin translation review workflow', () => {
     );
 
     expect(screen.getByRole('button', { name: '검수 완료' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: '게시' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: '게시' })).toBeDisabled();
   });
 
   it('shows an error state instead of falling back to translated text when source text is missing', () => {

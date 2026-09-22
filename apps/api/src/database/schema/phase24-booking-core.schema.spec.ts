@@ -234,7 +234,7 @@ describe('Phase 24 booking core shared contracts', () => {
       ticketItems: [makeTicketItem()],
     });
 
-    expect(parsedDetail.refundTimeline.currentState).toBe('PROCESSING_AT_PG');
+    expect(parsedDetail.refundTimeline?.currentState).toBe('PROCESSING_AT_PG');
     expect(parsedDetail.cancelledSeatHold.releaseWindowMinutes.max).toBe(10);
     expect(parsedDetail.qrTicket.jti).toBe('qr-jti-1');
     expect(parsedDetail.ticketEmailDelivery.canSend).toBe(true);

@@ -5,7 +5,7 @@ import {
   type AdminCapability,
   type AdminCapabilityUser,
 } from '@grabit/shared';
-import { ADMIN_CAPABILITIES_KEY } from '../decorators/admin-capabilities.decorator.js';
+import { ADMIN_CAPABILITIES_KEY, ADMIN_ANY_CAPABILITIES_KEY } from '../decorators/admin-capabilities.decorator.js';
 
 @Injectable()
 export class AdminCapabilitiesGuard implements CanActivate {
@@ -16,8 +16,12 @@ export class AdminCapabilitiesGuard implements CanActivate {
       ADMIN_CAPABILITIES_KEY,
       [context.getHandler(), context.getClass()],
     );
+    const anyCapabilities = this.reflector.getAllAndOverride<AdminCapability[]>(
+      ADMIN_ANY_CAPABILITIES_KEY,
+      [context.getHandler(), context.getClass()],
+    );
 
-    if (!requiredCapabilities || requiredCapabilities.length === 0) {
+    if (!requiredCapabilities?.length && !anyCapabilities?.length) {
       return true;
     }
 
@@ -34,8 +38,12 @@ export class AdminCapabilitiesGuard implements CanActivate {
       return true;
     }
 
-    return requiredCapabilities.every((capability) =>
+    const hasAll = (requiredCapabilities ?? []).every((capability) =>
       snapshot.capabilities.includes(capability),
     );
+    const hasAny = !anyCapabilities?.length || anyCapabilities.some((capability) =>
+      snapshot.capabilities.includes(capability),
+    );
+    return hasAll && hasAny;
   }
 }

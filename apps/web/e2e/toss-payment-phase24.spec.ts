@@ -1,9 +1,12 @@
 import { expect, test, type Route } from '@playwright/test';
 import { injectBookingFixture } from './fixtures/booking-store';
 
-function createReservationDetail(overrides: Record<string, unknown> = {}) {
+function createReservationDetail(orderId: string, overrides: Record<string, unknown> = {}) {
   return {
     id: 'phase24-recovery-reservation',
+    tossOrderId: orderId,
+    checkoutStartedAt: null,
+    checkoutPaymentMethod: { method: 'FOREIGN_EASY_PAY', provider: 'ALIPAY_PLUS' },
     reservationNumber: 'GRP-PHASE24-0001',
     status: 'PENDING_PAYMENT',
     performanceTitle: 'Phase 24 Recovery Performance',
@@ -127,7 +130,7 @@ async function mockAuthenticatedSession(page: import('@playwright/test').Page) {
 }
 
 test.describe('toss-payment phase24 recovery states', () => {
-  test('pending return shows inline wait UI without re-confirming payment', async ({ page }) => {
+  test('missing return lookup stays unknown without confirming or inviting a new payment', async ({ page }) => {
     let confirmIntercepted = false;
 
     await enableBooking(page);
@@ -161,11 +164,37 @@ test.describe('toss-payment phase24 recovery states', () => {
       '/booking/phase24-test-performance/complete?pending=true&orderId=phase24-order-pending&amount=50000',
     );
 
-    await expect(page.getByText('해외 결제 인증을 기다리고 있습니다')).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText(/같은 주문으로 예매 상태를 다시 확인/)).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('heading', { name: '예매 상태를 확인하지 못했어요' })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('button', { name: '좌석 다시 선택하기' })).not.toBeVisible();
+    await expect(page.getByRole('main').getByRole('link', { name: '고객센터', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: '상태 다시 확인' })).toBeVisible();
     await expect(page.getByText(/예매가 완료|완료되었습니다/)).not.toBeVisible();
     await expect.poll(() => confirmIntercepted).toBe(false);
+  });
+
+  test('provider processing remains pending after the local deadline without a second confirm', async ({ page }) => {
+    let confirmCount = 0;
+    await enableBooking(page);
+    await mockAuthenticatedSession(page);
+    await page.route('**/api/v1/payments/confirm', async (route: Route) => {
+      confirmCount += 1;
+      await route.fulfill({ status: 500, body: 'unexpected confirm call' });
+    });
+    await page.route('**/api/v1/reservations?orderId=**', async (route: Route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(
+        createReservationDetail('phase24-order-processing', {
+          checkoutStartedAt: new Date(Date.now() - 600000).toISOString(),
+          paymentDeadlineAt: new Date(Date.now() - 60000).toISOString(),
+          paymentInfo: { status: 'IN_PROGRESS' },
+        }),
+      ) });
+    });
+    await page.goto('/booking/phase24-test-performance/complete?pending=true&orderId=phase24-order-processing');
+    await expect(page.getByRole('heading', { name: '기존 예매를 확인하고 있어요' })).toBeVisible();
+    await expect(page.getByText('결제 여부와 선택한 좌석을 확인합니다. 새 결제를 시작하지 마세요.')).toBeVisible();
+    await page.getByRole('button', { name: '상태 다시 확인' }).click();
+    await expect(page.getByRole('button', { name: '좌석 다시 선택하기' })).not.toBeVisible();
+    expect(confirmCount).toBe(0);
   });
 
   test('failed return renders recoverable failure actions on the complete route', async ({ page }) => {
@@ -177,7 +206,7 @@ test.describe('toss-payment phase24 recovery states', () => {
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify(
-          createReservationDetail({
+          createReservationDetail('phase24-order-failed', {
             status: 'FAILED',
             cancelReason: '지갑사 인증에 실패했습니다. 다시 시도해주세요.',
             paymentDeadlineAt: new Date(Date.now() + 2 * 60 * 1000).toISOString(),
@@ -207,7 +236,7 @@ test.describe('toss-payment phase24 recovery states', () => {
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify(
-          createReservationDetail({
+          createReservationDetail('phase24-order-expired', {
             paymentDeadlineAt: '2026-05-08T00:00:00.000Z',
           }),
         ),
@@ -219,7 +248,7 @@ test.describe('toss-payment phase24 recovery states', () => {
     );
 
     await expect(page.getByText('결제 가능 시간이 만료되었습니다')).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText('좌석을 다시 선택한 뒤 새 결제를 시작해주세요.')).toBeVisible({
+    await expect(page.getByText('내 티켓에서 기존 예매의 결제 상태를 먼저 확인해 주세요. 미결제로 종료된 예매만 다시 선택할 수 있습니다.')).toBeVisible({
       timeout: 10000,
     });
     await expect(page.getByRole('button', { name: '좌석 다시 선택하기' })).toBeVisible();

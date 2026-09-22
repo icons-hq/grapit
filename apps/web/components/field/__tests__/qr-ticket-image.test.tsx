@@ -23,6 +23,7 @@ describe('QrTicketImage', () => {
     vi.stubEnv('NEXT_PUBLIC_QR_PUBLIC_WEB_ORIGIN', 'https://field-rehearsal.example.com');
     vi.stubGlobal('window', {
       location: {
+        pathname: '/',
         origin: 'https://browser-origin.example.com',
       },
     });
@@ -39,6 +40,7 @@ describe('QrTicketImage', () => {
     vi.stubEnv('NEXT_PUBLIC_QR_PUBLIC_WEB_ORIGIN', 'https://field-rehearsal.example.com/check-in');
     vi.stubGlobal('window', {
       location: {
+        pathname: '/',
         origin: 'https://browser-origin.example.com',
       },
     });
@@ -55,6 +57,7 @@ describe('QrTicketImage', () => {
     vi.stubEnv('NEXT_PUBLIC_QR_PUBLIC_WEB_ORIGIN', 'https://user@example.com');
     vi.stubGlobal('window', {
       location: {
+        pathname: '/',
         origin: 'https://browser-origin.example.com',
       },
     });
@@ -71,6 +74,7 @@ describe('QrTicketImage', () => {
     vi.stubEnv('NEXT_PUBLIC_QR_PUBLIC_WEB_ORIGIN', 'not a url');
     vi.stubGlobal('window', {
       location: {
+        pathname: '/',
         origin: 'https://browser-origin.example.com',
       },
     });
@@ -92,6 +96,7 @@ describe('QrTicketImage', () => {
     vi.stubEnv('NEXT_PUBLIC_QR_PUBLIC_WEB_ORIGIN', origin);
     vi.stubGlobal('window', {
       location: {
+        pathname: '/',
         origin: 'http://browser-origin.example.com',
       },
     });
@@ -113,6 +118,7 @@ describe('QrTicketImage', () => {
     vi.stubEnv('NODE_ENV', 'development');
     vi.stubGlobal('window', {
       location: {
+        pathname: '/',
         origin: 'http://127.0.0.1:3000',
       },
     });
@@ -134,6 +140,7 @@ describe('QrTicketImage', () => {
     vi.stubEnv('NODE_ENV', 'production');
     vi.stubGlobal('window', {
       location: {
+        pathname: '/',
         origin: 'http://127.0.0.1:3000',
       },
     });
@@ -172,6 +179,7 @@ describe('QrTicketImage', () => {
     vi.stubEnv('NEXT_PUBLIC_QR_PUBLIC_WEB_ORIGIN', 'http://localhost:3000');
     vi.stubGlobal('window', {
       location: {
+        pathname: '/',
         origin: 'https://browser-origin.example.com',
       },
     });

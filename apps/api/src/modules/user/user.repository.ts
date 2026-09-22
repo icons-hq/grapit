@@ -11,6 +11,7 @@ export interface NewUser {
   phone: string;
   gender: 'male' | 'female' | 'unspecified';
   country: string;
+  preferredLocale?: UserProfile['preferredLocale'];
   birthDate: string;
   isPhoneVerified?: boolean;
   isEmailVerified?: boolean;
@@ -65,6 +66,7 @@ export class UserRepository {
         phone: data.phone,
         gender: data.gender,
         country: data.country,
+        preferredLocale: data.preferredLocale ?? 'ko',
         birthDate: data.birthDate,
         isPhoneVerified: data.isPhoneVerified ?? false,
         isEmailVerified: data.isEmailVerified ?? false,

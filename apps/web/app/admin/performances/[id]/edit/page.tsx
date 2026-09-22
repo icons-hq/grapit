@@ -1,6 +1,10 @@
 'use client';
 
 import { use } from 'react';
+import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
+import { performancePreparationStepSchema } from '@grabit/shared';
+import { usePerformanceDraft } from '@/hooks/use-performance-preparation';
 import { useAdminPerformanceDetail } from '@/hooks/use-admin';
 import { PerformanceForm } from '@/components/admin/performance-form';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -11,9 +15,13 @@ export default function AdminPerformanceEditPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
+  const search = useSearchParams();
+  const draftId = search.get('draftId') ?? '';
+  const draft = usePerformanceDraft(draftId);
+  const initialStep = performancePreparationStepSchema.safeParse(search.get('step'));
   const { data, isLoading, isError } = useAdminPerformanceDetail(id);
 
-  if (isLoading) {
+  if (isLoading || (draftId && draft.isPending)) {
     return (
       <div className="space-y-6">
         <Skeleton className="h-8 w-48" />
@@ -23,6 +31,11 @@ export default function AdminPerformanceEditPage({
       </div>
     );
   }
+
+  if (draftId && (draft.isError || !draft.data || draft.data.performanceId !== id)) {
+    return <p role="alert">이 공연의 초안을 불러오지 못했습니다. <Link className="underline" href={`/admin/performances/${id}`}>준비 화면으로 돌아가기</Link></p>;
+  }
+  if (draft.data?.appliedAt) return <p>이미 반영된 초안입니다. <Link className="underline" href={`/admin/performances/${id}`}>공연 준비 화면 열기</Link></p>;
 
   if (isError || !data) {
     return (
@@ -43,7 +56,8 @@ export default function AdminPerformanceEditPage({
       <h1 className="mb-6 text-display font-semibold leading-[1.2]">
         공연 수정
       </h1>
-      <PerformanceForm mode="edit" initialData={data} performanceId={id} />
+      <PerformanceForm key={draftId || id} mode="edit" initialData={data} performanceId={id} initialDraft={draft.data}
+        initialStep={initialStep.success ? initialStep.data : undefined} />
     </div>
   );
 }

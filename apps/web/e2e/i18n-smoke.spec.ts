@@ -5,7 +5,7 @@ const koMessages = JSON.parse(
   readFileSync(new URL('../messages/ko.json', import.meta.url), 'utf8'),
 ) as {
   home: {
-    genreShortcuts: string;
+    browse: string;
   };
 };
 
@@ -26,7 +26,7 @@ const localeCases = [
     prefix: '',
     nativeName: '한국어',
     searchQuery: '걸룰스',
-    homeCopy: koMessages.home.genreShortcuts,
+    homeCopy: koMessages.home.browse,
     searchCopy: "'걸룰스' 검색 결과",
     resultTitle: '2026 걸룰스 팬미팅',
     authCopy: '로그인',
@@ -40,7 +40,7 @@ const localeCases = [
     prefix: '/en',
     nativeName: 'English',
     searchQuery: 'girl',
-    homeCopy: 'Browse by category',
+    homeCopy: 'Browse events',
     searchCopy: "Results for 'girl'",
     resultTitle: '2026 Girl Rules Fanmeeting',
     authCopy: 'Login',
@@ -54,7 +54,7 @@ const localeCases = [
     prefix: '/th',
     nativeName: 'ไทย',
     searchQuery: 'girl',
-    homeCopy: 'เลือกตามหมวดหมู่อีเวนต์',
+    homeCopy: 'สำรวจการแสดง',
     searchCopy: "ผลการค้นหา 'girl'",
     resultTitle: 'แฟนมีตติ้ง Girl Rules 2026',
     authCopy: 'เข้าสู่ระบบ',
@@ -68,7 +68,7 @@ const localeCases = [
     prefix: '/zh-CN',
     nativeName: '简体中文',
     searchQuery: 'girl',
-    homeCopy: '按活动分类浏览',
+    homeCopy: '浏览演出',
     searchCopy: "'girl' 的搜索结果",
     resultTitle: '2026 Girl Rules 粉丝见面会',
     authCopy: '登录',
@@ -134,6 +134,11 @@ test.describe('Phase 23 i18n canary smoke', () => {
       await expect(
         page.getByRole('heading', { level: 1, name: localeCase.supportCopy }),
       ).toBeVisible();
+
+      await gotoSmokeRoute(page, withLocalePrefix(localeCase.prefix, '/legal/terms'));
+      await expect(page.getByRole('heading', { level: 1, name: localeCase.locale === 'ko' ? '이용약관' : 'Terms of Service' })).toBeVisible();
+      if (localeCase.locale === 'th') await expect(page.getByText('ตรวจสอบประกาศทางกฎหมายภาษาอังกฤษ')).toBeVisible();
+      if (localeCase.locale === 'zh-CN') await expect(page.getByText('查看英文法律告知')).toBeVisible();
 
       const performanceResponse = await gotoSmokeRoute(
         page,
@@ -206,6 +211,9 @@ async function mockI18nPublicApis(page: Page) {
   await page.route('**/api/v1/home/banners', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
   );
+  await page.route('**/api/v1/performances?**', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ data: [], total: 0, page: 1, limit: 12, totalPages: 0 }),
+  }));
   await page.route('**/api/v1/home/hot**', (route) =>
     route.fulfill({ status: 200, contentType: 'application/json', body: '[]' }),
   );

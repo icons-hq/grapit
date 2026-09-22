@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
-import { AutomaticTranslationLabel } from '@/components/i18n/automatic-translation-label';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -16,6 +15,7 @@ interface TranslationReviewDetailPanelProps {
   onPublishDraft: (draftId: string) => Promise<unknown>;
   isReviewing: boolean;
   isPublishing: boolean;
+  canPublish?: boolean;
 }
 
 export function TranslationReviewDetailPanel({
@@ -24,13 +24,18 @@ export function TranslationReviewDetailPanel({
   onPublishDraft,
   isReviewing,
   isPublishing,
+  canPublish: hasPublishPermission = true,
 }: TranslationReviewDetailPanelProps) {
   const [translatedText, setTranslatedText] = useState('');
   const [reviewedDraftId, setReviewedDraftId] = useState<string | null>(null);
+  const [reviewedText, setReviewedText] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     setTranslatedText(draft?.translatedText ?? '');
     setReviewedDraftId(null);
+    setReviewedText(null);
+    setActionError(null);
   }, [draft?.id, draft?.translatedText]);
 
   if (!draft) {
@@ -52,26 +57,33 @@ export function TranslationReviewDetailPanel({
     typeof draft.sourceText === 'string' ? draft.sourceText.trim() : '';
   const isMissingSourceText = sourceText.length === 0;
   const canReview =
-    draft.status === 'draft' &&
+    (draft.status === 'draft' || (draft.status === 'review' && translatedText.trim() !== draft.translatedText.trim())) &&
     !isBlocked &&
     !isStale &&
     !isMissingSourceText &&
     translatedText.trim().length > 0;
   const canPublish =
+    hasPublishPermission &&
     !isBlocked &&
     !isStale &&
     !isMissingSourceText &&
-    (draft.status === 'review' ||
-      draft.status === 'published' ||
-      reviewedDraftId === draft.id);
+    ((draft.status === 'review' && translatedText.trim() === draft.translatedText.trim()) ||
+      (draft.status === 'draft' && reviewedDraftId === draft.id && translatedText.trim() === reviewedText));
 
   async function handleReview() {
     if (!draft || !canReview) return;
-    await onReviewDraft({
-      draftId: draft.id,
-      translatedText: translatedText.trim(),
-    });
-    setReviewedDraftId(draft.id);
+    try {
+      setActionError(null);
+      await onReviewDraft({ draftId: draft.id, translatedText: translatedText.trim() });
+      setReviewedDraftId(draft.id);
+      setReviewedText(translatedText.trim());
+    } catch { setActionError('검수 내용을 저장하지 못했습니다. 입력 내용과 최신 원문을 확인하고 다시 시도해주세요.'); }
+  }
+
+  async function handlePublish() {
+    if (!draft || !canPublish) return;
+    try { setActionError(null); await onPublishDraft(draft.id); }
+    catch { setActionError('게시하지 못했습니다. 최신 검수 상태를 확인하고 다시 시도해주세요.'); }
   }
 
   return (
@@ -85,12 +97,9 @@ export function TranslationReviewDetailPanel({
             {draft.contentType} · {draft.field ?? 'content'} · {draft.locale}
           </p>
         </div>
-        {(draft.automaticTranslationLabel ||
-          draft.isMachineTranslated ||
-          draft.translatedBy) && (
-          <AutomaticTranslationLabel locale={draft.locale} />
-        )}
+        <Badge variant="outline">{draft.status === 'published' ? '게시된 검수본' : draft.status === 'review' ? '검수 완료 · 게시 승인 대기' : '번역문 확인 필요'}</Badge>
       </div>
+      {actionError && <p role="alert" className="mt-4 text-sm text-red-700">{actionError}</p>}
 
       {isBlocked && (
         <div
@@ -140,7 +149,7 @@ export function TranslationReviewDetailPanel({
             value={translatedText}
             onChange={(event) => setTranslatedText(event.target.value)}
             rows={8}
-            disabled={isBlocked || isStale}
+            disabled={isBlocked || isStale || draft.status === 'published' || isReviewing || isPublishing}
           />
         </section>
       </div>
@@ -157,7 +166,7 @@ export function TranslationReviewDetailPanel({
         <Button
           type="button"
           disabled={!canPublish || isPublishing}
-          onClick={() => void onPublishDraft(draft.id)}
+          onClick={() => void handlePublish()}
         >
           게시
         </Button>

@@ -48,6 +48,7 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import {
   useAdminBenefitConfiguration,
+  useAdminBenefitOperationState,
   useAdminBenefitConfigurationChanges,
   useAdminBenefitExport,
   useAdminBenefitRuns,
@@ -61,6 +62,7 @@ import {
   useAdminPerformances,
 } from '@/hooks/use-admin';
 import { cn } from '@/lib/cn';
+import { useAdminEventContext } from './admin-event-context';
 
 const UNSELECTED_SELECT_VALUE = '__unselected__';
 
@@ -72,6 +74,7 @@ interface BenefitDraft {
   identity: string;
   nameKo: string;
   descriptionKo: string;
+  localizedCopy: Pick<BenefitDefinition['displayCopy'], 'en' | 'th' | 'zh-CN'>;
   eligibleTierNames: string;
   quantity: string;
   selectionPriority: string;
@@ -81,8 +84,13 @@ interface BenefitDraft {
 export function AdminBenefitManager({ className }: { className?: string }) {
   const [performanceSearch, setPerformanceSearch] = useState('');
   const [debouncedPerformanceSearch, setDebouncedPerformanceSearch] = useState('');
-  const [performanceId, setPerformanceId] = useState('');
-  const [showtimeId, setShowtimeId] = useState('');
+  const context = useAdminEventContext();
+  const [localPerformanceId, setLocalPerformanceId] = useState('');
+  const [localShowtimeId, setLocalShowtimeId] = useState('');
+  const performanceId = context?.performanceId ?? localPerformanceId;
+  const showtimeId = context?.showtimeId ?? localShowtimeId;
+  const setPerformanceId = context?.selectPerformance ?? setLocalPerformanceId;
+  const setShowtimeId = context?.selectShowtime ?? setLocalShowtimeId;
   const normalizedShowtimeId = showtimeId;
   const {
     data: performanceList,
@@ -99,6 +107,7 @@ export function AdminBenefitManager({ className }: { className?: string }) {
     isError: isPerformanceDetailError,
   } = useAdminPerformanceDetail(performanceId);
   const configurationQuery = useAdminBenefitConfiguration(normalizedShowtimeId);
+  const operationState = useAdminBenefitOperationState(normalizedShowtimeId);
   const changesQuery = useAdminBenefitConfigurationChanges(normalizedShowtimeId);
   const runsQuery = useAdminBenefitRuns(normalizedShowtimeId);
   const rollbackRun = useRollbackAdminBenefitRun();
@@ -123,7 +132,7 @@ export function AdminBenefitManager({ className }: { className?: string }) {
     configurationQuery.data?.showtimeId === normalizedShowtimeId
       ? configurationQuery.data
       : null;
-  const runs = useMemo(() => runsQuery.data?.runs ?? [], [runsQuery.data?.runs]);
+  const runs = useMemo(() => (runsQuery.data?.runs ?? []).filter((run) => run.showtimeId === normalizedShowtimeId), [runsQuery.data?.runs, normalizedShowtimeId]);
   const changes = useMemo(() => changesQuery.data ?? [], [changesQuery.data]);
   const draftSeedKey = !canUseShowtime
     ? 'empty-showtime'
@@ -132,6 +141,8 @@ export function AdminBenefitManager({ className }: { className?: string }) {
         ? `${configuration.id}:${configuration.updatedAt}`
         : `empty:${normalizedShowtimeId}`
       : `loading:${normalizedShowtimeId}`;
+  const canApplyChanges = canUseShowtime && operationState.isSuccess && !operationState.data?.resultLockedAt
+    && configurationQuery.isSuccess && !configurationQuery.isPlaceholderData;
 
   const summary = useMemo(
     () => {
@@ -187,7 +198,7 @@ export function AdminBenefitManager({ className }: { className?: string }) {
     (selectedPerformance?.showtimes.length ?? 0) === 0;
 
   function handleRollback() {
-    if (!rollbackTarget || rollbackReason.trim().length === 0) {
+    if (!rollbackTarget || rollbackReason.trim().length === 0 || !canApplyChanges) {
       return;
     }
 
@@ -242,7 +253,7 @@ export function AdminBenefitManager({ className }: { className?: string }) {
               onChange={(event) => {
                 setPerformanceSearch(event.target.value);
                 setPerformanceId('');
-                setShowtimeId('');
+                if (!context) setShowtimeId('');
               }}
               placeholder="공연명 검색"
             />
@@ -255,7 +266,7 @@ export function AdminBenefitManager({ className }: { className?: string }) {
             disabled={isPerformanceListLoading || isPerformanceListError}
             onValueChange={(value) => {
               setPerformanceId(value === UNSELECTED_SELECT_VALUE ? '' : value);
-              setShowtimeId('');
+              if (!context) setShowtimeId('');
             }}
           />
           <SelectField
@@ -302,17 +313,27 @@ export function AdminBenefitManager({ className }: { className?: string }) {
 
         <div className="mt-4 grid gap-3 md:grid-cols-4">
           <SummaryPill label="설정 버전" value={configuration?.version ?? '-'} />
-          <SummaryPill label="ALL 혜택" value={summary.included} />
-          <SummaryPill label="한정 혜택" value={summary.limited} />
-          <SummaryPill label="실행 기록" value={`${summary.liveRuns}/${summary.testRuns}`} />
+          <SummaryPill label="포함 특전" value={!canUseShowtime ? '회차 미선택' : configurationQuery.isError ? '조회 실패' : configurationQuery.isLoading ? '조회 중' : summary.included} />
+          <SummaryPill label="한정 특전" value={!canUseShowtime ? '회차 미선택' : configurationQuery.isError ? '조회 실패' : configurationQuery.isLoading ? '조회 중' : summary.limited} />
+          <SummaryPill label="실제 반영 / 테스트" value={!canUseShowtime ? '회차 미선택' : runsQuery.isError ? '조회 실패' : runsQuery.isLoading || runsQuery.isPlaceholderData ? '조회 중' : `${summary.liveRuns} / ${summary.testRuns}`} />
         </div>
       </section>
+
+      {canUseShowtime && <section className="rounded-lg border border-gray-200 bg-slate-50 p-4 text-sm" aria-label="특전 결과 고정과 지급 기록">
+        {operationState.isError ? <p role="alert">결과 고정 상태를 조회하지 못했습니다. 변경은 잠시 중단됩니다. <button className="underline" onClick={() => void operationState.refetch()}>다시 조회</button></p>
+          : operationState.isPending ? <p role="status">결과 고정·지급 기록 조회 중</p> : <>
+            <h2 className="font-semibold">{operationState.data?.resultLockedAt ? `결과 고정 · ${formatDateTime(operationState.data.resultLockedAt)}` : '결과 미고정 · 현장 지급 시도 전 변경 가능'}</h2>
+            <p className="mt-2 text-gray-600">현장 지급 시도가 기록되면 설정 변경·실제 배정·이전 결과 복원을 제한합니다. 지급 완료 {operationState.data?.redeemedCount ?? 0}건</p>
+            <ul className="mt-3 space-y-2">{operationState.data?.history.length ? operationState.data.history.map((entry) => <li key={entry.id}>{entry.seatKey} · {entry.benefitName} · {entry.result === 'redeemed' ? '지급 완료' : entry.result === 'duplicate' ? '중복 요청' : '지급 거절'} · {formatDateTime(entry.createdAt)}</li>) : <li className="text-gray-500">현장 지급 시도 기록이 없습니다.</li>}</ul>
+          </>}
+      </section>}
 
       <BenefitConfigurationWorkspace
         key={draftSeedKey}
         normalizedShowtimeId={normalizedShowtimeId}
         configuration={configuration}
         isConfigurationLoading={configurationQuery.isLoading && canUseShowtime}
+        canApplyChanges={canApplyChanges}
       />
 
       <section className="rounded-lg bg-white p-4 shadow-sm">
@@ -387,7 +408,7 @@ export function AdminBenefitManager({ className }: { className?: string }) {
                           type="button"
                           variant="outline"
                           size="sm"
-                          disabled={rollbackRun.isPending}
+                          disabled={rollbackRun.isPending || !canApplyChanges}
                           onClick={() => {
                             setRollbackTarget(run);
                             setRollbackReason('');
@@ -499,7 +520,7 @@ export function AdminBenefitManager({ className }: { className?: string }) {
             </Button>
             <Button
               type="button"
-              disabled={rollbackReason.trim().length === 0 || rollbackRun.isPending}
+              disabled={rollbackReason.trim().length === 0 || rollbackRun.isPending || !canApplyChanges}
               onClick={handleRollback}
             >
               {rollbackRun.isPending ? (
@@ -520,10 +541,12 @@ function BenefitConfigurationWorkspace({
   normalizedShowtimeId,
   configuration,
   isConfigurationLoading,
+  canApplyChanges,
 }: {
   normalizedShowtimeId: string;
   configuration: BenefitConfiguration | null;
   isConfigurationLoading: boolean;
+  canApplyChanges: boolean;
 }) {
   const saveConfiguration = useSaveAdminBenefitConfiguration();
   const runTest = useRunAdminBenefitTest();
@@ -543,7 +566,7 @@ function BenefitConfigurationWorkspace({
     runTest.isPending ||
     runLive.isPending;
   const canRunLive =
-    canUseShowtime &&
+    canApplyChanges &&
     Boolean(configuration?.id) &&
     liveReason.trim().length > 0 &&
     !isMutating;
@@ -696,6 +719,7 @@ function BenefitConfigurationWorkspace({
               <BenefitDraftEditor
                 key={draft.localId}
                 draft={draft}
+                siblings={drafts}
                 index={index}
                 canRemove={drafts.length > 1}
                 onChange={(patch) => updateDraft(draft.localId, patch)}
@@ -718,7 +742,7 @@ function BenefitConfigurationWorkspace({
             <Button
               type="button"
               className="h-12 w-full"
-              disabled={!canUseShowtime || saveConfiguration.isPending}
+              disabled={!canApplyChanges || saveConfiguration.isPending}
               onClick={handleSave}
             >
               {saveConfiguration.isPending ? (
@@ -813,12 +837,14 @@ function BenefitConfigurationWorkspace({
 
 function BenefitDraftEditor({
   draft,
+  siblings,
   index,
   canRemove,
   onChange,
   onRemove,
 }: {
   draft: BenefitDraft;
+  siblings: BenefitDraft[];
   index: number;
   canRemove: boolean;
   onChange: (patch: Partial<BenefitDraft>) => void;
@@ -870,14 +896,7 @@ function BenefitDraftEditor({
       </div>
 
       <div className="mt-3 grid gap-3 md:grid-cols-2">
-        <label className="space-y-1.5 text-sm font-semibold text-gray-700">
-          <span>혜택 identity</span>
-          <Input
-            value={draft.identity}
-            onChange={(event) => onChange({ identity: event.target.value })}
-            placeholder="benefit_6_to_1"
-          />
-        </label>
+        <p className="text-sm text-gray-500">특전 식별자는 자동으로 생성되며, 이름을 수정해도 기존 권리와 연결을 유지합니다.</p>
         <label className="space-y-1.5 text-sm font-semibold text-gray-700">
           <span>대상 등급</span>
           <Input
@@ -895,12 +914,12 @@ function BenefitDraftEditor({
           />
         </label>
         <label className="space-y-1.5 text-sm font-semibold text-gray-700">
-          <span>상호 배제 identity</span>
-          <Input
-            value={draft.mutuallyExclusiveWith}
-            onChange={(event) => onChange({ mutuallyExclusiveWith: event.target.value })}
-            placeholder="benefit_polaroid"
-          />
+          <span>함께 배정하지 않을 특전</span>
+          <select multiple aria-label={`함께 배정하지 않을 특전 ${index + 1}`} className="min-h-20 w-full rounded-lg border bg-white p-2"
+            value={draft.mutuallyExclusiveWith.split(',').map((value) => value.trim()).filter(Boolean)}
+            onChange={(event) => onChange({ mutuallyExclusiveWith: Array.from(event.target.selectedOptions).map((option) => option.value).join(', ') })}>
+            {siblings.filter((item) => item.identity !== draft.identity).map((item) => <option key={item.identity} value={item.identity}>{item.nameKo || '이름을 입력 중인 특전'}</option>)}
+          </select>
         </label>
         <label className="space-y-1.5 text-sm font-semibold text-gray-700 md:col-span-2">
           <span>혜택 설명</span>
@@ -910,6 +929,16 @@ function BenefitDraftEditor({
             placeholder="현장 스캐너에서 사용 처리하는 혜택입니다."
           />
         </label>
+        <details className="rounded-lg border border-gray-200 p-3 md:col-span-2">
+          <summary className="cursor-pointer text-sm font-semibold">다국어 안내 · 영어 / 태국어 / 중국어</summary>
+          <p className="mt-2 text-xs text-gray-500">각 언어의 안내를 입력하세요. 한국어를 수정해도 저장된 번역을 덮어쓰지 않습니다.</p>
+          {(['en', 'th', 'zh-CN'] as const).map((locale) => <div className="mt-3 grid gap-2 sm:grid-cols-2" key={locale}>
+            <label className="text-sm">{locale} 특전명<Input value={draft.localizedCopy[locale].name}
+              onChange={(event) => onChange({ localizedCopy: { ...draft.localizedCopy, [locale]: { ...draft.localizedCopy[locale], name: event.target.value } } })} /></label>
+            <label className="text-sm">{locale} 설명<Textarea value={draft.localizedCopy[locale].description}
+              onChange={(event) => onChange({ localizedCopy: { ...draft.localizedCopy, [locale]: { ...draft.localizedCopy[locale], description: event.target.value } } })} /></label>
+          </div>)}
+        </details>
         {draft.kind === 'limited' && (
           <>
             <label className="space-y-1.5 text-sm font-semibold text-gray-700">
@@ -1001,9 +1030,10 @@ function createBenefitDraft(kind: BenefitDraftKind): BenefitDraft {
   return {
     localId: id,
     kind,
-    identity: '',
+    identity: `benefit_${id}`,
     nameKo: '',
     descriptionKo: '',
+    localizedCopy: { en: { name: '', description: '' }, th: { name: '', description: '' }, 'zh-CN': { name: '', description: '' } },
     eligibleTierNames: '',
     quantity: kind === 'limited' ? '1' : '',
     selectionPriority: kind === 'limited' ? '1' : '',
@@ -1018,6 +1048,7 @@ function draftsFromConfiguration(configuration: BenefitConfiguration): BenefitDr
     identity: benefit.identity,
     nameKo: benefit.displayCopy.ko.name,
     descriptionKo: benefit.displayCopy.ko.description,
+    localizedCopy: { en: benefit.displayCopy.en, th: benefit.displayCopy.th, 'zh-CN': benefit.displayCopy['zh-CN'] },
     eligibleTierNames: benefit.eligibleTierNames.join(', '),
     quantity: benefit.kind === 'limited' ? String(benefit.quantity) : '',
     selectionPriority:
@@ -1033,6 +1064,8 @@ function buildBenefitDefinitions(
 
   for (const [index, draft] of drafts.entries()) {
     const identity = draft.identity.trim();
+    const missingLocale = (['en', 'th', 'zh-CN'] as const).find((locale) => !draft.localizedCopy[locale].name.trim() || !draft.localizedCopy[locale].description.trim());
+    if (missingLocale) return { ok: false, message: `${index + 1}번째 특전의 ${missingLocale} 이름과 설명을 입력하세요.` };
     const nameKo = draft.nameKo.trim();
     const descriptionKo = draft.descriptionKo.trim();
     const eligibleTierNames = splitCsv(draft.eligibleTierNames);
@@ -1041,17 +1074,15 @@ function buildBenefitDefinitions(
     if (!identity || !nameKo || !descriptionKo || eligibleTierNames.length === 0) {
       return {
         ok: false,
-        message: `${index + 1}번째 혜택의 identity, 혜택명, 설명, 대상 등급을 입력하세요.`,
+        message: `${index + 1}번째 특전의 이름, 설명, 대상 등급을 입력하세요.`,
       };
     }
 
     const base = {
       identity,
       displayCopy: {
+        ...draft.localizedCopy,
         ko: { name: nameKo, description: descriptionKo },
-        en: { name: nameKo, description: descriptionKo },
-        'zh-CN': { name: nameKo, description: descriptionKo },
-        th: { name: nameKo, description: descriptionKo },
       },
       eligibleTierNames,
       mutuallyExclusiveWith,

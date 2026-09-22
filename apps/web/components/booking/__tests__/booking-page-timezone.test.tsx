@@ -198,10 +198,10 @@ describe('BookingPage timezone handling', () => {
       screen.getByRole('button', { name: '2026년 7월 18일 토요일' }),
     );
 
-    expect(screen.getByRole('button', { name: '19:00' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '19:00 KST' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '10:00' })).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: '19:00' }));
+    await user.click(screen.getByRole('button', { name: '19:00 KST' }));
 
     expect(screen.getByText('seat map ready')).toBeInTheDocument();
     expect(

@@ -272,6 +272,18 @@ _Avoid_: Reservation total, KRW ticket total, client estimate.
 A snapshot of the Provider Charge Amount that the Buyer is asked to pay for a Reservation. It preserves the provider currency and amount used for payment authorization and validation.
 _Avoid_: Live exchange rate, UI estimate, mutable display price.
 
+**Prepared Checkout**:
+The Buyer-owned Reservation state used to start or resume payment, including the order ID, canonical seats, payment deadline, Checkout Payment Method and Provider Charge Quote. It exists before a Payment has been recorded and is recovered from the server after document navigation.
+_Avoid_: Browser-only cart, confirmed booking, provider approval.
+
+**Checkout Payment Method**:
+The server-stored method, provider route and charge currency selected for a Prepared Checkout. It can change before Provider Handoff but remains fixed across retries after handoff.
+_Avoid_: UI language, card issuer choice, actual provider payment result.
+
+**Provider Handoff**:
+The server boundary at which the selected Checkout Payment Method and seat locks have been validated and opening the provider checkout is authorized. The timestamp is not evidence that the browser opened, the provider approved, or money was captured.
+_Avoid_: Payment success, browser redirect, confirmed Reservation.
+
 **Provider Partial Cancellation**:
 A payment-provider cancellation result where only the refundable amount is cancelled and a policy-retained balance remains captured on the original payment. The retained balance can include Cancellation Fee Revenue or a non-refundable Ticket Service Fee. It can happen during Full Reservation Cancellation without implying buyer-facing partial cancellation.
 _Avoid_: Full payment cancellation, Ticket Item Cancellation, partial seat cancellation.
@@ -373,7 +385,7 @@ A staff member authorized to verify QR credentials, process venue entry, and red
 _Avoid_: Admin, operator, buyer.
 
 **Scanner Capability**:
-A limited authority granted to Field Scanner Staff for field QR operations, including Venue Entry and Benefit Redemption. It is separate from finance, security, event-management, and broad admin authority.
+A limited authority granted to Field Scanner Staff for field QR operations, including Venue Entry and Benefit Redemption. It is separate from finance, security, event-management, and broad admin authority. The scanner bundle grants entry and benefit redemption together, but the API enforces separate `field.scan.consume` and `field.benefits.redeem` capabilities (ADR 0011).
 _Avoid_: Admin access, full operator access.
 
 **Field Check-In**:
@@ -393,8 +405,12 @@ An operator-facing view of Ticket Items inside a Reservation, including seat ide
 _Avoid_: Reservation-only booking detail.
 
 **Settlement Dataset**:
-A finance-facing export or summary used after booking and entry operations to reconcile Ticket Items, payments, refunds, entry state, and no-shows for an event, with optional showtime or date-range drilldown. Summary views can group by Reservation, but export rows use Ticket Item as the atomic unit.
+A finance-facing export or summary for an event and optional showtime, with an explicit KST date basis and an evidence cutoff. Payment exports use one Payment per row, Ticket Item exports use one Ticket Item per row, and provider exports use one provider settlement transaction per row. Original order amounts must not repeat as additive values on Ticket Item rows. Missing financial evidence is unknown, never zero. See ADR 0012.
 _Avoid_: Dashboard, analytics, showtime-only report.
+
+**Finance Evidence Cutoff**:
+The time up to which stored approvals and cancellation requests/completions are considered. A failed full-refund attempt uses its saved quote and restoration history, not the ticket's current reset amounts. PG settlement data has its own observation time and sold-date/payout-date basis; a current PG response is not a historical snapshot or proof of bank deposit.
+_Avoid_: Report download time, accounting close, provider payout confirmation.
 
 ## Example Dialogue
 
@@ -524,7 +540,7 @@ Domain expert: "No. It is a Duplicate Benefit Redemption, and staff should see t
 
 Dev: "Does Benefit Redemption require a separate staff authority from Scanner Capability?"
 
-Domain expert: "No. Field Scanner Staff use the same Scanner Capability for Venue Entry and Benefit Redemption."
+Revamp decision (2026-09-22, ADR 0011): The same scanner bundle can grant both duties, but Venue Entry and Benefit Redemption require separate API capabilities. An explicit entry-only capability list does not grant physical benefit redemption.
 
 Dev: "Can Field Scanner Staff redeem a benefit by searching a buyer name instead of scanning QR?"
 

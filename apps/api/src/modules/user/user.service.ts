@@ -11,6 +11,7 @@ import type { UserProfile } from '@grabit/shared/types/user.types.js';
 import { DEFAULT_LOCALE, isSupportedLocale } from '@grabit/shared/constants/locales.js';
 import {
   ADMIN_CAPABILITIES,
+  adminCapabilityBundleSchema,
   type AdminCapability,
   type AdminCapabilityBundle,
 } from '@grabit/shared/schemas/admin-operations.schema.js';
@@ -217,7 +218,7 @@ export class UserService {
     if (data.marketingConsent !== undefined) {
       updateData.marketingConsent = data.marketingConsent;
     }
-    if (data.phone !== undefined && data.phone !== currentUser.phone) {
+    if (data.phone !== undefined && (data.phone !== currentUser.phone || !currentUser.isPhoneVerified)) {
       if (!data.phoneVerificationToken) {
         throw new BadRequestException('전화번호 인증이 필요합니다');
       }
@@ -309,14 +310,6 @@ function normalizeAdminCapabilities(
 function normalizeAdminCapabilityBundle(
   bundle: string | null | undefined,
 ): AdminCapabilityBundle | null {
-  if (
-    bundle === 'operator' ||
-    bundle === 'reviewer' ||
-    bundle === 'approver' ||
-    bundle === 'finance' ||
-    bundle === 'admin'
-  ) {
-    return bundle;
-  }
-  return null;
+  const parsed = adminCapabilityBundleSchema.safeParse(bundle);
+  return parsed.success ? parsed.data : null;
 }

@@ -2,6 +2,7 @@
 export * from './schemas/auth.schema';
 export * from './schemas/user.schema';
 export * from './schemas/performance.schema';
+export * from './schemas/performance-preparation.schema';
 // Phase 24 booking contracts include queue, floor-aware seat, payment, refund, and QR schemas.
 export * from './schemas/booking.schema';
 export * from './schemas/admin-dashboard.schema';
@@ -10,6 +11,7 @@ export * from './schemas/benefit.schema';
 export * from './schemas/admin-operations.schema';
 export * from './schemas/field-operations.schema';
 export * from './schemas/ticket-item.schema';
+export * from './schemas/finance-ledger.schema';
 
 // Types
 export * from './types/auth.types';
@@ -23,6 +25,8 @@ export * from './types/admin-operations.types';
 export * from './seat-identity';
 export * from './field-check-in-ingress';
 export * from './catalog-freshness';
+export * from './checkout-payment-method';
+export * from './auth-return';
 
 // Constants
 export * from './constants/index';

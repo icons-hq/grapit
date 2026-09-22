@@ -61,6 +61,8 @@ export class AdminBookingController {
   ) {}
 
   @Get('bookings')
+  @UseGuards(AdminCapabilitiesGuard)
+  @AdminCapabilities('reservations.read')
   async listBookings(
     @Query(new ZodValidationPipe(adminBookingListQuerySchema))
     query: AdminBookingListQueryInput,
@@ -72,8 +74,17 @@ export class AdminBookingController {
   }
 
   @Get('bookings/:id')
+  @UseGuards(AdminCapabilitiesGuard)
+  @AdminCapabilities('reservations.read')
   async getBookingDetail(@Param('id') id: string) {
     return this.adminBookingService.getBookingDetail(id);
+  }
+
+  @Get('bookings/:id/support-evidence')
+  @UseGuards(AdminCapabilitiesGuard)
+  @AdminCapabilities('reservations.read')
+  getBookingSupportEvidence(@Param('id', new ZodValidationPipe(z.string().uuid())) id: string) {
+    return this.adminBookingService.getBookingSupportEvidence(id);
   }
 
   @Get('bookings/:id/refund-preview')

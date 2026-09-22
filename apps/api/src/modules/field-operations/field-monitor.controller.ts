@@ -44,7 +44,7 @@ export class FieldMonitorController {
 
   @Get('logs')
   @UseGuards(AdminCapabilitiesGuard)
-  @AdminCapabilities('audit.read')
+  @AdminCapabilities('field.scan.verify')
   async listLogs(
     @Query(new ZodValidationPipe(fieldMonitorLogFilterSchema))
     query: FieldMonitorLogFilter,

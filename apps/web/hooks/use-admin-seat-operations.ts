@@ -1,7 +1,6 @@
 'use client';
 
 import {
-  keepPreviousData,
   useMutation,
   useQuery,
   useQueryClient,
@@ -61,7 +60,6 @@ export function useAdminSeatOperationHistory(
         buildHistoryPath(normalized),
       ),
     enabled: normalized.showtimeId.length > 0,
-    placeholderData: keepPreviousData,
   });
 }
 

@@ -92,6 +92,7 @@ describe('ResetPasswordPage', () => {
           body: JSON.stringify({
             email: 'member@example.com',
             frontendOrigin: 'https://heygrabit.com',
+            locale: 'ko',
           }),
         }),
       );

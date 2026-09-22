@@ -23,6 +23,7 @@ interface TicketEmailDeliveryPanelProps {
 type PanelMessage =
   | { tone: 'success'; text: string }
   | { tone: 'default'; text: string }
+  | { tone: 'error'; text: string }
   | null;
 
 function formatTemplate(template: string, values: Record<string, string>) {
@@ -37,7 +38,8 @@ function formatDateTime(dateString: string, locale: string): string {
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
-  }).format(date);
+    timeZone: 'Asia/Seoul',
+  }).format(date) + ' KST';
 }
 
 export function TicketEmailDeliveryPanel({
@@ -81,9 +83,18 @@ export function TicketEmailDeliveryPanel({
   }
 
   async function handleRequestCode() {
-    await requestVerification.mutateAsync({ email: normalizedEmail });
-    setCodeSent(true);
-    setMessage({ tone: 'default', text: copy.codeSent });
+    try {
+      const result = await requestVerification.mutateAsync({ email: normalizedEmail, locale });
+      if (result.emailDeliveryFailed) {
+        setCodeSent(false);
+        setMessage({ tone: 'error', text: getVisibleCopy(locale).auth.emailVerification.deliveryFailed });
+        return;
+      }
+      setCodeSent(true);
+      setMessage({ tone: 'default', text: copy.codeSent });
+    } catch {
+      setMessage({ tone: 'error', text: getVisibleCopy(locale).commonErrors.default });
+    }
   }
 
   async function handleVerifyAndSend() {
@@ -130,7 +141,7 @@ export function TicketEmailDeliveryPanel({
               )}
               {message && (
                 <p
-                  role={message.tone === 'success' ? 'status' : undefined}
+                  role={message.tone === 'error' ? 'alert' : 'status'}
                   className={
                     message.tone === 'success'
                       ? 'text-[#15803D]'
@@ -252,7 +263,7 @@ export function TicketEmailDeliveryPanel({
 
         {message && (
           <p
-            role={message.tone === 'success' ? 'status' : undefined}
+            role={message.tone === 'error' ? 'alert' : 'status'}
             className={
               message.tone === 'success'
                 ? 'text-sm text-[#15803D]'

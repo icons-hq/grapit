@@ -29,7 +29,7 @@ import type {
   AdminCapability,
   AdminCapabilityBundle,
 } from '@grabit/shared/types/admin-operations.types.js';
-import { ADMIN_CAPABILITIES } from '@grabit/shared/schemas/admin-operations.schema.js';
+import { ADMIN_CAPABILITIES, adminCapabilityBundleSchema } from '@grabit/shared/schemas/admin-operations.schema.js';
 import type {
   EmailAvailabilityResponse,
   SocialAuthResult,
@@ -40,6 +40,7 @@ import {
   isSupportedLocale,
 } from '@grabit/shared/constants/index.js';
 import { normalizeMergeName } from '../account-merge/account-merge-policy.js';
+import { resolveAuthReturnTo } from '@grabit/shared';
 
 // UUID v4 형식 검증용 regex. resetPassword 경로에서 DB lookup 전
 // sub 클레임이 실제 UUID임을 보장하여 payload-amplification DoS와
@@ -78,6 +79,7 @@ interface AuthResult extends TokenPair {
 
 interface RegistrationPendingResult {
   emailVerificationRequired: true;
+  emailDeliveryFailed?: boolean;
   email: string;
   verificationExpiresAt: Date;
   user: UserProfile;
@@ -155,6 +157,7 @@ export class AuthService {
         phone: dto.phone,
         gender: dto.gender,
         country: dto.country,
+        preferredLocale: dto.locale ?? DEFAULT_LOCALE,
         birthDate: dto.birthDate,
         marketingConsent: dto.marketingConsent,
         isPhoneVerified: true,
@@ -192,6 +195,7 @@ export class AuthService {
       emailVerificationRequired: true,
       email: user.email,
       verificationExpiresAt: verification.expiresAt,
+      ...(verification.emailDeliveryFailed ? { emailDeliveryFailed: true } : {}),
       user: this.mapToProfile(user),
     };
   }
@@ -334,7 +338,11 @@ export class AuthService {
       .where(eq(schema.refreshTokens.tokenHash, tokenHash));
   }
 
-  async requestPasswordReset(email: string, frontendOrigin?: string): Promise<void> {
+  async requestPasswordReset(
+    email: string,
+    frontendOrigin?: string,
+    navigation: { locale?: string; returnTo?: string } = {},
+  ): Promise<void> {
     const user = await this.userRepository.findByEmail(email);
 
     // 소셜 전용 계정(passwordHash === null)은 리셋 링크를 발송하지 않는다.
@@ -357,16 +365,20 @@ export class AuthService {
 
     // Dispatch reset link via EmailService (dev: console.log mock, prod: Resend).
     const frontendUrl = this.resolveFrontendOrigin(frontendOrigin);
-    const resetLink = `${frontendUrl}/auth/reset-password?token=${resetToken}`;
+    const locale = navigation.locale && isSupportedLocale(navigation.locale) ? navigation.locale : DEFAULT_LOCALE;
+    const resetUrl = new URL(`${locale === DEFAULT_LOCALE ? '' : `/${locale}`}/auth/reset-password`, frontendUrl);
+    resetUrl.searchParams.set('token', resetToken);
+    const returnTo = resolveAuthReturnTo(navigation.returnTo);
+    if (returnTo) resetUrl.searchParams.set('returnTo', returnTo);
 
-    await this.emailService.sendPasswordResetEmail(email, resetLink);
+    await this.emailService.sendPasswordResetEmail(email, resetUrl.toString(), locale);
   }
 
   async requestEmailVerification(
     email: string,
     locale: string = 'ko',
     _frontendOrigin?: string,
-  ): Promise<{ expiresAt: Date }> {
+  ): Promise<{ expiresAt: Date; emailDeliveryFailed?: boolean }> {
     return this.issueEmailVerification(email, locale);
   }
 
@@ -374,7 +386,7 @@ export class AuthService {
     email: string,
     locale: string = 'ko',
     _frontendOrigin?: string,
-  ): Promise<{ expiresAt: Date }> {
+  ): Promise<{ expiresAt: Date; emailDeliveryFailed?: boolean }> {
     return this.issueEmailVerification(email, locale);
   }
 
@@ -382,7 +394,7 @@ export class AuthService {
     userId: string,
     email: string,
     locale: string = 'ko',
-  ): Promise<{ expiresAt: Date }> {
+  ): Promise<{ expiresAt: Date; emailDeliveryFailed?: boolean }> {
     const normalizedEmail = email.trim().toLowerCase();
     if (isSocialPlaceholderEmail(normalizedEmail)) {
       throw new BadRequestException('실제 수신 가능한 이메일을 입력해주세요');
@@ -912,6 +924,7 @@ export class AuthService {
         phone: dto.phone,
         gender: dto.gender,
         country: dto.country,
+        preferredLocale: dto.locale ?? DEFAULT_LOCALE,
         birthDate: dto.birthDate,
         marketingConsent: dto.marketingConsent,
         isPhoneVerified: true,
@@ -980,7 +993,7 @@ export class AuthService {
   private async issueEmailVerification(
     email: string,
     locale: string,
-  ): Promise<{ expiresAt: Date }> {
+  ): Promise<{ expiresAt: Date; emailDeliveryFailed?: boolean }> {
     const user = await this.userRepository.findByEmail(email);
     const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_EXPIRY_MS);
 
@@ -1007,7 +1020,7 @@ export class AuthService {
     email: string,
     locale: string,
     purpose = EMAIL_VERIFICATION_PURPOSE,
-  ): Promise<{ expiresAt: Date }> {
+  ): Promise<{ expiresAt: Date; emailDeliveryFailed?: boolean }> {
     const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_EXPIRY_MS);
     const verificationCode = this.generateEmailVerificationCode();
     const tokenHash = this.hashEmailVerificationCode(email, verificationCode, purpose);
@@ -1020,7 +1033,15 @@ export class AuthService {
       expiresAt,
     });
 
-    await this.emailService.sendEmailVerificationEmail(email, verificationCode, locale);
+    // Account and consent have already committed. Preserve that outcome while
+    // telling the buyer to retry delivery, rather than repeating registration.
+    try {
+      const delivery = await this.emailService.sendEmailVerificationEmail(email, verificationCode, locale);
+      if (!delivery.success) return { expiresAt, emailDeliveryFailed: true };
+    } catch {
+      this.logger.warn('Verification email delivery failed; verification can be requested again');
+      return { expiresAt, emailDeliveryFailed: true };
+    }
 
     return { expiresAt };
   }
@@ -1214,14 +1235,6 @@ function normalizeAdminCapabilities(
 function normalizeAdminCapabilityBundle(
   bundle: string | null | undefined,
 ): AdminCapabilityBundle | null {
-  if (
-    bundle === 'operator' ||
-    bundle === 'reviewer' ||
-    bundle === 'approver' ||
-    bundle === 'finance' ||
-    bundle === 'admin'
-  ) {
-    return bundle;
-  }
-  return null;
+  const parsed = adminCapabilityBundleSchema.safeParse(bundle);
+  return parsed.success ? parsed.data : null;
 }

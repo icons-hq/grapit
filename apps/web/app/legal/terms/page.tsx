@@ -6,7 +6,9 @@ import { TermsMarkdown } from '@/components/legal/terms-markdown';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import { getLegalRobots } from '../robots';
 
-export const dynamic = 'force-static';
+// Locale comes from the request header written by the locale proxy.
+// force-static discards that header and serves Korean for every language.
+export const dynamic = 'force-dynamic';
 
 /**
  * Phase 16 review HIGH-4 (codex) — preview/staging 환경 noindex 강제.

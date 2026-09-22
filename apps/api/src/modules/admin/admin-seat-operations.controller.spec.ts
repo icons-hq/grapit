@@ -1,5 +1,7 @@
 import { type ExecutionContext, type INestApplication } from '@nestjs/common';
 import { Test, type TestingModule } from '@nestjs/testing';
+import { Reflector } from '@nestjs/core';
+import type { AdminCapability } from '@grabit/shared';
 import request from 'supertest';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
@@ -10,6 +12,7 @@ import { AdminSeatOperationsService } from './admin-seat-operations.service.js';
 
 describe('AdminSeatOperationsController', () => {
   let app: INestApplication;
+  let capabilities: AdminCapability[] | undefined;
   let service: {
     listHistory: Mock;
     performOperation: Mock;
@@ -39,14 +42,13 @@ describe('AdminSeatOperationsController', () => {
             email: 'admin@grapit.test',
             role: 'admin',
             roles: ['admin'],
+            adminCapabilities: capabilities,
           };
           return true;
         },
       })
       .overrideGuard(AdminCapabilitiesGuard)
-      .useValue({
-        canActivate: () => true,
-      })
+      .useValue(new AdminCapabilitiesGuard(new Reflector()))
       .compile();
 
     app = moduleRef.createNestApplication();
@@ -54,12 +56,39 @@ describe('AdminSeatOperationsController', () => {
   });
 
   beforeEach(() => {
+    capabilities = undefined;
     service.listHistory.mockReset();
     service.performOperation.mockReset();
   });
 
   afterAll(async () => {
     await app?.close();
+  });
+
+  it.each<AdminCapability>(['seat.disable', 'seat.reactivate', 'seat.manual_open'])(
+    'allows history with only %s without allowing other mutations', async (capability) => {
+      capabilities = [capability];
+      service.listHistory.mockResolvedValue({ rows: [] });
+      const res = await request(app.getHttpServer()).get('/admin/seat-operations/history')
+        .query({ showtimeId: '00000000-0000-4000-8000-000000000001' });
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ rows: [] });
+      for (const operation of ['disable', 'reactivate'] as const) {
+        if (capability === `seat.${operation}`) continue;
+        const denied = await request(app.getHttpServer()).post(`/admin/seat-operations/${operation}`)
+          .send({ showtimeId: '00000000-0000-4000-8000-000000000001', seatKey: '1F:A-10', reason: 'test', confirmed: true });
+        expect(denied.status).toBe(403);
+      }
+      expect(service.performOperation).not.toHaveBeenCalled();
+    },
+  );
+
+  it('denies history without a seat capability', async () => {
+    capabilities = ['reservations.read'];
+    const res = await request(app.getHttpServer()).get('/admin/seat-operations/history')
+      .query({ showtimeId: '00000000-0000-4000-8000-000000000001' });
+    expect(res.status).toBe(403);
+    expect(service.listHistory).not.toHaveBeenCalled();
   });
 
   it('returns 400 for malformed history showtimeId before calling the service', async () => {

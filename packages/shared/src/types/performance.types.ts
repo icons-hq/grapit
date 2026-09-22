@@ -302,6 +302,8 @@ export interface PerformanceCardData extends ReviewedTranslationMetadata {
   startDate: string;
   endDate: string;
   venueName: string | null;
+  minPrice?: number | null;
+  bookingStartsAt?: string | null;
 }
 
 export interface PerformanceListResponse {

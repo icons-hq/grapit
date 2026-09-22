@@ -19,23 +19,12 @@ describe('AdminPatchNotesPreview', () => {
       screen.getByRole('link', { name: '패치노트 전체 보기' }),
     ).toHaveAttribute('href', '/admin/patch-notes');
 
-    const article = screen.getByRole('article', {
-      name: 'PR #193 공연 예매·결제·특전 안정성 개선',
-    });
-
-    expect(within(article).getByText('PR #193')).toBeInTheDocument();
-    expect(
-      within(article).getByText('공연 예매·결제·특전 안정성 개선'),
-    ).toBeInTheDocument();
-    expect(
-      within(article).getByText(/중복 승인과 늦은 취소/),
-    ).toBeInTheDocument();
-    expect(
-      within(article).getByText(/현재 유효한 티켓이 있는 좌석/),
-    ).toBeInTheDocument();
-    expect(
-      within(article).getByText(/API\/Web\/Shared\/edge unit tests/),
-    ).toBeInTheDocument();
+    const latest = adminPatchNotes[0]!;
+    const article = screen.getByRole('article', { name: `PR #${latest.prNumber} ${latest.title}` });
+    expect(screen.getAllByRole('article')).toHaveLength(3);
+    expect(within(article).getByText(latest.summary)).toBeInTheDocument();
+    expect(within(article).getByText(latest.highlights[0]!)).toBeInTheDocument();
+    expect(within(article).getByText(latest.evidence[0]!)).toBeInTheDocument();
   });
 });
 

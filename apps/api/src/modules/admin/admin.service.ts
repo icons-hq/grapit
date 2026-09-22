@@ -7,10 +7,11 @@ import {
   Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
-import { and, eq, sql, ilike, inArray } from 'drizzle-orm';
+import { and, eq, ne, sql, ilike, inArray } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
   performances,
+  performanceDrafts,
   venues,
   priceTiers,
   showtimes,
@@ -59,6 +60,8 @@ import { CatalogFreshnessService } from '../performance/catalog-freshness.servic
 import { parseAdminKstDateTime } from './admin-date.util.js';
 import { AdminAuditService } from './admin-audit.service.js';
 import { PerformanceIntakeService } from './performance-intake.service.js';
+import { readPerformancePreparation } from './performance-preparation.js';
+import { invalidateChangedPerformanceTranslations } from '../translation/performance-translation-sync.js';
 
 function cloneDefaultBookingPolicy(): PerformanceBookingPolicy {
   return {
@@ -171,6 +174,7 @@ export interface EventPublishContentChecklist {
 }
 
 export interface PublishPerformanceInput {
+  expectedUpdatedAt: string;
   reason: string;
   confirmed: true;
   confirmedChangedFields: string[];
@@ -781,26 +785,46 @@ export class AdminService {
       );
   }
 
-  async createPerformance(input: CreatePerformanceInput): Promise<PerformanceWithDetails> {
-    const result = await this.db.transaction(async (tx) => {
+  private async resolvePerformanceVenue(tx: DrizzleDB, input: UpdatePerformanceInput & { venueName: string }, performanceId?: string, protectedStructure = false) {
+    if (protectedStructure && performanceId) {
+      const [current] = await tx.select({ name: venues.name, address: venues.address }).from(performances)
+        .leftJoin(venues, eq(performances.venueId, venues.id)).where(eq(performances.id, performanceId));
+      if (current?.name !== input.venueName || (input.venueAddress !== undefined && (current.address ?? '') !== (input.venueAddress ?? ''))) {
+        this.performanceIntakeService.assertStructureChangeAllowed(true, 'venueName');
+      }
+    }
+    const [inserted] = await tx.insert(venues).values({ name: input.venueName, address: input.venueAddress ?? null,
+      accessNotes: input.venueAccessNotes ?? null, transportSummary: input.transportSummary ?? null })
+      .onConflictDoNothing({ target: venues.name }).returning();
+    if (inserted) return inserted;
+    const [existing] = await tx.select().from(venues).where(eq(venues.name, input.venueName)).for('update');
+    if (!existing) throw new ConflictException('공연장 정보가 변경되었습니다. 다시 불러온 뒤 저장해주세요.');
+    const supplied = { address: input.venueAddress, accessNotes: input.venueAccessNotes, transportSummary: input.transportSummary };
+    const changes = Object.fromEntries(Object.entries(supplied).filter(([key, value]) => value !== undefined
+      && (performanceId || (value !== null && value !== '')) && (value ?? '') !== (existing[key as keyof typeof supplied] ?? '')));
+    if (!Object.keys(changes).length) return existing;
+    const others = performanceId ? await tx.select({ id: performances.id }).from(performances)
+      .where(and(eq(performances.venueId, existing.id), ne(performances.id, performanceId))).limit(1) : [existing];
+    if (others.length) throw new UnprocessableEntityException({ message: 'Validation failed', errors: {
+      venueName: ['다른 공연이 사용하는 장소 정보입니다. 등록된 주소·안내를 그대로 사용하거나 다른 장소 이름으로 등록해주세요.'],
+    } });
+    const [updated] = await tx.update(venues).set({ ...changes, updatedAt: new Date() }).where(eq(venues.id, existing.id)).returning();
+    return updated!;
+  }
+
+  async createPerformance(
+    input: CreatePerformanceInput,
+    context?: AdminEventMutationContext,
+    transaction?: DrizzleDB,
+  ): Promise<PerformanceWithDetails> {
+    if ((input.publishState !== undefined && input.publishState !== 'draft')
+      || input.publishedAt != null || input.publishedByUserId != null
+      || input.publishReadyAt != null || input.publishReviewRequestedAt != null) {
+      throw new BadRequestException('공개 상태와 승인 기록은 공개 승인 단계에서만 변경할 수 있습니다.');
+    }
+    const result = await (transaction ?? this.db).transaction(async (tx) => {
       // Insert or find venue by name
-      const [venue] = await tx
-        .insert(venues)
-        .values({
-          name: input.venueName,
-          address: input.venueAddress ?? null,
-          accessNotes: input.venueAccessNotes ?? null,
-          transportSummary: input.transportSummary ?? null,
-        })
-        .onConflictDoUpdate({
-          target: venues.name,
-          set: {
-            address: input.venueAddress ?? null,
-            accessNotes: input.venueAccessNotes ?? null,
-            transportSummary: input.transportSummary ?? null,
-          },
-        })
-        .returning();
+      const venue = await this.resolvePerformanceVenue(tx as unknown as DrizzleDB, input);
 
       // Insert performance
       const [perf] = await tx
@@ -832,6 +856,13 @@ export class AdminService {
         .returning();
 
       const performanceId = perf!.id;
+      if (context) {
+        await this.adminAuditService.write({ ...context, action: 'event.update',
+          resourceType: 'performance', resourceId: performanceId, status: 'success',
+          reason: context.reason ?? '새 공연 준비 정보 등록', before: {},
+          after: { title: perf!.title, publishState: 'draft', operation: 'create' },
+        }, tx as unknown as DrizzleDB);
+      }
       const validTierNames =
         this.performanceIntakeService.assertUniquePriceTierNames(input.priceTiers);
       const priceTierSnapshots =
@@ -889,6 +920,7 @@ export class AdminService {
         input.seatMaps,
         validTierNames,
         priceTierSnapshots,
+        false,
       );
 
       const bookingPolicy = input.bookingPolicy ?? cloneDefaultBookingPolicy();
@@ -943,7 +975,7 @@ export class AdminService {
       };
     });
 
-    await this.invalidateCatalogCache();
+    if (!transaction) await this.invalidateCatalogCache();
     return result;
   }
 
@@ -951,28 +983,19 @@ export class AdminService {
     id: string,
     input: UpdatePerformanceInput,
     context?: AdminEventMutationContext,
+    transaction?: DrizzleDB,
   ): Promise<PerformanceWithDetails> {
-    const result = await this.db.transaction(async (tx) => {
+    if (['publishState', 'publishedAt', 'publishedByUserId', 'publishReadyAt', 'publishReviewRequestedAt']
+      .some((key) => input[key as keyof UpdatePerformanceInput] !== undefined)) {
+      throw new BadRequestException('공개 상태와 승인 기록은 공개 승인 단계에서만 변경할 수 있습니다.');
+    }
+    const result = await (transaction ?? this.db).transaction(async (tx) => {
       // Handle venue update if venueName changed
+      const protectedStructure = await this.performanceIntakeService.lockAndCheckStructureProtection(tx as unknown as DrizzleDB, id);
       let venueId: string | undefined;
       if (input.venueName) {
-        const [venue] = await tx
-          .insert(venues)
-          .values({
-            name: input.venueName,
-            address: input.venueAddress ?? null,
-            accessNotes: input.venueAccessNotes ?? null,
-            transportSummary: input.transportSummary ?? null,
-          })
-          .onConflictDoUpdate({
-            target: venues.name,
-            set: {
-              address: input.venueAddress ?? null,
-              accessNotes: input.venueAccessNotes ?? null,
-              transportSummary: input.transportSummary ?? null,
-            },
-          })
-          .returning();
+        const venue = await this.resolvePerformanceVenue(tx as unknown as DrizzleDB,
+          { ...input, venueName: input.venueName }, id, protectedStructure);
         venueId = venue?.id;
       }
 
@@ -1020,7 +1043,7 @@ export class AdminService {
       if (input.salesInfoVisible !== undefined) {
         updateData['salesInfoVisible'] = input.salesInfoVisible;
       }
-      updateData['updatedAt'] = new Date();
+      updateData['updatedAt'] = nextPerformanceRevisionTime();
 
       const [perf] = await tx
         .update(performances)
@@ -1033,6 +1056,7 @@ export class AdminService {
       }
 
       // Replace price tiers if provided
+      await invalidateChangedPerformanceTranslations(tx as unknown as DrizzleDB, id, input);
       let validTierNames: Set<string> | null = null;
       let priceTierSnapshots: PriceTierSnapshot[] | null = null;
       if (input.priceTiers) {
@@ -1040,8 +1064,15 @@ export class AdminService {
           this.performanceIntakeService.assertUniquePriceTierNames(input.priceTiers);
         priceTierSnapshots =
           this.performanceIntakeService.priceTierSnapshotsFromInput(input.priceTiers);
-        await tx.delete(priceTiers).where(eq(priceTiers.performanceId, id));
-        if (input.priceTiers.length > 0) {
+        const existingTiers = await this.performanceIntakeService.loadPriceTierSnapshots(tx as unknown as DrizzleDB, id);
+        if (!this.performanceIntakeService.samePriceTiers(existingTiers, priceTierSnapshots)) {
+          this.performanceIntakeService.assertStructureChangeAllowed(protectedStructure, 'priceTiers');
+          if (!input.seatMaps) {
+            const existingMaps = await tx.select().from(seatMaps).where(eq(seatMaps.performanceId, id));
+            this.performanceIntakeService.assertSeatMapConfigsValid(existingMaps as PerformanceSeatMapInput[], validTierNames);
+          }
+          await tx.delete(priceTiers).where(eq(priceTiers.performanceId, id));
+          if (input.priceTiers.length > 0) {
           await tx
             .insert(priceTiers)
             .values(
@@ -1052,6 +1083,11 @@ export class AdminService {
                 sortOrder: pt.sortOrder,
               })),
             );
+          }
+          for (const tier of priceTierSnapshots) {
+            await tx.update(performanceSeatTiers).set({ price: tier.price, sortOrder: tier.sortOrder })
+              .where(and(eq(performanceSeatTiers.performanceId, id), eq(performanceSeatTiers.tierName, tier.tierName)));
+          }
         }
       }
 
@@ -1061,6 +1097,7 @@ export class AdminService {
           tx as unknown as DrizzleDB,
           id,
           input.showtimes,
+          protectedStructure,
         );
       }
 
@@ -1098,6 +1135,7 @@ export class AdminService {
           input.seatMaps,
           validTierNames,
           priceTierSnapshots,
+          protectedStructure,
         );
       }
 
@@ -1173,8 +1211,12 @@ export class AdminService {
       return response;
     });
 
-    await this.invalidateCatalogCache(id);
+    if (!transaction) await this.invalidateCatalogCache(id);
     return result;
+  }
+
+  async getPerformancePreparation(id: string) {
+    return readPerformancePreparation(this.db, id);
   }
 
   async publishPerformance(
@@ -1184,9 +1226,13 @@ export class AdminService {
   ): Promise<PerformanceWithDetails> {
     const result = await this.db.transaction(async (tx) => {
       const changedFields = sanitizeChangedFields(input.confirmedChangedFields);
-      const missingRequiredContent = getMissingRequiredPublishContent(
-        input.contentChecklist,
-      );
+      const [previous] = await tx.select().from(performances).where(eq(performances.id, id)).for('update');
+      if (!previous) throw new NotFoundException('공연을 찾을 수 없습니다.');
+      if (previous.updatedAt.toISOString() !== input.expectedUpdatedAt) {
+        throw new ConflictException('검수 중 공연 정보가 변경되었습니다. 최신 내용을 다시 불러온 뒤 공개를 확인해주세요.');
+      }
+      const preparation = await readPerformancePreparation(tx as unknown as DrizzleDB, id);
+      const missingRequiredContent = preparation.checks.filter((check) => !check.ready).map((check) => check.label);
 
       if (missingRequiredContent.length > 0) {
         await this.adminAuditService.write(
@@ -1207,9 +1253,7 @@ export class AdminService {
           tx as unknown as DrizzleDB,
         );
 
-        throw new BadRequestException(
-          `게시에는 한국어와 영어 필수 콘텐츠가 필요합니다: ${missingRequiredContent.join(', ')}`,
-        );
+        return { preparationFailure: missingRequiredContent };
       }
 
       const publishedAt = new Date();
@@ -1219,7 +1263,7 @@ export class AdminService {
           publishState: 'published',
           publishedAt,
           publishedByUserId: context.actorUserId,
-          updatedAt: publishedAt,
+          updatedAt: nextPerformanceRevisionTime(),
         })
         .where(eq(performances.id, id))
         .returning();
@@ -1275,7 +1319,7 @@ export class AdminService {
           status: 'success',
           reason: input.reason,
           changedFields,
-          before: {},
+          before: { publishState: previous.publishState, publishedAt: previous.publishedAt?.toISOString() ?? null },
           after: {
             publishState: 'published',
             publishedAt: response.publishedAt,
@@ -1291,6 +1335,9 @@ export class AdminService {
       return response;
     });
 
+    if ('preparationFailure' in result) {
+      throw new BadRequestException(`공개 준비를 완료해주세요: ${result.preparationFailure.join(', ')}`);
+    }
     await this.invalidateCatalogCache(id);
     return result;
   }
@@ -1353,13 +1400,19 @@ export class AdminService {
       });
     }
 
-    await this.db.delete(performances).where(eq(performances.id, id));
+    await this.db.transaction(async (tx) => {
+      // Drafts belong to the intentionally deleted, unused performance. Keep
+      // their cleanup atomic so another FK rejection cannot erase saved work.
+      await tx.delete(performanceDrafts).where(eq(performanceDrafts.performanceId, id));
+      await tx.delete(performances).where(eq(performances.id, id));
+    });
     await this.invalidateCatalogCache(id);
   }
 
   async saveSeatMap(
     performanceId: string,
     input: SaveSeatMapInput,
+    context?: AdminEventMutationContext,
   ): Promise<SeatMapSaveResult> {
     const floorAwareInput: FloorAwareSeatMapSaveInput = 'seatMaps' in input
       ? input
@@ -1383,13 +1436,20 @@ export class AdminService {
 
     const bookingPolicy = floorAwareInput.bookingPolicy ?? cloneDefaultBookingPolicy();
     this.performanceIntakeService.assertUniqueFloorKeys(floorAwareInput.seatMaps);
-    const [priceTierSnapshots, venueId] = await Promise.all([
+
+    await this.db.transaction(async (tx) => {
+      const protectedStructure = await this.performanceIntakeService.lockAndCheckStructureProtection(tx as unknown as DrizzleDB, performanceId);
+      const before = context ? {
+        seatMaps: await tx.select().from(seatMaps).where(eq(seatMaps.performanceId, performanceId)),
+        bookingPolicy: (await tx.select().from(bookingPolicies).where(eq(bookingPolicies.performanceId, performanceId)))[0] ?? null,
+      } : {};
+      const [priceTierSnapshots, venueId] = await Promise.all([
       this.performanceIntakeService.loadPriceTierSnapshots(
-        this.db,
+        tx as unknown as DrizzleDB,
         performanceId,
       ),
       this.performanceIntakeService.loadPerformanceVenueId(
-        this.db,
+        tx as unknown as DrizzleDB,
         performanceId,
       ),
     ]);
@@ -1399,7 +1459,6 @@ export class AdminService {
       validTierNames,
     );
 
-    await this.db.transaction(async (tx) => {
       await this.performanceIntakeService.replaceSeatMaps(
         tx as unknown as DrizzleDB,
         performanceId,
@@ -1407,6 +1466,7 @@ export class AdminService {
         floorAwareInput.seatMaps,
         validTierNames,
         priceTierSnapshots,
+        protectedStructure,
       );
 
       if (floorAwareInput.bookingPolicy) {
@@ -1416,6 +1476,12 @@ export class AdminService {
           floorAwareInput.bookingPolicy,
         );
       }
+      await tx.update(performances).set({ updatedAt: nextPerformanceRevisionTime() }).where(eq(performances.id, performanceId));
+      if (context) await this.adminAuditService.write({
+        ...context, action: 'event.update', resourceType: 'performance', resourceId: performanceId, status: 'success',
+        reason: context.reason ?? '좌석맵 저장', changedFields: ['seatMaps', ...(floorAwareInput.bookingPolicy ? ['bookingPolicy'] : [])],
+        before, after: floorAwareInput,
+      }, tx as unknown as DrizzleDB);
     });
 
     const normalizedSeatMaps = this.performanceIntakeService.normalizeSeatMaps(
@@ -1757,6 +1823,10 @@ function toBannerAuditSnapshot(banner: Banner): Record<string, unknown> {
   };
 }
 
+function nextPerformanceRevisionTime() {
+  return sql`greatest(date_trunc('milliseconds', clock_timestamp()), ${performances.updatedAt} + interval '1 millisecond')`;
+}
+
 function resolveUpdateChangedFields(input: UpdatePerformanceInput): string[] {
   return sanitizeChangedFields([
     ...Object.keys(input),
@@ -1803,17 +1873,4 @@ function buildUpdateAuditSnapshot(
   }
 
   return snapshot;
-}
-
-function getMissingRequiredPublishContent(
-  checklist: EventPublishContentChecklist,
-): string[] {
-  const missing: string[] = [];
-
-  if (!checklist.ko.title) missing.push('ko.title');
-  if (!checklist.ko.description) missing.push('ko.description');
-  if (!checklist.en.title) missing.push('en.title');
-  if (!checklist.en.description) missing.push('en.description');
-
-  return missing;
 }

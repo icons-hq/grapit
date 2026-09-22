@@ -276,6 +276,7 @@ describe('PaymentService', () => {
           userId: 'user-branch-grace',
           showtimeId: 'showtime-branch-grace',
           status: 'PENDING_PAYMENT',
+          checkoutPaymentMethod: createPaymentMethod(),
           paymentDeadlineAt: new Date('2026-06-09T03:27:00.000Z'),
           createdAt: new Date('2026-06-09T03:20:00.000Z'),
         }]))
@@ -323,6 +324,7 @@ describe('PaymentService', () => {
           userId: 'user-branch-cap',
           showtimeId: 'showtime-branch-cap',
           status: 'PENDING_PAYMENT',
+          checkoutPaymentMethod: createPaymentMethod(),
           paymentDeadlineAt: new Date('2026-06-09T03:34:00.000Z'),
           createdAt: new Date('2026-06-09T03:20:00.000Z'),
         }]))
@@ -358,6 +360,7 @@ describe('PaymentService', () => {
         userId: 'user-branch-expired',
         showtimeId: 'showtime-branch-expired',
         status: 'PENDING_PAYMENT',
+          checkoutPaymentMethod: createPaymentMethod(),
         paymentDeadlineAt: new Date('2026-06-09T03:27:00.000Z'),
         createdAt: new Date('2026-06-09T03:20:00.000Z'),
       }]));
@@ -405,6 +408,7 @@ describe('PaymentService', () => {
           userId: 'user-branch-race',
           showtimeId: 'showtime-branch-race',
           status: 'PENDING_PAYMENT',
+          checkoutPaymentMethod: createPaymentMethod(),
           paymentDeadlineAt: new Date('2026-06-09T03:27:00.000Z'),
           createdAt: new Date('2026-06-09T03:20:00.000Z'),
         }]))
@@ -445,6 +449,7 @@ describe('PaymentService', () => {
           userId: 'user-branch-redis-fail',
           showtimeId: 'showtime-branch-redis-fail',
           status: 'PENDING_PAYMENT',
+          checkoutPaymentMethod: createPaymentMethod(),
           paymentDeadlineAt: new Date('2026-06-09T03:27:00.000Z'),
           admissionActiveUntilAt: new Date('2026-06-09T03:27:00.000Z'),
           reentryGraceUntilAt: new Date('2026-06-09T03:28:00.000Z'),
@@ -2504,6 +2509,7 @@ describe('PaymentService', () => {
           cancelledSeatHoldMinMinutes: 1,
           cancelledSeatHoldMaxMinutes: 10,
         }]))
+        .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([{
           ticketItemId,
           seatId: 'SVIP:다-159',
@@ -2610,6 +2616,7 @@ describe('PaymentService', () => {
           cancelledSeatHoldMaxMinutes: 10,
         }]))
         .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([{
           ticketItemId,
           seatId: 'SVIP:다-159',
@@ -2710,6 +2717,7 @@ describe('PaymentService', () => {
           cancelledSeatHoldMinMinutes: 1,
           cancelledSeatHoldMaxMinutes: 10,
         }]))
+        .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([{
           ticketItemId: ticketItemId1,
@@ -2835,6 +2843,7 @@ describe('PaymentService', () => {
           cancelledSeatHoldMaxMinutes: 10,
         }]))
         .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([
           {
             ticketItemId: randomUUID(),
@@ -2927,6 +2936,7 @@ describe('PaymentService', () => {
           cancelledSeatHoldMinMinutes: 1,
           cancelledSeatHoldMaxMinutes: 10,
         }]))
+        .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([]));
 
@@ -3031,6 +3041,7 @@ describe('PaymentService', () => {
           cancelledSeatHoldMinMinutes: 1,
           cancelledSeatHoldMaxMinutes: 10,
         }]))
+        .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([{
@@ -3145,7 +3156,6 @@ describe('PaymentService', () => {
           cancelledSeatHoldMaxMinutes: 10,
         }]))
         .mockReturnValueOnce(createSelectChain([]))
-        .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([{
           id: refundId,
           providerMetadata: { cancellationQuote },
@@ -3241,6 +3251,7 @@ describe('PaymentService', () => {
           cancelledSeatHoldMinMinutes: 1,
           cancelledSeatHoldMaxMinutes: 10,
         }]))
+        .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([{
           ticketItemId,
           seatId: 'SVIP:다-159',
@@ -3325,6 +3336,7 @@ describe('PaymentService', () => {
           cancelledSeatHoldMinMinutes: 1,
           cancelledSeatHoldMaxMinutes: 10,
         }]))
+        .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([{ ticketItemId: randomUUID() }]))
         .mockReturnValueOnce(createSelectChain([{
           ticketItemId: pendingTicketItemId,

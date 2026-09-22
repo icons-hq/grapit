@@ -10,26 +10,27 @@ import { cn } from '@/lib/cn';
 interface OfflineSyncStatusProps {
   queue: readonly ScannerOfflineQueueItem[];
   isSyncing: boolean;
+  canSync?: boolean;
   onSyncOffline: () => void;
 }
 
 const STATE_STYLES = {
   pending: {
-    label: 'pending',
+    label: '동기화 대기',
     countLabel: '보류',
     icon: Clock3,
     row: 'border-[#FDE68A] bg-[#FFFBEB] text-[#8B6306]',
     badge: 'border-transparent bg-[#FFFBEB] text-[#8B6306]',
   },
   synced: {
-    label: 'synced',
+    label: '서버 확정',
     countLabel: '동기화',
     icon: CheckCircle2,
     row: 'border-[#BBF7D0] bg-[#F0FDF4] text-[#15803D]',
     badge: 'border-transparent bg-[#F0FDF4] text-[#15803D]',
   },
   rejected: {
-    label: 'rejected',
+    label: '충돌 확인 필요',
     countLabel: '거절',
     icon: AlertTriangle,
     row: 'border-[#F3C7C7] bg-[#FEF2F2] text-[#C62828]',
@@ -40,6 +41,7 @@ const STATE_STYLES = {
 export function OfflineSyncStatus({
   queue,
   isSyncing,
+  canSync = true,
   onSyncOffline,
 }: OfflineSyncStatusProps) {
   const counts = queue.reduce(
@@ -115,7 +117,7 @@ export function OfflineSyncStatus({
           type="button"
           variant="outline"
           className="h-11 w-full border-[#8B6306] text-[#8B6306]"
-          disabled={isSyncing || counts.pending === 0}
+          disabled={!canSync || isSyncing || counts.pending === 0}
           onClick={onSyncOffline}
         >
           <RefreshCcw className="h-4 w-4" />

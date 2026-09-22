@@ -1,3 +1,4 @@
+import { isSameCheckoutPaymentMethod } from '@grabit/shared';
 import { getTicketLimitSnapshot, lockTicketLimitScope } from '../../database/ticket-limit.js';
 import { randomUUID } from 'node:crypto';
 import { syncIncludedBenefitEntitlementsForTicketItems } from '../../database/included-benefit-entitlements.js';
@@ -11,7 +12,8 @@ import {
   Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { and, eq, inArray, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import type { TicketItemCancellationCommand } from '../../database/schema/ticket-items.js';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import { isActiveSeatUniqueViolation } from '../../database/seat-ownership.js';
 import {
@@ -43,6 +45,7 @@ import { PaymentCancellationFinalizerService } from '../cancellation/payment-can
 import {
   buildFullPaymentCancelRequest,
   buildFullReservationPaymentCancelRequest,
+  readStoredPaymentCancelRequest,
   type PaymentCancelPaymentSnapshot,
 } from './payment-cancel-policy.js';
 import {
@@ -205,7 +208,7 @@ function getRefundCancelRequestAnchor(refund: {
   sentToPgAt?: Date | null;
   processingAtPgAt?: Date | null;
 }): Date | null {
-  return refund.processingAtPgAt ?? refund.sentToPgAt ?? refund.requestedAt ?? null;
+  return refund.requestedAt ?? refund.sentToPgAt ?? refund.processingAtPgAt ?? null;
 }
 
 type WebhookSeatSelection = {
@@ -220,6 +223,7 @@ type WebhookSeatSelection = {
 };
 
 type PaymentStatusPartialCancelTicketItemCancellation = {
+  cancellationCommand?: TicketItemCancellationCommand | null;
   ticketItemId: string;
   seatId: string;
   floorKey: string;
@@ -286,7 +290,7 @@ export class PaymentService {
         ...(providerChargeQuote ? { providerChargeQuote } : {}),
       };
       return checkoutEnabled
-        ? await this.withPaymentProcessingGrace(branch, userId)
+        ? await this.withPaymentProcessingGrace(branch, userId, paymentMethod)
         : branch;
     }
 
@@ -305,7 +309,7 @@ export class PaymentService {
         pendingUrl,
         asyncStatus: 'pending_webhook',
         useInternationalCardOnly: false,
-      }, userId);
+      }, userId, paymentMethod);
     }
 
     if (paymentMethod.provider === 'CARD') {
@@ -334,7 +338,7 @@ export class PaymentService {
       };
       return overseasCardAvailability && !overseasCardAvailability.enabled
         ? branch
-        : await this.withPaymentProcessingGrace(branch, userId);
+        : await this.withPaymentProcessingGrace(branch, userId, paymentMethod);
     }
 
     return await this.withPaymentProcessingGrace({
@@ -346,16 +350,19 @@ export class PaymentService {
       failUrl,
       asyncStatus: 'sync',
       useInternationalCardOnly: false,
-    }, userId);
+    }, userId, paymentMethod);
   }
 
   private async withPaymentProcessingGrace<T extends TossPaymentBranch>(
     branch: T,
-    userId?: string,
+    userId: string | undefined,
+    paymentMethod: PaymentMethod,
   ): Promise<T> {
     const paymentDeadlineAt = await this.extendPendingPaymentProcessingGrace(
       branch.orderId,
       userId,
+      new Date(),
+      paymentMethod,
     );
     return paymentDeadlineAt ? { ...branch, paymentDeadlineAt } : branch;
   }
@@ -364,6 +371,7 @@ export class PaymentService {
     orderId: string,
     userId?: string,
     now: Date = new Date(),
+    paymentMethod?: PaymentMethod,
   ): Promise<string | undefined> {
     const [reservation] = await this.db
       .select({
@@ -375,6 +383,8 @@ export class PaymentService {
         admissionActiveUntilAt: reservations.admissionActiveUntilAt,
         reentryGraceUntilAt: reservations.reentryGraceUntilAt,
         createdAt: reservations.createdAt,
+        checkoutPaymentMethod: reservations.checkoutPaymentMethod,
+        checkoutStartedAt: reservations.checkoutStartedAt,
       })
       .from(reservations)
       .where(
@@ -395,6 +405,17 @@ export class PaymentService {
 
     if (reservation.status !== 'PENDING_PAYMENT') {
       throw new ConflictException('이미 처리된 주문 ID입니다. 새 주문 ID로 다시 시도해주세요.');
+    }
+
+    if (paymentMethod && reservation.checkoutStartedAt) {
+      throw new ConflictException('결제 상태를 확인 중입니다. 기존 예매를 다시 확인해주세요.');
+    }
+
+    if (paymentMethod && (
+      !reservation.checkoutPaymentMethod
+      || !isSameCheckoutPaymentMethod(reservation.checkoutPaymentMethod, paymentMethod)
+    )) {
+      throw new ConflictException('예매에 저장된 결제수단과 일치하지 않습니다. 기존 예매를 다시 확인해주세요.');
     }
 
     if (!this.isValidDate(reservation.paymentDeadlineAt)) {
@@ -442,6 +463,8 @@ export class PaymentService {
         eq(reservations.id, reservation.id),
         eq(reservations.status, 'PENDING_PAYMENT'),
         eq(reservations.paymentDeadlineAt, reservation.paymentDeadlineAt),
+        ...(paymentMethod ? [sql`${reservations.checkoutStartedAt} is null`] : []),
+        ...(paymentMethod ? [sql`${reservations.checkoutPaymentMethod} = ${JSON.stringify(reservation.checkoutPaymentMethod)}::jsonb`] : []),
       ))
       .returning({ id: reservations.id });
 
@@ -473,11 +496,28 @@ export class PaymentService {
             eq(reservations.id, reservation.id),
             eq(reservations.status, 'PENDING_PAYMENT'),
             eq(reservations.paymentDeadlineAt, effectiveDeadlineAt),
+            sql`${reservations.checkoutStartedAt} is null`,
+            ...(paymentMethod ? [sql`${reservations.checkoutPaymentMethod} = ${JSON.stringify(reservation.checkoutPaymentMethod)}::jsonb`] : []),
           ));
         throw error;
       }
     }
 
+    if (paymentMethod) {
+      const [started] = await this.db.update(reservations).set({
+        checkoutStartedAt: now,
+        updatedAt: now,
+      }).where(and(
+        eq(reservations.id, reservation.id),
+        eq(reservations.status, 'PENDING_PAYMENT'),
+        eq(reservations.paymentDeadlineAt, effectiveDeadlineAt),
+        sql`${reservations.checkoutStartedAt} is null`,
+        sql`${reservations.checkoutPaymentMethod} = ${JSON.stringify(reservation.checkoutPaymentMethod)}::jsonb`,
+      )).returning({ id: reservations.id });
+      if (!started) {
+        throw new ConflictException('예매 상태가 변경되었습니다. 기존 예매를 다시 확인해주세요.');
+      }
+    }
     return effectiveDeadlineAt.toISOString();
   }
 
@@ -1200,7 +1240,8 @@ export class PaymentService {
         and(
           eq(refunds.reservationId, reservation.id),
           eq(refunds.paymentId, payment.id),
-          inArray(refunds.status, ['sent_to_pg', 'processing_at_pg', 'failed']),
+          inArray(refunds.status, ['requested', 'sent_to_pg', 'processing_at_pg', 'failed']),
+          sql`${refunds.providerMetadata}->>'rightsRestoredAt' IS NULL`,
         ),
       );
 
@@ -1245,11 +1286,10 @@ export class PaymentService {
     }
     const reason = this.resolveCancelWebhookReason(payload, providerResponse);
     if (
-      providerResponse.status === 'PARTIAL_CANCELED'
-      && matchingRefund
+      matchingRefund
       && fullReservationCancellationQuote
     ) {
-      const expectedCancelRequest = buildFullReservationPaymentCancelRequest({
+      const expectedCancelRequest = readStoredPaymentCancelRequest(matchingRefund.providerMetadata) ?? buildFullReservationPaymentCancelRequest({
         payment,
         cancellationQuote: fullReservationCancellationQuote,
         reason,
@@ -1262,6 +1302,7 @@ export class PaymentService {
           buildCompletedCancelExpectation(
             expectedCancelRequest.options,
             getRefundCancelRequestAnchor(matchingRefund),
+            matchingRefund.providerMetadata,
           ),
         )
       ) {
@@ -1401,6 +1442,7 @@ export class PaymentService {
       await this.findPaymentStatusPartialCancelTicketItemCancellations(
         completedCancels,
         payment.id,
+        payment.currency === 'KRW' && (payment.providerChargeCurrency ?? 'KRW') === 'KRW' && payment.provider !== 'PAYPAL',
       );
 
     if (!ticketItemCancellations?.length) {
@@ -1417,7 +1459,8 @@ export class PaymentService {
           and(
             eq(refunds.reservationId, reservation.id),
             eq(refunds.paymentId, payment.id),
-            inArray(refunds.status, ['sent_to_pg', 'processing_at_pg', 'failed']),
+            inArray(refunds.status, ['requested', 'sent_to_pg', 'processing_at_pg', 'failed']),
+          sql`${refunds.providerMetadata}->>'rightsRestoredAt' IS NULL`,
           ),
         );
       const fullReservationCancellationQuote = matchingRefund
@@ -1426,7 +1469,7 @@ export class PaymentService {
 
       if (fullReservationCancellationQuote) {
         const reason = this.resolveCancelWebhookReason(payload, providerResponse);
-        const expectedCancelRequest = buildFullReservationPaymentCancelRequest({
+        const expectedCancelRequest = readStoredPaymentCancelRequest(matchingRefund.providerMetadata) ?? buildFullReservationPaymentCancelRequest({
           payment,
           cancellationQuote: fullReservationCancellationQuote,
           reason,
@@ -1439,6 +1482,7 @@ export class PaymentService {
             buildCompletedCancelExpectation(
               expectedCancelRequest.options,
               getRefundCancelRequestAnchor(matchingRefund),
+              matchingRefund.providerMetadata,
             ),
           )
         ) {
@@ -1487,6 +1531,7 @@ export class PaymentService {
         cancellationFee: ticketItemCancellation.cancellationFee,
         serviceFeeRefund: ticketItemCancellation.serviceFeeRefund,
         refundableAmount: ticketItemCancellation.refundableAmount,
+        cancellationCommand: ticketItemCancellation.cancellationCommand,
       };
 
       await this.paymentCancellationFinalizer.finalizeFullPaymentCancellation({
@@ -1530,6 +1575,7 @@ export class PaymentService {
     cancellationFee: number;
     serviceFeeRefund: number;
     refundableAmount: number;
+    cancellationCommand?: TicketItemCancellationCommand | null;
   } | null> {
     if (payload.eventType !== 'CANCEL_STATUS_CHANGED') {
       return null;
@@ -1551,11 +1597,13 @@ export class PaymentService {
         cancellationFee: ticketItems.cancellationFee,
         serviceFeeRefund: ticketItems.serviceFeeRefund,
         refundableAmount: ticketItems.refundableAmount,
+        cancellationCommand: ticketItems.cancellationCommand,
       })
       .from(ticketItems)
       .where(
         and(
-          eq(ticketItems.id, ticketItemId),
+          or(eq(ticketItems.id, ticketItemId),
+            sql`${ticketItems.cancellationCommand}->'options'->>'cancelRequestId' = ${payload.data.cancelRequestId}`),
           eq(ticketItems.paymentId, paymentId),
         ),
       );
@@ -1572,11 +1620,35 @@ export class PaymentService {
   private async findPaymentStatusPartialCancelTicketItemCancellations(
     completedCancels: readonly TossPaymentCancelRecord[],
     paymentId: string,
+    allowLegacyKrwAmountMatch: boolean,
   ): Promise<PaymentStatusPartialCancelTicketItemCancellation[] | null> {
     const ticketItemCancellations: PaymentStatusPartialCancelTicketItemCancellation[] = [];
     const matchedTicketItemIds = new Set<string>();
+    const matchedProviderCancels = new Set<TossPaymentCancelRecord>();
+
+    const preparedCommands = await this.db.select({
+      ticketItemId: ticketItems.id, seatId: ticketItems.seatId, floorKey: ticketItems.floorKey,
+      seatKey: ticketItems.seatKey, cancellationFee: ticketItems.cancellationFee,
+      serviceFeeRefund: ticketItems.serviceFeeRefund, refundableAmount: ticketItems.refundableAmount,
+      cancellationCommand: ticketItems.cancellationCommand, cancelReason: ticketItems.cancelReason,
+    }).from(ticketItems).where(and(eq(ticketItems.paymentId, paymentId),
+      eq(ticketItems.status, 'cancellation_pending'), sql`${ticketItems.cancellationCommand} IS NOT NULL`));
+    for (const item of preparedCommands) {
+      const command = item.cancellationCommand;
+      if (!command) continue;
+      const matches = completedCancels.filter((cancel) => cancel.cancelReason === command.reason
+        && Math.round(cancel.cancelAmount * (command.currency === 'USD' ? 100 : 1)) === command.amountMinor
+        && (!command.options.cancelRequestId || cancel.cancelRequestId === command.options.cancelRequestId));
+      if (matches.length > 1) return null;
+      if (matches.length === 1) {
+        ticketItemCancellations.push({ ...item, cancelReason: item.cancelReason ?? 'Ticket cancellation' });
+        matchedTicketItemIds.add(item.ticketItemId);
+        matchedProviderCancels.add(matches[0]!);
+      }
+    }
 
     for (const cancel of completedCancels) {
+      if (matchedProviderCancels.has(cancel)) continue;
       const ticketItemId = typeof cancel.cancelRequestId === 'string'
         ? this.parseGeneratedCancelRequestId(cancel.cancelRequestId)
         : null;
@@ -1619,6 +1691,9 @@ export class PaymentService {
     }
 
     for (const cancel of completedCancels) {
+      if (matchedProviderCancels.has(cancel)) continue;
+      // The legacy fallback compares an integer KRW ledger, never a provider USD amount.
+      if (!allowLegacyKrwAmountMatch || !Number.isSafeInteger(cancel.cancelAmount)) continue;
       if (typeof cancel.cancelRequestId === 'string' && cancel.cancelRequestId.trim()) {
         continue;
       }
@@ -1645,6 +1720,7 @@ export class PaymentService {
             eq(ticketItems.status, 'cancelled'),
             eq(ticketItems.refundableAmount, cancel.cancelAmount),
             eq(ticketItems.cancelReason, cancel.cancelReason),
+            isNull(ticketItems.cancellationCommand),
           ),
         );
 
@@ -1669,6 +1745,7 @@ export class PaymentService {
             eq(ticketItems.status, 'cancellation_pending'),
             eq(ticketItems.refundableAmount, cancel.cancelAmount),
             eq(ticketItems.cancelReason, cancel.cancelReason),
+            isNull(ticketItems.cancellationCommand),
           ),
         );
 

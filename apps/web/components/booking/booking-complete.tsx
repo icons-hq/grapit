@@ -7,6 +7,9 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Button } from '@/components/ui/button';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
+import { getCheckoutCopy } from '@/lib/booking/checkout-copy';
+import { ProviderChargeAmount } from '@/components/booking/provider-charge-amount';
+import { formatEventTimeWithKstAnchor } from '@/lib/i18n/format';
 import { SeatHighlightLabel } from '@/components/reservation/seat-highlight-label';
 import { TicketEmailDeliveryPanel } from '@/components/reservation/ticket-email-delivery-panel';
 import {
@@ -30,15 +33,7 @@ type BenefitCopy = CompleteCardCopy['benefits'];
 type BenefitLocale = keyof BenefitEntitlement['displayCopy'];
 
 function formatDateTime(dateStr: string, locale: string): string {
-  const date = new Date(dateStr);
-  return new Intl.DateTimeFormat(locale, {
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric',
-    weekday: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(date);
+  return formatEventTimeWithKstAnchor(dateStr, resolveVisibleCopyLocale(locale), { includeLocalTime: false }).kst;
 }
 
 function formatPrice(amount: number, locale: string): string {
@@ -411,9 +406,10 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
           <h2 className="text-base font-semibold">{copy.paymentInfo}</h2>
           <div className="space-y-2 text-sm">
             <div className="flex justify-between">
-              <span className="text-gray-500">{copy.totalAmount}</span>
+              <span className="text-gray-500">{getCheckoutCopy(locale).orderTotal}</span>
               <span className="font-semibold text-primary">{formatPrice(booking.totalAmount, locale)}</span>
             </div>
+            <ProviderChargeAmount quote={booking.paymentInfo?.providerChargeQuote ?? booking.providerChargeQuote} locale={locale} />
             <div className="flex justify-between">
               <span className="text-gray-500">{copy.paymentMethod}</span>
               <span className="text-gray-900">{booking.paymentMethod}</span>
@@ -543,7 +539,7 @@ export function BookingComplete({ booking }: BookingCompleteProps) {
                       </span>
                     </div>
                     <div>
-                      <span className="block text-gray-500">{copy.ticketValid}</span>
+                      <span className="block text-gray-500">{copy.ticketStatusLabel}</span>
                       <span className="font-semibold text-gray-900">
                         {card.ticketStatusLabel}
                       </span>

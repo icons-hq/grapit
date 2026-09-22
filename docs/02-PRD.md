@@ -104,8 +104,9 @@ Field operations are web-first and scanner-account based.
 - Scanner staff must be logged in with field scan capabilities.
 - Normal user accounts are denied on scanner-only surfaces.
 - Staff manually confirms entry after seeing ticket context.
-- Consuming one QR processes all active, not-entered tickets owned by the same buyer account for the same showtime.
+- Consuming one QR processes only the scanned Ticket Item. Other seats, including those owned by the same buyer for the same showtime, remain independent. Historical batch admission results are preserved (ADR 0011).
 - Duplicate, tampered, refunded/cancelled, expired, wrong-showtime, and already-used outcomes are recorded as distinct scan results.
+- Benefit redemption requires the separate `field.benefits.redeem` capability and online confirmation; it never consumes admission.
 - Offline handling is a local pending queue with server-authoritative sync; local pending state is not final admission evidence.
 - Field monitor focuses first on entered count, not-entered count, entry rate, duplicates, rejections, and offline backlog.
 
@@ -157,7 +158,7 @@ Admin is an operational console, not a marketing CMS.
 | ADM-03 | Manage reservations | Operator can inspect bookings, export masked/raw data when permitted, refund, and manually open seats. |
 | ADM-04 | Manage support content | Operator can manage inbox, FAQ, notices, escalation, and review state. |
 | ADM-05 | Manage security | Admin can inspect audit/security state, allowlist entries, and user permission bundles. |
-| ADM-06 | Manage settlement | Finance-capable admin can view settlement summary and export approved datasets with reason capture. |
+| ADM-06 | Manage settlement | Finance-capable admin explicitly selects event/showtime, KST date basis and evidence cutoff; compares original order/payment, completed/pending cancellation, remaining tickets and separate provider currencies; exports payment/ticket/provider records with scope and reason. Unqueried/failed/empty evidence remains distinct, and bank deposits/closing remain unverified without external evidence (ADR 0012). |
 | ADM-07 | Manage translations | Admin can create translation sources, review drafts, and publish reviewed localized content. |
 
 ### 4.4 Platform Requirements

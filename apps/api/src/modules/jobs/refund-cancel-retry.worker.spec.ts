@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TossPaymentError } from '../payment/toss-payments.client.js';
 import {
   REFUND_CANCEL_MAX_RETRIES,
@@ -43,6 +43,8 @@ function createRetryContext() {
 }
 
 describe('RefundCancelRetryWorker', () => {
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-05-08T04:00:00.000Z')); });
+  afterEach(() => { vi.useRealTimers(); });
   it('registers the refund-cancel-retry worker on module init', async () => {
     const boss = {
       isAvailable: true,
@@ -117,7 +119,7 @@ describe('RefundCancelRetryWorker', () => {
       stop: vi.fn(),
     };
     const tossPaymentsClient = {
-      queryPayment: vi.fn().mockResolvedValue({ status: 'DONE', cancels: [] }),
+      queryPayment: vi.fn().mockResolvedValue({ status: 'DONE', isPartialCancelable: true, cancels: [] }),
       cancelPayment: vi
         .fn()
         .mockRejectedValue(new TossPaymentError('INTERNAL_SERVER_ERROR', 'provider 5xx')),
@@ -176,7 +178,7 @@ describe('RefundCancelRetryWorker', () => {
       stop: vi.fn(),
     };
     const tossPaymentsClient = {
-      queryPayment: vi.fn().mockResolvedValue({ status: 'DONE', cancels: [] }),
+      queryPayment: vi.fn().mockResolvedValue({ status: 'DONE', isPartialCancelable: true, cancels: [] }),
       cancelPayment: vi
         .fn()
         .mockRejectedValue(new TossPaymentError('INTERNAL_SERVER_ERROR', 'provider 5xx')),
@@ -219,7 +221,7 @@ describe('RefundCancelRetryWorker', () => {
 
   it('attempts the configured final retry before marking retry exhausted', async () => {
     const tossPaymentsClient = {
-      queryPayment: vi.fn().mockResolvedValue({ status: 'DONE', cancels: [] }),
+      queryPayment: vi.fn().mockResolvedValue({ status: 'DONE', isPartialCancelable: true, cancels: [] }),
       cancelPayment: vi
         .fn()
         .mockRejectedValue(new TossPaymentError('INTERNAL_SERVER_ERROR', 'provider 5xx')),
@@ -344,6 +346,7 @@ describe('RefundCancelRetryWorker', () => {
       queryPayment: vi.fn().mockResolvedValue({
         paymentKey: 'pay-key-1',
         status: 'DONE',
+        isPartialCancelable: true,
         cancels: [],
       }),
       cancelPayment: vi.fn().mockResolvedValue({

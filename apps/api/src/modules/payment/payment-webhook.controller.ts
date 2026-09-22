@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Headers, Post, Req, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Headers, HttpCode, HttpStatus, Inject, Post, Req, UseGuards } from '@nestjs/common';
 import { z } from 'zod';
 import { Public } from '../../common/decorators/public.decorator.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
@@ -106,13 +106,16 @@ type TossWebhookRequest = {
 @Controller('payments/toss')
 export class PaymentWebhookController {
   constructor(
+    @Inject(PaymentService)
     private readonly paymentService: PaymentService,
+    @Inject(TossPaymentsClient)
     private readonly tossPaymentsClient: TossPaymentsClient,
   ) {}
 
   @Public()
   @UseGuards(TossWebhookGuard)
   @Post('webhook')
+  @HttpCode(HttpStatus.OK)
   async handleTossWebhook(
     @Body(new ZodValidationPipe(tossWebhookSchema))
     body: TossWebhookDto,

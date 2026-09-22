@@ -91,7 +91,7 @@ describe('SupportPage', () => {
     render(<SupportPage />);
 
     expect(
-      screen.getByText('Support content is being prepared for launch.'),
+      screen.getByText('We could not load the latest help content. Try again or contact us by email below.'),
     ).toBeInTheDocument();
     expect(screen.getByText('When does booking open?')).toBeInTheDocument();
     expect(screen.getByText('Payment and QR entry')).toBeInTheDocument();

@@ -255,7 +255,13 @@ Admin bypass exists for controlled tests and operational flows, not for normal b
 - canonical seat/tier/price,
 - queue admission.
 
-The pending reservation stores server-side payment deadline and queue recovery timestamps.
+The pending reservation stores server-side payment deadline, queue recovery timestamps,
+Checkout Payment Method and Provider Charge Quote. Authenticated order lookup reads the
+Reservation even before a Payment exists, so full-document returns can recover the same
+order, seats and deadline. Provider handoff freezes its method and quote after validating
+owned seat locks; an unknown in-flight checkout cannot be abandoned during its active
+window. A fail URL alone never cancels or replaces an order. See
+[the prepared checkout ADR](adr/0010-preserve-prepared-checkout-across-provider-returns.md).
 
 ### 6.4 Payment Confirm
 
@@ -268,7 +274,7 @@ The pending reservation stores server-side payment deadline and queue recovery t
 - compensation cancellation if provider confirmation succeeds but finalization fails,
 - QR ticket issuance after confirmed payment.
 
-Toss webhook processing records provider events, handles replay/idempotency, and verifies provider state before applying final mutations.
+Toss webhook processing records provider events, handles replay/idempotency, and verifies provider state before applying final mutations. Successful and duplicate deliveries return HTTP 200; validation and processing failures retain non-200 responses.
 
 ### 6.5 Refund And Cancelled Seat Reopen
 
@@ -301,24 +307,23 @@ Credential validity and venue entry state are separate:
 `FieldOperationsModule` provides:
 
 - verify: parse token or QR URL, load ticket context, return processable outcome,
-- consume: manually process entry when staff confirms, marking all active not-entered tickets for the same buyer account and showtime as entered,
-- offline sync: server-reverify pending attempts and return synced/rejected state,
+- consume: manually process only the scanned Ticket Item after staff confirms, preserving companion seats and the buyer's QR access (ADR 0011),
+- offline sync: server-reverify pending attempts and return pending/synced/rejected state; transient failures remain pending,
 - monitor: KPI summary and scan logs.
 
 Scanner-only access is represented through admin capability bundles, not a separate auth stack.
 
 ### 7.3 Settlement
 
-Admin settlement supports:
+Admin settlement uses `FinanceLedgerService` through `GET /admin/settlement/ledger` and `POST /admin/settlement/ledger/export`:
 
-- gross sales amount,
-- paid reservation count,
-- refunded amount/count,
-- entered/no-show counts,
-- entry rate,
-- export datasets for entry status, no-show reservations, reservation/payment/refund summary, and accounting input.
+- explicit event/showtime, KST approval or cancellation date range, and evidence cutoff;
+- original order, stored approved payment, completed/pending refunds, remaining tickets and retained fees;
+- saved provider charge/cancellation amounts in separate KRW and USD integer minor units;
+- optional current PG settlement reads by sold date or payout date, including cancelled payments and signed cancellation rows;
+- payment, ticket and provider CSVs from the same reader, with scope/time/currency, no buyer contact fields, reason and export audit.
 
-External finance-system integration is outside the current code path.
+Unknown amounts are nullable. Missing/failed PG evidence cannot become a successful zero result or a bank-deposit/closing confirmation. Legacy summary/reconciliation/export endpoints return authenticated HTTP 410 with migration guidance; their ambiguous monetary implementation is removed. Browser URLs are retained. See [ADR 0012](adr/0012-finance-evidence-ledger.md) and the [finance runbook](runbooks/finance-ledger-reconciliation.md). External bank evidence and finance-system integration remain separate.
 
 ## 8. Infrastructure And Deployment
 

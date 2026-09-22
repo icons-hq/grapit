@@ -8,6 +8,10 @@ import {
   shouldKeepHeldCancelledSeat,
 } from './cancelled-seat-release.worker.js';
 
+function withTransaction<T extends object>(db: T) {
+  return { ...db, transaction: (operation: (tx: T) => Promise<unknown>) => operation(db) };
+}
+
 describe('CancelledSeatReleaseWorker', () => {
   it('picks a uniform random delay between 60 and 600 seconds', () => {
     expect(pickCancelledSeatReleaseDelaySeconds(1, 10, () => 0)).toBe(60);
@@ -128,7 +132,7 @@ describe('CancelledSeatReleaseWorker', () => {
     };
     const bookingGateway = { broadcastSeatUpdate: vi.fn() };
     const worker = new CancelledSeatReleaseWorker(
-      db as never,
+      withTransaction(db) as never,
       { isAvailable: true, work: vi.fn(), send: vi.fn(), stop: vi.fn() } as never,
       bookingGateway as never,
     );
@@ -169,7 +173,7 @@ describe('CancelledSeatReleaseWorker', () => {
     };
     const bookingGateway = { broadcastSeatUpdate: vi.fn() };
     const worker = new CancelledSeatReleaseWorker(
-      db as never,
+      withTransaction(db) as never,
       { isAvailable: true, work: vi.fn(), send: vi.fn(), stop: vi.fn() } as never,
       bookingGateway as never,
     );
@@ -196,7 +200,7 @@ describe('CancelledSeatReleaseWorker', () => {
         })),
       })),
     };
-    const worker = new CancelledSeatReleaseWorker(db as never);
+    const worker = new CancelledSeatReleaseWorker(withTransaction(db) as never);
 
     const released = await (worker as unknown as {
       releaseHeldSeats: (

@@ -3,6 +3,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
 import { createRef } from 'react';
+import type { PrepareReservationResponse } from '@grabit/shared';
 import { TossPaymentWidget, type TossPaymentWidgetRef } from '../toss-payment-widget';
 
 const {
@@ -148,6 +149,17 @@ describe('TossPaymentWidget', () => {
     expect(screen.getByLabelText('결제 수단 선택')).toBeInTheDocument();
   });
 
+  it('restores the foreign widget for a server-owned overseas checkout', async () => {
+    process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = 'DEFAULT,uspay';
+    render(<TossPaymentWidget {...defaultProps} initialPaymentMethod={{
+      method: 'CARD', provider: 'CARD', currency: 'USD',
+      overseasPaymentConsent: { required: true, agreed: true, agreementVersion: 'test' },
+    }} />);
+    await waitFor(() => expect(renderAgreementMock).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('tab', { name: '해외 결제' })).toHaveAttribute('aria-selected', 'true');
+    expect(loadTossPaymentsMock).toHaveBeenLastCalledWith('test-foreign-widget-key');
+  });
+
   it('destroys the previous agreement widget before rendering a foreign widget variant', async () => {
     process.env.NEXT_PUBLIC_TOSS_PAYMENT_WIDGET_VARIANT_KEY = 'DEFAULT,uspay';
     const user = userEvent.setup();
@@ -257,6 +269,39 @@ describe('TossPaymentWidget', () => {
       failUrl:
         'https://grabit.test/booking/performance-1/confirm?error=true&paymentDeadlineAt=2026-06-05T10%3A09%3A00.000Z',
     }));
+  });
+
+  it('does not open a provider when the selection no longer matches the prepared checkout', async () => {
+    const ref = createRef<TossPaymentWidgetRef>();
+    render(<TossPaymentWidget {...defaultProps} ref={ref} />);
+    await waitFor(() => expect(renderAgreementMock).toHaveBeenCalledTimes(1));
+    const prepared = {
+      orderId: defaultProps.orderId,
+      paymentMethod: { method: 'SIMPLE_PAY', provider: 'KAKAOPAY', currency: 'KRW' },
+    } as PrepareReservationResponse;
+
+    await expect(ref.current?.requestPayment(prepared)).rejects.toThrow('결제수단이 변경되었습니다');
+    expect(apiClientPostMock).not.toHaveBeenCalled();
+    expect(widgetsRequestPaymentMock).not.toHaveBeenCalled();
+  });
+
+  it('stops before the SDK request if the selection changes while the server authorizes checkout', async () => {
+    let resolveBranch!: (value: unknown) => void;
+    apiClientPostMock.mockImplementationOnce(() => new Promise((resolve) => { resolveBranch = resolve; }));
+    const ref = createRef<TossPaymentWidgetRef>();
+    render(<TossPaymentWidget {...defaultProps} ref={ref} />);
+    await waitFor(() => expect(renderAgreementMock).toHaveBeenCalledTimes(1));
+    const request = ref.current!.requestPayment().catch((error: Error) => error);
+    await waitFor(() => expect(apiClientPostMock).toHaveBeenCalledTimes(1));
+    const onSelect = paymentMethodOnMock.mock.calls.find(([event]) => event === 'paymentMethodSelect')![1];
+    onSelect({ code: 'KAKAOPAY' });
+    resolveBranch({
+      orderId: defaultProps.orderId, method: 'CARD', provider: 'CARD', currency: 'KRW',
+      successUrl: 'https://grabit.test/complete', failUrl: 'https://grabit.test/confirm',
+      asyncStatus: 'sync', useInternationalCardOnly: false,
+    });
+    expect(await request).toEqual(expect.objectContaining({ message: expect.stringContaining('결제수단이 변경되었습니다') }));
+    expect(widgetsRequestPaymentMock).not.toHaveBeenCalled();
   });
 
   it('requests overseas card through the foreign payment widget in USD with provider-charge amount markers', async () => {

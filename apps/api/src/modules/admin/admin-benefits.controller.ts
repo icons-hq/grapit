@@ -85,8 +85,9 @@ type RollbackBody = z.infer<typeof rollbackBodySchema>;
 type ChangesQuery = z.infer<typeof changesQuerySchema>;
 
 @Controller('admin/benefits')
-@UseGuards(RolesGuard)
+@UseGuards(RolesGuard, AdminCapabilitiesGuard)
 @Roles('admin')
+@AdminCapabilities('benefits.manage')
 export class AdminBenefitsController {
   constructor(
     private readonly adminBenefitsService: AdminBenefitsService,
@@ -97,8 +98,17 @@ export class AdminBenefitsController {
   async getConfiguration(
     @Param('showtimeId', new ZodValidationPipe(showtimeIdSchema))
     showtimeId: string,
+    @Res() res: Response,
   ) {
-    return this.adminBenefitsService.getConfiguration(showtimeId);
+    // Express otherwise serializes a Nest null return as an empty body.
+    res.json(await this.adminBenefitsService.getConfiguration(showtimeId));
+  }
+
+  @Get('showtimes/:showtimeId/operation-state')
+  @UseGuards(AdminCapabilitiesGuard)
+  @AdminCapabilities('benefits.manage')
+  getOperationState(@Param('showtimeId', new ZodValidationPipe(showtimeIdSchema)) showtimeId: string) {
+    return this.adminBenefitsService.getOperationState(showtimeId);
   }
 
   @Put('showtimes/:showtimeId/configuration')

@@ -555,7 +555,7 @@ describe('prepareReservationSchema booking consent contract', () => {
     });
 
     expect(response.queueAdmission.queueSessionId).toBe('queue-session-1');
-    expect(detail.refundTimeline.currentState).toBe('PROCESSING_AT_PG');
+    expect(detail.refundTimeline?.currentState).toBe('PROCESSING_AT_PG');
     expect(detail.cancelledSeatHold?.releaseWindowMinutes.max).toBe(10);
     expect(detail.qrTicket.jti).toBe('qr-jti-1');
     expect(detail.qrTicket.entryStatus).toBe('ENTERED');

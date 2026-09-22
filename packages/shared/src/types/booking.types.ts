@@ -187,6 +187,18 @@ export interface RefundPreviewResponse {
   };
   refundTimeline: RefundTimeline | null;
   cancellationQuote: CancellationQuote | null;
+  providerRefund?: { currency: 'KRW' | 'USD'; amountMinor: number; amountDecimal: string } | null;
+  blockedReason?: string | null;
+}
+
+export interface TicketItemRefundPreviewResponse extends RefundPreviewResponse {
+  selectedTicketItemId: string;
+  remainingTicketItemIds: string[];
+}
+
+export interface CancellationExpectation {
+  expectedRefundableAmount: number;
+  expectedProviderRefundAmountMinor?: number;
 }
 
 export type CancelledSeatHoldStatus = 'HELD' | 'RELEASED' | 'MANUAL_OPENED';
@@ -246,6 +258,9 @@ export interface ReservationDetail extends ReservationListItem {
   performanceId?: string;
   showtimeId?: string;
   tossOrderId?: string | null;
+  checkoutPaymentMethod?: PaymentMethod | null;
+  checkoutStartedAt?: string | null;
+  providerChargeQuote?: ProviderChargeQuote;
   paymentMethod: string | null;
   paidAt: string | null;
   cancelDeadline: string;
@@ -256,8 +271,10 @@ export interface ReservationDetail extends ReservationListItem {
   queueAdmission: QueueAdmissionContext;
   paymentDeadlineAt: string;
   bookingPolicy: BookingPolicy;
-  refundTimeline: RefundTimeline;
+  refundTimeline: RefundTimeline | null;
   cancelledSeatHold: CancelledSeatHold | null;
+  refundProviderAmount?: RefundPreviewResponse['providerRefund'];
+  cancellationRecovery?: { kind: 'reservation' } | { kind: 'ticket'; ticketItemId: string } | null;
   qrTicket: QrTicket;
   ticketEmailDelivery: TicketEmailDelivery;
   paymentFailureDiagnostic: PaymentFailureDiagnostic | null;
@@ -272,6 +289,7 @@ export interface PaymentInfo {
   paidAt: string | null;
   paymentDeadlineAt?: string | null;
   paymentMethod?: PaymentMethod;
+  providerChargeQuote?: ProviderChargeQuote;
 }
 
 export interface BookingStats {
@@ -422,6 +440,35 @@ export interface AdminBookingDetail extends AdminBookingListItem {
   paymentCompletedAt: string | null;
   paymentInfo: PaymentInfo | null;
   ticketItems: AdminTicketItem[];
+}
+
+export interface AdminBookingSupportEvidence {
+  generatedAt: string;
+  originalOrderAmount: number;
+  provider: {
+    currency: string;
+    originalAmountMinor: number | null;
+    storedStatus: string;
+    approvedAt: string | null;
+    checkedAt: string | null;
+    checkStatus: string | null;
+  } | null;
+  refundTimeline: RefundTimeline | null;
+  refundProviderAmount: RefundPreviewResponse['providerRefund'];
+  rights: {
+    seatStatesKnown: boolean;
+    activeSeats: number;
+    cancelledSeats: number;
+    pendingSeats: number;
+    enteredSeats: number;
+    benefits: Array<{ id: string; seat: string; name: string; state: string; redeemedAt: string | null }>;
+  };
+  delivery: {
+    scheduledAt: string | null;
+    lastSentAt: string | null;
+    inboxReceipt: 'unverified';
+    history: Array<{ id: string; seat: string; credentialStatus: string; scheduledAt: string | null; sentAt: string | null }>;
+  };
 }
 
 export interface PrepareReservationRequest {

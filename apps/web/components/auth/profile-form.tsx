@@ -31,17 +31,16 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { PhoneVerification } from '@/components/auth/phone-verification';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
+import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
+import { buildAuthRoute } from '@/lib/auth-return';
+import Link from 'next/link';
 import { getClientLocale } from '@/lib/i18n/client-copy';
 
-const GENDER_LABELS: Record<string, string> = {
-  male: '남성',
-  female: '여성',
-  unspecified: '선택안함',
-};
 const WITHDRAWAL_REDIRECT_FLAG = 'grabit:withdrawalRedirect';
 
 interface ProfileFormProps {
   user: UserProfile;
+  returnTo?: string | null;
 }
 
 type ProfileSettingsUser = UserProfile & {
@@ -60,7 +59,7 @@ function getMarketingConsent(user: UserProfile): boolean {
   return (user as ProfileSettingsUser).marketingConsent === true;
 }
 
-export function ProfileForm({ user }: ProfileFormProps) {
+export function ProfileForm({ user, returnTo }: ProfileFormProps) {
   const router = useRouter();
   const locale = getClientLocale();
   const copy = getVisibleCopy(locale).profile;
@@ -73,7 +72,8 @@ export function ProfileForm({ user }: ProfileFormProps) {
   const [marketingConsent, setMarketingConsent] = useState(
     getMarketingConsent(user),
   );
-  const [isPhoneVerified, setIsPhoneVerified] = useState(true);
+  const [isEditingPhone, setIsEditingPhone] = useState(false);
+  const [isPhoneVerified, setIsPhoneVerified] = useState(user.isPhoneVerified);
   const [phoneVerificationToken, setPhoneVerificationToken] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
@@ -87,18 +87,19 @@ export function ProfileForm({ user }: ProfileFormProps) {
   const hasChanges =
     name !== user.name ||
     phoneChanged ||
+    Boolean(phoneVerificationToken) ||
     preferredLocale !== user.preferredLocale ||
     marketingConsent !== getMarketingConsent(user);
 
   // Reset phone verification when phone changes
   useEffect(() => {
-    if (phoneChanged) {
+    if (phoneChanged || isEditingPhone) {
       setIsPhoneVerified(false);
       setPhoneVerificationToken('');
     } else {
-      setIsPhoneVerified(true);
+      setIsPhoneVerified(user.isPhoneVerified);
     }
-  }, [phone, phoneChanged]);
+  }, [phone, phoneChanged, user.isPhoneVerified, isEditingPhone]);
 
   function handlePhoneVerified(verificationToken: string) {
     setIsPhoneVerified(true);
@@ -113,7 +114,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
     try {
       const payload: ProfileUpdatePayload = {};
       if (name !== user.name) payload.name = name;
-      if (phoneChanged) {
+      if (phoneChanged || phoneVerificationToken) {
         payload.phone = phone;
         payload.phoneVerificationToken = phoneVerificationToken;
       }
@@ -131,12 +132,15 @@ export function ProfileForm({ user }: ProfileFormProps) {
       if (accessToken) {
         setAuth(accessToken, updatedUser);
       }
-      toast.success('프로필이 수정되었습니다');
+      setPhoneVerificationToken('');
+      setIsEditingPhone(false);
+      toast.success(copy.saved);
+      if (returnTo && updatedUser.isEmailVerified && updatedUser.isPhoneVerified) router.push(returnTo);
     } catch (err) {
       const message =
         err instanceof Error
           ? err.message
-          : '일시적인 오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
+          : getVisibleCopy(locale).commonErrors.default;
       toast.error(message);
     } finally {
       setIsSaving(false);
@@ -151,8 +155,8 @@ export function ProfileForm({ user }: ProfileFormProps) {
       // Logout should clear state regardless
     } finally {
       clearAuth();
-      toast.success('로그아웃되었습니다');
-      router.push('/');
+      toast.success(copy.loggedOut);
+      router.push(getLocalizedPathname('/', locale));
     }
   }
 
@@ -169,13 +173,13 @@ export function ProfileForm({ user }: ProfileFormProps) {
         // Session storage may be unavailable in restricted browser contexts.
       }
       clearAuth();
-      toast.success('회원 탈퇴가 처리되었습니다');
-      router.push('/auth?withdrawn=1');
+      toast.success(copy.withdrawn);
+      router.push(`${getLocalizedPathname('/auth', locale)}?withdrawn=1`);
     } catch (err) {
       const message =
         err instanceof Error
           ? err.message
-          : '진행 중인 예매가 있으면 탈퇴할 수 없습니다.';
+          : copy.withdrawBlocked;
       toast.error(message);
       setWithdrawOpen(false);
     } finally {
@@ -187,20 +191,18 @@ export function ProfileForm({ user }: ProfileFormProps) {
     if (!dateStr) return '';
     const date = new Date(dateStr);
     if (isNaN(date.getTime())) return dateStr;
-    const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, '0');
-    const d = String(date.getDate()).padStart(2, '0');
-    return `${y}.${m}.${d}`;
+    return new Intl.DateTimeFormat(locale, { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: 'UTC' }).format(date);
   }
 
   return (
     <div className="space-y-6">
+      {returnTo && user.isEmailVerified && user.isPhoneVerified && <Link href={returnTo} className="inline-flex min-h-11 items-center font-semibold text-primary underline">{copy.returnToBooking}</Link>}
       <section className="rounded-lg border border-gray-200 bg-white p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-sm font-medium text-gray-500">계정 상태</p>
+            <p className="text-sm font-medium text-gray-500">{copy.accountStatus}</p>
             <p className="mt-1 text-base font-semibold text-gray-900">
-              {user.role === 'admin' ? '관리자 계정' : '일반 회원'}
+              {user.role === 'admin' ? copy.adminAccount : copy.buyerAccount}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -212,7 +214,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
                   : 'text-gray-600'
               }
             >
-              이메일 {user.isEmailVerified ? '인증 완료' : '미인증'}
+              {user.isEmailVerified ? copy.emailVerified : copy.emailUnverified}
             </Badge>
             <Badge
               variant={user.isPhoneVerified ? 'default' : 'outline'}
@@ -231,6 +233,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
       <div className="space-y-2">
         <Label>{copy.email}</Label>
         <p className="text-base text-gray-700">{user.email}</p>
+        {!user.isEmailVerified && <Link href={buildAuthRoute('/auth/verify-email', locale, { email: user.email, returnTo: returnTo ?? `${getLocalizedPathname('/mypage', locale)}?tab=settings` })} className="inline-flex min-h-11 items-center font-semibold text-primary underline">{copy.verifyEmail}</Link>}
       </div>
 
       <div className="space-y-2">
@@ -244,6 +247,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
 
       <div className="space-y-2">
         <Label>{copy.phone}</Label>
+        {user.isPhoneVerified && !isEditingPhone ? <Button type="button" variant="outline" onClick={() => setIsEditingPhone(true)}>{copy.changePhone}</Button> : isEditingPhone ? <Button type="button" variant="ghost" onClick={() => { setPhone(user.phone); setPhoneVerificationToken(''); setIsEditingPhone(false); }}>{copy.cancelPhoneChange}</Button> : null}
         <PhoneVerification
           phone={phone}
           onPhoneChange={setPhone}
@@ -294,7 +298,7 @@ export function ProfileForm({ user }: ProfileFormProps) {
       <div className="space-y-2">
         <Label>{copy.gender}</Label>
         <p className="text-base text-gray-700">
-          {GENDER_LABELS[user.gender] ?? user.gender}
+          {getVisibleCopy(locale).auth.signup[user.gender === 'male' ? 'genderMale' : user.gender === 'female' ? 'genderFemale' : 'genderUnspecified']}
         </p>
       </div>
 

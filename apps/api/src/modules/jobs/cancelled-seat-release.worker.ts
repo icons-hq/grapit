@@ -8,7 +8,7 @@ import {
 import { and, eq } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import { noActiveTicketItemOnSeat } from '../../database/seat-ownership.js';
-import { seatInventories, showtimes } from '../../database/schema/index.js';
+import { seatInventories, showtimes, ticketItems } from '../../database/schema/index.js';
 import { BookingGateway } from '../booking/booking.gateway.js';
 import {
   PG_BOSS,
@@ -147,7 +147,8 @@ export class CancelledSeatReleaseWorker implements OnModuleInit {
     const releasedSeats: SeatIdentityPayload[] = [];
 
     for (const seatIdentity of seatIdentities) {
-      const released = await this.db
+      const released = await this.db.transaction(async (tx) => {
+      const released = await tx
         .update(seatInventories)
         .set({
           status: 'available',
@@ -169,6 +170,16 @@ export class CancelledSeatReleaseWorker implements OnModuleInit {
           ),
         )
         .returning({ id: seatInventories.id });
+      if (released.length > 0) {
+        await tx.update(ticketItems).set({ reopenState: 'available', reopenHoldUntil: null,
+          reopenJobId: null, updatedAt: new Date() }).where(and(
+          eq(ticketItems.showtimeId, showtimeId), eq(ticketItems.seatKey, seatIdentity.seatKey),
+          eq(ticketItems.status, 'cancelled'), eq(ticketItems.reopenState, 'held_cancelled'),
+          eq(ticketItems.reopenJobId, releaseJobId),
+        ));
+      }
+      return released;
+      });
 
       if (released.length > 0) {
         releasedSeats.push(seatIdentity);

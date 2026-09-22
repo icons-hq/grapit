@@ -11,14 +11,45 @@
     "home": "首页",
     "search": "搜索",
     "category": "分类",
-    "logoutSuccess": "已退出登录"
+    "logoutSuccess": "已退出登录",
+    "close": "关闭",
+    "languageDescription": "请选择当前页面的显示语言。"
   },
   "home": {
     "hot": "热门演出",
     "newOpen": "新开售",
     "genreShortcuts": "按活动分类浏览",
     "more": "更多",
-    "empty": "搜索粉丝见面会和快闪活动，或按分类浏览。"
+    "empty": "搜索粉丝见面会和快闪活动，或按分类浏览。",
+    "intro": "寻找下一次现场相聚",
+    "browse": "浏览演出",
+    "all": "全部",
+    "selling": "销售中",
+    "upcoming": "即将开售",
+    "ended": "往期演出",
+    "myTickets": "我的票券",
+    "guide": "使用帮助",
+    "findShows": "查找演出",
+    "priceFrom": "{price}起",
+    "priceUnknown": "价格请见演出详情",
+    "feeSeparate": "另收预订手续费",
+    "bookingOpens": "{date} 开始预订",
+    "dateUnknown": "演出时间待公布",
+    "loadError": "无法加载演出，请重试。",
+    "emptyFiltered": "暂无符合条件的演出。",
+    "searchLabel": "搜索演出或艺人",
+    "promotionAlt": "演出资讯",
+    "previousBanner": "上一条资讯",
+    "nextBanner": "下一条资讯",
+    "bannerPosition": "资讯 {current} / {total}",
+    "statusHelp": {
+      "selling": "查看座位及预订状态。",
+      "closing_soon": "预订即将截止。",
+      "upcoming": "敬请关注开售公告。",
+      "ended": "本场演出已结束。"
+    },
+    "loading": "正在加载演出",
+    "bookingPaused": "预订暂时暂停。您仍可浏览演出信息。"
   },
   "search": {
     "promptTitle": "搜索演出",
@@ -78,7 +109,8 @@
     "priceLabel": "价格",
     "upcomingDateLabel": "即将开售",
     "detailImagesTitle": "详情图片",
-    "detailImageAlt": "{title} 详情图片 {index}"
+    "detailImageAlt": "{title} 详情图片 {index}",
+    "verifyCta": "验证后购票"
   },
   "support": {
     "title": "客户支持",
@@ -91,7 +123,10 @@
     "fallbackPaymentQuestion": "付款与 QR 入场",
     "fallbackPaymentAnswer": "付款完成后，可在我的页面查看预订记录和 QR 门票。入场时请准备好 QR 画面。",
     "fallbackRefundQuestion": "退款或账号支持",
-    "fallbackRefundAnswer": "请将预订编号、账号邮箱和咨询内容发送至客户支持邮箱。我们会审核后按顺序回复。"
+    "fallbackRefundAnswer": "请将预订编号、账号邮箱和咨询内容发送至客户支持邮箱。我们会审核后按顺序回复。",
+    "loading": "正在加载最新帮助信息。",
+    "loadError": "无法加载最新帮助信息。请重试或通过下方邮箱联系我们。",
+    "legalLinks": "条款与隐私信息"
   },
   "booking": {
     "disabled": "门票预订将于稍后开放",
@@ -117,7 +152,7 @@
         },
         "expired": {
           "badge": "入场已过期",
-          "title": "您的入场时间已过期，正在返回队列",
+          "title": "入场时限已过，请重新排队。",
           "description": "请重新进入队列以获得新的入场时间窗口。",
           "helper": "重新排队后，您仍可查看排位、预计等待时间和剩余座位数。"
         },
@@ -155,14 +190,14 @@
       },
       "infoLabel": "队列详情",
       "autoEnterInfo": "一旦获得入场资格，系统会自动打开座位选择页面。",
-      "safetyInfo": "这里只显示排位、预计等待时间和剩余座位数，内部 admission token 不会暴露。",
+      "safetyInfo": "进入排队不代表已获得座位。选择座位并确认保留后，才会暂时为您保留该座位。",
       "retryAction": "重试",
       "enterNowAction": "立即进入"
     },
     "paymentDeadline": {
       "badge": "支付时限",
       "title": "请在倒计时结束前完成支付",
-      "helper": "剩余时间少于或等于 {threshold} 时，将进入紧急状态。",
+      "helper": "请在倒计时结束前完成付款及银行卡或钱包验证。",
       "criticalHelper": "剩余时间少于或等于 {threshold}。请立即完成银行卡或海外钱包认证。",
       "seatHoldHelper": "座位锁定将在 {time} 后到期"
     },
@@ -178,12 +213,12 @@
     },
     "paymentRecovery": {
       "expiredTitle": "支付时间已到期",
-      "expiredBody": "请重新选择座位后再发起新的支付。",
+      "expiredBody": "请先在“我的门票”中查看此预订，仅在未付款的预订结束后重新选座。",
       "expiredCta": "支付时间已到期",
       "reselectCta": "重新选择座位",
       "reselectPrompt": "请重新选择座位",
       "failedTitle": "支付请求失败",
-      "failedBody": "支付未完成。座位选择信息可能已过期，请重新选择座位后再支付。",
+      "failedBody": "请确认原预订状态后，使用原付款方式重试。",
       "providerMessagePrefix": "支付服务商返回",
       "pendingTitle": "正在等待海外支付认证完成",
       "pendingBody": "钱包服务商完成认证后，您可以继续查询同一笔订单的状态。"
@@ -196,20 +231,76 @@
       },
       "expired": {
         "title": "支付时间已到期。",
-        "body": "请重新选择座位后再发起新的支付。"
+        "body": "请先在“我的门票”中查看此预订，仅在未付款的预订结束后重新选座。"
       },
       "aborted": {
         "title": "支付已中断或未获批准。",
-        "body": "请检查支付方式，或改用其他支付方式。"
+        "body": "请确认原预订状态后，使用原付款方式重试。"
       },
       "cancelled": {
         "title": "支付已取消。",
-        "body": "如需重新支付，请从预订页面发起新的支付。"
+        "body": "如果原预订尚未付款，可在此页面使用同一订单重试。"
       },
       "unknown": {
         "title": "支付未能完成。",
-        "body": "请检查支付方式，或改用其他支付方式。"
+        "body": "请确认原预订状态后，使用原付款方式重试。"
       }
+    },
+    "seatSelection": {
+      "back": "返回",
+      "chooseDate": "选择日期",
+      "chooseShowtime": "选择场次",
+      "dateShowtime": "选择日期 / 场次",
+      "showtimeSelected": "已选场次",
+      "noShowtimes": "所选日期没有场次",
+      "selectedSeats": "已选座位",
+      "selectionSummary": "已选座位汇总",
+      "emptySelection": "尚未选座，选择后将在此显示。",
+      "seatCount": "{count} 个座位",
+      "seatLabel": "{floor} 第 {row} 排 {number} 号",
+      "removeSeat": "取消选择 {seat}",
+      "orderTotal": "订单总额",
+      "clearAll": "全部清除",
+      "processing": "处理中…",
+      "chooseSeat": "请选择座位",
+      "next": "下一步",
+      "limit": "本场演出每人限购 {count} 张票",
+      "changePolicy": "付款后无法换座。如需更换，请取消并重新预订。",
+      "seatTaken": "此座位已被其他用户选择",
+      "releaseFirst": "请先取消其他座位的选择。",
+      "bookingInfo": "预订说明",
+      "backToEvent": "返回演出详情",
+      "noFloorSeats": "本层暂无可选座位，请查看其他楼层。",
+      "chooseFloor": "选择楼层",
+      "floorKeep": "切换楼层后仍会保留已选座位",
+      "busy": "暂无空位",
+      "legend": "座位等级",
+      "excluded": "保留座 / 邀请座",
+      "notSelectable": "不可选择",
+      "soldOrHeld": "已售 / 保留中",
+      "unavailable": "不可选择",
+      "mapControls": "座位图控制",
+      "zoomIn": "放大",
+      "zoomOut": "缩小",
+      "fitMap": "显示全图",
+      "map": "座位图",
+      "miniMap": "座位图概览",
+      "mapError": "无法加载座位图，请刷新后重试。",
+      "mapPending": "座位图尚未就绪，请稍后重试。",
+      "refresh": "刷新",
+      "stage": "舞台位置：{position}",
+      "remaining": "剩余时间",
+      "remainingAria": "剩余 {minutes} 分 {seconds} 秒",
+      "timerWarning": "剩余时间不足 3 分钟",
+      "expired": "座位保留已过期",
+      "expiredBody": "所选座位的保留时间已结束，请重新选座。",
+      "restart": "重新开始",
+      "listSummary": "从列表选择座位",
+      "listLabel": "座位列表",
+      "selectSeat": "选择座位",
+      "deselectSeat": "取消选座",
+      "totalSeatCount": "共 {count} 个座位",
+      "selectionConflict": "请确认座位状态和每人限购数量后重试。"
     }
   },
   "locale": {
@@ -346,7 +437,8 @@
       "invalidCode": "验证码不正确",
       "verified": "邮箱验证已完成。",
       "throttled": "请稍后再试。",
-      "systemError": "暂时发生错误。请重试。"
+      "systemError": "暂时发生错误。请重试。",
+      "deliveryFailed": "您的账户已保存，但验证邮件发送失败。请重新获取验证码或联系客服。"
     },
     "otp": {
       "sent": "验证码已发送",
@@ -385,30 +477,45 @@
       "retryButton": "重新登录",
       "processing": "正在完成登录...",
       "invalidAccess": "此登录链接无效。"
+    },
+    "navigation": {
+      "verifyTitle": "验证邮箱",
+      "verificationLogin": "邮箱已验证。登录后可继续预订。",
+      "continue": "继续",
+      "showPassword": "显示密码",
+      "hidePassword": "隐藏密码"
+    },
+    "validation": {
+      "email": "请输入有效的邮箱地址",
+      "password": "请输入密码",
+      "confirm": "请确认密码",
+      "mismatch": "两次密码不一致",
+      "rules": "密码至少8位，包含字母、数字和符号",
+      "link": "需要有效的验证链接"
     }
   },
   "metadata": {
     "title": "Grabit - 现场活动票务预订",
     "description": "演唱会、展览、体育和现场娱乐活动票务预订平台",
     "legal": {
-      "termsTitle": "Terms of Service — Grabit",
-      "termsDescription": "Terms for using Grabit and the rights and responsibilities of members and the company.",
-      "privacyTitle": "Privacy Policy — Grabit",
-      "privacyDescription": "How Grabit collects, uses, stores, and protects personal information.",
-      "marketingTitle": "Marketing Consent — Grabit",
-      "marketingDescription": "Marketing message categories, channels, and your right to withdraw consent."
+      "termsTitle": "服务条款 — Grabit",
+      "termsDescription": "Grabit 服务条款及会员和公司的权利与义务。",
+      "privacyTitle": "隐私政策 — Grabit",
+      "privacyDescription": "Grabit 如何收集、使用、存储和保护个人信息。",
+      "marketingTitle": "营销信息同意 — Grabit",
+      "marketingDescription": "营销信息的类别、渠道及撤回同意的权利。"
     }
   },
   "commonErrors": {
     "default": "发生临时错误。请稍后重试。",
-    "badRequest": "The request is invalid.",
-    "forbidden": "You do not have permission to access this.",
-    "notFound": "We could not find the requested information.",
-    "timeout": "The server response is delayed. Please try again shortly.",
-    "tooManyRequests": "Too many requests. Please try again shortly.",
-    "server": "A server error occurred. Please try again shortly.",
+    "badRequest": "请求无效。",
+    "forbidden": "您没有访问权限。",
+    "notFound": "未找到所请求的信息。",
+    "timeout": "服务器响应较慢，请稍后重试。",
+    "tooManyRequests": "请求过于频繁，请稍后重试。",
+    "server": "服务器出现错误，请稍后重试。",
     "authExpired": "登录会话已过期。请重新登录。",
-    "errorCode": "Error code: ERR-{status}",
+    "errorCode": "错误代码：ERR-{status}",
     "retry": "重试",
     "home": "前往首页"
   },
@@ -434,79 +541,79 @@
       "agreeTerms": "请同意条款",
       "agreePaymentTerms": "请同意付款条款",
       "paymentMethod": "付款方式",
-      "overseasDisclaimerAria": "Agree to overseas payment and refund notice",
+      "overseasDisclaimerAria": "同意境外付款与退款说明",
       "paymentCancelled": "付款已取消。",
       "paymentFailed": "付款失败。请重试。",
-      "paymentRequestFailed": "Payment request failed.",
-      "lockExpired": "Your seat hold expired. Please choose seats again.",
-      "seatTaken": "Another user already selected this seat.",
-      "lockExpiredRedirect": "Your seat hold expired. Returning to seat selection."
+      "paymentRequestFailed": "发起付款失败。",
+      "lockExpired": "座位保留已过期，请重新选座。",
+      "seatTaken": "该座位已被其他用户选择。",
+      "lockExpiredRedirect": "座位保留已过期，正在返回选座。"
     },
     "complete": {
       "invalidAccess": "访问无效。",
       "checkReservations": "查看我的预订",
-      "failedBookingTitle": "Booking could not be completed",
-      "confirmFailedTitle": "Payment confirmation failed",
-      "confirmFailedBody": "Check your booking history or try payment again.",
-      "confirmUnknownBody": "We could not confirm the payment yet. Try checking again shortly or check your booking history.",
+      "failedBookingTitle": "未能完成预订",
+      "confirmFailedTitle": "付款确认失败",
+      "confirmFailedBody": "再次付款前，请先在预订记录中确认结果。",
+      "confirmUnknownBody": "尚无法确认付款结果。请稍后重新查询，或查看预订记录。",
       "retryStatus": "重新检查状态",
-      "statusCheckFailed": "Could not check payment status.",
-      "deadlineExpired": "The payment window expired at {deadline}.",
-      "pendingDeadline": "This order will wait for payment status until {deadline}."
+      "statusCheckFailed": "无法查询付款状态。",
+      "deadlineExpired": "付款期限已于 {deadline} 结束。",
+      "pendingDeadline": "此订单将等待付款状态至 {deadline}。"
     },
     "widget": {
       "domesticTab": "韩国本地支付",
       "overseasTab": "海外支付",
-      "paymentUiAria": "Payment UI",
-      "paymentMethodAria": "Select payment method",
-      "widgetNotReady": "Payment widget is not initialized",
-      "widgetLoading": "Payment widget is loading",
+      "paymentUiAria": "付款界面",
+      "paymentMethodAria": "选择付款方式",
+      "widgetNotReady": "付款组件尚未就绪",
+      "widgetLoading": "正在加载付款组件",
       "setupIncomplete": "支付设置尚未完成。请联系客户支持。",
-      "systemLoadFailed": "Could not load the payment system. Please refresh the page.",
-      "widgetLoadFailed": "Could not load the payment widget.",
+      "systemLoadFailed": "无法加载付款系统，请刷新页面。",
+      "widgetLoadFailed": "无法加载付款组件。",
       "sdkInitLog": "Toss Payments SDK initialization failed:",
       "widgetRenderLog": "Payment widget rendering failed:",
-      "alipayDisabled": "Alipay payment setup is incomplete. Please contact support.",
-      "paypalDisabled": "PayPal payment setup is incomplete. Please contact support.",
-      "overseasCardDisabled": "Overseas card payment setup is incomplete. Please contact support.",
-      "foreignPaymentDisabled": "Overseas payment setup is incomplete. Please contact support.",
-      "overseasCardAmountMissing": "The overseas card payment amount is not ready.",
-      "overseasCardInvalidSetup": "Overseas card payment setup is invalid."
+      "alipayDisabled": "Alipay 暂不可用，请联系客服。",
+      "paypalDisabled": "PayPal 暂不可用，请联系客服。",
+      "overseasCardDisabled": "国际银行卡付款暂不可用，请联系客服。",
+      "foreignPaymentDisabled": "境外付款暂不可用，请联系客服。",
+      "overseasCardAmountMissing": "国际银行卡的扣款金额尚未就绪。",
+      "overseasCardInvalidSetup": "国际银行卡付款配置无效。"
     },
     "completeCard": {
       "title": "预订完成",
       "reservationNumber": "预订编号",
-      "reservationNumberAria": "Booking number {reservationNumber}",
+      "reservationNumberAria": "预订编号 {reservationNumber}",
       "performanceInfo": "活动信息",
-      "performanceName": "Event",
-      "performanceDate": "Date and time",
-      "venue": "Venue",
+      "performanceName": "演出",
+      "performanceDate": "日期与时间",
+      "venue": "场馆",
       "seatInfo": "座位信息",
       "paymentInfo": "付款信息",
-      "totalAmount": "Total paid",
-      "serviceFee": "Service fee",
+      "totalAmount": "已付金额",
+      "serviceFee": "手续费",
       "qrTicket": "QR 票",
-      "qrActive": "QR active",
-      "qrPending": "Checking",
-      "ticketValid": "Ticket valid",
-      "cancellationPending": "Cancellation pending",
-      "cancelled": "Cancelled",
-      "expired": "Expired",
-      "used": "Used",
-      "revoked": "Revoked",
-      "entered": "Entered",
-      "notEntered": "Not entered",
-      "unavailablePendingTitle": "Cancellation is being checked.",
-      "unavailablePendingDescription": "The QR ticket cannot be used until the partial cancellation result is confirmed.",
-      "unavailableCancelledTitle": "This ticket is cancelled.",
-      "unavailableCancelledDescription": "The QR ticket for this seat cannot be used.",
-      "unavailableExpiredTitle": "This ticket has expired.",
-      "unavailableExpiredDescription": "The QR ticket for this seat cannot be used.",
-      "unavailableDefaultTitle": "The QR ticket is not available yet.",
-      "unavailableDefaultDescription": "Refresh shortly or check again from My page.",
+      "qrActive": "二维码可用",
+      "qrPending": "查询中",
+      "ticketValid": "票券有效",
+      "cancellationPending": "取消确认中",
+      "cancelled": "已取消",
+      "expired": "已过期",
+      "used": "已使用",
+      "revoked": "已撤销",
+      "entered": "已入场",
+      "notEntered": "未入场",
+      "unavailablePendingTitle": "正在确认取消结果。",
+      "unavailablePendingDescription": "确认部分取消结果前，此二维码票券无法使用。",
+      "unavailableCancelledTitle": "此票券已取消。",
+      "unavailableCancelledDescription": "此座位的二维码票券无法使用。",
+      "unavailableExpiredTitle": "此票券已过期。",
+      "unavailableExpiredDescription": "此座位的二维码票券无法使用。",
+      "unavailableDefaultTitle": "暂时无法显示二维码票券。",
+      "unavailableDefaultDescription": "请稍后刷新，或在“我的账户”中重新查看。",
       "mypageCta": "在我的页面查看预订",
       "homeCta": "前往首页",
-      "seatLabel": "{tierName} row {row} seat {number}",
+      "seatLabel": "{tierName} 第 {row} 排 {number} 号",
       "paymentMethod": "付款方式",
       "paidAt": "付款时间",
       "cancellationDeadline": "取消截止时间",
@@ -522,7 +629,8 @@
         "inactive": "不可用",
         "empty": "无包含权益",
         "redeemedAt": "使用时间：{date}"
-      }
+      },
+      "ticketStatusLabel": "票券状态"
     }
   },
   "reservation": {
@@ -647,7 +755,7 @@
         "其他"
       ],
       "title": "退款和座位重新开放说明",
-      "description": "整个预订将被取消。此处不能只取消部分座位。",
+      "description": "可在各座位票券中取消单个座位，也可取消整个预订。确认前请核对退款金额及保留的票券。",
       "reasonLabel": "取消原因",
       "reasonPlaceholder": "请选择取消原因",
       "refundAmount": "预计退款金额",
@@ -749,7 +857,10 @@
     "viewWallet": "查看票夹",
     "editSettings": "编辑设置",
     "marketingOn": "已订阅",
-    "marketingOff": "未订阅"
+    "marketingOff": "未订阅",
+    "membership": "注册时长",
+    "checking": "正在查询预订",
+    "loadError": "无法加载预订，请重试。"
   },
   "profile": {
     "email": "电子邮件",
@@ -779,7 +890,18 @@
     "cancel": "取消",
     "confirmWithdraw": "确认删除",
     "emailVerified": "邮箱已验证",
-    "emailUnverified": "邮箱未验证"
+    "emailUnverified": "邮箱未验证",
+    "accountStatus": "账户状态",
+    "adminAccount": "管理员",
+    "buyerAccount": "会员",
+    "saved": "个人资料已更新",
+    "loggedOut": "已退出登录",
+    "withdrawn": "账户已关闭",
+    "withdrawBlocked": "请先处理有效预订，再关闭账户。",
+    "verifyEmail": "验证邮箱",
+    "returnToBooking": "返回预订",
+    "changePhone": "更改手机号",
+    "cancelPhoneChange": "取消更改手机号"
   },
   "resetPassword": {
     "sentTitle": "密码重置邮件已发送",

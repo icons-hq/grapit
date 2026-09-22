@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { BookingSupportEvidencePanel } from './booking-support-evidence-panel';
 import { Loader2, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -218,6 +219,7 @@ export function AdminBookingDetailModal({
   );
   const authUser = useAuthStore((state) => state.user);
   const canAdminRefund = hasAdminCapability(authUser, 'refund.admin_refund');
+  const canManualOpen = hasAdminCapability(authUser, 'seat.manual_open');
   const [showRefundForm, setShowRefundForm] = useState(false);
   const [refundReason, setRefundReason] = useState('');
   const [fullRefundOverride, setFullRefundOverride] = useState(false);
@@ -264,7 +266,7 @@ export function AdminBookingDetailModal({
   }
 
   function handleManualOpenConfirm() {
-    if (!bookingId || !manualOpenReason.trim()) return;
+    if (!canManualOpen || !bookingId || !booking || !canManualOpenCancelledSeats(booking) || !manualOpenReason.trim()) return;
 
     manualOpenMutation.mutate(
       {
@@ -314,6 +316,7 @@ export function AdminBookingDetailModal({
 
         {booking && !showRefundForm && !showManualOpenForm && (
           <div className="space-y-1">
+            <BookingSupportEvidencePanel bookingId={booking.id} />
             <InfoRow label="예매번호" value={booking.reservationNumber} />
             <Separator />
             <InfoRow
@@ -494,7 +497,7 @@ export function AdminBookingDetailModal({
               </Button>
             )}
 
-            {canManualOpenCancelledSeats(booking) && (
+            {canManualOpen && canManualOpenCancelledSeats(booking) && (
               <Button
                 variant="outline"
                 className="mt-4 h-12 w-full border-[#C62828] text-[#C62828] hover:bg-[#FEF2F2] hover:text-[#C62828]"
@@ -628,7 +631,7 @@ export function AdminBookingDetailModal({
           </div>
         )}
 
-        {booking && showManualOpenForm && (
+        {booking && showManualOpenForm && canManualOpen && (
           <div className="space-y-4">
             <DialogHeader>
               <DialogTitle>

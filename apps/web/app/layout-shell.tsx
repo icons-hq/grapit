@@ -5,9 +5,10 @@ import { GNB } from '@/components/layout/gnb';
 import { Footer } from '@/components/layout/footer';
 import { MobileTabBar } from '@/components/layout/mobile-tab-bar';
 import { LocaleSuggestion } from '@/components/i18n/locale-suggestion';
+import { resolveLocaleFromPathname } from '@/i18n/routing';
 
 export function LayoutShell({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
+  const { pathnameWithoutLocale: pathname } = resolveLocaleFromPathname(usePathname());
   const isAdmin = pathname.startsWith('/admin');
   // Hide GNB/Footer on booking seat selection and confirm pages, but show on complete page
   const isBookingCheckout =

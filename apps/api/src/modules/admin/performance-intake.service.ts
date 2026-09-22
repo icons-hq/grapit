@@ -1,5 +1,5 @@
-import { Injectable, UnprocessableEntityException } from '@nestjs/common';
-import { and, eq, inArray } from 'drizzle-orm';
+import { Injectable, NotFoundException, UnprocessableEntityException } from '@nestjs/common';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import type {
   PerformanceBookingPolicy,
   PerformanceBookingPolicyInput,
@@ -46,6 +46,35 @@ type SyncedLayoutOverlay = {
 
 @Injectable()
 export class PerformanceIntakeService {
+  async lockAndCheckStructureProtection(tx: DrizzleDB, performanceId: string): Promise<boolean> {
+    return (await this.readStructureProtection(tx, performanceId, true)).protected;
+  }
+
+  async readStructureProtection(tx: DrizzleDB, performanceId: string, lock = false): Promise<{ protected: boolean; reservationCount: number }> {
+    const result = await tx.execute(sql`select p.id,
+      (select count(*)::int from reservations r join showtimes s on s.id = r.showtime_id where s.performance_id = p.id) as reservation_count,
+      (p.status in ('selling', 'closing_soon')
+        or (p.publish_state = 'published' and b.booking_starts_at <= now())
+        or exists (select 1 from reservations r join showtimes s on s.id = r.showtime_id where s.performance_id = p.id)
+        or exists (select 1 from seat_operation_history h join showtimes s on s.id = h.showtime_id where s.performance_id = p.id)
+      ) as protected
+      from performances p left join booking_policies b on b.performance_id = p.id
+      where p.id = ${performanceId} ${lock ? sql`for update of p` : sql``}`);
+    if (!result.rows[0]) throw new NotFoundException('공연을 찾을 수 없습니다.');
+    return { protected: result.rows[0].protected === true, reservationCount: Number(result.rows[0].reservation_count ?? 0) };
+  }
+
+  assertStructureChangeAllowed(protectedStructure: boolean, field: string): void {
+    if (protectedStructure) throw new UnprocessableEntityException({ message: 'Validation failed', errors: {
+      [field]: ['판매가 열려 있거나 예매·현장 이력이 있어 좌석·가격·기존 회차 구조를 변경할 수 없습니다. 안내 정보는 계속 수정할 수 있습니다.'],
+    } });
+  }
+
+  samePriceTiers(left: PriceTierSnapshot[], right: PriceTierSnapshot[]): boolean {
+    const normalize = (tiers: PriceTierSnapshot[]) => tiers.map((tier) => ({ tierName: tier.tierName.trim(), price: tier.price, sortOrder: tier.sortOrder }))
+      .sort((a, b) => a.tierName.localeCompare(b.tierName));
+    return stableJson(normalize(left)) === stableJson(normalize(right));
+  }
   normalizeSeatMaps(
     performanceId: string,
     floors: PerformanceSeatMapInput[],
@@ -276,9 +305,16 @@ export class PerformanceIntakeService {
     floors: PerformanceSeatMapInput[],
     validTierNames: Set<string>,
     priceTierSnapshots: PriceTierSnapshot[],
+    protectedStructure?: boolean,
   ): Promise<void> {
     this.assertUniqueFloorKeys(floors);
     this.assertSeatMapConfigsValid(floors, validTierNames);
+    const previous = await tx.select().from(seatMaps).where(eq(seatMaps.performanceId, performanceId));
+    const comparable = (rows: Array<{ floorKey: string; floorLabel: string; sortOrder: number; svgUrl: string; seatConfig: unknown; totalSeats: number }>) => rows
+      .map(({ floorKey, floorLabel, sortOrder, svgUrl, seatConfig, totalSeats }) => ({ floorKey, floorLabel, sortOrder, svgUrl, seatConfig: seatConfig ?? null, totalSeats }))
+      .sort((a, b) => a.floorKey.localeCompare(b.floorKey));
+    if (stableJson(comparable(previous)) === stableJson(comparable(floors))) return;
+    this.assertStructureChangeAllowed(protectedStructure ?? await this.lockAndCheckStructureProtection(tx, performanceId), 'seatMaps');
     const overlay = await this.syncVenueLayoutOverlay(
       tx,
       performanceId,
@@ -313,6 +349,7 @@ export class PerformanceIntakeService {
     tx: DrizzleDB,
     performanceId: string,
     nextShowtimes: ShowtimeUpdateInput[],
+    protectedStructure = false,
   ): Promise<void> {
     const existingShowtimes = await tx
       .select({
@@ -359,6 +396,8 @@ export class PerformanceIntakeService {
 
       if (targetShowtime) {
         retainedIds.add(targetShowtime.id);
+        if (targetShowtime.dateTime.getTime() === dateTime.getTime()) continue;
+        this.assertStructureChangeAllowed(protectedStructure, 'showtimes');
         await tx
           .update(showtimes)
           .set({ dateTime })
@@ -386,6 +425,7 @@ export class PerformanceIntakeService {
     if (removedShowtimeIds.length === 0) {
       return;
     }
+    this.assertStructureChangeAllowed(protectedStructure, 'showtimes');
 
     const referencedShowtimes = await tx
       .select({ showtimeId: reservations.showtimeId })
@@ -619,4 +659,10 @@ export class PerformanceIntakeService {
 
     return { rowLabel: null, seatNumber: null };
   }
+}
+
+function stableJson(value: unknown): string {
+  const normalize = (item: unknown): unknown => Array.isArray(item) ? item.map(normalize)
+    : item && typeof item === 'object' ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b)).map(([key, nested]) => [key, normalize(nested)])) : item;
+  return JSON.stringify(normalize(value));
 }

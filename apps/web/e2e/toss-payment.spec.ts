@@ -228,7 +228,7 @@ test.describe('Toss Payments E2E', () => {
     const main = page.getByRole('main');
     await expect(main.getByText('결제를 완료하지 못했습니다.')).toBeVisible({ timeout: 5000 });
     await expect(
-      main.getByText('결제 수단 상태를 확인하거나 다른 결제 수단으로 다시 시도해주세요.'),
+      main.getByText('기존 예매 상태를 확인한 후 같은 결제수단으로 다시 시도해 주세요.'),
     ).toBeVisible();
     await expect(main.getByText('결제사 응답: 카드 승인 거절')).toBeVisible();
   });
@@ -310,7 +310,7 @@ test.describe('Toss Payments E2E', () => {
     await expect(page).toHaveURL(/\/booking\/e2e-test-performance\/confirm/);
   });
 
-  test('lock ownership: confirm 409 renders failed state instead of booking success', async ({
+  test('confirm 409 with unavailable lookup keeps payment unknown without offering another charge', async ({
     page,
   }) => {
     await loginAsTestUser(page);
@@ -342,13 +342,14 @@ test.describe('Toss Payments E2E', () => {
       '/booking/e2e-test-performance/complete?paymentKey=test_payment_key_lock_failure&orderId=test_order_lock_failure&amount=50000',
     );
 
-    await expect(page.getByText('예매를 완료하지 못했습니다')).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText('이미 다른 사용자가 선택한 좌석입니다.')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('heading', { name: '예매 상태를 확인하지 못했어요' })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('button', { name: '상태 다시 확인' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '좌석 다시 선택하기' })).not.toBeVisible();
     await expect(page.getByRole('button', { name: '예매 내역 확인' })).toBeVisible();
     await expect(page.getByText(/예매가 완료|완료되었습니다/)).not.toBeVisible();
   });
 
-  test('complete page: recovery failure after non-lock confirm error renders recoverable failed state', async ({
+  test('complete page: unavailable lookup after confirm error offers status recovery', async ({
     page,
   }) => {
     await loginAsTestUser(page);
@@ -380,7 +381,7 @@ test.describe('Toss Payments E2E', () => {
       '/booking/e2e-test-performance/complete?paymentKey=test_payment_key_recovery_failure&orderId=test_order_recovery_failure&amount=50000',
     );
 
-    await expect(page.getByRole('heading', { name: '결제 확인에 실패했습니다' })).toBeVisible({
+    await expect(page.getByRole('heading', { name: '예매 상태를 확인하지 못했어요' })).toBeVisible({
       timeout: 10000,
     });
     await expect(

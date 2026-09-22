@@ -13,7 +13,7 @@ import { BookingService } from '../booking/booking.service.js';
 import { isBackgroundProcessingEnabled } from './pgboss.provider.js';
 
 export const PENDING_PAYMENT_EXPIRATION_SWEEP_INTERVAL_MS = 60_000;
-export const ASYNC_PAYMENT_HANDOFF_STATUSES = ['IN_PROGRESS', 'DONE'] as const;
+export const ASYNC_PAYMENT_HANDOFF_STATUSES = ['IN_PROGRESS', 'DONE', 'PARTIAL_CANCELED'] as const;
 
 interface ExpiredPendingReservationRow {
   id: string;
@@ -112,6 +112,14 @@ export class PendingPaymentExpirationWorker implements OnModuleInit, OnModuleDes
         WHERE r.status = 'PENDING_PAYMENT'
           AND r.payment_deadline_at IS NOT NULL
           AND r.payment_deadline_at < ${now}
+          AND (
+            r.checkout_started_at IS NULL
+            OR EXISTS (
+              SELECT 1 FROM payments p
+              WHERE p.reservation_id = r.id
+                AND p.status IN ('ABORTED', 'EXPIRED', 'CANCELED')
+            )
+          )
           AND NOT EXISTS (
             SELECT 1
             FROM payments p

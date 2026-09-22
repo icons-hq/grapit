@@ -11,14 +11,45 @@
     "home": "หน้าแรก",
     "search": "ค้นหา",
     "category": "หมวดหมู่",
-    "logoutSuccess": "ออกจากระบบแล้ว"
+    "logoutSuccess": "ออกจากระบบแล้ว",
+    "close": "ปิด",
+    "languageDescription": "เลือกภาษาสำหรับหน้านี้"
   },
   "home": {
     "hot": "การแสดงยอดนิยม",
     "newOpen": "เปิดใหม่",
     "genreShortcuts": "เลือกตามหมวดหมู่อีเวนต์",
     "more": "ดูเพิ่มเติม",
-    "empty": "ค้นหาแฟนมีตและป๊อปอัป หรือเลือกดูตามหมวดหมู่"
+    "empty": "ค้นหาแฟนมีตและป๊อปอัป หรือเลือกดูตามหมวดหมู่",
+    "intro": "ค้นหาประสบการณ์ครั้งต่อไปของคุณ",
+    "browse": "สำรวจการแสดง",
+    "all": "ทั้งหมด",
+    "selling": "เปิดขาย",
+    "upcoming": "เร็วๆ นี้",
+    "ended": "การแสดงที่ผ่านมา",
+    "myTickets": "บัตรของฉัน",
+    "guide": "ความช่วยเหลือ",
+    "findShows": "ค้นหาการแสดง",
+    "priceFrom": "เริ่มต้น {price}",
+    "priceUnknown": "ดูราคาในรายละเอียด",
+    "feeSeparate": "ไม่รวมค่าธรรมเนียมจอง",
+    "bookingOpens": "เปิดจอง {date}",
+    "dateUnknown": "จะประกาศกำหนดการภายหลัง",
+    "loadError": "โหลดการแสดงไม่สำเร็จ โปรดลองอีกครั้ง",
+    "emptyFiltered": "ไม่มีการแสดงที่ตรงกับตัวกรองนี้",
+    "searchLabel": "ค้นหาการแสดงหรือศิลปิน",
+    "promotionAlt": "ข่าวการแสดง",
+    "previousBanner": "ประกาศก่อนหน้า",
+    "nextBanner": "ประกาศถัดไป",
+    "bannerPosition": "ประกาศ {current} จาก {total}",
+    "statusHelp": {
+      "selling": "ตรวจสอบที่นั่งและการเปิดจอง",
+      "closing_soon": "ใกล้ปิดรับจอง",
+      "upcoming": "รอประกาศการเปิดจอง",
+      "ended": "การแสดงนี้สิ้นสุดแล้ว"
+    },
+    "loading": "กำลังโหลดการแสดง",
+    "bookingPaused": "การจองหยุดให้บริการชั่วคราว คุณยังสามารถดูข้อมูลการแสดงได้"
   },
   "search": {
     "promptTitle": "ค้นหาการแสดง",
@@ -78,7 +109,8 @@
     "priceLabel": "ราคา",
     "upcomingDateLabel": "เร็วๆ นี้",
     "detailImagesTitle": "รูปภาพรายละเอียด",
-    "detailImageAlt": "{title} รูปรายละเอียด {index}"
+    "detailImageAlt": "{title} รูปรายละเอียด {index}",
+    "verifyCta": "ยืนยันเพื่อจอง"
   },
   "support": {
     "title": "ศูนย์ช่วยเหลือ",
@@ -91,7 +123,10 @@
     "fallbackPaymentQuestion": "การชำระเงินและการเข้าใช้ QR",
     "fallbackPaymentAnswer": "เมื่อชำระเงินสำเร็จ คุณสามารถดูรายการจองและบัตร QR ได้ในหน้าของฉัน โปรดเตรียมหน้าจอ QR สำหรับการเข้างาน",
     "fallbackRefundQuestion": "การคืนเงินหรือบัญชี",
-    "fallbackRefundAnswer": "ส่งหมายเลขการจอง อีเมลบัญชี และรายละเอียดคำขอไปยังอีเมลศูนย์ช่วยเหลือ เราจะตรวจสอบและตอบกลับตามลำดับ"
+    "fallbackRefundAnswer": "ส่งหมายเลขการจอง อีเมลบัญชี และรายละเอียดคำขอไปยังอีเมลศูนย์ช่วยเหลือ เราจะตรวจสอบและตอบกลับตามลำดับ",
+    "loading": "กำลังโหลดข้อมูลช่วยเหลือล่าสุด",
+    "loadError": "ไม่สามารถโหลดข้อมูลช่วยเหลือล่าสุดได้ ลองอีกครั้งหรือติดต่อทางอีเมลด้านล่าง",
+    "legalLinks": "ข้อกำหนดและข้อมูลความเป็นส่วนตัว"
   },
   "booking": {
     "disabled": "การจองบัตรจะเปิดให้บริการในภายหลัง",
@@ -117,7 +152,7 @@
         },
         "expired": {
           "badge": "สิทธิ์เข้าใช้หมดอายุ",
-          "title": "ช่วงเวลาเข้าใช้ของคุณหมดอายุแล้ว กำลังพากลับไปที่คิว",
+          "title": "หมดเวลาเข้างานในคิว กรุณาเข้าคิวอีกครั้ง",
           "description": "เข้าคิวใหม่เพื่อรับช่วงเวลาเข้าใช้รอบใหม่",
           "helper": "หลังกลับเข้าคิว คุณยังดูตำแหน่งคิว เวลารอ และที่นั่งคงเหลือได้"
         },
@@ -155,14 +190,14 @@
       },
       "infoLabel": "รายละเอียดคิว",
       "autoEnterInfo": "เมื่อได้รับสิทธิ์เข้าใช้ ระบบจะเปิดหน้าจอเลือกที่นั่งให้อัตโนมัติ",
-      "safetyInfo": "หน้านี้จะแสดงเฉพาะลำดับคิว เวลารอ และจำนวนที่นั่งคงเหลือ โดยซ่อน admission token ภายใน",
+      "safetyInfo": "การผ่านคิวไม่ได้รับประกันที่นั่ง ที่นั่งจะถูกจองชั่วคราวเมื่อเลือกและยืนยันการจองที่นั่งแล้ว",
       "retryAction": "ลองอีกครั้ง",
       "enterNowAction": "เข้าเลยตอนนี้"
     },
     "paymentDeadline": {
       "badge": "เวลาชำระเงิน",
       "title": "โปรดชำระเงินให้เสร็จก่อนหมดเวลานับถอยหลัง",
-      "helper": "เมื่อเหลือ {threshold} หรือน้อยกว่า ระบบจะเข้าสู่สถานะเร่งด่วน",
+      "helper": "กรุณาชำระเงินและยืนยันบัตรหรือวอลเล็ตก่อนหมดเวลา",
       "criticalHelper": "เหลือ {threshold} หรือน้อยกว่า กรุณาดำเนินการยืนยันบัตรหรือกระเป๋าเงินต่างประเทศทันที",
       "seatHoldHelper": "การล็อกที่นั่งจะหมดอายุใน {time}"
     },
@@ -178,12 +213,12 @@
     },
     "paymentRecovery": {
       "expiredTitle": "เวลาชำระเงินหมดแล้ว",
-      "expiredBody": "กรุณาเลือกที่นั่งใหม่และเริ่มการชำระเงินอีกครั้ง",
+      "expiredBody": "ตรวจสอบการจองในบัตรของฉันก่อน เลือกที่นั่งใหม่ได้เมื่อการจองที่ยังไม่ชำระเงินสิ้นสุดแล้ว",
       "expiredCta": "เวลาชำระเงินหมดแล้ว",
       "reselectCta": "เลือกที่นั่งใหม่",
       "reselectPrompt": "กรุณาเลือกที่นั่งใหม่",
       "failedTitle": "ส่งคำขอชำระเงินไม่สำเร็จ",
-      "failedBody": "การชำระเงินยังไม่เสร็จสมบูรณ์ ข้อมูลที่นั่งอาจหมดอายุแล้ว กรุณาเลือกที่นั่งใหม่ก่อนชำระเงินอีกครั้ง",
+      "failedBody": "ตรวจสอบการจองเดิม แล้วลองอีกครั้งด้วยวิธีชำระเงินเดิม",
       "providerMessagePrefix": "คำตอบจากผู้ให้บริการชำระเงิน",
       "pendingTitle": "กำลังรอการยืนยันการชำระเงินต่างประเทศ",
       "pendingBody": "เมื่อผู้ให้บริการวอลเล็ทยืนยันเสร็จแล้ว คุณจะสามารถกลับมาตรวจสอบสถานะคำสั่งซื้อเดิมได้"
@@ -196,20 +231,76 @@
       },
       "expired": {
         "title": "เวลาชำระเงินหมดแล้ว",
-        "body": "กรุณาเลือกที่นั่งใหม่และเริ่มการชำระเงินอีกครั้ง"
+        "body": "ตรวจสอบการจองในบัตรของฉันก่อน เลือกที่นั่งใหม่ได้เมื่อการจองที่ยังไม่ชำระเงินสิ้นสุดแล้ว"
       },
       "aborted": {
         "title": "การชำระเงินถูกขัดจังหวะหรือไม่ได้รับอนุมัติ",
-        "body": "ตรวจสอบวิธีชำระเงินของคุณหรือใช้วิธีอื่น"
+        "body": "ตรวจสอบการจองเดิม แล้วลองอีกครั้งด้วยวิธีชำระเงินเดิม"
       },
       "cancelled": {
         "title": "การชำระเงินถูกยกเลิกแล้ว",
-        "body": "หากต้องการชำระอีกครั้ง ให้เริ่มการชำระเงินใหม่จากหน้าจองบัตร"
+        "body": "หากการจองยังไม่ชำระเงิน คุณสามารถลองคำสั่งซื้อเดิมอีกครั้งในหน้านี้"
       },
       "unknown": {
         "title": "ไม่สามารถชำระเงินให้เสร็จสมบูรณ์ได้",
-        "body": "ตรวจสอบวิธีชำระเงินของคุณหรือใช้วิธีอื่น"
+        "body": "ตรวจสอบการจองเดิม แล้วลองอีกครั้งด้วยวิธีชำระเงินเดิม"
       }
+    },
+    "seatSelection": {
+      "back": "กลับ",
+      "chooseDate": "เลือกวันที่",
+      "chooseShowtime": "เลือกรอบการแสดง",
+      "dateShowtime": "เลือกวันที่ / รอบ",
+      "showtimeSelected": "เลือกรอบแล้ว",
+      "noShowtimes": "ไม่มีรอบการแสดงในวันที่เลือก",
+      "selectedSeats": "ที่นั่งที่เลือก",
+      "selectionSummary": "สรุปที่นั่งที่เลือก",
+      "emptySelection": "ยังไม่ได้เลือกที่นั่ง เลือกที่นั่งเพื่อดูข้อมูลที่นี่",
+      "seatCount": "{count} ที่นั่ง",
+      "seatLabel": "{floor} แถว {row} ที่นั่ง {number}",
+      "removeSeat": "ยกเลิกการเลือก {seat}",
+      "orderTotal": "ยอดรวมการจอง",
+      "clearAll": "ยกเลิกการเลือกทั้งหมด",
+      "processing": "กำลังดำเนินการ…",
+      "chooseSeat": "กรุณาเลือกที่นั่ง",
+      "next": "ถัดไป",
+      "limit": "จองได้สูงสุด {count} ใบต่อคนสำหรับการแสดงนี้",
+      "changePolicy": "เปลี่ยนที่นั่งหลังชำระเงินไม่ได้ หากต้องการเปลี่ยนต้องยกเลิกและจองใหม่",
+      "seatTaken": "มีผู้ใช้อื่นเลือกที่นั่งนี้แล้ว",
+      "releaseFirst": "กรุณายกเลิกการเลือกที่นั่งอื่นก่อน",
+      "bookingInfo": "ข้อมูลการจอง",
+      "backToEvent": "กลับไปที่รายละเอียดการแสดง",
+      "noFloorSeats": "ชั้นนี้ไม่มีที่นั่งว่าง กรุณาตรวจสอบชั้นอื่น",
+      "chooseFloor": "เลือกชั้น",
+      "floorKeep": "ที่นั่งที่เลือกจะคงอยู่เมื่อเปลี่ยนชั้น",
+      "busy": "ไม่ว่าง",
+      "legend": "ประเภทที่นั่ง",
+      "excluded": "ที่นั่งสงวน / บัตรเชิญ",
+      "notSelectable": "เลือกไม่ได้",
+      "soldOrHeld": "ขายแล้ว / กำลังจอง",
+      "unavailable": "ไม่พร้อมให้เลือก",
+      "mapControls": "ปรับมุมมองผังที่นั่ง",
+      "zoomIn": "ขยาย",
+      "zoomOut": "ย่อ",
+      "fitMap": "ดูผังทั้งหมด",
+      "map": "ผังที่นั่ง",
+      "miniMap": "ภาพรวมผังที่นั่ง",
+      "mapError": "โหลดผังที่นั่งไม่สำเร็จ กรุณารีเฟรชแล้วลองอีกครั้ง",
+      "mapPending": "ผังที่นั่งยังไม่พร้อม กรุณาลองอีกครั้งในภายหลัง",
+      "refresh": "รีเฟรช",
+      "stage": "ตำแหน่งเวที: {position}",
+      "remaining": "เวลาที่เหลือ",
+      "remainingAria": "เหลือ {minutes} นาที {seconds} วินาที",
+      "timerWarning": "เหลือเวลาน้อยกว่า 3 นาที",
+      "expired": "หมดเวลาจองที่นั่งชั่วคราว",
+      "expiredBody": "หมดเวลาจองที่นั่งชั่วคราวแล้ว กรุณาเลือกที่นั่งอีกครั้ง",
+      "restart": "เริ่มใหม่",
+      "listSummary": "เลือกที่นั่งจากรายการ",
+      "listLabel": "รายการที่นั่ง",
+      "selectSeat": "เลือกที่นั่ง",
+      "deselectSeat": "ยกเลิกการเลือกที่นั่ง",
+      "totalSeatCount": "รวม {count} ที่นั่ง",
+      "selectionConflict": "ตรวจสอบที่นั่งว่างและจำนวนบัตรสูงสุดต่อคน แล้วลองอีกครั้ง"
     }
   },
   "locale": {
@@ -346,7 +437,8 @@
       "invalidCode": "รหัสยืนยันไม่ถูกต้อง",
       "verified": "ยืนยันอีเมลเรียบร้อยแล้ว",
       "throttled": "โปรดลองอีกครั้งในภายหลัง",
-      "systemError": "เกิดข้อผิดพลาดชั่วคราว โปรดลองอีกครั้ง"
+      "systemError": "เกิดข้อผิดพลาดชั่วคราว โปรดลองอีกครั้ง",
+      "deliveryFailed": "บัญชีของคุณได้รับการบันทึกแล้ว แต่ส่งอีเมลยืนยันไม่สำเร็จ โปรดขอรหัสใหม่หรือติดต่อศูนย์ช่วยเหลือ"
     },
     "otp": {
       "sent": "ส่งรหัสยืนยันแล้ว",
@@ -385,30 +477,45 @@
       "retryButton": "ลองเข้าสู่ระบบอีกครั้ง",
       "processing": "กำลังเข้าสู่ระบบ...",
       "invalidAccess": "ลิงก์เข้าสู่ระบบนี้ไม่ถูกต้อง"
+    },
+    "navigation": {
+      "verifyTitle": "ยืนยันอีเมล",
+      "verificationLogin": "ยืนยันอีเมลแล้ว เข้าสู่ระบบเพื่อจองต่อ",
+      "continue": "ดำเนินการต่อ",
+      "showPassword": "แสดงรหัสผ่าน",
+      "hidePassword": "ซ่อนรหัสผ่าน"
+    },
+    "validation": {
+      "email": "กรอกอีเมลที่ถูกต้อง",
+      "password": "กรอกรหัสผ่าน",
+      "confirm": "ยืนยันรหัสผ่าน",
+      "mismatch": "รหัสผ่านไม่ตรงกัน",
+      "rules": "ใช้อย่างน้อย 8 ตัวอักษร รวมตัวอักษร ตัวเลข และสัญลักษณ์",
+      "link": "ต้องใช้ลิงก์ยืนยันที่ถูกต้อง"
     }
   },
   "metadata": {
     "title": "Grabit - จองบัตรอีเวนต์สด",
     "description": "บริการจองบัตรคอนเสิร์ต นิทรรศการ กีฬา และอีเวนต์สด",
     "legal": {
-      "termsTitle": "Terms of Service — Grabit",
-      "termsDescription": "Terms for using Grabit and the rights and responsibilities of members and the company.",
-      "privacyTitle": "Privacy Policy — Grabit",
-      "privacyDescription": "How Grabit collects, uses, stores, and protects personal information.",
-      "marketingTitle": "Marketing Consent — Grabit",
-      "marketingDescription": "Marketing message categories, channels, and your right to withdraw consent."
+      "termsTitle": "ข้อกำหนดการใช้บริการ — Grabit",
+      "termsDescription": "ข้อกำหนดการใช้ Grabit รวมถึงสิทธิและหน้าที่ของสมาชิกและบริษัท",
+      "privacyTitle": "นโยบายความเป็นส่วนตัว — Grabit",
+      "privacyDescription": "วิธีที่ Grabit เก็บรวบรวม ใช้ จัดเก็บ และคุ้มครองข้อมูลส่วนบุคคล",
+      "marketingTitle": "ความยินยอมรับข่าวสารการตลาด — Grabit",
+      "marketingDescription": "ประเภทและช่องทางข่าวสารการตลาด รวมถึงสิทธิในการถอนความยินยอม"
     }
   },
   "commonErrors": {
     "default": "เกิดข้อผิดพลาดชั่วคราว โปรดลองอีกครั้งในภายหลัง",
-    "badRequest": "The request is invalid.",
-    "forbidden": "You do not have permission to access this.",
-    "notFound": "We could not find the requested information.",
-    "timeout": "The server response is delayed. Please try again shortly.",
-    "tooManyRequests": "Too many requests. Please try again shortly.",
-    "server": "A server error occurred. Please try again shortly.",
+    "badRequest": "คำขอไม่ถูกต้อง",
+    "forbidden": "คุณไม่มีสิทธิ์เข้าถึงข้อมูลนี้",
+    "notFound": "ไม่พบข้อมูลที่ต้องการ",
+    "timeout": "เซิร์ฟเวอร์ตอบกลับช้า กรุณาลองอีกครั้งในภายหลัง",
+    "tooManyRequests": "มีคำขอมากเกินไป กรุณาลองอีกครั้งในภายหลัง",
+    "server": "เซิร์ฟเวอร์เกิดข้อผิดพลาด กรุณาลองอีกครั้งในภายหลัง",
     "authExpired": "เซสชันหมดอายุ โปรดเข้าสู่ระบบอีกครั้ง",
-    "errorCode": "Error code: ERR-{status}",
+    "errorCode": "รหัสข้อผิดพลาด: ERR-{status}",
     "retry": "ลองอีกครั้ง",
     "home": "ไปหน้าแรก"
   },
@@ -434,79 +541,79 @@
       "agreeTerms": "โปรดยอมรับข้อกำหนด",
       "agreePaymentTerms": "โปรดยอมรับเงื่อนไขการชำระเงิน",
       "paymentMethod": "วิธีชำระเงิน",
-      "overseasDisclaimerAria": "Agree to overseas payment and refund notice",
+      "overseasDisclaimerAria": "ยอมรับประกาศการชำระเงินและคืนเงินต่างประเทศ",
       "paymentCancelled": "การชำระเงินถูกยกเลิก",
       "paymentFailed": "ชำระเงินไม่สำเร็จ โปรดลองอีกครั้ง",
-      "paymentRequestFailed": "Payment request failed.",
-      "lockExpired": "Your seat hold expired. Please choose seats again.",
-      "seatTaken": "Another user already selected this seat.",
-      "lockExpiredRedirect": "Your seat hold expired. Returning to seat selection."
+      "paymentRequestFailed": "ไม่สามารถเริ่มการชำระเงินได้",
+      "lockExpired": "หมดเวลาจองที่นั่งชั่วคราว กรุณาเลือกที่นั่งอีกครั้ง",
+      "seatTaken": "มีผู้ใช้อื่นเลือกที่นั่งนี้แล้ว",
+      "lockExpiredRedirect": "หมดเวลาจองที่นั่งชั่วคราว กำลังกลับไปเลือกที่นั่ง"
     },
     "complete": {
       "invalidAccess": "การเข้าถึงไม่ถูกต้อง",
       "checkReservations": "ตรวจสอบการจองของฉัน",
-      "failedBookingTitle": "Booking could not be completed",
-      "confirmFailedTitle": "Payment confirmation failed",
-      "confirmFailedBody": "Check your booking history or try payment again.",
-      "confirmUnknownBody": "We could not confirm the payment yet. Try checking again shortly or check your booking history.",
+      "failedBookingTitle": "ไม่สามารถดำเนินการจองให้เสร็จได้",
+      "confirmFailedTitle": "ยืนยันการชำระเงินไม่สำเร็จ",
+      "confirmFailedBody": "ตรวจสอบผลในประวัติการจองก่อนเริ่มชำระเงินอีกครั้ง",
+      "confirmUnknownBody": "ยังยืนยันผลการชำระเงินไม่ได้ กรุณาตรวจสอบอีกครั้งในภายหลังหรือดูประวัติการจอง",
       "retryStatus": "ตรวจสอบสถานะอีกครั้ง",
-      "statusCheckFailed": "Could not check payment status.",
-      "deadlineExpired": "The payment window expired at {deadline}.",
-      "pendingDeadline": "This order will wait for payment status until {deadline}."
+      "statusCheckFailed": "ไม่สามารถตรวจสอบสถานะการชำระเงินได้",
+      "deadlineExpired": "หมดเวลาชำระเงินเมื่อ {deadline}",
+      "pendingDeadline": "คำสั่งซื้อนี้จะรอผลการชำระเงินจนถึง {deadline}"
     },
     "widget": {
       "domesticTab": "ชำระเงินในเกาหลี",
       "overseasTab": "ชำระเงินต่างประเทศ",
-      "paymentUiAria": "Payment UI",
-      "paymentMethodAria": "Select payment method",
-      "widgetNotReady": "Payment widget is not initialized",
-      "widgetLoading": "Payment widget is loading",
+      "paymentUiAria": "หน้าชำระเงิน",
+      "paymentMethodAria": "เลือกวิธีชำระเงิน",
+      "widgetNotReady": "หน้าชำระเงินยังไม่พร้อม",
+      "widgetLoading": "กำลังโหลดหน้าชำระเงิน",
       "setupIncomplete": "ตั้งค่าการชำระเงินยังไม่เสร็จ โปรดติดต่อฝ่ายช่วยเหลือ",
-      "systemLoadFailed": "Could not load the payment system. Please refresh the page.",
-      "widgetLoadFailed": "Could not load the payment widget.",
+      "systemLoadFailed": "โหลดระบบชำระเงินไม่สำเร็จ กรุณารีเฟรชหน้า",
+      "widgetLoadFailed": "โหลดหน้าชำระเงินไม่สำเร็จ",
       "sdkInitLog": "Toss Payments SDK initialization failed:",
       "widgetRenderLog": "Payment widget rendering failed:",
-      "alipayDisabled": "Alipay payment setup is incomplete. Please contact support.",
-      "paypalDisabled": "PayPal payment setup is incomplete. Please contact support.",
-      "overseasCardDisabled": "Overseas card payment setup is incomplete. Please contact support.",
-      "foreignPaymentDisabled": "Overseas payment setup is incomplete. Please contact support.",
-      "overseasCardAmountMissing": "The overseas card payment amount is not ready.",
-      "overseasCardInvalidSetup": "Overseas card payment setup is invalid."
+      "alipayDisabled": "ยังไม่สามารถใช้ Alipay ได้ กรุณาติดต่อฝ่ายช่วยเหลือ",
+      "paypalDisabled": "ยังไม่สามารถใช้ PayPal ได้ กรุณาติดต่อฝ่ายช่วยเหลือ",
+      "overseasCardDisabled": "ยังไม่สามารถชำระด้วยบัตรต่างประเทศได้ กรุณาติดต่อฝ่ายช่วยเหลือ",
+      "foreignPaymentDisabled": "ยังไม่สามารถชำระเงินต่างประเทศได้ กรุณาติดต่อฝ่ายช่วยเหลือ",
+      "overseasCardAmountMissing": "ยังไม่มียอดชำระสำหรับบัตรต่างประเทศ",
+      "overseasCardInvalidSetup": "การตั้งค่าชำระด้วยบัตรต่างประเทศไม่ถูกต้อง"
     },
     "completeCard": {
       "title": "จองสำเร็จ",
       "reservationNumber": "หมายเลขการจอง",
-      "reservationNumberAria": "Booking number {reservationNumber}",
+      "reservationNumberAria": "หมายเลขการจอง {reservationNumber}",
       "performanceInfo": "ข้อมูลอีเวนต์",
-      "performanceName": "Event",
-      "performanceDate": "Date and time",
-      "venue": "Venue",
+      "performanceName": "การแสดง",
+      "performanceDate": "วันและเวลา",
+      "venue": "สถานที่",
       "seatInfo": "ข้อมูลที่นั่ง",
       "paymentInfo": "ข้อมูลการชำระเงิน",
-      "totalAmount": "Total paid",
-      "serviceFee": "Service fee",
+      "totalAmount": "ยอดที่ชำระ",
+      "serviceFee": "ค่าธรรมเนียม",
       "qrTicket": "บัตร QR",
-      "qrActive": "QR active",
-      "qrPending": "Checking",
-      "ticketValid": "Ticket valid",
-      "cancellationPending": "Cancellation pending",
-      "cancelled": "Cancelled",
-      "expired": "Expired",
-      "used": "Used",
-      "revoked": "Revoked",
-      "entered": "Entered",
-      "notEntered": "Not entered",
-      "unavailablePendingTitle": "Cancellation is being checked.",
-      "unavailablePendingDescription": "The QR ticket cannot be used until the partial cancellation result is confirmed.",
-      "unavailableCancelledTitle": "This ticket is cancelled.",
-      "unavailableCancelledDescription": "The QR ticket for this seat cannot be used.",
-      "unavailableExpiredTitle": "This ticket has expired.",
-      "unavailableExpiredDescription": "The QR ticket for this seat cannot be used.",
-      "unavailableDefaultTitle": "The QR ticket is not available yet.",
-      "unavailableDefaultDescription": "Refresh shortly or check again from My page.",
+      "qrActive": "QR ใช้งานได้",
+      "qrPending": "กำลังตรวจสอบ",
+      "ticketValid": "บัตรใช้งานได้",
+      "cancellationPending": "กำลังตรวจสอบการยกเลิก",
+      "cancelled": "ยกเลิกแล้ว",
+      "expired": "หมดอายุ",
+      "used": "ใช้แล้ว",
+      "revoked": "เพิกถอนแล้ว",
+      "entered": "เข้างานแล้ว",
+      "notEntered": "ยังไม่เข้างาน",
+      "unavailablePendingTitle": "กำลังตรวจสอบการยกเลิก",
+      "unavailablePendingDescription": "ยังใช้บัตร QR ไม่ได้จนกว่าจะยืนยันผลการยกเลิกบางที่นั่ง",
+      "unavailableCancelledTitle": "บัตรนี้ถูกยกเลิกแล้ว",
+      "unavailableCancelledDescription": "ใช้บัตร QR ของที่นั่งนี้ไม่ได้",
+      "unavailableExpiredTitle": "บัตรนี้หมดอายุแล้ว",
+      "unavailableExpiredDescription": "ใช้บัตร QR ของที่นั่งนี้ไม่ได้",
+      "unavailableDefaultTitle": "ยังแสดงบัตร QR ไม่ได้",
+      "unavailableDefaultDescription": "กรุณารีเฟรชในภายหลังหรือตรวจสอบอีกครั้งจากบัญชีของฉัน",
       "mypageCta": "ตรวจสอบใน My page",
       "homeCta": "ไปหน้าแรก",
-      "seatLabel": "{tierName} row {row} seat {number}",
+      "seatLabel": "{tierName} แถว {row} ที่นั่ง {number}",
       "paymentMethod": "วิธีชำระเงิน",
       "paidAt": "เวลาชำระเงิน",
       "cancellationDeadline": "กำหนดยกเลิก",
@@ -522,7 +629,8 @@
         "inactive": "ไม่พร้อมใช้",
         "empty": "ไม่มีสิทธิประโยชน์",
         "redeemedAt": "ใช้เมื่อ: {date}"
-      }
+      },
+      "ticketStatusLabel": "สถานะบัตร"
     }
   },
   "reservation": {
@@ -647,7 +755,7 @@
         "อื่นๆ"
       ],
       "title": "ข้อมูลคืนเงินและเปิดขายที่นั่งอีกครั้ง",
-      "description": "การจองทั้งหมดจะถูกยกเลิก ไม่สามารถยกเลิกเฉพาะบางที่นั่งได้ที่นี่",
+      "description": "ยกเลิกเฉพาะที่นั่งจากบัตรแต่ละใบหรือยกเลิกทั้งการจองได้ โปรดตรวจสอบยอดคืนและบัตรที่เหลือก่อนยืนยัน",
       "reasonLabel": "เหตุผลการยกเลิก",
       "reasonPlaceholder": "เลือกเหตุผลการยกเลิก",
       "refundAmount": "ยอดเงินคืนโดยประมาณ",
@@ -749,7 +857,10 @@
     "viewWallet": "ดู กระเป๋าบัตร",
     "editSettings": "แก้ไขการตั้งค่า",
     "marketingOn": "สมัครรับข้อมูลแล้ว",
-    "marketingOff": "ไม่ได้สมัครรับข้อมูล"
+    "marketingOff": "ไม่ได้สมัครรับข้อมูล",
+    "membership": "ระยะเวลาการเป็นสมาชิก",
+    "checking": "กำลังตรวจสอบการจอง",
+    "loadError": "ไม่สามารถโหลดการจองได้ โปรดลองอีกครั้ง"
   },
   "profile": {
     "email": "อีเมล",
@@ -779,7 +890,18 @@
     "cancel": "ยกเลิก",
     "confirmWithdraw": "ยืนยันการลบ",
     "emailVerified": "ยืนยันอีเมลแล้ว",
-    "emailUnverified": "ยังไม่ได้ยืนยันอีเมล"
+    "emailUnverified": "ยังไม่ได้ยืนยันอีเมล",
+    "accountStatus": "สถานะบัญชี",
+    "adminAccount": "ผู้ดูแลระบบ",
+    "buyerAccount": "สมาชิก",
+    "saved": "อัปเดตโปรไฟล์แล้ว",
+    "loggedOut": "ออกจากระบบแล้ว",
+    "withdrawn": "ปิดบัญชีแล้ว",
+    "withdrawBlocked": "โปรดดำเนินการกับการจองที่ยังใช้งานอยู่ก่อนปิดบัญชี",
+    "verifyEmail": "ยืนยันอีเมล",
+    "returnToBooking": "กลับไปจอง",
+    "changePhone": "เปลี่ยนหมายเลขโทรศัพท์",
+    "cancelPhoneChange": "ยกเลิกการเปลี่ยนหมายเลข"
   },
   "resetPassword": {
     "sentTitle": "ส่งอีเมลรีเซ็ตรหัสผ่านแล้ว",

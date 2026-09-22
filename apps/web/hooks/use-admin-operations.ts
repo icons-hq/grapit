@@ -23,6 +23,8 @@ export type OperationsInboxSlaState =
   | 'responded';
 
 export interface OperationsInboxFilters {
+  performanceId?: string;
+  showtimeId?: string;
   source?: OperationsInboxSource | '';
   category?: string;
   status?: 'open' | 'in_progress' | 'resolved' | 'archived' | '';
@@ -113,6 +115,8 @@ export interface ReassignOperationInput {
 
 function buildOperationsSearchParams(filters: OperationsInboxFilters) {
   const params = new URLSearchParams();
+  if (filters.performanceId) params.set('performanceId', filters.performanceId);
+  if (filters.showtimeId) params.set('showtimeId', filters.showtimeId);
 
   if (filters.source) params.set('source', filters.source);
   if (filters.category) params.set('category', filters.category);

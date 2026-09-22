@@ -1,6 +1,6 @@
-import { Inject, Injectable, InternalServerErrorException } from '@nestjs/common';
+import { ConflictException, Inject, Injectable, InternalServerErrorException, UnauthorizedException } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
-import { and, asc, desc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 import {
   parseFieldCheckInToken,
   ticketBenefitDisplayCopySchema,
@@ -14,8 +14,10 @@ import {
 
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
-  reservations,
   ticketBenefitEntitlements,
+  performances,
+  showtimes,
+  venues,
   ticketItems,
   ticketScanEvents,
   tickets,
@@ -44,20 +46,8 @@ export interface FieldScannerContext {
 type PriorScanContext = NonNullable<FieldCheckInConsumeResponse['priorScan']>;
 type FieldCheckInTicketContext = NonNullable<FieldCheckInVerifyResponse['ticket']>;
 type FieldBenefitEntitlementRow = typeof ticketBenefitEntitlements.$inferSelect;
-type AccountConsumableTicketRow = {
-  ticketId: string;
-  ticketItemId: string | null;
-  usedAt: Date | null;
-};
 type ScanEventDb = Pick<DrizzleDB, 'insert' | 'select' | 'update'>;
 type AuditDb = Pick<DrizzleDB, 'insert' | 'select'>;
-
-class TicketItemNotConsumableDuringScanError extends Error {
-  constructor() {
-    super('Ticket item became non-consumable during scan consume');
-    this.name = 'TicketItemNotConsumableDuringScanError';
-  }
-}
 
 @Injectable()
 export class FieldCheckInService {
@@ -66,6 +56,14 @@ export class FieldCheckInService {
     private readonly qrTicketService: QrTicketService,
     private readonly adminAuditService: AdminAuditService,
   ) {}
+
+  async listShowtimes() {
+    return this.db.select({ id: showtimes.id, eventId: performances.id, title: performances.title,
+      dateTime: showtimes.dateTime, venueName: venues.name })
+      .from(showtimes).innerJoin(performances, eq(showtimes.performanceId, performances.id))
+      .leftJoin(venues, eq(performances.venueId, venues.id))
+      .orderBy(desc(showtimes.dateTime)).limit(200);
+  }
 
   async verify(
     input: FieldCheckInVerifyRequest,
@@ -77,7 +75,8 @@ export class FieldCheckInService {
     let contract: QrTicketScannerContract;
     try {
       contract = await this.qrTicketService.verifyTicketForScannerContract(token);
-    } catch {
+    } catch (error) {
+      if (!(error instanceof UnauthorizedException)) throw error;
       const response: FieldCheckInVerifyResponse = {
         outcome: 'tampered',
         processable: false,
@@ -103,13 +102,14 @@ export class FieldCheckInService {
 
     const outcome = classifyScannerContract(contract, input.showtimeId);
     const processable = outcome === 'processable';
-    const benefitEntitlements = await this.loadBenefitEntitlementsSafely(contract);
+    const benefits = await this.loadBenefitEntitlementsSafely(contract);
     const response: FieldCheckInVerifyResponse = {
       outcome,
       processable,
-      ticket: toTicketContext(contract, token, benefitEntitlements),
+      ticket: toTicketContext(contract, token, benefits.entitlements, benefits.available),
       rejectionReason: processable ? null : rejectionReasonFor(outcome),
       verifiedAt,
+      ...(outcome === 'already_used' ? { priorScan: await this.findPriorSuccessfulScan(this.db, contract) } : {}),
     };
 
     if (!processable) {
@@ -134,294 +134,61 @@ export class FieldCheckInService {
     input: FieldCheckInConsumeRequest,
     context: FieldScannerContext,
   ): Promise<FieldCheckInConsumeResponse> {
-    const token = input.token;
-    const consumedAt = new Date();
-
-    let contract: QrTicketScannerContract;
+    let verified: QrTicketScannerContract;
     try {
-      contract = await this.qrTicketService.verifyTicketForScannerContract(token);
-    } catch {
-      await this.writeAudit({
-        action: 'field.scan.consume',
-        status: 'denied',
-        resourceId: redactedTokenRef(token),
-        context,
-        after: {
-          outcome: 'tampered',
-          redactedTokenRef: redactedTokenRef(token),
-        },
-      });
-      return {
-        outcome: 'tampered',
-        ticket: null,
-        scanEventId: null,
-        rejectionReason: rejectionReasonFor('tampered'),
-      };
-    }
-
-    const precheckOutcome = classifyScannerContract(contract, input.showtimeId);
-    const ticketContext = toTicketContext(contract, token);
-
-    if (precheckOutcome !== 'processable') {
-      const scanEventId = await this.recordScanEvent(this.db, {
-        contract,
-        context,
-        outcome: scanResultForOutcome(precheckOutcome),
-        deviceAttemptId: input.deviceAttemptId,
-        token,
-        rejectionReason: rejectionReasonFor(precheckOutcome),
-      });
-      await this.writeAudit({
-        action: 'field.scan.consume',
-        status: 'denied',
-        resourceId: ticketResourceId(contract),
-        context,
-        after: {
-          outcome: precheckOutcome,
-          redactedTokenRef: redactedTokenRef(token),
-          scanEventId,
-        },
-      });
-
-      return {
-        outcome: precheckOutcome,
-        ticket: ticketContext,
-        scanEventId,
-        rejectionReason: rejectionReasonFor(precheckOutcome),
-      };
-    }
-
-    try {
-      return await this.runInTransaction(async (tx) => {
-        const priorScan = await this.findPriorSuccessfulScan(tx, contract);
-        if (priorScan) {
-          const scanEventId = await this.recordScanEvent(tx, {
-            contract,
-            context,
-            outcome: 'duplicate',
-            deviceAttemptId: input.deviceAttemptId,
-            token,
-            rejectionReason: rejectionReasonFor('duplicate'),
-          });
-          await this.writeAudit({
-            action: 'field.scan.consume',
-            status: 'denied',
-            resourceId: ticketResourceId(contract),
-            context,
-            after: {
-              outcome: 'duplicate',
-              redactedTokenRef: redactedTokenRef(token),
-              scanEventId,
-            },
-          }, tx);
-
-          return {
-            outcome: 'duplicate',
-            ticket: ticketContext,
-            scanEventId,
-            rejectionReason: rejectionReasonFor('duplicate'),
-            priorScan,
-          };
-        }
-
-        const accountTickets = await this.loadConsumableAccountTickets(tx, contract);
-        const accountTicketIds = accountTickets.map((ticket) => ticket.ticketId);
-        const accountTicketItemIds = accountTickets
-          .map((ticket) => ticket.ticketItemId)
-          .filter((ticketItemId): ticketItemId is string => Boolean(ticketItemId));
-
-        if (
-          accountTicketIds.length === 0
-          || !accountTicketItemIds.includes(contract.ticketItemId)
-        ) {
-          const laterPriorScan = await this.findPriorSuccessfulScan(tx, contract);
-          const scanEventId = await this.recordScanEvent(tx, {
-            contract,
-            context,
-            outcome: 'already_used',
-            deviceAttemptId: input.deviceAttemptId,
-            token,
-            rejectionReason: rejectionReasonFor('already_used'),
-          });
-          await this.writeAudit({
-            action: 'field.scan.consume',
-            status: 'denied',
-            resourceId: ticketResourceId(contract),
-            context,
-            after: {
-              outcome: 'already_used',
-              redactedTokenRef: redactedTokenRef(token),
-              scanEventId,
-            },
-          }, tx);
-
-          return {
-            outcome: 'already_used',
-            ticket: ticketContext,
-            scanEventId,
-            rejectionReason: rejectionReasonFor('already_used'),
-            priorScan: laterPriorScan,
-          };
-        }
-
-        const updatedTickets = await tx
-          .update(tickets)
-          .set({
-            usedAt: consumedAt,
-            updatedAt: consumedAt,
-          })
-          .where(
-            and(
-              eq(tickets.showtimeId, contract.showtimeId),
-              inArray(tickets.id, accountTicketIds),
-              eq(tickets.status, 'active'),
-              isNull(tickets.usedAt),
-            ),
-          )
-          .returning({
-            ticketId: tickets.id,
-            ticketItemId: tickets.ticketItemId,
-            usedAt: tickets.usedAt,
-          });
-        const updated = updatedTickets.find((ticket) =>
-          ticket.ticketItemId === contract.ticketItemId
-          || ticket.ticketId === contract.ticketId,
-        );
-
-        if (!updated) {
-          const laterPriorScan = await this.findPriorSuccessfulScan(tx, contract);
-          const scanEventId = await this.recordScanEvent(tx, {
-            contract,
-            context,
-            outcome: 'already_used',
-            deviceAttemptId: input.deviceAttemptId,
-            token,
-            rejectionReason: rejectionReasonFor('already_used'),
-          });
-          await this.writeAudit({
-            action: 'field.scan.consume',
-            status: 'denied',
-            resourceId: ticketResourceId(contract),
-            context,
-            after: {
-              outcome: 'already_used',
-              redactedTokenRef: redactedTokenRef(token),
-              scanEventId,
-            },
-          }, tx);
-
-          return {
-            outcome: 'already_used',
-            ticket: ticketContext,
-            scanEventId,
-            rejectionReason: rejectionReasonFor('already_used'),
-            priorScan: laterPriorScan,
-          };
-        }
-
-        const updatedTicketItems = await tx
-          .update(ticketItems)
-          .set({
-            admissionState: 'entered',
-            enteredAt: consumedAt,
-            updatedAt: consumedAt,
-          })
-          .where(
-            and(
-              inArray(ticketItems.id, accountTicketItemIds),
-              eq(ticketItems.status, 'active'),
-              eq(ticketItems.admissionState, 'not_entered'),
-            ),
-          )
-          .returning({ ticketItemId: ticketItems.id });
-
-        if (
-          updatedTicketItems.length !== accountTicketItemIds.length
-          || !updatedTicketItems.some((ticketItem) =>
-            ticketItem.ticketItemId === contract.ticketItemId,
-          )
-        ) {
-          throw new TicketItemNotConsumableDuringScanError();
-        }
-
-        const scanEventId = await this.recordScanEvent(tx, {
-          contract: {
-            ...contract,
-            ticketId: contract.ticketId ?? updated.ticketId,
-          },
-          context,
-          outcome: 'success',
-          deviceAttemptId: input.deviceAttemptId,
-          token,
-        });
-        await this.writeAudit({
-          action: 'field.scan.consume',
-          status: 'success',
-          resourceId: ticketResourceId(contract),
-          context,
-          after: {
-            outcome: 'entered',
-            redactedTokenRef: redactedTokenRef(token),
-            scanEventId,
-            consumedTicketItemCount: updatedTicketItems.length,
-          },
-        }, tx);
-
-        return {
-          outcome: 'entered',
-          ticket: ticketContext,
-          scanEventId,
-          consumedAt: (updated.usedAt ?? consumedAt).toISOString(),
-        };
-      });
+      verified = await this.qrTicketService.verifyTicketForScannerContract(input.token);
     } catch (error) {
-      if (!(error instanceof TicketItemNotConsumableDuringScanError)) {
-        throw error;
+      if (!(error instanceof UnauthorizedException)) throw error;
+      await this.writeAudit({ action: 'field.scan.consume', status: 'denied', resourceId: redactedTokenRef(input.token), context,
+        after: { outcome: 'tampered', redactedTokenRef: redactedTokenRef(input.token) } });
+      return { outcome: 'tampered', ticket: null, scanEventId: null, rejectionReason: rejectionReasonFor('tampered') };
+    }
+
+    return this.db.transaction(async (tx) => {
+      // An attempt has one receipt even if a response is lost or devices retry concurrently.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${input.deviceAttemptId}, 0))`);
+      const [receipt] = await tx.select().from(ticketScanEvents)
+        .where(eq(ticketScanEvents.deviceAttemptId, input.deviceAttemptId)).limit(1);
+      if (receipt) {
+        if (receipt.ticketItemId !== verified.ticketItemId || (receipt.metadata?.['requestedShowtimeId'] ?? receipt.showtimeId) !== input.showtimeId
+          || receipt.scannerUserId !== context.scannerUserId || receipt.metadata?.['redactedTokenRef'] !== redactedTokenRef(input.token)) {
+          throw new ConflictException('다른 검표에 사용된 요청입니다. 티켓을 다시 확인해주세요.');
+        }
+        return {
+          outcome: receipt.result === 'success' ? 'entered' : receipt.result as FieldCheckInOutcome,
+          ticket: toTicketContext(verified, input.token), scanEventId: receipt.id,
+          consumedAt: receipt.result === 'success' ? receipt.scannedAt.toISOString() : null,
+          rejectionReason: receipt.rejectionReason,
+        };
       }
 
-      const scanEventId = await this.recordScanEvent(this.db, {
-        contract: {
-          ...contract,
-        },
-        context,
-        outcome: 'refunded_cancelled',
-        deviceAttemptId: input.deviceAttemptId,
-        token,
-        rejectionReason: rejectionReasonFor('refunded_cancelled'),
-      });
-      await this.writeAudit({
-        action: 'field.scan.consume',
-        status: 'denied',
-        resourceId: ticketResourceId(contract),
-        context,
-        after: {
-          outcome: 'refunded_cancelled',
-          redactedTokenRef: redactedTokenRef(token),
-          scanEventId,
-        },
-      });
-
-      return {
-        outcome: 'refunded_cancelled',
-        ticket: ticketContext,
-        scanEventId,
-        rejectionReason: rejectionReasonFor('refunded_cancelled'),
-      };
-    }
-  }
-
-  private async runInTransaction<T>(
-    operation: (db: ScanEventDb) => Promise<T>,
-  ): Promise<T> {
-    const transactionResult = this.db.transaction?.((tx) =>
-      operation(tx as ScanEventDb),
-    );
-
-    if (transactionResult && typeof transactionResult.then === 'function') {
-      return transactionResult;
-    }
-
-    return operation(this.db);
+      // Match cancellation's lock order. A concurrent cancellation or entry must
+      // finish before we re-read the authoritative ticket and credential state.
+      await tx.execute(sql`SELECT r.id FROM reservations r
+        INNER JOIN payments p ON p.id = ${verified.paymentId} AND p.reservation_id = r.id
+        INNER JOIN ticket_items ti ON ti.id = ${verified.ticketItemId} AND ti.reservation_id = r.id AND ti.payment_id = p.id
+        WHERE r.id = ${verified.reservationId} FOR UPDATE OF r, p, ti`);
+      await tx.execute(sql`SELECT id FROM tickets WHERE id = ${verified.ticketId} FOR UPDATE`);
+      const contract = await this.qrTicketService.verifyTicketForScannerContract(input.token, tx);
+      const outcome = classifyScannerContract(contract, input.showtimeId);
+      const priorScan = outcome === 'already_used' ? await this.findPriorSuccessfulScan(tx, contract) : null;
+      const consumedAt = new Date();
+      if (outcome === 'processable') {
+        await tx.update(ticketItems).set({ admissionState: 'entered', enteredAt: consumedAt, updatedAt: consumedAt })
+          .where(and(eq(ticketItems.id, contract.ticketItemId), eq(ticketItems.status, 'active'), eq(ticketItems.admissionState, 'not_entered')));
+        await tx.update(tickets).set({ usedAt: consumedAt, updatedAt: consumedAt })
+          .where(and(eq(tickets.id, contract.ticketId!), eq(tickets.status, 'active'), isNull(tickets.usedAt)));
+      }
+      const entered = outcome === 'processable';
+      const scanEventId = await this.recordScanEvent(tx, { contract, context, token: input.token,
+        deviceAttemptId: input.deviceAttemptId, requestedShowtimeId: input.showtimeId, outcome: entered ? 'success' : scanResultForOutcome(outcome),
+        rejectionReason: entered ? null : rejectionReasonFor(outcome) });
+      await this.writeAudit({ action: 'field.scan.consume', status: entered ? 'success' : 'denied', resourceId: ticketResourceId(contract), context,
+        after: { outcome: entered ? 'entered' : outcome, scanEventId, redactedTokenRef: redactedTokenRef(input.token),
+          admissionUnit: 'ticket_item', consumedTicketItemCount: entered ? 1 : 0 } }, tx);
+      return { outcome: entered ? 'entered' : outcome, ticket: toTicketContext(contract, input.token), scanEventId,
+        consumedAt: entered ? consumedAt.toISOString() : null, rejectionReason: entered ? null : rejectionReasonFor(outcome), priorScan };
+    });
   }
 
   private async findPriorSuccessfulScan(
@@ -449,7 +216,7 @@ export class FieldCheckInService {
     const prior = rows[0];
 
     if (!prior) {
-      return null;
+      return contract.enteredAt ? { scannedAt: contract.enteredAt } : null;
     }
 
     return {
@@ -459,37 +226,6 @@ export class FieldCheckInService {
         ? maskContextValue(prior.deviceAttemptId)
         : undefined,
     };
-  }
-
-  private async loadConsumableAccountTickets(
-    db: ScanEventDb,
-    contract: QrTicketScannerContract,
-  ): Promise<AccountConsumableTicketRow[]> {
-    const rows = await db
-      .select({
-        ticketId: tickets.id,
-        ticketItemId: tickets.ticketItemId,
-        usedAt: tickets.usedAt,
-      })
-      .from(tickets)
-      .innerJoin(ticketItems, eq(tickets.ticketItemId, ticketItems.id))
-      .innerJoin(reservations, eq(tickets.reservationId, reservations.id))
-      .where(
-        and(
-          eq(reservations.userId, contract.userId),
-          eq(reservations.showtimeId, contract.showtimeId),
-          eq(reservations.status, 'CONFIRMED'),
-          eq(tickets.showtimeId, contract.showtimeId),
-          eq(tickets.status, 'active'),
-          isNull(tickets.usedAt),
-          eq(ticketItems.showtimeId, contract.showtimeId),
-          eq(ticketItems.status, 'active'),
-          eq(ticketItems.admissionState, 'not_entered'),
-        ),
-      )
-      .orderBy(asc(ticketItems.createdAt), asc(ticketItems.id));
-
-    return rows;
   }
 
   private async loadBenefitEntitlements(
@@ -529,11 +265,11 @@ export class FieldCheckInService {
 
   private async loadBenefitEntitlementsSafely(
     contract: QrTicketScannerContract,
-  ): Promise<FieldBenefitEntitlement[]> {
+  ): Promise<{ entitlements: FieldBenefitEntitlement[]; available: boolean }> {
     try {
-      return await this.loadBenefitEntitlements(contract);
+      return { entitlements: await this.loadBenefitEntitlements(contract), available: true };
     } catch {
-      return [];
+      return { entitlements: [], available: false };
     }
   }
 
@@ -544,6 +280,7 @@ export class FieldCheckInService {
       context: FieldScannerContext;
       outcome: 'success' | 'duplicate' | 'tampered' | 'refunded_cancelled' | 'expired' | 'wrong_showtime' | 'already_used';
       deviceAttemptId: string;
+      requestedShowtimeId: string;
       token: string;
       rejectionReason?: string | null;
     },
@@ -571,6 +308,7 @@ export class FieldCheckInService {
         metadata: {
           redactedTokenRef: redactedTokenRef(input.token),
           performanceId: input.contract.performanceId,
+          requestedShowtimeId: input.requestedShowtimeId,
           ticketItemId: input.contract.ticketItemId,
         },
       })
@@ -634,10 +372,12 @@ function toTicketContext(
   contract: QrTicketScannerContract,
   token: string,
   benefitEntitlements: FieldBenefitEntitlement[] = [],
+  benefitsAvailable = true,
 ): FieldCheckInTicketContext {
   return {
     reservationNumber: contract.reservationNumber ?? contract.reservationId,
     performanceTitle: contract.performanceTitle,
+    venueName: contract.venueName,
     showtimeId: contract.showtimeId,
     showtimeLabel: contract.showtimeAt,
     seatLabels: contract.seatLabels ?? [],
@@ -645,6 +385,7 @@ function toTicketContext(
     redactedTokenRef: redactedTokenRef(token),
     maskedJti: contract.maskedJti,
     benefitEntitlements,
+    benefitsAvailable,
   };
 }
 

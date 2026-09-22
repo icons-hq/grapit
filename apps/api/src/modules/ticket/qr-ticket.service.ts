@@ -113,6 +113,7 @@ type TicketEmailContextRow = {
 };
 
 export interface QrTicketTokenPayload {
+  exp?: number;
   type: 'qr-ticket';
   jti: string;
   reservationId: string;
@@ -142,6 +143,7 @@ export interface QrTicketScannerContract {
   seatLabels: string[];
   maskedJti: string;
   verifiedAt: string;
+  enteredAt?: string | null;
 }
 
 @Injectable()
@@ -375,7 +377,7 @@ export class QrTicketService implements OnModuleInit {
     return verified;
   }
 
-  private async verifyTicketPayload(token: string): Promise<QrTicketTokenPayload> {
+  private async verifyTicketPayload(token: string, allowExpiredForScanner = false): Promise<QrTicketTokenPayload> {
     const decoded = this.jwtService.decode<Record<string, unknown> | null>(token);
     const secretVersion =
       decoded && typeof decoded === 'object' && typeof decoded['secretVersion'] === 'string'
@@ -386,10 +388,18 @@ export class QrTicketService implements OnModuleInit {
       throw new UnauthorizedException('유효하지 않은 QR 티켓입니다');
     }
 
-    const verified = await this.jwtService.verifyAsync<QrTicketTokenPayload>(token, {
-      secret: this.getVerificationSecret(secretVersion),
-      algorithms: ['HS256'],
-    });
+    const secret = this.getVerificationSecret(secretVersion);
+    let verified: QrTicketTokenPayload;
+    try {
+      verified = await this.jwtService.verifyAsync<QrTicketTokenPayload>(token, {
+        secret, algorithms: ['HS256'], ignoreExpiration: allowExpiredForScanner,
+      });
+    } catch (error) {
+      if (error instanceof Error && ['JsonWebTokenError', 'TokenExpiredError', 'NotBeforeError'].includes(error.name)) {
+        throw new UnauthorizedException('유효하지 않은 QR 티켓입니다');
+      }
+      throw error;
+    }
 
     if (
       verified.type !== 'qr-ticket'
@@ -409,14 +419,17 @@ export class QrTicketService implements OnModuleInit {
     return verified;
   }
 
-  async verifyTicketForScannerContract(token: string): Promise<QrTicketScannerContract> {
-    const payload = await this.verifyTicketPayload(token);
-    const [row] = await this.db
+  async verifyTicketForScannerContract(token: string, db: Pick<DrizzleDB, 'select'> = this.db): Promise<QrTicketScannerContract> {
+    const payload = await this.verifyTicketPayload(token, true);
+    const [row] = await db
       .select({
         ticketId: tickets.id,
         ticketItemId: ticketItems.id,
         ticketItemStatus: ticketItems.status,
         ticketItemAdmissionState: ticketItems.admissionState,
+        enteredAt: ticketItems.enteredAt,
+        reservationStatus: reservations.status,
+        paymentStatus: payments.status,
         status: tickets.status,
         expiresAt: tickets.expiresAt,
         usedAt: tickets.usedAt,
@@ -455,15 +468,10 @@ export class QrTicketService implements OnModuleInit {
           eq(tickets.reservationId, payload.reservationId),
           eq(tickets.paymentId, payload.paymentId),
           eq(tickets.showtimeId, payload.showtimeId),
-          eq(reservations.status, 'CONFIRMED'),
-          eq(payments.status, 'DONE'),
         ),
       );
 
     if (!row) {
-      throw new UnauthorizedException('사용할 수 없는 QR 티켓입니다');
-    }
-    if (row.ticketItemStatus !== 'active') {
       throw new UnauthorizedException('사용할 수 없는 QR 티켓입니다');
     }
 
@@ -472,9 +480,14 @@ export class QrTicketService implements OnModuleInit {
       ticketId: row.ticketId,
       ticketItemId: row.ticketItemId,
       userId: row.userId,
-      ticketStatus: row.ticketItemAdmissionState === 'entered'
-        ? 'USED'
-        : this.mapScannerStatus(row),
+      ticketStatus: row.ticketItemStatus === 'expired' || (typeof payload.exp === 'number' && payload.exp <= Date.now() / 1000)
+        ? 'EXPIRED'
+        : row.ticketItemStatus !== 'active' || row.reservationStatus !== 'CONFIRMED' || row.paymentStatus !== 'DONE'
+          ? 'REVOKED'
+          : this.mapCredentialStatus(row) !== 'ACTIVE'
+            ? this.mapCredentialStatus(row)
+            : row.ticketItemAdmissionState === 'entered' ? 'USED' : this.mapScannerStatus(row),
+      enteredAt: (row.enteredAt ?? row.usedAt)?.toISOString() ?? null,
       reservationNumber: row.reservationNumber,
       reservationId: row.reservationId,
       paymentId: row.paymentId,
@@ -1066,7 +1079,7 @@ export class QrTicketService implements OnModuleInit {
   }
 
   private buildSeatLabels(seatIdentity: QrTicketSeatIdentity): string[] {
-    return [`${seatIdentity.tierName} ${seatIdentity.row}열 ${seatIdentity.number}번`];
+    return [`${seatIdentity.floorLabel || seatIdentity.floorKey} · ${seatIdentity.tierName} ${seatIdentity.row}열 ${seatIdentity.number}번`];
   }
 
   private ticketRecordFields() {

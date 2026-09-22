@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
   DEFAULT_LOCALE,
   isSupportedLocale,
@@ -64,6 +64,13 @@ export async function fetchReviewedPerformanceTranslations(
         eq(translationSources.sourceLocale, DEFAULT_LOCALE),
         eq(translationDrafts.targetLocale, locale),
         eq(translationDrafts.status, 'published'),
+        sql`exists (select 1 from performances as current_performance
+          where current_performance.id = ${translationSources.entityId}
+            and ${translationSources.sourceText} = case ${translationSources.field}
+              when 'title' then current_performance.title
+              when 'description' then current_performance.description
+              when 'salesInfo' then current_performance.sales_info
+            end)`,
         eq(
           translationDrafts.sourceContentHash,
           translationSources.contentHash,

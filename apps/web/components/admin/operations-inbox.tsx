@@ -1,6 +1,8 @@
 'use client';
 
-import { useMemo, useState, type FormEvent } from 'react';
+import { useMemo, useRef, useState, type FormEvent } from 'react';
+import Link from 'next/link';
+import { useAdminEventContext } from './admin-event-context';
 import { AlertTriangle, MessageSquareReply, Search, UserRoundPlus } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -110,16 +112,40 @@ export function OperationsInbox({
   onAnswer,
   onReassign,
 }: OperationsInboxProps) {
+  const context = useAdminEventContext();
   const [priority, setPriority] = useState<OperationsInboxPriority | ''>(
     filters?.priority ?? '',
   );
   const [category, setCategory] = useState(filters?.category ?? '');
-  const [selectedRow, setSelectedRow] = useState<OperationsInboxRow | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedRow = isLoading || isError ? null : rows.find((row) => row.id === selectedId);
   const [answer, setAnswer] = useState('');
   const [reason, setReason] = useState('');
   const [assigneeUserId, setAssigneeUserId] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const actionPending = useRef(false);
 
   const sortedRows = useMemo(() => sortOperationsRows(rows), [rows]);
+
+  function selectRow(id: string) {
+    if (actionPending.current || selectedId === id) return;
+    setSelectedId(id);
+    setAnswer('');
+    setReason('');
+    setAssigneeUserId('');
+    setSaveError(null);
+  }
+
+  async function saveAction(action: () => Promise<unknown> | void, onSuccess: () => void) {
+    if (actionPending.current) return;
+    actionPending.current = true;
+    setIsSaving(true);
+    setSaveError(null);
+    try { await action(); onSuccess(); }
+    catch { setSaveError('저장하지 못했습니다. 입력 내용은 유지됩니다. 연결을 확인하고 다시 시도해주세요.'); }
+    finally { actionPending.current = false; setIsSaving(false); }
+  }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -132,29 +158,25 @@ export function OperationsInbox({
 
   async function handleAnswer(markResolved = false) {
     if (!selectedRow || !answer.trim()) return;
-    await onAnswer({
+    await saveAction(() => onAnswer({
       id: selectedRow.id,
       body: answer.trim(),
       markResolved,
-    });
-    setAnswer('');
+    }), () => setAnswer(''));
   }
 
   async function handleEscalate() {
     if (!selectedRow || !reason.trim()) return;
-    await onEscalate({ id: selectedRow.id, reason: reason.trim() });
-    setReason('');
+    await saveAction(() => onEscalate({ id: selectedRow.id, reason: reason.trim() }), () => setReason(''));
   }
 
   async function handleReassign() {
     if (!selectedRow || !reason.trim()) return;
-    await onReassign({
+    await saveAction(() => onReassign({
       id: selectedRow.id,
       assigneeUserId: assigneeUserId.trim() || null,
       reason: reason.trim(),
-    });
-    setAssigneeUserId('');
-    setReason('');
+    }), () => { setAssigneeUserId(''); setReason(''); });
   }
 
   return (
@@ -237,7 +259,7 @@ export function OperationsInbox({
                   </TableRow>
                 ))}
 
-              {!isLoading && sortedRows.length === 0 && (
+              {!isLoading && !isError && sortedRows.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={6} className="py-12 text-center">
                     <p className="text-base font-semibold text-gray-900">
@@ -263,11 +285,11 @@ export function OperationsInbox({
                       selectedRow?.id === row.id && 'bg-[#F3EFFF]',
                       row.escalation.escalated && 'border-l-4 border-l-[#C62828]',
                     )}
-                    onClick={() => setSelectedRow(row)}
+                    onClick={() => selectRow(row.id)}
                     onKeyDown={(event) => {
                       if (event.key === 'Enter' || event.key === ' ') {
                         event.preventDefault();
-                        setSelectedRow(row);
+                        selectRow(row.id);
                       }
                     }}
                   >
@@ -320,11 +342,15 @@ export function OperationsInbox({
         <aside className="rounded-lg bg-white p-4 shadow-sm" aria-label="운영 항목 상세">
           {selectedRow ? (
             <div className="space-y-4">
+              {saveError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{saveError}</p>}
+              {isSaving && <p role="status" className="text-sm text-gray-600">변경 사항을 저장하고 있습니다.</p>}
               <div>
                 <h2 className="text-heading font-semibold leading-[1.2]">
                   {selectedRow.subject}
                 </h2>
                 <p className="mt-2 text-sm text-gray-600">{selectedRow.summary ?? '요약 없음'}</p>
+                {selectedRow.reservationId && <Link className="mt-3 inline-block text-sm font-semibold text-violet-700 underline"
+                  href={context?.href(`/admin/bookings?bookingId=${selectedRow.reservationId}`) ?? `/admin/bookings?bookingId=${selectedRow.reservationId}`}>연결된 예매·결제·티켓 확인 ›</Link>}
               </div>
               <dl className="grid gap-3 text-sm">
                 <div>
@@ -344,6 +370,7 @@ export function OperationsInbox({
                 <Label htmlFor="operations-answer">답변</Label>
                 <Textarea
                   id="operations-answer"
+                  disabled={isSaving}
                   value={answer}
                   onChange={(event) => setAnswer(event.target.value)}
                   placeholder="운영 답변을 입력하세요"
@@ -353,7 +380,7 @@ export function OperationsInbox({
                     type="button"
                     variant="outline"
                     onClick={() => void handleAnswer(false)}
-                    disabled={!answer.trim()}
+                    disabled={isSaving || !answer.trim()}
                   >
                     <MessageSquareReply className="h-4 w-4" />
                     답변 저장
@@ -361,7 +388,7 @@ export function OperationsInbox({
                   <Button
                     type="button"
                     onClick={() => void handleAnswer(true)}
-                    disabled={!answer.trim()}
+                    disabled={isSaving || !answer.trim()}
                   >
                     해결 처리
                   </Button>
@@ -371,11 +398,13 @@ export function OperationsInbox({
                 <Label htmlFor="operations-reason">변경 사유</Label>
                 <Textarea
                   id="operations-reason"
+                  disabled={isSaving}
                   value={reason}
                   onChange={(event) => setReason(event.target.value)}
                   placeholder="에스컬레이션 또는 담당자 변경 사유"
                 />
                 <Input
+                  disabled={isSaving}
                   value={assigneeUserId}
                   onChange={(event) => setAssigneeUserId(event.target.value)}
                   placeholder="담당자 userId"
@@ -386,7 +415,7 @@ export function OperationsInbox({
                     type="button"
                     variant="outline"
                     onClick={() => void handleReassign()}
-                    disabled={!reason.trim()}
+                    disabled={isSaving || !reason.trim()}
                   >
                     <UserRoundPlus className="h-4 w-4" />
                     담당 변경
@@ -395,7 +424,7 @@ export function OperationsInbox({
                     type="button"
                     variant="destructive"
                     onClick={() => void handleEscalate()}
-                    disabled={!reason.trim()}
+                    disabled={isSaving || !reason.trim()}
                   >
                     <AlertTriangle className="h-4 w-4" />
                     에스컬레이션

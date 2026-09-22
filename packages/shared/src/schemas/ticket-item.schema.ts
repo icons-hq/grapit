@@ -36,8 +36,10 @@ export const ticketItemCancellationSchema = z.object({
   cancellationFee: z.number().int().min(0),
   serviceFeeRefund: z.number().int().min(0),
   refundableAmount: z.number().int().min(0),
+  providerRefund: z.object({ currency: z.enum(['KRW', 'USD']), amountMinor: z.number().int().nonnegative(),
+    amountDecimal: z.string() }).nullable().optional(),
   refundStatus: z.enum(['REQUESTED', 'SENT_TO_PG', 'PROCESSING_AT_PG', 'COMPLETED', 'FAILED']),
-  reopenState: z.enum(['HELD_CANCELLED', 'AVAILABLE', 'MANUAL_OPENED']),
+  reopenState: z.enum(['NOT_REQUIRED', 'HELD_CANCELLED', 'AVAILABLE', 'MANUAL_OPENED']),
   reopenAt: isoDatetime('좌석 재오픈 시각').nullable().optional(),
 });
 

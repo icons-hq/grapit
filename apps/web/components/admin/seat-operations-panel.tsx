@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import { AlertTriangle, History, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
@@ -32,6 +33,11 @@ import {
   type AdminSeatOperationPayload,
 } from '@/hooks/use-admin-seat-operations';
 import type { AdminSeatOperationHistory } from '@grabit/shared';
+import { normalizeSeatIdentity, resolveAdminCapabilitySnapshot } from '@grabit/shared';
+import { useAuthStore } from '@/stores/use-auth-store';
+import { useAdminEventContext } from './admin-event-context';
+import { useAdminPerformanceDetail } from '@/hooks/use-admin';
+import { formatAdminKstDateTime } from '@/lib/admin-datetime';
 
 type SeatPanelAction = 'disable' | 'reactivate';
 
@@ -77,7 +83,13 @@ export function SeatOperationsPanel({
   initialSeatKey = '',
   className,
 }: SeatOperationsPanelProps) {
-  const [showtimeId, setShowtimeId] = useState(initialShowtimeId);
+  const user = useAuthStore((state) => state.user);
+  const capability = resolveAdminCapabilitySnapshot(user);
+  const canPerform = (operation: SeatPanelAction) => capability.superuser || capability.capabilities.includes(`seat.${operation}`);
+  const context = useAdminEventContext();
+  const selected = useAdminPerformanceDetail(context?.performanceId ?? '');
+  const [localShowtimeId, setShowtimeId] = useState(initialShowtimeId);
+  const showtimeId = context?.showtimeId ?? localShowtimeId;
   const [seatKey, setSeatKey] = useState(initialSeatKey);
   const [action, setAction] = useState<SeatPanelAction | null>(null);
   const [reason, setReason] = useState('');
@@ -97,10 +109,12 @@ export function SeatOperationsPanel({
   const selectedConfig = action ? ACTION_CONFIG[action] : null;
   const isMutating = disableSeat.isPending || reactivateSeat.isPending;
   const canOperate = showtimeId.trim().length > 0 && seatKey.trim().length > 0;
-  const canConfirm = canOperate && reason.trim().length > 0 && !isMutating;
+  const canConfirm = canOperate && action !== null && canPerform(action) && reason.trim().length > 0 && !isMutating;
   const historyRows = historyQuery.data?.rows ?? [];
+  const showtime = selected.data?.showtimes.find((item) => item.id === showtimeId);
 
   function openConfirmation(nextAction: SeatPanelAction) {
+    if (!canPerform(nextAction)) return;
     setAction(nextAction);
     setReason('');
   }
@@ -154,19 +168,19 @@ export function SeatOperationsPanel({
             좌석 운영
           </h2>
           <p className="mt-1 text-base text-gray-600">
-            회차 ID와 좌석 키를 기준으로 비활성화, 재활성화, 운영 이력을 확인합니다.
+            공연과 회차를 선택한 뒤 좌석의 판매 가능 상태와 운영 이력을 확인합니다.
           </p>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
-          <Button
+          {canPerform('disable') && <Button
             type="button"
             className="h-12 bg-[#C62828] hover:bg-[#A81F1F]"
             disabled={!canOperate || isMutating}
             onClick={() => openConfirmation('disable')}
           >
             좌석 비활성화
-          </Button>
-          <Button
+          </Button>}
+          {canPerform('reactivate') && <Button
             type="button"
             variant="outline"
             className="h-12"
@@ -174,12 +188,23 @@ export function SeatOperationsPanel({
             onClick={() => openConfirmation('reactivate')}
           >
             좌석 재활성화
-          </Button>
+          </Button>}
         </div>
       </div>
 
+      {(capability.superuser || capability.capabilities.includes('seat.manual_open')) && (
+        <div className="rounded-lg bg-gray-50 p-3 text-sm text-gray-700">
+          <p>취소 좌석 즉시 개방은 예매 상세에서 대상과 취소 상태를 확인한 뒤 진행합니다.</p>
+          {capability.superuser || capability.capabilities.includes('reservations.read') ? (
+            <Link href={context?.href('/admin/bookings') ?? '/admin/bookings'} className="mt-1 inline-block font-semibold text-[#6C3CE0] underline">
+              예매에서 취소 좌석 확인
+            </Link>
+          ) : <p className="mt-1">즉시 개방에는 예매 조회 권한도 필요합니다. 관리자에게 예매 조회 권한을 요청하세요.</p>}
+        </div>
+      )}
+
       <div className="grid gap-3 md:grid-cols-2">
-        <label className="space-y-1.5 text-sm font-semibold text-gray-700">
+        {!context && <label className="space-y-1.5 text-sm font-semibold text-gray-700">
           <span>회차 ID</span>
           <Input
             value={showtimeId}
@@ -187,15 +212,23 @@ export function SeatOperationsPanel({
             placeholder="showtime id"
             aria-label="회차 ID"
           />
-        </label>
+        </label>}
         <label className="space-y-1.5 text-sm font-semibold text-gray-700">
-          <span>좌석 키</span>
-          <Input
+          <span>{context ? '좌석 선택' : '좌석 키'}</span>
+          {context ? <select aria-label="좌석 선택" value={seatKey} onChange={(event) => setSeatKey(event.target.value)}
+            disabled={!showtimeId || selected.isLoading || selected.isError}
+            className="h-11 w-full rounded-lg border border-gray-200 bg-white px-3">
+            <option value="">{!showtimeId ? '상단에서 회차를 선택하세요' : selected.isError ? '좌석 목록 조회 실패' : '좌석을 선택하세요'}</option>
+            {(selected.data?.seatMaps ?? []).flatMap((floor) => (floor.seatConfig?.tiers ?? []).flatMap((tier) => tier.seatIds.map((seatId) => {
+              const seat = normalizeSeatIdentity({ floorKey: floor.floorKey, floorLabel: floor.floorLabel, seatId });
+              return <option key={seat.seatKey} value={seat.seatKey}>{floor.floorLabel} · {seat.seatId} · {tier.tierName}</option>;
+            })))}
+          </select> : <Input
             value={seatKey}
             onChange={(event) => setSeatKey(event.target.value)}
             placeholder="1F:A-10"
             aria-label="좌석 키"
-          />
+          />}
         </label>
       </div>
 
@@ -205,7 +238,7 @@ export function SeatOperationsPanel({
             role="alert"
             className="border-b bg-[#FEF2F2] px-4 py-3 text-sm font-semibold text-[#C62828]"
           >
-            좌석 운영 이력을 불러오지 못했습니다. 회차 ID와 좌석 키를 확인하세요.
+            좌석 운영 이력을 불러오지 못했습니다. 선택한 공연·회차와 연결 상태를 확인하세요.
           </div>
         )}
         <div className="flex items-center gap-2 border-b px-4 py-3">
@@ -256,11 +289,11 @@ export function SeatOperationsPanel({
                 </TableRow>
               ))}
 
-            {!historyQuery.isLoading && !canOperate && (
+            {!historyQuery.isLoading && !historyQuery.isError && !showtimeId && (
               <TableRow>
                 <TableCell colSpan={5} className="py-12 text-center">
                   <p className="text-base font-semibold text-gray-900">
-                    회차 ID와 좌석 키를 입력하세요
+                    {context ? '공연과 회차를 선택하세요' : '회차 ID와 좌석 키를 입력하세요'}
                   </p>
                   <p className="mt-1 text-sm text-gray-600">
                     좌석 운영 작업과 이력 조회에 모두 필요합니다.
@@ -269,7 +302,7 @@ export function SeatOperationsPanel({
               </TableRow>
             )}
 
-            {!historyQuery.isLoading && canOperate && historyRows.length === 0 && (
+            {!historyQuery.isLoading && !historyQuery.isError && showtimeId && historyRows.length === 0 && (
               <TableRow>
                 <TableCell colSpan={5} className="py-12 text-center">
                   <p className="text-base font-semibold text-gray-900">
@@ -312,10 +345,11 @@ export function SeatOperationsPanel({
 
             <div className="rounded-lg bg-[#F5F5F7] p-3">
               <p className="text-sm font-semibold text-gray-700">좌석 요약</p>
+              {selected.data && <p className="mt-2 font-semibold">{selected.data.title}</p>}
               <dl className="mt-2 grid gap-2 text-sm text-gray-700 sm:grid-cols-2">
                 <div className="flex justify-between gap-3 rounded-md bg-white px-3 py-2">
-                  <dt className="font-semibold">회차 ID</dt>
-                  <dd className="text-right">{showtimeId.trim() || '-'}</dd>
+                  <dt className="font-semibold">{showtime ? '회차' : '회차 ID'}</dt>
+                  <dd className="text-right">{showtime ? `${formatAdminKstDateTime(showtime.dateTime).replace('T', ' ')} KST` : showtimeId.trim() || '-'}</dd>
                 </div>
                 <div className="flex justify-between gap-3 rounded-md bg-white px-3 py-2">
                   <dt className="font-semibold">좌석 키</dt>

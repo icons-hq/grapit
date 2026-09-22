@@ -80,7 +80,7 @@ describe('PerformanceCard', () => {
   it('keeps date range visible for open performances', () => {
     render(<PerformanceCard performance={basePerformance} />);
 
-    expect(screen.getByText('2026.07.18 ~ 2026.07.18')).toBeDefined();
+    expect(screen.getByText('2026. 7. 18. KST')).toBeDefined();
   });
 
   it('shows 오픈예정 instead of 오픈 while booking is disabled', () => {

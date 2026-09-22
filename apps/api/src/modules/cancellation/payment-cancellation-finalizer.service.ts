@@ -6,7 +6,8 @@ import {
   NotFoundException,
   Optional,
 } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import type { TicketItemCancellationCommand } from '../../database/schema/ticket-items.js';
 import { and, eq, inArray, isNull, ne, or, sql } from 'drizzle-orm';
 import { normalizeSeatIdentity } from '@grabit/shared';
 import type { CancellationQuote } from '@grabit/shared';
@@ -75,6 +76,7 @@ export interface FinalizeFullPaymentCancellationInput {
     cancellationFee: number;
     serviceFeeRefund: number;
     refundableAmount: number;
+    cancellationCommand?: TicketItemCancellationCommand | null;
   };
   fullReservationCancellationQuote?: CancellationQuote;
   reason: string;
@@ -119,7 +121,6 @@ function toRecord(value: unknown): Record<string, unknown> {
 
 function resolveLocalPaymentStatus(
   providerResponse: PaymentCancellationProviderResponse | undefined,
-  cancellationQuote: CancellationQuote | undefined,
 ): 'CANCELED' | 'PARTIAL_CANCELED' {
   if (providerResponse?.status === 'CANCELED' || providerResponse?.balanceAmount === 0) {
     return 'CANCELED';
@@ -129,8 +130,6 @@ function resolveLocalPaymentStatus(
     providerResponse?.status === 'PARTIAL_CANCELED'
     && typeof providerResponse.balanceAmount === 'number'
     && providerResponse.balanceAmount > 0
-    && cancellationQuote
-    && cancellationQuote.refundableAmount < cancellationQuote.originalPaymentAmount
   ) {
     return 'PARTIAL_CANCELED';
   }
@@ -225,23 +224,44 @@ export class PaymentCancellationFinalizerService {
     const providerCancellation = sanitizeProviderCancellationPayload(
       input.providerResponse,
     );
-    const isPartialTicketItemCancellation =
-      input.ticketItemCancellation !== undefined
-      && input.providerResponse?.status === 'PARTIAL_CANCELED';
     const fullReservationCancellationQuote = input.fullReservationCancellationQuote;
-    const localPaymentStatus = resolveLocalPaymentStatus(
-      input.providerResponse,
-      fullReservationCancellationQuote,
-    );
+    const localPaymentStatus = resolveLocalPaymentStatus(input.providerResponse);
     const seatReleaseStates: SeatReleaseState[] = [];
 
     await this.db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT id FROM reservations WHERE id = ${input.context.reservation.id} FOR UPDATE`);
+      const remainingTicketItems = input.ticketItemCancellation
+        ? await tx.select({ id: ticketItems.id }).from(ticketItems).where(and(
+            eq(ticketItems.reservationId, input.context.reservation.id),
+            ne(ticketItems.id, input.ticketItemCancellation.ticketItemId),
+            inArray(ticketItems.status, [...ACTIVE_TICKET_ITEM_STATUSES]),
+          )).limit(1)
+        : [];
+      const preservesRemainingTickets = remainingTicketItems.length > 0;
+      const command = input.ticketItemCancellation?.cancellationCommand;
+      if (command) {
+        const cancellations = Array.isArray(input.providerResponse?.cancels)
+          ? input.providerResponse.cancels as Array<Record<string, unknown>> : [];
+        const completed = cancellations.find((cancel) => cancel.cancelStatus === 'DONE'
+          && cancel.cancelReason === command.reason
+          && typeof cancel.cancelAmount === 'number'
+          && Math.round(cancel.cancelAmount * (command.currency === 'USD' ? 100 : 1)) === command.amountMinor
+          && (!command.options.cancelRequestId || cancel.cancelRequestId === command.options.cancelRequestId));
+        if (!completed) throw new BadRequestException('취소 요청에 대응하는 결제사 완료 근거를 확인할 수 없습니다');
+        await tx.update(ticketItems).set({
+          cancellationCommand: sql`${ticketItems.cancellationCommand} || ${JSON.stringify({
+            completedAt: typeof completed.canceledAt === 'string' ? completed.canceledAt : now.toISOString(),
+            ...(typeof completed.transactionKey === 'string' ? { transactionKey: completed.transactionKey } : {}),
+          })}::jsonb`,
+        }).where(and(eq(ticketItems.id, input.ticketItemCancellation!.ticketItemId),
+          eq(ticketItems.paymentId, input.context.payment.id)));
+      }
       if (input.refundId) {
         const updatedRefunds = await tx
           .update(refunds)
           .set({
             status: 'completed',
-            sentToPgAt: now,
+            sentToPgAt: sql`coalesce(${refunds.sentToPgAt}, ${now.toISOString()}::timestamptz)`,
             completedAt: now,
             updatedAt: now,
             resultCode: input.providerResponse?.status ?? 'CANCELED',
@@ -249,7 +269,7 @@ export class PaymentCancellationFinalizerService {
             failureReason: null,
             expectedDepositAt: null,
             customerServiceCtaVisible: false,
-            providerMetadata: {
+            providerMetadata: sql`coalesce(${refunds.providerMetadata}, '{}'::jsonb) || ${JSON.stringify({
               cancelReason: input.reason,
               paymentStatus: input.providerResponse?.status ?? 'CANCELED',
               source: input.source,
@@ -257,7 +277,7 @@ export class PaymentCancellationFinalizerService {
                 ? { cancellationQuote: fullReservationCancellationQuote }
                 : {}),
               ...(providerCancellation ? { providerCancellation } : {}),
-            },
+            })}::jsonb`,
           })
           .where(
             and(
@@ -276,7 +296,7 @@ export class PaymentCancellationFinalizerService {
         }
       }
 
-      if (!isPartialTicketItemCancellation) {
+      if (!preservesRemainingTickets) {
         const updatedReservations = await tx
           .update(reservations)
           .set({
@@ -479,6 +499,13 @@ export class PaymentCancellationFinalizerService {
       }
 
       for (const seatIdentity of seatIdentities) {
+        const recordTicketHold = async (holdUntil: Date, jobId: string | null) => {
+          await tx.update(ticketItems).set({ reopenState: 'held_cancelled', reopenHoldUntil: holdUntil,
+            reopenJobId: jobId, updatedAt: now }).where(and(
+            eq(ticketItems.reservationId, input.context.reservation.id),
+            eq(ticketItems.seatKey, seatIdentity.seatKey), eq(ticketItems.status, 'cancelled'),
+          ));
+        };
         const updatedSoldSeatInventory = await tx
           .update(seatInventories)
           .set({
@@ -502,6 +529,7 @@ export class PaymentCancellationFinalizerService {
           .returning({ id: seatInventories.id });
 
         if (updatedSoldSeatInventory.length === 1) {
+          await recordTicketHold(releaseAt, JOB_ENQUEUE_FAILED);
           seatReleaseStates.push({
             seatIdentity,
             reopenJobId: JOB_ENQUEUE_FAILED,
@@ -536,9 +564,12 @@ export class PaymentCancellationFinalizerService {
           .returning({
             id: seatInventories.id,
             reopenJobId: seatInventories.reopenJobId,
+            reopenHoldUntil: seatInventories.reopenHoldUntil,
           });
 
         if (updatedHeldCancelledSeatInventory.length === 1) {
+          await recordTicketHold(updatedHeldCancelledSeatInventory[0]?.reopenHoldUntil ?? releaseAt,
+            updatedHeldCancelledSeatInventory[0]?.reopenJobId ?? JOB_ENQUEUE_FAILED);
           seatReleaseStates.push({
             seatIdentity,
             reopenJobId: updatedHeldCancelledSeatInventory[0]?.reopenJobId ?? JOB_ENQUEUE_FAILED,
@@ -674,7 +705,8 @@ export class PaymentCancellationFinalizerService {
         {
           id: releaseJobId,
           startAfter: releaseAt,
-          singletonKey: context.reservation.id,
+          singletonKey: `${context.reservation.id}:${createHash('sha256')
+            .update(JSON.stringify(seatIdentities.map((seat) => seat.seatKey).sort())).digest('hex')}`,
           retryLimit: 3,
           retryBackoff: true,
           retryDelay: 30,
@@ -734,6 +766,12 @@ export class PaymentCancellationFinalizerService {
             `Expected ${seatIdentities.length} released seat rows, updated ${updatedSeatInventories.length}`,
           );
         }
+        await tx.update(ticketItems).set({ reopenJobId: releaseJobId }).where(and(
+          eq(ticketItems.reservationId, context.reservation.id),
+          inArray(ticketItems.seatKey, seatIdentities.map((seat) => seat.seatKey)),
+          eq(ticketItems.status, 'cancelled'), eq(ticketItems.reopenState, 'held_cancelled'),
+          eq(ticketItems.reopenJobId, JOB_ENQUEUE_FAILED),
+        ));
       });
 
       return true;
