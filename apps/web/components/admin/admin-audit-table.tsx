@@ -101,47 +101,47 @@ export function AdminAuditTable({
         className="grid gap-3 rounded-lg bg-white p-4 shadow-sm md:grid-cols-2 xl:grid-cols-4"
       >
         <label className="space-y-1.5 text-sm font-semibold text-gray-700">
-          <span>Actor</span>
+          <span>관리자 계정</span>
           <Input
             value={actorUserId}
             onChange={(event) => setActorUserId(event.target.value)}
-            placeholder="user id"
-            aria-label="Actor"
+            placeholder="관리자 계정 ID"
+            aria-label="관리자 계정"
           />
         </label>
         <label className="space-y-1.5 text-sm font-semibold text-gray-700">
-          <span>Action</span>
+          <span>수행 작업</span>
           <Input
             value={action}
             onChange={(event) => setAction(event.target.value)}
-            placeholder="event.publish"
-            aria-label="Action"
+            placeholder="예: event.publish (공연 공개)"
+            aria-label="수행 작업"
           />
         </label>
         <label className="space-y-1.5 text-sm font-semibold text-gray-700">
-          <span>Resource type</span>
+          <span>대상 종류</span>
           <Input
             value={resourceType}
             onChange={(event) => setResourceType(event.target.value)}
-            placeholder="performance"
-            aria-label="Resource type"
+            placeholder="예: performance (공연)"
+            aria-label="대상 종류"
           />
         </label>
         <label className="space-y-1.5 text-sm font-semibold text-gray-700">
-          <span>Resource ID</span>
+          <span>대상 관리 번호</span>
           <Input
             value={resourceId}
             onChange={(event) => setResourceId(event.target.value)}
-            placeholder="resource id"
-            aria-label="Resource ID"
+            placeholder="대상 관리 번호"
+            aria-label="대상 관리 번호"
           />
         </label>
         <label className="space-y-1.5 text-sm font-semibold text-gray-700">
-          <span>Status</span>
+          <span>처리 결과</span>
           <select
             value={status}
             onChange={(event) => setStatus(event.target.value as AdminAuditStatus | '')}
-            aria-label="Status"
+            aria-label="처리 결과"
             className="flex h-11 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
           >
             {STATUS_OPTIONS.map((option) => (
@@ -186,17 +186,17 @@ export function AdminAuditTable({
             감사 로그를 불러오지 못했습니다. 필터를 확인하고 다시 시도하세요.
           </div>
         )}
-        <Table>
+        <Table className="admin-audit-table min-w-[1120px] table-fixed">
           <TableHeader>
             <TableRow className="bg-[#F5F5F7]">
-              <TableHead className="text-sm font-semibold text-gray-600">Actor</TableHead>
-              <TableHead className="text-sm font-semibold text-gray-600">Action</TableHead>
-              <TableHead className="text-sm font-semibold text-gray-600">Resource</TableHead>
-              <TableHead className="text-sm font-semibold text-gray-600">Status</TableHead>
-              <TableHead className="text-sm font-semibold text-gray-600">Time</TableHead>
-              <TableHead className="text-sm font-semibold text-gray-600">Masked IP</TableHead>
-              <TableHead className="text-sm font-semibold text-gray-600">Reason</TableHead>
-              <TableHead className="text-sm font-semibold text-gray-600">Changed fields</TableHead>
+              <TableHead className="text-sm font-semibold text-gray-600">관리자 계정</TableHead>
+              <TableHead className="text-sm font-semibold text-gray-600">수행 작업</TableHead>
+              <TableHead className="text-sm font-semibold text-gray-600">대상</TableHead>
+              <TableHead className="text-sm font-semibold text-gray-600">처리 결과</TableHead>
+              <TableHead className="text-sm font-semibold text-gray-600">작업 시각</TableHead>
+              <TableHead className="text-sm font-semibold text-gray-600">접속 주소 (일부 가림)</TableHead>
+              <TableHead className="text-sm font-semibold text-gray-600">사유</TableHead>
+              <TableHead className="text-sm font-semibold text-gray-600">변경 내역</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -218,7 +218,7 @@ export function AdminAuditTable({
                     조회된 감사 로그가 없습니다
                   </p>
                   <p className="mt-1 text-sm text-gray-600">
-                    actor, action, resource, 기간 필터를 조정해 다시 조회하세요.
+                    관리자, 수행 작업, 대상이나 기간을 바꿔 다시 조회하세요.
                   </p>
                 </TableCell>
               </TableRow>

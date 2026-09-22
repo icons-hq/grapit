@@ -1,7 +1,9 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
-import { Suspense, useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import { adminLocation } from '@/lib/admin-navigation';
+import './admin.css';
+import { Suspense, useEffect, useState } from 'react';
 import { apiClient } from '@/lib/api-client';
 import { useQueryClient } from '@tanstack/react-query';
 import { AdminEventContextBar, AdminEventContextProvider } from '@/components/admin/admin-event-context';
@@ -24,11 +26,14 @@ export default function AdminLayout({
   children: React.ReactNode;
 }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const location = adminLocation(pathname);
   const user = useAuthStore((s) => s.user);
   const isInitialized = useAuthStore((s) => s.isInitialized);
   const clearAuth = useAuthStore((s) => s.clearAuth);
   const queryClient = useQueryClient();
   const [menuOpen, setMenuOpen] = useState(false);
+  useEffect(() => { window.scrollTo({ top: 0, left: 0, behavior: 'instant' }); }, [pathname]);
 
   if (!isInitialized) {
     return (
@@ -87,10 +92,11 @@ export default function AdminLayout({
   return (
     <Suspense fallback={<p className="p-8">운영 화면을 불러오고 있습니다.</p>}>
     <AdminEventContextProvider>
-    <div className="flex min-h-screen overflow-x-hidden">
+    <div className="grabit-admin flex min-h-screen">
+      <a className="admin-skip-link" href="#admin-main">본문으로 바로가기</a>
       <AdminSidebar />
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-40 flex h-16 min-w-0 items-center border-b bg-white px-4 sm:px-6">
+        <header className="admin-topbar">
           <div className="flex items-center gap-3 lg:hidden">
             <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
               <SheetTrigger asChild>
@@ -98,15 +104,15 @@ export default function AdminLayout({
                   <Menu className="h-5 w-5" />
                 </Button>
               </SheetTrigger>
-              <SheetContent side="left" className="w-[240px] p-0">
+              <SheetContent side="left" className="grabit-admin w-[280px] max-w-[85vw] p-0">
                 <SheetTitle className="sr-only">관리자 메뉴</SheetTitle>
                 <AdminSidebar variant="drawer" onNavigate={() => setMenuOpen(false)} />
               </SheetContent>
             </Sheet>
           </div>
-          <span className="text-lg font-semibold lg:hidden">Grabit Admin</span>
+          <div className="admin-breadcrumb" aria-label="현재 위치"><span>{location.group?.label ?? '관리자'}</span><span aria-hidden="true">/</span><strong>{pathname.endsWith('/new') ? '공연 등록' : pathname.endsWith('/edit') ? '공연 편집' : location.item?.label ?? '운영'}</strong></div>
           <div className="ml-auto flex items-center gap-3">
-            <span className="text-sm text-gray-600">{user.name}</span>
+            <span className="max-w-28 truncate text-sm text-gray-600">{user.name}</span>
             <Button
               variant="ghost"
               size="icon"
@@ -117,7 +123,7 @@ export default function AdminLayout({
             </Button>
           </div>
         </header>
-        <main className="min-w-0 flex-1 overflow-x-hidden bg-white p-4 sm:p-8"><AdminRouteBoundary><AdminEventContextBar />{children}</AdminRouteBoundary></main>
+        <main id="admin-main" tabIndex={-1} className="admin-main"><AdminRouteBoundary><AdminEventContextBar />{children}</AdminRouteBoundary></main>
       </div>
     </div>
     </AdminEventContextProvider>

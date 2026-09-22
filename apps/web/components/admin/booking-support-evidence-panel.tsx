@@ -17,7 +17,7 @@ export function BookingSupportEvidencePanel({ bookingId }: { bookingId: string }
   return <section aria-label="고객 대응 근거" className="my-5 space-y-4 rounded-lg border border-gray-200 bg-slate-50 p-4 text-sm">
     <div className="flex justify-between gap-3"><h3 className="font-semibold">고객 대응 근거</h3><button className="text-violet-700 underline" onClick={() => void query.refetch()}>기록 새로 조회</button></div>
     <p className="text-xs text-gray-500">조회 {date(data.generatedAt)}</p>
-    <dl className="space-y-2">
+    <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
       <div><dt className="text-gray-500">원 주문액</dt><dd>KRW {data.originalOrderAmount.toLocaleString('ko-KR')}</dd></div>
       <div><dt className="text-gray-500">결제사 원 청구액</dt><dd>{provider ? provider.originalAmountMinor === null ? `${provider.currency} · 청구액 미확인`
         : `${provider.currency} ${(provider.originalAmountMinor / (provider.currency === 'USD' ? 100 : 1)).toLocaleString('ko-KR', { minimumFractionDigits: provider.currency === 'USD' ? 2 : 0 })}` : '결제 기록 없음'}</dd></div>

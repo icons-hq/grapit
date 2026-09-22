@@ -11,10 +11,10 @@ export default function AdminCutoverPage() {
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div>
           <h1 className="text-display font-semibold leading-[1.2] text-gray-900">
-            컷오버 게이트
+            판매 시작 점검
           </h1>
           <p className="mt-2 max-w-[760px] text-sm text-gray-600">
-            Gate Ledger의 server-derived readiness를 기준으로 live ticketing no-go 사유, 승인 상태, evidence freshness, rollback/close trigger를 확인합니다.
+            판매 시작 전에 필요한 점검 결과와 승인 기록을 확인합니다. 미완료 항목을 해결한 뒤 판매를 시작하세요.
           </p>
         </div>
       </div>

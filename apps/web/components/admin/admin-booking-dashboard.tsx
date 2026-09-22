@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { Banknote, Clock3, RotateCcw, TicketCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAdminEventContext } from './admin-event-context';
+import { AdminPageHeader } from './admin-page-header';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { resolveAdminCapabilitySnapshot } from '@grabit/shared';
 import { Button } from '@/components/ui/button';
@@ -37,7 +38,7 @@ import type {
 } from '@grabit/shared';
 
 const FUNNEL_STATUS_OPTIONS = [
-  { value: 'all', label: '전체 퍼널' },
+  { value: 'all', label: '전체 예매 상태' },
   { value: 'SOLD', label: '판매 완료' },
   { value: 'PAYMENT_PENDING', label: '결제 대기' },
   { value: 'PAYMENT_PROCESSING', label: '결제 확인 중' },
@@ -171,6 +172,18 @@ export function AdminBookingDashboard() {
   );
   const [detailOpen, setDetailOpen] = useState(Boolean(bookingId));
   const [detailSessionKey, setDetailSessionKey] = useState(0);
+  const eventScope = `${performanceId}:${showtimeId}`;
+  const [filterScope, setFilterScope] = useState(eventScope);
+  if (filterScope !== eventScope) {
+    setFilterScope(eventScope);
+    setSeatTier('all');
+    setFloorKey('all');
+    setSeatQuery('');
+    setDebouncedSeatQuery('');
+    setPage(1);
+    setSelectedBookingId(bookingId);
+    setDetailOpen(Boolean(bookingId));
+  }
   useEffect(() => {
     if (bookingId) { setSelectedBookingId(bookingId); setDetailOpen(true); }
   }, [bookingId]);
@@ -339,59 +352,24 @@ export function AdminBookingDashboard() {
       }
     : undefined;
 
-  if (isError) return <section role="alert" className="space-y-4"><h1 className="text-xl font-semibold">예매 관리</h1><p>예매를 조회하지 못했습니다. 현재 건수와 금액은 확인되지 않았습니다.</p><Button onClick={() => void refetch()}>다시 조회</Button></section>;
+  if (isError) return <section role="alert" className="space-y-4"><h1 className="text-xl font-semibold">예매·취소</h1><p>예매를 조회하지 못했습니다. 현재 건수와 금액은 확인되지 않았습니다.</p><Button onClick={() => void refetch()}>다시 조회</Button></section>;
 
   return (
-    <div>
-      <h1 className="mb-6 text-xl font-semibold text-gray-900">예매 관리</h1>
-
-      {/* Stats cards */}
-      {isLoading && !data ? <p role="status">선택한 범위의 예매를 조회하고 있습니다.</p> : <>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <AdminStatCard
-          icon={TicketCheck}
-          label="판매 좌석"
-          value={totalSoldSeats}
-          format="count"
-        />
-        <AdminStatCard
-          icon={Clock3}
-          label="결제/취소 진행"
-          value={processingCount}
-          format="count"
-        />
-        <AdminStatCard
-          icon={RotateCcw}
-          label="취소 완료"
-          value={completedCancelCount}
-          format="count"
-        />
-        <AdminStatCard
-          icon={Banknote}
-          label="판매 매출"
-          value={stats?.completedRevenue ?? 0}
-          format="currency"
-        />
-      </div>
-      <PaymentFailureBreakdown stats={stats} />
-
-      <div className="mt-6">
-        <TierStatsTable tierStats={tierStats} />
-      </div>
-      </>}
+    <div className="admin-booking-workspace">
+      <AdminPageHeader title="예매·취소" description="예매를 검색해 결제, 좌석, 환불 상태를 확인하세요. 예매 행을 누르면 상세 내역이 열립니다." />
 
       {/* Search + filter */}
-      <div className="mt-6 flex flex-col gap-3">
-        <Input
+      <div className="admin-panel mt-5 grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+        <label className="flex flex-col gap-2 text-sm font-medium">예매 검색<Input
           type="search"
-          placeholder="예매번호, Toss 주문번호, 공연명, 좌석, 회원 이름/이메일/전화/ID 검색"
+          placeholder="예매번호, 이름, 이메일, 전화번호로 검색"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          className="w-full lg:max-w-[460px]"
+          className="w-full"
           aria-label="예매 검색"
-        />
-        <div className="grid w-full grid-cols-2 gap-2 xl:flex xl:w-auto xl:flex-wrap">
-          <SelectFilter
+        /></label>
+        <div className="grid w-full grid-cols-2 gap-3">
+          {!context && <><SelectFilter
             id="admin-booking-performance"
             label="공연"
             value={performanceId}
@@ -416,7 +394,30 @@ export function AdminBookingDashboard() {
               setPage(1);
             }}
           />
+          </>}          <SelectFilter
+            id="admin-booking-funnel-status"
+            label="예매 상태"
+            value={funnelStatus}
+            options={FUNNEL_STATUS_OPTIONS}
+            onValueChange={(value) => {
+              setFunnelStatus(value as AdminBookingFunnelStatus | 'all');
+              setPage(1);
+            }}
+          />
           <SelectFilter
+            id="admin-booking-payment-status"
+            label="결제 상태"
+            value={paymentStatus}
+            options={PAYMENT_STATUS_OPTIONS}
+            onValueChange={(value) => {
+              setPaymentStatus(value as PaymentStatus | 'all');
+              setPage(1);
+            }}
+          />
+        </div>
+        <p className="text-xs text-muted-foreground lg:col-span-2">공연명, 좌석, 결제사 주문번호, 회원 ID로도 검색할 수 있습니다.</p>
+        <div className="flex flex-col items-start gap-3 sm:flex-row lg:col-span-2"><details className="admin-disclosure w-full flex-1"><summary>상세 검색 · 좌석, 결제수단, 국내·해외</summary><div className="admin-disclosure-body grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+<SelectFilter
             id="admin-booking-seat-tier"
             label="좌석 등급"
             value={seatTier}
@@ -435,26 +436,6 @@ export function AdminBookingDashboard() {
             disabled={performanceId === 'all' || isPerformanceDetailLoading || isPerformanceDetailError}
             onValueChange={(value) => {
               setFloorKey(value);
-              setPage(1);
-            }}
-          />
-          <SelectFilter
-            id="admin-booking-funnel-status"
-            label="퍼널 상태"
-            value={funnelStatus}
-            options={FUNNEL_STATUS_OPTIONS}
-            onValueChange={(value) => {
-              setFunnelStatus(value as AdminBookingFunnelStatus | 'all');
-              setPage(1);
-            }}
-          />
-          <SelectFilter
-            id="admin-booking-payment-status"
-            label="결제 상태"
-            value={paymentStatus}
-            options={PAYMENT_STATUS_OPTIONS}
-            onValueChange={(value) => {
-              setPaymentStatus(value as PaymentStatus | 'all');
               setPage(1);
             }}
           />
@@ -478,7 +459,6 @@ export function AdminBookingDashboard() {
               setPage(1);
             }}
           />
-        </div>
         <Input
           type="search"
           placeholder="좌석만 검색"
@@ -487,14 +467,15 @@ export function AdminBookingDashboard() {
           className="w-full lg:max-w-[240px]"
           aria-label="좌석 검색"
         />
+        </div></details>
+        <div><Button variant="outline" size="sm" onClick={() => { setSearch(''); setDebouncedSearch(''); setSeatQuery(''); setDebouncedSeatQuery(''); setSeatTier('all'); setFloorKey('all'); setFunnelStatus('all'); setPaymentStatus('all'); setPaymentMethod('all'); setAudienceRegion('all'); setPage(1); }}>검색 조건 초기화</Button></div></div>
       </div>
 
       {/* Booking table */}
-      <div className="mt-4">
-        {(permissions.superuser || permissions.capabilities.includes('reservations.export_raw')) && <ReservationExportPanel activeManifestContext={activeManifestContext} />}
-      </div>
 
-      <div className="mt-4">
+
+      <p className="mt-5 text-sm text-muted-foreground" aria-live="polite">{isLoading ? '예매를 조회하고 있습니다.' : `검색 결과 ${total.toLocaleString('ko-KR')}건`}</p>
+      <div className="mt-3">
         <AdminBookingTable
           bookings={bookings}
           isLoading={isLoading}
@@ -527,6 +508,40 @@ export function AdminBookingDashboard() {
           </Button>
         </div>
       )}
+
+      <details className="admin-disclosure mt-6"><summary>좌석 등급별 통계와 결제 실패 분석</summary><div className="admin-disclosure-body">      {/* Stats cards */}
+      {isLoading && !data ? <p role="status">선택한 범위의 예매를 조회하고 있습니다.</p> : <>
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+        <AdminStatCard
+          icon={TicketCheck}
+          label="판매 좌석"
+          value={totalSoldSeats}
+          format="seats"
+        />
+        <AdminStatCard
+          icon={Clock3}
+          label="결제/취소 진행"
+          value={processingCount}
+          format="count"
+        />
+        <AdminStatCard
+          icon={RotateCcw}
+          label="취소 완료"
+          value={completedCancelCount}
+          format="count"
+        />
+        <AdminStatCard
+          icon={Banknote}
+          label="판매 매출"
+          value={stats?.completedRevenue ?? 0}
+          format="currency"
+        />
+      </div>
+
+      </>}
+
+<PaymentFailureBreakdown stats={stats} /><TierStatsTable tierStats={tierStats} /></div></details>
+      {(permissions.superuser || permissions.capabilities.includes('reservations.export_raw')) && <details className="admin-disclosure mt-3"><summary>예매 명단 내려받기</summary><div className="admin-disclosure-body"><ReservationExportPanel activeManifestContext={activeManifestContext} /></div></details>}
 
       {/* Detail modal */}
       <AdminBookingDetailModal

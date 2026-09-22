@@ -72,7 +72,7 @@ describe('ConsentAuditTable', () => {
     const { onSearch } = renderTable();
 
     await user.type(screen.getByLabelText('사용자 ID 또는 이메일'), 'admin@example.com');
-    await user.type(screen.getByLabelText('동의 항목'), 'cross_border_transfer');
+    await user.selectOptions(screen.getByLabelText('동의 항목'), 'cross_border_transfer');
     await user.type(screen.getByLabelText('버전'), '2026-04-28');
     await user.type(screen.getByLabelText('IP 주소'), '203.0.113.10');
     fireEvent.change(screen.getByLabelText('시작 시각'), {
@@ -112,13 +112,13 @@ describe('ConsentAuditTable', () => {
   it('renders masked audit evidence and does not reveal raw PII', () => {
     renderTable();
 
-    expect(screen.getByText('cross_border_transfer')).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: '개인정보 국외 이전' })).toBeInTheDocument();
     expect(screen.getByText('2026-04-28')).toBeInTheDocument();
-    expect(screen.getByText('ko')).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: '한국어' })).toBeInTheDocument();
     expect(screen.getByText('su***@example.com')).toBeInTheDocument();
     expect(screen.getByText('+82********78')).toBeInTheDocument();
     expect(screen.getByText('203.0.113.0')).toBeInTheDocument();
-    expect(screen.getByText('signup')).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: '회원가입' })).toBeInTheDocument();
     expect(screen.queryByText('sujin@example.com')).not.toBeInTheDocument();
     expect(screen.queryByText('203.0.113.123')).not.toBeInTheDocument();
   });

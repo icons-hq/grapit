@@ -240,7 +240,7 @@ describe('Admin seat operations UI', () => {
     expect(apiClient.post).not.toHaveBeenCalled();
   });
 
-  it('shows ticket item status, admission, refund, and reopen fields in admin booking detail', () => {
+  it('shows 좌석별 티켓 상태, admission, refund, and reopen fields in admin booking detail', () => {
     mocks.bookingDetail.mockReturnValue({
       data: cancelledBooking(),
       isLoading: false,
@@ -256,7 +256,7 @@ describe('Admin seat operations UI', () => {
       />,
     );
 
-    const table = screen.getByRole('table', { name: 'ticket item status' });
+    const table = screen.getByRole('table', { name: '좌석별 티켓 상태' });
     expect(within(table).getByText('VIP A열 10번')).toBeInTheDocument();
     expect(within(table).getByText('취소됨')).toBeInTheDocument();
     expect(within(table).getByText('입장 전')).toBeInTheDocument();

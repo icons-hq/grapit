@@ -70,7 +70,7 @@ describe('OperationsInbox', () => {
     let rejectReply!: (reason: Error) => void;
     const answer = vi.fn(() => new Promise((_resolve, reject) => { rejectReply = reject; }));
     render(<OperationsInbox rows={[baseRow]} isLoading={false} isError={false} onFilterChange={vi.fn()} onEscalate={vi.fn()} onAnswer={answer} onReassign={vi.fn()} />);
-    await user.click(screen.getByRole('button', { name: '좌석 위치 문의 운영 항목 상세 보기' }));
+    await user.click(screen.getByRole('button', { name: '좌석 위치 문의 문의 상세 보기' }));
     await user.type(screen.getByLabelText('답변'), '좌석 안내 답변');
     await user.click(screen.getByRole('button', { name: '답변 저장' }));
     expect(screen.getByRole('button', { name: '답변 저장' })).toBeDisabled();
@@ -83,15 +83,15 @@ describe('OperationsInbox', () => {
 
   it('does not report an empty queue when loading failed', () => {
     render(<OperationsInbox rows={[]} isLoading={false} isError={true} onFilterChange={vi.fn()} onEscalate={vi.fn()} onAnswer={vi.fn()} onReassign={vi.fn()} />);
-    expect(screen.queryByText('처리할 운영 항목이 없습니다')).not.toBeInTheDocument();
+    expect(screen.queryByText('처리할 문의가 없습니다')).not.toBeInTheDocument();
   });
   it('renders the UI-SPEC empty state copy', () => {
     renderInbox([]);
 
-    expect(screen.getByText('처리할 운영 항목이 없습니다')).toBeInTheDocument();
+    expect(screen.getByText('처리할 문의가 없습니다')).toBeInTheDocument();
     expect(
       screen.getByText(
-        '미답변 문의, 검토 요청, 환불 분쟁이 생기면 여기에 표시됩니다. 필터를 조정하거나 새 공지 또는 FAQ를 등록하세요.',
+        '접수된 문의가 없거나 검색 조건에 맞는 문의가 없습니다. 조회 조건을 바꿔 확인할 수 있습니다.',
       ),
     ).toBeInTheDocument();
   });

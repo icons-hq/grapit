@@ -119,7 +119,7 @@ const CAPABILITY_LABELS: Record<AdminCapability, string> = {
   'event.write': '공연 편집',
   'event.publish': '공연 게시',
   'support.manage': 'CS 처리',
-  'support.escalate': 'CS 에스컬레이션',
+  'support.escalate': 'CS 관리자 검토 요청',
   'reservations.export_raw': '예매 원본 내보내기',
   'refund.admin_refund': '관리자 환불 처리',
   'seat.disable': '좌석 비활성화',
@@ -204,7 +204,7 @@ export function AdminUserManagement() {
 
   return (
     <div className="space-y-4">
-      <UserInsightsPanel />
+      <details className="admin-disclosure"><summary>회원 통계·전체 명단 내려받기</summary><div className="admin-disclosure-body"><UserInsightsPanel /></div></details>
       <section className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 xl:grid-cols-[390px_minmax(0,1fr)]">
         <div className="min-w-0 space-y-4">
           <form
@@ -515,9 +515,9 @@ function SignupTrendChart({ stats }: { stats: AdminUsersStats }) {
     <div className="rounded-lg border p-3">
       <div className="flex items-center gap-2">
         <BarChart3 className="h-4 w-4 text-gray-600" aria-hidden="true" />
-        <h3 className="text-sm font-semibold text-gray-900">최근 30일 가입 추이</h3>
+        <h3 className="text-sm font-semibold text-gray-900">최근 14일 가입 추이</h3>
       </div>
-      <div className="mt-4 flex h-32 items-end gap-1" aria-label="최근 30일 가입 추이 차트">
+      <div className="mt-4 flex h-32 items-end gap-1" aria-label="최근 14일 가입 추이 차트">
         {visibleTrend.map((bucket) => (
           <div
             key={bucket.date}
@@ -532,7 +532,7 @@ function SignupTrendChart({ stats }: { stats: AdminUsersStats }) {
         ))}
       </div>
       <p className="mt-2 text-xs text-gray-600">
-        최근 14일 막대만 표시하며, 전체 30일 집계는 API 응답에 포함됩니다.
+        최근 14일의 일별 가입 회원 수입니다.
       </p>
     </div>
   );
@@ -724,7 +724,7 @@ function UserDetailPanel({
   if (!selectedUserId) {
     return (
       <section className="rounded-lg bg-white p-8 text-center text-sm text-gray-600 shadow-sm">
-        회원을 검색하거나 목록에서 선택하면 상세 컨텍스트가 표시됩니다.
+        회원을 검색하거나 목록에서 선택하면 상세 정보가 표시됩니다.
       </section>
     );
   }
@@ -845,7 +845,7 @@ function ReservationContext({ user }: { user: AdminUserDetail }) {
     <div className="rounded-lg bg-white p-5 shadow-sm">
       <div className="flex items-center gap-2">
         <Ticket className="h-5 w-5 text-gray-600" aria-hidden="true" />
-        <h3 className="text-base font-semibold text-gray-900">예매 컨텍스트</h3>
+        <h3 className="text-base font-semibold text-gray-900">예매 내역</h3>
       </div>
       <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
         <MetricCard label="전체" value={user.reservations.total} />
@@ -907,7 +907,7 @@ function SupportContext({ user }: { user: AdminUserDetail }) {
     <div className="rounded-lg bg-white p-5 shadow-sm">
       <div className="flex items-center gap-2">
         <MessageSquareText className="h-5 w-5 text-gray-600" aria-hidden="true" />
-        <h3 className="text-base font-semibold text-gray-900">CS 컨텍스트</h3>
+        <h3 className="text-base font-semibold text-gray-900">고객 문의 내역</h3>
       </div>
       <div className="mt-4 grid gap-3 sm:grid-cols-3">
         <MetricCard label="열린 문의" value={user.support.openThreads} />
@@ -944,7 +944,7 @@ function AuditContext({ user }: { user: AdminUserDetail }) {
     <div className="rounded-lg bg-white p-5 shadow-sm">
       <div className="flex items-center gap-2">
         <History className="h-5 w-5 text-gray-600" aria-hidden="true" />
-        <h3 className="text-base font-semibold text-gray-900">Masked audit 컨텍스트</h3>
+        <h3 className="text-base font-semibold text-gray-900">활동 기록 (개인정보 보호)</h3>
       </div>
       <div className="mt-4 space-y-2">
         {user.recentAuditEvents.length === 0 ? (
@@ -1064,7 +1064,7 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
       <div className="flex items-center gap-2">
         <ShieldCheck className="h-5 w-5 text-gray-600" aria-hidden="true" />
         <h3 className="text-base font-semibold text-gray-900">
-          Role / capability 편집
+          관리자 역할·권한 설정
         </h3>
       </div>
       <p className="mt-2 text-sm text-gray-600">
@@ -1112,7 +1112,7 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
 
         <fieldset className="space-y-2">
           <legend className="text-sm font-semibold text-gray-700">
-            개별 capability
+            세부 권한
           </legend>
           <div className="grid gap-2">
             {ADMIN_CAPABILITIES.map((capability) => (
@@ -1283,10 +1283,10 @@ function AccountLifecyclePanel({
   }
 
   return (
-    <aside className="rounded-lg bg-white p-5 shadow-sm" aria-label="계정 생명주기 관리">
+    <aside className="rounded-lg bg-white p-5 shadow-sm" aria-label="계정 상태 관리 관리">
       <div className="flex items-center gap-2">
         <XCircle className="h-5 w-5 text-gray-600" aria-hidden="true" />
-        <h3 className="text-base font-semibold text-gray-900">계정 생명주기</h3>
+        <h3 className="text-base font-semibold text-gray-900">계정 상태 관리</h3>
       </div>
       <p className="mt-2 text-sm text-gray-600">
         탈퇴 처리는 로그인과 세션을 차단합니다. DB 완전 삭제는 탈퇴 처리 후 연결 이력이 없을 때만 가능합니다.

@@ -22,27 +22,27 @@ const PHASE_25_ADMIN_REGISTRATIONS = [
 ] as const;
 
 const ADMIN_SIDEBAR_LABELS = [
-  '대시보드',
+  '운영 현황',
   '공연 관리',
-  '배너 관리',
-  '예매 관리',
-  '동의 감사',
+  '홈 배너',
+  '예매·취소',
+  '개인정보 동의 기록',
   '번역 검수',
-  '운영 인박스',
-  'FAQ/공지',
+  '고객 문의',
+  '공지·자주 묻는 질문',
   '회원 관리',
-  '좌석 운영',
-  '감사 로그',
-  '보안 설정',
+  '좌석 관리',
+  '관리자 활동 기록',
+  '접근 보안',
 ] as const;
 
 const PHASE_25_LINKS = [
-  { label: '운영 인박스', href: '/admin/operations' },
-  { label: 'FAQ/공지', href: '/admin/support-content' },
+  { label: '고객 문의', href: '/admin/operations' },
+  { label: '공지·자주 묻는 질문', href: '/admin/support-content' },
   { label: '회원 관리', href: '/admin/users' },
-  { label: '좌석 운영', href: '/admin/seat-operations' },
-  { label: '감사 로그', href: '/admin/audit' },
-  { label: '보안 설정', href: '/admin/security' },
+  { label: '좌석 관리', href: '/admin/seat-operations' },
+  { label: '관리자 활동 기록', href: '/admin/audit' },
+  { label: '접근 보안', href: '/admin/security' },
 ] as const;
 
 test.describe('Admin RBAC and security route wiring', () => {
@@ -81,6 +81,7 @@ test.describe('Admin RBAC and security route wiring', () => {
 
     await page.goto('/admin/security');
 
+    await page.getByRole('button', { name: '고객·콘텐츠', exact: true }).click();
     for (const label of ADMIN_SIDEBAR_LABELS) {
       await expect(
         page.getByRole('link', { name: label }).first(),
@@ -95,10 +96,10 @@ test.describe('Admin RBAC and security route wiring', () => {
       );
     }
 
-    await page.getByRole('link', { name: '좌석 운영' }).click();
+    await page.getByRole('link', { name: '좌석 관리' }).click();
     await expect(page).toHaveURL(/\/admin\/seat-operations$/);
     await expect(
-      page.getByRole('heading', { name: '좌석 운영', level: 1 }),
+      page.getByRole('heading', { name: '좌석 관리', level: 1 }),
     ).toBeVisible();
     await expect(
       page.getByText('회차별 좌석 비활성화, 재활성화, 운영 이력을 한 곳에서 관리합니다.'),
@@ -107,11 +108,11 @@ test.describe('Admin RBAC and security route wiring', () => {
     await page.goto('/admin/security');
 
     await expect(
-      page.getByRole('heading', { name: '보안 운영', level: 1 }),
+      page.getByRole('heading', { name: '접근 보안', level: 1 }),
     ).toBeVisible();
     await expect(
       page.getByText(
-        'MFA는 아직 적용되지 않았습니다. 현재는 IP allowlist와 audit monitoring으로 운영합니다.',
+        '추가 본인 인증은 아직 적용되지 않았습니다. 허용된 접속 주소와 관리자 활동 기록으로 접근을 확인합니다.',
       ).first(),
     ).toBeVisible();
   });
@@ -173,7 +174,7 @@ async function mockAdminSecurityStatus(page: Page) {
       body: JSON.stringify({
         mfa: {
           status: 'deferred_accepted_risk',
-          note: 'MFA는 아직 적용되지 않았습니다. 현재는 IP allowlist와 audit monitoring으로 운영합니다.',
+          note: '추가 본인 인증은 아직 적용되지 않았습니다. 허용된 접속 주소와 관리자 활동 기록으로 접근을 확인합니다.',
         },
         ipAllowlist: {
           mode: 'monitoring',
@@ -190,7 +191,7 @@ async function mockAdminSecurityStatus(page: Page) {
           reason: 'E2E non-production route smoke',
         },
         deferredMfaCopy:
-          'MFA는 아직 적용되지 않았습니다. 현재는 IP allowlist와 audit monitoring으로 운영합니다.',
+          '추가 본인 인증은 아직 적용되지 않았습니다. 허용된 접속 주소와 관리자 활동 기록으로 접근을 확인합니다.',
         requiredCapability: 'security.manage',
       }),
     });

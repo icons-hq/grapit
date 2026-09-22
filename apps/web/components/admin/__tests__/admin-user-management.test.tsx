@@ -297,8 +297,9 @@ describe('AdminUserManagement', () => {
     expect(screen.getByText('50명')).toBeInTheDocument();
     expect(screen.getByText('KR')).toBeInTheDocument();
     expect(screen.getByText('30명 · 60.0%')).toBeInTheDocument();
-    expect(screen.getByText('최근 30일 가입 추이')).toBeInTheDocument();
+    expect(screen.getByText('최근 14일 가입 추이')).toBeInTheDocument();
 
+    await user.click(screen.getByText('회원 통계·전체 명단 내려받기'));
     await user.click(screen.getByRole('button', { name: '회원 원본 CSV 다운로드' }));
     await user.type(
       await screen.findByLabelText('회원 CSV 다운로드 사유'),
@@ -369,11 +370,11 @@ describe('AdminUserManagement', () => {
     });
 
     expect(screen.getByText('parkfan@example.com')).toBeInTheDocument();
-    expect(screen.getByText('예매 컨텍스트')).toBeInTheDocument();
+    expect(screen.getByText('예매 내역')).toBeInTheDocument();
     expect(screen.getByText('걸룰스 팬미팅')).toBeInTheDocument();
-    expect(screen.getByText('CS 컨텍스트')).toBeInTheDocument();
+    expect(screen.getByText('고객 문의 내역')).toBeInTheDocument();
     expect(screen.getByText('좌석 위치 문의')).toBeInTheDocument();
-    expect(screen.getByText('Masked audit 컨텍스트')).toBeInTheDocument();
+    expect(screen.getByText('활동 기록 (개인정보 보호)')).toBeInTheDocument();
     expect(screen.getByText(/masked IP 203\.0\.113\.0/)).toBeInTheDocument();
     expect(screen.queryByText('203.0.113.123')).not.toBeInTheDocument();
   });
@@ -532,10 +533,10 @@ describe('AdminUserManagement', () => {
     renderWithClient(<AdminUserManagement />);
 
     expect(await screen.findByText('Merged User')).toBeInTheDocument();
-    expect(await screen.findByText('Role / capability 편집')).toBeInTheDocument();
+    expect(await screen.findByText('관리자 역할·권한 설정')).toBeInTheDocument();
     expect(screen.getByRole('combobox', { name: 'Role' })).toBeDisabled();
     expect(screen.getByRole('combobox', { name: 'Capability bundle' })).toBeDisabled();
-    const capabilityFieldset = screen.getByText('개별 capability').closest('fieldset');
+    const capabilityFieldset = screen.getByText('세부 권한').closest('fieldset');
     expect(capabilityFieldset).not.toBeNull();
     for (const checkbox of within(capabilityFieldset as HTMLElement).getAllByRole('checkbox')) {
       expect(checkbox).toBeDisabled();
@@ -671,7 +672,7 @@ describe('AdminUserManagement', () => {
 
     renderWithClient(<AdminUserManagement />);
 
-    expect(await screen.findByText('Role / capability 편집')).toBeInTheDocument();
+    expect(await screen.findByText('관리자 역할·권한 설정')).toBeInTheDocument();
 
     await user.click(screen.getByRole('combobox', { name: 'Capability bundle' }));
     await user.click(await screen.findByRole('option', { name: '스캐너' }));
@@ -719,7 +720,7 @@ describe('AdminUserManagement', () => {
 
     renderWithClient(<AdminUserManagement />);
 
-    expect(await screen.findByText('예매 컨텍스트')).toBeInTheDocument();
+    expect(await screen.findByText('예매 내역')).toBeInTheDocument();
     await user.click(screen.getByRole('checkbox', { name: '보안 권한 관리' }));
     await user.type(screen.getByLabelText('권한 변경 사유'), '권한 회수 테스트');
     await user.click(screen.getByRole('checkbox', { name: '권한 변경 영향 확인' }));
@@ -747,7 +748,7 @@ describe('AdminUserManagement', () => {
 
     renderWithClient(<AdminUserManagement />, queryClient);
 
-    expect(await screen.findByText('계정 생명주기')).toBeInTheDocument();
+    expect(await screen.findByText('계정 상태 관리')).toBeInTheDocument();
     const submitButton = screen.getByRole('button', { name: '탈퇴 처리' });
     expect(submitButton).toBeDisabled();
 
@@ -799,7 +800,7 @@ describe('AdminUserManagement', () => {
 
     renderWithClient(<AdminUserManagement />, queryClient);
 
-    expect(await screen.findByText('계정 생명주기')).toBeInTheDocument();
+    expect(await screen.findByText('계정 상태 관리')).toBeInTheDocument();
     await user.type(screen.getByLabelText('탈퇴 처리 사유'), '사용자 요청');
     await user.click(screen.getByRole('checkbox', { name: '회원 탈퇴 처리 확인' }));
     await user.click(screen.getByRole('button', { name: '탈퇴 처리' }));
@@ -865,7 +866,7 @@ describe('AdminUserManagement', () => {
 
     renderWithClient(<AdminUserManagement />);
 
-    expect(await screen.findByText('계정 생명주기')).toBeInTheDocument();
+    expect(await screen.findByText('계정 상태 관리')).toBeInTheDocument();
     await user.type(screen.getByLabelText('DB 완전 삭제 사유'), '테스트 데이터 정리');
     await user.click(screen.getByRole('checkbox', { name: '회원 DB 완전 삭제 확인' }));
     await user.click(screen.getByRole('button', { name: 'DB에서 완전 삭제' }));

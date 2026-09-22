@@ -84,8 +84,9 @@ test.describe('Admin export and seat operations', () => {
   }) => {
     await page.goto('/admin/bookings');
 
-    await expect(page.getByRole('heading', { name: '예매 관리' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '예매·취소' })).toBeVisible();
     await expect(page.getByLabel('업무 공연 선택')).toBeVisible();
+    await page.getByText('예매 명단 내려받기', { exact: true }).click();
     await expect(page.getByText('일반 CSV는 선택 범위의 전체 회차를 포함합니다.', { exact: false })).toBeVisible();
     await page.getByRole('button', { name: '예약자 원본 CSV 내보내기' }).click();
     await expect(
@@ -101,7 +102,7 @@ test.describe('Admin export and seat operations', () => {
   }) => {
     await page.goto('/admin/bookings');
 
-    await expect(page.getByRole('heading', { name: '예매 관리' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '예매·취소' })).toBeVisible();
     await page
       .getByRole('button', { name: /Grabit Fanmeet 예매 상세 보기/ })
       .click();
@@ -117,7 +118,7 @@ test.describe('Admin export and seat operations', () => {
 
     await page.goto('/admin/seat-operations');
     await expect(
-      page.getByRole('heading', { name: '좌석 운영', level: 1 }),
+      page.getByRole('heading', { name: '좌석 관리', level: 1 }),
     ).toBeVisible();
     await page.getByLabel('업무 공연 선택').selectOption('00000000-0000-4000-8000-000000000101');
     await page.getByLabel('업무 회차 선택').selectOption('00000000-0000-4000-8000-000000000001');

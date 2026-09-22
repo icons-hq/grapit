@@ -63,7 +63,7 @@ export default function AdminBannersPage() {
   return (
     <div>
       <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-display font-semibold leading-[1.2]">배너 관리</h1>
+        <h1 className="text-display font-semibold leading-[1.2]">홈 배너</h1>
         {!showCreateForm && (
           <Button onClick={() => setShowCreateForm(true)}>
             <Plus className="mr-2 h-4 w-4" />
@@ -217,11 +217,11 @@ function BannerCard({
       <img
         src={banner.imageUrl}
         alt={`배너 ${banner.sortOrder + 1}`}
-        className="aspect-video h-20 rounded object-cover"
+        className="aspect-video h-14 rounded object-cover sm:h-20"
       />
 
       {/* Info */}
-      <div className="flex-1">
+      <div className="min-w-0 flex-1">
         <p className="text-sm font-semibold">
           순서: {banner.sortOrder + 1}
         </p>
@@ -229,7 +229,7 @@ function BannerCard({
           <p className="truncate text-xs text-gray-500">{banner.linkUrl}</p>
         )}
         <p className="text-xs text-gray-400">
-          {banner.placement} · {banner.deviceTarget} · {banner.status} ·{' '}
+          {({ home_hero: '홈 상단', home_secondary: '홈 보조', performance_detail: '공연 상세', operations_notice: '운영 공지' })[banner.placement]} · {({ all: '모든 기기', desktop: '컴퓨터', mobile: '모바일' })[banner.deviceTarget]} · {({ draft: '작성 중', scheduled: '게시 예약', active: '게시 중', paused: '게시 중지', expired: '기간 종료' })[banner.status]} ·{' '}
           {banner.isActive ? '활성' : '비활성'}
         </p>
       </div>

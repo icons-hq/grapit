@@ -32,12 +32,16 @@ export function TranslationSourceForm({
   const [sourceTitle, setSourceTitle] = useState('');
   const [sourceBody, setSourceBody] = useState('');
   const [sourceId, setSourceId] = useState<string | null>(null);
+  const [savedSourceKey, setSavedSourceKey] = useState('');
   const performanceText = performance && ['title', 'description', 'salesInfo'].includes(field)
     ? performance[field as 'title' | 'description' | 'salesInfo'] ?? '' : '';
+  const currentSourceText = performance ? performanceText : `${sourceTitle.trim()}\n\n${sourceBody.trim()}`.trim();
+  const sourceKey = JSON.stringify([performance ? 'performance' : entityType, performance?.id ?? entityId.trim(), field, currentSourceText]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const sourceText = performance ? performanceText : `${sourceTitle.trim()}\n\n${sourceBody.trim()}`.trim();
+    const sourceText = currentSourceText;
+    const submittedSourceKey = sourceKey;
     try {
       const source = await onCreateSource({
         entityType: performance ? 'performance' : entityType,
@@ -46,13 +50,14 @@ export function TranslationSourceForm({
         sourceText,
       });
       setSourceId(source.id);
+      setSavedSourceKey(submittedSourceKey);
     } catch {
       setSourceId(null);
     }
   }
 
   async function handleGenerateDrafts() {
-    if (!sourceId) return;
+    if (!sourceId || sourceKey !== savedSourceKey) return;
     try {
       await onGenerateDrafts(sourceId);
     } catch {
@@ -78,46 +83,45 @@ export function TranslationSourceForm({
           <select
             id="translation-entity-type"
             value={entityType}
-            onChange={(event) => setEntityType(event.target.value)}
+            onChange={(event) => { setEntityType(event.target.value); setSourceId(null); }}
             className="flex h-11 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
           >
-            <option value="performance">performance</option>
-            <option value="banner">banner</option>
-            <option value="notice">notice</option>
-            <option value="legal">legal</option>
+            <option value="performance">공연</option>
+            <option value="banner">배너</option>
           </select>
         </div>
         <div className="space-y-2">
-          <Label htmlFor="translation-entity-id">콘텐츠 ID</Label>
+          <Label htmlFor="translation-entity-id">콘텐츠 관리 번호</Label>
           <Input
             id="translation-entity-id"
             value={entityId}
-            onChange={(event) => setEntityId(event.target.value)}
+            onChange={(event) => { setEntityId(event.target.value); setSourceId(null); }}
             required
           />
         </div>
         </>}
         <div className="space-y-2">
-          <Label htmlFor="translation-field">필드</Label>
+          <Label htmlFor="translation-field">번역할 항목</Label>
           <select
             id="translation-field"
             value={field}
             onChange={(event) => { setField(event.target.value); setSourceId(null); }}
             className="flex h-11 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
           >
-            <option value="title">공연명</option>
+            <option value="title">제목</option>
             <option value="description">상세 안내</option>
             <option value="salesInfo">판매 안내</option>
           </select>
         </div>
       </div>
 
+      {!performance && <p className="text-xs text-muted-foreground">공지·약관·환불 정책·예매 안내는 자동 번역 대상이 아닙니다. 검수된 번역문을 사용해야 합니다.</p>}
       {!performance && <div className="space-y-2">
         <Label htmlFor="translation-source-title">원문 제목</Label>
         <Input
           id="translation-source-title"
           value={sourceTitle}
-          onChange={(event) => setSourceTitle(event.target.value)}
+          onChange={(event) => { setSourceTitle(event.target.value); setSourceId(null); }}
           required
         />
       </div>}
@@ -128,7 +132,7 @@ export function TranslationSourceForm({
           id="translation-source-body"
           value={performance ? performanceText : sourceBody}
           readOnly={Boolean(performance)}
-          onChange={(event) => setSourceBody(event.target.value)}
+          onChange={(event) => { setSourceBody(event.target.value); setSourceId(null); }}
           rows={5}
           required
         />
@@ -141,10 +145,10 @@ export function TranslationSourceForm({
         <Button
           type="button"
           variant="outline"
-          disabled={!sourceId || isGenerating}
+          disabled={!sourceId || sourceKey !== savedSourceKey || isGenerating || isCreating}
           onClick={() => void handleGenerateDrafts()}
         >
-          en/th/zh-CN 초안 생성
+          영어·태국어·중국어 초안 생성
         </Button>
       </div>
     </form>

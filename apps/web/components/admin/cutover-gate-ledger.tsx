@@ -6,7 +6,6 @@ import {
   CheckCircle2,
   Clock3,
   FileCheck2,
-  LockKeyhole,
   RefreshCw,
   ShieldAlert,
 } from 'lucide-react';
@@ -29,6 +28,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { cn } from '@/lib/cn';
+import { cutoverLabel } from '@/lib/admin-vocabulary';
 import type {
   AdminCutoverGateRow,
   AdminCutoverGateSummary,
@@ -63,12 +63,12 @@ const STATE_COPY: Record<
     icon: AlertTriangle,
   },
   ACCEPTED_RISK: {
-    label: '승인된 리스크',
+    label: '예외 승인',
     className: 'bg-[#FFFBEB] text-[#8B6306] border-transparent',
     icon: FileCheck2,
   },
   CONFIG_READY_NOT_DRILLED: {
-    label: '설정 증거',
+    label: '설정만 확인',
     className: 'bg-[#FFFBEB] text-[#8B6306] border-transparent',
     icon: Clock3,
   },
@@ -87,10 +87,12 @@ function formatDateTime(value: string | null): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat('ko-KR', {
+    year: 'numeric',
     month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    timeZone: 'Asia/Seoul',
   }).format(date);
 }
 
@@ -112,20 +114,6 @@ function stateCount(summary: AdminCutoverGateSummary, state: CutoverGateState) {
   return summary.countsByState[state] ?? 0;
 }
 
-function getFinalEnableReason(summary: AdminCutoverGateSummary | undefined) {
-  if (!summary) return 'Gate Ledger 데이터를 불러온 뒤 다시 확인하세요.';
-  if (summary.finalEnableAllowed) {
-    return '모든 필수 게이트가 검토되었습니다. 운영 runbook에서 rollback trigger를 다시 확인한 뒤 진행하세요.';
-  }
-
-  const blockingGate = summary.firstBlockingGate;
-  if (!blockingGate) {
-    return '서버가 finalEnableAllowed=false로 판단했습니다. Gate Ledger artifact와 API 상태를 확인하세요.';
-  }
-
-  return `BOOKING_ENABLED=true는 ${blockingGate.gateId} 때문에 비활성화되어 있습니다.`;
-}
-
 function isNonPassState(state: CutoverGateState) {
   return state !== 'PASS';
 }
@@ -136,7 +124,7 @@ function StateBadge({ state }: { state: CutoverGateState }) {
   return (
     <Badge className={copy.className}>
       <Icon className="h-3 w-3" />
-      {state}
+      {copy.label}
     </Badge>
   );
 }
@@ -189,27 +177,28 @@ function LoadingRows() {
 function GateDetail({ row }: { row: AdminCutoverGateRow | null }) {
   if (!row) {
     return (
-      <aside className="rounded-lg bg-white p-4 shadow-sm" aria-label="게이트 상세">
-        <p className="text-sm font-semibold text-gray-900">게이트를 선택하세요</p>
+      <aside className="rounded-lg bg-white p-4 shadow-sm" aria-label="점검 상세" id="cutover-detail" tabIndex={-1} style={{ scrollMarginTop: 90 }}>
+        <p className="text-sm font-semibold text-gray-900">점검 항목을 선택하세요</p>
         <p className="mt-2 text-sm text-gray-600">
-          행을 선택하면 증거, 승인 상태, 보완 모니터링, rollback trigger를 확인할 수 있습니다.
+          항목을 선택하면 확인 자료, 승인 기록과 판매 중단·복구 기준이 표시됩니다.
         </p>
       </aside>
     );
   }
 
   return (
-    <aside className="rounded-lg bg-white p-4 shadow-sm" aria-label="게이트 상세">
+    <aside className="rounded-lg bg-white p-4 shadow-sm" aria-label="점검 상세" id="cutover-detail" tabIndex={-1} style={{ scrollMarginTop: 90 }}>
       <div className="space-y-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <h2 className="text-heading font-semibold leading-[1.2] text-gray-900">
-              {row.gateId}
+              {cutoverLabel(row.gateId)}
             </h2>
             <p className="mt-2 text-sm text-gray-600">
               {row.requirementIds.length > 0
                 ? row.requirementIds.join(', ')
                 : '요구사항 미연결'}
+              {` · ${row.gateId}`}
               {' · '}
               {row.environment ?? '환경 미기록'}
             </p>
@@ -220,8 +209,8 @@ function GateDetail({ row }: { row: AdminCutoverGateRow | null }) {
         {isNonPassState(row.state) && (
           <div className="rounded-lg border border-[#F5E4B8] bg-[#FFFBEB] p-3 text-sm text-[#8B6306]">
             {row.state === 'CONFIG_READY_NOT_DRILLED'
-              ? '설정 증거는 있지만 실제 drill PASS는 아닙니다'
-              : 'PASS가 아닌 상태로 진행하려면 실패 게이트, 보완 모니터링, rollback trigger를 기록해야 합니다'}
+              ? '설정 확인만으로 실제 운영 테스트가 완료되지는 않습니다'
+              : '미완료 항목이 있다면 승인 사유, 추가 확인 방법과 판매 중단·복구 기준을 기록해야 합니다'}
           </div>
         )}
 
@@ -235,7 +224,7 @@ function GateDetail({ row }: { row: AdminCutoverGateRow | null }) {
           <div>
             <dt className="font-semibold text-gray-600">승인 상태</dt>
             <dd className="mt-1 text-gray-900">
-              {row.approvalState}
+              {({ approved: '승인됨', not_requested: '승인 요청 전', pending: '승인 대기', rejected: '반려', not_required: '승인 불필요' } as Record<string, string>)[row.approvalState] ?? row.approvalState}
               {row.approver ? ` · ${row.approver}` : ''}
               {row.approvalTimestamp
                 ? ` · ${formatDateTime(row.approvalTimestamp)}`
@@ -249,7 +238,7 @@ function GateDetail({ row }: { row: AdminCutoverGateRow | null }) {
             </dd>
           </div>
           <div>
-            <dt className="font-semibold text-gray-600">Rollback / close trigger</dt>
+            <dt className="font-semibold text-gray-600">판매 중단·복구 기준</dt>
             <dd className="mt-1 text-gray-900">
               {row.rollbackOrCloseTrigger ?? '미기록'}
             </dd>
@@ -257,7 +246,7 @@ function GateDetail({ row }: { row: AdminCutoverGateRow | null }) {
         </dl>
 
         <div>
-          <p className="text-sm font-semibold text-gray-600">Evidence refs</p>
+          <p className="text-sm font-semibold text-gray-600">확인 자료</p>
           {row.evidenceRefs.length > 0 ? (
             <ul className="mt-2 space-y-1 text-sm text-gray-900">
               {row.evidenceRefs.map((ref) => (
@@ -268,14 +257,14 @@ function GateDetail({ row }: { row: AdminCutoverGateRow | null }) {
             </ul>
           ) : (
             <p className="mt-2 rounded-md bg-[#F5F5F7] px-3 py-2 text-sm text-gray-700">
-              증거가 비어 있어 no-go입니다
+              확인 자료가 없어 판매를 시작할 수 없습니다
             </p>
           )}
         </div>
 
         <div className="rounded-lg bg-[#F5F5F7] p-3 text-sm text-gray-700">
           {row.redactionNotes ??
-            'Evidence preview는 redacted refs/metadata만 표시하며 raw provider payload는 표시하지 않습니다.'}
+            '확인 자료는 개인정보를 가린 요약으로 표시합니다.'}
         </div>
       </div>
     </aside>
@@ -300,9 +289,16 @@ export function CutoverGateLedger({
     selectedGateId && sortedRows.some((row) => row.gateId === selectedGateId)
       ? selectedGateId
       : preferredGateId;
+  function selectGate(id: string) {
+    setSelectedGateId(id);
+    if (window.innerWidth < 1280) requestAnimationFrame(() => {
+      const detail = document.getElementById('cutover-detail');
+      detail?.focus({ preventScroll: true });
+      detail?.scrollIntoView?.({ block: 'start', behavior: 'smooth' });
+    });
+  }
   const selectedRow =
     sortedRows.find((row) => row.gateId === effectiveSelectedGateId) ?? null;
-  const finalEnableReason = getFinalEnableReason(summary);
   const blockedCount = summary
     ? stateCount(summary, 'BLOCKED') + stateCount(summary, 'FAIL')
     : 0;
@@ -315,7 +311,7 @@ export function CutoverGateLedger({
             role="alert"
             className="rounded-lg bg-[#FEF2F2] p-4 text-sm font-semibold text-[#C62828]"
           >
-            게이트 상태를 불러오지 못했습니다. 새로고침 후 다시 시도하고, 반복되면 Gate Ledger artifact와 API 상태를 확인하세요.
+            점검 상태를 불러오지 못했습니다. 다시 확인해주세요. 반복되면 기술 담당자에게 문의하세요.
           </div>
         </CardContent>
       </Card>
@@ -327,10 +323,10 @@ export function CutoverGateLedger({
       <Card className="rounded-lg">
         <CardContent className="p-8 text-center">
           <h2 className="text-heading font-semibold leading-[1.2] text-gray-900">
-            등록된 게이트 증거가 없습니다
+            등록된 점검 자료가 없습니다
           </h2>
           <p className="mx-auto mt-3 max-w-[640px] text-base text-gray-700">
-            Gate Ledger 행을 생성하고 각 게이트의 상태와 증거 파일을 연결하세요. 빈 행이 있으면 BOOKING_ENABLED=true는 no-go입니다.
+            점검 항목별 결과와 확인 자료를 등록해야 합니다. 점검 기록이 없으면 판매를 시작할 수 없습니다.
           </p>
         </CardContent>
       </Card>
@@ -349,7 +345,7 @@ export function CutoverGateLedger({
       >
         <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div>
-            <p className="text-sm font-semibold text-gray-600">Go / no-go</p>
+            <p className="text-sm font-semibold text-gray-600">판매 시작 준비 상태</p>
             <h2
               className={cn(
                 'mt-1 text-heading font-semibold leading-[1.2]',
@@ -357,13 +353,13 @@ export function CutoverGateLedger({
               )}
             >
               {summary?.finalEnableAllowed
-                ? '모든 필수 게이트가 검토되었습니다'
-                : '아직 라이브 예매를 열 수 없습니다'}
+                ? '기록상 필수 점검이 검토되었습니다'
+                : '기록상 미완료 점검이 있습니다'}
             </h2>
             <p className="mt-2 text-sm text-gray-700">
               {summary?.firstBlockingGate
-                ? `첫 번째 blocking gate: ${summary.firstBlockingGate.gateId}`
-                : '서버가 내려준 Gate Ledger readiness만 표시합니다.'}
+                ? `먼저 확인할 항목: ${cutoverLabel(summary.firstBlockingGate.gateId)}`
+                : '저장된 점검 결과를 기준으로 표시합니다. 실제 판매 상태는 공연에서 확인하세요.'}
             </p>
           </div>
           <Button
@@ -374,35 +370,36 @@ export function CutoverGateLedger({
             disabled={isRefreshing}
           >
             <RefreshCw className={cn('h-4 w-4', isRefreshing && 'animate-spin')} />
-            게이트 검증하기
+            점검 결과 새로고침
           </Button>
         </div>
         <div className="mt-4 grid gap-2 text-sm md:grid-cols-2">
           <p className="rounded-lg border border-[#F5E4B8] bg-white/70 px-3 py-2 font-semibold text-[#8B6306]">
-            설정 증거는 있지만 실제 drill PASS는 아닙니다
+            설정 확인만으로 실제 운영 테스트가 완료되지는 않습니다
           </p>
           <p className="rounded-lg border border-[#F5E4B8] bg-white/70 px-3 py-2 font-semibold text-[#8B6306]">
-            PASS가 아닌 상태로 진행하려면 실패 게이트, 보완 모니터링, rollback trigger를 기록해야 합니다
+            미완료 항목이 있다면 승인 사유, 추가 확인 방법과 판매 중단·복구 기준을 기록해야 합니다
           </p>
         </div>
       </section>
 
-      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6" aria-label="게이트 상태 요약">
+      <p className="text-sm text-muted-foreground">점검 자료 기준: {summary?.ledgerGeneratedAt ? formatDateTime(summary.ledgerGeneratedAt) : '기준 시각 미기록'} · 현재 판매 상태와 자동으로 일치하지 않을 수 있습니다.</p>
+      <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3" aria-label="게이트 상태 요약">
         {isLoading ? (
           Array.from({ length: 6 }).map((_, index) => (
             <Skeleton key={`cutover-summary-${index}`} className="h-24 rounded-lg" />
           ))
         ) : summary ? (
           <>
-            <SummaryCard label="PASS" value={stateCount(summary, 'PASS')} tone="pass" />
-            <SummaryCard label="BLOCKED/FAIL" value={blockedCount} tone="blocked" />
+            <SummaryCard label="검증 완료" value={stateCount(summary, 'PASS')} tone="pass" />
+            <SummaryCard label="보완 필요" value={blockedCount} tone="blocked" />
             <SummaryCard
-              label="ACCEPTED_RISK"
+              label="예외 승인"
               value={stateCount(summary, 'ACCEPTED_RISK')}
               tone="amber"
             />
             <SummaryCard
-              label="CONFIG_READY_NOT_DRILLED"
+              label="설정만 확인"
               value={stateCount(summary, 'CONFIG_READY_NOT_DRILLED')}
               tone="amber"
             />
@@ -412,22 +409,22 @@ export function CutoverGateLedger({
               tone={summary.missingEvidenceCount > 0 ? 'blocked' : 'neutral'}
             />
             <SummaryCard
-              label="다음 no-go"
-              value={summary.firstBlockingGate?.gateId ?? '-'}
+              label="우선 확인"
+              value={summary.firstBlockingGate ? cutoverLabel(summary.firstBlockingGate.gateId) : '-'}
               tone={summary.firstBlockingGate ? 'blocked' : 'neutral'}
             />
           </>
         ) : null}
       </section>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_400px]">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
         <Card className="gap-0 overflow-hidden rounded-lg py-0">
           <CardHeader className="gap-2 border-b bg-white px-4 py-4">
             <CardTitle className="text-heading leading-[1.2]">
-              Gate Ledger
+              판매 시작 점검표
             </CardTitle>
             <CardDescription>
-              blockers-first 정렬로 상태, 증거 freshness, 승인 metadata, rollback/close trigger를 확인합니다.
+              판매를 막는 항목부터 표시합니다. 결과, 확인 자료와 승인 여부를 차례로 살펴보세요.
             </CardDescription>
           </CardHeader>
           <CardContent className="px-0">
@@ -435,11 +432,10 @@ export function CutoverGateLedger({
               <Table>
                 <TableHeader>
                   <TableRow className="bg-[#F5F5F7]">
-                    <TableHead scope="col">Gate</TableHead>
+                    <TableHead scope="col">점검 항목</TableHead>
                     <TableHead scope="col">상태</TableHead>
                     <TableHead scope="col">요구사항</TableHead>
-                    <TableHead scope="col">증거 freshness</TableHead>
-                    <TableHead scope="col">실패/주의 사유</TableHead>
+                    <TableHead scope="col">확인 자료</TableHead>
                   </TableRow>
                 </TableHeader>
                 {isLoading ? (
@@ -448,28 +444,28 @@ export function CutoverGateLedger({
                   <TableBody>
                     {sortedRows.map((row) => (
                       <TableRow
-                        key={row.gateId}
+                        key={cutoverLabel(row.gateId)}
                         data-testid="cutover-gate-row"
                         role="button"
                         tabIndex={0}
-                        aria-label={`${row.gateId} 게이트 상세 보기`}
+                        aria-label={`${cutoverLabel(row.gateId)} 점검 상세 보기`}
                         className={cn(
                           'min-h-11 cursor-pointer hover:bg-gray-50',
                           effectiveSelectedGateId === row.gateId && 'bg-[#F3EFFF]',
                           row.blocking && 'border-l-4 border-l-[#C62828]',
                         )}
-                        onClick={() => setSelectedGateId(row.gateId)}
+                        onClick={() => selectGate(row.gateId)}
                         onKeyDown={(event) => {
                           if (event.key === 'Enter' || event.key === ' ') {
                             event.preventDefault();
-                            setSelectedGateId(row.gateId);
+                            selectGate(row.gateId);
                           }
                         }}
                       >
                         <TableCell className="max-w-[220px] whitespace-normal">
                           <div className="flex flex-col gap-1">
                             <span className="font-semibold text-gray-900">
-                              {row.gateId}
+                              {cutoverLabel(row.gateId)}
                             </span>
                             <span className="text-sm text-gray-600">
                               {row.environment ?? '환경 미기록'}
@@ -484,11 +480,8 @@ export function CutoverGateLedger({
                         </TableCell>
                         <TableCell className="whitespace-normal text-sm text-gray-700">
                           {row.evidenceMissing
-                            ? '증거가 비어 있어 no-go입니다'
-                            : `${row.evidenceRefs.length}개 evidence ref`}
-                        </TableCell>
-                        <TableCell className="max-w-[320px] whitespace-normal text-sm text-gray-700">
-                          {row.blockingReason ?? row.failureReason ?? STATE_COPY[row.state].label}
+                            ? '확인 자료가 없어 판매를 시작할 수 없습니다'
+                            : `${row.evidenceRefs.length}개 확인 자료`}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -504,18 +497,18 @@ export function CutoverGateLedger({
                   ))
                 : sortedRows.map((row) => (
                     <button
-                      key={row.gateId}
+                      key={cutoverLabel(row.gateId)}
                       type="button"
                       className={cn(
                         'w-full rounded-lg border bg-white p-4 text-left',
                         effectiveSelectedGateId === row.gateId && 'border-primary bg-[#F3EFFF]',
                         row.blocking && 'border-l-4 border-l-[#C62828]',
                       )}
-                      onClick={() => setSelectedGateId(row.gateId)}
+                      onClick={() => selectGate(row.gateId)}
                     >
                       <div className="flex flex-wrap items-start justify-between gap-2">
                         <p className="min-w-0 break-all text-sm font-semibold text-gray-900">
-                          {row.gateId}
+                          {cutoverLabel(row.gateId)}
                         </p>
                         <StateBadge state={row.state} />
                       </div>
@@ -523,7 +516,7 @@ export function CutoverGateLedger({
                         {row.requirementIds.join(', ') || '요구사항 미연결'} · {row.environment ?? '환경 미기록'}
                       </p>
                       <p className="mt-2 text-sm text-gray-700">
-                        {row.blockingReason ?? row.failureReason ?? STATE_COPY[row.state].label}
+                        {row.evidenceMissing ? '확인 자료 누락' : STATE_COPY[row.state].label}
                       </p>
                     </button>
                   ))}
@@ -534,39 +527,9 @@ export function CutoverGateLedger({
         <GateDetail row={selectedRow} />
       </div>
 
-      <section className="sticky bottom-4 z-10 rounded-lg border bg-white p-4 shadow-sm">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-[#F5F5F7] text-gray-700">
-              <LockKeyhole className="h-5 w-5" />
-            </div>
-            <div>
-              <h2 className="text-heading font-semibold leading-[1.2] text-gray-900">
-                BOOKING_ENABLED=true final action
-              </h2>
-              <p className="mt-2 text-sm text-gray-700">{finalEnableReason}</p>
-              <p className="mt-1 text-sm text-gray-600">
-                금융 또는 좌석 안전 기준을 위반하면 즉시 예매를 닫습니다
-              </p>
-            </div>
-          </div>
-          <Button
-            type="button"
-            className="h-12 w-full lg:w-auto"
-            disabled={!summary?.finalEnableAllowed}
-          >
-            BOOKING_ENABLED=true 활성화
-          </Button>
-        </div>
-      </section>
-
-      <section className="grid gap-3 text-sm text-gray-700 md:grid-cols-2">
-        <div className="rounded-lg bg-white p-4 shadow-sm">
-          100% 직접 배포 후 15분 동안 핵심 경로를 감시합니다
-        </div>
-        <div className="rounded-lg bg-white p-4 shadow-sm">
-          이 phase는 Cloud Run traffic-split canary를 사용하지 않습니다
-        </div>
+      <section className="admin-panel text-sm text-muted-foreground">
+        <h2 className="mb-2 font-semibold text-gray-900">판매 시작은 별도로 진행합니다</h2>
+        <p>이 화면은 저장된 점검 기록을 보여줍니다. 여기에서 판매를 켜거나 끌 수 없습니다. 공연 담당자가 공개 여부와 판매 시작 시각을 확인하고, 운영 담당자가 승인된 절차에 따라 예매 허용 설정을 변경해야 합니다.</p>
       </section>
     </div>
   );

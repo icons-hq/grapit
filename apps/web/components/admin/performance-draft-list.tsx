@@ -10,7 +10,7 @@ export function PerformanceDraftList() {
   const capabilities = resolveAdminCapabilitySnapshot(user);
   const enabled = capabilities.superuser || capabilities.capabilities.includes('event.write');
   const drafts = usePerformanceDrafts(undefined, enabled);
-  if (!enabled) return null;
+  if (!enabled || (drafts.isSuccess && !drafts.data?.length)) return null;
   return <section aria-label="작성 중인 내 초안" className="mb-7 rounded-lg border border-gray-200 p-4">
     <h2 className="font-semibold">작성 중인 내 초안</h2>
     {drafts.isError ? <p role="alert" className="mt-2 text-sm">초안을 조회하지 못했습니다. <button className="underline" onClick={() => void drafts.refetch()}>다시 불러오기</button></p>

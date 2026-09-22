@@ -313,7 +313,7 @@ describe('AdminBenefitManager', () => {
     await selectBenefitShowtime(user);
 
     await screen.findByDisplayValue('6:1 이벤트 참여권');
-    await user.type(screen.getByLabelText('테스트 seed 참조값'), 'operator-seed');
+    await user.type(screen.getByLabelText('반복 테스트 번호 (선택)'), 'operator-seed');
     await user.click(screen.getByRole('button', { name: /^테스트 실행$/ }));
 
     await waitFor(() => expect(mocks.testMutate).toHaveBeenCalledTimes(1));
@@ -338,8 +338,8 @@ describe('AdminBenefitManager', () => {
     await selectBenefitShowtime(user);
 
     await screen.findByText(liveRunId);
-    await user.type(screen.getByLabelText('라이브 적용 사유'), '판매 종료 전 확정');
-    await user.click(screen.getByRole('button', { name: /라이브 적용/ }));
+    await user.type(screen.getByLabelText('실제 적용 사유'), '판매 종료 전 확정');
+    await user.click(screen.getByRole('button', { name: /실제 적용/ }));
 
     await waitFor(() => expect(mocks.liveMutate).toHaveBeenCalledTimes(1));
     expect(mocks.liveMutate).toHaveBeenCalledWith({
@@ -374,8 +374,8 @@ describe('AdminBenefitManager', () => {
     render(<AdminBenefitManager />);
 
     expect(screen.queryByLabelText('회차 ID')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '설정 CSV' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: '부여 CSV' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '특전 설정 내려받기' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '지급 대상 내려받기' })).toBeDisabled();
     expect(screen.getByRole('button', { name: /설정 저장/ })).toBeDisabled();
     expect(screen.getByRole('button', { name: /^테스트 실행$/ })).toBeDisabled();
     expect(screen.getByText('공연과 회차를 선택하면 실행 기록을 조회합니다.')).toBeInTheDocument();

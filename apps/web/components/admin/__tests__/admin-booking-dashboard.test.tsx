@@ -12,7 +12,9 @@ import { useAuthStore } from '@/stores/use-auth-store';
 
 const mocks = vi.hoisted(() => ({
   apiGet: vi.fn(),
+  context: null as null | { performanceId: string; showtimeId: string; bookingId: null; selectPerformance: ReturnType<typeof vi.fn>; selectShowtime: ReturnType<typeof vi.fn> },
 }));
+vi.mock('../admin-event-context', () => ({ useAdminEventContext: () => mocks.context }));
 
 vi.mock('@/lib/api-client', () => ({
   apiClient: {
@@ -47,7 +49,7 @@ function createQueryClient() {
 }
 
 function renderWithClient(ui: ReactNode) {
-  render(
+  return render(
     <QueryClientProvider client={createQueryClient()}>{ui}</QueryClientProvider>,
   );
 }
@@ -308,6 +310,7 @@ describe('AdminBookingDashboard', () => {
   });
 
   beforeEach(() => {
+    mocks.context = null;
     useAuthStore.setState({
       accessToken: 'admin-token',
       user: {
@@ -373,7 +376,7 @@ describe('AdminBookingDashboard', () => {
     renderWithClient(<AdminBookingDashboard />);
 
     expect(await screen.findByText('판매 좌석')).toBeInTheDocument();
-    expect(await screen.findByText('10건')).toBeInTheDocument();
+    expect(within(await screen.findByRole('group', { name: '판매 좌석', hidden: true })).getByText('10석')).toBeInTheDocument();
     expect(screen.getByText('결제/취소 진행')).toBeInTheDocument();
     expect(screen.queryByText('결제 실패/만료')).not.toBeInTheDocument();
     expect(screen.queryByText('만료 1건 · 중단/취소 1건')).not.toBeInTheDocument();
@@ -393,11 +396,11 @@ describe('AdminBookingDashboard', () => {
     renderWithClient(<AdminBookingDashboard />);
 
     const searchInput = await screen.findByPlaceholderText(
-      '예매번호, Toss 주문번호, 공연명, 좌석, 회원 이름/이메일/전화/ID 검색',
+      '예매번호, 이름, 이메일, 전화번호로 검색',
     );
 
     await user.type(searchInput, 'GRP-ORDER-123');
-    await selectOption(user, '퍼널 상태', '결제 확인 중');
+    await selectOption(user, '예매 상태', '결제 확인 중');
     await selectOption(user, '결제 상태', '결제 완료');
     await selectOption(user, '결제 수단', '해외 간편결제');
     await selectOption(user, '국내/해외', '해외');
@@ -459,6 +462,35 @@ describe('AdminBookingDashboard', () => {
         String(url).includes('/api/v1/admin/performances?page=1&limit=200'),
       ),
     ).toBe(true);
+  });
+
+  it('clears event-dependent filters and pagination when the shared event selection changes', async () => {
+    mocks.context = { performanceId: '11111111-1111-4111-8111-000000000301', showtimeId: '', bookingId: null, selectPerformance: vi.fn(), selectShowtime: vi.fn() };
+    const get = mocks.apiGet.getMockImplementation()!;
+    mocks.apiGet.mockImplementation((url: string) => url.includes('/admin/bookings?') ? Promise.resolve(bookingsResponse({ total: 41 })) : get(url));
+    const client = createQueryClient();
+    const { rerender } = render(<QueryClientProvider client={client}><AdminBookingDashboard /></QueryClientProvider>);
+    const user = userEvent.setup();
+    await waitFor(() => expect(screen.getByLabelText('좌석 등급')).not.toBeDisabled());
+    await selectOption(user, '좌석 등급', 'VIP');
+    await selectOption(user, '층', '1층');
+    await user.type(screen.getByPlaceholderText('좌석만 검색'), 'A-10');
+    await waitFor(() => expect(String(mocks.apiGet.mock.calls.at(-1)?.[0])).toContain('seatQuery=A-10'));
+    await user.click(screen.getByRole('button', { name: '다음' }));
+    await waitFor(() => expect(String(mocks.apiGet.mock.calls.at(-1)?.[0])).toContain('page=2'));
+    mocks.apiGet.mockClear();
+    mocks.context = { ...mocks.context, showtimeId: '11111111-1111-4111-8111-000000000302' };
+    rerender(<QueryClientProvider client={client}><AdminBookingDashboard /></QueryClientProvider>);
+    await waitFor(() => {
+      const requests = mocks.apiGet.mock.calls.map(([url]) => String(url)).filter((url) => url.includes('/admin/bookings?'));
+      expect(requests.length).toBeGreaterThan(0);
+      for (const url of requests) {
+        expect(url).toContain('showtimeId=11111111-1111-4111-8111-000000000302');
+        expect(url).toContain('page=1');
+        expect(url).not.toMatch(/seatTier=|floorKey=|seatQuery=/);
+      }
+    });
+    expect(screen.getByPlaceholderText('좌석만 검색')).toHaveValue('');
   });
 
   it('passes selected performance and showtime context to the reservation export panel', async () => {
@@ -585,7 +617,7 @@ describe('AdminBookingDashboard', () => {
     expect(within(row as HTMLTableRowElement).getAllByRole('cell', { name: '-' })).toHaveLength(2);
   });
 
-  it('shows Toss order id in the booking list and detail modal', async () => {
+  it('keeps the Toss order id in detail instead of crowding the list', async () => {
     const user = userEvent.setup();
     mocks.apiGet.mockImplementation(async (url: string) => {
       if (url.endsWith('/support-evidence')) return { generatedAt: '2026-09-21T00:00:00.000Z', originalOrderAmount: 50000, provider: null, refundTimeline: null, refundProviderAmount: null, rights: { seatStatesKnown: true, activeSeats: 1, cancelledSeats: 0, pendingSeats: 0, enteredSeats: 0, benefits: [] }, delivery: { lastSentAt: null, scheduledAt: null, inboxReceipt: 'unverified', history: [] } };
@@ -598,7 +630,8 @@ describe('AdminBookingDashboard', () => {
 
     renderWithClient(<AdminBookingDashboard />);
 
-    expect(await screen.findByText(/GRP-TOSS-ORDER-24006/)).toBeInTheDocument();
+    await screen.findByRole('button', { name: /김예매 Girl Rules Fanmeet 예매 상세 보기/ });
+    expect(screen.queryByText(/GRP-TOSS-ORDER-24006/)).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: /김예매 Girl Rules Fanmeet 예매 상세 보기/ }));
 
@@ -648,7 +681,8 @@ describe('AdminBookingDashboard', () => {
 
     renderWithClient(<AdminBookingDashboard />);
 
-    expect(await screen.findByText(/PAYMENT_DEADLINE_EXPIRED/)).toBeInTheDocument();
+    await screen.findByRole('button', { name: /실패고객 Girl Rules Fanmeet 예매 상세 보기/ });
+    expect(screen.queryByText(/PAYMENT_DEADLINE_EXPIRED/)).not.toBeInTheDocument();
     expect(screen.getByText('Toss 만료 수신/미반영')).toBeInTheDocument();
     expect(screen.getByText(/결제수단 확인 필요/)).toBeInTheDocument();
 

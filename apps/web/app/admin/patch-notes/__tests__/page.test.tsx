@@ -9,7 +9,7 @@ describe('AdminPatchNotesPage', () => {
     render(<AdminPatchNotesPage />);
 
     expect(
-      screen.getByRole('heading', { name: '패치노트' }),
+      screen.getByRole('heading', { name: '업데이트 내역' }),
     ).toBeInTheDocument();
     expect(
       screen.getByText('관리자 예매/결제 진단 및 일일 매출 통계 개선'),

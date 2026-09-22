@@ -23,9 +23,9 @@ export default function AdminOperationsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-display font-semibold leading-[1.2]">운영 인박스</h1>
+        <h1 className="text-display font-semibold leading-[1.2]">고객 문의</h1>
         <p className="mt-2 text-sm text-gray-600">
-          미답변 Q&A, CS, 환불 분쟁, 가입 실패와 SLA 상태를 하나의 큐에서 확인합니다.
+          미답변 문의와 환불·가입 문제를 확인하고 답변합니다. 기한이 지난 문의부터 처리하세요.
           {context?.performanceId ? ' 현재 공연의 예매에 연결된 문의를 표시합니다. 공연 미지정 문의는 전체 공연에서 확인하세요.' : ''}
         </p>
       </div>
@@ -45,8 +45,8 @@ export default function AdminOperationsPage() {
         }
         onEscalate={(input) =>
           escalateOperation.mutateAsync(input, {
-            onSuccess: () => toast.success('운영 항목이 에스컬레이션되었습니다.'),
-            onError: () => toast.error('에스컬레이션에 실패했습니다.'),
+            onSuccess: () => toast.success('관리자에게 검토를 요청했습니다.'),
+            onError: () => toast.error('관리자 검토 요청에 실패했습니다.'),
           })
         }
         onReassign={(input) =>

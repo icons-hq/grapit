@@ -273,7 +273,7 @@ export function FieldMonitor({
     <section className="space-y-5" aria-label="현장 모니터">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-gray-900">현장 모니터</h1>
+          <h1 className="text-xl font-semibold text-gray-900">입장 현황</h1>
           <p className="mt-2 text-base leading-[1.5] text-gray-600">
             회차별 입장·중복·동기화 현황을 확인합니다.
           </p>
@@ -348,7 +348,7 @@ function MonitorFilters({
   const context = useAdminEventContext();
   return (
     <Card className="border-gray-200 bg-white shadow-sm">
-      <CardContent className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-6">
+      <CardContent className="grid items-end gap-3 p-4 sm:grid-cols-2 xl:grid-cols-[minmax(130px,1fr)_minmax(130px,1fr)_minmax(160px,1fr)_minmax(320px,2fr)]">
         {!context && <><Input
           className="h-11"
           placeholder="event ID"
@@ -405,21 +405,21 @@ function MonitorFilters({
             && <option value={filters.scannerUserId}>선택한 담당자</option>}
           {scanners.map((scanner) => <option key={scanner.id} value={scanner.id}>{scanner.name}</option>)}
         </select>
-        <div className="grid grid-cols-2 gap-2">
-          <Input
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <label className="text-xs text-gray-600">조회 시작일<Input
             type="date"
             className="h-11"
             value={filters.dateFrom ?? ''}
             aria-label="조회 시작일"
             onChange={(event) => updateFilter('dateFrom', event.target.value)}
-          />
-          <Input
+          /></label>
+          <label className="text-xs text-gray-600">조회 종료일<Input
             type="date"
             className="h-11"
             value={filters.dateTo ?? ''}
             aria-label="조회 종료일"
             onChange={(event) => updateFilter('dateTo', event.target.value)}
-          />
+          /></label>
         </div>
       </CardContent>
     </Card>
