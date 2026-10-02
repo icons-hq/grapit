@@ -11,6 +11,7 @@ import type { DrizzleDB } from '../src/database/drizzle.provider.js';
 import * as schema from '../src/database/schema/index.js';
 import { TossPaymentError } from '../src/modules/payment/toss-payments.client.js';
 import { RefundService } from '../src/modules/refund/refund.service.js';
+import { AdminBookingService } from '../src/modules/admin/admin-booking.service.js';
 import { PaymentCancellationFinalizerService, JOB_ENQUEUE_FAILED } from '../src/modules/cancellation/payment-cancellation-finalizer.service.js';
 import { HeldCancelledSeatRecoveryWorker } from '../src/modules/cancellation/held-cancelled-seat-recovery.worker.js';
 import { RefundCancelRetryWorker } from '../src/modules/jobs/refund-cancel-retry.worker.js';
@@ -311,6 +312,36 @@ describe('Refund and cancellation recovery — PostgreSQL', () => {
     expect(blockingHealthy.cancelPayment.mock.calls[0]?.[1]).toBe(toss.cancelPayment.mock.calls[0]?.[1]);
     const [reservation] = await db.select().from(reservations).where(eq(reservations.id, f.reservation.id));
     expect(reservation!.status).toBe('CANCELLED');
+  });
+
+  it('reports a PG-rejected admin refund to the admin as rights restored (u03 x u14 contract)', async () => {
+    const f = await purchase();
+    // A definite provider rejection that left the balance untouched: RefundService restores the rights.
+    const toss = provider(f.snapshot, {
+      fail: () => new TossPaymentError('NOT_CANCELABLE_PAYMENT', '취소할 수 없는 결제입니다', 400),
+    });
+    const audit = { write: vi.fn().mockResolvedValue(undefined) };
+    const adminBooking = new AdminBookingService(
+      db,
+      { broadcastSeatUpdate: vi.fn() } as never,
+      new RefundService(db, toss as never, finalizer()),
+      audit as never,
+    );
+
+    const result = await adminBooking.refundBooking(f.reservation.id, adminId, 'PG 거절');
+
+    // u14 reads rights_restored from RefundService's FAILED + canRequestRefund response.
+    expect(result).toMatchObject({ outcome: 'rights_restored', currentState: 'FAILED' });
+    expect(audit.write).toHaveBeenCalledWith(expect.objectContaining({
+      action: 'refund.admin_refund',
+      status: 'failed',
+      after: { refund: expect.objectContaining({ outcome: 'rights_restored' }) },
+    }));
+    const [reservation] = await db.select().from(reservations).where(eq(reservations.id, f.reservation.id));
+    expect(reservation!.status).toBe('CONFIRMED');
+    const items = await db.select().from(ticketItems).where(eq(ticketItems.reservationId, f.reservation.id));
+    expect(items.every((item) => item.status === 'active')).toBe(true);
+    expect(f.snapshot.balanceAmount).toBe(f.payment.amount);
   });
 
   it('refuses a refund before revoking anything when the provider balance disagrees with the ledger (#80)', async () => {
