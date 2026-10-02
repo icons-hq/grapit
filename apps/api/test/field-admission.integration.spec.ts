@@ -476,6 +476,74 @@ describe('Seat-level field admission — HTTP and PostgreSQL', () => {
     expect(byId.get(invalidMetadata!.id)).toBe(other.show.id);
   });
 
+  it('filters monitor logs by outcome with the results the duplicate KPI counts (audit #113, #114)', async () => {
+    const f = await fixture();
+    expect((await consume(f)).body.outcome).toBe('entered');
+    // A later rescan of the used seat is recorded as already_used.
+    expect((await verify(f.credentials[0]!.token, f.show.id, randomUUID())).body.outcome).toBe('already_used');
+    expect((await verify('forged-qr-content', f.show.id, randomUUID())).body.outcome).toBe('tampered');
+    const logs = (outcome: string) => request(app.getHttpServer()).get('/field/monitor/logs')
+      .query({ eventId: f.event.id, showtimeId: f.show.id, outcome });
+
+    const duplicates = await logs('duplicate');
+    expect(duplicates.status).toBe(200);
+    expect(duplicates.body).toEqual([expect.objectContaining({ outcome: 'already_used', reservationNumber: f.order.reservationNumber })]);
+    expect((await monitorSummary(f)).duplicateScanCount).toBe(1);
+    expect((await logs('tampered')).body).toEqual([expect.objectContaining({ outcome: 'tampered', reservationNumber: null })]);
+    expect((await logs('entered')).body).toEqual([expect.objectContaining({ outcome: 'entered' })]);
+    expect((await logs('wrong_showtime')).body).toEqual([]);
+  });
+
+  it('serializes an unverifiable consume behind a valid consume of the same attempt instead of failing with 500 (audit #113)', async () => {
+    const f = await fixture(); const attempt = randomUUID(); const blocker = await pool.connect();
+    let forgedSettled = false;
+    try {
+      await blocker.query('BEGIN'); await blocker.query('SELECT id FROM reservations WHERE id=$1 FOR UPDATE', [f.order.id]);
+      // The valid consume holds the attempt lock and has found no receipt yet.
+      const valid = consume(f, 0, attempt).then((response) => response);
+      await waitForLock('INNER JOIN payments p');
+      const forged = request(app.getHttpServer()).post('/field/check-in/consume')
+        .send({ token: 'forged-qr-content', showtimeId: f.show.id, deviceAttemptId: attempt, confirmed: true })
+        .then((response) => { forgedSettled = true; return response; });
+      for (let i = 0; i < 150 && !forgedSettled; i += 1) {
+        const waiting = await pool.query("select count(*)::int as n from pg_stat_activity where wait_event_type = 'Lock' and query like '%pg_advisory_xact_lock%'");
+        if (waiting.rows[0].n > 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      await blocker.query('COMMIT');
+      const [validResponse, forgedResponse] = await Promise.all([valid, forged]);
+      expect([validResponse.status, forgedResponse.status]).toEqual([201, 201]);
+      expect(validResponse.body.outcome).toBe('entered');
+      expect(forgedResponse.body.outcome).toBe('tampered');
+      const receipts = await db.select().from(schema.ticketScanEvents).where(eq(schema.ticketScanEvents.deviceAttemptId, attempt));
+      expect(receipts).toEqual([expect.objectContaining({ result: 'success', ticketItemId: f.items[0]!.id })]);
+    } finally { await blocker.query('ROLLBACK'); blocker.release(); }
+  });
+
+  it('gives up a benefit redemption with a retryable 409 while a payment holds the showtime, then redeems the same request (D6)', async () => {
+    const f = await fixture(); const blocker = await pool.connect();
+    const [entitlement] = await db.select().from(schema.ticketBenefitEntitlements).where(eq(schema.ticketBenefitEntitlements.ticketItemId, f.items[0]!.id));
+    const input = { token: f.credentials[0]!.token, showtimeId: f.show.id, benefitEntitlementId: entitlement!.id, deviceAttemptId: randomUUID(), confirmed: true };
+    try {
+      // Payment confirmation share-locks the showtime row while it issues tickets.
+      await blocker.query('BEGIN'); await blocker.query('SELECT id FROM showtimes WHERE id=$1 FOR SHARE', [f.show.id]);
+      const started = Date.now();
+      const blocked = await request(app.getHttpServer()).post('/field/benefits/redeem').send(input);
+      expect(Date.now() - started).toBeLessThan(6000);
+      expect(blocked.status).toBe(409);
+      expect(blocked.body.message).toBe('같은 회차 결제 처리와 겹쳐 특전 지급을 확인하지 못했습니다. 실물을 지급하지 말고 같은 요청으로 다시 확인해주세요.');
+      const records = await db.select().from(schema.ticketBenefitRedemptionRecords)
+        .where(eq(schema.ticketBenefitRedemptionRecords.deviceAttemptId, input.deviceAttemptId));
+      expect(records).toHaveLength(0);
+      const [unchanged] = await db.select().from(schema.ticketBenefitEntitlements).where(eq(schema.ticketBenefitEntitlements.id, entitlement!.id));
+      expect(unchanged!.state).toBe('active');
+    } finally { await blocker.query('ROLLBACK'); blocker.release(); }
+
+    const retried = await request(app.getHttpServer()).post('/field/benefits/redeem').send(input);
+    expect(retried.status).toBe(201);
+    expect(retried.body.outcome).toBe('redeemed');
+  });
+
   it('lists today\'s showtimes first even when more than 200 later showtimes exist (audit #112)', async () => {
     const [event] = await db.insert(schema.performances).values({ title: 'Long run', genre: 'artist_celebrity', ageRating: 'All ages',
       status: 'selling', publishState: 'published', startDate: new Date('2026-01-01'), endDate: new Date('2098-12-31') }).returning();

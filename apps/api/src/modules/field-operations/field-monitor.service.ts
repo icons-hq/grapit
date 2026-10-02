@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { and, desc, eq, gte, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type {
   FieldCheckInOutcome,
@@ -79,7 +79,11 @@ const MONITOR_ALERT_THRESHOLDS = {
   refundedCancelledWarning: 1,
 } as const;
 
-const DUPLICATE_RESULTS = sql.raw(`('duplicate', 'already_used')`);
+type ScanResult = (typeof ticketScanEvents.result.enumValues)[number];
+
+/** Results counted as a duplicate scan by the KPI, duplicate_spike and the log filter. */
+const DUPLICATE_RESULT_VALUES: ScanResult[] = ['duplicate', 'already_used'];
+const DUPLICATE_RESULTS = sql.raw(`(${DUPLICATE_RESULT_VALUES.map((value) => `'${value}'`).join(', ')})`);
 const REJECTED_RESULTS = sql.raw(
   `('tampered', 'refunded_cancelled', 'expired', 'wrong_showtime', 'offline_rejected', 'sync_failure')`,
 );
@@ -225,7 +229,7 @@ export class FieldMonitorService {
       conditions.push(scannedAtGateShowtime(filter.showtimeId));
     }
     if (filter.outcome) {
-      conditions.push(sql`${ticketScanEvents.result} = any(${resultValuesForOutcome(filter.outcome)})`);
+      conditions.push(inArray(ticketScanEvents.result, resultValuesForOutcome(filter.outcome)));
     }
     if (filter.syncState) {
       conditions.push(eq(ticketScanEvents.syncState, syncStateForFilter(filter.syncState)));
@@ -397,7 +401,7 @@ function syncStateForFilter(syncState: 'pending' | 'synced' | 'rejected') {
   return syncState;
 }
 
-function resultValuesForOutcome(outcome: FieldCheckInOutcome): string[] {
+function resultValuesForOutcome(outcome: FieldCheckInOutcome): ScanResult[] {
   switch (outcome) {
     case 'entered':
       return ['success', 'offline_synced'];
@@ -409,7 +413,13 @@ function resultValuesForOutcome(outcome: FieldCheckInOutcome): string[] {
       return ['offline_pending'];
     case 'processable':
       return ['success'];
-    default:
+    case 'duplicate':
+      return DUPLICATE_RESULT_VALUES;
+    case 'tampered':
+    case 'refunded_cancelled':
+    case 'expired':
+    case 'wrong_showtime':
+    case 'already_used':
       return [outcome];
   }
 }

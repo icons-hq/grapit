@@ -165,19 +165,24 @@ export class FieldCheckInService {
       verified = await this.qrTicketService.verifyTicketForScannerContract(input.token);
     } catch (error) {
       if (!(error instanceof UnauthorizedException)) throw error;
-      await this.writeAudit({ action: 'field.scan.consume', status: 'denied', resourceId: redactedTokenRef(input.token), context,
-        after: { outcome: 'tampered', redactedTokenRef: redactedTokenRef(input.token), requestedShowtimeId: input.showtimeId } });
-      // No ticket can be identified, so the rejection is attributed to the gate showtime only.
-      // A retried attempt keeps its first record.
-      const scanEventId = await this.recordScanEvent(this.db, { contract: null, context, token: input.token,
-        deviceAttemptId: input.deviceAttemptId, requestedShowtimeId: input.showtimeId, outcome: 'tampered',
-        rejectionReason: rejectionReasonFor('tampered'), stage: 'consume', keepFirstAttempt: true });
-      return { outcome: 'tampered', ticket: null, scanEventId, rejectionReason: rejectionReasonFor('tampered') };
+      return this.db.transaction(async (tx) => {
+        // Same attempt lock as the valid path below, so a concurrent valid consume
+        // of this attempt waits instead of colliding on the attempt's unique receipt.
+        await lockScanAttempt(tx, input.deviceAttemptId);
+        await this.writeAudit({ action: 'field.scan.consume', status: 'denied', resourceId: redactedTokenRef(input.token), context,
+          after: { outcome: 'tampered', redactedTokenRef: redactedTokenRef(input.token), requestedShowtimeId: input.showtimeId } }, tx);
+        // No ticket can be identified, so the rejection is attributed to the gate showtime only.
+        // A retried attempt keeps its first record.
+        const scanEventId = await this.recordScanEvent(tx, { contract: null, context, token: input.token,
+          deviceAttemptId: input.deviceAttemptId, requestedShowtimeId: input.showtimeId, outcome: 'tampered',
+          rejectionReason: rejectionReasonFor('tampered'), stage: 'consume', keepFirstAttempt: true });
+        return { outcome: 'tampered', ticket: null, scanEventId, rejectionReason: rejectionReasonFor('tampered') };
+      });
     }
 
     return this.db.transaction(async (tx) => {
       // An attempt has one receipt even if a response is lost or devices retry concurrently.
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${input.deviceAttemptId}, 0))`);
+      await lockScanAttempt(tx, input.deviceAttemptId);
       const [receipt] = await tx.select().from(ticketScanEvents)
         .where(eq(ticketScanEvents.deviceAttemptId, input.deviceAttemptId)).limit(1);
       if (receipt) {
@@ -436,6 +441,11 @@ export class FieldCheckInService {
       db,
     );
   }
+}
+
+/** Serializes every consume of one device attempt, valid or unverifiable, until commit. */
+async function lockScanAttempt(tx: Pick<DrizzleDB, 'execute'>, deviceAttemptId: string): Promise<void> {
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${deviceAttemptId}, 0))`);
 }
 
 function extractToken(input: FieldCheckInVerifyRequest): string {

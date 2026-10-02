@@ -1,4 +1,11 @@
-import { ConflictException, Inject, Injectable, InternalServerErrorException, UnauthorizedException } from '@nestjs/common';
+import {
+  ConflictException,
+  Inject,
+  Injectable,
+  InternalServerErrorException,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import {
@@ -14,7 +21,19 @@ import {
   ticketBenefitEntitlements,
   ticketBenefitRedemptionRecords,
 } from '../../database/schema/index.js';
+import { BENEFIT_MUTATION_LOCK_TIMEOUT } from '../admin/admin-benefits.service.js';
 import { QrTicketService } from '../ticket/qr-ticket.service.js';
+
+/**
+ * A first redemption takes the showtime row FOR NO KEY UPDATE, which conflicts
+ * with the FOR SHARE that payment confirmation takes on the same showtime. Waiting
+ * without bound behind a stream of confirmations would hold a pool connection and
+ * queue later confirmations behind this writer, so the wait is bounded like the
+ * admin benefit mutations (same lock timeout, shorter statement budget).
+ */
+const FIELD_REDEMPTION_STATEMENT_TIMEOUT = '10s';
+const PG_LOCK_NOT_AVAILABLE = '55P03';
+const PG_QUERY_CANCELED = '57014';
 
 export interface BenefitRedemptionContext {
   scannerUserId: string;
@@ -52,20 +71,30 @@ export class BenefitRedemptionService {
     input: BenefitRedemptionRequest,
     context: BenefitRedemptionContext,
   ): Promise<BenefitRedemptionResponse> {
-    return this.db.transaction(async (tx) => {
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`benefit:${input.deviceAttemptId}`}, 0))`);
-      const entitlement = await this.findEntitlement(input.benefitEntitlementId, tx);
-      if (entitlement) {
-        // Configuration/live allocation uses the same showtime lock. Record the
-        // first redemption attempt before a competing result mutation can proceed.
-        await tx.execute(sql`SELECT id FROM showtimes WHERE id = ${entitlement.showtimeId} FOR NO KEY UPDATE`);
-        await tx.execute(sql`SELECT r.id FROM reservations r
-          INNER JOIN payments p ON p.reservation_id = r.id
-          INNER JOIN ticket_items ti ON ti.reservation_id = r.id AND ti.payment_id = p.id
-          WHERE ti.id = ${entitlement.ticketItemId} FOR UPDATE OF r, p, ti`);
-      }
-      return this.redeemLocked(input, context, tx);
-    });
+    try {
+      return await this.db.transaction(async (tx) => {
+        await tx.execute(sql`
+          SELECT set_config('lock_timeout', ${BENEFIT_MUTATION_LOCK_TIMEOUT}, true),
+            set_config('statement_timeout', ${FIELD_REDEMPTION_STATEMENT_TIMEOUT}, true)
+        `);
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`benefit:${input.deviceAttemptId}`}, 0))`);
+        const entitlement = await this.findEntitlement(input.benefitEntitlementId, tx);
+        if (entitlement) {
+          // Configuration/live allocation uses the same showtime lock. Record the
+          // first redemption attempt before a competing result mutation can proceed.
+          await tx.execute(sql`SELECT id FROM showtimes WHERE id = ${entitlement.showtimeId} FOR NO KEY UPDATE`);
+          await tx.execute(sql`SELECT r.id FROM reservations r
+            INNER JOIN payments p ON p.reservation_id = r.id
+            INNER JOIN ticket_items ti ON ti.reservation_id = r.id AND ti.payment_id = p.id
+            WHERE ti.id = ${entitlement.ticketItemId} FOR UPDATE OF r, p, ti`);
+        }
+        return this.redeemLocked(input, context, tx);
+      });
+    } catch (error) {
+      // The transaction rolled back, so nothing was recorded for this attempt and
+      // the same request can be retried.
+      throw translateRedemptionDbError(error);
+    }
   }
 
   private async redeemLocked(
@@ -466,6 +495,37 @@ function toBenefitEntitlement(row: BenefitEntitlementRow): BenefitEntitlement {
         ...(row.runId ? { runMode: 'live' as const } : {}),
       };
   }
+}
+
+/**
+ * Maps the lock and statement timeouts of the redemption transaction to
+ * staff-facing errors. Other errors pass through unchanged.
+ */
+function translateRedemptionDbError(error: unknown): unknown {
+  const code = postgresErrorCode(error);
+  if (code === PG_LOCK_NOT_AVAILABLE) {
+    return new ConflictException(
+      '같은 회차 결제 처리와 겹쳐 특전 지급을 확인하지 못했습니다. 실물을 지급하지 말고 같은 요청으로 다시 확인해주세요.',
+    );
+  }
+  if (code === PG_QUERY_CANCELED) {
+    return new ServiceUnavailableException(
+      '특전 지급 확인이 제한 시간을 넘어 취소되었습니다. 실물을 지급하지 말고 잠시 후 같은 요청으로 다시 확인해주세요.',
+    );
+  }
+  return error;
+}
+
+function postgresErrorCode(error: unknown): string | undefined {
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current; depth += 1) {
+    const code = (current as { code?: unknown }).code;
+    if (typeof code === 'string') {
+      return code;
+    }
+    current = (current as { cause?: unknown }).cause;
+  }
+  return undefined;
 }
 
 function rejectionReasonFor(outcome: BenefitRedemptionOutcome): string {
