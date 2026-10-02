@@ -47,6 +47,9 @@ describe('Performance preparation — real HTTP and PostgreSQL', () => {
   let pool: Pool;
   let actorId: string;
   let catalog: PerformanceService;
+  let freshness: CatalogFreshnessService;
+  // Translation reads and state transitions under test never call DeepL.
+  const unusedTranslationProvider = { translateText: async () => { throw new Error('not used'); } } as never;
 
   beforeAll(async () => {
     container = await new GenericContainer('postgres:16-alpine')
@@ -62,7 +65,7 @@ describe('Performance preparation — real HTTP and PostgreSQL', () => {
       name: 'Preparation operator', phone: '+821000000000', gender: 'unspecified', birthDate: '1990-01-01', role: 'admin' });
     const cache = new CacheService({ get: async () => null, set: async () => 'OK',
       del: async () => 0, scan: async () => ['0', []] } as never);
-    const freshness = new CatalogFreshnessService(cache);
+    freshness = new CatalogFreshnessService(cache);
     catalog = new PerformanceService(db, cache, new PerformanceViewCounter(db));
     const admin = new AdminService(db, freshness, new AdminAuditService(db));
     // Vitest's TS transform omits constructor metadata. Supply wiring only;
@@ -307,6 +310,71 @@ describe('Performance preparation — real HTTP and PostgreSQL', () => {
     expect(response.status).toBe(400);
   });
 
+  it('serializes a delete against a concurrent draft apply without a deadlock (audit #121)', async () => {
+    const payload = input();
+    const created = await request(app.getHttpServer()).post('/admin/performances').send(payload);
+    expect(created.status).toBe(201);
+    const id = created.body.id as string;
+    const draft = await request(app.getHttpServer()).post('/admin/performance-drafts').send({
+      performanceId: id, baseUpdatedAt: created.body.updatedAt, data: { ...payload, title: '동시 반영 초안' }, step: 'review',
+    });
+    expect(draft.status).toBe(201);
+    const waitingOnDraft = async (count: number) => {
+      for (let attempt = 0; attempt < 300; attempt++) {
+        const active = await pool.query("select 1 from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock' and query like '%performance_drafts%'");
+        if (active.rowCount! >= count) return true;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      return false;
+    };
+    const blocker = await pool.connect();
+    try {
+      await blocker.query('begin');
+      await blocker.query('select id from performance_drafts where id = $1 for update', [draft.body.id]);
+      // The apply queues for the draft row first, then the delete arrives. Taking the
+      // performance lock before the draft lock made this order a 40P01 deadlock (500).
+      const applying = request(app.getHttpServer()).post(`/admin/performance-drafts/${draft.body.id}/apply`)
+        .send({ expectedRevision: 1 }).then((response) => response);
+      expect(await waitingOnDraft(1)).toBe(true);
+      const deleting = request(app.getHttpServer()).delete(`/admin/performances/${id}`)
+        .send({ reason: '중복 등록 정리' }).then((response) => response);
+      expect(await waitingOnDraft(2)).toBe(true);
+      await blocker.query('commit');
+      const [applied, deleted] = await Promise.all([applying, deleting]);
+
+      expect([201, 404, 409]).toContain(applied.status);
+      expect([200, 404, 409]).toContain(deleted.status);
+      expect([applied.status, deleted.status].filter((status) => status === 200 || status === 201).length).toBeGreaterThan(0);
+      const remaining = await pool.query('SELECT id FROM performances WHERE id = $1', [id]);
+      expect(remaining.rows).toHaveLength(deleted.status === 200 ? 0 : 1);
+      if (deleted.status === 200) {
+        expect((await pool.query('SELECT id FROM performance_drafts WHERE performance_id = $1', [id])).rows).toHaveLength(0);
+        expect(await new AdminAuditService(db).query({ resourceType: 'performance', resourceId: id, action: 'event.delete' }))
+          .toEqual([expect.objectContaining({ actorUserId: actorId, reason: '중복 등록 정리' })]);
+      }
+    } finally {
+      await blocker.query('rollback').catch(() => undefined);
+      blocker.release();
+    }
+  });
+
+  it('keeps a partial banner update from leaving a scheduled banner without a start (audit #51)', async () => {
+    const admin = app.get(AdminService);
+    const [unscheduled] = await db.insert(schema.banners).values({ imageUrl: 'https://example.test/a.jpg', status: 'active' }).returning();
+    const [scheduled] = await db.insert(schema.banners).values({ imageUrl: 'https://example.test/b.jpg', status: 'scheduled',
+      startsAt: new Date('2099-01-01T00:00:00.000Z') }).returning();
+
+    await expect(admin.updateBanner(unscheduled!.id, { status: 'scheduled' })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(admin.updateBanner(scheduled!.id, { startsAt: null })).rejects.toBeInstanceOf(BadRequestException);
+    const rows = await pool.query('SELECT id, status, starts_at FROM banners WHERE id = ANY($1) ORDER BY image_url', [[unscheduled!.id, scheduled!.id]]);
+    expect(rows.rows.map((row) => [row.status, row.starts_at === null])).toEqual([['active', true], ['scheduled', false]]);
+
+    await expect(admin.updateBanner(scheduled!.id, { startsAt: null, status: 'paused' })).resolves.toMatchObject({ status: 'paused', startsAt: null });
+    await expect(admin.updateBanner(unscheduled!.id, { status: 'scheduled', startsAt: '2099-01-01T00:00:00.000Z' }))
+      .resolves.toMatchObject({ status: 'scheduled' });
+    await expect(admin.updateBanner(randomUUID(), { status: 'scheduled' })).rejects.toThrow('배너를 찾을 수 없습니다');
+  });
+
   it('retains the applied draft and original performance when bookings block deletion', async () => {
     const draft = await request(app.getHttpServer()).post('/admin/performance-drafts')
       .send({ data: { ...input(), showtimes: [{ dateTime: '2099-01-01T18:00' }] }, step: 'review' });
@@ -350,7 +418,7 @@ describe('Performance preparation — real HTTP and PostgreSQL', () => {
     await request(app.getHttpServer()).put(`/admin/performances/${id}`).send({ description: '수정 후 아직 번역하지 않은 안내' });
     expect((await request(app.getHttpServer()).get(`/admin/performances/${id}/preparation`)).body.canPublish).toBe(false);
     expect((await catalog.findById(id, 'en'))?.description).toBe('수정 후 아직 번역하지 않은 안내');
-    const queue = await new TranslationService(db).listQueue({ entityId: id, locale: 'en' });
+    const queue = await new TranslationService(db, unusedTranslationProvider, freshness).listQueue({ entityId: id, locale: 'en' });
     expect(queue.find((draft) => draft.field === 'description')?.status).toBe('stale');
   });
 
@@ -362,7 +430,7 @@ describe('Performance preparation — real HTTP and PostgreSQL', () => {
     const [draft] = await db.insert(schema.translationDrafts).values({ sourceId: source!.id, targetLocale: 'en',
       status: transition === 'publish' ? 'review' : 'draft', translatedText: 'Previous source', sourceContentHash: hash }).returning();
     const blocker = await pool.connect();
-    const translations = new TranslationService(db);
+    const translations = new TranslationService(db, unusedTranslationProvider, freshness);
     try {
       await blocker.query('begin');
       await blocker.query('select id from translation_drafts where id = $1 for update', [draft!.id]);

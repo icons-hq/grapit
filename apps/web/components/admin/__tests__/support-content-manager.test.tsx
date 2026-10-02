@@ -363,6 +363,100 @@ describe('SupportContentManager edit safety', () => {
     );
   });
 
+  it('warns that reloading after a conflict discards the draft before replacing it', async () => {
+    const user = userEvent.setup();
+    (apiClient.get as ReturnType<typeof vi.fn>).mockResolvedValue(
+      supportContentResponse,
+    );
+    (apiClient.patch as ReturnType<typeof vi.fn>).mockRejectedValue(
+      Object.assign(new Error('다른 운영자가 먼저 수정했습니다.'), { statusCode: 409 }),
+    );
+
+    render(<SupportContentManager />, { wrapper: createWrapper() });
+    await user.click(
+      await screen.findByRole('button', { name: '예매는 어떻게 하나요? 수정' }),
+    );
+    await user.type(screen.getByLabelText('내용'), ' 추가');
+    await user.click(screen.getByRole('button', { name: '저장' }));
+    const getCalls = (apiClient.get as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    await user.click(await screen.findByRole('button', { name: '최신 내용 다시 불러오기' }));
+    const dialog = await screen.findByRole('alertdialog', { name: '최신 내용을 다시 불러올까요?' });
+    expect(dialog).toHaveTextContent('작성 중인 내용은 버려집니다');
+    await user.click(screen.getByRole('button', { name: '계속 수정' }));
+    expect(screen.getByLabelText('내용')).toHaveValue('좌석을 선택하고 결제하면 예매됩니다. 추가');
+    expect((apiClient.get as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(getCalls);
+
+    await user.click(screen.getByRole('button', { name: '최신 내용 다시 불러오기' }));
+    await user.click(await screen.findByRole('button', { name: '작성 내용 버리고 불러오기' }));
+    await waitFor(() => {
+      expect(screen.getByLabelText('내용')).toHaveValue('좌석을 선택하고 결제하면 예매됩니다.');
+    });
+  });
+
+  it('restores archived content with 보관 해제 and then allows publishing (audit #133)', async () => {
+    const user = userEvent.setup();
+    const archivedFaq = {
+      ...supportContentResponse.faqs[0],
+      reviewState: 'archived',
+      canPublish: false,
+      archivedAt: '2026-05-15T01:00:00.000Z',
+    };
+    (apiClient.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+      faqs: [archivedFaq],
+      notices: [],
+    });
+    (apiClient.post as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...archivedFaq,
+      reviewState: 'approved',
+      canPublish: true,
+      archivedAt: null,
+    });
+
+    render(<SupportContentManager />, { wrapper: createWrapper() });
+    await screen.findByText('예매는 어떻게 하나요?');
+    expect(screen.queryByRole('button', { name: /검수 완료/ })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /게시$/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^보관$/ })).toBeDisabled();
+
+    (apiClient.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+      faqs: [{ ...archivedFaq, reviewState: 'approved', canPublish: true, archivedAt: null }],
+      notices: [],
+    });
+    await user.click(screen.getByRole('button', { name: /보관 해제/ }));
+
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/api/v1/admin/support-content/faqs/faq-ko/review',
+      {},
+    );
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /게시$/ })).toBeEnabled();
+    });
+    // Back to an approved row: the button returns to its normal label.
+    expect(screen.getByRole('button', { name: /검수 완료/ })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: /보관 해제/ })).not.toBeInTheDocument();
+  });
+
+  it('warns that a separately registered fallback-category notice shows next to its original', async () => {
+    const user = userEvent.setup();
+    (apiClient.get as ReturnType<typeof vi.fn>).mockResolvedValue(
+      supportContentResponse,
+    );
+    const warning = '기존 공지의 번역이면 원문 공지에서 번역본 등록을 사용하세요. 따로 등록하면 원문이 함께 노출됩니다.';
+
+    render(<SupportContentManager />, { wrapper: createWrapper() });
+    await screen.findByText('예매는 어떻게 하나요?');
+    await user.click(screen.getByRole('button', { name: '공지 등록' }));
+    await user.selectOptions(screen.getByLabelText('분류'), 'urgent');
+    expect(screen.queryByText(warning)).not.toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText('언어'), 'en');
+    expect(screen.getByRole('note')).toHaveTextContent(warning);
+
+    await user.selectOptions(screen.getByLabelText('분류'), 'general');
+    expect(screen.queryByText(warning)).not.toBeInTheDocument();
+  });
+
   it('enables review only for content waiting for review and confirms before unpublishing an assisted edit (audit #48)', async () => {
     const user = userEvent.setup();
     const publishedThai = noticeRow({
@@ -421,7 +515,7 @@ describe('SupportContentManager edit safety', () => {
       await screen.findByRole('button', { name: '예매는 어떻게 하나요? 수정' }),
     );
     expect(
-      screen.getByText('게시 중인 콘텐츠입니다. 저장하면 공개 화면에 바로 반영됩니다.'),
+      screen.getByText('게시 중인 콘텐츠입니다. 저장하면 공개 화면에 반영됩니다(최대 1분 지연).'),
     ).toBeInTheDocument();
     await user.selectOptions(screen.getByLabelText('분류'), 'event_info');
     await user.click(screen.getByRole('button', { name: '저장' }));

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { SUPPORTED_LOCALES } from '../constants/locales';
+import { CHECKOUT_CONFIGURABLE_PAYMENT_METHODS } from '../checkout-payment-method';
 import {
   BANNER_DEVICE_TARGETS,
   BANNER_PLACEMENTS,
@@ -7,7 +8,6 @@ import {
   DEFAULT_PERFORMANCE_BOOKING_POLICY,
   GENRES,
   PERFORMANCE_PUBLISH_LIFECYCLE,
-  PERFORMANCE_ALLOWED_PAYMENT_METHODS,
   PERFORMANCE_STATUSES,
 } from '../types/performance.types';
 
@@ -74,6 +74,13 @@ export const searchQuerySchema = z.object({
 });
 export type SearchQuery = z.infer<typeof searchQuerySchema>;
 
+/**
+ * A `scheduled` banner goes live at its startsAt; without one it is never shown
+ * (public banner filter), so it cannot be stored that way.
+ */
+export const SCHEDULED_BANNER_REQUIRES_START_MESSAGE =
+  '예약됨 상태는 시작 시각이 필요합니다. 시작 시각이 없으면 노출되지 않습니다';
+
 export const createBannerSchema = z.object({
   imageUrl: z.string().url('올바른 이미지 URL을 입력해주세요'),
   linkUrl: z.string().url().nullable().optional(),
@@ -85,6 +92,13 @@ export const createBannerSchema = z.object({
   sortOrder: z.number().int().min(0).default(0),
   isActive: z.boolean().default(true),
 }).superRefine((value, ctx) => {
+  if (value.status === 'scheduled' && !value.startsAt) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: SCHEDULED_BANNER_REQUIRES_START_MESSAGE,
+      path: ['startsAt'],
+    });
+  }
   if (!value.startsAt || !value.endsAt) return;
   if (Date.parse(value.endsAt) < Date.parse(value.startsAt)) {
     ctx.addIssue({
@@ -116,13 +130,25 @@ export const performanceSeatMapSchema = z.object({
 });
 export type PerformanceSeatMapInput = z.infer<typeof performanceSeatMapSchema>;
 
+type CheckoutConfigurablePaymentMethod = (typeof CHECKOUT_CONFIGURABLE_PAYMENT_METHODS)[number];
+
+function isCheckoutConfigurablePaymentMethod(
+  method: string,
+): method is CheckoutConfigurablePaymentMethod {
+  return (CHECKOUT_CONFIGURABLE_PAYMENT_METHODS as readonly string[]).includes(method);
+}
+
 export const performanceBookingPolicySchema = z.object({
   maxTicketsPerUser: z
     .number()
     .int()
     .positive('최대 예매 가능 매수는 1 이상이어야 합니다'),
+  // Only categories buyer checkout can submit and the admin form offers. VIRTUAL_ACCOUNT and
+  // MOBILE_PHONE stay readable on legacy rows (PERFORMANCE_ALLOWED_PAYMENT_METHODS) but
+  // can no longer be stored, so an API call or draft apply cannot allow a method no
+  // operator can see.
   allowedPaymentMethods: z
-    .array(z.enum(PERFORMANCE_ALLOWED_PAYMENT_METHODS))
+    .array(z.enum(CHECKOUT_CONFIGURABLE_PAYMENT_METHODS))
     .min(1, '최소 1개의 결제 수단이 필요합니다'),
   changePolicyEnabled: z.boolean(),
   paymentWindowMinutes: z
@@ -246,7 +272,11 @@ export const createPerformanceSchema = z.object({
   seatMaps: z.array(performanceSeatMapSchema).optional().default([]),
   bookingPolicy: performanceBookingPolicySchema
     .optional()
-    .default(DEFAULT_PERFORMANCE_BOOKING_POLICY),
+    .default(() => ({
+      ...DEFAULT_PERFORMANCE_BOOKING_POLICY,
+      allowedPaymentMethods: DEFAULT_PERFORMANCE_BOOKING_POLICY.allowedPaymentMethods
+        .filter(isCheckoutConfigurablePaymentMethod),
+    })),
 });
 
 export type CreatePerformanceInput = z.infer<typeof createPerformanceSchema>;

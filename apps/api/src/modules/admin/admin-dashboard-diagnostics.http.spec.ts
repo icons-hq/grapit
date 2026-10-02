@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { Test } from '@nestjs/testing';
 import type { INestApplication } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { Agent } from 'node:http';
 import request from 'supertest';
 import type { AdminCapabilityUser } from '@grabit/shared';
 import { AdminCapabilitiesGuard } from '../../common/guards/admin-capabilities.guard.js';
@@ -30,6 +31,7 @@ const USERS: Record<string, AdminCapabilityUser> = {
 
 describe('Admin dashboard and diagnostics HTTP access', () => {
   let app: INestApplication;
+  let agent: Agent;
   const dashboard = {
     getSummary: vi.fn(),
     getRevenueTrend: vi.fn(),
@@ -52,9 +54,15 @@ describe('Admin dashboard and diagnostics HTTP access', () => {
       next();
     });
     await app.init();
+    // One listening server and one keep-alive socket for the file. Without it supertest
+    // listens on and closes a new ephemeral port per request, which intermittently
+    // fails with "socket hang up" when a pooled socket of a closed server is reused.
+    await app.listen(0, '127.0.0.1');
+    agent = new Agent({ keepAlive: true, maxSockets: 1 });
   });
 
   afterAll(async () => {
+    agent?.destroy();
     await app?.close();
   });
 
@@ -70,7 +78,7 @@ describe('Admin dashboard and diagnostics HTTP access', () => {
     '/admin/dashboard/payment?period=30d',
     '/admin/dashboard/top-performances',
   ])('denies the field scanner token %s before reading sales data', async (path) => {
-    const response = await request(app.getHttpServer()).get(path).set('x-test-user', 'scanner');
+    const response = await request(app.getHttpServer()).get(path).agent(agent).set('x-test-user', 'scanner');
 
     expect(response.status).toBe(403);
     for (const fn of Object.values(dashboard)) expect(fn).not.toHaveBeenCalled();
@@ -79,7 +87,7 @@ describe('Admin dashboard and diagnostics HTTP access', () => {
   it('serves the dashboard to admins with reservations.read and to legacy admins', async () => {
     for (const user of ['operator', 'superuser', 'legacyAdmin']) {
       const response = await request(app.getHttpServer())
-        .get('/admin/dashboard/summary')
+        .get('/admin/dashboard/summary').agent(agent)
         .set('x-test-user', user);
       expect(response.status, user).toBe(200);
     }
@@ -89,14 +97,14 @@ describe('Admin dashboard and diagnostics HTTP access', () => {
   it('lets only security.manage holders send a Sentry diagnostic event', async () => {
     for (const user of ['scanner', 'operator']) {
       const response = await request(app.getHttpServer())
-        .get('/admin/_sentry-test')
+        .get('/admin/_sentry-test').agent(agent)
         .set('x-test-user', user);
       expect(response.status, user).toBe(403);
     }
     expect(sentry.captureException).not.toHaveBeenCalled();
 
     const response = await request(app.getHttpServer())
-      .get('/admin/_sentry-test')
+      .get('/admin/_sentry-test').agent(agent)
       .set('x-test-user', 'superuser');
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({ eventId: 'event-1' });

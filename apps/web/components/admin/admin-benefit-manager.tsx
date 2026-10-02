@@ -13,10 +13,11 @@ import {
   Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import type {
-  BenefitConfiguration,
-  BenefitDefinition,
-  BenefitRunRecord,
+import {
+  benefitDefinitionWriteListSchema,
+  type BenefitConfiguration,
+  type BenefitDefinition,
+  type BenefitRunRecord,
 } from '@grabit/shared';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -546,6 +547,9 @@ export function AdminBenefitManager({ className }: { className?: string }) {
   );
 }
 
+const SAVED_CONFIGURATION_NOT_RUNNABLE_MESSAGE =
+  '저장된 설정에 더 이상 허용되지 않는 배타 규칙이 있습니다. 설정을 다시 저장한 뒤 실행하세요.';
+
 function BenefitConfigurationWorkspace({
   normalizedShowtimeId,
   showtimeLabel,
@@ -588,9 +592,17 @@ function BenefitConfigurationWorkspace({
     return !built.ok
       || canonicalBenefits(built.benefits) !== canonicalBenefits(configuration.benefits);
   }, [configuration, drafts]);
+  // Unsaved-change detection drops exclusion rules the editor cannot express, so a
+  // saved configuration with a legacy rule the runner now refuses (an exclusion on or
+  // against an included benefit) looks unchanged. Check the saved copy itself.
+  const savedConfigurationRunnable = useMemo(
+    () => !configuration || benefitDefinitionWriteListSchema.safeParse(configuration.benefits).success,
+    [configuration],
+  );
   const canRunLive =
     canApplyChanges &&
     Boolean(configuration?.id) &&
+    savedConfigurationRunnable &&
     !hasUnsavedChanges &&
     liveReason.trim().length > 0 &&
     !isMutating;
@@ -692,6 +704,10 @@ function BenefitConfigurationWorkspace({
   function handleRequestLiveRun() {
     if (!configuration?.id) {
       toast.error('실제 실행 전 혜택 설정을 저장하세요.');
+      return;
+    }
+    if (!savedConfigurationRunnable) {
+      toast.error(SAVED_CONFIGURATION_NOT_RUNNABLE_MESSAGE);
       return;
     }
     if (hasUnsavedChanges) {
@@ -862,6 +878,11 @@ function BenefitConfigurationWorkspace({
           {hasUnsavedChanges && (
             <p role="status" className="mt-3 rounded-lg bg-[#FFF7ED] p-3 text-sm text-[#9A3412]">
               저장되지 않은 변경이 있습니다. 먼저 설정을 저장하세요. 실제 적용은 저장된 설정으로만 실행됩니다.
+            </p>
+          )}
+          {!savedConfigurationRunnable && (
+            <p role="alert" className="mt-3 rounded-lg bg-[#FFF7ED] p-3 text-sm text-[#9A3412]">
+              {SAVED_CONFIGURATION_NOT_RUNNABLE_MESSAGE}
             </p>
           )}
           <Button

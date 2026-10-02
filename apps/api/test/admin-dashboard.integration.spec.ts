@@ -340,6 +340,40 @@ describe('AdminDashboardService (integration)', () => {
     });
   });
 
+  it('summary: offsets every compensated unissued charge regardless of its cancel reason', async () => {
+    const { showtimeId } = await seedVenuePerformanceShowtime();
+    const userId = await seedUser();
+    const today = new Date();
+
+    const confirmedReservationId = await seedReservation({ userId, showtimeId, status: 'CONFIRMED', totalAmount: 100000, createdAt: today });
+    await seedPayment({ reservationId: confirmedReservationId, amount: 100000, status: 'DONE', paidAt: today });
+
+    // Async DONE seat conflict, async DONE amount mismatch, and a confirm-time
+    // (u01) compensation each refund a charge that gross already counted.
+    for (const [amount, cancelReason] of [
+      [61000, '판매 불가능 좌석으로 인한 자동 취소'],
+      [52000, '결제 금액 불일치로 인한 자동 취소'],
+      [43000, '이미 시작된 회차는 예매할 수 없습니다.'],
+    ] as const) {
+      const reservationId = await seedReservation({ userId, showtimeId, status: 'FAILED', totalAmount: amount, createdAt: today });
+      await seedPayment({ reservationId, amount, status: 'CANCELED', paidAt: today, cancelledAt: today, cancelReason });
+    }
+
+    // Never charged (no paid_at): neither gross nor the offset counts it.
+    const unpaidReservationId = await seedReservation({ userId, showtimeId, status: 'FAILED', totalAmount: 30000, createdAt: today });
+    await seedPayment({ reservationId: unpaidReservationId, amount: 30000, status: 'CANCELED', cancelledAt: today, cancelReason: '결제 금액 불일치로 인한 자동 취소' });
+
+    const result = await service.getSummary();
+
+    expect(result).toEqual({
+      todayBookings: 4,
+      todayCancellationEvents: 3,
+      todayGrossRevenue: 256000,
+      todayNegativeCancellationRevenue: -156000,
+      todayNetRevenue: 100000,
+    });
+  });
+
   it('revenue-daily: returns up to 30 daily buckets for 30d period', async () => {
     const { showtimeId } = await seedVenuePerformanceShowtime();
     const userId = await seedUser();

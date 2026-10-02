@@ -5,6 +5,13 @@ import { PERFORMANCE_BOOKING_START_YEAR_RANGE } from '@grabit/shared';
 import { Input } from '@/components/ui/input';
 import { formatAdminKstDateTime, parseAdminKstDateTimeInput } from '@/lib/admin-datetime';
 
+/**
+ * Committed while the browser reports a partially filled input (some segments
+ * cleared). It is not an ISO instant, so schema validation blocks saving instead
+ * of treating the field as empty: an empty sale start opens a selling event at once.
+ */
+export const KST_DATETIME_INCOMPLETE = 'incomplete';
+
 interface KstDateTimeInputProps {
   /** UTC ISO instant, null when empty, or the operator's unfinished text. */
   value: string | null | undefined;
@@ -14,7 +21,8 @@ interface KstDateTimeInputProps {
   yearRange?: { min: number; max: number };
 }
 
-const toText = (value: string | null | undefined) => (value ? formatAdminKstDateTime(value) : '');
+const toText = (value: string | null | undefined) =>
+  (value && value !== KST_DATETIME_INCOMPLETE ? formatAdminKstDateTime(value) : '');
 
 /**
  * A KST `datetime-local` input that keeps the operator's own text while typing.
@@ -24,7 +32,8 @@ const toText = (value: string | null | undefined) => (value ? formatAdminKstDate
  * instant on every keystroke made those values unrepresentable and blanked the
  * input. Only a complete value inside the allowed year range is committed as an
  * instant; anything else is committed as-is so validation blocks saving instead
- * of silently keeping an older time the input no longer shows.
+ * of silently keeping an older time the input no longer shows. Only a fully
+ * cleared input commits null.
  */
 export function KstDateTimeInput({
   value,
@@ -34,7 +43,7 @@ export function KstDateTimeInput({
   'aria-label': ariaLabel,
 }: KstDateTimeInputProps) {
   const [text, setText] = useState(() => toText(value));
-  const [incomplete, setIncomplete] = useState(false);
+  const [incomplete, setIncomplete] = useState(() => value === KST_DATETIME_INCOMPLETE);
   // The value this input last committed or adopted from its parent.
   const [syncedValue, setSyncedValue] = useState<string | null>(value ?? null);
 
@@ -42,19 +51,31 @@ export function KstDateTimeInput({
     // Only external changes (draft load, form reset) replace what the operator typed.
     setSyncedValue(value ?? null);
     setText(toText(value));
-    setIncomplete(false);
+    setIncomplete(value === KST_DATETIME_INCOMPLETE);
   }
 
-  const outOfRange = text !== '' && parseAdminKstDateTimeInput(text, yearRange) === null;
+  const outOfRange = text !== '' && !incomplete && parseAdminKstDateTimeInput(text, yearRange) === null;
 
-  function handleChange(event: React.ChangeEvent<HTMLInputElement>) {
-    const raw = event.target.value;
+  function commit(target: HTMLInputElement) {
+    const raw = target.value;
+    // A partially typed (or partially cleared) value reports '' with validity.badInput
+    // in Chromium. Committing null here would save an empty sale start.
+    const partial = raw === '' && target.validity?.badInput === true;
+    const next = partial
+      ? KST_DATETIME_INCOMPLETE
+      : raw === '' ? null : parseAdminKstDateTimeInput(raw, yearRange) ?? raw;
     setText(raw);
-    // A partially typed value reports '' with validity.badInput in Chromium.
-    setIncomplete(raw === '' && event.target.validity?.badInput === true);
-    const next = raw === '' ? null : parseAdminKstDateTimeInput(raw, yearRange) ?? raw;
+    setIncomplete(partial);
+    if (next === syncedValue) return;
     setSyncedValue(next);
     onChange(next);
+  }
+
+  function handleInput(event: React.FormEvent<HTMLInputElement>) {
+    // React fires onChange only when the value string changes. Partially filling an
+    // empty input, or clearing the last segments of a partial one, keeps it '' and
+    // only toggles validity.badInput, so those edits are committed here.
+    if (event.currentTarget.value === '' && text === '') commit(event.currentTarget);
   }
 
   return (
@@ -67,7 +88,8 @@ export function KstDateTimeInput({
         min={`${yearRange.min}-01-01T00:00`}
         max={`${yearRange.max}-12-31T23:59:59`}
         value={text}
-        onChange={handleChange}
+        onChange={(event) => commit(event.target)}
+        onInput={handleInput}
         onBlur={onBlur}
       />
       {outOfRange && (
@@ -77,7 +99,7 @@ export function KstDateTimeInput({
       )}
       {incomplete && (
         <span role="alert" className="block text-xs font-normal text-red-600">
-          날짜와 시각을 끝까지 입력해주세요. 완성되지 않은 값은 비어 있는 것으로 처리됩니다.
+          날짜와 시각을 끝까지 입력해주세요. 완성되기 전에는 저장할 수 없습니다. 비우려면 모든 칸을 지워주세요.
         </span>
       )}
     </>

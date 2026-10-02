@@ -92,11 +92,15 @@ const PAYMENT_METHOD_LABELS: Record<PerformanceAllowedPaymentMethod, string> = {
 };
 
 // Reservation prepare enforces the saved list, so offer every category checkout can submit.
+// The server stores only these (legacy VIRTUAL_ACCOUNT/MOBILE_PHONE rows stay readable).
 const ACTIVE_BOOKING_PAYMENT_METHODS = CHECKOUT_CONFIGURABLE_PAYMENT_METHODS;
+type ActiveBookingPaymentMethod = (typeof ACTIVE_BOOKING_PAYMENT_METHODS)[number];
 
-const ACTIVE_BOOKING_PAYMENT_METHOD_SET = new Set<PerformanceAllowedPaymentMethod>(
-  ACTIVE_BOOKING_PAYMENT_METHODS,
-);
+const ACTIVE_BOOKING_PAYMENT_METHOD_SET = new Set<string>(ACTIVE_BOOKING_PAYMENT_METHODS);
+
+function isActiveBookingPaymentMethod(method: string): method is ActiveBookingPaymentMethod {
+  return ACTIVE_BOOKING_PAYMENT_METHOD_SET.has(method);
+}
 
 const ADMIN_EVENT_LOCALE_ORDER = ['ko', 'en', 'th', 'zh-CN'] as const;
 const PERFORMANCE_OPEN_STATUS_OPTIONS: Array<{
@@ -113,6 +117,14 @@ function isBookingStartReached(bookingStartsAt: string | null | undefined): bool
   if (!bookingStartsAt) return false;
   const startsAtMs = Date.parse(bookingStartsAt);
   return Number.isFinite(startsAtMs) && startsAtMs <= Date.now();
+}
+
+// Conversely, an open sale status with a future booking start shows as upcoming on
+// public pages and does not sell until that start. Only a committed instant counts.
+function isBookingStartPending(bookingStartsAt: string | null | undefined): boolean {
+  if (!bookingStartsAt || !/(?:Z|[+-]\d{2}:\d{2})$/u.test(bookingStartsAt)) return false;
+  const startsAtMs = Date.parse(bookingStartsAt);
+  return Number.isFinite(startsAtMs) && startsAtMs > Date.now();
 }
 
 function isEventCategory(genre: string): genre is EventCategory {
@@ -259,18 +271,39 @@ function copyVisibilityChipClasses(visible: boolean): string {
 }
 
 function normalizeAllowedBookingPaymentMethods(
-  methods: PerformanceAllowedPaymentMethod[] | null | undefined,
-): PerformanceAllowedPaymentMethod[] {
+  methods: readonly PerformanceAllowedPaymentMethod[] | null | undefined,
+): ActiveBookingPaymentMethod[] {
   const filtered = (methods ?? DEFAULT_PERFORMANCE_BOOKING_POLICY.allowedPaymentMethods)
-    .filter((method) => ACTIVE_BOOKING_PAYMENT_METHOD_SET.has(method));
+    .filter(isActiveBookingPaymentMethod);
 
   return filtered.length > 0
     ? filtered
-    : [...DEFAULT_PERFORMANCE_BOOKING_POLICY.allowedPaymentMethods];
+    : DEFAULT_PERFORMANCE_BOOKING_POLICY.allowedPaymentMethods.filter(isActiveBookingPaymentMethod);
+}
+
+/**
+ * A draft keeps whatever was saved into it. Drop payment methods the form cannot show
+ * (and the server no longer stores) so the operator can save the draft again; an empty
+ * result is left for the form's "at least one method" validation.
+ */
+function normalizeDraftFormValues(data: PerformanceDraft['data']): CreatePerformanceFormInput {
+  const values = data as CreatePerformanceFormInput;
+  const methods: unknown = values.bookingPolicy?.allowedPaymentMethods;
+  if (!values.bookingPolicy || !Array.isArray(methods)) return values;
+  return {
+    ...values,
+    bookingPolicy: {
+      ...values.bookingPolicy,
+      allowedPaymentMethods: methods.filter(
+        (method): method is ActiveBookingPaymentMethod => typeof method === 'string' && isActiveBookingPaymentMethod(method),
+      ),
+    },
+  };
 }
 
 function normalizeBookingPolicy(
-  bookingPolicy: CreatePerformanceFormInput['bookingPolicy'] | undefined,
+  // Stored policies (read type) may still list legacy methods; form values never do.
+  bookingPolicy: CreatePerformanceFormInput['bookingPolicy'] | PerformanceWithDetails['bookingPolicy'] | undefined,
 ): NonNullable<CreatePerformanceInput['bookingPolicy']> {
   return {
     ...DEFAULT_PERFORMANCE_BOOKING_POLICY,
@@ -391,7 +424,7 @@ export function PerformanceForm({
   const form = useForm<CreatePerformanceFormInput, unknown, CreatePerformanceInput>({
     resolver: zodResolver(createPerformanceSchema),
     mode: 'onBlur',
-    defaultValues: initialDraft ? initialDraft.data as CreatePerformanceFormInput : initialData
+    defaultValues: initialDraft ? normalizeDraftFormValues(initialDraft.data) : initialData
       ? mapToFormValues(initialData)
       : {
           title: '',
@@ -415,9 +448,7 @@ export function PerformanceForm({
           showtimes: [],
           castings: [],
           seatMaps: [],
-          bookingPolicy: {
-            ...DEFAULT_PERFORMANCE_BOOKING_POLICY,
-          },
+          bookingPolicy: normalizeBookingPolicy(undefined),
         },
   });
 
@@ -796,6 +827,12 @@ export function PerformanceForm({
                 && isBookingStartReached(watchedValues.bookingPolicy?.bookingStartsAt) && (
                 <p className="mt-1 text-xs text-gray-500" role="note">
                   판매 시작 일시가 지나 공개 화면에는 &apos;판매 중&apos;으로 표시됩니다. 저장된 상태는 &apos;판매 예정&apos;으로 유지됩니다.
+                </p>
+              )}
+              {(watchedValues.status === 'selling' || watchedValues.status === 'closing_soon')
+                && isBookingStartPending(watchedValues.bookingPolicy?.bookingStartsAt) && (
+                <p className="mt-1 text-xs text-gray-500" role="note">
+                  판매 시작 일시 전까지 공개 화면에는 판매 예정으로 표시되고 예매가 열리지 않습니다.
                 </p>
               )}
             </div>

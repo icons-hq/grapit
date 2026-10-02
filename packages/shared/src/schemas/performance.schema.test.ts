@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   PERFORMANCE_QUERY_MAX_PAGE,
   PERFORMANCE_QUERY_SUB_MAX_LENGTH,
+  SCHEDULED_BANNER_REQUIRES_START_MESSAGE,
+  createBannerSchema,
   createPerformanceSchema,
   performanceBookingPolicySchema,
   performanceQuerySchema,
@@ -10,6 +12,7 @@ import {
   updatePerformanceSchema,
 } from './performance.schema';
 import { resolvePerformanceSaleOpening } from './performance-preparation.schema';
+import { CHECKOUT_CONFIGURABLE_PAYMENT_METHODS } from '../checkout-payment-method';
 
 describe('performance query schema', () => {
   it('parses ended query strings without JavaScript truthiness coercion', () => {
@@ -305,11 +308,46 @@ describe('performance price and sale-time input guards', () => {
     expect(result.error?.issues.map((issue) => issue.path.join('.'))).toContain('bookingStartsAt');
   });
 
+  it('stores exactly the payment methods checkout can submit and the admin form offers (audit #70)', () => {
+    expect(performanceBookingPolicySchema.parse({
+      ...policy, allowedPaymentMethods: [...CHECKOUT_CONFIGURABLE_PAYMENT_METHODS],
+    }).allowedPaymentMethods).toEqual(['CARD', 'TRANSFER', 'SIMPLE_PAY', 'FOREIGN_EASY_PAY']);
+
+    for (const hidden of ['VIRTUAL_ACCOUNT', 'MOBILE_PHONE']) {
+      const policyResult = performanceBookingPolicySchema.safeParse({ ...policy, allowedPaymentMethods: ['CARD', hidden] });
+      expect(policyResult.success, hidden).toBe(false);
+      expect(policyResult.error?.issues.map((issue) => issue.path.join('.'))).toEqual(['allowedPaymentMethods.1']);
+      // Every write path parses through this schema: create, partial update, seat-map save and draft apply.
+      const bookingPolicy = { ...policy, allowedPaymentMethods: [hidden] };
+      expect(createPerformanceSchema.safeParse({ ...basePayload, bookingPolicy }).success, hidden).toBe(false);
+      expect(updatePerformanceSchema.safeParse({ bookingPolicy }).success, hidden).toBe(false);
+    }
+  });
+
   it('accepts a sale start at the KST year boundary and an omitted start', () => {
     // 2000-01-01 00:00 KST is 1999-12-31 15:00 UTC.
     expect(performanceBookingPolicySchema.safeParse({ ...policy, bookingStartsAt: '1999-12-31T15:00:00.000Z' }).success).toBe(true);
     expect(performanceBookingPolicySchema.safeParse({ ...policy, bookingStartsAt: '1999-12-31T14:59:59.000Z' }).success).toBe(false);
     expect(performanceBookingPolicySchema.parse({ ...policy }).bookingStartsAt).toBeNull();
+  });
+});
+
+describe('banner schema', () => {
+  const banner = { imageUrl: 'https://r2.example.com/banners/open.jpg' };
+
+  it('rejects a scheduled banner without a start time because it would never be shown (audit #51)', () => {
+    for (const startsAt of [undefined, null]) {
+      const result = createBannerSchema.safeParse({ ...banner, status: 'scheduled', startsAt });
+      expect(result.success).toBe(false);
+      expect(result.error?.issues).toEqual([
+        expect.objectContaining({ path: ['startsAt'], message: SCHEDULED_BANNER_REQUIRES_START_MESSAGE }),
+      ]);
+    }
+    expect(createBannerSchema.safeParse({ ...banner, status: 'scheduled', startsAt: '2026-10-08T11:00:00.000Z' }).success)
+      .toBe(true);
+    // Other statuses keep an optional start.
+    expect(createBannerSchema.safeParse({ ...banner, status: 'active' }).success).toBe(true);
+    expect(createBannerSchema.safeParse({ ...banner, status: 'draft', startsAt: null }).success).toBe(true);
   });
 });
 

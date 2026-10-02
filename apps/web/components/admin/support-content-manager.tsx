@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import {
   Archive,
+  ArchiveRestore,
   CheckCircle2,
   Languages,
   Pencil,
@@ -170,6 +171,7 @@ export function SupportContentManager() {
   const [form, setForm] = useState<FormState>(initialFaqForm);
   const [saveError, setSaveError] = useState<SaveError | null>(null);
   const [confirmUnpublishOpen, setConfirmUnpublishOpen] = useState(false);
+  const [confirmReloadOpen, setConfirmReloadOpen] = useState(false);
   const isEditing = editTarget !== null;
 
   const supportContent = useAdminSupportContent({ includeArchived: true });
@@ -222,6 +224,7 @@ export function SupportContentManager() {
     setTranslationSource(null);
     setSaveError(null);
     setConfirmUnpublishOpen(false);
+    setConfirmReloadOpen(false);
   }
 
   function startCreate(type: SupportContentType) {
@@ -528,9 +531,19 @@ export function SupportContentManager() {
                   번역본으로 연결합니다.
                 </p>
               )}
+              {isCreating &&
+                formType === 'notice' &&
+                !translationSource &&
+                form.locale !== 'ko' &&
+                LOCALE_FALLBACK_CATEGORIES.has(form.category as SupportNoticeCategory) && (
+                  <p role="note" className="mt-2 rounded-lg bg-[#FFFBEB] p-3 text-sm text-[#8B6306]">
+                    기존 공지의 번역이면 원문 공지에서 번역본 등록을 사용하세요. 따로
+                    등록하면 원문이 함께 노출됩니다.
+                  </p>
+                )}
               {editTarget?.reviewState === 'published' && (
                 <p className="mt-2 text-sm text-gray-600">
-                  게시 중인 콘텐츠입니다. 저장하면 공개 화면에 바로 반영됩니다.
+                  게시 중인 콘텐츠입니다. 저장하면 공개 화면에 반영됩니다(최대 1분 지연).
                 </p>
               )}
               <div className="mt-4 space-y-3">
@@ -700,7 +713,7 @@ export function SupportContentManager() {
                         type="button"
                         variant="outline"
                         size="sm"
-                        onClick={() => void reopenLatest()}
+                        onClick={() => setConfirmReloadOpen(true)}
                       >
                         최신 내용 다시 불러오기
                       </Button>
@@ -779,8 +792,12 @@ export function SupportContentManager() {
                   disabled={!isReviewable(selectedItem.reviewState)}
                   onClick={() => void handleReview(selectedItem)}
                 >
-                  <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
-                  검수 완료
+                  {selectedItem.reviewState === 'archived' ? (
+                    <ArchiveRestore className="h-4 w-4" aria-hidden="true" />
+                  ) : (
+                    <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+                  )}
+                  {selectedItem.reviewState === 'archived' ? '보관 해제' : '검수 완료'}
                 </Button>
                 <Button
                   type="button"
@@ -793,11 +810,18 @@ export function SupportContentManager() {
                 <Button
                   type="button"
                   variant="outline"
+                  disabled={selectedItem.reviewState === 'archived'}
                   onClick={() => void handleArchive(selectedItem)}
                 >
                   <Archive className="h-4 w-4" aria-hidden="true" />
                   보관
                 </Button>
+                {selectedItem.reviewState === 'archived' && (
+                  <p className="text-sm text-gray-600">
+                    보관 해제하면 게시 전 상태로 돌아갑니다. 공개하려면 이어서 게시하세요.
+                    자동 번역 검수본은 다시 검수해야 합니다.
+                  </p>
+                )}
               </div>
             </section>
           )}
@@ -825,6 +849,29 @@ export function SupportContentManager() {
               onClick={() => void handleSave({ confirmedUnpublish: true })}
             >
               저장하고 게시 내리기
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={confirmReloadOpen} onOpenChange={setConfirmReloadOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>최신 내용을 다시 불러올까요?</AlertDialogTitle>
+            <AlertDialogDescription>
+              작성 중인 내용은 버려집니다. 필요하면 먼저 복사해 두세요.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>계속 수정</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                setConfirmReloadOpen(false);
+                void reopenLatest();
+              }}
+            >
+              작성 내용 버리고 불러오기
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -993,8 +1040,9 @@ function isConflictError(error: unknown): boolean {
   );
 }
 
+/** Mirrors the API: review approves draft/review rows and restores archived ones. */
 function isReviewable(state: SupportContentReviewState): boolean {
-  return state === 'draft' || state === 'review';
+  return state === 'draft' || state === 'review' || state === 'archived';
 }
 
 function groupKey(notice: AdminSupportNotice): string {

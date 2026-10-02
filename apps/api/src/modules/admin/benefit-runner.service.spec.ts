@@ -4,6 +4,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { inspect } from 'node:util';
+import type { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { describe, expect, it, vi, type Mock } from 'vitest';
 
 import type { BenefitConfiguration, BenefitDefinition } from '@grabit/shared';
@@ -922,6 +924,11 @@ describe('BenefitRunnerService', () => {
     const result = await service.exportRun(RUN_ID, { actorUserId: ACTOR_ID, now: NOW });
 
     expect(selectCalls[1]?.table).toBe(ticketBenefitEntitlements);
+    // run_id has no index: the lookup must lead with the run's showtime so the
+    // (showtime_id, ticket_item_id) index serves it instead of a full table scan.
+    const lookup = new PgDialect().sqlToQuery(selectCalls[1]?.where as SQL);
+    expect(lookup.sql).toMatch(/"showtime_id" = \$1 and .*"run_id" = \$2/);
+    expect(lookup.params).toEqual([SHOWTIME_ID, RUN_ID]);
     const lines = result.csv.replace(/^\uFEFF/, '').trim().split(/\r?\n/);
     expect(lines[0]).toMatch(/,"Inactive Reason"$/);
     const lineFor = (label: string) => lines.find((line) => line.includes(ticketId(label)));

@@ -2,8 +2,9 @@ import '@testing-library/jest-dom/vitest';
 import { useState } from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
+import { DEFAULT_PERFORMANCE_BOOKING_POLICY, performanceBookingPolicySchema } from '@grabit/shared';
 
-import { KstDateTimeInput } from '../kst-datetime-input';
+import { KST_DATETIME_INCOMPLETE, KstDateTimeInput } from '../kst-datetime-input';
 
 function ControlledInput({ initial, onCommit }: { initial: string | null; onCommit: (value: string | null) => void }) {
   const [value, setValue] = useState<string | null>(initial);
@@ -39,6 +40,45 @@ describe('KstDateTimeInput', () => {
     // Never stored as a real (year 0002...) instant that would open sales immediately.
     expect(onCommit).not.toHaveBeenCalledWith(expect.stringMatching(/^0\d{3}-.*Z$/u));
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('blocks saving a partially cleared sale start instead of committing it as empty', () => {
+    const onCommit = vi.fn();
+    render(<ControlledInput initial="2025-10-01T11:00:00.000Z" onCommit={onCommit} />);
+    const input = screen.getByLabelText('판매 시작 일시') as HTMLInputElement;
+    const reportBadInput = (badInput: boolean) =>
+      Object.defineProperty(input, 'validity', { configurable: true, value: { badInput } });
+
+    // Chromium: clearing only the hour segment reports value '' with validity.badInput.
+    reportBadInput(true);
+    fireEvent.change(input, { target: { value: '' } });
+
+    expect(onCommit).toHaveBeenLastCalledWith(KST_DATETIME_INCOMPLETE);
+    expect(onCommit).not.toHaveBeenCalledWith(null);
+    expect(screen.getByRole('alert')).toHaveTextContent('완성되기 전에는 저장할 수 없습니다');
+    expect(input).toHaveAttribute('aria-invalid', 'true');
+    // An empty sale start would open a selling event at once; the sentinel fails validation.
+    const policy = { ...DEFAULT_PERFORMANCE_BOOKING_POLICY, bookingStartsAt: KST_DATETIME_INCOMPLETE };
+    expect(performanceBookingPolicySchema.safeParse(policy).success).toBe(false);
+
+    // Clearing the remaining segments keeps the value '' (no React onChange); only badInput flips.
+    reportBadInput(false);
+    fireEvent.input(input, { target: { value: '' } });
+
+    expect(onCommit).toHaveBeenLastCalledWith(null);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('blocks saving when an empty sale start is only partly typed', () => {
+    const onCommit = vi.fn();
+    render(<ControlledInput initial={null} onCommit={onCommit} />);
+    const input = screen.getByLabelText('판매 시작 일시') as HTMLInputElement;
+    Object.defineProperty(input, 'validity', { configurable: true, value: { badInput: true } });
+
+    fireEvent.input(input, { target: { value: '' } });
+
+    expect(onCommit).toHaveBeenLastCalledWith(KST_DATETIME_INCOMPLETE);
+    expect(screen.getByRole('alert')).toHaveTextContent('날짜와 시각을 끝까지 입력해주세요');
   });
 
   it('clears to null and adopts values loaded from outside the input', () => {

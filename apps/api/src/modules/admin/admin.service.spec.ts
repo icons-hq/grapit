@@ -20,6 +20,7 @@ import type {
   CreateBannerInput,
   SeatMapConfigInput,
 } from '@grabit/shared/schemas/performance.schema';
+import { SCHEDULED_BANNER_REQUIRES_START_MESSAGE } from '@grabit/shared';
 
 import { AdminService } from './admin.service.js';
 import { AdminBannerController } from './admin-banner.controller.js';
@@ -30,6 +31,7 @@ import { CatalogFreshnessService } from '../performance/catalog-freshness.servic
 import {
   banners,
   bookingPolicies,
+  performanceDrafts,
   performances,
   performanceSeatAssignments,
   performanceSeatTiers,
@@ -715,10 +717,17 @@ describe('AdminService', () => {
       counts: Partial<Record<'showtimes_count' | 'reservations_count' | 'ticket_scan_events_count' | 'seat_operation_history_count', number>> = {},
     ) {
       const tx = mockDb._tx;
-      const lockedRead = { from: vi.fn(), where: vi.fn(), for: vi.fn().mockResolvedValue(target ? [target] : []) };
+      const lockOrder: string[] = [];
+      const draftLock = { from: vi.fn(), where: vi.fn(), orderBy: vi.fn(),
+        for: vi.fn(async () => { lockOrder.push('performance_drafts'); return []; }) };
+      draftLock.from.mockReturnValue(draftLock);
+      draftLock.where.mockReturnValue(draftLock);
+      draftLock.orderBy.mockReturnValue(draftLock);
+      const lockedRead = { from: vi.fn(), where: vi.fn(), lockOrder, draftLock,
+        for: vi.fn(async () => { lockOrder.push('performances'); return target ? [target] : []; }) };
       lockedRead.from.mockReturnValue(lockedRead);
       lockedRead.where.mockReturnValue(lockedRead);
-      tx.select.mockReturnValueOnce(lockedRead as never);
+      tx.select.mockReturnValueOnce(draftLock as never).mockReturnValueOnce(lockedRead as never);
       tx.execute.mockResolvedValueOnce({
         rows: [{ showtimes_count: 0, reservations_count: 0, ticket_scan_events_count: 0, seat_operation_history_count: 0, ...counts }],
       });
@@ -732,6 +741,10 @@ describe('AdminService', () => {
       await service.deletePerformance('perf-id-123', { ...adminMutationContext, reason: '중복 등록 정리' });
 
       expect(lockedRead.for).toHaveBeenCalledWith('update');
+      // Draft apply locks its draft row before the performance; delete must use the same order.
+      expect(lockedRead.draftLock.from).toHaveBeenCalledWith(performanceDrafts);
+      expect(lockedRead.draftLock.for).toHaveBeenCalledWith('update');
+      expect(lockedRead.lockOrder).toEqual(['performance_drafts', 'performances']);
       expect(mockDb._tx.delete).toHaveBeenCalledWith(performances);
       expect(mockAudit.write).toHaveBeenCalledWith(expect.objectContaining({
         actorUserId: adminMutationContext.actorUserId,
@@ -1030,6 +1043,35 @@ describe('AdminService', () => {
       ).rejects.toThrow(BadRequestException);
 
       expect(mockDb.update).not.toHaveBeenCalled();
+    });
+
+    it('rejects a scheduled banner without a start time, which the public filter never shows (audit #51)', async () => {
+      await expect(service.createBanner({
+        imageUrl: 'https://r2.example.com/banners/open.jpg', status: 'scheduled', startsAt: null,
+      })).rejects.toThrow(SCHEDULED_BANNER_REQUIRES_START_MESSAGE);
+      await expect(service.updateBanner('banner-id-123', { status: 'scheduled', startsAt: null }))
+        .rejects.toThrow(SCHEDULED_BANNER_REQUIRES_START_MESSAGE);
+      expect(mockDb.insert).not.toHaveBeenCalled();
+      expect(mockDb.update).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['schedules a stored banner that has no start', { status: 'scheduled' as const }, '"starts_at" is not null'],
+      ['clears the start of a stored scheduled banner', { startsAt: null }, '"status" <> $'],
+    ])('checks the merged row when a partial update %s', async (_label, input, condition) => {
+      const where = vi.fn().mockReturnValue({ returning: vi.fn().mockResolvedValue([]) });
+      mockDb.update = vi.fn().mockReturnValue({ set: vi.fn().mockReturnValue({ where }) });
+      const existing = { from: vi.fn(), where: vi.fn().mockResolvedValue([{ id: 'banner-id-123' }]) };
+      existing.from.mockReturnValue(existing);
+      mockDb.select = vi.fn().mockReturnValue(existing);
+
+      await expect(service.updateBanner('banner-id-123', input))
+        .rejects.toThrow(SCHEDULED_BANNER_REQUIRES_START_MESSAGE);
+
+      const rendered = new PgDialect().sqlToQuery(where.mock.calls[0]![0] as SQL);
+      expect(rendered.sql).toContain('"banners"."id" = $');
+      expect(rendered.sql).toContain(condition);
+      expect(mockCatalogFreshness.invalidateBanners).not.toHaveBeenCalled();
     });
 
     it('should throw NotFoundException when banner does not exist', async () => {

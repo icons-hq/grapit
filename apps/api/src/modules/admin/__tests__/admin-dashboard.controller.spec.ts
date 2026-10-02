@@ -7,6 +7,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { Agent } from 'node:http';
 import request from 'supertest';
 import { AdminDashboardController } from '../admin-dashboard.controller.js';
 import { AdminDashboardService } from '../admin-dashboard.service.js';
@@ -30,6 +31,7 @@ type RoleMode = 'anonymous' | 'user' | 'admin';
 
 describe('AdminDashboardController (access control)', () => {
   let app: INestApplication;
+  let agent: Agent;
   let mode: RoleMode = 'admin';
 
   beforeAll(async () => {
@@ -83,27 +85,33 @@ describe('AdminDashboardController (access control)', () => {
 
     app = moduleRef.createNestApplication();
     await app.init();
+    // One listening server and one keep-alive socket for the file. Without it supertest
+    // listens on and closes a new ephemeral port per request, which intermittently
+    // fails with "socket hang up" when a pooled socket of a closed server is reused.
+    await app.listen(0, '127.0.0.1');
+    agent = new Agent({ keepAlive: true, maxSockets: 1 });
   });
 
   afterAll(async () => {
+    agent?.destroy();
     await app?.close();
   });
 
   it('returns 401 for unauthenticated request', async () => {
     mode = 'anonymous';
-    const res = await request(app.getHttpServer()).get('/admin/dashboard/summary');
+    const res = await request(app.getHttpServer()).get('/admin/dashboard/summary').agent(agent);
     expect(res.status).toBe(401);
   });
 
   it('returns 403 for non-admin authenticated user', async () => {
     mode = 'user';
-    const res = await request(app.getHttpServer()).get('/admin/dashboard/summary');
+    const res = await request(app.getHttpServer()).get('/admin/dashboard/summary').agent(agent);
     expect(res.status).toBe(403);
   });
 
   it('returns 200 for admin role (will GREEN once Plan 02 implements handler)', async () => {
     mode = 'admin';
-    const res = await request(app.getHttpServer()).get('/admin/dashboard/summary');
+    const res = await request(app.getHttpServer()).get('/admin/dashboard/summary').agent(agent);
     // RED now (skeleton throws 500). GREEN after Plan 02.
     expect(res.status).toBe(200);
   });
