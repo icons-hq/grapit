@@ -52,6 +52,7 @@ jobs:
         run: >-
           node --test scripts/k6/phase26-load.test.mjs scripts/phase26/record-k6-evidence.test.mjs
           scripts/phase26/test-event-identity.test.mjs scripts/phase26/provision-load-buyers.test.mjs
+          scripts/phase26/infra-evidence.test.mjs scripts/phase26/rehearsal-smoke.test.mjs
           scripts/revamp/production-preflight.test.mjs
           scripts/revamp/pg-stub-preload.test.mjs scripts/revamp/isolated-capacity.test.mjs
           scripts/smoke-valkey-production.test.mjs

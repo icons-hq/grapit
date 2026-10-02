@@ -405,7 +405,7 @@ Begin this process at least 14 days before sales open. The old baseline is a res
 
 1. Close the sitewide gate with the [kill-switch procedure](#sitewide-booking-kill-switch): set repository variable `BOOKING_ENABLED=false` first, then update the live API/Web/worker. Keep it closed while capacity changes and verification are in progress. Every deploy reads the same variable, so merges during preparation cannot reopen it.
 2. Resize or replace Cloud SQL to at least the prior `db-custom-2-12288` capacity, then load-test. Reconsider REGIONAL availability before public sale or venue-entry windows.
-3. Verify the PostgreSQL connection budget before load tests: `API_MAX_INSTANCES × (DB_POOL_MAX + PGBOSS_POOL_MAX)` for the API, plus `DB_POOL_MAX + PGBOSS_POOL_MAX` for the worker, plus `DB_CONNECTION_RESERVE`, must not exceed `max_connections` minus reserved connections. `PGBOSS_POOL_MAX` (workflow default `3`) is the per-process pg-boss pool the budget counts. Keep it at or above the cap the API and worker actually use: the code default is `3` with background processing and `1` for a producer-only API. When the repository variable is set, the Deploy workflow also passes the same value to the API service and the worker Job (`RUNTIME_PGBOSS_POOL_MAX`); when it is unset, each process keeps its code default. Size `DB_POOL_MAX` from a single-showtime confirm load test that records pool wait and showtime-lock wait. Then set `DB_CONNECTION_BUDGET_ENFORCE=true` so the deploy workflow's database preflight fails instead of only warning when the posture can exhaust connections. The formula counts one revision. During a deploy rollout, old and new revision instances overlap until the old ones drain, so either size `DB_CONNECTION_RESERVE` for that overlap or deploy only outside peak traffic.
+3. Verify the PostgreSQL connection budget before load tests: `API_MAX_INSTANCES × (DB_POOL_MAX + API pg-boss cap)` for the API, plus `DB_POOL_MAX + worker pg-boss cap` for the worker, plus `DB_CONNECTION_RESERVE`, must not exceed `max_connections` minus reserved connections. The pg-boss cap is the `PGBOSS_POOL_MAX` repository variable when it is set (the Deploy workflow then passes it to the API service and the worker Job as `RUNTIME_PGBOSS_POOL_MAX`); when it is unset, each process keeps its code default, `3` with background processing (the worker Job, a warm API) and `1` for a producer-only API. The deploy preflight counts the same caps. Size `DB_POOL_MAX` from a single-showtime confirm load test that records pool wait and showtime-lock wait. Then set `DB_CONNECTION_BUDGET_ENFORCE=true` so the deploy workflow's database preflight fails instead of only warning when the posture can exhaust connections. The formula counts one revision. During a deploy rollout, old and new revision instances overlap until the old ones drain, so either size `DB_CONNECTION_RESERVE` for that overlap or deploy only outside peak traffic.
    - Pass the [PostgreSQL connection budget](#postgresql-connection-budget) gate on the target instance: record `max_connections`, choose `DB_POOL_MAX` and `PGBOSS_POOL_MAX` within the budget, and decide `DB_STATEMENT_TIMEOUT_MS` and `DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS`. Set them as repository variables of the same name; the Deploy workflow passes a set value to the API and worker (see [Optional runtime settings](#optional-runtime-settings)). Confirm them on the deployed revision and in `pg_stat_activity` before step 10.
 4. Create a new Cluster Mode Enabled Valkey instance sized from load evidence. These requirements are mandatory:
    - `--replica-count` of at least `1` with multi-zone distribution, so a node failure or maintenance fails over instead of wiping state;
@@ -468,14 +468,16 @@ gcloud run jobs update grabit-background-worker --project=grapit-491806 --region
 
 Update the API first. It stops new seat locks and Toss confirm calls, so no new payment is approved through the confirm path; payments Toss has already approved still complete through the webhook and reconcile paths. Then update Web so the CTA and badges match. Verify that `https://heygrabit.com/api/runtime-flags` returns `bookingEnabled:false`, a non-admin seat lock or prepare returns 403, and API health returns 200.
 
-If a Deploy run is in progress when you close (`gh run list --workflow=deploy.yml --status=in_progress`), wait for it to finish, then repeat the three checks above. If the flag reads `true` again, run the three close commands again.
+If a Deploy run is in progress when you close (`gh run list --workflow=deploy.yml --status=in_progress`), wait for it to finish, then repeat the three checks above. If the flag reads `true` again, run the three close commands again. To stop a reopen run (`allow_booking_reopen=true`) altogether, cancel it with `gh run cancel <run-id>`; it keeps a close made during the run (below), but its remaining jobs still deploy until cancelled.
 
 Reopen only after the gates pass. Set the variable to `true` **before** any gcloud reopen, then run the same three updates with `BOOKING_ENABLED=true` (or dispatch the Deploy workflow with `allow_booking_reopen=true`), and verify the runtime flag and a buyer smoke. A gcloud-only reopen that leaves the variable at `false` closes sales again on the next push to `main`.
 
 What the Deploy workflow guarantees:
 
-- At the start of a run, the migrate job reads the live API and Web values. It fails the whole deploy before touching the database if it would switch a live `false` (or unreadable) service to `true`, unless the run is a manual dispatch with `allow_booking_reopen=true`.
-- `deploy-api` and `deploy-web` read their own service again right before `deploy-cloudrun`. That is several minutes later, after image builds and the worker smoke. If the service was closed in the meantime, the job deploys `false` and keeps it closed, and the run shows a warning. If the live value cannot be read at that point, the job fails without deploying that service. A close made during a run is therefore preserved. The remaining window is the few seconds between that re-read and the Cloud Run update, which is why the post-run check above exists.
+- At the start of a run, the migrate job reads the live API and Web values and each service's latest revision (`status.latestCreatedRevisionName`) and hands them to the deploy jobs. It fails the whole deploy before touching the database if it would switch a live `false` (or unreadable) service to `true`, unless the run is a manual dispatch with `allow_booking_reopen=true`. An approved reopen is shown as a warning annotation and in the step summary.
+- `deploy-api` and `deploy-web` read their own service again right before `deploy-cloudrun`. That is several minutes later, after image builds and the worker smoke. In a normal run, a service closed in the meantime is deployed with `false` and stays closed, and the run shows a warning. If the live value cannot be read at that point, the job fails without deploying that service.
+- In a run with `allow_booking_reopen=true`, the same re-read is compared with the start-of-run snapshot. A closed service that was open at the start, or whose latest revision changed during the run (a `gcloud run services update` that changes the service, such as the close above on an open service, creates a revision), was closed during the run: the job deploys `false` and shows a warning, and a new reopen dispatch is needed. Only a service that was already closed at the start and is unchanged is reopened, with a warning and step summary. If the snapshot or a revision cannot be read, or the live value cannot be read right before deploy, the approved run reopens with a warning that a close during the run could not be ruled out; check the flag after the run. Service-level prewarm creates no revision, but a `PREWARM_SCALING_SCOPE=template` prewarm does, so a reopen run that overlaps one keeps the service closed.
+- A close made during a run is therefore preserved in both kinds of run. The remaining window is the few seconds between that re-read and the Cloud Run update, which is why the post-run check above exists.
 - Closing through the variable never needs approval. When a deploy switches a live `true` service to `false`, the run shows a warning annotation and step summary, so an unintended close is visible.
 - The background worker receives the variable as is. It serves no buyer request, so its value does not open or close sales.
 
@@ -490,7 +492,7 @@ The Deploy workflow validates these repository variables before any job changes 
 | `MIGRATION_STATEMENT_TIMEOUT` | `60s` | `statement_timeout` for the same sessions. |
 | `MIGRATION_FREEZE` | `false` | `true` fails the deploy when any migration is pending. |
 | `API_CONCURRENCY` | `250` | API Cloud Run concurrency. |
-| `PGBOSS_POOL_MAX`, `DB_CONNECTION_RESERVE`, `DB_CONNECTION_BUDGET_ENFORCE` | `3`, `5`, `false` | Connection budget inputs. `PGBOSS_POOL_MAX` must be at least the runtime pg-boss pool cap (code default `3`, `1` producer-only); when the variable is set, the same value is also the runtime pg-boss pool of the API and worker (see [Optional runtime settings](#optional-runtime-settings)). `true` makes an over-budget posture fail the deploy. |
+| `DB_CONNECTION_RESERVE`, `DB_CONNECTION_BUDGET_ENFORCE` | `5`, `false` | Connection budget inputs. The budget counts each process's real pg-boss pool cap: the `PGBOSS_POOL_MAX` runtime variable when it is set (see [Optional runtime settings](#optional-runtime-settings)), otherwise `3` for the worker Job and an API with background processing, and `1` for a producer-only API (`BACKGROUND_PROCESSING_ENABLED=false`). `true` makes an over-budget posture fail the deploy. |
 | `CUTOVER_GATE_LEDGER_PATH`, `CUTOVER_GATE_LEDGER_MAX_AGE_DAYS` | packaged phase26 ledger, `30` | Runtime-replaceable Gate Ledger and its freshness limit. |
 | `PREWARM_SCALING_SCOPE` | `service` | `service` patches the service-level minimum. `template` is the revision-template fallback; see [prewarm live verification](#prewarm-live-verification). |
 | `PGBOSS_START_MAX_ATTEMPTS`, `DB_STATEMENT_TIMEOUT_MS`, `DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS`, `PAYMENT_HANDOFF_ABANDON_SWEEP_ENABLED` | unset (code defaults) | Runtime settings passed to the API and worker only when set. See [Optional runtime settings](#optional-runtime-settings). |
@@ -528,7 +530,7 @@ Official references: [Cloud Run minimum instances and scale to zero](https://clo
 
 | Variable | API | Worker | Code default when unset |
 | --- | --- | --- | --- |
-| `PGBOSS_POOL_MAX` | yes | yes | `3` with background processing, `1` for a producer-only API. Must not exceed the budget input. |
+| `PGBOSS_POOL_MAX` | yes | yes | `3` with background processing, `1` for a producer-only API. The connection budget counts the set value for both processes. |
 | `PGBOSS_START_MAX_ATTEMPTS` | yes | yes | `3` |
 | `DB_STATEMENT_TIMEOUT_MS`, `DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS` | yes | yes | no limit |
 | `PAYMENT_HANDOFF_ABANDON_SWEEP_ENABLED` | yes | yes | on; `false` stops the abandoned handoff review |
@@ -547,11 +549,11 @@ gcloud run services update grabit-api --project="$GCP_PROJECT_ID" --region=asia-
 
 ### PostgreSQL connection budget
 
-Every API and worker process opens two PostgreSQL pools: the application pool (`DB_POOL_MAX`, code default `10`, workflow default `4`, managed-demo `2`) and the pg-boss pool (`PGBOSS_POOL_MAX`, code default `3` when background processing runs in the process and `1` for a producer-only API; the Deploy workflow's `PGBOSS_POOL_MAX` repository variable, default `3`, is only the budget input). Before changing `API_MAX_INSTANCES`, `DB_POOL_MAX`, `PGBOSS_POOL_MAX`, or the Cloud SQL tier, verify:
+Every API and worker process opens two PostgreSQL pools: the application pool (`DB_POOL_MAX`, code default `10`, workflow default `4`, managed-demo `2`) and the pg-boss pool (`PGBOSS_POOL_MAX`, code default `3` when background processing runs in the process and `1` for a producer-only API; a set repository variable of the same name becomes the runtime pool of the API and the worker Job). The Deploy workflow's database preflight counts each process's cap the same way. Before changing `API_MAX_INSTANCES`, `DB_POOL_MAX`, `PGBOSS_POOL_MAX`, `BACKGROUND_PROCESSING_ENABLED`, or the Cloud SQL tier, verify:
 
 ```text
-API_MAX_INSTANCES × (DB_POOL_MAX + PGBOSS_POOL_MAX)
-+ worker Job (DB_POOL_MAX + PGBOSS_POOL_MAX), unless the Job is paused
+API_MAX_INSTANCES × (DB_POOL_MAX + API pg-boss cap)
++ worker Job (DB_POOL_MAX + worker pg-boss cap), unless the Job is paused
 + rollout overlap (old and new revisions both running during a deploy)
 + migration, Cloud SQL Auth Proxy, and operator sessions
 < max_connections − superuser_reserved_connections
@@ -559,7 +561,7 @@ API_MAX_INSTANCES × (DB_POOL_MAX + PGBOSS_POOL_MAX)
 
 - Workflow defaults at ticket opening: `40 × (4 + 3) = 280` for the API. Read the real limits with `SHOW max_connections;` and `SHOW superuser_reserved_connections;` on the target instance; do not assume a tier default.
 - Do not deploy during a sale window. If a deploy cannot be avoided, budget a second API term for the overlapping revision.
-- Managed demo (`db-f1-micro`): `4 × (2 + 1) + (2 + 3) = 17` before rollout overlap and operator sessions, so keep manual sessions short and avoid parallel deploys.
+- Managed demo (`db-f1-micro`): `4 × (2 + 1) + (2 + 3) = 17` before rollout overlap and operator sessions. With the default reserve `5` the preflight requires 22, which fits `max_connections` 25 minus 3 superuser-reserved connections exactly: no over-budget warning, but no headroom either. Keep manual sessions short and avoid parallel deploys.
 - During the load test, record pool usage per process and pool. Expected `application_name` values are `grabit-api`, `grabit-api-pgboss`, `grabit-background-worker`, and `grabit-background-worker-pgboss` (a value embedded in `DATABASE_URL` overrides them):
 
   ```sql

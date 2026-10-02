@@ -2,13 +2,15 @@
 // Provisions the synthetic buyer pool (PHASE26_USER_POOL_FILE) for the Phase 26
 // k6 load gate in scripts/k6/phase26-*.js.
 //
-// Why the pool is not built by logging in: POST /auth/login is limited to 60
-// requests per minute per client (default throttler), so 10,000 buyers take
-// about 167 minutes and 20,000 about 333 minutes, while API-issued access tokens
-// live 15 minutes (auth.config.ts). k6 does not call /auth/refresh either: it is
-// a public route throttled per client like login, and refresh rotates the
-// refresh token, so a pool would become single-use and a lost response would
-// revoke the whole family.
+// Why the pool is not built by logging in: POST /auth/login allows 100 requests
+// per minute per client IP (ROUTE_THROTTLES.authLogin in route-throttles.ts), so
+// one load generator signs in 10,000 buyers in about 100 minutes and 20,000 in
+// about 200 minutes, while API-issued access tokens live 15 minutes
+// (auth.config.ts). The `login-account` policy also caps each email + IP at 30
+// per 15 minutes. k6 does not call /auth/refresh either: with a refresh cookie
+// it allows 600 requests per minute per client IP (ROUTE_THROTTLES.authRefresh),
+// but refresh rotates the refresh token, so a pool would become single-use and a
+// lost response would revoke the whole family.
 //
 // Instead, against the database and JWT secret of the target the k6 run hits:
 //  1. buyers are created or reused under a reserved, undeliverable namespace

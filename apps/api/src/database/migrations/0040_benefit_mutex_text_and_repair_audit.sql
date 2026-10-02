@@ -2,8 +2,6 @@
 -- mutual_exclusion_group stores comma-joined benefit identities of up to 120 chars
 -- each, so varchar(120) rejected three or more exclusions. varchar -> text is
 -- binary coercible: PostgreSQL updates the catalog without rewriting the table.
-SET LOCAL lock_timeout = '10s';
---> statement-breakpoint
 ALTER TABLE "ticket_benefits" ALTER COLUMN "mutual_exclusion_group" SET DATA TYPE text;
 --> statement-breakpoint
 -- The included-benefit-repair CLI writes one admin audit row per apply and links

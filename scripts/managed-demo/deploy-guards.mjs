@@ -4,8 +4,9 @@
 // the only entry points the workflow uses:
 //
 //   node scripts/managed-demo/deploy-guards.mjs validate-config
-//   node scripts/managed-demo/deploy-guards.mjs booking-gate --service NAME=FILE [...]
+//   node scripts/managed-demo/deploy-guards.mjs booking-gate --service NAME=FILE [...] [--snapshot KEY=NAME ...]
 //   node scripts/managed-demo/deploy-guards.mjs booking-gate-value --service NAME=FILE
+//        [--live-at-guard true|false|unreadable --revision-at-guard REVISION]
 //   node scripts/managed-demo/deploy-guards.mjs db-preflight
 //   node scripts/managed-demo/deploy-guards.mjs runtime-env --target api
 //
@@ -30,6 +31,19 @@ const DURATION_UNIT_MS = { ms: 1, s: 1_000, min: 60_000, h: 3_600_000, d: 86_400
 // Web and worker treat anything that is not an explicit true value as closed.
 const RUNTIME_TRUE_VALUES = new Set(['true', '1', 'yes', 'on']);
 const PREWARM_SCALING_SCOPES = new Set(['service', 'template']);
+// Cloud Run revision names: lowercase letters, digits and hyphens. Anything else
+// read back from a job output is treated as missing.
+const REVISION_NAME_PATTERN = /^[a-z][a-z0-9-]{0,99}$/;
+const SNAPSHOT_KEY_PATTERN = /^[a-z][a-z0-9_]{0,30}$/;
+
+// Mirror apps/api/src/modules/jobs/pgboss.provider.ts (asserted by the unit test).
+const DEFAULT_PGBOSS_POOL_MAX_PROCESSING = 3;
+const DEFAULT_PGBOSS_POOL_MAX_PRODUCER = 1;
+
+/** Same parsing as the API's isBackgroundProcessingEnabled(): only "false" turns it off. */
+function backgroundProcessingEnabled(value) {
+  return typeof value !== 'string' || value.trim().toLowerCase() !== 'false';
+}
 
 export function parseStrictBoolean(value, name) {
   const normalized = typeof value === 'string' ? value.trim() : value;
@@ -90,8 +104,8 @@ function parseCountryListText(value, name) {
  * repository variable is set (as `RUNTIME_<NAME>` in the workflow env). Unset
  * keeps the code default, which can differ per process: the pg-boss pool is 3
  * with background processing and 1 for a producer-only API, so a fixed
- * workflow default would change the managed-demo API's connection count.
- * The budget input `PGBOSS_POOL_MAX` (default 3) stays separate.
+ * workflow default would change the managed-demo API's connection count. The
+ * connection budget derives each process's pg-boss cap the same way.
  */
 export const OPTIONAL_RUNTIME_ENV = [
   { name: 'PGBOSS_POOL_MAX', targets: ['api', 'worker'], parse: parsePositiveIntegerText },
@@ -177,15 +191,23 @@ export function validateDeployConfig(env) {
     throw new Error('PREWARM_SCALING_SCOPE must be exactly "service" or "template"');
   }
 
-  const pgBossPoolMax = parseInteger(env.PGBOSS_POOL_MAX, 'PGBOSS_POOL_MAX', { min: 1 });
   const runtimeEnv = {
     api: resolveOptionalRuntimeEnv(env, 'api'),
     worker: resolveOptionalRuntimeEnv(env, 'worker'),
   };
-  const runtimePgBossPoolMax = runtimeEnv.api.find(([name]) => name === 'PGBOSS_POOL_MAX');
-  if (runtimePgBossPoolMax && Number(runtimePgBossPoolMax[1]) > pgBossPoolMax) {
-    throw new Error('RUNTIME_PGBOSS_POOL_MAX must not exceed the PGBOSS_POOL_MAX budget input');
-  }
+  // The pg-boss pool cap each process really uses: the runtime value when the
+  // repository variable is set, otherwise the code default. The managed-demo API
+  // is producer-only (1); the worker Job always processes jobs (3).
+  const runtimePgBossPoolMax = (target) => {
+    const pair = runtimeEnv[target].find(([name]) => name === 'PGBOSS_POOL_MAX');
+    return pair ? Number(pair[1]) : null;
+  };
+  const apiPgBossPoolMax =
+    runtimePgBossPoolMax('api') ??
+    (backgroundProcessingEnabled(env.BACKGROUND_PROCESSING_ENABLED)
+      ? DEFAULT_PGBOSS_POOL_MAX_PROCESSING
+      : DEFAULT_PGBOSS_POOL_MAX_PRODUCER);
+  const workerPgBossPoolMax = runtimePgBossPoolMax('worker') ?? DEFAULT_PGBOSS_POOL_MAX_PROCESSING;
 
   return {
     bookingEnabled,
@@ -198,7 +220,8 @@ export function validateDeployConfig(env) {
     apiMaxInstances,
     apiConcurrency: parseInteger(env.API_CONCURRENCY, 'API_CONCURRENCY', { min: 1, max: 1_000 }),
     dbPoolMax: parseInteger(env.DB_POOL_MAX, 'DB_POOL_MAX', { min: 1 }),
-    pgBossPoolMax,
+    apiPgBossPoolMax,
+    workerPgBossPoolMax,
     dbConnectionReserve: parseInteger(env.DB_CONNECTION_RESERVE, 'DB_CONNECTION_RESERVE', {
       min: 0,
     }),
@@ -257,6 +280,37 @@ export function runtimeBookingEnabled(rawValue) {
 }
 
 /**
+ * `status.latestCreatedRevisionName` from the v1 describe JSON. Any env or
+ * template update (including a gcloud kill-switch close) creates a revision; a
+ * service-level prewarm scaling change does not.
+ */
+export function readServiceRevision(serviceDescription) {
+  const name = serviceDescription?.status?.latestCreatedRevisionName;
+  return typeof name === 'string' && REVISION_NAME_PATTERN.test(name) ? name : null;
+}
+
+/** Job-output form of one service's state as the migrate guard saw it. */
+export function formatGuardSnapshot(service) {
+  let live = 'unreadable';
+  if (service.readable) live = runtimeBookingEnabled(service.rawValue) ? 'true' : 'false';
+  return { live, revision: service.revision ?? '' };
+}
+
+/**
+ * Reads the snapshot back in a deploy job. Missing job outputs arrive as empty
+ * strings, and anything unexpected is treated as unreadable.
+ */
+export function parseGuardSnapshot(live, revision) {
+  const liveText = typeof live === 'string' ? live.trim() : '';
+  const revisionText = typeof revision === 'string' ? revision.trim() : '';
+  return {
+    readable: liveText === 'true' || liveText === 'false',
+    liveEnabled: liveText === 'true',
+    revision: REVISION_NAME_PATTERN.test(revisionText) ? revisionText : null,
+  };
+}
+
+/**
  * Decides whether a deploy may apply `target` as the sitewide booking gate.
  *
  * Closing (target=false) is always allowed, but closing a live-open service is
@@ -273,7 +327,7 @@ export function evaluateBookingGate({ target, services, allowReopen }) {
   for (const service of services) {
     if (!service.readable) {
       lines.push(`${service.name}: live state unreadable -> target ${target}`);
-      if (target) reopenBlocked.push(`${service.name} (live state unreadable)`);
+      if (target) reopenBlocked.push({ name: service.name, liveLabel: 'state unreadable' });
       continue;
     }
 
@@ -281,20 +335,21 @@ export function evaluateBookingGate({ target, services, allowReopen }) {
     const liveLabel = service.rawValue === undefined ? 'unset (closed)' : String(liveEnabled);
     lines.push(`${service.name}: live ${liveLabel} -> target ${target}`);
     if (target && !liveEnabled) {
-      reopenBlocked.push(`${service.name} (live ${liveLabel})`);
+      reopenBlocked.push({ name: service.name, liveLabel });
     }
     if (!target && liveEnabled) {
       warnings.push(closingWarning(service.name));
     }
   }
 
+  const blockedList = reopenBlocked.map(({ name, liveLabel }) => `${name} (live ${liveLabel})`).join(', ');
   if (reopenBlocked.length > 0 && !allowReopen) {
     return {
       ok: false,
       lines,
       warnings,
       message:
-        `Refusing to reopen sitewide booking on ${reopenBlocked.join(', ')}. ` +
+        `Refusing to reopen sitewide booking on ${blockedList}. ` +
         'Set repository variable BOOKING_ENABLED=false to keep the gate closed, or ' +
         'reopen deliberately via a manual Deploy dispatch with allow_booking_reopen=true ' +
         'after the opening evidence gates pass.',
@@ -305,7 +360,15 @@ export function evaluateBookingGate({ target, services, allowReopen }) {
   if (!target) {
     message = 'Sitewide booking gate target is false: this deploy keeps or makes booking closed.';
   } else if (reopenBlocked.length > 0) {
-    message = `Sitewide booking reopen explicitly approved for ${reopenBlocked.join(', ')}.`;
+    message = `Sitewide booking reopen explicitly approved for ${blockedList}.`;
+    // An approved reopen is as visible as a close.
+    for (const { name, liveLabel } of reopenBlocked) {
+      warnings.push(
+        `${name}: this deploy REOPENS sitewide booking (live ${liveLabel} -> true) because the run ` +
+          'was dispatched with allow_booking_reopen=true. A close made on this service later in ' +
+          'the run is kept closed.',
+      );
+    }
   }
   return { ok: true, lines, warnings, message };
 }
@@ -326,13 +389,15 @@ function closingWarning(name) {
  * would write the stale `true` and silently reopen sales.
  *
  * - target false: write false (warn when this closes a live-open service).
- * - target true, live open, or reopen approved: write true.
+ * - target true, live open: write true.
  * - target true, live closed, no approval: keep it closed (write false) and
  *   warn, so an in-flight hotfix still ships without undoing the close.
  * - target true, live unreadable, no approval: fail the step without
  *   deploying, because guessing either value is unsafe during a sale.
+ * - target true, reopen approved: see resolveApprovedReopen. `atGuard` is the
+ *   migrate guard's snapshot of this service from the start of the run.
  */
-export function resolveDeployBookingValue({ target, service, allowReopen }) {
+export function resolveDeployBookingValue({ target, service, allowReopen, atGuard }) {
   if (!target) {
     const liveOpen = service.readable && runtimeBookingEnabled(service.rawValue);
     return {
@@ -344,12 +409,7 @@ export function resolveDeployBookingValue({ target, service, allowReopen }) {
   }
 
   if (allowReopen) {
-    return {
-      ok: true,
-      value: true,
-      warning: null,
-      message: `${service.name}: deploying BOOKING_ENABLED=true (reopen explicitly approved).`,
-    };
+    return resolveApprovedReopen({ service, atGuard });
   }
 
   if (!service.readable) {
@@ -381,6 +441,72 @@ export function resolveDeployBookingValue({ target, service, allowReopen }) {
     value: true,
     warning: null,
     message: `${service.name}: deploying BOOKING_ENABLED=true.`,
+  };
+}
+
+/**
+ * allow_booking_reopen=true approves reopening the gate that was closed when
+ * the run started. It does not approve undoing a close an operator made while
+ * the run was in progress (the gcloud kill switch), so the live value right
+ * before deploy is compared with the migrate guard's snapshot:
+ *
+ * - live open now: write true (nothing to reopen).
+ * - live closed now and open at the start: closed during the run, keep false.
+ * - live closed now and at the start, but a different latest revision: the
+ *   service was updated during the run (for example reopened and closed again),
+ *   keep false.
+ * - live closed now and at the start, same revision: the intended reopen,
+ *   write true with a warning.
+ * - snapshot, revision or live value unreadable: write true as approved, with a
+ *   warning that a close during the run could not be ruled out.
+ */
+function resolveApprovedReopen({ service, atGuard }) {
+  const approvedMessage = `${service.name}: deploying BOOKING_ENABLED=true (reopen explicitly approved).`;
+  const unverified = (reason) => ({
+    ok: true,
+    value: true,
+    warning:
+      `${service.name}: this deploy REOPENS sitewide booking under allow_booking_reopen=true, but it ` +
+      `could not verify that the service was not closed during this run (${reason}). Check the ` +
+      'runtime flag after the run and close again with the kill switch if needed.',
+    message: approvedMessage,
+  });
+
+  if (!service.readable) return unverified('live value unreadable right before deploy');
+  if (runtimeBookingEnabled(service.rawValue)) {
+    return {
+      ok: true,
+      value: true,
+      warning: null,
+      message: `${service.name}: deploying BOOKING_ENABLED=true (already open).`,
+    };
+  }
+  if (!atGuard?.readable) return unverified('no readable migrate-guard snapshot');
+
+  const keepClosed = (why) => ({
+    ok: true,
+    value: false,
+    warning:
+      `${service.name}: live BOOKING_ENABLED is closed and ${why}. Keeping it closed (deploying ` +
+      'false) although this run has allow_booking_reopen=true. Dispatch a new reopen run if sales ' +
+      'should open.',
+    message: `${service.name}: deploying BOOKING_ENABLED=false (close made during the run preserved).`,
+  });
+  if (atGuard.liveEnabled) return keepClosed('it was open when this run started, so it was closed during this run');
+  if (!atGuard.revision || !service.revision) return unverified('revision unknown');
+  if (atGuard.revision !== service.revision) {
+    return keepClosed(
+      `the service changed during this run (revision ${atGuard.revision} -> ${service.revision})`,
+    );
+  }
+
+  return {
+    ok: true,
+    value: true,
+    warning:
+      `${service.name}: this deploy REOPENS sitewide booking (live false -> true) under ` +
+      `allow_booking_reopen=true; the service is unchanged since the run started (${service.revision}).`,
+    message: approvedMessage,
   };
 }
 
@@ -423,33 +549,60 @@ export function evaluateMigrationFreeze({ freeze, pending }) {
 /**
  * Worst-case PostgreSQL connection demand of the deployed posture.
  * Each API instance and the single worker task own one app pool (DB_POOL_MAX)
- * plus one pg-boss pool (PGBOSS_POOL_MAX). The API code always caps the pg-boss
- * pool (default 3 with background processing, 1 producer-only), so the workflow
- * default 3 is the per-process worst case unless a runtime override raises it.
+ * plus one pg-boss pool. The pg-boss cap differs per process: the runtime
+ * PGBOSS_POOL_MAX when set, otherwise 3 with background processing and 1 for a
+ * producer-only API (the managed-demo API). The worker Job always processes jobs.
  *
  * The count covers one revision's instances. While a deploy rolls out, old
  * and new revision instances overlap briefly; that headroom must come from
  * DB_CONNECTION_RESERVE (or the deploy must avoid peak traffic).
  */
+export function estimateConnectionDemand({
+  apiMaxInstances,
+  dbPoolMax,
+  apiPgBossPoolMax,
+  workerPgBossPoolMax,
+  workerTasks = 1,
+  reserve,
+}) {
+  const api = apiMaxInstances * (dbPoolMax + apiPgBossPoolMax);
+  const worker = workerTasks * (dbPoolMax + workerPgBossPoolMax);
+  return {
+    api,
+    worker,
+    reserve,
+    required: api + worker + reserve,
+    formula:
+      `API ${apiMaxInstances} x (${dbPoolMax} app + ${apiPgBossPoolMax} pg-boss) = ${api}, ` +
+      `worker ${workerTasks} x (${dbPoolMax} app + ${workerPgBossPoolMax} pg-boss) = ${worker}, ` +
+      `reserve ${reserve}`,
+  };
+}
+
 export function evaluateConnectionBudget({
   maxConnections,
   reservedConnections,
   apiMaxInstances,
   dbPoolMax,
-  pgBossPoolMax,
+  apiPgBossPoolMax,
+  workerPgBossPoolMax,
   workerTasks = 1,
   reserve,
   enforce,
 }) {
-  const perProcess = dbPoolMax + pgBossPoolMax;
-  const api = apiMaxInstances * perProcess;
-  const worker = workerTasks * perProcess;
-  const required = api + worker + reserve;
+  const demand = estimateConnectionDemand({
+    apiMaxInstances,
+    dbPoolMax,
+    apiPgBossPoolMax,
+    workerPgBossPoolMax,
+    workerTasks,
+    reserve,
+  });
+  const { required } = demand;
   const available = maxConnections - reservedConnections;
   const overBudget = required > available;
   const message =
-    `DB connection budget: API ${apiMaxInstances} x (${dbPoolMax} app + ${pgBossPoolMax} pg-boss) = ${api}, ` +
-    `worker ${worker}, reserve ${reserve}, required ${required} / available ${available} ` +
+    `DB connection budget: ${demand.formula}, required ${required} / available ${available} ` +
     `(max_connections ${maxConnections} - reserved ${reservedConnections}). ` +
     'Assumes no old/new revision overlap; DB_CONNECTION_RESERVE must cover rollout overlap.';
 
@@ -505,7 +658,8 @@ export function evaluateDbPreflight({ config, settings, journal, lastAppliedMill
     reservedConnections: Number(settings.superuser_reserved) + Number(settings.reserved),
     apiMaxInstances: config.apiMaxInstances,
     dbPoolMax: config.dbPoolMax,
-    pgBossPoolMax: config.pgBossPoolMax,
+    apiPgBossPoolMax: config.apiPgBossPoolMax,
+    workerPgBossPoolMax: config.workerPgBossPoolMax,
     reserve: config.dbConnectionReserve,
     enforce: config.dbConnectionBudgetEnforce,
   });
@@ -552,23 +706,44 @@ async function exportEnv(name, value) {
   await appendFile(envPath, `${name}=${value}\n`);
 }
 
-function parseArgs(args) {
+function parseArgs(args, { allowSnapshot = false, allowGuardSnapshot = false } = {}) {
   const services = [];
+  const snapshots = [];
+  const guard = { live: undefined, revision: undefined };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
+    const value = args[index + 1];
     if (arg === '--service') {
-      const spec = args[index + 1];
       index += 1;
-      const separator = spec?.indexOf('=') ?? -1;
-      if (!spec || separator <= 0) {
+      const separator = value?.indexOf('=') ?? -1;
+      if (!value || separator <= 0) {
         throw new Error('--service expects NAME=DESCRIBE_JSON_PATH');
       }
-      services.push({ name: spec.slice(0, separator), path: spec.slice(separator + 1) });
+      services.push({ name: value.slice(0, separator), path: value.slice(separator + 1) });
+      continue;
+    }
+    if (arg === '--snapshot' && allowSnapshot) {
+      index += 1;
+      const separator = value?.indexOf('=') ?? -1;
+      const key = separator > 0 ? value.slice(0, separator) : '';
+      if (!SNAPSHOT_KEY_PATTERN.test(key) || !value.slice(separator + 1)) {
+        throw new Error('--snapshot expects KEY=SERVICE_NAME with a lowercase output key');
+      }
+      snapshots.push({ key, name: value.slice(separator + 1) });
+      continue;
+    }
+    if ((arg === '--live-at-guard' || arg === '--revision-at-guard') && allowGuardSnapshot) {
+      // Empty strings are valid: a missing job output expands to "".
+      if (value === undefined || value.startsWith('--')) {
+        throw new Error(`${arg} expects a value (may be empty)`);
+      }
+      index += 1;
+      guard[arg === '--live-at-guard' ? 'live' : 'revision'] = value;
       continue;
     }
     throw new Error(`Unknown argument: ${arg}`);
   }
-  return { services };
+  return { services, snapshots, guard };
 }
 
 async function readServiceDescription(path) {
@@ -590,6 +765,7 @@ async function commandValidateConfig() {
     `- Migration lock_timeout ${config.migrationLockTimeout.text}, statement_timeout ${config.migrationStatementTimeout.text}, freeze ${config.migrationFreeze}`,
     `- API instances ${config.apiMinInstances}-${config.apiMaxInstances}, concurrency ${config.apiConcurrency}`,
     `- Prewarm scaling scope ${config.prewarmScalingScope}`,
+    `- pg-boss pool cap counted by the connection budget: API ${config.apiPgBossPoolMax}, worker ${config.workerPgBossPoolMax}`,
     `- Optional runtime settings: API ${describeRuntimeEnv(config.runtimeEnv.api)}; worker ${describeRuntimeEnv(config.runtimeEnv.worker)}`,
   ];
   console.log(lines.slice(1).join('\n'));
@@ -626,15 +802,21 @@ async function readServiceGateInput(service) {
     name: service.name,
     readable: Boolean(description) && !envValue?.fromSecret,
     rawValue: envValue?.value,
+    revision: description ? readServiceRevision(description) : null,
   };
 }
 
 async function commandBookingGate(args) {
   const config = validateDeployConfig(process.env);
   const allowReopen = readAllowReopen();
-  const { services } = parseArgs(args);
+  const { services, snapshots } = parseArgs(args, { allowSnapshot: true });
   if (services.length === 0) {
     throw new Error('booking-gate requires at least one --service');
+  }
+  for (const snapshot of snapshots) {
+    if (!services.some((service) => service.name === snapshot.name)) {
+      throw new Error(`--snapshot names a service without --service: ${snapshot.name}`);
+    }
   }
 
   const inputs = [];
@@ -660,22 +842,35 @@ async function commandBookingGate(args) {
   if (!result.ok) {
     throw new Error(result.message);
   }
+  // Start-of-run state for the deploy jobs (job outputs), so an approved reopen
+  // can tell its own target from a close made later in the run.
+  for (const snapshot of snapshots) {
+    const input = inputs.find((service) => service.name === snapshot.name);
+    const { live, revision } = formatGuardSnapshot(input);
+    await writeOutput(`${snapshot.key}_live`, live);
+    await writeOutput(`${snapshot.key}_revision`, revision);
+  }
   console.log(result.message);
 }
 
 async function commandBookingGateValue(args) {
   const config = validateDeployConfig(process.env);
   const allowReopen = readAllowReopen();
-  const { services } = parseArgs(args);
+  const { services, guard } = parseArgs(args, { allowGuardSnapshot: true });
   if (services.length !== 1) {
     throw new Error('booking-gate-value requires exactly one --service');
   }
 
   const service = await readServiceGateInput(services[0]);
+  const atGuard =
+    guard.live === undefined && guard.revision === undefined
+      ? undefined
+      : parseGuardSnapshot(guard.live, guard.revision);
   const result = resolveDeployBookingValue({
     target: config.bookingEnabled,
     service,
     allowReopen,
+    atGuard,
   });
   if (result.warning) {
     console.log(`::warning::${result.warning}`);

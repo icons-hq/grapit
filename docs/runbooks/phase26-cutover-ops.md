@@ -498,7 +498,10 @@ performance detail + seat map, queue enter with status polling while
 Abandoned checkouts call `cancel-pending` and release their locks. k6 empties
 each VU's cookie jar after every iteration, so the script seeds the buyer's
 refresh cookie at the start of every iteration and each journey re-enters the
-queue, which reuses that buyer's queue session.
+queue. While the buyer's admission is still active the API reuses the same
+queue session; after the active window has passed, enter returns a new
+`WAITING` position and the journey polls until `ADMITTED`, like a buyer who
+lost their turn.
 
 Inputs (all required unless a default is shown; files are mounted privately and
 never committed):
@@ -516,6 +519,7 @@ never committed):
 | `PHASE26_MAX_PURCHASES_PER_VU` | Default `1`. Purchases per buyer in `pg-stub` mode; keep it at or below the test event's per-user ticket limit. A confirm that times out or returns 5xx counts as a used seat, because the server may have sold it |
 | `PHASE26_READ_WEIGHT` / `PHASE26_QUEUE_WEIGHT` / `PHASE26_MUTATION_WEIGHT` | Journey depth weights (baseline 75/20/5, stress 80/18/2). The scripts refuse a mix that one buyer could send faster than the API's per-buyer throttles allow (below) |
 | `PHASE26_THINK_TIME_SECONDS` / `PHASE26_QUEUE_POLL_SECONDS` | Default `3` / `2`. The think time ends every iteration, so a buyer runs at most 60 / think-time journeys per minute; a `WAITING` buyer polls the queue status at the poll interval |
+| `PHASE26_LOCALE` / `PHASE26_CONSENT_VERSIONS` | Default `ko` / unset. Booking consent versions follow `@grabit/shared` (`BOOKING_CONSENT_ITEM_KEYS`, `CONSENT_DOCUMENT_VERSIONS`): prepare sends only `terms` and `privacy`, each at its current document version, in `ko` for the `ko` locale and `en` otherwise; the unit test fails when the script drifts from shared. Set `PHASE26_CONSENT_VERSIONS='terms=<version>,privacy=<version>'` only for a target that still serves another active document. The old single `PHASE26_CONSENT_VERSION` is refused |
 
 Run with the scripts directory mounted, because the entries import `./lib`:
 
@@ -534,7 +538,10 @@ tagged requests, when queue traffic is below 5% of requests, when
 lock/prepare/confirm each have fewer than 500 requests, or when any flow breaks
 p95 < 2s / error rate < 1%. Purchase traffic is judged by volume, not share:
 only admitted buyers can lock, and the API admits at most 1,000 at a time
-(`QUEUE_MAX_ACTIVE_ADMISSIONS`, held for the 600 s active window). With the
+(`QUEUE_MAX_ACTIVE_ADMISSIONS`, held for the 600 s active window). An admitted
+buyer reuses its session only inside that window; when its window has passed,
+its next journey gets a new `WAITING` position behind the buyers already
+waiting and polls like them. With the
 default weights roughly 1,000 admitted buyers each reach lock/prepare/confirm
 at least once, while about 9,000 (baseline) or 19,000 (stress) buyers wait and
 poll the queue every 2 seconds, so lock stays a fraction of a percent of all
@@ -571,8 +578,8 @@ journeys per minute) and refuse to start when it exceeds one of these limits:
 With the default 3 s think time, booking share × 20 must stay at or below 8 for
 prepare and 6 for confirm, so a booking share above about 30% (`pg-stub`) or
 40% needs a longer think time. A think time below 2 s or a poll interval of 1 s
-always exceeds the `default` limit. The limits mirror `app.module.ts` and
-`traffic-defense.service.ts`; the unit test fails when they drift. The public
+always exceeds the `default` limit. The limits mirror `DEFAULT_THROTTLER` and
+`TRAFFIC_POLICIES` in `traffic-defense.service.ts`; the unit test fails when they drift. The public
 browse row is stricter than the API: catalog reads are not throttled, and the
 seat map read has its own budget of 60 per 10 s per account
 (`SEAT_STATUS_THROTTLE`). No throttle selects its bucket by cookie.
@@ -580,11 +587,15 @@ seat map read has its own budget of 60 per 10 s per account
 ### Synthetic buyer pool
 
 Buyers cannot be logged in through the API for this run: `POST /auth/login`
-allows 60 requests per minute per client, so 10,000 buyers take about 167
-minutes and 20,000 about 333 minutes, while API access tokens live 15 minutes
-(`jwtExpiresIn` is fixed in `apps/api/src/config/auth.config.ts`). k6 does not
-call `/auth/refresh` either: it is throttled per client like login, and it
-rotates the refresh token, so the pool would become single-use. Instead,
+allows 100 requests per minute per client IP (`ROUTE_THROTTLES.authLogin` in
+`apps/api/src/modules/traffic/route-throttles.ts`), so one load generator signs
+in 10,000 buyers in about 100 minutes and 20,000 in about 200 minutes, while API
+access tokens live 15 minutes (`jwtExpiresIn` is fixed in
+`apps/api/src/config/auth.config.ts`). The `login-account` policy also caps each
+email + IP at 30 per 15 minutes. k6 does not call `/auth/refresh` either: with a
+refresh cookie it allows 600 requests per minute per client IP
+(`ROUTE_THROTTLES.authRefresh`), but it rotates the refresh token, so the pool
+would become single-use. The unit test ties these figures to the code. Instead,
 `scripts/phase26/provision-load-buyers.mjs` writes the buyers and their refresh
 families directly into the database of the target the k6 run hits and signs
 the access tokens with that target's `JWT_SECRET`:

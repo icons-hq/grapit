@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Read-only release evidence. By default the script starts its own Cloud SQL
-// Auth Proxy for the exact instance below on a free loopback port, so the port
+// Auth Proxy for the exact instance (--instance, REVAMP_PROD_CLOUD_SQL_INSTANCE,
+// or the managed-demo default below) on a free loopback port, so the port
 // cannot silently belong to another instance's proxy. It also records the
 // connected server's identity and refuses a baseline taken from a different
 // server. The database secret stays in process memory and is never printed.
@@ -13,9 +14,20 @@ import { createServer } from 'node:net';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const INSTANCE = 'grapit-491806:asia-northeast3:grabit-db-managed-demo';
-export const TARGET = 'grabit-db-managed-demo/grapit';
 const DATABASE = 'grapit';
+/** Default target: the current managed-demo instance. Override with --instance. */
+export const INSTANCE = 'grapit-491806:asia-northeast3:grabit-db-managed-demo';
+export const INSTANCE_ENV = 'REVAMP_PROD_CLOUD_SQL_INSTANCE';
+// Cloud SQL connection name `project:region:instance`, lowercase: a project ID
+// (6-30 characters), a region such as asia-northeast3, and an instance name.
+const INSTANCE_PATTERN = /^[a-z][a-z0-9-]{4,28}[a-z0-9]:[a-z]+-[a-z]+[0-9]+:[a-z][a-z0-9-]{0,97}$/;
+
+/** Evidence target label: `<instance name>/<database>`. */
+export function targetFor(instance) {
+  return `${instance.split(':')[2]}/${DATABASE}`;
+}
+
+export const TARGET = targetFor(INSTANCE);
 const PROXY_READY_PATTERN = /ready for new connections/i;
 const PROXY_START_TIMEOUT_MS = 30_000;
 const SERVER_ID_PATTERN = /^[0-9a-f]{64}$/;
@@ -31,6 +43,9 @@ export const IDENTITY_SOURCES = {
 const USAGE = [
   'Usage: REVAMP_PROD_DATABASE_URL=<secret in process memory> node scripts/revamp/production-preflight.mjs --read-only',
   '         --output=/private/before.json [--baseline=/private/before.json] [--expected-migrations=<count>]',
+  '         [--instance=<project:region:instance>]',
+  `  --instance (or ${INSTANCE_ENV}): the Cloud SQL instance to prove, default ${INSTANCE}.`,
+  '         The secret must select the same instance; the evidence target is `<instance name>/grapit`.',
   '  Default: starts `cloud-sql-proxy <instance>` (CLOUD_SQL_PROXY_BIN or PATH) on a free loopback port and stops it afterwards.',
   '  --proxy-port=<port> --expected-server-id=<sha256>: use an already running proxy only when the connected',
   '         server identity equals the `server.identity` recorded by a script-managed run.',
@@ -39,7 +54,7 @@ const USAGE = [
 // Fixed, value-free messages. Parser and driver errors can embed the secret
 // (WHATWG URL errors carry `input`), so they are never printed.
 const FAILURES = {
-  invalid_arguments: 'Invalid arguments. Use an absolute --output path and, for an external proxy, --proxy-port with --expected-server-id.',
+  invalid_arguments: 'Invalid arguments. Use an absolute --output path, a lowercase project:region:instance for --instance, and, for an external proxy, --proxy-port with --expected-server-id.',
   invalid_database_url: 'REVAMP_PROD_DATABASE_URL is missing or could not be parsed. Its value is not printed.',
   unexpected_database: 'REVAMP_PROD_DATABASE_URL does not select the expected database.',
   unexpected_instance: 'REVAMP_PROD_DATABASE_URL does not select the expected Cloud SQL instance.',
@@ -66,7 +81,7 @@ export function failureMessage(error) {
   return error instanceof PreflightError ? `${error.message} (code=${error.code})` : `${FAILURES.read_failed} (code=read_failed)`;
 }
 
-export function parseArgs(argv) {
+export function parseArgs(argv, env = process.env) {
   const value = (name) => argv.find((arg) => arg.startsWith(`--${name}=`))?.slice(name.length + 3);
   const readOnly = argv.includes('--read-only');
   const output = value('output');
@@ -74,7 +89,10 @@ export function parseArgs(argv) {
   const rawPort = value('proxy-port');
   const expectedServerId = value('expected-server-id');
   const rawMigrations = value('expected-migrations');
+  const rawInstance = value('instance') ?? (env?.[INSTANCE_ENV]?.trim() || undefined);
   if (!readOnly) return { readOnly };
+  const instance = rawInstance ?? INSTANCE;
+  if (!INSTANCE_PATTERN.test(instance)) throw new PreflightError('invalid_arguments');
   if (!output?.startsWith('/')) throw new PreflightError('invalid_arguments');
   if (baselinePath !== undefined && !baselinePath.startsWith('/')) throw new PreflightError('invalid_arguments');
   let proxyPort = null;
@@ -92,13 +110,13 @@ export function parseArgs(argv) {
     expectedMigrations = Number(rawMigrations);
     if (!Number.isInteger(expectedMigrations) || expectedMigrations < 1) throw new PreflightError('invalid_arguments');
   }
-  return { readOnly, output, baselinePath, proxyPort, expectedServerId: expectedServerId ?? null, expectedMigrations };
+  return { readOnly, output, baselinePath, proxyPort, expectedServerId: expectedServerId ?? null, expectedMigrations, instance };
 }
 
 // Cloud Run secrets use the unix-socket form `user:pw@/grapit?host=/cloudsql/<instance>`.
 // WHATWG URL rejects the empty host and its TypeError carries the whole input,
 // so normalize first and convert every parser failure into a fixed error.
-export function parseDatabaseUrl(raw) {
+export function parseDatabaseUrl(raw, instance = INSTANCE) {
   if (typeof raw !== 'string' || raw.trim() === '') throw new PreflightError('invalid_database_url');
   const normalized = raw.trim().replace(/^(postgres(?:ql)?:\/\/[^/?#]*)@\//, '$1@localhost/');
   let url;
@@ -118,7 +136,7 @@ export function parseDatabaseUrl(raw) {
   }
   if (!user) throw new PreflightError('invalid_database_url');
   if (url.pathname !== `/${DATABASE}`) throw new PreflightError('unexpected_database');
-  if (url.searchParams.get('host') !== `/cloudsql/${INSTANCE}`) throw new PreflightError('unexpected_instance');
+  if (url.searchParams.get('host') !== `/cloudsql/${instance}`) throw new PreflightError('unexpected_instance');
   return { user, password, database: DATABASE };
 }
 
@@ -173,12 +191,12 @@ async function freePort() {
   return port;
 }
 
-async function startManagedProxy() {
+async function startManagedProxy(instance) {
   const bin = process.env.CLOUD_SQL_PROXY_BIN?.trim() || 'cloud-sql-proxy';
   const port = await freePort();
   // The proxy authenticates with ADC; it never needs the database secret.
   const { REVAMP_PROD_DATABASE_URL: _secret, ...env } = process.env;
-  const child = spawn(bin, [INSTANCE, '--address=127.0.0.1', `--port=${port}`, '--run-connection-test'], {
+  const child = spawn(bin, [instance, '--address=127.0.0.1', `--port=${port}`, '--run-connection-test'], {
     stdio: ['ignore', 'pipe', 'pipe'], env,
   });
   try {
@@ -288,14 +306,15 @@ export async function main(argv = process.argv.slice(2)) {
   try {
     const args = parseArgs(argv);
     if (!args.readOnly) { console.log(USAGE); return 0; }
-    const credentials = parseDatabaseUrl(process.env.REVAMP_PROD_DATABASE_URL);
-    const baseline = args.baselinePath ? await readBaseline(args.baselinePath) : null;
+    const target = targetFor(args.instance);
+    const credentials = parseDatabaseUrl(process.env.REVAMP_PROD_DATABASE_URL, args.instance);
+    const baseline = args.baselinePath ? await readBaseline(args.baselinePath, target) : null;
     await mkdir(dirname(args.output), { recursive: true });
     try { await (await open(args.output, 'wx', 0o600)).close(); } catch { throw new PreflightError('output_exists'); }
 
     let port = args.proxyPort;
     if (port === null) {
-      proxy = await startManagedProxy();
+      proxy = await startManagedProxy(args.instance);
       port = proxy.port;
     }
     const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -315,14 +334,14 @@ export async function main(argv = process.argv.slice(2)) {
     const preservationPassed = comparison ? Object.values(comparison).every((row) => row.missing === 0 && row.immutableChanged === 0) : null;
     const migrationExpectation = args.expectedMigrations === null ? null
       : { expected: args.expectedMigrations, actual: snapshot.migrations.count, met: snapshot.migrations.count === args.expectedMigrations };
-    const connection = { proxy: args.proxyPort === null ? 'script-managed' : 'external', instance: INSTANCE };
+    const connection = { proxy: args.proxyPort === null ? 'script-managed' : 'external', instance: args.instance };
     const { records, inFlight, providerProcessing, pendingTicketCancellations, pendingRefunds, migrations, expandedCheckoutColumns } = snapshot;
-    const result = { checkedAt: new Date().toISOString(), target: TARGET, readOnly: true, connection, server, records, inFlight,
+    const result = { checkedAt: new Date().toISOString(), target, readOnly: true, connection, server, records, inFlight,
       providerProcessing, pendingTicketCancellations, pendingRefunds, migrations, migrationExpectation, expandedCheckoutColumns,
       comparison, preservationPassed };
     await writeFile(args.output, JSON.stringify(result, null, 2));
     // No row contents, customer identifiers, credentials or financial totals.
-    console.log(JSON.stringify({ target: TARGET, readOnly: true, connection, server, inFlight, providerProcessing,
+    console.log(JSON.stringify({ target, readOnly: true, connection, server, inFlight, providerProcessing,
       pendingTicketCancellations, pendingRefunds, migrations, migrationExpectation, expandedCheckoutColumns, comparison,
       preservationPassed, result: args.output }));
     if (preservationPassed === false) return 2;
@@ -340,10 +359,10 @@ export async function main(argv = process.argv.slice(2)) {
   }
 }
 
-async function readBaseline(path) {
+async function readBaseline(path, target) {
   let baseline;
   try { baseline = JSON.parse(await readFile(path, 'utf8')); } catch { throw new PreflightError('invalid_baseline'); }
-  if (baseline?.target !== TARGET || baseline?.readOnly !== true || typeof baseline?.records !== 'object') {
+  if (baseline?.target !== target || baseline?.readOnly !== true || typeof baseline?.records !== 'object') {
     throw new PreflightError('invalid_baseline');
   }
   for (const table of TABLES) {

@@ -4,6 +4,7 @@ import {
   IDENTITY_SOURCES,
   INSTANCE,
   PreflightError,
+  TARGET,
   assertServerIdentity,
   failureMessage,
   parseArgs,
@@ -11,6 +12,7 @@ import {
   postmasterServerIdentity,
   readServerIdentity,
   serverIdentity,
+  targetFor,
 } from './production-preflight.mjs';
 
 const SECRET = 'Pw-unit-3b9e';
@@ -48,10 +50,48 @@ test('an external proxy port requires the server identity recorded by a script-m
   assert.match(id, /^[0-9a-f]{64}$/);
   assert.throws(() => parseArgs(['--read-only', '--output=/private/a.json', '--proxy-port=15439']), { code: 'invalid_arguments' });
   assert.throws(() => parseArgs(['--read-only', '--output=relative.json']), { code: 'invalid_arguments' });
-  assert.deepEqual(parseArgs(['--read-only', '--output=/private/a.json', '--proxy-port=15439', `--expected-server-id=${id}`]), {
+  assert.deepEqual(parseArgs(['--read-only', '--output=/private/a.json', '--proxy-port=15439', `--expected-server-id=${id}`], {}), {
     readOnly: true, output: '/private/a.json', baselinePath: undefined, proxyPort: 15439, expectedServerId: id, expectedMigrations: null,
+    instance: INSTANCE,
   });
-  assert.equal(parseArgs(['--read-only', '--output=/private/a.json']).proxyPort, null);
+  assert.equal(parseArgs(['--read-only', '--output=/private/a.json'], {}).proxyPort, null);
+});
+
+const SALE_INSTANCE = 'grapit-491806:asia-northeast3:grabit-db-sale';
+
+test('the Cloud SQL instance is configurable, defaults to the managed-demo instance, and names the target', () => {
+  const base = ['--read-only', '--output=/private/a.json'];
+  assert.equal(parseArgs(base, {}).instance, INSTANCE);
+  assert.equal(targetFor(INSTANCE), 'grabit-db-managed-demo/grapit');
+  assert.equal(TARGET, targetFor(INSTANCE));
+  assert.equal(parseArgs([...base, `--instance=${SALE_INSTANCE}`], {}).instance, SALE_INSTANCE);
+  assert.equal(parseArgs(base, { REVAMP_PROD_CLOUD_SQL_INSTANCE: ` ${SALE_INSTANCE} ` }).instance, SALE_INSTANCE);
+  // The flag wins over the environment; a blank environment value keeps the default.
+  assert.equal(parseArgs([...base, `--instance=${INSTANCE}`], { REVAMP_PROD_CLOUD_SQL_INSTANCE: SALE_INSTANCE }).instance, INSTANCE);
+  assert.equal(parseArgs(base, { REVAMP_PROD_CLOUD_SQL_INSTANCE: '  ' }).instance, INSTANCE);
+  assert.equal(targetFor(SALE_INSTANCE), 'grabit-db-sale/grapit');
+
+  for (const bad of [
+    'grabit-db-sale',
+    'grapit-491806:grabit-db-sale',
+    'Grapit-491806:asia-northeast3:grabit-db-sale',
+    'grapit-491806:asia-northeast3:grabit-db-sale --address=0.0.0.0',
+    'grapit-491806:asia-northeast3:',
+    'grapit-491806:asia-northeast3:sale:extra',
+    '-grapit:asia-northeast3:grabit-db-sale',
+  ]) {
+    assert.throws(() => parseArgs([...base, `--instance=${bad}`], {}), { code: 'invalid_arguments' }, bad);
+    assert.throws(() => parseArgs(base, { REVAMP_PROD_CLOUD_SQL_INSTANCE: bad }), { code: 'invalid_arguments' }, bad);
+  }
+});
+
+test('the secret must select the configured instance', () => {
+  const sale = `postgresql://grapit_app:${SECRET}@/grapit?host=/cloudsql/${SALE_INSTANCE}`;
+  assert.deepEqual(parseDatabaseUrl(sale, SALE_INSTANCE), { user: 'grapit_app', password: SECRET, database: 'grapit' });
+  // A secret for the managed-demo instance never passes for the sale instance, and vice versa.
+  assert.throws(() => parseDatabaseUrl(sale), { code: 'unexpected_instance' });
+  assert.throws(() => parseDatabaseUrl(`postgresql://grapit_app:${SECRET}@/grapit?host=/cloudsql/${INSTANCE}`, SALE_INSTANCE),
+    { code: 'unexpected_instance' });
 });
 
 test('refuses a connected server that differs from the expected or baseline server', () => {

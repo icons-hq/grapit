@@ -71,11 +71,11 @@ describe('Revamp read-only release evidence', () => {
     return original.toString();
   }
 
-  function managedProxyEnv(record: string) {
+  function managedProxyEnv(record: string, expectedInstance = INSTANCE) {
     return {
       CLOUD_SQL_PROXY_BIN: fakeProxy,
       FAKE_PROXY_RECORD: record,
-      FAKE_PROXY_EXPECTED_INSTANCE: INSTANCE,
+      FAKE_PROXY_EXPECTED_INSTANCE: expectedInstance,
       FAKE_PROXY_UPSTREAM_HOST: container.getHost(),
       FAKE_PROXY_UPSTREAM_PORT: String(container.getMappedPort(5432)),
     };
@@ -168,6 +168,58 @@ describe('Revamp read-only release evidence', () => {
       await pool.query(`ALTER ROLE postgres PASSWORD 'test'`);
     }
   }, 30000);
+
+  it('proves a configured Cloud SQL instance through the script-managed proxy (audit #166, D7)', async () => {
+    // A sale-capacity restore may replace the instance; --instance or the environment
+    // names it, and the proxy, secret check, evidence target and baseline follow it.
+    const saleInstance = 'grapit-491806:asia-northeast3:grabit-db-sale';
+    const password = 'Pw-preflight-instance-5b2e';
+    await pool.query(`ALTER ROLE postgres PASSWORD '${password}'`);
+    try {
+      const socketUrl = `postgresql://postgres:${password}@/grapit?host=/cloudsql/${saleInstance}`;
+      const record = join(work, 'sale-proxy.json');
+      const output = join(work, 'sale.json');
+      const result = run(socketUrl, [`--output=${output}`, `--instance=${saleInstance}`], managedProxyEnv(record, saleInstance));
+      expect(result.stderr).toBe('');
+      expect(result.exitCode).toBe(0);
+      expect(`${result.stdout}${result.stderr}`).not.toContain(password);
+      const proxy = JSON.parse(await readFile(record, 'utf8'));
+      expect(proxy.args[0]).toBe(saleInstance);
+      expect(proxy.receivedSecret).toBe(false);
+      const evidence = JSON.parse(await readFile(output, 'utf8'));
+      expect(evidence.target).toBe('grabit-db-sale/grapit');
+      expect(evidence.connection).toEqual({ proxy: 'script-managed', instance: saleInstance });
+
+      // The environment variable selects the same instance, and its baseline is accepted.
+      const envRecord = join(work, 'sale-env-proxy.json');
+      const after = join(work, 'sale-after.json');
+      const fromEnv = run(socketUrl, [`--output=${after}`, `--baseline=${output}`],
+        { ...managedProxyEnv(envRecord, saleInstance), REVAMP_PROD_CLOUD_SQL_INSTANCE: saleInstance });
+      expect(fromEnv.stderr).toBe('');
+      expect(fromEnv.exitCode).toBe(0);
+      expect(JSON.parse(await readFile(envRecord, 'utf8')).args[0]).toBe(saleInstance);
+      expect(JSON.parse(await readFile(after, 'utf8')).preservationPassed).toBe(true);
+
+      // Without the option the managed-demo default refuses the sale secret before any proxy starts,
+      // and a baseline of the other instance is not comparable.
+      const unconfigured = run(socketUrl, [`--output=${join(work, 'sale-default.json')}`],
+        managedProxyEnv(join(work, 'sale-unused.json'), saleInstance));
+      expect(unconfigured.exitCode).toBe(1);
+      expect(unconfigured.stderr).toContain('code=unexpected_instance');
+      const demoUrl = `postgresql://postgres:${password}@/grapit?host=/cloudsql/${INSTANCE}`;
+      const crossed = run(demoUrl, [`--output=${join(work, 'sale-crossed.json')}`, `--baseline=${output}`],
+        managedProxyEnv(join(work, 'sale-crossed-proxy.json')));
+      expect(crossed.exitCode).toBe(1);
+      expect(crossed.stderr).toContain('code=invalid_baseline');
+
+      const invalid = run(socketUrl, [`--output=${join(work, 'sale-invalid.json')}`, '--instance=grabit-db-sale'],
+        managedProxyEnv(join(work, 'sale-invalid-proxy.json'), saleInstance));
+      expect(invalid.exitCode).toBe(1);
+      expect(invalid.stderr).toContain('code=invalid_arguments');
+    } finally {
+      await pool.query(`ALTER ROLE postgres PASSWORD 'test'`);
+    }
+  }, 60000);
 
   it('fails with a fixed message and never echoes an unparseable secret', async () => {
     const password = 'Pw-unparseable-9e4f';

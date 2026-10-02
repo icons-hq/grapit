@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { realpathSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   assertPhase26Marker,
   assertPhase26OrderPrefix,
@@ -42,6 +45,22 @@ const CLEANUP_CONFIRMATION_ENV = {
 };
 
 const FINAL_STATUSES = new Set(['PASS', 'FAIL', 'BLOCKED']);
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+
+let sharedContracts = null;
+
+// Consent rows, document versions and the service fee come from the same
+// shared contract the checkout page uses, so the smoke never drifts from it.
+export function loadSharedContracts() {
+  if (!sharedContracts) {
+    try {
+      sharedContracts = createRequire(resolve(REPO_ROOT, 'apps/api/package.json'))('@grabit/shared');
+    } catch {
+      throw new Error('Could not load @grabit/shared; run `pnpm --filter @grabit/shared build` first.');
+    }
+  }
+  return sharedContracts;
+}
 
 function usage() {
   return `Usage:
@@ -591,14 +610,35 @@ function toInt(value, fallback) {
   return Number.isInteger(parsed) ? parsed : fallback;
 }
 
-function makeConsentItems() {
-  return ['terms', 'privacy', 'pipa_required'].map((key) => ({
+// The rows the booking checkout records (terms, privacy), each at its current
+// document version, in Korean. pipa_required belongs to signup, not booking.
+export function makeConsentItems(shared = loadSharedContracts()) {
+  return shared.BOOKING_CONSENT_ITEM_KEYS.map((key) => ({
     key,
-    version: 'phase26-rehearsal',
-    language: 'ko',
+    version: shared.CONSENT_DOCUMENT_VERSIONS[key],
+    language: shared.resolveConsentDocumentLanguage('ko'),
     accepted: true,
     sourceFlow: 'booking',
   }));
+}
+
+// prepare and Toss confirm both carry the order total: seat price plus the
+// per-ticket service fee, the same amount the server computes.
+export function checkoutAmount(seat, shared = loadSharedContracts()) {
+  return seat.price + shared.TICKET_SERVICE_FEE_KRW;
+}
+
+export function buildPrepareRequest({ orderId, config, seat, now = new Date() }, shared = loadSharedContracts()) {
+  return {
+    orderId,
+    showtimeId: config.showtimeId,
+    seats: [seat],
+    amount: checkoutAmount(seat, shared),
+    consentItems: makeConsentItems(shared),
+    paymentDeadlineAt: new Date(now.getTime() + 7 * 60 * 1000).toISOString(),
+    bookingPolicy: bookingPolicy(),
+    paymentMethod: paymentMethod(),
+  };
 }
 
 function bookingPolicy() {
@@ -704,6 +744,8 @@ function cleanupExecutionVariables(config) {
 
 async function runRehearsal(args) {
   const config = loadConfig();
+  // Fail before any request when the shared contract is not built.
+  loadSharedContracts();
   const authHeaders = await loadAuthHeaders(config.authHeaderFile);
   const context = new RehearsalContext(config, authHeaders);
   const evidence = baseEvidence(commandShape(args));
@@ -779,16 +821,7 @@ async function runRehearsal(args) {
       'reservation-prepare',
       'POST',
       '/reservations/prepare',
-      {
-        orderId,
-        showtimeId: config.showtimeId,
-        seats: [seat],
-        amount: seat.price,
-        consentItems: makeConsentItems(),
-        paymentDeadlineAt: new Date(Date.now() + 7 * 60 * 1000).toISOString(),
-        bookingPolicy: bookingPolicy(),
-        paymentMethod: paymentMethod(),
-      },
+      buildPrepareRequest({ orderId, config, seat }),
     );
     addHttpCheck(evidence, prepareResult);
     const preparedReservationId = extractReservationId(prepareResult.json);
@@ -822,7 +855,7 @@ async function runRehearsal(args) {
         {
           paymentKey: config.paymentKey,
           orderId,
-          amount: seat.price,
+          amount: checkoutAmount(seat),
         },
       );
       addHttpCheck(evidence, confirmResult);
@@ -943,7 +976,17 @@ async function main() {
   console.log(`${evidence.status} phase26 rehearsal smoke. evidence=${evidencePath()}`);
 }
 
-main().catch((error) => {
-  console.error(redactText(error?.message || String(error)));
-  process.exitCode = 1;
-});
+function isEntrypoint() {
+  try {
+    return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isEntrypoint()) {
+  main().catch((error) => {
+    console.error(redactText(error?.message || String(error)));
+    process.exitCode = 1;
+  });
+}

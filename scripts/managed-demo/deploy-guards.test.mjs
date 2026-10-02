@@ -13,9 +13,11 @@ import {
   evaluateMigrationFreeze,
   findPendingMigrations,
   formatCloudRunEnvVarLines,
+  parseGuardSnapshot,
   parseStrictBoolean,
   postgresSettingToMs,
   readServiceEnvValue,
+  readServiceRevision,
   resolveDeployBookingValue,
   resolveOptionalRuntimeEnv,
   runtimeBookingEnabled,
@@ -35,17 +37,18 @@ const workflowDefaults = {
   API_MAX_INSTANCES: '40',
   API_CONCURRENCY: '250',
   DB_POOL_MAX: '4',
-  PGBOSS_POOL_MAX: '3',
+  BACKGROUND_PROCESSING_ENABLED: 'true',
   DB_CONNECTION_RESERVE: '5',
   DB_CONNECTION_BUDGET_ENFORCE: 'false',
   PREWARM_SCALING_SCOPE: 'service',
 };
 
-function describeService(env) {
+function describeService(env, revision = 'grabit-api-00001-aaa') {
   return {
     apiVersion: 'serving.knative.dev/v1',
     kind: 'Service',
     spec: { template: { spec: { containers: [{ image: 'img', env }] } } },
+    ...(revision ? { status: { latestCreatedRevisionName: revision } } : {}),
   };
 }
 
@@ -115,6 +118,9 @@ test('a push deploy cannot silently reopen a gate an operator closed with gcloud
   const approved = evaluateBookingGate({ target: true, services: closedByOperator, allowReopen: true });
   assert.equal(approved.ok, true);
   assert.match(approved.message, /explicitly approved/);
+  // An approved reopen is never silent either (audit D6).
+  assert.equal(approved.warnings.length, 1);
+  assert.match(approved.warnings[0], /^grabit-api: this deploy REOPENS sitewide booking \(live false -> true\)/);
 });
 
 test('closing the gate or keeping it open never needs approval', () => {
@@ -153,10 +159,6 @@ test('a close made while the deploy is running survives the later API/Web deploy
   assert.equal(preserved.value, false);
   assert.match(preserved.warning, /Keeping the service closed/);
 
-  // Only an explicit reopen dispatch writes true over a live close.
-  const reopened = resolveDeployBookingValue({ target: true, service: closedMidRun, allowReopen: true });
-  assert.equal(reopened.value, true);
-
   // Unreadable live state right before deploy: fail the step instead of guessing.
   const unreadable = resolveDeployBookingValue({
     target: true,
@@ -166,6 +168,92 @@ test('a close made while the deploy is running survives the later API/Web deploy
   assert.equal(unreadable.ok, false);
   assert.equal(unreadable.value, null);
   assert.match(unreadable.message, /refusing to guess/);
+});
+
+const REV_START = 'grabit-api-00001-aaa';
+const REV_CLOSED = 'grabit-api-00002-bbb';
+
+test('a close made during an approved reopen run is kept closed (audit D6)', () => {
+  // The migrate guard saw the API open; the on-call closed it with gcloud while the
+  // images built. allow_booking_reopen=true must not undo that close.
+  const closedMidRun = { name: 'grabit-api', readable: true, rawValue: 'false', revision: REV_CLOSED };
+  const wasOpen = resolveDeployBookingValue({
+    target: true,
+    service: closedMidRun,
+    allowReopen: true,
+    atGuard: { readable: true, liveEnabled: true, revision: REV_START },
+  });
+  assert.deepEqual([wasOpen.ok, wasOpen.value], [true, false]);
+  assert.match(wasOpen.warning, /closed during this run/);
+
+  // Closed at the start, then reopened and closed again (or otherwise updated) mid-run:
+  // a new revision means someone changed the service after the guard read it.
+  const changedWhileClosed = resolveDeployBookingValue({
+    target: true,
+    service: closedMidRun,
+    allowReopen: true,
+    atGuard: { readable: true, liveEnabled: false, revision: REV_START },
+  });
+  assert.deepEqual([changedWhileClosed.ok, changedWhileClosed.value], [true, false]);
+  assert.match(changedWhileClosed.warning, /changed during this run/);
+});
+
+test('an unchanged approved reopen opens the gate with a warning', () => {
+  const closed = { name: 'grabit-web', readable: true, rawValue: 'false', revision: REV_START };
+  const intended = resolveDeployBookingValue({
+    target: true,
+    service: closed,
+    allowReopen: true,
+    atGuard: { readable: true, liveEnabled: false, revision: REV_START },
+  });
+  assert.deepEqual([intended.ok, intended.value], [true, true]);
+  assert.match(intended.warning, /REOPENS sitewide booking/);
+  assert.match(intended.message, /reopen explicitly approved/);
+
+  // Without a readable snapshot the approved run still reopens, but says it could not verify.
+  for (const atGuard of [undefined, parseGuardSnapshot('', ''), parseGuardSnapshot('unreadable', REV_START)]) {
+    const unverified = resolveDeployBookingValue({ target: true, service: closed, allowReopen: true, atGuard });
+    assert.deepEqual([unverified.ok, unverified.value], [true, true]);
+    assert.match(unverified.warning, /could not verify/);
+  }
+  // A revision missing on either side cannot prove "unchanged" either.
+  const noRevision = resolveDeployBookingValue({
+    target: true,
+    service: { ...closed, revision: null },
+    allowReopen: true,
+    atGuard: { readable: true, liveEnabled: false, revision: REV_START },
+  });
+  assert.equal(noRevision.value, true);
+  assert.match(noRevision.warning, /could not verify/);
+
+  // Unreadable right before deploy: the approved run keeps its explicit reopen, loudly.
+  const unreadableNow = resolveDeployBookingValue({
+    target: true,
+    service: { name: 'grabit-web', readable: false, rawValue: undefined, revision: null },
+    allowReopen: true,
+    atGuard: { readable: true, liveEnabled: false, revision: REV_START },
+  });
+  assert.deepEqual([unreadableNow.ok, unreadableNow.value], [true, true]);
+  assert.match(unreadableNow.warning, /could not verify/);
+
+  // An already open service needs no reopen and stays quiet.
+  const alreadyOpen = resolveDeployBookingValue({
+    target: true,
+    service: { ...closed, rawValue: 'true' },
+    allowReopen: true,
+    atGuard: { readable: true, liveEnabled: true, revision: REV_START },
+  });
+  assert.deepEqual([alreadyOpen.value, alreadyOpen.warning], [true, null]);
+});
+
+test('guard snapshots round-trip through job outputs without trusting arbitrary text', () => {
+  assert.deepEqual(parseGuardSnapshot('true', REV_START), { readable: true, liveEnabled: true, revision: REV_START });
+  assert.deepEqual(parseGuardSnapshot('false', ''), { readable: true, liveEnabled: false, revision: null });
+  assert.deepEqual(parseGuardSnapshot('unreadable', 'Bad Rev'), { readable: false, liveEnabled: false, revision: null });
+  assert.equal(parseGuardSnapshot('TRUE', REV_START).readable, false, 'only the guard formats are accepted');
+  assert.equal(parseGuardSnapshot('false', 'rev\nEVIL=1').revision, null);
+  assert.equal(readServiceRevision(describeService([], REV_CLOSED)), REV_CLOSED);
+  assert.equal(readServiceRevision(describeService([], null)), null);
 });
 
 test('deploy-time booking value keeps an open gate open and annotates a close', () => {
@@ -267,7 +355,8 @@ test('connection budget counts app pool plus pg-boss pool per API instance and w
     reservedConnections: 3,
     apiMaxInstances: 40,
     dbPoolMax: 4,
-    pgBossPoolMax: 10,
+    apiPgBossPoolMax: 10,
+    workerPgBossPoolMax: 10,
     reserve: 5,
     enforce: false,
   });
@@ -281,7 +370,8 @@ test('connection budget counts app pool plus pg-boss pool per API instance and w
     reservedConnections: 3,
     apiMaxInstances: 40,
     dbPoolMax: 4,
-    pgBossPoolMax: 10,
+    apiPgBossPoolMax: 10,
+    workerPgBossPoolMax: 10,
     reserve: 5,
     enforce: true,
   });
@@ -292,12 +382,85 @@ test('connection budget counts app pool plus pg-boss pool per API instance and w
     reservedConnections: 3,
     apiMaxInstances: 30,
     dbPoolMax: 8,
-    pgBossPoolMax: 3,
+    apiPgBossPoolMax: 3,
+    workerPgBossPoolMax: 3,
     reserve: 10,
     enforce: true,
   });
   assert.equal(sized.required, 30 * 11 + 11 + 10);
   assert.equal(sized.ok, true);
+});
+
+test('the deploy budget uses each process pg-boss cap, not one workflow value (x4 deploy-budget)', () => {
+  // Managed demo: 4 producer-only API instances (pg-boss 1) plus the worker Job (pg-boss 3).
+  // db-f1-micro allows 25 - 3 reserved = 22, so 17 + reserve 5 fits and must not warn.
+  const demo = validateDeployConfig({
+    ...workflowDefaults,
+    API_MIN_INSTANCES: '0',
+    API_MAX_INSTANCES: '4',
+    DB_POOL_MAX: '2',
+    BACKGROUND_PROCESSING_ENABLED: 'false',
+  });
+  assert.deepEqual([demo.apiPgBossPoolMax, demo.workerPgBossPoolMax], [1, 3]);
+  const demoBudget = evaluateConnectionBudget({
+    maxConnections: 25,
+    reservedConnections: 3,
+    apiMaxInstances: demo.apiMaxInstances,
+    dbPoolMax: demo.dbPoolMax,
+    apiPgBossPoolMax: demo.apiPgBossPoolMax,
+    workerPgBossPoolMax: demo.workerPgBossPoolMax,
+    reserve: demo.dbConnectionReserve,
+    enforce: false,
+  });
+  assert.equal(demoBudget.required, 4 * (2 + 1) + (2 + 3) + 5);
+  assert.equal(demoBudget.overBudget, false);
+  assert.match(demoBudget.message, /API 4 x \(2 app \+ 1 pg-boss\) = 12, worker 1 x \(2 app \+ 3 pg-boss\) = 5/);
+  const demoPreflight = evaluateDbPreflight({
+    config: demo,
+    settings: { max_connections: 25, superuser_reserved: 3, reserved: 0, lock_timeout: '5s', statement_timeout: '1min' },
+    journal: { entries: [{ tag: '0001_a', when: 100 }] },
+    lastAppliedMillis: 100,
+  });
+  assert.equal(demoPreflight.ok, true);
+  assert.deepEqual(demoPreflight.annotations, [], 'no false over-budget warning on every managed-demo deploy');
+
+  // Warm ticket-opening posture: every API instance processes jobs (pg-boss 3).
+  const warm = validateDeployConfig(workflowDefaults);
+  assert.deepEqual([warm.apiPgBossPoolMax, warm.workerPgBossPoolMax], [3, 3]);
+  const warmBudget = evaluateConnectionBudget({
+    maxConnections: 400,
+    reservedConnections: 3,
+    apiMaxInstances: warm.apiMaxInstances,
+    dbPoolMax: warm.dbPoolMax,
+    apiPgBossPoolMax: warm.apiPgBossPoolMax,
+    workerPgBossPoolMax: warm.workerPgBossPoolMax,
+    reserve: warm.dbConnectionReserve,
+    enforce: false,
+  });
+  assert.equal(warmBudget.required, 40 * (4 + 3) + (4 + 3) + 5);
+
+  // A set RUNTIME_PGBOSS_POOL_MAX is the real cap of both processes.
+  const pinned = validateDeployConfig({
+    ...workflowDefaults,
+    BACKGROUND_PROCESSING_ENABLED: 'false',
+    RUNTIME_PGBOSS_POOL_MAX: '2',
+  });
+  assert.deepEqual([pinned.apiPgBossPoolMax, pinned.workerPgBossPoolMax], [2, 2]);
+  // Same parsing as the API: anything but "false" processes jobs.
+  assert.equal(validateDeployConfig({ ...workflowDefaults, BACKGROUND_PROCESSING_ENABLED: ' FALSE ' }).apiPgBossPoolMax, 1);
+  assert.equal(validateDeployConfig({ ...workflowDefaults, BACKGROUND_PROCESSING_ENABLED: undefined }).apiPgBossPoolMax, 3);
+});
+
+test('pg-boss budget defaults mirror the API code defaults', async () => {
+  const source = await readFile(join(REPO_ROOT, 'apps/api/src/modules/jobs/pgboss.provider.ts'), 'utf8');
+  const declared = (name) => Number(new RegExp(`\\b${name}\\s*=\\s*(\\d+);`).exec(source)?.[1]);
+  const config = validateDeployConfig(workflowDefaults);
+  assert.equal(config.apiPgBossPoolMax, declared('DEFAULT_PGBOSS_POOL_MAX_PROCESSING'));
+  assert.equal(config.workerPgBossPoolMax, declared('DEFAULT_PGBOSS_POOL_MAX_PROCESSING'));
+  assert.equal(
+    validateDeployConfig({ ...workflowDefaults, BACKGROUND_PROCESSING_ENABLED: 'false' }).apiPgBossPoolMax,
+    declared('DEFAULT_PGBOSS_POOL_MAX_PRODUCER'),
+  );
 });
 
 test('parses PostgreSQL duration settings returned by current_setting()', () => {
@@ -348,8 +511,7 @@ test('optional runtime settings fail validation instead of failing every instanc
     [{ RUNTIME_SMS_ALLOWED_COUNTRIES: 'KOR' }, /ISO 3166-1 alpha-2/],
     [{ RUNTIME_SMS_LOCAL_RATE_LIMITS_ENABLED: 'off' }, /must be exactly "true" or "false"/],
     [{ RUNTIME_PAYMENT_HANDOFF_ABANDON_SWEEP_ENABLED: 'no' }, /must be exactly "true" or "false"/],
-    // The runtime pool can never exceed what the connection budget counted.
-    [{ RUNTIME_PGBOSS_POOL_MAX: '4' }, /must not exceed the PGBOSS_POOL_MAX budget input/],
+    [{ RUNTIME_PGBOSS_POOL_MAX: '0' }, /RUNTIME_PGBOSS_POOL_MAX must be between 1/],
   ]) {
     assert.throws(() => validateDeployConfig({ ...workflowDefaults, ...env }), pattern);
   }
@@ -403,8 +565,8 @@ async function runGuards(args, { env = {}, files = {} } = {}) {
   }
 }
 
-const liveJson = (value) =>
-  JSON.stringify(describeService(value === undefined ? [] : [{ name: 'BOOKING_ENABLED', value }]));
+const liveJson = (value, revision = REV_START) =>
+  JSON.stringify(describeService(value === undefined ? [] : [{ name: 'BOOKING_ENABLED', value }], revision));
 
 test('CLI validate-config exports PGOPTIONS through GITHUB_ENV and rejects bad input', async () => {
   const ok = await runGuards(['validate-config']);
@@ -428,6 +590,28 @@ test('CLI booking-gate exit codes follow the reopen guard', async () => {
 
   const approved = await runGuards(args, { files: closedApi, env: { ALLOW_BOOKING_REOPEN: 'true' } });
   assert.equal(approved.status, 0, approved.stderr);
+  assert.match(approved.stdout, /^::warning::grabit-api: this deploy REOPENS sitewide booking/m);
+  assert.match(approved.summary, /REOPENS sitewide booking/);
+
+  // The guard records each service's live state and revision for the deploy jobs.
+  const snapshot = await runGuards(
+    [...args, '--snapshot', 'api=grabit-api', '--snapshot', 'web=grabit-web'],
+    { files: { api: liveJson('false', REV_START), web: liveJson('true', 'grabit-web-00007-xyz') }, env: { ALLOW_BOOKING_REOPEN: 'true' } },
+  );
+  assert.equal(snapshot.status, 0, snapshot.stderr);
+  assert.equal(
+    snapshot.githubOutput,
+    `api_live=false\napi_revision=${REV_START}\nweb_live=true\nweb_revision=grabit-web-00007-xyz\n`,
+  );
+  const unreadableSnapshot = await runGuards(
+    ['booking-gate', '--service', 'grabit-api=@api', '--snapshot', 'api=grabit-api'],
+    { files: { api: '' }, env: { BOOKING_ENABLED: 'false' } },
+  );
+  assert.equal(unreadableSnapshot.status, 0, unreadableSnapshot.stderr);
+  assert.equal(unreadableSnapshot.githubOutput, 'api_live=unreadable\napi_revision=\n');
+  const unknownSnapshot = await runGuards([...args, '--snapshot', 'api=grabit-other'], { files: closedApi });
+  assert.equal(unknownSnapshot.status, 1);
+  assert.match(unknownSnapshot.stderr, /--snapshot names a service without --service/);
 
   // An empty describe file (gcloud failed) is unreadable, never "open".
   const unreadable = await runGuards(args, { files: { api: '', web: liveJson('true') } });
@@ -457,6 +641,39 @@ test('CLI booking-gate-value writes the deploy value to GITHUB_OUTPUT', async ()
   const unreadable = await runGuards(args, { files: { api: '{not json' } });
   assert.equal(unreadable.status, 1);
   assert.equal(unreadable.githubOutput, '');
+
+  // Approved reopen run: the guard snapshot decides whether a live close is the
+  // intended reopen target or a close made during this run.
+  const reopenEnv = { ALLOW_BOOKING_REOPEN: 'true' };
+  const closedDuringRun = await runGuards(
+    [...args, '--live-at-guard', 'true', '--revision-at-guard', REV_START],
+    { files: { api: liveJson('false', REV_CLOSED) }, env: reopenEnv },
+  );
+  assert.equal(closedDuringRun.status, 0, closedDuringRun.stderr);
+  assert.equal(closedDuringRun.githubOutput, 'booking_enabled=false\n');
+  assert.match(closedDuringRun.stdout, /^::warning::grabit-api: .*closed during this run/m);
+
+  const intendedReopen = await runGuards(
+    [...args, '--live-at-guard', 'false', '--revision-at-guard', REV_START],
+    { files: { api: liveJson('false', REV_START) }, env: reopenEnv },
+  );
+  assert.equal(intendedReopen.status, 0, intendedReopen.stderr);
+  assert.equal(intendedReopen.githubOutput, 'booking_enabled=true\n');
+  assert.match(intendedReopen.stdout, /^::warning::grabit-api: this deploy REOPENS sitewide booking/m);
+  assert.match(intendedReopen.summary, /REOPENS sitewide booking/);
+
+  // Missing job outputs arrive as empty strings.
+  const noSnapshot = await runGuards(
+    [...args, '--live-at-guard', '', '--revision-at-guard', ''],
+    { files: { api: liveJson('false', REV_START) }, env: reopenEnv },
+  );
+  assert.equal(noSnapshot.status, 0, noSnapshot.stderr);
+  assert.equal(noSnapshot.githubOutput, 'booking_enabled=true\n');
+  assert.match(noSnapshot.stdout, /^::warning::grabit-api: .*could not verify/m);
+
+  const missingValue = await runGuards([...args, '--live-at-guard'], { files: { api: liveJson('true') } });
+  assert.equal(missingValue.status, 1);
+  assert.match(missingValue.stderr, /--live-at-guard expects a value/);
 
   const twoServices = await runGuards([...args, '--service', 'grabit-web=@web'], {
     files: { api: liveJson('true'), web: liveJson('true') },
@@ -520,6 +737,25 @@ test('deploy workflow keeps the guarded deploy contract', async () => {
     assert.doesNotMatch(block, /BOOKING_ENABLED=\$\{\{ env\.BOOKING_ENABLED \}\}/);
   }
 
+  // Audit D6: the migrate guard snapshots each service's live gate and revision, and both
+  // deploy jobs compare against it so an approved reopen run keeps a close made mid-run.
+  // `needs` only exposes direct dependencies, so deploy-web must list migrate-production.
+  const migrate = workflowJob(workflow, 'migrate-production');
+  for (const key of ['api_live', 'api_revision', 'web_live', 'web_revision']) {
+    assert.match(migrate, new RegExp(`\\n {6}${key}: \\$\\{\\{ steps\\.booking_guard\\.outputs\\.${key} \\}\\}\\n`));
+  }
+  assert.match(migrate, /- name: Guard sitewide booking gate\n\s+id: booking_guard\n/);
+  assert.match(migrate, /--snapshot "api=\$\{API_SERVICE\}"/);
+  assert.match(migrate, /--snapshot "web=\$\{WEB_SERVICE\}"/);
+  assert.match(workflowJob(workflow, 'deploy-web'), /needs:\n\s+- migrate-production\n\s+- deploy-api\n/);
+  for (const [job, key] of [['deploy-api', 'api'], ['deploy-web', 'web']]) {
+    const block = workflowJob(workflow, job);
+    assert.match(block, /\n\s+- migrate-production\n/, `${job} needs migrate-production`);
+    assert.match(block, new RegExp(`LIVE_AT_GUARD: \\$\\{\\{ needs\\.migrate-production\\.outputs\\.${key}_live \\}\\}`));
+    assert.match(block, new RegExp(`REVISION_AT_GUARD: \\$\\{\\{ needs\\.migrate-production\\.outputs\\.${key}_revision \\}\\}`));
+    assert.match(block, /--live-at-guard "\$\{LIVE_AT_GUARD\}" --revision-at-guard "\$\{REVISION_AT_GUARD\}"/);
+  }
+
   // #60: migration sessions get lock/statement timeouts before drizzle-kit migrate runs.
   const validateIndex = workflow.indexOf('deploy-guards.mjs validate-config');
   const preflightIndex = workflow.indexOf('deploy-guards.mjs db-preflight');
@@ -537,9 +773,11 @@ test('deploy workflow keeps the guarded deploy contract', async () => {
   assert.match(workflow, /PREWARM_SCALING_SCOPE: \$\{\{ vars\.PREWARM_SCALING_SCOPE \|\| 'service' \}\}/);
   assert.match(workflow, /PREWARM_SCALING_SCOPE=\$\{\{ env\.PREWARM_SCALING_SCOPE \}\}/);
 
-  // #54/#58: the budget default matches the pg-boss pool cap the API code sets
-  // (3 with background processing, 1 producer-only), not the pg-boss library default 10.
-  assert.match(workflow, /PGBOSS_POOL_MAX: \$\{\{ vars\.PGBOSS_POOL_MAX \|\| '3' \}\}/);
+  // #54/#58 + x4 deploy-budget: the budget derives each process's pg-boss cap from the
+  // runtime value or the API code default, so there is no separate workflow budget input
+  // whose default (3) would overcount the producer-only API.
+  assert.doesNotMatch(workflow, /\n {2}PGBOSS_POOL_MAX:/);
+  assert.match(workflow, /BACKGROUND_PROCESSING_ENABLED: \$\{\{ vars\.BACKGROUND_PROCESSING_ENABLED \|\| 'true' \}\}/);
 
   // u18a → u20 handoff: the runtime pool and session limits come from the same
   // repository variables with no workflow default, and the API passes them only when set.
