@@ -14,56 +14,77 @@ describe('ReservationController cancellation routes', () => {
   it('returns the queue slot right after a confirmed payment', async () => {
     const detail = { id: 'reservation-1', status: 'CONFIRMED' };
     const service = { confirmAndCreateReservation: vi.fn().mockResolvedValue(detail) };
-    const queue = { releaseAdmissionAfterPurchase: vi.fn().mockResolvedValue(true) };
+    const queue = { releaseAdmissionForOrder: vi.fn().mockResolvedValue(true) };
     const controller = new ReservationController(service as never, {} as never, queue as never);
 
     await expect(controller.confirmPayment(
       { orderId: 'ORDER-1', paymentKey: 'pk', amount: 1000 } as never,
-      { user: { id: 'user-1' }, queueAdmission: { queueSessionId: 'queue-session-1' } },
+      { user: { id: 'user-1' } },
     )).resolves.toBe(detail);
 
-    expect(queue.releaseAdmissionAfterPurchase).toHaveBeenCalledWith('queue-session-1');
+    expect(queue.releaseAdmissionForOrder).toHaveBeenCalledWith('ORDER-1', 'user-1');
     expect(service.confirmAndCreateReservation.mock.invocationCallOrder[0])
-      .toBeLessThan(queue.releaseAdmissionAfterPurchase.mock.invocationCallOrder[0]!);
+      .toBeLessThan(queue.releaseAdmissionForOrder.mock.invocationCallOrder[0]!);
   });
 
   it('keeps the queue slot when the confirm result is not a confirmed reservation', async () => {
     const detail = { id: 'reservation-1', status: 'PENDING_PAYMENT' };
     const service = { confirmAndCreateReservation: vi.fn().mockResolvedValue(detail) };
-    const queue = { releaseAdmissionAfterPurchase: vi.fn().mockResolvedValue(true) };
+    const queue = { releaseAdmissionForOrder: vi.fn().mockResolvedValue(true) };
     const controller = new ReservationController(service as never, {} as never, queue as never);
 
     await expect(controller.confirmPayment(
       { orderId: 'ORDER-1', paymentKey: 'pk', amount: 1000 } as never,
-      { user: { id: 'user-1' }, queueAdmission: { queueSessionId: 'queue-session-1' } },
+      { user: { id: 'user-1' } },
     )).resolves.toBe(detail);
-    expect(queue.releaseAdmissionAfterPurchase).not.toHaveBeenCalled();
+    expect(queue.releaseAdmissionForOrder).not.toHaveBeenCalled();
   });
 
   it('keeps the queue slot when payment confirm fails', async () => {
     const service = {
       confirmAndCreateReservation: vi.fn().mockRejectedValue(new Error('좌석 점유 시간이 만료되었습니다')),
     };
-    const queue = { releaseAdmissionAfterPurchase: vi.fn().mockResolvedValue(true) };
+    const queue = { releaseAdmissionForOrder: vi.fn().mockResolvedValue(true) };
     const controller = new ReservationController(service as never, {} as never, queue as never);
 
     await expect(controller.confirmPayment(
       { orderId: 'ORDER-1', paymentKey: 'pk', amount: 1000 } as never,
-      { user: { id: 'user-1' }, queueAdmission: { queueSessionId: 'queue-session-1' } },
+      { user: { id: 'user-1' } },
     )).rejects.toThrow('좌석 점유 시간이 만료되었습니다');
-    expect(queue.releaseAdmissionAfterPurchase).not.toHaveBeenCalled();
+    expect(queue.releaseAdmissionForOrder).not.toHaveBeenCalled();
   });
 
   it('never turns a confirmed purchase into an error when the slot release fails', async () => {
     const detail = { id: 'reservation-1', status: 'CONFIRMED' };
     const service = { confirmAndCreateReservation: vi.fn().mockResolvedValue(detail) };
-    const queue = { releaseAdmissionAfterPurchase: vi.fn().mockRejectedValue(new Error('valkey down')) };
+    const queue = { releaseAdmissionForOrder: vi.fn().mockRejectedValue(new Error('valkey down')) };
     const controller = new ReservationController(service as never, {} as never, queue as never);
 
     await expect(controller.confirmPayment(
       { orderId: 'ORDER-1', paymentKey: 'pk', amount: 1000 } as never,
-      { user: { id: 'user-1' }, queueAdmission: { queueSessionId: 'queue-session-1' } },
+      { user: { id: 'user-1' } },
     )).resolves.toBe(detail);
+  });
+
+  it('does not expire the browser session that authorised confirm through the Redis fallback', async () => {
+    const detail = { id: 'reservation-1', status: 'CONFIRMED' };
+    const service = { confirmAndCreateReservation: vi.fn().mockResolvedValue(detail) };
+    const queue = {
+      releaseAdmissionForOrder: vi.fn().mockResolvedValue(true),
+      releaseAdmissionAfterPurchase: vi.fn().mockResolvedValue(true),
+    };
+    const controller = new ReservationController(service as never, {} as never, queue as never);
+
+    // AdmissionGuard attached the current browser's own queue session: the
+    // order binding did not match, so the Redis fallback authorised confirm.
+    await controller.confirmPayment(
+      { orderId: 'ORDER-1', paymentKey: 'pk', amount: 1000 } as never,
+      { user: { id: 'user-1' }, queueAdmission: { queueSessionId: 'browser-session' } } as never,
+    );
+
+    // the released slot is looked up from the confirmed order, never this session
+    expect(queue.releaseAdmissionForOrder).toHaveBeenCalledWith('ORDER-1', 'user-1');
+    expect(queue.releaseAdmissionAfterPurchase).not.toHaveBeenCalledWith('browser-session');
   });
 
   it('routes whole-booking cancellation through the durable refund state machine', async () => {

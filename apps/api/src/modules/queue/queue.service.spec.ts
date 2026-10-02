@@ -2,12 +2,16 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { HttpException } from '@nestjs/common';
+import type { SQL } from 'drizzle-orm';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   QUEUE_ACTIVE_WINDOW_SECONDS,
+  QUEUE_ADMISSION_COOKIE_MAX_AGE_MS,
   QUEUE_ETA_CYCLE_MAX_SECONDS,
   QUEUE_ETA_MAX_SECONDS,
   QUEUE_SLOT_MIN_HOLD_SECONDS,
+  QUEUE_WAITING_COOKIE_MAX_AGE_MS,
   QueueService,
   RELEASE_QUEUE_RECONCILE_LOCK_LUA,
   estimateQueueWait,
@@ -257,14 +261,9 @@ class FakeRedis {
     const keys = keysAndArgs.slice(0, numKeys).map(String);
     const args = keysAndArgs.slice(numKeys).map(String);
     this.evalKeys.push(keys);
+    // The JavaScript mirror also covers the reconcile lock release (#89).
     if (isQueueScript(script)) {
       return evalQueueScriptInMemory(this, script, keys, args);
-    }
-    if (script.includes('RELEASE_QUEUE_RECONCILE_LOCK_LUA')) {
-      if ((await this.get(keys[0]!)) === args[0]) {
-        return this.del(keys[0]!);
-      }
-      return 0;
     }
     throw new Error(`FakeRedis: unsupported script ${script.slice(0, 40)}`);
   }
@@ -276,15 +275,45 @@ type QueueDbState = {
   showtimeIds: string[];
   soldCount: number;
   orderBinding: Record<string, unknown> | null;
+  // Optional per-showtime start (default: far ahead, on sale) and sold seats
+  // (default: soldCount for the whole performance).
+  showtimeStartsAt?: Record<string, Date>;
+  soldByShowtime?: Record<string, number>;
 };
 
+const pgDialect = new PgDialect();
+const FAR_FUTURE = new Date('2100-01-01T00:00:00.000Z');
+
+/**
+ * The C1 cutoff a query applied, read from its real SQL: the bound value of
+ * `"showtimes"."date_time" > $n`, or null when the query did not filter.
+ */
+function readOnSaleCutoff(where: SQL | undefined): Date | null {
+  if (!where) return null;
+  const query = pgDialect.sqlToQuery(where);
+  const match = /"showtimes"\."date_time" > \$(\d+)/.exec(query.sql);
+  return match ? new Date(String(query.params[Number(match[1]) - 1])) : null;
+}
+
 function createQueueDb(state: QueueDbState) {
+  const selectedShowtimeIds = (where: SQL | undefined): string[] => {
+    const cutoff = readOnSaleCutoff(where);
+    return state.showtimeIds.filter((id) =>
+      cutoff === null
+      || (state.showtimeStartsAt?.[id] ?? FAR_FUTURE).getTime() > cutoff.getTime());
+  };
+
   return {
     select: vi.fn((selection: Record<string, unknown> = {}) => ({
       from: (table: unknown) => {
-        const rows = (): unknown[] => {
+        const rows = (where: SQL | undefined): unknown[] => {
           if (table === seatMaps) return [{ totalSeats: state.totalSeats }];
-          if (table === seatInventories) return [{ total: state.soldCount }];
+          if (table === seatInventories) {
+            if (!state.soldByShowtime) return [{ total: state.soldCount }];
+            const total = selectedShowtimeIds(where)
+              .reduce((sum, id) => sum + (state.soldByShowtime?.[id] ?? 0), 0);
+            return [{ total }];
+          }
           if (table === reservations) return state.orderBinding ? [state.orderBinding] : [];
           if (table === performances) {
             // Queue entry gate row: a published, selling performance with a
@@ -300,12 +329,12 @@ function createQueueDb(state: QueueDbState) {
           if (table === showtimes) {
             return 'performanceId' in selection
               ? [{ performanceId: state.performanceId }]
-              : state.showtimeIds.map((id) => ({ id }));
+              : selectedShowtimeIds(where).map((id) => ({ id }));
           }
           return [];
         };
         const chain = {
-          where: async () => rows(),
+          where: async (where?: SQL) => rows(where),
           innerJoin: () => chain,
           leftJoin: () => chain,
         };
@@ -324,6 +353,8 @@ type QueueServiceInternals = {
   reconcilePerformanceQueueIfDue: (performanceId: string) => Promise<void>;
   broadcastWaitingPositions: (performanceId: string) => Promise<void>;
   admitQueueSession: (performanceId: string, queueSessionId: string) => Promise<void>;
+  admitQueueSessionWithinCapacity: (performanceId: string, queueSessionId: string) => Promise<void>;
+  calculateRemainingSeats: (performanceId: string) => Promise<number>;
 };
 
 type SnapshotView = {
@@ -781,6 +812,77 @@ describe('QueueService', () => {
         vi.useRealTimers();
       }
     });
+
+    /**
+     * The upper bound holds only at the remaining seats of the snapshot. When
+     * seats sell while a buyer waits, the cycle capacity shrinks, the earlier
+     * bound no longer covers the wait, and the next snapshot widens the range
+     * so that it covers the wait again.
+     */
+    it('widens the range when remaining seats shrink while waiting', async () => {
+      vi.useFakeTimers();
+      try {
+        const openAt = Date.parse('2026-06-04T10:00:00.000Z');
+        vi.setSystemTime(openAt);
+        const stepMs = 5_000;
+        const fakeRedis = new FakeRedis();
+        const remainingSeatsKey = `{queue:${performanceId}}:remaining-seats`;
+        await fakeRedis.set(remainingSeatsKey, '3');
+        const simulated = new QueueService(
+          fakeRedis as never,
+          mockDb as never,
+          mockGateway as unknown as QueueGateway,
+        );
+
+        const leases: Array<Awaited<ReturnType<QueueService['ensureQueueSession']>>> = [];
+        for (let index = 0; index < 6; index += 1) {
+          vi.setSystemTime(openAt + index * 10);
+          leases.push(await simulated.ensureQueueSession({
+            performanceId,
+            identity: {
+              userId: `buyer-${index}`,
+              refreshTokenFamilyId: `buyer-${index}-family`,
+              deviceSlotId: `buyer-${index}-family`,
+            },
+          }));
+        }
+        const poll = (lease: (typeof leases)[number]) => simulated.getQueueSessionStatus({
+          queueSessionId: lease.queueSessionId,
+          identity: lease,
+          admissionToken: lease.admissionToken,
+        });
+        const last = leases[5]!;
+
+        // first reconcile: 3 seats admit the first three, the last is third in line
+        const before = await poll(last);
+        const beforeAt = Date.now();
+        expect(before).toMatchObject({ state: 'WAITING', position: 3, etaUnavailable: false });
+        expect(before.etaSeconds).toBe(QUEUE_ETA_CYCLE_MAX_SECONDS);
+
+        // two seats sell: one admission per cycle from now on
+        await fakeRedis.set(remainingSeatsKey, '1');
+        vi.setSystemTime(Date.now() + stepMs);
+        const after = await poll(last);
+        const afterAt = Date.now();
+        expect(after).toMatchObject({ state: 'WAITING', position: 3, etaUnavailable: false });
+        expect(after.etaSeconds).toBe(3 * QUEUE_ETA_CYCLE_MAX_SECONDS);
+        expect(after.etaSeconds).toBeGreaterThan(before.etaSeconds);
+
+        let admittedAt: number | null = null;
+        while (admittedAt === null && Date.now() <= openAt + 3 * 60 * 60_000) {
+          vi.setSystemTime(Date.now() + stepMs);
+          if ((await poll(last)).state !== 'WAITING') admittedAt = Date.now();
+        }
+
+        expect(admittedAt).not.toBeNull();
+        // the bound sampled at 3 remaining seats did not hold once seats sold ...
+        expect((admittedAt ?? 0) - beforeAt).toBeGreaterThan(before.etaSeconds * 1000);
+        // ... the widened bound sampled after the drop does
+        expect((admittedAt ?? 0) - afterAt).toBeLessThanOrEqual(after.etaSeconds * 1000);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   function createWaitingRecord() {
@@ -831,7 +933,12 @@ describe('QueueService', () => {
     expect(controllerSource).toContain('secure');
     expect(controllerSource).toContain("sameSite: 'lax'");
     expect(controllerSource).toContain("path: '/api/v1'");
-    expect(controllerSource).toContain('maxAge: 780000');
+    // Admission cookie: 13 minutes for an admission, the 30-minute idle window
+    // while WAITING (Max-Age is checked in queue.controller.http.spec.ts).
+    expect(controllerSource).toContain('QUEUE_ADMISSION_COOKIE_MAX_AGE_MS');
+    expect(controllerSource).toContain('QUEUE_WAITING_COOKIE_MAX_AGE_MS');
+    expect(QUEUE_ADMISSION_COOKIE_MAX_AGE_MS).toBe(780_000);
+    expect(QUEUE_WAITING_COOKIE_MAX_AGE_MS).toBe(1_800_000);
 
     expect(gatewaySource).toContain('queue:position');
     expect(gatewaySource).toContain('queue:admitted');
@@ -1435,6 +1542,449 @@ describe('QueueService session lifecycle (TTL-faithful Redis)', () => {
       expect(await redis.zrank(waitingKey, ghost.queueSessionId)).toBeNull();
     });
   });
+
+  describe('re-entry after the active window (D2, #4 #26 #32)', () => {
+    const identityKeyA = `{queue:${performanceId}}:identity:user-a:family-a:family-a`;
+    const prepare = (admissionToken: string) =>
+      service.assertAdmissionForShowtime({
+        showtimeId,
+        identity: browserA,
+        admissionToken,
+        action: 'prepare-reservation',
+      });
+    const pendingOrder = (
+      lease: { queueSessionId: string; admittedAt: string | null },
+      paymentDeadlineAt: Date,
+    ): Record<string, unknown> => {
+      const admittedAt = new Date(String(lease.admittedAt));
+      return {
+        tossOrderId: 'ORDER-1',
+        status: 'PENDING_PAYMENT',
+        queueSessionId: lease.queueSessionId,
+        refreshFamilyId: browserA.refreshTokenFamilyId,
+        deviceSlotKey: browserA.deviceSlotId,
+        admittedAt,
+        admissionActiveUntilAt: new Date(admittedAt.getTime() + minutes(10)),
+        reentryGraceUntilAt: new Date(admittedAt.getTime() + minutes(13)),
+        paymentDeadlineAt,
+      };
+    };
+
+    it('reuses the admission up to activeUntilAt and replaces it right after', async () => {
+      dbState.totalSeats = 1;
+      const first = await enter(browserA);
+      expect(first.state).toBe('ADMITTED');
+      setNow(1_000);
+      await expect(enter(browserB)).resolves.toMatchObject({ state: 'WAITING', position: 1 });
+
+      // activeUntilAt itself still belongs to the admission (lock/prepare accept it)
+      setNow(minutes(10));
+      await expect(enter(browserA, first.admissionToken)).resolves.toMatchObject({
+        queueSessionId: first.queueSessionId,
+        state: 'ADMITTED',
+        autoEnter: true,
+        activeUntilAt: first.activeUntilAt,
+      });
+      expect(gateway.emitExpired).not.toHaveBeenCalled();
+
+      setNow(minutes(10) + 1);
+      const next = await enter(browserA, first.admissionToken);
+
+      expect(next.queueSessionId).not.toBe(first.queueSessionId);
+      expect(next).toMatchObject({ state: 'WAITING', autoEnter: false, activeUntilAt: null });
+      expect(next.position).toBeGreaterThan(0);
+      expect(next).not.toHaveProperty('recoveryOrderId');
+      expect(gateway.emitExpired).toHaveBeenCalledWith(
+        first.queueSessionId,
+        expect.objectContaining({ state: 'EXPIRED', autoEnter: false }),
+      );
+      expect(await readRecord(first.queueSessionId)).toBeNull();
+      expect(await redis.sismember(activeKey, first.queueSessionId)).toBe(0);
+      expect(await redis.get(identityKeyA)).toBe(next.queueSessionId);
+      expect(await redis.get(`{queue:admission}:${hashToken(first.admissionToken)}`)).toBeNull();
+    });
+
+    it.each([
+      ['no order', () => null],
+      ['a cancelled order', (order: Record<string, unknown>) => ({ ...order, status: 'CANCELLED' })],
+      [
+        'an order of another browser session',
+        (order: Record<string, unknown>) => ({
+          ...order,
+          refreshFamilyId: 'family-x',
+          deviceSlotKey: 'family-x',
+        }),
+      ],
+      [
+        'an order prepared under another queue session',
+        (order: Record<string, unknown>) => ({ ...order, queueSessionId: 'queue-session-other' }),
+      ],
+      [
+        'an order past its payment deadline',
+        (order: Record<string, unknown>) => ({
+          ...order,
+          paymentDeadlineAt: new Date(T0.getTime() + minutes(10.5)),
+        }),
+      ],
+    ])(
+      'takes a new waiting position after the active window with %s, even inside the recovery grace',
+      async (_label, orderFor) => {
+        dbState.totalSeats = 1;
+        const first = await enter(browserA);
+        setNow(1_000);
+        const other = await enter(browserB);
+        expect(other.state).toBe('WAITING');
+        setNow(minutes(9));
+        await prepare(first.admissionToken); // payment recovery until T+13
+        dbState.orderBinding = orderFor(pendingOrder(first, new Date(T0.getTime() + minutes(16))));
+
+        // the confirm page cancelled the order (or it does not bind) and rejoins at T+11
+        setNow(minutes(11));
+        const next = await enter(browserA, first.admissionToken);
+
+        expect(next.queueSessionId).not.toBe(first.queueSessionId);
+        expect(next).toMatchObject({ state: 'WAITING', autoEnter: false });
+        expect(next.position).toBeGreaterThan(0);
+        expect(next).not.toHaveProperty('recoveryOrderId');
+        expect(await readRecord(first.queueSessionId)).toBeNull();
+        expect(await redis.sismember(activeKey, first.queueSessionId)).toBe(0);
+        expect(gateway.emitExpired).toHaveBeenCalledWith(
+          first.queueSessionId,
+          expect.objectContaining({ state: 'EXPIRED' }),
+        );
+      },
+    );
+
+    it('keeps only payment recovery while a pending order bound to the session can still be paid', async () => {
+      dbState.totalSeats = 10;
+      const first = await enter(browserA);
+      setNow(minutes(9));
+      await prepare(first.admissionToken);
+      // provider handoff extended the payment deadline to T+17:30
+      dbState.orderBinding = pendingOrder(first, new Date(T0.getTime() + minutes(17.5)));
+      const prepared = await readRecord(first.queueSessionId);
+
+      // active window over, recovery grace still open
+      setNow(minutes(11));
+      const recovery = await enter(browserA, first.admissionToken);
+      expect(recovery).toMatchObject({
+        queueSessionId: first.queueSessionId,
+        state: 'PAYMENT_RECOVERY',
+        autoEnter: false,
+        recoveryOrderId: 'ORDER-1',
+        position: 0,
+        activeUntilAt: first.activeUntilAt,
+      });
+      // no new window and no longer slot
+      expect(await readRecord(first.queueSessionId)).toMatchObject({
+        state: 'ADMITTED',
+        activeUntilAt: prepared?.['activeUntilAt'],
+        paymentRecoveryUntilAt: prepared?.['paymentRecoveryUntilAt'],
+        expiresAt: prepared?.['expiresAt'],
+      });
+
+      // both windows over: the reconcile returns the slot, recovery stays
+      setNow(minutes(14));
+      const late = await enter(browserA, recovery.admissionToken);
+      expect(late).toMatchObject({
+        queueSessionId: first.queueSessionId,
+        state: 'PAYMENT_RECOVERY',
+        recoveryOrderId: 'ORDER-1',
+        autoEnter: false,
+      });
+      expect(await readRecord(first.queueSessionId)).toMatchObject({ state: 'EXPIRED' });
+      expect(await redis.sismember(activeKey, first.queueSessionId)).toBe(0);
+
+      // the 13-minute admission cookie is gone: a new token, still recovery only
+      setNow(minutes(15));
+      const noCookie = await enter(browserA);
+      expect(noCookie).toMatchObject({
+        queueSessionId: first.queueSessionId,
+        state: 'PAYMENT_RECOVERY',
+        recoveryOrderId: 'ORDER-1',
+      });
+      expect(noCookie.admissionToken).not.toBe(late.admissionToken);
+      await expect(status(first.queueSessionId, browserA, noCookie.admissionToken))
+        .resolves.toMatchObject({ state: 'PAYMENT_RECOVERY', recoveryOrderId: 'ORDER-1' });
+      // payment confirm is still authorised by the order binding
+      await expect(service.assertAdmissionForOrder({
+        orderId: 'ORDER-1',
+        userId: browserA.userId,
+        identity: browserA,
+      })).resolves.toMatchObject({ queueSessionId: first.queueSessionId });
+
+      // the order deadline passes: the next entry is a new queue entry
+      setNow(minutes(17.5) + 1_000);
+      const rejoin = await enter(browserA, noCookie.admissionToken);
+      expect(rejoin.queueSessionId).not.toBe(first.queueSessionId);
+      expect(rejoin.state).not.toBe('PAYMENT_RECOVERY');
+      expect(rejoin).not.toHaveProperty('recoveryOrderId');
+    });
+
+    it('never re-grants seat selection to a recovery-only session', async () => {
+      dbState.totalSeats = 10;
+      const first = await enter(browserA);
+      setNow(minutes(9));
+      await prepare(first.admissionToken);
+      dbState.orderBinding = pendingOrder(first, new Date(T0.getTime() + minutes(16)));
+
+      setNow(minutes(11));
+      const recovery = await enter(browserA, first.admissionToken);
+      expect(recovery.state).toBe('PAYMENT_RECOVERY');
+
+      await expect(service.assertAdmissionForShowtime({
+        showtimeId,
+        identity: browserA,
+        admissionToken: recovery.admissionToken,
+        action: 'lock-seat',
+      })).rejects.toThrow('대기열 입장 시간이 만료되었습니다');
+
+      // the refused lock expired the session; the order is still payable
+      await expect(enter(browserA, recovery.admissionToken)).resolves.toMatchObject({
+        queueSessionId: first.queueSessionId,
+        state: 'PAYMENT_RECOVERY',
+        recoveryOrderId: 'ORDER-1',
+      });
+      await expect(service.assertAdmissionForShowtime({
+        showtimeId,
+        identity: browserA,
+        admissionToken: recovery.admissionToken,
+        action: 'prepare-reservation',
+      })).rejects.toThrow('대기열 입장 시간이 만료되었습니다');
+    });
+
+    it('reports the same judgement from status polls after the active window', async () => {
+      dbState.totalSeats = 10;
+      const first = await enter(browserA);
+      setNow(minutes(9));
+      await prepare(first.admissionToken);
+      dbState.orderBinding = pendingOrder(first, new Date(T0.getTime() + minutes(16)));
+
+      setNow(minutes(10) + 1);
+      await expect(status(first.queueSessionId, browserA, first.admissionToken))
+        .resolves.toMatchObject({
+          state: 'PAYMENT_RECOVERY',
+          autoEnter: false,
+          recoveryOrderId: 'ORDER-1',
+        });
+      expect(gateway.emitExpired).not.toHaveBeenCalled();
+
+      // the buyer cancels the pending order: the admission ends at once
+      dbState.orderBinding = { ...dbState.orderBinding!, status: 'CANCELLED' };
+      setNow(minutes(10.5));
+      const ended = await status(first.queueSessionId, browserA, first.admissionToken);
+
+      expect(ended).toMatchObject({ state: 'EXPIRED', autoEnter: false });
+      expect(ended).not.toHaveProperty('recoveryOrderId');
+      expect(await readRecord(first.queueSessionId)).toMatchObject({ state: 'EXPIRED' });
+      expect(await redis.sismember(activeKey, first.queueSessionId)).toBe(0);
+      expect(gateway.emitExpired).toHaveBeenCalledWith(
+        first.queueSessionId,
+        expect.objectContaining({ state: 'EXPIRED' }),
+      );
+    });
+  });
+
+  describe('remaining seats of the showtimes on sale (C1, #2 #6 #91)', () => {
+    const startedShowtimeId = '7d4f1c1e-0000-4000-8000-000000000002';
+    const laterShowtimeId = '7d4f1c1e-0000-4000-8000-000000000003';
+
+    it('does not wait for seats of a showtime that has already started', async () => {
+      dbState.totalSeats = 2;
+      dbState.showtimeIds = [startedShowtimeId, showtimeId];
+      dbState.showtimeStartsAt = {
+        [startedShowtimeId]: new Date(T0.getTime() - minutes(60)),
+        [showtimeId]: new Date(T0.getTime() + minutes(120)),
+      };
+      // the started showtime still has free seats; the one on sale is sold out
+      dbState.soldByShowtime = { [startedShowtimeId]: 0, [showtimeId]: 2 };
+
+      const lease = await enter(browserA);
+
+      expect(lease).toMatchObject({
+        state: 'WAITING',
+        position: 1,
+        remainingSeats: 0,
+        etaUnavailable: true,
+      });
+      expect(await redis.scard(activeKey)).toBe(0);
+    });
+
+    it('counts capacity, sold seats and live locks over the same on-sale showtimes', async () => {
+      dbState.totalSeats = 3;
+      dbState.showtimeIds = [startedShowtimeId, showtimeId, laterShowtimeId];
+      dbState.showtimeStartsAt = {
+        [startedShowtimeId]: new Date(T0.getTime() - minutes(60)),
+        [showtimeId]: new Date(T0.getTime() + minutes(120)),
+        [laterShowtimeId]: new Date(T0.getTime() + minutes(24 * 60)),
+      };
+      dbState.soldByShowtime = { [startedShowtimeId]: 1, [showtimeId]: 1, [laterShowtimeId]: 0 };
+      await redis.set(`{${startedShowtimeId}}:seat:A-1`, 'buyer-1', 'PX', minutes(7));
+      await redis.sadd(`{${startedShowtimeId}}:locked-seats`, 'A-1');
+      await redis.set(`{${showtimeId}}:seat:A-1`, 'buyer-2', 'PX', minutes(7));
+      await redis.sadd(lockedSeatsKey, 'A-1');
+
+      const lease = await enter(browserA);
+
+      // 2 on-sale showtimes x 3 seats - 1 sold - 1 live lock (not 9 - 2 - 2)
+      expect(lease.remainingSeats).toBe(4);
+      expect(redis.evalKeys.some((keys) => keys.includes(`{${startedShowtimeId}}:locked-seats`)))
+        .toBe(false);
+    });
+
+    it('closes the waiting line once every showtime has started', async () => {
+      dbState.totalSeats = 0;
+      dbState.showtimeStartsAt = { [showtimeId]: new Date(T0.getTime() + minutes(20)) };
+      const waiting = await enter(browserA);
+      expect(waiting.state).toBe('WAITING');
+
+      // seats would be free now, but the only showtime starts
+      dbState.totalSeats = 5;
+      setNow(minutes(20));
+      const error = await captureRejection(
+        status(waiting.queueSessionId, browserA, waiting.admissionToken),
+      );
+
+      expect(error.getStatus()).toBe(403);
+      expect(error.message).toBe('이미 시작된 회차는 예매할 수 없습니다.');
+      expect(error.getResponse()).toMatchObject({ errorCode: 'NO_BOOKABLE_SHOWTIME' });
+      // the reconcile that ran with the poll admitted nobody
+      expect(await readRecord(waiting.queueSessionId)).toMatchObject({ state: 'WAITING' });
+      expect(await redis.scard(activeKey)).toBe(0);
+    });
+  });
+
+  describe('admission capacity (#89)', () => {
+    const browserC = { userId: 'user-c', refreshTokenFamilyId: 'family-c', deviceSlotId: 'family-c' };
+
+    it('keeps the active set within capacity when a direct admission overlaps a reconcile', async () => {
+      dbState.totalSeats = 0;
+      const a = await enter(browserA);
+      setNow(100);
+      const b = await enter(browserB);
+      setNow(200);
+      const c = await enter(browserC);
+      expect([a.state, b.state, c.state]).toEqual(['WAITING', 'WAITING', 'WAITING']);
+
+      dbState.totalSeats = 2;
+      setNow(5_000);
+      const internals = service as unknown as QueueServiceInternals;
+      const originalScard = redis.scard.bind(redis);
+      let interleaved = false;
+      redis.scard = async (key: string) => {
+        const count = await originalScard(key);
+        if (!interleaved && key === activeKey) {
+          interleaved = true;
+          // another instance admits the head of the line between the reconcile's
+          // SCARD and its admission batch
+          await internals.admitQueueSessionWithinCapacity(performanceId, a.queueSessionId);
+        }
+        return count;
+      };
+
+      await internals.reconcilePerformanceQueue(performanceId);
+      redis.scard = originalScard;
+
+      expect(interleaved).toBe(true);
+      expect(await redis.scard(activeKey)).toBe(2);
+      expect(await readRecord(a.queueSessionId)).toMatchObject({ state: 'ADMITTED' });
+      expect(await readRecord(b.queueSessionId)).toMatchObject({ state: 'ADMITTED' });
+      expect(await readRecord(c.queueSessionId)).toMatchObject({ state: 'WAITING' });
+      expect(await redis.zrank(waitingKey, c.queueSessionId)).toBe(0);
+    });
+  });
+
+  describe('remaining seats cache miss (#89)', () => {
+    it('computes the remaining seats once for concurrent cache misses', async () => {
+      dbState.totalSeats = 7;
+      const internals = service as unknown as QueueServiceInternals;
+      const fresh = vi.spyOn(service as never, 'calculateRemainingSeatsFresh');
+
+      const results = await Promise.all(
+        Array.from({ length: 8 }, () => internals.calculateRemainingSeats(performanceId)),
+      );
+
+      expect(results).toEqual(Array.from({ length: 8 }, () => 7));
+      expect(fresh).toHaveBeenCalledTimes(1);
+
+      // cached for 2 seconds, then the next miss computes again
+      await internals.calculateRemainingSeats(performanceId);
+      expect(fresh).toHaveBeenCalledTimes(1);
+      setNow(2_500);
+      await internals.calculateRemainingSeats(performanceId);
+      expect(fresh).toHaveBeenCalledTimes(2);
+    });
+
+    it('shares a failed computation and computes again on the next miss', async () => {
+      dbState.totalSeats = 4;
+      const internals = service as unknown as QueueServiceInternals;
+      const fresh = vi
+        .spyOn(service as never, 'calculateRemainingSeatsFresh')
+        .mockRejectedValueOnce(new Error('db down'));
+
+      const results = await Promise.allSettled(
+        Array.from({ length: 3 }, () => internals.calculateRemainingSeats(performanceId)),
+      );
+
+      expect(results.every((result) => result.status === 'rejected')).toBe(true);
+      expect(fresh).toHaveBeenCalledTimes(1);
+      await expect(internals.calculateRemainingSeats(performanceId)).resolves.toBe(4);
+      expect(fresh).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('slot return of the confirmed order (#4, #3)', () => {
+    it('returns the slot of the session the order was prepared under, not the confirming browser', async () => {
+      dbState.totalSeats = 10;
+      const orderSession = await enter(browserA);
+      // the same buyer confirms from another browser whose own admission passes
+      // the Redis fallback (e.g. after an in-app browser handoff)
+      const otherBrowser = {
+        userId: browserA.userId,
+        refreshTokenFamilyId: 'family-a2',
+        deviceSlotId: 'family-a2',
+      };
+      setNow(1_000);
+      const confirmingSession = await enter(otherBrowser);
+      expect(confirmingSession.state).toBe('ADMITTED');
+      dbState.orderBinding = {
+        tossOrderId: 'ORDER-1',
+        status: 'CONFIRMED',
+        queueSessionId: orderSession.queueSessionId,
+      };
+
+      await expect(service.releaseAdmissionForOrder('ORDER-1', browserA.userId)).resolves.toBe(true);
+
+      expect(await readRecord(orderSession.queueSessionId)).toMatchObject({ state: 'EXPIRED' });
+      expect(await redis.sismember(activeKey, orderSession.queueSessionId)).toBe(0);
+      expect(await readRecord(confirmingSession.queueSessionId)).toMatchObject({ state: 'ADMITTED' });
+      expect(await redis.sismember(activeKey, confirmingSession.queueSessionId)).toBe(1);
+    });
+
+    it('releases nothing without a confirmed order bound to a queue session, and never throws', async () => {
+      dbState.totalSeats = 10;
+      const lease = await enter(browserA);
+
+      dbState.orderBinding = {
+        tossOrderId: 'ORDER-1',
+        status: 'PENDING_PAYMENT',
+        queueSessionId: lease.queueSessionId,
+      };
+      await expect(service.releaseAdmissionForOrder('ORDER-1', browserA.userId)).resolves.toBe(false);
+      dbState.orderBinding = { tossOrderId: 'ORDER-1', status: 'CONFIRMED', queueSessionId: null };
+      await expect(service.releaseAdmissionForOrder('ORDER-1', browserA.userId)).resolves.toBe(false);
+      dbState.orderBinding = null;
+      await expect(service.releaseAdmissionForOrder('ORDER-1', browserA.userId)).resolves.toBe(false);
+      expect(await readRecord(lease.queueSessionId)).toMatchObject({ state: 'ADMITTED' });
+
+      const failing = new QueueService(
+        redis as never,
+        { select: () => { throw new Error('db down'); } } as never,
+        gateway as unknown as QueueGateway,
+      );
+      await expect(failing.releaseAdmissionForOrder('ORDER-1', browserA.userId)).resolves.toBe(false);
+    });
+  });
 });
 
 describe('QueueService on the local-development InMemoryRedis', () => {
@@ -1478,5 +2028,42 @@ describe('QueueService on the local-development InMemoryRedis', () => {
     await expect(service.releaseAdmissionAfterPurchase(lease.queueSessionId)).resolves.toBe(true);
     const reentry = await service.enterPerformanceQueue({ performanceId, identity: browser });
     expect(reentry.queueSessionId).not.toBe(lease.queueSessionId);
+  });
+
+  it('releases the reconcile lock so the next reconcile runs after the throttle interval (#89)', async () => {
+    vi.useFakeTimers();
+    try {
+      process.env['NODE_ENV'] = 'development';
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const config = { get: (_key: string, defaultValue?: string) => defaultValue ?? '' };
+      const redis = (redisProvider as unknown as {
+        useFactory: (configService: unknown) => { get: (key: string) => Promise<string | null> };
+      }).useFactory(config);
+      const service = new QueueService(
+        redis as never,
+        createQueueDb({
+          performanceId,
+          totalSeats: 1,
+          showtimeIds: [showtimeId],
+          soldCount: 0,
+          orderBinding: null,
+        }) as never,
+        createMockGateway() as unknown as QueueGateway,
+      );
+      const reconcile = vi
+        .spyOn(service as never, 'reconcilePerformanceQueue')
+        .mockResolvedValue(undefined as never);
+      const internals = service as unknown as QueueServiceInternals;
+
+      await internals.reconcilePerformanceQueueIfDue(performanceId);
+      expect(await redis.get(`{queue:${performanceId}}:reconcile-lock`)).toBeNull();
+
+      vi.advanceTimersByTime(1_100);
+      await internals.reconcilePerformanceQueueIfDue(performanceId);
+
+      expect(reconcile).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -112,10 +112,7 @@ export class ReservationController {
   @Post('payments/confirm')
   async confirmPayment(
     @Body(new ZodValidationPipe(confirmPaymentSchema)) body: ConfirmPaymentInput,
-    @Request() req: {
-      user: AuthenticatedReservationUser;
-      queueAdmission?: { queueSessionId?: string };
-    },
+    @Request() req: { user: AuthenticatedReservationUser },
     @Query('locale') locale?: string,
   ) {
     const reservation = await this.reservationService.confirmAndCreateReservation(
@@ -132,11 +129,14 @@ export class ReservationController {
     );
 
     // Return the queue slot as soon as the purchase is confirmed instead of
-    // holding it until the active/recovery window ends. Best effort: the
-    // release never throws, so it cannot turn a confirmed purchase into an error.
+    // holding it until the active/recovery window ends. The slot is the one of
+    // the queue session the order was prepared under, not the session of this
+    // browser: a confirm allowed through the Redis fallback carries an
+    // unrelated session that must keep its admission. Best effort: the release
+    // never throws, so it cannot turn a confirmed purchase into an error.
     if (reservation.status === 'CONFIRMED') {
       await this.queueService
-        ?.releaseAdmissionAfterPurchase(req.queueAdmission?.queueSessionId)
+        ?.releaseAdmissionForOrder(body.orderId, req.user.id)
         .catch(() => false);
     }
 

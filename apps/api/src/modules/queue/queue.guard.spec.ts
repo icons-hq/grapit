@@ -253,6 +253,54 @@ describe('AdmissionGuard', () => {
     expect(queueService.assertAdmissionForShowtime).not.toHaveBeenCalled();
   });
 
+  it.each([
+    '/api/v1/Payments/Confirm',
+    '/api/v1/PAYMENTS/confirm/',
+    '/api/v1/payments/confirm/?locale=en',
+  ])('treats every routed spelling of payment confirm as the order-bound path (%s)', async (originalUrl) => {
+    const context = createExecutionContext({
+      // the admission cookie expired; only the order binding can authorise
+      cookies: { refreshToken: 'refresh-cookie' },
+      body: { orderId: 'ORDER-1', showtimeId: '550e8400-e29b-41d4-a716-446655440000' },
+      originalUrl,
+    });
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(queueService.assertAdmissionForOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ orderId: 'ORDER-1', admissionToken: undefined }),
+    );
+    expect(queueService.assertAdmissionForShowtime).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [{ originalUrl: '/api/v1/Reservations/Prepare' }],
+    [{ originalUrl: '/api/v1/reservations/prepare/' }],
+    [{ originalUrl: '/api/v1/RESERVATIONS/PREPARE?x=1' }],
+    // Express sets the dispatched route template; it wins over the raw URL
+    [{ originalUrl: '/api/v1/Reservations/Prepare', route: { path: '/api/v1/reservations/prepare' } }],
+  ])('validates every routed spelling of reservation prepare as prepare-reservation (%o)', async (request) => {
+    const context = createExecutionContext(request);
+
+    await expect(guard.canActivate(context)).resolves.toBe(true);
+    expect(queueService.assertAdmissionForShowtime).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'prepare-reservation' }),
+    );
+  });
+
+  it('keeps seat lock as lock-seat and does not take paths that only contain the suffix', async () => {
+    for (const originalUrl of [
+      '/api/v1/Booking/Seats/Lock/',
+      '/api/v1/reservations/prepare-preview',
+    ]) {
+      const context = createExecutionContext({ originalUrl });
+      await expect(guard.canActivate(context)).resolves.toBe(true);
+    }
+
+    expect(queueService.assertAdmissionForShowtime.mock.calls.map(([params]) => params.action))
+      .toEqual(['lock-seat', 'lock-seat']);
+    expect(queueService.assertAdmissionForOrder).not.toHaveBeenCalled();
+  });
+
   it('locks the guard source and controller wiring to cookie-only admission enforcement', async () => {
     const guardSource = await readFile(
       resolve(__dirname, 'guards/admission.guard.ts'),

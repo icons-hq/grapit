@@ -340,6 +340,77 @@ describe('QueueService Redis scripts — Valkey Cluster mode', () => {
     expect(lease).toMatchObject({ state: 'ADMITTED', remainingSeats: 2 });
   });
 
+  it('rotates only the token of a retained EXPIRED session, and only when asked (D2)', async () => {
+    dbState.totalSeats = 10;
+    const lease = await service.enterPerformanceQueue({ performanceId, identity: browserA });
+    await expect(service.releaseAdmissionAfterPurchase(lease.queueSessionId)).resolves.toBe(true);
+    const expired = await readRecord(lease.queueSessionId);
+    const ttlBefore = await cluster.pttl(sessionKey(lease.queueSessionId));
+    const touch = (allowExpired: string) => cluster.eval(
+      QUEUE_SESSION_TRANSITION_LUA,
+      4,
+      sessionKey(lease.queueSessionId),
+      waitingKey,
+      activeKey,
+      `{queue:${performanceId}}:identity:user-a:family-a:family-a`,
+      lease.queueSessionId,
+      'touch',
+      'recovery-hash',
+      '',
+      '',
+      '0',
+      allowExpired,
+    ) as Promise<[number, string]>;
+
+    await expect(touch('')).resolves.toEqual(expect.arrayContaining([0, 'EXPIRED']));
+    expect(await readRecord(lease.queueSessionId)).toEqual(expired);
+
+    const [applied, state] = await touch('1');
+    expect([applied, state]).toEqual([1, 'EXPIRED']);
+    expect(await readRecord(lease.queueSessionId)).toEqual({
+      ...expired,
+      admissionTokenHash: 'recovery-hash',
+    });
+    expect(await cluster.pttl(sessionKey(lease.queueSessionId))).toBeLessThanOrEqual(ttlBefore);
+    expect(await cluster.sismember(activeKey, lease.queueSessionId)).toBe(0);
+    expect(await cluster.zscore(waitingKey, lease.queueSessionId)).toBeNull();
+  });
+
+  it('keeps a reconcile batch within capacity when another instance admits in between (#89)', async () => {
+    const browserC = { userId: 'user-c', refreshTokenFamilyId: 'family-c', deviceSlotId: 'family-c' };
+    const a = await service.ensureQueueSession({ performanceId, identity: browserA });
+    const b = await service.ensureQueueSession({ performanceId, identity: browserB });
+    const c = await service.ensureQueueSession({ performanceId, identity: browserC });
+    dbState.totalSeats = 2;
+    const internals = service as unknown as {
+      reconcilePerformanceQueue: (id: string) => Promise<void>;
+      admitQueueSessionWithinCapacity: (performanceId: string, id: string) => Promise<void>;
+    };
+    const originalScard = cluster.scard.bind(cluster);
+    let interleaved = false;
+    (cluster as unknown as { scard: (key: string) => Promise<number> }).scard = async (key: string) => {
+      const count = await originalScard(key);
+      if (!interleaved && key === activeKey) {
+        interleaved = true;
+        await internals.admitQueueSessionWithinCapacity(performanceId, a.queueSessionId);
+      }
+      return count;
+    };
+
+    try {
+      await internals.reconcilePerformanceQueue(performanceId);
+    } finally {
+      // drop the own-property override; the prototype command is back
+      delete (cluster as unknown as { scard?: unknown }).scard;
+    }
+
+    expect(interleaved).toBe(true);
+    expect(await cluster.scard(activeKey)).toBe(2);
+    expect(await readRecord(b.queueSessionId)).toMatchObject({ state: 'ADMITTED' });
+    expect(await readRecord(c.queueSessionId)).toMatchObject({ state: 'WAITING' });
+    expect(await cluster.zrank(waitingKey, c.queueSessionId)).toBe(0);
+  });
+
   it('expires only the authority window it inspected', async () => {
     dbState.totalSeats = 10;
     const lease = await service.enterPerformanceQueue({ performanceId, identity: browserA });

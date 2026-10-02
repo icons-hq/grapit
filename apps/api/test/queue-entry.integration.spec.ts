@@ -3,19 +3,29 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { GenericContainer, type StartedTestContainer } from 'testcontainers';
 import IORedis from 'ioredis';
 import { HttpException } from '@nestjs/common';
+import { eq } from 'drizzle-orm';
 import { drizzle, type NodePgDatabase } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { Pool } from 'pg';
 import { randomUUID } from 'node:crypto';
 import * as schema from '../src/database/schema/index.js';
-import { bookingPolicies, performances, showtimes } from '../src/database/schema/index.js';
+import {
+  bookingPolicies,
+  performances,
+  reservations,
+  seatInventories,
+  seatMaps,
+  showtimes,
+  users,
+} from '../src/database/schema/index.js';
 import { QueueService } from '../src/modules/queue/queue.service.js';
 import type { QueueGateway } from '../src/modules/queue/queue.gateway.js';
 
 /**
  * Queue entry gate against real Postgres 16 and Valkey 8.
- * Covers the SQL sellable-showtime cutoff (C1) and that rejected entries never
- * create queue keys.
+ * Covers the SQL sellable-showtime cutoff (C1), that rejected entries never
+ * create queue keys, remaining seats over the showtimes on sale, and re-entry
+ * after the active window (D2) with the real order-binding query.
  *
  * 실행: pnpm --filter @grabit/api exec vitest run --config vitest.integration.config.ts test/queue-entry.integration.spec.ts
  */
@@ -81,6 +91,8 @@ describe('QueueService entry gate (integration)', () => {
   });
 
   beforeEach(async () => {
+    await db.delete(reservations);
+    await db.delete(users);
     await db.delete(showtimes);
     await db.delete(bookingPolicies);
     await db.delete(performances);
@@ -220,5 +232,112 @@ describe('QueueService entry gate (integration)', () => {
     // The estimate keeps no per-session state in Valkey.
     const keys = await queueKeysFor(performanceId);
     expect(keys.some((key) => key.includes(':eta-origin:'))).toBe(false);
+  });
+
+  async function seedSeatMap(performanceId: string, totalSeats: number): Promise<void> {
+    await db.insert(seatMaps).values({
+      performanceId,
+      svgUrl: 'https://example.test/seat-map.svg',
+      totalSeats,
+    });
+  }
+
+  it('counts only the seats of showtimes still on sale (C1)', async () => {
+    const performanceId = await seedPerformance({
+      showtimeOffsetsMs: [-3_600_000, 3_600_000],
+    });
+    await seedSeatMap(performanceId, 2);
+    const rows = await db.select().from(showtimes).where(eq(showtimes.performanceId, performanceId));
+    const upcoming = rows.find((row) => row.dateTime.getTime() > Date.now());
+    // The upcoming showtime is sold out; the started one still has 2 free seats.
+    await db.insert(seatInventories).values(['A-1', 'A-2'].map((seatKey) => ({
+      showtimeId: upcoming!.id,
+      seatId: seatKey,
+      seatKey,
+      status: 'sold' as const,
+    })));
+
+    const result = await service.enterPerformanceQueue({ performanceId, identity });
+
+    expect(result).toMatchObject({
+      state: 'WAITING',
+      remainingSeats: 0,
+      etaUnavailable: true,
+    });
+  });
+
+  it('keeps only payment recovery after the active window while a bound pending order is payable, then re-queues (D2)', async () => {
+    const performanceId = await seedPerformance({ showtimeOffsetsMs: [86_400_000] });
+    await seedSeatMap(performanceId, 10);
+    const [showtime] = await db.select().from(showtimes)
+      .where(eq(showtimes.performanceId, performanceId));
+    const [buyer] = await db.insert(users).values({
+      email: `${randomUUID()}@example.test`,
+      name: 'Buyer',
+      phone: '+821012345678',
+      gender: 'unspecified',
+      birthDate: '1990-01-01',
+    }).returning();
+    const buyerIdentity = {
+      userId: buyer!.id,
+      refreshTokenFamilyId: 'family-d2',
+      deviceSlotId: 'family-d2',
+    };
+
+    const admitted = await service.enterPerformanceQueue({ performanceId, identity: buyerIdentity });
+    expect(admitted.state).toBe('ADMITTED');
+
+    // The active window ended a minute ago: rewrite only that field of the
+    // stored record (Valkey keeps the real TTL).
+    const sessionKey = `{queue:${performanceId}}:session:${admitted.queueSessionId}`;
+    const record = JSON.parse((await redis.get(sessionKey))!) as Record<string, string>;
+    const activeUntilAt = new Date(Date.now() - 60_000).toISOString();
+    await redis.set(sessionKey, JSON.stringify({ ...record, activeUntilAt }), 'KEEPTTL');
+
+    // A pending order prepared under this admission can still be paid.
+    const orderId = `GRP-${randomUUID()}`;
+    const [order] = await db.insert(reservations).values({
+      userId: buyer!.id,
+      showtimeId: showtime!.id,
+      reservationNumber: randomUUID().slice(0, 28),
+      tossOrderId: orderId,
+      status: 'PENDING_PAYMENT',
+      totalAmount: 52_000,
+      cancelDeadline: new Date(Date.now() + 86_400_000),
+      queueSessionId: admitted.queueSessionId,
+      refreshFamilyId: buyerIdentity.refreshTokenFamilyId,
+      deviceSlotKey: buyerIdentity.deviceSlotId,
+      admittedAt: new Date(record['admittedAt']!),
+      admissionActiveUntilAt: new Date(activeUntilAt),
+      reentryGraceUntilAt: new Date(record['reentryGraceUntilAt']!),
+      paymentDeadlineAt: new Date(Date.now() + 5 * 60_000),
+    }).returning();
+
+    const recovery = await service.enterPerformanceQueue({
+      performanceId,
+      identity: buyerIdentity,
+      presentedAdmissionToken: admitted.admissionToken,
+    });
+    expect(recovery).toMatchObject({
+      queueSessionId: admitted.queueSessionId,
+      state: 'PAYMENT_RECOVERY',
+      autoEnter: false,
+      recoveryOrderId: orderId,
+      activeUntilAt,
+    });
+
+    // The buyer cancels the order: the next entry is a new queue entry.
+    await db.update(reservations).set({ status: 'CANCELLED' }).where(eq(reservations.id, order!.id));
+    const rejoin = await service.enterPerformanceQueue({
+      performanceId,
+      identity: buyerIdentity,
+      presentedAdmissionToken: recovery.admissionToken,
+    });
+
+    expect(rejoin.queueSessionId).not.toBe(admitted.queueSessionId);
+    expect(rejoin.state).not.toBe('PAYMENT_RECOVERY');
+    expect(rejoin).not.toHaveProperty('recoveryOrderId');
+    expect(await redis.get(sessionKey)).toBeNull();
+    expect(await redis.sismember(`{queue:${performanceId}}:active`, admitted.queueSessionId)).toBe(0);
   });
 });
