@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { DEFAULT_PERFORMANCE_BOOKING_POLICY } from '@grabit/shared';
 import {
   and,
   getTableName,
@@ -82,7 +83,34 @@ export interface AccountMergeApplyResult {
   mergedGroups: number;
   mergedSourceUsers: number;
   rowChanges: AccountMergeReportRowChange[];
+  ticketLimitWarnings: AccountMergeTicketLimitWarning[];
 }
+
+/**
+ * A merge target that now holds more active tickets for one performance than
+ * the per-buyer limit allows. The merge keeps every purchase; this tells the
+ * operator which buyer now sits above the limit after combining accounts.
+ */
+export interface AccountMergeTicketLimitWarning {
+  groupKey: string;
+  targetUserId: string;
+  performanceId: string;
+  activeTicketCount: number;
+  maxTicketsPerUser: number;
+}
+
+/**
+ * Live sales signals checked before apply. Merging changes Reservation
+ * ownership and signs the source accounts out, so it must not run while
+ * buyers are mid-checkout or a sale is about to open.
+ */
+export interface AccountMergeSalesActivity {
+  activeCheckoutReservations: number;
+  openOrOpeningShowtimes: number;
+  lookaheadHours: number;
+}
+
+export const ACCOUNT_MERGE_SALES_LOOKAHEAD_HOURS = 24;
 
 export interface AccountMergeReportRowChange {
   tableName: string;
@@ -308,10 +336,13 @@ export class AccountMergeService {
       const batchId = String(batch.id);
       const rowChanges: AccountMergeReportRowChange[] = [];
 
+      const ticketLimitWarnings: AccountMergeTicketLimitWarning[] = [];
+
       for (const group of groups) {
         rowChanges.push(
           ...(await this.applyGroup(tx, batchId, group, now, options.operatorUserId)),
         );
+        ticketLimitWarnings.push(...(await this.findTicketLimitWarnings(tx, group)));
       }
 
       return {
@@ -319,8 +350,62 @@ export class AccountMergeService {
         mergedGroups: groups.length,
         mergedSourceUsers,
         rowChanges,
+        ticketLimitWarnings,
       };
     });
+  }
+
+  /**
+   * Fails before any write when an allowlist entry can never pass
+   * transaction revalidation, so the operator fixes the allowlist instead of
+   * losing every safe group in the same batch to a rollback.
+   */
+  validateManualAllowlist(
+    dryRun: AccountMergeDryRunResult,
+    manualAllowlist: ManualMergeAllowlistEntry[],
+  ): void {
+    buildManualApplyGroups(dryRun.manualReviewGroups, manualAllowlist);
+  }
+
+  async salesActivity(): Promise<AccountMergeSalesActivity> {
+    const [row] = normalizeRows<{
+      activeCheckoutReservations: number;
+      openOrOpeningShowtimes: number;
+    }>(
+      await this.db.execute(sql`
+        select
+          (
+            select count(*)::int
+            from reservations
+            where status = 'PENDING_PAYMENT'
+              and (
+                payment_deadline_at > now()
+                or (payment_deadline_at is null and updated_at > now() - interval '1 hour')
+              )
+          ) as "activeCheckoutReservations",
+          (
+            select count(*)::int
+            from showtimes s
+            join performances p on p.id = s.performance_id
+            left join booking_policies bp on bp.performance_id = s.performance_id
+            where p.publish_state = 'published'
+              and p.status <> 'ended'
+              and s.date_time > now()
+              and (
+                (
+                  bp.booking_starts_at is not null
+                  and bp.booking_starts_at <= now() + make_interval(hours => ${ACCOUNT_MERGE_SALES_LOOKAHEAD_HOURS})
+                )
+                or (bp.booking_starts_at is null and p.status <> 'upcoming')
+              )
+          ) as "openOrOpeningShowtimes"
+      `),
+    );
+    return {
+      activeCheckoutReservations: Number(row?.activeCheckoutReservations ?? 0),
+      openOrOpeningShowtimes: Number(row?.openOrOpeningShowtimes ?? 0),
+      lookaheadHours: ACCOUNT_MERGE_SALES_LOOKAHEAD_HOURS,
+    };
   }
 
   async verify(
@@ -564,6 +649,18 @@ export class AccountMergeService {
       reservationCounts[row.id] ??= { total: 0, confirmed: 0 };
     }
 
+    // Audit #104: a PENDING_PAYMENT reservation anywhere in the group means a
+    // checkout (sync confirm or webhook DONE) can still finish against the
+    // pre-merge owner and its ticket-limit count. The users rows are locked
+    // FOR UPDATE above, which also blocks new reservation inserts for these
+    // buyers (FK key-share lock) until this transaction ends, so checking the
+    // locked reservation rows is enough to keep in-flight payments out.
+    if (
+      userIds.some((userId) => (reservationCounts[userId]?.pendingPayment ?? 0) > 0)
+    ) {
+      throw new Error('ACCOUNT_MERGE_GROUP_REVALIDATION_FAILED:pending_payment');
+    }
+
     const classification = classifyDuplicateGroup({
       groupKey: group.groupKey,
       users: usersInGroup,
@@ -658,6 +755,46 @@ export class AccountMergeService {
         afterSnapshot,
       }),
     );
+  }
+
+  private async findTicketLimitWarnings(
+    tx: AccountMergeTx,
+    group: MergeGroup,
+  ): Promise<AccountMergeTicketLimitWarning[]> {
+    // Same active-ticket definition as database/ticket-limit.ts.
+    const rows = normalizeRows<{
+      performanceId: string;
+      activeTicketCount: number;
+      maxTicketsPerUser: number;
+    }>(await tx.execute(sql`
+      select
+        ticket_showtimes.performance_id::text as "performanceId",
+        count(*)::int as "activeTicketCount",
+        coalesce(
+          bp.max_tickets_per_user,
+          ${DEFAULT_PERFORMANCE_BOOKING_POLICY.maxTicketsPerUser}
+        )::int as "maxTicketsPerUser"
+      from ticket_items ti
+      inner join reservations r on r.id = ti.reservation_id
+      inner join showtimes ticket_showtimes on ticket_showtimes.id = ti.showtime_id
+      left join booking_policies bp on bp.performance_id = ticket_showtimes.performance_id
+      where r.user_id = ${group.targetUserId}::uuid
+        and r.status = 'CONFIRMED'
+        and ti.status in ('active', 'cancellation_pending')
+      group by ticket_showtimes.performance_id, bp.max_tickets_per_user
+      having count(*) > coalesce(
+        bp.max_tickets_per_user,
+        ${DEFAULT_PERFORMANCE_BOOKING_POLICY.maxTicketsPerUser}
+      )
+      order by 1
+    `));
+    return rows.map((row) => ({
+      groupKey: group.groupKey,
+      targetUserId: group.targetUserId,
+      performanceId: String(row.performanceId),
+      activeTicketCount: Number(row.activeTicketCount),
+      maxTicketsPerUser: Number(row.maxTicketsPerUser),
+    }));
   }
 
   private async userIdsFromQuery(query: SQLWrapper): Promise<string[]> {
@@ -788,6 +925,15 @@ function buildManualApplyGroups(
     const reviewGroup = manualReviewByKey.get(entry.groupKey);
     if (!reviewGroup) {
       throw new Error('ACCOUNT_MERGE_ALLOWLIST_GROUP_NOT_FOUND');
+    }
+    // Audit #105: these groups always fail transaction revalidation
+    // (unverified phone evidence / an in-flight payment), which would roll
+    // back every safe group in the batch. Reject them before any write.
+    if (reviewGroup.reason === 'identity_evidence_incomplete') {
+      throw new Error('ACCOUNT_MERGE_ALLOWLIST_IDENTITY_EVIDENCE_INCOMPLETE');
+    }
+    if (reviewGroup.reason === 'source_pending_payment_reservation') {
+      throw new Error('ACCOUNT_MERGE_ALLOWLIST_PENDING_PAYMENT');
     }
 
     const sourceUserIds = uniqueSorted(entry.sourceUserIds);

@@ -776,10 +776,254 @@ describe('AccountMergeService', () => {
     const service = new AccountMergeService(db as never);
 
     await expect(service.apply(applyOptions())).rejects.toThrow(
-      'ACCOUNT_MERGE_GROUP_REVALIDATION_FAILED:classification_changed',
+      'ACCOUNT_MERGE_GROUP_REVALIDATION_FAILED:pending_payment',
     );
     expect(tx.updateCalls).toEqual([]);
     expect(tx.insertedRowChanges).toEqual([]);
+  });
+
+  it('aborts a safe merge when the target is mid-checkout so its confirm cannot see moved tickets', async () => {
+    const { db, tx } = createRecordingDb({
+      executeRows: [
+        candidateRows(),
+        safeRevalidationRows(),
+        [],
+        [
+          {
+            userId: 'source-safe',
+            totalReservations: 0,
+            confirmedReservations: 0,
+            pendingPaymentReservations: 0,
+          },
+          {
+            userId: 'target-safe',
+            totalReservations: 3,
+            confirmedReservations: 1,
+            pendingPaymentReservations: 1,
+          },
+        ],
+      ],
+      tableRows: rowsForSource(),
+    });
+    const service = new AccountMergeService(db as never);
+
+    await expect(service.apply(applyOptions())).rejects.toThrow(
+      'ACCOUNT_MERGE_GROUP_REVALIDATION_FAILED:pending_payment',
+    );
+    expect(tx.updateCalls).toEqual([]);
+    expect(tx.insertedRowChanges).toEqual([]);
+  });
+
+  it('aborts a manual allowlist merge when any group member owns a pending payment', async () => {
+    const manualAllowlist: ManualMergeAllowlistEntry[] = [
+      {
+        groupKey: '821055556666|1991-02-03|kim',
+        targetUserId: 'manual-a',
+        sourceUserIds: ['manual-b'],
+        reason: 'operator reviewed duplicate social signup',
+      },
+    ];
+    const { db, tx } = createRecordingDb({
+      executeRows: [
+        manualCandidateRows(),
+        manualRevalidationRows(),
+        [],
+        [
+          {
+            userId: 'manual-b',
+            totalReservations: 2,
+            confirmedReservations: 1,
+            pendingPaymentReservations: 1,
+          },
+          {
+            userId: 'manual-a',
+            totalReservations: 1,
+            confirmedReservations: 1,
+            pendingPaymentReservations: 0,
+          },
+        ],
+      ],
+      tableRows: rowsForSource('manual-b'),
+    });
+    const service = new AccountMergeService(db as never);
+
+    await expect(
+      service.apply(
+        applyOptions({
+          dryRunHash: manualDryRunHash(),
+          allowlistHash: hashJson(manualAllowlist),
+          manualAllowlist,
+        }),
+      ),
+    ).rejects.toThrow('ACCOUNT_MERGE_GROUP_REVALIDATION_FAILED:pending_payment');
+    expect(tx.updateCalls).toEqual([]);
+  });
+
+  it('rejects an allowlisted identity-evidence-incomplete group before the transaction so safe groups are not rolled back', async () => {
+    const incompleteRows = [
+      {
+        groupKey: '821077778888|1990-01-01|park',
+        id: 'park-verified',
+        name: 'Park',
+        phone: '+82 10-7777-8888',
+        birthDate: '1990-01-01',
+        isPhoneVerified: true,
+        accountStatus: 'active',
+        totalReservations: 1,
+        confirmedReservations: 1,
+        pendingPaymentReservations: 0,
+      },
+      {
+        groupKey: '821077778888|1990-01-01|park',
+        id: 'park-unverified',
+        name: 'Park',
+        phone: '+82 10-7777-8888',
+        birthDate: '1990-01-01',
+        isPhoneVerified: false,
+        accountStatus: 'active',
+        totalReservations: 0,
+        confirmedReservations: 0,
+        pendingPaymentReservations: 0,
+      },
+    ];
+    const rows = [...candidateRows().filter((row) => row.name === 'Hong'), ...incompleteRows];
+    const manualAllowlist: ManualMergeAllowlistEntry[] = [
+      {
+        groupKey: '821077778888|1990-01-01|park',
+        targetUserId: 'park-verified',
+        sourceUserIds: ['park-unverified'],
+        reason: 'operator reviewed an unverified duplicate',
+      },
+    ];
+    const { db, tx } = createRecordingDb({ executeRows: [rows, rows] });
+    const service = new AccountMergeService(db as never);
+    const dryRun = await service.dryRun({});
+
+    expect(dryRun.manualReviewGroups).toEqual([
+      expect.objectContaining({ reason: 'identity_evidence_incomplete' }),
+    ]);
+    expect(() => service.validateManualAllowlist(dryRun, manualAllowlist)).toThrow(
+      'ACCOUNT_MERGE_ALLOWLIST_IDENTITY_EVIDENCE_INCOMPLETE',
+    );
+    await expect(
+      service.apply(
+        applyOptions({
+          dryRunHash: hashAccountMergeDryRun(dryRun),
+          allowlistHash: hashJson(manualAllowlist),
+          manualAllowlist,
+        }),
+      ),
+    ).rejects.toThrow('ACCOUNT_MERGE_ALLOWLIST_IDENTITY_EVIDENCE_INCOMPLETE');
+    expect(db.transaction).not.toHaveBeenCalled();
+    expect(tx.insertedBatches).toEqual([]);
+  });
+
+  it('rejects an allowlisted source-pending-payment group before the transaction', async () => {
+    const pendingRows = [
+      {
+        groupKey: '821033334444|1988-08-08|choi',
+        id: 'choi-target',
+        name: 'Choi',
+        phone: '+82 10-3333-4444',
+        birthDate: '1988-08-08',
+        isPhoneVerified: true,
+        accountStatus: 'active',
+        totalReservations: 1,
+        confirmedReservations: 1,
+        pendingPaymentReservations: 0,
+      },
+      {
+        groupKey: '821033334444|1988-08-08|choi',
+        id: 'choi-source',
+        name: 'Choi',
+        phone: '+82 10-3333-4444',
+        birthDate: '1988-08-08',
+        isPhoneVerified: true,
+        accountStatus: 'active',
+        totalReservations: 1,
+        confirmedReservations: 0,
+        pendingPaymentReservations: 1,
+      },
+    ];
+    const manualAllowlist: ManualMergeAllowlistEntry[] = [
+      {
+        groupKey: '821033334444|1988-08-08|choi',
+        targetUserId: 'choi-target',
+        sourceUserIds: ['choi-source'],
+        reason: 'operator reviewed duplicate checkout account',
+      },
+    ];
+    const { db } = createRecordingDb({ executeRows: [pendingRows, pendingRows] });
+    const service = new AccountMergeService(db as never);
+    const dryRun = await service.dryRun({});
+
+    expect(dryRun.manualReviewGroups).toEqual([
+      expect.objectContaining({ reason: 'source_pending_payment_reservation' }),
+    ]);
+    await expect(
+      service.apply(
+        applyOptions({
+          dryRunHash: hashAccountMergeDryRun(dryRun),
+          allowlistHash: hashJson(manualAllowlist),
+          manualAllowlist,
+        }),
+      ),
+    ).rejects.toThrow('ACCOUNT_MERGE_ALLOWLIST_PENDING_PAYMENT');
+    expect(db.transaction).not.toHaveBeenCalled();
+  });
+
+  it('reports merge targets that now exceed the per-buyer ticket limit', async () => {
+    const manualAllowlist: ManualMergeAllowlistEntry[] = [
+      {
+        groupKey: '821055556666|1991-02-03|kim',
+        targetUserId: 'manual-a',
+        sourceUserIds: ['manual-b'],
+        reason: 'operator reviewed duplicate social signup',
+      },
+    ];
+    const { db, tx } = createRecordingDb({
+      executeRows: [
+        manualCandidateRows(),
+        manualRevalidationRows(),
+        [],
+        manualReservationCountRows(),
+        [{ performanceId: 'performance-1', activeTicketCount: 2, maxTicketsPerUser: 1 }],
+      ],
+      tableRows: rowsForSource('manual-b'),
+    });
+    const service = new AccountMergeService(db as never);
+
+    const result = await service.apply(
+      applyOptions({
+        dryRunHash: manualDryRunHash(),
+        allowlistHash: hashJson(manualAllowlist),
+        manualAllowlist,
+      }),
+    );
+
+    expect(result.ticketLimitWarnings).toEqual([
+      {
+        groupKey: '821055556666|1991-02-03|kim',
+        targetUserId: 'manual-a',
+        performanceId: 'performance-1',
+        activeTicketCount: 2,
+        maxTicketsPerUser: 1,
+      },
+    ]);
+    expect(tx.execute).toHaveBeenCalledTimes(4);
+  });
+
+  it('reads active checkout and open-sale counts for the CLI sales gate', async () => {
+    const { db } = createRecordingDb({
+      executeRows: [[{ activeCheckoutReservations: 2, openOrOpeningShowtimes: 1 }]],
+    });
+    const service = new AccountMergeService(db as never);
+
+    await expect(service.salesActivity()).resolves.toEqual({
+      activeCheckoutReservations: 2,
+      openOrOpeningShowtimes: 1,
+      lookaheadHours: 24,
+    });
   });
 
   it('rejects verify when the batch does not exist', async () => {
