@@ -1057,6 +1057,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     const sync = new ReservationFinalizationService(db, { cancelPayment: cancel } as never, {
       acquirePaymentConfirmLock: async () => true, refreshPaymentConfirmLock: async () => true,
       releasePaymentConfirmLock: async () => {}, extendOwnedSeatLocks: async () => {},
+      markPaymentConfirmAttempted: async () => {},
       assertOwnedSeatLocks: async () => {}, consumeOwnedSeatLocks: async () => ({ consumedSeatIds: [] }),
     } as never, { broadcastSeatUpdate: vi.fn() } as never, qr);
     await expect(sync.confirmAndCreateReservation({ orderId: r.tossOrderId!, paymentKey: payload.data.paymentKey, amount: 52000 }, f.userId))

@@ -51,6 +51,32 @@ export interface TossSettlementRow {
 
 const TOSS_SETTLEMENT_PAGE_SIZE = 5_000;
 
+export const TOSS_TRANSACTION_PAGE_SIZE = 5_000;
+/** Toss documents transaction lookup as taking up to 60 seconds. */
+export const TOSS_TRANSACTION_LOOKUP_TIMEOUT_MS = 65_000;
+
+export type TossSecretKeyScope = NonNullable<TossPaymentRequestOptions['secretKeyScope']>;
+
+export interface TossTransactionQueryOptions extends TossPaymentRequestOptions {
+  startDate: string;
+  endDate: string;
+  startingAfter?: string;
+  limit?: number;
+  /** A caller with its own time budget may shorten it; defaults to the documented maximum. */
+  timeoutMs?: number;
+}
+
+export interface TossTransactionRow {
+  transactionKey: string;
+  paymentKey?: string;
+  orderId?: string;
+  status?: string;
+  transactionAt?: string;
+  method?: string | null;
+  currency?: string;
+  amount?: number;
+}
+
 export interface TossPaymentCancelOptions extends TossPaymentRequestOptions {
   cancelAmount?: number;
   currency?: string;
@@ -290,6 +316,68 @@ export class TossPaymentsClient {
 
     // TODO: zod 스키마로 런타임 검증 추가 (현재는 타입 단언만 수행)
     return data as TossPaymentResponse;
+  }
+
+  /**
+   * One scope per distinct configured secret key, i.e. per Toss MID this server can
+   * approve payments with. Proving that an order has no transaction needs all of them,
+   * because the MID a checkout used depends on the widget variant and confirm scope.
+   * A missing (or, for overseas card, non-widget) key cannot approve anything.
+   */
+  getTransactionLookupScopes(): TossSecretKeyScope[] {
+    const scopes: TossSecretKeyScope[] = [];
+    const seenKeys = new Set<string>();
+    const add = (scope: TossSecretKeyScope, key: string) => {
+      const normalized = key.trim();
+      if (!normalized || seenKeys.has(normalized)) {
+        return;
+      }
+      seenKeys.add(normalized);
+      scopes.push(scope);
+    };
+
+    add('default', this.secretKey);
+    if (this.isWidgetSecretKey(this.overseasCardSecretKey)) {
+      add('overseas-card', this.overseasCardSecretKey);
+    }
+    add('foreign-easy-pay', this.foreignEasyPaySecretKey);
+    return scopes;
+  }
+
+  /**
+   * Transaction lookup (GET /v1/transactions) is in the widget secret key scope, unlike
+   * order-ID lookup. Dates are KST `yyyy-MM-dd'T'HH:mm:ss`. Returns one page.
+   */
+  async queryTransactions(
+    options: TossTransactionQueryOptions,
+  ): Promise<TossTransactionRow[]> {
+    const params = new URLSearchParams({
+      startDate: options.startDate,
+      endDate: options.endDate,
+      limit: String(options.limit ?? TOSS_TRANSACTION_PAGE_SIZE),
+    });
+    if (options.startingAfter) {
+      params.set('startingAfter', options.startingAfter);
+    }
+
+    const response = await fetch(`${this.baseUrl}/transactions?${params.toString()}`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(options.timeoutMs ?? TOSS_TRANSACTION_LOOKUP_TIMEOUT_MS),
+      headers: {
+        Authorization: this.getAuthHeader(options.secretKeyScope),
+      },
+    });
+
+    const data: unknown = await response.json();
+
+    if (!response.ok) {
+      throw this.toPaymentError(data, '거래 내역 조회에 실패했습니다');
+    }
+    if (!Array.isArray(data)) {
+      throw new TossPaymentError('INVALID_TRANSACTION_RESPONSE', '거래 응답 형식을 확인할 수 없습니다');
+    }
+
+    return data as TossTransactionRow[];
   }
 
   async querySettlements(

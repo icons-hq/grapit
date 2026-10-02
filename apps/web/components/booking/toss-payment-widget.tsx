@@ -417,6 +417,27 @@ function appendPaymentDeadlineReturnParam(
   return url.toString();
 }
 
+/** The HTTP status of an API error, or null when no response arrived. */
+function getHttpStatus(error: unknown): number | null {
+  const statusCode = (error as { statusCode?: unknown } | null)?.statusCode;
+  return typeof statusCode === 'number' ? statusCode : null;
+}
+
+/**
+ * Best effort: the server accepts only a fresh, merchant-confirmed handoff with no
+ * payment, a free confirm lease and no confirm attempt. Any refusal leaves the order
+ * in status review.
+ */
+async function releaseTossPaymentHandoff(orderId: string): Promise<void> {
+  try {
+    await apiClient.post('/api/v1/payments/branch/release', { orderId }, {
+      showErrorToast: false,
+    });
+  } catch {
+    // Recovery lookup decides what the buyer sees next.
+  }
+}
+
 function resolveInitialPaymentMethodSelection(_variantKey: string): PaymentMethodSelection {
   return resolvePaymentMethodSelection('CARD', _variantKey);
 }
@@ -574,6 +595,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
   ) {
     const locale = resolveVisibleCopyLocale(useLocale());
     const widgetCopy = getVisibleCopy(locale).bookingExtra.widget;
+    const confirmCopy = getVisibleCopy(locale).bookingExtra.confirm;
     const checkoutCopy = getCheckoutCopy(locale);
     const paymentWidgetVariantKeys = resolvePaymentWidgetVariantKeys();
     const [paymentWidgetVariantKey, setPaymentWidgetVariantKey] = useState(
@@ -593,6 +615,8 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
     );
     const paymentWidgetInstanceRef = useRef<PaymentMethodWidget | null>(null);
     const agreementWidgetInstanceRef = useRef<AgreementWidget | null>(null);
+    /** Last reported required-terms state; null until the agreement widget reports. */
+    const agreementAgreedRef = useRef<boolean | null>(null);
     const widgetDestroyPromiseRef = useRef<Promise<void> | null>(null);
     const shouldRenderPaymentWidgets = true;
 
@@ -613,6 +637,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
     }, [onPaymentMethodChange, paymentWidgetVariantKey]);
 
     const updateWidgetAgreement = useCallback((status: WidgetAgreementStatus) => {
+      agreementAgreedRef.current = status.agreedRequiredTerms;
       onWidgetAgreementChange?.(status.agreedRequiredTerms);
     }, [onWidgetAgreementChange]);
 
@@ -639,6 +664,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
     }, [destroyWidgetInstance]);
 
     const changePaymentWidgetVariant = useCallback((variantKey: string) => {
+      agreementAgreedRef.current = null;
       setWidgetState(null);
       setPaymentWidgetVariantKey(variantKey);
       const normalized = resolveInitialPaymentMethodSelection(variantKey);
@@ -656,12 +682,34 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
         );
         const completeUrl = `${origin}${localizedBookingPath}/complete`;
         const confirmUrl = `${origin}${localizedBookingPath}/confirm`;
-        const selection = selectedPaymentMethodRef.current;
         if (!widgets) {
           throw new Error(widgetCopy.widgetNotReady);
         }
         if (isLoading) {
           throw new Error(widgetCopy.widgetLoading);
+        }
+        const paymentMethodWidget = paymentWidgetInstanceRef.current;
+        if (!paymentMethodWidget) {
+          throw new Error(widgetCopy.widgetNotReady);
+        }
+
+        // Every check the browser can make runs before the server records Provider
+        // Handoff. A missed or late iframe selection event must not reach the server.
+        const liveSelection = resolvePaymentMethodSelection(
+          (await paymentMethodWidget.getSelectedPaymentMethod()).code,
+          paymentWidgetVariantKey,
+        );
+        if (!isSameCheckoutPaymentMethod(
+          liveSelection.paymentMethod,
+          selectedPaymentMethodRef.current.paymentMethod,
+        )) {
+          selectedPaymentMethodRef.current = liveSelection;
+          onPaymentMethodChange?.(liveSelection);
+          throw new Error(checkoutCopy.methodChanged);
+        }
+        const selection = selectedPaymentMethodRef.current;
+        if (agreementAgreedRef.current === false) {
+          throw new Error(confirmCopy.agreePaymentTerms);
         }
 
         if (prepareResult && (prepareResult.orderId !== orderId
@@ -698,67 +746,88 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
         failUrl.searchParams.set('error', 'true');
         failUrl.searchParams.set('resumeOrderId', orderId);
         const branchPaymentMethod = prepareResult?.paymentMethod ?? selection.paymentMethod;
-        const branch = await apiClient.post<TossPaymentBranchResponse>('/api/v1/payments/branch', {
-          orderId,
-          paymentMethod: branchPaymentMethod,
-          successUrl: completeUrl,
-          failUrl: failUrl.toString(),
-          pendingUrl,
-        }, {
-          showErrorToast: false,
-        });
-        if (branch.paymentDeadlineAt) {
-          onPaymentDeadlineChange?.(branch.paymentDeadlineAt);
-        }
-        const branchForRequest = branch.paymentDeadlineAt
-          ? {
-              ...branch,
-              failUrl: appendPaymentDeadlineReturnParam(
-                branch.failUrl,
-                branch.paymentDeadlineAt,
-              ),
-            }
-          : branch;
-
-        if (
-          requiresProviderChargeQuote
-          && (branchForRequest.checkoutEnabled !== true || !branchForRequest.providerChargeQuote)
-        ) {
-          throw new Error(resolveProviderChargeDisabledMessage(
-            selection.paymentMethod.provider,
-            branchForRequest.disabledReason,
-            locale,
-          ));
+        let branch: TossPaymentBranchResponse;
+        try {
+          branch = await apiClient.post<TossPaymentBranchResponse>('/api/v1/payments/branch', {
+            orderId,
+            paymentMethod: branchPaymentMethod,
+            successUrl: completeUrl,
+            failUrl: failUrl.toString(),
+            pendingUrl,
+          }, {
+            showErrorToast: false,
+          });
+        } catch (error) {
+          // A lost response or a gateway/server error (502/503/504 under open load) may
+          // hide a committed handoff; the server re-checks every release condition. A 4xx
+          // rejection committed nothing and may describe another tab's handoff.
+          const statusCode = getHttpStatus(error);
+          if (statusCode === null || statusCode >= 500) {
+            await releaseTossPaymentHandoff(orderId);
+          }
+          throw error;
         }
 
-        if (branchForRequest.providerChargeQuote) {
-          await widgets.setAmount(resolvePaymentRequestAmount({
+        // From here the server holds Provider Handoff. If this document fails before the
+        // provider checkout opens (for example NEED_CARD_PAYMENT_DETAIL), no provider
+        // payment or webhook will ever exist, so hand the order back before reporting.
+        try {
+          if (branch.paymentDeadlineAt) {
+            onPaymentDeadlineChange?.(branch.paymentDeadlineAt);
+          }
+          const branchForRequest = branch.paymentDeadlineAt
+            ? {
+                ...branch,
+                failUrl: appendPaymentDeadlineReturnParam(
+                  branch.failUrl,
+                  branch.paymentDeadlineAt,
+                ),
+              }
+            : branch;
+
+          if (
+            requiresProviderChargeQuote
+            && (branchForRequest.checkoutEnabled !== true || !branchForRequest.providerChargeQuote)
+          ) {
+            throw new Error(resolveProviderChargeDisabledMessage(
+              selection.paymentMethod.provider,
+              branchForRequest.disabledReason,
+              locale,
+            ));
+          }
+
+          if (branchForRequest.providerChargeQuote) {
+            await widgets.setAmount(resolvePaymentRequestAmount({
+              amount,
+              currency: branchForRequest.currency,
+              providerChargeQuote: branchForRequest.providerChargeQuote,
+            }));
+          }
+
+          const requestPayload = buildWidgetPaymentRequest({
+            branch: branchForRequest,
             amount,
-            currency: branchForRequest.currency,
-            providerChargeQuote: branchForRequest.providerChargeQuote,
-          }));
-        }
+            customerEmail,
+            customerName,
+            customerMobilePhone,
+            customerCountry,
+            orderName,
+            locale,
+            selectedSeats,
+          });
 
-        const requestPayload = buildWidgetPaymentRequest({
-          branch: branchForRequest,
-          amount,
-          customerEmail,
-          customerName,
-          customerMobilePhone,
-          customerCountry,
-          orderName,
-          locale,
-          selectedSeats,
-        });
-
-        // The buyer can change an iframe selection while the branch request is in flight.
-        // Never send its amount/return contract to a different provider selection.
-        if (!isSameCheckoutPaymentMethod(selection.paymentMethod, selectedPaymentMethodRef.current.paymentMethod)) {
-          throw new Error(checkoutCopy.methodChanged);
+          // The buyer can change an iframe selection while the branch request is in flight.
+          // Never send its amount/return contract to a different provider selection.
+          if (!isSameCheckoutPaymentMethod(selection.paymentMethod, selectedPaymentMethodRef.current.paymentMethod)) {
+            throw new Error(checkoutCopy.methodChanged);
+          }
+          await widgets.requestPayment(
+            requestPayload as Parameters<TossPaymentsWidgets['requestPayment']>[0],
+          );
+        } catch (error) {
+          await releaseTossPaymentHandoff(orderId);
+          throw error;
         }
-        await widgets.requestPayment(
-          requestPayload as Parameters<TossPaymentsWidgets['requestPayment']>[0],
-        );
       },
     }), [
       widgets,
@@ -774,7 +843,10 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
       isLoading,
       selectedSeats,
       onPaymentDeadlineChange,
+      onPaymentMethodChange,
+      paymentWidgetVariantKey,
       widgetCopy,
+      confirmCopy,
       checkoutCopy,
     ]);
 
@@ -786,6 +858,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
           await destroyRenderedWidgets();
           setIsLoading(true);
           setError(null);
+          agreementAgreedRef.current = null;
           onWidgetAgreementChange?.(false);
 
           if (!paymentWidgetClientKey) {

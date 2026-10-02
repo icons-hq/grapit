@@ -16,8 +16,10 @@ import {
   useReconcileAsyncPaymentReturn,
 } from '@/hooks/use-booking';
 import {
+  CONFIRM_PAYMENT_RETURN_PARAMS,
   buildConfirmPaymentPayload,
   hasValidConfirmPaymentReturn,
+  isRetryableConfirmPaymentError,
 } from '@/lib/booking/payment-return';
 import {
   getVisibleCopy,
@@ -65,6 +67,7 @@ interface RecoveryStateCardProps {
     label: string;
     onClick: () => void;
     icon?: 'refresh';
+    disabled?: boolean;
   };
   supportAction?: { label: string; href: string };
   secondaryAction?: {
@@ -106,9 +109,14 @@ function RecoveryStateCard({
                 <button
                   type="button"
                   onClick={primaryAction.onClick}
-                  className="inline-flex items-center justify-center gap-2 rounded-md border border-current px-4 py-2 text-sm font-medium"
+                  disabled={primaryAction.disabled}
+                  className="inline-flex items-center justify-center gap-2 rounded-md border border-current px-4 py-2 text-sm font-medium disabled:opacity-60"
                 >
-                  {primaryAction.icon === 'refresh' && <RefreshCw className="h-4 w-4" />}
+                  {primaryAction.icon === 'refresh' && (
+                    primaryAction.disabled
+                      ? <Loader2 className="h-4 w-4 animate-spin" />
+                      : <RefreshCw className="h-4 w-4" />
+                  )}
                   {primaryAction.label}
                 </button>
               )}
@@ -175,7 +183,12 @@ function CompletePageContent() {
   const hasReconciledAsyncReturnRef = useRef(false);
 
   const [confirmFailed, setConfirmFailed] = useState(false);
-  const shouldRecoverByOrderId = !!orderId && (confirmFailed || isPendingReturn);
+  // Only a transient failure (retries exhausted) offers to send the confirm again.
+  const [confirmRetryable, setConfirmRetryable] = useState(false);
+  // A confirm error is reported only after lookup shows the order is not confirmed.
+  const [unreportedConfirmError, setUnreportedConfirmError] = useState<string | null>(null);
+  // A confirmed response is authoritative; a later lookup outage must not replace it.
+  const shouldRecoverByOrderId = !!orderId && !bookingData && (confirmFailed || isPendingReturn);
   const paymentRecovery = useBookingPaymentRecovery(
     shouldRecoverByOrderId ? orderId : null,
     {
@@ -188,6 +201,18 @@ function CompletePageContent() {
     : null;
   const effectiveBooking = bookingData ?? recoveredBooking;
 
+  // Once confirmed, drop the one-time provider return so reload or history
+  // navigation reads the order instead of sending confirm again.
+  const replaceConfirmReturnWithLookup = useCallback((confirmedOrderId: string) => {
+    const nextParams = new URLSearchParams(searchParams.toString());
+    for (const key of CONFIRM_PAYMENT_RETURN_PARAMS) {
+      nextParams.delete(key);
+    }
+    nextParams.set('pending', 'true');
+    nextParams.set('orderId', confirmedOrderId);
+    router.replace(`${window.location.pathname}?${nextParams.toString()}`, { scroll: false });
+  }, [router, searchParams]);
+
   useEffect(() => {
     if (!recoveredBooking) {
       return;
@@ -196,10 +221,24 @@ function CompletePageContent() {
     setBookingData(recoveredBooking);
     clearBooking();
     setConfirmFailed(false);
-  }, [clearBooking, recoveredBooking]);
+    setConfirmRetryable(false);
+    setUnreportedConfirmError(null);
+    // Confirmed by lookup after a failed confirm (for example a reload past the
+    // admission window): the return parameters must not send confirm again either.
+    if (hasConfirmParams && !isPendingReturn && orderId) {
+      replaceConfirmReturnWithLookup(orderId);
+    }
+  }, [
+    clearBooking,
+    hasConfirmParams,
+    isPendingReturn,
+    orderId,
+    recoveredBooking,
+    replaceConfirmReturnWithLookup,
+  ]);
 
   // Confirm payment on mount — only needs URL params (server has pending order)
-  const confirmPayment = useCallback(async () => {
+  const confirmPayment = useCallback(async (): Promise<boolean> => {
     if (
       hasConfirmedRef.current
       || isPendingReturn
@@ -207,11 +246,13 @@ function CompletePageContent() {
       || !orderId
       || !hasValidConfirmReturn
     ) {
-      return;
+      return false;
     }
 
     hasConfirmedRef.current = true;
     setIsConfirming(true);
+    // confirmRetryable changes only with an outcome, so a resend keeps its card
+    // (with a busy button) instead of flashing the status-check variant.
 
     try {
       const result = await confirmMutation.mutateAsync(buildConfirmPaymentPayload({
@@ -223,18 +264,26 @@ function CompletePageContent() {
       }));
 
       if (result.status !== 'CONFIRMED') {
+        setConfirmRetryable(false);
         setConfirmFailed(true);
-        return;
+        return false;
       }
 
       setBookingData(result);
+      setConfirmFailed(false);
+      setConfirmRetryable(false);
+      setUnreportedConfirmError(null);
       clearBooking();
+      replaceConfirmReturnWithLookup(orderId);
+      return true;
     } catch (err) {
-      const errorMessage =
-        err instanceof Error ? err.message : completeCopy.confirmFailedTitle;
-      toast.error(errorMessage);
+      setUnreportedConfirmError(
+        err instanceof Error ? err.message : completeCopy.confirmFailedTitle,
+      );
+      setConfirmRetryable(isRetryableConfirmPaymentError(err));
       // Try recovery — maybe already confirmed on a previous attempt
       setConfirmFailed(true);
+      return false;
     } finally {
       setIsConfirming(false);
     }
@@ -249,7 +298,38 @@ function CompletePageContent() {
     confirmMutation,
     clearBooking,
     completeCopy,
+    replaceConfirmReturnWithLookup,
   ]);
+
+  const { refetch: refetchPaymentRecovery } = paymentRecovery;
+  const retryConfirmPayment = useCallback(async () => {
+    hasConfirmedRef.current = false;
+    if (!(await confirmPayment())) {
+      void refetchPaymentRecovery();
+    }
+  }, [confirmPayment, refetchPaymentRecovery]);
+  const canRetryConfirm = hasConfirmParams && !isPendingReturn && confirmRetryable && !bookingData;
+
+  // An already confirmed order (for example after a reload past its admission window)
+  // must not be reported as a payment failure.
+  const recoveryPaymentStatus = paymentRecovery.paymentStatus;
+  useEffect(() => {
+    if (!unreportedConfirmError) {
+      return;
+    }
+    if (recoveryPaymentStatus === 'confirmed') {
+      setUnreportedConfirmError(null);
+      return;
+    }
+    if (
+      recoveryPaymentStatus === 'failed'
+      || recoveryPaymentStatus === 'expired'
+      || recoveryPaymentStatus === 'unavailable'
+    ) {
+      toast.error(unreportedConfirmError);
+      setUnreportedConfirmError(null);
+    }
+  }, [recoveryPaymentStatus, unreportedConfirmError]);
 
   useEffect(() => {
     if (hasConfirmParams && !isPendingReturn) {
@@ -366,14 +446,23 @@ function CompletePageContent() {
     );
   }
 
+  const retryConfirmAction = {
+    label: completeCopy.retryConfirm,
+    onClick: () => {
+      void retryConfirmPayment();
+    },
+    icon: 'refresh' as const,
+    disabled: isConfirming,
+  };
+
   if (paymentRecovery.paymentStatus === 'pending') {
     return (
       <RecoveryStateCard
         tone="amber"
         title={checkoutCopy.checking}
-        body={checkoutCopy.checkingBody}
+        body={canRetryConfirm ? completeCopy.confirmRetryBody : checkoutCopy.checkingBody}
         supportAction={{ label: checkoutCopy.support, href: getLocalizedPathname('/support', locale) }}
-        primaryAction={{
+        primaryAction={canRetryConfirm ? retryConfirmAction : {
           label: completeCopy.retryStatus,
           onClick: () => {
             void paymentRecovery.refetch();
@@ -389,7 +478,7 @@ function CompletePageContent() {
   }
 
   if (
-    isConfirming
+    (isConfirming && !canRetryConfirm)
     || (confirmFailed && paymentRecovery.fetchStatus === 'fetching' && paymentRecovery.paymentStatus === 'idle')
     || (!effectiveBooking && !isPendingReturn && !confirmFailed)
   ) {
@@ -401,9 +490,9 @@ function CompletePageContent() {
       <RecoveryStateCard
         tone="red"
         title={checkoutCopy.unavailable}
-        body={completeCopy.confirmUnknownBody}
+        body={canRetryConfirm ? completeCopy.confirmRetryBody : completeCopy.confirmUnknownBody}
         supportAction={{ label: checkoutCopy.support, href: getLocalizedPathname('/support', locale) }}
-        primaryAction={{
+        primaryAction={canRetryConfirm ? retryConfirmAction : {
           label: completeCopy.retryStatus,
           onClick: () => {
             void paymentRecovery.refetch();

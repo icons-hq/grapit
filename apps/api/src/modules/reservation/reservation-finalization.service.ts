@@ -152,6 +152,9 @@ export class ReservationFinalizationService {
       if (!lockStillOwned) {
         throw new ConflictException('결제 확인이 이미 진행 중입니다.');
       }
+      // Provider Handoff release must never reopen an order once its approval may have
+      // been requested, even after this lease ends without a Payment row (ADR 0010).
+      await this.bookingService.markPaymentConfirmAttempted(dto.orderId);
 
       return await this.confirmAndCreateReservationLocked(
         dto,

@@ -1,4 +1,4 @@
-import { Body, Controller, Post, Request } from '@nestjs/common';
+import { Body, Controller, HttpCode, Post, Request } from '@nestjs/common';
 import { z } from 'zod';
 import { paymentMethodSchema } from '@grabit/shared';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
@@ -13,6 +13,12 @@ const paymentBranchRequestSchema = z.object({
 });
 
 type PaymentBranchRequestDto = z.infer<typeof paymentBranchRequestSchema>;
+
+const paymentBranchReleaseSchema = z.object({
+  orderId: z.string().min(1, '주문 ID가 필요합니다'),
+});
+
+type PaymentBranchReleaseDto = z.infer<typeof paymentBranchReleaseSchema>;
 
 const asyncPaymentReturnSchema = z.object({
   orderId: z.string().min(1, '주문 ID가 필요합니다'),
@@ -35,6 +41,23 @@ export class PaymentController {
   ) {
     return this.paymentService.prepareTossPaymentBranch({
       ...body,
+      userId: req.user.id,
+    });
+  }
+
+  /**
+   * Called by the checkout page when the provider SDK rejected before opening checkout,
+   * or when the branch response was lost or failed with a 5xx after a possible commit.
+   */
+  @Post('branch/release')
+  @HttpCode(200)
+  releaseTossPaymentHandoff(
+    @Body(new ZodValidationPipe(paymentBranchReleaseSchema))
+    body: PaymentBranchReleaseDto,
+    @Request() req: { user: { id: string } },
+  ) {
+    return this.paymentService.releaseTossPaymentHandoff({
+      orderId: body.orderId,
       userId: req.user.id,
     });
   }
