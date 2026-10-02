@@ -3,7 +3,10 @@
 import { useState, type FormEvent } from 'react';
 import { toast } from 'sonner';
 import { Plus } from 'lucide-react';
-import { AdminSecuritySummary } from '@/components/admin/admin-security-summary';
+import {
+  ADMIN_SECURITY_MFA_DEFERRED_COPY,
+  AdminSecuritySummary,
+} from '@/components/admin/admin-security-summary';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -13,9 +16,6 @@ import {
   useAdminSecurityStatus,
   useCreateAdminAllowlistRecord,
 } from '@/hooks/use-admin-security';
-
-const MFA_DEFERRED_COPY =
-  '추가 본인 인증은 아직 적용되지 않았습니다. 허용된 접속 주소와 관리자 활동 기록으로 접근을 확인합니다.';
 
 export default function AdminSecurityPage() {
   const securityStatus = useAdminSecurityStatus();
@@ -58,7 +58,7 @@ export default function AdminSecurityPage() {
     <div className="space-y-6" data-required-capability={ADMIN_SECURITY_REQUIRED_CAPABILITY}>
       <div>
         <h1 className="text-display font-semibold leading-[1.2]">접근 보안</h1>
-        <p className="mt-2 text-sm text-gray-600">{MFA_DEFERRED_COPY}</p>
+        <p className="mt-2 text-sm text-gray-600">{ADMIN_SECURITY_MFA_DEFERRED_COPY}</p>
       </div>
 
       <AdminSecuritySummary
@@ -126,6 +126,9 @@ export default function AdminSecurityPage() {
             className="min-h-24"
           />
         </div>
+        <p className="text-sm text-gray-600 lg:col-span-3">
+          등록한 주소는 현재 관리자 요청을 차단하는 데 쓰이지 않으며, 보안 화면의 접속 주소 확인에만 사용됩니다.
+        </p>
         <div className="flex items-end">
           <Button
             type="submit"

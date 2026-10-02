@@ -51,7 +51,10 @@ export interface AdminSecurityStatusResponse {
   };
   lastAuditEventAt: string | null;
   currentRequest: {
+    /** Whether the request IP matches the allowlist (not whether it was blocked). */
     allowed: boolean;
+    /** Whether a mismatch is actually blocked. Absent on older API responses. */
+    enforced?: boolean;
     source:
       | 'env_bootstrap'
       | 'db_managed'

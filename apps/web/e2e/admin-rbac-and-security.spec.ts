@@ -112,7 +112,7 @@ test.describe('Admin RBAC and security route wiring', () => {
     ).toBeVisible();
     await expect(
       page.getByText(
-        '추가 본인 인증은 아직 적용되지 않았습니다. 허용된 접속 주소와 관리자 활동 기록으로 접근을 확인합니다.',
+        '추가 본인 인증은 아직 적용되지 않았습니다. 접속 허용 주소는 관리자 요청을 차단하지 않고 확인용으로만 표시되며, 관리자 활동은 감사 기록으로 추적합니다.',
       ).first(),
     ).toBeVisible();
   });
@@ -174,16 +174,17 @@ async function mockAdminSecurityStatus(page: Page) {
       body: JSON.stringify({
         mfa: {
           status: 'deferred_accepted_risk',
-          note: '추가 본인 인증은 아직 적용되지 않았습니다. 허용된 접속 주소와 관리자 활동 기록으로 접근을 확인합니다.',
+          note: 'MFA는 아직 적용되지 않았습니다. 관리자 IP allowlist는 요청을 차단하지 않는 모니터링 전용이며, 관리자 활동은 감사 로그로 추적합니다.',
         },
         ipAllowlist: {
-          mode: 'monitoring',
+          mode: 'disabled',
           activeRecords: 0,
           lastChangedAt: null,
         },
         lastAuditEventAt: null,
         currentRequest: {
           allowed: true,
+          enforced: false,
           source: 'non_production_bypass',
           maskedIpAddress: '127.0.0.0',
           matchedCidr: null,
@@ -191,7 +192,7 @@ async function mockAdminSecurityStatus(page: Page) {
           reason: 'E2E non-production route smoke',
         },
         deferredMfaCopy:
-          '추가 본인 인증은 아직 적용되지 않았습니다. 허용된 접속 주소와 관리자 활동 기록으로 접근을 확인합니다.',
+          'MFA는 아직 적용되지 않았습니다. 관리자 IP allowlist는 요청을 차단하지 않는 모니터링 전용이며, 관리자 활동은 감사 로그로 추적합니다.',
         requiredCapability: 'security.manage',
       }),
     });

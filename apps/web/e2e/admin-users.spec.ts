@@ -211,7 +211,14 @@ test.describe('Admin user management', () => {
     await page.getByRole('button', { name: '검색' }).click();
     await searchRequest;
 
-    await page.getByRole('checkbox', { name: '보안 권한 관리' }).click();
+    // The admin bundle is superuser: capabilities show as effective and locked.
+    await expect(page.getByTestId('admin-user-effective-permissions')).toHaveText(
+      '적용될 권한: 전체 관리자 (모든 권한)',
+    );
+    await expect(page.getByRole('checkbox', { name: '보안 권한 관리' })).toBeDisabled();
+
+    await page.getByRole('combobox', { name: 'Capability bundle' }).click();
+    await page.getByRole('option', { name: '운영자' }).click();
     await page.getByLabel('권한 변경 사유').fill('보안 담당자 교체로 권한을 회수합니다.');
     await page.getByRole('checkbox', { name: '권한 변경 영향 확인' }).click();
     await page.getByRole('button', { name: '권한 변경 검토' }).click();
@@ -220,7 +227,7 @@ test.describe('Admin user management', () => {
     await expect.poll(() => requests.patchPayloads.length).toBe(1);
     expect(requests.patchPayloads[0]).toMatchObject({
       role: 'admin',
-      adminCapabilityBundle: 'admin',
+      adminCapabilityBundle: 'operator',
       reason: '보안 담당자 교체로 권한을 회수합니다.',
       confirmed: true,
     });

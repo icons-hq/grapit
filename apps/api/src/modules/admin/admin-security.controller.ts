@@ -12,11 +12,13 @@ import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import { resolveTrustedRequestIp } from '../../common/request-ip.js';
 import {
   AdminSecurityService,
-  type AdminSecurityDecision,
+  type AdminAllowlistStatus,
 } from './admin-security.service.js';
 
+// The IP allowlist is evaluated for display only; no guard blocks admin
+// requests by IP (audit #43). Keep this copy in sync with the web screen.
 const DEFERRED_MFA_COPY =
-  'MFA는 아직 적용되지 않았습니다. 현재는 IP allowlist와 audit monitoring으로 운영합니다.';
+  'MFA는 아직 적용되지 않았습니다. 관리자 IP allowlist는 요청을 차단하지 않는 모니터링 전용이며, 관리자 활동은 감사 로그로 추적합니다.';
 
 const allowlistRecordSchema = z.object({
   cidr: z.string().trim().min(1, 'CIDR 또는 IP를 입력해주세요'),
@@ -36,20 +38,18 @@ export class AdminSecurityController {
   constructor(private readonly securityService: AdminSecurityService) {}
 
   @Get('status')
-  async getSecurityStatus(
-    @CurrentUser('id') actorUserId: string,
-    @Req() request: Request,
-  ) {
-    const decision = await this.securityService.evaluateRequest(request, {
-      actorUserId,
-      requestId: request.get('x-request-id') ?? undefined,
-      userAgent: request.get('user-agent') ?? undefined,
-    });
+  async getSecurityStatus(@Req() request: Request) {
+    // Read-only: status reads never write `security.allowlist.update` audit rows.
+    const allowlist = await this.securityService.getAllowlistStatus(request);
+    const { decision } = allowlist;
 
     return {
-      ...securityStatusFromDecision(decision),
+      ...securityStatusFromAllowlist(allowlist),
       currentRequest: {
+        // `allowed` = matches the allowlist; `enforced` = whether a mismatch
+        // would actually be blocked (currently never).
         allowed: decision.allowed,
+        enforced: allowlist.enforced,
         source: decision.source,
         maskedIpAddress: maskIp(decision.ipAddress),
         matchedCidr: decision.matchedCidr ?? null,
@@ -76,9 +76,10 @@ export class AdminSecurityController {
       source: body.source,
       reason: body.reason,
       expiresAt: body.expiresAt ?? null,
-      requestId: request.get('x-request-id') ?? undefined,
+      requestId: request.get('x-request-id')?.slice(0, 120) ?? undefined,
       ipAddress: resolveTrustedRequestIp(request),
-      userAgent: request.get('user-agent') ?? undefined,
+      // admin_audit_logs.user_agent is varchar(500).
+      userAgent: request.get('user-agent')?.slice(0, 500) ?? undefined,
     });
 
     return {
@@ -88,8 +89,8 @@ export class AdminSecurityController {
   }
 }
 
-function securityStatusFromDecision(
-  decision: AdminSecurityDecision,
+function securityStatusFromAllowlist(
+  allowlist: AdminAllowlistStatus,
 ): AdminSecurityStatus {
   return {
     mfa: {
@@ -97,9 +98,10 @@ function securityStatusFromDecision(
       note: DEFERRED_MFA_COPY,
     },
     ipAllowlist: {
-      mode: decision.source === 'non_production_bypass' ? 'monitoring' : 'enforced',
-      activeRecords: decision.matchedCidr || decision.allowlistRecordId ? 1 : 0,
-      lastChangedAt: null,
+      // Never report `enforced` unless something actually blocks requests.
+      mode: allowlist.mode,
+      activeRecords: allowlist.activeRecords,
+      lastChangedAt: allowlist.lastChangedAt,
     },
     lastAuditEventAt: null,
   };

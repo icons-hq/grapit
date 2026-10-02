@@ -440,7 +440,8 @@ Operational truth order for production incidents:
 - JWT guard protects authenticated endpoints by default.
 - Roles guard and admin capability guard protect admin operations.
 - Throttler guard is global and can use Redis-backed storage when real Redis is configured.
-- Request IP handling is centralized for audit and allowlist features.
+- Request IP handling is centralized for audit and allowlist features. Admin audit context uses the shared trusted resolver (`resolveTrustedRequestIp`), never a raw client `X-Forwarded-For` value, and bounds `user-agent` to the audit column length.
+- The admin IP allowlist (`ADMIN_IP_ALLOWLIST_CIDRS` / `ADMIN_ACCESS_ALLOWLIST_CIDRS` env CIDRs and `admin_access_allowlist` rows) is monitoring-only: no guard, middleware or edge rule blocks admin requests by IP. `GET /admin/security/status` reports `mode=monitoring` in production (`disabled` elsewhere), never `enforced`, shows whether the current IP would match, and writes no audit row. Only allowlist record creation writes `security.allowlist.update`. Enforcing it requires a separate guard, deployed CIDRs and a field-scanner exemption policy.
 - Toss payment exceptions are filtered to avoid leaking provider internals.
 
 ### 10.2 Admin Capabilities
@@ -455,6 +456,14 @@ Shared admin capability bundles include:
 - `admin`
 
 Scanner-only accounts can verify/consume/sync field scan attempts but must not gain broad admin, finance, support, user, security, refund, or raw export authority.
+
+Permission update rules (`PATCH /admin/users/:id/permissions`, `security.manage`):
+
+- The `admin` bundle is the superuser bundle. Stored capability lists are ignored for it, so the API rejects a narrowed list with this bundle and stores the canonical empty list. Narrowed access, including shared field scanner accounts, must use a non-admin bundle such as `scanner`.
+- A non-admin bundle saved without capabilities stores that bundle's defaults explicitly. `role=user` clears bundle and capabilities in one request.
+- Audit snapshots record the stored fields plus the guard-effective access (`adminSuperuser`, `effectiveAdminCapabilities`).
+- Only a superuser can grant, change or remove superuser access. A non-superuser `security.manage` holder can only change or withdraw accounts whose before/after access stays within the actor's own capabilities, and cannot widen their own access.
+- Admin withdrawal (`POST /admin/users/:id/withdrawal`) uses the same blocker as self-withdrawal: a `PENDING_PAYMENT` reservation or a `CONFIRMED` reservation whose showtime has not started returns 409 `ACCOUNT_WITHDRAWAL_BLOCKED`. Cancel/refund those reservations, or let the pending payment settle, before withdrawing the member.
 
 ### 10.3 Data Redaction
 
