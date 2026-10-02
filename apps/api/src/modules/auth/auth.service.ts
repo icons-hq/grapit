@@ -21,6 +21,11 @@ import { EmailService } from './email/email.service.js';
 import { ConsentService } from '../consent/consent.service.js';
 import type { ConsentRequestMeta } from '../consent/consent.service.js';
 import { isSocialPlaceholderEmail } from '../../common/email-address.js';
+import { isSameAuthEmail, normalizeAuthEmail } from './auth-email.js';
+import {
+  hashSocialRegistrationBinding,
+  isSocialRegistrationBindingValid,
+} from './social-oauth-state.js';
 import type { RegisterBody } from './dto/register.dto.js';
 import type { SocialRegisterBody } from './dto/social-register.dto.js';
 import type { SocialProfile } from './interfaces/social-profile.interface.js';
@@ -90,6 +95,15 @@ const EMAIL_VERIFICATION_PURPOSE = 'signup';
 const ACCOUNT_EMAIL_VERIFICATION_PURPOSE = 'account_email';
 const EMAIL_VERIFICATION_CODE_DIGITS = 6;
 const USER_REFRESH_FAMILY_LIMIT = 2;
+/**
+ * A rotated refresh token stays usable for this long. Several tabs (or a retry
+ * after a lost response) presenting the same parent inside the window receive the
+ * same child token instead of tripping token-reuse detection.
+ */
+export const REFRESH_ROTATION_GRACE_MS = 30 * 1000;
+const REFRESH_ROTATION_MAX_DESCENDANT_DEPTH = 5;
+const REFRESH_TOKEN_REUSE_MESSAGE = '토큰이 재사용되었습니다. 보안을 위해 해당 세션이 종료됩니다.';
+const SOCIAL_REGISTRATION_BINDING_MESSAGE = '소셜 로그인 확인이 만료되었습니다. 소셜 로그인을 다시 진행해주세요.';
 const REFRESH_FAMILY_LIMIT_NOTICE = '다른 기기에서 로그인되어 가장 오래된 세션이 종료되었습니다.';
 const DEFAULT_FRONTEND_ORIGIN = 'http://localhost:3000';
 const LOCAL_FRONTEND_HOSTNAMES = new Set([
@@ -134,7 +148,8 @@ export class AuthService {
       'signup',
     );
 
-    // 1. Check email uniqueness
+    // 1. Check email uniqueness (case-insensitive) and store the canonical lower-case form.
+    const email = normalizeAuthEmail(dto.email);
     const existing = await this.userRepository.findByEmail(dto.email);
     if (existing) {
       throw new ConflictException('이미 사용 중인 이메일입니다');
@@ -151,7 +166,7 @@ export class AuthService {
     const user = await this.db.transaction(async (tx) => {
       // 3. Insert user
       const createdUser = await this.userRepository.create({
-        email: dto.email,
+        email,
         passwordHash,
         name: dto.name,
         phone: dto.phone,
@@ -237,26 +252,20 @@ export class AuthService {
     oldRawToken: string,
   ): Promise<TokenPair> {
     // 1. Hash the incoming raw token
-    const tokenHash = createHash('sha256').update(oldRawToken).digest('hex');
+    const tokenHash = hashRefreshToken(oldRawToken);
 
     // 2. Find refresh token by hash
-    const tokens = await this.db
-      .select()
-      .from(schema.refreshTokens)
-      .where(eq(schema.refreshTokens.tokenHash, tokenHash));
-
-    const tokenRecord = tokens[0];
+    const tokenRecord = await this.findRefreshTokenByHash(tokenHash);
 
     // 3. Token not found
     if (!tokenRecord) {
       throw new UnauthorizedException('유효하지 않은 리프레시 토큰입니다');
     }
 
-    // 4. Token already revoked -- possible theft! Revoke entire family
+    // 4. Token already revoked: a just-rotated parent replayed by another tab or a
+    //    retry gets the same child; any other reuse is treated as theft.
     if (tokenRecord.revokedAt) {
-      await this.revokeRefreshTokenFamily(tokenRecord.family);
-
-      throw new UnauthorizedException('토큰이 재사용되었습니다. 보안을 위해 해당 세션이 종료됩니다.');
+      return this.resolveRevokedRefreshToken(oldRawToken, tokenRecord);
     }
 
     // 5. Check expiration
@@ -264,9 +273,10 @@ export class AuthService {
       throw new UnauthorizedException('리프레시 토큰이 만료되었습니다');
     }
 
-    // 6. Generate new refresh token with same family
-    const newRawToken = randomBytes(32).toString('hex');
-    const newTokenHash = createHash('sha256').update(newRawToken).digest('hex');
+    // 6. Derive the child token deterministically so a concurrent or retried
+    //    rotation of the same parent converges on the same child.
+    const newRawToken = this.deriveRotatedRefreshToken(oldRawToken);
+    const newTokenHash = hashRefreshToken(newRawToken);
     const now = new Date();
     const newTokenExpiresAt = new Date(
       Date.now() + REFRESH_TOKEN_EXPIRY_DAYS * 24 * 60 * 60 * 1000,
@@ -282,7 +292,7 @@ export class AuthService {
       throw new UnauthorizedException('탈퇴 처리된 계정입니다');
     }
 
-    await this.db.transaction(async (tx) => {
+    const rotated = await this.db.transaction(async (tx) => {
       const revokedRows = await tx
         .update(schema.refreshTokens)
         .set({ revokedAt: now })
@@ -295,8 +305,8 @@ export class AuthService {
         .returning({ id: schema.refreshTokens.id });
 
       if (revokedRows.length === 0) {
-        await this.revokeRefreshTokenFamily(tokenRecord.family, tx);
-        throw new UnauthorizedException('토큰이 재사용되었습니다. 보안을 위해 해당 세션이 종료됩니다.');
+        // Another request revoked this parent first; nothing is written here.
+        return false;
       }
 
       await tx.insert(schema.refreshTokens).values({
@@ -305,28 +315,148 @@ export class AuthService {
         family: tokenRecord.family,
         expiresAt: newTokenExpiresAt,
       });
+      return true;
     });
 
+    if (!rotated) {
+      // The conditional UPDATE waited for the winning transaction, so its revoke and
+      // child row are committed now. Re-read and apply the same grace decision.
+      const committedRecord = await this.findRefreshTokenByHash(tokenHash);
+      if (!committedRecord?.revokedAt) {
+        throw new UnauthorizedException('유효하지 않은 리프레시 토큰입니다');
+      }
+      return this.resolveRevokedRefreshToken(oldRawToken, committedRecord);
+    }
+
     // 8. Generate new access token with full claims
-    const accessToken = await this.jwtService.signAsync({
-      sub: tokenRecord.userId,
+    const accessToken = await this.signAccessTokenForUser(tokenRecord.userId, user);
+
+    return { accessToken, refreshToken: newRawToken };
+  }
+
+  /**
+   * Handles a refresh token that is already revoked.
+   *
+   * Inside REFRESH_ROTATION_GRACE_MS of its revocation, if the rotation chain that
+   * started at this token still ends in an active child of the same family, the
+   * caller receives that child again (no new row, no family revoke). This keeps
+   * concurrent tabs and lost-response retries signed in. Everything else — reuse
+   * after the window, or a token revoked by logout/password reset/family revoke —
+   * keeps the theft response: revoke the family and reject.
+   */
+  private async resolveRevokedRefreshToken(
+    rawToken: string,
+    tokenRecord: typeof schema.refreshTokens.$inferSelect,
+  ): Promise<TokenPair> {
+    const revokedAt = tokenRecord.revokedAt;
+    const withinGrace =
+      revokedAt !== null && Date.now() - revokedAt.getTime() <= REFRESH_ROTATION_GRACE_MS;
+
+    if (withinGrace) {
+      const descendant = await this.findActiveRotationDescendant(rawToken, tokenRecord);
+      if (descendant) {
+        const user = await this.userRepository.findById(tokenRecord.userId);
+        if (!user) {
+          throw new UnauthorizedException('사용자를 찾을 수 없습니다');
+        }
+        if (this.isInactiveAccount(user)) {
+          await this.revokeRefreshTokenFamily(tokenRecord.family);
+          throw new UnauthorizedException('탈퇴 처리된 계정입니다');
+        }
+
+        this.logger.debug('Refresh token replayed inside the rotation grace window; reusing the active child');
+        const accessToken = await this.signAccessTokenForUser(tokenRecord.userId, user);
+        return { accessToken, refreshToken: descendant.rawToken };
+      }
+    }
+
+    await this.revokeRefreshTokenFamily(tokenRecord.family);
+    throw new UnauthorizedException(REFRESH_TOKEN_REUSE_MESSAGE);
+  }
+
+  private async findActiveRotationDescendant(
+    rawToken: string,
+    tokenRecord: typeof schema.refreshTokens.$inferSelect,
+  ): Promise<{ rawToken: string } | null> {
+    const now = new Date();
+    let currentRawToken = rawToken;
+
+    for (let depth = 0; depth < REFRESH_ROTATION_MAX_DESCENDANT_DEPTH; depth += 1) {
+      const childRawToken = this.deriveRotatedRefreshToken(currentRawToken);
+      const child = await this.findRefreshTokenByHash(hashRefreshToken(childRawToken));
+      if (!child || child.family !== tokenRecord.family || child.userId !== tokenRecord.userId) {
+        // No rotation child: the token was revoked by logout, password reset,
+        // a family revoke, or rotated before deterministic children existed.
+        return null;
+      }
+      if (!child.revokedAt) {
+        return child.expiresAt > now ? { rawToken: childRawToken } : null;
+      }
+      currentRawToken = childRawToken;
+    }
+
+    return null;
+  }
+
+  private async findRefreshTokenByHash(tokenHash: string) {
+    const tokens = await this.db
+      .select()
+      .from(schema.refreshTokens)
+      .where(eq(schema.refreshTokens.tokenHash, tokenHash));
+    return tokens[0];
+  }
+
+  /**
+   * Child refresh token = HMAC(server secret, parent). Only the server can derive
+   * it, and only from the parent's raw value, which the database never stores.
+   */
+  private deriveRotatedRefreshToken(parentRawToken: string): string {
+    const secret =
+      this.configService.get<string>('auth.jwtRefreshSecret') ??
+      this.configService.get<string>('auth.jwtSecret');
+    if (!secret) {
+      // Without a server secret the child cannot be private, so fall back to a
+      // random child (rotation still works, the grace window does not apply).
+      return randomBytes(32).toString('hex');
+    }
+
+    return createHmac('sha256', secret)
+      .update(`refresh-rotation:v1:${parentRawToken}`)
+      .digest('hex');
+  }
+
+  private async signAccessTokenForUser(
+    userId: string,
+    user: {
+      email: string;
+      role: string;
+      adminCapabilityBundle?: string | null;
+      adminCapabilities?: readonly string[] | null;
+    },
+  ): Promise<string> {
+    return this.jwtService.signAsync({
+      sub: userId,
       email: user.email,
       role: user.role,
       adminCapabilityBundle: normalizeAdminCapabilityBundle(user.adminCapabilityBundle),
       adminCapabilities: normalizeAdminCapabilities(user.adminCapabilities),
     });
-
-    return { accessToken, refreshToken: newRawToken };
   }
 
   private async revokeRefreshTokenFamily(
     family: string,
     db: Pick<DrizzleDB, 'update'> = this.db,
   ): Promise<void> {
+    // Keep the original revoked_at of already revoked rows; it decides the grace window.
     await db
       .update(schema.refreshTokens)
       .set({ revokedAt: new Date() })
-      .where(eq(schema.refreshTokens.family, family));
+      .where(
+        and(
+          eq(schema.refreshTokens.family, family),
+          isNull(schema.refreshTokens.revokedAt),
+        ),
+      );
   }
 
   async revokeRefreshToken(rawToken: string): Promise<void> {
@@ -354,7 +484,8 @@ export class AuthService {
       return;
     }
 
-    // Generate reset token with user's password hash as additional entropy
+    // Generate reset token with user's password hash as additional entropy.
+    // The lookup is case-insensitive; the link goes to the address stored on the account.
     const secret =
       this.configService.get<string>('auth.jwtSecret') + user.passwordHash;
 
@@ -371,7 +502,7 @@ export class AuthService {
     const returnTo = resolveAuthReturnTo(navigation.returnTo);
     if (returnTo) resetUrl.searchParams.set('returnTo', returnTo);
 
-    await this.emailService.sendPasswordResetEmail(email, resetUrl.toString(), locale);
+    await this.emailService.sendPasswordResetEmail(user.email, resetUrl.toString(), locale);
   }
 
   async requestEmailVerification(
@@ -495,9 +626,11 @@ export class AuthService {
   }
 
   async verifyEmailVerificationCode(
-    email: string,
+    rawEmail: string,
     code: string,
   ): Promise<{ verified: true }> {
+    // Codes are issued against the canonical lower-case address.
+    const email = normalizeAuthEmail(rawEmail);
     const latestRows = await this.db
       .select()
       .from(schema.emailVerificationTokens)
@@ -722,7 +855,10 @@ export class AuthService {
 
   // -- Social auth methods --
 
-  async findOrCreateSocialUser(profile: SocialProfile): Promise<SocialAuthResult> {
+  async findOrCreateSocialUser(
+    profile: SocialProfile,
+    options: { registrationBinding?: string } = {},
+  ): Promise<SocialAuthResult> {
     this.logger.log(`findOrCreateSocialUser: provider=${profile.provider}, providerId=${profile.providerId}`);
 
     // 1. Look up social_accounts by (provider, providerId)
@@ -746,7 +882,10 @@ export class AuthService {
         throw new UnauthorizedException('연결된 사용자 계정을 찾을 수 없습니다');
       }
 
-      const effectiveUser = user.isEmailVerified
+      // A social login proves the provider address only. users.email becomes verified
+      // here only when the provider vouches for that exact address; otherwise the
+      // normal /auth/verify-email flow must verify it before tickets are emailed.
+      const effectiveUser = user.isEmailVerified || !isProviderVerifiedEmailFor(profile, user.email)
         ? user
         : await this.markSocialEmailVerified(user);
 
@@ -774,8 +913,13 @@ export class AuthService {
         provider: profile.provider,
         providerId: profile.providerId,
         email: profile.email,
+        emailVerified: profile.emailVerified === true,
         name: profile.name,
         purpose: 'social-registration',
+        // Only the browser holding the matching httpOnly binding cookie can complete it.
+        ...(options.registrationBinding
+          ? { binding: hashSocialRegistrationBinding(options.registrationBinding) }
+          : {}),
       },
       { expiresIn: '30m' },
     );
@@ -796,6 +940,7 @@ export class AuthService {
     registrationToken: string,
     dto: SocialRegisterBody,
     requestMeta: ConsentRequestMeta = { ipAddress: '0.0.0.0' },
+    options: { registrationBinding?: string } = {},
   ): Promise<AuthResult | RegistrationPendingResult> {
     this.logger.log('completeSocialRegistration: started');
 
@@ -811,8 +956,10 @@ export class AuthService {
       provider: string;
       providerId: string;
       email?: string;
+      emailVerified?: boolean;
       name?: string;
       purpose: string;
+      binding?: string;
     };
 
     try {
@@ -823,6 +970,12 @@ export class AuthService {
 
     if (payload.purpose !== 'social-registration') {
       throw new UnauthorizedException('유효하지 않은 등록 토큰입니다');
+    }
+
+    // A registrationToken travels in a URL. Without the binding cookie issued to the
+    // browser that finished the provider login, a forwarded link cannot be completed.
+    if (!isSocialRegistrationBindingValid(payload.binding, options.registrationBinding)) {
+      throw new UnauthorizedException(SOCIAL_REGISTRATION_BINDING_MESSAGE);
     }
 
     this.consentService.assertAgeAllowed(dto.birthDate);
@@ -837,10 +990,20 @@ export class AuthService {
       (user) => normalizeMergeName(user.name) === normalizedSubmittedName,
     );
 
-    const email = payload.email ?? `${payload.provider}_${payload.providerId}@social.grabit.com`;
+    const providerEmail = payload.email ? normalizeAuthEmail(payload.email) : undefined;
+    const email = providerEmail ?? `${payload.provider}_${payload.providerId}@social.grabit.com`;
 
     if (nameMatchedIdentityMatches.length === 1) {
       const targetUser = nameMatchedIdentityMatches[0]!;
+      if (hasAdminAuthority(targetUser)) {
+        // Phone + birth date + name must never be enough to add a login route to an
+        // admin or scanner account; those links need an explicit operator process.
+        this.logger.warn(`completeSocialRegistration: refused automatic link to privileged userId=${targetUser.id}`);
+        throw new ConflictException({
+          code: 'ACCOUNT_LINK_CONFIRMATION_REQUIRED',
+          message: '이미 가입된 계정이 있습니다. 기존 계정으로 로그인해주세요.',
+        });
+      }
       const linkedUser = await this.db.transaction(async (tx) => {
         const updatedAt = new Date();
         const guardedUsers = await tx
@@ -905,7 +1068,7 @@ export class AuthService {
       };
     }
 
-    // 2. Check if user with that email already exists (account linking)
+    // 2. Check if user with that email already exists (account linking, case-insensitive)
     const existingUser = await this.userRepository.findByEmail(email);
 
     if (existingUser) {
@@ -928,7 +1091,9 @@ export class AuthService {
         birthDate: dto.birthDate,
         marketingConsent: dto.marketingConsent,
         isPhoneVerified: true,
-        isEmailVerified: true,
+        // A provider address counts as verified only when the provider asserted it.
+        // Placeholder addresses are never mailed (ticket delivery skips them).
+        isEmailVerified: providerEmail ? payload.emailVerified === true : true,
       }, tx);
 
       // 4. Create social account link
@@ -962,18 +1127,17 @@ export class AuthService {
     });
 
     this.logger.log(`completeSocialRegistration: completed for userId=${user.id}`);
-    const effectiveUser = { ...user, isEmailVerified: true };
     const tokens = await this.generateTokenPair(
-      effectiveUser.id,
-      effectiveUser.email,
-      effectiveUser.role,
-      normalizeAdminCapabilityBundle(effectiveUser.adminCapabilityBundle),
-      effectiveUser.adminCapabilities,
+      user.id,
+      user.email,
+      user.role,
+      normalizeAdminCapabilityBundle(user.adminCapabilityBundle),
+      user.adminCapabilities,
     );
 
     return {
       ...tokens,
-      user: this.mapToProfile(effectiveUser),
+      user: this.mapToProfile(user),
     };
   }
 
@@ -991,17 +1155,17 @@ export class AuthService {
   }
 
   private async issueEmailVerification(
-    email: string,
+    rawEmail: string,
     locale: string,
   ): Promise<{ expiresAt: Date; emailDeliveryFailed?: boolean }> {
-    const user = await this.userRepository.findByEmail(email);
+    const user = await this.userRepository.findByEmail(rawEmail);
     const expiresAt = new Date(Date.now() + EMAIL_VERIFICATION_EXPIRY_MS);
 
     if (!user) {
       return { expiresAt };
     }
 
-    return this.issueEmailVerificationForUser(user.id, email, locale);
+    return this.issueEmailVerificationForUser(user.id, normalizeAuthEmail(rawEmail), locale);
   }
 
   private async markSocialEmailVerified<T extends { id: string; isEmailVerified: boolean }>(
@@ -1206,6 +1370,30 @@ export class AuthService {
       createdAt: user.createdAt.toISOString(),
     };
   }
+}
+
+function isProviderVerifiedEmailFor(profile: SocialProfile, storedEmail: string): boolean {
+  return (
+    profile.emailVerified === true &&
+    !isSocialPlaceholderEmail(storedEmail) &&
+    isSameAuthEmail(profile.email, storedEmail)
+  );
+}
+
+function hasAdminAuthority(user: {
+  role?: string | null;
+  adminCapabilityBundle?: string | null;
+  adminCapabilities?: readonly string[] | null;
+}): boolean {
+  return (
+    user.role === 'admin' ||
+    Boolean(user.adminCapabilityBundle) ||
+    (user.adminCapabilities?.length ?? 0) > 0
+  );
+}
+
+function hashRefreshToken(rawToken: string): string {
+  return createHash('sha256').update(rawToken).digest('hex');
 }
 
 function normalizeAccountStatus(

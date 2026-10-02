@@ -442,6 +442,10 @@ Operational truth order for production incidents:
 - Throttler guard is global and can use Redis-backed storage when real Redis is configured.
 - Request IP handling is centralized for audit and allowlist features.
 - Toss payment exceptions are filtered to avoid leaking provider internals.
+- Refresh tokens rotate per use inside a family. A just-rotated token replayed within 30 seconds returns the family's active child (multi-tab and retry safety); later reuse revokes the family. The web serializes refreshes across tabs with a Web Lock and signs out only on a rejected refresh session, not on 5xx/429/network failures. See [Auth session runbook](runbooks/auth-session-operations.md).
+- Social OAuth uses a signed, nonce-bound `state` checked against an httpOnly cookie before the provider code is exchanged. Social registration completion requires the httpOnly binding cookie issued to the browser that finished the provider login, and automatic identity linking never targets admin or scanner accounts.
+- Login emails are stored in lower case for new accounts and looked up case-insensitively (`idx_users_email_lower`). A social login marks the account email verified only when the provider asserts verification of the same address.
+- Post-auth `returnTo` values are normalized by `resolveAuthReturnTo` and rejected unless the normalized result is still a same-site path (no protocol-relative output after dot-segment removal).
 
 ### 10.2 Admin Capabilities
 

@@ -125,8 +125,8 @@ describe('api-client error interceptor', () => {
       status: 401,
       json: async () => ({ message: 'Unauthorized', statusCode: 401 }),
     });
-    // Second call is the refresh attempt - also fails
-    mockFetch.mockResolvedValueOnce({
+    // Refresh attempts (the initial one and the cross-tab recheck) are rejected too
+    mockFetch.mockResolvedValue({
       ok: false,
       status: 401,
       json: async () => ({ message: 'Refresh failed', statusCode: 401 }),

@@ -13,7 +13,7 @@ The Grabit account that represents a Buyer inside the service and can own Reserv
 _Avoid_: Real-world person, social provider account, email address.
 
 **Verified Buyer Identity**:
-The buyer identity evidence Grabit uses when deciding whether a new login link belongs to an existing Buyer Account. Future social-login linking can use a newly verified phone number plus birth date when exactly one active Buyer Account matches; historical cleanup uses stricter evidence.
+The buyer identity evidence Grabit uses when deciding whether a new login link belongs to an existing Buyer Account. Future social-login linking can use a newly verified phone number plus birth date when exactly one active Buyer Account matches; historical cleanup uses stricter evidence. Automatic linking only happens in the browser that completed the provider login and never targets admin or scanner accounts.
 _Avoid_: Phone-only match, provider email match, automatic global merge.
 
 **Social Login Link**:

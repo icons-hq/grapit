@@ -15,8 +15,6 @@ import type {
   BenefitOperationState,
 } from '@grabit/shared';
 import { apiClient } from '@/lib/api-client';
-import { apiUrl } from '@/lib/api-url';
-import { useAuthStore } from '@/stores/use-auth-store';
 
 export function useAdminBenefitOperationState(showtimeId: string) {
   return useQuery({ queryKey: ['admin', 'benefits', 'operation-state', showtimeId], enabled: Boolean(showtimeId),
@@ -196,17 +194,8 @@ export function useAdminBenefitExport() {
       path: `/${string}`;
       fallbackFilename: string;
     }): Promise<BenefitExportDownload> => {
-      const { accessToken } = useAuthStore.getState();
-      const headers: Record<string, string> = {};
-      if (accessToken) {
-        headers['Authorization'] = `Bearer ${accessToken}`;
-      }
-
-      const response = await fetch(apiUrl(path), {
-        method: 'GET',
-        credentials: 'include',
-        headers,
-      });
+      // Shares the 401 → refresh → retry flow so a long-open admin screen can export.
+      const response = await apiClient.raw('GET', path, undefined, { showErrorToast: false });
 
       if (!response.ok) {
         throw new Error(await resolveExportErrorMessage(response));

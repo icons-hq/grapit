@@ -30,8 +30,23 @@ describe('GoogleStrategy', () => {
       provider: 'google',
       providerId: 'google-id-789',
       email: 'google@test.com',
+      emailVerified: true,
       name: 'Google User',
     });
+  });
+
+  it('does not report an email as verified when Google withholds email_verified', async () => {
+    const { GoogleStrategy } = await import('./google.strategy.js');
+    const strategy = new GoogleStrategy({ get: vi.fn().mockReturnValue('test-value') } as unknown as ConfigService);
+
+    for (const verified of [false, undefined, 'false']) {
+      const result = strategy.extractProfile({
+        id: 'google-id-unverified',
+        displayName: 'Google User',
+        emails: [{ value: 'google@test.com', verified }],
+      });
+      expect(result.emailVerified).toBe(false);
+    }
   });
 
   it('should use default callbackURL containing /social/ segment when env var is not set', async () => {

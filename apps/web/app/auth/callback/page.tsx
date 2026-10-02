@@ -107,9 +107,13 @@ function CallbackContent() {
 
     if (user) {
       hasRedirectedRef.current = true;
+      // A social login does not verify the account email unless the provider vouched
+      // for that exact address; finish verification first, like a password login.
       router.push(
-        resolveSafeReturnToFromSearch(searchParams.toString()) ??
-          getLocalizedPathname('/', authCopy.locale),
+        user.isEmailVerified === false
+          ? buildAuthRoute('/auth/verify-email', authCopy.locale, { email: user.email, returnTo })
+          : resolveSafeReturnToFromSearch(searchParams.toString()) ??
+              getLocalizedPathname('/', authCopy.locale),
       );
       return;
     }
@@ -119,7 +123,7 @@ function CallbackContent() {
       toast.error(authCopy.socialErrors.oauthFailed);
       router.push(loginPath);
     }
-  }, [user, isInitialized, searchParams, router, authCopy.locale, authCopy.socialErrors.oauthFailed, loginPath]);
+  }, [user, isInitialized, searchParams, router, authCopy.locale, authCopy.socialErrors.oauthFailed, loginPath, returnTo]);
 
   function handleStep2Complete(data: SignupStep2SubmitData) {
     setStep2Data(data);
@@ -163,8 +167,10 @@ function CallbackContent() {
       setAuth(res.accessToken, res.user);
       toast.success(authCopy.form.signupComplete);
       router.push(
-        resolveSafeReturnToFromSearch(searchParams.toString()) ??
-          getLocalizedPathname('/', authCopy.locale),
+        res.user.isEmailVerified === false
+          ? buildAuthRoute('/auth/verify-email', authCopy.locale, { email: res.user.email, returnTo })
+          : resolveSafeReturnToFromSearch(searchParams.toString()) ??
+              getLocalizedPathname('/', authCopy.locale),
       );
     } catch (error) {
       const message =

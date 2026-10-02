@@ -1,5 +1,5 @@
 import { Injectable, Inject } from '@nestjs/common';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import * as schema from '../../database/schema/index.js';
 import type { UserProfile } from '@grabit/shared/types/user.types.js';
@@ -22,12 +22,26 @@ export interface NewUser {
 export class UserRepository {
   constructor(@Inject(DRIZZLE) private readonly db: DrizzleDB) {}
 
+  /**
+   * Case-insensitive account lookup (served by idx_users_email_lower).
+   * Legacy rows may differ only by case; the exact spelling wins, then an active
+   * account, then the oldest one, so existing logins keep resolving to the same row.
+   */
   async findByEmail(email: string) {
+    const requestedEmail = email.trim();
     const results = await this.db
       .select()
       .from(schema.users)
-      .where(eq(schema.users.email, email));
-    return results[0] ?? null;
+      .where(sql`lower(${schema.users.email}) = ${requestedEmail.toLowerCase()}`);
+    if (results.length <= 1) return results[0] ?? null;
+
+    return [...results].sort((left, right) => {
+      const exact = Number(right.email === requestedEmail) - Number(left.email === requestedEmail);
+      if (exact !== 0) return exact;
+      const active = Number(right.accountStatus === 'active') - Number(left.accountStatus === 'active');
+      if (active !== 0) return active;
+      return left.createdAt.getTime() - right.createdAt.getTime();
+    })[0] ?? null;
   }
 
   async findById(id: string) {

@@ -3,8 +3,6 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { FinanceLedger, FinanceLedgerExportRequest, FinanceLedgerQuery } from '@grabit/shared';
 import { apiClient } from '@/lib/api-client';
-import { apiUrl } from '@/lib/api-url';
-import { useAuthStore } from '@/stores/use-auth-store';
 
 export function useAdminFinanceLedger(query: FinanceLedgerQuery | null, enabled = true) {
   return useQuery({
@@ -18,12 +16,8 @@ export function useAdminFinanceLedger(query: FinanceLedgerQuery | null, enabled 
 
 export function useAdminFinanceExport() {
   return useMutation({ mutationFn: async (payload: FinanceLedgerExportRequest) => {
-    const token = useAuthStore.getState().accessToken;
-    const response = await fetch(apiUrl('/api/v1/admin/settlement/ledger/export'), {
-      method: 'POST', credentials: 'include',
-      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      body: JSON.stringify(payload),
-    });
+    // Shares the 401 → refresh → retry flow so a long-open admin screen can export.
+    const response = await apiClient.raw('POST', '/api/v1/admin/settlement/ledger/export', payload, { showErrorToast: false });
     if (!response.ok) {
       const body = await response.json().catch(() => null) as { message?: unknown } | null;
       throw new Error(typeof body?.message === 'string' ? body.message : 'CSV 내보내기에 실패했습니다. 다시 시도해주세요.');

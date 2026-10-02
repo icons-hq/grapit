@@ -7,6 +7,7 @@ import {
   timestamp,
   pgEnum,
   jsonb,
+  index,
 } from 'drizzle-orm/pg-core';
 
 export const genderEnum = pgEnum('gender', ['male', 'female', 'unspecified']);
@@ -38,4 +39,7 @@ export const users = pgTable('users', {
   withdrawalSource: varchar('withdrawal_source', { length: 20 }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [
+  // Case-insensitive login/signup lookups. Not unique: legacy rows may differ only by case.
+  index('idx_users_email_lower').using('btree', sql`lower(${table.email})`),
+]);
