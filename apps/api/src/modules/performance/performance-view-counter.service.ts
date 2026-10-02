@@ -8,9 +8,16 @@ import {
 } from '@nestjs/common';
 import { sql } from 'drizzle-orm';
 
+import { waitWithinRunDeadline } from '../../common/run-deadline.js';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 
 export const PERFORMANCE_VIEW_COUNT_FLUSH_INTERVAL_MS = 10_000;
+/**
+ * Longest wait for the final flush at shutdown, shortened to the run deadline.
+ * It runs after pg-boss stopped and the HTTP server closed, so it never delays
+ * failWip; the views it could not write in time are dropped.
+ */
+export const VIEW_COUNT_SHUTDOWN_FLUSH_CAP_MS = 1_000;
 /** A flush never waits long behind an admin edit holding the row lock. */
 const FLUSH_LOCK_TIMEOUT_MS = 1_000;
 const FLUSH_STATEMENT_TIMEOUT_MS = 3_000;
@@ -72,9 +79,17 @@ export function buildViewCountFlushStatement(
  * late (when the next request wakes the instance). The single-message flush
  * keeps such a stall from holding a row lock.
  *
+ * Shutdown: onModuleDestroy only stops the timer. The final flush runs in
+ * onApplicationShutdown, after pg-boss's graceful stop and failWip
+ * (beforeApplicationShutdown) and the HTTP server close, and is waited for at
+ * most VIEW_COUNT_SHUTDOWN_FLUSH_CAP_MS within the run deadline. A DB I/O wait
+ * in onModuleDestroy would hold every later hook, so pg-boss could miss
+ * failWip before Cloud Run's SIGKILL (audit #153).
+ *
  * Trade-off: deltas that are not flushed yet are lost if the process dies
- * without a graceful shutdown (bounded by one flush interval per instance).
- * view_count only drives popularity ordering, so this is acceptable.
+ * without a graceful shutdown or the final flush misses its wait (bounded by
+ * one flush interval per instance). view_count only drives popularity
+ * ordering, so this is acceptable.
  */
 @Injectable()
 export class PerformanceViewCounter
@@ -94,12 +109,21 @@ export class PerformanceViewCounter
     this.flushTimer.unref?.();
   }
 
-  async onModuleDestroy(): Promise<void> {
-    await this.stopAndFlush();
+  /** No DB I/O: Nest runs beforeApplicationShutdown (pg-boss stop) only after this. */
+  onModuleDestroy(): void {
+    this.stopTimer();
   }
 
   async onApplicationShutdown(): Promise<void> {
-    await this.stopAndFlush();
+    const timedOut = await waitWithinRunDeadline(
+      this.stopAndFlush(),
+      VIEW_COUNT_SHUTDOWN_FLUSH_CAP_MS,
+    );
+    if (timedOut) {
+      this.logger.warn(
+        'performance view count final flush did not finish before shutdown — unwritten views are dropped',
+      );
+    }
   }
 
   /** Synchronous and I/O free: safe on the hot public read path. */
@@ -136,11 +160,15 @@ export class PerformanceViewCounter
     }
   }
 
-  private async stopAndFlush(): Promise<void> {
+  private stopTimer(): void {
     if (this.flushTimer) {
       clearInterval(this.flushTimer);
       this.flushTimer = null;
     }
+  }
+
+  private async stopAndFlush(): Promise<void> {
+    this.stopTimer();
     // Views recorded while an earlier flush was in flight need a second pass.
     if (this.activeFlush) await this.activeFlush;
     await this.flush();

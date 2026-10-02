@@ -23,6 +23,7 @@ import { performances } from '../../database/schema/performances.js';
 import { bookingPolicies } from '../../database/schema/booking-policies.js';
 import {
   SHOWTIME_STARTED_MESSAGE,
+  isShowtimeSalesClosed,
   showtimeOnSaleCondition,
 } from '../booking/showtime-sales-cutoff.js';
 import { QueueGateway } from './queue.gateway.js';
@@ -261,6 +262,19 @@ type QueueSnapshotContext = {
   waitingCount: number;
   rank: number | null;
   remainingSeats: number;
+};
+
+type QueueSnapshotOptions = {
+  // Counters the caller already read for many sessions (reconcile, broadcasts).
+  context?: QueueSnapshotContext;
+  // Remaining seats the caller already read; only the waiting counters are read.
+  remainingSeats?: number;
+  // The pending order found by findRecoveryOrderId.
+  recoveryOrderId?: string;
+  // The instant the caller judged the admission window at. One request judges
+  // it once, so a window that ends during the snapshot reads is not judged
+  // again (and reported EXPIRED without the recovery lookup).
+  now?: number;
 };
 
 type RemainingSeatsState = {
@@ -667,18 +681,24 @@ export class QueueService {
       });
     }
 
+    // The window is judged once, at `now`: the snapshot reads below take Redis
+    // round trips (and a DB query on a cache miss), and a window that ended
+    // meanwhile must not turn into EXPIRED without the recovery lookup. The
+    // remaining seats read above are reused instead of read again.
     const now = Date.now();
+    const snapshotOptions = { now, remainingSeats: seats.remainingSeats };
     if (this.isAdmissionWindowClosed(record, now)) {
       const recoveryOrderId = await this.findRecoveryOrderId(record, now);
       if (recoveryOrderId) {
-        return this.buildSnapshot(record, undefined, recoveryOrderId);
+        return this.buildSnapshot(record, { ...snapshotOptions, recoveryOrderId });
       }
       return this.buildSnapshot(
         record.state === EXPIRED ? record : await this.expireQueueSession(record),
+        snapshotOptions,
       );
     }
 
-    return this.buildSnapshot(await this.renewWaitingSession(record));
+    return this.buildSnapshot(await this.renewWaitingSession(record), snapshotOptions);
   }
 
   /**
@@ -700,8 +720,14 @@ export class QueueService {
   /**
    * The pending order prepared under this queue session that payment confirm
    * would still accept through the order binding (same user, refresh family and
-   * device slot, before max(paymentDeadlineAt, admissionActiveUntilAt)). Its
-   * toss order id, or null. Uses idx_reservations_queue_session_id.
+   * device slot, before max(paymentDeadlineAt, admissionActiveUntilAt)), for a
+   * showtime that has not started yet (C1). Its toss order id, or null. Uses
+   * idx_reservations_queue_session_id.
+   *
+   * The payment deadline is not capped at the showtime start, so an order
+   * prepared just before the start can outlive it. Payment handoff and confirm
+   * refuse such an order, so it must not hold the buyer in payment recovery
+   * (autoEnter false) instead of a new waiting position for another showtime.
    */
   private async findRecoveryOrderId(
     record: QueueSessionRecord,
@@ -719,8 +745,10 @@ export class QueueService {
         admissionActiveUntilAt: reservations.admissionActiveUntilAt,
         reentryGraceUntilAt: reservations.reentryGraceUntilAt,
         paymentDeadlineAt: reservations.paymentDeadlineAt,
+        showtimeAt: showtimes.dateTime,
       })
       .from(reservations)
+      .innerJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
       .where(
         and(
           eq(reservations.queueSessionId, record.queueSessionId),
@@ -731,12 +759,16 @@ export class QueueService {
             gte(reservations.paymentDeadlineAt, nowDate),
             gte(reservations.admissionActiveUntilAt, nowDate),
           ),
+          showtimeOnSaleCondition(nowDate),
         ),
       );
 
     let best: { orderId: string; endsAt: number } | null = null;
     for (const row of rows) {
       if (!row.tossOrderId || row.queueSessionId !== record.queueSessionId) {
+        continue;
+      }
+      if (isShowtimeSalesClosed(row.showtimeAt, nowDate)) {
         continue;
       }
       const admission = this.resolveOrderBoundAdmission(row, record, record.userId, now);
@@ -1091,7 +1123,9 @@ export class QueueService {
     for (const admittedRecord of admittedRecords) {
       this.gateway.emitAdmitted(
         admittedRecord.queueSessionId,
-        await this.buildSnapshot(admittedRecord, { waitingCount, rank: null, remainingSeats }),
+        await this.buildSnapshot(admittedRecord, {
+          context: { waitingCount, rank: null, remainingSeats },
+        }),
       );
     }
 
@@ -1346,16 +1380,17 @@ export class QueueService {
   /**
    * `recoveryOrderId` is the pending order found by findRecoveryOrderId; with
    * it a session whose active window ended reports PAYMENT_RECOVERY (payment
-   * of that order only, autoEnter false, no new window).
+   * of that order only, autoEnter false, no new window). `now` is the instant
+   * the caller judged the window at (default: when the counters were read).
    */
   private async buildSnapshot(
     record: QueueSessionRecord,
-    context?: QueueSnapshotContext,
-    recoveryOrderId?: string,
+    options: QueueSnapshotOptions = {},
   ): Promise<QueueSessionSnapshot> {
+    const { recoveryOrderId } = options;
     const { waitingCount, rank, remainingSeats } =
-      context ?? (await this.readSnapshotContext(record));
-    const state = this.resolveVisibleState(record, recoveryOrderId);
+      options.context ?? (await this.readSnapshotContext(record, options.remainingSeats));
+    const state = this.resolveVisibleState(record, recoveryOrderId, options.now);
     const position = state === WAITING && rank !== null ? rank + 1 : 0;
     const estimate =
       state === WAITING ? estimateQueueWait({ position, remainingSeats }) : NO_WAIT_ESTIMATE;
@@ -1377,12 +1412,20 @@ export class QueueService {
     };
   }
 
-  private async readSnapshotContext(record: QueueSessionRecord): Promise<QueueSnapshotContext> {
+  /**
+   * Waiting counters of the session. `knownRemainingSeats` is the remaining
+   * seat count the caller already read (status polls read it for the C1
+   * check), so a poll reads the remaining-seats cache once instead of twice.
+   */
+  private async readSnapshotContext(
+    record: QueueSessionRecord,
+    knownRemainingSeats?: number,
+  ): Promise<QueueSnapshotContext> {
     const waitingKey = this.waitingQueueKey(record.performanceId);
     const [waitingCount, rank, remainingSeats] = await Promise.all([
       this.redis.zcard(waitingKey),
       this.redis.zrank(waitingKey, record.queueSessionId),
-      this.calculateRemainingSeats(record.performanceId),
+      knownRemainingSeats ?? this.calculateRemainingSeats(record.performanceId),
     ]);
     return { waitingCount, rank, remainingSeats };
   }
@@ -1390,13 +1433,15 @@ export class QueueService {
   /**
    * An admission whose active window has ended is never reported as ADMITTED:
    * it is PAYMENT_RECOVERY while a bound pending order can still be paid
-   * (`recoveryOrderId`), otherwise EXPIRED.
+   * (`recoveryOrderId`), otherwise EXPIRED. `now` is the instant the window is
+   * judged at.
    */
   private resolveVisibleState(
     record: QueueSessionRecord,
     recoveryOrderId?: string,
+    now: number = Date.now(),
   ): QueueSessionState {
-    if (record.state === WAITING || !this.isAdmissionWindowClosed(record, Date.now())) {
+    if (record.state === WAITING || !this.isAdmissionWindowClosed(record, now)) {
       return record.state;
     }
 
@@ -1628,7 +1673,7 @@ export class QueueService {
 
       this.gateway.emitPosition(
         queueSessionId,
-        await this.buildSnapshot(record, { waitingCount, rank: index, remainingSeats }),
+        await this.buildSnapshot(record, { context: { waitingCount, rank: index, remainingSeats } }),
       );
     }
   }
