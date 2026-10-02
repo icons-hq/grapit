@@ -196,7 +196,7 @@ describe('Auth session and email identity — PostgreSQL', () => {
 
       const result = await auth.findOrCreateSocialUser({ provider: 'kakao', providerId: 'legacy001', name: 'Legacy Kakao' });
 
-      expect(result.user).toMatchObject({ id: legacy!.id, isEmailVerified: true });
+      expect(result).toMatchObject({ status: 'authenticated', user: { id: legacy!.id, isEmailVerified: true } });
       const [stored] = await db.select().from(schema.users).where(eq(schema.users.id, legacy!.id));
       expect(stored!.isEmailVerified).toBe(true);
     });
@@ -214,7 +214,7 @@ describe('Auth session and email identity — PostgreSQL', () => {
         name: 'Integration Buyer',
       });
 
-      expect(result.user).toMatchObject({ id: local.id, isEmailVerified: false });
+      expect(result).toMatchObject({ status: 'authenticated', user: { id: local.id, isEmailVerified: false } });
       const [stored] = await db.select().from(schema.users).where(eq(schema.users.id, local.id));
       expect(stored!.isEmailVerified).toBe(false);
     }, 30000);
@@ -245,7 +245,7 @@ describe('Auth session and email identity — PostgreSQL', () => {
       });
       smsService.claimPhoneVerificationToken.mockClear();
       await expect(auth.checkEmailAvailability('NEW.FAN@example.test')).resolves.toEqual({ available: false });
-      await expect(auth.register({ ...({} as never), email: 'new.FAN@example.test', password: 'Test1234!', name: 'Dup', gender: 'female', country: 'KR', birthDate: '1995-05-15', phone: '01011113333', phoneVerificationToken: 'x', termsOfService: true, privacyPolicy: true, marketingConsent: false, consentItems: [] } as never))
+      await expect(auth.register({ email: 'new.FAN@example.test', password: 'Test1234!', name: 'Dup', gender: 'female', country: 'KR', birthDate: '1995-05-15', phone: '01011113333', phoneVerificationToken: 'x', termsOfService: true, privacyPolicy: true, marketingConsent: false, consentItems: [] } as never))
         .rejects.toThrow(ConflictException);
       // The case-only duplicate is refused before its phone token is consumed.
       expect(smsService.claimPhoneVerificationToken).not.toHaveBeenCalled();
