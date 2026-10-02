@@ -92,8 +92,9 @@ describe('Queue entry HTTP contract', () => {
       state: 'WAITING',
       position: 42,
       waitingCount: 300,
-      etaSeconds: 0,
-      etaPending: true,
+      etaSeconds: 780,
+      etaMinSeconds: 0,
+      etaUnavailable: false,
       remainingSeats: 100,
       autoEnter: false,
       admittedAt: null,
@@ -109,8 +110,9 @@ describe('Queue entry HTTP contract', () => {
     expect(response.body).toMatchObject({
       queueSessionId: 'queue-session-1',
       position: 42,
-      etaSeconds: 0,
-      etaPending: true,
+      etaSeconds: 780,
+      etaMinSeconds: 0,
+      etaUnavailable: false,
     });
     expect(response.body).not.toHaveProperty('admissionToken');
     expect(queueService.enterPerformanceQueue).toHaveBeenCalledWith(

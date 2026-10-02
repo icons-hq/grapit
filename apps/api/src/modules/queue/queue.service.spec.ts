@@ -3,10 +3,12 @@ import { resolve } from 'node:path';
 import { HttpException } from '@nestjs/common';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  QUEUE_ETA_MIN_SAMPLE_MS,
+  QUEUE_ETA_CYCLE_MAX_SECONDS,
+  QUEUE_ETA_MAX_SECONDS,
+  QUEUE_SLOT_MIN_HOLD_SECONDS,
   QueueService,
   RELEASE_QUEUE_RECONCILE_LOCK_LUA,
-  estimateQueueWaitSeconds,
+  estimateQueueWait,
 } from './queue.service.js';
 import type { QueueGateway } from './queue.gateway.js';
 
@@ -93,6 +95,115 @@ function createMockGateway(): {
     emitAdmitted: vi.fn(),
     emitExpired: vi.fn(),
     emitPosition: vi.fn(),
+  };
+}
+
+type SnapshotView = {
+  state: string;
+  position: number;
+  etaSeconds: number;
+  etaMinSeconds: number;
+  etaUnavailable: boolean;
+};
+
+type QueueSimulationAccess = {
+  readQueueSessionRecord: (performanceId: string, queueSessionId: string) => Promise<unknown>;
+  enablePaymentRecovery: (record: unknown) => Promise<unknown>;
+  buildSnapshot: (
+    record: unknown,
+  ) => Promise<Awaited<ReturnType<QueueService['getQueueSessionStatus']>>>;
+};
+
+/**
+ * Functional in-memory Redis for the commands QueueService uses. Unlike the
+ * call-recording mock it keeps real string/set/sorted-set state (sorted by
+ * score, then member, like Redis) so reconcile, ranks and slot accounting
+ * behave as they do against Valkey. Key TTLs are not simulated; queue timing
+ * is driven by the timestamps stored in session records.
+ */
+function createFunctionalRedis() {
+  const strings = new Map<string, string>();
+  const sets = new Map<string, Set<string>>();
+  const zsets = new Map<string, Map<string, number>>();
+  const ordered = (key: string): string[] =>
+    [...(zsets.get(key) ?? new Map<string, number>()).entries()]
+      .sort(([memberA, scoreA], [memberB, scoreB]) =>
+        scoreA !== scoreB ? scoreA - scoreB : memberA < memberB ? -1 : memberA > memberB ? 1 : 0,
+      )
+      .map(([member]) => member);
+
+  return {
+    async get(key: string) {
+      return strings.get(key) ?? null;
+    },
+    async set(key: string, value: string, ...options: Array<string | number>) {
+      if (options.includes('NX') && strings.has(key)) return null;
+      strings.set(key, String(value));
+      return 'OK';
+    },
+    async del(...keys: string[]) {
+      let removed = 0;
+      for (const key of keys) {
+        if (strings.delete(key) || sets.delete(key) || zsets.delete(key)) removed += 1;
+      }
+      return removed;
+    },
+    async zadd(key: string, score: number, member: string) {
+      const zset = zsets.get(key) ?? new Map<string, number>();
+      const added = zset.has(member) ? 0 : 1;
+      zset.set(member, Number(score));
+      zsets.set(key, zset);
+      return added;
+    },
+    async zrank(key: string, member: string) {
+      const index = ordered(key).indexOf(member);
+      return index < 0 ? null : index;
+    },
+    async zcard(key: string) {
+      return zsets.get(key)?.size ?? 0;
+    },
+    async zrange(key: string, start: number, stop: number) {
+      const members = ordered(key);
+      return members.slice(start, stop < 0 ? members.length + stop + 1 : stop + 1);
+    },
+    async zrem(key: string, ...members: string[]) {
+      const zset = zsets.get(key);
+      let removed = 0;
+      for (const member of members) if (zset?.delete(member)) removed += 1;
+      return removed;
+    },
+    async sadd(key: string, ...members: string[]) {
+      const set = sets.get(key) ?? new Set<string>();
+      let added = 0;
+      for (const member of members) {
+        if (!set.has(member)) {
+          set.add(member);
+          added += 1;
+        }
+      }
+      sets.set(key, set);
+      return added;
+    },
+    async srem(key: string, ...members: string[]) {
+      const set = sets.get(key);
+      let removed = 0;
+      for (const member of members) if (set?.delete(member)) removed += 1;
+      return removed;
+    },
+    async smembers(key: string) {
+      return [...(sets.get(key) ?? [])];
+    },
+    async scard(key: string) {
+      return sets.get(key)?.size ?? 0;
+    },
+    async eval(_script: string, _numKeys: number, key: string, token: string) {
+      // RELEASE_QUEUE_RECONCILE_LOCK_LUA: delete only when the token matches.
+      if (strings.get(key) === token) {
+        strings.delete(key);
+        return 1;
+      }
+      return 0;
+    },
   };
 }
 
@@ -368,96 +479,81 @@ describe('QueueService', () => {
     ).resolves.toBeUndefined();
   });
 
-  describe('wait estimate', () => {
-    it('derives ETA from measured line movement instead of a fixed per-position step', () => {
-      // ~1000 admissions per 10 minutes: rank 6000 -> 5000 in 600s.
-      const etaSeconds = estimateQueueWaitSeconds({
-        origin: { rank: 6_000, at: 0 },
-        currentRank: 4_999,
-        now: 600_000,
+  describe('wait estimate (audit #91)', () => {
+    it('bounds the audit example by admission cycles instead of a fixed per-position step', () => {
+      // 1000+ seats: ~1000 admissions per 10-13 minute cycle, position 5000.
+      const estimate = estimateQueueWait({ position: 5_000, remainingSeats: 8_000 });
+
+      // 5 cycles: about 40-67 minutes, which contains the ~50 minutes the audit
+      // expects and is nowhere near 5000 * 5s (~6.9h).
+      expect(estimate).toEqual({
+        etaSeconds: 5 * QUEUE_ETA_CYCLE_MAX_SECONDS,
+        etaMinSeconds: 4 * QUEUE_SLOT_MIN_HOLD_SECONDS,
+        etaUnavailable: false,
       });
-
-      // 5000th in line at 1000 per 10 min is ~50 minutes, not 5000 * 5s (~6.9h).
-      expect(etaSeconds).toBeGreaterThanOrEqual(49 * 60);
-      expect(etaSeconds).toBeLessThanOrEqual(51 * 60);
+      expect(estimate.etaMinSeconds).toBeLessThanOrEqual(50 * 60);
+      expect(estimate.etaSeconds).toBeGreaterThanOrEqual(50 * 60);
     });
 
-    it('stays pending until the line has moved over a minimum sample window', () => {
+    it('covers the 300-seat example that the fixed step under-reported', () => {
+      // Position 600 with 300 seats needs a second cycle: about 10-27 minutes, not ~50.
+      expect(estimateQueueWait({ position: 600, remainingSeats: 300 })).toEqual({
+        etaSeconds: 2 * QUEUE_ETA_CYCLE_MAX_SECONDS,
+        etaMinSeconds: QUEUE_SLOT_MIN_HOLD_SECONDS,
+        etaUnavailable: false,
+      });
+      // First cycle: admitted as soon as a current slot frees up.
+      expect(estimateQueueWait({ position: 300, remainingSeats: 300 })).toEqual({
+        etaSeconds: QUEUE_ETA_CYCLE_MAX_SECONDS,
+        etaMinSeconds: 0,
+        etaUnavailable: false,
+      });
+    });
+
+    it('reports the estimate as unavailable instead of an unrealistic number', () => {
+      // No seat left to admit into.
+      expect(estimateQueueWait({ position: 10, remainingSeats: 0 })).toMatchObject({
+        etaUnavailable: true,
+        etaSeconds: QUEUE_ETA_MAX_SECONDS,
+      });
+      // One seat left and 1000 people ahead would otherwise read as ~9 days.
+      expect(estimateQueueWait({ position: 1_000, remainingSeats: 1 })).toMatchObject({
+        etaUnavailable: true,
+        etaSeconds: QUEUE_ETA_MAX_SECONDS,
+      });
+      // Missing rank.
+      expect(estimateQueueWait({ position: 0, remainingSeats: 100 })).toMatchObject({
+        etaUnavailable: true,
+      });
+      // Just inside the cap is still a range.
+      const lastCycles = Math.floor(QUEUE_ETA_MAX_SECONDS / QUEUE_ETA_CYCLE_MAX_SECONDS);
       expect(
-        estimateQueueWaitSeconds({
-          origin: { rank: 600, at: 0 },
-          currentRank: 590,
-          now: QUEUE_ETA_MIN_SAMPLE_MS - 1,
-        }),
-      ).toBeNull();
+        estimateQueueWait({ position: lastCycles * 1_000, remainingSeats: 5_000 }),
+      ).toMatchObject({ etaUnavailable: false, etaSeconds: lastCycles * QUEUE_ETA_CYCLE_MAX_SECONDS });
       expect(
-        estimateQueueWaitSeconds({
-          origin: { rank: 600, at: 0 },
-          currentRank: 600,
-          now: 20 * 60_000,
-        }),
-      ).toBeNull();
+        estimateQueueWait({ position: lastCycles * 1_000 + 1, remainingSeats: 5_000 }),
+      ).toMatchObject({ etaUnavailable: true });
     });
 
-    it('seeds the origin sample on the first waiting snapshot and reports the wait as pending', async () => {
-      vi.useFakeTimers();
-      try {
-        vi.setSystemTime(new Date('2026-06-04T10:00:00.000Z'));
-        const record = createWaitingRecord();
-        mockRedis.zrank.mockResolvedValueOnce(599);
-        mockRedis.zcard.mockResolvedValueOnce(2_000);
-        mockRedis.get.mockImplementation(async (key: string) =>
-          key.endsWith(':remaining-seats') ? '300' : null,
-        );
+    it('builds waiting snapshots from position and remaining seats without per-session ETA state', async () => {
+      const record = createWaitingRecord();
+      mockRedis.zrank.mockResolvedValueOnce(599);
+      mockRedis.zcard.mockResolvedValueOnce(2_000);
+      mockRedis.get.mockImplementation(async (key: string) =>
+        key.endsWith(':remaining-seats') ? '300' : null,
+      );
 
-        const snapshot = await buildSnapshot(service, record);
+      const snapshot = await buildSnapshot(service, record);
 
-        expect(snapshot).toMatchObject({
-          position: 600,
-          etaSeconds: 0,
-          etaPending: true,
-        });
-        expect(mockRedis.set).toHaveBeenCalledWith(
-          `{queue:${performanceId}}:eta-origin:${record.queueSessionId}`,
-          JSON.stringify({ rank: 599, at: Date.parse('2026-06-04T10:00:00.000Z') }),
-          'EX',
-          7_200,
-          'NX',
-        );
-      } finally {
-        vi.useRealTimers();
-      }
-    });
-
-    it('reports the measured wait once the line has advanced since the origin sample', async () => {
-      vi.useFakeTimers();
-      try {
-        const originAt = Date.parse('2026-06-04T10:00:00.000Z');
-        vi.setSystemTime(originAt + 10 * 60_000);
-        const record = createWaitingRecord();
-        // 300-seat sale: 900 waiting ahead -> 600 after 10 minutes (30/min).
-        mockRedis.zrank.mockResolvedValueOnce(599);
-        mockRedis.get.mockImplementation(async (key: string) => {
-          if (key.endsWith(':remaining-seats')) return '300';
-          if (key.includes(':eta-origin:')) return JSON.stringify({ rank: 899, at: originAt });
-          return null;
-        });
-
-        const snapshot = await buildSnapshot(service, record);
-
-        expect(snapshot.etaPending).toBe(false);
-        // 600 positions at 30/min is 20 minutes, not (600 - 1) * 5s.
-        expect(snapshot.etaSeconds).toBe(20 * 60);
-        expect(mockRedis.set).not.toHaveBeenCalledWith(
-          expect.stringContaining(':eta-origin:'),
-          expect.anything(),
-          'EX',
-          expect.any(Number),
-          'NX',
-        );
-      } finally {
-        vi.useRealTimers();
-      }
+      expect(snapshot).toMatchObject({
+        position: 600,
+        etaSeconds: 2 * QUEUE_ETA_CYCLE_MAX_SECONDS,
+        etaMinSeconds: QUEUE_SLOT_MIN_HOLD_SECONDS,
+        etaUnavailable: false,
+      });
+      // Older clients only read etaSeconds; it must never read as "entering soon".
+      expect(snapshot.etaSeconds).toBeGreaterThan(0);
+      expect(mockRedis.set).not.toHaveBeenCalled();
     });
 
     it('does not compute a wait estimate for admitted sessions', async () => {
@@ -473,8 +569,152 @@ describe('QueueService', () => {
 
       const snapshot = await buildSnapshot(service, record);
 
-      expect(snapshot).toMatchObject({ state: 'ADMITTED', etaSeconds: 0, etaPending: false });
-      expect(mockRedis.get).not.toHaveBeenCalledWith(expect.stringContaining(':eta-origin:'));
+      expect(snapshot).toMatchObject({
+        state: 'ADMITTED',
+        etaSeconds: 0,
+        etaMinSeconds: 0,
+        etaUnavailable: false,
+      });
+    });
+
+    /**
+     * Regression for the review of the measured-throughput ETA: admission moves
+     * in waves (an opening burst, then a cycle every 10-13 minutes), so an ETA
+     * sampled during the opening reconcile or just before a wave must not
+     * under-report the wait. This drives the real reconcile/expiry code with a
+     * functional Redis fake and checks every waiting snapshot against the time
+     * the session was actually admitted.
+     */
+    it('contains the actual admission time in every waiting snapshot through opening burst and waves', async () => {
+      vi.useFakeTimers();
+      try {
+        const openAt = Date.parse('2026-06-04T10:00:00.000Z');
+        vi.setSystemTime(openAt);
+        const seats = 3;
+        const stepMs = 5_000;
+        const fakeRedis = createFunctionalRedis();
+        await fakeRedis.set(`{queue:${performanceId}}:remaining-seats`, String(seats));
+        const simulated = new QueueService(
+          fakeRedis as never,
+          mockDb as never,
+          mockGateway as unknown as QueueGateway,
+        );
+        const internals = simulated as unknown as QueueSimulationAccess;
+
+        type Snapshot = Awaited<ReturnType<QueueService['getQueueSessionStatus']>>;
+        type Tracked = {
+          name: string;
+          lease: Awaited<ReturnType<QueueService['ensureQueueSession']>>;
+          samples: Array<{ at: number; min: number; max: number; unavailable: boolean }>;
+          admittedAt: number | null;
+        };
+        const tracked: Tracked[] = [];
+        const enter = async (name: string) => {
+          const lease = await simulated.ensureQueueSession({
+            performanceId,
+            identity: {
+              userId: name,
+              refreshTokenFamilyId: `${name}-family`,
+              deviceSlotId: `${name}-family`,
+            },
+          });
+          const entry: Tracked = { name, lease, samples: [], admittedAt: null };
+          tracked.push(entry);
+          return entry;
+        };
+        const sample = (entry: Tracked, snapshot: Snapshot) => {
+          if (snapshot.state === 'WAITING') {
+            entry.samples.push({
+              at: Date.now(),
+              min: snapshot.etaMinSeconds * 1000,
+              max: snapshot.etaSeconds * 1000,
+              unavailable: snapshot.etaUnavailable,
+            });
+          }
+        };
+        const poll = async (entry: Tracked) => {
+          const snapshot = await simulated.getQueueSessionStatus({
+            queueSessionId: entry.lease.queueSessionId,
+            identity: entry.lease,
+            admissionToken: entry.lease.admissionToken,
+          });
+          sample(entry, snapshot);
+          if (snapshot.state !== 'WAITING' && entry.admittedAt === null) {
+            entry.admittedAt = Date.now();
+            // Every other buyer reaches checkout and keeps the slot through the
+            // payment-recovery grace (13 minutes); the rest hold it 10 minutes.
+            if (tracked.indexOf(entry) % 2 === 0) {
+              const stored = await internals.readQueueSessionRecord(
+                performanceId,
+                entry.lease.queueSessionId,
+              );
+              if (stored) await internals.enablePaymentRecovery(stored);
+            }
+          }
+        };
+
+        // Opening burst: 9 buyers enter before any reconcile pass has run, so
+        // their first snapshot is taken while the first wave is still in line.
+        for (let index = 0; index < 9; index += 1) {
+          // Entries a few milliseconds apart (same-millisecond scores would be
+          // ordered by random session id, as in Redis).
+          vi.setSystemTime(openAt + index * 10);
+          const entry = await enter(`burst-${index}`);
+          const stored = await internals.readQueueSessionRecord(
+            performanceId,
+            entry.lease.queueSessionId,
+          );
+          if (stored) sample(entry, await internals.buildSnapshot(stored));
+        }
+
+        const lateJoinAt = openAt + 9 * 60_000; // one minute before the first wave
+        let lateJoined = false;
+        const deadline = openAt + 90 * 60_000;
+        while (Date.now() <= deadline && tracked.some((entry) => entry.admittedAt === null)) {
+          if (!lateJoined && Date.now() >= lateJoinAt) {
+            lateJoined = true;
+            await enter('late-joiner');
+          }
+          for (const entry of tracked) {
+            if (entry.admittedAt === null) await poll(entry);
+          }
+          vi.setSystemTime(Date.now() + stepMs);
+        }
+
+        expect(tracked.every((entry) => entry.admittedAt !== null)).toBe(true);
+        // Waves actually happened: the last buyer waited more than two cycles.
+        const longestWait = Math.max(
+          ...tracked.map((entry) => (entry.admittedAt ?? 0) - openAt),
+        );
+        expect(longestWait).toBeGreaterThan(2 * QUEUE_SLOT_MIN_HOLD_SECONDS * 1000);
+
+        let checked = 0;
+        for (const entry of tracked) {
+          for (const observed of entry.samples) {
+            const label = `${entry.name} sampled at +${(observed.at - openAt) / 1000}s`;
+            const actualWaitMs = (entry.admittedAt ?? 0) - observed.at;
+            expect(observed.unavailable, label).toBe(false);
+            // Never promises an earlier admission than reality (the reviewed
+            // estimate under-reported by several times) ...
+            expect(actualWaitMs, label).toBeLessThanOrEqual(observed.max);
+            // ... and never a later minimum than reality.
+            expect(actualWaitMs, label).toBeGreaterThanOrEqual(observed.min);
+            checked += 1;
+          }
+        }
+        expect(checked).toBeGreaterThan(100);
+
+        // The late joiner sampled one minute before a wave still gets an upper
+        // bound that covers its real wait (the measured estimate showed ~1/5).
+        const late = tracked.find((entry) => entry.name === 'late-joiner');
+        const lateFirst = late?.samples[0];
+        expect(lateFirst).toBeDefined();
+        const lateWaitMs = (late?.admittedAt ?? 0) - (lateFirst?.at ?? 0);
+        expect(lateWaitMs).toBeGreaterThan(QUEUE_SLOT_MIN_HOLD_SECONDS * 1000);
+        expect(lateWaitMs).toBeLessThanOrEqual(lateFirst?.max ?? 0);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
@@ -499,12 +739,10 @@ describe('QueueService', () => {
   function buildSnapshot(
     target: QueueService,
     record: ReturnType<typeof createWaitingRecord>,
-  ): Promise<{ state: string; position: number; etaSeconds: number; etaPending: boolean }> {
+  ): Promise<SnapshotView> {
     return (
       target as unknown as {
-        buildSnapshot: (
-          value: ReturnType<typeof createWaitingRecord>,
-        ) => Promise<{ state: string; position: number; etaSeconds: number; etaPending: boolean }>;
+        buildSnapshot: (value: ReturnType<typeof createWaitingRecord>) => Promise<SnapshotView>;
       }
     ).buildSnapshot(record);
   }

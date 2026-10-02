@@ -239,6 +239,30 @@ describe('BookingRoute auth gating', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'back' }));
     expect(routerPushMock).toHaveBeenCalledWith('/en/performance/performance-auth');
   });
+
+  it('sends visitors of a missing performance home instead of to its missing detail page', async () => {
+    useLocaleMock.mockReturnValue('en');
+    useAuthStoreMock.mockReturnValue({
+      isInitialized: true,
+      accessToken: 'access-token',
+    });
+    useQueueMock.mockReturnValue({
+      status: 'closed',
+      closedReason: 'notFound',
+      position: 0,
+      etaSeconds: 0,
+      remainingSeats: 0,
+      autoEnter: false,
+      isReady: false,
+      retry: vi.fn(),
+      enterNow: vi.fn(),
+    });
+
+    renderBookingRoute();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'back' }));
+    expect(routerPushMock).toHaveBeenCalledWith('/en');
+  });
 });
 
 function renderBookingRoute() {

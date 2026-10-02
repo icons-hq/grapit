@@ -13,7 +13,7 @@ import { QueueService } from '../src/modules/queue/queue.service.js';
 import type { QueueGateway } from '../src/modules/queue/queue.gateway.js';
 
 /**
- * Queue entry gate + wait estimate against real Postgres 16 and Valkey 8.
+ * Queue entry gate against real Postgres 16 and Valkey 8.
  * Covers the SQL sellable-showtime cutoff (C1) and that rejected entries never
  * create queue keys.
  *
@@ -201,23 +201,24 @@ describe('QueueService entry gate (integration)', () => {
     expect(await queueKeysFor(performanceId)).toEqual([]);
   });
 
-  it('allows entry while one showtime is still ahead and starts a pending wait estimate', async () => {
+  it('allows entry while one showtime is still ahead and reports an unavailable wait without seats', async () => {
     const performanceId = await seedPerformance({
       showtimeOffsetsMs: [-3_600_000, 3_600_000],
     });
 
     const result = await service.enterPerformanceQueue({ performanceId, identity });
 
-    // No seat map -> no remaining seats -> the session keeps waiting.
+    // No seat map -> no remaining seats -> nobody can be admitted, so the
+    // estimate is unavailable instead of "entering soon" (etaSeconds stays > 0
+    // for clients that only read etaSeconds).
     expect(result.state).toBe('WAITING');
     expect(result.position).toBe(1);
-    expect(result.etaPending).toBe(true);
-    expect(result.etaSeconds).toBe(0);
+    expect(result.remainingSeats).toBe(0);
+    expect(result.etaUnavailable).toBe(true);
+    expect(result.etaSeconds).toBeGreaterThan(0);
 
-    const originKey = `{queue:${performanceId}}:eta-origin:${result.queueSessionId}`;
-    expect(JSON.parse((await redis.get(originKey)) ?? 'null')).toMatchObject({ rank: 0 });
-    const ttl = await redis.ttl(originKey);
-    expect(ttl).toBeGreaterThan(0);
-    expect(ttl).toBeLessThanOrEqual(7_200);
+    // The estimate keeps no per-session state in Valkey.
+    const keys = await queueKeysFor(performanceId);
+    expect(keys.some((key) => key.includes(':eta-origin:'))).toBe(false);
   });
 });

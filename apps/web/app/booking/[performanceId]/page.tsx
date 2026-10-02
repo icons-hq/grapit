@@ -23,6 +23,7 @@ export default function BookingRoute({
   const bookingPath = getLocalizedPathname(`/booking/${performanceId}`, locale);
   const authRedirectPath = `${getLocalizedPathname('/auth', locale)}?returnTo=${encodeURIComponent(bookingPath)}`;
   const performancePath = getLocalizedPathname(`/performance/${performanceId}`, locale);
+  const homePath = getLocalizedPathname('/', locale);
 
   const {
     bookingAvailable,
@@ -132,16 +133,19 @@ export default function BookingRoute({
       status={queue.status}
       position={queue.position}
       etaSeconds={queue.etaSeconds}
-      etaPending={queue.etaPending}
+      etaMinSeconds={queue.etaMinSeconds}
+      etaUnavailable={queue.etaUnavailable}
       remainingSeats={queue.remainingSeats}
       autoEnter={queue.autoEnter}
       bookingOpensAt={queue.bookingOpensAt}
+      closedReason={queue.closedReason}
       onRetry={() => {
         void queue.retry();
       }}
       onEnterNow={queue.enterNow}
       onBack={() => {
-        router.push(performancePath);
+        // A missing performance has no detail page to go back to.
+        router.push(queue.closedReason === 'notFound' ? homePath : performancePath);
       }}
     />
   );

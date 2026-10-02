@@ -32,10 +32,22 @@ const QUEUE_MAX_ACTIVE_ADMISSIONS = 1000;
 const QUEUE_RECONCILE_LOCK_TTL_MS = 30_000;
 const QUEUE_POSITION_BROADCAST_LIMIT = 500;
 const QUEUE_REMAINING_SEATS_CACHE_SECONDS = 2;
-// ETA is measured from how far this session's own line actually moved since it
-// was first observed waiting. Below the minimum sample the estimate stays pending.
-export const QUEUE_ETA_MIN_SAMPLE_MS = 30_000;
-const QUEUE_ETA_ORIGIN_TTL_SECONDS = 7_200;
+// Wait estimate (audit #91). Admission runs in cycles: reconcile keeps at most
+// min(remainingSeats, QUEUE_MAX_ACTIVE_ADMISSIONS) sessions active, and a slot is
+// returned only when that session's authority window ends (expireStaleSessions).
+// Each slot is therefore held at least for the active window and at most for the
+// active window plus the payment-recovery grace (resolveAuthorityExpiry).
+// If slots are ever returned earlier (e.g. on purchase), lower the minimum hold.
+export const QUEUE_SLOT_MIN_HOLD_SECONDS = QUEUE_ACTIVE_WINDOW_SECONDS;
+export const QUEUE_SLOT_MAX_HOLD_SECONDS =
+  QUEUE_ACTIVE_WINDOW_SECONDS + QUEUE_REENTRY_GRACE_SECONDS;
+// An ended slot is only noticed by the next reconcile, which runs on queue
+// requests; waiting clients poll every 15-20 s, so allow one poll per cycle.
+const QUEUE_ETA_RECONCILE_LATENCY_SECONDS = 20;
+export const QUEUE_ETA_CYCLE_MAX_SECONDS =
+  QUEUE_SLOT_MAX_HOLD_SECONDS + QUEUE_ETA_RECONCILE_LATENCY_SECONDS;
+// Beyond this the estimate is reported as unavailable instead of a huge number.
+export const QUEUE_ETA_MAX_SECONDS = 3 * 60 * 60;
 const BOOKING_NOT_OPEN_MESSAGE = '예매는 추후 오픈 예정입니다';
 const BOOKING_ENDED_MESSAGE = '판매가 종료된 공연입니다';
 const PERFORMANCE_NOT_FOUND_MESSAGE = '공연을 찾을 수 없습니다';
@@ -66,52 +78,61 @@ function isBookingStartReached(value: Date | null | undefined, now: Date = new D
   return value instanceof Date && !Number.isNaN(value.getTime()) && value.getTime() <= now.getTime();
 }
 
-type QueueWaitOrigin = {
-  rank: number;
-  at: number;
+export type QueueWaitEstimate = {
+  // Upper bound of the wait in seconds (also what older clients display).
+  etaSeconds: number;
+  // Lower bound of the wait in seconds.
+  etaMinSeconds: number;
+  // true when no honest estimate exists: no seat left to admit into, no rank,
+  // or the upper bound exceeds QUEUE_ETA_MAX_SECONDS.
+  etaUnavailable: boolean;
+};
+
+const NO_WAIT_ESTIMATE: QueueWaitEstimate = {
+  etaSeconds: 0,
+  etaMinSeconds: 0,
+  etaUnavailable: false,
 };
 
 /**
- * Estimates the remaining wait from the observed throughput of this session's
- * own line: positions advanced since `origin` divided by the elapsed time.
- * Returns null while there is not enough movement to estimate honestly.
+ * Deterministic wait range for the current admission algorithm. The waiting
+ * line moves in cycles of `min(remainingSeats, QUEUE_MAX_ACTIVE_ADMISSIONS)`
+ * admissions, and every cycle takes between the minimum and maximum slot hold.
+ * Position p is admitted in cycle ceil(p / cycleCapacity): no earlier than
+ * (cycles - 1) minimum holds and no later than `cycles` maximum holds (plus
+ * the reconcile latency of each cycle).
+ * The range does not depend on when the session was first observed, so wave-
+ * shaped admission (an opening burst, then a cycle every 10-13 minutes) cannot
+ * make it under-report the wait the way a short line-movement sample does.
  */
-export function estimateQueueWaitSeconds(params: {
-  origin: QueueWaitOrigin;
-  currentRank: number;
-  now: number;
-}): number | null {
-  const elapsedMs = params.now - params.origin.at;
-  const advancedPositions = params.origin.rank - params.currentRank;
-  if (elapsedMs < QUEUE_ETA_MIN_SAMPLE_MS || advancedPositions <= 0) {
-    return null;
+export function estimateQueueWait(params: {
+  position: number;
+  remainingSeats: number;
+}): QueueWaitEstimate {
+  const position = Math.floor(params.position);
+  const remainingSeats = Math.floor(params.remainingSeats);
+
+  if (!(position > 0)) {
+    return { etaSeconds: 0, etaMinSeconds: 0, etaUnavailable: true };
   }
 
-  const positionsPerSecond = advancedPositions / (elapsedMs / 1000);
-  return Math.max(1, Math.ceil((params.currentRank + 1) / positionsPerSecond));
-}
-
-function parseQueueWaitOrigin(raw: string | null): QueueWaitOrigin | null {
-  if (!raw) {
-    return null;
+  if (!(remainingSeats > 0)) {
+    // Reconcile admits nobody until seats come back (sold out or all held).
+    return { etaSeconds: QUEUE_ETA_MAX_SECONDS, etaMinSeconds: 0, etaUnavailable: true };
   }
 
-  try {
-    const parsed = JSON.parse(raw) as Partial<QueueWaitOrigin>;
-    if (
-      typeof parsed.rank === 'number' &&
-      Number.isInteger(parsed.rank) &&
-      parsed.rank >= 0 &&
-      typeof parsed.at === 'number' &&
-      Number.isFinite(parsed.at)
-    ) {
-      return { rank: parsed.rank, at: parsed.at };
-    }
-  } catch {
-    // Corrupt sample: start a new one.
+  const cycleCapacity = Math.min(remainingSeats, QUEUE_MAX_ACTIVE_ADMISSIONS);
+  const cycles = Math.ceil(position / cycleCapacity);
+  const maxSeconds = cycles * QUEUE_ETA_CYCLE_MAX_SECONDS;
+  if (maxSeconds > QUEUE_ETA_MAX_SECONDS) {
+    return { etaSeconds: QUEUE_ETA_MAX_SECONDS, etaMinSeconds: 0, etaUnavailable: true };
   }
 
-  return null;
+  return {
+    etaSeconds: maxSeconds,
+    etaMinSeconds: (cycles - 1) * QUEUE_SLOT_MIN_HOLD_SECONDS,
+    etaUnavailable: false,
+  };
 }
 
 export type QueueSessionState =
@@ -153,8 +174,8 @@ export type QueueSessionSnapshot = {
   position: number;
   waitingCount: number;
   etaSeconds: number;
-  // true while the waiting line has not moved enough to measure a wait time.
-  etaPending: boolean;
+  etaMinSeconds: number;
+  etaUnavailable: boolean;
   remainingSeats: number;
   autoEnter: boolean;
   admittedAt: string | null;
@@ -706,59 +727,23 @@ export class QueueService {
     const remainingSeats = await this.calculateRemainingSeats(record.performanceId);
     const state = this.resolveVisibleState(record);
     const position = state === WAITING && rank !== null ? rank + 1 : 0;
-    const { etaSeconds, etaPending } = await this.resolveWaitEstimate(record, state, rank);
+    const estimate =
+      state === WAITING ? estimateQueueWait({ position, remainingSeats }) : NO_WAIT_ESTIMATE;
 
     return {
       queueSessionId: record.queueSessionId,
       state,
       position,
       waitingCount,
-      etaSeconds,
-      etaPending,
+      etaSeconds: estimate.etaSeconds,
+      etaMinSeconds: estimate.etaMinSeconds,
+      etaUnavailable: estimate.etaUnavailable,
       remainingSeats,
       autoEnter: state === ADMITTED,
       admittedAt: record.admittedAt,
       activeUntilAt: record.activeUntilAt,
       reentryGraceUntilAt: record.reentryGraceUntilAt,
     };
-  }
-
-  /**
-   * Wait estimate from measured line movement instead of a fixed per-position
-   * step. The first waiting observation is stored as the origin sample; later
-   * snapshots divide the positions advanced since then by the elapsed time.
-   */
-  private async resolveWaitEstimate(
-    record: QueueSessionRecord,
-    state: QueueSessionState,
-    rank: number | null,
-  ): Promise<{ etaSeconds: number; etaPending: boolean }> {
-    if (state !== WAITING) {
-      return { etaSeconds: 0, etaPending: false };
-    }
-
-    if (rank === null) {
-      return { etaSeconds: 0, etaPending: true };
-    }
-
-    const originKey = this.etaOriginKey(record.performanceId, record.queueSessionId);
-    const now = Date.now();
-    const origin = parseQueueWaitOrigin(await this.redis.get(originKey));
-
-    if (!origin || rank > origin.rank) {
-      const sample = JSON.stringify({ rank, at: now } satisfies QueueWaitOrigin);
-      if (origin) {
-        await this.redis.set(originKey, sample, 'EX', QUEUE_ETA_ORIGIN_TTL_SECONDS);
-      } else {
-        await this.redis.set(originKey, sample, 'EX', QUEUE_ETA_ORIGIN_TTL_SECONDS, 'NX');
-      }
-      return { etaSeconds: 0, etaPending: true };
-    }
-
-    const etaSeconds = estimateQueueWaitSeconds({ origin, currentRank: rank, now });
-    return etaSeconds === null
-      ? { etaSeconds: 0, etaPending: true }
-      : { etaSeconds, etaPending: false };
   }
 
   private resolveVisibleState(record: QueueSessionRecord): QueueSessionState {
@@ -1012,10 +997,6 @@ export class QueueService {
 
   private remainingSeatsCacheKey(performanceId: string): string {
     return `${this.queuePrefix(performanceId)}:remaining-seats`;
-  }
-
-  private etaOriginKey(performanceId: string, queueSessionId: string): string {
-    return `${this.queuePrefix(performanceId)}:eta-origin:${queueSessionId}`;
   }
 
   private sessionKey(performanceId: string, queueSessionId: string): string {

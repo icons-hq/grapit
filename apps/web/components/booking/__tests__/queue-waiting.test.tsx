@@ -69,6 +69,28 @@ describe('QueueWaiting', () => {
       );
 
       expect(screen.getByRole('timer')).toHaveTextContent(koQueue.metrics.openTimeUnknown);
+      // Without an open time the page re-checks periodically; it must not claim
+      // that refreshing is unnecessary as if entry were timed to the open.
+      expect(screen.getByTestId('queue-open-time-unknown')).toHaveTextContent(
+        koQueue.openTimeUnknownInfo.replace('{seconds}', '15'),
+      );
+      expect(screen.queryByText(koQueue.status.notOpen.helper)).not.toBeInTheDocument();
+    });
+
+    it('keeps the no-refresh guidance when the open time is known', () => {
+      render(
+        <QueueWaiting
+          status="notOpen"
+          position={0}
+          etaSeconds={0}
+          remainingSeats={0}
+          autoEnter={false}
+          bookingOpensAt={Date.now() + 60_000}
+        />,
+      );
+
+      expect(screen.getByText(koQueue.status.notOpen.helper)).toBeInTheDocument();
+      expect(screen.queryByTestId('queue-open-time-unknown')).not.toBeInTheDocument();
     });
   });
 
@@ -94,36 +116,58 @@ describe('QueueWaiting', () => {
     expect(onBack).toHaveBeenCalledTimes(1);
   });
 
+  it('tells visitors of a missing performance that it was not found instead of "sales ended"', () => {
+    const onBack = vi.fn();
+    render(
+      <QueueWaiting
+        status="closed"
+        closedReason="notFound"
+        position={0}
+        etaSeconds={0}
+        remainingSeats={0}
+        autoEnter={false}
+        onBack={onBack}
+      />,
+    );
+
+    expect(screen.getByRole('heading', { name: koQueue.notFound.title })).toBeInTheDocument();
+    expect(screen.queryByText(koQueue.status.closed.description)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: koQueue.backHomeAction }));
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
   describe('wait estimate (audit #91)', () => {
-    it('does not show a per-position countdown while the estimate is pending', () => {
-      render(
-        <QueueWaiting
-          status="waiting"
-          position={600}
-          etaSeconds={0}
-          etaPending
-          remainingSeats={300}
-          autoEnter={false}
-        />,
-      );
-
-      expect(screen.getByTestId('queue-metric-eta')).toHaveTextContent(koQueue.metrics.etaCalculating);
-      expect(screen.getByTestId('queue-metric-eta')).not.toHaveTextContent(koQueue.metrics.soon);
-    });
-
-    it('shows the measured estimate as a minute range', () => {
+    it('shows the server range for the current admission cycles', () => {
       render(
         <QueueWaiting
           status="waiting"
           position={5_000}
-          etaSeconds={3_000}
+          etaSeconds={4_000}
+          etaMinSeconds={2_400}
           remainingSeats={8_000}
           autoEnter={false}
         />,
       );
 
-      expect(screen.getByTestId('queue-metric-eta')).toHaveTextContent('약 40~60분');
+      expect(screen.getByTestId('queue-metric-eta')).toHaveTextContent('약 40~67분');
       expect(screen.queryByTestId('queue-sold-out-risk')).not.toBeInTheDocument();
+    });
+
+    it('never shows "entering soon" for a waiting position without an estimate', () => {
+      render(
+        <QueueWaiting
+          status="waiting"
+          position={600}
+          etaSeconds={10_800}
+          etaUnavailable
+          remainingSeats={0}
+          autoEnter={false}
+        />,
+      );
+
+      expect(screen.getByTestId('queue-metric-eta')).toHaveTextContent(koQueue.metrics.etaUnavailable);
+      expect(screen.getByTestId('queue-metric-eta')).not.toHaveTextContent(koQueue.metrics.soon);
+      expect(screen.getByTestId('queue-sold-out-risk')).toHaveTextContent(koQueue.soldOutRisk);
     });
 
     it('warns that seats may sell out when more people wait ahead than seats remain', () => {
@@ -131,7 +175,8 @@ describe('QueueWaiting', () => {
         <QueueWaiting
           status="waiting"
           position={600}
-          etaSeconds={1_200}
+          etaSeconds={1_600}
+          etaMinSeconds={600}
           remainingSeats={300}
           autoEnter={false}
         />,
@@ -140,13 +185,28 @@ describe('QueueWaiting', () => {
       expect(screen.getByTestId('queue-sold-out-risk')).toHaveTextContent(koQueue.soldOutRisk);
     });
 
+    it('does not show a wait estimate on failure surfaces', () => {
+      render(
+        <QueueWaiting
+          status="expired"
+          position={0}
+          etaSeconds={0}
+          remainingSeats={0}
+          autoEnter={false}
+        />,
+      );
+
+      expect(screen.getByTestId('queue-metric-eta')).not.toHaveTextContent(koQueue.metrics.soon);
+    });
+
     it.each([
-      [{ etaSeconds: 0, etaPending: true, position: 1 }, koQueue.metrics.soon],
-      [{ etaSeconds: 0, etaPending: true, position: 12 }, koQueue.metrics.etaCalculating],
-      [{ etaSeconds: 0, etaPending: false, position: 0 }, koQueue.metrics.soon],
-      [{ etaSeconds: 45, etaPending: false, position: 3 }, koQueue.metrics.etaUnderMinute],
-      [{ etaSeconds: 75, etaPending: false, position: 3 }, '약 1~2분'],
-      [{ etaSeconds: 165, etaPending: false, position: 12 }, '약 2~4분'],
+      [{ etaSeconds: 800, etaMinSeconds: 0, position: 1, remainingSeats: 300 }, '14분 이내'],
+      [{ etaSeconds: 1_600, etaMinSeconds: 600, position: 600, remainingSeats: 300 }, '약 10~27분'],
+      [{ etaSeconds: 0, position: 0, remainingSeats: 300 }, koQueue.metrics.etaCalculating],
+      [{ etaSeconds: 10_800, etaUnavailable: true, position: 12, remainingSeats: 0 }, koQueue.metrics.etaUnavailable],
+      [{ etaSeconds: 10_800, etaUnavailable: true, position: 20_000, remainingSeats: 5_000 }, '3시간 넘게 걸릴 수 있음'],
+      // Older API responses without the lower bound read as an upper bound.
+      [{ etaSeconds: 165, position: 12, remainingSeats: 24 }, '3분 이내'],
     ])('formats %o as %s', (params, expected) => {
       expect(formatQueueEta(params, koQueue.metrics)).toBe(expected);
     });
@@ -154,10 +214,16 @@ describe('QueueWaiting', () => {
     it('localizes the estimate range', () => {
       expect(
         formatQueueEta(
-          { etaSeconds: 3_000, etaPending: false, position: 5_000 },
+          { etaSeconds: 4_000, etaMinSeconds: 2_400, position: 5_000, remainingSeats: 8_000 },
           enMessages.booking.queue.metrics,
         ),
-      ).toBe('About 40–60 min');
+      ).toBe('About 40–67 min');
+      expect(
+        formatQueueEta(
+          { etaSeconds: 800, etaMinSeconds: 0, position: 3, remainingSeats: 300 },
+          enMessages.booking.queue.metrics,
+        ),
+      ).toBe('Within 14 min');
     });
   });
 });

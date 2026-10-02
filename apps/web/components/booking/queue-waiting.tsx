@@ -21,7 +21,11 @@ import {
   CardHeader,
 } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
-import type { QueueStatus } from '@/hooks/use-queue';
+import {
+  QUEUE_OPEN_UNKNOWN_RETRY_MS,
+  type QueueClosedReason,
+  type QueueStatus,
+} from '@/hooks/use-queue';
 import {
   getVisibleCopy,
   resolveVisibleCopyLocale,
@@ -32,13 +36,15 @@ import { cn } from '@/lib';
 type QueueWaitingProps = {
   status: QueueStatus;
   position: number;
+  // Upper bound of the wait; etaMinSeconds is the lower bound.
   etaSeconds: number;
-  // true while the server has not observed enough queue movement for an ETA.
-  etaPending?: boolean;
+  etaMinSeconds?: number;
+  etaUnavailable?: boolean;
   remainingSeats: number;
   autoEnter: boolean;
   // Booking open time on this device's clock (server-offset corrected).
   bookingOpensAt?: number | null;
+  closedReason?: QueueClosedReason | null;
   showEnterNow?: boolean;
   onRetry?: () => void;
   onEnterNow?: () => void;
@@ -54,6 +60,7 @@ type SurfaceCopy = {
 
 type QueueCopy = {
   status: Record<QueueStatus, SurfaceCopy>;
+  notFound: SurfaceCopy;
   metrics: {
     position: string;
     eta: string;
@@ -61,7 +68,9 @@ type QueueCopy = {
     ready: string;
     soon: string;
     etaCalculating: string;
-    etaUnderMinute: string;
+    etaWithin: string;
+    etaUnavailable: string;
+    etaOverLimit: string;
     etaAbout: string;
     etaRange: string;
     opensIn: string;
@@ -72,10 +81,12 @@ type QueueCopy = {
   autoEnterInfo: string;
   safetyInfo: string;
   etaInfo: string;
+  openTimeUnknownInfo: string;
   soldOutRisk: string;
   retryAction: string;
   enterNowAction: string;
   backAction: string;
+  backHomeAction: string;
 };
 
 const FALLBACK_QUEUE_COPY: QueueCopy = {
@@ -143,6 +154,12 @@ const FALLBACK_QUEUE_COPY: QueueCopy = {
       helper: '차단이 계속되면 잠시 후 다시 시도하거나 고객센터에 문의해주세요.',
     },
   },
+  notFound: {
+    badge: '예매 불가',
+    title: '공연을 찾을 수 없습니다',
+    description: '주소가 잘못되었거나 더 이상 공개되지 않는 공연입니다.',
+    helper: '홈에서 공연을 다시 찾아 주세요.',
+  },
   metrics: {
     position: '현재 순번',
     eta: '예상 대기',
@@ -150,7 +167,9 @@ const FALLBACK_QUEUE_COPY: QueueCopy = {
     ready: '입장 가능',
     soon: '곧 입장',
     etaCalculating: '계산 중',
-    etaUnderMinute: '1분 이내',
+    etaWithin: '{minutes}분 이내',
+    etaUnavailable: '산정 불가',
+    etaOverLimit: '{hours}시간 넘게 걸릴 수 있음',
     etaAbout: '약 {minutes}분',
     etaRange: '약 {min}~{max}분',
     opensIn: '오픈까지',
@@ -162,12 +181,15 @@ const FALLBACK_QUEUE_COPY: QueueCopy = {
   safetyInfo:
     '대기열 순번, 예상 시간, 남은 좌석 수만 노출되며 내부 인증 정보는 표시되지 않습니다.',
   etaInfo:
-    '예상 대기 시간은 최근 대기열이 줄어든 속도로 계산하며, 상황에 따라 달라질 수 있습니다.',
+    '예상 대기 시간은 현재 순번과 입장 처리 주기(앞선 입장자가 이용할 수 있는 시간)로 계산한 범위이며, 상황에 따라 달라질 수 있습니다. 차례가 되면 자동으로 이동하니 이 화면을 열어 두세요.',
+  openTimeUnknownInfo:
+    '예매 오픈 시각이 아직 공개되지 않았습니다. 이 화면이 약 {seconds}초마다 오픈 여부를 확인하고, 열리면 자동으로 대기열에 들어갑니다.',
   soldOutRisk:
     '앞선 대기 인원이 남은 좌석보다 많아 순서가 오기 전에 매진될 수 있습니다.',
   retryAction: '다시 시도',
   enterNowAction: '지금 입장하기',
   backAction: '공연 정보로 돌아가기',
+  backHomeAction: '홈으로 이동',
 };
 
 const SURFACE_ICONS = {
@@ -203,38 +225,48 @@ const QUEUE_METRIC_TEST_IDS = {
   opensIn: 'queue-opens-in',
 } as const;
 
-// The estimate comes from measured queue movement, so it is shown as a range
-// rather than a to-the-second countdown.
-const ETA_RANGE_LOWER_RATIO = 0.8;
-const ETA_RANGE_UPPER_RATIO = 1.2;
-
+/**
+ * The server sends a range for the current admission cycles: etaSeconds is the
+ * upper bound and etaMinSeconds the lower bound. Shown in whole minutes, never
+ * as a to-the-second countdown.
+ */
 export function formatQueueEta(
-  params: { etaSeconds: number; etaPending?: boolean; position: number },
+  params: {
+    etaSeconds: number;
+    etaMinSeconds?: number;
+    etaUnavailable?: boolean;
+    position: number;
+    remainingSeats: number;
+  },
   metrics: QueueCopy['metrics'],
 ): string {
-  if (params.etaPending) {
-    return params.position === 1 ? metrics.soon : metrics.etaCalculating;
+  if (params.position <= 0) {
+    return metrics.etaCalculating;
+  }
+
+  if (params.etaUnavailable) {
+    if (params.remainingSeats <= 0 || params.etaSeconds <= 0) {
+      return metrics.etaUnavailable;
+    }
+
+    return formatCopy(metrics.etaOverLimit, {
+      hours: Math.max(1, Math.floor(params.etaSeconds / 3600)),
+    });
   }
 
   if (params.etaSeconds <= 0) {
     return metrics.soon;
   }
 
-  if (params.etaSeconds < 60) {
-    return metrics.etaUnderMinute;
+  const upperMinutes = Math.max(1, Math.ceil(params.etaSeconds / 60));
+  const lowerMinutes = Math.floor(Math.max(0, params.etaMinSeconds ?? 0) / 60);
+
+  if (lowerMinutes <= 0) {
+    return formatCopy(metrics.etaWithin, { minutes: upperMinutes });
   }
 
-  const lowerMinutes = Math.max(
-    1,
-    Math.floor((params.etaSeconds * ETA_RANGE_LOWER_RATIO) / 60),
-  );
-  const upperMinutes = Math.max(
-    lowerMinutes,
-    Math.ceil((params.etaSeconds * ETA_RANGE_UPPER_RATIO) / 60),
-  );
-
-  if (lowerMinutes === upperMinutes) {
-    return formatCopy(metrics.etaAbout, { minutes: lowerMinutes });
+  if (lowerMinutes >= upperMinutes) {
+    return formatCopy(metrics.etaAbout, { minutes: upperMinutes });
   }
 
   return formatCopy(metrics.etaRange, { min: lowerMinutes, max: upperMinutes });
@@ -308,10 +340,12 @@ export function QueueWaiting({
   status,
   position,
   etaSeconds,
-  etaPending = false,
+  etaMinSeconds = 0,
+  etaUnavailable = false,
   remainingSeats,
   autoEnter,
   bookingOpensAt = null,
+  closedReason = null,
   showEnterNow = false,
   onRetry,
   onEnterNow,
@@ -320,7 +354,10 @@ export function QueueWaiting({
   const locale = resolveVisibleCopyLocale(useLocale());
   const queueCopy =
     getVisibleCopy(locale).booking.queue ?? FALLBACK_QUEUE_COPY;
-  const copy = queueCopy.status[status] ?? FALLBACK_QUEUE_COPY.status[status];
+  const isNotFound = status === 'closed' && closedReason === 'notFound';
+  const copy = isNotFound
+    ? queueCopy.notFound ?? FALLBACK_QUEUE_COPY.notFound
+    : queueCopy.status[status] ?? FALLBACK_QUEUE_COPY.status[status];
   const metrics = { ...FALLBACK_QUEUE_COPY.metrics, ...queueCopy.metrics };
   const Icon = SURFACE_ICONS[status];
   const tone = SURFACE_TONES[status];
@@ -436,9 +473,22 @@ export function QueueWaiting({
                     <Skeleton className="mt-3 h-8 w-24" />
                   ) : (
                     <p className="mt-3 break-keep text-2xl font-semibold leading-tight text-neutral-950">
-                      {status === 'admitted' && autoEnter
-                        ? metrics.ready
-                        : formatQueueEta({ etaSeconds, etaPending, position }, metrics)}
+                      {status === 'admitted'
+                        ? autoEnter
+                          ? metrics.ready
+                          : metrics.soon
+                        : status === 'waiting'
+                          ? formatQueueEta(
+                              {
+                                etaSeconds,
+                                etaMinSeconds,
+                                etaUnavailable,
+                                position,
+                                remainingSeats,
+                              },
+                              metrics,
+                            )
+                          : '-'}
                     </p>
                   )}
                 </div>
@@ -471,7 +521,16 @@ export function QueueWaiting({
                 {queueCopy.infoLabel}
               </p>
               <div className="mt-3 space-y-3 whitespace-normal break-keep text-sm leading-6 text-neutral-700">
-                {status !== 'closed' && <p>{copy.helper}</p>}
+                {status === 'notOpen' && bookingOpensAt === null ? (
+                  <p data-testid="queue-open-time-unknown">
+                    {formatCopy(
+                      queueCopy.openTimeUnknownInfo ?? FALLBACK_QUEUE_COPY.openTimeUnknownInfo,
+                      { seconds: Math.round(QUEUE_OPEN_UNKNOWN_RETRY_MS / 1000) },
+                    )}
+                  </p>
+                ) : (
+                  status !== 'closed' && <p>{copy.helper}</p>
+                )}
                 {showSoldOutRisk && (
                   <p className="font-medium text-amber-800" data-testid="queue-sold-out-risk">
                     {queueCopy.soldOutRisk ?? FALLBACK_QUEUE_COPY.soldOutRisk}
@@ -504,7 +563,9 @@ export function QueueWaiting({
             )}
             {status === 'closed' && onBack && (
               <Button size="lg" variant="outline" onClick={onBack}>
-                {queueCopy.backAction ?? FALLBACK_QUEUE_COPY.backAction}
+                {isNotFound
+                  ? queueCopy.backHomeAction ?? FALLBACK_QUEUE_COPY.backHomeAction
+                  : queueCopy.backAction ?? FALLBACK_QUEUE_COPY.backAction}
               </Button>
             )}
           </CardFooter>

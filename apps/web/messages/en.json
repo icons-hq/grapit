@@ -193,6 +193,12 @@
           "helper": "If the block continues, wait a while and contact support."
         }
       },
+      "notFound": {
+        "badge": "Unavailable",
+        "title": "We could not find this event",
+        "description": "The link may be wrong, or the event is no longer public.",
+        "helper": "Find the event again from the home page."
+      },
       "metrics": {
         "position": "Current position",
         "eta": "Estimated wait",
@@ -200,7 +206,9 @@
         "ready": "Ready to enter",
         "soon": "Soon",
         "etaCalculating": "Calculating",
-        "etaUnderMinute": "Under 1 min",
+        "etaWithin": "Within {minutes} min",
+        "etaUnavailable": "Not available",
+        "etaOverLimit": "May take over {hours} h",
         "etaAbout": "About {minutes} min",
         "etaRange": "About {min}–{max} min",
         "opensIn": "Opens in",
@@ -210,11 +218,13 @@
       "infoLabel": "Queue details",
       "autoEnterInfo": "Once admission is granted, the route opens the seat selection screen automatically.",
       "safetyInfo": "Queue admission does not reserve a seat. A seat is held only after you select it and the hold is confirmed.",
-      "etaInfo": "The estimated wait is based on how fast the queue has recently moved and may change.",
+      "etaInfo": "The estimated wait is a range based on your position and how long the buyers admitted ahead of you can keep their turn. It may change, and you will move on automatically when your turn comes, so keep this page open.",
+      "openTimeUnknownInfo": "The booking open time has not been announced yet. This page checks about every {seconds} seconds and joins the queue automatically once booking opens.",
       "soldOutRisk": "More people are ahead of you than there are seats left, so tickets may sell out before your turn.",
       "retryAction": "Try again",
       "enterNowAction": "Enter now",
-      "backAction": "Back to event"
+      "backAction": "Back to event",
+      "backHomeAction": "Go to home"
     },
     "paymentDeadline": {
       "badge": "Payment deadline",

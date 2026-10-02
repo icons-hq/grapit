@@ -12,8 +12,11 @@ const koMessages = JSON.parse(
         remainingSeats: string;
         soon: string;
         etaRange: string;
+        etaWithin: string;
         opensIn: string;
       };
+      notFound: { title: string };
+      openTimeUnknownInfo: string;
       status: {
         notOpen: { title: string };
         waiting: { title: string };
@@ -29,10 +32,12 @@ const koMessages = JSON.parse(
 const waitingSnapshot = {
   queueSessionId: 'queue-session-waiting',
   state: 'WAITING',
-  position: 12,
+  // Second admission cycle for 24 seats: 10-27 minutes.
+  position: 30,
   waitingCount: 48,
-  etaSeconds: 165,
-  etaPending: false,
+  etaSeconds: 1_600,
+  etaMinSeconds: 600,
+  etaUnavailable: false,
   remainingSeats: 24,
   autoEnter: false,
   admittedAt: null,
@@ -112,7 +117,7 @@ test.describe('booking queue route', () => {
     );
     await expect(etaMetric).toContainText(koMessages.booking.queue.metrics.eta);
     await expect(etaMetric).toContainText(
-      formatQueueEta(waitingSnapshot.etaSeconds),
+      formatQueueEta(waitingSnapshot.etaMinSeconds, waitingSnapshot.etaSeconds),
     );
     await expect(remainingSeatsMetric).toContainText(
       koMessages.booking.queue.metrics.remainingSeats,
@@ -170,6 +175,45 @@ test.describe('booking queue route', () => {
     expect(enterCalls).toBe(2);
   });
 
+  test('queue entry with an unannounced open time explains the periodic check', async ({
+    page,
+  }) => {
+    await page.route(
+      '**/api/v1/queue/performances/**/enter',
+      async (route: Route) => {
+        const serverNow = new Date().toISOString();
+        await fulfillJson(route, 403, {
+          statusCode: 403,
+          message: '예매는 추후 오픈 예정입니다',
+          errorCode: 'BOOKING_NOT_OPEN',
+          bookingStartsAt: null,
+          serverNow,
+          timestamp: serverNow,
+        });
+      },
+    );
+    await page.route(
+      `**/api/v1/performances/${queuePerformanceId}`,
+      async (route: Route) => {
+        await fulfillJson(route, 200, {
+          id: queuePerformanceId,
+          bookingPolicy: { bookingStartsAt: null },
+        });
+      },
+    );
+
+    await page.goto(`/booking/${queuePerformanceId}`);
+
+    await expect(
+      page.getByRole('heading', {
+        name: koMessages.booking.queue.status.notOpen.title,
+      }),
+    ).toBeVisible();
+    await expect(page.getByTestId('queue-open-time-unknown')).toContainText(
+      koMessages.booking.queue.openTimeUnknownInfo.replace('{seconds}', '15'),
+    );
+  });
+
   test('queue entry for a performance without sellable showtimes shows the closed surface', async ({
     page,
   }) => {
@@ -189,6 +233,24 @@ test.describe('booking queue route', () => {
       page.getByRole('heading', {
         name: koMessages.booking.queue.status.closed.title,
       }),
+    ).toBeVisible();
+  });
+
+  test('queue entry for a missing performance says it was not found', async ({ page }) => {
+    await page.route(
+      '**/api/v1/queue/performances/**/enter',
+      async (route: Route) => {
+        await fulfillJson(route, 404, {
+          statusCode: 404,
+          message: '공연을 찾을 수 없습니다',
+          errorCode: 'PERFORMANCE_NOT_FOUND',
+        });
+      },
+    );
+
+    await page.goto(`/booking/${queuePerformanceId}`);
+    await expect(
+      page.getByRole('heading', { name: koMessages.booking.queue.notFound.title }),
     ).toBeVisible();
   });
 
@@ -214,14 +276,18 @@ test.describe('booking queue route', () => {
   }
 });
 
-function formatQueueEta(etaSeconds: number): string {
+function formatQueueEta(etaMinSeconds: number, etaSeconds: number): string {
   if (etaSeconds <= 0) {
     return koMessages.booking.queue.metrics.soon;
   }
 
-  // Measured estimates are shown as a +/-20% minute range.
-  const lower = Math.max(1, Math.floor((etaSeconds * 0.8) / 60));
-  const upper = Math.max(lower, Math.ceil((etaSeconds * 1.2) / 60));
+  // The server sends the admission-cycle range: lower and upper bound.
+  const lower = Math.floor(etaMinSeconds / 60);
+  const upper = Math.max(1, Math.ceil(etaSeconds / 60));
+  if (lower <= 0) {
+    return koMessages.booking.queue.metrics.etaWithin.replace('{minutes}', String(upper));
+  }
+
   return koMessages.booking.queue.metrics.etaRange
     .replace('{min}', String(lower))
     .replace('{max}', String(upper));
