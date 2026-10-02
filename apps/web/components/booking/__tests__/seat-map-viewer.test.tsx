@@ -119,7 +119,8 @@ describe('SeatMapViewer', () => {
       selectedSeatIds={new Set()} onSeatClick={onSeatClick} maxSelect={1} />);
     fireEvent.click(await screen.findByText('Choose seats from a list'));
     const select = screen.getByRole('combobox', { name: 'Seat list' });
-    expect((screen.getByRole('option', { name: /A.*2/ }) as HTMLOptionElement).disabled).toBe(true);
+    // 목록 option은 <details>를 펼쳤을 때(toggle 이벤트 뒤)만 렌더한다.
+    expect((await screen.findByRole('option', { name: /A.*2/ }) as HTMLOptionElement).disabled).toBe(true);
     fireEvent.change(select, { target: { value: '1F:A-1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Select seat' }));
     expect(onSeatClick).toHaveBeenCalledWith('1F:A-1');
@@ -1125,6 +1126,241 @@ describe('SeatMapViewer', () => {
     const xAttr = parseFloat(stageTextEl?.getAttribute('x') ?? '0');
     // 우측에 배치 → x는 viewBox width의 절반을 초과해야 함 (400의 중앙인 200보다 커야 함)
     expect(xAttr).toBeGreaterThan(200);
+  });
+
+  // audit #49: XML 주석·PI는 HTML 재파싱에서 <img onerror>로 되살아날 수 있다(mXSS).
+  it('audit #49: 주석·PI·breakout 태그 payload가 좌석맵에서 HTML 요소로 되살아나지 않는다', async () => {
+    const onSeatClick = vi.fn();
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      text: () =>
+        Promise.resolve(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!--> <img src=x onerror="window.__seatMapXss=1"> -->
+  <?x > <img src=x onerror="window.__seatMapXss=2">?>
+  <img/><p/>
+  <circle data-seat-id="A-1" cx="20" cy="20" r="10" />
+</svg>`),
+    });
+
+    const { container } = render(
+      <SeatMapViewer
+        svgUrl="https://example.com/mxss.svg"
+        seatConfig={mockSeatConfig}
+        seatStates={new Map([['A-1', 'available']])}
+        selectedSeatIds={new Set()}
+        onSeatClick={onSeatClick}
+        maxSelect={4}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-seat-id="A-1"]')).toBeTruthy();
+    });
+
+    const canvas = screen.getByTestId('seat-map-canvas');
+    expect(canvas.querySelector('img')).toBeNull();
+    expect(canvas.querySelector('[onerror]')).toBeNull();
+    expect(
+      Array.from(canvas.querySelectorAll('*')).every(
+        (element) => element.namespaceURI === 'http://www.w3.org/2000/svg',
+      ),
+    ).toBe(true);
+
+    fireEvent.click(container.querySelector('[data-seat-id="A-1"]')!);
+    expect(onSeatClick).toHaveBeenCalledWith('A-1');
+  });
+
+  it('audit #49: 루트가 SVG가 아닌 문서는 좌석맵으로 렌더하지 않는다', async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      text: () =>
+        Promise.resolve(
+          '<html xmlns="http://www.w3.org/1999/xhtml"><body><img src="x" onerror="alert(1)"/></body></html>',
+        ),
+    });
+
+    render(
+      <SeatMapViewer
+        svgUrl="https://example.com/not-svg.svg"
+        seatConfig={mockSeatConfig}
+        seatStates={new Map()}
+        selectedSeatIds={new Set()}
+        onSeatClick={() => {}}
+        maxSelect={4}
+      />,
+    );
+
+    expect(
+      await screen.findByText('좌석 배치도가 준비되지 않았습니다. 잠시 후 다시 시도해주세요.'),
+    ).toBeDefined();
+    expect(screen.queryByTestId('seat-map-canvas')).toBeNull();
+    expect(document.querySelector('img')).toBeNull();
+  });
+
+  describe('audit #11: seat-update 렌더 비용', () => {
+    const renderViewer = (
+      seatStates: ReadonlyMap<string, SeatState>,
+      onSeatClick: (runtimeSeatId: string) => void = () => {},
+    ) => (
+      <SeatMapViewer
+        svgUrl="https://example.com/seats.svg"
+        seatConfig={mockSeatConfig}
+        seatStates={seatStates}
+        selectedSeatIds={new Set()}
+        onSeatClick={onSeatClick}
+        maxSelect={4}
+      />
+    );
+
+    it('seat-update마다 SVG를 다시 파싱·주입하지 않고 바뀐 좌석 element의 속성만 갱신한다', async () => {
+      const onSeatClick = vi.fn();
+      const { container, rerender } = render(
+        renderViewer(new Map<string, SeatState>([['A-2', 'available']]), onSeatClick),
+      );
+
+      await waitFor(() => {
+        expect(container.querySelector('[data-seat-id="A-2"]')).toBeTruthy();
+      });
+
+      const root = container.querySelector('svg')!;
+      const seatA1 = container.querySelector('[data-seat-id="A-1"]')!;
+      const seatA2 = container.querySelector('[data-seat-id="A-2"]')!;
+      const parseSpy = vi.spyOn(DOMParser.prototype, 'parseFromString');
+      const innerHtmlSpy = vi.spyOn(Element.prototype, 'innerHTML', 'set');
+      const mutatedTargets = new Set<Node>();
+      const observer = new MutationObserver((records) => {
+        records.forEach((record) => mutatedTargets.add(record.target));
+      });
+      observer.observe(root, { attributes: true, childList: true, subtree: true });
+
+      try {
+        // 오픈 직후처럼 seat-update가 몰려 매번 새 Map 참조가 내려온다.
+        for (let index = 0; index < 31; index += 1) {
+          rerender(
+            renderViewer(
+              new Map<string, SeatState>([['A-2', index % 2 === 0 ? 'locked' : 'available']]),
+              onSeatClick,
+            ),
+          );
+        }
+        observer.takeRecords().forEach((record) => mutatedTargets.add(record.target));
+
+        expect(parseSpy).not.toHaveBeenCalled();
+        expect(innerHtmlSpy).not.toHaveBeenCalled();
+        expect(container.querySelector('svg')).toBe(root);
+        expect(container.querySelector('[data-seat-id="A-1"]')).toBe(seatA1);
+        expect(seatA2.getAttribute('fill')).toBe('#D1D5DB');
+        expect(seatA2.getAttribute('style')).toContain('transition:none');
+        expect([...mutatedTargets]).toEqual([seatA2]);
+      } finally {
+        observer.disconnect();
+        parseSpy.mockRestore();
+        innerHtmlSpy.mockRestore();
+      }
+
+      // 탭을 시작한 좌석 element가 분리되지 않았으므로 click이 그대로 좌석 선택으로 이어진다.
+      fireEvent.click(seatA1);
+      expect(onSeatClick).toHaveBeenCalledWith('A-1');
+    });
+
+    it('pointerdown 뒤 click 전에 seat-update가 와도 같은 좌석 탭이 선택으로 이어진다', async () => {
+      const onSeatClick = vi.fn();
+      const { container, rerender } = render(
+        renderViewer(new Map<string, SeatState>(), onSeatClick),
+      );
+
+      await waitFor(() => {
+        expect(container.querySelector('[data-seat-id="A-1"]')).toBeTruthy();
+      });
+
+      const seatA1 = container.querySelector('[data-seat-id="A-1"]')!;
+      fireEvent.pointerDown(seatA1);
+      rerender(renderViewer(new Map<string, SeatState>([['B-1', 'locked']]), onSeatClick));
+      fireEvent.pointerUp(seatA1);
+      fireEvent.click(seatA1);
+
+      expect(seatA1.isConnected).toBe(true);
+      expect(onSeatClick).toHaveBeenCalledWith('A-1');
+    });
+
+    it('MiniMap은 상태와 무관한 정적 SVG를 한 번만 만든다', async () => {
+      const { container, rerender } = render(
+        renderViewer(new Map<string, SeatState>([['A-1', 'locked']])),
+      );
+
+      await waitFor(() => {
+        expect(container.querySelector('[data-seat-id="A-1"]')).toBeTruthy();
+      });
+
+      const miniMapMarkup = () =>
+        miniMapSpy.mock.lastCall?.[0].children.props.dangerouslySetInnerHTML as { __html: string };
+      const initialMarkup = miniMapMarkup();
+      expect(initialMarkup.__html).toContain('data-seat-id="A-1"');
+      expect(initialMarkup.__html).not.toContain('#D1D5DB');
+
+      rerender(renderViewer(new Map<string, SeatState>([['A-1', 'available'], ['B-1', 'sold']])));
+      rerender(renderViewer(new Map<string, SeatState>([['A-2', 'locked']])));
+
+      expect(miniMapMarkup()).toBe(initialMarkup);
+    });
+
+    it('층을 빠르게 바꾸면 늦게 도착한 이전 층 SVG를 현재 층에 칠하지 않는다', async () => {
+      let resolveFirstFloor: (value: unknown) => void = () => {};
+      global.fetch = vi.fn((url: string) =>
+        url.endsWith('/1f.svg')
+          ? new Promise((resolve) => {
+              resolveFirstFloor = resolve;
+            })
+          : Promise.resolve({ ok: true, text: () => Promise.resolve(SVG_WITH_SEAT_KEY) }),
+      ) as unknown as typeof fetch;
+
+      const floorViewer = (svgUrl: string, floorKey: string) => (
+        <SeatMapViewer
+          svgUrl={svgUrl}
+          floorKey={floorKey}
+          seatConfig={mockSeatConfig}
+          seatStates={new Map()}
+          selectedSeatIds={new Set()}
+          onSeatClick={() => {}}
+          maxSelect={4}
+        />
+      );
+      const { container, rerender } = render(floorViewer('https://example.com/1f.svg', '1F'));
+      rerender(floorViewer('https://example.com/2f.svg', '2F'));
+
+      await waitFor(() => {
+        expect(container.querySelector('[data-seat-key="2F:A-1"]')).toBeTruthy();
+      });
+
+      await act(async () => {
+        resolveFirstFloor({ ok: true, text: () => Promise.resolve(SVG_CONTENT) });
+      });
+
+      expect(container.querySelector('[data-seat-key="2F:A-1"]')).toBeTruthy();
+      expect(container.querySelector('[data-seat-id="B-1"]')).toBeNull();
+    });
+
+    it('좌석 목록은 펼쳤을 때만 option을 렌더하고 펼친 뒤에는 최신 상태를 반영한다', async () => {
+      const { container, rerender } = render(renderViewer(new Map<string, SeatState>()));
+
+      await waitFor(() => {
+        expect(container.querySelector('[data-seat-id="A-1"]')).toBeTruthy();
+      });
+
+      // 접힌 상태: placeholder option만 있다.
+      expect(container.querySelectorAll('option')).toHaveLength(1);
+      rerender(renderViewer(new Map<string, SeatState>([['A-2', 'sold']])));
+      expect(container.querySelectorAll('option')).toHaveLength(1);
+
+      fireEvent.click(screen.getByText('목록에서 좌석 선택'));
+      await waitFor(() => {
+        expect(container.querySelectorAll('option')).toHaveLength(4);
+      });
+      const soldOption = Array.from(container.querySelectorAll('option')).find(
+        (option) => option.value === 'A-2',
+      );
+      expect(soldOption?.disabled).toBe(true);
+    });
   });
 
   // 신규 케이스 10 (reviews revision MED #4): selected + locked broadcast 회귀 — D-13 BROADCAST PRIORITY
