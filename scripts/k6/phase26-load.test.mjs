@@ -4,9 +4,11 @@ import { createRequire, register } from 'node:module';
 import test from 'node:test';
 import {
   ADMISSION_COOKIE,
+  BUYER_THROTTLES,
   REFRESH_COOKIE,
   TICKET_SERVICE_FEE_KRW,
   buildOptions,
+  buyerThrottleDemand,
   createPhase26Load,
   parseConfig,
   parseSeatPool,
@@ -62,7 +64,9 @@ function env(overrides = {}) {
 // Minimal API model with the production guards: Bearer JWT + refreshToken cookie
 // for the queue, plus the cookie-only grabit_queue_admission for lock/prepare/confirm.
 // A confirmed seat is sold and can never be locked again.
-function fakeApi({ users, waitingPolls = 0, confirmOutcome = () => 200 }) {
+const VERIFIED_PROFILE = (user) => ({ id: user.sub, role: 'user', isEmailVerified: true, isPhoneVerified: true });
+
+function fakeApi({ users, waitingPolls = 0, confirmOutcome = () => 200, profile = VERIFIED_PROFILE }) {
   const calls = [];
   const locks = new Map();
   const sold = new Set();
@@ -86,6 +90,8 @@ function fakeApi({ users, waitingPolls = 0, confirmOutcome = () => 200 }) {
     const bearer = /^Bearer (.+)$/.exec(params?.headers?.Authorization ?? '')?.[1];
     const user = bearer ? byToken.get(bearer) : undefined;
     if (!user) return respond(401);
+    // GET /users/me needs only the Bearer token; the profile comes from the user row.
+    if (method === 'GET' && path === '/users/me') return respond(200, profile(user));
     // QueueService.resolveBrowserIdentity / AdmissionGuard need the refresh cookie on every request.
     if (jar.cookies.get(REFRESH_COOKIE) !== user.refreshToken) return respond(401, { message: '브라우저 세션이 필요합니다' });
 
@@ -172,8 +178,8 @@ function counter() {
   return { values, add: (value, tags) => values.push({ value, tags }) };
 }
 
-function harness({ config, users, seats, waitingPolls = 0, random = 0, confirmOutcome }) {
-  const api = fakeApi({ users, waitingPolls, confirmOutcome });
+function harness({ config, users, seats, waitingPolls = 0, random = 0, confirmOutcome, profile, apiUsers = users }) {
+  const api = fakeApi({ users: apiUsers, waitingPolls, confirmOutcome, profile });
   const metrics = { queueAdmitted: counter(), queueNotAdmitted: counter() };
   const sleeps = [];
   let clock = NOW_S * 1000;
@@ -262,8 +268,68 @@ test('setup refuses tokens that would expire during the run once VU initialisati
   assert.doesNotThrow(() => fresh.setup());
 });
 
+test('setup proves the pool belongs to this target before any load', () => {
+  const config = parseConfig(env(), 'LOAD_10K_BASELINE');
+  const users = parseUserPool(buyers(3), { minUsers: 3, validUntilMs: 0 });
+  const seats = parseSeatPool(seatPool(3));
+  const ok = harness({ config, users, seats });
+  ok.setup();
+  const probes = ok.api.calls.filter((call) => call.path === '/users/me');
+  assert.deepEqual(probes.map((call) => [call.headers.Authorization, call.status, call.tags.flow]),
+    [[`Bearer ${users[0].accessToken}`, 200, 'setup'], [`Bearer ${users[2].accessToken}`, 200, 'setup']]);
+
+  const cases = {
+    // The API knows none of the pool tokens: minted with another target's secret.
+    'minted for another target (401)': { apiUsers: [] },
+    'unverified phone': { profile: (user) => ({ ...VERIFIED_PROFILE(user), isPhoneVerified: false }) },
+    'admin in the database': { profile: (user) => ({ ...VERIFIED_PROFILE(user), role: 'admin' }) },
+    'token of another account': { profile: (user) => ({ ...VERIFIED_PROFILE(user), id: 'someone-else' }) },
+  };
+  for (const [name, options] of Object.entries(cases)) {
+    const h = harness({ config, users, seats, ...options });
+    assert.throws(() => h.setup(), /not an email- and phone-verified `user` of this target/, name);
+  }
+});
+
+test('refuses a journey mix that one buyer cannot send without hitting the API throttles', () => {
+  for (const gate of ['LOAD_10K_BASELINE', 'LOAD_20K_STRESS']) {
+    for (const mode of ['off', 'pg-stub']) {
+      const config = parseConfig(env({ PHASE26_CONFIRM_MODE: mode }), gate);
+      for (const [label, requests] of Object.entries(buyerThrottleDemand(config))) {
+        const limit = BUYER_THROTTLES[label.startsWith('default') ? 'default' : label].limit;
+        assert.ok(requests <= limit, `${gate}/${mode} ${label} ${requests} <= ${limit}`);
+      }
+    }
+  }
+  assert.throws(() => parseConfig(env({ PHASE26_THINK_TIME_SECONDS: '0' }), 'LOAD_10K_BASELINE'), /unbounded requests/);
+  assert.throws(() => parseConfig(env({ PHASE26_THINK_TIME_SECONDS: '1' }), 'LOAD_10K_BASELINE'), /default \(public browse\) throttle/);
+  assert.throws(() => parseConfig(env({ PHASE26_QUEUE_POLL_SECONDS: '1' }), 'LOAD_10K_BASELINE'), /default \(authenticated\) throttle/);
+  // Raising the purchase share to half the journeys exceeds prepare 8/min per buyer.
+  assert.throws(() => parseConfig(env({ PHASE26_READ_WEIGHT: '50', PHASE26_QUEUE_WEIGHT: '0', PHASE26_MUTATION_WEIGHT: '50' }),
+    'LOAD_10K_BASELINE'), /prepare-reservation throttle, which allows 8/);
+  assert.throws(() => parseConfig(env({ PHASE26_READ_WEIGHT: '60', PHASE26_QUEUE_WEIGHT: '0', PHASE26_MUTATION_WEIGHT: '40',
+    PHASE26_CONFIRM_MODE: 'pg-stub' }), 'LOAD_10K_BASELINE'), /confirm-payment throttle, which allows 6/);
+  assert.doesNotThrow(() => parseConfig(env({ PHASE26_READ_WEIGHT: '60', PHASE26_QUEUE_WEIGHT: '0', PHASE26_MUTATION_WEIGHT: '40',
+    PHASE26_THINK_TIME_SECONDS: '5', PHASE26_CONFIRM_MODE: 'pg-stub' }), 'LOAD_10K_BASELINE'));
+});
+
+test('keeps the per-buyer throttle model aligned with the API throttles', async () => {
+  const policies = await readFile(new URL('../../apps/api/src/modules/traffic/traffic-defense.service.ts', import.meta.url), 'utf8');
+  for (const name of ['queue-entry', 'lock-seat', 'prepare-reservation', 'confirm-payment']) {
+    const block = new RegExp(`'${name}': \\{\\s*ttl: ([\\d_]+),\\s*limit: (\\d+),`).exec(policies);
+    assert.ok(block, `${name} policy found`);
+    assert.equal(Number(block[1].replaceAll('_', '')), BUYER_THROTTLES[name].ttlSeconds * 1000, `${name} ttl`);
+    assert.equal(Number(block[2]), BUYER_THROTTLES[name].limit, `${name} limit`);
+  }
+  const app = await readFile(new URL('../../apps/api/src/app.module.ts', import.meta.url), 'utf8');
+  const fallback = /name: 'default',\s*ttl: ([\d_]+),\s*limit: (\d+),/.exec(app);
+  assert.ok(fallback, 'default throttler found');
+  assert.equal(Number(fallback[1].replaceAll('_', '')), BUYER_THROTTLES.default.ttlSeconds * 1000);
+  assert.equal(Number(fallback[2]), BUYER_THROTTLES.default.limit);
+});
+
 test('a buyer journey authenticates the queue, carries the admission cookie and sends a contract-valid prepare', () => {
-  const config = parseConfig(env({ PHASE26_THINK_TIME_SECONDS: '0' }), 'LOAD_10K_BASELINE');
+  const config = parseConfig(env(), 'LOAD_10K_BASELINE');
   const users = parseUserPool(buyers(2), { minUsers: 2, validUntilMs: 0 });
   const seats = parseSeatPool(seatPool(4));
   const h = harness({ config, users, seats, random: 0 });
@@ -295,7 +361,7 @@ test('a buyer journey authenticates the queue, carries the admission cookie and 
 });
 
 test('a VU keeps its browser identity across k6 iterations although k6 empties the cookie jar', () => {
-  const config = parseConfig(env({ PHASE26_THINK_TIME_SECONDS: '0' }), 'LOAD_10K_BASELINE');
+  const config = parseConfig(env(), 'LOAD_10K_BASELINE');
   const users = parseUserPool(buyers(1), { minUsers: 1, validUntilMs: 0 });
   const h = harness({ config, users, seats: parseSeatPool(seatPool(1)), random: 0 });
   const setupData = h.setup();
@@ -308,7 +374,7 @@ test('a VU keeps its browser identity across k6 iterations although k6 empties t
 });
 
 test('waits in the queue with status polling and books only after ADMITTED', () => {
-  const config = parseConfig(env({ PHASE26_THINK_TIME_SECONDS: '0', PHASE26_QUEUE_POLL_SECONDS: '2', PHASE26_QUEUE_MAX_WAIT_SECONDS: '4' }), 'LOAD_10K_BASELINE');
+  const config = parseConfig(env({ PHASE26_QUEUE_POLL_SECONDS: '2', PHASE26_QUEUE_MAX_WAIT_SECONDS: '4' }), 'LOAD_10K_BASELINE');
   const users = buyers(1);
   const seats = parseSeatPool(seatPool(2));
   const waiting = harness({ config, users, seats, waitingPolls: 10, random: 0 });
@@ -323,7 +389,7 @@ test('waits in the queue with status polling and books only after ADMITTED', () 
 });
 
 test('pg-stub confirm sends a contract-valid confirm once per buyer and keeps the purchase', () => {
-  const config = parseConfig(env({ PHASE26_THINK_TIME_SECONDS: '0', PHASE26_CONFIRM_MODE: 'pg-stub' }), 'LOAD_20K_STRESS');
+  const config = parseConfig(env({ PHASE26_CONFIRM_MODE: 'pg-stub' }), 'LOAD_20K_STRESS');
   const users = parseUserPool(buyers(1), { minUsers: 1, validUntilMs: 0 });
   const h = harness({ config, users, seats: parseSeatPool(seatPool(3)), random: 0 });
   const setupData = h.setup();
@@ -339,7 +405,7 @@ test('pg-stub confirm sends a contract-valid confirm once per buyer and keeps th
 });
 
 test('pg-stub purchases across VUs and iterations never lock a sold or foreign seat', () => {
-  const config = parseConfig(env({ PHASE26_THINK_TIME_SECONDS: '0', PHASE26_CONFIRM_MODE: 'pg-stub',
+  const config = parseConfig(env({ PHASE26_CONFIRM_MODE: 'pg-stub',
     PHASE26_MAX_PURCHASES_PER_VU: '2', PHASE26_STRESS_TARGET_VUS: '3' }), 'LOAD_20K_STRESS');
   const users = parseUserPool(buyers(3), { minUsers: 3, validUntilMs: 0 });
   const seats = parseSeatPool(seatPool(requiredSeatCount(config)), { minSeats: requiredSeatCount(config) });
@@ -357,7 +423,7 @@ test('pg-stub purchases across VUs and iterations never lock a sold or foreign s
 });
 
 test('pg-stub reuses a seat after a clean confirm rejection but never after an unanswered confirm', () => {
-  const config = parseConfig(env({ PHASE26_THINK_TIME_SECONDS: '0', PHASE26_CONFIRM_MODE: 'pg-stub',
+  const config = parseConfig(env({ PHASE26_CONFIRM_MODE: 'pg-stub',
     PHASE26_MAX_PURCHASES_PER_VU: '2' }), 'LOAD_20K_STRESS');
   const users = parseUserPool(buyers(1), { minUsers: 1, validUntilMs: 0 });
   // 1st confirm: clean 409 (released, same seat retried); 2nd: timeout after the

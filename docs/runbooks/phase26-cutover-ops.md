@@ -501,11 +501,12 @@ never committed):
 | `PHASE26_TEST_MARKER` | Token matching `^PHASE26[_-][A-Za-z0-9_-]{6,}$`; the performance title must start with it |
 | `PHASE26_TEST_ORDER_PREFIX` | Order ID prefix for prepare/confirm, e.g. `PHASE26_ORD-`, so cleanup can scope the orders |
 | `PHASE26_LOAD_APPROVED` | `PHASE26_DEDICATED_TEST_EVENT_APPROVED` |
-| `PHASE26_USER_POOL_FILE` | JSON array of `{ "accessToken", "refreshToken" }`, one distinct buyer per VU (at least the target VU count). The refresh token is sent as the `refreshToken` cookie and must belong to a persisted refresh family; the queue admission cookie is taken from the enter response, never from a header. Every buyer must be a `user` (not `admin`) **in the database**, because the API reads role and verification from the user row, and must have completed email and phone verification (`is_email_verified` and `is_phone_verified`), otherwise lock/prepare/confirm return 403. Access tokens must outlive VU initialisation plus the whole run plus 2 minutes; `setup()` re-checks this after all VUs are initialised and aborts before any load. API-issued access tokens live 15 minutes (`jwtExpiresIn` is fixed in `apps/api/src/config/auth.config.ts`), so the default 60s + 10m + 30s stages leave about 1.5 minutes for minting and initialisation: log the buyers in immediately before `k6 run`, or shorten `PHASE26_<BASELINE|STRESS>_HOLD` (for example `8m`) when initialising 10K/20K VUs takes longer |
+| `PHASE26_USER_POOL_FILE` | JSON array of `{ "accessToken", "refreshToken" }`, one distinct buyer per VU (at least the target VU count), written by `scripts/phase26/provision-load-buyers.mjs` (see "Synthetic buyer pool" below). The refresh token is sent as the `refreshToken` cookie and must belong to a persisted refresh family; the queue admission cookie is taken from the enter response, never from a header. k6 never refreshes tokens, so access tokens must outlive VU initialisation plus the whole run plus 2 minutes; `setup()` re-checks this after all VUs are initialised and also calls `GET /users/me` for the first and last buyer, aborting before any load unless the API authenticates them as email- and phone-verified `user` accounts of this target |
 | `PHASE26_SEAT_POOL_FILE` | JSON array of floor-aware seat selections (`seatId`, `seatKey`, `floorKey`, `floorLabel`, `tierName`, `price`, `row`, `number`) of the test showtime. Seats are partitioned per VU (VU n owns its own slice), so buyers never contend for a seat and a sold seat is never locked again. It needs at least the target VU count of seats, and in `pg-stub` mode the target VU count × `PHASE26_MAX_PURCHASES_PER_VU` (20,000 × 1 for stress); the scripts refuse a smaller pool. The test performance must also keep at least 1,000 remaining seats, because the queue admits at most `min(remaining seats, 1,000)` buyers at a time |
 | `PHASE26_CONFIRM_MODE` | `off` (default) or `pg-stub`. Use `pg-stub` only against an isolated deployment whose API process preloads `scripts/revamp/pg-stub-preload.mjs` (`GRABIT_PG_STUB=isolated-load-test-only`); it sends synthetic payment keys |
 | `PHASE26_MAX_PURCHASES_PER_VU` | Default `1`. Purchases per buyer in `pg-stub` mode; keep it at or below the test event's per-user ticket limit. A confirm that times out or returns 5xx counts as a used seat, because the server may have sold it |
-| `PHASE26_READ_WEIGHT` / `PHASE26_QUEUE_WEIGHT` / `PHASE26_MUTATION_WEIGHT` | Journey depth weights (baseline 75/20/5, stress 80/18/2) |
+| `PHASE26_READ_WEIGHT` / `PHASE26_QUEUE_WEIGHT` / `PHASE26_MUTATION_WEIGHT` | Journey depth weights (baseline 75/20/5, stress 80/18/2). The scripts refuse a mix that one buyer could send faster than the API's per-buyer throttles allow (below) |
+| `PHASE26_THINK_TIME_SECONDS` / `PHASE26_QUEUE_POLL_SECONDS` | Default `3` / `2`. The think time ends every iteration, so a buyer runs at most 60 / think-time journeys per minute; a `WAITING` buyer polls the queue status at the poll interval |
 
 Run with the scripts directory mounted, because the entries import `./lib`:
 
@@ -530,15 +531,88 @@ at least once, while about 9,000 (baseline) or 19,000 (stress) buyers wait and
 poll the queue every 2 seconds, so lock stays a fraction of a percent of all
 requests in a healthy run (roughly 0.3% without confirm and 0.03% with one
 `pg-stub` purchase per buyer). 500 is half of one full admission wave. If a
-run lands below it, check that the queue actually admitted ~1,000 buyers, then
-raise `PHASE26_MUTATION_WEIGHT` (or, in `pg-stub` mode,
-`PHASE26_MAX_PURCHASES_PER_VU` with a larger seat pool) rather than lowering
-the queue weight. Without a PG-stubbed target the confirm flow is unmeasured, so
-the gate stays `BLOCKED` unless the owner records `--accepted-risk`.
+run lands below it, adjust in this order and never lower the queue weight:
 
-Provisioning the synthetic buyers, refresh families and seat pool in the
-dedicated environment is an operator task; never mint them against real buyer
-accounts.
+1. Check the queue really admitted about 1,000 buyers (`phase26_queue_admitted`,
+   `phase26_queue_not_admitted{state}`) and that the test performance kept at
+   least 1,000 remaining seats.
+2. Lengthen `PHASE26_<BASELINE|STRESS>_HOLD`: each extra 10 minutes is another
+   admission wave.
+3. In `pg-stub` mode, raise `PHASE26_MAX_PURCHASES_PER_VU` (at or below the
+   event's per-user ticket limit) with a matching seat pool.
+4. Only then raise `PHASE26_MUTATION_WEIGHT`, within the per-buyer throttles.
+
+Without a PG-stubbed target the confirm flow is unmeasured, so the gate stays
+`BLOCKED` unless the owner records `--accepted-risk`.
+
+Every buyer is one user to the API's throttles, so the journey mix must stay
+under them or the run fails on 429s that real traffic would not cause. The
+scripts compute the worst case from the think time (at most 60 / think-time
+journeys per minute) and refuse to start when it exceeds one of these limits:
+
+| API throttle (per buyer) | Limit | Requests per journey |
+| --- | --- | --- |
+| `default`, public browse (keyed by the refresh cookie) | 60 / 60 s | 2 (detail + seat map) |
+| `default`, authenticated | 60 / 60 s | enter, lock + unlock, prepare + cancel, confirm; a `WAITING` buyer adds 60 / poll-interval status polls |
+| `queue-entry` | 20 / 60 s | 1 per queue or booking journey |
+| `lock-seat` | 12 / 15 s | 1 per booking journey |
+| `prepare-reservation` | 8 / 60 s | 1 per booking journey |
+| `confirm-payment` | 6 / 60 s | 1 per booking journey in `pg-stub` mode |
+
+With the default 3 s think time, booking share × 20 must stay at or below 8 for
+prepare and 6 for confirm, so a booking share above about 30% (`pg-stub`) or
+40% needs a longer think time. A think time below 2 s or a poll interval of 1 s
+always exceeds the `default` limit. The limits mirror `app.module.ts` and
+`traffic-defense.service.ts`; the unit test fails when they drift.
+
+### Synthetic buyer pool
+
+Buyers cannot be logged in through the API for this run: `POST /auth/login`
+allows 60 requests per minute per client, so 10,000 buyers take about 167
+minutes and 20,000 about 333 minutes, while API access tokens live 15 minutes
+(`jwtExpiresIn` is fixed in `apps/api/src/config/auth.config.ts`). k6 does not
+call `/auth/refresh` either: it is throttled per client like login, and it
+rotates the refresh token, so the pool would become single-use. Instead,
+`scripts/phase26/provision-load-buyers.mjs` writes the buyers and their refresh
+families directly into the database of the target the k6 run hits and signs
+the access tokens with that target's `JWT_SECRET`:
+
+```bash
+# The proxy and both secrets belong to the same target as GRABIT_API_URL.
+export PHASE26_LOAD_APPROVED=PHASE26_DEDICATED_TEST_EVENT_APPROVED
+export PHASE26_TARGET_DATABASE_URL=...   # e.g. through cloud-sql-proxy on 127.0.0.1
+export PHASE26_TARGET_JWT_SECRET=...     # the target API's JWT_SECRET, byte for byte
+node scripts/phase26/provision-load-buyers.mjs provision --count 20000 --valid-for 2h \
+  --out "$PRIVATE_DIR/users.json"
+```
+
+- Buyers are `phase26-buyer-000001…@phase26-load.invalid` with phones in the
+  unassignable `010-0XXX-XXXX` range: active `user` rows with email and phone
+  verified, no password, no social login and no admin capability, so nobody can
+  sign in as them. Rerunning reuses them and revokes their previous families.
+  Any other account in the namespace aborts the run without changes.
+- Each access token and its refresh family expire after `--valid-for`
+  (default `2h`, at most `6h`); provision once for the baseline and the stress
+  run if both fit in the window. The pool file is created `0600`, never
+  overwritten, and must stay in `$PRIVATE_DIR`. Nothing secret is printed.
+- Until they are deleted, the buyers count as members in admin user statistics.
+- After the run, revoke the pool at once (this stops queue entry, lock, prepare
+  and confirm for every pool token) and delete the buyers after the dedicated
+  test-event cleanup has removed their reservations:
+
+  ```bash
+  node scripts/phase26/provision-load-buyers.mjs cleanup                 # right after k6
+  node scripts/phase26/provision-load-buyers.mjs cleanup --delete-users  # after the test-event cleanup
+  ```
+
+  Deletion is refused as a whole (`synthetic_buyers_still_referenced`, families
+  stay revoked) while any buyer still has reservations or audit rows. Cleanup
+  only touches accounts the script could have created and reports any other
+  namespace account as `skippedAccounts`.
+
+Never run either command against a target other than the one under test, and
+never point it at real buyer accounts. The seat pool is still prepared by the
+operator from the test showtime.
 
 ## Dedicated test-event cleanup
 
@@ -549,7 +623,9 @@ performance must not be `published`, and it must have no future
 `booking_starts_at`. Unpublish the test event in admin before cleanup. Order IDs
 are matched literally with `starts_with()`, so `_` in a prefix is not a
 wildcard. Run the dry-run first and pass its exact counts to the execution
-script; `rehearsal-smoke.mjs` applies the same marker and title rule.
+script; `rehearsal-smoke.mjs` applies the same marker and title rule. Then
+delete the synthetic load buyers with
+`scripts/phase26/provision-load-buyers.mjs cleanup --delete-users`.
 
 ## No-go states
 

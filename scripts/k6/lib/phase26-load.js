@@ -10,6 +10,9 @@
 // k6 empties each VU's cookie jar after every iteration (noCookiesReset=false
 // by default), so the refresh cookie is seeded at the start of every iteration
 // and each journey re-enters the queue, which reuses the buyer's queue session.
+//
+// The buyer pool comes from scripts/phase26/provision-load-buyers.mjs. k6 never
+// refreshes tokens, so every access token must outlive the run.
 
 export const APPROVAL_TOKEN = 'PHASE26_DEDICATED_TEST_EVENT_APPROVED';
 export const PHASE26_TEST = 'PHASE26_TEST';
@@ -24,6 +27,18 @@ export const BOOKING_CONSENT_KEYS = ['terms', 'privacy', 'pipa_required'];
 export const DEFAULT_CONSENT_VERSION = '2026-04-28';
 export const FLOWS = ['read', 'queue', 'lock', 'prepare', 'confirm'];
 export const CONFIRM_MODES = ['off', 'pg-stub'];
+
+// Per-buyer API throttles: the global `default` throttler in app.module.ts and
+// TRAFFIC_POLICIES in traffic-defense.service.ts (asserted by the unit test).
+// Authenticated requests count per user; the public browse requests count per
+// refresh cookie, which is per buyer too.
+export const BUYER_THROTTLES = {
+  default: { limit: 60, ttlSeconds: 60 },
+  'queue-entry': { limit: 20, ttlSeconds: 60 },
+  'lock-seat': { limit: 12, ttlSeconds: 15 },
+  'prepare-reservation': { limit: 8, ttlSeconds: 60 },
+  'confirm-payment': { limit: 6, ttlSeconds: 60 },
+};
 
 // The gate names promise concurrent buyers, so the default load is that many
 // concurrent VUs ramped up like an opening spike. record-k6-evidence.mjs refuses
@@ -130,7 +145,7 @@ export function parseConfig(env, gateId) {
   const rampUp = durationEnv(env, `${prefix}_RAMP_UP`, '60s');
   const hold = durationEnv(env, `${prefix}_HOLD`, '10m');
   const rampDown = durationEnv(env, `${prefix}_RAMP_DOWN`, '30s');
-  return {
+  const config = {
     gateId,
     scenario: gate.scenario,
     apiUrl,
@@ -157,6 +172,50 @@ export function parseConfig(env, gateId) {
     locale: String(env.PHASE26_LOCALE || 'ko').trim(),
     consentVersion: String(env.PHASE26_CONSENT_VERSION || DEFAULT_CONSENT_VERSION).trim(),
   };
+  assertWithinBuyerThrottles(config);
+  return config;
+}
+
+// Worst-case requests one buyer sends per throttle window. Every iteration ends
+// with PHASE26_THINK_TIME_SECONDS of sleep, so a buyer runs at most
+// 1 / thinkTime iterations per second; a WAITING buyer polls every
+// PHASE26_QUEUE_POLL_SECONDS. A 429 counts as a failed request, so a mix that
+// can exceed a limit would fail the gate's 1% error budget for the wrong reason.
+export function buyerThrottleDemand(config) {
+  const total = config.weights.browse + config.weights.queue + config.weights.book;
+  const book = config.weights.book / total;
+  const entering = (config.weights.queue + config.weights.book) / total;
+  const prepare = config.prepare ? book : 0;
+  const confirm = config.confirmMode === 'pg-stub' ? book : 0;
+  const perSecond = config.thinkTimeSeconds > 0 ? 1 / config.thinkTimeSeconds : Infinity;
+  const per = (name, requestsPerIteration) =>
+    (requestsPerIteration > 0 ? requestsPerIteration * perSecond * BUYER_THROTTLES[name].ttlSeconds : 0);
+  // Authenticated calls of one journey: enter, then lock + unlock, prepare +
+  // cancel-pending and confirm when booking.
+  const authenticated = entering + book * 2 + prepare * 2 + confirm;
+  const polling = BUYER_THROTTLES.default.ttlSeconds / config.queuePollSeconds + 6;
+  return {
+    'default (public browse)': per('default', 2),
+    'default (authenticated)': Math.max(per('default', authenticated), polling),
+    'queue-entry': per('queue-entry', entering),
+    'lock-seat': per('lock-seat', book),
+    'prepare-reservation': per('prepare-reservation', prepare),
+    'confirm-payment': per('confirm-payment', confirm),
+  };
+}
+
+export function assertWithinBuyerThrottles(config) {
+  const demand = buyerThrottleDemand(config);
+  for (const [label, requests] of Object.entries(demand)) {
+    const name = label.startsWith('default') ? 'default' : label;
+    const { limit, ttlSeconds } = BUYER_THROTTLES[name];
+    if (requests > limit) {
+      const shown = Number.isFinite(requests) ? Math.ceil(requests) : 'unbounded';
+      throw new Error(`One buyer may send ${shown} requests per ${ttlSeconds}s to the API's ${label} throttle, `
+        + `which allows ${limit}; raise PHASE26_THINK_TIME_SECONDS or PHASE26_QUEUE_POLL_SECONDS, `
+        + 'or lower PHASE26_MUTATION_WEIGHT / PHASE26_QUEUE_WEIGHT');
+    }
+  }
 }
 
 export function buildOptions(config) {
@@ -263,13 +322,14 @@ export function parseUserPool(raw, { minUsers, validUntilMs }) {
       throw new Error(`user pool entry ${index} is an admin; use buyer accounts only`);
     }
     if (typeof claims.exp !== 'number' || claims.exp * 1000 < validUntilMs) {
-      throw new Error(`user pool entry ${index} accessToken expires before the run ends; mint fresh tokens`);
+      throw new Error(`user pool entry ${index} accessToken expires before the run ends; `
+        + 'provision a fresh pool with scripts/phase26/provision-load-buyers.mjs');
     }
     if (subjects[claims.sub]) throw new Error(`user pool entry ${index} repeats a buyer; each VU needs a distinct user`);
     if (refreshTokens[user.refreshToken]) throw new Error(`user pool entry ${index} repeats a refresh token`);
     subjects[claims.sub] = true;
     refreshTokens[user.refreshToken] = true;
-    return { accessToken: user.accessToken, refreshToken: user.refreshToken, expMs: claims.exp * 1000 };
+    return { sub: claims.sub, accessToken: user.accessToken, refreshToken: user.refreshToken, expMs: claims.exp * 1000 };
   });
 }
 
@@ -277,16 +337,27 @@ export function runValidUntilMs(config, nowMs) {
   return nowMs + config.runDurationMs + RUN_END_MARGIN_MS;
 }
 
-// Initialising 10K/20K VUs takes time after the pool was parsed, and API-issued
-// access tokens live only 15 minutes, so setup() re-checks expiry right before
-// the load starts instead of trusting the init-time check alone.
+// Initialising 10K/20K VUs takes time after the pool was parsed and k6 never
+// refreshes tokens, so setup() re-checks expiry right before the load starts
+// instead of trusting the init-time check alone.
 export function assertUsersOutliveRun(users, config, nowMs) {
   const validUntilMs = runValidUntilMs(config, nowMs);
   for (let index = 0; index < users.length; index += 1) {
     if (!(users[index].expMs >= validUntilMs)) {
       throw new Error(`Phase 26 setup failed: user pool entry ${index} accessToken expires before the run ends `
-        + '(VU initialisation included); mint fresh tokens just before the run or shorten the stages');
+        + '(VU initialisation included); provision a fresh pool with scripts/phase26/provision-load-buyers.mjs '
+        + 'and a longer --valid-for');
     }
+  }
+}
+
+// The API decides from the user row, so a pool minted with another target's
+// secret, or for unverified or admin accounts, would turn the run into 401/403s.
+export function assertBuyerProfile(profile, user) {
+  if (!profile || profile.id !== user.sub || profile.role !== 'user'
+    || profile.isEmailVerified !== true || profile.isPhoneVerified !== true) {
+    throw new Error('Phase 26 setup failed: a pool buyer is not an email- and phone-verified `user` of this target; '
+      + 'provision the pool against the database and JWT secret of GRABIT_API_URL');
   }
 }
 
@@ -498,6 +569,12 @@ export function createPhase26Load({ http, check, sleep, exec, metrics, config, u
     const performance = parseJson(responses[1]);
     assertTestEvent(performance, config);
     assertUsersOutliveRun(users, config, now().getTime());
+    const probes = users.length > 1 ? [users[0], users[users.length - 1]] : [users[0]];
+    const profiles = http.batch(probes.map((user) =>
+      ['GET', `${base}/users/me`, null, params('setup', 'setup:buyer', { body: true, user })]));
+    probes.forEach((user, index) => {
+      assertBuyerProfile(isSuccess(profiles[index]) ? parseJson(profiles[index]) : null, user);
+    });
     return { bookingPolicy: toBookingPolicy(performance?.bookingPolicy) };
   }
 
