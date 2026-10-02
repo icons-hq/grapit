@@ -576,7 +576,8 @@ describe('Performance preparation — real HTTP and PostgreSQL', () => {
     const detail = (await request(app.getHttpServer()).get(`/admin/performances/${event.body.id}`)).body;
     // Missing Redis/broadcast adapters make any unauthorized continuation fail;
     // the public method must reject through the publication rule before reaching them.
-    const booking = new BookingService(undefined as never, db, undefined as never, new FeatureFlagsService(() => ({ BOOKING_ENABLED: 'true' })));
+    // The gateway stub is an empty object because the constructor probes it for onSeatUpdate.
+    const booking = new BookingService(undefined as never, db, {} as never, new FeatureFlagsService(() => ({ BOOKING_ENABLED: 'true' })));
     await expect(booking.lockSeat({ id: actorId, role: 'user', isEmailVerified: true, isPhoneVerified: true },
       detail.showtimes[0].id, '1F:A-1')).rejects.toBeInstanceOf(ForbiddenException);
   });
