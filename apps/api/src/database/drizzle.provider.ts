@@ -109,12 +109,83 @@ export function attachDatabasePoolErrorListener(
   });
 }
 
+type QueryFunction = (...args: unknown[]) => unknown;
+
+function isBeginStatement(queryArg: unknown): boolean {
+  const text = typeof queryArg === 'string'
+    ? queryArg
+    : typeof queryArg === 'object' && queryArg !== null
+      ? (queryArg as { text?: unknown }).text
+      : undefined;
+  return typeof text === 'string' && /^\s*begin\b/i.test(text);
+}
+
+/**
+ * drizzle-orm 0.45 `transaction()` checks a client out with `pool.connect()`
+ * and sends `begin` before entering the try/finally that releases it. A
+ * rejected `begin` (the connection died between checkout and the first query,
+ * as in a Cloud SQL failover) therefore never returns the client, and that
+ * pool slot is lost until the process restarts.
+ *
+ * Promise-style checkouts are wrapped: when the first query of the checkout is
+ * `begin` and it rejects, the client is released with the error (pg-pool
+ * discards it), and any later release for the same checkout is a no-op instead
+ * of pg-pool's "already been released" throw. Callback checkouts
+ * (`pool.query`) release themselves and are left alone.
+ */
+export function releaseClientOnFailedTransactionBegin(
+  pool: Pick<Pool, 'connect'>,
+): void {
+  const connect = pool.connect.bind(pool) as (
+    callback?: (...args: unknown[]) => void,
+  ) => Promise<PoolClient> | void;
+
+  (pool as { connect: unknown }).connect = (callback?: (...args: unknown[]) => void) => {
+    if (callback) {
+      return connect(callback);
+    }
+    return (connect() as Promise<PoolClient>).then(guardCheckout);
+  };
+}
+
+function guardCheckout(client: PoolClient): PoolClient {
+  const originalQuery = client.query as unknown as QueryFunction;
+  const poolRelease = client.release;
+  let released = false;
+  let firstQuery = true;
+
+  const release = (error?: Error | boolean) => {
+    if (released) return;
+    released = true;
+    // The client object is reused by later checkouts; hand it back unwrapped.
+    (client as { query: unknown }).query = originalQuery;
+    poolRelease.call(client, error);
+  };
+  client.release = release;
+
+  (client as { query: unknown }).query = (...args: unknown[]) => {
+    const isBegin = firstQuery && isBeginStatement(args[0]);
+    firstQuery = false;
+    const result = originalQuery.apply(client, args);
+    if (!isBegin || !(result instanceof Promise)) {
+      return result;
+    }
+    return result.catch((error: unknown) => {
+      release(error instanceof Error ? error : true);
+      throw error;
+    });
+  };
+
+  return client;
+}
+
 export const drizzleProvider = {
   provide: DRIZZLE,
   inject: [ConfigService],
   useFactory: (config: ConfigService) => {
     const pool = new Pool(buildDatabasePoolConfig(config));
     attachDatabasePoolErrorListener(pool, 'application');
+    releaseClientOnFailedTransactionBegin(pool);
     return drizzle(pool, { schema });
   },
 };

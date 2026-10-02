@@ -6,7 +6,7 @@ vi.mock('pg', async () => {
   const { EventEmitter: Emitter } = await import('node:events');
   return {
     Pool: vi.fn().mockImplementation((config: Record<string, unknown>) =>
-      Object.assign(new Emitter(), { config }),
+      Object.assign(new Emitter(), { config, connect: vi.fn() }),
     ),
   };
 });
