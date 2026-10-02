@@ -1,0 +1,75 @@
+import { describe, it, expect, beforeEach } from 'vitest';
+import { useBookingStore } from '../use-booking-store';
+
+function seat(seatId: string) {
+  return {
+    seatId,
+    tierName: 'VIP',
+    tierColor: '#6C3CE0',
+    row: 'A',
+    number: seatId.split('-')[1] ?? '1',
+    price: 110000,
+    floorKey: '1F',
+    floorLabel: '1층',
+    seatKey: `1F:${seatId}`,
+  };
+}
+
+describe('booking store seat selection', () => {
+  beforeEach(() => {
+    useBookingStore.getState().resetBooking();
+  });
+
+  it('keeps seats and timer when the current showtime is selected again (audit #29)', () => {
+    const store = useBookingStore.getState();
+    store.setShowtime('showtime-1');
+    store.addSeat(seat('A-1'));
+    store.setTimerExpiry(1_000_000);
+
+    useBookingStore.getState().setShowtime('showtime-1');
+
+    expect(useBookingStore.getState().selectedSeats).toHaveLength(1);
+    expect(useBookingStore.getState().timerExpiresAt).toBe(1_000_000);
+
+    useBookingStore.getState().setShowtime('showtime-2');
+
+    expect(useBookingStore.getState().selectedSeats).toEqual([]);
+    expect(useBookingStore.getState().timerExpiresAt).toBeNull();
+  });
+
+  it('clears the hold timer when the last selected seat is removed (audit #31)', () => {
+    const store = useBookingStore.getState();
+    store.setShowtime('showtime-1');
+    store.addSeat(seat('A-1'));
+    store.addSeat(seat('A-2'));
+    store.setTimerExpiry(1_000_000);
+
+    useBookingStore.getState().removeSeat('1F:A-1');
+    expect(useBookingStore.getState().timerExpiresAt).toBe(1_000_000);
+
+    useBookingStore.getState().removeSeat('1F:A-2');
+    expect(useBookingStore.getState().timerExpiresAt).toBeNull();
+  });
+
+  it('follows every new server deadline instead of keeping the first one (audit #31)', () => {
+    const store = useBookingStore.getState();
+    store.setTimerExpiry(1_000_000);
+    useBookingStore.getState().setTimerExpiry(2_000_000);
+
+    expect(useBookingStore.getState().timerExpiresAt).toBe(2_000_000);
+  });
+
+  it('keeps an expiry notice open when the selection empties, and closes it on a new deadline', () => {
+    const store = useBookingStore.getState();
+    store.setShowtime('showtime-1');
+    store.addSeat(seat('A-1'));
+    store.setTimerExpiry(1_000_000);
+    useBookingStore.getState().expireTimer();
+
+    useBookingStore.getState().removeSeat('1F:A-1');
+    expect(useBookingStore.getState().isTimerExpired).toBe(true);
+
+    useBookingStore.getState().setTimerExpiry(3_000_000);
+    expect(useBookingStore.getState().isTimerExpired).toBe(false);
+  });
+});

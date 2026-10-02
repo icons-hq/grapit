@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
@@ -182,7 +182,14 @@ function renderWithQuery(ui: ReactNode) {
 }
 
 describe('BookingPage timezone handling', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   beforeEach(() => {
+    // Started showtimes are not offered; keep the fixture showtime upcoming.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-07-01T00:00:00.000+09:00'));
     useBookingStore.getState().resetBooking();
     lockSeatMutateMock.mockReset();
     routerPushMock.mockReset();

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { renderHook } from '@testing-library/react';
+import { renderHook, waitFor } from '@testing-library/react';
 import {
   useBookingPaymentSnapshot,
   useCancelPendingReservation,
@@ -481,6 +481,8 @@ describe('use-booking payment mutations', () => {
     expect(apiClient.post).toHaveBeenCalledWith('/api/v1/booking/seats/lock', {
       showtimeId: 'showtime-disabled',
       seatId: 'A-1',
+    }, {
+      showErrorToast: false,
     });
   });
 
@@ -604,6 +606,9 @@ describe('use-booking payment mutations', () => {
     expect(apiClient.post).toHaveBeenCalledWith('/api/v1/booking/seats/lock', {
       showtimeId: 'showtime-floor-aware',
       seatId: '2F:A-1',
+    }, {
+      // The seat page reports lock failures once per seat; no generic toast.
+      showErrorToast: false,
     });
   });
 
@@ -629,6 +634,15 @@ describe('use-booking payment mutations', () => {
     deleteMock.mockResolvedValueOnce(undefined);
 
     const { Wrapper, queryClient } = createWrapper();
+    queryClient.setQueryData(['seat-status', 'showtime-floor-aware'], {
+      showtimeId: 'showtime-floor-aware',
+      seats: { '1F:A-1': 'locked', '1F:A-2': 'locked' },
+    });
+    queryClient.setQueryData(['my-locks', 'showtime-floor-aware'], {
+      seatIds: ['1F:A-1'],
+      expiresAt: Date.now() + 60_000,
+      requestSeq: 1,
+    });
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
     const { result } = renderHook(() => useUnlockSeat(), {
       wrapper: Wrapper,
@@ -640,11 +654,135 @@ describe('use-booking payment mutations', () => {
     });
 
     expect(invalidateSpy).toHaveBeenCalledWith({
-      queryKey: ['seat-status', 'showtime-floor-aware'],
-    });
-    expect(invalidateSpy).toHaveBeenCalledWith({
       queryKey: ['my-locks', 'showtime-floor-aware'],
     });
+    // audit #8: no full seat-status reload per release; the released seat is
+    // patched locally while the socket (which would broadcast it) is down.
+    expect(invalidateSpy).not.toHaveBeenCalledWith({
+      queryKey: ['seat-status', 'showtime-floor-aware'],
+    });
+    expect(queryClient.getQueryData(['seat-status', 'showtime-floor-aware'])).toEqual({
+      showtimeId: 'showtime-floor-aware',
+      seats: { '1F:A-2': 'locked' },
+    });
+    expect(queryClient.getQueryData(['my-locks', 'showtime-floor-aware'])).toMatchObject({
+      seatIds: [],
+      expiresAt: null,
+    });
+  });
+
+  it('useUnlockSeat() leaves seat-status to the server broadcast while the socket is connected', async () => {
+    deleteMock.mockResolvedValueOnce(undefined);
+    useBookingStore.getState().setConnected(true);
+
+    const { Wrapper, queryClient } = createWrapper();
+    queryClient.setQueryData(['seat-status', 'showtime-floor-aware'], {
+      showtimeId: 'showtime-floor-aware',
+      seats: { '1F:A-1': 'locked' },
+    });
+    const { result } = renderHook(() => useUnlockSeat(), {
+      wrapper: Wrapper,
+    });
+
+    await result.current.mutateAsync({
+      showtimeId: 'showtime-floor-aware',
+      seatId: '1F:A-1',
+    });
+
+    // The unlock may have been a no-op (lock already expired and re-taken by
+    // someone else); only the server broadcast knows, so keep the state.
+    expect(queryClient.getQueryData(['seat-status', 'showtime-floor-aware'])).toEqual({
+      showtimeId: 'showtime-floor-aware',
+      seats: { '1F:A-1': 'locked' },
+    });
+  });
+
+  it('useLockSeat() patches seat-status and my-locks locally instead of reloading the whole seat map', async () => {
+    const expiresAt = Date.now() + 10 * 60 * 1000;
+    postMock.mockResolvedValueOnce({
+      success: true,
+      lockId: 'lock-1F-A-2',
+      seatId: '1F:A-2',
+      seatKey: '1F:A-2',
+      floorKey: '1F',
+      expiresAt,
+    });
+
+    const { Wrapper, queryClient } = createWrapper();
+    queryClient.setQueryData(['seat-status', 'showtime-floor-aware'], {
+      showtimeId: 'showtime-floor-aware',
+      seats: { '1F:A-1': 'sold' },
+    });
+    queryClient.setQueryData(['my-locks', 'showtime-floor-aware'], {
+      seatIds: [],
+      expiresAt: null,
+      requestSeq: 1,
+    });
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    const { result } = renderHook(() => useLockSeat(), { wrapper: Wrapper });
+
+    await result.current.mutateAsync({
+      showtimeId: 'showtime-floor-aware',
+      seatId: 'A-2',
+      floorKey: '1F',
+      floorLabel: '1층',
+      seatKey: '1F:A-2',
+    });
+
+    expect(invalidateSpy).not.toHaveBeenCalled();
+    expect(queryClient.getQueryData(['seat-status', 'showtime-floor-aware'])).toEqual({
+      showtimeId: 'showtime-floor-aware',
+      seats: { '1F:A-1': 'sold', '1F:A-2': 'locked' },
+    });
+    // requestSeq is kept: the patch is local knowledge, not a fresh snapshot.
+    expect(queryClient.getQueryData(['my-locks', 'showtime-floor-aware'])).toEqual({
+      seatIds: ['1F:A-2'],
+      expiresAt,
+      requestSeq: 1,
+    });
+  });
+
+  it('useLockSeat() resyncs seat-status and my-locks after a 409 so the stale seat map is corrected', async () => {
+    postMock.mockRejectedValueOnce(new ApiClientError('이미 다른 사용자가 선택한 좌석입니다', 409));
+
+    const { Wrapper, queryClient } = createWrapper();
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+    const { result } = renderHook(() => useLockSeat(), { wrapper: Wrapper });
+
+    await expect(result.current.mutateAsync({
+      showtimeId: 'showtime-conflict',
+      seatId: 'A-1',
+      floorKey: '1F',
+      seatKey: '1F:A-1',
+    })).rejects.toMatchObject({ statusCode: 409 });
+
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['seat-status', 'showtime-conflict'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['my-locks', 'showtime-conflict'] });
+  });
+
+  it('useLockSeat() settles every concurrent mutateAsync call with its own result', async () => {
+    let rejectFirst: (error: unknown) => void = () => undefined;
+    postMock
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectFirst = reject; }))
+      .mockResolvedValueOnce({
+        success: true,
+        lockId: 'lock-1F-A-2',
+        seatId: '1F:A-2',
+        expiresAt: Date.now() + 60_000,
+      });
+
+    const { Wrapper } = createWrapper();
+    const { result } = renderHook(() => useLockSeat(), { wrapper: Wrapper });
+
+    const first = result.current.mutateAsync({ showtimeId: 'showtime-race', seatId: 'A-1', floorKey: '1F' });
+    const second = result.current.mutateAsync({ showtimeId: 'showtime-race', seatId: 'A-2', floorKey: '1F' });
+    await waitFor(() => expect(postMock).toHaveBeenCalledTimes(2));
+    rejectFirst(new ApiClientError('이미 다른 사용자가 선택한 좌석입니다', 409));
+
+    // audit #10: per-call mutate() callbacks of the first call would be
+    // dropped once the second call starts; the promises are not.
+    await expect(first).rejects.toMatchObject({ statusCode: 409 });
+    await expect(second).resolves.toMatchObject({ lockId: 'lock-1F-A-2' });
   });
 
   it('usePrepareReservation() uses floor-aware store seats and cached event policy instead of legacy payload defaults', async () => {

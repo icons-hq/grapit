@@ -3,29 +3,41 @@
 import { getSeatSelectionCopy, formatSeatSelectionPrice } from '@/lib/booking/seat-selection-copy';
 import { formatCopy } from '@/lib/i18n/client-copy';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useLocale } from 'next-intl';
+import { useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, Loader2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type {
   FloorAwareSeatSelection,
   SeatMapConfig,
   SeatState,
+  Showtime,
 } from '@grabit/shared';
 import { normalizeSeatIdentity, TICKET_SERVICE_FEE_KRW } from '@grabit/shared';
 import { usePerformanceDetail } from '@/hooks/use-performances';
 import {
   useSeatStatus,
   useMyLocks,
-  useLockSeat,
-  useUnlockSeat,
-  useUnlockAllSeats,
+  type MyLocksSnapshot,
 } from '@/hooks/use-booking';
+import {
+  useSeatLockController,
+  type SeatLockRejection,
+} from '@/hooks/use-seat-lock-controller';
 import { useBookingStore } from '@/stores/use-booking-store';
 import { useBookingSocket } from '@/hooks/use-socket';
 import { useBookingAvailability } from '@/hooks/use-booking-availability';
 import { ApiClientError } from '@/lib/api-client';
+import { getDefaultErrorMessage, getStatusMessages } from '@/lib/error-messages';
+import { BookingDisabledError } from '@/lib/runtime-flags';
+import {
+  getCutoffTimerDelay,
+  getNextShowtimeCutoffAt,
+  isShowtimeSalesClosed,
+  isShowtimeSalesClosedError,
+} from '@/lib/booking/showtime-sales';
 import {
   getKstCalendarDate,
   getKstCalendarKey,
@@ -72,6 +84,36 @@ function parseRuntimeSeatIdentity(rawSeatIdOrKey: string): RuntimeSeatIdentity {
 
 function isUnavailableSeatState(state: RuntimeSeatState | undefined) {
   return state === 'locked' || state === 'sold' || state === 'held' || state === 'disabled';
+}
+
+/**
+ * Wall-clock `now` that advances exactly when the next showtime reaches its
+ * sales cutoff (`now >= dateTime`), and when the tab becomes visible again
+ * (timers are throttled while hidden or asleep).
+ */
+function useShowtimeSalesClock(showtimes: readonly Showtime[]): number {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const nextCutoffAt = getNextShowtimeCutoffAt(showtimes, now);
+    if (nextCutoffAt === null) {
+      return undefined;
+    }
+    const timeout = window.setTimeout(() => setNow(Date.now()), getCutoffTimerDelay(nextCutoffAt));
+    return () => window.clearTimeout(timeout);
+  }, [now, showtimes]);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        setNow(Date.now());
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
+
+  return now;
 }
 
 function formatSeatLabel(seat: FloorAwareSeatSelection) {
@@ -211,6 +253,7 @@ function BookingSelectionBar({
 
 export function BookingPage({ performanceId }: { performanceId: string }) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const activeLocale = resolveVisibleCopyLocale(useLocale());
   const copy = getVisibleCopy(activeLocale);
   const seatCopy = copy.booking.seatSelection;
@@ -232,14 +275,35 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
 
   const [selectedFloorKey, setSelectedFloorKey] = useState<string | null>(null);
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(true);
+  const [isVerifyingSelection, setIsVerifyingSelection] = useState(false);
 
-  useBookingSocket(selectedShowtimeId);
+  const allShowtimes = useMemo(
+    () => performance?.showtimes ?? [],
+    [performance?.showtimes],
+  );
+  const salesNow = useShowtimeSalesClock(allShowtimes);
+  const bookableShowtimes = useMemo(
+    () => allShowtimes.filter((showtime) => !isShowtimeSalesClosed(showtime.dateTime, salesNow)),
+    [allShowtimes, salesNow],
+  );
+  // The booking store is global: a showtime left over from another
+  // performance, or one that already started, is never used for requests.
+  const activeShowtime = useMemo(
+    () => bookableShowtimes.find((showtime) => showtime.id === selectedShowtimeId) ?? null,
+    [bookableShowtimes, selectedShowtimeId],
+  );
+  const activeShowtimeId = activeShowtime?.id ?? null;
 
-  const { data: seatStatusData } = useSeatStatus(selectedShowtimeId);
-  const { data: myLocksData } = useMyLocks(selectedShowtimeId);
-  const lockSeat = useLockSeat();
-  const unlockSeat = useUnlockSeat();
-  const unlockAll = useUnlockAllSeats();
+  useBookingSocket(activeShowtimeId);
+
+  const { data: seatStatusData } = useSeatStatus(activeShowtimeId);
+  const myLocksQuery = useMyLocks(activeShowtimeId);
+  const myLocksData = myLocksQuery.data;
+  const refetchMyLocks = myLocksQuery.refetch;
+  const lockRejectedHandlerRef = useRef<(rejection: SeatLockRejection) => void>(() => undefined);
+  const seatLocks = useSeatLockController({
+    onLockRejected: (rejection) => lockRejectedHandlerRef.current(rejection),
+  });
   const { bookingAvailable, bookingDisabledMessage } = useBookingAvailability({
     performanceStatus: performance?.status,
     bookingStartsAt: performance?.bookingPolicy?.bookingStartsAt,
@@ -276,31 +340,27 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
     [availableSeatMaps, selectedFloorKey],
   );
 
-  const allShowtimes = useMemo(
-    () => performance?.showtimes ?? [],
-    [performance?.showtimes],
-  );
-
+  // Started showtimes are closed for sale, so their dates/chips are not offered.
   const availableDates = useMemo(() => {
     const dateMap = new Map<string, Date>();
-    for (const showtime of allShowtimes) {
+    for (const showtime of bookableShowtimes) {
       const key = getKstCalendarKey(showtime.dateTime);
       if (!dateMap.has(key)) {
         dateMap.set(key, getKstCalendarDate(showtime.dateTime));
       }
     }
     return Array.from(dateMap.values());
-  }, [allShowtimes]);
+  }, [bookableShowtimes]);
 
   const filteredShowtimes = useMemo(() => {
     if (!selectedDate) {
       return [];
     }
 
-    return allShowtimes.filter((showtime) =>
+    return bookableShowtimes.filter((showtime) =>
       isSameKstCalendarDate(showtime.dateTime, selectedDate),
     );
-  }, [allShowtimes, selectedDate]);
+  }, [bookableShowtimes, selectedDate]);
 
   const tierInfoByFloorKey = useMemo(() => {
     const map = new Map<string, Map<string, { tierName: string; color: string; price: number }>>();
@@ -486,24 +546,17 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
 
   const currentFloorOption = floorOptions.find((option) => option.floorKey === currentSeatMap?.floorKey) ?? null;
 
-  useEffect(() => {
-    if (!myLocksData || myLocksData.seatIds.length === 0) {
-      return;
-    }
-    if (selectedSeats.length > 0) {
-      return;
-    }
-
-    for (const runtimeSeatId of myLocksData.seatIds) {
+  const buildSeatSelection = useCallback(
+    (runtimeSeatId: string): FloorAwareSeatSelection | null => {
       const seatIdentity = parseRuntimeSeatIdentity(runtimeSeatId);
       const floorSeatMap = availableSeatMaps.find((seatMap) => seatMap.floorKey === seatIdentity.floorKey);
       const tierInfo = tierInfoByFloorKey.get(seatIdentity.floorKey)?.get(seatIdentity.seatId);
       if (!floorSeatMap || !tierInfo) {
-        continue;
+        return null;
       }
 
       const parts = seatIdentity.seatId.split('-');
-      addSeat({
+      return {
         seatId: seatIdentity.seatId,
         tierName: tierInfo.tierName,
         tierColor: tierInfo.color,
@@ -513,28 +566,190 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
         floorKey: floorSeatMap.floorKey,
         floorLabel: floorSeatMap.floorLabel,
         seatKey: seatIdentity.seatKey,
-      });
-    }
+      };
+    },
+    [availableSeatMaps, tierInfoByFloorKey],
+  );
 
-    if (myLocksData.expiresAt) {
-      setTimerExpiry(myLocksData.expiresAt);
+  /**
+   * Aligns the selection with the server's locks: drops selected seats the
+   * server no longer holds for the user (lost lock responses, TTL expiry) and
+   * restores held seats missing from the selection (reload, return from
+   * checkout, a lock whose response was lost). Snapshots requested before the
+   * last seat operation was answered are ignored, so a just-released seat is
+   * never restored from an old snapshot.
+   */
+  const lastReconciledRef = useRef<{ snapshot: MyLocksSnapshot; changed: boolean } | null>(null);
+  const isCheckingExpiryRef = useRef(false);
+  const reconcileSelectionWithServer = useCallback(
+    (snapshot: MyLocksSnapshot, showtimeId: string): { applied: boolean; changed: boolean } => {
+      if (lastReconciledRef.current?.snapshot === snapshot) {
+        return { applied: true, changed: lastReconciledRef.current.changed };
+      }
+      if (!seatLocks.isSnapshotCurrent(snapshot.requestSeq ?? 0)) {
+        return { applied: false, changed: false };
+      }
+      const state = useBookingStore.getState();
+      if (state.selectedShowtimeId !== showtimeId) {
+        return { applied: false, changed: false };
+      }
+
+      const serverSeatKeys = new Set(
+        snapshot.seatIds.map((runtimeSeatId) => parseRuntimeSeatIdentity(runtimeSeatId).seatKey),
+      );
+      const hadSelection = state.selectedSeats.length > 0;
+      const ghostSeats = state.selectedSeats.filter((seat) => !serverSeatKeys.has(seat.seatKey));
+      for (const seat of ghostSeats) {
+        removeSeat(seat.seatKey);
+      }
+
+      const selectedSeatKeys = new Set(state.selectedSeats.map((seat) => seat.seatKey));
+      let restoredCount = 0;
+      for (const runtimeSeatId of snapshot.seatIds) {
+        const seatSelection = buildSeatSelection(runtimeSeatId);
+        if (!seatSelection || selectedSeatKeys.has(seatSelection.seatKey)) {
+          continue;
+        }
+        addSeat(seatSelection);
+        restoredCount += 1;
+      }
+
+      if (snapshot.expiresAt && useBookingStore.getState().selectedSeats.length > 0) {
+        setTimerExpiry(snapshot.expiresAt);
+      }
+
+      // A restore into an empty selection (reload/return) is expected and silent.
+      const changed = ghostSeats.length > 0 || (hadSelection && restoredCount > 0);
+      lastReconciledRef.current = { snapshot, changed };
+      if (changed && !isCheckingExpiryRef.current) {
+        toast.info(seatCopy.selectionResynced);
+      }
+      return { applied: true, changed };
+    },
+    [addSeat, buildSeatSelection, removeSeat, seatCopy.selectionResynced, seatLocks, setTimerExpiry],
+  );
+
+  useEffect(() => {
+    if (!activeShowtimeId || !myLocksData) {
+      return;
     }
+    reconcileSelectionWithServer(myLocksData, activeShowtimeId);
+  }, [activeShowtimeId, myLocksData, reconcileSelectionWithServer]);
+
+  /** Releases whatever the user may hold in a showtime they are leaving. */
+  const releaseShowtimeHolds = useCallback(
+    (showtimeId: string) => {
+      const state = useBookingStore.getState();
+      const cachedLocks = queryClient.getQueryData<MyLocksSnapshot>(['my-locks', showtimeId]);
+      const holdsSeats = (state.selectedShowtimeId === showtimeId && state.selectedSeats.length > 0)
+        || (cachedLocks?.seatIds.length ?? 0) > 0
+        || seatLocks.hasPendingLocksFor(showtimeId);
+      if (holdsSeats) {
+        seatLocks.releaseAll(showtimeId);
+      }
+    },
+    [queryClient, seatLocks],
+  );
+
+  const changeShowtime = useCallback(
+    (nextShowtimeId: string | null) => {
+      const previousShowtimeId = useBookingStore.getState().selectedShowtimeId;
+      if (previousShowtimeId === nextShowtimeId) {
+        return;
+      }
+      if (previousShowtimeId) {
+        releaseShowtimeHolds(previousShowtimeId);
+      }
+      setShowtime(nextShowtimeId);
+    },
+    [releaseShowtimeHolds, setShowtime],
+  );
+
+  /** Sales close at the showtime start (`now >= date_time`): drop it and its seats. */
+  const closeStartedShowtime = useCallback(
+    (showtimeId: string) => {
+      if (useBookingStore.getState().selectedShowtimeId !== showtimeId) {
+        return;
+      }
+      releaseShowtimeHolds(showtimeId);
+      setShowtime(null);
+      toast.info(seatCopy.showtimeClosed);
+    },
+    [releaseShowtimeHolds, seatCopy.showtimeClosed, setShowtime],
+  );
+
+  // A selection that is not an open showtime of this performance (left over
+  // from another performance, or the showtime started) is released and reset.
+  useEffect(() => {
+    if (!performance || !selectedShowtimeId || activeShowtimeId) {
+      return;
+    }
+    if (allShowtimes.some((showtime) => showtime.id === selectedShowtimeId)) {
+      closeStartedShowtime(selectedShowtimeId);
+      return;
+    }
+    releaseShowtimeHolds(selectedShowtimeId);
+    useBookingStore.getState().resetBooking();
   }, [
-    addSeat,
-    availableSeatMaps,
-    myLocksData,
-    selectedSeats.length,
-    setTimerExpiry,
-    tierInfoByFloorKey,
+    activeShowtimeId,
+    allShowtimes,
+    closeStartedShowtime,
+    performance,
+    releaseShowtimeHolds,
+    selectedShowtimeId,
   ]);
+
+  const handleLockRejected = useCallback(({ error, showtimeId, stillWanted }: SeatLockRejection) => {
+    if (isShowtimeSalesClosedError(error)) {
+      closeStartedShowtime(showtimeId);
+      return;
+    }
+    if (!stillWanted) {
+      // The user already dropped this seat; nothing to report.
+      return;
+    }
+    if (error instanceof BookingDisabledError) {
+      toast.info(error.message);
+      return;
+    }
+    if (error instanceof ApiClientError) {
+      if (error.statusCode === 401) {
+        return;
+      }
+      if (error.statusCode === 409) {
+        toast.info(activeLocale === 'ko' ? error.message.trim() || seatCopy.selectionConflict : seatCopy.selectionConflict);
+        return;
+      }
+      toast.error(
+        activeLocale === 'ko' && error.message.trim()
+          ? error.message
+          : getStatusMessages()[error.statusCode] ?? getDefaultErrorMessage(),
+      );
+      return;
+    }
+    toast.error(copy.commonErrors.server);
+  }, [
+    activeLocale,
+    closeStartedShowtime,
+    copy.commonErrors.server,
+    seatCopy.selectionConflict,
+  ]);
+
+  useEffect(() => {
+    lockRejectedHandlerRef.current = handleLockRejected;
+  }, [handleLockRejected]);
 
   const handleSeatClick = useCallback(
     (runtimeSeatId: string) => {
-      if (!selectedShowtimeId || !currentSeatMap) {
+      if (!activeShowtimeId || !activeShowtime || !currentSeatMap) {
         return;
       }
       if (!bookingAvailable) {
         toast.info(bookingDisabledMessage);
+        return;
+      }
+      if (isShowtimeSalesClosed(activeShowtime.dateTime)) {
+        closeStartedShowtime(activeShowtimeId);
         return;
       }
 
@@ -543,28 +758,27 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
         ?? currentSeatMap;
       const floorSeatStates = seatStatesByFloorKey.get(floorSeatMap.floorKey) ?? seatStatesMap;
       const seatState = floorSeatStates.get(seatIdentity.seatKey) ?? floorSeatStates.get(seatIdentity.seatId);
-      const isSelected = selectedSeats.some(
-        (seat) => seat.seatKey === seatIdentity.seatKey
-          || (seat.floorKey === floorSeatMap.floorKey && seat.seatId === seatIdentity.seatId),
-      );
-      const isMyLockedSeat = seatState === 'locked' && myLockedSeatIds.has(seatIdentity.seatId);
-      if (isUnavailableSeatState(seatState) && !isSelected && !isMyLockedSeat) {
-        toast.info(seatCopy.seatTaken);
-        return;
-      }
-
       const existingSeat = selectedSeats.find(
         (seat) => seat.seatKey === seatIdentity.seatKey
           || (seat.floorKey === floorSeatMap.floorKey && seat.seatId === seatIdentity.seatId),
       );
       if (existingSeat) {
-        removeSeat(existingSeat.seatKey);
-        unlockSeat.mutate({ showtimeId: selectedShowtimeId, seatId: existingSeat.seatKey });
+        seatLocks.releaseSeat(activeShowtimeId, existingSeat.seatKey);
         return;
       }
 
-      if (isMyLockedSeat) {
-        unlockSeat.mutate({ showtimeId: selectedShowtimeId, seatId: seatIdentity.seatKey });
+      // The user's own request for this seat is still running: its "locked"
+      // state is ours, not another user's.
+      const hasOwnPendingRequest = seatLocks.isLockPending(activeShowtimeId, seatIdentity.seatKey)
+        || seatLocks.isUnlockPending(activeShowtimeId, seatIdentity.seatKey);
+      const isMyLockedSeat = seatState === 'locked' && myLockedSeatIds.has(seatIdentity.seatId);
+      if (isUnavailableSeatState(seatState) && !isMyLockedSeat && !hasOwnPendingRequest) {
+        toast.info(seatCopy.seatTaken);
+        return;
+      }
+
+      if (isMyLockedSeat && !hasOwnPendingRequest) {
+        seatLocks.releaseSeat(activeShowtimeId, seatIdentity.seatKey);
         return;
       }
 
@@ -595,62 +809,34 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
         seatKey: seatIdentity.seatKey,
       };
 
-      addSeat(seatSelection);
-
-      lockSeat.mutate(
-        {
-          showtimeId: selectedShowtimeId,
-          seatId: seatIdentity.seatId,
-          floorKey: floorSeatMap.floorKey,
-          floorLabel: floorSeatMap.floorLabel,
-          seatKey: seatSelection.seatKey,
-        },
-        {
-          onSuccess: (response) => {
-            if (response.expiresAt) {
-              setTimerExpiry(response.expiresAt);
-            }
-          },
-          onError: (error: unknown) => {
-            removeSeat(seatSelection.seatKey);
-            if (error instanceof ApiClientError && error.statusCode === 409) {
-              toast.info(activeLocale === 'ko' ? error.message.trim() || seatCopy.selectionConflict : seatCopy.selectionConflict);
-              return;
-            }
-
-            toast.error(copy.commonErrors.server);
-          },
-        },
-      );
+      // Seats still being released count against the per-user limit on the
+      // server until their release lands.
+      seatLocks.lockSeat(activeShowtimeId, seatSelection, { perUserLimit: maxTicketsPerUser });
     },
     [
-      addSeat,
-      activeLocale,
-      copy.commonErrors.server,
       seatCopy,
+      activeShowtime,
+      activeShowtimeId,
       availableSeatMaps,
       bookingDisabledMessage,
       bookingAvailable,
+      closeStartedShowtime,
       currentSeatMap,
-      lockSeat,
       maxTicketsPerUser,
       myLockedSeatIds,
-      removeSeat,
+      seatLocks,
       seatStatesMap,
       seatStatesByFloorKey,
       selectedSeats,
-      selectedShowtimeId,
-      setTimerExpiry,
       ticketLimitCopy,
       tierInfoByFloorKey,
       tierInfoMap,
-      unlockSeat,
     ],
   );
 
   const handleRemoveSeat = useCallback(
     (seatKey: string) => {
-      if (!selectedShowtimeId) {
+      if (!activeShowtimeId) {
         return;
       }
 
@@ -659,56 +845,83 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
         return;
       }
 
-      removeSeat(seat.seatKey);
-      unlockSeat.mutate({ showtimeId: selectedShowtimeId, seatId: seat.seatKey });
+      seatLocks.releaseSeat(activeShowtimeId, seat.seatKey);
     },
-    [removeSeat, selectedSeats, selectedShowtimeId, unlockSeat],
+    [activeShowtimeId, seatLocks, selectedSeats],
   );
 
   const handleClearSeats = useCallback(() => {
-    if (!selectedShowtimeId || selectedSeats.length === 0) {
+    if (!activeShowtimeId || selectedSeats.length === 0) {
       return;
     }
 
-    unlockAll.mutate({ showtimeId: selectedShowtimeId });
     useBookingStore.getState().clearSeats();
-  }, [selectedSeats.length, selectedShowtimeId, unlockAll]);
+    seatLocks.releaseAll(activeShowtimeId);
+  }, [activeShowtimeId, seatLocks, selectedSeats.length]);
 
-  const handleProceed = useCallback(() => {
-    if (!selectedShowtimeId || !performance) {
+  const handleProceed = useCallback(async () => {
+    if (!activeShowtimeId || !activeShowtime || !performance) {
       return;
     }
     if (!bookingAvailable) {
       toast.info(bookingDisabledMessage);
       return;
     }
+    if (isShowtimeSalesClosed(activeShowtime.dateTime)) {
+      closeStartedShowtime(activeShowtimeId);
+      return;
+    }
 
-    const selectedPerformanceShowtime = allShowtimes.find((showtime) => showtime.id === selectedShowtimeId);
-    useBookingStore.getState().setBookingData({
-      selectedSeats,
-      showtimeId: selectedShowtimeId,
-      performanceId,
-      performanceTitle: performance.title,
-      showDateTime: selectedPerformanceShowtime?.dateTime ?? null,
-      venue: performance.venue?.name ?? null,
-      posterUrl: performance.posterUrl ?? null,
-      expiresAt: timerExpiresAt,
-    });
+    // Hand off only seats the server still holds for this user, with the
+    // server's deadline.
+    setIsVerifyingSelection(true);
+    try {
+      await seatLocks.waitForIdle();
+      const result = await refetchMyLocks();
+      if (result.isError || !result.data) {
+        return;
+      }
+      const { applied, changed } = reconcileSelectionWithServer(result.data, activeShowtimeId);
+      if (!applied || changed) {
+        // The selection changed while verifying: let the user review it.
+        return;
+      }
 
-    router.push(
-      getLocalizedPathname(`/booking/${performanceId}/confirm`, activeLocale),
-    );
+      const state = useBookingStore.getState();
+      if (state.selectedShowtimeId !== activeShowtimeId || state.selectedSeats.length === 0) {
+        return;
+      }
+
+      useBookingStore.getState().setBookingData({
+        selectedSeats: state.selectedSeats,
+        showtimeId: activeShowtimeId,
+        performanceId,
+        performanceTitle: performance.title,
+        showDateTime: activeShowtime.dateTime,
+        venue: performance.venue?.name ?? null,
+        posterUrl: performance.posterUrl ?? null,
+        expiresAt: result.data.expiresAt ?? state.timerExpiresAt,
+      });
+
+      router.push(
+        getLocalizedPathname(`/booking/${performanceId}/confirm`, activeLocale),
+      );
+    } finally {
+      setIsVerifyingSelection(false);
+    }
   }, [
     activeLocale,
-    allShowtimes,
+    activeShowtime,
+    activeShowtimeId,
     bookingDisabledMessage,
     bookingAvailable,
+    closeStartedShowtime,
     performance,
     performanceId,
+    reconcileSelectionWithServer,
+    refetchMyLocks,
     router,
-    selectedSeats,
-    selectedShowtimeId,
-    timerExpiresAt,
+    seatLocks,
   ]);
 
   const handleBack = useCallback(() => {
@@ -717,24 +930,68 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
     );
   }, [activeLocale, performanceId, router]);
 
-  const handleTimerExpire = useCallback(() => {
+  // The client countdown is only a projection of the server TTL. Before
+  // declaring expiry (which releases everything), confirm with the server.
+  const handleTimerExpire = useCallback(async () => {
+    const showtimeId = useBookingStore.getState().selectedShowtimeId;
+    if (showtimeId && showtimeId === activeShowtimeId) {
+      // The expiry modal explains the outcome; the resync toast stays quiet.
+      isCheckingExpiryRef.current = true;
+      try {
+        const result = await refetchMyLocks();
+        if (result.data) {
+          // Process the snapshot here (silently) so the effect does not toast it later.
+          reconcileSelectionWithServer(result.data, showtimeId);
+        }
+        const serverExpiresAt = result.data?.expiresAt ?? null;
+        const state = useBookingStore.getState();
+        if (state.selectedShowtimeId !== showtimeId) {
+          return;
+        }
+        if (
+          !result.isError
+          && result.data
+          && result.data.seatIds.length > 0
+          && serverExpiresAt !== null
+          && serverExpiresAt - Date.now() > 1_000
+          && state.selectedSeats.length > 0
+        ) {
+          setTimerExpiry(serverExpiresAt);
+          return;
+        }
+      } catch {
+        // Fall through to the expiry modal.
+      } finally {
+        isCheckingExpiryRef.current = false;
+      }
+    }
     useBookingStore.getState().expireTimer();
-  }, []);
+  }, [activeShowtimeId, reconcileSelectionWithServer, refetchMyLocks, setTimerExpiry]);
 
   const handleTimerReset = useCallback(() => {
     const { selectedShowtimeId: showtimeId } = useBookingStore.getState();
     if (showtimeId) {
-      unlockAll.mutate({ showtimeId });
+      seatLocks.releaseAll(showtimeId);
     }
     useBookingStore.getState().resetBooking();
-  }, [unlockAll]);
+  }, [seatLocks]);
 
   const handleDateSelect = useCallback(
     (date: Date) => {
+      const currentDate = useBookingStore.getState().selectedDate;
+      if (
+        currentDate
+        && currentDate.getFullYear() === date.getFullYear()
+        && currentDate.getMonth() === date.getMonth()
+        && currentDate.getDate() === date.getDate()
+      ) {
+        // Same day again: keep the showtime and its held seats.
+        return;
+      }
       setDate(date);
-      setShowtime(null);
+      changeShowtime(null);
     },
-    [setDate, setShowtime],
+    [changeShowtime, setDate],
   );
 
   if (bookingDisabledReason) {
@@ -747,7 +1004,9 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
           performanceTitle={disabledTitle}
           expiresAt={null}
           onBack={handleBack}
-          onExpire={handleTimerExpire}
+          onExpire={() => {
+            void handleTimerExpire();
+          }}
         />
 
         <main className="mx-auto flex w-full max-w-[760px] flex-1 items-center px-4 py-12">
@@ -815,7 +1074,9 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
         performanceTitle={performance.title}
         expiresAt={timerExpiresAt}
         onBack={handleBack}
-        onExpire={handleTimerExpire}
+        onExpire={() => {
+          void handleTimerExpire();
+        }}
       />
 
       <main className="mx-auto w-full max-w-[1280px] px-4 py-4 pb-48 lg:px-6 lg:py-8 lg:pb-40">
@@ -829,7 +1090,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
               >
                 <span className="text-sm font-semibold text-gray-900">
                   {selectedDate
-                    ? `${selectedDate.getMonth() + 1}/${selectedDate.getDate()}${selectedShowtimeId ? ` - ${seatCopy.showtimeSelected}` : ''}`
+                    ? `${selectedDate.getMonth() + 1}/${selectedDate.getDate()}${activeShowtimeId ? ` - ${seatCopy.showtimeSelected}` : ''}`
                     : seatCopy.dateShowtime}
                 </span>
                 <ChevronDown
@@ -856,9 +1117,11 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
                     </h2>
                     <ShowtimeChips
                       showtimes={filteredShowtimes}
-                      selected={selectedShowtimeId}
+                      selected={activeShowtimeId}
                       onSelect={(id) => {
-                        setShowtime(id);
+                        // Re-selecting the current chip is a no-op; switching
+                        // releases the previous showtime's seats first.
+                        changeShowtime(id);
                         if (id && window.innerWidth < 1024) {
                           setIsDatePickerOpen(false);
                         }
@@ -869,7 +1132,7 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
               </div>
             </div>
 
-            {selectedShowtimeId && currentSeatMap && seatConfig ? (
+            {activeShowtimeId && currentSeatMap && seatConfig ? (
               <>
                 <FloorSelector
                   floors={floorOptions}
@@ -924,15 +1187,17 @@ export function BookingPage({ performanceId }: { performanceId: string }) {
         </div>
       </main>
 
-      {selectedShowtimeId ? (
+      {activeShowtimeId ? (
         <BookingSelectionBar
           tierSummaries={tierSummaries}
           selectedSeatCount={selectedSeats.length}
           totalPrice={totalPrice}
           canClear={selectedSeats.length > 0}
           onClear={handleClearSeats}
-          onProceed={handleProceed}
-          isLoading={lockSeat.isPending || unlockAll.isPending}
+          onProceed={() => {
+            void handleProceed();
+          }}
+          isLoading={seatLocks.pendingLockCount > 0 || seatLocks.isReleasingAll || isVerifyingSelection}
           disabledReason={bookingDisabledReason}
         />
       ) : null}

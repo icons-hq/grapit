@@ -83,13 +83,17 @@ export const useBookingStore = create<BookingState>((set) => ({
 
   setDate: (date) => set({ selectedDate: date }),
 
+  // Re-selecting the current showtime must keep the selection: clearing it
+  // would orphan the server locks behind it.
   setShowtime: (id) =>
-    set({
-      selectedShowtimeId: id,
-      selectedSeats: [],
-      timerExpiresAt: null,
-      isTimerExpired: false,
-    }),
+    set((state) => (state.selectedShowtimeId === id
+      ? state
+      : {
+        selectedShowtimeId: id,
+        selectedSeats: [],
+        timerExpiresAt: null,
+        isTimerExpired: false,
+      })),
 
   addSeat: (seat) =>
     set((state) => {
@@ -104,16 +108,26 @@ export const useBookingStore = create<BookingState>((set) => ({
     }),
 
   removeSeat: (seatKey) =>
-    set((state) => ({
-      selectedSeats: state.selectedSeats.filter((seat) => seat.seatKey !== seatKey),
-    })),
+    set((state) => {
+      const selectedSeats = state.selectedSeats.filter((seat) => seat.seatKey !== seatKey);
+      if (selectedSeats.length === state.selectedSeats.length) {
+        return state;
+      }
+      // No held seat means no server deadline: a later first lock gets a fresh
+      // TTL. An expiry notice already shown stays until the user resets.
+      return selectedSeats.length === 0
+        ? { selectedSeats, timerExpiresAt: null }
+        : { selectedSeats };
+    }),
 
   clearSeats: () => set({ selectedSeats: [], timerExpiresAt: null, isTimerExpired: false }),
 
+  // Always follow the latest server deadline (lock response or my-locks).
+  // Seats held together share the user's TTL, so overwriting is safe.
   setTimerExpiry: (expiresAt) =>
-    set((state) => ({
-      timerExpiresAt: state.timerExpiresAt === null ? expiresAt : state.timerExpiresAt,
-    })),
+    set((state) => (state.timerExpiresAt === expiresAt && !state.isTimerExpired
+      ? state
+      : { timerExpiresAt: expiresAt, isTimerExpired: false })),
 
   applyPaymentDeadline: (paymentDeadlineAt) => {
     const parsedDeadline = Date.parse(paymentDeadlineAt);

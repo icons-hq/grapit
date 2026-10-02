@@ -230,6 +230,15 @@ Seat locks are managed by `BookingService` and Redis/Valkey.
 
 Local development can use an in-memory Redis-compatible mock when Redis URL is absent. Production cannot silently use that fallback.
 
+The web seat selection page (`BookingPage` + `useSeatLockController`) keeps the selection aligned with the server locks:
+
+- Each lock request is awaited on its own promise; at most one lock request per seat is in flight. A seat dropped while its lock is pending (double tap, showtime change, reset) is released when the lock lands, and a lock is never sent while a release of the same seat or of the whole showtime is in flight.
+- Changing the date or showtime releases the previous showtime's locks; re-selecting the current showtime keeps them. A selection that is not an open showtime of the current performance (another performance, or a showtime that started) is released and reset.
+- Showtimes whose `date_time` has passed are not offered and close while the page is open (`now >= date_time`, same cutoff as the server).
+- `my-locks` snapshots reconcile the selection (drop seats the server no longer holds, restore held seats) only when requested after every lock/unlock response, so a released seat is never restored from an older snapshot. Checkout starts only after the same check.
+- The hold timer always follows the latest server deadline and clears when no seat is selected; on expiry the page re-reads `my-locks` before releasing anything.
+- Lock success patches seat status locally; a lock conflict reloads seat status and `my-locks`. Seat status is also polled while the tab is visible (20–30 s connected, 10–15 s while the socket is down, per-viewer jitter) because Redis TTL expiry is not broadcast; reconnects reload it after a random delay of up to 3 s.
+
 ### 6.2 Queue Admission
 
 `QueueModule` manages queue entry/session state. The admission guard protects booking mutations by validating:
