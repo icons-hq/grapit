@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
+import { ThrottleEmailBody } from './throttle-identity.js';
 import {
   SECURITY_BLOCKED,
   SECURITY_CHALLENGE_REQUIRED,
@@ -40,6 +42,7 @@ describe('TrafficDefenseService', () => {
         'email-verification-send',
         'email-verification-verify',
         'account-email-send',
+        'account-email-address',
       ]),
     );
   });
@@ -347,6 +350,68 @@ describe('TrafficDefenseService', () => {
     expect(accountEmail('user-2', 'a@b.co')).not.toBe(accountEmail('user-1', 'a@b.co'));
   });
 
+  it('counts only bodies the route accepts against an address budget, keyed by the parsed email (review r3)', () => {
+    const service = new TrafficDefenseService();
+    const schema = z.object({
+      email: z.string().email(),
+      locale: z.enum(['ko', 'en']).optional(),
+    });
+    const handler = function requestReset() {};
+    ThrottleEmailBody(schema)(handler as never);
+    const resetPolicy = service
+      .getThrottlerOptions()
+      .find((option) => option.name === 'password-reset-email');
+    const reset = (body: Record<string, unknown>, ip = '203.0.113.10') =>
+      createRequest({
+        originalUrl: '/api/v1/auth/password-reset/request',
+        body,
+        ip,
+        socket: { remoteAddress: ip },
+      });
+    const skip = (body: Record<string, unknown>) =>
+      resetPolicy?.skipIf?.(createExecutionContext(reset(body), handler));
+    const tracker = (body: Record<string, unknown>, ip?: string) =>
+      service.resolveTracker(
+        'password-reset-email',
+        reset(body, ip),
+        createExecutionContext(reset(body, ip), handler),
+      );
+
+    // A body the route rejects with 400 sends no mail and spends nothing.
+    expect(skip({ email: 'victim@example.com', locale: 'zz' })).toBe(true);
+    expect(skip({ email: ' victim@example.com' })).toBe(true);
+    expect(skip({ email: ['victim@example.com'] })).toBe(true);
+    // An accepted body counts against the address, across IPs and casing.
+    expect(skip({ email: 'victim@example.com', locale: 'en' })).toBe(false);
+    expect(tracker({ email: 'VICTIM@example.com', locale: 'en' }, '198.51.100.9')).toBe(
+      tracker({ email: 'victim@example.com' }),
+    );
+    expect(tracker({ email: 'victim@example.com' })).toMatch(
+      /^password-reset-email:email:[0-9a-f]{32}$/,
+    );
+  });
+
+  it('caps signed-in account-email mail per address across accounts, after the per-account share (review r3)', () => {
+    const service = new TrafficDefenseService();
+    const names = service.getThrottlerOptions().map((option) => option.name);
+    const addressTracker = (userId: string, email: string) =>
+      service.resolveTracker(
+        'account-email-address',
+        createRequest({
+          originalUrl: '/api/v1/auth/email-verification/account-email/request',
+          user: { id: userId },
+          body: { email },
+        }),
+      );
+
+    expect(service.getPolicyIdentity('account-email-address')).toBe('email');
+    expect(addressTracker('user-1', 'a@b.co')).toBe(addressTracker('user-2', 'A@B.co'));
+    expect(addressTracker('user-1', 'a@b.co')).toMatch(/^account-email-address:email:[0-9a-f]{32}$/);
+    // Same ttl, so the guard runs them in list order: a request the
+    // per-account share rejects never reaches the shared address bucket.
+    expect(names.indexOf('account-email-send')).toBeLessThan(names.indexOf('account-email-address'));
+  });
+
   it('matches policies on the route that dispatched the request, so path spellings cannot skip them (review r2)', () => {
     const service = new TrafficDefenseService();
     const skip = (name: string, overrides: Record<string, unknown>) =>
@@ -497,9 +562,13 @@ describe('TrafficDefenseService', () => {
   });
 });
 
-function createExecutionContext(request: ReturnType<typeof createRequest>) {
+function createExecutionContext(
+  request: ReturnType<typeof createRequest>,
+  handler?: (...args: never[]) => unknown,
+) {
   return {
     getType: () => 'http',
+    ...(handler ? { getHandler: () => handler } : {}),
     switchToHttp: () => ({
       getRequest: () => request,
     }),

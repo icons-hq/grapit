@@ -7,12 +7,14 @@ import { ThrottlerStorageRedisService } from '@nest-lab/throttler-storage-redis'
  * 1.2.0. The difference: a request that arrives while the bucket is blocked
  * is rejected before `INCR`. The stock script counts it first, so rejected
  * requests fill the next window while a block runs, and when the block ends
- * that window is already over the limit and blocks again at once. Anyone who
- * sends a few requests per window could then keep a shared bucket blocked
- * forever without one request reaching the handler: one address's mail
- * budget (password reset, verification resend), or every user behind a NAT.
- * Here each window that follows a block grants `limit` requests again, which
- * is also how @nestjs/throttler's in-memory storage (dev, HTTP specs) behaves.
+ * that window is already over the limit and blocks again at once. After one
+ * fill, a few rejected requests per window would then renew the block
+ * indefinitely: a shared bucket such as every user behind a NAT, or one
+ * address's mail budget. Here each window that follows a block grants `limit`
+ * requests again, which is also how @nestjs/throttler's in-memory storage
+ * (dev, HTTP specs) behaves. Refilling an address's mail budget therefore
+ * takes requests the route accepts, and those mail the owner
+ * (`ThrottleEmailBody`).
  */
 export const BLOCK_AWARE_THROTTLE_SCRIPT = `
   local hitKey = KEYS[1]

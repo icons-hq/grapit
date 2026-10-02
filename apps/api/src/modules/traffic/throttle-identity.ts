@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { isIP } from 'node:net';
+import { SetMetadata } from '@nestjs/common';
 import type { Request } from 'express';
 import { resolveTrustedRequestIp } from '../../common/request-ip.js';
 
@@ -59,12 +60,50 @@ export function resolveThrottleEmail(
   const raw =
     credentialField(req.body, 'email') ??
     (source === 'body-or-query' ? credentialField(req.query, 'email') : null);
-  if (raw === null) {
-    return null;
-  }
+  return raw === null ? null : normalizeThrottleEmail(raw);
+}
 
+/** Email policies key on the address as the account lookup reads it: trimmed, any case. */
+export function normalizeThrottleEmail(raw: string): string | null {
   const normalized = raw.trim().toLowerCase();
   return normalized.length > 0 ? normalized : null;
+}
+
+export const THROTTLE_EMAIL_BODY_METADATA = 'grabit:throttle-email-body';
+
+/** The subset of a Zod schema the throttle needs (`z.object({ email: ... })`). */
+export type ThrottleEmailBodySchema = {
+  safeParse(value: unknown): { success: true; data: { email: string } } | { success: false };
+};
+
+/**
+ * Declares the body schema of a route whose email traffic policies spend a
+ * per-address budget. Pass the same schema as the route's
+ * `@Body(new ZodValidationPipe(schema))`.
+ *
+ * ThrottlerGuard runs before that pipe. Without this, a body the route rejects
+ * with 400 (an unknown `locale`, a malformed `frontendOrigin`) sends no mail
+ * but still fills the address bucket, so anyone could keep an owner's reset or
+ * verification mail blocked without one mail arriving. With it, the email
+ * policies skip bodies the schema rejects and key on the parsed email. The
+ * route's default bucket (per IP, or per user when signed in) still counts
+ * every request. route-throttles.spec checks that every route with an
+ * address-wide policy declares the schema its `@Body` pipe uses.
+ */
+export function ThrottleEmailBody(schema: ThrottleEmailBodySchema): MethodDecorator {
+  return SetMetadata(THROTTLE_EMAIL_BODY_METADATA, schema);
+}
+
+/**
+ * The email an email policy keys on for a declared body schema: the parsed,
+ * normalized email, or `null` when the route will reject the body.
+ */
+export function resolveValidatedThrottleEmail(
+  req: ThrottleRequestLike,
+  schema: ThrottleEmailBodySchema,
+): string | null {
+  const parsed = schema.safeParse(req.body);
+  return parsed.success ? normalizeThrottleEmail(parsed.data.email) : null;
 }
 
 export function hashThrottleIdentity(value: string): string {

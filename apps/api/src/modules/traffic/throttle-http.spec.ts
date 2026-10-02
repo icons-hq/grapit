@@ -434,6 +434,72 @@ describe('throttling over HTTP', () => {
     });
   });
 
+  describe('a request the route rejects does not spend an address mail budget (review r3)', () => {
+    // ThrottlerGuard runs before the route's ZodValidationPipe. A body the
+    // route rejects (400) sends no mail, so it must not fill the address-wide
+    // bucket and lock the owner out without a single mail arriving.
+    it('keeps password reset mail available to the owner after rejected requests for the address', async () => {
+      const limit = policyLimit('password-reset-email');
+      const rejectedBodies = [
+        { email: 'victim@example.com', locale: 'zz' },
+        { email: 'victim@example.com', frontendOrigin: 'not-a-url' },
+        { email: 'victim@example.com', returnTo: 'x'.repeat(3000) },
+      ];
+      const rejected = await sendMany(limit + 3, (index) =>
+        post('/auth/password-reset/request', '203.0.113.66')
+          .send(rejectedBodies[index % rejectedBodies.length]!),
+      );
+      expect(rejected.every((status) => status === 400)).toBe(true);
+      expect(authService.requestPasswordReset).not.toHaveBeenCalled();
+
+      const owner = await post('/auth/password-reset/request', '198.51.100.7')
+        .send({ email: 'victim@example.com' });
+      expect(owner.status).toBe(200);
+      expect(authService.requestPasswordReset).toHaveBeenCalledTimes(1);
+      expect(authService.requestPasswordReset.mock.calls[0]?.[0]).toBe('victim@example.com');
+    });
+
+    it('keeps verification mail available to the owner after rejected request/resend calls', async () => {
+      const limit = policyLimit('email-verification-send');
+      const rejectedBodies = [
+        { email: 'victim@example.com', locale: 'zz' },
+        { email: 'victim@example.com', frontendOrigin: 'not-a-url' },
+      ];
+      const rejected = await sendMany(limit + 1, (index) =>
+        post(
+          index % 2 === 0 ? '/auth/email-verification/resend' : '/auth/email-verification/request',
+          '203.0.113.66',
+        ).send(rejectedBodies[index % rejectedBodies.length]!),
+      );
+      expect(rejected.every((status) => status === 400)).toBe(true);
+
+      const ownerResend = await post('/auth/email-verification/resend', '198.51.100.7')
+        .send({ email: 'victim@example.com' });
+      const ownerRequest = await post('/auth/email-verification/request', '198.51.100.7')
+        .send({ email: 'victim@example.com', locale: 'en' });
+      expect(ownerResend.status).toBe(200);
+      expect(ownerRequest.status).toBe(200);
+      expect(authService.resendEmailVerification).toHaveBeenCalledTimes(1);
+      expect(authService.requestEmailVerification).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the account-email address cap for requests the route accepts', async () => {
+      const perAddress = policyLimit('account-email-address');
+      const rejected = await sendMany(perAddress + 1, (index) =>
+        post('/auth/email-verification/account-email/request', `203.0.113.${index + 1}`)
+          .set('x-test-user', `attacker-${index}`)
+          .send({ email: 'target@example.com', locale: 'zz' }),
+      );
+      expect(rejected.every((status) => status === 400)).toBe(true);
+
+      const owner = await post('/auth/email-verification/account-email/request', '198.51.100.7')
+        .set('x-test-user', 'owner-1')
+        .send({ email: 'target@example.com' });
+      expect(owner.status).toBe(200);
+      expect(authService.requestAccountEmailVerification).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('email verification mail is rate limited (#12)', () => {
     it('stops a resend flood to one address from one IP', async () => {
       const statuses = await sendMany(5, () =>
@@ -531,6 +597,42 @@ describe('throttling over HTTP', () => {
         .set('x-test-user', 'victim-1')
         .send({ email: 'victim@example.com' });
       expect(owner.status).toBe(200);
+    });
+
+    it('caps account-email mail to one address across accounts (review r3)', async () => {
+      // One account may send `account-email-send` codes to an address; more
+      // accounts must not multiply that into a mail flood to the address.
+      const perAccount = policyLimit('account-email-send');
+      const perAddress = policyLimit('account-email-address');
+      expect(perAddress).toBeGreaterThan(perAccount);
+      const first = await sendMany(perAccount + 3, (index) =>
+        post('/auth/email-verification/account-email/request', `203.0.113.${index + 1}`)
+          .set('x-test-user', 'account-0')
+          .send({ email: 'unowned@example.com' }),
+      );
+      expect(first.slice(0, perAccount).every((status) => status === 200)).toBe(true);
+      expect(first.slice(perAccount).every((status) => status === 429)).toBe(true);
+
+      // Requests the per-account share rejected did not spend the address budget.
+      const others = await sendMany(perAddress - perAccount, (index) =>
+        post('/auth/email-verification/account-email/request', `198.51.100.${index + 1}`)
+          .set('x-test-user', `account-${1 + Math.floor(index / perAccount)}`)
+          .send({ email: index % 2 === 0 ? 'Unowned@example.com' : 'unowned@example.com' }),
+      );
+      expect(others.every((status) => status === 200)).toBe(true);
+
+      const freshAccount = await post('/auth/email-verification/account-email/request', '192.0.2.50')
+        .set('x-test-user', 'account-fresh')
+        .send({ email: 'unowned@example.com' });
+      expect(freshAccount.status).toBe(429);
+      expect(freshAccount.body.message).toBe(TRAFFIC_RATE_LIMITED);
+      expect(authService.requestAccountEmailVerification).toHaveBeenCalledTimes(perAddress);
+
+      // The cap is per address: the same account can still verify another one.
+      const otherAddress = await post('/auth/email-verification/account-email/request', '192.0.2.50')
+        .set('x-test-user', 'account-fresh')
+        .send({ email: 'mine@example.com' });
+      expect(otherAddress.status).toBe(200);
     });
 
     it('caps account-email code guesses per signed-in user', async () => {

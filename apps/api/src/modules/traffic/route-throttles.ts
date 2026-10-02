@@ -83,7 +83,8 @@ export const ROUTE_THROTTLES = {
   authEmailVerificationVerify: { limit: 300, ttl: FIFTEEN_MINUTES_MS },
   /**
    * POST /auth/email-verification/account-email/request per signed-in user.
-   * `account-email-send` also caps each user + address.
+   * `account-email-send` also caps each user + address, and
+   * `account-email-address` each address across accounts.
    */
   accountEmailVerificationSend: { limit: 10, ttl: FIFTEEN_MINUTES_MS },
   /**

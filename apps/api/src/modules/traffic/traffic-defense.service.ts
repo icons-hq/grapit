@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { ExecutionContext } from '@nestjs/common';
 import { Injectable } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import type { ThrottlerModuleOptions, ThrottlerOptions } from '@nestjs/throttler';
 import { AUTH_COOKIE_NAME } from '@grabit/shared/constants/index.js';
 import type { Request } from 'express';
@@ -9,6 +10,9 @@ import {
   resolveThrottleEmail,
   resolveThrottleIpKey,
   resolveThrottleUserId,
+  resolveValidatedThrottleEmail,
+  THROTTLE_EMAIL_BODY_METADATA,
+  type ThrottleEmailBodySchema,
   type ThrottleEmailSource,
 } from './throttle-identity.js';
 
@@ -26,7 +30,11 @@ const TRAFFIC_POLICY_NAMES = [
   'password-reset-email',
   'email-verification-send',
   'email-verification-verify',
+  // Keep after account-email-send: throttlers with the same ttl run in this
+  // order, and a request that account-email-send rejects must not reach and
+  // spend the cross-account address bucket.
   'account-email-send',
+  'account-email-address',
 ] as const;
 
 export type TrafficPolicyName = (typeof TRAFFIC_POLICY_NAMES)[number];
@@ -57,23 +65,24 @@ type PolicyRouteMatcher = {
 /**
  * Who a policy bucket belongs to.
  * - `principal`: the JWT-verified user, otherwise the trusted client IP.
- * - `email`: the normalized request email across every IP. Only for anonymous
- *   routes whose side effect lands on that address (mail sends), so one
- *   address cannot be flooded from many IPs. The route's IP-scoped default
- *   bucket still caps how many addresses one IP can target. Such a route must
- *   mail every address whose owner can use the flow: a request that sends
- *   nothing still spends the address budget, and only real mail tells the
- *   owner what is going on (and hands them a fresh code or link).
+ * - `email`: the normalized request email across every IP (and account). Only
+ *   for routes whose side effect lands on that address (mail sends), so one
+ *   address cannot be flooded from many IPs or accounts. The route's default
+ *   bucket still caps how many addresses one IP or user can target. Since
+ *   anyone can spend this budget, the route must declare its body schema with
+ *   `@ThrottleEmailBody` (bodies it rejects are not counted) and should mail
+ *   every address whose owner can use the flow: then whoever spends an
+ *   owner's budget also hands the owner fresh codes or links and shows them
+ *   what is going on.
  * - `email-ip`: the normalized request email from one client IP. Used where a
  *   cross-IP cap would let anyone lock a victim out (login, code verify).
  * - `user-email`: the normalized request email per JWT-verified user (per
- *   client IP when anonymous). For signed-in routes that may refuse to send,
- *   such as a 409 for an address another account owns: one account's
- *   requests must not spend a budget that the address owner needs.
- * Identity policies skip requests that carry no usable email; the route's
- * default bucket still applies to them.
+ *   client IP when anonymous). One account's share of an address.
+ * Identity policies skip requests that carry no usable email, or that the
+ * route's declared body schema rejects; the route's default bucket still
+ * applies to them.
  */
-type PolicyIdentity = 'principal' | 'email' | 'email-ip' | 'user-email';
+export type PolicyIdentity = 'principal' | 'email' | 'email-ip' | 'user-email';
 
 type TrafficPolicyDefinition = {
   ttl: number;
@@ -224,12 +233,26 @@ const TRAFFIC_POLICIES: Record<TrafficPolicyName, TrafficPolicyDefinition> = {
     ],
   },
   'account-email-send': {
-    // Signed-in account email codes. The handler answers 409 without mail for
-    // an address another account owns, so this is per account and address,
-    // never shared with the owner's own request/resend or account-email flow.
+    // Signed-in account email codes, one account's share of an address.
     ttl: FIFTEEN_MINUTES_MS,
     limit: 5,
     identity: 'user-email',
+    matchers: [
+      {
+        method: 'POST',
+        patterns: [/\/auth\/email-verification\/account-email\/request$/],
+      },
+    ],
+  },
+  'account-email-address': {
+    // Signed-in account email codes to one address across every account, so
+    // more accounts do not multiply account-email-send into a mail flood. Kept
+    // apart from the anonymous request/resend bucket: the handler answers 409
+    // without mail for an address another account owns, and that owner still
+    // has request/resend for their own address.
+    ttl: FIFTEEN_MINUTES_MS,
+    limit: 10,
+    identity: 'email',
     matchers: [
       {
         method: 'POST',
@@ -247,6 +270,8 @@ const DEFAULT_THROTTLER = {
 } as const;
 
 const REFRESH_ROUTE_PATTERN = /\/auth\/refresh$/;
+
+const reflector = new Reflector();
 
 @Injectable()
 export class TrafficDefenseService {
@@ -277,7 +302,7 @@ export class TrafficDefenseService {
         ttl: definition.ttl,
         limit: definition.limit,
         skipIf: (context) => !this.appliesToRequest(name, context),
-        getTracker: (req) => this.resolveTracker(name, req as RequestLike),
+        getTracker: (req, context) => this.resolveTracker(name, req as RequestLike, context),
         ...(definition.shareBucketAcrossRoutes
           ? {
               generateKey: (_context: ExecutionContext, tracker: string, throttlerName: string) =>
@@ -288,13 +313,23 @@ export class TrafficDefenseService {
     });
   }
 
+  /** Who a named policy's buckets belong to (see `PolicyIdentity`). */
+  getPolicyIdentity(policy: TrafficPolicyName): PolicyIdentity {
+    return TRAFFIC_POLICIES[policy].identity ?? 'principal';
+  }
+
   /**
    * Bucket identity for a named policy. Never derived from cookies or
    * admission tokens: the client can mint those at will, so they would hand
-   * out a fresh bucket per request.
+   * out a fresh bucket per request. `context` is the throttled route; email
+   * policies read its `@ThrottleEmailBody` schema from it.
    */
-  resolveTracker(policy: TrafficPolicyName, req: RequestLike): string {
-    const identity = TRAFFIC_POLICIES[policy].identity ?? 'principal';
+  resolveTracker(
+    policy: TrafficPolicyName,
+    req: RequestLike,
+    context?: ExecutionContext,
+  ): string {
+    const identity = this.getPolicyIdentity(policy);
     const ipKey = resolveThrottleIpKey(req);
 
     if (identity === 'principal') {
@@ -302,7 +337,7 @@ export class TrafficDefenseService {
       return userId ? `${policy}:user:${userId}` : `${policy}:ip:${ipKey}`;
     }
 
-    const email = resolveThrottleEmail(req, TRAFFIC_POLICIES[policy].emailSource);
+    const email = this.resolvePolicyEmail(policy, req, context);
     if (!email) {
       return `${policy}:ip:${ipKey}`;
     }
@@ -409,16 +444,45 @@ export class TrafficDefenseService {
       return false;
     }
 
-    const identity = TRAFFIC_POLICIES[policy].identity ?? 'principal';
-    if (identity === 'principal') {
+    if (this.getPolicyIdentity(policy) === 'principal') {
       return true;
     }
 
     return (
-      resolveThrottleEmail(
-        context.switchToHttp().getRequest<RequestLike>(),
-        TRAFFIC_POLICIES[policy].emailSource,
-      ) !== null
+      this.resolvePolicyEmail(policy, context.switchToHttp().getRequest<RequestLike>(), context) !==
+      null
+    );
+  }
+
+  /**
+   * The normalized email an identity policy keys on, or `null` to skip it.
+   * With a `@ThrottleEmailBody` schema on the route, only a body the route
+   * will accept counts, keyed by its parsed email. Otherwise the raw email
+   * from the policy's `emailSource` (login reads it like passport-local).
+   */
+  private resolvePolicyEmail(
+    policy: TrafficPolicyName,
+    req: RequestLike,
+    context: ExecutionContext | undefined,
+  ): string | null {
+    const schema = this.resolveEmailBodySchema(context);
+    if (schema) {
+      return resolveValidatedThrottleEmail(req, schema);
+    }
+
+    return resolveThrottleEmail(req, TRAFFIC_POLICIES[policy].emailSource);
+  }
+
+  private resolveEmailBodySchema(
+    context: ExecutionContext | undefined,
+  ): ThrottleEmailBodySchema | undefined {
+    if (typeof context?.getHandler !== 'function') {
+      return undefined;
+    }
+
+    return reflector.get<ThrottleEmailBodySchema | undefined>(
+      THROTTLE_EMAIL_BODY_METADATA,
+      context.getHandler(),
     );
   }
 

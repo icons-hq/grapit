@@ -1,4 +1,7 @@
+import { RequestMethod, type ExecutionContext } from '@nestjs/common';
+import { METHOD_METADATA, PATH_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants.js';
 import { describe, expect, it } from 'vitest';
+import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import { BenefitRedemptionController } from '../field-operations/benefit-redemption.controller.js';
 import { FieldCheckInController } from '../field-operations/field-check-in.controller.js';
 import { FieldMonitorController } from '../field-operations/field-monitor.controller.js';
@@ -11,11 +14,25 @@ import {
   resolveCurrentUserProfileTracker,
   resolveFieldOperationsTracker,
 } from './route-throttles.js';
-import { toThrottleIpKey } from './throttle-identity.js';
+import { THROTTLE_EMAIL_BODY_METADATA, toThrottleIpKey } from './throttle-identity.js';
+import { TrafficDefenseService, type TrafficPolicyName } from './traffic-defense.service.js';
 
 const DEFAULT_SKIP_METADATA = 'THROTTLER:SKIPdefault';
 const DEFAULT_LIMIT_METADATA = 'THROTTLER:LIMITdefault';
 const DEFAULT_TRACKER_METADATA = 'THROTTLER:TRACKERdefault';
+/** `RouteParamtypes.BODY` in @nestjs/common. */
+const BODY_ROUTE_PARAM_TYPE = 3;
+
+/** The schema of the route's `@Body(new ZodValidationPipe(schema))`. */
+function bodyValidationSchema(controller: object, handlerName: string): unknown {
+  const args = (Reflect.getMetadata(ROUTE_ARGS_METADATA, controller, handlerName) ?? {}) as Record<
+    string,
+    { pipes?: unknown[] }
+  >;
+  const body = Object.entries(args).find(([key]) => key.startsWith(`${BODY_ROUTE_PARAM_TYPE}:`))?.[1];
+  const pipe = body?.pipes?.find((candidate) => candidate instanceof ZodValidationPipe);
+  return (pipe as { schema?: unknown } | undefined)?.schema;
+}
 
 describe('route throttle overrides', () => {
   it.each([
@@ -54,6 +71,60 @@ describe('route throttle overrides', () => {
   ] as const)('limits signed-in %s below the 60/min default (audit #12)', (handler, limit) => {
     expect(Reflect.getMetadata(DEFAULT_LIMIT_METADATA, AuthController.prototype[handler])).toBe(limit);
     expect(limit).toBeLessThan(60);
+  });
+
+  it('makes every route with an address-wide mail policy declare the body schema it validates (review r3)', () => {
+    // The throttle runs before the route's validation pipe. Only a declared
+    // schema keeps bodies the route rejects out of the address budget, and it
+    // has to be the very schema the route validates with.
+    const service = new TrafficDefenseService();
+    const addressPolicies = service
+      .getThrottlerOptions()
+      .filter((option) => service.getPolicyIdentity(option.name as TrafficPolicyName) === 'email');
+    expect(addressPolicies.length).toBeGreaterThan(0);
+
+    const controllerPath = Reflect.getMetadata(PATH_METADATA, AuthController) as string;
+    const prototype = AuthController.prototype as unknown as Record<string, unknown>;
+    const covered: string[] = [];
+    for (const handlerName of Object.getOwnPropertyNames(prototype)) {
+      const handler = prototype[handlerName];
+      const path: unknown =
+        handlerName === 'constructor' ? undefined : Reflect.getMetadata(PATH_METADATA, handler as object);
+      if (typeof handler !== 'function' || typeof path !== 'string') {
+        continue;
+      }
+
+      const method = RequestMethod[Reflect.getMetadata(METHOD_METADATA, handler) as RequestMethod];
+      const request = {
+        method,
+        route: { path: `/api/v1/${controllerPath}/${path}` },
+        body: { email: 'probe@example.com' },
+        headers: {},
+        ip: '198.51.100.7',
+        socket: { remoteAddress: '198.51.100.7' },
+        user: { id: 'user-1' },
+      };
+      const context = {
+        getType: () => 'http',
+        getHandler: () => handler,
+        switchToHttp: () => ({ getRequest: () => request }),
+      } as unknown as ExecutionContext;
+      if (!addressPolicies.some((option) => option.skipIf?.(context) === false)) {
+        continue;
+      }
+
+      covered.push(handlerName);
+      const declared: unknown = Reflect.getMetadata(THROTTLE_EMAIL_BODY_METADATA, handler);
+      expect(declared, handlerName).toBeDefined();
+      expect(declared, handlerName).toBe(bodyValidationSchema(AuthController, handlerName));
+    }
+
+    expect(covered.sort()).toEqual([
+      'requestAccountEmailVerification',
+      'requestEmailVerification',
+      'requestReset',
+      'resendEmailVerification',
+    ]);
   });
 
   it('tracks the profile call per user and client network', () => {

@@ -21,6 +21,7 @@ import { CurrentUser, type RequestUser } from '../../common/decorators/current-u
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import { resolveTrustedRequestIp } from '../../common/request-ip.js';
 import { ROUTE_THROTTLES } from '../traffic/route-throttles.js';
+import { ThrottleEmailBody } from '../traffic/throttle-identity.js';
 import { AuthService, type ValidatedUser } from './auth.service.js';
 import { registerBodySchema, type RegisterBody } from './dto/register.dto.js';
 import {
@@ -170,8 +171,10 @@ export class AuthController {
   @Public()
   @HttpCode(HttpStatus.OK)
   // Per client IP; the `password-reset-email` traffic policy caps each address
-  // at 3 req / 15 min across IPs (REVIEWS.md HIGH-04).
+  // at 3 req / 15 min across IPs (REVIEWS.md HIGH-04), counting only bodies
+  // this route accepts.
   @Throttle({ default: ROUTE_THROTTLES.authPasswordResetRequest })
+  @ThrottleEmailBody(resetPasswordRequestBodySchema)
   @Post('password-reset/request')
   async requestReset(
     @Body(new ZodValidationPipe(resetPasswordRequestBodySchema))
@@ -199,9 +202,11 @@ export class AuthController {
   @Public()
   @HttpCode(HttpStatus.OK)
   // Per client IP; `email-verification-send` caps each address across IPs and
-  // across request/resend. (Hotfix 260517's skip was for the Cloudflare-edge
-  // IP collapse, fixed since by trusted client IP resolution.)
+  // across request/resend, counting only bodies this route accepts. (Hotfix
+  // 260517's skip was for the Cloudflare-edge IP collapse, fixed since by
+  // trusted client IP resolution.)
   @Throttle({ default: ROUTE_THROTTLES.authEmailVerificationSend })
+  @ThrottleEmailBody(emailVerificationRequestSchema)
   @Post('email-verification/request')
   async requestEmailVerification(
     @Body(new ZodValidationPipe(emailVerificationRequestSchema))
@@ -223,6 +228,7 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   // Per client IP; `email-verification-send` caps each address across IPs.
   @Throttle({ default: ROUTE_THROTTLES.authEmailVerificationSend })
+  @ThrottleEmailBody(emailVerificationRequestSchema)
   @Post('email-verification/resend')
   async resendEmailVerification(
     @Body(new ZodValidationPipe(emailVerificationRequestSchema))
@@ -257,8 +263,10 @@ export class AuthController {
   }
 
   @HttpCode(HttpStatus.OK)
-  // Per signed-in user; `account-email-send` caps each user + address.
+  // Per signed-in user; `account-email-send` caps each user + address and
+  // `account-email-address` each address across accounts.
   @Throttle({ default: ROUTE_THROTTLES.accountEmailVerificationSend })
+  @ThrottleEmailBody(accountEmailVerificationRequestSchema)
   @Post('email-verification/account-email/request')
   async requestAccountEmailVerification(
     @CurrentUser() user: RequestUser,
