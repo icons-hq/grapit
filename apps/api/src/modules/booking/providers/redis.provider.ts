@@ -310,6 +310,9 @@ class InMemoryRedis {
     if (script.includes('REFRESH_PAYMENT_CONFIRM_LOCK_LUA')) {
       return this.evalRefreshPaymentConfirmLock(keys, args);
     }
+    if (script.includes('READ_VALID_LOCKED_SEATS_LUA')) {
+      return this.evalReadValidLockedSeats(keys, args);
+    }
     if (keys.length === 3 && args.length === 3 && script.includes('VERIFIED')) {
       return this.evalVerifyAndIncrement(keys, args);
     }
@@ -552,6 +555,14 @@ class InMemoryRedis {
     return alive;
   }
 
+  private evalReadValidLockedSeats(keys: string[], args: string[]): string[] {
+    const [lockedSeatsKey] = keys;
+    const [keyPrefix] = args;
+
+    return Array.from(this.sets.get(lockedSeatsKey) ?? [])
+      .filter((sid) => this.store.has(`${keyPrefix}${sid}`));
+  }
+
   private getSortedSetEntries(key: string): Array<[string, number]> {
     return Array.from(this.sortedSets.get(key)?.entries() ?? []).sort((a, b) => {
       if (a[1] === b[1]) {
@@ -650,7 +661,7 @@ function assertClusterRedisUrlPath(parsedUrl: URL): void {
   }
 }
 
-function sanitizeRedisErrorMessage(message: string): string {
+export function sanitizeRedisErrorMessage(message: string): string {
   return message
     .replace(REDIS_URL_PATTERN, '[redacted redis url]')
     .replace(AUTH_HEADER_PATTERN, '[redacted authorization header]')
@@ -677,6 +688,107 @@ function registerRedisErrorLogging(client: IORedis | Cluster): void {
 }
 
 let redisWarned = false;
+
+export const REDIS_RECONNECT_BASE_DELAY_MS = 200;
+export const REDIS_RECONNECT_MAX_DELAY_MS = 1_000;
+export const REDIS_UNEXPECTED_END_RECONNECT_DELAY_MS = 1_000;
+
+/**
+ * Reconnect delay shared by the standalone `retryStrategy` and the cluster
+ * `clusterRetryStrategy`, including the Socket.IO subscriber that inherits
+ * them through `duplicate()`.
+ *
+ * It never returns a non-number: ioredis moves a client to the terminal `end`
+ * state as soon as the strategy returns null, so a Valkey failover or network
+ * flap longer than the retry budget used to leave the API instance unable to
+ * lock seats, admit queue sessions or broadcast until it was recycled.
+ * Requests issued during an outage still fail quickly: standalone commands are
+ * flushed every `maxRetriesPerRequest + 1` reconnect attempts.
+ */
+export function redisReconnectDelay(times: number): number {
+  const attempt = Number.isFinite(times) && times > 0 ? Math.floor(times) : 1;
+  return Math.min(attempt * REDIS_RECONNECT_BASE_DELAY_MS, REDIS_RECONNECT_MAX_DELAY_MS);
+}
+
+type GuardableRedisClient = {
+  on?: (event: string, listener: (...args: unknown[]) => void) => unknown;
+  connect?: (...args: unknown[]) => Promise<unknown>;
+  quit?: (...args: unknown[]) => unknown;
+  disconnect?: (reconnect?: boolean) => unknown;
+};
+
+const intentionallyClosedRedisClients = new WeakSet<object>();
+const endRecoveryRegisteredClients = new WeakSet<object>();
+
+function markIntentionalCloseOnShutdownCalls(client: GuardableRedisClient): void {
+  const originalQuit = client.quit;
+  if (typeof originalQuit === 'function') {
+    client.quit = (...args: unknown[]) => {
+      intentionallyClosedRedisClients.add(client);
+      return originalQuit.apply(client, args);
+    };
+  }
+
+  const originalDisconnect = client.disconnect;
+  if (typeof originalDisconnect === 'function') {
+    client.disconnect = (reconnect?: boolean) => {
+      // ioredis treats disconnect(true) as "drop and reconnect"; only a plain
+      // disconnect() / disconnect(false) is a shutdown.
+      if (!reconnect) {
+        intentionallyClosedRedisClients.add(client);
+      }
+      return originalDisconnect.call(client, reconnect);
+    };
+  }
+}
+
+/**
+ * Safety net for the `end` state. With `redisReconnectDelay` ioredis only
+ * ends a connection after quit()/disconnect(); any other `end` is unexpected
+ * and would otherwise leave seat locking, queue admission, throttling and
+ * Socket.IO pub/sub dead on a long-lived instance. Log it and reconnect.
+ */
+export function registerRedisEndRecovery(
+  client: unknown,
+  label: string,
+  reconnectDelayMs = REDIS_UNEXPECTED_END_RECONNECT_DELAY_MS,
+): void {
+  if (typeof client !== 'object' || client === null) return;
+  const guardable = client as GuardableRedisClient;
+  if (typeof guardable.on !== 'function' || typeof guardable.connect !== 'function') return;
+  if (endRecoveryRegisteredClients.has(client)) return;
+  endRecoveryRegisteredClients.add(client);
+
+  markIntentionalCloseOnShutdownCalls(guardable);
+  // Connected again after a shutdown call (explicit connect()): re-arm.
+  guardable.on('ready', () => {
+    intentionallyClosedRedisClients.delete(client);
+  });
+  guardable.on('end', () => {
+    if (intentionallyClosedRedisClients.has(client)) return;
+
+    console.error(
+      `[redis] ${label} connection ended unexpectedly; reconnecting in ${reconnectDelayMs}ms`,
+    );
+    const timer = setTimeout(() => {
+      if (intentionallyClosedRedisClients.has(client)) return;
+      guardable.connect?.().catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`[redis] ${label} reconnect failed:`, sanitizeRedisErrorMessage(message));
+      });
+    }, reconnectDelayMs);
+    timer.unref?.();
+  });
+}
+
+/**
+ * Attaches the sanitized error logger and the unexpected-end recovery to a
+ * client created outside the provider factory (the Socket.IO subscriber).
+ */
+export function registerRedisClientGuards(client: IORedis | Cluster, label: string): void {
+  registerRedisErrorLogging(client);
+  registerRedisEndRecovery(client, label);
+}
 
 /**
  * Unified Redis provider: single ioredis TCP client for both seat locking
@@ -728,10 +840,7 @@ export const redisProvider: Provider = {
         scaleReads: 'master',
         enableReadyCheck: true,
         redisOptions,
-        clusterRetryStrategy: (times: number) => {
-          if (times > 5) return null;
-          return Math.min(times * 500, 5000);
-        },
+        clusterRetryStrategy: redisReconnectDelay,
       });
 
       attachRedisRuntimeMetadata(client, {
@@ -739,7 +848,7 @@ export const redisProvider: Provider = {
         client: 'ioredis-cluster',
         configured: true,
       });
-      registerRedisErrorLogging(client);
+      registerRedisClientGuards(client, 'cluster client');
       client.connect().catch(() => {});
       return client;
     }
@@ -747,10 +856,7 @@ export const redisProvider: Provider = {
     const client = new IORedis(url, {
       maxRetriesPerRequest: 3,
       lazyConnect: true,
-      retryStrategy: (times: number) => {
-        if (times > 5) return null;
-        return Math.min(times * 500, 5000);
-      },
+      retryStrategy: redisReconnectDelay,
     });
 
     attachRedisRuntimeMetadata(client, {
@@ -758,7 +864,7 @@ export const redisProvider: Provider = {
       client: 'ioredis-standalone',
       configured: true,
     });
-    registerRedisErrorLogging(client);
+    registerRedisClientGuards(client, 'standalone client');
     client.connect().catch(() => {});
     return client;
   },

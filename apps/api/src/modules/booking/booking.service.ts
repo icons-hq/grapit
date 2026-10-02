@@ -4,10 +4,11 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  Logger,
 } from '@nestjs/common';
 import type IORedis from 'ioredis';
 import { eq, and, or, isNull, sql } from 'drizzle-orm';
-import { REDIS_CLIENT } from './providers/redis.provider.js';
+import { REDIS_CLIENT, sanitizeRedisErrorMessage } from './providers/redis.provider.js';
 import { DRIZZLE } from '../../database/drizzle.provider.js';
 import type { DrizzleDB } from '../../database/drizzle.provider.js';
 import { seatInventories } from '../../database/schema/seat-inventories.js';
@@ -67,6 +68,10 @@ function parseRuntimeSeatIdentity(rawSeatIdOrKey: string): RuntimeSeatIdentity {
 
 function decodeRuntimeSeatId(runtimeSeatId: string): string {
   return decodeSeatRuntimeId(runtimeSeatId);
+}
+
+function describeError(error: unknown): string {
+  return sanitizeRedisErrorMessage(error instanceof Error ? error.message : String(error));
 }
 
 function assertBookingVerificationComplete(actor: BookingActor): void {
@@ -170,12 +175,14 @@ return 0
 /**
  * Lua script to get valid locked seats, cleaning stale entries.
  * Checks each seat in locked-seats set against its actual Redis key.
+ * Used as the rate-limited stale-member sweep; the seat status read path uses
+ * READ_VALID_LOCKED_SEATS_LUA, which never writes.
  *
  * KEYS[1] = {showtimeId}:locked-seats
  * ARGV[1] = key prefix "{showtimeId}:seat:"
  * Returns: array of valid (still-locked) seat IDs
  */
-const GET_VALID_LOCKED_SEATS_LUA = `
+export const GET_VALID_LOCKED_SEATS_LUA = `
 local members = redis.call('SMEMBERS', KEYS[1])
 local alive = {}
 for i, sid in ipairs(members) do
@@ -187,6 +194,76 @@ for i, sid in ipairs(members) do
 end
 return alive
 `;
+
+/**
+ * Read-only variant of GET_VALID_LOCKED_SEATS_LUA for the seat status snapshot.
+ * Stale members (lock key expired by TTL) are skipped, not removed.
+ *
+ * KEYS[1] = {showtimeId}:locked-seats
+ * ARGV[1] = key prefix "{showtimeId}:seat:"
+ * Returns: array of valid (still-locked) seat IDs
+ */
+export const READ_VALID_LOCKED_SEATS_LUA = `
+-- READ_VALID_LOCKED_SEATS_LUA
+local members = redis.call('SMEMBERS', KEYS[1])
+local alive = {}
+for i, sid in ipairs(members) do
+  if redis.call('EXISTS', ARGV[1] .. sid) == 1 then
+    alive[#alive + 1] = sid
+  end
+end
+return alive
+`;
+
+/** Shared (all instances) seat status snapshot lifetime. */
+export const SEAT_STATUS_CACHE_TTL_MS = 1_000;
+/** Per-instance snapshot lifetime; never outlives the shared snapshot. */
+export const SEAT_STATUS_LOCAL_CACHE_TTL_MS = 500;
+const SEAT_STATUS_LOCAL_CACHE_MAX_ENTRIES = 256;
+/** Local change markers outlive every snapshot and computation they guard. */
+const SEAT_STATUS_CHANGE_RETENTION_MS = 10_000;
+/** At most one stale locked-seats sweep per showtime per interval, cluster-wide. */
+export const LOCKED_SEATS_SWEEP_INTERVAL_MS = 10_000;
+
+/**
+ * Not hash-tagged with the showtime: the snapshot is read far more often than
+ * seat locks change, so in cluster mode it should not load the lock slot.
+ */
+export function seatStatusCacheKey(showtimeId: string): string {
+  return `seat-status-cache:${showtimeId}`;
+}
+
+export function lockedSeatsSweepGuardKey(showtimeId: string): string {
+  return `{${showtimeId}}:locked-seats:sweep-guard`;
+}
+
+type SeatStatusSnapshot = {
+  generatedAt: number;
+  response: SeatStatusResponse;
+};
+
+function parseSeatStatusSnapshot(
+  raw: string | null | undefined,
+  showtimeId: string,
+): SeatStatusSnapshot | null {
+  if (typeof raw !== 'string' || raw.length === 0) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<SeatStatusSnapshot>;
+    const response = parsed.response as Partial<SeatStatusResponse> | undefined;
+    if (
+      typeof parsed.generatedAt !== 'number'
+      || !Number.isFinite(parsed.generatedAt)
+      || response?.showtimeId !== showtimeId
+      || typeof response.seats !== 'object'
+      || response.seats === null
+    ) {
+      return null;
+    }
+    return { generatedAt: parsed.generatedAt, response: response as SeatStatusResponse };
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Atomically acquires transient recovery locks only when every requested seat
@@ -357,6 +434,18 @@ return 0
 
 @Injectable()
 export class BookingService {
+  private readonly logger = new Logger(BookingService.name);
+  private readonly seatStatusLocalCache = new Map<
+    string,
+    { expiresAt: number; response: SeatStatusResponse }
+  >();
+  private readonly seatStatusInFlight = new Map<
+    string,
+    { startSeq: number; promise: Promise<SeatStatusResponse> }
+  >();
+  private readonly seatStatusLocalChanges = new Map<string, { seq: number; at: number }>();
+  private seatStatusChangeSeq = 0;
+
   constructor(
     @Inject(REDIS_CLIENT) private readonly redis: IORedis,
     @Inject(DRIZZLE) private readonly db: DrizzleDB,
@@ -529,8 +618,9 @@ export class BookingService {
       throw new ConflictException('이미 다른 사용자가 선택한 좌석입니다');
     }
 
-    // Broadcast real-time update (include userId so sender can ignore own events)
-    this.gateway.broadcastSeatUpdate(showtimeId, seatId, 'locked', userId);
+    this.markSeatStatusChanged(showtimeId);
+    // The room is unauthenticated: never broadcast who holds the seat (audit #92).
+    this.gateway.broadcastSeatUpdate(showtimeId, seatId, 'locked');
     const luaLockTtlSeconds = Number(result[3]);
     const effectiveLockTtlSeconds =
       Number.isFinite(luaLockTtlSeconds) && luaLockTtlSeconds > 0
@@ -603,7 +693,8 @@ export class BookingService {
       return false;
     }
 
-    this.gateway.broadcastSeatUpdate(showtimeId, seatId, 'available', userId);
+    this.markSeatStatusChanged(showtimeId);
+    this.gateway.broadcastSeatUpdate(showtimeId, seatId, 'available');
     return true;
   }
 
@@ -665,6 +756,7 @@ export class BookingService {
     const conflict = this.lockConflictFromResult(result);
     if (conflict) throw conflict;
 
+    this.markSeatStatusChanged(showtimeId);
     return { consumedSeatIds: seatIds };
   }
 
@@ -738,7 +830,11 @@ export class BookingService {
       ...runtimeSeatIds,
     )) as SeatLockOwnershipResult;
 
-    return { acquired: result[0] === 1 };
+    const acquired = result[0] === 1;
+    if (acquired) {
+      this.markSeatStatusChanged(showtimeId);
+    }
+    return { acquired };
   }
 
   async releaseRecoverySeatLocks(
@@ -762,6 +858,7 @@ export class BookingService {
       ownerToken,
       ...runtimeSeatIds,
     );
+    this.markSeatStatusChanged(showtimeId);
   }
 
   async forceReleaseSeatLock(showtimeId: string, seatId: string): Promise<void> {
@@ -776,6 +873,7 @@ export class BookingService {
     if (owner) {
       await this.redis.srem(`{${showtimeId}}:user-seats:${owner}`, runtimeSeatId);
     }
+    this.markSeatStatusChanged(showtimeId);
   }
 
   async acquirePaymentConfirmLock(orderId: string, lockToken: string): Promise<boolean> {
@@ -890,17 +988,181 @@ export class BookingService {
   /**
    * Returns the status of all seats for a showtime.
    * Combines Redis locks + DB unavailable records.
+   *
+   * The endpoint is public and every booking client re-reads it, so the
+   * snapshot is cached (audit #8): a per-instance copy for
+   * SEAT_STATUS_LOCAL_CACHE_TTL_MS, a shared Valkey copy for
+   * SEAT_STATUS_CACHE_TTL_MS, and one in-flight computation per showtime per
+   * instance. A snapshot is therefore at most SEAT_STATUS_CACHE_TTL_MS old;
+   * live changes reach clients through seat-update events, and lock/prepare
+   * decisions never read this snapshot.
+   *
+   * A lock change made by this instance is never hidden from a later read on
+   * this instance: snapshots and computations that started before the change
+   * are not reused, so the client that just locked or released a seat and
+   * re-reads (session affinity) sees its own change.
    */
   async getSeatStatus(showtimeId: string): Promise<SeatStatusResponse> {
-    // 1. Get locked seats from Redis (with stale entry cleanup)
+    const local = this.readLocalSeatStatus(showtimeId);
+    if (local) return local;
+
+    const inFlight = this.seatStatusInFlight.get(showtimeId);
+    if (inFlight && this.isSeatStatusCurrent(showtimeId, inFlight.startSeq)) {
+      return inFlight.promise;
+    }
+
+    const startSeq = this.seatStatusChangeSeq;
+    const promise: Promise<SeatStatusResponse> = this.loadSeatStatus(showtimeId, startSeq).finally(() => {
+      if (this.seatStatusInFlight.get(showtimeId)?.promise === promise) {
+        this.seatStatusInFlight.delete(showtimeId);
+      }
+    });
+    this.seatStatusInFlight.set(showtimeId, { startSeq, promise });
+    return promise;
+  }
+
+  /** Records that this instance changed seat state for the showtime. */
+  private markSeatStatusChanged(showtimeId: string): void {
+    const now = Date.now();
+    this.seatStatusChangeSeq += 1;
+    this.seatStatusLocalChanges.delete(showtimeId);
+    this.seatStatusLocalChanges.set(showtimeId, { seq: this.seatStatusChangeSeq, at: now });
+    this.seatStatusLocalCache.delete(showtimeId);
+
+    if (this.seatStatusLocalChanges.size > SEAT_STATUS_LOCAL_CACHE_MAX_ENTRIES) {
+      for (const [key, change] of this.seatStatusLocalChanges) {
+        if (now - change.at < SEAT_STATUS_CHANGE_RETENTION_MS) break;
+        this.seatStatusLocalChanges.delete(key);
+      }
+    }
+  }
+
+  /** True when no local change to the showtime happened after `startSeq`. */
+  private isSeatStatusCurrent(showtimeId: string, startSeq: number): boolean {
+    const change = this.seatStatusLocalChanges.get(showtimeId);
+    return change === undefined || change.seq <= startSeq;
+  }
+
+  private readLocalSeatStatus(showtimeId: string): SeatStatusResponse | null {
+    const entry = this.seatStatusLocalCache.get(showtimeId);
+    if (!entry) return null;
+    if (entry.expiresAt <= Date.now()) {
+      this.seatStatusLocalCache.delete(showtimeId);
+      return null;
+    }
+    return entry.response;
+  }
+
+  private writeLocalSeatStatus(showtimeId: string, snapshot: SeatStatusSnapshot): void {
+    const now = Date.now();
+    const expiresAt = Math.min(
+      now + SEAT_STATUS_LOCAL_CACHE_TTL_MS,
+      snapshot.generatedAt + SEAT_STATUS_CACHE_TTL_MS,
+    );
+    if (expiresAt <= now) return;
+
+    this.seatStatusLocalCache.delete(showtimeId);
+    if (this.seatStatusLocalCache.size >= SEAT_STATUS_LOCAL_CACHE_MAX_ENTRIES) {
+      for (const [key, entry] of this.seatStatusLocalCache) {
+        if (entry.expiresAt <= now) this.seatStatusLocalCache.delete(key);
+      }
+      while (this.seatStatusLocalCache.size >= SEAT_STATUS_LOCAL_CACHE_MAX_ENTRIES) {
+        const oldestKey = this.seatStatusLocalCache.keys().next().value;
+        if (oldestKey === undefined) break;
+        this.seatStatusLocalCache.delete(oldestKey);
+      }
+    }
+    this.seatStatusLocalCache.set(showtimeId, { expiresAt, response: snapshot.response });
+  }
+
+  private async loadSeatStatus(showtimeId: string, startSeq: number): Promise<SeatStatusResponse> {
+    const cacheKey = seatStatusCacheKey(showtimeId);
+    let shared: SeatStatusSnapshot | null = null;
+    try {
+      shared = parseSeatStatusSnapshot(await this.redis.get(cacheKey), showtimeId);
+    } catch (error) {
+      this.logger.warn(
+        `Seat status cache read failed for showtimeId=${showtimeId}: ${describeError(error)}`,
+      );
+    }
+    const localChangeAt = this.seatStatusLocalChanges.get(showtimeId)?.at;
+    if (
+      shared
+      && Date.now() - shared.generatedAt < SEAT_STATUS_CACHE_TTL_MS
+      && (localChangeAt === undefined || shared.generatedAt > localChangeAt)
+    ) {
+      if (this.isSeatStatusCurrent(showtimeId, startSeq)) {
+        this.writeLocalSeatStatus(showtimeId, shared);
+      }
+      return shared.response;
+    }
+
+    const generatedAt = Date.now();
+    const response = await this.computeSeatStatus(showtimeId);
+    if (!this.isSeatStatusCurrent(showtimeId, startSeq)) {
+      // Seats changed on this instance while computing: answer the callers
+      // that asked before the change, but do not publish an outdated snapshot.
+      return response;
+    }
+
+    const snapshot: SeatStatusSnapshot = { generatedAt, response };
+    try {
+      await this.redis.set(cacheKey, JSON.stringify(snapshot), 'PX', SEAT_STATUS_CACHE_TTL_MS);
+    } catch (error) {
+      this.logger.warn(
+        `Seat status cache write failed for showtimeId=${showtimeId}: ${describeError(error)}`,
+      );
+    }
+    if (this.isSeatStatusCurrent(showtimeId, startSeq)) {
+      this.writeLocalSeatStatus(showtimeId, snapshot);
+    }
+    return response;
+  }
+
+  /**
+   * Removes locked-seats members whose lock key already expired. Runs at most
+   * once per LOCKED_SEATS_SWEEP_INTERVAL_MS per showtime across instances and
+   * re-checks every member atomically, so a seat locked again meanwhile stays.
+   * Resolves whether a sweep ran; never rejects.
+   */
+  async sweepStaleLockedSeats(showtimeId: string): Promise<boolean> {
+    try {
+      const acquired = await this.redis.set(
+        lockedSeatsSweepGuardKey(showtimeId),
+        '1',
+        'PX',
+        LOCKED_SEATS_SWEEP_INTERVAL_MS,
+        'NX',
+      );
+      if (acquired !== 'OK') return false;
+
+      await this.redis.eval(
+        GET_VALID_LOCKED_SEATS_LUA,
+        1,
+        `{${showtimeId}}:locked-seats`,
+        `{${showtimeId}}:seat:`,
+      );
+      return true;
+    } catch (error) {
+      this.logger.warn(
+        `Stale locked-seats sweep failed for showtimeId=${showtimeId}: ${describeError(error)}`,
+      );
+      return false;
+    }
+  }
+
+  private async computeSeatStatus(showtimeId: string): Promise<SeatStatusResponse> {
+    // 1. Get locked seats from Redis. The read never writes; stale members are
+    //    removed by the rate-limited sweep instead.
     const lockedSeatsKey = `{${showtimeId}}:locked-seats`;
     const keyPrefix = `{${showtimeId}}:seat:`;
     const lockedSeats = (await this.redis.eval(
-      GET_VALID_LOCKED_SEATS_LUA,
+      READ_VALID_LOCKED_SEATS_LUA,
       1,
       lockedSeatsKey,
       keyPrefix,
     )) as string[];
+    void this.sweepStaleLockedSeats(showtimeId);
 
     // 2. Get sold and delayed-release seats from DB
     const unavailableSeats = await this.db

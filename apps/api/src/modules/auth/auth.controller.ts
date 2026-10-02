@@ -44,6 +44,7 @@ import {
 import type { SocialProfile } from './interfaces/social-profile.interface.js';
 import { AUTH_COOKIE_NAME } from '@grabit/shared/constants/index.js';
 import type { EmailAvailabilityResponse } from '@grabit/shared/types/auth.types.js';
+import { getPrimaryFrontendUrl } from '../../config/frontend-origins.js';
 
 const launchLocaleSchema = z.enum(['ko', 'en', 'th', 'zh-CN']).default('ko');
 const emailAvailabilityQuerySchema = z.object({
@@ -374,7 +375,7 @@ export class AuthController {
   // -- Private helpers --
 
   private async handleSocialCallback(req: Request, res: Response): Promise<void> {
-    const frontendUrl = this.configService.get<string>('FRONTEND_URL', 'http://localhost:3000');
+    const frontendUrl = getPrimaryFrontendUrl(this.configService.get<string>('FRONTEND_URL'));
     const callbackState = getSocialCallbackStateFromRequest(req, 'state');
     const returnToParam: Record<string, string> = callbackState.returnTo
       ? { returnTo: callbackState.returnTo }

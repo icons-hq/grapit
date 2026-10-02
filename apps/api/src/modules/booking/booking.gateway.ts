@@ -7,37 +7,41 @@ import {
   ConnectedSocket,
   MessageBody,
 } from '@nestjs/websockets';
-import { Logger } from '@nestjs/common';
+import { Inject, Logger, Optional } from '@nestjs/common';
 import type { Server, Socket } from 'socket.io';
-import type { SeatState } from '@grabit/shared';
+import type { SeatState, SeatUpdateEvent } from '@grabit/shared';
+import { allowSocketIoFrontendOrigin } from '../../config/frontend-origins.js';
+import { REDIS_CLIENT, sanitizeRedisErrorMessage } from './providers/redis.provider.js';
+import {
+  canPublishSocketIoEvents,
+  publishSocketIoRoomEvent,
+  type SocketIoRedisPublisher,
+} from './providers/socket-io-redis-emitter.js';
+
+export const BOOKING_SOCKET_NAMESPACE = '/booking';
+export const SEAT_UPDATE_EVENT = 'seat-update';
+
+export function showtimeRoom(showtimeId: string): string {
+  return `showtime:${showtimeId}`;
+}
 
 @WebSocketGateway({
-  namespace: '/booking',
+  namespace: BOOKING_SOCKET_NAMESPACE,
   cors: {
-    origin: (
-      origin: string | undefined,
-      callback: (err: Error | null, allow?: boolean) => void,
-    ) => {
-      const allowedOrigin =
-        process.env['FRONTEND_URL'] ?? 'http://localhost:3000';
-      if (
-        process.env['NODE_ENV'] !== 'production' ||
-        !origin ||
-        origin === allowedOrigin
-      ) {
-        callback(null, true);
-      } else {
-        callback(new Error('CORS not allowed'));
-      }
-    },
+    origin: allowSocketIoFrontendOrigin,
     credentials: true,
   },
 })
 export class BookingGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(BookingGateway.name);
+  private readonly redisPublisher: SocketIoRedisPublisher | null;
 
   @WebSocketServer()
   server?: Server;
+
+  constructor(@Optional() @Inject(REDIS_CLIENT) redis?: unknown) {
+    this.redisPublisher = canPublishSocketIoEvents(redis) ? redis : null;
+  }
 
   handleConnection(client: Socket): void {
     this.logger.log(`Client connected: ${client.id}`);
@@ -60,7 +64,7 @@ export class BookingGateway implements OnGatewayConnection, OnGatewayDisconnect 
       return { event: 'error', data: 'Invalid showtime ID' };
     }
 
-    void client.join(`showtime:${showtimeId}`);
+    void client.join(showtimeRoom(showtimeId));
     this.logger.log(`Client ${client.id} joined showtime:${showtimeId}`);
     return { event: 'joined', data: showtimeId };
   }
@@ -70,24 +74,61 @@ export class BookingGateway implements OnGatewayConnection, OnGatewayDisconnect 
     @ConnectedSocket() client: Socket,
     @MessageBody() showtimeId: string,
   ): void {
-    void client.leave(`showtime:${showtimeId}`);
+    void client.leave(showtimeRoom(showtimeId));
     this.logger.log(`Client ${client.id} left showtime:${showtimeId}`);
   }
 
   /**
    * Broadcasts a seat status update to all clients in the showtime room.
-   * A standalone Nest application context, such as the bounded background
-   * worker, does not initialize a Socket.IO server.
+   *
+   * The room is joined without authentication, so the payload carries only the
+   * seat and its state, never who locked or bought it (audit #92). The trailing
+   * argument is accepted for existing callers and ignored.
    */
-  broadcastSeatUpdate(showtimeId: string, seatId: string, status: SeatState, userId?: string): void {
-    if (!this.server) {
-      return;
+  broadcastSeatUpdate(
+    showtimeId: string,
+    seatId: string,
+    status: SeatState,
+    _ignoredActorId?: string,
+  ): void {
+    void this.publishSeatUpdate(showtimeId, seatId, status);
+  }
+
+  /**
+   * Same as `broadcastSeatUpdate`, awaitable. Inside the API the Socket.IO
+   * server (and its Redis adapter) fans the event out. A standalone Nest
+   * application context such as the bounded background worker has no server,
+   * so the event is published to Valkey in the adapter wire format instead
+   * (audit #151). Resolves false when nothing could be sent; never rejects.
+   */
+  async publishSeatUpdate(showtimeId: string, seatId: string, status: SeatState): Promise<boolean> {
+    const payload: SeatUpdateEvent = { seatId, status };
+    const room = showtimeRoom(showtimeId);
+
+    if (this.server) {
+      this.server.to(room).emit(SEAT_UPDATE_EVENT, payload);
+      return true;
     }
 
-    this.server.to(`showtime:${showtimeId}`).emit('seat-update', {
-      seatId,
-      status,
-      userId,
-    });
+    if (!this.redisPublisher) {
+      return false;
+    }
+
+    try {
+      await publishSocketIoRoomEvent(
+        this.redisPublisher,
+        BOOKING_SOCKET_NAMESPACE,
+        room,
+        SEAT_UPDATE_EVENT,
+        payload,
+      );
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.logger.warn(
+        `Seat update publish failed without a Socket.IO server. showtimeId=${showtimeId}, seatId=${seatId}, status=${status}: ${sanitizeRedisErrorMessage(message)}`,
+      );
+      return false;
+    }
   }
 }

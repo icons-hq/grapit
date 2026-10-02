@@ -2,6 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { PgDialect } from 'drizzle-orm/pg-core';
 import type { SQL } from 'drizzle-orm';
 import { seatInventories } from '../../database/schema/index.js';
+import { BookingGateway } from '../booking/booking.gateway.js';
+import {
+  buildSocketIoRoomChannel,
+  encodeSocketIoRoomEvent,
+} from '../booking/providers/socket-io-redis-emitter.js';
 import {
   CancelledSeatReleaseWorker,
   pickCancelledSeatReleaseDelaySeconds,
@@ -130,7 +135,7 @@ describe('CancelledSeatReleaseWorker', () => {
         })),
       })),
     };
-    const bookingGateway = { broadcastSeatUpdate: vi.fn() };
+    const bookingGateway = { publishSeatUpdate: vi.fn().mockResolvedValue(true) };
     const worker = new CancelledSeatReleaseWorker(
       withTransaction(db) as never,
       { isAvailable: true, work: vi.fn(), send: vi.fn(), stop: vi.fn() } as never,
@@ -147,11 +152,89 @@ describe('CancelledSeatReleaseWorker', () => {
 
     expect(result.status).toBe('released');
     expect(db.update).toHaveBeenCalledWith(seatInventories);
-    expect(bookingGateway.broadcastSeatUpdate).toHaveBeenCalledWith(
+    expect(bookingGateway.publishSeatUpdate).toHaveBeenCalledWith(
       'showtime-1',
       '1F:A-10',
       'available',
     );
+  });
+
+  it('publishes released seats through Valkey when the worker has no Socket.IO server', async () => {
+    const db = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn().mockResolvedValue([
+            { dateTime: new Date('2026-05-15T10:00:00.000Z') },
+          ]),
+        })),
+      })),
+      update: vi.fn(() => ({
+        set: vi.fn(() => ({
+          where: vi.fn(() => ({
+            returning: vi.fn().mockResolvedValue([{ id: 'seat-inventory-1' }]),
+          })),
+        })),
+      })),
+    };
+    const redis = { publish: vi.fn().mockResolvedValue(1) };
+    // Same wiring as the bounded background worker: gateway without a server.
+    const bookingGateway = new BookingGateway(redis);
+    expect(bookingGateway.server).toBeUndefined();
+    const worker = new CancelledSeatReleaseWorker(
+      withTransaction(db) as never,
+      { isAvailable: true, work: vi.fn(), send: vi.fn(), stop: vi.fn() } as never,
+      bookingGateway,
+    );
+
+    const result = await worker.handleJob({
+      reservationId: 'reservation-1',
+      showtimeId: 'showtime-1',
+      releaseAt: '2026-05-15T09:00:00.000Z',
+      seatIdentities: [{ floorKey: '1F', seatId: 'A-10', seatKey: '1F:A-10' }],
+    }, 'release-job-1');
+
+    expect(result.status).toBe('released');
+    expect(redis.publish).toHaveBeenCalledOnce();
+    expect(redis.publish).toHaveBeenCalledWith(
+      buildSocketIoRoomChannel('/booking', 'showtime:showtime-1'),
+      encodeSocketIoRoomEvent('/booking', 'showtime:showtime-1', 'seat-update', {
+        seatId: '1F:A-10',
+        status: 'available',
+      }),
+    );
+  });
+
+  it('keeps the committed release when the Valkey publish fails', async () => {
+    const db = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn().mockResolvedValue([
+            { dateTime: new Date('2026-05-15T10:00:00.000Z') },
+          ]),
+        })),
+      })),
+      update: vi.fn(() => ({
+        set: vi.fn(() => ({
+          where: vi.fn(() => ({
+            returning: vi.fn().mockResolvedValue([{ id: 'seat-inventory-1' }]),
+          })),
+        })),
+      })),
+    };
+    const redis = { publish: vi.fn().mockRejectedValue(new Error('Connection is closed.')) };
+    const worker = new CancelledSeatReleaseWorker(
+      withTransaction(db) as never,
+      { isAvailable: true, work: vi.fn(), send: vi.fn(), stop: vi.fn() } as never,
+      new BookingGateway(redis),
+    );
+
+    await expect(worker.handleJob({
+      reservationId: 'reservation-1',
+      showtimeId: 'showtime-1',
+      releaseAt: '2026-05-15T09:00:00.000Z',
+      seatIdentities: [{ floorKey: '1F', seatId: 'A-10', seatKey: '1F:A-10' }],
+    }, 'release-job-1')).resolves.toEqual({ status: 'released' });
+    expect(redis.publish).toHaveBeenCalledOnce();
   });
 
   it('does not broadcast when the guarded delayed release updates no rows', async () => {
@@ -171,7 +254,7 @@ describe('CancelledSeatReleaseWorker', () => {
         })),
       })),
     };
-    const bookingGateway = { broadcastSeatUpdate: vi.fn() };
+    const bookingGateway = { publishSeatUpdate: vi.fn().mockResolvedValue(true) };
     const worker = new CancelledSeatReleaseWorker(
       withTransaction(db) as never,
       { isAvailable: true, work: vi.fn(), send: vi.fn(), stop: vi.fn() } as never,
@@ -185,7 +268,7 @@ describe('CancelledSeatReleaseWorker', () => {
       seatIdentities: [{ floorKey: '1F', seatId: 'A-10', seatKey: '1F:A-10' }],
     }, 'stale-release-job');
 
-    expect(bookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+    expect(bookingGateway.publishSeatUpdate).not.toHaveBeenCalled();
   });
 
   it('does not release a seat and includes the active-ticket guard in the where clause', async () => {

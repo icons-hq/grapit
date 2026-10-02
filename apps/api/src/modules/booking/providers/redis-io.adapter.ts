@@ -4,6 +4,7 @@ import { IoAdapter } from '@nestjs/platform-socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
 import IORedis, { Cluster } from 'ioredis';
 import type { ServerOptions } from 'socket.io';
+import { registerRedisClientGuards } from './redis.provider.js';
 
 const SOCKET_IO_REDIS_READY_TIMEOUT_MS = 5000;
 
@@ -140,18 +141,6 @@ function disconnectRedisSubscriber(subClient: unknown): void {
 }
 
 /**
- * Socket.IO server options for the booking namespace.
- */
-export function getBookingSocketOptions(): Partial<ServerOptions> {
-  return {
-    cors: {
-      origin: process.env['FRONTEND_URL'] ?? 'http://localhost:3000',
-      credentials: true,
-    },
-  };
-}
-
-/**
  * NestJS WebSocket adapter that layers Socket.IO on top of a Redis pub/sub
  * transport (via @socket.io/redis-adapter). Required for multi-instance
  * broadcast when Cloud Run scales the API service beyond a single instance —
@@ -201,6 +190,9 @@ export class RedisIoAdapter extends IoAdapter {
     try {
       subClient = duplicateSocketSubscriber(pubClient);
       const readySubClient = await assertSocketSubscriberReady(subClient);
+      // duplicate() copies options (including the never-ending reconnect
+      // strategy) but not listeners, so the subscriber needs its own guards.
+      registerRedisClientGuards(readySubClient, 'socket.io subscriber');
       this.adapterConstructor = createAdapter(pubClient, readySubClient);
       this.logger.log('Socket.IO Redis adapter wired (pub/sub via duplicated ioredis client with null retries on sub)');
       return true;

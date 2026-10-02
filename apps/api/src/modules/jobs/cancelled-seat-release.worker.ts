@@ -93,8 +93,13 @@ export class CancelledSeatReleaseWorker implements OnModuleInit {
       payload.seatIdentities,
       releaseJobId,
     );
+    // In the bounded Cloud Run worker there is no Socket.IO server; the gateway
+    // then publishes through Valkey so open seat maps still see the release
+    // (audit #151). Awaited so the publish is flushed before the worker closes
+    // Redis. A failed publish is logged by the gateway and does not undo the
+    // committed release.
     for (const seatIdentity of releasedSeats) {
-      this.bookingGateway?.broadcastSeatUpdate(
+      await this.bookingGateway?.publishSeatUpdate(
         payload.showtimeId,
         seatIdentity.seatKey,
         'available',

@@ -144,7 +144,7 @@ Admin screens are dense operational tools. Public pages can be more visual, but 
 - Admin authorization uses role and capability guards.
 - Global validation uses the Zod validation pipe.
 - Global filters include generic HTTP exception formatting and Toss payment exception formatting.
-- CORS origins are derived from `FRONTEND_URL`, with production requiring HTTPS origins.
+- CORS origins are derived from `FRONTEND_URL`, with production requiring HTTPS origins. `FRONTEND_URL` may list several origins separated by commas; REST CORS and the `/booking` and `/queue` Socket.IO gateways accept every listed origin through `apps/api/src/config/frontend-origins.ts`, while redirects and email links that need one URL use the first entry.
 - `helmet` and `cookie-parser` are installed at bootstrap.
 
 ### 4.3 API Surface
@@ -225,8 +225,10 @@ Seat locks are managed by `BookingService` and Redis/Valkey.
 - Lock ownership is per user.
 - Lock and unlock operations use Lua-compatible atomic checks.
 - Max-ticket policy is enforced from performance booking policy.
-- Seat lock state is reflected in `GET /api/v1/booking/schedules/:showtimeId/seats`.
-- Seat updates are broadcast over Socket.IO rooms named by showtime.
+- Seat lock state is reflected in `GET /api/v1/booking/schedules/:showtimeId/seats`. The endpoint is public, accepts only UUID showtime IDs, and has its own default-throttler budget of 60 requests per 10 seconds, counted per account when the request carries a valid access token and per trusted client IP otherwise (cookies never select the bucket). Its snapshot is cached for at most 1 second (shared Valkey key `seat-status-cache:{showtimeId}`, a 500 ms per-instance copy, and one in-flight computation per showtime per instance). An instance that changed seat locks for a showtime does not serve snapshots or computations that started before that change, so a client re-reading after its own lock or unlock on the same instance sees it. Lock, prepare and confirm decisions never read this snapshot.
+- The seat status read does not modify `{showtimeId}:locked-seats`. Members whose lock key expired by TTL are removed by an atomic sweep that runs at most once per 10 seconds per showtime across instances, triggered when a snapshot is recomputed.
+- Seat updates are broadcast over Socket.IO rooms named by showtime. The rooms are unauthenticated, so `seat-update` carries only the seat and its state, never the user who locked or bought it; a client learns the result of its own lock from the lock API response.
+- Contexts without a Socket.IO server, such as the bounded background worker, publish seat updates straight to Valkey in the `@socket.io/redis-adapter` format, so cancelled-seat releases processed by the Job still reach open seat maps.
 
 Local development can use an in-memory Redis-compatible mock when Redis URL is absent. Production cannot silently use that fallback.
 
@@ -408,6 +410,7 @@ Production convention:
 - Cloud Run environment variables and Secret Manager bindings provide runtime configuration.
 - API validates production frontend origin and Redis/Valkey pub/sub readiness at bootstrap.
 - Missing production Redis URL or invalid Valkey mode fails startup.
+- After startup, the shared ioredis client and the duplicated Socket.IO subscriber reconnect indefinitely with a bounded backoff (200 ms steps, capped at 1 second) in both standalone and cluster mode, so a Valkey failover or network flap does not leave an instance permanently disconnected. Standalone commands issued during an outage fail after `maxRetriesPerRequest` reconnect attempts; an unexpected `end` state is logged and reconnected. `/api/v1/health` reports Valkey reachability, but recovery does not depend on a probe restarting the instance.
 
 ### 8.5 Object Storage And Uploads
 

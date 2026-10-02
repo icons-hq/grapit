@@ -9,7 +9,6 @@ import { createBookingSocket } from '@/lib/socket-client';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import { getClientLocale } from '@/lib/i18n/client-copy';
 import { useBookingStore } from '@/stores/use-booking-store';
-import { useAuthStore } from '@/stores/use-auth-store';
 
 export function useBookingSocket(showtimeId: string | null): void {
   const socketRef = useRef<Socket | null>(null);
@@ -83,21 +82,10 @@ export function useBookingSocket(showtimeId: string | null): void {
         },
       );
 
-      // Race condition check: if ANOTHER user locked a seat we selected
-      // Ignore our own broadcasts (userId matches)
-      const myUserId = useAuthStore.getState().user?.id;
-      if (data.status === 'locked' && data.userId !== myUserId) {
-        const store = useBookingStore.getState();
-        const isOurSeat = store.selectedSeats.some(
-          (s) => s.seatId === data.seatId,
-        );
-        if (isOurSeat) {
-          store.removeSeat(data.seatId);
-          toast.info(copy.seatTaken, {
-            style: { backgroundColor: '#F3EFFF', color: '#6C3CE0' },
-          });
-        }
-      }
+      // The broadcast never says who locked a seat (audit #92), so a 'locked'
+      // event cannot tell our own lock from someone else's. Selected seats are
+      // reconciled by the lock API response instead: a lost race returns 409
+      // and the caller removes the seat there.
     });
 
     socket.connect();

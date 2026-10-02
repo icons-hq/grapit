@@ -8,15 +8,17 @@ import {
   Req,
   HttpCode,
   HttpStatus,
+  ParseUUIDPipe,
   UseGuards,
 } from '@nestjs/common';
-import { SkipThrottle } from '@nestjs/throttler';
+import { Throttle } from '@nestjs/throttler';
 import type { Request } from 'express';
 import { Public } from '../../common/decorators/public.decorator.js';
 import { ZodValidationPipe } from '../../common/pipes/zod-validation.pipe.js';
 import { AdmissionGuard } from '../queue/guards/admission.guard.js';
 import { BookingService } from './booking.service.js';
 import { lockSeatSchema, type LockSeatBody } from './dto/lock-seat.dto.js';
+import { SEAT_STATUS_THROTTLE } from './seat-status-throttle.js';
 
 type AuthenticatedBookingUser = {
   id: string;
@@ -99,11 +101,14 @@ export class BookingController {
   /**
    * GET /api/v1/booking/schedules/:showtimeId/seats
    * Public endpoint. Returns all seat states for a showtime.
+   * Rate limited per account (or per IP without an access token) and served
+   * from a short cache (audit #8). Non-UUID IDs are rejected before they
+   * reach Valkey keys or the uuid column.
    */
   @Public()
-  @SkipThrottle()
+  @Throttle({ default: SEAT_STATUS_THROTTLE })
   @Get('schedules/:showtimeId/seats')
-  async getSeatStatus(@Param('showtimeId') showtimeId: string) {
+  async getSeatStatus(@Param('showtimeId', new ParseUUIDPipe()) showtimeId: string) {
     return this.bookingService.getSeatStatus(showtimeId);
   }
 }

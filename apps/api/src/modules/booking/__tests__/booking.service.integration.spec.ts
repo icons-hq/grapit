@@ -8,7 +8,15 @@ import {
   BookingService,
   LOCK_EXPIRED_MESSAGE,
   LOCK_OTHER_OWNER_MESSAGE,
+  lockedSeatsSweepGuardKey,
+  SEAT_STATUS_CACHE_TTL_MS,
+  seatStatusCacheKey,
 } from '../booking.service.js';
+import { BookingGateway } from '../booking.gateway.js';
+import {
+  buildSocketIoRoomChannel,
+  encodeSocketIoRoomEvent,
+} from '../providers/socket-io-redis-emitter.js';
 
 /**
  * Phase 07-05 integration spec — PROVES Lua scripts execute correctly on a
@@ -213,6 +221,88 @@ describe('BookingService Lua scripts — real Valkey 8 integration', () => {
         showtimeId,
         seats: { [seatKey]: 'locked' },
       });
+  });
+
+  it('reads seat status without removing stale members and sweeps them once per interval (audit #8)', async () => {
+    const service = createBookingService(redis);
+    const staleRuntimeSeatId = toRuntimeSeatId(otherSeatKey);
+    await service.lockSeat(userId, showtimeId, seatKey);
+    // A lock whose key expired by TTL leaves its member behind.
+    await redis.sadd(lockedSeatsKey, staleRuntimeSeatId);
+    // Hold the sweep guard so the read path alone can be observed.
+    await redis.set(lockedSeatsSweepGuardKey(showtimeId), 'held', 'PX', 60_000);
+
+    await expect(service.getSeatStatus(showtimeId)).resolves.toEqual({
+      showtimeId,
+      seats: { [seatKey]: 'locked' },
+    });
+    expect(await redis.smembers(lockedSeatsKey)).toEqual(
+      expect.arrayContaining([runtimeSeatId, staleRuntimeSeatId]),
+    );
+    expect(await redis.pttl(seatStatusCacheKey(showtimeId))).toBeGreaterThan(0);
+    expect(await redis.pttl(seatStatusCacheKey(showtimeId)))
+      .toBeLessThanOrEqual(SEAT_STATUS_CACHE_TTL_MS);
+
+    await redis.del(lockedSeatsSweepGuardKey(showtimeId));
+    await expect(service.sweepStaleLockedSeats(showtimeId)).resolves.toBe(true);
+    expect(await redis.smembers(lockedSeatsKey)).toEqual([runtimeSeatId]);
+    await expect(service.sweepStaleLockedSeats(showtimeId)).resolves.toBe(false);
+  });
+
+  it('serves the shared seat status snapshot to another instance until it expires', async () => {
+    const first = createBookingService(redis);
+    const second = createBookingService(redis);
+    await first.lockSeat(userId, showtimeId, seatKey);
+
+    await expect(first.getSeatStatus(showtimeId)).resolves.toEqual({
+      showtimeId,
+      seats: { [seatKey]: 'locked' },
+    });
+    // Released after the snapshot was taken: a reader may see the snapshot
+    // for at most SEAT_STATUS_CACHE_TTL_MS.
+    await first.unlockSeat(userId, showtimeId, seatKey);
+    await expect(second.getSeatStatus(showtimeId)).resolves.toEqual({
+      showtimeId,
+      seats: { [seatKey]: 'locked' },
+    });
+    // The instance that applied the change never serves the older snapshot.
+    await expect(first.getSeatStatus(showtimeId)).resolves.toEqual({
+      showtimeId,
+      seats: {},
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, SEAT_STATUS_CACHE_TTL_MS + 50));
+    await expect(createBookingService(redis).getSeatStatus(showtimeId)).resolves.toEqual({
+      showtimeId,
+      seats: {},
+    });
+  });
+
+  it('delivers a seat update published without a Socket.IO server to a Redis adapter subscriber (audit #151)', async () => {
+    const subscriber = redis.duplicate();
+    const room = `showtime:${showtimeId}`;
+    const channel = buildSocketIoRoomChannel('/booking', room);
+    try {
+      const received = new Promise<Buffer>((resolve) => {
+        subscriber.on('pmessageBuffer', (_pattern: Buffer, messageChannel: Buffer, message: Buffer) => {
+          if (messageChannel.toString() === channel) resolve(message);
+        });
+      });
+      // Same pattern the Socket.IO Redis adapter subscribes to.
+      await subscriber.psubscribe('socket.io#/booking#*');
+
+      const gateway = new BookingGateway(redis);
+      await expect(gateway.publishSeatUpdate(showtimeId, seatKey, 'available')).resolves.toBe(true);
+
+      expect(await received).toEqual(
+        encodeSocketIoRoomEvent('/booking', room, 'seat-update', {
+          seatId: seatKey,
+          status: 'available',
+        }),
+      );
+    } finally {
+      subscriber.disconnect();
+    }
   });
 
   it('rejects duplicate lock on same seat through BookingService.lockSeat', async () => {

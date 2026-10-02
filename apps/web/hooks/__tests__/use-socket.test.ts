@@ -105,6 +105,34 @@ describe('useBookingSocket', () => {
     expect(mockStore.setConnected).toHaveBeenCalledWith(false);
   });
 
+  it('applies seat-update events without treating anonymous locks as lost selections', async () => {
+    const { toast } = await import('sonner');
+    mockStore.selectedSeats = [{ seatId: 'A-1', seatKey: '1F:A-1' } as { seatId: string }];
+    renderHook(() => useBookingSocket('test-showtime-id'));
+
+    const seatUpdateCall = (mockSocket.on as Mock).mock.calls.find(
+      (call: unknown[]) => call[0] === 'seat-update',
+    );
+    expect(seatUpdateCall).toBeDefined();
+    const seatUpdateHandler = seatUpdateCall![1] as (data: unknown) => void;
+
+    // Payload shape after audit #92: no userId, so our own lock looks the same.
+    seatUpdateHandler({ seatId: '1F:A-1', status: 'locked' });
+    seatUpdateHandler({ seatId: 'A-1', status: 'locked' });
+
+    expect(mockQueryClient.setQueryData).toHaveBeenCalledTimes(2);
+    const updater = (mockQueryClient.setQueryData as Mock).mock.calls[0]![1] as (
+      old: { showtimeId: string; seats: Record<string, string> } | undefined,
+    ) => unknown;
+    expect(updater({ showtimeId: 'test-showtime-id', seats: {} })).toEqual({
+      showtimeId: 'test-showtime-id',
+      seats: { '1F:A-1': 'locked' },
+    });
+    expect(mockStore.removeSeat).not.toHaveBeenCalled();
+    expect(toast.info).not.toHaveBeenCalled();
+    mockStore.selectedSeats = [];
+  });
+
   it('does nothing when showtimeId is null', () => {
     renderHook(() => useBookingSocket(null));
 

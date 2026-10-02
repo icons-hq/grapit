@@ -7,6 +7,7 @@ import {
   buildSocialCallbackUrl,
   getSocialCallbackStateFromRequest,
 } from '../social-callback-url.js';
+import { getPrimaryFrontendUrl } from '../../../config/frontend-origins.js';
 
 function handleSocialAuthRequest<T>(
   err: Error | null,
@@ -17,7 +18,7 @@ function handleSocialAuthRequest<T>(
   logger: Logger,
 ): T {
   if (err || !user) {
-    const frontendUrl = configService.get<string>('FRONTEND_URL', 'http://localhost:3000');
+    const frontendUrl = getPrimaryFrontendUrl(configService.get<string>('FRONTEND_URL'));
     const errorCode =
       err?.message?.toLowerCase().includes('denied') ||
       err?.message?.toLowerCase().includes('cancel')

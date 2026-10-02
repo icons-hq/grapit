@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import type IORedis from 'ioredis';
 import { AppModule } from './app.module.js';
+import { getFrontendOrigins, parseFrontendUrlList } from './config/frontend-origins.js';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter.js';
 import { TossPaymentExceptionFilter } from './common/filters/toss-payment-exception.filter.js';
 import { ZodValidationPipe } from './common/pipes/zod-validation.pipe.js';
@@ -18,13 +19,7 @@ async function bootstrap() {
   //
   // WR-06: split(',') 결과 각 origin 이 모두 https 여야 한다(일부가 http 면 mixed-content
   // 조용히 허용되는 현상을 차단). 빈 문자열은 필터링한다.
-  const rawFrontend = process.env['FRONTEND_URL']?.trim() ?? '';
-  const frontendOrigins = rawFrontend
-    ? rawFrontend
-        .split(',')
-        .map((o) => o.trim())
-        .filter(Boolean)
-    : [];
+  const frontendOrigins = parseFrontendUrlList(process.env['FRONTEND_URL']);
 
   if (process.env['NODE_ENV'] === 'production') {
     if (frontendOrigins.length === 0) {
@@ -70,8 +65,8 @@ async function bootstrap() {
 
   // WR-06: origin 은 항상 배열로 통일(dev default 포함) — express-cors 는 배열마다
   //        요청 origin 을 echo 하므로 cookie + credentials 시 일관된 동작이 보장된다.
-  const corsOrigins =
-    frontendOrigins.length > 0 ? frontendOrigins : ['http://localhost:3000'];
+  //        Socket.IO gateway 도 같은 getFrontendOrigins() 목록으로 origin 을 검사한다.
+  const corsOrigins = getFrontendOrigins(process.env['FRONTEND_URL']);
 
   app.enableCors({
     origin: corsOrigins,

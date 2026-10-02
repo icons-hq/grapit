@@ -50,6 +50,10 @@ describe('RedisIoAdapter', () => {
     });
     expect(subClient.connect).toHaveBeenCalledOnce();
     expect(subClient.ping).toHaveBeenCalledOnce();
+    // duplicate() does not copy listeners: the subscriber gets its own sanitized
+    // error logging and unexpected-end recovery (audit #7).
+    const subscribedEvents = subClient.on.mock.calls.map((call: unknown[]) => call[0]);
+    expect(subscribedEvents).toEqual(expect.arrayContaining(['error', 'end', 'ready']));
   });
 
   it('duplicates ioredis Cluster subscribers with cluster override options', async () => {

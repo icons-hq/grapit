@@ -30,11 +30,17 @@ function sanitizeHealthMessage(message: string): string {
  *
  * Calls `redis.ping()` and reports up/down via HealthIndicatorService.check(key).
  *
- * Why this exists: Cloud Run's liveness probe hits /api/v1/health. Without a
- * Redis check, a degraded connection (e.g. VPC PSC endpoint lost, Memorystore
- * instance paused, network flap) leaves the API reporting healthy while seat
- * locking silently fails. Per 07-REVIEWS.md MEDIUM consensus #7 and Cloud Run
- * startup probe best practice.
+ * Why this exists: without a Redis check, a degraded connection (e.g. VPC PSC
+ * endpoint lost, Memorystore instance paused, network flap) leaves
+ * /api/v1/health reporting healthy while seat locking silently fails. Per
+ * 07-REVIEWS.md MEDIUM consensus #7.
+ *
+ * Recovery does not depend on this endpoint: the ioredis clients created by
+ * `redis.provider.ts` (and the duplicated Socket.IO subscriber) keep
+ * reconnecting with a bounded backoff and never enter the terminal `end`
+ * state on their own. Whether a Cloud Run probe also calls this endpoint is
+ * decided by the API deploy flags in `.github/workflows/deploy.yml`; this
+ * indicator does not assume one exists.
  *
  * Terminus 11.1 API: we inject HealthIndicatorService and call
  * `service.check(key).up()` / `.down(data)`. The old `HealthIndicator` base
