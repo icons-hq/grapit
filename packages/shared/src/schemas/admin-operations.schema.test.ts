@@ -448,6 +448,26 @@ describe('admin operations contract', () => {
       capabilities: ['support.manage'],
       superuser: false,
     });
+
+    // ...and without a capability list they fail closed instead of falling
+    // back to the legacy role=admin superuser (guards on dashboard/diagnostics).
+    for (const adminCapabilityBundle of ['superadmin', 'Admin', ' operator ']) {
+      expect(resolveAdminCapabilitySnapshot({
+        id: 'admin-unknown-empty',
+        role: 'admin',
+        adminCapabilityBundle,
+        adminCapabilities: [],
+      })).toEqual({ bundle: null, capabilities: [], superuser: false });
+    }
+    // A missing or blank bundle keeps the legacy role fallback.
+    for (const adminCapabilityBundle of [null, undefined, '']) {
+      expect(resolveAdminCapabilitySnapshot({
+        id: 'admin-legacy',
+        role: 'admin',
+        adminCapabilityBundle,
+        adminCapabilities: [],
+      }).superuser).toBe(true);
+    }
   });
 
   it('limits explicit non-admin bundles even when the coarse role remains admin', () => {

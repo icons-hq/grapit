@@ -68,7 +68,8 @@ export interface AdminCapabilityUser {
   role?: string | null;
   /**
    * Stored bundle. DB/JWT values are plain strings, so unknown values are
-   * tolerated here and resolved as "no bundle".
+   * tolerated here: they keep an explicit capability list, and otherwise grant
+   * nothing (never the legacy role=admin superuser fallback).
    */
   adminCapabilityBundle?: AdminCapabilityBundle | string | null;
   adminCapabilities?: readonly AdminCapability[] | readonly string[] | null;
@@ -140,6 +141,21 @@ export function resolveAdminCapabilitySnapshot(
     return {
       bundle: null,
       capabilities: storedCapabilities,
+      superuser: false,
+    };
+  }
+
+  // A stored bundle this build does not know (a mistyped manual write, or a
+  // bundle from a newer release) fails closed. Only a missing bundle is the
+  // legacy role-based fallback; otherwise role=admin with an unknown bundle
+  // and no capability list would read as superuser (u12 review).
+  if (
+    typeof user.adminCapabilityBundle === 'string'
+    && user.adminCapabilityBundle.trim() !== ''
+  ) {
+    return {
+      bundle: null,
+      capabilities: [],
       superuser: false,
     };
   }

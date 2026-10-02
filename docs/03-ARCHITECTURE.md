@@ -668,7 +668,7 @@ Permission update rules (`PATCH /admin/users/:id/permissions`, `security.manage`
 
 `GET /api/v1/admin/consent-audit` requires `audit.read` and returns keyset-paginated pages (default 100, maximum 500 rows); without a `from` or user/email/IP filter it reads only the 7 days ending at `to` (or now), and every page of one query keeps the first page's window.
 
-`/api/v1/admin/dashboard/*` requires `reservations.read` (the same capability as the admin home menu), and `GET /api/v1/admin/_sentry-test` requires `security.manage`. Legacy `role=admin` accounts with no bundle or capabilities remain superusers.
+`/api/v1/admin/dashboard/*` requires `reservations.read` (the same capability as the admin home menu), and `GET /api/v1/admin/_sentry-test` requires `security.manage`. Legacy `role=admin` accounts with no bundle or capabilities remain superusers. A stored bundle value the build does not recognize keeps only an explicit capability list; without one it grants nothing, instead of falling back to that legacy superuser rule.
 
 ### 10.3 Data Redaction
 
