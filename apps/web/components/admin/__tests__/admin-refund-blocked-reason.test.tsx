@@ -187,13 +187,14 @@ describe('Admin refund preview blockers (audit #80, #23, #53)', () => {
     expect(screen.getByRole('button', { name: '환불 확인' })).toBeDisabled();
   });
 
-  it('offers a failed refund with revoked tickets for recovery and sends it without a new quote', async () => {
+  it('offers a failed refund with revoked tickets for recovery and sends the stored quote as expected amounts', async () => {
     const user = userEvent.setup();
     const onRefund = vi.fn();
     mockRefundPreview({
       reservationId: 'reservation-1',
       cancellationQuote: QUOTE,
       refundableAmount: 120000,
+      providerRefund: { currency: 'KRW', amountMinor: 120000, amountDecimal: '120000' },
       canRequestRefund: false,
       adminRecoveryAvailable: true,
       adminRecoveryReason: 'RETRY_EXHAUSTED · 은행 응답 지연',
@@ -216,9 +217,13 @@ describe('Admin refund preview blockers (audit #80, #23, #53)', () => {
     const confirm = screen.getByRole('button', { name: '환불 확인' });
     expect(confirm).toBeEnabled();
     await user.click(confirm);
+    // The stored quote on screen guards a request that became a new refund because another tab
+    // restored the rights meanwhile: the server refuses (409) a re-quote that differs from it.
     expect(onRefund).toHaveBeenCalledWith('reservation-1', '운영 재처리', {
       fullRefundOverride: false,
       enteredTicketOverride: false,
+      expectedRefundableAmount: 120000,
+      expectedProviderRefundAmountMinor: 120000,
     });
   });
 

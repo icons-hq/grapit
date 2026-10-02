@@ -672,6 +672,15 @@ export class RefundService {
     return actor.kind === 'admin' && options.fullRefundOverride === true;
   }
 
+  /**
+   * An attempt that still holds the revoked rights is answered (buyer) or reconciled
+   * (recoverExistingRefundForAdmin, which ignores `options`). Otherwise a new refund is quoted now and
+   * `options.expected*` are compared with that quote inside insertRequestedRefund, before any right is
+   * revoked or the PG is called. The admin recovery request also sends the stored quote it showed as
+   * the expected amounts: when another tab or operator restored the rights in between (aborted, past
+   * the idempotency window, larger balance), this request becomes a new refund, and a re-quote that
+   * differs from what the operator saw stops with 409 instead of sending an unseen amount to the PG.
+   */
   protected async requestRefundWithContext(
     context: ReservationRefundContext,
     existingRefund: RefundRecord | null,
@@ -1006,7 +1015,9 @@ export class RefundService {
    * When the frozen command can no longer be used (aborted by the provider, or past the idempotency window)
    * the rights are restored and the request stops with 409. A new attempt needs a fresh quote computed at
    * that time, so the operator must review the refreshed preview and request it again; this request never
-   * sends a re-quoted amount the operator did not see.
+   * sends a re-quoted amount the operator did not see. The expected amounts the recovery request carries
+   * (the stored quote on screen) are not used here; they guard the case where the rights were already
+   * restored before this request arrived and requestRefundWithContext takes the new refund path instead.
    */
   protected async recoverExistingRefundForAdmin(
     context: ReservationRefundContext,

@@ -318,11 +318,17 @@ export function AdminBookingDetailModal({
   function handleRefundConfirm() {
     if (!bookingId || !refundReason.trim() || !refundQuote || refundConfirmDisabled) return;
     if (recoveryMode) {
-      // Recovery reconciles the stored attempt with the PG (same frozen command and quote). Fee
-      // overrides and expected amounts belong to a new quote and are not sent.
+      // Recovery reconciles the stored attempt with the PG (same frozen command and quote), so fee
+      // overrides are never sent. The stored quote on screen goes along as the expected amounts: if
+      // another tab or operator restored the rights meanwhile, the server treats this as a new
+      // refund and answers 409 when its fresh quote differs, instead of sending an unseen amount.
       onRefund(bookingId, refundReason.trim(), {
         fullRefundOverride: false,
         enteredTicketOverride: false,
+        expectedRefundableAmount: refundQuote.refundableAmount,
+        ...(refundPreview?.providerRefund
+          ? { expectedProviderRefundAmountMinor: refundPreview.providerRefund.amountMinor }
+          : {}),
       });
       return;
     }
@@ -388,7 +394,7 @@ export function AdminBookingDetailModal({
         )}
 
         {booking && !showRefundForm && !showManualOpenForm && (
-          <div className="space-y-1">
+          <div className="min-w-0 space-y-1">
             <BookingSupportEvidencePanel bookingId={booking.id} />
             <InfoRow label="예매번호" value={booking.reservationNumber} />
             <Separator />
@@ -587,7 +593,7 @@ export function AdminBookingDetailModal({
         )}
 
         {booking && showRefundForm && canAdminRefund && (
-          <div className="space-y-4">
+          <div className="min-w-0 space-y-4">
             <h3 className="text-base font-semibold text-gray-900">
               {recoveryMode
                 ? '실패한 환불을 재조정하시겠습니까?'
@@ -765,7 +771,7 @@ export function AdminBookingDetailModal({
         )}
 
         {booking && showManualOpenForm && canManualOpen && (
-          <div className="space-y-4">
+          <div className="min-w-0 space-y-4">
             <DialogHeader>
               <DialogTitle>
                 이 취소 좌석을 지금 즉시 개방하시겠습니까?

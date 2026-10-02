@@ -324,7 +324,7 @@ describe('AdminBookingDashboard refund outcome', () => {
     expect(listCalls()).toBe(2);
   });
 
-  it('sends the recovery of a failed refund without expected amounts', async () => {
+  it('sends the recovery of a failed refund with the stored quote on screen as expected amounts', async () => {
     const user = userEvent.setup();
     previewResponse = refundPreview({
       canRequestRefund: false,
@@ -349,10 +349,45 @@ describe('AdminBookingDashboard refund outcome', () => {
     await waitFor(() => expect(mocks.apiPost).toHaveBeenCalledTimes(1));
     const [url, body] = mocks.apiPost.mock.calls[0]!;
     expect(url).toBe(`/api/v1/admin/bookings/${BOOKING_ID}/refund`);
-    expect(body).toMatchObject({ reason: '고객 요청', fullRefundOverride: false, enteredTicketOverride: false });
-    expect(body.expectedRefundableAmount).toBeUndefined();
-    expect(body.expectedProviderRefundAmountMinor).toBeUndefined();
+    // Never a fee override. If another tab restored the rights meanwhile the server takes the new
+    // refund path and refuses (409) a re-quote that differs from these amounts.
+    expect(body).toMatchObject({
+      reason: '고객 요청',
+      fullRefundOverride: false,
+      enteredTicketOverride: false,
+      expectedRefundableAmount: 48000,
+      expectedProviderRefundAmountMinor: 48000,
+    });
     await waitFor(() => expect(mocks.toast.success).toHaveBeenCalledWith('환불이 완료되었습니다'));
+  });
+
+  it('keeps the modal open with the conflict when the recovery became a new refund with a different quote', async () => {
+    const user = userEvent.setup();
+    previewResponse = refundPreview({
+      canRequestRefund: false,
+      adminRecoveryAvailable: true,
+      adminRecoveryReason: 'RETRY_EXHAUSTED · 은행 응답 지연',
+      refundTimeline: {
+        currentState: 'FAILED',
+        requestedAt: '2026-05-08T12:00:00.000Z',
+        failedAt: '2026-05-08T12:30:00.000Z',
+        expectedDepositAt: null,
+        customerServiceCtaVisible: true,
+      },
+    });
+    mocks.apiPost.mockRejectedValue(serverError(409, '환불 금액이 변경되었습니다. 견적을 다시 확인해주세요.'));
+    renderDashboard(<AdminBookingDashboard />);
+
+    const dialog = await openRefundForm(user);
+    expect(await within(dialog).findByText('이전 환불 재조정')).toBeInTheDocument();
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: '환불 확인' })).toBeEnabled());
+    await user.click(within(dialog).getByRole('button', { name: '환불 확인' }));
+
+    await waitFor(() => expect(mocks.toast.error).toHaveBeenCalledWith(
+      '환불 금액이 변경되었습니다. 견적을 다시 확인해주세요.',
+    ));
+    expect(mocks.toast.success).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 
   it('keeps the modal open with the server message and re-reads the preview when the PG cannot be queried at execution (503)', async () => {
@@ -389,6 +424,29 @@ describe('AdminBookingDashboard refund outcome', () => {
       '환불 요청 결과를 확인하지 못했습니다. 예매 상세에서 환불 상태를 확인한 뒤 다시 시도해주세요.',
     ));
     expect(mocks.toast.error).not.toHaveBeenCalledWith('Failed to fetch');
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it.each([
+    { name: 'an unhandled 500', error: () => serverError(500, 'Internal server error') },
+    { name: 'a 504 without a JSON body', error: () => serverError(504, '요청을 처리하지 못했습니다') },
+    { name: 'a 502 from the proxy', error: () => serverError(502, 'Bad Gateway') },
+  ])('reports $name after the request as an unknown refund result, not the server message', async ({ error }) => {
+    const user = userEvent.setup();
+    const rejection = error();
+    mocks.apiPost.mockRejectedValue(rejection);
+    renderDashboard(<AdminBookingDashboard />);
+
+    const dialog = await openRefundForm(user);
+    await waitFor(() => expect(within(dialog).getByRole('button', { name: '환불 확인' })).toBeEnabled());
+    await user.click(within(dialog).getByRole('button', { name: '환불 확인' }));
+
+    // The 5xx may have come after the PG cancel, so it must not read as "not refunded".
+    await waitFor(() => expect(mocks.toast.error).toHaveBeenCalledWith(
+      '환불 요청 결과를 확인하지 못했습니다. 예매 상세에서 환불 상태를 확인한 뒤 다시 시도해주세요.',
+    ));
+    expect(mocks.toast.error).not.toHaveBeenCalledWith(rejection.message);
+    expect(mocks.toast.success).not.toHaveBeenCalled();
     expect(screen.getByRole('dialog')).toBeInTheDocument();
   });
 

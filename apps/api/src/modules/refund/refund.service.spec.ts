@@ -659,6 +659,125 @@ describe('RefundService', () => {
     expect(tossPaymentsClient.cancelPayment).not.toHaveBeenCalled();
   });
 
+  describe('admin recovery request after another tab restored the rights', () => {
+    /** Thenable query chain: every builder call returns itself and awaiting it yields `rows`. */
+    function queryChain(rows: unknown[]): unknown {
+      const handler: ProxyHandler<object> = {
+        get(_target, prop) {
+          if (prop === 'then') {
+            return (resolve: (value: unknown[]) => void) => resolve(rows);
+          }
+          return () => new Proxy({}, handler);
+        },
+      };
+      return new Proxy({}, handler);
+    }
+
+    // The failed attempt the operator's recovery screen showed. It was quoted
+    // before the D-2 fee tier, so its stored quote has no cancellation fee.
+    const storedQuote = {
+      originalPaymentAmount: 204000,
+      ticketSubtotal: 200000,
+      ticketServiceFeeTotal: 4000,
+      cancellationFeeTotal: 0,
+      serviceFeeRefundTotal: 4000,
+      refundableAmount: 204000,
+      policyCodes: ['BEFORE_SHOW_DAY_7'],
+      items: [
+        { ticketItemId: 'ticket-item-1', ticketPrice: 100000, serviceFee: 2000, cancellationFee: 0,
+          serviceFeeRefund: 2000, refundableAmount: 102000, policyCode: 'BEFORE_SHOW_DAY_7' },
+        { ticketItemId: 'ticket-item-2', ticketPrice: 100000, serviceFee: 2000, cancellationFee: 0,
+          serviceFeeRefund: 2000, refundableAmount: 102000, policyCode: 'BEFORE_SHOW_DAY_7' },
+      ],
+    };
+
+    function setup() {
+      vi.setSystemTime(new Date('2026-07-16T00:10:00.000+09:00'));
+      const context = createSeatLevelContext();
+      // Another tab's recovery already gave the rights back (aborted / past the
+      // idempotency window), so this request is a new refund quoted now (D-2: 140,000).
+      const restoredRefund = createRefund({
+        status: 'failed',
+        resultCode: 'ABORTED',
+        failedAt: new Date('2026-07-15T15:00:00.000Z'),
+        providerMetadata: {
+          cancellationQuote: storedQuote,
+          providerRefund: { currency: 'KRW', amountMinor: 204000, amountDecimal: '204000',
+            originalAmountMinor: 204000, balanceBeforeMinor: 204000 },
+          rightsRestoredAt: '2026-07-15T15:01:00.000Z',
+        },
+      });
+      const requestedRefund = createRefund({ status: 'requested', providerMetadata: {} });
+      const tx = {
+        execute: vi.fn().mockResolvedValue({ rows: [] }),
+        select: vi.fn(),
+        insert: vi.fn(() => queryChain([requestedRefund])),
+        update: vi.fn(() => queryChain([requestedRefund])),
+      };
+      tx.select
+        .mockReturnValueOnce(queryChain([restoredRefund])) // refunds FOR UPDATE
+        .mockReturnValueOnce(queryChain([context.reservation])) // reservations
+        .mockReturnValueOnce(queryChain(context.ticketItems)) // ticket items FOR UPDATE
+        .mockReturnValueOnce(queryChain([])) // benefit entitlements
+        .mockReturnValueOnce(queryChain([])); // credential states
+      const db = { transaction: vi.fn(async (fn: (inner: typeof tx) => unknown) => fn(tx)) };
+      const tossPaymentsClient = {
+        queryPayment: vi.fn().mockResolvedValue({
+          totalAmount: 204000, balanceAmount: 204000, isPartialCancelable: true,
+        }),
+        cancelPayment: vi.fn(),
+      };
+      const service = new RefundService(
+        db as never,
+        tossPaymentsClient as never,
+        { finalizeFullPaymentCancellation: vi.fn() } as never,
+        { isAvailable: false, send: vi.fn() } as never,
+      );
+      vi.spyOn(service as never, 'loadReservationContextByReservationId').mockResolvedValue(context as never);
+      vi.spyOn(service as never, 'findExistingRefund').mockResolvedValue(restoredRefund as never);
+      return { service, tx, tossPaymentsClient };
+    }
+
+    it('stops with 409 before revoking any right or calling the PG when the re-quote differs from the stored quote on screen', async () => {
+      const { service, tx, tossPaymentsClient } = setup();
+      const recoverSpy = vi.spyOn(service as never, 'recoverExistingRefundForAdmin');
+      const attemptSpy = vi.spyOn(service as never, 'runProviderCancelAttempt');
+
+      // The recovery confirm sends the stored quote it showed, never overrides.
+      const request = service.requestAdminRefund('reservation-1', 'admin-1', '운영 환불 재조정', {
+        fullRefundOverride: false,
+        enteredTicketOverride: false,
+        expectedRefundableAmount: storedQuote.refundableAmount,
+        expectedProviderRefundAmountMinor: 204000,
+      });
+
+      await expect(request).rejects.toBeInstanceOf(ConflictException);
+      await expect(request).rejects.toThrow('환불 금액이 변경되었습니다');
+      expect(recoverSpy).not.toHaveBeenCalled();
+      expect(tx.insert).not.toHaveBeenCalled();
+      expect(tx.update).not.toHaveBeenCalled();
+      expect(attemptSpy).not.toHaveBeenCalled();
+      expect(tossPaymentsClient.cancelPayment).not.toHaveBeenCalled();
+    });
+
+    it('starts the new refund when the re-quote equals the amounts on screen', async () => {
+      const { service, tx } = setup();
+      const attemptSpy = vi.spyOn(service as never, 'runProviderCancelAttempt')
+        .mockResolvedValue({ refundableAmount: 140000 } as never);
+
+      await service.requestAdminRefund('reservation-1', 'admin-1', '운영 환불 재조정', {
+        fullRefundOverride: false,
+        enteredTicketOverride: false,
+        expectedRefundableAmount: 140000,
+        expectedProviderRefundAmountMinor: 140000,
+      });
+
+      expect(tx.update).toHaveBeenCalled();
+      expect(attemptSpy).toHaveBeenCalledTimes(1);
+      expect(attemptSpy.mock.calls[0]?.[2]).toMatchObject({ refundableAmount: 140000 });
+    });
+  });
+
   it('keeps the buyer request path tolerant of a failed PG pre-check (the frozen preflight re-checks it)', async () => {
     vi.setSystemTime(new Date('2026-07-16T00:10:00.000+09:00'));
     const tossPaymentsClient = {

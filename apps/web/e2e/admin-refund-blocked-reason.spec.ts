@@ -105,7 +105,7 @@ test.describe('Admin refund preview blockers', () => {
     expect(refundPosts).toBe(0);
   });
 
-  test('offers a failed refund with revoked tickets for recovery and sends it without a new quote', async ({ page }) => {
+  test('offers a failed refund with revoked tickets for recovery and sends the stored quote as expected amounts', async ({ page }) => {
     let refundBody: Record<string, unknown> | null = null;
     await page.route(`**/api/v1/admin/bookings/${BOOKING_ID}/refund-preview?**`, (route) => fulfillJson(route, {
       ...previewWithQuote(),
@@ -138,10 +138,90 @@ test.describe('Admin refund preview blockers', () => {
     await confirm.click();
 
     await expect.poll(() => refundBody).not.toBeNull();
-    expect(refundBody).toMatchObject({ reason: '결제사 장애 후 재처리', fullRefundOverride: false, enteredTicketOverride: false });
-    expect(refundBody).not.toHaveProperty('expectedRefundableAmount');
-    expect(refundBody).not.toHaveProperty('expectedProviderRefundAmountMinor');
+    // No fee override; the stored quote on screen goes along so that a request that became a new
+    // refund (rights restored by another tab meanwhile) is refused (409) when its re-quote differs.
+    expect(refundBody).toMatchObject({
+      reason: '결제사 장애 후 재처리',
+      fullRefundOverride: false,
+      enteredTicketOverride: false,
+      expectedRefundableAmount: 104000,
+      expectedProviderRefundAmountMinor: 104000,
+    });
   });
+
+  for (const viewport of [
+    { name: '375px', size: { width: 375, height: 812 } },
+    { name: '768px', size: { width: 768, height: 1024 } },
+    { name: '1280px', size: { width: 1280, height: 900 } },
+  ]) {
+    test(`keeps the booking detail dialog within its width with the per-seat ticket table at ${viewport.name}`, async ({ page }) => {
+      await page.setViewportSize(viewport.size);
+      // Registered after beforeEach, so these answer the detail and its evidence panel.
+      await page.route(`**/api/v1/admin/bookings/${BOOKING_ID}`, (route) => fulfillJson(route, {
+        ...confirmedBooking(),
+        paymentInfo: { paymentKey: 'payment-key-1', method: 'CARD', amount: 104000, status: 'DONE',
+          paidAt: '2026-05-13T09:00:00.000Z' },
+        ticketItems: confirmedBooking().seats.map((seat, index) => ({
+          ...seat,
+          id: `ticket-item-${index + 1}`,
+          reservationId: BOOKING_ID,
+          paymentId: 'payment-1',
+          showtimeId: '00000000-0000-4000-8000-000000000001',
+          serviceFee: 2000,
+          status: 'ACTIVE',
+          admissionState: 'NOT_ENTERED',
+          enteredAt: null,
+          cancelledAt: null,
+          cancelReason: null,
+          cancellationFee: 0,
+          serviceFeeRefund: 0,
+          refundableAmount: 52000,
+          reopenState: 'NOT_REQUIRED',
+          reopenHoldUntil: null,
+        })),
+      }));
+      await page.route(`**/api/v1/admin/bookings/${BOOKING_ID}/support-evidence`, (route) => fulfillJson(route, {
+        generatedAt: '2026-09-21T00:00:00.000Z', originalOrderAmount: 104000, provider: null, refundTimeline: null,
+        refundProviderAmount: null,
+        rights: { seatStatesKnown: true, activeSeats: 2, cancelledSeats: 0, pendingSeats: 0, enteredSeats: 0, benefits: [] },
+        delivery: { lastSentAt: null, scheduledAt: null, inboxReceipt: 'unverified', history: [] },
+      }));
+
+      await page.goto('/admin/bookings');
+      await page.getByRole('button', { name: /Grabit Fanmeet 예매 상세 보기/ }).click();
+      const dialog = page.getByRole('dialog');
+      const table = dialog.getByRole('table', { name: '좌석별 티켓 상태' });
+      await expect(table).toBeVisible();
+      // Measure after the open animation (fade and zoom) has finished.
+      await dialog.evaluate((element) => Promise.all(element.getAnimations().map((animation) => animation.finished)));
+      await expect(dialog).toHaveCSS('opacity', '1');
+
+      // The nowrap table must not widen the dialog's grid track: no horizontal scroll in the
+      // dialog, and the title, description and reservation number stay inside it.
+      const metrics = await dialog.evaluate((element) => ({
+        scrollWidth: element.scrollWidth,
+        clientWidth: element.clientWidth,
+      }));
+      expect(metrics.scrollWidth).toBe(metrics.clientWidth);
+      const dialogBox = (await dialog.boundingBox())!;
+      for (const locator of [
+        dialog.getByRole('heading', { name: '예매 상세' }),
+        dialog.getByText('예매 상태, 좌석, 결제 정보와 예약별 운영 작업을 확인합니다.'),
+        dialog.getByText('GRP-CONFIRMED-0001'),
+      ]) {
+        const box = (await locator.boundingBox())!;
+        expect(box.x).toBeGreaterThanOrEqual(dialogBox.x);
+        expect(box.x + box.width).toBeLessThanOrEqual(dialogBox.x + dialogBox.width + 0.5);
+      }
+      // Wide tables scroll inside their own container instead.
+      const tableBox = (await table.boundingBox())!;
+      expect(tableBox.x).toBeGreaterThanOrEqual(dialogBox.x);
+
+      await page.screenshot({ path: test.info().outputPath(`admin-booking-detail-${viewport.name}-top.png`) });
+      await table.scrollIntoViewIfNeeded();
+      await page.screenshot({ path: test.info().outputPath(`admin-booking-detail-${viewport.name}.png`) });
+    });
+  }
 });
 
 function previewWithQuote() {
