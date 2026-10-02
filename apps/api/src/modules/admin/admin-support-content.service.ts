@@ -635,6 +635,9 @@ export class AdminSupportContentService {
     const updated = await this.inTransaction(async (db) => {
       const existing = await this.lockNoticeRow(db, id);
       assertReviewable(existing.reviewState as SupportContentReviewState);
+      if (existing.reviewState === 'archived') {
+        await this.assertRestorableInTranslationGroup(db, existing);
+      }
       const now = this.now();
       const transition = reviewTransition(existing, input.actorUserId, now);
       const next = await this.updateNoticeRow(db, id, {
@@ -793,32 +796,9 @@ export class AdminSupportContentService {
     actor: SupportContentActorInput,
   ): Promise<string> {
     const source = await this.lockNoticeRow(db, sourceNoticeId);
-    const groupId = source.translationGroupId ?? source.id;
-    if (groupId !== source.id) {
-      // The group id is the first source notice's id. Locking it serializes
-      // concurrent translations of any member so the duplicate check holds.
-      await this.lockNoticeRow(db, groupId).catch((error: unknown) => {
-        if (!(error instanceof NotFoundException)) throw error;
-      });
-    }
-
-    const members = isMemoryStore(db)
-      ? db.notices.filter(
-          (row) => (row.translationGroupId ?? row.id) === groupId,
-        )
-      : await db
-          .select()
-          .from(supportNotices)
-          .where(
-            or(
-              eq(supportNotices.translationGroupId, groupId),
-              eq(supportNotices.id, groupId),
-            ),
-          );
-    const duplicate = members.find(
-      (row) => row.locale === locale && row.reviewState !== 'archived',
-    );
-    if (duplicate) {
+    const groupId = noticeGroupKey(source);
+    await this.lockTranslationGroupRoot(db, groupId, source.id);
+    if (await this.findActiveGroupMember(db, groupId, locale)) {
       throw new BadRequestException('이미 같은 언어의 번역본이 있습니다');
     }
 
@@ -836,6 +816,71 @@ export class AdminSupportContentService {
       });
     }
     return groupId;
+  }
+
+  /**
+   * Restoring an archived notice must keep one live version per locale in its
+   * translation group: another version of the same locale may have been
+   * registered while this one was archived.
+   */
+  private async assertRestorableInTranslationGroup(
+    db: SupportContentStore,
+    row: NoticeRow,
+  ): Promise<void> {
+    const groupId = noticeGroupKey(row);
+    await this.lockTranslationGroupRoot(db, groupId, row.id);
+    const duplicate = await this.findActiveGroupMember(
+      db,
+      groupId,
+      row.locale as SupportContentLocale,
+      row.id,
+    );
+    if (duplicate) {
+      throw new BadRequestException(
+        '이미 같은 언어의 번역본이 있습니다. 그 번역본을 보관한 뒤 보관 해제해주세요',
+      );
+    }
+  }
+
+  /**
+   * The group id is the first source notice's id. Locking that row serializes
+   * every same-locale check in the group (new translation, restore), so the
+   * one-live-version-per-locale rule holds under concurrency.
+   */
+  private async lockTranslationGroupRoot(
+    db: SupportContentStore,
+    groupId: string,
+    alreadyLockedId: string,
+  ): Promise<void> {
+    if (groupId === alreadyLockedId) return;
+    await this.lockNoticeRow(db, groupId).catch((error: unknown) => {
+      if (!(error instanceof NotFoundException)) throw error;
+    });
+  }
+
+  private async findActiveGroupMember(
+    db: SupportContentStore,
+    groupId: string,
+    locale: SupportContentLocale,
+    excludeId?: string,
+  ): Promise<NoticeRow | undefined> {
+    const members = isMemoryStore(db)
+      ? db.notices.filter((row) => noticeGroupKey(row) === groupId)
+      : await db
+          .select()
+          .from(supportNotices)
+          .where(
+            or(
+              eq(supportNotices.translationGroupId, groupId),
+              eq(supportNotices.id, groupId),
+            ),
+          );
+    return members.find(
+      (row) =>
+        row.id !== excludeId
+        && row.locale === locale
+        && row.reviewState !== 'archived',
+    );
   }
 
   private async listFaqRows(

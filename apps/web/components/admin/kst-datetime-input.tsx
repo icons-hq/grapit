@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { PERFORMANCE_BOOKING_START_YEAR_RANGE } from '@grabit/shared';
 import { Input } from '@/components/ui/input';
 import { formatAdminKstDateTime, parseAdminKstDateTimeInput } from '@/lib/admin-datetime';
@@ -24,6 +24,14 @@ interface KstDateTimeInputProps {
 const toText = (value: string | null | undefined) =>
   (value && value !== KST_DATETIME_INCOMPLETE ? formatAdminKstDateTime(value) : '');
 
+/** Keys that only move between segments or leave the input. Any other key may edit one. */
+const NAVIGATION_KEYS = new Set([
+  'Tab', 'ArrowLeft', 'ArrowRight', 'Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Escape', 'Enter',
+]);
+
+/** What the segments show: the value plus whether a '' value is partly filled. */
+const segmentState = (input: HTMLInputElement) => `${input.value}|${input.validity?.badInput === true}`;
+
 /**
  * A KST `datetime-local` input that keeps the operator's own text while typing.
  *
@@ -33,7 +41,8 @@ const toText = (value: string | null | undefined) =>
  * input. Only a complete value inside the allowed year range is committed as an
  * instant; anything else is committed as-is so validation blocks saving instead
  * of silently keeping an older time the input no longer shows. Only a fully
- * cleared input commits null.
+ * cleared input commits null; edits that keep the value '' are committed when
+ * focus leaves the input.
  */
 export function KstDateTimeInput({
   value,
@@ -46,6 +55,10 @@ export function KstDateTimeInput({
   const [incomplete, setIncomplete] = useState(() => value === KST_DATETIME_INCOMPLETE);
   // The value this input last committed or adopted from its parent.
   const [syncedValue, setSyncedValue] = useState<string | null>(value ?? null);
+  // Segment state when focus entered the input, and whether a key that can edit a
+  // segment was pressed since then.
+  const focusedState = useRef<string | null>(null);
+  const editedSinceFocus = useRef(false);
 
   if ((value ?? null) !== syncedValue) {
     // Only external changes (draft load, form reset) replace what the operator typed.
@@ -71,11 +84,30 @@ export function KstDateTimeInput({
     onChange(next);
   }
 
-  function handleInput(event: React.FormEvent<HTMLInputElement>) {
-    // React fires onChange only when the value string changes. Partially filling an
-    // empty input, or clearing the last segments of a partial one, keeps it '' and
-    // only toggles validity.badInput, so those edits are committed here.
-    if (event.currentTarget.value === '' && text === '') commit(event.currentTarget);
+  function handleFocus(event: React.FocusEvent<HTMLInputElement>) {
+    focusedState.current = segmentState(event.currentTarget);
+    editedSinceFocus.current = false;
+  }
+
+  function handleKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (!NAVIGATION_KEYS.has(event.key)) editedSinceFocus.current = true;
+  }
+
+  function handleBlur(event: React.FocusEvent<HTMLInputElement>) {
+    // Chromium emits neither input nor change while the value stays '' (clearing
+    // the remaining segments of a partial value, typing into an empty input), so
+    // what the segments show is committed when focus leaves the input: all empty
+    // commits null, partly filled commits the incomplete sentinel. Only an edit
+    // made in this visit is committed, so tabbing through a reopened unfinished
+    // value does not quietly turn it into an empty sale start.
+    const target = event.currentTarget;
+    if (
+      target.value === ''
+      && (editedSinceFocus.current || segmentState(target) !== focusedState.current)
+    ) {
+      commit(target);
+    }
+    onBlur?.();
   }
 
   return (
@@ -89,8 +121,9 @@ export function KstDateTimeInput({
         max={`${yearRange.max}-12-31T23:59:59`}
         value={text}
         onChange={(event) => commit(event.target)}
-        onInput={handleInput}
-        onBlur={onBlur}
+        onFocus={handleFocus}
+        onKeyDown={handleKeyDown}
+        onBlur={handleBlur}
       />
       {outOfRange && (
         <span role="alert" className="block text-xs font-normal text-red-600">
@@ -99,7 +132,7 @@ export function KstDateTimeInput({
       )}
       {incomplete && (
         <span role="alert" className="block text-xs font-normal text-red-600">
-          날짜와 시각을 끝까지 입력해주세요. 완성되기 전에는 저장할 수 없습니다. 비우려면 모든 칸을 지워주세요.
+          날짜와 시각을 끝까지 입력해주세요. 완성되기 전에는 저장할 수 없습니다. 비우려면 모든 칸을 지운 뒤 입력란 밖을 눌러주세요.
         </span>
       )}
     </>

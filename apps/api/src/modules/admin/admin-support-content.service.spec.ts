@@ -1024,6 +1024,72 @@ describe('AdminSupportContentService', () => {
         }),
       ).rejects.toThrow(BadRequestException);
     });
+
+    it('rejects restoring an archived translation while another version of its locale is live in the group', async () => {
+      const { service, audit } = createService();
+      const source = await service.createNotice({
+        actorUserId: OPERATOR_ID,
+        category: 'urgent',
+        locale: 'ko',
+        title: '결제 장애 안내',
+        body: '결제가 지연되고 있습니다.',
+      });
+      await service.publishNotice(source.id, { actorUserId: OPERATOR_ID });
+      const archivedEnglish = await service.createNotice({
+        actorUserId: OPERATOR_ID,
+        category: 'urgent',
+        locale: 'en',
+        title: 'Payment delay (old)',
+        body: 'Old wording',
+        translationOfNoticeId: source.id,
+      });
+      await service.publishNotice(archivedEnglish.id, { actorUserId: OPERATOR_ID });
+      await service.archiveNotice(archivedEnglish.id, { actorUserId: OPERATOR_ID });
+      // Archiving frees the locale, so a replacement translation can be registered.
+      const replacement = await service.createNotice({
+        actorUserId: OPERATOR_ID,
+        category: 'urgent',
+        locale: 'en',
+        title: 'Payment delay',
+        body: 'New wording',
+        translationOfNoticeId: source.id,
+      });
+      await service.publishNotice(replacement.id, { actorUserId: OPERATOR_ID });
+      const auditCount = audit.entries.length;
+
+      await expect(service.reviewNotice(archivedEnglish.id, { actorUserId: OPERATOR_ID }))
+        .rejects.toThrow('이미 같은 언어의 번역본이 있습니다');
+      await expect(service.getNotice(archivedEnglish.id)).resolves.toMatchObject({
+        status: 'archived',
+        reviewState: 'archived',
+      });
+      expect(audit.entries).toHaveLength(auditCount);
+      // English viewers keep seeing exactly one version of the notice.
+      await expect(service.listPublished({ locale: 'en' })).resolves.toMatchObject({
+        notices: [{ id: replacement.id }],
+      });
+
+      // The same rule covers the group's source row.
+      await service.archiveNotice(source.id, { actorUserId: OPERATOR_ID });
+      const korean = await service.createNotice({
+        actorUserId: OPERATOR_ID,
+        category: 'urgent',
+        locale: 'ko',
+        title: '결제 장애 안내(수정)',
+        body: '새 원문',
+        translationOfNoticeId: replacement.id,
+      });
+      await expect(service.reviewNotice(source.id, { actorUserId: OPERATOR_ID }))
+        .rejects.toThrow(BadRequestException);
+
+      // Once the live version is archived, the old one can come back.
+      await service.archiveNotice(replacement.id, { actorUserId: OPERATOR_ID });
+      await expect(service.reviewNotice(archivedEnglish.id, { actorUserId: OPERATOR_ID }))
+        .resolves.toMatchObject({ status: 'draft', reviewState: 'approved', archivedAt: null });
+      await service.archiveNotice(korean.id, { actorUserId: OPERATOR_ID });
+      await expect(service.reviewNotice(source.id, { actorUserId: OPERATOR_ID }))
+        .resolves.toMatchObject({ reviewState: 'approved' });
+    });
   });
 
   describe('public read cache (audit #132)', () => {

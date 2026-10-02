@@ -6,14 +6,32 @@ import { DEFAULT_PERFORMANCE_BOOKING_POLICY, performanceBookingPolicySchema } fr
 
 import { KST_DATETIME_INCOMPLETE, KstDateTimeInput } from '../kst-datetime-input';
 
-function ControlledInput({ initial, onCommit }: { initial: string | null; onCommit: (value: string | null) => void }) {
+function ControlledInput({
+  initial,
+  onCommit,
+  onBlur,
+}: {
+  initial: string | null;
+  onCommit: (value: string | null) => void;
+  onBlur?: () => void;
+}) {
   const [value, setValue] = useState<string | null>(initial);
   return (
     <>
-      <KstDateTimeInput aria-label="판매 시작 일시" value={value} onChange={(next) => { setValue(next); onCommit(next); }} />
+      <KstDateTimeInput
+        aria-label="판매 시작 일시"
+        value={value}
+        onChange={(next) => { setValue(next); onCommit(next); }}
+        onBlur={onBlur}
+      />
       <button type="button" onClick={() => setValue('2027-01-02T03:04:00.000Z')}>외부 값 불러오기</button>
     </>
   );
+}
+
+/** jsdom has no segmented datetime-local UI, so the browser's badInput report is stubbed. */
+function reportBadInput(input: HTMLInputElement, badInput: boolean) {
+  Object.defineProperty(input, 'validity', { configurable: true, value: { badInput } });
 }
 
 describe('KstDateTimeInput', () => {
@@ -42,15 +60,19 @@ describe('KstDateTimeInput', () => {
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
-  it('blocks saving a partially cleared sale start instead of committing it as empty', () => {
+  // The event sequences below follow Chromium as measured in a real browser: once the
+  // value is '' (a segment is empty), editing other segments sends keydown but neither
+  // input nor change, and only leaving the input (blur) shows the final badInput.
+  it('blocks saving a partially cleared sale start and commits null only after every segment is cleared and the input is left', () => {
     const onCommit = vi.fn();
-    render(<ControlledInput initial="2025-10-01T11:00:00.000Z" onCommit={onCommit} />);
+    const onBlur = vi.fn();
+    render(<ControlledInput initial="2025-10-01T11:00:00.000Z" onCommit={onCommit} onBlur={onBlur} />);
     const input = screen.getByLabelText('판매 시작 일시') as HTMLInputElement;
-    const reportBadInput = (badInput: boolean) =>
-      Object.defineProperty(input, 'validity', { configurable: true, value: { badInput } });
+    fireEvent.focus(input);
 
-    // Chromium: clearing only the hour segment reports value '' with validity.badInput.
-    reportBadInput(true);
+    // Clearing only the hour segment changes the value to '' with validity.badInput.
+    reportBadInput(input, true);
+    fireEvent.keyDown(input, { key: 'Backspace' });
     fireEvent.change(input, { target: { value: '' } });
 
     expect(onCommit).toHaveBeenLastCalledWith(KST_DATETIME_INCOMPLETE);
@@ -61,11 +83,15 @@ describe('KstDateTimeInput', () => {
     const policy = { ...DEFAULT_PERFORMANCE_BOOKING_POLICY, bookingStartsAt: KST_DATETIME_INCOMPLETE };
     expect(performanceBookingPolicySchema.safeParse(policy).success).toBe(false);
 
-    // Clearing the remaining segments keeps the value '' (no React onChange); only badInput flips.
-    reportBadInput(false);
-    fireEvent.input(input, { target: { value: '' } });
+    // Clearing the remaining segments sends no input/change; badInput turns false.
+    reportBadInput(input, false);
+    fireEvent.keyDown(input, { key: 'Backspace' });
+    expect(onCommit).toHaveBeenCalledTimes(1);
+
+    fireEvent.blur(input);
 
     expect(onCommit).toHaveBeenLastCalledWith(null);
+    expect(onBlur).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
@@ -73,12 +99,44 @@ describe('KstDateTimeInput', () => {
     const onCommit = vi.fn();
     render(<ControlledInput initial={null} onCommit={onCommit} />);
     const input = screen.getByLabelText('판매 시작 일시') as HTMLInputElement;
-    Object.defineProperty(input, 'validity', { configurable: true, value: { badInput: true } });
+    fireEvent.focus(input);
 
-    fireEvent.input(input, { target: { value: '' } });
+    // Typing only the year keeps the value '' and sends no input/change.
+    fireEvent.keyDown(input, { key: '2' });
+    reportBadInput(input, true);
+    expect(onCommit).not.toHaveBeenCalled();
+
+    fireEvent.blur(input);
 
     expect(onCommit).toHaveBeenLastCalledWith(KST_DATETIME_INCOMPLETE);
     expect(screen.getByRole('alert')).toHaveTextContent('날짜와 시각을 끝까지 입력해주세요');
+  });
+
+  it('keeps a reopened unfinished sale start when the operator only passes through, and clears it on an edit', () => {
+    const onCommit = vi.fn();
+    const onBlur = vi.fn();
+    render(<ControlledInput initial={KST_DATETIME_INCOMPLETE} onCommit={onCommit} onBlur={onBlur} />);
+    const input = screen.getByLabelText('판매 시작 일시') as HTMLInputElement;
+    expect(input.value).toBe('');
+    expect(screen.getByRole('alert')).toHaveTextContent('입력란 밖을 눌러주세요');
+
+    // Moving through the empty segments is not an edit and must not save an empty sale start.
+    fireEvent.focus(input);
+    fireEvent.keyDown(input, { key: 'Tab' });
+    fireEvent.keyDown(input, { key: 'ArrowRight' });
+    fireEvent.blur(input);
+
+    expect(onCommit).not.toHaveBeenCalled();
+    expect(onBlur).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('alert')).toHaveTextContent('완성되기 전에는 저장할 수 없습니다');
+
+    // Clearing a segment and leaving commits what the segments show: empty.
+    fireEvent.focus(input);
+    fireEvent.keyDown(input, { key: 'Backspace' });
+    fireEvent.blur(input);
+
+    expect(onCommit).toHaveBeenLastCalledWith(null);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   });
 
   it('clears to null and adopts values loaded from outside the input', () => {

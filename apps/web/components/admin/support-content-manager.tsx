@@ -170,6 +170,9 @@ export function SupportContentManager() {
     useState<AdminSupportNotice | null>(null);
   const [form, setForm] = useState<FormState>(initialFaqForm);
   const [saveError, setSaveError] = useState<SaveError | null>(null);
+  // A rejected review/publish/archive (e.g. 보관 해제 while another version of
+  // the locale is live), shown only while the same row stays selected.
+  const [actionError, setActionError] = useState<{ itemId: string; message: string } | null>(null);
   const [confirmUnpublishOpen, setConfirmUnpublishOpen] = useState(false);
   const [confirmReloadOpen, setConfirmReloadOpen] = useState(false);
   const isEditing = editTarget !== null;
@@ -345,28 +348,46 @@ export function SupportContentManager() {
     setForm(activeType === 'faq' ? initialFaqForm : initialNoticeForm);
   }
 
-  async function handleReview(item: SupportContentItem) {
-    if (item.type === 'faq') {
-      await reviewFaq.mutateAsync(item.id);
-      return;
+  async function runRowAction(
+    item: SupportContentItem,
+    action: () => Promise<unknown>,
+  ) {
+    setActionError(null);
+    try {
+      await action();
+    } catch (error) {
+      setActionError({
+        itemId: item.id,
+        message:
+          error instanceof Error && error.message
+            ? error.message
+            : '처리하지 못했습니다. 잠시 후 다시 시도해주세요.',
+      });
     }
-    await reviewNotice.mutateAsync(item.id);
+  }
+
+  async function handleReview(item: SupportContentItem) {
+    await runRowAction(item, () =>
+      item.type === 'faq'
+        ? reviewFaq.mutateAsync(item.id)
+        : reviewNotice.mutateAsync(item.id),
+    );
   }
 
   async function handlePublish(item: SupportContentItem) {
-    if (item.type === 'faq') {
-      await publishFaq.mutateAsync(item.id);
-      return;
-    }
-    await publishNotice.mutateAsync(item.id);
+    await runRowAction(item, () =>
+      item.type === 'faq'
+        ? publishFaq.mutateAsync(item.id)
+        : publishNotice.mutateAsync(item.id),
+    );
   }
 
   async function handleArchive(item: SupportContentItem) {
-    if (item.type === 'faq') {
-      await archiveFaq.mutateAsync(item.id);
-      return;
-    }
-    await archiveNotice.mutateAsync(item.id);
+    await runRowAction(item, () =>
+      item.type === 'faq'
+        ? archiveFaq.mutateAsync(item.id)
+        : archiveNotice.mutateAsync(item.id),
+    );
   }
 
   const categoryOptions =
@@ -820,6 +841,11 @@ export function SupportContentManager() {
                   <p className="text-sm text-gray-600">
                     보관 해제하면 게시 전 상태로 돌아갑니다. 공개하려면 이어서 게시하세요.
                     자동 번역 검수본은 다시 검수해야 합니다.
+                  </p>
+                )}
+                {actionError?.itemId === selectedItem.id && (
+                  <p role="alert" className="text-sm text-red-600">
+                    {actionError.message}
                   </p>
                 )}
               </div>

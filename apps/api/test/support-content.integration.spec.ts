@@ -247,6 +247,41 @@ describe('support content and operations inbox (integration)', () => {
     });
   });
 
+  it('keeps one live version per locale when an archived translation is restored, even against a concurrent new translation', async () => {
+    const actor = { actorUserId: operatorId };
+    const source = await service.createNotice({
+      ...actor, category: 'urgent', locale: 'ko', title: '긴급', body: '긴급',
+    });
+    await service.publishNotice(source.id, actor);
+    const oldEnglish = await service.createNotice({
+      ...actor, category: 'urgent', locale: 'en', title: 'Old', body: 'Old', translationOfNoticeId: source.id,
+    });
+    await service.archiveNotice(oldEnglish.id, actor);
+    const liveEnglish = await service.createNotice({
+      ...actor, category: 'urgent', locale: 'en', title: 'Live', body: 'Live', translationOfNoticeId: source.id,
+    });
+    await service.publishNotice(liveEnglish.id, actor);
+
+    await expect(service.reviewNotice(oldEnglish.id, actor)).rejects.toThrow('이미 같은 언어의 번역본이 있습니다');
+    await expect(service.getNotice(oldEnglish.id)).resolves.toMatchObject({ reviewState: 'archived' });
+
+    // Restore and a new same-locale translation serialize on the group's source row.
+    await service.archiveNotice(liveEnglish.id, actor);
+    const results = await Promise.allSettled([
+      service.reviewNotice(oldEnglish.id, actor),
+      service.createNotice({
+        ...actor, category: 'urgent', locale: 'en', title: 'Racing', body: 'Racing', translationOfNoticeId: source.id,
+      }),
+    ]);
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1);
+    const liveEnglishRows = (await db
+      .select()
+      .from(supportNotices)
+      .where(eq(supportNotices.translationGroupId, source.id)))
+      .filter((row) => row.locale === 'en' && row.reviewState !== 'archived');
+    expect(liveEnglishRows).toHaveLength(1);
+  });
+
   it('finds old overdue threads beyond the newest 200 and counts totals over every matching thread', async () => {
     const operations = new AdminOperationsService(db as never, audit);
     const now = new Date('2026-10-01T03:00:00.000Z');

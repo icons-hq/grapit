@@ -437,6 +437,38 @@ describe('SupportContentManager edit safety', () => {
     expect(screen.queryByRole('button', { name: /보관 해제/ })).not.toBeInTheDocument();
   });
 
+  it('shows why 보관 해제 was rejected when another version of the locale is live', async () => {
+    const user = userEvent.setup();
+    const archivedNotice = {
+      ...supportContentResponse.notices[0],
+      status: 'archived',
+      reviewState: 'archived',
+      canPublish: false,
+      archivedAt: '2026-05-15T01:00:00.000Z',
+    };
+    (apiClient.get as ReturnType<typeof vi.fn>).mockResolvedValue({
+      faqs: [],
+      notices: [archivedNotice],
+    });
+    (apiClient.post as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('이미 같은 언어의 번역본이 있습니다. 그 번역본을 보관한 뒤 보관 해제해주세요'),
+    );
+
+    render(<SupportContentManager />, { wrapper: createWrapper() });
+    await user.click(await screen.findByRole('tab', { name: '공지' }));
+    await screen.findByText('Entry notice');
+    await user.click(screen.getByRole('button', { name: /보관 해제/ }));
+
+    expect(apiClient.post).toHaveBeenCalledWith(
+      '/api/v1/admin/support-content/notices/notice-en/review',
+      {},
+    );
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '이미 같은 언어의 번역본이 있습니다',
+    );
+    expect(screen.getByRole('button', { name: /게시$/ })).toBeDisabled();
+  });
+
   it('warns that a separately registered fallback-category notice shows next to its original', async () => {
     const user = userEvent.setup();
     (apiClient.get as ReturnType<typeof vi.fn>).mockResolvedValue(

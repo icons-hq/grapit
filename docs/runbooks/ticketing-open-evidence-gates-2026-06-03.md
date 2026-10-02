@@ -791,7 +791,11 @@ for launch, not merely that fallback code exists.
   button on an archived row), then `게시`. Unarchiving does not publish; it
   returns the row to `게시 가능`, or to `검수 필요` for an assisted th/zh-CN
   translation, which needs `검수 완료` first. Both steps write
-  `support.content.review` / `support.content.publish` audit rows.
+  `support.content.review` / `support.content.publish` audit rows. A notice
+  translation cannot be restored while another unarchived version of the same
+  locale exists in its translation group (400 `이미 같은 언어의 번역본이
+  있습니다`); archive that version first, so a locale never shows two
+  versions of one notice.
 - Notices honor `노출 시작` (`scheduled_at`) and `노출 종료` (`ends_at`); a
   scheduled start or end can appear up to about a minute late for the reasons
   above.
