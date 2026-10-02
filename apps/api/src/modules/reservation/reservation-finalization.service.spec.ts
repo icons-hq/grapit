@@ -1590,7 +1590,7 @@ describe('ReservationFinalizationService', () => {
     const tx = {
       execute: vi.fn((query: unknown) => {
         const renderedQuery = inspect(query, { depth: 10 });
-        if (renderedQuery.includes('FOR NO KEY UPDATE')) {
+        if (renderedQuery.includes('FOR SHARE')) {
           benefitSyncOperations.push('lock-showtime');
         }
         return Promise.resolve(ticketLimitResult());

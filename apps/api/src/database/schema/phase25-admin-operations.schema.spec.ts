@@ -45,6 +45,7 @@ describe('Phase 25 admin operations security schema contracts', () => {
       'benefits.run.rollback',
       'benefits.run.export',
       'benefits.entitlements.export',
+      'benefits.included_repair.apply',
       'security.allowlist.update',
       'security.permission.update',
       'user.withdraw',

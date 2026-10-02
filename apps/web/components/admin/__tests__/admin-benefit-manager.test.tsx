@@ -134,6 +134,20 @@ const fixtureConfiguration: BenefitConfiguration = {
       selectionPriority: 1,
       mutuallyExclusiveWith: ['benefit_polaroid'],
     },
+    {
+      kind: 'limited',
+      identity: 'benefit_polaroid',
+      displayCopy: {
+        ko: { name: '사인 폴라로이드', description: '사인 폴라로이드 설명' },
+        en: { name: 'Signed polaroid', description: 'Signed polaroid benefit' },
+        'zh-CN': { name: '签名拍立得', description: '签名拍立得福利' },
+        th: { name: 'Signed polaroid', description: 'Signed polaroid benefit' },
+      },
+      eligibleTierNames: ['SVIP', 'VIP'],
+      quantity: 10,
+      selectionPriority: 2,
+      mutuallyExclusiveWith: ['benefit_6_to_1'],
+    },
   ],
   createdAt: '2026-07-01T08:00:00.000Z',
   updatedAt: '2026-07-01T08:10:00.000Z',
@@ -312,7 +326,7 @@ describe('AdminBenefitManager', () => {
     const user = userEvent.setup();
     await selectBenefitShowtime(user);
 
-    await screen.findByDisplayValue('6:1 이벤트 참여권');
+    await screen.findByDisplayValue('6:1 이벤트 설명');
     await user.type(screen.getByLabelText('반복 테스트 번호 (선택)'), 'operator-seed');
     await user.click(screen.getByRole('button', { name: /^테스트 실행$/ }));
 
@@ -339,7 +353,8 @@ describe('AdminBenefitManager', () => {
 
     await screen.findByText(liveRunId);
     await user.type(screen.getByLabelText('실제 적용 사유'), '판매 종료 전 확정');
-    await user.click(screen.getByRole('button', { name: /실제 적용/ }));
+    await user.click(screen.getByRole('button', { name: /^실제 적용$/ }));
+    await user.click(await screen.findByRole('button', { name: /실제 적용 확정/ }));
 
     await waitFor(() => expect(mocks.liveMutate).toHaveBeenCalledTimes(1));
     expect(mocks.liveMutate).toHaveBeenCalledWith({
@@ -367,6 +382,77 @@ describe('AdminBenefitManager', () => {
       showtimeId,
       sourceRunId: liveRunId,
       reason: '직전 실행으로 복구',
+    });
+  });
+
+  it('blocks the live run while the editor differs from the saved configuration', async () => {
+    const user = userEvent.setup();
+    await selectBenefitShowtime(user);
+
+    await screen.findByDisplayValue('6:1 이벤트 설명');
+    const [sixToOneQuantity] = screen.getAllByLabelText('수량');
+    await user.clear(sixToOneQuantity!);
+    await user.type(sixToOneQuantity!, '100');
+    await user.type(screen.getByLabelText('실제 적용 사유'), '판매 종료 전 확정');
+
+    expect(screen.getByRole('button', { name: /^실제 적용$/ })).toBeDisabled();
+    expect(screen.getByText(/저장되지 않은 변경이 있습니다/)).toBeInTheDocument();
+    expect(mocks.liveMutate).not.toHaveBeenCalled();
+
+    await user.clear(sixToOneQuantity!);
+    await user.type(sixToOneQuantity!, '30');
+    expect(screen.getByRole('button', { name: /^실제 적용$/ })).toBeEnabled();
+    expect(screen.queryByText(/저장되지 않은 변경이 있습니다/)).not.toBeInTheDocument();
+  });
+
+  it('confirms the saved limited benefits before applying them to tickets', async () => {
+    const user = userEvent.setup();
+    await selectBenefitShowtime(user);
+
+    await screen.findByDisplayValue('6:1 이벤트 설명');
+    await user.type(screen.getByLabelText('실제 적용 사유'), '판매 종료 전 확정');
+    await user.click(screen.getByRole('button', { name: /^실제 적용$/ }));
+
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Girl Rules Fanmeet · 2026. 7. 18. 오후 7:00')).toBeInTheDocument();
+    expect(within(dialog).getByText('저장된 설정 v2')).toBeInTheDocument();
+    expect(within(dialog).getByText('수량 30 · 대상 SVIP · 우선순위 1')).toBeInTheDocument();
+    expect(within(dialog).getByText('함께 배정하지 않음: 사인 폴라로이드')).toBeInTheDocument();
+    expect(mocks.liveMutate).not.toHaveBeenCalled();
+
+    await user.click(within(dialog).getByRole('button', { name: '취소' }));
+    expect(mocks.liveMutate).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: /^실제 적용$/ }));
+    await user.click(await screen.findByRole('button', { name: /실제 적용 확정/ }));
+    await waitFor(() => expect(mocks.liveMutate).toHaveBeenCalledWith({
+      showtimeId,
+      configurationId,
+      reason: '판매 종료 전 확정',
+    }));
+  });
+
+  it('offers mutual exclusion only between limited benefits and drops it when a benefit becomes included', async () => {
+    const user = userEvent.setup();
+    await selectBenefitShowtime(user);
+
+    await screen.findByDisplayValue('6:1 이벤트 설명');
+    expect(screen.queryByLabelText('함께 배정하지 않을 특전 1')).not.toBeInTheDocument();
+    const sixToOneOptions = within(screen.getByLabelText('함께 배정하지 않을 특전 2'))
+      .getAllByRole('option')
+      .map((option) => option.textContent);
+    expect(sixToOneOptions).toEqual(['사인 폴라로이드']);
+
+    await user.selectOptions(screen.getByLabelText('혜택 종류 3'), 'included');
+    await user.type(screen.getByLabelText('설정 저장 사유'), '폴라로이드 기본 지급 전환');
+    await user.click(screen.getByRole('button', { name: /설정 저장/ }));
+
+    await waitFor(() => expect(mocks.saveMutate).toHaveBeenCalledTimes(1));
+    const saved = mocks.saveMutate.mock.calls[0]![0] as { benefits: Array<{ identity: string; mutuallyExclusiveWith: string[] }> };
+    expect(saved.benefits.find((benefit) => benefit.identity === 'benefit_6_to_1')?.mutuallyExclusiveWith).toEqual([]);
+    expect(saved.benefits.find((benefit) => benefit.identity === 'benefit_polaroid')).toMatchObject({
+      kind: 'included',
+      mutuallyExclusiveWith: [],
     });
   });
 

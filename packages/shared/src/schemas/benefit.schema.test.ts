@@ -3,6 +3,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
   benefitConfigurationExportRowSchema,
   benefitConfigurationSchema,
+  benefitDefinitionWriteListSchema,
   benefitEntitlementSchema,
   benefitEntitlementExportRowSchema,
   benefitRedemptionRequestSchema,
@@ -626,5 +627,42 @@ describe('ticket benefit shared contracts', () => {
       | 'tampered'
       | 'wrong_showtime'
     >();
+  });
+
+  it('rejects mutual exclusion rules on included benefits only when saving or test-running a draft', () => {
+    const included = includedBenefit({ identity: 'vip-photocard', mutuallyExclusiveWith: ['signed-poster'] });
+    const limited = limitedBenefit({ identity: 'signed-poster', mutuallyExclusiveWith: [] });
+
+    const includedRule = benefitDefinitionWriteListSchema.safeParse([included, limited]);
+    expect(includedRule.success).toBe(false);
+    expect(includedRule.error?.issues[0]).toMatchObject({
+      path: [0, 'mutuallyExclusiveWith', 0],
+      message: '기본 포함 특전에는 함께 배정하지 않을 특전을 설정할 수 없습니다',
+    });
+
+    const limitedToIncluded = benefitDefinitionWriteListSchema.safeParse([
+      includedBenefit({ identity: 'vip-photocard' }),
+      limitedBenefit({ identity: 'signed-poster', mutuallyExclusiveWith: ['vip-photocard'] }),
+    ]);
+    expect(limitedToIncluded.success).toBe(false);
+    expect(limitedToIncluded.error?.issues[0]?.path).toEqual([1, 'mutuallyExclusiveWith', 0]);
+
+    expect(benefitDefinitionWriteListSchema.safeParse([
+      includedBenefit({ identity: 'vip-photocard' }),
+      limitedBenefit({ identity: 'signed-poster', mutuallyExclusiveWith: ['six-to-one'] }),
+      limitedBenefit({ identity: 'six-to-one', mutuallyExclusiveWith: [] }),
+    ]).success).toBe(true);
+
+    // Stored configurations stay readable so existing run history does not break.
+    expect(benefitConfigurationSchema.safeParse({
+      id: configurationId,
+      showtimeId,
+      active: true,
+      version: 1,
+      benefits: [included, limited],
+      createdAt: validIso,
+      updatedAt: validIso,
+      activatedAt: validIso,
+    }).success).toBe(true);
   });
 });

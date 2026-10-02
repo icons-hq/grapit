@@ -191,6 +191,12 @@ export function AdminBenefitManager({ className }: { className?: string }) {
       label: formatDateTime(showtime.dateTime),
     })),
   ];
+  const selectedShowtime = selectedPerformance?.showtimes.find(
+    (showtime) => showtime.id === normalizedShowtimeId,
+  );
+  const showtimeLabel = selectedShowtime
+    ? `${selectedPerformance?.title ?? ''} · ${formatDateTime(selectedShowtime.dateTime)}`
+    : normalizedShowtimeId;
   const isShowtimeSelectDisabled =
     !performanceId ||
     isPerformanceDetailLoading ||
@@ -333,6 +339,7 @@ export function AdminBenefitManager({ className }: { className?: string }) {
       <BenefitConfigurationWorkspace
         key={draftSeedKey}
         normalizedShowtimeId={normalizedShowtimeId}
+        showtimeLabel={showtimeLabel}
         configuration={configuration}
         isConfigurationLoading={configurationQuery.isLoading && canUseShowtime}
         canApplyChanges={canApplyChanges}
@@ -541,11 +548,13 @@ export function AdminBenefitManager({ className }: { className?: string }) {
 
 function BenefitConfigurationWorkspace({
   normalizedShowtimeId,
+  showtimeLabel,
   configuration,
   isConfigurationLoading,
   canApplyChanges,
 }: {
   normalizedShowtimeId: string;
+  showtimeLabel: string;
   configuration: BenefitConfiguration | null;
   isConfigurationLoading: boolean;
   canApplyChanges: boolean;
@@ -561,17 +570,36 @@ function BenefitConfigurationWorkspace({
   const [saveReason, setSaveReason] = useState('');
   const [testSeedRef, setTestSeedRef] = useState('');
   const [liveReason, setLiveReason] = useState('');
+  const [isLiveConfirmOpen, setIsLiveConfirmOpen] = useState(false);
 
   const canUseShowtime = normalizedShowtimeId.length > 0;
   const isMutating =
     saveConfiguration.isPending ||
     runTest.isPending ||
     runLive.isPending;
+  // Live runs always use the saved configuration. Block them while the editor
+  // shows values that differ from it so the operator never confirms one thing
+  // and applies another.
+  const hasUnsavedChanges = useMemo(() => {
+    if (!configuration) {
+      return false;
+    }
+    const built = buildBenefitDefinitions(drafts);
+    return !built.ok
+      || canonicalBenefits(built.benefits) !== canonicalBenefits(configuration.benefits);
+  }, [configuration, drafts]);
   const canRunLive =
     canApplyChanges &&
     Boolean(configuration?.id) &&
+    !hasUnsavedChanges &&
     liveReason.trim().length > 0 &&
     !isMutating;
+  const savedLimitedBenefits = (configuration?.benefits ?? []).filter(
+    (benefit): benefit is Extract<BenefitDefinition, { kind: 'limited' }> => benefit.kind === 'limited',
+  );
+  const benefitNameByIdentity = new Map(
+    (configuration?.benefits ?? []).map((benefit) => [benefit.identity, benefit.displayCopy.ko.name]),
+  );
 
   function updateDraft(localId: string, patch: Partial<BenefitDraft>) {
     setDrafts((current) =>
@@ -661,13 +689,25 @@ function BenefitConfigurationWorkspace({
       });
   }
 
-  function handleRunLive() {
+  function handleRequestLiveRun() {
     if (!configuration?.id) {
       toast.error('실제 실행 전 혜택 설정을 저장하세요.');
       return;
     }
+    if (hasUnsavedChanges) {
+      toast.error('저장되지 않은 변경이 있습니다. 먼저 설정을 저장하세요.');
+      return;
+    }
     if (liveReason.trim().length === 0) {
       toast.error('실제 실행 사유를 입력하세요.');
+      return;
+    }
+
+    setIsLiveConfirmOpen(true);
+  }
+
+  function handleRunLive() {
+    if (!configuration?.id || !canRunLive) {
       return;
     }
 
@@ -680,6 +720,7 @@ function BenefitConfigurationWorkspace({
       .then(() => {
         toast.success('실제 혜택을 티켓에 적용했습니다.');
         setLiveReason('');
+        setIsLiveConfirmOpen(false);
       })
       .catch((error: unknown) => {
         toast.error(error instanceof Error ? error.message : '실제 실행에 실패했습니다.');
@@ -818,11 +859,16 @@ function BenefitConfigurationWorkspace({
               placeholder="예: 판매 종료 전 1차 혜택 확정"
             />
           </label>
+          {hasUnsavedChanges && (
+            <p role="status" className="mt-3 rounded-lg bg-[#FFF7ED] p-3 text-sm text-[#9A3412]">
+              저장되지 않은 변경이 있습니다. 먼저 설정을 저장하세요. 실제 적용은 저장된 설정으로만 실행됩니다.
+            </p>
+          )}
           <Button
             type="button"
             className="mt-4 h-12 w-full bg-[#15803D] hover:bg-[#166534]"
             disabled={!canRunLive}
-            onClick={handleRunLive}
+            onClick={handleRequestLiveRun}
           >
             {runLive.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -833,6 +879,77 @@ function BenefitConfigurationWorkspace({
           </Button>
         </div>
       </section>
+
+      <Dialog
+        open={isLiveConfirmOpen}
+        onOpenChange={(open) => {
+          if (!open && !runLive.isPending) {
+            setIsLiveConfirmOpen(false);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>저장된 설정으로 실제 적용</DialogTitle>
+            <DialogDescription>
+              아래 저장본으로 한정 특전을 티켓에 확정 배정합니다. 기존 한정 특전 배정은 이번 결과로 교체됩니다.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <div className="rounded-lg bg-[#F5F5F7] p-3">
+              <p className="font-semibold text-gray-900">{showtimeLabel}</p>
+              <p className="mt-1 text-gray-600">저장된 설정 v{configuration?.version ?? '-'}</p>
+            </div>
+            {savedLimitedBenefits.length > 0 ? (
+              <ul aria-label="적용할 한정 특전" className="space-y-2">
+                {savedLimitedBenefits.map((benefit) => (
+                  <li key={benefit.identity} className="rounded-lg border border-gray-200 p-3">
+                    <p className="font-semibold text-gray-900">{benefit.displayCopy.ko.name}</p>
+                    <p className="mt-1 text-gray-600">
+                      수량 {benefit.quantity} · 대상 {benefit.eligibleTierNames.join(', ')} · 우선순위 {benefit.selectionPriority}
+                    </p>
+                    {benefit.mutuallyExclusiveWith.length > 0 && (
+                      <p className="mt-1 text-gray-600">
+                        함께 배정하지 않음: {benefit.mutuallyExclusiveWith
+                          .map((identity) => benefitNameByIdentity.get(identity) ?? identity)
+                          .join(', ')}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p role="alert" className="rounded-lg bg-[#FFF7ED] p-3 text-[#9A3412]">
+                저장된 한정 특전이 없습니다. 실행하면 기존 한정 특전 배정이 모두 비활성화됩니다.
+              </p>
+            )}
+            <p className="text-gray-600">사유: {liveReason.trim()}</p>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={runLive.isPending}
+              onClick={() => setIsLiveConfirmOpen(false)}
+            >
+              취소
+            </Button>
+            <Button
+              type="button"
+              className="bg-[#15803D] hover:bg-[#166534]"
+              disabled={!canRunLive}
+              onClick={handleRunLive}
+            >
+              {runLive.isPending ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Play className="h-4 w-4" />
+              )}
+              실제 적용 확정
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
@@ -878,6 +995,9 @@ function BenefitDraftEditor({
                   event.target.value === 'limited'
                     ? draft.selectionPriority || '1'
                     : '',
+                // Exclusion applies only between limited benefits.
+                mutuallyExclusiveWith:
+                  event.target.value === 'limited' ? draft.mutuallyExclusiveWith : '',
               })
             }
           >
@@ -914,14 +1034,6 @@ function BenefitDraftEditor({
             onChange={(event) => onChange({ nameKo: event.target.value })}
             placeholder="6:1 이벤트 참여권"
           />
-        </label>
-        <label className="space-y-1.5 text-sm font-semibold text-gray-700">
-          <span>함께 배정하지 않을 특전</span>
-          <select multiple aria-label={`함께 배정하지 않을 특전 ${index + 1}`} className="min-h-20 w-full rounded-lg border bg-white p-2"
-            value={draft.mutuallyExclusiveWith.split(',').map((value) => value.trim()).filter(Boolean)}
-            onChange={(event) => onChange({ mutuallyExclusiveWith: Array.from(event.target.selectedOptions).map((option) => option.value).join(', ') })}>
-            {siblings.filter((item) => item.identity !== draft.identity).map((item) => <option key={item.identity} value={item.identity}>{item.nameKo || '이름을 입력 중인 특전'}</option>)}
-          </select>
         </label>
         <label className="space-y-1.5 text-sm font-semibold text-gray-700 md:col-span-2">
           <span>혜택 설명</span>
@@ -960,6 +1072,15 @@ function BenefitDraftEditor({
                 value={draft.selectionPriority}
                 onChange={(event) => onChange({ selectionPriority: event.target.value })}
               />
+            </label>
+            <label className="space-y-1.5 text-sm font-semibold text-gray-700 md:col-span-2">
+              <span>함께 배정하지 않을 한정 특전</span>
+              <select multiple aria-label={`함께 배정하지 않을 특전 ${index + 1}`} className="min-h-20 w-full rounded-lg border bg-white p-2"
+                value={splitCsv(draft.mutuallyExclusiveWith)}
+                onChange={(event) => onChange({ mutuallyExclusiveWith: Array.from(event.target.selectedOptions).map((option) => option.value).join(', ') })}>
+                {siblings.filter((item) => item.kind === 'limited' && item.identity !== draft.identity).map((item) => <option key={item.identity} value={item.identity}>{item.nameKo || '이름을 입력 중인 특전'}</option>)}
+              </select>
+              <span className="block text-xs font-normal text-gray-500">같은 구매자가 선택한 한정 특전을 함께 받지 않습니다. 기본 포함 특전에는 적용되지 않습니다.</span>
             </label>
           </>
         )}
@@ -1063,6 +1184,9 @@ function buildBenefitDefinitions(
   drafts: BenefitDraft[],
 ): { ok: true; benefits: BenefitDefinition[] } | { ok: false; message: string } {
   const benefits: BenefitDefinition[] = [];
+  const limitedIdentities = new Set(
+    drafts.filter((draft) => draft.kind === 'limited').map((draft) => draft.identity.trim()),
+  );
 
   for (const [index, draft] of drafts.entries()) {
     const identity = draft.identity.trim();
@@ -1071,7 +1195,10 @@ function buildBenefitDefinitions(
     const nameKo = draft.nameKo.trim();
     const descriptionKo = draft.descriptionKo.trim();
     const eligibleTierNames = splitCsv(draft.eligibleTierNames);
-    const mutuallyExclusiveWith = splitCsv(draft.mutuallyExclusiveWith);
+    // Only limited siblings can be selected; drop stale references to included or removed drafts.
+    const mutuallyExclusiveWith = draft.kind === 'limited'
+      ? splitCsv(draft.mutuallyExclusiveWith).filter((reference) => limitedIdentities.has(reference))
+      : [];
 
     if (!identity || !nameKo || !descriptionKo || eligibleTierNames.length === 0) {
       return {
@@ -1116,6 +1243,31 @@ function buildBenefitDefinitions(
   }
 
   return { ok: true, benefits };
+}
+
+/** Order-insensitive form of what a live run would apply, for unsaved-change detection. */
+function canonicalBenefits(benefits: BenefitDefinition[]): string {
+  const limitedIdentities = new Set(
+    benefits.filter((benefit) => benefit.kind === 'limited').map((benefit) => benefit.identity),
+  );
+  return JSON.stringify(
+    [...benefits]
+      .sort((left, right) => left.identity.localeCompare(right.identity))
+      .map((benefit) => ({
+        identity: benefit.identity.trim(),
+        kind: benefit.kind,
+        displayCopy: (['ko', 'en', 'th', 'zh-CN'] as const).map((locale) => [
+          benefit.displayCopy[locale].name.trim(),
+          benefit.displayCopy[locale].description.trim(),
+        ]),
+        eligibleTierNames: benefit.eligibleTierNames.map((tier) => tier.trim()).sort(),
+        quantity: benefit.kind === 'limited' ? benefit.quantity : null,
+        selectionPriority: benefit.kind === 'limited' ? benefit.selectionPriority : null,
+        mutuallyExclusiveWith: benefit.kind === 'limited'
+          ? benefit.mutuallyExclusiveWith.filter((identity) => limitedIdentities.has(identity)).sort()
+          : [],
+      })),
+  );
 }
 
 function splitCsv(value: string): string[] {

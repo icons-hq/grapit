@@ -16,7 +16,7 @@ export async function syncIncludedBenefitEntitlementsForTicketItems(
     return;
   }
 
-  await lockShowtimeForBenefitMutation(db, showtimeId);
+  await lockShowtimeForTicketIssuance(db, showtimeId);
 
   const [configuration] = await db
     .select({ id: ticketBenefitConfigurations.id })
@@ -75,7 +75,17 @@ export async function syncIncludedBenefitEntitlementsForTicketItems(
     .onConflictDoNothing();
 }
 
-async function lockShowtimeForBenefitMutation(
+/**
+ * Ticket issuance only has to serialize with benefit configuration changes,
+ * live runs, rollbacks, field redemption and the repair CLI. Those writers take
+ * FOR NO KEY UPDATE on the showtime row, which conflicts with FOR SHARE, so a
+ * new ticket can never miss a configuration that commits concurrently.
+ * FOR SHARE is compatible with itself and with the ticket_items FK KEY SHARE,
+ * so confirms for different seats of the same showtime run in parallel instead
+ * of queueing behind one row lock. Never upgrade this lock later in the same
+ * transaction: two share holders upgrading would deadlock.
+ */
+async function lockShowtimeForTicketIssuance(
   db: Pick<DrizzleDB, 'execute'>,
   showtimeId: string,
 ): Promise<void> {
@@ -83,7 +93,7 @@ async function lockShowtimeForBenefitMutation(
     SELECT id
     FROM showtimes
     WHERE id = ${showtimeId}
-    FOR NO KEY UPDATE
+    FOR SHARE
   `);
 
   if (Array.isArray(result) && result.length === 0) {

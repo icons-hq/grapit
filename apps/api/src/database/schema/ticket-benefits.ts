@@ -1,5 +1,6 @@
 import { desc, sql } from 'drizzle-orm';
 import {
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -12,6 +13,7 @@ import {
   varchar,
 } from 'drizzle-orm/pg-core';
 
+import { adminAuditLogs } from './admin-audit-logs.js';
 import { showtimes } from './showtimes.js';
 import { ticketItems } from './ticket-items.js';
 import { users } from './users.js';
@@ -138,7 +140,8 @@ export const ticketBenefits = pgTable(
       .notNull(),
     quantity: integer('quantity'),
     selectionPriority: integer('selection_priority'),
-    mutualExclusionGroup: varchar('mutual_exclusion_group', { length: 120 }),
+    // Comma-joined limited benefit identities (each up to 120 chars). text since 0040.
+    mutualExclusionGroup: text('mutual_exclusion_group'),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -223,6 +226,8 @@ export const ticketBenefitEntitlements = pgTable(
     redeemedByUserId: uuid('redeemed_by_user_id').references(() => users.id, {
       onDelete: 'set null',
     }),
+    // Set only by the included-benefit-repair CLI. NULL means regular issuance.
+    repairAuditLogId: uuid('repair_audit_log_id'),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -231,6 +236,11 @@ export const ticketBenefitEntitlements = pgTable(
       .defaultNow(),
   },
   (table) => [
+    foreignKey({
+      name: 'tbe_repair_audit_log_fk',
+      columns: [table.repairAuditLogId],
+      foreignColumns: [adminAuditLogs.id],
+    }).onDelete('restrict'),
     index('idx_ticket_benefit_entitlements_showtime_ticket_item').on(
       table.showtimeId,
       table.ticketItemId,

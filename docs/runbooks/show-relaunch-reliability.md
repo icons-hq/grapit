@@ -9,7 +9,8 @@
 - 보상 취소 `cancel_pending` 동안 DONE 재전송은 재발권하지 않는다. PG CANCELED만 미발권 취소 완료로 수렴한다. 전체 취소는 `CANCEL_STATUS_CHANGED`와 `PAYMENT_STATUS_CHANGED/CANCELED` 양쪽에서 같은 finalizer로 처리한다. 잘못된 금액의 callback도 이미 수락한 결제 상태를 덮어쓰지 않는다.
 - 일반 confirm과 비동기 progress는 동일 주문의 Redis confirmation lease를 공유한다. 잠금 경합·유실은 503 재시도로 처리한다. 타 요청이 처리 중인 정상 결제를 보상 취소하지 않는다. 이전 진행/실패/만료 이벤트는 확정·취소된 상태를 되돌리지 못한다. 이미 발권된 취소는 progress가 부분 갱신하지 않고 취소 finalizer로 수렴하도록 재시도한다.
 - 두 발권 경로는 같은 기본 베네핏 생성 함수와 사용자·공연 단위 매수 제한/advisory lock을 사용한다. 회차가 달라도 공연 매수 제한을 지킨다. 초과 결제 보상 사유는 좌석 충돌과 구분한다.
-- 베네핏 생성의 showtime 잠금은 `FOR NO KEY UPDATE`다. Ticket FK의 KEY SHARE와 호환해 동시 결제의 lock upgrade deadlock을 피하며 설정 변경과는 직렬화한다.
+- 베네핏 생성(두 발권 경로)의 showtime 잠금은 `FOR SHARE`다(2026-10 감사 #56으로 `FOR NO KEY UPDATE`에서 변경). 같은 회차의 결제끼리는 공유해 병렬로 확정되고, Ticket FK의 KEY SHARE와도 호환한다. 설정 저장·live run·rollback·현장 특전 수령·repair apply는 `FOR NO KEY UPDATE`를 잡으므로 발권과는 계속 직렬화된다. 발권 transaction 안에서 이 잠금을 더 강한 모드로 올리지 않는다(공유 보유자끼리 upgrade하면 deadlock).
+- 설정 저장·live run·rollback은 transaction 시작 시 `lock_timeout 3s`, `statement_timeout 30s`를 건다. 결제가 회차를 잡고 있으면 기다리지 않고 409(`잠시 후 다시 시도`)로 실패하며, 기존 권리 동기화는 판매 수와 무관한 3개의 set-based 문장으로 처리한다.
 - 최초 payment deadline은 서버의 공연 정책을 사용하고 prepare 시 선택 좌석의 Redis TTL을 동일 기한으로 맞춘다(기존 TTL이 길면 단축). 공유 선택 목록과 관련 없는 좌석의 TTL은 줄이지 않는다. 결제 앱으로 넘길 때 기존 grace(8분, 생성 후 총 15분 cap)와 서버 응답 deadline을 유지한다. 클라이언트가 보낸 deadline을 기준으로 삼지 않는다. 화면 제목에는 고정 7분을 표시하지 않고 서버 countdown을 기준으로 안내한다. prepare 응답을 결제 위젯 호출 전에 적용하고, 좌석 선택 화면을 포함한 모든 클라이언트 타이머를 서버 기한에 맞춰 단축·연장한다. 준비 응답이 늦게 도착했을 때 화면이 종료됐거나 공연·회차·좌석 선택이 바뀌었으면 새 선택의 타이머를 변경하지 않고 이전 pending 예약만 정리한다(기존 결제 재개는 보존).
 - 만료 worker는 예약 상태/진단만 정리한다. 사용자 전체 잠금을 해제하지 않는다. 과거 예약과 같은 사용자의 새 시도를 구별할 수 없으므로 Redis 자체 TTL이 잠금 만료를 담당한다. 사용자 ‘선택 해제’는 Lua의 원자적 owner 확인을 사용한다.
 - 소셜 로그인 callback의 오류·재시도·로딩·toast는 선택 언어를 사용한다. 기존 번역을 공유하고 계정 충돌 후 기존 계정으로 로그인하는 안내를 보존한다. session refresh는 AuthInitializer 한 곳에서만 수행하며 실패 후 로딩을 종료한다.
@@ -89,19 +90,31 @@ ROLLBACK;
 
 `included-benefit-repair.cli`는 설정 최신 버전의 included 권리만 다룬다. `CONFIRMED` 예약, `DONE` 결제, `active` 티켓에 한정한다. 추첨/수령/취소 이력을 바꾸지 않는다. 이미 active 또는 redeemed인 같은 권리는 제외한다.
 
+**실행 시간대:** 판매 오픈 직후, 결제 피크, 해당 회차 입장·특전 지급 시간대에는 apply하지 않는다. apply는 회차 행을 `FOR NO KEY UPDATE`로 잡아 그 회차의 발권·설정 변경·현장 특전 수령을 commit까지 멈춘다. 한산한 시간 또는 해당 회차 판매가 소강일 때 실행한다. dry-run은 언제든 가능하다.
+
 ```bash
 pnpm --filter @grabit/api build
 # DATABASE_URL은 승인된 대상 환경에서 비밀 주입한다. 명령행에 값을 적지 않는다.
 node apps/api/dist/ops/included-benefit-repair.cli.js dry-run <showtime-uuid>
-node apps/api/dist/ops/included-benefit-repair.cli.js apply <showtime-uuid> <reviewed-hash>
+node apps/api/dist/ops/included-benefit-repair.cli.js apply <showtime-uuid> <reviewed-hash> \
+  --operator-user-id <admin-user-uuid> --reason "<승인 근거 10-500자>"
 node apps/api/dist/ops/included-benefit-repair.cli.js dry-run <showtime-uuid>
 ```
 
 1. dry-run은 READ ONLY/REPEATABLE READ다. 두 mode 모두 회차가 없으면 `BENEFIT_REPAIR_SHOWTIME_NOT_FOUND`로 실패한다. 회차·누락 티켓 수·권리 수·해시만 출력한다.
 2. 회차와 생성 대상 목록의 해시를 검토한다. hash에는 ticket id, benefit identity, configuration id와 표시문구 snapshot이 포함된다.
-3. 명시 승인 후 apply한다. 회차 → 티켓 순서로 잠근 뒤 후보를 다시 계산한다. 해시가 달라졌으면 중단한다.
-4. 검토된 누락 권리만 INSERT한다. 실제 returning 수가 예상과 다르면 transaction을 취소한다.
-5. 다시 dry-run하여 누락 0/0을 확인하고, 티켓·제한 베네핏·수령 기록 수가 보존됐는지 별도 대조한다. 출력 JSON은 운영 증거로 보관한다.
+3. 명시 승인 후 apply한다. `--operator-user-id`는 `benefits.manage` 권한이 있는 활성 관리자여야 한다(아니면 `BENEFIT_REPAIR_OPERATOR_NOT_ALLOWED`). apply는 `lock_timeout 2s`로 회차를 잠근 뒤 후보를 다시 계산한다. 해시가 달라졌거나 후보 티켓이 그 사이 취소되면 `BENEFIT_REPAIR_CANDIDATES_CHANGED`로 중단한다. 결제·현장 처리와 경합하면 `BENEFIT_REPAIR_LOCK_TIMEOUT`으로 실패하므로 한산한 시간에 dry-run부터 다시 한다.
+4. 후보 티켓(예약·결제 포함)만 `FOR SHARE`로 잠근다. 나머지 티켓의 검표·취소는 막지 않는다. 검토된 누락 권리만 1,000행 단위로 INSERT한다. 실제 returning 수가 예상과 다르면 transaction을 취소한다.
+5. 같은 transaction에서 `admin_audit_logs`에 `benefits.included_repair.apply`(실행자, 사유, 검토 해시, 설정 id, 대상 수) 1행을 남기고, 생성한 권리의 `repair_audit_log_id`에 그 audit id를 기록한다. 출력 JSON의 `auditLogId`로 대조한다. 정상 자동 발급 권리는 이 값이 NULL이다.
+6. 다시 dry-run하여 누락 0/0을 확인하고, 티켓·제한 베네핏·수령 기록 수가 보존됐는지 별도 대조한다. 출력 JSON은 운영 증거로 보관한다.
+
+```sql
+-- repair로 생긴 권리와 실행 근거
+SELECT e.id, e.ticket_item_id, e.benefit_identity, a.actor_user_id, a.reason, a.created_at
+FROM ticket_benefit_entitlements e
+JOIN admin_audit_logs a ON a.id = e.repair_audit_log_id
+WHERE e.showtime_id = '<showtime-uuid>';
+```
 
 2026-09-18 09:39 KST 읽기 전용 재조회: Girl Rules 회차 `3d66b3d3-61f3-427c-9fda-1a5eece511c5`는 3티켓·13권리 누락, 전체 공연 활성 좌석 중복 0, 기본 권리 중복 0, 재고 소유권 불일치 0이었다. 이 수치는 실행 시 다시 확인하며 이 문서 자체가 apply 승인은 아니다.
 
