@@ -48,12 +48,13 @@ const QUEUE_POSITION_BROADCAST_LIMIT = 500;
 const QUEUE_REMAINING_SEATS_CACHE_SECONDS = 2;
 const QUEUE_SESSION_SETUP_MAX_ATTEMPTS = 3;
 // Wait estimate (audit #91). Admission runs in cycles: reconcile keeps at most
-// min(remainingSeats, QUEUE_MAX_ACTIVE_ADMISSIONS) sessions active, and a slot is
-// returned only when that session's authority window ends (expireStaleSessions).
-// Each slot is therefore held at least for the active window and at most for the
-// active window plus the payment-recovery grace (resolveAuthorityExpiry).
-// If slots are ever returned earlier (e.g. on purchase), lower the minimum hold.
-export const QUEUE_SLOT_MIN_HOLD_SECONDS = QUEUE_ACTIVE_WINDOW_SECONDS;
+// min(remainingSeats, QUEUE_MAX_ACTIVE_ADMISSIONS) sessions active. A slot is
+// returned when that session's authority window ends (expireStaleSessions), at
+// most the active window plus the payment-recovery grace (resolveAuthorityExpiry).
+// A successful payment confirm returns the slot right away
+// (releaseAdmissionAfterPurchase), so a slot has no guaranteed minimum hold and
+// the estimate never promises a minimum wait.
+export const QUEUE_SLOT_MIN_HOLD_SECONDS = 0;
 export const QUEUE_SLOT_MAX_HOLD_SECONDS =
   QUEUE_ACTIVE_WINDOW_SECONDS + QUEUE_REENTRY_GRACE_SECONDS;
 // An ended slot is only noticed by the next reconcile, which runs on queue

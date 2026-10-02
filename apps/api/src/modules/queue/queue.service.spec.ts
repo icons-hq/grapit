@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { HttpException } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  QUEUE_ACTIVE_WINDOW_SECONDS,
   QUEUE_ETA_CYCLE_MAX_SECONDS,
   QUEUE_ETA_MAX_SECONDS,
   QUEUE_SLOT_MIN_HOLD_SECONDS,
@@ -285,7 +286,17 @@ function createQueueDb(state: QueueDbState) {
           if (table === seatMaps) return [{ totalSeats: state.totalSeats }];
           if (table === seatInventories) return [{ total: state.soldCount }];
           if (table === reservations) return state.orderBinding ? [state.orderBinding] : [];
-          if (table === performances) return [{ status: 'selling', bookingStartsAt: null }];
+          if (table === performances) {
+            // Queue entry gate row: a published, selling performance with a
+            // showtime that has not started yet.
+            return [{
+              status: 'selling',
+              publishState: 'published',
+              bookingStartsAt: null,
+              showtimeCount: state.showtimeIds.length,
+              sellableShowtimeCount: state.showtimeIds.length,
+            }];
+          }
           if (table === showtimes) {
             return 'performanceId' in selection
               ? [{ performanceId: state.performanceId }]
@@ -330,99 +341,6 @@ type QueueSimulationAccess = {
     record: unknown,
   ) => Promise<Awaited<ReturnType<QueueService['getQueueSessionStatus']>>>;
 };
-
-/**
- * Functional in-memory Redis for the commands QueueService uses. Unlike the
- * call-recording mock it keeps real string/set/sorted-set state (sorted by
- * score, then member, like Redis) so reconcile, ranks and slot accounting
- * behave as they do against Valkey. Key TTLs are not simulated; queue timing
- * is driven by the timestamps stored in session records.
- */
-function createFunctionalRedis() {
-  const strings = new Map<string, string>();
-  const sets = new Map<string, Set<string>>();
-  const zsets = new Map<string, Map<string, number>>();
-  const ordered = (key: string): string[] =>
-    [...(zsets.get(key) ?? new Map<string, number>()).entries()]
-      .sort(([memberA, scoreA], [memberB, scoreB]) =>
-        scoreA !== scoreB ? scoreA - scoreB : memberA < memberB ? -1 : memberA > memberB ? 1 : 0,
-      )
-      .map(([member]) => member);
-
-  return {
-    async get(key: string) {
-      return strings.get(key) ?? null;
-    },
-    async set(key: string, value: string, ...options: Array<string | number>) {
-      if (options.includes('NX') && strings.has(key)) return null;
-      strings.set(key, String(value));
-      return 'OK';
-    },
-    async del(...keys: string[]) {
-      let removed = 0;
-      for (const key of keys) {
-        if (strings.delete(key) || sets.delete(key) || zsets.delete(key)) removed += 1;
-      }
-      return removed;
-    },
-    async zadd(key: string, score: number, member: string) {
-      const zset = zsets.get(key) ?? new Map<string, number>();
-      const added = zset.has(member) ? 0 : 1;
-      zset.set(member, Number(score));
-      zsets.set(key, zset);
-      return added;
-    },
-    async zrank(key: string, member: string) {
-      const index = ordered(key).indexOf(member);
-      return index < 0 ? null : index;
-    },
-    async zcard(key: string) {
-      return zsets.get(key)?.size ?? 0;
-    },
-    async zrange(key: string, start: number, stop: number) {
-      const members = ordered(key);
-      return members.slice(start, stop < 0 ? members.length + stop + 1 : stop + 1);
-    },
-    async zrem(key: string, ...members: string[]) {
-      const zset = zsets.get(key);
-      let removed = 0;
-      for (const member of members) if (zset?.delete(member)) removed += 1;
-      return removed;
-    },
-    async sadd(key: string, ...members: string[]) {
-      const set = sets.get(key) ?? new Set<string>();
-      let added = 0;
-      for (const member of members) {
-        if (!set.has(member)) {
-          set.add(member);
-          added += 1;
-        }
-      }
-      sets.set(key, set);
-      return added;
-    },
-    async srem(key: string, ...members: string[]) {
-      const set = sets.get(key);
-      let removed = 0;
-      for (const member of members) if (set?.delete(member)) removed += 1;
-      return removed;
-    },
-    async smembers(key: string) {
-      return [...(sets.get(key) ?? [])];
-    },
-    async scard(key: string) {
-      return sets.get(key)?.size ?? 0;
-    },
-    async eval(_script: string, _numKeys: number, key: string, token: string) {
-      // RELEASE_QUEUE_RECONCILE_LOCK_LUA: delete only when the token matches.
-      if (strings.get(key) === token) {
-        strings.delete(key);
-        return 1;
-      }
-      return 0;
-    },
-  };
-}
 
 describe('QueueService', () => {
   const performanceId = '550e8400-e29b-41d4-a716-446655440000';
@@ -708,9 +626,11 @@ describe('QueueService', () => {
      * Regression for the review of the measured-throughput ETA: admission moves
      * in waves (an opening burst, then a cycle every 10-13 minutes), so an ETA
      * sampled during the opening reconcile or just before a wave must not
-     * under-report the wait. This drives the real reconcile/expiry code with a
-     * functional Redis fake and checks every waiting snapshot against the time
-     * the session was actually admitted.
+     * under-report the wait. This drives the real reconcile/expiry code with the
+     * TTL-faithful Redis fake and checks every waiting snapshot against the time
+     * the session was actually admitted. Some buyers confirm payment early and
+     * return their slot right away (#4), so admission can also come sooner than
+     * a full admission window.
      */
     it('contains the actual admission time in every waiting snapshot through opening burst and waves', async () => {
       vi.useFakeTimers();
@@ -719,7 +639,7 @@ describe('QueueService', () => {
         vi.setSystemTime(openAt);
         const seats = 3;
         const stepMs = 5_000;
-        const fakeRedis = createFunctionalRedis();
+        const fakeRedis = new FakeRedis();
         await fakeRedis.set(`{queue:${performanceId}}:remaining-seats`, String(seats));
         const simulated = new QueueService(
           fakeRedis as never,
@@ -734,6 +654,7 @@ describe('QueueService', () => {
           lease: Awaited<ReturnType<QueueService['ensureQueueSession']>>;
           samples: Array<{ at: number; min: number; max: number; unavailable: boolean }>;
           admittedAt: number | null;
+          releaseAt: number | null;
         };
         const tracked: Tracked[] = [];
         const enter = async (name: string) => {
@@ -745,7 +666,7 @@ describe('QueueService', () => {
               deviceSlotId: `${name}-family`,
             },
           });
-          const entry: Tracked = { name, lease, samples: [], admittedAt: null };
+          const entry: Tracked = { name, lease, samples: [], admittedAt: null, releaseAt: null };
           tracked.push(entry);
           return entry;
         };
@@ -768,9 +689,14 @@ describe('QueueService', () => {
           sample(entry, snapshot);
           if (snapshot.state !== 'WAITING' && entry.admittedAt === null) {
             entry.admittedAt = Date.now();
-            // Every other buyer reaches checkout and keeps the slot through the
-            // payment-recovery grace (13 minutes); the rest hold it 10 minutes.
-            if (tracked.indexOf(entry) % 2 === 0) {
+            const index = tracked.indexOf(entry);
+            // Every third buyer confirms payment two minutes after admission and
+            // returns the slot at once; of the rest, every other buyer keeps the
+            // slot through the payment-recovery grace (13 minutes) and the others
+            // hold it for the 10-minute active window.
+            if (index % 3 === 1) {
+              entry.releaseAt = entry.admittedAt + 2 * 60_000;
+            } else if (index % 2 === 0) {
               const stored = await internals.readQueueSessionRecord(
                 performanceId,
                 entry.lease.queueSessionId,
@@ -803,17 +729,29 @@ describe('QueueService', () => {
             await enter('late-joiner');
           }
           for (const entry of tracked) {
+            if (entry.releaseAt !== null && Date.now() >= entry.releaseAt) {
+              entry.releaseAt = null;
+              await simulated.releaseAdmissionAfterPurchase(entry.lease.queueSessionId);
+            }
+          }
+          for (const entry of tracked) {
             if (entry.admittedAt === null) await poll(entry);
           }
           vi.setSystemTime(Date.now() + stepMs);
         }
 
         expect(tracked.every((entry) => entry.admittedAt !== null)).toBe(true);
-        // Waves actually happened: the last buyer waited more than two cycles.
+        // Waves actually happened: the last buyer waited more than two active
+        // windows even though some slots came back early.
         const longestWait = Math.max(
           ...tracked.map((entry) => (entry.admittedAt ?? 0) - openAt),
         );
-        expect(longestWait).toBeGreaterThan(2 * QUEUE_SLOT_MIN_HOLD_SECONDS * 1000);
+        expect(longestWait).toBeGreaterThan(2 * QUEUE_ACTIVE_WINDOW_SECONDS * 1000);
+        // An early slot return admitted someone before the first active window ended.
+        const earliestLaterAdmission = Math.min(
+          ...tracked.slice(seats).map((entry) => (entry.admittedAt ?? Infinity) - openAt),
+        );
+        expect(earliestLaterAdmission).toBeLessThan(QUEUE_ACTIVE_WINDOW_SECONDS * 1000);
 
         let checked = 0;
         for (const entry of tracked) {
@@ -837,7 +775,7 @@ describe('QueueService', () => {
         const lateFirst = late?.samples[0];
         expect(lateFirst).toBeDefined();
         const lateWaitMs = (late?.admittedAt ?? 0) - (lateFirst?.at ?? 0);
-        expect(lateWaitMs).toBeGreaterThan(QUEUE_SLOT_MIN_HOLD_SECONDS * 1000);
+        expect(lateWaitMs).toBeGreaterThan(QUEUE_ACTIVE_WINDOW_SECONDS * 1000);
         expect(lateWaitMs).toBeLessThanOrEqual(lateFirst?.max ?? 0);
       } finally {
         vi.useRealTimers();

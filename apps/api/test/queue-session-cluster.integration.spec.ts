@@ -63,7 +63,17 @@ function createQueueDb(state: DbState) {
           if (table === seatMaps) return [{ totalSeats: state.totalSeats }];
           if (table === seatInventories) return [{ total: state.soldCount }];
           if (table === reservations) return [];
-          if (table === performances) return [{ status: 'selling', bookingStartsAt: null }];
+          if (table === performances) {
+            // Queue entry gate row: a published, selling performance with a
+            // showtime that has not started yet.
+            return [{
+              status: 'selling',
+              publishState: 'published',
+              bookingStartsAt: null,
+              showtimeCount: state.showtimeIds.length,
+              sellableShowtimeCount: state.showtimeIds.length,
+            }];
+          }
           if (table === showtimes) {
             return 'performanceId' in selection
               ? [{ performanceId: state.performanceId }]

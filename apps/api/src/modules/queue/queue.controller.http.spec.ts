@@ -79,9 +79,12 @@ describe('Queue entry HTTP contract', () => {
       statusCode: 403,
       message: '예매는 추후 오픈 예정입니다',
       errorCode: 'BOOKING_NOT_OPEN',
+      // The global filter keeps extra exception fields (audit #157), so the
+      // web reads the open time and server clock straight from the 403 body.
+      bookingStartsAt: '2026-06-04T10:00:00.000Z',
+      serverNow: '2026-06-04T09:59:00.000Z',
     });
-    // The web falls back to this server timestamp to correct its clock even
-    // when extra exception fields are stripped by the global filter.
+    // The web still falls back to this server timestamp to correct its clock.
     expect(Date.parse(response.body.timestamp)).not.toBeNaN();
   });
 

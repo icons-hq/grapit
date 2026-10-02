@@ -57,7 +57,7 @@ Booking is gated by runtime feature flags and queue admission.
 - When booking is disabled, non-admin buyers cannot create seat locks, prepare reservations, or confirm payment.
 - Queue entry is event/performance scoped and returns admission state used by booking mutation guards.
 - Queue entry is refused for unknown, unpublished, or ended performances and when every showtime has already started. Before the booking start, the booking route shows a countdown and joins the queue automatically at the open time; when the open time is not announced it re-checks about every 15 seconds.
-- The waiting screen shows the position and an estimated wait range computed from the admission cycles (remaining seats and the admission window); it does not show a per-position fixed estimate and shows "not available" instead of a misleading number when no estimate is possible.
+- The waiting screen shows the position and an estimated maximum wait ("within N minutes") computed from the admission cycles (remaining seats and the longest admission window); because a confirmed purchase returns its slot early, it promises no minimum wait. It does not show a per-position fixed estimate and shows "not available" instead of a misleading number when no estimate is possible.
 - Queue admission is carried through the booking flow and checked again during reservation prepare and payment confirm.
 - Booking policy is event-specific and includes maximum tickets, payment window, seat hold window, cancellation/change behavior, and manual open rules.
 
