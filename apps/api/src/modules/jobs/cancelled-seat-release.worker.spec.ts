@@ -159,6 +159,51 @@ describe('CancelledSeatReleaseWorker', () => {
     );
   });
 
+  it('sends every released seat update at once so an outage costs one publish timeout (u07 review)', async () => {
+    const db = {
+      select: vi.fn(() => ({
+        from: vi.fn(() => ({
+          where: vi.fn().mockResolvedValue([
+            { dateTime: new Date('2026-05-15T10:00:00.000Z') },
+          ]),
+        })),
+      })),
+      update: vi.fn(() => ({
+        set: vi.fn(() => ({
+          where: vi.fn(() => ({
+            returning: vi.fn().mockResolvedValue([{ id: 'seat-inventory-1' }]),
+          })),
+        })),
+      })),
+    };
+    const pending: Array<(sent: boolean) => void> = [];
+    const bookingGateway = {
+      publishSeatUpdate: vi.fn(() => new Promise<boolean>((resolve) => { pending.push(resolve); })),
+    };
+    const worker = new CancelledSeatReleaseWorker(
+      withTransaction(db) as never,
+      { isAvailable: true, work: vi.fn(), send: vi.fn(), stop: vi.fn() } as never,
+      bookingGateway as never,
+    );
+
+    const run = worker.handleJob({
+      reservationId: 'reservation-1',
+      showtimeId: 'showtime-1',
+      releaseAt: '2026-05-15T09:00:00.000Z',
+      seatIdentities: [
+        { floorKey: '1F', seatId: 'A-10', seatKey: '1F:A-10' },
+        { floorKey: '1F', seatId: 'A-11', seatKey: '1F:A-11' },
+        { floorKey: '1F', seatId: 'A-12', seatKey: '1F:A-12' },
+      ],
+    }, 'release-job-1');
+    await vi.waitFor(() => expect(bookingGateway.publishSeatUpdate).toHaveBeenCalledTimes(3));
+
+    // All three are in flight before the first publish settles.
+    expect(pending).toHaveLength(3);
+    for (const resolve of pending) resolve(false);
+    await expect(run).resolves.toEqual({ status: 'released' });
+  });
+
   it('publishes released seats through Valkey when the worker has no Socket.IO server', async () => {
     const db = {
       select: vi.fn(() => ({

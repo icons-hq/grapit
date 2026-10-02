@@ -97,14 +97,14 @@ export class CancelledSeatReleaseWorker implements OnModuleInit {
     // then publishes through Valkey so open seat maps still see the release
     // (audit #151). Awaited so the publish is flushed before the worker closes
     // Redis. A failed publish is logged by the gateway and does not undo the
-    // committed release.
-    for (const seatIdentity of releasedSeats) {
-      await this.bookingGateway?.publishSeatUpdate(
+    // committed release. Sent together, so a Valkey outage delays the job by
+    // one publish timeout instead of one per seat (u07 review).
+    await Promise.allSettled(releasedSeats.map((seatIdentity) =>
+      this.bookingGateway?.publishSeatUpdate(
         payload.showtimeId,
         seatIdentity.seatKey,
         'available',
-      );
-    }
+      )));
 
     return { status: 'released' };
   }
