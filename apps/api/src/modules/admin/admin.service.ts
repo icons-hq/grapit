@@ -123,7 +123,7 @@ type SeatMapSaveResult = Pick<
 type BannerMutationContext = AdminEventMutationContext;
 
 type PerformanceDeleteBlockerCounts = {
-  performance_count: unknown;
+  showtimes_count: unknown;
   reservations_count: unknown;
   ticket_scan_events_count: unknown;
   seat_operation_history_count: unknown;
@@ -179,7 +179,12 @@ export interface PublishPerformanceInput {
   confirmed: true;
   confirmedChangedFields: string[];
   contentChecklist: EventPublishContentChecklist;
+  /** Required when publishing would open buyer sales at once (open sale status without a future start). */
+  immediateSaleConfirmed?: boolean;
 }
+
+export const IMMEDIATE_SALE_CONFIRMATION_MESSAGE =
+  '공개하는 즉시 판매가 열립니다. 즉시 판매 시작을 확인한 뒤 다시 공개해주세요.';
 
 type SeatMapValidationIssue = {
   path: string;
@@ -868,12 +873,12 @@ export class AdminService {
       const priceTierSnapshots =
         this.performanceIntakeService.priceTierSnapshotsFromInput(input.priceTiers);
 
-      // Insert price tiers
-      if (input.priceTiers.length > 0) {
+      // Insert price tiers with the same trimmed names used for seat assignment.
+      if (priceTierSnapshots.length > 0) {
         await tx
           .insert(priceTiers)
           .values(
-            input.priceTiers.map((pt) => ({
+            priceTierSnapshots.map((pt) => ({
               performanceId,
               tierName: pt.tierName,
               price: pt.price,
@@ -1072,11 +1077,11 @@ export class AdminService {
             this.performanceIntakeService.assertSeatMapConfigsValid(existingMaps as PerformanceSeatMapInput[], validTierNames);
           }
           await tx.delete(priceTiers).where(eq(priceTiers.performanceId, id));
-          if (input.priceTiers.length > 0) {
+          if (priceTierSnapshots.length > 0) {
           await tx
             .insert(priceTiers)
             .values(
-              input.priceTiers.map((pt) => ({
+              priceTierSnapshots.map((pt) => ({
                 performanceId: id,
                 tierName: pt.tierName,
                 price: pt.price,
@@ -1084,9 +1089,12 @@ export class AdminService {
               })),
             );
           }
+          // Checkout charges the overlay price, so it must follow the price tier even
+          // for overlay rows persisted before names were trimmed.
           for (const tier of priceTierSnapshots) {
             await tx.update(performanceSeatTiers).set({ price: tier.price, sortOrder: tier.sortOrder })
-              .where(and(eq(performanceSeatTiers.performanceId, id), eq(performanceSeatTiers.tierName, tier.tierName)));
+              .where(and(eq(performanceSeatTiers.performanceId, id),
+                eq(sql`btrim(${performanceSeatTiers.tierName})`, tier.tierName)));
           }
         }
       }
@@ -1256,6 +1264,31 @@ export class AdminService {
         return { preparationFailure: missingRequiredContent };
       }
 
+      // Publication and sale opening are separate decisions; publishing an already
+      // open sale must be acknowledged explicitly rather than inferred from the form.
+      const opensSaleNow = previous.publishState !== 'published' && preparation.saleOpening.mode === 'immediate';
+      if (opensSaleNow && input.immediateSaleConfirmed !== true) {
+        await this.adminAuditService.write(
+          {
+            actorUserId: context.actorUserId,
+            action: 'event.publish',
+            resourceType: 'performance',
+            resourceId: id,
+            status: 'failed',
+            reason: input.reason,
+            changedFields: [...changedFields, 'saleOpening'],
+            before: {},
+            after: { saleOpening: { ...preparation.saleOpening, confirmed: false } },
+            ipAddress: context.ipAddress ?? null,
+            userAgent: context.userAgent ?? null,
+            requestId: context.requestId ?? null,
+          },
+          tx as unknown as DrizzleDB,
+        );
+
+        return { immediateSaleUnconfirmed: true as const };
+      }
+
       const publishedAt = new Date();
       const [perf] = await tx
         .update(performances)
@@ -1318,12 +1351,14 @@ export class AdminService {
           resourceId: id,
           status: 'success',
           reason: input.reason,
-          changedFields,
+          // Record how sales open as a result of this approval (kept only when listed).
+          changedFields: [...changedFields, 'saleOpening'],
           before: { publishState: previous.publishState, publishedAt: previous.publishedAt?.toISOString() ?? null },
           after: {
             publishState: 'published',
             publishedAt: response.publishedAt,
             publishedByUserId: context.actorUserId,
+            saleOpening: { ...preparation.saleOpening, confirmed: opensSaleNow ? true : null },
           },
           ipAddress: context.ipAddress ?? null,
           userAgent: context.userAgent ?? null,
@@ -1335,76 +1370,123 @@ export class AdminService {
       return response;
     });
 
-    if ('preparationFailure' in result) {
+    if ('preparationFailure' in result && result.preparationFailure) {
       throw new BadRequestException(`공개 준비를 완료해주세요: ${result.preparationFailure.join(', ')}`);
+    }
+    if ('immediateSaleUnconfirmed' in result && result.immediateSaleUnconfirmed) {
+      throw new BadRequestException(IMMEDIATE_SALE_CONFIRMATION_MESSAGE);
     }
     await this.invalidateCatalogCache(id);
     return result;
   }
 
-  async deletePerformance(id: string): Promise<void> {
-    const blockerResult = await this.db.execute(sql`
-      WITH target_performance AS (
-        SELECT id
-        FROM performances
-        WHERE id = ${id}
-      ),
-      target_showtimes AS (
-        SELECT id
-        FROM showtimes
-        WHERE performance_id = ${id}
-      )
-      SELECT
-        (SELECT count(*)::int FROM target_performance) AS performance_count,
-        (
-          SELECT count(*)::int
-          FROM reservations
-          WHERE showtime_id IN (SELECT id FROM target_showtimes)
-        ) AS reservations_count,
-        (
-          SELECT count(*)::int
-          FROM ticket_scan_events
-          WHERE showtime_id IN (SELECT id FROM target_showtimes)
-        ) AS ticket_scan_events_count,
-        (
-          SELECT count(*)::int
-          FROM seat_operation_history
-          WHERE showtime_id IN (SELECT id FROM target_showtimes)
-        ) AS seat_operation_history_count
-    `);
-    const counts = blockerResult.rows[0] as
-      | PerformanceDeleteBlockerCounts
-      | undefined;
-
-    if (!counts || countValue(counts.performance_count) === 0) {
-      throw new NotFoundException('공연을 찾을 수 없습니다');
-    }
-
-    const blockers: string[] = [];
-    const reservationsCount = countValue(counts.reservations_count);
-    const ticketScanEventsCount = countValue(counts.ticket_scan_events_count);
-    const seatOperationHistoryCount = countValue(counts.seat_operation_history_count);
-
-    if (reservationsCount > 0) blockers.push(`예매 ${reservationsCount}건`);
-    if (ticketScanEventsCount > 0) {
-      blockers.push(`입장 스캔 이력 ${ticketScanEventsCount}건`);
-    }
-    if (seatOperationHistoryCount > 0) {
-      blockers.push(`좌석 운영 이력 ${seatOperationHistoryCount}건`);
-    }
-
-    if (blockers.length > 0) {
-      throw new ConflictException({
-        message: `연결된 운영 이력이 있어 공연을 삭제할 수 없습니다: ${blockers.join(', ')}`,
-        blockers,
-      });
-    }
-
+  async deletePerformance(id: string, context?: AdminEventMutationContext): Promise<void> {
     await this.db.transaction(async (tx) => {
+      // Lock first so a concurrent publish cannot slip between the checks and the
+      // cascading delete of showtimes, seat inventory, prices and benefit settings.
+      const [target] = await tx
+        .select({
+          id: performances.id,
+          title: performances.title,
+          status: performances.status,
+          publishState: performances.publishState,
+          publishedAt: performances.publishedAt,
+        })
+        .from(performances)
+        .where(eq(performances.id, id))
+        .for('update');
+
+      if (!target) {
+        throw new NotFoundException('공연을 찾을 수 없습니다');
+      }
+
+      if (target.publishState === 'published') {
+        throw new ConflictException({
+          message: '공개된 공연은 삭제할 수 없습니다. 판매종료 처리로 공개 목록과 예매 진입에서 숨겨주세요.',
+          blockers: ['공개된 공연'],
+        });
+      }
+
+      const blockerResult = await tx.execute(sql`
+        WITH target_showtimes AS (
+          SELECT id
+          FROM showtimes
+          WHERE performance_id = ${id}
+        )
+        SELECT
+          (SELECT count(*)::int FROM target_showtimes) AS showtimes_count,
+          (
+            SELECT count(*)::int
+            FROM reservations
+            WHERE showtime_id IN (SELECT id FROM target_showtimes)
+          ) AS reservations_count,
+          (
+            SELECT count(*)::int
+            FROM ticket_scan_events
+            WHERE showtime_id IN (SELECT id FROM target_showtimes)
+          ) AS ticket_scan_events_count,
+          (
+            SELECT count(*)::int
+            FROM seat_operation_history
+            WHERE showtime_id IN (SELECT id FROM target_showtimes)
+          ) AS seat_operation_history_count
+      `);
+      const counts = blockerResult.rows[0] as
+        | PerformanceDeleteBlockerCounts
+        | undefined;
+
+      const blockers: string[] = [];
+      const reservationsCount = countValue(counts?.reservations_count);
+      const ticketScanEventsCount = countValue(counts?.ticket_scan_events_count);
+      const seatOperationHistoryCount = countValue(counts?.seat_operation_history_count);
+
+      if (reservationsCount > 0) blockers.push(`예매 ${reservationsCount}건`);
+      if (ticketScanEventsCount > 0) {
+        blockers.push(`입장 스캔 이력 ${ticketScanEventsCount}건`);
+      }
+      if (seatOperationHistoryCount > 0) {
+        blockers.push(`좌석 운영 이력 ${seatOperationHistoryCount}건`);
+      }
+
+      if (blockers.length > 0) {
+        throw new ConflictException({
+          message: `연결된 운영 이력이 있어 공연을 삭제할 수 없습니다: ${blockers.join(', ')}`,
+          blockers,
+        });
+      }
+
       // Drafts belong to the intentionally deleted, unused performance. Keep
       // their cleanup atomic so another FK rejection cannot erase saved work.
       await tx.delete(performanceDrafts).where(eq(performanceDrafts.performanceId, id));
       await tx.delete(performances).where(eq(performances.id, id));
+      if (context) {
+        await this.adminAuditService.write(
+          {
+            actorUserId: context.actorUserId,
+            action: 'event.delete',
+            resourceType: 'performance',
+            resourceId: id,
+            status: 'success',
+            reason: context.reason ?? '공연 삭제',
+            // Audit snapshots keep only keys listed in changedFields.
+            changedFields: ['performance'],
+            before: {
+              performance: {
+                title: target.title,
+                status: target.status,
+                publishState: target.publishState,
+                publishedAt: target.publishedAt?.toISOString() ?? null,
+                showtimeCount: countValue(counts?.showtimes_count),
+              },
+            },
+            after: { performance: null },
+            ipAddress: context.ipAddress ?? null,
+            userAgent: context.userAgent ?? null,
+            requestId: context.requestId ?? null,
+          },
+          tx as unknown as DrizzleDB,
+        );
+      }
     });
     await this.invalidateCatalogCache(id);
   }
@@ -1531,6 +1613,7 @@ export class AdminService {
           genre: performances.genre,
           posterUrl: performances.posterUrl,
           status: performances.status,
+          publishState: performances.publishState,
           startDate: performances.startDate,
           endDate: performances.endDate,
           venueName: venues.name,
@@ -1556,6 +1639,7 @@ export class AdminService {
         genre: row.genre,
         posterUrl: row.posterUrl,
         status: row.status,
+        publishState: row.publishState,
         startDate: row.startDate?.toISOString() ?? '',
         endDate: row.endDate?.toISOString() ?? '',
         venueName: row.venueName ?? null,

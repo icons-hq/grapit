@@ -1,11 +1,50 @@
 'use client';
 
+import { useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import type { SeatMapConfig } from '@grabit/shared';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { VisualSeatTierEditor } from '@/components/admin/visual-seat-tier-editor';
+
+function parseSeatIds(text: string): string[] {
+  return text.split(',').map((seatId) => seatId.trim()).filter(Boolean);
+}
+
+/**
+ * Keeps the operator's raw text while typing. Re-deriving the text from the
+ * parsed list on every keystroke dropped a trailing ", " immediately, so a second
+ * seat could only be pasted, never typed.
+ */
+function SeatIdsTextarea({
+  seatIds,
+  onChange,
+  'aria-label': ariaLabel,
+}: {
+  seatIds: string[];
+  onChange: (seatIds: string[]) => void;
+  'aria-label': string;
+}) {
+  // null while not editing: show the list as other editors (the visual map) change it.
+  const [draft, setDraft] = useState<string | null>(null);
+
+  return (
+    <Textarea
+      value={draft ?? seatIds.join(', ')}
+      onFocus={() => setDraft(seatIds.join(', '))}
+      onChange={(event) => {
+        setDraft(event.target.value);
+        onChange(parseSeatIds(event.target.value));
+      }}
+      onBlur={() => setDraft(null)}
+      aria-label={ariaLabel}
+      placeholder="좌석 ID (콤마로 구분, e.g. A1, A2, A3)"
+      rows={2}
+      className="mt-2 text-sm"
+    />
+  );
+}
 
 interface TierEditorProps {
   tiers: SeatMapConfig['tiers'];
@@ -115,21 +154,10 @@ export function TierEditor({
                   <summary className="cursor-pointer text-xs font-medium text-gray-600">
                     좌석 ID 직접 입력
                   </summary>
-                  <Textarea
-                    value={tier.seatIds.join(', ')}
-                    onChange={(e) =>
-                      updateTier(
-                        index,
-                        'seatIds',
-                        e.target.value
-                          .split(',')
-                          .map((s) => s.trim())
-                          .filter(Boolean),
-                      )
-                    }
-                    placeholder="좌석 ID (콤마로 구분, e.g. A1, A2, A3)"
-                    rows={2}
-                    className="mt-2 text-sm"
+                  <SeatIdsTextarea
+                    seatIds={tier.seatIds}
+                    onChange={(seatIds) => updateTier(index, 'seatIds', seatIds)}
+                    aria-label={`${tier.tierName || `등급 ${index + 1}`} 좌석 ID`}
                   />
                 </details>
               </div>

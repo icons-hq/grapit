@@ -349,7 +349,7 @@ A platform-wide launch control that keeps buyer booking closed across performanc
 _Avoid_: Performance Sale Status, Performance Publication, public catalog visibility.
 
 **Performance Publication**:
-The operator decision that makes a Performance visible on public buyer surfaces. It does not by itself make seats bookable.
+The operator decision that makes a Performance visible on public buyer surfaces. It does not by itself make seats bookable. When the Performance Sale Status is already open, publication opens sales at once, so the approver must confirm that explicitly; a published Performance is archived by ending its sale status, never deleted.
 _Avoid_: Performance Sale Status, Sitewide Booking Gate, ticketing open.
 
 **Performance Sale Status**:

@@ -89,6 +89,8 @@ export interface PublishPerformanceInput {
     ko: { title: boolean; description: boolean };
     en: { title: boolean; description: boolean };
   };
+  /** Required by the API when publishing opens buyer sales at once. */
+  immediateSaleConfirmed?: boolean;
 }
 
 function toApiDateTime(value?: string): string | undefined {

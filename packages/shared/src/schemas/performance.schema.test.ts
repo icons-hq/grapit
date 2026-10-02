@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   createPerformanceSchema,
+  performanceBookingPolicySchema,
   performanceQuerySchema,
   searchQuerySchema,
+  seatMapConfigSchema,
   updatePerformanceSchema,
 } from './performance.schema';
+import { resolvePerformanceSaleOpening } from './performance-preparation.schema';
 
 describe('performance query schema', () => {
   it('parses ended query strings without JavaScript truthiness coercion', () => {
@@ -220,5 +223,91 @@ describe('performance floor and booking policy schema', () => {
     expect(parsed.detailImages?.[0]?.imageUrl).toBe(
       'https://cdn.example.com/detail/location.jpg',
     );
+  });
+});
+
+describe('performance price and sale-time input guards', () => {
+  const basePayload = {
+    title: '2026 걸룰스 팬미팅',
+    genre: 'artist_celebrity',
+    venueName: '동해문화예술관 대극장',
+    startDate: '2026-07-18T14:00:00.000Z',
+    endDate: '2026-07-18T16:00:00.000Z',
+    ageRating: '전체 관람가',
+    priceTiers: [{ tierName: 'VIP', price: 88000, sortOrder: 0 }],
+  } as const;
+  const policy = {
+    maxTicketsPerUser: 1,
+    allowedPaymentMethods: ['CARD'],
+    changePolicyEnabled: false,
+    paymentWindowMinutes: 7,
+    seatHoldMinutes: 10,
+    cancelledSeatHoldMinMinutes: 1,
+    cancelledSeatHoldMaxMinutes: 10,
+    manualOpenEnabled: true,
+  } as const;
+
+  it('trims tier names on both the price tier and seat assignment sides', () => {
+    const parsed = createPerformanceSchema.parse({
+      ...basePayload,
+      priceTiers: [{ tierName: ' VIP ', price: 88000, sortOrder: 0 }],
+      seatMaps: [{
+        floorKey: '1F', floorLabel: '1층', sortOrder: 0, svgUrl: 'https://cdn.example.com/1f.svg', totalSeats: 1,
+        seatConfig: { tiers: [{ tierName: 'VIP ', color: '#FFD700', seatIds: ['A-1'] }] },
+      }],
+    });
+
+    expect(parsed.priceTiers[0]?.tierName).toBe('VIP');
+    expect(parsed.seatMaps[0]?.seatConfig?.tiers[0]?.tierName).toBe('VIP');
+    expect(seatMapConfigSchema.parse({ tiers: [{ tierName: '  R', color: '#000', seatIds: [] }] }).tiers[0]?.tierName).toBe('R');
+    expect(createPerformanceSchema.safeParse({
+      ...basePayload, priceTiers: [{ tierName: '   ', price: 88000, sortOrder: 0 }],
+    }).success).toBe(false);
+  });
+
+  it('rejects a zero-priced tier that would sell a paid seat for the service fee only', () => {
+    const result = createPerformanceSchema.safeParse({
+      ...basePayload,
+      priceTiers: [{ tierName: 'VIP', price: 88000, sortOrder: 0 }, { tierName: 'R', price: 0, sortOrder: 1 }],
+    });
+
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result.error?.issues)).toContain('가격은 0보다 커야 합니다');
+  });
+
+  it.each([
+    '0002-10-01T11:00:00.000Z',
+    '0202-10-01T11:00:00.000Z',
+    '2101-01-01T00:00:00.000Z',
+  ])('rejects an implausible KST sale start year %s', (bookingStartsAt) => {
+    const result = performanceBookingPolicySchema.safeParse({ ...policy, bookingStartsAt });
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => issue.path.join('.'))).toContain('bookingStartsAt');
+  });
+
+  it('accepts a sale start at the KST year boundary and an omitted start', () => {
+    // 2000-01-01 00:00 KST is 1999-12-31 15:00 UTC.
+    expect(performanceBookingPolicySchema.safeParse({ ...policy, bookingStartsAt: '1999-12-31T15:00:00.000Z' }).success).toBe(true);
+    expect(performanceBookingPolicySchema.safeParse({ ...policy, bookingStartsAt: '1999-12-31T14:59:59.000Z' }).success).toBe(false);
+    expect(performanceBookingPolicySchema.parse({ ...policy }).bookingStartsAt).toBeNull();
+  });
+});
+
+describe('resolvePerformanceSaleOpening', () => {
+  const now = new Date('2026-10-01T00:00:00.000Z');
+
+  it('mirrors the booking gate for each sale status and start time combination', () => {
+    expect(resolvePerformanceSaleOpening({ status: 'upcoming', bookingStartsAt: null }, now))
+      .toEqual({ mode: 'manual', at: null, startElapsed: false });
+    expect(resolvePerformanceSaleOpening({ status: 'selling', bookingStartsAt: null }, now))
+      .toEqual({ mode: 'immediate', at: null, startElapsed: false });
+    expect(resolvePerformanceSaleOpening({ status: 'closing_soon', bookingStartsAt: undefined }, now).mode).toBe('immediate');
+    expect(resolvePerformanceSaleOpening({ status: 'upcoming', bookingStartsAt: '2026-10-08T11:00:00.000Z' }, now))
+      .toEqual({ mode: 'scheduled', at: '2026-10-08T11:00:00.000Z', startElapsed: false });
+    expect(resolvePerformanceSaleOpening({ status: 'selling', bookingStartsAt: new Date('2026-10-08T11:00:00.000Z') }, now).mode).toBe('scheduled');
+    expect(resolvePerformanceSaleOpening({ status: 'upcoming', bookingStartsAt: '2025-10-01T11:00:00.000Z' }, now))
+      .toEqual({ mode: 'immediate', at: '2025-10-01T11:00:00.000Z', startElapsed: true });
+    expect(resolvePerformanceSaleOpening({ status: 'ended', bookingStartsAt: null }, now).mode).toBe('ended');
   });
 });

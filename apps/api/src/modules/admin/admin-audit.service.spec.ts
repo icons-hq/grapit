@@ -69,6 +69,7 @@ describe('AdminAuditService', () => {
     expect(ADMIN_AUDIT_ACTIONS).toEqual([
       'event.publish',
       'event.update',
+      'event.delete',
       'refund.admin_refund',
       'support.escalate',
       'support.content.create',

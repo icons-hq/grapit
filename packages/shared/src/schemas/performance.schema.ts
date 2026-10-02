@@ -22,6 +22,18 @@ const booleanQueryParam = z.preprocess((value) => {
 const isoDatetime = (label: string) =>
   z.string().datetime({ message: `${label}은 ISO datetime 형식이어야 합니다` });
 
+/**
+ * Sale opening times outside this KST year range are input mistakes (for example
+ * a browser emitting year 0002 while the operator types a year digit by digit).
+ */
+export const PERFORMANCE_BOOKING_START_YEAR_RANGE = { min: 2000, max: 2100 } as const;
+const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
+
+function kstYearOf(value: string): number {
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? new Date(ms + KST_OFFSET_MS).getUTCFullYear() : Number.NaN;
+}
+
 export const performancePublishLifecycleSchema = z.enum(
   PERFORMANCE_PUBLISH_LIFECYCLE,
 );
@@ -76,7 +88,8 @@ export type CreateBannerInput = z.input<typeof createBannerSchema>;
 
 export const seatMapConfigSchema = z.object({
   tiers: z.array(z.object({
-    tierName: z.string().min(1),
+    // Seat assignment matches price tiers by name, so both sides are trimmed at the boundary.
+    tierName: z.string().trim().min(1),
     color: z.string().min(1),
     seatIds: z.array(z.string()),
   })),
@@ -127,6 +140,17 @@ export const performanceBookingPolicySchema = z.object({
       message: '취소 좌석 hold 최대 시간은 최소 시간보다 작을 수 없습니다',
       path: ['cancelledSeatHoldMaxMinutes'],
     });
+  }
+  if (value.bookingStartsAt) {
+    const year = kstYearOf(value.bookingStartsAt);
+    const { min, max } = PERFORMANCE_BOOKING_START_YEAR_RANGE;
+    if (!(year >= min && year <= max)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `판매 시작 일시는 ${min}년부터 ${max}년 사이의 한국 시간으로 입력해주세요`,
+        path: ['bookingStartsAt'],
+      });
+    }
   }
 });
 export type PerformanceBookingPolicyInput = z.infer<
@@ -194,8 +218,9 @@ export const createPerformanceSchema = z.object({
   publishedAt: isoDatetime('게시 시각').nullable().optional(),
   publishedByUserId: z.string().uuid().nullable().optional(),
   priceTiers: z.array(z.object({
-    tierName: z.string().min(1, '등급명을 입력해주세요').max(50),
-    price: z.number().int().min(0, '가격은 0 이상이어야 합니다'),
+    tierName: z.string().trim().min(1, '등급명을 입력해주세요').max(50),
+    // Free seats are not a supported sale policy; 0 is almost always a missing price.
+    price: z.number().int().positive('가격은 0보다 커야 합니다'),
     sortOrder: z.number().int().min(0).default(0),
   })).min(1, '최소 1개의 가격 등급이 필요합니다'),
   showtimes: z.array(z.object({

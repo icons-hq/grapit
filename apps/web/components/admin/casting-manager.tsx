@@ -44,7 +44,8 @@ interface CastingCardProps {
   control: Control<CreatePerformanceFormInput>;
   register: UseFormRegister<CreatePerformanceFormInput>;
   remove: UseFieldArrayRemove;
-  onPhotoUpload: (index: number, file: File) => void;
+  /** Resolves true only when the uploaded photo was stored on this same casting. */
+  onPhotoUpload: (fieldId: string, file: File) => Promise<boolean>;
 }
 
 function CastingCard({
@@ -56,6 +57,7 @@ function CastingCard({
   onPhotoUpload,
 }: CastingCardProps) {
   const [preview, setPreview] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const watchedPhotoUrl = useWatch({
@@ -66,20 +68,28 @@ function CastingCard({
   const displayUrl = preview ?? watchedPhotoUrl;
 
   const handleFileChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
       const f = e.target.files?.[0];
       if (!f) return;
-
-      // Create blob URL for instant preview
-      const blobUrl = URL.createObjectURL(f);
-      setPreview(blobUrl);
-
-      onPhotoUpload(index, f);
-
       // Reset the input so the same file can be re-selected
       e.target.value = '';
+
+      // Create blob URL for instant preview while uploading
+      const blobUrl = URL.createObjectURL(f);
+      setPreview(blobUrl);
+      setUploading(true);
+
+      try {
+        await onPhotoUpload(field.id, f);
+      } finally {
+        // Success shows the stored photo URL; failure falls back to the previous
+        // photo. Either way the card never keeps a preview that was not saved.
+        setPreview((current) => (current === blobUrl ? null : current));
+        setUploading(false);
+        URL.revokeObjectURL(blobUrl);
+      }
     },
-    [index, onPhotoUpload],
+    [field.id, onPhotoUpload],
   );
 
   const triggerFileInput = useCallback(() => {
@@ -142,6 +152,7 @@ function CastingCard({
             size="sm"
             className="text-gray-400 hover:text-red-600"
             aria-label={`${field.actorName || 'casting'} delete`}
+            disabled={uploading}
           >
             <Trash2 className="h-4 w-4" />
           </Button>
@@ -179,13 +190,22 @@ export function CastingManager({
   control,
 }: CastingManagerProps) {
   const presignedUpload = usePresignedUpload();
+  // Uploads finish after other cards may have been added or removed, so results
+  // are matched to the casting by its field id at completion, never by the
+  // index it had when the upload started.
+  const latestFields = useRef(fields);
+  latestFields.current = fields;
+  const latestUploadByField = useRef(new Map<string, number>());
+  const uploadSequence = useRef(0);
 
   const handlePhotoUpload = useCallback(
-    async (index: number, file: File) => {
+    async (fieldId: string, file: File): Promise<boolean> => {
       if (file.size > 5 * 1024 * 1024) {
         toast.error('사진은 5MB 이하여야 합니다.');
-        return;
+        return false;
       }
+      const uploadId = (uploadSequence.current += 1);
+      latestUploadByField.current.set(fieldId, uploadId);
       const ext = file.name.split('.').pop() ?? 'jpg';
       try {
         const { uploadUrl, publicUrl, mode, cacheControl } =
@@ -201,12 +221,22 @@ export function CastingManager({
           mode,
           cacheControl,
         });
+        // A newer photo chosen for the same casting wins over this slower upload.
+        if (latestUploadByField.current.get(fieldId) !== uploadId) return false;
+        const index = latestFields.current.findIndex((field) => field.id === fieldId);
+        if (index < 0) return false;
         setValue(`castings.${index}.photoUrl`, publicUrl, {
           shouldDirty: true,
         });
         toast.success('사진이 업로드되었습니다.');
+        return true;
       } catch {
         toast.error('사진 업로드에 실패했습니다.');
+        return false;
+      } finally {
+        if (latestUploadByField.current.get(fieldId) === uploadId) {
+          latestUploadByField.current.delete(fieldId);
+        }
       }
     },
     [presignedUpload, setValue],
