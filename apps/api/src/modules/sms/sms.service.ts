@@ -334,6 +334,25 @@ function errorMessageForLog(err: unknown): string {
   return redactSensitiveText(err instanceof Error ? err.message : String(err));
 }
 
+/**
+ * Reports a Valkey failure of an SMS step that ran without calling Twilio. It
+ * carries no `provider` tag, so Twilio alerts and triage never see it.
+ */
+function captureSmsValkeyException(
+  err: unknown,
+  tags: Record<string, string> = {},
+): void {
+  Sentry.withScope((scope) => {
+    scope.setTag('component', 'sms');
+    scope.setTag('dependency', 'valkey');
+    for (const [name, value] of Object.entries(tags)) {
+      scope.setTag(name, value);
+    }
+    scope.setLevel('error');
+    Sentry.captureException(err);
+  });
+}
+
 /** Reports a provider or Valkey failure with the Twilio status/code as tags. */
 function captureSmsProviderException(
   err: unknown,
@@ -625,16 +644,30 @@ export class SmsService {
 
     const releaseSendQuota = await this.reserveSendQuota(e164);
 
+    // verifyCode calls Twilio only while this marker exists (audit #36
+    // follow-up). It is recorded before the provider call: a Valkey failure
+    // after a delivered code would answer 400, give the quota back, and leave
+    // a code verify-code refuses (410), so the buyer would be sent and billed
+    // another one. A failure here has sent nothing, so the quota is given
+    // back and the buyer can resend at once.
+    const pendingKey = smsPendingVerificationKey(e164);
+    let createdPendingMarker: boolean;
+    try {
+      createdPendingMarker = await this.recordPendingVerification(pendingKey);
+    } catch (err) {
+      await releaseSendQuota();
+      captureSmsValkeyException(err, { 'sms.step': 'pending_marker_set', country });
+      this.logger.error({
+        event: 'sms.pending_marker_failed',
+        phone: maskE164ForLog(e164),
+        country,
+        err: errorMessageForLog(err),
+      });
+      throw smsBadRequest(SMS_SEND_FAILED_MESSAGE, SMS_ERROR_CODES.sendFailed);
+    }
+
     try {
       const sent = await this.client!.sendVerification(e164);
-      // verifyCode calls Twilio only while this marker exists (audit #36
-      // follow-up). A Valkey failure here takes the non-provider failure path
-      // below, like every other Valkey error in this service (fail closed):
-      // the quota is given back so the buyer can resend at once, because a
-      // code sent without the marker cannot be verified.
-      await this.redis.set(
-        smsPendingVerificationKey(e164), '1', 'PX', PENDING_VERIFICATION_TTL_MS,
-      );
       this.logger.log({
         event: 'sms.sent',
         phone: maskE164ForLog(e164),
@@ -645,14 +678,20 @@ export class SmsService {
       });
       return { success: true, message: '인증번호가 발송되었습니다' };
     } catch (err) {
+      // The marker this request created would only let verify-code reach
+      // Twilio for a code that was not sent. Best effort: one left behind is
+      // cleared by the next verify's 404. A marker an earlier send created is
+      // kept, because the code that send delivered can still be verified.
+      if (createdPendingMarker) {
+        await this.clearPendingVerification(e164, pendingKey);
+      }
       // [Phase 10 review + Issue 2] Rollback policy
       // Twilio 5xx/429/timeout/network -> user didn't receive SMS -> release BOTH the
       //   30s cooldown AND the phone-axis hourly send slot. Otherwise a
       //   transient provider outage would burn the user's 5/hour quota
       //   without delivering anything (Issue 2 from PR #16 review).
       // Twilio permanent 4xx -> keep both cooldown and counter (abuse mitigation).
-      // The global budget slot follows the same rule. A Valkey failure while
-      // recording the pending marker also rolls back (see above).
+      // The global budget slot follows the same rule.
       const shouldRollback =
         !(err instanceof TwilioVerifyApiError) || err.shouldRollbackQuota;
       if (shouldRollback) {
@@ -698,10 +737,11 @@ export class SmsService {
    * checks against a live verification (which needs a send-code first, under
    * the send limits) count toward the limit.
    *
-   * Twilio is called only for a number with a pending marker, which a
-   * successful send-code sets for the code's 10-minute lifetime. Without it
-   * the request gets 410 straight away; approval and "no pending
-   * verification" clear it. Dev mock skips the marker.
+   * Twilio is called only for a number with a pending marker, which send-code
+   * sets for the code's 10-minute lifetime right before calling Twilio (a
+   * failed send removes the marker it created). Without it the request gets
+   * 410 straight away; approval and "no pending verification" clear it. Dev
+   * mock skips the marker.
    */
   async verifyCode(
     phone: string,
@@ -809,6 +849,23 @@ export class SmsService {
       });
       return { verified: false, message: '인증번호 확인에 실패했습니다. 잠시 후 다시 시도해주세요.' };
     }
+  }
+
+  /**
+   * Sets the pending marker for a code's 10-minute lifetime. Returns whether
+   * this call created it (false: an earlier send-code's marker was there and
+   * its TTL is renewed for the code about to be sent). Throws on a Valkey
+   * error.
+   */
+  private async recordPendingVerification(pendingKey: string): Promise<boolean> {
+    const created = await this.redis.set(
+      pendingKey, '1', 'PX', PENDING_VERIFICATION_TTL_MS, 'NX',
+    );
+    if (created === 'OK') {
+      return true;
+    }
+    await this.redis.set(pendingKey, '1', 'PX', PENDING_VERIFICATION_TTL_MS);
+    return false;
   }
 
   /**

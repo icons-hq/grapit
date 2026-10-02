@@ -137,7 +137,7 @@ describe('SmsService app-side SMS limits', () => {
 
   it('SMS_LOCAL_RATE_LIMITS_ENABLED=false bypasses only the per-phone limits, not the global send budgets', async () => {
     const mockRedis = {
-      set: vi.fn().mockResolvedValue(null),
+      set: vi.fn().mockResolvedValue('OK'),
       eval: vi.fn().mockResolvedValue(1),
       pttl: vi.fn().mockResolvedValue(3000),
     };
@@ -160,7 +160,7 @@ describe('SmsService app-side SMS limits', () => {
     // No resend cooldown; only the pending marker verify-code needs.
     expect(mockRedis.set).toHaveBeenCalledTimes(1);
     expect(mockRedis.set).toHaveBeenCalledWith(
-      smsPendingVerificationKey('+821012345678'), '1', 'PX', 600_000,
+      smsPendingVerificationKey('+821012345678'), '1', 'PX', 600_000, 'NX',
     );
     expect(mockRedis.eval).toHaveBeenCalledTimes(2);
     expect(mockRedis.eval).toHaveBeenCalledWith(

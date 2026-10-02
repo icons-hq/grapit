@@ -918,29 +918,72 @@ describe('SmsService', () => {
       });
     }
 
-    it('send-code 성공 시 같은 hash tag의 pending marker를 10분 PX로 남긴다', async () => {
-      const service = new SmsService(createConfigService(), mockRedis as never);
-      vi.spyOn(TwilioVerifyClient.prototype, 'sendVerification')
+    it('send-code는 Twilio 호출 전에 같은 hash tag의 pending marker를 10분 PX로 남긴다', async () => {
+      const redis = createNxRedis();
+      const service = new SmsService(createConfigService(), redis as never);
+      const sendSpy = vi.spyOn(TwilioVerifyClient.prototype, 'sendVerification')
         .mockResolvedValueOnce({ sid: 'VE_marker', status: 'pending', channel: 'sms' });
 
       await service.sendVerificationCode(PHONE);
 
       expect(smsPendingVerificationKey(PHONE)).toBe(`{sms:${PHONE}}:pending`);
-      expect(mockRedis.set).toHaveBeenCalledWith(
-        smsPendingVerificationKey(PHONE), '1', 'PX', 600_000,
+      expect(await redis.pttl(smsPendingVerificationKey(PHONE))).toBeGreaterThan(599_000);
+      const markerSet = redis.set.mock.calls.findIndex(
+        ([key]) => key === smsPendingVerificationKey(PHONE),
       );
+      expect(markerSet).toBeGreaterThanOrEqual(0);
+      // no Valkey write is left after the provider call that sends the code
+      expect(redis.set.mock.invocationCallOrder[markerSet]!)
+        .toBeLessThan(sendSpy.mock.invocationCallOrder[0]!);
+      expect(Math.max(...redis.set.mock.invocationCallOrder))
+        .toBeLessThan(sendSpy.mock.invocationCallOrder[0]!);
     });
 
-    it('send-code가 실패하면 marker를 남기지 않는다', async () => {
-      const service = new SmsService(createConfigService(), mockRedis as never);
+    it('Twilio 5xx로 발송이 실패하면 만든 marker를 지우고 quota를 돌려준다', async () => {
+      const redis = createNxRedis();
+      const service = new SmsService(createConfigService(), redis as never);
       vi.spyOn(TwilioVerifyClient.prototype, 'sendVerification')
-        .mockRejectedValueOnce(new TwilioVerifyApiError(400, 60200, 'Invalid parameter'));
+        .mockRejectedValueOnce(new TwilioVerifyApiError(503, 20503, 'Service Unavailable'));
 
       await expect(service.sendVerificationCode(PHONE)).rejects.toThrow(BadRequestException);
 
-      expect(mockRedis.set).not.toHaveBeenCalledWith(
-        smsPendingVerificationKey(PHONE), expect.anything(), 'PX', expect.anything(),
-      );
+      expect(await redis.get(smsPendingVerificationKey(PHONE))).toBeNull();
+      expect(await redis.get(smsResendKey(PHONE))).toBeNull();
+      expect(redis.decr).toHaveBeenCalledWith(smsSendCounterKey(PHONE));
+    });
+
+    it('Twilio 영구 4xx로 발송이 실패하면 만든 marker는 지우고 quota는 유지한다', async () => {
+      const redis = createNxRedis();
+      const service = new SmsService(createConfigService(), redis as never);
+      vi.spyOn(TwilioVerifyClient.prototype, 'sendVerification')
+        .mockRejectedValueOnce(new TwilioVerifyApiError(400, 60200, 'Invalid parameter'));
+      const checkSpy = vi.spyOn(TwilioVerifyClient.prototype, 'checkVerification');
+
+      await expect(service.sendVerificationCode(PHONE)).rejects.toThrow(BadRequestException);
+
+      expect(await redis.get(smsPendingVerificationKey(PHONE))).toBeNull();
+      expect(await redis.get(smsResendKey(PHONE))).toBe('1');
+      expect(redis.decr).not.toHaveBeenCalled();
+      await expect(service.verifyCode(PHONE, '123456')).rejects.toThrow(GoneException);
+      expect(checkSpy).not.toHaveBeenCalled();
+    });
+
+    it('재발송이 실패해도 이전 발송의 marker는 남아 이미 받은 인증번호를 확인할 수 있다', async () => {
+      const redis = createNxRedis();
+      const service = new SmsService(createConfigService(), redis as never);
+      vi.spyOn(TwilioVerifyClient.prototype, 'sendVerification')
+        .mockResolvedValueOnce({ sid: 'VE_first', status: 'pending', channel: 'sms' })
+        .mockRejectedValueOnce(new TwilioVerifyApiError(429, 60203, 'Max send attempts reached'));
+      const checkSpy = vi.spyOn(TwilioVerifyClient.prototype, 'checkVerification')
+        .mockResolvedValueOnce({ sid: 'VE_first', status: 'approved', valid: true });
+
+      await service.sendVerificationCode(PHONE);
+      await redis.del(smsResendKey(PHONE)); // the 30-second cooldown passed
+      await expect(service.sendVerificationCode(PHONE)).rejects.toThrow(BadRequestException);
+
+      expect(await redis.get(smsPendingVerificationKey(PHONE))).toBe('1');
+      await expect(service.verifyCode(PHONE, '123456')).resolves.toMatchObject({ verified: true });
+      expect(checkSpy).toHaveBeenCalledTimes(1);
     });
 
     it('marker가 없으면 Twilio를 부르지 않고 verify 한도도 쓰지 않은 채 410을 반환한다', async () => {
@@ -1006,10 +1049,19 @@ describe('SmsService', () => {
       expect(mockRedis.eval).not.toHaveBeenCalled();
     });
 
-    it('marker 기록이 실패하면 발송 실패로 답하고 예약한 quota를 돌려준다', async () => {
+    it('marker 기록이 실패하면 Twilio를 부르지 않고 발송 실패로 답하며 예약한 quota를 모두 돌려준다', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-10-02T00:00:30.000Z'));
+      const windowIndex = Math.floor(Date.now() / 60_000);
+      const hourIndex = Math.floor(Date.now() / 3_600_000);
+      const captured: Array<Record<string, unknown>> = [];
+      captureExceptionMock.mockImplementation(() => {
+        captured.push({ ...Sentry.getCurrentScope().getScopeData().tags });
+        return 'event-id';
+      });
+      vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
       const service = new SmsService(createConfigService(), mockRedis as never);
-      vi.spyOn(TwilioVerifyClient.prototype, 'sendVerification')
-        .mockResolvedValueOnce({ sid: 'VE_marker_fail', status: 'pending', channel: 'sms' });
+      const sendSpy = vi.spyOn(TwilioVerifyClient.prototype, 'sendVerification');
       mockRedis.set
         .mockResolvedValueOnce('OK') // resend cooldown
         .mockRejectedValueOnce(new Error('Connection is closed.')); // pending marker
@@ -1020,8 +1072,20 @@ describe('SmsService', () => {
       expect((error as BadRequestException).getResponse()).toMatchObject({
         errorCode: 'SMS_SEND_FAILED',
       });
+      // nothing was sent: no SMS charge, and the buyer can resend at once
+      expect(sendSpy).not.toHaveBeenCalled();
       expect(mockRedis.del).toHaveBeenCalledWith(smsResendKey(PHONE));
       expect(mockRedis.decr).toHaveBeenCalledWith(smsSendCounterKey(PHONE));
+      expect(mockRedis.decr).toHaveBeenCalledWith(smsGlobalSendCounterKey(windowIndex));
+      expect(mockRedis.decr).toHaveBeenCalledWith(smsGlobalHourlySendCounterKey(hourIndex));
+      // reported as a Valkey failure, never as a Twilio one
+      expect(captured).toHaveLength(1);
+      expect(captured[0]).toMatchObject({
+        dependency: 'valkey',
+        'sms.step': 'pending_marker_set',
+        country: 'KR',
+      });
+      expect(captured[0]).not.toHaveProperty('provider');
     });
 
     it('dev mock은 marker 없이 000000으로 통과한다', async () => {
