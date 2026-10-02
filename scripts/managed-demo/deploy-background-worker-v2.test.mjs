@@ -68,6 +68,7 @@ test('passes pg-boss and session limits to the worker only when set (u18a → u2
     RUNTIME_DB_STATEMENT_TIMEOUT_MS: '30000',
     RUNTIME_DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS: '120000',
     RUNTIME_SMS_ALLOWED_COUNTRIES: 'KR',
+    RUNTIME_PAYMENT_HANDOFF_ABANDON_SWEEP_ENABLED: 'false',
   }).template.template.containers[0];
   const value = (name) => container.env.find((entry) => entry.name === name)?.value;
   assert.equal(value('PGBOSS_POOL_MAX'), '3');
@@ -75,6 +76,8 @@ test('passes pg-boss and session limits to the worker only when set (u18a → u2
   assert.equal(value('DB_STATEMENT_TIMEOUT_MS'), '30000');
   assert.equal(value('DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS'), '120000');
   assert.equal(value('SMS_ALLOWED_COUNTRIES'), undefined);
+  // The staged abandoned-handoff rollout survives Job redeploys (the spec is rebuilt each time).
+  assert.equal(value('PAYMENT_HANDOFF_ABANDON_SWEEP_ENABLED'), 'false');
 
   assert.throws(
     () => buildBackgroundWorkerJob({ ...validEnv, RUNTIME_DB_STATEMENT_TIMEOUT_MS: '30s' }),

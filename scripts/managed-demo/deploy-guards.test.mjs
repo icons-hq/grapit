@@ -347,6 +347,7 @@ test('optional runtime settings fail validation instead of failing every instanc
     [{ RUNTIME_PGBOSS_START_MAX_ATTEMPTS: '-1' }, /must be an integer/],
     [{ RUNTIME_SMS_ALLOWED_COUNTRIES: 'KOR' }, /ISO 3166-1 alpha-2/],
     [{ RUNTIME_SMS_LOCAL_RATE_LIMITS_ENABLED: 'off' }, /must be exactly "true" or "false"/],
+    [{ RUNTIME_PAYMENT_HANDOFF_ABANDON_SWEEP_ENABLED: 'no' }, /must be exactly "true" or "false"/],
     // The runtime pool can never exceed what the connection budget counted.
     [{ RUNTIME_PGBOSS_POOL_MAX: '4' }, /must not exceed the PGBOSS_POOL_MAX budget input/],
   ]) {
@@ -545,6 +546,7 @@ test('deploy workflow keeps the guarded deploy contract', async () => {
     'PGBOSS_START_MAX_ATTEMPTS',
     'DB_STATEMENT_TIMEOUT_MS',
     'DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS',
+    'PAYMENT_HANDOFF_ABANDON_SWEEP_ENABLED',
     'SMS_ALLOWED_COUNTRIES',
     'SMS_GLOBAL_SEND_LIMIT_PER_MINUTE',
     'SMS_GLOBAL_SEND_LIMIT_PER_HOUR',

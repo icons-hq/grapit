@@ -102,6 +102,12 @@ export const OPTIONAL_RUNTIME_ENV = [
     targets: ['api', 'worker'],
     parse: parsePositiveIntegerText,
   },
+  // w2a abandoned handoff review (on unless 'false'); the first rollout runbook stages it.
+  {
+    name: 'PAYMENT_HANDOFF_ABANDON_SWEEP_ENABLED',
+    targets: ['api', 'worker'],
+    parse: parseStrictBooleanText,
+  },
   { name: 'SMS_ALLOWED_COUNTRIES', targets: ['api'], parse: parseCountryListText },
   { name: 'SMS_GLOBAL_SEND_LIMIT_PER_MINUTE', targets: ['api'], parse: parseNonNegativeIntegerText },
   { name: 'SMS_GLOBAL_SEND_LIMIT_PER_HOUR', targets: ['api'], parse: parseNonNegativeIntegerText },

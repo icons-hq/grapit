@@ -525,6 +525,7 @@ Official references: [Cloud Run minimum instances and scale to zero](https://clo
 | `PGBOSS_POOL_MAX` | yes | yes | `3` with background processing, `1` for a producer-only API. Must not exceed the budget input. |
 | `PGBOSS_START_MAX_ATTEMPTS` | yes | yes | `3` |
 | `DB_STATEMENT_TIMEOUT_MS`, `DB_IDLE_IN_TRANSACTION_SESSION_TIMEOUT_MS` | yes | yes | no limit |
+| `PAYMENT_HANDOFF_ABANDON_SWEEP_ENABLED` | yes | yes | on; `false` stops the abandoned handoff review |
 | `SMS_ALLOWED_COUNTRIES`, `SMS_GLOBAL_SEND_LIMIT_PER_MINUTE`, `SMS_GLOBAL_SEND_LIMIT_PER_HOUR`, `SMS_LOCAL_RATE_LIMITS_ENABLED` | yes | no | all countries, `300`, `3000`, on |
 
 `DB_APPLICATION_NAME` is not passed: the API (`grabit-api`) and the worker (`grabit-background-worker`) set different defaults so `pg_stat_activity` can tell them apart.
@@ -574,4 +575,25 @@ API_MAX_INSTANCES × (DB_POOL_MAX + PGBOSS_POOL_MAX)
 
 Before the next actual ticket opening, complete the [40-item relaunch handoff](show-relaunch-reliability.md). Pending reservation sweeps now rely on each Redis lock's TTL and never unlock a user's current selection. The worker's `unlockedSeats=0` is expected; inspect expired reservation counts, actual lock TTL and queue admission delay separately. Migration 0033 and the reviewed missing-benefit repair have separate preflight and approval boundaries.
 
-The same sweep also reviews card/transfer/easy-pay/overseas-card/PayPal handoffs that never reached Toss (deadline + 45 minutes, no Payment row). It reads the Toss transaction ledger (`GET /v1/transactions`, 65-second timeout, one read per overlapping time window, at most 20 orders and a 65-second budget per sweep) with every distinct configured MID key, and fails only orders absent from all of them, recording `PAYMENT_HANDOFF_ABANDONED` with `provider_check_status=no_provider_transaction`. An order with a lookup error or page-cap overflow is looked at again after 30 minutes. A `CRITICAL: provider transaction exists for an unrecorded payment handoff` log means Toss has a transaction for an order without a local Payment: reconcile it with the Toss console before releasing seats or refunding, as in the [cancellation reconciliation runbook](ticket-cancellation-reconciliation.md). It repeats once a day per order until reconciled. Review state lives in Valkey under `{payment-handoff-review}:*`; deleting it only makes the next sweeps look again. Set `PAYMENT_HANDOFF_ABANDON_SWEEP_ENABLED=false` on the API service and the background worker job to stop the review without a code change.
+The same sweep also reviews card/transfer/easy-pay/overseas-card/PayPal handoffs that never reached Toss (deadline + 45 minutes, no Payment row). It reads the Toss transaction ledger (`GET /v1/transactions`, 65-second timeout, one read per overlapping time window, at most 20 orders and a 65-second budget per sweep) with every distinct configured MID key, and fails only orders absent from all of them, recording `PAYMENT_HANDOFF_ABANDONED` with `provider_check_status=no_provider_transaction`. An order with a lookup error or page-cap overflow is looked at again after 30 minutes. A `CRITICAL: provider transaction exists for an unrecorded payment handoff` log means Toss has a transaction for an order without a local Payment: reconcile it with the Toss console before releasing seats or refunding, as in the [cancellation reconciliation runbook](ticket-cancellation-reconciliation.md). It repeats once a day per order until reconciled. Review state lives in Valkey under `{payment-handoff-review}:*`; deleting it only makes the next sweeps look again. Set repository variable `PAYMENT_HANDOFF_ABANDON_SWEEP_ENABLED=false` and redeploy to stop the review without a code change; the Deploy workflow passes it to the API service and the worker Job ([Optional runtime settings](#optional-runtime-settings)). Setting it on the Job by hand does not last, because every deploy rebuilds the Job spec.
+
+First rollout of the review (audit #9). Existing orphan `PENDING_PAYMENT` rows become `FAILED` as soon as the review proves Toss has no transaction for them, so stage it:
+
+1. Before the first deploy that contains the review, set `PAYMENT_HANDOFF_ABANDON_SWEEP_ENABLED=false`.
+2. Count what the review would look at (read-only):
+
+   ```sql
+   SELECT count(*) AS candidates, min(payment_deadline_at), max(payment_deadline_at)
+   FROM reservations r
+   WHERE r.status = 'PENDING_PAYMENT'
+     AND r.checkout_started_at IS NOT NULL
+     AND r.toss_order_id IS NOT NULL
+     AND r.checkout_payment_method IS NOT NULL
+     AND r.payment_deadline_at < now() - interval '45 minutes'
+     AND NOT (coalesce(r.checkout_payment_method->>'method', '') = 'FOREIGN_EASY_PAY'
+              AND coalesce(r.checkout_payment_method->>'provider', '') IN ('ALIPAY_PLUS', 'TRUEMONEY'))
+     AND NOT EXISTS (SELECT 1 FROM payments p WHERE p.reservation_id = r.id);
+   ```
+
+3. Confirm that every configured Toss secret key may call `GET /v1/transactions`. Without that permission every lookup fails and orders are only deferred (30 minutes), never failed.
+4. Get operator approval for the count, then remove the variable (or set `true`) and redeploy. Watch the `Failed abandoned payment handoffs` log and any `CRITICAL: provider transaction exists` line; at most 20 orders are reviewed per sweep.
