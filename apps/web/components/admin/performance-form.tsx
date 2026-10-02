@@ -109,6 +109,14 @@ const PERFORMANCE_OPEN_STATUS_OPTIONS: Array<{
   { value: 'selling', label: '판매 중' },
 ];
 
+// The admin API returns the stored status; public pages derive 'selling' from
+// an 'upcoming' event once its booking start passes.
+function isBookingStartReached(bookingStartsAt: string | null | undefined): boolean {
+  if (!bookingStartsAt) return false;
+  const startsAtMs = Date.parse(bookingStartsAt);
+  return Number.isFinite(startsAtMs) && startsAtMs <= Date.now();
+}
+
 function isEventCategory(genre: string): genre is EventCategory {
   return (GENRES as readonly string[]).includes(genre);
 }
@@ -784,6 +792,12 @@ export function PerformanceForm({
               {form.formState.errors.status && (
                 <p className="mt-1 text-sm text-red-500">
                   {form.formState.errors.status.message}
+                </p>
+              )}
+              {watchedValues.status === 'upcoming'
+                && isBookingStartReached(watchedValues.bookingPolicy?.bookingStartsAt) && (
+                <p className="mt-1 text-xs text-gray-500" role="note">
+                  판매 시작 일시가 지나 공개 화면에는 &apos;판매 중&apos;으로 표시됩니다. 저장된 상태는 &apos;판매 예정&apos;으로 유지됩니다.
                 </p>
               )}
             </div>

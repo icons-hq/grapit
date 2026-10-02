@@ -1,5 +1,16 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, Global, Module, ServiceUnavailableException } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { Test } from '@nestjs/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { DRIZZLE } from '../../database/drizzle.provider.js';
+import { CatalogFreshnessService } from '../performance/catalog-freshness.service.js';
+import { PerformanceModule } from '../performance/performance.module.js';
+import {
+  DEEPL_UNAVAILABLE_MARKER,
+  DeepLClient,
+  requiresManualTranslation,
+} from './deepl.client.js';
+import { TranslationModule } from './translation.module.js';
 import { TranslationService } from './translation.service.js';
 
 type SourceRow = {
@@ -85,6 +96,9 @@ describe('TranslationService', () => {
   let deeplClient: {
     translateText: ReturnType<typeof vi.fn>;
   };
+  let catalogFreshness: {
+    invalidatePerformance: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
     store = new InMemoryTranslationStore();
@@ -95,7 +109,87 @@ describe('TranslationService', () => {
         targetLang: locale,
       })),
     };
-    service = new TranslationService(store as never, deeplClient as never);
+    catalogFreshness = {
+      invalidatePerformance: vi.fn().mockResolvedValue(undefined),
+    };
+    service = new TranslationService(
+      store as never,
+      deeplClient as never,
+      catalogFreshness as never,
+    );
+  });
+
+  async function createReviewedPerformanceDraft(entityType = 'performance') {
+    const source = await service.createSource({
+      entityType,
+      entityId: '11111111-1111-4111-8111-111111111111',
+      field: 'title',
+      sourceText: '2026 걸룰스 팬미팅',
+      createdBy: '22222222-2222-2222-2222-222222222222',
+    });
+    const [draft] = await service.generateDrafts(source.id);
+    await service.markReviewed(draft.id, '33333333-3333-3333-3333-333333333333');
+    return { source, draft };
+  }
+
+  it('invalidates the cached public catalog after publishing a performance translation', async () => {
+    const { draft } = await createReviewedPerformanceDraft();
+    expect(catalogFreshness.invalidatePerformance).not.toHaveBeenCalled();
+
+    await service.publishDraft(draft.id);
+
+    expect(catalogFreshness.invalidatePerformance).toHaveBeenCalledTimes(1);
+    expect(catalogFreshness.invalidatePerformance).toHaveBeenCalledWith(
+      '11111111-1111-4111-8111-111111111111',
+    );
+  });
+
+  it('invalidates the cached public catalog when a published performance source is edited', async () => {
+    const { source, draft } = await createReviewedPerformanceDraft();
+    await service.publishDraft(draft.id);
+    catalogFreshness.invalidatePerformance.mockClear();
+
+    await service.markStaleOnSourceEdit(source.id, '2026 걸룰스 팬미팅 (변경)');
+
+    expect(catalogFreshness.invalidatePerformance).toHaveBeenCalledWith(
+      '11111111-1111-4111-8111-111111111111',
+    );
+  });
+
+  it('does not touch catalog caches for translations outside the performance catalog', async () => {
+    const { draft } = await createReviewedPerformanceDraft('fanmeet');
+
+    await service.publishDraft(draft.id);
+
+    expect(catalogFreshness.invalidatePerformance).not.toHaveBeenCalled();
+  });
+
+  it('keeps a committed publish successful when catalog invalidation fails', async () => {
+    const { draft } = await createReviewedPerformanceDraft();
+    catalogFreshness.invalidatePerformance.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+
+    await expect(service.publishDraft(draft.id)).resolves.toMatchObject({
+      status: 'published',
+    });
+  });
+
+  it('fails draft generation without partial drafts when the provider fails for one locale', async () => {
+    deeplClient.translateText.mockImplementation(async (text: string, locale: string) => {
+      if (locale === 'th') throw new Error('DeepL 번역 요청에 실패했습니다 (503 Service Unavailable)');
+      return { status: 'translated', text: `${locale}:${text}`, targetLang: locale };
+    });
+    const source = await service.createSource({
+      entityType: 'performance',
+      entityId: '11111111-1111-4111-8111-111111111111',
+      field: 'title',
+      sourceText: '팬미팅',
+      createdBy: '22222222-2222-2222-2222-222222222222',
+    });
+
+    await expect(service.generateDrafts(source.id)).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    );
+    expect(store.drafts).toHaveLength(0);
   });
 
   it('creates Korean source content and target drafts for all launch locales', async () => {
@@ -338,5 +432,110 @@ describe('TranslationService', () => {
       automaticTranslationLabel: true,
     });
     expect(drafts.some((draft) => draft.status === 'published')).toBe(false);
+  });
+
+  describe('drafts that still need a manual translation', () => {
+    async function createMarkerDraft() {
+      deeplClient.translateText.mockResolvedValue({
+        status: 'unavailable',
+        text: `${DEEPL_UNAVAILABLE_MARKER} 팬미팅 안내`,
+        targetLang: 'EN-US',
+      });
+      const source = await service.createSource({
+        entityType: 'performance',
+        entityId: '11111111-1111-4111-8111-111111111111',
+        field: 'description',
+        sourceText: '팬미팅 안내',
+        createdBy: '22222222-2222-2222-2222-222222222222',
+      });
+      const [draft] = await service.generateDrafts(source.id);
+      return draft;
+    }
+
+    it('cannot be marked reviewed with the copied Korean text left in place', async () => {
+      const draft = await createMarkerDraft();
+
+      await expect(service.markReviewed(draft.id, '33333333-3333-3333-3333-333333333333'))
+        .rejects.toThrow(BadRequestException);
+      await expect(service.markReviewed(
+        draft.id,
+        '33333333-3333-3333-3333-333333333333',
+        `  ${DEEPL_UNAVAILABLE_MARKER} 팬미팅 안내`,
+      )).rejects.toThrow('번역문을 직접 입력');
+      expect(store.getDraft(draft.id)?.status).toBe('draft');
+    });
+
+    it('can be reviewed and published once the operator replaces the text', async () => {
+      const draft = await createMarkerDraft();
+
+      await service.markReviewed(draft.id, '33333333-3333-3333-3333-333333333333', 'Fan meeting notice');
+      const published = await service.publishDraft(draft.id);
+
+      expect(published).toMatchObject({ status: 'published', translatedText: 'Fan meeting notice' });
+      expect(catalogFreshness.invalidatePerformance).toHaveBeenCalledTimes(1);
+    });
+
+    it('is never published, even when it reached review before this check existed', async () => {
+      const draft = await createMarkerDraft();
+      const stored = store.getDraft(draft.id)!;
+      stored.status = 'review';
+
+      await expect(service.publishDraft(draft.id)).rejects.toThrow(BadRequestException);
+      expect(stored.status).toBe('review');
+      expect(catalogFreshness.invalidatePerformance).not.toHaveBeenCalled();
+    });
+
+    it('uses the marker the DeepL client writes when no key is configured', async () => {
+      const client = new DeepLClient({ get: () => '' } as never);
+
+      const result = await client.translateText('팬미팅 안내', 'en');
+
+      expect(requiresManualTranslation(result.text)).toBe(true);
+      expect(requiresManualTranslation('Fan meeting notice')).toBe(false);
+    });
+  });
+});
+
+describe('TranslationModule dependency injection', () => {
+  @Global()
+  @Module({
+    providers: [{ provide: DRIZZLE, useValue: {} }],
+    exports: [DRIZZLE],
+  })
+  class FakeDatabaseModule {}
+
+  const catalogFreshness = { invalidatePerformance: vi.fn() };
+
+  @Module({
+    providers: [{ provide: CatalogFreshnessService, useValue: catalogFreshness }],
+    exports: [CatalogFreshnessService],
+  })
+  class FakePerformanceModule {}
+
+  it('injects the real DeepL client and catalog freshness service into TranslationService', async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [
+        ConfigModule.forRoot({ isGlobal: true, ignoreEnvFile: true }),
+        FakeDatabaseModule,
+        TranslationModule,
+      ],
+    })
+      .overrideModule(PerformanceModule)
+      .useModule(FakePerformanceModule)
+      .compile();
+
+    try {
+      const service = moduleRef.get(TranslationService);
+      const injected = service as unknown as {
+        deepLClient: unknown;
+        catalogFreshness: unknown;
+      };
+
+      expect(injected.deepLClient).toBeInstanceOf(DeepLClient);
+      expect(injected.deepLClient).toBe(moduleRef.get(DeepLClient));
+      expect(injected.catalogFreshness).toBe(catalogFreshness);
+    } finally {
+      await moduleRef.close();
+    }
   });
 });

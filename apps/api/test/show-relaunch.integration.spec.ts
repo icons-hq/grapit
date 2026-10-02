@@ -33,6 +33,8 @@ import { PendingPaymentExpirationWorker } from '../src/modules/jobs/pending-paym
 import { CancelledSeatReleaseWorker } from '../src/modules/jobs/cancelled-seat-release.worker.js';
 import { RefundCancelRetryWorker } from '../src/modules/jobs/refund-cancel-retry.worker.js';
 import { PerformanceService } from '../src/modules/performance/performance.service.js';
+import { CacheService } from '../src/modules/performance/cache.service.js';
+import { PerformanceViewCounter } from '../src/modules/performance/performance-view-counter.service.js';
 import { SearchService } from '../src/modules/search/search.service.js';
 import type { PrepareReservationRequest } from '@grabit/shared';
 
@@ -100,8 +102,10 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
         { performanceId: event!.id, tierName: 'R', price: 85000 },
       ]);
     }
-    const catalogCache = { get: vi.fn().mockResolvedValue(null), set: vi.fn() };
-    const catalog = new PerformanceService(db, catalogCache as never);
+    const catalogCache = new CacheService({ get: async () => null, set: async () => 'OK',
+      del: async () => 0, scan: async () => ['0', []] } as never);
+    const catalogCacheSet = vi.spyOn(catalogCache, 'set');
+    const catalog = new PerformanceService(db, catalogCache, new PerformanceViewCounter(db));
     const selling = await catalog.findByGenre('artist_celebrity', { page: 1, limit: 1, sort: 'latest', ended: true, sub: category, status: 'selling' });
     expect(selling.total).toBe(1);
     expect(selling.data).toMatchObject([{ id: ids[0], status: 'selling', minPrice: 85000, bookingStartsAt: '2020-01-01T00:00:00.000Z' }]);
@@ -116,7 +120,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     expect(found.data.find((event) => event.id === ids[0])).toMatchObject({ status: 'selling', minPrice: 85000 });
     await db.update(schema.bookingPolicies).set({ bookingStartsAt: new Date(Date.now() + 20000) }).where(eq(schema.bookingPolicies.performanceId, ids[1]!));
     await catalog.findByGenre('artist_celebrity', { page: 1, limit: 1, sort: 'latest', ended: true, sub: category, status: 'selling' });
-    const ttl = catalogCache.set.mock.calls.at(-1)?.[2] as number;
+    const ttl = catalogCacheSet.mock.calls.at(-1)?.[2] as number;
     expect(ttl).toBeGreaterThan(0);
     expect(ttl).toBeLessThanOrEqual(20);
   });

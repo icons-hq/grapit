@@ -21,6 +21,7 @@ import { UploadService } from '../src/modules/admin/upload.service.js';
 import { PerformanceService } from '../src/modules/performance/performance.service.js';
 import { CacheService } from '../src/modules/performance/cache.service.js';
 import { CatalogFreshnessService } from '../src/modules/performance/catalog-freshness.service.js';
+import { PerformanceViewCounter } from '../src/modules/performance/performance-view-counter.service.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 import { RolesGuard } from '../src/common/guards/roles.guard.js';
 import { AdminCapabilitiesGuard } from '../src/common/guards/admin-capabilities.guard.js';
@@ -62,7 +63,7 @@ describe('Performance preparation — real HTTP and PostgreSQL', () => {
     const cache = new CacheService({ get: async () => null, set: async () => 'OK',
       del: async () => 0, scan: async () => ['0', []] } as never);
     const freshness = new CatalogFreshnessService(cache);
-    catalog = new PerformanceService(db, cache);
+    catalog = new PerformanceService(db, cache, new PerformanceViewCounter(db));
     const admin = new AdminService(db, freshness, new AdminAuditService(db));
     // Vitest's TS transform omits constructor metadata. Supply wiring only;
     // the HTTP routes, pipes, Reflector and both authorization guards are real.

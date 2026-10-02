@@ -4,20 +4,31 @@ import { useSearchParams } from 'next/navigation';
 import { useLocale } from 'next-intl';
 import { apiClient } from '@/lib/api-client';
 import { resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
-import type {
-  PerformanceListResponse,
-  PerformanceWithDetails,
-  PerformanceCardData,
-  Banner,
-  PerformanceQuery,
+import {
+  PERFORMANCE_QUERY_MAX_PAGE,
+  type PerformanceListResponse,
+  type PerformanceWithDetails,
+  type PerformanceCardData,
+  type Banner,
+  type PerformanceQuery,
 } from '@grabit/shared';
+
+/**
+ * The catalog API rejects pages outside 1..PERFORMANCE_QUERY_MAX_PAGE with
+ * 400. A hand-edited `?page=` URL shows an empty last page instead.
+ */
+export function clampCatalogPage(page: number): number {
+  if (!Number.isFinite(page) || page < 1) return 1;
+  return Math.min(Math.floor(page), PERFORMANCE_QUERY_MAX_PAGE);
+}
 
 export function useBrowsePerformances(status: NonNullable<PerformanceQuery['status']>, page: number) {
   const locale = resolveVisibleCopyLocale(useLocale());
+  const requestPage = clampCatalogPage(page);
   return useQuery({
-    queryKey: ['performances', 'browse', status, page, locale],
+    queryKey: ['performances', 'browse', status, requestPage, locale],
     queryFn: () => apiClient.get<PerformanceListResponse>(`/api/v1/performances?${new URLSearchParams({
-      genre: 'artist_celebrity', status, page: String(page), limit: '12', ended: 'true', locale,
+      genre: 'artist_celebrity', status, page: String(requestPage), limit: '12', ended: 'true', locale,
     })}`),
   });
 }
@@ -53,7 +64,7 @@ function useHomeBannerDeviceTarget(): HomeBannerDeviceTarget | null {
 export function usePerformances(genre: string) {
   const searchParams = useSearchParams();
   const locale = resolveVisibleCopyLocale(useLocale());
-  const page = Number(searchParams.get('page') ?? '1');
+  const page = clampCatalogPage(Number(searchParams.get('page') ?? '1'));
   const sort = (searchParams.get('sort') ?? 'latest') as 'latest' | 'popular';
   const ended = searchParams.get('ended') === 'true';
 
