@@ -100,7 +100,7 @@ function createTicketRecord(overrides: Record<string, unknown> = {}) {
     usedAt: null,
     revokedAt: null,
     emailScheduledAt: new Date('2026-07-17T11:00:00.000Z'),
-    emailSentAt: null,
+    emailSentAt: null as Date | null,
     emailJobId: null,
     ...overrides,
   };
@@ -1508,6 +1508,8 @@ describe('QrTicketService', () => {
       anchorEmailJobId?: string | null;
       rows?: ReturnType<typeof reminderRows>;
       claimedIds?: string[];
+      /** Rows the release UPDATE still finds holding this job's claim. Defaults to every claimed row. */
+      releasedIds?: string[];
       emailResult?: { success: boolean; error?: string };
     }) {
       const claimReturning = vi.fn().mockResolvedValue(
@@ -1516,7 +1518,10 @@ describe('QrTicketService', () => {
       const claimSet = vi.fn().mockReturnValue({
         where: vi.fn().mockReturnValue({ returning: claimReturning }),
       });
-      const releaseWhere = vi.fn().mockResolvedValue(undefined);
+      const releaseReturning = vi.fn().mockResolvedValue(
+        (input.releasedIds ?? input.claimedIds ?? []).map((id) => ({ id })),
+      );
+      const releaseWhere = vi.fn().mockReturnValue({ returning: releaseReturning });
       const releaseSet = vi.fn().mockReturnValue({ where: releaseWhere });
       const mockDb = {
         select: vi
@@ -1554,7 +1559,7 @@ describe('QrTicketService', () => {
         handleReminderEmailJob(payload: { ticketId: string; reservationId: string }, jobId?: string): Promise<void>;
       }).handleReminderEmailJob({ ticketId: 'ticket-a1', reservationId: 'reservation-1' }, jobId);
 
-      return { mockDb, emailService, jwtService, claimSet, claimReturning, releaseSet, releaseWhere, handle };
+      return { mockDb, emailService, jwtService, claimSet, claimReturning, releaseSet, releaseWhere, releaseReturning, handle };
     }
 
     it('claims every active seat before sending one reminder that covers the whole reservation', async () => {
@@ -1597,6 +1602,27 @@ describe('QrTicketService', () => {
       expect(harness.mockDb.select).toHaveBeenCalledTimes(1);
       expect(harness.mockDb.update).not.toHaveBeenCalled();
       expect(harness.emailService.sendQrTicketReminderEmail).not.toHaveBeenCalled();
+    });
+
+    it('emails only the seats it claimed when a seat changed between the read and the claim', async () => {
+      const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      // Seat 1 was cancelled (or already sent) after the context read, so the claim skipped it.
+      const harness = createReminderService({ claimedIds: ['ticket-a2'] });
+
+      await harness.handle('qr-email-job-1');
+      const warnings = warn.mock.calls.map(([message]) => String(message));
+      warn.mockRestore();
+
+      const emailInput = harness.emailService.sendQrTicketReminderEmail.mock.calls[0]?.[1] as {
+        tickets: Array<{ seatLabel: string; token: string }>;
+      };
+      expect(emailInput.tickets.map((ticket) => ticket.seatLabel)).toEqual(['1층 · VIP A열 2번']);
+      expect(emailInput.tickets.map((ticket) =>
+        (harness.jwtService.decode(ticket.token) as Record<string, unknown>)['ticketItemId'],
+      )).toEqual(['ticket-item-a2']);
+      expect(warnings).toContainEqual(expect.stringMatching(
+        /^QR reminder partial claim\. reservationId=reservation-1, jobId=qr-email-job-1, .*readTicketCount=2, claimedTicketCount=1/,
+      ));
     });
 
     it('skips the reminder when the reservation was already emailed', async () => {
@@ -1663,6 +1689,23 @@ describe('QrTicketService', () => {
         expect(lines).toContainEqual(expect.stringMatching(/^QR reminder claimed\. .*jobId=qr-email-job-1/));
         expect(lines).toContainEqual(expect.stringMatching(/^QR reminder claim released after send failure\. .*jobId=qr-email-job-1/));
         expect(lines.some((line) => line.startsWith('QR reminder sent.'))).toBe(false);
+      });
+
+      it('does not report a release when another send already superseded the claim', async () => {
+        const logs = captureLogs();
+        const harness = createReminderService({
+          claimedIds: ['ticket-a1', 'ticket-a2'],
+          releasedIds: [],
+          emailResult: { success: false, error: 'resend 503' },
+        });
+
+        await expect(harness.handle('qr-email-job-1')).rejects.toThrow('resend 503');
+        const lines = logs.lines();
+        logs.restore();
+
+        expect(harness.releaseReturning).toHaveBeenCalledTimes(1);
+        expect(lines.some((line) => line.startsWith('QR reminder claim released'))).toBe(false);
+        expect(lines).toContainEqual(expect.stringMatching(/^QR reminder claim already superseded after send failure\. .*jobId=qr-email-job-1/));
       });
 
       it('logs the job id when a retry finds the claim already taken', async () => {

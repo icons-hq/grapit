@@ -13,6 +13,7 @@ import * as schema from '../src/database/schema/index.js';
 import type { DrizzleDB } from '../src/database/drizzle.provider.js';
 import { createPostgresPoolCleanup } from './helpers/postgres-pool-cleanup.js';
 import { AdminAuditService } from '../src/modules/admin/admin-audit.service.js';
+import type { EmailService } from '../src/modules/auth/email/email.service.js';
 import { QrTicketService } from '../src/modules/ticket/qr-ticket.service.js';
 import { FieldCheckInService } from '../src/modules/field-operations/field-check-in.service.js';
 
@@ -261,7 +262,7 @@ describe('QR ticket issuance, reminder email and keyring — PostgreSQL', () => 
         stop: vi.fn(),
       };
       const emailService = {
-        sendQrTicketReminderEmail: vi.fn(async () => {
+        sendQrTicketReminderEmail: vi.fn<EmailService['sendQrTicketReminderEmail']>(async () => {
           await new Promise((resolve) => setTimeout(resolve, 100));
           return { success: true };
         }),
@@ -287,9 +288,8 @@ describe('QR ticket issuance, reminder email and keyring — PostgreSQL', () => 
       ]);
 
       expect(emailService.sendQrTicketReminderEmail).toHaveBeenCalledTimes(1);
-      const emailInput = emailService.sendQrTicketReminderEmail.mock.calls[0]?.[1] as unknown as {
-        tickets: Array<{ seatLabel: string; token: string }>;
-      };
+      const emailInput = emailService.sendQrTicketReminderEmail.mock.calls[0]?.[1];
+      if (!emailInput) throw new Error('reminder email was not sent');
       expect(emailInput.tickets.map((ticket) => ticket.seatLabel)).toEqual([
         '1층 · VIP A열 1번',
         '1층 · VIP A열 2번',
@@ -311,7 +311,9 @@ describe('QR ticket issuance, reminder email and keyring — PostgreSQL', () => 
       };
       const [first] = await createService().ensureIssuedTicketsForReservation(issueInput(f));
       const worker = createService({ emailService }) as unknown as ReminderHandler;
-      const payload = { ticketId: first!.id, reservationId: f.order.id };
+      const ticketId = first?.id;
+      if (!ticketId) throw new Error('fixture issued no QR credential');
+      const payload = { ticketId, reservationId: f.order.id };
 
       await expect(worker.handleReminderEmailJob(payload)).rejects.toThrow('resend 503');
       const afterFailure = await db.select().from(schema.tickets).where(eq(schema.tickets.reservationId, f.order.id));
