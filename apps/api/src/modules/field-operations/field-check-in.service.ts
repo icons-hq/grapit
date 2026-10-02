@@ -352,7 +352,10 @@ export class FieldCheckInService {
       deviceAttemptId: `${VERIFY_ATTEMPT_PREFIX}${attemptId}`,
       requestedShowtimeId,
       token: input.token,
-      rejectionReason: rejectionReasonFor(input.outcome),
+      // A pending cancellation keeps its own reason, as consume records it.
+      rejectionReason: input.contract
+        ? rejectionReasonForContract(input.outcome, input.contract)
+        : rejectionReasonFor(input.outcome),
       stage: 'verify',
       keepFirstAttempt: true,
     });

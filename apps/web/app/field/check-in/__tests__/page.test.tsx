@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => ({
   useRealVerify: false,
   showtimes: [] as Array<{ id: string; eventId: string; title: string; dateTime: string; venueName: string | null }>,
   auth: { isInitialized: true, accessToken: 'scanner-access-token' as string | null },
+  capabilities: [] as string[],
   clearAuth: vi.fn(),
   apiPost: vi.fn(),
   consumeMutateAsync: vi.fn(),
@@ -60,7 +61,7 @@ vi.mock('@/stores/use-auth-store', () => ({
       name: '현장 스태프',
       role: 'admin',
       adminCapabilityBundle: 'scanner',
-      adminCapabilities: ['field.scan.verify', 'field.scan.consume', 'field.scan.sync', 'field.benefits.redeem'],
+      adminCapabilities: mocks.capabilities,
     },
   }),
 }));
@@ -181,6 +182,7 @@ beforeEach(async () => {
   mocks.verifyState = {};
   mocks.useRealVerify = false;
   mocks.auth = { isInitialized: true, accessToken: 'scanner-access-token' };
+  mocks.capabilities = ['field.scan.verify', 'field.scan.consume', 'field.scan.sync', 'field.benefits.redeem'];
   mocks.showtimes = [showtimeOption(REQUESTED_SHOWTIME_ID, '현장 검증', '2099-01-01T10:00:00Z')];
   mocks.consumeMutateAsync.mockReset();
   mocks.benefitRedeemMutateAsync.mockReset().mockResolvedValue({
@@ -493,6 +495,20 @@ describe('FieldCheckInPage device-wide pending entries (#117)', () => {
     expect(sent.every((attempt) => attempt.scannerUserId === SCANNER_USER_ID)).toBe(true);
     await waitFor(async () => expect((await listPendingScanAttempts({ syncState: 'pending' })).map((record) => record.deviceAttemptId))
       .toEqual(['other-account']));
+  });
+
+  it('does not sync for an account that has sync but not entry permission, which the server rejects (#111)', async () => {
+    mocks.capabilities = ['field.scan.verify', 'field.scan.sync'];
+    Object.defineProperty(navigator, 'onLine', { configurable: true, value: false });
+    await addPendingScanAttempt(pendingRecord());
+    renderPage();
+    const banner = await screen.findByRole('region', { name: '이 기기의 미동기화 입장 대기' });
+
+    act(() => setOnline(true));
+
+    await waitFor(() => expect(within(banner).getByRole('button', { name: '내 대기 1건 동기화' })).toBeDisabled());
+    expect(mocks.offlineSyncMutateAsync).not.toHaveBeenCalled();
+    expect(await listPendingScanAttempts({ syncState: 'pending' })).toHaveLength(1);
   });
 
   it('warns before logging out with unsynced entries and clears the session only on confirmation', async () => {

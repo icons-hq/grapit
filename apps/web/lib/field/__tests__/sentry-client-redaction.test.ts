@@ -31,4 +31,24 @@ describe('client Sentry init', () => {
       expect(JSON.stringify(payload)).not.toContain(RAW);
     }
   });
+
+  it('masks console breadcrumb strings without rewriting the live console arguments', async () => {
+    await import('../../../instrumentation-client');
+    const options = sentry.init.mock.calls[0]?.[0] as {
+      beforeBreadcrumb: (breadcrumb: unknown) => { message?: string; data?: { arguments?: unknown[] } };
+    };
+    const loggedObject = { ticket: RAW };
+    const liveArgs: unknown[] = [`ticket=${RAW}`, loggedObject];
+
+    const breadcrumb = options.beforeBreadcrumb({
+      category: 'console',
+      message: `ticket=${RAW}`,
+      data: { arguments: liveArgs, logger: 'console' },
+    });
+
+    expect(breadcrumb.message).not.toContain(RAW);
+    expect(breadcrumb.data?.arguments?.[0]).not.toContain(RAW);
+    expect(liveArgs[0]).toBe(`ticket=${RAW}`);
+    expect(loggedObject.ticket).toBe(RAW);
+  });
 });

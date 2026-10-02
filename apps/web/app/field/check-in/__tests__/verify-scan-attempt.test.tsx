@@ -1,6 +1,8 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import userEvent from '@testing-library/user-event';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import FieldCheckInPage from '../page';
@@ -87,9 +89,12 @@ describe('FieldCheckInPage scan attempt identity', () => {
 
   it('verifies with the same device attempt id that the entry action consumes', async () => {
     const user = userEvent.setup();
-    render(<FieldCheckInPage />);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+    render(<FieldCheckInPage />, { wrapper });
 
-    await user.click(screen.getByRole('button', { name: '이 좌석 입장 처리' }));
+    // The page first checks this device's offline queue for the same QR.
+    await user.click(await screen.findByRole('button', { name: '이 좌석 입장 처리' }));
     await waitFor(() => expect(mocks.consumeMutateAsync).toHaveBeenCalledTimes(1));
 
     const consumedAttempt = mocks.consumeMutateAsync.mock.calls[0]?.[0].deviceAttemptId;

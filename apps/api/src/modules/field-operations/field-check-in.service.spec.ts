@@ -10,6 +10,7 @@ import { FieldCheckInService, fieldShowtimeListLowerBound } from './field-check-
 // Keep only collaborator-failure and sensitive-output boundaries here.
 function contract(): QrTicketScannerContract {
   return { ticketId: 'ticket-1', ticketItemId: 'item-1', userId: 'buyer-1', tokenVersion: 'v1', ticketStatus: 'ACTIVE',
+    ticketItemStatus: 'active', cancellationPending: false,
     reservationId: 'order-1', paymentId: 'payment-1', showtimeId: '00000000-0000-4000-8000-000000000001',
     performanceId: 'event-1', performanceTitle: 'Show', showtimeAt: '2099-01-01T10:00:00Z', venueName: 'Hall',
     seatIdentity: { seatId: 'A-1', seatKey: '1F:A-1', floorKey: '1F', floorLabel: '1층', row: 'A', number: '1', tierName: 'VIP' },
@@ -56,7 +57,11 @@ describe('Field verification boundaries', () => {
 
 const REQUESTED_SHOWTIME_ID = '00000000-0000-4000-8000-000000000099';
 
-function recordingDependencies(options: { consumedReceipt?: boolean; ticketStatus?: QrTicketScannerContract['ticketStatus'] } = {}) {
+function recordingDependencies(options: {
+  consumedReceipt?: boolean;
+  ticketStatus?: QrTicketScannerContract['ticketStatus'];
+  cancellationPending?: boolean;
+} = {}) {
   const inserted: Array<Record<string, unknown>> = [];
   const statement = {
     onConflictDoNothing: vi.fn(() => statement),
@@ -72,7 +77,13 @@ function recordingDependencies(options: { consumedReceipt?: boolean; ticketStatu
     return query;
   });
   const db = { select, update: vi.fn(), insert: vi.fn(() => insertBuilder), transaction: vi.fn() };
-  const qr = { verifyTicketForScannerContract: vi.fn(async () => ({ ...contract(), ticketStatus: options.ticketStatus ?? 'REVOKED' })) };
+  const qr = { verifyTicketForScannerContract: vi.fn(async () => ({
+    ...contract(),
+    ticketStatus: options.ticketStatus ?? 'REVOKED',
+    ...(options.cancellationPending
+      ? { ticketItemStatus: 'cancellation_pending' as const, cancellationPending: true }
+      : {}),
+  })) };
   const audit = { write: vi.fn() };
   return { db, qr, audit, inserted, statement, service: new FieldCheckInService(db as never, qr as never, audit as never) };
 }
@@ -145,6 +156,27 @@ describe('Verify-stage rejection ledger (audit #113, #114)', () => {
     await service.verify({ token, showtimeId: contract().showtimeId, deviceAttemptId: 'attempt-1' }, context);
 
     expect(inserted).toEqual([expect.objectContaining({ result: outcome, requestedShowtimeId: contract().showtimeId })]);
+  });
+
+  it('stores the pending-cancellation reason, not the completed-refund reason, for a cancellation_pending seat', async () => {
+    const { service, inserted } = recordingDependencies({ ticketStatus: 'REVOKED', cancellationPending: true });
+
+    const result = await service.verify({ token, showtimeId: contract().showtimeId, deviceAttemptId: 'attempt-1' }, context);
+
+    expect(result).toMatchObject({ outcome: 'refunded_cancelled', resultLabel: '취소 처리 중 · 입장 불가' });
+    expect(inserted).toEqual([expect.objectContaining({
+      result: 'refunded_cancelled',
+      rejectionReason: result.rejectionReason,
+    })]);
+    expect(result.rejectionReason).toContain('취소 처리 중인 티켓입니다');
+  });
+
+  it('keeps the completed-refund reason for a cancelled seat', async () => {
+    const { service, inserted } = recordingDependencies({ ticketStatus: 'REVOKED' });
+
+    await service.verify({ token, showtimeId: contract().showtimeId, deviceAttemptId: 'attempt-1' }, context);
+
+    expect(inserted).toEqual([expect.objectContaining({ rejectionReason: '취소 또는 환불된 티켓입니다' })]);
   });
 
   it('adds nothing when consume already recorded the same attempt, such as the re-check right after entry', async () => {
