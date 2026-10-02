@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -7,16 +9,19 @@ import {
   buildMigrationPgOptions,
   evaluateBookingGate,
   evaluateConnectionBudget,
+  evaluateDbPreflight,
   evaluateMigrationFreeze,
   findPendingMigrations,
   parseStrictBoolean,
   postgresSettingToMs,
   readServiceEnvValue,
+  resolveDeployBookingValue,
   runtimeBookingEnabled,
   validateDeployConfig,
 } from './deploy-guards.mjs';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const GUARDS_CLI = join(REPO_ROOT, 'scripts/managed-demo/deploy-guards.mjs');
 
 // Workflow defaults from .github/workflows/deploy.yml when no repository variable is set.
 const workflowDefaults = {
@@ -31,6 +36,7 @@ const workflowDefaults = {
   PGBOSS_POOL_MAX: '10',
   DB_CONNECTION_RESERVE: '5',
   DB_CONNECTION_BUDGET_ENFORCE: 'false',
+  PREWARM_SCALING_SCOPE: 'service',
 };
 
 function describeService(env) {
@@ -59,6 +65,8 @@ test('rejects unsafe or ambiguous deploy inputs before any mutation', () => {
     [{ API_MIN_INSTANCES: '5', API_MAX_INSTANCES: '4' }, /API_MIN_INSTANCES must not exceed/],
     [{ API_CONCURRENCY: '0' }, /API_CONCURRENCY must be between/],
     [{ MIGRATION_FREEZE: 'on' }, /MIGRATION_FREEZE must be exactly/],
+    [{ PREWARM_SCALING_SCOPE: 'revision' }, /PREWARM_SCALING_SCOPE must be exactly/],
+    [{ PREWARM_SCALING_SCOPE: undefined }, /PREWARM_SCALING_SCOPE must be exactly/],
   ];
 
   for (const [override, pattern] of invalid) {
@@ -112,8 +120,15 @@ test('closing the gate or keeping it open never needs approval', () => {
     { name: 'grabit-api', readable: true, rawValue: 'true' },
     { name: 'grabit-web', readable: true, rawValue: 'true' },
   ];
-  assert.equal(evaluateBookingGate({ target: true, services: open, allowReopen: false }).ok, true);
-  assert.equal(evaluateBookingGate({ target: false, services: open, allowReopen: false }).ok, true);
+  const keepOpen = evaluateBookingGate({ target: true, services: open, allowReopen: false });
+  assert.equal(keepOpen.ok, true);
+  assert.deepEqual(keepOpen.warnings, []);
+
+  // Closing is allowed but never silent: a push that closes live sales is annotated.
+  const closing = evaluateBookingGate({ target: false, services: open, allowReopen: false });
+  assert.equal(closing.ok, true);
+  assert.equal(closing.warnings.length, 2);
+  assert.match(closing.warnings[0], /grabit-api: this deploy CLOSES sitewide booking/);
 
   const unreadable = [{ name: 'grabit-api', readable: false, rawValue: undefined }];
   assert.equal(evaluateBookingGate({ target: false, services: unreadable, allowReopen: false }).ok, true);
@@ -121,6 +136,51 @@ test('closing the gate or keeping it open never needs approval', () => {
   // An existing service without the variable runs closed (shared default false).
   const unset = [{ name: 'grabit-web', readable: true, rawValue: undefined }];
   assert.equal(evaluateBookingGate({ target: true, services: unset, allowReopen: false }).ok, false);
+});
+
+test('a close made while the deploy is running survives the later API/Web deploy step', () => {
+  // The migrate-job guard saw live true. Minutes later, during the image build and worker
+  // smoke, an operator ran the gcloud kill switch without changing the variable.
+  const closedMidRun = { name: 'grabit-api', readable: true, rawValue: 'false' };
+  const preserved = resolveDeployBookingValue({
+    target: true,
+    service: closedMidRun,
+    allowReopen: false,
+  });
+  assert.equal(preserved.ok, true);
+  assert.equal(preserved.value, false);
+  assert.match(preserved.warning, /Keeping the service closed/);
+
+  // Only an explicit reopen dispatch writes true over a live close.
+  const reopened = resolveDeployBookingValue({ target: true, service: closedMidRun, allowReopen: true });
+  assert.equal(reopened.value, true);
+
+  // Unreadable live state right before deploy: fail the step instead of guessing.
+  const unreadable = resolveDeployBookingValue({
+    target: true,
+    service: { name: 'grabit-web', readable: false, rawValue: undefined },
+    allowReopen: false,
+  });
+  assert.equal(unreadable.ok, false);
+  assert.equal(unreadable.value, null);
+  assert.match(unreadable.message, /refusing to guess/);
+});
+
+test('deploy-time booking value keeps an open gate open and annotates a close', () => {
+  const live = { name: 'grabit-web', readable: true, rawValue: 'true' };
+  const open = resolveDeployBookingValue({ target: true, service: live, allowReopen: false });
+  assert.deepEqual([open.ok, open.value, open.warning], [true, true, null]);
+
+  const close = resolveDeployBookingValue({ target: false, service: live, allowReopen: false });
+  assert.deepEqual([close.ok, close.value], [true, false]);
+  assert.match(close.warning, /CLOSES sitewide booking/);
+
+  const alreadyClosed = resolveDeployBookingValue({
+    target: false,
+    service: { name: 'grabit-web', readable: false, rawValue: undefined },
+    allowReopen: false,
+  });
+  assert.deepEqual([alreadyClosed.ok, alreadyClosed.value, alreadyClosed.warning], [true, false, null]);
 });
 
 test('detects pending migrations with the drizzle migrator comparison', async () => {
@@ -144,6 +204,58 @@ test('migration freeze blocks only deploys that would apply migrations', () => {
   const frozen = evaluateMigrationFreeze({ freeze: true, pending });
   assert.equal(frozen.ok, false);
   assert.match(frozen.message, /0099_hot_table_ddl/);
+
+  // Statement-level timeouts do not bound the whole migration transaction.
+  assert.equal(evaluateMigrationFreeze({ freeze: false, pending }).warning, null);
+  const batch = evaluateMigrationFreeze({
+    freeze: false,
+    pending: [...pending, { tag: '0100_backfill', when: 2 }],
+  });
+  assert.equal(batch.ok, true);
+  assert.match(batch.warning, /held until the last statement commits/);
+});
+
+function preflightInput(overrides = {}) {
+  const config = validateDeployConfig({ ...workflowDefaults, ...overrides.env });
+  return {
+    config,
+    settings: {
+      max_connections: 400,
+      superuser_reserved: 3,
+      reserved: 0,
+      lock_timeout: '5s',
+      statement_timeout: '1min',
+      ...overrides.settings,
+    },
+    journal: { entries: [{ tag: '0001_a', when: 100 }, { tag: '0002_b', when: 200 }] },
+    lastAppliedMillis: overrides.lastAppliedMillis ?? 200,
+  };
+}
+
+test('db preflight collects every blocking check before migrations run', () => {
+  // Defaults: PGOPTIONS applied, nothing pending, over budget but not enforced.
+  const passing = evaluateDbPreflight(preflightInput());
+  assert.equal(passing.ok, true);
+  assert.deepEqual(passing.failures, []);
+  assert.match(passing.annotations.join('\n'), /^::warning::DB connection budget/m);
+
+  const blocked = evaluateDbPreflight(
+    preflightInput({
+      env: { MIGRATION_FREEZE: 'true', DB_CONNECTION_BUDGET_ENFORCE: 'true' },
+      settings: { lock_timeout: '0', statement_timeout: '0' },
+      lastAppliedMillis: 100,
+    }),
+  );
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.failures.length, 3);
+  assert.match(blocked.failures[0], /PGOPTIONS was not applied/);
+  assert.match(blocked.failures[1], /MIGRATION_FREEZE=true blocks 1 pending migration/);
+  assert.match(blocked.failures[2], /DB_CONNECTION_BUDGET_ENFORCE=true/);
+  assert.match(blocked.annotations.join('\n'), /^::error::DB connection budget/m);
+
+  const unparsable = evaluateDbPreflight(preflightInput({ settings: { lock_timeout: 'soon' } }));
+  assert.equal(unparsable.ok, false);
+  assert.match(unparsable.failures[0], /PGOPTIONS was not applied/);
 });
 
 test('connection budget counts app pool plus pg-boss pool per API instance and worker', () => {
@@ -193,14 +305,135 @@ test('parses PostgreSQL duration settings returned by current_setting()', () => 
   assert.throws(() => postgresSettingToMs('soon'), /Unrecognized/);
 });
 
+async function runGuards(args, { env = {}, files = {} } = {}) {
+  const dir = await mkdtemp(join(tmpdir(), 'deploy-guards-'));
+  try {
+    const paths = {
+      GITHUB_ENV: join(dir, 'github-env'),
+      GITHUB_OUTPUT: join(dir, 'github-output'),
+      GITHUB_STEP_SUMMARY: join(dir, 'step-summary'),
+    };
+    for (const path of Object.values(paths)) await writeFile(path, '');
+    const resolvedArgs = [];
+    for (const arg of args) {
+      const match = /^(.+)=@(.+)$/.exec(arg);
+      if (match) {
+        const filePath = join(dir, match[2]);
+        await writeFile(filePath, files[match[2]] ?? '');
+        resolvedArgs.push(`${match[1]}=${filePath}`);
+      } else {
+        resolvedArgs.push(arg);
+      }
+    }
+    const result = spawnSync(process.execPath, [GUARDS_CLI, ...resolvedArgs], {
+      encoding: 'utf8',
+      env: { PATH: process.env.PATH, ...workflowDefaults, ...paths, ...env },
+    });
+    return {
+      status: result.status,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      githubEnv: await readFile(paths.GITHUB_ENV, 'utf8'),
+      githubOutput: await readFile(paths.GITHUB_OUTPUT, 'utf8'),
+      summary: await readFile(paths.GITHUB_STEP_SUMMARY, 'utf8'),
+    };
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+const liveJson = (value) =>
+  JSON.stringify(describeService(value === undefined ? [] : [{ name: 'BOOKING_ENABLED', value }]));
+
+test('CLI validate-config exports PGOPTIONS through GITHUB_ENV and rejects bad input', async () => {
+  const ok = await runGuards(['validate-config']);
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.equal(ok.githubEnv, 'PGOPTIONS=-c lock_timeout=5s -c statement_timeout=60s\n');
+  assert.match(ok.summary, /Prewarm scaling scope service/);
+
+  const bad = await runGuards(['validate-config'], { env: { BOOKING_ENABLED: 'flase' } });
+  assert.equal(bad.status, 1);
+  assert.equal(bad.githubEnv, '');
+  assert.match(bad.stderr, /BOOKING_ENABLED must be exactly/);
+});
+
+test('CLI booking-gate exit codes follow the reopen guard', async () => {
+  const closedApi = { api: liveJson('false'), web: liveJson('true') };
+  const args = ['booking-gate', '--service', 'grabit-api=@api', '--service', 'grabit-web=@web'];
+
+  const refused = await runGuards(args, { files: closedApi });
+  assert.equal(refused.status, 1);
+  assert.match(refused.stderr, /Refusing to reopen sitewide booking on grabit-api/);
+
+  const approved = await runGuards(args, { files: closedApi, env: { ALLOW_BOOKING_REOPEN: 'true' } });
+  assert.equal(approved.status, 0, approved.stderr);
+
+  // An empty describe file (gcloud failed) is unreadable, never "open".
+  const unreadable = await runGuards(args, { files: { api: '', web: liveJson('true') } });
+  assert.equal(unreadable.status, 1);
+  assert.match(unreadable.stderr, /grabit-api \(live state unreadable\)/);
+
+  const closing = await runGuards(args, {
+    files: { api: liveJson('true'), web: liveJson('true') },
+    env: { BOOKING_ENABLED: 'false' },
+  });
+  assert.equal(closing.status, 0, closing.stderr);
+  assert.match(closing.stdout, /^::warning::grabit-api: this deploy CLOSES sitewide booking/m);
+});
+
+test('CLI booking-gate-value writes the deploy value to GITHUB_OUTPUT', async () => {
+  const args = ['booking-gate-value', '--service', 'grabit-api=@api'];
+
+  const open = await runGuards(args, { files: { api: liveJson('true') } });
+  assert.equal(open.status, 0, open.stderr);
+  assert.equal(open.githubOutput, 'booking_enabled=true\n');
+
+  const preserved = await runGuards(args, { files: { api: liveJson('false') } });
+  assert.equal(preserved.status, 0, preserved.stderr);
+  assert.equal(preserved.githubOutput, 'booking_enabled=false\n');
+  assert.match(preserved.stdout, /^::warning::grabit-api: live BOOKING_ENABLED is closed/m);
+
+  const unreadable = await runGuards(args, { files: { api: '{not json' } });
+  assert.equal(unreadable.status, 1);
+  assert.equal(unreadable.githubOutput, '');
+
+  const twoServices = await runGuards([...args, '--service', 'grabit-web=@web'], {
+    files: { api: liveJson('true'), web: liveJson('true') },
+  });
+  assert.equal(twoServices.status, 1);
+  assert.match(twoServices.stderr, /exactly one --service/);
+});
+
+function workflowJob(workflow, name) {
+  const start = workflow.indexOf(`\n  ${name}:\n`);
+  assert.ok(start > 0, `job ${name} exists`);
+  const rest = workflow.slice(start + 1);
+  const next = rest.slice(1).search(/\n {2}[a-z][a-z0-9-]*:\n/);
+  return next === -1 ? rest : rest.slice(0, next + 1);
+}
+
 test('deploy workflow keeps the guarded deploy contract', async () => {
   const workflow = await readFile(join(REPO_ROOT, '.github/workflows/deploy.yml'), 'utf8');
 
   // #64/#137: one repository variable drives API, Web and worker; no hardcoded open gate.
   assert.doesNotMatch(workflow, /BOOKING_ENABLED=true\b/);
   assert.match(workflow, /BOOKING_ENABLED: \$\{\{ vars\.BOOKING_ENABLED \|\| 'true' \}\}/);
-  assert.equal(workflow.match(/BOOKING_ENABLED=\$\{\{ env\.BOOKING_ENABLED \}\}/g)?.length, 2);
-  assert.match(workflow, /deploy-guards\.mjs booking-gate/);
+  assert.match(workflow, /deploy-guards\.mjs booking-gate\b/);
+
+  // #64 race: API and Web re-read the live gate immediately before their deploy step.
+  for (const [job, service] of [
+    ['deploy-api', 'API_SERVICE'],
+    ['deploy-web', 'WEB_SERVICE'],
+  ]) {
+    const block = workflowJob(workflow, job);
+    const recheck = block.indexOf('deploy-guards.mjs booking-gate-value');
+    const deploy = block.indexOf('google-github-actions/deploy-cloudrun@');
+    assert.ok(block.includes('actions/checkout@'), `${job} checks out the guard script`);
+    assert.ok(block.includes(`gcloud run services describe "\${${service}}"`), `${job} reads its own service`);
+    assert.ok(recheck > 0 && recheck < deploy, `${job} re-checks before deploy-cloudrun`);
+    assert.match(block, /BOOKING_ENABLED=\$\{\{ steps\.booking_gate\.outputs\.booking_enabled \}\}/);
+    assert.doesNotMatch(block, /BOOKING_ENABLED=\$\{\{ env\.BOOKING_ENABLED \}\}/);
+  }
 
   // #60: migration sessions get lock/statement timeouts before drizzle-kit migrate runs.
   const validateIndex = workflow.indexOf('deploy-guards.mjs validate-config');
@@ -213,6 +446,9 @@ test('deploy workflow keeps the guarded deploy contract', async () => {
   assert.match(workflow, /--startup-probe=httpGet\.path=\/api\/v1\/health,httpGet\.port=8080,/);
   assert.match(workflow, /--timeout=3600\b/);
 
-  // #150: prewarm can never request more minimum instances than the API maximum.
+  // #150: prewarm can never request more minimum instances than the API maximum, and the
+  // service-level scope can be switched back to the template mask without a code change.
   assert.match(workflow, /PREWARM_MAX_MIN_INSTANCES=\$\{\{ env\.API_MAX_INSTANCES \}\}/);
+  assert.match(workflow, /PREWARM_SCALING_SCOPE: \$\{\{ vars\.PREWARM_SCALING_SCOPE \|\| 'service' \}\}/);
+  assert.match(workflow, /PREWARM_SCALING_SCOPE=\$\{\{ env\.PREWARM_SCALING_SCOPE \}\}/);
 });

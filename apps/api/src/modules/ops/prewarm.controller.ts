@@ -26,8 +26,9 @@ type PrewarmScaleRequestBody = z.infer<typeof prewarmScaleRequestSchema>;
 type PrewarmStepDownRequestBody = z.infer<typeof prewarmStepDownRequestSchema>;
 
 /**
- * 200 only after Cloud Run finished applying the new minimum; 202 means the
- * operation was accepted but is still running (see `state`/`operationName`).
+ * 200 only after the service reads back settled with the new minimum; 202
+ * means Cloud Run accepted the update but the readback had not settled within
+ * the wait budget (see `state`/`operationName`).
  */
 function respondWithUpdateState(res: Response, result: PrewarmUpdateResult) {
   res.status(result.state === 'applied' ? HttpStatus.OK : HttpStatus.ACCEPTED);

@@ -377,8 +377,8 @@ During the no-sale managed-demo posture, Web and API use minimum instances `0`, 
 8. build and push API image,
 9. build and push web image,
 10. validate and patch the bounded background worker Job through the Cloud Run v2 API, then smoke it from the API image,
-11. when scale-to-zero is selected, verify the separately provisioned five-minute schedule is enabled, then deploy API,
-12. deploy web after API deploy.
+11. when scale-to-zero is selected, verify the separately provisioned five-minute schedule is enabled; re-read the live API `BOOKING_ENABLED` (a close made during the run is kept, an unreadable value fails the job), then deploy API,
+12. re-read the live Web `BOOKING_ENABLED` the same way, then deploy web after API deploy.
 
 API deploy injects runtime values through Cloud Run environment variables and Secret Manager bindings. Documentation must name required settings without printing raw values.
 
@@ -394,9 +394,9 @@ Important non-sensitive production invariants:
 - managed-demo API background processing is producer-only; the bounded Job always enables processing, and the warm ticket-opening default restores continuous API workers
 - worker interval is disabled inside the Job and replaced by one immediate sweep plus a 30-second bounded processing window
 - web build receives public API/WS/R2/Sentry/Toss public values at image build time
-- API, Web and worker `BOOKING_ENABLED` come from one repository variable (unset deploys `true`); see the kill switch in `docs/runbooks/managed-demo-cost-floor.md`
+- API, Web and worker `BOOKING_ENABLED` come from one repository variable (unset deploys `true`); a deploy never writes `true` over a live closed API/Web without `allow_booking_reopen=true`; see the kill switch in `docs/runbooks/managed-demo-cost-floor.md`
 - API request timeout is `3600s` for Socket.IO; startup and liveness probes use `/api/v1/health`, which checks only Valkey so database blips do not restart instances
-- prewarm changes the service-level minimum (no new revision) and is capped by `API_MAX_INSTANCES`
+- prewarm changes the service-level minimum (no new revision; `PREWARM_SCALING_SCOPE=template` is the revision-template fallback), is capped by `API_MAX_INSTANCES`, and confirms completion by reading the service back (`run.services.get`), not the operation
 
 ### 8.4 Runtime Configuration
 

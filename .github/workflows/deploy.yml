@@ -32,9 +32,13 @@ env:
   BACKGROUND_PROCESSING_ENABLED: ${{ vars.BACKGROUND_PROCESSING_ENABLED || 'true' }}
   # Sitewide booking gate shared by API, Web and the background worker. Unset keeps
   # the current production behaviour (open). The kill-switch procedure in
-  # docs/runbooks/managed-demo-cost-floor.md changes this variable first so a later
-  # push cannot silently reopen a gate closed with gcloud.
+  # docs/runbooks/managed-demo-cost-floor.md changes this variable first. The
+  # migrate job refuses a reopen, and deploy-api/deploy-web re-read the live value
+  # right before deploying so a close made mid-run is preserved.
   BOOKING_ENABLED: ${{ vars.BOOKING_ENABLED || 'true' }}
+  # Prewarm patches the service-level minimum (no new revision). 'template' is the
+  # Phase 24-21 revision-template fallback if the service-level update is refused.
+  PREWARM_SCALING_SCOPE: ${{ vars.PREWARM_SCALING_SCOPE || 'service' }}
   API_CONCURRENCY: ${{ vars.API_CONCURRENCY || '250' }}
   # Migration sessions fail fast instead of queueing hot-table traffic behind an
   # ACCESS EXCLUSIVE lock request inside drizzle's single migration transaction.
@@ -251,6 +255,12 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
       - id: auth
         uses: google-github-actions/auth@v3
         with:
@@ -265,6 +275,19 @@ jobs:
             --location="${GCP_REGION}" \
             --format='value(state)')
           test "${SCHEDULER_STATE}" = 'ENABLED'
+      - name: Re-check sitewide booking gate before deploy
+        id: booking_gate
+        env:
+          ALLOW_BOOKING_REOPEN: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_booking_reopen == true }}
+        run: |
+          if ! gcloud run services describe "${API_SERVICE}" \
+            --project="${GCP_PROJECT_ID}" \
+            --region="${GCP_REGION}" \
+            --format=json > "${RUNNER_TEMP}/live-service.json"; then
+            : > "${RUNNER_TEMP}/live-service.json"
+          fi
+          node scripts/managed-demo/deploy-guards.mjs booking-gate-value \
+            --service "${API_SERVICE}=${RUNNER_TEMP}/live-service.json"
       - uses: google-github-actions/deploy-cloudrun@v3
         with:
           service: ${{ env.API_SERVICE }}
@@ -297,6 +320,7 @@ jobs:
             GOOGLE_CALLBACK_URL=${{ vars.CLOUD_RUN_API_URL }}/api/v1/auth/social/google/callback
             PREWARM_ALLOWED_SERVICE_NAME=${{ env.API_SERVICE }}
             PREWARM_MAX_MIN_INSTANCES=${{ env.API_MAX_INSTANCES }}
+            PREWARM_SCALING_SCOPE=${{ env.PREWARM_SCALING_SCOPE }}
             DB_POOL_MAX=${{ env.DB_POOL_MAX }}
             DB_POOL_IDLE_TIMEOUT_MS=30000
             DB_POOL_CONNECTION_TIMEOUT_MS=5000
@@ -304,7 +328,7 @@ jobs:
             CUTOVER_GATE_LEDGER_PATH=${{ vars.CUTOVER_GATE_LEDGER_PATH || '/app/phase26/26-GATE-LEDGER.json' }}
             CUTOVER_GATE_LEDGER_MAX_AGE_DAYS=${{ vars.CUTOVER_GATE_LEDGER_MAX_AGE_DAYS || '30' }}
             R2_UPLOAD_CACHE_CONTROL_ENABLED=true
-            BOOKING_ENABLED=${{ env.BOOKING_ENABLED }}
+            BOOKING_ENABLED=${{ steps.booking_gate.outputs.booking_enabled }}
             PAYPAL_CHECKOUT_ENABLED=true
             ALIPAY_CHECKOUT_ENABLED=true
             PAYPAL_KRW_USD_RATE=${{ vars.PAYPAL_KRW_USD_RATE }}
@@ -389,11 +413,31 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.DEPLOY_SHA }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
       - id: auth
         uses: google-github-actions/auth@v3
         with:
           workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v3
+      - name: Re-check sitewide booking gate before deploy
+        id: booking_gate
+        env:
+          ALLOW_BOOKING_REOPEN: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_booking_reopen == true }}
+        run: |
+          if ! gcloud run services describe "${WEB_SERVICE}" \
+            --project="${GCP_PROJECT_ID}" \
+            --region="${GCP_REGION}" \
+            --format=json > "${RUNNER_TEMP}/live-service.json"; then
+            : > "${RUNNER_TEMP}/live-service.json"
+          fi
+          node scripts/managed-demo/deploy-guards.mjs booking-gate-value \
+            --service "${WEB_SERVICE}=${RUNNER_TEMP}/live-service.json"
       - uses: google-github-actions/deploy-cloudrun@v3
         with:
           service: ${{ env.WEB_SERVICE }}
@@ -410,7 +454,7 @@ jobs:
             --allow-unauthenticated
           env_vars: |
             NODE_ENV=production
-            BOOKING_ENABLED=${{ env.BOOKING_ENABLED }}
+            BOOKING_ENABLED=${{ steps.booking_gate.outputs.booking_enabled }}
             NEXT_PUBLIC_QR_PUBLIC_WEB_ORIGIN=https://heygrabit.com
           secrets: |
             SENTRY_DSN=sentry-dsn-web:latest

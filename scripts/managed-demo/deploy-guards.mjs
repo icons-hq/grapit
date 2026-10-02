@@ -5,6 +5,7 @@
 //
 //   node scripts/managed-demo/deploy-guards.mjs validate-config
 //   node scripts/managed-demo/deploy-guards.mjs booking-gate --service NAME=FILE [...]
+//   node scripts/managed-demo/deploy-guards.mjs booking-gate-value --service NAME=FILE
 //   node scripts/managed-demo/deploy-guards.mjs db-preflight
 //
 // Inputs come from the workflow environment (repository variables with
@@ -27,6 +28,7 @@ const DURATION_UNIT_MS = { ms: 1, s: 1_000, min: 60_000, h: 3_600_000, d: 86_400
 // Mirrors packages/shared/src/flags.ts parseBooleanFlag(value, false): the API,
 // Web and worker treat anything that is not an explicit true value as closed.
 const RUNTIME_TRUE_VALUES = new Set(['true', '1', 'yes', 'on']);
+const PREWARM_SCALING_SCOPES = new Set(['service', 'template']);
 
 export function parseStrictBoolean(value, name) {
   const normalized = typeof value === 'string' ? value.trim() : value;
@@ -86,8 +88,15 @@ export function validateDeployConfig(env) {
     throw new Error('API_MIN_INSTANCES must not exceed API_MAX_INSTANCES');
   }
 
+  const prewarmScalingScope =
+    typeof env.PREWARM_SCALING_SCOPE === 'string' ? env.PREWARM_SCALING_SCOPE.trim() : '';
+  if (!PREWARM_SCALING_SCOPES.has(prewarmScalingScope)) {
+    throw new Error('PREWARM_SCALING_SCOPE must be exactly "service" or "template"');
+  }
+
   return {
     bookingEnabled,
+    prewarmScalingScope,
     migrationLockTimeout,
     migrationStatementTimeout,
     migrationFreeze: parseStrictBoolean(env.MIGRATION_FREEZE, 'MIGRATION_FREEZE'),
@@ -156,13 +165,15 @@ export function runtimeBookingEnabled(rawValue) {
 /**
  * Decides whether a deploy may apply `target` as the sitewide booking gate.
  *
- * Closing (target=false) is always allowed. Opening a service whose live
- * runtime is closed, or whose live state cannot be read, requires an explicit
- * manual dispatch with allow_booking_reopen=true. This keeps a gcloud-only
- * emergency close from being silently undone by the next main push.
+ * Closing (target=false) is always allowed, but closing a live-open service is
+ * reported as a warning because it stops sales sitewide. Opening a service
+ * whose live runtime is closed, or whose live state cannot be read, requires
+ * an explicit manual dispatch with allow_booking_reopen=true. This keeps a
+ * gcloud-only emergency close from being silently undone by the next main push.
  */
 export function evaluateBookingGate({ target, services, allowReopen }) {
   const lines = [];
+  const warnings = [];
   const reopenBlocked = [];
 
   for (const service of services) {
@@ -178,12 +189,16 @@ export function evaluateBookingGate({ target, services, allowReopen }) {
     if (target && !liveEnabled) {
       reopenBlocked.push(`${service.name} (live ${liveLabel})`);
     }
+    if (!target && liveEnabled) {
+      warnings.push(closingWarning(service.name));
+    }
   }
 
   if (reopenBlocked.length > 0 && !allowReopen) {
     return {
       ok: false,
       lines,
+      warnings,
       message:
         `Refusing to reopen sitewide booking on ${reopenBlocked.join(', ')}. ` +
         'Set repository variable BOOKING_ENABLED=false to keep the gate closed, or ' +
@@ -198,7 +213,81 @@ export function evaluateBookingGate({ target, services, allowReopen }) {
   } else if (reopenBlocked.length > 0) {
     message = `Sitewide booking reopen explicitly approved for ${reopenBlocked.join(', ')}.`;
   }
-  return { ok: true, lines, message };
+  return { ok: true, lines, warnings, message };
+}
+
+function closingWarning(name) {
+  return (
+    `${name}: this deploy CLOSES sitewide booking (live true -> false) because repository ` +
+    'variable BOOKING_ENABLED is false. If sales should stay open, cancel this run and set ' +
+    'BOOKING_ENABLED=true first.'
+  );
+}
+
+/**
+ * Chooses the BOOKING_ENABLED value one deploy job writes, re-reading the live
+ * service immediately before `deploy-cloudrun`. The migrate-job guard runs
+ * minutes earlier; an operator may close the gate with gcloud while images
+ * build and the worker smoke runs. Without this re-check the API/Web deploy
+ * would write the stale `true` and silently reopen sales.
+ *
+ * - target false: write false (warn when this closes a live-open service).
+ * - target true, live open, or reopen approved: write true.
+ * - target true, live closed, no approval: keep it closed (write false) and
+ *   warn, so an in-flight hotfix still ships without undoing the close.
+ * - target true, live unreadable, no approval: fail the step without
+ *   deploying, because guessing either value is unsafe during a sale.
+ */
+export function resolveDeployBookingValue({ target, service, allowReopen }) {
+  if (!target) {
+    const liveOpen = service.readable && runtimeBookingEnabled(service.rawValue);
+    return {
+      ok: true,
+      value: false,
+      warning: liveOpen ? closingWarning(service.name) : null,
+      message: `${service.name}: deploying BOOKING_ENABLED=false.`,
+    };
+  }
+
+  if (allowReopen) {
+    return {
+      ok: true,
+      value: true,
+      warning: null,
+      message: `${service.name}: deploying BOOKING_ENABLED=true (reopen explicitly approved).`,
+    };
+  }
+
+  if (!service.readable) {
+    return {
+      ok: false,
+      value: null,
+      warning: null,
+      message:
+        `${service.name}: live BOOKING_ENABLED is unreadable right before deploy; refusing to ` +
+        'guess the sitewide booking gate. Re-run the deploy, or dispatch it with ' +
+        'allow_booking_reopen=true after confirming booking may be open.',
+    };
+  }
+
+  if (!runtimeBookingEnabled(service.rawValue)) {
+    return {
+      ok: true,
+      value: false,
+      warning:
+        `${service.name}: live BOOKING_ENABLED is closed but repository variable BOOKING_ENABLED ` +
+        'is true. Keeping the service closed (deploying false). Set the variable to false, or ' +
+        'reopen deliberately with a manual dispatch and allow_booking_reopen=true.',
+      message: `${service.name}: deploying BOOKING_ENABLED=false (live close preserved).`,
+    };
+  }
+
+  return {
+    ok: true,
+    value: true,
+    warning: null,
+    message: `${service.name}: deploying BOOKING_ENABLED=true.`,
+  };
 }
 
 /** Same comparison as drizzle-orm's pg migrator (`created_at < folderMillis`). */
@@ -213,19 +302,28 @@ export function findPendingMigrations(journal, lastAppliedMillis) {
 
 export function evaluateMigrationFreeze({ freeze, pending }) {
   if (pending.length === 0) {
-    return { ok: true, message: 'No pending migrations.' };
+    return { ok: true, warning: null, message: 'No pending migrations.' };
   }
   const tags = pending.map((entry) => entry.tag).join(', ');
   if (freeze) {
     return {
       ok: false,
+      warning: null,
       message:
         `MIGRATION_FREEZE=true blocks ${pending.length} pending migration(s): ${tags}. ` +
         'Merge schema changes outside the ticket-opening window, or lift the freeze ' +
         'deliberately after reviewing hot-table lock impact.',
     };
   }
-  return { ok: true, message: `${pending.length} pending migration(s): ${tags}.` };
+  // lock_timeout/statement_timeout bound each statement, not the transaction:
+  // a lock taken by an earlier migration stays held until the last one commits.
+  const warning =
+    pending.length > 1
+      ? `${pending.length} pending migrations run in one transaction; a lock taken by an ` +
+        'earlier migration is held until the last statement commits (PostgreSQL 16 has no ' +
+        'transaction_timeout). Deploy hot-table DDL alone, outside sales hours.'
+      : null;
+  return { ok: true, warning, message: `${pending.length} pending migration(s): ${tags}.` };
 }
 
 /**
@@ -233,6 +331,10 @@ export function evaluateMigrationFreeze({ freeze, pending }) {
  * Each API instance and the single worker task own one app pool (DB_POOL_MAX)
  * plus one pg-boss pool (PGBOSS_POOL_MAX, pg-boss default 10 unless the API
  * code sets a smaller max).
+ *
+ * The count covers one revision's instances. While a deploy rolls out, old
+ * and new revision instances overlap briefly; that headroom must come from
+ * DB_CONNECTION_RESERVE (or the deploy must avoid peak traffic).
  */
 export function evaluateConnectionBudget({
   maxConnections,
@@ -253,7 +355,8 @@ export function evaluateConnectionBudget({
   const message =
     `DB connection budget: API ${apiMaxInstances} x (${dbPoolMax} app + ${pgBossPoolMax} pg-boss) = ${api}, ` +
     `worker ${worker}, reserve ${reserve}, required ${required} / available ${available} ` +
-    `(max_connections ${maxConnections} - reserved ${reservedConnections}).`;
+    `(max_connections ${maxConnections} - reserved ${reservedConnections}). ` +
+    'Assumes no old/new revision overlap; DB_CONNECTION_RESERVE must cover rollout overlap.';
 
   return {
     ok: !overBudget || !enforce,
@@ -264,10 +367,75 @@ export function evaluateConnectionBudget({
   };
 }
 
+/**
+ * Turns the migration-session readback into the preflight verdict. Every
+ * failing check is collected, so one run reports all blockers at once.
+ */
+export function evaluateDbPreflight({ config, settings, journal, lastAppliedMillis }) {
+  const failures = [];
+  const annotations = [];
+  const lines = ['### Database preflight'];
+
+  lines.push(
+    `- Migration session lock_timeout ${settings.lock_timeout}, statement_timeout ${settings.statement_timeout}`,
+  );
+  let sessionLockMs = null;
+  let sessionStatementMs = null;
+  try {
+    sessionLockMs = postgresSettingToMs(settings.lock_timeout);
+    sessionStatementMs = postgresSettingToMs(settings.statement_timeout);
+  } catch {
+    // An unrecognized readback is treated like a missing PGOPTIONS.
+  }
+  if (
+    sessionLockMs !== config.migrationLockTimeout.ms ||
+    sessionStatementMs !== config.migrationStatementTimeout.ms
+  ) {
+    failures.push(
+      'PGOPTIONS was not applied to the migration session; refusing to run migrations without lock_timeout/statement_timeout.',
+    );
+  }
+
+  const pending = findPendingMigrations(journal, lastAppliedMillis);
+  const freeze = evaluateMigrationFreeze({ freeze: config.migrationFreeze, pending });
+  lines.push(`- ${freeze.message}`);
+  if (!freeze.ok) failures.push(freeze.message);
+  if (freeze.warning) {
+    lines.push(`- ${freeze.warning}`);
+    annotations.push(`::warning::${freeze.warning}`);
+  }
+
+  const budget = evaluateConnectionBudget({
+    maxConnections: Number(settings.max_connections),
+    reservedConnections: Number(settings.superuser_reserved) + Number(settings.reserved),
+    apiMaxInstances: config.apiMaxInstances,
+    dbPoolMax: config.dbPoolMax,
+    pgBossPoolMax: config.pgBossPoolMax,
+    reserve: config.dbConnectionReserve,
+    enforce: config.dbConnectionBudgetEnforce,
+  });
+  lines.push(`- ${budget.message}`);
+  if (budget.overBudget) {
+    annotations.push(`${budget.ok ? '::warning::' : '::error::'}${budget.message} Over budget.`);
+    if (!budget.ok) failures.push(`${budget.message} DB_CONNECTION_BUDGET_ENFORCE=true.`);
+  }
+
+  return { ok: failures.length === 0, failures, annotations, lines, pending };
+}
+
 async function writeSummary(lines) {
   const summaryPath = process.env.GITHUB_STEP_SUMMARY;
   if (!summaryPath) return;
   await appendFile(summaryPath, `${lines.join('\n')}\n`);
+}
+
+async function writeOutput(name, value) {
+  const outputPath = process.env.GITHUB_OUTPUT;
+  if (!outputPath) {
+    console.log(`${name}=${value}`);
+    return;
+  }
+  await appendFile(outputPath, `${name}=${value}\n`);
 }
 
 async function exportEnv(name, value) {
@@ -316,17 +484,29 @@ async function commandValidateConfig() {
     `- BOOKING_ENABLED target: ${config.bookingEnabled}`,
     `- Migration lock_timeout ${config.migrationLockTimeout.text}, statement_timeout ${config.migrationStatementTimeout.text}, freeze ${config.migrationFreeze}`,
     `- API instances ${config.apiMinInstances}-${config.apiMaxInstances}, concurrency ${config.apiConcurrency}`,
+    `- Prewarm scaling scope ${config.prewarmScalingScope}`,
   ];
   console.log(lines.slice(1).join('\n'));
   await writeSummary(lines);
 }
 
+function readAllowReopen() {
+  return parseStrictBoolean(process.env.ALLOW_BOOKING_REOPEN ?? 'false', 'ALLOW_BOOKING_REOPEN');
+}
+
+async function readServiceGateInput(service) {
+  const description = await readServiceDescription(service.path);
+  const envValue = description ? readServiceEnvValue(description, 'BOOKING_ENABLED') : null;
+  return {
+    name: service.name,
+    readable: Boolean(description) && !envValue?.fromSecret,
+    rawValue: envValue?.value,
+  };
+}
+
 async function commandBookingGate(args) {
   const config = validateDeployConfig(process.env);
-  const allowReopen = parseStrictBoolean(
-    process.env.ALLOW_BOOKING_REOPEN ?? 'false',
-    'ALLOW_BOOKING_REOPEN',
-  );
+  const allowReopen = readAllowReopen();
   const { services } = parseArgs(args);
   if (services.length === 0) {
     throw new Error('booking-gate requires at least one --service');
@@ -334,13 +514,7 @@ async function commandBookingGate(args) {
 
   const inputs = [];
   for (const service of services) {
-    const description = await readServiceDescription(service.path);
-    const envValue = description ? readServiceEnvValue(description, 'BOOKING_ENABLED') : null;
-    inputs.push({
-      name: service.name,
-      readable: Boolean(description) && !envValue?.fromSecret,
-      rawValue: envValue?.value,
-    });
+    inputs.push(await readServiceGateInput(service));
   }
 
   const result = evaluateBookingGate({
@@ -349,10 +523,47 @@ async function commandBookingGate(args) {
     allowReopen,
   });
   console.log(result.lines.join('\n'));
-  await writeSummary(['### Sitewide booking gate', ...result.lines.map((line) => `- ${line}`), result.message]);
+  for (const warning of result.warnings) {
+    console.log(`::warning::${warning}`);
+  }
+  await writeSummary([
+    '### Sitewide booking gate',
+    ...result.lines.map((line) => `- ${line}`),
+    ...result.warnings.map((warning) => `- **Warning:** ${warning}`),
+    result.message,
+  ]);
   if (!result.ok) {
     throw new Error(result.message);
   }
+  console.log(result.message);
+}
+
+async function commandBookingGateValue(args) {
+  const config = validateDeployConfig(process.env);
+  const allowReopen = readAllowReopen();
+  const { services } = parseArgs(args);
+  if (services.length !== 1) {
+    throw new Error('booking-gate-value requires exactly one --service');
+  }
+
+  const service = await readServiceGateInput(services[0]);
+  const result = resolveDeployBookingValue({
+    target: config.bookingEnabled,
+    service,
+    allowReopen,
+  });
+  if (result.warning) {
+    console.log(`::warning::${result.warning}`);
+  }
+  await writeSummary([
+    `### Booking gate at deploy (${service.name})`,
+    `- ${result.message}`,
+    ...(result.warning ? [`- **Warning:** ${result.warning}`] : []),
+  ]);
+  if (!result.ok) {
+    throw new Error(result.message);
+  }
+  await writeOutput('booking_enabled', String(result.value));
   console.log(result.message);
 }
 
@@ -395,48 +606,14 @@ async function commandDbPreflight() {
     await client.end();
   }
 
-  const failures = [];
-  const lines = ['### Database preflight'];
-
-  const sessionLockMs = postgresSettingToMs(settings.lock_timeout);
-  const sessionStatementMs = postgresSettingToMs(settings.statement_timeout);
-  lines.push(
-    `- Migration session lock_timeout ${settings.lock_timeout}, statement_timeout ${settings.statement_timeout}`,
-  );
-  if (
-    sessionLockMs !== config.migrationLockTimeout.ms ||
-    sessionStatementMs !== config.migrationStatementTimeout.ms
-  ) {
-    failures.push(
-      'PGOPTIONS was not applied to the migration session; refusing to run migrations without lock_timeout/statement_timeout.',
-    );
+  const result = evaluateDbPreflight({ config, settings, journal, lastAppliedMillis });
+  for (const annotation of result.annotations) {
+    console.log(annotation);
   }
-
-  const pending = findPendingMigrations(journal, lastAppliedMillis);
-  const freeze = evaluateMigrationFreeze({ freeze: config.migrationFreeze, pending });
-  lines.push(`- ${freeze.message}`);
-  if (!freeze.ok) failures.push(freeze.message);
-
-  const budget = evaluateConnectionBudget({
-    maxConnections: settings.max_connections,
-    reservedConnections: settings.superuser_reserved + settings.reserved,
-    apiMaxInstances: config.apiMaxInstances,
-    dbPoolMax: config.dbPoolMax,
-    pgBossPoolMax: config.pgBossPoolMax,
-    reserve: config.dbConnectionReserve,
-    enforce: config.dbConnectionBudgetEnforce,
-  });
-  lines.push(`- ${budget.message}`);
-  if (budget.overBudget) {
-    const annotation = budget.ok ? '::warning::' : '::error::';
-    console.log(`${annotation}${budget.message} Over budget.`);
-    if (!budget.ok) failures.push(`${budget.message} DB_CONNECTION_BUDGET_ENFORCE=true.`);
-  }
-
-  console.log(lines.slice(1).join('\n'));
-  await writeSummary(lines);
-  if (failures.length > 0) {
-    throw new Error(failures.join('\n'));
+  console.log(result.lines.slice(1).join('\n'));
+  await writeSummary(result.lines);
+  if (!result.ok) {
+    throw new Error(result.failures.join('\n'));
   }
 }
 
@@ -448,11 +625,15 @@ async function main() {
       return commandValidateConfig();
     case 'booking-gate':
       return commandBookingGate(args);
+    case 'booking-gate-value':
+      return commandBookingGateValue(args);
     case 'db-preflight':
       if (args.length > 0) throw new Error(`Unknown arguments: ${args.join(', ')}`);
       return commandDbPreflight();
     default:
-      throw new Error('Usage: deploy-guards.mjs <validate-config|booking-gate|db-preflight>');
+      throw new Error(
+        'Usage: deploy-guards.mjs <validate-config|booking-gate|booking-gate-value|db-preflight>',
+      );
   }
 }
 
