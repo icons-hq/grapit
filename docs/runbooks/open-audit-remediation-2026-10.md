@@ -189,6 +189,7 @@ WHERE (d.translated_text = s.source_text OR d.translated_text LIKE '[manual-revi
 
 - [ ] privacy·pipa_required `2026-04-28` 동의 행 비활성화: web 배포 후 24시간 이상, 티켓 오픈 창 밖, 3.3의 부하 gate 뒤에 별도 migration으로 [고정된 SQL](consent-document-versions.md#bumping-a-document-version)만 쓴다. `version`만으로 거르면 terms·marketing도 꺼져 모든 가입과 prepare가 400이 된다. DELETE는 금지다. #169 #106
 - [ ] 이 release 이전으로 API를 되돌릴 때는 web을 먼저 또는 함께 되돌린다. API만 되돌리면 동의(pipa 없는 예매 payload 400)와 현장 verify(`deviceAttemptId` 400)가 모두 막힌다. web만 되돌리는 것은 안전하다. [동의 rollback](consent-document-versions.md#rollback), [현장 rollback](seat-level-field-operations.md#배포-rollback-순서). #98 #113
+- [ ] 대기열 입장 계약도 같은 이유로 API만 되돌리지 않는다. 이전 API는 활성 창이 지난 결제 복구 입장을 `recoveryOrderId` 없이 재입장 유예 동안 다시 내준다. 그러면 새 web은 자동 재입장 1회 뒤에도 만료 화면에 머물고, 좌석은 seat hold TTL까지 풀지 않는다. 다른 탭의 결제 대기 주문 좌석을 지우지 않기 위한 동작이다. web을 함께 되돌린다([Architecture 6.2](../03-ARCHITECTURE.md#62-queue-admission)). #4 #32
 - [ ] 이후 `UNIQUE(lower(email))`이나 소문자 backfill을 하기 전에 [중복 점검 쿼리](auth-session-operations.md#read-only-duplicate-check-run-before-adding-a-unique-constraint)를 실행하고 중복을 병합 runbook으로 해결한다. `JWT_REFRESH_SECRET`과 `JWT_SECRET`은 오픈 창 동안 회전하지 않는다. #99 #13
 - [ ] QR secret을 교체할 때는 [pinned-version 절차](qr-ticket-secret-rotation.md#교체-절차)를 따른다(main merge 일시 중지, 명시 version으로 `--update-secrets`). #109
 - [ ] `FRONTEND_URL`을 여러 origin으로 바꿀 때는 첫 항목이 소셜 redirect·QR 이메일 링크의 기준이 되도록 순서를 정한다. #93

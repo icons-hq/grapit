@@ -49,6 +49,7 @@ import {
   CHECKOUT_PAYMENT_METHOD_NOT_ALLOWED_MESSAGE,
   TICKET_SERVICE_FEE_KRW,
   isCheckoutPaymentMethodAllowed,
+  isForeignCheckout,
   isSameCheckoutPaymentMethod,
   resolveConsentDocumentLanguage,
   toFloorAwareSeatSelection as toSharedFloorAwareSeatSelection,
@@ -111,9 +112,10 @@ function ConfirmPageContent() {
     useBookingStore();
   const applyPaymentDeadline = useBookingStore((s) => s.applyPaymentDeadline);
   // Prepare needs the queue access window on the server, whatever the seat
-  // lock or payment countdown says (audit #32).
+  // lock or payment countdown says (audit #32). Resuming a prepared order does
+  // not (see resumesPreparedCheckout).
   const queueAccessExpiresAt = useBookingStore((s) => s.queueAccessExpiresAt);
-  const queueAccessClosed = useServerTimeReached(queueAccessExpiresAt);
+  const queueAccessWindowClosed = useServerTimeReached(queueAccessExpiresAt);
   const queueAccessCopy = getQueueAccessClosedCopy(locale);
   const user = useAuthStore((s) => s.user);
   const {
@@ -351,6 +353,22 @@ function ConfirmPageContent() {
   );
   const visibleQuote = preparedReview?.providerChargeQuote
     ?? (methodMatchesRestoredOrder ? recovery.reservation?.providerChargeQuote : undefined);
+  // A Prepared Checkout before Provider Handoff keeps its order, seats, method and
+  // quote (ADR 0010), so paying it again with the saved method needs no new prepare:
+  // the handoff (`POST /payments/branch`) re-validates the method and the seat locks,
+  // and payment confirm is authorised by the order binding until the payment deadline.
+  // Prepare needs the queue access window, which has usually closed when a buyer comes
+  // back from the booking route's payment recovery screen or the reservation list, so
+  // these resumes skip it. A foreign method without a stored quote (or a changed
+  // method) still prepares, inside the window.
+  const restoredReservation = recovery.reservation;
+  const resumesPreparedCheckout = Boolean(returnOrderId)
+    && recovery.state === 'ready'
+    && Boolean(restoredReservation?.id)
+    && methodFixedByOrder
+    && (Boolean(restoredReservation?.providerChargeQuote)
+      || !isForeignCheckout(paymentMethod));
+  const queueAccessClosed = queueAccessWindowClosed && !resumesPreparedCheckout;
 
   async function handlePayment() {
     if (!bookingAvailable) return;
@@ -389,9 +407,27 @@ function ConfirmPageContent() {
       returnUrl.searchParams.set('resumeOrderId', orderId);
       window.history.replaceState(null, '', `${returnUrl.pathname}${returnUrl.search}`);
 
-      // 1. Create pending reservation on server before payment
+      // 1. Create pending reservation on server before payment, or reuse the
+      //    prepared order when resuming it with its saved method.
       const now = new Date();
-      const result = await prepareMutation.mutateAsync({
+      const resumedCheckout: PrepareReservationResponse | null =
+        resumesPreparedCheckout && restoredReservation
+          ? {
+              reservationId: restoredReservation.id,
+              orderId,
+              queueAdmission: restoredReservation.queueAdmission,
+              paymentDeadlineAt: restoredReservation.paymentDeadlineAt,
+              bookingPolicy,
+              paymentMethod,
+              ...(restoredReservation.providerChargeQuote
+                ? {
+                    checkoutEnabled: true,
+                    providerChargeQuote: restoredReservation.providerChargeQuote,
+                  }
+                : {}),
+            }
+          : null;
+      const result = resumedCheckout ?? await prepareMutation.mutateAsync({
         orderId,
         showtimeId: selectedShowtimeId ?? '',
         seats: selectedSeats.map(toFloorAwareSeatSelection),

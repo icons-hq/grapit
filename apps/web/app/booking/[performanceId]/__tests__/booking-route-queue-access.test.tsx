@@ -15,6 +15,7 @@ const {
   refetchRuntimeFlagsMock,
   toastWarningMock,
   unlockAllMock,
+  unlockAllState,
   useQueueMock,
   useBookingAvailabilityMock,
   useAuthStoreMock,
@@ -24,6 +25,7 @@ const {
   refetchRuntimeFlagsMock: vi.fn(),
   toastWarningMock: vi.fn(),
   unlockAllMock: vi.fn(),
+  unlockAllState: { isPending: false },
   useQueueMock: vi.fn(),
   useBookingAvailabilityMock: vi.fn(),
   useAuthStoreMock: vi.fn(),
@@ -54,7 +56,7 @@ vi.mock('@/stores/use-auth-store', () => ({
 }));
 
 vi.mock('@/hooks/use-booking', () => ({
-  useUnlockAllSeats: () => ({ mutate: unlockAllMock }),
+  useUnlockAllSeats: () => ({ mutate: unlockAllMock, isPending: unlockAllState.isPending }),
 }));
 
 vi.mock('@/components/booking/booking-page', () => ({
@@ -104,6 +106,7 @@ function admittedQueue(overrides: Record<string, unknown> = {}) {
     activeUntilAt: new Date(ACTIVE_UNTIL).toISOString(),
     reentryGraceUntilAt: new Date(ACTIVE_UNTIL + 180_000).toISOString(),
     recoveryOrderId: null,
+    accessEndedByServer: false,
     retry: queueRetryMock,
     recheck: queueRecheckMock,
     enterNow: vi.fn(),
@@ -130,6 +133,7 @@ function fulfilledParams<T>(value: T): Promise<T> {
 describe('BookingRoute queue access window (audit #32)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    unlockAllState.isPending = false;
     vi.useFakeTimers();
     resetServerClockForTests();
     useBookingStore.getState().resetBooking();
@@ -200,7 +204,9 @@ describe('BookingRoute queue access window (audit #32)', () => {
     const view = renderBookingRoute();
     expect(unlockAllMock).not.toHaveBeenCalled();
 
-    useQueueMock.mockReturnValue(admittedQueue({ status: 'expired', isReady: false }));
+    useQueueMock.mockReturnValue(
+      admittedQueue({ status: 'expired', isReady: false, accessEndedByServer: true }),
+    );
     view.rerender(
       <Suspense fallback={<div>loading params</div>}>
         <BookingRoute params={fulfilledParams({ performanceId: 'performance-queue' })} />
@@ -210,6 +216,80 @@ describe('BookingRoute queue access window (audit #32)', () => {
     expect(screen.getByText('queue expired')).toBeInTheDocument();
     expect(unlockAllMock).toHaveBeenCalledTimes(1);
     expect(unlockAllMock).toHaveBeenCalledWith({ showtimeId: 'showtime-queue' });
+  });
+
+  it('keeps the seats while the queue has no server answer on the ended admission', () => {
+    // A rejoin click (or a failed check) leaves the seat screen before the
+    // server said whether an order still awaits payment.
+    vi.setSystemTime(ADMITTED_AT + 2 * 60_000);
+    useBookingStore.setState({ selectedShowtimeId: 'showtime-queue' });
+    const view = renderBookingRoute();
+    const rerender = () =>
+      view.rerender(
+        <Suspense fallback={<div>loading params</div>}>
+          <BookingRoute params={fulfilledParams({ performanceId: 'performance-queue' })} />
+        </Suspense>,
+      );
+
+    useQueueMock.mockReturnValue(admittedQueue({ status: 'loading', isReady: false }));
+    rerender();
+    useQueueMock.mockReturnValue(admittedQueue({ status: 'expired', isReady: false }));
+    rerender();
+    expect(unlockAllMock).not.toHaveBeenCalled();
+
+    useQueueMock.mockReturnValue(
+      admittedQueue({
+        status: 'admitted',
+        isReady: false,
+        recoveryOrderId: 'order-awaiting-payment',
+      }),
+    );
+    rerender();
+    useQueueMock.mockReturnValue(
+      admittedQueue({ status: 'expired', isReady: false, accessEndedByServer: true }),
+    );
+    rerender();
+
+    // The order awaiting payment kept its seats; its later end is not this
+    // seat screen's to release.
+    expect(unlockAllMock).not.toHaveBeenCalled();
+  });
+
+  it('holds the next seat screen until the release of the ended admission lands', () => {
+    vi.setSystemTime(ADMITTED_AT + 2 * 60_000);
+    useBookingStore.setState({ selectedShowtimeId: 'showtime-queue' });
+    const view = renderBookingRoute();
+    const rerender = () =>
+      view.rerender(
+        <Suspense fallback={<div>loading params</div>}>
+          <BookingRoute params={fulfilledParams({ performanceId: 'performance-queue' })} />
+        </Suspense>,
+      );
+
+    useQueueMock.mockReturnValue(
+      admittedQueue({ status: 'expired', isReady: false, accessEndedByServer: true }),
+    );
+    rerender();
+    expect(unlockAllMock).toHaveBeenCalledTimes(1);
+
+    // The rejoin is admitted at once while unlock-all is still in flight: a
+    // seat locked now could be erased by it.
+    unlockAllState.isPending = true;
+    useQueueMock.mockReturnValue(
+      admittedQueue({
+        activeUntilAt: new Date(ADMITTED_AT + 12 * 60_000).toISOString(),
+      }),
+    );
+    rerender();
+    expect(screen.getByText('queue loading')).toBeInTheDocument();
+    expect(screen.queryByText(/booking page/)).not.toBeInTheDocument();
+
+    unlockAllState.isPending = false;
+    rerender();
+    expect(
+      screen.getByText(`booking page performance-queue until ${ADMITTED_AT + 12 * 60_000}`),
+    ).toBeInTheDocument();
+    expect(unlockAllMock).toHaveBeenCalledTimes(1);
   });
 
   it('judges the access window on the server clock, not a fast device clock', () => {

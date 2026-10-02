@@ -33,8 +33,10 @@ const QUEUE_ACCESS_WARNING_LEAD_MS = 2 * 60_000;
 
 /**
  * An admission whose seat window closed while an order still awaits payment.
- * Seat locks would be refused, so the route only offers to continue that
- * payment (or to look at the reservation).
+ * Seat locks and prepare would be refused, so the route only offers to
+ * continue that payment (or to look at the reservation). Checkout resumes the
+ * prepared order without a new prepare and payment confirm is authorised by
+ * the order binding, so the payment can still finish (ARCHITECTURE 6.2).
  */
 function QueuePaymentRecovery({
   locale,
@@ -74,7 +76,17 @@ function QueuePaymentRecovery({
               <Link href={reservationsHref}>{copy.reservations}</Link>
             </Button>
             <Button asChild size="lg" className="w-full sm:w-auto">
-              <Link href={resumeHref}>{copy.resume}</Link>
+              <Link
+                href={resumeHref}
+                onClick={() => {
+                  // Like the reservation list's resume: checkout restores the
+                  // order from the server, not from this tab's seat screen
+                  // (whose queue access deadline has passed).
+                  useBookingStore.getState().resetBooking();
+                }}
+              >
+                {copy.resume}
+              </Link>
             </Button>
           </CardFooter>
         </Card>
@@ -116,6 +128,7 @@ export default function BookingRoute({
       queueGated,
   });
   const {
+    accessEndedByServer,
     isReady: queueIsReady,
     recheck: recheckQueue,
     recoveryOrderId,
@@ -141,11 +154,18 @@ export default function BookingRoute({
 
   // Leaving the seat screen because the access ended (window closed, the
   // admission was used up in another tab, the server expired it) releases the
-  // seats it held at once instead of leaving them locked for the rest of the
-  // seat hold, where neither the owner nor anybody else can buy them. The
-  // release waits for the server's answer (the status check at the window
-  // end): an order still awaiting payment keeps its seats for recovery.
-  const { mutate: releaseShowtimeSeats } = useUnlockAllSeats();
+  // seats it held instead of leaving them locked for the rest of the seat
+  // hold, where neither the owner nor anybody else can buy them. Only the
+  // server's answer that the admission ended with no order awaiting payment
+  // (accessEndedByServer) releases them: never the local clock, a rejoin click
+  // still waiting for its answer or a failed check, since unlock-all drops
+  // every lock of the showtime, including the seats of an order still payable
+  // in recovery. No seat screen opens while the release is in flight, so it
+  // cannot land after the next admission's seat locks and erase them.
+  const {
+    mutate: releaseShowtimeSeats,
+    isPending: releasingSeats,
+  } = useUnlockAllSeats();
   const seatScreenShownRef = useRef(false);
   useEffect(() => {
     if (showsSeatScreen) {
@@ -159,9 +179,9 @@ export default function BookingRoute({
       seatScreenShownRef.current = false;
       return;
     }
-    if (queueIsReady) {
-      // Closed on this device's server-corrected clock, or the seat screen is
-      // hidden for another reason (booking disabled): wait for the server.
+    if (!accessEndedByServer) {
+      // No answer yet (window closed on this device's server-corrected clock,
+      // an entry or check in flight, booking disabled): keep waiting.
       return;
     }
 
@@ -171,7 +191,7 @@ export default function BookingRoute({
       releaseShowtimeSeats({ showtimeId: selectedShowtimeId });
     }
     useBookingStore.getState().clearSeats();
-  }, [queueIsReady, recoveryOrderId, releaseShowtimeSeats, showsSeatScreen]);
+  }, [accessEndedByServer, recoveryOrderId, releaseShowtimeSeats, showsSeatScreen]);
 
   const queueAccessEndingSoon = useServerTimeReached(
     queueAccessExpiresAtMs === null
@@ -295,6 +315,19 @@ export default function BookingRoute({
           remainingSeats={queue.remainingSeats}
           autoEnter={false}
           onRetry={rejoinQueue}
+        />
+      );
+    }
+
+    if (releasingSeats) {
+      // The previous admission's unlock-all is still in flight (see above).
+      return (
+        <QueueWaiting
+          status="loading"
+          position={0}
+          etaSeconds={0}
+          remainingSeats={0}
+          autoEnter={false}
         />
       );
     }

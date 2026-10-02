@@ -130,6 +130,15 @@ type UseQueueResult = {
   reentryGraceUntilAt: string | null;
   /** Order awaiting payment when only payment recovery is allowed. */
   recoveryOrderId: string | null;
+  /**
+   * The server answered that the last admission ended with no order awaiting
+   * payment (EXPIRED, a waiting position, a closed sale, a missing session),
+   * so the seats it held may be released. False while no such answer arrived:
+   * an entry or check in flight, a transient failure, payment recovery, and a
+   * closed PAYMENT_RECOVERY admission without `recoveryOrderId` (an older API
+   * that does not say whether an order still awaits payment).
+   */
+  accessEndedByServer: boolean;
   retry: () => Promise<void>;
   /** Reads the current session status at once (e.g. after a queue 403). */
   recheck: () => Promise<void>;
@@ -415,6 +424,7 @@ export function useQueue({
   const [loadingSlow, setLoadingSlow] = useState(false);
   const [bookingOpensAt, setBookingOpensAt] = useState<number | null>(null);
   const [closedReason, setClosedReason] = useState<QueueClosedReason | null>(null);
+  const [accessEndedByServer, setAccessEndedByServer] = useState(false);
   const socketRef = useRef<Socket | null>(null);
   const autoEnterTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadingSurfaceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -485,6 +495,7 @@ export function useQueue({
 
       if (nextSnapshot.state === 'EXPIRED') {
         clearAutoEnterTimer();
+        setAccessEndedByServer(true);
         setStatus('expired');
         updateReady(false);
         return;
@@ -494,6 +505,7 @@ export function useQueue({
         // Only the bound order's payment may continue (the route offers it);
         // the seat screen would refuse every seat lock.
         clearAutoEnterTimer();
+        setAccessEndedByServer(false);
         setStatus('admitted');
         updateReady(false);
         return;
@@ -504,7 +516,11 @@ export function useQueue({
           // Defensive: the server should not hand out an admission whose seat
           // window already closed. Show the re-entry surface instead of a
           // seat screen without a countdown, and enter once more on its own.
+          // A closed ADMITTED session never prepared an order; a closed
+          // PAYMENT_RECOVERY one without recoveryOrderId (older API) may
+          // still have one awaiting payment, so its seats stay.
           clearAutoEnterTimer();
+          setAccessEndedByServer(nextSnapshot.state === 'ADMITTED');
           setStatus('expired');
           updateReady(false);
           if (!closedAdmissionReentryUsedRef.current) {
@@ -514,6 +530,7 @@ export function useQueue({
           return;
         }
 
+        setAccessEndedByServer(false);
         setStatus('admitted');
         if (isReadyRef.current) {
           // Already on the booking screen: a refreshed admitted snapshot must
@@ -533,7 +550,10 @@ export function useQueue({
         return;
       }
 
+      // A waiting position (a new one after the admission ended, see the queue
+      // re-entry contract) holds no seats and no order.
       clearAutoEnterTimer();
+      setAccessEndedByServer(true);
       setStatus('waiting');
       updateReady(false);
     },
@@ -548,6 +568,7 @@ export function useQueue({
       }
 
       clearAutoEnterTimer();
+      setAccessEndedByServer(nextStatus === 'closed' || nextStatus === 'expired');
       setClosedReason(nextStatus === 'closed' ? resolveClosedReason(error) : null);
       setStatus(nextStatus);
       updateReady(false);
@@ -653,6 +674,8 @@ export function useQueue({
       if (!options.background) {
         transientEntryRetryCountRef.current = 0;
         closedAdmissionReentryUsedRef.current = false;
+        // The entry's answer decides again whether the last admission ended.
+        setAccessEndedByServer(false);
         setStatus('loading');
         updateReady(false);
         setLoadingSlow(false);
@@ -718,6 +741,9 @@ export function useQueue({
 
         transientEntryRetryCountRef.current = 0;
         const nextStatus = mapQueueEntryError(error);
+        if (nextStatus === 'closed' || nextStatus === 'expired') {
+          setAccessEndedByServer(true);
+        }
         setBookingOpensAt(null);
         setClosedReason(nextStatus === 'closed' ? resolveClosedReason(error) : null);
         setStatus(nextStatus);
@@ -960,11 +986,13 @@ export function useQueue({
       reentryGraceUntilAt: snapshot.reentryGraceUntilAt,
       recoveryOrderId:
         recoveryOnly && status === 'admitted' ? (snapshot.recoveryOrderId ?? null) : null,
+      accessEndedByServer,
       retry,
       recheck,
       enterNow,
     }),
     [
+      accessEndedByServer,
       bookingOpensAt,
       closedReason,
       enterNow,

@@ -1067,6 +1067,123 @@ describe('useQueue', () => {
     });
   });
 
+  describe('server answer on the ended admission (seat release, audit #4, #32)', () => {
+    it('reports the end only once the server answers, not on the local clock or a rejoin in flight', async () => {
+      vi.setSystemTime(new Date('2026-06-04T10:09:00.000Z'));
+      postMock
+        .mockResolvedValueOnce(admittedSnapshot('queue-session-seat-screen'))
+        // The rejoin's answer is still on its way.
+        .mockImplementationOnce(() => new Promise(() => {}));
+      getMock.mockImplementation(() => new Promise(() => {}));
+
+      const { result } = renderQueue('performance-release');
+      await flushQueueEffects();
+      expect(result.current.isReady).toBe(true);
+      expect(result.current.accessEndedByServer).toBe(false);
+
+      // Past activeUntilAt locally; the window-end check has not answered.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000 + 500);
+      });
+      expect(result.current.accessEndedByServer).toBe(false);
+
+      await act(async () => {
+        void result.current.retry();
+      });
+      await flushQueueEffects();
+      expect(result.current.status).toBe('loading');
+      expect(result.current.isReady).toBe(false);
+      expect(result.current.accessEndedByServer).toBe(false);
+    });
+
+    it('reports the end when the status check finds the admission expired', async () => {
+      vi.setSystemTime(new Date('2026-06-04T10:09:00.000Z'));
+      postMock.mockResolvedValueOnce(admittedSnapshot('queue-session-expiring'));
+      getMock.mockResolvedValueOnce({
+        ...waitingSnapshot('queue-session-expiring'),
+        state: 'EXPIRED',
+        position: 0,
+      });
+
+      const { result } = renderQueue('performance-expiring');
+      await flushQueueEffects();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60_000 + 2_000);
+      });
+      await flushQueueEffects();
+
+      expect(result.current.status).toBe('expired');
+      expect(result.current.accessEndedByServer).toBe(true);
+    });
+
+    it('keeps an order awaiting payment out of the end, also after a rejoin', async () => {
+      vi.setSystemTime(new Date('2026-06-04T10:11:00.000Z'));
+      postMock.mockResolvedValue(
+        admittedSnapshot('queue-session-recovery-only', {
+          state: 'PAYMENT_RECOVERY',
+          autoEnter: false,
+          paymentRecoveryUntilAt: '2026-06-04T10:13:00.000Z',
+          recoveryOrderId: 'order-awaiting-payment',
+        }),
+      );
+
+      const { result } = renderQueue('performance-recovery-only');
+      await flushQueueEffects();
+
+      expect(result.current.recoveryOrderId).toBe('order-awaiting-payment');
+      expect(result.current.accessEndedByServer).toBe(false);
+
+      await act(async () => {
+        await result.current.retry();
+      });
+      expect(postMock).toHaveBeenCalledTimes(2);
+      expect(result.current.recoveryOrderId).toBe('order-awaiting-payment');
+      expect(result.current.accessEndedByServer).toBe(false);
+    });
+
+    it('does not report the end for a closed PAYMENT_RECOVERY admission an older API sends without its order', async () => {
+      vi.setSystemTime(new Date('2026-06-04T10:11:00.000Z'));
+      postMock.mockResolvedValue(
+        admittedSnapshot('queue-session-old-api', {
+          state: 'PAYMENT_RECOVERY',
+          autoEnter: false,
+        }),
+      );
+
+      const { result } = renderQueue('performance-old-api');
+      await flushQueueEffects();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1);
+      });
+      await flushQueueEffects();
+
+      // Re-entry surface, but an order of another tab may still need its seats.
+      expect(result.current.status).toBe('expired');
+      expect(result.current.isReady).toBe(false);
+      expect(result.current.accessEndedByServer).toBe(false);
+    });
+
+    it('reports the end for a closed ADMITTED admission and for a new waiting position', async () => {
+      vi.setSystemTime(new Date('2026-06-04T10:11:00.000Z'));
+      postMock
+        .mockResolvedValueOnce(admittedSnapshot('queue-session-closed-admitted'))
+        .mockImplementationOnce(() => new Promise(() => {}));
+
+      const { result } = renderQueue('performance-closed-admitted');
+      await flushQueueEffects();
+      expect(result.current.status).toBe('expired');
+      expect(result.current.accessEndedByServer).toBe(true);
+
+      postMock.mockReset();
+      postMock.mockResolvedValueOnce(waitingSnapshot('queue-session-next', { position: 3 }));
+      await act(async () => {
+        await result.current.retry();
+      });
+      expect(result.current.status).toBe('waiting');
+      expect(result.current.accessEndedByServer).toBe(true);
+    });
+  });
+
   describe('status checks after the sale closed (audit #2, #4)', () => {
     it('maps a 403 NO_BOOKABLE_SHOWTIME status answer to the closed surface instead of re-entry', async () => {
       const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0);
