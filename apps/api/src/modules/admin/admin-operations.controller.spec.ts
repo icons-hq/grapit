@@ -1,8 +1,15 @@
+import 'reflect-metadata';
+import { Agent } from 'node:http';
 import type { Request } from 'express';
-import { describe, expect, it, vi } from 'vitest';
+import type { INestApplication } from '@nestjs/common';
+import { Test } from '@nestjs/testing';
+import request from 'supertest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { AdminCapabilitiesGuard } from '../../common/guards/admin-capabilities.guard.js';
+import { RolesGuard } from '../../common/guards/roles.guard.js';
 import { AdminOperationsController } from './admin-operations.controller.js';
-import type { AdminOperationsService } from './admin-operations.service.js';
+import { AdminOperationsService } from './admin-operations.service.js';
 
 function createRequest(options: {
   peerIp: string;
@@ -109,5 +116,65 @@ describe('AdminOperationsController audit request context (audit #123)', () => {
       { reason: 'needs finance review' },
       { ipAddress: '203.0.113.99', userAgent: 'Vitest Browser' },
     );
+  });
+});
+
+describe('GET /admin/operations/inbox priority validation (u15)', () => {
+  let app: INestApplication;
+  let agent: Agent;
+  const service = {
+    listInbox: vi.fn(async () => ({ rows: [], totals: { all: 0, escalated: 0, overdue: 0, dueSoon: 0 } })),
+  };
+
+  beforeAll(async () => {
+    Reflect.defineMetadata('design:paramtypes', [AdminOperationsService], AdminOperationsController);
+    const module = await Test.createTestingModule({
+      controllers: [AdminOperationsController],
+      providers: [{ provide: AdminOperationsService, useValue: service }],
+    })
+      .overrideGuard(RolesGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(AdminCapabilitiesGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
+    app = module.createNestApplication();
+    await app.init();
+    // One listening server and one keep-alive socket for the whole suite.
+    await app.listen(0, '127.0.0.1');
+    agent = new Agent({ keepAlive: true, maxSockets: 1 });
+  });
+
+  afterAll(async () => {
+    agent?.destroy();
+    await app?.close();
+  });
+
+  beforeEach(() => service.listInbox.mockClear());
+
+  it('rejects an unknown priority with 400 instead of treating it as normal', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/admin/operations/inbox')
+      .query({ priority: 'urgent' })
+      .agent(agent);
+
+    expect(response.status).toBe(400);
+    expect(service.listInbox).not.toHaveBeenCalled();
+  });
+
+  it.each(['normal', 'due_soon', 'overdue', 'escalated'])('accepts the %s priority filter', async (priority) => {
+    const response = await request(app.getHttpServer())
+      .get('/admin/operations/inbox')
+      .query({ priority })
+      .agent(agent);
+
+    expect(response.status).toBe(200);
+    expect(service.listInbox).toHaveBeenCalledWith(expect.objectContaining({ priority }));
+  });
+
+  it('keeps the inbox unfiltered when no priority is given', async () => {
+    const response = await request(app.getHttpServer()).get('/admin/operations/inbox').agent(agent);
+
+    expect(response.status).toBe(200);
+    expect(service.listInbox).toHaveBeenCalledWith(expect.objectContaining({ priority: undefined }));
   });
 });

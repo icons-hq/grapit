@@ -72,6 +72,8 @@ describe('AdminAuditService', () => {
       'event.delete',
       'refund.admin_refund',
       'support.escalate',
+      'support.assign',
+      'support.resolve',
       'support.content.create',
       'support.content.update',
       'support.content.review',
@@ -106,6 +108,41 @@ describe('AdminAuditService', () => {
     );
     expect(db._values.mock.calls.map(([row]) => row.status)).toContain('denied');
     expect(db._values.mock.calls.map(([row]) => row.status)).toContain('failed');
+  });
+
+  it('bounds request headers to the audit columns so a long header cannot fail the insert (u12)', async () => {
+    const db = createMockDb();
+    const service = new AdminAuditService(db as never);
+
+    await service.write({
+      ...writeInput({ action: 'support.escalate' }),
+      userAgent: 'U'.repeat(600),
+      requestId: 'r'.repeat(200),
+      ipAddress: `2001:db8::${'f'.repeat(80)}`,
+    });
+
+    const row = db._values.mock.calls[0]![0] as { userAgent: string; requestId: string; ipAddress: string };
+    expect(row.userAgent).toHaveLength(500);
+    expect(row.requestId).toHaveLength(120);
+    expect(row.ipAddress).toHaveLength(45);
+  });
+
+  it('keeps short header values unchanged and does not split a character at the bound', async () => {
+    const db = createMockDb();
+    const service = new AdminAuditService(db as never);
+
+    await service.write({
+      ...writeInput(),
+      userAgent: `${'a'.repeat(499)}😀tail`,
+      requestId: 'req-1',
+      ipAddress: null,
+    });
+
+    const row = db._values.mock.calls[0]![0] as { userAgent: string; requestId: string; ipAddress: null };
+    expect(Array.from(row.userAgent)).toHaveLength(500);
+    expect(row.userAgent.endsWith('😀')).toBe(true);
+    expect(row.requestId).toBe('req-1');
+    expect(row.ipAddress).toBeNull();
   });
 
   it('uses an explicit transaction client for atomic mutation plus audit writes', async () => {

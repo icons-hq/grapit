@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { z } from 'zod';
+import { adminOperationsPrioritySchema } from '@grabit/shared';
 
 import { AdminCapabilities } from '../../common/decorators/admin-capabilities.decorator.js';
 import { CurrentUser } from '../../common/decorators/current-user.decorator.js';
@@ -55,6 +56,10 @@ const signupLookupSchema = z.object({
 // admin_audit_logs.user_agent is varchar(500).
 const AUDIT_USER_AGENT_MAX_LENGTH = 500;
 
+// An unknown priority used to fall into the 'normal' branch, so the rows and
+// the totals disagreed; reject it instead (u15).
+const inboxPriorityQuerySchema = adminOperationsPrioritySchema.optional();
+
 @Controller('admin/operations')
 @UseGuards(RolesGuard, AdminCapabilitiesGuard)
 @Roles('admin')
@@ -69,7 +74,8 @@ export class AdminOperationsController {
     @Query('source') source?: AdminOperationsInboxFilters['source'],
     @Query('category') category?: AdminOperationsInboxFilters['category'],
     @Query('status') status?: AdminOperationsInboxFilters['status'],
-    @Query('priority') priority?: AdminOperationsInboxFilters['priority'],
+    @Query('priority', new ZodValidationPipe(inboxPriorityQuerySchema))
+    priority?: AdminOperationsInboxFilters['priority'],
     @Query('includeResolved') includeResolved?: string,
     @Query('performanceId', new ZodValidationPipe(z.string().uuid().optional())) performanceId?: string,
     @Query('showtimeId', new ZodValidationPipe(z.string().uuid().optional())) showtimeId?: string,

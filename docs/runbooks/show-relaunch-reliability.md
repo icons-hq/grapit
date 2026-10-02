@@ -110,7 +110,7 @@ Deploy workflow는 main push마다 구 revision이 트래픽을 받는 중에 `d
 | 0044 | `ticket_scan_events` | `NOT NULL` 해제, backfill `UPDATE`, CHECK 추가. 현장 검표 기록이 멈춘다. |
 | 0046 | `users` | 인덱스 생성. 로그인 조회는 계속되고 write만 기다린다. |
 
-0041(관리자 감사 enum 값과 `support_notices` 컬럼·인덱스), 0042(감사 enum 값), 0045(`consent_items` 행 INSERT)는 hot table을 잠그지 않는다. 다만 0039의 `SET LOCAL lock_timeout = '10s'`가 batch 끝까지 남으므로 이들도 10s 기준으로 기다린다.
+0041(관리자 감사 enum 값과 `support_notices` 컬럼·인덱스), 0042(감사 enum 값), 0045(`consent_items` 행 INSERT), 0047(문의 상태·담당자 변경 감사 enum 값)은 hot table을 잠그지 않는다. 다만 0039의 `SET LOCAL lock_timeout = '10s'`가 batch 끝까지 남으므로 이들도 10s 기준으로 기다린다.
 
 - 판매 오픈, 현장 입장, 결제 확정이 몰리는 시간대를 피한 배포 창에서 실행하고, 그 창 밖에서는 `MIGRATION_FREEZE=true`를 유지한다.
 - 실행 전에 `seat_inventories`, `reservations`, `ticket_scan_events` 행 수와 활성 트랜잭션(`pg_stat_activity`의 `state <> 'idle'`)을 확인한다. 잠금 대기로 실패하면 transaction 전체가 rollback되므로 한산한 시간에 다시 실행한다.
