@@ -314,6 +314,62 @@ describe('PaymentService async DONE safety and recovery', () => {
       expect(db.transaction).not.toHaveBeenCalled();
       expect(tossClient.cancelPayment).toHaveBeenCalledOnce();
     });
+
+    function failedDoneFixture(input: { reservationId: string; userId: string; showtimeId: string; seats: string[] }) {
+      db.select
+        .mockImplementationOnce(() => selectChain([{
+          id: input.reservationId,
+          userId: input.userId,
+          showtimeId: input.showtimeId,
+          status: 'FAILED',
+          totalAmount: input.seats.length * 52000,
+        }]))
+        .mockImplementationOnce(() => selectChain([]))
+        .mockImplementationOnce(() => selectChain(input.seats.map((seatId) => ({
+          seatId, tierName: 'VIP', price: 50000, row: 'A', number: seatId.slice(-1),
+        }))));
+    }
+
+    it('refunds a late DONE for a FAILED reservation when the buyer re-locked the seat for a newer checkout', async () => {
+      const reservationId = randomUUID();
+      failedDoneFixture({ reservationId, userId: 'buyer-a', showtimeId: 'showtime-1', seats: ['1F:A-1'] });
+      // The buyer's live lock now belongs to checkout R2, so recovery cannot take it.
+      bookingService.acquireRecoverySeatLocks.mockResolvedValueOnce({ acquired: false });
+      tossClient.cancelPayment.mockResolvedValueOnce({
+        status: 'CANCELED',
+        cancels: [{ cancelAmount: 52000, cancelReason: '판매 불가능 좌석으로 인한 자동 취소', canceledAt: '2026-10-01T00:20:01.000Z', cancelStatus: 'DONE' }],
+      });
+
+      await expect(service.upsertAsyncPaymentProgress(lateDonePayload('GRP-LATE-FAILED-1'), 'DONE', 'payment_status_changed:done'))
+        .resolves.toBe('DONE_COMPENSATED_SEAT_CONFLICT');
+
+      expect(bookingService.extendOwnedSeatLocks).not.toHaveBeenCalled();
+      expect(bookingService.getMyLocks).not.toHaveBeenCalled();
+      expect(bookingService.acquireRecoverySeatLocks).toHaveBeenCalledWith(
+        'showtime-1', ['1F:A-1'], `payment-recovery:${reservationId}`,
+      );
+      expect(db.transaction).not.toHaveBeenCalled();
+      expect(tossClient.cancelPayment).toHaveBeenCalledOnce();
+    });
+
+    it('recovers a FAILED reservation only under the recovery lock when its seats are free', async () => {
+      const reservationId = randomUUID();
+      failedDoneFixture({ reservationId, userId: 'buyer-a', showtimeId: 'showtime-1', seats: ['1F:A-1'] });
+      mockCommittingTransaction();
+      db.insert.mockImplementationOnce(() => mutationChain([{ id: randomUUID() }]));
+
+      await expect(service.upsertAsyncPaymentProgress(lateDonePayload('GRP-LATE-FAILED-2'), 'DONE', 'payment_status_changed:done'))
+        .resolves.toBe('DONE_APPLIED');
+
+      expect(bookingService.extendOwnedSeatLocks).not.toHaveBeenCalled();
+      expect(bookingService.acquireRecoverySeatLocks).toHaveBeenCalledWith(
+        'showtime-1', ['1F:A-1'], `payment-recovery:${reservationId}`,
+      );
+      expect(bookingService.releaseRecoverySeatLocks).toHaveBeenCalledWith(
+        'showtime-1', ['1F:A-1'], `payment-recovery:${reservationId}`,
+      );
+      expect(tossClient.cancelPayment).not.toHaveBeenCalled();
+    });
   });
 
   describe('confirmed cancel webhooks after seat-level cancellations (#77)', () => {
@@ -719,6 +775,147 @@ describe('PaymentService async DONE safety and recovery', () => {
       expect(diagnosticInsert.values).toHaveBeenCalledWith(expect.objectContaining({
         diagnosticCode: 'ASYNC_DONE_COMPENSATION_ATTENTION',
       }));
+    });
+
+    it('records a failing provider query and keeps polling before the attention threshold', async () => {
+      const now = new Date('2026-10-01T01:00:00.000Z');
+      const record = compensationRecord({
+        reservationId: 'reservation-1',
+        state: 'error',
+        lastCheckedAt: '2026-10-01T00:58:00.000Z',
+      });
+      sweepCandidates([{ id: 'payment-1', tossOrderId: 'GRP-COMP-1' }]);
+      db.select
+        .mockImplementationOnce(() => selectChain([paymentRow({ providerMetadata: { asyncDoneCompensation: record } })]))
+        .mockImplementationOnce(() => selectChain([{ id: 'reservation-1', status: 'PENDING_PAYMENT' }]));
+      tossClient.queryPayment.mockRejectedValueOnce(new Error('UNAUTHORIZED_KEY'));
+      const recordUpdate = mutationChain();
+      db.update.mockImplementationOnce(() => recordUpdate);
+
+      await expect(service.recoverAsyncDoneCompensations(now)).resolves.toMatchObject({ waiting: 1, attention: 0 });
+
+      const patch = findJsonParam(recordUpdate.set.mock.calls[0]?.[0], 'asyncDoneCompensation') as {
+        asyncDoneCompensation: AsyncDoneCompensationRecord;
+      };
+      expect(patch.asyncDoneCompensation).toMatchObject({
+        state: 'error',
+        queryFailures: 1,
+        queryFailingSince: now.toISOString(),
+        lastError: 'UNAUTHORIZED_KEY',
+      });
+      expect(tossClient.cancelPayment).not.toHaveBeenCalled();
+      expect(db.insert).not.toHaveBeenCalled();
+    });
+
+    it('surfaces a compensation whose provider query keeps failing for operator reconciliation', async () => {
+      const now = new Date('2026-10-01T03:00:00.000Z');
+      const errorLog = vi.spyOn((service as unknown as { logger: { error: (...args: unknown[]) => void } }).logger, 'error')
+        .mockImplementation(() => undefined);
+      const record = compensationRecord({
+        reservationId: 'reservation-1',
+        state: 'pending',
+        lastCheckedAt: '2026-10-01T02:45:00.000Z',
+        queryFailures: 2,
+        queryFailingSince: '2026-10-01T01:30:00.000Z',
+      });
+      sweepCandidates([{ id: 'payment-1', tossOrderId: 'GRP-COMP-1' }]);
+      db.select
+        .mockImplementationOnce(() => selectChain([paymentRow({
+          providerMetadata: { asyncDoneCompensation: record, asyncDoneCompensationOpen: true },
+        })]))
+        .mockImplementationOnce(() => selectChain([{ id: 'reservation-1', status: 'PENDING_PAYMENT' }]));
+      tossClient.queryPayment.mockRejectedValueOnce(new Error('NOT_FOUND_PAYMENT'));
+      const recordUpdate = mutationChain();
+      const flagUpdate = mutationChain();
+      db.update
+        .mockImplementationOnce(() => recordUpdate)
+        .mockImplementationOnce(() => flagUpdate);
+      const diagnosticInsert = mutationChain();
+      db.insert.mockImplementationOnce(() => diagnosticInsert);
+
+      await expect(service.recoverAsyncDoneCompensations(now)).resolves.toMatchObject({ attention: 1, waiting: 0 });
+
+      const patch = findJsonParam(recordUpdate.set.mock.calls[0]?.[0], 'asyncDoneCompensation') as {
+        asyncDoneCompensation: AsyncDoneCompensationRecord;
+      };
+      expect(patch.asyncDoneCompensation).toMatchObject({ state: 'attention', queryFailures: 3 });
+      expect(patch.asyncDoneCompensation.lastError).toContain('NOT_FOUND_PAYMENT');
+      expect(diagnosticInsert.values).toHaveBeenCalledWith(expect.objectContaining({
+        diagnosticCode: 'ASYNC_DONE_COMPENSATION_ATTENTION',
+      }));
+      expect(findJsonParam(flagUpdate.set.mock.calls[0]?.[0], 'asyncDoneCompensationOpen'))
+        .toEqual({ asyncDoneCompensationOpen: false });
+      expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('needs operator reconciliation'));
+      expect(tossClient.cancelPayment).not.toHaveBeenCalled();
+    });
+
+    it('surfaces a duplicate-charge compensation whose provider query keeps failing', async () => {
+      const now = new Date('2026-10-01T03:00:00.000Z');
+      const errorLog = vi.spyOn((service as unknown as { logger: { error: (...args: unknown[]) => void } }).logger, 'error')
+        .mockImplementation(() => undefined);
+      const duplicate = compensationRecord({
+        reservationId: 'reservation-1',
+        kind: 'duplicate_payment_key',
+        paymentKey: 'pay_duplicate',
+        state: 'error',
+        lastCheckedAt: '2026-10-01T02:58:00.000Z',
+        queryFailures: 40,
+        queryFailingSince: '2026-10-01T01:00:00.000Z',
+      });
+      sweepCandidates([{ id: 'payment-1', tossOrderId: 'GRP-COMP-1' }]);
+      db.select
+        .mockImplementationOnce(() => selectChain([paymentRow({
+          status: 'DONE',
+          asyncStatus: 'payment_status_changed:done',
+          providerMetadata: { duplicatePaymentCompensations: [duplicate], asyncDoneCompensationOpen: true },
+        })]))
+        .mockImplementationOnce(() => selectChain([{ id: 'reservation-1', status: 'CONFIRMED' }]));
+      tossClient.queryPayment.mockRejectedValueOnce(new Error('FORBIDDEN_REQUEST'));
+      const metadataUpdate = mutationChain();
+      db.update.mockImplementationOnce(() => metadataUpdate);
+
+      await expect(service.recoverAsyncDoneCompensations(now)).resolves.toMatchObject({ attention: 1 });
+
+      const patch = findJsonParam(metadataUpdate.set.mock.calls[0]?.[0], 'duplicatePaymentCompensations') as {
+        duplicatePaymentCompensations: AsyncDoneCompensationRecord[];
+        asyncDoneCompensationOpen: boolean;
+      };
+      expect(patch.duplicatePaymentCompensations[0]).toMatchObject({ state: 'attention', queryFailures: 41 });
+      expect(patch.asyncDoneCompensationOpen).toBe(false);
+      expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('paymentKey=pay_duplicate'));
+    });
+
+    it('clears the query failure count after the provider answers again', async () => {
+      const now = new Date('2026-10-01T01:00:00.000Z');
+      const record = compensationRecord({
+        reservationId: 'reservation-1',
+        state: 'pending',
+        lastCheckedAt: '2026-10-01T00:45:00.000Z',
+        queryFailures: 2,
+        queryFailingSince: '2026-10-01T00:30:00.000Z',
+      });
+      sweepCandidates([{ id: 'payment-1', tossOrderId: 'GRP-COMP-1' }]);
+      db.select
+        .mockImplementationOnce(() => selectChain([paymentRow({ providerMetadata: { asyncDoneCompensation: record } })]))
+        .mockImplementationOnce(() => selectChain([{ id: 'reservation-1', status: 'PENDING_PAYMENT' }]));
+      tossClient.queryPayment.mockResolvedValueOnce({
+        paymentKey: 'pay_compensated',
+        orderId: 'GRP-COMP-1',
+        totalAmount: 69.36,
+        status: 'DONE',
+        cancels: [{ cancelAmount: 69.36, cancelReason: 'x', canceledAt: '2026-10-01T00:10:00.000Z', cancelStatus: 'IN_PROGRESS', cancelRequestId: 'cancel_reservation-1' }],
+      });
+      const recordUpdate = mutationChain();
+      db.update.mockImplementationOnce(() => recordUpdate);
+
+      await expect(service.recoverAsyncDoneCompensations(now)).resolves.toMatchObject({ waiting: 1 });
+
+      const patch = findJsonParam(recordUpdate.set.mock.calls[0]?.[0], 'asyncDoneCompensation') as {
+        asyncDoneCompensation: AsyncDoneCompensationRecord;
+      };
+      expect(patch.asyncDoneCompensation.state).toBe('pending');
+      expect(patch.asyncDoneCompensation).not.toHaveProperty('queryFailures');
+      expect(patch.asyncDoneCompensation).not.toHaveProperty('queryFailingSince');
     });
 
     it('skips the sweep when another instance holds the sweep lease', async () => {

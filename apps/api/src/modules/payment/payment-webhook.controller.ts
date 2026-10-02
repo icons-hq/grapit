@@ -14,12 +14,10 @@ import {
 } from './toss-payments.client.js';
 import { TossWebhookGuard } from './toss-webhook.guard.js';
 import { resolvePaymentCancelSecretScope } from './payment-cancel-policy.js';
-
-/** Local rejections of a provider DONE whose PG charge may still need a refund. */
-const REJECTED_DONE_ASYNC_STATUSES = new Set([
-  'payment_amount_mismatch',
-  'payment_provider_unsupported',
-]);
+import {
+  REJECTED_DONE_ASYNC_STATUSES,
+  isSettledOrCompensatedPaymentState,
+} from './async-done-compensation.js';
 
 const paymentStatusPriority = {
   READY: 0,
@@ -727,6 +725,18 @@ export class PaymentWebhookController {
     incomingStatus: keyof typeof paymentStatusPriority,
   ): boolean {
     if (!progress) {
+      return false;
+    }
+
+    if (
+      incomingStatus === 'DONE'
+      && progress.paymentKey
+      && progress.paymentKey !== body.data.paymentKey
+      && isSettledOrCompensatedPaymentState(progress)
+    ) {
+      // A provider-verified DONE for another paymentKey of an order whose
+      // payment is already accepted, cancelled or compensated is a second
+      // charge. The service refunds it; ignoring it here would leave it at the PG.
       return false;
     }
 

@@ -27,6 +27,7 @@ import * as schema from '../src/database/schema/index.js';
 import { noActiveTicketItemOnSeat, isActiveSeatUniqueViolation } from '../src/database/seat-ownership.js';
 import { syncIncludedBenefitEntitlementsForTicketItems } from '../src/database/included-benefit-entitlements.js';
 import { PaymentService } from '../src/modules/payment/payment.service.js';
+import { PaymentWebhookController } from '../src/modules/payment/payment-webhook.controller.js';
 import { QrTicketService } from '../src/modules/ticket/qr-ticket.service.js';
 import { PendingPaymentExpirationWorker } from '../src/modules/jobs/pending-payment-expiration.worker.js';
 import { CancelledSeatReleaseWorker } from '../src/modules/jobs/cancelled-seat-release.worker.js';
@@ -1213,6 +1214,63 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     expect((await db.select().from(reservations).where(eq(reservations.id, r.id)))[0]?.status).toBe('FAILED');
     expect(await service.recoverAsyncDoneCompensations(new Date(later.getTime() + 30 * 60 * 1000)))
       .toMatchObject({ checked: 0 });
+    expect(cancel).toHaveBeenCalledTimes(2);
+  });
+
+  it('refunds a second paymentKey DONE webhook after the order’s first charge was already refunded', async () => {
+    const f = await fixture();
+    const r = await order(f, '1F:A-1');
+    const firstKey = `test-${randomUUID()}`;
+    const retryKey = `test-${randomUUID()}`;
+    const cancel = vi.fn().mockImplementation(async (paymentKey: string, reason: string, options: { cancelRequestId?: string }) => ({
+      paymentKey, orderId: r.tossOrderId!, status: 'CANCELED', totalAmount: 52000,
+      cancels: [{ cancelAmount: 52000, cancelReason: reason, canceledAt: new Date().toISOString(),
+        cancelStatus: 'DONE', cancelRequestId: options.cancelRequestId }],
+    }));
+    const queryPayment = vi.fn().mockImplementation(async (paymentKey: string) => ({
+      paymentKey, orderId: r.tossOrderId!, status: 'DONE', method: 'FOREIGN_EASY_PAY', currency: 'KRW',
+      totalAmount: 52000, approvedAt: new Date().toISOString(),
+    }));
+    const service = new PaymentService(db, { broadcastSeatUpdate: vi.fn() } as never, qr);
+    Object.assign(service, {
+      tossClient: { cancelPayment: cancel, queryPayment },
+      bookingService: {
+        acquirePaymentConfirmLock: async () => true, refreshPaymentConfirmLock: async () => true,
+        releasePaymentConfirmLock: async () => {},
+        extendOwnedSeatLocks: async () => { throw new ConflictException(LOCK_EXPIRED_MESSAGE); },
+        acquireRecoverySeatLocks: async () => ({ acquired: false }),
+        getMyLocks: async () => ({ seatIds: [], expiresAt: null }),
+      },
+    });
+    // The real controller filter runs against the stored rows, not a mocked progress snapshot.
+    const controller = new PaymentWebhookController(service, { queryPayment } as never);
+    const done = (paymentKey: string) => ({ eventType: 'PAYMENT_STATUS_CHANGED', createdAt: new Date().toISOString(),
+      data: { paymentKey, orderId: r.tossOrderId!, status: 'DONE', method: 'FOREIGN_EASY_PAY',
+        provider: 'ALIPAY_PLUS', currency: 'KRW', totalAmount: 52000 } }) as never;
+
+    // The first charge arrives after its seat was re-locked by another buyer and is refunded.
+    expect(await controller.handleTossWebhook(done(firstKey), randomUUID()))
+      .toMatchObject({ processingResultCode: 'DONE_COMPENSATED_SEAT_CONFLICT' });
+    let [row] = await db.select().from(payments).where(eq(payments.reservationId, r.id));
+    expect(row).toMatchObject({ paymentKey: firstKey, status: 'CANCELED' });
+    expect((await db.select().from(reservations).where(eq(reservations.id, r.id)))[0]?.status).toBe('FAILED');
+
+    // An in-app retry captured a second charge for the same order: it is refunded, not ignored.
+    expect(await controller.handleTossWebhook(done(retryKey), randomUUID()))
+      .toMatchObject({ processingResultCode: 'DONE_DUPLICATE_PAYMENT_COMPENSATED' });
+    expect(cancel).toHaveBeenLastCalledWith(retryKey, '중복 결제로 인한 자동 취소', expect.objectContaining({
+      idempotencyKey: `async-done-duplicate-cancel:${r.tossOrderId}:${retryKey}`,
+      secretKeyScope: 'foreign-easy-pay',
+    }));
+    [row] = await db.select().from(payments).where(eq(payments.reservationId, r.id));
+    expect(row).toMatchObject({ paymentKey: firstKey, status: 'CANCELED',
+      providerMetadata: expect.objectContaining({
+        duplicatePaymentCompensations: [expect.objectContaining({ paymentKey: retryKey, state: 'cancelled' })],
+      }) });
+
+    // Toss retries of the same DONE acknowledge without a second cancel.
+    expect(await controller.handleTossWebhook(done(retryKey), randomUUID()))
+      .toMatchObject({ processingResultCode: 'DONE_DUPLICATE_PAYMENT_COMPENSATED' });
     expect(cancel).toHaveBeenCalledTimes(2);
   });
 

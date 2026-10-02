@@ -71,12 +71,16 @@ import {
   ASYNC_DONE_COMPENSATION_MAX_ATTEMPTS,
   ASYNC_DONE_COMPENSATION_METADATA_KEY,
   ASYNC_DONE_COMPENSATION_OPEN_METADATA_KEY,
+  ASYNC_DONE_COMPENSATION_QUERY_FAILURE_ATTENTION_COUNT,
+  ASYNC_DONE_COMPENSATION_QUERY_FAILURE_ATTENTION_MS,
   ASYNC_DONE_COMPENSATION_REASONS,
   DUPLICATE_PAYMENT_COMPENSATIONS_METADATA_KEY,
+  REJECTED_DONE_ASYNC_STATUSES,
   buildCompensationRecord,
   buildDuplicateCancelRequestSeed,
   isCompensationDue,
   isOpenCompensationState,
+  isSettledOrCompensatedPaymentState,
   readAsyncDoneCompensation,
   readDuplicatePaymentCompensations,
   synthesizeLegacyCompensationRecord,
@@ -117,11 +121,6 @@ type CompensationStepAction = 'cancelled' | 'retried' | 'waiting' | 'attention';
 const ASYNC_DONE_COMPENSATION_SWEEP_LEASE_KEY = 'async-done-compensation-sweep';
 /** Open compensations are rare; non-due rows are read but not rewritten. */
 const ASYNC_DONE_COMPENSATION_SWEEP_LIMIT = 100;
-/** Rejected DONE callbacks whose PG payment may still need a compensating cancel. */
-const REJECTED_DONE_ASYNC_STATUSES = new Set([
-  'payment_amount_mismatch',
-  'payment_provider_unsupported',
-]);
 /**
  * TrueMoney has no provider charge quote contract yet, so it can never be
  * issued safely. Branch creation rejects it and a captured DONE is refunded.
@@ -213,6 +212,8 @@ export interface AsyncPaymentProgressSnapshot {
   reservationStatus: ReservationStatus;
   paymentStatus: PaymentStatus | null;
   paymentAsyncStatus?: string | null;
+  /** The stored payment's key; a DONE for another key may be a duplicate charge. */
+  paymentKey?: string | null;
 }
 
 type WebhookReservationSnapshot = {
@@ -864,6 +865,7 @@ export class PaymentService {
 
     const [payment] = await this.db
       .select({
+        paymentKey: payments.paymentKey,
         paymentStatus: payments.status,
         paymentAsyncStatus: payments.asyncStatus,
       })
@@ -880,6 +882,7 @@ export class PaymentService {
       reservationStatus: reservation.reservationStatus as ReservationStatus,
       paymentStatus: payment?.paymentStatus as PaymentStatus | undefined ?? null,
       paymentAsyncStatus: payment?.paymentAsyncStatus ?? null,
+      paymentKey: payment?.paymentKey ?? null,
     };
   }
 
@@ -1285,6 +1288,7 @@ export class PaymentService {
       ? reservation.totalAmount
       : payload.data.totalAmount ?? reservation.totalAmount;
     const currency = storesWebhookAmountAsKrw ? 'KRW' : payload.data.currency ?? 'KRW';
+    const ledgerCharge = this.toPaymentLedgerCharge(amount, currency, reservation);
 
     if (
       provider === 'PAYPAL'
@@ -1402,9 +1406,9 @@ export class PaymentService {
       tossOrderId: orderId,
       method,
       provider,
-      currency,
+      currency: ledgerCharge.currency,
       asyncStatus: completesUnissuedCompensation ? 'compensation_cancelled' : asyncStatus,
-      amount,
+      amount: ledgerCharge.amount,
       status: paymentStatus,
       paidAt,
       cancelledAt,
@@ -2472,12 +2476,17 @@ export class PaymentService {
     // A PENDING_PAYMENT row outlives its Redis checkout locks (15-minute cap), so
     // a late DONE must prove the seats are still this buyer's or free before it
     // takes them from someone who legitimately re-locked them.
-    const ownLocks = await this.tryHoldBuyerSeatLocks(reservation, seatKeys);
-    if (ownLocks === 'held') {
-      return held([]);
-    }
-    if (ownLocks === 'unavailable') {
-      return lost;
+    // A FAILED reservation's checkout is over: a live lock of the same buyer
+    // belongs to a newer checkout, so it only recovers seats nobody holds.
+    const ownsCheckoutLocks = reservation.status === 'PENDING_PAYMENT';
+    if (ownsCheckoutLocks) {
+      const ownLocks = await this.tryHoldBuyerSeatLocks(reservation, seatKeys);
+      if (ownLocks === 'held') {
+        return held([]);
+      }
+      if (ownLocks === 'unavailable') {
+        return lost;
+      }
     }
 
     const recovered = await this.bookingService.acquireRecoverySeatLocks(
@@ -2487,6 +2496,9 @@ export class PaymentService {
     );
     if (recovered.acquired) {
       return held(seatKeys);
+    }
+    if (!ownsCheckoutLocks) {
+      return lost;
     }
 
     // Recovery fails when any seat has another owner. That owner may still be
@@ -2623,15 +2635,11 @@ export class PaymentService {
     existingPayment: WebhookPaymentSnapshot,
     reservation: WebhookReservationSnapshot,
   ): boolean {
-    const asyncStatus = existingPayment.asyncStatus ?? '';
-    return reservation.status === 'CONFIRMED'
-      || reservation.status === 'CANCELLED'
-      || existingPayment.status === 'DONE'
-      || existingPayment.status === 'PARTIAL_CANCELED'
-      || existingPayment.status === 'CANCELED'
-      || asyncStatus === 'cancel_pending'
-      || asyncStatus === 'compensation_cancelled'
-      || REJECTED_DONE_ASYNC_STATUSES.has(asyncStatus);
+    return isSettledOrCompensatedPaymentState({
+      reservationStatus: reservation.status,
+      paymentStatus: existingPayment.status,
+      paymentAsyncStatus: existingPayment.asyncStatus,
+    });
   }
 
   /** A rejected DONE is refunded unless the reservation already accepted a payment. */
@@ -2872,6 +2880,13 @@ export class PaymentService {
     }
     const orderId = this.requireWebhookOrderId(payload);
     const paymentKey = this.requireWebhookPaymentKey(payload);
+    const ledgerCharge = this.toPaymentLedgerCharge(
+      amount,
+      this.storesWebhookAmountAsKrw(provider, providerChargeQuote)
+        ? 'KRW'
+        : payload.data.currency ?? 'KRW',
+      reservation,
+    );
 
     const paymentValues = {
       reservationId: reservation.id,
@@ -2879,11 +2894,9 @@ export class PaymentService {
       tossOrderId: orderId,
       method,
       provider,
-      currency: this.storesWebhookAmountAsKrw(provider, providerChargeQuote)
-        ? 'KRW'
-        : payload.data.currency ?? 'KRW',
+      currency: ledgerCharge.currency,
       asyncStatus,
-      amount,
+      amount: ledgerCharge.amount,
       status: 'ABORTED' as const,
       paidAt: null,
       cancelledAt: null,
@@ -2931,9 +2944,11 @@ export class PaymentService {
 
     const orderId = this.requireWebhookOrderId(payload);
     const paymentKey = this.requireWebhookPaymentKey(payload);
+    // The record keeps the provider-reported charge; the row keeps the KRW ledger.
     const currency = this.storesWebhookAmountAsKrw(provider, providerChargeQuote)
       ? 'KRW'
       : payload.data.currency ?? 'KRW';
+    const ledgerCharge = this.toPaymentLedgerCharge(amount, currency, reservation);
     const scopeMetadata = this.resolveWebhookPaymentScopeMetadata(payload, provider);
     const paymentSnapshot: PaymentCancelPaymentSnapshot = {
       id: existingPayment?.id,
@@ -2972,11 +2987,11 @@ export class PaymentService {
       tossOrderId: orderId,
       method,
       provider,
-      currency,
+      currency: ledgerCharge.currency,
       asyncStatus: terminalCancelCompleted
         ? rejectedCharge ? 'compensation_cancelled' : asyncStatus
         : 'cancel_pending',
-      amount,
+      amount: ledgerCharge.amount,
       status: terminalCancelCompleted ? 'CANCELED' as const : 'DONE' as const,
       paidAt: payload.data.approvedAt ? new Date(payload.data.approvedAt) : now,
       cancelledAt: terminalCancelCompleted ? now : null,
@@ -3502,17 +3517,43 @@ export class PaymentService {
     now: Date,
     assertLease: () => Promise<void>,
   ): Promise<{ action: CompensationStepAction; record: AsyncDoneCompensationRecord; cancelledAt?: Date }> {
-    const checked: AsyncDoneCompensationRecord = { ...record, lastCheckedAt: now.toISOString() };
+    const { queryFailures: previousQueryFailures, queryFailingSince, ...rest } = record;
+    const checked: AsyncDoneCompensationRecord = { ...rest, lastCheckedAt: now.toISOString() };
     let queried: TossPaymentResponse;
     try {
       queried = await this.tossClient!.queryPayment(record.paymentKey, {
         secretKeyScope: record.payment.secretKeyScope,
       });
     } catch (error) {
-      return {
-        action: 'waiting',
-        record: { ...checked, lastError: this.describeError(error) },
+      // A query that keeps failing (wrong secret scope or key, provider outage)
+      // would otherwise be re-polled forever with no operator signal.
+      const queryFailures = (previousQueryFailures ?? 0) + 1;
+      const failingSince = queryFailingSince ?? now.toISOString();
+      const failingForMs = now.getTime() - (Date.parse(failingSince) || now.getTime());
+      const lastError = this.describeError(error);
+      const failed: AsyncDoneCompensationRecord = {
+        ...checked,
+        lastError,
+        queryFailures,
+        queryFailingSince: failingSince,
       };
+      if (
+        queryFailures >= ASYNC_DONE_COMPENSATION_QUERY_FAILURE_ATTENTION_COUNT
+        && failingForMs >= ASYNC_DONE_COMPENSATION_QUERY_FAILURE_ATTENTION_MS
+      ) {
+        return {
+          action: 'attention',
+          record: {
+            ...failed,
+            state: 'attention',
+            lastError: `provider query failing since ${failingSince}: ${lastError}`,
+          },
+        };
+      }
+      this.logger.warn(
+        `Async DONE compensation provider query failed; will retry. orderId=${orderId}, kind=${record.kind}, paymentKey=${record.paymentKey}, queryFailures=${queryFailures}, error=${lastError}`,
+      );
+      return { action: 'waiting', record: failed };
     }
 
     if (queried.paymentKey !== record.paymentKey || queried.orderId !== orderId) {
@@ -3846,6 +3887,28 @@ export class PaymentService {
         provider === 'CARD'
         || this.usesProviderChargeQuote(provider)
       ));
+  }
+
+  /**
+   * payments.amount is the integer KRW ledger. A provider charge outside it
+   * (an unquoted USD charge such as TrueMoney's 75.5) would fail the integer
+   * column after the PG cancel was already sent, so the row keeps the
+   * reservation's KRW total and the provider charge stays in the webhook or
+   * compensation record.
+   */
+  private toPaymentLedgerCharge(
+    amount: number,
+    currency: string | undefined,
+    reservation: { totalAmount: number },
+  ): { amount: number; currency: string } {
+    if (
+      (this.normalizeProviderCurrency(currency) ?? 'KRW') === 'KRW'
+      && Number.isSafeInteger(amount)
+    ) {
+      return { amount, currency: currency ?? 'KRW' };
+    }
+
+    return { amount: reservation.totalAmount, currency: 'KRW' };
   }
 
   private getProviderChargeAvailability(

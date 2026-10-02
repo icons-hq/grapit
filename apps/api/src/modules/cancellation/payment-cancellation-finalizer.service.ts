@@ -115,12 +115,6 @@ const SENSITIVE_PROVIDER_METADATA_KEY =
   /(secret|password|authorization|credential|access[-_]?token|refresh[-_]?token|id[-_]?token|api[-_]?key)/i;
 
 
-function toRecord(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
 function resolveLocalPaymentStatus(
   providerResponse: PaymentCancellationProviderResponse | undefined,
 ): 'CANCELED' | 'PARTIAL_CANCELED' {
@@ -339,15 +333,17 @@ export class PaymentCancellationFinalizerService {
             status: localPaymentStatus,
             cancelledAt: now,
             cancelReason: input.reason,
-            providerMetadata: {
-              ...toRecord(input.context.payment.providerMetadata),
+            // Merge into the stored metadata instead of rewriting it from the
+            // caller's earlier snapshot, so records written concurrently under
+            // the order lease (e.g. duplicate DONE compensations) survive.
+            providerMetadata: sql`coalesce(${payments.providerMetadata}, '{}'::jsonb) || ${JSON.stringify({
               refundCompletedAt: now.toISOString(),
               cancellationSource: input.source,
               ...(fullReservationCancellationQuote
                 ? { cancellationQuote: fullReservationCancellationQuote }
                 : {}),
               ...(providerCancellation ? { providerCancellation } : {}),
-            },
+            })}::jsonb`,
           })
           .where(eq(payments.id, input.context.payment.id))
           .returning({ id: payments.id });

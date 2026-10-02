@@ -49,6 +49,9 @@ export interface AsyncDoneCompensationRecord {
   lastAttemptAt: string;
   lastCheckedAt?: string;
   lastError?: string;
+  /** Consecutive failed provider queries; cleared by the next successful query. */
+  queryFailures?: number;
+  queryFailingSince?: string;
 }
 
 export type CompensationCancelOutcome =
@@ -95,8 +98,43 @@ export const ASYNC_DONE_COMPENSATION_DIAGNOSTIC_CODES: Record<AsyncDoneCompensat
   duplicate_payment_key: 'ASYNC_DONE_DUPLICATE_PAYMENT_CANCELLED',
 };
 
+/** Local rejections of a provider DONE whose PG charge may still need a refund. */
+export const REJECTED_DONE_ASYNC_STATUSES: ReadonlySet<string> = new Set([
+  'payment_amount_mismatch',
+  'payment_provider_unsupported',
+]);
+
+/**
+ * The order already holds an accepted, cancelled or compensated payment, so a
+ * provider-verified DONE for another paymentKey of the same order can never be
+ * issued and must be refunded as a duplicate. The webhook controller and the
+ * DONE processing path share this predicate so neither filters the other's case.
+ */
+export function isSettledOrCompensatedPaymentState(input: {
+  reservationStatus: string;
+  paymentStatus?: string | null;
+  paymentAsyncStatus?: string | null;
+}): boolean {
+  const asyncStatus = input.paymentAsyncStatus ?? '';
+  return input.reservationStatus === 'CONFIRMED'
+    || input.reservationStatus === 'CANCELLED'
+    || input.paymentStatus === 'DONE'
+    || input.paymentStatus === 'PARTIAL_CANCELED'
+    || input.paymentStatus === 'CANCELED'
+    || asyncStatus === 'cancel_pending'
+    || asyncStatus === 'compensation_cancelled'
+    || REJECTED_DONE_ASYNC_STATUSES.has(asyncStatus);
+}
+
 /** Cancel requests per charge (first request included) before operator attention. */
 export const ASYNC_DONE_COMPENSATION_MAX_ATTEMPTS = 5;
+/**
+ * A compensation whose provider query keeps failing (secret scope or key
+ * misconfiguration, provider outage) is surfaced for operators once it has
+ * failed this many consecutive times over at least this long.
+ */
+export const ASYNC_DONE_COMPENSATION_QUERY_FAILURE_ATTENTION_COUNT = 3;
+export const ASYNC_DONE_COMPENSATION_QUERY_FAILURE_ATTENTION_MS = 60 * 60 * 1000;
 /** Provider IN_PROGRESS cancellations normally finish through CANCEL_STATUS_CHANGED. */
 const ASYNC_DONE_COMPENSATION_PENDING_RECHECK_MS = 10 * 60 * 1000;
 const ASYNC_DONE_COMPENSATION_RETRY_BACKOFF_MS = 60 * 1000;

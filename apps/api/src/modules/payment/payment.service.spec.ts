@@ -2199,6 +2199,104 @@ describe('PaymentService', () => {
       expect(mockDb.transaction).not.toHaveBeenCalled();
     });
 
+    it('stores the KRW ledger amount for an unquoted USD TrueMoney charge and keeps the provider charge in the record', async () => {
+      const reservationId = randomUUID();
+      const insertCompensatedPayment = createMutationChain([{ id: randomUUID() }]);
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          userId: randomUUID(),
+          showtimeId: randomUUID(),
+          status: 'PENDING_PAYMENT',
+          totalAmount: 102000,
+        }]))
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([
+          { seatId: '1F:A-1', tierName: 'VIP', price: 100000, row: 'A', number: '1' },
+        ]));
+      mockDb.insert.mockReturnValueOnce(insertCompensatedPayment);
+
+      await expect(service.upsertAsyncPaymentProgress(
+        {
+          eventId: 'evt-truemoney-usd-done',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_truemoney_usd',
+            orderId: 'GRP-TRUEMONEY-USD',
+            status: 'DONE',
+            method: '해외간편결제',
+            easyPay: '트루머니',
+            currency: 'USD',
+            totalAmount: 75.5,
+            approvedAt: '2026-05-08T08:00:00.000Z',
+          },
+        },
+        'DONE',
+        'payment_status_changed:done',
+      )).resolves.toBe('DONE_CANCEL_PENDING');
+
+      expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
+        'pay_truemoney_usd',
+        '지원하지 않는 결제수단으로 인한 자동 취소',
+        expect.objectContaining({ secretKeyScope: 'foreign-easy-pay' }),
+      );
+      const inserted = insertCompensatedPayment.values.mock.calls[0]?.[0] as {
+        amount: number;
+        currency: string;
+        providerMetadata: { asyncDoneCompensation: { payment: { amount: number; currency: string } } };
+      };
+      // payments.amount is an integer column; 75.5 would fail after the PG cancel was sent.
+      expect(Number.isSafeInteger(inserted.amount)).toBe(true);
+      expect(inserted).toMatchObject({ amount: 102000, currency: 'KRW', asyncStatus: 'cancel_pending' });
+      expect(inserted.providerMetadata.asyncDoneCompensation.payment).toMatchObject({
+        amount: 75.5,
+        currency: 'USD',
+        secretKeyScope: 'foreign-easy-pay',
+      });
+    });
+
+    it('stores the KRW ledger amount for unquoted USD progress events', async () => {
+      const reservationId = randomUUID();
+      const insertProgress = createMutationChain([{ id: randomUUID() }]);
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          userId: randomUUID(),
+          showtimeId: randomUUID(),
+          status: 'PENDING_PAYMENT',
+          totalAmount: 102000,
+        }]))
+        .mockReturnValueOnce(createSelectChain([]));
+      mockDb.insert.mockReturnValueOnce(insertProgress);
+
+      await service.upsertAsyncPaymentProgress(
+        {
+          eventId: 'evt-truemoney-usd-progress',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_truemoney_progress',
+            orderId: 'GRP-TRUEMONEY-PROGRESS',
+            status: 'IN_PROGRESS',
+            method: '해외간편결제',
+            easyPay: '트루머니',
+            currency: 'USD',
+            totalAmount: 75.5,
+          },
+        },
+        'IN_PROGRESS',
+        'payment_status_changed:in_progress',
+      );
+
+      expect(insertProgress.values).toHaveBeenCalledWith(expect.objectContaining({
+        provider: 'TRUEMONEY',
+        status: 'IN_PROGRESS',
+        amount: 102000,
+        currency: 'KRW',
+      }));
+    });
+
     it('does not refund an amount-mismatched replay of an already issued payment', async () => {
       const reservationId = randomUUID();
 
@@ -4432,6 +4530,82 @@ describe('PaymentService', () => {
       expect(mockDb.transaction).not.toHaveBeenCalled();
       expect(mockQrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
       expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { name: 'a late DONE refunded for a seat conflict', reservationStatus: 'FAILED', status: 'CANCELED', asyncStatus: 'payment_status_changed:done' },
+      { name: 'a rejected charge already refunded', reservationStatus: 'FAILED', status: 'CANCELED', asyncStatus: 'compensation_cancelled' },
+      { name: 'an issued reservation the buyer cancelled', reservationStatus: 'CANCELLED', status: 'CANCELED', asyncStatus: 'payment_status_changed:done' },
+    ] as const)('refunds a second DONE paymentKey after $name', async ({ reservationStatus, status, asyncStatus }) => {
+      const reservationId = randomUUID();
+      const updateSettledPayment = createMutationChain();
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          userId: randomUUID(),
+          showtimeId: randomUUID(),
+          status: reservationStatus,
+          totalAmount: 150000,
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: randomUUID(),
+          reservationId,
+          paymentKey: 'pay_first_charge',
+          tossOrderId: 'GRP-ASYNC-DONE',
+          method: 'FOREIGN_EASY_PAY',
+          provider: 'ALIPAY_PLUS',
+          amount: 150000,
+          status,
+          asyncStatus,
+          providerMetadata: { asyncDoneCompensation: { state: 'cancelled' } },
+        }]));
+      mockDb.update.mockReturnValueOnce(updateSettledPayment);
+      mockTossClient.cancelPayment.mockResolvedValueOnce({
+        paymentKey: 'pay_retry_charge',
+        orderId: 'GRP-ASYNC-DONE',
+        totalAmount: 107.5,
+        status: 'CANCELED',
+        cancels: [{ cancelAmount: 107.5, cancelReason: '중복 결제로 인한 자동 취소', cancelStatus: 'DONE' }],
+      });
+
+      await expect(service.upsertAsyncPaymentProgress(
+        {
+          eventId: `evt-duplicate-after-${reservationStatus}-${asyncStatus}`,
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_retry_charge',
+            orderId: 'GRP-ASYNC-DONE',
+            status: 'DONE',
+            method: 'FOREIGN_EASY_PAY',
+            provider: 'ALIPAY_PLUS',
+            currency: 'USD',
+            totalAmount: 107.5,
+          },
+        },
+        'DONE',
+        'payment_status_changed:done',
+      )).resolves.toBe('DONE_DUPLICATE_PAYMENT_COMPENSATED');
+
+      expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
+        'pay_retry_charge',
+        '중복 결제로 인한 자동 취소',
+        expect.objectContaining({
+          idempotencyKey: 'async-done-duplicate-cancel:GRP-ASYNC-DONE:pay_retry_charge',
+          secretKeyScope: 'foreign-easy-pay',
+        }),
+      );
+      const metadataPatch = findJsonParam(
+        updateSettledPayment.set.mock.calls[0]?.[0],
+        'duplicatePaymentCompensations',
+      ) as { duplicatePaymentCompensations: Array<Record<string, unknown>> };
+      expect(metadataPatch.duplicatePaymentCompensations).toEqual([
+        expect.objectContaining({ paymentKey: 'pay_retry_charge', state: 'cancelled' }),
+      ]);
+      // The settled row itself is never rewritten by the duplicate.
+      expect(updateSettledPayment.set.mock.calls[0]?.[0]).not.toHaveProperty('status');
+      expect(mockDb.insert).not.toHaveBeenCalled();
+      expect(mockDb.transaction).not.toHaveBeenCalled();
     });
 
     it('acknowledges a replayed duplicate DONE without sending a second cancel', async () => {

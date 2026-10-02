@@ -189,10 +189,13 @@ Alipay must not be treated as done just because the cancel API returned.
 ## Async DONE Compensation
 
 An async DONE that cannot be issued is refunded in full instead of being left
-at the PG: seat taken by another buyer after the checkout lock expired, ticket
-limit, amount or currency mismatch with the stored quote (a USD quote never
-accepts a same-number KRW charge), an unsupported provider (TrueMoney), or a
-second paymentKey for an order that already has a settled payment.
+at the PG: seat taken by another checkout after the checkout lock expired (a
+late DONE for a `FAILED` order never takes a seat the same buyer re-locked for a
+newer reservation), ticket limit, amount or currency mismatch with the stored
+quote (a USD quote never accepts a same-number KRW charge), an unsupported
+provider (TrueMoney), or a second paymentKey for an order whose payment is
+already accepted, cancelled or compensated (including a buyer-cancelled
+reservation or an earlier refunded late DONE).
 
 - The payment row stays `DONE` + `async_status=cancel_pending` until the PG
   reports the cancel complete, so confirm and DONE replays cannot issue it.
@@ -208,6 +211,14 @@ second paymentKey for an order that already has a settled payment.
   live cancel is re-cancelled with a new idempotency key and
   `cancelRequestId` suffix `-r<n>`. After 5 requests the record becomes
   `attention`, logs an error and writes `ASYNC_DONE_COMPENSATION_ATTENTION`.
+  A provider query that keeps failing (wrong secret scope or key, provider
+  outage) is logged as a warning on each attempt, counted in `queryFailures`
+  since `queryFailingSince`, and becomes `attention` after at least 3
+  consecutive failures over one hour.
+- `payments.amount` is the KRW ledger. A compensated charge reported in another
+  currency without a quote (for example a TrueMoney USD amount) keeps the
+  reservation's KRW total on the row; the provider amount and currency are in
+  `asyncDoneCompensation.payment`.
 - `attention` rows need manual provider reconciliation. Do not edit the row to
   issue tickets.
 
@@ -294,6 +305,7 @@ select
   r.status as reservation_status,
   p.provider_metadata->'asyncDoneCompensation'->>'state' as compensation_state,
   p.provider_metadata->'asyncDoneCompensation'->>'attempts' as compensation_attempts,
+  p.provider_metadata->'asyncDoneCompensation'->>'lastError' as compensation_last_error,
   jsonb_array_length(coalesce(p.provider_metadata->'duplicatePaymentCompensations', '[]'::jsonb)) as duplicate_charges
 from payments p
 join reservations r on r.id = p.reservation_id

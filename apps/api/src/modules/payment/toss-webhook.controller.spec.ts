@@ -886,6 +886,86 @@ describe('PaymentWebhookController', () => {
     expect(paymentService.upsertAsyncPaymentProgress).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    {
+      name: 'a late DONE refunded for a seat conflict',
+      progress: { reservationStatus: 'FAILED', paymentStatus: 'CANCELED', paymentAsyncStatus: 'payment_status_changed:done' },
+    },
+    {
+      name: 'a rejected charge already refunded',
+      progress: { reservationStatus: 'FAILED', paymentStatus: 'CANCELED', paymentAsyncStatus: 'compensation_cancelled' },
+    },
+    {
+      name: 'an issued reservation the buyer cancelled',
+      progress: { reservationStatus: 'CANCELLED', paymentStatus: 'CANCELED', paymentAsyncStatus: 'payment_status_changed:done' },
+    },
+    {
+      name: 'an issued reservation with a seat-level cancellation',
+      progress: { reservationStatus: 'CONFIRMED', paymentStatus: 'PARTIAL_CANCELED', paymentAsyncStatus: 'sync' },
+    },
+    {
+      name: 'a compensation cancel still in flight on a failed order',
+      progress: { reservationStatus: 'FAILED', paymentStatus: 'DONE', paymentAsyncStatus: 'cancel_pending' },
+      // Not an Alipay event, so only the duplicate rule forwards it.
+      data: { provider: 'CARD', method: 'CARD', currency: 'KRW' },
+    },
+  ] as const)('forwards a second paymentKey DONE after $name so the duplicate charge is refunded', async (testCase) => {
+    const { progress } = testCase;
+    const event: TossWebhookRequestBody = {
+      ...paymentStatusChangedEvent,
+      data: { ...paymentStatusChangedEvent.data, ...('data' in testCase ? testCase.data : {}) },
+    };
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress({
+      ...progress,
+      paymentKey: 'pay_first_charge',
+    }));
+    paymentService.upsertAsyncPaymentProgress.mockResolvedValueOnce('DONE_DUPLICATE_PAYMENT_COMPENSATED');
+
+    const result = await controller.handleTossWebhook(event);
+
+    expect(result.processingResultCode).toBe('DONE_DUPLICATE_PAYMENT_COMPENSATED');
+    expect(paymentService.upsertAsyncPaymentProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ paymentKey: 'pay_async_1', status: 'DONE' }),
+      }),
+      'DONE',
+      'payment_status_changed:done',
+    );
+  });
+
+  it('keeps ignoring a DONE replay of the same paymentKey after its cancellation', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress({
+      reservationStatus: 'CANCELLED',
+      paymentStatus: 'CANCELED',
+      paymentKey: 'pay_async_1',
+    }));
+
+    const result = await controller.handleTossWebhook(paymentStatusChangedEvent);
+
+    expect(result.processingResultCode).toBe('IGNORED_STALE_PAYMENT_EVENT');
+    expect(paymentService.upsertAsyncPaymentProgress).not.toHaveBeenCalled();
+  });
+
+  it('keeps ignoring a different-paymentKey DONE when the order only has an ordinary provider failure', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress({
+      reservationStatus: 'FAILED',
+      paymentStatus: 'ABORTED',
+      paymentAsyncStatus: 'payment_status_changed:aborted',
+      paymentKey: 'pay_first_charge',
+    }));
+
+    const result = await controller.handleTossWebhook({
+      ...paymentStatusChangedEvent,
+      data: { ...paymentStatusChangedEvent.data, provider: 'CARD', method: 'CARD', currency: 'KRW' },
+    });
+
+    expect(result.processingResultCode).toBe('IGNORED_STALE_PAYMENT_EVENT');
+    expect(paymentService.upsertAsyncPaymentProgress).not.toHaveBeenCalled();
+  });
+
   it('still ignores DONE after an ordinary provider ABORTED', async () => {
     paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
     paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress({
