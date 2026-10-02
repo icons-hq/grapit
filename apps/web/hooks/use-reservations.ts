@@ -7,7 +7,6 @@ import {
   keepPreviousData,
 } from '@tanstack/react-query';
 import { apiClient } from '@/lib/api-client';
-import { apiUrl } from '@/lib/api-url';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { getClientLocale } from '@/lib/i18n/client-copy';
 import type {
@@ -278,20 +277,9 @@ export function useReservationExport() {
     mutationFn: async (
       filters: ReservationExportPayload,
     ): Promise<ReservationExportDownload> => {
-      const { accessToken } = useAuthStore.getState();
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      };
-
-      if (accessToken) {
-        headers['Authorization'] = `Bearer ${accessToken}`;
-      }
-
-      const response = await fetch(apiUrl('/api/v1/admin/bookings/export'), {
-        method: 'POST',
-        credentials: 'include',
-        headers,
-        body: JSON.stringify(filters),
+      // Shares the 401 → refresh → retry flow so a long-open admin screen can export.
+      const response = await apiClient.raw('POST', '/api/v1/admin/bookings/export', filters, {
+        showErrorToast: false,
       });
 
       if (!response.ok) {

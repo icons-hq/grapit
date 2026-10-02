@@ -1,7 +1,21 @@
 import { resolveAuthReturnTo, type SupportedLocale } from '@grabit/shared';
 import { getLocalizedPathname } from '@/lib/i18n/locale-path';
 
-export const resolveSafeReturnTo = resolveAuthReturnTo;
+/**
+ * Resolve a post-auth destination that router.push/replace and Link may navigate to.
+ * The shared normalizer rejects external targets; in the browser we additionally
+ * require that the resolved URL keeps the current origin so a future normalizer
+ * regression cannot turn a returnTo into an external navigation.
+ */
+export function resolveSafeReturnTo(value: string | null | undefined): string | null {
+  const returnTo = resolveAuthReturnTo(value);
+  if (!returnTo || typeof window === 'undefined') return returnTo;
+  try {
+    return new URL(returnTo, window.location.origin).origin === window.location.origin ? returnTo : null;
+  } catch {
+    return null;
+  }
+}
 
 export function resolveSafeReturnToFromSearch(search: string): string | null {
   return resolveSafeReturnTo(new URLSearchParams(search).get('returnTo'));

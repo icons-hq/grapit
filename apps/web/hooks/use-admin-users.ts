@@ -21,8 +21,6 @@ import {
   type AdminUserSupportThreadSummary as ApiAdminUserSupportThreadSummary,
 } from '@grabit/shared';
 import { apiClient } from '@/lib/api-client';
-import { apiUrl } from '@/lib/api-url';
-import { useAuthStore } from '@/stores/use-auth-store';
 
 export {
   ADMIN_CAPABILITIES,
@@ -241,21 +239,13 @@ export function useAdminUserExport() {
     mutationFn: async (
       payload: AdminUserExportRequest,
     ): Promise<AdminUserExportDownload> => {
-      const { accessToken } = useAuthStore.getState();
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      };
-
-      if (accessToken) {
-        headers['Authorization'] = `Bearer ${accessToken}`;
-      }
-
-      const response = await fetch(apiUrl('/api/v1/admin/users/export'), {
-        method: 'POST',
-        credentials: 'include',
-        headers,
-        body: JSON.stringify({ reason: payload.reason.trim() }),
-      });
+      // Shares the 401 → refresh → retry flow so a long-open admin screen can export.
+      const response = await apiClient.raw(
+        'POST',
+        '/api/v1/admin/users/export',
+        { reason: payload.reason.trim() },
+        { showErrorToast: false },
+      );
 
       if (!response.ok) {
         throw new Error(await resolveUserExportErrorMessage(response));

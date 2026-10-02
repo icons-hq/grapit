@@ -33,49 +33,176 @@ class ApiClientError extends Error {
   }
 }
 
-let refreshPromise: Promise<string | null> | null = null;
+/**
+ * Result of renewing the access token from the httpOnly refresh cookie.
+ * - refreshed: a new access token was issued.
+ * - signed_out: the server rejected or did not receive a refresh session (401/403/204).
+ * - unavailable: the server could not answer (5xx, 429, network error, timeout); the
+ *   session may still be valid, so callers must not clear it.
+ */
+export type RefreshOutcome =
+  | { status: 'refreshed'; accessToken: string }
+  | { status: 'signed_out' }
+  | { status: 'unavailable' };
 
-async function refreshAccessToken(): Promise<string | null> {
+type RefreshAttempt = RefreshOutcome | { status: 'rejected' };
+
+const REFRESH_LOCK_NAME = 'grabit-auth-refresh';
+const REFRESH_LOCK_WAIT_MS = 20_000;
+const REFRESH_REQUEST_TIMEOUT_MS = 10_000;
+const REJECTED_REFRESH_RECHECK_DELAY_MS = 300;
+export const DEFAULT_REFRESH_RETRY_DELAYS_MS: readonly number[] = [500, 1_500];
+/**
+ * No refresh attempt is sent later than this after the first one. The API accepts a
+ * just-rotated cookie again for 30 seconds (REFRESH_ROTATION_GRACE_MS); if the first
+ * rotation committed but its response was lost, every retry must reach the API inside
+ * that window or it is treated as token reuse and the session is revoked. The margin
+ * covers request transit and server queueing.
+ */
+export const REFRESH_RETRY_BUDGET_MS = 20_000;
+
+let refreshPromise: Promise<RefreshOutcome> | null = null;
+
+/**
+ * Renews the access token. Concurrent callers in this tab share one request, and
+ * tabs take turns through a Web Lock so a single refresh cookie is rotated by one
+ * tab at a time (the API also tolerates a concurrent replay of a just-rotated
+ * token). Transient failures are retried with backoff before reporting
+ * `unavailable`.
+ */
+export function refreshAccessToken(
+  options: { retryDelaysMs?: readonly number[] } = {},
+): Promise<RefreshOutcome> {
   // Deduplicate concurrent refresh requests
   if (refreshPromise) {
     return refreshPromise;
   }
 
-  refreshPromise = (async () => {
-    try {
-      const res = await fetch(apiUrl('/api/v1/auth/refresh'), {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-      });
-
-      if (!res.ok) {
-        return null;
-      }
-
-      const data = (await res.json()) as { accessToken: string };
-      return data.accessToken;
-    } catch {
-      return null;
-    } finally {
+  refreshPromise = refreshWithRetries(options.retryDelaysMs ?? DEFAULT_REFRESH_RETRY_DELAYS_MS)
+    .finally(() => {
       refreshPromise = null;
-    }
-  })();
+    });
 
   return refreshPromise;
 }
 
-async function request<T>(
+async function refreshWithRetries(retryDelaysMs: readonly number[]): Promise<RefreshOutcome> {
+  let firstSentAt: number | null = null;
+  const budgetLeftMs = () =>
+    firstSentAt === null ? REFRESH_RETRY_BUDGET_MS : REFRESH_RETRY_BUDGET_MS - (Date.now() - firstSentAt);
+  // Each attempt re-checks the budget after waiting for the cross-tab lock.
+  const attemptRefresh = () => withCrossTabRefreshLock(async (): Promise<RefreshAttempt> => {
+    if (budgetLeftMs() < 0) return { status: 'unavailable' };
+    firstSentAt ??= Date.now();
+    return requestRefresh();
+  });
+
+  let attempt = await attemptRefresh();
+
+  if (attempt.status === 'rejected') {
+    // Another tab may have rotated the shared cookie while this request was in
+    // flight; give the cookie jar a moment and check once more before signing out.
+    await sleep(REJECTED_REFRESH_RECHECK_DELAY_MS);
+    attempt = await attemptRefresh();
+    if (attempt.status === 'rejected') return { status: 'signed_out' };
+  }
+
+  for (const delayMs of retryDelaysMs) {
+    if (attempt.status !== 'unavailable') break;
+    const waitMs = withJitter(delayMs);
+    // A retry that could only start after the server grace window is not sent.
+    if (waitMs > budgetLeftMs()) break;
+    await sleep(waitMs);
+    attempt = await attemptRefresh();
+  }
+
+  return attempt.status === 'rejected' ? { status: 'signed_out' } : attempt;
+}
+
+async function requestRefresh(): Promise<RefreshAttempt> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REFRESH_REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(apiUrl('/api/v1/auth/refresh'), {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+    });
+
+    // 204: no refresh cookie was sent, so there is no session to keep.
+    if (res.status === 204) return { status: 'signed_out' };
+    if (res.status === 401 || res.status === 403) return { status: 'rejected' };
+    if (!res.ok) return { status: 'unavailable' };
+
+    const data = (await res.json()) as { accessToken?: unknown };
+    return typeof data.accessToken === 'string' && data.accessToken.length > 0
+      ? { status: 'refreshed', accessToken: data.accessToken }
+      : { status: 'unavailable' };
+  } catch {
+    // Network failure, aborted (timeout) or unreadable body: the session is unknown.
+    return { status: 'unavailable' };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function withCrossTabRefreshLock<T>(task: () => Promise<T>): Promise<T> {
+  const locks = typeof navigator === 'undefined'
+    ? undefined
+    : (navigator as Navigator & { locks?: LockManager }).locks;
+  if (!locks || typeof locks.request !== 'function') return task();
+
+  const controller = new AbortController();
+  const lockWait = setTimeout(() => controller.abort(), REFRESH_LOCK_WAIT_MS);
+  let acquired = false;
+  try {
+    return await locks.request(REFRESH_LOCK_NAME, { signal: controller.signal }, async () => {
+      acquired = true;
+      clearTimeout(lockWait);
+      return task();
+    });
+  } catch (error) {
+    // The lock could not be obtained (wait timed out or unsupported options). The
+    // API keeps a concurrent rotation safe, so refreshing without the lock is fine.
+    if (!acquired) return task();
+    throw error;
+  } finally {
+    clearTimeout(lockWait);
+  }
+}
+
+function withJitter(delayMs: number): number {
+  return Math.round(delayMs * (0.8 + Math.random() * 0.4));
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function redirectToLogin() {
+  useAuthStore.getState().clearAuth();
+  if (typeof window !== 'undefined') {
+    const returnTo = resolveSafeReturnTo(`${window.location.pathname}${window.location.search}${window.location.hash}`)
+      ?? resolveSafeReturnToFromSearch(window.location.search);
+    navigateToLocalizedPath(buildAuthRoute('/auth', getClientLocale(), { returnTo }));
+  }
+}
+
+/**
+ * Sends an API request with the in-memory access token. On 401 it renews the token
+ * once and retries. Only a rejected refresh session signs the buyer out; when the
+ * API is temporarily unavailable the session and in-memory booking state are kept
+ * and a retryable 503 ApiClientError is thrown instead.
+ */
+async function sendWithSession(
   method: string,
   path: ApiPath,
-  body?: unknown,
-  options: ApiClientOptions = {},
-): Promise<T> {
+  init: { body?: BodyInit; headers?: Record<string, string> },
+  options: ApiClientOptions,
+): Promise<Response> {
   const { accessToken } = useAuthStore.getState();
-
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-  };
+  const headers: Record<string, string> = { ...(init.headers ?? {}) };
 
   if (accessToken) {
     headers['Authorization'] = `Bearer ${accessToken}`;
@@ -87,37 +214,65 @@ async function request<T>(
     credentials: 'include',
   };
 
-  if (body !== undefined) {
-    config.body = JSON.stringify(body);
+  if (init.body !== undefined) {
+    config.body = init.body;
   }
 
-  let res = await fetch(apiUrl(path), config);
+  const res = await fetch(apiUrl(path), config);
 
   // On 401, attempt silent refresh and retry once
-  if (res.status === 401 && accessToken) {
-    const newToken = await refreshAccessToken();
-
-    if (newToken) {
-      // Update store with new token
-      const { user } = useAuthStore.getState();
-      if (user) {
-        useAuthStore.getState().setAuth(newToken, user);
-      }
-
-      // Retry with new token
-      headers['Authorization'] = `Bearer ${newToken}`;
-      res = await fetch(apiUrl(path), { ...config, headers });
-    } else {
-      // Refresh failed -- clear auth and redirect
-      useAuthStore.getState().clearAuth();
-      if (typeof window !== 'undefined') {
-        const returnTo = resolveSafeReturnTo(`${window.location.pathname}${window.location.search}${window.location.hash}`)
-          ?? resolveSafeReturnToFromSearch(window.location.search);
-        navigateToLocalizedPath(buildAuthRoute('/auth', getClientLocale(), { returnTo }));
-      }
-      throw new ApiClientError(getClientVisibleCopy().commonErrors.authExpired, 401);
-    }
+  if (res.status !== 401 || !accessToken) {
+    return res;
   }
+
+  const refresh = await refreshAccessToken();
+
+  if (refresh.status === 'refreshed') {
+    // Update store with new token
+    const { user } = useAuthStore.getState();
+    if (user) {
+      useAuthStore.getState().setAuth(refresh.accessToken, user);
+    }
+
+    // Retry with new token
+    return fetch(apiUrl(path), {
+      ...config,
+      headers: { ...headers, Authorization: `Bearer ${refresh.accessToken}` },
+    });
+  }
+
+  if (refresh.status === 'signed_out') {
+    // Refresh session is gone -- clear auth and send the buyer to login.
+    redirectToLogin();
+    throw new ApiClientError(getClientVisibleCopy().commonErrors.authExpired, 401);
+  }
+
+  // Temporary outage: keep the session and the current screen; let the caller retry.
+  const commonErrors = getClientVisibleCopy().commonErrors;
+  if (options.showErrorToast !== false) {
+    toast.error(commonErrors.default, {
+      description: formatCopy(commonErrors.errorCode, { status: 503 }),
+      duration: 5000,
+    });
+  }
+  throw new ApiClientError(commonErrors.default, 503);
+}
+
+async function request<T>(
+  method: string,
+  path: ApiPath,
+  body?: unknown,
+  options: ApiClientOptions = {},
+): Promise<T> {
+  const res = await sendWithSession(
+    method,
+    path,
+    {
+      headers: { 'Content-Type': 'application/json' },
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    },
+    options,
+  );
 
   if (!res.ok) {
     const status = res.status;
@@ -158,6 +313,27 @@ async function request<T>(
   return res.json() as Promise<T>;
 }
 
+/**
+ * Authenticated request for non-JSON responses such as CSV downloads. It shares the
+ * 401 → refresh → retry handling of JSON requests and returns the raw Response so
+ * the caller can read a Blob and its own error body.
+ */
+function requestRaw(
+  method: string,
+  path: ApiPath,
+  body?: unknown,
+  options: ApiClientOptions = {},
+): Promise<Response> {
+  return sendWithSession(
+    method,
+    path,
+    body === undefined
+      ? {}
+      : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    options,
+  );
+}
+
 export const apiClient = {
   get: <T>(path: ApiPath, options?: ApiClientOptions) =>
     request<T>('GET', path, undefined, options),
@@ -169,6 +345,8 @@ export const apiClient = {
     request<T>('PATCH', path, body, options),
   delete: <T>(path: ApiPath, options?: ApiClientOptions) =>
     request<T>('DELETE', path, undefined, options),
+  raw: (method: 'GET' | 'POST', path: ApiPath, body?: unknown, options?: ApiClientOptions) =>
+    requestRaw(method, path, body, options),
 };
 
 export { ApiClientError };

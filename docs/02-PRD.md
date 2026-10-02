@@ -44,7 +44,9 @@ Auth must protect scarce booking resources and admin surfaces.
 - Email-based registration uses three visible steps: credentials, itemized consent, and profile/phone verification.
 - Social login supports Kakao, Naver, and Google callback flows.
 - Email verification and SMS/phone verification are required before ordinary buyers can book.
-- Refresh-token state supports device-family management and logout.
+- Refresh-token state supports device-family management and logout. Several tabs refreshing at once, or a temporary API failure during refresh, must not sign the buyer out.
+- Social sign-in is protected against login CSRF and forwarded registration links. Social-only sign-up completes without an email code; a password account linked to a social login keeps its own email verification unless the provider verified the same address.
+- Login email matching is case-insensitive.
 - Itemized consent capture is shared by signup, social completion, and booking flows.
 - Legal pages are public and linked through the frontend legal routes.
 - Account profile update and withdrawal are available from My Page/user endpoints.

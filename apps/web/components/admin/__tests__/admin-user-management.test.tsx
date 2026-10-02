@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   apiGet: vi.fn(),
   apiPatch: vi.fn(),
   apiPost: vi.fn(),
+  apiRaw: vi.fn(),
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
 }));
@@ -25,6 +26,7 @@ vi.mock('@/lib/api-client', () => ({
     get: mocks.apiGet,
     patch: mocks.apiPatch,
     post: mocks.apiPost,
+    raw: mocks.apiRaw,
   },
 }));
 
@@ -274,16 +276,14 @@ describe('AdminUserManagement', () => {
     mocks.apiPost.mockReset();
     mocks.toastSuccess.mockReset();
     mocks.toastError.mockReset();
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValue(
-        new Response('"id","email"\n"user-1","fan@example.com"', {
-          status: 200,
-          headers: {
-            'content-disposition': 'attachment; filename="user-export-raw-2026-05-18.csv"',
-          },
-        }),
-      ),
+    // The CSV download goes through the session-refreshing raw client.
+    mocks.apiRaw.mockReset().mockImplementation(async () =>
+      new Response('"id","email"\n"user-1","fan@example.com"', {
+        status: 200,
+        headers: {
+          'content-disposition': 'attachment; filename="user-export-raw-2026-05-18.csv"',
+        },
+      }),
     );
     mockSuccessfulApi();
   });
@@ -308,12 +308,11 @@ describe('AdminUserManagement', () => {
     await user.click(screen.getByRole('button', { name: 'CSV 다운로드 확정' }));
 
     await waitFor(() => {
-      expect(globalThis.fetch).toHaveBeenCalledWith(
-        expect.stringContaining('/api/v1/admin/users/export'),
-        expect.objectContaining({
-          method: 'POST',
-          body: JSON.stringify({ reason: '회원 운영 데이터 대조' }),
-        }),
+      expect(mocks.apiRaw).toHaveBeenCalledWith(
+        'POST',
+        '/api/v1/admin/users/export',
+        { reason: '회원 운영 데이터 대조' },
+        { showErrorToast: false },
       );
     });
     expect(mocks.toastSuccess).toHaveBeenCalledWith(

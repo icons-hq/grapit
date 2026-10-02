@@ -53,7 +53,7 @@ test.describe('Social Login - Login Page Error Display', () => {
 });
 
 test.describe('Social Login - Processing State', () => {
-  test('callback waits for one session refresh, then exits loading when refresh fails', async ({ page }) => {
+  test('callback waits for the session refresh, then exits loading when refresh fails', async ({ page }) => {
     let releaseRefresh!: () => void;
     const pendingRefresh = new Promise<void>((resolve) => { releaseRefresh = resolve; });
     let refreshCount = 0;
@@ -67,7 +67,10 @@ test.describe('Social Login - Processing State', () => {
     releaseRefresh();
     await expect(page).toHaveURL(/\/auth$/);
     await expect(page.getByRole('tab', { name: '로그인', exact: true })).toBeVisible();
-    expect(refreshCount).toBe(1);
+    // Only AuthInitializer refreshes; the callback page never calls /auth/refresh itself.
+    // A 401 is rechecked once (~300 ms later) in case another tab rotated the shared
+    // cookie meanwhile, so a rejected session costs exactly two requests.
+    expect(refreshCount).toBe(2);
   });
 });
 

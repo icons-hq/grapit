@@ -2,7 +2,8 @@ import { z } from 'zod';
 import { SUPPORTED_LOCALES, signupConsentRowsSchema } from '@grabit/shared';
 
 export const registerBodySchema = z.object({
-  email: z.string().email('올바른 이메일 주소를 입력해주세요'),
+  // Stored and compared in lower case so the same mailbox cannot register twice.
+  email: z.string().trim().toLowerCase().email('올바른 이메일 주소를 입력해주세요'),
   password: z
     .string()
     .min(8, '비밀번호는 8자 이상이어야 합니다')

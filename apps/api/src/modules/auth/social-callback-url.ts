@@ -71,25 +71,6 @@ export function getSocialCallbackStateFromRequest(
   );
 }
 
-export function buildSocialOAuthState(
-  locale: unknown,
-  returnTo: unknown,
-): string | undefined {
-  const resolvedLocale = resolveSocialCallbackLocale(locale);
-  const resolvedReturnTo = resolveSafeSocialReturnTo(returnTo);
-
-  if (!resolvedReturnTo) {
-    return resolvedLocale ?? undefined;
-  }
-
-  const params = new URLSearchParams();
-  if (resolvedLocale) {
-    params.set('locale', resolvedLocale);
-  }
-  params.set('returnTo', resolvedReturnTo);
-  return params.toString();
-}
-
 export function buildSocialCallbackUrl(
   frontendUrl: string,
   locale: SupportedLocale | null,

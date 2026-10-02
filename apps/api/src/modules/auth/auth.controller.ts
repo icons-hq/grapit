@@ -42,30 +42,37 @@ import {
   getSocialCallbackStateFromRequest,
 } from './social-callback-url.js';
 import type { SocialProfile } from './interfaces/social-profile.interface.js';
+import {
+  SOCIAL_REGISTRATION_BINDING_COOKIE,
+  createSocialRegistrationBinding,
+  socialRegistrationBindingCookieOptions,
+} from './social-oauth-state.js';
 import { AUTH_COOKIE_NAME } from '@grabit/shared/constants/index.js';
 import type { EmailAvailabilityResponse } from '@grabit/shared/types/auth.types.js';
 import { getPrimaryFrontendUrl } from '../../config/frontend-origins.js';
 
 const launchLocaleSchema = z.enum(['ko', 'en', 'th', 'zh-CN']).default('ko');
+// Login emails are compared case-insensitively; normalize before validation.
+const authEmailSchema = z.string().trim().toLowerCase().email();
 const emailAvailabilityQuerySchema = z.object({
-  email: z.string().email(),
+  email: authEmailSchema,
 });
 const emailVerificationRequestSchema = z.object({
-  email: z.string().email(),
+  email: authEmailSchema,
   locale: launchLocaleSchema.optional(),
   frontendOrigin: z.string().url().max(200).optional(),
 });
 const accountEmailVerificationRequestSchema = z.object({
-  email: z.string().email(),
+  email: authEmailSchema,
   locale: launchLocaleSchema.optional(),
 });
 const accountEmailVerificationVerifySchema = z.object({
-  email: z.string().email(),
+  email: authEmailSchema,
   code: z.string().regex(/^\d{6}$/, '인증번호는 6자리입니다'),
 });
 const emailVerificationVerifySchema = z.union([
   z.object({
-    email: z.string().email(),
+    email: authEmailSchema,
     code: z.string().regex(/^\d{6}$/, '인증번호는 6자리입니다'),
   }),
   z.object({
@@ -104,6 +111,8 @@ export class AuthController {
       emailVerificationRequired: result.emailVerificationRequired,
       email: result.email,
       verificationExpiresAt: result.verificationExpiresAt,
+      // The account is committed even when Resend fails; the web offers a resend.
+      ...(result.emailDeliveryFailed ? { emailDeliveryFailed: true } : {}),
       user: result.user,
     };
   }
@@ -348,17 +357,23 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const { registrationToken, ...registerData } = dto;
+    const registrationBinding = (req.cookies as Record<string, unknown> | undefined)?.[
+      SOCIAL_REGISTRATION_BINDING_COOKIE
+    ];
     const result = await this.authService.completeSocialRegistration(
       registrationToken,
       registerData,
       this.resolveConsentMeta(req),
+      { registrationBinding: typeof registrationBinding === 'string' ? registrationBinding : undefined },
     );
+    this.clearSocialRegistrationBindingCookie(res);
 
     if ('emailVerificationRequired' in result) {
       return {
         emailVerificationRequired: result.emailVerificationRequired,
         email: result.email,
         verificationExpiresAt: result.verificationExpiresAt,
+        ...(result.emailDeliveryFailed ? { emailDeliveryFailed: true } : {}),
         user: result.user,
       };
     }
@@ -392,7 +407,8 @@ export class AuthController {
 
     try {
       this.logger.log(`Social callback: provider=${profile.provider}, providerId=${profile.providerId}`);
-      const result = await this.authService.findOrCreateSocialUser(profile);
+      const registrationBinding = createSocialRegistrationBinding();
+      const result = await this.authService.findOrCreateSocialUser(profile, { registrationBinding });
 
       if (result.status === 'authenticated') {
         this.logger.log(`Social login authenticated: provider=${profile.provider}, providerId=${profile.providerId}`);
@@ -407,6 +423,11 @@ export class AuthController {
         );
       } else if (result.status === 'needs_registration') {
         this.logger.log(`Social login needs registration: provider=${profile.provider}`);
+        res.cookie(
+          SOCIAL_REGISTRATION_BINDING_COOKIE,
+          registrationBinding,
+          socialRegistrationBindingCookieOptions(),
+        );
         res.redirect(
           buildSocialCallbackUrl(frontendUrl, callbackState.locale, {
             registrationToken: result.registrationToken,
@@ -434,6 +455,12 @@ export class AuthController {
         }),
       );
     }
+  }
+
+  private clearSocialRegistrationBindingCookie(res: Response): void {
+    const { maxAge: _maxAge, ...clearOptions } = socialRegistrationBindingCookieOptions();
+    void _maxAge;
+    res.clearCookie(SOCIAL_REGISTRATION_BINDING_COOKIE, clearOptions);
   }
 
   private setRefreshTokenCookie(res: Response, token: string): void {
