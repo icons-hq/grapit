@@ -939,8 +939,12 @@ describe('AdminBookingService', () => {
       });
     });
 
-    it.each(Object.values(ASYNC_DONE_COMPENSATION_DIAGNOSTIC_CODES))(
-      'buckets an async DONE compensation (%s) as a compensated cancel, not a buyer cancellation',
+    it.each([
+      ...Object.values(ASYNC_DONE_COMPENSATION_DIAGNOSTIC_CODES),
+      // u01 confirm/reconcile compensation of an approval it could not issue.
+      'CONFIRM_APPROVAL_COMPENSATED',
+    ])(
+      'buckets a compensation (%s) as a compensated cancel, not a buyer cancellation',
       async (diagnosticCode) => {
         mockDb.select
           .mockReturnValueOnce(createChainMock([{

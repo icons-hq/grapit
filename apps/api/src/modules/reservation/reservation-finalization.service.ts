@@ -59,6 +59,7 @@ import { ProviderChargeQuoteService } from '../payment/provider-charge-quote.ser
 import { QrTicketService } from '../ticket/qr-ticket.service.js';
 import { buildFullPaymentCancelRequest } from '../payment/payment-cancel-policy.js';
 import {
+  CONFIRM_APPROVAL_COMPENSATED_DIAGNOSTIC_CODE,
   paymentTerminalFailureDiagnostic,
   recordReservationPaymentFailureDiagnostic,
 } from '../payment/payment-failure-diagnostic.js';
@@ -2152,7 +2153,7 @@ export class ReservationFinalizationService {
         paymentId: input.paymentId,
         tossOrderId: input.orderId,
         diagnosticKind: 'payment_compensated_cancel',
-        diagnosticCode: 'CONFIRM_APPROVAL_COMPENSATED',
+        diagnosticCode: CONFIRM_APPROVAL_COMPENSATED_DIAGNOSTIC_CODE,
         diagnosticMessage: input.reason,
         diagnosticSource: input.diagnosticSource,
       });

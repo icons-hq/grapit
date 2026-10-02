@@ -37,7 +37,10 @@ import {
   type AdminRefundRequestOptions,
   type RefundRequestResponse,
 } from '../refund/refund.service.js';
-import { mapPaymentFailureDiagnostic } from '../payment/payment-failure-diagnostic.js';
+import {
+  CONFIRM_APPROVAL_COMPENSATED_DIAGNOSTIC_CODE,
+  mapPaymentFailureDiagnostic,
+} from '../payment/payment-failure-diagnostic.js';
 import { ASYNC_DONE_COMPENSATION_DIAGNOSTIC_CODES } from '../payment/async-done-compensation.js';
 import { noActiveTicketItemOnSeat } from '../../database/seat-ownership.js';
 import { safeCsvRows, withUtf8Bom } from './csv-export.util.js';
@@ -856,13 +859,16 @@ function expiredPaymentFailureConditionSql(): SQL {
 
 /**
  * Every async DONE that could not be issued (seat conflict, ticket limit, amount or currency
- * mismatch, unsupported provider, duplicate payment key) is refunded in full and recorded with
- * one of these diagnostic codes. They all belong to the compensated-cancel bucket, never to
- * buyer cancellation or provider abort.
+ * mismatch, unsupported provider, duplicate payment key), and every confirm approval that could
+ * not be issued (u01: sales cutoff, lost hold, outcome resolved after the admission window), is
+ * refunded in full and recorded with one of these diagnostic codes. They all belong to the
+ * compensated-cancel bucket, never to buyer cancellation (the payment row reads CANCELED) or
+ * provider abort.
  */
-const ASYNC_DONE_COMPENSATED_CANCEL_DIAGNOSTIC_CODES: readonly string[] = Object.values(
-  ASYNC_DONE_COMPENSATION_DIAGNOSTIC_CODES,
-);
+const ASYNC_DONE_COMPENSATED_CANCEL_DIAGNOSTIC_CODES: readonly string[] = [
+  ...Object.values(ASYNC_DONE_COMPENSATION_DIAGNOSTIC_CODES),
+  CONFIRM_APPROVAL_COMPENSATED_DIAGNOSTIC_CODE,
+];
 const ASYNC_DONE_COMPENSATED_CANCEL_DIAGNOSTIC_CODE_SET = new Set(
   ASYNC_DONE_COMPENSATED_CANCEL_DIAGNOSTIC_CODES,
 );
