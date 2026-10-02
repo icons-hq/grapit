@@ -14,3 +14,18 @@ export function isSameCheckoutPaymentMethod(a: PaymentMethod, b: PaymentMethod):
       === (b.currency ?? (isForeignCheckout(b) ? 'USD' : 'KRW'))
     && isForeignCheckout(a) === isForeignCheckout(b);
 }
+
+/**
+ * Reservation prepare answers 409 with this exact message when the method is not in the
+ * performance's allowed payment methods. Checkout keeps the buyer on the payment step.
+ */
+export const CHECKOUT_PAYMENT_METHOD_NOT_ALLOWED_MESSAGE =
+  '이 공연에서 사용할 수 없는 결제수단입니다. 다른 결제수단을 선택해주세요.';
+
+/** Whether a performance's allowed payment methods include this checkout method category. */
+export function isCheckoutPaymentMethodAllowed(
+  method: Pick<PaymentMethod, 'method'>,
+  allowedPaymentMethods: readonly string[],
+): boolean {
+  return allowedPaymentMethods.includes(method.method);
+}

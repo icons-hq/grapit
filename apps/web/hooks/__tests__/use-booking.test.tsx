@@ -786,8 +786,28 @@ describe('use-booking payment mutations', () => {
     expect(result.current.lockExpiresAt).toBe('2026-05-08T10:10:00.000Z');
     expect(result.current.paymentDeadlineAt).toBe('2026-05-08T10:07:00.000Z');
     expect(result.current.allowedPaymentMethods).toEqual(['CARD', 'FOREIGN_EASY_PAY']);
+    expect(result.current.allowedPaymentMethodsKnown).toBe(true);
 
     vi.useRealTimers();
+  });
+
+  it('useBookingPaymentSnapshot() marks the payment method list as a fallback without a cached policy', () => {
+    useBookingStore.getState().setBookingData({
+      selectedSeats: [createFloorAwareSeat()],
+      showtimeId: 'showtime-uncached-policy',
+      performanceId: 'performance-uncached',
+      performanceTitle: '락 테스트 공연',
+      showDateTime: '2099-07-18T12:00:00.000Z',
+      venue: '테스트 공연장',
+      posterUrl: null,
+      expiresAt: Date.parse('2099-05-08T10:10:00.000Z'),
+    });
+
+    const { Wrapper } = createWrapper();
+    const { result } = renderHook(() => useBookingPaymentSnapshot(), { wrapper: Wrapper });
+
+    expect(result.current.allowedPaymentMethods).toEqual(['CARD']);
+    expect(result.current.allowedPaymentMethodsKnown).toBe(false);
   });
 
   it('updates the seat-selection timer when the server payment deadline is shorter than the selection hold', () => {

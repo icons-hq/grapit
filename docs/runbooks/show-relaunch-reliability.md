@@ -85,6 +85,26 @@ ROLLBACK;
 
 코드 rollback 시에도 소유권 보호 인덱스를 임의 제거하지 않는다. 0033 이전 앱과 혼재하는 롤링 구간에는 충돌 오류가 발생할 수 있으므로 한산한 시간에 수행하고 예약/웹훅 실패율을 관찰한다. 인덱스 사전검사 실패는 데이터 검토로 돌아가며, 자동 삭제로 우회하지 않는다.
 
+## 예매 게이트 변경의 배포 차단 점검 (2026-10 감사 #62·#68·#70)
+
+reservation prepare는 공연 `allowed_payment_methods`에 없는 결제수단을 409로 거절한다. 정책 행이 없거나 목록이 비면 플랫폼 기본값 `["CARD"]`만 허용한다. 결제 단계 화면은 좌석을 유지한 채 다른 수단을 고르게 하지만, 위젯에 보이는 수단이 정책에서 빠져 있으면 구매자는 그 수단으로 결제할 수 없다. 배포 전에 판매 종료가 아닌 공개 공연 전체를 read-only로 점검한다. 결과가 한 행이라도 있으면 배포를 멈추고 관리자 공연 편집에서 결제수단을 먼저 저장한다.
+
+```sql
+BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+SELECT p.id, p.title, p.status, bp.id IS NULL AS missing_policy, bp.allowed_payment_methods
+FROM performances p
+LEFT JOIN booking_policies bp ON bp.performance_id = p.id
+WHERE p.publish_state = 'published' AND p.status <> 'ended'
+  AND (bp.id IS NULL
+    OR NOT bp.allowed_payment_methods @> '["CARD", "TRANSFER", "SIMPLE_PAY", "FOREIGN_EASY_PAY"]'::jsonb);
+ROLLBACK;
+```
+
+- 기준 목록은 구매자 위젯(국내·해외 variant)에 실제로 보이는 범주다. 국내·해외 카드는 `CARD`, 계좌이체는 `TRANSFER`, 토스페이·네이버페이·카카오페이는 `SIMPLE_PAY`, Alipay·PayPal·TrueMoney는 `FOREIGN_EASY_PAY`다. 운영자가 특정 공연에서 의도적으로 뺀 범주는 그 공연만 예외로 기록한다.
+- 웹은 위젯의 가상계좌·휴대폰 결제 선택을 아직 `CARD`로 분류한다. 이 두 수단을 위젯에 노출하는 동안에는 공연별 제한이 적용되지 않는다. confirm은 Toss 승인 응답의 실제 결제수단을 정책과 대조하지 않는다(통합 후속).
+- admission token: migration 0039는 과거 예약의 원문 token을 `sha256:<hex>` digest로 바꾼다. 롤링 구간에 이전 revision이 원문을 다시 쓸 수 있다. 새 API revision이 트래픽 100%를 받은 뒤, 승인된 운영 DB 절차로 0039의 `UPDATE reservations ...` 문장을 그대로 한 번 더 실행한다. 이미 digest인 값은 바뀌지 않는다. 확인 쿼리 `SELECT count(*) FROM reservations WHERE admission_token IS NOT NULL AND admission_token NOT LIKE 'sha256:%';`의 결과는 0이어야 한다.
+- 같은 인증 휴대폰의 다른 계정이 결제 기한 안의 `PENDING_PAYMENT` 좌석을 갖고 있으면 좌석 lock과 prepare가 매수 제한(409)으로 막는다. 결제 기한이 지나거나 그 예매를 취소하면 풀린다. prepare 전의 Redis 좌석 hold는 계정 단위다. 그래서 두 계정이 거의 동시에 prepare를 통과하면, confirm advisory lock 뒤의 결제가 Toss 승인 후 매수 초과 보상 취소된다. CS 안내는 기존 매수 초과 보상 취소와 같다.
+
 ## 기본 베네핏 누락 복구
 
 `included-benefit-repair.cli`는 설정 최신 버전의 included 권리만 다룬다. `CONFIRMED` 예약, `DONE` 결제, `active` 티켓에 한정한다. 추첨/수령/취소 이력을 바꾸지 않는다. 이미 active 또는 redeemed인 같은 권리는 제외한다.

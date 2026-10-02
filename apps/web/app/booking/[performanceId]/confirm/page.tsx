@@ -39,7 +39,9 @@ import { useBookingStore } from '@/stores/use-booking-store';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { apiClient } from '@/lib/api-client';
 import {
+  CHECKOUT_PAYMENT_METHOD_NOT_ALLOWED_MESSAGE,
   TICKET_SERVICE_FEE_KRW,
+  isCheckoutPaymentMethodAllowed,
   isSameCheckoutPaymentMethod,
   toFloorAwareSeatSelection as toSharedFloorAwareSeatSelection,
 } from '@grabit/shared';
@@ -76,6 +78,12 @@ function isLockFailureMessage(message: string): boolean {
   return LOCK_FAILURE_MESSAGES.some((candidate) => candidate === message);
 }
 
+/** Prepare's 409 for a method outside the performance policy; the buyer can pick another method. */
+function isPaymentMethodNotAllowedError(err: unknown): boolean {
+  return err instanceof Error && 'statusCode' in err && Number(err.statusCode) === 409
+    && err.message === CHECKOUT_PAYMENT_METHOD_NOT_ALLOWED_MESSAGE;
+}
+
 function getLocalizedLockFailureMessage(
   message: string,
   copy: ReturnType<typeof getVisibleCopy>['bookingExtra']['confirm'],
@@ -106,6 +114,8 @@ function ConfirmPageContent() {
     paymentDeadlineAt,
     lockExpiresAt,
     bookingPolicy,
+    allowedPaymentMethods,
+    allowedPaymentMethodsKnown,
     isPaymentDeadlineExpired,
   } = useBookingPaymentSnapshot();
 
@@ -117,6 +127,7 @@ function ConfirmPageContent() {
   const [widgetReady, setWidgetReady] = useState(false);
   const [widgetAgreementAgreed, setWidgetAgreementAgreed] = useState(false);
   const [lockFailureMessage, setLockFailureMessage] = useState<string | null>(null);
+  const [paymentMethodRejected, setPaymentMethodRejected] = useState(false);
   const [paymentReturnError, setPaymentReturnError] = useState<PaymentFailureGuidance | null>(null);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<PaymentMethodSelection | null>(null);
   const [preparedReview, setPreparedReview] = useState<PrepareReservationResponse | null>(null);
@@ -265,6 +276,7 @@ function ConfirmPageContent() {
   const handlePaymentMethodChange = useCallback((selection: PaymentMethodSelection) => {
     setSelectedPaymentMethod(selection);
     setOverseasDisclaimerAgreed(false);
+    setPaymentMethodRejected(false);
     setPreparedReview((current) => current?.paymentMethod
       && isSameCheckoutPaymentMethod(current.paymentMethod, selection.paymentMethod) ? current : null);
   }, [setSelectedPaymentMethod, setOverseasDisclaimerAgreed, setPreparedReview]);
@@ -316,6 +328,16 @@ function ConfirmPageContent() {
   const methodMatchesRestoredOrder = !restoredMethod || !selectedPaymentMethod
     || isSameCheckoutPaymentMethod(restoredMethod, paymentMethod);
   const lockedMethodMismatch = Boolean(recovery.reservation?.checkoutStartedAt) && !methodMatchesRestoredOrder;
+  // The server re-checks only a new or changed method, so the order's fixed method may resume.
+  const methodFixedByOrder = restoredMethod
+    ? isSameCheckoutPaymentMethod(restoredMethod, paymentMethod)
+    : false;
+  const paymentMethodNotAllowed = paymentMethodRejected || (
+    allowedPaymentMethodsKnown === true
+    && Array.isArray(allowedPaymentMethods)
+    && !methodFixedByOrder
+    && !isCheckoutPaymentMethodAllowed(paymentMethod, allowedPaymentMethods)
+  );
   const visibleQuote = preparedReview?.providerChargeQuote
     ?? (methodMatchesRestoredOrder ? recovery.reservation?.providerChargeQuote : undefined);
 
@@ -325,6 +347,7 @@ function ConfirmPageContent() {
     if (isPaymentDeadlineExpired) return;
     if (returnOrderId && recovery.state !== 'ready') return;
     if (lockedMethodMismatch) return;
+    if (paymentMethodNotAllowed) return;
     if (
       !paymentWidgetRef.current
       || !agreed
@@ -446,6 +469,12 @@ function ConfirmPageContent() {
         }
       }
       if (mountedRef.current) setIsProcessing(false);
+      if (isPaymentMethodNotAllowedError(err)) {
+        // Not a seat failure: keep the seats and let the buyer choose an allowed method.
+        setPaymentMethodRejected(true);
+        if (returnOrderId) void refetchRecovery();
+        return;
+      }
       if (uncreatedOrder || isLockFailureMessage(errorMessage)) {
         setLockFailureMessage(locale === 'ko' ? getLocalizedLockFailureMessage(errorMessage, confirmCopy) : confirmCopy.paymentRequestFailed);
         return;
@@ -513,6 +542,7 @@ function ConfirmPageContent() {
 
   const ctaDisabled = isReselecting || !bookingAvailable
     || lockedMethodMismatch
+    || paymentMethodNotAllowed
     || (Boolean(returnOrderId) && recovery.state !== 'ready')
     || !!lockFailureMessage
     || !agreed
@@ -529,6 +559,8 @@ function ConfirmPageContent() {
     ? t('paymentRecovery.expiredCta')
     : isProcessing
     ? confirmCopy.processing
+    : paymentMethodNotAllowed
+    ? checkoutCopy.chooseAnotherMethod
     : requiresOverseasDisclaimer && !overseasDisclaimerAgreed
     ? t('paymentDisclaimer.ctaPending')
     : !agreed
@@ -615,6 +647,11 @@ function ConfirmPageContent() {
           <section role="status" className="flex flex-col gap-2 border-t border-border pt-4">
             <p className="text-sm">{checkoutCopy.savedMethod}: <strong>{getCheckoutMethodLabel(restoredMethod, locale)}</strong></p>
             {lockedMethodMismatch && <p className="text-sm text-muted-foreground">{checkoutCopy.methodLocked}</p>}
+          </section>
+        )}
+        {paymentMethodNotAllowed && !lockedMethodMismatch && (
+          <section role="alert" className="rounded-lg border border-red-200 bg-red-50 p-4">
+            <p className="text-sm font-medium text-red-700">{checkoutCopy.methodNotAllowed}</p>
           </section>
         )}
         <section className="space-y-3" inert={isProcessing}>

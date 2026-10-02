@@ -229,6 +229,9 @@ Seat locks are managed by `BookingService` and Redis/Valkey.
   number (E.164 identity via `parseE164`); an account without a verified phone counts alone.
   SQL narrows candidates through `idx_users_verified_phone_suffix` (last 8 digits) and the
   confirm-time advisory lock uses the same phone scope (`apps/api/src/database/ticket-limit.ts`).
+  Seat lock and prepare also count seats the other accounts of that phone hold in unexpired
+  `PENDING_PAYMENT` reservations, so a second account stops before payment; the buyer's own
+  pending orders and the confirm-time snapshot stay on confirmed tickets.
 - Showtime sales close at `showtimes.date_time`: seat lock and prepare (new and retried
   orders) reject a started showtime with 403, including Admin Booking Bypass.
 - Seat lock state is reflected in `GET /api/v1/booking/schedules/:showtimeId/seats`.
@@ -252,7 +255,8 @@ Performance Publication and the sale start time (`apps/api/src/common/admin-book
 Restricted bundles such as scanner or finance also carry `role=admin` but queue and book
 like Buyers. Callers must forward the capability claims; without them the bypass is denied.
 The admission token is cookie-only: it is not stored on the Reservation and API responses
-return the `cookie-bound` marker instead.
+return the `cookie-bound` marker instead. Migration 0039 replaced historical raw values with
+`sha256:<hex>` digests (rerun after a rolling cutover, see the relaunch runbook).
 
 ### 6.3 Reservation Prepare
 
@@ -264,11 +268,18 @@ return the `cookie-bound` marker instead.
 - duplicate seats,
 - showtime booking context,
 - booking policy, including `allowedPaymentMethods` for a new order or a changed method
-  (409 before seat TTLs change; an unchanged fixed method is not re-checked),
+  (409 `CHECKOUT_PAYMENT_METHOD_NOT_ALLOWED_MESSAGE` from `@grabit/shared` before seat TTLs
+  change; an unchanged fixed method is not re-checked; a missing policy row means the
+  platform default `['CARD']`, as in the public performance policy),
 - showtime sales cutoff,
 - active lock ownership,
 - canonical seat/tier/price,
 - queue admission.
+
+Checkout treats that 409 as a payment-method choice, not a seat failure: it keeps the seats
+and order identity and asks for another method. With the performance policy cached, it also
+disables payment for a method outside the policy before prepare. The Toss widget cannot hide
+individual methods, so the widget variant configuration must match the policy.
 
 Reservation numbers are `GRP-<KST date>-<8 base32 CSPRNG chars>`. A unique collision
 regenerates the number (bounded retries); a concurrent prepare that lost the `toss_order_id`

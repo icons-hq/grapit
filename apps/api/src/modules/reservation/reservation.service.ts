@@ -11,7 +11,11 @@ import {
 } from '@nestjs/common';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { eq, and, or, sql, desc, inArray, asc, ne, isNull } from 'drizzle-orm';
-import { isSameCheckoutPaymentMethod } from '@grabit/shared';
+import {
+  CHECKOUT_PAYMENT_METHOD_NOT_ALLOWED_MESSAGE,
+  isCheckoutPaymentMethodAllowed,
+  isSameCheckoutPaymentMethod,
+} from '@grabit/shared';
 import { fetchReviewedPerformanceTranslations } from '../translation/performance-translation-overlay.js';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import { noActiveTicketItemOnSeat } from '../../database/seat-ownership.js';
@@ -248,8 +252,8 @@ const RESERVATION_NUMBER_RANDOM_LENGTH = 8;
 const RESERVATION_NUMBER_MAX_ATTEMPTS = 3;
 const RESERVATION_NUMBER_UNIQUE_CONSTRAINT = 'reservations_reservation_number_unique';
 const RESERVATION_ORDER_ID_UNIQUE_CONSTRAINT = 'reservations_toss_order_id_unique';
-export const PAYMENT_METHOD_NOT_ALLOWED_MESSAGE =
-  '이 공연에서 사용할 수 없는 결제수단입니다. 다른 결제수단을 선택해주세요.';
+/** Shared with checkout, which keeps the buyer on the payment step for this 409. */
+export const PAYMENT_METHOD_NOT_ALLOWED_MESSAGE = CHECKOUT_PAYMENT_METHOD_NOT_ALLOWED_MESSAGE;
 
 /** Constraint name of a PostgreSQL unique violation (23505), unwrapping driver error causes. */
 function uniqueViolationConstraint(error: unknown): string | null {
@@ -273,7 +277,7 @@ function assertPaymentMethodAllowed(
   paymentMethod: PaymentMethod | undefined,
   allowedPaymentMethods: readonly string[],
 ): void {
-  if (paymentMethod && !allowedPaymentMethods.includes(paymentMethod.method)) {
+  if (paymentMethod && !isCheckoutPaymentMethodAllowed(paymentMethod, allowedPaymentMethods)) {
     throw new ConflictException(PAYMENT_METHOD_NOT_ALLOWED_MESSAGE);
   }
 }

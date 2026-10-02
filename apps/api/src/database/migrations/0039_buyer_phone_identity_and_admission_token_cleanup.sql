@@ -9,6 +9,11 @@ CREATE INDEX IF NOT EXISTS idx_users_verified_phone_suffix
   WHERE is_phone_verified = true;
 --> statement-breakpoint
 -- Audit #68: queue admission tokens are cookie-only bearer values. The API no longer
--- writes or returns them; clear the raw values kept on historical reservations. No
--- code reads this column, and live admission state stays in Valkey.
-UPDATE reservations SET admission_token = NULL WHERE admission_token IS NOT NULL;
+-- writes or returns them. Replace the raw values kept on historical reservations with
+-- a SHA-256 digest: the bearer value is gone, while a token found in logs can still be
+-- correlated by hashing it. No code reads this column, and live admission state stays
+-- in Valkey. The statement is idempotent; rerun it once after the rolling cutover to
+-- cover rows a previous revision wrote (docs/runbooks/show-relaunch-reliability.md).
+UPDATE reservations
+SET admission_token = 'sha256:' || encode(sha256(convert_to(admission_token, 'UTF8')), 'hex')
+WHERE admission_token IS NOT NULL AND admission_token NOT LIKE 'sha256:%';

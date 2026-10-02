@@ -78,6 +78,41 @@ describe('ticket limit buyer identity (audit #62)', () => {
     expect(renderedSql(executor)).toContain('r.id <> $');
   });
 
+  it('adds unexpired pending seats of other accounts of the same phone to the lock/prepare count', async () => {
+    const executor = executorReturning({
+      active_ticket_count: 0,
+      buyer_phone: '+821012345678',
+      buyer_phone_verified: true,
+      linked_phone_accounts: [
+        { phone: '010-1234-5678', active_ticket_count: 0, pending_seat_count: 1 },
+        { phone: '+66812345678', active_ticket_count: 0, pending_seat_count: 3 },
+      ],
+    });
+
+    await expect(countBuyerActiveTicketsForPerformance(executor, 'user-b', 'performance-1'))
+      .resolves.toBe(1);
+    const rendered = renderedSql(executor);
+    expect(rendered).toContain("'pending_seat_count'");
+    expect(rendered).toContain("pending.status = 'PENDING_PAYMENT'");
+    expect(rendered).toContain('pending.payment_deadline_at > now()');
+    expect(rendered).toContain('pending.user_id = linked.id');
+  });
+
+  it('keeps pending seats out of the confirm-time snapshot', async () => {
+    const executor = executorReturning({
+      performance_id: 'performance-1',
+      max_tickets_per_user: 1,
+      active_ticket_count: 0,
+      buyer_phone: '+821012345678',
+      buyer_phone_verified: true,
+      linked_phone_accounts: [{ phone: '+821012345678', active_ticket_count: 0 }],
+    });
+
+    await expect(getTicketLimitSnapshot(executor, 'user-b', 'reservation-b', 'showtime-1'))
+      .resolves.toMatchObject({ activeTicketCount: 0 });
+    expect(renderedSql(executor)).not.toContain('pending_seat_count');
+  });
+
   it('only groups verified accounts and narrows them with the indexed phone suffix', async () => {
     const executor = executorReturning({ active_ticket_count: 0 });
     await countBuyerActiveTicketsForPerformance(executor, 'user-b', 'performance-1');

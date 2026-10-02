@@ -58,9 +58,9 @@ Booking is gated by runtime feature flags and queue admission.
 - Queue entry is event/performance scoped and returns admission state used by booking mutation guards.
 - Queue admission is carried through the booking flow and checked again during reservation prepare and payment confirm.
 - Booking policy is event-specific and includes maximum tickets, payment window, seat hold window, cancellation/change behavior, allowed payment methods, and manual open rules.
-- The maximum-ticket limit is per person as identified by a verified phone number: confirmed tickets of every Buyer Account that verified the same phone (E.164) count together. A Buyer Account without a verified phone is limited on its own. Signup is not blocked; a stronger identity (CI/DI) is outside the current scope.
+- The maximum-ticket limit is per person as identified by a verified phone number: confirmed tickets of every Buyer Account that verified the same phone (E.164) count together. A Buyer Account without a verified phone is limited on its own. Seat lock and reservation prepare also count seats another account of the same phone holds in an unexpired pending payment. Signup is not blocked; a stronger identity (CI/DI) is outside the current scope.
 - Sales for a showtime close at its scheduled start time. Seat lock and reservation prepare reject a started showtime for every actor.
-- Reservation prepare rejects a payment method that is not in the performance's allowed payment methods.
+- Reservation prepare rejects a payment method that is not in the performance's allowed payment methods. Checkout keeps the selected seats and asks the buyer to choose another method.
 
 ### 3.4 Seat Selection
 

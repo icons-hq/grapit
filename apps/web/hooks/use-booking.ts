@@ -50,6 +50,8 @@ export interface BookingPaymentSnapshot {
   lockExpiresAt: string | null;
   bookingPolicy: BookingPolicy;
   allowedPaymentMethods: PerformanceBookingPolicy['allowedPaymentMethods'];
+  /** False when the performance policy is not cached (e.g. a reload); the list is then only a fallback. */
+  allowedPaymentMethodsKnown: boolean;
   isPaymentDeadlineExpired: boolean;
 }
 
@@ -189,6 +191,7 @@ function buildBookingPaymentSnapshot(
       seatHoldMinutes,
     },
     allowedPaymentMethods: performancePolicy?.allowedPaymentMethods ?? [...DEFAULT_ALLOWED_PAYMENT_METHODS],
+    allowedPaymentMethodsKnown: Boolean(performancePolicy?.allowedPaymentMethods?.length),
     isPaymentDeadlineExpired: paymentDeadlineAt
       ? new Date(paymentDeadlineAt).getTime() <= Date.now()
       : false,

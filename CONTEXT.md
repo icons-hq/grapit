@@ -369,7 +369,7 @@ A limited operator permission for Admin Pre-Open Booking Smoke that lets an auth
 _Avoid_: Public booking access, launch approval, general buyer bypass.
 
 **Per-Person Ticket Limit**:
-The performance's maximum ticket count for one person. Grabit identifies the person by a verified phone number (E.164): confirmed tickets of every Buyer Account that verified that phone count together, while a Buyer Account without a verified phone is limited on its own.
+The performance's maximum ticket count for one person. Grabit identifies the person by a verified phone number (E.164): confirmed tickets of every Buyer Account that verified that phone count together, while a Buyer Account without a verified phone is limited on its own. Before payment, seats another account of that phone holds in an unexpired pending payment also count.
 _Avoid_: Per-account limit, per-order limit.
 
 **Showtime Sales Cutoff**:

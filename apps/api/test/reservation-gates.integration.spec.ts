@@ -1,4 +1,6 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { GenericContainer, type StartedTestContainer } from 'testcontainers';
 import { Pool } from 'pg';
@@ -103,6 +105,18 @@ describe('Reservation gates — PostgreSQL', () => {
     return new PgDialect().sqlToQuery(query);
   }
 
+  async function pendingPurchase(userId: string, showtimeId: string, seatKeys: string[], paymentDeadlineAt: Date) {
+    const id = randomUUID();
+    const [reservation] = await db.insert(reservations).values({ userId, showtimeId,
+      reservationNumber: id.slice(0, 28), tossOrderId: `GRP-${id}`, status: 'PENDING_PAYMENT',
+      totalAmount: seatKeys.length * 52000, cancelDeadline: new Date('2098-12-31'), paymentDeadlineAt }).returning();
+    await db.insert(schema.reservationSeats).values(seatKeys.map((seatKey, index) => ({
+      reservationId: reservation!.id, seatId: seatKey, tierName: 'VIP', price: 50000, row: 'A',
+      number: String(index + 1),
+    })));
+    return reservation!;
+  }
+
   describe('per-person ticket limit by verified phone (audit #62)', () => {
     it('sums confirmed tickets across accounts that verified the same phone in different formats', async () => {
       const { performanceId, showtimeId } = await performanceWithShowtime(1);
@@ -171,6 +185,28 @@ describe('Reservation gates — PostgreSQL', () => {
       }
     });
 
+    it('stops a second account of the same phone at lock/prepare while the first holds an unexpired pending payment', async () => {
+      const { performanceId, showtimeId } = await performanceWithShowtime(1);
+      const first = await user('+821044441234', true);
+      const second = await user('010-4444-1234', true);
+      const otherNumber = await user('+821044449999', true);
+      const inFlight = await pendingPurchase(first.id, showtimeId, ['1F:E-1'], new Date(Date.now() + 5 * 60_000));
+      await pendingPurchase(first.id, showtimeId, ['1F:E-2'], new Date(Date.now() - 60_000));
+      await pendingPurchase(otherNumber.id, showtimeId, ['1F:E-3'], new Date(Date.now() + 5 * 60_000));
+
+      // Another account of the phone holds 1 seat in a live payment; expired orders do not count.
+      await expect(countBuyerActiveTicketsForPerformance(db, second.id, performanceId)).resolves.toBe(1);
+      // The buyer's own pending orders (a retried prepare) never count against themselves.
+      await expect(countBuyerActiveTicketsForPerformance(db, first.id, performanceId)).resolves.toBe(0);
+      await expect(countBuyerActiveTicketsForPerformance(db, otherNumber.id, performanceId)).resolves.toBe(0);
+      // Confirm-time limit stays on confirmed tickets so the in-flight payment is not double counted.
+      await expect(getTicketLimitSnapshot(db, second.id, randomUUID(), showtimeId))
+        .resolves.toEqual({ performanceId, maxTicketsPerUser: 1, activeTicketCount: 0 });
+
+      await db.update(reservations).set({ status: 'FAILED' }).where(eq(reservations.id, inFlight.id));
+      await expect(countBuyerActiveTicketsForPerformance(db, second.id, performanceId)).resolves.toBe(0);
+    });
+
     it('looks linked accounts up through idx_users_verified_phone_suffix', async () => {
       const { performanceId } = await performanceWithShowtime(1);
       const buyer = await user('+821088881234', true);
@@ -191,6 +227,42 @@ describe('Reservation gates — PostgreSQL', () => {
         await client.query('ROLLBACK');
         client.release();
       }
+    });
+  });
+
+  describe('historical admission token cleanup (audit #68)', () => {
+    function admissionTokenCleanupStatement(): string {
+      const migration = readFileSync(resolve(__dirname,
+        '../src/database/migrations/0039_buyer_phone_identity_and_admission_token_cleanup.sql'), 'utf8');
+      const statement = migration.split('--> statement-breakpoint')
+        .map((part) => part.split('\n').filter((line) => !line.trimStart().startsWith('--')).join('\n').trim())
+        .find((part) => part.startsWith('UPDATE reservations'));
+      expect(statement).toBeDefined();
+      return statement!;
+    }
+
+    it('replaces raw tokens with a correlatable SHA-256 digest and is safe to rerun after cutover', async () => {
+      const { showtimeId } = await performanceWithShowtime(1);
+      const buyer = await user('+821033331234', true);
+      const raw = `adm_${randomUUID()}`;
+      const legacy = await pendingPurchase(buyer.id, showtimeId, ['1F:F-1'], new Date(Date.now() + 60_000));
+      const empty = await pendingPurchase(buyer.id, showtimeId, ['1F:F-2'], new Date(Date.now() + 60_000));
+      await db.update(reservations).set({ admissionToken: raw }).where(eq(reservations.id, legacy.id));
+      const tokenOf = async (id: string) => (await db.select({ token: reservations.admissionToken })
+        .from(reservations).where(eq(reservations.id, id)))[0]?.token;
+      const digest = `sha256:${createHash('sha256').update(raw, 'utf8').digest('hex')}`;
+
+      await pool.query(admissionTokenCleanupStatement());
+      expect(await tokenOf(legacy.id)).toBe(digest);
+      expect(await tokenOf(empty.id)).toBeNull();
+
+      // A row an old revision wrote during the rolling deploy is covered by the rerun; digests stay as they are.
+      const lateRaw = `adm_${randomUUID()}`;
+      await db.update(reservations).set({ admissionToken: lateRaw }).where(eq(reservations.id, empty.id));
+      await pool.query(admissionTokenCleanupStatement());
+      expect(await tokenOf(legacy.id)).toBe(digest);
+      expect(await tokenOf(empty.id))
+        .toBe(`sha256:${createHash('sha256').update(lateRaw, 'utf8').digest('hex')}`);
     });
   });
 

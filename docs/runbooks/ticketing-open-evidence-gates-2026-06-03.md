@@ -241,7 +241,10 @@ Performance while ordinary Buyers remain blocked until public sale opens.
       from `allowedPaymentMethods`, so the performance setting must list every
       method category in the matrix (`CARD` covers domestic and overseas cards,
       `FOREIGN_EASY_PAY` covers Alipay/PayPal/TrueMoney, `SIMPLE_PAY` covers
-      Toss Pay/Naver Pay/Kakao Pay, `TRANSFER` covers bank transfer).
+      Toss Pay/Naver Pay/Kakao Pay, `TRANSFER` covers bank transfer). Before the
+      enforcing release, run the deploy-blocking check for every published
+      performance in `show-relaunch-reliability.md` (missing policy rows count
+      as `CARD` only).
 - [ ] Confirm current Toss live configuration for every method/provider path in
       the matrix.
 - [ ] Confirm deployed API/web revisions and environment flag state.

@@ -15,7 +15,9 @@ type BuyerTicketCountRow = {
 /*
  * The per-person ticket limit (booking_policies.max_tickets_per_user) is summed
  * over every Buyer Account that verified the same phone number (E.164). An
- * account without a verified phone keeps the account-only limit.
+ * account without a verified phone keeps the account-only limit. Seat lock and
+ * prepare also count seats the other accounts of that phone hold in unexpired
+ * pending payments; the confirm-time snapshot counts confirmed tickets only.
  *
  * Stored phones keep the submitted format ("010-…", "+82…", "+82 0…"), so SQL
  * narrows candidates by the last 8 digits — identical for every format of one
@@ -45,9 +47,30 @@ function confirmedTicketCount(input: {
   )`;
 }
 
+/*
+ * Seats another account holds in an unexpired PENDING_PAYMENT reservation. Only the
+ * lock/prepare pre-checks add these for linked accounts, so a second account of the
+ * same phone is stopped before payment instead of being compensation-cancelled after
+ * Toss approval. The buyer's own pending orders stay excluded: Redis seat holds already
+ * bound them, and a retried order must not count against itself.
+ */
+function unexpiredPendingSeatCount(input: { userId: SQL; performanceId: SQL }): SQL {
+  return sql`(
+    SELECT count(*)::int
+    FROM reservation_seats pending_seats
+    INNER JOIN reservations pending ON pending.id = pending_seats.reservation_id
+    INNER JOIN showtimes pending_showtimes ON pending_showtimes.id = pending.showtime_id
+    WHERE pending.user_id = ${input.userId}
+      AND pending_showtimes.performance_id = ${input.performanceId}
+      AND pending.status = 'PENDING_PAYMENT'
+      AND pending.payment_deadline_at > now()
+  )`;
+}
+
 function buyerPhoneColumns(input: {
   performanceId: SQL;
   excludeReservationId?: string;
+  includeLinkedPendingSeats?: boolean;
 }): SQL {
   return sql`
     buyer.phone AS buyer_phone,
@@ -59,7 +82,13 @@ function buyerPhoneColumns(input: {
           userId: sql`linked.id`,
           performanceId: input.performanceId,
           excludeReservationId: input.excludeReservationId,
-        })}
+        })}${input.includeLinkedPendingSeats
+          ? sql`,
+        'pending_seat_count', ${unexpiredPendingSeatCount({
+          userId: sql`linked.id`,
+          performanceId: input.performanceId,
+        })}`
+          : sql``}
       )), '[]'::json)
       FROM users linked
       WHERE buyer.is_phone_verified = true
@@ -86,7 +115,10 @@ function toE164OrNull(phone: unknown): string | null {
   }
 }
 
-/** Buyer's own confirmed tickets plus those of accounts sharing the verified phone. */
+/**
+ * Buyer's own confirmed tickets plus those of accounts sharing the verified phone, and
+ * those accounts' unexpired pending seats when the query selected them.
+ */
 function sumBuyerIdentityTickets(row: BuyerTicketCountRow): number {
   const ownCount = toCount(row.active_ticket_count);
   const buyerPhone = row.buyer_phone_verified === true ? toE164OrNull(row.buyer_phone) : null;
@@ -95,14 +127,22 @@ function sumBuyerIdentityTickets(row: BuyerTicketCountRow): number {
   }
 
   return row.linked_phone_accounts.reduce<number>((total, account) => {
-    const linked = account as { phone?: unknown; active_ticket_count?: unknown };
+    const linked = account as {
+      phone?: unknown;
+      active_ticket_count?: unknown;
+      pending_seat_count?: unknown;
+    };
     return toE164OrNull(linked.phone) === buyerPhone
-      ? total + toCount(linked.active_ticket_count)
+      ? total + toCount(linked.active_ticket_count) + toCount(linked.pending_seat_count)
       : total;
   }, ownCount);
 }
 
-/** Confirmed active tickets the buyer's verified phone identity holds for a performance. */
+/**
+ * Seat lock / prepare pre-check count for the buyer's verified phone identity: confirmed
+ * active tickets of every account of that phone, plus seats the other accounts hold in
+ * unexpired pending payments. The confirm-time snapshot counts confirmed tickets only.
+ */
 export async function countBuyerActiveTicketsForPerformance(
   executor: TicketLimitExecutor,
   userId: string,
@@ -111,7 +151,7 @@ export async function countBuyerActiveTicketsForPerformance(
   const result = await executor.execute(sql`
     SELECT
       ${confirmedTicketCount({ userId: sql`${userId}`, performanceId: sql`${performanceId}` })} AS active_ticket_count,
-      ${buyerPhoneColumns({ performanceId: sql`${performanceId}` })}
+      ${buyerPhoneColumns({ performanceId: sql`${performanceId}`, includeLinkedPendingSeats: true })}
     FROM (SELECT 1) AS anchor
     LEFT JOIN users buyer ON buyer.id = ${userId}
   `);
