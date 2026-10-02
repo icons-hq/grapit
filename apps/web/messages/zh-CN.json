@@ -810,6 +810,7 @@
         "其他"
       ],
       "title": "退款和座位重新开放说明",
+      "deadlineTitle": "取消截止信息",
       "description": "可在各座位票券中取消单个座位，也可取消整个预订。确认前请核对退款金额及保留的票券。",
       "reasonLabel": "取消原因",
       "reasonPlaceholder": "请选择取消原因",

@@ -351,6 +351,33 @@ describe('ReservationDetailView QR ticket card', () => {
     expect(screen.queryByText(getVisibleCopy(locale).reservation.detail.beforePayment)).not.toBeInTheDocument();
   });
 
+  it.each([
+    ['ko', '/mypage', '환불 및 재오픈 안내', '취소 마감 안내'],
+    ['en', '/en/mypage', 'Refund and seat reopening notice', 'Cancellation deadline'],
+  ] as const)('titles the refund notice and the cancellation deadline cards differently (%s)', (locale, path, refundTitle, deadlineTitle) => {
+    window.history.replaceState({}, '', path);
+    const copy = getVisibleCopy(locale).reservation.cancel;
+    expect(copy.title).toBe(refundTitle);
+    expect(copy.deadlineTitle).toBe(deadlineTitle);
+
+    render(<ReservationDetailView reservation={createReservation()} onCancel={vi.fn()} isCancelling={false} />);
+
+    // Both cards render for a confirmed booking; neither title repeats.
+    expect(screen.getAllByRole('heading', { level: 2, name: refundTitle })).toHaveLength(1);
+    const deadlineHeading = screen.getByRole('heading', { level: 2, name: deadlineTitle });
+    expect(deadlineHeading.parentElement).toHaveTextContent(
+      getVisibleCopy(locale).bookingExtra.completeCard.cancellationDeadline,
+    );
+  });
+
+  it('gives the cancellation deadline card its own title in every locale', () => {
+    for (const locale of ['ko', 'en', 'th', 'zh-CN']) {
+      const copy = getVisibleCopy(locale).reservation.cancel;
+      expect(copy.deadlineTitle).toBeTruthy();
+      expect(copy.deadlineTitle).not.toBe(copy.title);
+    }
+  });
+
   it('keeps an unpaid order with no payment timestamp explicitly unpaid', () => {
     const reservation = createReservation({ status: 'PENDING_PAYMENT', paidAt: null, paymentInfo: null, ticketItems: [] });
     render(<ReservationDetailView reservation={reservation} onCancel={vi.fn()} isCancelling={false} />);
