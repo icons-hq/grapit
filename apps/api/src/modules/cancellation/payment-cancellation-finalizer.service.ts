@@ -93,6 +93,8 @@ export type PaymentCancellationProviderResponse = {
 export interface FinalizeFullPaymentCancellationResult {
   releaseJobId: string;
   releaseEnqueued: boolean;
+  /** Webhook replay found the cancellation already applied under the lock. */
+  alreadyFinalized?: true;
 }
 
 type CancellationSource = FinalizeFullPaymentCancellationInput['source'];
@@ -228,8 +230,24 @@ export class PaymentCancellationFinalizerService {
     const localPaymentStatus = resolveLocalPaymentStatus(input.providerResponse);
     const seatReleaseStates: SeatReleaseState[] = [];
 
+    let alreadyFinalized = false;
     await this.db.transaction(async (tx) => {
-      await tx.execute(sql`SELECT id FROM reservations WHERE id = ${input.context.reservation.id} FOR UPDATE`);
+      const lockedReservation = await tx.execute(sql`SELECT id, status FROM reservations WHERE id = ${input.context.reservation.id} FOR UPDATE`);
+      if (input.source === 'cancel_webhook') {
+        // A webhook that read its snapshot before a concurrent finalizer
+        // committed must not re-apply the cancellation (history, fees, seats).
+        const lockedStatus = (lockedReservation as { rows?: Array<Record<string, unknown>> } | undefined)
+          ?.rows?.[0]?.['status'];
+        const lockedTicketItem = input.ticketItemCancellation
+          ? await tx.execute(sql`SELECT status FROM ticket_items WHERE id = ${input.ticketItemCancellation.ticketItemId}`)
+          : undefined;
+        const lockedTicketItemStatus = (lockedTicketItem as { rows?: Array<Record<string, unknown>> } | undefined)
+          ?.rows?.[0]?.['status'];
+        if (lockedStatus === 'CANCELLED' || lockedTicketItemStatus === 'cancelled') {
+          alreadyFinalized = true;
+          return;
+        }
+      }
       const remainingTicketItems = input.ticketItemCancellation
         ? await tx.select({ id: ticketItems.id }).from(ticketItems).where(and(
             eq(ticketItems.reservationId, input.context.reservation.id),
@@ -615,6 +633,10 @@ export class PaymentCancellationFinalizerService {
         );
       }
     });
+
+    if (alreadyFinalized) {
+      return { releaseJobId: JOB_ENQUEUE_FAILED, releaseEnqueued: false, alreadyFinalized: true };
+    }
 
     const seatIdentitiesNeedingReleaseJob = seatReleaseStates
       .filter((state) =>

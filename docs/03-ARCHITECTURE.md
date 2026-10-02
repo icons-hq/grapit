@@ -274,7 +274,9 @@ window. A fail URL alone never cancels or replaces an order. See
 - compensation cancellation if provider confirmation succeeds but finalization fails,
 - QR ticket issuance after confirmed payment.
 
-Toss webhook processing records provider events, handles replay/idempotency, and verifies provider state before applying final mutations. Successful and duplicate deliveries return HTTP 200; validation and processing failures retain non-200 responses.
+Toss webhook processing records provider events, handles replay/idempotency, and verifies provider state before applying final mutations. Successful and duplicate deliveries return HTTP 200; validation and processing failures retain non-200 responses. An authentic out-of-order event whose status the provider has already moved past is acknowledged with `IGNORED_STALE_PROVIDER_STATE`; identity disagreements (paymentKey, orderId, amount, unknown cancel request) stay 400. Cancel events are matched by `cancelRequestId` through local primary keys and the full id stored on seat-level commands, refund attempts and compensation records.
+
+Async DONE (webhook or pending return) is issued only when the provider-verified charge matches the reservation in amount and currency: a stored USD quote requires a USD/`MUSD` charge, otherwise KRW; PayPal DONE events are checked the same way but stay acknowledgements of the synchronous confirm. For a `PENDING_PAYMENT` or late `FAILED` order the buyer's checkout locks are extended through the commit, or a reservation-scoped recovery lock is taken when they expired; a seat held by another buyer is never taken. A DONE that cannot be issued (seat conflict, ticket limit, amount or currency mismatch, unsupported provider such as TrueMoney, a second paymentKey for a settled order) is cancelled in full and tracked in `payments.provider_metadata` while the row stays `DONE/cancel_pending`. `AsyncDoneCompensationRecoveryWorker` re-checks unfinished compensations, re-cancels provider `ABORTED` or lost requests with bounded retries, converges completed ones to `CANCELED/compensation_cancelled`, and marks exhausted ones `attention` with a payment failure diagnostic. The pending-return endpoint skips the provider query for an order whose same payment is already settled and has its own per-account rate limit.
 
 ### 6.5 Refund And Cancelled Seat Reopen
 
@@ -390,7 +392,7 @@ Important non-sensitive production invariants:
 - API requires Redis/Valkey runtime wiring
 - managed-demo Web/API minimum instances are `0`, with a maximum of `4`; repository variables select this posture while workflow defaults preserve the warm ticket-opening posture
 - managed-demo API background processing is producer-only; the bounded Job always enables processing, and the warm ticket-opening default restores continuous API workers
-- worker interval is disabled inside the Job and replaced by one immediate sweep plus a 30-second bounded processing window
+- worker interval is disabled inside the Job and replaced by one immediate sweep plus a 30-second bounded processing window; the async DONE compensation recovery sweep also runs once at the start of each window (`ASYNC_DONE_COMPENSATION_RECOVERY_INTERVAL_MS`, default 60000, `0` disables it)
 - web build receives public API/WS/R2/Sentry/Toss public values at image build time
 
 ### 8.4 Runtime Configuration

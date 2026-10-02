@@ -1594,4 +1594,52 @@ describe('PaymentCancellationFinalizerService', () => {
     expect(transactionCommitted).not.toHaveBeenCalled();
     expect(transaction.selectCalls).toHaveLength(1);
   });
+
+  it('does not re-apply a webhook cancellation when a concurrent finalizer already cancelled the reservation', async () => {
+    const pgBoss = { isAvailable: true, send: vi.fn() };
+    const { service, transaction } = createService(pgBoss);
+    transaction.tx.execute.mockResolvedValueOnce({ rows: [{ id: 'reservation-1', status: 'CANCELLED' }] });
+
+    const result = await service.finalizeFullPaymentCancellation(
+      baseInput({ refundId: undefined, source: 'cancel_webhook', reason: 'provider cancellation' }),
+    );
+
+    expect(result).toEqual({ releaseJobId: JOB_ENQUEUE_FAILED, releaseEnqueued: false, alreadyFinalized: true });
+    expect(transaction.updateCalls).toHaveLength(0);
+    expect(pgBoss.send).not.toHaveBeenCalled();
+  });
+
+  it('does not re-apply a webhook seat cancellation when the Ticket Item was already finalized', async () => {
+    const pgBoss = { isAvailable: true, send: vi.fn() };
+    const { service, transaction } = createService(pgBoss);
+    transaction.tx.execute
+      .mockResolvedValueOnce({ rows: [{ id: 'reservation-1', status: 'CONFIRMED' }] })
+      .mockResolvedValueOnce({ rows: [{ status: 'cancelled' }] });
+
+    const result = await service.finalizeFullPaymentCancellation(baseInput({
+      refundId: undefined,
+      source: 'cancel_webhook',
+      reason: 'provider cancellation',
+      ticketItemCancellation: {
+        ticketItemId: 'ticket-item-1',
+        cancellationFee: 4000,
+        serviceFeeRefund: 0,
+        refundableAmount: 46000,
+      },
+      context: createContext({ seats: [{ seatId: '1F:A-10' }] }),
+    }));
+
+    expect(result.alreadyFinalized).toBe(true);
+    expect(transaction.updateCalls).toHaveLength(0);
+  });
+
+  it('keeps finalizing refund-driven cancellations without the webhook replay guard', async () => {
+    const { service, transaction } = createService({ isAvailable: false, send: vi.fn() });
+    transaction.tx.execute.mockResolvedValueOnce({ rows: [{ id: 'reservation-1', status: 'CANCELLED' }] });
+
+    const result = await service.finalizeFullPaymentCancellation(baseInput());
+
+    expect(result.alreadyFinalized).toBeUndefined();
+    expect(transaction.updateCalls.some((call) => call.table === refunds)).toBe(true);
+  });
 });

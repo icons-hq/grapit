@@ -18,7 +18,9 @@ import { Pool } from 'pg';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { and, eq, inArray } from 'drizzle-orm';
+import { ConflictException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { LOCK_EXPIRED_MESSAGE } from '../src/modules/booking/booking.service.js';
 import { JwtService } from '@nestjs/jwt';
 import type { DrizzleDB } from '../src/database/drizzle.provider.js';
 import * as schema from '../src/database/schema/index.js';
@@ -892,6 +894,8 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     const service = new PaymentService(db, { broadcastSeatUpdate: vi.fn() } as never, qr);
     Object.assign(service, { bookingService: {
       acquirePaymentConfirmLock: async () => true, refreshPaymentConfirmLock: async () => true, releasePaymentConfirmLock: async () => {},
+      extendOwnedSeatLocks: vi.fn().mockRejectedValue(new ConflictException(LOCK_EXPIRED_MESSAGE)),
+      getMyLocks: vi.fn().mockResolvedValue({ seatIds: [], expiresAt: null }),
       acquireRecoverySeatLocks: vi.fn().mockResolvedValue({ acquired: true }), releaseRecoverySeatLocks: vi.fn(),
     } });
     const payload = { eventId: randomUUID(), eventType: 'PAYMENT_STATUS_CHANGED', data: {
@@ -967,6 +971,8 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
       },
       refreshPaymentConfirmLock: async () => true,
       releasePaymentConfirmLock: async (orderId: string) => { held.delete(orderId); },
+      extendOwnedSeatLocks: async () => { throw new ConflictException(LOCK_EXPIRED_MESSAGE); },
+      getMyLocks: async () => ({ seatIds: [], expiresAt: null }),
       acquireRecoverySeatLocks: async () => {
         if (recoveryHeld) return { acquired: false };
         recoveryHeld = true; return { acquired: true };
@@ -993,7 +999,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     const service = new PaymentService(db, { broadcastSeatUpdate: vi.fn() } as never, qr);
     Object.assign(service, { bookingService: {
       acquirePaymentConfirmLock: async () => true, refreshPaymentConfirmLock: async () => true,
-      releasePaymentConfirmLock: async () => {},
+      releasePaymentConfirmLock: async () => {}, extendOwnedSeatLocks: async () => {},
     } });
     const calls = rows.map((r) => service.upsertAsyncPaymentProgress({
       eventId: randomUUID(), eventType: 'PAYMENT_STATUS_CHANGED', data: {
@@ -1014,7 +1020,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     const service = new PaymentService(db, { broadcastSeatUpdate: vi.fn() } as never, qr);
     Object.assign(service, { tossClient: { cancelPayment: cancel }, bookingService: {
       acquirePaymentConfirmLock: async () => true, refreshPaymentConfirmLock: async () => true,
-      releasePaymentConfirmLock: async () => {},
+      releasePaymentConfirmLock: async () => {}, extendOwnedSeatLocks: async () => {},
     } });
     await Promise.all(orders.map((r) => service.upsertAsyncPaymentProgress({
       eventId: randomUUID(), eventType: 'PAYMENT_STATUS_CHANGED', data: {
@@ -1037,7 +1043,7 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     const cancel = vi.fn().mockResolvedValue({ status: 'DONE', cancels: [{ cancelStatus: 'IN_PROGRESS' }] });
     Object.assign(service, { tossClient: { cancelPayment: cancel }, bookingService: {
       acquirePaymentConfirmLock: async () => true, refreshPaymentConfirmLock: async () => true,
-      releasePaymentConfirmLock: async () => {},
+      releasePaymentConfirmLock: async () => {}, extendOwnedSeatLocks: async () => {},
     } });
     const payload = { eventId: randomUUID(), eventType: 'PAYMENT_STATUS_CHANGED', data: {
       paymentKey: `test-${randomUUID()}`, orderId: r.tossOrderId!, status: 'DONE',
@@ -1061,6 +1067,153 @@ describe('Show relaunch — PostgreSQL transaction regressions', () => {
     await service.upsertAsyncPaymentProgress({ ...payload, eventId: randomUUID() }, 'DONE', 'payment_status_changed:done');
     expect(await db.select().from(ticketItems).where(eq(ticketItems.reservationId, r.id))).toHaveLength(0);
     expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('resolves a foreign seat cancel webhook by its stored command id and finalizes only that seat once', async () => {
+    const f = await cancellationPurchase();
+    await db.update(payments).set({ method: 'FOREIGN_EASY_PAY', provider: 'ALIPAY_PLUS', currency: 'USD',
+      providerChargeCurrency: 'USD', providerChargeAmountMinor: 7072 }).where(eq(payments.id, f.first.paymentId));
+    await db.insert(seatInventories).values({ showtimeId: f.showtimeId, seatId: f.first.seatId,
+      seatKey: f.first.seatKey, floorKey: f.first.floorKey, status: 'sold' });
+    const [payment] = await db.select().from(payments).where(eq(payments.id, f.first.paymentId));
+    const snapshot = { paymentKey: payment!.paymentKey, orderId: payment!.tossOrderId, status: 'DONE',
+      totalAmount: 70.72, balanceAmount: 70.72, isPartialCancelable: true,
+      cancels: [] as Array<{ cancelAmount: number; cancelReason: string; cancelStatus: string; cancelRequestId?: string; canceledAt: string }> };
+    const cancel = vi.fn().mockImplementation(async (_key, reason, options) => {
+      snapshot.cancels.push({ cancelAmount: options.cancelAmount, cancelReason: reason, cancelStatus: 'IN_PROGRESS',
+        cancelRequestId: options.cancelRequestId, canceledAt: new Date().toISOString() });
+      return structuredClone(snapshot);
+    });
+    const provider = { queryPayment: vi.fn().mockImplementation(async () => structuredClone(snapshot)), cancelPayment: cancel };
+    await buyerCancellations(provider).cancelTicketItem(f.first.reservationId, f.first.id, f.userId, 'Cancel one seat');
+    const [pendingItem] = await db.select().from(ticketItems).where(eq(ticketItems.id, f.first.id));
+    const cancelRequestId = pendingItem!.cancellationCommand!.options.cancelRequestId!;
+    expect(cancelRequestId).not.toBe(`cancel_${f.first.id}`);
+
+    const paymentService = new PaymentService(db, undefined, qr, provider as never, undefined,
+      new PaymentCancellationFinalizerService(db, { isAvailable: false } as never));
+    // The live CANCEL_STATUS_CHANGED payload has no paymentKey/orderId: the stored command finds it.
+    expect((await paymentService.findPaymentCancelSnapshotByCancelRequestId(cancelRequestId))?.paymentKey)
+      .toBe(payment!.paymentKey);
+
+    snapshot.cancels[0]!.cancelStatus = 'DONE'; snapshot.status = 'PARTIAL_CANCELED'; snapshot.balanceAmount = 35.36;
+    const webhook = { eventId: randomUUID(), eventType: 'CANCEL_STATUS_CHANGED' as const, data: {
+      paymentKey: snapshot.paymentKey, orderId: snapshot.orderId, status: 'PARTIAL_CANCELED',
+      cancelStatus: 'DONE', cancelRequestId } };
+    expect(await paymentService.finalizeConfirmedCancelWebhook(webhook, snapshot)).toBe('finalized');
+    const items = await db.select().from(ticketItems).where(eq(ticketItems.reservationId, f.first.reservationId));
+    expect(items.find((item) => item.id === f.first.id)?.status).toBe('cancelled');
+    expect(items.find((item) => item.id === f.second.id)?.status).toBe('active');
+    const [cancelled] = items.filter((item) => item.id === f.first.id);
+    expect(await paymentService.finalizeConfirmedCancelWebhook({ ...webhook, eventId: randomUUID() }, snapshot))
+      .toBe('already_finalized');
+    const [afterReplay] = await db.select().from(ticketItems).where(eq(ticketItems.id, f.first.id));
+    expect(afterReplay!.cancelledAt).toEqual(cancelled!.cancelledAt);
+  });
+
+  it('resolves retried refund attempts by cancelRequestIds stored in the refund history', async () => {
+    const f = await cancellationPurchase();
+    const attempt = `cancel_${randomUUID()}`;
+    await db.insert(schema.refunds).values({ reservationId: f.first.reservationId, paymentId: f.first.paymentId,
+      provider: 'toss_payments', status: 'processing_at_pg', providerMetadata: {
+        cancelRequest: { paymentKey: 'k', reason: 'r', options: { idempotencyKey: 'i', cancelRequestId: `cancel_${randomUUID()}` } },
+        previousAttempts: [{ cancelRequest: { paymentKey: 'k', reason: 'r', options: { idempotencyKey: 'i0', cancelRequestId: attempt } } }],
+      } });
+    const paymentService = new PaymentService(db);
+    expect((await paymentService.findPaymentCancelSnapshotByCancelRequestId(attempt))?.id).toBe(f.first.paymentId);
+    expect(await paymentService.findPaymentCancelSnapshotByCancelRequestId('cancel_not-a-uuid')).toBeNull();
+  });
+
+  it('a quote-less console full cancel after a seat cancellation keeps the earlier seat history and reopened seat', async () => {
+    const f = await cancellationPurchase();
+    const earlierCancelAt = new Date('2026-09-20T00:00:00.000Z');
+    await db.update(ticketItems).set({ status: 'cancelled', cancelledAt: earlierCancelAt, cancelReason: '좌석 취소',
+      cancellationFee: 4000, serviceFeeRefund: 0, refundableAmount: 48000, reopenState: 'not_required' })
+      .where(eq(ticketItems.id, f.first.id));
+    // Seat A's hold already ended and the seat is back on sale; seat B is still sold.
+    await db.insert(seatInventories).values([
+      { showtimeId: f.showtimeId, seatId: f.first.seatId, seatKey: f.first.seatKey, floorKey: f.first.floorKey, status: 'available' },
+      { showtimeId: f.showtimeId, seatId: f.second.seatId, seatKey: f.second.seatKey, floorKey: f.second.floorKey, status: 'sold' },
+    ]);
+    const [payment] = await db.select().from(payments).where(eq(payments.id, f.first.paymentId));
+    const providerResponse = { paymentKey: payment!.paymentKey, orderId: payment!.tossOrderId, status: 'CANCELED',
+      totalAmount: 104000, balanceAmount: 0, cancels: [
+        { cancelAmount: 48000, cancelReason: '좌석 취소', canceledAt: earlierCancelAt.toISOString(), cancelStatus: 'DONE' },
+        { cancelAmount: 56000, cancelReason: '콘솔 취소', canceledAt: new Date().toISOString(), cancelStatus: 'DONE' },
+      ] };
+    const paymentService = new PaymentService(db, undefined, qr, {} as never, undefined,
+      new PaymentCancellationFinalizerService(db, { isAvailable: false } as never));
+
+    expect(await paymentService.finalizeConfirmedCancelWebhook({ eventId: randomUUID(), eventType: 'PAYMENT_STATUS_CHANGED',
+      data: { paymentKey: payment!.paymentKey, orderId: payment!.tossOrderId, status: 'CANCELED' } }, providerResponse))
+      .toBe('finalized');
+
+    const [first] = await db.select().from(ticketItems).where(eq(ticketItems.id, f.first.id));
+    expect(first).toMatchObject({ status: 'cancelled', cancellationFee: 4000, refundableAmount: 48000, cancelledAt: earlierCancelAt });
+    expect((await db.select().from(ticketItems).where(eq(ticketItems.id, f.second.id)))[0]?.status).toBe('cancelled');
+    expect((await db.select().from(reservations).where(eq(reservations.id, f.first.reservationId)))[0]?.status).toBe('CANCELLED');
+    const seatA = await db.select().from(seatInventories).where(and(eq(seatInventories.showtimeId, f.showtimeId),
+      eq(seatInventories.seatKey, f.first.seatKey)));
+    expect(seatA[0]?.status).toBe('available');
+  });
+
+  it('refunds a late DONE whose seat another buyer re-locked, then recovers an aborted refund until the PG cancels it', async () => {
+    const f = await fixture();
+    const r = await order(f, '1F:A-1');
+    const paymentKey = `test-${randomUUID()}`;
+    const providerPayment = { paymentKey, orderId: r.tossOrderId!, status: 'DONE', totalAmount: 52000,
+      cancels: [] as Array<{ cancelAmount: number; cancelReason: string; canceledAt: string; cancelStatus: string; cancelRequestId?: string }> };
+    const cancel = vi.fn().mockImplementation(async (_key: string, reason: string, options: { cancelRequestId?: string }) => {
+      providerPayment.cancels.push({ cancelAmount: 52000, cancelReason: reason, canceledAt: new Date().toISOString(),
+        cancelStatus: 'IN_PROGRESS', cancelRequestId: options.cancelRequestId });
+      return structuredClone(providerPayment);
+    });
+    const service = new PaymentService(db, { broadcastSeatUpdate: vi.fn() } as never, qr);
+    Object.assign(service, {
+      tossClient: { cancelPayment: cancel, queryPayment: vi.fn().mockImplementation(async () => structuredClone(providerPayment)) },
+      bookingService: {
+        acquirePaymentConfirmLock: async () => true, refreshPaymentConfirmLock: async () => true,
+        releasePaymentConfirmLock: async () => {},
+        extendOwnedSeatLocks: async () => { throw new ConflictException(LOCK_EXPIRED_MESSAGE); },
+        acquireRecoverySeatLocks: async () => ({ acquired: false }),
+        getMyLocks: async () => ({ seatIds: [], expiresAt: null }),
+      },
+    });
+
+    expect(await service.upsertAsyncPaymentProgress({ eventId: randomUUID(), eventType: 'PAYMENT_STATUS_CHANGED', data: {
+      paymentKey, orderId: r.tossOrderId!, status: 'DONE', provider: 'ALIPAY_PLUS', method: 'FOREIGN_EASY_PAY',
+      currency: 'KRW', totalAmount: 52000 } }, 'DONE', 'payment_status_changed:done')).toBe('DONE_CANCEL_PENDING');
+    expect(await db.select().from(ticketItems).where(eq(ticketItems.reservationId, r.id))).toHaveLength(0);
+    let [row] = await db.select().from(payments).where(eq(payments.reservationId, r.id));
+    expect(row).toMatchObject({ status: 'DONE', asyncStatus: 'cancel_pending' });
+
+    // The PG aborts the refund: the abort is recorded and the payment stays unissuable.
+    providerPayment.cancels[0]!.cancelStatus = 'ABORTED';
+    expect(await service.recordCompensationCancelAborted({ eventId: randomUUID(), eventType: 'CANCEL_STATUS_CHANGED',
+      data: { paymentKey, orderId: r.tossOrderId!, cancelStatus: 'ABORTED', cancelRequestId: `cancel_${r.id}` } })).toBe('own');
+    [row] = await db.select().from(payments).where(eq(payments.reservationId, r.id));
+    expect(row).toMatchObject({ status: 'DONE', asyncStatus: 'cancel_pending',
+      providerMetadata: expect.objectContaining({ asyncDoneCompensationOpen: true,
+        asyncDoneCompensation: expect.objectContaining({ state: 'aborted' }) }) });
+
+    // The sweep re-requests the cancel with a fresh request id; its webhook resolves via the record.
+    const later = new Date(Date.now() + 5 * 60 * 1000);
+    expect(await service.recoverAsyncDoneCompensations(later)).toMatchObject({ retried: 1 });
+    expect(cancel).toHaveBeenCalledTimes(2);
+    expect(cancel.mock.calls[1]?.[2]).toMatchObject({ cancelRequestId: `cancel_${r.id}-r2` });
+    expect((await service.findPaymentCancelSnapshotByCancelRequestId(`cancel_${r.id}-r2`))?.paymentKey).toBe(paymentKey);
+
+    // The PG finishes the retried cancel; the next sweep converges the local state.
+    providerPayment.status = 'CANCELED';
+    providerPayment.cancels[1]!.cancelStatus = 'DONE';
+    expect(await service.recoverAsyncDoneCompensations(new Date(later.getTime() + 11 * 60 * 1000)))
+      .toMatchObject({ cancelled: 1 });
+    [row] = await db.select().from(payments).where(eq(payments.reservationId, r.id));
+    expect(row).toMatchObject({ status: 'CANCELED', asyncStatus: 'compensation_cancelled' });
+    expect((await db.select().from(reservations).where(eq(reservations.id, r.id)))[0]?.status).toBe('FAILED');
+    expect(await service.recoverAsyncDoneCompensations(new Date(later.getTime() + 30 * 60 * 1000)))
+      .toMatchObject({ checked: 0 });
+    expect(cancel).toHaveBeenCalledTimes(2);
   });
 
   it('ticket-item partial cancellation preserves local DONE and the remaining QR, manifest and revenue', async () => {

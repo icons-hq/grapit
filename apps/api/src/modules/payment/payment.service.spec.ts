@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import type { PaymentMethod } from '@grabit/shared';
 import { ticketItems, ticketBenefitEntitlements, payments } from '../../database/schema/index.js';
 import { PaymentService } from './payment.service.js';
+import { LOCK_OTHER_OWNER_MESSAGE } from '../booking/booking.service.js';
 
 vi.mock('../../database/ticket-limit.js', () => ({
   getTicketLimitSnapshot: vi.fn().mockResolvedValue({ performanceId: 'performance-1', maxTicketsPerUser: 4, activeTicketCount: 0 }),
@@ -84,6 +85,39 @@ function sqlPredicateHasParamValue(predicate: unknown, value: string): boolean {
   return visit(predicate);
 }
 
+function findJsonParam(predicate: unknown, key: string): Record<string, unknown> | undefined {
+  const seen = new Set<unknown>();
+  let found: Record<string, unknown> | undefined;
+
+  function visit(candidateValue: unknown): void {
+    if (found || candidateValue === null || candidateValue === undefined) {
+      return;
+    }
+    if (typeof candidateValue === 'string') {
+      if (!candidateValue.startsWith('{')) return;
+      try {
+        const parsed = JSON.parse(candidateValue) as Record<string, unknown>;
+        if (parsed && typeof parsed === 'object' && key in parsed) found = parsed;
+      } catch {
+        // Not a JSON parameter.
+      }
+      return;
+    }
+    if (typeof candidateValue !== 'object' || seen.has(candidateValue)) {
+      return;
+    }
+    seen.add(candidateValue);
+    if (Array.isArray(candidateValue)) {
+      candidateValue.forEach(visit);
+      return;
+    }
+    Object.values(candidateValue as Record<string, unknown>).forEach(visit);
+  }
+
+  visit(predicate);
+  return found;
+}
+
 describe('PaymentService', () => {
   let service: PaymentService;
   let mockDb: ReturnType<typeof createMockDb>;
@@ -100,6 +134,7 @@ describe('PaymentService', () => {
     acquireRecoverySeatLocks: ReturnType<typeof vi.fn>;
     extendOwnedSeatLocks: ReturnType<typeof vi.fn>;
     releaseRecoverySeatLocks: ReturnType<typeof vi.fn>;
+    getMyLocks: ReturnType<typeof vi.fn>;
   };
   let mockTossClient: {
     cancelPayment: ReturnType<typeof vi.fn>;
@@ -122,6 +157,7 @@ describe('PaymentService', () => {
       acquireRecoverySeatLocks: vi.fn().mockResolvedValue({ acquired: true }),
       extendOwnedSeatLocks: vi.fn().mockResolvedValue(undefined),
       releaseRecoverySeatLocks: vi.fn().mockResolvedValue(undefined),
+      getMyLocks: vi.fn().mockResolvedValue({ seatIds: [], expiresAt: null }),
     };
     mockTossClient = {
       cancelPayment: vi.fn().mockResolvedValue({}),
@@ -198,6 +234,7 @@ describe('PaymentService', () => {
       const paymentLookup = createSelectChain([payment]);
 
       mockDb.select
+        // primary-key lookups: refund id, ticket item id, payment id
         .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(createSelectChain([]))
         .mockReturnValueOnce(paymentLookup);
@@ -212,6 +249,135 @@ describe('PaymentService', () => {
         paymentLookup.where.mock.calls[0]?.[0],
         paymentId,
       )).toBe(true);
+    });
+
+    it('resolves seat-level command cancel request ids by the value stored on the ticket item command', async () => {
+      const commandId = randomUUID();
+      const payment = {
+        id: randomUUID(),
+        paymentKey: 'pay_alipay_two_seats',
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'ALIPAY_PLUS',
+        currency: 'KRW',
+        amount: 104000,
+        providerMetadata: null,
+        providerChargeCurrency: 'USD',
+        providerChargeAmountMinor: 7072,
+      };
+      const storedCommandLookup = createSelectChain([payment]);
+      mockDb.select
+        // refund, ticket item, payment and reservation primary keys miss the random command id
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(storedCommandLookup);
+
+      const result = await service.findPaymentCancelSnapshotByCancelRequestId(`cancel_${commandId}`);
+
+      expect(result).toEqual(payment);
+      expect(storedCommandLookup.innerJoin).toHaveBeenCalledOnce();
+      expect(sqlPredicateHasParamValue(
+        storedCommandLookup.where.mock.calls[0]?.[0],
+        `cancel_${commandId}`,
+      )).toBe(true);
+      expect(mockDb.select).toHaveBeenCalledTimes(5);
+    });
+
+    it('resolves retried refund attempts by the cancelRequestId stored in refund metadata', async () => {
+      const attemptId = randomUUID();
+      const payment = {
+        id: randomUUID(),
+        paymentKey: 'pay_alipay_refund_retry',
+        method: 'FOREIGN_EASY_PAY',
+        provider: 'ALIPAY_PLUS',
+        currency: 'KRW',
+        amount: 104000,
+        providerMetadata: null,
+        providerChargeCurrency: 'USD',
+        providerChargeAmountMinor: 7072,
+      };
+      const refundCommandLookup = createSelectChain([payment]);
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(refundCommandLookup);
+
+      const result = await service.findPaymentCancelSnapshotByCancelRequestId(`cancel_${attemptId}`);
+
+      expect(result).toEqual(payment);
+      expect(sqlPredicateHasParamValue(
+        refundCommandLookup.where.mock.calls[0]?.[0],
+        `cancel_${attemptId}`,
+      )).toBe(true);
+      // previousAttempts[*].cancelRequest is matched by jsonb containment.
+      expect(sqlPredicateHasParamValue(
+        refundCommandLookup.where.mock.calls[0]?.[0],
+        JSON.stringify([{ cancelRequest: { options: { cancelRequestId: `cancel_${attemptId}` } } }]),
+      )).toBe(true);
+      expect(mockDb.select).toHaveBeenCalledTimes(6);
+    });
+
+    it('resolves a duplicate-payment compensation cancel to the duplicate paymentKey and its scope', async () => {
+      const duplicateCancelRequestId = 'cancel_dup-0123456789abcdef0123456789abcdef';
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: randomUUID(),
+          paymentKey: 'pay_settled',
+          method: 'FOREIGN_EASY_PAY',
+          provider: 'ALIPAY_PLUS',
+          currency: 'KRW',
+          amount: 102000,
+          providerChargeCurrency: 'USD',
+          providerChargeAmountMinor: 6936,
+          providerMetadata: {
+            duplicatePaymentCompensations: [{
+              version: 1,
+              kind: 'duplicate_payment_key',
+              paymentKey: 'pay_duplicate',
+              reason: '중복 결제로 인한 자동 취소',
+              payment: {
+                method: 'FOREIGN_EASY_PAY',
+                provider: 'ALIPAY_PLUS',
+                currency: 'USD',
+                amount: 69.36,
+                providerChargeCurrency: null,
+                providerChargeAmountMinor: null,
+                secretKeyScope: 'foreign-easy-pay',
+              },
+              cancelRequest: {
+                paymentKey: 'pay_duplicate',
+                reason: '중복 결제로 인한 자동 취소',
+                options: { secretKeyScope: 'foreign-easy-pay', cancelRequestId: duplicateCancelRequestId },
+              },
+              cancelRequestIds: [duplicateCancelRequestId],
+              attempts: 1,
+              state: 'pending',
+              requestedAt: '2026-09-30T00:00:00.000Z',
+              lastAttemptAt: '2026-09-30T00:00:00.000Z',
+            }],
+          },
+        }]));
+
+      const result = await service.findPaymentCancelSnapshotByCancelRequestId(duplicateCancelRequestId);
+
+      expect(result).toMatchObject({
+        paymentKey: 'pay_duplicate',
+        provider: 'ALIPAY_PLUS',
+        providerMetadata: { secretKeyScope: 'foreign-easy-pay' },
+      });
+    });
+
+    it('does not cast non-uuid cancel request ids into uuid primary-key lookups', async () => {
+      const result = await service.findPaymentCancelSnapshotByCancelRequestId('cancel_refund-1');
+
+      expect(result).toBeNull();
+      expect(mockDb.select).toHaveBeenCalledTimes(3);
     });
   });
 
@@ -689,8 +855,8 @@ describe('PaymentService', () => {
       expect(mockDb.select).not.toHaveBeenCalled();
     });
 
-    it('keeps TrueMoney on the async webhook branch', async () => {
-      const branch = await service.prepareTossPaymentBranch({
+    it('rejects TrueMoney checkout branches until provider-charge quotes support it', async () => {
+      await expect(service.prepareTossPaymentBranch({
         orderId: 'GRP-TRUEMONEY',
         paymentMethod: createPaymentMethod({
           method: 'FOREIGN_EASY_PAY',
@@ -706,18 +872,12 @@ describe('PaymentService', () => {
         successUrl: 'https://grabit.test/booking/perf-1/complete',
         failUrl: 'https://grabit.test/booking/perf-1/confirm?error=true',
         pendingUrl: 'https://grabit.test/booking/perf-1/pending?orderId=GRP-TRUEMONEY',
-      });
+      })).rejects.toThrow(BadRequestException);
 
-      expect(branch).toMatchObject({
-        orderId: 'GRP-TRUEMONEY',
-        method: 'FOREIGN_EASY_PAY',
-        provider: 'TRUEMONEY',
-        currency: 'THB',
-        asyncStatus: 'pending_webhook',
-        pendingUrl:
-          'https://grabit.test/booking/perf-1/pending?orderId=GRP-TRUEMONEY',
-      });
-      expect(branch.useInternationalCardOnly).toBe(false);
+      // No reservation is touched and no checkout grace or Redis TTL is granted.
+      expect(mockDb.select).not.toHaveBeenCalled();
+      expect(mockDb.update).not.toHaveBeenCalled();
+      expect(mockBookingService.extendOwnedSeatLocks).not.toHaveBeenCalled();
     });
 
     it('routes PayPal through sync checkout with stored provider quote', async () => {
@@ -813,8 +973,8 @@ describe('PaymentService', () => {
           orderId: 'GRP-NO-PENDING',
           paymentMethod: createPaymentMethod({
             method: 'FOREIGN_EASY_PAY',
-            provider: 'TRUEMONEY',
-            currency: 'THB',
+            provider: 'ALIPAY_PLUS',
+            currency: 'USD',
             pendingUrlRequired: true,
           }),
           successUrl: 'https://grabit.test/booking/perf-1/complete',
@@ -932,7 +1092,7 @@ describe('PaymentService', () => {
             status: 'DONE',
             method: 'FOREIGN_EASY_PAY',
             provider: 'ALIPAY',
-            currency: 'USD',
+            currency: 'KRW',
             totalAmount: 154000,
             approvedAt: '2026-05-08T08:00:00.000Z',
           },
@@ -1404,7 +1564,7 @@ describe('PaymentService', () => {
             status: 'DONE',
             method: 'FOREIGN_EASY_PAY',
             provider: 'ALIPAY_PLUS',
-            currency: 'USD',
+            currency: 'KRW',
             totalAmount: 102000,
             approvedAt: '2026-05-29T08:00:00.000Z',
           },
@@ -1475,7 +1635,7 @@ describe('PaymentService', () => {
             status: 'DONE',
             method: 'FOREIGN_EASY_PAY',
             provider: 'ALIPAY_PLUS',
-            currency: 'USD',
+            currency: 'KRW',
             totalAmount: 102000,
           },
         },
@@ -1525,7 +1685,9 @@ describe('PaymentService', () => {
         },
         'DONE',
         'payment_status_changed:done',
-      )).resolves.toBeUndefined();
+      // Without a stored USD quote a USD PayPal charge cannot be verified; it is
+      // flagged, never issued by the async path.
+      )).resolves.toBe('PAYPAL_DONE_AMOUNT_MISMATCH');
 
       expect(mockDb.transaction).not.toHaveBeenCalled();
       expect(mockQrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
@@ -1624,6 +1786,7 @@ describe('PaymentService', () => {
         paymentKey: 'pay_alipay_return',
         orderId: 'GRP-ALIPAY-RETURN',
         method: 'FOREIGN_EASY_PAY',
+        currency: 'USD',
         totalAmount: 108,
         status: 'DONE',
         approvedAt: '2026-05-29T08:00:00.000Z',
@@ -1696,9 +1859,12 @@ describe('PaymentService', () => {
       });
     });
 
-    it('rejects Alipay DONE webhook when provider totalAmount differs from the stored USD quote', async () => {
+    it('refunds an Alipay DONE webhook whose provider totalAmount differs from the stored USD quote', async () => {
       const reservationId = randomUUID();
-      const insertRejectedPayment = createMutationChain();
+      const paymentId = randomUUID();
+      const insertCompensatedPayment = createMutationChain([{ id: paymentId }]);
+      const failReservation = createMutationChain();
+      const insertDiagnostic = createMutationChain();
 
       mockDb.select
         .mockReturnValueOnce(createSelectChain([{
@@ -1716,7 +1882,23 @@ describe('PaymentService', () => {
         .mockReturnValueOnce(createSelectChain([
           { seatId: '1F:A-1', tierName: 'VIP', price: 148000, row: 'A', number: '1' },
         ]));
-      mockDb.insert.mockReturnValueOnce(insertRejectedPayment);
+      mockDb.insert
+        .mockReturnValueOnce(insertCompensatedPayment)
+        .mockReturnValueOnce(insertDiagnostic);
+      mockDb.update.mockReturnValueOnce(failReservation);
+      mockTossClient.cancelPayment.mockResolvedValueOnce({
+        paymentKey: 'pay_alipay_provider_mismatch',
+        orderId: 'GRP-ALIPAY-PROVIDER-MISMATCH',
+        totalAmount: 107.99,
+        status: 'CANCELED',
+        cancels: [{
+          cancelAmount: 107.99,
+          cancelReason: '결제 금액 불일치로 인한 자동 취소',
+          canceledAt: '2026-05-29T08:00:05.000Z',
+          cancelStatus: 'DONE',
+          cancelRequestId: `cancel_${reservationId}`,
+        }],
+      });
 
       await expect(service.upsertAsyncPaymentProgress(
         {
@@ -1735,26 +1917,107 @@ describe('PaymentService', () => {
         },
         'DONE',
         'payment_status_changed:done',
-      )).rejects.toThrow('결제 금액이 일치하지 않습니다');
+      )).resolves.toBe('DONE_COMPENSATED_AMOUNT_MISMATCH');
 
-      expect(insertRejectedPayment.values).toHaveBeenCalledWith(
+      expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
+        'pay_alipay_provider_mismatch',
+        '결제 금액 불일치로 인한 자동 취소',
+        {
+          idempotencyKey: 'async-done-amount-mismatch-cancel:GRP-ALIPAY-PROVIDER-MISMATCH:pay_alipay_provider_mismatch',
+          secretKeyScope: 'foreign-easy-pay',
+          cancelRequestId: `cancel_${reservationId}`,
+        },
+      );
+      expect(insertCompensatedPayment.values).toHaveBeenCalledWith(
         expect.objectContaining({
           reservationId,
           paymentKey: 'pay_alipay_provider_mismatch',
           amount: 150000,
-          status: 'ABORTED',
-          asyncStatus: 'payment_amount_mismatch',
+          status: 'CANCELED',
+          asyncStatus: 'compensation_cancelled',
           providerChargeCurrency: 'USD',
           providerChargeAmountMinor: 10800,
+          providerMetadata: expect.objectContaining({
+            asyncDoneCompensation: expect.objectContaining({
+              kind: 'amount_mismatch',
+              state: 'cancelled',
+              cancelRequestIds: [`cancel_${reservationId}`],
+            }),
+            asyncDoneCompensationOpen: false,
+          }),
         }),
       );
+      expect(failReservation.set).toHaveBeenCalledWith(expect.objectContaining({ status: 'FAILED' }));
+      expect(insertDiagnostic.values).toHaveBeenCalledWith(expect.objectContaining({
+        reservationId,
+        paymentId,
+        diagnosticKind: 'payment_compensated_cancel',
+        diagnosticCode: 'ASYNC_DONE_AMOUNT_MISMATCH_CANCELLED',
+      }));
       expect(mockDb.transaction).not.toHaveBeenCalled();
       expect(mockQrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
     });
 
-    it('rejects amount-mismatched DONE webhook without finalizing reservation state', async () => {
+    it('refunds a same-number KRW charge for a USD-quoted reservation instead of issuing tickets', async () => {
       const reservationId = randomUUID();
-      const insertRejectedPayment = createMutationChain();
+      const insertCompensatedPayment = createMutationChain([{ id: randomUUID() }]);
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          userId: randomUUID(),
+          showtimeId: randomUUID(),
+          status: 'PENDING_PAYMENT',
+          totalAmount: 150000,
+          providerChargeCurrency: 'USD',
+          providerChargeAmountMinor: 10800,
+          providerChargeRate: '0.00072',
+          providerChargeQuotedAt: new Date('2026-05-29T10:00:00.000Z'),
+        }]))
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([
+          { seatId: '1F:A-1', tierName: 'VIP', price: 148000, row: 'A', number: '1' },
+        ]));
+      mockDb.insert.mockReturnValueOnce(insertCompensatedPayment);
+
+      // Domestic widget charge of 108 KRW reported for an order quoted at USD 108.00.
+      await expect(service.upsertAsyncPaymentProgress(
+        {
+          eventId: 'evt-krw-108-for-usd-quote',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_krw_108',
+            orderId: 'GRP-KRW-108',
+            status: 'DONE',
+            method: '카드',
+            provider: 'CARD',
+            currency: 'KRW',
+            totalAmount: 108,
+            approvedAt: '2026-05-29T08:00:00.000Z',
+          },
+        },
+        'DONE',
+        'payment_status_changed:done',
+      )).resolves.toBe('DONE_CANCEL_PENDING');
+
+      expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
+        'pay_krw_108',
+        '결제 금액 불일치로 인한 자동 취소',
+        expect.objectContaining({ secretKeyScope: 'default' }),
+      );
+      expect(insertCompensatedPayment.values).toHaveBeenCalledWith(expect.objectContaining({
+        paymentKey: 'pay_krw_108',
+        status: 'DONE',
+        asyncStatus: 'cancel_pending',
+      }));
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+      expect(mockQrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
+      expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
+    });
+
+    it('keeps an amount-mismatched DONE unissuable and recoverable while the refund is in progress', async () => {
+      const reservationId = randomUUID();
+      const insertCompensatedPayment = createMutationChain([{ id: randomUUID() }]);
 
       mockDb.select
         .mockReturnValueOnce(createSelectChain([{
@@ -1769,7 +2032,20 @@ describe('PaymentService', () => {
           { seatId: '1F:A-1', tierName: 'VIP', price: 73000, row: 'A', number: '1' },
           { seatId: '1F:A-2', tierName: 'VIP', price: 73000, row: 'A', number: '2' },
         ]));
-      mockDb.insert.mockReturnValueOnce(insertRejectedPayment);
+      mockDb.insert.mockReturnValueOnce(insertCompensatedPayment);
+      mockTossClient.cancelPayment.mockResolvedValueOnce({
+        paymentKey: 'pay_underpaid',
+        orderId: 'GRP-UNDERPAID',
+        totalAmount: 149000,
+        status: 'DONE',
+        cancels: [{
+          cancelAmount: 149000,
+          cancelReason: '결제 금액 불일치로 인한 자동 취소',
+          canceledAt: '2026-05-08T08:00:05.000Z',
+          cancelStatus: 'IN_PROGRESS',
+          cancelRequestId: `cancel_${reservationId}`,
+        }],
+      });
 
       await expect(service.upsertAsyncPaymentProgress(
         {
@@ -1781,32 +2057,37 @@ describe('PaymentService', () => {
             status: 'DONE',
             method: 'FOREIGN_EASY_PAY',
             provider: 'ALIPAY_PLUS',
-            currency: 'USD',
+            currency: 'KRW',
             totalAmount: 149000,
             approvedAt: '2026-05-08T08:00:00.000Z',
           },
         },
         'DONE',
         'payment_status_changed:done',
-      )).rejects.toThrow('금액이 일치하지 않습니다');
+      )).resolves.toBe('DONE_CANCEL_PENDING');
 
-      expect(insertRejectedPayment.values).toHaveBeenCalledWith(
+      expect(insertCompensatedPayment.values).toHaveBeenCalledWith(
         expect.objectContaining({
           reservationId,
           paymentKey: 'pay_underpaid',
           amount: 149000,
-          status: 'ABORTED',
-          asyncStatus: 'payment_amount_mismatch',
+          status: 'DONE',
+          asyncStatus: 'cancel_pending',
+          providerMetadata: expect.objectContaining({
+            asyncDoneCompensation: expect.objectContaining({ kind: 'amount_mismatch', state: 'pending', attempts: 1 }),
+            asyncDoneCompensationOpen: true,
+          }),
         }),
       );
+      expect(mockDb.update).not.toHaveBeenCalled();
       expect(mockDb.transaction).not.toHaveBeenCalled();
       expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
       expect(mockQrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
     });
 
-    it('rejects seat-only legacy DONE webhook amount before finalizing reservation state', async () => {
+    it('records an unknown refund outcome for the recovery sweep instead of dropping a rejected DONE', async () => {
       const reservationId = randomUUID();
-      const insertRejectedPayment = createMutationChain();
+      const insertCompensatedPayment = createMutationChain([{ id: randomUUID() }]);
 
       mockDb.select
         .mockReturnValueOnce(createSelectChain([{
@@ -1821,7 +2102,8 @@ describe('PaymentService', () => {
           { seatId: '1F:A-1', tierName: 'VIP', price: 100000, row: 'A', number: '1' },
           { seatId: '1F:A-2', tierName: 'VIP', price: 100000, row: 'A', number: '2' },
         ]));
-      mockDb.insert.mockReturnValueOnce(insertRejectedPayment);
+      mockDb.insert.mockReturnValueOnce(insertCompensatedPayment);
+      mockTossClient.cancelPayment.mockRejectedValueOnce(new Error('socket hang up'));
 
       await expect(service.upsertAsyncPaymentProgress(
         {
@@ -1833,27 +2115,134 @@ describe('PaymentService', () => {
             status: 'DONE',
             method: 'FOREIGN_EASY_PAY',
             provider: 'ALIPAY_PLUS',
-            currency: 'USD',
+            currency: 'KRW',
             totalAmount: 200000,
             approvedAt: '2026-05-08T08:00:00.000Z',
           },
         },
         'DONE',
         'payment_status_changed:done',
-      )).rejects.toThrow('금액이 일치하지 않습니다');
+      )).resolves.toBe('DONE_CANCEL_PENDING');
 
-      expect(insertRejectedPayment.values).toHaveBeenCalledWith(
+      expect(insertCompensatedPayment.values).toHaveBeenCalledWith(
         expect.objectContaining({
           reservationId,
           paymentKey: 'pay_seat_only',
-          amount: 200000,
-          status: 'ABORTED',
-          asyncStatus: 'payment_amount_mismatch',
+          status: 'DONE',
+          asyncStatus: 'cancel_pending',
+          providerMetadata: expect.objectContaining({
+            asyncDoneCompensation: expect.objectContaining({
+              kind: 'amount_mismatch',
+              state: 'error',
+              lastError: 'socket hang up',
+            }),
+            asyncDoneCompensationOpen: true,
+          }),
         }),
       );
       expect(mockDb.transaction).not.toHaveBeenCalled();
       expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
       expect(mockQrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
+    });
+
+    it('refunds a captured TrueMoney DONE because the provider has no quote contract', async () => {
+      const reservationId = randomUUID();
+      const insertCompensatedPayment = createMutationChain([{ id: randomUUID() }]);
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          userId: randomUUID(),
+          showtimeId: randomUUID(),
+          status: 'PENDING_PAYMENT',
+          totalAmount: 102000,
+        }]))
+        .mockReturnValueOnce(createSelectChain([]))
+        .mockReturnValueOnce(createSelectChain([
+          { seatId: '1F:A-1', tierName: 'VIP', price: 100000, row: 'A', number: '1' },
+        ]));
+      mockDb.insert.mockReturnValueOnce(insertCompensatedPayment);
+
+      await expect(service.upsertAsyncPaymentProgress(
+        {
+          eventId: 'evt-truemoney-done',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_truemoney',
+            orderId: 'GRP-TRUEMONEY-DONE',
+            status: 'DONE',
+            method: '해외간편결제',
+            easyPay: '트루머니',
+            currency: 'KRW',
+            // Even a numerically matching amount must not issue an unsupported provider.
+            totalAmount: 102000,
+            approvedAt: '2026-05-08T08:00:00.000Z',
+          },
+        },
+        'DONE',
+        'payment_status_changed:done',
+      )).resolves.toBe('DONE_CANCEL_PENDING');
+
+      expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
+        'pay_truemoney',
+        '지원하지 않는 결제수단으로 인한 자동 취소',
+        expect.objectContaining({ secretKeyScope: 'foreign-easy-pay' }),
+      );
+      expect(insertCompensatedPayment.values).toHaveBeenCalledWith(expect.objectContaining({
+        provider: 'TRUEMONEY',
+        method: 'FOREIGN_EASY_PAY',
+        asyncStatus: 'cancel_pending',
+        providerMetadata: expect.objectContaining({
+          asyncDoneCompensation: expect.objectContaining({ kind: 'unsupported_provider' }),
+        }),
+      }));
+      expect(mockDb.transaction).not.toHaveBeenCalled();
+    });
+
+    it('does not refund an amount-mismatched replay of an already issued payment', async () => {
+      const reservationId = randomUUID();
+
+      mockDb.select
+        .mockReturnValueOnce(createSelectChain([{
+          id: reservationId,
+          userId: randomUUID(),
+          showtimeId: randomUUID(),
+          status: 'CONFIRMED',
+          totalAmount: 102000,
+        }]))
+        .mockReturnValueOnce(createSelectChain([{
+          id: randomUUID(),
+          reservationId,
+          paymentKey: 'pay_issued',
+          tossOrderId: 'GRP-ISSUED',
+          amount: 102000,
+          status: 'DONE',
+        }]))
+        .mockReturnValueOnce(createSelectChain([
+          { seatId: '1F:A-1', tierName: 'VIP', price: 100000, row: 'A', number: '1' },
+        ]));
+
+      await expect(service.upsertAsyncPaymentProgress(
+        {
+          eventId: 'evt-issued-mismatch',
+          eventType: 'PAYMENT_STATUS_CHANGED',
+          data: {
+            paymentKey: 'pay_issued',
+            orderId: 'GRP-ISSUED',
+            status: 'DONE',
+            method: 'FOREIGN_EASY_PAY',
+            provider: 'ALIPAY_PLUS',
+            currency: 'KRW',
+            totalAmount: 101000,
+          },
+        },
+        'DONE',
+        'payment_status_changed:done',
+      )).rejects.toThrow('결제 금액이 일치하지 않습니다');
+
+      expect(mockTossClient.cancelPayment).not.toHaveBeenCalled();
+      expect(mockDb.update).not.toHaveBeenCalled();
+      expect(mockDb.insert).not.toHaveBeenCalled();
     });
 
     it('acks PayPal DONE webhook before sync confirm without creating async payment rows', async () => {
@@ -3497,7 +3886,7 @@ describe('PaymentService', () => {
             status: 'DONE',
             method: 'FOREIGN_EASY_PAY',
             provider: 'ALIPAY_PLUS',
-            currency: 'USD',
+            currency: 'KRW',
             totalAmount: 102000,
             approvedAt: '2026-05-08T08:00:00.000Z',
           },
@@ -3611,7 +4000,7 @@ describe('PaymentService', () => {
             status: 'DONE',
             method: 'FOREIGN_EASY_PAY',
             provider: 'ALIPAY_PLUS',
-            currency: 'USD',
+            currency: 'KRW',
             totalAmount: 102000,
             approvedAt: '2026-05-29T08:00:00.000Z',
           },
@@ -3681,7 +4070,12 @@ describe('PaymentService', () => {
         .mockReturnValueOnce(createSelectChain([
           { seatId: '1F:A-1', tierName: 'VIP', price: 100000, row: 'A', number: '1' },
         ]));
+      // The buyer's checkout lock expired and another buyer re-locked the seat.
+      mockBookingService.extendOwnedSeatLocks.mockRejectedValueOnce(
+        new ConflictException(LOCK_OTHER_OWNER_MESSAGE),
+      );
       mockBookingService.acquireRecoverySeatLocks.mockResolvedValueOnce({ acquired: false });
+      mockBookingService.getMyLocks.mockResolvedValueOnce({ seatIds: [], expiresAt: null });
       mockDb.update
         .mockReturnValueOnce(updateCanceledPayment)
         .mockReturnValueOnce(failReservation);
@@ -3714,7 +4108,7 @@ describe('PaymentService', () => {
             status: 'DONE',
             method: 'FOREIGN_EASY_PAY',
             provider: 'ALIPAY_PLUS',
-            currency: 'USD',
+            currency: 'KRW',
             totalAmount: 102000,
             approvedAt: '2026-05-29T08:00:00.000Z',
           },
@@ -3824,7 +4218,7 @@ describe('PaymentService', () => {
             status: 'DONE',
             method: 'FOREIGN_EASY_PAY',
             provider: 'ALIPAY_PLUS',
-            currency: 'USD',
+            currency: 'KRW',
             totalAmount: 102000,
             approvedAt: '2026-05-29T08:00:00.000Z',
           },
@@ -3877,7 +4271,7 @@ describe('PaymentService', () => {
             status: 'DONE',
             method: 'FOREIGN_EASY_PAY',
             provider: 'ALIPAY_PLUS',
-            currency: 'USD',
+            currency: 'KRW',
             totalAmount: 154000,
             approvedAt: '2026-05-08T08:00:00.000Z',
           },
@@ -3931,7 +4325,7 @@ describe('PaymentService', () => {
             status: 'DONE',
             method: 'FOREIGN_EASY_PAY',
             provider: 'ALIPAY_PLUS',
-            currency: 'USD',
+            currency: 'KRW',
             totalAmount: 200000,
             approvedAt: '2026-05-08T08:00:00.000Z',
           },
@@ -3946,9 +4340,10 @@ describe('PaymentService', () => {
       expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
     });
 
-    it('rejects confirmed DONE webhook replays with mismatched payment identity', async () => {
+    it('refunds a second DONE paymentKey for an already confirmed order instead of failing forever', async () => {
       const reservationId = randomUUID();
       const paymentId = randomUUID();
+      const updateSettledPayment = createMutationChain();
 
       mockDb.select
         .mockReturnValueOnce(createSelectChain([{
@@ -3963,9 +4358,26 @@ describe('PaymentService', () => {
           reservationId,
           paymentKey: 'pay_original_done',
           tossOrderId: 'GRP-ASYNC-DONE',
+          method: 'FOREIGN_EASY_PAY',
+          provider: 'ALIPAY_PLUS',
           amount: 150000,
           status: 'DONE',
+          asyncStatus: 'payment_status_changed:done',
+          providerMetadata: null,
         }]));
+      mockDb.update.mockReturnValueOnce(updateSettledPayment);
+      mockTossClient.cancelPayment.mockResolvedValueOnce({
+        paymentKey: 'pay_different_done',
+        orderId: 'GRP-ASYNC-DONE',
+        totalAmount: 108,
+        status: 'CANCELED',
+        cancels: [{
+          cancelAmount: 108,
+          cancelReason: '중복 결제로 인한 자동 취소',
+          canceledAt: '2026-05-08T08:01:00.000Z',
+          cancelStatus: 'DONE',
+        }],
+      });
 
       await expect(service.upsertAsyncPaymentProgress(
         {
@@ -3978,22 +4390,52 @@ describe('PaymentService', () => {
             method: 'FOREIGN_EASY_PAY',
             provider: 'ALIPAY_PLUS',
             currency: 'USD',
-            totalAmount: 150000,
+            totalAmount: 108,
             approvedAt: '2026-05-08T08:00:00.000Z',
           },
         },
         'DONE',
         'payment_status_changed:done',
-      )).rejects.toThrow('결제 정보가 예매와 일치하지 않습니다');
+      )).resolves.toBe('DONE_DUPLICATE_PAYMENT_COMPENSATED');
 
+      const cancelOptions = mockTossClient.cancelPayment.mock.calls[0]?.[2] as {
+        idempotencyKey: string;
+        secretKeyScope: string;
+        cancelRequestId: string;
+      };
+      expect(mockTossClient.cancelPayment).toHaveBeenCalledWith(
+        'pay_different_done',
+        '중복 결제로 인한 자동 취소',
+        expect.objectContaining({
+          idempotencyKey: 'async-done-duplicate-cancel:GRP-ASYNC-DONE:pay_different_done',
+          secretKeyScope: 'foreign-easy-pay',
+        }),
+      );
+      // A dedicated cancelRequestId keeps the duplicate's cancel webhook from
+      // resolving to the settled payment.
+      expect(cancelOptions.cancelRequestId).toMatch(/^cancel_dup-[0-9a-f]{32}$/);
+      expect(cancelOptions.cancelRequestId).not.toBe(`cancel_${reservationId}`);
+      expect(updateSettledPayment.set).toHaveBeenCalledOnce();
+      const metadataPatch = findJsonParam(
+        updateSettledPayment.set.mock.calls[0]?.[0],
+        'duplicatePaymentCompensations',
+      ) as { duplicatePaymentCompensations: Array<Record<string, unknown>>; asyncDoneCompensationOpen?: boolean };
+      expect(metadataPatch.duplicatePaymentCompensations).toEqual([
+        expect.objectContaining({
+          kind: 'duplicate_payment_key',
+          paymentKey: 'pay_different_done',
+          state: 'cancelled',
+          cancelRequestIds: [cancelOptions.cancelRequestId],
+        }),
+      ]);
+      expect(metadataPatch.asyncDoneCompensationOpen).toBeUndefined();
       expect(mockDb.transaction).not.toHaveBeenCalled();
       expect(mockQrTicketService.ensureIssuedTicketsForReservation).not.toHaveBeenCalled();
       expect(mockBookingGateway.broadcastSeatUpdate).not.toHaveBeenCalled();
     });
 
-    it('rejects amount-mismatched DONE replays before mutating an existing payment identity', async () => {
+    it('acknowledges a replayed duplicate DONE without sending a second cancel', async () => {
       const reservationId = randomUUID();
-      const paymentId = randomUUID();
 
       mockDb.select
         .mockReturnValueOnce(createSelectChain([{
@@ -4004,17 +4446,42 @@ describe('PaymentService', () => {
           totalAmount: 150000,
         }]))
         .mockReturnValueOnce(createSelectChain([{
-          id: paymentId,
+          id: randomUUID(),
           reservationId,
           paymentKey: 'pay_original_done',
           tossOrderId: 'GRP-ASYNC-DONE',
           amount: 150000,
           status: 'DONE',
+          providerMetadata: {
+            duplicatePaymentCompensations: [{
+              version: 1,
+              kind: 'duplicate_payment_key',
+              paymentKey: 'pay_different_done',
+              reason: '중복 결제로 인한 자동 취소',
+              payment: {
+                method: 'FOREIGN_EASY_PAY',
+                provider: 'ALIPAY_PLUS',
+                currency: 'USD',
+                amount: 108,
+                secretKeyScope: 'foreign-easy-pay',
+              },
+              cancelRequest: {
+                paymentKey: 'pay_different_done',
+                reason: '중복 결제로 인한 자동 취소',
+                options: { secretKeyScope: 'foreign-easy-pay', cancelRequestId: 'cancel_dup-x' },
+              },
+              cancelRequestIds: ['cancel_dup-x'],
+              attempts: 1,
+              state: 'pending',
+              requestedAt: '2026-05-08T08:00:00.000Z',
+              lastAttemptAt: '2026-05-08T08:00:00.000Z',
+            }],
+          },
         }]));
 
       await expect(service.upsertAsyncPaymentProgress(
         {
-          eventId: 'evt-payment-done-amount-identity-mismatch',
+          eventId: 'evt-payment-done-duplicate-replay',
           eventType: 'PAYMENT_STATUS_CHANGED',
           data: {
             paymentKey: 'pay_different_done',
@@ -4023,14 +4490,14 @@ describe('PaymentService', () => {
             method: 'FOREIGN_EASY_PAY',
             provider: 'ALIPAY_PLUS',
             currency: 'USD',
-            totalAmount: 149000,
-            approvedAt: '2026-05-08T08:00:00.000Z',
+            totalAmount: 107.5,
           },
         },
         'DONE',
         'payment_status_changed:done',
-      )).rejects.toThrow('결제 정보가 예매와 일치하지 않습니다');
+      )).resolves.toBe('DONE_DUPLICATE_PAYMENT_CANCEL_PENDING');
 
+      expect(mockTossClient.cancelPayment).not.toHaveBeenCalled();
       expect(mockDb.update).not.toHaveBeenCalled();
       expect(mockDb.insert).not.toHaveBeenCalled();
       expect(mockDb.transaction).not.toHaveBeenCalled();

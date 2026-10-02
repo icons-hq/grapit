@@ -23,6 +23,7 @@ function createMockPaymentService() {
     upsertAsyncPaymentProgress: vi.fn<PaymentService['upsertAsyncPaymentProgress']>(),
     finalizeConfirmedCancelWebhook: vi.fn().mockResolvedValue('finalized'),
     finalizePaymentStatusPartialCancelWebhook: vi.fn().mockResolvedValue('finalized'),
+    recordCompensationCancelAborted: vi.fn().mockResolvedValue(null),
     markWebhookEventProcessed: vi.fn<PaymentService['markWebhookEventProcessed']>(),
     markWebhookEventFailed: vi.fn<PaymentService['markWebhookEventFailed']>(),
   };
@@ -748,7 +749,7 @@ describe('PaymentWebhookController', () => {
     );
   });
 
-  it('fails closed when a DONE webhook disagrees with queried Toss state', async () => {
+  it('acknowledges an out-of-order DONE webhook after the provider already moved to CANCELED', async () => {
     paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
     paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
     tossClient.queryPayment.mockResolvedValueOnce(
@@ -757,16 +758,221 @@ describe('PaymentWebhookController', () => {
       }),
     );
 
-    await expect(controller.handleTossWebhook(paymentStatusChangedEvent)).rejects.toThrow(
-      'Toss provider state mismatch',
-    );
+    await expect(controller.handleTossWebhook(paymentStatusChangedEvent)).resolves.toEqual({
+      acknowledged: true,
+      duplicate: false,
+      processingResultCode: 'IGNORED_STALE_PROVIDER_STATE',
+    });
 
+    expect(paymentService.findAsyncPaymentProgress).not.toHaveBeenCalled();
     expect(paymentService.upsertAsyncPaymentProgress).not.toHaveBeenCalled();
+    expect(paymentService.markWebhookEventFailed).not.toHaveBeenCalled();
+    expect(paymentService.markWebhookEventProcessed).toHaveBeenCalledWith(
+      'evt-payment-done-1',
+      'IGNORED_STALE_PROVIDER_STATE',
+      'provider status CANCELED is ahead of webhook status DONE',
+    );
+  });
+
+  it.each([
+    ['IN_PROGRESS', 'DONE'],
+    ['IN_PROGRESS', 'EXPIRED'],
+    ['WAITING_FOR_DEPOSIT', 'DONE'],
+    ['PARTIAL_CANCELED', 'CANCELED'],
+  ])('acknowledges a stale %s webhook when the provider is already %s', async (webhookStatus, providerStatus) => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    tossClient.queryPayment.mockResolvedValueOnce(makeQueriedPayment({ status: providerStatus }));
+
+    const result = await controller.handleTossWebhook({
+      ...paymentStatusChangedEvent,
+      data: { ...paymentStatusChangedEvent.data, status: webhookStatus },
+    });
+
+    expect(result.processingResultCode).toBe('IGNORED_STALE_PROVIDER_STATE');
+    expect(paymentService.upsertAsyncPaymentProgress).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['DONE', 'ABORTED'],
+    ['CANCELED', 'DONE'],
+    ['EXPIRED', 'IN_PROGRESS'],
+  ])('fails closed when a %s webhook disagrees with a provider %s that is not a later state', async (webhookStatus, providerStatus) => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    tossClient.queryPayment.mockResolvedValueOnce(makeQueriedPayment({ status: providerStatus }));
+
+    await expect(controller.handleTossWebhook({
+      ...paymentStatusChangedEvent,
+      data: { ...paymentStatusChangedEvent.data, status: webhookStatus },
+    })).rejects.toThrow('Toss provider state mismatch: status');
+
     expect(paymentService.markWebhookEventFailed).toHaveBeenCalledWith(
       'evt-payment-done-1',
       'PROCESSING_FAILED',
       expect.stringContaining('Toss provider state mismatch'),
     );
+  });
+
+  it('keeps identity mismatches fail-closed even when the provider status is later', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    tossClient.queryPayment.mockResolvedValueOnce(makeQueriedPayment({
+      orderId: 'GRP-OTHER-ORDER',
+      status: 'CANCELED',
+    }));
+
+    await expect(controller.handleTossWebhook(paymentStatusChangedEvent)).rejects.toThrow(
+      'Toss provider state mismatch: orderId, status',
+    );
+    expect(paymentService.markWebhookEventProcessed).not.toHaveBeenCalled();
+  });
+
+  it('acknowledges a stale cancel IN_PROGRESS webhook when the same cancel request is already DONE', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult({ eventId: 'evt-cancel-in-progress-late' }));
+    tossClient.queryPayment.mockResolvedValueOnce(makeQueriedPayment({
+      status: 'CANCELED',
+      cancels: [{
+        cancelAmount: 150000,
+        cancelReason: 'buyer changed mind',
+        canceledAt: '2026-05-08T07:02:05.000Z',
+        cancelStatus: 'DONE',
+        cancelRequestId: 'cancel_refund-1',
+      }],
+    }));
+
+    const result = await controller.handleTossWebhook({
+      eventId: 'evt-cancel-in-progress-late',
+      eventType: 'CANCEL_STATUS_CHANGED',
+      data: { cancelStatus: 'IN_PROGRESS', cancelRequestId: 'cancel_refund-1' },
+    });
+
+    expect(result.processingResultCode).toBe('IGNORED_STALE_PROVIDER_STATE');
+    expect(paymentService.finalizeConfirmedCancelWebhook).not.toHaveBeenCalled();
+    expect(paymentService.upsertAsyncPaymentProgress).not.toHaveBeenCalled();
+  });
+
+  it('passes the provider-verified currency, not the callback currency, to DONE processing', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
+    tossClient.queryPayment.mockResolvedValueOnce(makeQueriedPayment({ currency: 'KRW', totalAmount: 108 }));
+
+    await controller.handleTossWebhook({
+      ...paymentStatusChangedEvent,
+      data: { ...paymentStatusChangedEvent.data, currency: 'USD', totalAmount: 108 },
+    });
+
+    expect(paymentService.upsertAsyncPaymentProgress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ currency: 'KRW', totalAmount: 108 }),
+      }),
+      'DONE',
+      'payment_status_changed:done',
+    );
+  });
+
+  it('re-applies a DONE webhook after a local amount rejection so the captured charge can be refunded', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress({
+      reservationStatus: 'FAILED',
+      paymentStatus: 'ABORTED',
+      paymentAsyncStatus: 'payment_amount_mismatch',
+    }));
+    paymentService.upsertAsyncPaymentProgress.mockResolvedValueOnce('DONE_COMPENSATED_AMOUNT_MISMATCH');
+
+    const result = await controller.handleTossWebhook({
+      ...paymentStatusChangedEvent,
+      data: { ...paymentStatusChangedEvent.data, provider: 'CARD', method: 'CARD', currency: 'KRW' },
+    });
+
+    expect(result.processingResultCode).toBe('DONE_COMPENSATED_AMOUNT_MISMATCH');
+    expect(paymentService.upsertAsyncPaymentProgress).toHaveBeenCalledOnce();
+  });
+
+  it('still ignores DONE after an ordinary provider ABORTED', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress({
+      reservationStatus: 'FAILED',
+      paymentStatus: 'ABORTED',
+      paymentAsyncStatus: 'payment_status_changed:aborted',
+    }));
+
+    const result = await controller.handleTossWebhook({
+      ...paymentStatusChangedEvent,
+      data: { ...paymentStatusChangedEvent.data, provider: 'CARD', method: 'CARD', currency: 'KRW' },
+    });
+
+    expect(result.processingResultCode).toBe('IGNORED_STALE_PAYMENT_EVENT');
+    expect(paymentService.upsertAsyncPaymentProgress).not.toHaveBeenCalled();
+  });
+
+  it('records a provider ABORTED compensation cancel instead of acknowledging it silently', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult({ eventId: 'evt-comp-cancel-aborted' }));
+    paymentService.findPaymentCancelSnapshotByCancelRequestId.mockResolvedValueOnce({
+      id: 'payment-alipay-1',
+      paymentKey: 'pay_async_1',
+      method: 'FOREIGN_EASY_PAY',
+      provider: 'ALIPAY_PLUS',
+      currency: 'KRW',
+      amount: 150000,
+      providerMetadata: null,
+    });
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress({
+      reservationStatus: 'PENDING_PAYMENT',
+      paymentStatus: 'DONE',
+      paymentAsyncStatus: 'cancel_pending',
+    }));
+    paymentService.recordCompensationCancelAborted.mockResolvedValueOnce('own');
+    tossClient.queryPayment.mockResolvedValueOnce(makeQueriedPayment({
+      status: 'DONE',
+      cancels: [{
+        cancelAmount: 108,
+        cancelReason: '판매 불가능 좌석으로 인한 자동 취소',
+        canceledAt: '2026-05-08T07:02:05.000Z',
+        cancelStatus: 'ABORTED',
+        cancelRequestId: 'cancel_reservation-1',
+      }],
+    }));
+
+    const result = await controller.handleTossWebhook({
+      eventId: 'evt-comp-cancel-aborted',
+      eventType: 'CANCEL_STATUS_CHANGED',
+      data: { cancelStatus: 'ABORTED', cancelRequestId: 'cancel_reservation-1' },
+    });
+
+    expect(result.processingResultCode).toBe('ASYNC_DONE_COMPENSATION_CANCEL_ABORTED');
+    expect(paymentService.recordCompensationCancelAborted).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        paymentKey: 'pay_async_1',
+        orderId: 'GRP-ASYNC-1',
+        cancelStatus: 'ABORTED',
+        cancelRequestId: 'cancel_reservation-1',
+      }),
+    }));
+    expect(paymentService.markWebhookEventProcessed).toHaveBeenCalledWith(
+      'evt-comp-cancel-aborted',
+      'ASYNC_DONE_COMPENSATION_CANCEL_ABORTED',
+      'own payment compensation cancel aborted; recovery scheduled',
+    );
+  });
+
+  it('uses the foreign easy pay secret scope for live TrueMoney webhooks without a provider', async () => {
+    paymentService.recordWebhookEvent.mockResolvedValueOnce(makeLedgerResult());
+    paymentService.findAsyncPaymentProgress.mockResolvedValueOnce(makeProgress());
+
+    await controller.handleTossWebhook({
+      ...paymentStatusChangedEvent,
+      data: {
+        paymentKey: 'pay_async_1',
+        orderId: 'GRP-ASYNC-1',
+        status: 'DONE',
+        method: '해외간편결제',
+        easyPay: '트루머니',
+        currency: 'USD',
+        totalAmount: 150000,
+      },
+    });
+
+    expect(tossClient.queryPayment).toHaveBeenCalledWith('pay_async_1', {
+      secretKeyScope: 'foreign-easy-pay',
+    });
   });
 
   it('re-applies DONE webhook replay when post-commit side effects previously failed', async () => {
