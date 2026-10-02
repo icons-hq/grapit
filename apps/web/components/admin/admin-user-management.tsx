@@ -793,9 +793,12 @@ function AccountOverview({ user }: { user: AdminUserDetail }) {
             <Badge className={accountStatusBadgeClass(user.accountStatus)}>
               {accountStatusLabel(user.accountStatus)}
             </Badge>
-            {user.adminCapabilityBundle && (
-              <Badge className="border-transparent bg-[#EFF6FF] text-[#1D4ED8]">
-                {BUNDLE_LABELS[user.adminCapabilityBundle]}
+            {accessBadgeLabel(user) && (
+              <Badge
+                className="border-transparent bg-[#EFF6FF] text-[#1D4ED8]"
+                data-testid="admin-user-access-badge"
+              >
+                {accessBadgeLabel(user)}
               </Badge>
             )}
           </div>
@@ -1134,6 +1137,12 @@ function PermissionEditor({ user }: { user: AdminUserDetail }) {
           <legend className="text-sm font-semibold text-gray-700">
             세부 권한
           </legend>
+          <p
+            className="text-sm text-gray-700"
+            data-testid="admin-user-current-permissions"
+          >
+            {currentAccessSummary(user)}
+          </p>
           <p
             className="rounded-lg bg-[#F5F5F7] px-3 py-2 text-sm font-semibold text-gray-900"
             data-testid="admin-user-effective-permissions"
@@ -1613,6 +1622,36 @@ function permissionValidationMessage(
     return '세부 권한을 1개 이상 선택하세요. 모든 관리자 권한을 회수하려면 역할을 일반 회원으로 바꾸세요.';
   }
   return null;
+}
+
+/**
+ * Header badge for the access the guards grant today. A legacy role-only admin
+ * (no bundle, no capability list) is a superuser too, so the badge follows the
+ * resolved access instead of the stored bundle (u12).
+ */
+function accessBadgeLabel(user: AdminUserDetail): string | null {
+  if (user.role !== 'admin') return null;
+  if (user.adminSuperuser) {
+    return user.adminCapabilityBundle === 'admin'
+      ? BUNDLE_LABELS.admin
+      : `${BUNDLE_LABELS.admin}(legacy)`;
+  }
+  return user.adminCapabilityBundle ? BUNDLE_LABELS[user.adminCapabilityBundle] : null;
+}
+
+/** Access the saved account has now, independent of unsaved editor changes. */
+function currentAccessSummary(user: AdminUserDetail): string {
+  if (user.role !== 'admin') return '현재 실효 권한: 없음 (일반 회원)';
+  if (user.adminSuperuser) {
+    return user.adminCapabilityBundle === 'admin'
+      ? '현재 실효 권한: 전체 관리자 (모든 권한)'
+      : '현재 실효 권한: 전체 관리자 (모든 권한, 권한 묶음 없는 legacy 관리자)';
+  }
+  if (user.adminCapabilities.length === 0) return '현재 실효 권한: 없음';
+  const bundle = user.adminCapabilityBundle
+    ? `${BUNDLE_LABELS[user.adminCapabilityBundle]} 묶음 · `
+    : '';
+  return `현재 실효 권한: ${bundle}${user.adminCapabilities.length}개`;
 }
 
 /** Summary of what the guards will actually allow after saving (audit #42). */

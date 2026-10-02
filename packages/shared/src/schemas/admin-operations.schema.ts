@@ -390,6 +390,9 @@ export const adminUserListItemSchema = z.object({
   marketingConsent: z.boolean(),
   adminCapabilityBundle: adminCapabilityBundleSchema.nullable(),
   adminCapabilities: z.array(adminCapabilitySchema),
+  /** Server-resolved guard access; preferred over re-resolving bundle + list. */
+  adminSuperuser: z.boolean().optional(),
+  effectiveAdminCapabilities: z.array(adminCapabilitySchema).optional(),
   accountStatus: accountStatusSchema.default('active'),
   withdrawnAt: isoDatetime('탈퇴 처리 시각').nullable().optional(),
   withdrawalReason: z.string().nullable().optional(),

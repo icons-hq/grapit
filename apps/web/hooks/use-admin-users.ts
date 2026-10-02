@@ -470,6 +470,12 @@ function mapListItem(
       item.role,
       item.adminCapabilityBundle,
       item.adminCapabilities,
+      item.adminSuperuser === undefined
+        ? undefined
+        : {
+            adminSuperuser: item.adminSuperuser,
+            effectiveAdminCapabilities: item.effectiveAdminCapabilities ?? [],
+          },
     ),
     accountStatus: normalizeAdminUserAccountStatus(item.accountStatus),
     withdrawnAt: item.withdrawnAt ?? null,
@@ -515,15 +521,26 @@ function normalizeAdminUserAccountStatus(
 /**
  * Mirrors the API guards (RolesGuard + AdminCapabilitiesGuard): only role=admin
  * accounts have admin access, and the `admin` bundle is superuser regardless of
- * any stored capability list (audit #42).
+ * any stored capability list (audit #42). The API sends its own resolution of
+ * the stored row (`adminSuperuser`, `effectiveAdminCapabilities`); it wins over
+ * re-resolving here, because the list/detail bundle is normalised and an
+ * unknown stored bundle arrives as null, which would read as the legacy
+ * role-only superuser (u12).
  */
 function resolveEffectiveAccess(
   role: AdminUserRole,
   bundle: AdminCapabilityBundle | null,
   capabilities: readonly AdminCapability[],
+  serverAccess?: { adminSuperuser: boolean; effectiveAdminCapabilities: readonly AdminCapability[] },
 ): Pick<AdminUserListItem, 'adminCapabilities' | 'adminSuperuser'> {
   if (role !== 'admin') {
     return { adminCapabilities: [], adminSuperuser: false };
+  }
+  if (serverAccess) {
+    return {
+      adminCapabilities: normalizeAdminCapabilities(serverAccess.effectiveAdminCapabilities),
+      adminSuperuser: serverAccess.adminSuperuser,
+    };
   }
 
   const snapshot = resolveAdminCapabilitySnapshot({

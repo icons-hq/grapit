@@ -72,9 +72,8 @@ import { safeCsvRows, withUtf8Bom } from './csv-export.util.js';
 import { buildDailyBucketSkeleton, kstBoundaryToUtc } from './kst-boundary.js';
 
 const USER_REFRESH_FAMILY_LIMIT = 2;
-// Active reservations per user are bounded by booking limits; the cap only
-// protects the withdrawal check from pathological accounts.
-const WITHDRAWAL_BLOCKER_RESERVATION_LIMIT = 100;
+// Withdrawal blockers are counted in full; only the sample list in the 409
+// response is capped.
 const WITHDRAWAL_BLOCKER_SAMPLE_LIMIT = 10;
 
 type UserRow = Pick<
@@ -537,7 +536,14 @@ export class AdminUserService {
     const parsed = adminUserWithdrawalSchema.parse(input);
 
     await this.db.transaction(async (tx) => {
-      const target = await this.findUserById(targetUserId, tx as DrizzleDB);
+      // First statement: lock the target row FOR UPDATE. Reservation prepare
+      // re-reads account_status under FOR KEY SHARE before inserting
+      // (lockActiveBuyerAccount), which conflicts only with this lock, so a
+      // prepare either commits before the blocker query below sees it or
+      // waits and is refused as withdrawn. Without it the status UPDATE
+      // (NO KEY UPDATE) never conflicts with the FK's KEY SHARE and a
+      // PENDING_PAYMENT committed in between slips past the check (audit #44).
+      const target = await this.findUserById(targetUserId, tx as DrizzleDB, { forUpdate: true });
       const actor = actorUserId === targetUserId
         ? target
         : await this.findUserById(actorUserId, tx as DrizzleDB);
@@ -548,6 +554,7 @@ export class AdminUserService {
       if (actorUserId === targetUserId) {
         throw new BadRequestException('관리자는 자기 계정을 관리자 화면에서 탈퇴 처리할 수 없습니다');
       }
+      // Re-checked on the locked row.
       if (target.accountStatus === 'withdrawn' || target.accountStatus === 'merged') {
         return;
       }
@@ -728,12 +735,14 @@ export class AdminUserService {
   private async findUserById(
     userId: string,
     db: Pick<DrizzleDB, 'select'> = this.db,
+    options: { forUpdate?: boolean } = {},
   ): Promise<UserRow> {
-    const [row] = await db
+    const query = db
       .select(userSelectFields())
       .from(users)
       .where(eq(users.id, userId))
       .limit(1);
+    const [row] = options.forUpdate ? await query.for('update') : await query;
 
     if (!row) {
       throw new NotFoundException('사용자를 찾을 수 없습니다');
@@ -929,6 +938,33 @@ export class AdminUserService {
     db: Pick<DrizzleDB, 'select'>,
     now: Date = new Date(),
   ): Promise<AdminUserWithdrawalBlockers> {
+    const blocking = and(
+      eq(reservations.userId, userId),
+      or(
+        eq(reservations.status, 'PENDING_PAYMENT'),
+        and(eq(reservations.status, 'CONFIRMED'), gt(showtimes.dateTime, now)),
+      )!,
+    );
+    // Counts come from an aggregate, not from the sample, so the 409 message
+    // reports every blocking reservation (u12: a capped sample undercounted).
+    const [counts] = await db
+      .select({
+        pendingPayment: sql<number>`count(*) filter (where ${reservations.status} = 'PENDING_PAYMENT')::int`,
+        upcomingConfirmed: sql<number>`count(*) filter (where ${reservations.status} = 'CONFIRMED')::int`,
+      })
+      .from(reservations)
+      .leftJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
+      .where(blocking);
+    const pendingPayment = counts?.pendingPayment ?? 0;
+    const upcomingConfirmed = counts?.upcomingConfirmed ?? 0;
+    const blockers: AdminUserDeletionBlocker[] = [
+      { key: 'pending_payment_reservations', label: '결제 진행 중 예매', count: pendingPayment },
+      { key: 'upcoming_confirmed_reservations', label: '관람 예정 확정 예매', count: upcomingConfirmed },
+    ].filter((blocker) => blocker.count > 0);
+    if (blockers.length === 0) {
+      return { blockers, reservations: [] };
+    }
+
     const rows = await db
       .select({
         id: reservations.id,
@@ -938,28 +974,13 @@ export class AdminUserService {
       })
       .from(reservations)
       .leftJoin(showtimes, eq(reservations.showtimeId, showtimes.id))
-      .where(
-        and(
-          eq(reservations.userId, userId),
-          or(
-            eq(reservations.status, 'PENDING_PAYMENT'),
-            and(eq(reservations.status, 'CONFIRMED'), gt(showtimes.dateTime, now)),
-          )!,
-        ),
-      )
+      .where(blocking)
       .orderBy(asc(reservations.createdAt))
-      .limit(WITHDRAWAL_BLOCKER_RESERVATION_LIMIT);
-
-    const pendingPayment = rows.filter((row) => row.status === 'PENDING_PAYMENT').length;
-    const upcomingConfirmed = rows.filter((row) => row.status === 'CONFIRMED').length;
-    const blockers: AdminUserDeletionBlocker[] = [
-      { key: 'pending_payment_reservations', label: '결제 진행 중 예매', count: pendingPayment },
-      { key: 'upcoming_confirmed_reservations', label: '관람 예정 확정 예매', count: upcomingConfirmed },
-    ].filter((blocker) => blocker.count > 0);
+      .limit(WITHDRAWAL_BLOCKER_SAMPLE_LIMIT);
 
     return {
       blockers,
-      reservations: rows.slice(0, WITHDRAWAL_BLOCKER_SAMPLE_LIMIT).map((row) => ({
+      reservations: rows.map((row) => ({
         id: row.id,
         reservationNumber: row.reservationNumber,
         status: row.status === 'PENDING_PAYMENT' ? 'PENDING_PAYMENT' : 'CONFIRMED',
@@ -1164,6 +1185,7 @@ function toListItem(
       : null,
   ]);
 
+  const access = effectiveAccessSnapshot(user);
   return {
     id: user.id,
     maskedEmail: maskEmail(user.email),
@@ -1175,6 +1197,10 @@ function toListItem(
     marketingConsent: user.marketingConsent,
     adminCapabilityBundle: normalizeBundle(user.adminCapabilityBundle),
     adminCapabilities: normalizeCapabilities(user.adminCapabilities),
+    // Guard-equivalent access computed from the stored row, so the console
+    // never re-derives it from a normalised (possibly nulled) bundle.
+    adminSuperuser: access.adminSuperuser,
+    effectiveAdminCapabilities: access.effectiveAdminCapabilities,
     accountStatus: normalizeAdminAccountStatus(user.accountStatus),
     withdrawnAt: user.withdrawnAt?.toISOString() ?? null,
     withdrawalReason: user.withdrawalReason ?? null,
@@ -1285,7 +1311,10 @@ function resolvePermissionAccess(user: PermissionSubject): AdminCapabilitySnapsh
     id: user.id,
     email: user.email,
     role: user.role,
-    adminCapabilityBundle: normalizeBundle(user.adminCapabilityBundle),
+    // Pass the stored string as-is: the shared resolver fails closed on a
+    // bundle it does not know, exactly like the guards. Normalising it to null
+    // first would turn it into the legacy role=admin superuser fallback.
+    adminCapabilityBundle: user.adminCapabilityBundle,
     adminCapabilities: normalizeCapabilities(user.adminCapabilities),
   });
 }

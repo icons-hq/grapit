@@ -86,7 +86,7 @@ WHERE (d.translated_text = s.source_text OR d.translated_text LIKE '[manual-revi
 
 ### 1.4 CS·운영 안내
 
-- [ ] CS 문구를 준비한다: 결제 대기·예정 공연 예매가 있는 회원은 취소·환불 뒤에만 탈퇴된다(API 409). 같은 인증 휴대폰의 다른 계정 구매·결제 대기도 1인 매수 제한에 합산된다(409). Naver로 새로 가입한 실제 이메일 계정과 provider 이메일이 다른 연결 계정은 예매 전에 `/auth/verify-email`을 거친다. #44 #62 #100
+- [ ] CS 문구를 준비한다: 결제 대기·예정 공연 예매가 있는 회원은 취소·환불 뒤에만 탈퇴된다(API 409). 같은 인증 휴대폰의 다른 계정 구매·결제 대기도 1인 매수 제한에 합산된다(409). 비밀번호 계정에 소셜을 연결했고 계정 이메일이 미인증인 회원은, provider가 같은 주소를 인증하지 않았다면(Naver는 항상 해당) 소셜 로그인 뒤 `/auth/verify-email`을 거친다. #44 #62 #100
 - [ ] 현장 책임자에게 결과 제목 `취소 처리 중 · 입장 불가`의 의미(환불 미확정, 입장 금지, 예매번호·좌석 기록 후 책임자 연결)를 공유한다. [좌석별 현장 검표](seat-level-field-operations.md). #115
 
 ## 2. 배포 직후
@@ -187,7 +187,7 @@ WHERE (d.translated_text = s.source_text OR d.translated_text LIKE '[manual-revi
 ### 4.1 정해진 조건이 되면 실행
 
 - [ ] privacy·pipa_required `2026-04-28` 동의 행 비활성화: web 배포 후 24시간 이상, 티켓 오픈 창 밖, 3.3의 부하 gate 뒤에 별도 migration으로 [고정된 SQL](consent-document-versions.md#bumping-a-document-version)만 쓴다. `version`만으로 거르면 terms·marketing도 꺼져 모든 가입과 prepare가 400이 된다. DELETE는 금지다. #169 #106
-- [ ] 이 release 이전으로 API를 되돌릴 때는 web을 먼저 또는 함께 되돌린다. API만 되돌리면 동의(pipa 없는 예매 payload 400)와 현장 verify(`deviceAttemptId` 400)가 모두 막힌다. web만 되돌리는 것은 안전하다. [동의 rollback](consent-document-versions.md#rollback), [현장 rollback](seat-level-field-operations.md#배포-rollback-순서). #98 #113
+- [ ] 이 release 이전으로 API를 되돌릴 때는 web을 먼저 또는 함께 되돌린다. API만 되돌리면 동의(pipa 없는 예매 payload 400)와 현장 verify(`deviceAttemptId` 400)가 모두 막힌다. 웹만 되돌리기(또는 웹 먼저 되돌리기)는 2026-04-28 privacy·pipa_required retire migration 이전에만 안전하다. 그 이후에는 `CONSENT_DOCUMENT_VERSIONS` 도입 release 이전으로 웹을 되돌리지 않거나, 먼저 key와 version을 함께 지정한 UPDATE(`key IN ('privacy','pipa_required') AND version='2026-04-28'`)로 `is_active=true`로 되돌린다. 좌석 선택은 booking-web-4의 seat-update 호환 이벤트 덕분에 웹 rollback에도 안전하다. [동의 rollback](consent-document-versions.md#rollback), [현장 rollback](seat-level-field-operations.md#배포-rollback-순서). #98 #113 #106 #169
 - [ ] 이후 `UNIQUE(lower(email))`이나 소문자 backfill을 하기 전에 [중복 점검 쿼리](auth-session-operations.md#read-only-duplicate-check-run-before-adding-a-unique-constraint)를 실행하고 중복을 병합 runbook으로 해결한다. `JWT_REFRESH_SECRET`과 `JWT_SECRET`은 오픈 창 동안 회전하지 않는다. #99 #13
 - [ ] QR secret을 교체할 때는 [pinned-version 절차](qr-ticket-secret-rotation.md#교체-절차)를 따른다(main merge 일시 중지, 명시 version으로 `--update-secrets`). #109
 - [ ] `FRONTEND_URL`을 여러 origin으로 바꿀 때는 첫 항목이 소셜 redirect·QR 이메일 링크의 기준이 되도록 순서를 정한다. #93
