@@ -15,9 +15,18 @@ import { resolveTrustedRequestIp } from '../../common/request-ip.js';
 export type ThrottleRequestLike = Request & {
   user?: { id?: string; userId?: string };
   body?: unknown;
+  query?: unknown;
 };
 
-const MAX_EMAIL_LENGTH = 320;
+/**
+ * Where a route reads the email it acts on.
+ * - `body`: Zod-validated JSON bodies (password reset, email verification).
+ *   The query string is ignored there, so it must not move the bucket either.
+ * - `body-or-query`: passport-local, which takes `body.email` and falls back to
+ *   `query.email` (`lookup(req.body) || lookup(req.query)`). The throttle has
+ *   to read the same value, or `?email=<victim>` would skip the email policy.
+ */
+export type ThrottleEmailSource = 'body' | 'body-or-query';
 
 export function resolveThrottleUserId(req: ThrottleRequestLike): string | null {
   const userId = req.user?.id ?? req.user?.userId;
@@ -43,23 +52,41 @@ export function toThrottleIpKey(ip: string): string {
   return prefix ? `${prefix}::/64` : ip;
 }
 
-export function resolveThrottleEmail(req: ThrottleRequestLike): string | null {
-  const body = req.body;
-  if (!body || typeof body !== 'object') {
+export function resolveThrottleEmail(
+  req: ThrottleRequestLike,
+  source: ThrottleEmailSource = 'body',
+): string | null {
+  const raw =
+    credentialField(req.body, 'email') ??
+    (source === 'body-or-query' ? credentialField(req.query, 'email') : null);
+  if (raw === null) {
     return null;
   }
 
-  const email = (body as Record<string, unknown>)['email'];
-  if (typeof email !== 'string') {
-    return null;
-  }
-
-  const normalized = email.trim().toLowerCase();
-  return normalized.length > 0 && normalized.length <= MAX_EMAIL_LENGTH ? normalized : null;
+  const normalized = raw.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : null;
 }
 
 export function hashThrottleIdentity(value: string): string {
   return createHash('sha256').update(value).digest('hex').slice(0, 32);
+}
+
+/**
+ * Same value rules as passport-local's `lookup`: a truthy, non-object field.
+ * Falsy values ('' / 0 / false) and arrays/objects count as absent, so the
+ * caller falls through to the next source exactly like passport-local does.
+ */
+function credentialField(source: unknown, field: string): string | null {
+  if (!source || typeof source !== 'object') {
+    return null;
+  }
+
+  const value = (source as Record<string, unknown>)[field];
+  if (!value || typeof value === 'object') {
+    return null;
+  }
+
+  return String(value);
 }
 
 function ipv6Prefix64(ip: string): string | null {

@@ -9,6 +9,7 @@ import {
   resolveThrottleEmail,
   resolveThrottleIpKey,
   resolveThrottleUserId,
+  type ThrottleEmailSource,
 } from './throttle-identity.js';
 
 export const TRAFFIC_RATE_LIMITED = 'TRAFFIC_RATE_LIMITED';
@@ -64,6 +65,11 @@ type TrafficPolicyDefinition = {
   limit: number;
   matchers: PolicyRouteMatcher[];
   identity?: PolicyIdentity;
+  /**
+   * Where the matched routes read the email (`email` / `email-ip` identities).
+   * Must be the same source the handler or strategy uses. Defaults to `body`.
+   */
+  emailSource?: ThrottleEmailSource;
   /** One bucket for every matched route instead of one bucket per route. */
   shareBucketAcrossRoutes?: boolean;
 };
@@ -151,9 +157,14 @@ const TRAFFIC_POLICIES: Record<TrafficPolicyName, TrafficPolicyDefinition> = {
     ],
   },
   'login-account': {
-    ttl: 5 * MINUTE_MS,
-    limit: 10,
+    // Every attempt counts, successful ones included, so the window leaves
+    // room for a shared scanner account signing in on a gate fleet and for CI
+    // logins. Sustained guessing stays at 2/min per account and IP.
+    ttl: FIFTEEN_MINUTES_MS,
+    limit: 30,
     identity: 'email-ip',
+    // passport-local reads `email` from the body, then from the query string.
+    emailSource: 'body-or-query',
     matchers: [
       {
         method: 'POST',
@@ -180,7 +191,7 @@ const TRAFFIC_POLICIES: Record<TrafficPolicyName, TrafficPolicyDefinition> = {
     matchers: [
       {
         method: 'POST',
-        patterns: [/\/auth\/email-verification\/(request|resend)$/],
+        patterns: [/\/auth\/email-verification\/(request|resend|account-email\/request)$/],
       },
     ],
   },
@@ -191,7 +202,7 @@ const TRAFFIC_POLICIES: Record<TrafficPolicyName, TrafficPolicyDefinition> = {
     matchers: [
       {
         method: 'POST',
-        patterns: [/\/auth\/email-verification\/verify$/],
+        patterns: [/\/auth\/email-verification\/(verify|account-email\/verify)$/],
       },
     ],
   },
@@ -260,7 +271,7 @@ export class TrafficDefenseService {
       return userId ? `${policy}:user:${userId}` : `${policy}:ip:${ipKey}`;
     }
 
-    const email = resolveThrottleEmail(req);
+    const email = resolveThrottleEmail(req, TRAFFIC_POLICIES[policy].emailSource);
     if (!email) {
       return `${policy}:ip:${ipKey}`;
     }
@@ -365,7 +376,12 @@ export class TrafficDefenseService {
       return true;
     }
 
-    return resolveThrottleEmail(context.switchToHttp().getRequest<RequestLike>()) !== null;
+    return (
+      resolveThrottleEmail(
+        context.switchToHttp().getRequest<RequestLike>(),
+        TRAFFIC_POLICIES[policy].emailSource,
+      ) !== null
+    );
   }
 
   private matchesPolicy(policy: TrafficPolicyName, context: ExecutionContext): boolean {

@@ -148,6 +148,37 @@ describe('resolveTrustedRequestIp', () => {
         ),
       ).toBe('172.70.207.202');
     });
+
+    it('accepts every secret of a comma-separated list during a rotation', () => {
+      process.env[EDGE_PROXY_SHARED_SECRET_ENV] = ' old-edge-secret , new-edge-secret ,';
+      const viaEdge = (secret: string) =>
+        resolveTrustedRequestIp(
+          requestWithIp('172.70.207.202', '172.70.207.202', {
+            [EDGE_PROXY_SECRET_HEADER]: secret,
+            [EDGE_CLIENT_IP_HEADER]: '198.51.100.44',
+          }),
+        );
+
+      expect(viaEdge('old-edge-secret')).toBe('198.51.100.44');
+      expect(viaEdge('new-edge-secret')).toBe('198.51.100.44');
+      // The list itself, an empty entry or a partial value is not a secret.
+      expect(viaEdge('old-edge-secret,new-edge-secret')).toBe('172.70.207.202');
+      expect(viaEdge(',')).toBe('172.70.207.202');
+      expect(viaEdge('new-edge')).toBe('172.70.207.202');
+    });
+
+    it('treats a list of only separators as no secret configured', () => {
+      process.env[EDGE_PROXY_SHARED_SECRET_ENV] = ' , ';
+
+      expect(
+        resolveTrustedRequestIp(
+          requestWithIp('172.70.207.202', '172.70.207.202', {
+            [EDGE_CLIENT_IP_HEADER]: '198.51.100.44',
+            'cf-connecting-ip': '198.51.100.45',
+          }),
+        ),
+      ).toBe('198.51.100.45');
+    });
   });
 
   it('ignores forwarded IP headers unless the normalized peer is Cloudflare', () => {

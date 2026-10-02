@@ -25,16 +25,33 @@ const MINUTE_MS = 60_000;
 const FIFTEEN_MINUTES_MS = 15 * MINUTE_MS;
 
 /**
- * Field check-in, offline sync, benefit redemption and monitor calls are made
- * by a shared scanner account from several gate devices at once, and one
- * admission costs several calls. Bucket them per account and network instead
- * of per account, so gates in another venue or on another network do not share
- * a bucket, and leave headroom far above physical gate throughput.
+ * Verified user × client network. A shared account used from several devices
+ * at once (gate scanners) gets one bucket per network instead of one bucket for
+ * the whole account, so another venue or network never shares it.
  */
-export function resolveFieldOperationsTracker(req: ThrottleRequestLike): string {
+function resolveUserNetworkTracker(prefix: string, req: ThrottleRequestLike): string {
   const ipKey = resolveThrottleIpKey(req);
   const userId = resolveThrottleUserId(req);
-  return userId ? `field:user:${userId}:ip:${ipKey}` : `field:ip:${ipKey}`;
+  return userId ? `${prefix}:user:${userId}:ip:${ipKey}` : `${prefix}:ip:${ipKey}`;
+}
+
+/**
+ * Field check-in, offline sync, benefit redemption and monitor calls are made
+ * by a shared scanner account from several gate devices at once, and one
+ * admission costs several calls. Bucket them per account and network, with
+ * headroom far above physical gate throughput.
+ */
+export function resolveFieldOperationsTracker(req: ThrottleRequestLike): string {
+  return resolveUserNetworkTracker('field', req);
+}
+
+/**
+ * GET /users/me runs on every full page load (AuthInitializer). A gate phone
+ * that opens each QR link from the camera reloads the check-in page per scan,
+ * so a shared scanner account must not share one per-account bucket.
+ */
+export function resolveCurrentUserProfileTracker(req: ThrottleRequestLike): string {
+  return resolveUserNetworkTracker('profile', req);
 }
 
 export const ROUTE_THROTTLES = {
@@ -60,6 +77,25 @@ export const ROUTE_THROTTLES = {
   authEmailVerificationSend: { limit: 20, ttl: FIFTEEN_MINUTES_MS },
   /** POST /auth/email-verification/verify per client IP; `email-verification-verify` caps email + IP. */
   authEmailVerificationVerify: { limit: 30, ttl: FIFTEEN_MINUTES_MS },
+  /**
+   * POST /auth/email-verification/account-email/request per signed-in user.
+   * `email-verification-send` caps each address across users and IPs.
+   */
+  accountEmailVerificationSend: { limit: 10, ttl: FIFTEEN_MINUTES_MS },
+  /**
+   * POST /auth/email-verification/account-email/verify per signed-in user;
+   * `email-verification-verify` caps email + IP.
+   */
+  accountEmailVerificationVerify: { limit: 30, ttl: FIFTEEN_MINUTES_MS },
+  /**
+   * GET /users/me per user and client network, sized like field operations
+   * because a gate phone loads it once per scanned QR link.
+   */
+  currentUserProfile: {
+    limit: 600,
+    ttl: MINUTE_MS,
+    getTracker: (req) => resolveCurrentUserProfileTracker(req as ThrottleRequestLike),
+  },
   /** Field operations per scanner account and client network (see resolveFieldOperationsTracker). */
   fieldOperations: {
     limit: 600,

@@ -1,3 +1,4 @@
+import { Agent } from 'node:http';
 import {
   Injectable,
   type CanActivate,
@@ -24,10 +25,13 @@ import { PaymentWebhookController } from '../payment/payment-webhook.controller.
 import { PaymentService } from '../payment/payment.service.js';
 import { TossPaymentsClient } from '../payment/toss-payments.client.js';
 import { TossWebhookGuard } from '../payment/toss-webhook.guard.js';
+import { UserController } from '../user/user.controller.js';
+import { UserService } from '../user/user.service.js';
 import { ROUTE_THROTTLES } from './route-throttles.js';
 import {
   TRAFFIC_RATE_LIMITED,
   TrafficDefenseService,
+  type TrafficPolicyName,
 } from './traffic-defense.service.js';
 import { TrafficModule } from './traffic.module.js';
 
@@ -53,8 +57,22 @@ class TestJwtGuard implements CanActivate {
 
 const CLOUDFLARE_PEER = '172.70.207.202';
 
+function policyLimit(name: TrafficPolicyName): number {
+  const policy = new TrafficDefenseService()
+    .getThrottlerOptions()
+    .find((option) => option.name === name);
+  if (typeof policy?.limit !== 'number') {
+    throw new Error(`no numeric limit for ${name}`);
+  }
+  return policy.limit;
+}
+
 describe('throttling over HTTP', () => {
   let app: NestExpressApplication;
+  // One listening server and one kept-alive connection per test: these specs
+  // send thousands of requests, and supertest otherwise opens a new listener
+  // and socket per request, which can run out of ports under the full suite.
+  let agent: Agent | undefined;
   const authService = {
     login: vi.fn(),
     refreshTokens: vi.fn(),
@@ -63,9 +81,12 @@ describe('throttling over HTTP', () => {
     resendEmailVerification: vi.fn(),
     verifyEmailVerificationCode: vi.fn(),
     verifyEmailVerificationToken: vi.fn(),
+    requestAccountEmailVerification: vi.fn(),
+    verifyAccountEmailVerificationCode: vi.fn(),
     requestPasswordReset: vi.fn(),
     checkEmailAvailability: vi.fn(),
   };
+  const userService = { getUserProfile: vi.fn() };
   const paymentService = {
     recordWebhookEvent: vi.fn(),
     markWebhookEventProcessed: vi.fn(),
@@ -95,13 +116,20 @@ describe('throttling over HTTP', () => {
     });
     authService.verifyEmailVerificationCode.mockResolvedValue({ verified: true });
     authService.verifyEmailVerificationToken.mockResolvedValue({ verified: true });
+    authService.requestAccountEmailVerification.mockResolvedValue({
+      expiresAt: new Date('2026-10-02T00:10:00.000Z'),
+    });
+    authService.verifyAccountEmailVerificationCode.mockResolvedValue({ verified: true });
     authService.requestPasswordReset.mockResolvedValue(undefined);
+    userService.getUserProfile.mockResolvedValue({ id: 'scanner-1' });
     paymentService.recordWebhookEvent.mockResolvedValue({
       state: 'duplicate-processed',
       eventId: 'evt-1',
       processingResultCode: 'ALREADY_PROCESSED',
     });
     fieldCheckInService.verify.mockResolvedValue({ outcome: 'processable' });
+    fieldCheckInService.consume.mockResolvedValue({ outcome: 'admitted' });
+    fieldCheckInService.listShowtimes.mockResolvedValue([]);
 
     const moduleRef = await Test.createTestingModule({
       imports: [
@@ -112,13 +140,19 @@ describe('throttling over HTTP', () => {
             trafficDefense.getThrottlerModuleConfig(),
         }),
       ],
-      controllers: [AuthController, PaymentWebhookController, FieldCheckInController],
+      controllers: [
+        AuthController,
+        PaymentWebhookController,
+        FieldCheckInController,
+        UserController,
+      ],
       providers: [
         { provide: AuthService, useValue: authService },
         { provide: ConfigService, useValue: configService },
         { provide: PaymentService, useValue: paymentService },
         { provide: TossPaymentsClient, useValue: {} },
         { provide: FieldCheckInService, useValue: fieldCheckInService },
+        { provide: UserService, useValue: userService },
         // Same order as AppModule: authenticate first, then throttle.
         { provide: APP_GUARD, useClass: TestJwtGuard },
         { provide: APP_GUARD, useClass: ThrottlerGuard },
@@ -138,21 +172,36 @@ describe('throttling over HTTP', () => {
     // injection by type is unavailable; wire the controllers' collaborators.
     Object.assign(moduleRef.get(AuthController), { authService, configService });
     Object.assign(moduleRef.get(FieldCheckInController), { fieldCheckInService });
+    Object.assign(moduleRef.get(UserController), { userService });
 
     app = moduleRef.createNestApplication<NestExpressApplication>({ logger: false });
     app.set('trust proxy', 1);
     app.use(cookieParser());
     app.setGlobalPrefix('api/v1');
     await app.init();
+    await app.listen(0, '127.0.0.1');
+    agent = new Agent({ keepAlive: true, maxSockets: 1 });
   });
 
   afterEach(async () => {
     delete process.env[EDGE_PROXY_SHARED_SECRET_ENV];
+    agent?.destroy();
+    agent = undefined;
     await app?.close();
   });
 
   function post(path: string, ip: string) {
-    return request(app.getHttpServer()).post(`/api/v1${path}`).set('X-Forwarded-For', ip);
+    return request(app.getHttpServer())
+      .post(`/api/v1${path}`)
+      .agent(agent)
+      .set('X-Forwarded-For', ip);
+  }
+
+  function get(path: string, ip: string) {
+    return request(app.getHttpServer())
+      .get(`/api/v1${path}`)
+      .agent(agent)
+      .set('X-Forwarded-For', ip);
   }
 
   function randomCookie(): string {
@@ -190,7 +239,7 @@ describe('throttling over HTTP', () => {
     });
 
     it('caps password guesses per account and IP without locking the account out elsewhere', async () => {
-      const statuses = await sendMany(10, () =>
+      const statuses = await sendMany(policyLimit('login-account'), () =>
         post('/auth/login', '198.51.100.7')
           .set('Cookie', randomCookie())
           .send({ email: 'Victim@Example.com', password: 'guess' }),
@@ -200,6 +249,27 @@ describe('throttling over HTTP', () => {
       const blocked = await post('/auth/login', '198.51.100.7')
         .send({ email: ' victim@example.com ', password: 'guess' });
       expect(blocked.status).toBe(429);
+
+      const ownerElsewhere = await post('/auth/login', '203.0.113.20')
+        .send({ email: 'victim@example.com', password: 'right' });
+      expect(ownerElsewhere.status).toBe(200);
+    });
+
+    it('caps password guesses that name the account in the query string (review r1)', async () => {
+      // passport-local reads `email` from the body, then from the query string.
+      const limit = policyLimit('login-account');
+      const statuses = await sendMany(limit, (index) =>
+        index % 2 === 0
+          ? post('/auth/login?email=Victim@Example.com', '198.51.100.7').send({ password: 'guess' })
+          : post('/auth/login', '198.51.100.7').send({ email: 'victim@example.com', password: 'guess' }),
+      );
+      expect(statuses.every((status) => status === 200)).toBe(true);
+
+      const blocked = await post('/auth/login?email=victim@example.com', '198.51.100.7')
+        .set('Cookie', randomCookie())
+        .send({ password: 'guess' });
+      expect(blocked.status).toBe(429);
+      expect(blocked.body.message).toBe(TRAFFIC_RATE_LIMITED);
 
       const ownerElsewhere = await post('/auth/login', '203.0.113.20')
         .send({ email: 'victim@example.com', password: 'right' });
@@ -330,6 +400,51 @@ describe('throttling over HTTP', () => {
       expect(blocked.status).toBe(429);
     });
 
+    it('caps account-email mail per signed-in user and shares the per-address cap (review r1)', async () => {
+      const perUser = ROUTE_THROTTLES.accountEmailVerificationSend.limit;
+      const toDistinct = await sendMany(perUser, (index) =>
+        post('/auth/email-verification/account-email/request', '198.51.100.7')
+          .set('x-test-user', 'user-1')
+          .send({ email: `new-${index}@example.com` }),
+      );
+      expect(toDistinct.every((status) => status === 200)).toBe(true);
+      const overUser = await post('/auth/email-verification/account-email/request', '198.51.100.8')
+        .set('x-test-user', 'user-1')
+        .send({ email: 'another@example.com' });
+      expect(overUser.status).toBe(429);
+
+      // Signup resends and other accounts share the per-address budget.
+      await sendMany(3, (index) =>
+        post('/auth/email-verification/resend', `203.0.113.${index + 1}`)
+          .send({ email: 'victim@example.com' }),
+      );
+      await sendMany(2, (index) =>
+        post('/auth/email-verification/account-email/request', '192.0.2.10')
+          .set('x-test-user', `user-${index + 2}`)
+          .send({ email: 'Victim@example.com' }),
+      );
+      const overAddress = await post('/auth/email-verification/account-email/request', '192.0.2.11')
+        .set('x-test-user', 'user-9')
+        .send({ email: 'victim@example.com' });
+      expect(overAddress.status).toBe(429);
+      expect(authService.requestAccountEmailVerification).toHaveBeenCalledTimes(perUser + 2);
+    });
+
+    it('caps account-email code guesses per signed-in user', async () => {
+      const perUser = ROUTE_THROTTLES.accountEmailVerificationVerify.limit;
+      const statuses = await sendMany(perUser, (index) =>
+        post('/auth/email-verification/account-email/verify', `198.51.100.${(index % 200) + 1}`)
+          .set('x-test-user', 'user-1')
+          .send({ email: `target-${index}@example.com`, code: '000000' }),
+      );
+      expect(statuses.every((status) => status === 200)).toBe(true);
+
+      const blocked = await post('/auth/email-verification/account-email/verify', '203.0.113.9')
+        .set('x-test-user', 'user-1')
+        .send({ email: 'target-new@example.com', code: '000000' });
+      expect(blocked.status).toBe(429);
+    });
+
     it('caps code guesses per address and IP without locking the owner out elsewhere', async () => {
       const statuses = await sendMany(10, () =>
         post('/auth/email-verification/verify', '198.51.100.7')
@@ -370,6 +485,58 @@ describe('throttling over HTTP', () => {
         .set('x-test-user', 'scanner-1')
         .send({ token: 'ticket-token-next' });
       expect(otherVenue.status).not.toBe(429);
+    });
+  });
+
+  describe('a shared scanner account reloading the check-in page per scan (#15, review r1)', () => {
+    it('admits more than 60 people a minute through the full page-load sequence', async () => {
+      // Camera QR link -> new page load: AuthInitializer refresh + users/me,
+      // then showtimes, verify, consume, and the verify refetch after consume.
+      const admissions = 120;
+      const gateIp = '198.51.100.7';
+      const showtimeId = '18a3bcc6-5e75-463d-abfd-634601328754';
+      const statuses: number[] = [];
+      for (let index = 0; index < admissions; index += 1) {
+        const token = `ticket-token-${index}`;
+        statuses.push(
+          (await post('/auth/refresh', gateIp).set('Cookie', `refreshToken=gate-${index % 4}`)).status,
+          (await get('/users/me', gateIp).set('x-test-user', 'scanner-1')).status,
+          (await get('/field/check-in/showtimes', gateIp).set('x-test-user', 'scanner-1')).status,
+          (
+            await post('/field/check-in/verify', gateIp)
+              .set('x-test-user', 'scanner-1')
+              .send({ token, showtimeId })
+          ).status,
+          (
+            await post('/field/check-in/consume', gateIp)
+              .set('x-test-user', 'scanner-1')
+              .send({ token, showtimeId, deviceAttemptId: `attempt-${index}`, confirmed: true })
+          ).status,
+          (
+            await post('/field/check-in/verify', gateIp)
+              .set('x-test-user', 'scanner-1')
+              .send({ token, showtimeId })
+          ).status,
+        );
+      }
+
+      expect(statuses).not.toContain(429);
+      expect(statuses.every((status) => status === 200 || status === 201)).toBe(true);
+      expect(userService.getUserProfile).toHaveBeenCalledTimes(admissions);
+      expect(fieldCheckInService.consume).toHaveBeenCalledTimes(admissions);
+    });
+
+    it('keeps a ceiling on the profile call per account and network', async () => {
+      const limit = ROUTE_THROTTLES.currentUserProfile.limit;
+      const statuses = await sendMany(limit, () =>
+        get('/users/me', '198.51.100.7').set('x-test-user', 'scanner-1'),
+      );
+      expect(statuses).not.toContain(429);
+
+      expect((await get('/users/me', '198.51.100.7').set('x-test-user', 'scanner-1')).status)
+        .toBe(429);
+      expect((await get('/users/me', '203.0.113.20').set('x-test-user', 'scanner-1')).status)
+        .toBe(200);
     });
   });
 

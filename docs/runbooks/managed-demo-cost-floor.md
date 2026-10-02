@@ -262,11 +262,40 @@ client IP:
    with different IPs. A direct `run.app` request with forged
    `x-grabit-client-ip` must land in its peer's bucket.
 
-To roll back, unset the API binding first, then the Worker secret.
+While the API binding is set, a request without a matching secret is
+identified by its peer IP. Traffic from a Worker version that does not send the
+secret, or from the GCP load-balancer fallback, therefore collapses into a few
+Cloudflare edge IPs. Anonymous auth and every other per-IP limit then return
+429 for everyone, which is the 2026-05-17 shared-IP incident again. Every
+rollback below starts by removing the API binding unless the target still
+sends the current secret.
+
+To roll back the edge secret itself, remove the API binding and deploy the API
+first, then delete the Worker secret.
+
+Rotate the secret without downtime. The API accepts a comma-separated list;
+the Worker always holds exactly one value:
+
+1. Generate the new value. Add a Secret Manager version containing
+   `OLD,NEW` and deploy the API. Both values are now accepted.
+2. Set the Worker secret to `NEW` only (`wrangler secret put
+   EDGE_PROXY_SHARED_SECRET --env production`). That publishes a new Worker
+   version immediately.
+3. Repeat the two-network check from step 3 above.
+4. Add a Secret Manager version containing `NEW` only and deploy the API.
 
 Only after at least 24 hours of clean canary evidence may the forwarding rule, HTTPS proxy, URL map, backend services, NEGs, and unused address be deleted. Capture each resource as YAML before deletion. Deletion order and exact resource names are in the baseline ledger.
 
 Worker rollback:
+
+Before either rollback below, check the API binding. If the API has
+`EDGE_PROXY_SHARED_SECRET` bound, and the rollback target does not send a
+secret the API accepts, remove the binding and deploy the API first. Such a
+target is a Worker version from before the edge-secret code, a version
+deployed with a different secret, or route removal to the load balancer. Run
+the rollback only after that API revision serves traffic. Otherwise the
+rollback collapses every client into Cloudflare edge IPs (see Client IP trust
+above).
 
 If a previously verified production Worker version exists, use a version rollback:
 
@@ -300,7 +329,7 @@ Use this path during the retention window:
 3. add a new `redis-url` version containing the same value as preserved version `1`, and set `VALKEY_MODE=cluster`;
 4. set `BACKGROUND_PROCESSING_ENABLED=true`, then deploy the preserved image SHA or route Cloud Run traffic to `grabit-api-00242-2vn` and `grabit-web-00191-zw8`;
 5. disable `grabit-background-worker-every-5m` only after an API instance is kept warm and its continuous workers are verified;
-6. rollback/remove the Worker Route so traffic returns to the still-retained GCP load balancer;
+6. if the serving API revision has `EDGE_PROXY_SHARED_SECRET` bound, remove the binding and deploy the API first (the load balancer path sends no edge secret); then rollback/remove the Worker Route so traffic returns to the still-retained GCP load balancer;
 7. run the full smoke checklist and reconcile any writes made after the cutover. Database rollback is not a blind pointer flip if both databases accepted writes; choose a source of truth and reconcile first.
 
 ## Restore for an actual ticket opening

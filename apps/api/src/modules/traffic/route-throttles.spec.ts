@@ -3,8 +3,14 @@ import { BenefitRedemptionController } from '../field-operations/benefit-redempt
 import { FieldCheckInController } from '../field-operations/field-check-in.controller.js';
 import { FieldMonitorController } from '../field-operations/field-monitor.controller.js';
 import { OfflineSyncController } from '../field-operations/offline-sync.controller.js';
+import { AuthController } from '../auth/auth.controller.js';
 import { PaymentWebhookController } from '../payment/payment-webhook.controller.js';
-import { ROUTE_THROTTLES, resolveFieldOperationsTracker } from './route-throttles.js';
+import { UserController } from '../user/user.controller.js';
+import {
+  ROUTE_THROTTLES,
+  resolveCurrentUserProfileTracker,
+  resolveFieldOperationsTracker,
+} from './route-throttles.js';
 import { toThrottleIpKey } from './throttle-identity.js';
 
 const DEFAULT_SKIP_METADATA = 'THROTTLER:SKIPdefault';
@@ -25,6 +31,46 @@ describe('route throttle overrides', () => {
       ROUTE_THROTTLES.fieldOperations.getTracker,
     );
     expect(ROUTE_THROTTLES.fieldOperations.limit).toBeGreaterThanOrEqual(600);
+  });
+
+  it('gives GET /users/me a per-user-and-network bucket, not the 60/min per-account default (audit #15)', () => {
+    expect(Reflect.getMetadata(DEFAULT_LIMIT_METADATA, UserController.prototype.getProfile)).toBe(
+      ROUTE_THROTTLES.currentUserProfile.limit,
+    );
+    expect(Reflect.getMetadata(DEFAULT_TRACKER_METADATA, UserController.prototype.getProfile)).toBe(
+      ROUTE_THROTTLES.currentUserProfile.getTracker,
+    );
+    expect(ROUTE_THROTTLES.currentUserProfile.limit).toBeGreaterThanOrEqual(
+      ROUTE_THROTTLES.fieldOperations.limit,
+    );
+    // Profile writes keep the default.
+    expect(Reflect.getMetadata(DEFAULT_LIMIT_METADATA, UserController.prototype.updateProfile))
+      .toBeUndefined();
+  });
+
+  it.each([
+    ['requestAccountEmailVerification', ROUTE_THROTTLES.accountEmailVerificationSend.limit],
+    ['verifyAccountEmailVerification', ROUTE_THROTTLES.accountEmailVerificationVerify.limit],
+  ] as const)('limits signed-in %s below the 60/min default (audit #12)', (handler, limit) => {
+    expect(Reflect.getMetadata(DEFAULT_LIMIT_METADATA, AuthController.prototype[handler])).toBe(limit);
+    expect(limit).toBeLessThan(60);
+  });
+
+  it('tracks the profile call per user and client network', () => {
+    const request = (userId: string | undefined, ip: string) =>
+      ({
+        ip,
+        socket: { remoteAddress: ip },
+        headers: {},
+        ...(userId ? { user: { id: userId } } : {}),
+      }) as never;
+
+    expect(resolveCurrentUserProfileTracker(request('scanner-1', '198.51.100.7'))).toBe(
+      'profile:user:scanner-1:ip:198.51.100.7',
+    );
+    expect(resolveCurrentUserProfileTracker(request(undefined, '198.51.100.7'))).toBe(
+      'profile:ip:198.51.100.7',
+    );
   });
 
   it('skips the default throttler for the Toss webhook only (audit #20)', () => {

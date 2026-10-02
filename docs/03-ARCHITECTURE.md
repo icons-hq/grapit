@@ -139,7 +139,7 @@ Admin screens are dense operational tools. Public pages can be more visual, but 
 ### 4.2 HTTP Prefix And Guards
 
 - `main.ts` sets global prefix `api/v1`.
-- `ThrottlerGuard` is global and runs after `JwtAuthGuard`. Its `default` throttler (60/min per route) tracks the JWT-verified user, otherwise the trusted client IP (IPv6 grouped by /64). It never tracks client-chosen cookies, admission tokens or headers, because a fresh value per request would get a fresh bucket. `TrafficDefenseService` adds named policies on top: booking mutations, signup per IP, `login-account` and `email-verification-verify` per email + IP, and `password-reset-email` and `email-verification-send` per email across IPs. Route overrides live in `modules/traffic/route-throttles.ts`. Auth endpoints get per-IP limits with shared-NAT headroom, and cookie-less `POST /auth/refresh` is not counted. Field operations use 600/min per scanner account and client network. The Toss webhook skips IP throttling and relies on its secret guard and event ledger.
+- `ThrottlerGuard` is global and runs after `JwtAuthGuard`. Its `default` throttler (60/min per route) tracks the JWT-verified user, otherwise the trusted client IP (IPv6 grouped by /64). It never tracks client-chosen cookies, admission tokens or headers, because a fresh value per request would get a fresh bucket. `TrafficDefenseService` adds named policies on top: booking mutations, signup per IP, `login-account` and `email-verification-verify` per email + IP, and `password-reset-email` and `email-verification-send` per email across IPs. Each email policy reads the email from the same place the route does; for login that is passport-local's body-then-query lookup. Route overrides live in `modules/traffic/route-throttles.ts`. Auth endpoints get per-IP limits with shared-NAT headroom, and cookie-less `POST /auth/refresh` is not counted. Signed-in account-email verification routes are limited per user and share the per-address caps. Field operations and `GET /users/me` use 600/min per user and client network, because a gate phone reloads the check-in page for every scanned QR link. The Toss webhook skips IP throttling and relies on its secret guard and event ledger.
 - `JwtAuthGuard` is global; public endpoints use the `@Public` decorator.
 - Admin authorization uses role and capability guards.
 - Global validation uses the Zod validation pipe.
@@ -408,7 +408,7 @@ Production convention:
 - Cloud Run environment variables and Secret Manager bindings provide runtime configuration.
 - API validates production frontend origin and Redis/Valkey pub/sub readiness at bootstrap.
 - Missing production Redis URL or invalid Valkey mode fails startup.
-- Optional `EDGE_PROXY_SHARED_SECRET` (API env and edge Worker secret, same value) switches client-IP trust to the edge-secret check described in 10.1. Provision the Worker secret first, then the API. Unset keeps the Cloudflare-peer `cf-connecting-ip` fallback.
+- Optional `EDGE_PROXY_SHARED_SECRET` (API env and edge Worker secret, same value) switches client-IP trust to the edge-secret check described in 10.1. Provision the Worker secret first, then the API. Unset keeps the Cloudflare-peer `cf-connecting-ip` fallback. The API accepts a comma-separated list for rotation; the Worker holds one value. Remove the API binding before any Worker rollback or load-balancer fallback that would not send the secret (managed-demo runbook, Phase 4).
 
 ### 8.5 Object Storage And Uploads
 

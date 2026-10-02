@@ -257,6 +257,8 @@ export class AuthController {
   }
 
   @HttpCode(HttpStatus.OK)
+  // Per signed-in user; `email-verification-send` caps each address.
+  @Throttle({ default: ROUTE_THROTTLES.accountEmailVerificationSend })
   @Post('email-verification/account-email/request')
   async requestAccountEmailVerification(
     @CurrentUser() user: RequestUser,
@@ -276,6 +278,8 @@ export class AuthController {
   }
 
   @HttpCode(HttpStatus.OK)
+  // Per signed-in user; `email-verification-verify` caps email + IP.
+  @Throttle({ default: ROUTE_THROTTLES.accountEmailVerificationVerify })
   @Post('email-verification/account-email/verify')
   async verifyAccountEmailVerification(
     @CurrentUser() user: RequestUser,

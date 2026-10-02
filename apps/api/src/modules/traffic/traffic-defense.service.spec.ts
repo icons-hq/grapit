@@ -250,6 +250,100 @@ describe('TrafficDefenseService', () => {
     ).toBe(false);
   });
 
+  it('reads the login email where passport-local does: body first, then query (review r1)', () => {
+    const service = new TrafficDefenseService();
+    const loginAccount = service
+      .getThrottlerOptions()
+      .find((option) => option.name === 'login-account');
+    const login = (overrides: Record<string, unknown>) =>
+      createRequest({ originalUrl: '/api/v1/auth/login', ...overrides });
+    const tracker = (overrides: Record<string, unknown>) =>
+      service.resolveTracker('login-account', login(overrides));
+    const victimKey = tracker({ body: { email: 'victim@example.com', password: 'guess' } });
+
+    // `POST /auth/login?email=victim` with only a password in the body
+    expect(tracker({ body: { password: 'guess' }, query: { email: 'Victim@Example.com' } }))
+      .toBe(victimKey);
+    expect(
+      loginAccount?.skipIf?.(
+        createExecutionContext(login({ body: { password: 'guess' }, query: { email: 'victim@example.com' } })),
+      ),
+    ).toBe(false);
+    // passport-local falls through falsy body values to the query string
+    expect(tracker({ body: { email: '', password: 'guess' }, query: { email: 'victim@example.com' } }))
+      .toBe(victimKey);
+    // and prefers a body value, so the query cannot move the bucket
+    expect(tracker({ body: { email: 'victim@example.com' }, query: { email: 'other@example.com' } }))
+      .toBe(victimKey);
+    // arrays/objects are not credentials for passport-local either
+    expect(
+      loginAccount?.skipIf?.(
+        createExecutionContext(login({ body: { email: ['victim@example.com'] }, query: {} })),
+      ),
+    ).toBe(true);
+  });
+
+  it('keeps body-only email policies on the body the handler validates', () => {
+    const service = new TrafficDefenseService();
+    const reset = (overrides: Record<string, unknown>) =>
+      createRequest({ originalUrl: '/api/v1/auth/password-reset/request', ...overrides });
+    const resetPolicy = service
+      .getThrottlerOptions()
+      .find((option) => option.name === 'password-reset-email');
+
+    // The handler mails body.email; a query value must not shift that bucket...
+    expect(
+      service.resolveTracker(
+        'password-reset-email',
+        reset({ body: { email: 'victim@example.com' }, query: { email: 'other@example.com' } }),
+      ),
+    ).toBe(
+      service.resolveTracker('password-reset-email', reset({ body: { email: 'victim@example.com' } })),
+    );
+    // ...nor charge a victim's budget for a request that sends no mail.
+    expect(
+      resetPolicy?.skipIf?.(
+        createExecutionContext(reset({ body: {}, query: { email: 'victim@example.com' } })),
+      ),
+    ).toBe(true);
+  });
+
+  it('applies the per-address mail and code policies to signed-in account email routes', () => {
+    const service = new TrafficDefenseService();
+    const skip = (name: string, originalUrl: string) =>
+      service
+        .getThrottlerOptions()
+        .find((option) => option.name === name)
+        ?.skipIf?.(
+          createExecutionContext(
+            createRequest({ originalUrl, user: { id: 'user-1' }, body: { email: 'a@b.co' } }),
+          ),
+        );
+
+    expect(skip('email-verification-send', '/api/v1/auth/email-verification/account-email/request'))
+      .toBe(false);
+    expect(skip('email-verification-verify', '/api/v1/auth/email-verification/account-email/verify'))
+      .toBe(false);
+    expect(
+      service.resolveTracker(
+        'email-verification-send',
+        createRequest({
+          originalUrl: '/api/v1/auth/email-verification/account-email/request',
+          user: { id: 'user-1' },
+          body: { email: 'A@B.co' },
+        }),
+      ),
+    ).toBe(
+      service.resolveTracker(
+        'email-verification-send',
+        createRequest({
+          originalUrl: '/api/v1/auth/email-verification/resend',
+          body: { email: 'a@b.co' },
+        }),
+      ),
+    );
+  });
+
   it('shares the email-verification-send bucket between request and resend', () => {
     const service = new TrafficDefenseService();
     const option = service
