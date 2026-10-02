@@ -4,8 +4,11 @@ import {
   readFeatureFlags,
   type SupportedLocale,
 } from '@grabit/shared';
+import { recordServerTimeSample } from '@/lib/server-clock';
 
 export type RuntimeFlags = ReturnType<typeof readFeatureFlags>;
+/** `/api/runtime-flags` body: the flags plus the web server clock (epoch ms). */
+export type RuntimeFlagsPayload = RuntimeFlags & { serverNow: number };
 type RuntimeLocale = Extract<SupportedLocale, 'ko' | 'en' | 'th' | 'zh-CN'>;
 const RUNTIME_LOCALES = ['ko', 'en', 'th', 'zh-CN'] as const;
 
@@ -29,6 +32,27 @@ export const BOOKING_ENDED_COPY: Record<RuntimeLocale, string> = {
   th: 'การจำหน่ายบัตรสิ้นสุดแล้ว',
   'zh-CN': '门票销售已结束',
 };
+
+export const BOOKING_AVAILABILITY_CHECKING_COPY: Record<RuntimeLocale, string> = {
+  ko: '예매 가능 여부를 확인하고 있습니다',
+  en: 'Checking ticket booking availability',
+  th: 'กำลังตรวจสอบสถานะการจองบัตร',
+  'zh-CN': '正在确认门票预订状态',
+};
+
+export const BOOKING_AVAILABILITY_UNAVAILABLE_COPY: Record<RuntimeLocale, string> = {
+  ko: '예매 가능 여부를 확인하지 못했습니다. 잠시 후 자동으로 다시 확인합니다',
+  en: 'Could not check booking availability. Retrying automatically',
+  th: 'ตรวจสอบสถานะการจองไม่สำเร็จ ระบบจะลองใหม่อัตโนมัติ',
+  'zh-CN': '暂时无法确认预订状态，系统将自动重试',
+};
+
+export class RuntimeFlagsUnavailableError extends Error {
+  constructor(message = 'Runtime flags are unavailable') {
+    super(message);
+    this.name = 'RuntimeFlagsUnavailableError';
+  }
+}
 
 export class BookingDisabledError extends Error {
   constructor(message = BOOKING_DISABLED_COPY.ko) {
@@ -63,6 +87,26 @@ export function getBookingEndedCopy(locale: string | undefined): string {
   return BOOKING_ENDED_COPY[supportedLocale];
 }
 
+export function getBookingAvailabilityCheckingCopy(
+  locale: string | undefined,
+): string {
+  const candidate = locale ?? '';
+  const supportedLocale = isRuntimeLocale(candidate)
+    ? candidate
+    : DEFAULT_LOCALE;
+  return BOOKING_AVAILABILITY_CHECKING_COPY[supportedLocale];
+}
+
+export function getBookingAvailabilityUnavailableCopy(
+  locale: string | undefined,
+): string {
+  const candidate = locale ?? '';
+  const supportedLocale = isRuntimeLocale(candidate)
+    ? candidate
+    : DEFAULT_LOCALE;
+  return BOOKING_AVAILABILITY_UNAVAILABLE_COPY[supportedLocale];
+}
+
 function isRuntimeLocale(value: string): value is RuntimeLocale {
   return (RUNTIME_LOCALES as readonly string[]).includes(value);
 }
@@ -75,24 +119,63 @@ export function readRuntimeFlagsFromEnv(
   });
 }
 
+export function buildRuntimeFlagsPayload(
+  env: Record<string, string | undefined>,
+  nowMs: number = Date.now(),
+): RuntimeFlagsPayload {
+  return {
+    ...readRuntimeFlagsFromEnv(env),
+    serverNow: nowMs,
+  };
+}
+
+function isCachedResponse(response: Response): boolean {
+  const age = Number(response.headers?.get('age') ?? 0);
+  return Number.isFinite(age) && age > 0;
+}
+
+/**
+ * Reads the runtime flags. A failed request throws instead of resolving to
+ * "booking disabled", so react-query retries it and keeps the last good value
+ * rather than caching a transient error as a real kill switch.
+ */
 export async function fetchRuntimeFlags(
   fetcher: typeof fetch = fetch,
 ): Promise<RuntimeFlags> {
-  try {
-    const response = await fetcher('/api/runtime-flags', {
-      cache: 'no-store',
-      credentials: 'same-origin',
-    });
+  const requestStartedAtMs = Date.now();
+  const response = await fetcher('/api/runtime-flags', {
+    cache: 'no-store',
+    credentials: 'same-origin',
+  });
+  const responseReceivedAtMs = Date.now();
 
-    if (!response.ok) {
-      return { bookingEnabled: false };
-    }
-
-    const flags = (await response.json()) as Partial<RuntimeFlags>;
-    return {
-      bookingEnabled: flags.bookingEnabled === true,
-    };
-  } catch {
-    return { bookingEnabled: false };
+  if (!response.ok) {
+    throw new RuntimeFlagsUnavailableError(
+      `Runtime flags request failed with status ${response.status}`,
+    );
   }
+
+  let flags: Partial<RuntimeFlagsPayload> | null;
+  try {
+    flags = (await response.json()) as Partial<RuntimeFlagsPayload> | null;
+  } catch {
+    throw new RuntimeFlagsUnavailableError('Runtime flags response is not JSON');
+  }
+
+  if (!flags || typeof flags !== 'object') {
+    throw new RuntimeFlagsUnavailableError('Runtime flags response is empty');
+  }
+
+  // A cached copy carries a stale serverNow and would skew the clock offset.
+  if (typeof flags.serverNow === 'number' && !isCachedResponse(response)) {
+    recordServerTimeSample({
+      serverNowMs: flags.serverNow,
+      requestStartedAtMs,
+      responseReceivedAtMs,
+    });
+  }
+
+  return {
+    bookingEnabled: flags.bookingEnabled === true,
+  };
 }

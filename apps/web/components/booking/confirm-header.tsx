@@ -5,6 +5,7 @@ import { useLocale } from 'next-intl';
 import { ChevronLeft } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useBookingStore } from '@/stores/use-booking-store';
+import { useServerTimeReached } from '@/hooks/use-server-clock';
 import { getCheckoutCopy } from '@/lib/booking/checkout-copy';
 import { resolveVisibleCopyLocale } from '@/lib/i18n/visible-copy';
 
@@ -15,11 +16,11 @@ export function ConfirmHeader({ onExpire, onBack, disabled }: {
 }) {
   const expiresAt = useBookingStore((store) => store.expiresAt);
   const copy = getCheckoutCopy(resolveVisibleCopyLocale(useLocale()));
+  // Server-issued deadline: compare on the server-corrected clock.
+  const deadlineReached = useServerTimeReached(expiresAt || null);
   useEffect(() => {
-    if (!expiresAt) return;
-    const timer = window.setTimeout(onExpire, Math.min(2_147_483_647, Math.max(0, expiresAt - Date.now())));
-    return () => window.clearTimeout(timer);
-  }, [expiresAt, onExpire]);
+    if (deadlineReached) onExpire();
+  }, [deadlineReached, expiresAt, onExpire]);
 
   return (
     <header className="border-b border-border bg-background">

@@ -190,6 +190,7 @@
       },
       "infoLabel": "队列详情",
       "autoEnterInfo": "一旦获得入场资格，系统会自动打开座位选择页面。",
+      "accessEndingSoon": "预订入场时间仅剩 2 分钟。已选好座位请尽快进入付款步骤，超时后需重新排队并获得新的序号。",
       "safetyInfo": "进入排队不代表已获得座位。选择座位并确认保留后，才会暂时为您保留该座位。",
       "retryAction": "重试",
       "enterNowAction": "立即进入"

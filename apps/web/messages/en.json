@@ -190,6 +190,7 @@
       },
       "infoLabel": "Queue details",
       "autoEnterInfo": "Once admission is granted, the route opens the seat selection screen automatically.",
+      "accessEndingSoon": "Your booking access ends in 2 minutes. If you have chosen seats, continue to payment. After that you will need a new place in the queue.",
       "safetyInfo": "Queue admission does not reserve a seat. A seat is held only after you select it and the hold is confirmed.",
       "retryAction": "Try again",
       "enterNowAction": "Enter now"

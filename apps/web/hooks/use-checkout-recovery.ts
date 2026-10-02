@@ -8,9 +8,10 @@ import { useAuthStore } from '@/stores/use-auth-store';
 import { useBookingStore } from '@/stores/use-booking-store';
 import { getCheckoutState } from '@/lib/booking/checkout-state';
 import { getClientLocale } from '@/lib/i18n/client-copy';
+import { getServerNowMs } from '@/lib/server-clock';
 
 export function useCheckoutRecovery(orderId: string | null, performanceId: string, paused = false) {
-  const [nowMs, setNowMs] = useState(Date.now);
+  const [nowMs, setNowMs] = useState(getServerNowMs);
   const userId = useAuthStore((store) => store.user?.id);
   const locale = getClientLocale();
   const query = useQuery({
@@ -28,8 +29,8 @@ export function useCheckoutRecovery(orderId: string | null, performanceId: strin
   const deadline = reservation?.paymentDeadlineAt;
   useEffect(() => {
     if (!deadline || !Number.isFinite(Date.parse(deadline))) return;
-    const delay = Math.min(2_147_483_647, Math.max(0, Date.parse(deadline) - Date.now()));
-    const timer = window.setTimeout(() => setNowMs(Date.now()), delay);
+    const delay = Math.min(2_147_483_647, Math.max(0, Date.parse(deadline) - getServerNowMs()));
+    const timer = window.setTimeout(() => setNowMs(getServerNowMs()), delay);
     return () => window.clearTimeout(timer);
   }, [deadline]);
   const checkoutState = reservation ? getCheckoutState(reservation, nowMs) : 'unavailable';

@@ -79,7 +79,7 @@ Current App Router files:
 | My Page | `/mypage`, `/mypage/reservations/[id]` |
 | Field | `/field/check-in` |
 | Legal | `/legal/terms`, `/legal/privacy`, `/legal/marketing` |
-| Runtime flags | `/api/runtime-flags` |
+| Runtime flags | `/api/runtime-flags` (`bookingEnabled` plus the web server clock `serverNow`, `Cache-Control: no-store`) |
 | Admin | `/admin`, `/admin/performances`, `/admin/performances/new`, `/admin/performances/[id]/edit`, `/admin/bookings`, `/admin/operations`, `/admin/support-content`, `/admin/banners`, `/admin/translations`, `/admin/seat-operations`, `/admin/field-monitor`, `/admin/settlement`, `/admin/security`, `/admin/audit`, `/admin/consent-audit`, `/admin/users`, `/admin/cutover` |
 
 ### 3.2 State And Data Flow
@@ -91,6 +91,8 @@ Current App Router files:
 | Forms | React Hook Form + Zod | signup, profile, booking terms, admin event forms |
 | Realtime | Socket.IO client | seat status updates by showtime room |
 | Locale | next-intl routing + shared locale constants | `ko`, `en`, `th`, `zh-CN` |
+| Runtime flags | TanStack Query (`useRuntimeFlags`) | A failed `/api/runtime-flags` read is retried and keeps the last good value; until a value loads, booking stays closed with a "checking" message, never "opens later" |
+| Server clock | `lib/server-clock.ts` | Offset measured from `serverNow` in `/api/runtime-flags`; booking open, seat-lock, queue-access and payment countdowns compare server instants with `getServerNowMs()` instead of the device clock |
 
 ### 3.3 Component Boundaries
 
@@ -240,6 +242,8 @@ Local development can use an in-memory Redis-compatible mock when Redis URL is a
 - order binding for payment confirm where needed.
 
 Admin bypass exists for controlled tests and operational flows, not for normal buyers.
+
+Seat lock and prepare both require the admission activity window (`activeUntilAt`, 10 minutes after admission); payment recovery only extends payment confirm. The seat screen therefore counts down to whichever ends first, the seat lock or `activeUntilAt`, warns two minutes ahead, and switches to the queue-expired screen when the window closes. Rejoining from there issues a new queue position. The confirm step inherits the same earlier deadline.
 
 ### 6.3 Reservation Prepare
 
