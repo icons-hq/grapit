@@ -199,9 +199,11 @@ reservation or an earlier refunded late DONE).
 
 - The payment row stays `DONE` + `async_status=cancel_pending` until the PG
   reports the cancel complete, so confirm and DONE replays cannot issue it.
-  `payments.provider_metadata.asyncDoneCompensation` (and
-  `duplicatePaymentCompensations[]` for a second paymentKey) records the cancel
-  command, every `cancelRequestId`, attempts and state.
+  `payments.provider_metadata.asyncDoneCompensation` records the cancel
+  command, every `cancelRequestId`, attempts and state. A second paymentKey has
+  no payment row of its own: the order's existing row keeps its status (for
+  example `DONE` for a confirmed order) and the cancel is recorded in that row's
+  `duplicatePaymentCompensations[]`.
 - A cancel `ABORTED` webhook is recorded as `ASYNC_DONE_COMPENSATION_CANCEL_ABORTED`
   (ledger code and payment failure diagnostic).
 - The recovery sweep (`AsyncDoneCompensationRecoveryWorker`, every minute where
