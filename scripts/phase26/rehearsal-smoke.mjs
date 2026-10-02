@@ -3,6 +3,11 @@ import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
+import {
+  assertPhase26Marker,
+  assertPhase26OrderPrefix,
+  assertPhase26TestEventTitle,
+} from './test-event-identity.mjs';
 
 const DEFAULT_EVIDENCE_PATH =
   '.planning/phases/26-m1-canary-cutover-gates/evidence/26-05-rehearsal.json';
@@ -50,8 +55,8 @@ Required environment for live rehearsal:
   PHASE26_TEST_PERFORMANCE_ID            Dedicated test-event performance UUID
   PHASE26_TEST_SHOWTIME_ID               Dedicated test-event showtime UUID
   PHASE26_TEST_SEAT_ID                   Dedicated test seat ID or floor-aware seatKey
-  PHASE26_TEST_ORDER_PREFIX              Must start with PHASE26_ or PHASE26-
-  PHASE26_TEST_MARKER                    Explicit test marker present on the test performance
+  PHASE26_TEST_ORDER_PREFIX              Must start with PHASE26_ or PHASE26- (letters, digits, _ or - only)
+  PHASE26_TEST_MARKER                    Dedicated token matching ^PHASE26[_-][A-Za-z0-9_-]{6,}$; the test performance title must start with it
   PHASE26_REHEARSAL_ALLOW_MUTATION       Must equal ${REQUIRED_MUTATION_APPROVAL}
 
 Optional environment:
@@ -314,13 +319,8 @@ function loadConfig() {
   validateUuid(performanceId, 'PHASE26_TEST_PERFORMANCE_ID');
   validateUuid(showtimeId, 'PHASE26_TEST_SHOWTIME_ID');
 
-  if (!/^PHASE26[_-]/.test(orderPrefix)) {
-    throw new Error('PHASE26_TEST_ORDER_PREFIX must start with PHASE26_ or PHASE26-');
-  }
-
-  if (testMarker.length < 8 || !/PHASE26|TEST/i.test(testMarker)) {
-    throw new Error('PHASE26_TEST_MARKER must be explicit and include PHASE26 or TEST');
-  }
+  assertPhase26OrderPrefix(orderPrefix);
+  assertPhase26Marker(testMarker);
 
   if (!databaseUrl()) {
     throw new Error('PHASE26_DATABASE_URL or DATABASE_URL is required before rehearsal mutations');
@@ -503,15 +503,12 @@ function assertFixtureSafe(performance, config) {
   const title = String(performance?.title || performance?.name || '');
   const description = String(performance?.description || '');
   const salesInfo = String(performance?.salesInfo || performance?.sales_info || '');
-  const searchable = `${title}\n${description}\n${salesInfo}`;
 
-  if (/Girl Rules|GIRL RULES|걸룰|걸룰스/i.test(searchable)) {
+  if (/Girl Rules|걸룰/i.test(`${description}\n${salesInfo}`)) {
     throw new Error('Dedicated test-event fixture check failed: real Girl Rules content is in scope');
   }
-
-  if (!searchable.includes(config.testMarker)) {
-    throw new Error('Dedicated test-event fixture check failed: PHASE26_TEST_MARKER was not found on the performance metadata');
-  }
+  // Same positive identification as the cleanup SQL: the title starts with the marker.
+  assertPhase26TestEventTitle(title, config.testMarker);
 
   const showtimes = [
     ...(Array.isArray(performance?.showtimes) ? performance.showtimes : []),

@@ -13,7 +13,10 @@
 --
 -- Safety contract:
 -- - This script is read-only and returns counts plus masked row identifiers.
--- - It refuses the real Girl Rules event by title/marker deny checks.
+-- - It applies the same positive identification as cleanup-test-event.sql:
+--   the marker must match ^PHASE26[_-][A-Za-z0-9_-]{6,}$, the performance title
+--   must start with it, and published or future-opening performances are refused.
+--   Order IDs are matched literally with starts_with(), never LIKE patterns.
 -- - It flags unexpected rows before cleanup-test-event.sql can mutate anything.
 -- - Do not paste auth headers, payment keys, cookies, phone/email PII, or raw row
 --   dumps into evidence.
@@ -54,42 +57,50 @@ select
 do $$
 declare
   cfg record;
-  performance_title text;
-  marker_present boolean;
+  target record;
 begin
   select * into cfg from phase26_cleanup_config;
 
-  if cfg.order_prefix !~ '^PHASE26[_-]' then
-    raise exception 'PHASE26 cleanup deny: order prefix must start with PHASE26_ or PHASE26-, got %', cfg.order_prefix;
+  -- Order IDs are matched with starts_with(), so the prefix is a literal, but
+  -- keep it to the same safe alphabet as generated PHASE26 order IDs.
+  if cfg.order_prefix !~ '^PHASE26[_-][A-Za-z0-9_-]*$' then
+    raise exception 'PHASE26 cleanup deny: order prefix must start with PHASE26_ or PHASE26- and use only letters, digits, _ or -, got %', cfg.order_prefix;
   end if;
 
-  if length(cfg.test_marker) < 8 or cfg.test_marker !~* 'PHASE26|TEST' then
-    raise exception 'PHASE26 cleanup deny: test marker must be explicit and include PHASE26 or TEST';
+  -- Positive identification only. A marker is a dedicated token, never a word
+  -- that can appear in real performance copy, and the title must start with it.
+  if cfg.test_marker !~ '^PHASE26[_-][A-Za-z0-9_-]{6,}$' then
+    raise exception 'PHASE26 cleanup deny: test marker must match ^PHASE26[_-][A-Za-z0-9_-]{6,}$';
   end if;
 
-  select p.title,
-    (
-      p.title ilike '%' || cfg.test_marker || '%'
-      or coalesce(p.description, '') ilike '%' || cfg.test_marker || '%'
-      or coalesce(p.sales_info, '') ilike '%' || cfg.test_marker || '%'
-    )
-    into performance_title, marker_present
+  select p.title, p.publish_state::text as publish_state, bp.booking_starts_at
+    into target
   from performances p
+  left join booking_policies bp on bp.performance_id = p.id
   where p.id = cfg.performance_id;
 
-  if performance_title is null then
+  if not found then
     raise exception 'PHASE26 cleanup deny: performanceId % was not found', cfg.performance_id;
   end if;
 
-  if performance_title ilike '%Girl Rules%'
-    or performance_title ilike '%GIRL RULES%'
-    or performance_title ilike '%걸룰%'
-    or performance_title ilike '%걸룰스%' then
+  if not starts_with(target.title, cfg.test_marker) then
+    raise exception 'PHASE26 cleanup deny: performance title must start with the dedicated test marker';
+  end if;
+
+  if target.title ilike '%Girl Rules%'
+    or target.title ilike '%걸룰%' then
     raise exception 'PHASE26 cleanup deny: real Girl Rules performance is in cleanup scope';
   end if;
 
-  if not marker_present then
-    raise exception 'PHASE26 cleanup deny: performance does not contain the dedicated test marker in title/description/sales_info';
+  -- A published performance is customer-visible and bookable; a future booking
+  -- opening means a sale is still scheduled. Unpublish/close the dedicated test
+  -- event in admin first; never delete inventory a sale may depend on.
+  if target.publish_state = 'published' then
+    raise exception 'PHASE26 cleanup deny: performance is published; unpublish the dedicated test event before cleanup';
+  end if;
+
+  if target.booking_starts_at is not null and target.booking_starts_at > now() then
+    raise exception 'PHASE26 cleanup deny: performance has a scheduled future booking opening';
   end if;
 
   if not exists (
@@ -106,13 +117,13 @@ create temp table phase26_scoped_reservations as
 select r.id, r.toss_order_id, r.showtime_id, r.status
 from reservations r
 join phase26_cleanup_config cfg on cfg.showtime_id = r.showtime_id
-where r.toss_order_id like (select order_prefix || '%' from phase26_cleanup_config);
+where starts_with(r.toss_order_id, (select order_prefix from phase26_cleanup_config));
 
 create temp table phase26_scoped_payments as
 select p.id, p.reservation_id, p.toss_order_id, p.status
 from payments p
 join phase26_scoped_reservations r on r.id = p.reservation_id
-where p.toss_order_id like (select order_prefix || '%' from phase26_cleanup_config);
+where starts_with(p.toss_order_id, (select order_prefix from phase26_cleanup_config));
 
 create temp table phase26_scoped_tickets as
 select t.id, t.reservation_id, t.payment_id, t.showtime_id, t.status
@@ -128,7 +139,7 @@ join phase26_scoped_reservations r on r.id = f.reservation_id;
 create temp table phase26_scoped_webhooks as
 select e.id, e.event_type, e.toss_order_id
 from payment_webhook_events e
-where e.toss_order_id like (select order_prefix || '%' from phase26_cleanup_config)
+where starts_with(coalesce(e.toss_order_id, ''), (select order_prefix from phase26_cleanup_config))
   or e.reservation_id in (select id from phase26_scoped_reservations)
   or e.payment_id in (select id from phase26_scoped_payments);
 
@@ -136,18 +147,23 @@ create temp table phase26_unexpected_rows as
 select 'reservations_without_prefix' as check_name, count(*)::int as row_count
 from reservations r
 join phase26_cleanup_config cfg on cfg.showtime_id = r.showtime_id
-where coalesce(r.toss_order_id, '') not like cfg.order_prefix || '%'
+where not starts_with(coalesce(r.toss_order_id, ''), cfg.order_prefix)
 union all
 select 'payments_without_prefix', count(*)::int
 from payments p
 join reservations r on r.id = p.reservation_id
 join phase26_cleanup_config cfg on cfg.showtime_id = r.showtime_id
-where coalesce(p.toss_order_id, '') not like cfg.order_prefix || '%'
+where not starts_with(coalesce(p.toss_order_id, ''), cfg.order_prefix)
 union all
 select 'tickets_outside_scoped_reservations', count(*)::int
 from tickets t
 join phase26_cleanup_config cfg on cfg.showtime_id = t.showtime_id
 where t.reservation_id not in (select id from phase26_scoped_reservations)
+union all
+select 'ticket_items_outside_scoped_reservations', count(*)::int
+from ticket_items ti
+join phase26_cleanup_config cfg on cfg.showtime_id = ti.showtime_id
+where ti.reservation_id not in (select id from phase26_scoped_reservations)
 union all
 select 'showtime_mismatch', count(*)::int
 from showtimes s

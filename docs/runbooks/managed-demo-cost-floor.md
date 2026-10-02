@@ -159,8 +159,16 @@ After the new endpoint is active:
 1. confirm zero active seat-lock and admission-queue keys on the original instance;
 2. add a new `redis-url` secret version without printing the URL;
 3. set GitHub Actions repository variable `VALKEY_MODE=standalone`;
-4. deploy and verify API health reports the standalone managed Valkey connection;
-5. keep the original `grabit-valkey` unchanged for at least 24 hours.
+4. deploy and verify API health reports the standalone managed Valkey connection, then run the Valkey smoke against the new instance by name (the script has no default instance and checks that the Cloud Run-bound `redis-url` secret version points to a writable endpoint of that instance):
+
+   ```bash
+   GRABIT_VALKEY_INSTANCE=grabit-valkey-managed-demo GRABIT_VALKEY_EXPECTED_MODE=standalone \
+   GRABIT_VALKEY_MIN_REPLICAS=0 GRABIT_SALES_OPEN_AT=none \
+   pnpm --filter @grabit/web exec node ../../scripts/smoke-valkey-production.mjs --check health
+   ```
+
+   The managed-demo posture deliberately overrides the replica minimum. The smoke still requires `maxmemory-policy=noeviction` unless `GRABIT_VALKEY_MAXMEMORY_POLICY` is set; a failure there is a real eviction risk for seat-lock and queue keys, not a smoke bug;
+5. keep the original `grapit-valkey` unchanged for at least 24 hours.
 
 ## Phase 3 — Cloud Run services and bounded worker
 
@@ -293,7 +301,7 @@ Begin this process at least 14 days before sales open. The old baseline is a res
 4. Create a new Cluster Mode Enabled Valkey instance sized from load evidence. These requirements are mandatory:
    - `--replica-count` of at least `1` with multi-zone distribution, so a node failure or maintenance fails over instead of wiping state;
    - an explicit weekly window (`--maintenance-policy-weekly-window=day=DAY,startTime=hours=HOUR`, UTC) that does not fall on the opening day or venue-entry days;
-   - `maxmemory-policy=noeviction` with memory headroom from the load test. Seat locks, confirmation leases and queue keys carry TTLs, so `volatile-*` policies evict them first;
+   - `maxmemory-policy=noeviction` (`--engine-configs=maxmemory-policy=noeviction`) with memory headroom from the load test. Seat locks, confirmation leases and queue keys carry TTLs, so `volatile-*` policies evict them first;
    - persistence is optional because Valkey state is transient by design.
 
    Set `VALKEY_MODE=cluster`, then record the posture as Gate 5 evidence:
@@ -307,6 +315,16 @@ Begin this process at least 14 days before sales open. The old baseline is a res
    ```
 
    The check fails for zero replicas, single-zone placement, `shared-core-nano`, an evicting policy, a missing weekly window, or a weekly or already scheduled maintenance occurrence within six hours of a protected window. If `maintenanceSchedule` collides, move it with `gcloud memorystore instances reschedule-maintenance INSTANCE --location=asia-northeast3 --reschedule-type=SPECIFIC_TIME --schedule-time=UTC_ISO` and re-run the check. Rescheduling is possible up to 14 days from the original schedule, but not within one hour of its start. Memorystore sends maintenance notices at least one week ahead only to subscribed contacts, so subscribe the on-call address before the opening week.
+
+   After setting `VALKEY_MODE=cluster` and deploying, run the Valkey smoke with the new instance named explicitly. It also checks that the Cloud Run-bound `redis-url` secret version points to a writable endpoint of that instance. Its defaults are the opening posture: at least one replica, `noeviction`, and no maintenance window or scheduled maintenance from one hour before `GRABIT_SALES_OPEN_AT` until `GRABIT_SALES_PROTECTED_HOURS` (default 6) after it:
+
+   ```bash
+   GRABIT_VALKEY_INSTANCE=<new-instance-id> GRABIT_VALKEY_EXPECTED_MODE=cluster \
+   GRABIT_SALES_OPEN_AT=<opening ISO-8601 with offset, e.g. 2026-11-01T20:00:00+09:00> \
+   pnpm --filter @grabit/web exec node ../../scripts/smoke-valkey-production.mjs --check all
+   ```
+
+   Do not reuse the retained `grapit-valkey` or `grabit-valkey-managed-demo` names in the smoke after a cutover; the smoke fails when `redis-url` does not point at the named instance.
 5. Restore Web/API minimum instances `1`; restore API instance-based CPU, set `BACKGROUND_PROCESSING_ENABLED=true`, and restore the tested maximums (`40` API / `50` Web were the prior ceilings). Confirm `API_MAX_INSTANCES`/`API_MIN_INSTANCES` are not the managed-demo `4`/`0`.
 6. Size API capacity for WebSockets, not only HTTP. Every waiting buyer holds one `/queue` Socket.IO connection, and an admitted buyer can also hold a `/booking` connection. Each one occupies a Cloud Run concurrency slot next to lock, prepare and confirm requests. Require `API_MAX_INSTANCES × API_CONCURRENCY ≥ 1.5 × (expected waiting + 2 × expected admitted + peak in-flight HTTP)`, adjusting `API_MAX_INSTANCES` or `API_CONCURRENCY`. The workflow pins the API request timeout to `3600s`, so sockets are not cut at the 300s default.
 7. Pause the five-minute Job only after continuous pg-boss workers are verified on the warm API revision.

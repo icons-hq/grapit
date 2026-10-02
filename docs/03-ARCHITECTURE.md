@@ -409,7 +409,8 @@ Admin booking list (`GET /api/v1/admin/bookings`): list and aggregate reads run 
 
 `TicketModule` owns QR issue/read/verify.
 
-- QR credentials are seat-level: one active `tickets` row per active Ticket Item (ADR 0001, ADR 0003).
+- QR credentials are seat-level: each Ticket Item has at most one active `tickets` row (`tickets.ticket_item_id`, unique partial index `idx_tickets_ticket_item_active`), per ADR 0001/0003. A reservation with several seats therefore has several independent QR credentials.
+- Legacy reservation-level rows (`ticket_item_id IS NULL`, guarded by `idx_tickets_legacy_*`) are compatibility-only. Issue, read and venue-entry paths join through `ticket_items` and reject them; do not reissue, scan or repair QR at reservation level.
 - `tickets` stores QR JTI, signing version, status, issue/email timestamps, use/revoke/expiry state.
 - Reservation detail read path can self-heal missing QR for confirmed completed payments. Reads that find every credential stay lock-free; a missing credential is issued only inside a transaction that share-locks the reservation row and re-reads Ticket Item status, so it serializes with cancellation prepare, full refund, rights restoration and field consume (all lock the reservation first). A `cancellation_pending` Ticket Item never receives a new active credential, and concurrent issuers converge through `idx_tickets_ticket_item_active` (`ON CONFLICT DO NOTHING`).
 - QR reminder email is one pg-boss job per reservation, sent D-1 (or at issue when closer). The `qr-ticket-email-resend` queue uses pg-boss' standard policy, so `singletonKey` does not deduplicate. Scheduling records the job with a compare-and-set on `tickets.email_job_id`; a job whose id is not the recorded one is skipped. The worker claims `email_sent_at` on every active credential of the reservation before sending and releases the claim if delivery fails (pg-boss retries). A process crash between claim and send loses that reminder rather than duplicating it. Because `email_sent_at` doubles as the claim, the buyer `lastSentAt` and admin support evidence `sentAt` mean "claimed or sent", not inbox delivery (`inboxReceipt` stays `unverified`). Worker logs carry the reservation and pg-boss job id: `QR reminder claimed` followed by `QR reminder sent` is a delivered reminder; a `claimed` line without a matching `sent` (often followed by `skipped: already sent or claimed` on the retry) is a lost reminder, and the buyer can resend from reservation detail. A separate claim/lease column is a follow-up for the next migration slot.
@@ -421,6 +422,8 @@ Credential validity and venue entry state are separate:
 
 - credential status answers whether the QR credential is valid,
 - `entryStatus` and `enteredAt` answer whether entry was processed.
+
+The API `entryStatus`/`enteredAt` fields on a QR ticket are derived values (from the credential row's `used_at`, written in the same transaction as the consume). The admission source of truth is the Ticket Item: `ticket_items.admission_state` and `ticket_items.entered_at`. Manual recovery and CS investigation read admission per Ticket Item.
 
 ### 7.2 Field Check-In
 
