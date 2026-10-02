@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
 import type { PerformanceWithDetails } from '@grabit/shared';
 import { ApiClientError, apiClient } from '@/lib/api-client';
+import { SHOWTIME_SALES_CLOSED_MESSAGE } from '@/lib/booking/showtime-sales';
 
 const AUTO_ENTER_DELAY_MS = 1_200;
 const WAITING_POLL_INTERVAL_MS = 15_000;
@@ -44,7 +45,8 @@ const BOOKING_CLOSED_ERROR_CODES = new Set([
 ]);
 const BOOKING_CLOSED_MESSAGES = new Set([
   '판매가 종료된 공연입니다',
-  '이미 시작된 회차는 예매할 수 없습니다.',
+  // C1 cutoff: one web definition with the seat/date pickers (showtime-sales.ts).
+  SHOWTIME_SALES_CLOSED_MESSAGE,
   '예매 가능한 회차가 없습니다.',
   '공연을 찾을 수 없습니다',
 ]);

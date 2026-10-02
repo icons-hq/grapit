@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { ForbiddenException } from '@nestjs/common';
+import { PgDialect } from 'drizzle-orm/pg-core';
 import {
   SHOWTIME_STARTED_MESSAGE,
   assertShowtimeSalesOpen,
   isShowtimeSalesClosed,
+  showtimeOnSaleCondition,
 } from '../showtime-sales-cutoff.js';
 
 describe('showtime sales cutoff', () => {
@@ -30,5 +32,17 @@ describe('showtime sales cutoff', () => {
 
   it('uses the contract message', () => {
     expect(SHOWTIME_STARTED_MESSAGE).toBe('이미 시작된 회차는 예매할 수 없습니다.');
+  });
+
+  it('gives queries the same cutoff as isShowtimeSalesClosed (date_time > now)', () => {
+    const now = new Date('2026-10-05T10:00:00.000Z');
+    const query = new PgDialect().sqlToQuery(showtimeOnSaleCondition(now));
+
+    // Strictly greater: a showtime starting exactly at `now` is closed, the
+    // same instant isShowtimeSalesClosed starts returning true.
+    expect(query.sql).toBe('"showtimes"."date_time" > $1');
+    expect(query.params).toHaveLength(1);
+    expect(new Date(query.params[0] as string).getTime()).toBe(now.getTime());
+    expect(isShowtimeSalesClosed(now, now)).toBe(true);
   });
 });

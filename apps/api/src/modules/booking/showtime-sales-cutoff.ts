@@ -1,4 +1,6 @@
 import { ForbiddenException } from '@nestjs/common';
+import { gt, type SQL } from 'drizzle-orm';
+import { showtimes } from '../../database/schema/showtimes.js';
 
 export const SHOWTIME_STARTED_MESSAGE = '이미 시작된 회차는 예매할 수 없습니다.';
 
@@ -30,4 +32,14 @@ export function assertShowtimeSalesOpen(
   if (isShowtimeSalesClosed(showtimeStartsAt, now)) {
     throw new ForbiddenException(SHOWTIME_STARTED_MESSAGE);
   }
+}
+
+/**
+ * Set form of {@link isShowtimeSalesClosed} for queries: matches the showtimes
+ * still on sale at `now` (`date_time > now`, the exact negation of
+ * `now >= date_time`). Every API sales gate that counts or filters showtimes
+ * uses this instead of its own comparison, so the cutoff has one definition.
+ */
+export function showtimeOnSaleCondition(now: Date = new Date()): SQL {
+  return gt(showtimes.dateTime, now);
 }

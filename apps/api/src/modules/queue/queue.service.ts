@@ -21,7 +21,10 @@ import { seatMaps } from '../../database/schema/seat-maps.js';
 import { showtimes } from '../../database/schema/showtimes.js';
 import { performances } from '../../database/schema/performances.js';
 import { bookingPolicies } from '../../database/schema/booking-policies.js';
-import { SHOWTIME_STARTED_MESSAGE } from '../booking/showtime-sales-cutoff.js';
+import {
+  SHOWTIME_STARTED_MESSAGE,
+  showtimeOnSaleCondition,
+} from '../booking/showtime-sales-cutoff.js';
 import { QueueGateway } from './queue.gateway.js';
 import {
   COUNT_VALID_LOCKED_SEATS_LUA,
@@ -460,8 +463,9 @@ export class QueueService {
    * Queue entry gate. Runs before any queue key is created so unknown, hidden,
    * ended or fully started performances never get a waiting session.
    * Sales cutoff (C1): a showtime is sellable only while now < showtimes.date_time,
-   * and the cutoff has no admin bypass. The SQL `date_time > now` below is the
-   * set form of isShowtimeSalesClosed (booking/showtime-sales-cutoff.ts).
+   * and the cutoff has no admin bypass. showtimeOnSaleCondition is the set form
+   * of isShowtimeSalesClosed (booking/showtime-sales-cutoff.ts), shared with
+   * seat lock, prepare and the pre-approval confirm check.
    */
   private async assertPerformanceBookingOpen(
     performanceId: string,
@@ -474,7 +478,7 @@ export class QueueService {
         publishState: performances.publishState,
         bookingStartsAt: bookingPolicies.bookingStartsAt,
         showtimeCount: sql<number>`(select count(*)::int from ${showtimes} where ${eq(showtimes.performanceId, performances.id)})`,
-        sellableShowtimeCount: sql<number>`(select count(*)::int from ${showtimes} where ${and(eq(showtimes.performanceId, performances.id), gt(showtimes.dateTime, now))})`,
+        sellableShowtimeCount: sql<number>`(select count(*)::int from ${showtimes} where ${and(eq(showtimes.performanceId, performances.id), showtimeOnSaleCondition(now))})`,
       })
       .from(performances)
       .leftJoin(bookingPolicies, eq(bookingPolicies.performanceId, performances.id))

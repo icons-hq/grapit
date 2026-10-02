@@ -638,6 +638,8 @@ describe('useQueue', () => {
 
   it.each([
     [403, '이미 시작된 회차는 예매할 수 없습니다.', { errorCode: 'NO_BOOKABLE_SHOWTIME' }, 'unavailable'],
+    // Message-only C1 rejection (older API or a filter that drops errorCode).
+    [403, '이미 시작된 회차는 예매할 수 없습니다.', {}, 'unavailable'],
     [403, '판매가 종료된 공연입니다', {}, 'unavailable'],
     [404, '공연을 찾을 수 없습니다', { errorCode: 'PERFORMANCE_NOT_FOUND' }, 'notFound'],
     [404, '공연을 찾을 수 없습니다', {}, 'notFound'],
