@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, integer } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, integer, index } from 'drizzle-orm/pg-core';
 import { reservations } from './reservations.js';
 
 export const reservationSeats = pgTable('reservation_seats', {
@@ -9,4 +9,6 @@ export const reservationSeats = pgTable('reservation_seats', {
   price: integer('price').notNull(),
   row: varchar('row', { length: 50 }).notNull(),
   number: varchar('number', { length: 50 }).notNull(),
-});
+}, (table) => [
+  index('idx_reservation_seats_reservation_id').on(table.reservationId),
+]);

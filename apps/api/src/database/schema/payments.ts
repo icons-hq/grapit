@@ -1,4 +1,4 @@
-import { pgTable, uuid, varchar, integer, timestamp, pgEnum, jsonb } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, varchar, integer, timestamp, pgEnum, jsonb, index } from 'drizzle-orm/pg-core';
 import { reservations } from './reservations.js';
 
 export const paymentStatusEnum = pgEnum('payment_status', [
@@ -29,4 +29,6 @@ export const payments = pgTable('payments', {
   cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
   cancelReason: varchar('cancel_reason', { length: 200 }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [
+  index('idx_payments_toss_order_id').on(table.tossOrderId),
+]);
