@@ -29,9 +29,26 @@ export interface AdminCutoverGateRow {
   blockingReason: string | null;
 }
 
+export interface AdminCutoverLedgerFreshness {
+  state: 'fresh' | 'stale' | 'unknown';
+  ageDays: number | null;
+  maxAgeDays: number;
+  reason: string | null;
+}
+
+export interface AdminCutoverOpeningScope {
+  id: string;
+  label: string | null;
+  performanceIds: string[];
+  opensAt: string | null;
+}
+
 export interface AdminCutoverGateSummary {
   generatedAt: string;
   ledgerGeneratedAt: string | null;
+  /** Optional for responses from APIs deployed before ledger freshness checks. */
+  freshness?: AdminCutoverLedgerFreshness;
+  opening?: AdminCutoverOpeningScope | null;
   source: {
     state: 'loaded' | 'blocked';
     runtimeArtifactRequired: boolean;

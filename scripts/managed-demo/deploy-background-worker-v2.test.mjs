@@ -53,6 +53,21 @@ test('renders one bounded v2 Job with secret references and managed-demo setting
   );
 });
 
+test('uses the shared BOOKING_ENABLED gate instead of a hardcoded true', () => {
+  const envValue = (env) =>
+    buildBackgroundWorkerJob(env)
+      .template.template.containers[0].env.find(({ name }) => name === 'BOOKING_ENABLED').value;
+
+  assert.equal(envValue({ ...validEnv, BOOKING_ENABLED: 'false' }), 'false');
+  assert.equal(envValue({ ...validEnv, BOOKING_ENABLED: 'true' }), 'true');
+  // Unset keeps the historical production behaviour.
+  assert.equal(envValue(validEnv), 'true');
+  assert.throws(
+    () => buildBackgroundWorkerJob({ ...validEnv, BOOKING_ENABLED: 'flase' }),
+    /BOOKING_ENABLED must be exactly "true" or "false"/,
+  );
+});
+
 test('rejects drift-prone or unsafe deployment inputs', () => {
   assert.throws(
     () => buildBackgroundWorkerJob({ ...validEnv, VALKEY_MODE: 'pico' }),

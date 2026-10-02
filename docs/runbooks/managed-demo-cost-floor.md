@@ -152,6 +152,8 @@ gcloud memorystore instances create grabit-valkey-managed-demo \
 
 Some gcloud help output omits `custom-pico` even though the regional API accepts it. Submit the create request and verify the resulting instance reports `CUSTOM_PICO`; do not silently substitute `shared-core-nano` or `standard-small`.
 
+This demo instance keeps the Memorystore default `maxmemory-policy=volatile-lru` and has no maintenance window. Both are acceptable only while no sale is scheduled: a node restart or maintenance event wipes seat locks, confirmation leases and queue positions. `scripts/provision-valkey.sh` (single `shared-core-nano`, zero replicas) is legacy/demo only and refuses to run without `--legacy-demo`.
+
 After the new endpoint is active:
 
 1. confirm zero active seat-lock and admission-queue keys on the original instance;
@@ -171,11 +173,13 @@ Set these GitHub Actions repository variables immediately before the managed-dem
 - `BACKGROUND_PROCESSING_ENABLED=false`;
 - `VALKEY_MODE=standalone` after the Valkey secret cutover.
 
+`BOOKING_ENABLED` is a separate repository variable shared by API, Web and the bounded worker; when it is unset the workflow deploys `true`, which preserves the current production behaviour. See [Sitewide booking kill switch](#sitewide-booking-kill-switch).
+
 Without those variables, workflow defaults preserve the warm ticket-opening posture (`1/40` API, `1/50` Web, instance-based API CPU, pool size `4`, continuous background processing, cluster Valkey). In managed-demo mode the API remains a pg-boss producer but does not run scheduler, supervisor, queue-worker, or pending-payment timers while its CPU is throttled. The workflow deploys and synchronously smokes `grabit-background-worker` from the same immutable API image with background processing explicitly enabled. If `API_MIN_INSTANCES=0`, deployment refuses to change the API unless `grabit-background-worker-every-5m` already exists in `ENABLED` state.
 
 API deploy uses `--set-cloudsql-instances`, not `--add-cloudsql-instances`, so the Secret-selected connection is the only mounted Cloud SQL instance after a cutover or rollback. Change `CLOUD_SQL_CONNECTION_NAME` before deployment and verify the resulting revision annotation contains exactly the intended instance.
 
-The workflow renders the complete Job definition with `scripts/managed-demo/deploy-background-worker-v2.mjs`, validates it with the Cloud Run v2 `jobs.patch` `validateOnly` path, applies it through the same v2 API, and reads the image back before executing the smoke run. This preserves one deterministic Job configuration and avoids the legacy v1 deploy path that returned a false service-account `actAs` denial even after direct IAM and Policy Troubleshooter checks succeeded. The pure payload contract is covered by `deploy-background-worker-v2.test.mjs` in CI.
+The workflow renders the complete Job definition with `scripts/managed-demo/deploy-background-worker-v2.mjs`, validates it with the Cloud Run v2 `jobs.patch` `validateOnly` path, applies it through the same v2 API, and reads the image back before executing the smoke run. This preserves one deterministic Job configuration and avoids the legacy v1 deploy path that returned a false service-account `actAs` denial even after direct IAM and Policy Troubleshooter checks succeeded. The pure payload contract is covered by `deploy-background-worker-v2.test.mjs` in CI, together with the deploy guards and Valkey posture check under `scripts/managed-demo/*.test.mjs`.
 
 Safe rollout order is two-stage: first deploy with warm defaults to create/smoke the Job, then run the Scheduler script, set the managed-demo variables, and manually dispatch the deploy workflow again. Do not set `API_MIN_INSTANCES=0` before the Scheduler job exists.
 
@@ -282,14 +286,72 @@ Use this path during the retention window:
 
 Begin this process at least 14 days before sales open. The old baseline is a restoration reference, not proof that it is sale-ready.
 
-1. Set `BOOKING_ENABLED=false` while capacity changes and verification are in progress.
+1. Close the sitewide gate with the [kill-switch procedure](#sitewide-booking-kill-switch): set repository variable `BOOKING_ENABLED=false` first, then update the live API/Web/worker. Keep it closed while capacity changes and verification are in progress. Every deploy reads the same variable, so merges during preparation cannot reopen it.
 2. Resize or replace Cloud SQL to at least the prior `db-custom-2-12288` capacity, then load-test. Reconsider REGIONAL availability before public sale or venue-entry windows.
-3. Create a new Cluster Mode Enabled Valkey instance sized from load evidence, with replicas where availability requires them. Set `VALKEY_MODE=cluster`.
-4. Restore Web/API minimum instances `1`; restore API instance-based CPU, set `BACKGROUND_PROCESSING_ENABLED=true`, and restore the tested maximums (`40` API / `50` Web were the prior ceilings).
-5. Pause the five-minute Job only after continuous pg-boss workers are verified on the warm API revision.
-6. Choose a ticket-opening edge: a tested Cloudflare Worker plan with adequate limits, or a rebuilt GCP load balancer whose new certificates are `ACTIVE`.
-7. Pass load/concurrency, DB backup restore, signup/login, SMS/email, payment/webhook/refund, queue/seat-lock, QR/check-in/offline sync, admin write, logs/alerts, and rollback rehearsals.
-8. Enable `BOOKING_ENABLED=true` only after the evidence gates pass.
+3. Verify the PostgreSQL connection budget before load tests: `API_MAX_INSTANCES × (DB_POOL_MAX + PGBOSS_POOL_MAX)` for the API, plus `DB_POOL_MAX + PGBOSS_POOL_MAX` for the worker, plus `DB_CONNECTION_RESERVE`, must not exceed `max_connections` minus reserved connections. Set `PGBOSS_POOL_MAX` to the pg-boss pool size the deployed API image actually uses (pg-boss default `10`). Size `DB_POOL_MAX` from a single-showtime confirm load test that records pool wait and showtime-lock wait. Then set `DB_CONNECTION_BUDGET_ENFORCE=true` so the deploy workflow's database preflight fails instead of only warning when the posture can exhaust connections.
+4. Create a new Cluster Mode Enabled Valkey instance sized from load evidence. These requirements are mandatory:
+   - `--replica-count` of at least `1` with multi-zone distribution, so a node failure or maintenance fails over instead of wiping state;
+   - an explicit weekly window (`--maintenance-policy-weekly-window=day=DAY,startTime=hours=HOUR`, UTC) that does not fall on the opening day or venue-entry days;
+   - `maxmemory-policy=noeviction` with memory headroom from the load test. Seat locks, confirmation leases and queue keys carry TTLs, so `volatile-*` policies evict them first;
+   - persistence is optional because Valkey state is transient by design.
+
+   Set `VALKEY_MODE=cluster`, then record the posture as Gate 5 evidence:
+
+   ```bash
+   gcloud memorystore instances describe INSTANCE \
+     --project=grapit-491806 --location=asia-northeast3 --format=json > valkey.json
+   node scripts/managed-demo/verify-valkey-sale-posture.mjs valkey.json \
+     --protect=OPEN_START_ISO/OPEN_END_ISO \
+     --protect=ENTRY_START_ISO/ENTRY_END_ISO
+   ```
+
+   The check fails for zero replicas, single-zone placement, `shared-core-nano`, an evicting policy, a missing weekly window, or a weekly or already scheduled maintenance occurrence within six hours of a protected window. If `maintenanceSchedule` collides, move it with `gcloud memorystore instances reschedule-maintenance INSTANCE --location=asia-northeast3 --reschedule-type=SPECIFIC_TIME --schedule-time=UTC_ISO` and re-run the check. Rescheduling is possible up to 14 days from the original schedule, but not within one hour of its start. Memorystore sends maintenance notices at least one week ahead only to subscribed contacts, so subscribe the on-call address before the opening week.
+5. Restore Web/API minimum instances `1`; restore API instance-based CPU, set `BACKGROUND_PROCESSING_ENABLED=true`, and restore the tested maximums (`40` API / `50` Web were the prior ceilings). Confirm `API_MAX_INSTANCES`/`API_MIN_INSTANCES` are not the managed-demo `4`/`0`.
+6. Size API capacity for WebSockets, not only HTTP. Every waiting buyer holds one `/queue` Socket.IO connection, and an admitted buyer can also hold a `/booking` connection. Each one occupies a Cloud Run concurrency slot next to lock, prepare and confirm requests. Require `API_MAX_INSTANCES × API_CONCURRENCY ≥ 1.5 × (expected waiting + 2 × expected admitted + peak in-flight HTTP)`, adjusting `API_MAX_INSTANCES` or `API_CONCURRENCY`. The workflow pins the API request timeout to `3600s`, so sockets are not cut at the 300s default.
+7. Pause the five-minute Job only after continuous pg-boss workers are verified on the warm API revision.
+8. Prewarm is optional. If used, keep `grabit-prewarm-scale-up` and `grabit-prewarm-step-down` paused until the opening day. Schedule scale-up at least 15 minutes before the sale, and step-down only after the queue drains and traffic falls. Prewarm changes the service-level minimum, so it creates no new revision. Requests above the live API maximum are rejected. HTTP 200 means the Cloud Run operation finished; `202` with `state: pending` means it is still running, so check the returned operation. If prewarm is not used, keep both jobs paused.
+9. Choose a ticket-opening edge: a tested Cloudflare Worker plan with adequate limits, or a rebuilt GCP load balancer whose new certificates are `ACTIVE`.
+10. Pass load/concurrency (including the concurrent WebSocket count from step 6), DB backup restore, signup/login, SMS/email, payment/webhook/refund, queue/seat-lock, QR/check-in/offline sync, admin write, logs/alerts, and rollback rehearsals.
+11. Set `MIGRATION_FREEZE=true` from the day before the opening until venue entry ends. Hotfixes without schema changes still deploy; any pending migration fails the deploy before it touches the database.
+12. Record the go/no-go decision. `/admin/cutover` shows `finalEnableAllowed:true` only for a Gate Ledger that names this opening (`opening.id`, `label`, `performanceIds`, `opensAt`) and was generated within `CUTOVER_GATE_LEDGER_MAX_AGE_DAYS` (default 30). The packaged phase26 ledger is a historical record and is reported as stale and unscoped. To use the screen for a new opening, store a regenerated ledger as a Secret Manager secret and mount it on the API with `gcloud run services update grabit-api --update-secrets=/var/run/grabit-cutover/ledger.json=SECRET:latest`. Deploys merge secrets, so the mount persists. Then set repository variable `CUTOVER_GATE_LEDGER_PATH=/var/run/grabit-cutover/ledger.json`. Without a fresh ledger, record the per-performance publication, sale-status and sale-time checks and the owner approval outside the ledger as the explicit waiver that Gate 1 requires.
+13. Reopen `BOOKING_ENABLED=true` only after the evidence gates pass, using the kill-switch procedure in reverse or a manual Deploy dispatch with `allow_booking_reopen=true`.
+
+## Sitewide booking kill switch
+
+`BOOKING_ENABLED` is one sitewide gate. Per-performance opening is still controlled by publication, sale status and sale time. When it is false, the API rejects non-admin seat lock, prepare and confirm with 403 `예매는 추후 오픈 예정입니다`, and Web `/api/runtime-flags` reports `bookingEnabled:false`. API, Web and the worker get the same repository variable at deploy time.
+
+Close (emergency or preparation):
+
+```bash
+gh variable set BOOKING_ENABLED --body false
+gcloud run services update grabit-api --project=grapit-491806 --region=asia-northeast3 --update-env-vars=BOOKING_ENABLED=false
+gcloud run services update grabit-web --project=grapit-491806 --region=asia-northeast3 --update-env-vars=BOOKING_ENABLED=false
+gcloud run jobs update grabit-background-worker --project=grapit-491806 --region=asia-northeast3 --update-env-vars=BOOKING_ENABLED=false
+```
+
+Update the API first. It stops new seat locks and Toss confirm calls, so no new payment is approved through the confirm path; payments Toss has already approved still complete through the webhook and reconcile paths. Then update Web so the CTA and badges match. Verify that `https://heygrabit.com/api/runtime-flags` returns `bookingEnabled:false`, a non-admin seat lock or prepare returns 403, and API health returns 200.
+
+Reopen only after the gates pass: set the variable to `true`, run the same three updates with `BOOKING_ENABLED=true` (or dispatch the Deploy workflow with `allow_booking_reopen=true`), and verify the runtime flag and a buyer smoke.
+
+The Deploy workflow refuses to switch a live API or Web whose value is `false` (or unreadable) back to `true`, unless the run is a manual dispatch with `allow_booking_reopen=true`. A push to `main` therefore cannot silently undo a gcloud-only close. Closing through the variable never needs approval.
+
+## Deploy safety settings
+
+The Deploy workflow validates these repository variables before any job changes the database or Cloud Run:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `BOOKING_ENABLED` | `true` | Sitewide gate for API, Web and worker. Must be exactly `true` or `false`. |
+| `MIGRATION_LOCK_TIMEOUT` | `5s` | `lock_timeout` for every migration-job session, applied through `PGOPTIONS`. |
+| `MIGRATION_STATEMENT_TIMEOUT` | `60s` | `statement_timeout` for the same sessions. |
+| `MIGRATION_FREEZE` | `false` | `true` fails the deploy when any migration is pending. |
+| `API_CONCURRENCY` | `250` | API Cloud Run concurrency. |
+| `PGBOSS_POOL_MAX`, `DB_CONNECTION_RESERVE`, `DB_CONNECTION_BUDGET_ENFORCE` | `10`, `5`, `false` | Connection budget inputs. `true` makes an over-budget posture fail the deploy. |
+| `CUTOVER_GATE_LEDGER_PATH`, `CUTOVER_GATE_LEDGER_MAX_AGE_DAYS` | packaged phase26 ledger, `30` | Runtime-replaceable Gate Ledger and its freshness limit. |
+
+Drizzle applies all pending migrations in one transaction. If a migration cannot get its lock within `MIGRATION_LOCK_TIMEOUT`, it fails and rolls back instead of queueing every reservation and payment query behind it, and the API and Web deploy jobs do not run. Re-run the deploy in a quiet period. The database preflight reads the session settings back and refuses to migrate if `PGOPTIONS` was not applied. Build large indexes with `CREATE INDEX CONCURRENTLY` through a separate approved runbook, because the single migration transaction cannot run it.
+
+The API service is deployed with `--timeout=3600`, an HTTP startup probe, and an HTTP liveness probe on `/api/v1/health` (period 15s, timeout 5s, 4 failures). That endpoint checks only Valkey, so a brief Cloud SQL outage cannot cause a restart loop. An instance whose Valkey client stopped reconnecting is replaced after about one minute of continuous failures. Keep `/api/v1/health` free of database checks. `PREWARM_MAX_MIN_INSTANCES` follows `API_MAX_INSTANCES`.
 
 Official references: [Cloud Run minimum instances and scale to zero](https://cloud.google.com/run/docs/configuring/min-instances), [Cloud Run Jobs v2 patch](https://cloud.google.com/run/docs/reference/rest/v2/projects.locations.jobs/patch), [Cloud Run WebSockets](https://cloud.google.com/run/docs/triggering/websockets), [Cloud SQL instance settings](https://cloud.google.com/sql/docs/postgres/instance-settings), [Memorystore for Valkey node specifications](https://cloud.google.com/memorystore/docs/valkey/instance-node-specification), [Cloudflare Worker Routes](https://developers.cloudflare.com/workers/configuration/routing/routes/), and [Cloudflare Workers pricing](https://developers.cloudflare.com/workers/platform/pricing/).
 

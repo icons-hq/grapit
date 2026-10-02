@@ -15,6 +15,12 @@ export const PREWARM_ALLOWED_SCHEDULER_EMAIL = 'PREWARM_ALLOWED_SCHEDULER_EMAIL'
 export const PREWARM_ALLOWED_AUDIENCE = 'PREWARM_ALLOWED_AUDIENCE';
 export const PREWARM_ALLOWED_SERVICE_NAME = 'PREWARM_ALLOWED_SERVICE_NAME';
 export const PREWARM_MAX_MIN_INSTANCES = 'PREWARM_MAX_MIN_INSTANCES';
+export const PREWARM_OPERATION_WAIT_MS = 'PREWARM_OPERATION_WAIT_MS';
+
+const CLOUD_RUN_V2_BASE_URL = 'https://run.googleapis.com/v2';
+// Stays well inside Cloud Scheduler's default HTTP attempt deadline (180s).
+const DEFAULT_OPERATION_WAIT_MS = 45_000;
+const OPERATION_POLL_INTERVAL_MS = 2_000;
 
 const GOOGLE_OIDC_DISCOVERY_URL = 'https://accounts.google.com/.well-known/openid-configuration';
 const GOOGLE_METADATA_ACCESS_TOKEN_URL =
@@ -64,6 +70,43 @@ type CachedAccessToken = {
 
 type GoogleJwk = JsonWebKey & {
   kid?: string;
+};
+
+type CloudRunScaling = {
+  minInstanceCount?: number;
+  maxInstanceCount?: number;
+};
+
+type CloudRunService = {
+  scaling?: CloudRunScaling;
+  template?: {
+    scaling?: CloudRunScaling;
+  };
+};
+
+type CloudRunOperation = {
+  name?: string;
+  done?: boolean;
+  error?: { code?: number; message?: string };
+  response?: CloudRunService;
+};
+
+export type PrewarmUpdateState = 'applied' | 'pending';
+
+export type PrewarmUpdateResult = {
+  audience: string;
+  operation: 'scale-up' | 'step-down';
+  schedulerEmail: string;
+  serviceName: string;
+  minInstances: number;
+  maxInstances: number | null;
+  /**
+   * `applied`: the Cloud Run operation finished and the service-level minimum
+   * reads back as requested. `pending`: the request was accepted but the
+   * operation did not finish within PREWARM_OPERATION_WAIT_MS.
+   */
+  state: PrewarmUpdateState;
+  operationName: string | null;
 };
 
 @Injectable()
@@ -129,12 +172,20 @@ export class PrewarmService {
     }
   }
 
+  /**
+   * Prewarm changes the service-level `scaling.minInstanceCount`, not the
+   * revision template. A service-level minimum takes effect without a new
+   * revision, so scale-up/step-down never roll traffic (and Socket.IO
+   * connections) to a fresh revision. Cloud Run applies the highest active
+   * minimum, so stepping the service level down keeps the deploy-time
+   * revision minimum (API_MIN_INSTANCES) warm.
+   */
   private async updateMinInstances(
     serviceName: string,
     minInstances: number,
     operation: 'scale-up' | 'step-down',
     claims: PrewarmTokenClaims,
-  ) {
+  ): Promise<PrewarmUpdateResult> {
     if (!SERVICE_NAME_PATTERN.test(serviceName)) {
       throw new BadRequestException('PREWARM_INVALID_SERVICE_NAME');
     }
@@ -156,22 +207,32 @@ export class PrewarmService {
     const projectId = this.getRequiredEnv(PREWARM_PROJECT_ID);
     const region = this.getRequiredEnv(PREWARM_REGION);
     const accessToken = await this.getGoogleAccessToken();
-    const endpoint =
-      `https://run.googleapis.com/v2/projects/${encodeURIComponent(projectId)}` +
-      `/locations/${encodeURIComponent(region)}/services/${encodeURIComponent(serviceName)}` +
-      '?update_mask=template.scaling.minInstanceCount';
+    const headers = {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+    };
+    const serviceUrl =
+      `${CLOUD_RUN_V2_BASE_URL}/projects/${encodeURIComponent(projectId)}` +
+      `/locations/${encodeURIComponent(region)}/services/${encodeURIComponent(serviceName)}`;
 
-    const response = await fetch(endpoint, {
+    const serviceResponse = await fetch(serviceUrl, { headers });
+    if (!serviceResponse.ok) {
+      throw new ServiceUnavailableException(
+        `PREWARM_SERVICE_READ_FAILED:${serviceResponse.status}`,
+      );
+    }
+    const service = (await serviceResponse.json()) as CloudRunService;
+    const maxInstances = effectiveMaxInstances(service);
+    if (maxInstances !== null && minInstances > maxInstances) {
+      throw new BadRequestException('PREWARM_MIN_EXCEEDS_MAX_INSTANCES');
+    }
+
+    const response = await fetch(`${serviceUrl}?update_mask=scaling.minInstanceCount`, {
       method: 'PATCH',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify({
-        template: {
-          scaling: {
-            minInstanceCount: minInstances,
-          },
+        scaling: {
+          minInstanceCount: minInstances,
         },
       }),
     });
@@ -182,7 +243,15 @@ export class PrewarmService {
       );
     }
 
-    const payload = (await response.json()) as { name?: string };
+    const initialOperation = (await response.json()) as CloudRunOperation;
+    const finalOperation = await this.waitForOperation(initialOperation, headers);
+
+    if (finalOperation.done) {
+      const appliedMin = Number(finalOperation.response?.scaling?.minInstanceCount ?? 0);
+      if (finalOperation.response && appliedMin !== minInstances) {
+        throw new ServiceUnavailableException('PREWARM_SCALE_READBACK_MISMATCH');
+      }
+    }
 
     return {
       audience: claims.aud,
@@ -190,8 +259,54 @@ export class PrewarmService {
       schedulerEmail: claims.email,
       serviceName,
       minInstances,
-      operationName: payload.name ?? null,
+      maxInstances,
+      state: finalOperation.done ? 'applied' : 'pending',
+      operationName: finalOperation.name ?? initialOperation.name ?? null,
     };
+  }
+
+  private async waitForOperation(
+    operation: CloudRunOperation,
+    headers: Record<string, string>,
+  ): Promise<CloudRunOperation> {
+    const deadline = Date.now() + this.getOperationWaitMs();
+    let current = operation;
+
+    while (!current.done && current.name && Date.now() < deadline) {
+      await this.delay(Math.min(OPERATION_POLL_INTERVAL_MS, Math.max(0, deadline - Date.now())));
+      const pollResponse = await fetch(`${CLOUD_RUN_V2_BASE_URL}/${current.name}`, { headers });
+      if (!pollResponse.ok) {
+        throw new ServiceUnavailableException(
+          `PREWARM_OPERATION_READ_FAILED:${pollResponse.status}`,
+        );
+      }
+      current = (await pollResponse.json()) as CloudRunOperation;
+    }
+
+    if (current.done && current.error) {
+      throw new ServiceUnavailableException(
+        `PREWARM_SCALE_OPERATION_FAILED:${current.error.code ?? 'unknown'}`,
+      );
+    }
+
+    return current;
+  }
+
+  protected delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private getOperationWaitMs(): number {
+    const value = this.configService.get<string>(PREWARM_OPERATION_WAIT_MS)?.trim();
+    if (!value) {
+      return DEFAULT_OPERATION_WAIT_MS;
+    }
+    if (!/^\d+$/.test(value)) {
+      throw new ServiceUnavailableException(
+        `${PREWARM_OPERATION_WAIT_MS} must be a non-negative integer`,
+      );
+    }
+    return Number.parseInt(value, 10);
   }
 
   private extractBearerToken(req: PrewarmRequestLike): string {
@@ -374,4 +489,16 @@ export class PrewarmService {
     const value = Number.parseInt(match[1] ?? '300', 10);
     return Number.isFinite(value) && value > 0 ? value : 300;
   }
+}
+
+/**
+ * The lowest positive cap among the service-level and revision-template
+ * maximums. Cloud Run caps a minimum at the active maximum, so a prewarm above
+ * it could never become warm capacity.
+ */
+function effectiveMaxInstances(service: CloudRunService): number | null {
+  const caps = [service.scaling?.maxInstanceCount, service.template?.scaling?.maxInstanceCount]
+    .map((value) => Number(value))
+    .filter((value) => Number.isInteger(value) && value > 0);
+  return caps.length > 0 ? Math.min(...caps) : null;
 }

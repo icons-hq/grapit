@@ -85,6 +85,52 @@ function signServiceAccountToken(
   };
 }
 
+function jsonResponse(body: unknown, init?: ResponseInit) {
+  return new Response(JSON.stringify(body), {
+    headers: { 'content-type': 'application/json', 'cache-control': 'max-age=300' },
+    ...init,
+  });
+}
+
+function oidcAndTokenResponses(jwk: JsonWebKey) {
+  return [
+    jsonResponse({ jwks_uri: 'https://www.googleapis.com/oauth2/v3/certs' }),
+    jsonResponse({ keys: [jwk] }),
+    jsonResponse({ access_token: 'gcp-access-token', expires_in: 3600 }),
+  ];
+}
+
+function mockFetchSequence(responses: Response[]) {
+  const fetchMock = vi.fn();
+  for (const response of responses) {
+    fetchMock.mockResolvedValueOnce(response);
+  }
+  global.fetch = fetchMock as unknown as typeof global.fetch;
+  return fetchMock;
+}
+
+function schedulerRequest(token: string) {
+  return createRequest({
+    authorization: `Bearer ${token}`,
+    'x-prewarm-control-token': TEST_ENV.PREWARM_CONTROL_TOKEN,
+  }) as never;
+}
+
+function createService(env: Partial<Record<string, string>> = {}) {
+  const service = new PrewarmService({
+    get: vi.fn((key: string, fallback?: string) =>
+      key in env ? env[key] : (TEST_ENV as Record<string, string>)[key] ?? fallback,
+    ),
+  } as never);
+  vi.spyOn(service as unknown as { delay: (ms: number) => Promise<void> }, 'delay').mockResolvedValue(
+    undefined,
+  );
+  return service;
+}
+
+const SERVICE_URL =
+  'https://run.googleapis.com/v2/projects/grabit-prod/locations/asia-northeast3/services/grabit-api';
+
 describe('PrewarmService', () => {
   const originalFetch = global.fetch;
 
@@ -125,63 +171,36 @@ describe('PrewarmService', () => {
   );
 
   it('validates Scheduler OIDC claims and shared app token before scaling up', async () => {
-    const configService = createConfigService();
-    const service = new PrewarmService(configService as never);
+    const service = createService();
     const { token, jwk } = signServiceAccountToken();
+    const fetchMock = mockFetchSequence([
+      ...oidcAndTokenResponses(jwk),
+      jsonResponse({ template: { scaling: { maxInstanceCount: 100 } } }),
+      jsonResponse({
+        name: 'projects/grabit-prod/locations/asia-northeast3/operations/prewarm-scale-up',
+        done: false,
+      }),
+      jsonResponse({
+        name: 'projects/grabit-prod/locations/asia-northeast3/operations/prewarm-scale-up',
+        done: true,
+        response: { scaling: { minInstanceCount: 100 } },
+      }),
+    ]);
 
-    global.fetch = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            jwks_uri: 'https://www.googleapis.com/oauth2/v3/certs',
-          }),
-          { headers: { 'content-type': 'application/json', 'cache-control': 'max-age=300' } },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ keys: [jwk] }), {
-          headers: { 'content-type': 'application/json', 'cache-control': 'max-age=300' },
-        }),
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            access_token: 'gcp-access-token',
-            expires_in: 3600,
-          }),
-          { headers: { 'content-type': 'application/json' } },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            name:
-              'projects/grabit-prod/locations/asia-northeast3/operations/prewarm-scale-up',
-          }),
-          { headers: { 'content-type': 'application/json' } },
-        ),
-      ) as typeof global.fetch;
-
-    const result = await service.scaleUp(
-      'grabit-api',
-      100,
-      createRequest({
-        authorization: `Bearer ${token}`,
-        'x-prewarm-control-token': TEST_ENV.PREWARM_CONTROL_TOKEN,
-      }) as never,
-    );
+    const result = await service.scaleUp('grabit-api', 100, schedulerRequest(token));
 
     expect(result).toMatchObject({
       operation: 'scale-up',
       serviceName: 'grabit-api',
       minInstances: 100,
+      maxInstances: 100,
+      state: 'applied',
+      operationName: 'projects/grabit-prod/locations/asia-northeast3/operations/prewarm-scale-up',
     });
 
-    expect(global.fetch).toHaveBeenLastCalledWith(
-      expect.stringContaining(
-        '/v2/projects/grabit-prod/locations/asia-northeast3/services/grabit-api?update_mask=template.scaling.minInstanceCount',
-      ),
+    // Service-level scaling: no template change, therefore no new revision rollout.
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${SERVICE_URL}?update_mask=scaling.minInstanceCount`,
       expect.objectContaining({
         method: 'PATCH',
         headers: expect.objectContaining({
@@ -189,58 +208,108 @@ describe('PrewarmService', () => {
           'Content-Type': 'application/json',
         }),
         body: JSON.stringify({
-          template: {
-            scaling: {
-              minInstanceCount: 100,
-            },
+          scaling: {
+            minInstanceCount: 100,
           },
         }),
       }),
     );
+    expect(
+      fetchMock.mock.calls.some(([url]) => String(url).includes('template.scaling')),
+    ).toBe(false);
+    // The LRO is polled before success is reported.
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      'https://run.googleapis.com/v2/projects/grabit-prod/locations/asia-northeast3/operations/prewarm-scale-up',
+      expect.objectContaining({ headers: expect.any(Object) }),
+    );
   });
 
   it('defaults step-down to minInstances=0 after the same OIDC and app-token checks', async () => {
-    const configService = createConfigService();
-    const service = new PrewarmService(configService as never);
+    const service = createService();
     const { token, jwk } = signServiceAccountToken();
+    mockFetchSequence([
+      ...oidcAndTokenResponses(jwk),
+      jsonResponse({ template: { scaling: { maxInstanceCount: 40 } } }),
+      jsonResponse({ name: 'operations/prewarm-step-down', done: true, response: { scaling: {} } }),
+    ]);
 
-    global.fetch = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            jwks_uri: 'https://www.googleapis.com/oauth2/v3/certs',
-          }),
-          { headers: { 'content-type': 'application/json', 'cache-control': 'max-age=300' } },
-        ),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ keys: [jwk] }), {
-          headers: { 'content-type': 'application/json', 'cache-control': 'max-age=300' },
-        }),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ access_token: 'gcp-access-token', expires_in: 3600 }), {
-          headers: { 'content-type': 'application/json' },
-        }),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ name: 'operations/prewarm-step-down' }), {
-          headers: { 'content-type': 'application/json' },
-        }),
-      ) as typeof global.fetch;
-
-    const result = await service.stepDown(
-      'grabit-api',
-      undefined,
-      createRequest({
-        authorization: `Bearer ${token}`,
-        'x-prewarm-control-token': TEST_ENV.PREWARM_CONTROL_TOKEN,
-      }) as never,
-    );
+    const result = await service.stepDown('grabit-api', undefined, schedulerRequest(token));
 
     expect(result.minInstances).toBe(0);
     expect(result.operation).toBe('step-down');
+    expect(result.state).toBe('applied');
+  });
+
+  it('rejects a minimum above the live Cloud Run maximum before patching', async () => {
+    const service = createService();
+    const { token, jwk } = signServiceAccountToken();
+    const fetchMock = mockFetchSequence([
+      ...oidcAndTokenResponses(jwk),
+      jsonResponse({
+        scaling: { maxInstanceCount: 60 },
+        template: { scaling: { maxInstanceCount: 40 } },
+      }),
+    ]);
+
+    await expect(service.scaleUp('grabit-api', 41, schedulerRequest(token))).rejects.toMatchObject({
+      message: 'PREWARM_MIN_EXCEEDS_MAX_INSTANCES',
+    });
+    expect(fetchMock.mock.calls.some(([, init]) => (init as RequestInit)?.method === 'PATCH')).toBe(
+      false,
+    );
+  });
+
+  it('reports a failed Cloud Run operation instead of success', async () => {
+    const service = createService();
+    const { token, jwk } = signServiceAccountToken();
+    mockFetchSequence([
+      ...oidcAndTokenResponses(jwk),
+      jsonResponse({ template: { scaling: { maxInstanceCount: 40 } } }),
+      jsonResponse({ name: 'operations/prewarm-scale-up', done: false }),
+      jsonResponse({
+        name: 'operations/prewarm-scale-up',
+        done: true,
+        error: { code: 9, message: 'FAILED_PRECONDITION' },
+      }),
+    ]);
+
+    await expect(service.scaleUp('grabit-api', 20, schedulerRequest(token))).rejects.toMatchObject({
+      message: 'PREWARM_SCALE_OPERATION_FAILED:9',
+    });
+  });
+
+  it('marks the update pending when the operation does not finish within the wait budget', async () => {
+    const service = createService({ PREWARM_OPERATION_WAIT_MS: '0' });
+    const { token, jwk } = signServiceAccountToken();
+    const fetchMock = mockFetchSequence([
+      ...oidcAndTokenResponses(jwk),
+      jsonResponse({ template: { scaling: { maxInstanceCount: 40 } } }),
+      jsonResponse({ name: 'operations/prewarm-scale-up', done: false }),
+    ]);
+
+    const result = await service.scaleUp('grabit-api', 20, schedulerRequest(token));
+
+    expect(result.state).toBe('pending');
+    expect(result.operationName).toBe('operations/prewarm-scale-up');
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+
+  it('rejects an operation whose service-level minimum does not read back', async () => {
+    const service = createService();
+    const { token, jwk } = signServiceAccountToken();
+    mockFetchSequence([
+      ...oidcAndTokenResponses(jwk),
+      jsonResponse({ template: { scaling: { maxInstanceCount: 40 } } }),
+      jsonResponse({
+        name: 'operations/prewarm-scale-up',
+        done: true,
+        response: { scaling: { minInstanceCount: 1 } },
+      }),
+    ]);
+
+    await expect(service.scaleUp('grabit-api', 20, schedulerRequest(token))).rejects.toMatchObject({
+      message: 'PREWARM_SCALE_READBACK_MISMATCH',
+    });
   });
 
   it('rejects wrong aud and email claims before performing any scale change', async () => {
@@ -357,9 +426,9 @@ describe('PrewarmService', () => {
     ).toBe(false);
   });
 
-  it('registers prewarm routes with body validation and 202 status', async () => {
-    const scaleUp = vi.fn().mockResolvedValue({ operation: 'scale-up' });
-    const stepDown = vi.fn().mockResolvedValue({ operation: 'step-down' });
+  it('registers prewarm routes: 200 after the operation applied, 202 while pending', async () => {
+    const scaleUp = vi.fn().mockResolvedValue({ operation: 'scale-up', state: 'applied' });
+    const stepDown = vi.fn().mockResolvedValue({ operation: 'step-down', state: 'pending' });
     const moduleRef = await Test.createTestingModule({
       controllers: [PrewarmController],
       providers: [
@@ -386,9 +455,9 @@ describe('PrewarmService', () => {
       await request(server)
         .post('/internal/prewarm/services/grabit-api')
         .send({ minInstances: 100 })
-        .expect(HttpStatus.ACCEPTED)
+        .expect(HttpStatus.OK)
         .expect(({ body }) => {
-          expect(body).toEqual({ operation: 'scale-up' });
+          expect(body).toEqual({ operation: 'scale-up', state: 'applied' });
         });
       expect(scaleUp).toHaveBeenCalledWith('grabit-api', 100, expect.any(Object));
 
@@ -404,7 +473,7 @@ describe('PrewarmService', () => {
         .send({})
         .expect(HttpStatus.ACCEPTED)
         .expect(({ body }) => {
-          expect(body).toEqual({ operation: 'step-down' });
+          expect(body).toEqual({ operation: 'step-down', state: 'pending' });
         });
       expect(stepDown).toHaveBeenCalledWith('grabit-api', undefined, expect.any(Object));
     } finally {
