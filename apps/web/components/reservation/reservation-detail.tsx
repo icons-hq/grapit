@@ -1165,11 +1165,11 @@ export function ReservationDetailView({
         />
       )}
 
-      {/* Cancel info */}
+      {/* Cancel info: deadline and cancellation time, not the refund notice above */}
       <Card className="mt-4 py-4">
         <CardContent>
           <h2 className="mb-3 text-base font-semibold text-gray-900">
-            {copy.cancel.title}
+            {copy.cancel.deadlineTitle}
           </h2>
           <div className="flex items-start justify-between py-2">
             <span className="text-sm text-gray-600">{completeCopy.cancellationDeadline}</span>

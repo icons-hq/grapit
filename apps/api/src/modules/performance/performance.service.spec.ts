@@ -393,6 +393,51 @@ describe('PerformanceService', () => {
       expect(mockDb.select).toHaveBeenCalled();
     });
 
+    it('hides performances whose showtimes have all started when ended=false, in the page and the count', async () => {
+      await service.findByGenre('artist_celebrity', { page: 1, limit: 20, sort: 'latest', ended: false });
+
+      const dialect = new PgDialect();
+      const whereSql = mockDb._chainable.where.mock.calls.map(
+        ([condition]) => dialect.sqlToQuery(condition).sql,
+      );
+      expect(whereSql).toHaveLength(2);
+      for (const sql of whereSql) {
+        expect(sql).toContain('"performances"."status" <> $');
+        expect(sql).toMatch(/exists \(select 1 from "showtimes" where \("showtimes"\."performance_id" = "performances"\."id" and "showtimes"\."date_time" > \$\d+\)\)/);
+      }
+    });
+
+    it('lists a selling performance whose showtimes have all started as ended', async () => {
+      mockDb.select.mockReturnValueOnce(createChainableResult([{
+        id: PHASE23_I18N_SMOKE_PERFORMANCE_ID, title: '팬미팅', genre: 'artist_celebrity', posterUrl: null,
+        status: 'selling', startDate: new Date('2026-07-18T00:00:00.000Z'),
+        endDate: new Date('2026-07-18T00:00:00.000Z'), venueName: null,
+        bookingStartsAt: new Date('2026-07-01T00:00:00.000Z'),
+        lastShowtimeAt: new Date(Date.now() - 60_000),
+      }])).mockReturnValueOnce(createChainableResult([{ count: 1, nextBookingStartsAt: null }]));
+
+      const result = await service.findByGenre('artist_celebrity', { page: 1, limit: 20, sort: 'latest', ended: true });
+
+      expect(result.data[0]?.status).toBe('ended');
+    });
+
+    it('expires a list page when a listed performance\'s last showtime starts', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-09-21T10:00:00Z'));
+      try {
+        mockDb.select.mockReturnValueOnce(createChainableResult([{
+          id: PHASE23_I18N_SMOKE_PERFORMANCE_ID, title: '팬미팅', genre: 'artist_celebrity', posterUrl: null,
+          status: 'selling', startDate: null, endDate: null, venueName: null, bookingStartsAt: null,
+          lastShowtimeAt: new Date('2026-09-21T10:00:30Z'),
+        }])).mockReturnValueOnce(createChainableResult([{ count: 1, nextBookingStartsAt: null }]));
+
+        const result = await service.findByGenre('artist_celebrity', { page: 1, limit: 20, sort: 'latest', ended: false });
+
+        expect(result.data[0]?.status).toBe('selling');
+        expect(mockCache.set).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ total: 1 }), 30);
+      } finally { vi.useRealTimers(); }
+    });
+
     it('filters public genre lists to published performances', async () => {
       await service.findByGenre('artist_celebrity', {
         page: 1,
@@ -1005,6 +1050,28 @@ describe('PerformanceService', () => {
   });
 
   describe('controller public detail status', () => {
+    it('reads a selling performance whose showtimes have all started as ended', async () => {
+      const detail = {
+        id: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
+        status: 'selling',
+        bookingPolicy: { bookingStartsAt: '2026-07-01T00:00:00.000Z' },
+        showtimes: [
+          { id: 's1', performanceId: PHASE23_I18N_SMOKE_PERFORMANCE_ID, dateTime: '2026-07-18T05:00:00.000Z' },
+        ],
+      } as unknown as PerformanceWithDetails;
+      const controller = new PerformanceController({
+        findById: vi.fn().mockResolvedValue(detail),
+      } as unknown as PerformanceService);
+
+      expect((await controller.getPerformance(PHASE23_I18N_SMOKE_PERFORMANCE_ID)).status).toBe('ended');
+
+      detail.showtimes.push({
+        id: 's2', performanceId: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
+        dateTime: new Date(Date.now() + 3_600_000).toISOString(),
+      });
+      expect((await controller.getPerformance(PHASE23_I18N_SMOKE_PERFORMANCE_ID)).status).toBe('selling');
+    });
+
     it('reads a selling performance with a future booking start as upcoming, like list cards', async () => {
       const detail = {
         id: PHASE23_I18N_SMOKE_PERFORMANCE_ID,
@@ -1138,6 +1205,29 @@ describe('PerformanceService', () => {
       expect(hasPublishStatePublishedFilter(whereCondition)).toBe(true);
     });
 
+    it('lists only performances with a showtime still on sale (or none scheduled yet)', async () => {
+      await service.getHotPerformances();
+
+      const [whereCondition] = mockDb._chainable.where.mock.calls[0] ?? [];
+      const { sql } = new PgDialect().sqlToQuery(whereCondition);
+      expect(sql).toMatch(/exists \(select 1 from "showtimes" where \("showtimes"\."performance_id" = "performances"\."id" and "showtimes"\."date_time" > \$\d+\)\)/);
+      expect(sql).toMatch(/not exists \(select 1 from "showtimes" where "showtimes"\."performance_id" = "performances"\."id"\)/);
+    });
+
+    it('expires the hot list when a listed performance\'s last showtime starts', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-09-21T10:00:00Z'));
+      try {
+        mockDb.select.mockReturnValueOnce(createChainableResult([{
+          id: PHASE23_I18N_SMOKE_PERFORMANCE_ID, title: '팬미팅', genre: 'artist_celebrity', posterUrl: null,
+          status: 'selling', startDate: null, endDate: null, venueName: null, bookingStartsAt: null,
+          lastShowtimeAt: new Date('2026-09-21T10:00:45Z'),
+        }])).mockReturnValueOnce(createChainableResult([{ nextBookingStartsAt: null }]));
+        await service.getHotPerformances();
+        expect(mockCache.set).toHaveBeenCalledWith(expect.any(String), expect.any(Array), 45);
+      } finally { vi.useRealTimers(); }
+    });
+
     it('expires the hot list at the next opening that is not listed yet', async () => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date('2026-09-21T10:00:00Z'));
@@ -1167,6 +1257,16 @@ describe('PerformanceService', () => {
 
       const [whereCondition] = mockDb._chainable.where.mock.calls[0] ?? [];
       expect(hasPublishStatePublishedFilter(whereCondition)).toBe(true);
+    });
+
+    it('leaves out performances whose showtimes have all started, like operator-ended ones', async () => {
+      await service.getNewPerformances();
+
+      const [whereCondition] = mockDb._chainable.where.mock.calls[0] ?? [];
+      const { sql, params } = new PgDialect().sqlToQuery(whereCondition);
+      expect(sql).toContain('"performances"."status" <> $');
+      expect(sql).toMatch(/exists \(select 1 from "showtimes" where \("showtimes"\."performance_id" = "performances"\."id" and "showtimes"\."date_time" > \$\d+\)\)/);
+      expect(params).toContain('ended');
     });
   });
 });

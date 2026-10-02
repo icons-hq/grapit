@@ -212,6 +212,40 @@ describe('MyPage account hub', () => {
     expect(mocks.routerReplace).toHaveBeenCalledWith('/mypage?tab=settings');
   });
 
+  it.each([
+    ['ko', '/mypage', '한국어', 'Korean'],
+    ['th', '/mypage', 'ไทย', 'Thai'],
+    ['ko', '/en/mypage', '한국어', 'Korean'],
+  ] as const)(
+    'shows a %s language preference by its own name on %s, not its English name',
+    (preferredLocale, path, nativeName, englishName) => {
+      window.history.replaceState(null, '', path);
+      const previous = mocks.user.preferredLocale;
+      mocks.user.preferredLocale = preferredLocale;
+      try {
+        render(<MyPage />);
+        expect(screen.getByText(nativeName)).toBeInTheDocument();
+        expect(screen.queryByText(englishName)).not.toBeInTheDocument();
+      } finally {
+        mocks.user.preferredLocale = previous;
+      }
+    },
+  );
+
+  it('lays the ticket wallet counts out in two columns on phones so the list stays in view', () => {
+    mocks.search = 'tab=wallet';
+
+    render(<MyPage />);
+
+    const summary = screen.getByTestId('ticket-wallet-summary');
+    expect(summary).toHaveClass('grid-cols-2', 'sm:grid-cols-3', 'lg:grid-cols-5');
+    const tiles = Array.from(summary.children);
+    expect(tiles).toHaveLength(5);
+    // The fifth tile would sit alone in the last phone row; it spans it instead.
+    expect(tiles[4]).toHaveClass('col-span-2', 'sm:col-span-1');
+    expect(tiles.slice(0, 4).every((tile) => !tile.classList.contains('col-span-2'))).toBe(true);
+  });
+
   it('keeps ProfileForm as the settings core', () => {
     mocks.search = 'tab=settings';
 

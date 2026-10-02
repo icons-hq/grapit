@@ -25,6 +25,7 @@ import {
 import { AutomaticTranslationLabel } from '@/components/i18n/automatic-translation-label';
 import { CurrencyDisplay } from '@/components/i18n/currency-display';
 import {
+  formatBookingOpensAtKst,
   parseBookingStartMs,
   resolveBookingStartPerformanceStatus,
 } from '@/components/performance/performance-display-status';
@@ -122,6 +123,12 @@ export default function PerformanceDetailPage({
   );
   // Booking stays closed while the flags are unknown, but the badge is not downgraded.
   const displayStatus = getDisplayPerformanceStatus(saleStatus, bookingEnabled, flagsResolved);
+  // The open time the home list shows for this performance, repeated here while
+  // booking has not started yet.
+  const bookingOpensAt =
+    saleStatus === 'upcoming'
+      ? formatBookingOpensAtKst(performance.bookingPolicy?.bookingStartsAt, activeLocale)
+      : null;
 
   return (
     <>
@@ -187,16 +194,22 @@ export default function PerformanceDetailPage({
                   icon={<Calendar className="h-4 w-4" />}
                   label={copy.performance.scheduleLabel}
                   value={
-                    saleStatus === 'upcoming' ? (
-                      copy.performance.upcomingDateLabel
-                    ) : (
+                    <>
                       <PerformancePeriod
                         startDate={performance.startDate}
                         endDate={performance.endDate}
                         locale={activeLocale}
                         fallback={copy.home.dateUnknown}
                       />
-                    )
+                      {bookingOpensAt && (
+                        <p
+                          className="mt-1 text-xs font-medium text-primary"
+                          data-testid="performance-booking-opens-at"
+                        >
+                          {copy.home.bookingOpens.replace('{date}', bookingOpensAt)}
+                        </p>
+                      )}
+                    </>
                   }
                 />
                 {performance.runtime && (

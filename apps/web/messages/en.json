@@ -811,6 +811,7 @@
         "Other"
       ],
       "title": "Refund and seat reopening notice",
+      "deadlineTitle": "Cancellation deadline",
       "description": "Cancel individual seats from their ticket cards, or cancel the whole booking. Review the refund and remaining tickets before confirming.",
       "reasonLabel": "Cancellation reason",
       "reasonPlaceholder": "Select a cancellation reason",

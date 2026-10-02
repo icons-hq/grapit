@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { eq, desc, sql, and, ne } from 'drizzle-orm';
+import { eq, desc, sql, and } from 'drizzle-orm';
 import {
   DEFAULT_LOCALE,
   type PerformanceCardData,
@@ -7,7 +7,11 @@ import {
   type SearchQuery,
 } from '@grabit/shared';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
-import { publicCatalogCardSelection, mapPublicCatalogCard } from '../performance/catalog-card.js';
+import {
+  publicCatalogCardSelection,
+  mapPublicCatalogCard,
+  publicCatalogNotEndedCondition,
+} from '../performance/catalog-card.js';
 import { performances, venues, bookingPolicies } from '../../database/schema/index.js';
 import {
   overlayReviewedCardTranslations,
@@ -34,7 +38,9 @@ export class SearchService {
     }
 
     if (!ended) {
-      conditions.push(ne(performances.status, 'ended'));
+      // Same rule as the cards: a performance whose showtimes have all started
+      // reads as ended even while its operator status says selling.
+      conditions.push(publicCatalogNotEndedCondition());
     }
 
     // tsvector + ILIKE combined search. Foreign-locale searches also match

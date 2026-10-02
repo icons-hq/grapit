@@ -32,6 +32,7 @@ import { useMyReservations } from '@/hooks/use-reservations';
 import { getVisibleCopy, type VisibleCopy } from '@/lib/i18n/visible-copy';
 import { getLocalizedPathname } from '@/components/i18n/locale-switcher';
 import { getClientLocale } from '@/lib/i18n/client-copy';
+import { cn } from '@/lib';
 
 type MyPageTab = 'account' | 'wallet' | 'settings';
 type AccountHubUser = UserProfile & {
@@ -327,7 +328,9 @@ function AccountHub({
           <InfoTile label={visibleCopy.auth.signup.countryLabel} value={getCountryLabel(user.country, locale)} />
           <InfoTile
             label={profileCopy.preferredLocale}
-            value={LOCALE_LABELS[user.preferredLocale].english}
+            // Each language by its own name (한국어, English, ไทย, 简体中文), as the
+            // language switcher shows it, never the English name on a Korean page.
+            value={LOCALE_LABELS[user.preferredLocale].native}
             icon={<Languages className="h-4 w-4" />}
           />
           <InfoTile
@@ -433,11 +436,19 @@ function InfoTile({
   );
 }
 
-function StatusTile({ label, value }: { label: string; value: number | string }) {
+function StatusTile({
+  label,
+  value,
+  className,
+}: {
+  label: string;
+  value: number | string;
+  className?: string;
+}) {
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4">
-      <p className="text-2xl font-semibold text-gray-950">{value}</p>
-      <p className="mt-1 text-sm text-gray-500">{label}</p>
+    <div className={cn('rounded-lg border border-gray-200 bg-white p-3 sm:p-4', className)}>
+      <p className="text-xl font-semibold text-gray-950 sm:text-2xl">{value}</p>
+      <p className="mt-1 text-xs text-gray-500 sm:text-sm">{label}</p>
     </div>
   );
 }
@@ -476,7 +487,12 @@ function TicketWallet({
         </div>
       </div>
 
-      <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      {/* Two columns on phones so the five counts do not push the booking list
+          below the fold; the odd last tile spans the row there. */}
+      <div
+        className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5"
+        data-testid="ticket-wallet-summary"
+      >
         <StatusTile label={mypageCopy.summary.total} value={summary.total} />
         <StatusTile label={reservationCopy.status.confirmed} value={summary.CONFIRMED} />
         <StatusTile
@@ -484,7 +500,11 @@ function TicketWallet({
           value={summary.PENDING_PAYMENT}
         />
         <StatusTile label={reservationCopy.status.cancelled} value={summary.CANCELLED} />
-        <StatusTile label={reservationCopy.status.failed} value={summary.FAILED} />
+        <StatusTile
+          label={reservationCopy.status.failed}
+          value={summary.FAILED}
+          className="col-span-2 sm:col-span-1"
+        />
       </div>
 
       <div className="mt-6">

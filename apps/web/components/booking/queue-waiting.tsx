@@ -373,6 +373,23 @@ export function QueueWaiting({
     status === 'retry' ||
     status === 'challenge' ||
     status === 'blocked';
+  const showRetryAction =
+    status === 'retry' ||
+    status === 'challenge' ||
+    status === 'authRequired' ||
+    status === 'expired';
+  const showEnterNowAction = status === 'admitted' && showEnterNow;
+  // The booking route has no header, and in-app browsers may have no back
+  // button either: every surface the buyer can stay on (closed, not open yet,
+  // blocked, waiting in line) needs its own way out.
+  const showBackAction =
+    Boolean(onBack) &&
+    (status === 'closed' ||
+      status === 'notOpen' ||
+      status === 'blocked' ||
+      status === 'waiting');
+  // An empty footer would render as a bare strip under the card.
+  const hasFooterAction = showRetryAction || showEnterNowAction || showBackAction;
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-neutral-50 via-white to-[#f3efff] px-4 py-8 sm:px-6 lg:px-8">
@@ -549,35 +566,27 @@ export function QueueWaiting({
             </section>
           </CardContent>
 
-          <CardFooter className="flex flex-col gap-3 border-t bg-neutral-50/80 px-6 py-5 sm:flex-row sm:justify-end">
-            {(status === 'retry' ||
-              status === 'challenge' ||
-              status === 'authRequired' ||
-              status === 'expired') && (
-              <Button size="lg" variant="outline" onClick={onRetry}>
-                {queueCopy.retryAction}
-              </Button>
-            )}
-            {status === 'admitted' && showEnterNow && (
-              <Button size="lg" onClick={onEnterNow}>
-                {queueCopy.enterNowAction}
-              </Button>
-            )}
-            {status === 'closed' && onBack && (
-              <Button size="lg" variant="outline" onClick={onBack}>
-                {isNotFound
-                  ? queueCopy.backHomeAction ?? FALLBACK_QUEUE_COPY.backHomeAction
-                  : queueCopy.backAction ?? FALLBACK_QUEUE_COPY.backAction}
-              </Button>
-            )}
-            {/* No other action leads away from these surfaces; in-app browsers
-                may have no back button either. */}
-            {(status === 'notOpen' || status === 'blocked') && onBack && (
-              <Button size="lg" variant="outline" onClick={onBack}>
-                {queueCopy.backAction ?? FALLBACK_QUEUE_COPY.backAction}
-              </Button>
-            )}
-          </CardFooter>
+          {hasFooterAction && (
+            <CardFooter className="flex flex-col gap-3 border-t bg-neutral-50/80 px-6 py-5 sm:flex-row sm:justify-end">
+              {showRetryAction && (
+                <Button size="lg" variant="outline" onClick={onRetry}>
+                  {queueCopy.retryAction}
+                </Button>
+              )}
+              {showEnterNowAction && (
+                <Button size="lg" onClick={onEnterNow}>
+                  {queueCopy.enterNowAction}
+                </Button>
+              )}
+              {showBackAction && (
+                <Button size="lg" variant="outline" onClick={onBack}>
+                  {isNotFound
+                    ? queueCopy.backHomeAction ?? FALLBACK_QUEUE_COPY.backHomeAction
+                    : queueCopy.backAction ?? FALLBACK_QUEUE_COPY.backAction}
+                </Button>
+              )}
+            </CardFooter>
+          )}
         </Card>
       </div>
     </main>

@@ -65,6 +65,21 @@ const SVG_WITH_TEXT_OVERLAY = `
 </svg>
 `;
 
+// sample-seat-map.svg shape: seats at the top level, row letters beside them and
+// seat numbers in a separate <g> drawn on top of the seats.
+const SVG_WITH_DETACHED_NUMBER_LABELS = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 120">
+  <text x="400" y="55" text-anchor="middle">STAGE</text>
+  <text x="10" y="40" text-anchor="middle">A</text>
+  <rect data-seat-id="A-1" x="20" y="20" width="32" height="32" rx="4" />
+  <rect data-seat-id="A-2" x="62" y="20" width="32" height="32" rx="4" />
+  <g font-size="10" text-anchor="middle">
+    <text x="36" y="40">1</text><text x="78" y="40"><tspan>2</tspan></text>
+  </g>
+  <text data-seat-id="B-1" x="36" y="90">B1<tspan dx="2">*</tspan></text>
+</svg>
+`;
+
 const SVG_WITH_SEAT_KEY = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 120">
   <g class="seat-cell">
@@ -334,6 +349,55 @@ describe('SeatMapViewer', () => {
     expect(seatLabel?.getAttribute('pointer-events')).toBe('none');
     fireEvent.click(seatLabel!);
     expect(onSeatClick).toHaveBeenCalledWith('A-1');
+  });
+
+  it('lets taps on seat numbers drawn in a separate group reach the seat underneath', async () => {
+    const onSeatClick = vi.fn();
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      text: () => Promise.resolve(SVG_WITH_DETACHED_NUMBER_LABELS),
+    });
+
+    const { container } = render(
+      <SeatMapViewer
+        svgUrl="https://example.com/detached-labels.svg"
+        seatConfig={mockSeatConfig}
+        seatStates={new Map<string, SeatState>([
+          ['A-1', 'available'],
+          ['A-2', 'available'],
+          ['B-1', 'available'],
+        ])}
+        selectedSeatIds={new Set()}
+        onSeatClick={onSeatClick}
+        maxSelect={4}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('[data-seat-id="A-1"]')).toBeTruthy();
+    });
+
+    // Row letters, the stage label and seat numbers outside the seat's own group
+    // are not hit targets, so a tap on them falls through to the seat rect.
+    const nonSeatTexts = Array.from(container.querySelectorAll('svg text, svg tspan')).filter(
+      (node) => !node.closest('[data-seat-id]') && !node.hasAttribute('data-seat-checkmark'),
+    );
+    expect(nonSeatTexts.map((node) => node.textContent?.trim())).toEqual(
+      expect.arrayContaining(['STAGE', 'A', '1', '2']),
+    );
+    for (const node of nonSeatTexts) {
+      expect(node.getAttribute('pointer-events')).toBe('none');
+    }
+
+    // A seat that is itself a <text> stays clickable, children included.
+    const textSeat = container.querySelector('[data-seat-id="B-1"]')!;
+    expect(textSeat.getAttribute('pointer-events')).toBeNull();
+    expect(textSeat.querySelector('tspan')?.getAttribute('pointer-events')).toBeNull();
+
+    fireEvent.click(container.querySelector('[data-seat-id="A-1"]')!);
+    fireEvent.click(textSeat);
+    expect(onSeatClick).toHaveBeenNthCalledWith(1, 'A-1');
+    expect(onSeatClick).toHaveBeenNthCalledWith(2, 'B-1');
   });
 
   it('does NOT call onSeatClick when clicking a locked seat', async () => {

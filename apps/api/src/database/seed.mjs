@@ -275,7 +275,9 @@ async function seed() {
         endDate: new Date('2026-07-18T14:59:59.000Z').toISOString(),
         runtime: '120분',
         ageRating: '전체 관람가',
-        status: 'selling',
+        // Its only showtime (2026-07-18) has started, so the catalog reads it
+        // as ended anyway; store the same status so seeded data is consistent.
+        status: 'ended',
         viewCount: 0,
       },
     ];
