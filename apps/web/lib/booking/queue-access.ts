@@ -52,14 +52,19 @@ type QueueAccessLocale = 'ko' | 'en' | 'th' | 'zh-CN';
 /**
  * Server messages (403) of a seat lock, prepare or payment handoff refused for
  * the queue admission itself: the window ended, the admission was used up by a
- * purchase in another tab, the admission cookie is missing or for another
- * performance, or (handoff) the order is bound to another browser session.
+ * purchase in another tab, the admission cookie is missing, for another
+ * performance or still WAITING (this browser re-entered the queue elsewhere), or
+ * (handoff) the order is bound to another browser session.
  * Other 403s (sales closed, booking disabled) are not about the queue.
+ * Matched by message prefix (the error code field is not delivered yet), so every
+ * admission 403 message of the API (queue.service admission checks, admission.guard)
+ * must start with one of these.
  */
 const QUEUE_ACCESS_REJECTION_PREFIXES = [
   '대기열 입장 시간이 만료되었습니다',
   '대기열 입장 인증이 필요합니다',
   '대기열 입장 정보가',
+  '대기열 입장이 아직',
 ] as const;
 
 export function isQueueAccessRejection(statusCode: number, message: string): boolean {

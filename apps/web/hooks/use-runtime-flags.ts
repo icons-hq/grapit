@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useQuery, type Query } from '@tanstack/react-query';
 import { useLocale } from 'next-intl';
+import { useServerClockOffsetMs } from '@/hooks/use-server-clock';
 import { getServerNowMs } from '@/lib/server-clock';
 import {
   RuntimeFlagsUnavailableError,
@@ -106,6 +107,14 @@ export const SERVER_CLOCK_RESYNC_LEAD_MS = 30_000;
 export const SERVER_CLOCK_RESYNC_SPREAD_MS = 10_000;
 const MAX_TIMEOUT_MS = 2_147_483_647;
 
+interface ResyncPlan {
+  targetMs: number;
+  /** Server instant of the re-read, jitter included. */
+  resyncAtMs: number;
+  /** The re-read already ran; a later offset change must not trigger another one. */
+  done: boolean;
+}
+
 export interface UseRuntimeFlagsOptions {
   /**
    * A server instant (for example a booking start) the page acts on. The flags are
@@ -132,20 +141,51 @@ export function useRuntimeFlags(options: UseRuntimeFlagsOptions = {}) {
   const isResolved = query.data !== undefined;
   const { refetch } = query;
   const resyncClockBeforeMs = options.resyncClockBeforeMs ?? null;
+  // The delay is measured on the server clock, so it must be re-armed whenever a
+  // sample corrects the offset: the first sample usually lands after mount, and a
+  // device that is X seconds slow would otherwise re-check X seconds late.
+  const serverClockOffsetMs = useServerClockOffsetMs();
+  const resyncPlanRef = useRef<ResyncPlan | null>(null);
 
   useEffect(() => {
     if (resyncClockBeforeMs === null || !Number.isFinite(resyncClockBeforeMs)) return;
-    const resyncAtMs = resyncClockBeforeMs - SERVER_CLOCK_RESYNC_LEAD_MS
-      + Math.floor(Math.random() * SERVER_CLOCK_RESYNC_SPREAD_MS);
-    const delayMs = resyncAtMs - getServerNowMs();
-    // Already inside the window (the page has just read the flags) or too far away.
-    if (delayMs <= 0 || delayMs > MAX_TIMEOUT_MS) return;
+    // One jittered instant per target: re-arming after an offset change keeps it.
+    let plan = resyncPlanRef.current;
+    if (plan?.targetMs !== resyncClockBeforeMs) {
+      plan = {
+        targetMs: resyncClockBeforeMs,
+        resyncAtMs: resyncClockBeforeMs - SERVER_CLOCK_RESYNC_LEAD_MS
+          + Math.floor(Math.random() * SERVER_CLOCK_RESYNC_SPREAD_MS),
+        done: false,
+      };
+      resyncPlanRef.current = plan;
+    }
+    const activePlan = plan;
+    if (activePlan.done) return;
 
-    const timer = window.setTimeout(() => {
-      void refetch();
-    }, delayMs);
-    return () => window.clearTimeout(timer);
-  }, [refetch, resyncClockBeforeMs]);
+    let timer: number | null = null;
+    const arm = () => {
+      const delayMs = activePlan.resyncAtMs - getServerNowMs();
+      // Already inside the window (the flags, and with them a clock sample, have
+      // just been read) or too far away.
+      if (delayMs <= 0 || delayMs > MAX_TIMEOUT_MS) return;
+      timer = window.setTimeout(() => {
+        timer = null;
+        // Timers can fire early relative to the corrected clock; wait for it.
+        if (getServerNowMs() < activePlan.resyncAtMs) {
+          arm();
+          return;
+        }
+        activePlan.done = true;
+        void refetch();
+      }, delayMs);
+    };
+    arm();
+
+    return () => {
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [refetch, resyncClockBeforeMs, serverClockOffsetMs]);
 
   return {
     ...(query.data ?? FAIL_CLOSED_FLAGS),

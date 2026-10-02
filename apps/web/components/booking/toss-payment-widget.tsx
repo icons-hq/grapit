@@ -56,6 +56,16 @@ type WidgetMethodCategory =
   | { kind: 'SIMPLE_PAY'; provider: 'TOSS_PAY' | 'NAVER_PAY' | 'KAKAOPAY' }
   | { kind: 'FOREIGN_EASY_PAY'; provider: 'ALIPAY_PLUS' | 'TRUEMONEY' | 'PAYPAL' };
 
+/**
+ * Card issuer shortcut codes of the SDK type (SHINHAN, HYUNDAI, KOOKMIN, BC, IBK_BC, ...)
+ * are deliberately left out. Most of them are also Toss bank institution codes (SHINHAN,
+ * WOORI, KOOKMIN, HANA, NONGHYEOP, CITI, ...), so a code alone cannot tell a card from an
+ * account transfer. The server compares the approved method with the method fixed on the
+ * checkout (findApprovedMethodPolicyMismatch -> checkout_method_mismatch), so guessing CARD
+ * for a transfer would charge the buyer and then cancel it in compensation. Refusing before
+ * the handoff is safer. Operating premise: the DEFAULT variant keeps card issuer and bank
+ * shortcuts off in the Toss console (open-audit runbook 1.3).
+ */
 const WIDGET_METHOD_CATEGORY_BY_CODE = new Map<string, WidgetMethodCategory>([
   ['CARD', { kind: 'CARD' }],
   ['카드', { kind: 'CARD' }],
@@ -118,6 +128,13 @@ interface TossPaymentWidgetProps {
   onPaymentMethodChange?: (selection: PaymentMethodSelection) => void;
   onWidgetAgreementChange?: (agreed: boolean) => void;
   onPaymentDeadlineChange?: (paymentDeadlineAt: string) => void;
+  /**
+   * The widget could not load (missing client key, SDK or render failure): the message
+   * it shows in place of the payment methods and terms, or null once a load starts again
+   * or succeeds. Checkout uses it for the pay button instead of asking for terms the
+   * buyer cannot see.
+   */
+  onLoadError?: (message: string | null) => void;
 }
 
 export interface TossPaymentWidgetRef {
@@ -592,6 +609,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
       onPaymentMethodChange,
       onWidgetAgreementChange,
       onPaymentDeadlineChange,
+      onLoadError,
     },
     ref,
   ) {
@@ -607,7 +625,19 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
     );
     const [widgetState, setWidgetState] = useState<PaymentWidgetState | null>(null);
     const [isLoading, setIsLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
+    const [error, setErrorState] = useState<string | null>(null);
+    // Read through a ref so a new callback identity never restarts the widget load.
+    const onLoadErrorRef = useRef(onLoadError);
+    useEffect(() => {
+      onLoadErrorRef.current = onLoadError;
+    }, [onLoadError]);
+    /** The shown load error and the one reported to checkout always change together. */
+    const setError = useCallback((message: string | null) => {
+      setErrorState(message);
+      onLoadErrorRef.current?.(message);
+    }, []);
+    // An unmounted widget shows no error any more.
+    useEffect(() => () => onLoadErrorRef.current?.(null), []);
     const paymentWidgetClientKey = resolvePaymentWidgetClientKey(paymentWidgetVariantKey);
     const widgets = widgetState?.variantKey === paymentWidgetVariantKey
       ? widgetState.widgets
@@ -903,6 +933,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
       paymentWidgetVariantKey,
       shouldRenderPaymentWidgets,
       destroyRenderedWidgets,
+      setError,
       widgetCopy,
     ]);
 
@@ -995,6 +1026,7 @@ export const TossPaymentWidget = forwardRef<TossPaymentWidgetRef, TossPaymentWid
       shouldRenderPaymentWidgets,
       destroyRenderedWidgets,
       destroyWidgetInstance,
+      setError,
       widgetCopy,
     ]);
 

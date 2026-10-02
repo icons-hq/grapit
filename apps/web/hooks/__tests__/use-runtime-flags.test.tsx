@@ -16,7 +16,12 @@ import {
   type UseRuntimeFlagsOptions,
 } from '@/hooks/use-runtime-flags';
 import { RuntimeFlagsUnavailableError } from '@/lib/runtime-flags';
-import { resetServerClockForTests } from '@/lib/server-clock';
+import {
+  getServerClockOffsetMs,
+  getServerNowMs,
+  recordServerTimeSample,
+  resetServerClockForTests,
+} from '@/lib/server-clock';
 
 vi.mock('next-intl', () => ({
   useLocale: () => 'ko',
@@ -179,6 +184,79 @@ describe('useRuntimeFlags', () => {
     await flush(1);
     expect(fetchMock).toHaveBeenCalledTimes(2);
 
+    await flush(60_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-arms the resync on the server clock once the first clock sample corrects the offset', async () => {
+    fetchMock.mockResolvedValue(okResponse(true));
+    // The device clock is 60 seconds slow; the first sample arrives after mount.
+    const deviceSlowByMs = 60_000;
+    const serverNowAtMount = Date.now() + deviceSlowByMs;
+    const startMs = serverNowAtMount + 120_000;
+    renderRuntimeFlags({ resyncClockBeforeMs: startMs });
+    await flush();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      const deviceNow = Date.now();
+      recordServerTimeSample({
+        serverNowMs: deviceNow + deviceSlowByMs,
+        requestStartedAtMs: deviceNow,
+        responseReceivedAtMs: deviceNow,
+      });
+    });
+    expect(getServerClockOffsetMs()).toBe(deviceSlowByMs);
+
+    // Math.random() = 1: 20 seconds before the start on the server clock,
+    // i.e. 100 seconds after mount (not 160 seconds by the device clock).
+    await flush(100_000 - 1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await flush(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(startMs - getServerNowMs()).toBe(20_000);
+
+    // The timer armed on the uncorrected clock is gone: no second re-read.
+    await flush(120_000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the jittered resync instant and runs it once across offset corrections', async () => {
+    fetchMock.mockResolvedValue(okResponse(true));
+    vi.mocked(Math.random).mockReturnValueOnce(0.5);
+    const startMs = Date.now() + 120_000;
+    renderRuntimeFlags({ resyncClockBeforeMs: startMs });
+    await flush();
+    // Later draws must not move the planned instant.
+    vi.mocked(Math.random).mockReturnValue(0);
+
+    // A device clock 5 seconds fast: the resync (25s before start) is 5s later on it.
+    await act(async () => {
+      const deviceNow = Date.now();
+      recordServerTimeSample({
+        serverNowMs: deviceNow - 5_000,
+        requestStartedAtMs: deviceNow,
+        responseReceivedAtMs: deviceNow,
+      });
+    });
+
+    await flush(100_000 - 1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await flush(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(startMs - getServerNowMs()).toBe(25_000);
+
+    // A tighter sample after the re-read moves the clock back again; the resync
+    // instant is in the future on it, but the re-read already ran.
+    await act(async () => {
+      const deviceNow = Date.now();
+      recordServerTimeSample({
+        serverNowMs: deviceNow - 8_000,
+        requestStartedAtMs: deviceNow,
+        responseReceivedAtMs: deviceNow,
+      });
+    });
     await flush(60_000);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });

@@ -407,15 +407,27 @@ function containsScriptableUrl(value: string) {
   return SCRIPTABLE_URL_SCHEMES.some((scheme) => normalized.includes(scheme));
 }
 
-function hasNonLocalUrlReference(value: string) {
-  const lower = value.toLowerCase();
-  let index = lower.indexOf('url(');
-  while (index !== -1) {
-    const target = lower.slice(index + 4).replace(/^[\s'"]+/, '');
-    if (!target.startsWith('#')) return true;
-    index = lower.indexOf('url(', index + 4);
+/**
+ * 값 안의 `url(` 마다 그 뒤 인자 문자열을 돌려준다.
+ *
+ * 찾기와 자르기를 원문 한 문자열에서 한다. `toLowerCase()`는 `İ`(U+0130)처럼 code unit 길이가
+ * 바뀌는 문자가 있어, 소문자 문자열의 index로 원문을 자르면 검사 창이 URL 인자 안쪽으로 밀린다
+ * (`İ` 여러 개 + `url(https://…#a)`가 `#a)`만 검사되어 통과). CSS 함수 이름은 ASCII 대소문자만
+ * 구분하지 않으므로 u flag 없는 `/url\(/gi`(ASCII 밖 문자를 ASCII로 접지 않는다)로 충분하다.
+ */
+function urlReferenceArguments(value: string): string[] {
+  const pattern = /url\(/gi;
+  const args: string[] = [];
+  for (let match = pattern.exec(value); match; match = pattern.exec(value)) {
+    args.push(value.slice(match.index + match[0].length));
   }
-  return false;
+  return args;
+}
+
+function hasNonLocalUrlReference(value: string) {
+  return urlReferenceArguments(value).some(
+    (argument) => !argument.replace(/^[\s'"]+/, '').startsWith('#'),
+  );
 }
 
 // `url(` 뒤의 지역 참조 하나: 선택적 따옴표, `#`, 안전한 이름, 같은 따옴표, `)`.
@@ -423,14 +435,14 @@ const SAFE_LOCAL_URL_REFERENCE_PATTERN = /^\s*(['"]?)#[A-Za-z_][A-Za-z0-9_.:-]{0
 
 /** `url(...)` 중 하나라도 안전한 이름의 지역 참조(`url(#id)`)가 아니면 true. */
 function hasUnsafeUrlReference(value: string) {
-  const lower = value.toLowerCase();
-  let index = lower.indexOf('url(');
-  while (index !== -1) {
-    if (!SAFE_LOCAL_URL_REFERENCE_PATTERN.test(value.slice(index + 4))) return true;
-    index = lower.indexOf('url(', index + 4);
-  }
-  return false;
+  return urlReferenceArguments(value).some(
+    (argument) => !SAFE_LOCAL_URL_REFERENCE_PATTERN.test(argument),
+  );
 }
+
+// 좌석맵 표현 속성 값에는 CSS 주석이 필요 없다. 주석은 검사 창을 흐리는 패딩으로만 쓰이므로
+// 렌더링에서 지운다(업로드는 디자인 도구 export를 막지 않도록 거부하지 않는다).
+const CSS_COMMENT_PATTERN = /\/\*/;
 
 /** `id`는 이름 하나, `class`는 공백으로 나눈 이름 목록이어야 한다. */
 function hasUnsafeNameValue(name: string, value: string) {
@@ -470,6 +482,7 @@ function isUnsafeAttributeValue(attr: Attr, mode: 'render' | 'upload') {
 
   // 표현 속성은 CSS 값으로 파싱된다. 외부 url() 참조, 문자열 인자로 외부 이미지를 불러오는
   // 함수(image-set 등), CSS escape(`u\rl(`)를 막는다. 지역 url(#id)는 허용한다.
+  if (mode === 'render' && CSS_COMMENT_PATTERN.test(value)) return true;
   const unsafeUrl = mode === 'render' ? hasUnsafeUrlReference(value) : hasNonLocalUrlReference(value);
   return unsafeUrl || UNSAFE_PRESENTATION_VALUE_PATTERN.test(value);
 }

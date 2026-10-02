@@ -8,6 +8,7 @@ import '@testing-library/jest-dom/vitest';
 import { CHECKOUT_PAYMENT_METHOD_NOT_ALLOWED_MESSAGE, type PaymentMethod } from '@grabit/shared';
 import ConfirmPage from '@/app/booking/[performanceId]/confirm/page';
 import { getCheckoutCopy } from '@/lib/booking/checkout-copy';
+import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import { useAuthStore } from '@/stores/use-auth-store';
 import { useBookingStore } from '@/stores/use-booking-store';
 import type { PaymentMethodSelection } from '@/components/booking/toss-payment-widget';
@@ -18,6 +19,8 @@ const boundary = vi.hoisted(() => ({
   prepare: vi.fn(), read: vi.fn(), cancel: vi.fn(), unlock: vi.fn(), requestPayment: vi.fn(),
   replace: vi.fn(), search: new URLSearchParams(),
   policy: { allowedPaymentMethods: ['CARD'] as string[], allowedPaymentMethodsKnown: false },
+  /** The message the widget shows instead of the methods and terms when it cannot load. */
+  widgetLoadError: null as string | null,
 }));
 
 vi.mock('next/navigation', () => ({
@@ -53,6 +56,8 @@ vi.mock('@/components/auth/auth-guard', () => ({
 
 const TRANSFER: PaymentMethod = { method: 'TRANSFER', provider: 'CARD', currency: 'KRW' };
 const CARD: PaymentMethod = { method: 'CARD', provider: 'CARD', currency: 'KRW' };
+// Card issuer shortcuts of the DEFAULT widget; their codes are also bank codes (audit #70).
+const CARD_ISSUER_SHORTCUTS = vi.hoisted(() => ['SHINHAN', 'HYUNDAI', 'KOOKMIN', 'BC', 'IBK_BC']);
 
 vi.mock('@/components/booking/toss-payment-widget', async (importOriginal) => ({
   // The real selection rules (isPayableWidgetSelection) with a test double for the iframe.
@@ -62,14 +67,26 @@ vi.mock('@/components/booking/toss-payment-widget', async (importOriginal) => ({
       onReady: () => void;
       onWidgetAgreementChange: (agreed: boolean) => void;
       onPaymentMethodChange?: (selection: PaymentMethodSelection) => void;
+      onLoadError?: (message: string | null) => void;
     }, ref,
   ) {
-    const { onReady, onWidgetAgreementChange } = props;
+    const { onReady, onWidgetAgreementChange, onLoadError } = props;
     useImperativeHandle(ref, () => ({ requestPayment: boundary.requestPayment }));
     useEffect(() => {
+      // Like the real widget: a load failure never reports ready or agreed terms.
+      if (boundary.widgetLoadError) {
+        onWidgetAgreementChange(false);
+        onLoadError?.(boundary.widgetLoadError);
+        return;
+      }
       onReady();
       onWidgetAgreementChange(true);
-    }, [onReady, onWidgetAgreementChange]);
+    }, [onReady, onWidgetAgreementChange, onLoadError]);
+    const loadAgain = () => {
+      onLoadError?.(null);
+      onReady();
+      onWidgetAgreementChange(true);
+    };
     const choose = (code: string, paymentMethod: PaymentMethod) => props.onPaymentMethodChange?.({
       code, paymentMethod, requiresOverseasDisclaimer: false, requestFlow: 'widget',
     });
@@ -84,7 +101,8 @@ vi.mock('@/components/booking/toss-payment-widget', async (importOriginal) => ({
       <div>
         <button type="button" onClick={() => choose('TRANSFER', TRANSFER)}>Choose transfer</button>
         <button type="button" onClick={() => choose('CARD', CARD)}>Choose card</button>
-        {['VIRTUAL_ACCOUNT', 'MOBILE_PHONE', 'PAYCO', '가상계좌'].map((code) => (
+        <button type="button" onClick={loadAgain}>Load widget again</button>
+        {['VIRTUAL_ACCOUNT', 'MOBILE_PHONE', 'PAYCO', '가상계좌', ...CARD_ISSUER_SHORTCUTS].map((code) => (
           <button key={code} type="button" onClick={() => void chooseCode(code)}>{`Choose ${code}`}</button>
         ))}
       </div>
@@ -121,6 +139,7 @@ describe('Checkout payment methods outside the performance policy (audit #70)', 
     boundary.cancel.mockResolvedValue(undefined);
     boundary.search = new URLSearchParams();
     boundary.policy = { allowedPaymentMethods: ['CARD'], allowedPaymentMethodsKnown: false };
+    boundary.widgetLoadError = null;
     window.history.replaceState({}, '', '/booking/performance-policy/confirm');
     useBookingStore.getState().resetBooking();
     useAuthStore.getState().setAuth('synthetic-test-token', {
@@ -202,11 +221,15 @@ describe('Checkout payment methods outside the performance policy (audit #70)', 
     expect(payButton('paymentDisclaimer.payNow')).toBeEnabled();
   });
 
-  it.each([
+  it.each<[string, typeof boundary.policy]>([
     ['VIRTUAL_ACCOUNT', { allowedPaymentMethods: ['CARD', 'VIRTUAL_ACCOUNT'], allowedPaymentMethodsKnown: true }],
     ['MOBILE_PHONE', { allowedPaymentMethods: ['CARD'], allowedPaymentMethodsKnown: false }],
     ['PAYCO', { allowedPaymentMethods: ['CARD', 'SIMPLE_PAY'], allowedPaymentMethodsKnown: true }],
     ['가상계좌', { allowedPaymentMethods: ['CARD'], allowedPaymentMethodsKnown: false }],
+    // Even where card and transfer are both allowed: the code cannot tell them apart.
+    ...CARD_ISSUER_SHORTCUTS.map((code): [string, typeof boundary.policy] => [
+      code, { allowedPaymentMethods: ['CARD', 'TRANSFER'], allowedPaymentMethodsKnown: true },
+    ]),
   ])('refuses a %s widget selection under any policy without calling prepare', async (code, policy) => {
     const user = userEvent.setup();
     boundary.policy = policy;
@@ -226,6 +249,33 @@ describe('Checkout payment methods outside the performance policy (audit #70)', 
 
     await user.click(screen.getByRole('button', { name: 'Choose card' }));
     expect(screen.queryByText(copy.methodNotAllowed)).not.toBeInTheDocument();
+    expect(payButton('paymentDisclaimer.payNow')).toBeEnabled();
+  });
+
+  it.each([
+    ['setupIncomplete'],
+    ['systemLoadFailed'],
+    ['widgetLoadFailed'],
+  ] as const)('labels the pay button with the widget %s error instead of asking for unseen payment terms', async (key) => {
+    const user = userEvent.setup();
+    const widgetCopy = getVisibleCopy('ko').bookingExtra.widget;
+    boundary.widgetLoadError = widgetCopy[key];
+    useBookingStore.getState().setBookingData({
+      ...booking, selectedSeats: seats, expiresAt: Date.parse(booking.paymentDeadlineAt),
+    });
+    mountPage();
+    await user.click(screen.getByRole('checkbox', { name: '전체 동의' }));
+
+    const blocked = screen.getAllByRole('button', { name: widgetCopy[key] });
+    expect(blocked.length).toBeGreaterThan(0);
+    for (const button of blocked) expect(button).toBeDisabled();
+    const agreePaymentTerms = getVisibleCopy('ko').bookingExtra.confirm.agreePaymentTerms;
+    expect(screen.queryByRole('button', { name: agreePaymentTerms })).not.toBeInTheDocument();
+    await user.click(blocked[0]!);
+    expect(boundary.prepare).not.toHaveBeenCalled();
+
+    // A later successful load clears the error.
+    await user.click(screen.getByRole('button', { name: 'Load widget again' }));
     expect(payButton('paymentDisclaimer.payNow')).toBeEnabled();
   });
 

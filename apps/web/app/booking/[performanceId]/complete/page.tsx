@@ -399,7 +399,10 @@ function CompletePageContent() {
     }).then(() => {
       void paymentRecovery.refetch();
     }).catch((err) => {
-      toast.error(err instanceof Error ? err.message : completeCopy.statusCheckFailed);
+      // Server messages are Korean; other locales get locale copy, never the raw text.
+      toast.error(locale === 'ko' && err instanceof Error && err.message.trim()
+        ? err.message
+        : completeCopy.statusCheckFailed);
       setConfirmFailed(true);
     });
   }, [
@@ -407,6 +410,7 @@ function CompletePageContent() {
     asyncReturnProvider,
     hasValidAmount,
     isPendingReturn,
+    locale,
     orderId,
     parsedAmount,
     paymentKey,
