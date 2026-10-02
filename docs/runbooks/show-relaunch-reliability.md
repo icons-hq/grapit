@@ -96,6 +96,25 @@ Deploy workflow는 main push마다 구 revision이 트래픽을 받는 중에 `d
 - migration 자체에 더 긴 잠금 대기가 필요하면(예: 0033의 `SET LOCAL lock_timeout = '10s'`) 그 migration 안에서만 명시하고, 판매 시간대를 피한 배포 창을 따로 잡는다.
 - 두 timeout은 statement 단위다. 앞선 statement가 hot table 잠금을 얻으면, 같은 batch의 뒤 statement가 각각 `MIGRATION_STATEMENT_TIMEOUT`까지 실행되는 동안 그 잠금이 유지된다. Cloud SQL은 PostgreSQL 16이라 transaction 전체 상한(`transaction_timeout`, 17부터)을 쓸 수 없다. 따라서 hot table DDL은 단독 배포로 내보내고, 긴 backfill이나 다른 migration과 같은 batch에 두지 않는다. pending migration이 2개 이상이면 DB preflight가 경고한다.
 
+- `SET LOCAL`은 transaction이 끝날 때까지 유지된다. drizzle은 pending migration을 한 transaction으로 적용하므로, `SET LOCAL lock_timeout = '10s'`를 둔 migration 뒤의 모든 migration도 `MIGRATION_LOCK_TIMEOUT`(기본 5s) 대신 10s를 받는다. 이런 migration을 다른 migration과 같은 배포에 묶을 때는 그 뒤의 DDL 전체를 10s 대기 기준으로 검토한다.
+
+### 2026-10 감사 migration batch(0038–0046) 첫 배포
+
+감사 수정 브랜치를 처음 배포하면 0038–0046 아홉 개가 한 transaction으로 적용된다(DB preflight가 pending 2개 이상으로 경고한다). 이 batch는 hot table 잠금을 잡는다.
+
+| Migration | 잠금 대상 | 영향 |
+| --- | --- | --- |
+| 0038 | `reservation_seats`, `payments` | `CONCURRENTLY` 없는 인덱스 생성. 생성 동안 두 테이블 write(좌석 선택 prepare, confirm, webhook 기록)가 멈춘다. |
+| 0039 | `users`, `reservations` | 0039부터 batch 끝까지 `lock_timeout` 10s. `users` 인덱스 생성(가입·프로필 write 대기)과 `reservations` 전 행 `UPDATE`(예약 write 대기). 사전 확인·batch 선변환은 아래 '예매 게이트 변경의 배포 차단 점검'을 따른다. |
+| 0040 | `ticket_benefits`, `ticket_benefit_entitlements` | 컬럼 type을 `text`로 바꾸는 동안 `ACCESS EXCLUSIVE`, FK 추가 동안 두 테이블 잠금. 발권 시 특전 동기화가 기다린다. |
+| 0043 | `seat_inventories` | `CONCURRENTLY` 없는 부분 인덱스 생성. 생성 동안 `SHARE` 잠금으로 좌석 상태 write(확정 시 sold, 취소 시 held/available, 관리자 좌석 작업)가 멈춘다. 대상 행이 적어도 전체 테이블을 스캔한다. |
+| 0044 | `ticket_scan_events` | `NOT NULL` 해제, backfill `UPDATE`, CHECK 추가. 현장 검표 기록이 멈춘다. |
+| 0046 | `users` | 인덱스 생성. 로그인 조회는 계속되고 write만 기다린다. |
+
+- 판매 오픈, 현장 입장, 결제 확정이 몰리는 시간대를 피한 배포 창에서 실행하고, 그 창 밖에서는 `MIGRATION_FREEZE=true`를 유지한다.
+- 실행 전에 `seat_inventories`, `reservations`, `ticket_scan_events` 행 수와 활성 트랜잭션(`pg_stat_activity`의 `state <> 'idle'`)을 확인한다. 잠금 대기로 실패하면 transaction 전체가 rollback되므로 한산한 시간에 다시 실행한다.
+- 대형 운영 데이터에서 0038·0043·0046 인덱스 생성이 오래 걸릴 것으로 보이면, 별도 승인 runbook으로 같은 이름의 인덱스를 `CREATE INDEX CONCURRENTLY`로 먼저 만든다. migration은 `IF NOT EXISTS`라 그 뒤에는 아무 일도 하지 않는다.
+
 ## 예매 게이트 변경의 배포 차단 점검 (2026-10 감사 #62·#68·#70)
 
 ### 결제수단 정책 (#70)
