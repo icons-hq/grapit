@@ -6,6 +6,7 @@ import type { Socket } from 'socket.io-client';
 import { toast } from 'sonner';
 import type { SeatUpdateEvent, SeatStatusResponse } from '@grabit/shared';
 import { createBookingSocket } from '@/lib/socket-client';
+import { refetchAfterInFlight, SEAT_STATUS_RECONNECT_JITTER_MS } from '@/lib/booking/seat-resync';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
 import { getClientLocale } from '@/lib/i18n/client-copy';
 import { useBookingStore } from '@/stores/use-booking-store';
@@ -22,21 +23,51 @@ export function useBookingSocket(showtimeId: string | null): void {
 
     const socket = createBookingSocket();
     socketRef.current = socket;
+    const seatStatusKey = ['seat-status', showtimeId] as const;
+    let disposed = false;
+    let resyncGeneration = 0;
+    let resyncTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const resyncSeatStatus = (afterReconnect: boolean) => {
+      resyncGeneration += 1;
+      const generation = resyncGeneration;
+      if (resyncTimer !== null) {
+        clearTimeout(resyncTimer);
+        resyncTimer = null;
+      }
+      if (!afterReconnect) {
+        // Events between the HTTP snapshot and the room join are never
+        // delivered, so the map needs one read sent after the join. A load
+        // still in flight was sent before the join: wait for it, then read
+        // once more.
+        void refetchAfterInFlight(
+          queryClient,
+          seatStatusKey,
+          () => disposed || generation !== resyncGeneration,
+        );
+        return;
+      }
+      resyncTimer = setTimeout(() => {
+        resyncTimer = null;
+        void queryClient.invalidateQueries({
+          queryKey: seatStatusKey,
+        });
+      }, Math.floor(Math.random() * SEAT_STATUS_RECONNECT_JITTER_MS));
+    };
 
     socket.on('connect', () => {
       useBookingStore.getState().setConnected(true);
       socket.emit('join-showtime', showtimeId);
 
-      if (hadPreviousConnection.current) {
+      const isReconnect = hadPreviousConnection.current;
+      if (isReconnect) {
         // Reconnect after disconnect
         toast.success(copy.reconnected, {
           id: 'ws-status',
           duration: 3000,
         });
-        queryClient.invalidateQueries({
-          queryKey: ['seat-status', showtimeId],
-        });
       }
+      resyncSeatStatus(isReconnect);
 
       hadPreviousConnection.current = true;
     });
@@ -59,6 +90,8 @@ export function useBookingSocket(showtimeId: string | null): void {
       }
     });
 
+    // After the final failed attempt the store stays disconnected, which
+    // switches seat-status to the faster fallback polling in useSeatStatus.
     socket.io?.on('reconnect_failed', () => {
       toast.error(
         copy.reconnectFailed,
@@ -91,11 +124,16 @@ export function useBookingSocket(showtimeId: string | null): void {
     socket.connect();
 
     return () => {
+      disposed = true;
+      if (resyncTimer !== null) {
+        clearTimeout(resyncTimer);
+      }
       socket.emit('leave-showtime', showtimeId);
       socket.io?.off('reconnect_failed');
       socket.disconnect();
       socketRef.current = null;
       hadPreviousConnection.current = false;
+      useBookingStore.getState().setConnected(false);
     };
   }, [showtimeId, queryClient, copy]);
 }

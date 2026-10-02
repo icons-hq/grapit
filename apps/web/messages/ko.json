@@ -348,7 +348,10 @@
       "selectSeat": "좌석 선택",
       "deselectSeat": "좌석 해제",
       "totalSeatCount": "총 {count}석",
-      "selectionConflict": "좌석 상태와 1인 예매 한도를 확인한 뒤 다시 시도해 주세요."
+      "selectionConflict": "좌석 상태와 1인 예매 한도를 확인한 뒤 다시 시도해 주세요.",
+      "showtimeClosed": "이미 시작된 회차는 예매할 수 없습니다.",
+      "selectionResynced": "점유 상태가 바뀐 좌석이 있어 선택 목록을 갱신했습니다. 선택 좌석을 확인해 주세요.",
+      "selectionVerifyFailed": "선택 좌석의 점유 상태를 확인하지 못했습니다. 잠시 후 다시 시도해 주세요."
     }
   },
   "locale": {

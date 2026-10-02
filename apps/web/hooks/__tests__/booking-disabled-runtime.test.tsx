@@ -134,8 +134,8 @@ vi.mock('@/hooks/use-booking', () => ({
     allowedPaymentMethods: ['CARD'],
     isPaymentDeadlineExpired: false,
   }),
-  useLockSeat: () => ({ mutate: lockSeatMutateMock, isPending: false }),
-  useUnlockSeat: () => ({ mutate: vi.fn(), isPending: false }),
+  useLockSeat: () => ({ mutate: lockSeatMutateMock, mutateAsync: lockSeatMutateMock, isPending: false }),
+  useUnlockSeat: () => ({ mutate: vi.fn(), mutateAsync: vi.fn().mockResolvedValue(undefined), isPending: false }),
   useUnlockAllSeats: () => ({ mutate: vi.fn(), mutateAsync: vi.fn().mockResolvedValue(undefined), isPending: false }),
   useCancelPendingReservation: (options?: { showErrorToast?: boolean }) => ({
     mutate: cancelPendingReservationMock,
@@ -554,22 +554,28 @@ describe('runtime booking disabled UI', () => {
   });
 
   it('allows admin to lock a seat while runtime booking is disabled', async () => {
-    const user = userEvent.setup();
-    setCurrentUserRole('admin');
-    useBookingStore.getState().clearSeats();
+    // The fixture showtime (2026-07-04 09:00Z) must not have started yet.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-07-01T00:00:00.000Z'));
+    try {
+      const user = userEvent.setup();
+      setCurrentUserRole('admin');
+      useBookingStore.getState().clearSeats();
 
-    renderWithQuery(<BookingPage performanceId="performance-disabled" />);
+      renderWithQuery(<BookingPage performanceId="performance-disabled" />);
 
-    await user.click(await screen.findByRole('button', { name: '좌석 A-1' }));
+      await user.click(await screen.findByRole('button', { name: '좌석 A-1' }));
 
-    expect(lockSeatMutateMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        showtimeId: 'showtime-disabled',
-        seatId: 'A-1',
-      }),
-      expect.any(Object),
-    );
-    expect(screen.queryByText('예매는 추후 오픈 예정입니다')).not.toBeInTheDocument();
+      await waitFor(() => expect(lockSeatMutateMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          showtimeId: 'showtime-disabled',
+          seatId: 'A-1',
+        }),
+      ));
+      expect(screen.queryByText('예매는 추후 오픈 예정입니다')).not.toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it.each([

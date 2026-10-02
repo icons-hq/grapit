@@ -2,8 +2,30 @@ import { expect, test, devices, type Browser, type Page, type Route } from '@pla
 
 const FLOOR_BROWSER_PERFORMANCE_ID = 'floor-browser';
 const FLOOR_BROWSER_SHOWTIME_ID = 'showtime-floor-browser';
-const SHOWTIME_ISO = '2026-07-18T19:00:00.000+09:00';
-const SHOWTIME_DATE_LABEL = '2026년 7월 18일 토요일';
+
+// Showtimes that already started are not offered, so the fixture stays in the future.
+function upcomingKstShowtime(daysAhead: number) {
+  const instant = new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000);
+  const kstDate = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(instant);
+  const iso = `${kstDate}T19:00:00.000+09:00`;
+  const dateLabel = new Intl.DateTimeFormat('ko-KR', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    weekday: 'long',
+  }).format(new Date(iso));
+  return { kstDate, iso, dateLabel };
+}
+
+const UPCOMING_SHOWTIME = upcomingKstShowtime(14);
+const SHOWTIME_ISO = UPCOMING_SHOWTIME.iso;
+const SHOWTIME_DATE_LABEL = UPCOMING_SHOWTIME.dateLabel;
 const LOCK_EXPIRES_AT = Date.now() + 8 * 60 * 1000;
 const ADMITTED_QUEUE_SNAPSHOT = {
   queueSessionId: 'queue-floor-browser',
@@ -73,8 +95,8 @@ function createFloorBrowserPerformanceDetail() {
     venueId: 'venue-floor-browser',
     posterUrl: null,
     description: 'seat hit target browser regression fixture',
-    startDate: '2026-07-18T00:00:00.000+09:00',
-    endDate: '2026-07-18T23:59:59.000+09:00',
+    startDate: `${UPCOMING_SHOWTIME.kstDate}T00:00:00.000+09:00`,
+    endDate: `${UPCOMING_SHOWTIME.kstDate}T23:59:59.000+09:00`,
     runtime: '120분',
     ageRating: '전체관람가',
     status: 'selling' as const,
@@ -225,7 +247,10 @@ async function stubFloorBrowserRoutes(
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ seatIds: [], expiresAt: null }),
+        body: JSON.stringify({
+          seatIds: [...lockedSeatKeys],
+          expiresAt: lockedSeatKeys.size > 0 ? LOCK_EXPIRES_AT : null,
+        }),
       });
     },
   );

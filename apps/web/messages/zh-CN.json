@@ -348,7 +348,10 @@
       "selectSeat": "选择座位",
       "deselectSeat": "取消选座",
       "totalSeatCount": "共 {count} 个座位",
-      "selectionConflict": "请确认座位状态和每人限购数量后重试。"
+      "selectionConflict": "请确认座位状态和每人限购数量后重试。",
+      "showtimeClosed": "该场次已开始，无法预订。",
+      "selectionResynced": "部分座位的保留状态已变化，已更新所选座位。请确认所选座位。",
+      "selectionVerifyFailed": "无法确认所选座位的保留状态，请稍后重试。"
     }
   },
   "locale": {
