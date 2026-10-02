@@ -2,19 +2,14 @@
 
 import * as React from 'react';
 import { X } from 'lucide-react';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   LOCALE_SUGGESTION_COOKIE,
   type PublicSupportedLocale,
   isPublicSupportedLocale,
-  resolveLocaleFromPathname,
 } from '@/i18n/routing';
-import { getLocalizedNavigationPath } from '@/lib/i18n/locale-path';
 import { cn } from '@/lib/cn';
 import { getVisibleCopy } from '@/lib/i18n/visible-copy';
-import {
-  setLocalePreferenceCookie,
-} from './locale-switcher';
+import { useLocaleSelection } from './locale-switcher';
 
 type SupportedLocale = PublicSupportedLocale;
 
@@ -27,10 +22,7 @@ const PUBLIC_LOCALE_LABELS = {
 } as const satisfies Record<SupportedLocale, string>;
 
 export function LocaleSuggestion({ className }: { className?: string }) {
-  const pathname = usePathname();
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const activeLocale = resolveLocaleFromPathname(pathname).locale;
+  const { activeLocale, handleLocaleSelect } = useLocaleSelection();
   const [suggestedLocale, setSuggestedLocale] =
     React.useState<SupportedLocale | null>(null);
 
@@ -52,11 +44,9 @@ export function LocaleSuggestion({ className }: { className?: string }) {
   }
 
   function chooseLocale() {
-    setLocalePreferenceCookie(locale);
     dismiss();
-    router.push(
-      getLocalizedNavigationPath(pathname, searchParams.toString(), locale),
-    );
+    // Same full navigation as LocaleSwitcher so the provider locale and <html lang> follow the URL.
+    void handleLocaleSelect(locale);
   }
 
   return (

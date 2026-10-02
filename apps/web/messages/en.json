@@ -305,7 +305,8 @@
   },
   "locale": {
     "suggestion": "View this page in English?",
-    "dismiss": "Later"
+    "dismiss": "Later",
+    "localTime": "Local time"
   },
   "legal": {
     "fallbackLabel": "Reviewing the English legal notice"

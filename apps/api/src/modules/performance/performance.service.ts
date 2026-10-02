@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { eq, desc, sql, and, inArray, ne, or, lte } from 'drizzle-orm';
+import { eq, desc, sql, and, inArray, ne } from 'drizzle-orm';
 import { DRIZZLE, type DrizzleDB } from '../../database/drizzle.provider.js';
 import {
   performances,
@@ -246,7 +246,7 @@ export class PerformanceService {
             join booking_policies next_policy on next_policy.performance_id = next_performance.id
             where next_performance.publish_state = 'published'
               and next_performance.genre = ${genre}
-              and next_performance.status = 'upcoming'
+              and next_performance.status <> 'ended'
               and next_policy.booking_starts_at > ${queryTime}
               ${sub ? sql`and next_performance.subcategory = ${sub}` : sql``}
           )`,
@@ -465,13 +465,7 @@ export class PerformanceService {
         .where(
           and(
             eq(performances.publishState, 'published'),
-            or(
-              inArray(performances.status, ['selling', 'closing_soon']),
-              and(
-                eq(performances.status, 'upcoming'),
-                lte(bookingPolicies.bookingStartsAt, new Date()),
-              ),
-            ),
+            publicCatalogStatusCondition('selling', new Date()),
           ),
         )
       .orderBy(desc(performances.viewCount))

@@ -41,6 +41,15 @@ describe('formatEventTimeWithKstAnchor', () => {
     expect(th.local).toContain('16:00');
     expect(zhCn.local).toContain('17:00');
   });
+
+  it('formats the secondary local time with the Gregorian calendar for Thai', () => {
+    const th = formatEventTimeWithKstAnchor('2026-10-04T11:00:00.000Z', 'th', {
+      localTimeZone: 'Asia/Bangkok',
+    });
+
+    expect(th.local).toContain('2026');
+    expect(th.local).not.toContain('2569');
+  });
 });
 
 describe('formatKrwWithEstimate', () => {

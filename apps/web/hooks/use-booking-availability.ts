@@ -61,6 +61,8 @@ export function useBookingAvailability(options: {
     isAdmin,
     bookingAvailable,
     bookingOpen,
+    /** The clock bookingOpen was evaluated with; status displays must use the same instant. */
+    nowMs,
     verificationRequiredForBooking: verificationRequired,
     isAdminBookingBypassActive:
       !verificationRequired &&

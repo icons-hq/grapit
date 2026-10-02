@@ -13,6 +13,10 @@ import {
 } from '@/lib/i18n/visible-copy';
 import { useRuntimeFlags } from '@/hooks/use-runtime-flags';
 import { getDisplayPerformanceStatus, StatusBadge } from './status-badge';
+import {
+  resolveTimeAwarePerformanceStatus,
+  useBookingStartClock,
+} from './performance-display-status';
 import type { PerformanceCardData } from '@grabit/shared';
 
 interface PerformanceCardProps {
@@ -29,10 +33,13 @@ export function PerformanceCard({
   const activeLocale = resolveVisibleCopyLocale(useLocale());
   const copy = getVisibleCopy(activeLocale);
   const { bookingEnabled } = useRuntimeFlags();
-  const displayStatus = getDisplayPerformanceStatus(
+  const nowMs = useBookingStartClock([performance.bookingStartsAt]);
+  const saleStatus = resolveTimeAwarePerformanceStatus(
     performance.status,
-    bookingEnabled,
+    performance.bookingStartsAt,
+    nowMs,
   );
+  const displayStatus = getDisplayPerformanceStatus(saleStatus, bookingEnabled);
 
   return (
     <Link
@@ -78,7 +85,7 @@ export function PerformanceCard({
           </p>
         )}
         <p className="mt-1 line-clamp-1 text-xs text-gray-500 md:text-sm">
-          {performance.status === 'upcoming' ? copy.performance.upcomingDateLabel : formatCatalogDateRange(performance.startDate, performance.endDate, activeLocale) ?? copy.home.dateUnknown}
+          {saleStatus === 'upcoming' ? copy.performance.upcomingDateLabel : formatCatalogDateRange(performance.startDate, performance.endDate, activeLocale) ?? copy.home.dateUnknown}
         </p>
         {performance.minPrice != null && <p className="mt-2 text-sm font-semibold text-foreground">{copy.home.priceFrom.replace('{price}', `KRW ${new Intl.NumberFormat(activeLocale).format(performance.minPrice)}`)}<span className="ml-1 text-xs font-normal text-muted-foreground">{copy.home.feeSeparate}</span></p>}
       </div>

@@ -305,7 +305,8 @@
   },
   "locale": {
     "suggestion": "要以简体中文查看此页面吗？",
-    "dismiss": "稍后"
+    "dismiss": "稍后",
+    "localTime": "当地时间"
   },
   "legal": {
     "fallbackLabel": "查看英文法律告知"
